@@ -9,6 +9,7 @@ set(SRC_FILE_LIST
 	EmbeddedShadersTest.cpp
 	ShaderAbiTest.cpp
 	ModelSceneTest.cpp
+	LayeredTargetTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)

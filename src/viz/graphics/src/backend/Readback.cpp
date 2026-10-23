@@ -7,7 +7,12 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 ReadbackResult readbackOf(const ReadbackState& state, const ReadbackRequest& request) noexcept
 {
     // 1. Does the request name something the target has? (A request that can never be served answers the
-    //    same way whatever the target currently holds.)
+    //    same way whatever the target currently holds.) The LAYER is part of the address: a 2D target has
+    //    exactly one, and asking for layer 1 of it is the same kind of mistake as asking for attachment 2.
+    if (request.layer >= state.layers)
+    {
+        return ReadbackResult{ false, ReadbackRefusal::UnknownLayer };
+    }
     if (request.kind == ReadbackKind::Color)
     {
         if (request.attachment >= state.color_attachments)
@@ -50,6 +55,7 @@ std::string_view refusalName(ReadbackRefusal refusal) noexcept
     {
     case ReadbackRefusal::None: return "none";
     case ReadbackRefusal::UnknownAttachment: return "unknown-attachment";
+    case ReadbackRefusal::UnknownLayer: return "unknown-layer";
     case ReadbackRefusal::UnreadableFormat: return "unreadable-format";
     case ReadbackRefusal::NotCaptured: return "not-captured";
     }

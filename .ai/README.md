@@ -105,7 +105,7 @@
   可见数量与选择单位被绑死而放弃。保留作为“通道方案为什么被否”的记录；现行设计见
   `graphics-instancing-primitive-2026-10-23.md`。
 - `graphics-colour-space.md` —— **颜色：把“色彩空间 + 数值域”放进类型（2026-10-21）**：`Colorf` 是线性光、`Color` 是 sRGB 编码字节，两者只由一对有名转换桥接（`Color::toLinear()` / `Colorf::toColor()`，IEC 61966-2-1 分段曲线、alpha 不参与编码）；SDK 的作者颜色因此只剩一种（`PassDesc::clear_color` / `ClearPolicy` / `FramePlan` 从字节改成线性浮点，后端不再 `/255`），默认清屏色写成“#333333 的原意 + 解一次”，判据含一条设备级“读回 55 而不是 128”；另登记“不做”的四条（`UnitScalar`、目标格式加 sRGB 变体、两个颜色类型改名、8 位图色彩空间）与 robotics / geometry 侧 `Colorf` 输入空间未声明的交互。
-- `graphics-layers.md` —— **层与分层渲染（L1 内容掩码已落地 2026-10-12；L2 设计定稿，裁决现阶段不做、等触发）**：**L1**（对象声明 `Node::setLayers` + pass 掩码 `setLayerMask` 两级；收集与**记忆化 memo key** 的坑；配方入口、0 的退化语义、落点清单、判据与 5 条变异实测）与 **L2 目标层**（`layerCount` + pass 的层区间，L2a 逐层先落、L2b 一次写完等触发；读侧先行的理由；§6 开头是"不做"的四条理由），两者的行业依据（Ogre-Next 的三级掩码 + slice/array 目标 + render queue 子组）、与既有裁决的关系、以及"不做的话今天的替代与代价"；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地，各配判据；"子树层并集"整段跳过仍登记）**。
+- `graphics-layers.md` —— **层与分层渲染（L1 内容掩码已落地 2026-10-12；L2a 目标层已落地 2026-10-23；L2b 一次写多层等触发）**：**L1**（对象声明 `Node::setLayers` + pass 掩码 `setLayerMask` 两级；收集与**记忆化 memo key** 的坑；配方入口、0 的退化语义、落点清单、判据与 5 条变异实测）与 **L2 目标层**（`layerCount` + pass 的层区间，L2a 逐层已落、L2b 一次写完等触发；读侧先行的理由；§6 开头是"不做"的四条理由；**§10 是 L2a 的落地记录与判据**），两者的行业依据（Ogre-Next 的三级掩码 + slice/array 目标 + render queue 子组）、与既有裁决的关系、以及"不做的话今天的替代与代价"；**§9（2026-10-13：拾取 / 包围盒掩码参数已落地，各配判据；2026-10-22：子树层并集整段跳过已落地）**。
 - `vsg-reimplementation.md` —— vsg 后端"从零重新实现"：契约、坑与实施记录（本仓库最长的设计文档）。
 - `vsg-design.md` —— vsg 渲染后端设计 v5（历史登记）。
 - `vsg-pass-lifecycle.md` —— pass 生命周期与槽身份（历史登记）。

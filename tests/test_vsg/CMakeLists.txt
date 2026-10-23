@@ -62,6 +62,8 @@ set(SRC_FILE_LIST
 	SdkPixelTest.cpp
 	# The primitives model end to end: one geometry, three draws, one upload of each shared stream.
 	PrimitiveDrawTest.cpp
+	# Layered targets: the shape/readback vocabulary (the device case is in VsgBackendTest).
+	LayeredTargetTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)

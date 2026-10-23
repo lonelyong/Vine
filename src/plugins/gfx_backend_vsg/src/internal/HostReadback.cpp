@@ -19,9 +19,10 @@ namespace
 /// here, and only for a target that has been DRAWN INTO: the copy commands transition the image from the
 /// layout a render pass leaves it in, which a never-rendered image is not in.
 HostReadbackRefusal ensureCopy(OffscreenTarget& target, core::ReadbackKind kind, std::uint32_t attachment,
-                               ::vsg::Device* device)
+                               std::uint32_t layer, ::vsg::Device* device)
 {
-    const core::ReadbackResult servable = target.readbackResult(core::ReadbackRequest{ kind, attachment });
+    const core::ReadbackResult servable =
+        target.readbackResult(core::ReadbackRequest{ kind, attachment, layer });
     if (servable.ok)
     {
         return HostReadbackRefusal::None;  // a frame copied it: the buffer is current
@@ -31,15 +32,16 @@ HostReadbackRefusal ensureCopy(OffscreenTarget& target, core::ReadbackKind kind,
         switch (servable.refusal)
         {
         case core::ReadbackRefusal::UnknownAttachment: return HostReadbackRefusal::UnknownAttachment;
+        case core::ReadbackRefusal::UnknownLayer: return HostReadbackRefusal::UnknownLayer;
         case core::ReadbackRefusal::UnreadableFormat: return HostReadbackRefusal::UnreadableFormat;
         case core::ReadbackRefusal::None:
         case core::ReadbackRefusal::NotCaptured: break;
         }
         return HostReadbackRefusal::TransferFailed;
     }
-    if (!target.written())
+    if (!target.written(layer))
     {
-        return HostReadbackRefusal::NotRecorded;  // nothing has been recorded into it: nothing to read
+        return HostReadbackRefusal::NotRecorded;  // nothing has been recorded into THAT layer: nothing to read
     }
     if (device == nullptr)
     {
@@ -63,9 +65,10 @@ HostReadbackRefusal ensureCopy(OffscreenTarget& target, core::ReadbackKind kind,
 }  // namespace
 
 HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind kind,
-                                     std::uint32_t attachment) noexcept
+                                     std::uint32_t attachment, std::uint32_t layer) noexcept
 {
-    const core::ReadbackResult servable = target.readbackResult(core::ReadbackRequest{ kind, attachment });
+    const core::ReadbackResult servable =
+        target.readbackResult(core::ReadbackRequest{ kind, attachment, layer });
     if (servable.ok)
     {
         return HostReadbackRefusal::None;
@@ -73,26 +76,28 @@ HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind
     switch (servable.refusal)
     {
     case core::ReadbackRefusal::UnknownAttachment: return HostReadbackRefusal::UnknownAttachment;
+    case core::ReadbackRefusal::UnknownLayer: return HostReadbackRefusal::UnknownLayer;
     case core::ReadbackRefusal::UnreadableFormat: return HostReadbackRefusal::UnreadableFormat;
     case core::ReadbackRefusal::NotCaptured:
         // No frame has copied this attachment back. A target that has been drawn into gets its copy made at
-        // read time; one that never was is NotRecorded (the SDK's NotReady), never a copy of UNDEFINED memory.
-        return target.written() ? HostReadbackRefusal::None : HostReadbackRefusal::NotRecorded;
+        // read time; one whose THIS LAYER was never written is NotRecorded (the SDK's NotReady), never a copy of
+        // UNDEFINED memory.
+        return target.written(layer) ? HostReadbackRefusal::None : HostReadbackRefusal::NotRecorded;
     case core::ReadbackRefusal::None: break;
     }
     return HostReadbackRefusal::TransferFailed;
 }
 
-HostReadbackRefusal readColorAttachment(OffscreenTarget& target, std::uint32_t attachment, ::vsg::Device* device,
-                                        std::vector<std::uint8_t>& outPixels)
+HostReadbackRefusal readColorAttachment(OffscreenTarget& target, std::uint32_t attachment, std::uint32_t layer,
+                                        ::vsg::Device* device, std::vector<std::uint8_t>& outPixels)
 {
     const HostReadbackRefusal copy =
-        ensureCopy(target, core::ReadbackKind::Color, attachment, device);
+        ensureCopy(target, core::ReadbackKind::Color, attachment, layer, device);
     if (copy != HostReadbackRefusal::None)
     {
         return copy;
     }
-    const core::PixelProbe probe = target.probe(attachment);
+    const core::PixelProbe probe = target.probe(attachment, layer);
     if (!probe.valid())
     {
         return HostReadbackRefusal::TransferFailed;  // the buffer does not hold a whole picture
@@ -101,15 +106,15 @@ HostReadbackRefusal readColorAttachment(OffscreenTarget& target, std::uint32_t a
     return HostReadbackRefusal::None;
 }
 
-HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, ::vsg::Device* device,
+HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, std::uint32_t layer, ::vsg::Device* device,
                                         std::vector<float>& outDepths)
 {
-    const HostReadbackRefusal copy = ensureCopy(target, core::ReadbackKind::Depth, 0U, device);
+    const HostReadbackRefusal copy = ensureCopy(target, core::ReadbackKind::Depth, 0U, layer, device);
     if (copy != HostReadbackRefusal::None)
     {
         return copy;
     }
-    const core::DepthProbe probe = target.depthProbe();
+    const core::DepthProbe probe = target.depthProbe(layer);
     if (!probe.valid())
     {
         return HostReadbackRefusal::TransferFailed;
@@ -127,7 +132,8 @@ vn::graphics::ReadbackResult readbackResultOf(HostReadbackRefusal refusal) noexc
     case HostReadbackRefusal::UnknownTarget:
     case HostReadbackRefusal::NotBuilt:
     case HostReadbackRefusal::NotRecorded: return vn::graphics::ReadbackResult::NotReady;
-    case HostReadbackRefusal::UnknownAttachment: return vn::graphics::ReadbackResult::Invalid;
+    case HostReadbackRefusal::UnknownAttachment:
+    case HostReadbackRefusal::UnknownLayer: return vn::graphics::ReadbackResult::Invalid;
     case HostReadbackRefusal::UnreadableFormat:
     case HostReadbackRefusal::BorrowedDepth:
     case HostReadbackRefusal::NoDevice: return vn::graphics::ReadbackResult::Unsupported;
@@ -155,6 +161,8 @@ vn::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* what)
                                     "back");
     case HostReadbackRefusal::UnknownAttachment:
         return vn::String::fromUtf8(entry + ": the target has no such attachment");
+    case HostReadbackRefusal::UnknownLayer:
+        return vn::String::fromUtf8(entry + ": the target has no such array layer");
     case HostReadbackRefusal::UnreadableFormat:
         return vn::String::fromUtf8(entry + ": this backend packs RGBA8 colour and D16/D32/D32F depth only; that"
                                     "attachment's format cannot be read back");

@@ -182,6 +182,52 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
         << "and a content command still takes the pass' depth policy";
 }
 
+TEST(FrameCompilerTest, ALayerRangeTheTargetCannotServeIsLeftOutOfThePlan)
+{
+    Rig r;
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    r.addTarget(target.get(), 64, 64, true);
+    r.facts.back().wanted.shape.layers         = 1U;
+    r.facts.back().current.desc.shape.layers   = 1U;
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(target.get());
+    ASSERT_TRUE(r.recorder.setPassLayers(1U, 1U)) << "layer 1 of a one-layer target";
+    r.recorder.render(oneCommand(), nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    EXPECT_TRUE(frame.passes.empty()) << "a pass writing a layer the target does not have draws nothing";
+
+    // The target itself is still in the table: the declaration is what is wrong, not the target.
+    ASSERT_EQ(frame.targets.size(), 1u);
+}
+
+TEST(FrameCompilerTest, AValidLayerRangeReachesTheCompiledPass)
+{
+    Rig r;
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    r.addTarget(target.get(), 64, 64, true);
+    r.facts.back().wanted.shape.layers       = 2U;
+    r.facts.back().current.desc.shape.layers = 2U;
+
+    r.recorder.beginFrame(FrameToken{ 1 });
+    r.recorder.beginPass(1);
+    r.recorder.setRenderTarget(target.get());
+    ASSERT_TRUE(r.recorder.setPassLayers(1U, 1U));
+    r.recorder.render(oneCommand(), nullptr);
+    r.recorder.endPass();
+    r.recorder.endFrame();
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 1u);
+    EXPECT_EQ(frame.passes[0].first_layer, 1U);
+    EXPECT_EQ(frame.passes[0].layer_count, 1U);
+    EXPECT_EQ(frame.targets[0].shape.layers, 2U);
+}
+
 TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
 {    // The plan carries the pass' declared inputs because a binding layer needs two things the description
     // cannot keep for it: WHICH target each input reads, and how many colour textures it offers (the count a

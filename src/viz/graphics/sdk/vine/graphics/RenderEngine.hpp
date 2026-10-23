@@ -613,6 +613,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     struct OutputIdentity {
         raw_ptr<const RenderTarget> target{ nullptr };      // set once the image is bound
         int                         attachment = 0;          // colour index; kWholeTarget = the whole target
+        int                         layer = 0;               // array layer (0 for a plain 2D target)
         bool                        depth = false;           // a depth attachment is NOT attachment 0
         raw_ptr<const ImageRef>     declared{ nullptr };    // identity while unbound
 
@@ -630,8 +631,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
          */
         [[nodiscard]] bool operator==(const OutputIdentity& other) const noexcept
         {
-            return target == other.target && attachment == other.attachment && depth == other.depth &&
-                   declared == other.declared;
+            return target == other.target && attachment == other.attachment && layer == other.layer &&
+                   depth == other.depth && declared == other.declared;
         }
 
         /** @brief Builds the identity of a declared output image.
@@ -645,16 +646,18 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
          *
          * @param target     Target the image belongs to.
          * @param attachment Colour attachment index.
+         * @param layer      Array layer (0 for a plain 2D target).
          * @return The image's address.
          */
-        static OutputIdentity colorOf(const RenderTarget& target, int attachment) noexcept;
+        static OutputIdentity colorOf(const RenderTarget& target, int attachment, int layer = 0) noexcept;
 
         /** @brief Builds the identity of a target's depth attachment.
          *
          * @param target Target the depth belongs to.
+         * @param layer  Array layer (0 for a plain 2D target).
          * @return The image's address.
          */
-        static OutputIdentity depthOf(const RenderTarget& target) noexcept;
+        static OutputIdentity depthOf(const RenderTarget& target, int layer = 0) noexcept;
 
         /** @brief Builds the identity of a whole target (a coarse declaration).
          *

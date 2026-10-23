@@ -20,6 +20,7 @@ void HostTargets::describe(const vn::graphics::RenderTarget& target, Description
     out.depth_format    = target.depthFormat();
     out.depth_promotion = target.isDepthPromoted();
     out.samples         = target.samples() == 0U ? 1U : target.samples();
+    out.layer_count     = target.layerCount() > 0 ? static_cast<std::uint32_t>(target.layerCount()) : 1U;
 
     const vn::graphics::RenderTarget* source = target.depthSource();
     out.depth_source = source;
@@ -63,12 +64,22 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
     {
         return State::SamplesUnsupported;
     }
+    // A LAYERED target is built from array images, and this release stops at the combinations it can honour:
+    // multisampling resolves per layer (a later step), and a borrowed depth is one whole image whose layer
+    // count would have to agree with the borrower's - neither is approximated here, because either guess
+    // draws into the wrong image. L2a is one layer per pass, and these are its boundaries.
+    if (description.layer_count > 1U &&
+        (description.samples > 1U || description.depth_source != nullptr))
+    {
+        return State::LayersUnsupported;
+    }
 
     OffscreenTarget::TargetLayout layout;
     layout.width         = static_cast<std::uint32_t>(description.width);
     layout.height        = static_cast<std::uint32_t>(description.height);
     layout.color_formats = description.color_formats;
     layout.samples       = description.samples;
+    layout.layers        = description.layer_count != 0U ? description.layer_count : 1U;
 
     const OffscreenTarget* depth_source = nullptr;
     if (description.has_depth)
@@ -221,13 +232,15 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     // announces a different shape, which is what makes the plan answer Rebuild instead of quietly drawing into
     // the old images (a target's objects are built for one count, see OffscreenTarget).
     out.wanted.shape.samples = entry.description.samples == 0U ? 1U : entry.description.samples;
+    out.wanted.shape.layers  = entry.description.layer_count != 0U ? entry.description.layer_count : 1U;
 
     if (entry.target != nullptr)
     {
         out.current = entry.target->instance();
         const bool same_engine_shape = out.current.desc.shape.color_formats == out.wanted.shape.color_formats &&
                                        out.current.desc.shape.depth_format == out.wanted.shape.depth_format &&
-                                       out.current.desc.shape.samples == out.wanted.shape.samples;
+                                       out.current.desc.shape.samples == out.wanted.shape.samples &&
+                                       out.current.desc.shape.layers == out.wanted.shape.layers;
         if (same_engine_shape)
         {
             const core::TargetShape& built = entry.target->shape();

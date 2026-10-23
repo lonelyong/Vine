@@ -74,7 +74,7 @@
 | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|
 | per-attachment clear 色 | （已落地 2026-10-19，见 §1）—— `ClearPolicy::extra_colors` 让每个附件拿自己的颜色，未写的仍为透明黑 | ~~G-buffer 需要按附件不同清色~~ 已收口 | `graphics-mrt-gbuffer.md` S4 剩余 |
-| L2a / L2b 目标层 | 分层渲染（`layerCount` + pass 的 `first_layer` / `layer_count`）；`DepthView::layer()` 已在位并**拒绝**未支持的分层声明 | 点光立方体阴影 / CSM / VR 双眼 / 实例化被触发 | `graphics-layers.md` §6 |
+| L2a / L2b 目标层 | 分层渲染。**L2a 已落地（2026-10-23）**：`RenderTarget::setLayerCount` + pass 的 `first_layer` / `layer_count`（一条 pass 写一层）+ `2D_ARRAY` 视图/逐层帧缓冲 + 按层回读 + `ImageRef::bind(..., layer)`；分层 + MSAA、分层 + 借用深度、`layer_count > 1`、整张分层目标作输入四项明确拒绝。**L2b（一次写多/全部层，render view / multiview）仍开放** | 点光立方体阴影 / CSM / VR 双眼 / 实例化被触发（实例化已于 2026-10-23 落地，只作触发评估） | `graphics-layers.md` §6 / §10 |
 
 ### 3.3 内容、场景图与选择
 

@@ -61,6 +61,7 @@ enum class ReadbackRefusal : std::uint8_t
 {
     None,               ///< Served (or servable): nothing to report.
     UnknownAttachment,  ///< The target has no such attachment.
+    UnknownLayer,       ///< The target has no such array layer (see RenderTarget::layerCount).
     UnreadableFormat,   ///< This backend cannot read that attachment's format, ever.
     NotCaptured,        ///< No copy of that attachment has been handed out for recording (yet).
 };
@@ -70,6 +71,7 @@ struct ReadbackRequest
 {
     ReadbackKind  kind{ReadbackKind::Color};  ///< Which attachment kind.
     std::uint32_t attachment{0};              ///< Colour attachment index; ignored for Depth.
+    std::uint32_t layer{0};                   ///< Array layer to read (0 for a plain 2D target).
 };
 
 /** @brief What the target currently has, as facts (no device work, no pixels).
@@ -79,6 +81,7 @@ struct ReadbackRequest
 struct ReadbackState
 {
     std::uint32_t color_attachments{0};  ///< How many colour attachments the target has.
+    std::uint32_t layers{1};             ///< Array layers the attachments have (see RenderTarget::layerCount).
     vn::graphics::RenderTarget::ColorFormat color_format{
         vn::graphics::RenderTarget::ColorFormat::RGBA8
     };                                             ///< The format of the requested colour attachment.

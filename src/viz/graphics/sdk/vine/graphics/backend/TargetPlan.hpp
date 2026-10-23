@@ -77,6 +77,12 @@ struct VN_GRAPHICS_API TargetShape
     std::vector<std::uint32_t> device_color_formats;  ///< The same attachments, as the device spells them.
     std::uint32_t              device_depth_format{0}; ///< The device's depth format; 0 = no depth.
     std::uint32_t              samples{1};             ///< Sample count.
+    /// Array layers the images have (1 = a plain 2D target).
+    ///
+    /// NOT part of RenderPassCompatibility: Vulkan's render-pass compatibility depends on the attachment
+    /// formats and sample counts, not on how many array layers the images have. It IS part of this shape's
+    /// equality, because the image views and the framebuffers are rebuilt when the layer count changes.
+    std::uint32_t              layers{1};
     std::uint32_t              subpass{0};             ///< Subpass the pipeline targets.
 
     /** @brief Compares the compatibility-relevant properties. */

@@ -2283,6 +2283,101 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     EXPECT_TRUE(host.alive());
 }
 
+TEST(VsgBackendTest, TwoPassesWriteTwoLayersOfOneArrayTargetAndReadEachLayerBack)
+{
+    if (!deviceCaseAvailable())
+    {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+    {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow host(connection, screen, 128, 96);
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setDiagnosticSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
+        std::printf("[layers] diagnostic: severity=%d category=%d message=%s\n",
+                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    as_bytes(diagnostic.message).c_str());
+    });
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    // ONE target, TWO array layers: the L2a shape (one pass writes one layer). The depth follows the
+    // colour attachments, so the target owns a two-layer depth too.
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32F);
+    target->setSize(64, 64);
+    target->setLayerCount(2);
+
+    const TriangleFixture                        triangle = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera   = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>           pass0(new RenderPass());
+    const vn::intrusive_ptr<RenderPass>           pass1(new RenderPass());
+    pass0->setFirstLayer(0);
+    pass0->setLayerCount(1);
+    pass1->setFirstLayer(1);
+    pass1->setLayerCount(1);
+
+    // Each pass clears ITS layer to a different colour, then draws the same triangle: a pass that wrote the
+    // wrong layer (or the same framebuffer twice) leaves both layers one colour.
+    const vn::graphics::ClearPolicy red{ vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F), false };
+    const vn::graphics::ClearPolicy blue{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), false };
+
+    backend->executeFrame(TestFrame()
+                              .pass(pass0.get(), 0)
+                              .target(target.get())
+                              .clear(red)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(triangle.commands, camera.get())
+                              .pass(pass1.get(), 1)
+                              .target(target.get())
+                              .clear(blue)
+                              .depth(vn::graphics::DepthMode::Disabled)
+                              .content(triangle.commands, camera.get())
+                              .value());
+
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "both layered passes recorded";
+
+    // The corner is outside the triangle: it is each layer's own clear colour, read through the layer-aware
+    // readback (the whole array is copied once; a layer is a slice of it).
+    std::vector<std::uint8_t>      layer0;
+    std::vector<std::uint8_t>      layer1;
+    vn::graphics::ReadbackResult why0 = vn::graphics::ReadbackResult::Failed;
+    vn::graphics::ReadbackResult why1 = vn::graphics::ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, 0, layer0, &why0));
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, 1, layer1, &why1));
+    ASSERT_EQ(layer0.size(), 64U * 64U * 4U);
+    ASSERT_EQ(layer1.size(), 64U * 64U * 4U);
+
+    const std::size_t corner = (2U * 64U + 2U) * 4U;
+    EXPECT_GT(layer0[corner + 0U], 200U) << "layer 0 keeps the red clear";
+    EXPECT_LT(layer0[corner + 2U], 50U);
+    EXPECT_LT(layer1[corner + 0U], 50U) << "layer 1 keeps the blue clear";
+    EXPECT_GT(layer1[corner + 2U], 200U);
+
+    // A layer the target does not have is refused as an Invalid request, before the device is touched.
+    std::vector<std::uint8_t>      scratch;
+    vn::graphics::ReadbackResult   bad = vn::graphics::ReadbackResult::Ok;
+    const std::uint64_t            waits_before = backend->deviceWaits();
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, 2, scratch, &bad));
+    EXPECT_EQ(bad, vn::graphics::ReadbackResult::Invalid) << "layer 2 of a two-layer target";
+    EXPECT_EQ(backend->deviceWaits(), waits_before) << "a refused layer costs no device wait";
+
+    backend->releaseRenderTarget(target.get());
+    backend->shutdown();
+    EXPECT_TRUE(host.alive());
+}
+
 // 跨帧差异相位（登记 B8）：现有像素相位全是静止相机，任何"某一帧读到别的帧的块"都看不见。
 // 这条相位每帧只动一点相机，并把判据做成可读回的子类：帧 1..5 相机 0.95..0.75（红通道类 1）、
 // 末帧 0.1（类 0），它的输出留在离屏 target 上；帧 7..14 相机 0.9、打进窗口。

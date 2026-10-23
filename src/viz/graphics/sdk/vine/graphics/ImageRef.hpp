@@ -93,8 +93,9 @@ class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
      *
      * @param target     Target whose attachment this image is (null unbinds it).
      * @param attachment Attachment index inside @p target.
+     * @param layer      Array layer inside @p target (0 for a plain 2D target).
      */
-    void bind(intrusive_ptr<RenderTarget> target, int attachment = 0);
+    void bind(intrusive_ptr<RenderTarget> target, int attachment = 0, int layer = 0);
 
     /** @brief Gets the bound target.
      *
@@ -108,6 +109,17 @@ class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
      */
     int attachment() const noexcept;
 
+    /** @brief Gets the array layer inside the bound attachment.
+     *
+     * @details
+     * - A layer is part of the image's ADDRESS, not of how it is used: `bind(target, attachment, 2)` and
+     *   `bind(target, attachment, 3)` are two distinct images of one array target, and the wiring check
+     *   treats them as two (`OutputIdentity` compares the layer). 0 is the whole image of a plain 2D target.
+     *
+     * @return The layer index (0 while unbound, or for a plain 2D target).
+     */
+    int layer() const noexcept;
+
     /** @brief States whether this image is currently bound.
      *
      * @return true when a target is bound.
@@ -119,6 +131,7 @@ class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
     Kind                        kind_ = Kind::Color;
     intrusive_ptr<RenderTarget> target_;
     int                         attachment_ = 0;
+    int                         layer_      = 0;
 };
 
 VN_GRAPHICS_NS_END
