@@ -77,7 +77,7 @@ struct TransientShape
  *   the kinds cannot express.
  * - What is NOT here: a descriptor cannot invent an execution (that is PassKind), cannot be a subtree of
  *   content (Scene), and cannot decide how a backend draws (the program's own ABI). The state it states is
- *   the pass-scoped half of the ONE resolution table (see .ai/design/graphics-state.md §4).
+ *   the pass-scoped half of the ONE resolution table (see .ai/design/graphics-scene.md §4).
  *
  * @note
  * - Why a value and not a class: a pass used to be a configured `RenderPass` subclass, so adding a kind
@@ -175,7 +175,7 @@ struct VN_GRAPHICS_API PassDesc
     /// unchanged by layers existing. A mask instead of a layer or a list: one AND answers for a node, and
     /// "these two" is as cheap as "one". A mask of 0 selects nothing - legal, and reported once as a
     /// frame-plan problem, because a content pass that draws nothing is nearly always a mistake
-    /// (see .ai/design/graphics-layers.md).
+    /// (see .ai/design/graphics-scene.md).
     std::uint32_t layer_mask{ kAllLayers };
 
     /// Whether this pass runs at all (a disabled pass keeps its declaration, costs nothing, and still counts

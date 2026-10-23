@@ -1,5 +1,5 @@
 /**
- * @brief The view block: the per-view ABI values a pass' draws read (see `.ai/design/vsg-reimplementation.md`
+ * @brief The view block: the per-view ABI values a pass' draws read (see `.ai/design/vsg-backend.md`
  * §11.16o, milestone M3d-3c).
  *
  * Device-free by construction: the builder turns a camera snapshot plus the frame's time and extent into the

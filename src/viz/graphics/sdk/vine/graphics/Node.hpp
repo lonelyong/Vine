@@ -68,7 +68,7 @@ enum class ViewDependence
  *     (see opacity);
  *   - layers and drawOrder take the NEAREST declaration: a node that declares its own replaces what it
  *     inherited, and clearing goes back to inheriting (see setLayers / setDrawOrder).
- * - BOUNDS ARE CACHED PER NODE (see .ai/design/graphics-scene-graph.md §10.2): the collection walk keeps each
+ * - BOUNDS ARE CACHED PER NODE (see .ai/design/graphics-scene.md §10.2): the collection walk keeps each
  *   subtree's box in the node's OWN frame, so a camera move recomputes nothing and a culled subtree costs
  *   one transformed box instead of a walk. The cache lives by ANNOUNCEMENT: every built-in mutation
  *   (MatrixTransform::setMatrix / PositionAttitudeTransform / AutoTransform setters, Group::addChild /
@@ -127,7 +127,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *   subtree is in the layer its ancestors declared (kDefaultLayer when nobody did).
      * - Resolution happens once, in the collection walk - which is why there is no up-walking spelling
      *   here; "why was this not drawn" is asked by a pass and answered while collecting (see
-     *   Scene::collectRenderCommands and .ai/design/graphics-layers.md).
+     *   Scene::collectRenderCommands and .ai/design/graphics-scene.md).
      *
      * @return The declared layer set, or nullopt when this node declares none.
      */

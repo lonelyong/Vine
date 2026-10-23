@@ -67,5 +67,5 @@
   > 就是早退，管线不重建。实测：最大化 752x480 → 2352x888 **225.5 → 36.4–51.4 ms**（`targets 0`、
   > `target resizes 2`、`rebind compiles 1`，其中 22–36 ms 是**新面板首次可见**建的一个槽，与 resize 无关）、
   > 还原 **→ 2.2 ms**、`device_waits` 不涨。像素侧由自检新相位 `runTargetResizePhase` 覆盖（拷贝程序铺满新尺寸、
-  > 中心/边角都对）；设计与实测见 `.ai/design/vsg-target-resize-in-place.md`，`H9` 行的收尾见
+  > 中心/边角都对）；设计与实测见 `.ai/design/vsg-backend.md`，`H9` 行的收尾见
   > `.ai/memory/graphics-perf-backlog.md`。

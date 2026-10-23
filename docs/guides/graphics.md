@@ -137,7 +137,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   **样本数也是目标的属性**：`setSamples(n)`（默认 1，0 当 1）—— 离屏目标会自建多重采样图并把**颜色**
   解析成一张单采样图，那张图就是它的彩色内容；上限问 `capabilities().max_samples`，用法与三条限制见 §3.20。
 - `PassChain::build(engine, const ChainDesc&)` —— 配方层（结构选择只有一个：
-  `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-pipeline.md`）、
+  `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-architecture.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
   `defaultGbufferGeometryProgram()`、`defaultDeferredLightProgram()`）。它装配出来的就是**你手写也会写的
   那些对象**，返回值 `PassChain` 句柄持有它们（`presentingPass()`、`offscreenTarget()`、`resize(w,h)`），
@@ -646,7 +646,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 **后端侧的事**（绑定下标怎么算、变体与缓存怎么组织、切路径要不要重建、编译失败怎么答）不在这里重复——
 唯一权威是后端文档：
 
-> [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md) §5.4（ABI 与坑）、
+> [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §5.4（ABI 与坑）、
 > [`vsg-data-flow.md`](vsg-data-flow.md) §6（名字即绑定）、
 > [`vsg-backend.md`](vsg-backend.md) §2（服务与拒绝）。
 
@@ -671,7 +671,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 `PassChain::build`）而不带前缀：一个 pass 画的是**宿主给它的** program，管它叫"内建"是错的。
 
 **所有 GLSL 都归 SDK**：后端**没有**自己的 shader 目录（曾经有，2026-09-13 收回来了），它只决定怎么编译和绑。
-| 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-custom-shader.md`](../../.ai/design/vsg-custom-shader.md) §10 |
+| 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §10 |
 
 > 这些 shader 是**真文件**（不是 C++ 字符串）：改了 `.glsl` 直接重编，`bash scripts/vine_shader_check.sh`
 > 会先把每个 shader（含各 define 变体）过一遍 glslangValidator，再核对嵌入副本与文件是否逐字节一致。
@@ -749,8 +749,8 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 仓库里**第一个按契约改过来的读者是 demo 自己**：`test_data/images` 的六张 JPG 天空面是颜色图，声明从
 `Rgba8Unorm` 改成 `Rgba8Srgb` 后天空回到正确亮度（视口带 mean 122.7 → 80.8，门禁判据一行未动）——
-读数与变异证明见 [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md) §11.16cp。
-完整形状、判据与"不做"的四条见 [`.ai/design/graphics-colour-space.md`](../../.ai/design/graphics-colour-space.md)。
+读数与变异证明见 [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §11.16cp。
+完整形状、判据与"不做"的四条见 [`.ai/design/graphics-rendering.md`](../../.ai/design/graphics-rendering.md)。
 
 ### 3.10 省事的视图：`PassChain` 是配方，视图只采纳（appfw 的 `ViewerOptions` 是宿主那一层）
 
@@ -814,8 +814,8 @@ view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"
   `RenderControl` 上的三条同名入口（`viewerOptions()/setViewerOptions()/setShadingMode()`）就是它的转发。
 - 配方/几何/开关三层与"两处同名 vs 一处覆盖"的完整理由见
   [`.ai/design/appfw-render-view.md`](../../.ai/design/appfw-render-view.md) §4.1、§7、§12，落地记录见
-  [`.ai/design/graphics-redesign.md`](../../.ai/design/graphics-redesign.md) S7 与
-  [`.ai/design/graphics-window-device-viewer.md`](../../.ai/design/graphics-window-device-viewer.md) S8。
+  [`.ai/design/graphics-architecture.md`](../../.ai/design/graphics-architecture.md) S7 与
+  [`.ai/design/graphics-architecture.md`](../../.ai/design/graphics-architecture.md) S8。
 
 ### 3.11 一块窗口由谁画：`RenderSurface`
 
@@ -1421,7 +1421,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 没有可用阴影时程序一次都不采那张图。宿主自己的程序声明了 `shadow_map` 却没带上它时，会**按 drawable** 报一条
 `DiagnosticCategory::UnsupportedRequest`，而不是画出一张"没有阴影的阴影"。两个约定不同、且都写在 ABI 里：矩阵是
 **SDK 裁剪约定**（y 向上、z 0 近 → 1 远），纹理是**后端约定**（reverse-Z、near = 1 → far = 0、v = 0 是世界的"上"），
-着色器里各转一次。判据（三次像素断言 + 逐项变异）见 `.ai/design/graphics-pipeline.md` §8.2 / §8.3 / §9。内容着色侧
+着色器里各转一次。判据（三次像素断言 + 逐项变异）见 `.ai/design/graphics-architecture.md` §8.2 / §8.3 / §9。内容着色侧
 **没有保留项**：程序就是唯一入口（见 §3），未实现的着色需要宿主自己写一个 `ShaderProgram`。
 
 ```bash

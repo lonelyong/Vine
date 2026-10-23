@@ -1,5 +1,5 @@
 /**
- * @brief Packing the per-draw ABI block from a compiled command (see `.ai/design/vsg-reimplementation.md`
+ * @brief Packing the per-draw ABI block from a compiled command (see `.ai/design/vsg-backend.md`
  * §11.17 and ShaderAbi.hpp).
  *
  * Device-free by construction: packing is arithmetic over the plan's values.

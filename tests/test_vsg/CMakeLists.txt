@@ -1,6 +1,6 @@
 set(TEST_NAME test_vsg)
 set(SRC_FILE_LIST
-	# The rewritten backend's device-free core (see .ai/design/vsg-reimplementation.md): the plan/timeline
+	# The rewritten backend's device-free core (see .ai/design/vsg-backend.md): the plan/timeline
 	# types, the key audit and the evidence fixtures. No device, no vsg types.
 	BackendCoreTest.cpp
 	BackendEvidenceTest.cpp

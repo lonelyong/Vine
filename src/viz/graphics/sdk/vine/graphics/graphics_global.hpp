@@ -27,7 +27,7 @@
  *   and its compiler, pass order, pipeline keys, target plans, storage, lifetime and the evidence
  *   counters.
  * - A host must not include it, and this half never includes a particular backend:
- *   scripts/check_include_hygiene.py enforces both directions (see .ai/design/graphics-layering.md).
+ *   scripts/check_include_hygiene.py enforces both directions (see .ai/design/graphics-architecture.md).
  */
 #define VN_GRAPHICSBACKEND_NS_BEGIN \
     VN_GRAPHICS_NS_BEGIN          \

@@ -1,6 +1,6 @@
 /**
  * @brief The content layer's device-free half: stream identity, the plan that reacts to an edit, the geometry
- * aliasing registry, the material arena and the per-frame ring (see `.ai/design/vsg-reimplementation.md`
+ * aliasing registry, the material arena and the per-frame ring (see `.ai/design/vsg-backend.md`
  * D3/D7 and milestone M2).
  *
  * What these cases pin, in the order the design promises them:

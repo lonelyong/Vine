@@ -1,6 +1,6 @@
 /**
  * @brief The frame's COMPILATION stage: normalize, target/depth resolution, order (see
- * `.ai/design/vsg-reimplementation.md` D2 / §2.4, milestone M3d).
+ * `.ai/design/vsg-backend.md` D2 / §2.4, milestone M3d).
  *
  * Device-free by construction: the compiler reads the recorder's collection plus a facts table (the API
  * layer's account of its targets) and produces plain values.
@@ -227,7 +227,7 @@ TEST(FrameCompilerTest, AnImportedTextureInputIsAFirstClassInputWithNoProducerEd
 {
     // An imported texture has no pass that writes it, so it must not create a dependency edge - and it still
     // offers one colour image to bind, exactly like a produced attachment. The plan is the one place both
-    // kinds become the same shape (see .ai/design/graphics-image-source.md).
+    // kinds become the same shape (see .ai/design/graphics-rendering.md).
     Rig r;
     vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
     r.addTarget(destination.get(), 64, 64, true);

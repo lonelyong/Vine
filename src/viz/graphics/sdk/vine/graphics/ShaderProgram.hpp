@@ -43,7 +43,7 @@ struct VN_GRAPHICS_API ShaderStage
  * @details
  * - The thin programmable-shading handle: it groups the GLSL sources of the stages (vertex + fragment
  *   today) that replace the engine's default program for the objects it is bound to. Parameters, texture
- *   slots and pass-level inputs are layered on later (see .ai/design/graphics-shader.md).
+ *   slots and pass-level inputs are layered on later (see .ai/design/graphics-rendering.md).
  * - A Geometry whose program() is null uses the session's default content program (material driven) -
  *   zero regression.
  */

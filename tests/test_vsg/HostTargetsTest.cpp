@@ -1,6 +1,6 @@
 /**
  * @brief The host's off-screen targets: the description COPIED, and the facts the plan resolves from (see
- * `.ai/design/vsg-reimplementation.md` §11.16bf, `api/HostTargets.hpp`).
+ * `.ai/design/vsg-backend.md` §11.16bf, `api/HostTargets.hpp`).
  *
  * Device-free by construction: with no device nothing is built - `ensure` keeps the description and answers
  * `NotBuilt` - so what is checked here is the half a device cannot prove: that no host object is

@@ -1,6 +1,6 @@
 /**
  * @brief The pass' SAMPLED INPUTS: the plan carries them, and the content layer binds their colour textures
- * (see `.ai/design/vsg-reimplementation.md` §11.16n, milestone M3d-3b-8).
+ * (see `.ai/design/vsg-backend.md` §11.16n, milestone M3d-3b-8).
  *
  * Real device, no window: SKIPped when no device can be created.
  *

@@ -45,7 +45,7 @@
  *     last submitted frame left (api/HostReadback). A refusal answers the SDK's machine-readable result and
  *     says its reason once per episode;
  *   * the surface facts - `setWindowHandle()`/`nativeHandle()` for a host surface, `resize()` and the present:
- *     THE DEVICE IS NOT A WINDOW (see `.ai/design/device-is-not-a-window.md`), so what this backend hands out from
+ *     THE DEVICE IS NOT A WINDOW (see `.ai/design/graphics-architecture.md`), so what this backend hands out from
  *     `createSurfaceTarget()` is one target OBJECT per window, the first included - never itself (a device that draws
  *     only into render targets answers none at all, see RenderDevice::createSurfaceTarget). The same window asked for
  *     twice is refused with `WindowOccupied` and said once, because one live swapchain per window is a platform
@@ -137,7 +137,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * is already being served is refused with WindowOccupied and said once - and a NEW window gets its own target,
      * because the device is the thing that is shared, not the window. EVERY window is answered by its own small
      * target object, the first included: the backend is the device and the frame half, and it is never a window
-     * (see `.ai/design/device-is-not-a-window.md`).
+     * (see `.ai/design/graphics-architecture.md`).
      *
      * What a window brings is a SURFACE and a SWAPCHAIN; the device, its compiled programs and the buffers they
      * read are shared with the windows already served - which is the whole point of asking ONE device for them.

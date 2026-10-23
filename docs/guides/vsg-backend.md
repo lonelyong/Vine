@@ -2,7 +2,7 @@
 
 > 本文覆盖**运行时行为**：SDK 的每个方法落到哪、**服务什么 / 拒绝什么**、一帧的**调用次数**、
 > **更新策略**、**生命周期与所有权**、**诊断与验证**。
-> 契约、设计决定与**坑**在 [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md)
+> 契约、设计决定与**坑**在 [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md)
 > （不在这里重复）；文件地图与构建见 [`vsg-plugin.md`](vsg-plugin.md)；逐帧数据流与
 > L0/L1 映射见 [`vsg-data-flow.md`](vsg-data-flow.md)。
 >
@@ -13,11 +13,11 @@
 | SDK 方法 | 实际发生 | 宿主看到的 |
 | --- | --- | --- |
 | `initialize()` | 由公告（宿主句柄、尺寸、默认程序）建会话；失败时**自己清理半成品**。设备是“什么都不呈现”（`DeviceDesc::None`，见 `RenderDevice.hpp` 的 `DeviceDesc`）时改走无窗口缝：建一块 `vsg::Device`、不建窗口 | `true/false` + 诊断；`false` 后没有会话 |
-| `executeFrame(value, present_to)` | **一帧的整个身体**（`beginFrame()`/`endFrame()` 的那两半都在这里）：会话开帧（取交换链图、推进槽位时钟）+ 录制器开一帧 → 按值走每条 pass（身份 / order / 输入 → 它的 target、viewport、清屏、状态与每条绘制调用，内容副作用在绘制那一层）+ 描述定稿 → **编译** → 记录并提交 → **帧尾 present**（有目标时经它；`nullptr` 时走离屏会话、不 present，见 `device-is-not-a-window.md`） | 没有会话时上报一次；调用返回时这一帧已经完整（提交 + 呈递都由它做完） |
+| `executeFrame(value, present_to)` | **一帧的整个身体**（`beginFrame()`/`endFrame()` 的那两半都在这里）：会话开帧（取交换链图、推进槽位时钟）+ 录制器开一帧 → 按值走每条 pass（身份 / order / 输入 → 它的 target、viewport、清屏、状态与每条绘制调用，内容副作用在绘制那一层）+ 描述定稿 → **编译** → 记录并提交 → **帧尾 present**（有目标时经它；`nullptr` 时走离屏会话、不 present，见 `graphics-architecture.md`） | 没有会话时上报一次；调用返回时这一帧已经完整（提交 + 呈递都由它做完） |
 | `present_to->present()` | **不再由宿主调用**：它是帧尾的**机制**（`PresentTarget` 的呈递那一半，窗口实现是 `WindowPresentTarget`），由 `executeFrame()` 在帧尾调用；直接驱动一帧的宿主在自己 present 只会找到“没有开着的帧” | `framesPresented()` +1（由执行器那一次调用造成）；丢帧会被点名为诊断 |
 | `setRenderTarget(target)` | 宿主的**目标公告**：离屏目标描述送进 `HostTargets`（**快照**，稳态零分配）。pass 画进哪张目标写在帧值里，不走这条 | 目标懒建；拒绝原因分说 |
 | `setClearPolicy` 等 per-pass 入口 | **已删**：清屏 / 视口 / 灯 / pass 状态 / 输入全部随帧值到达（见上） | 与计划一致与否在执行段核对 |
-| `createSurfaceTarget(handle, why)` | 答**这块窗口自己的目标对象**（每块窗口一个）：本后端有窗口那一半，宿主/引擎经它驱动句柄/尺寸/呈现；**一把窗口一次**，第二把答 `WindowOccupied` + 报一次，设备**不是**其中任何一块（见 `device-is-not-a-window.md`）。设备建的时候就说了“不呈现”时（`DeviceDesc::None`）早退：**静默**答 `NoPresentation`，窗口数为 0 | 只离屏的设备不用覆写：默认答 `NoPresentation`，一个窗口入口都不必实现 |
+| `createSurfaceTarget(handle, why)` | 答**这块窗口自己的目标对象**（每块窗口一个）：本后端有窗口那一半，宿主/引擎经它驱动句柄/尺寸/呈现；**一把窗口一次**，第二把答 `WindowOccupied` + 报一次，设备**不是**其中任何一块（见 `graphics-architecture.md`）。设备建的时候就说了“不呈现”时（`DeviceDesc::None`）早退：**静默**答 `NoPresentation`，窗口数为 0 | 只离屏的设备不用覆写：默认答 `NoPresentation`，一个窗口入口都不必实现 |
 | 目标上的 `setWindowHandle`/`resize` | 采纳宿主表面 / 跟随表面（**停一次设备，计数**） | `deviceWaits()` |
 | `capabilities()` | 能力收成一个值：`render_targets = true`（离屏路径可用）；`presentation` 答成设备**创建时**说的意图（`DeviceDesc::None` ⇒ false，见 `RenderDevice.hpp` 的 `DeviceDesc`） | 引擎每帧读一次这张值（见 `RenderDevice::capabilities`） |
 | `releasePass/releaseRenderTarget` | 释放该 pass 的会话身份 / 目标对象（停靠后销毁） | 保留态不随帧数增长 |

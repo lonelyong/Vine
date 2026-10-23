@@ -2,7 +2,7 @@
 
 > 本文覆盖：**一帧的数据怎么流**（引擎对象 → 事实 → 计划 → 录制 → 执行），每一层点名负责的单元，
 > 以及 L0/L1 契约映射与**支持矩阵**（唯一一份）。
-> 契约、设计决定与**坑**见 [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md)；
+> 契约、设计决定与**坑**见 [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md)；
 > 运行时行为（服务/拒绝、调用次数）见 [`vsg-backend.md`](vsg-backend.md)；文件地图与构建见
 > [`vsg-plugin.md`](vsg-plugin.md)。
 >

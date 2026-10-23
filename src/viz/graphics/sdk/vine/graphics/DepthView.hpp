@@ -23,7 +23,7 @@ class RenderTarget;
  *   outliving a phase), so holding a bare pointer here would be the dangling-pointer shape this type exists to
  *   remove.
  * - WHAT IT NAMES is the depth image, optionally ONE LAYER of it. A layered target (a shadow map array, a CSM
- *   cascade stack) is the layered-rendering item registered in `.ai/design/graphics-layers.md`: until that lands,
+ *   cascade stack) is the layered-rendering item registered in `.ai/design/graphics-scene.md`: until that lands,
  *   a target has one depth image, so a view whose layer is not 0 is a DECLARATION this SDK cannot honour yet -
  *   it is refused (and said once) rather than silently pointing at the whole image.
  * - A DEFAULT-CONSTRUCTED VIEW NAMES NOTHING, which is not the same statement as "the target's own depth": a pass

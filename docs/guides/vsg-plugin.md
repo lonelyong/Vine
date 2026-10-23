@@ -1,7 +1,7 @@
 # gfx_backend_vsg：模块说明（重写版）
 
 > **一句话**：注册名 `vsg` 创建的是**重写版门面** `VsgBackend`（由 `VsgRenderBackendFactory` 注册），它按
-> [`.ai/design/vsg-reimplementation.md`](../../.ai/design/vsg-reimplementation.md) 的设计实现
+> [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) 的设计实现
 > `vn::graphics::RenderBackend`。那份设计文档是本模块**契约、坑与实施记录**的唯一权威。
 >
 > **本文只回答**：这个插件是什么、文件在哪、怎么构建、怎么跑、证据在哪、哪件事该看哪份文档。
@@ -73,7 +73,7 @@
 | 内部视图（仅测试） | `BackendContent` |
 
 **`graphics/backend`**（图形模块的后端半：头在 `src/viz/graphics/sdk/vine/graphics/backend/`（导出、随 SDK 安装，**一个扁平目录，内部不再分组**），
-实现在 `src/viz/graphics/src/backend/`；分层与依赖规则见 `.ai/design/graphics-layering.md`）——无 vsg 的规则与账本（已从本插件移出，编进 `libGraphics`）：
+实现在 `src/viz/graphics/src/backend/`；分层与依赖规则见 `.ai/design/graphics-architecture.md`）——无 vsg 的规则与账本（已从本插件移出，编进 `libGraphics`）：
 
 | 组 | 单元 |
 | --- | --- |
@@ -89,7 +89,7 @@
 >
 > `DeviceRequirements` 相反：**从后端半移入本插件**（`include/vine/vsg/internal/` + `src/internal/`，2026-10-21）。
 > 它命名的是 Vulkan 1.4 地板与 `VK_EXT_*` 要求，只有 Vulkan 后端能用；留在"随 SDK 安装"的那一半里
-> 会把"每个后端都能用"写成假话（见 `.ai/design/graphics-object-model-audit-2026-10-21.md` R1）。
+> 会把"每个后端都能用"写成假话（见 `.ai/design/graphics-followups.md` R1）。
 
 **`shell/`（插件外壳）**：`GfxBackendVsgPlugin`（`VN_DECLARE_PLUGIN`）与 `VsgRenderBackendFactory`（按名注册/创建），头在 `include/vine/vsg/shell/`、实现在 `src/shell/`。
 
@@ -127,10 +127,10 @@ bash scripts/vsg_rewrite_gate.sh build                   # 完整门禁（Debug�
 
 | 主题 | 唯一权威 |
 | --- | --- |
-| 契约、设计决定（D1–D8）、**坑**、实施记录与登记 | `.ai/design/vsg-reimplementation.md` |
+| 契约、设计决定（D1–D8）、**坑**、实施记录与登记 | `.ai/design/vsg-backend.md` |
 | 运行时行为：服务/拒绝、每帧调用次数、更新策略、诊断、验证 | 本文 §4 + [`vsg-backend.md`](vsg-backend.md) |
 | 逐帧数据流、L0/L1 与 ShaderSet 映射、支持矩阵 | [`vsg-data-flow.md`](vsg-data-flow.md) |
-| 自定义着色：作者视角 / 后端 ABI / 名字地图 / 引擎契约 | `docs/guides/graphics.md`、`.ai/design/vsg-reimplementation.md` §5.4、`vsg-data-flow.md` §6、`.ai/design/graphics-shader.md` |
+| 自定义着色：作者视角 / 后端 ABI / 名字地图 / 引擎契约 | `docs/guides/graphics.md`、`.ai/design/vsg-backend.md` §5.4、`vsg-data-flow.md` §6、`.ai/design/graphics-rendering.md` |
 | 引擎侧使用文档（宿主视角） | `docs/guides/graphics.md` |
 | 构建树 / 工具约定 | 仓库根 `CMakeLists.txt` 与 `cmake/`、`scripts/vsg_rewrite_gate.sh`、`.ai/memory/graphics.md` |
 

@@ -1,5 +1,5 @@
 /**
- * @brief The model -> scene bridge (see `.ai/design/graphics-object-model-audit-2026-10-21.md` §2 G1).
+ * @brief The model -> scene bridge (see `.ai/design/graphics-followups.md` §2 G1).
  *
  * `geometry::Model` keeps what a flat mesh loses (the node tree, per-node transforms, per-entry materials), but
  * nothing in the renderer consumed it: the only product path flattened the file into one mesh with one grey

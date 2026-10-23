@@ -99,7 +99,7 @@ String FramePlan::describe() const
         text += " camera=" + pointerText(pass.camera);
         text += " content=" + pointerText(pass.content);
         // Only when it is NOT the default: every line carrying the mask would make the common case noisier, and
-        // "which layers" is a fact most passes never state (see .ai/design/graphics-layers.md).
+        // "which layers" is a fact most passes never state (see .ai/design/graphics-scene.md).
         if (pass.layer_mask != kAllLayers) {
             text += " layers=" + layerMaskText(pass.layer_mask);
         }

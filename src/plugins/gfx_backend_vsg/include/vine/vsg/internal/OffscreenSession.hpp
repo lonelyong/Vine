@@ -21,7 +21,7 @@
  *   to submit: its passes draw into off-screen targets of the device, and that work has to reach the queue even
  *   though nothing is acquired and nothing is presented. A windowed session cannot express that - its frame opens by
  *   acquiring the swapchain's next image - so the submit half is split out here (see
- *   `.ai/design/device-is-not-a-window.md` §6).
+ *   `.ai/design/graphics-architecture.md` §6).
  * - WHAT IT OWNS. A viewer with no window, one record-and-submit task over a windowless command graph
  *   (`vsg::CommandGraph(device, family)`, the framework's own spelling of "a submission that neither acquires nor
  *   presents"), and the slot learning every session does. The DEVICE is borrowed from the caller, like the device

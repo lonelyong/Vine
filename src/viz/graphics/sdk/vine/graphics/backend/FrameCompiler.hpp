@@ -55,7 +55,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
  *   setProducerViewProjection): a pass declares targets as its inputs and nothing else, so a map is
  *   found by what the target SAYS rather than by declaration order - "the first declared input whose
  *   depth is sampleable" bound one as the sun's map for a whole deferred branch, because a G-buffer
- *   has a depth too (a measured defect of the reference backend, see .ai/design/graphics-shadow.md).
+ *   has a depth too (a measured defect of the reference backend, see .ai/design/graphics-rendering.md).
  * - The matrix is the PRODUCER's own (light clip <- world, in the SDK's clip convention): a consumer
  *   cannot invent it, and a map without one is not readable - shading nothing is the honest answer
  *   for a map nobody stated how to read.

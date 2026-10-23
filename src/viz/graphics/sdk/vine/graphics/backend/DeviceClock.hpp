@@ -29,7 +29,7 @@
  *   left at their last evidence forever.
  * - This is the device-level equivalent of what Filament (`Driver::destroyDeferred`), Unreal (`FRHIResource` deferred
  *   delete) and wgpu (submission index) do: ONE submission watermark per device, not one per window. See
- *   `.ai/design/graphics-window-device-viewer.md` §11.
+ *   `.ai/design/graphics-architecture.md` §11.
  *
  * NOT thread-safe: the device is driven from one thread (see RenderDevice's threading note).
  */

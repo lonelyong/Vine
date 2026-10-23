@@ -1,6 +1,6 @@
 /**
  * @brief Borrowed depth: a second target drawing against the depth an earlier pass wrote (see
- * `.ai/design/vsg-reimplementation.md` D6, `core::depthPlan`, milestone M3c).
+ * `.ai/design/vsg-backend.md` D6, `core::depthPlan`, milestone M3c).
  *
  * Three facts interact here - promotion (the host wants a sampleable depth), borrowing (a target uses another
  * target's depth image) and preservation (a pass LOADs the depth an earlier pass wrote) - and all three change

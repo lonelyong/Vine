@@ -170,7 +170,7 @@ mip 数不在 `[1, mipCapacity]` —— 全部 `std::invalid_argument`。
 - 图像解码/编码**已实现** → 见 `loaders/imageio`（`vn::ImageIO`，stb 支持）；
 - **mip 生成没有**（对账后仍真）：解码只产出 1 个 mip（`ImageCodec.cpp` 只写 `mipData(0)`），
   全库没有生成器（无 blit / `generateMipmap` 调用）；**上传侧已按级数工作**（`makeMipmapLayout`
-  逐级描述，见 `vsg-texture-upload.md` §5），所以缺的只是"把第 0 级扩成一条链"的那一步；
+  逐级描述，见 `vsg-backend.md` §5），所以缺的只是"把第 0 级扩成一条链"的那一步；
 - **读回路径**（对账：旧句半过期）——**后端层已有** `RenderBackend::readColorBuffer()/readDepthBuffer()`
   （离屏目标，packed RGBA8 / 深度 float；`VsgBackend` 实现，`test_vsg` 的像素相位在用）；
   仍没有的是 **`imaging::Image` 级包装**与**窗口读回**（应用门禁读窗口走 X11 `xwin2ppm.py`，
@@ -178,7 +178,7 @@ mip 数不在 `[1, mipCapacity]` —— 全部 `std::invalid_argument`。
 - **后端消费 `Texture`**（对账：旧句已过期）——重写版**已消费**：D2 的 face 0 与 Cube 的六个 face
   （作 6 层上传，层数经 Data 的 `depth`）都进图像、mip 链按 `makeMipmapLayout` 逐级上传、建 sampler
   （级数 + 设备上限夹过的各向异性；`DeviceFeatures` 显式申请 `samplerAnisotropy`）、进采样描述符集
-  （见 `vsg-texture-upload.md` §5 与 §11.16cv）。仍不能表达的是 `Texture3D` / `2DArray`
+  （见 `vsg-backend.md` §5 与 §11.16cv）。仍不能表达的是 `Texture3D` / `2DArray`
   （`imaging::Image` 严格二维，无 depth/slice）；
 - `RenderTarget` 自己的 `ColorFormat`/`DepthFormat` 枚举与 `imaging::PixelFormat` **重复**（对账后仍真，
   两套枚举都还在），将来应并入后者 —— 那是**改公开 API**，需单独一批。

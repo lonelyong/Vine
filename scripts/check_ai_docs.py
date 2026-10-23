@@ -12,7 +12,7 @@ that no longer existed (the vsg rewrite renamed whole layers and the notes kept 
                      pointer to a deleted note is worse than no entry, because it looks like coverage.
   R3 (reports, `--strict` fails)  In a section that is NOT marked as history, every backticked unit name
                      (`Foo.hpp` / `Foo.cpp`), every repository path and every document name
-                     (`graphics-layering.md`) must resolve. A sentence in a current section that names a
+                     (`graphics-architecture.md`) must resolve. A sentence in a current section that names a
                      deleted unit or a renamed document is a reader following a pointer that leads
                      nowhere - the drift `check_doc_symbols.py` already gates for the plugin's three
                      living documents, which this extends to the whole `.ai/` tree.
@@ -50,7 +50,7 @@ HEADING = re.compile(r"^#{1,6}\s")
 # A unit is a name a reader can open. Prose may name a symbol that is deliberately absent, so only the
 # two shapes a script can decide exactly are looked for.
 UNIT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*\.(?:hpp|cpp))`")
-# A note may name another document by bare name (``见 `graphics-layering.md` ``) or by path; both are
+# A note may name another document by bare name (``见 `graphics-architecture.md` ``) or by path; both are
 # claims about this tree, and both break the same way when a document is renamed.
 DOC_RE = re.compile(r"`([A-Za-z0-9._-]+\.md)`")
 # A path is a claim about THIS repository: it starts at a known root. `add/remove` in prose is a pair of

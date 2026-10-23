@@ -8,7 +8,7 @@
 // (378x247, 1037x509, 491x319, 378x406, 558x247 and one gate run 3418x1110). The gate states the
 // judged size itself because of that (scripts/vsg_rewrite_gate.sh, "the app's own start-up size is
 // NOT deterministic"); this window states 800x600 - the documented default, also its minimum.
-// See .ai/design/vsg-reimplementation.md §11.16dc.
+// See .ai/design/vsg-backend.md §11.16dc.
 //
 // The process shares one GuiApplication (see test_gui.cpp's global environment); this file builds its
 // own MainWindow, as the GuiTest fixture does, and never touches the shared one.

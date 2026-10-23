@@ -378,7 +378,7 @@ fi
 #   * the flat BACKGROUND does not cover the picture. The deferred lighting program paints one colour where
 #     no geometry was written (linear 0.06, sRGB-encoded - 69 per channel on this host's swapchain), and a
 #     healthy demo shows it on 0.00% of the window. Measured 2026-09-25, the day the G-buffer's write mask
-#     became the background test (see .ai/design/vsg-reimplementation.md §11.16cg, item D4): when the
+#     became the background test (see .ai/design/vsg-backend.md §11.16cg, item D4): when the
 #     G-buffer STOPPED writing w = 1, the whole deferred view went flat at that colour - 14 53% of the window
 #     - while the other two criteria stayed satisfied (the flat colour is not near-black, and the previews
 #     keep their own content). The share is what says "the picture is one flat surface", which no max, mean
@@ -467,7 +467,7 @@ app_known_vuids() { # the VUID names this stage tolerates, one per line, with th
     #   * VUID-vkCmdDraw-None-09600 (fixed, M10j): the "no texture" white fallback was a CLEAR a frame had to
     #     record, and the app's path no longer had a recorder - its image stayed UNDEFINED while descriptors
     #     declared SHADER_READ_ONLY, at every submit that sampled it. It is uploaded like every other image now
-    #     (see api/WhiteImage, .ai/design/vsg-reimplementation.md §11.16bs).
+    #     (see api/WhiteImage, .ai/design/vsg-backend.md §11.16bs).
     #
     # An entry belongs here only with a written mechanism and a design-doc section, never to make a run green.
     :

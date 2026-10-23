@@ -864,7 +864,7 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
     // wiring it could not have produced, so nothing is recorded and the reason is said once per episode instead of
     // being drawn into someone else's window. nullptr is a frame with NO WINDOW: the off-screen form, which runs
     // through the device's off-screen session, records into the targets its passes name, submits, and presents
-    // nothing (see `.ai/design/device-is-not-a-window.md` §6).
+    // nothing (see `.ai/design/graphics-architecture.md` §6).
     std::size_t index = kNoWindow;
     if (present_to != nullptr)
     {
@@ -1531,7 +1531,7 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
     }
 
     // ONE TYPE DISPATCH: the SDK names the entry with Object because the four content types have no common
-    // narrower base (see graphics-content-release-2026-10-22.md). The order is exact: no two of these types
+    // narrower base (see graphics-content-lifecycle.md). The order is exact: no two of these types
     // are related, and a Texture2D / CubeMap answers through Texture::desc().
     if (const auto* geometry = vn::obj_cast<const vn::graphics::Geometry>(content))
     {
@@ -1945,7 +1945,7 @@ void VsgBackend::reportUnserved(std::size_t slot) noexcept
                      vn::graphics::DiagnosticCategory::UnsupportedRequest,
                      vn::String::fromUtf8(std::string(kUnservedNames[slot]) +
                               " has nowhere to go: every part of the frame protocol needs a session that is "
-                              "up (see .ai/design/vsg-reimplementation.md)"));
+                              "up (see .ai/design/vsg-backend.md)"));
 }
 
 namespace detail

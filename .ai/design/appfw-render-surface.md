@@ -100,7 +100,7 @@ QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返�
 - **首帧提前（prewarm）**（2026-09-20）：attach 成功时若控件还不在屏上（还停在启动框后面），
   就按当时的表面尺寸渲染一帧（`prewarmFrame()`），把设备/管线/程序槽的一次性开销付在启动框还盖着的时候；
   这一帧不发布、不上屏、不改状态。窗口上屏后的那一帧走**就地改尺寸**
-  （见 `vsg-target-resize-in-place.md`），所以预热的尺寸不是浪费。
+  （见 `vsg-backend.md`），所以预热的尺寸不是浪费。
 - **实测（本机 Windows + RTX 4060，2026-09-20）**：`Pending -> Attached` 在插件 `load()` 里，
   紧随其后的预热帧 `build profile (frame): extent 320x320, targets 3, program slots 3 (132.1 ms: nodes 23.9,
   view compiles 108.2, overlay glslang 4), total 142.3 ms`（2642 ms）→ 69 ms 后

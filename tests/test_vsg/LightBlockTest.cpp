@@ -1,6 +1,6 @@
 /**
  * @brief The forward LIGHT BLOCK: the lights a drawing call announced reach its shader in VIEW space
- * (see `.ai/design/vsg-reimplementation.md`, milestone M5c).
+ * (see `.ai/design/vsg-backend.md`, milestone M5c).
  *
  * Why this is a picture and not a byte comparison. A light that never reached the shader and a scene lit only by
  * the ambient fill look the same to every counter: the draw is recorded, the block is bound, the pipeline is the

@@ -1,6 +1,6 @@
 /**
  * @brief The pass registry: the SDK's pass objects to the plan's pass numbers (see
- * `.ai/design/vsg-reimplementation.md` §11.16be, `api/PassRegistry.hpp`).
+ * `.ai/design/vsg-backend.md` §11.16be, `api/PassRegistry.hpp`).
  *
  * Device-free by construction - the registry never dereferences an identity - so what is checked here is
  * the CONTRACT the whole frame drive keys on: the same object answers the same number for as long as it

@@ -114,7 +114,7 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
  *   (path), and the per-pass options of the passes the path and the overlays need.
  * - Shadows are NOT here — a shadow is requested by the LIGHT that casts it (Light::isCastingShadow) and honoured by the
  *   chain that draws that light's content, because a light outlives any one chain and a scene may be drawn by
- *   several (see PassStage::Depth and .ai/design/graphics-pipeline.md §2).
+ *   several (see PassStage::Depth and .ai/design/graphics-architecture.md §2).
  */
 struct VN_GRAPHICS_API ChainDesc {
     /** @brief Camera the produced scene passes frame (borrowed).

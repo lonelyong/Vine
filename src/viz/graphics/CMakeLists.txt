@@ -11,7 +11,7 @@ target_compile_definitions(${GRAPHICS_TARGET_NAME} PRIVATE VN_GRAPHICS_BACKEND_C
 # the library as the generated vine/graphics/EmbeddedShaders.hpp.
 vn_use_embedded_shaders(${GRAPHICS_TARGET_NAME} OUTPUT vine/graphics/EmbeddedShaders.hpp SOURCES)
 
-# Two layers inside one module and one target (see .ai/design/graphics-layering.md), divided by what
+# Two layers inside one module and one target (see .ai/design/graphics-architecture.md), divided by what
 # crosses the DLL boundary - not by who happens to read them:
 #
 #   sdk/vine/graphics/…    everything EXPORTED, and therefore installed: the host half (scene, camera,

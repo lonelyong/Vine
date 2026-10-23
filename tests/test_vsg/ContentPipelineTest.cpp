@@ -1,6 +1,6 @@
 /**
  * @brief Content pipelines: one `vsg::GraphicsPipeline` per identity, with the editable half declared
- * dynamic (see `.ai/design/vsg-reimplementation.md` D3 and milestone M2c-2b-2).
+ * dynamic (see `.ai/design/vsg-backend.md` D3 and milestone M2c-2b-2).
  *
  * What these cases pin:
  *

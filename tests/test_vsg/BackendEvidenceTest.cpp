@@ -470,7 +470,7 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
     // ONE recorded triangle, and a readback/multi-pass frame is bigger still. So the ceilings stay ceilings
     // instead of zeros - the fix (caller-owned scratch for the plan, and episode rows owned by whoever decides
     // the episode) buys a handful of bytes per pass, and it is written up with its trigger in
-    // `.ai/design/vsg-reimplementation.md` rather than paid for with an abstraction.
+    // `.ai/design/vsg-backend.md` rather than paid for with an abstraction.
     //
     // This test is the TRIPWIRE: if either number grows, something started allocating per pass and §0.3 of
     // `docs/guides/vsg-backend.md` has to be re-argued against the new number.

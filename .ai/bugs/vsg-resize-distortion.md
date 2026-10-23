@@ -47,7 +47,7 @@
 当时的修法是"**记得**把新尺寸推给相机"（上面第 1、2 条）—— 一份状态两处维护，漏一次就又变形。
 M2c 把 aspect 从相机里拿出去（投影 `projectionMatrix(aspect)` 现算、一处推导 `RenderBackend::viewAspect()`），
 那一版**同日被回退**：见下面"后续二"。
-见 `graphics-render-next.md` §3.2.3（③ 与它的"回退"）与 `.ai/memory/graphics.md` 的 "aspect 出相机（M2c）" 一条。
+见 `graphics-architecture.md` §3.2.3（③ 与它的"回退"）与 `.ai/memory/graphics.md` 的 "aspect 出相机（M2c）" 一条。
 
 ## 后续二（A，2026-10-11 同日）：形状回到相机，但只有一个来源
 
@@ -60,4 +60,4 @@ target/viewport），于是"整帧描述在派发前拼好"写不出来。A 把�
 
 **所以这条 bug 的两个"当时"修法都不用回到**：既不需要"记得推给相机"（视图推一次，因为形状确实是它那格的），
 也不需要"问后端"（形状在相机里，编译期就答得出来）。
-见 `.ai/design/graphics-redesign.md` §"已落地：A"与 `.ai/memory/graphics.md` 的 A 那一条。
+见 `.ai/design/graphics-architecture.md` §"已落地：A"与 `.ai/memory/graphics.md` 的 A 那一条。

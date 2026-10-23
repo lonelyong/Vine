@@ -1,6 +1,6 @@
 /**
  * @brief The by-name image policy: which image a declared sampler binding gets (see
- * `.ai/design/vsg-reimplementation.md` §11.16aj, `api/ContentImages.hpp`).
+ * `.ai/design/vsg-backend.md` §11.16aj, `api/ContentImages.hpp`).
  *
  * Device-free by construction: the images are `vsg::ImageView` / `vsg::Sampler` create-infos and the plan is
  * values, so what is checked here is the POLICY - the names the engine's ABI reserves, and that the map is

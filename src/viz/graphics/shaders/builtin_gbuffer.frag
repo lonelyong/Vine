@@ -61,7 +61,7 @@ void main()
     // The attachment carries the specular COLOUR SCALED BY ITS INTENSITY (the material's alpha), which is
     // the product the lighting program multiplies by - so the deferred highlight honours the SDK's "A is
     // intensity" exactly like the forward program does (wired 2026-09-25, see
-    // .ai/design/vsg-reimplementation.md §11.16cj). The alpha channel itself stays 1: nothing reads it.
+    // .ai/design/vsg-backend.md §11.16cj). The alpha channel itself stays 1: nothing reads it.
     out_specular = vec4(clamp(material.specular.rgb, 0.0, 1.0) * clamp(material.specular.a, 0.0, 1.0), 1.0);
     // w = 1 marks "this pixel was written", and the deferred lighting program's background test reads it
     // (a cleared pixel keeps the transparent black it was cleared with, w = 0) - the two programs are the

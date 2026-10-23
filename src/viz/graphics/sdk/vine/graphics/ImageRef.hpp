@@ -31,7 +31,7 @@ VN_GRAPHICS_NS_BEGIN
  *   replaces).
  *
  * @note
- * - Why an object and not a name (design `graphics-render-pipeline.md` §14): a name is a stringly-typed
+ * - Why an object and not a name (design `graphics-architecture.md` §14): a name is a stringly-typed
  *   pointer - the per-frame name registry conflated the WIRING (static), "was it produced this frame"
  *   (per frame) and "who produces it" (identity), so every structural mistake (two producers under one
  *   name, a consumer whose producer is gone, a renamed producer) could only show up at run time, silently,

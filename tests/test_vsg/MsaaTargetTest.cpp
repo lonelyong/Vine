@@ -1,5 +1,5 @@
 /**
- * @brief Multisampled targets, and the resolve that makes them a picture (see `.ai/design/graphics-msaa-2026-10-22.md`).
+ * @brief Multisampled targets, and the resolve that makes them a picture (see `.ai/design/graphics-rendering.md`).
  *
  * The sample count is a TARGET's property, and this is the file that proves what that means on a device: a
  * multisampled target draws into multisampled images and RESOLVES its colour into a single-sample image, and

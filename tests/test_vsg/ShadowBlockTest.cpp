@@ -1,6 +1,6 @@
 /**
  * @brief The SHADOW BLOCK: the matrix that places a fragment in a light's map, and the four facts that keep the
- * shading off when the map cannot be used (see `.ai/design/vsg-reimplementation.md`, milestone M5c-2).
+ * shading off when the map cannot be used (see `.ai/design/vsg-backend.md`, milestone M5c-2).
  *
  * What the block is FOR. The map arrives as a sampled input - the sampling path already binds the texture - and what
  * the shader cannot get from a texture is WHERE a fragment lands in it: the map was rasterised by the light's camera,

@@ -2,7 +2,7 @@
 
 > 模块说明：**架构图 · 类关系图 · 简单 demo**，外加"要多幅画面怎么办"与常见问题。
 > 逐个入口的参考手册在同目录的 [`graphics.md`](graphics.md) §3.10 / §3.11 / §4.2；设计依据（为什么这样切、否决过什么）在
-> `.ai/design/graphics-window-device-viewer.md` §2/§3/§6/§8；落地记录与判据在 `.ai/memory/graphics.md` /
+> `.ai/design/graphics-architecture.md` §2/§3/§6/§8；落地记录与判据在 `.ai/memory/graphics.md` /
 > `.ai/memory/appfw.md` 顶部的 S8 / S9 / S10a 条与"多格下线"那条。
 
 ## 1. 这个模块管什么

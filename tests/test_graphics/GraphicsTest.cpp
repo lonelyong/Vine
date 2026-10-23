@@ -6411,7 +6411,7 @@ TEST(PassChainTest, DeclaredPassInputsReachTheBackend)
 /**
  * @brief An imported texture is an input like any other, in the same ordered list as a produced target.
  *
- * The two kinds travel in ONE ordered list (see .ai/design/graphics-image-source.md): the texture has no
+ * The two kinds travel in ONE ordered list (see .ai/design/graphics-rendering.md): the texture has no
  * producer, so it adds no wiring rule and no schedule edge, while a produced target keeps the rules it had.
  * A content pass is the kind that binds imported textures today; the full-screen ABI is source + shadow map
  * only, and the engine reports a ScreenPass that declares one.
@@ -7486,7 +7486,7 @@ TEST(AxisGizmoTest, ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport)
 {
     // A window mid-layout can be smaller than the corner box plus its margins: measured 100x30 on the
     // demo's first shown frame, where the naive fit computed -2 pixels for the box side (see
-    // .ai/design/vsg-reimplementation.md §11.16db). "No room" must be spelled as a zero-area rectangle
+    // .ai/design/vsg-backend.md §11.16db). "No room" must be spelled as a zero-area rectangle
     // - the backend's empty-rectangle rule then skips the drawing call - never as a negative one.
     auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
     gizmo->onSurfaceResized(100, 30);
@@ -9625,7 +9625,7 @@ TEST(SceneContentCacheTest, EachCallerGetsItsOwnCopyOfTheMemoisedList)
  * @brief The mask decides which nodes reach a picture: one AND per node, and a pass is free to draw a part.
  *
  * Layers are the content selection a pass draws with (see Node::setLayers / RenderPass::setLayerMask and
- * `.ai/design/graphics-layers.md`): the mask names layers, a node declares which it is in, and a node that
+ * `.ai/design/graphics-scene.md`): the mask names layers, a node declares which it is in, and a node that
  * declares none is in kDefaultLayer - so declaring the FEW items of a named layer is enough to keep them out
  * of a pass that draws the rest (a shadow pass drawing casters, two passes showing different parts).
  */
@@ -12744,7 +12744,7 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
 TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
 {
     // A RECIPE, not a gate: it answers the question the B4 row in the backend's design log
-    // (.ai/design/vsg-reimplementation.md §11.16bw) could not - "the demo's collection is a memo hit or ~42
+    // (.ai/design/vsg-backend.md §11.16bw) could not - "the demo's collection is a memo hit or ~42
     // commands, so the cost is unmeasurable there". Nothing here asserts a machine-dependent number; the
     // figures below are printed so they can be recorded in the design log, and the asserted facts are the
     // machine-independent ones: a MOVED camera collects again, a STILL one reuses the shared list, and the

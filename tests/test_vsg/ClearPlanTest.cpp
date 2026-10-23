@@ -1,5 +1,5 @@
 /**
- * @brief The clear/load policy of a pass' attachments, as a table (see `.ai/design/vsg-reimplementation.md`
+ * @brief The clear/load policy of a pass' attachments, as a table (see `.ai/design/vsg-backend.md`
  * D6 and milestone M3).
  *
  * Every row here is a picture on the other side of it, and each one has been wrong in this backend's family

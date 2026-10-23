@@ -887,7 +887,7 @@ TEST(RenderControlTest, ADeviceThatPresentsNothingFailsTheAttachWithItsReason)
         << "宿主读到的理由说了为什么（无呈现能力）";
 }
 
-// 内容掩码（`.ai/design/graphics-layers.md` 的 L1）在 appfw 这一侧的入口：`ViewerOptions::layer_mask` 原样进配方，
+// 内容掩码（`.ai/design/graphics-scene.md` 的 L1）在 appfw 这一侧的入口：`ViewerOptions::layer_mask` 原样进配方，
 // 于是这条链的**内容** pass 都带它 —— 而 HUD 档（坐标轴 / 帧率读数）不受内容选择影响：藏内容不该把读者的工具
 // 一起藏掉。这是"一块区画什么"的请求之一，所以它和 path / mode 一样是一次建链（见 ViewerOptions）。
 TEST(RenderControlTest, TheViewerOptionsLayerMaskReachesTheContentPassesAndNotTheHud)

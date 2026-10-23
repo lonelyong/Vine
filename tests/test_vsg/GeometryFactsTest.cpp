@@ -1,6 +1,6 @@
 /**
  * @brief Building a geometry's entry in the content tables, from the SDK object the host authored
- * (see `.ai/design/vsg-reimplementation.md` §11.17 and `api/ContentFacts.hpp`).
+ * (see `.ai/design/vsg-backend.md` §11.17 and `api/ContentFacts.hpp`).
  *
  * Device-free by construction: the walk reads the SDK object and produces values (the only GPU-facing part,
  * the upload, happens later and elsewhere).

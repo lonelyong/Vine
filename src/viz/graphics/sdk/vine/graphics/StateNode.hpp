@@ -235,7 +235,7 @@ struct VN_GRAPHICS_API RenderStateOrigin
  * @details
  * - The pass side of the state priority table (see resolveRenderState), in one value: a backend resolves a
  *   command's state without asking the pass anything else.
- * - The two items differ ON PURPOSE (the table in `.ai/design/graphics-state.md` §4.1): `depth` is a POLICY
+ * - The two items differ ON PURPOSE (the table in `.ai/design/graphics-scene.md` §4.1): `depth` is a POLICY
  *   for content that authored none ("this slot tests and writes", "this slot is translucent over what is
  *   already there", "this slot is an overlay"), and content that authored a depth state keeps it - depth is
  *   something scene content routinely declares; `polygonMode` is an OVERRIDE that beats every command the
@@ -368,7 +368,7 @@ class VN_GRAPHICS_API StateNode : public Group {
 
     /** @brief Sets a custom shader program for this subtree.
      *
-     * Program resolution (graphics-shader.md): a leaf Geometry's own program
+     * Program resolution (graphics-rendering.md): a leaf Geometry's own program
      * wins; otherwise the nearest ancestor StateNode program applies. This is
      * separate from the render-state items above: a program replaces the
      * shading, not a pipeline-state slot.

@@ -30,7 +30,7 @@ using vn::math::Vec3d;
  *   engine REPORTS that while compiling the frame (see RenderEngine's frame-plan problems) instead of
  *   letting the picture be quietly wrong. What this replaced derived the aspect from the pass' rectangle at
  *   render time - a shape only the BACKEND could answer, depending on what had been announced before it
- *   (see `.ai/design/graphics-redesign.md`).
+ *   (see `.ai/design/graphics-architecture.md`).
  * - The projection PARAMETERS are all state here: fov / near / far, the aspect, and the orthographic
  *   WINDOW (kept whole - see setOrthographic). The perspective projection is rebuilt per call;
  *   an orthographic one ignores the aspect, because its window already carries a shape.

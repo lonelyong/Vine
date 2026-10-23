@@ -1,5 +1,5 @@
 /**
- * @brief The frame's COLLECTION stage (see `.ai/design/vsg-reimplementation.md` D2, milestone M3d).
+ * @brief The frame's COLLECTION stage (see `.ai/design/vsg-backend.md` D2, milestone M3d).
  *
  * Device-free by construction: the recorder touches borrowed host values, the frame arena and the one
  * diagnostic route - never a GPU object - so the whole contract of the collection side is pinned here.

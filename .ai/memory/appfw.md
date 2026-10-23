@@ -164,7 +164,7 @@
   （不装拾取型）⇒ ① 红；`onMouseMove` 不转发 ⇒ 只有"相机真的动了"那条红。
 - **行业同源**：picker / intersector 在行业里也是**库**而不是核心（VTK `vtkCellPicker` 用的是同一套射线数学、
   OSG 的 intersector 住 `osgUtil`、three.js 是 `Raycaster` + 用户代码）⇒ 我们的位置与他们一致，定形写进
-  `.ai/design/graphics-object-model-vs-3d-frameworks.md` §2.5；"怎么接"的用法见 `docs/guides/graphics.md` §3.16。
+  `.ai/design/graphics-architecture.md` §2.5；"怎么接"的用法见 `docs/guides/graphics.md` §3.16。
 
 ## 2026-10-11 多格下线：一块渲染区只画一幅画（S8 的 `Viewer` 收成"一条请求"）
 
@@ -391,7 +391,7 @@
   **重建**由重建的那一方把运行期选择搬过去（**S8 之后在 `Viewer` 的建链那一步**：读活着的链、在新链上重落一遍；
   与 S6"一个值一个 owner"同一条）。判据：graphics 360 / gui 254 / vsg 426（421+3 skip+2 已知红）+ appfw 32 /
   meshio 34 / iobase 94 全绿、全量 0 error / 0 warning、五 gate 0 finding；**变异 5/5 红**。
-  落地记录见 `.ai/design/graphics-redesign.md` S7。
+  落地记录见 `.ai/design/graphics-architecture.md` S7。
   **下文两条（"渲染视图 v2 已落地"与" HUD 的显示 / 隐藏是运行时开关"）读作 S7 之前**：它们写的
   `SceneView::Options` / `setOptions` / `ensureWindowPass` / `applyOverlayIntent` 都已随 S7 退场（当时的口径与
   教训仍有效，`AHiddenOverlayStaysHiddenAcrossARebuild` 那条钉子改成控件级的

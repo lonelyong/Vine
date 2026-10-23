@@ -2,7 +2,7 @@
  * @brief The device-free core of the rewritten vsg backend: the P0 contract, as tables.
  *
  * This file pins the four decisions that must be settled BEFORE any GPU code exists (see
- * `.ai/design/vsg-reimplementation.md` §2.5):
+ * `.ai/design/vsg-backend.md` §2.5):
  *
  *   * the protocol is a state machine that answers only "is this call legal" (P0-3) - so its rules are
  *     exercised as a transition table rather than as branches inside the renderer;

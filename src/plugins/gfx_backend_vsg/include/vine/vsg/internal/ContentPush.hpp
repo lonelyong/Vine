@@ -15,7 +15,7 @@
  * drawable's model matrix.
  *
  * WHY THE PUSH EXISTS AT ALL. On this backend the content ABI's blocks are L1 structs bound at whatever
- * `(set, binding)` a program declares (see api/ProgramAbi and `.ai/design/vsg-reimplementation.md` §11.16af)
+ * `(set, binding)` a program declares (see api/ProgramAbi and `.ai/design/vsg-backend.md` §11.16af)
  * - but the engine's own programs also declare a 128-byte push range, and that range is their L2 realization
  * of the SAME L1 values:
  *

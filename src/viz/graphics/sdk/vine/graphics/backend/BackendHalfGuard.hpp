@@ -5,7 +5,7 @@
  *
  * @details
  * - A header under `vine/graphics/backend/` is the frame machinery a BACKEND uses (see
- *   graphics_global.hpp's VN_GRAPHICSBACKEND_NS_BEGIN, and .ai/design/graphics-layering.md). A host
+ *   graphics_global.hpp's VN_GRAPHICSBACKEND_NS_BEGIN, and .ai/design/graphics-architecture.md). A host
  *   renders through the headers directly under `vine/graphics/` only, but reaching into this half still
  *   compiles - so the rule used to hold only in scripts/check_include_hygiene.py, at gate time.
  * - Including this header makes that rule a compile error: a translation unit that reaches the backend
@@ -20,5 +20,5 @@
 #ifndef VN_GRAPHICS_BACKEND_CONSUMER
 #    error "vine/graphics/backend/ is the BACKEND half of graphics: a host includes only \
 vine/graphics/*.hpp. Define VN_GRAPHICS_BACKEND_CONSUMER to opt in (a render backend and the \
-backend's own tests do; see .ai/design/graphics-layering.md)."
+backend's own tests do; see .ai/design/graphics-architecture.md)."
 #endif

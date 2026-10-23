@@ -1,5 +1,5 @@
 /**
- * @brief The three tables a compiled command cannot carry (see `.ai/design/vsg-reimplementation.md` §11.17).
+ * @brief The three tables a compiled command cannot carry (see `.ai/design/vsg-backend.md` §11.17).
  *
  * Device-free by construction: the tables hold what the content layer is given, and the lookups are pure.
  *

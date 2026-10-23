@@ -10,7 +10,7 @@
     toplevel window -- so anything the application does in response is the application's own behaviour.
 
     Used to measure the resize transient described in .ai/bugs/vsg-maximize-black-band.md and the
-    in-place resize in .ai/design/vsg-target-resize-in-place.md: run the app with its log redirected,
+    in-place resize in .ai/design/vsg-backend.md §4: run the app with its log redirected,
     call this script, and compare the timestamps of the window/target/slot instrumentation (the
     "build profile" line) with the moment the window changed size.
 

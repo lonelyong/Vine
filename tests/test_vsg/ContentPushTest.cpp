@@ -1,5 +1,5 @@
 /**
- * @brief The camera matrices a declared push block carries, filled by name (see `.ai/design/vsg-reimplementation.md`
+ * @brief The camera matrices a declared push block carries, filled by name (see `.ai/design/vsg-backend.md`
  * §11.16ag, `api/ContentPush.hpp`).
  *
  * Device-free by construction: the input is the range the ENGINE's own program declares (scanned out of its

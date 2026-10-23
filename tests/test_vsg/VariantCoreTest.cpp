@@ -1,6 +1,6 @@
 /**
  * @brief The identity layer's device-free half: the variant pool and the per-pass state registry
- * (see `.ai/design/vsg-reimplementation.md` D3 and milestone M2b).
+ * (see `.ai/design/vsg-backend.md` D3 and milestone M2b).
  *
  * What these cases pin:
  *

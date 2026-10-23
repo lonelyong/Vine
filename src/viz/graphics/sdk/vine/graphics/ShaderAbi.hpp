@@ -13,7 +13,7 @@ VN_GRAPHICS_NS_BEGIN
  * @details
  * - This is the L1 (backend-neutral) half of the shader ABI: a backend maps a role to its own binding spelling — a
  *   vsg attribute-binding name, a D3D semantic, a GL attribute index — while the SHADER declares the attribute at the
- *   location attributeLocation() returns. See .ai/design/graphics-shader.md §11.
+ *   location attributeLocation() returns. See .ai/design/graphics-rendering.md §11.
  * - A caller-provided attribute (a forwarded custom channel) is not in this enum: it keeps its SOURCE location as its
  *   shader location (>= 3, never the reserved texcoord slot 8 and never the four instance-matrix columns 12-15), which
  *   is what lets a program address its own attributes without the engine renumbering them.
@@ -109,7 +109,7 @@ constexpr bool isCanonicalAttributeLocation(std::uint32_t location) noexcept
  * - The engine owns this SHAPE; a backend owns where it lives — a uniform / constant buffer, or (as the vsg forward
  *   path does today) the proj/model subset inside the 128-byte push range.
  * - Every member is a mat4/vec4 and the struct is 16-byte aligned, so std140, D3D cbuffer packing and root constants
- *   all agree (see .ai/design/graphics-shader.md §11/§12): a `vec3` followed by a `float` is the one packing trap
+ *   all agree (see .ai/design/graphics-rendering.md §11/§12): a `vec3` followed by a `float` is the one packing trap
  *   this rule avoids.
  * - Matrices are column-major, matching the math module's convention; a backend whose shader language needs row-major
  *   translates when it fills the block.

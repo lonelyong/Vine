@@ -169,7 +169,7 @@ void ChainBuilder::reportRequestedShadows() const
                                  String(count_text) +
                                      String(u8" shadow-casting light(s) in this pipeline's content have no shadow "
                                             u8"pass (its path builds none, or its lighting program is the host's; "
-                                            u8"see .ai/design/graphics-pipeline.md §9): those lights cast nothing"));
+                                            u8"see .ai/design/graphics-architecture.md §9): those lights cast nothing"));
 }
 
 namespace
@@ -178,7 +178,7 @@ namespace
 /**
  * @brief Finds the light a content scene asks a shadow for.
  *
- * Single directional light per content, as the shadow design fixes it (graphics-pipeline.md §9): the
+ * Single directional light per content, as the shadow design fixes it (graphics-architecture.md §9): the
  * FIRST enabled, shadow-casting directional light is the one the pass is built for, and the rest
  * are reported as unbuilt by reportRequestedShadows().
  *
@@ -191,7 +191,7 @@ intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
     if (content == nullptr) {
         return nullptr;
     }
-    // Single directional light per content, as the shadow design fixes it (graphics-pipeline.md §9).
+    // Single directional light per content, as the shadow design fixes it (graphics-architecture.md §9).
     for (const auto& light : content->lights()) {
         if (light != nullptr && light->isEnabled() && light->isCastingShadow() &&
             light->type() == LightType::Directional) {
@@ -221,7 +221,7 @@ intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline,
     auto light_camera = make_intrusive<Camera>();
     // ONE derivation of the light camera: the pass renders through this camera and the target
     // STATES its view-projection, so the shading reads the same matrix instead of fitting a
-    // second ortho box of its own (see .ai/design/graphics-pipeline.md §9).
+    // second ortho box of its own (see .ai/design/graphics-architecture.md §9).
     // The map states what it IS, not who reads it: a consumer finds the shadow by asking the declared
     // targets whose shadow they are (RenderTarget::setShadowOf), so nothing is inferred from declaration
     // order and RenderPass stays a generic stage.
@@ -306,7 +306,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // The light this pipeline must cast a shadow for, if any: the request lives on the LIGHT
     // (Light::isCastingShadow, with its own resolution/bias in ShadowSettings), because a light outlives
     // any one pipeline and a scene may be drawn by several. Single directional light per content,
-    // as the shadow design fixes it (graphics-shadow.md §8).
+    // as the shadow design fixes it (graphics-rendering.md §8).
     intrusive_ptr<const Light> shadow_light = requestedShadowLight(content_.get());
 
     // Programs default to the built-in temporary shaders so the preset works

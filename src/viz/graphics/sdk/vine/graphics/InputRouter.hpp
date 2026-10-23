@@ -38,7 +38,7 @@ class CameraManipulator;
  *   kind of empty abstraction this module refuses to ship. The seam is the reason the type exists: the day a second
  *   tool arrives, the rule goes here and `SceneView` stays a facade.
  * - SELECTION IS NOT ROUTING. What a picked object means (the selected set, the outline pass) is business, and the
- *   framework deliberately has no opinion (see `.ai/design/graphics-object-model-vs-3d-frameworks.md` §2.5); a
+ *   framework deliberately has no opinion (see `.ai/design/graphics-architecture.md` §2.5); a
  *   router routes events, it does not own a selection.
  */
 class VN_GRAPHICS_API InputRouter

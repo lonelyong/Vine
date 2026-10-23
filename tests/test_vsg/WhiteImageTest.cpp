@@ -1,5 +1,5 @@
 /**
- * @brief The 1x1 white image a material without a texture samples (see `.ai/design/vsg-reimplementation.md`
+ * @brief The 1x1 white image a material without a texture samples (see `.ai/design/vsg-backend.md`
  * §11.16ai, `api/WhiteImage.hpp`).
  *
  * Device-free by construction: `vsg::Image`, `vsg::ImageView` and `vsg::Sampler` are create-infos until a

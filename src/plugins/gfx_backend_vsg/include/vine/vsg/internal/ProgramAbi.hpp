@@ -11,7 +11,7 @@
 
 /**
  * @brief What a program's TEXT declares: the bindings and the push ranges, per variant (see
- * `.ai/design/vsg-reimplementation.md` §11.16ae).
+ * `.ai/design/vsg-backend.md` §11.16ae).
  *
  * WHY THE TEXT HAS TO BE READ AT ALL. A backend cannot choose where a shader's blocks live: the program's
  * source carries the `layout(set = ..., binding = ...)` qualifiers, and a pipeline whose layout disagrees
@@ -26,7 +26,7 @@
  *
  * FACTS HERE, POLICY LATER. This file answers what is declared: which (set, binding) pairs exist, of what
  * kind, which stages read them, which of the five L1 blocks each uniform block is (the GLSL block type name
- * IS the L1 name - see `.ai/design/graphics-shader.md` §11.3), how large each block is, and which push ranges
+ * IS the L1 name - see `.ai/design/graphics-rendering.md` §11.3), how large each block is, and which push ranges
  * the stages declare. It does NOT decide which bytes or which image go to which binding: that is the
  * serving layer's policy, and the same facts are served differently by the content path and the full-screen
  * path. An unknown block type is therefore a FACT (`AbiBlockRole::Foreign`) rather than a rejection: the
@@ -154,7 +154,7 @@ struct ProgramAbi
 /**
  * @brief Gets the L1 block a GLSL block type name names, or Foreign when it names none of them.
  *
- * The type name IS the role (`.ai/design/graphics-shader.md` §11.3 keeps the GLSL block type name and the L1
+ * The type name IS the role (`.ai/design/graphics-rendering.md` §11.3 keeps the GLSL block type name and the L1
  * name identical on purpose), which is what lets a program declare the blocks at any (set, binding) it likes
  * and still be served.
  *

@@ -1,5 +1,5 @@
 /**
- * @brief Multi-attachment targets and the clear policy that goes with them (see `.ai/design/vsg-reimplementation.md`
+ * @brief Multi-attachment targets and the clear policy that goes with them (see `.ai/design/vsg-backend.md`
  * D6 and milestone M3).
  *
  * The clear plan is pinned device-free in `ClearPlanTest`; what these cases add is the two things only a

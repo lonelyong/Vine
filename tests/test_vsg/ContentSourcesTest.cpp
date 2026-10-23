@@ -1,6 +1,6 @@
 /**
  * @brief Building the PROGRAM and MATERIAL entries of the content tables, from the SDK objects
- * (see `.ai/design/vsg-reimplementation.md` §11.17, `api/ContentSources.hpp`).
+ * (see `.ai/design/vsg-backend.md` §11.17, `api/ContentSources.hpp`).
  *
  * Device-free by construction.
  *

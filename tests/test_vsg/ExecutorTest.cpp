@@ -1,5 +1,5 @@
 /**
- * @brief The frame's EXECUTION stage (see `.ai/design/vsg-reimplementation.md` §2.4, milestone M3d).
+ * @brief The frame's EXECUTION stage (see `.ai/design/vsg-backend.md` §2.4, milestone M3d).
  *
  * What this case is for, and why it is a PICTURE rather than a formality. The whole reason the backend is
  * split into collect → compile → execute is that the record order is the SCHEDULE's order, not the order the

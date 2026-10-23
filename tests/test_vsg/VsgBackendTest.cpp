@@ -75,7 +75,7 @@ using vn::vsg::detail::BackendContentAccess;
 /**
  * @brief The device these cases drive directly, with the ONE window a case presents through held explicitly.
  *
- * WHY IT IS NOT `VsgBackend`: the DEVICE IS NOT A WINDOW (see `.ai/design/device-is-not-a-window.md`) - it hands out
+ * WHY IT IS NOT `VsgBackend`: the DEVICE IS NOT A WINDOW (see `.ai/design/graphics-architecture.md`) - it hands out
  * a target per window and has none of `present / resize / nativeHandle` of its own. A case here drives one window, so
  * this holds THAT window's target and names it in the frame, which is exactly what a host does; everything the cases
  * assert about the device (counters, clock, storage, targets) is inherited unchanged.
@@ -113,7 +113,7 @@ class DirectDriveBackend : public vn::vsg::VsgBackend
 
     /// One argument: the frame is for the window this case holds (see RenderFrameExecutor::executeFrame).
     ///
-    /// nullptr NOW MEANS "NO WINDOW" (the off-screen form, see `.ai/design/device-is-not-a-window.md` §6), so this
+    /// nullptr NOW MEANS "NO WINDOW" (the off-screen form, see `.ai/design/graphics-architecture.md` §6), so this
     /// form names the window's target EXPLICITLY: the target of the window this case holds, asked for from the
     /// device when the case never asked (initialize() brings the device's own window up, and a frame still has to be
     /// able to name it).
@@ -1092,7 +1092,7 @@ TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
  * The pass declares ONE input, the imported texture, and its content program samples the pass' input set at
  * set 1 binding 0. A magenta center means the texture reached the shader; white means the stand-in was bound,
  * and the destination's blue clear means the draw never happened. This is the backend half of
- * `.ai/design/graphics-image-source.md` (the full-screen ABI has its own fixed source bindings; imported
+ * `.ai/design/graphics-rendering.md` (the full-screen ABI has its own fixed source bindings; imported
  * textures reach content passes first).
  */
 TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
@@ -4706,7 +4706,7 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
     EXPECT_NE(other, own) << "and it is not the first window's target";
     EXPECT_NE(static_cast<const void*>(own), static_cast<const void*>(backend.get()))
-        << "neither target IS the device: the type does not even allow it (see device-is-not-a-window.md)";
+        << "neither target IS the device: the type does not even allow it (see graphics-architecture.md)";
     EXPECT_NE(static_cast<const void*>(other), static_cast<const void*>(backend.get()));
     EXPECT_EQ(other->nativeHandle(), nullptr) << "nothing is attached before ITS session comes up";
     EXPECT_EQ(backend->windowCount(), 2U);
@@ -4723,7 +4723,7 @@ TEST(VsgBackendTest, ANullTargetRunsTheFrameWithoutAnyWindow)
     }
 
     // A FRAME THAT NAMES NO TARGET IS NOT A FRAME FOR WINDOW 0 (see RenderFrameExecutor::executeFrame and
-    // `.ai/design/device-is-not-a-window.md` §6): it is the off-screen form. It acquires nothing, presents nothing,
+    // `.ai/design/graphics-architecture.md` §6): it is the off-screen form. It acquires nothing, presents nothing,
     // brings no window into existence, and reports nothing - and the next frame through a window's target still
     // presents exactly once.
     vn::intrusive_ptr<vn::vsg::VsgBackend> backend(new vn::vsg::VsgBackend());

@@ -1,7 +1,7 @@
 /**
  * @brief The three tables' ROW ORDER: the lookups' fast path, and the proof that it is not a second truth.
  *
- * See `api/ContentFacts` for what the order is and `.ai/design/vsg-reimplementation.md` §11.16bz for why it
+ * See `api/ContentFacts` for what the order is and `.ai/design/vsg-backend.md` §11.16bz for why it
  * exists and what it costs.
  *
  * WHY THIS CASE IS A DIFFERENTIAL ONE. The order is DERIVED state: the rows are the truth, and "the order is

@@ -2,7 +2,7 @@
  * @brief The engine's shader ABI: attribute locations and the L1 data-block layouts.
  *
  * The attribute table and the block structs are the contract a backend materialises
- * (see .ai/design/graphics-shader.md §11/§12). Their values are pinned here so a change
+ * (see .ai/design/graphics-rendering.md §11/§12). Their values are pinned here so a change
  * that would silently re-map a shader's inputs, or shift a block's std140/D3D-cbuffer
  * offsets, fails a unit test instead of showing up as a wrong picture.
  */

@@ -163,7 +163,7 @@ struct VN_GRAPHICS_API PassDraw
  * @brief ONE FRAME, as a value: every enabled pass with everything it issues, in the order announced.
  *
  * THE FRAME IS ALREADY A VALUE INSIDE THE ENGINE (compileFrame() decides the order, the wiring and the
- * problems), so this is that value in the form a backend consumes - see `.ai/design/graphics-redesign.md`:
+ * problems), so this is that value in the form a backend consumes - see `.ai/design/graphics-architecture.md`:
  * the engine assembles it BEFORE anything is dispatched, and a backend can then run a whole frame without the
  * flat announce-call sequence (RenderFrameExecutor::executeFrame).
  *

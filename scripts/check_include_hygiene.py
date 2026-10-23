@@ -86,7 +86,7 @@ INCLUDE = re.compile(r'^#include\s*([<"])([^>"]+)[>"]\s*$')
 DEFAULT_PATHS = ("src", "tests", "tools")
 SKIP_PARTS = ("build/", "_deps/", "/vsg_selftest/")
 # The backend half of graphics (`vine/graphics/backend`) must stay API-agnostic (see
-# .ai/design/graphics-layering.md): it may include the host half of graphics and the standard library,
+# .ai/design/graphics-architecture.md): it may include the host half of graphics and the standard library,
 # but nothing from a render API's own headers and nothing from a backend. It used to live inside
 # gfx_backend_vsg, which is what made it unreachable for a second backend. A prose rule ("only the
 # executor touches vsg") decays the moment it is inconvenient; a directory plus this check is what
@@ -129,7 +129,7 @@ def backend_half_findings(path, lines):
 def host_audience_findings(path, lines):
     """Return the findings that keep the backend half out of every host's include list.
 
-    `vine/graphics/backend/` is a backend's business (see .ai/design/graphics-layering.md): a host
+    `vine/graphics/backend/` is a backend's business (see .ai/design/graphics-architecture.md): a host
     renders through the SDK's host half, so reaching into the backend half is a layering error even
     though it compiles - and, unchecked, the two halves would drift back into one.
     """

@@ -1,5 +1,5 @@
 /**
- * @brief Recording a pass' content from the three tables (see `.ai/design/vsg-reimplementation.md` §11.17).
+ * @brief Recording a pass' content from the three tables (see `.ai/design/vsg-backend.md` §11.17).
  *
  * Real device, no window: SKIPped when no device can be created.
  *
@@ -1260,7 +1260,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     //   * the push is not written (or written as zeros) => every vertex lands at the origin => no triangle;
     //   * `modelView` is composed with the model on the WRONG side (or dropped) => the drawable stays centred
     //     while the test's model matrix moved it to the right => the right pixel is clear;
-    //   * the projection is written UNFOLDED (the SDK's clip convention, `.ai/design/vsg-reimplementation.md`
+    //   * the projection is written UNFOLDED (the SDK's clip convention, `.ai/design/vsg-backend.md`
     //     §11.16o) => the geometry is clipped away (device z outside [0, 1]) => no triangle.
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)

@@ -20,7 +20,7 @@ VN_GRAPHICS_NS_BEGIN
  *   `SamplerParams`, three.js' texture filters/wrap modes, vsg's `vsg::Sampler`): `min_filter` / `mag_filter`,
  *   `mipmap_mode`, the three address modes, `anisotropy`, `lod_bias` and the LOD range. Compare samplers
  *   (hardware depth comparison) are not part of this slice: the pass depth path reads exact depths, and a
- *   compare sampler would need an ABI of its own (see `.ai/design/graphics-image-source.md`).
+ *   compare sampler would need an ABI of its own (see `.ai/design/graphics-rendering.md`).
  * - A value, not an object: two equal `Sampler`s are the same state, so a cache can key on it. The backend
  *   clamps `anisotropy` to what the device reports and maps every field to its `VkSamplerCreateInfo` spelling;
  *   the SDK stores what the host stated.

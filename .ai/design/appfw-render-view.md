@@ -1,11 +1,11 @@
 # appfw 渲染视图（最终设计 v2，2026-10-11）
 
 > **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
-> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
+> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups.md` §1.1）。
 
 > 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形 + S8 改形（多视图归 `Viewer`）+ S10a 改形（窗口那一半由设备造）；S8 之后"多格"下线（一块区只画一幅画）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
-> 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-pipeline-builder.md`（配方层）、`graphics-pipeline.md`（pass 调度）、
-> `graphics-render-next.md`（**如果重新设计这一套栈会怎么切**：提案，含 M1–M7 迁移切片与触发条件 —— 本文是"现在是什么"，那份是"要变成什么"）。
+> 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-architecture.md`（配方层）、`graphics-architecture.md`（pass 调度）、
+> `graphics-architecture.md`（**如果重新设计这一套栈会怎么切**：提案，含 M1–M7 迁移切片与触发条件 —— 本文是"现在是什么"，那份是"要变成什么"）。
 >
 > ---
 >
@@ -17,7 +17,7 @@
 > `engine()->setDevice()` / `engine()->device()`（原 `setBackend` / `backend`），`Capabilities::presentation` 由设备自己
 > 答；引擎**只在区没有目标时**才向设备要一把，所以宿主绑过的那把永不被覆盖。判据见
 > `.ai/memory/appfw.md` / `.ai/memory/graphics.md` 顶部 S10a 条，设计依据见
-> `graphics-window-device-viewer.md` §3 Q1/Q2、§4、§7 的 S10a 行。
+> `graphics-architecture.md` §3 Q1/Q2、§4、§7 的 S10a 行。
 >
 > **S8 改形（2026-10-11，最新的一条，先读它）**：**多视图归 appfw 的 `Viewer`**（`RenderControl::viewer()`）。
 > 一个控件 = 一块渲染区（一个引擎、一个会话、一个设备）**不再等于一个视图**：`Viewer` 管这块区 —— 一条请求
@@ -41,7 +41,7 @@
 >
 > **S7 改形（2026-10-11，S8 之前的那一条）**：**配方离开 `SceneView`，归 `Pipeline`；视图只采纳一个**。
 > 起因是用户点了 `ensureWindowPass()` 的名（"什么时候该调用"没有答案）—— 它一个名字同时是**配方**和**表要的默认
-> pass 入口**。落地记录与判据见 `graphics-redesign.md` S7、要点见 `.ai/memory/graphics.md` 顶部。
+> pass 入口**。落地记录与判据见 `graphics-architecture.md` S7、要点见 `.ai/memory/graphics.md` 顶部。
 >
 > **新的归属**（这张表就是 S7 之后"谁是什么"）：
 >
@@ -77,7 +77,7 @@
 >    `init()` 的那一步现在是 `if (!d->surface->hasPresentation()) d->surface->present(*d->view);`，宿主自建主 pass
 >    的写法是 `surface->present(pipeline->windowPass())`（`demo_plugin` 就是这么改的）。本文里凡出现
 >    "让位规则 / `hasWindowPass` / '该相机已有窗口 pass 就不建'"的句子，读作**M2a 之前**的行为
->    （§2.2 那两行、§4.2、§5、§12.2 与不变量 2/16 已就地改写）。目标形态与分片见 `graphics-render-next.md` §3.2。
+>    （§2.2 那两行、§4.2、§5、§12.2 与不变量 2/16 已就地改写）。目标形态与分片见 `graphics-architecture.md` §3.2。
 >
 > **v2 相对 v1 的四处升级**（都是"消掉一类记账/陷阱"，不是加功能）：
 > ① **初始化时机**：控件构造只组装，attach 走"宿主显式 `init()`"或"第一拍兜底"（§2.3、R1）；
@@ -195,7 +195,7 @@ RenderControl（Impl = SurfaceWindow）
 **所有权方向：控件 → 引擎，不是引擎 → 控件**。引擎没有任何回指（它不认识控件与视图）；它唯一曾经有的"上向"知识
 是 `hasWindowPass(camera)`（查自己的 pass 表：`pass->camera() == camera && pass->isEnabled() && pass->renderTarget() == nullptr`），
 而它随 M2a（2026-10-11）**删除**了 —— 那条查询是"谁呈现"的推断本身，现在由**表面**声明（`RenderSurface`，
-见 §12.2 与 `graphics-render-next.md` §3.2）。后端也不回指引擎（`gfx_backend_vsg` 里没有
+见 §12.2 与 `graphics-architecture.md` §3.2）。后端也不回指引擎（`gfx_backend_vsg` 里没有
 `RenderEngine*` 成员）。**引擎是可独立存在的服务**（`test_graphics` 里到处 `new RenderEngine()`，无窗口、无控件）。
 逐边的精确分析（谁强引用谁、为什么、有什么顺序约束）见 **§13**。
 
@@ -338,7 +338,7 @@ passes registered here"。构造自驱在后端已注册时**先 attach 了一�
 | **操作期间临时加引用** | 借用的成员一旦要"跨操作使用"，入口先 `intrusive_ptr<T>(p, /*add_ref*/ true)`；**要跨操作长期持有的借用用 `Lease`**（2026-10-19 起视图/管线→引擎就是这条） | 控件捕获期间→视图（§5，临时加引用）；视图/管线→引擎（§13，`Lease`）；**一个回答"操作期间活着"，一个回答"还在不在"** |
 | **意图用值、变更即重建** | 配方（`Options`）按值进出、无 setter 碎片；改它 = 一次重建 | `setOptions(Options)` / `options()` |
 | **几何用 setters、零重建** | 每帧会变的东西（视口、可见性、着色模式）只改取值，不碰结构 | `setViewport` / `setStatsVisible` / `Options::mode` |
-| **同名状态两处出现时，赢家的名字带 `Override`** | pass 级 setter **赢了内容**的 → `…Override`（`setProgramOverride` / `setPolygonModeOverride`）；pass 给的是**可被内容压过的默认** → 不带（`setDepthMode`）。判断依据与整张表在 `.ai/design/graphics-state.md` §4.1 | 视图的"线框"开关必须是覆盖：否则内容写过的线框会把它永久钉住 |
+| **同名状态两处出现时，赢家的名字带 `Override`** | pass 级 setter **赢了内容**的 → `…Override`（`setProgramOverride` / `setPolygonModeOverride`）；pass 给的是**可被内容压过的默认** → 不带（`setDepthMode`）。判断依据与整张表在 `.ai/design/graphics-scene.md` §4.1 | 视图的"线框"开关必须是覆盖：否则内容写过的线框会把它永久钉住 |
 | **能不能 vs 为什么** | "能不能"用返回值（`bool`/`nullopt`）；"为什么"一律走**诊断**（`RenderEngine::setDiagnosticSink`，控件转日志）；**不许静默失败** | `init()` → `bool` + 诊断；HUD 开关 / 延迟路径上的模式 → 诊断 |
 | **一层一个旋钮** | 同一件事不给两个入口；句柄（`pipeline()->gizmo()`）是**微调口**而不是第二配置面，状态仍然只有一份 | 视图不给 `setPipelineOptions()`；`Options` 不含尺寸/偏移 |
 
@@ -740,7 +740,7 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 2. 设备与资源的归属始终是**后端会话**，不是控件（今天就是这样：`SessionContentAccess::device(session)`）；
 3. `RenderEngine` 可以多实例、可以换后端（今天就是这样）。
 
-> **S10a 的修正（2026-10-11）**：这条迁移路径的**契约面已经先落**（`graphics-window-device-viewer.md` §7 S10a）：
+> **S10a 的修正（2026-10-11）**：这条迁移路径的**契约面已经先落**（`graphics-architecture.md` §7 S10a）：
 > 窗口那一半不再是"控件把句柄交给引擎/后端"，而是**设备造一把目标**（`RenderDevice::createSurfaceTarget`）、
 > **区持有它**（`RenderSurface::bindTarget`）。所以"不碰控件与视图的 API"要读成"**不碰视图的 API，控件的窗口
 > 那一句改一次**"：控件 attach 时向设备要目标、失败带理由（`failAttach`），重建窗口在旧目标上重公告。
@@ -797,15 +797,15 @@ OSG（一个 `Viewer` 多个 `GraphicsWindow`）、Unreal / Unity（一个 RHI �
 重复记账，也会把"谁清屏"变成控件的事）。
 
 > **目标形态（大改版设计，进行中）**：这一节的"矩形挂在视图上、清屏靠谁先公告、视图去认领窗口、aspect 存在相机里"
-> 是**过渡形态**。按三维规范重写的目标见 `graphics-render-next.md` §3.2：**清屏与顺序归表面**（`RenderSurface` +
+> 是**过渡形态**。按三维规范重写的目标见 `graphics-architecture.md` §3.2：**清屏与顺序归表面**（`RenderSurface` +
 > 呈现表）、**矩形归呈现条目**（`Surface::present(view, rect)`，`SceneView::setViewport` 转发）、
 > **aspect 归相机**（一台相机一张画面），于是分屏的每一格各有一台相机；"同一台相机进两块不同形状的矩形"被引擎
 > 编译期报出来。分片进度：**M2a 谁呈现 / M2b 清屏归表面 / M2d 矩形放呈现条目 / M5a 输入按矩形推 + 焦点视图 已落地
-> （2026-10-11）**；M2c（aspect 出相机）**同日落地又回退**（形状回到相机，见 `graphics-redesign.md` §"已落地：A"）；
+> （2026-10-11）**；M2c（aspect 出相机）**同日落地又回退**（形状回到相机，见 `graphics-architecture.md` §"已落地：A"）；
 > M5b **2026-10-11 按"机制在底层、组合在应用层"重评：机制半边（表面尺寸扇出）进 SDK，布局所有者
 > （split/join/比例/生死）归应用层**；
 > 所以"谁 split、谁销毁"今天就该是应用自己的事，SDK 欠的只有"表面把尺寸喂给每一格"这一条机制
-> （`graphics-render-next.md` §5.1 T1 / T4）。
+> （`graphics-architecture.md` §5.1 T1 / T4）。
 > **落地后本节有四条已过期**：①"形状由后端推导"不成立 —— 形状是**相机自己的状态**
 > （`Camera::setAspect(w / h)` / `aspectRatio()` / `projectionMatrix()`），`RenderBackend::viewAspect()` 已删除，
 > 投影、剔除、view block、拾取射线读同一个数；矩形与相机不一致时引擎在编译期报出来
