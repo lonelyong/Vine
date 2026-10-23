@@ -39,7 +39,7 @@ TEST(RenderStateMapperTest, DefaultStateReproducesBackendDefaults)
 
     // Rasterisation: two-sided (no culling), filled, and CLOCKWISE front faces. The sign is the
     // backend's answer to vsg's Y-inverting projection: the SDK's rule is "front = counter-clockwise in
-    // world space" (StateNode.hpp), the projection flips the screen-space orientation
+    // world space" (RenderState.hpp), the projection flips the screen-space orientation
     // (vsg/maths/transform.h: `perspective` negates the Y term, "Y NDC coordinates are inverted in
     // Vulkan"), so declaring the framebuffer-space front faces CLOCKWISE is what keeps cullMode meaning
     // what the SDK says. Pinned with the cull modes below because the two lines are one decision.

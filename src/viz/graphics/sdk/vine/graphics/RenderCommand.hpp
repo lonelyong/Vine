@@ -7,8 +7,8 @@
 
 #include "Geometry.hpp"
 #include "Material.hpp"
+#include "RenderState.hpp"
 #include "ShaderProgram.hpp"
-#include "StateNode.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -81,7 +81,7 @@ struct VN_GRAPHICS_API RenderCommand {
      * - Computed at collection time by folding every StateNode from the scene root down to the geometry. An unset
      *   item means "nobody on the path said anything about it" - NOT "set to the default": the final state of the
      *   command depends on the pass drawing it as well, and the ONE place that answers that is
-     *   `resolveRenderState(authored_state, pass.stateOverrides())` (see StateNode.hpp, which also says which item a
+     *   `resolveRenderState(authored_state, pass.stateOverrides())` (see StateResolution.hpp, which also says which item a
      *   pass overrides and which one it only supplies a default for).
      * - A backend consumes the resolved state to select a pipeline variant and to diff its dynamic state; backends
      *   that consume no per-object state ignore this.

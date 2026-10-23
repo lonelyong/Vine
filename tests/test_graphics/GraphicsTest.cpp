@@ -3353,7 +3353,7 @@ class MockBackend : public RenderBackend {
             last_commands_authored_polygon_modes.push_back(command.authored_state.polygonMode);
             // The EFFECTIVE mode, resolved the way a real backend does it: what the content authored, weighed
             // against the pass that draws it (the rasterisation override travels with the pass' state, not in the
-            // commands - see StateNode.hpp's resolveRenderState).
+            // commands - see StateResolution.hpp's resolveRenderState).
             last_polygon_modes.push_back(
                 resolveRenderState(command.authored_state, pass_state, Topology::Triangles)
                     .state.polygonMode);
@@ -4597,7 +4597,7 @@ TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
 {
     // The pass side of the state table travels as ONE announcement (RenderBackend::setPassState): its depth policy
     // and its rasterisation override together. That is what lets a backend resolve each command's final state
-    // without asking the pass anything (StateNode.hpp), and what lets a rasterisation switch cost no command
+    // without asking the pass anything (StateResolution.hpp), and what lets a rasterisation switch cost no command
     // rewrite at all.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto scene  = intrusive_ptr<Scene>(new Scene());
@@ -7989,8 +7989,8 @@ TEST(SceneTest, TheDrawResolvesPrimitiveThenGeometryThenStateNode)
 TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
 {
     // THE table: pass override > content (the folded StateNodes) > default, item by item, with the layer that
-    // decided each one reported next to the value. One function, one place (StateNode.hpp's resolveRenderState),
-    // so "why is this drawn in Line?" is a fact rather than an exercise in reading three files.
+    // decided each one reported next to the value. One function, one place (StateResolution.hpp's
+    // resolveRenderState), so "why is this drawn in Line?" is a fact rather than an exercise in reading three files.
     RenderState content;
     content.cullMode    = CullMode::Back;
     content.blend       = BlendState{ .enabled = true };

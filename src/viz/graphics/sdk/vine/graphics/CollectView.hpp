@@ -20,7 +20,7 @@ using vn::math::Vec3d;
  * - The collection-time context: the camera's projection / view / eye / up plus the DEVICE-pixel
  *   viewport the picture lands in. It is the narrow counterpart of OSG's `CullStack` - the facts a
  *   view-dependent node needs, without any blend / depth / cull state (that state is resolved per
- *   command by the pass, see StateNode.hpp).
+ *   command by the pass, see StateResolution.hpp).
  * - ONE PER VIEW, not one per frame: a frame has shadow, main, PiP and HUD passes with different
  *   cameras and viewports. The scene's collected-list memo is keyed by the view-projection and eye,
  *   plus the viewport only when the list contains a node that depends on it (ViewDependence::

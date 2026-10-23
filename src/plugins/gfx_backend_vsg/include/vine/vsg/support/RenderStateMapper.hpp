@@ -10,7 +10,7 @@
 #include <vsg/state/RasterizationState.h>
 #include <vsg/utils/GraphicsPipelineConfigurator.h>
 
-#include <vine/graphics/StateNode.hpp>
+#include <vine/graphics/RenderState.hpp>
 #include <vine/vsg/support/VsgDynamicState.hpp>
 
 VN_VSG_NS_BEGIN
@@ -184,7 +184,7 @@ inline RenderStateObjects makeRenderStateObjects(
     out.rasterization = ::vsg::RasterizationState::create();
     out.rasterization->cullMode = detail::mapCullMode(state.cullMode);
     // FRONT FACES ARE DECLARED CLOCKWISE, and the sign is the whole point: the SDK's rule is that a
-    // triangle is front-facing when its vertices read counter-clockwise in world space (StateNode.hpp),
+    // triangle is front-facing when its vertices read counter-clockwise in world space (RenderState.hpp),
     // while Vulkan decides that in FRAMEBUFFER space -- and vsg's projection INVERTS Y (see
     // vsg/maths/transform.h: `perspective` negates the m[1][1] term, documented as "Y NDC coordinates
     // are inverted in Vulkan"). The inversion flips the screen-space orientation, so the SDK's front

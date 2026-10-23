@@ -380,7 +380,8 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
         out.instance_revision = command.instance_revision;
         out.first_instance    = command.first_instance;
         out.instance_count    = command.instance_count;
-        // The ONE resolution: what the content authored, weighed against what the pass says (StateNode.hpp).
+        // The ONE resolution: what the content authored, weighed against what the pass says
+        // (StateResolution.hpp).
         vn::graphics::ResolvedRenderState resolved =
             resolveRenderState(command.authored_state, pass_state, command.topology).state;
         // THE ENGINE'S TRANSPARENCY CHANNEL IS THE COMMAND'S OPACITY, and this is the only place that can weigh it

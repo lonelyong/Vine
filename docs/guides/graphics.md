@@ -81,7 +81,7 @@ engine.setDevice(backend);
 
 **折叠出来的只是"内容作者写的那份"**：一条命令画出来是什么状态，还要加上**画它的那条 pass** 说的
 （depth 策略 + 光栅化覆盖）—— 两者由**一个函数**合并，`resolveRenderState(cmd.authoredState,
-pass.stateOverrides(), cmd.topology)`（`StateNode.hpp`），它按项回答"最终值 + 这一项是谁给的"（`StateOrigin`）；
+pass.stateOverrides(), cmd.topology)`（`StateResolution.hpp`），它按项回答"最终值 + 这一项是谁给的"（`StateOrigin`）；
 第三个参数是**数据的拓扑**（命令所属的 `Primitive`），pass 只能覆盖它，`StateNode` 不能。
 优先级一句话：**pass 的光栅化覆盖赢过内容，内容的 depth 赢过 pass 的 depth 策略**（pass 给的是"没写过
 depth 的那些的默认"），其余没有别的层 —— 视图的模式在**建管线时**就已经变成 pass 级覆盖（那是配方的事）。

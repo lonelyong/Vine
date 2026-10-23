@@ -19,7 +19,7 @@
 #include "PassDesc.hpp"
 #include "PresentTarget.hpp"
 #include "Sampler.hpp"
-#include "StateNode.hpp"
+#include "StateResolution.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN

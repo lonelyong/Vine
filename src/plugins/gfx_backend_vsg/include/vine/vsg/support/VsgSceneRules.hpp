@@ -43,7 +43,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/graphics/StateNode.hpp>
+#include <vine/graphics/StateResolution.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 

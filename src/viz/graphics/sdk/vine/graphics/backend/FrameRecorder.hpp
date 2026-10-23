@@ -11,6 +11,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/StateResolution.hpp>
 #include <vine/graphics/Viewport.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
@@ -312,7 +313,7 @@ class VN_GRAPHICS_API FrameRecorder
     /** @brief Announces the pass' own state for the content it draws (depth policy + rasterisation override).
      *
      * The pass side of the state priority table: recorded per scope, and what the compiler resolves every command
-     * against (see `resolveRenderState` in StateNode.hpp). A scope that announces nothing is recorded with the
+     * against (see `resolveRenderState` in StateResolution.hpp). A scope that announces nothing is recorded with the
      * defaults.
      *
      * @param state Depth policy and rasterisation override of the scope.

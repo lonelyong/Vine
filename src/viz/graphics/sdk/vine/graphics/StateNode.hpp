@@ -3,285 +3,18 @@
 
 #include <optional>
 
-#include "Topology.hpp"
-
 #include "Group.hpp"
 // Included rather than forward-declared: this class HOLDS an intrusive_ptr<Material>, so every translation
 // unit that destroys a StateNode instantiates the reference-count hooks and needs the complete type.
-#include "DepthMode.hpp"
 #include "Material.hpp"
-#include "PolygonMode.hpp"
+
+#include "RenderState.hpp"
+#include "StateResolution.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
 class ShaderProgram;
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
-
-/**
- * @brief Depth comparison function used when the depth test is enabled.
- */
-enum class CompareOp
-{
-    Never,       ///< Depth never passes.
-    Less,        ///< Pass when the fragment is closer than the stored depth.
-    Equal,       ///< Pass when the depths are equal.
-    LessEqual,   ///< Pass when the fragment is closer or equal.
-    Greater,     ///< Pass when the fragment is farther.
-    NotEqual,    ///< Pass when the depths differ.
-    GreaterEqual, ///< Pass when the fragment is farther or equal.
-    Always,      ///< Depth always passes.
-};
-
-/**
- * @brief Face culling mode for a StateNode subtree.
- *
- * @details
- * - WHICH FACE IS FRONT IS THE SDK'S RULE, NOT THE GPU'S: a triangle is front-facing when its vertices
- *   appear counter-clockwise to the camera in a right-handed world (the SDK's view looks down -Z, see
- *   Camera), so a host authors geometry against one convention and gets the same picture on every backend.
- * - A backend rendering under another clip convention (the vsg backend flips Y for Vulkan, where the front
- *   face is defined in framebuffer coordinates) maps this rule onto its own front face.
- *
- * @note
- * - A backend that got the mapping wrong culls the faces it was asked to keep: the object disappears with
- *   no diagnostic (recorded as UB-14 in the vsg backend's notes).
- */
-enum class CullMode
-{
-    None,  ///< No faces are culled (two-sided rendering).
-    Front, ///< Counter-clockwise (front-facing) triangles are culled.
-    Back,  ///< Clockwise (back-facing) triangles are culled.
-};
-
-/**
- * @brief Blend factors used when blending is enabled.
- */
-enum class BlendFactor
-{
-    Zero,               ///< 0.
-    One,                ///< 1.
-    SrcAlpha,           ///< Source alpha.
-    OneMinusSrcAlpha,   ///< 1 - source alpha.
-    DstAlpha,           ///< Destination alpha.
-    OneMinusDstAlpha,   ///< 1 - destination alpha.
-    SrcColor,           ///< Source color.
-    OneMinusSrcColor,   ///< 1 - source color.
-    DstColor,           ///< Destination color.
-    OneMinusDstColor,   ///< 1 - destination color.
-};
-
-/**
- * @brief Concrete depth-test state (defaults applied).
- */
-struct VN_GRAPHICS_API DepthState
-{
-    bool      test    = true;                ///< Depth test enabled.
-    bool      write   = true;                ///< Depth writes enabled.
-    CompareOp compare = CompareOp::Less;      ///< Depth comparison function.
-};
-
-/** @brief Returns whether two depth states are equal. */
-inline bool operator==(const DepthState& lhs, const DepthState& rhs)
-{
-    return lhs.test == rhs.test && lhs.write == rhs.write && lhs.compare == rhs.compare;
-}
-
-/** @brief Returns whether two depth states differ. */
-inline bool operator!=(const DepthState& lhs, const DepthState& rhs)
-{
-    return !(lhs == rhs);
-}
-
-/**
- * @brief Concrete blend state (defaults applied).
- *
- * @details
- * - `enabled` is the ENABLE, not a hint: false means the surface writes its fragment unchanged, even when a
- *   program writes an alpha below 1 (the rule three.js / Filament / Unity follow for an opaque material).
- * - TRANSPARENCY HAS ONE OTHER SOURCE, and it is merged where the two meet: a command whose effective
- *   opacity is below 1 (Node::setOpacity / Scene::setOpacity) is drawn with blending on and the pair
- *   below, because opacity is the engine's transparency channel (see RenderCommand::opacity). Content that
- *   wants per-pixel alpha from its own shader states the blend here instead of relying on the object's
- *   opacity.
- * - A backend whose target carries several colour attachments never blends them (they hold data, not a
- *   surface), and a full-screen draw writes its rectangle; both are target-shape rules, not this flag.
- */
-struct VN_GRAPHICS_API BlendState
-{
-    bool        enabled = false;                           ///< Blending enabled.
-    BlendFactor src     = BlendFactor::SrcAlpha;           ///< Source blend factor.
-    BlendFactor dst     = BlendFactor::OneMinusSrcAlpha;   ///< Destination blend factor.
-};
-
-/** @brief Returns whether two blend states are equal. */
-inline bool operator==(const BlendState& lhs, const BlendState& rhs)
-{
-    return lhs.enabled == rhs.enabled && lhs.src == rhs.src && lhs.dst == rhs.dst;
-}
-
-/** @brief Returns whether two blend states differ. */
-inline bool operator!=(const BlendState& lhs, const BlendState& rhs)
-{
-    return !(lhs == rhs);
-}
-
-/**
- * @brief Optional render-state contributions declared by a StateNode.
- *
- * Every item is optional: an unset item means "inherit from the enclosing
- * StateNode". Only the items a node sets take part in the fold towards a
- * leaf's effective state.
- */
-struct VN_GRAPHICS_API RenderState
-{
-    std::optional<DepthState>  depth;        ///< Depth test/write/compare override.
-    std::optional<CullMode>    cullMode;     ///< Face culling override.
-    std::optional<BlendState>  blend;        ///< Blending override.
-    std::optional<PolygonMode> polygonMode;  ///< Polygon rasterisation override.
-
-    /** @brief Returns whether no item is set.
-     *
-     * @return true when every item is unset (the block contributes nothing).
-     */
-    bool empty() const
-    {
-        return !depth && !cullMode && !blend && !polygonMode;
-    }
-
-    /** @brief Overlays another state block onto this one.
-     *
-     * Every item set in @p other replaces the corresponding item of this
-     * block; items unset in @p other are left untouched.
-     *
-     * @param other Source block to overlay.
-     */
-    void merge(const RenderState& other);
-};
-
-/** @brief Returns whether two optional state blocks are equal. */
-inline bool operator==(const RenderState& lhs, const RenderState& rhs)
-{
-    return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
-           lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode;
-}
-
-/** @brief Returns whether two optional state blocks differ. */
-inline bool operator!=(const RenderState& lhs, const RenderState& rhs)
-{
-    return !(lhs == rhs);
-}
-
-/**
- * @brief Concrete render state after defaults are applied.
- *
- * The resolved state is what a backend uses to select pipeline variants:
- * StateNodes contribute overrides; everything they do not set falls back to
- * the defaults below (which match the backend's current default pipeline
- * state, so a scene without StateNodes resolves to today's behaviour).
- */
-struct VN_GRAPHICS_API ResolvedRenderState
-{
-    DepthState   depth;                        ///< Depth state (defaults: test/write on, Less).
-    CullMode     cullMode = CullMode::None;    ///< Face culling (default: none).
-    BlendState   blend;                        ///< Blending (default: disabled).
-    PolygonMode  polygonMode = PolygonMode::Fill;  ///< Polygon mode (default: fill).
-    /// The EFFECTIVE primitive topology of the draw: the PRIMITIVE's own value (see Primitive.hpp), or the
-    /// pass' override of it for the whole view. It has no "content" layer and no default here - a command
-    /// without a primitive draws nothing - so this is filled by the caller that knows the data.
-    Topology     topology = Topology::Triangles;
-};
-
-/** @brief Returns whether two resolved states are equal. */
-inline bool operator==(const ResolvedRenderState& lhs, const ResolvedRenderState& rhs)
-{
-    return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
-           lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.topology == rhs.topology;
-}
-
-/** @brief Returns whether two resolved states differ. */
-inline bool operator!=(const ResolvedRenderState& lhs, const ResolvedRenderState& rhs)
-{
-    return !(lhs == rhs);
-}
-
-/**
- * @brief Which layer decided one resolved state item.
- *
- * Every item of a resolved state came from exactly one place, and saying which one is what turns "why is this
- * drawn in Line?" from a code-reading exercise into a fact (see resolveRenderState).
- */
-enum class StateOrigin
-{
-    Default,   ///< Nobody said: the engine's default for that item.
-    Content,   ///< A StateNode on the command's path authored it (the content's own word).
-    Pass,      ///< The pass that draws it (see PassRenderState).
-    Data,      ///< The DATA said it (a primitive's topology): not a state anybody authored.
-};
-
-/** @brief The origin of every item of a resolved state (one per item, in the same order as ResolvedRenderState). */
-struct VN_GRAPHICS_API RenderStateOrigin
-{
-    StateOrigin depth{StateOrigin::Default};        ///< Where the depth state came from.
-    StateOrigin cullMode{StateOrigin::Default};     ///< Where the cull mode came from.
-    StateOrigin blend{StateOrigin::Default};        ///< Where the blend state came from.
-    StateOrigin polygonMode{StateOrigin::Default};  ///< Where the rasterisation mode came from.
-    StateOrigin topology{StateOrigin::Default};     ///< Where the topology came from (Data or Pass).
-};
-
-/**
- * @brief What a PASS says about the content it draws.
- *
- * @details
- * - The pass side of the state priority table (see resolveRenderState), in one value: a backend resolves a
- *   command's state without asking the pass anything else.
- * - The two items differ ON PURPOSE (the table in `.ai/design/graphics-scene.md` §4.1): `depth` is a POLICY
- *   for content that authored none ("this slot tests and writes", "this slot is translucent over what is
- *   already there", "this slot is an overlay"), and content that authored a depth state keeps it - depth is
- *   something scene content routinely declares; `polygonMode` is an OVERRIDE that beats every command the
- *   pass draws, because it is a viewing switch ("show me the edges") that a content-authored Line must not
- *   be able to veto.
- * - `program` is deliberately NOT here: it is not a render state but a different SHADING, so it travels as its own
- *   field of the pass draw (PassDraw::program_override) and the backend resolves it per command exactly the way it
- *   resolves `state` - the command list itself is never rewritten (RenderPass::setProgramOverride).
- */
-struct VN_GRAPHICS_API PassRenderState
-{
-    DepthMode                  depth{DepthMode::TestAndWrite};  ///< Depth policy for content that authored none.
-    std::optional<PolygonMode> polygonMode{};                   ///< Rasterisation override for every command.
-    /// Primitive-topology override for every command ("show me this scene as points"). It overrides what the
-    /// DATA states, because how a view looks at a scene is the pass' decision - the same rule the rasterisation
-    /// mode already follows. The data keeps saying what it is; a pipeline is compiled per effective topology.
-    std::optional<Topology>    topology{};
-};
-
-/** @brief One command's FINAL state in one pass, and the layer each item came from. */
-struct VN_GRAPHICS_API ResolvedCommandState
-{
-    ResolvedRenderState state;   ///< The final state (defaults filled in).
-    RenderStateOrigin   origin;  ///< Which layer decided each item of it.
-};
-
-/**
- * @brief Resolves the final render state of content drawn by a pass: the ONE implementation of the priority table.
- *
- * @details
- * - The table: `pass override > content (the folded StateNodes) > defaults`.
- * - One place and one test table; a caller wanting to know WHY an item has its value reads `origin` instead
- *   of reconstructing the layering. Everything consuming state goes through here: the geometry/state a
- *   backend bakes into a pipeline variant, the dynamic state it diffs per command, and any diagnostic that
- *   has to explain a picture.
- *
- * @param authored The state the CONTENT authored (RenderCommand::authored_state): every item left unset is
- *                 "nobody on the path said anything about it", which is not the same as "set to the default".
- * @param pass     What the pass drawing it overrides (RenderPass::stateOverrides).
- * @param data_topology The PRIMITIVE's topology (see Primitive.hpp): the data's own word, which the pass may
- *                 override but a StateNode cannot (topology is not state - it says how this draw consumes its
- *                 vertex/index data).
- * @return The final state and the origin of each item.
- */
-VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass,
-                                                       Topology data_topology);
 
 /**
  * @brief Scene-graph node applying render state to its subtree.
@@ -296,6 +29,9 @@ VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& autho
  * - State deliberately lives on nodes rather than per drawable, so a batch of geometry sharing one StateNode
  *   also shares one pipeline variant; the model mirrors vsg::StateGroup / the GL state stack and stays
  *   backend-agnostic.
+ * - The TYPES this node uses live in two narrower headers, so a consumer that only needs the vocabulary or
+ *   the priority table (a pass, a backend's pipeline key) does not include the scene graph: RenderState.hpp
+ *   holds what content may say, StateResolution.hpp holds what a resolved state is and how it is computed.
  */
 class VN_GRAPHICS_API StateNode : public Group {
     VN_OBJECT_META_DECL;
@@ -443,19 +179,6 @@ using StateNodePtr = intrusive_ptr<StateNode>;
  * @return The folded optional state block.
  */
 VN_GRAPHICS_API RenderState collectRenderState(raw_ptr<const Node> node);
-
-/**
- * @brief Applies default values to a folded optional state block.
- *
- * The content-only spelling of the priority table (resolveRenderState(authored, pass)): a pass that overrides
- * nothing resolves exactly like this, so a caller that has the content's word and no pass to draw it with (a
- * tool, a test, a host reading its own scene) uses it directly.
- *
- * @param state Folded optional state (see collectRenderState).
- * @return Concrete state with defaults applied, usable as a pipeline-variant
- *         key component.
- */
-VN_GRAPHICS_API ResolvedRenderState resolveRenderState(const RenderState& state);
 
 /**
  * @brief Computes the effective render state for a node in one step.

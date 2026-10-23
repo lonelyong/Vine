@@ -184,7 +184,8 @@ void RenderPass::fillPassFacts(PassDraw& out)
     out.clear            = clearPolicy();
     out.program_override = desc_.program_override;
     // This pass' state for the content it draws - its depth policy and its rasterisation override, in one
-    // announcement: what a backend needs to resolve each command's FINAL state (StateNode.hpp's resolveRenderState).
+    // announcement: what a backend needs to resolve each command's FINAL state
+    // (StateResolution.hpp's resolveRenderState).
     out.state    = stateOverrides();
     out.draws.clear();
 }

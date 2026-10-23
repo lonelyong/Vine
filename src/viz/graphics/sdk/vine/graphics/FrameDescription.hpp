@@ -12,7 +12,7 @@
 
 #include "ImageSource.hpp"
 #include "RenderCommand.hpp"
-#include "StateNode.hpp"
+#include "StateResolution.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -147,7 +147,7 @@ struct VN_GRAPHICS_API PassDraw
     /// THE BACKEND APPLIES IT, the way it applies @ref state: the pass states the override ONCE and the draw list
     /// stays the shared, immutable list it was collected as. Rewriting every command's program instead cost a
     /// command-sized copy (allocation + memcpy + three refcounts per command) on every frame the override existed -
-    /// the same trade the rasterisation override already made (see StateNode.hpp's resolveRenderState).
+    /// the same trade the rasterisation override already made (see StateResolution.hpp's resolveRenderState).
     intrusive_ptr<const ShaderProgram> program_override;
     /// The drawing calls, in the order they happen. Empty is a real answer: a pass that announces its target and
     /// state but has nothing to draw with (no camera, no program) issues no draw, and does NOT become a draw of

@@ -3,8 +3,8 @@
 > **状态**：现行
 > **最后核对**：2026-10-23
 > **范围**：严格树、状态折叠、收集 memo、层与拾取。
-> **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `Scene.hpp` / `Camera.hpp` /
-> `RayIntersection.hpp`。
+> **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
+> `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计
@@ -111,8 +111,9 @@
 | `MatrixTransform::setMatrix()` / `matrix()` | 局部矩阵 |
 | `PositionAttitudeTransform::setPosition()` / `setAttitude()` / `setScale()` / `setPivot()` | TRS |
 | `AutoTransform::setAutoRotateMode()` / `setAutoScaleToScreen()` / `setAxis()` / `setNormal()` | billboard |
-| `StateNode::setRenderState()` / `renderState()` / `setMaterial()` / `setProgram()` | 子树状态 |
-| `resolveRenderState(authored, pass, topology)` | 唯一解析点 |
+| `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `clearState()` / `renderState()` | 子树状态 |
+| `StateNode::setMaterial()` / `setProgram()` | 子树 material / program |
+| `resolveRenderState(authored, pass, topology)` | 唯一解析点（`StateResolution.hpp`） |
 
 ### 4.3 场景与收集
 

@@ -441,7 +441,7 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             // scene root to this geometry contributes, deeper nodes overriding.
             // What arrives here is the CONTENT's word (every item optional, so
             // "nobody said" and "said the default" stay different facts); the pass
-            // drawing it completes the picture, in one place (see StateNode.hpp's
+            // drawing it completes the picture, in one place (see StateResolution.hpp's
             // resolveRenderState and RenderPass::stateOverrides).
             cmd.authored_state = subtree.state;
             cmd.program = program;
