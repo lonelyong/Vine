@@ -8,7 +8,9 @@ description: |
   "把待办移出去"、"补个 ADR"、"这份文档放哪"、"合并设计文档"、"更新 copilot instructions".
   Enforces: current design vs history vs backlog separation; one fact one home; numbered
   design points / features / interfaces / caveats / rejected options / tests; no dates in
-  design or backlog filenames; ADR for why and rejected alternatives; git is the archive.
+  design or backlog filenames; ADR for why and rejected alternatives; git is the archive;
+  design points traceable to the global design constraints `G1`–`G12`.
+
 ---
 
 # Design Docs: 目录、模板与迁移
@@ -126,6 +128,10 @@ memory 写“现役要点与坑”，bugs 写“事故复盘”，git 写“全�
 
 规则：
 - 编号 ID 稳定，供别的文档引用（"见 N4"）。
+- §2 每条设计要点标注它服务或取舍了哪条全局约束（`G1`–`G12`，见
+  `.github/copilot-instructions.md`）：满足哪条、为哪条付了代价。§7 的否决项写明它规避了哪条
+  `G#`，或违反了哪条 `G#` 因此不做。
+- §1.3 非目标与 §9.2 已知缺口是 `G8` 的证据：没有消费者的扩展点留在 backlog，不进代码。
 - 功能点按主题分组；先给索引表，再给每个功能点的行为/约束/要求/验收/注意。
 - 共享的约束、要求、不变量放 §5，用 `C#` / `R#` / `N#`；功能点引用它们，不重复。
 - 公开接口按类分组；完整签名看头文件。

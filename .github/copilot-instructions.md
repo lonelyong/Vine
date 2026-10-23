@@ -1,5 +1,27 @@
 # C++ Coding Guidelines
 
+## Framework Design Constraints
+
+These twelve principles define what "well designed" means in this repository. They are
+**constraints, not aspirations**: a change that violates one must say so, and say why, at the
+point of violation — in its design doc or in an ADR. Cite them as `G#` from `.ai/design/` and
+from review comments instead of restating the principle.
+
+| # | Principle | The question it turns into |
+|---|---|---|
+| G1 | 概念清晰，抽象自然 | Does each core concept have one definition, one owner and a stated boundary? Does a new abstraction remove more complexity than it introduces? |
+| G2 | 职责分明，层次合理 | Does the edge point toward `base` only — no back edge, no cross-layer shortcut? |
+| G3 | 流程清晰，逻辑自然 | Can create → configure → run → get result → release be read in one pass, with a simple job staying simple? |
+| G4 | 接口简洁，语义明确 | Do name, parameters, return value, ownership, lifetime and failure mode mean what they say, without an unwritten convention? |
+| G5 | 内聚而低耦合 | Does the expected change stay inside the module? If it must cross a boundary, is the boundary drawn wrong? |
+| G6 | 统一而一致 | Do naming, error handling, resource management and abstraction level match the rest of the repo — and where they don't, is the deviation justified? |
+| G7 | 隐藏复杂性，不转移复杂性 | Is the complexity absorbed here, or pushed into one more layer / config / callback the caller now has to learn? |
+| G8 | 保持克制，避免过度设计 | Is there a real consumer for this extension point today? Would merging these two concepts lose a distinction that actually exists? |
+| G9 | 易于扩展，持续演进 | Can a new format, device or algorithm be added without editing the core model? |
+| G10 | 关注真实成本 | Are lifetime, ownership, allocation, layout, exception safety, concurrency and ABI costed — not only drawn? |
+| G11 | 易于理解、调试、维护 | Can a failure be located, state observed and the module tested alone, without guessing an implicit mechanism? |
+| G12 | 设计意图体现在代码中 | Do class boundaries show responsibility, interface shape show constraints, dependencies show architecture, names show the domain? |
+
 ## Project Layout & Documentation
 
 * `docs/` is the unified repository documentation folder AND the GitHub Pages
@@ -276,3 +298,4 @@ When reviewing code, check:
 * Thread safety.
 * API consistency.
 * Naming and style compliance.
+* Design against `G1`–`G12`; name the violated principle instead of arguing taste.
