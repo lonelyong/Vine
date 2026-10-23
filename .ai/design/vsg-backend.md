@@ -4,7 +4,7 @@
 > 每 pass 私有状态表、reverse-Z）不可协商；下面这些坑都踩过，别重踩。
 >
 > **权威来源**：`RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/backend/**` /
-> `src/plugins/gfx_backend_vsg/include/vine/vsg/**`。**待办**：`graphics-followups.md`。
+> `src/plugins/gfx_backend_vsg/include/vine/vsg/**`。**待办**：`../backlog/graphics.md`。
 
 ## 1. 设计要点
 
@@ -344,7 +344,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | D2 | 跨 pass 共享管线状态注册表 | vsg 按 viewID 编管线；共享会拿到不兼容 render pass 的 pipeline。 |
 | D3 | 自建管线绕开 vsg | 会与 vsg 的 state 装配 / 记录路径分叉；收益只在冷启动。 |
 | D4 | Wayland | 只按 WSI 契约实现；没有真机验证。 |
-| D5 | 后端自己再排一次 pass | 调度上移引擎；两套排序 = 两套帧词汇。 |
+| D5 | 后端自己再排一次 pass | 调度上移引擎；两套排序 = 两套帧词汇。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |
 | D6 | 超过 3 个方向光限制 | 灯块 1024 槽，不限；旧限制已消失。 |
 
 ## 8. 判据
@@ -357,4 +357,4 @@ material 值 / 流字节 / cull 全部**不进**。
 
 ## 9. 相关文档
 
-`graphics-architecture.md` · `graphics-rendering.md` · `graphics-content-lifecycle.md` · `graphics-followups.md`
+`graphics-architecture.md` · `graphics-rendering.md` · `graphics-content-lifecycle.md` · `../backlog/graphics.md`

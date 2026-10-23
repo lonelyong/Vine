@@ -1,7 +1,7 @@
 # graphics / vsg 后端 —— 现役要点
 
 > 只记**现役**：机制、判据、坑，以及“当时为什么这么定”。逐片历史与重写前那一代在 git；
-> 设计文档在 `.ai/design/`，**唯一待办清单**是 `.ai/design/graphics-followups.md`。
+> 设计文档在 `.ai/design/`，**唯一待办清单**是 `.ai/backlog/graphics.md`。
 > 更细的后端契约与坑见 `.ai/design/vsg-backend.md` §1–§5。
 
 ## 1. 分层与一帧

@@ -1,7 +1,7 @@
 # appfw 渲染视图（最终设计 v2，2026-10-11）
 
 > **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
-> `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups.md` §1.1）。
+> `RenderPipeline` / `RenderPipelineOptions`（见 `../backlog/graphics.md` §1.1）。
 
 > 状态：**已落地 S0–S4 + 输入路由（S6+②）+ S7 改形 + S8 改形（多视图归 `Viewer`）+ S10a 改形（窗口那一半由设备造）；S8 之后"多格"下线（一块区只画一幅画）**（2026-10-11；其余 S6+ 三轴仍为"缝已定、未实现"）。本文**取代此前各稿**（那些是本设计的推演过程，结论以本文为准）；
 > 相关文档：`appfw-render-surface.md`（表面生命周期）、`graphics-architecture.md`（配方层）、`graphics-architecture.md`（pass 调度）、

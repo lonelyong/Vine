@@ -1,30 +1,32 @@
 # .ai/ —— AI 辅助目录
 
 面向 AI 助手与团队的仓库内知识，随 git 版本化。`docs/guides/` 是使用者文档；设计文档与笔记放这里。
-2026-10-23 清理：已关闭、已明确不做、已被取代的历史设计文档已删除（需要时看 git），只保留现行设计、
-唯一待办清单与模块要点。
+已关闭、已明确不做、已被取代的内容不在树内保留（需要时看 git），只保留现行设计、
+决策记录、开放待办与模块要点。
 
 **索引由机器钉住**（`scripts/check_ai_docs.py`）：`.ai/` 下每一份 `.md` 必须在这里被点名，点到的名字必须存在。
 **写法**：结论在上、历史在下；现行段落提到已不存在的东西时加 `<!-- drift-ok -->`。
 
-## design/ —— 现行设计文档（26）
+**分层**：`design/` 只写**现在是什么**（现行、无日期、≤300 行）；`decisions/` 写**为什么这么定**
+（ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
+一 bug 一文件。历史归 git，不放进 `design/`。
+
+## design/ —— 现行设计文档（23）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
-否决项（D#）→ 判据（T#）→ 相关文档**。
+否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
 
-**graphics / vsg（7）**
+**graphics / vsg（6）**
 - `graphics-architecture.md` —— 分层、设备/窗口/引擎/链/视图、一帧与调度。
 - `graphics-scene.md` —— 节点、状态、收集、层、视图上下文、拾取。
-- `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒。
+- `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒、存储与共享。
 - `graphics-rendering.md` —— 目标、MSAA、图源、颜色、着色、阴影。
 - `graphics-content-lifecycle.md` —— 内容释放与缓存策略。
-- `graphics-followups.md` —— **唯一待办清单**：只留开放的触发条件型条目。
 - `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑 / 否决项 / 门禁。
 
-**appfw（12）**
+**appfw（11）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
 - `appfw-startup-splash.md` —— 启动框与启动进度。
-- `appfw-startup-next.md` —— 启动流程下一步（触发条件型）。
 - `appfw-render-surface.md` —— 渲染表面生命周期与平台回退。
 - `appfw-render-view.md` —— 渲染视图设计（四层 API、配方归链、输入路由、着色模式）。
 - `appfw-command-manager.md` —— CommandManager。
@@ -35,16 +37,37 @@
 - `appfw-userio.md` —— UserIO。
 - `appfw-document-model.md` —— 文档模型（身份 + 生命周期 + 类型注册）。
 
-**base 与其他（7）**
+**base 与其他（6）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
-- `async-next.md` —— async 下一步（取消、作用域、帧分配的 go/no-go）。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。
 - `robotics-io-design.md` —— Robotics IO（XML、VFS 打包、材质库）。
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## memory/ —— 模块要点（9）
+## decisions/ —— 决策记录（ADR）（8）
+
+一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
+日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
+
+- `ADR-2026-10-23-no-multi-parent-dag.md` —— 不引入多父，严格树 + 实例化。
+- `ADR-2026-10-23-instancing-per-primitive.md` —— 实例化挂在 `Primitive`，不做作用域。
+- `ADR-2026-10-23-l2a-reverted.md` —— L2a 回撤，分层目标等 L2b 一起做。
+- `ADR-2026-10-22-engine-schedules-passes.md` —— pass 调度只在引擎。
+- `ADR-2026-10-22-cache-unbounded-explicit-release.md` —— 缓存不设上限，释放显式管理。
+- `ADR-2026-10-22-msaa-target-property.md` —— MSAA 是目标属性，颜色/深度各解析一张图。
+- `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
+- `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
+
+## backlog/ —— 开放待办（3）
+
+只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
+
+- `graphics.md` —— graphics / vsg 的开放待办（内容、后端资源、平台、对象模型）。
+- `appfw-startup.md` —— 启动流程剩余项（Windows 半边）。
+- `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
+
+## memory/ —— 模块要点（8）
 
 - `graphics.md` —— graphics / vsg 现役要点：机制、判据、坑与“当时为什么这么定”。
 - `appfw.md` —— appfw 横切规则（线程 / 锁内不跑用户代码 / 生命周期）。

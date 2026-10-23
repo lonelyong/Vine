@@ -6,12 +6,29 @@
   site root: user/developer-facing docs live under `docs/guides/` (so the site
   can serve them later), while `index.html` + `CNAME` at `docs/` are the site
   itself. Do NOT place design docs or notes there — those belong in `.ai/`.
-* `.ai/` holds AI-visible, repo-versioned knowledge:
-  * `.ai/design/` — full module design docs (e.g. `robotics-io-design.md`,
-    `robotics-proximity-design.md`).
-  * `.ai/memory/` — concise module notes (e.g. `robotics-proximity.md`).
-* Before touching a module's design or conventions, consult `.ai/design/` and
-  `.ai/memory/` for the relevant module.
+* `.ai/` holds AI-visible, repo-versioned knowledge, split by the question it answers:
+  * `.ai/design/` — **current, normative** design: what the system IS now. Stable
+    `<area>-<topic>.md` names, **no date suffix**, no closed or historical items, one topic
+    per file, aim for ≤300 lines.
+  * `.ai/decisions/` — **ADR** (`ADR-YYYY-MM-DD-<slug>.md`): why a decision was made, the
+    options rejected and their consequences. Dated, immutable; mark `已取代` and link the
+    successor. This is the only history kept in-tree.
+  * `.ai/backlog/` — **open, trigger-gated** work only (`<area>.md`, no date suffix).
+    Closed or explicitly not-doing items are deleted, not marked.
+  * `.ai/memory/` — concise current facts, traps and commands; no chronology.
+  * `.ai/bugs/` — one postmortem per bug.
+  * `.ai/research/` — dated, non-authoritative proposals/experiments; convert to
+    design/ADR and delete when done.
+* `docs/guides/` is user-facing; internal design, decisions and backlog never go there.
+* **Design docs**: one fact one home. Contracts live in headers, behaviour in tests; a
+  design doc summarises and links, never duplicates. Required order: one-line conclusion →
+  design points (`1.x`) → features (`F#`) → public interfaces (grouped) → caveats and
+  invariants (`N#`) → rejected options (`D#`, one line + ADR link) → tests (`T#`) → Mermaid
+  diagrams next to the relevant section → related docs. Add `最后核对：YYYY-MM-DD`.
+* **History**: never add dated, closed or historical docs to `.ai/design/`; git is the
+  archive. Keep only an ADR for a decision likely to be re-litigated.
+* Before touching a module, read its `.ai/design/` doc and `.ai/backlog/`; after changing
+  any `.ai/` file run `python3 scripts/check_ai_docs.py --strict`.
 
 ## Language Standard
 

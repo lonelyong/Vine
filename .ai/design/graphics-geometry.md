@@ -4,7 +4,7 @@
 > 形状归几何、字节归 buffer。
 >
 > **权威来源**：`Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp`。
-> **待办**：`graphics-followups.md`。
+> **待办**：`../backlog/graphics.md`。
 
 ## 1. 设计要点
 
@@ -132,9 +132,9 @@
 
 | # | 否决 | 理由 |
 |---|---|---|
-| D1 | `InstanceScope` 作用域 | 选择单位、射线递归、嵌套与包围盒语义复杂；改为 `Primitive` 参数。 |
-| D2 | 实例矩阵作为 `Geometry` 保留通道 | 一个几何只能一套实例；可见数量要改切片；没有引擎把实例挂在网格资产上。 |
-| D3 | 多父 / DAG | 渲染路径可 DAG，但公开世界查询与拾取身份不成立；复制节点即可。 |
+| D1 | `InstanceScope` 作用域 | 选择单位、射线递归、嵌套与包围盒语义复杂；改为 `Primitive` 参数。详见 [ADR](../decisions/ADR-2026-10-23-instancing-per-primitive.md)。 |
+| D2 | 实例矩阵作为 `Geometry` 保留通道 | 一个几何只能一套实例；可见数量要改切片；没有引擎把实例挂在网格资产上。详见 [ADR](../decisions/ADR-2026-10-23-instancing-per-primitive.md)。 |
+| D3 | 多父 / DAG | 渲染路径可 DAG，但公开世界查询与拾取身份不成立；复制节点即可。详见 [ADR](../decisions/ADR-2026-10-23-no-multi-parent-dag.md)。 |
 | D4 | 逐实例材质 / 颜色 / 层 / 排序 / 剔除 | 一条 draw 的实例共享这些；等真实需求再加。 |
 | D5 | GPU indirect / 自动合批 | 没有消费者；实例化只解决“同一几何 N 份”。 |
 | D6 | `Topology` strip / fan | 需要单独扩展枚举与拾取/管线映射；不在本设计里伪支持。 |
@@ -150,4 +150,4 @@
 
 ## 7. 相关文档
 
-`graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `graphics-followups.md`
+`graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `../backlog/graphics.md`

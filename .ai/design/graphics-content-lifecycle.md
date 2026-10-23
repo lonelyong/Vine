@@ -4,7 +4,7 @@
 >
 > **权威来源**：`RenderDevice.hpp` / `RenderEngine.hpp` / `MaterialImages.hpp` /
 > `core/MaterialArena.hpp` / `core/Streams.hpp` / `core/BlockStorage.hpp`。
-> **待办**：`graphics-followups.md`。
+> **待办**：`../backlog/graphics.md`。
 
 ## 1. 设计要点
 
@@ -81,7 +81,7 @@
 
 | # | 否决 | 理由 |
 |---|---|---|
-| D1 | LRU / 容量上限 / 压力淘汰 | 300 张同序循环下 LRU 与 FIFO 一样差；上限是替宿主做决定。 |
+| D1 | LRU / 容量上限 / 压力淘汰 | 300 张同序循环下 LRU 与 FIFO 一样差；上限是替宿主做决定。详见 [ADR](../decisions/ADR-2026-10-22-cache-unbounded-explicit-release.md)。 |
 | D2 | 材质 FIFO 淘汰 | 淘汰活材质会画错；拒绝只兜底。 |
 | D3 | 释放时 idle 设备 | 破坏路径才需要；释放走 token + park。 |
 | D4 | 全局预算 / trim / 收缩 | 没有消费者；宿主显式管理。 |
@@ -98,4 +98,4 @@
 
 ## 7. 相关文档
 
-`graphics-architecture.md` · `graphics-geometry.md` · `vsg-backend.md` · `graphics-followups.md`
+`graphics-architecture.md` · `graphics-geometry.md` · `vsg-backend.md` · `../backlog/graphics.md`

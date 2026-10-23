@@ -323,7 +323,7 @@ X 服务端读回（**`scripts/xwinmap.py`**，已入库；它读 `XQueryTree` +
 - **`init()` 只建不 show → 构造函数只建不 show**（**2026-09-26 再次往前一步**）：好处是建应用（包括测试）不再有屏幕副作用；
   代价是"从不跑循环的宿主"窗口不会自己上屏，它走 `finishStartup()`（幂等，且它本来就负责"确保主窗可见"）——测试应用就是这条路。
   `init()` 本身已删（身份 + Qt 应用对象 + UserIO + 配置文件全进构造函数，两个 builder 各剩一句 `make_unique`），
-  见 `appfw-startup-next.md` 的待办 1。
+  见 `../backlog/appfw-startup.md` 的待办 1。
 - **ABI**：两个新虚函数声明**在已有虚函数之后**（vtable 槽位只追加），所以那一轮 `VN_APPFW_PLUGIN_ABI_VERSION` 不用动；
   随后删掉中间的 `init()` 时是真 ABI 变更 ⇒ **3u → 4u**（`beginStartup()` 仍在最后，之后的追加不必再动）。
 

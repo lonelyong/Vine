@@ -15,7 +15,7 @@
  *   The header used to sit in the SDK's backend half (which is installed with the SDK), which claimed every
  *   backend could use it - no non-Vulkan backend can. It stays in `vn::graphics::backend` because this plugin
  *   aliases that namespace as `core`, and the policy is still "the backend layer's answer about a device"; what
- *   it no longer is, is part of what the SDK hands to hosts (see `.ai/design/graphics-followups.md` R1).
+ *   it no longer is, is part of what the SDK hands to hosts (see `.ai/backlog/graphics.md` R1).
  * - WHY THE POLICY IS SEPARATE FROM THE PROBE. "Which device will we run on" has two halves with very
  *   different testability: what the backend REQUIRES (a version floor and a handful of features, all of
  *   them decisions this backend made) and what a machine OFFERS (a driver's answer, only obtainable on a

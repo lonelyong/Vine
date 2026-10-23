@@ -77,7 +77,7 @@
 | `Task<T&>` | cppcoro 支持 | **不支持**，`StorableValue` 在模板边界拒绕（报错清晰，不再落进 `std::optional`） | 结果用 `std::optional` 缓存；支持引用要改 Task/SharedTask/When 三处，收益低。需要引用时返回指针/`std::reference_wrapper` |
 | `Awaitable` 概念 | cppcoro `awaitable_traits` 用 `get_awaiter` 展开成员/非成员 `operator co_await` | 同（`detail::getAwaiter`），并额外校验 `await_ready` 可按语言规则上下文转 bool、`await_suspend` 只能是 `void`/`bool`/`coroutine_handle<>` **值**（引用形式的 handle 被 clang 判错、g++ 目前放过，本概念按标准拒绝） | 只有"像 co_await 一样查找"的概念才能接受本模块自己的 awaitable（Task/SharedTask/AsyncEvent 都靠 `operator co_await`）；返回型别也要查，否则概念会放过编译器会拒绝的写法 |
 | `Generator` 的 ranges 契约 | `std::generator`（C++23）是 input_range | 已补齐 `iterator_concept` + 后置 `++` + `operator->`，实测 `std::ranges::input_range` = true | C++20 ranges 只要求后置 `++`，缺它 `weakly_incrementable` 即失败 |
-| 取消模型 | P2300：环境 stop token（`get_stop_token`），取消必须**请求**后由操作上报 `set_stopped`；C#：`Task.WhenAll` 自己从不取消，令牌交给任务，然后等全部结束 | 显式传 `CancellationToken`（同 cppcoro），触发时按 **`CancelPolicy`** 收口：`StopAndWait`（`whenAll` 的默认：先 `request_stop()` 再等最后一个孩子收尾）或 `Destroy`（`whenAny`/`withTimeout`/`Scope::join` 的默认：直接销毁） | 两个行业阵营都提供、默认值按各自的适用面选：`async-next.md` §6（2026-09-27 落地，含三枚钉子 + 8 处变异） |
+| 取消模型 | P2300：环境 stop token（`get_stop_token`），取消必须**请求**后由操作上报 `set_stopped`；C#：`Task.WhenAll` 自己从不取消，令牌交给任务，然后等全部结束 | 显式传 `CancellationToken`（同 cppcoro），触发时按 **`CancelPolicy`** 收口：`StopAndWait`（`whenAll` 的默认：先 `request_stop()` 再等最后一个孩子收尾）或 `Destroy`（`whenAny`/`withTimeout`/`Scope::join` 的默认：直接销毁） | 两个行业阵营都提供、默认值按各自的适用面选：`../backlog/async.md` §6（2026-09-27 落地，含三枚钉子 + 8 处变异） |
 | 无等待者时的 notify | `std::condition_variable`/folly `Baton` 记为丢失 | `AsyncConditionVariable` 用**粘性标记**保留，下一个 waiter 消费 | "释放 AsyncMutex + 登记等待"无法原子，丢掉会死锁；谓词循环写法下多余唤醒无害。这是**刻意偏离**，不要"修"回去 |
 | 调度器 | `schedule()`/`resumeOn` 语义一致 | 同 | — |
 | `whenAll`/`whenAny` 变参 | P2300 `when_all` 接受 void 子操作（结果里不含 void） | 支持**全 void** 的变参重载（返回 `Task<void>`），混合 void/非 void 仍不支持（用 `vector<AnyTask>` + `discard()`） | 一致地支持混合 void 需要去掉结果 tuple 里的 void 位，属 API 形状改动，未做 |
@@ -105,7 +105,7 @@
    `TaskTest.WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken` 就是钉这条；要"绝不挂住"就显式选 `Destroy`。
    `Destroy` **不**做"先请求再销毁"：请求只会在几微秒后销毁帧时触发一批自己的 `stop_callback`，没有收益、只有风险。
    注入的令牌只在被组合的那一层可见（包装层如 `discard()` 是独立的协程，不转发就切断通道——与 C# 显式传令牌一致）。
-   细节、未采纳项与变异表见 `async-next.md` §6。
+   细节、未采纳项与变异表见 `../backlog/async.md` §6。
 3. **`TimerService` 故意不析构**（进程级单例 + worker 线程），LSan 不报是因为线程让它可达；不要"顺手"加析构。
 4. **`Scope` 析构不等待/不取消孩子**：孩子自持（`DetachedTask` + 共享状态），必须在 Scope 离开作用域前
    `co_await join()`，否则 `~ScopeState` 的 `AsyncEvent` 断言会炸。
@@ -146,9 +146,9 @@
 
 
 
-## 8. P2：下一步的结论（详细设计见 `.ai/design/async-next.md`）
+## 8. P2：下一步的结论（详细设计见 `.ai/backlog/async.md`）
 
-三项的**形状、依据（含全仓 grep 实测）、验证配方与 go/no-go** 都在 `.ai/design/async-next.md`；
+三项的**形状、依据（含全仓 grep 实测）、验证配方与 go/no-go** 都在 `.ai/backlog/async.md`；
 这里只留结论，避免两处说法漂移：
 
 1. **取消的环境（stop token 随任务走）⇒ 建议排期**：appfw 早已把令牌装进上下文对象
@@ -158,7 +158,7 @@
    （stdexec 的 `async_scope`/`counting_scope` 同理）⇒ 析构只做 `request_stop()` + 断言，另加 `detach()`，
    不做"析构里等待"（析构不是协程，等待要么阻塞线程、要么泵循环，那是宿主的策略）。
 3. **帧分配 ⇒ 不做，挂账**：协程体只出现在 appfw/app_shell/demo_plugin/test_plugin/vsg 插件各若干处，`src/viz`
-   渲染路径 **0 个** ⇒ 帧分配不在任何热路径上；判据写在 `async-next.md` §3。
+   渲染路径 **0 个** ⇒ 帧分配不在任何热路径上；判据写在 `../backlog/async.md` §3。
 
 另记一条本轮量到的（不是风险，是"别写没用的守卫"）：`WhenAnyChild::promise_type::return_value()` 里的
 `try/catch` 变异掉**不红**——语言本身会把 `return_value` 抛出的异常交给 `unhandled_exception`（今天这条

@@ -89,7 +89,7 @@
 >
 > `DeviceRequirements` 相反：**从后端半移入本插件**（`include/vine/vsg/internal/` + `src/internal/`，2026-10-21）。
 > 它命名的是 Vulkan 1.4 地板与 `VK_EXT_*` 要求，只有 Vulkan 后端能用；留在"随 SDK 安装"的那一半里
-> 会把"每个后端都能用"写成假话（见 `.ai/design/graphics-followups.md` R1）。
+> 会把"每个后端都能用"写成假话（见 `.ai/backlog/graphics.md` R1）。
 
 **`shell/`（插件外壳）**：`GfxBackendVsgPlugin`（`VN_DECLARE_PLUGIN`）与 `VsgRenderBackendFactory`（按名注册/创建），头在 `include/vine/vsg/shell/`、实现在 `src/shell/`。
 

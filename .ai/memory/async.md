@@ -11,7 +11,7 @@
 > `AsyncDefectRegressionTest.YieldLoopStackIsConstant`（`depth 319936` vs 期望 `< 65536`；单跑
 > 同样红，不是 flake）。注释写“buggy build ~1.7 MB”，实际 312 KB 仍超阈值 ⇒ 疑似编译器/构建类型
 > 相关的帧尺寸变化。与 graphics 无关，但会让全量 `ctest` 长期停在 23/24 —— 下次碰 async 时先看这里。
-> 下一步（P2）设计与 go/no-go：`.ai/design/async-next.md`。
+> 下一步（P2）设计与 go/no-go：`.ai/backlog/async.md`。
 > 本文件只放"干活时需要立刻想起的东西"。
 
 ## 结构

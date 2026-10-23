@@ -4,7 +4,7 @@
 > 颜色分线性光与 sRGB 编码；着色走 `ShaderProgram` + `ShaderAbi`；阴影由灯声明。
 >
 > **权威来源**：`RenderTarget.hpp` / `ImageSource.hpp` / `Sampler.hpp` / `ShaderProgram.hpp` /
-> `ShaderAbi.hpp` / `Light.hpp`。**待办**：`graphics-followups.md`。
+> `ShaderAbi.hpp` / `Light.hpp`。**待办**：`../backlog/graphics.md`。
 
 ## 1. 设计要点
 
@@ -118,8 +118,8 @@
 |---|---|---|
 | D1 | 硬件 compare sampler | 这一版 pass 深度路径读精确深度；compare sampler 需要独立 ABI。 |
 | D2 | 数组 / 3D 纹理 | `Texture::Kind` 只有 D2 / Cube；分层目标是触发条件型设计。 |
-| D3 | 多重采样目标借入深度 | 借到的是单采样解析图，而一个帧缓冲附件共用一个样本数。 |
-| D4 | 目标格式的 sRGB 变体 | 颜色空间已经在类型层解决；不再给目标加第二套语义。 |
+| D3 | 多重采样目标借入深度 | 借到的是单采样解析图，而一个帧缓冲附件共用一个样本数。详见 [ADR](../decisions/ADR-2026-10-22-msaa-target-property.md)。 |
+| D4 | 目标格式的 sRGB 变体 | 颜色空间已经在类型层解决；不再给目标加第二套语义。详见 [ADR](../decisions/ADR-2026-10-21-colour-space-in-types.md)。 |
 | D5 | 引擎自动阴影子系统 | 阴影是普通 pass；灯声明，链建 pass。 |
 | D6 | 点/聚光阴影 / CSM / PCSS | 没有消费者；等真实需求。 |
 
@@ -136,4 +136,4 @@
 ## 7. 相关文档
 
 `graphics-architecture.md` · `graphics-scene.md` · `graphics-geometry.md` · `vsg-backend.md` ·
-`graphics-followups.md`
+`../backlog/graphics.md`

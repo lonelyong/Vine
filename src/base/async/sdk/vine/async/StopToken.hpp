@@ -46,7 +46,7 @@ inline detail::StopTokenRequest currentStopToken() noexcept
  * Nothing is inherited automatically: a task created inside another task starts with an empty
  * environment unless its creator hands one over. That is deliberate for this step - no existing
  * call site changes behaviour - and it is the point to revisit if compositions should propagate
- * their token into children by default (see .ai/design/async-next.md).
+ * their token into children by default (see .ai/backlog/async.md).
  *
  * @tparam T Result type of the task.
  * @param token Environment the body should run in; a default token means "no environment".

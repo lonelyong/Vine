@@ -4,7 +4,7 @@
 > 拾取是机制，选择是业务。
 >
 > **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `Scene.hpp` / `Camera.hpp` /
-> `RayIntersection.hpp`。**待办**：`graphics-followups.md`。
+> `RayIntersection.hpp`。**待办**：`../backlog/graphics.md`。
 
 ## 1. 设计要点
 
@@ -131,7 +131,7 @@
 
 | # | 否决 | 理由 |
 |---|---|---|
-| D1 | 多父 / DAG 场景图 | `worldMatrix()` / `boundingBox()` / 拾取身份失去唯一答案；重复子树复制节点即可。 |
+| D1 | 多父 / DAG 场景图 | `worldMatrix()` / `boundingBox()` / 拾取身份失去唯一答案；重复子树复制节点即可。详见 [ADR](../decisions/ADR-2026-10-23-no-multi-parent-dag.md)。 |
 | D2 | 选择态（选中集 / 描边 / 框选 / 多选）进框架 | 拾取是机制、选择是业务；行业里 picker 也是库。 |
 | D3 | 在框架里内置 LOD / 空间划分 | 等“每帧收集本身成为瓶颈”的真实负载；见待办。 |
 | D4 | 层掩码在容器上剪枝 | 最近声明获胜会让后代重声明变得不可达。 |
@@ -148,4 +148,4 @@
 
 ## 7. 相关文档
 
-`graphics-architecture.md` · `graphics-geometry.md` · `graphics-rendering.md` · `graphics-followups.md`
+`graphics-architecture.md` · `graphics-geometry.md` · `graphics-rendering.md` · `../backlog/graphics.md`

@@ -117,7 +117,7 @@ co_await sleepFor(std::chrono::seconds(2), mine);
 ### 2.1 现状与证据
 
 - `Scope` 的契约：孩子**自持**（`DetachedTask` + 共享状态），`~Scope` 不等待也不取消；孩子可以活得比
-  作用域长，只有一句散文警告（`async-design.md` §4.4）。
+  作用域长，只有一句散文警告（`../design/async-design.md` §4.4）。
 - **全仓没有生产使用者**：`grep -rn 'async::Scope' src/` 只命中无关的 `PluginScope`/`ChainScope`/`ReadScope`。
   也就是说今天的"不结构化"还没有伤到任何人——但 API 一旦被用就会踩。
 - 标准形状（stdexec 的 `async_scope`/`counting_scope`）：**析构断言、同步点显式 `co_await`**，不是

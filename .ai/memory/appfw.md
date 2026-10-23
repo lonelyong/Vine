@@ -484,18 +484,18 @@
   启动框/状态栏只是呈现者 ⇒ **无头宿主也报告自己的启动**（控制台 `[进度] …`）。构造就建是不行的：
   不跑启动的进程会多一个活的前台宿主 ⇒ `isBusy()` 恒真 ⇒ 顶层命令全被拒。
   阶段语义是**阶段内比例**（可计数 `stage(name,total)`+`setDone`；不确定 `stage(name)`），不是全局 ETA。
-- 📋 **下一步待办（2026-09-26 用户定的方向，独立文档 `.ai/design/appfw-startup-next.md`）**：
+- 📋 **下一步待办（2026-09-26 用户定的方向，独立文档 `.ai/backlog/appfw-startup.md`）**：
   ✅**①已落地**：`init()` 折进构造函数（`Application(const AppConfig&, argc, argv)`：身份 → managers → Qt 应用对象
   → `initialize()`（UserIO + 配置文件）；GUI 多一步建窗口）⇒ `init()`/`setSplashConfig()` 删、ABI **3u→4u**、
   两个 builder 各剩一句 `make_unique`；**Qt 类型不进 core SDK**（Qt 对象走私有 `ApplicationData::app`，
   `unique_ptr` 持有且声明在最前 ⇒ 最后析构，一个进程因此能接着建下一个宿主）；
   **宿主不能有静态存储期**——静态析构里销毁 Qt 应用对象会调到已不再映射的地址（退出时段错误，用例全绿也一样），
-  套件要显式 `TearDownTestSuite()` 释放（见 `.ai/design/appfw-startup-next.md`）；
+  套件要显式 `TearDownTestSuite()` 释放（见 `.ai/backlog/appfw-startup.md`）；
   ✅**②机制已落地**：`run()` 先 `exec()`，再推 posted 启动步（`startupSequence()`：建上报口 + `stage("正在启动")`
   → `startupStart()` → `startup()` → `startupEnd()`）；插件加载也成了框架内置动作（`AppConfig::load_plugins`）。
   ✅**③已落地（X11 已验）**：启动期只有启动框在屏，主窗在 `startupEnd()` 第一次 show；
   ✅**④X11 半边已验**：句柄来自容器里独立 `QWindow` 的 `winId()`，顶层不必 show（Windows 待验）。
-  细节与实测见 `.ai/design/appfw-startup-next.md`。
+  细节与实测见 `.ai/backlog/appfw-startup.md`。
 - ⚠️ ~~窗口一定在宿主的启动工作之前上屏~~（2026-09-26 **已推翻**，X11 实测）：启动期**只有启动框在屏**，
   主窗由 `finishStartup()` 第一次 `show()`。旧结论（“嵌入式渲染表面要用顶层窗口的原生句柄 ⇒ 主窗必须先 show”）
   错在把句柄的归属搞错了：`SurfaceWindow::nativeHandle()` 用的是容器里那个独立 `QWindow` 自己的 `winId()`，

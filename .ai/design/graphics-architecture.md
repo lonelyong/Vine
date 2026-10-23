@@ -5,7 +5,7 @@
 >
 > **权威来源**：`RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsRoute.hpp` / `SceneView.hpp` / `RenderSurface.hpp` / `RenderBackend.hpp`。
-> **待办**：`graphics-followups.md`。
+> **待办**：`../backlog/graphics.md`。
 
 ## 1. 设计要点
 
@@ -135,7 +135,7 @@
 | D2 | 一帧跨多窗口 | 只有“一场画面铺满两块屏”才需要；当前一窗口一幅画。 |
 | D3 | `PassPipeline` / `ScenePicture` 命名 | 重开 K1 的 PSO 歧义 / 读成“场景图片”；现行名 `PassChain`。 |
 | D4 | 引擎同时做 pass 表、产出表、诊断与 UI 门面 | 一个类型多职；拆成三个窄门面。 |
-| D5 | 后端自己再排一次 pass | 两套排序、两套帧词汇；调度上移引擎。 |
+| D5 | 后端自己再排一次 pass | 两套排序、两套帧词汇；调度上移引擎。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |
 
 ## 6. 判据
 
@@ -148,4 +148,4 @@
 ## 7. 相关文档
 
 `graphics-scene.md` · `graphics-geometry.md` · `graphics-rendering.md` ·
-`graphics-content-lifecycle.md` · `vsg-backend.md` · `graphics-followups.md`
+`graphics-content-lifecycle.md` · `vsg-backend.md` · `../backlog/graphics.md`

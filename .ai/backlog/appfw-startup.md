@@ -1,7 +1,7 @@
 # 启动流程下一步：启动事件 / 主窗后显示 / 渲染先就绪（待办，2026-09-26）
 
 > **命名演变（同日稍后）**：本文里的 `beginStartup` / `finishStartup` / `runStartup(work)` 即后来的
-> `startupStart(next)` / `startupEnd()` / `run(work)`；待办 1–4 已落地，三者实际形状见 `appfw-startup-phases.md`
+> `startupStart(next)` / `startupEnd()` / `run(work)`；待办 1–4 已落地，三者实际形状见 `../design/appfw-startup-phases.md`
 > （`run(work)` 后来删了：宿主的重活由它自己重写那一拍、自己丢到线程池上）。
 
 > 用户 2026-09-26 定的方向（原话）："`Application` 与 `GuiApplication` 要统一初始化，`init()` 是否需要；
@@ -9,7 +9,7 @@
 > 主窗口在初始化完成后再 `show()`，渲染的话也要在窗口显示前把资源初始化好。"
 >
 > 上一轮（`0ad0a10` + `e39373d`）落地的是"**创建与上屏分家**（`init()` 只建不 show）+ 框架排顺序 + 宿主只交 work"，
-> 见 `appfw-startup-splash.md` 的"统一启动流程"一节。
+> 见 `../design/appfw-startup-splash.md` 的"统一启动流程"一节。
 > 本轮落地了待办 1（`init()` 折进构造，见下），剩下三条是在它之上再往前一步。
 
 ## 目标形状（①②③④一起满足时的样子）
@@ -80,7 +80,7 @@ run():  exec()                           先把循环跑起来（此前屏幕上
 
 ## 待办 2：启动阶段由“启动事件 + 虚函数”推进 —— **已落地（2026-09-26）**
 
-形状（见 `appfw-startup-splash.md` 的“生命周期”）：`run()` 先 `exec()`，再用 `Qt::QueuedConnection` 推一个
+形状（见 `../design/appfw-startup-splash.md` 的“生命周期”）：`run()` 先 `exec()`，再用 `Qt::QueuedConnection` 推一个
 启动步（就是 `run()` 里那两行：建上报口 + `stage("正在启动")`，然后把画面交给 `beginStartup(work)` 的回调），
 所以无头与有窗口的启动阶段都在循环里跑（以前无头的启动工作在 `exec()` 之前）。插件加载也进来了：
 `AppConfig::load_plugins`（默认开）⇒ 宿主的 `main` 不再写 `loadAll()`，而且它跑在宿主的 work 之前。
@@ -106,7 +106,7 @@ base `Application` 在 core SDK 里，命名不了 `gui::Window`（`Application.
   将来若真要 OO 化（`class VineApp : public GuiApplication { void onStartup() override; }`），让 `beginStartup()` 的默认实现
   变成"调用登记的回调"即可，不必现在做。
 - 位置提醒（2026-09-26 已变）：**启动上报口现在是 `Application::run()` 建的**（`stage("正在启动")`，见
-  `appfw-startup-splash.md` 的"上报口属于启动阶段"），`GuiApplication` 构造里那句"建上报口 + 报'正在初始化界面'"
+  `../design/appfw-startup-splash.md` 的"上报口属于启动阶段"），`GuiApplication` 构造里那句"建上报口 + 报'正在初始化界面'"
   已经删掉。所以 `beginStartup()` 落地时，"建上报口 + 报框架的第一阶段"这两行就是从 `run()` 搬进 `beginStartup()`
   （GUI 同时在那里显示启动框），不需要再动 `GuiApplication` 的窗口创建。
 
@@ -119,7 +119,7 @@ base `Application` 在 core SDK 里，命名不了 `gui::Window`（`Application.
 - 前提是**待办 4 的 X11 半边成立了**（见下）：“未 show 的内嵌表面窗口有可用句柄”已在 WSLg/X11 实测。
 - 硬证据（X 服务端读回，`map_state`）：启动期只有启动框 `IsViewable`、主窗 `800x600` 仍是 **IsUnmapped**；
   `finishStartup()` 后启动框消失、主窗（框 `864x664`）`IsViewable`。日志侧：`surface Pending -> Attached`
-  发生在主窗未 show 时，`Attached -> Presenting` 紧随主窗上屏之后。细节与完整日志见 `appfw-startup-splash.md`
+  发生在主窗未 show 时，`Attached -> Presenting` 紧随主窗上屏之后。细节与完整日志见 `../design/appfw-startup-splash.md`
   的“启动期只有启动框”一节。
 - ⚠️ **Windows 未验**（待办 4 的另一半）：若那边 `VsgHostWindow` 拿不到有效 HWND ⇒ `GetClientRect(..) failed` +
   `surface -> Failed`，就得回退今天的形状（主窗早 show、门等两窗）并记“Windows 上未采纳”。
