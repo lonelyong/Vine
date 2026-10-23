@@ -4,6 +4,9 @@
 - **模块**: gfx_backend_vsg + appfw/gui
 - **状态**: 已修复
 
+> **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
+> 现行结构见 `.ai/design/vsg-backend.md`。
+
 ## 现象
 
 最大化（或把窗口拉大）后，渲染区**新露出来的那部分先是黑的**，约 250 ms 后才被画面填满。
@@ -56,7 +59,7 @@
   （`[host-surface] move:` 行 + 0 VUID + `[selftest] done`）。
 - 实机（Windows 11 + RTX 4060）：`ShowWindow(SW_MAXIMIZE)` 后重建序列正常（gbuffer + composite + 6 个
   全屏程序节点），0 VUID、无崩溃；重建帧覆盖整个新窗口（因为 `renderArea` 已当场写对）。
-- **仍剩（登记在 `.ai/memory/graphics-perf-backlog.md` 的 H9）**：重建帧本身 ~240 ms（6 个全屏程序节点
+- **当时仍剩（H9，后来已修）**：重建帧本身 ~240 ms（6 个全屏程序节点
   ~180 ms + 2 个 target ~40 ms；其中 **glslang 只占 ~50 ms**，其余是 vsg 每节点建管线/描述符）。这段期间
   屏上是旧画面（不变形），窗口新长出来的部分到该帧落地时才填上。要再缩短得改槽的重建策略（原地
   re-point 描述符 + 动态 viewport 状态），因为 resize 后**源的图像视图换了**、节点必须重建。
@@ -67,5 +70,5 @@
   > 就是早退，管线不重建。实测：最大化 752x480 → 2352x888 **225.5 → 36.4–51.4 ms**（`targets 0`、
   > `target resizes 2`、`rebind compiles 1`，其中 22–36 ms 是**新面板首次可见**建的一个槽，与 resize 无关）、
   > 还原 **→ 2.2 ms**、`device_waits` 不涨。像素侧由自检新相位 `runTargetResizePhase` 覆盖（拷贝程序铺满新尺寸、
-  > 中心/边角都对）；设计与实测见 `.ai/design/vsg-backend.md`，`H9` 行的收尾见
-  > `.ai/memory/graphics-perf-backlog.md`。
+  > 中心/边角都对）；设计与实测见 `.ai/design/vsg-backend.md`。旧的性能待办清单已删除，
+  > 现行开放项看 `.ai/backlog/graphics.md`。

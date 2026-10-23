@@ -1,4 +1,10 @@
-# appfw 配置子系统设计（2026-09-11 审查轮）
+# appfw 配置子系统设计
+
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：`ConfigManager` / `ConfigRegistry` / `gui::ConfigWindow` 的三层分工与契约。
+> **权威来源**：`ConfigManager.hpp`、`ConfigRegistry.hpp`、`gui/ConfigWindow.hpp`、`tests/test_gui`。
+> **待办**：无（开放项见 `../backlog/`）
 
 代码：`src/fw/appfw/sdk/vine/appfw/ConfigManager.hpp`、`ConfigRegistry.hpp`、`ConfigItem.hpp`、
 `ConfigCategory.hpp`、`ConfigGroup.hpp`、`ConfigStandard.hpp` 与 `src/fw/appfw/src/` 下的同名 `.cpp`，
@@ -6,7 +12,7 @@
 测试：`tests/test_gui/test_gui.cpp`（`ConfigManager_*` / `ConfigItem_*` / `ConfigRegistry_*` /
 `ConfigWindowTest.*`）。
 
-## 三层分工
+## 1. 概要设计：三层分工
 
 | 层 | 类型 | 存什么 | 谁写 |
 | --- | --- | --- | --- |
@@ -17,9 +23,9 @@
 `Application` 各持有一个 `ConfigManager` 与 `ConfigRegistry`；`Plugin::configItems()` /
 `PluginLoadContext::registeredConfigs()` 是插件查询自己那部分描述树的入口。
 
-## 契约（本轮固化）
+## 2. 设计要点与契约
 
-### 值层：`ConfigManager`
+### 2.1 值层：`ConfigManager`
 
 - **存储类型**就是 API 能表达的类型：`String`/`bool`/`int`/`double` 及 `vector` 版本。
   int 就是 `int`（早先内部存 `int64_t`，但公开访问器只有 `int`，那段容量只能由 JSON 进入，
@@ -39,7 +45,7 @@
   不能把一份配置静默吃掉）。
 - **JSON 表示**：整数写成 JSON 整数，API 能表达的值都无损往返。
 
-### 描述层：`ConfigRegistry`
+### 2.2 描述层：`ConfigRegistry`
 
 - **key 全树唯一**：`ConfigGroup::addItem` 通过 `ConfigRegistry::item()` 查重，不是组内唯一。
 - **owner 是缓存**：`addItem` 记录；`owner` 为空时清除（重新注册不能把旧 owner 留给别人）；
@@ -49,7 +55,7 @@
 - **生命周期 / 线程**：查询返回指向树内节点的裸指针，节点被删即失效；不做同步，
   注册在启动与插件装载期完成，之后只读。
 
-### 视图层：`gui::ConfigWindow`
+### 2.3 视图层：`gui::ConfigWindow`
 
 - **构造时对描述树取快照**：构造之后注册的项不会出现在已有窗口里（要重建窗口），
   但**编辑器与 key 成对保存**、`refresh()`/`reset()` 按 key 查描述树，
@@ -61,7 +67,7 @@
 - 编辑立即写回 `ConfigManager`（`changed` 由值层发）；`refresh()` 期间屏蔽编辑器信号，
   不会把“刷新”写成一次修改。
 
-## 本轮审查（15 点：缺陷 → 修复）
+## 3. 关键行为与证据
 
 | 编号 | 缺陷 | 证据 | 修复 |
 | --- | --- | --- | --- |
@@ -85,7 +91,7 @@
 （无候选时退回发现顺序并 `break`）。本轮补 `PluginLifecycleTest.UnloadOrderTerminatesOnACycle`
 把它固化下来。
 
-## 不变量
+## 4. 约束与不变量
 
 1. 事件触发时值已经落定（锁外触发），处理函数回调管理器不会死锁。
 2. `changed` 只在值变化时发生；空 key 只表示“整体变化”。
@@ -94,7 +100,7 @@
 5. 编辑器与 key 一一对应，只显示“该 key 的存储值”或“该 item 的默认值”。
 6. `itemsForPlugin(p)` 返回的每一项都真实存在于树上且 owner 是 `p`。
 
-## 测试映射（tests/test_gui/test_gui.cpp）
+## 5. 测试与验收
 
 | 用例 | 覆盖 |
 | --- | --- |
@@ -112,7 +118,7 @@
 | `ConfigWindowTest.UnboundedNumbersAreNotClamped` | C15 |
 | `PluginLifecycleTest.UnloadOrderTerminatesOnACycle` | 插件侧收尾：成环输入必须终止 |
 
-## 已评估但**未采纳**（留档，避免重复建议）
+## 6. 已否决选项
 
 - **不给 `ConfigManager` 加“存储类型查询”API**（`type(key)`）：Choice 编辑器在“存储值类型与选项
   类型不一致”时，仍按各选项自身的类型读取后近似匹配。为一个 GUI 细节扩公共 API 不划算；

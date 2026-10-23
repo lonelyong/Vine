@@ -1,13 +1,19 @@
-# appfw EventBus 设计（2026-09-10 重写）
+# appfw EventBus 设计
+
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：事件总线、订阅/取消、投递与关停；不覆盖 `Signal` 本体的实现细节。
+> **权威来源**：`EventBus.hpp`、`tests/test_gui/EventBusTest.cpp`。
+> **待办**：无（开放项见 `../backlog/`）
 
 代码：`src/fw/appfw/sdk/vine/appfw/EventBus.hpp`、`src/fw/appfw/src/EventBus.cpp`、
 `src/fw/appfw/sdk/vine/appfw/MainThreadDispatcher.hpp`、`src/fw/appfw/src/MainThreadDispatcher.cpp`；
 依赖 `Type::interfaces()`（`src/base/core/sdk/vine/Type.hpp`）。
-测试：`tests/test_gui/EventBusTest.cpp`（42 例）。
+测试：`tests/test_gui/EventBusTest.cpp`。
 
-第八轮审查（2026-09-11）结论见文末“第八轮审查”。
+历史审查结论见 git；现行契约见 §3–§5。
 
-## 目标与不变量
+## 1. 概要设计与目标
 
 1. **出圈者不指向 bus**：任何离开 bus 的对象（`Subscription` 句柄、事件循环里的任务）都不得持有
    指向 `EventBus`/`Impl`/`EventChannel` 的指针或强引用。bus 先死只让它们变哑，不能悬垂。
@@ -20,7 +26,7 @@
    里的日志调用不再包 try/catch。
 5. **锁内不跑用户代码**：handler 调用、handler 闭包析构、事件析构都在所有锁之外执行。
 
-## 结构
+## 2. 设计要点：结构
 
 ```
 EventBus ── Impl ─┬─ map<TypeId, EventChannel>   (channels, std::shared_mutex)
@@ -40,7 +46,7 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
 - `MainThreadDispatcher::isMainThread()` = "创建 QCoreApplication 的线程"（不再在无 app 时返回 true）；
   `hasEventLoop()` = QCoreApplication 是否存在；`postToMainThread()` 返回 bool，不会在调用线程内联执行。
 
-## 关键机制
+## 3. 功能点与关键机制
 
 - **准入协议（admission）**：`publish()`/`subscribe()` 先通过 `Impl::CallGuard` 进入总线。
   `state` 与 `active_calls` 在同一把 `call_mutex` 下，因此“总线已开始停止”与“有调用者进来了”
@@ -112,7 +118,7 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
   `Application::shutdown()`（由 `Application::run()` 调用）用 `EventBus::gracefulShutdownTimeout()`（200ms）优雅关停，
   `Application::shutdown()` 在其返回 `false` 时记一条警告（与命令链 drain 超时的警告对称）。
 
-## 必须由调用方保证
+## 4. 调用方契约
 
 1. 销毁 `EventBus` 前推荐先停下：`shutdownGracefully()` 返回 `true` 即证明没有线程在内；
    `shutdown()` 只停止接纳、**不等**在飞调用，但 `~EventBus()` 自己会等到在飞调用退出，
@@ -126,7 +132,7 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
 5. 接口订阅依赖事件类在元数据里声明了该接口（`VN_OBJECT_META_IMPL(..., Itf)`）；声明了却不真继承
    会让 `obj_cast/dynamic_cast` 失败（记日志）。
 
-## 测试映射（tests/test_gui/EventBusTest.cpp，42 例）
+## 5. 测试与验收
 
 - **派发/多态（8）**：PublishDeliversToSubscribers、DifferentTypesAreIsolated、PolymorphicDispatch、
   PublishWithNoSubscribersIsNoOp、PublishNullEventIsIgnored、InterfaceSubscriptionReceivesImplementingEvents、
@@ -167,7 +173,7 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
 
 运行：`QT_QPA_PLATFORM=offscreen ./build/bin/test_gui --gtest_filter='EventBusTest.*'`。
 
-## 已评估但**未采纳**的优化（留档，避免重复建议）
+## 6. 已否决选项
 
 - **DeliveryRegistry 换成 `unordered_map` + `extract` 做 O(1) 移除**：未采纳。待处理投递数通常为
   0–2（跑到就注销），`push_back` 已是 O(1)，向量对缓存友好且不额外分配；换成哈希表要在
@@ -180,7 +186,7 @@ Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析�
 - **`thread_local` 深度不覆盖 detached async task**：非问题。深度只记录“调用线程当下嵌套的
   已准入调用”；异步任务之后调 `publish()` 本身就是一次独立的准入调用，不依赖任何逃离线程的深度。
 
-## ASan 门（scripts/asan_check.sh）
+## 7. 验证门禁
 
 UAF 类结论只有插桩构建能确证，所以有一条可复跑的门禁：
 
@@ -196,40 +202,12 @@ VINE_ASAN_FILTER='*' scripts/asan_check.sh     # 整个 test_gui（68 例）
 跑就用 `VINE_ASAN_QPA_PLATFORM=xcb`。脚本会先验证二进制确实链了 ASan runtime
 （否则报错退出，避免“门禁”静默跑未插桩的二进制），失败时保留完整日志并打印报告。
 
-当前结果（2026-09-11，第八轮修复后）：`VINE_ASAN_FILTER='EventBusTest.*'` 下 **42 例全过、
-AddressSanitizer 错误为零**（UAF/越界/释放后使用均无），默认跑法输出 `RESULT: PASS`。
+当前结果：`VINE_ASAN_FILTER='EventBusTest.*'` 下全部用例通过、AddressSanitizer 错误为零
+（UAF/越界/释放后使用均无），默认跑法输出 `RESULT: PASS`。
 加 `VINE_ASAN_LEAKS=1` 时 LeakSanitizer 报 15 处 / 5864 字节，栈**全部**经过
 `GuiTest::SetUp`（`tests/test_gui/test_gui.cpp:108`）→ `createGuiApplication()` →
 `GuiApplication` 构造函数 → `MainWindow`/`SARibbonMainWindow`（第三方），也就是测试夹具与
 QApplication 的既有保留，与 EventBus 无关；这与早先整跑 test_gui 时出现的 `GuiTest::buildDock`
 是同一类问题（测试夹具自己持有对象），只是不同跑法命中的不同用例。
 
-## 第八轮审查（2026-09-11）
 
-标准与 CommandManager 那轮一致：每条缺陷要么可复现、要么可证伪，修复必须带证据。
-
-已修：
-
-| 编号 | 缺陷 | 修复与证据 |
-|------|------|-----------|
-| E1 | `reportHandlerError` 是 `noexcept`，但内部要构造 `EventBusError`（`String tag` 拷贝会分配）并调用用户钩子：分配失败会在**错误路径**上炸成 `std::terminate` | 把“构造上下文 + 填充 tag + 调用钩子”整体放进同一个 `try { ... } catch (...) {}`。观测路径不能反过来成为新的失败源 |
-| E3 | `subscribeErased()` 中 `make_shared<Subscription::Control>` 若抛异常，订阅**已经注册进 channel** 却没有句柄：活跃、永远无法取消、也没人知道 | `state` 按值传给 `make_shared`，`catch (...)` 里先 `state->deactivate()` 再 `throw;`：失败要么完全没订阅，要么订阅已变哑 |
-| E7 | `Impl::shutdown_result` 默认 `true`。`shutdown()`/`~EventBus()`（两者都**不 drain**，直接丢弃排队投递）抢先停掉总线后，后来的 `shutdownGracefully()` 读到默认值 `true`，等于报告“排队的投递都跑过了” | 默认改 `false`，两条非优雅路径显式写 `false`；只有真正等完在飞调用 + 泵完队列的调用才可能写 `true`。复现用例 `GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork`：修前 `Actual: true / Expected: false`，修后通过 |
-| E11 | **停止线程上的重入关停会等自己**：`cancelSubscriptions()` 在锁外析构订阅闭包，闭包析构里再调 `shutdown()`/`shutdownGracefully()` 时 `state == Stopping`，而 `Stopped` 要等外层这次转换——死锁 | 新增 `Impl::stopper`（受 `call_mutex` 保护，只在 `Stopping` 期间有意义）；`state == Stopping && stopper == std::this_thread::get_id()` 时 `shutdown()` 直接返回、`shutdownGracefully()` 返回 `false`（这次关停确实没 drain）。两条入口都验过：闭包析构入口用**常驻**用例 `ReentrantShutdownFromReleasedHandlerDoesNotWaitForItself`（工作线程 + 3s 有界等待，回归时失败而非挂住）：去守卫失败（3068ms 后断言失败）、带守卫 10ms 通过；drain 泵入口（Main handler 在 `shutdownGracefully()` 的泵里再调 `shutdown()`，外层正卡在该线程上）用一次性用例验过：带守卫 2ms 通过、去守卫 `timeout 30` 被 SIGTERM 杀掉（143，连结果都没打印）——即真死锁。该一次性用例因其"回归即挂住"的失败形态未留在套件里 |
-
-文档精度（不改行为）：`EventBusError::subscriber_id` 只在同一事件类型内唯一（`Channel::last_id_`
-每个 channel 一份）；`isShutDown()` 从**开始停止**那刻即为 `true`（不是等停下来）；
-`subscribe()` 的 `std::bad_alloc` 语义、`publish()` 的 null 事件语义写进头文件。
-
-仅记录、本轮**未改**：
-
-| 编号 | 观察 | 为什么不改 |
-|------|------|-----------|
-| E5 | `isShutDown()` 与 `shutdown()`/`shutdownGracefully()` 命名不成体系（`isShutdown()` 更一致） | 公开 API：改名会影响库外调用者。仓内波及 = 头文件 + 9 处测试调用 + 本文档。需要用户决定 |
-| E9 | `shutdownGracefully(0)` 一轮 drain 都不做（deadline 已过，`drainPendingDeliveries()` 在 `pendingCount()==0` 之外直接返回 false） | “0 = 不等待”是自洽语义；改成“至少跑一轮”会让 0 与“立刻取消”的直觉分离，风险大于收益 |
-| E10 | `subscriber_id` 唯一性范围 | 不是缺陷，是文档缺口，已补 |
-
-门禁自身修复：`scripts/asan_check.sh` 推导 C 驱动时只处理了裸名（`g++` → `gcc`），
-遇到缓存里的绝对路径 `/usr/bin/g++` 会原样传给 `CMAKE_C_COMPILER`；CMake ≥ 4
-因此直接配置失败（"The CMAKE_C_COMPILER is set to a C++ compiler"）。现按路径安全的方式
-替换，且在找不到配套 C 驱动时从 `PATH` 取 `gcc`/`cc`/`clang`，不再退化把 C++ 编译器交给 C。

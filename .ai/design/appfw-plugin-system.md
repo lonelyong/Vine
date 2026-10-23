@@ -1,4 +1,10 @@
-# appfw 插件系统设计（2026-09-10 补齐禁用与反初始化）
+# appfw 插件系统设计
+
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：插件发现/加载/卸载、依赖、配置持久化、元数据与 ABI 握手。
+> **权威来源**：`Plugin.hpp`、`PluginManager.hpp`、`tests/test_appfw`。
+> **待办**：无（开放项见 `../backlog/`）
 
 代码：`src/fw/appfw/sdk/vine/appfw/PluginManager.hpp`、`src/fw/appfw/src/PluginManager.cpp`、
 `src/fw/appfw/sdk/vine/appfw/Plugin.hpp`、`src/fw/appfw/src/Application.cpp`。
@@ -6,7 +12,7 @@ UI：`src/fw/appfw/src/gui/PluginManagerDialog.cpp`。
 测试：`tests/test_gui/test_gui.cpp`（`PluginLifecycleTest` 19 例，含目录布局、卸载顺序、插件数据目录、安装注册文件、来源作用域）、
 `tests/test_vsg/GfxBackendVsgPluginTest.cpp`（配置持久化往返 1 例）。
 
-## 本次修改的出发问题
+## 1. 概要设计：问题与目标
 
 1. `Plugin::unload()` 声明存在、两个插件实现了它，但**全仓没有任何调用点**——
    `Plugin.hpp` 的类注释却承诺"unload() on shutdown"。即：关停时的反初始化是
@@ -17,7 +23,7 @@ UI：`src/fw/appfw/src/gui/PluginManagerDialog.cpp`。
    注释里写的"before the subscribers (windows, plugins) start to be torn down"
    只兑现了总线那一半。
 
-## 语义：发现（discovery）与加载（loading）分离
+## 2. 设计要点：发现与加载分离
 
 | 概念 | 行为 |
 | --- | --- |
@@ -31,7 +37,7 @@ UI：`src/fw/appfw/src/gui/PluginManagerDialog.cpp`。
 
 - **禁用要重启生效**：`setPluginEnabled()` 只写偏好，不动运行态。已加载的插件继续
   运行到进程结束；被禁用的插件在下一次 `loadAll()`（即下次启动）才不加载。
-  这避免了"运行时热卸载"带来的一整套问题（见文末"已评估但未采纳"）。
+  这避免了"运行时热卸载"带来的一整套问题（见 §19 已否决选项）。
 - **禁用的插件不是可满足的依赖**：`loadAll()` 做依赖解析时，被禁用的插件不进
   `available` 集合，因此依赖它的插件不会被加载，并且在日志里被区分为
   `disabled dependency`（不是 `missing dependency`）——修复方式不同（去启用 vs 去安装）。
@@ -55,7 +61,7 @@ UI：`src/fw/appfw/src/gui/PluginManagerDialog.cpp`。
 - **跳过不卸载已加载的插件**：`removeFromSkipList()` 后下一次 `loadAll()` 就能加载，
   不需要重启（与禁用相反）。
 
-## 卸载与关闭顺序
+## 3. 卸载与关闭顺序
 
 `Application::shutdown()`（`Application.cpp`，**protected**：只有 `run()` 那条收尾路径调它；
 宿主/命令/插件要停进程用 `exit()`）是关闭序列，顺序有语义。两种"来早了"的用法各留一条
@@ -98,7 +104,7 @@ UI：`src/fw/appfw/src/gui/PluginManagerDialog.cpp`。
 process-lifetime plugin code mapped"），插件里的静态工厂、元对象、vtable 都被宿主
 长期引用。所以"卸载"是**反初始化**，不是"卸载代码"。
 
-## 配置持久化与目录布局
+## 4. 配置持久化与目录布局
 
 目录布局（`Application` 提供，宿主不传路径）：
 
@@ -147,7 +153,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 `createGuiApplication()`（与真实应用同一条路径），因此既不读写开发机上的真实配置，
 又覆盖了 builder 的默认接线；进程从不 `run()`，所以不会有文件被写出去。
 
-## 插件自己的数据目录（每插件一目录）
+## 5. 插件自己的数据目录（每插件一目录）
 
 `PluginLoadContext::ensureDataDirectory()` → `<数据>/plugins/<PluginInfo::name>`，
 `Application::pluginDataDirectory()` 是该根（`<数据>/plugins`）。命名用 `ensure*` 而不是
@@ -169,9 +175,9 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 验证：`PluginLifecycleTest.PluginDataDirectoryIsPerPlugin`（路径组成、首次调用即创建、
 两插件互不覆盖、无 Application/无插件名时返回空路径不崩、用例结束清理）。
 
-## 插件来源与安装注册（2026-09-10 定稿）
+## 6. 插件来源与安装注册
 
-### 三种来源（PluginScope）
+### 6.1 三种来源（PluginScope）
 
 | 来源 | 位置 | 谁能动它 |
 | --- | --- | --- |
@@ -185,7 +191,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 - 优先级 **BuiltIn > User > AllUsers**：`loadAll()` 按这个顺序扫，同一个插件名只发现一次、
   只实例化一次。自带插件永远不会被用户装的同名插件顶替。
 
-### 注册文件（installed.d/<id>.plugin）
+### 6.2 注册文件（installed.d/<id>.plugin）
 
 安装 = **写一个文件**，卸载 = **删那个文件**，因此：
 
@@ -208,7 +214,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
   `AllUsers` 需要系统目录可写，普通用户会失败 ⇒ UI 提示改用"仅当前用户"。
   `uninstallPlugin(id, scope)` 删除对应文件。
 
-### 还没有做的
+### 6.3 还没有做的
 
 - 每插件一个**库子目录**（带私有依赖用）。install RPATH 已经是 `$ORIGIN;$ORIGIN/../lib`，
   届时把 `pluginLibrariesIn()` 扩一层并保留平铺兼容即可。
@@ -216,7 +222,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 - 被 ABI 拒绝的库**不进发现列表**（它连元数据都不能安全读，没有名字可列），只能靠日志定位。
   若以后想让它也出现在插件管理器里，需要一个允许"无名条目"的列表形态。
 
-## 插件元数据与图标（2026-09-10 新增）
+## 7. 插件元数据与图标
 
 `PluginInfo` 在 `uuid/name/display_name/version/description/vendor/dependencies` 之外新增三个可选字段，
 目的是让插件管理器能"交代清楚一个插件是谁写的、去哪找人、长什么样"：
@@ -247,7 +253,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 `(Class, Uuid, Name, DisplayName, Version, Description, Vendor, Email, Repo, Icon, Dependencies)`
 —— **参数个数变了，所有插件必须重编**（和之前加 uuid 一样；旧 `.so` 会让宿主按新布局读旧结构）。
 
-## 插件管理器对话框（2026-09-10 重做布局；同日改为 Tab 页）
+## 8. 插件管理器对话框
 
 左栏：筛选框 → 插件列表（图标 + 显示名 + 版本 + 状态后缀，不可用的行灰显）→ `加载插件…` 与
 `安装插件`（下拉：仅当前用户 / 所有用户）。右栏：占位页或详情页（**放在 QScrollArea 里**，
@@ -280,7 +286,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 - `setFrameShape(QFrame::NoFrame)`：pane 已经画了边框，表格再画一层就成了"双线夹一条缝"。
 - `verticalHeader()->setVisible(false)`：行号列对只读列表是噪音，还自带两条竖线。
 - 全部颜色走 `palette(...)`（QSS 运行时求值），跟随浅/深主题；这点与徽章写死颜色**相反**
-  （徽章那条是特例，见文末）。
+  （徽章那条是特例，见本节末）。
 - 验证手段：临时 test 里 `root->grab().save(png)`（offscreen 平台可离屏渲染），再用
   `System.Drawing` 逐像素扫颜色变化，确认 pane/表头同色、只剩一条边框线、网格与选中高亮都在。
   ⚠️ 扫图**记得 `$bmp.Dispose()`**：GDI+ 会锁住 PNG，导致下一次 `save()` 失败。
@@ -295,7 +301,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 徽章配色写死（浅色主题下的绿/橙/紫/灰）：`palette()` 角色在样式表里不可靠，
 而徽章必须在深色主题下也能读作一个状态。
 
-## 一条硬约束：一个插件库在一个进程里只能被创建一次实例
+## 9. 一条硬约束：一个插件库在一个进程里只能被创建一次实例
 
 `VN_DECLARE_COMMAND` 的注册会写 **vine 类型注册表**（`vn::Type`），它是进程级且**不可撤销**
 的：同一个插件从**两个不同文件**（例如程序目录里的原件和用户装的拷贝）各加载一次，第二次
@@ -308,7 +314,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 - 测试里也不能让同一个插件从两个路径各创建一次（`test_gui` 用一个固定的拷贝目录，
   `test_vsg` 只加载程序目录）。
 
-## 关闭路径为什么必须接线（不是可选项）
+## 10. 关闭路径为什么必须接线（不是可选项）
 
 `ConsoleLogRouter` 的 sink 回调捕获了宿主 `ConsolePanel` 的裸指针，唯一开关是配置
 原子 `alive`；沿用的 sink 对象有意泄漏常驻 logger。`AppShellPlugin::unload()` 做的
@@ -319,7 +325,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 的 widget。接线 `unloadAll()` 后该窗口期被关闭。
 （窗口与 `ApplicationData` 的销毁先后未逐行追证，故保守表述为"存在 UAF 窗口"。）
 
-## 修正的注释与实现不符
+## 11. 修正的注释与实现不符
 
 | 位置 | 原注释 | 实际 |
 | --- | --- | --- |
@@ -327,7 +333,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 | `GfxBackendVsgPlugin.hpp` | "Removes the backend registration on unload" | 实现是空操作：`RenderBackendRegistry` 无注销 API、不持有工厂、库常驻 |
 | `plugin_export.hpp`（更早一轮） | 暗示 `preLoad()` 注册命令 | 实际由 `vinePluginRegisterCommands` 注册（`preLoad()` 基类为空） |
 
-## 命令注册队列属于模块（第八轮修正，2026-09-11）
+## 12. 命令注册队列属于模块
 
 `VN_DECLARE_COMMAND` 在插件库**被 dlopen 时**排队注册器（`inline static AutoRegistrar`），
 `vinePluginRegisterCommands()` 在宿主加载该插件时把队列刷进 `CommandManager`。前提是
@@ -365,7 +371,7 @@ process-lifetime plugin code mapped"），插件里的静态工厂、元对象�
 不用动），但宏体变了 ⇒ **插件必须重编**（与之前加 uuid/icon 字段同一约定；旧 `.so` 会把
 命令注册进它自己那份旧队列，宿主看不见）。
 
-## 第八轮审查（2026-09-11）
+## 13. API 与线程安全
 
 已修：
 
@@ -389,7 +395,7 @@ ASan 门（插件套件）：`VINE_ASAN_FILTER='PluginLifecycleTest.*' scripts/a
 的返回值指向了临时 `vector<PluginEntry>`（已修：先把 `pluginEntries()` 的返回值绑到局部变量）。
 修后 19/19 在 ASan 下干净。
 
-## 命名与简化（2026-09-11）
+## 14. 命名与简化
 
 命名：按仓库约定（Qt 风格访问器、布尔 getter 用 `is`/`has`、内部字段 snake_case）核对一遍，
 改了这几处：
@@ -421,7 +427,7 @@ ASan 门（插件套件）：`VINE_ASAN_FILTER='PluginLifecycleTest.*' scripts/a
 `PluginEntry` 占位去调 `unloadOrder()` 看着略笨，但那是公开可测的 API 形状，不值得为
 省两行而分叉出第二套卸载排序实现。
 
-## 插件 ABI 握手（2026-09-11，修 P5）
+## 15. 插件 ABI 握手
 
 **问题**：宿主按*自己*的 `PluginInfo` 布局去读插件 `.so` 里的静态结构。插件如果是用另一版
 SDK 编的，字段就错位——`String` 在错误的偏移上是一对（长度、指针）垃圾，静态读不出错，
@@ -438,7 +444,7 @@ struct PluginAbi {
     const char*   framework_version; // 编译时的框架版本（VN_APPFW_VERSION），纯诊断
 };
 
-#define VN_APPFW_PLUGIN_ABI_VERSION 7u   // Plugin.hpp，命名空间块之外
+#define VN_APPFW_PLUGIN_ABI_VERSION 8u   // Plugin.hpp，命名空间块之外
 ```
 
 规则（都写在 `Plugin.hpp` 里）：
@@ -446,7 +452,7 @@ struct PluginAbi {
 - `abi_version` **永远第一个成员**，且宿主在它匹配之前不许读别的成员（两条 `static_assert`
   钉住：标准布局 + 偏移 0）；
 - 成员只能**往后加**，不重排不删除，而且不能用布局会变的 SDK 类型（只能整数/`const char*`）；
-- `VN_APPFW_PLUGIN_ABI_VERSION`（现为 `7u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
+- `VN_APPFW_PLUGIN_ABI_VERSION`（现为 `8u`）在任何插件可见面变化时 +1：`PluginAbi`、`PluginInfo`、
   `Plugin`/`PluginLoadContext`、入口签名、命令注册 ABI。
 
 **这个常量为什么定在 `Plugin.hpp`**（而不是别处）：
@@ -498,7 +504,7 @@ struct PluginAbi {
   编译期 `VN_APPFW_VERSION` 相等——证明整条链路（`VN_DECLARE_PLUGIN` → `PluginAbi` →
   `queryLibrary()` → `PluginEntry` → 对话框）没有丢值。
 
-## 依赖不满足时到底会发生什么（2026-09-11 核查并修正）
+## 16. 依赖不满足时到底会发生什么
 
 「某个插件被禁用 / 被宿主跳过 / 根本没装」时，依赖它的插件会不会加载，取决于走哪条路径
 （每条都有用例或探针证据）：
@@ -531,9 +537,7 @@ struct PluginAbi {
 
 为什么**只在这一层**改成剪枝：依赖不可满足是集合的静态属性，可以精确到具体插件及其下游；而**实例化失败或生命周期抛异常仍然回滚整批**（原有语义不变，也仍有用例）——一个跑起来才失败的插件可能已经留下了全局状态，把它当成“可隔离”反而危险。
 
-## 测试映射
-
-## 测试映射
+## 17. 测试与验收
 
 | 用例 | 固定的事实 |
 | --- | --- |
@@ -565,7 +569,7 @@ struct PluginAbi {
 被实例化过，它的命令就永远留在进程注册表里，因此"未注册"类断言只能用在首次加载之前），已在测试
 注释里写明；`PluginLifecycleEnv`（全局环境）保证卸载发生在 GuiApplication 销毁之前。
 
-## 必须由调用方/插件保证
+## 18. 调用方/插件契约
 
 - 插件的 `unload()`：幂等、不抛异常优先（抛了会被捕获记录）、不销毁宿主拥有的
   widget/窗口，不假设宿主已撤销其注册。
@@ -573,7 +577,7 @@ struct PluginAbi {
   `unload()` 后仍在，这是有意的）。
 - 宿主没有 `dlclose`，插件的静态对象活到进程结束。
 
-## 已评估但**未采纳**（留档，避免重复建议）
+## 19. 已否决选项
 
 - **运行时热卸载 / 禁用立即生效**：需要插件 `load()` 可重入（现有插件不是：
   `installConsoleLogSink` 的 `addSink` 在 `if (sink == nullptr)` 之外，重载会重复挂

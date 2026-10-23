@@ -1,9 +1,15 @@
-# appfw 启动阶段三拍与启动工作线程（2026-09-26）
+# appfw 启动阶段三拍与启动工作线程
+
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：三拍、线程契约、失败/取消/退出；启动框呈现见 `appfw-startup-splash.md`。
+> **权威来源**：`Application.hpp`、`PluginManager.hpp`、`tests/test_appfw`。
+> **待办**：`../backlog/appfw-startup.md`
 
 本文回答两个问题：启动阶段怎么摆才读得懂（`startupStart` / `startup` / `startupEnd`），
 以及"启动期主线程被占住、消息不更新"这条现象怎么根治（宿主的启动工作丢到线程池上）。
 
-## 现象与实测拆分
+## 1. 概要设计：问题与实测
 
 启动期主线程被一段长工作占住时：UI 不刷新（消息循环不跑），窗口不响应，取消点不到。
 本机（WSLg/Weston + Xwayland，2026-09-26 探针，已撤）把"冷启动到主窗可画"这段劈开：
@@ -24,7 +30,7 @@
 （`AppShellUi.cpp` 的注释："the size the surface has right now does not matter"）。所以 warm-up
 不是"在等实际大小"，把它再挪上工作线程收益仅 0.4 s，而代价是动 vsg 单设备那条无门禁的路径 ⇒ 先不动。
 
-## 三拍
+## 2. 设计要点：三拍
 
 ```cpp
 class Application {
@@ -121,7 +127,7 @@ vn::async::DetachedTask Application::startupSequence()
 正在跑的启动里去；叶子重写它，需要自己驱动启动的叶子从自己的类里调它。`test_gui` 的共享应用就是
 `TestGuiApplication`（`tests/test_gui/fixtures/`），用 `using` 把最后一拍提上来并用 `Task::result()` 驱动。
 **槽位**：三拍声明为**一组、放在类末尾**（新虚函数追加在末尾的既有规矩），签名同时变了 ⇒
-`VN_APPFW_PLUGIN_ABI_VERSION` 抬到 **5u**。
+`VN_APPFW_PLUGIN_ABI_VERSION` 必须 bump（当前 **8u**）。
 
 **唯一的时间轴契约：每一拍都在主线程结束**（框架的在 `startup()` 里替宿主保证，叶子的靠它自己
 `resumeOnMainThread()`），于是下一拍也在主线程开始。"执行可以换线程、顺序由主线程控"就是这个意思。
@@ -153,7 +159,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
 （`processEvents()`）会连带跑起别的启动中对象的定时器），拍 3 没有可等的点（全同步）。这条在 `Application.hpp`
 的注释里同时保留。
 
-**`PluginManager` 的两道门与"管理器不转循环"**（2026-09-26 定稿，`VN_APPFW_PLUGIN_ABI_VERSION` 6u）：早先那版
+**`PluginManager` 的两道门与"管理器不转循环"**（2026-09-26 定稿，当前 ABI **8u**）：早先那版
 "`loadAll()` 保持同步"被撤了。钩子 `preLoad()/load()`/`postLoad()` 现在是 `Task<void>`，于是插件自己就能在钩子里
 **跳池**（`co_await vn::async::run(...)`）→ 用 `resumeOnMainThread()` 回来，界面那一半仍在应用线程上。
 管理器因此有两道门，做的是**同一件事**（同一份扫描、同一个依赖闭包、同一个生命周期顺序），差别只有一个：
@@ -202,7 +208,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
   （机制被钉住）；相位**名字**不属于契约，改文案不会红。
 
 
-## 线程契约
+## 3. 线程契约
 
 | 允许在非主线程 | 必须在主线程 |
 |---|---|
@@ -226,7 +232,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
 - **工作线程要主线程的结果**：`postToMainThread` + 等 future（主线程是自由的，不会死锁）。
   反向**禁止**：主线程永不阻塞等 worker，否则循环又停了，本设计就白做了。
 
-## 生命周期与退出
+## 4. 生命周期与退出
 
 - **异常**：宿主自己那一拍里抛的异常（包括它从池上重抛回来的）由驱动那个 `try` 接住 → 记日志 → `failStartup()`：
   启动期的异常是致命的，得由启动序列统一处理，而不是让一个半启动的应用继续跑。
@@ -238,7 +244,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
   （`dptr()`）。这是这条设计的固有性质：框架不拥有那些线程，也就无法阻止它们回家。
 - **`exit()` 加固**：非主线程调用时改为 `postToMainThread`，工作线程里的宿主不必知道这条规矩。
 
-## 门禁与钉子（都能红）
+## 5. 测试与门禁
 
 1. 宿主自己那一拍里交给池的工作的线程 id ≠ 主线程 id（用例 `WorkingHostApplication` 就是宿主写法本身；变异：内联在主线程跑 ⇒ 红）。
 2. **工作期间循环真的在转**：主线程上每 10 ms 一跳的定时器，工作里睡 120 ms，断言到点前 ≥5 跳
@@ -255,7 +261,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
    ①被委托的代码在**应用线程**上跑；②**调用返回时它已经跑完**——委托那一段故意睡 60 ms，调用方量自己身上花的时间并断言
    `>= 50 ms`（变异：只排队、不等 ⇒ 立刻返回 ⇒ 红）。另有"已在应用线程时内联执行"一条（排队等自己会死锁）。
 
-## 异步装配：重活换线程、界面留在主线程（2026-09-26 落地）
+## 6. 功能点：异步装配
 
 **实测把 1768 ms 的 `DemoScene::install()` 劈开**：`loadDemoCubeMap(256)` 885 ms + `loadDemoCubeMap(512)` 880 ms
 （十二张 2048² JPEG 的读盘 + 解码 + `boxFilterRgba` 降采样），而**其余全部合计只有 3 ms**（场景图、诊断 pass、管线）；
@@ -298,7 +304,7 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene>);      // 自己包的�
   `.so` 跨 TU 也找不到 ⇒ 运行期 `undefined symbol`，编译期完全看不出来）。
 - 界面本身（Ribbon、停靠面板、控件、图形对象）自始至终在应用线程上：换线程的只有纯数据那一块。
 
-## 取消（token）与启动框上的关闭按钮（2026-09-26 落地）
+## 7. 功能点：取消
 
 取消的东西早就在了：每个 `ProgressHost` 自带 `std::stop_source`（状态栏那个 Cancel 按钮就是 `request_stop()`）——
 **缺的是有人看它**。现在这条链路接通了：
@@ -324,7 +330,7 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene>);      // 自己包的�
   `load()` 里请求取消 ⇒ `run()` 返回 **0**、最后一拍没跑、插件已卸、上报口已收）。变异（把两处 `startupCancelled()`
   检查改成 `false`）⇒ 那条用例**挂死**（没人停循环）⇒ 它自带 3 s 兜底，回归时以失败收场而不是卡死。
 
-## 门上守着它：应用线程最长连续占用（2026-09-26 加）
+## 8. 应用线程占用门禁
 
 那个“414 → 74 ms”的数字以前只在提交信息里。现在它是**门禁的一行**：demo 在 `VINE_BOOT_TIMING=1` 下把启动期
 应用线程**最长一次连续占用**打到 stderr（10 ms 定时器量间隔），`scripts/vsg_rewrite_gate.sh` 的应用阶段读它并要求
@@ -333,58 +339,20 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene>);      // 自己包的�
 `[FAIL] app (deferred demo) … the boot held the application thread for 69 ms, over the 1 ms allowed`）。
 日志里没有这一行也算红（探针被删掉不能被静默放过）。
 
-## 渲染会话 init 的一半搬到池上（2026-09-26 落地，**A/B 量过**）
+## 9. 渲染会话 init
 
-结论先给：**会话 init 只是"要句柄"，不是"要应用线程"**——设备/会话/管线建在池上完全成立，像素逐位不变。
+`RenderControl::init()` 是同步、幂等的 attach：设备/会话/管线与 warm-up 帧都在应用线程上一次付掉
+（实测最长一段 ~184 ms，是启动期主线程占用的主要来源）。`initAsync()` 只是给协程调用方的拼法
+（`co_return init()`，**不挂起**，也不把任何一段丢到池上）；`test_gui` 的 `InitAsyncCompletesWithoutSuspending`
+钉着这一点。
 
-- 形状：`SurfaceWindow::initializeBackend()` 劈成 `prepareBackendAttach()`（应用线程：还句柄、`setWindowHandle`）→
-  `engine->initialize()`（**任意线程**）→ `finishBackendAttach()`（应用线程：状态、尺寸、`resize`、warm-up、
-  settle）。新增 `RenderControl::initAsync()`（`vn::async::Task<bool>`）把中间那一段走 `vn::async::run()` +
-  `resumeOnMainThread()`；同步的 `init()` 一字不改（不跑循环的宿主照用）。demo 插件改成 `co_await …initAsync()`。
-- 先做过**可行性**实验（`engine->initialize()` 整段丢到 `std::thread` + join）：`ok=1`，`Pending -> Attached` 正常，
-  渲染区 `87.04%`、无 `vuid`/validation —— 所以后续的搬移不是赌博。
-- A/B（同一条二进制，`VINE_BOOT_SYNC_INIT=1` 走老路；10 ms 定时器量应用线程最长连续占用）：
+- 构造只组装，不选后端、不 attach；宿主在**自己的顺序**里调 `init()` / `initAsync()`。
+- attach 读场景图（管线由已注册的 pass 建、warm-up 要 record）⇒ 宿主不要在 attach 进行中从别的线程改场景；
+  当前没有 `isAttaching()` 旗子，attach 与应用线程上的内容装配天然串行。
+- 要把这段搬到池上，需要重新设计 attach 与 `installContent()` 的并发；目前不做，开放项见
+  `.ai/backlog/appfw-startup.md`。
 
-| | 应用线程最长连续占用 | 启动期空档 | attach | 首个 Presenting | 渲染区像素 |
-|---|---|---|---|---|---|
-| 旧（全同步） | **364 ms** | 一整段 364 | 111 ms | 326 ms | 87.04% |
-| 新（initAsync） | **189–204 ms** | 68 / 189 / 68 | 136 ms | 368 ms | 87.04%（逐位同） |
-
-- 归属（临时探针，已撤）：**池上 115 ms**（设备/会话/管线）+ 应用线程尾 **184 ms**（= warm-up 那一帧）。
-
-### 第二步：warm-up 那一帧也搬到池上（2026-09-26 同日）
-
-`prewarmFrame()` 就是一句 `engine->frame()`，而它要的也只是句柄与已建好的会话 ⇒ `initAsync()` 里它同样走
-`vn::async::run()`；不是 `initAsync()` 的调用方（同步 `init()`、控制台已经在屏上时）照旧在应用线程上付这笔钱
-（`finishBackendAttach(bool warm_up_here)`）。
-
-| 应用线程最长连续占用 | |
-|---|---|
-| 原始（全部同步） | **414 ms**（一整段） |
-| 设备/会话/管线搬到池上 | **189–204 ms**（68 / 189 / 68） |
-| warm-up 也搬到池上 | **74 ms**（74 / 22 / 64，四段短账） |
-
-渲染区像素逐位不变（`87.04%`，两棵树门禁同上），`Attached -> Presenting` ~370–385 ms，无 `vuid`/validation。
-
-- ⚠️ **它带一条契约**（写进了 `RenderControl::initAsync()` 的文档）：attach 会**读场景图**（管线由已注册的 pass 建，
-  warm-up 帧还要 record 它）⇒ **宿主不得在 attach 进行中改场景**；内容装配要等它返回再动手。
-  **已做成结构性保证（2026-09-26 同日）**：`SurfaceWindow` 用 `AttachScope` 把整段 attach（含 warm-up）标在
-  `std::atomic<bool> attaching` 上，`RenderControl::isAttaching()` 公开；demo 的装配协程**两处**等它——
-  池上先等一次，**应用线程上再确认一次**再 `installContent()`（attach 也是在应用线程上开的 ⇒ "检查 + 装"之间没有挂起点，
-  相对 attach 的开启是原子的；只靠池上那次不够，attach 可能在那之后开起来）。
-  钉子：`test_gui/RenderControlTest.InitAsyncAttachesOffTheApplicationThreadAndPublishesWhenAttaching`。
-- 顺带一条：`prewarmFrame()` 自己的注释早就写着这笔开销（“measured 183.6 ms for the demo's 5 slots”），
-  实测与它相符（166–184 ms）。
-
-- 代价：首个 Presenting 晚 ~40 ms（多一次池往返 + 回主线程的投递），换来启动期多了两个 68 ms 的可响应窗口。
-- 门禁：两棵树 `ninja` 0 warning；`ctest` 24/24 ×2；两棵树门禁 8/8 `[ok]`（app 像素 `87.04%` / `85.14%` 逐位不变）；
-  `cmake --install` + 真机跑无错。
-
-## 本设计不解决
-
-- **warm-up 那一帧仍在应用线程**（实测 184 ms）：设备/会话/管线已经搬到池上（见上一节），但 `prewarmFrame()` 那一帧
-  （建 pass 图、program slot、编译管线）还是应用线程上最长的一段。要动它必须先解决它与 `installContent()`（内容装配
-  回来时在应用线程建 CubeMap、挂场景节点）的并发——不是"丢线程"三个字能解决的，单独立项。
+## 10. 非目标与已知缺口
 - **"启动驱动搬到新线程 + 取消令牌 + 启动框关闭按钮 + 动画"**（2026-09-26 评估过，**用户当场决定不做**：
   "算了先不管那么多，卡顿就卡顿吧"）。评估结论留档，免得下次重新推导：
   - 驱动单独搬线程**买不到动画**：应用线程占用 414 ms 里 **356 ms 是插件里必须在应用线程的块**（`init()` 304），
@@ -402,12 +370,4 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene>);      // 自己包的�
 - Wayland 原生会话下"不跑循环就画不出窗口"这条依旧成立（`repaint()` 在 Wayland 上本就做不到），
   本设计只是让启动期不再出现"没有循环在转"的时段。
 
-## 落地顺序
 
-1. ~~三拍重命名与虚函数（同步形状，行为不变）~~（2026-09-26 完成）。
-2. ~~宿主的启动工作上工作线程（握手 + 有界收尾 + `exit()` 加固）~~（完成，**后又撤掉**：`run(work)` 重载直接删了——
-   只有测试在用，而"旗子 + 有界等待"比那条便利门贵；宿主的活现在由它自己在 `startup()` 那一拍丢到池上。`exit()` 加固
-   留下了：非主线程调 `exit()` 会被改道到主线程，宿主不必知道这条规矩）。
-3. ~~钩子改成异步方法（`Task<void>`）+ 驱动 `co_await` 三拍 + 三拍新钉子（第 6 条）~~（完成；
-   `VN_APPFW_PLUGIN_ABI_VERSION` 5u）。
-4. ~~demo 内容加载搬上工作线程（1693 ms 那笔）~~（**完成 2026-09-26**，见下节）。

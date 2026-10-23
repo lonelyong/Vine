@@ -1,287 +1,250 @@
-# appfw 渲染表面生命周期（2026-09-18）
+# appfw 渲染表面生命周期
 
-## 问题
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：`RenderControl` / `SurfaceWindow` 的原生表面、attach、状态与平台回退；图形层的表面/目标/设备契约见
+> `graphics-architecture.md`。
+> **权威来源**：`RenderControl.hpp`、`src/gui/SurfaceWindow.{hpp,cpp}`、`tests/test_gui/RenderControlTest.cpp`。
+> **待办**：`../backlog/appfw-startup.md`
 
-启动顺序是"窗口先生效，插件后布 UI"：窗口由 `Application::run()` 的启动步上屏（`startupStart()`，
-2026-09-26 起构造函数只建不 show、启动步跑在事件循环里），等它画出首帧之后框架才加载插件
-（`AppConfig::load_plugins`，2026-09-26 起宿主不用自己调 `loadAll()`），app_shell 的 `buildAppShellDock()` 才
-`new RenderControl()` + `setCentralWidget()`。
+## 1. 概要设计
 
-后端 attach 需要"窗口存在、已布局、尺寸可用"，而这比 UI 组装晚。旧做法是插件猜一个延迟：
+### 1.1 问题与背景
 
-```cpp
-QTimer::singleShot(100, [render_control] { render_control->init(); });   // 返回值被丢弃
-```
+一块 3D 区要同时回答“原生窗口什么时候有句柄”“什么时候能 attach”“什么时候能显示”“窗口重建后怎么办”。
+过去把这些时机交给定时器/重试梯子，结果是空窗、黑洞和猜时机。
 
-两个后果：
+### 1.2 目标
 
-1. **透明窗口期**：未呈现的原生窗口在屏幕上是一个洞，合成器填什么都行（用户看到"渲染区是透明的"）。
-2. **可能永不恢复**：`init()` 里那三个重查定时器挂在 `if (d->backend_live)` 之下——**只有第一次就成功才会重查**；
-   100ms 时若尺寸还是 0 或 `engine->initialize()` 返回 false，就再也没有人重试（表面事件早已在
-   `wired` 之前被有意忽略），直到用户缩放窗口触发 resize 才恢复。
+- 构造只组装，attach 有明确入口；宿主能在自己的顺序里决定什么时候 attach。
+- attach 不要求表面可见；首帧由 attach 自己渲出来，区域在首帧之前保持隐藏。
+- 原生窗口重建后会话保留，宿主不需要自己做任何事。
+- 失败有状态和原因，宿主可重试；控件不排定时器。
 
-结论：这段窗口期必然存在（present 要求窗口已映射），要做的是让它**有界、可观察、不可见**，
-而不是把时机交给宿主去猜。
+### 1.3 非目标
 
-## 文件划分（2026-09-19 拆分）
+- 不在控件里做布局策略；尺寸由容器/resize 事件给。
+- 不替宿主重试；没有 100 ms × N 的 attach 梯子。
+- 不保证所有平台都能在未显示窗口上 attach（Wayland 回退为“先显示再 attach”）。
 
-- **`RenderControl`**（公开，`sdk/vine/appfw/gui/RenderControl.hpp` + `src/fw/appfw/src/gui/RenderControl.cpp`）只剩封装：
-  构造 host QWidget、`createWindowContainer` 嵌表面、容器 `installEventFilter`，然后把
-  `engine()/view()/init()/renderFrame()/fitToScreen()/devicePixelRatio()/state()/failureReason()`
-  直接转发给表面。`state_changed` 是唯一需要中继的一处：控件订阅表面的 `on_state_changed` 再 trigger 自己的
-  信号，宿主仍然只订阅这一个入口。公开 API 与行为不变，`.cpp` 从 ~1060 行降到 ~100 行。
-- **`SurfaceWindow`**（私有，`src/fw/appfw/src/gui/SurfaceWindow.hpp` + `.cpp`）装“表面 + 会话”的全部逻辑：
-  引擎与 SceneView 的创建、诊断 sink、attach/重新公告、延迟 resize、settle 帧、可见性规则、状态机、
-  Qt 事件翻译与 `view()->pushEvent()`、右键菜单。它是私有头、不导出（只在 appfw DLL 内使用），
-  不参与公开 ABI。
-- 日志前缀仍是 `[RenderControl]`：表面就是那个控件的表面，日志门禁与设计笔记都按它检索。
-- `SurfaceWindow` 构造收一个 `QWidget* host`："能不能 present"要问宿主控件（表面自己的
-  `isVisible()/isExposed()` 在祖先窗口隐藏时也可能为真，见“Qt 事实”），右键菜单也以它为 parent。
-- 本文下方 2026-09-19 之前的条目里出现的 `handleSurfaceUpdate()` / `onSurfaceDestroyed()` /
-  `initializeBackend()` / `RenderSurface` 都已经是 `SurfaceWindow` 的成员（分别是 `handleUpdate()` /
-  `handleDestroyed()` / `initializeBackend()` / `SurfaceWindow`），只是当时还叫 `RenderControl.cpp` 里的名字。
+### 1.4 一句话结论
 
-## 机制：宿主给时机，控件自维护（2026-09-19 改）
+`RenderControl` 构造只组装；`init()` / `initAsync()` / 第一拍兜底做一次同步 attach；状态只有
+`Pending → Presenting`（失败是 `Failed`），容器在首帧前隐藏，窗口重建由控件自己跟。
 
-- **首次 attach 只有宿主能做**：`init()` 是唯一入口，控件不排任何定时器、也不监听表面事件去替宿主
-  attach。表面还没布局好时 `init()` 返回 `false`（不猜延时），宿主再调一次就是重试（幂等；已绑到
-  当前句柄时立刻返回 true）。
-- **已建立的会话自己维护**：平台窗口被 Qt 重建（换屏 / reparent / 把 dock 拖出去）后新句柄出现时，
-  控件自己重新公告给后端（`handleUpdate()` 发现 `h != session_handle`，`renderFrame()` 里
-  那条守卫同理），宿主不用察觉 —— 这是“控件拥有自己的表面”，不是“控件猜时机”。
-- **两个标志各回答一个问题**（Impl 里就叫这两个名字）：`backend_live` = 最近一次 attach 尝试成功
-  （后端活着）；`has_session` = 有会话（设备+管线建在 `session_handle` 上）。单向蕴含
-  `backend_live ⇒ has_session`；重建后重新公告失败时前者 false、后者仍 true，这正是控件继续跟着新
-  窗口的原因。
-- **重试阶梯已删**：`setAutoInitialize(auto)`、`ensureAttached()`、`100 ms × kMaxAttachAttempts` 那条
-  阶梯，连同构造里的 `singleShot(0)` 首触发一起删了。`Failed` 现在只剩一种来源：**没有注册任何后端
-  插件**（等下去也不会变）；后端拒绝只是让 `init()` 返回 `false`，何时再试由宿主决定。
-- **没建立过的会话不被接管**：`handleUpdate()` 只在 `has_session == true`（宿主真的 attach 成功过）
-  时才重新 attach；从没 attach 过的表面只等宿主的 `init()`。
-- **先 attach，不显示，首帧才显示**（2026-09-20 定稿）：attach 只需要句柄+尺寸（不需要表面可见），
-  present 要求窗口真的在屏幕上（判据用容器控件的 `isVisible()`，见“Qt 事实”）。**“显示”这件事归容器控件**：
-  `RenderControl` 把容器隐藏着，`initializeBackend()` 成功只到 `Attached`，等首帧 present 进表面、
-  `setState(Presenting)` 报到 `on_state_changed` 时容器才 `setVisible(true)`。规则的实质是
-  “**露出来 = 有东西可看**” —— 未 present 的原生窗口是一块洞（旧版在 attach 时就显示它，那 1 s 全靠启动框盖着），
-  而可见的容器会被 Qt 把它的矩形抹成透明（见“可见性规则归容器控件”），所以容器就是那个开关。
-  表面自己**从不**碰自己的可见性（Qt 文档：容器管嵌入窗口的几何与可见性）。
-- **句柄换了照样成立**：`handleDestroyed()` 只把状态打回 `Pending`；新窗口随容器一起被 Qt 收进来，
-  而容器因为状态不再是 `Presenting` 而被控件重新隐藏，新窗口里落下第一帧后才再显示。
-- **预热帧**（2026-09-20）：attach 成功时控件还不在屏上（启动框还盖着）就渲一帧把设备/管线开销付掉。
-- **“表面能画了”是三个事件报的，不是定时器**（2026-09-20）：容器的 show（`eventFilter` 的
-  `QEvent::Show` 里 `scheduleUpdate()`）、容器的 resize（`handleResized()`）、平台窗口重建（`noteSurfaceUsable()`）。
-  `init()` 里那串 `singleShot(150/400/900)` 的“布局可能还没稳”重试梯子已删 —— 和当年删 attach 的退避梯子
-  同一个理由：定时器是猜，事件是事实。
-- **状态跟着现实走**：`handleDestroyed()` 同时把状态打回 `Pending`——`Presenting` 的语义是“已经往可见
-  表面出过帧”，窗口在换的时候不成立；重建后重新走一遍 `Pending → Attached → Presenting`（会话本身没变）。
-  订阅 `state_changed` 的宿主（占位图/缓存暂停之类）拿到的是真话。
-- **表面由控件自己建、自己持有**（2026-09-19 简化）：`RenderControl` 在构造体里 `new SurfaceWindow(host_widget)` 并交给 window container（容器即持有者），没有工厂函数、也没有“把指针挂在 widget 的 property 上再取回来”的往返。`Control` 的 widget 是一个普通 host QWidget，里面一个 `QVBoxLayout` 装着
-  `QWidget::createWindowContainer(surface, host)` 出来的容器；容器把 resize/show 报给表面（`installEventFilter`），因为 maximize 时嵌入窗口收不到自己的 resize。
-- 对外接口：`SurfaceState { Pending, Attached, Presenting, Failed }` + `state()` + `state_changed` 信号
-  + `failureReason()`。
-- **信号改名 `stateChanged` → `state_changed`**（2026-09-21，用户拍板）：与本目录早已存在的属性变更事件
-  （`GuiApplication::theme_changed`、`UIElement::name_changed`）同一风格；内部中继 `on_state_changed` 是
-  `std::function` **字段**、按字段规则本就是 snake_case，改名后同一个概念只有一个名字。
-  `VN_APPFW_PLUGIN_ABI_VERSION` **不需要 +1**（它只描述插件握手面 `PluginAbi`/`PluginInfo`/入口签名/命令注册，
-  见 `appfw-plugin-system.md`），但用了该信号的插件必须重编：仓内是 `app_shell` 与 `test_gui`，同批改。
-- **可见性规则归容器控件**（2026-09-20，用户拍板）：`RenderControl` 把窗口容器**隐藏**着，直到 `state_changed` 报到
-  `Presenting` 才显示它。理由是 Qt 的 window container 在每次 paint 里把自己的矩形用 `CompositionMode_Source`
-  抹成 `Qt::TRANSPARENT`（给内嵌原生窗口挖洞），所以：**可见的容器 + 还没帧 = 一块透到桌面后面的洞**
-  （给它 `setAutoFillBackground(true)` 也没用：先填的背景在同一趟里被抹掉）；**隐藏的容器则根本不被 paint** —— 
-  没洞，那一格就是主窗口自己的背景。原生子窗口在容器显示/隐藏时会跟着 Qt 一起变化（文档：容器管嵌入窗口的几何
-  与可见性，不要自己调 `show()/hide()`），所以 `SurfaceWindow` 不再管自己的可见性：`surface_shown` /
-  `setSurfaceShown()` / `handleShown()` / `showEvent()` 全删。
-- **首帧与启动框**（2026-09-20）：框架不再为“窗口能不能露”做任何等待 ——
-  `windowCanBeSeen()` / `deferStartupFrameClose()` / `closeStartupFrame()`（2026-09-19 那版）连同 2000 ms 定时器
-  全删了，`GuiApplication::finishStartup()` 无条件关框。让它成立的是本类的可见性规则（上一节）：容器藏着就不上屏，
-  所以窗口任何时候都可露，首帧之前那一格是**主窗口自己的背景** —— 不是洞，也不是“控件底色被画进去”：
-  早期版把容器 `setAutoFillBackground(true)` 当成机制写在这里，是错的（那个背景与洞在同一趟 paint 里被抹掉，
-  该调用已删）。
-- **首帧提前（prewarm）**（2026-09-20）：attach 成功时若控件还不在屏上（还停在启动框后面），
-  就按当时的表面尺寸渲染一帧（`prewarmFrame()`），把设备/管线/程序槽的一次性开销付在启动框还盖着的时候；
-  这一帧不发布、不上屏、不改状态。窗口上屏后的那一帧走**就地改尺寸**
-  （见 `vsg-backend.md`），所以预热的尺寸不是浪费。
-- **实测（本机 Windows + RTX 4060，2026-09-20）**：`Pending -> Attached` 在插件 `load()` 里，
-  紧随其后的预热帧 `build profile (frame): extent 320x320, targets 3, program slots 3 (132.1 ms: nodes 23.9,
-  view compiles 108.2, overlay glslang 4), total 142.3 ms`（2642 ms）→ 69 ms 后
-  `Startup frame going away: main window visible=true, active=true`（2711 ms）→ 392 ms 后
-  `Attached -> Presenting`，这一帧 `extent 200x60, target resizes 2 (0.4 ms), program slots 0, total 3.8 ms` →
-  随后稳定帧 `extent 752x480, target resizes 2 (0.2 ms), program slots 2 (40.7 ms), total 43.8 ms`。
-  对照旧版：框到 `Presenting` 759 ms（现 392 ms），窗口上屏后的首帧 183.6 ms（现 3.8 ms）。
-- **那一格是背景，不是洞**（2026-09-20，像素证据）：把一块品红全屏窗口放到主窗口正后方，再给主窗口
-  `PrintWindow`（`PW_RENDERFULLCONTENT`，截的是窗口自己的合成，与 z 序无关）：关框那一刻渲染区是主题背景色，
-  `Presenting` 之后同一区域是画面，品红一次都没露出来。
-  见 `.ai/design/appfw-startup-splash.md`（那里有一节专门算这笔账）。
-- `hasPresented()`：留在公开接口上（宿主问“画面出没出来”仍然合法），但它不再是“窗口能不能露”的前置条件 ——
-  控件不会把空的原生窗口留在屏幕上。
-- app_shell：`new RenderControl()` → `setCentralWidget()` → 发布控件（`setPrimaryRenderControl()`）；内容插件（`demo_plugin`）在这里挂骨架 → `postLoad()` 里 `init()`。
+## 2. 设计要点
 
-## 实测（本机 xcb + lavapipe，2026-09-18）
+### 2.1 文件划分
 
-```
-[VsgHostWindow] attached to the host window 0x60004c (640x480, mapped=true)
-[RenderControl] Pending -> Attached after 1783 ms (surface visible=false, exposed=false)
-[RenderControl] surface shown after 1784 ms
-[RenderControl] Attached -> Presenting (first frame, 143 ms after attach)
-```
+| 文件 | 职责 |
+| --- | --- |
+| `sdk/vine/appfw/gui/RenderControl.hpp` / `src/gui/RenderControl.cpp` | 公开控件：转发 `init()/initAsync()`、`state()`、`failureReason()`、尺寸/比例、`viewer()`、`view()`、`engine()`、`renderFrame()`、`fitToScreen()`、`setContinuousRendering()` |
+| `src/gui/SurfaceWindow.{hpp,cpp}` | 私有实现：原生 `QWindow`、`RenderEngine`、`SceneView`、`Viewer`、attach 规则、延迟 resize、Qt 事件 → 视图输入 |
+| `SurfaceWindow` 的容器 | `QWidget::createWindowContainer` 包住原生 `QWindow`；容器在首帧前隐藏 |
 
-- **隐藏状态 attach 在 X11 上确实可行**（attach 时 `visible=false, exposed=false`）。
-- `1783 ms` 是 app 自身启动（插件加载 + demo 装配）到事件循环第一拍，**与渲染路径无关**。
-- 渲染侧从"表面可用"到"画面出来"约 `300 ms`：swapchain/视图 159 ms + 首帧 143 ms（后者主要是 demo
-  的管线构建，见 `[VsgProgramSlot] … attached` 那几行）。
-- 剩余可见窗口期 = "show → 首帧" 的 143 ms。要再缩短就是预热（见"第二步"）。
+### 2.2 构造只组装
 
-## 平台契约
+`new RenderControl()` 返回时：建好引擎、视图、查看器、诊断路由；**不选后端、不 attach**；
+`state()==Pending`、`engine()->device()==nullptr`、没有 pass/链。这样 `engine()->setDevice()`、
+`viewer()->setViewerOptions()`（或宿主自己的 `view()->setChain()`）和内容装配都在第一次 attach 之前同步跑完，
+**零重建**。
 
-- **attach-while-hidden**：X11/Windows 接受未映射窗口；**Wayland** 需要已 configure 的 `xdg_surface`，
-  未映射的 surface 通常拿不到 extent。所以在**隐藏表面上 attach 失败**时控件把表面显示出来，让下一次
-  尝试能看见它（日志 `attaching to a hidden surface failed: this platform wants a visible window…`，
-  状态位 `needs_visible_surface`，日志只说一次）。`needs_visible_surface` **不是“以后就一直显示”**：
-  首次 attach 时下一次尝试是宿主的 `init()`，已建会话跟新窗口时是控件自己的 `init()`；
-  **重建后表面又是隐藏的，回退会再触发一次**（必须如此，否则那个平台上重建之后永远绑不上）。
-- **未验证**：本机只有 xcb/offscreen，Wayland 的回退路径**没有在真 Wayland 上实测**（仅按 WSI 契约实现）；
-  在 Wayland 上跑时先看那条日志是否出现。
+### 2.3 两个 attach 入口
 
-## Qt 事实（probe 实测，offscreen 与 xcb 结论一致）
+- `init()`：同步、幂等；会话已绑在当前句柄上就直接 `true`，否则走完整 attach。
+- `initAsync()`：`co_return init()`，**不挂起**，也不把任何一段丢到池上；只是给协程调用方的拼法。
+  判据：`RenderControlTest.InitAsyncCompletesWithoutSuspending`。
 
-1. `QWindow::winId()` 会**创建**平台窗口，不要求显示；未布局时表面尺寸是 `0x0`，要等布局/事件循环才给大小
-   （`/tmp/probe_surface_visible.cpp` 阶段 A–F）。
-2. `QWidget::createWindowContainer` 把内嵌 QWindow 的可见性**绑在容器上**：每次 container（或祖先）Show
-   都会把它重新显示（探针 G、K）⇒ "隐藏"是意图，必须在 Show 之后**重申**（本实现的
-   `SurfaceWindow::showEvent` / 它装在宿主上的 eventFilter），
-   否则"窗口已显示后插件才建控件"的场景下，未呈现的原生窗口照样上屏。
-3. 隐藏期间 QWindow 的**尺寸仍随容器布局变化**（`378x136 → 398x146`，探针 H/I）⇒ 隐藏时 attach
-   拿到的是最终尺寸，不需要猜大小。
-4. QWindow 的 `isVisible()`/`isExposed()` 在"祖先窗口没显示"时也可能为真（offscreen 实测 `exposed=1`）
-   ⇒ 判断"能不能 present"要看**容器控件**的 `isVisible()`，不能只看表面自己的 flag。
+没有调时，第一拍事件循环的 `QTimer::singleShot(0)` 兜底会 attach；兜底用宿主刚装上的后端，不是注册表默认值。
 
-## 测试
+### 2.4 attach 的次序
 
-`tests/test_gui/RenderControlTest.cpp`（8 例，假后端，无需 GPU）：没人调 `init()` 就一直 `Pending`
-（后端一次都没被碰过、表面不显示）、宿主上屏时一次 `init()` 就 attach **并在同一调用里出首帧**
-（`Presenting` + 表面这时才可见）、`state_changed` 的 `Pending→Attached→Presenting` 序列且不重复、
-后端拒绝 ⇒ `init()` 返回 `false` 且**没有人在背后重试**、宿主再 `init()` 可恢复、没注册后端插件 ⇒ `Failed` + 原因、
-窗口未显示时先热起来但状态停在 `Attached` 且**表面不上屏**（`WarmsUpWhileInvisibleAndPutsTheSurfaceOnScreenWithItsFirstFrame`：
-`show()` 之后靠 show 事件自己把首帧做出来）、**平台窗口重建后控件自己跟过去**（新句柄被重新公告，宿主零调用；
-`state_changed` 序列钐住 `Pending → Attached → Presenting`，即重建期间状态会退回 `Pending`）。
+1. **先保证这块表面有呈现**：视图没有链就按 `ViewerOptions` 建一条默认链并采纳，然后在 `RenderSurface` 上声明；
+   宿主已用自己的 pass 声明过 ⇒ 这一步不动。
+2. **补默认后端**：`useDefaultBackend()` 只在引擎没有后端时取注册表第一个；晚注册的后端仍会被下一次 attach 捡起。
+3. **没有后端** ⇒ `failAttach("no render backend is registered")`，状态 `Failed`。
+4. **句柄空 / 尺寸退化** ⇒ 记一行日志、保持 `Pending`，等 show/resize/下一次 `activate()`；控件不排定时器。
+5. **attach**：`setWindowHandle` → 设备/会话/管线 `initialize()` → `resize(w,h)` + 把尺寸交给表面
+   → `renderFrame()`（这一帧付掉 pass 图 / program slot / 编译，状态进 `Presenting`）。
 
-## 为什么没有更复杂的机制（曾实现过，已删）
+attach 不要求表面可见；只有 present 才要求窗口在屏上。平台不同意时 attach 失败，控件回退到“先显示表面再 attach”。
 
-- **6 级退避梯子（16/50/100/200/400/900ms）**：实测在真 app 里根本没被用上（第一次事件循环拍时表面
-  已经可用），先换成单一 100ms 重试 + 一个计数，**2026-09-19 连这个也删了** —— 首次 attach 是宿主的
-  `init()`，控件只维护已建立的会话。
-- **为“等表面”排定时器**：那就变成轮询（100ms 一圈）；规则是“要 attach 的人自己决定下一次调用”。
+## 3. 功能点
 
-## 第二步：把设备/管线构建挪进 load()（2026-09-18）
+### 3.1 功能索引
 
-**动机**：设备 + 管线构建原来落在事件循环第一拍，也就是启动框关闭之后：那 ~1 s 主线程被占着，
-主窗口一帧都画不出来（实测：`finishStartup` 时 `visible=true, active=true` 但屏幕空白，直到 `Presenting`）。
+| # | 功能 | 行为 | 状态 |
+| --- | --- | --- | --- |
+| F1 | 构造只组装，attach 有入口 | `init()` / `initAsync()` / 第一拍兜底 | 已落地 |
+| F2 | 状态与可见性 | `Pending` / `Presenting` / `Failed`；首帧前容器隐藏 | 已落地 |
+| F3 | 原生窗口重建 | 新句柄重新公告，会话保留 | 已落地 |
+| F4 | 失败与重试 | 拒绝 ⇒ false + `Pending`；无后端 ⇒ `Failed`；宿主可重试 | 已落地 |
+| F5 | 平台回退 | X11/WSLg 未显示可 attach；Wayland 先显示再 attach | 已落地（Windows 未验） |
 
-**做法：宿主侧一行，框架零新增**：控件先丢进窗口，然后立刻 `init()`：
+### 3.1.1 F1 构造只组装，attach 有入口
 
-```cpp
-// src/plugins/app_shell/src/AppShellUi.cpp（外壳那一趟：load()）
-auto* render_control = new gui::RenderControl();
-manager->setCentralWidget(render_control);   // 先进窗口；表面此时的尺寸是退化值，布局稍后给真尺寸
-wnd->setPrimaryRenderControl(render_control); // 发布给内容插件
+- **行为**：构造建面 + 引擎 + 视图 + 容器；`init()` 同步 attach，`initAsync()` 是协程拼法；没有显式调用时第一拍兜底。
+- **约束**（C1）：attach 必须有句柄和尺寸；句柄空/尺寸退化时保持 `Pending`，不猜延时。
+- **要求**（R1）：配置写在 attach 之前 = 零重建；控件不排重试定时器。
+- **验收**（T1）：`ConstructionOnlyComposesAndTheFirstTurnAttaches`。
+- **注意**（N1）：`initAsync()` 不下池；设备/会话/管线/warm-up 都在应用线程。
 
-// src/plugins/demo_plugin/src/DemoPlugin.cpp（内容插件那一趟：load()，app_shell 之后）
-auto demo = std::make_shared<DemoScene>(render_control);
-demo->install();                             // 内容 + 管线；相机 vantage 必须在 attach 之前（orbit 的 home 取它）
+### 3.1.2 F2 状态与可见性
 
-// src/plugins/app_shell/src/AppShellPlugin.cpp 的 postLoad()：全部插件都 load 完之后
-co_await initAppShellRenderControl(wnd, dock_);  // 设备 + 管线在这一拍建好
-```
+- **行为**：`Pending`（没有可用表面或还没渲过）/ `Presenting`（帧在表面里）/ `Failed`（后端起不来）。
+  容器在 `state_changed` 报到 `Presenting` 之前一直隐藏。
+- **约束**（C2）：没有会话就没有帧；`failureReason()` 非空 ⟺ `Failed`。
+- **要求**（R2）：`Presenting` 之前露出的是主窗背景，不是洞；`renderFrame()` / `fitToScreen()` 在 attach 前不得推状态。
+- **验收**（T2）：`TheFrameTheAttachRendersPutsTheSurfaceOnScreen`、
+  `AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen`。
+- **注意**（N2）：未呈现的原生窗口在 Qt 里是一个洞（window container 把自己的矩形挖透明），所以“藏着”是正确性。
 
-- attach 只要“句柄 + 尺寸 > 0”，而新 QWindow 的退化尺寸（本机实测 **1x1**，不是 0x0）就满足；
-  真实尺寸随后由布局给出，走既有的 resize / settle 路径重建 swapchain（用例钉住 `resize_calls > 1`）。
-- **句柄是表面窗口自己的，不是顶层的**（2026-09-26 实测）：`SurfaceWindow::nativeHandle()` 返回容器里那个
-  独立 `QWindow` 的 `winId()`，所以**顶层（主窗）没 show 也能 attach**（WSLg/X11：主窗全程未 show 时
-  `[VsgHostWindow] attached … (160x160)` + `Pending -> Attached` 都正常，`Attached -> Presenting`
-  紧随主窗上屏）。历史那次 `GetClientRect(..) failed : 无效的窗口句柄` 来自**旧渲染器拿顶层句柄** +
-  没人建原生窗口，不是本形状的性质（详见 `appfw-startup-splash.md` 的“启动期只有启动框”）。
-- **不需要**给控件加“初始尺寸”类 API：曾加过 `setInitialSurfaceSize()`（以及“未上屏允许 attach、
-  失败不计预算、不提前显示表面”那套预热语义），用户判定是把业务/策略塞进框架层，已全部删掉。
-- 平台差异：Wayland 上未映射 surface 拿不到 extent ⇒ 那里的 `init()` 返回 `false`（静默不生效），
-  控件显示表面后由宿主再调一次 `init()`（“先显示再 attach”回退），不会更差。
+### 3.1.3 F3 原生窗口重建
 
-**实测（沙箱，VSG 因环境无法初始化）**：后端 `initialize()` 已在 `load()` 内跑（~1.1 s）；在渲染可用的
-机器上这段应变成 `Pending -> Attached` 落在 `load()` 内。
+- **行为**：Qt 销毁并重建平台窗口（dock 拖拽、换屏、`setCentralWidget()` 重父化）时，新句柄被捡起并重新公告给后端；
+  会话、设备、缓存与已编译管线都留，状态重走 `Pending → Presenting`。
+- **约束**（C3）：重建只换表面，不换会话；宿主不需要自己重新 `init()`。
+- **要求**（R3）：重建期间状态退回 `Pending`，区域隐藏；首帧回来后再显示。
+- **验收**（T3）：`FollowsARecreatedSurfaceWithoutTheHost`。
+- **注意**（N3）：重父化会重建原生窗口，所以中央区不要每页一个控件，容器内切页。
 
-**测试**：`RenderControlTest.HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles`
-（嵌入后立刻 `init()` → 不等事件循环就 attach；之后宿主改窗口尺寸，**没有定时器兜底**，靠容器 resize 事件
-把后端对齐到表面真实尺寸）。
+### 3.1.4 F4 失败与重试
 
-## 2026-10-11：构造只组装，attach 排第一拍或宿主显式 `init()`（当前契约）
+- **行为**：后端拒绝 ⇒ `init()` 返回 false，状态停在 `Pending`；没有注册后端 ⇒ `Failed` + 原因；
+  宿主再调 `init()` 就是重试。
+- **约束**（C4）：控件没有任何后台重试；失败原因只在 `Failed` 时有效，attach 成功后清掉旧判决。
+- **要求**（R4）：拒绝与失败都必须可观察（返回值/状态/原因），不能静默。
+- **验收**（T4）：`RefusedAttachReportsFalseAndWaitsForTheHost`、`HostCanRetryAfterTheBackendRefused`、
+  `ReportsFailedWhenNoRenderBackendIsRegistered`。
+- **注意**（N4）：晚注册的后端会被下一次 attach 捡起，不要在构造时就判死。
 
-后面 2026-09-28 那一节说的"构造里就试一次（`init()`）"**不再成立**（本节覆盖它这一点，其余条目仍有效）：真实应用里后端插件在启动期就注册，于是"构造即 attach"在调用栈上把 `engine()->setBackend()` 的"Call before initialize()"和 demo 的 "`install()` 早于 attach"两条契约一起绕过。现在的顺序：
+### 3.1.5 F5 平台回退
 
-- **构造只组装**：`RenderControl` 建面 + 引擎 + 视图 + 容器；`SurfaceWindow` 建引擎与视图（`setEngine`）、挂诊断 sink、
-  接 `screenChanged`，**不选后端、不 attach**。构造返回时 `state()==Pending`、`engine()->backend()==nullptr`、
-  无 pass、无管线 —— 这就是"配置窗口"：`setBackend()` / `setViewerOptions()` / 装内容都排在第一次 attach 之前，
-  而且**零重建**（S7 之后配方的入口是 `RenderControl::setViewerOptions()`；S7 之前是 `view()->setOptions()`）。
-  兜底是 `QTimer::singleShot(0, this, [this]{ init(); })`。
-- **attach 两个入口，语义相同**：`init()`（同步、幂等：会话已绑在当前句柄上就直接 `true`）与 `initAsync()`
-  （`co_return init()`，**不挂起**，只是给协程调用方的拼法）。仓库内两个宿主都在文档上屏那一拍要它：
-  `DemoView::activate()` 的 `initAsync()`、`ModelRenderView::activate()` 的 `init()`。
-- **`init()` 内部的次序**（前两条是这一轮定的）：①**这块表面的呈现声明**（`if (!d->surface->hasPresentation())`
-  —— **在后端检查之前**：谁画这块表面是组成，不是设备事实；宿主自建的 pass 已在 `surface->present(pass)` 里声明过，
-  此时就一条都不建。**S7 之后这一步还要先保证视图有一条链**（没有就按 `ViewerOptions` 建一条默认预设并采纳），
-  因为表把声明**解析**成"视图采纳的那条链的窗口 pass"，它自己不建；M2a 之前这里是 `view->ensureWindowPass()`，
-  它自带"引擎里已有同一个相机的窗口 pass 就让位"的推断）②`useDefaultBackend()`（只在引擎没有后端时补第一个注册的
-  后端；晚注册的还能被下一次 attach 捡起）③没有后端 ⇒ `failAttach("no render backend is registered")` ④句柄空 / 尺寸退化
-  ⇒ 记一行日志后返回，等 show/resize/下一次 `activate()` ⑤`setWindowHandle` → `initialize()`（设备 + 会话 + 管线编译）
-  → `resize(w,h)` + 把尺寸交给**表面**（`surface->resize(w,h,dpr)`，表面记下并扇出给每条呈现；控件自己那个视图不呈现时才单独喂）
-  → `renderFrame()`（这一帧付掉 pass 图 / program slot / 编译）。
-- **状态仍是三个**（`Pending` / `Presenting` / `Failed`），并加两条不变量：
-  **没有会话就没有帧**（`renderFrame()` 在 `backend_live` 为假时不推状态 —— `Presenting` 就是"帧在面里"，也是控件显示
-  渲染区域的依据）；**`failureReason()` 非空 ⟺ `state()==Failed`**（attach 成功后清掉旧判决）。
-- **测试**：`test_gui` 251 全绿；本轮新增/加强 `AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen`、
-  `ReportsFailedWhenNoRenderBackendIsRegistered`（后半段钉住"晚到后端 attach 成功 ⇒ 原因清空"），
-  `ConstructionOnlyComposesAndTheFirstTurnAttaches` 仍钉构造与第一拍。
+- **行为**：X11/WSLg 上主窗未 show 时容器里的独立 `QWindow` 已有有效句柄，attach 成功；Wayland 未映射 surface
+  拿不到 extent，`init()` 返回 false，控件显示表面后宿主再调一次。
+- **约束**（C5）：attach 只需要句柄 + 尺寸；present 需要窗口在屏上。
+- **要求**（R5）：平台不同意时回退为“先显示再 attach”，不能更差。
+- **验收**（T5）：`scripts/xwinmap.py` 读启动期 map_state；Windows 判据见 backlog。
+- **注意**（N5）：`map_state` 字段偏移是 92，不是 100；Windows 的 HWND + client rect 仍未实测。
 
-## 已评估但未采纳
+## 4. 公开接口
 
-- **延后创建/插入 RenderControl 直到就绪**（原版）：自锁——控件不在已显示窗口的布局里就没有可用表面
-  （`surfaceWidth()==0` 或句柄为空），`initializeBackend()` 会一直 defer，“就绪”永远不成立。
-  ⚠️ 2026-09-18 补：“先给尺寸再 attach、最后嵌入”的变形（`setInitialSurfaceSize()`）也试过，已删：
-  退化尺寸（1x1）本来就够 attach，先嵌入再 `init()` 更简单，框架不需要尺寸策略。
-- **延后 show QWindow 到引擎就绪之后**：因果反了。引擎"就绪"指 swapchain 建好，而它需要窗口存在；
-  present 又要求窗口已映射。本实现取的是它的可行内核：**隐藏时 attach（设备/swapchain），显示后才 present**。
-- **在 QWindow 背后画背景当占位**：未呈现的原生窗口露出什么取决于平台/合成器，画在后面不保证可见；
-  控件选择"保持隐藏，让容器自己的背景露出来"。
+### 4.1 `RenderControl`
 
-## 2026-09-28：模型改成"控件自己 attach"（同步），状态减到三个
+| 接口 | 契约 | 备注 |
+| --- | --- | --- |
+| `init()` | 同步、幂等 attach | 会话已绑当前句柄 ⇒ 直接 true |
+| `initAsync()` | `co_return init()`，不挂起 | 协程调用方的拼法 |
+| `state()` | `Pending` / `Presenting` / `Failed` | 见 F2 |
+| `failureReason()` | 非空 ⟺ `Failed` | attach 成功后清掉 |
+| `engine()` / `view()` / `viewer()` / `surface()` | 借用，控件拥有 | `view()` 在 `release` 后为 null |
+| `renderFrame()` / `fitToScreen()` | 按需出帧 / 对准内容 | attach 前不推 `Presenting` |
+| `setContinuousRendering(on, interval_ms)` | 连续出帧 | 默认按需 |
 
-上面若干条是 2026-09-19/20 那套"**宿主挑时机**"模型的记录（`initializeBackend()`、
-“`Attached` 只到绑上、等首帧才上屏”、`isAttaching()` 握手旗、settle 帧…）。
-本节是 2026-09-28 当时的契约，与它上面那些条目冲突时以本节为准（旧条目按日期保留，作为历史）。
-**注意：其中"`SurfaceWindow` 在构造函数里就试一次 attach"这一条已被 2026-10-11 那一节覆盖**（现在是"构造只组装"，见上）。
+## 5. 约束、要求与不变量
 
-- **attach 是同步的、由控件自己发起**：QWindow 一 `new` 出来句柄就有，所以 `SurfaceWindow` 在
-  **构造函数里**就试一次（`init()`），事件循环、宿主、定时器都不参与。句柄为空/尺寸退化/后端还没注册
-  时它退回，等触发再试。
-- **状态只剩三个**：`Pending`（没有可用表面，或还没往里渲过任何东西 ⇒ 区域隐藏）/ `Presenting`
-  （帧在表面里 ⇒ 区域显示）/ `Failed`（后端根本起不来）。**`Attached` 删了**：它在同步模型里
-  永远不驻留（`init()` 里 `setState(Attached)` 之后同一个调用栈就 `renderFrame()` ⇒ `Presenting`），
-  也没有任何读者区分它和 `Pending`。它原来承担的"设备与管线建了多久"改由 `init()` 自己打一行日志：
-  `[RenderControl] session up after N ms (device, session and pipelines)`（"construction -> 首帧"仍在
-  `setState` 那行里）。
-- **一帧就是一帧，没有"预热帧"这种特殊帧**：`renderFrame()` 不再问"控件在不在屏上"，它只剩两个判断
-  ——没有原生窗口、会话绑的不是现在这个窗口（后者重绑）。构造时那一帧是在占位尺寸（实测 160x160）下渲的，
-  它照样把状态推到 `Presenting`；可见性最终由 Qt 的父子链决定（顶层窗口没显示时表面仍然不可见）。
-- **`isAttaching()` 删了**：同步 attach 没有"正在 attach"这个可观察窗口。`AttachScope`、`Impl::attaching`、
-  `RenderControl::isAttaching()`、`DemoScene::sessionAttaching()` 与 demo 装配协程里的两个等待循环一并删。
-  install 的场景图读与写在同一条线程上，天然串行。
-- **settle 帧删了**：`settle_frames` / `requestSettleFrames()` / `handleUpdateTick()` / `event()` 里的
-  `UpdateRequest` 分支。resize 路径现在只出**一帧**（在那个最终尺寸上）。
-- **构造时还没有后端不算失败**：宿主按 SDK 写的次序（构造 ⇒ `engine()->setBackend()` ⇒ `init()`）时，
-  构造那一次只"不动"（保持 `Pending`，不 `failAttach`）；显式的 `init()` 配上没后端才判 `Failed`。
-- **重试触发加了一条：宿主 widget 自己的 show**（`RenderControl` 把事件过滤器同时装在容器和
-  `impl<QWidget>()` 上）。原因：容器在"有帧"之前是**隐藏**的，而 Qt 不给隐藏的子控件发 show —— 
-  只装在容器上时，"构造时没后端、之后才 setBackend()、窗口显示后不 resize"的控件会永远停在 `Pending`
-  （2026-09-28 由 `RenderControlTest.AttachesItselfOnceTheBackendAndWindowAreThere` 抓到）。
-- **测试**：`test_gui` 233 全绿（`RenderControlTest` 9/9）。三个用例按新模型重写：
-  `AttachesItselfOnceTheBackendAndWindowAreThere`（后端后装 + 窗口显示 ⇒ 自己 attach）、
-  `ReportsTheLifecycleThroughStateChanges`（序列 `Pending -> Presenting`）、
-  `TheFrameTheAttachRendersPutsTheSurfaceOnScreen`（一帧即 `Presenting`，上屏仍等窗口显示）。
+### 5.1 约束（C#）
+
+| # | 约束 |
+| --- | --- |
+| C1 | attach 必须有句柄和尺寸；否则保持 `Pending`。 |
+| C2 | 没有会话就没有帧；`failureReason()` 非空 ⟺ `Failed`。 |
+| C3 | 重建只换表面，不换会话；宿主不需要重新 `init()`。 |
+| C4 | 控件不排重试定时器；失败可观察。 |
+| C5 | attach 不要求可见；present 要求窗口在屏上。 |
+
+### 5.2 要求（R#）
+
+| # | 要求 |
+| --- | --- |
+| R1 | attach 之前配置 = 零重建。 |
+| R2 | `Presenting` 之前区域保持隐藏，露出主窗背景。 |
+| R3 | 重建期间状态退回 `Pending`，首帧后恢复 `Presenting`。 |
+| R4 | 拒绝/失败必须可观察；晚注册后端可被下一次 attach 捡起。 |
+| R5 | 平台不同意时回退为“先显示再 attach”。 |
+
+### 5.3 不变量（N#）
+
+| # | 不变量 |
+| --- | --- |
+| N1 | 构造返回时 `state()==Pending`、`device()==nullptr`、没有链。 |
+| N2 | `Presenting` ⟺ 帧已经在表面里。 |
+| N3 | 原生窗口重建不销毁会话/设备/已编译管线。 |
+| N4 | 控件不拥有窗口容器的可见性策略之外的东西；尺寸由 resize 事件给。 |
+
+## 6. 注意事项与陷阱
+
+### 6.1 未呈现的原生窗口是洞
+
+- 会怎么错：容器可见但还没有帧，桌面透出来。
+- 怎么判：`state()!=Presenting` 时容器必须隐藏。
+- 怎么防：`state_changed` 到 `Presenting` 才 `setVisible(true)`。
+
+### 6.2 不要在启动期替渲染组件 pump 事件
+
+- 会怎么错：`processEvents()` 把别的组件的定时器/事件一起跑，嵌入式表面被提前唤醒。
+- 怎么判：attach 在布局没稳时发生，拿不到有效尺寸/句柄。
+- 怎么防：启动框只 `repaint()`；首帧门用 `Window::hasPainted()` + 300 ms 兜底。
+
+### 6.3 重父化会重建原生窗口
+
+- 会怎么错：每个文档一个中央控件，切页/拖拽就重建会话，画面闪。
+- 怎么判：状态反复 `Pending → Presenting`，设备数上涨。
+- 怎么防：中央区放一个容器、只装一次、内部 `QStackedWidget` 切页。
+
+## 7. 已否决选项
+
+| # | 选项 | 理由 | ADR |
+| --- | --- | --- | --- |
+| D1 | 延后创建/插入 `RenderControl` 直到“就绪” | 自锁：控件不在已显示窗口的布局里就没有可用表面。 | — |
+| D2 | 先给尺寸再 attach、最后嵌入 | 退化尺寸（1x1）本来就够 attach；先嵌入再 `init()` 更简单。 | — |
+| D3 | 延后 show `QWindow` 到引擎就绪之后 | 因果反了：引擎就绪需要窗口存在，present 又要求窗口已映射。 | — |
+| D4 | 在 `QWindow` 背后画背景当占位 | 未呈现的原生窗口露出什么取决于平台/合成器。 | — |
+| D5 | 100 ms × N 次 attach 重试梯子 / settle 帧 | 首次 attach 是宿主的 `init()`，之后由窗口事件驱动。 | — |
+| D6 | 单独的 `Attached` 状态 | 同步 attach 里它永不驻留，没有读者区分它和 `Pending`。 | — |
+
+## 8. 测试与验收
+
+| # | 判据 | 用例 / 命令 |
+| --- | --- | --- |
+| T1 | 构造只组装；第一拍 attach 到宿主刚装的后端 | `ConstructionOnlyComposesAndTheFirstTurnAttaches` |
+| T2 | attach 那一帧就进 `Presenting`；attach 前不推状态 | `TheFrameTheAttachRendersPutsTheSurfaceOnScreen`、`AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen` |
+| T3 | 原生窗口重建后会话保留 | `FollowsARecreatedSurfaceWithoutTheHost` |
+| T4 | 拒绝 ⇒ false + `Pending`；无后端 ⇒ `Failed`；可重试 | `RefusedAttachReportsFalseAndWaitsForTheHost`、`HostCanRetryAfterTheBackendRefused`、`ReportsFailedWhenNoRenderBackendIsRegistered` |
+| T5 | 嵌入后立刻 `init()`，不等布局 | `HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles` |
+
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+F1–F5 已落地（Windows 的未显示窗口 attach 仍未实测）。同步 attach，三态状态机，容器隐藏到首帧。
+
+### 9.2 已知缺口 / 待办
+
+- Windows：主窗未 show 时 `VsgHostWindow` 是否拿到有效 HWND；见 `../backlog/appfw-startup.md`。
+- 会话 init 仍在应用线程（~184 ms）；搬到池上需要重新设计 attach 与内容装配的并发，暂不做。
+
+### 9.3 兼容性 / 迁移
+
+`SurfaceState::Attached` 已删除；旧代码只看 `Pending` / `Presenting` / `Failed`。`isAttaching()`、
+`AttachScope`、settle 帧均已删除。
+
+## 10. 参考
+
+### 10.1 代码
+
+- `src/fw/appfw/sdk/vine/appfw/gui/RenderControl.hpp`
+- `src/fw/appfw/src/gui/SurfaceWindow.{hpp,cpp}`
+- `tests/test_gui/RenderControlTest.cpp`
+
+### 10.2 文档与 ADR
+
+- `appfw-render-view.md`
+- `appfw-startup-splash.md`
+- `graphics-architecture.md`
+- `../backlog/appfw-startup.md`
+
+### 10.3 外部资料
+
+- Qt `QWidget::createWindowContainer` 的原生窗口语义。
+- X11 `XQueryTree` / `XGetWindowAttributes`（`scripts/xwinmap.py`）。

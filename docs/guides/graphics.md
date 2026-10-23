@@ -813,9 +813,8 @@ view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"
   （`presentedView()`），查看器自己不存第二份答案。
   `RenderControl` 上的三条同名入口（`viewerOptions()/setViewerOptions()/setShadingMode()`）就是它的转发。
 - 配方/几何/开关三层与"两处同名 vs 一处覆盖"的完整理由见
-  [`.ai/design/appfw-render-view.md`](../../.ai/design/appfw-render-view.md) §4.1、§7、§12，落地记录见
-  [`.ai/design/graphics-architecture.md`](../../.ai/design/graphics-architecture.md) S7 与
-  [`.ai/design/graphics-architecture.md`](../../.ai/design/graphics-architecture.md) S8。
+  [`.ai/design/appfw-render-view.md`](../../.ai/design/appfw-render-view.md) §3、§5、§6，链与 pass 的历史
+  沿革见 [`.ai/design/graphics-architecture.md`](../../.ai/design/graphics-architecture.md) 的 S7/S8 记录。
 
 ### 3.11 一块窗口由谁画：`RenderSurface`
 

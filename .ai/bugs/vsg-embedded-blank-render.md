@@ -4,6 +4,9 @@
 - **模块**: gfx_backend_vsg 插件（嵌入式 `SceneBridge` 几何构建路径）
 - **状态**: 已修复
 
+> **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
+> 现行结构见 `.ai/design/vsg-backend.md`。
+
 ## 现象
 
 嵌入式路径即使初始化成功，视图也只有清屏色、没有任何几何体；而独立窗口路径

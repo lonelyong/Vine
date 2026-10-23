@@ -1,4 +1,10 @@
-# appfw 文档模型设计（2026-09-27）
+# appfw 文档模型设计
+
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：文档身份/生命周期、打开与保存、类型元数据、视图层与中央客户区。
+> **权威来源**：`Document.hpp`、`DocumentManager.hpp`、`DocumentView.hpp`、`tests/test_appfw` / `tests/test_gui`。
+> **待办**：无（开放项见 `../backlog/`）
 
 本文回答：**"中间的渲染区、文档到底归谁；插件能否创建文档；文档是不是 app 创建的"**。核心结论一句话：
 
@@ -8,7 +14,7 @@
 见 §4–§6 与 `tests/test_appfw/DocumentTest.cpp`（17 条语义钉子）、`tests/test_gui/test_gui.cpp` 的
 `DocumentManagerDialogTest`。**视图层与共享会话（§7、§8）未做**。
 
-## 1. 今天有什么：会话与视图，没有文档
+## 1. 概要设计：问题与背景
 
 - `RenderControl`（`sdk/vine/appfw/gui/RenderControl.hpp`）：一个控件 = 一个原生 surface = 一个 `RenderEngine` =
   **恰好一个** `SceneView`（camera + content scene + orbit 操纵器）；`MainWindow::setPrimaryRenderControl()` 把
@@ -22,7 +28,7 @@
 所以今天"中央渲染区"的语义是：**外壳拥有控件与会话，某个内容插件往里填一个 scene**（`demo_plugin` 正是那个插件）。
 没有身份、没有生命周期、没有"关闭/保存/最近打开" ⇒ 那是**视图内容**，不是文档。
 
-## 2. 三条不同的轴（别焊在一起）
+## 2. 设计要点：三条不同的轴
 
 | 轴 | 今天归谁 | 文档模型里归谁 |
 |---|---|---|
@@ -30,7 +36,7 @@
 | camera + content scene + 操纵器（**视图状态**） | `RenderControl` 私有那个 `SceneView` | **文档类型提供的视图**（见 §5） |
 | 身份 + 生命周期 + 数据（**文档**） | 不存在 | **框架持有生命周期，插件提供类型** |
 
-## 3. 框架的面积：只给两件，别的一概不定
+## 3. 设计要点：框架的面积
 
 | 层 | 内容 | 位置 |
 |---|---|---|
@@ -44,7 +50,7 @@
 一条判据：一个**只开表格文档**的 app 不该为 3D 付钱（不建 device）；一个**多文档** app 不该需要 N 个 device；
 一个**单文档** app 不该写标签条代码。
 
-## 4. 文档语义（第 1 步已落地）
+## 4. 功能点：文档语义
 
 `Document` 是**纯数据 + 生命周期**，没有窗口/控件/场景/路径/对话框；`DocumentManager` 是进程一份（
 `Application::documentManager()`，创建于 `Application::initialize()`，早于插件加载，所以插件能在自己的 `load()`
@@ -70,7 +76,7 @@
 **有意不做（第 1 步）**：`open(path)` 与保存路径（要 IO 的账，见 §7）、`dirtyChanged` 事件（文档类型自己发变化
 事件、宿主订阅即可）、`closeAll()`（宿主三行循环，且"部分失败"的策略归宿主）、按插件记 owner（等有真实需求再加）。
 
-## 5. 打开与保存：载荷注册表 + 文档来源
+## 5. 功能点：打开与保存
 
 **位置不是 `path`，是 `Vfs + 虚拟路径`。** `src/base/iobase`（`vn::io`）已经有这件事的抽象：`Vfs` 是一棵以 `/` 分隔的
 虚拟文件树，操作走 `Result`/`IoError`、带 `isReadOnly()`；后端有 `DirectoryVfs`（真实目录）、`ZipArchive`（包 / 内存树，
@@ -227,7 +233,7 @@ vn::appfw::Document* document = manager.open(&payload);     // 借用；键 = pa
 
 ⇒ **现在不动代码**：`reload()` 是视图/宿主那一步（第 3 步）的事，等真的有一个宿主需要它再加（默认实现让所有已有类型不用改）。
 
-## 6. 类型元数据与管理器面板
+## 6. 功能点：类型元数据与面板
 
 与仓库既有的三件套同构（`PluginInfo`/`PluginManagerDialog`、`CommandInfo`/`CommandManagerDialog`、`ConfigWindow`），
 文档这一件是 `DocumentTypeInfo` + `gui::DocumentManagerDialog` + `show_document_types` 命令。
@@ -244,7 +250,7 @@ vn::appfw::Document* document = manager.open(&payload);     // 借用；键 = pa
 - **面板只读，类型没有“启用/禁用”开关**：谁能用由注册它的插件决定（禁用或跳过插件 —— 既有且语义完备的开关），
   再给类型一个启用位会多出一个语义晦涩的轴（“禁用一个类型后，已经打开的同类型文档怎么办？”没有干净答案）。
 
-## 7. 视图层（2026-09-27 落地）
+## 7. 功能点：视图层
 
 三件东西，都在 `sdk/vine/appfw/gui/`：
 
@@ -298,7 +304,7 @@ vn::appfw::Document* document = manager.open(&payload);     // 借用；键 = pa
 free；`gdb` 里表现为同一个 `UIElement::~UIElement` 连续出现两帧（都停在 `delete d` 那一行）。`build-asan` 下一跑就能抓
 （视图用例 9/9 干净）。
 
-## 8. 中央客户区（2026-09-27 落地）
+## 8. 功能点：中央客户区
 
 `DockPanelManager::setCentralWidget()` 的实测语义（`third_party/DockingPanes`）：
 
@@ -322,39 +328,30 @@ free；`gdb` 里表现为同一个 `UIElement::~UIElement` 连续出现两帧（
 - 标签条自己画或用 `QTabWidget`（库的 tabbed container 只服务 L/R/B 的面板）—— **这一件还没做**：今天宿主内部只有页，
   没有标签条，所以"同时开三份文档、点标签切换"要靠命令（`setCurrent`）或后续补的容器。
 
-## 9. 硬限制：运行时只有一块渲染区
+## 9. 功能点：渲染面与设备上限
 
 `RenderBackend::initialize()` 的契约是 **"device, surface, pipelines"、"Called once per session, after the host
 announced the native window (setWindowHandle)"**，并且"A backend that is already initialized **tears the previous
-session down first**"；`RenderBackendFactory::create()` 又是**每次给一份新实例**；而 `gfx_backend_vsg` 的
-`VSG_MAX_DEVICES=1` 是**有意绊线**（"a path that does this must throw instead of quietly working"）。
+session down first**"；`RenderBackendFactory::create()` 又是**每次给一份新实例**。
 
-⇒ **"每个文档一块各自独立的渲染 surface"今天做不到**（第二个 device 会抛）。可行的形状是：**一块 surface + 一个
-engine（外壳持有并共享）+ 每个 3D 文档一个 `SceneView`**，切换 = 换呈现的 view；想分屏就显式给 pass 设 sub-viewport
-（engine 不管布局）。这是**后端的账**，不是文档模型的账 —— 将来后端支持"一个 device 服务多个 surface"才可能改。
+**现行形状**：**一个文档 = 一个视图 = 它自己那份资源**。视图自带 `RenderControl`（自己的原生面、自己的会话/设备、
+自己编的管线），`content()` 返回**视图自己**（一实例一页，和 2D 一样）；`activate()` 里首次造场景并
+`RenderControl::init()`（"宿主给时机、控件维护会话"），相机只在第一次对准内容。
+应用级共享的只有外壳那一套（DockPanel、Ribbon 菜单 —— 它们跟随"当前文档"的语义）。
 
-**视图层怎么接（已落 2026-09-27）**：**一个文档 = 一个视图 = 它自己那份资源**（用户拍板）。视图**自带** `RenderControl`
-（自己的原生面、自己的会话/设备、自己编的管线），`content()` 返回**视图自己**（一实例一页，和 2D 一模一样）；
-`activate()` 里首次造场景并 `RenderControl::init()`（"宿主给时机、控件维护会话"），相机只在第一次对准内容。
-**应用级共享的只有外壳那一套**（DockPanel、Ribbon 菜单 —— 它们跟随"当前文档"的语义）。
+**上限是 4**：`gfx_backend_vsg/CMakeLists.txt` 显式设 `VSG_MAX_DEVICES=4`。vsg 1.1.16 里 `<=4` 的固定数组分支
+是唯一正确的形状（`>4` 的动态分支 `vk_buffer<std::vector<T>>` 的 `size()` 只在写时增长、读会越界，实测
+`std::vector<vsg::ModifiedCount>::operator[]` 断言、`test_vsg` 当场 abort）。`<=4` 分支的 `operator[]`
+**不做边界检查**，所以第 5 块由**后端拒**：`vsg::Device` 构造抛异常，`deviceFailureMessage()` 转成带上限数字的理由，
+`RenderControl::init()` 返回 false 并进 `Failed`。要"无上限"就得给 vsg 打补丁；本树保持 vsg 原版 + 门禁盯着我们
+自己的用法，所以没做。
 
-由此两条原来的设计被**推翻**（记下来，别重提）：
-
-- "会话必须全进程共享"不是硬件限制，只取决于 **vsg 的 `VSG_MAX_DEVICES`**。但那个常量的三种形状里，
-  `>4` 的**动态分支在 vsg 1.1.16 是坏的**：`vk_buffer<std::vector<T>>` 的 `size()` 只在写时增长、读会越界
-  （实测 `std::vector<vsg::ModifiedCount>::operator[]` 断言，`test_vsg` 当场 abort）⇒ **不改 upstream 的上限是 4**
-  （`<=4` 的固定数组分支，实现正确）。我们取 **4**（`gfx_backend_vsg/CMakeLists.txt` 里显式设，原文"默认 1 是有意绊线"
-  那句已作废）：可以同时开 4 份 3D 文档，各自一块设备；要"无上限"就得给 vsg 打补丁（本树的规矩是 vsg 保持原版 + 门禁
-  盯着我们自己的用法，所以没做）。**注意**：`<=4` 分支的 `operator[]` **不做边界检查** ⇒ 第 5 块面必须由**我们**拒掉
-  （还没做，见 §12.2 第 5 条）。
-- 文档视图**不需要**把窗口交给谁：各自一块设备，互相看不到，所以"外壳的内容要退场"这类编排也不需要了（原来
-  §12.2 第 5 条提的那两种形状全部作废）。
-
-钉子：`tests/test_gui/ModelViewerTest.cpp` 的 `EachDocumentViewOwnsItsOwnRenderSurface`（`content() == 视图自己`；两份
-文档的控件/引擎/view **都不是同一个**；关掉一份另一份还在）。
+钉子：`tests/test_gui/ModelViewerTest.cpp` 的 `EachDocumentViewOwnsItsOwnRenderSurface`（`content() == 视图自己`；
+两份文档的控件/引擎/view **都不是同一个**；关掉一份另一份还在）；
+`tests/test_vsg/VsgBackendTest.cpp` 的 `ADeviceCapThatIsReachedIsAReasonAndNotAnException`（第 5 块给理由、不抛到事件循环）。
 
 
-## 10. 落地顺序
+## 10. 状态与演进：落地顺序
 
 1. **core（✅ 已落）**：`Document`（`source()`/`save()`）+ `DocumentManager`（类型注册含元数据、按载荷类型注册的打开器、
    `create`/`open`/`close`/`current`）+ 语义钉子（`tests/test_appfw/DocumentTest.cpp`）。
@@ -371,13 +368,13 @@ engine（外壳持有并共享）+ 每个 3D 文档一个 `SceneView`**，切换
    无用的 API 不留。运行期 attach 是普通路径（`RenderControl` 的文档本来就写着 "THE HOST GIVES THE TIMING"）；
    "必须贴着主窗上屏"那条**只对启动期那个会话**成立（见 `appfw-startup-phases.md`）。
 
-## 11. 本设计不解决 / 有意不做
+## 11. 非目标与已知缺口
 - **单文档还是多文档**：由 app 决定。单文档 app 在 `opened` 里先关旧的（或用默认派生给的开关），多文档 app 用集合 +
   标签；两者共用同一套 `Document` 语义。
 - **多窗口**（一个文档一个顶层窗口）：appfw 今天只有**一个** `MainWindow`，这是另一个量级的改动，不在本文范围。
 - **`open(path)` 与格式探测**：需要"哪个类型能读这个路径"的 IO 概念（`iobase`/扩展名），留给第 2 步一起定。
 
-## 12. 参考实现：`model_viewer` 测试插件（2026-09-27 落地）
+## 12. 参考：`model_viewer` 测试插件
 
 上面说的这些有一个**可点的**例子：`src/plugins/model_viewer/`。它是测试插件，但按真实插件的形状写：
 
@@ -414,11 +411,11 @@ engine（外壳持有并共享）+ 每个 3D 文档一个 `SceneView`**，切换
 2. ~~`Command::documentTypes()` + `CommandInfo.document_types`~~ **不做（2026-09-27 用户拍板：命令内部自己获取
    文档并判断类型）**：不适用就返回 `NotApplicable`（把缺的那句话写进 `message()`），见
    `appfw-command-manager.md`「结果状态」。因此也**没有"按类型过滤 ribbon"**这一层：UI 少显几个按钮是观感问题，
-   正确性已经由命令自己保证。附带好处：`Command` 的虚表不动，插件 ABI 不用从 7u 抬到 8u。
+   正确性已经由命令自己保证。附带好处：`Command` 的虚表不动，插件 ABI 不用再 bump。
 3. ~~视图注册表（§7）~~ **已落**：文档类型 → 视图（"编辑器里 mesh 与 b-rep 显示/交互不同"的地基）。渲染那一段也已落：
    视图**自带**渲染面（§9），不是共享会话。
 4. 面板注册表 + 可见性声明（依赖 3 的编排骨架）。与第 2 条的区别要记住：**命令**有 `execute()` 这一步，所以"适用不适用"
-   由它自己判；**面板**没有"执行"时刻，它的适用面只能由**声明**表达，再由宿主决定显隐。5. **同时开的 3D 文档数要有个明确的拒法（未做，必须做）**：`VSG_MAX_DEVICES=4` 的 `std::array` 分支**不做边界检查**，
-   第 5 块渲染面写下去就是 out-of-bounds。所以要到第 5 份时由**我们**拒（后端数着活的会话数，超了就在
-   `initialize()` 里明确失败 + 一句话；`RenderControl::init()` 因此返回 false，那份文档的页保持空白/给出提示），
-   而不是等它去踩数组。
+   由它自己判；**面板**没有"执行"时刻，它的适用面只能由**声明**表达，再由宿主决定显隐。5. **同时开的 3D 文档数有明确拒法（已落）**：`VSG_MAX_DEVICES=4` 的 `std::array` 分支不做边界检查，所以第 5 块
+   由 vsg 的 `Device` 构造抛异常拒绝；`gfx_backend_vsg` 把异常转成带“at most 4 simultaneous render devices”的理由，
+   `RenderControl::init()` 返回 false 并进 `Failed`，那份文档的页保持空白/给出提示。
+   判据：`VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`。

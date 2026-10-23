@@ -1,4 +1,10 @@
-# appfw UserIO 设计（2026-09-11 审查轮）
+# appfw UserIO 设计
+
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：`UserIO` 契约、控制台/可视两个后端、文件读取与输入协议。
+> **权威来源**：`UserIO.hpp`、`ConsoleUserIO.hpp`、`VisualUserIO.hpp`、`tests/test_gui`。
+> **待办**：无（开放项见 `../backlog/`）
 
 代码：`src/fw/appfw/sdk/vine/appfw/UserIO.hpp` + `src/fw/appfw/src/UserIO.cpp`（基类），
 `src/fw/appfw/src/ConsoleUserIO.hpp/.cpp`（无头）与
@@ -7,7 +13,7 @@
 `VisualUserIO::setConsolePanel()`（由宿主自己绑，见下）与 `CommandManager`（`reportToUser()`、命令集事件）。
 测试：`tests/test_gui/test_gui.cpp`（`UserIOTest.*` 6 例、`ConsoleUserIOReadTest.*` 4 例 + `GuiTest.CommandManager_PendingUserInput*`）。
 
-## 结构
+## 1. 概要设计与结构
 
 | 类 | 何时创建 | 输出 | 读入 |
 | --- | --- | --- | --- |
@@ -18,7 +24,7 @@
 拥有者：`ApplicationData::user_io`（`unique_ptr`，先于 dispatcher 拆）；`Application::shutdown()` 先
 `cancelPendingInput()` 再排空命令链。
 
-### 面板接线（2026-09-21）
+### 1.1 面板接线（2026-09-21）
 
 - **面板归调用方，绑定在 UserIO 上**：`VisualUserIO::setConsolePanel(ConsolePanel*)`（`nullptr` = 解绑，重绑先摘旧面板的
   handler）。插件建面板、挂 dock，再把它交出去；这个类不销毁面板。
@@ -32,9 +38,9 @@
   `co_await done` —— 能唤醒它的只有面板的 `lineEntered`/`escapePressed` 或关机的 `cancelPendingInput()`，
   所以一个 `getXxxAsync` 会挂到关机（不崩、不报错）。要改语义就得先在 `UserIO` 层决定“没有交互面”算什么。
 
-## 契约（本轮固化）
+## 2. 设计要点与契约
 
-### 线程
+### 2.1 线程
 
 - **所有入口都可以从任意线程调用。** 命令在它恢复时所在的线程上继续（定时器线程、IO 线程），
   所以 `putString`/`clear` 是"任意线程"的输出路径：实现负责编组，调用方不管线程。
@@ -46,7 +52,7 @@
 - **`cancelPendingInput()` 可以从任意线程调用**，包括事件循环已经停掉的时候（`Application::shutdown()`
   正是如此）——所以它只能改原子标志并 `set()` 事件，绝不能碰 UI。
 
-### 交互
+### 2.2 交互
 
 - **同一时刻只允许一个交互等待**：控制台只显示一个提示，两个等待中的读会共享同一个完成事件和结果
   字段（旧实现里第二次读会覆盖第一次的 `pending_`/结果，一次输入喂给两个读）。第二个 `getXxxAsync`
@@ -56,7 +62,7 @@
 - **取消必须真的解开等待**：`ConsoleUserIO` 用后台线程读 `std::cin`（阻塞读无法被中断），
   取消时设置共享状态并唤醒等待者，未消费的行留在缓冲里给下一个读。
 
-### 取值
+### 2.3 取值
 
 - `getIntAsync()` 产出 **`int`**（旧签名是 `int8_t`：输入 1000 会变成 -24）。
 - 解析走 `UserIO::parseInt()`：`String::toInt()` 经 `strtol` 再转 `int`，超出范围会静默回绕，
@@ -73,7 +79,7 @@
 - `onApplicationThread()` 带一条断言：有事件循环时，inline 路径必须在应用线程（否则就是拿控件在错线程上写）；
   这是后续改动的保险丝。
 
-### 输出与列表
+### 2.4 输出与列表
 
 - `putString` 一行一条、`clear` 清屏；`ConsoleUserIO::clear()` 无条件输出 ANSI 序列（重定向到文件时
   会落进控制字符，留档不改）。
@@ -82,7 +88,7 @@
 - 重新绑定面板会先摘掉旧面板上的两个 handler（旧实现每次都挂新的，同一个面板绑两次 ⇒ 一行输入
   被执行两次）。
 
-### 无头进度（2026-09-18）
+### 2.5 无头进度（2026-09-18）
 
 `LongRunning` 命令会建一个 ambient `ProgressHost`，GUI 侧由 `ProgressPresenter` 显示；无头侧过去
 **什么都不显示**。现在 `ConsoleUserIO` 自带一个 `ConsoleProgressReporter`
@@ -104,12 +110,12 @@
 - 直接构造 `ConsoleUserIO` 的用例需要 appfw 私有头：`test_gui` 的 CMake 单列了这个 include 目录，与
   `test_asyncqt` 引私有 Qt 协程胶水同样的做法。
 
-## 本轮审查（11 项）
+## 3. 关键行为与证据
 
 | 编号 | 缺陷 | 证据 | 修复 |
 | --- | --- | --- | --- |
 | U1 | 输出路径不编组：`VisualUserIO::putString` 直接写 QWidget | `ConsolePanel::append` 不做编组，而 `CommandManager::reportToUser` 与 `appendOnApplicationThread` 都编组；app_shell 的命令全部 `io->putString(...)` | 编组下沉到 `putString`/`clear`（`onConsolePanel`），并在 `UserIO` 里写明"任意线程可调用、实现负责编组" |
-| U2 | `getIntAsync` 返回 `int8_t` 且两个实现无检查地窄化 | `static_cast<int8_t>(1000)` = -24 | 签名改为 `int`（无调用方），解析改走 `UserIO::parseInt`；`VN_APPFW_PLUGIN_ABI_VERSION` 1u → 2u，插件必须重编 |
+| U2 | `getIntAsync` 返回 `int8_t` 且两个实现无检查地窄化 | `static_cast<int8_t>(1000)` = -24 | 签名改为 `int`（无调用方），解析改走 `UserIO::parseInt`；`VN_APPFW_PLUGIN_ABI_VERSION` 必须 bump（当前 **8u**），插件必须重编 |
 | U3 | 并发读共享 `done_`/结果字段，互相踩 | 一份 `pending_`/`cancelled_`/四个结果字段 | 单交互槽位 + `beginRead` 的 CAS 拒绝 + warning，`UserIOTest.SecondReadIsRefusedWhileOneIsPending` |
 | U4 | `ConsoleUserIO` 阻塞 `std::getline` ⇒ `cancelPendingInput()` 无效，关机可能让命令恢复到已拆的管理器上 | 旧实现直接在等待者线程上 `getline` | 一个后台读线程 + 行缓冲 + 可唤醒的 `AsyncEvent`，取消后读取立即返回 |
 | U5 | 补全列表不刷新：绑定 console 之后注册的命令进不了补全 | `refreshCompletion` 只在 `setConsolePanel`/`setCommandManager` 调用；app_shell 在自己的 `load()` 里绑定，命令在加载期注册 | 新增 `CommandManager::commandsChanged` 事件（注册/取消/启用开关/别名，均在锁外触发），`VisualUserIO` 订阅后编组刷新 |
@@ -124,7 +130,7 @@
 它自己的文档承诺"不是有效整数则返回 0 且 ok=false"，所以按契约补上范围检查，并在 `StringTest`
 固化（`99999999999` → 0/ok=false，`2147483647` → 保留）。
 
-## 不变量
+## 4. 约束与不变量
 
 1. 任何线程调用 `putString`/`clear` 都安全；真正碰面板的动作只在应用线程上发生，且面板已销毁时是空操作。
 2. 同一时刻最多一个 `getXxxAsync` 在等待；它的槽位在协程结束（或被销毁）时释放。
@@ -134,7 +140,7 @@
 6. 读可以从任意线程发起，而提示记帐与面板写入只发生在应用线程上。
 7. 有前台进度时无头输出里一定会出现进度行（`LongRunning` 命令在无头模式下不再"默默跑"）。
 
-## 测试映射（tests/test_gui/test_gui.cpp）
+## 5. 测试与验收
 
 | 用例 | 覆盖 |
 | --- | --- |
@@ -155,7 +161,7 @@
 | `ConsoleProgressReporterTest.ConsoleUserIOPrintsTheProgressOfAForegroundOperation` | 端到端：无头 IO 构造即挂消费者，进度出现在 stdout |
 | `test_core String.NumericConversions` | `String::toInt` 范围检查 |
 
-## 已评估但**未采纳**（留档）
+## 6. 已否决选项
 
 - **不给 `ConsolePanel` 加"当前补全条目"的 getter**：为测试方便扩公共 API 不划算，U5 以机制测试
   （`commandsChanged`）+ 绑定路径覆盖，弹窗行为留给人工检查。
@@ -179,7 +185,7 @@
   每次 O(N) 拷贝 + 一次编组 UI 更新）。没有测量支持它是瓶颈；若未来剖析真的看到启动期刷新成堆，
   再考虑把连续刷新合并成一次 posted 刷新——当前不动。
 
-## 文件 / 目录读取（2026-10-10 落地）
+## 7. 文件 / 目录读取
 
 > 状态：**已落地**（W1–W4）。三条定稿（用户 2026-10-10）：**对外四个分开的接口**（文件/文件夹 × 单个/多个）、
 > **多个路径写在一行里用 `;` 分隔**、**浏览按钮（打开文件对话框）**。理由分别在 §1 / §2 / §5。
@@ -191,7 +197,7 @@
 > 测试：`tests/test_gui/test_gui.cpp` 的 `ConsoleUserIOReadTest.*`（无头）与 `UserIOTest.*`（GUI，含一个真的点按钮、
 > 真的开对话框、由用例自己关掉对话框的端到端用例）。
 
-### 0. 为什么合理
+### 7.1 为什么合理
 
 今天命令想拿一个文件路径只有 `getStringAsync()`：提示与取值都在框架里，但**"这个路径能不能用"和"再问一次"调用方做不到** ——
 重提示是实现的内部状态机（`VisualUserIO::Impl::parseAndComplete()` + `repromptError()`），调用方在
@@ -210,7 +216,7 @@
 
 代价（认下来）：`UserIO` 追加四个虚函数 + 两个选项结构；`ConsolePanel` 后期多一个按钮。
 
-### 1. 接口（SDK 面）
+### 7.2 接口（SDK 面）
 
 **对外是四个分开的名字**：文件与文件夹各一个单个、一个多个，调用方谁也不传 "kind"（用户要求）。
 选项也**分成两个结构**，因为字段集合本来就不一样：目录读没有"后缀"这一项，
@@ -298,7 +304,7 @@ if (!mesh) {
 const auto inputs = co_await io->getFilesAsync(u8"输入文件: ", FileReadOptions{ { u8"stl" }, u8"网格文件" });
 ```
 
-### 2. 输入协议：一行一条答案，多个用 `;` 分隔
+### 7.3 输入协议：一行一条答案，多个用 `;` 分隔
 
 | 方面 | 单个 | 多个（`getFilesAsync` / `getDirsAsync`） |
 | --- | --- | --- |
@@ -320,7 +326,7 @@ const auto inputs = co_await io->getFilesAsync(u8"输入文件: ", FileReadOptio
 - **列表读不需要新协议**：它就是"一次普通读 + 一次切分"，所以槽位、取消、行缓冲、`AsyncEvent` 全都不用动
   —— 这正是选 `;` 而不是"逐行输入到空行"的最大收益（见 §6）。没有终止符、没有"边读边收"的中间态、没有逐轮回显。
 
-### 3. 校验（基类共享）
+### 7.4 校验（基类共享）
 
 ```cpp
   protected:
@@ -368,7 +374,7 @@ const auto inputs = co_await io->getFilesAsync(u8"输入文件: ", FileReadOptio
 
 文案示例：`文件不存在: <path>`、`不是目录: <path>`、`后缀不支持（仅 .stl / .obj）`。
 
-### 4. 两个后端的实现要点
+### 7.5 两个后端的实现要点
 
 **`ConsoleUserIO`** —— 每条读都是"`readLineAsync()` 一次 + 校验"：
 
@@ -389,7 +395,7 @@ const auto inputs = co_await io->getFilesAsync(u8"输入文件: ", FileReadOptio
 - `endRead()`（每次读结束时都走）顺手把面板的输入动作清掉：按钮不属于面板的状态机，它属于**这一次读**，
   所以撤下与读的收尾在同一处发生（`console == nullptr` 时什么也不做）。
 
-### 5. 输入行的路径交互（浏览 + 高亮；拖放**先不做**）
+### 7.6 输入行的路径交互（浏览 + 高亮；拖放**先不做**）
 
 **一条原则**：手打与点击（浏览）都只是"更快地填那一行"。
 所以校验与完成永远只有一条路径（输入行的 `lineEntered`），没有旁路，浏览也不可能绕过 `checkPath`。
@@ -464,7 +470,7 @@ void ConsolePanel::beginInput(const String& prompt, const String& initial_text =
   **自动提交**（选完要按一次回车 —— 用户能看见将要提交的确切文本、还能再用 `;` 追加，
   而且"浏览"因此永远不绕过校验）、无头侧没有任何浏览面。
 
-### 6. 备选与未采纳（留档）
+### 7.7 备选与未采纳（留档）
 
 - **"逐行输入、空行结束"的列表协议**：不做（用户 2026-10-10 定为 `;`）。理由：要在**一次读里循环**，
   `ConsoleUserIO` 得把槽位协议拆成"外层持槽 + 内层逐行"两层；GUI 侧要逐轮改提示、逐条回显、认两种终止符（空行与 EOF）。
@@ -482,7 +488,7 @@ void ConsolePanel::beginInput(const String& prompt, const String& initial_text =
   要"少一个旋钮"就砍标题 —— 一个 `extensions` 加框架定的标题已经够用（本轮砍掉 `picker_label` 就是这个理由）。
 - **对话框放在实现侧 + 给 `ConsolePanel` 加 `vn::Signal<> browsePressed`（本节早先的写法）**：不做。
   `Signal` 是 `ConsolePanel` 的**数据成员**，加一个就改 `sizeof(ConsolePanel)` —— 插件在 SDK 头里
-  `new ConsolePanel(...)`，两边大小不一致就是 ABI 破坏，得 bump 8u 并重编全部插件；
+  `new ConsolePanel(...)`，两边大小不一致就是 ABI 破坏，得再 bump ABI 并重编全部插件；
   而"填行"方案让面板复用现成的 `lineEntered`，一个成员都不用加。
   第二层理由：旧方案里对话框结果要**绕过输入行**直接喂 `onLineEntered()`，于是"读是否已经结束"必须在实现侧再判一次；
   填行方案只剩面板内部一次 `kind` 比较，路径根本落不到错误的读上。
@@ -496,7 +502,7 @@ void ConsolePanel::beginInput(const String& prompt, const String& initial_text =
   `cancelPendingInput()` 立下的口径；默认给 `nullopt` + warning，谁支持谁 override。
 - **`suggested_path` 之外的"相对基准目录"**：不做，调用方按 cwd 解释。
 
-### 7. 工作分解与测试
+### 7.8 工作分解与测试
 
 | 工作项 | 状态 | 内容 |
 | --- | --- | --- |
@@ -518,7 +524,7 @@ void ConsolePanel::beginInput(const String& prompt, const String& initial_text =
 | `ConsoleUserIOReadTest.MultiplePathsComeFromOneSemicolonSeparatedLine` | 无头：`;` 切分、空白段忽略、保序；一段坏 ⇒ 整条失败（不给部分成功） |
 | `ConsoleUserIOReadTest.DirReadRejectsAFileAndAcceptsADirectory` | 目录读拒文件（"不是目录"）、文件读拒目录（"不是文件"） |
 
-### 8. 不变量（新增 8–11）
+### 7.9 不变量（新增 8–11）
 
 8. 无头侧一次读**从不重提示**：非法输入只报一次原因，`nullopt` 随之而来（列表读也一样）。
 9. 路径读只在**校验通过**时给出路径；`require_existing` 时它在判定时刻存在，此后可能消失（TOCTOU 由调用方承担）。

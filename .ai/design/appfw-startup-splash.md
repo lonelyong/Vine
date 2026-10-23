@@ -1,425 +1,252 @@
-# appfw 启动框与启动进度（`BootSplash` / `StartupProgress`）设计（2026-09-18）
+# appfw 启动框与启动进度（`BootSplash` / `StartupProgress`）设计
 
-> **命名演变（2026-09-26）**：本文早期记录里的 `beginStartup(ready)` / `finishStartup()` / `runStartup(work)`
-> 就是后来的 `startupStart(next)` / `startupEnd()` / `run(work)`；启动阶段已是三拍 `startupStart` → `startup` →
-> `startupEnd`（见 `appfw-startup-phases.md`）。**`run(work)` 那个重载后来删了**：宿主的启动工作由它自己重写
-> `startup()` 那一拍、自己 `co_await vn::async::run(...)` 丢到线程池上，框架不再替宿主拥有线程。带日期的历史记录保留旧名。
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：启动框、启动进度与呈现；三拍、线程契约、失败/取消路径见 `appfw-startup-phases.md`。
+> **权威来源**：`StartupProgress.hpp`、`gui/BootSplash.hpp`、`AppConfig.hpp`、`tests/test_gui/BootSplashTest`。
+> **待办**：`../backlog/appfw-startup.md`
 
-## 目标与定位
+## 1. 概要设计
 
-启动期没有进度可看：`GuiApplication` 的**构造函数**建主窗口（Ribbon、停靠面板），而 `PluginManager::loadAllAsync()`
-在应用线程上跑，用户面对的是一个"还没长齐的窗口"，而且插件加载快慢完全不可见。
-本次加的是**框架级**的启动框：任何 app 通过 `AppConfig::splash` 开一个，框里显示应用身份
-（logo/标题/副标题）+ 当前在做什么（"正在加载插件 app_shell (1/4)"）+ 一个**一直在转的小指示器**。
+### 1.1 问题与背景
 
-> **2026-09-26 改版（用户）：”不搞总进度，只是不断推进，不显示进度条，显示一个小的转圈的图标”。**
-> 框上不再有进度条、也没有任何百分比：启动没有已知总量，条只能骗人（见下“两种阶段”一节的结论）。
-> 留下的是：状态行（在干什么）+ 18 px 的转圈指示器（在动）。`BootSplash::progressFraction()` /
-> `isIndeterminate()` 随之删除，换成 `BootSplash::isBusyIndicatorRunning()`。
-> 报告方的**可计数阶段照旧存在**（`stage(name, total)` / `setDone()`，插件加载就在用）——
-> 状态栏的呈现者与无头控制台照旧显示它们，只是**启动框不把它们变成数字**。
+启动期没有进度可看：`GuiApplication` 构造函数建主窗（Ribbon、停靠面板），插件加载在应用线程上跑，用户面对的是
+一个“还没长齐的窗口”，而且加载快慢完全不可见。启动框要给应用身份和当前阶段，但不能假装知道总量。
 
-"通用"落在两件事上：
+### 1.2 目标
 
-- **应用只为外观配置一次**（`AppConfig::splash`：`enabled`/`title`/`subtitle`/`logo`），不写任何呈现代码；
-- **启动期进度是应用级状态**，框架自己上报（界面初始化 + 插件逐个大报），应用可以插入自己的阶段
-  （Vine 的 `main.cpp` 报了一行"正在初始化日志"）。
+- 应用只配外观（`AppConfig::splash`），不写呈现代码。
+- 启动期只显示启动框；主窗在 `startupEnd()` 第一次上屏，用户看不到“先冒出一个窗口、再变样”。
+- 进度按相位更新，不显示百分比/进度条；状态行 + 18 px 转圈。
+- 上报口是应用级状态，状态栏/控制台/启动框共享同一份。
 
-## 组成
+### 1.3 非目标
+
+- 不做整体 ETA、进度条、百分比。
+- 不在相位内做动画/心跳；不切开会话 `init()`，不让启动期回转循环。
+- 不替宿主拥有启动线程；宿主的重活由它自己在 `startup()` 那一拍丢到池上。
+
+### 1.4 一句话结论
+
+启动框是框架级呈现：`Application::startupSequence()` 建/收上报口，`GuiApplication::startupStart()` 上框并等首帧，
+`startupEnd()` 收框并第一次显示主窗；进度按相位推，框只显示状态行 + 转圈。
+
+## 2. 设计要点
+
+### 2.1 组成
 
 | 部件 | 位置 | 职责 |
 | --- | --- | --- |
-| `SplashConfig` | `AppConfig::splash`（`AppConfig.hpp`） | 应用侧配置：开关 + 标题/副标题/logo |
+| `SplashConfig` | `AppConfig::splash`（`AppConfig.hpp`） | 开关 + 标题/副标题/logo |
 | `StartupProgress` | `sdk/vine/appfw/StartupProgress.hpp` | 启动期上报口：阶段、状态文字、比例；进程内至多一个 |
-| `gui::BootSplash` | `sdk/vine/appfw/gui/BootSplash.hpp` | 呈现：无边框自绘圆角框 + 状态行 + 转圈指示器（无条无百分比） |
-| `Application` | 启动期由 `startupSequence()` 驱动：建/收上报口（`beginStartupProgress()` / `endStartupProgress()`），三拍是异步钩子 | 生命周期与销毁 |
-| `GuiApplication` | **构造函数** / `startupStart()` + `startupEnd()` 覆写（异步） | 建框、显示、关闭 |
-| `PluginManager::loadAllAsync()` | 上报"正在查找插件"、"正在创建/加载/收尾插件 x (i/n)" | 启动里最长、最不可预测的一段 |
+| `gui::BootSplash` | `sdk/vine/appfw/gui/BootSplash.hpp` | 无边框自绘圆角框 + 状态行 + 转圈指示器 |
+| `Application` | `startupSequence()` 驱动三拍；建/收上报口 | 生命周期 |
+| `GuiApplication` | 构造函数建框；`startupStart()` / `startupEnd()` 覆写上屏/收框 | 呈现 |
+| `PluginManager::loadAllAsync()` | 上报“正在查找/加载/收尾插件 x (i/n)” | 启动里最长、最不可预测的一段 |
 
-**为什么上报口在 appfw 而不是 base**：与 `ProgressHost` 同源——"应用此刻在干什么"是应用状态，
-且要往 `ProgressHost` 里报（Core 的 Signal）。上报口**自己持一个前台 `ProgressHost`**，
-所以启动进度不是启动框私有的：状态栏的 `ProgressPresenter`、无头模式的 `ConsoleProgressReporter`
-不需要任何额外接线就能显示同一份状态。
+**为什么上报口在 appfw 而不是 base**：它要往 `ProgressHost` 里报（Core 的 `Signal`），而 `ProgressHost` 是应用状态。
+上报口自己持一个前台 `ProgressHost`，所以启动进度天然被状态栏/控制台共享。
 
-## 两种阶段，以及为什么不是"整体 ETA"
+### 2.2 两种阶段
 
-- **可计数阶段** `stage(name, total)`：有总量，`setDone()` 按 `done/total` 推进（插件加载就是这样，
-  每个插件的 `load()` 回来算一份）。**启动框不显示它**（没有条）；状态栏呈现者与控制台照旧显示。
+- **可计数阶段** `stage(name, total)`：`setDone()` 按 `done/total` 推进（插件加载就是这样，每个插件回来算一份）。
 - **不确定阶段** `stage(name)`：只知道在做什么。
+- **每个可计数阶段从零开始**（等于该阶段自己的比例），不是整次启动的剩余。上报方不可能知道还没走到的阶段有多长；
+  硬凑全局百分比要么在阶段切换处跳回 0，要么让应用预先声明权重表。
+- 启动框不把可计数阶段变成数字；状态栏呈现者与控制台照旧显示它们。
 
-**每个可计数阶段从零开始**（等于该阶段自己的比例），而不是整次启动的剩余。
-理由：上报方不可能知道还没走到的阶段有多长，硬凑一个全局百分比要么在阶段切换处跳回 0
-（骗人），要么得让应用预先声明权重表（把框架的复杂度转嫁给应用）。
-用户真正要看的是"正在加载哪个插件"和"这段还要多久"，前者由状态文字精确回答
-（`setLabel("正在加载插件 app_shell (1/4)")`），后者由当前阶段的真实比例回答。
+## 3. 功能点
 
-## 生命周期
+### 3.1 功能索引
 
-```
-config.splash.enabled = true
-createGuiApplication()   → GuiApplication 构造函数：建框（不 show）→ 建主窗口（不 show）   ← 只建窗口
-main: app->run()          （宿主有自己的启动工作就重写 startup() 那一拍；日志由 main 自己 initDefault）
-  Application::run()     → exec() 先跑起来，同时往队列里推一个启动步
-     └─ 启动步（在循环里）→ 三拍依次走，每一拍的 next() 都由主线程调（见 appfw-startup-phases.md）
-         ├─ startupStart(next)  框架：建上报口 + stage("正在启动")
-         │                      GUI：上屏启动框、等它画出首帧（300 ms 封顶）才 next()
-         │                      无头：没画面可摆，立刻 next()
-         ├─ startup(next)       框架：加载插件（主线程，AppConfig::load_plugins 默认开；逐插件上报）
-         │                      宿主交的 work（如果有）跑在**它自己的线程**上，主循环不被占住
-         │                      两者都完成时 next()
-         └─ startupEnd()        框架：结束上报口；GUI：收启动框 + 主窗第一次 show
-```
+| # | 功能 | 行为 | 状态 |
+| --- | --- | --- | --- |
+| F1 | 启动框呈现 | 应用身份 + 状态行 + 转圈；无进度条/百分比 | 已落地 |
+| F2 | 相位进度 | 每个相位开始报一次，收到上报就同步重绘 | 已落地 |
+| F3 | 首帧门 | 启动框画出首帧后才跑启动工作；300 ms 兜底 | 已落地 |
+| F4 | 主窗上屏 | `startupEnd()` 收框、主窗第一次 `show()`、`raise()`/`activate()` | 已落地 |
+| F5 | 取消 | 启动框 `✕`/`startupStart` 的 token；取消不是失败 | 已落地 |
+| F6 | 上报口生命周期 | 第一拍前建、最后一拍后收；没有上报口时全空操作 | 已落地 |
 
-- **整个启动阶段跑在循环里**（2026-09-26 修）：`run()` 先 `exec()`，再推一个启动步（`Qt::QueuedConnection`）。
-  理由不是风格：窗口系统那一半（X11 的 expose、Windows 的 WM_PAINT）只能由循环派发，循环起来之前 `show()`
-  出来的窗口一个像素都没有；而启动工作的第一道门就是“启动画面真的在屏上”。
-  修之前无头那条路是例外：等待钩子（当时叫 `whenUserInterfaceIsUp()`）默认立刻 `then()`，而它在 `exec()` 之前被调
-  ⇒ 无头的插件加载跑在循环外（“启动工作跑在循环里、可以 postToMainThread / `exit()`”这条对无头是假的）。
-  钉子：`test_appfw` 在宿主那一拍（当时还是 `run(work)`）跑起来之前 post 一帧回调，工作里快照它是否已经到过（post 事件 FIFO ⇒
-  只有循环真在派发时它才先到）；变异（把启动步改回 `exec()` 之前直接调）⇒ 红。
-  **2026-09-26 再加两钉**：宿主的 work 跑在**它自己的线程**上（线程 id 断言）、且工作期间主线程**仍在派发**
-  （主线程上 10 ms 一跳的定时器在工作睡着的 120 ms 里必须跳出 ≥5 拍）；变异（把 work 内联回主线程）⇒ 两钉+异常用例同时红。
-- **插件加载是框架的内置启动动作**（2026-09-26）：`AppConfig::load_plugins`（默认开）⇒ 宿主的 `main` 不再写
-  `loadAll()`，要自管就关掉。它跑在**宿主的 work 之前**，所以 work 里可以直接用插件注册的命令/服务/界面；
-  时机是契约：它仍在“窗口已上屏”之后（渲染表面要句柄）。失败只告警（`Some plugins failed to load…`）。
-- **上报口属于启动阶段，不属于窗口**（2026-09-26 修）：以前它是在 `GuiApplication` 建启动框时顺手建的
-  ⇒ “没开启动框”和“没有窗口”两种宿主的启动期都是一片沉默，尽管控制台消费者一直挂在 `ProgressHost` 上等着。
-  现在由驱动的 `startupSequence()` 建/收（三拍之前建、`startupEnd()` 之前收）：无头宿主报的是**同一份**东西，
-  启动框/状态栏进度条只是它的两个**呈现者**（`StartupProgress.hpp` 的类注释就是这条约定）。
-  实测（无头、只链 Qt6::Core 的 `test_appfw`，人为把启动拖到 700 ms 过掉首字延迟）：
-  ```
-  [进度] 50% 正在加载插件
-  [进度] 100% 正在加载插件
-  [进度] 已结束
-  ```
-- **为什么不在构造函数里建**（曾经评估过的形状）：从不跑启动的进程（测试、工具）会因此多出一个活着的
-  前台宿主 ⇒ `Application::isBusy()` 永远为真 ⇒ 顶层命令全被拒（`test_gui` 里两百多个命令用例立刻红）。
-  上报口的生命周期就是启动阶段的生命周期，所以它跟着 `startupSequence()` 的两头走。
-- **那一行“启动工作开始”的证据不再取决于宿主交没交 work**：以前它包在 `startup_work != nullptr` 里（那个成员随
-  `run(work)` 重载一起删了），而当时的正常宿主（`main` 只调 `run()`）根本没交 work ⇒ 日志会凭空消失。现在无论有没有
-  宿主的活都打：
-  `startup work starting 12 ms after the application was asked to run: the startup frame is on screen`
-  （没框时同一行变成 `: this boot shows no window`）。
-- **创建与上屏是两步**（用户拍板）：**构造函数只建不 show**，`run()` 推的启动步负责上屏（它跑在循环里），
-  所以"窗口什么时候出现在用户眼前"只有一个地方（`GuiApplication::startupStart()` 上框、`startupEnd()` 上主窗）；
-  无头应用那两步都没事做（没画面可摆，立刻继续），两边共用同一份启动步。
-- **上屏早于启动工作，但“上屏”指的是启动框**：启动工作（含插件 `load()`）要等启动框画出首帧
-  （见下一条），**与主窗无关**（主窗还没 show；句柄来自容器里独立的表面窗口，见“启动期只有启动框”一节）。
-- **启动阶段由框架开始、也由框架结束**：三拍由 `startupSequence()` 依次走，最后的 `startupEnd()` 收框收上报口，宿主
-  不必自己调它（也就不会漏）。想在别的时刻结束启动阶段的宿主照旧自己调（幂等）。
-- **启动期屏幕上只有启动框**；主窗在 `startupEnd()` 里第一次上屏（`startupStart()` 只上框）。
-- **跑启动工作之前，窗口必须已经画过**：上屏之后框架仍要等首帧（"框要上屏…"与"`Window::hasPainted()`"两节；
-  GUI 300 ms 封顶），因为 X11 上只 `repaint()`/`show()` 不派发就是一个空窗口。
-- 上报口的销毁是刻意的（不是只 `complete()`）：活着的宿主会一直待在前台栈上，
-  把之后所有命令的进度挡在后面。
-- 没有上报口时（`StartupProgress::current() == nullptr`，例如未启用启动框、或测试）**所有调用都是空操作**，
-  所以启动代码可以无条件上报。
-- 上报口的销毁是刻意的（不是只 `complete()`）：活着的宿主会一直待在前台栈上，
-  把之后所有命令的进度挡在后面。
-- 没有上报口时（`StartupProgress::current() == nullptr`，例如未启用启动框、或测试）**所有调用都是空操作**，
-  所以启动代码可以无条件上报。
+### 3.1.1 F1 启动框呈现
 
-## 渲染
+- **行为**：`SplashConfig` 配开关/标题/副标题/logo；`BootSplash` 自绘圆角面板，状态行 + 18 px 转圈。
+- **约束**（C1）：不显示百分比/进度条；空标题回落到应用名；读不到的 logo 按“没有 logo”处理。
+- **要求**（R1）：深浅主题自动跟随；居中于主屏；不改 appfw 现有控件样式。
+- **验收**（T1）：`BootSplashTest` 的 `statusText()` 断言。
+- **注意**（N1）：状态文字按框宽 `elidedText`，长插件名不能把窗口撑宽。
 
-- **自绘圆角面板**：`QWidget` 子类 `paintEvent` 画圆角矩形，颜色取 `palette(window)` / `palette(mid)`，
-  深浅主题自动跟随；窗口 `Qt::SplashScreen | Qt::FramelessWindowHint` + `WA_TranslucentBackground`，
-  居中于主屏（启动期还没有用户选过的显示器）。**不改 appfw 现有控件样式**，也不引第三方。
-- **logo**：`.svg` 走 `QSvgRenderer`（按框等比缩放，带 DPR），其余走 `QPixmap`；读不到的图按"没有 logo"
-  处理——启动不该因为一张装饰图失败。空标题回落到应用名（`BootSplash` 自己解析：构造函数先应用身份、再建窗口，
-  所以那一刻 `QCoreApplication::applicationName()` 已经是 `AppConfig::name`，builder 不用再补标题）。
-- **重绘用 `repaint()`，不 `processEvents()`**：插件加载仍占着主线程（宿主的活已经上了工作线程），
-  不主动重绘则那一帧要等启动结束；
-  但 pump 整个事件队列会顺手把**别的**组件的定时器/事件也跑了——嵌入式渲染表面的 resize/settle 更新
-  就是这样被提前唤醒的
-  （见下）。`repaint()` 只同步画这一帧，不替别人推进状态机。
-- 状态文字按框宽手工 `elidedText`（插件名可能很长，QLabel 会自己把窗口撑宽）。
+### 3.1.2 F2 相位进度
 
-## ✅ 启动期只有启动框；主窗在 `startupEnd()` 第一次上屏（2026-09-26 落地，推翻旧的“硬约束”）
+- **行为**：每个相位开始时报一次（“正在启动” → “正在显示启动画面” → “正在查找/加载/收尾插件” → “正在准备主窗口”）；
+  框每收到一次上报就 `repaint()`。
+- **约束**（C2）：相位内部不动画；不做心跳/按时间插值。
+- **要求**（R2）：相位边界一定看得见；状态栏/控制台与框读同一份 `StartupProgress`。
+- **验收**（T2）：`BootSplashTest` 的 `statusText()` 跟着 `stage()/setLabel()` 变。
+- **注意**（N2）：给相位内加动画只能切开会话 `init()` 或让启动期回转循环，两条都比“相位边界可见”贵。
 
-**旧口径**（见 git 历史与本文早期版本）：嵌入式渲染表面要用**已 show 的顶层窗口**的原生句柄建交换链 ⇒
-主窗必须与启动框一起上屏，否则 `vsg::Win32_Window(...) GetClientRect(..) failed : 无效的窗口句柄` +
-`[RenderControl] surface Pending -> Failed`。那个失败来自**旧渲染器**（它拿的是**顶层**窗口的句柄）与
-“没人去建原生窗口”两件事叠加。
+### 3.1.3 F3 首帧门
 
-**现在**：表面窗口是容器里的一个独立 `QWindow`，它有**自己的**原生句柄，与顶层是否 show 无关
-（`SurfaceWindow::nativeHandle()` = 它自己的 `winId()`）。实测（2026-09-26，WSLg/X11，主窗全程不 show）：
+- **行为**：`startupStart()` 上屏启动框，`co_await` 首帧（`Window::hasPainted()` + 300 ms 兜底）才继续；
+  X11 上只 `repaint()`/`show()` 不派发就是空窗口。
+- **约束**（C3）：启动工作（含插件 `load()`）必须在启动框画出首帧之后；主窗还没 show。
+- **要求**（R3）：没有启动框时立即继续；首帧门不能变成固定 sleep。
+- **验收**（T3）：`test_appfw` 的启动工作用例；`startup work starting N ms ... the startup frame is on screen`。
+- **注意**（N3）：启动期不要替渲染组件 `processEvents()`；只让启动框自己重绘。
 
-```
-startup work starting 7 ms after the application was asked to run: the startup frame is on screen
-[VsgHostWindow] attached to the host window 0x60002a (160x160, mapped=true)
-[RenderControl] surface Pending -> Attached after 1736 ms      ← 主窗还没 show 就 attach 成功
-Startup frame going away: main window visible=true
-[RenderControl] surface Attached -> Presenting after 1932 ms   ← 主窗上屏后立即出首帧
-```
+### 3.1.4 F4 主窗上屏
 
-X 服务端读回（**`scripts/xwinmap.py`**，已入库；它读 `XQueryTree` + `XGetWindowAttributes` 的 `map_state`。
-注意该字段的字节偏移是 **92**，不是想当然的 100 —— 读错会让所有窗口都“看起来是 IsUnmapped”）：
+- **行为**：`startupEnd()` 收启动框、主窗第一次 `show()`；有框时先 `raise()`/`activate()`。
+- **约束**（C4）：主窗在 `startupEnd()` 之前不 show；启动期屏幕上只有启动框。
+- **要求**（R4）：主窗第一次出现时已经是成品；渲染区在 `Presenting` 之前容器隐藏，露出主窗背景。
+- **验收**（T4）：X11 `scripts/xwinmap.py` 读启动期主窗 `IsUnmapped`、结束后 `IsViewable`。
+- **注意**（N4）：`Qt::SplashScreen` 置顶且不激活进程；Windows 只把前台激活给新进程，必须 `raise()`/`activate()`。
 
-| 时刻 | 根子窗 | map_state |
+### 3.1.5 F5 取消
+
+- **行为**：启动框右上角 `✕` 往 `StartupProgress::stopToken()` 上写；框架每拍之后、每个插件之前看一眼。
+- **约束**（C5）：取消不是失败；`cancelStartup()` 卸已装插件 + 收上报口 + `exit(0)`，主窗不上屏。
+- **要求**（R5）：插件从 `PluginLoadContext::stopToken()` 拿同一个 token；不在启动里的插件拿到永不停的 token。
+- **验收**（T5）：`test_appfw` 的取消用例。
+- **注意**（N5）：取消不走 `startupEnd()` 也不走 `failStartup()`。
+
+### 3.1.6 F6 上报口生命周期
+
+- **行为**：`beginStartupProgress()` 在第一拍前，`endStartupProgress()` 在最后一拍后；`startupEnd()` 那一拍仍能上报。
+- **约束**（C6）：不在构造函数里建；从不跑启动的进程会多一个活着的宿主，`isBusy()` 永远为真，顶层命令全被拒。
+- **要求**（R6）：没有上报口时所有调用都是空操作；销毁是刻意的（不是只 `complete()`）。
+- **验收**（T6）：`test_appfw` 无头启动进度用例。
+- **注意**（N6）：活着的宿主会一直待在前台栈上，挡掉之后所有命令的进度。
+
+## 4. 公开接口
+
+### 4.1 `StartupProgress`
+
+| 接口 | 契约 | 备注 |
 | --- | --- | --- |
-| 启动期 t=1.2 s | `504x216`（启动框 440x152 + 边框） | IsViewable |
-| 启动期 t=1.2 s | `800x600 'Vine'`（主窗） | **IsUnmapped**（已创建，没上屏） |
-| 启动结束 t=3.7 s | `864x664`（主窗 + 边框） | IsViewable，启动框已消失 |
+| `stage(name)` / `stage(name, total)` | 开始一个不确定/可计数阶段 | 每个可计数阶段从零开始 |
+| `setDone(double)` | 推进当前阶段 | 值是绝对值，不是增量 |
+| `setLabel(String)` | 改状态文字 | 逐插件上报用 |
+| `fraction()` | `optional<double>` | 是否可计数只看它 |
+| `stopToken()` / `requestCancel()` | 启动取消 | 取消不是失败 |
 
-- 落地形状：GUI 的 `startupStart()`（异步）上屏启动框、`co_await` 它画出首帧（没框 ⇒ 没什么可等，直接返回）；
-  （`startupWindow()` 是那个“启动期唯一的窗口”，`bootWindows()`/`allPainted()` 的两窗逻辑已删）；
-  `startupEnd()` 里主窗第一次 `show()`（有框时先 `raise()`/`activate()`，见下节）。
-- 验收（“先黑后画”消失）：主窗第一次出现时已经是成品——渲染视图在 `Presenting` 之前把容器藏着，
-  所以那一格是主窗自己的背景，不是洞；门禁 app 阶段像素不变（`content 87.04%` / `85.14%`）。
-- ⚠️ **Windows 未验**：这是待办 4 的另一半（`VsgHostWindow` 在 Windows 上用 HWND + client rect，
-  而 Qt 在未 show 的顶层下给不给内嵌 `QWindow` 一个有效 HWND，只在本机 Windows 上能确定）。
-  判据：启动期日志里 `[VsgHostWindow] attached to the host window 0x…` 与
-  `[RenderControl] surface Pending -> Attached` 是否出现（而不是 `GetClientRect(..) failed`/`-> Failed`）。
-  即使早期 attach 失败，主窗上屏（`startupEnd()`）会触发 layout/resize，控件自己会重试 attach。
+### 4.2 `gui::BootSplash`
 
-- 插一句同源提醒：**启动期不要替渲染组件 pump 事件**（`attach` 被提前唤醒就是这个样子）。
-  这条规则有一个例外：启动框 `show()` 之后必须派发到它画出第一帧（见下文“框要上屏”一节）。
+| 接口 | 契约 | 备注 |
+| --- | --- | --- |
+| `isBusyIndicatorRunning()` | 转圈是否在动 | 没有百分比/进度条 |
+| `statusText()` | 当前画出来的状态行 | 测试断言用 |
 
-### 框关掉后必须把主窗口提到前面（2026-09-18 用户实测报“框没了，主窗口没出来”）
+### 4.3 `SplashConfig`
 
-- 机制：`Qt::SplashScreen` 既**置顶**又**不激活进程地显示**，而 Windows 只把“前台激活”给新进程的
-  **第一个**窗口 —— 这个名额被启动框占掉，于是随后 `show()` 的主窗口**显示在框下面、且一直没成为前台窗口**，
-  压在启动它的终端/IDE 后面。日志侧对照：主窗口 1.4 s 就已 `mapped=true`，所以它一直在，只是被压着。
-- 修法（与 `QSplashScreen::finish()` 同一套）：`GuiApplication::startupEnd()` 先 `delete` 框，再
-  `native->raise()` + `activate()`。只在**确实有框**时做：无框应用不该在长启动结尾抢别人的焦点。
-- 诊断行（那一刻打）：`Startup frame going away: main window visible=…, active=…`，
-  用来把“被压在后面”（visible=true）与“根本没显示”（visible=false）分开。
+`enabled` / `title` / `subtitle` / `logo`；应用只配外观，不写呈现代码。
 
-### 框关掉时窗口必须已经能画（2026-09-20：这条责任挪回渲染视图，框架不再等）
+## 5. 约束、要求与不变量
 
-- 实测现象（保留作证据，2026-09-19）：`startupEnd()` 那一刻 `main window visible=true, active=true`，
-  但渲染区空白，直到 `Attached -> Presenting after ~3300 ms`。差的那 ~0.7–0.9 s 不是“渲染后端初始化慢”，
-  而是**首帧的时机**：`Attached` 的语义只是“后端绑上了”，一帧都没提交，而首帧要等事件循环把窗口推到屏幕上，
-  再按窗口系统的最终尺寸建图和提交。
-- 框架一度为此等待（`windowCanBeSeen()` / `deferStartupFrameClose()` / `closeStartupFrame()` + 2000 ms 一次性
-  定时器，2026-09-19，见 git 历史）。**2026-09-20 三个方法连同常量、订阅、定时器整个删掉**：
-  `startupEnd()` 现在无条件关框，框架不再知道“首帧什么时候到”。
-- **取代它的规则在渲染视图里：容器控件藏着，直到有帧落进去**（`RenderControl`，见 `appfw-render-surface.md`）。
-  未 present 的原生窗口是一块洞（合成器随便填），而 Qt 的 window container 在 paint 里把自己的矩形抹成透明
-  （`CompositionMode_Source` + `Qt::TRANSPARENT`），所以“可见的容器 + 还没有帧”就是一块洞；
-  隐藏的容器根本不被 paint，那一格于是是**主窗口自己的背景**。`RenderControl` 因此把容器隐藏着，
-  `state_changed` 报到 `Presenting` 才显示它；表面自己的可见性不碰（容器管嵌入窗口的几何与可见性，
-  自己 `show()/hide()` 是 Qt 文档里不推荐的做法），`surface_shown` / `setSurfaceShown()` / `handleShown()` /
-  `showEvent()` 都删了。
-- **首帧提前：attach 时先预热一帧**（2026-09-20）。`SurfaceWindow::initializeBackend()` 成功后看控件在不在屏上：
-  不在（还停在启动框后面）就走 `prewarmFrame()` —— 按当时的表面尺寸（实测 320x320，布局还没跑）
-  渲染一帧，把设备与管线的一次性开销付掉，不发布、不上屏、不改状态。窗口上屏后的第一帧由此变成**就地改尺寸**
-  的一帧（`target resizes 2`、`program slots 0`），不再重付那 183.6 ms。
-- 顺带把首帧的时机本身改成事件驱动（2026-09-20）：当时还在 `init()` 里的那串 `singleShot(150/400/900)` 重试梯子删了，
-  “表面现在能画了”由三个事件报告 —— 容器的 show（`eventFilter` 的 `QEvent::Show` 里补 `scheduleUpdate()`）、
-  容器的 resize、平台窗口重建（SurfaceCreated）。
-- **实测（本机 Windows + RTX 4060，2026-09-20）**：`Pending -> Attached` 在插件 `load()` 里（2642 ms），
-  预热帧 `build profile (frame): extent 320x320, targets 3, program slots 3, total 142.3 ms` → 69 ms 后
-  `Startup frame going away: main window visible=true, active=true`（2711 ms，框立刻走，没有武装、没有等待）
-  → 392 ms 后 `Attached -> Presenting`，这一帧 `total 3.8 ms`（旧版同一帧 183.6 ms，因为那一帧是拿窗口最终
-  尺寸冷建的）；稳定帧 `extent 752x480, target resizes 2 (0.2 ms), program slots 2 (40.7 ms), total 43.8 ms`。
-- **这一格是背景而不是洞**（2026-09-20，像素证据）：品红全屏窗口垫在主窗口背后 + `PrintWindow`
-  （`PW_RENDERFULLCONTENT`，截的是窗口自己的合成，与 z 序无关）：关框那一刻渲染区是主题背景色，
-  `Presenting` 后同一区域是画面，品红一次都没露过。旧版这里写成“露出来的是控件底色
-  （容器 `setAutoFillBackground(true)`）”，机制说错了：那个背景和洞在同一趟 paint 里被抹掉。
-  渲染器一侧的完整链条见 `appfw-render-surface.md`。
-- **契约没变的部分**：**插件从 `load()` 返回就表示它的子系统已经可用**；`startupEnd()` 仍是
-  “宿主自己的活 + 所有插件的活都干完了”。`Pending`（宿主还没让它 attach）与这条无关。
-- 不放在插件里的原因（当时）：`load()` 跑在 `loadAll()` 中段，在那儿等会拖住**其它插件**的加载与进度上报。
+### 5.1 约束（C#）
 
-### 框要上屏，先派发"窗口已可见"通知（2026-09-26：WSL 下启动框整只全透明）
-
-**现象**（用户实测报"启动画面，wsl 下不显示"）：闪屏的 X 窗（440×152、depth 32 ARGB，外加 WM 的
-504×216 装饰框）已映射、`MAP_STATE_VIEWABLE`、尺寸也对，**但整个生命期每个像素都是 `rgba(0,0,0,0)`** ——
-既不是"被别的窗口盖住"，也不是"位置跑到屏外"，而是**窗口里一个像素都没有**。
-
-**探针**（临时 `fprintf` 到 stderr，验后已删）：`show()` 之后只收到 `QEvent::Show(exposed=0)`，
-16 次启动上报各调一次 `repaint()`，**全程没有 `QEvent::Expose`，`paintEvent` 一次都没跑**；
-框在启动结束（~1.9 s）被 `delete`。
-
-**分辨"服务端还是客户端"**（两个 X 连接的最小客户端：A 建窗+填色，B 独立 `XGetImage`）：B 在 0 ms 就读到了填充
-⇒ X 服务端**立刻**保存新窗内容，卡住的不是服务端。
-
-**机制**：X11 上 Qt 把内容画进窗口要先有"窗口已可见"的通知（expose 事件），而它只能由**事件队列派发**送达；
-启动期不跑事件循环（这正是当初选 `repaint()` 的原因），于是 `repaint()` 只画进 backing store，
-一个像素都到不了窗口。Windows 上 `repaint()` 直写 HWND，所以同一份代码在 Windows 正常。
-（**夸平台口径**：Qt 自己在 `QSplashScreen::repaint()` 的说明里写的就是"标准 `repaint()` 也要调 `processEvents()`，
-以保证更新显示，**even when there is no event loop present**"，"有些 X11 WM 不支持 stays-on-top，
-办法是定时 `raise()`"——即这是"启动期不跑事件循环"的 Qt 级行为，不是 WSL/Weston 的缺陷。）
-
-**修法（2026-09-26 定稿，当日稍后又改为异步钩子）**：不再在 `init()` 里等——等待（以及它之后的一切）搬到
-`Application::run()` 推的启动阶段里：
-因为**只有循环能画出窗口**（`hasPainted()` 的语义就是"事件队列被派发过"）：
-
-- `GuiApplication::beginStartup(ready)` 先 `show()` 启动框，再订阅它的 `Window::first_paint`，另加
-  `QTimer::singleShot(300 ms)` 作上限；两者由**同一个** `ready` 收口，谁先到都只跑一次（快路径：
-  挂订阅前先看 `hasPainted()`）。
-- 到点后**再排一拍**（`QTimer::singleShot(0, …)`）才真正跑 work：首帧信号是在派发那个窗口的 paint 事件时到的，
-  而 work 会重绘启动框、最后把它 `delete` 掉——两者都不能发生在"某个窗口的绘制里"
-  （实测：直接在首帧信号里跑 work ⇒ `QWidget::repaint: Recursive repaint detected` + 段错误）。
-- 超时先到就 `VN_LOGW`（不静默）："the startup phase is moving on … it stays an empty window until the event loop runs"。
-- 没有轮询、没有步进常量；平台差异也不靠 `#ifdef`（派发即可画的平台上循环第一拍就通过）。
-
-**实测**（本机 WSLg/Weston + Xwayland，2026-09-26）：日志
-`startup work starting 5–11 ms after the application was asked to run: the startup frame and the main window are on screen`；
-独立 X 读回从 t≈0 起框就是 `504x216 painted=61.9%`、主窗框 `864x664 painted=83.5%`，直到启动结束（~1.9 s）。
-
-**反证（当真）**：把这道门拿掉（当时还是两个钩子，把 `whenUserInterfaceIsUp()` 改成直接 `then()`，启动工作立刻开跑）
-⇒ 启动期读回是 **主窗 `864x664 painted=0.0%`**（闪屏框仍是 61.9%：启动过程自己会驱动嵌套派发，框因此仍然画得出来），
-且日志里没有那条 "on screen" 行——**正是用户最初报的\"闪屏还亮着、主窗全黑\"那一幕**。恢复后基线照旧
-（框 61.9% / 主窗 83.5%）。
-
-**顺带修正**：`BootSplash.hpp` 的类注释里"a notification repaints **and pumps the event queue**"是旧设计的残留
-（实现从 6988216 起就只 `repaint()`），已改成与实现一致，并写清"把窗口系统那一半交给宿主"。
-
-### 主窗在启动期也是一块黑板（2026-09-26，同一根因）
-
-**现象**（用户实测报"splash 还没完，主窗口就显示出来了，只是开始全黑"）：闪屏按预期亮着，但主窗口是**全黑**的。
-
-**实测**：主窗的 WM 框（`864x664`）在整段启动期（~0.35 s → 1.9 s）`XGetImage` 采样都是 `painted=0.0%`，
-直到 `run()` 进事件循环才跳到 `83.5%`。与闪屏同根：Qt 把窗口画上屏要事件队列派发，而启动期不跑事件循环。
-
-**修法**：主窗同样由 `run()` 上屏（状态栏进度条在建窗口时先挂好，这样首帧就把框架放进窗口的东西都画上），
-并且和闪屏一样先等它画出首帧再放行启动工作（同一道门，见上一节）。
-
-**实测**：主窗框从 t≈0 起就是 `83.5%`（余下 16.5% ≈ 378×247 就是渲染区那块“洞”——容器里的原生子窗还没有帧，
-见 `appfw-render-surface.md`；首帧呈递后就是画面）。
-
-**反证（真机）**：把门拿掉 ⇒ 主窗回到 `painted=0.0%`（与上节同一个变异）。
-`test_gui` **217/217**；两棵树门禁 `cases=451 failed=0 vuid=0 hazard=0`，应用阶段像素与基线**逐字节一致**
-（等待期间的额外派发没打扰渲染表面，进度条提前挂也不影响画面）。
-
-### 统一启动流程：框架排，宿主交（2026-09-26 用户要求 `Application`/`GuiApplication` 一致）
-
-用户的要求："`Application`/`GuiApplication` 要统一，窗口可以先初始化，但其它初始化两边是一样的，
-`show` 要在初始化完成后 `show`"。落地后的分层（一个扩展点）：
-
-- **`Application::run()` 的步骤**：`exec()` 先跑 → 队列里的启动步（建上报口 + `stage("正在启动")` →
-  `beginStartup(启动工作)`）→ 插件加载 → 宿主的 work → `finishStartup()`。
-  两边（无头/GUI）走的是**同一份**顺序，唯一的分歧在 `virtual void beginStartup(std::function<void()> ready)`：
-  base 默认"没画面可摆，立刻 `ready()`"，GUI 上屏 `AppConfig::splash` 那张启动框、并在它**真的画出首帧**之后
-  才 `ready()`（300 ms 上限）。
-- **为什么"摆画面"与"等它真的在屏上"合成一个方法**（2026-09-26 用户质疑" splash 只是启动时多执行的一个，
-  值不值得一个独立方法"）：分开的两个钩子（旧 `showUserInterface()` + `whenUserInterfaceIsUp()`）只在一起才有意义，
-  而"摆"这一半今天只是框架自己的策略——框的存在、创建、喂数据、销毁全由框架按 `AppConfig::splash` 决定，
-  宿主一行代码都不用写。合成 `beginStartup(ready)` 之后语义就是一句话：**"启动画面摆出来，摆好了叫我"**，
-  框架的调用点也只有一行（`beginStartup([this]{ startStartupWork(); })`）。
-- **为什么仍然需要一个虚函数**："它真的在屏上了吗"只有带窗口的那一层答得出——base `Application` 在 core SDK 里
-  命名不了 `gui::Window`/`BootSplash`（甚至不许出现 Qt 类型），所以"让框上屏 + 等首帧"只能是 gui 层实现的东西。
-  于是这个钩子对宿主是**可选的**：`main.cpp` 什么都不覆盖，也不妨碍启动框按配置出现。
-  顺带：旧名 `showUserInterface()`/`whenUserInterfaceIsUp()` 指向了错的对象（那时它们真的连主窗一起管）——
-  现在主窗归 `startupEnd()`，旧名会让人以为"用户界面已经上屏了"，所以本轮把这两个名字一起换掉了。
-- **为什么不是对称的 `preStartup()`/`postStartup()` 父子钩子**（2026-09-26 评估过，结论：不上）：
-  这一对看起来对称，但**"前"这一半天生是异步的**：它不能在返回前把"启动画面真的在屏上"这件事等到
-  ——在这里阻塞会卡住唯一能画出窗口的那个循环，而用 `processEvents()` 去逼出一帧正是启动期**禁止**做的事
-  （会顺手跑别的组件的定时器/settle）。所以continuation 只能是个回调，而且只有带窗口的那一层说得出它该何时跑。
-  "后"那一半（`startupEnd()`）**没有**这个问题：启动完了，而且它是 **protected** 的——收尾是框架的动作，
-  宿主不从外面插手到一次正在跑的启动里去（叶子重写它；需要自己驱动启动的叶子，如不跑循环的测试/工具，
-  从自己的类里调它，活例见 `tests/test_gui/fixtures/TestGuiApplication.hpp`）。两个钩子形状不同是**故意的**，
-  不是没收拾干净；这条也写在 `Application::startupEnd()` 与 `startupStart()` 的注释里，免得下一个人把它
-  "修正"成对称的一对。
-- **宿主自己的启动工作**：重写 `startup()` 那一拍——先 `co_await Application::startup()`（插件先加载），自己的重活再
-  `co_await vn::async::run(...)` 丢到线程池上（框架不替宿主拥有线程；曾经有过 `run(work)` 重载，2026-09-26 删）。宿主
-  "该在启动期做的事"就写在 `main.cpp` 的一个块里，框架负责它什么时候跑、什么时候结束启动阶段。
-- **启动阶段只有一个推动点**：`Application::startupSequence()`（三拍平铺，协程驱动）——它交给 `startupStart()`、
-  `startup()`（插件；宿主重写它加自己的活）与 `startupEnd()`；没有第二个地方推动启动。
-- **没有"宿主忘了 `finishStartup()`"这种故障**了：脚本式 `app->finishStartup(); app->run();` 从接口上消失，
-  框不会因为漏调用而永远盖住主窗（`~GuiApplication()` 里那条旧告警保留作最后一道拦网）。
-- **`init()` 只建不 show → 构造函数只建不 show**（**2026-09-26 再次往前一步**）：好处是建应用（包括测试）不再有屏幕副作用；
-  代价是"从不跑循环的宿主"窗口不会自己上屏，它走 `finishStartup()`（幂等，且它本来就负责"确保主窗可见"）——测试应用就是这条路。
-  `init()` 本身已删（身份 + Qt 应用对象 + UserIO + 配置文件全进构造函数，两个 builder 各剩一句 `make_unique`），
-  见 `../backlog/appfw-startup.md` 的待办 1。
-- **ABI**：两个新虚函数声明**在已有虚函数之后**（vtable 槽位只追加），所以那一轮 `VN_APPFW_PLUGIN_ABI_VERSION` 不用动；
-  随后删掉中间的 `init()` 时是真 ABI 变更 ⇒ **3u → 4u**（`beginStartup()` 仍在最后，之后的追加不必再动）。
-
-### “已画过”是 SDK 级契约：`Window::hasPainted()`（2026-09-26 复核后重排）
-
-两个窗口问的是同一个问题，所以机制只留一份、放在它该在的层：
-
-- **契约**：`Window::hasPainted()`（公开 SDK，`noexcept`）**报状态**；`Window::first_paint`（`vn::Signal<>`）
-  **报状态转移**（只 trigger 一次）。语义：**窗口自己或它里面任何东西画过**；
-  窗口已不再是一个“空窗口”（X11 上全黑、透明框则全透明）。
-  两者都是同一只观察者给的：等它用事件（不再轮询），问它用查询（快路径与事后判定）。
-- **实现**：`WindowData` 持一个 `Window.cpp` 内部的 `PaintWatcher`（事件过滤器）。安装时递归接上
-  窗口与当时已有的全部子控件；**后加的**子控件（停靠面板、状态栏里的进度条）靠父控件的 `ChildAdded`
-  通知接上。两条路径各有原因：顶层自己可能一个像素都不画（面积被不透明子控件盖住），
-  而“谁先画”取决于布局；窗口里的东西也不必在观察之前就存在。
-- **观察者随窗口销毁**（不挂在被观察的 widget 上：窗口不拥有 widget 时 widget 会先死）。
-- **测试**（`tests/test_gui/WindowPaintTest.cpp`，4 例）：未 show ⇒ 未画；show + 派发 ⇒ 已画；
-  已在里面的子控件画 ⇒ 已画；后加进来的子控件画 ⇒ 已画；**首帧信号只报一次**（第二次 paint 不再报）。
-- **变异（4/4 各自被对应用例或被真机逮到）**：信号从不 trigger ⇒ 2 例红（且真机上会退化成等满 300 ms 上限）；
-  每次 paint 都 trigger ⇒ 只"只报一次"红；不记录已画 ⇒ 4 例全红；**整段等待拿掉（真机）** ⇒ 两个窗口
-  `painted=0.0%`（原缺陷重现）且框架自己打出 "stays an empty window until the event loop runs" 告警。
-
-**另一个好处**：这套机制让“等待”变成可验证的后置条件，而不是平台 hack——
-没有 `#ifdef`，在派发即可画的平台上循环第一次就退出。
-
-**没有改 z 序（当日量过，记下免得再查）**：怀疑"主窗压住闪屏"时量过 X 子窗顺序
-（`XQueryTree` 自下而上）——主窗框始终列在闪屏框之后（=更靠上），而且在
-`impl<QWidget>()->raise()` 前后**都不变**；而用户能看到闪屏 ⇒ 这个顺序在这台 WSLg 上反映不了合成结果。
-所以**不加**这行（无实测效果的代码不写）。
-
-## 平台注意
-
-- 圆角靠 `WA_TranslucentBackground`；没有合成的 X11 会话里圆角会退化成黑角（Windows/WSLg 正常）。
-  要绝对稳就把 `paintEvent` 的面板改成满矩形（一处改动）。
-- **"窗口已映射"不等于"框上屏"**：还要窗口系统把"现在可见了"的通知派发进来（见下节）。
-  WSLg 上框的 X 窗从建出来就是 `Viewable`，但只要不派发就一个像素都没有。
-- Wayland 上"未映射窗口 attach"本就不成立，`RenderControl` 会走"先显示表面再 attach"的回退
-  （见 `appfw-render-surface.md` 的平台契约）；启动框与它的关系只是"框也在最上层"。
-
-## ABI
-
-`VN_APPFW_PLUGIN_ABI_VERSION` **不需要 +1**：插件可见面（`PluginAbi`/`PluginInfo`/`Plugin`/
-`PluginLoadContext`/入口签名/命令注册）一个都没动；`StartupProgress` 是新增 API，`Application`
-新增的 `finishStartup()` 与统一启动流程的 `beginStartup()` 都**追加在虚表末尾**
-（声明在所有既有虚函数之后），`runStartup()` 根本不是虚函数。
-
-## 顺带修复（不修就没法跑 GUI 用例）
-
-`tests/test_gui/test_gui.cpp` 里的 `ConsoleProgressReporterTest.ConsoleUserIOPrintsTheProgressOfAForegroundOperation`
-直接构造 **appfw 私有**类 `ConsoleUserIO`（`src/fw/appfw/src/ConsoleUserIO.hpp`），但该类没有导出宏，
-`viAppfwd.lib` 里根本没有它的符号 ⇒ `test_gui` 在 HEAD 上**链接失败**（LNK2019 ×2，`6ec0e4d` 引入）。
-修法：给 `ConsoleUserIO` 加 `VN_APPFW_API`（类仍私有，只多两个导出符号），保留那个端到端用例。
-
-## 测试映射
-
-| 用例 | 覆盖 |
+| # | 约束 |
 | --- | --- |
-| `StartupProgressTest.NoSinkByDefault` | 默认没有上报口（未启用启动框的应用/测试不受影响） |
-| `StartupProgressTest.SinkIsForegroundAndProcessWide` | `current()` 进程内唯一；宿主在前台栈上，销毁后前台恢复 |
-| `StartupProgressTest.IndeterminateStageReportsLabelOnly` | 不确定阶段只出状态文字 |
-| `StartupProgressTest.CountedStageReportsFraction` | 绝对值推进、忽略倒退、`setLabel` 细到插件一级、`complete()` 补满 |
-| `StartupProgressTest.EveryCountedStageStartsOver` | 每个可计数阶段从零开始 |
-| `StartupProgressTest.StageWithoutTotalIsIndeterminate` | `total <= 0` 退化成不确定阶段 |
-| `BootSplashTest.ShowsReportedStageAndProgress` | 框的状态文字/比例/不确定态跟着上报口走 |
-| `BootSplashTest.MissingLogoIsNotFatal` | 读不到的 logo 不致命 |
-| `BootSplashTest.FrameSurvivesTheEndOfTheBoot` | 上报口先死（宿主先关框）时保留最后一帧，不读已销毁对象 |
-| `BootSplashTest.DisabledByDefaultInTheTestApplication` | 默认关闭；`finishStartup()` 幂等 |
-| `GuiApplicationConstructionTest.TheBuilderReturnsAFinishedApplication` | 构造即完成：身份、Qt 应用对象、UserIO 与默认配置文件都已在构造里装好（2026-09-26） |
-| `HeadlessBootTest.TheBootReportsItsProgressWithoutAWindow`（`test_appfw`） | 无头启动阶段有上报口（宿主报得出东西），构造本身不建（不跑启动的进程不忙）；启动结束即销毁 |
-| `BootSplashTest.AnEmptyTitleShowsTheApplicationName` | 空标题由启动框自己解析成应用名（身份先于窗口应用） |
-| `BootSplashTest.TheFramePaintsOnceTheWindowSystemHasShownIt` | `Window::hasPainted()` 直到窗口系统通知可见（派发事件队列）之后才为真 |
-| `WindowPaintTest.AWindowHasNotPaintedUntilTheQueueHasBeenDispatched` | 未 show 未画；show + 派发后已画 |
-| `WindowPaintTest.APaintOfAnythingThatIsAlreadyInsideTheWindowCounts` | 窗口构造时就已存在的子控件画了也算 |
-| `WindowPaintTest.APaintOfAWidgetThatArrivesLaterCounts` | 窗口构造之后才加进来的子控件画了也算（`ChildAdded`） |
-| `WindowPaintTest.TheFirstPaintIsReportedOnceThroughItsSignal` | 首帧信号只报一次（状态转移，不是每次绘制） |
+| C1 | 启动框不显示百分比/进度条；状态行 + 转圈。 |
+| C2 | 相位内部不动画；不做心跳/按时间插值。 |
+| C3 | 启动工作在启动框首帧之后；主窗在 `startupEnd()` 之前不 show。 |
+| C4 | 主窗在 `startupEnd()` 第一次 show；启动期屏幕上只有启动框。 |
+| C5 | 取消不是失败；不走 `startupEnd()`/`failStartup()`。 |
+| C6 | 上报口不在构造函数里建；由 `startupSequence()` 建/收。 |
 
-视觉验证（临时用例 + `grab()` 离屏渲染，验证后已删）：圆角面板/标题/副标题/进度条/状态行、
-SVG logo 等比缩放、确定态与忙碌态两种进度条。
+### 5.2 要求（R#）
 
-## 已评估但未采纳
+| # | 要求 |
+| --- | --- |
+| R1 | 深浅主题自动跟随；logo 读不到不影响启动。 |
+| R2 | 相位边界可见；状态栏/控制台/框共享同一份进度。 |
+| R3 | 首帧门有 300 ms 兜底；没有启动框立即继续。 |
+| R4 | 主窗第一次出现时是成品，不露洞。 |
+| R5 | 插件拿同一个 stop token；不在启动里的插件拿永不停的 token。 |
+| R6 | 没有上报口时所有调用空操作。 |
 
-- **隐藏主窗口、等 `finishStartup()` 再显示**：见上，渲染后端需要已显示的顶层窗口。
-- **在启动路径里等第一帧（嵌套 `QEventLoop` + 首帧信号）**：能跑、也够快（实测 1–5 ms），
-  但它是**框架绕过自己的循环**去推队列：等的时机、超时、"等完接着干什么"都堆在建应用那一步里，
-  宿主还得自己接上 `finishStartup(); run();`（漏了就回到老故障）。改成"循环自己的事交给循环"：
-  建应用只建（现在是构造函数），`run()` 排好顺序，宿主只交 work（见"统一启动流程"一节）。
-- **轮询式等待**（`processEvents` + 步进重绘，早期的中间形态）：超时/步长靠猜，成功也靠猜。
-  被事件驱动取代。
-- **把上报口做成 base `Application` 自动创建**：❌ 2026-09-26 之前的口径；现在**改为采纳**，但位置不同 ——
-  不是构造，而是 `run()` 启动启动阶段时（见"上报口属于启动阶段"）。当初否决的真实理由仍然成立：
-  构造就建的话，没用启动框的无头应用/测试会平白多出一个前台宿主，把 `ProgressHost::current()` 的语义
-  和 `isBusy()`（= 拒新命令）搞坏。
-- **全局加权 ETA**（把根标尺切成固定权重带）：需要在阶段开始前就知道全部阶段及其权重，
-  而应用插入的阶段只有应用自己知道；退化成"应用要预先声明权重表"，不如现在的"阶段内比例 + 状态文字"诚实。
-- **`QSplashScreen`**：只有一行文字 + 一张图，画不了"状态行 + 进度条 + 主题跟随"。
-- **给启动框加动画/淡出**：需要在 `finishStartup()` 里跑一段事件循环（或定时器），
-  与"显式结束、立刻进主循环"的契约冲突；需要时再说。
-- **把 `SplashConfig` 放进配置文件**（`app.splash.*`）：用户明确选了"代码配置"，
-  多个 app 各自在 `main.cpp` 里声明；要改成配置项时只需 `createGuiApplication()` 里读一次 `ConfigManager`。
+### 5.3 不变量（N#）
+
+| # | 不变量 |
+| --- | --- |
+| N1 | 启动期屏幕上只有启动框。 |
+| N2 | 主窗第一次 `show()` 发生在 `startupEnd()`。 |
+| N3 | 上报口生命周期 = 启动阶段生命周期。 |
+| N4 | 启动框的可计数阶段不变成数字。 |
+
+## 6. 注意事项与陷阱
+
+### 6.1 相位内动画的代价
+
+- 会怎么错：以为加个定时器就能让转圈更顺；实际要切开会话 `init()` 或让启动期回转循环。
+- 怎么判：应用线程最长连续占用实测 ~184 ms（会话 init）。
+- 怎么防：只做相位边界更新；相位内保持静止。
+
+### 6.2 启动期 pump 事件
+
+- 会怎么错：`processEvents()` 把渲染表面的 resize/settle 定时器提前唤醒，拿不到有效句柄。
+- 怎么判：attach 在布局没稳时发生；启动框全透明/空白。
+- 怎么防：启动框只 `repaint()`；首帧门用 `Window::hasPainted()`。
+
+### 6.3 Windows 未验
+
+- 会怎么错：主窗未 show 时 `VsgHostWindow` 拿不到有效 HWND，attach 失败。
+- 怎么判：日志 `GetClientRect(..) failed` / `surface -> Failed`。
+- 怎么防：回退“主窗早 show、门等两窗”，并记“Windows 上未采纳”；判据见 backlog。
+
+## 7. 已否决选项
+
+| # | 选项 | 理由 | ADR |
+| --- | --- | --- | --- |
+| D1 | 进度条 / 百分比 / 整体 ETA | 启动没有已知总量，条只能骗人。 | — |
+| D2 | 相位内动画 / 心跳 / 按时间插值 | 要切开会话 `init()` 或回转循环，代价高于收益。 | — |
+| D3 | 主窗与启动框一起早 show | 用户会看到“先冒出一个窗口、再变样”。 | — |
+| D4 | 构造函数里建上报口 | 从不跑启动的进程会永远 `isBusy()`，顶层命令全被拒。 | — |
+| D5 | 宿主自己排启动顺序（先结束启动再跑循环） | 顺序漏写就回到老故障；启动步归 `run()` 所有。 | — |
+| D6 | 启动期 `processEvents()` pump | 会把别的组件的定时器/事件一起跑。 | — |
+
+## 8. 测试与验收
+
+| # | 判据 | 用例 / 命令 |
+| --- | --- | --- |
+| T1 | 默认关闭；关闭时 `startupEnd()` 幂等 | `BootSplashTest.DisabledByDefaultInTheTestApplication` |
+| T2 | 框画出来的字跟着 `stage()` / `setLabel()` 变 | `BootSplashTest` 的 `statusText()` |
+| T3 | 启动步在循环里、宿主 work 在别的线程、主线程仍在派发 | `test_appfw` 启动工作用例 |
+| T4 | 主窗未 show 时 attach 成功、`startupEnd()` 后 `Presenting` | `scripts/xwinmap.py` + 门禁 app 阶段 |
+
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+F1–F6 已落地；X11/WSLg 已验证“启动期只有启动框”，Windows 未验。
+
+### 9.2 已知缺口 / 待办
+
+- Windows 的 HWND + client rect 探针；见 `../backlog/appfw-startup.md`。
+- 相位内动画/进度条不做；如要做，先解决会话 `init()` 的线程与循环回转。
+
+### 9.3 兼容性 / 迁移
+
+旧名 `beginStartup` / `finishStartup` / `runStartup` 与已删除的 `run(work)` 重载只出现在 git 历史里；
+当前只按 `startupStart` / `startup` / `startupEnd` 三拍写。
+
+## 10. 参考
+
+### 10.1 代码
+
+- `src/fw/appfw/sdk/vine/appfw/StartupProgress.hpp`
+- `src/fw/appfw/sdk/vine/appfw/gui/BootSplash.hpp`
+- `src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`
+- `tests/test_gui/BootSplashTest.cpp`
+
+### 10.2 文档与 ADR
+
+- `appfw-startup-phases.md`
+- `appfw-render-surface.md`
+- `appfw-progress.md`
+- `../backlog/appfw-startup.md`
+
+### 10.3 外部资料
+
+- Qt `Qt::SplashScreen` / `WA_TranslucentBackground` 语义。
+- X11 `XQueryTree` / `XGetWindowAttributes`（`scripts/xwinmap.py`）。

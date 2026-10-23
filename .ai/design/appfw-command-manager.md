@@ -1,10 +1,16 @@
-# appfw CommandManager 设计（2026-09-10 重写）
+# appfw CommandManager 设计
+
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：命令注册/执行链/历史/禁用/结果状态；对话框与输入输出见 `appfw-userio.md`。
+> **权威来源**：`CommandManager.hpp`、`Command.hpp`、`tests/test_gui`。
+> **待办**：无（开放项见 `../backlog/`）
 
 代码：`src/fw/appfw/sdk/vine/appfw/CommandManager.hpp`、`src/fw/appfw/src/CommandManager.cpp`；
 `CommandFlags::Exclusive` 语义见 `src/fw/appfw/sdk/vine/appfw/Command.hpp`。
 测试：`tests/test_gui/test_gui.cpp`（`CommandManager_*` 共 41 例）。
 
-## 入口点语义（顶层 vs 嵌套）
+## 1. 概要设计与入口点语义
 
 四个公开入口全部是**顶层入口**（`executeCommandAsyncImpl` 传 `nested=false`）；只有
 `CommandExecutionContext::executeChild()` 走 `nested=true`。
@@ -36,7 +42,7 @@
   （`Task::result()` 自己的文档就警告：若该线程的事件循环是任务恢复所必需的，就会死锁）。
   命令内部应 `co_await executeCommandAsync(...)`，或直接用 `executeChild()`。
 
-## 最佳实践整理（第三轮）
+## 2. 设计要点与最佳实践
 
 1. **日志不改变行为，且不靠本地封装保证**：调用点直接写裸 `VN_LOGI/W/E`，参数一律传
    `std::string_view`（`toUtf8View`，调用侧零分配）；“日志失败不会影响命令”由 **Logging 模块的契约**
@@ -62,7 +68,7 @@
    剩余仅是全仓 `VN_OBJECT_META_DECL;` 多一个分号的 `-Wextra-semi`（宏末尾自带 `;`，且仓库里两种写法并存），
    要统一得单独一轮、全仓改，不在本模块范围（项目并未启用该警告）。
 
-## 第八轮：API / 架构 / 线程安全三轴复核（2026-09-17）
+## 3. API 与线程安全
 
 复核方式：读 `CommandManager`/`Command`/`UserIO` 三份头 + 实现 + 本设计文档 + UserIO 文档，写探针实测
 （`/tmp/async_probe2/probe_command_flags.cpp`、`probe_signal_threads.cpp`、`bench_signal.cpp`），基线 <!-- drift-ok -->
@@ -77,7 +83,7 @@
 | E4 | `VisualUserIO::currentPrompt_` 跨线程读写：写在**读发起线程**（命令可在定时器/IO 线程恢复后调用 `getXxxAsync`），读在应用线程（`repromptError`） | 读码 + 新用例把"读在非应用线程发起"钉成事实（命令先 `sleepFor(1ms)` 再提示，断言发起线程 ≠ 应用线程） | 提示记帐改成 `PromptState`（`shared_ptr`，避免 posted 回调捕获 `this`），写入挪进"显示提示"那条编组调用 ⇒ 只在应用线程读写；`onApplicationThread` 加断言守住"有事件循环时 inline 路径必须在应用线程" |
 | E5 | `Signal` 本体无同步 ⇒ `executing/executed/commandsChanged` 三个**公开**事件表必须"订阅与命令完成错开" | TSan 探针：一边 `trigger` 一边 `add/removeHandler` ⇒ **12 条 data race**，进程不崩（静默 UB） | 见下节。这是本轮唯一"跨模块"的改动 |
 
-### E5 落实：`Signal` 线程安全化（`src/base/core/sdk/vine/Signal.hpp`）
+### 3.1 E5 落实：`Signal` 线程安全化（`src/base/core/sdk/vine/Signal.hpp`）
 
 **做法**：handler 表是**不可变快照**（`std::vector<std::shared_ptr<Slot>>`，`Slot : Connection::State = {callback, atomic<bool> alive}`），
 `connect()` 返回 RAII 句柄 `Connection`（`disconnect()`/`isActive()`/`detach()`；句柄是独立于 Signal 的**非模板类**，
@@ -108,7 +114,7 @@
 订阅），这是刻意取舍。受益方是所有 `Signal` 使用者：`CommandManager` 三个事件、`ConsolePanel` 的
 `lineEntered`/`escapePressed`、`WindowContext` 的 mouse/key/resized、`GuiApplication::theme_changed` 等。
 
-#### 为什么行里存的是 `shared_ptr<Slot>` 而不是裸 `handler`
+#### 3.1.1 为什么行里存的是 `shared_ptr<Slot>` 而不是裸 `handler`
 
 这个指针不是为了省一次间接访问，它承载的是"订阅"这个实体本身（早期版本叫 `HandlerNode`，但表已经是平铺的
 `vector<Entry>`，没有图可谈，改名后能自解释）：**订阅的生命周期必须长于任何一次快照**，
@@ -133,7 +139,7 @@ TSan 在 `probe_signal_threads` mode1 报 **1 条 data race**（`trigger` 读 / 
 （`probe_lock_during_trigger.cpp`，3 秒超时 = 124），锁只包住每次标志检查 ⇒ 每次发火 N 次 `lock/unlock`， <!-- drift-ok -->
 且与 `add/remove` 抢同一把锁（发火线程之间也随之串行化）。
 
-#### 表的形状（`vector`）与发布方式（Qt 式原子发布）
+#### 3.1.2 表的形状（`vector`）与发布方式（Qt 式原子发布）
 
 两种选择分别实测过，全部在同一台机上交替测量（`/tmp/async_probe2/`：`bench_qt` = 现方案，`bench_final` = 锁内取快照，
 `bench_old` = 第一版 `map` + `atomic<shared_ptr>`，变异脚本 `make_variant_{vec,vec2}.py`）：
@@ -158,7 +164,7 @@ TSan 在 `probe_signal_threads` mode1 报 **1 条 data race**（`trigger` 读 / 
   `is_lock_free()` 确实是 false，但那只是"内部有自旋锁"，它不会阻塞在用户代码上、不会与 mutation mutex 互相等待，
   也就不会死锁；Qt 的 `ConnectionDataPointer` 本质上也是同一套（原子指针 + 引用计数）。
 
-#### 与 Qt 的对应关系（"跟 Qt 保持一致"的落地清单）
+#### 3.1.3 与 Qt 的对应关系（"跟 Qt 保持一致"的落地清单）
 
 | Qt（`QObject` 内部） | 这里 |
 | --- | --- |
@@ -170,7 +176,7 @@ TSan 在 `probe_signal_threads` mode1 报 **1 条 data race**（`trigger` 读 / 
 | 发火期间 `connect` 的新连接何时生效：实现定义、无文档保证 | 钉死为"下一轮才生效"（`AddDuringEmitTakesEffectNextEmit`） |
 | 连接句柄 `QMetaObject::Connection`（`isValid()`、可 `disconnect()`） | `Connection`（`isActive()`、`disconnect()`、`detach()`）—— 入口与 Qt 同名，句柄形状与本仓库 `EventBus::Subscription` 同形 |
 
-#### RAII 断连：`connect()` 返回 `Connection`（形状同 appfw 的 `EventBus::Subscription`）
+#### 3.1.4 RAII 断连：`connect()` 返回 `Connection`（形状同 appfw 的 `EventBus::Subscription`）
 
 只有一个入口 `connect()`，它返回**移动语义的 RAII 句柄** `Connection`：析构即取消，`disconnect()` 幂等且可从
 handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订阅（对象自己的内部接线用）。因为没有 id 了，
@@ -206,7 +212,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 - **试过但否决**：`make_shared<HandlerTable>` 换成 `shared_ptr(new HandlerTable)`（控制块与 vector 元数据分属不同
   cache line）——2 线程 h=20 改善约 10%（121 → 104-117），但每次订阅 +12 ns（113 → 126），不划算。
 
-### 本轮评估但**未改**（记档）
+### 3.2 评估但未改（记档）
 
 - **`commandsChanged` 不带载荷**：消费方（控制台补全）只能全量重取 `commandInfos()`；要增量更新就给
   EventArgs 加 `kind/name`，属 API 扩展，等有实际痛点再做。
@@ -220,7 +226,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 - **`Command::name()/group()/description()` 值返回**：`String` 有 SSO，短名不分配；改成 `const String&`/view
   要动虚函数签名与插件 ABI，收益不抵成本。
 
-## 第七轮：内部结构重构（2026-09-11，行为不变）
+## 4. 内部结构
 
 目标：简洁、去重、贴 C++20 最佳实践；公开 API 与行为不变（111 个 GUI 用例 + 117 async + 11 progress 全绿）。
 
@@ -247,7 +253,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 验证：本模块在 `-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual` 下 **0 警告**
 （剩余警告来自既有的 core/math 头）。
 
-## 第六轮审查（重入 + 多线程，2026-09-11）
+## 5. 重入与多线程
 
 重入面：管理器调用的
 用户代码有命令虚函数（`name`/`flags`/`group`/`description`/`getType`）、工厂、快照回调、
@@ -260,14 +266,14 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 | D16 | 两个排他命令从不同线程并发提交 | **真缺陷**（探针：`a=0 b=0 max_concurrent=2`）：排他命令本来就绕过串联门（这正是「接管」的含义），两个都过了门就并发跑，排他性失效 | 新增 `Impl::exclusive_busy`：与门检查同处一个临界区，运行中的顶层 Exclusive 持有、由它的 `ChainGuard` 释放。改后峰值并发 = 1（用例 `CommandManager_ExclusiveCommandsAreSerialized`；改前为 2，可判别）。**接管仍正常**：后到者先等前者收尾，再被放行——用例里两种结局都断言了 |
 | D17 | 工厂里重入注册表（注册/注销/列举/查询） | **安全**（探针 + 用例）：工厂在 `registry_mutex` 之外调用 | 已加用例 `CommandManager_ReentrantFactoryIsSafe` 钉住 |
 | D18 | `executed` 处理函数里再跑命令、注销刚跑完的命令、增删处理函数 | **安全**（探针 + 用例）：通知在所有锁之外；`Signal` 先取 id 快照再查找，所以同线程内重入增删是安全的（新增的本轮不生效、注销的不再调用） | 已加用例 `CommandManager_ReentrantEventHandlerIsSafe` 钉住 |
-| D19 | `executing`/`executed` 的事件表本身不是线程安全的（`Signal` 无锁，`trigger` 快照 + 查找） | **真约束**（读代码）：命令在任意线程结束，而订阅方在主线程 `subscribe` ⇒ 数据竞争 | 当时只文档化（「订阅请放在启动期」）。**已根治**：2026-09-17 把 `Signal` 本体改成线程安全（不可变快照 + 原子发布，与 Qt 连接表同构），见下节「第九轮」；事件注释里的启动期限制不再需要 |
+| D19 | `executing`/`executed` 的事件表本身不是线程安全的（`Signal` 无锁，`trigger` 快照 + 查找） | **真约束**（读代码）：命令在任意线程结束，而订阅方在主线程 `subscribe` ⇒ 数据竞争 | 当时只文档化（「订阅请放在启动期」）。**已根治**：把 `Signal` 本体改成线程安全（不可变快照 + 原子发布，与 Qt 连接表同构），见 §3.1；事件注释里的启动期限制不再需要 |
 | D20 | `setCommandEnabled` 的读-改-写（读数组 → 改 → 写数组）不是原子的 | **真但极难触发**（只有 UI 线程调它；`ConfigManager` 自身读写是加锁的，所以无数据竞争，只有丢失更新） | **有意不加**管理器侧互斥：`ConfigManager::setStringArray()` 会在释放自身锁后触发 `changed`，处理器可能重入 `setCommandEnabled`，加一把跨该调用的锁会自锁。留档，建议将来在 ConfigManager 侧提供「原子增删数组元素」 |
 
 结论：**命令的虚函数、工厂、事件处理函数、快照回调在同线程内重入是安全的**（无锁 + Signal 快照语义），
-跨线程的约束只剩一条：禁用偏好的读写不要两个线程同时写（D20）——事件表的增删**已安全**（第九轮把 `Signal`
+跨线程的约束只剩一条：禁用偏好的读写不要两个线程同时写（D20）——事件表的增删**已安全**（§3.1 把 `Signal`
 本体改成线程安全，D19 根治）。
 
-## 第五轮审查（边界情况，2026-09-11）
+## 6. 边界情况
 
 重点是"各种情况"下新老机制的交界：等待用户输入、在自己身上排空、以及第 4 轮改动带来的新边界。
 
@@ -282,7 +288,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 | D14′ | 同上 | 已在 UserIO 审查轮修掉（U6：`pending_`/`cancelled_` 改 `std::atomic`） | **本行已过时**，以上是当时的记档 |
 | D15 | 贴出的失败消息在关停期间投递 | 经核实**安全**：`ApplicationData` 的声明顺序保证 `main_dispatcher` 最后销毁、`user_io` 先于 `command_manager` 销毁，而消息只可能被应用线程在 `EventBus::shutdownGracefully()` 派发时消费，那时两者都还活着 | 无需改动 |
 
-## 第四轮审查（8 点：缺陷 → 修复，2026-09-10）
+## 7. 结果上报、排他与取消
 
 审查方式：先跑通全部既有用例（25/25），再用临时探针用例复现可疑行为（跑完即删除），
 最后把能复现的固化成正式用例；两处属于契约收敛的问题没有稳定复现手段，只做静态判定。
@@ -298,7 +304,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 | D7 | `setCommandEnabled()` 不解析别名 ⇒ 按别名禁用无效（执行路径会解析），而 `isCommandEnabled(别名)` 仍返回 true（API 自相矛盾） | 代码 | `resolveName()` 后再写偏好与标记 |
 | D8 | `executeCommandAsync(Command*)` 的 `command->name()`（虚函数 + `String` 拷贝）与 `isDisabledRegistration()` 在 try 之外 ⇒ 与不变量 7 冲突（会抛给 UI 调用方） | 代码 | 移入 try 块 |
 
-## 第二轮审查（12 点，逐条对照代码核实）
+## 8. 排他、串联门与别名
 
 | # | 指控 | 核实结果 | 处理 |
 | --- | --- | --- | --- |
@@ -315,7 +321,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 | 11 | flags 缓存不一致 | 真（代码质量） | Undoable 判定改用缓存值 |
 | 12 | 事件参数裸指针 | 已在第一轮处理（仅通知期间有效）；接口不变 | 文档已注明 |
 
-## 第一轮审查
+## 9. 历史、链模型与注册
 
 | 项 | 结论 | 处理 |
 | --- | --- | --- |
@@ -328,7 +334,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 | `CommandExecutedEventArgs::command()` 未说明有效窗口；`Exclusive` 文档与实现不符 | 真（文档） | 两处文档按实现改写 |
 | "协程栈应显式建模"、"token 在源被替换后失效" | 真（架构） | 即链模型：源只 `request_stop()`，永不替换 |
 
-## 不变量
+## 10. 约束与不变量
 
 1. **一条链 = 一个栈 + 一个取消源**：链内是嵌套关系（父命令 `co_await` 子命令），链间互相独立；
    任何一条链都不能清空、弹出或取消另一条链的成员。
@@ -351,7 +357,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
   `exclusive_busy` 保证两个排他命令不同时运行（后到者要么接管前者、要么被拒）。
 9. **资源有界**：历史不超过 `maxHistoryEntries()`，嵌套深度不超过 `maxChainDepth()`。
 
-## 调度内核转移表（2026-09-25 审计）
+## 11. 调度内核转移表
 
 对 `Impl::admit()` / `takeOverForeground()` / `waitChainsDrained()` / `ChainGuard` / `cancelLiveChains()`
 的现状逐事件落表，作为"调度内核状态机化"（②）的复核交付：审计确认代码与不变量 4/5/8 一致，
@@ -377,7 +383,7 @@ handler 内部调用，`isActive()` 查询，`detach()` 放弃管理但保留订
 （E1b 并发）、`ExclusiveStopsEveryLiveChain`（E2 全链）、`CancelAllAbortsWaitingTakeOver`（E2×E4）、
 `ExclusiveIsRejectedWhenChainIgnoresCancellation`（E2 超时）。
 
-## 结构
+## 12. 结构
 
 ```
 CommandManager ── Impl ─┬─ shared_ptr<Chain> foreground   (最近一次顶层链)
@@ -406,7 +412,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   （见 `async_global.hpp`）。链的 `runs` 归零前一定已完成弹栈与宿主析构，所以轮询读到的
   零值同样代表"整帧已收尾"。
 
-## 结果状态：`Failed` 与 `NotApplicable` 是两件事（2026-09-27 落地）
+## 13. 结果状态：`Failed` 与 `NotApplicable` 是两件事
 
 `CommandStatus` 现在是四个：`Success` / `Failed` / `Cancelled` / **`NotApplicable`**。
 
@@ -428,14 +434,14 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   `context->application()->documentManager()->current()` 再看 `typeId()`），不适用就返回 `NotApplicable`，
   并把缺的那一句写进 `message()`。**框架不给命令带"适用文档类型"元数据**：不引入 `CommandInfo::document_types`，
   也不做"按类型过滤 ribbon"那一层 —— 派生的好处是 `Command` 的虚表不动，`VN_APPFW_PLUGIN_ABI_VERSION` 不用
-  7u → 8u（那是插件实现的导出类，加虚函数据就要动 ABI）。UI 少显几个按钮是**观感**问题，正确性由命令自己保证。
+  再 bump（那是插件实现的导出类，加虚函数据就要动 ABI）。UI 少显几个按钮是**观感**问题，正确性由命令自己保证。
 - 钉子：`CommandManager_DetachedNotApplicableIsExplainedAndNotReportedAsAFailure`（含**日志级别**断言：
   挂了 `LogSink` 抓行，`notApplicable` 不得出在 Error 级、且必须有那一行 info 级的 "not applicable"）、
   `UserIOTest.NotApplicableTypedInTheConsoleIsAHintNotAnError`（**颜色**断言：拿面板自己刚写的
   Warning/Error 两行做基准色，不写死色值）。
 - 变异电池三处都验证过：把 `executeDetached` / `logOutcome` / 控制台任一处改回旧行为 ⇒ 对应用例立刻红，恢复后全绿。
 
-## 命令管理器对话框（`gui::CommandManagerDialog`）
+## 14. 命令管理器对话框（`gui::CommandManagerDialog`）
 
 - 文件：`src/fw/appfw/src/gui/CommandManagerDialog.cpp`（窗口标题「命令管理器」），由 app_shell 的
   `show_commands` 命令打开。
@@ -448,7 +454,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   而不是隐藏（选中行变化频繁，隐藏会闪）。按钮文案随选中行的状态在 `禁用命令` / `启用命令` 之间切。
 - 对话框**不再提供"卸载命令"**：禁用是标记而非移除，语义更清楚也不会丢元数据/别名。
 
-## 命令禁用（2026-09-10，用户拍板的设计）
+## 15. 命令禁用
 
 **禁用是注册表里的一个标记，不是移除**：命令留在 registry 里（连同元数据、别名、owner），只是
 不能执行，随时可以再启用。相比"卸载"，插件下次启动重新注册时不会被"复活"，也不丢展示信息。
@@ -488,7 +494,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   `executeDetached()` 也会把失败消息写进 `UserIO`（同控制台同一条消息），两条路都有提示
   且不会重复（控制台不走 executeDetached）。
 
-## 关键机制
+## 16. 关键机制
 
 - **Exclusive 接管**：顶层 Exclusive 命令先取活链快照（`collectLiveChains()`），对**每一条**活链
   `request_stop()`，再 `co_await Impl::waitChainsDrained(...)`：等待是**协作式**的
@@ -542,7 +548,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
 - **注册元数据**：`registerCommand()` 调一次工厂探测以缓存 `group`/`description`；
   工厂返回 nullptr 只告警，条目仍可注册（执行时得到 `Failed`）。
 
-## 必须由调用方保证
+## 17. 调用方契约
 
 - 命令实例的生命周期由调用方持有（`Command*` 重载）；manager 不接管所有权，
   但**历史不再保存该指针**，所以执行返回后即可安全销毁。
@@ -570,7 +576,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   `MainThreadDispatcher.hpp`；协程式，与事件处理函数里的"自己编组"是同一条规则）；
   没有事件循环时它不挂起，直接在调用线程继续。回调式场景仍用 `postToMainThread()`。
 
-## 测试映射（tests/test_gui/test_gui.cpp）
+## 18. 测试与验收
 
 - `CommandManager_HistoryRecordsValueSnapshots`：值快照、越界 `nullopt`、取消注册后仍可读
   （该用例会解引用历史条目里保存的命令信息，旧实现保存的是已析构命令的地址）。
@@ -630,7 +636,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
   `UserIOTest.NotApplicableTypedInTheConsoleIsAHintNotAnError`（控制台里同样的两条 + 颜色是警告色不是错误色）。
   两条都用 `NotApplicableCommand` 这个夹具（`s_message` 控制带不带解释、`s_runs` 确认命令真的跑了）。
 
-## 有意**未做**的最佳实践项（留档）
+## 19. 有意未做
 
 - **合并 `Context` 与 `CommandExecutionContext`（用 friend）**：不合理，理由见下节。
 - **`Impl` 改用 `make_unique`**：仓库的 PImpl 风格是 `d(new Impl(...))`（`ConfigRegistry`/`ThreadPool`/`DynamicLibrary` 等一致）。
@@ -639,7 +645,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
 - **给加锁的访问器标 `noexcept`**：`std::mutex::lock` 理论上会抛（仅无锁的 `application()` 标了）。
 - **私有嵌套类标 `final`**：外部本就无法继承，无收益。
 
-## 约定：类级常量统一为 `static constexpr` 函数
+## 20. 约定：类级常量统一为 `static constexpr` 函数
 
 本模块与 `EventBus` 的类级常量统一采用**小写 camelCase 的 `static constexpr` 访问器**：
 `CommandManager::exclusiveDrainTimeout()` / `maxHistoryEntries()` / `maxChainDepth()`、
@@ -656,7 +662,7 @@ Chain ── vector<Command*> commands    (链内栈，innermost 在尾, mutex �
 
 注：base 层的 `String::npos`（模仿 `std::string`）等既有数据成员常量属于 stdlib 镜像，不在此约定范围内。
 
-## 已评估但**未采纳**（留档，避免重复建议）
+## 21. 已否决选项
 
 - **Exclusive 无限等待旧链**：会与"命令可能在被单线程执行器驱动的主线程上启动"冲突，
   存在死锁风险；采用有界等待 + 超时拒绝。

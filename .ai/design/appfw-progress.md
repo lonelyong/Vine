@@ -1,6 +1,12 @@
-# appfw 环境进度（`ProgressHost`）设计（2026-09-18：搬迁 + 推送模型）
+# appfw 环境进度（`ProgressHost`）设计
 
-## 归属与分工
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：`ProgressHost` 的归属、推送模型、两个消费者与契约。
+> **权威来源**：`ProgressHost.hpp`、`tests/test_gui`。
+> **待办**：无（开放项见 `../backlog/`）
+
+## 1. 概要设计：归属与分工
 
 - **base / `vn::Progress`**：`ProgressIndicator`（[0,1] 标尺、原子位置、外部取消 token）、
   `ProgressRange` / `ProgressScope`（把标尺切成区间）。零外部依赖，插件和测试可以直接用来算进度。
@@ -11,10 +17,10 @@
   这是层约束逼出来的降级设计，搬迁后 GUI 呈现器与控制台消费者可以各自订阅。
 - 依赖方向：appfw → `vn::Progress`。`ProgressHost.hpp` include indicator/range/scope 且按值返回
   range/scope，所以 appfw 里 `vn::Progress` 是 **PUBLIC** 链接。
-- `VN_APPFW_PLUGIN_ABI_VERSION` 2u → **3u**：公共 SDK 头变了（宿主换了 include 路径与命名空间），
+- `VN_APPFW_PLUGIN_ABI_VERSION` 必须 bump（当前 **8u**）：公共 SDK 头变了（宿主换了 include 路径与命名空间），
   插件必须重编。
 
-## 推送模型（原来是拉）
+## 2. 设计要点：推送模型
 
 - `ProgressHost::changed()` 返回进程级 `Signal<>`，在以下时刻发火：宿主注册/注销、前台栈压入/弹出、
   label 变化（设成相同值不发）、指示器位置跨过整百分点（含到终点、含被重置）。
@@ -27,7 +33,7 @@
   的热路径。实测（-O3，2000 万条目）：`next(1)` 由 10.0 → 9.9 ns/item（噪声内，无可测代价），
   2000 万条目只发 **101** 次通知。
 
-## 两个消费者
+## 3. 功能点：两个消费者
 
 - `gui::ProgressPresenter`：订阅 changed() 后**不再轮询**；空闲时不持有任何定时器，只为两个截止时间
   （"出现延迟" 400ms、"隐藏延迟" 300ms）臂一个单发 `QTimer`。跨线程通知用
@@ -39,7 +45,7 @@
   **一次性**唤醒（generation 计数器把 stop() 之后到点的唤醒变成空操作，`sleeping_` 保证同时只有一个）。
   `poll()` 保留给宿主自驱循环与测试，且**不需要**先 `start()`。
 
-## 契约与不变量
+## 4. 约束与不变量
 
 1. label 跨线程安全：`label()` **按值**返回（2026-09-18 修正——原来是 `const std::string&`，
    与工作线程里的 `setLabel` 构成真实数据竞争），写入侧互斥锁保护，值没变则不发通知。
@@ -53,7 +59,7 @@
 4. **空闲零唤醒**：presenter 无定时器，控制台消费者没有待发唤醒；只有真正有待办截止时间时才各臂一个。
 5. `ConsoleProgressOptions::interval` 现在的语义是**最小行距**（原来是轮询周期）；测试手动步进时设 0。
 
-## 测试映射
+## 5. 测试与验收
 
 | 用例 | 覆盖 |
 | --- | --- |
@@ -62,7 +68,7 @@
 | `ConsoleProgressReporterTest.*`（3 例，`test_gui`） | 手动步进的节流与收尾、通知驱动 + `stop()` 后静音、`ConsoleUserIO` 端到端打印 |
 | `ProgressPresenterTest.*`（`test_gui`） | 取消按钮、`isBusy()` |
 
-## 已评估但**未采纳**（留档）
+## 6. 已否决选项
 
 - **保留 base 里的自查回调 + 单观察者**：层约束逼出来的降级（写一个更差的 Signal），搬迁后作废。
 - **把整个 progress 模块搬进 appfw**：`ProgressIndicator`/Range/Scope 是零依赖原语，插件与 base 测试

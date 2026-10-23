@@ -21,10 +21,22 @@
     design/ADR and delete when done.
 * `docs/guides/` is user-facing; internal design, decisions and backlog never go there.
 * **Design docs**: one fact one home. Contracts live in headers, behaviour in tests; a
-  design doc summarises and links, never duplicates. Required order: one-line conclusion →
-  design points (`1.x`) → features (`F#`) → public interfaces (grouped) → caveats and
-  invariants (`N#`) → rejected options (`D#`, one line + ADR link) → tests (`T#`) → Mermaid
-  diagrams next to the relevant section → related docs. Add `最后核对：YYYY-MM-DD`.
+  design doc summarises and links, never duplicates. Every design doc uses the same
+  numbered chapters, with sub-numbers when a chapter has parts:
+  1. **概要设计** — 1.1 problem/background, 1.2 goals, 1.3 non-goals, 1.4 one-paragraph conclusion.
+  2. **设计要点** — `2.x`, one point each: what / why / boundary.
+  3. **功能点** — `3.x` groups; a feature index table, then each `F#` states behaviour,
+     constraints (`C#`), requirements (`R#`), acceptance (`T#`) and caveats (`N#`).
+  4. **公开接口** — grouped by class/module, contract + pointer to the header.
+  5. **约束、要求与不变量** — global `C#` / `R#` / `N#`; a feature may reference these.
+  6. **注意事项与陷阱** — `P#`; each says how it fails, how to detect it, how to prevent it.
+  7. **已否决选项** — `D#`, one line + ADR link.
+  8. **测试与验收** — `T#` criterion + test case/command.
+  9. **状态与演进** — current status, known gaps/backlog links, compatibility/migration.
+  10. **参考** — code, docs/ADR, external sources.
+  Put a status / last-verified / scope block at the top; Mermaid diagrams sit next to the
+  section they explain. Stable IDs (`F#`, `C#`, `R#`, `N#`, `T#`, `D#`) are for
+  cross-references. The full template lives in `.github/skills/design-docs/SKILL.md`.
 * **History**: never add dated, closed or historical docs to `.ai/design/`; git is the
   archive. Keep only an ADR for a decision likely to be re-litigated.
 * Before touching a module, read its `.ai/design/` doc and `.ai/backlog/`; after changing
