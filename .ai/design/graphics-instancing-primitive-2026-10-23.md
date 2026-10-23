@@ -153,6 +153,9 @@ world_instance = geometry_world * primitive->instanceMatrix(instance)
 - `Topology` 仍是 `Triangles` / `Points` / `Lines` 的列表形式；strip/fan 需要单独扩展枚举和
   拾取/管线映射，不在本设计里伪支持。
 - 没有 `InstanceScope`，所以没有嵌套作用域、作用域级选择或作用域级剔除。
+- **多父（DAG）已裁决不做（2026-10-23）**：同一几何 N 份由实例流覆盖；同一子树 N 份复制节点即可
+  （`Buffer` 仍共享）。若将来需要“编辑一次、所有放置生效”，按 USD 式**显式引用节点**
+  （`ReferenceNode`）重新设计，不放开 `Group`。
 
 ## 4. 落地记录
 

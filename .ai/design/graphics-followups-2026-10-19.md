@@ -78,7 +78,7 @@
 
 | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|
-| 实例化 / 批处理 | 一条 `RenderCommand` 一个几何。**已落地（2026-10-23）**：实例流挂在 `Primitive` 上（per-draw 参数），命令快照 `instance_transforms` / `first_instance` / `instance_count`；后端 `Draw.instances` / `first_instance` + binding 4 整段实例流；`VINE_INSTANCED` 同时决定文本与顶点布局。早期 `Geometry` 通道方案与 `InstanceScope` 作用域方案均已作废 | 同一几何 N 份（粒子、植被）；与 L2b 同源只指触发评估 | object-model §3 缺口 2；`graphics-instancing-primitive-2026-10-23.md` |
+| 实例化 / 批处理 | 一条 `RenderCommand` 一个几何。**已落地（2026-10-23）**：实例流挂在 `Primitive` 上（per-draw 参数），命令快照 `instance_transforms` / `first_instance` / `instance_count`；后端 `Draw.instances` / `first_instance` + binding 4 整段实例流；`VINE_INSTANCED` 同时决定文本与顶点布局。早期 `Geometry` 通道方案与 `InstanceScope` 作用域方案均已作废。**DAG 多父同日裁决不做**（见 §5） | 同一几何 N 份（粒子、植被）；与 L2b 同源只指触发评估 | object-model §3 缺口 2；`graphics-instancing-primitive-2026-10-23.md` |
 | LOD / 空间划分 | 无 LOD 节点、无八叉树 / 可见性集合 | 大场景“每帧收集本身成为瓶颈” | object-model §3 缺口 3 |
 | 选择态（描边 / 框选 / 多选） | 拾取是机制（已有），选择不在框架 | 多处调用点各自重写同一套选择与高亮 | object-model §2.5 |
 ### 3.4 帧、线程与证据
@@ -159,6 +159,7 @@ F3（灯光列表复制，按成本/收益关闭）。**本节不再有待办。
 | **单图元便捷拼写** | **已关闭（2026-10-23，用户选 B）**：`setIndices` / `hasIndices` / `indices` / `firstIndex` / `indexCount` / `indicesBuffer` 与“primitive 0”的实例便捷全部删除，索引/实例直接在 `Primitive` 上写。`material` / `setMaterial` / `program` / `setProgram` 保留，但语义改为**几何级默认**（图元自己的值优先，再否则最近 `StateNode`），不是批量写。判据 `GeometryTest.MaterialAndProgramAreGeometryDefaultsNotBatchWrites` / `SceneTest.TheDrawResolvesPrimitiveThenGeometryThenStateNode`；设计见 `graphics-primitives-2026-10-22.md` §2 |
 | **T2 / M6** 一设备 N 交换链 | 由 S10b 覆盖并关闭（2026-10-19），形状是“每窗口一个 `createSurfaceTarget`” |
 | **L2 目标层（L2a/L2b）** | 2026-10-23 L2a 曾落地（数组目标 + 逐层帧缓冲 + 按层读回）后**回撤**：没有消费者，N 张 2D 目标 + N 条 pass 已能实现同样画面；L2a 只多一点打包/身份，不省收集/提交，却增加公开面与组合拒绝。当前不做；L2b 等 VR / 实测 N-pass 开销再与 L2a 一起设计。历史记录见 `graphics-layers.md` §10 |
+| **R7 的 DAG 半边（多父）** | **已关闭（2026-10-23，用户裁决不做）**：同一几何 N 份由 `Primitive` 实例流覆盖（2026-10-23 落地）；同一子树 N 份复制节点即可，顶点/索引/实例 `Buffer` 仍共享。放开任意多父会让 `Node::worldMatrix()` / `boundingBox()` / 拾取身份失去唯一答案（OSG/vsg 用 `NodePath` 补偿，vsg 的 `Node` 甚至不存父指针），代价大于收益。若将来出现“同一子树 N 份且编辑一次全生效”的真实需求，按 USD 式**显式引用节点**（`ReferenceNode`）重新开，不把 `Group` 改成 DAG |
 | **Cube 作 pass 输入** | 两条真实设备用例证明，无需改后端（2026-10-19） |
 | **>3 个方向光** | 新后端走 lights 块（1024 槽），不设限（2026-09-25 对账） |
 | **内容掩码 / `Pipeline` 命名风险 / 外部图像接线** | L1 掩码、K1 改名、E2 + cube 均已落地（review §1.3、§2.1） |
