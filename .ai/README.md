@@ -19,7 +19,7 @@
 - `graphics-rendering.md` —— 目标、MSAA、图源、颜色、着色、阴影。
 - `graphics-content-lifecycle.md` —— 内容释放与缓存策略。
 - `graphics-followups.md` —— **唯一待办清单**：只留开放的触发条件型条目。
-- `vsg-backend.md` —— vsg 后端契约、平台事实、坑与门禁。
+- `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑 / 否决项 / 门禁。
 
 **appfw（12）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
