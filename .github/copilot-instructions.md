@@ -22,6 +22,9 @@ from review comments instead of restating the principle.
 | G11 | 易于理解、调试、维护 | Can a failure be located, state observed and the module tested alone, without guessing an implicit mechanism? |
 | G12 | 设计意图体现在代码中 | Do class boundaries show responsibility, interface shape show constraints, dependencies show architecture, names show the domain? |
 
+How a design point, a rejected option or a review cites a `G#` — and when a violation is
+acceptable — is in `.github/instructions/framework-design.instructions.md`.
+
 ## Project Layout & Documentation
 
 * `docs/` is the unified repository documentation folder AND the GitHub Pages
