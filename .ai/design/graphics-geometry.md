@@ -1,78 +1,127 @@
 # graphics 几何：通道、图元、实例、revision
 
-> 单一来源：`Geometry` / `Primitive` 的数据模型。头文件 `Geometry.hpp` / `Primitive.hpp` /
-> `Buffer.hpp` 是 API 细节的权威。待办见 `graphics-followups.md`。
+> **一句话**：`Geometry` 是通道集，`Primitive` 是一次 draw；实例流是这条 draw 的参数；
+> 形状归几何、字节归 buffer。
+>
+> **权威来源**：`Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp`。
+> **待办**：`graphics-followups.md`。
 
-## 1. 两个对象
+## 1. 设计要点
 
-- **`Geometry`（叶子节点）= 通道集**：位置、法线、贴图坐标、自定义属性；所有 primitive 共享这些流。
-- **`Primitive` = 一次 draw**：topology + 索引片段 + material / program + 实例流。一个几何可以有多条 primitive
-  （网格 + 边线 + 选中点共享一份顶点，就是三条 draw）。
-- `Geometry` 没有子节点、没有自己的变换；放置靠外层变换节点。可见性/透明度归 `Node`。
+1.1 **一个对象一个职责**：`Geometry` 只装通道；`Primitive` 只描述一次 draw；材质/程序是几何级默认。
+1.2 **数据即绘制**：装位置通道时自动有一个默认三角形 primitive，避免“有数据却不知道该怎么画”。
+1.3 **通道 = 段 + 步长**：`BufferSlice<float>` + components；切片规则只有一处（`BufferSlice`）。
+1.4 **实例是 draw 的参数**：挂在 `Primitive` 上，不是场景图作用域；没有 `InstanceScope`。
+1.5 **两级 revision**：`Geometry::revision()` 描述形状，`Buffer::revision()` 描述字节。
+1.6 **包围盒按数据缓存**：局部盒键 = positions buffer + 其 revision + 段 + 几何 revision。
 
-## 2. 通道
+## 2. 功能点
 
-- `AttributeChannel` = `BufferSlice<float>` + `components`（每顶点标量数，1..4）。
-- 通道是**段 + 步长**：`offset` 以标量计，`scalarCount == 0` 表示“从 offset 到缓冲末尾”。
-  `BufferSlice` 的切法只有一处（越界钳位、0 = 剩余、长度跟随增长）。
-- `setPositions` / `setNormals` / `setTexcoords2` / `setTexcoords3` 共享调用方的 buffer，不拷贝；
-  分段用 `first_vertex` / `vertex_count`（单位是顶点）。通用入口是 `addBuffer(location, AttributeChannel::slice(...))`。
-- 一个 arena buffer 可以装多个几何的顶点：每个几何只读自己的段，显存里只有一份。
-- 自定义通道从 location 3 起；规范槽位由 `ShaderAbi.hpp` 的 `attributeLocation()` 定义，不能占用。
-- 组件数就是步长：`vertexCount()` / `xyz()` / `stride()` 都按它走；vec4 位置保留 xyz、跳过 w。
+### 2.1 通道
 
-## 3. Primitive
+| # | 功能 | 说明 |
+|---|---|---|
+| F1 | 规范通道 | positions / normals / texcoords / colour；location 由 `ShaderAbi` 定义。 |
+| F2 | 自定义通道 | location 3 起，`addBuffer(location, AttributeChannel)`。 |
+| F3 | 共享 buffer | `setPositions` / `setNormals` / `setTexcoords2/3` 接收 `intrusive_ptr<const Buffer<float>>`。 |
+| F4 | Arena 切片 | `first_vertex` / `vertex_count`；一个 buffer 装多个几何的顶点。 |
+| F5 | 视图访问 | `scalars()` / `xyz()` / `vec3View()` / `vertexCount()` / `stride()`。 |
 
-```cpp
-struct Primitive {
-    Topology topology;              // Triangles / Points / Lines（列表）
-    BufferSlice<uint32_t> indices;  // 空 = 非索引
-    intrusive_ptr<Material> material;   // null = 几何级默认
-    intrusive_ptr<ShaderProgram> program; // null = 几何级默认
-    BufferSlice<float> instance_transforms; // 16 float/实例，列主序 mat4
-    std::optional<std::size_t> visible_instances; // 可见前缀
-};
-```
+### 2.2 图元
 
-- 索引流按 buffer 共享上传；同一 arena 的多个 primitive 可以指向不同段。
-- `Geometry::material` / `program` 是**几何级默认**，不是批量写：图元自己的值优先，再否则最近 `StateNode`。
-- 拓扑是 pipeline 身份的一部分，不是动态状态；pass 可以把整片内容“当点看”（`PassRenderState::topology` 覆盖）。
+| # | 功能 | 说明 |
+|---|---|---|
+| F6 | 一次 draw | `Primitive{topology, indices, material, program}`。 |
+| F7 | 多 part | 一个 `Geometry` 多条 `Primitive`，共享顶点通道。 |
+| F8 | 索引段 | `BufferSlice<uint32_t>`；空 = 非索引；同一 arena 可共享上传。 |
+| F9 | 材质/程序默认 | 图元自己的值 > 几何默认 > 最近 `StateNode` > pass。 |
+| F10 | 拓扑 | `Triangles` / `Points` / `Lines`；是管线身份，不是动态状态。 |
 
-## 4. 实例化
+### 2.3 实例
 
-- 实例流挂在 `Primitive` 上，是一条 draw 的参数，不是场景图作用域；没有 `InstanceScope`。
-- 每实例 16 float 列主序 mat4；`firstInstance` = 切片起点 / 16；`visibleInstanceCount` 只改 draw 参数，不重传。
-- 上传键是**整段 buffer**（offset 0 / count 0），按 buffer revision 共享；可见前缀不换 buffer。
-- 收集：`Scene` 对每个 primitive 发一条命令；有实例流且可见数为 0 只跳过该 primitive。
-- 后端：binding 4 的逐实例顶点流 + `ProgramVariant.instanced`（bit 8）+ `VINE_INSTANCED`；
-  实例矩阵在**该 draw 的几何局部空间**里乘。
-- 包围盒：每条 primitive 的可见实例矩阵变换局部盒后的并集；拾取逐 primitive、逐可见实例。
-- 边界：逐实例材质/颜色/opacity/层/排序/剔除、GPU indirect、自动合批都不做；一条 draw 的实例共享材质/层/排序。
-  多个放置 = 多个 `Geometry` 节点（可共享同一实例 buffer）；多个 part = 多个 `Primitive`。
+| # | 功能 | 说明 |
+|---|---|---|
+| F11 | 实例流 | `BufferSlice<float> instance_transforms`，每实例 16 float 列主序 mat4。 |
+| F12 | 可见前缀 | `std::optional<size_t> visible_instances`；只改 draw 参数，不重传。 |
+| F13 | 收集 | 每个 primitive 一条命令；可见数为 0 只跳过该 primitive。 |
+| F14 | 后端 | binding 4 的逐实例流 + `VINE_INSTANCED`（bit 8）+ `Draw.instances` / `firstInstance`。 |
+| F15 | 包围盒 | 每条 primitive 的可见实例矩阵变换局部盒后的并集。 |
+| F16 | 拾取 | 逐 primitive、逐可见实例；结果 `geometry + primitiveIndex + instanceIndex`。 |
 
-## 5. revision：形状归几何，字节归 buffer
+### 2.4 revision 与包围盒
 
-- `Geometry::revision()` 只描述**形状**（喂哪些通道、从哪读）；`setRevision()` / `bumpRevision()` 是唯一推进入口。
-- `Buffer::setRevision()` 是**字节**公告；上传缓存只认它。改了字节却只动几何 revision，会继续画旧字节。
-- 事实行（layout / 通道集 / counts）在几何 revision 变化时重建；通道/索引/实例流的新身份会自然触发上传。
-- 一个编辑批次只公告一次几何 revision；setter 自己不会推进它。
+| # | 功能 | 说明 |
+|---|---|---|
+| F17 | 几何 revision | `setRevision()` / `bumpRevision()`；只表示形状变化。 |
+| F18 | buffer revision | `Buffer::setRevision()`；字节公告，上传缓存只认它。 |
+| F19 | 事实行重建 | 几何 revision 变化 ⇒ 重建 layout / 通道集 / counts。 |
+| F20 | 局部盒缓存 | `localBounds()` + `localBoundsComputationCount()` 见证。 |
+| F21 | 世界盒 | 局部盒乘父链；`subtreeBounds` 在节点自身坐标系。 |
 
-## 6. 包围盒
+## 3. 公开接口
 
-- `Geometry::localBounds()`：位置通道的局部盒，按（buffer、buffer revision、段、几何 revision）缓存；
-  `localBoundsComputationCount()` 是缓存命中见证。
-- `Geometry::subtreeBounds(box)`：几何自身坐标系里的盒，按每条 primitive 的可见实例展开。
-- `Geometry::boundingBox()`：局部盒乘父链世界矩阵（视图无关的放置）；`Scene::boundingBox` 只算可见/层掩码内容。
-- 移动相机不重算子树盒；移动/编辑子树只失效祖先。
+### 3.1 `Geometry`
 
-## 7. 边界（不是缺陷）
+| 接口 | 作用 |
+|---|---|
+| `addBuffer()` / `removeBuffer()` / `buffer()` / `bufferCount()` / `bufferLocations()` | 通道 |
+| `setPositions()` / `setNormals()` / `setTexcoords2/3()` / `has*()` / `*Count()` | 规范通道 |
+| `addPrimitive()` / `setPrimitive()` / `clearPrimitives()` / `primitive()` / `primitives()` | 图元 |
+| `material()` / `setMaterial()` / `program()` / `setProgram()` | 几何级默认 |
+| `revision()` / `setRevision()` / `bumpRevision()` | 形状公告 |
+| `vertexCount()` / `localBounds()` / `boundingBox()` / `subtreeBounds()` | 数据与盒 |
+| `setInstanceTransforms()` / `setVisibleInstanceCount()` / `clear*()` | 默认 primitive 0 的实例便捷 |
+| `geometryFromShape()` / `packAttribute()` / `packIndices()` | 桥与打包 |
 
-- 场景图是严格树：不做多父 / DAG；重复子树复制节点即可，`Buffer` 仍共享。
-- `Topology` 只有 `Triangles` / `Points` / `Lines` 列表；strip/fan 是独立缺口（见 ledger）。
-- 一个 `Geometry` 的所有 primitive 共享节点世界矩阵；需要不同整体变换就多个 Geometry 节点。
+### 3.2 `Primitive`
 
-## 8. 判据
+| 接口 | 作用 |
+|---|---|
+| `topology` / `indices` | 拓扑与索引段 |
+| `material` / `program` | 这次 draw 的覆盖 |
+| `hasInstances()` / `instanceCount()` / `firstInstance()` / `visibleInstanceCount()` | 实例 |
+| `setInstanceTransforms()` / `setVisibleInstanceCount()` | 实例编辑 |
 
-`GeometryTest` / `PrimitiveTest` / `PrimitiveInstancingTest` / `StreamRevisionTest` / `GeometryFactsTest` /
-`PrimitiveDrawTest` / `SceneTest.TheDrawResolvesPrimitiveThenGeometryThenStateNode`，
-以及设备级 `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`。
+### 3.3 `AttributeChannel`
+
+| 接口 | 作用 |
+|---|---|
+| `packed()` / `shared()` / `slice()` / `fromSlice()` | 构造 |
+| `scalars()` / `scalarSlice()` / `floatCount()` / `vertexCount()` / `stride()` | 读取 |
+| `xyz()` / `vec3View()` | 顶点级视图 |
+
+## 4. 注意项
+
+| # | 注意项 |
+|---|---|
+| N1 | 改字节必须 `Buffer::setRevision()`；只改几何 revision 会继续画旧字节。 |
+| N2 | 一组编辑只公告一次几何 revision；setter 自己不会推进它。 |
+| N3 | 实例流上传键是整段 buffer（offset 0 / count 0）；可见前缀不换 buffer。 |
+| N4 | 实例矩阵在**该 draw 的几何局部空间**里乘；一个 Geometry 的所有 primitive 共享节点世界矩阵。 |
+| N5 | 一个 Geometry 只能有一个父；多个放置用多个 Geometry 节点（可共享 buffer）。 |
+| N6 | 自定义通道不能占用规范 location。 |
+| N7 | `POINT_LIST` 要求顶点阶段静态写 `gl_PointSize`。 |
+
+## 5. 否决项
+
+| # | 否决 | 理由 |
+|---|---|---|
+| D1 | `InstanceScope` 作用域 | 选择单位、射线递归、嵌套与包围盒语义复杂；改为 `Primitive` 参数。 |
+| D2 | 实例矩阵作为 `Geometry` 保留通道 | 一个几何只能一套实例；可见数量要改切片；没有引擎把实例挂在网格资产上。 |
+| D3 | 多父 / DAG | 渲染路径可 DAG，但公开世界查询与拾取身份不成立；复制节点即可。 |
+| D4 | 逐实例材质 / 颜色 / 层 / 排序 / 剔除 | 一条 draw 的实例共享这些；等真实需求再加。 |
+| D5 | GPU indirect / 自动合批 | 没有消费者；实例化只解决“同一几何 N 份”。 |
+| D6 | `Topology` strip / fan | 需要单独扩展枚举与拾取/管线映射；不在本设计里伪支持。 |
+
+## 6. 判据
+
+| # | 判据 |
+|---|---|
+| T1 | `GeometryTest` / `PrimitiveTest` / `PrimitiveInstancingTest`。 |
+| T2 | `StreamRevisionTest`：单通道编辑只重传该流；几何编辑重建事实行。 |
+| T3 | `GeometryFactsTest` / `PrimitiveDrawTest`。 |
+| T4 | 设备级 `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`。 |
+
+## 7. 相关文档
+
+`graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `graphics-followups.md`

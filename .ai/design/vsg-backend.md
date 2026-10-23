@@ -1,104 +1,134 @@
 # vsg 后端：契约、平台事实与坑
 
-> 单一来源：vsg 后端的实现契约。头文件 `RenderBackend.hpp` / `ShaderAbi.hpp` 与
-> `src/plugins/gfx_backend_vsg/include/vine/vsg/**` 是 API 细节的权威。待办见
-> `graphics-followups.md`。
+> **一句话**：Vulkan 1.4 地板、无 dynamic rendering、每 pass 私有状态表、reverse-Z；
+> 后端只物化引擎交来的帧值。
+>
+> **权威来源**：`RenderBackend.hpp` / `ShaderAbi.hpp` /
+> `src/plugins/gfx_backend_vsg/include/vine/vsg/**`。**待办**：`graphics-followups.md`。
 
-## 1. 平台地板（硬约束，不是实现选择）
+## 1. 设计要点
 
-- Vulkan **1.4**；设备必须有 7 个必需 feature；EDS2 / EDS3 + 3 个 fn-pointer 入口。
-- **没有 dynamic rendering**（vsg 记录路径只有 `vkCmdBeginRenderPass`）⇒ render pass + load-op variants。
-- vsg 按 viewID 编译管线 ⇒ **每 pass 的状态注册表必须私有**。
-- push constant 预算 **128 B**；reverse-Z（far = 0）；世界 CCW vs framebuffer CW ⇒ `frontFace = CLOCKWISE`。
-- X11 / Win32；**无 Wayland**。
-- 在飞槽数是 vsg `Viewer` 的硬编码 3：启动期逐帧学习（`probeSlotCount` / `SlotTracker`），学会前不 park。
-- 退役窗口 = `slots + 1`；`RetirementQueue::setSlots()` 原地更新，不要重新赋值。
+1.1 **core / api / support 分层**：`core` 是纯策略、无 vsg 类型；`api` 做 vsg 适配；`support` 放宿主窗口与工具。
+1.2 **帧是值**：后端只按 `FrameDescription.passes` 物化，不重排、不报环。
+1.3 **每 pass 状态私有**：vsg 按 viewID 编管线，所以状态注册表不能跨 pass 共享。
+1.4 **目标形状驱动**：`TargetShape` 决定图像、通道、管线兼容性；bootstrap 清所有附件。
+1.5 **流按 buffer 身份共享**：`StreamKey` = buffer + 自身 revision + 段；稳态零重传。
+1.6 **反向 Z + CW 正面**：Vulkan NDC z 就是 depth；世界 CCW 到 framebuffer 是 CW。
 
-## 2. 分层
+## 2. 功能点
 
-```
-gfx_backend_vsg/
-  core/     纯策略、无 vsg 类型：协议、帧环、退役、键、目标计划、观测、证据夹具
-  api/      vsg 适配：设备、会话、目标、管线、描述符、录制、读回
-  support/  宿主窗口、场景规则、状态映射、工具
-```
+### 2.1 平台与设备
 
-`core/` 不 include `vsg/*`（`check_include_hygiene.py` 守边界）。
+| # | 功能 | 说明 |
+|---|---|---|
+| F1 | 设备地板 | Vulkan 1.4；7 个必需 feature；EDS2 / EDS3 + 3 个 fn-pointer 入口。 |
+| F2 | 设备探测 | `DeviceProbe` 枚举 physical device，填 `DeviceFacts`；不与策略分叉。 |
+| F3 | 会话 | 自有窗口或采纳宿主窗口；窗口 ⇒ 交换链 ⇒ `beginFrame` / `commitFrame`。 |
+| F4 | 槽数学习 | `probeSlotCount` / `SlotTracker`；学会前不 park。 |
+| F5 | 退役 | `RetirementQueue` 窗口 = `slots + 1`；`setSlots()` 原地更新。 |
 
-## 3. 一帧
+### 2.2 目标与通道
 
-- 会话：自有窗口或采纳宿主窗口；窗口 ⇒ 交换链 ⇒ `beginFrame` / `commitFrame`。
-- 记录：`Viewer` 的 `RecordAndSubmitTask`，每槽一个 fence；槽数由 `fence(i)` 越界回答逐帧学习。
-- 帧协议（引擎侧）：`beginFrame` → 每 pass（`beginPass` / `setPassOrder` / `setPassInputs` / `execute` /
-  `endPass`）→ `endFrame` → present。`removePass` → `releasePass(pass)` 再 `releaseRenderTarget(pass->renderTarget())`。
-- 预热：启用、非清屏、绑定内容的 pass 走 `beginPass` / `setPassOrder` / `execute` / `endPass`，不 `setPassInputs`。
+| # | 功能 | 说明 |
+|---|---|---|
+| F6 | 目标计划 | `TargetShape`：附件数 / 颜色格式 / 深度格式 / samples / subpass。 |
+| F7 | 清屏 | `planClearValues`：bootstrap 清所有附件；深度清 0.0（reverse-Z far）。 |
+| F8 | 深度借出/借入 | 借入方不自建深度；`initialLayout` = attachment layout，LOAD。 |
+| F9 | 依赖 | `VkSubpassDependency` 的 stage/access mask 是兼容性的一部分；借深度取超集。 |
+| F10 | 读回 | 颜色按 attachment；深度 D32 / D16（D24S8 拒绝）；barrier 回 attachment layout。 |
 
-## 4. 目标与渲染通道
+### 2.3 管线与状态
 
-- `TargetShape` 是目标的兼容形状：附件数 / 颜色格式 / 深度格式 / samples / subpass。
-- `planClearValues(shape, policy, bootstrap, depth_preserved)`：bootstrap 清所有附件；attachment 0 = policy 色，
-  其余 = 透明黑；深度清 `0.0`（reverse-Z far）；`depth_preserved` 优先级最高。
-- 深度可借出 / 借入：借入方不自建深度，用出借方的 view；`initialLayout` = attachment layout，LOAD；
-  借出方撤销提升（`borrowers` 计数）。
-- `VkSubpassDependency` 的 stage/access mask 是 render-pass 兼容性的一部分；借深度时 dependency 必须按形状
-  取超集，只有 loadOp/layout 可以每个 pass 不同。
-- 读回：颜色按 attachment，深度支持 D32 / D16（D24S8 拒绝）；深度图需要 `TRANSFER_SRC`；
-  读回后 barrier 回 attachment layout。
+| # | 功能 | 说明 |
+|---|---|---|
+| F11 | 管线键 | program + revision + layout + topology + render-pass 兼容性 + samples + variant。 |
+| F12 | 变体池 | `VariantPool` 按 key 缓存；FIFO 上限 65；id 不复用。 |
+| F13 | 状态注册 | 每 pass 私有；`variant_switched` / `dynamic_issued` 分开计数。 |
+| F14 | 动态状态 | 块槽位 `detail::kDynamicStateSlot`（15）；viewport / scissor 动态。 |
+| F15 | 管线状态 | reverse-Z GREATER；frontFace CLOCKWISE；blend 恒开（单颜色附件内容）。 |
 
-## 5. 管线、变体、状态
+### 2.4 流、块、描述符
 
-- `PipelineKey` 的身份：program + revision + layout + topology + render-pass 兼容性 + samples + variant。
-  只有 `operator==` 决定身份；hash 写在旁边。
-- `VariantPool` 按 key 缓存；FIFO 上限 65，id 不复用；`keyOf(id)` 可查。
-- 每 pass 的 `StateRegistry` 分开记 `variant_switched` 与 `dynamic_issued` 两种成本。
-- 动态状态块槽位必须是 `detail::kDynamicStateSlot`（15），否则会替换 pipeline bind。
-- 动态 `vkCmdSetPrimitiveTopology` 只能在 pipeline 的 topology class 内；`Topology` 进 `PipelineKey`。
-- 管线状态：reverse-Z ⇒ `VK_COMPARE_OP_GREATER`；front face `CLOCKWISE`；混合恒开（单颜色附件内容），
-  `BlendState::enabled` 只选因子。
-- 设备扩展必须真正 enable（EDS3 的 polygon mode / color blend）；只开 feature bit 不够。
+| # | 功能 | 说明 |
+|---|---|---|
+| F16 | 流共享 | `StreamKey` = buffer + revision + 段；index 归一到整段 buffer。 |
+| F17 | 自定义属性 | location 3 起，转发 `vine_Attribute{location}`。 |
+| F18 | 块存储 | 一个 mapped buffer：view / draw / material 三区；每帧 ring；稳态零写。 |
+| F19 | 描述符 | 一个 set，3 个 dynamic uniform binding（0 view / 1 draw / 2 material）。 |
+| F20 | 材质 arena | 每槽 `copies` 份；槽满 `Refused`；扩容只换 material 区。 |
 
-## 6. 流、块、描述符
+### 2.5 纹理与着色器
 
-- `StreamKey` = buffer + **该 buffer 自己的 revision** + 段；共享上传键是整段 buffer（index 归一化到整段）。
-- 自定义属性从 location 3 起，转发为 `vine_Attribute{location}`；规范槽位由 `ShaderAbi` 定义。
-- `BlockStorage`：一个 mapped buffer（HOST_VISIBLE|HOST_COHERENT）含 view / draw / material 三区；
-  对齐用设备的 `minUniformBufferOffsetAlignment`；每帧 ring，slab 数 = 在飞帧 + 1；稳态零写。
-- `BlockDescriptors`：一个 set，三个 dynamic uniform binding（0 view / 1 draw / 2 material），
-  offset 按 binding 顺序；misaligned offset 拒绝并计数，不交给驱动。
-- 材质 arena 每槽 `copies` 份；槽满 `Refused`，不淘汰活材质；扩容只换 material 区，不动 view/draw。
+| # | 功能 | 说明 |
+|---|---|---|
+| F21 | 纹理上传 | `MaterialImages` 键 `(Texture*, revision)`；D2 / Cube 视图；白 cube 兜底。 |
+| F22 | sampler | 按值缓存；`InputSetCache` 键 `(view, sampler)`。 |
+| F23 | 着色器文件 | `builtin_<角色>.<阶段>`；构建期嵌入；`vine_` 前缀。 |
+| F24 | 变体文本 | `#pragma import_defines` 决定文本；漏写会静默丢弃。 |
+| F25 | POINT_LIST | 顶点阶段必须静态写 `gl_PointSize`；内置程序写 1.0。 |
 
-## 7. 纹理上传
+## 3. 公开接口
 
-- `Texture` 是逻辑描述（kind / size / format / mip / 每层源图）；后端按描述建 `VkImage`。
-- `MaterialImages` 上传键 `(Texture*, revision)`；`setImage` 后下一帧重传；sampler 状态按值缓存。
-- 上传按 kind 建视图：`D2` = `VK_IMAGE_VIEW_TYPE_2D`，`Cube` = `TYPE_CUBE`；不完整 cube ⇒ 白 cube + 一条 Warning。
-- 程序侧在对应 binding 声明 `sampler2D` / `samplerCube`；sampler 不带维度。
+### 3.1 后端契约
 
-## 8. 着色器文件与 ABI
+| 接口 | 作用 |
+|---|---|
+| `RenderBackend` | 设备 / 帧 / 呈现三面聚合 |
+| `RenderBackendFactory` | 创建后端 |
+| `RenderDevice` | 设备、目标、内容释放、读回 |
+| `RenderFrameExecutor` | 执行一帧 |
+| `PresentTarget` / `WindowPresentTarget` | 呈递契约 / 窗口面 |
 
-- 文件命名 `builtin_<角色>.<阶段>`（如 `builtin_forward.vert` / `builtin_forward.frag`）；
-  `vine_` 前缀是 GLSL 侧的命名约定。
-- 构建期嵌入（`VineEmbedShaders.cmake`）；改 shader 重新配置/构建。
-- `ShaderAbi.hpp` 是 C++ 与 GLSL 的唯一契约：顶点 location、块布局、push constant 128 B。
-- `#pragma import_defines` 决定变体文本；漏写会静默丢弃，文本与顶点布局必须一起变。
-- `POINT_LIST` 要求顶点阶段静态写 `gl_PointSize`；内置程序写 1.0。
+### 3.2 插件内关键类型
 
-## 9. 坑
+| 接口 | 作用 |
+|---|---|
+| `api::Device` / `api::Session` | 无窗口设备 / 自有或宿主窗口会话 |
+| `api::OffscreenTarget` | 离屏颜色 + 可选深度 + 读回 |
+| `api::ContentPipeline` / `api::ContentDraw` | 管线与一次 draw 的录制 |
+| `api::StateCommands` / `api::BlockDescriptors` | 动态状态 / 描述符 |
+| `core::TargetPlan` / `core::ClearPlan` / `core::Keys` | 目标计划 / 清屏 / 键 |
+| `core::Streams` / `core::MaterialArena` / `core::FrameRing` | 流 / 材质 / 每帧环 |
+| `core::RetirementQueue` / `core::SlotProbe` | 退役 / 槽数 |
+| `support::VsgHostWindow` / `support::RenderStateMapper` | 宿主窗口 / 状态映射 |
 
-- `vn::String` 是 `std::u8string`；字面量 `u8"..."`，printf/gtest 用 `reinterpret_cast<const char*>(s.data()), s.size()`。
-- `PassDesc::camera` 是拥有式 `intrusive_ptr<Camera>`；传栈相机地址会 double-free。
-- `vsg::Viewer` 没有 `device` 成员；用 `viewer->deviceWaitIdle()`。
-- `vsg::Instance::create` 抛异常（不返回 null）；版本回落循环要 catch。
-- `vsg::RenderGraph` 默认 `renderArea` 零面积；必须显式设置，否则 pass 记录了但什么都不清。
-- `vsg::DescriptorBuffer::create` 参数顺序是 `(bufferInfoList, DESTINATION BINDING, array element, type)`。
-- Vulkan NDC z 就是 depth（没有 OpenGL 的 `z*0.5+0.5`）；reverse-Z far = 0.0，清深度不能清 1.0。
-- 设备读回像素是 BGR 字节序；单通道断言用 `isRed()` 等，不要读 `pixel[0]`。
-- 改公开签名或改名后必须全量构建；旧插件 `.so` 会 `undefined symbol`。
+## 4. 注意项（平台事实与坑）
 
-## 10. 证据与门禁
+| # | 注意项 |
+|---|---|
+| N1 | 没有 dynamic rendering：`vkCmdBeginRendering` 在 vsg 记录路径不存在。 |
+| N2 | push constant 128 B；块布局不可超。 |
+| N3 | reverse-Z：far = 0.0；清深度不能清 1.0，否则 GREATER 拒绝所有片元。 |
+| N4 | 世界 CCW vs framebuffer CW：frontFace 必须 CLOCKWISE。 |
+| N5 | 设备扩展必须真正 enable（EDS3 polygon / color blend）；只开 feature bit 不够。 |
+| N6 | `vsg::Instance::create` 抛异常；版本回落要 catch。 |
+| N7 | `vsg::RenderGraph` 默认 `renderArea` 零面积；必须显式设置。 |
+| N8 | `vsg::DescriptorBuffer::create` 参数是 `(bufferInfoList, DESTINATION BINDING, array element, type)`。 |
+| N9 | 动态拓扑只能在 pipeline 的 topology class 内；`Topology` 进键。 |
+| N10 | 设备读回是 BGR 字节序；单通道断言用 `isRed()` 等。 |
+| N11 | `vn::String` 是 `std::u8string`；gtest/printf 用 `reinterpret_cast<const char*>`。 |
+| N12 | 改公开签名 / 改名后必须全量构建；旧插件 `.so` 会 undefined symbol。 |
 
-- `test_vsg`：设备无关 + 真实设备电池；`skipped == 0` 才算跑过设备电池。
-- `scripts/vsg_rewrite_gate.sh`：suite 两跑 0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比
-  （含软件光栅器上的应用画面检查）。
-- 静态门禁：`check_ai_docs.py` / `check_doc_symbols.py` / `check_include_hygiene.py` /
-  `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`。
+## 5. 否决项
+
+| # | 否决 | 理由 |
+|---|---|---|
+| D1 | dynamic rendering 合并每 pass begin | vsg 记录路径没有 `vkCmdBeginRendering`；被上游阻塞。 |
+| D2 | Wayland | 只按 WSI 契约实现；没有真机验证。 |
+| D3 | 跨 pass 共享管线状态注册表 | vsg 按 viewID 编管线；共享会拿到不兼容 render pass 的 pipeline。 |
+| D4 | 自建管线绕开 vsg | 会与 vsg 的 state 装配 / 记录路径分叉；收益只在冷启动。 |
+| D5 | 超过 3 个方向光 | 灯块 1024 槽，不限；旧限制已消失。 |
+
+## 6. 判据
+
+| # | 判据 |
+|---|---|
+| T1 | `test_vsg`：设备无关 + 真实设备电池；`skipped == 0` 才算跑过。 |
+| T2 | `scripts/vsg_rewrite_gate.sh`：0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。 |
+| T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` /
+      `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`。 |
+
+## 7. 相关文档
+
+`graphics-architecture.md` · `graphics-rendering.md` · `graphics-content-lifecycle.md` ·
+`graphics-followups.md`
