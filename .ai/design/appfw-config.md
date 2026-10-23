@@ -6,128 +6,236 @@
 > **权威来源**：`ConfigManager.hpp`、`ConfigRegistry.hpp`、`gui/ConfigWindow.hpp`、`tests/test_gui`。
 > **待办**：无（开放项见 `../backlog/`）
 
-代码：`src/fw/appfw/sdk/vine/appfw/ConfigManager.hpp`、`ConfigRegistry.hpp`、`ConfigItem.hpp`、
-`ConfigCategory.hpp`、`ConfigGroup.hpp`、`ConfigStandard.hpp` 与 `src/fw/appfw/src/` 下的同名 `.cpp`，
-视图层 `src/fw/appfw/sdk/vine/appfw/gui/ConfigWindow.hpp` / `src/fw/appfw/src/gui/ConfigWindow.cpp`。
-测试：`tests/test_gui/test_gui.cpp`（`ConfigManager_*` / `ConfigItem_*` / `ConfigRegistry_*` /
-`ConfigWindowTest.*`）。
+## 1. 概要设计
 
-## 1. 概要设计：三层分工
+### 1.1 问题与背景
 
-| 层 | 类型 | 存什么 | 谁写 |
-| --- | --- | --- | --- |
-| 值 | `ConfigManager` | key → String/bool/int/double 及其数组 | 宿主、插件（运行期） |
-| 描述 | `ConfigRegistry`（`ConfigCategory` → `ConfigGroup` → `ConfigItem`） | 显示树、类型、默认值、range、选项、owner | 插件注册期（`PluginLoadContext::registerConfigItem`） |
-| 视图 | `gui::ConfigWindow` | 由描述树生成的编辑器，值来自 `ConfigManager` | 宿主 UI（`ShowConfigWindowCommand`） |
+配置有三件不同的事：值（运行期读写）、描述（显示树/类型/默认值/range/owner）、视图（编辑器）。
+把它们混在一层会让插件注册、宿主读写和 UI 刷新互相污染。
 
-`Application` 各持有一个 `ConfigManager` 与 `ConfigRegistry`；`Plugin::configItems()` /
-`PluginLoadContext::registeredConfigs()` 是插件查询自己那部分描述树的入口。
+### 1.2 目标
 
-## 2. 设计要点与契约
+- 值层 `ConfigManager`：key → 值，线程安全，变化通知。
+- 描述层 `ConfigRegistry`：`ConfigCategory → ConfigGroup → ConfigItem`，key 全树唯一。
+- 视图层 `gui::ConfigWindow`：由描述树生成编辑器，值来自 `ConfigManager`。
+
+### 1.3 非目标
+
+- 不给 `ConfigManager` 加“存储类型查询”API；不为一个 GUI 细节扩公共面。
+- 不做 fsync；只保证“要么旧内容要么新内容”。
+- 不在 `ConfigWindow` 里监听注册表变化自动重建；窗口是快照。
+
+### 1.4 一句话结论
+
+配置分三层：**值**归 `ConfigManager`、**描述**归 `ConfigRegistry`、**编辑器**归 `ConfigWindow`；
+`changed` 只在值真的变化时发，空 key 表示“整体变化”。
+
+## 2. 设计要点
 
 ### 2.1 值层：`ConfigManager`
 
-- **存储类型**就是 API 能表达的类型：`String`/`bool`/`int`/`double` 及 `vector` 版本。
-  int 就是 `int`（早先内部存 `int64_t`，但公开访问器只有 `int`，那段容量只能由 JSON 进入，
-  等于死容量；现在由 JSON 进入的超范围整数在装载时夹取并记 warning）。
-- **`changed` 只在值真的变化时发**：`set*` 写同值、`remove` 不存在的键、`clear` 空配置、
-  `loadJson` 装载内容相同的配置都不发。处理函数里把值归一化回同值不会自激。
-- **空 key = “整个配置变了”**：`clear()`，以及真的替换了内容的 `loadJson()`/`load()`。
-  单个键的事件始终带该 key（空 key 因此有了明确含义，见 `ConfigChangedEventArgs` 的注释）。
-- **读取永不抛异常**：键不存在或存储类型与访问器不符，一律返回调用方给的默认值。
-- **线程安全**：内部 `shared_mutex`；写者独占、读者共享；`changed` 在**释放锁之后**触发，
-  所以处理函数可以安全回调管理器。**订阅/退订本身无锁**（`vn::Signal` 无锁），启动期接线。
-- **保存**（`save`）：`QSaveFile` 原子写（临时文件 + rename 覆盖目标），`open`/`write`/`commit`
-  每一步的结果都检查；失败时磁盘上的旧文件保持不变，返回 false 一定是真的没写成。
-  父目录必须存在（由宿主负责创建，`Application::shutdown` 已如此）。
-- **加载**（`loadJson`/`load`）：解析在锁外完成，成功后整体替换；文本不是 JSON 对象才返回 false。
-  不符合 `{"type":...,"value":...}` 形状的条目跳过并记 warning（手写文件里一个 typo
-  不能把一份配置静默吃掉）。
-- **JSON 表示**：整数写成 JSON 整数，API 能表达的值都无损往返。
+- **存储类型**就是 API 能表达的类型：`String`/`bool`/`int`/`double` 及 vector 版本。int 就是 `int`
+  （早先内部 `int64_t` 是死容量；JSON 超范围整数装载时夹取 + warning）。
+- **`changed` 只在值真的变化时发**：同值写入、remove 不存在的键、clear 空配置、loadJson 内容相同都不发。
+- **空 key = “整个配置变了”**：`clear()`，以及真的替换了内容的 `loadJson()`/`load()`；单键事件始终带 key。
+- **读取永不抛异常**：键不存在或类型不符，返回调用方给的默认值。
+- **线程安全**：内部 `shared_mutex`；写独占、读共享；`changed` 在释放锁之后触发；订阅/退订无锁。
 
 ### 2.2 描述层：`ConfigRegistry`
 
-- **key 全树唯一**：`ConfigGroup::addItem` 通过 `ConfigRegistry::item()` 查重，不是组内唯一。
-- **owner 是缓存**：`addItem` 记录；`owner` 为空时清除（重新注册不能把旧 owner 留给别人）；
-  删除路径（`removeItem`/`removeCategory`/`clear`/`removeItemsForPlugin`）清理；
-  `itemsForPlugin` 本身跳过已不在树上的项，所以任何删除路径都不会留下误判所有权。
-- `itemsForPlugin` 的顺序是 **key 升序**（内部按 key 收集）。
-- **生命周期 / 线程**：查询返回指向树内节点的裸指针，节点被删即失效；不做同步，
-  注册在启动与插件装载期完成，之后只读。
+- **key 全树唯一**：`ConfigGroup::addItem` 通过 `ConfigRegistry::item()` 查重。
+- **owner 是缓存**：`addItem` 记录；空 owner 清除；删除路径清理；`itemsForPlugin` 跳过已不在树上的项。
+- `itemsForPlugin` 的顺序是 key 升序。
+- **生命周期/线程**：查询返回树内节点裸指针，节点被删即失效；注册在启动/插件装载期完成，之后只读。
 
 ### 2.3 视图层：`gui::ConfigWindow`
 
-- **构造时对描述树取快照**：构造之后注册的项不会出现在已有窗口里（要重建窗口），
-  但**编辑器与 key 成对保存**、`refresh()`/`reset()` 按 key 查描述树，
-  所以“注册表遍历顺序变了”再也不会把 A 的值塞进 B 的编辑器（旧实现按下标访问平行数组）。
-- **Choice 编辑器**：显示存储值；键从未写过时显示 `ConfigItem` 的默认值（即 `reset()` 会恢复的
-  那个）；两者都匹配不到选项时显示**未选中**，而不是谎报第 0 项。
-- **数值项未声明 range 时不夹取**：int 用整个 `int` 范围，double 用 ±1e15；
-  声明了 range 才受 range 约束（旧实现对无 range 的项用 0..1000000，会把负值悄悄改成 0）。
-- 编辑立即写回 `ConfigManager`（`changed` 由值层发）；`refresh()` 期间屏蔽编辑器信号，
-  不会把“刷新”写成一次修改。
+- **构造时对描述树取快照**；编辑器与 key 成对保存，`refresh()`/`reset()` 按 key 查树，
+  不按下标配对。
+- **Choice**：显示存储值；从未写过时显示 `ConfigItem` 默认值；都匹配不到时显示未选中。
+- **数值项未声明 range 时不夹取**：int 用整个 `int` 范围，double 用 ±1e15。
+- 编辑立即写回 `ConfigManager`；`refresh()` 期间屏蔽编辑器信号。
 
-## 3. 关键行为与证据
+## 3. 功能点
 
-| 编号 | 缺陷 | 证据 | 修复 |
+### 3.1 功能索引
+
+| # | 功能 | 行为 | 状态 |
 | --- | --- | --- | --- |
-| C1 | `save()` 丢弃 `QFile::write` 结果，写失败仍返回 true | 探针：`save(/dev/full)` 返回 1；磁盘满时 `Application::shutdown` 的告警永不触发 | `QSaveFile` + 检查 `open/write/commit`，见 `ConfigManager::save` |
-| C2 | 就地截断写，失败/崩溃留下半份 JSON | 同上；`writeRegistrationFile` 早已用 tmp+rename | 同上（临时文件 + rename） |
-| C3 | `loadJson()`/`load()` 整体替换不发 `changed` | 探针：装载新键后事件数 0 | 内容真的变了就发一次空 key 事件 |
-| C4 | 同值写入也发 `changed` | 探针：同值 `setInt` 事件 1→2 | `assignValue` 只在真变化时返回 true |
-| C5 | `ConfigItem::step()` 注释与实现不符（“no range” vs “no step”） | 代码 + `ConfigItem_RangeAny` | 修注释，并说明 range 会重置 step |
-| C6 | `owners_` 在删除路径不更新，可残留错误所有权 | 删分类后重新注册且不声明 owner：`itemsForPlugin` 仍返回该项 | `pruneOwners()` + 空 owner 清除 + 删除路径清理 |
-| C7 | `ConfigWindow` 编辑器按下标与遍历顺序配对，注册表一变就显示错值 | 探针：注册 order=-1 的分组后，key=a 的编辑器显示 key=z 的值 | 编辑器与 key 成对，`refresh/reset` 按 key 驱动；`ConfigWindowTest.RefreshKeepsEachValueWithItsKey` |
-| C8 | Choice 存储值不在选项里时显示第 0 项且不回写 | 代码 `idx >= 0 ? idx : 0` | `choiceIndex()`：不匹配返回 -1；`ConfigWindowTest.ChoiceWithoutMatchShowsNoSelection` |
-| C9 | 内部 `int64_t` 但公开只有 `int`，且整数写成 double，“无损往返”不成立 | 探针：`1234567890123456789` 回写成 `...800` | 存储与 JSON 都用 `int`，整数按 JSON 整数写；超范围夹取 + warning |
-| C10 | 畸形 JSON 条目静默丢弃 | 代码：`continue` / “unknown type: skip this key” | 两类跳过都 `VN_LOGW` 带 key；`ConfigManager_BadEntriesAreIgnoredNotFatal` |
-| C11 | 空 key 语义未文档化（与合法空键冲突） | 头文件原本只写“carrying the key” | `ConfigChangedEventArgs` 文档写明空 key = 整体变化 |
-| C12 | `save()` 不建父目录，与插件注册写入器不一致 | 代码对比 | 文档写明父目录由宿主创建（保持既有的 `Application` 行为） |
-| C13 | 描述树无生命周期/线程契约（裸指针 + 无同步） | 头文件缺注释 | 三个类都补 `@note Lifetime` / `@note Threading` |
-| C14 | 缺少本设计文档 | `.ai/design/` 里另三个 appfw 模块都有 | 本文 |
-| C15 | 未声明 range 的 int/double 编辑器夹取显示值（负值变 0） | 收尾审查时发现：`setRange(0, 1000000)` | 无 range 时不约束；`ConfigWindowTest.UnboundedNumbersAreNotClamped` |
+| F1 | 值存储 | `ConfigManager` 读写 String/bool/int/double 及数组 | 已落地 |
+| F2 | 变化通知 | `changed` 只在值变化/整体替换时发 | 已落地 |
+| F3 | 保存/加载 | `QSaveFile` 原子写；JSON 装载整体替换 | 已落地 |
+| F4 | 描述树 | `ConfigRegistry` 树、key 唯一、owner 缓存 | 已落地 |
+| F5 | 配置窗口 | 快照 + key 配对 + 未声明 range 不夹取 | 已落地 |
 
-收尾还核实了一点：`PluginManager::unloadOrder()` 之前怀疑“成环会死循环”，**核实后不成立**
-（无候选时退回发现顺序并 `break`）。本轮补 `PluginLifecycleTest.UnloadOrderTerminatesOnACycle`
-把它固化下来。
+### 3.1.1 F1 值存储
 
-## 4. 约束与不变量
+- **行为**：`ConfigManager` 存 String/bool/int/double 及 vector 版本；`get*` 读取，`set*` 写入。
+- **约束**（C1）：存储类型就是 API 能表达的类型；int 就是 `int`。
+- **要求**（R1）：读取永不抛异常；类型不符返回默认值。
+- **验收**（T1）：`ConfigManager_Basic`、`ConfigManager_JsonRoundTripKeepsTypes`。
+- **注意**（N1）：JSON 超范围整数夹取 + warning，不失败整份配置。
 
-1. 事件触发时值已经落定（锁外触发），处理函数回调管理器不会死锁。
-2. `changed` 只在值变化时发生；空 key 只表示“整体变化”。
-3. `save()` 返回 true ⇒ 文件内容完整；返回 false ⇒ 磁盘上的旧文件没被破坏。
-4. `loadJson()` 返回 true ⇒ 存储已被整体替换（可能内容与原来相同，此时不通知）。
-5. 编辑器与 key 一一对应，只显示“该 key 的存储值”或“该 item 的默认值”。
-6. `itemsForPlugin(p)` 返回的每一项都真实存在于树上且 owner 是 `p`。
+### 3.1.2 F2 变化通知
 
-## 5. 测试与验收
+- **行为**：`changed` 在值真的变化时发；空 key 表示整体变化。
+- **约束**（C2）：`changed` 在释放锁之后触发；处理函数可安全回调管理器。
+- **要求**（R2）：同值写入/删除不存在键/clear 空配置/loadJson 内容相同都不发。
+- **验收**（T2）：`ConfigManager_NotifiesOnlyOnRealChanges`、`ConfigManager_ChangedEvent`。
+- **注意**（N2）：订阅/退订本身无锁，启动期接线。
 
-| 用例 | 覆盖 |
+### 3.1.3 F3 保存/加载
+
+- **行为**：`save()` 用 `QSaveFile` 原子写；`loadJson()`/`load()` 解析在锁外完成，成功后整体替换。
+- **约束**（C3）：`open`/`write`/`commit` 每步检查；失败时旧文件不变。
+- **要求**（R3）：父目录必须存在（宿主负责创建）；文本不是 JSON 对象才返回 false。
+- **验收**（T3）：`ConfigManager_SaveReportsFailureAndKeepsTheOldFile`、
+  `ConfigManager_BadEntriesAreIgnoredNotFatal`。
+- **注意**（N3）：不符合 `{"type":...,"value":...}` 形状的条目跳过并 warning。
+
+### 3.1.4 F4 描述树
+
+- **行为**：`ConfigRegistry` 管 `ConfigCategory → ConfigGroup → ConfigItem`；key 全树唯一。
+- **约束**（C4）：owner 是缓存；空 owner 清除；删除路径清理。
+- **要求**（R4）：`itemsForPlugin(p)` 的每一项都真实存在且 owner 是 p；顺序 key 升序。
+- **验收**（T4）：`ConfigRegistry_Register` / `MetaAndOrder` / `StandardCategories` / `Ownership`。
+- **注意**（N4）：查询返回裸指针，节点被删即失效；注册后只读。
+
+### 3.1.5 F5 配置窗口
+
+- **行为**：构造时对描述树取快照；编辑器与 key 成对；`refresh()`/`reset()` 按 key 驱动。
+- **约束**（C5）：Choice 存储值/默认值都匹配不到时显示未选中；数值项未声明 range 不夹取。
+- **要求**（R5）：编辑立即写回；`refresh()` 期间屏蔽编辑器信号。
+- **验收**（T5）：`RefreshKeepsEachValueWithItsKey`、`ChoiceWithoutMatchShowsNoSelection`、
+  `UnboundedNumbersAreNotClamped`。
+- **注意**（N5）：窗口是快照，构造后注册的项要重建窗口才出现。
+
+## 4. 公开接口
+
+### 4.1 `ConfigManager`
+
+| 接口 | 契约 | 备注 |
+| --- | --- | --- |
+| `getString/getBool/getInt/getDouble` 及数组版 | 读取；永不抛 | 类型不符返回默认值 |
+| `set*` | 写入；值变化才发 `changed` | 同值静默 |
+| `clear()` / `remove(key)` | 整体/单键删除 | 空配置 clear 不发 |
+| `save()` / `loadJson()` / `load()` | 原子写/整体替换 | 父目录由宿主创建 |
+| `changed` | `Signal<ConfigChangedEventArgs>` | 空 key = 整体变化 |
+
+### 4.2 `ConfigRegistry`
+
+| 接口 | 契约 | 备注 |
+| --- | --- | --- |
+| `addCategory/addGroup/addItem` | 建树；key 全树唯一 | owner 缓存 |
+| `item(key)` / `itemsForPlugin(p)` | 查询 | 裸指针；key 升序 |
+| `removeItem/removeCategory/clear` | 删除并清理 owner | 节点失效 |
+
+### 4.3 `ConfigItem` / `ConfigWindow`
+
+| 接口 | 契约 | 备注 |
+| --- | --- | --- |
+| fluent builder（`description` / `range` / `choices` …） | 描述项 | 见 `ConfigItem.hpp` |
+| `gui::ConfigWindow` | 由描述树生成编辑器 | 快照 + key 配对 |
+
+## 5. 约束、要求与不变量
+
+### 5.1 约束（C#）
+
+| # | 约束 |
 | --- | --- |
-| `ConfigManager_Basic` | 值、数组、层级 key、JSON 往返、宿主单例 |
-| `ConfigManager_SaveReportsFailureAndKeepsTheOldFile` | C1/C2：成功可读回、不留临时文件、失败三种路径、失败时旧配置完好 |
-| `ConfigManager_NotifiesOnlyOnRealChanges` | C3/C4/C11：同值静默、loadJson 通知与幂等、clear 语义 |
-| `ConfigManager_JsonRoundTripKeepsTypes` | C9：类型无损、旧格式兼容、超范围夹取 |
-| `ConfigManager_BadEntriesAreIgnoredNotFatal` | C10：坏条目忽略、好条目生效、非 JSON 失败 |
-| `ConfigManager_ChangedEvent` | 事件载荷与 key |
-| `ConfigItem_Descriptor` / `DefaultTypeCheck` / `RangeAny` / `TypedChoices` | 描述器与 fluent builder 契约（含 `step()` 默认值） |
-| `ConfigRegistry_Register` / `MetaAndOrder` / `StandardCategories` / `Ownership` | 树结构、排序、标准分类、owner |
-| `ConfigRegistry_OwnershipDoesNotOutliveTheItem` | C6：删除路径清理 owner、空 owner 清除 |
-| `ConfigWindowTest.RefreshKeepsEachValueWithItsKey` | C7 |
-| `ConfigWindowTest.ChoiceWithoutMatchShowsNoSelection` | C8 |
-| `ConfigWindowTest.UnboundedNumbersAreNotClamped` | C15 |
-| `PluginLifecycleTest.UnloadOrderTerminatesOnACycle` | 插件侧收尾：成环输入必须终止 |
+| C1 | 存储类型就是 API 能表达的类型；int 就是 `int`。 |
+| C2 | `changed` 在锁外触发；订阅/退订无锁。 |
+| C3 | `save()` 每步检查；失败时旧文件不变。 |
+| C4 | key 全树唯一；owner 是缓存，删除路径清理。 |
+| C5 | Choice 不匹配显示未选中；未声明 range 不夹取。 |
 
-## 6. 已否决选项
+### 5.2 要求（R#）
 
-- **不给 `ConfigManager` 加“存储类型查询”API**（`type(key)`）：Choice 编辑器在“存储值类型与选项
-  类型不一致”时，仍按各选项自身的类型读取后近似匹配。为一个 GUI 细节扩公共 API 不划算；
-  真要做，前提是先有类型访问器。
-- **不 fsync**：`QSaveFile` 保证“要么旧内容要么新内容”，不保证崩溃后已落盘，
-  与 `PluginManager` 的注册文件写入器同级（进程崩溃罕见，写入原子性才是要紧的）。
-- **不给 `getStringArray` 等补默认值参数**：保持既有签名（数组语义下“默认值”意义不大）。
-- **超范围整数夹取而不报错**：报错会让整份配置装载失败，夹取 + warning 更可控。
-- **`ConfigItem` 的 `std::any` 保持**：`@throws std::bad_any_cast` 是已公开的契约，
-  换成 `std::optional` 会改掉这个异常类型。
-- **不在 `ConfigWindow` 里监听注册表变化自动重建**：窗口是快照，重建由宿主决定（`refresh()`
-  已保证“快照之外的变化不会污染已有编辑器”）。
+| # | 要求 |
+| --- | --- |
+| R1 | 读取永不抛异常；类型不符返回默认值。 |
+| R2 | 同值/删除不存在键/clear 空配置/loadJson 内容相同都不发通知。 |
+| R3 | 父目录由宿主创建；非 JSON 对象才返回 false。 |
+| R4 | `itemsForPlugin(p)` 每项真实存在且 owner 是 p。 |
+| R5 | 编辑立即写回；`refresh()` 屏蔽编辑器信号。 |
+
+### 5.3 不变量（N#）
+
+| # | 不变量 |
+| --- | --- |
+| N1 | 事件触发时值已经落定；处理函数回调管理器不会死锁。 |
+| N2 | `save()` true ⇒ 文件完整；false ⇒ 旧文件没被破坏。 |
+| N3 | `loadJson()` true ⇒ 存储已整体替换（内容相同则不通知）。 |
+| N4 | 编辑器只显示“该 key 的存储值”或“该 item 的默认值”。 |
+
+## 6. 注意事项与陷阱
+
+### 6.1 空 key 的语义
+
+- 会怎么错：把空 key 当合法键，和“整体变化”混淆。
+- 怎么判：`ConfigChangedEventArgs` 的 key 为空。
+- 怎么防：空 key 只表示整体变化；单键事件始终带 key。
+
+### 6.2 未声明 range 的数值
+
+- 会怎么错：旧实现对无 range 的项用 0..1000000，负值被悄悄改成 0。
+- 怎么判：`ConfigWindowTest.UnboundedNumbersAreNotClamped`。
+- 怎么防：int 用整个 `int` 范围，double 用 ±1e15；声明了 range 才夹取。
+
+## 7. 已否决选项
+
+| # | 选项 | 理由 | ADR |
+| --- | --- | --- | --- |
+| D1 | `ConfigManager::type(key)` | 为一个 GUI 细节扩公共 API 不划算。 | — |
+| D2 | fsync | `QSaveFile` 已保证旧/新二选一；写入原子性才是要紧的。 | — |
+| D3 | 给 `getStringArray` 补默认值参数 | 数组语义下“默认值”意义不大。 | — |
+| D4 | 超范围整数报错 | 会让整份配置装载失败；夹取 + warning 更可控。 | — |
+| D5 | `ConfigItem` 的 `std::any` 换 `optional` | 会改掉已公开的 `bad_any_cast` 契约。 | — |
+| D6 | `ConfigWindow` 监听注册表自动重建 | 窗口是快照，重建由宿主决定。 | — |
+
+## 8. 测试与验收
+
+| # | 判据 | 用例 / 命令 |
+| --- | --- | --- |
+| T1 | 值/数组/层级 key/JSON 往返 | `ConfigManager_Basic` |
+| T2 | 保存失败保留旧文件 | `ConfigManager_SaveReportsFailureAndKeepsTheOldFile` |
+| T3 | 通知只在真变化时发 | `ConfigManager_NotifiesOnlyOnRealChanges` |
+| T4 | 类型无损/旧格式/超范围夹取 | `ConfigManager_JsonRoundTripKeepsTypes` |
+| T5 | 坏条目忽略 | `ConfigManager_BadEntriesAreIgnoredNotFatal` |
+| T6 | 描述树/owner/排序 | `ConfigRegistry_*` |
+| T7 | 编辑器按下标配对/Choice/无 range | `ConfigWindowTest.*` |
+
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+三层已落地；值层线程安全、原子保存、描述树与配置窗口均已测试。
+
+### 9.2 已知缺口 / 待办
+
+无；`RenderTarget` 枚举与 `PixelFormat` 的重复不属于本模块。
+
+### 9.3 兼容性 / 迁移
+
+`ConfigItem` 的 `std::any` 与 `bad_any_cast` 契约保留；`ConsoleProgressOptions::interval` 等
+其它模块的迁移不在本文范围。
+
+## 10. 参考
+
+### 10.1 代码
+
+- `src/fw/appfw/sdk/vine/appfw/ConfigManager.hpp`
+- `src/fw/appfw/sdk/vine/appfw/ConfigRegistry.hpp`
+- `src/fw/appfw/sdk/vine/appfw/ConfigItem.hpp`
+- `src/fw/appfw/sdk/vine/appfw/gui/ConfigWindow.hpp`
+- `tests/test_gui/test_gui.cpp`
+
+### 10.2 文档与 ADR
+
+- `appfw-plugin-system.md`
+- `appfw-progress.md`
+- `../backlog/`
+
+### 10.3 外部资料
+
+- Qt `QSaveFile` 的原子写语义。

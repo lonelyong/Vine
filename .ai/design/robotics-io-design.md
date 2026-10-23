@@ -1,5 +1,11 @@
 # Robotics IO 模块设计（XML 序列化）
 
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：设备/工作单元的 XML 序列化、VFS 打包与场景序列化前置。
+> **权威来源**：`src/robotics/io/**`、`tests/test_robotics_io`。
+> **待办**：`../backlog/`
+
 > 状态：设计稿（先设计，未实现）→ **阶段一（VFS 基础设施）已实现**：`vn::io` 的 `Vfs` /
 > `ZipVfs` / `DirectoryVfs` + `ZipArchive` 后端重载已落地，测试 `tests/test_iobase/VfsTest.cpp`
 > （14 用例）全通过。**阶段二（场景序列化）已实现**：`RoboticsIO` 的 `XmlIOBase` / `DeviceIO` /

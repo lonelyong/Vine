@@ -1,23 +1,43 @@
 # graphics 几何：通道、图元、实例、revision
 
-> **一句话**：`Geometry` 是通道集，`Primitive` 是一次 draw；实例流是这条 draw 的参数；
-> 形状归几何、字节归 buffer。
->
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：`Geometry` 通道集、`Primitive` 一次 draw、实例流、revision 与存储共享。
 > **权威来源**：`Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp`。
-> **待办**：`../backlog/graphics.md`。
+> **待办**：`../backlog/graphics.md`
 
-## 1. 设计要点
+## 1. 概要设计
 
-1.1 **一个对象一个职责**：`Geometry` 只装通道；`Primitive` 只描述一次 draw；材质/程序是几何级默认。
-1.2 **数据即绘制**：装位置通道时自动有一个默认三角形 primitive，避免“有数据却不知道该怎么画”。
-1.3 **通道 = 段 + 步长**：`BufferSlice<float>` + components；切片规则只有一处（`BufferSlice`）。
-1.4 **实例是 draw 的参数**：挂在 `Primitive` 上，不是场景图作用域；没有 `InstanceScope`。
-1.5 **两级 revision**：`Geometry::revision()` 描述形状，`Buffer::revision()` 描述字节。
-1.6 **包围盒按数据缓存**：局部盒键 = positions buffer + 其 revision + 段 + 几何 revision。
+### 1.1 问题与背景
 
-## 2. 功能点
+本文件定义 graphics 几何：通道、图元、实例、revision 的现行设计：先给对象与边界，再给功能、接口、约束与验收。
 
-### 2.1 通道
+### 1.2 目标
+
+- 把 §2 的设计要点落成 §3 的功能点、§4 的接口与 §8 的验收。
+- 让“现在是什么”与“为什么这么定”分开：理由在 §2/§7，历史看 git。
+
+### 1.3 非目标
+
+- 不在本文件重复头文件里的完整签名；接口只给契约与指针。
+- 不在本文件保存已关闭的历史或逐轮审查记录。
+
+### 1.4 一句话结论
+
+> `Geometry` 是通道集，`Primitive` 是一次 draw；实例流是这条 draw 的参数； 形状归几何、字节归 buffer。
+
+## 2. 设计要点
+
+2.1 **一个对象一个职责**：`Geometry` 只装通道；`Primitive` 只描述一次 draw；材质/程序是几何级默认。
+2.2 **数据即绘制**：装位置通道时自动有一个默认三角形 primitive，避免“有数据却不知道该怎么画”。
+2.3 **通道 = 段 + 步长**：`BufferSlice<float>` + components；切片规则只有一处（`BufferSlice`）。
+2.4 **实例是 draw 的参数**：挂在 `Primitive` 上，不是场景图作用域；没有 `InstanceScope`。
+2.5 **两级 revision**：`Geometry::revision()` 描述形状，`Buffer::revision()` 描述字节。
+2.6 **包围盒按数据缓存**：局部盒键 = positions buffer + 其 revision + 段 + 几何 revision。
+
+## 3. 功能点
+
+### 3.1 通道
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -27,7 +47,7 @@
 | F4 | Arena 切片 | `first_vertex` / `vertex_count`；一个 buffer 装多个几何的顶点。 |
 | F5 | 视图访问 | `scalars()` / `xyz()` / `vec3View()` / `vertexCount()` / `stride()`。 |
 
-### 2.2 图元
+### 3.2 图元
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -37,7 +57,7 @@
 | F9 | 材质/程序默认 | 图元自己的值 > 几何默认 > 最近 `StateNode` > pass。 |
 | F10 | 拓扑 | `Triangles` / `Points` / `Lines`；是管线身份，不是动态状态。 |
 
-### 2.3 实例
+### 3.3 实例
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -48,7 +68,7 @@
 | F15 | 包围盒 | 每条 primitive 的可见实例矩阵变换局部盒后的并集。 |
 | F16 | 拾取 | 逐 primitive、逐可见实例；结果 `geometry + primitiveIndex + instanceIndex`。 |
 
-### 2.4 revision 与包围盒
+### 3.4 revision 与包围盒
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -58,7 +78,7 @@
 | F20 | 局部盒缓存 | `localBounds()` + `localBoundsComputationCount()` 见证。 |
 | F21 | 世界盒 | 局部盒乘父链；`subtreeBounds` 在节点自身坐标系。 |
 
-### 2.5 存储与共享（geometry 模块）
+### 3.5 存储与共享（geometry 模块）
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -75,9 +95,9 @@
 - 段的身份进两层缓存 key：共享绑定缓存 = 缓冲地址 + revision + offset + 长度；派生法线缓存另加索引 first/count。
 - 推导量（零填充 texcoords、白色 opacity 载体、推导法线）仍自己分配真数组；vec4 位置有意不进别名。
 
-## 3. 公开接口
+## 4. 公开接口
 
-### 3.1 `Geometry`
+### 4.1 `Geometry`
 
 | 接口 | 作用 |
 |---|---|
@@ -90,7 +110,7 @@
 | `setInstanceTransforms()` / `setVisibleInstanceCount()` / `clear*()` | 默认 primitive 0 的实例便捷 |
 | `geometryFromShape()` / `packAttribute()` / `packIndices()` | 桥与打包 |
 
-### 3.2 `Primitive`
+### 4.2 `Primitive`
 
 | 接口 | 作用 |
 |---|---|
@@ -99,7 +119,7 @@
 | `hasInstances()` / `instanceCount()` / `firstInstance()` / `visibleInstanceCount()` | 实例 |
 | `setInstanceTransforms()` / `setVisibleInstanceCount()` | 实例编辑 |
 
-### 3.3 `AttributeChannel`
+### 4.3 `AttributeChannel`
 
 | 接口 | 作用 |
 |---|---|
@@ -107,7 +127,7 @@
 | `scalars()` / `scalarSlice()` / `floatCount()` / `vertexCount()` / `stride()` | 读取 |
 | `xyz()` / `vec3View()` | 顶点级视图 |
 
-### 3.4 存储与共享
+### 4.4 存储与共享
 
 | 接口 | 作用 |
 |---|---|
@@ -116,7 +136,25 @@
 | `geometryFromShape()` | `Shape` → `Geometry`，共享 buffer |
 | `packAttribute()` / `packIndices()` | 类型化输入打包 |
 
-## 4. 注意项
+## 5. 约束、要求与不变量
+
+### 5.1 约束（C#）
+
+| # | 约束 |
+|---|---|
+| C1 | 形状归 `Geometry`，字节归 `Buffer`；一个通道一种布局。 |
+| C2 | 实例流是 `Primitive` 的参数，不是 `Geometry` 的通道。 |
+| C3 | revision 只在内容真正变化时推进；可见实例数是前缀。 |
+
+### 5.2 要求（R#）
+
+| # | 要求 |
+|---|---|
+| R1 | 实例共享材质/层/排序；逐实例属性等真实需求再加。 |
+| R2 | 多个放置 = 多个 `Geometry` 节点（可共享 buffer）。 |
+| R3 | 包围盒/拾取身份 = `geometry + primitiveIndex + instanceIndex`。 |
+
+### 5.3 不变量（N#）
 
 | # | 注意项 |
 |---|---|
@@ -128,7 +166,21 @@
 | N6 | 自定义通道不能占用规范 location。 |
 | N7 | `POINT_LIST` 要求顶点阶段静态写 `gl_PointSize`。 |
 
-## 5. 否决项
+## 6. 注意事项与陷阱
+
+### 6.1 一事实一家
+
+- 会怎么错：同一份状态被两处保存，改一处另一处过期。
+- 怎么判：出现两份可写的值/两个可写的注册表。
+- 怎么防：回到 §5 的 N#；只留一个 owner，其余只读。
+
+### 6.2 后端/平台的边界
+
+- 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
+- 怎么判：出现“如果 Windows/X11 就……”的分支。
+- 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
+
+## 7. 已否决选项
 
 | # | 否决 | 理由 |
 |---|---|---|
@@ -139,7 +191,7 @@
 | D5 | GPU indirect / 自动合批 | 没有消费者；实例化只解决“同一几何 N 份”。 |
 | D6 | `Topology` strip / fan | 需要单独扩展枚举与拾取/管线映射；不在本设计里伪支持。 |
 
-## 6. 判据
+## 8. 测试与验收
 
 | # | 判据 |
 |---|---|
@@ -148,6 +200,20 @@
 | T3 | `GeometryFactsTest` / `PrimitiveDrawTest`。 |
 | T4 | 设备级 `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`。 |
 
-## 7. 相关文档
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+现行设计；功能点与接口以上表为准。
+
+### 9.2 已知缺口 / 待办
+
+见 `../backlog/graphics.md`；开放项按触发条件保留。
+
+### 9.3 兼容性 / 迁移
+
+旧名/旧路径只在 §7 已否决选项或 git 历史里出现；新代码按 §4 的接口写。
+
+## 10. 参考
 
 `graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `../backlog/graphics.md`

@@ -1,23 +1,44 @@
 # graphics 场景图：节点、状态、收集、层、拾取
 
-> **一句话**：严格树 + 最近声明获胜的折叠；收集是纯函数，memo 由根子树 epoch 驱动；
-> 拾取是机制，选择是业务。
->
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：严格树、状态折叠、收集 memo、层与拾取。
 > **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `Scene.hpp` / `Camera.hpp` /
-> `RayIntersection.hpp`。**待办**：`../backlog/graphics.md`。
+> `RayIntersection.hpp`。
+> **待办**：`../backlog/graphics.md`
 
-## 1. 设计要点
+## 1. 概要设计
 
-1.1 **严格树**：`Group::addChild` 自动从旧父脱离，拒绝成环；一次遍历里一个节点只有一个世界矩阵。
-1.2 **折叠规则固定**：可见性硬门、透明度相乘、层与 drawOrder 最近声明获胜、状态按项覆盖。
-1.3 **状态只有一个解析点**：`resolveRenderState(authored, pass, data_topology)` 给出每项的来源。
-1.4 **收集是纯函数**：相机 + 场景内容 + 层掩码 → 共享不可变命令表；memo 只在这些输入变化时失效。
-1.5 **视图上下文显式**：`CollectView` 携带 projection / view / eye / up / viewport；billboard 只在这里生效。
-1.6 **拾取是机制**：射线 + 场景走查；选择/描边/框选不在框架里。
+### 1.1 问题与背景
 
-## 2. 功能点
+本文件定义 graphics 场景图：节点、状态、收集、层、拾取 的现行设计：先给对象与边界，再给功能、接口、约束与验收。
 
-### 2.1 节点与树
+### 1.2 目标
+
+- 把 §2 的设计要点落成 §3 的功能点、§4 的接口与 §8 的验收。
+- 让“现在是什么”与“为什么这么定”分开：理由在 §2/§7，历史看 git。
+
+### 1.3 非目标
+
+- 不在本文件重复头文件里的完整签名；接口只给契约与指针。
+- 不在本文件保存已关闭的历史或逐轮审查记录。
+
+### 1.4 一句话结论
+
+> 严格树 + 最近声明获胜的折叠；收集是纯函数，memo 由根子树 epoch 驱动； 拾取是机制，选择是业务。
+
+## 2. 设计要点
+
+2.1 **严格树**：`Group::addChild` 自动从旧父脱离，拒绝成环；一次遍历里一个节点只有一个世界矩阵。
+2.2 **折叠规则固定**：可见性硬门、透明度相乘、层与 drawOrder 最近声明获胜、状态按项覆盖。
+2.3 **状态只有一个解析点**：`resolveRenderState(authored, pass, data_topology)` 给出每项的来源。
+2.4 **收集是纯函数**：相机 + 场景内容 + 层掩码 → 共享不可变命令表；memo 只在这些输入变化时失效。
+2.5 **视图上下文显式**：`CollectView` 携带 projection / view / eye / up / viewport；billboard 只在这里生效。
+2.6 **拾取是机制**：射线 + 场景走查；选择/描边/框选不在框架里。
+
+## 3. 功能点
+
+### 3.1 节点与树
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -27,7 +48,7 @@
 | F4 | `StateNode` | 子树渲染状态（depth / cull / blend / polygon）；可嵌套、深层覆盖。 |
 | F5 | `Geometry` | 叶子：顶点通道 + `Primitive` 列表（见 `graphics-geometry.md`）。 |
 
-### 2.2 折叠规则
+### 3.2 折叠规则
 
 | # | 事实 | 规则 |
 |---|---|---|
@@ -38,7 +59,7 @@
 | F10 | material / program | 图元 > 几何级默认 > 最近 `StateNode` > pass。 |
 | F11 | 状态 | 每项 optional；`StateOrigin::Content / Pass / Data` 记录来源。 |
 
-### 2.3 收集
+### 3.3 收集
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -49,7 +70,7 @@
 | F16 | 排序 | drawOrder 外键；同 order 内不透明前向、透明后向。 |
 | F17 | 场景盒 | `Scene::boundingBox(mask)` 只算可见且命中层掩码的内容。 |
 
-### 2.4 层与视图上下文
+### 3.4 层与视图上下文
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -60,7 +81,7 @@
 | F22 | AutoTransform | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`；`setAutoScaleToScreen` 恒像素。 |
 | F23 | 保守包围盒 | AutoTransform 以 position 为球心的球盒；场景盒不随最后相机变化。 |
 
-### 2.5 拾取
+### 3.5 拾取
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -69,9 +90,9 @@
 | F26 | 命中身份 | `geometry + primitiveIndex + instanceIndex`；只打 `Triangles`。 |
 | F27 | 掩码 | 与收集同一层规则；容器不因掩码被剪。 |
 
-## 3. 公开接口
+## 4. 公开接口
 
-### 3.1 `Node` / `Group`
+### 4.1 `Node` / `Group`
 
 | 接口 | 作用 |
 |---|---|
@@ -83,7 +104,7 @@
 | `parent()` / `worldMatrix()` / `boundingBox()` | 父链查询 |
 | `Group::addChild()` / `removeChild()` / `children()` | 结构 |
 
-### 3.2 变换与状态
+### 4.2 变换与状态
 
 | 接口 | 作用 |
 |---|---|
@@ -93,7 +114,7 @@
 | `StateNode::setRenderState()` / `renderState()` / `setMaterial()` / `setProgram()` | 子树状态 |
 | `resolveRenderState(authored, pass, topology)` | 唯一解析点 |
 
-### 3.3 场景与收集
+### 4.3 场景与收集
 
 | 接口 | 作用 |
 |---|---|
@@ -105,7 +126,7 @@
 | `Scene::setContentFrame()` | memo 帧令牌 |
 | `Scene::findNode(name)` | 按名字查找 |
 
-### 3.4 拾取
+### 4.4 拾取
 
 | 接口 | 作用 |
 |---|---|
@@ -114,7 +135,25 @@
 | `RayIntersection::intersectScene()` / `intersectSceneAll()` | 场景 |
 | `RayIntersectionResult` | hit / point / normal / distance / geometry / primitiveIndex / instanceIndex |
 
-## 4. 注意项
+## 5. 约束、要求与不变量
+
+### 5.1 约束（C#）
+
+| # | 约束 |
+|---|---|
+| C1 | 场景图是严格树；`addChild` 自动脱离旧父并拒绝成环。 |
+| C2 | 状态折叠是最近声明获胜；容器不做层掩码剪枝。 |
+| C3 | 收集是纯函数；memo 由根子树 epoch 驱动。 |
+
+### 5.2 要求（R#）
+
+| # | 要求 |
+|---|---|
+| R1 | 选择/高亮/框选是业务，不放进框架。 |
+| R2 | 拾取是机制：`Camera` 射线 + `RayIntersection`，不引入选中态。 |
+| R3 | 包围盒/世界矩阵只有单父链上的一个答案。 |
+
+### 5.3 不变量（N#）
 
 | # | 注意项 |
 |---|---|
@@ -127,7 +166,21 @@
 | N7 | 拾取只打三角形图元；线/点不是表面。 |
 | N8 | `Camera` 自带 aspect；pass 矩形与相机形状不一致会在编译期报出来。 |
 
-## 5. 否决项
+## 6. 注意事项与陷阱
+
+### 6.1 一事实一家
+
+- 会怎么错：同一份状态被两处保存，改一处另一处过期。
+- 怎么判：出现两份可写的值/两个可写的注册表。
+- 怎么防：回到 §5 的 N#；只留一个 owner，其余只读。
+
+### 6.2 后端/平台的边界
+
+- 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
+- 怎么判：出现“如果 Windows/X11 就……”的分支。
+- 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
+
+## 7. 已否决选项
 
 | # | 否决 | 理由 |
 |---|---|---|
@@ -137,7 +190,7 @@
 | D4 | 层掩码在容器上剪枝 | 最近声明获胜会让后代重声明变得不可达。 |
 | D5 | 把状态折叠做成每叶上行查询 | O(depth) 且分配；自顶向下 `InheritedState` 是唯一实现。 |
 
-## 6. 判据
+## 8. 测试与验收
 
 | # | 判据 |
 |---|---|
@@ -146,6 +199,20 @@
 | T3 | `SceneLayersTest` / `AutoTransformTest` / `PositionAttitudeTransformTest`。 |
 | T4 | 移动子树移入视锥不被陈旧盒藏掉；层冲突只报一次。 |
 
-## 7. 相关文档
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+现行设计；功能点与接口以上表为准。
+
+### 9.2 已知缺口 / 待办
+
+见 `../backlog/graphics.md`；开放项按触发条件保留。
+
+### 9.3 兼容性 / 迁移
+
+旧名/旧路径只在 §7 已否决选项或 git 历史里出现；新代码按 §4 的接口写。
+
+## 10. 参考
 
 `graphics-architecture.md` · `graphics-geometry.md` · `graphics-rendering.md` · `../backlog/graphics.md`

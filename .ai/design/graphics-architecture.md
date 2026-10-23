@@ -1,24 +1,44 @@
 # graphics 架构：设备、引擎、链、一帧
 
-> **一句话**：设备不是窗口；引擎负责生命周期与一帧；`PassChain` 是一张画面的配方和注册归属；
-> 调度只在引擎一处，后端只物化。
->
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：设备/窗口/区/视图/引擎的分层，一帧的编译与调度。
 > **权威来源**：`RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsRoute.hpp` / `SceneView.hpp` / `RenderSurface.hpp` / `RenderBackend.hpp`。
-> **待办**：`../backlog/graphics.md`。
+> **待办**：`../backlog/graphics.md`
 
-## 1. 设计要点
+## 1. 概要设计
 
-1.1 **机制进 SDK，组合归应用层**：分屏布局、多 transient 互借深度、便利对象的边界都不做成引擎政策。
-1.2 **声明与执行分离**：pass 是声明，帧编译成值（`FrameDescription` / `FramePlan`），后端只消费值。
-1.3 **一个事实一个家**：pass 登记只有 `PassRegistry`；命名产出只有 `OutputRegistry`；诊断只有
+### 1.1 问题与背景
+
+本文件定义 graphics 架构：设备、引擎、链、一帧 的现行设计：先给对象与边界，再给功能、接口、约束与验收。
+
+### 1.2 目标
+
+- 把 §2 的设计要点落成 §3 的功能点、§4 的接口与 §8 的验收。
+- 让“现在是什么”与“为什么这么定”分开：理由在 §2/§7，历史看 git。
+
+### 1.3 非目标
+
+- 不在本文件重复头文件里的完整签名；接口只给契约与指针。
+- 不在本文件保存已关闭的历史或逐轮审查记录。
+
+### 1.4 一句话结论
+
+> 设备不是窗口；引擎负责生命周期与一帧；`PassChain` 是一张画面的配方和注册归属； 调度只在引擎一处，后端只物化。
+
+## 2. 设计要点
+
+2.1 **机制进 SDK，组合归应用层**：分屏布局、多 transient 互借深度、便利对象的边界都不做成引擎政策。
+2.2 **声明与执行分离**：pass 是声明，帧编译成值（`FrameDescription` / `FramePlan`），后端只消费值。
+2.3 **一个事实一个家**：pass 登记只有 `PassRegistry`；命名产出只有 `OutputRegistry`；诊断只有
     `DiagnosticsRoute`；呈递只有 `RenderSurface` 的呈现表。
-1.4 **设备不是窗口**：`RenderDevice` 拥有 GPU 设备与队列，可服务多个窗口；窗口目标由设备发放。
-1.5 **调度只有一个实现**：引擎的 `detail::FrameScheduler` 排序；后端不再按依赖重排、不再报环。
+2.4 **设备不是窗口**：`RenderDevice` 拥有 GPU 设备与队列，可服务多个窗口；窗口目标由设备发放。
+2.5 **调度只有一个实现**：引擎的 `detail::FrameScheduler` 排序；后端不再按依赖重排、不再报环。
 
-## 2. 功能点
+## 3. 功能点
 
-### 2.1 设备、窗口、区、视图、引擎
+### 3.1 设备、窗口、区、视图、引擎
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -28,7 +48,7 @@
 | F4 | 视图 | `SceneView`：相机 + 场景 + 操纵器 + 采纳的 `PassChain`；回答“哪条 pass 画我”。 |
 | F5 | 引擎 | `RenderEngine`：`initialize` / `shutdown` / `frame`、设备借用、尺寸、能力、报告。 |
 
-### 2.2 引擎的三个门面
+### 3.2 引擎的三个门面
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -36,7 +56,7 @@
 | F7 | `OutputRegistry` | 命名产出与 transient：`publish` / `resolve` / `unpublish` / `transientTarget`。 |
 | F8 | `DiagnosticsRoute` | 诊断：`setSink` / 计数 / `isClean`；引擎先死 ⇒ `isValid()` false。 |
 
-### 2.3 链（配方 + 注册归属）
+### 3.3 链（配方 + 注册归属）
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -46,7 +66,7 @@
 | F12 | 运行时开关 | `setShadingMode` / `setGizmoVisible` / `setStatsVisible` / `resize`。 |
 | F13 | overlay | role + 内容 + pass；`overlayPass(role)` / `overlayContent(role)`；第三种 overlay 不改类。 |
 
-### 2.4 一帧
+### 3.4 一帧
 
 | # | 步骤 | 说明 |
 |---|---|---|
@@ -55,7 +75,7 @@
 | F16 | 物化 | 后端按 `FrameDescription.passes` 建目标/subpass/barrier/clear、记录命令、报告无法服务项。 |
 | F17 | 呈递 | `RenderSurface` 的呈现表解析到具体 pass；`PresentTarget` / `WindowPresentTarget` 两层。 |
 
-### 2.5 呈现与多窗口
+### 3.5 呈现与多窗口
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -63,9 +83,9 @@
 | F19 | 多窗口 | 一个引擎可服务多个窗口；每个窗口一个目标；窗口销毁不带走其他窗口。 |
 | F20 | 尺寸 | 表面尺寸唯一 owner 是 `RenderSurface`；视图通过 `resize` / `addSurfaceLayout` 跟随。 |
 
-## 3. 公开接口
+## 4. 公开接口
 
-### 3.1 `RenderEngine`
+### 4.1 `RenderEngine`
 
 | 接口 | 作用 |
 |---|---|
@@ -81,7 +101,7 @@
 | `framePlan()` / `frameDescription()` | 本帧的编译产物 |
 | `surfaceWidth()` / `surfaceHeight()` / `capabilities()` / `frameReport()` | 查询 |
 
-### 3.2 注册表与诊断
+### 4.2 注册表与诊断
 
 | 接口 | 作用 |
 |---|---|
@@ -91,7 +111,7 @@
 | `OutputRegistry::transientTarget()` / `transientCount()` | transient |
 | `DiagnosticsRoute::setSink()` / `count()` / `isClean()` | 诊断 |
 
-### 3.3 `PassChain`
+### 4.3 `PassChain`
 
 | 接口 | 作用 |
 |---|---|
@@ -105,7 +125,7 @@
 | `setGizmoVisible()` / `setStatsVisible()` | overlay 开关 |
 | `overlayPass(role)` / `overlayContent(role)` / `setOverlayVisible(role, on)` | overlay 查询/开关 |
 
-### 3.4 `SceneView` / `RenderSurface`
+### 4.4 `SceneView` / `RenderSurface`
 
 | 接口 | 作用 |
 |---|---|
@@ -116,7 +136,25 @@
 | `RenderSurface::present(view)` / `present(pass)` | 声明呈递 |
 | `RenderSurface::resize(w, h, ratio)` | 表面尺寸唯一定义 |
 
-## 4. 注意项
+## 5. 约束、要求与不变量
+
+### 5.1 约束（C#）
+
+| # | 约束 |
+|---|---|
+| C1 | 设备不是窗口：`RenderDevice` 拥有设备/队列，窗口目标由设备发放。 |
+| C2 | pass 登记、命名产出、诊断、呈递各有唯一 owner，不存第二份清单。 |
+| C3 | 调度只在引擎；后端只物化 `FrameDescription.passes`。 |
+
+### 5.2 要求（R#）
+
+| # | 要求 |
+|---|---|
+| R1 | 后端不得重排 pass、不得自建依赖图、不得报环。 |
+| R2 | `PassChain` 只借引擎，不延长引擎寿命；引擎先死 ⇒ `isValid()` false。 |
+| R3 | 一区一幅画；多格布局归应用层，不往引擎加第二个区。 |
+
+### 5.3 不变量（N#）
 
 | # | 注意项 |
 |---|---|
@@ -127,7 +165,21 @@
 | N5 | 相机自带 aspect；pass 矩形与相机形状不一致会在编译期报出来。 |
 | N6 | 后端只物化 `FrameDescription.passes`；不要在记录路径重排或自建依赖图。 |
 
-## 5. 否决项
+## 6. 注意事项与陷阱
+
+### 6.1 一事实一家
+
+- 会怎么错：同一份状态被两处保存，改一处另一处过期。
+- 怎么判：出现两份可写的值/两个可写的注册表。
+- 怎么防：回到 §5 的 N#；只留一个 owner，其余只读。
+
+### 6.2 后端/平台的边界
+
+- 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
+- 怎么判：出现“如果 Windows/X11 就……”的分支。
+- 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
+
+## 7. 已否决选项
 
 | # | 否决 | 理由 |
 |---|---|---|
@@ -137,7 +189,7 @@
 | D4 | 引擎同时做 pass 表、产出表、诊断与 UI 门面 | 一个类型多职；拆成三个窄门面。 |
 | D5 | 后端自己再排一次 pass | 两套排序、两套帧词汇；调度上移引擎。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |
 
-## 6. 判据
+## 8. 测试与验收
 
 | # | 判据 |
 |---|---|
@@ -145,7 +197,21 @@
 | T2 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_public_docs.py` 0 finding。 |
 | T3 | `scripts/vsg_rewrite_gate.sh`：0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。 |
 
-## 7. 相关文档
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+现行设计；功能点与接口以上表为准。
+
+### 9.2 已知缺口 / 待办
+
+见 `../backlog/graphics.md`；开放项按触发条件保留。
+
+### 9.3 兼容性 / 迁移
+
+旧名/旧路径只在 §7 已否决选项或 git 历史里出现；新代码按 §4 的接口写。
+
+## 10. 参考
 
 `graphics-scene.md` · `graphics-geometry.md` · `graphics-rendering.md` ·
 `graphics-content-lifecycle.md` · `vsg-backend.md` · `../backlog/graphics.md`

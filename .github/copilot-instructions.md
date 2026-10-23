@@ -40,7 +40,8 @@
 * **History**: never add dated, closed or historical docs to `.ai/design/`; git is the
   archive. Keep only an ADR for a decision likely to be re-litigated.
 * Before touching a module, read its `.ai/design/` doc and `.ai/backlog/`; after changing
-  any `.ai/` file run `python3 scripts/check_ai_docs.py --strict`.
+  any `.ai/` file run `python3 scripts/check_ai_docs.py --strict` and
+  `python3 scripts/check_design_docs.py`.
 
 ## Language Standard
 

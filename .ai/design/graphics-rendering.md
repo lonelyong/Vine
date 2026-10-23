@@ -1,23 +1,44 @@
 # graphics 渲染：目标、MSAA、图源、颜色、着色、阴影
 
-> **一句话**：`RenderTarget` 是描述；采样数是目标属性；produced 与 imported 两种图源不合并；
-> 颜色分线性光与 sRGB 编码；着色走 `ShaderProgram` + `ShaderAbi`；阴影由灯声明。
->
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：目标、MSAA、图源、颜色空间、着色与阴影。
 > **权威来源**：`RenderTarget.hpp` / `ImageSource.hpp` / `Sampler.hpp` / `ShaderProgram.hpp` /
-> `ShaderAbi.hpp` / `Light.hpp`。**待办**：`../backlog/graphics.md`。
+> `ShaderAbi.hpp` / `Light.hpp`。
+> **待办**：`../backlog/graphics.md`
 
-## 1. 设计要点
+## 1. 概要设计
 
-1.1 **描述与 GPU 资源分离**：`RenderTarget` 只是描述，后端按描述造图。
-1.2 **采样数是目标属性**：`setSamples` → `TargetShape` → 管线键 → 通道与图像。
-1.3 **图源两种生命周期**：produced（`ImageRef`）与 imported（`Texture`）不合并，只用 `ImageSource` 统一解析形状。
-1.4 **颜色进类型**：`Colorf` 线性光、`Color` sRGB 编码，一对有名转换。
-1.5 **着色薄接口**：GLSL 源 + 类型化入口；`ShaderAbi` 是 C++ 与 GLSL 的唯一契约。
-1.6 **阴影是普通 pass**：灯声明，链建 depth-only pass，没有引擎级阴影子系统。
+### 1.1 问题与背景
 
-## 2. 功能点
+本文件定义 graphics 渲染：目标、MSAA、图源、颜色、着色、阴影 的现行设计：先给对象与边界，再给功能、接口、约束与验收。
 
-### 2.1 目标
+### 1.2 目标
+
+- 把 §2 的设计要点落成 §3 的功能点、§4 的接口与 §8 的验收。
+- 让“现在是什么”与“为什么这么定”分开：理由在 §2/§7，历史看 git。
+
+### 1.3 非目标
+
+- 不在本文件重复头文件里的完整签名；接口只给契约与指针。
+- 不在本文件保存已关闭的历史或逐轮审查记录。
+
+### 1.4 一句话结论
+
+> `RenderTarget` 是描述；采样数是目标属性；produced 与 imported 两种图源不合并； 颜色分线性光与 sRGB 编码；着色走 `ShaderProgram` + `ShaderAbi`；阴影由灯声明。
+
+## 2. 设计要点
+
+2.1 **描述与 GPU 资源分离**：`RenderTarget` 只是描述，后端按描述造图。
+2.2 **采样数是目标属性**：`setSamples` → `TargetShape` → 管线键 → 通道与图像。
+2.3 **图源两种生命周期**：produced（`ImageRef`）与 imported（`Texture`）不合并，只用 `ImageSource` 统一解析形状。
+2.4 **颜色进类型**：`Colorf` 线性光、`Color` sRGB 编码，一对有名转换。
+2.5 **着色薄接口**：GLSL 源 + 类型化入口；`ShaderAbi` 是 C++ 与 GLSL 的唯一契约。
+2.6 **阴影是普通 pass**：灯声明，链建 depth-only pass，没有引擎级阴影子系统。
+
+## 3. 功能点
+
+### 3.1 目标
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -27,7 +48,7 @@
 | F4 | 有效性 | 至少一个自己的附件 + 正尺寸；借来的深度不算自己的。 |
 | F5 | 读回 | `readColorBuffer` / `readDepthBuffer`；读解析后的画面。 |
 
-### 2.2 MSAA
+### 3.2 MSAA
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -37,7 +58,7 @@
 | F9 | 画面定义 | `picture()` / `depthPicture()`：读回、采样、借出、提升都走它。 |
 | F10 | 上限 | `Capabilities::max_samples`；超限报 `SamplesUnsupported`。 |
 
-### 2.3 图源
+### 3.3 图源
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -47,7 +68,7 @@
 | F14 | 全屏 ABI | source 颜色附件占 0..C-1，depth 跟随，imported 按声明序填空余 binding。 |
 | F15 | Sampler | min/mag、mipmap、address、border、anisotropy、lod bias、LOD range；按值缓存。 |
 
-### 2.4 颜色
+### 3.4 颜色
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -56,7 +77,7 @@
 | F18 | 文本与字节序 | CSS hex 读写；`fromArgb` / `fromBgr` 带序构造。 |
 | F19 | 插值 | `Colorf::lerp` 在线性光下插值。 |
 
-### 2.5 着色与阴影
+### 3.5 着色与阴影
 
 | # | 功能 | 说明 |
 |---|---|---|
@@ -67,9 +88,9 @@
 | F24 | 阴影 | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`；`directionalShadowMatrix` 唯一推导。 |
 | F25 | 阴影目标 | depth-only `RenderTarget` + `shadowOf` 声明；采样走 `VineShadowBlock`。 |
 
-## 3. 公开接口
+## 4. 公开接口
 
-### 3.1 目标
+### 4.1 目标
 
 | 接口 | 作用 |
 |---|---|
@@ -79,7 +100,7 @@
 | `hasColor()` / `hasDepth()` / `colorCount()` / `colorFormat()` / `depthFormat()` | 查询 |
 | `setSize()` / `width()` / `height()` | 尺寸 |
 
-### 3.2 图源与采样
+### 4.2 图源与采样
 
 | 接口 | 作用 |
 |---|---|
@@ -88,7 +109,7 @@
 | `Sampler` 字段 | filter / mipmap / address / border / anisotropy / lod |
 | `RenderPass::addInput(Texture[, Sampler])` / `PassDesc::inputs` | pass 输入 |
 
-### 3.3 着色与阴影
+### 4.3 着色与阴影
 
 | 接口 | 作用 |
 |---|---|
@@ -99,7 +120,25 @@
 | `directionalShadowMatrix(light, box, ...)` | 光相机 |
 | `RenderTarget::shadowOf()` / `setShadowOf()` | 阴影目标声明 |
 
-## 4. 注意项
+## 5. 约束、要求与不变量
+
+### 5.1 约束（C#）
+
+| # | 约束 |
+|---|---|
+| C1 | 采样数是目标属性；图像/通道/管线三者由 `TargetShape` 统一驱动。 |
+| C2 | produced 与 imported 图源不合并；生命周期不同。 |
+| C3 | 颜色分线性光 `Colorf` 与 sRGB 编码 `Color`。 |
+
+### 5.2 要求（R#）
+
+| # | 要求 |
+|---|---|
+| R1 | 阴影是普通 pass：灯声明，链建 pass，不做引擎内置阴影子系统。 |
+| R2 | 多重采样目标的深度解析取 `sample0`，不做平均。 |
+| R3 | 目标格式不再加第二套颜色语义。 |
+
+### 5.3 不变量（N#）
 
 | # | 注意项 |
 |---|---|
@@ -112,7 +151,21 @@
 | N7 | `ShaderAbi` 的块布局 / location 改一个必须同时改 C++ 与 GLSL。 |
 | N8 | 阴影只支持方向光；点/聚光、CSM、PCSS 不做。 |
 
-## 5. 否决项
+## 6. 注意事项与陷阱
+
+### 6.1 一事实一家
+
+- 会怎么错：同一份状态被两处保存，改一处另一处过期。
+- 怎么判：出现两份可写的值/两个可写的注册表。
+- 怎么防：回到 §5 的 N#；只留一个 owner，其余只读。
+
+### 6.2 后端/平台的边界
+
+- 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
+- 怎么判：出现“如果 Windows/X11 就……”的分支。
+- 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
+
+## 7. 已否决选项
 
 | # | 否决 | 理由 |
 |---|---|---|
@@ -123,7 +176,7 @@
 | D5 | 引擎自动阴影子系统 | 阴影是普通 pass；灯声明，链建 pass。 |
 | D6 | 点/聚光阴影 / CSM / PCSS | 没有消费者；等真实需求。 |
 
-## 6. 判据
+## 8. 测试与验收
 
 | # | 判据 |
 |---|---|
@@ -133,7 +186,21 @@
 | T4 | `ScreenDrawTest` / `ImageSourceTest` / `SamplerTest` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`。 |
 | T5 | 阴影：有投影光时地面变暗；无投影光时证据逐字节不变。 |
 
-## 7. 相关文档
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+现行设计；功能点与接口以上表为准。
+
+### 9.2 已知缺口 / 待办
+
+见 `../backlog/graphics.md`；开放项按触发条件保留。
+
+### 9.3 兼容性 / 迁移
+
+旧名/旧路径只在 §7 已否决选项或 git 历史里出现；新代码按 §4 的接口写。
+
+## 10. 参考
 
 `graphics-architecture.md` · `graphics-scene.md` · `graphics-geometry.md` · `vsg-backend.md` ·
 `../backlog/graphics.md`

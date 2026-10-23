@@ -1,5 +1,11 @@
 # IOBase（vn::io）核心能力设计 —— VFS 与 Stream
 
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：`Vfs` / `Stream` / 错误模型 / 路径 / 后端 / MountVfs；迁移与门禁。
+> **权威来源**：`src/base/iobase/sdk/vine/io/**`、`tests/test_iobase`。
+> **待办**：`../backlog/`
+
 > 状态：**设计稿（S1–S6 均已落地，见 §13；§14 为对照门禁）**。现状：`Vfs` / `ZipArchive` / `DirectoryVfs` /
 > `MountVfs` 已落地（以 `sdk/vine/io/` 下的头文件为准），本设计只覆盖**核心功能缺口**，不照搬
 > 外部需求文档的 API 形态。

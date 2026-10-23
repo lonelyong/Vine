@@ -1,12 +1,36 @@
 # vsg 后端：架构、契约、坑
 
-> **一句话**：后端只把引擎编译好的帧值物化成 Vulkan 命令；平台事实（1.4 地板、无 dynamic rendering、
-> 每 pass 私有状态表、reverse-Z）不可协商；下面这些坑都踩过，别重踩。
->
+> **状态**：现行
+> **最后核对**：2026-10-23
+> **范围**：vsg 后端如何把编译好的帧值物化成 Vulkan 命令；平台事实与已踩过的坑。
 > **权威来源**：`RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/backend/**` /
-> `src/plugins/gfx_backend_vsg/include/vine/vsg/**`。**待办**：`../backlog/graphics.md`。
+> `src/plugins/gfx_backend_vsg/include/vine/vsg/**`。
+> **待办**：`../backlog/graphics.md`
 
-## 1. 设计要点
+## 1. 概要设计
+
+### 1.1 问题与背景
+
+引擎把一帧编译成值；后端只把这些值物化成 Vulkan 命令。平台事实（1.4 地板、无 dynamic rendering、
+每 pass 私有状态表、reverse-Z）不可协商，踩过的坑必须留在这份文件里。
+
+### 1.2 目标
+
+- 三段式：收集 → 编译 → 执行；执行器只做机械落地。
+- 调度只在引擎，后端按 `FrameDescription.passes` 的顺序物化。
+- 每个 pass 的状态私有；流按 buffer 身份共享；证据三重（验证层/计数器/像素）。
+
+### 1.3 非目标
+
+- 不在后端重排 pass、自建依赖图或报环。
+- 不让 SDK `graphics/backend/` include vsg；只有插件 `internal/` 才 include both。
+- 不把平台差异写进引擎/应用层。
+
+### 1.4 一句话结论
+
+> 后端只把引擎编译好的帧值物化成 Vulkan 命令；平台事实不可协商，坑都踩过，别重踩。
+
+## 2. 设计要点
 
 1.1 **三段式**：收集（`FrameRecorder`）→ 编译（`FrameCompiler`）→ 执行（`VsgExecutor`）；
     执行器只做机械落地，不决定排序、重建或缓存。
@@ -18,9 +42,9 @@
 1.7 **证据三重**：验证层 / 计数器 / 像素；三者缺一都不算“通过”。
 1.8 **物理边界**：SDK `graphics/backend/` 不 include vsg；插件 `internal/` 才 include both。
 
-## 2. 后端架构
+### 2.9 后端架构
 
-### 2.1 分层
+#### 2.9.1 分层
 
 | 层 | 位置 | 内容 |
 |---|---|---|
@@ -29,7 +53,7 @@
 | 插件支撑 | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / 入口点 |
 | 插件外壳 | `src/plugins/gfx_backend_vsg/src/shell/` | 插件注册、`RenderBackendFactory` |
 
-### 2.2 类图
+#### 2.9.2 类图
 
 `VsgBackendImpl` 就是 `VsgBackend::Impl`（私有实现）；`Sdk*` 是 SDK `backend/` 里的可移植类型，带
 `<<SDK>>` 标记。
@@ -90,7 +114,7 @@ classDiagram
     HostTargets --> OffscreenSession
 ```
 
-### 2.3 一帧的生命周期
+#### 2.9.3 一帧的生命周期
 
 ```
 beginFrame()      取交换链图像（槽位逐帧学习）
@@ -103,7 +127,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 - 环（cycle）在引擎调度器处理；后端不再自建依赖图。分量外的 pass 照跑，帧照旧提交。
 - 空帧也是帧：照样编译、录制、呈递；空 **pass** 不是 pass。
 
-### 2.4 对象职责
+#### 2.9.4 对象职责
 
 | 对象 | 回答的问题 |
 |---|---|
@@ -195,7 +219,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 | `core::RetirementQueue` / `core::SlotProbe` | 退役 / 槽数 |
 | `support::VsgHostWindow` / `support::RenderStateMapper` | 宿主窗口 / 状态映射 |
 
-## 5. 键与状态
+### 4.3 键与状态
 
 | 层 | 当前拼写 | 允许的变化方式 |
 |---|---|---|
@@ -207,7 +231,36 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 **“计数是身份不是状态”**：绑在描述符布局上的东西（采样彩色数、深度数）必须进键；extent / load-op / 布局 /
 material 值 / 流字节 / cull 全部**不进**。
 
-## 6. 坑（不可再踩）
+## 5. 约束、要求与不变量
+
+### 5.1 约束（C#）
+
+| # | 约束 |
+|---|---|
+| C1 | SDK `graphics/backend/` 不 include vsg；插件 `internal/` 才 include both。 |
+| C2 | 每 pass 状态私有；状态注册表不跨 pass 共享。 |
+| C3 | 调度只在引擎；后端按 `FrameDescription.passes` 物化。 |
+| C4 | `TargetShape` 决定图像/通道/管线兼容性；bootstrap 清所有附件。 |
+| C5 | `StreamKey` = buffer + buffer revision + 段；稳态零重传。 |
+
+### 5.2 要求（R#）
+
+| # | 要求 |
+|---|---|
+| R1 | 执行器只做机械落地，不决定排序/重建/缓存。 |
+| R2 | 反向 Z + CW 正面：世界 CCW 到 framebuffer 是 CW。 |
+| R3 | 证据三重：验证层 / 计数器 / 像素，缺一不算通过。 |
+| R4 | 平台事实留在后端，不上推到引擎/应用层。 |
+
+### 5.3 不变量（N#）
+
+| # | 不变量 |
+|---|---|
+| N1 | 后端不重排 pass、不自建依赖图、不报环。 |
+| N2 | 物理边界：SDK 后端契约不 include vsg。 |
+| N3 | 平台事实（1.4、无 dynamic rendering、reverse-Z）不可协商。 |
+
+## 6. 注意事项与陷阱
 
 ### 6.1 协议与帧
 
@@ -336,7 +389,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | P81 | G-buffer albedo 用 16F | 8 位暗色阶在亮光下露台阶；`intensity ≤ 1` 时两者一样 |
 | P82 | episode 是调用方的 | 半片 / 灯掉落 / 拒绝报告各归各；`ContentPass` 每帧新建，状态挂它会每帧重报 |
 
-## 7. 否决项
+## 7. 已否决选项
 
 | # | 否决 | 理由 |
 |---|---|---|
@@ -347,7 +400,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | D5 | 后端自己再排一次 pass | 调度上移引擎；两套排序 = 两套帧词汇。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |
 | D6 | 超过 3 个方向光限制 | 灯块 1024 槽，不限；旧限制已消失。 |
 
-## 8. 判据
+## 8. 测试与验收
 
 | # | 判据 |
 |---|---|
@@ -355,6 +408,20 @@ material 值 / 流字节 / cull 全部**不进**。
 | T2 | `scripts/vsg_rewrite_gate.sh`：0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。 |
 | T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`。 |
 
-## 9. 相关文档
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+现行；F1–F6 已落地。
+
+### 9.2 已知缺口 / 待办
+
+见 `../backlog/graphics.md`。
+
+### 9.3 兼容性 / 迁移
+
+新代码按 §4 的接口写；旧名只在 §7 或 git 历史里出现。
+
+## 10. 参考
 
 `graphics-architecture.md` · `graphics-rendering.md` · `graphics-content-lifecycle.md` · `../backlog/graphics.md`

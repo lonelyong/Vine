@@ -216,11 +216,14 @@ memory 写“现役要点与坑”，bugs 写“事故复盘”，git 写“全�
 
 ```bash
 python3 scripts/check_ai_docs.py --strict
+python3 scripts/check_design_docs.py
 python3 scripts/check_doc_symbols.py
 python3 scripts/check_public_docs.py
 ```
 
 - `check_ai_docs.py`：`.ai/` 下每份 `.md` 必须在 `.ai/README.md` 被点名；现行段落的引用必须存在。
+- `check_design_docs.py`：每份 design 文档的顶部块、10 章编号、子序号、行数与
+  `F/C/R/T/N/D` ID；`--strict` 把行数/ID 警告也变成失败。
 - `check_doc_symbols.py`：`docs/guides/` 的 living 文档点名的单元必须存在。
 - `check_public_docs.py`：公开面文档义务基线不能变坏。
 - 纯文档改动不跑编译 / 测试；改到源码注释时按仓库规矩决定是否 build。
