@@ -7,6 +7,7 @@
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/ImageSource.hpp>
+#include <vine/graphics/DepthRange.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -213,6 +214,12 @@ struct CollectedPass
     bool          has_clear{false};        ///< Whether the host announced a clear policy for this scope.
     ClearValues   clear{};                 ///< The announced policy (meaningful when has_clear).
     vn::graphics::PassRenderState state{}; ///< The pass' own state: depth policy + rasterisation override.
+    /// The depth band this pass maps its draws into (the whole buffer when nobody announced one).
+    ///
+    /// A plain value rather than "announced or not": unlike a clear, where "never announced" and "announced
+    /// the default" are different pictures, stating the whole buffer and stating nothing ARE the same picture
+    /// (see DepthRange). The compiler resolves the default; the recorder keeps what the scope said.
+    vn::graphics::DepthRange depth_range{};
     std::span<const CollectedDraw> draws{};///< Drawing calls that arrived in the scope, in call order.
 };
 
@@ -302,6 +309,19 @@ class VN_GRAPHICS_API FrameRecorder
      * @return true when it was recorded; false when it was dropped.
      */
     bool setViewport(int x, int y, int width, int height);
+
+    /** @brief Announces the depth band the open pass maps its draws into.
+     *
+     * @details
+     * - A SCOPE attribute, not a drawing-call one: every draw of the pass is mapped into the same band, which
+     *   is the whole point - the band is what makes one pass a single semantic layer.
+     * - Unlike the viewport, which waits for the next call, this one applies to the pass from now on, so a
+     *   backend never has to keep two half-stated bands in step.
+     *
+     * @param range Depth-buffer interval; {0, 1} means the whole buffer (the default).
+     * @return true when it was recorded; false when it was dropped.
+     */
+    bool setDepthRange(const vn::graphics::DepthRange& range);
 
     /** @brief Announces how the pass' target is cleared before it draws.
      *
@@ -434,6 +454,7 @@ class VN_GRAPHICS_API FrameRecorder
     bool        pass_has_clear_{false};          ///< Whether the scope announced a clear.
     ClearValues pass_clear_{};                   ///< The announced clear.
     vn::graphics::PassRenderState pass_state_{};  ///< The scope's own state (depth policy + rasterisation override).
+    vn::graphics::DepthRange    pass_depth_range_{};  ///< The scope's depth band ({0, 1} = whole buffer).
     std::span<const InputRef> pass_inputs_{};    ///< The scope's inputs (a property of the pass).
 
     bool                       pending_has_viewport_{false};  ///< Whether a viewport is waiting for a draw.

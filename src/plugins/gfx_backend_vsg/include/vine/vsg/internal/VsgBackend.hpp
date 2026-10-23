@@ -351,6 +351,9 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     /** @brief Announces the pass' own state for the content it draws (see PassDraw::state). */
     void announcePassState(const vn::graphics::PassRenderState& state);
 
+    /** @brief Announces the depth band the pass maps its draws into (see PassDraw::depth_range). */
+    void announceDepthRange(const vn::graphics::DepthRange& range);
+
     /** @brief Announces the lights of one drawing call (see DrawDescription::lights). */
     void announceLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights);
 

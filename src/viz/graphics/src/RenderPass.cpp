@@ -181,6 +181,7 @@ void RenderPass::fillPassFacts(PassDraw& out)
 {
     out.target           = desc_.writes.get();
     out.viewport         = desc_.viewport;
+    out.depth_range      = desc_.depth_range;
     out.clear            = clearPolicy();
     out.program_override = desc_.program_override;
     // This pass' state for the content it draws - its depth policy and its rasterisation override, in one

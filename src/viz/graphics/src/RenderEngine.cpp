@@ -361,6 +361,7 @@ FramePlan RenderEngine::framePlan() const
         if (pass->hasViewport()) {
             entry.viewport = pass->viewport();
         }
+        entry.depth_range = pass->depthRange();
         plan.passes.push_back(std::move(entry));
     }
     return plan;

@@ -169,6 +169,7 @@ const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, c
         pass.schedule_index  = schedule_index;
         pass.target_index    = slot;
         pass.state           = source.state;
+        pass.depth_range     = source.depth_range;
         pass.clear           = source.clear;
         pass.viewport        = vn::graphics::Viewport{ 0, 0, targets_[slot].width, targets_[slot].height };
         pass.depth_preserved = target.depth.preserve;

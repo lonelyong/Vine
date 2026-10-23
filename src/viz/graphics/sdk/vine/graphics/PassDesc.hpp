@@ -12,6 +12,7 @@
 
 #include "Camera.hpp"
 #include "DepthMode.hpp"
+#include "DepthRange.hpp"
 #include "ImageRef.hpp"
 #include "ImageSource.hpp"
 #include "PassStage.hpp"
@@ -160,6 +161,15 @@ struct VN_GRAPHICS_API PassDesc
 
     /// A sub-rectangle of the target to draw into (unset = the whole of it).
     std::optional<Viewport> viewport;
+
+    /// The depth-buffer band this pass' draws are mapped into (unset = the whole buffer, i.e. no remapping).
+    ///
+    /// A pass carves a band out of the depth buffer so its content sits at a chosen depth regardless of where
+    /// the geometry really is - the semantic-layer case (annotations over solids, an overlay over a scene)
+    /// stated as one interval rather than as a second mechanism. The mapping is order-preserving, but a
+    /// remapped depth is no longer a distance: a pass that states a band here is saying its target's depth is
+    /// a LAYER value, so nothing else may read that depth back as geometry (see DepthRange).
+    std::optional<DepthRange> depth_range;
 
     /// The full-screen program a Screen pass draws through (null draws nothing; reported once).
     intrusive_ptr<ShaderProgram> program{ nullptr };

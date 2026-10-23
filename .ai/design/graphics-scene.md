@@ -32,6 +32,10 @@
 2.1 **严格树**：`Group::addChild` 自动从旧父脱离，拒绝成环；一次遍历里一个节点只有一个世界矩阵。
 2.2 **折叠规则固定**：可见性硬门、透明度相乘、层与 drawOrder 最近声明获胜、状态按项覆盖。
 2.3 **状态只有一个解析点**：`resolveRenderState(authored, pass, data_topology)` 给出每项的来源。
+2.3.1 **深度带属于 pass，不属于节点**：`RenderPass::setDepthRange` 把一条 pass 的 draw 映射进深度缓冲的一段；
+节点不能携带它，因为两棵子树映射同一个 framebuffer 会让一个像素的深度值失去唯一含义（没有 per-pixel tag
+就无法反解，拾取也没有唯一答案）。映射保序，但重映射后的深度**不再是距离**：一张 target 的写者若用不同区间，
+它的深度就不能再被当作几何距离读回。
 2.4 **收集是纯函数**：相机 + 场景内容 + 层掩码 → 共享不可变命令表；memo 只在这些输入变化时失效。
 2.5 **视图上下文显式**：`CollectView` 携带 projection / view / eye / up / viewport；billboard 只在这里生效。
 2.6 **拾取是机制**：射线 + 场景走查；选择/描边/框选不在框架里。
@@ -46,6 +50,7 @@
 | F2 | `Group` | 子节点容器；`addChild` / `removeChild` / `children()`。 |
 | F3 | 变换节点 | `MatrixTransform`、`PositionAttitudeTransform`（TRS + pivot）、`AutoTransform`（billboard）。 |
 | F4 | `StateNode` | 子树渲染状态（depth / cull / blend / polygon）；可嵌套、深层覆盖。 |
+| F4a | `DepthRange` | pass 级深度带：把一条 pass 的 draw 映射进 `[min,max]`（默认整段 = 不重映射），用于语义分层；保序但不再是距离。 |
 | F5 | `Geometry` | 叶子：顶点通道 + `Primitive` 列表（见 `graphics-geometry.md`）。 |
 
 ### 3.2 折叠规则
@@ -113,6 +118,7 @@
 | `AutoTransform::setAutoRotateMode()` / `setAutoScaleToScreen()` / `setAxis()` / `setNormal()` | billboard |
 | `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `clearState()` / `renderState()` | 子树状态 |
 | `StateNode::setMaterial()` / `setProgram()` | 子树 material / program |
+| `RenderPass::setDepthRange()` / `depthRange()` / `clearDepthRange()` | 整条 pass 的深度带（`DepthRange`） |
 | `resolveRenderState(authored, pass, topology)` | 唯一解析点（`StateResolution.hpp`） |
 
 ### 4.3 场景与收集

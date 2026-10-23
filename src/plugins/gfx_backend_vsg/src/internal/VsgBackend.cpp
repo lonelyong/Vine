@@ -945,6 +945,10 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
                 announceClear(*description.clear);
             }
             announcePassState(description.state);
+            if (description.depth_range.has_value())
+            {
+                announceDepthRange(*description.depth_range);
+            }
             for (const vn::graphics::DrawDescription& draw : description.draws)
             {
                 if (draw.lights.has_value())
@@ -1400,6 +1404,14 @@ void VsgBackend::announcePassState(const vn::graphics::PassRenderState& state)
     if (d->recorder.inPass())
     {
         (void)d->recorder.setPassState(state);
+    }
+}
+
+void VsgBackend::announceDepthRange(const vn::graphics::DepthRange& range)
+{
+    if (d->recorder.inPass())
+    {
+        (void)d->recorder.setDepthRange(range);
     }
 }
 

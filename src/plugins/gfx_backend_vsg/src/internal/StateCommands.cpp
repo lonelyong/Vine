@@ -152,16 +152,17 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     return command;
 }
 
-::vsg::ref_ptr<::vsg::SetViewport> makeViewportCommand(const ViewportRect& rect)
+::vsg::ref_ptr<::vsg::SetViewport> makeViewportCommand(const ViewportRect& rect, float depth_min, float depth_max)
 {
     VkViewport viewport = {};
     viewport.x          = rect.x;
     viewport.y          = rect.y;
     viewport.width      = std::max(rect.width, 0.0F);
     viewport.height     = std::max(rect.height, 0.0F);
-    // The depth range is the API's fixed [0, 1]: reverse-Z is in the projection.
-    viewport.minDepth = 0.0F;
-    viewport.maxDepth = 1.0F;
+    // The band the PASS stated, in buffer values: reverse-Z lives in the projection, so the default {0, 1} is
+    // the whole buffer and a narrower pair forces the pass' content into that layer (see DepthRange).
+    viewport.minDepth = depth_min;
+    viewport.maxDepth = depth_max;
     return ::vsg::SetViewport::create(0U, ::vsg::Viewports{ viewport });
 }
 

@@ -106,6 +106,7 @@ bool FrameRecorder::beginPass(PassId pass)
     pass_has_clear_         = false;
     pass_clear_             = ClearValues{};
     pass_state_             = vn::graphics::PassRenderState{};
+    pass_depth_range_       = vn::graphics::DepthRange{};
     pass_inputs_            = {};
     pending_has_viewport_   = false;
     pending_viewport_       = {};
@@ -135,6 +136,7 @@ bool FrameRecorder::endPass()
         record.has_clear = pass_has_clear_;
         record.clear     = pass_clear_;
         record.state     = pass_state_;
+        record.depth_range = pass_depth_range_;
 
         const std::span<CollectedDraw> draws = arena_.makeArray<CollectedDraw>(open_draws_.size());
         for (std::size_t i = 0; i < open_draws_.size(); ++i)
@@ -186,6 +188,16 @@ bool FrameRecorder::setViewport(int x, int y, int width, int height)
     }
     pending_has_viewport_ = true;
     pending_viewport_     = vn::graphics::Viewport{ x, y, width, height };
+    return true;
+}
+
+bool FrameRecorder::setDepthRange(const vn::graphics::DepthRange& range)
+{
+    if (!pass_open_ || scope_target_released_)
+    {
+        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    }
+    pass_depth_range_ = range;
     return true;
 }
 

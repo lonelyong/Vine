@@ -12,6 +12,7 @@
 #include <vine/RefCounted.hpp>
 
 #include "DepthMode.hpp"
+#include "DepthRange.hpp"
 #include "DepthView.hpp"
 #include "FrameDescription.hpp"
 #include "ImageRef.hpp"
@@ -345,6 +346,32 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
 
     /// @brief Clears any configured sub-viewport: the pass draws the whole target again.
     void clearViewport() noexcept { desc_.viewport.reset(); }
+
+    /**
+     * @brief Maps this pass' draws into a band of the depth buffer instead of the whole of it.
+     *
+     * @details
+     * - The band is what makes a semantic layer sit where the view wants it rather than where the geometry is:
+     *   annotations over solids, an overlay over a scene, one layer of a stacked picture in front of another.
+     * - The mapping is order-preserving, so near/far inside the band and against default-mapped content are
+     *   unchanged - but a remapped depth is NO LONGER A DISTANCE. A pass that states a band is declaring its
+     *   target's depth to be a layer value, so nothing may read that depth back as geometry afterwards.
+     * - A pass cannot compose a band with an enclosing one: there is no enclosing pass, and two passes writing
+     *   one target with different bands leave a pixel's value with no single meaning (see DepthRange).
+     *
+     * @param range Depth-buffer interval the pass' draws are mapped into; {0, 1} is the whole buffer.
+     */
+    void setDepthRange(const DepthRange& range) { desc_.depth_range = range; }
+
+    /**
+     * @brief Gets the depth band this pass maps its draws into.
+     *
+     * @return The band, or nullopt when the pass maps into the whole depth buffer.
+     */
+    [[nodiscard]] std::optional<DepthRange> depthRange() const noexcept { return desc_.depth_range; }
+
+    /// @brief Clears any configured depth band: the pass maps into the whole depth buffer again.
+    void clearDepthRange() noexcept { desc_.depth_range.reset(); }
 
     /** @brief States the device-pixel size of the surface this pass draws into when it has no target.
      *

@@ -174,6 +174,8 @@ struct CompiledPass
     std::uint32_t target_index{0};            ///< Index into CompiledFrame::targets (the pass' target).
     vn::graphics::Viewport viewport{};      ///< Whole-target rectangle, for the draw calls that announced none.
     vn::graphics::PassRenderState state{};  ///< The pass' own state (depth policy + rasterisation override).
+    /// The depth band the pass' draws are mapped into ({0, 1} = the whole buffer, see DepthRange).
+    vn::graphics::DepthRange depth_range{};
     ClearValues   clear{};                    ///< The effective clear policy (announced, or the default).
     bool          bootstrap{false};           ///< First writer of freshly built attachments: it must clear.
     bool          depth_preserved{false};     ///< A later pass reads the depth this one writes: never clear it.

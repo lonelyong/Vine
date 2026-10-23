@@ -64,7 +64,7 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     }
     // The rectangle is a command, which is what keeps an extent out of the pipeline's identity: a resize
     // changes these two calls and nothing else.
-    commands->addChild(makeViewportCommand(draw.viewport));
+    commands->addChild(makeViewportCommand(draw.viewport, draw.depth_min, draw.depth_max));
     commands->addChild(makeScissorCommand(draw.viewport));
     for (const ::vsg::ref_ptr<::vsg::BindVertexBuffers>& bind : draw.vertex_binds) {
         if (bind != nullptr) {
@@ -120,7 +120,7 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     }
 
     auto commands = ::vsg::Commands::create();
-    commands->addChild(makeViewportCommand(draw.viewport));
+    commands->addChild(makeViewportCommand(draw.viewport, draw.depth_min, draw.depth_max));
     commands->addChild(makeScissorCommand(draw.viewport));
     if (draw.push != nullptr) {
         // After the state commands, where the pipeline layout the bind made current is the one the push range

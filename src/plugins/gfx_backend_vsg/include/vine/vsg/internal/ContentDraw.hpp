@@ -75,6 +75,8 @@ class ContentDraw
         /// span the draw reads; without one, `vertex_count` is what is drawn.
         ::vsg::ref_ptr<::vsg::BindIndexBuffer>    index;
         ViewportRect        viewport;            ///< The rectangle the draw covers.
+        float               depth_min{0.0F};     ///< The depth band's far end the pass maps into.
+        float               depth_max{1.0F};     ///< The depth band's near end the pass maps into.
         std::uint32_t       index_count{0};      ///< Indices to draw (indexed draws only).
         std::uint32_t       first_index{0};      ///< First index of the span the geometry states (indexed only).
         /// Vertices to draw (unindexed draws only): the draw's whole geometry, assembled from the vertex
@@ -103,6 +105,8 @@ class ContentDraw
         ::vsg::ref_ptr<::vsg::BindDescriptorSet> samplers;  ///< Set 0: binding i is the source's attachment i.
         ::vsg::ref_ptr<::vsg::PushConstants>     push;      ///< The ABI's 128-byte block, or null to push none.
         ViewportRect       viewport;            ///< The rectangle the triangle covers (the PiP sub-rectangle).
+        float              depth_min{0.0F};     ///< The depth band's far end the pass maps into.
+        float              depth_max{1.0F};     ///< The depth band's near end the pass maps into.
         std::uint32_t      color_attachments{1};///< Colour attachments of the pass (for the blend state).
     };
 

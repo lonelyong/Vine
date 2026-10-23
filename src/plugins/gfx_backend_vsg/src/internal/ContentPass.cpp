@@ -987,6 +987,8 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     full_screen.viewport = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
                                          static_cast<float>(draw.viewport.width),
                                          static_cast<float>(draw.viewport.height) };
+    full_screen.depth_min = pass.depth_range.min;
+    full_screen.depth_max = pass.depth_range.max;
     full_screen.color_attachments = pass.color_attachments;
 
     const auto group = entry.draws->recordScreen(*scope_.registry, full_screen);
@@ -1350,6 +1352,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     record.viewport       = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
                                         static_cast<float>(draw.viewport.width),
                                         static_cast<float>(draw.viewport.height) };
+    record.depth_min      = pass.depth_range.min;
+    record.depth_max      = pass.depth_range.max;
     // Which of the entry's two spans the draw reads: an indexed entry states the slice of its index stream, an
     // unindexed one the vertex count - never both, because the command they lead to is a different one.
     if (primitive.indices.has_value())

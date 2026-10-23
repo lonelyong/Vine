@@ -9,6 +9,7 @@
 #include <vine/String.hpp>
 #include <vine/raw_ptr.hpp>
 #include "Node.hpp"
+#include "DepthRange.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -63,6 +64,12 @@ struct VN_GRAPHICS_API PassPlan
     bool clears_depth = true;
     /// The sub-rectangle of the target it draws into, or nullopt for the whole target.
     std::optional<Viewport> viewport;
+    /// The depth band its draws are mapped into, or nullopt for the whole depth buffer (see DepthRange).
+    ///
+    /// A row with a band is a LAYER: its content sits at a chosen depth rather than at its real distance, so the
+    /// target's depth is no longer a distance field. That is the fact a host reading a plan needs in order to
+    /// know why one pass draws over another.
+    std::optional<DepthRange> depth_range;
     /// The input names it declared (see RenderPass::addInputName), in declaration order.
     std::vector<String> inputs;
     /// The name it publishes its result under, or empty (see RenderPass::setOutputName).

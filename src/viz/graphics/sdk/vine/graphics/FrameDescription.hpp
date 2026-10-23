@@ -10,6 +10,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "DepthRange.hpp"
 #include "ImageSource.hpp"
 #include "RenderCommand.hpp"
 #include "StateResolution.hpp"
@@ -136,6 +137,8 @@ struct VN_GRAPHICS_API PassDraw
     raw_ptr<RenderTarget> target = nullptr;
     /// The sub-rectangle of the target it draws into, or nullopt for the whole of it.
     std::optional<Viewport> viewport;
+    /// The depth band this pass' draws are mapped into, or nullopt for the whole buffer (see DepthRange).
+    std::optional<DepthRange> depth_range;
     /// The clear it announces before it draws, or nullopt to announce NONE (a pass that clears nothing must not
     /// claim to: see ClearPolicy).
     std::optional<ClearPolicy> clear;

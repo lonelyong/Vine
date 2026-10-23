@@ -107,9 +107,13 @@ struct ViewportRect
  * The depth range is [0, 1] and stays that way: reverse-Z lives in the projection, not in the viewport.
  *
  * @param rect The rectangle the draw covers.
+ * @param depth_range The depth band the pass maps into (see vn::graphics::DepthRange); {0, 1} is the whole
+ *                    buffer.
  * @return The command (never null).
  */
-[[nodiscard]] ::vsg::ref_ptr<::vsg::SetViewport> makeViewportCommand(const ViewportRect& rect);
+[[nodiscard]] ::vsg::ref_ptr<::vsg::SetViewport> makeViewportCommand(const ViewportRect& rect,
+                                                                   float              depth_min = 0.0F,
+                                                                   float              depth_max = 1.0F);
 
 /** @brief Builds the scissor command for @p rect.
  *

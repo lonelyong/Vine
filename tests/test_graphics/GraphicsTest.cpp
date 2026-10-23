@@ -3705,6 +3705,53 @@ TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
     EXPECT_EQ(std::count(text.begin(), text.end(), '\n'), 3) << "one line per pass, plus the header";
 }
 
+/**
+ * @brief A pass can map its draws into a band of the depth buffer, and the plan says which one.
+ *
+ * The band is a PASS fact (see DepthRange): it is what makes one pass a semantic layer, and it is deliberately
+ * not a StateNode item - two subtrees mapping one framebuffer differently would leave a pixel's depth value
+ * with no single meaning. The test pins it to the pass and pins the default to "the whole buffer".
+ */
+TEST(RenderEngineTest, APassMapsItsDrawsIntoItsOwnDepthBand)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto camera  = intrusive_ptr<Camera>(new Camera());
+    auto target  = intrusive_ptr<RenderTarget>(new RenderTarget());
+
+    auto plain = intrusive_ptr<RenderPass>(new RenderPass());
+    plain->setName(u8"geometry");
+    plain->setCamera(camera);
+    plain->setRenderTarget(target);
+
+    auto overlay = intrusive_ptr<RenderPass>(new RenderPass());
+    overlay->setName(u8"annotations");
+    overlay->setCamera(camera);
+    overlay->setDepthRange(DepthRange{ 0.6F, 1.0F });  // the near half: in front of the geometry
+
+    engine->addPass(plain, content, -10);
+    engine->addPass(overlay, content, 10);
+
+    const FramePlan plan = engine->framePlan();
+    ASSERT_EQ(plan.passes.size(), 2u);
+    EXPECT_FALSE(plan.passes[0].depth_range.has_value()) << "nobody stated one: the whole buffer, unchanged";
+    ASSERT_TRUE(plan.passes[1].depth_range.has_value());
+    EXPECT_FLOAT_EQ(plan.passes[1].depth_range->min, 0.6F);
+    EXPECT_FLOAT_EQ(plan.passes[1].depth_range->max, 1.0F);
+
+    // The value type says what it means: {0, 1} is "no remapping", and a band outside the buffer or inverted is
+    // a caller bug rather than a value the backend should clamp.
+    EXPECT_TRUE(DepthRange{}.isDefault());
+    EXPECT_TRUE(DepthRange{}.isValid());
+    EXPECT_FALSE((DepthRange{ 0.6F, 1.0F }.isDefault()));
+    EXPECT_FALSE((DepthRange{ 0.6F, 0.2F }.isValid())) << "an inverted band is not a range";
+    EXPECT_FALSE((DepthRange{ -0.1F, 0.5F }.isValid()));
+
+    // Clearing it puts the pass back on the whole buffer.
+    overlay->clearDepthRange();
+    EXPECT_FALSE(engine->framePlan().passes[1].depth_range.has_value());
+}
+
 TEST(RenderEngineTest, TheFramePlanIsWhatTheFrameActuallyRan)
 {
     // The plan is not a second opinion about the frame: the passes it lists as running, in the order it lists
