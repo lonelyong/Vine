@@ -106,17 +106,6 @@ void RenderTarget::setSamples(std::uint32_t samples)
     samples_ = samples != 0U ? samples : 1U;
 }
 
-int RenderTarget::layerCount() const
-{
-    return layer_count_;
-}
-
-void RenderTarget::setLayerCount(int count)
-{
-    // A layer count below 1 is not "automatic": it is a plain 2D target (the default), like setSamples' 0.
-    layer_count_ = count > 0 ? count : 1;
-}
-
 bool RenderTarget::hasColor() const
 {
     return !color_formats_.empty();

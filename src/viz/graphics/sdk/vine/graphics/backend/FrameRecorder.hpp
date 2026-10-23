@@ -212,10 +212,6 @@ struct CollectedPass
     bool          has_clear{false};        ///< Whether the host announced a clear policy for this scope.
     ClearValues   clear{};                 ///< The announced policy (meaningful when has_clear).
     vn::graphics::PassRenderState state{}; ///< The pass' own state: depth policy + rasterisation override.
-    /// The target array layers this pass writes (see PassDesc::first_layer / layer_count). A pass with no
-    /// target (the window) answers the defaults, which is the single-layer case.
-    std::uint32_t first_layer{0};          ///< First array layer written.
-    std::uint32_t layer_count{1};          ///< Layers written (1 in this release).
     std::span<const CollectedDraw> draws{};///< Drawing calls that arrived in the scope, in call order.
 };
 
@@ -274,14 +270,6 @@ class VN_GRAPHICS_API FrameRecorder
      *         (the inner scope does not open, and the outer one keeps its state).
      */
     bool beginPass(PassId pass);
-
-    /** @brief Announces which array layers the open pass writes (see CollectedPass::first_layer).
-     *
-     * @param first First array layer.
-     * @param count Layers written (1 in this release; the compiler refuses wider ranges).
-     * @return false when no pass scope is open.
-     */
-    bool setPassLayers(std::uint32_t first, std::uint32_t count);
 
     /** @brief Closes the open pass scope, dropping attributes no drawing call consumed.
      *
@@ -442,8 +430,6 @@ class VN_GRAPHICS_API FrameRecorder
     PassId      pass_id_{0};                     ///< Identity of the open scope's pass.
     int         order_{0};                       ///< Order announced for the open scope.
     const void* pass_target_{nullptr};           ///< Target announced for the open scope.
-    std::uint32_t pass_first_layer_{0};          ///< First array layer the scope writes.
-    std::uint32_t pass_layer_count_{1};          ///< Array layers the scope writes.
     bool        pass_has_clear_{false};          ///< Whether the scope announced a clear.
     ClearValues pass_clear_{};                   ///< The announced clear.
     vn::graphics::PassRenderState pass_state_{};  ///< The scope's own state (depth policy + rasterisation override).

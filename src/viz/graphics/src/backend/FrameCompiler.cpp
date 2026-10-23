@@ -41,7 +41,6 @@ CompiledShape copiedShape(FrameArena& arena, const TargetShape& shape)
         arena.copy(std::span<const std::uint32_t>{ shape.device_color_formats });
     copy.device_depth_format = shape.device_depth_format;
     copy.samples             = shape.samples;
-    copy.layers              = shape.layers;
     copy.subpass             = shape.subpass;
     return copy;
 }
@@ -55,7 +54,7 @@ bool statedShapeAgrees(const CompiledShape& stated, const TargetShape& actual) n
     if (!std::equal(stated.color_formats.begin(), stated.color_formats.end(), actual.color_formats.begin(),
                     actual.color_formats.end()) ||
         stated.depth_format != actual.depth_format || stated.samples != actual.samples ||
-        stated.layers != actual.layers || stated.subpass != actual.subpass)
+        stated.subpass != actual.subpass)
     {
         return false;
     }
@@ -138,17 +137,6 @@ const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, c
             // schedule with the passes that have no target at all.
             continue;
         }
-
-        // A layer range the target cannot serve is a declaration this backend cannot honour. This release
-        // writes ONE layer per pass (L2a); a wider range is the multiview step (L2b) and is not silently
-        // drawn into layer 0. The engine reports the declaration once (see RenderEngine::collectPlanProblems).
-        const std::uint32_t target_layers = found->wanted.shape.layers != 0U ? found->wanted.shape.layers : 1U;
-        if (pass.layer_count == 0U || pass.layer_count > 1U ||
-            pass.first_layer >= target_layers ||
-            pass.first_layer + pass.layer_count > target_layers)
-        {
-            continue;
-        }
         servable_[index]     = 1;
         target_index_[index] = slot;
     }
@@ -163,22 +151,7 @@ const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, c
         servable_count += (servable != 0) ? 1U : 0U;
     }
     const std::span<CompiledPass> compiled = arena_.makeArray<CompiledPass>(servable_count);
-
-    // THE BOOTSTRAP FACT IS PER LAYER, not per target: two passes writing two layers of one freshly built
-    // array target are both first writers of THEIR layer, and the second one must clear its own layer
-    // instead of loading an image nothing has written yet (an UNDEFINED layer). The flat table keeps the
-    // steady frame allocation-free: offsets are rebuilt into a reused vector.
-    layer_offset_.assign(targets_.size(), 0);
-    std::uint32_t total_layers = 0;
-    for (std::size_t index = 0; index < targets_.size(); ++index)
-    {
-        layer_offset_[index] = total_layers;
-        const std::uint32_t layers = targets_[index].compiled.shape.layers != 0U
-                                         ? targets_[index].compiled.shape.layers
-                                         : 1U;
-        total_layers += layers;
-    }
-    bootstrapped_layers_.assign(total_layers, 0);
+    bootstrapped_.assign(targets_.size(), 0);
 
     std::uint32_t schedule_index = 0;
     for (std::size_t node = 0; node < pass_count; ++node)
@@ -198,8 +171,6 @@ const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, c
         pass.state           = source.state;
         pass.clear           = source.clear;
         pass.viewport        = vn::graphics::Viewport{ 0, 0, targets_[slot].width, targets_[slot].height };
-        pass.first_layer     = source.first_layer;
-        pass.layer_count     = source.layer_count;
         pass.depth_preserved = target.depth.preserve;
 
         // The other two facts a pipeline's identity needs come from the PASS' side of the plan: how many
@@ -210,21 +181,13 @@ const CompiledFrame& FrameCompiler::compile(const CollectedFrame& description, c
         pass.color_attachments = targets_[slot].color_attachments;
         pass.depth_sampleable  = target.depth.sampleable;
 
-        // The bootstrap pass is the FIRST writer of the layer it writes, into attachments that were just
-        // built or invalidated: an UNDEFINED image cannot be loaded, so that pass must clear (see ClearPlan's
-        // rules 1 and 3). Later passes into the same layer keep what it wrote, and a pass writing a different
-        // layer of the same fresh target is a first writer too.
-        if (writes(source) && freshAttachments(target.decision))
+        // The bootstrap pass is the FIRST writer into attachments that were just built or invalidated: an
+        // UNDEFINED image cannot be loaded, so that pass must clear (see ClearPlan's rules 1 and 3). Later
+        // passes into the same target keep what it wrote.
+        if (writes(source) && bootstrapped_[slot] == 0 && freshAttachments(target.decision))
         {
-            for (std::uint32_t layer = 0; layer < source.layer_count; ++layer)
-            {
-                const std::uint32_t flat = layer_offset_[slot] + source.first_layer + layer;
-                if (flat < bootstrapped_layers_.size() && bootstrapped_layers_[flat] == 0)
-                {
-                    pass.bootstrap             = true;
-                    bootstrapped_layers_[flat] = 1;
-                }
-            }
+            pass.bootstrap    = true;
+            bootstrapped_[slot] = 1;
         }
 
         pass.draws = resolveDraws(source, pass.viewport, description.default_program);
@@ -265,7 +228,6 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
             continue;
         }
         out.target = source.target;
-        out.layer  = source.layer;
         if (out.target == nullptr)
         {
             continue;  // nothing produced it this frame: the engine reports that, and there is nothing to bind
@@ -288,22 +250,8 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
         }
         const std::uint32_t offered_colors =
             static_cast<std::uint32_t>(found->wanted.shape.color_formats.size());
-        const std::uint32_t target_layers =
-            found->wanted.shape.layers != 0U ? found->wanted.shape.layers : 1U;
         if (source.kind == vn::graphics::ImageSource::Kind::ProducedImage)
         {
-            if (source.layer < 0 || static_cast<std::uint32_t>(source.layer) >= target_layers)
-            {
-                // A layer is part of the image's address: an index this target does not have is reported by the
-                // consumer (the one that knows what the target offers), and nothing is bound rather than
-                // sampling another layer.
-                report(vn::graphics::DiagnosticCategory::ContentSkipped,
-                       "frame " + std::to_string(token.frame) + ": pass " + std::to_string(pass.pass) +
-                           " declares array layer " + std::to_string(source.layer) + " of a sampled target that has " +
-                           std::to_string(target_layers) +
-                           " layer(s): nothing is bound for it this frame");
-                continue;
-            }
             // A SINGLE image: the attachment is the identity, so the offer is that one view (or the depth),
             // never the whole target. The count follows the image rather than the target's attachment count -
             // that is what a sampled-input set binds, and what a pipeline's input count is compiled for.
@@ -339,17 +287,7 @@ std::span<const CompiledInput> FrameCompiler::resolveInputs(const CollectedPass&
         }
 
         // A whole-target declaration keeps its coarse meaning: every colour attachment, plus the depth while
-        // that one is sampleable (see ImageSource::ProducedTarget). A LAYERED target has no whole-target
-        // meaning in this release: sampling every layer at once is the multiview/array-sampler step (L2b), so
-        // the input binds nothing and says why rather than binding a `sampler2D` to an array view.
-        if (target_layers > 1U)
-        {
-            report(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   "frame " + std::to_string(token.frame) + ": pass " + std::to_string(pass.pass) +
-                       " declares a whole layered target as an input; a layered target is sampled one layer at a "
-                       "time (declare an ImageRef bound to that layer): nothing is bound for it this frame");
-            continue;
-        }
+        // that one is sampleable (see ImageSource::ProducedTarget).
         out.color_attachments = offered_colors;
         out.depth_sampleable  = depthPlan(found->depth).sampleable;
         out.shadow            = found->shadow;

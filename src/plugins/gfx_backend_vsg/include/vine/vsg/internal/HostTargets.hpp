@@ -64,8 +64,6 @@ class VN_VSG_API HostTargets
         bool        depth_promotion{true};      ///< The host asked for a sampleable depth (own depth only).
         std::uint32_t samples{1};               ///< Samples per pixel the host asked for (see
                                                 ///< RenderTarget::setSamples); the depth follows the colour.
-        std::uint32_t layer_count{1};           ///< Array layers the host asked for (see RenderTarget::setLayerCount);
-                                                ///< the depth follows the colour.
         const void* depth_source{nullptr};      ///< The lender, when the depth is borrowed (its identity).
         const void* shadow_light{nullptr};      ///< The light this target is the shadow map of, when stated.
         bool        has_view_projection{false}; ///< Whether the producer stated how to read the map.
@@ -98,9 +96,6 @@ class VN_VSG_API HostTargets
         /// The description asks for something this backend cannot build: a sample count above the device's
         /// limit, or a multisampled target that would also have to share/promote/read back its depth.
         SamplesUnsupported,
-        /// The description asks for an array target this release cannot build: layers combined with
-        /// multisampling, or layers with a borrowed depth (a layered depth borrow is a later step).
-        LayersUnsupported,
         BuildFailed,        ///< The description is complete but the objects could not be created.
     };
 

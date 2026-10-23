@@ -281,16 +281,14 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
                 {
                     if (input.depth_sampleable)
                     {
-                        // A layer-named depth input reads THAT layer's view (a 2D view on a layered target);
-                        // a plain 2D target answers layer 0 with its only view.
-                        offer.depth = entry->target->depthView(static_cast<std::uint32_t>(input.layer));
+                        offer.depth = entry->target->depthView();
                     }
                 }
                 else if (input.attachment >= 0 &&
                          static_cast<std::uint32_t>(input.attachment) < attachments)
                 {
-                    views.push_back(entry->target->colorView(static_cast<std::uint32_t>(input.attachment),
-                                                             static_cast<std::uint32_t>(input.layer)));
+                    views.push_back(
+                        entry->target->colorView(static_cast<std::uint32_t>(input.attachment)));
                     offer.colors = views;
                 }
             }
@@ -1269,15 +1267,12 @@ bool VsgBackend::adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target,
     else if (ensured.state != HostTargets::State::NotBuilt && picture_depends &&
              ensured.entry->report.shouldReport())
     {
-        const UnbuildableReason reason =
-            ensured.state == HostTargets::State::DepthSourceMissing
-                ? UnbuildableReason::DepthSourceMissing
-                : (ensured.state == HostTargets::State::SamplesUnsupported
-                       ? UnbuildableReason::SamplesUnsupported
-                       : (ensured.state == HostTargets::State::LayersUnsupported
-                              ? UnbuildableReason::LayersUnsupported
-                              : UnbuildableReason::BuildFailed));
-        reportUnbuildableTarget(target, reason, d->targets.maxSamples());
+        reportUnbuildableTarget(target, ensured.state == HostTargets::State::DepthSourceMissing
+                                            ? UnbuildableReason::DepthSourceMissing
+                                            : (ensured.state == HostTargets::State::SamplesUnsupported
+                                                   ? UnbuildableReason::SamplesUnsupported
+                                                   : UnbuildableReason::BuildFailed),
+                                d->targets.maxSamples());
     }
 
     if (ensured.entry->target != nullptr)
@@ -1311,13 +1306,6 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
               "single-sample picture, and a framebuffer's attachments share one sample count - announce the "
               "borrower at one sample, or let it own its depth";
     }
-    else if (reason == UnbuildableReason::LayersUnsupported)
-    {
-        message = nameOf(target) + " asks for " + std::to_string(target->layerCount()) +
-                  " array layers, which this release builds only for a single-sample target with its own "
-                  "depth: the passes that draw into it are skipped (layers with multisampling or a borrowed "
-                  "depth are later steps)";
-    }
     else if (reason == UnbuildableReason::DepthSourceMissing)
     {
         // The lender is read from the target itself (shareDepth keeps it alive), so this works whether or
@@ -1346,9 +1334,6 @@ void VsgBackend::openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass)
     if (d->recorder.inFrame())
     {
         (void)d->recorder.beginPass(id);
-        // The layer range is part of the declaration the recorder is collecting, like the order and the
-        // target: the plan needs it to pick the per-layer framebuffer and to bootstrap the right layer.
-        (void)d->recorder.setPassLayers(pass->firstLayer(), pass->layerCount());
     }
 }
 
@@ -1576,12 +1561,6 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
 bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
                                  std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why)
 {
-    return readColorBuffer(target, attachment, 0, outPixels, why);
-}
-
-bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int attachment, int layer,
-                                 std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why)
-{
     // A refusal says WHY on both channels: the machine answer in @p why and one sentence on the diagnostics
     // route - once per episode, because this call is synchronous and a caller polling a target that is not
     // ready yet must not be flooded. A target this backend holds keeps its own episode (its entry's); the
@@ -1619,10 +1598,6 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int a
     {
         return refuse(HostReadbackRefusal::UnknownAttachment, entry->readback_report);
     }
-    if (layer < 0)
-    {
-        return refuse(HostReadbackRefusal::UnknownLayer, entry->readback_report);
-    }
     const ::vsg::ref_ptr<::vsg::Device> device = d->device;
     if (device == nullptr)
     {
@@ -1633,8 +1608,7 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int a
     // does not have, a format this backend does not pack, a target no frame has drawn into yet): a request
     // that has no answer costs nothing - not even the wait below.
     const HostReadbackRefusal pre =
-        classifyReadback(*entry->target, core::ReadbackKind::Color, static_cast<std::uint32_t>(attachment),
-                         static_cast<std::uint32_t>(layer));
+        classifyReadback(*entry->target, core::ReadbackKind::Color, static_cast<std::uint32_t>(attachment));
     if (pre != HostReadbackRefusal::None)
     {
         return refuse(pre, entry->readback_report);
@@ -1649,9 +1623,8 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int a
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
     }
 
-    const HostReadbackRefusal refusal =
-        readColorAttachment(*entry->target, static_cast<std::uint32_t>(attachment),
-                            static_cast<std::uint32_t>(layer), device.get(), outPixels);
+    const HostReadbackRefusal refusal = readColorAttachment(*entry->target, static_cast<std::uint32_t>(attachment),
+                                                            device.get(), outPixels);
     if (refusal != HostReadbackRefusal::None)
     {
         return refuse(refusal, entry->readback_report);
@@ -1666,12 +1639,6 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int a
 
 bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths,
                                  vn::graphics::ReadbackResult* why)
-{
-    return readDepthBuffer(target, 0, outDepths, why);
-}
-
-bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, int layer,
-                                 std::vector<float>& outDepths, vn::graphics::ReadbackResult* why)
 {
     const auto refuse = [&](HostReadbackRefusal refusal, vn::graphics::ReportOnce& episode) {
         if (why != nullptr)
@@ -1706,18 +1673,13 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, int l
         // Unsupported - the image belongs to the lender, and this target never promised it.
         return refuse(HostReadbackRefusal::BorrowedDepth, entry->readback_report);
     }
-    if (layer < 0)
-    {
-        return refuse(HostReadbackRefusal::UnknownLayer, entry->readback_report);
-    }
     const ::vsg::ref_ptr<::vsg::Device> device = d->device;
     if (device == nullptr)
     {
         return refuse(HostReadbackRefusal::NoDevice, entry->readback_report);
     }
 
-    const HostReadbackRefusal pre =
-        classifyReadback(*entry->target, core::ReadbackKind::Depth, 0U, static_cast<std::uint32_t>(layer));
+    const HostReadbackRefusal pre = classifyReadback(*entry->target, core::ReadbackKind::Depth, 0U);
     if (pre != HostReadbackRefusal::None)
     {
         return refuse(pre, entry->readback_report);
@@ -1730,8 +1692,7 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, int l
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
     }
 
-    const HostReadbackRefusal refusal =
-        readDepthAttachment(*entry->target, static_cast<std::uint32_t>(layer), device.get(), outDepths);
+    const HostReadbackRefusal refusal = readDepthAttachment(*entry->target, device.get(), outDepths);
     if (refusal != HostReadbackRefusal::None)
     {
         return refuse(refusal, entry->readback_report);

@@ -133,7 +133,6 @@ struct VN_GRAPHICS_API ImageSource
     Kind                         kind{ Kind::None };      ///< Which kind this is.
     raw_ptr<RenderTarget>        target{ nullptr };       ///< Produced target (null for imported/none).
     int                          attachment{ 0 };         ///< Colour index for ProducedImage (-1 for a whole target).
-    int                          layer{ 0 };              ///< Array layer for ProducedImage (0 for a plain 2D target).
     bool                         depth{ false };          ///< Whether the produced image is the target's depth.
     raw_ptr<const Texture>       texture{ nullptr };      ///< Imported texture (null for produced/none).
     std::uint64_t                revision{ 0 };           ///< Texture revision the upload is built from.
@@ -145,11 +144,10 @@ struct VN_GRAPHICS_API ImageSource
      * @param target     Target the image belongs to.
      * @param attachment Colour attachment index (see ImageRef::attachment).
      * @param depth      Whether the image is the target's depth attachment.
-     * @param layer      Array layer (0 for a plain 2D target; see ImageRef::layer).
      * @return The resolved source.
      */
     [[nodiscard]] static ImageSource producedImage(raw_ptr<RenderTarget> target, int attachment,
-                                                   bool depth, int layer = 0) noexcept
+                                                   bool depth) noexcept
     {
         if (target == nullptr) {
             return {};   // a kind without its target would make isProduced() a lie
@@ -158,7 +156,6 @@ struct VN_GRAPHICS_API ImageSource
         source.kind       = Kind::ProducedImage;
         source.target     = target;
         source.attachment = attachment;
-        source.layer      = layer;
         source.depth      = depth;
         return source;
     }

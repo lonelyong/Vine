@@ -161,16 +161,6 @@ struct VN_GRAPHICS_API PassDesc
     /// A sub-rectangle of the target to draw into (unset = the whole of it).
     std::optional<Viewport> viewport;
 
-    /// The target array layer range this pass writes (see RenderTarget::setLayerCount).
-    ///
-    /// A target with `layerCount > 1` is a 2D array; `{0, 1}` (the default) is the plain 2D case. This
-    /// release writes ONE layer per pass (L2a) - N layers are N passes, which is what point-light cube
-    /// shadows and cascades need. A range wider than one layer is the multiview step (L2b); the engine
-    /// refuses it rather than drawing layer 0 for every layer. Depth follows the target's own layers.
-    std::uint32_t first_layer{0};
-    /// Layers written by this pass (1 in this release; see first_layer).
-    std::uint32_t layer_count{1};
-
     /// The full-screen program a Screen pass draws through (null draws nothing; reported once).
     intrusive_ptr<ShaderProgram> program{ nullptr };
     /// The program override a Scene pass draws ALL of its geometry with (the view-mode path, see M1).

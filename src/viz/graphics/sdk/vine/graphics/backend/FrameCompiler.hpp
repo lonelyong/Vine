@@ -130,7 +130,6 @@ struct CompiledInput
     std::optional<vn::graphics::Sampler> sampler{};  ///< Imported texture's declared sampler state; absent = the
                                                      ///< backend's input sampler. Always absent for produced inputs.
     int           attachment{-1};         ///< Colour attachment a ProducedImage names; -1 = whole target / imported.
-    int           layer{0};               ///< Array layer a ProducedImage names (0 for a plain 2D target).
     bool          depth{false};           ///< Whether a ProducedImage names the target's depth attachment.
     std::uint32_t color_attachments{0};   ///< Colour textures it offers (0 = nothing to bind for it).
     /// Whether the input's DEPTH is sampleable and therefore bound too (the engine's contract for a
@@ -177,10 +176,6 @@ struct CompiledPass
     vn::graphics::PassRenderState state{};  ///< The pass' own state (depth policy + rasterisation override).
     ClearValues   clear{};                    ///< The effective clear policy (announced, or the default).
     bool          bootstrap{false};           ///< First writer of freshly built attachments: it must clear.
-    /// The layer range this pass writes, in the target's array layers. This release accepts exactly one
-    /// layer per pass; a range wider than one is the multiview step (see .ai/design/graphics-layers.md).
-    std::uint32_t first_layer{0};             ///< First array layer the pass writes.
-    std::uint32_t layer_count{1};             ///< Layers the pass writes (1 in this release).
     bool          depth_preserved{false};     ///< A later pass reads the depth this one writes: never clear it.
     std::uint32_t color_attachments{0};       ///< Colour attachments of the pass' target (part of a pipeline's
                                               ///< identity).
@@ -227,7 +222,6 @@ struct CompiledShape
     std::uint32_t                  device_depth_format{0};   ///< The device's depth format; 0 = no depth, or never
                                                              ///< learned.
     std::uint32_t                  samples{1};               ///< Sample count.
-    std::uint32_t                  layers{1};                ///< Array layers (1 = a plain 2D target).
     std::uint32_t                  subpass{0};               ///< Subpass the pipeline targets.
 };
 
@@ -363,10 +357,7 @@ class VN_GRAPHICS_API FrameCompiler
     // arena-backed, these are the tables it is built from).
     std::vector<std::uint8_t> servable_;      ///< Per pass: whether it can be served this frame.
     std::vector<std::uint32_t> target_index_; ///< Per pass: its TargetSlot, or kNoTarget.
-    /// Per slot: the offset of its first layer in the flat bootstrap table below.
-    std::vector<std::uint32_t> layer_offset_;
-    /// Per TARGET LAYER (slot order, then array layer): whether a writer has run for it.
-    std::vector<std::uint8_t>  bootstrapped_layers_;
+    std::vector<std::uint8_t>  bootstrapped_; ///< Per slot: whether its first writer has run.
     std::vector<TargetSlot>    targets_;      ///< The target table of the frame being compiled.
 };
 

@@ -548,29 +548,25 @@ RenderEngine::OutputIdentity RenderEngine::OutputIdentity::of(const ImageRef& im
     OutputIdentity identity;
     identity.target     = image.target();
     identity.attachment = image.attachment();
-    identity.layer      = image.layer();
     identity.depth      = (image.kind() == ImageRef::Kind::Depth);
     // Only while there is no address: the object is all the identity that exists yet.
     identity.declared = (identity.target == nullptr) ? &image : nullptr;
     return identity;
 }
 
-RenderEngine::OutputIdentity RenderEngine::OutputIdentity::colorOf(const RenderTarget& target, int attachment,
-                                                                 int layer) noexcept
+RenderEngine::OutputIdentity RenderEngine::OutputIdentity::colorOf(const RenderTarget& target, int attachment) noexcept
 {
     OutputIdentity identity;
     identity.target     = &target;
     identity.attachment = attachment;
-    identity.layer      = layer;
     return identity;
 }
 
-RenderEngine::OutputIdentity RenderEngine::OutputIdentity::depthOf(const RenderTarget& target, int layer) noexcept
+RenderEngine::OutputIdentity RenderEngine::OutputIdentity::depthOf(const RenderTarget& target) noexcept
 {
     OutputIdentity identity;
     identity.target     = &target;
     identity.attachment = 0;   // a depth attachment has no colour index; `depth` is what tells them apart
-    identity.layer      = layer;
     identity.depth      = true;
     return identity;
 }
@@ -597,10 +593,7 @@ bool RenderEngine::OutputIdentity::operator<(const OutputIdentity& other) const 
     if (depth != other.depth) {
         return depth < other.depth;
     }
-    if (attachment != other.attachment) {
-        return attachment < other.attachment;
-    }
-    return layer < other.layer;
+    return attachment < other.attachment;
 }
 
 
@@ -708,8 +701,7 @@ void RenderEngine::collectPlanProblems()
 
         // Drawing into a target fills it: every attachment it has holds this pass' content
         // afterwards. This is the physical fact the input rules below are answered from.
-        raw_ptr<RenderTarget> drawn_into = pass->renderTarget();
-        if (drawn_into != nullptr) {
+        if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
             noteFilled(Declaration{ nullptr, drawn_into, pass, index });
         }
 
@@ -723,25 +715,6 @@ void RenderEngine::collectPlanProblems()
                                 String(u8"pass '") + reportedPassName(pass) +
                                     String(u8"' has a layer mask of 0, so no layer of its content is selected —"
                                            u8" state the layers it draws (RenderPass::setLayerMask / Node::setLayers)"));
-        }
-
-        // The target's array-layer range this pass writes. L2a writes exactly one layer per pass; a wider
-        // range is the multiview step, and an out-of-range layer would draw into layer 0 of an attachment
-        // that has no such layer - a picture that silently is not the one declared. Reported once per
-        // episode (reportPlanProblems compares this list with the previous compile's).
-        const int target_layers =
-            drawn_into != nullptr && drawn_into->layerCount() > 0 ? drawn_into->layerCount() : 1;
-        if (pass->layerCount() == 0 || pass->layerCount() > 1 ||
-            pass->firstLayer() >= static_cast<std::uint32_t>(target_layers) ||
-            pass->firstLayer() + pass->layerCount() > static_cast<std::uint32_t>(target_layers)) {
-            reportEngineProblem(
-                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-                String(u8"pass '") + reportedPassName(pass) + String(u8"' writes array layers [") +
-                    String::fromUtf8(std::to_string(pass->firstLayer())) + String(u8", ") +
-                    String::fromUtf8(std::to_string(pass->firstLayer() + pass->layerCount())) +
-                    String(u8") of '") + drawn_into_name(pass) + String(u8"', which has ") +
-                    String::fromUtf8(std::to_string(target_layers)) +
-                    String(u8" layer(s): this release writes one layer per pass, so the pass draws nothing"));
         }
 
         if (!pass->isEnabled()) {
@@ -769,22 +742,15 @@ void RenderEngine::collectPlanProblems()
             }
 
             std::vector<OutputIdentity>& promised_images = wiring_promised_images_;
-            const int promised_layers = promised->layerCount() > 0 ? promised->layerCount() : 1;
             promised_images.clear();
-            promised_images.reserve(
-                (static_cast<std::size_t>(promised->colorCount()) + 1U) * static_cast<std::size_t>(promised_layers));
+            promised_images.reserve(static_cast<std::size_t>(promised->colorCount()) + 1);
             for (int attachment = 0; attachment < promised->colorCount(); ++attachment) {
-                for (int layer = 0; layer < promised_layers; ++layer) {
-                    promised_images.push_back(OutputIdentity::colorOf(*promised, attachment, layer));
-                }
+                promised_images.push_back(OutputIdentity::colorOf(*promised, attachment));
             }
             if (promised->hasDepth()) {
                 // The depth of a promised target is part of the promise, and it is a DIFFERENT
-                // image from colour attachment 0 (which is why the identity carries the kind). A layered
-                // target has one depth image PER layer, so each is claimed on its own.
-                for (int layer = 0; layer < promised_layers; ++layer) {
-                    promised_images.push_back(OutputIdentity::depthOf(*promised, layer));
-                }
+                // image from colour attachment 0 (which is why the identity carries the kind).
+                promised_images.push_back(OutputIdentity::depthOf(*promised));
             }
 
             for (const auto& identity : promised_images) {

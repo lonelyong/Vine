@@ -182,28 +182,6 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      */
     void setSamples(std::uint32_t samples);
 
-    /** @brief Gets how many array layers this target's images have (1 = a plain 2D target).
-     *
-     * @return The layer count (always at least 1).
-     */
-    int layerCount() const;
-
-    /** @brief Sets how many array layers this target's images have.
-     *
-     * @details
-     * - A property of the TARGET, like the sample count: the images are what carry the layers, and a pass
-     *   states WHICH layer it writes with `PassDesc::first_layer` / `PassDesc::layer_count`. One target, one
-     *   layer count - a depth attachment follows its colour attachments, so the two cannot disagree.
-     * - The default is 1, which is the historical 2D target; a count below 1 means 1. A window target is
-     *   single-layer whatever this says (the window's image set is the surface's).
-     * - A pass writes ONE layer in this release (`layer_count == 1`); writing several layers in one pass is
-     *   the later multiview step (see .ai/design/graphics-layers.md L2a/L2b), and the engine refuses it
-     *   rather than drawing layer 0 for all of them.
-     *
-     * @param count Array layers (1 = a plain 2D target).
-     */
-    void setLayerCount(int count);
-
     /** @brief Returns whether a color attachment is configured. */
     bool hasColor() const;
 
@@ -313,10 +291,9 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     Mat4d producer_view_projection_;
     bool  producer_view_projection_stated_ = false;
     intrusive_ptr<const Light> shadow_of_;   // whose shadow map this is, when it is one (held: see setShadowOf)
-    int           width_       = 1;
-    int           height_      = 1;
-    std::uint32_t samples_     = 1;  // samples per pixel (see setSamples; 1 = none)
-    int           layer_count_ = 1;  // array layers (see setLayerCount; 1 = a plain 2D target)
+    int           width_   = 1;
+    int           height_  = 1;
+    std::uint32_t samples_ = 1;  // samples per pixel (see setSamples; 1 = none)
 };
 
 using RenderTargetPtr = intrusive_ptr<RenderTarget>;

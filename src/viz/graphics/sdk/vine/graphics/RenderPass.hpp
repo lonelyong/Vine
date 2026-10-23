@@ -128,38 +128,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
     [[nodiscard]] raw_ptr<RenderTarget> renderTarget() const noexcept { return desc_.writes.get(); }
 
     /**
-     * @brief Gets the first target array layer this pass writes.
-     *
-     * @return The first layer (0 when the target is a plain 2D image).
-     */
-    [[nodiscard]] std::uint32_t firstLayer() const noexcept { return desc_.first_layer; }
-
-    /**
-     * @brief Gets how many target array layers this pass writes.
-     *
-     * @return The layer count (1 in this release; see PassDesc::layer_count).
-     */
-    [[nodiscard]] std::uint32_t layerCount() const noexcept { return desc_.layer_count; }
-
-    /**
-     * @brief Sets the first target array layer this pass writes.
-     *
-     * @param layer First array layer (see RenderTarget::setLayerCount).
-     */
-    void setFirstLayer(std::uint32_t layer) { desc_.first_layer = layer; }
-
-    /**
-     * @brief Sets how many target array layers this pass writes.
-     *
-     * @details
-     * - 0 means 1, like the other counts in this API; a value above 1 is the multiview step (L2b) and is
-     *   refused by the engine in this release rather than silently drawing one layer.
-     *
-     * @param count Layers written.
-     */
-    void setLayerCount(std::uint32_t count) { desc_.layer_count = count != 0U ? count : 1U; }
-
-    /**
      * @brief Sets the target this pass draws into.
      *
      * @details

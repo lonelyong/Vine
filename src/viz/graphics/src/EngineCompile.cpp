@@ -444,8 +444,7 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
                 raw_ptr<RenderTarget> target = resolveDeclaredImage(pass, *image);
                 out.push_back(target != nullptr
                                   ? ImageSource::producedImage(target, image->attachment(),
-                                                               image->kind() == ImageRef::Kind::Depth,
-                                                               image->layer())
+                                                               image->kind() == ImageRef::Kind::Depth)
                                   : ImageSource{});
             }
             else if (raw_ptr<Texture> texture = input.texture(); texture != nullptr) {

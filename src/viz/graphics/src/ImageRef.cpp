@@ -16,11 +16,10 @@ ImageRef::Kind ImageRef::kind() const noexcept
     return kind_;
 }
 
-void ImageRef::bind(intrusive_ptr<RenderTarget> target, int attachment, int layer)
+void ImageRef::bind(intrusive_ptr<RenderTarget> target, int attachment)
 {
-    target_     = std::move(target);
+    target_     = target;
     attachment_ = (target_ != nullptr) ? attachment : 0;
-    layer_      = (target_ != nullptr) ? layer : 0;
 }
 
 raw_ptr<RenderTarget> ImageRef::target() const noexcept
@@ -31,11 +30,6 @@ raw_ptr<RenderTarget> ImageRef::target() const noexcept
 int ImageRef::attachment() const noexcept
 {
     return attachment_;
-}
-
-int ImageRef::layer() const noexcept
-{
-    return layer_;
 }
 
 bool ImageRef::isBound() const noexcept

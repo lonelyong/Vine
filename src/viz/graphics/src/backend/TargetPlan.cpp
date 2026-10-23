@@ -7,7 +7,7 @@ bool TargetShape::operator==(const TargetShape& other) const noexcept
     return color_formats == other.color_formats && depth_format == other.depth_format &&
            device_color_formats == other.device_color_formats &&
            device_depth_format == other.device_depth_format && samples == other.samples &&
-           layers == other.layers && subpass == other.subpass;
+           subpass == other.subpass;
 }
 
 RenderPassCompatibility TargetShape::compatibility() const noexcept

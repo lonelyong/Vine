@@ -345,35 +345,6 @@ class VN_GRAPHICS_API RenderDevice
         return false;
     }
 
-    /** @brief Reads back ONE array layer of a colour attachment (see RenderTarget::setLayerCount).
-     *
-     * @details
-     * - The layer is part of the image's address: `layer` is in [0, target->layerCount()), and 0 is the
-     *   whole image of a plain 2D target.
-     * - The default implementation serves layer 0 by calling the overload above, and reports any other layer
-     *   as Unsupported: a device that can read pixels at all still has to say whether it can read a layer.
-     * - A device that implements layered readback overrides this one; the layer-0 overload above should then
-     *   forward here so both entry points answer the same way.
-     *
-     * @param target     Off-screen target whose colour attachment to read.
-     * @param attachment Colour attachment index in [0, target->colorCount()).
-     * @param layer      Array layer in [0, target->layerCount()).
-     * @param outPixels  Receives the packed RGBA8 pixels of that layer on success.
-     * @param why        Receives why the read did not happen (Ok when it did), or null to ignore.
-     * @return true when the pixels were read; false otherwise.
-     */
-    virtual bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment, int layer,
-                                 std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
-    {
-        if (layer != 0) {
-            if (why != nullptr) {
-                *why = ReadbackResult::Unsupported;
-            }
-            return false;
-        }
-        return readColorBuffer(target, attachment, outPixels, why);
-    }
-
     /** @brief Reads back the depth attachment of an off-screen render target.
      *
      * @details
@@ -400,31 +371,6 @@ class VN_GRAPHICS_API RenderDevice
             *why = ReadbackResult::Unsupported;
         }
         return false;
-    }
-
-    /** @brief Reads back ONE array layer of the depth attachment (see RenderTarget::setLayerCount).
-     *
-     * @details
-     * - The layer rules are readColorBuffer's: 0 is the whole image of a plain 2D target, and the default
-     *   implementation forwards layer 0 to the overload above and refuses the rest.
-     * - A borrower (RenderTarget::shareDepth) still reads through the SOURCE target.
-     *
-     * @param target    Off-screen target whose depth buffer to read.
-     * @param layer     Array layer in [0, target->layerCount()).
-     * @param outDepths Receives the depth values of that layer on success.
-     * @param why       Receives why the read did not happen (Ok when it did), or null to ignore.
-     * @return true when the depth values were read; false otherwise.
-     */
-    virtual bool readDepthBuffer(const RenderTarget* target, int layer, std::vector<float>& outDepths,
-                                ReadbackResult* why = nullptr)
-    {
-        if (layer != 0) {
-            if (why != nullptr) {
-                *why = ReadbackResult::Unsupported;
-            }
-            return false;
-        }
-        return readDepthBuffer(target, outDepths, why);
     }
 
     /** @brief Gets what this device can do (see Capabilities).

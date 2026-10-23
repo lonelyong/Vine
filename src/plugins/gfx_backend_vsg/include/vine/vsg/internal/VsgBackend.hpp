@@ -237,16 +237,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
                          std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why = nullptr) override;
 
-    /** @brief Reads ONE array layer of a colour attachment back (see RenderTarget::setLayerCount). */
-    bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment, int layer,
-                         std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why = nullptr) override;
-
     /** @brief Reads a depth attachment back as normalised values (a borrowed depth is the source's to read). */
     bool readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths,
-                         vn::graphics::ReadbackResult* why = nullptr) override;
-
-    /** @brief Reads ONE array layer of the depth attachment back (see RenderTarget::setLayerCount). */
-    bool readDepthBuffer(const vn::graphics::RenderTarget* target, int layer, std::vector<float>& outDepths,
                          vn::graphics::ReadbackResult* why = nullptr) override;
 
   public:
@@ -425,7 +417,6 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
         BuildFailed,        ///< The objects could not be created.
         DepthSourceMissing, ///< The depth is borrowed from a target this backend does not hold.
         SamplesUnsupported, ///< The sample count is above the device's, or a multisampled target borrows a depth.
-        LayersUnsupported,  ///< Layered target combined with multisampling or a borrowed depth.
     };
 
     void reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, UnbuildableReason reason,

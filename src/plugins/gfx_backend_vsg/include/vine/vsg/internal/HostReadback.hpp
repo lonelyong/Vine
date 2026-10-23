@@ -47,7 +47,6 @@ enum class HostReadbackRefusal : std::uint8_t
     NotBuilt,          ///< It is held but has no built attachments yet.
     NotRecorded,       ///< No frame has drawn into it (yet): there is nothing to read back.
     UnknownAttachment, ///< The target has no such attachment.
-    UnknownLayer,      ///< The target has no such array layer (see RenderTarget::layerCount).
     UnreadableFormat,  ///< This backend cannot read that attachment's format (see core::colorReadbackOf).
     BorrowedDepth,     ///< The depth is the LENDER's image: the source target is the one to read (SDK's rule).
     NoDevice,          ///< There is no device to copy with or whose work produced the values.
@@ -63,12 +62,10 @@ enum class HostReadbackRefusal : std::uint8_t
  * @param target     The target to classify against (its objects must be built).
  * @param kind       Which attachment kind.
  * @param attachment Colour attachment index (ignored for Depth).
- * @param layer      Array layer to read (0 for a plain 2D target).
  * @return `None` when a readback can be served, the refusal otherwise.
  */
 [[nodiscard]] HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind kind,
-                                                   std::uint32_t attachment,
-                                                   std::uint32_t layer = 0) noexcept;
+                                                   std::uint32_t attachment) noexcept;
 
 /** @brief Reads colour attachment @p attachment of @p target back as tightly packed RGBA8 rows.
  *
@@ -76,26 +73,23 @@ enum class HostReadbackRefusal : std::uint8_t
  *
  * @param target     The target to read (its objects must be built and something must have been recorded).
  * @param attachment Colour attachment index, in [0, colorAttachmentCount()).
- * @param layer      Array layer to read (0 for a plain 2D target).
  * @param device     Device a missing copy is submitted on, or null when only a frame's own copy can serve.
- * @param outPixels  Receives `width * height * 4` bytes of that layer; untouched otherwise.
+ * @param outPixels  Receives `width * height * 4` bytes on success; untouched otherwise.
  * @return `None` when the pixels were read, the refusal otherwise.
  */
 [[nodiscard]] HostReadbackRefusal readColorAttachment(OffscreenTarget& target, std::uint32_t attachment,
-                                                      std::uint32_t layer, ::vsg::Device* device,
+                                                      ::vsg::Device* device,
                                                       std::vector<std::uint8_t>& outPixels);
 
 /** @brief Reads @p target's depth attachment back as normalised values in [0, 1], row-major.
  *
  * @param target    The target to read (it must own a depth attachment; a BORROWED depth is the caller's to
  *                  refuse - the map belongs to the lender, see the SDK's readDepthBuffer note).
- * @param layer     Array layer to read (0 for a plain 2D target).
  * @param device    Device a missing copy is submitted on, or null when only a frame's own copy can serve.
- * @param outDepths Receives `width * height` values of that layer; untouched otherwise.
+ * @param outDepths Receives `width * height` values on success; untouched otherwise.
  * @return `None` when the values were read, the refusal otherwise.
  */
-[[nodiscard]] HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, std::uint32_t layer,
-                                                      ::vsg::Device* device,
+[[nodiscard]] HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, ::vsg::Device* device,
                                                       std::vector<float>& outDepths);
 
 /** @brief Translates a refusal into the SDK's machine-readable result.

@@ -3,10 +3,13 @@
 > **2026-10-19 K1 改名**：本文中的 `Pipeline` / `PipelineOptions` 是当时的名字；现行 API 是
 > `RenderPipeline` / `RenderPipelineOptions`（见 `graphics-followups-2026-10-19.md` §1.1）。
 
-> **状态**：**L1 内容掩码已落地**（2026-10-12，判据与变异见 §5 实测）；**L2a 目标层已落地（2026-10-23，一个 pass 写一层）**——
-> `RenderTarget::setLayerCount` + pass 的层区间 + 后端数组视图/逐层帧缓冲 + 按层读回；**L2b（一次写多/全部层）
-> 仍是设计定稿、未落地**，命中 §6 的触发条件再做（理由见 §6 开头）。L2a 的落地记录见 §10。
+> **状态**：**L1 内容掩码已落地**（2026-10-12，判据与变异见 §5 实测）；**L2 目标层**（L2a 逐层、L2b 一次写完）
+> 仍是**设计定稿、未落地** —— **裁决（2026-10-12）：现阶段不做**，命中 §6 的触发条件再做（理由见 §6 开头）。
 > 落点清单见 §4。
+>
+> **2026-10-23 补记（历史）**：L2a 曾按 §3.2 的形状落地（数组目标 + 逐层帧缓冲 + 按层读回），
+> 同日**回撤**——没有消费者，而 N 张 2D 目标 + N 条 pass 已能实现同样画面；L2a 只多一点打包/身份，
+> 不省收集/提交，却增加公开面与组合拒绝。当前 L2a/L2b 都不做；记录见 §10。
 >
 > **复核后的修订（同日）**：① 名词统一为**层**（layer）—— 输入侧已有的是 `Texture::layerCount()` / `layer(i)`，
 > 新名词必须跟它走，`slice` 只出现在引用 Ogre-Next 上游符号的地方；② 目标侧写层用**一个区间**
@@ -234,7 +237,7 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 - **语义要等第一个消费者压**：清屏只洗"本条 pass 写的那些层"、深度层数一致、读侧带层 —— 这三条应由真实需求拍板，
   否则冻的是猜测（仓库前几片的教训：先有消费者再冻形状）。
 
-**L2a 落地判据**（已按此验收，2026-10-23；记录见 §10）：① `RenderTarget::setLayerCount(n)` + pass 的区间被后端如实建成 `2D_ARRAY`（结构用例）；
+**L2a 落地判据**（命中触发条件后照此验收）：① `RenderTarget::setLayerCount(n)` + pass 的区间被后端如实建成 `2D_ARRAY`（结构用例）；
 ② 真设备用例（`test_vsg`）：两层数组目标、两条 pass 各写一层、按层读回两张图不同且各自正确（这条同时钉住读侧）；
 ③ 层数 > 1 而 pass 的区间超出范围 ⇒ 拒绝 + 报一次（不静默画错层）；④ 深度层数与颜色不一致 ⇒ 拒绝 + 报一次；
 ⑤ 单层退化：`layerCount == 1` 时创建参数与今天逐字节相同（`arrayLayers = 1`、一个视图/帧缓冲），既有用例不动即是证明。
@@ -339,33 +342,25 @@ PassDesc::first_layer { 0 } + PassDesc::layer_count { 1 }
 `(union & mask) == 0`。判据：`SceneTest.TheSubtreeLayerUnionPrunesAWholeExcludedSubtree` /
 `TheSubtreeLayerCacheInvalidatesOnDeclarationsAndStructure` / `TheSubtreeLayerCacheIgnoresNonLayerMutations`；
 `test_graphics` 434 → **437**。
-## 10. L2a 落地记录（2026-10-23）
 
-**形状**：`RenderTarget::setLayerCount(n)`（默认 1，0 当 1）是目标的属性；`PassDesc::first_layer` /
-`layer_count` 随声明进 `RenderPass`，一条 pass 写**一层**（`layer_count == 1`）。后端为目标建 `2D_ARRAY`
-图像、一张整数组视图（供按层命名的输入/整图读取）和**每层一个 2D 视图与帧缓冲**；`OffscreenTarget::passGraph`
-按 `first_layer` 选帧缓冲，并记录该层已写（`written(layer)`，供按层回读判定 `NotRecorded`）。
+## 10. 历史登记：L2a 落地后回撤（2026-10-23）
 
-**读侧**：`ImageRef::bind(target, attachment, layer)` 把层带进 `ImageSource` / `CompiledInput` /
-`OutputIdentity`（同一 attachment 的不同层是两个输出身份）；`RenderDevice::readColorBuffer` /
-`readDepthBuffer` 增加带 `layer` 的重载（旧重载转发 layer 0，是**增量**而非破坏），
-`core::ReadbackRequest` / `ReadbackState` 带层，越界层回答 `ReadbackRefusal::UnknownLayer` /
-`ReadbackResult::Invalid` 且不触碰设备。拷贝节点一次搬**整组层**，`probe(attachment, layer)` 按层切片。
+**做了什么**：按 §3.2 的 L2a 形状落地了 `RenderTarget::setLayerCount` + pass 的 `first_layer` /
+`layer_count`、`2D_ARRAY` 视图与逐层帧缓冲、`ImageRef` 层与按层读回；提交 `dbe52527`，
+`test_graphics` 451 / `test_vsg` 508。
 
-**计划**：`TargetShape.layers` 进形状**相等性**（换层数 ⇒ `Rebuild`），但**不进**
-`RenderPassCompatibility`（Vulkan 的兼容性不含数组层数）⇒ 改层数不会重编已有管线。`FrameCompiler` 把
-`first_layer` / `layer_count` 带进 `CompiledPass`，出界或 `layer_count > 1` 的声明被排除出计划；引擎在
-`collectPlanProblems` 里按 episode 报一次。Bootstrap 按**层**记账（同一张新建数组目标的第 0、1 层各自由
-自己的首写者清屏）。
+**为什么回撤（用户 2026-10-23 定）**：
 
-**本轮拒绝**（明确报一次并跳过，不静默画错）：分层 + 多重采样；分层 + 借用深度；一条 pass 的
-`layer_count > 1`（L2b）；把**整张**分层 target 当输入（数组采样是 L2b 的读侧，按层消费用 `ImageRef`）。
+- **没有消费者**：立方体阴影 / CSM / 双目都还没有排期；仓库里没有任何生产代码调用
+  `setLayerCount > 1`，只有新增测试与文档。
+- **替代派已经够用**：N 张 2D 目标 + N 条 pass 能实现同样画面，字节数一样；L2a 只省“打包”
+  （对象 / 视图 / 描述符 / 绑定份数），**不省收集也不省提交**（每层一台相机 ⇒ 每层一次 walk）。
+- **复杂度不低**：约 1150 行 / 40 个文件，公开面增加 `RenderTarget` / `PassDesc` / `RenderPass` /
+  `ImageRef` / `ImageSource` / `RenderDevice` / `Readback` / `TargetShape` / `CompiledPass` /
+  `FrameRecorder` 的层相关字段与方法；还要明确拒绝分层 + MSAA、分层 + 借用深度、
+  `layer_count > 1`（L2b）与整张分层目标作输入四组组合。
+- **没有性能收益**：省钱的半边是 L2b（multiview / 一次写多层），L2a 单独做只是半成品。
 
-**判据**：`test_graphics` **451**（+3 `LayeredTargetTest`：层数 round-trip、声明到 pass、`ImageRef` 层）；
-`test_vsg` **508**（+2 `LayeredTargetTest` 形状/回读分类、+2 `FrameCompilerTest` 层区间入计划/出界排除、
-+1 真设备 `VsgBackendTest.TwoPassesWriteTwoLayersOfOneArrayTargetAndReadEachLayerBack`：两层各清各的颜色、
-按层读回红/蓝、越界层 `Invalid` 且零 device wait）。单层路径逐字节不变（`layerCount == 1` 走原
-`createImageView` / 单帧缓冲 / 单层拷贝分支）。
-
-**仍未做**：L2b（一条 pass 写多层，需要 render view / multiview 与着色器写层号）、分层 MSAA 的逐层 resolve、
-分层借用深度的逐层视图、整张分层目标作为数组采样输入。
+**回撤后的形状**：所有层相关代码 / 测试 / 指南 §3.24 删除；L1 内容掩码、实例化与既有 2D
+目标/读回路径保留；`test_graphics` 回到 448、`test_vsg` 回到 503。L2a/L2b 不再作为独立待办；
+将来 VR 或实测 N-pass 开销命中时，L2a+L2b 作为**一个整体**重新设计。

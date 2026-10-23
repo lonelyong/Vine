@@ -325,30 +325,6 @@ void fillClearValues(::vsg::RenderGraph& graph, const core::PassClearPlan& plan,
     }
 }
 
-/// @brief Creates a view over one array-layer range, allocating the image's memory when @p allocate is true.
-///
-/// The image is allocated ONCE (by the first view created over it): a layered target makes an all-layers
-/// view for sampling/readback plus one 2D view per layer for the framebuffers, and calling vsg's
-/// createImageView for each would try to allocate the same image repeatedly.
-::vsg::ref_ptr<::vsg::ImageView> createLayerView(::vsg::Device* device, ::vsg::ref_ptr<::vsg::Image> image,
-                                                 VkImageAspectFlags aspect, std::uint32_t base_layer,
-                                                 std::uint32_t layer_count, bool allocate)
-{
-    if (device == nullptr || image == nullptr || layer_count == 0U) {
-        return {};
-    }
-    if (allocate) {
-        image->compile(device);
-        image->allocateAndBindMemory(device);
-    }
-    auto view = ::vsg::ImageView::create(std::move(image), aspect);
-    view->viewType = layer_count > 1U ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-    view->subresourceRange.baseArrayLayer = base_layer;
-    view->subresourceRange.layerCount     = layer_count;
-    view->compile(device);
-    return view;
-}
-
 }  // namespace
 
 struct OffscreenTarget::Data
@@ -374,8 +350,6 @@ struct OffscreenTarget::Data
     bool                               depth_borrowed{false};  ///< The depth is the lender's image.
     /// Whether anything has been recorded into the attachments yet (see OffscreenTarget::written).
     bool                               written{false};
-    /// Per array layer: whether a pass has recorded into it (see OffscreenTarget::written(layer)).
-    std::vector<std::uint8_t>          written_layers;
     /// Whether a submission into these attachments was lost: they exist and were written into, but their
     /// contents can no longer be trusted (see OffscreenTarget::invalidateAttachments). The plan answers
     /// Repair(Bootstrap) for such a target, so the next frame's first writer clears instead of loading.
@@ -438,9 +412,6 @@ core::TargetShape OffscreenTarget::shapeOf(const TargetLayout& layout)
     // Samples are part of a pipeline's compatibility (a graphics pipeline states the count it was compiled
     // for), so the shape carries them: it is the value the pass' draw pipelines are keyed on.
     shape.samples = layout.samples == 0U ? 1U : layout.samples;
-    // Array layers are part of the shape's EQUALITY (a change rebuilds the views and framebuffers) but not
-    // of RenderPassCompatibility (Vulkan's compatibility does not depend on array layers).
-    shape.layers = layout.layers == 0U ? 1U : layout.layers;
     // The DEVICE formats the images and the render pass are actually built with: the engine's spelling is a
     // projection (RGBA8 covers both a linear and an sRGB image), and a pipeline key cannot be built from a
     // projection - an sRGB window surface and this linear target are not render-pass compatible (see
@@ -465,7 +436,6 @@ OffscreenTarget::TargetLayout OffscreenTarget::layout() const noexcept
     out.depth_format     = d->depth_format;
     out.depth_sampleable = d->depth_sampleable;
     out.samples          = d->shape.samples;
-    out.layers           = d->shape.layers;
     out.clear            = d->clear_policy;
     return out;
 }
@@ -537,7 +507,6 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     target->d->width            = layout.width;
     target->d->height           = layout.height;
     target->d->shape            = shape;
-    target->d->written_layers.assign(shape.layers == 0U ? 1U : shape.layers, 0U);
     target->d->depth_borrowed   = depth_borrowed;
     target->d->depth_format     = layout.depth_format;
     target->d->depth_sampleable = layout.depth_sampleable;
@@ -593,14 +562,6 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         core::planClearValues(d->shape, d->clear_policy, /*bootstrap*/ true, /*depth_borrowed*/ d->depth_borrowed);
     const VkSampleCountFlagBits samples = samplesToVk(d->shape.samples);
     const bool                  multisampled = samples != VK_SAMPLE_COUNT_1_BIT;
-    const std::uint32_t         layers = d->shape.layers == 0U ? 1U : d->shape.layers;
-    // The two combinations this release refuses at the host boundary (see HostTargets::State::LayersUnsupported)
-    // are also refused here, because buildAttachments is reached by resize/rebuild as well: a multisampled
-    // layered image would need a per-layer resolve this code does not build, and a borrowed layered depth is
-    // one image whose views this target does not own.
-    if (layers > 1U && (multisampled || d->depth_borrowed)) {
-        return false;
-    }
     for (const vn::graphics::RenderTarget::ColorFormat format : d->shape.color_formats) {
         OffscreenTarget::Attachments::Color color;
         // The image is created with SAMPLED usage as well as colour-attachment: the pass leaves colour
@@ -616,7 +577,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         color.image->format         = toColorFormat(format);
         color.image->extent         = VkExtent3D{ width, height, 1U };
         color.image->mipLevels      = 1U;
-        color.image->arrayLayers    = layers;
+        color.image->arrayLayers    = 1U;
         color.image->samples        = samples;
         color.image->tiling         = VK_IMAGE_TILING_OPTIMAL;
         color.image->usage          = multisampled
@@ -625,23 +586,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
                   VK_IMAGE_USAGE_SAMPLED_BIT;
         color.image->initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
         color.image->sharingMode    = VK_SHARING_MODE_EXCLUSIVE;
-        if (layers == 1U) {
-            // The plain 2D path is the historical one, byte for byte: one 2D view over the whole image.
-            color.view = ::vsg::createImageView(d->device, color.image, VK_IMAGE_ASPECT_COLOR_BIT);
-        } else {
-            // A layered image gets an all-layers array view (what a whole-target reader sees) plus one 2D
-            // view per layer (what a pass' framebuffer and a layer-named input see).
-            color.view = createLayerView(d->device.get(), color.image, VK_IMAGE_ASPECT_COLOR_BIT, 0U, layers, true);
-            color.layer_views.reserve(layers);
-            for (std::uint32_t layer = 0; layer < layers; ++layer) {
-                auto view = createLayerView(d->device.get(), color.image, VK_IMAGE_ASPECT_COLOR_BIT, layer, 1U,
-                                            false);
-                if (view == nullptr) {
-                    return false;
-                }
-                color.layer_views.push_back(std::move(view));
-            }
-        }
+        color.view                  = ::vsg::createImageView(d->device, color.image, VK_IMAGE_ASPECT_COLOR_BIT);
         if (color.view == nullptr) {
             return false;
         }
@@ -689,7 +634,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         out.depth_image->format    = toDepthFormat(d->depth_format.value());
         out.depth_image->extent    = VkExtent3D{ width, height, 1U };
         out.depth_image->mipLevels = 1U;
-        out.depth_image->arrayLayers = layers;
+        out.depth_image->arrayLayers = 1U;
         out.depth_image->samples   = samples;
         out.depth_image->tiling    = VK_IMAGE_TILING_OPTIMAL;
         // The usage is decided BEFORE the view is created, and that ordering is a rule rather than style: vsg
@@ -706,21 +651,8 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
                           : VK_IMAGE_USAGE_TRANSFER_SRC_BIT | (d->depth_sampleable ? VK_IMAGE_USAGE_SAMPLED_BIT : 0U));
         out.depth_image->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         out.depth_image->sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-        if (layers == 1U) {
-            out.depth_view = ::vsg::createImageView(d->device, out.depth_image, VK_IMAGE_ASPECT_DEPTH_BIT);
-        } else {
-            out.depth_view =
-                createLayerView(d->device.get(), out.depth_image, VK_IMAGE_ASPECT_DEPTH_BIT, 0U, layers, true);
-            out.depth_layer_views.reserve(layers);
-            for (std::uint32_t layer = 0; layer < layers; ++layer) {
-                auto view = createLayerView(d->device.get(), out.depth_image, VK_IMAGE_ASPECT_DEPTH_BIT, layer, 1U,
-                                            false);
-                if (view == nullptr) {
-                    return false;
-                }
-                out.depth_layer_views.push_back(std::move(view));
-            }
-        }
+        out.depth_view = ::vsg::createImageView(d->device, out.depth_image,
+                                                       VK_IMAGE_ASPECT_DEPTH_BIT);
         if (out.depth_view == nullptr) {
             return false;
         }
@@ -752,42 +684,25 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
 
     // The views in the SAME order the render pass lists its attachments (colour..., depth?, resolve...): the
     // framebuffer's i-th view IS the pass' i-th attachment, so a missing or misplaced one makes every
-    // attachment after it describe the wrong image. With layers, every layer gets its own framebuffer over
-    // its own 2D views, so a pass writes exactly the layer it names (L2a); layer 0's framebuffer is also the
-    // target's `framebuffer`, which is the only one a plain 2D target has.
-    const auto make_framebuffer = [&](std::uint32_t layer) -> ::vsg::ref_ptr<::vsg::Framebuffer> {
-        ::vsg::ImageViews views;
+    // attachment after it describe the wrong image.
+    ::vsg::ImageViews attachments;
+    for (const OffscreenTarget::Attachments::Color& color : out.colors) {
+        attachments.push_back(color.view);
+    }
+    if (plan.has_depth) {
+        attachments.push_back(out.depth_view);
+    }
+    if (d->shape.samples > 1U) {
         for (const OffscreenTarget::Attachments::Color& color : out.colors) {
-            views.push_back(color.layer_views.empty() ? color.view : color.layer_views[layer]);
+            attachments.push_back(color.resolve_view);
         }
         if (plan.has_depth) {
-            views.push_back(out.depth_layer_views.empty() ? out.depth_view : out.depth_layer_views[layer]);
+            attachments.push_back(out.depth_resolve_view);
         }
-        if (d->shape.samples > 1U) {
-            for (const OffscreenTarget::Attachments::Color& color : out.colors) {
-                views.push_back(color.resolve_view);
-            }
-            if (plan.has_depth) {
-                views.push_back(out.depth_resolve_view);
-            }
-        }
-        return ::vsg::Framebuffer::create(d->render_pass, views, width, height, 1U);
-    };
-    if (layers == 1U) {
-        out.framebuffer = make_framebuffer(0U);
-        if (out.framebuffer == nullptr) {
-            return false;
-        }
-    } else {
-        out.layer_framebuffers.reserve(layers);
-        for (std::uint32_t layer = 0; layer < layers; ++layer) {
-            auto framebuffer = make_framebuffer(layer);
-            if (framebuffer == nullptr) {
-                return false;
-            }
-            out.layer_framebuffers.push_back(std::move(framebuffer));
-        }
-        out.framebuffer = out.layer_framebuffers.front();
+    }
+    out.framebuffer = ::vsg::Framebuffer::create(d->render_pass, attachments, width, height, 1U);
+    if (out.framebuffer == nullptr) {
+        return false;
     }
 
     out.render_graph              = ::vsg::RenderGraph::create();
@@ -819,8 +734,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         if (!packed.readable) {
             continue;
         }
-        const VkDeviceSize color_byte_count =
-            static_cast<VkDeviceSize>(width) * height * packed.bytes_per_texel * layers;
+        const VkDeviceSize color_byte_count = static_cast<VkDeviceSize>(width) * height * packed.bytes_per_texel;
         color.destination = ::vsg::Buffer::create(color_byte_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                   VK_SHARING_MODE_EXCLUSIVE);
         if (color.destination == nullptr) {
@@ -847,7 +761,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         region.imageSubresource.mipLevel       = 0U;
         region.imageSubresource.baseArrayLayer = 0U;
-        region.imageSubresource.layerCount     = layers;
+        region.imageSubresource.layerCount     = 1U;
         region.imageOffset                     = VkOffset3D{ 0, 0, 0 };
         region.imageExtent                     = VkExtent3D{ width, height, 1U };
 
@@ -862,7 +776,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
         // capture may be recorded between two passes, and leaving it in TRANSFER_SRC would break the next
         // descriptor that names it. The forward transition carries the pass' writes into the transfer stage,
         // which is what makes the copied bytes the frame's picture.
-        const VkImageSubresourceRange color_range{ VK_IMAGE_ASPECT_COLOR_BIT, 0U, 1U, 0U, layers };
+        const VkImageSubresourceRange color_range{ VK_IMAGE_ASPECT_COLOR_BIT, 0U, 1U, 0U, 1U };
         auto to_transfer = ::vsg::ImageMemoryBarrier::create(
             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -913,8 +827,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     if (plan.has_depth && out.depth_view != nullptr) {
         const core::ReadbackFormat packed = core::depthReadbackOf(d->depth_format.value());
         if (packed.readable) {
-            const VkDeviceSize depth_bytes =
-                static_cast<VkDeviceSize>(width) * height * packed.bytes_per_texel * layers;
+            const VkDeviceSize depth_bytes = static_cast<VkDeviceSize>(width) * height * packed.bytes_per_texel;
             out.depth_destination = ::vsg::Buffer::create(depth_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                                  VK_SHARING_MODE_EXCLUSIVE);
             if (out.depth_destination == nullptr) {
@@ -942,7 +855,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
             // unusable for everything that follows this node (measured: the transition that claimed
             // DEPTH_STENCIL_ATTACHMENT_OPTIMAL for a shadow map in SHADER_READ_ONLY is
             // VUID-VkImageMemoryBarrier-oldLayout-01197).
-            const VkImageSubresourceRange depth_range{ VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 1U, 0U, layers };
+            const VkImageSubresourceRange depth_range{ VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 1U, 0U, 1U };
             const VkImageLayout steady_layout = toVkLayout(depthSteadyLayout());
             // WHAT WROTE THIS IMAGE DEPENDS ON WHICH ONE IT IS. A single-sample picture is written by the
             // depth tests (the fragment-test stages); a RESOLVED one is written by the pass' resolve, which the
@@ -969,7 +882,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
             depth_region.bufferOffset      = 0U;
             depth_region.bufferRowLength   = width;
             depth_region.bufferImageHeight = height;
-            depth_region.imageSubresource  = { VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 0U, layers };
+            depth_region.imageSubresource  = { VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 0U, 1U };
             depth_region.imageOffset       = VkOffset3D{ 0, 0, 0 };
             depth_region.imageExtent       = VkExtent3D{ width, height, 1U };
 
@@ -1017,25 +930,9 @@ OffscreenTarget::~OffscreenTarget()
     return d->attachments.render_graph;
 }
 
-::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearValues& policy, bool bootstrap,
-                                                              std::uint32_t first_layer,
-                                                              std::uint32_t layer_count)
+::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearValues& policy, bool bootstrap)
 {
     if (d->render_pass == nullptr || d->attachments.framebuffer == nullptr)
-    {
-        return {};
-    }
-    // A pass writes ONE layer in this release (L2a). A wider range is the multiview step, which would need a
-    // render view per layer; refusing it here keeps a mis-planned pass from drawing layer 0 N times.
-    const std::uint32_t layers = d->shape.layers == 0U ? 1U : d->shape.layers;
-    if (layer_count != 1U || first_layer >= layers)
-    {
-        return {};
-    }
-    const ::vsg::ref_ptr<::vsg::Framebuffer>& framebuffer =
-        d->attachments.layer_framebuffers.empty() ? d->attachments.framebuffer
-                                                  : d->attachments.layer_framebuffers[first_layer];
-    if (framebuffer == nullptr)
     {
         return {};
     }
@@ -1056,22 +953,17 @@ OffscreenTarget::~OffscreenTarget()
     // fact is "something has been recorded into it", and a frame that is recorded but dropped is not a
     // different target.
     d->written = true;
-    if (first_layer < d->written_layers.size())
-    {
-        d->written_layers[first_layer] = 1;
-    }
     // An INVALIDATED target is repaired by exactly this kind of pass: one that bootstraps CLEARS the
     // attachments, which is what turns "contents unknown" back into "contents known - the clear colour".
     // Only a bootstrapping frame may do it: a pass that loads cannot repair an image nobody can trust, and
-    // letting it clear the flag would hand the next frame a LOAD of unknown contents. With layers the repair
-    // is per LAYER: one layer's clean clear says nothing about another layer's UNDEFINED contents.
+    // letting it clear the flag would hand the next frame a LOAD of unknown contents.
     if (bootstrap)
     {
         d->attachments_invalidated = false;
     }
 
     auto graph              = ::vsg::RenderGraph::create();
-    graph->framebuffer      = framebuffer;
+    graph->framebuffer      = d->attachments.framebuffer;
     graph->renderPass       = render_pass;
     graph->renderArea       = VkRect2D{ { 0, 0 }, { d->width, d->height } };
     graph->contents         = VK_SUBPASS_CONTENTS_INLINE;
@@ -1089,11 +981,6 @@ std::size_t OffscreenTarget::passVariantCount() const noexcept
 bool OffscreenTarget::written() const noexcept
 {
     return d->written;
-}
-
-bool OffscreenTarget::written(std::uint32_t layer) const noexcept
-{
-    return layer < d->written_layers.size() && d->written_layers[layer] != 0U;
 }
 
 core::TargetInstance OffscreenTarget::instance() const noexcept
@@ -1233,14 +1120,12 @@ bool OffscreenTarget::nameImages(const char* label) noexcept
     }
     // Handing the node out is the recording half of a readback: from here on a probe is meaningful (see the
     // declaration). The flag lives in the ATTACHMENT SET, so a resize starts it false - the new buffers hold
-    // nothing until a frame copies into them. A LAYERED target is copied only when every layer has a writer
-    // (see allLayersWritten): the copy transitions the whole array, and an unwritten layer is UNDEFINED.
+    // nothing until a frame copies into them.
     OffscreenTarget::Attachments::Color& color = d->attachments.colors[attachment];
-    if (color.capture != nullptr && allLayersWritten()) {
+    if (color.capture != nullptr) {
         color.captured = true;
-        return color.capture;
     }
-    return {};
+    return color.capture;
 }
 
 core::PixelProbe OffscreenTarget::probe() const
@@ -1250,15 +1135,10 @@ core::PixelProbe OffscreenTarget::probe() const
 
 core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
 {
-    return probe(attachment, 0U);
-}
-
-core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment, std::uint32_t layer) const
-{
     // The same table readbackResult() answers with: "can this be served, and if not why" is one question,
     // and a probe that decided it for itself could disagree with the classification a caller asked for.
     const core::ReadbackResult check =
-        readbackResult(core::ReadbackRequest{ core::ReadbackKind::Color, attachment, layer });
+        readbackResult(core::ReadbackRequest{ core::ReadbackKind::Color, attachment });
     if (!check.ok || attachment >= d->attachments.colors.size()) {
         return core::PixelProbe(0, 0, {});
     }
@@ -1266,17 +1146,11 @@ core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment, std::uint32_t 
     if (color.mapped == nullptr || color.mapped->data() == nullptr) {
         return core::PixelProbe(0, 0, {});
     }
-    // The copy carried EVERY layer into one buffer, each layer's rows tightly packed after the previous
-    // layer's, so a layer is a contiguous slab of it.
     const std::size_t byte_count = static_cast<std::size_t>(d->width) * d->height *
                                    core::colorReadbackOf(d->shape.color_formats[attachment]).bytes_per_texel;
-    const std::size_t offset = byte_count * layer;
-    if (offset + byte_count > color.mapped->size()) {
-        return core::PixelProbe(0, 0, {});
-    }
     std::vector<std::uint8_t> pixels;
     pixels.resize(byte_count);
-    std::memcpy(pixels.data(), color.mapped->data() + offset, byte_count);
+    std::memcpy(pixels.data(), color.mapped->data(), byte_count);
     return core::PixelProbe(static_cast<int>(d->width), static_cast<int>(d->height), std::move(pixels));
 }
 
@@ -1284,7 +1158,6 @@ core::ReadbackResult OffscreenTarget::readbackResult(const core::ReadbackRequest
 {
     core::ReadbackState state;
     state.color_attachments = static_cast<std::uint32_t>(d->attachments.colors.size());
-    state.layers            = d->shape.layers == 0U ? 1U : d->shape.layers;
     if (request.kind == core::ReadbackKind::Color && request.attachment < d->shape.color_formats.size())
     {
         state.color_format = d->shape.color_formats[request.attachment];
@@ -1312,34 +1185,9 @@ std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
     return d->attachments.colors[attachment].view;
 }
 
-::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::colorView(std::uint32_t attachment,
-                                                           std::uint32_t layer) const noexcept
-{
-    if (attachment >= d->attachments.colors.size())
-    {
-        return {};
-    }
-    const OffscreenTarget::Attachments::Color& color = d->attachments.colors[attachment];
-    if (color.layer_views.empty())
-    {
-        return layer == 0U ? color.view : ::vsg::ref_ptr<::vsg::ImageView>{};
-    }
-    return layer < color.layer_views.size() ? color.layer_views[layer] : ::vsg::ref_ptr<::vsg::ImageView>{};
-}
-
 ::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::depthView() const noexcept
 {
     return d->attachments.depth_view;
-}
-
-::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::depthView(std::uint32_t layer) const noexcept
-{
-    if (d->attachments.depth_layer_views.empty())
-    {
-        return layer == 0U ? d->attachments.depth_view : ::vsg::ref_ptr<::vsg::ImageView>{};
-    }
-    return layer < d->attachments.depth_layer_views.size() ? d->attachments.depth_layer_views[layer]
-                                                           : ::vsg::ref_ptr<::vsg::ImageView>{};
 }
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::readback() const noexcept
@@ -1381,55 +1229,27 @@ const OffscreenTarget* OffscreenTarget::depthSource() const noexcept
 
 ::vsg::ref_ptr<::vsg::Node> OffscreenTarget::captureDepth() const
 {
-    if (d->attachments.depth_capture != nullptr && allLayersWritten()) {
+    if (d->attachments.depth_capture != nullptr) {
         d->attachments.depth_captured = true;
-        return d->attachments.depth_capture;
     }
-    return {};
-}
-
-bool OffscreenTarget::allLayersWritten() const noexcept
-{
-    if (d->shape.layers <= 1U) {
-        return true;  // the 2D path keeps its historical "the caller decides" rule
-    }
-    if (d->written_layers.size() != d->shape.layers) {
-        return false;
-    }
-    for (const std::uint8_t written : d->written_layers) {
-        if (written == 0U) {
-            return false;
-        }
-    }
-    return true;
+    return d->attachments.depth_capture;
 }
 
 core::DepthProbe OffscreenTarget::depthProbe() const
 {
-    return depthProbe(0U);
-}
-
-core::DepthProbe OffscreenTarget::depthProbe(std::uint32_t layer) const
-{
     // One classification (see readbackResult) and one decoder (core::decodeDepth), so "why is there no
     // probe" and "what do the numbers mean" cannot drift apart between the entry points.
     const core::ReadbackResult check =
-        readbackResult(core::ReadbackRequest{ core::ReadbackKind::Depth, 0U, layer });
+        readbackResult(core::ReadbackRequest{ core::ReadbackKind::Depth, 0U });
     if (!check.ok || d->attachments.depth_mapped == nullptr || d->attachments.depth_mapped->data() == nullptr)
     {
         return core::DepthProbe();
     }
     const core::ReadbackFormat packed = core::depthReadbackOf(d->depth_format.value());
     const std::size_t          texels = static_cast<std::size_t>(d->width) * d->height;
-    const std::size_t          offset = texels * packed.bytes_per_texel * layer;
-    const std::size_t          bytes_needed = texels * packed.bytes_per_texel;
     const auto* bytes = static_cast<const std::byte*>(static_cast<const void*>(d->attachments.depth_mapped->data()));
-    if (offset + bytes_needed > d->attachments.depth_mapped->size())
-    {
-        return core::DepthProbe();
-    }
-    std::vector<float> values = core::decodeDepth(
-        d->depth_format.value(), std::span<const std::byte>(bytes + offset, bytes_needed));
+    std::vector<float> values =
+        core::decodeDepth(d->depth_format.value(), std::span<const std::byte>(bytes, texels * packed.bytes_per_texel));
     if (values.size() != texels)
     {
         return core::DepthProbe();  // a copy that is not a whole image is not a picture of anything
@@ -1517,9 +1337,8 @@ OffscreenTarget::Resized OffscreenTarget::resize(std::uint32_t width, std::uint3
     d->height            = height;
     // The new images have never been written into, so the target's facts have to say so: a caller that derives
     // "this pass is the first writer" from written() clears rather than loads, which is the only thing an
-    // UNDEFINED image accepts (see passGraph). Layers are fresh together.
+    // UNDEFINED image accepts (see passGraph).
     d->written = false;
-    d->written_layers.assign(d->shape.layers == 0U ? 1U : d->shape.layers, 0U);
     // The invalidation belonged to the OLD set: these images are new, and "the plan says ResizeInPlace" is
     // already the fact that makes the next writer clear (see core::FrameCompiler's freshAttachments).
     d->attachments_invalidated = false;
@@ -1656,7 +1475,6 @@ OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, co
     // see written) and the invalidation belonged to the OLD attachments - "the plan said Rebuild" is
     // already the fact that makes the next writer clear (see core::FrameCompiler's freshAttachments).
     d->written                 = false;
-    d->written_layers.assign(d->shape.layers == 0U ? 1U : d->shape.layers, 0U);
     d->attachments_invalidated = false;
     ++d->generation;
     result.replaced   = true;

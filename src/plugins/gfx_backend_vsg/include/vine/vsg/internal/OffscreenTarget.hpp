@@ -90,10 +90,6 @@ class OffscreenTarget
         std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;  ///< Absent for colour only.
         bool           depth_sampleable{false};  ///< The host asked for a depth a shader may sample (promotion).
         std::uint32_t  samples{1};               ///< Samples per pixel (1 = no multisampling; see RenderTarget::setSamples).
-        /// Array layers the images have (1 = a plain 2D target; see RenderTarget::setLayerCount).
-        /// The depth follows the colour attachments; this release builds layers only for single-sample,
-        /// own-depth targets (see HostTargets::State::LayersUnsupported).
-        std::uint32_t  layers{1};
         core::ClearValues clear;        ///< What the pass clears (bootstrap applies).
     };
 
@@ -156,15 +152,10 @@ class OffscreenTarget
      *
      * @param policy    What this pass asks the target to clear (attachment 0's colour, and the depth).
      * @param bootstrap Whether this pass is the first writer of freshly built attachments.
-     * @param first_layer First array layer this pass writes (0 for a plain 2D target).
-     * @param layer_count Layers the pass writes; this release accepts exactly 1 (the multiview step is later).
      * @return The graph this pass records into (its only child is the target's content view - see
-     *         `addContent`), or null when the target has no attachments, the layer is out of range, or the
-     *         variant could not be built.
+     *         `addContent`), or null when the target has no attachments or the variant could not be built.
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearValues& policy, bool bootstrap = true,
-                                                              std::uint32_t first_layer = 0,
-                                                              std::uint32_t layer_count = 1);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::RenderGraph> passGraph(const core::ClearValues& policy, bool bootstrap = true);
 
     /** @brief Gets how many load-op variants of this target's render pass have been built.
      *
@@ -191,17 +182,6 @@ class OffscreenTarget
      * target as one that was not.
      */
     [[nodiscard]] bool written() const noexcept;
-
-    /** @brief Gets whether a particular array layer has been recorded into.
-     *
-     * A layered target bootstraps PER LAYER: two passes writing two layers of a fresh array target are
-     * both first writers of their layer, and a readback of a layer nothing wrote is `NotRecorded` rather
-     * than a copy of UNDEFINED memory.
-     *
-     * @param layer Array layer (0 for a plain 2D target).
-     * @return true when that layer has been written; false otherwise (including out of range).
-     */
-    [[nodiscard]] bool written(std::uint32_t layer) const noexcept;
 
     /** @brief Gets the facts the lifecycle plan is decided from (`core::planTarget`).
      *
@@ -290,15 +270,6 @@ class OffscreenTarget
      */
     [[nodiscard]] core::PixelProbe probe(std::uint32_t attachment) const;
 
-    /** @brief Reads one array layer of a colour attachment (see @ref capture).
-     *
-     * @param attachment Colour attachment index.
-     * @param layer      Array layer (0 for a plain 2D target).
-     * @return A probe over the copied pixels of that layer, or an invalid probe when the readback was
-     *         refused (see @ref readbackResult for why).
-     */
-    [[nodiscard]] core::PixelProbe probe(std::uint32_t attachment, std::uint32_t layer) const;
-
     /** @brief Gets whether a readback of @p request can be served, and why not when it cannot.
      *
      * One table (`core::readbackOf`) answers for every readback entry point, so @ref probe, @ref depthProbe
@@ -329,19 +300,6 @@ class OffscreenTarget
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::ImageView> colorView(std::uint32_t attachment) const noexcept;
 
-    /** @brief Gets ONE array layer's view of a colour attachment, for a pass that samples that layer.
-     *
-     * The difference from @ref colorView: a layered target's whole-attachment view is an array view, and a
-     * shader reading ONE layer with an ordinary `sampler2D` needs a 2D view whose base layer is @p layer.
-     * The view is left in SHADER_READ_ONLY by the target's pass, like the whole-attachment one.
-     *
-     * @param attachment Colour attachment index.
-     * @param layer      Array layer in [0, layerCount()).
-     * @return The layer's view, or null when there is no such attachment or layer.
-     */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::ImageView> colorView(std::uint32_t attachment,
-                                                             std::uint32_t layer) const noexcept;
-
     /** @brief Gets the DEPTH attachment's view, for a pass that samples it (see core::CompiledInput).
      *
      * A shader may sample it only while the depth is sampleable (`core::depthPlan`: the host asked for it and
@@ -351,13 +309,6 @@ class OffscreenTarget
      * @return The depth view, or null when the target has no depth attachment.
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::ImageView> depthView() const noexcept;
-
-    /** @brief Gets ONE array layer's view of the depth attachment (see colorView(attachment, layer)).
-     *
-     * @param layer Array layer in [0, layerCount()).
-     * @return The layer's depth view, or null when there is no depth or no such layer.
-     */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::ImageView> depthView(std::uint32_t layer) const noexcept;
 
     /** @brief Gets the node that copies this target's picture back for a probe.
      *
@@ -438,13 +389,6 @@ class OffscreenTarget
      *         @ref readbackResult for why).
      */
     [[nodiscard]] core::DepthProbe depthProbe() const;
-
-    /** @brief Reads one array layer of the depth attachment (see @ref captureDepth).
-     *
-     * @param layer Array layer (0 for a plain 2D target).
-     * @return A probe over that layer's depth values, or an invalid probe when the readback was refused.
-     */
-    [[nodiscard]] core::DepthProbe depthProbe(std::uint32_t layer) const;
 
     /** @brief Gets the target's width in pixels. */
     [[nodiscard]] std::uint32_t width() const noexcept;
@@ -619,8 +563,6 @@ class OffscreenTarget
             /// image a later pass samples and a readback copies.
             ::vsg::ref_ptr<::vsg::Image>                         image;
             ::vsg::ref_ptr<::vsg::ImageView>                     view;
-            /// One 2D view per array layer (empty for a plain 2D target, whose @ref view is the layer).
-            std::vector<::vsg::ref_ptr<::vsg::ImageView>>       layer_views;
             /// Where a multisampled pass RESOLVES into (single-sample): the image later passes sample, the
             /// readback copies from, and the one that carries the picture between frames. Null when the
             /// target is single-sample (then @ref image is that image).
@@ -644,8 +586,6 @@ class OffscreenTarget
         std::vector<Color>                                   colors;
         ::vsg::ref_ptr<::vsg::Image>                         depth_image;   ///< Empty when the depth is borrowed.
         ::vsg::ref_ptr<::vsg::ImageView>                     depth_view;    ///< Empty when the depth is borrowed.
-        /// One 2D depth view per array layer (empty for a plain 2D target).
-        std::vector<::vsg::ref_ptr<::vsg::ImageView>>       depth_layer_views;
         /// Where a MULTISAMPLED pass resolves the depth into (single-sample): the image later passes sample,
         /// a borrower attaches, and the depth readback copies. Null when the target is single-sample (then
         /// @ref depth_image is that image) or when the depth is borrowed (the lender's picture answers).
@@ -656,11 +596,7 @@ class OffscreenTarget
         ::vsg::ref_ptr<::vsg::DeviceMemory>                  depth_destination_memory;
         ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> depth_mapped;
         bool                                                 depth_captured{false};  ///< See Color::captured.
-        /// The framebuffer every pass used before layers existed: layer 0's, and the only one for a plain
-        /// 2D target (so the object graph is unchanged when layerCount == 1).
         ::vsg::ref_ptr<::vsg::Framebuffer>                   framebuffer;
-        /// One framebuffer per array layer (empty for a plain 2D target; layer 0's IS @ref framebuffer).
-        std::vector<::vsg::ref_ptr<::vsg::Framebuffer>>     layer_framebuffers;
         ::vsg::ref_ptr<::vsg::RenderGraph>                   render_graph;
 
         /** @brief Gets the image that holds the depth PICTURE (the resolved one when multisampled).
@@ -674,17 +610,6 @@ class OffscreenTarget
             return depth_resolve_image != nullptr ? depth_resolve_image : depth_image;
         }
     };
-
-    /** @brief Gets whether every array layer has been recorded into (always true for a plain 2D target).
-     *
-     * The copy-back transitions the WHOLE image to the transfer layout, so a layer nobody wrote is still
-     * UNDEFINED: copying it would be a (correctly) reported validation error rather than a picture. A layered
-     * target is therefore captured only when every layer has a writer; a plain 2D target keeps its historical
-     * behaviour (the caller decides whether anything was drawn - see written()).
-     *
-     * @return true when every layer has been written (or the target has one layer).
-     */
-    [[nodiscard]] bool allLayersWritten() const noexcept;
 
     /** @brief Builds a layout's shape in both spellings (the engine's and the device's).
      *

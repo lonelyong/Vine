@@ -225,8 +225,7 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
     // whether a later pass reads the depth this one writes (never cleared). Handing them on is what makes a
     // second pass over one target LOAD 
     // what the first one wrote instead of erasing it - the target builds the variant the plan asks for.
-    ::vsg::ref_ptr<::vsg::RenderGraph> graph =
-        target->passGraph(pass.clear, pass.bootstrap, pass.first_layer, pass.layer_count);
+    ::vsg::ref_ptr<::vsg::RenderGraph> graph = target->passGraph(pass.clear, pass.bootstrap);
     if (graph == nullptr)
     {
         reportSkipped(compiled_target, "the target has no attachments to draw into");
@@ -658,9 +657,6 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
             // target disagreeing (the shape agreement in record() would catch it, but only after a frame was
             // wasted on images nobody can draw into at the new count).
             layout.samples = wanted->wanted.shape.samples;
-            // The array-layer count is part of the same shape fact: a rebuild that kept the old count would
-            // leave the target serving 2D views while the plan (and every pass' layer range) names an array.
-            layout.layers  = wanted->wanted.shape.layers;
             const OffscreenTarget::Rebuilt rebuilt = target->rebuild(layout, timeline, retirement);
             replaced = rebuilt.replaced;
             if (rebuilt.replaced)

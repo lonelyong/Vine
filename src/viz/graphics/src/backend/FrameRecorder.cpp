@@ -103,8 +103,6 @@ bool FrameRecorder::beginPass(PassId pass)
     pass_id_                = pass;
     order_                  = 0;
     pass_target_            = nullptr;
-    pass_first_layer_       = 0;
-    pass_layer_count_       = 1;
     pass_has_clear_         = false;
     pass_clear_             = ClearValues{};
     pass_state_             = vn::graphics::PassRenderState{};
@@ -133,12 +131,10 @@ bool FrameRecorder::endPass()
         record.pass      = pass_id_;
         record.order     = order_;
         record.target    = pass_target_;
-        record.inputs      = pass_inputs_;
-        record.has_clear   = pass_has_clear_;
-        record.clear       = pass_clear_;
-        record.state       = pass_state_;
-        record.first_layer = pass_first_layer_;
-        record.layer_count = pass_layer_count_;
+        record.inputs    = pass_inputs_;
+        record.has_clear = pass_has_clear_;
+        record.clear     = pass_clear_;
+        record.state     = pass_state_;
 
         const std::span<CollectedDraw> draws = arena_.makeArray<CollectedDraw>(open_draws_.size());
         for (std::size_t i = 0; i < open_draws_.size(); ++i)
@@ -156,16 +152,6 @@ bool FrameRecorder::endPass()
     scope_target_released_     = false;
     open_draws_.clear();
     pass_inputs_ = {};
-    return true;
-}
-
-bool FrameRecorder::setPassLayers(std::uint32_t first, std::uint32_t count)
-{
-    if (!pass_open_ || scope_target_released_) {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
-    }
-    pass_first_layer_ = first;
-    pass_layer_count_ = count;
     return true;
 }
 

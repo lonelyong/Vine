@@ -1311,57 +1311,6 @@ root->addChild(label);
 - **包围盒是保守的球盒**：覆盖任意朝向，所以 culling 与场景框不会因为相机换了就“跳”。自动缩放时用
   `maximumScale`（有限时）算上界；场景框允许偏大，不允许偏小。
 
-### 3.24 分层目标：一个 target 的多个数组层（`setLayerCount`）
-
-一张离屏目标可以是 **2D 数组**：`RenderTarget::setLayerCount(n)`（默认 1，0 当 1）。一个 pass 写**一层**
-（`PassDesc::first_layer` + `layer_count`，或 `RenderPass::setFirstLayer` / `setLayerCount`），
-同一个 target 的 N 层就是 N 条 pass —— 点光源立方体阴影的 6 个面、CSM 的几级、VR 的两只眼都是这个形状。
-层的数量是**目标的属性**，深度附件跟着彩色附件走（层数一致）。
-
-```cpp
-#include <vine/graphics/RenderTarget.hpp>
-#include <vine/graphics/RenderPass.hpp>
-
-auto cube_shadow = make_intrusive<RenderTarget>();
-cube_shadow->attachColor(RenderTarget::ColorFormat::RGBA8);
-cube_shadow->attachDepth(RenderTarget::DepthFormat::D32F);
-cube_shadow->setSize(512, 512);
-cube_shadow->setLayerCount(6);                 // 2D array：6 个面
-
-for (int face = 0; face < 6; ++face) {
-    auto pass = make_intrusive<RenderPass>();
-    pass->setRenderTarget(cube_shadow);
-    pass->setFirstLayer(static_cast<std::uint32_t>(face));
-    pass->setLayerCount(1);                    // 本 release 一条 pass 写一层（L2a）
-    pass->setCamera(face_camera[face]);
-    engine->addPass(pass);
-}
-
-// 按层读回（别的层不会被读成第 0 层）
-std::vector<std::uint8_t> pixels;
-vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
-if (engine->device()->readColorBuffer(cube_shadow.get(), /*attachment*/ 0, /*layer*/ 2, pixels, &why)) {
-    // pixels 是第 2 层的 width * height * 4 字节
-}
-```
-
-- **写哪一层**：`first_layer` 是目标里的数组层号（0 起）；`layer_count` 本 release 只接受 1。层号超出
-  `layerCount()`、或 `layer_count > 1`（一次写多层是后续的 multiview 步骤）⇒ 引擎在接线期报一次，该 pass
-  不画，绝不悄悄落到第 0 层。
-- **每层一个帧缓冲**：后端为目标建一张 `2D_ARRAY` 图像，并给每一层建一个 2D 视图与帧缓冲；一条 pass
-  只把它要写的那一层绑进自己的 render pass。层之间互不覆盖，第一条写某层的 pass 会清那一层（其余层
-  的既有内容不受影响）。
-- **读**：`RenderDevice::readColorBuffer(target, attachment, layer, out, why)` /
-  `readDepthBuffer(target, layer, out, why)`（第 0 层可以继续用不带 layer 的重载）；越界的层回答
-  `ReadbackResult::Invalid`，且不触碰设备。层是图像地址的一部分：`ImageRef::bind(target, attachment, layer)`
-  让下游 pass 只采样那一层（`PassDesc` / `RenderPass` 的输入照旧声明这个 `ImageRef`）。
-- **一次写整张**：把**整个**分层 target 当输入（`addInputTarget` / `ProducedTarget`）是后续的数组采样
-  步骤；本 release 的消费者按层声明 `ImageRef`，整张声明会被报一次并不绑定。
-- **边界**：分层 + 多重采样、分层 + 借用深度都暂时被拒绝（报一次并跳过相关 pass）——它们各自需要
-  逐层 resolve / 逐层借用，属于后续步骤；单层目标（`layerCount == 1`）的创建参数与行为逐字节不变。
-- **重建**：层数进 `TargetShape` 的相等性（视图与帧缓冲要换），但**不进** `RenderPassCompatibility`
-  （Vulkan 的 render-pass 兼容性不含数组层数），所以改层数不会重编已有管线。
-
 ## 4. 现成例子：怎么构建、怎么跑
 ### 4.1 构建
 

@@ -74,8 +74,6 @@
 | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|
 | per-attachment clear 色 | （已落地 2026-10-19，见 §1）—— `ClearPolicy::extra_colors` 让每个附件拿自己的颜色，未写的仍为透明黑 | ~~G-buffer 需要按附件不同清色~~ 已收口 | `graphics-mrt-gbuffer.md` S4 剩余 |
-| L2a / L2b 目标层 | 分层渲染。**L2a 已落地（2026-10-23）**：`RenderTarget::setLayerCount` + pass 的 `first_layer` / `layer_count`（一条 pass 写一层）+ `2D_ARRAY` 视图/逐层帧缓冲 + 按层回读 + `ImageRef::bind(..., layer)`；分层 + MSAA、分层 + 借用深度、`layer_count > 1`、整张分层目标作输入四项明确拒绝。**L2b（一次写多/全部层，render view / multiview）仍开放** | 点光立方体阴影 / CSM / VR 双眼 / 实例化被触发（实例化已于 2026-10-23 落地，只作触发评估） | `graphics-layers.md` §6 / §10 |
-
 ### 3.3 内容、场景图与选择
 
 | 项 | 内容 | 触发条件 | 出处 |
@@ -161,6 +159,7 @@ F3（灯光列表复制，按成本/收益关闭）。**本节不再有待办。
 | **B7** 管线销毁竞态 | **已关闭（2026-10-22）**：破坏路径的计数 device idle 本来就有；本轮补上 headless 的 `OffscreenSession`（唯一 frame source），`releaseContentWorld()` 现在窗口与离屏都 idle。20 次单例 + 2 次全量套件 + 两棵树门禁 **0 VUID**；判据 `OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`。再现时按新问题重开，不重捡本行 |
 | **B8** F−N 可读回洞 | **已关闭（2026-10-22）**：不是生产设计缺陷——`perFrameCopies(n) = n + 1`，当前 3 槽 / 4 slab，最旧在飞帧与当前帧永不同 slab；`BlockStorageTest.TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightDoNot` 钉住轮转。F−N 只是 readback 只看最新帧的观测缺口；加旧帧读回是测试接缝，不是正确性修复，不做 |
 | **T2 / M6** 一设备 N 交换链 | 由 S10b 覆盖并关闭（2026-10-19），形状是“每窗口一个 `createSurfaceTarget`” |
+| **L2 目标层（L2a/L2b）** | 2026-10-23 L2a 曾落地（数组目标 + 逐层帧缓冲 + 按层读回）后**回撤**：没有消费者，N 张 2D 目标 + N 条 pass 已能实现同样画面；L2a 只多一点打包/身份，不省收集/提交，却增加公开面与组合拒绝。当前不做；L2b 等 VR / 实测 N-pass 开销再与 L2a 一起设计。历史记录见 `graphics-layers.md` §10 |
 | **Cube 作 pass 输入** | 两条真实设备用例证明，无需改后端（2026-10-19） |
 | **>3 个方向光** | 新后端走 lights 块（1024 槽），不设限（2026-09-25 对账） |
 | **内容掩码 / `Pipeline` 命名风险 / 外部图像接线** | L1 掩码、K1 改名、E2 + cube 均已落地（review §1.3、§2.1） |
