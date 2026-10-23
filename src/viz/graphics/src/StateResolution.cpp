@@ -17,6 +17,9 @@ ResolvedRenderState resolveRenderState(const RenderState& state)
     if (state.polygonMode) {
         resolved.polygonMode = *state.polygonMode;
     }
+    if (state.polygonOffset) {
+        resolved.polygonOffset = *state.polygonOffset;
+    }
     return resolved;
 }
 
@@ -38,6 +41,13 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
     if (authored.polygonMode) {
         resolved.state.polygonMode = *authored.polygonMode;
         resolved.origin.polygonMode = StateOrigin::Content;
+    }
+    // A depth bias is something the CONTENT says about its own surfaces (this decal sits on that panel), so it
+    // has no pass layer: nothing a view chooses can make two coplanar faces stop fighting without also changing
+    // what the content means.
+    if (authored.polygonOffset) {
+        resolved.state.polygonOffset = *authored.polygonOffset;
+        resolved.origin.polygonOffset = StateOrigin::Content;
     }
     // Topology: the DATA's own word (a primitive's topology) - no StateNode layer exists for it, because a
     // subtree cannot reinterpret another object's vertex/index data. The pass may override it below, which is

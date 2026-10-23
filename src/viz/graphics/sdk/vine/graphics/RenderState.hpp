@@ -116,6 +116,46 @@ inline bool operator!=(const BlendState& lhs, const BlendState& rhs)
 }
 
 /**
+ * @brief Nudges the depth of a polygon towards the viewer or away from it before the depth test.
+ *
+ * @details
+ * - THE ANSWER to coplanar surfaces: two faces at the same physical depth (a decal on a panel, a
+ *   highlight over the face it marks, a shaded face and its own wireframe) fight for the depth buffer,
+ *   and no geometric offset fixes that at every zoom level - the offset has to happen in the depth
+ *   units the rasteriser uses, which is what this states.
+ * - `factor` scales the polygon's slope and `units` is a constant in the depth buffer's own units. The
+ *   usual pair is a small positive `units` with a slope-scaled `factor`, since a face seen edge-on has
+ *   the largest depth error per pixel.
+ * - The offset applies to the RASTERISED depth only: it does not move the vertex, change the bounding
+ *   box, or affect picking, which is what makes "push this highlight 0.001 closer" a rendering detail
+ *   rather than a change to the scene.
+ *
+ * @note
+ * - {0, 0} is "no offset at all", and that is the default: a pipeline without an offset behaves exactly
+ *   as it did before this type existed.
+ */
+struct VN_GRAPHICS_API PolygonOffset
+{
+    float factor = 0.0F;  ///< Depth offset per unit of polygon slope.
+    float units  = 0.0F;  ///< Constant depth offset, in depth-buffer units.
+
+    /** @brief Returns whether this offset does nothing (the default). */
+    [[nodiscard]] bool isZero() const noexcept { return factor == 0.0F && units == 0.0F; }
+};
+
+/** @brief Returns whether two polygon offsets are equal. */
+inline bool operator==(const PolygonOffset& lhs, const PolygonOffset& rhs)
+{
+    return lhs.factor == rhs.factor && lhs.units == rhs.units;
+}
+
+/** @brief Returns whether two polygon offsets differ. */
+inline bool operator!=(const PolygonOffset& lhs, const PolygonOffset& rhs)
+{
+    return !(lhs == rhs);
+}
+
+/**
  * @brief Optional render-state contributions declared on the content side (a StateNode).
  *
  * Every item is optional: an unset item means "inherit from the enclosing
@@ -128,10 +168,11 @@ inline bool operator!=(const BlendState& lhs, const BlendState& rhs)
  */
 struct VN_GRAPHICS_API RenderState
 {
-    std::optional<DepthState>  depth;        ///< Depth test/write/compare override.
-    std::optional<CullMode>    cullMode;     ///< Face culling override.
-    std::optional<BlendState>  blend;        ///< Blending override.
-    std::optional<PolygonMode> polygonMode;  ///< Polygon rasterisation override.
+    std::optional<DepthState>    depth;          ///< Depth test/write/compare override.
+    std::optional<CullMode>      cullMode;       ///< Face culling override.
+    std::optional<BlendState>    blend;          ///< Blending override.
+    std::optional<PolygonMode>   polygonMode;    ///< Polygon rasterisation override.
+    std::optional<PolygonOffset> polygonOffset;  ///< Depth-bias override (coplanar surfaces).
 
     /** @brief Returns whether no item is set.
      *
@@ -139,7 +180,7 @@ struct VN_GRAPHICS_API RenderState
      */
     bool empty() const
     {
-        return !depth && !cullMode && !blend && !polygonMode;
+        return !depth && !cullMode && !blend && !polygonMode && !polygonOffset;
     }
 
     /** @brief Overlays another state block onto this one.
@@ -156,7 +197,8 @@ struct VN_GRAPHICS_API RenderState
 inline bool operator==(const RenderState& lhs, const RenderState& rhs)
 {
     return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
-           lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode;
+           lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
+           lhs.polygonOffset == rhs.polygonOffset;
 }
 
 /** @brief Returns whether two optional state blocks differ. */

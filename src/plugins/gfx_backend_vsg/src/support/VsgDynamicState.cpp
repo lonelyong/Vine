@@ -24,6 +24,8 @@ int SetDynamicState::compare(const ::vsg::Object& rhs_object) const
     if ((result = ::vsg::compare_value(cull_mode, rhs.cull_mode)) != 0) return result;
     if ((result = ::vsg::compare_value(front_face, rhs.front_face)) != 0) return result;
     if ((result = ::vsg::compare_value(polygon_mode, rhs.polygon_mode)) != 0) return result;
+    if ((result = ::vsg::compare_value(depth_bias_constant, rhs.depth_bias_constant)) != 0) return result;
+    if ((result = ::vsg::compare_value(depth_bias_slope, rhs.depth_bias_slope)) != 0) return result;
     if ((result = ::vsg::compare_value(topology, rhs.topology)) != 0) return result;
     if ((result = ::vsg::compare_value(color_attachment_count, rhs.color_attachment_count)) != 0) return result;
     // Per field, not per struct: the attachment struct has no comparison of its own, and the write mask is
@@ -69,6 +71,8 @@ void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
     vkCmdSetCullMode(commandBuffer, cull_mode);
     vkCmdSetFrontFace(commandBuffer, front_face);
     vkCmdSetPrimitiveTopology(commandBuffer, topology);
+    // Core 1.0: the factors move per draw, the enable is the pipeline's (see the field's note).
+    vkCmdSetDepthBias(commandBuffer, depth_bias_constant, 0.0F, depth_bias_slope);
 
     // The three calls that need an entry point (see DynamicStateEntryPoints). Guarded on the pointer rather
     // than on a flag: a session refuses a device without them, so they are present in every real session.
@@ -101,7 +105,7 @@ void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
                                        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_CULL_MODE,
                                        VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
                                        VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
-                                       VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT);
+                                       VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT, VK_DYNAMIC_STATE_DEPTH_BIAS);
 }
 
 } // namespace detail

@@ -16,6 +16,9 @@ void RenderState::merge(const RenderState& other)
     if (other.polygonMode) {
         polygonMode = other.polygonMode;
     }
+    if (other.polygonOffset) {
+        polygonOffset = other.polygonOffset;
+    }
 }
 
 VN_GRAPHICS_NS_END

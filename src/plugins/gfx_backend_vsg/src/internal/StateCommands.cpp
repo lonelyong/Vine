@@ -111,6 +111,10 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     // Clockwise, because vsg's projection inverts Y (see the file note).
     command->front_face   = VK_FRONT_FACE_CLOCKWISE;
     command->polygon_mode = mapPolygon(state.polygon_mode);
+    // The polygon offset travels as the two factors: `units` is the constant depth term and `factor` the
+    // slope-scaled one (see PolygonOffset).
+    command->depth_bias_constant = state.polygon_offset.units;
+    command->depth_bias_slope    = state.polygon_offset.factor;
     command->topology     = mapTopology(state.topology);
 
     // The ENABLE is the resolved state's, and the compiler is what makes it true for a translucent command

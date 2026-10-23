@@ -44,7 +44,8 @@ bool PipelineKey::operator==(const PipelineKey& other) const noexcept
 bool DynamicState::operator==(const DynamicState& other) const noexcept
 {
     return depth == other.depth && compare == other.compare && cull_mode == other.cull_mode &&
-           polygon_mode == other.polygon_mode && topology == other.topology && blend == other.blend;
+           polygon_mode == other.polygon_mode && polygon_offset == other.polygon_offset &&
+           topology == other.topology && blend == other.blend;
 }
 
 DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state) noexcept
@@ -56,6 +57,7 @@ DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state)
     resolved.compare      = state.depth.compare;
     resolved.cull_mode    = state.cullMode;
     resolved.polygon_mode = state.polygonMode;
+    resolved.polygon_offset = state.polygonOffset;
     resolved.topology     = state.topology;
     resolved.blend        = state.blend;
     return resolved;

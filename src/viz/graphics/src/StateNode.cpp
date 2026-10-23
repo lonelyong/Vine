@@ -81,6 +81,23 @@ std::optional<PolygonMode> StateNode::polygonMode() const
     return state_.polygonMode;
 }
 
+void StateNode::setPolygonOffset(const PolygonOffset& offset)
+{
+    announceContentChange();
+    state_.polygonOffset = offset;
+}
+
+void StateNode::clearPolygonOffset()
+{
+    announceContentChange();
+    state_.polygonOffset.reset();
+}
+
+std::optional<PolygonOffset> StateNode::polygonOffset() const
+{
+    return state_.polygonOffset;
+}
+
 const RenderState& StateNode::renderState() const
 {
     return state_;

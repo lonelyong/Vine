@@ -195,6 +195,12 @@ inline RenderStateObjects makeRenderStateObjects(
     // about. A backend that renders without the Y inversion would declare counter-clockwise here.
     out.rasterization->frontFace = VK_FRONT_FACE_CLOCKWISE;
     out.rasterization->polygonMode = detail::mapPolygonMode(state.polygonMode);
+    // The bias ENABLE is baked TRUE and the factors are dynamic (see SetDynamicState): a zero offset is
+    // zero factors, so one pipeline serves both the offset and the plain case.
+    out.rasterization->depthBiasEnable         = VK_TRUE;
+    out.rasterization->depthBiasConstantFactor = state.polygonOffset.units;
+    out.rasterization->depthBiasSlopeFactor    = state.polygonOffset.factor;
+    out.rasterization->depthBiasClamp          = 0.0F;
 
     // Blending: always-on for the per-vertex opacity path; the StateNode
     // selects the factors when it opts in. A single color attachment covers
@@ -341,6 +347,8 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
     command->cull_mode    = states.rasterization->cullMode;
     command->front_face   = states.rasterization->frontFace;
     command->polygon_mode = states.rasterization->polygonMode;
+    command->depth_bias_constant = states.rasterization->depthBiasConstantFactor;
+    command->depth_bias_slope    = states.rasterization->depthBiasSlopeFactor;
 
     command->topology = states.inputAssembly->topology;
 

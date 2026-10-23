@@ -7813,6 +7813,7 @@ TEST(StateNodeTest, ResolveAppliesDefaults)
     EXPECT_FALSE(fallback.blend.enabled);
     EXPECT_EQ(fallback.polygonMode, PolygonMode::Fill);
     EXPECT_EQ(fallback.topology, Topology::Triangles);
+    EXPECT_TRUE(fallback.polygonOffset.isZero()) << "no offset unless the content states one";
 
     RenderState partial;
     partial.cullMode    = CullMode::Back;
@@ -7846,6 +7847,40 @@ TEST(StateNodeTest, FoldInheritsFromAncestorStateNode)
     EXPECT_EQ(effective.cullMode, CullMode::Back);
     EXPECT_EQ(effective.polygonMode, PolygonMode::Line);
     EXPECT_TRUE(effective.depth.test);
+}
+
+/**
+ * @brief A polygon offset folds like every other item, and an inner node replaces rather than adds to it.
+ *
+ * The offset is what stops two coplanar faces fighting for the depth buffer (a decal on a panel, a highlight
+ * over the face it marks, a wireframe over its own fill). It is a CONTENT item: nothing a pass chooses can
+ * make those two faces agree, and the value must NOT be additive when nested - a subtree that states its own
+ * offset means that offset, not a sum nobody could predict.
+ */
+TEST(StateNodeTest, PolygonOffsetFoldsAndReplaces)
+{
+    auto root = intrusive_ptr<StateNode>(new StateNode());
+    root->setPolygonOffset(PolygonOffset{ 1.0F, 2.0F });
+
+    auto inner = intrusive_ptr<StateNode>(new StateNode());
+    root->addChild(inner);
+
+    // An inner node that says nothing inherits the offset.
+    EXPECT_EQ(collectRenderState(inner.get()).polygonOffset.value_or(PolygonOffset{}), (PolygonOffset{ 1.0F, 2.0F }));
+
+    // One that states its own REPLACES it, item and all.
+    inner->setPolygonOffset(PolygonOffset{ 0.5F, 0.25F });
+    const ResolvedRenderState effective = effectiveRenderState(inner.get());
+    EXPECT_FLOAT_EQ(effective.polygonOffset.factor, 0.5F);
+    EXPECT_FLOAT_EQ(effective.polygonOffset.units, 0.25F);
+
+    // Clearing goes back to inheriting.
+    inner->clearPolygonOffset();
+    EXPECT_FLOAT_EQ(effectiveRenderState(inner.get()).polygonOffset.factor, 1.0F);
+
+    // {0, 0} is the same picture as no offset at all, so the default says so itself.
+    EXPECT_TRUE(PolygonOffset{}.isZero());
+    EXPECT_FALSE((PolygonOffset{ 0.0F, 1e-4F }.isZero()));
 }
 
 TEST(StateNodeTest, FoldDeeperNodeOverridesShallower)

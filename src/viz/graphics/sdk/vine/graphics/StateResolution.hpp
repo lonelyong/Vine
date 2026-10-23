@@ -25,6 +25,7 @@ struct VN_GRAPHICS_API ResolvedRenderState
     CullMode     cullMode = CullMode::None;    ///< Face culling (default: none).
     BlendState   blend;                        ///< Blending (default: disabled).
     PolygonMode  polygonMode = PolygonMode::Fill;  ///< Polygon mode (default: fill).
+    PolygonOffset polygonOffset{};                 ///< Depth bias (default: none).
     /// The EFFECTIVE primitive topology of the draw: the PRIMITIVE's own value (see Primitive.hpp), or the
     /// pass' override of it for the whole view. It has no "content" layer and no default here - a command
     /// without a primitive draws nothing - so this is filled by the caller that knows the data.
@@ -36,7 +37,7 @@ inline bool operator==(const ResolvedRenderState& lhs, const ResolvedRenderState
 {
     return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
            lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.topology == rhs.topology;
+           lhs.polygonOffset == rhs.polygonOffset && lhs.topology == rhs.topology;
 }
 
 /** @brief Returns whether two resolved states differ. */
@@ -66,6 +67,7 @@ struct VN_GRAPHICS_API RenderStateOrigin
     StateOrigin cullMode{StateOrigin::Default};     ///< Where the cull mode came from.
     StateOrigin blend{StateOrigin::Default};        ///< Where the blend state came from.
     StateOrigin polygonMode{StateOrigin::Default};  ///< Where the rasterisation mode came from.
+    StateOrigin polygonOffset{StateOrigin::Default};  ///< Where the depth bias came from.
     StateOrigin topology{StateOrigin::Default};     ///< Where the topology came from (Data or Pass).
 };
 

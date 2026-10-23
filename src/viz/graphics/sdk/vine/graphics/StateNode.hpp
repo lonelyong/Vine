@@ -102,6 +102,26 @@ class VN_GRAPHICS_API StateNode : public Group {
      */
     std::optional<PolygonMode> polygonMode() const;
 
+    /** @brief Sets the depth bias for this subtree (coplanar surfaces, decals, wireframe over a face).
+     *
+     * @details
+     * - The offset is applied to the RASTERISED depth, so two faces at the same physical depth stop fighting
+     *   without moving anything: the vertex, the bounding box and the picking answer are unchanged.
+     * - {0, 0} is the same as clearing it (see PolygonOffset::isZero).
+     *
+     * @param offset Slope-scaled and constant depth offset in depth-buffer units.
+     */
+    void setPolygonOffset(const PolygonOffset& offset);
+
+    /** @brief Clears the depth-bias override so enclosing state is inherited. */
+    void clearPolygonOffset();
+
+    /** @brief Gets the depth-bias override.
+     *
+     * @return The override, or nullopt when unset (the enclosing state applies).
+     */
+    std::optional<PolygonOffset> polygonOffset() const;
+
     /** @brief Sets a custom shader program for this subtree.
      *
      * Program resolution (graphics-rendering.md): a leaf Geometry's own program

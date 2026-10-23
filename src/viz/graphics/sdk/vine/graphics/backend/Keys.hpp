@@ -252,6 +252,7 @@ struct VN_GRAPHICS_API DynamicState
                                                                                ///< Vulkan boundary.
     vn::graphics::CullMode      cull_mode{vn::graphics::CullMode::None};       ///< Face culling.
     vn::graphics::PolygonMode   polygon_mode{vn::graphics::PolygonMode::Fill}; ///< Rasterisation mode.
+    vn::graphics::PolygonOffset polygon_offset{};                               ///< Depth bias (coplanar surfaces).
     vn::graphics::Topology      topology{vn::graphics::Topology::Triangles};   ///< Primitive assembly.
     vn::graphics::BlendState    blend;                                           ///< Blend state.
 

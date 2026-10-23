@@ -34,6 +34,8 @@ inline constexpr VkPrimitiveTopology kBakedTopology         = VK_PRIMITIVE_TOPOL
 inline constexpr VkPolygonMode       kBakedPolygonMode      = VK_POLYGON_MODE_FILL;
 inline constexpr VkBool32            kBakedBlendEnable      = VK_FALSE;
 inline constexpr VkBlendFactor       kBakedBlendFactor      = VK_BLEND_FACTOR_ONE;
+inline constexpr float               kBakedDepthBiasConstant = 0.0F;
+inline constexpr float               kBakedDepthBiasSlope    = 0.0F;
 
 /**
  * @brief The most colour attachments the blend half of this command can carry.
@@ -140,6 +142,14 @@ class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicSta
     VkFrontFace         front_face         = kBakedFrontFace;
     VkPolygonMode       polygon_mode       = kBakedPolygonMode;
     VkPrimitiveTopology topology           = kBakedTopology;
+    /// The polygon-offset half of the rasteriser state (`vkCmdSetDepthBias`).
+    ///
+    /// The ENABLE is baked TRUE into every content pipeline on purpose: Vulkan 1.0 delivers the bias FACTORS
+    /// dynamically but `depthBiasEnable` only from VK_EXT_extended_dynamic_state2, so a baked enable with
+    /// dynamic factors is what gives one pipeline per program instead of one per offset. Zero factors are a
+    /// zero offset, which is why "no polygon offset" needs no separate flag here.
+    float               depth_bias_constant = kBakedDepthBiasConstant;
+    float               depth_bias_slope    = kBakedDepthBiasSlope;
     /// The colour attachments of the draw the command precedes (0 = a depth-only pass: no blend at all).
     std::uint32_t color_attachment_count = 0u;
     /// Per-attachment blend state: only the entries below color_attachment_count are recorded.

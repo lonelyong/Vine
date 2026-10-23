@@ -49,7 +49,7 @@
 | F1 | `Node` | 名字、可见性、透明度、层、drawOrder、父链、世界矩阵、包围盒。 |
 | F2 | `Group` | 子节点容器；`addChild` / `removeChild` / `children()`。 |
 | F3 | 变换节点 | `MatrixTransform`、`PositionAttitudeTransform`（TRS + pivot）、`AutoTransform`（billboard）。 |
-| F4 | `StateNode` | 子树渲染状态（depth / cull / blend / polygon）；可嵌套、深层覆盖。 |
+| F4 | `StateNode` | 子树渲染状态（depth / cull / blend / polygon / polygonOffset）；可嵌套、深层覆盖。 |
 | F4a | `DepthRange` | pass 级深度带：把一条 pass 的 draw 映射进 `[min,max]`（默认整段 = 不重映射），用于语义分层；保序但不再是距离。 |
 | F5 | `Geometry` | 叶子：顶点通道 + `Primitive` 列表（见 `graphics-geometry.md`）。 |
 
@@ -116,7 +116,7 @@
 | `MatrixTransform::setMatrix()` / `matrix()` | 局部矩阵 |
 | `PositionAttitudeTransform::setPosition()` / `setAttitude()` / `setScale()` / `setPivot()` | TRS |
 | `AutoTransform::setAutoRotateMode()` / `setAutoScaleToScreen()` / `setAxis()` / `setNormal()` | billboard |
-| `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `clearState()` / `renderState()` | 子树状态 |
+| `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `setPolygonOffset()` / `clearState()` / `renderState()` | 子树状态 |
 | `StateNode::setMaterial()` / `setProgram()` | 子树 material / program |
 | `RenderPass::setDepthRange()` / `depthRange()` / `clearDepthRange()` | 整条 pass 的深度带（`DepthRange`） |
 | `resolveRenderState(authored, pass, topology)` | 唯一解析点（`StateResolution.hpp`） |
