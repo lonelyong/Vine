@@ -45,7 +45,7 @@ bool DynamicState::operator==(const DynamicState& other) const noexcept
 {
     return depth == other.depth && compare == other.compare && cull_mode == other.cull_mode &&
            polygon_mode == other.polygon_mode && polygon_offset == other.polygon_offset &&
-           topology == other.topology && blend == other.blend;
+           topology == other.topology && line_width == other.line_width && blend == other.blend;
 }
 
 DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state) noexcept
@@ -59,6 +59,7 @@ DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state)
     resolved.polygon_mode = state.polygonMode;
     resolved.polygon_offset = state.polygonOffset;
     resolved.topology     = state.topology;
+    resolved.line_width   = state.lineWidth;
     resolved.blend        = state.blend;
     return resolved;
 }

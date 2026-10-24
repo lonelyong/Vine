@@ -191,13 +191,27 @@ struct VN_GRAPHICS_API RenderState
      */
     std::optional<float> pointSize;
 
+    /**
+     * @brief Width of rasterised LINE primitives, in framebuffer pixels (the override for a subtree).
+     *
+     * @details
+     * - It applies to line primitives (`Topology::Lines`): axis lines, skeletons, trajectories, the ruler and
+     *   leader lines a CAD drawing is made of. It does NOT widen `PolygonMode::Line` (a wireframe's edges are
+     *   rasterised as lines by the polygon stage, and the API's line width does not reach them - the same rule
+     *   OpenGL states). A thick WIREFRAME is a different technique (expanded quads or a shader), not this value.
+     * - Unlike the point size it IS API state, delivered as dynamic state: one pipeline serves every width, so
+     *   changing it recompiles nothing. The device's `lineWidthRange` is the ceiling (see
+     *   Capabilities::max_line_width) and values below 1.0 are raised to 1.0.
+     */
+    std::optional<float> lineWidth;
+
     /** @brief Returns whether no item is set.
      *
      * @return true when every item is unset (the block contributes nothing).
      */
     bool empty() const
     {
-        return !depth && !cullMode && !blend && !polygonMode && !polygonOffset && !pointSize;
+        return !depth && !cullMode && !blend && !polygonMode && !polygonOffset && !pointSize && !lineWidth;
     }
 
     /** @brief Overlays another state block onto this one.
@@ -215,7 +229,8 @@ inline bool operator==(const RenderState& lhs, const RenderState& rhs)
 {
     return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
            lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.polygonOffset == rhs.polygonOffset && lhs.pointSize == rhs.pointSize;
+           lhs.polygonOffset == rhs.polygonOffset && lhs.pointSize == rhs.pointSize &&
+           lhs.lineWidth == rhs.lineWidth;
 }
 
 /** @brief Returns whether two optional state blocks differ. */

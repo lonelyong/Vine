@@ -668,6 +668,32 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
     void clearPointSizeOverride() noexcept { desc_.point_size.reset(); }
 
     /**
+     * @brief Gets the pass-level line-width override.
+     *
+     * @return The width in framebuffer pixels, or nullopt when each command keeps its own.
+     */
+    [[nodiscard]] std::optional<float> lineWidthOverride() const noexcept { return desc_.line_width; }
+
+    /**
+     * @brief Draws every LINE primitive this pass renders @p width pixels wide.
+     *
+     * @details
+     * - The "draw me the structure, thicker" switch of a CAD view: widths that differ per layer are the
+     *   CONTENT's word (StateNode::setLineWidth), and a view that wants every line readable overrides them
+     *   here - same rule as the polygon-mode override, and equally cheap: the width is dynamic state, so
+     *   nothing is rebuilt.
+     * - It affects line primitives only; `PolygonMode::Line` edges are rasterised by the polygon stage and do
+     *   not take their width from here. Values below 1.0 are raised to 1.0, and the device's lineWidthRange is
+     *   the ceiling (see Capabilities::max_line_width).
+     *
+     * @param width Line width in framebuffer pixels.
+     */
+    void setLineWidthOverride(float width) noexcept { desc_.line_width = width; }
+
+    /// @brief Removes the line-width override, leaving each command's own width in effect.
+    void clearLineWidthOverride() noexcept { desc_.line_width.reset(); }
+
+    /**
      * @brief Describes what this pass issues this frame: its target, its state and its drawing calls.
      *
      * @details

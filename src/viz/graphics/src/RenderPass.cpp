@@ -124,6 +124,7 @@ PassRenderState RenderPass::stateOverrides() const noexcept
     state.depth       = desc_.depth_mode;
     state.polygonMode = desc_.polygon_mode;
     state.pointSize   = desc_.point_size;
+    state.lineWidth   = desc_.line_width;
     return state;
 }
 

@@ -93,7 +93,8 @@
 | F22 | ABI | 顶点 location、`VineViewBlock` / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`、128 B push。 |
 | F23 | 透明度 | 唯一通道是 `Node::opacity`；材质不贡献 alpha；blend 恒开。 |
 | F24 | 阴影 | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`；光相机由 `directionalShadowMatrix`（正交）/ `spotShadowMatrix`（透视）推导。**每链一张图、一盏灯（第一个可建的方向光或聚光）**，点光不支持（见 2.7）。 |
-| F25 | 阴影目标 | depth-only `RenderTarget` + `shadowOf` 声明；采样走 `VineShadowBlock`。 |
+| F26 | 线宽 | `StateNode::setLineWidth` / `RenderPass::setLineWidthOverride`：**线图元**（`Topology::Lines`）的宽度，framebuffer 像素，动态状态（`vkCmdSetLineWidth`）所以不重编；`wideLines` 是设备必需特性，上限是设备 `lineWidthRange`（`Capabilities::max_line_width`），下限 1.0。它**不加宽** `PolygonMode::Line` 的线框边。 |
+
 
 ## 4. 公开接口
 

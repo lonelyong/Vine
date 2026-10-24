@@ -253,8 +253,9 @@ struct VN_GRAPHICS_API DynamicState
     vn::graphics::CullMode      cull_mode{vn::graphics::CullMode::None};       ///< Face culling.
     vn::graphics::PolygonMode   polygon_mode{vn::graphics::PolygonMode::Fill}; ///< Rasterisation mode.
     vn::graphics::PolygonOffset polygon_offset{};                               ///< Depth bias (coplanar surfaces).
-    vn::graphics::Topology      topology{vn::graphics::Topology::Triangles};   ///< Primitive assembly.
-    vn::graphics::BlendState    blend;                                           ///< Blend state.
+    vn::graphics::Topology      topology{vn::graphics::Topology::Triangles};   ///< Primitive assembly.    /// Width of rasterised LINE primitives, in framebuffer pixels (see RenderState::lineWidth). It is dynamic
+    /// state of its own (`vkCmdSetLineWidth`), so it belongs here rather than in a pipeline key.
+    float                       line_width{1.0F};    vn::graphics::BlendState    blend;                                           ///< Blend state.
 
     /** @brief Compares the whole state. */
     [[nodiscard]] bool operator==(const DynamicState& other) const noexcept;

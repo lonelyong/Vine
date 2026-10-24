@@ -115,6 +115,23 @@ std::optional<float> StateNode::pointSize() const
     return state_.pointSize;
 }
 
+void StateNode::setLineWidth(float width)
+{
+    announceContentChange();
+    state_.lineWidth = width;
+}
+
+void StateNode::clearLineWidth()
+{
+    announceContentChange();
+    state_.lineWidth.reset();
+}
+
+std::optional<float> StateNode::lineWidth() const
+{
+    return state_.lineWidth;
+}
+
 const RenderState& StateNode::renderState() const
 {
     return state_;

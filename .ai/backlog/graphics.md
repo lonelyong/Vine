@@ -59,7 +59,7 @@
 | S5 | `VineLightsBlock` 上移 SDK | 灯块的 GLSL 已归 `vine_params.glsl`，C++ 仍在后端 `LightBlock.hpp`；上移让布局与声明同模块 | 第二个后端需要同一份灯布局（与 T15 / S4 同一触发） | `../design/graphics-shader-params.md` §3.3 |
 | S6 | 逐灯阴影 / 点光阴影 | 今天只有一个投射灯、一张 2D 深度图：方向光（正交光相机）与聚光（透视光相机）都走它；点光需要六面 cube 深度目标 + 多矩阵阴影 ABI（6 个 `viewToLight` 或一个 cube 采样器），即层化目标能力。`Light::setCastShadow` 在点光上不建 pass 并报告 | 点光投影的真实需求，或第二个投射灯 | `../decisions/ADR-2026-10-24-light-block-typed-lights.md` |
 | S7 | 逐对象选灯 | 今天按声明顺序取前 8 盏，超出的按 episode 报掉落；一场灯很多时需要"选哪几盏照这个 draw" | 一次场景的灯数远超 8 且掉落可见地影响画面 | `../decisions/ADR-2026-10-24-light-block-typed-lights.md` |
-| S8 | 光栅线宽 | Vulkan 的 `lineWidth` 是**烘焙进 pipeline** 的（`wideLines` 可选特性，`lineWidthRange` 常常只有 1.0），做它意味着 `RenderState::lineWidth` + `PipelineKey::line_width`，每宽度一个变体；真粗线（选中轮廓、骨架连线）更适合 quad 展开或专用 pass | 出现"必须靠光栅线宽才看得对"的图，且 quad 展开不可接受 | `../design/graphics-scene.md` §2.3.2 |
+| S8 | 粗线框 / 制图级线 | 光栅**线宽**已落地（`RenderState::lineWidth`，作用于 `Topology::Lines`）。剩下的是它做不到的：`PolygonMode::Line` 的线框边不随线宽变粗，而且光栅线没有 join/cap/抗锯齿（AA 要 `VK_EXT_line_rasterization` 的 `smoothLines`）。正解是 **quad 展开**（折线 → 面向相机的四边形，宽度按像素或世界单位）或 shader 线框（barycentric/`fwidth`），落在几何构建器或宿主 program | 出现"线框太细看不清"或需要抗锯齿 / join 的图 | `../design/graphics-rendering.md` F26 |
 
 ## 3. 下一 session 的第一条命令
 

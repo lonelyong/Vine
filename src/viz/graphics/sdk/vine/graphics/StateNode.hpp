@@ -144,6 +144,30 @@ class VN_GRAPHICS_API StateNode : public Group {
      */
     std::optional<float> pointSize() const;
 
+    /** @brief Sets the width of LINE primitives for this subtree, in framebuffer pixels.
+     *
+     * @details
+     * - It applies to `Topology::Lines` (axes, skeletons, trajectories, leader lines) and to nothing else:
+     *   `PolygonMode::Line` edges keep their own width, so a thick WIREFRAME is a different technique
+     *   (expanded quads or a shader), not this value.
+     * - Delivered as dynamic state (`vkCmdSetLineWidth`), so one pipeline serves every width and changing it
+     *   recompiles nothing. It replaces the LAYOUT value the pipeline was created with.
+     * - The device's `lineWidthRange` is the ceiling (see Capabilities::max_line_width) and values below 1.0
+     *   are raised to 1.0.
+     *
+     * @param width Line width in framebuffer pixels.
+     */
+    void setLineWidth(float width);
+
+    /** @brief Clears the line-width override so enclosing state is inherited. */
+    void clearLineWidth();
+
+    /** @brief Gets the line-width override.
+     *
+     * @return The width in framebuffer pixels, or nullopt when unset (the enclosing state applies, then 1).
+     */
+    std::optional<float> lineWidth() const;
+
     /** @brief Sets a custom shader program for this subtree.
      *
      * Program resolution (graphics-rendering.md): a leaf Geometry's own program

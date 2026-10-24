@@ -326,3 +326,61 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
     EXPECT_GT(nine_pixels.blue, single_pixel.blue * 8U)
         << "点大小没有到达 gl_PointSize（状态没进 draw 块，或顶点阶段没写它）";
 }
+
+TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
+{
+    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+
+    // The CAD case: one horizontal LINE primitive drawn twice, at the default one-pixel width and with the
+    // StateNode saying four. A rasterised line's width is dynamic state (`vkCmdSetLineWidth`), so the picture
+    // is the proof that it reached the rasteriser - and that a second width did not need a second pipeline.
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    geometry->setPositions(
+        packVec3({ -0.6F, 0.0F, kPlaneZ, 0.6F, 0.0F, kPlaneZ }));  // one horizontal segment across the frame
+    geometry->setNormals(packVec3({ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
+
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U }));
+    geometry->clearPrimitives();
+    Primitive edge;
+    edge.topology = Topology::Lines;
+    edge.indices  = Primitive::IndexSpan::slice(arena, 0U, 2U);
+    const vn::intrusive_ptr<Material> blue(new Material());
+    blue->setDiffuse(vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F));
+    edge.material = blue;
+    geometry->addPrimitive(edge);
+    geometry->bumpRevision();
+
+    const vn::intrusive_ptr<StateNode> state(new StateNode());
+    state->addChild(geometry);
+    const vn::intrusive_ptr<Scene> scene(new Scene());
+    scene->setRoot(state);
+
+    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+    pass->setName(vn::String(u8"lines"));
+    pass->setCamera(fixture.camera);
+    pass->setRenderTarget(fixture.target);
+    pass->setClearEnabled(true);
+    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    pass->setShouldClearDepth(true);
+    pass->setDepthMode(DepthMode::Disabled);
+    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
+    fixture.engine->addPass(pass, scene, 0);
+
+    const PixelProbe thin = fixture.read();
+    ASSERT_TRUE(thin.valid()) << "画出来的这一帧必须读得回来";
+    const PartPixels one_pixel = countParts(thin);
+
+    state->setLineWidth(4.0F);
+    const PixelProbe wide = fixture.read();
+    ASSERT_TRUE(wide.valid());
+    const PartPixels four_pixels = countParts(wide);
+
+    std::printf("[primitives] line width 1 -> %zu px, width 4 -> %zu px\n", one_pixel.blue, four_pixels.blue);
+
+    // A 1-pixel horizontal line across the frame and a 4-pixel one differ by about three rows of line length:
+    // what proves the width reached the rasteriser is the RATIO, not a pixel count that depends on the frame.
+    EXPECT_GT(one_pixel.blue, 10U) << "那条线根本没画出来，先查线图元本身";
+    EXPECT_GT(four_pixels.blue, one_pixel.blue * 2U)
+        << "线宽没有到达光栅器（动态状态没发出，或设备把宽度钳回了 1）";
+}

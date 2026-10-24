@@ -116,6 +116,9 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     command->depth_bias_constant = state.polygon_offset.units;
     command->depth_bias_slope    = state.polygon_offset.factor;
     command->topology     = mapTopology(state.topology);
+    // The width the caller already clamped to the device's lineWidthRange (see ContentPass): the API rejects a
+    // value above it, so this layer never has to guard.
+    command->line_width   = state.line_width;
 
     // The ENABLE is the resolved state's, and the compiler is what makes it true for a translucent command
     // (opacity < 1, see FrameCompiler::resolveCommands): "blend disabled" therefore really means no blending,

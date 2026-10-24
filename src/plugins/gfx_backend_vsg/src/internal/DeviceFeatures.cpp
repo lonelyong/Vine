@@ -8,10 +8,11 @@ void applyRequiredFeatures(const ::vsg::ref_ptr<::vsg::DeviceFeatures>& features
 {
     // The count is the contract: a feature added to core::DeviceRequirements without a request here (or the
     // other way round) fails the build, which is the only way the two cannot drift silently.
-    static_assert(core::kDeviceFeatureCount == 8, "every required feature must be requested here");
+    static_assert(core::kDeviceFeatureCount == 9, "every required feature must be requested here");
 
     features->get().fillModeNonSolid  = VK_TRUE;
     features->get().largePoints       = VK_TRUE;
+    features->get().wideLines         = VK_TRUE;
     features->get().independentBlend  = VK_TRUE;
     features->get().samplerAnisotropy = VK_TRUE;
     features

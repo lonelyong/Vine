@@ -36,6 +36,9 @@ inline constexpr VkBool32            kBakedBlendEnable      = VK_FALSE;
 inline constexpr VkBlendFactor       kBakedBlendFactor      = VK_BLEND_FACTOR_ONE;
 inline constexpr float               kBakedDepthBiasConstant = 0.0F;
 inline constexpr float               kBakedDepthBiasSlope    = 0.0F;
+/// @brief The line width a pipeline bakes. Dynamic state makes the value irrelevant to the pipeline, so it is
+/// the command's own default - and 1.0 is the one width every device accepts.
+inline constexpr float               kBakedLineWidth        = 1.0F;
 
 /**
  * @brief The most colour attachments the blend half of this command can carry.
@@ -150,6 +153,9 @@ class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicSta
     /// zero offset, which is why "no polygon offset" needs no separate flag here.
     float               depth_bias_constant = kBakedDepthBiasConstant;
     float               depth_bias_slope    = kBakedDepthBiasSlope;
+    /// Width of rasterised LINE primitives, in framebuffer pixels (`vkCmdSetLineWidth`), already clamped to the
+    /// device's lineWidthRange by the recorder that built this command.
+    float               line_width          = kBakedLineWidth;
     /// The colour attachments of the draw the command precedes (0 = a depth-only pass: no blend at all).
     std::uint32_t color_attachment_count = 0u;
     /// Per-attachment blend state: only the entries below color_attachment_count are recorded.

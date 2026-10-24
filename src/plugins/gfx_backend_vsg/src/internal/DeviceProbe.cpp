@@ -33,6 +33,10 @@ void noteFeatures(const VkPhysicalDeviceFeatures& core_features,
     {
         facts.note(DeviceFeature::LargePoints);
     }
+    if (core_features.wideLines == VK_TRUE)
+    {
+        facts.note(DeviceFeature::WideLines);
+    }
     if (core_features.independentBlend == VK_TRUE)
     {
         facts.note(DeviceFeature::IndependentBlend);

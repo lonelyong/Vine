@@ -14,6 +14,12 @@ namespace
 /// implementation's `pointSizeRange`, so the value the shader writes is always one the device accepts.
 constexpr float kMinimumPointSize = 1.0F;
 
+/// @brief The narrowest line the engine will ask for.
+///
+/// One pixel is the floor the API guarantees and the only width a device MAY reject for being too small; a
+/// non-positive request is raised to it instead of becoming "invisible".
+constexpr float kMinimumLineWidth = 1.0F;
+
 }  // namespace
 
 ResolvedRenderState resolveRenderState(const RenderState& state)
@@ -36,6 +42,9 @@ ResolvedRenderState resolveRenderState(const RenderState& state)
     }
     if (state.pointSize) {
         resolved.pointSize = std::max(*state.pointSize, kMinimumPointSize);
+    }
+    if (state.lineWidth) {
+        resolved.lineWidth = std::max(*state.lineWidth, kMinimumLineWidth);
     }
     return resolved;
 }
@@ -72,6 +81,11 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
     if (authored.pointSize) {
         resolved.state.pointSize  = std::max(*authored.pointSize, kMinimumPointSize);
         resolved.origin.pointSize = StateOrigin::Content;
+    }
+    // The line width is API state (dynamic), so it carries no draw-block comment: same fold, same floor.
+    if (authored.lineWidth) {
+        resolved.state.lineWidth  = std::max(*authored.lineWidth, kMinimumLineWidth);
+        resolved.origin.lineWidth = StateOrigin::Content;
     }
     // Topology: the DATA's own word (a primitive's topology) - no StateNode layer exists for it, because a
     // subtree cannot reinterpret another object's vertex/index data. The pass may override it below, which is
@@ -113,6 +127,10 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
     if (pass.pointSize) {
         resolved.state.pointSize  = std::max(*pass.pointSize, kMinimumPointSize);
         resolved.origin.pointSize = StateOrigin::Pass;
+    }
+    if (pass.lineWidth) {
+        resolved.state.lineWidth  = std::max(*pass.lineWidth, kMinimumLineWidth);
+        resolved.origin.lineWidth = StateOrigin::Pass;
     }
 
     return resolved;

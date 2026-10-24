@@ -27,6 +27,7 @@ int SetDynamicState::compare(const ::vsg::Object& rhs_object) const
     if ((result = ::vsg::compare_value(depth_bias_constant, rhs.depth_bias_constant)) != 0) return result;
     if ((result = ::vsg::compare_value(depth_bias_slope, rhs.depth_bias_slope)) != 0) return result;
     if ((result = ::vsg::compare_value(topology, rhs.topology)) != 0) return result;
+    if ((result = ::vsg::compare_value(line_width, rhs.line_width)) != 0) return result;
     if ((result = ::vsg::compare_value(color_attachment_count, rhs.color_attachment_count)) != 0) return result;
     // Per field, not per struct: the attachment struct has no comparison of its own, and the write mask is
     // deliberately left out — the command does not deliver it (vkCmdSetColorBlendEquationEXT reads the six
@@ -71,6 +72,9 @@ void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
     vkCmdSetCullMode(commandBuffer, cull_mode);
     vkCmdSetFrontFace(commandBuffer, front_face);
     vkCmdSetPrimitiveTopology(commandBuffer, topology);
+    // Core 1.0, and it needs the wideLines feature for any value above 1.0 - which this backend REQUIRES, so the
+    // call is always legal here (see DeviceRequirements).
+    vkCmdSetLineWidth(commandBuffer, line_width);
     // Core 1.0: the factors move per draw, the enable is the pipeline's (see the field's note).
     vkCmdSetDepthBias(commandBuffer, depth_bias_constant, 0.0F, depth_bias_slope);
 

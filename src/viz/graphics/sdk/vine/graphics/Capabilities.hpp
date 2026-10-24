@@ -78,6 +78,15 @@ struct VN_GRAPHICS_API Capabilities
     /// because one target has one sample count.
     std::uint32_t max_samples{1};
 
+    /// The widest LINE primitive the device rasterises, in framebuffer pixels (1 = line width is fixed).
+    ///
+    /// A LIMIT, not a feature: `wideLines` is a requirement of this backend (a width above 1.0 is invalid
+    /// without it), but how WIDE is the device's own answer - some implementations report a range that stops at
+    /// 1.0 even with the feature on. `RenderState::lineWidth` is clamped to it, so a host that offers a width
+    /// slider reads this, and a host that needs thick lines regardless of the device should generate geometry
+    /// instead (a rasterised line cannot get joins, caps or antialiasing anyway).
+    float max_line_width{1.0F};
+
     /// How many colour attachments one render target may carry.
     ///
     /// A CEILING, not a promise the engine enforces: a declaration asking for more is refused by the backend that

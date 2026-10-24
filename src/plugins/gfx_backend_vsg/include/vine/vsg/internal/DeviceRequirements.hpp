@@ -61,6 +61,8 @@ inline constexpr std::uint32_t kRequiredApiVersion = makeApiVersion(1, 4);
  *   * FillModeNonSolid - wireframe rendering (a polygon mode of Line);
  *   * LargePoints - a point primitive larger than one pixel (the vertex stage writes `gl_PointSize`, and a
  *     value above 1.0 is invalid without this feature);
+ *   * WideLines - a line primitive wider than one pixel (`vkCmdSetLineWidth`; a width above 1.0 is invalid
+ *     without this feature, whatever the state is delivered through);
  *   * IndependentBlend - MRT pipelines whose attachments blend differently (a G-buffer);
  *   * SamplerAnisotropy - the samplers ask for it, so not requesting the feature is a validation error,
  *     not a degradation;
@@ -72,6 +74,7 @@ enum class DeviceFeature : std::uint8_t
 {
     FillModeNonSolid,                       ///< Wireframe polygon mode.
     LargePoints,                            ///< Point primitives larger than one pixel.
+    WideLines,                              ///< Line primitives wider than one pixel.
     IndependentBlend,                       ///< Per-attachment blending (MRT).
     SamplerAnisotropy,                      ///< Anisotropic sampling.
     ExtendedDynamicState2,                  ///< The dynamic state the pipelines assume.

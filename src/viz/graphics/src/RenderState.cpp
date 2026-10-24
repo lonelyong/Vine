@@ -22,6 +22,9 @@ void RenderState::merge(const RenderState& other)
     if (other.pointSize) {
         pointSize = other.pointSize;
     }
+    if (other.lineWidth) {
+        lineWidth = other.lineWidth;
+    }
 }
 
 VN_GRAPHICS_NS_END

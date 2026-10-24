@@ -1335,6 +1335,12 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // same reason - the pipeline's sampled set is compiled against how many of each the pass binds.
     record.key.sampled_depth_count = pipeline_depths;
     record.dynamic                = command.dynamic;
+    // The device's lineWidthRange is a LIMIT the API enforces by refusing the call, so the width is clamped here -
+    // where the draw is prepared - rather than at the Vulkan boundary, which cannot report why it refused. 1.0 is
+    // the floor for the same reason a point is at least one pixel: "0" must not become a way to hide lines.
+    const float widest_line = scope_.max_line_width > 1.0F ? scope_.max_line_width : 1.0F;
+    record.dynamic.line_width =
+        std::clamp(record.dynamic.line_width, 1.0F, widest_line);
     // The blocks: one bind per set the PROGRAM declares (its own `layout(set = ..., binding = ...)` qualifiers,
     // see api/ProgramAbi). Which sets those are came from `serveHalf`, which also refused the half when the
     // caller built no set for one of them.

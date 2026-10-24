@@ -22,6 +22,10 @@ struct ContentAssembly::Data
     /// images, which is what keeps a steady frame from writing a descriptor a pending frame still reads.
     InputSetCache                  input_sets{};
 
+    /// The device's widest LINE width (see ContentPass::Scope::max_line_width): read once here, because this is
+    /// the object that owns the device and the recorder that clamps the value is created per pass.
+    float                         max_line_width{1.0F};
+
     const ContentFacts*  facts{nullptr};
     core::FrameTimeline* timeline{nullptr};
     core::RetirementQueue* retirement{nullptr};
@@ -71,6 +75,11 @@ ContentAssembly::ContentAssembly(ContentStore& store, ::vsg::ref_ptr<::vsg::Devi
     d->halves      = std::make_unique<ContentHalves>(
         pool, detail::fetchDynamicStateEntryPoints(d->device->vk(), d->device->getInstance()->vk()));
     d->sets        = std::make_unique<ContentSets>(d->device, storage, images);
+    // How wide a rasterised LINE may be is the device's answer, and the API REFUSES a width above it - so it is
+    // read here, once, and handed to every pass' recorder (see ContentPass::Scope::max_line_width).
+    if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice()) {
+        d->max_line_width = physical->getProperties().limits.lineWidthRange[1];
+    }
 }
 
 ContentAssembly::~ContentAssembly() = default;
@@ -152,6 +161,7 @@ bool ContentAssembly::record(const core::CompiledPass& pass, const core::RenderP
     scope.block_sets = candidates;
     scope.uploads    = &d->uploads;
     scope.input_sets = &d->input_sets;
+    scope.max_line_width = d->max_line_width;
     // The two reports that are NOT about this frame: the light-drop sentence is about the PASS and the
     // empty-rectangle one is about the SESSION, so their episodes belong to the content world (see
     // ContentPass::Scope and the note on the halves' own state).

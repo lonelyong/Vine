@@ -231,6 +231,10 @@ class VN_VSG_API ContentPass
         /// layout the pipeline was not compiled against.
         std::span<BlockDescriptors* const> block_sets{};
         StreamUploads*         uploads{nullptr};      ///< The stream sharing (geometry).
+        /// The device's widest LINE width (VkPhysicalDeviceLimits::lineWidthRange[1]); the recorder clamps the
+        /// resolved width to it. 1.0 - the default - is the one width every device accepts, so a caller that does
+        /// not state the limit gets a legal draw rather than an invalid call.
+        float                  max_line_width{1.0F};
         /// Episode state of the light-drop report: a drawing call whose announced lights all fit the block
         /// re-arms it, so "the host announced lights the block cannot carry" is said once per episode rather
         /// than once per drawing call (see `record`). The episode's END is the caller's decision - a scope

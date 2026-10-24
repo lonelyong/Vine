@@ -1175,6 +1175,10 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
         // limit reported is what BOTH can do (a device whose depth tops out lower is the binding side).
         answer.max_samples =
             std::min(properties.limits.framebufferColorSampleCounts, properties.limits.framebufferDepthSampleCounts);
+        // How WIDE a rasterised LINE may be is the device's answer, not the feature bit's: `wideLines` says
+        // "widths above 1.0 are allowed", and this is how far the implementation goes (some stop at 1.0 even
+        // with the feature on). The recorder clamps to it (see ContentPass::Scope::max_line_width).
+        answer.max_line_width = properties.limits.lineWidthRange[1];
         if (properties.limits.timestampComputeAndGraphics != VK_FALSE)
         {
             answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::GpuTimings);

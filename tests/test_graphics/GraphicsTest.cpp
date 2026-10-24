@@ -3199,6 +3199,8 @@ class MockBackend : public RenderBackend {
     std::vector<PolygonMode> last_polygon_modes;
     /// The EFFECTIVE point size of every command, resolved the same way (see last_polygon_modes).
     std::vector<float> last_point_sizes;
+    /// The EFFECTIVE line width of every command, resolved the same way.
+    std::vector<float> last_line_widths;
     int light_sets = 0;
     std::size_t last_light_count = 0;
     const Light* last_light = nullptr;
@@ -3352,6 +3354,8 @@ class MockBackend : public RenderBackend {
         last_commands_authored_polygon_modes.reserve(commands.size());
         last_point_sizes.clear();
         last_point_sizes.reserve(commands.size());
+        last_line_widths.clear();
+        last_line_widths.reserve(commands.size());
         for (const auto& command : commands) {
             last_programs.push_back(program_override != nullptr ? program_override : command.program.get());
             last_commands_authored_polygon_modes.push_back(command.authored_state.polygonMode);
@@ -3364,6 +3368,9 @@ class MockBackend : public RenderBackend {
             last_point_sizes.push_back(
                 resolveRenderState(command.authored_state, pass_state, Topology::Triangles)
                     .state.pointSize);
+            last_line_widths.push_back(
+                resolveRenderState(command.authored_state, pass_state, Topology::Triangles)
+                    .state.lineWidth);
         }
     }
 
@@ -4691,6 +4698,47 @@ TEST(SceneViewViewportTest, ThePassLevelPointSizeOverridesTheContentAndNeverReac
     engine->frame();
     ASSERT_EQ(backend->last_point_sizes.size(), 1u);
     EXPECT_FLOAT_EQ(backend->last_point_sizes[0], 3.0F);
+}
+
+TEST(SceneViewViewportTest, ThePassLevelLineWidthOverridesTheContentAndCanBeClearedBack)
+{
+    // The CAD case: the content states a width per layer, and the viewer thickens every line it draws. Same
+    // shape as the point-size and polygon-mode overrides, because they are the same kind of pass property.
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+
+    auto root = intrusive_ptr<StateNode>(new StateNode());
+    root->setLineWidth(2.0F);
+    root->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -2.0), nullptr, u8"lines"));
+    view->scene()->setRoot(root);
+
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    backend->ok   = true;
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto pipeline            = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
+    RenderPass* const window = pipeline->presentingPass();
+    ASSERT_NE(window, nullptr);
+
+    engine->frame();
+    ASSERT_EQ(backend->last_line_widths.size(), 1u);
+    EXPECT_FLOAT_EQ(backend->last_line_widths[0], 2.0F);
+    EXPECT_FALSE(window->lineWidthOverride().has_value());
+
+    window->setLineWidthOverride(5.0F);
+    ASSERT_EQ(window->lineWidthOverride(), 5.0F);
+    engine->frame();
+    ASSERT_EQ(backend->last_line_widths.size(), 1u);
+    EXPECT_FLOAT_EQ(backend->last_line_widths[0], 5.0F);
+
+    window->clearLineWidthOverride();
+    EXPECT_FALSE(window->lineWidthOverride().has_value());
+    engine->frame();
+    ASSERT_EQ(backend->last_line_widths.size(), 1u);
+    EXPECT_FLOAT_EQ(backend->last_line_widths[0], 2.0F);
 }
 
 TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
@@ -7957,6 +8005,7 @@ TEST(StateNodeTest, NewNodeHasNoState)
     EXPECT_FALSE(state.blend().has_value());
     EXPECT_FALSE(state.polygonMode().has_value());
     EXPECT_FALSE(state.pointSize().has_value());
+    EXPECT_FALSE(state.lineWidth().has_value());
 }
 
 TEST(StateNodeTest, TopologyIsNotStateAtAll)
@@ -8055,6 +8104,42 @@ TEST(StateNodeTest, ThePointSizeIsStateForTheContentAndDataForTheBackend)
     // Saving and clearing round-trip through the block the fold reads.
     node.clearPointSize();
     EXPECT_FALSE(node.pointSize().has_value());
+    EXPECT_FALSE(node.hasState());
+}
+
+TEST(StateNodeTest, TheLineWidthIsStateForTheContentAndDynamicStateForTheBackend)
+{
+    // A CAD drawing states widths per layer (content) and the viewer may thicken every line (pass override).
+    // Unlike the point size, the width IS API state - dynamic state - so it also never recompiles a pipeline,
+    // and it does NOT widen a wireframe's edges (see PolygonMode::Line).
+    StateNode node;
+    node.setLineWidth(2.5F);
+    ASSERT_TRUE(node.lineWidth().has_value());
+    EXPECT_FLOAT_EQ(*node.lineWidth(), 2.5F);
+
+    const ResolvedCommandState defaults = resolveRenderState(RenderState{}, PassRenderState{}, Topology::Lines);
+    EXPECT_FLOAT_EQ(defaults.state.lineWidth, 1.0F);
+    EXPECT_EQ(defaults.origin.lineWidth, StateOrigin::Default);
+
+    const ResolvedCommandState authored =
+        resolveRenderState(node.renderState(), PassRenderState{}, Topology::Lines);
+    EXPECT_FLOAT_EQ(authored.state.lineWidth, 2.5F);
+    EXPECT_EQ(authored.origin.lineWidth, StateOrigin::Content);
+
+    PassRenderState viewing;
+    viewing.lineWidth = 4.0F;
+    const ResolvedCommandState overridden = resolveRenderState(node.renderState(), viewing, Topology::Lines);
+    EXPECT_FLOAT_EQ(overridden.state.lineWidth, 4.0F);
+    EXPECT_EQ(overridden.origin.lineWidth, StateOrigin::Pass);
+
+    // A hairlines request resolves to one pixel from either side, never to zero.
+    StateNode hairline;
+    hairline.setLineWidth(0.25F);
+    EXPECT_FLOAT_EQ(resolveRenderState(hairline.renderState(), PassRenderState{}, Topology::Lines).state.lineWidth,
+                    1.0F);
+
+    node.clearLineWidth();
+    EXPECT_FALSE(node.lineWidth().has_value());
     EXPECT_FALSE(node.hasState());
 }
 
