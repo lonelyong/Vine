@@ -323,7 +323,11 @@ vn::intrusive_ptr<vn::graphics::Geometry> makeDirectionBox(const vn::String& nam
     geometry->setTexcoords3(vn::graphics::packAttribute(directions));
     vn::graphics::Primitive draw;
     draw.indices = vn::graphics::Primitive::IndexSpan::whole(vn::graphics::packIndices(indices));
-    geometry->addPrimitive(std::move(draw));
+    // setPositions already stated the DEFAULT draw (a non-indexed triangle list over the position channel,
+    // see Geometry::addBuffer); this REPLACES it with the indexed one. Appending would keep the default and
+    // draw the 24 authored corners as 8 triangles, four of which mix corners of different faces - a
+    // direction box drawn that way smears its cube map across a triangle that spans the whole box.
+    geometry->setPrimitive(0U, std::move(draw));
     return geometry;
 }
 
@@ -523,7 +527,9 @@ addBox(vn::graphics::Group* root, const vn::Colorf& diffuse, const vn::String& n
     geometry->setNormals(vn::graphics::packAttribute(normals));
     vn::graphics::Primitive draw;
     draw.indices = vn::graphics::Primitive::IndexSpan::whole(vn::graphics::packIndices(indices));
-    geometry->addPrimitive(std::move(draw));
+    // Replaces the default draw setPositions stated (see makeDirectionBox); appending would draw the 24
+    // corners a second time as 8 triangles, four of them mixing faces.
+    geometry->setPrimitive(0U, std::move(draw));
 
     auto material = vn::make_intrusive<vn::graphics::Material>();
     // Matte plastic: a low roughness keeps the highlight tight while the default dielectric reflectance
@@ -908,13 +914,18 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
     // where the camera happens to be. It used to be described as "from the camera side", which made the
     // shadow a function of the viewpoint: with the camera free to orbit, "the shadow looks wrong" then
     // has no expected answer to compare against. A fixed sun makes the expected picture a CONSTANT -
-    // the shadows fall towards -x/-y, away from the default camera - so a deviation is a bug rather
-    // than a matter of opinion.
+    // the shadows fall towards +x/+y, TOWARDS the default camera - so a deviation is a bug rather than a
+    // matter of opinion.
+    //
+    // THE SHADOWS MUST BE VISIBLE FROM THE DEFAULT VIEW, which is why they fall towards the camera: a sun
+    // BEHIND the camera puts every shadow behind its own caster, and a ground whose shadow nobody can see
+    // is a demo that shows nothing of the feature - measured 2026-10-24, the first report of "the shadow
+    // looks wrong" was a picture with no shadow in it at all.
     //
     // The world is Z-up (robotics convention), so "above" is +Z and the light travels downward: the
-    // source sits at +x/+y/+z, well above the 6x6 ground. Lights travel along the given direction (both
+    // source sits at -x/-y/+z, well above the 6x6 ground. Lights travel along the given direction (both
     // the deferred and the forward shaders shade with the opposite ray).
-    auto sun = vn::graphics::Light::createDirectional(vn::math::Vec3d(-0.40, -0.50, -0.77));
+    auto sun = vn::graphics::Light::createDirectional(vn::math::Vec3d(0.40, 0.50, -0.77));
     sun->setName(u8"scene_sun");
     sun->setIntensity(1.0f);
     // The demo's shadow, STATED rather than defaulted, so the numbers can be checked against the
@@ -930,8 +941,9 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
     scene->addLight(sun);
 
     // Soft cool fill from the opposite (back) side so orbiting to the far
-    // side does not drop those faces to ambient-only either.
-    auto fill = vn::graphics::Light::createDirectional(vn::math::Vec3d(0.5, 0.5, -0.4));
+    // side does not drop those faces to ambient-only either. "Opposite" is opposite to the SUN above,
+    // whose source is at -x/-y: this one's source is at +x/+y.
+    auto fill = vn::graphics::Light::createDirectional(vn::math::Vec3d(-0.5, -0.5, -0.4));
     fill->setName(u8"scene_fill");
     fill->setIntensity(0.5f);
     scene->addLight(fill);

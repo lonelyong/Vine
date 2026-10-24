@@ -482,7 +482,8 @@ options.content = scene;
 options.camera  = camera.get();
 
 // 结构只有两选：forward / deferred。阴影不是预设——它由"投影的那盏灯"提出请求
-// （Light::castShadow），当前还没有阴影 pass，所以 build 会报一条"画面无影"。
+// （Light::castShadow()），预设为内容里第一盏可建的方向光/聚光建一条 depth-only 的
+// shadow pass；第二盏投射灯与点光没有图，会在诊断通道里各报一条（见 §4.3）。
 options.path = ShadingPath::Deferred;
 options.offscreen_width  = 0;          // 0 = 用当前 surface 尺寸，未知时回退 640x360
 options.offscreen_height = 0;
