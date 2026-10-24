@@ -120,6 +120,16 @@ TEST(RenderStateMapperTest, TopologyMaps)
               VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
     EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::Lines)).inputAssembly->topology,
               VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
+    // The strip and fan forms are values of their own: the engine keeps one pipeline per enum value even though
+    // the API would let a dynamic set stay inside the same topology class (see Topology.hpp).
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::Triangles)).inputAssembly->topology,
+              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::TriangleStrip)).inputAssembly->topology,
+              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::TriangleFan)).inputAssembly->topology,
+              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::LineStrip)).inputAssembly->topology,
+              VK_PRIMITIVE_TOPOLOGY_LINE_STRIP);
 }
 
 TEST(RenderStateMapperTest, BlendFactorsAppliedWhenEnabled)

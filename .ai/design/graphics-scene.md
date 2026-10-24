@@ -96,7 +96,7 @@
 |---|---|---|
 | F24 | 射线 | `Camera::screenToWorldRay` 收归一化屏幕坐标。 |
 | F25 | 场景查询 | `RayIntersection::intersectScene` / `intersectSceneAll`。 |
-| F26 | 命中身份 | `geometry + primitiveIndex + instanceIndex`；只打 `Triangles`。 |
+| F26 | 命中身份 | `geometry + primitiveIndex + instanceIndex`；只打三角形拓扑（list / strip / fan，`isTriangleTopology`）。 |
 | F27 | 掩码 | 与收集同一层规则；容器不因掩码被剪。 |
 
 ## 4. 公开接口

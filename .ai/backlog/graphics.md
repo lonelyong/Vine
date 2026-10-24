@@ -20,7 +20,6 @@
 | T2 | 选择态 | 选中集 / 描边 / 框选 / 多选不在框架 | 多处调用点各自重写同一套选择与高亮 | `../design/graphics-scene.md` §2.5 |
 | T3 | `ViewContext` | 命令取当前视图靠 `MainWindow::primaryRenderControl()` + `MainWindow::current()` | 一个窗口出现第二个 3D 区，或命令要指向非活动窗口 | `SceneView.hpp` / `RenderSurface.hpp` |
 | T4 | L2b 分层目标 | 数组层 + 一次写多层；L2a 已裁决不做 | VR / 单 pass 多视图真正落地，或实测 N-pass 开销成为瓶颈 | `../design/graphics-rendering.md` §2.1 |
-| T5 | `Topology` strip / fan | 只有 `Triangles` / `Points` / `Lines` 列表 | 导入器需要 strip/fan，且拾取 / 管线映射一并设计 | `../design/graphics-geometry.md` §5 |
 | T6 | update traversal | 无逐帧节点更新入口（`FrameContext` / `UpdateContext` 没有消费者） | 动画 / 关节回放等需要每帧更新节点状态 | `../design/graphics-scene.md` §2.4 |
 | T7 | 节点灯 / 逐 draw 选灯 | `Light` 在 `Scene` 上且是世界坐标：灯不能跟着子树动，也没有“这几盏灯照这个 draw”（灯块按声明顺序取前 8 盏）。两者是同一个模型的缺口 | 出现挂在会动物体上的灯，或一场景灯数远超槽数且掉落影响画面 | `../design/graphics-scene.md` §2.7、`../design/graphics-shader-params.md`、本文件 S7 |
 

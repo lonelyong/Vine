@@ -327,6 +327,61 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
         << "点大小没有到达 gl_PointSize（状态没进 draw 块，或顶点阶段没写它）";
 }
 
+TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
+{
+    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+
+    // The same quad, assembled three ways: six indices as a list, four as a strip, four as a fan. The pixel
+    // counts must agree, because the only thing that differs is which triples the assembler forms.
+    const auto draw_quad = [&](Topology topology, std::vector<std::uint32_t> indices)
+    {
+        const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+        geometry->setPositions(packVec3({ -0.6F, -0.6F, kPlaneZ, 0.6F, -0.6F, kPlaneZ, //
+                                          -0.6F, 0.6F, kPlaneZ, 0.6F, 0.6F, kPlaneZ }));
+        geometry->setNormals(packVec3({ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
+        const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(
+            new vn::Buffer<std::uint32_t>(std::move(indices)));
+        geometry->clearPrimitives();
+        Primitive quad;
+        quad.topology = topology;
+        quad.indices  = Primitive::IndexSpan::slice(arena, 0U, arena->size());
+        const vn::intrusive_ptr<Material> red(new Material());
+        red->setDiffuse(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+        quad.material = red;
+        geometry->addPrimitive(quad);
+        geometry->bumpRevision();
+
+        const vn::intrusive_ptr<Scene> scene(new Scene());
+        scene->setRoot(geometry);
+
+        // One pass per shape: the frame draws exactly one scene, and the scene IS the quad here.
+        const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+        pass->setName(vn::String(u8"quad"));
+        pass->setCamera(fixture.camera);
+        pass->setRenderTarget(fixture.target);
+        pass->setClearEnabled(true);
+        pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+        pass->setShouldClearDepth(true);
+        pass->setDepthMode(DepthMode::Disabled);
+        pass->setProgramOverride(vn::graphics::unlitForwardProgram());
+        fixture.engine->addPass(pass, scene, 0);
+
+        const PixelProbe picture = fixture.read();
+        fixture.engine->removePass(pass.get());
+        EXPECT_TRUE(picture.valid()) << "画出来的这一帧必须读得回来";
+        return countParts(picture).red;
+    };
+
+    const std::size_t list  = draw_quad(Topology::Triangles, { 0U, 1U, 2U, 2U, 1U, 3U });
+    const std::size_t strip = draw_quad(Topology::TriangleStrip, { 0U, 1U, 2U, 3U });
+    const std::size_t fan   = draw_quad(Topology::TriangleFan, { 0U, 1U, 3U, 2U });
+
+    std::printf("[primitives] quad coverage: list=%zu strip=%zu fan=%zu\n", list, strip, fan);
+    EXPECT_GT(list, 500U) << "同一个四边形列表都没画满，先查基本三角形路径";
+    EXPECT_EQ(strip, list) << "strip 与 list 必须覆盖同一个四边形";
+    EXPECT_EQ(fan, list) << "fan 与 list 必须覆盖同一个四边形";
+}
+
 TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
 {
     VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);

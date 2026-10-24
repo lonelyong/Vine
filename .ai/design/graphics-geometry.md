@@ -55,7 +55,7 @@
 | F7 | 多 part | 一个 `Geometry` 多条 `Primitive`，共享顶点通道。 |
 | F8 | 索引段 | `BufferSlice<uint32_t>`；空 = 非索引；同一 arena 可共享上传。 |
 | F9 | 材质/程序默认 | 图元自己的值 > 几何默认 > 最近 `StateNode` > pass。 |
-| F10 | 拓扑 | `Triangles` / `Points` / `Lines`；是管线身份，不是动态状态。 |
+| F10 | 拓扑 | `Triangles` / `TriangleStrip` / `TriangleFan` / `Lines` / `LineStrip` / `Points`；是管线身份，不是动态状态（每种值一条 pipeline，尽管 Vulkan 允许同拓扑类内动态切换）。`isTriangleTopology()` 是“这是表面吗”的唯一判据（拾取用）。 |
 
 ### 3.3 实例
 
@@ -189,7 +189,6 @@
 | D3 | 多父 / DAG | 渲染路径可 DAG，但公开世界查询与拾取身份不成立；复制节点即可。详见 [ADR](../decisions/ADR-2026-10-23-no-multi-parent-dag.md)。 |
 | D4 | 逐实例材质 / 颜色 / 层 / 排序 / 剔除 | 一条 draw 的实例共享这些；等真实需求再加。 |
 | D5 | GPU indirect / 自动合批 | 没有消费者；实例化只解决“同一几何 N 份”。 |
-| D6 | `Topology` strip / fan | 需要单独扩展枚举与拾取/管线映射；不在本设计里伪支持。 |
 
 ## 8. 测试与验收
 

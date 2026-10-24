@@ -113,8 +113,11 @@ inline VkPrimitiveTopology mapTopology(vn::graphics::Topology topology)
 {
     switch (topology) {
         case vn::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        case vn::graphics::Topology::TriangleStrip: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+        case vn::graphics::Topology::TriangleFan: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
         case vn::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
         case vn::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+        case vn::graphics::Topology::LineStrip: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
     }
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }

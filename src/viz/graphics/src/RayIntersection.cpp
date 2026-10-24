@@ -242,7 +242,7 @@ void forEachTriangleHit(const Geometry* geometry, const Ray& ray, const Mat4d& w
     }
     for (std::size_t index = 0; index < geometry->primitiveCount(); ++index) {
         const Primitive* primitive = geometry->primitive(index);
-        if (primitive == nullptr || primitive->topology != Topology::Triangles) {
+        if (primitive == nullptr || !isTriangleTopology(primitive->topology)) {
             continue;   // a line or point primitive is not a surface
         }
         const GeometryMesh mesh = meshOfGeometry(geometry, primitive);
@@ -255,11 +255,12 @@ void forEachTriangleHit(const Geometry* geometry, const Ray& ray, const Mat4d& w
             hit.instanceIndex  = instance;
         };
         if (!primitive->hasInstances()) {
-            traverseMesh(mesh.positions, mesh.indices, ray, world, [&](const RayIntersectionResult& hit) {
-                RayIntersectionResult tagged = hit;
-                tag(tagged, std::numeric_limits<std::uint32_t>::max());
-                visit(tagged);
-            });
+            traverseMesh(mesh.positions, mesh.indices, primitive->topology, ray, world,
+                         [&](const RayIntersectionResult& hit) {
+                             RayIntersectionResult tagged = hit;
+                             tag(tagged, std::numeric_limits<std::uint32_t>::max());
+                             visit(tagged);
+                         });
             continue;
         }
         const std::size_t visible = primitive->visibleInstanceCount();
@@ -268,7 +269,7 @@ void forEachTriangleHit(const Geometry* geometry, const Ray& ray, const Mat4d& w
             if (!matrix.has_value()) {
                 continue;  // the buffer shrank under the visible count
             }
-            traverseMesh(mesh.positions, mesh.indices, ray, world * *matrix,
+            traverseMesh(mesh.positions, mesh.indices, primitive->topology, ray, world * *matrix,
                          [&](const RayIntersectionResult& hit) {
                              RayIntersectionResult tagged = hit;
                              tag(tagged, static_cast<std::uint32_t>(instance));
@@ -331,7 +332,10 @@ RayIntersectionResult makeTriangleHit(const Vec3d& a, const Vec3d& b, const Vec3
  * there — the same visible outcome as a hidden node.
  *
  * @param positions  Vertex positions (local space).
- * @param indices    Triangle index array, or null for consecutive triples.
+ * @param indices    Index array, or null for consecutive vertices.
+ * @param topology   How @p indices (or the positions) assemble into triangles. The three triangle topologies differ
+ *                   only in which triples they form, and a strip flips its winding every other triangle - which is
+ *                   why the reported normal is built from the SAME triple the GPU rasterises.
  * @param ray        The world-space ray.
  * @param world      World matrix of the geometry.
  * @param on_hit     Invoked for each triangle hit with its hit result.
@@ -339,7 +343,7 @@ RayIntersectionResult makeTriangleHit(const Vec3d& a, const Vec3d& b, const Vec3
  */
 template <typename OnHit>
 bool traverseMesh(const vn::geometry::Vec3fArray& positions,
-                  std::span<const std::uint32_t> indices,
+                  std::span<const std::uint32_t> indices, Topology topology,
                   const Ray& ray, const Mat4d& world, OnHit&& on_hit)
 {
     if (positions.empty()) {
@@ -366,27 +370,58 @@ bool traverseMesh(const vn::geometry::Vec3fArray& positions,
 
     const std::size_t n = !indices.empty() ? indices.size() : positions.size();
     bool any = false;
-    for (std::size_t tri = 0; tri + 2 < n; tri += 3) {
-        std::size_t i0 = tri;
-        std::size_t i1 = tri + 1;
-        std::size_t i2 = tri + 2;
+    const auto vertex = [&](std::size_t at, Vec3d& out) noexcept {
+        std::size_t index = at;
         if (!indices.empty()) {
-            i0 = indices[tri];
-            i1 = indices[tri + 1];
-            i2 = indices[tri + 2];
-            if (i0 >= positions.size() || i1 >= positions.size() || i2 >= positions.size()) {
-                continue;
+            index = indices[at];
+            if (index >= positions.size()) {
+                return false;
             }
         }
-        const Vec3d a(positions[i0].x, positions[i0].y, positions[i0].z);
-        const Vec3d b(positions[i1].x, positions[i1].y, positions[i1].z);
-        const Vec3d c(positions[i2].x, positions[i2].y, positions[i2].z);
+        out = Vec3d(positions[index].x, positions[index].y, positions[index].z);
+        return true;
+    };
+    const auto tryTriangle = [&](std::size_t a_at, std::size_t b_at, std::size_t c_at, bool flip,
+                                 std::size_t ordinal)
+    {
+        Vec3d a;
+        Vec3d b;
+        Vec3d c;
+        if (!vertex(a_at, a) || !vertex(b_at, b) || !vertex(c_at, c)) {
+            return;
+        }
+        if (flip) {
+            std::swap(b, c);   // a strip reverses its winding on every other triangle
+        }
         double t = 0.0;
         if (!intersectTriangle(local_origin, local_dir, a, b, c, t)) {
-            continue;
+            return;
         }
         any = true;
-        on_hit(makeTriangleHit(a, b, c, local_origin, local_dir, t, tri / 3, ray, world));
+        on_hit(makeTriangleHit(a, b, c, local_origin, local_dir, t, ordinal, ray, world));
+    };
+
+    switch (topology) {
+    case Topology::Triangles:
+        for (std::size_t tri = 0; tri + 2 < n; tri += 3) {
+            tryTriangle(tri, tri + 1, tri + 2, false, tri / 3);
+        }
+        break;
+    case Topology::TriangleStrip:
+        for (std::size_t tri = 0; tri + 2 < n; ++tri) {
+            // Triangle i is (i, i+1, i+2), wound the other way on odd i (the rule both APIs state).
+            tryTriangle(tri, tri + 1, tri + 2, (tri % 2U) != 0U, tri);
+        }
+        break;
+    case Topology::TriangleFan:
+        for (std::size_t tri = 1; tri + 1 < n; ++tri) {
+            tryTriangle(0, tri, tri + 1, false, tri - 1U);
+        }
+        break;
+    case Topology::Points:
+    case Topology::Lines:
+    case Topology::LineStrip:
+        break;   // not a surface: nothing to pick
     }
     return any;
 }

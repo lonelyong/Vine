@@ -10,8 +10,10 @@
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/OwnedFrame.hpp>
 #include <vine/graphics/PositionAttitudeTransform.hpp>
+#include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
+#include <vine/graphics/Topology.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
@@ -1265,6 +1267,55 @@ TEST(RayIntersectionTest, MissesTriangle)
     Ray ray(Vec3d(5, 5, 1), Vec3d(0, 0, -1));
     RayIntersectionResult result = RayIntersection::intersect(ray, geom.get(), Mat4d());
     EXPECT_FALSE(result.hit);
+}
+
+TEST(RayIntersectionTest, AStripAndAFanAreSurfacesToo)
+{
+    // The three triangle topologies differ only in WHICH triples they form, so picking must walk all of them: a
+    // strip or a fan is just as much a surface as a list. The winding matters here too - a strip reverses it on
+    // every other triangle, and the reported normal must be the one the GPU would rasterise.
+    const auto make_mesh = [](Topology topology, std::vector<float> positions, std::vector<std::uint32_t> indices)
+    {
+        auto geometry = intrusive_ptr<Geometry>(new Geometry());
+        geometry->setPositions(
+            intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::move(positions))));
+        auto arena = intrusive_ptr<const vn::Buffer<std::uint32_t>>(
+            new vn::Buffer<std::uint32_t>(std::move(indices)));
+        geometry->clearPrimitives();
+        Primitive primitive;
+        primitive.topology = topology;
+        primitive.indices  = Primitive::IndexSpan::slice(arena, 0U, arena->size());
+        geometry->addPrimitive(primitive);
+        geometry->bumpRevision();
+        return geometry;
+    };
+
+    // A strip covers the same quad as a list, with four vertices instead of six.
+    const auto strip = make_mesh(Topology::TriangleStrip,
+                                 { -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, -1.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F },
+                                 { 0U, 1U, 2U, 3U });
+    const Ray  ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
+    const RayIntersectionResult strip_hit = RayIntersection::intersect(ray, strip.get(), Mat4d());
+    EXPECT_TRUE(strip_hit.hit) << "两条三角形都应该被走到";
+    EXPECT_NEAR(strip_hit.normal.z, 1.0, 1e-6) << "strip 的奇偶翻转必须体现在法线上";
+    EXPECT_NEAR(strip_hit.point.z, 0.0, 1e-6);
+
+    // A fan: one centre, then the rim in one consistent winding (a fan around a CORNER of a quad would author
+    // the second triangle the other way round - the data's winding, which picking reports as it is).
+    const auto fan = make_mesh(Topology::TriangleFan,
+                               { 0.0F, 0.0F, 0.0F, -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F,
+                                 -1.0F, 1.0F, 0.0F },
+                               { 0U, 1U, 2U, 3U, 4U });
+    const RayIntersectionResult fan_hit = RayIntersection::intersect(ray, fan.get(), Mat4d());
+    EXPECT_TRUE(fan_hit.hit);
+    EXPECT_NEAR(fan_hit.normal.z, 1.0, 1e-6);
+
+    // A line or point primitive is not a surface, so it is never picked - the same answer as before the strip
+    // and fan existed.
+    EXPECT_FALSE(isTriangleTopology(Topology::Lines));
+    EXPECT_FALSE(isTriangleTopology(Topology::LineStrip));
+    EXPECT_FALSE(isTriangleTopology(Topology::Points));
+    EXPECT_TRUE(isTriangleTopology(Topology::Triangles));
 }
 
 TEST(RayIntersectionTest, SceneQuery)
