@@ -1720,7 +1720,7 @@ TEST(MaterialTest, Defaults)
     EXPECT_FLOAT_EQ(mat.occlusion(), 1.0f);
     EXPECT_EQ(mat.alphaMode(), AlphaMode::Opaque);
     EXPECT_FLOAT_EQ(mat.alphaCutoff(), 0.5f);
-    EXPECT_EQ(mat.texture(), nullptr);
+    EXPECT_EQ(mat.texture(TextureSlot::BaseColor), nullptr);
     EXPECT_EQ(mat.revision(), 0u);
 }
 
@@ -1748,19 +1748,38 @@ TEST(MaterialTest, Setters)
     EXPECT_FLOAT_EQ(mat.alphaCutoff(), 0.125f);
 }
 
-TEST(MaterialTest, CarriesTheTextureItSamples)
+TEST(MaterialTest, CarriesTheFiveTextureSlots)
 {
     auto texture = intrusive_ptr<Texture>(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
+    auto other   = intrusive_ptr<Texture>(new Texture2D(2, 2, PixelFormat::Rgba8Unorm));
 
     Material mat;
-    EXPECT_EQ(mat.texture(), nullptr);
+    for (const TextureSlot slot : { TextureSlot::BaseColor, TextureSlot::MetallicRoughness, TextureSlot::Normal,
+                                    TextureSlot::Occlusion, TextureSlot::Emissive })
+    {
+        EXPECT_EQ(mat.texture(slot), nullptr);
+        EXPECT_FALSE(mat.hasTexture(slot));
+    }
+    EXPECT_EQ(mat.sampler(TextureSlot::BaseColor), Sampler{})
+        << "an absent slot still states the default read state";
 
-    mat.setTexture(texture);
-    EXPECT_EQ(mat.texture(), texture.get());
+    Sampler state;
+    state.address_u = Sampler::AddressMode::ClampToEdge;
+    mat.setTexture(TextureSlot::BaseColor, texture, state);
+    mat.setTexture(TextureSlot::MetallicRoughness, other);
+
+    EXPECT_EQ(mat.texture(TextureSlot::BaseColor), texture.get());
+    EXPECT_EQ(mat.texture(TextureSlot::MetallicRoughness), other.get());
+    EXPECT_EQ(mat.texture(TextureSlot::Normal), nullptr);
+    EXPECT_TRUE(mat.hasTexture(TextureSlot::BaseColor));
+    EXPECT_EQ(mat.sampler(TextureSlot::BaseColor).address_u, Sampler::AddressMode::ClampToEdge)
+        << "the slot carries its own read state, not the cache's default";
     EXPECT_EQ(texture->useCount(), 2u);
 
-    mat.setTexture(nullptr);
-    EXPECT_EQ(mat.texture(), nullptr);
+    mat.clearTexture(TextureSlot::BaseColor);
+    EXPECT_EQ(mat.texture(TextureSlot::BaseColor), nullptr);
+    EXPECT_FALSE(mat.hasTexture(TextureSlot::BaseColor));
+    EXPECT_EQ(texture->useCount(), 1u) << "clearing the slot released the material's reference";
 }
 
 /**
@@ -1786,7 +1805,7 @@ TEST(MaterialTest, TheRevisionMovesWhenAShadingValueChanges)
     mat.setOcclusion(0.75f);
     mat.setAlphaMode(AlphaMode::Mask);
     mat.setAlphaCutoff(0.25f);
-    mat.setTexture(texture);
+    mat.setTexture(TextureSlot::BaseColor, texture);
     EXPECT_EQ(mat.revision(), 8u) << "every shading value that moved is one edit";
 
     // Same values again: nothing changed, so nothing moves. This is what keeps a host that re-applies its settings
@@ -1798,7 +1817,7 @@ TEST(MaterialTest, TheRevisionMovesWhenAShadingValueChanges)
     mat.setOcclusion(0.75f);
     mat.setAlphaMode(AlphaMode::Mask);
     mat.setAlphaCutoff(0.25f);
-    mat.setTexture(texture);
+    mat.setTexture(TextureSlot::BaseColor, texture);
     EXPECT_EQ(mat.revision(), 8u) << "re-applying what the material already holds is not an edit";
 
     // A name is a label, not shading.
@@ -1806,7 +1825,7 @@ TEST(MaterialTest, TheRevisionMovesWhenAShadingValueChanges)
     EXPECT_EQ(mat.revision(), 8u) << "renaming a material is not a shading change";
 
     // Clearing the texture is a change (the picture loses its map).
-    mat.setTexture(nullptr);
+    mat.clearTexture(TextureSlot::BaseColor);
     EXPECT_EQ(mat.revision(), 9u);
 }
 

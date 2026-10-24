@@ -481,8 +481,8 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
 TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
 {
     // The engine's own screen lighting program (`BuiltinShaders::shadowedDeferredLightProgram`) writes its
-    // shadow ABI's bindings down by hand: the lights at 5 (the binding both paths share), the source's four
-    // colours take 0..3 and its depth would take 4, and the map and the block follow at 6 and 7. The layer's
+    // shadow ABI's bindings down by hand: the lights at 6 (the binding both paths share), the source's four
+    // colours take 0..3 and its depth would take 4, and the map and the block follow at 7 and 8. The layer's
     // set is what the TEXT declares, so those numbers are the text's - and the layer has to serve them.
     const vn::intrusive_ptr<vn::graphics::ShaderProgram> program =
         vn::graphics::shadowedDeferredLightProgram();
@@ -499,12 +499,12 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     EXPECT_EQ(samplers[1], 1U);
     EXPECT_EQ(samplers[2], 2U);
     EXPECT_EQ(samplers[3], 3U);
-    EXPECT_EQ(samplers[4], 6U) << "the map's binding is the text's own number, after the light block";
+    EXPECT_EQ(samplers[4], 7U) << "the map's binding is the text's own number, after the light block";
     const auto shape = layer->blockShape(0U);
     ASSERT_EQ(shape.size(), 2U);
-    EXPECT_EQ(shape[0].binding, 5U) << "the light block both paths carry";
+    EXPECT_EQ(shape[0].binding, 6U) << "the light block both paths carry";
     EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::Lights);
-    EXPECT_EQ(shape[1].binding, 7U);
+    EXPECT_EQ(shape[1].binding, 8U);
     EXPECT_EQ(shape[1].role, vn::vsg::AbiBlockRole::ShadowBlock);
 
     // The set a pass binds when its source offers FOUR colours and NO sampleable depth: 0..3 for the colours,
@@ -517,13 +517,13 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     for (const auto& entry : set->bindings) { bindings.push_back(entry.binding); }
     ASSERT_EQ(bindings.size(), 7U) << "four colours, the lights, the map and the block";
     EXPECT_EQ(bindings[0], 0U);
-    EXPECT_EQ(bindings[4], 5U) << "the light block both paths carry";
-    EXPECT_EQ(bindings[5], 6U) << "the map takes its declared binding";
-    EXPECT_EQ(bindings[6], 7U) << "and the shadow block takes its own";
-    EXPECT_EQ(std::find(bindings.begin(), bindings.end(), 4U), bindings.end())
-        << "nothing lives at 4: the source offers no depth";
+    EXPECT_EQ(bindings[4], 6U) << "the light block both paths carry";
+    EXPECT_EQ(bindings[5], 7U) << "the map takes its declared binding";
+    EXPECT_EQ(bindings[6], 8U) << "and the shadow block takes its own";
+    EXPECT_EQ(std::find(bindings.begin(), bindings.end(), 5U), bindings.end())
+        << "nothing lives at 5: the source offers no depth";
     for (const auto& entry : set->bindings) {
-        if (entry.binding == 7U) {
+        if (entry.binding == 8U) {
             // DYNAMIC, and that is the point: the block's offset moves every frame (the arena writes one block
             // per call per frame), so a descriptor that baked it would make the pass rebuild its set every
             // frame - and a freshly written set that a pending command buffer still names is exactly what the
@@ -541,9 +541,9 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     for (const auto& entry : with_depth->bindings) { with_depth_bindings.push_back(entry.binding); }
     ASSERT_EQ(with_depth_bindings.size(), 8U) << "the depth takes 4, so everything after it slides by none";
     EXPECT_EQ(with_depth_bindings[4], 4U) << "the source's own depth";
-    EXPECT_EQ(with_depth_bindings[5], 5U) << "the lights did not move";
-    EXPECT_EQ(with_depth_bindings[6], 6U);
-    EXPECT_EQ(with_depth_bindings[7], 7U);
+    EXPECT_EQ(with_depth_bindings[5], 6U) << "the lights did not move";
+    EXPECT_EQ(with_depth_bindings[6], 7U);
+    EXPECT_EQ(with_depth_bindings[7], 8U);
 
     // The full-screen ABI's rules, each refused where the layer is built: a declaration outside set 0 (there
     // is no second set to bind), and any block that is not the lights' or the shadow's (both paths carry the

@@ -33,7 +33,7 @@
  * text is fine, the backend just cannot fill it - and the layer that binds is where that becomes a refusal.
  *
  * A VARIANT, NOT A PROGRAM, IS WHAT HAS FACTS. The shipped programs gate declarations with `#ifdef`
- * (`VINE_DIFFUSE_MAP`, `VINE_TEXCOORD_CUBE`, ...), so "the bindings of this program" has no answer until the
+ * (`VINE_TEXTURED`, `VINE_TEXCOORD_CUBE`, ...), so "the bindings of this program" has no answer until the
  * defines in effect are known. The scan therefore takes the defines and answers for that variant, and it
  * evaluates them READ-ONLY: a `#define` the source carries itself (the flat forward program's `VINE_FLAT`)
  * is honoured, and a `#error` inside a taken branch makes the variant Malformed - the text itself says it
@@ -100,7 +100,7 @@ struct AbiBinding
     std::uint32_t    block_size{0};   ///< Its std140 size in bytes; 0 when the layout is Unspecified or the
                                       ///< members could not be sized (a sampler has no size either).
     std::string      type_name{};     ///< The declared type (`VineMaterialBlock`, `samplerCube`, ...).
-    std::string      name{};          ///< The declared instance name (`material`, `diffuseMap`, ...).
+    std::string      name{};          ///< The declared instance name (`material`, `baseColorMap`, ...).
 };
 
 /** @brief One member of a declared push block: what it is called, and where its bytes sit. */

@@ -114,7 +114,7 @@ vn::intrusive_ptr<Material> material(vn::intrusive_ptr<Texture2D> texture = {})
     out->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
     if (texture != nullptr)
     {
-        out->setTexture(texture);
+        out->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     }
     return out;
 }

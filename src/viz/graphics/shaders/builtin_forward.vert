@@ -3,7 +3,7 @@
 // ONLY when the source asks for it on this line: a name that is missing here is silently dropped (the
 // branch that tests it stays dead, with no error from any layer). Keep the list in sync with the
 // backend's variants — scripts/vine_shader_check.sh compiles every combination of these names.
-#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE, VINE_INSTANCED)
+#pragma import_defines (VINE_VERTEX_COLOR, VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE, VINE_INSTANCED)
 // The per-drawable block, read here for `params.y` (the point size). The vertex stage used to see only the push
 // constants; the block's set is already visible to this stage, so the size costs one read, not a new binding.
 #define VINE_PARAM_DRAW
@@ -23,7 +23,7 @@ layout(location = 12) in mat4 vine_InstanceModel;
 #ifdef VINE_VERTEX_COLOR
 layout(location = 2) in vec4 vine_Color;
 #endif
-#ifdef VINE_DIFFUSE_MAP
+#ifdef VINE_TEXTURED
 // The slot's KIND is NAMED, never defaulted: the backend sets exactly ONE of the two names for every
 // drawable, from the width of the geometry's texcoord channel (three scalars is a direction, two is a
 // UV pair - see SceneBridgePipeline), so a variant that samples the slot without saying what the slot
@@ -43,7 +43,7 @@ layout(location = 1) out vec3 vine_view_normal;
 #ifdef VINE_VERTEX_COLOR
 layout(location = 2) out vec4 vine_color;
 #endif
-#ifdef VINE_DIFFUSE_MAP
+#ifdef VINE_TEXTURED
 #if defined(VINE_TEXCOORD_CUBE)
 layout(location = 3) out vec3 vine_uv;
 #elif defined(VINE_TEXCOORD_UV)
@@ -69,7 +69,7 @@ void main()
 #ifdef VINE_VERTEX_COLOR
     vine_color = vine_Color;
 #endif
-#ifdef VINE_DIFFUSE_MAP
+#ifdef VINE_TEXTURED
     vine_uv = vine_TexCoord0;
 #endif
     // Reverse-Z: the projection matrix maps near to 1 and far to 0, which is

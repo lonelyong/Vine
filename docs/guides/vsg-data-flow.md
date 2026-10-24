@@ -99,7 +99,7 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
   不匹配 = 着色器读没人写过的地方。所以 `ProgramAbi` 只回答"文本声明了什么"，绑定侧照它建集合。
 * **块角色按 L1 类型名认领**（`VineViewBlock` / `VineDrawBlock` / `VineMaterialBlock` / `VineLightsBlock` /
   `VineShadowBlock` / push 结构），**不是**按 binding 序号。
-* **变体是事实的一部分**：`VINE_DIFFUSE_MAP`（材质有图）、`VINE_VERTEX_COLOR`（几何自己写了颜色通道）、
+* **变体是事实的一部分**：`VINE_TEXTURED`（材质的五个纹理槽至少一个存在）、`VINE_VERTEX_COLOR`（几何自己写了颜色通道）、
   `VINE_TEXCOORD_CUBE|UV` 由 `ProgramVariant` 从事实算出，进管线键。
 * 引擎自带程序的声明与实测 ABI 逐条钉在 `tests/test_vsg/ProgramAbiTest.cpp`；自定义程序的后端契约见设计文档 §5.4（作者视角见 `docs/guides/graphics.md`）。
 

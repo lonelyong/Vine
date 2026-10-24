@@ -23,6 +23,7 @@
 
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Texture.hpp>
 
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentSources.hpp>
@@ -195,6 +196,10 @@ TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
     material.setOcclusion(0.5F);
     material.setAlphaMode(AlphaMode::Mask);
     material.setAlphaCutoff(0.125F);
+    const auto normal_map = vn::make_intrusive<vn::graphics::Texture2D>(2, 2, vn::imaging::PixelFormat::Rgba8Unorm);
+    vn::graphics::Sampler clamp;
+    clamp.address_u = vn::graphics::Sampler::AddressMode::ClampToEdge;
+    material.setTexture(vn::graphics::TextureSlot::Normal, normal_map, clamp);
 
     MaterialFacts          facts;
     std::vector<std::byte> storage;
@@ -215,11 +220,16 @@ TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
     EXPECT_FLOAT_EQ(block.params[1], 0.75F);
     EXPECT_FLOAT_EQ(block.params[2], 0.5F);
     EXPECT_FLOAT_EQ(block.params[3], 0.125F);
-    EXPECT_EQ(block.flags[0], 1U << vn::graphics::kMaterialAlphaModeShift)
-        << "Mask is 1 in the ABI's numbering, in bits 8-9";
+    EXPECT_EQ(block.flags[0], (1U << 2) | (1U << vn::graphics::kMaterialAlphaModeShift))
+        << "bit 2 = the normal slot, bits 8-9 = Mask (1) in the ABI's numbering";
     EXPECT_EQ(block.flags[1], 0U);
     EXPECT_EQ(block.flags[2], 0U);
     EXPECT_EQ(block.flags[3], 0U);
+
+    // The slots themselves are facts of the entry, not of the block: the map and the state it is read with.
+    EXPECT_EQ(facts.slots[2].texture, normal_map.get());
+    EXPECT_EQ(facts.slots[2].sampler, clamp);
+    EXPECT_EQ(facts.slots[0].texture, nullptr) << "a slot the material does not carry stays absent";
 }
 
 TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)

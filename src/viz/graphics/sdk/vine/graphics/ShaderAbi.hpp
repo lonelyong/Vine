@@ -149,6 +149,21 @@ struct alignas(16) VineDrawBlock
 constexpr std::uint32_t kMaterialAlphaModeShift = 8u;
 
 /**
+ * @brief Bits of VineMaterialBlock::flags that report one texture slot's presence (bits 0-4).
+ *
+ * @details
+ * - The order is `TextureSlot`'s: base colour, metallic-roughness, normal, occlusion, emissive. A set bit means
+ *   the slot carries a map; the shader samples it instead of that slot's constant fallback.
+ * - A slot that exists takes the same program VARIANT as any other (the binary `VINE_TEXTURED`, see
+ *   graphics-material.md §2.5): these bits short-circuit per slot at run time, they do not select a pipeline.
+ */
+constexpr std::uint32_t kMaterialFlagBaseColor       = 1u << 0u;
+constexpr std::uint32_t kMaterialFlagMetallicRoughness = 1u << 1u;
+constexpr std::uint32_t kMaterialFlagNormal          = 1u << 2u;
+constexpr std::uint32_t kMaterialFlagOcclusion       = 1u << 3u;
+constexpr std::uint32_t kMaterialFlagEmissive        = 1u << 4u;
+
+/**
  * @brief Per-material data block the built-in shading reads (L1 shape).
  *
  * @details

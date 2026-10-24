@@ -348,8 +348,8 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
     const auto shadowed = shadowedDeferredLightProgram();
     ASSERT_NE(shadowed, nullptr);
     const std::string shadowed_text = shadowed->stage(0)->source.as_std_str();
-    EXPECT_NE(shadowed_text.find("layout(binding = 6) uniform sampler2D shadow_map;"), std::string::npos);
-    EXPECT_NE(shadowed_text.find("layout(binding = 7, std140) uniform VineShadowBlock"), std::string::npos)
+    EXPECT_NE(shadowed_text.find("layout(binding = 7) uniform sampler2D shadow_map;"), std::string::npos);
+    EXPECT_NE(shadowed_text.find("layout(binding = 8, std140) uniform VineShadowBlock"), std::string::npos)
         << "the block's GLSL type name is the L1 name (ShaderAbi.hpp)";
     EXPECT_NE(shadowed_text.find("shadow.viewToLight"), std::string::npos);
     EXPECT_EQ(shadowed_text.find("VINE_SHADOW_BINDINGS"), std::string::npos)
@@ -385,16 +385,16 @@ TEST(EmbeddedShadersTest, TheForwardProgramDeclaresTheShadowAbiWhereTheContentSe
     // params block is for (ShaderAbi.hpp).
     //
     // The bindings are pinned HERE, in the shipped text's own terms, because they are an ABI two
-    // layers have to agree on: the fragment program's layout qualifiers must name what
-    // buildVineShaderSet declares (set 0, the map at 3, the block at 4, after the material at 0, the
-    // optional diffuse map at 1 and the lights at 2). A number changed in one place only is a shader
-    // reading somebody else's binding.
+    // layers have to agree on: the fragment program's layout qualifiers must name what the content set
+    // declares (set 0, the map at 7, the block at 8, after the material at 0, the five texture slots at
+    // 1-5 and the lights at 6). A number changed in one place only is a shader reading somebody else's
+    // binding.
     const auto forward = forwardProgram();
     ASSERT_NE(forward, nullptr);
     ASSERT_EQ(forward->stageCount(), 2u);
     const std::string text = forward->stage(1)->source.as_std_str();
-    EXPECT_NE(text.find("layout(set = 0, binding = 3) uniform sampler2D shadow_map;"), std::string::npos);
-    EXPECT_NE(text.find("layout(set = 0, binding = 4, std140) uniform VineShadowBlock"), std::string::npos)
+    EXPECT_NE(text.find("layout(set = 0, binding = 7) uniform sampler2D shadow_map;"), std::string::npos);
+    EXPECT_NE(text.find("layout(set = 0, binding = 8, std140) uniform VineShadowBlock"), std::string::npos)
         << "the block's GLSL type name is the L1 name (ShaderAbi.hpp)";
     EXPECT_NE(text.find("shadow.viewToLight"), std::string::npos);
     // Which switch the term reads, so the two paths cannot drift into different ABIs.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -11,6 +12,7 @@
 #include <vsg/core/ref_ptr.h>
 
 #include <vine/Buffer.hpp>
+#include <vine/graphics/Sampler.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
@@ -198,18 +200,26 @@ struct ProgramFacts
     ProgramAbi               abi{};             ///< The bindings and push ranges those two texts declare.
 };
 
-/** @brief What a material identity answers with: the block bytes the shading reads. */
+/** @brief One material texture slot as the CONTENT layer sees it: the map and how it is read. */
+struct MaterialSlotFacts
+{
+    vn::raw_ptr<const vn::graphics::Texture> texture{};  ///< The map; null = the slot is absent.
+    vn::graphics::Sampler                    sampler{};  ///< Read state, by value (the image cache keys on it).
+};
+
+/** @brief What a material identity answers with: the block bytes the shading reads, and its texture set. */
 struct MaterialFacts
 {
     const void*                material{nullptr};  ///< The identity (nullptr = the default material).
     std::uint64_t              revision{0};        ///< The revision its owner tracks its bytes at.
     std::span<const std::byte> block{};            ///< The block; its size must be the ABI's.
 
-    /// The texture the material samples, or null when it has none. The BLOCK does not carry it (a map is
-    /// an image, not a texel of material state), and it is a fact the content layer needs: it is what
-    /// decides whether a program's `VINE_DIFFUSE_MAP` variant applies to this drawable (see
-    /// api/ProgramVariant). The pointer is borrowed with the entry - the material owns it.
-    vn::raw_ptr<const vn::graphics::Texture> texture{};
+    /// The five texture slots, in `TextureSlot` order. A null map means the slot is absent - which is what the
+    /// block's flag bits say as well (this list is what the CONTENT layer resolves images from, the flags are
+    /// what the shader reads). It is a fact the content layer needs: any present slot is what puts the drawable
+    /// in the program's `VINE_TEXTURED` variant (see api/ProgramVariant). Each pointer is borrowed with the
+    /// entry - the material owns it.
+    std::array<MaterialSlotFacts, vn::graphics::kTextureSlotCount> slots{};
 };
 
 /** @brief Every table a frame's content needs, borrowed for the recording. */

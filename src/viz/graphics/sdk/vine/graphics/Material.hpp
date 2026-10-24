@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <array>
 #include <cstdint>
 
 #include <vine/intrusive_ptr.hpp>
@@ -10,6 +11,7 @@
 #include <vine/Colorf.hpp>
 #include <vine/String.hpp>
 
+#include "Sampler.hpp"
 #include "Texture.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -19,7 +21,7 @@ VN_GRAPHICS_NS_BEGIN
  *
  * @details
  * - The MODE is a material fact while the MAGNITUDE is a per-drawable one (`VineDrawBlock::params.x`); the
- *   effective alpha is the product of the two (and of the base texture's alpha once the texture set exists), so
+ *   effective alpha is the product of the two times the base-colour texture's own alpha (graphics-material.md §2.7), so
  *   the sort and the shading read the same inputs instead of two different notions of "translucent".
  * - `Opaque` keeps the drawable in the opaque queue and ignores alpha; `Mask` cuts out fragments below
  *   `Material::alphaCutoff()` but is still opaque to the sort (a cut-out leaf must occlude itself); `Blend` is
@@ -39,6 +41,38 @@ enum class AlphaMode
 };
 
 /**
+ * @brief The five semantic texture slots a material carries.
+ *
+ * @details
+ * - The slot's IDENTITY decides its binding and its colour space, not the host: base colour and emissive are
+ *   sampled as colour (sRGB formats, hardware-decoded), metallic-roughness / normal / occlusion as data (linear
+ *   formats). A texture that does not fit its slot is reported, never silently interpreted as another colour
+ *   space (graphics-material.md §2.9).
+ * - `metallic_roughness` is glTF's packing: G = roughness, B = metallic; `occlusion` is read from R.
+ * - Only `BaseColor` may be a cube map (the sampler kind follows the geometry's texcoord width, which is a fact
+ *   about the geometry); the other four are 2D only. The UV set is always 0 - a second one would be a geometry
+ *   format change, not a material one.
+ */
+enum class TextureSlot
+{
+    BaseColor,        ///< Albedo / reflectance tint (RGB; alpha drives AlphaMode).
+    MetallicRoughness, ///< G = roughness, B = metallic (linear data).
+    Normal,           ///< Tangent-space normal (linear data).
+    Occlusion,        ///< Ambient occlusion in R (linear data).
+    Emissive,         ///< Emission colour (sRGB colour).
+};
+
+/** @brief The number of texture slots a material carries (see TextureSlot). */
+constexpr std::uint32_t kTextureSlotCount = 5U;
+
+/** @brief One texture slot: the texture (when the slot exists) and how it is READ. */
+struct VN_GRAPHICS_API TextureSlotBinding
+{
+    intrusive_ptr<Texture> texture;  ///< The map, or null when the slot is absent.
+    Sampler                sampler{}; ///< Filter / wrap / mip state (a value: equal state = one sampler).
+};
+
+/**
  * @brief A surface's appearance: metallic-roughness PBR factors and an optional base-colour texture.
  *
  * @details
@@ -49,8 +83,9 @@ enum class AlphaMode
  *   `materialFrom`), so the engine has one set of surface parameters instead of two branches per path.
  * - The material counts its own edits (`revision()`), because every shading value travels through a setter; a
  *   consumer that answers for a material caches on that number instead of reading the values back every frame.
- * - Textures are still ONE optional map in this stage (`texture()`): the five-slot texture set, its per-slot
- *   samplers and the textured program variant are the next landing step and leave this class's factor API alone.
+ * - Textures are a five-slot SET (`TextureSlot`): each slot is a map plus its `Sampler`, the slot's identity
+ *   decides its binding and colour space, and a material carrying any slot takes the program's `VINE_TEXTURED`
+ *   variant (five samplers, missing slots bound to their type's constant fallback - graphics-material.md §2.5).
  *
  * @note
  * - Transparency is not a material value: `AlphaMode` says how alpha is USED, and the per-drawable opacity
@@ -178,17 +213,46 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
      */
     void setAlphaCutoff(float cutoff);
 
-    /** @brief Gets the texture this material samples.
+    /** @brief Gets the texture one slot samples.
      *
-     * @return The texture, or null when the material has none.
+     * @param slot The slot to read.
+     * @return The texture, or null when that slot is absent.
      */
-    raw_ptr<Texture> texture() const;
+    raw_ptr<Texture> texture(TextureSlot slot) const;
 
-    /** @brief Sets the texture this material samples.
+    /** @brief Gets how one slot is read (filter / wrap / mip state).
      *
-     * @param texture The texture to sample, or null to clear it.
+     * @param slot The slot to read.
+     * @return The sampler of that slot (the defaults when it is absent).
      */
-    void setTexture(intrusive_ptr<Texture> texture);
+    const Sampler& sampler(TextureSlot slot) const;
+
+    /** @brief Whether one slot has a texture.
+     *
+     * @param slot The slot to test.
+     * @return true when the slot exists.
+     */
+    bool hasTexture(TextureSlot slot) const;
+
+    /** @brief Sets (or replaces) the texture and its read state in one slot.
+     *
+     * @details
+     * - Passing a null @p texture clears the slot, exactly like clearTexture().
+     * - The texture itself is not validated here beyond its kind: a cube map in a slot other than BaseColor is
+     *   a contract violation the SHADING side answers with the slot's declared-kind fallback (graphics-material.md
+     *   C2), because the material does not own a diagnostic channel. The per-slot report is F11.
+     *
+     * @param slot    The slot to write.
+     * @param texture The map, or null to clear the slot.
+     * @param sampler How the map is read (defaults when omitted).
+     */
+    void setTexture(TextureSlot slot, intrusive_ptr<Texture> texture, const Sampler& sampler = {});
+
+    /** @brief Clears one slot (its texture is released; the sampler value is kept).
+     *
+     * @param slot The slot to clear.
+     */
+    void clearTexture(TextureSlot slot);
 
     /** @brief Gets the revision, which moves whenever a shading value of this material changes.
      *
@@ -197,9 +261,10 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
      *   (`Geometry::setRevision()`), because their bytes sit in buffers a caller can refill behind the SDK's
      *   back - a material has no such hole: every one of its shading values travels through a setter, so the
      *   setter can report the change itself and nobody has to remember to.
-     * - WHAT MOVES IT: the diffuse / specular / ambient colours, the shininess and the texture - each only when
-     *   the value actually DIFFERS (assigning what a material already holds is not a change, so a host that
-     *   re-applies its settings every frame costs nothing). The NAME does not move it: a label is not shading.
+     * - WHAT MOVES IT: the base colour, emissive, metallic, roughness, occlusion, alpha mode, alpha cutoff and
+     *   every texture slot (its map and its sampler) - each only when the value actually DIFFERS (assigning what
+     *   a material already holds is not a change, so a host that re-applies its settings every frame costs
+     *   nothing). The NAME does not move it: a label is not shading.
      * - WHAT READS IT: a consumer that answers for this material caches on the number instead of reading the
      *   values back every frame (see the backend's ContentStore::updateMaterial).
      *
@@ -218,7 +283,7 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
     float                  occlusion_ = 1.0f;
     AlphaMode              alpha_mode_ = AlphaMode::Opaque;
     float                  alpha_cutoff_ = 0.5f;
-    intrusive_ptr<Texture> texture_;
+    std::array<TextureSlotBinding, kTextureSlotCount> textures_{};
     /// Moves when a shading value changes (see revision()); the name is deliberately not part of it.
     std::uint64_t revision_ = 0;
 };

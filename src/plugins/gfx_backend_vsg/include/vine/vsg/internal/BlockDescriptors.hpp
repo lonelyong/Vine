@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -14,6 +15,7 @@
 #include <vsg/state/Sampler.h>
 #include <vsg/vk/Device.h>
 
+#include <vine/graphics/Material.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ProgramAbi.hpp>
 #include <vine/vsg/vsg_global.hpp>
@@ -87,13 +89,31 @@ class BlockDescriptors
     {
         // No default member initialisers on purpose: a default argument of the enclosing class cannot use
         // them (`ImageSource source = {}` would be diagnosed), so `{}` value-initialises these instead.
-        const void*   texture;   ///< The texture the images were acquired for; null = none involved.
-        std::uint64_t revision;  ///< That texture's revision when they were.
+        struct Slot
+        {
+            const void*            texture;   ///< The slot's texture; null = the slot is absent.
+            std::uint64_t          revision;  ///< That texture's revision when the set was built.
+            vn::graphics::Sampler  sampler;   ///< How the slot is read (equal state = the same sampler object).
+
+            /** @brief Compares two slots (the identity is map, revision and read state). */
+            [[nodiscard]] friend bool operator==(const Slot&, const Slot&) noexcept = default;
+        };
+
+        /// One entry per `TextureSlot`, in that order.
+        std::array<Slot, vn::graphics::kTextureSlotCount> slots;
 
         /** @brief Gets whether the set's images involve no texture at all (its samplers are pass-level). */
-        [[nodiscard]] bool empty() const noexcept { return texture == nullptr; }
+        [[nodiscard]] bool empty() const noexcept
+        {
+            for (const Slot& slot : slots) {
+                if (slot.texture != nullptr) {
+                    return false;
+                }
+            }
+            return true;
+        }
 
-        /** @brief Compares two sources (the identity is the pair). */
+        /** @brief Compares two sources (the identity is every slot's map, revision and state). */
         [[nodiscard]] friend bool operator==(const ImageSource&, const ImageSource&) noexcept = default;
     };
 

@@ -60,26 +60,26 @@ ShaderStage stage(ShaderStageType type, const char* source)
     return out;
 }
 
-/// @brief A content program whose fragment stage gates its sampler on `VINE_DIFFUSE_MAP`: one text, two ABIs.
+/// @brief A content program whose fragment stage gates its sampler on `VINE_TEXTURED`: one text, two ABIs.
 constexpr const char* kGatedVertexSource =
     "#version 450\n"
-    "#pragma import_defines (VINE_DIFFUSE_MAP)\n"
+    "#pragma import_defines (VINE_TEXTURED)\n"
     "layout(location = 0) in vec3 position;\n"
-    "#ifdef VINE_DIFFUSE_MAP\n"
+    "#ifdef VINE_TEXTURED\n"
     "layout(location = 8) in vec2 texcoord;\n"
     "#endif\n"
     "void main() { gl_Position = vec4(position, 1.0); }\n";
 
 constexpr const char* kGatedFragmentSource =
     "#version 450\n"
-    "#pragma import_defines (VINE_DIFFUSE_MAP)\n"
+    "#pragma import_defines (VINE_TEXTURED)\n"
     "layout(location = 0) out vec4 color;\n"
     "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
     "{\n"
     "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
     "} material;\n"
-    "#ifdef VINE_DIFFUSE_MAP\n"
-    "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+    "#ifdef VINE_TEXTURED\n"
+    "layout(set = 0, binding = 1) uniform sampler2D baseColorMap;\n"
     "#endif\n"
     "void main() { color = material.base_color; }\n";
 
@@ -132,7 +132,7 @@ vn::intrusive_ptr<Material> material(vn::Colorf diffuse,
     out->setBaseColor(diffuse);
     if (texture != nullptr)
     {
-        out->setTexture(texture);
+        out->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     }
     return out;
 }
@@ -548,7 +548,7 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     ASSERT_EQ(store.programEntries(), 2U) << "one program, two texts: two entries";
 
     ProgramVariant textured_variant;
-    textured_variant.diffuse_map = true;
+    textured_variant.textured = true;
     const ProgramVariant plain_variant;
 
     const auto textured_entry = findProgram(facts, ProgramRef{ program.get(), program->revision() }, textured_variant, DrawKind::Content);

@@ -10,7 +10,7 @@
 
 /**
  * @brief The 1x1 white image a material WITHOUT a texture is read as (the engine's contract, and the
- * fallback every program that samples `diffuseMap` needs).
+ * fallback every program that samples a material's texture slot needs).
  *
  * WHY A FALLBACK AT ALL. The engine's shaders sample the material's map unconditionally
  * (`texture(diffuseMap, uv)`), and its ABI says what "the material has no texture" means: the sample is

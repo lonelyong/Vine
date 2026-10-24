@@ -64,26 +64,26 @@ ShaderStage stage(ShaderStageType type, const char* source)
     return out;
 }
 
-/// @brief A content program whose fragment stage gates its sampler on `VINE_DIFFUSE_MAP` - one text, two ABIs.
+/// @brief A content program whose fragment stage gates its sampler on `VINE_TEXTURED` - one text, two ABIs.
 /// The texts are written the way the engine's own stages are (see builtin_forward.vert) so they COMPILE: this
 /// producer builds real layers.
 constexpr const char* kGatedVertexSource =
-    "#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV)\n"
+    "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV)\n"
     "layout(location = 0) in vec3 position;\n"
-    "#ifdef VINE_DIFFUSE_MAP\n"
+    "#ifdef VINE_TEXTURED\n"
     "layout(location = 8) in vec2 texcoord;\n"
     "#endif\n"
     "void main() { gl_Position = vec4(position, 1.0); }\n";
 
 constexpr const char* kGatedFragmentSource =
-    "#pragma import_defines (VINE_DIFFUSE_MAP)\n"
+    "#pragma import_defines (VINE_TEXTURED)\n"
     "layout(location = 0) out vec4 outColor;\n"
     "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
     "{\n"
     "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
     "} material;\n"
-    "#ifdef VINE_DIFFUSE_MAP\n"
-    "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+    "#ifdef VINE_TEXTURED\n"
+    "layout(set = 0, binding = 1) uniform sampler2D baseColorMap;\n"
     "#endif\n"
     "void main() { outColor = material.base_color; }\n";
 
@@ -135,7 +135,7 @@ vn::intrusive_ptr<Material> material(vn::Colorf diffuse, vn::intrusive_ptr<Textu
     out->setBaseColor(diffuse);
     if (texture != nullptr)
     {
-        out->setTexture(texture);
+        out->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     }
     return out;
 }
@@ -361,7 +361,7 @@ TEST(ContentHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
     const auto textured = ::material(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F), texture);
 
     ProgramVariant textured_variant;
-    textured_variant.diffuse_map = true;
+    textured_variant.textured = true;
     ProgramFacts textured_facts;
     ProgramFacts plain_facts;
     ASSERT_EQ(buildProgramFacts(*program, textured_variant, textured_facts), FactMiss::None);
@@ -588,7 +588,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     // the OLD revision's entry is gone, exactly as api/ContentStore leaves it once its own window is past.
     ShaderStage patched = stage(ShaderStageType::Fragment, kGatedFragmentSource);
     patched.source      = vn::String(reinterpret_cast<const char8_t*>(
-        "#pragma import_defines (VINE_DIFFUSE_MAP)\n"
+        "#pragma import_defines (VINE_TEXTURED)\n"
         "layout(location = 0) out vec4 outColor;\n"
         "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
         "{\n"

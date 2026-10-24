@@ -95,8 +95,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 ### 2.3 资源
 
 - `Material` —— metallic-roughness PBR 因子（`baseColor / emissive / metallic / roughness / occlusion /
-  alphaMode / alphaCutoff`）+ 可选 `Texture`；Phong 资产由导入器（`ModelScene.cpp` 的 `materialFrom`）按固定表
-  转换，引擎内只有一套材质语义。颜色改动是
+  alphaMode / alphaCutoff`）+ 五个语义纹理槽（`TextureSlot`：base colour / metallic-roughness / normal /
+  occlusion / emissive，每槽一个 `Sampler`；`setTexture(slot, texture, sampler)` / `texture(slot)`）。Phong 资产由
+  导入器（`ModelScene.cpp` 的 `materialFrom`）按固定表转换，引擎内只有一套材质语义。颜色改动是
   **动态**的：材质自己数自己的改动（`revision()`，每个 setter 先比较再决定要不要 ++，所以反复赋同值是零成本），
   后端每帧只比这一个数字，改了就在下一帧就地刷新 —— 改材质不需要任何重建，也不需要“通知后端”的调用。
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
@@ -539,7 +540,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
     不会静默绑错图。
   - **cube 也能作 pass 输入**：`addInput(cube)` + 程序在该 binding 声明 `samplerCube`（上传/绑定都按
     kind 走，建六层 cube view）；不完整的 cube 会绑**白 cube**并报一次。材质贴图路径同样支持 cube
-    （`Material::setTexture(CubeMap)`，demo 天空盒即此路径）。
+    （`Material::setTexture(TextureSlot::BaseColor, cube)`，demo 天空盒即此路径）。
 
 `RenderEngine::validateWiring()` 每帧校验结构，并把每个问题**只报一次**（消失后重新武装）：
 
@@ -630,8 +631,8 @@ layout(location = 8) in vec2 inUV;         // texcoords（固定；模块保留�
 layout(location = 5) in vec3 inTangent;    // 自定义：就是 Geometry 的 loc 5
 layout(location = 9) in vec4 inTint;       // 自定义：就是 Geometry 的 loc 9
 
-layout(set = 0, binding = 0) uniform PhongMaterial { /* 与内建路径同一个材质值 */ };
-layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
+layout(set = 0, binding = 0) uniform VineMaterialBlock { /* 与内建路径同一个材质值 */ };
+layout(set = 0, binding = 1) uniform sampler2D baseColorMap;  // 五槽之一（1–5），需 VINE_TEXTURED
 layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 ```
 
@@ -1351,8 +1352,8 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 `test_data/images/posx.jpg … negz.jpg`，读入后盒式滤波到 256²/面、再交给 `CubeMap::setFaceImage()` 的**具名**面（`posx` → `+X` … `negz` → `-Z`，
 不靠目录排序：六个名字排出来是 -X 在 +X 前面）。盒子放在**不透明场景**里：G-buffer 的几何阶段现在和
 前向阶段一样**采样材质的纹理**（2D 或 cube，按 texcoord 通道宽度选 sampler kind，见 `builtin_gbuffer.frag`），
-所以带贴图的盒子可以画在**写深度**的那一趟里、自己遮挡住背面。**纹理采样由 `VINE_DIFFUSE_MAP` 门控，而后端只在该材质
-真有可用纹理时才发这个 define** ⇒ 无纹理的不透明内容（demo 整堆盒子）连 sampler 都不声明、也没有纹理取样，
+所以带贴图的盒子可以画在**写深度**的那一趟里、自己遮挡住背面。**纹理采样由 `VINE_TEXTURED` 门控，而后端只在材质的五个纹理槽
+至少有一个真有可用贴图时才发这个 define** ⇒ 无纹理的不透明内容（demo 整堆盒子）连 sampler 都不声明、也没有纹理取样，
 和加这个能力之前一样便宜。
 
 那只盒子是**立方体探针（cube probe）**的样子，**不是**镜面反射：texcoord 通道里装的是"盒心 → 该片元"的**向量**（在面图

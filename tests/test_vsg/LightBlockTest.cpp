@@ -721,7 +721,7 @@ TEST(LightBlockTest, BothLightingProgramsReadTheBlockAtTheSameBinding)
     const AbiBinding* forward_lights = lights_of(forward_facts.abi);
     ASSERT_NE(forward_lights, nullptr);
     EXPECT_EQ(forward_lights->set, 0U);
-    EXPECT_EQ(forward_lights->binding, 5U) << "the binding both paths share (see vine_params.glsl)";
+    EXPECT_EQ(forward_lights->binding, 6U) << "the binding both paths share (see vine_params.glsl)";
     EXPECT_EQ(forward_lights->block_size, sizeof(VineLightsBlock));
 
     ProgramFacts screen_facts;

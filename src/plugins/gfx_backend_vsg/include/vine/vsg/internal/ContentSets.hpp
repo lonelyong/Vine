@@ -32,9 +32,9 @@
  * answer them the same way, so they are answered here, once.
  *
  * WHERE EACH IMAGE COMES FROM:
- *   * `diffuseMap` (Material): the drawable's own texture, through @p images - a material with NO texture (or
- *     one whose texture cannot be used) takes the white fallback, the value the engine's own stages are
- *     written against ("no map" is white, not an unwritten binding).
+ *   * a texture-slot name (`baseColorMap` … `emissiveMap`, Material): the drawable's own map for that slot,
+ *     through @p images - an absent slot (or one whose texture cannot be used) takes the white fallback, the
+ *     value the engine's own stages are written against ("no map" is white, not an unwritten binding).
  *   * `shadow_map` (Shadow): the map the pass' plan resolved (api/ContentImages::shadowImageOf), or the white
  *     stand-in - a 2D one, or a CUBE one when the text declares `samplerCube` (a 2D view where a cube is
  *     declared is an invalid descriptor, not an untextured draw).
@@ -62,6 +62,20 @@
  */
 VN_VSG_NS_BEGIN
 
+/** @brief Builds the tag a set is compared by from a material's five texture slots.
+ *
+ * @details
+ * - One entry per `TextureSlot`: the map's identity, the revision it is being read at, and the stated read
+ *   state. Two drawables of one variant whose materials differ in ANY slot therefore answer different tags,
+ *   which is what makes a pass pick each one's own set (see BlockDescriptors::ImageSource).
+ * - A material with no map at all answers an EMPTY tag: its sets' samplers are all pass-level, so every drawable
+ *   of the variant shares them.
+ *
+ * @param material The material entry the drawable names.
+ * @return The tag.
+ */
+[[nodiscard]] BlockDescriptors::ImageSource imageSourceOf(const MaterialFacts& material) noexcept;
+
 /** @brief Produces the declared sets a pass' drawables need (see the file note). */
 class ContentSets
 {
@@ -71,7 +85,7 @@ class ContentSets
      *
      * @param device  The device the sets belong to.
      * @param storage The frame's block storage the sets bind (its buffer).
-     * @param images  The material images (the `diffuseMap` half of the by-name policy, plus the fallbacks).
+     * @param images  The material images (the texture-set half of the by-name policy, plus the fallbacks).
      */
     ContentSets(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage, MaterialImages& images);
 

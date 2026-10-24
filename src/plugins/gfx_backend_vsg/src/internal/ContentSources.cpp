@@ -183,6 +183,31 @@ namespace
     return 0u;
 }
 
+/// @brief The flag-row bits of the slots the material HAS (see kMaterialFlag*).
+///
+/// Presence is the one thing the bits say: a slot's map and sampler travel through MaterialFacts, because a
+/// map is an image and an image is not a texel of material state.
+[[nodiscard]] std::uint32_t textureSlotBits(const vn::graphics::Material& material) noexcept
+{
+    std::uint32_t bits = 0U;
+    if (material.hasTexture(vn::graphics::TextureSlot::BaseColor)) {
+        bits |= vn::graphics::kMaterialFlagBaseColor;
+    }
+    if (material.hasTexture(vn::graphics::TextureSlot::MetallicRoughness)) {
+        bits |= vn::graphics::kMaterialFlagMetallicRoughness;
+    }
+    if (material.hasTexture(vn::graphics::TextureSlot::Normal)) {
+        bits |= vn::graphics::kMaterialFlagNormal;
+    }
+    if (material.hasTexture(vn::graphics::TextureSlot::Occlusion)) {
+        bits |= vn::graphics::kMaterialFlagOcclusion;
+    }
+    if (material.hasTexture(vn::graphics::TextureSlot::Emissive)) {
+        bits |= vn::graphics::kMaterialFlagEmissive;
+    }
+    return bits;
+}
+
 /// @brief Packs @p material's fields into the ABI's block, field for field.
 ///
 /// The ONE spelling of the mapping: buildMaterialFacts writes it, and nothing else re-derives it.
@@ -197,9 +222,9 @@ namespace
     block.base_color = { base.r, base.g, base.b, base.a };
     block.emissive   = { emissive.r, emissive.g, emissive.b, emissive.a };
     block.params     = { material.metallic(), material.roughness(), material.occlusion(), material.alphaCutoff() };
-    // The texture-set bits (0-4) stay zero until the slots exist; the alpha mode is the one flag row entry the
-    // model has today (graphics-material.md §3.4).
-    block.flags[0] = alphaModeBits(material.alphaMode()) << vn::graphics::kMaterialAlphaModeShift;
+    // The flag row: the present texture slots (bits 0-4) and the alpha mode (bits 8-9).
+    block.flags[0] = textureSlotBits(material) |
+                     (alphaModeBits(material.alphaMode()) << vn::graphics::kMaterialAlphaModeShift);
     return block;
 }
 
@@ -222,9 +247,16 @@ FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_
     out.material  = material;  // null for the default material: an identity that content without one matches
     out.revision  = revision;
     out.block     = storage;
-    // AFTER the entry is reset: the texture is a fact of the material like the block is, and it is what
-    // decides whether the drawable takes the `VINE_DIFFUSE_MAP` variant of its program (api/ProgramVariant).
-    out.texture = material != nullptr ? material->texture() : nullptr;
+    // AFTER the entry is reset: the texture SET is a fact of the material like the block is, and any present
+    // slot is what decides whether the drawable takes the `VINE_TEXTURED` variant of its program
+    // (api/ProgramVariant).
+    if (material != nullptr) {
+        for (std::uint32_t index = 0U; index < vn::graphics::kTextureSlotCount; ++index) {
+            const auto slot             = static_cast<vn::graphics::TextureSlot>(index);
+            out.slots[index].texture    = material->texture(slot);
+            out.slots[index].sampler    = material->sampler(slot);
+        }
+    }
     return FactMiss::None;
 }
 

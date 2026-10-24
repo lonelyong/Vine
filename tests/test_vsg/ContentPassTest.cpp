@@ -1528,10 +1528,10 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     }
     // The entry is built for the variant the material asks for (it carries a texture): the tables key
     // their program entries by the variant, so an entry built for another text is not this entry.
-    vn::vsg::ProgramVariant textured_variant;
-    textured_variant.diffuse_map = true;
+    vn::vsg::ProgramVariant sampled_variant;
+    sampled_variant.textured = true;
     ProgramFacts program_facts;
-    ASSERT_EQ(buildProgramFacts(*program, textured_variant, program_facts), FactMiss::None);
+    ASSERT_EQ(buildProgramFacts(*program, sampled_variant, program_facts), FactMiss::None);
 
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     {
@@ -1565,7 +1565,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     BlockDescriptors* declared_sets[] = { declared.get() };
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setTexture(texture);
+    material->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -1637,7 +1637,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     // through a half whose variant is the one its material and geometry ask for).
     const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
         vn::graphics::backend::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
-        pipelines.get(), &draws, textured_variant } };
+        pipelines.get(), &draws, sampled_variant } };
     ContentPass::Scope scope;
     scope.entries    = halves;
     scope.registry   = &registry;
@@ -1787,7 +1787,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     // The entry is built for the variant the material asks for (it carries a texture): the tables key
     // their program entries by the variant, so an entry built for another text is not this entry.
     vn::vsg::ProgramVariant textured_variant;
-    textured_variant.diffuse_map = true;
+    textured_variant.textured = true;
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, textured_variant, program_facts), FactMiss::None);
 
@@ -1822,7 +1822,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     BlockDescriptors* declared_sets[] = { declared.get() };
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setTexture(cube);
+    material->setTexture(vn::graphics::TextureSlot::BaseColor, cube);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -2026,7 +2026,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     // The entry is built for the variant the material asks for (it carries a texture): the tables key
     // their program entries by the variant, so an entry built for another text is not this entry.
     vn::vsg::ProgramVariant textured_variant;
-    textured_variant.diffuse_map = true;
+    textured_variant.textured = true;
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, textured_variant, program_facts), FactMiss::None);
 
@@ -2061,7 +2061,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     ASSERT_NE(first_declared, nullptr);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setTexture(texture);
+    material->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -2275,9 +2275,9 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
         vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
             "layout(location = 0) in vec3 position;\n"
-            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#ifdef VINE_TEXTURED\n"
             "#if defined(VINE_TEXCOORD_CUBE)\n"
             "layout(location = 8) in vec3 texcoord;\n"
             "#elif defined(VINE_TEXCOORD_UV)\n"
@@ -2291,7 +2291,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
             "void main()\n"
             "{\n"
             "    gl_Position = pc.projection * pc.modelView * vec4(position, 1.0);\n"
-            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#ifdef VINE_TEXTURED\n"
             "    uv = texcoord;\n"
             "#else\n"
             "    uv = vec2(0.0);\n"
@@ -2300,19 +2300,19 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
             "layout(location = 0) in vec2 uv;\n"
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
             "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#ifdef VINE_TEXTURED\n"
             "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
             "#endif\n"
             "void main()\n"
             "{\n"
-            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#ifdef VINE_TEXTURED\n"
             "    outColor = vec4(texture(diffuseMap, uv).rgb, 1.0);\n"
             "#else\n"
             "    outColor = vec4(material.base_color.rgb, 1.0);\n"
@@ -2325,7 +2325,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     // The two variants' facts: ONE text, two ABIs - the textured one declares the sampler the plain one
     // does not, and each compile asks for its own define list.
     vn::vsg::ProgramVariant textured_variant;
-    textured_variant.diffuse_map = true;
+    textured_variant.textured = true;
     const vn::vsg::ProgramVariant plain_variant;
 
     ProgramFacts textured_facts;
@@ -2373,7 +2373,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
 
     // The two materials: one samples the texture, the other shades its own diffuse.
     const vn::intrusive_ptr<Material> textured_material(new Material());
-    textured_material->setTexture(texture);
+    textured_material->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     const vn::intrusive_ptr<Material> plain_material(new Material());
     plain_material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
@@ -2866,7 +2866,8 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
-    ASSERT_EQ(material->texture(), nullptr) << "the material this case shades has no map (that is the point)";
+    ASSERT_EQ(material->texture(vn::graphics::TextureSlot::BaseColor), nullptr)
+        << "the material this case shades has no map (that is the point)";
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -4342,7 +4343,7 @@ TEST(ContentPassTest, TheMaterialsReflectanceReachesBothPaths)
     const vn::vsg::SamplerImage white = images->white();
     ASSERT_NE(white.view, nullptr);
     const vn::vsg::BlockDescriptors::SampledBinding forward_maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 3U, white.view, white.sampler }
+        vn::vsg::BlockDescriptors::SampledBinding{ 7U, white.view, white.sampler }
     };
     std::unique_ptr<BlockDescriptors> forward_set =
         BlockDescriptors::forAbi(forward_facts.abi, 0U, created.device, *storage, forward_maps);
@@ -5384,9 +5385,9 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
         vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
             "layout(location = 0) in vec3 position;\n"
-            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#ifdef VINE_TEXTURED\n"
             "#if defined(VINE_TEXCOORD_CUBE)\n"
             "layout(location = 8) in vec3 texcoord;\n"
             "#elif defined(VINE_TEXCOORD_UV)\n"
@@ -5399,7 +5400,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
             "layout(location = 0) out vec2 uv;\n"
             "void main()\n"
             "{\n"
-            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#ifdef VINE_TEXTURED\n"
             "    gl_Position = pc.projection * pc.modelView * vec4(position, 1.0);\n"
             "    uv = texcoord;\n"
             "#else\n"
@@ -5410,19 +5411,19 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
             "layout(location = 0) in vec2 uv;\n"
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
             "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#ifdef VINE_TEXTURED\n"
             "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
             "#endif\n"
             "void main()\n"
             "{\n"
-            "#ifdef VINE_DIFFUSE_MAP\n"
+            "#ifdef VINE_TEXTURED\n"
             "    outColor = vec4(texture(diffuseMap, uv).rgb, 1.0);\n"
             "#else\n"
             "    outColor = vec4(material.base_color.rgb, 1.0);\n"
@@ -5447,7 +5448,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     }
 
     const vn::intrusive_ptr<Material> textured_material(new Material());
-    textured_material->setTexture(texture);
+    textured_material->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     const vn::intrusive_ptr<Material> plain_material(new Material());
     plain_material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
@@ -5518,7 +5519,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     ASSERT_EQ(store.builds(), 5U) << "the geometry, the two materials and the two variants";
 
     vn::vsg::ProgramVariant textured_variant;
-    textured_variant.diffuse_map = true;
+    textured_variant.textured = true;
     const vn::vsg::ProgramVariant plain_variant;
     // THE HALVES ARE PRODUCED the way a host produces them: the pass' tuples come from the store's tables
     // and the layers are compiled from the entries they name (see api/ContentHalves) - no host loop, no
@@ -5693,15 +5694,15 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
         geometry->setRevision(1U);
     }
 
-    const vn::intrusive_ptr<Material> left_material(new Material());
-    left_material->setTexture(left_texture);
+    const vn::intrusive_ptr<Material> left_map_material(new Material());
+    left_map_material->setTexture(vn::graphics::TextureSlot::BaseColor, left_texture);
     const vn::intrusive_ptr<Material> right_material(new Material());
-    right_material->setTexture(right_texture);
+    right_material->setTexture(vn::graphics::TextureSlot::BaseColor, right_texture);
 
     vn::vsg::ContentStore store;
     store.track(geometry);
     store.track(program);
-    store.track(left_material);
+    store.track(left_map_material);
     store.track(right_material);
 
     FrameArena    arena{ 64 * 1024 };
@@ -5733,7 +5734,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
 
     RenderCommand left_command;
     left_command.geometry = geometry;
-    left_command.material = left_material;
+    left_command.material = left_map_material;
     left_command.program  = program;
     RenderCommand right_command;
     right_command.geometry = geometry;
@@ -5925,15 +5926,15 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
         geometry->setRevision(1U);
     }
 
-    const vn::intrusive_ptr<Material> left_material(new Material());
-    left_material->setTexture(left_texture);
+    const vn::intrusive_ptr<Material> left_produced_material(new Material());
+    left_produced_material->setTexture(vn::graphics::TextureSlot::BaseColor, left_texture);
     const vn::intrusive_ptr<Material> right_material(new Material());
-    right_material->setTexture(right_texture);
+    right_material->setTexture(vn::graphics::TextureSlot::BaseColor, right_texture);
 
     vn::vsg::ContentStore store;
     store.track(geometry);
     store.track(program);
-    store.track(left_material);
+    store.track(left_produced_material);
     store.track(right_material);
 
     FrameArena    arena{ 64 * 1024 };
@@ -5965,7 +5966,7 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
 
     RenderCommand left_command;
     left_command.geometry = geometry;
-    left_command.material = left_material;
+    left_command.material = left_produced_material;
     left_command.program  = program;
     RenderCommand right_command;
     right_command.geometry = geometry;
@@ -6148,15 +6149,15 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
         geometry->setRevision(1U);
     }
 
-    const vn::intrusive_ptr<Material> left_material(new Material());
-    left_material->setTexture(left_texture);
+    const vn::intrusive_ptr<Material> left_assembled_material(new Material());
+    left_assembled_material->setTexture(vn::graphics::TextureSlot::BaseColor, left_texture);
     const vn::intrusive_ptr<Material> right_material(new Material());
-    right_material->setTexture(right_texture);
+    right_material->setTexture(vn::graphics::TextureSlot::BaseColor, right_texture);
 
     vn::vsg::ContentStore store;
     store.track(geometry);
     store.track(program);
-    store.track(left_material);
+    store.track(left_assembled_material);
     store.track(right_material);
 
     FrameArena    arena{ 64 * 1024 };
@@ -6188,7 +6189,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
 
     RenderCommand left_command;
     left_command.geometry = geometry;
-    left_command.material = left_material;
+    left_command.material = left_assembled_material;
     left_command.program  = program;
     RenderCommand right_command;
     right_command.geometry = geometry;
@@ -6398,10 +6399,10 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     ASSERT_NE(sky_program, nullptr);
 
     const vn::intrusive_ptr<Material> sky_material(new Material());   // the sky box: the cube IS its map
-    sky_material->setTexture(sky_cube);
+    sky_material->setTexture(vn::graphics::TextureSlot::BaseColor, sky_cube);
     const vn::intrusive_ptr<Material> bare_material(new Material());  // no map at all
     const vn::intrusive_ptr<Material> flat_material(new Material());  // a map of the other kind
-    flat_material->setTexture(flat_texture);
+    flat_material->setTexture(vn::graphics::TextureSlot::BaseColor, flat_texture);
 
     vn::vsg::ContentStore store;
     store.track(to_posz);

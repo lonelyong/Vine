@@ -7,7 +7,7 @@
 layout(location = 0) in vec3 vine_dir;
 layout(location = 0) out vec4 out_color;
 // The material's texture, at the binding every content program samples it from (set 0 / binding 1,
-// the ABI's `diffuseMap` slot). The KIND follows the coordinate the vertex stage declared, exactly
+// the base-colour texture slot). The KIND follows the coordinate the vertex stage declared, exactly
 // like the engine's own content stages, so the backend's kind check can keep a mismatched material
 // from becoming an unbindable descriptor. The pair branch is VINE_TEXCOORD_UV and the no-kind build
 // the vertex stage explains (a sky whose channel is not a direction).

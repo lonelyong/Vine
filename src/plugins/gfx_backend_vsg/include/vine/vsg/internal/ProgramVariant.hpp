@@ -36,7 +36,7 @@ struct MaterialFacts;
  */
 struct ProgramVariant
 {
-    bool diffuse_map{false};   ///< `VINE_DIFFUSE_MAP`: the material carries a texture to sample.
+    bool textured{false};      ///< `VINE_TEXTURED`: the material carries at least one texture slot to sample.
     bool vertex_color{false};  ///< `VINE_VERTEX_COLOR`: the geometry feeds the colour channel.
     bool cube_texcoord{false}; ///< `VINE_TEXCOORD_CUBE`; false asks for `VINE_TEXCOORD_UV` instead.
     bool instanced{false};     ///< `VINE_INSTANCED`: the draw reads the per-instance model matrix at 12-15.
@@ -50,9 +50,9 @@ struct ProgramVariant
      * EXACTLY ONE KIND IS ALWAYS NAMED: the engine's stages refuse to build a variant that samples the
      * texcoord slot without stating what the slot IS (`#error a sampled texcoord slot needs one kind`),
      * so the kind is not an option - what is optional is whether the slot is sampled at all
-     * (@ref diffuse_map).
+     * (@ref textured).
      *
-     * @return The names, one per line a compile adds (`VINE_TEXCOORD_UV`, `VINE_DIFFUSE_MAP`, ...).
+     * @return The names, one per line a compile adds (`VINE_TEXCOORD_UV`, `VINE_TEXTURED`, ...).
      */
     [[nodiscard]] std::vector<std::string> defines() const;
 
@@ -72,13 +72,14 @@ struct ProgramVariant
  *   * the texcoord KIND follows the geometry's channel WIDTH - three scalars per vertex is a direction
  *     and takes the cube sampler, two is a UV pair (the engine's stages say so; the backend does not
  *     get to guess, and a texture whose kind disagrees with the channel gives way, not the data);
- *   * `VINE_DIFFUSE_MAP` turns on when the MATERIAL has a texture. A material without one takes the
- *     variant with no sampler and no fetch at all, which is the variant the engine's own stages gate
- *     their sampler on;
+ *   * `VINE_TEXTURED` turns on when the MATERIAL carries any texture-slot map. The variant then declares all
+ *     five samplers (missing slots bind their type's constant fallback) and the shader short-circuits per
+ *     slot on the block's flags. A material with no map takes the variant with no sampler and no fetch at all
+ *     - the zero-sampler fast path (graphics-material.md §2.5).
  *   * `VINE_VERTEX_COLOR` turns on when the geometry AUTHORS the colour channel: a derived one (the
  *     backend's own white carrier) is not an authored colour, so multiplying by it would only cost.
  *
- * @param material The material the drawable is shaded with (its texture is the switch's input).
+ * @param material The material the drawable is shaded with (its texture set is the switch's input).
  * @param geometry The geometry being drawn (its fed channels are the other two).
  * @return The variant.
  */

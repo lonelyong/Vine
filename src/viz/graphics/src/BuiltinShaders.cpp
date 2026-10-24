@@ -64,11 +64,11 @@ intrusive_ptr<ShaderProgram> makeProgram(const char8_t* name, std::u8string_view
  *
  * Two paths declare it, in DIFFERENT places, because each spends its low bindings on what it reads
  * first: a fullscreen program's source occupies 0..color_count-1, its depth takes color_count, and the
- * light block takes 5, so the map and its block follow at 6 / 7 for the canonical four-colour G-buffer; a content
- * program declares the material (0), the optional diffuse map (1) and the shadow pair (3 / 4) in its own set, and
- * the lights live at 5 (the one binding both paths share, see vine_params.glsl). The ORDER is fixed rather than
- * "appended in declaration order" so that a shader text can name its bindings at all: a slot number that depends
- * on how many other things a pipeline happens to have cannot be written down (see
+ * light block takes 6, so the map and its block follow at 7 / 8 for the canonical four-colour G-buffer; a content
+ * program declares the material (0), the five texture slots (1-5) and the shadow pair (7 / 8) in its own set,
+ * and the lights live at 6 (the one binding both paths share, see vine_params.glsl). The ORDER is fixed rather
+ * than "appended in declaration order" so that a shader text can name its bindings at all: a slot number that
+ * depends on how many other things a pipeline happens to have cannot be written down (see
  * .ai/design/graphics-architecture.md §9).
  *
  * @param set_index     Descriptor set both bindings live in.
@@ -199,7 +199,7 @@ bool insertShadowAbi(std::u8string& source, std::u8string_view declarations, std
 std::u8string forwardFragmentSource()
 {
     std::u8string source(shaders::kBuiltinForwardFrag);
-    insertShadowAbi(source, shadowBindings(0u, 3u, /*qualify_set*/ true), std::u8string_view(shadow_term));
+    insertShadowAbi(source, shadowBindings(0u, 7u, /*qualify_set*/ true), std::u8string_view(shadow_term));
     return source;
 }
 
@@ -318,10 +318,10 @@ intrusive_ptr<ShaderProgram> makeDeferredLightingProgram(bool with_shadow)
     //
     // The binding numbers are the shadow ABI (see .ai/design/graphics-architecture.md §9): a fullscreen
     // program's source occupies 0..color_count-1, its source's depth takes color_count when that
-    // one is sampleable, the light block takes 5 (the binding both paths share), and the shadow map and its
-    // block follow at 6 and 7 for the canonical 4-colour G-buffer this program is written against.
+    // one is sampleable, the light block takes 6 (the binding both paths share), and the shadow map and its
+    // block follow at 7 and 8 for the canonical 4-colour G-buffer this program is written against.
     std::u8string     source(shaders::kBuiltinDeferredLightingFrag);
-    const std::u8string declarations = with_shadow ? shadowBindings(0u, 6u, /*qualify_set*/ false) : std::u8string{};
+    const std::u8string declarations = with_shadow ? shadowBindings(0u, 7u, /*qualify_set*/ false) : std::u8string{};
     if (!insertShadowAbi(source, declarations, with_shadow ? std::u8string_view(shadow_term) : std::u8string_view{})) {
         return {};   // declined: the caller reports and draws nothing (no silent stand-in)
     }

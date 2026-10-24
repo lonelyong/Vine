@@ -95,15 +95,15 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | `Material` 资产 | PBR 因子 + 纹理集 + alpha 模式；setter 只移动 revision | 部分已做（因子与 alpha 模式；纹理集是 M2） |
+| F1 | `Material` 资产 | PBR 因子 + 纹理集 + alpha 模式；setter 只移动 revision | 已做 |
 | F2 | `MaterialInstance` | 引用一个资产，稀疏覆盖因子 / 纹理 / alpha | 未做 |
-| F3 | 纹理集 | 五个语义槽 + 每槽 `Sampler` + kind/格式校验 | 未做 |
+| F3 | 纹理集 | 五个语义槽 + 每槽 `Sampler` + kind/格式校验 | 已做（格式校验随 F11） |
 | F4 | 材质块 v2 | 仍 64 B：base_color / emissive / params / flags | 已做 |
 | F5 | forward PBR | GGX 直接光 + ambient，含 normal/ORM/emissive 槽 | 未做 |
 | F6 | deferred PBR | G-buffer 还原 + 同一 BRDF + emissive/occlusion | 未做 |
 | F7 | alpha 模式 | Opaque / Mask / Blend 的排序、discard 与输出 alpha | 未做 |
 | F8 | 导入转换 | asset `Color/Phong/Pbr` → 引擎 PBR，去掉近似 | 已做 |
-| F9 | 变体 | `VINE_TEXTURED` 二元位 + 常量回退 | 未做 |
+| F9 | 变体 | `VINE_TEXTURED` 二元位 + 常量回退 | 已做 |
 | F10 | 上传去重 | 实例复合 revision；改资产使实例重写 | 未做 |
 | F11 | 诊断 | 缺槽 / 格式不符 / Cube 进非 base 槽 / 无效覆盖 | 未做 |
 
@@ -121,7 +121,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 ### 3.3 F3 纹理集
 
-- **行为**：`TextureSlot { TexturePtr texture; Sampler sampler{}; }`，五个槽；绑定固定
+- **行为**：`enum class TextureSlot`（五槽）+ `TextureSlotBinding { TexturePtr texture; Sampler sampler{}; }`；绑定固定
   （content set 0：material 0，五槽 1–5，lights 6，shadow 7/8）。
 - **行为**：`metallic_roughness` 按 glTF 打包（G = roughness，B = metallic），`occlusion` 取 R。
 - **约束**（C2）：槽的 kind 与格式按 §2.9；不合法时按 F11 报一次并**不**静默替换成回退图（回退只用于
@@ -263,23 +263,24 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 ### 9.1 当前状态
 
-**M1（模型 + 块 + 导入）已落地**（2026-10-24）：`Material` 是 PBR 因子（Phong 访问器已删），块是 64 B 的
-`base_color / emissive / params / flags`（`static_assert` 钉偏移），`materialFrom` 的固定表就位、`PbrMaterial`
-逐字段直传，单贴图 API 未动（M2）。着色仍是迁移期桥：两路径的 Blinn-Phong 项由 `vineMaterialShininess` /
-`vineMaterialF0` 从 PBR 因子导出，emissive / occlusion / alpha 模式只进块、不进画面；M3 用真实 GGX 与 G-buffer 替换它并删除桥。
+**M1（模型 + 块 + 导入）与 M2（纹理集 + 二元变体）已落地**（2026-10-24）：`Material` 是 PBR 因子 + 五个纹理槽
+（每槽 = 贴图 + `Sampler`，槽身份定绑定与色彩空间），块是 64 B 的 `base_color / emissive / params / flags`
+（flags 的 bit0–4 逐槽存在），`materialFrom` 的固定表就位、`PbrMaterial` 逐字段直传；内容集绑定固定为
+material 0 / 槽 1–5 / lights 6 / shadow 7–8，`VINE_TEXTURED` 一个位声明全部五槽。
+着色仍是迁移期桥：两路径的 Blinn-Phong 项由 `vineMaterialShininess` / `vineMaterialF0` 导出，M2 只让 base 槽参与
+画面；MR / normal / occlusion / emissive 与 alpha 模式只进块与绑定，缺槽统一绑白 —— M3 读它们时按槽给常量（emissive
+黑、normal 平直）并删除桥。
 
 ### 9.2 已知缺口 / 待办
 
-- 落地分四步：M1 模型与块（F1/F4/F8）已做；M2 纹理集与变体（F3/F9）；M3 两条路径的 BRDF 与 G-buffer（F5/F6）；M4 实例与 alpha 模式（F2/F7/F10/F11）。
+- 落地分四步：M1 模型与块（F1/F4/F8）与 M2 纹理集与变体（F3/F9）已做；M3 两条路径的 BRDF 与 G-buffer（F5/F6）；M4 实例与 alpha 模式（F2/F7/F10/F11）。
 - 镜像 UV 下的导数切线基是已知近似，不是 bug；需要时再引入切线通道。
 - IBL、SSAO、透射（KHR_materials_transmission）不在本设计内。
 
 ### 9.3 兼容性 / 迁移
 
-- `setDiffuse` → `setBaseColor`；`setAmbient` / `setSpecular` / `setShininess` 删除（Phong 语义不再存在）。
-- `setTexture(t)` → `setTexture(TextureSlot::BaseColor, t, {})`；`texture()` → `texture(TextureSlot::BaseColor)`。
-- `MaterialPtr` 在持有处改为 `MaterialBasePtr`；`vn::geometry` 侧不变。落地时同步修改 `graphics-scene.md` F7、
-  `graphics-rendering.md` F23/N6、`graphics-shader-params.md` 的 material 块行与 §2.2、`vsg-backend.md` 的变体与上传小节。
+- `setDiffuse` → `setBaseColor`，`setAmbient` / `setSpecular` / `setShininess` 删除；`setTexture(t)` → `setTexture(TextureSlot::BaseColor, t, {})`，`texture()` → `texture(slot)`。
+- `MaterialPtr` 在持有处改为 `MaterialBasePtr`；`vn::geometry` 侧不变。落地时同步修改 `graphics-scene.md` F7、`graphics-rendering.md` F23/N6、`graphics-shader-params.md` 的 material 块行与 §2.2、`vsg-backend.md` 的变体与上传小节。
 
 ## 10. 参考
 
@@ -296,5 +297,4 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 ### 10.3 外部资料
 
-- glTF 2.0：material（metallic-roughness）、`KHR_materials_unlit`、textureInfo 的 texCoord 与 sampler。
-- Filament：材质/实例分层与采样器参数；Cook-Torrance GGX 的 Smith / Schlick 形式。
+- glTF 2.0 的 material（metallic-roughness、textureInfo 的 texCoord/sampler）；Filament 的材质/实例分层、采样器参数与 Cook-Torrance GGX 的 Smith/Schlick 形式。

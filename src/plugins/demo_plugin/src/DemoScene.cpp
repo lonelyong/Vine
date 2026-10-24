@@ -357,7 +357,7 @@ addCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graphics::Text
     // Roughness from the shininess this box used to state (64): sqrt(2 / (n + 2)) keeps the highlight
     // width the old Phong material drew with.
     material->setRoughness(0.174f);
-    material->setTexture(std::move(texture));
+    material->setTexture(vn::graphics::TextureSlot::BaseColor, std::move(texture));
     geometry->setMaterial(material);
 
     auto node = vn::make_intrusive<vn::graphics::MatrixTransform>();
@@ -437,7 +437,7 @@ void addDemoSkyBox(vn::graphics::Group* root, double radius, vn::intrusive_ptr<v
         auto material = vn::make_intrusive<vn::graphics::Material>();
         // White: the sky program is unlit and multiplies nothing, so the map IS the colour.
         material->setBaseColor(vn::Colorf::kWhite);
-        material->setTexture(std::move(cube));
+        material->setTexture(vn::graphics::TextureSlot::BaseColor, std::move(cube));
         geometry->setMaterial(material);
         // The SDK's built-in sky program (BuiltinShaders::skyboxProgram): unlit, samples the material's
         // cube map by the authored direction, and takes its sampler kind from the texcoord channel's

@@ -1,6 +1,7 @@
 #include <vine/vsg/internal/ContentSets.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 #include <vsg/state/Sampler.h>
@@ -154,9 +155,9 @@ struct ContentSets::Data
         candidates.push_back(set.descriptors.get());
     }
 
-    /** @brief Ensures the set one key names, resolving its images from @p entry's layer and @p material. */
-    void ensure(const Key& key, const ContentPass::Scope::Entry& entry, const MaterialFacts& material,
-                const core::CompiledPass& pass, std::span<const InputImages> inputs)
+    /** @brief Ensures the set one key names, resolving its images from @p key's source and the pass' inputs. */
+    void ensure(const Key& key, const ContentPass::Scope::Entry& entry, const core::CompiledPass& pass,
+                std::span<const InputImages> inputs)
     {
         if (Set* existing = find(key))
         {
@@ -179,7 +180,15 @@ struct ContentSets::Data
             case ImageOrigin::Material:
             {
                 detail::TextureReject reason = detail::TextureReject::Ok;
-                map = images->acquire(static_cast<const vn::graphics::Texture*>(key.source.texture), reason);
+                // WHICH SLOT: the name is the contract (see api/ContentImages::materialSlotOf). A material
+                // binding that names no slot has no image to offer - the declared kind's white stands in, the
+                // same answer as an absent slot.
+                const std::optional<std::size_t> slot = materialSlotOf(binding.name);
+                const BlockDescriptors::ImageSource::Slot absent{ nullptr, 0U, vn::graphics::Sampler{} };
+                const BlockDescriptors::ImageSource::Slot& source =
+                    slot.has_value() && *slot < key.source.slots.size() ? key.source.slots[*slot] : absent;
+                map = images->acquire(static_cast<const vn::graphics::Texture*>(source.texture), source.sampler,
+                                      reason);
                 // The DECLARED kind is the contract a descriptor write has to satisfy: a cube declaration
                 // cannot take a 2D view and a 2D declaration cannot take a view of a six-layer image (an
                 // invalid descriptor, not a wrong picture - see MaterialImages' fallback note). A map that is
@@ -188,7 +197,7 @@ struct ContentSets::Data
                 // so a host can see that its material did not fit the text it was drawn with.
                 const bool cube_declared = isCube(binding);
                 const bool cube_image    = map.view != nullptr && map.view->viewType == VK_IMAGE_VIEW_TYPE_CUBE;
-                if (key.source.empty() || reason != detail::TextureReject::Ok || map.view == nullptr ||
+                if (source.texture == nullptr || reason != detail::TextureReject::Ok || map.view == nullptr ||
                     cube_declared != cube_image)
                 {
                     ++fallbacks;
@@ -238,6 +247,22 @@ ContentSets::ContentSets(::vsg::ref_ptr<::vsg::Device> device, const BlockStorag
     d->device  = std::move(device);
     d->storage = &storage;
     d->images  = &images;
+}
+
+BlockDescriptors::ImageSource imageSourceOf(const MaterialFacts& material) noexcept
+{
+    BlockDescriptors::ImageSource source{};
+    for (std::size_t index = 0; index < material.slots.size(); ++index)
+    {
+        const MaterialSlotFacts& slot = material.slots[index];
+        if (slot.texture != nullptr)
+        {
+            source.slots[index].texture  = slot.texture;
+            source.slots[index].revision = slot.texture->revision();
+            source.slots[index].sampler  = slot.sampler;
+        }
+    }
+    return source;
 }
 
 std::size_t ContentSets::repoint(const BlockStorage& storage, core::FrameTimeline& timeline,
@@ -319,17 +344,12 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
                 continue;  // no half serves it: the recorder refuses it on the half, and says so
             }
 
-            // The images this drawable asks for: its material's texture at the revision that texture is at
-            // (the pair api/MaterialImages keys by, and the tag the pass picks a set by). VALUE-initialised:
-            // a material with no texture states NO source, and an indeterminate pair here filed such a
-            // drawable under the previous one's texture (ImageSource has no default member initialisers -
-            // see its own note - so the `{}` is the initialisation).
-            BlockDescriptors::ImageSource source{};
-            if (material.entry->texture != nullptr)
-            {
-                source.texture  = material.entry->texture;
-                source.revision = material.entry->texture->revision();
-            }
+            // The images this drawable asks for: its material's five texture slots at the revisions those
+            // textures are at (the triple api/MaterialImages keys by, and the tag the pass picks a set by).
+            // VALUE-initialised: a material with no map states NO source, and an indeterminate slot here would
+            // file such a drawable under the previous one's images (ImageSource has no default member
+            // initialisers - see its own note - so the `{}` is the initialisation).
+            const BlockDescriptors::ImageSource source = imageSourceOf(*material.entry);
 
             for (const std::uint32_t set : entry->pipelines->declaredSets())
             {
@@ -340,10 +360,9 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
                 key.set      = set;
                 // A set whose samplers are all pass-level does not depend on the drawable's images: tagging
                 // it with an empty source lets every drawable of this variant share it.
-                key.source = declaresMaterialSampler(*entry->pipelines, set)
-                                 ? source
-                                 : BlockDescriptors::ImageSource{};
-                d->ensure(key, *entry, *material.entry, pass, inputs);
+                key.source = declaresMaterialSampler(*entry->pipelines, set) ? source
+                                                                              : BlockDescriptors::ImageSource{};
+                d->ensure(key, *entry, pass, inputs);
             }
         }
     }

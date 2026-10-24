@@ -14,10 +14,10 @@
 //     #define VINE_PARAM_LIGHTS
 //     #include "vine_params.glsl"
 //
-// The set/binding numbers are the CONTENT set's arrangement (.ai/design/graphics-architecture.md §9): the
-// material at 0, the optional diffuse map at 1, the lights at 2. The samplers stay the declaring program's
-// own - a sampler's KIND follows the geometry's texcoord width (see builtin_forward.vert), which is not a
-// fact about a block.
+// The set/binding numbers are the CONTENT set's arrangement (.ai/design/graphics-material.md §3.3): the
+// material at 0, its five texture slots at 1-5, the lights at 6, the shadow pair at 7/8. The samplers stay the
+// declaring program's own - their names and kinds are the texture set's policy (api/ContentImages), which is
+// not a fact about a block.
 //
 // NOT HERE. `VineShadowBlock` names a set/binding that belongs to the PROGRAM that declares it (a full-screen
 // program's source already occupies the low bindings of its set), so its one declaration is
@@ -85,9 +85,9 @@ layout(set = 1, binding = 0, std140) uniform VineDrawBlock
 // only (see ProgramAbi) - a struct array would be a declaration no layer could measure.
 //
 // The binding is the same on BOTH drawing paths (the full-screen deferred program puts its G-buffer samplers at
-// 0..3 and its depth at 4, then this block at 5), which is why the number is written here and not
+// 0..3 and its depth at 4, then this block at 6), which is why the number is written here and not
 // parameterised: one binding, one declaration.
-layout(set = 0, binding = 5, std140) uniform VineLightsBlock
+layout(set = 0, binding = 6, std140) uniform VineLightsBlock
 {
     vec4 ambient;               // rgb + intensity
     vec4 position_kind[8];      // xyz = view-space position, w = kind

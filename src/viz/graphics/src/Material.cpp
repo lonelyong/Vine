@@ -126,19 +126,38 @@ void Material::setAlphaCutoff(float cutoff)
     ++revision_;
 }
 
-raw_ptr<Texture> Material::texture() const
+raw_ptr<Texture> Material::texture(TextureSlot slot) const
 {
-    return texture_.get();
+    return textures_[static_cast<std::size_t>(slot)].texture.get();
 }
 
-void Material::setTexture(intrusive_ptr<Texture> texture)
+const Sampler& Material::sampler(TextureSlot slot) const
 {
-    if (texture_.get() == texture.get())
-    {
+    return textures_[static_cast<std::size_t>(slot)].sampler;
+}
+
+bool Material::hasTexture(TextureSlot slot) const
+{
+    return textures_[static_cast<std::size_t>(slot)].texture != nullptr;
+}
+
+void Material::setTexture(TextureSlot slot, intrusive_ptr<Texture> texture, const Sampler& sampler)
+{
+    TextureSlotBinding& binding = textures_[static_cast<std::size_t>(slot)];
+    // A slot is (map, state): either one changing is one edit, and re-stating what the material already holds
+    // is none - the same rule every other setter follows (see revision()).
+    if (binding.texture.get() == texture.get() && binding.sampler == sampler) {
         return;
     }
-    texture_ = texture;
+    binding.texture = std::move(texture);
+    binding.sampler = sampler;
     ++revision_;
+}
+
+void Material::clearTexture(TextureSlot slot)
+{
+    // The STATE stays with the slot: clearing the map is not a statement about the next map's filtering.
+    setTexture(slot, nullptr, textures_[static_cast<std::size_t>(slot)].sampler);
 }
 
 std::uint64_t Material::revision() const

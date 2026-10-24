@@ -4,15 +4,21 @@
 
 VN_VSG_NS_BEGIN
 
+namespace
+{
+/// The five slot names, in `TextureSlot` order: the one spelling of "which name is which slot".
+constexpr std::string_view kSlotNames[] = { "baseColorMap", "metallicRoughnessMap", "normalMap", "occlusionMap",
+                                            "emissiveMap" };
+}  // namespace
+
 ImageOrigin imageOriginOf(std::string_view name) noexcept
 {
-    // The names the engine's programs spend: the DRAWABLE's own map - `diffuseMap` on the content programs
-    // and `skyMap` on the sky program, which samples the sky box's own cube map out of its MATERIAL (see
-    // builtin_skybox.frag: "the ABI's diffuseMap slot") - and the map a pass resolves (`shadow_map`). Every
-    // OTHER name is a texture the pass' inputs offer - the engine's screen programs (albedo_tex, normal_tex,
-    // spec_tex, pos_tex, screen_tex) are all of that kind, and so is any name a host invents for a picture it
-    // declared as an input.
-    if (name == std::string_view("diffuseMap") || name == std::string_view("skyMap"))
+    // The names the engine's programs spend: the DRAWABLE's own maps - the five texture slots on the content
+    // programs, and `skyMap` on the sky program, which samples the sky box's own cube map out of its MATERIAL
+    // (see builtin_skybox.frag) - and the map a pass resolves (`shadow_map`). Every OTHER name is a texture the
+    // pass' inputs offer - the engine's screen programs (albedo_tex, normal_tex, spec_tex, pos_tex, screen_tex)
+    // are all of that kind, and so is any name a host invents for a picture it declared as an input.
+    if (materialSlotOf(name).has_value())
     {
         return ImageOrigin::Material;
     }
@@ -21,6 +27,23 @@ ImageOrigin imageOriginOf(std::string_view name) noexcept
         return ImageOrigin::Shadow;
     }
     return ImageOrigin::Input;
+}
+
+std::optional<std::size_t> materialSlotOf(std::string_view name) noexcept
+{
+    for (std::size_t index = 0; index < std::size(kSlotNames); ++index)
+    {
+        if (name == kSlotNames[index])
+        {
+            return index;
+        }
+    }
+    // The single-map era's name, and the sky program's name for the same image: both are the base-colour slot.
+    if (name == std::string_view("diffuseMap") || name == std::string_view("skyMap"))
+    {
+        return 0U;
+    }
+    return std::nullopt;
 }
 
 bool shadowBindingOf(const ProgramAbi& abi, std::uint32_t set, std::uint32_t& binding) noexcept

@@ -121,18 +121,19 @@ TEST(ProgramAbiTest, TheForwardProgramDeclaresTheContentAbiTheExistingBackendSer
 
     ASSERT_EQ(abi.bindings.size(), 5U);
     expectBlock(abi, 0U, 0U, AbiBlockRole::Material, kFragment, sizeof(vn::graphics::VineMaterialBlock));
-    expectBlock(abi, 0U, 5U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
-    expectSampler(abi, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
-    expectBlock(abi, 0U, 4U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
+    expectBlock(abi, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectSampler(abi, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
+    expectBlock(abi, 0U, 8U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
     // The draw block is declared by BOTH stages now: the fragment reads `params.x` (opacity), the vertex stage
     // reads `params.y` (the point size it writes to gl_PointSize), so the binding's stage flags are the union.
     expectBlock(abi, 1U, 0U, AbiBlockRole::Draw, kVertex | kFragment, sizeof(vn::graphics::VineDrawBlock));
 
-    // The texcoord slot's sampler is NOT declared by this variant: that is the fact the serving layer will
-    // read to decide whether a pipeline needs the binding at all. Binding 2 is the slot the lights used to take;
-    // it is unused now (see vine_params.glsl: lights sit at 5, the one binding both paths share).
-    EXPECT_EQ(at(abi, 0U, 1U), nullptr);
-    EXPECT_EQ(at(abi, 0U, 2U), nullptr);
+    // The five texture slots are NOT declared by this variant: that is the fact the serving layer reads to
+    // decide whether a pipeline needs those bindings at all. 1-5 are the slots, 6 the lights both paths
+    // share (see vine_params.glsl), 7/8 the shadow pair.
+    for (std::uint32_t binding = 1U; binding <= 5U; ++binding) {
+        EXPECT_EQ(at(abi, 0U, binding), nullptr) << "binding " << binding << " is an untextured variant's slot";
+    }
 
     // One push block: the two camera matrices the vertex stage reads, which is the whole 128-byte budget.
     // The MEMBERS are facts too, and they are what the serving layer fills BY NAME: `projection` first, then
@@ -156,18 +157,26 @@ TEST(ProgramAbiTest, TheDiffuseSamplerIsTheVariantsFactAndAVariantThatCannotComp
 {
     const auto program = vn::graphics::forwardProgram();
 
-    const ProgramAbi uv = scan(*program, { "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_UV" });
-    expectSampler(uv, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "diffuseMap");
-    EXPECT_EQ(uv.bindings.size(), 6U);
+    // ONE define turns on the whole set: all five slots are declared together (a per-slot variant would
+    // multiply the pipeline cache by 32 - graphics-material.md §2.5). The base colour's KIND follows the
+    // texcoord width; the other four are 2-D data maps.
+    const ProgramAbi uv = scan(*program, { "VINE_TEXTURED", "VINE_TEXCOORD_UV" });
+    expectSampler(uv, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "baseColorMap");
+    expectSampler(uv, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "metallicRoughnessMap");
+    expectSampler(uv, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "normalMap");
+    expectSampler(uv, 0U, 4U, AbiDescriptorKind::Sampler2D, kFragment, "occlusionMap");
+    expectSampler(uv, 0U, 5U, AbiDescriptorKind::Sampler2D, kFragment, "emissiveMap");
+    EXPECT_EQ(uv.bindings.size(), 10U) << "five blocks and five slots";
 
-    const ProgramAbi cube = scan(*program, { "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_CUBE" });
-    expectSampler(cube, 0U, 1U, AbiDescriptorKind::SamplerCube, kFragment, "diffuseMap");
+    const ProgramAbi cube = scan(*program, { "VINE_TEXTURED", "VINE_TEXCOORD_CUBE" });
+    expectSampler(cube, 0U, 1U, AbiDescriptorKind::SamplerCube, kFragment, "baseColorMap");
+    EXPECT_EQ(cube.bindings.size(), 10U);
 
     // A texcoord slot that was asked for without its kind: the source says `#error`, and a variant whose own
-    // text refuses to compile must not come back as "a program without a diffuse map".
+    // text refuses to compile must not come back as "a program without a texture set".
     ProgramFacts facts;
     ASSERT_EQ(buildProgramFacts(*program, facts), FactMiss::None);
-    const std::string_view only_map[] = { "VINE_DIFFUSE_MAP" };
+    const std::string_view only_map[] = { "VINE_TEXTURED" };
     ProgramAbi             refused;
     EXPECT_EQ(scanProgramAbi(facts.shaders.vertex, facts.shaders.fragment, only_map, refused), FactMiss::Malformed);
 }
@@ -180,8 +189,8 @@ TEST(ProgramAbiTest, TheFlatForwardProgramIsTheSameAbiAndItsDefineComesFromTheTe
 
     // `VINE_FLAT` is a define the TEXT carries (`#define VINE_FLAT 1`), not one the source imports: the
     // compiler drops a define the source never asks for, so the two must not be conflated.
-    const std::vector<std::string> expected = { "VINE_DIFFUSE_MAP", "VINE_INSTANCED", "VINE_TEXCOORD_CUBE",
-                                                "VINE_TEXCOORD_UV", "VINE_VERTEX_COLOR" };
+    const std::vector<std::string> expected = { "VINE_INSTANCED", "VINE_TEXCOORD_CUBE", "VINE_TEXCOORD_UV",
+                                                "VINE_TEXTURED", "VINE_VERTEX_COLOR" };
     EXPECT_EQ(flat.import_defines, expected);
     EXPECT_EQ(std::find(expected.begin(), expected.end(), "VINE_FLAT"), expected.end());
 }
@@ -247,19 +256,19 @@ TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndT
     expectSampler(plain, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "normal_tex");
     expectSampler(plain, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "spec_tex");
     expectSampler(plain, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "pos_tex");
-    expectBlock(plain, 0U, 5U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectBlock(plain, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
     // The lights are a BLOCK, not a push: the full-screen program declares no push range at all (a host's own
     // screen program may declare one - see ContentPipeline::Settings).
     EXPECT_TRUE(plain.pushes.empty());
-    EXPECT_EQ(at(plain, 0U, 6U), nullptr);   // the unshadowed variant declares no map and no block
+    EXPECT_EQ(at(plain, 0U, 7U), nullptr);   // the unshadowed variant declares no map and no block
 
     const auto shadowed_program = vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(shadowed_program, nullptr) << "the shadow markers must still be in the shipped source";
     const ProgramAbi shadowed = scanScreen(*shadowed_program);
     ASSERT_EQ(shadowed.bindings.size(), 7U);
-    expectBlock(shadowed, 0U, 5U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
-    expectSampler(shadowed, 0U, 6U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
-    expectBlock(shadowed, 0U, 7U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
+    expectBlock(shadowed, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectSampler(shadowed, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
+    expectBlock(shadowed, 0U, 8U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
 }
 
 TEST(ProgramAbiTest, TheScreenProgramsBindTheAttachmentTheirFactoryNamed)
@@ -299,8 +308,10 @@ TEST(ProgramAbiTest, TheGbufferAndSkyboxProgramsDeclareTheSlotsTheirShadingReads
     EXPECT_EQ(gbuffer.pushes[0].size, 128U);
     EXPECT_EQ(gbuffer.pushes[0].stages, kVertex);
 
-    const ProgramAbi gbuffer_mapped = scan(*vn::graphics::gbufferGeometryProgram(), { "VINE_DIFFUSE_MAP", "VINE_TEXCOORD_UV" });
-    expectSampler(gbuffer_mapped, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "diffuseMap");
+    const ProgramAbi gbuffer_mapped = scan(*vn::graphics::gbufferGeometryProgram(), { "VINE_TEXTURED", "VINE_TEXCOORD_UV" });
+    expectSampler(gbuffer_mapped, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "baseColorMap");
+    expectSampler(gbuffer_mapped, 0U, 5U, AbiDescriptorKind::Sampler2D, kFragment, "emissiveMap");
+    EXPECT_EQ(gbuffer_mapped.bindings.size(), 7U) << "two blocks and five slots";
 
     // The sky: its map sits in the same slot the content stages keep for the material's texture, and the
     // sampler KIND follows the texcoord width - including "no kind at all", which is the pair branch.

@@ -18,6 +18,7 @@
 #include <vsg/state/Sampler.h>
 
 #include <vine/vsg/internal/ContentPush.hpp>
+#include <vine/vsg/internal/ContentSets.hpp>
 #include <vine/vsg/internal/DrawBlock.hpp>
 #include <vine/vsg/internal/LightBlock.hpp>
 #include <vine/vsg/internal/ShadowBlock.hpp>
@@ -69,7 +70,7 @@ std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
  * WHY IT MATTERS, AND WHAT IT COST TO MISS IT: the pass' declared inputs are what this backend binds at set 1
  * (see ContentPipeline::kInputSet) FOR THE PROGRAMS THAT READ THEM THERE, while the engine's own programs
  * keep every map outside that set - the material block and the diffuse map at set 0, the per-drawable block
- * at set 1 - and are served by name instead (see api/ContentImages: `diffuseMap` from the material,
+ * at set 1 - and are served by name instead (see api/ContentImages: a texture slot from the material,
  * `shadow_map` from the pass' resolved images). Compiling such a program against an input set is a LAYOUT
  * question rather than a size one: its per-drawable block lives in set 1, and a sampled set in that slot is
  * exactly the mismatch ContentPipeline::acquire's guard refuses - measured: every command of the engine's
@@ -1186,20 +1187,15 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         return false;
     }
 
-    // WHICH IMAGES THIS DRAWABLE ASKS FOR: its material's texture at the revision that texture is at. The
-    // caller's sets are tagged with the same pair (see BlockDescriptors::ImageSource - MaterialImages
-    // acquires images by exactly this key), so a pass serving two textured drawables of one variant picks
-    // each one's own map instead of the first set whose shape fits.
+    // WHICH IMAGES THIS DRAWABLE ASKS FOR: its material's five texture slots at the revisions those textures
+    // are at. The caller's sets are tagged with the same source (see BlockDescriptors::ImageSource -
+    // MaterialImages acquires images by exactly this key), so a pass serving two textured drawables of one
+    // variant picks each one's own map instead of the first set whose shape fits.
     //
-    // VALUE-initialised on purpose: the pair is indeterminate when the material has no texture, and a set
-    // key built from a stale pointer would file this drawable under ANOTHER one's images (ImageSource has no
-    // default member initialisers - see its own note - so the `{}` is the initialisation).
-    BlockDescriptors::ImageSource demanded{};
-    if (material.entry->texture != nullptr)
-    {
-        demanded.texture  = material.entry->texture;
-        demanded.revision = material.entry->texture->revision();
-    }
+    // VALUE-initialised on purpose: the source is empty when the material has no map, and a set key built from
+    // a stale pointer would file this drawable under ANOTHER one's images (ImageSource has no default member
+    // initialisers - see its own note - so the `{}` is the initialisation).
+    const BlockDescriptors::ImageSource demanded = imageSourceOf(*material.entry);
 
     // THE HALF IS SERVED HERE, per command: a pass holds one half per (program, revision, layout, variant,
     // topology), and each half's block sets are ITS OWN - the textured variant's declared set carries the

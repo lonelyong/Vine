@@ -3,13 +3,13 @@
 // ONLY when the source asks for it on this line: a name that is missing here is silently dropped (the
 // branch that tests it stays dead, with no error from any layer). Keep the list in sync with the
 // backend's variants — scripts/vine_shader_check.sh compiles every combination of these names.
-#pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)
+#pragma import_defines (VINE_VERTEX_COLOR, VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)
 layout(location = 0) in vec3 vine_view_pos;
 layout(location = 1) in vec3 vine_view_normal;
 #ifdef VINE_VERTEX_COLOR
 layout(location = 2) in vec4 vine_color;
 #endif
-#ifdef VINE_DIFFUSE_MAP
+#ifdef VINE_TEXTURED
 #if defined(VINE_TEXCOORD_CUBE)
 layout(location = 3) in vec3 vine_uv;
 #elif defined(VINE_TEXCOORD_UV)
@@ -28,17 +28,22 @@ layout(location = 0) out vec4 out_color;
 #define VINE_PARAM_LIGHTS
 #include "vine_params.glsl"
 
-#ifdef VINE_DIFFUSE_MAP
-// The sampler kind follows the coordinate the vertex stage declared: a cube map is sampled by
-// direction, a 2-D map by UV. Both branches bind set 0 / binding 1, and the texture the host
-// resolves must be the matching kind (the backend binds a white cube when it is not).
+#ifdef VINE_TEXTURED
+// The five slots of the texture set, at the content set's fixed bindings (graphics-material.md §3.3): the base
+// colour may be a cube map (its kind follows the vertex stage's texcoord width), the other four are 2-D data
+// maps. A slot the material does not have is bound to its type's constant fallback, and the block's flags
+// short-circuit it at run time - the variant is binary, so all five are declared together.
 #if defined(VINE_TEXCOORD_CUBE)
-layout(set = 0, binding = 1) uniform samplerCube diffuseMap;
+layout(set = 0, binding = 1) uniform samplerCube baseColorMap;
 #elif defined(VINE_TEXCOORD_UV)
-layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
+layout(set = 0, binding = 1) uniform sampler2D baseColorMap;
 #else
 #error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
 #endif
+layout(set = 0, binding = 2) uniform sampler2D metallicRoughnessMap;
+layout(set = 0, binding = 3) uniform sampler2D normalMap;
+layout(set = 0, binding = 4) uniform sampler2D occlusionMap;
+layout(set = 0, binding = 5) uniform sampler2D emissiveMap;
 #endif
 
 // The shadow this pass declared, if any: the map it named as an INPUT and the block that places a
@@ -82,10 +87,10 @@ void main()
     // (its lighting program writes alpha 1) - so reading them here would make the
     // same asset translucent in forward and opaque in deferred.
     float alpha = draw.params.x;
-#ifdef VINE_DIFFUSE_MAP
-    // The texture contributes COLOUR only, by the same rule.
-    vec4 texel = texture(diffuseMap, vine_uv);
-    albedo *= texel.rgb;
+#ifdef VINE_TEXTURED
+    // M2 wires the BASE slot into the picture. metallic-roughness / normal / occlusion / emissive are
+    // declared and bound (the variant is binary, not per slot) and become inputs of the real BRDF in M3.
+    albedo *= texture(baseColorMap, vine_uv).rgb;
 #endif
 #ifdef VINE_VERTEX_COLOR
     // An AUTHORED vertex colour modulates the albedo only. Its alpha is

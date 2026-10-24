@@ -18,7 +18,8 @@
  *
  * WHY A NAME TABLE AND NOT A SET INDEX. A program's text says where its samplers live (`layout(set = ...,
  * binding = ...)`) and what they are CALLED, and the layer serves the text as written (see api/ProgramAbi).
- * The engine's own programs spend the names this way: `diffuseMap` is the drawable's own texture, `skyMap`
+ * The engine's own programs spend the names this way: the five texture-set names (`baseColorMap`,
+ * `metallicRoughnessMap`, `normalMap`, `occlusionMap`, `emissiveMap`) are the drawable's own maps, `skyMap`
  * is the drawable's own texture TOO (the sky box carries its map in its material and the sky program names
  * that map `skyMap` - see builtin_skybox.frag), `shadow_map` is the map its pass declared, and every other
  * name (`albedo_tex`, `normal_tex`, `spec_tex`, `pos_tex`, `screen_tex`, ...) is a texture an earlier pass
@@ -31,10 +32,10 @@
  *     plan resolved one reports a program that declares none - the map would never reach its drawables
  *     otherwise, silently.
  * The other two rows are the CALLER's, because the caller is the one that owns the image:
- *   * `Material` (`diffuseMap` AND `skyMap`): the DRAWABLE's own texture. The engine's sky program names the
- *     sky box's own cube map `skyMap` and samples it at the ABI's material slot, which is the same slot
- *     `diffuseMap` names on every other content program. A material without a usable texture takes the
- *     white fallback OF THE DECLARED KIND (api/WhiteImage, api/MaterialImages::whiteCube - "no map" is
+ *   * `Material` (`baseColorMap` and the other four slots, plus `skyMap`): the DRAWABLE's own textures. The
+ *     engine's sky program names the sky box's own cube map `skyMap` and samples it at the base-colour
+ *     slot, which is the binding `baseColorMap` names on every other content program. A slot without a
+ *     usable texture takes the white fallback OF THE DECLARED KIND (api/WhiteImage, api/MaterialImages::whiteCube - "no map" is
  *     WHITE, not an unwritten binding, and a 2D view where the text declares `samplerCube` is an invalid
  *     descriptor rather than an untextured draw).
  *   * `Input`: the pass' declared inputs, in declaration order - input by input, each one's colour
@@ -76,18 +77,32 @@ struct InputImages
 /** @brief Where a declared sampler binding takes its image from (the by-name policy of the file note). */
 enum class ImageOrigin
 {
-    Material,  ///< The drawable's own texture, or the white fallback of the declared kind (`diffuseMap`, `skyMap`).
+    Material,  ///< One of the material's five texture slots (see materialSlotOf).
     Shadow,    ///< The map the pass' plan resolved (`shadow_map`); a pass without one takes the white stand-in.
     Input,     ///< Any other name: a texture the pass' declared inputs offer, in declaration order.
 };
 
 /** @brief Gets where a declared sampler's @p name takes its image from.
  *
- * @param name The declared instance name (`diffuseMap`, `shadow_map`, `skyMap`, ...); an empty name is a
+ * @param name The declared instance name (`baseColorMap`, `shadow_map`, `skyMap`, ...); an empty name is a
  *             declaration the scan could not name, which is served like any other input texture.
  * @return The origin the name states (see the file note for what each one is filled from).
  */
 [[nodiscard]] ImageOrigin imageOriginOf(std::string_view name) noexcept;
+
+/** @brief Gets the material texture slot a sampler declaration names, as an index into `MaterialFacts::slots`.
+ *
+ * @details
+ * - The five names are the set's own: `baseColorMap`, `metallicRoughnessMap`, `normalMap`, `occlusionMap`,
+ *   `emissiveMap` - one per `TextureSlot`, in that order. `diffuseMap` (the single-map era) and `skyMap`
+ *   (the sky program's name for the same image) both mean the base-colour slot.
+ * - A name that is not one of these is not a material sampler at all; the caller decides what that means
+ *   for the binding (a declared `sampler2D` still needs an image).
+ *
+ * @param name The declared instance name.
+ * @return The slot index, or an empty value when the name is not a material slot.
+ */
+[[nodiscard]] std::optional<std::size_t> materialSlotOf(std::string_view name) noexcept;
 
 /** @brief One image, as a caller needs it to fill a declared sampler binding. */
 struct SamplerImage

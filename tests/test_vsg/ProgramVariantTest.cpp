@@ -80,12 +80,12 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
 
     ProgramVariant cube;
     cube.cube_texcoord = true;
-    cube.diffuse_map   = true;
+    cube.textured      = true;
     cube.vertex_color  = true;
     const std::vector<std::string> cube_names = cube.defines();
     ASSERT_EQ(cube_names.size(), 3U);
     EXPECT_EQ(cube_names[0], "VINE_TEXCOORD_CUBE");
-    EXPECT_EQ(cube_names[1], "VINE_DIFFUSE_MAP");
+    EXPECT_EQ(cube_names[1], "VINE_TEXTURED");
     EXPECT_EQ(cube_names[2], "VINE_VERTEX_COLOR");
 
     // The instance stream is a switch too: it changes the vertex input the layer declares, so it must
@@ -101,7 +101,7 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
     std::vector<std::uint32_t> seen;
     for (int mask = 0; mask < 16; ++mask) {
         ProgramVariant variant;
-        variant.diffuse_map   = (mask & 1) != 0;
+        variant.textured      = (mask & 1) != 0;
         variant.vertex_color  = (mask & 2) != 0;
         variant.cube_texcoord = (mask & 4) != 0;
         variant.instanced     = (mask & 8) != 0;
@@ -121,7 +121,7 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
         GeometryFacts geometry = geometryWith(bare);
         MaterialFacts material;
         const ProgramVariant variant = variantOf(material, geometry);
-        EXPECT_FALSE(variant.diffuse_map);
+        EXPECT_FALSE(variant.textured);
         EXPECT_FALSE(variant.vertex_color);
         EXPECT_FALSE(variant.cube_texcoord);
     }
@@ -133,9 +133,9 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
         GeometryFacts geometry = geometryWith(uvs);
         const vn::intrusive_ptr<Texture2D> texture(new Texture2D(2, 2, PixelFormat::Rgba8Unorm));
         MaterialFacts material;
-        material.texture = texture.get();
+        material.slots[0].texture = texture.get();
         const ProgramVariant variant = variantOf(material, geometry);
-        EXPECT_TRUE(variant.diffuse_map);
+        EXPECT_TRUE(variant.textured);
         EXPECT_FALSE(variant.cube_texcoord) << "two scalars are a UV pair";
     }
 
@@ -146,7 +146,7 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
     {
         GeometryFacts geometry = geometryWith(directions);
         MaterialFacts material;
-        material.texture = reinterpret_cast<const vn::graphics::Texture*>(kAuthoredBuffer);
+        material.slots[0].texture = reinterpret_cast<const vn::graphics::Texture*>(kAuthoredBuffer);
         EXPECT_TRUE(variantOf(material, geometry).cube_texcoord);
     }
 
@@ -179,8 +179,8 @@ TEST(ProgramVariantTest, TheEnginesOwnForwardProgramDescribesItselfPerVariant)
         return AbiDescriptorKind::UniformBlock;  // "absent": the block kind stands for nothing declared
     };
 
-    // WITHOUT the map's define the engine's forward stage declares no diffuse sampler at all - the
-    // declaration sits behind `#ifdef VINE_DIFFUSE_MAP` - and its ABI is the material block, the lights
+    // WITHOUT the set's define the engine's forward stage declares no sampler at all - the five
+    // declarations sit behind `#ifdef VINE_TEXTURED` - and its ABI is the material block, the lights
     // and the rest.
     ProgramFacts without;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, without), FactMiss::None);
@@ -193,7 +193,7 @@ TEST(ProgramVariantTest, TheEnginesOwnForwardProgramDescribesItselfPerVariant)
     // asks for `sampler2D`, a three-scalar slot for `samplerCube`. A layout scanned for the wrong one is
     // a descriptor the shader's sampler type does not match.
     ProgramVariant textured;
-    textured.diffuse_map = true;
+    textured.textured = true;
 
     ProgramVariant uv_variant = textured;
     ProgramFacts   uv_facts;
