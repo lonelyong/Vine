@@ -4877,10 +4877,10 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
 
-    // Five directional lights for a block with three slots: the drop is the packer's arithmetic, not a guess.
+    // Nine directional lights for a block with EIGHT slots: the drop is the packer's arithmetic, not a guess.
     std::vector<vn::intrusive_ptr<vn::graphics::Light>> many_lights;
     std::vector<const vn::graphics::Light*>             many_refs;
-    for (int index = 0; index < 5; ++index) {
+    for (int index = 0; index < 9; ++index) {
         vn::intrusive_ptr<vn::graphics::Light> light =
             vn::graphics::Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
         light->setColor(vn::Colorf(0.1F, 0.1F, 0.1F, 1.0F));
@@ -4888,7 +4888,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
         many_lights.push_back(std::move(light));
         many_refs.push_back(many_lights.back().get());
     }
-    std::vector<const vn::graphics::Light*> few_refs{ many_refs.begin(), many_refs.begin() + 3 };
+    std::vector<const vn::graphics::Light*> few_refs{ many_refs.begin(), many_refs.begin() + 8 };
 
     const auto recordOneFrame = [&](unsigned frame_index, bool empty_rectangle, bool too_many_lights) {
         recorder.beginFrame(FrameToken{ frame_index });
@@ -4955,20 +4955,20 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     EXPECT_EQ(emptyRectReports(), after_first + 1U) << "a re-armed episode is reported again";
 
     // PHASE 2 - the light drop. A call whose lights all fit RE-ARMS the episode (the recorder's own rule), so
-    // the sequence is: too many lights (said once) -> too many again (silent) -> three lights (re-armed) ->
+    // the sequence is: too many lights (said once) -> too many again (silent) -> few enough (re-armed) ->
     // too many (said again).
     ReportOnce  lights_episode;
     const auto& channel = vn::graphics::DiagnosticCategory::ChannelIgnored;
     const std::uint64_t ignored_before = diagnostics.count(channel);
-    recordPassWith(recordOneFrame(5U, false, true), nullptr, &lights_episode);
+    recordPassWith(recordOneFrame(9U, false, true), nullptr, &lights_episode);
     EXPECT_EQ(diagnostics.count(channel), ignored_before + 1U)
-        << "five lights into a three-slot block: " << messages.back().as_std_str();
-    recordPassWith(recordOneFrame(6U, false, true), nullptr, &lights_episode);
+        << "nine lights into an eight-slot block: " << messages.back().as_std_str();
+    recordPassWith(recordOneFrame(10U, false, true), nullptr, &lights_episode);
     EXPECT_EQ(diagnostics.count(channel), ignored_before + 1U)
         << "the SAME pass in the next frame stays silent (the episode is the caller's)";
     recordPassWith(recordOneFrame(7U, false, false), nullptr, &lights_episode);
     EXPECT_EQ(diagnostics.count(channel), ignored_before + 1U) << "a call whose lights FIT says nothing";
-    recordPassWith(recordOneFrame(8U, false, true), nullptr, &lights_episode);
+    recordPassWith(recordOneFrame(11U, false, true), nullptr, &lights_episode);
     EXPECT_EQ(diagnostics.count(channel), ignored_before + 2U)
         << "and the next overflowing call reports again: the fitting call ENDED the episode";
 }

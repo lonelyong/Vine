@@ -102,9 +102,12 @@ std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
     return total;
 }
 
-/// @brief The full-screen ABI's push range: the layout the SDK's screen programs declare (see LightPushBlock).
-constexpr std::size_t kFullscreenPushBytes = sizeof(vn::vsg::LightPushBlock);
-static_assert(kFullscreenPushBytes == 128U, "the full-screen push range is the ABI's 128 bytes");
+/// @brief How many of the announced lights the block is supposed to carry (a DISABLED light is not a drop).
+std::size_t enabledLightCount(std::span<const core::LightRef> lights) noexcept
+{
+    return static_cast<std::size_t>(std::count_if(
+        lights.begin(), lights.end(), [](const core::LightRef& light) { return light.enabled; }));
+}
 
 /// @brief Whether two block shapes declare the same roles at the same bindings, in the same order.
 bool sameShape(std::span<const BlockDescriptors::Binding> left,
@@ -463,7 +466,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         vn::vsg::VineLightsBlock lights_block;
         const std::size_t          represented = packLightBlock(draw.lights, draw.camera, lights_block);
         const BlockStorage::Block  lights      = scope_.storage->writeLights(bytesOf(lights_block));
-        reportLightsDropped(draw.lights.size(), represented, draw.camera.present);
+        reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
         if (!lights.valid)
         {
             reportRefused("the drawing call's light block", "the frame's block budget is full");
@@ -791,13 +794,53 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // ... and the other direction, once per half: the pass resolved a map and the program cannot read it.
     reportShadowNotSampled(entry, pass);
 
-    // The block is the CALL's (its lights and camera are), so it is written per call - for every call, switch
-    // on or off: the same text serves both, and an unbound block a shader reads is undefined behaviour rather
-    // than "no shadow".
+    // The blocks are the CALL's (its lights and camera are), so they are written per call: the light block first
+    // (both paths bind the same one, see LightBlock), then the shadow block - for every call, switch on or off:
+    // the same text serves both, and an unbound block a shader reads is undefined behaviour rather than "no
+    // shadow".
     const std::span<const BlockDescriptors::Binding> shape = layer->blockShape(0U);
-    vn::graphics::VineShadowBlock                  shadow_block;
-    std::uint64_t                                    shadow_offset = 0U;
-    if (!shape.empty())
+    // By ROLE, never by number: the bindings belong to the program's text (the SDK's screen programs put the
+    // lights at 5 and the shadow pair after it), while `BlockDescriptors`' constants are the canonical CONTENT
+    // shape's spelling. A lookup by constant would miss every block of a program that spells them elsewhere.
+    const auto hasRole = [shape](AbiBlockRole role) {
+        for (const BlockDescriptors::Binding& entry : shape)
+        {
+            if (entry.role == role)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto roleAt = [shape](std::uint32_t binding) {
+        for (const BlockDescriptors::Binding& entry : shape)
+        {
+            if (entry.binding == binding)
+            {
+                return entry.role;
+            }
+        }
+        return AbiBlockRole::NotABlock;
+    };
+
+    vn::vsg::VineLightsBlock lights_block;
+    std::uint64_t           lights_offset = 0U;
+    if (hasRole(AbiBlockRole::Lights))
+    {
+        const std::size_t        represented = packLightBlock(draw.lights, draw.camera, lights_block);
+        const BlockStorage::Block written   = scope_.storage->writeLights(bytesOf(lights_block));
+        reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
+        if (!written.valid)
+        {
+            reportRefused("the drawing call's light block", "the frame's block budget is full");
+            return false;
+        }
+        lights_offset = written.offset;
+    }
+
+    vn::graphics::VineShadowBlock shadow_block;
+    std::uint64_t                 shadow_offset = 0U;
+    if (hasRole(AbiBlockRole::ShadowBlock))
     {
         const bool                shadow_on = packShadowBlock(pass.shadow, draw, shadow_block);
         const BlockStorage::Block written   = scope_.storage->writeShadows(bytesOf(shadow_block));
@@ -847,15 +890,28 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     {
         if (declared.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
         {
+            // Which L1 block lives at this binding is the SHAPE's answer (the text declared it): a full-screen
+            // program carries the lights and, when it samples a shadow, the shadow block - at the bindings its
+            // own text states.
+            const AbiBlockRole role    = roleAt(declared.binding);
+            const std::size_t  bytes   = role == AbiBlockRole::Lights          ? sizeof(lights_block)
+                                         : role == AbiBlockRole::ShadowBlock ? sizeof(shadow_block)
+                                                                             : 0U;
+            const std::uint64_t offset = role == AbiBlockRole::Lights ? lights_offset : shadow_offset;
+            if (bytes == 0U)
+            {
+                reportRefused("a full-screen drawing call", "its program declares a block this path cannot fill");
+                return false;
+            }
             // The descriptor names the whole buffer at offset 0; the CALL's offset is the bind's. A range that
             // started at the block's own offset would be counted twice (the effective window is the descriptor's
             // offset plus the dynamic one).
             auto buffer_info = ::vsg::BufferInfo::create(scope_.storage->buffer(), 0U,
-                                                         static_cast<VkDeviceSize>(sizeof(shadow_block)));
+                                                         static_cast<VkDeviceSize>(bytes));
             descriptors.push_back(::vsg::DescriptorBuffer::create(::vsg::BufferInfoList{ buffer_info },
                                                                   declared.binding, 0U,
                                                                   VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC));
-            dynamic_offsets.push_back(static_cast<std::uint32_t>(shadow_offset));
+            dynamic_offsets.push_back(static_cast<std::uint32_t>(offset));
             continue;
         }
         if (declares_map && declared.binding == map_binding)
@@ -973,17 +1029,10 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     full_screen.key.sampled_depth_count   = depths;
     full_screen.dynamic                   = draw.dynamic;
     full_screen.samplers                  = samples;
-    // The push the SDK's full-screen programs declare: the lights the call announced, packed into the 128-byte
-    // range (see LightPushBlock). An empty list leaves the ambient fill, so a full-screen pass with no lights still
-    // shades its albedo instead of rendering black. The count of represented lights is deliberately NOT reported
-    // here: the drop report is the content path's (the reference behaviour), and a full-screen call packs what fits
-    // and says nothing.
-    vn::vsg::LightPushBlock push_block;
-    (void)packLightPushBlock(draw.lights, draw.camera, push_block);
-    ::vsg::ref_ptr<::vsg::ubyteArray> push_bytes =
-        ::vsg::ubyteArray::create(static_cast<std::uint32_t>(sizeof(push_block)));
-    std::memcpy(push_bytes->data(), &push_block, sizeof(push_block));
-    full_screen.push = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U, push_bytes);
+    // No push: the SDK's full-screen programs read their lights from the light BLOCK (see LightBlock), and a
+    // full-screen program of the host's that declares a push block is served by its own caller - the engine has
+    // no bytes for it.
+    full_screen.push                      = {};
     full_screen.viewport = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
                                          static_cast<float>(draw.viewport.width),
                                          static_cast<float>(draw.viewport.height) };
@@ -1493,14 +1542,14 @@ void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represe
     }
     else if (represented == 0U)
     {
-        message = std::to_string(announced) + " announced light(s) are not lit (disabled, or a kind the light";
-        message += " block does not carry); the pass falls back to the block's ambient fill";
+        message = std::to_string(announced) + " announced light(s) are not lit (a positional light nobody";
+        message += " placed, or a light beyond the block's slots); the pass falls back to the block's ambient fill";
     }
     else
     {
         message = std::to_string(announced - represented) + " of " + std::to_string(announced) + " announced";
-        message += " light(s) are not lit (disabled, not ambient or directional, or beyond the block's three";
-        message += " directional slots)";
+        message += " light(s) are not lit (a positional light nobody placed, or a light beyond the block's eight";
+        message += " slots)";
     }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::ChannelIgnored, vn::String::fromUtf8(message));

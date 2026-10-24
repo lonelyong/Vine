@@ -303,8 +303,8 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
     const auto shadowed = shadowedDeferredLightProgram();
     ASSERT_NE(shadowed, nullptr);
     const std::string shadowed_text = shadowed->stage(0)->source.as_std_str();
-    EXPECT_NE(shadowed_text.find("layout(binding = 5) uniform sampler2D shadow_map;"), std::string::npos);
-    EXPECT_NE(shadowed_text.find("layout(binding = 6, std140) uniform VineShadowBlock"), std::string::npos)
+    EXPECT_NE(shadowed_text.find("layout(binding = 6) uniform sampler2D shadow_map;"), std::string::npos);
+    EXPECT_NE(shadowed_text.find("layout(binding = 7, std140) uniform VineShadowBlock"), std::string::npos)
         << "the block's GLSL type name is the L1 name (ShaderAbi.hpp)";
     EXPECT_NE(shadowed_text.find("shadow.viewToLight"), std::string::npos);
     EXPECT_EQ(shadowed_text.find("VINE_SHADOW_BINDINGS"), std::string::npos)

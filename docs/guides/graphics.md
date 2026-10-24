@@ -100,7 +100,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
 - `Texture` —— 2D / Cube，按层填充（`setImage()` / `setFaceImage()` / `setLayer()`；编号一律用 `layer` 词汇）。每次填充都会
   `revision()++`，后端据此区分"同一张纹理、新像素"与"同一张纹理、同样像素"（只看指针做不到）。
-- `Light` —— ambient / directional，带 `castShadow()` 与 `ShadowSettings{resolution, bias, filter}`
+- `Light` —— ambient / directional / point / spot，带 `castShadow()` 与 `ShadowSettings{resolution, bias, filter}`
   （阴影渲染的现状见 §4.3）。
 - `ImageRef` —— **一张图的身份**（某个 target 的某个附件，颜色或深度），pass 接线的对象形式，见 §3.7。
 

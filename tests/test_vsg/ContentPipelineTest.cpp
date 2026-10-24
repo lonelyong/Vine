@@ -458,11 +458,9 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     ASSERT_EQ(layout_one->setLayouts.size(), 1U) << "the samplers are the only set - no block set, no set 1";
     EXPECT_EQ(layout_one->setLayouts[0], samplers);
 
-    // The push budget is the full-screen ABI's 128 bytes, and the FRAGMENT stage reads them: the engine's
-    // canonical vertex stage declares no constants, while a screen program's light block is the shader's.
-    ASSERT_EQ(layout_one->pushConstantRanges.size(), 1U);
-    EXPECT_EQ(layout_one->pushConstantRanges.front().stageFlags, VK_SHADER_STAGE_FRAGMENT_BIT);
-    EXPECT_EQ(layout_one->pushConstantRanges.front().size, 128U);
+    // No push: the SDK's own screen programs read the light BLOCK (see LightBlock), so a screen pipeline
+    // declares a push range only when its caller asks for one (a host program's own block).
+    EXPECT_TRUE(layout_one->pushConstantRanges.empty()) << "nothing is pushed by default";
 
     VariantPool pool;
     const auto  screen = layer->acquire(pool, screenKey(1U));
@@ -483,9 +481,9 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
 TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
 {
     // The engine's own screen lighting program (`BuiltinShaders::shadowedDeferredLightProgram`) writes its
-    // shadow ABI's bindings down by hand: the map at 5 (the source's four colours take 0..3 and its depth
-    // would take 4) and the block at 6. The layer's set is what the TEXT declares, so those numbers are the
-    // text's - and the layer has to serve them.
+    // shadow ABI's bindings down by hand: the lights at 5 (the binding both paths share), the source's four
+    // colours take 0..3 and its depth would take 4, and the map and the block follow at 6 and 7. The layer's
+    // set is what the TEXT declares, so those numbers are the text's - and the layer has to serve them.
     const vn::intrusive_ptr<vn::graphics::ShaderProgram> program =
         vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(program, nullptr);
@@ -501,29 +499,31 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     EXPECT_EQ(samplers[1], 1U);
     EXPECT_EQ(samplers[2], 2U);
     EXPECT_EQ(samplers[3], 3U);
-    EXPECT_EQ(samplers[4], 5U) << "the map's binding is the text's own number";
+    EXPECT_EQ(samplers[4], 6U) << "the map's binding is the text's own number, after the light block";
     const auto shape = layer->blockShape(0U);
-    ASSERT_EQ(shape.size(), 1U);
-    EXPECT_EQ(shape[0].binding, 6U);
-    EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::ShadowBlock);
+    ASSERT_EQ(shape.size(), 2U);
+    EXPECT_EQ(shape[0].binding, 5U) << "the light block both paths carry";
+    EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::Lights);
+    EXPECT_EQ(shape[1].binding, 7U);
+    EXPECT_EQ(shape[1].role, vn::vsg::AbiBlockRole::ShadowBlock);
 
     // The set a pass binds when its source offers FOUR colours and NO sampleable depth: 0..3 for the colours,
-    // the map at 5 and the block at 6 - binding 4 is NOT in it, which is exactly where an arrangement that
-    // just appended the textures would have put the map (and the engine's text would then read undefined
-    // data: it hard-codes 5).
+    // the lights at 5, the map at 6 and the block at 7 - binding 4 is NOT in it, which is exactly where an
+    // arrangement that just appended the textures would have put the map (and the engine's text would then read
+    // undefined data: it hard-codes those numbers).
     const auto set = layer->sampledSetLayout(4U, 0U);
     ASSERT_NE(set, nullptr);
     std::vector<std::uint32_t> bindings;
     for (const auto& entry : set->bindings) { bindings.push_back(entry.binding); }
-    ASSERT_EQ(bindings.size(), 6U);
+    ASSERT_EQ(bindings.size(), 7U) << "four colours, the lights, the map and the block";
     EXPECT_EQ(bindings[0], 0U);
-    EXPECT_EQ(bindings[3], 3U);
-    EXPECT_EQ(bindings[4], 5U) << "the map takes its declared binding";
-    EXPECT_EQ(bindings[5], 6U) << "and the block takes its own";
+    EXPECT_EQ(bindings[4], 5U) << "the light block both paths carry";
+    EXPECT_EQ(bindings[5], 6U) << "the map takes its declared binding";
+    EXPECT_EQ(bindings[6], 7U) << "and the shadow block takes its own";
     EXPECT_EQ(std::find(bindings.begin(), bindings.end(), 4U), bindings.end())
         << "nothing lives at 4: the source offers no depth";
     for (const auto& entry : set->bindings) {
-        if (entry.binding == 6U) {
+        if (entry.binding == 7U) {
             // DYNAMIC, and that is the point: the block's offset moves every frame (the arena writes one block
             // per call per frame), so a descriptor that baked it would make the pass rebuild its set every
             // frame - and a freshly written set that a pending command buffer still names is exactly what the
@@ -534,19 +534,20 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
         }
     }
 
-    // ... and with a sampleable source depth the arrangement gains binding 4 while the map STAYS at 5.
+    // ... and with a sampleable source depth the arrangement gains binding 4 while the rest STAYS put.
     const auto with_depth = layer->sampledSetLayout(4U, 1U);
     ASSERT_NE(with_depth, nullptr);
     std::vector<std::uint32_t> with_depth_bindings;
     for (const auto& entry : with_depth->bindings) { with_depth_bindings.push_back(entry.binding); }
-    ASSERT_EQ(with_depth_bindings.size(), 7U);
+    ASSERT_EQ(with_depth_bindings.size(), 8U) << "the depth takes 4, so everything after it slides by none";
     EXPECT_EQ(with_depth_bindings[4], 4U) << "the source's own depth";
-    EXPECT_EQ(with_depth_bindings[5], 5U) << "the map did not move";
+    EXPECT_EQ(with_depth_bindings[5], 5U) << "the lights did not move";
     EXPECT_EQ(with_depth_bindings[6], 6U);
+    EXPECT_EQ(with_depth_bindings[7], 7U);
 
     // The full-screen ABI's rules, each refused where the layer is built: a declaration outside set 0 (there
-    // is no second set to bind), and any block that is not the shadow's (a screen program's lights travel in
-    // its push).
+    // is no second set to bind), and any block that is not the lights' or the shadow's (both paths carry the
+    // lights, and a shadow is what a full-screen text may sample).
     const auto refusing = [](const std::string& declaration) {
         ContentPipeline::Shaders shaders;
         shaders.vertex   = "#version 450\n"
@@ -564,9 +565,14 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     };
     EXPECT_EQ(refusing("layout(set = 1, binding = 0) uniform sampler2D picture;"), nullptr)
         << "the full-screen ABI is set 0 and nothing else";
-    EXPECT_EQ(refusing("layout(binding = 7, std140) uniform VineLightsBlock { vec4 ambient; } lights;"), nullptr)
-        << "a screen program's lights travel in its push block";
-    EXPECT_NE(refusing("layout(binding = 5) uniform sampler2D shadow_map;"), nullptr)
+    EXPECT_NE(refusing("layout(binding = 5, std140) uniform VineLightsBlock "
+                       "{ vec4 ambient; vec4 position_kind[8]; vec4 direction_range[8]; "
+                       "vec4 color_intensity[8]; vec4 cone[8]; } lights;"),
+              nullptr)
+        << "the light block both paths carry is exactly what a screen text declares";
+    EXPECT_EQ(refusing("layout(binding = 7, std140) uniform VineMaterialBlock { vec4 ambient; } material;"), nullptr)
+        << "a content-only block is not this ABI's";
+    EXPECT_NE(refusing("layout(binding = 6) uniform sampler2D shadow_map;"), nullptr)
         << "while the shadow's pair is exactly what a screen text may declare";
 }
 

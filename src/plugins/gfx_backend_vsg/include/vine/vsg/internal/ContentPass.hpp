@@ -52,10 +52,11 @@
  * match the plan. Both halves of the input ABI are bound (colour attachments and a sampleable depth), and
  * WHICH one an input offers is the plan's fact - the caller is checked against it rather than asked.
  *
- * WHAT IS NOT HERE YET, and is therefore not promised: the full-screen push block's CONTENTS (the lights and the
- * depth reconstruction the SDK's deferred lighting program reads) arrive with the full-screen lighting half - the
- * forward path's light and shadow blocks are bound here (see LightBlock / ShadowBlock), and the full-screen push is
- * recorded empty rather than approximated.
+ * BOTH DRAWING CALLS BIND THE SAME LIGHT BLOCK. The forward content path and the full-screen deferred path
+ * read their lights from one block (see LightBlock): the content path binds it in its own set, the full-screen
+ * path in set 0 at the binding both paths give it. A full-screen program therefore declares a light block +
+ * shadow block instead of a push, and this layer writes both per call and reports dropped lights for BOTH kinds
+ * (the full-screen path used to keep its lights in a 128-byte push and say nothing about the ones that did not fit).
  *
  * WHAT THE SCOPE IS A SET OF: COMPILED HALVES. A pipeline layer is built from ONE program's stage text against
  * ONE vertex layout, so the scope holds a set of them - one per (program, revision, layout) the pass draws with
@@ -75,9 +76,8 @@
  * idENTITY the plan resolved) offers bindings 0.. for its attachments, the shadow map takes the binding its
  * text declares, and the call's own shadow block takes its own - the pass builds that set per call, because
  * a full-screen call has ONE block and it is the call's. The state it draws with is the plan's
- * `CompiledDraw::dynamic` (a full-screen call has no per-command state to resolve), and its 128-byte push
- * block carries the call's lights (see `recordScreenDraw`) - the full-screen ABI's own copy of what the
- * content path's light block is.
+ * `CompiledDraw::dynamic` (a full-screen call has no per-command state to resolve), and its lights arrive in the
+ * same block the content path binds (see `recordScreenDraw`).
  */
 VN_VSG_NS_BEGIN
 
@@ -352,8 +352,9 @@ class VN_VSG_API ContentPass
      * shadow exists); and a mismatch between the pass' imported textures and the sampler bindings its text
      * declares.
      *
-     * THE PUSH BLOCK IS THE FULL-SCREEN ABI'S 128 BYTES AND CARRIES THE CALL'S LIGHTS
-     * (`LightPushBlock` - the same packing the lighting phase uses for the content path's block).
+     * THE LIGHT BLOCK IS THE CALL'S and both kinds of call bind it: the SDK's screen programs read their lights
+     * from it (there is no push block any more - see LightBlock), so the set this layer builds carries a light
+     * block and, when the text declares one, the shadow's.
      *
      * @param draw          The compiled full-screen call.
      * @param entry         The screen half its program names (resolved by the caller).

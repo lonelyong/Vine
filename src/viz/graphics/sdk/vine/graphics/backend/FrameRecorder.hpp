@@ -126,6 +126,12 @@ struct LightRef
     float                      intensity{1.0F};                   ///< Intensity multiplier.
     bool                       has_direction{false};              ///< Whether direction() means anything.
     vn::math::Vec3d          direction{};                       ///< World-space direction (directional lights).
+    bool                       has_position{false};               ///< Whether position() / range() mean anything.
+    vn::math::Vec3d          position{};                        ///< World-space position (point / spot lights).
+    float                      range{0.0F};                      ///< Distance at which the contribution reaches zero
+                                                                 ///< (0 = no cutoff); see Light::setRange.
+    double                     inner_cone_degrees{0.0};           ///< Spot cone's full-strength angle (degrees).
+    double                     outer_cone_degrees{0.0};           ///< Spot cone's zero-strength angle (degrees).
     bool                        cast_shadow{false};                ///< Light::isCastingShadow: the switch that makes it a
                                                                   ///< caster.
     float                      shadow_bias{0.0F};                 ///< ShadowSettings::bias: the map comparison's

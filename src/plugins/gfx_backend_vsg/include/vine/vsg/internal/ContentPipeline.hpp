@@ -59,8 +59,8 @@
  * `vn::graphics::BuiltinShaders`: `screenCopyProgram` declares its sampler as `layout(binding = i)`, with
  * no set qualifier, so set 0 is where a full-screen sampler has to live), the full-screen vertex stage
  * supplied by the backend (the engine's canonical triangle, built from `gl_VertexIndex`, with no vertex
- * buffer and no vertex-side constants), and one 128-byte push block whose layout the SDK's builtin screen
- * programs declare (`ambient` + `projparms` + three directional lights). The two are not interchangeable,
+ * buffer and no vertex-side constants), and the LIGHT block at the binding both paths give it (see
+ * LightBlock; a host program's push range is its own declaration). The two are not interchangeable,
  * which is why the layer knows its kind and the key carries it: `acquire()` refuses a key of the other kind
  * rather than compiling a pipeline for an ABI the draw will not bind.
  *
@@ -122,8 +122,10 @@ class ContentPipeline
     struct Settings
     {
         std::uint32_t color_attachments{1};  ///< Colour attachments the blend state declares.
-        std::uint32_t push_bytes{128};       ///< The FULL-SCREEN path's push budget: a content program's push
-                                             ///< ranges are its own declarations (see `create`).
+        std::uint32_t push_bytes{0};         ///< The FULL-SCREEN path's push budget, when its text declares one: a
+                                             ///< content program's push ranges are its own declarations (see
+                                             ///< `create`), and the SDK's own screen programs declare none - they
+                                             ///< read their lights from the light block (see LightBlock).
         /// The primitive assembly the pipeline's STATIC topology states. It is part of the identity rather
         /// than runtime state because of the API's rule: a topology set dynamically may only be of the same
         /// CLASS as this baked value, so a layer built for another class cannot serve the draw at all (see

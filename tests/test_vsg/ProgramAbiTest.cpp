@@ -121,14 +121,16 @@ TEST(ProgramAbiTest, TheForwardProgramDeclaresTheContentAbiTheExistingBackendSer
 
     ASSERT_EQ(abi.bindings.size(), 5U);
     expectBlock(abi, 0U, 0U, AbiBlockRole::Material, kFragment, sizeof(vn::graphics::VineMaterialBlock));
-    expectBlock(abi, 0U, 2U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectBlock(abi, 0U, 5U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
     expectSampler(abi, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
     expectBlock(abi, 0U, 4U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
     expectBlock(abi, 1U, 0U, AbiBlockRole::Draw, kFragment, sizeof(vn::graphics::VineDrawBlock));
 
     // The texcoord slot's sampler is NOT declared by this variant: that is the fact the serving layer will
-    // read to decide whether a pipeline needs the binding at all.
+    // read to decide whether a pipeline needs the binding at all. Binding 2 is the slot the lights used to take;
+    // it is unused now (see vine_params.glsl: lights sit at 5, the one binding both paths share).
     EXPECT_EQ(at(abi, 0U, 1U), nullptr);
+    EXPECT_EQ(at(abi, 0U, 2U), nullptr);
 
     // One push block: the two camera matrices the vertex stage reads, which is the whole 128-byte budget.
     // The MEMBERS are facts too, and they are what the serving layer fills BY NAME: `projection` first, then
@@ -234,25 +236,28 @@ void main() {}
     EXPECT_STREQ(vn::vsg::abiBlockRoleName(foreign->role), "foreign block");
 }
 
-TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesAndTheShadowedPairAtFive)
+TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndTheShadowedPair)
 {
     const ProgramAbi plain = scanScreen(*vn::graphics::deferredLightProgram());
-    ASSERT_EQ(plain.bindings.size(), 4U);
+    // Four G-buffer samplers and the light block both paths carry (at the binding the SDK's programs share).
+    ASSERT_EQ(plain.bindings.size(), 5U);
     expectSampler(plain, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "albedo_tex");
     expectSampler(plain, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "normal_tex");
     expectSampler(plain, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "spec_tex");
     expectSampler(plain, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "pos_tex");
-    ASSERT_EQ(plain.pushes.size(), 1U);
-    EXPECT_EQ(plain.pushes[0].size, 128U);   // the full-screen light block
-    EXPECT_EQ(plain.pushes[0].stages, kFragment);
-    EXPECT_EQ(at(plain, 0U, 5U), nullptr);   // the unshadowed variant declares no map and no block
+    expectBlock(plain, 0U, 5U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    // The lights are a BLOCK, not a push: the full-screen program declares no push range at all (a host's own
+    // screen program may declare one - see ContentPipeline::Settings).
+    EXPECT_TRUE(plain.pushes.empty());
+    EXPECT_EQ(at(plain, 0U, 6U), nullptr);   // the unshadowed variant declares no map and no block
 
     const auto shadowed_program = vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(shadowed_program, nullptr) << "the shadow markers must still be in the shipped source";
     const ProgramAbi shadowed = scanScreen(*shadowed_program);
-    ASSERT_EQ(shadowed.bindings.size(), 6U);
-    expectSampler(shadowed, 0U, 5U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
-    expectBlock(shadowed, 0U, 6U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
+    ASSERT_EQ(shadowed.bindings.size(), 7U);
+    expectBlock(shadowed, 0U, 5U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectSampler(shadowed, 0U, 6U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
+    expectBlock(shadowed, 0U, 7U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
 }
 
 TEST(ProgramAbiTest, TheScreenProgramsBindTheAttachmentTheirFactoryNamed)
@@ -330,7 +335,7 @@ layout(set = 0, binding = 2, std140) uniform VineMaterialBlock
 } material;
 layout(set = 0, binding = 3, std140) uniform VineLightsBlock
 {
-    vec4 ambient; vec4 sun_dir[3]; vec4 sun_color[3];
+    vec4 ambient; vec4 position_kind[8]; vec4 direction_range[8]; vec4 color_intensity[8]; vec4 cone[8];
 } lights;
 layout(set = 0, binding = 4, std140) uniform VineShadowBlock { mat4 viewToLight; vec4 params; } shadow;
 layout(set = 1, binding = 0) uniform sampler2D depth_tex;

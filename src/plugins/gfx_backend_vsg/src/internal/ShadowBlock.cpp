@@ -37,8 +37,8 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
 
     // And it has to be a light the block can NAME: the shader scales the light whose slot the block states, so a
     // caster the block cannot carry would scale a light the map does not belong to.
-    const std::size_t slot = directionalSlotOf(draw.lights, shadow.light);
-    if (slot >= kLightDirectionalSlots)
+    const std::size_t slot = packedSlotOf(draw.lights, shadow.light);
+    if (slot >= kLightSlots)
     {
         return false;
     }

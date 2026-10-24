@@ -987,7 +987,6 @@ src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	return|FpsOverlay::camera
 src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	return|FpsOverlay::content
 src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	return|Sampler::addFrame
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|AttributeChannel::empty
-src/viz/graphics/sdk/vine/graphics/Light.hpp	return|Light::createDirectional
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyDown/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyUp/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onMouseMove/1

@@ -396,6 +396,14 @@ void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> l
         {
             ref.direction = light->direction();
         }
+        ref.has_position        = light->hasPosition();
+        ref.range               = light->range();
+        ref.inner_cone_degrees  = light->innerConeAngle();
+        ref.outer_cone_degrees  = light->outerConeAngle();
+        if (ref.has_position)
+        {
+            ref.position = light->position();
+        }
     }
     pending_lights_ = copy;
 }

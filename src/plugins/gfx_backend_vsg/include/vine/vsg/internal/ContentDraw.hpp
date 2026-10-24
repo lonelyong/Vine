@@ -103,7 +103,9 @@ class ContentDraw
         core::PipelineKey  key;                 ///< Identity (kind = Screen: the full-screen descriptor ABI).
         core::DynamicState dynamic;             ///< The set-command half of the state.
         ::vsg::ref_ptr<::vsg::BindDescriptorSet> samplers;  ///< Set 0: binding i is the source's attachment i.
-        ::vsg::ref_ptr<::vsg::PushConstants>     push;      ///< The ABI's 128-byte block, or null to push none.
+        ::vsg::ref_ptr<::vsg::PushConstants>     push;      ///< The push block the program declares, or null to push
+                                                            ///< none: the SDK's screen programs declare none (they
+                                                            ///< read the light block), so this is a host program's.
         ViewportRect       viewport;            ///< The rectangle the triangle covers (the PiP sub-rectangle).
         float              depth_min{0.0F};     ///< The depth band's far end the pass maps into.
         float              depth_max{1.0F};     ///< The depth band's near end the pass maps into.

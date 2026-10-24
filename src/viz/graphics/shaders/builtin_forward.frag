@@ -116,19 +116,24 @@ void main()
     // fragment's view position by one name in both programs: here it arrives as a varying, there it is
     // read out of the G-buffer.
     vec3 pos = vine_view_pos;
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 8; ++i)
     {
-        vec3 d = lights.sun_dir[i].xyz;
-        if (dot(d, d) < 1e-6) continue;
-        vec3 c = lights.sun_color[i].rgb;
-        float a = lights.sun_color[i].a;
-        vec3 L = normalize(-d);
+        // What a light IS (kind, position, range, cone) is the block's business and is evaluated in one place
+        // (vineEvaluateLight, vine_params.glsl); what is left here is this surface's term.
+        vec3  L;
+        float attenuation = vineEvaluateLight(i, pos, L);
+        if (attenuation <= 0.0)
+        {
+            continue;   // an unused slot, or a light that cannot reach this fragment
+        }
+        vec3 c = lights.color_intensity[i].rgb;
+        float a = lights.color_intensity[i].a;
         float ndl = max(dot(n, L), 0.0);
         // The shadow ABI's term goes here: it scales this light's ndl by whether the map found a
         // caster in front of this fragment. The line below IS that insertion point, and it is the same
         // text the deferred lighting program carries (so the two paths cannot drift).
         // VINE_SHADOW_TERM
-        color += albedo * c * a * ndl;
+        color += albedo * c * a * ndl * attenuation;
         // Specular is gated by ndl like the diffuse term: a face turned away
         // from the light must not receive a highlight (see builtin_deferred_lighting.frag
         // for the full reasoning).
@@ -141,7 +146,7 @@ void main()
             // .ai/design/vsg-backend.md §11.16cj). Whichever way it is spelled, the product that
             // reaches the sum is colour x intensity: the G-buffer writer folds the same two factors into its
             // attachment, so the forward and the deferred picture agree by construction.
-            color += c * a * spec * material.specular.rgb * clamp(material.specular.a, 0.0, 1.0) * ndl;
+            color += c * a * spec * material.specular.rgb * clamp(material.specular.a, 0.0, 1.0) * ndl * attenuation;
         }
     }
     out_color = vec4(color, alpha);

@@ -529,15 +529,16 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
 
     // The full-screen ABI's three rules (see the header): ONE set, and it is set 0 - the engine's screen
     // programs declare `layout(binding = i)` with no set qualifier, and its shadow ABI inserts the map and
-    // the block into that same set, so there is no second set for this kind to bind. The only BLOCK it may
-    // declare is the shadow's, because a full-screen program's lights travel in its push block.
+    // the block into that same set, so there is no second set for this kind to bind. The BLOCKS it may declare
+    // are the light block (both paths carry it, see LightBlock) and the shadow's.
     for (const AbiBinding& binding : abi.bindings)
     {
         if (binding.set != 0U)
         {
             return nullptr;
         }
-        if (binding.kind == AbiDescriptorKind::UniformBlock && binding.role != AbiBlockRole::ShadowBlock)
+        if (binding.kind == AbiDescriptorKind::UniformBlock && binding.role != AbiBlockRole::ShadowBlock &&
+            binding.role != AbiBlockRole::Lights)
         {
             return nullptr;
         }

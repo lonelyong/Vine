@@ -54,12 +54,84 @@ layout(set = 1, binding = 0, std140) uniform VineDrawBlock
 #endif
 
 #ifdef VINE_PARAM_LIGHTS
-// Per-view lights, packed from the content scene each frame (LightBlock.hpp): one ambient plus up to three
-// directional lights, all in VIEW space.
-layout(set = 0, binding = 2, std140) uniform VineLightsBlock
+// Per-view lights, packed from the content scene each frame (LightBlock.hpp): one ambient plus EIGHT typed
+// lights, positions AND directions already in VIEW space (so no world matrix is needed here).
+//
+// `position_kind[i].w` is the kind (LightType: 1 = directional, 2 = point, 3 = spot; -1 = an unused slot),
+// `direction_range[i].w` is the range (<= 0 = no cutoff), `cone[i]` holds cos(inner) / cos(outer) for a spot.
+// The arrays are PARALLEL rather than an array of structs because the ABI scanner sizes built-in member types
+// only (see ProgramAbi) - a struct array would be a declaration no layer could measure.
+//
+// The binding is the same on BOTH drawing paths (the full-screen deferred program puts its G-buffer samplers at
+// 0..3 and its depth at 4, then this block at 5), which is why the number is written here and not
+// parameterised: one binding, one declaration.
+layout(set = 0, binding = 5, std140) uniform VineLightsBlock
 {
-    vec4 ambient;      // rgb + intensity
-    vec4 sun_dir[3];   // view-space direction, w unused
-    vec4 sun_color[3]; // rgb + intensity
+    vec4 ambient;               // rgb + intensity
+    vec4 position_kind[8];      // xyz = view-space position, w = kind
+    vec4 direction_range[8];    // xyz = view-space direction, w = range
+    vec4 color_intensity[8];    // rgb + intensity
+    vec4 cone[8];               // x = cos(inner), y = cos(outer)
 } lights;
+
+// Evaluates one light at a view-space fragment position: puts the unit direction TO the light in `to_light` and
+// returns its contribution factor (1 for a directional light, inverse-square with the range window for a point,
+// times the cone's smoothstep for a spot). A slot that is unused or cannot be evaluated returns 0, which is what
+// the shading loops skip on.
+//
+// ONE function rather than a loop per program: the two programs that light (forward and deferred) differ in
+// where their surface data comes from, not in what a light IS - and a second copy of the attenuation/cone
+// arithmetic is exactly the drift this file exists to prevent.
+float vineEvaluateLight(int index, vec3 pos, out vec3 to_light)
+{
+    to_light = vec3(0.0);
+    float kind = lights.position_kind[index].w;
+    if (kind < -0.5)
+    {
+        return 0.0;   // an unused slot
+    }
+    if (kind < 1.5)
+    {
+        // Directional: a direction only, no distance.
+        vec3 d = lights.direction_range[index].xyz;
+        if (dot(d, d) < 1e-6)
+        {
+            return 0.0;
+        }
+        to_light = normalize(-d);
+        return 1.0;
+    }
+    // Point and spot: the vector from the fragment to the light, in view space.
+    vec3 to_position = lights.position_kind[index].xyz - pos;
+    float distance = length(to_position);
+    if (distance < 1e-6)
+    {
+        return 0.0;
+    }
+    to_light = to_position / distance;
+    float attenuation = 1.0 / (distance * distance + 1.0);
+    float range = lights.direction_range[index].w;
+    if (range > 0.0)
+    {
+        // Windowed inverse square: EXACTLY zero at the range, so a light cannot leak past the distance the host
+        // bounded it by (the classic (1 - (d/r)^4)^2 window on top of 1/(d^2 + 1)).
+        float window = clamp(1.0 - pow(distance / range, 4.0), 0.0, 1.0);
+        attenuation *= window * window;
+    }
+    if (kind > 2.5)
+    {
+        // Spot: the cone is tested on the angle between the light's axis and the direction to the fragment.
+        vec3 raw_axis = lights.direction_range[index].xyz;
+        if (dot(raw_axis, raw_axis) < 1e-6)
+        {
+            return 0.0;
+        }
+        float cosine = dot(-to_light, normalize(raw_axis));
+        float inner = lights.cone[index].x;
+        float outer = lights.cone[index].y;
+        // A zero-width soft edge (inner == outer) is a hard cut; smoothstep would divide by zero there.
+        attenuation *= inner > outer ? smoothstep(outer, inner, cosine) : step(inner, cosine);
+    }
+    return attenuation;
+}
 #endif

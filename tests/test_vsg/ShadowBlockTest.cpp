@@ -78,14 +78,14 @@ using vn::vsg::ContentDraw;
 using vn::vsg::ContentFacts;
 using vn::vsg::ContentPass;
 using vn::vsg::ContentPipeline;
-using vn::vsg::directionalSlotOf;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
 using vn::vsg::InputImages;
-using vn::vsg::kLightDirectionalSlots;
+using vn::vsg::kLightSlots;
 using vn::vsg::MaterialFacts;
 using vn::vsg::OffscreenTarget;
 using vn::vsg::packLightBlock;
+using vn::vsg::packedSlotOf;
 using vn::vsg::packShadowBlock;
 using vn::vsg::PassContent;
 using vn::vsg::ProgramFacts;
@@ -295,16 +295,18 @@ TEST(ShadowBlockTest, EveryMissingStatementLeavesTheSwitchOff)
 
 TEST(ShadowBlockTest, ACasterTheBlockCannotNameLeavesTheSwitchOff)
 {
-    // Four directional lights announced, the map's owner last: the light block carries three, so the owner has no
+    // Nine directional lights announced, the map's owner last: the light block carries eight, so the owner has no
     // slot - and then the shader could not name the light its map belongs to, which would scale a light the map does
     // NOT belong to (the failure the slot number exists to prevent).
     const CameraSnapshot camera = cameraLookingAlongPlusX();
     const void* const    owner  = reinterpret_cast<const void*>(0x51U);
 
-    LightRef first  = makeSun(reinterpret_cast<const void*>(0x61U), 0.1, 0.0, 0.0);
-    LightRef second = makeSun(reinterpret_cast<const void*>(0x62U), 0.2, 0.0, 0.0);
-    LightRef third  = makeSun(reinterpret_cast<const void*>(0x63U), 0.3, 0.0, 0.0);
-    LightRef caster = makeSun(owner, 0.4, 0.0, 0.0);
+    std::vector<LightRef> announced;
+    for (std::size_t index = 0; index < kLightSlots; ++index)
+    {
+        announced.push_back(makeSun(reinterpret_cast<const void*>(0x60U + index), 0.1, 0.0, 0.0));
+    }
+    announced.push_back(makeSun(owner, 0.4, 0.0, 0.0));   // the ninth: no slot left
 
     ShadowFacts shadow;
     shadow.light               = owner;
@@ -312,16 +314,15 @@ TEST(ShadowBlockTest, ACasterTheBlockCannotNameLeavesTheSwitchOff)
     shadow.view_projection     = mixedProducerMatrix();
 
     std::vector<LightRef> storage;
-    const LightRef        announced[]{ first, second, third, caster };
-    const CompiledDraw    draw = drawWith(camera, std::span<const LightRef>(announced, 4U), storage);
+    const CompiledDraw    draw = drawWith(camera, std::span<const LightRef>(announced), storage);
     vn::graphics::VineShadowBlock block;
     EXPECT_FALSE(packShadowBlock(shadow, draw, block))
-        << "the owner is the fourth directional light, and the block holds three";
+        << "the owner is the ninth directional light, and the block holds eight";
 
-    // The block still represents the three lights that FIT (the caller's drop report is about the fourth).
+    // The block still represents the lights that FIT (the caller's drop report is about the ninth).
     VineLightsBlock lights_block;
-    EXPECT_EQ(packLightBlock(draw.lights, draw.camera, lights_block), 3U);
-    EXPECT_EQ(directionalSlotOf(draw.lights, owner), kLightDirectionalSlots)
+    EXPECT_EQ(packLightBlock(draw.lights, draw.camera, lights_block), kLightSlots);
+    EXPECT_EQ(packedSlotOf(draw.lights, owner), kLightSlots)
         << "and the owner is not one of them - the same answer the packing just gave";
 }
 
@@ -334,11 +335,13 @@ TEST(ShadowBlockTest, TheSlotHelperAgreesWithThePacking)
     LightRef first   = makeSun(reinterpret_cast<const void*>(0x71U), 0.11, 0.0, 0.0);
     LightRef second  = makeSun(reinterpret_cast<const void*>(0x72U), 0.22, 0.0, 0.0);
     LightRef third   = makeSun(reinterpret_cast<const void*>(0x73U), 0.33, 0.0, 0.0);
-    LightRef fourth  = makeSun(reinterpret_cast<const void*>(0x74U), 0.44, 0.0, 0.0);
     LightRef off     = makeSun(reinterpret_cast<const void*>(0x75U), 0.55, 0.0, 0.0);
     off.enabled      = false;
+    // A positional light WITHOUT a position is skipped by the packing, so it must take no slot here either - the
+    // helper and the packer agree on that or a shadow's slot number points at somebody else.
+    LightRef unplaced = makeLight(reinterpret_cast<const void*>(0x76U), LightType::Point, 0.66, 0.0, 0.0, 1.0F);
 
-    const LightRef announced[]{ ambient, first, off, second, third, fourth };
+    const LightRef announced[]{ ambient, first, off, unplaced, second, third };
     const CameraSnapshot camera = cameraLookingAlongPlusX();
 
     VineLightsBlock block;
@@ -349,17 +352,17 @@ TEST(ShadowBlockTest, TheSlotHelperAgreesWithThePacking)
     };
     for (const auto& [light, colour] : expected)
     {
-        const std::size_t slot = directionalSlotOf(announced, light->identity);
-        ASSERT_LT(slot, kLightDirectionalSlots) << "an enabled directional light has a slot";
-        EXPECT_FLOAT_EQ(block.cols[slot][0], colour)
+        const std::size_t slot = packedSlotOf(announced, light->identity);
+        ASSERT_LT(slot, kLightSlots) << "an enabled directional light has a slot";
+        EXPECT_FLOAT_EQ(block.color_intensity[slot][0], colour)
             << "the slot the helper reports is where the packing put THIS light's colour";
     }
-    EXPECT_EQ(directionalSlotOf(announced, fourth.identity), kLightDirectionalSlots)
-        << "the fourth directional light is not carried at all";
-    EXPECT_EQ(directionalSlotOf(announced, off.identity), kLightDirectionalSlots)
-        << "and a disabled light was never packed";
-    EXPECT_EQ(directionalSlotOf(announced, ambient.identity), kLightDirectionalSlots)
-        << "an ambient light has no directional slot";
+    EXPECT_EQ(packedSlotOf(announced, off.identity), kLightSlots)
+        << "a disabled light was never packed";
+    EXPECT_EQ(packedSlotOf(announced, ambient.identity), kLightSlots)
+        << "an ambient light fills the ambient field, not a slot";
+    EXPECT_EQ(packedSlotOf(announced, unplaced.identity), kLightSlots)
+        << "a positional light nobody placed takes no slot (the packing skips it too)";
 }
 
 namespace
@@ -383,8 +386,10 @@ constexpr char8_t kProducerVertex[] =
 constexpr char8_t kConsumerFragment[] =
     u8"layout(set = 0, binding = 3, std140) uniform VineLightsBlock {\n"
     u8"    vec4 ambient;\n"
-    u8"    vec4 sun_dir[3];\n"
-    u8"    vec4 sun_color[3];\n"
+    u8"    vec4 position_kind[8];\n"
+    u8"    vec4 direction_range[8];\n"
+    u8"    vec4 color_intensity[8];\n"
+    u8"    vec4 cone[8];\n"
     u8"} lights;\n"
     u8"layout(set = 0, binding = 4, std140) uniform VineShadowBlock {\n"
     u8"    mat4 viewToLight;\n"
@@ -397,8 +402,9 @@ constexpr char8_t kConsumerFragment[] =
     u8"    vec3 n   = vec3(0.0, 0.0, 1.0);\n"
     u8"    vec3 pos = vec3(surface * 2.0, 1.0);\n"
     u8"    vec3 lit = lights.ambient.rgb * lights.ambient.a;\n"
-    u8"    for (int i = 0; i < 3; ++i) {\n"
-    u8"        float ndl = max(dot(n, lights.sun_dir[i].xyz), 0.0);\n"
+    u8"    for (int i = 0; i < 8; ++i) {\n"
+    u8"        if (lights.position_kind[i].w < 0.5) continue;\n"
+    u8"        float ndl = max(dot(n, lights.direction_range[i].xyz), 0.0);\n"
     u8"        if (shadow.params.x > 0.5 && i == int(shadow.params.w)) {\n"
     u8"            vec4  light_clip = shadow.viewToLight * vec4(pos, 1.0);\n"
     u8"            vec3  light_uv   = light_clip.xyz / light_clip.w;\n"
@@ -410,7 +416,7 @@ constexpr char8_t kConsumerFragment[] =
     u8"                ndl *= mix(1.0, visible, clamp(shadow.params.z, 0.0, 1.0));\n"
     u8"            }\n"
     u8"        }\n"
-    u8"        lit += lights.sun_color[i].rgb * lights.sun_color[i].a * ndl;\n"
+    u8"        lit += lights.color_intensity[i].rgb * lights.color_intensity[i].a * ndl;\n"
     u8"    }\n"
     u8"    outColor = vec4(lit, 1.0);\n"
     u8"}\n";
@@ -605,7 +611,21 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     const Light* band0_lights[]{ ambient.get(), sun_a.get() };
     const Light* band1_lights[]{ ambient.get(), sun_a.get() };  // the same light object, its switch flipped below
     const Light* band2_lights[]{ ambient.get(), sun_b.get(), sun_a.get() };
-    const Light* band3_lights[]{ ambient.get(), sun_b.get(), sun_c.get(), sun_d.get(), sun_a.get() };
+    // Band 3 announces MORE lights than the block carries, with the owner LAST: past the eighth slot the owner
+    // cannot be named, so the switch stays off and every carried light contributes. The eight carried lights are
+    // equal greys, so the band's colour is ambient + 8 x 0.05.
+    std::vector<vn::intrusive_ptr<Light>> grey_suns;
+    while (grey_suns.size() < vn::vsg::kLightSlots)
+    {
+        grey_suns.push_back(make_sun(0.05, 0.05, 0.05));
+    }
+    std::vector<const Light*> band3_refs;
+    band3_refs.push_back(ambient.get());
+    for (const auto& light : grey_suns)
+    {
+        band3_refs.push_back(light.get());
+    }
+    band3_refs.push_back(sun_a.get());
 
     const auto command_for = [&](const vn::intrusive_ptr<Geometry>& geometry, const vn::intrusive_ptr<ShaderProgram>& program) {
         RenderCommand command;
@@ -672,7 +692,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     sun_a->setCastShadow(true);
     recorder.setLights(std::span<const Light* const>(band2_lights, 3U));
     recorder.render(std::span<const RenderCommand>(&commands[2], 1U), &camera);
-    recorder.setLights(std::span<const Light* const>(band3_lights, 5U));
+    recorder.setLights(std::span<const Light* const>(band3_refs));
     recorder.render(std::span<const RenderCommand>(&commands[3], 1U), &camera);
     recorder.endPass();
     recorder.endFrame();
@@ -730,7 +750,6 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
         << "every band is a complete content draw";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 1U)
         << "band 3 announced a caster the light block cannot carry: one episode, one report";
-
     VsgExecutor executor(diagnostics);
     executor.addTarget(map_handle.get(), map.get());
     executor.addTarget(receiver_handle.get(), receiver.get());
@@ -771,8 +790,8 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
         << static_cast<int>(one_scaled.b) << ")";
 
     const Rgba8 no_slot = band(56);
-    EXPECT_TRUE(near(no_slot.r, 0.3) && near(no_slot.g, 0.7) && near(no_slot.b, 0.5))
-        << "band 3: the owner is the fourth directional light, so the switch stays off and every light contributes, "
+    EXPECT_TRUE(near(no_slot.r, 0.5) && near(no_slot.g, 0.5) && near(no_slot.b, 0.5))
+        << "band 3: the owner is past the eighth slot, so the switch stays off and every carried light contributes, "
            "got ("
         << static_cast<int>(no_slot.r) << ", " << static_cast<int>(no_slot.g) << ", " << static_cast<int>(no_slot.b)
         << ")";

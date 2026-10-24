@@ -1,6 +1,6 @@
 /**
- * @brief The forward LIGHT BLOCK: the lights a drawing call announced reach its shader in VIEW space
- * (see `.ai/design/vsg-backend.md`, milestone M5c).
+ * @brief The LIGHT BLOCK: the lights a drawing call announced reach its shader in VIEW space, on BOTH drawing
+ * paths (see `.ai/design/vsg-backend.md`, milestone M5c, and ADR-2026-10-24-light-block-typed-lights).
  *
  * Why this is a picture and not a byte comparison. A light that never reached the shader and a scene lit only by
  * the ambient fill look the same to every counter: the draw is recorded, the block is bound, the pipeline is the
@@ -10,9 +10,8 @@
  *   * band 0 announces a sun pointing AT the viewer (world +Z, camera at +Z): the band must be ambient + sun;
  *   * band 1 announces the same sun the other way (world -Z): the band must be ambient only - the direction's
  *     SIGN is the claim, and a packing that lost it would light both bands;
- *   * bands 2 and 3 announce a light the block cannot carry (disabled): both must be the ambient FILL, and the
- *     two of them together must produce exactly ONE diagnostic - the drop report is an episode, not a per-call
- *     sentence.
+ *   * bands 2 and 3 announce a DISABLED light: both must be the ambient FILL, and the two of them together must
+ *     produce no drop report at all - a disabled light is not a dropped one.
  *
  * The bands are also what pins "the block is per DRAWING CALL": one pass, four calls, four different pictures -
  * a per-pass block would paint all four bands with the last announcement's lights.
@@ -23,6 +22,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -33,6 +33,7 @@
 #include <vsg/app/Viewer.h>
 
 #include <vine/Buffer.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 
@@ -77,6 +78,8 @@ using vn::graphics::ShaderStageType;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::buildGeometryFacts;
+using vn::vsg::AbiBinding;
+using vn::vsg::AbiBlockRole;
 using vn::vsg::buildMaterialFacts;
 using vn::vsg::buildProgramFacts;
 using vn::vsg::buildScreenProgramFacts;
@@ -86,13 +89,13 @@ using vn::vsg::ContentPass;
 using vn::vsg::ContentPipeline;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
-using vn::vsg::kLightDirectionalSlots;
+using vn::vsg::kLightKindEmpty;
+using vn::vsg::kLightSlots;
 using vn::vsg::MaterialFacts;
 using vn::vsg::OffscreenTarget;
-using vn::vsg::LightPushBlock;
 using vn::vsg::packLightBlock;
-using vn::vsg::packLightPushBlock;
 using vn::vsg::PassContent;
+using vn::vsg::ProgramAbi;
 using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::VineLightsBlock;
@@ -160,24 +163,41 @@ CameraSnapshot cameraLookingAlongPlusX()
     return camera;
 }
 
-/// @brief The fragments of the device case: the block's ambient plus every lit directional, against a normal
-/// facing the viewer.
+/// @brief The fragments of the device case: the block's ambient plus every lit light, against a normal facing the
+/// viewer.
 ///
-/// No `normalize` in the loop on purpose: the packing normalizes the direction, so an unnormalized value arriving
-/// in the shader means the packing lost that step - and the announced direction is deliberately not unit length.
+/// The directional branch mirrors the ABI's rule (the packing normalizes the direction, so an unnormalized value
+/// arriving in the shader means the packing lost that step - and the announced direction is deliberately not unit
+/// length), and the positional branch is what makes a POSITION observable: a point light at view (0, 0, 1) lights
+/// the surface with `1 / (d^2 + 1)` of its colour, which no packing that forgot the translation can reproduce.
 /// A zero direction contributes nothing (and must not produce a NaN).
 const char* const kLightingFragment =
     "layout(set = 0, binding = 3, std140) uniform VineLightsBlock {\n"
     "    vec4 ambient;\n"
-    "    vec4 sun_dir[3];\n"
-    "    vec4 sun_color[3];\n"
+    "    vec4 position_kind[8];\n"
+    "    vec4 direction_range[8];\n"
+    "    vec4 color_intensity[8];\n"
+    "    vec4 cone[8];\n"
     "} lights;\n"
     "layout(location = 0) out vec4 outColor;\n"
     "void main() {\n"
     "    vec3 n = vec3(0.0, 0.0, 1.0);\n"
     "    vec3 lit = lights.ambient.rgb * lights.ambient.a;\n"
-    "    for (int i = 0; i < 3; ++i) {\n"
-    "        lit += lights.sun_color[i].rgb * lights.sun_color[i].a * max(dot(n, lights.sun_dir[i].xyz), 0.0);\n"
+    "    for (int i = 0; i < 8; ++i) {\n"
+    "        float kind = lights.position_kind[i].w;\n"
+    "        vec3 L = vec3(0.0);\n"
+    "        float attenuation = 0.0;\n"
+    "        if (kind > 0.5 && kind < 1.5) {\n"
+    "            L = normalize(-lights.direction_range[i].xyz);\n"
+    "            attenuation = 1.0;\n"
+    "        } else if (kind > 1.5 && kind < 2.5) {\n"
+    "            vec3 to_light = lights.position_kind[i].xyz;\n"
+    "            float distance = length(to_light);\n"
+    "            L = to_light / distance;\n"
+    "            attenuation = 1.0 / (distance * distance + 1.0);\n"
+    "        }\n"
+    "        lit += lights.color_intensity[i].rgb * lights.color_intensity[i].a *\n"
+    "               max(dot(n, L), 0.0) * attenuation;\n"
     "    }\n"
     "    outColor = vec4(lit, 1.0);\n"
     "}\n";
@@ -214,24 +234,30 @@ TEST(LightBlockTest, TheBlockCarriesTheLightsInViewSpace)
     EXPECT_FLOAT_EQ(block.ambient[2], 0.4F);
     EXPECT_FLOAT_EQ(block.ambient[3], 0.5F) << "the ambient slot carries rgb + intensity";
 
-    // Slot 0, in announcement order: a world +Z direction stays view +Z for this camera.
-    EXPECT_NEAR(block.dirs[0][0], 0.0F, 1e-6F);
-    EXPECT_NEAR(block.dirs[0][1], 0.0F, 1e-6F);
-    EXPECT_NEAR(block.dirs[0][2], 1.0F, 1e-6F);
-    EXPECT_FLOAT_EQ(block.dirs[0][3], 0.0F) << "the direction's w is unused";
-    EXPECT_FLOAT_EQ(block.cols[0][0], 0.8F);
-    EXPECT_FLOAT_EQ(block.cols[0][3], 2.0F) << "rgb + intensity, like the ambient slot";
+    // Slot 0, in announcement order: a world +Z direction stays view +Z for this camera. `w` of the direction slot
+    // is the RANGE (0 = no cutoff, which is what a directional light states).
+    EXPECT_NEAR(block.direction_range[0][0], 0.0F, 1e-6F);
+    EXPECT_NEAR(block.direction_range[0][1], 0.0F, 1e-6F);
+    EXPECT_NEAR(block.direction_range[0][2], 1.0F, 1e-6F);
+    EXPECT_FLOAT_EQ(block.direction_range[0][3], 0.0F) << "a directional light has no range";
+    EXPECT_FLOAT_EQ(block.position_kind[0][0], 0.0F) << "a directional light has no position";
+    EXPECT_FLOAT_EQ(block.position_kind[0][3], static_cast<float>(LightType::Directional))
+        << "the kind is the LightType value the shading switches on";
+    EXPECT_FLOAT_EQ(block.color_intensity[0][0], 0.8F);
+    EXPECT_FLOAT_EQ(block.color_intensity[0][3], 2.0F) << "rgb + intensity, like the ambient slot";
 
     // Slot 1: a world +X direction lands on view +X, and the length-2 direction comes out UNIT length - the
     // shading compares the direction against a normal, so an unnormalized one would scale the light.
-    EXPECT_NEAR(block.dirs[1][0], 1.0F, 1e-6F);
-    EXPECT_NEAR(block.dirs[1][1], 0.0F, 1e-6F);
-    EXPECT_NEAR(block.dirs[1][2], 0.0F, 1e-6F);
-    EXPECT_FLOAT_EQ(block.cols[1][1], 0.5F);
+    EXPECT_NEAR(block.direction_range[1][0], 1.0F, 1e-6F);
+    EXPECT_NEAR(block.direction_range[1][1], 0.0F, 1e-6F);
+    EXPECT_NEAR(block.direction_range[1][2], 0.0F, 1e-6F);
+    EXPECT_FLOAT_EQ(block.color_intensity[1][1], 0.5F);
 
-    // Nothing announced a third directional light, so the last slot stays empty.
-    EXPECT_FLOAT_EQ(block.dirs[2][2], 0.0F);
-    EXPECT_FLOAT_EQ(block.cols[2][0], 0.0F);
+    // Nothing announced a third light, so the last slot says UNUSED - not "an ambient of its own", which is what a
+    // zeroed kind would read as.
+    EXPECT_FLOAT_EQ(block.position_kind[2][3], kLightKindEmpty);
+    EXPECT_FLOAT_EQ(block.direction_range[2][2], 0.0F);
+    EXPECT_FLOAT_EQ(block.color_intensity[2][0], 0.0F);
 }
 
 TEST(LightBlockTest, TheDirectionsAreRotatedIntoViewSpace)
@@ -260,11 +286,11 @@ TEST(LightBlockTest, TheDirectionsAreRotatedIntoViewSpace)
     VineLightsBlock block;
     ASSERT_EQ(packLightBlock(announced, looking_along_x, block), 3U);
 
-    EXPECT_NEAR(block.dirs[0][2], -1.0F, 1e-6F) << "a light travelling along +X goes AWAY from this camera";
-    EXPECT_NEAR(block.dirs[0][0], 0.0F, 1e-6F);
-    EXPECT_NEAR(block.dirs[1][2], 1.0F, 1e-6F) << "and the opposite light travels towards it";
-    EXPECT_NEAR(block.dirs[2][1], 1.0F, 1e-6F) << "the camera's up is still the world's up";
-    EXPECT_NEAR(block.dirs[2][2], 0.0F, 1e-6F) << "with no leakage between the axes";
+    EXPECT_NEAR(block.direction_range[0][2], -1.0F, 1e-6F) << "a light travelling along +X goes AWAY from this camera";
+    EXPECT_NEAR(block.direction_range[0][0], 0.0F, 1e-6F);
+    EXPECT_NEAR(block.direction_range[1][2], 1.0F, 1e-6F) << "and the opposite light travels towards it";
+    EXPECT_NEAR(block.direction_range[2][1], 1.0F, 1e-6F) << "the camera's up is still the world's up";
+    EXPECT_NEAR(block.direction_range[2][2], 0.0F, 1e-6F) << "with no leakage between the axes";
 }
 
 TEST(LightBlockTest, DisabledAndUnusableLightsAreNotPacked)
@@ -274,19 +300,19 @@ TEST(LightBlockTest, DisabledAndUnusableLightsAreNotPacked)
 
     LightRef disabled_ambient   = makeLight(LightType::Ambient, 1.0, 0.0, 0.0, 1.0F, /*enabled*/ false);
     LightRef disabled_sun       = makeLight(LightType::Directional, 1.0, 0.0, 0.0, 1.0F, /*enabled*/ false);
-    LightRef point              = makeLight(LightType::Point, 1.0, 0.0, 0.0, 1.0F);  // a kind the block has no slot for
+    LightRef unplaced_point     = makeLight(LightType::Point, 1.0, 0.0, 0.0, 1.0F);  // no position: lights nowhere
     LightRef sun                = makeLight(LightType::Directional, 0.25, 0.5, 0.75, 1.0F);
     sun.has_direction           = true;
     sun.direction               = vn::math::Vec3d(0.0, 0.0, 1.0);
 
-    const LightRef announced[]{ disabled_ambient, disabled_sun, point, sun };
+    const LightRef announced[]{ disabled_ambient, disabled_sun, unplaced_point, sun };
     VineLightsBlock block;
     const std::size_t represented = packLightBlock(announced, camera, block);
 
-    EXPECT_EQ(represented, 1U) << "only the enabled directional light is lit";
-    EXPECT_NEAR(block.dirs[0][2], 1.0F, 1e-6F) << "and it is the one in slot 0";
-    EXPECT_NEAR(block.dirs[1][2], 0.0F, 1e-6F);
-    EXPECT_NEAR(block.cols[0][0], 0.25F, 1e-6F);
+    EXPECT_EQ(represented, 1U) << "only the enabled, usable light is lit";
+    EXPECT_NEAR(block.direction_range[0][2], 1.0F, 1e-6F) << "and it is the one in slot 0";
+    EXPECT_FLOAT_EQ(block.position_kind[1][3], kLightKindEmpty) << "the next slot was never used";
+    EXPECT_NEAR(block.color_intensity[0][0], 0.25F, 1e-6F);
 
     // No enabled ambient light was announced, so the block carries the fill - but the fill is NOT a light: the
     // count above stays about what the host announced.
@@ -306,35 +332,89 @@ TEST(LightBlockTest, AnEmptyAnnouncementIsLitByTheFillAndCountsNothing)
 
     EXPECT_EQ(represented, 0U) << "nothing was announced, so nothing is dropped either";
     EXPECT_FLOAT_EQ(block.ambient[0], 0.15F) << "and the scene is still visible instead of multiplied by zero";
-    for (std::size_t slot = 0; slot < kLightDirectionalSlots; ++slot)
+    for (std::size_t slot = 0; slot < kLightSlots; ++slot)
     {
-        EXPECT_FLOAT_EQ(block.dirs[slot][0], 0.0F);
-        EXPECT_FLOAT_EQ(block.dirs[slot][3], 0.0F);
+        EXPECT_FLOAT_EQ(block.position_kind[slot][3], kLightKindEmpty) << "slot " << slot << " says UNUSED";
+        EXPECT_FLOAT_EQ(block.direction_range[slot][0], 0.0F);
+        EXPECT_FLOAT_EQ(block.color_intensity[slot][0], 0.0F);
     }
 }
 
-TEST(LightBlockTest, OnlyThreeDirectionalLightsGetSlots)
+TEST(LightBlockTest, APointLightCarriesItsViewSpacePositionAndRange)
+{
+    // A camera at world +Z looking at the origin, i.e. the identity rotation PLUS a translation: world (0, 0, 4)
+    // lands at view (0, 0, -1). A packing that rotated but forgot to TRANSLATE would put it at (0, 0, 4), which is
+    // the bug this case measures (see the file note: it only looks right while the camera sits at the origin).
+    CameraSnapshot camera = cameraAtPlusZ();
+    camera.view(2, 3)     = -5.0;   // p_view = p_world + (0, 0, -5)
+    ASSERT_TRUE(camera.present);
+
+    LightRef lamp       = makeLight(LightType::Point, 0.9, 0.6, 0.3, 1.5F);
+    lamp.has_position   = true;
+    lamp.position       = vn::math::Vec3d(0.0, 0.0, 4.0);
+    lamp.range          = 12.0F;
+
+    const LightRef announced[]{ lamp };
+    VineLightsBlock block;
+    ASSERT_EQ(packLightBlock(announced, camera, block), 1U);
+
+    EXPECT_NEAR(block.position_kind[0][0], 0.0F, 1e-6F);
+    EXPECT_NEAR(block.position_kind[0][1], 0.0F, 1e-6F);
+    EXPECT_NEAR(block.position_kind[0][2], -1.0F, 1e-6F) << "the view matrix's translation is part of the position";
+    EXPECT_FLOAT_EQ(block.position_kind[0][3], static_cast<float>(LightType::Point));
+    EXPECT_FLOAT_EQ(block.direction_range[0][3], 12.0F) << "the range rides in the direction slot's w";
+    EXPECT_FLOAT_EQ(block.color_intensity[0][1], 0.6F);
+    EXPECT_FLOAT_EQ(block.color_intensity[0][3], 1.5F);
+}
+
+TEST(LightBlockTest, ASpotLightCarriesItsConeAsCosines)
+{
+    // The block stores the cone as COSINES, so the shading does no trigonometry per fragment; the two angles are
+    // degrees in the content API (see Light::setOuterConeAngle).
+    const CameraSnapshot camera = cameraAtPlusZ();
+    ASSERT_TRUE(camera.present);
+
+    LightRef spot            = makeLight(LightType::Spot, 1.0, 1.0, 1.0, 1.0F);
+    spot.has_position        = true;
+    spot.position            = vn::math::Vec3d(0.0, 0.0, 2.0);
+    spot.has_direction       = true;
+    spot.direction           = vn::math::Vec3d(0.0, 0.0, -1.0);
+    spot.range               = 8.0F;
+    spot.inner_cone_degrees  = 15.0;
+    spot.outer_cone_degrees  = 30.0;
+
+    const LightRef announced[]{ spot };
+    VineLightsBlock block;
+    ASSERT_EQ(packLightBlock(announced, camera, block), 1U);
+
+    EXPECT_FLOAT_EQ(block.position_kind[0][3], static_cast<float>(LightType::Spot));
+    EXPECT_NEAR(block.cone[0][0], std::cos(15.0 * 3.14159265358979323846 / 180.0), 1e-6F);
+    EXPECT_NEAR(block.cone[0][1], std::cos(30.0 * 3.14159265358979323846 / 180.0), 1e-6F);
+    EXPECT_LT(block.cone[0][1], block.cone[0][0]) << "the outer edge is the WIDER angle, so the SMALLER cosine";
+    EXPECT_NEAR(block.direction_range[0][2], -1.0F, 1e-6F) << "the axis, in view space";
+}
+
+TEST(LightBlockTest, OnlyEightLightsGetSlots)
 {
     const CameraSnapshot camera = cameraAtPlusZ();
     ASSERT_TRUE(camera.present);
 
-    LightRef first  = makeLight(LightType::Directional, 0.1, 0.0, 0.0, 1.0F);
-    LightRef second = makeLight(LightType::Directional, 0.2, 0.0, 0.0, 1.0F);
-    LightRef third  = makeLight(LightType::Directional, 0.3, 0.0, 0.0, 1.0F);
-    LightRef fourth = makeLight(LightType::Directional, 0.4, 0.0, 0.0, 1.0F);
-    for (LightRef* light : { &first, &second, &third, &fourth })
+    // Ten announced, eight carried: the surplus is counted as dropped (the caller reports it once per episode).
+    std::vector<LightRef> announced;
+    for (std::size_t index = 0; index < 10U; ++index)
     {
-        light->has_direction = true;
-        light->direction     = vn::math::Vec3d(0.0, 0.0, 1.0);
+        LightRef light       = makeLight(LightType::Directional, 0.1F * static_cast<float>(index + 1U), 0.0, 0.0, 1.0F);
+        light.has_direction  = true;
+        light.direction      = vn::math::Vec3d(0.0, 0.0, 1.0);
+        announced.push_back(light);
     }
 
-    const LightRef announced[]{ first, second, third, fourth };
     VineLightsBlock block;
-    EXPECT_EQ(packLightBlock(announced, camera, block), 3U)
-        << "the block holds three: the caller reports the difference once per episode";
-    EXPECT_FLOAT_EQ(block.cols[0][0], 0.1F);
-    EXPECT_FLOAT_EQ(block.cols[1][0], 0.2F);
-    EXPECT_FLOAT_EQ(block.cols[2][0], 0.3F) << "in announcement order, and the fourth has no slot";
+    EXPECT_EQ(packLightBlock(announced, camera, block), kLightSlots)
+        << "the block holds eight: the caller reports the difference once per episode";
+    EXPECT_FLOAT_EQ(block.color_intensity[0][0], 0.1F);
+    EXPECT_FLOAT_EQ(block.color_intensity[7][0], 0.8F) << "in announcement order, and the ninth has no slot";
+    EXPECT_FLOAT_EQ(block.position_kind[7][3], static_cast<float>(LightType::Directional));
 }
 
 TEST(LightBlockTest, ACameraThatWasNeverEstablishedLeavesTheBlockEmpty)
@@ -354,7 +434,7 @@ TEST(LightBlockTest, ACameraThatWasNeverEstablishedLeavesTheBlockEmpty)
     block.ambient[0] = 9.0F;  // a value the packing must overwrite
     EXPECT_EQ(packLightBlock(announced, none, block), 0U);
     EXPECT_FLOAT_EQ(block.ambient[0], 0.0F) << "every field is written, the fill included";
-    EXPECT_FLOAT_EQ(block.dirs[0][2], 0.0F);
+    EXPECT_FLOAT_EQ(block.direction_range[0][2], 0.0F);
 }
 
 TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
@@ -460,14 +540,19 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     facts.materials  = materials;
 
     // The four announcements. Bands 0 and 1 differ ONLY in the sun's sign; bands 2 and 3 announce a light the block
-    // cannot carry (a disabled one) and must be the ambient fill - with ONE report between them.
+    // cannot light (a disabled one, and a positional light nobody placed) and must be the ambient fill - with ONE
+    // report between them.
+    //
+    // A light's DIRECTION is the direction the light TRAVELS (see Light::setDirection): the vector the shading
+    // uses is its NEGATION, so a sun whose light travels AWAY from the viewer (-Z) is the one that lights a face
+    // turned towards the viewer.
     vn::intrusive_ptr<Light> ambient = Light::createAmbient();
     ambient->setColor(vn::Colorf(0.1, 0.1, 0.1, 1.0));
     ambient->setIntensity(1.0F);
-    vn::intrusive_ptr<Light> sun_towards = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
+    vn::intrusive_ptr<Light> sun_towards = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
     sun_towards->setColor(vn::Colorf(0.4, 0.0, 0.0, 1.0));
     sun_towards->setIntensity(1.0F);
-    vn::intrusive_ptr<Light> sun_away = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    vn::intrusive_ptr<Light> sun_away = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
     sun_away->setColor(vn::Colorf(0.4, 0.0, 0.0, 1.0));
     sun_away->setIntensity(1.0F);
     vn::intrusive_ptr<Light> disabled_ambient = Light::createAmbient();
@@ -560,8 +645,8 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
         << "nothing may be refused: every band is a complete content draw";
-    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 1U)
-        << "two calls announced an unusable light and the drop report is one episode, not one sentence per call";
+    EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 0U)
+        << "a DISABLED light is not a drop: the two unusable bands said so themselves (see the announced lists)";
 
     VsgExecutor executor(diagnostics);
     executor.addTarget(handle.get(), target.get());
@@ -579,8 +664,8 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     viewer->recordAndSubmit();
     viewer->deviceWaitIdle();
 
-    // The four bands, read back: ambient + sun towards the viewer, ambient alone when the sun points away, and
-    // the block's fill for the two calls whose light the block could not carry.
+    // The four bands, read back: ambient + the sun that reaches the surface, ambient alone for the one that does
+    // not, and the block's fill for the two calls whose light could not be lit at all.
     const auto near = [](std::uint8_t byte, double value) {
         return std::abs(static_cast<double>(byte) - 255.0 * value) <= 8.0;
     };
@@ -602,8 +687,9 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
 
     const Rgba8 fill_again = band_of(56);
     EXPECT_TRUE(near(fill_again.r, 0.15) && near(fill_again.g, 0.15) && near(fill_again.b, 0.15))
-        << "band 3 announced another unusable light and is the fill as well, got (" << static_cast<int>(fill_again.r)
-        << ", " << static_cast<int>(fill_again.g) << ", " << static_cast<int>(fill_again.b) << ")";
+        << "band 3 announced another disabled light and is the fill as well, got ("
+        << static_cast<int>(fill_again.r) << ", " << static_cast<int>(fill_again.g) << ", "
+        << static_cast<int>(fill_again.b) << ")";
 
     // The gaps between the bands are the pass' own clear, which is what makes the four values above a PICTURE:
     // the bands are not "the whole target painted somehow" - they sit on a background the shading never wrote.
@@ -613,71 +699,54 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
         << static_cast<int>(background.g) << ", " << static_cast<int>(background.b) << ")";
 }
 
-TEST(LightBlockTest, ThePushBlockIsTheSameLightsInThePushesOwnLayout)
+TEST(LightBlockTest, BothLightingProgramsReadTheBlockAtTheSameBinding)
 {
-    // The full-screen path spends its whole 128-byte push range on the lights (it needs no view matrices, so unlike
-    // the forward path it has nothing else to spend it on), and the values have to be the ones the forward UBO
-    // carries: the SDK's two lighting programs light the same scene, so a second walk with different rules would
-    // shade a scene differently depending on which pass draws it.
-    const CameraSnapshot camera = cameraAtPlusZ();
-    ASSERT_TRUE(camera.present);
+    // The lights are ONE block on both drawing paths (see LightBlock): the forward content program and the
+    // deferred full-screen program declare it at the same set/binding, so a scene lights identically whichever
+    // path draws it - and the full-screen path no longer carries a second copy of the same numbers in its push
+    // range. The block's size is the ABI (the static_asserts in LightBlock.hpp are the other half).
+    const auto lights_of = [](const ProgramAbi& abi) -> const AbiBinding* {
+        for (const AbiBinding& binding : abi.bindings)
+        {
+            if (binding.role == AbiBlockRole::Lights)
+            {
+                return &binding;
+            }
+        }
+        return nullptr;
+    };
 
-    LightRef      ambient = makeLight(LightType::Ambient, 0.2, 0.3, 0.4, 0.5F);
-    LightRef      sun     = makeLight(LightType::Directional, 0.8, 0.4, 0.2, 2.0F);
-    sun.has_direction     = true;
-    sun.direction         = vn::math::Vec3d(0.0, 0.0, 1.0);
-    const LightRef announced[]{ ambient, sun };
+    ProgramFacts forward_facts;
+    ASSERT_EQ(buildProgramFacts(*vn::graphics::forwardProgram(), forward_facts), FactMiss::None);
+    const AbiBinding* forward_lights = lights_of(forward_facts.abi);
+    ASSERT_NE(forward_lights, nullptr);
+    EXPECT_EQ(forward_lights->set, 0U);
+    EXPECT_EQ(forward_lights->binding, 5U) << "the binding both paths share (see vine_params.glsl)";
+    EXPECT_EQ(forward_lights->block_size, sizeof(VineLightsBlock));
 
-    LightPushBlock    push;
-    const std::size_t represented = packLightPushBlock(announced, camera, push);
-
-    VineLightsBlock ubo;
-    ASSERT_EQ(packLightBlock(announced, camera, ubo), represented) << "one packing, two layouts";
-    EXPECT_EQ(represented, 2U);
-    EXPECT_EQ(push.ambient, ubo.ambient);
-    for (std::size_t slot = 0; slot < kLightDirectionalSlots; ++slot)
-    {
-        EXPECT_EQ(push.dirs[slot], ubo.dirs[slot]) << "slot " << slot << " of the directions";
-        EXPECT_EQ(push.cols[slot], ubo.cols[slot]) << "slot " << slot << " of the colours";
-    }
-
-    // The reservation stays zero: no shipped program reads it, and a value nobody reads is a promise without an
-    // effect (see LightPushBlock's declaration).
-    for (const float value : push.projparms)
-    {
-        EXPECT_FLOAT_EQ(value, 0.0F) << "projparms is reserved and stays zero";
-    }
-
-    // The ABI itself: the size and the offsets the GLSL block declares.
-    EXPECT_EQ(sizeof(LightPushBlock), 128U);
-    EXPECT_EQ(offsetof(LightPushBlock, projparms), 16U);
-    EXPECT_EQ(offsetof(LightPushBlock, dirs), 32U);
-    EXPECT_EQ(offsetof(LightPushBlock, cols), 80U);
-
-    // Same rules as the UBO: no camera means an empty push (not the fill), an empty list means the fill.
-    LightPushBlock empty;
-    EXPECT_EQ(packLightPushBlock(announced, CameraSnapshot{}, empty), 0U);
-    for (const float value : empty.ambient)
-    {
-        EXPECT_FLOAT_EQ(value, 0.0F) << "no camera: nothing to rotate into, so nothing is pushed";
-    }
-    LightPushBlock filled;
-    EXPECT_EQ(packLightPushBlock(std::span<const LightRef>{}, camera, filled), 0U);
-    EXPECT_FLOAT_EQ(filled.ambient[0], 0.15F) << "an empty announcement keeps the scene visible";
+    ProgramFacts screen_facts;
+    ASSERT_EQ(buildScreenProgramFacts(*vn::graphics::deferredLightProgram(), screen_facts), FactMiss::None);
+    const AbiBinding* screen_lights = lights_of(screen_facts.abi);
+    ASSERT_NE(screen_lights, nullptr) << "the deferred lighting program reads the same block";
+    EXPECT_EQ(screen_lights->set, forward_lights->set);
+    EXPECT_EQ(screen_lights->binding, forward_lights->binding);
+    EXPECT_EQ(screen_lights->block_size, sizeof(VineLightsBlock));
+    EXPECT_TRUE(screen_facts.abi.pushes.empty()) << "the lights are a block, not a push: the range is a host's";
 }
 
-TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
+TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
 {
     // THE PICTURE. Three full-screen calls in ONE pass, each with its own viewport (a third of the target) and its
     // own light list: a sun pointing at the viewer, the same sun reversed, and no announcement at all. The fragment
-    // stage reads the PUSH (its only input), so each band's colour is its own call's announcement:
+    // stage reads the LIGHT BLOCK - the same block the content path binds - so each band's colour is its own call's
+    // announcement:
     //
     //   band 0: ambient + the sun towards the viewer -> 0.5 / 0.1 / 0.1
     //   band 1: the same light the other way         -> 0.1 / 0.1 / 0.1 (ambient alone)
     //   band 2: nothing announced                    -> 0.15 (the fill, so the band is visible at all)
     //
-    // A push recorded once per PASS (all three calls sharing the first announcement), a zeroed push, or one pushed
-    // to the wrong stage moves at least one band, and the destination's clear (blue) is what a band that drew
+    // A block written once per PASS (all three calls sharing the first announcement), a zeroed block, or one bound
+    // at the wrong binding moves at least one band, and the destination's clear (blue) is what a band that drew
     // nothing would show.
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
@@ -697,24 +766,27 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     ASSERT_NE(destination, nullptr);
 
     // The program: the engine's canonical full-screen vertex stage (buildScreenProgramFacts composes it) with a
-    // fragment stage that shades from the push.
+    // fragment stage that shades from the light block - at the binding both paths give it (see vine_params.glsl).
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(push_constant, std140) uniform PushConstants {\n"
+            "layout(set = 0, binding = 5, std140) uniform VineLightsBlock {\n"
             "    vec4 ambient;\n"
-            "    vec4 projparms;\n"
-            "    vec4 sun_dir[3];\n"
-            "    vec4 sun_color[3];\n"
-            "} pc;\n"
+            "    vec4 position_kind[8];\n"
+            "    vec4 direction_range[8];\n"
+            "    vec4 color_intensity[8];\n"
+            "    vec4 cone[8];\n"
+            "} lights;\n"
             "layout(location = 0) out vec4 outColor;\n"
             "void main() {\n"
             "    vec3 n = vec3(0.0, 0.0, 1.0);\n"
-            "    vec3 lit = pc.ambient.rgb * pc.ambient.a;\n"
-            "    for (int i = 0; i < 3; ++i) {\n"
-            "        lit += pc.sun_color[i].rgb * pc.sun_color[i].a * max(dot(n, pc.sun_dir[i].xyz), 0.0);\n"
+            "    vec3 lit = lights.ambient.rgb * lights.ambient.a;\n"
+            "    for (int i = 0; i < 8; ++i) {\n"
+            "        if (lights.position_kind[i].w < 0.5) continue;\n"
+            "        lit += lights.color_intensity[i].rgb * lights.color_intensity[i].a *\n"
+            "               max(dot(n, normalize(-lights.direction_range[i].xyz)), 0.0);\n"
             "    }\n"
             "    outColor = vec4(lit, 1.0);\n"
             "}\n"));
@@ -726,17 +798,17 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::createScreen(program_facts.abi, program_facts.shaders);
     ASSERT_NE(pipelines, nullptr);
 
-    // The camera every call announces: at +Z looking at the origin, so a world +Z direction is a light towards the
-    // viewer (which lights the fixed normal) and the reversed one does not.
+    // The camera every call announces: at +Z looking at the origin. A light's DIRECTION is where it travels, so the
+    // one whose light travels away from the viewer (-Z) is the one that lights the face turned towards it.
     Camera camera;
     camera.lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                  vn::math::Vec3d(0.0, 1.0, 0.0));
 
     vn::intrusive_ptr<Light> ambient = Light::createAmbient();
     ambient->setColor(vn::Colorf(0.1, 0.1, 0.1, 1.0));
-    vn::intrusive_ptr<Light> towards = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
+    vn::intrusive_ptr<Light> towards = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
     towards->setColor(vn::Colorf(0.4, 0.0, 0.0, 1.0));
-    vn::intrusive_ptr<Light> away = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    vn::intrusive_ptr<Light> away = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
     away->setColor(vn::Colorf(0.4, 0.0, 0.0, 1.0));
 
     const Light* band0_lights[]{ ambient.get(), towards.get() };
@@ -806,7 +878,7 @@ TEST(LightBlockTest, ThePushReachesTheFragmentStagePerFullScreenCall)
     ASSERT_TRUE(content.record(frame.passes[0], facts, destination->shape().compatibility(), {}, view_block, node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 0U)
-        << "the drop report belongs to the content path: a full-screen call packs what fits and says nothing";
+        << "both calls announced lights that fit the block, so neither kind of path reports a drop";
 
     VsgExecutor executor(diagnostics);
     executor.addTarget(handle.get(), destination.get());

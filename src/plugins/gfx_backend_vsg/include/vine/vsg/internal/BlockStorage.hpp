@@ -60,7 +60,7 @@ class BlockStorage
 
         core::FrameRing::Layout     views{ 288U, 1U, kAssumedSlabs, 256U };   ///< View blocks (one per pass per frame).
         core::FrameRing::Layout     draws{ 80U, 1U, kAssumedSlabs, 1024U };   ///< Draw blocks (one per draw per frame).
-        core::FrameRing::Layout     lights{ 112U, 1U, kAssumedSlabs, 1024U }; ///< Light blocks (one per drawing call).
+        core::FrameRing::Layout     lights{ 528U, 1U, kAssumedSlabs, 1024U }; ///< Light blocks (one per drawing call).
         core::FrameRing::Layout     shadows{ 80U, 1U, kAssumedSlabs, 1024U }; ///< Shadow blocks (one per drawing call).
         core::MaterialArena::Layout materials{ 64U, kAssumedSlabs, 256U };    ///< Material blocks (persistent, rotating).
     };

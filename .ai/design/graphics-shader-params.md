@@ -11,7 +11,8 @@
 ### 1.1 问题与背景
 
 五个参数块撑起引擎与 shader 之间的全部数据，容量已经确定（`VineViewBlock` 288 B、`VineDrawBlock` 80 B、
-`VineMaterialBlock` 64 B、`VineShadowBlock` 80 B、`VineLightsBlock` 112 B），C++ 侧偏移由 `static_assert`
+`VineMaterialBlock` 64 B、`VineShadowBlock` 80 B、`VineLightsBlock` 528 B：一盏环境光 + 8 个带类型的灯
+槽，见 [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md)），C++ 侧偏移由 `static_assert`
 钉死。问题不是“布局对不对”，而是“每份声明有几个 owner”：
 
 - **GLSL 侧只能有一份声明**：参数块写在 `src/viz/graphics/shaders/vine_params.glsl` 一处，shader 用
@@ -64,7 +65,7 @@
 | draw | 模型矩阵、不透明度、点大小、用户槽 | 每 draw（ring + dynamic offset） |
 | material | 环境 / 漫反射 / 高光 / 光泽 | 每材质（去重后） |
 | shadow | 光空间矩阵、阴影参数 | 每 pass |
-| lights | 一盏环境光 + 至多三盏方向光（视图空间） | 每 view |
+| lights | 一盏环境光 + 8 个带类型的灯（方向光 / 点光 / 聚光；位置与方向都在视图空间） | 每 view |
 
 逐顶点与逐实例数据**不是参数**：位置 / 法线 / 颜色 / UV 走 canonical attribute，自定义通道保留源
 location（≥ 3，避开 8 与 12–15，见 `ShaderAbi.hpp`）。
@@ -125,6 +126,10 @@ include 解析，也不需要编译器扩展；用户 shader 想用同一套块�
 守卫是 `VINE_PARAM_MATERIAL` / `VINE_PARAM_DRAW` / `VINE_PARAM_LIGHTS`；`#include` 必须独占一行行首（P5）。
 影子块（§1.1）与 view 块不在片段里：view 块没有内置 shader 声明它——content 路径把视图实现成 128 B push
 range（见 `ContentPush.hpp`），想要这个块的 program 按自己的布局声明它。
+
+灯块的 set/binding 是两条路径**共用**的 set 0 / binding 5（content 集：material 0、diffuse 1、shadow 对 3/4，
+2 因此空出；全屏集：source 颜色 0..N-1、深度 4、灯 5、shadow 对 6/7），所以片段里写的是同一个数字，不需要
+可参数化的 binding（ABI 扫描器也不做宏求值）。
 
 ### 3.3 F2–F3 C++ 收敛与构建期 inline
 
@@ -268,6 +273,9 @@ C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份�
 
 P0 已实现：参数块只有一处 GLSL 声明（`shaders/vine_params.glsl`，构建期展开），四个 L1 块的 C++ 定义在
 `ShaderAbi.hpp`，`VineLightsBlock` 与打包同住 `LightBlock.hpp`。字节、公开接口与既有测试未变。
+
+灯块自 2026-10-24 起是「带类型的灯数组」（位置 / 方向 / 范围 / 锥角，两条路径共用 UBO），
+见 [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md)。
 
 ### 9.2 已知缺口 / 待办
 
