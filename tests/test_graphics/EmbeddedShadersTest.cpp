@@ -314,12 +314,13 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
 
 TEST(EmbeddedShadersTest, TheShadowTermNamesTheLightItsMapBelongsTo)
 {
-    // The term is inserted INSIDE the loop over the block's directional lights, so the ownership guard is
-    // the only thing keeping one light's map from scaling every other light's term: `shadow.params.w` is
-    // the slot of the light the map belongs to (ShaderAbi.hpp), and the resolver writes it from the pass'
-    // own declaration (RenderPass::ShadowSource). A term without it shades a shadow onto lights that cast
-    // nothing - measured: a face the sun never reaches went to ambient-only in the shape of the sun's
-    // shadow, and the same file's single-light fixtures could not see the difference at all.
+    // The term is inserted INSIDE the loop over the block's typed lights, so the ownership guard is the only
+    // thing keeping one light's map from scaling every other light's term: `shadow.params.w` is the packed
+    // slot of the light the map belongs to (ShaderAbi.hpp), and the backend writes it from the map's own
+    // statement (RenderTarget::setShadowOf -> CompiledPass::shadow -> packedSlotOf). A term without it shades
+    // a shadow onto lights that cast nothing - measured: a face the sun never reaches went to ambient-only in
+    // the shape of the sun's shadow, and the same file's single-light fixtures could not see the difference at
+    // all.
     for (const auto& program : { shadowedDeferredLightProgram(), forwardProgram() }) {
         ASSERT_NE(program, nullptr);
         ASSERT_GT(program->stageCount(), 0u);

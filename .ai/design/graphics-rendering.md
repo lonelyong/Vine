@@ -35,6 +35,7 @@
 2.4 **颜色进类型**：`Colorf` 线性光、`Color` sRGB 编码，一对有名转换。
 2.5 **着色薄接口**：GLSL 源 + 类型化入口；`ShaderAbi` 是 C++ 与 GLSL 的唯一契约。
 2.6 **阴影是普通 pass**：灯声明，链建 depth-only pass，没有引擎级阴影子系统。
+2.7 **阴影的四个归属**：请求在灯（`Light::setCastShadow` + `ShadowSettings`）、身份在图（`RenderTarget::setShadowOf` 与 `setProducerViewProjection`，plan 只抄成 `CompiledPass::shadow`）、约定在内置 ABI（`VineShadowBlock` 与阴影项，可选变体）、组合在预设（`ChainBuilder` 的 recipe）。引擎核心的 `PassDesc` 没有 shadow 字段（见 D5）。
 
 ## 3. 功能点
 
@@ -129,6 +130,7 @@
 | C1 | 采样数是目标属性；图像/通道/管线三者由 `TargetShape` 统一驱动。 |
 | C2 | produced 与 imported 图源不合并；生命周期不同。 |
 | C3 | 颜色分线性光 `Colorf` 与 sRGB 编码 `Color`。 |
+| C4 | 引擎核心的 pass 描述没有 shadow 字段；一张图“是阴影”由目标自己声明，消费者不靠“第一个带深度的输入”猜。 |
 
 ### 5.2 要求（R#）
 
@@ -137,6 +139,7 @@
 | R1 | 阴影是普通 pass：灯声明，链建 pass，不做引擎内置阴影子系统。 |
 | R2 | 多重采样目标的深度解析取 `sample0`，不做平均。 |
 | R3 | 目标格式不再加第二套颜色语义。 |
+| R4 | 阴影的约定只在内置着色里：不用内置程序的 pass 与 `VineShadowBlock` 无关，把 map 当普通 produced 图采样即可。 |
 
 ### 5.3 不变量（N#）
 
@@ -149,7 +152,7 @@
 | N5 | `Sampler` 是缓存键：字段必须是有限数；NaN 会让缓存每帧 miss。 |
 | N6 | 材质不贡献 alpha；透明度只来自 `Node::opacity`。 |
 | N7 | `ShaderAbi` 的块布局 / location 改一个必须同时改 C++ 与 GLSL。 |
-| N8 | 阴影只支持方向光；点/聚光、CSM、PCSS 不做。 |
+| N8 | 阴影只支持方向光；点/聚光的 `setCastShadow` 不建 pass，由 `ChainBuilder::reportRequestedShadows` 报出（backlog S6）。CSM / PCSS 不做。 |
 
 ## 6. 注意事项与陷阱
 
@@ -165,6 +168,13 @@
 - 怎么判：出现“如果 Windows/X11 就……”的分支。
 - 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
 
+### 6.3 阴影图的身份靠猜
+
+- 会怎么错：消费者把“第一个带可采样深度的输入”当阴影图——G-buffer 也有深度，于是太阳的阴影读到 G-buffer 的深度，
+  只有一半画面对（这是参考后端测过的缺陷）。
+- 怎么判：喂进 shader 的图和 `CompiledPass::shadow` 声明的不是同一张；或 map 的 owner 不在本次 call 的灯表里。
+- 怎么防：身份只来自目标（`setShadowOf` + `setProducerViewProjection`），plan 只抄不推；`ShadowFacts` 是唯一来源。
+
 ## 7. 已否决选项
 
 | # | 否决 | 理由 |
@@ -173,8 +183,8 @@
 | D2 | 数组 / 3D 纹理 | `Texture::Kind` 只有 D2 / Cube；分层目标是触发条件型设计。 |
 | D3 | 多重采样目标借入深度 | 借到的是单采样解析图，而一个帧缓冲附件共用一个样本数。详见 [ADR](../decisions/ADR-2026-10-22-msaa-target-property.md)。 |
 | D4 | 目标格式的 sRGB 变体 | 颜色空间已经在类型层解决；不再给目标加第二套语义。详见 [ADR](../decisions/ADR-2026-10-21-colour-space-in-types.md)。 |
-| D5 | 引擎自动阴影子系统 | 阴影是普通 pass；灯声明，链建 pass。 |
-| D6 | 点/聚光阴影 / CSM / PCSS | 没有消费者；等真实需求。 |
+| D5 | 引擎自动阴影子系统，或给 `PassDesc` 加 shadow 字段 / `PassStage::Shadow` | 阴影是一个或多个普通 pass 的组合；引擎只提供通用的 `Depth` 档位、图身份与解析事实。加字段会把“谁投影、怎么读”复制进 pass 模型（见 §2.7）。 |
+| D6 | 点/聚光阴影 / CSM / PCSS | 没有消费者；点/聚光的 `setCastShadow` 今日不建 pass 且被报告（backlog S6 等真实需求）。 |
 
 ## 8. 测试与验收
 

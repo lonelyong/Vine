@@ -254,11 +254,10 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
         return false;
     }
     // A shadow-casting light in the content is honoured on this path too, through the SAME pass the
-    // deferred path builds (one implementation, one light camera). The content pass then STATES the
-    // shadow it shades - the map and the light it was cast by (RenderPass::ShadowSource) - and that
-    // declaration is the whole hand-off: the engine resolves it (RenderEngine::resolvePassInputs) and
-    // the backend binds it into the content set's shadow binding, where the forward program shades
-    // with it (ShadowAbi / ShaderAbi.hpp).
+    // deferred path builds (one implementation, one light camera). The map STATES whose shadow it is and how
+    // to read it (`RenderTarget::setShadowOf` + `setProducerViewProjection`), the plan copies that statement
+    // into `CompiledPass::shadow` (`core::ShadowFacts`), and the backend binds the map and packs the block -
+    // the pass model itself has no shadow field (see .ai/design/graphics-rendering.md §2.7).
     intrusive_ptr<RenderTarget> shadow_map;
     if (intrusive_ptr<const Light> shadow_light = requestedShadowLight(content_.get()); shadow_light != nullptr) {
         shadow_map = buildShadowPass(pipeline, shadow_light);
@@ -392,10 +391,11 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
         // consumes is the target — one declaration instead of "name + attachment index".
         light_desc.input_targets = { gbuffer };
         if (shadow_map != nullptr) {
-            // The pass states the shadow it shades (see RenderPass::ShadowSource): the map, and the
-            // light it was cast by - which also puts the map among the pass' inputs, with the same
-            // ordering and lifetime guarantees. The shadow ABI puts its two bindings right after the
-            // source's own (see BuiltinShaders::deferredLightProgram).
+            // The map goes in as an ordinary INPUT, and its own statement is what makes it a shadow: the
+            // target names its light and publishes how to read it (`RenderTarget::setShadowOf` /
+            // `setProducerViewProjection`), and the plan copies that into `CompiledPass::shadow`
+            // (`core::ShadowFacts`). The shadow ABI puts its two bindings right after the source's own (see
+            // BuiltinShaders::deferredLightProgram), and the engine's plan has no shadow field to fill.
             light_desc.input_targets.push_back(shadow_map);
         }
         light_desc.program = std::move(light_program);
