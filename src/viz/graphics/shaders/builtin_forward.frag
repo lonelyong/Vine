@@ -67,7 +67,7 @@ void main()
     vec3 n = normalize(vine_view_normal);
 #endif
     vec3 view_dir = normalize(-vine_view_pos);
-    vec3 albedo = material.diffuse.rgb;
+    vec3 albedo = material.base_color.rgb;
     // The drawable's opacity is a PER-DRAWABLE VALUE, not a per-vertex one: it
     // arrives in the draw block and is rewritten in place when the command's
     // opacity changes, so a translucent drawable costs O(1) per frame instead of
@@ -110,8 +110,14 @@ void main()
     out_color = vec4(normalize(n) * 0.5 + 0.5, 1.0);
     return;
 #endif
-    vec3 color = albedo * (lights.ambient.rgb * lights.ambient.a);
-    float shininess = max(material.shininess, 1.0);
+    // The M1 bridge from the PBR factors to the Phong terms this stage still draws with (see
+    // vine_params.glsl): the diffuse lobe is what a dielectric reflects, the highlight tint is what a metal
+    // reflects, and both are driven by the SAME base colour the host authored. It leaves with M3's BRDF.
+    float metallic  = clamp(material.params.x, 0.0, 1.0);
+    vec3  diffuse   = albedo * (1.0 - metallic);
+    vec3  f0        = vineMaterialF0(albedo, metallic);
+    float shininess = vineMaterialShininess(material.params.y);
+    vec3 color = diffuse * (lights.ambient.rgb * lights.ambient.a);
     // The shadow term below is the SAME text the deferred lighting program inserts, and it reads the
     // fragment's view position by one name in both programs: here it arrives as a varying, there it is
     // read out of the G-buffer.
@@ -133,7 +139,7 @@ void main()
         // caster in front of this fragment. The line below IS that insertion point, and it is the same
         // text the deferred lighting program carries (so the two paths cannot drift).
         // VINE_SHADOW_TERM
-        color += albedo * c * a * ndl * attenuation;
+        color += diffuse * c * a * ndl * attenuation;
         // Specular is gated by ndl like the diffuse term: a face turned away
         // from the light must not receive a highlight (see builtin_deferred_lighting.frag
         // for the full reasoning).
@@ -141,12 +147,9 @@ void main()
         {
             vec3 h = normalize(L + view_dir);
             float spec = pow(max(dot(n, h), 0.0), shininess);
-            // The material's specular ALPHA scales the highlight (the SDK documented "A is intensity" from
-            // the first release, and no engine program read it until 2026-09-25 - see
-            // .ai/design/vsg-backend.md §11.16cj). Whichever way it is spelled, the product that
-            // reaches the sum is colour x intensity: the G-buffer writer folds the same two factors into its
-            // attachment, so the forward and the deferred picture agree by construction.
-            color += c * a * spec * material.specular.rgb * clamp(material.specular.a, 0.0, 1.0) * ndl * attenuation;
+            // The reflectance the metallic-roughness pair implies (vineMaterialF0): the same value the
+            // G-buffer writer stores, so the forward and the deferred picture agree by construction.
+            color += c * a * spec * f0 * ndl * attenuation;
         }
     }
     out_color = vec4(color, alpha);

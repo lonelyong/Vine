@@ -253,7 +253,7 @@ TriangleFixture makeTriangle()
     fixture.geometry = geometry;
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     fixture.material = material;
 
     RenderCommand command;
@@ -706,7 +706,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;
@@ -2366,7 +2366,7 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     // 每帧把同一个全屏四边形画 8 遍：多一点填充量，让帧真正在 GPU 上跑起来（探针实测：Debug
     // 下 CPU 每帧与 GPU 帧同量级，纯粹加负载并不会制造出跨帧重叠窗口——本相位的职责见文件头）。
@@ -2507,7 +2507,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;
@@ -2697,7 +2697,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
-    // The content shades with the MATERIAL's own diffuse colour. The engine edits materials in place and
+    // The content shades with the MATERIAL's own base colour. The engine edits materials in place and
     // expects the picture to follow - the implementation this backend replaces refreshed every commanded
     // material every frame for exactly that reason - so the pixels are the evidence for both halves: the
     // edit landing, and the steady frame that must not rebuild anything.
@@ -2714,9 +2714,9 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "void main() { outColor = material.diffuse; }\n"));
+            "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -2732,7 +2732,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;
@@ -2782,7 +2782,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     // The host edits the material and DOES NOTHING ELSE. There is no announcement to make: the SDK's
     // RenderBackend has no "this material changed" entry point, so the touch the facade makes when the next
     // frame commands the material is the whole mechanism (see ContentStore::updateMaterial).
-    material->setDiffuse(vn::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
     const std::uint64_t builds_before = store->builds();
     drive();
     EXPECT_EQ(store->builds(), builds_before + 1U) << "the edit replaced exactly that material's row";
@@ -2860,7 +2860,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
 
-    // The two programs: both shade with the material's own diffuse colour, so the picture cannot tell them
+    // The two programs: both shade with the material's own base colour, so the picture cannot tell them
     // apart - what differs is the TEXT, and that is what the pipeline key carries (see PipelineKey::program).
     const auto material_program = [](const char* body) {
         const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
@@ -2872,7 +2872,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         std::string text = "layout(location = 0) out vec4 outColor;\n"
                            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
                            "{\n"
-                           "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+                           "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
                            "} material;\n"
                            "void main() { ";
         text += body;
@@ -2884,9 +2884,9 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         program->addStage(fragment);
         return program;
     };
-    const vn::intrusive_ptr<ShaderProgram> program_a = material_program("outColor = material.diffuse;");
+    const vn::intrusive_ptr<ShaderProgram> program_a = material_program("outColor = material.base_color;");
     const vn::intrusive_ptr<ShaderProgram> program_b =
-        material_program("vec4 tinted = material.diffuse * 1.0; outColor = tinted;");
+        material_program("vec4 tinted = material.base_color * 1.0; outColor = tinted;");
 
     vn::intrusive_ptr<Geometry>          geometry(new Geometry());
     vn::intrusive_ptr<vn::Buffer<float>> positions(new vn::Buffer<float>(gridPositions(kGridSide)));
@@ -2896,7 +2896,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     geometry->bumpRevision();
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.3F, 0.4F, 0.3F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.3F, 0.4F, 0.3F, 1.0F));
 
     std::vector<RenderCommand> commands(1U);
     commands[0].geometry = geometry;
@@ -2966,7 +2966,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     {
         const auto [before, after] = run("material edited every frame", kFramesPerRegime, [&](int frame) {
             const float shade = 0.3F + 0.02F * static_cast<float>(frame + 1);
-            material->setDiffuse(vn::Colorf(shade, 0.4F, shade, 1.0F));
+            material->setBaseColor(vn::Colorf(shade, 0.4F, shade, 1.0F));
         });
         const EditCostDelta change = editCostDelta(before, after);
         EXPECT_EQ(change.builds, kFramesPerRegime) << "each edit replaces exactly the material's row";
@@ -3170,9 +3170,9 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "void main() { outColor = material.diffuse; }\n"));
+            "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -3228,7 +3228,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     geometry->bumpRevision();
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.3F, 0.4F, 0.3F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.3F, 0.4F, 0.3F, 1.0F));
 
     std::vector<RenderCommand> commands(1U);
     commands[0].geometry = geometry;
@@ -3406,9 +3406,9 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "void main() { outColor = material.diffuse; }\n"));
+            "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -3427,7 +3427,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         for (std::size_t index = 0; index < count; ++index) {
             const vn::intrusive_ptr<Material> material(new Material());
             const float shade = 0.2F + 0.6F * static_cast<float>(index % 16U) / 15.0F;
-            material->setDiffuse(vn::Colorf(shade, 0.4F, 1.0F - shade, 1.0F));
+            material->setBaseColor(vn::Colorf(shade, 0.4F, 1.0F - shade, 1.0F));
             materials.push_back(std::move(material));
         }
         return materials;
@@ -3630,7 +3630,7 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
     destination->attachColor(RenderTarget::ColorFormat::RGBA8);
     destination->setSize(kWidth, kHeight);
 
-    // The content program: the pass' view block, and the material's diffuse as the fragment's only input.
+    // The content program: the pass' view block, and the material's base colour as the fragment's only input.
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
@@ -3646,9 +3646,9 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "void main() { outColor = material.diffuse; }\n"));
+            "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -3685,7 +3685,7 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
 
             const vn::intrusive_ptr<Material> material(new Material());
             const float red = static_cast<float>(index) / static_cast<float>(kCols * kRows - 1);
-            material->setDiffuse(vn::Colorf(red, 0.0F, 1.0F - red, 1.0F));
+            material->setBaseColor(vn::Colorf(red, 0.0F, 1.0F - red, 1.0F));
             materials.push_back(material);
 
             RenderCommand command;
@@ -4018,7 +4018,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
             geometry->bumpRevision();
 
             const vn::intrusive_ptr<Material> material(new Material());
-            material->setDiffuse(vn::Colorf(0.3F, 0.4F, 0.5F, 1.0F));
+            material->setBaseColor(vn::Colorf(0.3F, 0.4F, 0.5F, 1.0F));
 
             const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
             {
@@ -4033,9 +4033,9 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
                     "layout(location = 0) out vec4 outColor;\n"
                     "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
                     "{\n"
-                    "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+                    "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
                     "} material;\n"
-                    "void main() { outColor = material.diffuse; }\n"));
+                    "void main() { outColor = material.base_color; }\n"));
                 program->addStage(vertex);
                 program->addStage(fragment);
             }
@@ -4175,7 +4175,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     EXPECT_EQ(backend->diagnosticCount(), 0U);
 
     // The same pair the material case uses: clip-space positions passed through, and a fragment stage
-    // shading with the material's own diffuse colour - so one probe at the window's centre sees whichever
+    // shading with the material's own base colour - so one probe at the window's centre sees whichever
     // drawing call drew LAST.
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
@@ -4190,9 +4190,9 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "void main() { outColor = material.diffuse; }\n"));
+            "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -4208,9 +4208,9 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> first_material(new Material());
-    first_material->setDiffuse(vn::Colorf(0.25F, 0.6F, 0.25F, 1.0F));
+    first_material->setBaseColor(vn::Colorf(0.25F, 0.6F, 0.25F, 1.0F));
     const vn::intrusive_ptr<Material> second_material(new Material());
-    second_material->setDiffuse(vn::Colorf(0.75F, 0.2F, 0.75F, 1.0F));
+    second_material->setBaseColor(vn::Colorf(0.75F, 0.2F, 0.75F, 1.0F));
 
     RenderCommand first;
     first.geometry = geometry;
@@ -4428,7 +4428,7 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    material->setBaseColor(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;
@@ -4555,9 +4555,9 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "void main() { outColor = material.diffuse; }\n"));
+            "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -4573,7 +4573,7 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.25F, 0.6F, 0.25F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.25F, 0.6F, 0.25F, 1.0F));
 
     RenderCommand command;
     command.geometry = geometry;

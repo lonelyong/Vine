@@ -74,12 +74,16 @@ VN_GRAPHICS_API ModelScene sceneFromModel(const vn::geometry::Model& model);
  * @brief Converts one geometry material into the material a draw uses.
  *
  * @details
- * - Color and Phong translate field for field.
- * - PBR is an EXPLICIT APPROXIMATION until the engine has a PBR path: the base colour becomes the diffuse colour
- *   weighted by `1 - metallic` (a metal has no diffuse lobe), the highlight becomes white-to-base by `metallic`
- *   with `1 - roughness` as its strength, and the Phong exponent rises with `1 - roughness` (smooth surfaces get a
- *   tighter highlight). `PbrMaterial::opacity` is NOT part of the material - the engine's transparency is the
- *   node's opacity - so `sceneFromModel` puts it on the leaf instead (see Node::setOpacity).
+ * - PBR translates field for field (base colour, metallic, roughness, emissive): the engine's model IS the source's
+ *   model, so nothing is approximated.
+ * - Color becomes the base colour with `metallic = 0` and `roughness = 1` (a flat colour authors no gloss).
+ * - Phong is the ONE conversion: the diffuse reflectance becomes the base colour, the exponent becomes the roughness
+ *   through `sqrt(2 / (n + 2))` (the standard Blinn-Phong -> GGX mapping, so the highlight keeps its width), and the
+ *   specular colour becomes metallic - its strongest channel scaled by its intensity. Metallic-roughness has no
+ *   separate reflectance knob, so a strong or tinted specular is what "metal" means there; the trade-off is stated in
+ *   graphics-material.md §3.6.
+ * - `PbrMaterial::opacity` is NOT part of the material - the engine's transparency is the node's opacity - so
+ *   `sceneFromModel` puts it on the leaf instead (see Node::setOpacity).
  * - The result is a NEW object every call; a caller converting a whole model does not call this per entry (that
  *   would give one material object per draw instead of one per source material) - `sceneFromModel` caches by the
  *   source object's identity.

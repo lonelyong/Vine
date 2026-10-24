@@ -21,7 +21,7 @@ layout(location = 2) out vec4 out_specular;
 layout(location = 3) out vec4 out_position;
 // The material this stage writes the G-buffer's albedo and specular from: the ONE declaration of the
 // parameter blocks (see vine_params.glsl), so a deferred drawable and a forward one of the same material
-// shade the same bytes. `diffuse.w` (the material's own alpha) is not read here either - the engine's
+// shade the same bytes. `base_color.a` (the material's own alpha) is not read here either - the engine's
 // transparency is the per-drawable opacity, and it reaches the composite through the lighting pass, not
 // through this attachment.
 #define VINE_PARAM_MATERIAL
@@ -48,17 +48,20 @@ void main()
     // matters beyond looks: the G-buffer pass writes depth, so opaque content here occludes itself and
     // others correctly, unlike a drawable pushed into the forward overlay pass (whose depth-TEST-only
     // rule cannot self-occlude).
-    vec3 albedo = material.diffuse.rgb;
+    vec3 albedo = material.base_color.rgb;
 #ifdef VINE_DIFFUSE_MAP
     albedo *= texture(diffuseMap, vine_texcoord).rgb;
 #endif
-    out_albedo = vec4(albedo, 1.0);
-    out_normal = vec4(normalize(vine_view_normal), clamp(material.shininess / 256.0, 0.0, 1.0));
-    // The attachment carries the specular COLOUR SCALED BY ITS INTENSITY (the material's alpha), which is
-    // the product the lighting program multiplies by - so the deferred highlight honours the SDK's "A is
-    // intensity" exactly like the forward program does (wired 2026-09-25, see
-    // .ai/design/vsg-backend.md §11.16cj). The alpha channel itself stays 1: nothing reads it.
-    out_specular = vec4(clamp(material.specular.rgb, 0.0, 1.0) * clamp(material.specular.a, 0.0, 1.0), 1.0);
+    // The M1 bridge (see vine_params.glsl): the attachment carries what the lighting pass multiplies by the
+    // light terms, so it is the DIFFUSE lobe - a metal reflects rather than scatters - while the specular
+    // attachment carries the reflectance. Both derive from the same authored base colour.
+    float metallic = clamp(material.params.x, 0.0, 1.0);
+    out_albedo = vec4(albedo * (1.0 - metallic), 1.0);
+    out_normal = vec4(normalize(vine_view_normal), vineMaterialShininess(material.params.y) / 256.0);
+    // The attachment carries the reflectance the metallic-roughness pair implies (vineMaterialF0), which is
+    // the product the lighting program multiplies by - so the deferred highlight honours the PBR factors
+    // exactly like the forward program does. The alpha channel stays 1: nothing reads it yet.
+    out_specular = vec4(vineMaterialF0(albedo, metallic), 1.0);
     // w = 1 marks "this pixel was written", and the deferred lighting program's background test reads it
     // (a cleared pixel keeps the transparent black it was cleared with, w = 0) - the two programs are the
     // two halves of one contract, so this channel is not spare.

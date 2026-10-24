@@ -80,12 +80,12 @@ constexpr const char* kGatedFragmentSource =
     "layout(location = 0) out vec4 outColor;\n"
     "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
     "{\n"
-    "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+    "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
     "} material;\n"
     "#ifdef VINE_DIFFUSE_MAP\n"
     "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
     "#endif\n"
-    "void main() { outColor = material.diffuse; }\n";
+    "void main() { outColor = material.base_color; }\n";
 
 constexpr const char* kScreenFragmentSource =
     "#version 450\n"
@@ -132,7 +132,7 @@ vn::intrusive_ptr<Geometry> quad(bool texcoords = false)
 vn::intrusive_ptr<Material> material(vn::Colorf diffuse, vn::intrusive_ptr<Texture2D> texture = {})
 {
     const auto out = vn::intrusive_ptr<Material>(new Material());
-    out->setDiffuse(diffuse);
+    out->setBaseColor(diffuse);
     if (texture != nullptr)
     {
         out->setTexture(texture);
@@ -592,9 +592,9 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
         "layout(location = 0) out vec4 outColor;\n"
         "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
         "{\n"
-        "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+        "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
         "} material;\n"
-        "void main() { outColor = material.diffuse; }\n"));
+        "void main() { outColor = material.base_color; }\n"));
     ASSERT_TRUE(program->setStage(1U, patched));
     const std::uint64_t new_revision = program->revision();
     ASSERT_GT(new_revision, old_revision);

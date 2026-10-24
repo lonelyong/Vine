@@ -234,15 +234,11 @@ void AxisGizmo::rebuild()
         geometry->setNormals(packAttribute(normals));
 
         auto material = make_intrusive<Material>();
-        material->setDiffuse(stick.color);
-        // Flat unshaded sticks: with the gizmo lit by a pure ambient light,
-        // phong's ambientColor = diffuse * ambient * ambient.a, so a WHITE
-        // ambient material makes ambientColor == diffuse == the stick colour
-        // regardless of viewing direction (a directional headlight made the
-        // sticks go dark/black when the camera looked along a diagonal).
-        material->setAmbient(Colorf::kWhite);
-        // Black specular avoids any white highlight.
-        material->setSpecular(Colorf::kBlack);
+        // Flat unshaded sticks: the gizmo is lit by a pure ambient light, so the shading term is
+        // base_colour * ambient and the stick's colour IS what lands on screen, whatever the view
+        // direction (a directional headlight used to make the sticks go dark/black when the camera
+        // looked along a diagonal).
+        material->setBaseColor(stick.color);
 
         Primitive stick_draw;
         stick_draw.topology = Topology::Triangles;

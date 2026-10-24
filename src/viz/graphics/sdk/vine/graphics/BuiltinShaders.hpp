@@ -36,11 +36,13 @@ VN_GRAPHICS_NS_BEGIN
  */
 
 /**
- * @brief The built-in scene-shading program: lit Phong, per-material diffuse/specular.
+ * @brief The built-in scene-shading program: lit, with the material's PBR factors.
  *
  * @details
- * - Reads the engine's ABI: positions/normals (+ optional colour and texture), the material value, the
- *   per-view lights and the per-drawable block (see ShaderAbi.hpp).
+ * - Reads the engine's ABI: positions/normals (+ optional colour and texture), the material block (base colour,
+ *   metallic, roughness), the per-view lights and the per-drawable block (see ShaderAbi.hpp).
+ * - The G-buffer and this program read the SAME factors and derive the same diffuse/reflectance split, so the two
+ *   paths agree on what a material is at every step of the material work (graphics-material.md §9.2).
  *
  * @return The vertex + fragment program (fresh per call).
  */
@@ -68,7 +70,7 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> flatForwardProgram();
  *
  * @details
  * - The same stages as forwardProgram(), and the same material / diffuse map / vertex colour inputs —
- *   what changes is where shading STOPS: the fragment stage writes material.diffuse.rgb (modulated by
+ *   what changes is where shading STOPS: the fragment stage writes material.base_color.rgb (modulated by
  *   the diffuse map and the vertex colour, exactly as the lit program would) with the drawable's
  *   opacity, and returns before the ambient term, the directional lights and the specular highlight.
  * - It exists to answer a question a viewer gets asked constantly - "is this the shape or the

@@ -231,7 +231,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -740,7 +740,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     ASSERT_EQ(buildGeometryFacts(*sampling_geometry, sampling_geometry_facts, sampling_channels, primitives_sampling_channels), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);

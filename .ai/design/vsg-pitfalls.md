@@ -244,7 +244,7 @@ ABI、流、目标寿命、WSI、证据、引擎侧。时间线归 git。
 | P77 | `skyMap` 与 `diffuseMap` 同一行 | 引擎自带天空程序把 material 纹理当天空；种类对不上采样器 |
 | P78 | 影子块按“目标认领”选 | 同一 light 身份 + 深度可采样 + 生产者公布矩阵；不是“第一个深度可采样输入” |
 | P79 | 色彩空间契约 | 引擎内部线性；颜色图 `*Srgb`、数据图 `*Unorm`；编码只在硬件两头 |
-| P80 | `Material::specular()` 的 alpha 是强度 | 两条路径都真的乘它；默认 0.5 ⇒ 接线会改画面 |
+| P80 | 材质块是 4×16 B 的 PBR 行 | 行序 `base_color / emissive / params / flags`；自写 shader 抄旧成员会在错误的偏移上取值（`diffuse` 会读到 offset 16 的 emissive） |
 | P81 | G-buffer albedo 用 16F | 8 位暗色阶在亮光下露台阶；`intensity ≤ 1` 时两者一样 |
 | P82 | episode 是调用方的 | 半片 / 灯掉落 / 拒绝报告各归各；`ContentPass` 每帧新建，状态挂它会每帧重报 |
 

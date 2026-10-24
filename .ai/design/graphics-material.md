@@ -4,7 +4,7 @@
 > **最后核对**：2026-10-24
 > **范围**：材质的数据模型、纹理集与采样、实例覆盖、上传去重、forward 与 deferred 的一致性；
 > 不含材质 DSL、运行时名字反射、bindless 与 IBL。
-> **权威来源**：`Material.hpp` / `ShaderAbi.hpp` / `shaders/vine_params.glsl`（今天的 Phong 版）；
+> **权威来源**：`Material.hpp` / `ShaderAbi.hpp` / `shaders/vine_params.glsl`（材质块已是 PBR 版；着色仍是迁移期桥）；
 > 落地后新增实例类型的头与 `vine_brdf.glsl` BRDF 片段。
 > **待办**：`../backlog/graphics.md`（M1）
 
@@ -95,14 +95,14 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | `Material` 资产 | PBR 因子 + 纹理集 + alpha 模式；setter 只移动 revision | 未做 |
+| F1 | `Material` 资产 | PBR 因子 + 纹理集 + alpha 模式；setter 只移动 revision | 部分已做（因子与 alpha 模式；纹理集是 M2） |
 | F2 | `MaterialInstance` | 引用一个资产，稀疏覆盖因子 / 纹理 / alpha | 未做 |
 | F3 | 纹理集 | 五个语义槽 + 每槽 `Sampler` + kind/格式校验 | 未做 |
-| F4 | 材质块 v2 | 仍 64 B：base_color / emissive / params / flags | 未做 |
+| F4 | 材质块 v2 | 仍 64 B：base_color / emissive / params / flags | 已做 |
 | F5 | forward PBR | GGX 直接光 + ambient，含 normal/ORM/emissive 槽 | 未做 |
 | F6 | deferred PBR | G-buffer 还原 + 同一 BRDF + emissive/occlusion | 未做 |
 | F7 | alpha 模式 | Opaque / Mask / Blend 的排序、discard 与输出 alpha | 未做 |
-| F8 | 导入转换 | asset `Color/Phong/Pbr` → 引擎 PBR，去掉近似 | 未做 |
+| F8 | 导入转换 | asset `Color/Phong/Pbr` → 引擎 PBR，去掉近似 | 已做 |
 | F9 | 变体 | `VINE_TEXTURED` 二元位 + 常量回退 | 未做 |
 | F10 | 上传去重 | 实例复合 revision；改资产使实例重写 | 未做 |
 | F11 | 诊断 | 缺槽 / 格式不符 / Cube 进非 base 槽 / 无效覆盖 | 未做 |
@@ -161,6 +161,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 - **行为**：`ColorMaterial` → base=color、metallic 0、roughness 1；`PhongMaterial` → base=diffuse、
   `roughness = sqrt(2 / (shininess + 2))`（Blinn-Phong 到 GGX 的标准映射）、specular 折算进 metallic；
   `PbrMaterial` → 逐字段，不再近似。
+- **规格**：`metallic = clamp(max(specular.rgb) × clamp(specular.a, 0, 1), 0, 1)`——metallic-roughness 没有单独反射率旋钮，强或带色的 specular 正是“金属”含义（最强通道 = 反射峰值，alpha = 强度）；代价见 D7。
 - **约束**（C5）：转换只发生在 `ModelScene.cpp` 一处；引擎侧不出现“源是 Phong”的分支。
 - **验收**（T5）：导入一个 glTF PBR 资产，base/metallic/roughness/emissive 与源文件逐字段一致。
 
@@ -245,6 +246,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 | D4 | 只用 draw block 的用户槽做 tint，不做实例 | 没有纹理/alpha 覆盖能力，第二个调用点之后仍会克隆材质；`G8` 反向证据。 |
 | D5 | bindless / 描述符索引 | 今天没有消费者；`G8`。 |
 | D6 | 名字表作为材质核心（`set("BaseColor", ...)`） | 运行期查找、无类型安全；S2/S3 保持独立；`G4` `G8`。 |
+| D7 | 把 Phong 的 specular 当 F0 保留（Blender / Godot 的做法） | 需要给材质与块再加一个反射率输入，而引擎今天只有一条反射路径；折进 metallic 的代价（典型 `Ks 0.5` 会变半金属）由 F8 的固定表承担；`G8`。 |
 
 ## 8. 测试与验收
 
@@ -261,12 +263,14 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 ### 9.1 当前状态
 
-设计已定，未实现。今天的引擎仍是 Phong + 单贴图。
+**M1（模型 + 块 + 导入）已落地**（2026-10-24）：`Material` 是 PBR 因子（Phong 访问器已删），块是 64 B 的
+`base_color / emissive / params / flags`（`static_assert` 钉偏移），`materialFrom` 的固定表就位、`PbrMaterial`
+逐字段直传，单贴图 API 未动（M2）。着色仍是迁移期桥：两路径的 Blinn-Phong 项由 `vineMaterialShininess` /
+`vineMaterialF0` 从 PBR 因子导出，emissive / occlusion / alpha 模式只进块、不进画面；M3 用真实 GGX 与 G-buffer 替换它并删除桥。
 
 ### 9.2 已知缺口 / 待办
 
-- 落地分四步：M1 模型与块（F1/F4/F8，不动 G-buffer）；M2 纹理集与变体（F3/F9）；M3 两条路径的 BRDF
-  与 G-buffer（F5/F6）；M4 实例与 alpha 模式（F2/F7/F10/F11）。
+- 落地分四步：M1 模型与块（F1/F4/F8）已做；M2 纹理集与变体（F3/F9）；M3 两条路径的 BRDF 与 G-buffer（F5/F6）；M4 实例与 alpha 模式（F2/F7/F10/F11）。
 - 镜像 UV 下的导数切线基是已知近似，不是 bug；需要时再引入切线通道。
 - IBL、SSAO、透射（KHR_materials_transmission）不在本设计内。
 
@@ -274,20 +278,16 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 - `setDiffuse` → `setBaseColor`；`setAmbient` / `setSpecular` / `setShininess` 删除（Phong 语义不再存在）。
 - `setTexture(t)` → `setTexture(TextureSlot::BaseColor, t, {})`；`texture()` → `texture(TextureSlot::BaseColor)`。
-- `MaterialPtr` 在持有处改为 `MaterialBasePtr`；`vn::geometry` 侧不变。
-- 落地时同步修改：`graphics-scene.md` F7（材质模式参与透明判定）、`graphics-rendering.md` F23/N6、
-  `graphics-shader-params.md` 的 material 块行与 §2.2、`vsg-backend.md` 的变体与上传小节。
+- `MaterialPtr` 在持有处改为 `MaterialBasePtr`；`vn::geometry` 侧不变。落地时同步修改 `graphics-scene.md` F7、
+  `graphics-rendering.md` F23/N6、`graphics-shader-params.md` 的 material 块行与 §2.2、`vsg-backend.md` 的变体与上传小节。
 
 ## 10. 参考
 
 ### 10.1 代码
 
 - `src/viz/graphics/sdk/vine/graphics/Material.hpp` · `ShaderAbi.hpp` · `Sampler.hpp` · `Texture.hpp`
-- `src/viz/graphics/shaders/vine_params.glsl` · `builtin_forward.frag` · `builtin_gbuffer.frag` ·
-  `builtin_deferred_lighting.frag`
-- `src/plugins/gfx_backend_vsg/src/internal/ContentSources.cpp`（`blockOfMaterial`）· `ProgramVariant.hpp` ·
-  `MaterialImages.hpp`
-- `src/viz/graphics/src/ModelScene.cpp`（`materialFrom`）
+- `shaders/vine_params.glsl` · `builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag`
+- `ContentSources.cpp`（`blockOfMaterial`）· `ProgramVariant.hpp` · `MaterialImages.hpp` · `ModelScene.cpp`（`materialFrom`）
 
 ### 10.2 文档与 ADR
 

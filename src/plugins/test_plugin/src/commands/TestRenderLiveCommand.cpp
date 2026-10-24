@@ -55,7 +55,7 @@ intrusive_ptr<vn::graphics::MatrixTransform> addDemoTriangle(vn::graphics::Scene
     geometry->setPositions(vn::graphics::packAttribute(positions));
 
     auto material = make_intrusive<vn::graphics::Material>();
-    material->setDiffuse(diffuse);
+    material->setBaseColor(diffuse);
     geometry->setMaterial(material);
 
     auto node = intrusive_ptr<vn::graphics::MatrixTransform>(
@@ -122,9 +122,9 @@ vn::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecutionCo
         // Geometry-level visibility blinks (child attach/detach path).
         mover_geom->setVisible((tick / 24) % 2 == 0);
 
-        // Material diffuse cycles through hues (shared Phong uniform path).
+        // Material base colour cycles through hues (per-material block path).
         const float c = static_cast<float>(t);
-        base_mat->setDiffuse(vn::Colorf(0.5f + 0.5f * std::sin(c),
+        base_mat->setBaseColor(vn::Colorf(0.5f + 0.5f * std::sin(c),
                                           0.5f + 0.5f * std::sin(c + 2.1f),
                                           0.5f + 0.5f * std::sin(c + 4.2f), 1.0f));
 

@@ -69,7 +69,7 @@ vn::intrusive_ptr<Scene> makeQuadScene()
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    material->setBaseColor(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
 
     const vn::intrusive_ptr<StateNode> state(new StateNode());
     state->setMaterial(material);

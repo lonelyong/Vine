@@ -33,8 +33,8 @@ void main()
     // 0.06-grey hole over geometry that is right in front of the lens (registered as D4, fixed 2026-09-25).
     if (pos4.a < 0.5) { out_color = vec4(vec3(0.06), 1.0); return; }
     n = normalize(n);
-    // Per-pixel material from the G-buffer: specular colour rides
-    // attachment 2, shininess rides the normal attachment's alpha.
+    // Per-pixel material from the G-buffer: the reflectance (the metallic-roughness pair's F0) rides
+    // attachment 2, and the Blinn-Phong exponent the M1 bridge derives rides the normal attachment's alpha.
     vec3 spec_col = clamp(texture(spec_tex, uv).rgb, 0.0, 1.0);
     float shininess = max(n4.a * 256.0, 1.0);
     vec3 view_dir = normalize(-pos);

@@ -461,7 +461,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     GeometryFacts                        geometry_facts;
     std::vector<vn::vsg::ChannelFacts> channel_storage;

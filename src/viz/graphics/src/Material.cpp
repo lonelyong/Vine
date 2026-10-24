@@ -18,66 +18,111 @@ void Material::setName(const String& name)
     name_ = name;
 }
 
-Colorf Material::diffuse() const
+Colorf Material::baseColor() const
 {
-    return diffuse_;
+    return base_color_;
 }
 
-void Material::setDiffuse(const Colorf& color)
+void Material::setBaseColor(const Colorf& color)
 {
     // Each setter compares FIRST (see revision()): a host that re-applies the values it already set - the common
     // "recompute my settings every frame" shape - costs nothing, and a consumer keyed on the revision keeps what
     // it has instead of rebuilding an identical row.
-    if (diffuse_ == color)
+    if (base_color_ == color)
     {
         return;
     }
-    diffuse_ = color;
+    base_color_ = color;
     ++revision_;
 }
 
-Colorf Material::specular() const
+Colorf Material::emissive() const
 {
-    return specular_;
+    return emissive_;
 }
 
-void Material::setSpecular(const Colorf& color)
+void Material::setEmissive(const Colorf& color)
 {
-    if (specular_ == color)
+    if (emissive_ == color)
     {
         return;
     }
-    specular_ = color;
+    emissive_ = color;
     ++revision_;
 }
 
-Colorf Material::ambient() const
+float Material::metallic() const
 {
-    return ambient_;
+    return metallic_;
 }
 
-void Material::setAmbient(const Colorf& color)
+void Material::setMetallic(float metallic)
 {
-    if (ambient_ == color)
+    if (metallic_ == metallic)
     {
         return;
     }
-    ambient_ = color;
+    metallic_ = metallic;
     ++revision_;
 }
 
-float Material::shininess() const
+float Material::roughness() const
 {
-    return shininess_;
+    return roughness_;
 }
 
-void Material::setShininess(float shine)
+void Material::setRoughness(float roughness)
 {
-    if (shininess_ == shine)
+    if (roughness_ == roughness)
     {
         return;
     }
-    shininess_ = shine;
+    roughness_ = roughness;
+    ++revision_;
+}
+
+float Material::occlusion() const
+{
+    return occlusion_;
+}
+
+void Material::setOcclusion(float occlusion)
+{
+    if (occlusion_ == occlusion)
+    {
+        return;
+    }
+    occlusion_ = occlusion;
+    ++revision_;
+}
+
+AlphaMode Material::alphaMode() const
+{
+    return alpha_mode_;
+}
+
+void Material::setAlphaMode(AlphaMode mode)
+{
+    if (alpha_mode_ == mode)
+    {
+        return;
+    }
+    alpha_mode_ = mode;
+    ++revision_;
+}
+
+float Material::alphaCutoff() const
+{
+    return alpha_cutoff_;
+}
+
+void Material::setAlphaCutoff(float cutoff)
+{
+    if (alpha_cutoff_ == cutoff)
+    {
+        return;
+    }
+    alpha_cutoff_ = cutoff;
     ++revision_;
 }
 

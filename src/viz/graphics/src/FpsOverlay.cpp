@@ -358,12 +358,9 @@ void FpsOverlay::rebuild()
     // ONE material for the whole row: the bar colour lives here, not per segment, because the row is one
     // draw -- an off segment is expressed by GEOMETRY (no area), never by a colour.
     auto material = make_intrusive<Material>();
-    material->setDiffuse(kLit);
-    // On-top HUD content is lit by a pure ambient light: a WHITE ambient material makes
-    // ambientColor == diffuse == the bar colour, so this IS the readout's on-screen colour; black
-    // specular avoids highlights.
-    material->setAmbient(Colorf::kWhite);
-    material->setSpecular(Colorf::kBlack);
+    // On-top HUD content is lit by a pure ambient light, so base_colour * ambient is the bar colour and
+    // this IS the readout's on-screen colour whatever the view direction; no highlight is evaluated at all.
+    material->setBaseColor(kLit);
 
     Primitive readout_draw;
     readout_draw.topology = Topology::Triangles;

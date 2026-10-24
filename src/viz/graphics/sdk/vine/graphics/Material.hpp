@@ -15,21 +15,56 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief Material class defining surface appearance.
+ * @brief How a material's alpha is interpreted where the surface is shaded.
  *
  * @details
- * - Diffuse / specular / ambient colours, shininess and an optional texture.
- * - A material is always OPAQUE: transparency is the leaf's or the subtree's (Geometry::setOpacity /
- *   Node::setOpacity), never the material's - the diffuse alpha travels to the shader unchanged
- *   (VineMaterialBlock::diffuse.w) for a host program with a transparency model of its own, but no engine
- *   program reads it, because the engine sorts by the drawable's opacity and a material is shared by every
- *   drawable that uses it.
+ * - The MODE is a material fact while the MAGNITUDE is a per-drawable one (`VineDrawBlock::params.x`); the
+ *   effective alpha is the product of the two (and of the base texture's alpha once the texture set exists), so
+ *   the sort and the shading read the same inputs instead of two different notions of "translucent".
+ * - `Opaque` keeps the drawable in the opaque queue and ignores alpha; `Mask` cuts out fragments below
+ *   `Material::alphaCutoff()` but is still opaque to the sort (a cut-out leaf must occlude itself); `Blend` is
+ *   the only mode the transparent queue accepts, and it is drawn by the forward overlay - the deferred G-buffer
+ *   records opaque and masked content only.
+ *
+ * @note
+ * - The block already carries the mode (`VineMaterialBlock::flags`, bits 8-9); the engine's own programs start
+ *   reading it with the alpha-mode work (graphics-material.md F7), and until then every material behaves as
+ *   `Opaque`, which is the default.
+ */
+enum class AlphaMode
+{
+    Opaque, ///< Alpha is ignored: drawn in the opaque queue.
+    Mask,   ///< Alpha below alphaCutoff() is discarded; still opaque to the sort.
+    Blend,  ///< Alpha is blended: the drawable belongs in the transparent queue (forward overlay).
+};
+
+/**
+ * @brief A surface's appearance: metallic-roughness PBR factors and an optional base-colour texture.
+ *
+ * @details
+ * - The engine's ONE shading model is metallic-roughness with glTF 2.0's vocabulary - base colour, emissive,
+ *   metallic, roughness, occlusion - because the import boundary can express an asset in it without an
+ *   approximation, and both drawing paths (forward and deferred) read the same bytes (graphics-material.md §2.1).
+ * - Phong does not exist here: a Phong source asset is converted by the importer (`ModelScene.cpp`'s
+ *   `materialFrom`), so the engine has one set of surface parameters instead of two branches per path.
+ * - The material counts its own edits (`revision()`), because every shading value travels through a setter; a
+ *   consumer that answers for a material caches on that number instead of reading the values back every frame.
+ * - Textures are still ONE optional map in this stage (`texture()`): the five-slot texture set, its per-slot
+ *   samplers and the textured program variant are the next landing step and leave this class's factor API alone.
+ *
+ * @note
+ * - Transparency is not a material value: `AlphaMode` says how alpha is USED, and the per-drawable opacity
+ *   (`Geometry::setOpacity` / `Node::setOpacity`) is the only magnitude, because one material is shared by every
+ *   drawable that uses it (graphics-material.md §2.7).
+ * - Emissive is HDR: its colour is linear and unbounded, and its ALPHA is the strength the colour is scaled by
+ *   (`Colorf`'s fourth component is a scalar slot here, not an opacity, exactly as the block's `emissive.a`
+ *   states).
  */
 class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
     VN_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs a material with its default colours and no texture. */
+    /** @brief Constructs a material with the engine's default appearance and no texture. */
     Material();
 
   public:
@@ -41,69 +76,107 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
 
     /** @brief Sets the material name.
      *
+     * @details
+     * - A name is a label, not shading: it never moves `revision()`.
+     *
      * @param name New material name.
      */
     void setName(const String& name);
 
-    /** @brief Gets the diffuse color (RGBA).
+    /** @brief Gets the base (albedo) colour.
      *
-     * @return The diffuse colour.
+     * @return Linear RGBA; alpha is the material's own alpha (see AlphaMode).
      */
-    Colorf diffuse() const;
+    Colorf baseColor() const;
 
-    /** @brief Sets the diffuse color.
+    /** @brief Sets the base (albedo) colour.
      *
      * @details
-     * - The alpha is stored and passed to a host shader program through the material block; the engine's
-     *   own programs do not read it (see the class note), so setting it does NOT make the object
-     *   translucent - use Geometry::setOpacity() / Node::setOpacity() for that.
+     * - This is the diffuse albedo of a dielectric and the reflection tint of a metal; the split between the two
+     *   is `metallic()`.
+     * - Setting it does NOT make the drawable translucent on its own: the effective alpha is the mode's business
+     *   and the magnitude is the drawable's opacity (see the class note).
      *
-     * @param color RGBA color in [0, 1].
+     * @param color Linear RGBA; alpha in [0, 1].
      */
-    void setDiffuse(const Colorf& color);
+    void setBaseColor(const Colorf& color);
 
-    /** @brief Gets the specular color (RGB, A is intensity).
+    /** @brief Gets the emissive colour and strength.
+     *
+     * @return Linear RGB plus the strength in A (0 = no emission).
+     */
+    Colorf emissive() const;
+
+    /** @brief Sets the emissive colour and strength.
+     *
+     * @param color Linear RGB plus the strength in A; the product is what the surface emits on top of shading.
+     */
+    void setEmissive(const Colorf& color);
+
+    /** @brief Gets the metallic factor.
+     *
+     * @return Metallic in [0, 1]: 0 is a dielectric, 1 a metal.
+     */
+    float metallic() const;
+
+    /** @brief Sets the metallic factor.
+     *
+     * @param metallic Metallic in [0, 1].
+     */
+    void setMetallic(float metallic);
+
+    /** @brief Gets the perceived roughness.
+     *
+     * @return Roughness in [0, 1]: 0 is a mirror, 1 fully diffuse.
+     */
+    float roughness() const;
+
+    /** @brief Sets the perceived roughness.
      *
      * @details
-     * - The intensity multiplies the highlight in every engine program that shades one - the forward lit
-     *   program and the deferred chain alike (the G-buffer's specular attachment carries the colour already
-     *   scaled by it) - so an alpha of 0.5 leaves the surface half as reflective as the colour alone.
-     *   Wired 2026-09-25: the accessor documented this from the first release, and no shader read it until
-     *   then.
+     * - 0 is a mirror and 1 fully diffuse; the value is the one an asset authors (glTF's `roughnessFactor` and
+     *   Filament's `roughness` are the same quantity). How it turns into the BRDF's width is the shading model's
+     *   business, not this class's.
      *
-     * @return The specular colour (RGBA).
+     * @param roughness Roughness in [0, 1].
      */
-    Colorf specular() const;
+    void setRoughness(float roughness);
 
-    /** @brief Sets the specular color.
+    /** @brief Gets the ambient-occlusion factor.
      *
-     * @param color RGB in [0, 1] is the highlight's colour; A in [0, 1] scales its strength.
+     * @return Occlusion in [0, 1] (1 = not occluded).
      */
-    void setSpecular(const Colorf& color);
+    float occlusion() const;
 
-    /** @brief Gets the ambient color (RGB).
+    /** @brief Sets the ambient-occlusion factor.
      *
-     * @return The ambient colour.
+     * @param occlusion Occlusion in [0, 1]; it scales the ambient term only, never a direct light.
      */
-    Colorf ambient() const;
+    void setOcclusion(float occlusion);
 
-    /** @brief Sets the ambient color.
+    /** @brief Gets how the material's alpha is interpreted.
      *
-     * @param color RGBA color in [0, 1].
+     * @return The alpha mode (Opaque by default).
      */
-    void setAmbient(const Colorf& color);
+    AlphaMode alphaMode() const;
 
-    /** @brief Gets the shininess (Phong exponent).
+    /** @brief Sets how the material's alpha is interpreted.
      *
-     * @return The Phong exponent.
+     * @param mode New alpha mode.
      */
-    float shininess() const;
+    void setAlphaMode(AlphaMode mode);
 
-    /** @brief Sets the shininess (Phong exponent).
+    /** @brief Gets the alpha threshold used by AlphaMode::Mask.
      *
-     * @param shine Phong exponent, typically [1, 128].
+     * @return The cutoff in [0, 1].
      */
-    void setShininess(float shine);
+    float alphaCutoff() const;
+
+    /** @brief Sets the alpha threshold used by AlphaMode::Mask.
+     *
+     * @param cutoff Cutoff in [0, 1]; fragments with a lower effective alpha are discarded.
+     */
+    void setAlphaCutoff(float cutoff);
 
     /** @brief Gets the texture this material samples.
      *
@@ -135,11 +208,16 @@ class VN_GRAPHICS_API Material : public Object, public RefCounted<Material> {
     std::uint64_t revision() const;
 
   private:
-    String              name_;
-    Colorf              diffuse_{ 0.8f, 0.8f, 0.8f, 1.0f };
-    Colorf              specular_{ 1.0f, 1.0f, 1.0f, 0.5f };
-    Colorf              ambient_{ 0.2f, 0.2f, 0.2f, 1.0f };
-    float               shininess_ = 32.0f;
+    String                 name_;
+    Colorf                 base_color_{ 0.8f, 0.8f, 0.8f, 1.0f };
+    /// Linear RGB plus the strength in A (0 = no emission).
+    Colorf                 emissive_{ 0.0f, 0.0f, 0.0f, 1.0f };
+    float                  metallic_ = 0.0f;
+    /// Perceptual roughness; the same default the geometry-side PbrMaterial states.
+    float                  roughness_ = 0.5f;
+    float                  occlusion_ = 1.0f;
+    AlphaMode              alpha_mode_ = AlphaMode::Opaque;
+    float                  alpha_cutoff_ = 0.5f;
     intrusive_ptr<Texture> texture_;
     /// Moves when a shading value changes (see revision()); the name is deliberately not part of it.
     std::uint64_t revision_ = 0;

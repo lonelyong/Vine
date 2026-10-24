@@ -26,17 +26,38 @@
 // (ContentPush.hpp), and a program that wants the block declares it where its own arrangement puts it.
 
 #ifdef VINE_PARAM_MATERIAL
-// The material the host assigned (Material -> VineMaterialBlock). `diffuse.w` is the material's own alpha: it
-// is TRANSPORTED for a host program that has its own transparency model, and no engine program reads it - the
-// engine's one transparency channel is the per-drawable opacity in the draw block, because a material is
-// shared by every drawable that uses it.
+// The material the host assigned (Material -> VineMaterialBlock): the four 16-byte rows of graphics-material.md
+// §3.4. `base_color` is the linear albedo and its alpha is the MATERIAL's own alpha; the effective alpha is
+// that times the drawable's opacity (draw.params.x), because a material is shared by every drawable that uses
+// it - and `flags`'s bits 8-9 say how the alpha is meant to be used (0 opaque, 1 mask, 2 blend).
+//
+// M1 BRIDGE: the bytes are the PBR factors, but both shading paths still draw with Blinn-Phong until the GGX
+// BRDF lands (graphics-material.md §9.2, M3). The two conversions below are the bridge's ONLY spelling, so the
+// forward and the deferred path cannot drift apart while they wait - and they leave with it.
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
-    vec4 ambient;
-    vec4 diffuse;
-    vec4 specular;
-    float shininess;
+    vec4  base_color;   // rgb = linear albedo, a = material alpha
+    vec4  emissive;     // rgb = linear emission, a = strength
+    vec4  params;       // x metallic, y roughness, z occlusion, w alpha cutoff
+    uvec4 flags;        // bit0-4 = texture slots, bit8-9 = alpha mode (0 opaque, 1 mask, 2 blend)
 } material;
+
+// Perceived roughness -> the Blinn-Phong exponent the bridge draws with: the inverse of the import table's
+// sqrt(2 / (n + 2)). Floored and capped so the exponent stays finite and fits what the G-buffer can carry -
+// a roughness of 0 would ask for an infinite exponent, and 256 is the largest value `shininess / 256` stores
+// in that attachment's alpha.
+float vineMaterialShininess(float roughness)
+{
+    float perceptual = clamp(roughness, 0.0, 1.0);
+    return clamp(2.0 / max(perceptual * perceptual, 1e-4) - 2.0, 1.0, 256.0);
+}
+
+// Reflectance at normal incidence, from the metallic-roughness pair: a dielectric's 0.04 grey at metallic 0,
+// the base colour itself at metallic 1. ONE spelling for the forward term and the G-buffer writer.
+vec3 vineMaterialF0(vec3 base_color, float metallic)
+{
+    return mix(vec3(0.04), base_color, clamp(metallic, 0.0, 1.0));
+}
 #endif
 
 #ifdef VINE_PARAM_DRAW

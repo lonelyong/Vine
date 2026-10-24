@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -150,7 +151,7 @@ TEST(ModelSceneTest, AMeshUsedTwiceIsOneAllocationBehindTwoLeaves)
         << "the vertex data is ONE allocation, shared by both leaves";
 }
 
-TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePhongParametersAndPbrOpacityBecomesLeafOpacity)
+TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomesLeafOpacity)
 {
     auto color_material = vn::make_intrusive<ColorMaterial>(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
     color_material->setName(u8"red");
@@ -192,26 +193,27 @@ TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePhongParametersAndPbrOpacityBe
     ASSERT_NE(red, nullptr);
     ASSERT_NE(red->material(), nullptr);
     EXPECT_EQ(red->material()->name(), vn::String(u8"red"));
-    EXPECT_FLOAT_EQ(red->material()->diffuse().r, 1.0F);
-    EXPECT_FLOAT_EQ(red->material()->diffuse().g, 0.0F);
-    EXPECT_FLOAT_EQ(red->material()->specular().a, 0.0F) << "a flat colour asks for no highlight of its own";
+    EXPECT_FLOAT_EQ(red->material()->baseColor().r, 1.0F);
+    EXPECT_FLOAT_EQ(red->material()->baseColor().g, 0.0F);
+    EXPECT_FLOAT_EQ(red->material()->metallic(), 0.0F) << "a flat colour states no reflectance";
+    EXPECT_FLOAT_EQ(red->material()->roughness(), 1.0F) << "and authors no gloss";
     EXPECT_FLOAT_EQ(red->opacity(), 1.0F);
 
     const auto* phong = dynamic_cast<const Geometry*>(converted_root->children()[1].get());
     ASSERT_NE(phong, nullptr);
     ASSERT_NE(phong->material(), nullptr);
-    EXPECT_FLOAT_EQ(phong->material()->diffuse().b, 0.6F);
-    EXPECT_FLOAT_EQ(phong->material()->specular().r, 0.9F);
-    EXPECT_FLOAT_EQ(phong->material()->shininess(), 64.0F);
+    EXPECT_FLOAT_EQ(phong->material()->baseColor().b, 0.6F) << "the diffuse reflectance is the base colour";
+    EXPECT_FLOAT_EQ(phong->material()->metallic(), 0.9F)
+        << "the specular colour's peak becomes metallic (the strongest channel, intensity 1)";
+    EXPECT_FLOAT_EQ(phong->material()->roughness(), std::sqrt(2.0F / (64.0F + 2.0F)))
+        << "the exponent becomes the roughness by the standard Blinn-Phong -> GGX mapping";
 
     const auto* pbr = dynamic_cast<const Geometry*>(converted_root->children()[2].get());
     ASSERT_NE(pbr, nullptr);
     ASSERT_NE(pbr->material(), nullptr);
-    EXPECT_FLOAT_EQ(pbr->material()->diffuse().r, 0.0F)
-        << "a fully metallic surface has no diffuse lobe (the PBR approximation)";
-    EXPECT_FLOAT_EQ(pbr->material()->specular().r, 0.8F)
-        << "and its highlight takes the base colour";
-    EXPECT_FLOAT_EQ(pbr->material()->specular().a, 0.75F) << "1 - roughness";
+    EXPECT_FLOAT_EQ(pbr->material()->baseColor().r, 0.8F) << "PBR is translated field for field, not approximated";
+    EXPECT_FLOAT_EQ(pbr->material()->metallic(), 1.0F);
+    EXPECT_FLOAT_EQ(pbr->material()->roughness(), 0.25F);
     EXPECT_FLOAT_EQ(pbr->opacity(), 0.4F) << "a PBR material's opacity is the LEAF's, not the shared material's";
 }
 

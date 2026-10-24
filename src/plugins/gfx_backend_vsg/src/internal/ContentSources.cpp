@@ -168,21 +168,38 @@ FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, Pro
 namespace
 {
 
+/// @brief The alpha mode's bits in the material block's flag row (see kMaterialAlphaModeShift).
+///
+/// A switch rather than a cast: the numbering is the ABI's (0/1/2), so a new enumerator has to be given a
+/// number here instead of silently inheriting one the shader reads as something else.
+[[nodiscard]] constexpr std::uint32_t alphaModeBits(vn::graphics::AlphaMode mode) noexcept
+{
+    switch (mode)
+    {
+    case vn::graphics::AlphaMode::Opaque: return 0u;
+    case vn::graphics::AlphaMode::Mask: return 1u;
+    case vn::graphics::AlphaMode::Blend: return 2u;
+    }
+    return 0u;
+}
+
 /// @brief Packs @p material's fields into the ABI's block, field for field.
 ///
 /// The ONE spelling of the mapping: buildMaterialFacts writes it, and nothing else re-derives it.
-/// a member added to the engine's mapping cannot reach one without the other.
+/// The values are packed VERBATIM - no clamping and no sanitising: a material is data the host authored, and
+/// the shader clamps what it draws (graphics-material.md N2).
 [[nodiscard]] vn::graphics::VineMaterialBlock blockOfMaterial(const vn::graphics::Material& material) noexcept
 {
-    const vn::Colorf diffuse  = material.diffuse();
-    const vn::Colorf specular = material.specular();
-    const vn::Colorf ambient  = material.ambient();
+    const vn::Colorf base     = material.baseColor();
+    const vn::Colorf emissive = material.emissive();
 
     vn::graphics::VineMaterialBlock block{};  // its member defaults are the default material
-    block.diffuse   = { diffuse.r, diffuse.g, diffuse.b, diffuse.a };
-    block.specular  = { specular.r, specular.g, specular.b, specular.a };
-    block.ambient   = { ambient.r, ambient.g, ambient.b, ambient.a };
-    block.shininess = material.shininess();
+    block.base_color = { base.r, base.g, base.b, base.a };
+    block.emissive   = { emissive.r, emissive.g, emissive.b, emissive.a };
+    block.params     = { material.metallic(), material.roughness(), material.occlusion(), material.alphaCutoff() };
+    // The texture-set bits (0-4) stay zero until the slots exist; the alpha mode is the one flag row entry the
+    // model has today (graphics-material.md §3.4).
+    block.flags[0] = alphaModeBits(material.alphaMode()) << vn::graphics::kMaterialAlphaModeShift;
     return block;
 }
 
@@ -192,10 +209,9 @@ FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_
                             MaterialFacts& out, std::vector<std::byte>& storage)
 {
     // The block's MEMBERS are the payload, and `{}` is aggregate initialisation: it initialises the members
-    // from their defaults (this is the ABI's default material - grey, one non-zero shininess) and leaves the
-    // struct's tail padding alone. That padding is not read by any shader and is deliberately left as it is: what
-    // decides whether a material changed is the number it reports (Material::revision), never a byte comparison of
-    // these bytes (which would report "changed" for a material that did not).
+    // from their defaults (the ABI states the default material's values) and leaves the struct's tail padding
+    // alone. What decides whether a material changed is the number it reports (Material::revision), never a byte
+    // comparison of these bytes (which would report "changed" for a material that did not).
     const vn::graphics::VineMaterialBlock block =
         material != nullptr ? blockOfMaterial(*material) : vn::graphics::VineMaterialBlock{};
 

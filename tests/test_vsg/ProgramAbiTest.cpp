@@ -214,7 +214,7 @@ void main() { gl_Position = vec4(position, 1.0); }
 #define VINE_EXTRA 1
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
-    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;
+    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;
 } material;
 #ifdef VINE_EXTRA
 layout(set = 0, binding = 1, std140) uniform SomeOtherBlock { vec4 value; } extra;
@@ -335,7 +335,7 @@ layout(set = 0, binding = 0, std140) uniform VineViewBlock
 } view;
 layout(set = 0, binding = 2, std140) uniform VineMaterialBlock
 {
-    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;
+    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;
 } material;
 layout(set = 0, binding = 3, std140) uniform VineLightsBlock
 {
@@ -429,7 +429,7 @@ TEST(ProgramAbiTest, ADriftedBlockSizeIsVisibleAsAFact)
     constexpr const char* kFragment = R"(#version 450
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
-    vec4 ambient; vec4 diffuse; vec4 specular; float shininess; vec4 extra;
+    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags; vec4 extra;
 } material;
 void main() {}
 )";

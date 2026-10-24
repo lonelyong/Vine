@@ -585,7 +585,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
                                                  make_band(0.0F, 0.5F), make_band(0.5F, 1.0F) };
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    material->setBaseColor(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);

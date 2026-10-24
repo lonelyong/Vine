@@ -120,34 +120,50 @@ TEST(ShaderAbiTest, ShadowBlockIsTheViewToLightMatrixPlusItsParameters)
     EXPECT_EQ(offsetof(VineShadowBlock, params), 64u);
 }
 
-TEST(ShaderAbiTest, MaterialBlockEqualityCoversItsWholeDeclaredLayout)
+TEST(ShaderAbiTest, TheMaterialBlockIsThePbrRowsAndEqualityCoversThem)
 {
-    // A backend asks "does the GPU need this material again?" by comparing two blocks, so the
-    // comparison is the type's own (the defaulted operator==): a field list written out in a backend
-    // is a second copy of this layout, and one that falls behind it fails silently — the symptom is a
-    // material edit that never reaches the GPU. Flipping one bit of every member byte and demanding
-    // that the comparison notices pins that coverage without naming the members.
-    constexpr std::size_t member_bytes = offsetof(VineMaterialBlock, shininess) + sizeof(float);
-    static_assert(member_bytes == 52u, "the material block's members must end before its std140 padding");
+    // Four 16-byte std140 rows (graphics-material.md §3.4), and the members end exactly at byte 64 - there is no
+    // tail padding left. A backend asks "does the GPU need this material again?" by comparing two blocks through
+    // the type's own defaulted operator==: a field list written out in a backend is a second copy of this layout,
+    // and one that falls behind it fails silently - the symptom is a material edit that never reaches the GPU.
+    // Flipping one bit of every member byte and demanding that the comparison notices pins that coverage without
+    // naming the members.
+    EXPECT_EQ(sizeof(VineMaterialBlock), 64u) << "two colour rows, the factor row and the flag row";
+    EXPECT_EQ(alignof(VineMaterialBlock), 16u);
+    EXPECT_EQ(offsetof(VineMaterialBlock, base_color), 0u);
+    EXPECT_EQ(offsetof(VineMaterialBlock, emissive), 16u);
+    EXPECT_EQ(offsetof(VineMaterialBlock, params), 32u);
+    EXPECT_EQ(offsetof(VineMaterialBlock, flags), 48u);
 
     VineMaterialBlock a;
     // Every field is non-zero: a bit flipped inside a zero float is a denormal, and this test must
     // not depend on how denormals compare.
-    a.ambient   = { 0.1f, 0.2f, 0.3f, 1.0f };
-    a.diffuse   = { 0.4f, 0.5f, 0.6f, 1.0f };
-    a.specular  = { 0.7f, 0.8f, 0.9f, 0.5f };
-    a.shininess = 32.0f;
+    a.base_color = { 0.1f, 0.2f, 0.3f, 1.0f };
+    a.emissive   = { 0.4f, 0.5f, 0.6f, 2.0f };
+    a.params     = { 0.7f, 0.8f, 0.9f, 1.0f };
+    a.flags      = { 2u << kMaterialAlphaModeShift, 1u, 0u, 0u };
 
     VineMaterialBlock b = a;
     EXPECT_TRUE(a == b);
 
     auto* bytes = reinterpret_cast<unsigned char*>(&b);
-    for (std::size_t offset = 0; offset < member_bytes; ++offset) {
+    for (std::size_t offset = 0; offset < sizeof(VineMaterialBlock); ++offset) {
         bytes[offset] ^= 0x01u;
         EXPECT_TRUE(a != b) << "a change at byte " << offset << " must be visible to the comparison";
         bytes[offset] ^= 0x01u;
     }
     EXPECT_TRUE(a == b) << "the scan must leave the block as it found it";
+
+    // The defaults are the default material's values, so content without a material shades like content with a
+    // default one (see ContentSourcesTest.NoMaterialIsTheDefaultMaterialNotAMiss).
+    const VineMaterialBlock defaults{};
+    EXPECT_EQ(defaults.base_color[0], 0.8f);
+    EXPECT_EQ(defaults.base_color[3], 1.0f);
+    EXPECT_EQ(defaults.params[0], 0.0f);
+    EXPECT_EQ(defaults.params[1], 0.5f);
+    EXPECT_EQ(defaults.params[2], 1.0f);
+    EXPECT_EQ(defaults.params[3], 0.5f);
+    EXPECT_EQ(defaults.flags[0], 0u) << "no texture slots, opaque";
 }
 
 TEST(ShaderAbiTest, TheShaderBlockNamesAreTheL1Names)
@@ -176,19 +192,18 @@ TEST(ShaderAbiTest, TheForwardFragmentsAlphaIsTheDrawablesOpacityAlone)
     const std::string forward_fs = asByteString(shaders::kBuiltinForwardFrag);
     EXPECT_NE(forward_fs.find("float alpha = draw.params.x;"), std::string::npos)
         << "the fragment alpha must be the drawable's opacity";
-    EXPECT_EQ(forward_fs.find("material.diffuse.a"), std::string::npos)
+    EXPECT_EQ(forward_fs.find("material.base_color.a"), std::string::npos)
         << "the material's alpha must not scale the fragment alpha (a shared material would make "
            "every drawable that uses it translucent, in an order nobody sorted)";
     EXPECT_EQ(forward_fs.find("alpha *= texel.a"), std::string::npos)
         << "the sampled texel's alpha must not scale the fragment alpha either (same reason, and the "
            "deferred path discards it, so the two paths would disagree about one asset)";
 
-    // The block the shading declares is the engine's material ABI and nothing else: the fields no
-    // accessor could set and no stage read are gone rather than declared (see VineMaterialBlock).
+    // The block the shading declares is the engine's material ABI and nothing else: fields no accessor
+    // could set and no stage read are gone rather than declared (see VineMaterialBlock).
     EXPECT_EQ(forward_fs.find("alphaMask"), std::string::npos);
     const std::string gbuffer_fs = asByteString(shaders::kBuiltinGbufferFrag);
     EXPECT_EQ(gbuffer_fs.find("alphaMask"), std::string::npos);
-    EXPECT_EQ(gbuffer_fs.find("vec4 emissive;"), std::string::npos);
 }
 
 }  // namespace

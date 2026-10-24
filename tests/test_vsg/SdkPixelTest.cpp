@@ -324,7 +324,7 @@ vn::intrusive_ptr<vn::graphics::MatrixTransform> makeCoplanarQuad(const vn::intr
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<vn::graphics::Material> material(new vn::graphics::Material());
-    material->setDiffuse(colour);
+    material->setBaseColor(colour);
 
     const vn::intrusive_ptr<vn::graphics::StateNode> state(new vn::graphics::StateNode());
     state->setMaterial(material);

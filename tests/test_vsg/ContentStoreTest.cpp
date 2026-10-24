@@ -76,12 +76,12 @@ constexpr const char* kGatedFragmentSource =
     "layout(location = 0) out vec4 color;\n"
     "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
     "{\n"
-    "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+    "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
     "} material;\n"
     "#ifdef VINE_DIFFUSE_MAP\n"
     "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
     "#endif\n"
-    "void main() { color = material.diffuse; }\n";
+    "void main() { color = material.base_color; }\n";
 
 constexpr const char* kScreenFragmentSource =
     "#version 450\n"
@@ -129,7 +129,7 @@ vn::intrusive_ptr<Material> material(vn::Colorf diffuse,
                                        vn::intrusive_ptr<Texture2D> texture = {})
 {
     const auto out = vn::intrusive_ptr<Material>(new Material());
-    out->setDiffuse(diffuse);
+    out->setBaseColor(diffuse);
     if (texture != nullptr)
     {
         out->setTexture(texture);
@@ -374,7 +374,7 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
     // A material EDIT replaces a row in place, and a geometry revision bump APPENDS one and parks the old one.
     store.updateMaterial(material.get());
     auto* mutable_material = const_cast<vn::graphics::Material*>(material.get());
-    mutable_material->setDiffuse(vn::Colorf(0.9F, 0.1F, 0.1F, 1.0F));
+    mutable_material->setBaseColor(vn::Colorf(0.9F, 0.1F, 0.1F, 1.0F));
     store.updateMaterial(material.get());
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_TRUE(covers(second)) << "a replaced row keeps its place in the order";
@@ -453,20 +453,20 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
                                   program.get());
     const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
     const auto           first_block = blockOf(*findMaterial(first, material.get()).entry);
-    EXPECT_FLOAT_EQ(first_block.diffuse[0], 0.25F);
+    EXPECT_FLOAT_EQ(first_block.base_color[0], 0.25F);
 
     // The host edits the material. The material moves its own revision (Material::revision - every shading value
     // goes through a setter, which compares first), and the facade touches every material a frame commands because
     // the engine never announces an edit; this is that touch.
     const std::uint64_t before = material->revision();
-    material->setDiffuse(vn::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
     EXPECT_EQ(material->revision(), before + 1U);
     store.updateMaterial(material.get());
 
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_EQ(store.materialEntries(), 1U) << "a material is answered by identity alone: the row is replaced";
     const auto second_block = blockOf(*findMaterial(second, material.get()).entry);
-    EXPECT_FLOAT_EQ(second_block.diffuse[0], 0.75F) << "the table answers what the material is NOW";
+    EXPECT_FLOAT_EQ(second_block.base_color[0], 0.75F) << "the table answers what the material is NOW";
     EXPECT_EQ(retirement.pending(), 1U) << "the replaced value was parked";
 
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
@@ -503,7 +503,7 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     const std::uint64_t builds_before = store.builds();
     for (int frame = 0; frame < 5; ++frame)
     {
-        material->setDiffuse(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));  // same value: not an edit
+        material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));  // same value: not an edit
         store.updateMaterial(material.get());
         (void)store.tablesFor(plan->frame, timeline, retirement);
     }
@@ -511,15 +511,15 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     EXPECT_EQ(store.builds(), builds_before) << "the touch found nothing changed";
     EXPECT_EQ(retirement.pending(), 0U) << "and nothing was parked";
     EXPECT_EQ(store.materialEntries(), 1U);
-    EXPECT_FLOAT_EQ(blockOf(*findMaterial(again, material.get()).entry).diffuse[0], 0.25F);
+    EXPECT_FLOAT_EQ(blockOf(*findMaterial(again, material.get()).entry).base_color[0], 0.25F);
 
     // The same touch AFTER an edit moves the revision, and the next walk replaces the row (the SDK's own
     // contract, now reached through the touch rather than through a separate announcement).
-    material->setDiffuse(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
     store.updateMaterial(material.get());
     const ContentFacts& edited = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_EQ(store.builds(), builds_before + 1U) << "the edit replaced the row";
-    EXPECT_FLOAT_EQ(blockOf(*findMaterial(edited, material.get()).entry).diffuse[0], 0.5F);
+    EXPECT_FLOAT_EQ(blockOf(*findMaterial(edited, material.get()).entry).base_color[0], 0.5F);
     EXPECT_EQ(retirement.pending(), 1U) << "and the value it had was parked";
 }
 

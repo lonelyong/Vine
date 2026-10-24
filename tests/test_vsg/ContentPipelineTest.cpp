@@ -728,9 +728,9 @@ TEST(ContentPipelineTest, TheLayoutFollowsTheDeclarationsWhereverTheyPutTheBlock
                        "layout(location = 0) out vec4 outColor;\n"
                        "layout(set = 0, binding = 3, std140) uniform VineMaterialBlock\n"
                        "{\n"
-                       "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+                       "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
                        "} material;\n"
-                       "void main() { outColor = material.diffuse; }\n";
+                       "void main() { outColor = material.base_color; }\n";
 
     auto layer = makeLayerWith(shaders);
     ASSERT_NE(layer, nullptr);
@@ -800,11 +800,11 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 0, std140) uniform MyOwnBlock { vec4 value; } own;"), nullptr);
     // A material block that declares MORE bytes than the L1 struct: the bytes past it are not the ABI's.
     EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
-                             "{ vec4 ambient; vec4 diffuse; vec4 specular; float shininess; vec4 extra; } material;"),
+                             "{ vec4 base_color; vec4 emissive; vec4 params; uvec4 flags; vec4 extra; } material;"),
               nullptr);
     // A block whose layout is not std140: its size is the compiler's, and the bytes bound are std140's.
     EXPECT_EQ(layerDeclaring("layout(set = 0, binding = 0) uniform VineMaterialBlock\n"
-                             "{ vec4 ambient; vec4 diffuse; vec4 specular; float shininess; } material;"),
+                             "{ vec4 base_color; vec4 emissive; vec4 params; uvec4 flags; } material;"),
               nullptr);
     // A sampler in the block set is FINE now: the engine's own set 0 carries the material block AND the
     // diffuse map, so the two kinds share a set (the caller supplies the image - see api/BlockDescriptors).

@@ -1,6 +1,7 @@
 #include <vine/graphics/ModelScene.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -22,12 +23,19 @@ VN_GRAPHICS_NS_BEGIN
 namespace
 {
 
-/// The share of a flat colour a ColorMaterial's ambient term gets: the engine's own default ambient is 0.2 grey,
-/// so a colour-only source keeps the same "unlit parts are dark, not black" look its Phong sibling would have.
-constexpr float kColorAmbientShare = 0.2F;
-/// Phong exponents a PBR roughness maps onto: fully rough stays nearly matte, fully smooth is a tight highlight.
-constexpr float kPbrShininessFloor = 1.0F;
-constexpr float kPbrShininessRange = 127.0F;
+/// The perceived roughness a Blinn-Phong exponent corresponds to (graphics-material.md §3.6): the standard
+/// Blinn-Phong -> GGX mapping, stated once here because this file is the ONLY place a Phong source becomes an
+/// engine material.
+///
+/// - `n = 0` (a highlight with no falloff) is fully rough, and a mirrored surface (an exponent in the thousands)
+///   approaches 0; the engine adds no clamp of its own, because a shader clamps what it draws.
+/// - The M1 shading bridge inverts this exact formula, so an imported asset keeps the highlight width the source
+///   gave it while the real BRDF is still to come.
+[[nodiscard]] float roughnessFromShininess(float shininess) noexcept
+{
+    const float exponent = std::max(shininess, 0.0F);
+    return std::clamp(std::sqrt(2.0F / (exponent + 2.0F)), 0.0F, 1.0F);
+}
 
 /**
  * @brief One conversion's state: the model, the result being filled and the caches that make it a tree.
@@ -150,37 +158,40 @@ intrusive_ptr<Material> materialFrom(const vn::geometry::Material& material)
 
     switch (material.materialType()) {
     case vn::geometry::MaterialType::Color: {
-        // A colour-only source has no highlight of its own: the ambient share keeps its unlit parts readable, and
-        // the zero-strength specular keeps the engine from inventing one.
+        // A colour-only source has no highlight of its own: the colour IS the material, and fully rough means the
+        // engine adds no gloss nobody authored (graphics-material.md §3.6).
         const Colorf base = static_cast<const vn::geometry::ColorMaterial&>(material).color();
-        converted->setDiffuse(base);
-        converted->setAmbient(Colorf(base.r * kColorAmbientShare, base.g * kColorAmbientShare,
-                                     base.b * kColorAmbientShare, 1.0F));
-        converted->setSpecular(Colorf(0.0F, 0.0F, 0.0F, 0.0F));
+        converted->setBaseColor(base);
+        converted->setMetallic(0.0F);
+        converted->setRoughness(1.0F);
         break;
     }
     case vn::geometry::MaterialType::Phong: {
-        const auto& phong = static_cast<const vn::geometry::PhongMaterial&>(material);
-        converted->setAmbient(phong.ambient());
-        converted->setDiffuse(phong.diffuse());
-        converted->setSpecular(phong.specular());
-        converted->setShininess(phong.shininess());
+        // THE FIXED TABLE (graphics-material.md §3.6) - the one place Phong exists at all:
+        // - the diffuse reflectance is the base colour;
+        // - the exponent becomes the roughness through the standard mapping, so the highlight keeps its width;
+        // - the specular colour becomes metallic. Metallic-roughness has no separate reflectance knob, and a
+        //   strong or tinted specular is exactly what "metal" means in it: the strongest channel is the
+        //   reflection's peak and the alpha scales it. A dielectric's Ks (0.04-0.08) therefore lands near 0, a
+        //   mirror's 1 lands on 1.
+        const auto&  phong    = static_cast<const vn::geometry::PhongMaterial&>(material);
+        const Colorf specular = phong.specular();
+        const float  peak     = std::max({ specular.r, specular.g, specular.b });
+        converted->setBaseColor(phong.diffuse());
+        converted->setRoughness(roughnessFromShininess(phong.shininess()));
+        converted->setMetallic(std::clamp(peak * std::clamp(specular.a, 0.0F, 1.0F), 0.0F, 1.0F));
         break;
     }
     case vn::geometry::MaterialType::Pbr: {
-        // THE APPROXIMATION, spelled out where a reader looks for it (see materialFrom's note): a metal has no
-        // diffuse lobe, its highlight takes the base colour, and smoothness becomes both the highlight's strength
-        // and the Phong exponent. It is a faithful ENOUGH picture for an imported asset, not a PBR shading model.
-        const auto&   pbr       = static_cast<const vn::geometry::PbrMaterial&>(material);
-        const float   metallic  = std::clamp(pbr.metallic(), 0.0F, 1.0F);
-        const float   roughness = std::clamp(pbr.roughness(), 0.0F, 1.0F);
-        const Colorf  base      = pbr.baseColor();
-        const Colorf  highlight = Colorf::lerp(Colorf(1.0F, 1.0F, 1.0F, 1.0F), base, metallic);
-        const float   smoothness = 1.0F - roughness;
-        converted->setDiffuse(Colorf(base.r * (1.0F - metallic), base.g * (1.0F - metallic),
-                                     base.b * (1.0F - metallic), base.a));
-        converted->setSpecular(Colorf(highlight.r, highlight.g, highlight.b, smoothness));
-        converted->setShininess(kPbrShininessFloor + smoothness * kPbrShininessRange);
+        // Field for field, with no approximation: the source already speaks the engine's vocabulary. Opacity stays
+        // the LEAF's (a shared material's alpha would make every drawable that uses it translucent), which the
+        // caller applies.
+        const auto&  pbr      = static_cast<const vn::geometry::PbrMaterial&>(material);
+        const Colorf emissive = pbr.emissive();
+        converted->setBaseColor(pbr.baseColor());
+        converted->setMetallic(std::clamp(pbr.metallic(), 0.0F, 1.0F));
+        converted->setRoughness(std::clamp(pbr.roughness(), 0.0F, 1.0F));
+        converted->setEmissive(Colorf(emissive.r, emissive.g, emissive.b, 1.0F));
         break;
     }
     default: break;

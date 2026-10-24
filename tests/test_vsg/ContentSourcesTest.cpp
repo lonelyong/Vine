@@ -27,6 +27,7 @@
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentSources.hpp>
 
+using vn::graphics::AlphaMode;
 using vn::graphics::Material;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -187,13 +188,16 @@ TEST(ContentSourcesTest, AScreenProgramWithoutOneFragmentStageIsNotAScreenProgra
 TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
 {
     Material material;
-    material.setDiffuse(vn::Colorf(0.1F, 0.2F, 0.3F, 0.4F));
-    material.setSpecular(vn::Colorf(0.5F, 0.6F, 0.7F, 1.0F));
-    material.setAmbient(vn::Colorf(0.05F, 0.06F, 0.07F, 1.0F));
-    material.setShininess(42.0F);
+    material.setBaseColor(vn::Colorf(0.1F, 0.2F, 0.3F, 0.4F));
+    material.setEmissive(vn::Colorf(0.5F, 0.6F, 0.7F, 2.0F));
+    material.setMetallic(0.25F);
+    material.setRoughness(0.75F);
+    material.setOcclusion(0.5F);
+    material.setAlphaMode(AlphaMode::Mask);
+    material.setAlphaCutoff(0.125F);
 
-    MaterialFacts            facts;
-    std::vector<std::byte>   storage;
+    MaterialFacts          facts;
+    std::vector<std::byte> storage;
     ASSERT_EQ(buildMaterialFacts(&material, 9U, facts, storage), FactMiss::None);
 
     EXPECT_EQ(facts.material, &material);
@@ -203,11 +207,19 @@ TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
     vn::graphics::VineMaterialBlock block;
     ASSERT_GE(facts.block.size(), sizeof(block));
     std::memcpy(&block, facts.block.data(), sizeof(block));
-    EXPECT_FLOAT_EQ(block.diffuse[0], 0.1F);
-    EXPECT_FLOAT_EQ(block.diffuse[3], 0.4F);
-    EXPECT_FLOAT_EQ(block.specular[1], 0.6F);
-    EXPECT_FLOAT_EQ(block.ambient[2], 0.07F);
-    EXPECT_FLOAT_EQ(block.shininess, 42.0F);
+    EXPECT_FLOAT_EQ(block.base_color[0], 0.1F);
+    EXPECT_FLOAT_EQ(block.base_color[3], 0.4F);
+    EXPECT_FLOAT_EQ(block.emissive[1], 0.6F);
+    EXPECT_FLOAT_EQ(block.emissive[3], 2.0F) << "the emission STRENGTH rides the row's alpha";
+    EXPECT_FLOAT_EQ(block.params[0], 0.25F);
+    EXPECT_FLOAT_EQ(block.params[1], 0.75F);
+    EXPECT_FLOAT_EQ(block.params[2], 0.5F);
+    EXPECT_FLOAT_EQ(block.params[3], 0.125F);
+    EXPECT_EQ(block.flags[0], 1U << vn::graphics::kMaterialAlphaModeShift)
+        << "Mask is 1 in the ABI's numbering, in bits 8-9";
+    EXPECT_EQ(block.flags[1], 0U);
+    EXPECT_EQ(block.flags[2], 0U);
+    EXPECT_EQ(block.flags[3], 0U);
 }
 
 TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
@@ -225,12 +237,14 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     std::memcpy(&block, facts.block.data(), sizeof(block));
     const vn::graphics::VineMaterialBlock defaults{};
 
-    // The ABI's own comparison - member-wise, on purpose: the block's members are the payload, and its tail
-    // padding (shininess ends at 52 of 64 bytes) is not part of it. Comparing the BYTES would report a change
-    // for a material that did not change, which is why the ABI provides `operator==` rather than a hash.
+    // The ABI's own comparison - member-wise, on purpose: a field list written out in a backend would be a
+    // second copy of the layout. The defaults are the default material's values, so content with no material
+    // shades exactly like content with a default one (GraphicsTest's MaterialTest.Defaults states the same
+    // numbers).
     EXPECT_TRUE(block == defaults);
-    EXPECT_EQ(block.diffuse[3], 0.0F);
-    EXPECT_EQ(block.shininess, 32.0F) << "the one non-zero default the ABI states";
+    EXPECT_FLOAT_EQ(block.base_color[0], 0.8F);
+    EXPECT_FLOAT_EQ(block.params[1], 0.5F) << "roughness: the geometry-side PbrMaterial default";
+    EXPECT_EQ(block.flags[0], 0U) << "no texture slot, Opaque";
 
     // Building the same entry twice gives the same MEMBERS (the table's identity for it is the pair below).
     std::vector<std::byte> again_storage;

@@ -140,6 +140,15 @@ struct alignas(16) VineDrawBlock
 };
 
 /**
+ * @brief Shift of the two-bit alpha mode inside VineMaterialBlock::flags (bits 8-9).
+ *
+ * @details
+ * - The value is the ABI's, not a backend's: the packer shifts `AlphaMode`'s ordinal by it and the GLSL side
+ *   shifts back, so the two spellings cannot drift apart.
+ */
+constexpr std::uint32_t kMaterialAlphaModeShift = 8u;
+
+/**
  * @brief Per-material data block the built-in shading reads (L1 shape).
  *
  * @details
@@ -148,25 +157,28 @@ struct alignas(16) VineDrawBlock
  * - Field order and std140 offsets are the contract (see the GLSL `VineMaterialBlock` in the SDK's
  *   `shaders/vine_params.glsl`, the ONE declaration of the parameter blocks), so the two sides cannot drift: a member
  *   added here without the GLSL fails the static_asserts below or the structural test, never silently mis-reads.
+ * - The four rows are graphics-material.md §3.4's: `base_color` (rgb linear albedo, a = the material's own alpha),
+ *   `emissive` (rgb linear emission, a = strength), `params` (x metallic, y roughness, z occlusion, w alpha cutoff)
+ *   and `flags`.
  *
  * @note
- * - Transparency is NOT part of it: opacity is a per-drawable value (VineDrawBlock::params.x), because one material
- *   is shared by every drawable that uses it.
- * - `diffuse.w` still carries the material's own alpha — the byte is transported for a host program that wants its
- *   own transparency model — but no engine program reads it, and in particular the forward stage does not multiply it
- *   into the fragment alpha (doing so made a shared material translucent for every drawable at once, while the sort
- *   order the engine computes is the opacity's).
- * - Fields the shading never read were removed rather than left declared: an ABI member that promises an effect has
- *   to have one (the removed trio was emissive / alphaMask / alphaMaskCutoff — no SDK accessor could set them and no
- *   stage read them, so a host that believed in them saw nothing).
+ * - Transparency's MAGNITUDE is not part of it: opacity is a per-drawable value (VineDrawBlock::params.x), because
+ *   one material is shared by every drawable that uses it. `base_color.a` is the material's own alpha, whose meaning
+ *   the alpha mode decides.
+ * - `flags` is a `uvec4` rather than four floats because its content is a bit map, not numbers: bits 0-4 are the
+ *   texture-set slots (base colour, metallic-roughness, normal, occlusion, emissive, in that order) and bits 8-9 are
+ *   the alpha mode (0 opaque, 1 mask, 2 blend). Bits 5-7 and 10-31 are reserved and written as zero.
+ * - The member DEFAULTS are the default material's values, and vn::graphics::Material's constructor states the same
+ *   ones: content without a material must look like content with a default one, so "the default material" has one
+ *   definition rather than two.
  */
 struct alignas(16) VineMaterialBlock
 {
-    std::array<float, 4> ambient{};  ///< xyz = colour, w = 1.
-    std::array<float, 4> diffuse{};  ///< xyz = colour, w = the material's own alpha (unread by the
-                                     ///< engine's programs, see the note above).
-    std::array<float, 4> specular{}; ///< xyz = colour, w = strength.
-    float                shininess{ 32.0f }; ///< Phong exponent.
+    std::array<float, 4>         base_color{ 0.8f, 0.8f, 0.8f, 1.0f }; ///< rgb = albedo, a = material alpha.
+    std::array<float, 4>         emissive{ 0.0f, 0.0f, 0.0f, 1.0f };   ///< rgb = emission, a = strength.
+    std::array<float, 4>         params{ 0.0f, 0.5f, 1.0f, 0.5f };     ///< x metallic, y roughness, z occlusion,
+                                                                       ///< w alpha cutoff.
+    std::array<std::uint32_t, 4> flags{}; ///< bit0-4 texture slots, bit8-9 alpha mode; rest reserved.
 
     /**
      * @brief Field-wise equality of two blocks.
@@ -174,10 +186,9 @@ struct alignas(16) VineMaterialBlock
      * @details
      * - A backend refreshes a material by comparing the block it WOULD send with the one the GPU already has, so this
      *   comparison is a type-level fact and not a backend detail.
-     * - Defaulted on purpose: a member added here (PBR's metallic/roughness, say) then enters the comparison by
-     *   itself, whereas a hand-written field list in the backend is a second copy of this layout that can silently
-     *   fall behind it — and its failure mode is a material edit that never reaches the GPU, i.e. a slider that does
-     *   nothing with nothing to see in a log.
+     * - Defaulted on purpose: a member added here then enters the comparison by itself, whereas a hand-written field
+     *   list in the backend is a second copy of this layout that can silently fall behind it — and its failure mode is
+     *   a material edit that never reaches the GPU, i.e. a slider that does nothing with nothing to see in a log.
      *
      * @param a Left block.
      * @param b Right block.
@@ -185,6 +196,13 @@ struct alignas(16) VineMaterialBlock
      */
     friend constexpr bool operator==(const VineMaterialBlock& a, const VineMaterialBlock& b) noexcept = default;
 };
+
+static_assert(sizeof(VineMaterialBlock) == 64U, "the material block is four 16-byte std140 rows");
+static_assert(alignof(VineMaterialBlock) == 16U, "every member is a vec4 row, so the block's alignment is 16");
+static_assert(offsetof(VineMaterialBlock, base_color) == 0U, "std140: the first row starts the block");
+static_assert(offsetof(VineMaterialBlock, emissive) == 16U, "std140: one vec4 row between the two");
+static_assert(offsetof(VineMaterialBlock, params) == 32U, "std140: the factor row follows the emission row");
+static_assert(offsetof(VineMaterialBlock, flags) == 48U, "std140: the flag row closes the block");
 
 /**
  * @brief How many typed lights one drawing call can have lit - the light block's slot count.
@@ -253,9 +271,6 @@ static_assert(offsetof(VineViewBlock, frame) == 272u, "VineViewBlock std140 offs
 static_assert(sizeof(VineDrawBlock) == 80u, "VineDrawBlock must be 1 mat4 + 1 vec4");
 static_assert(alignof(VineDrawBlock) == 16u, "VineDrawBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineDrawBlock, params) == 64u, "VineDrawBlock std140 offset");
-static_assert(sizeof(VineMaterialBlock) == 64u, "VineMaterialBlock must be 3 vec4 + 1 float (std140 pads it to 64)");
-static_assert(alignof(VineMaterialBlock) == 16u, "VineMaterialBlock must stay std140 / D3D-cbuffer aligned");
-static_assert(offsetof(VineMaterialBlock, shininess) == 48u, "VineMaterialBlock std140 offset");
 static_assert(sizeof(VineShadowBlock) == 80u, "VineShadowBlock must be 1 mat4 + 1 vec4");
 static_assert(alignof(VineShadowBlock) == 16u, "VineShadowBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineShadowBlock, params) == 64u, "VineShadowBlock std140 offset");

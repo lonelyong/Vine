@@ -150,13 +150,13 @@ vn::intrusive_ptr<Scene> makeThreePartScene()
     geometry->clearPrimitives();
 
     const vn::intrusive_ptr<Material> fill(new Material());
-    fill->setDiffuse(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    fill->setBaseColor(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
     const vn::intrusive_ptr<Material> outline(new Material());
-    outline->setDiffuse(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F));
+    outline->setBaseColor(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F));
 
     const vn::intrusive_ptr<Material> markers(new Material());
-    markers->setDiffuse(vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F));
+    markers->setBaseColor(vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F));
 
     Primitive triangles;
     triangles.topology = Topology::Triangles;
@@ -180,7 +180,7 @@ vn::intrusive_ptr<Scene> makeThreePartScene()
     geometry->bumpRevision();
 
     const vn::intrusive_ptr<Material> inherited(new Material());
-    inherited->setDiffuse(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    inherited->setBaseColor(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
 
     const vn::intrusive_ptr<StateNode> state(new StateNode());
     state->setMaterial(inherited);
@@ -287,7 +287,7 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
     markers.topology = Topology::Points;
     markers.indices  = Primitive::IndexSpan::slice(arena, 0U, 4U);
     const vn::intrusive_ptr<Material> blue(new Material());
-    blue->setDiffuse(vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F));
+    blue->setBaseColor(vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F));
     markers.material = blue;
     geometry->addPrimitive(markers);
     geometry->bumpRevision();
@@ -346,7 +346,7 @@ TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
         quad.topology = topology;
         quad.indices  = Primitive::IndexSpan::slice(arena, 0U, arena->size());
         const vn::intrusive_ptr<Material> red(new Material());
-        red->setDiffuse(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+        red->setBaseColor(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
         quad.material = red;
         geometry->addPrimitive(quad);
         geometry->bumpRevision();
@@ -401,7 +401,7 @@ TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
     edge.topology = Topology::Lines;
     edge.indices  = Primitive::IndexSpan::slice(arena, 0U, 2U);
     const vn::intrusive_ptr<Material> blue(new Material());
-    blue->setDiffuse(vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F));
+    blue->setBaseColor(vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F));
     edge.material = blue;
     geometry->addPrimitive(edge);
     geometry->bumpRevision();

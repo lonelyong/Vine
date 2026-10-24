@@ -1708,21 +1708,44 @@ TEST(RayIntersectionTest, TheLayerMaskSelectsWhatIsPicked)
 
 TEST(MaterialTest, Defaults)
 {
+    // The defaults are the ones the ABI block states (ShaderAbi.hpp): content with no material and content with a
+    // default one look the same, so "the default material" has one definition rather than two.
     Material mat;
-    EXPECT_NEAR(mat.shininess(), 32.0f, 1e-6f);
-    EXPECT_NEAR(mat.diffuse().r, 0.8f, 1e-6f);
+    EXPECT_FLOAT_EQ(mat.baseColor().r, 0.8f);
+    EXPECT_FLOAT_EQ(mat.baseColor().a, 1.0f);
+    EXPECT_FLOAT_EQ(mat.emissive().r, 0.0f);
+    EXPECT_FLOAT_EQ(mat.emissive().a, 1.0f) << "the default strength is 1, on a colour that emits nothing";
+    EXPECT_FLOAT_EQ(mat.metallic(), 0.0f);
+    EXPECT_FLOAT_EQ(mat.roughness(), 0.5f) << "the geometry-side PbrMaterial states the same default";
+    EXPECT_FLOAT_EQ(mat.occlusion(), 1.0f);
+    EXPECT_EQ(mat.alphaMode(), AlphaMode::Opaque);
+    EXPECT_FLOAT_EQ(mat.alphaCutoff(), 0.5f);
+    EXPECT_EQ(mat.texture(), nullptr);
+    EXPECT_EQ(mat.revision(), 0u);
 }
 
 TEST(MaterialTest, Setters)
 {
     Material mat;
     mat.setName(u8"red");
-    mat.setDiffuse(Colorf(1.0f, 0.0f, 0.0f, 1.0f));
-    mat.setShininess(64.0f);
+    mat.setBaseColor(Colorf(1.0f, 0.0f, 0.0f, 0.5f));
+    mat.setEmissive(Colorf(0.2f, 0.1f, 0.0f, 2.0f));
+    mat.setMetallic(0.75f);
+    mat.setRoughness(0.25f);
+    mat.setOcclusion(0.5f);
+    mat.setAlphaMode(AlphaMode::Blend);
+    mat.setAlphaCutoff(0.125f);
 
     EXPECT_EQ(mat.name(), u8"red");
-    EXPECT_NEAR(mat.diffuse().r, 1.0f, 1e-6f);
-    EXPECT_NEAR(mat.shininess(), 64.0f, 1e-6f);
+    EXPECT_FLOAT_EQ(mat.baseColor().r, 1.0f);
+    EXPECT_FLOAT_EQ(mat.baseColor().a, 0.5f);
+    EXPECT_FLOAT_EQ(mat.emissive().b, 0.0f);
+    EXPECT_FLOAT_EQ(mat.emissive().a, 2.0f) << "emissive alpha is the STRENGTH, not an opacity";
+    EXPECT_FLOAT_EQ(mat.metallic(), 0.75f);
+    EXPECT_FLOAT_EQ(mat.roughness(), 0.25f);
+    EXPECT_FLOAT_EQ(mat.occlusion(), 0.5f);
+    EXPECT_EQ(mat.alphaMode(), AlphaMode::Blend);
+    EXPECT_FLOAT_EQ(mat.alphaCutoff(), 0.125f);
 }
 
 TEST(MaterialTest, CarriesTheTextureItSamples)
@@ -1755,30 +1778,36 @@ TEST(MaterialTest, TheRevisionMovesWhenAShadingValueChanges)
     Material mat;
     EXPECT_EQ(mat.revision(), 0u) << "a material nobody changed has not changed";
 
-    mat.setDiffuse(Colorf(1.0f, 0.0f, 0.0f, 1.0f));
+    mat.setBaseColor(Colorf(1.0f, 0.0f, 0.0f, 1.0f));
     EXPECT_EQ(mat.revision(), 1u);
-    mat.setSpecular(Colorf(0.5f, 0.5f, 0.5f, 1.0f));
-    mat.setAmbient(Colorf(0.1f, 0.1f, 0.1f, 1.0f));
-    mat.setShininess(8.0f);
+    mat.setEmissive(Colorf(0.0f, 0.0f, 1.0f, 1.0f));
+    mat.setMetallic(0.5f);
+    mat.setRoughness(0.1f);
+    mat.setOcclusion(0.75f);
+    mat.setAlphaMode(AlphaMode::Mask);
+    mat.setAlphaCutoff(0.25f);
     mat.setTexture(texture);
-    EXPECT_EQ(mat.revision(), 5u) << "every shading value that moved is one edit";
+    EXPECT_EQ(mat.revision(), 8u) << "every shading value that moved is one edit";
 
     // Same values again: nothing changed, so nothing moves. This is what keeps a host that re-applies its settings
     // every frame from rebuilding every material row every frame.
-    mat.setDiffuse(Colorf(1.0f, 0.0f, 0.0f, 1.0f));
-    mat.setSpecular(Colorf(0.5f, 0.5f, 0.5f, 1.0f));
-    mat.setAmbient(Colorf(0.1f, 0.1f, 0.1f, 1.0f));
-    mat.setShininess(8.0f);
+    mat.setBaseColor(Colorf(1.0f, 0.0f, 0.0f, 1.0f));
+    mat.setEmissive(Colorf(0.0f, 0.0f, 1.0f, 1.0f));
+    mat.setMetallic(0.5f);
+    mat.setRoughness(0.1f);
+    mat.setOcclusion(0.75f);
+    mat.setAlphaMode(AlphaMode::Mask);
+    mat.setAlphaCutoff(0.25f);
     mat.setTexture(texture);
-    EXPECT_EQ(mat.revision(), 5u) << "re-applying what the material already holds is not an edit";
+    EXPECT_EQ(mat.revision(), 8u) << "re-applying what the material already holds is not an edit";
 
     // A name is a label, not shading.
     mat.setName(u8"red");
-    EXPECT_EQ(mat.revision(), 5u) << "renaming a material is not a shading change";
+    EXPECT_EQ(mat.revision(), 8u) << "renaming a material is not a shading change";
 
     // Clearing the texture is a change (the picture loses its map).
     mat.setTexture(nullptr);
-    EXPECT_EQ(mat.revision(), 6u);
+    EXPECT_EQ(mat.revision(), 9u);
 }
 
 // ============ Material inheritance ============

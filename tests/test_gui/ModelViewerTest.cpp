@@ -832,7 +832,7 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     ASSERT_NE(geometry->material(), nullptr);
     EXPECT_NE(geometry->material(), original) << "选中要看得见：材质换成了高亮那份";
     const vn::graphics::Material* const highlight_material = geometry->material();
-    const vn::Colorf highlight_colour = geometry->material()->diffuse();
+    const vn::Colorf highlight_colour = geometry->material()->baseColor();
     EXPECT_GT(highlight_colour.r, highlight_colour.b) << "高亮是暖色（橙），与中灰的模型分得开";
 
     // ③ 点空白（角落）：取消选择，材质**原样**还回去。
@@ -873,7 +873,7 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     EXPECT_EQ(view->selectedGeometry(), geometry);
     ASSERT_NE(geometry->material(), nullptr);
     EXPECT_EQ(geometry->material(), highlight_material) << "高亮材质是视图自己那一份，跨次拾取复用";
-    EXPECT_EQ(geometry->material()->diffuse().r, highlight_colour.r);
+    EXPECT_EQ(geometry->material()->baseColor().r, highlight_colour.r);
 }
 
 /// 记录它拿到的目标：命令实例随执行销毁，所以记在静态上（用例自己清零）。

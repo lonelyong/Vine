@@ -277,7 +277,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -457,7 +457,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -674,7 +674,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
           right_pipeline.get(), &right_draws },
     };
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -919,7 +919,7 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     StateRegistry second_registry(pool);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -1100,9 +1100,9 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "void main() { outColor = vec4(material.diffuse.rgb, 1.0); }\n"));
+            "void main() { outColor = vec4(material.base_color.rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -1150,7 +1150,7 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     // A colour the CLEAR's channels do not match, so a role read from the wrong binding cannot pass: the clear
     // is (0.25, 0.5, 0.75) and the material is its mirror in red and blue.
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -2305,7 +2305,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
             "#ifdef VINE_DIFFUSE_MAP\n"
             "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
@@ -2315,7 +2315,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
             "#ifdef VINE_DIFFUSE_MAP\n"
             "    outColor = vec4(texture(diffuseMap, uv).rgb, 1.0);\n"
             "#else\n"
-            "    outColor = vec4(material.diffuse.rgb, 1.0);\n"
+            "    outColor = vec4(material.base_color.rgb, 1.0);\n"
             "#endif\n"
             "}\n"));
         program->addStage(vertex);
@@ -2375,7 +2375,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     const vn::intrusive_ptr<Material> textured_material(new Material());
     textured_material->setTexture(texture);
     const vn::intrusive_ptr<Material> plain_material(new Material());
-    plain_material->setDiffuse(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    plain_material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     MaterialFacts          textured_material_facts;
     MaterialFacts          plain_material_facts;
@@ -2613,10 +2613,10 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
             "layout(set = 0, binding = 1) uniform sampler2D map_tex;\n"
-            "void main() { outColor = vec4(texture(map_tex, vec2(0.5, 0.5)).rgb * material.diffuse.rgb, 1.0); }\n"));
+            "void main() { outColor = vec4(texture(map_tex, vec2(0.5, 0.5)).rgb * material.base_color.rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -2661,7 +2661,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
+    material->setBaseColor(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -2820,10 +2820,10 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
             "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
-            "void main() { outColor = vec4(texture(diffuseMap, vec2(0.5, 0.5)).rgb * material.diffuse.rgb, 1.0); }\n"));
+            "void main() { outColor = vec4(texture(diffuseMap, vec2(0.5, 0.5)).rgb * material.base_color.rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -2865,7 +2865,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
+    material->setBaseColor(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
     ASSERT_EQ(material->texture(), nullptr) << "the material this case shades has no map (that is the point)";
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
@@ -3065,25 +3065,25 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
         u8"layout(location = 0) out vec4 outColor;\n"
         u8"layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
         u8"{\n"
-        u8"    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+        u8"    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
         u8"} material;\n"
         u8"layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
         u8"layout(set = 0, binding = 3) uniform sampler2D shadow_map;\n"
         u8"void main() {\n"
         u8"    vec3  albedo = texture(diffuseMap, vec2(0.5, 0.5)).rgb;\n"
         u8"    float mapped = texture(shadow_map, vec2(0.5, 0.5)).r;\n"
-        u8"    outColor = vec4(albedo * material.diffuse.rgb * mapped, 1.0);\n"
+        u8"    outColor = vec4(albedo * material.base_color.rgb * mapped, 1.0);\n"
         u8"}\n");
     const vn::intrusive_ptr<ShaderProgram> unshadowed_program = make_program(
         u8"layout(location = 0) out vec4 outColor;\n"
         u8"layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
         u8"{\n"
-        u8"    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+        u8"    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
         u8"} material;\n"
         u8"layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
         u8"void main() {\n"
         u8"    vec3 albedo = texture(diffuseMap, vec2(0.5, 0.5)).rgb;\n"
-        u8"    outColor = vec4(albedo * material.diffuse.rgb, 1.0);\n"
+        u8"    outColor = vec4(albedo * material.base_color.rgb, 1.0);\n"
         u8"}\n");
     ProgramFacts shadow_facts;
     ProgramFacts unshadowed_facts;
@@ -3110,7 +3110,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
+    material->setBaseColor(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
     ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
@@ -4108,21 +4108,21 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
         << static_cast<int>(untouched.g) << ", " << static_cast<int>(untouched.b) << ")";
 }
 
-TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
+TEST(ContentPassTest, TheMaterialsReflectanceReachesBothPaths)
 {
-    // `Material::specular()` has documented "A is intensity" since the SDK's first release, and until
-    // 2026-09-25 NO engine program read it (registered as D2): the highlight was the colour alone, so a host
-    // asking for a weaker reflection had only `shininess` to reach for. This case pins the wiring in BOTH
-    // paths the engine shades with - the forward lit program and the G-buffer writer + its lighting pass -
-    // because "one fact, one spelling" is the point: the deferred attachment carries the colour ALREADY
-    // scaled, and the forward program scales the same two factors into its sum.
+    // The material's highlight is the reflectance its factors imply (`vineMaterialF0`): a dielectric's 0.04
+    // grey, a metal's own base colour. This case pins that the base colour reaches the shading in BOTH paths the
+    // engine draws with - the forward lit program and the G-buffer writer + its lighting pass - because "one
+    // fact, one spelling" is the point: the writer stores the reflectance in its attachment, and the forward
+    // program derives the same value into its sum.
     //
-    // The material is chosen so the answer is one multiplication wide: albedo is BLACK (the ambient fill and
-    // the sun's diffuse term multiply it to zero), the specular colour is WHITE, and the geometry faces the
-    // camera with the sun straight behind the lens - so `L`, the view direction and the normal all point the
-    // same way, `dot(n, h) == 1` and `pow(..., shininess) == 1`: the lit value IS
-    // `sun_colour(0.5) x 1 x 1 x alpha`. Alpha 0.25 therefore lands on 0.125, and a path that ignores the
-    // alpha lands on 0.5.
+    // The material is chosen so the answer is one multiplication wide: it is METALLIC, so neither the ambient
+    // fill nor the sun's diffuse term contributes and the reflectance IS the base colour; and the geometry faces
+    // the camera with the sun straight behind the lens - so `L`, the view direction and the normal all point the
+    // same way, `dot(n, h) == 1` and `pow(..., shininess) == 1`: the lit value IS `sun_colour(0.5) x base`. A
+    // black base therefore lands on 0 and a quarter-grey one on 0.125; a path that ignored the material's
+    // factors would draw the 0.8 grey default and land on 0.4 (and one that kept a metal's diffuse lobe would
+    // land on 0.25 for the quarter material - 64, not 32).
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
@@ -4164,12 +4164,14 @@ TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
     camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
 
+    // A metal's reflectance IS its base colour (a dielectric would add its own diffuse lobe on top, which this
+    // one-multiplication case wants out of the way): black reflects nothing, a quarter grey reflects a quarter.
     const vn::intrusive_ptr<Material> black_material(new Material());
-    black_material->setDiffuse(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    black_material->setSpecular(vn::Colorf(1.0F, 1.0F, 1.0F, 0.0F));    // alpha 0: reflects NOTHING
+    black_material->setBaseColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    black_material->setMetallic(1.0F);
     const vn::intrusive_ptr<Material> quarter_material(new Material());
-    quarter_material->setDiffuse(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    quarter_material->setSpecular(vn::Colorf(1.0F, 1.0F, 1.0F, 0.25F));   // a quarter of the reflection
+    quarter_material->setBaseColor(vn::Colorf(0.25F, 0.25F, 0.25F, 1.0F));
+    quarter_material->setMetallic(1.0F);
 
     // The engine's own programs: the forward one shades a lit target directly, the G-buffer writer and its
     // lighting are the deferred pair.
@@ -4429,17 +4431,17 @@ TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
     };
     const Rgba8 silent = forward_black->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
     EXPECT_TRUE(near(silent.r, 0.0) && near(silent.g, 0.0) && near(silent.b, 0.0))
-        << "alpha 0 must reflect nothing, got (" << static_cast<int>(silent.r) << ", "
+        << "a black metal must reflect nothing, got (" << static_cast<int>(silent.r) << ", "
         << static_cast<int>(silent.g) << ", " << static_cast<int>(silent.b)
-        << ") - 0.5 here means the forward program still ignores the intensity";
+        << ") - 0.4 here means the material's factors never reached the shader";
     const Rgba8 quarter = forward_quarter->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
     EXPECT_TRUE(near(quarter.r, 0.125) && near(quarter.g, 0.125) && near(quarter.b, 0.125))
-        << "alpha 0.25 must land on sun_colour x alpha = 0.125, got (" << static_cast<int>(quarter.r) << ", "
-        << static_cast<int>(quarter.g) << ", " << static_cast<int>(quarter.b) << ")";
+        << "a quarter-grey metal must land on sun_colour x base = 0.125, got (" << static_cast<int>(quarter.r)
+        << ", " << static_cast<int>(quarter.g) << ", " << static_cast<int>(quarter.b) << ")";
     const Rgba8 shaded = deferred->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
     EXPECT_TRUE(near(shaded.r, 0.125) && near(shaded.g, 0.125) && near(shaded.b, 0.125))
         << "the DEFERRED path must shade the same value (the G-buffer's specular attachment carries the "
-           "colour already scaled by the intensity), got ("
+           "reflectance the forward term derives), got ("
         << static_cast<int>(shaded.r) << ", " << static_cast<int>(shaded.g) << ", " << static_cast<int>(shaded.b)
         << ") - 0.5 here means the writer folded nothing";
 }
@@ -5413,7 +5415,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
-            "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
+            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
             "#ifdef VINE_DIFFUSE_MAP\n"
             "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
@@ -5423,7 +5425,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
             "#ifdef VINE_DIFFUSE_MAP\n"
             "    outColor = vec4(texture(diffuseMap, uv).rgb, 1.0);\n"
             "#else\n"
-            "    outColor = vec4(material.diffuse.rgb, 1.0);\n"
+            "    outColor = vec4(material.base_color.rgb, 1.0);\n"
             "#endif\n"
             "}\n"));
         program->addStage(vertex);
@@ -5447,7 +5449,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     const vn::intrusive_ptr<Material> textured_material(new Material());
     textured_material->setTexture(texture);
     const vn::intrusive_ptr<Material> plain_material(new Material());
-    plain_material->setDiffuse(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    plain_material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     // The host hands the store its live content, and nothing else: everything below reads its tables.
     vn::vsg::ContentStore store;
@@ -6639,7 +6641,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     ASSERT_FALSE(geometry->primitive(0)->isIndexed()) << "the fixture is the shape under test: no index arena exists";
 
     const vn::intrusive_ptr<Material> material(new Material());
-    material->setDiffuse(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
+    material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     vn::vsg::ContentStore store;
     store.track(geometry);

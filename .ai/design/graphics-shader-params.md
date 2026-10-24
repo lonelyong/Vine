@@ -63,7 +63,7 @@
 |---|---|---|
 | view | 相机矩阵、视口尺寸、时间 | 每 view |
 | draw | 模型矩阵、不透明度、点大小、用户槽 | 每 draw（ring + dynamic offset） |
-| material | 环境 / 漫反射 / 高光 / 光泽 | 每材质（去重后） |
+| material | base colour / emissive / metallic·roughness·occlusion·alpha cutoff / flags | 每材质（去重后） |
 | shadow | 光空间矩阵、阴影参数 | 每 pass |
 | lights | 一盏环境光 + `kMaxLights` 个带类型的灯（方向光 / 点光 / 聚光；位置与方向都在视图空间） | 每 view |
 
@@ -170,7 +170,7 @@ Vulkan 后端实现为映射 ring + dynamic offset；别的后端实现成 cbuff
 
 ### 3.6 F6–F7 `Material` 与用户扩展点
 
-`Material::set("Material.Diffuse", color)` 走名字表，既有 `setDiffuse()` 等字段糖保留、内部走同一入口；
+`Material::set("Material.BaseColor", color)` 走名字表，既有 `setBaseColor()` 等字段糖保留、内部走同一入口；
 未知名字与类型不符都在 `set()` 返回错误。用户扩展点是 draw 块的两个具名槽（`Draw.UserSlot0/1`）与一段
 保留 set/binding；用户自定义块只能落在保留段之外，占用即错误。
 
@@ -283,7 +283,7 @@ P0 已实现：参数块只有一处 GLSL 声明（`shaders/vine_params.glsl`，
 ### 9.2 已知缺口 / 待办
 
 P1（名字表与 `Material::set`、用户扩展点、`ParameterSink`）与 `VineLightsBlock` 上移都是触发条件型，见
-`../backlog/graphics.md` §2.5。材质块仍是 Phong：改 PBR 见 `graphics-material.md` F4 / backlog M1。
+`../backlog/graphics.md` §2.5。材质块已是 PBR（见 `graphics-material.md` F4），纹理集 / BRDF / 实例按该文 §9.2 的 M2–M4 推进。
 
 ### 9.3 兼容性 / 迁移
 

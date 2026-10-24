@@ -94,7 +94,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 
 ### 2.3 资源
 
-- `Material` —— Phong 参数（`ambient/diffuse/specular/shininess`）+ 可选 `Texture`。颜色改动是
+- `Material` —— metallic-roughness PBR 因子（`baseColor / emissive / metallic / roughness / occlusion /
+  alphaMode / alphaCutoff`）+ 可选 `Texture`；Phong 资产由导入器（`ModelScene.cpp` 的 `materialFrom`）按固定表
+  转换，引擎内只有一套材质语义。颜色改动是
   **动态**的：材质自己数自己的改动（`revision()`，每个 setter 先比较再决定要不要 ++，所以反复赋同值是零成本），
   后端每帧只比这一个数字，改了就在下一帧就地刷新 —— 改材质不需要任何重建，也不需要“通知后端”的调用。
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
@@ -246,7 +248,7 @@ GeometryPtr geometry(new Geometry());
 geometry->setPositions(packAttribute(positions));
 
 MaterialPtr material(new Material());
-material->setDiffuse(vn::Colorf(0.8f, 0.4f, 0.2f, 1.0f));
+material->setBaseColor(vn::Colorf(0.8f, 0.4f, 0.2f, 1.0f));
 
 // ② 场景图：transform → state → geometry（三层是惯例：位置 / 状态 / 叶子）。
 auto state = StateNodePtr(new StateNode());
@@ -374,8 +376,9 @@ compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 ```cpp
 // ① 规范 G-buffer：告警里说的 4 张彩色附件（albedo / view normal+shininess / specular / view position）
 //    + D24 深度。几何 program 必须写这 4 个输出。
-//    specular 附件装的是**颜色 × 强度**（`Material::specular()` 的 alpha）：光照侧直接乘它，
-//    所以前向与延迟两条路的高光强度一致（2026-09-25 接线）。
+//    albedo 附件装的是**漫反射项**（base colour × (1 - metallic)），specular 附件装的是 metallic-roughness
+//    推导出的反射率（`vineMaterialF0`：介质的 0.04 灰、金属的 base colour）：光照侧直接乘它们，
+//    所以前向与延迟两条路读的是同一份材质因子。
 //    位置的 w 是**契约的一半**：写过的像素写 1（清除留下的透明黑是 0），光照 program 用它区分
 //    "背景" 与 "几何"；距离判据做不到——相机贴住的像素视图位置就是 ~0（2026-09-25 修）。
 auto gbuffer = defaultGbufferTarget(width, height);
@@ -1359,7 +1362,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 的注释）。另外 cube map 在这里当 albedo 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。
 
 延迟（默认）路径还在左上角画**四格 G-buffer 预览**：按顺序是 albedo、视图法线+光泽（法线装在 rgb、`shininess/256` 装在
-alpha）、specular、视图位置。每格是一次全屏复制（`screenCopyProgram(n)`，n 就是**附件下标**），源是那条管线自己的
+alpha）、specular（反射率 F0）、视图位置。每格是一次全屏复制（`screenCopyProgram(n)`，n 就是**附件下标**），源是那条管线自己的
 G-buffer。判"有没有画"的看法线格和 albedo 格：法线格应是场景的法线（夹具那只 `(0,0,1)` 的四边形复制回来是**纯蓝**），
 albedo 格应是场景的颜色。位置格**天生就暗**——视图位置的 z 是负的（视图朝向的那根轴），复制进 8 位窗口时钳成 0 ——
 那不是"没画"。后三格**停在透明黑**（`(0,0,0,0)`，即附件的清屏值）才是接线断了：G-buffer 那道几何 pass 必须带

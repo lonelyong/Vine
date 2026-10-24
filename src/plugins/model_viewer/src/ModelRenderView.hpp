@@ -352,9 +352,9 @@ inline void ModelRenderView::selectAt(double nx, double ny)
         if (highlight_ == nullptr)
         {
             highlight_ = vn::make_intrusive<vn::graphics::Material>();
-            highlight_->setDiffuse(vn::Colorf(1.0f, 0.55f, 0.12f, 1.0f));
-            highlight_->setSpecular(vn::Colorf(0.10f, 0.10f, 0.10f, 1.0f));
-            highlight_->setShininess(16.0f);
+            // Roughness from the shininess this highlight used to state (16), by sqrt(2 / (n + 2)).
+            highlight_->setBaseColor(vn::Colorf(1.0f, 0.55f, 0.12f, 1.0f));
+            highlight_->setRoughness(0.333f);
         }
         selected_geometry_ = hit.geometry;
         selected_material_ = vn::intrusive_ptr<vn::graphics::Material>(hit.geometry->material());
@@ -414,9 +414,9 @@ inline void ModelRenderView::buildScene()
     // 文件里没声明材质的网格（STL 就是这种）补一份中灰：整棵子树共用**同一份**材质对象，后端能把它们
     // 归成一个批次；没有这一步，它们会落到引擎默认材质上（查看器不该让同一个模型有两种外观）。
     auto grey = vn::make_intrusive<vn::graphics::Material>();
-    grey->setDiffuse(vn::Colorf(0.72f, 0.74f, 0.78f, 1.0f));
-    grey->setSpecular(vn::Colorf(0.25f, 0.25f, 0.25f, 1.0f));
-    grey->setShininess(48.0f);
+    // Roughness from the shininess this fallback used to state (48), by sqrt(2 / (n + 2)).
+    grey->setBaseColor(vn::Colorf(0.72f, 0.74f, 0.78f, 1.0f));
+    grey->setRoughness(0.2f);
     applyDefaultMaterials(*converted.root, grey);
 
     auto root = converted.root;

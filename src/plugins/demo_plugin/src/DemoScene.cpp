@@ -353,9 +353,10 @@ addCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graphics::Text
     //
     // Sampling by the fragment's REFLECTED view direction (a mirror) is a different shading rule and
     // needs a program of its own; the engine's preset samples the direction the vertex stage supplies.
-    material->setDiffuse(vn::Colorf(0.45f, 0.45f, 0.45f, 1.0f));
-    material->setSpecular(vn::Colorf(0.12f, 0.12f, 0.12f, 1.0f));
-    material->setShininess(64.0f);
+    material->setBaseColor(vn::Colorf(0.45f, 0.45f, 0.45f, 1.0f));
+    // Roughness from the shininess this box used to state (64): sqrt(2 / (n + 2)) keeps the highlight
+    // width the old Phong material drew with.
+    material->setRoughness(0.174f);
     material->setTexture(std::move(texture));
     geometry->setMaterial(material);
 
@@ -435,8 +436,7 @@ void addDemoSkyBox(vn::graphics::Group* root, double radius, vn::intrusive_ptr<v
 
         auto material = vn::make_intrusive<vn::graphics::Material>();
         // White: the sky program is unlit and multiplies nothing, so the map IS the colour.
-        material->setDiffuse(vn::Colorf::kWhite);
-        material->setSpecular(vn::Colorf::kBlack);
+        material->setBaseColor(vn::Colorf::kWhite);
         material->setTexture(std::move(cube));
         geometry->setMaterial(material);
         // The SDK's built-in sky program (BuiltinShaders::skyboxProgram): unlit, samples the material's
@@ -526,13 +526,11 @@ addBox(vn::graphics::Group* root, const vn::Colorf& diffuse, const vn::String& n
     geometry->addPrimitive(std::move(draw));
 
     auto material = vn::make_intrusive<vn::graphics::Material>();
-    material->setDiffuse(diffuse);
-    // Matte plastic: a low grey specular keeps lit surfaces looking solid.
-    // The Material default specular is pure white, which makes the deferred
-    // specular G-buffer attachment read all-white and paints broad white
-    // highlights that read as glass / see-through on opaque boxes.
-    material->setSpecular(vn::Colorf(0.12f, 0.12f, 0.12f, 1.0f));
-    material->setShininess(64.0f);
+    // Matte plastic: a low roughness keeps the highlight tight while the default dielectric reflectance
+    // (0.04) stops it from painting the broad white patches that read as glass / see-through on opaque
+    // boxes. Roughness from the shininess this box used to state (64), by sqrt(2 / (n + 2)).
+    material->setBaseColor(diffuse);
+    material->setRoughness(0.174f);
     geometry->setMaterial(material);
 
     // Place the box with a MatrixTransform: the transform node carries the
@@ -1106,15 +1104,9 @@ void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
         auto overlay_root = vn::make_intrusive<vn::graphics::Group>();
         overlay->setRoot(overlay_root);
         const auto add_overlay_box = [overlay_root](const vn::Colorf& color, const vn::math::Vec3d& centre, double half) {
-            auto box = addBox(overlay_root.get(), color, u8"slot_overlay", centre, vn::math::Vec3d(half, half, half));
-            // Top (on-top) layers are lit by a pure ambient light: a WHITE
-            // ambient material makes ambientColor == diffuse == the box color.
-            if (auto* geometry = dynamic_cast<vn::graphics::Geometry*>(box->children().front().get())) {
-                if (auto* material = geometry->material(); material != nullptr) {
-                    material->setAmbient(vn::Colorf::kWhite);
-                    material->setSpecular(vn::Colorf::kBlack);
-                }
-            }
+            addBox(overlay_root.get(), color, u8"slot_overlay", centre, vn::math::Vec3d(half, half, half));
+            // On-top (depth-off) slots are lit by a pure ambient light, so the box colour that travelled
+            // through the material is exactly what lands on screen - nothing to override for the shading.
         };
         // Sparse, vivid boxes offset from the main cubes so the overlay is
         // clearly visible on top while tracking the main camera.
@@ -1178,15 +1170,9 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     auto overlay_root = vn::make_intrusive<vn::graphics::Group>();
     overlay->setRoot(overlay_root);
     const auto add_overlay_box = [overlay_root](const vn::Colorf& color, const vn::math::Vec3d& centre, const vn::math::Vec3d& half) {
-        auto box = addBox(overlay_root.get(), color, u8"mslot_overlay", centre, half);
-        // On-top (depth-off) slots are lit by a pure ambient light: a WHITE
-        // ambient material makes ambientColor == diffuse == the box colour.
-        if (auto* geometry = dynamic_cast<vn::graphics::Geometry*>(box->children().front().get())) {
-            if (auto* material = geometry->material(); material != nullptr) {
-                material->setAmbient(vn::Colorf::kWhite);
-                material->setSpecular(vn::Colorf::kBlack);
-            }
-        }
+        addBox(overlay_root.get(), color, u8"mslot_overlay", centre, half);
+        // On-top (depth-off) slots are lit by a pure ambient light, so the box colour that travelled
+        // through the material is exactly what lands on screen.
     };
     add_overlay_box(vn::Colorf(1.0f, 0.30f, 0.10f, 1.0f), vn::math::Vec3d(-2.4, -1.8, 0.9), vn::math::Vec3d(0.55, 0.55, 0.55));
     add_overlay_box(vn::Colorf(0.30f, 0.90f, 0.30f, 1.0f), vn::math::Vec3d(2.2, 1.6, 1.3), vn::math::Vec3d(0.45, 0.45, 0.45));

@@ -111,7 +111,7 @@ vn::intrusive_ptr<Geometry> quad()
 vn::intrusive_ptr<Material> material(vn::intrusive_ptr<Texture2D> texture = {})
 {
     const auto out = vn::intrusive_ptr<Material>(new Material());
-    out->setDiffuse(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    out->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
     if (texture != nullptr)
     {
         out->setTexture(texture);
