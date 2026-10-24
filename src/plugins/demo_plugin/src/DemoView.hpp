@@ -10,7 +10,6 @@
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/gui/DocumentView.hpp>
-#include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
 
 #include "DemoDocument.hpp"
@@ -30,8 +29,9 @@ namespace vn::demo
  *    `activate()` 再试）；
  *  - 会话起来之后才去装贴图（`assembleDemoContentLater()`，它自己等 attach 结束），重活仍在别的线程上。
  *
- * 显示期间它把这块控件发布到窗口上（`MainWindow::setPrimaryRenderControl()`）：这是给"想拿到当前 3D 视图"的
- * 插件用的读数（`test_plugin` 的实时渲染演示就是），下屏时收回去。
+ * 这块控件由视图自己回答给窗口（`activeRenderControl()`：本视图只有一个窗格）—— 窗口据此**派生**
+ * `primaryRenderControl()`，别的插件（`test_plugin` 的实时渲染演示就是）不必认识任何具体视图类；视图不再往窗口上
+ * 发布任何东西（没有发布槽，见 ADR-2026-10-24-command-target.md）。
  */
 class DemoView final : public vn::appfw::gui::DocumentView
 {
@@ -57,11 +57,14 @@ class DemoView final : public vn::appfw::gui::DocumentView
     /// 上屏：首次造骨架，并把"建会话 + 开内容"安排到**下一拍**（见 activate 的注释）。
     void activate() override;
 
-    /// 下屏：不再自称是窗口上的 3D 视图（会话留着，切回来就接着用）。
+    /// 下屏：没有窗口级状态要收（会话与场景留着，切回来就接着用）。
     void deactivate() override;
 
     /// @return 本视图自己的渲染控件。
     vn::appfw::gui::RenderControl* renderControl() const { return control_; }
+
+    /// @brief 命令该作用于的那块 3D 区：本视图只有一个窗格，所以就是它自己的控件。
+    vn::appfw::gui::RenderControl* activeRenderControl() override { return control_; }
 
   private:
     vn::appfw::gui::RenderControl* control_         = nullptr;
@@ -100,19 +103,13 @@ inline void DemoView::activate()
         }(this);
     }
 
-    if (auto* window = vn::appfw::gui::MainWindow::current(); window != nullptr && window->primaryRenderControl() != control_)
-    {
-        window->setPrimaryRenderControl(control_);
-    }
+    // 发布"当前 3D 视图"已取消：窗口**派生**回答（当前文档视图 → 活动窗格），视图不再往窗口里写任何东西 ——
+    // 单槽发布会让两个可见区域互相覆盖（见 ADR-2026-10-24-command-target.md）。
 }
 
 inline void DemoView::deactivate()
 {
-    if (auto* window = vn::appfw::gui::MainWindow::current();
-        window != nullptr && window->primaryRenderControl() == control_)
-    {
-        window->setPrimaryRenderControl(nullptr);
-    }
+    // 下屏的收尾：视图不持有任何窗口级状态，所以这里没有要收的东西（场景与会话留着，切回来接着用）。
 }
 
 /**

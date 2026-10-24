@@ -88,8 +88,8 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene> demo);
  * @brief The demo content a demo plugin hangs on the shell's render control: content, overlays, diagnostic passes
  * and pipeline.
  *
- * The demo belongs to a content plugin, not to the shell: the shell owns the window, the dock layout and the Ribbon
- * (and publishes the 3D view through MainWindow::primaryRenderControl()), while this class owns what that view draws.
+ * The demo belongs to a content plugin, not to the shell: the shell owns the window, the dock layout and the Ribbon,
+ * while this class owns what that view draws (the view answers the window through DocumentView::activeRenderControl()).
  *
  * ONE CONTENT VOCABULARY, TWO COMPOSITIONS. The forward and Deferred examples draw the same content
  * wherever both paths can draw it identically, and each adds the slices only it can use (buildScene is

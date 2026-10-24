@@ -88,6 +88,13 @@ class VN_APPFW_API DocumentView : public UIElement {
      *   itself into a window-wide slot any more.
      * - A 2D view (and a view that draws nothing) returns null - "this view has no 3D area" - which is a legal
      *   answer, not a failure.
+     * - The answer is NOT gated on activation: it is a query and not state that switches off, so an off-screen view
+     *   returns the same control before and after `activate()`. WHO may ask is the caller's decision - `MainWindow::
+     *   primaryRenderControl()` asks only the host's current view, so an inactive view is never consulted.
+     * - Do not ask the window "am I the one on screen?" from inside `activate()`: the host CLEARS its current view
+     *   before calling activate() and installs the new one after, so there the window answers as if no document view
+     *   were current (its fallback), not for this view. Activation is already the signal - it is the callback you
+     *   are in.
      *
      * @return The active pane's render control, or null when this view has none.
      */

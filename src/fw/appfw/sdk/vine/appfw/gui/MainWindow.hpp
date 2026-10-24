@@ -37,28 +37,20 @@ class VN_APPFW_API MainWindow : public Window {
     raw_ptr<StatusBar>        statusBar() const;
     raw_ptr<DockPanelManager> dockPanelManager() const;
 
-    /** @brief Registers the control the SHELL itself shows when no document view is up.
+    /** @brief Returns the 3D area a command should act on, or nullptr when there is none.
      *
      * @details
-     * - A document view is NOT registered here: the window answers with the shown document's view instead (see
-     *   primaryRenderControl), so a view never has to publish itself into a window-wide slot.
-     * - This setter is for the area the shell owns (the demo view, a host's own 3D page): it is the FALLBACK, used
-     *   when the central widget is not a document host or the current document has no 3D view.
+     * - DERIVED, not published: `central document host -> current view -> DocumentView::activeRenderControl()`.
+     *   "Which pane" is the view's answer, because it is the view that created the panes; the window only asks the
+     *   view that is on screen, so an off-screen view is never consulted and the answer stays single-valued even
+     *   when several areas exist.
+     * - NO ACTIVE DOCUMENT, NO TARGET: when the central area is not a document host, no view is shown, or the shown
+     *   view has no 3D area, the answer is nullptr. There is no "the shell's own 3D page" fallback: the central slot
+     *   is where the document host installs, and every 3D area in an application belongs to a view.
+     * - A command that needs this answer treats nullptr as "nothing to act on" and says so - it is the normal state
+     *   of a window with no document open, not a failure.
      *
-     * @param control The shell's own render control, or nullptr to clear.
-     */
-    void setPrimaryRenderControl(RenderControl* control);
-
-    /** @brief Gets the 3D area commands should act on: the shown document view's active pane, else the shell's own.
-     *
-     * @details
-     * - DERIVED, not published: the answer is `central document host -> current view -> activeRenderControl()`,
-     *   which is where "which pane" belongs (the view created it - see DocumentView::activeRenderControl). Only when
-     *   there is no document view (or it has no 3D area) does the explicitly registered fallback answer.
-     * - That makes the query single-valued even when several areas exist: a document view with two panes answers its
-     *   active one, and a view that is not on screen cannot answer at all.
-     *
-     * @return The active render control, or nullptr when no 3D area is showing.
+     * @return The active render control of the shown view, or nullptr when no view with a 3D area is on screen.
      */
     RenderControl* primaryRenderControl() const;
 

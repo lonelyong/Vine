@@ -29,9 +29,9 @@ inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wi
  * `registerCommand<T>()`：一处说得清、可读、用例也能照做（见 ModelViewerPlugin）。名字是下面那几个常量。
  *
  * **作用在哪个视图上**：控制器那个视图（`RenderControl::view()`）—— 一块渲染区只画一幅画（多格已下线，见
- * `RenderSurface`）。`primaryRenderControl()`（"谁上屏谁发布"）仍然用来找**窗口**上那块 3D 控件 —— 那是框架给的
- * 通道（那接口的注释就是"让别的插件够到渲染引擎/场景，不必依赖 app_shell 内部"）。于是这条命令不需要认识任何
- * 具体视图类。两道守卫让它不会改错东西：
+ * `RenderSurface`）。`primaryRenderControl()`（"当前文档视图 → 它的活动窗格"，派生回答）仍然用来找**窗口**上那块
+ * 3D 控件 —— 那是框架给的通道（那接口的注释就是"让别的插件够到渲染引擎/场景，不必依赖 app_shell 内部"）。于是
+ * 这条命令不需要认识任何具体视图类。两道守卫让它不会改错东西：
  *
  *  - 当前文档不是模型文档 ⇒ `NotApplicable`：演示文档的视图不该被模型查看器的命令改掉；
  *  - 还没有视图上屏（文档开着但没显示过）⇒ 同样 `NotApplicable`，并说清原因（不静默）。

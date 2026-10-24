@@ -292,3 +292,37 @@ TEST(DocumentViewTest, ATypeWithoutAViewGetsAPageThatNamesIt)
                                                                      << message.toStdString();
     EXPECT_TRUE(message.contains(QStringLiteral("没有注册视图")));
 }
+
+TEST(DocumentViewTest, NoActiveDocumentMeansNoCommandTarget)
+{
+    // 窗口的 3D 区是**派生**的（当前文档视图 → 它的活动窗格），不是谁发布进窗口的槽：没有当前文档就没有可回答的
+    // 东西 —— "没有目标"是正常状态，不是失败。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+    EXPECT_EQ(window.primaryRenderControl(), nullptr) << "没有当前文档：没有目标";
+
+    // 文档活跃，但它的视图是 2D（不回答 3D 区）⇒ 仍然没有目标：**文档活跃 ≠ 有 3D 目标**。
+    vn::appfw::Document* document = openDocument(documents, kShownType);
+    ASSERT_NE(document, nullptr);
+    ASSERT_TRUE(documents.setCurrent(document));
+    ASSERT_NE(host.currentView(), nullptr) << "视图在屏幕上";
+    EXPECT_EQ(window.primaryRenderControl(), nullptr) << "这个视图没有 3D 区可回答";
+
+    // 文档不再活跃 ⇒ 回到"没有目标"。视图对象还在（视图不随激活消失），只是没人问它。
+    ASSERT_TRUE(documents.setCurrent(nullptr));
+    EXPECT_EQ(host.currentView(), nullptr);
+    EXPECT_EQ(book.destroyed, 0) << "下屏不是销毁";
+    EXPECT_EQ(window.primaryRenderControl(), nullptr);
+}

@@ -34,7 +34,6 @@ struct MainWindow::Impl : public WindowData {
     std::unique_ptr<RibbonBar>        ribbon_bar;
     std::unique_ptr<StatusBar>        status_bar;
     std::unique_ptr<DockPanelManager> dock_panel_mgr;
-    RenderControl*                    primary_render_control = nullptr;
 
     ~Impl();
 };
@@ -137,28 +136,23 @@ raw_ptr<DockPanelManager> MainWindow::dockPanelManager() const
     return dptr()->dock_panel_mgr.get();
 }
 
-void MainWindow::setPrimaryRenderControl(RenderControl* control)
-{
-    dptr()->primary_render_control = control;
-}
-
 RenderControl* MainWindow::primaryRenderControl() const
 {
-    // DERIVED, in one place: the shown document's view answers which of its panes is active, and the explicitly
-    // registered control is only the shell's own area (see the header's contract). A view that published itself
-    // here instead made the answer the LAST publisher's, which two visible areas cannot share.
-    if (const DockPanelManager* docks = dockPanelManager()) {
-        if (UIElement* central = docks->centralWidget()) {
-            if (auto* host = dynamic_cast<CentralDocumentHost*>(central)) {
-                if (DocumentView* view = host->currentView()) {
-                    if (RenderControl* active = view->activeRenderControl()) {
-                        return active;
-                    }
-                }
-            }
-        }
+    // DERIVED in one place: the shown document's view answers which of its panes is active (see the header). No
+    // fallback slot - with no document view on screen there is nothing for a command to act on.
+    const DockPanelManager* docks = dockPanelManager();
+    if (docks == nullptr) {
+        return nullptr;
     }
-    return dptr()->primary_render_control;
+
+    UIElement* central = docks->centralWidget();
+    auto*      host    = dynamic_cast<CentralDocumentHost*>(central);
+    if (host == nullptr) {
+        return nullptr;
+    }
+
+    DocumentView* view = host->currentView();
+    return view != nullptr ? view->activeRenderControl() : nullptr;
 }
 
 inline auto MainWindow::dptr() -> Impl*

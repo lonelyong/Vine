@@ -464,7 +464,7 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     ASSERT_NE(docks, nullptr);
     vn::appfw::gui::CentralDocumentHost host(*documents, *views, *docks);
 
-    // 打开并显示一份模型：宿主显示 ⇒ 视图 activate() ⇒ 把它的控件发布成"当前 3D 视图"。
+    // 打开并显示一份模型：宿主显示 ⇒ 视图 activate() ⇒ 它自己成为“宿主当前视图”。
     ASSERT_NE(openModel(*documents, u8"立方体", vn::model_viewer::makeBoxMesh()), nullptr);
     auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
     ASSERT_NE(view, nullptr);
@@ -473,10 +473,11 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     auto* scene_view = control->view();
     ASSERT_NE(scene_view, nullptr);
     ASSERT_NE(scene_view->chain(), nullptr) << "上屏之后视图该有自己的默认管线";
-    // 命令靠"宿主发布的那个当前 3D 视图"找到要改的东西，所以先把这两件事说清楚：现在的主窗口就是这一个，
-    // 而这份文档的控件被发布在它上面（视图在 activate() 里发布）。
+    // 命令靠“窗口**派生**出的那块 3D 区”找到要改的东西：当前文档 → 它的视图 → 视图回答的活动窗格（视图不再往
+    // 窗口上发布任何东西，见 ADR-2026-10-24-command-target.md），所以先把这两件事说清楚：现在的主窗口就是这一个，
+    // 而这份文档的视图正在上屏。
     ASSERT_EQ(vn::appfw::gui::MainWindow::current(), &window);
-    ASSERT_EQ(window.primaryRenderControl(), control) << "视图上屏时该把自己的控件发布到主窗口（命令层的唯一入口）";
+    ASSERT_EQ(window.primaryRenderControl(), control) << "视图上屏时，窗口从当前视图派生出它的控件（命令层的唯一入口）";
 
     // 命令按名字注册（插件自己的自动登记队列只在插件模块里 flush，这里是可执行文件 ⇒ 用例显式登记）。
     ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingLitCommand>(
@@ -546,8 +547,8 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     const auto refused = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeWireframeCommand));
     EXPECT_EQ(refused.status(), vn::appfw::CommandStatus::NotApplicable);
     EXPECT_FALSE(refused.message().empty()) << "要说清为什么（不静默）";
-    // 下屏的另一半：视图 deactivate() 时把自己发布的那个收回，窗口上不该留下已经下屏的控件。
-    EXPECT_EQ(window.primaryRenderControl(), nullptr) << "下屏时该把发布出去的控件收回去";
+    // 没有当前文档就没有上屏的视图：窗口不再回答任何 3D 区 —— 不是谁“收回”了，是没有人被问到。
+    EXPECT_EQ(window.primaryRenderControl(), nullptr) << "没有上屏的视图时窗口没有 3D 区可回答";
 }
 
 TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)

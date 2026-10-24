@@ -143,9 +143,9 @@ class ModelPickManipulator final : public vn::graphics::CameraManipulator
  *  - **自带灯与帧率读数**：灯挂在场景上（`scene->addLighting(LightRig::studio())`，没人装就只有后端的常量填充，
  *    画面是一片平色），帧率读数由**控件的查看器预设**提供（`control_->setViewerOptions(... .stats = true)`，
  *    尺寸与比例归链维护）—— 读数归本视图，因为"这一份文档的帧率"就是这一块渲染面的帧率。
- *  - **发布"当前 3D 视图"**：上屏时把这块控件发布给窗口（`MainWindow::setPrimaryRenderControl()`），下屏时收回
- *    （与 `DemoView` 同一形状）—— 于是别的插件（本插件的"显示模式"命令、`test_plugin` 的实时渲染演示）不必认识
- *    任何具体视图类，就能拿到当前那块渲染面。
+ *  - **回答"命令该作用在哪块区"**：`activeRenderControl()` 返回本视图自己的控件（本视图只有一个窗格）；窗口据此
+ *    **派生**出 `primaryRenderControl()`，本视图不再往窗口上发布任何东西 —— 别的插件（本插件的"显示模式"命令、
+ *    `test_plugin` 的实时渲染演示）仍不必认识任何具体视图类，就能拿到当前那块渲染面。
  *  - **点击选中**：本视图自己带一个拾取型操纵器（`ModelPickManipulator`：导航原样转发给轨道操纵器，另外把"点击"
  *    交回本视图），点到谁就把谁的材质换成**高亮材质**（原来那份留着，落空或换选时原样还回去）。选择是**业务**（住
  *    在这份视图里），图形层只提供射线拾取（`Camera::screenToWorldRay` + `RayIntersection`）与材质 —— 框架里没有
