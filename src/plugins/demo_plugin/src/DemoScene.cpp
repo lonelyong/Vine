@@ -1269,10 +1269,6 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     // the write evidence the other three tiles give by being coloured.
     static const vn::String preview_labels[] = { u8"GBuffer.base_color", u8"GBuffer.normal",
                                                    u8"GBuffer.occlusion", u8"GBuffer.position" };
-    static const vn::graphics::ScreenCopyChannels preview_channels[] = {
-        vn::graphics::ScreenCopyChannels::All, vn::graphics::ScreenCopyChannels::All,
-        vn::graphics::ScreenCopyChannels::Alpha, vn::graphics::ScreenCopyChannels::All
-    };
     const double dpr   = render_control->devicePixelRatio();
     const int    pip_w = static_cast<int>(108.0 * dpr);
     const int    pip_h = static_cast<int>(61.0 * dpr);
@@ -1283,7 +1279,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
         // One copy program PER attachment: which attachment a fullscreen program reads is its
         // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
         // which target it is that binding of.
-        screen->setProgram(vn::graphics::screenCopyProgram(attachment, preview_channels[attachment]));
+        screen->setProgram(vn::graphics::screenCopyProgram(attachment, previewChannelsOf(attachment)));
         screen->addInputName(u8"GBuffer");
         auto image = vn::make_intrusive<vn::graphics::ImageRef>(preview_labels[attachment]);
         image->bind(target, attachment);
@@ -1485,7 +1481,10 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // Deferred preset: the builder's G-buffer pass published its MRT target
     // as "GBuffer". Draw each colour attachment as a small top-left preview so
     // the default demo shows the G-buffer alongside the lit window result
-    // (0 = albedo, 1 = view normal + shininess, 2 = specular, 3 = view pos).
+    // (0 = base colour, 1 = shading normal + roughness/metallic, 2 = emission + occlusion, 3 = view
+    // position - the packing is shaders/vine_gbuffer.glsl). WHICH CHANNELS a tile shows is
+    // `previewChannelsOf` (PreviewFit.hpp), the same answer the VINE_VSG_GBUFFER strip uses: attachment
+    // 2's content rides in its alpha, so a whole-texel copy of it is a black rectangle either way.
     // The four previews and the one layout step below keep them in step with the
     // window: a preview copies the WHOLE attachment, so its rectangle takes the
     // source's aspect (see fitPreviewRect) instead of squeezing it into the slot.
@@ -1507,8 +1506,9 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
             preview->setName(u8"gbuffer_preview");
             preview->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
             // One copy program per attachment: the sampler binding IS the attachment (see
-            // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of.
-            preview->setProgram(vn::graphics::screenCopyProgram(attachment));
+            // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of, and the
+            // CHANNELS it shows are the strip's (see previewChannelsOf).
+            preview->setProgram(vn::graphics::screenCopyProgram(attachment, previewChannelsOf(attachment)));
             preview->addInputName(u8"GBuffer");
             if (gbuffer != nullptr) {
                 auto image = vn::make_intrusive<vn::graphics::ImageRef>(u8"GBuffer.preview");

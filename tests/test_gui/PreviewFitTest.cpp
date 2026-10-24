@@ -14,6 +14,7 @@
 #include "PreviewFit.hpp"
 
 using vn::demo::fitPreviewRect;
+using vn::demo::previewChannelsOf;
 
 TEST(PreviewFitTest, AWiderSourceIsLetterboxedVertically)
 {
@@ -83,4 +84,17 @@ TEST(PreviewFitTest, AVeryThinSourceStillGetsAPixel)
     EXPECT_EQ(rect.height, 1) << "at least one pixel a side";
     EXPECT_EQ(rect.x, 0);
     EXPECT_EQ(rect.y, 1) << "centred: (4 - 1) / 2";
+}
+
+TEST(PreviewFitTest, TheEmissionRowsTileShowsItsOcclusion)
+{
+    // The strip and the VINE_VSG_GBUFFER overlay both ask this one function, and it was answered in two
+    // places once: the deferred strip kept copying attachment 2 whole, so the default demo showed a black
+    // tile whatever the pass did (attachment 2 is emission - HDR, zero without emitters - plus occlusion
+    // in its alpha, which is the write evidence a tile exists to show).
+    EXPECT_EQ(previewChannelsOf(0), vn::graphics::ScreenCopyChannels::All);
+    EXPECT_EQ(previewChannelsOf(1), vn::graphics::ScreenCopyChannels::All);
+    EXPECT_EQ(previewChannelsOf(2), vn::graphics::ScreenCopyChannels::Alpha)
+        << "attachment 2's content rides in its alpha (graphics-material.md 2.8)";
+    EXPECT_EQ(previewChannelsOf(3), vn::graphics::ScreenCopyChannels::All);
 }

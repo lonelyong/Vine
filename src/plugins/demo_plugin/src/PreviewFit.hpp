@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Viewport.hpp>
 
 /**
@@ -20,6 +21,27 @@
  */
 namespace vn::demo
 {
+
+/**
+ * @brief Which channels the preview of G-buffer attachment @p attachment shows.
+ *
+ * WHY IT IS NOT ALWAYS THE WHOLE TEXEL. Attachment 2 of the canonical G-buffer is emission (rgb) + occlusion
+ * (alpha) - graphics-material.md 2.8 - and emission is HDR with no emitters in this demo, so a copy of the
+ * whole texel is a rectangle that is BLACK whether the pass wrote it or not. Its alpha is the occlusion
+ * factor: 1 on every written, unoccluded pixel and 0 where the clear survived, which is the same "the pass
+ * wrote this" evidence the other tiles give by being coloured.
+ *
+ * WHY IT LIVES HERE, NEXT TO THE FIT. It is the same question as the letterbox arithmetic - what a preview
+ * tile SHOWS - and it was answered in two places (the deferred strip and the VINE_VSG_GBUFFER strip) once
+ * only, so one of them kept drawing the black tile. One function, both callers, one unit test.
+ *
+ * @param attachment Colour attachment index of the target being previewed.
+ * @return The channels the tile shows.
+ */
+[[nodiscard]] inline vn::graphics::ScreenCopyChannels previewChannelsOf(int attachment) noexcept
+{
+    return attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All;
+}
 
 /**
  * @brief Fits an @p source_width x @p source_height picture inside a slot, centred.
