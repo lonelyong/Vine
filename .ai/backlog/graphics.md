@@ -58,7 +58,9 @@
 | S4 | 第二个后端的 `ParameterSink` | cbuffer / `glUniform*` 等“写字节”实现 | 第二个后端出现（与 T15 同一触发） | `../design/graphics-shader-params.md` §3.5 |
 | S5 | `VineLightsBlock` 上移 SDK | 灯块的 GLSL 已归 `vine_params.glsl`，C++ 仍在后端 `LightBlock.hpp`；上移让布局与声明同模块 | 第二个后端需要同一份灯布局（与 T15 / S4 同一触发） | `../design/graphics-shader-params.md` §3.3 |
 | S6 | 逐灯阴影 / 点光阴影 | 今天只有一个投射灯、一张 2D 深度图：方向光（正交光相机）与聚光（透视光相机）都走它；点光需要六面 cube 深度目标 + 多矩阵阴影 ABI（6 个 `viewToLight` 或一个 cube 采样器），即层化目标能力。`Light::setCastShadow` 在点光上不建 pass 并报告 | 点光投影的真实需求，或第二个投射灯 | `../decisions/ADR-2026-10-24-light-block-typed-lights.md` |
-| S7 | 逐对象选灯 | 今天按声明顺序取前 8 盏，超出的按 episode 报掉落；一场灯很多时需要“选哪几盏照这个 draw” | 一次场景的灯数远超 8 且掉落可见地影响画面 | `../decisions/ADR-2026-10-24-light-block-typed-lights.md` || S8 | 光栅线宽 | Vulkan 的 `lineWidth` 是**烘焙进 pipeline** 的（`wideLines` 可选特性，`lineWidthRange` 常常只有 1.0），做它意味着 `RenderState::lineWidth` + `PipelineKey::line_width`，每宽度一个变体；真粗线（选中轮廓、骨架连线）更适合 quad 展开或专用 pass | 出现"必须靠光栅线宽才看得对"的图，且 quad 展开不可接受 | `../design/graphics-scene.md` §2.3.2 |
+| S7 | 逐对象选灯 | 今天按声明顺序取前 8 盏，超出的按 episode 报掉落；一场灯很多时需要"选哪几盏照这个 draw" | 一次场景的灯数远超 8 且掉落可见地影响画面 | `../decisions/ADR-2026-10-24-light-block-typed-lights.md` |
+| S8 | 光栅线宽 | Vulkan 的 `lineWidth` 是**烘焙进 pipeline** 的（`wideLines` 可选特性，`lineWidthRange` 常常只有 1.0），做它意味着 `RenderState::lineWidth` + `PipelineKey::line_width`，每宽度一个变体；真粗线（选中轮廓、骨架连线）更适合 quad 展开或专用 pass | 出现"必须靠光栅线宽才看得对"的图，且 quad 展开不可接受 | `../design/graphics-scene.md` §2.3.2 |
+
 ## 3. 下一 session 的第一条命令
 
 `git log --oneline -1` 确认在 `dev` 上；只从 §2 取一条，触发条件命中才做。全部未命中就不做。
