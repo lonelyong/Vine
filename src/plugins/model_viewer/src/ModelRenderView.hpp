@@ -143,7 +143,7 @@ class ModelPickManipulator final : public vn::graphics::CameraManipulator
  *  - **自带灯与帧率读数**：灯挂在场景上（`scene->addLighting(LightRig::studio())`，没人装就只有后端的常量填充，
  *    画面是一片平色），帧率读数由**控件的查看器预设**提供（`control_->setViewerOptions(... .stats = true)`，
  *    尺寸与比例归链维护）—— 读数归本视图，因为"这一份文档的帧率"就是这一块渲染面的帧率。
- *  - **回答"命令该作用在哪块区"**：`activeRenderControl()` 返回本视图自己的控件（本视图只有一个窗格）；窗口据此
+ *  - **回答"命令该作用在哪块区"**：`renderControl()` 返回本视图自己的控件（本视图只有一个窗格）；窗口据此
  *    **派生**出 `primaryRenderControl()`，本视图不再往窗口上发布任何东西 —— 别的插件（本插件的"显示模式"命令、
  *    `test_plugin` 的实时渲染演示）仍不必认识任何具体视图类，就能拿到当前那块渲染面。
  *  - **点击选中**：本视图自己带一个拾取型操纵器（`ModelPickManipulator`：导航原样转发给轨道操纵器，另外把"点击"
@@ -200,22 +200,16 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     void deactivate() override;
 
     /**
-     * @brief 命令该作用于的那块 3D 区：本视图只有一个窗格，所以就是它自己的控件。
+     * @brief 命令该作用于的那块 3D 区 —— 也就是本视图自己的渲染控件（本视图只有一个窗格）。
      *
      * @details
-     * - 视图回答“哪个窗格”才能让窗口**派生**出 `primaryRenderControl()`（见 ADR-2026-10-24-command-target.md）：
-     *   视图有多个窗格时在这里改答活动的那一个，框架不用动。
-     *
-     * @return 本视图的渲染控件。
-     */
-    vn::appfw::gui::RenderControl* activeRenderControl() override { return control_; }
-
-    /**
-     * @brief 本视图自己的渲染控件（自己的面/会话/设备）。
+     * - 窗口据此**派生**出 `primaryRenderControl()`（见 ADR-2026-10-24-command-target.md）：视图有多个窗格时在这里
+     *   改答用户最后用的那一个，框架不用动。
+     * - 覆盖基类的查询，不是额外的状态：控件随本视图生灭，覆盖它只是把“哪一块”说出来。
      *
      * @return 控件；生命周期与本视图相同。
      */
-    vn::appfw::gui::RenderControl* renderControl() const { return control_; }
+    vn::appfw::gui::RenderControl* renderControl() const override { return control_; }
 
     /**
      * @brief 当前选中的几何（点击命中的那一个），没选中时为空。

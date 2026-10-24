@@ -27,9 +27,9 @@ class RenderControl;
  *
  * VIEW STATE IS NOT DOCUMENT STATE: it is never saved, never makes a document dirty, and disappears with the view.
  *
- * THE VIEW IS WHERE "WHICH 3D AREA?" IS ANSWERED: `activeRenderControl()` names the pane a command should act on, so
- * the window derives its primary control from the current view instead of a view publishing itself into a
- * window-wide slot (see `../decisions/ADR-2026-10-24-command-target.md`).
+ * THE VIEW IS WHERE "WHICH 3D AREA?" IS ANSWERED: `renderControl()` names the area a command should act on, so the
+ * window derives its primary control from the current view instead of a view publishing itself into a window-wide
+ * slot (see `../decisions/ADR-2026-10-24-command-target.md`).
  */
 class VN_APPFW_API DocumentView : public UIElement {
     VN_OBJECT_META_DECL
@@ -77,28 +77,25 @@ class VN_APPFW_API DocumentView : public UIElement {
     virtual void deactivate() {}
 
     /**
-     * @brief Returns the render control of the part of this view a command should act on, or null.
+     * @brief Returns the render control a command should act on in this view, or null when the view has no 3D area.
      *
      * @details
-     * - A view that hosts ONE 3D area returns that area's control. A view that hosts SEVERAL panes returns the one
-     *   the user last worked in - **the view owns that decision**, because it is the view that created the panes; the
-     *   framework keeps no pane registry and no layout rule.
-     * - This is the accessor that turns "which 3D area is current" into a DERIVED question: `MainWindow::
-     *   primaryRenderControl()` answers it through the document host's current view, so no view has to publish
-     *   itself into a window-wide slot any more.
+     * - The view answers, because the view owns the area: `MainWindow::primaryRenderControl()` reaches this through
+     *   the document host's current view, so no view publishes itself into a window-wide slot any more.
+     * - A view that hosts SEVERAL panes answers for the one the user last worked in - **the view owns that decision**,
+     *   because it is the view that created the panes; the framework keeps no pane registry and no layout rule.
      * - A 2D view (and a view that draws nothing) returns null - "this view has no 3D area" - which is a legal
      *   answer, not a failure.
      * - The answer is NOT gated on activation: it is a query and not state that switches off, so an off-screen view
      *   returns the same control before and after `activate()`. WHO may ask is the caller's decision - `MainWindow::
      *   primaryRenderControl()` asks only the host's current view, so an inactive view is never consulted.
      * - Do not ask the window "am I the one on screen?" from inside `activate()`: the host CLEARS its current view
-     *   before calling activate() and installs the new one after, so there the window answers as if no document view
-     *   were current (its fallback), not for this view. Activation is already the signal - it is the callback you
-     *   are in.
+     *   before calling activate() and installs the new one after, so there the window answers "no view", whatever
+     *   this view would say. Activation is already the signal - it is the callback you are in.
      *
-     * @return The active pane's render control, or null when this view has none.
+     * @return This view's render control, or null when it has none.
      */
-    virtual RenderControl* activeRenderControl() { return nullptr; }
+    virtual RenderControl* renderControl() const { return nullptr; }
 
   protected:
     /**

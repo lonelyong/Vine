@@ -267,7 +267,7 @@ F1–F6 均已落地；多格/共享会话已删除。`Viewer` 是一块区的�
 
 - 超过 4 份 3D 文档需要给 vsg 打补丁；本树保持原版 + 门禁。
 - 多窗口（一个文档一个顶层窗口）不在本设计范围。
-- **命令找视图靠全局约定**：`MainWindow::current()` + `primaryRenderControl()`（当前文档视图的活动窗格，已改为派生；无激活文档即 null，发布槽已删）仍是菜单/命令/插件的唯一入口 —— 第二窗口的发起者信息在派发时丢失。目标改为带层的视图、调用点迁移见 `../decisions/ADR-2026-10-24-command-target.md` 第 2–4 步（backlog T3）。
+- **命令找视图靠全局约定**：`MainWindow::current()` + `primaryRenderControl()`（当前文档视图的 `renderControl()`，已改为派生；无激活文档即 null，发布槽已删）仍是菜单/命令/插件的唯一入口 —— 第二窗口的发起者信息在派发时丢失。目标改为带层的视图、调用点迁移见 `../decisions/ADR-2026-10-24-command-target.md` 第 2–4 步（backlog T3）。
 - 逐实例属性 / GPU indirect 不在渲染视图层，见 `../backlog/graphics.md`。
 
 ### 9.3 兼容性 / 迁移

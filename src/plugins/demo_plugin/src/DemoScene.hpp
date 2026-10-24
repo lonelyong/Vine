@@ -89,7 +89,7 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene> demo);
  * and pipeline.
  *
  * The demo belongs to a content plugin, not to the shell: the shell owns the window, the dock layout and the Ribbon,
- * while this class owns what that view draws (the view answers the window through DocumentView::activeRenderControl()).
+ * while this class owns what that view draws (the view answers the window through DocumentView::renderControl()).
  *
  * ONE CONTENT VOCABULARY, TWO COMPOSITIONS. The forward and Deferred examples draw the same content
  * wherever both paths can draw it identically, and each adds the slices only it can use (buildScene is

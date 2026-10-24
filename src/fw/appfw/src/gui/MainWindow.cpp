@@ -152,7 +152,7 @@ RenderControl* MainWindow::primaryRenderControl() const
     }
 
     DocumentView* view = host->currentView();
-    return view != nullptr ? view->activeRenderControl() : nullptr;
+    return view != nullptr ? view->renderControl() : nullptr;
 }
 
 inline auto MainWindow::dptr() -> Impl*

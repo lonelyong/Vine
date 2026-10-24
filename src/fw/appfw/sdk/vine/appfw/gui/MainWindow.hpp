@@ -40,7 +40,7 @@ class VN_APPFW_API MainWindow : public Window {
     /** @brief Returns the 3D area a command should act on, or nullptr when there is none.
      *
      * @details
-     * - DERIVED, not published: `central document host -> current view -> DocumentView::activeRenderControl()`.
+     * - DERIVED, not published: `central document host -> current view -> DocumentView::renderControl()`.
      *   "Which pane" is the view's answer, because it is the view that created the panes; the window only asks the
      *   view that is on screen, so an off-screen view is never consulted and the answer stays single-valued even
      *   when several areas exist.

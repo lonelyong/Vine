@@ -29,7 +29,7 @@ namespace vn::demo
  *    `activate()` 再试）；
  *  - 会话起来之后才去装贴图（`assembleDemoContentLater()`，它自己等 attach 结束），重活仍在别的线程上。
  *
- * 这块控件由视图自己回答给窗口（`activeRenderControl()`：本视图只有一个窗格）—— 窗口据此**派生**
+ * 这块控件由视图自己回答给窗口（`renderControl()`：本视图只有一个窗格）—— 窗口据此**派生**
  * `primaryRenderControl()`，别的插件（`test_plugin` 的实时渲染演示就是）不必认识任何具体视图类；视图不再往窗口上
  * 发布任何东西（没有发布槽，见 ADR-2026-10-24-command-target.md）。
  */
@@ -60,11 +60,10 @@ class DemoView final : public vn::appfw::gui::DocumentView
     /// 下屏：没有窗口级状态要收（会话与场景留着，切回来就接着用）。
     void deactivate() override;
 
-    /// @return 本视图自己的渲染控件。
-    vn::appfw::gui::RenderControl* renderControl() const { return control_; }
-
-    /// @brief 命令该作用于的那块 3D 区：本视图只有一个窗格，所以就是它自己的控件。
-    vn::appfw::gui::RenderControl* activeRenderControl() override { return control_; }
+    /// @brief 命令该作用于的那块 3D 区：本视图只有一个窗格，就是它自己的渲染控件。
+    ///
+    /// @return 控件；生命周期与本视图相同。
+    vn::appfw::gui::RenderControl* renderControl() const override { return control_; }
 
   private:
     vn::appfw::gui::RenderControl* control_         = nullptr;
