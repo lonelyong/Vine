@@ -2,6 +2,8 @@
 
 - 状态：已采纳（设计定稿；实现分四步，见「实现顺序」）
 - 日期：2026-10-24
+- 后续：决定 4 的后半（保留 `primaryRenderControl()` 派生查询）与"活动窗格"的命名已被
+  `ADR-2026-10-24-command-target-no-window-query.md` 取代；其余决定仍然有效。
 - 相关：`../design/appfw-render-view.md` · `../design/appfw-command-manager.md` ·
   `../design/appfw-document-model.md` · `../backlog/graphics.md`（T3）
 
