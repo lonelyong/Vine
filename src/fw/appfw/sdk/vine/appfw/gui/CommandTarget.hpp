@@ -23,6 +23,10 @@ VN_APPFWGUI_NS_BEGIN
  *   a legal state, not a failure: document-level commands still run, view-level ones get the uniform refusal.
  * - Resolution happens at DISPATCH time and travels with the execution, so a command never asks "what is current"
  *   while it runs: two windows or two panes can each carry their own answer.
+ * - Why not let the command read `GuiApplication::centralDocumentHost()->currentView()` instead (three lines, no
+ *   window, no cast)? Because that answers "what is current NOW, in this application": a command that awaits lets
+ *   the user switch documents meanwhile, and a second window's command would land on the first window's view. The
+ *   window argument here is what lets the answer belong to the dispatcher (and lets a test point at its own host).
  *
  * @param window Window the dispatch came from; may be null, and so may its dock manager and central host.
  * @return The target; every layer may be null.
