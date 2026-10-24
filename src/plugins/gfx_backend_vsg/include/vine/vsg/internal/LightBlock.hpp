@@ -17,8 +17,9 @@
  * light representation; the two are different ABIs with the same numbers, which is why the packing here is the
  * forward half of one rule and not a copy of the other.)
  *
- * THE BLOCK IS THE CONTRACT WITH THE SHADER (`VineLightsBlock`, the name the GLSL block in builtin_forward.frag
- * declares), and two of its facts fail silently when they are wrong:
+ * THE BLOCK IS THE CONTRACT WITH THE SHADER (`VineLightsBlock`, the name the GLSL block in the SDK's
+ * shaders/vine_params.glsl declares - the ONE declaration of the parameter blocks), and two of its facts fail
+ * silently when they are wrong:
  *
  *   * THE DIRECTIONS ARE VIEW-SPACE. The lights arrive in world space and leave multiplied by the camera's axes, so
  *     the shading can light in view space and never touch a world matrix. A packing that forgot the rotation is
@@ -47,8 +48,8 @@ struct alignas(16) VineLightsBlock
     std::array<std::array<float, 4>, 3> cols{};     ///< rgb + intensity of the light each direction belongs to.
 };
 
-// The struct IS the shader ABI (builtin_forward.frag's VineLightsBlock): a field added here without updating that
-// text (or vice versa) must fail the build, not silently mis-read at run time.
+// The struct IS the shader ABI (vine_params.glsl's VineLightsBlock): a field added here without updating that text
+// (or vice versa) must fail the build, not silently mis-read at run time.
 static_assert(sizeof(VineLightsBlock) == 112U, "VineLightsBlock must be 1 vec4 + 3 vec4 + 3 vec4");
 static_assert(alignof(VineLightsBlock) == 16U, "VineLightsBlock must stay std140 / D3D-cbuffer aligned");
 

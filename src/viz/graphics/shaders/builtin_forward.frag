@@ -20,18 +20,13 @@ layout(location = 3) in vec2 vine_uv;
 #endif
 layout(location = 0) out vec4 out_color;
 
-// The material the host assigned (the same std140 block the deferred path's
-// G-buffer stage declares, so one Vine material value feeds both).
-// `diffuse.w` carries the material's own alpha and is NOT read here: see the alpha
-// comment in main() (the engine has one transparency channel, and it is the
-// per-drawable opacity).
-layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
-{
-    vec4 ambient;
-    vec4 diffuse;
-    vec4 specular;
-    float shininess;
-} material;
+// The parameter blocks this stage reads, from their ONE declaration (vine_params.glsl): the material, the
+// per-drawable block and the view's lights, at the bindings of the content set. What a block MEANS is
+// stated next to its bytes there; this file states only what the surface does with them.
+#define VINE_PARAM_MATERIAL
+#define VINE_PARAM_DRAW
+#define VINE_PARAM_LIGHTS
+#include "vine_params.glsl"
 
 #ifdef VINE_DIFFUSE_MAP
 // The sampler kind follows the coordinate the vertex stage declared: a cube map is sampled by
@@ -45,29 +40,6 @@ layout(set = 0, binding = 1) uniform sampler2D diffuseMap;
 #error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
 #endif
 #endif
-
-// Per-drawable values (VineDrawBlock): the model matrix and four scalars the host
-// rewrites once per drawn command instead of once per vertex. `params.x` is the
-// drawable's effective opacity (scene x node x geometry); the remaining components
-// are reserved. This is the L1 block itself, declared exactly as the SDK defines it
-// (see ShaderAbi.hpp), so a backend without a push range binds the same 80 bytes.
-//
-// It lives in its OWN set (1) because it is bound PER DRAWABLE with a dynamic offset:
-// the scene shares one buffer and one descriptor set, and each draw selects its slot.
-layout(set = 1, binding = 0, std140) uniform VineDrawBlock
-{
-    mat4 model;
-    vec4 params;
-} draw;
-
-// Per-view lights, packed from the content scene each frame (VineLightsBlock):
-// one ambient plus up to three directional lights, all in VIEW space.
-layout(set = 0, binding = 2, std140) uniform VineLightsBlock
-{
-    vec4 ambient;      // rgb + intensity
-    vec4 sun_dir[3];   // view-space direction, w unused
-    vec4 sun_color[3]; // rgb + intensity
-} lights;
 
 // The shadow this pass declared, if any: the map it named as an INPUT and the block that places a
 // fragment in it (ShaderAbi.hpp). DECLARED ALWAYS, unlike the deferred lighting program's two

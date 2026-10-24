@@ -142,9 +142,9 @@ struct alignas(16) VineDrawBlock
  * @details
  * - The engine's material ABI: a backend fills this from vn::graphics::Material and binds it at the shader's material
  *   binding.
- * - Field order and std140 offsets are the contract (see the shader's `VineMaterialBlock` ), so the two sides cannot
- *   drift: a member added here without the GLSL fails the static_asserts below or the structural test, never silently
- *   mis-reads.
+ * - Field order and std140 offsets are the contract (see the GLSL `VineMaterialBlock` in the SDK's
+ *   `shaders/vine_params.glsl`, the ONE declaration of the parameter blocks), so the two sides cannot drift: a member
+ *   added here without the GLSL fails the static_asserts below or the structural test, never silently mis-reads.
  *
  * @note
  * - Transparency is NOT part of it: opacity is a per-drawable value (VineDrawBlock::params.x), because one material
@@ -192,8 +192,9 @@ struct alignas(16) VineMaterialBlock
  *   carries a matrix and not just a bias: the shading already has the view position (a varying in the forward stage,
  *   a G-buffer attachment in the deferred one) and nothing else about the light camera.
  * - It is a PASS-level block, not a per-view one: the pipeline that builds a shadow pass owns the light camera that
- *   produced its map, and a pass that samples no shadow declares no such binding at all (the shader's stage is gated
- *   by a define, see builtin_forward.frag).
+ *   produced its map, and a program that samples no shadow declares no such binding at all (the deferred lighting
+ *   program has a shadowed variant that declares it, and the forward program declares it unconditionally and switches
+ *   at run time - see BuiltinShaders::shadowBindings).
  * - `params.x` is 1 while a map is bound (a shader must be able to take the unshadowed path with the same text) and 0
  *   otherwise; `y` is the depth bias applied at the comparison; `z` is the shadow strength (0 disables the darkening
  *   without unbinding anything); `w` names which of the block's directional lights the map belongs to, so the map
@@ -220,7 +221,8 @@ struct alignas(16) VineShadowBlock
 };
 
 // The structs ARE the shader ABI: a member added here without updating the GLSL
-// (or vice versa) must fail the build, not silently mis-read at run time.
+// (the parameter blocks are declared once, in shaders/vine_params.glsl) must fail the build, not silently mis-read at
+// run time.
 static_assert(sizeof(VineViewBlock) == 288u, "VineViewBlock must be 4 mat4 + 2 vec4");
 static_assert(alignof(VineViewBlock) == 16u, "VineViewBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineViewBlock, cam_pos) == 256u, "VineViewBlock std140 offset");

@@ -12,7 +12,8 @@
 #   vn_declare_embedded_shaders(OUTPUT vine/graphics/EmbeddedShaders.hpp
 #                              NAMESPACE vn::graphics::shaders
 #                              SOURCES src/viz/graphics/shaders/builtin_forward.vert
-#                                      src/viz/graphics/shaders/builtin_forward.frag)
+#                                      src/viz/graphics/shaders/builtin_forward.frag
+#                              INCLUDES src/viz/graphics/shaders/vine_params.glsl)
 #
 #   # In any directory, for every target that compiles a TU including the header:
 #   vn_use_embedded_shaders(<target> OUTPUT vine/vsg/EmbeddedShaders.hpp)
@@ -38,8 +39,14 @@ set(VINE_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated")
 # @param NAMESPACE C++ namespace of the generated constants.
 # @param SOURCES   Shader sources; relative paths are resolved against the
 #                  calling directory.
+# @param INCLUDES  GLSL fragments the sources `#include` (e.g. vine_params.glsl).
+#                  They are NOT embedded as entries - the generator inlines them into the
+#                  shaders that include them - but they must be listed so the generated header
+#                  depends on them: a custom command can only watch files known at configure
+#                  time, and a fragment edit that left every embedded copy stale would be
+#                  invisible (the embedded hash would still match the shader file).
 function(vn_declare_embedded_shaders)
-    cmake_parse_arguments(ARG "" "OUTPUT;NAMESPACE" "SOURCES" ${ARGN})
+    cmake_parse_arguments(ARG "" "OUTPUT;NAMESPACE" "SOURCES;INCLUDES" ${ARGN})
     if(NOT ARG_OUTPUT)
         message(FATAL_ERROR "vn_declare_embedded_shaders: OUTPUT is required")
     endif()
@@ -74,6 +81,18 @@ function(vn_declare_embedded_shaders)
     string(REPLACE ";" "," packed_sources "${sources}")
     string(MAKE_C_IDENTIFIER "${ARG_OUTPUT}" rule_suffix)
 
+    set(includes "")
+    foreach(fragment IN LISTS ARG_INCLUDES)
+        if(NOT IS_ABSOLUTE "${fragment}")
+            set(fragment "${CMAKE_CURRENT_SOURCE_DIR}/${fragment}")
+        endif()
+        if(NOT EXISTS "${fragment}")
+            message(FATAL_ERROR
+                "vn_declare_embedded_shaders: shader include not found: ${fragment}")
+        endif()
+        list(APPEND includes "${fragment}")
+    endforeach()
+
     add_custom_command(
         OUTPUT "${header}"
         COMMAND "${CMAKE_COMMAND}"
@@ -81,7 +100,7 @@ function(vn_declare_embedded_shaders)
                 "-DSOURCES=${packed_sources}"
                 "-DNAMESPACE=${ARG_NAMESPACE}"
                 -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VineEmbedShaders.cmake"
-        DEPENDS ${sources} "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VineEmbedShaders.cmake"
+        DEPENDS ${sources} ${includes} "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VineEmbedShaders.cmake"
         COMMENT "Embedding shaders into ${ARG_OUTPUT}"
         VERBATIM
     )

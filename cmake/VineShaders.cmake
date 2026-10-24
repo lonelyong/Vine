@@ -24,8 +24,8 @@
 #   builtin_<role>.<stage>     e.g. builtin_forward.frag, builtin_gbuffer.vert
 #
 #   * `builtin_` because the file IS the engine's built-in text for that role: the prefix is what
-#     separates the text this repository ships from a host's own shader, and every file here has it
-#     (a name is either a built-in or a host's, never ambiguous).
+#     separates the text this repository ships from a host's own shader, and every STAGE file here
+#     has it (a name is either a built-in or a host's, never ambiguous).
 #   * `<role>` is the renderer's word for what the stage does, not a product, vendor or C++ word -
 #     a shader file name lives in the renderer's vocabulary (`forward`, `gbuffer`,
 #     `deferred_lighting`, `skybox`, `screen_copy`, `fullscreen`), which is also what a reader of
@@ -36,9 +36,21 @@
 #     the built-in pipeline carries the same word (see RenderPipelineBuilder: pass `gbuffer`,
 #     `deferred_lighting`).
 #
+#   vine_<topic>.glsl   e.g. vine_params.glsl
+#
+#   * A FRAGMENT, not a stage: it has no `#version` and no `main`, it is not embedded on its own,
+#     and a shader names it with `#include "vine_params.glsl"` (the build inlines it - see
+#     cmake/VineEmbedShaders.cmake). `vine_` rather than `builtin_` because what it holds is the
+#     engine's ABI vocabulary (the parameter blocks), not the text of one stage; `.glsl` because
+#     the extension names its role in the build: an include, never a compiled stage.
+#   * It is declared under INCLUDES below, not SOURCES: the entry is not a program, but the
+#     generated header must still depend on it.
+#
 # Adding a shader: drop the .vert/.frag in src/viz/graphics/shaders/, add it to the SOURCES list
 # below, include the generated header, and use the generated constant named after the file
 # (builtin_forward.vert -> kBuiltinForwardVert).
+# Adding a fragment: drop the .glsl there, list it under INCLUDES, and `#include` it from the
+# stages that need it.
 # scripts/vine_shader_check.sh validates every shader listed here.
 
 include(VineShaderHelper)
@@ -58,4 +70,6 @@ vn_declare_embedded_shaders(
         "${VN_SDK_SHADER_DIR}/builtin_forward.frag"
         "${VN_SDK_SHADER_DIR}/builtin_skybox.vert"
         "${VN_SDK_SHADER_DIR}/builtin_skybox.frag"
+    INCLUDES
+        "${VN_SDK_SHADER_DIR}/vine_params.glsl"
 )

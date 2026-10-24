@@ -6,11 +6,24 @@
 # ship inside the binary (no runtime resource copying, no loose files next to
 # the DLL).
 #
+# A shader may name one of the SDK's shared GLSL fragments with
+# `#include "vine_params.glsl"` (see that file). The line is REPLACED by the
+# fragment's text here, so what ships is one self-contained source: no include
+# resolution, no file on disk and no compiler extension at run time. The
+# fragments are declared with INCLUDES in the inventory (cmake/VineShaders.cmake)
+# so the generation rule depends on them - a custom command can only watch files
+# known at configure time, and a fragment edit that left every embedded copy
+# stale would be invisible.
+#
 # Inputs (all passed with -D):
 #   OUT       Absolute path of the header to write.
 #   SOURCES   Shader files, ','-separated (a ',' is never valid in a path, and a
 #             ';'-separated list would be re-split by CMake's list expansion).
 #   NAMESPACE C++ namespace for the generated constants (e.g. vn::vsg::shaders).
+#
+# Mode used by the offline gate (scripts/vine_shader_check.sh), which must compile
+# and hash exactly the text the build embeds:
+#   VINE_EXPAND_ONLY=ON  Expand the single SOURCE's includes into OUT and return.
 #
 # The header is only rewritten when its content changes, so an unchanged shader
 # does not make every includer recompile.
@@ -23,6 +36,70 @@ endif()
 if(NOT SOURCES)
     message(FATAL_ERROR "VineEmbedShaders: SOURCES is required")
 endif()
+
+# ---- #include expansion ------------------------------------------------------
+#
+# Replaces every `#include "name"` LINE of @p content_var with the text of the file of that name sitting
+# next to @p source_dir. One implementation serves both the build and the offline gate, so the two cannot
+# disagree about what a program's text is. A fragment may include another; the nesting bound turns a cycle
+# into a configure-time error instead of a hang.
+#
+# @param content_var Variable holding the text to expand.
+# @param source_dir  Directory the include names are resolved against (the including file's).
+# @param depth       Current nesting depth (0 for a shader source).
+# @param out_var     Variable that receives the expanded text (set in the caller's scope).
+function(vine_expand_includes content_var source_dir depth out_var)
+    set(_content "${${content_var}}")
+    if(depth GREATER 8)
+        message(FATAL_ERROR
+            "VineEmbedShaders: #include nesting is deeper than 8 next to ${source_dir} (a cycle?)")
+    endif()
+    while(TRUE)
+        # The directive must START a line (the leading newline is part of the match and put back with the
+        # fragment's text): `vine_params.glsl` documents its own use with an `#include "vine_params.glsl"`
+        # line inside a comment, and an unanchored match would make the fragment include itself.
+        string(REGEX MATCH "\n#include[ \t]+\"([^\"]+)\"\n" _include_line "${_content}")
+        if(NOT _include_line)
+            break()
+        endif()
+        string(REGEX REPLACE "\n#include[ \t]+\"([^\"]+)\"\n" "\\1" _fragment_name "${_include_line}")
+        set(_fragment "${source_dir}/${_fragment_name}")
+        if(NOT EXISTS "${_fragment}")
+            message(FATAL_ERROR
+                "VineEmbedShaders: #include \"${_fragment_name}\" does not resolve next to the including source "
+                "(${source_dir}); fragments live beside the shaders that include them")
+        endif()
+        # The CR guard applies to an included file too: file(READ) normalises CRLF, so only the raw bytes can
+        # tell - the same guard, for the same reason, as the one on a shader source below.
+        file(READ "${_fragment}" _fragment_hex HEX)
+        string(FIND "${_fragment_hex}" "0d" _fragment_carriage_return)
+        if(NOT _fragment_carriage_return EQUAL -1)
+            message(FATAL_ERROR
+                "VineEmbedShaders: ${_fragment_name} contains CR bytes; shader sources must use LF line endings")
+        endif()
+        file(READ "${_fragment}" _fragment_text)
+        math(EXPR _nested_depth "${depth} + 1")
+        vine_expand_includes(_fragment_text "${source_dir}" "${_nested_depth}" _fragment_text)
+        string(REPLACE "${_include_line}" "\n${_fragment_text}" _content "${_content}")
+    endwhile()
+    set(${out_var} "${_content}" PARENT_SCOPE)
+endfunction()
+
+# Expand-only mode: one source in, its expanded text out, nothing else touched.
+if(VINE_EXPAND_ONLY)
+    string(REPLACE "," ";" _expand_sources "${SOURCES}")
+    list(LENGTH _expand_sources _expand_count)
+    if(NOT _expand_count EQUAL 1)
+        message(FATAL_ERROR "VineEmbedShaders: VINE_EXPAND_ONLY takes exactly one source, got ${SOURCES}")
+    endif()
+    set(_expand_source "${_expand_sources}")
+    get_filename_component(_expand_dir "${_expand_source}" DIRECTORY)
+    file(READ "${_expand_source}" _expand_text)
+    vine_expand_includes(_expand_text "${_expand_dir}" 0 _expand_text)
+    file(WRITE "${OUT}" "${_expand_text}")
+    return()
+endif()
+
 if(NOT NAMESPACE)
     message(FATAL_ERROR "VineEmbedShaders: NAMESPACE is required")
 endif()
@@ -69,6 +146,10 @@ foreach(_source IN LISTS _sources)
     if(NOT _content)
         message(FATAL_ERROR "VineEmbedShaders: ${_file_name} is empty")
     endif()
+    # The fragment lines are replaced BEFORE the guards and the hash below: what is embedded - and what a
+    # backend compiles - is the expanded text, so its size and hash are the expanded text's.
+    get_filename_component(_source_dir "${_source}" DIRECTORY)
+    vine_expand_includes(_content "${_source_dir}" 0 _content)
 
     # Guard 1: file(READ) converts CRLF to LF, and the compiler would do the same
     # again, so a CR would make the embedded text differ from the file on disk.
@@ -118,9 +199,13 @@ foreach(_source IN LISTS _sources)
 
     # Hashing by path: `string(<algo> <string> <out>)` returns an empty string on
     # some CMake builds (observed with 4.2.3), while `file(<algo> <path> <out>)` is
-    # reliable. The file cannot change between the read and the hash: this script
-    # runs as a build step that depends on it.
-    file(SHA256 "${_source}" _sha)
+    # reliable. The expanded text is hashed through a scratch file next to OUT, then
+    # removed; the file cannot change between the write and the hash: this script runs
+    # as one build step.
+    set(_hash_input "${OUT}.hash")
+    file(WRITE "${_hash_input}" "${_content}")
+    file(SHA256 "${_hash_input}" _sha)
+    file(REMOVE "${_hash_input}")
     string(SUBSTRING "${_sha}" 0 16 _hash)
     string(LENGTH "${_content}" _bytes)
 
@@ -138,7 +223,11 @@ endforeach()
 set(_text "")
 string(APPEND _text "// Generated by cmake/VineEmbedShaders.cmake - DO NOT EDIT.\n")
 string(APPEND _text "//\n")
-string(APPEND _text "// Every entry is the byte-for-byte content of one shader file:\n")
+string(APPEND _text "// Every entry is one shader file with its `#include` fragments expanded\n")
+string(APPEND _text "// (see vine_params.glsl): the text a backend compiles, byte for byte.\n")
+string(APPEND _text "//\n")
+string(APPEND _text "// The hash and byte count are the EXPANDED text's.\n")
+string(APPEND _text "//\n")
 foreach(_source IN LISTS _sources)
     get_filename_component(_file_name "${_source}" NAME)
     string(APPEND _text "//   ${_file_name}\n")
