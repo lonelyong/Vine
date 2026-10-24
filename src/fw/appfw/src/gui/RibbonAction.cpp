@@ -5,6 +5,7 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
+#include <vine/appfw/gui/CommandTarget.hpp>
 
 #include <vine/appfw/gui/UIElementData.hpp>
 
@@ -35,7 +36,10 @@ RibbonAction::RibbonAction()
         const String cmd = self.command();
         if (!cmd.empty()) {
             if (auto* app = Application::current()) {
-                app->commandManager()->executeDetached(cmd);
+                // Resolve at dispatch and carry it: a ribbon control belongs to one window, so the window that is
+                // current here is the one whose view the command acts on (single window today; the initiator's own
+                // window once there are several).
+                app->commandManager()->executeDetached(cmd, resolveCommandTarget(MainWindow::current()));
             }
         }
     }).detach();

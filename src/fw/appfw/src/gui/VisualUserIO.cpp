@@ -16,6 +16,7 @@
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginManager.hpp>
+#include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
 
 #include <vine/async/AsyncEvent.hpp>
@@ -602,7 +603,7 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
             const auto& message = result.message();
             self->appendOnApplicationThread(message.empty() ? String(u8"命令执行失败") : message,
                                             ConsoleMessageType::Error);
-        }(this, owner->commandManager()->executeCommandAsync(text));
+        }(this, owner->commandManager()->executeCommandAsync(text, resolveCommandTarget(MainWindow::current())));
     }
 }
 

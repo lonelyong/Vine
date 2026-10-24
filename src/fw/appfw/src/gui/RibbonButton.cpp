@@ -9,6 +9,7 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
+#include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/RibbonAction.hpp>
 
 #include "ControlData.hpp"
@@ -79,7 +80,8 @@ RibbonButton::RibbonButton()
         const String cmd = self.command();
         if (!cmd.empty()) {
             if (auto* app = Application::current()) {
-                app->commandManager()->executeDetached(cmd);
+                // Same rule as RibbonAction: resolve the target at dispatch and let it travel with the execution.
+                app->commandManager()->executeDetached(cmd, resolveCommandTarget(MainWindow::current()));
             }
         }
     }).detach();

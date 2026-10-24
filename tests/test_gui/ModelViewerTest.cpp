@@ -22,6 +22,7 @@
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/gui/CentralDocumentHost.hpp>
+#include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/Control.hpp>
 #include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
@@ -870,4 +871,72 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     ASSERT_NE(geometry->material(), nullptr);
     EXPECT_EQ(geometry->material(), highlight_material) << "高亮材质是视图自己那一份，跨次拾取复用";
     EXPECT_EQ(geometry->material()->diffuse().r, highlight_colour.r);
+}
+
+/// 记录它拿到的目标：命令实例随执行销毁，所以记在静态上（用例自己清零）。
+class TargetRecordingCommand final : public vn::appfw::Command
+{
+  public:
+    /// 最近一次执行收到的目标。
+    static inline vn::appfw::CommandTarget s_seen{};
+
+  public:
+    vn::String name() const override { return u8"record_target"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"records the execution target"; }
+
+    // 声明它需要视图：没拿到目标时框架应该在命令体之前就拒绝。
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::NeedsView; }
+
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
+    {
+        s_seen = context->target();
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
+    }
+};
+
+TEST(ModelViewerTest, TheCommandTargetTravelsWithTheExecution)
+{
+    // 目标在**派发时**解析（当前文档 → 它的视图），然后随执行走：命令不自己去问"谁是当前视图"，
+    // 也不要每个视图级命令各写一遍空链判断（见 ADR-2026-10-24-command-target.md）。
+    vn::appfw::DocumentManager           documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow           window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ASSERT_TRUE(registerModelType(documents));
+    ASSERT_TRUE(registerModelOpener(documents));
+    ASSERT_TRUE(views.registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    // 什么都没有：空目标（合法状态，不是失败）。
+    EXPECT_TRUE(vn::appfw::gui::resolveCommandTarget(&window).isEmpty());
+
+    vn::appfw::Document* document = openModel(documents, u8"立方体", vn::model_viewer::makeBoxMesh());
+    ASSERT_NE(document, nullptr);
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+
+    const vn::appfw::CommandTarget target = vn::appfw::gui::resolveCommandTarget(&window);
+    EXPECT_EQ(target.document, document) << "文档从视图取：视图知道自己的文档，反向不成立";
+    EXPECT_EQ(vn::appfw::gui::targetView(target), view) << "视图就是那块 3D 区的宿主";
+
+    // 派发带目标：命令收到的是**派发时**那一个，不是运行时再问一遍。
+    vn::appfw::CommandManager commands(vn::appfw::Application::current());
+    TargetRecordingCommand::s_seen = {};
+    ASSERT_TRUE(commands.registerCommand<TargetRecordingCommand>(vn::String(u8"record_target")));
+    const auto ran = commands.executeCommandAndWait(vn::String(u8"record_target"), target);
+    EXPECT_EQ(ran.status(), vn::appfw::CommandStatus::Success);
+    EXPECT_EQ(TargetRecordingCommand::s_seen.document, document);
+    EXPECT_EQ(TargetRecordingCommand::s_seen.view, view);
+
+    // 不给目标：同一条命令被框架统一拒绝，命令体一次都不跑。
+    TargetRecordingCommand::s_seen = {};
+    const auto refused = commands.executeCommandAndWait(vn::String(u8"record_target"));
+    EXPECT_EQ(refused.status(), vn::appfw::CommandStatus::NotApplicable);
+    EXPECT_FALSE(refused.message().empty()) << "要说清缺什么";
+    EXPECT_TRUE(TargetRecordingCommand::s_seen.isEmpty()) << "拒绝发生在命令体之前";
 }

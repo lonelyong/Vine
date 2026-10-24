@@ -82,7 +82,7 @@ enum class CommandFlags : std::uint32_t
      * @brief Acts on the document the dispatch resolved, not on whatever happens to be current.
      *
      * The framework refuses the command with NotApplicable when the execution carries no document,
-     * so the body does not write that guard itself (see CommandExecutionContext::targetDocument()).
+     * so the body does not write that guard itself (see CommandExecutionContext::target()).
      */
     NeedsDocument = 1 << 3,
 
@@ -91,7 +91,7 @@ enum class CommandFlags : std::uint32_t
      *
      * Refused with NotApplicable when the execution carries no view - a console command, a headless run
      * and a window with no document open all have none. The view is read through
-     * CommandExecutionContext::targetView().
+     * CommandExecutionContext::target().
      */
     NeedsView = 1 << 4
 };
@@ -222,6 +222,34 @@ class VN_APPFW_API CommandResult
 };
 
 /**
+ * @brief What an execution acts on: a document, its presentation, or neither.
+ *
+ * @details
+ * - Both layers are nullable, and empty is a legal state: a console command, a headless run and a window with nothing
+ *   open all carry an empty target. CommandFlags::NeedsDocument / NeedsView turn that state into a uniform
+ *   NotApplicable result before the command body runs.
+ * - The target is what the DISPATCH resolved (the initiating widget, else the current document's view), not "whatever
+ *   is current at run time": the two differ as soon as a second window or a second pane exists.
+ * - The view is an opaque Object here on purpose: the command layer names the target without importing GUI types.
+ *   GUI code reads it typed through `gui::targetView(target)`.
+ */
+struct CommandTarget
+{
+    /// The document the execution acts on, or nullptr.
+    Document* document = nullptr;
+
+    /// The presentation the execution acts on (a document view in the GUI layer), or nullptr.
+    vn::Object* view = nullptr;
+
+    /**
+     * @brief Returns whether neither layer is present.
+     *
+     * @return true when the execution has nothing to act on.
+     */
+    bool isEmpty() const noexcept { return document == nullptr && view == nullptr; }
+};
+
+/**
  * @brief Execution context handed to Command::execute().
  *
  * Created by the CommandManager for each execution and passed to the command.
@@ -312,32 +340,18 @@ class VN_APPFW_API CommandExecutionContext
     virtual vn::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) = 0;
 
     /**
-     * @brief Returns the document this execution was dispatched for, or nullptr.
+     * @brief Returns what this execution was dispatched to act on.
      *
      * @details
-     * - Empty is a legal state: a console command, a headless run and a window with nothing open all
-     *   have no document. CommandFlags::NeedsDocument turns that state into a uniform NotApplicable
-     *   result before the body runs, so the body reads the target without guarding for it.
-     * - The target is what the dispatch resolved (see `.ai/decisions/ADR-2026-10-24-command-target.md`),
-     *   not "whatever is current": the two differ as soon as a second window or a second pane exists.
+     * - Every layer may be null, and that is a legal state rather than a failure: CommandFlags::NeedsDocument and
+     *   NeedsView are the declaration that turns a missing layer into a uniform NotApplicable result before the body
+     *   runs, so the body itself reads the target without guarding for it.
+     * - The target travels with the execution instead of being looked up from a window-wide slot, so two windows or
+     *   two panes each keep their own answer.
      *
-     * @return The target document, or nullptr when this execution has none.
+     * @return The target of this execution (never null itself; its layers may be).
      */
-    virtual Document* targetDocument() const = 0;
-
-    /**
-     * @brief Returns the presentation this execution was dispatched for, as an opaque object, or nullptr.
-     *
-     * @details
-     * - Opaque on purpose: the command layer names the target without importing GUI types. GUI code
-     *   reads the same answer typed, through `gui::CommandTarget::of(context)` - the one place that
-     *   casts.
-     * - nullptr is a legal state (a console command, a headless run, a 2D view); CommandFlags::NeedsView
-     *   turns it into a uniform NotApplicable result before the body runs.
-     *
-     * @return The target view as an Object, or nullptr when this execution has none.
-     */
-    virtual vn::Object* targetView() const = 0;
+    virtual const CommandTarget& target() const = 0;
 };
 
 /**

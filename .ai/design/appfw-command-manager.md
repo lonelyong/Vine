@@ -36,7 +36,7 @@
 
 ## 2. 设计要点
 
-2.0 **命令声明它需要哪一层，框架统一拒绝**：应用 / 文档 / 视图三层都可空，命令用 `CommandFlags::NeedsDocument` / `NeedsView` 声明前提，派发前统一拒绝（`NotApplicable` + 说清缺哪层），命令体读 `CommandExecutionContext::targetDocument()` / `targetView()` 而不自己判空；控制台与无 GUI 测试是合法情形。目标解析见 `../decisions/ADR-2026-10-24-command-target.md`。
+2.0 **命令声明它需要哪一层，框架统一拒绝**：应用 / 文档 / 视图三层都可空，命令用 `CommandFlags::NeedsDocument` / `NeedsView` 声明前提，派发前统一拒绝（`NotApplicable` + 说清缺哪层），命令体读 `CommandExecutionContext::target()` 而不自己判空；控制台与无 GUI 测试是合法情形。目标在**派发时**解析（`gui::resolveCommandTarget()`：当前文档视图 → 它的文档，视图只在有 3D 区时进目标），随执行走，见 `../decisions/ADR-2026-10-24-command-target.md`。
 
 ### 2.1 四个公开入口
 

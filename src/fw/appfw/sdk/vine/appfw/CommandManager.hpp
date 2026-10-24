@@ -249,10 +249,11 @@ class VN_APPFW_API CommandManager
      * before executing.
      *
      * @param command Command to execute; must not be null.
+     * @param target  What the dispatch resolved for this execution; everything null when it resolved nothing.
      * @return The execution outcome; Failed when the command's name is registered
      *         and disabled, so this entry point cannot bypass setCommandEnabled().
      */
-    CommandResult executeCommandAndWait(Command* command);
+    CommandResult executeCommandAndWait(Command* command, const CommandTarget& target = {});
 
     /**
      * @brief Starts a registered command by name, blocking until it finishes.
@@ -262,9 +263,10 @@ class VN_APPFW_API CommandManager
      * subject to the serialization gate, caller blocked.
      *
      * @param name Registered command name.
+     * @param target What the dispatch resolved for this execution; everything null when it resolved nothing.
      * @return The execution outcome; Failed when the name is not registered.
      */
-    CommandResult executeCommandAndWait(const String& name);
+    CommandResult executeCommandAndWait(const String& name, const CommandTarget& target = {});
 
     /**
      * @brief Executes a command asynchronously.
@@ -276,11 +278,12 @@ class VN_APPFW_API CommandManager
      * goes through CommandExecutionContext::executeChild() instead.
      *
      * @param command Command to execute; must not be null.
+     * @param target  What the dispatch resolved for this execution; everything null when it resolved nothing.
      * @return A task yielding the execution outcome; Failed when the command's name
      *         is registered and disabled, so this entry point cannot bypass
      *         setCommandEnabled().
      */
-    vn::async::Task<CommandResult> executeCommandAsync(Command* command);
+    vn::async::Task<CommandResult> executeCommandAsync(Command* command, const CommandTarget& target = {});
 
     /**
      * @brief Executes a registered command by name asynchronously.
@@ -290,10 +293,11 @@ class VN_APPFW_API CommandManager
      * valid until it is awaited even when the argument was a temporary.
      *
      * @param name Registered command name.
+     * @param target What the dispatch resolved for this execution; everything null when it resolved nothing.
      * @return A lazy task yielding the execution outcome; Failed when not
      *         registered.
      */
-    vn::async::Task<CommandResult> executeCommandAsync(const String& name);
+    vn::async::Task<CommandResult> executeCommandAsync(const String& name, const CommandTarget& target = {});
 
     /**
      * @brief Executes a registered command by name in the background.
@@ -314,8 +318,10 @@ class VN_APPFW_API CommandManager
      * worker thread.
      *
      * @param name Registered command name.
+     * @param target What the dispatch resolved for this execution (GUI triggers pass the view they were
+     *        clicked in, or the current document's view); everything null when it resolved nothing.
      */
-    void executeDetached(const String& name);
+    void executeDetached(const String& name, const CommandTarget& target = {});
 
     /**
      * @brief Returns the command at the top of the foreground execution chain.
@@ -677,7 +683,8 @@ class VN_APPFW_API CommandManager
     /// A top-level scope creates a fresh chain, which becomes the foreground chain and
     /// faces the serialization gate; a nested scope joins the chain the context passes
     /// in, which also skips the gate.
-    vn::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope);
+    vn::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope,
+                                                          const CommandTarget& target);
 
     /// Runs a registered command by name on a task that owns its own copy of the name.
     ///
@@ -687,7 +694,7 @@ class VN_APPFW_API CommandManager
     ///
     /// @param name Command or alias name, owned by the returned task.
     /// @return A lazy task yielding the execution outcome.
-    vn::async::Task<CommandResult> executeNamedCommand(String name);
+    vn::async::Task<CommandResult> executeNamedCommand(String name, const CommandTarget& target);
 
     /// Returns a strong reference to the foreground chain, or an empty pointer when
     /// nothing ran yet. Taken under the manager mutex and handed out by value, so the

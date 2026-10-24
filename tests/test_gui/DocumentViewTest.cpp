@@ -22,6 +22,7 @@
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/gui/CentralDocumentHost.hpp>
+#include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/Control.hpp>
 #include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
@@ -319,6 +320,12 @@ TEST(DocumentViewTest, NoActiveDocumentMeansNoCommandTarget)
     ASSERT_TRUE(documents.setCurrent(document));
     ASSERT_NE(host.currentView(), nullptr) << "视图在屏幕上";
     EXPECT_EQ(window.primaryRenderControl(), nullptr) << "这个视图没有 3D 区可回答";
+
+    // 派发解析给出的是**只有文档**的目标：文档层有了，3D 区那层没有 —— 于是 NeedsView 的命令会得到统一拒绝，
+    // 而 NeedsDocument 的命令照常跑（2D 文档不是二等公民）。
+    const auto target = vn::appfw::gui::resolveCommandTarget(&window);
+    EXPECT_EQ(target.document, document);
+    EXPECT_EQ(target.view, nullptr) << "2D 视图没有可作用的 3D 区";
 
     // 文档不再活跃 ⇒ 回到"没有目标"。视图对象还在（视图不随激活消失），只是没人问它。
     ASSERT_TRUE(documents.setCurrent(nullptr));
