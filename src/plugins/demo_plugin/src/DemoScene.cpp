@@ -1261,8 +1261,18 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     // Preview each colour attachment of the same published target: each preview declares the SAME wire
     // at the grain it really is — one image, not "a name plus an attachment index". The identity is
     // the address (target + attachment), so the producer's whole-target promise above answers it.
+    //
+    // THE THIRD TILE SHOWS ITS ALPHA, not its rgb: attachment 2 is emission + occlusion
+    // (graphics-material.md 2.8), emission is HDR and this scene has no emitters, so a plain copy of
+    // that row is a black rectangle that reads as "the pass wrote nothing". Its alpha is the occlusion
+    // factor - 1 for every written, unoccluded pixel and 0 where nothing was drawn - which is exactly
+    // the write evidence the other three tiles give by being coloured.
     static const vn::String preview_labels[] = { u8"GBuffer.base_color", u8"GBuffer.normal",
-                                                   u8"GBuffer.emissive", u8"GBuffer.position" };
+                                                   u8"GBuffer.occlusion", u8"GBuffer.position" };
+    static const vn::graphics::ScreenCopyChannels preview_channels[] = {
+        vn::graphics::ScreenCopyChannels::All, vn::graphics::ScreenCopyChannels::All,
+        vn::graphics::ScreenCopyChannels::Alpha, vn::graphics::ScreenCopyChannels::All
+    };
     const double dpr   = render_control->devicePixelRatio();
     const int    pip_w = static_cast<int>(108.0 * dpr);
     const int    pip_h = static_cast<int>(61.0 * dpr);
@@ -1273,7 +1283,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
         // One copy program PER attachment: which attachment a fullscreen program reads is its
         // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
         // which target it is that binding of.
-        screen->setProgram(vn::graphics::screenCopyProgram(attachment));
+        screen->setProgram(vn::graphics::screenCopyProgram(attachment, preview_channels[attachment]));
         screen->addInputName(u8"GBuffer");
         auto image = vn::make_intrusive<vn::graphics::ImageRef>(preview_labels[attachment]);
         image->bind(target, attachment);

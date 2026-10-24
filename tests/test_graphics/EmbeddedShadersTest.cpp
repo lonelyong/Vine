@@ -518,6 +518,38 @@ TEST(EmbeddedShadersTest, TheSkyboxProgramUsesTheEmbeddedSources)
     EXPECT_NE(skybox_fs->source.as_std_str().find("sampler2D skyMap"), std::string::npos);
 }
 
+TEST(EmbeddedShadersTest, AScreenCopyCanShowOneChannelOfItsAttachment)
+{
+    // A copy of an attachment whose content rides in its ALPHA (the G-buffer's emission + occlusion row -
+    // emission is HDR and usually zero) is the same shipped text with its OUTPUT expression changed, so the
+    // marker it rewrites has to be in the source: a rewrite that silently missed would leave a copy of the rgb,
+    // which is the black rectangle this variant exists to replace.
+    const std::string shipped = asByteString(kBuiltinScreenCopyFrag);
+    EXPECT_NE(shipped.find("out_color = texture(screen_tex, vine_uv);"), std::string::npos)
+        << "the factory rewrites this line; a source edit must not remove it quietly";
+
+    const auto plain = screenCopyProgram(2);
+    ASSERT_NE(plain, nullptr);
+    ASSERT_GT(plain->stageCount(), 0u);
+    const std::string plain_text = plain->stage(0)->source.as_std_str();
+    EXPECT_NE(plain_text.find("layout(binding = 2) uniform sampler2D screen_tex;"), std::string::npos)
+        << "the attachment is the binding";
+    EXPECT_NE(plain_text.find("out_color = texture(screen_tex, vine_uv);"), std::string::npos)
+        << "the plain variant keeps the shipped output";
+
+    const auto alpha = screenCopyProgram(2, ScreenCopyChannels::Alpha);
+    ASSERT_NE(alpha, nullptr);
+    ASSERT_GT(alpha->stageCount(), 0u);
+    const std::string alpha_text = alpha->stage(0)->source.as_std_str();
+    EXPECT_NE(alpha_text.find("out_color = vec4(vec3(texture(screen_tex, vine_uv).a), 1.0);"), std::string::npos)
+        << "the alpha variant copies that channel as grey";
+    EXPECT_EQ(alpha_text.find("out_color = texture(screen_tex, vine_uv);"), std::string::npos)
+        << "and nothing of the plain output is left";
+    EXPECT_NE(plain->name(), alpha->name()) << "two programs, two names (a pool keys pipelines by identity)";
+    EXPECT_EQ(screenCopyProgram()->name(), u8"builtin_screen_copy") << "the no-argument form is the plain copy";
+    EXPECT_EQ(screenCopyProgram(0, ScreenCopyChannels::Alpha)->name(), u8"builtin_screen_copy_alpha");
+}
+
 TEST(EmbeddedShadersTest, TheNamedConstantsAreInTheTable)
 {
     ASSERT_NE(findEntry("builtin_forward.vert"), nullptr);

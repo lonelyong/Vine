@@ -257,6 +257,8 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     ASSERT_EQ(gbuffer->colorCount(), 4) << "延迟预设的 G-buffer 是四张彩色附件（见 defaultGbufferTarget）";
 
     // 四格预览 = demo 默认场景里那四条的写法：同一张源、每格一个换了下标的屏程序、一个 12x12 的视口。
+    // 第三格用的是**拷 alpha**的那个变体（demo 同样如此）：attachment 2 的 rgb 是 emissive、本场景不发光，
+    // 而它的 alpha 是遮挡因子 —— 写过的像素是 1、清屏处是 0，所以这一格是“这一张附件到底写了没有”的证据。
     constexpr int kSlot     = 2;
     constexpr int kSlotStep = 15;
     constexpr int kSlotSide = 12;
@@ -264,7 +266,9 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
         vn::intrusive_ptr<ScreenPass> preview(new ScreenPass());
         preview->setName(vn::String(u8"gbuffer_preview"));
         preview->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(fixture.camera));
-        preview->setProgram(vn::graphics::screenCopyProgram(attachment));
+        preview->setProgram(vn::graphics::screenCopyProgram(
+            attachment, attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha
+                                        : vn::graphics::ScreenCopyChannels::All));
         preview->addInputName(u8"GBuffer");
         vn::intrusive_ptr<vn::graphics::ImageRef> image(new vn::graphics::ImageRef(u8"GBuffer.preview"));
         image->bind(vn::intrusive_ptr<RenderTarget>(gbuffer), attachment);
@@ -290,10 +294,10 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     }
 
     for (int attachment = 0; attachment < 4; ++attachment) {
-        // 第 2 张附件的 rgb 是自发光，而夹具的材质不自发光：这一格"被写过"的证据是 alpha = 遮挡因子 1，不是 rgb。
-        // 其余三张写的是颜色，透明黑就是没写。
+        // 第 2 张附件拷的是 alpha（遮挡）：写过的像素是 1 → 白，清屏处是 0 → 黑，两种“被写过”的证据都在这里
+        // 读得出来；其余三张写的就是颜色，透明黑 = 没写。
         const Rgba8& pixel = copies[static_cast<std::size_t>(attachment)];
-        const bool   written = attachment == 2 ? pixel.a != 0U : covered(pixel);
+        const bool   written = attachment == 2 ? (pixel.r > 128U) : covered(pixel);
         EXPECT_TRUE(written)
             << "第 " << attachment
             << " 格是透明黑：那张附件留着清屏色 = 几何 pass 没写它（正是后三格全黑的那个失败）";

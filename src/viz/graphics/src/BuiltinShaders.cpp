@@ -264,7 +264,7 @@ intrusive_ptr<ShaderProgram> fullscreenVertexProgram()
     return program;
 }
 
-intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment)
+intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment, ScreenCopyChannels channels)
 {
     // The attachment is the sampler's BINDING in the fragment text (see the header): rewrite the one
     // line that states it. The marker below is asserted against the shipped source by
@@ -283,10 +283,23 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment)
             source.replace(at, sizeof(marker) - 1u, line);
         }
     }
+    // WHICH CHANNELS go on screen is a second rewrite of the same text, and its marker is asserted the
+    // same way: a row whose content rides in its alpha (a G-buffer's emission + occlusion - emission is
+    // HDR and usually zero, the alpha is the occlusion AND the row's write evidence) is otherwise an
+    // empty tile that reads as "the pass wrote nothing" (graphics-material.md 2.8).
+    constexpr char8_t output_marker[] = u8"out_color = texture(screen_tex, vine_uv);";
+    if (channels == ScreenCopyChannels::Alpha) {
+        const std::size_t at = source.find(output_marker);
+        if (at != std::u8string::npos) {
+            source.replace(at, sizeof(output_marker) - 1u,
+                           std::u8string(u8"out_color = vec4(vec3(texture(screen_tex, vine_uv).a), 1.0);"));
+        }
+    }
 
+    const String suffix = channels == ScreenCopyChannels::Alpha ? String(u8"_alpha") : String(u8"");
     auto program = make_intrusive<ShaderProgram>();
-    program->setName(attachment == 0 ? String(u8"builtin_screen_copy")
-                                     : String(u8"builtin_screen_copy_") + String(attachment_text));
+    program->setName(attachment == 0 ? String(u8"builtin_screen_copy") + suffix
+                                     : String(u8"builtin_screen_copy") + suffix + String(u8"_") + String(attachment_text));
     ShaderStage fragment;
     fragment.type   = ShaderStageType::Fragment;
     fragment.source = String(source);

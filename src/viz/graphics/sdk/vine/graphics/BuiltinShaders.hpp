@@ -150,6 +150,23 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
 VN_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
 
 /**
+ * @brief Which channels a screen copy puts on screen.
+ *
+ * @details
+ * - `All` is the plain copy: the source texel as it is, which is what a colour attachment wants.
+ * - `Alpha` shows the texel's alpha as a grey picture. It exists for the attachments whose per-pixel
+ *   content RIDES THERE while their rgb is usually zero - a G-buffer's emission + occlusion row is the
+ *   case: emission is HDR and a scene without emitters leaves it black, so a plain copy of that row is an
+ *   empty tile that reads as "the pass wrote nothing". Its alpha, on the other hand, is the occlusion
+ *   (1 = unoccluded) and therefore also the row's write evidence (the clear leaves 0).
+ */
+enum class ScreenCopyChannels
+{
+    All,   ///< The whole texel, rgba - the plain copy.
+    Alpha, ///< Its alpha, as grey - for a row whose content rides in that channel.
+};
+
+/**
  * @brief The built-in plain screen copy: one colour attachment of the source, sampled 1:1.
  *
  * @details
@@ -161,16 +178,19 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
  *   common copy of a target's first colour attachment.
  *
  * @param attachment Colour attachment of the source to sample (binding index in the generated text).
+ * @param channels   Which channels of it go on screen (see ScreenCopyChannels).
  * @return The fragment program (fresh per call; see fullscreenVertexProgram for the vertex stage).
  */
-VN_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0);
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0,
+                                                              ScreenCopyChannels channels = ScreenCopyChannels::All);
 
 /**
  * @brief The built-in fullscreen deferred-lighting program.
  *
  * @details
- * - Reads a G-buffer's colour attachments by binding (albedo / normal+shininess / specular / view
- *   position) and the pass camera's lights; see fullscreenVertexProgram for the fragment-stage
+ * - Reads a G-buffer's four colour attachments by binding (base colour / the shading normal with
+ *   roughness and metallic / emission with occlusion / view position - see shaders/vine_gbuffer.glsl)
+ *   and the pass camera's lights; see fullscreenVertexProgram for the fragment-stage
  *   interface it shares with every other fullscreen program. It declares neither a shadow map nor a
  *   shadow block, so the pass that draws it must provide neither — use shadowedDeferredLightProgram()
  *   for the variant that consumes one.
