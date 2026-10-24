@@ -11,18 +11,19 @@
 （ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
 一 bug 一文件。历史归 git，不放进 `design/`。
 
-## design/ —— 现行设计文档（23）
+## design/ —— 现行设计文档（24）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
 
-**graphics / vsg（6）**
+**graphics / vsg（7）**
 - `graphics-architecture.md` —— 分层、设备/窗口/引擎/链/视图、一帧与调度。
 - `graphics-scene.md` —— 节点、状态、收集、层、视图上下文、拾取。
 - `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒、存储与共享。
 - `graphics-rendering.md` —— 目标、MSAA、图源、颜色、着色、阴影。
 - `graphics-content-lifecycle.md` —— 内容释放与缓存策略。
-- `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑 / 否决项 / 门禁。
+- `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑索引 / 否决项 / 门禁。
+- `vsg-pitfalls.md` —— vsg 后端 P1–P82 坑表，按九个风险域分组，每条带症状与判据。
 
 **appfw（11）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。

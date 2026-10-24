@@ -32,15 +32,14 @@
 
 ## 2. 设计要点
 
-1.1 **三段式**：收集（`FrameRecorder`）→ 编译（`FrameCompiler`）→ 执行（`VsgExecutor`）；
-    执行器只做机械落地，不决定排序、重建或缓存。
-1.2 **调度在引擎**：`detail::FrameScheduler` 是唯一排序点；后端按 `FrameDescription.passes` 的顺序物化。
-1.3 **每 pass 状态私有**：vsg 按 viewID 编管线；状态注册表跨 pass 共享会拿到不兼容 render pass 的 pipeline。
-1.4 **目标形状驱动**：`TargetShape` 决定图像、通道、管线兼容性；bootstrap 清所有附件。
-1.5 **流按 buffer 身份共享**：`StreamKey` = buffer + 该 buffer 自己的 revision + 段；稳态零重传。
-1.6 **反向 Z + CW 正面**：Vulkan NDC z 就是 depth；世界 CCW 到 framebuffer 是 CW。
-1.7 **证据三重**：验证层 / 计数器 / 像素；三者缺一都不算“通过”。
-1.8 **物理边界**：SDK `graphics/backend/` 不 include vsg；插件 `internal/` 才 include both。
+2.1 **三段式**：收集（`FrameRecorder`）→ 编译（`FrameCompiler`）→ 执行（`VsgExecutor`）；执行器只做机械落地，不决定排序、重建或缓存。
+2.2 **调度在引擎**：`detail::FrameScheduler` 是唯一排序点；后端按 `FrameDescription.passes` 的顺序物化。
+2.3 **每 pass 状态私有**：vsg 按 viewID 编管线；状态注册表跨 pass 共享会拿到不兼容 render pass 的 pipeline。
+2.4 **目标形状驱动**：`TargetShape` 决定图像、通道、管线兼容性；bootstrap 清所有附件。
+2.5 **流按 buffer 身份共享**：`StreamKey` = buffer + 该 buffer 自己的 revision + 段；稳态零重传。
+2.6 **反向 Z + CW 正面**：Vulkan NDC z 就是 depth；世界 CCW 到 framebuffer 是 CW。
+2.7 **证据三重**：验证层 / 计数器 / 像素；三者缺一都不算“通过”。
+2.8 **物理边界**：SDK `graphics/backend/` 不 include vsg；插件 `internal/` 才 include both。
 
 ### 2.9 后端架构
 
@@ -48,10 +47,12 @@
 
 | 层 | 位置 | 内容 |
 |---|---|---|
-| SDK 后端契约 | `src/viz/graphics/sdk/vine/graphics/backend/` | `FrameRecorder` / `FrameCompiler` / `Keys` / `TargetPlan` / `ClearPlan` / `VariantPool` / `StateRegistry` / `RetirementQueue` / `FrameTimeline` / `FrameArena` / `FrameRing` / `MaterialArena` / `Observe` / 证据夹具 |
-| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `api::Session` / `WindowTarget` / `OffscreenSession` / `HostTargets` / `VsgExecutor` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `BlockStorage` / `BlockDescriptors` / `MaterialImages` |
+| SDK 后端契约 | `src/viz/graphics/sdk/vine/graphics/backend/` | `FrameRecorder` / `FrameCompiler` / `Keys` / `TargetPlan` / `ClearPlan` / `VariantPool` / `StateRegistry` / `RetirementQueue` / `FrameTimeline` / `FrameArena` / `FrameRing` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / 证据夹具 |
+| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `api::Device` / `api::Session` / `WindowTarget` / `OffscreenSession` / `OffscreenTarget` / `HostTargets` / `VsgExecutor` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
 | 插件支撑 | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / 入口点 |
 | 插件外壳 | `src/plugins/gfx_backend_vsg/src/shell/` | 插件注册、`RenderBackendFactory` |
+
+内部类型按 `api::`（设备、会话、目标、内容录制）/ `core::`（SDK 后端契约的别名）/ `support::`（vsg 适配）分组，不是公开接口；公开契约只有 §4.1 的五个 SDK 类型。
 
 #### 2.9.2 类图
 
@@ -206,20 +207,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 | `RenderFrameExecutor` | 执行一帧 |
 | `PresentTarget` / `WindowPresentTarget` | 呈递契约 / 窗口面 |
 
-### 4.2 插件内部关键类型
-
-| 接口 | 作用 |
-|---|---|
-| `api::Device` / `api::Session` | 无窗口设备 / 自有或宿主窗口会话 |
-| `api::OffscreenTarget` | 离屏颜色 + 可选深度 + 读回 |
-| `api::ContentPipeline` / `api::ContentDraw` | 管线与一次 draw 的录制 |
-| `api::StateCommands` / `api::BlockDescriptors` | 动态状态 / 描述符 |
-| `core::TargetPlan` / `core::ClearPlan` / `core::Keys` | 目标计划 / 清屏 / 键 |
-| `core::Streams` / `core::MaterialArena` / `core::FrameRing` | 流 / 材质 / 每帧环 |
-| `core::RetirementQueue` / `core::SlotProbe` | 退役 / 槽数 |
-| `support::VsgHostWindow` / `support::RenderStateMapper` | 宿主窗口 / 状态映射 |
-
-### 4.3 键与状态
+### 4.2 键与状态
 
 | 层 | 当前拼写 | 允许的变化方式 |
 |---|---|---|
@@ -262,132 +250,15 @@ material 值 / 流字节 / cull 全部**不进**。
 
 ## 6. 注意事项与陷阱
 
-### 6.1 协议与帧
+坑按风险域分成九组，P1–P82 连同症状与判据在 [`vsg-pitfalls.md`](vsg-pitfalls.md)；改哪块读哪组。
 
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P1 | 关帧的是 `swapBuffers()`，`endFrame()` 只离开 pass | 忘了它：下一次 `beginFrame` 被拒，`description()` 还是旧帧 |
-| P2 | 空帧也是帧 | 空 **pass** 不是 pass；acquire 过的图必须有一趟 render pass 走过，否则 present UNDEFINED |
-| P3 | 借用参数必须当场快照 | 引擎 `resolved_inputs_` 是复用成员；持有 = 读下一个 pass 的数据 |
-| P4 | 无 scope 的绘制拒绝并上报 | scope 属性属于 pass，每次绘制属性只服务下一个调用 |
-| P5 | `beginFrame` 之外的“暖机” render 不收集 | 协议拒绝，静默返回 |
-| P6 | 环由引擎调度器处理 | 后端不再自建依赖图；重新引入 = 第二套排序 |
-
-### 6.2 键与管线
-
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P7 | 不要把可动态化的东西放进键 | StateNode 一改就重编；键审计（created 不动） |
-| P8 | 不要把要换的视图留在节点里 | resize 重建整批程序槽；键审计 |
-| P9 | 拓扑只能进“类” | `VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY` 只允许同类切换；跨类 = 新管线 |
-| P10 | 格式枚举是投影 | sRGB/线性、RGB/BGR 都是兼容性的一部分；漏了 ⇒ 02684，像素照过 |
-| P11 | 池容量 65（FIFO） | 淘汰后同键再来会重新 `created`；容量与淘汰是身份的一部分 |
-| P12 | 块角色按类型名认领 | 按 binding 序号给角色会读成别人的块 |
-
-### 6.3 朝向、裁剪与深度
-
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P13 | reverse-Z 三件套 | 远平面 0.0、比较 GREATER、深度清 0.0；清 1.0 + GREATER = 全丢 |
-| P14 | 视图块只折 `proj` / `view_proj` | x/w 不变、y 取反、z 记作 `0.5 - 0.5*z`；`view` / `inv_view` 不折 |
-| P15 | 折反看不出来 | z 镜像时画面照样过测；算术用例 + 像素用例各管一段 |
-| P16 | front face = CLOCKWISE | 照抄 CCW 会让每个 cull 模式作用在错误的面（静默） |
-| P17 | 单附件内容混合恒开 | `blend.enabled` 只选因子；MRT / 全屏 draw 不混合 |
-| P18 | 全屏调用不测深度 | 正典三角形 z = 0 = reverse-Z 远平面；测了就整块消失 |
-| P19 | 全屏 push 必须紧贴绘制、放进 `Commands` | 放在 stateCommands 里会读到恒等矩阵，画面“看着正常” |
-| P20 | push 的阶段是 ABI 的一半 | 发错阶段 0 VUID 静默 |
-| P21 | 背景判据是“这条通道写没写过” | 不是 `dot(pos,pos) < 1e-6`；后者在相机贴脸时留洞 |
-| P22 | 顶点数 / ABI 声明像素看不见 | 被 viewport 裁掉或画同一张图；判据是算术用例 |
-
-### 6.4 块与描述符（ABI）
-
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P23 | `VineMaterialBlock` 是聚合体 | `{}` 不碰尾部填充；用逐成员 `operator==`，不要字节比较 |
-| P24 | dynamic offset 必须对齐 | `minUniformBufferOffsetAlignment` 的倍数；不合规不给命令 + 计数 |
-| P25 | 别把每帧偏移烤进描述符集 | 池会把同一句柄发回下一帧，上一帧命令还在用（03047） |
-| P26 | 替换描述符集 = 旧的必须进退役窗口 | 池会把已释放 set 的句柄发给替代品；`vkUpdateDescriptorSets` 打在 pending 句柄上 |
-| P27 | 布局要声明两种绑定（块 + 采样） | 空隙必须是真布局；空指针 ⇒ 无效句柄 ⇒ 段错误 |
-| P28 | “什么都不声明”就是“什么都不绑” | 程序没声明块就没有集合可绑；别无条件绑块集（00360） |
-| P29 | 声明了 push 却没填 ⇒ 拒绝那一半 | “黑屏是因为矩阵是零”不算诊断 |
-| P30 | 全屏集合的每个 binding 从程序声明来 | 写死 binding 5 读到未定义数据 |
-| P31 | std140 尺寸按对齐算 | 成员字节相加会漏补齐（52 → 64） |
-| P32 | `#ifdef` 分支的条件决定事实 | 不管 define 全算 taken ⇒ 同 `(set,binding)` 两种类型 ⇒ Malformed |
-| P33 | 白图 fallback 必须走上传 | 没有录制方 ⇒ 图永远 UNDEFINED + 描述符撒谎 = 每帧 09600 |
-| P34 | 材质贴图种类必须对上采样器 | 立方体逐面交织错了是静默的（字节总数一样） |
-| P35 | 布局 / 兼容性主张的判据是验证层 | 像素全绿、VUID 成串（r/ah/ai/al 四次实测） |
-
-### 6.5 流、几何与别名
-
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P36 | 流身份 = buffer + **该 buffer 的 revision** + 段 | 几何 revision 只重建事实行；改字节必须 `Buffer::setRevision` |
-| P37 | 被重填的 buffer 是新流 | 旧别名不能指向新字节；revision 移出身份 = 静默旧数据 |
-| P38 | 派生通道不可共享 | 白载体、零 UV、法线字节属于一个几何 |
-| P39 | 一个几何的所有通道从同一个顶点起算 | 否则“索引 0”对每个通道指不同顶点 |
-| P40 | 索引键归一化为整 buffer | 切片共享同一份上传；别名判据 = 同一个 bind 对象 |
-| P41 | 别名登记不持有字节 | 淘汰 ≠ 释放；寿命靠帧点名，宽限 = slots + 1；容量 512，淘汰最久未点名 |
-| P42 | 用栈对象构造 `intrusive_ptr` 会 invalid free | SDK 对象必须堆上由 `intrusive_ptr` 拥有 |
-
-### 6.6 目标、寿命与设备空闲
-
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P43 | 销毁只有两条路 | 整会话替换（前置一次计数 device idle）或退役出队；否则 00765 |
-| P44 | 退役窗口 = slots + 1 | 槽数学不到 ⇒ `retire()` 返回 false，退回计数 device wait |
-| P45 | 丢帧 = 内容不可信 | 下一份计划答 `Repair(Bootstrap)`；只有清屏能修，LOAD 不能 |
-| P46 | `built` = 能 LOAD = `written` | 新目标第一趟必须清；`written` 必须复位 |
-| P47 | load op 是交换半边，不进键 | 但依赖掩码绝不能随变体变（变体连 framebuffer 都不兼容） |
-| P48 | 形状变了才是真重建 | 连格式一起核对；兼容性主张像素抓不住（00904） |
-| P49 | 借用深度：不建镜像、用出借方视图 | `borrowed` 恒不可采样；捕获屏障必须命名真正当前布局（01197） |
-| P50 | 读回是一张分类表 | 分类先于任何工作；“永远不行”和“还没行”是不同答案；颜色只打包 RGBA8 |
-| P51 | 计划与资源世界逐项核对 | 目标形状、输入项数与每项彩色数；不等就整趟拒绝并说出哪项 |
-| P52 | `written()` 在“录了但没提交”时也为真 | 事实是“有人往里录过”；对 bootstrap 判断够用 |
-| P53 | 窗口答案问平台 | live 采样与换尺寸由平台/表面给出，不采纳计划的主张 |
-
-### 6.7 WSI 与窗口
-
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P54 | present 到“还没 viewable”的窗口永远不会到 | 读它 `BadMatch`（readError 8）；构造等 viewable，测试 settle 后再呈现 |
-| P55 | 读窗口读后端日志里那个 id | 名字 / Qt 容器会读到永远亮着的 chrome；`xwinresize.py` 改顶层父窗口 |
-| P56 | 呈现是异步的 | commit 后立刻读可能拿到旧后备存储（全黑）⇒ 多跑两帧 |
-| P57 | 每帧换命令图会拆掉在飞 fence/semaphore/命令缓冲 | 实测 12 条 VUID；稳帧别每帧 `assignFrameGraphs` |
-| P58 | 丢帧之后会话要自己活下来 | acquire 过没呈递的图让 WSI 缺一张；会话把图还回去 |
-| P59 | 启动尺寸不确定 | 窗口随日志 dock 长；门禁先把窗口拖到固定尺寸再判 |
-| P60 | 起应用要 `exec` 且按名字杀 | `pkill -x Vine`；遗留窗口会盖住测试窗口 |
-
-### 6.8 证据、门禁与构建
-
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P61 | “测试过了”不是结论 | 套件全绿同时验证层一直报 VUID；门禁数 VUID / SYNC-HAZARD，跳过即失败 |
-| P62 | 假绿要能被门禁自己抓到 | 忘 `swapBuffers`、空 pass、伪造 VUID/skip 行；判据要“不会骗过自己” |
-| P63 | 相位表 | 一行 = 装配 → 断言（像素 + 计数器）→ 期望的计数器增量（含不变项） |
-| P64 | 稳态判据是“两帧都不分配” | 一帧不分配只是那一帧的事实 |
-| P65 | 变异反证要先自己验一遍 | 两帧身份一致、字段恒零的变异不会红 |
-| P66 | 应用阶段三条画面判据 | 非近黑 ≥30%、预览最大通道 ≥64、平背景 ≤5%；VUID 白名单为空 |
-| P67 | 插件源列表是 GLOB | 新增 `.cpp` 要重新 configure；`tests/test_vsg/CMakeLists.txt` 两处显式加 |
-| P68 | demo 宿主是插件 | `ninja -C build Vine` 不重建它；改完 demo 要 `ninja -C build demo_plugin` |
-| P69 | `VSG_MAX_DEVICES` = 4 | `<1` / `>4` 在 1.1.16 是坏的；第 5 块面要由我们拒（暂无守卫） |
-| P70 | `vn::String` 是 `std::u8string` | 字面量 `u8"..."`；`Mat4d` 默认构造 = 单位阵；`vsg::Image::vk(deviceID)` 要下标；`vsg::Exception` 不是 `std::exception` |
-| P71 | 三份 living 文档受 `check_doc_symbols.py` 管 | 点名的单元必须存在；段落标题含“历史登记”可整段免检 |
-| P72 | 证据门禁前必须整包 build | 只建目标会留下陈旧二进制；“证据”不可信 |
-| P73 | 脚本批量改代码的四条护栏 | 合并切割段后一次写回；报告未命中项；别对刚生成的文件打补丁；改门禁先 `bash -n` |
-| P74 | `SRC_FILE_LIST` 用 tab 缩进 | 空格匹配必然失败 |
-| P75 | clang 偶发瞬时崩溃（exit 135） | 先重跑；干净后仍走完整判据，不许当“通过” |
-
-### 6.9 引擎侧（场景桥与着色约定）
-
-| # | 坑 | 症状 / 判据 |
-|---|---|---|
-| P76 | 声明与绑定都按名字 | 未声明的 `assign*` 是静默 no-op；“加了声明才算接上” |
-| P77 | `skyMap` 与 `diffuseMap` 同一行 | 引擎自带天空程序把 material 纹理当天空；种类对不上采样器 |
-| P78 | 影子块按“目标认领”选 | 同一 light 身份 + 深度可采样 + 生产者公布矩阵；不是“第一个深度可采样输入” |
-| P79 | 色彩空间契约 | 引擎内部线性；颜色图 `*Srgb`、数据图 `*Unorm`；编码只在硬件两头 |
-| P80 | `Material::specular()` 的 alpha 是强度 | 两条路径都真的乘它；默认 0.5 ⇒ 接线会改画面 |
-| P81 | G-buffer albedo 用 16F | 8 位暗色阶在亮光下露台阶；`intensity ≤ 1` 时两者一样 |
-| P82 | episode 是调用方的 | 半片 / 灯掉落 / 拒绝报告各归各；`ContentPass` 每帧新建，状态挂它会每帧重报 |
+| 域 | 坑号 | 域 | 坑号 |
+|---|---|---|---|
+| 协议与帧 | P1–P6 | 目标、寿命与设备空闲 | P43–P53 |
+| 键与管线 | P7–P12 | WSI 与窗口 | P54–P60 |
+| 朝向、裁剪与深度 | P13–P22 | 证据、门禁与构建 | P61–P75 |
+| 块与描述符（ABI） | P23–P35 | 引擎侧（场景桥与着色约定） | P76–P82 |
+| 流、几何与别名 | P36–P42 | | |
 
 ## 7. 已否决选项
 

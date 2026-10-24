@@ -113,74 +113,47 @@ Zip                 一次性 compress/decompress/entries/readEntry
 ### 3.1.1 F1 错误模型
 
 - **行为**：业务失败返回 `IoError`；`Result<T>` 携带值或错误。
-- **约束**（C1）：不抛业务异常；`Result` 不做组合子。
-- **要求**（R1）：`ioErrorName()` 给可读名字；诊断/测试用它。
-- **验收**（T1）：`test_iobase` 的错误模型用例。
-- **注意**（N1）：`NotFound` 不能只靠 `error_code` 判；先看 `file_type`。
+- **引用**：C1、R1、T1、N1。
 
 ### 3.1.2 F2 路径校验
 
 - **行为**：`normalizeVfsPath` 折叠合法段、拒绝非法段。
-- **约束**（C2）：前导 `/`、`\`、`:` 段、根外 `..` 一律 `InvalidPath`。
-- **要求**（R2）：后端落地前再验 `is_absolute()`/`has_root_name()`。
-- **验收**（T2）：路径校验用例。
-- **注意**（N2）：旧子串 `..` 判据会误杀 `a..b`。
+- **引用**：C2、R2、T2、P2、P4。
 
 ### 3.1.3 F3 文件信息
 
-- **行为**：`stat(path)` 返回 `VfsEntryInfo`；`list(dir)` 返回完整路径列表。
-- **约束**（C3）：目录 `size=0`；`kind` 只有 File/Directory；`crc` 无记录为 0。
-- **要求**（R3）：`stat` 对存在但非文件/目录返回 `NotFound`；`list` 的路径可直接回喂。
-- **验收**（T3）：`stat`/`list`/`kindOf` 用例。
-- **注意**（N3）：`VfsEntryInfo::path` 是完整路径，名字用 `name()`。
+- **行为**：`stat(path)` 返回 `VfsEntryInfo`（目录 `size=0`、`kind` 只有 File/Directory、`crc` 无记录为 0）；`list(dir)` 返回可直接回喂的完整路径。
+- **引用**：C3、R3、T3、P5。
 
 ### 3.1.4 F4 只读声明
 
 - **行为**：`isReadOnly()`；写/改操作第一行检查，命中立即 `ReadOnly`。
-- **约束**（C4）：只读后端不得触碰后端；`ZipArchive(ReadOnly)` 是只读。
-- **要求**（R4）：`MountVfs` 全部挂载只读时整体只读；单个挂载点可只读。
-- **验收**（T4）：`ReadOnlyBackendRefusesEveryChange`。
-- **注意**（N4）：`ZipMemoryVfs` 可写，`savePkg` 依赖这一点。
+- **引用**：C4、R4、T4。
 
 ### 3.1.5 F5 目录/文件操作
 
 - **行为**：`createDirectory(s)` / `rename` / `remove` / `removeAll`。
-- **约束**（C5）：`rmdir` 非空返回 `NotEmpty`；跨后端 rename 复制 + 删源。
-- **要求**（R5）：失败保留源；路径校验先行。
-- **验收**（T5）：目录/文件操作用例。
-- **注意**（N5）：`rename` 同名覆盖语义按后端。
+- **引用**：C5、R5、T5、P6。
 
 ### 3.1.6 F6 读流/push
 
 - **行为**：`openRead` 返回 `VfsEntrySource`；`read(path, sink)` 分块推送；`copy` 跨树搬运。
-- **约束**（C6）：读流可活过 VFS；`seekable()` 按后端能力。
-- **要求**（R6）：`read` 遇 sink 拒绝原样返回错误；末尾 `stream->error()` 作为结果。
-- **验收**（T6）：`ZipArchiveOpensWithoutReadingContent` 等。
-- **注意**（N6）：压缩条目 seek 等于解压到该位置。
+- **引用**：C6、R6、T6、P7。
 
 ### 3.1.7 F7 写来源
 
 - **行为**：四个 `addFile` 重载；`Fragment` 借用、`DataSource` 拉取、真实文件延迟读。
-- **约束**（C7）：借用数据必须活到 `saveAs`/`commit`；`DataSource::size()` 必须准确，不一致 → `InvalidData`。
-- **要求**（R7）：`read()` 允许短读，0 = EOF；一个 source 只挂一条目。
-- **验收**（T7）：`addFile`/`copy`/`kUnknownSize` 用例。
-- **注意**（N7）：`kUnknownSize` 强制 zip64，目标必须可 seek。
+- **引用**：C7、R7、T7、P8。
 
 ### 3.1.8 F8 后端家族
 
 - **行为**：`DirectoryVfs` / `ZipArchive` / `MountVfs`。
-- **约束**（C8）：zip 打开只读中央目录；改动在 overlay；落介质只在 `commit`/`saveAs`。
-- **要求**（R8）：`commit()` 临时文件 + 原子替换；未改动条目透传压缩数据。
-- **验收**（T8）：`ZipArchiveTest` / `MountVfsTest`。
-- **注意**（N8）：libzip 读路径不校验 CRC，需自己算。
+- **引用**：C8、R8、T8、P3。
 
 ### 3.1.9 F9 内存流
 
 - **行为**：`MemoryStreamBuf` / `ChunkedMemoryStreamBuf` 的 `reserve` + `setCapacityLimit`。
-- **约束**（C9）：上限只约束增长；现有内容保留；`reserve` 失败不改缓冲。
-- **要求**（R9）：单字符写也要受上限约束（裁 put 区终点）；降上限重发 put 区。
-- **验收**（T9）：`MemoryStreamTest`。
-- **注意**（N9）：`release()`/`clearData()` 不重置上限；移动构造/赋值带上限。
+- **引用**：C9、R9、T9、P9。
 
 ## 4. 公开接口
 
@@ -212,7 +185,7 @@ Zip                 一次性 compress/decompress/entries/readEntry
 | --- | --- |
 | C1 | 业务失败走返回值；异常只用于编程错误。 |
 | C2 | 虚路径无工作目录；前导 `/`/`\`/`:`/根外 `..` 拒绝。 |
-| C3 | `stat`/`list` 只描述存在的条目；缺失由 `Result` 错误码承担。 |
+| C3 | `stat`/`list` 只描述存在的条目；存在但非文件/目录返回 `NotFound`，缺失由 `Result` 错误码承担。 |
 | C4 | 只读后端写操作立即 `ReadOnly`，不触碰后端。 |
 | C5 | 目录非空删除返回 `NotEmpty`；跨后端 rename 失败保留源。 |
 | C6 | 读流可活过 VFS；push sink 拒绝原样返回。 |
@@ -229,7 +202,7 @@ Zip                 一次性 compress/decompress/entries/readEntry
 | R3 | `list` 返回完整路径，可直接回喂。 |
 | R4 | 只读挂载点/后端都参与只读判定。 |
 | R5 | 路径校验先行；失败保留源。 |
-| R6 | 读流 `error()` 说明 0 字节原因。 |
+| R6 | 读流允许短读（0 = EOF）；`error()` 说明 0 字节原因。 |
 | R7 | 一个 source 只挂一条目；回调在保存线程。 |
 | R8 | `commit()` 临时文件 + 原子替换 + 重建索引。 |
 | R9 | 单字符写也受容量上限约束。 |
@@ -245,23 +218,17 @@ Zip                 一次性 compress/decompress/entries/readEntry
 
 ## 6. 注意事项与陷阱
 
-### 6.1 `error_code` 判 `NotFound`
-
-- 会怎么错：MSVC 在路径不存在时也置位 `ec`，把“不存在”误报成 `IoFailure`。
-- 怎么判：`stat`/`list` 先看 `file_type::not_found`。
-- 怎么防：按 N1 写；跨平台用例钉住。
-
-### 6.2 绝对段逃逸
-
-- 会怎么错：`C:/…` 作为右操作数拼到根上会替换左操作数。
-- 怎么判：`normalizeVfsPath` 拒绝 `:` 段/前导 `/`；后端复验。
-- 怎么防：路径校验只留一个入口。
-
-### 6.3 zip CRC
-
-- 会怎么错：libzip 读路径不校验 CRC，损坏条目静默给错字节。
-- 怎么判：自己算 `crc32()` 对照目录记录；不符 `IoFailure`。
-- 怎么防：`readEntries` 取 `ZIP_STAT_CRC`；流末尾对照。
+| # | 坑 | 会怎么错 | 怎么判 / 怎么防 |
+| --- | --- | --- | --- |
+| P1 | `error_code` 判 `NotFound` | MSVC 在路径不存在时也置位 `ec`，把“不存在”误报成 `IoFailure`。 | `stat`/`list` 先看 `file_type::not_found`；按 N1 写，跨平台用例钉住。 |
+| P2 | 绝对段逃逸 | `C:/…` 作为右操作数拼到根上会替换左操作数。 | `normalizeVfsPath` 拒绝 `:` 段/前导 `/`；路径校验只留一个入口。 |
+| P3 | zip CRC | libzip 读路径不校验 CRC，损坏条目静默给错字节。 | 自己算 `crc32()` 对照目录记录；不符 `IoFailure`；`readEntries` 取 `ZIP_STAT_CRC`，流末尾对照。 |
+| P4 | 用子串判 `..` | 按子串拒 `..` 会误杀 `a..b`，真逃逸却可能漏判。 | 只按段抵消；`normalizeVfsPath` 是唯一入口（C2）。 |
+| P5 | 把 `VfsEntryInfo::path` 当名字 | 拿完整路径当名字会拼出双路径。 | 名字走 `name()`（R3）。 |
+| P6 | `rename` 同名覆盖 | 覆盖语义按后端，`DirectoryVfs` 与 zip overlay 结果不同。 | 需要“不覆盖”时先 `stat`；跨后端 rename 失败保留源（C5）。 |
+| P7 | 压缩条目 seek | 每次 seek 都从头解压该条目。 | 顺序读写；反复 seek 先解到内存流。 |
+| P8 | `kUnknownSize` | 目标不可 seek 时 zip64 回填失败。 | 未知长度只写可 seek 目标，否则先缓冲（C7）。 |
+| P9 | `release()` / `clearData()` | 以为清空内容会连上限一起重置。 | 上限独立于内容；移动构造/赋值带上限（C9）。 |
 
 ## 7. 已否决选项
 
