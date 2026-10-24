@@ -168,8 +168,10 @@ void ChainBuilder::reportRequestedShadows() const
                                  vn::graphics::DiagnosticCategory::UnsupportedRequest,
                                  String(count_text) +
                                      String(u8" shadow-casting light(s) in this pipeline's content have no shadow "
-                                            u8"pass (its path builds none, or its lighting program is the host's; "
-                                            u8"see .ai/design/graphics-architecture.md §9): those lights cast nothing"));
+                                            u8"pass (only directional and spot lights cast, its path builds none, "
+                                            u8"or its lighting program is the host's; see "
+                                            u8".ai/design/graphics-rendering.md §2.7 and §6 N8): those lights "
+                                            u8"cast nothing"));
 }
 
 namespace
@@ -178,8 +180,8 @@ namespace
 /**
  * @brief Finds the light a content scene asks a shadow for.
  *
- * Single directional light per content, as the shadow design fixes it (graphics-architecture.md §9): the
- * FIRST enabled, shadow-casting directional light is the one the pass is built for, and the rest
+ * Single caster per content, as the shadow design fixes it (graphics-rendering.md §2.7 / §6 N8): the
+ * FIRST enabled, shadow-casting light of a casting kind is the one the pass is built for, and the rest
  * are reported as unbuilt by reportRequestedShadows().
  *
  * @param content Content scene to scan (may be null).
@@ -191,10 +193,12 @@ intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
     if (content == nullptr) {
         return nullptr;
     }
-    // Single directional light per content, as the shadow design fixes it (graphics-architecture.md §9).
+    // The kinds that HAVE a pass today: a directional light gets an orthographic light camera, a spot a perspective
+    // one taken from its cone. A POINT light has no pass yet (it needs six faces; see backlog S6) and is reported
+    // rather than silently ignored.
     for (const auto& light : content->lights()) {
         if (light != nullptr && light->isEnabled() && light->isCastingShadow() &&
-            light->type() == LightType::Directional) {
+            (light->type() == LightType::Directional || light->type() == LightType::Spot)) {
             return light;   // a strong handle: the map holds its light (RenderTarget::setShadowOf)
         }
     }
@@ -219,14 +223,18 @@ intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline,
     shadow_map->setDepthPromotion(true);
 
     auto light_camera = make_intrusive<Camera>();
-    // ONE derivation of the light camera: the pass renders through this camera and the target
-    // STATES its view-projection, so the shading reads the same matrix instead of fitting a
-    // second ortho box of its own (see .ai/design/graphics-architecture.md §9).
+    // ONE derivation of the light camera: the pass renders through this camera and the target STATES its
+    // view-projection, so the shading reads the same matrix instead of fitting a second one of its own (see
+    // .ai/design/graphics-rendering.md §2.7). A directional light gets the orthographic fit, a spot the
+    // perspective one taken from its cone - the shading does not care which, it maps through a matrix.
     // The map states what it IS, not who reads it: a consumer finds the shadow by asking the declared
     // targets whose shadow they are (RenderTarget::setShadowOf), so nothing is inferred from declaration
     // order and RenderPass stays a generic stage.
     shadow_map->setShadowOf(shadow_light_owner);
-    shadow_map->setProducerViewProjection(directionalShadowMatrix(shadow_light, content_->boundingBox(), *light_camera));
+    const vn::math::Aabbd shadow_bounds = content_->boundingBox();
+    shadow_map->setProducerViewProjection(shadow_light.type() == LightType::Spot
+                                              ? spotShadowMatrix(shadow_light, shadow_bounds, *light_camera)
+                                              : directionalShadowMatrix(shadow_light, shadow_bounds, *light_camera));
 
     PassDesc desc;
     desc.name          = u8"shadow";

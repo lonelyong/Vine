@@ -251,10 +251,11 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      *
      * @details
      * - Read by PassChain::build, which builds ONE depth-only pass for the FIRST enabled, shadow-casting
-     *   DIRECTIONAL light of the content it was given (further ones, and content rendered by passes it did not
-     *   create, stay unshadowed and are reported on the host's diagnostic channel).
-     * - A point or spot light has no depth pass today (its light camera would be a cube map or a perspective
-     *   frustum), so setting this on one has no effect and is reported.
+     *   DIRECTIONAL or SPOT light of the content it was given (a directional light gets an orthographic light
+     *   camera, a spot a perspective one taken from its cone; further casters, and content rendered by passes it
+     *   did not create, stay unshadowed and are reported on the host's diagnostic channel).
+     * - A POINT light has no pass yet (it needs six faces of one shadow - see backlog S6), so setting this on one
+     *   has no effect and is reported.
      * - The engine itself schedules nothing: a shadow pass is an ordinary registered pass at
      *   PassStage::Depth.
      *

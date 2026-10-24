@@ -6307,6 +6307,61 @@ TEST(PassChainTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     EXPECT_EQ(engine->diagnosticCount(), problems_before);
 }
 
+TEST(PassChainTest, ASpotCasterIsBuiltAsOnePerspectiveShadowMap)
+{
+    // Same SINGLE-caster rule as a directional sun, different light camera: the map is stated with the spot's
+    // perspective fit, the pass draws through a PERSPECTIVE camera, and nothing about the shading changes - a matrix
+    // is a matrix (see ShaderAbi's VineShadowBlock). A point caster is still reported rather than built (backlog S6).
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    engine->initialize();
+
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+    cam->lookAt(Vec3d(0.0, 0.0, 5.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+    auto spot = LightPtr(Light::createSpot(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, -1.0), 10.0, 20.0, 50.0F));
+    spot->setCastShadow(true);
+    spot->setShadowResolution(64);
+    content->addLight(spot);
+
+    ChainDesc options;
+    options.camera  = cam.get();
+    options.content = content;
+    auto pipeline   = PassChain::build(engine.get(), options);
+    ASSERT_NE(pipeline, nullptr);
+    EXPECT_EQ(engine->passCount(), 2u) << "shadow + the content pass (which IS the window pass)";
+
+    backend->target_history.clear();
+    backend->render_cameras.clear();
+    const std::size_t problems_before = engine->diagnosticCount();
+    engine->frame();
+
+    ASSERT_GE(backend->target_history.size(), 2u);
+    RenderTarget* shadow = backend->target_history.front();
+    ASSERT_NE(shadow, nullptr);
+    EXPECT_TRUE(shadow->hasDepth());
+    EXPECT_FALSE(shadow->hasColor());
+    EXPECT_EQ(shadow->width(), 64) << "the map is the side length the spot asked for";
+    EXPECT_TRUE(shadow->isDepthPromoted());
+
+    auto        light_camera = intrusive_ptr<Camera>(new Camera());
+    const Mat4d expected     = spotShadowMatrix(*spot, content->boundingBox(), *light_camera);
+    const Mat4d stated       = shadow->producerViewProjection();
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            EXPECT_DOUBLE_EQ(stated(r, c), expected(r, c)) << "at (" << r << ", " << c << ")";
+        }
+    }
+
+    ASSERT_FALSE(backend->render_cameras.empty());
+    ASSERT_NE(backend->render_cameras.front(), nullptr);
+    EXPECT_NE(backend->render_cameras.front(), cam.get()) << "the shadow pass looks along the spot, not through the view";
+    EXPECT_EQ(backend->render_cameras.front()->projectionType(), Camera::ProjectionType::Perspective)
+        << "the spot's map is drawn through its cone, not an orthographic box";
+    EXPECT_EQ(engine->diagnosticCount(), problems_before) << "one caster, one pass: nothing requested is left unbuilt";
+}
+
 TEST(PassChainTest, DeferredPresetBuildsGbufferAndLightingPasses)
 {
     auto engine     = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -6406,6 +6461,46 @@ TEST(PassChainTest, TheDirectionalShadowCameraFramesTheContentFromTheLightSide)
     EXPECT_NEAR(eye.x, 5.0, 1e-9) << "the eye is centred on the content, so the window is symmetric";
     EXPECT_NEAR(eye.y, 3.0, 1e-9);
     EXPECT_GT(eye.z, 2.0) << "with a -z sun the light camera looks from +z";
+}
+
+TEST(PassChainTest, TheSpotShadowCameraFramesTheConeFromTheLightsPosition)
+{
+    // A spot is not a direction: the light camera sits AT the light and its frustum is the cone. The bounds (ten
+    // units in front of it) must land inside, and a point well off the cone's axis must land OUTSIDE - the map
+    // covers the cone, not the world (outside the cone the light is already at zero strength).
+    auto spot = LightPtr(Light::createSpot(vn::math::Vec3d(0.0, 0.0, 10.0), vn::math::Vec3d(0.0, 0.0, -1.0),
+                                          10.0, 20.0, 50.0F));
+    const vn::math::Rect3<double> bounds(vn::math::Point3<double>(-1.0, -1.0, -1.0),
+                                          vn::math::Point3<double>(1.0, 1.0, 1.0));
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    const vn::math::Mat4d view_projection = spotShadowMatrix(*spot, bounds, *camera);
+
+    EXPECT_EQ(camera->projectionType(), Camera::ProjectionType::Perspective) << "a spot is a cone, not a box";
+    const vn::math::Vec3d eye = camera->eye();
+    EXPECT_NEAR(eye.x, 0.0, 1e-9);
+    EXPECT_NEAR(eye.y, 0.0, 1e-9);
+    EXPECT_NEAR(eye.z, 10.0, 1e-9) << "the eye IS the light's position";
+
+    for (const auto& corner : { vn::math::Point3<double>(-1.0, -1.0, -1.0), vn::math::Point3<double>(-1.0, 1.0, 1.0),
+                                vn::math::Point3<double>(1.0, -1.0, 1.0), vn::math::Point3<double>(1.0, 1.0, -1.0) }) {
+        const vn::math::Point3<double> ndc = view_projection * corner;
+        EXPECT_GE(ndc.x, -1.0) << "the content is inside the cone at this distance";
+        EXPECT_LE(ndc.x, 1.0);
+        EXPECT_GE(ndc.y, -1.0);
+        EXPECT_LE(ndc.y, 1.0);
+        EXPECT_GE(ndc.z, -1.0) << "and inside the light's depth range";
+        EXPECT_LE(ndc.z, 1.0);
+    }
+
+    // Eight units off the axis at ten units away is ~39 degrees: outside the 20 degree cone (plus its margin).
+    const vn::math::Point3<double> off_axis = view_projection * vn::math::Point3<double>(8.0, 0.0, 0.0);
+    EXPECT_GT(std::abs(off_axis.x), 1.0) << "a fragment outside the cone is outside the map";
+
+    // Depth is MONOTONIC along the light: nearer content has the smaller clip z (the SDK's -1 near, +1 far).
+    const vn::math::Point3<double> near_point = view_projection * vn::math::Point3<double>(0.0, 0.0, 8.0);
+    const vn::math::Point3<double> far_point  = view_projection * vn::math::Point3<double>(0.0, 0.0, -5.0);
+    EXPECT_LT(near_point.z, far_point.z) << "2 units away is nearer than 15";
 }
 
 /**

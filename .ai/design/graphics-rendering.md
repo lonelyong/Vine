@@ -86,7 +86,7 @@
 | F21 | 内置程序 | forward / flat / gbuffer / deferred lighting / shadowed；`builtin_<角色>.<阶段>`。 |
 | F22 | ABI | 顶点 location、`VineViewBlock` / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`、128 B push。 |
 | F23 | 透明度 | 唯一通道是 `Node::opacity`；材质不贡献 alpha；blend 恒开。 |
-| F24 | 阴影 | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`；`directionalShadowMatrix` 唯一推导。 |
+| F24 | 阴影 | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`；光相机由 `directionalShadowMatrix`（正交）/ `spotShadowMatrix`（透视）推导。 |
 | F25 | 阴影目标 | depth-only `RenderTarget` + `shadowOf` 声明；采样走 `VineShadowBlock`。 |
 
 ## 4. 公开接口
@@ -118,7 +118,8 @@
 | `ShaderStage{type, source, entryPoint}` | 阶段 |
 | `attributeLocation()` / `Vine*Block` | ABI |
 | `Light::setCastShadow()` / `isCastingShadow()` / `shadowSettings()` / `setShadowResolution()` / `setShadowBias()` | 灯 |
-| `directionalShadowMatrix(light, box, ...)` | 光相机 |
+| `directionalShadowMatrix(light, box, ...)` | 光相机（方向光，正交） |
+| `spotShadowMatrix(light, box, ...)` | 光相机（聚光，透视，眼在灯位，锥角=外锥角×1.02） |
 | `RenderTarget::shadowOf()` / `setShadowOf()` | 阴影目标声明 |
 
 ## 5. 约束、要求与不变量
@@ -152,7 +153,7 @@
 | N5 | `Sampler` 是缓存键：字段必须是有限数；NaN 会让缓存每帧 miss。 |
 | N6 | 材质不贡献 alpha；透明度只来自 `Node::opacity`。 |
 | N7 | `ShaderAbi` 的块布局 / location 改一个必须同时改 C++ 与 GLSL。 |
-| N8 | 阴影只支持方向光；点/聚光的 `setCastShadow` 不建 pass，由 `ChainBuilder::reportRequestedShadows` 报出（backlog S6）。CSM / PCSS 不做。 |
+| N8 | 阴影投射灯是方向光与聚光（正交 / 透视光相机，同一张 2D 深度图、同一份 `VineShadowBlock`）；点光需要六面 cube，`setCastShadow` 在点光上不建 pass，由 `ChainBuilder::reportRequestedShadows` 报出（backlog S6）。CSM / PCSS 不做。 |
 
 ## 6. 注意事项与陷阱
 

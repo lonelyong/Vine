@@ -1,5 +1,8 @@
 #include <vine/graphics/ChainPresets.hpp>
 
+#include <algorithm>
+#include <limits>
+
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Light.hpp>
@@ -74,6 +77,55 @@ Mat4d directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
     camera.setOrthographic(-radius, radius, -radius, radius, 0.0, depth);
     // Orthographic: the window above carries the shape, and the matrix does not read the camera's aspect at all.
     // The shadow map is square anyway (the window is -radius..radius on both axes).
+    return camera.projectionMatrix() * camera.viewMatrix();
+}
+
+Mat4d spotShadowMatrix(const Light& light, const vn::math::Aabbd& bounds, Camera& camera)
+{
+    using vn::math::Vec3d;
+
+    const bool valid = bounds.max().x >= bounds.min().x && bounds.max().y >= bounds.min().y &&
+                       bounds.max().z >= bounds.min().z;
+    const Vec3d  forward = light.direction().length() > 1e-9 ? light.direction().normalized() : Vec3d(0.0, 0.0, -1.0);
+    const Vec3d  eye     = light.position();
+    // Any up vector that is not parallel to the direction: a light is a direction, not a roll.
+    const Vec3d  up      = std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0);
+
+    // How far the content is from the LIGHT, along its axis: a spot has a position, so a fitted sphere around the
+    // whole scene would be the wrong question. An invalid box keeps a usable frustum instead of a degenerate one.
+    double axis_min = 0.0;
+    double axis_max = 100.0;
+    if (valid)
+    {
+        axis_min = std::numeric_limits<double>::max();
+        axis_max = std::numeric_limits<double>::lowest();
+        for (int corner = 0; corner < 8; ++corner)
+        {
+            const Vec3d point((corner & 1) != 0 ? bounds.max().x : bounds.min().x,
+                              (corner & 2) != 0 ? bounds.max().y : bounds.min().y,
+                              (corner & 4) != 0 ? bounds.max().z : bounds.min().z);
+            const double distance = (point - eye).dot(forward);
+            axis_min              = std::min(axis_min, distance);
+            axis_max              = std::max(axis_max, distance);
+        }
+        const double margin = std::max(1e-3, (axis_max - axis_min) * 0.01);
+        axis_min -= margin;
+        axis_max += margin;
+    }
+    // The eye may sit inside the bounds: the near plane then clamps to a small positive distance rather than to zero
+    // (a zero near plane is a degenerate projection).
+    const double near_plane = std::max(axis_min, 0.01);
+    const double far_plane  = std::max(axis_max, near_plane + 1.0);
+
+    // The cone the map covers is the spot's OUTER cone plus a small margin: the map edge then sits where the light is
+    // already at zero strength (see vineEvaluateLight), so nothing fades at the map's border.
+    const double half_angle = std::clamp(light.outerConeAngle() * 1.02, 0.5, 85.0);
+    const double fov_y      = 2.0 * half_angle;
+
+    camera.lookAt(eye, eye + forward, up);
+    camera.setPerspective(fov_y, near_plane, far_plane);
+    // The map is square and the shadow pass draws the whole target, so the aspect the camera derives from its pass
+    // rectangle is 1 and the horizontal extent equals the vertical one.
     return camera.projectionMatrix() * camera.viewMatrix();
 }
 

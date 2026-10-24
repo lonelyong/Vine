@@ -423,6 +423,49 @@ constexpr char8_t kConsumerFragment[] =
 
 }  // namespace
 
+TEST(ShadowBlockTest, ASpotCasterPacksTheSameBlockAsADirectionalOne)
+{
+    // A spot shadow is rendered through a PERSPECTIVE light camera, but the block is the same shape: a matrix, the
+    // light's slot and the switch. The kind check is a membership test (directional or spot), not a second code
+    // path - which is what lets one shader term serve both.
+    const CameraSnapshot camera = cameraLookingAlongPlusX();
+    ASSERT_TRUE(camera.present);
+
+    const void* const owner = reinterpret_cast<const void*>(0x61U);
+    LightRef          spot  = makeLight(owner, LightType::Spot, 0.3, 0.3, 0.0, 1.0F);
+    spot.has_direction      = true;
+    spot.direction          = vn::math::Vec3d(0.0, 0.0, -1.0);
+    spot.has_position       = true;
+    spot.position           = vn::math::Vec3d(0.0, 0.0, 5.0);
+    spot.cast_shadow        = true;
+    spot.shadow_bias        = 0.004F;
+
+    std::vector<LightRef> storage;
+    const LightRef        announced[]{ spot };
+    const CompiledDraw    draw = drawWith(camera, std::span<const LightRef>(announced, 1U), storage);
+
+    ShadowFacts shadow;
+    shadow.light               = owner;
+    shadow.has_view_projection = true;
+    shadow.view_projection     = mixedProducerMatrix();
+
+    vn::graphics::VineShadowBlock block;
+    ASSERT_TRUE(packShadowBlock(shadow, draw, block));
+    EXPECT_FLOAT_EQ(block.params[0], 1.0F) << "the switch is on for a spot caster too";
+    EXPECT_FLOAT_EQ(block.params[1], 0.004F) << "the spot's own bias";
+    EXPECT_FLOAT_EQ(block.params[3], 0.0F) << "slot 0: the spot is the first (and only) carried light";
+
+    // A POINT caster gets no block: it needs SIX faces, so the switch stays off rather than scaling one arbitrary
+    // face over the whole surface (backlog S6).
+    LightRef point = spot;
+    point.type     = LightType::Point;
+    const LightRef point_announced[]{ point };
+    const CompiledDraw point_draw = drawWith(camera, std::span<const LightRef>(point_announced, 1U), storage);
+    vn::graphics::VineShadowBlock point_block;
+    EXPECT_FALSE(packShadowBlock(shadow, point_draw, point_block));
+    EXPECT_FLOAT_EQ(point_block.params[0], 0.0F) << "a point caster leaves the switch off";
+}
+
 TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
 {
     // THE PICTURE. One frame, two passes: a depth-only shadow map written by the engine's shadow pass (the WHOLE map

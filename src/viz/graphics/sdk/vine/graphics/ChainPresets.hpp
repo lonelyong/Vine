@@ -79,6 +79,25 @@ class ShaderProgram;
                                                                      const vn::math::Aabbd& bounds,
                                                                      Camera& camera);
 
+/** @brief The light camera a SPOT shadow is rendered with.
+ *
+ * @details
+ * - Perspective, from the light's POSITION along its direction, with the vertical field of view taken from the spot's
+ *   OUTER cone angle (a small margin keeps the map edge off the cone edge, where the light is already zero). The map
+ *   is square and the shadow pass draws the whole target, so the aspect is 1 and the horizontal cone matches.
+ * - Near and far come from the content bounds PROJECTED onto the light axis (not from a fitted sphere): a spot has a
+ *   position, so what matters is how far the content is from it.
+ * - The same contract as @ref directionalShadowMatrix: the pass renders through this camera and the target STATES its
+ *   view-projection, so the shading maps its fragments through the one matrix - never a second fit.
+ *
+ * @param light  Spot light the map is rendered from (its position is the eye, its direction the axis).
+ * @param bounds Content bounds the map must cover.
+ * @param camera Receives the light camera (also usable as the shadow pass' camera).
+ * @return The light camera's projection * view matrix.
+ */
+[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d spotShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
+                                                              Camera& camera);
+
 /** @brief Recipe: render content into an off-screen target and composite it back as a picture-in-picture screen pass.
  *
  * @details

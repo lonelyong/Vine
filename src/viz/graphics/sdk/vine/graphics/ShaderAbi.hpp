@@ -202,9 +202,10 @@ struct alignas(16) VineMaterialBlock
  *   wherever that one light is blocked — see the shadow term).
  * - THE MATRIX IS IN THE SDK'S CLIP CONVENTION, THE MAP IS NOT: `view_to_light` maps a view-space position to the
  *   SDK's OWN clip space — x right, y up, z in [-1, 1] with -1 at the light's near plane and +1 at its far one (see
- *   Camera; directionalShadowMatrix builds it as `projection * view` in that convention and
- *   states it on the map through RenderTarget::setProducerViewProjection) — so the matrix means the same thing on
- *   every backend.
+ *   Camera; `directionalShadowMatrix` and `spotShadowMatrix` both build `projection * view` in that convention and
+ *   state it on the map through RenderTarget::setProducerViewProjection) — so the matrix means the same thing on
+ *   every backend. Which CAMERA produced it (orthographic for a directional light, perspective for a spot) is not
+ *   in this block: a matrix is a matrix, and the shading only maps through it.
  * - The MAP it is compared against is a GPU image the backend rasterised, and its two axes are the backend's
  *   business: the vsg backend renders reverse-Z (near = 1, far = 0) into a top-down image (v = 0 is world up, the
  *   same fact that makes its G-buffer upright).

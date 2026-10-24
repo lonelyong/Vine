@@ -19,7 +19,9 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
 
     // The map belongs to ONE light, and that light has to be one this call announced - the switch lives on the
     // LIGHT (Light::isCastingShadow), so a caster that stopped casting has to stop shading, and a light this call never
-    // announced is not a light it can shade.
+    // announced is not a light it can shade. A shadow is rendered through an orthographic camera (directional) or a
+    // perspective one (spot); both arrive here as ONE matrix, which is why the kind check is a membership test and
+    // not two code paths.
     const core::LightRef* caster = nullptr;
     for (const core::LightRef& light : draw.lights)
     {
@@ -30,7 +32,7 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
         }
     }
     if (caster == nullptr || !caster->enabled || !caster->cast_shadow ||
-        caster->type != vn::graphics::LightType::Directional)
+        (caster->type != vn::graphics::LightType::Directional && caster->type != vn::graphics::LightType::Spot))
     {
         return false;
     }
