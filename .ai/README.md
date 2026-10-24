@@ -11,12 +11,12 @@
 （ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
 一 bug 一文件。历史归 git，不放进 `design/`。
 
-## design/ —— 现行设计文档（24）
+## design/ —— 现行设计文档（25）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
 
-**graphics / vsg（7）**
+**graphics / vsg（8）**
 - `graphics-architecture.md` —— 分层、设备/窗口/引擎/链/视图、一帧与调度。
 - `graphics-scene.md` —— 节点、状态、收集、层、视图上下文、拾取。
 - `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒、存储与共享。
@@ -24,6 +24,7 @@
 - `graphics-content-lifecycle.md` —— 内容释放与缓存策略。
 - `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑索引 / 否决项 / 门禁。
 - `vsg-pitfalls.md` —— vsg 后端 P1–P82 坑表，按九个风险域分组，每条带症状与判据。
+- `graphics-shader-params.md` —— 着色参数 ABI：Schema 生成 C++/GLSL/偏移表，名字只在接线期。
 
 **appfw（11）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
@@ -46,11 +47,12 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（8）
+## decisions/ —— 决策记录（ADR）（9）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-10-24-shader-parameter-schema.md` —— 着色参数走 Schema 生成，不走运行时反射与材质 DSL。
 - `ADR-2026-10-23-no-multi-parent-dag.md` —— 不引入多父，严格树 + 实例化。
 - `ADR-2026-10-23-instancing-per-primitive.md` —— 实例化挂在 `Primitive`，不做作用域。
 - `ADR-2026-10-23-l2a-reverted.md` —— L2a 回撤，分层目标等 L2b 一起做。

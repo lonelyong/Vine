@@ -8,7 +8,11 @@
 
 ## 1. 现在可做（无触发条件）
 
-**空。** 剩下的每条都缺一个真实消费方、一次真实负载，或被上游卡住。
+| # | 项 | 内容 | 出处 |
+|---|---|---|---|
+| S1 | 参数 Schema P0 | 参数清单 + 生成器（C++ 结构体 / GLSL 片段 / 偏移表），生成结果与现行 `ShaderAbi.hpp` 逐字节一致；先证明等价，不加新能力 | `../design/graphics-shader-params.md` §3.2–3.3、§3.8 |
+
+其余条目都缺一个真实消费方、一次真实负载，或被上游卡住。
 
 ## 2. 触发条件型
 
@@ -34,7 +38,6 @@
 | T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在 | 上游支持后合并每 pass 的 begin | 本行 |
 
 ### 2.3 平台与验证
-
 | # | 项 | 内容 | 触发条件 |
 |---|---|---|---|
 | T12 | Windows 窗口读像素 | `TestHostWindow` 是 XCB 窗口；Windows 侧仍 SKIP | 有 Windows 机器时 |
@@ -49,6 +52,14 @@
 | T16 | R5 | 材质是单一平铺 Phong + 一张贴图；无 `MaterialInstance`；PBR 只能近似 | 逐对象参数（高亮 / tint）在第二个调用点出现，或需要真实 PBR |
 | T17 | R8 | 无异步上传 / 编译入口（契约是单线程串行） | 一次加载超过一帧预算 |
 | T18 | R10 | `OwnedFrame` 是零生产消费者的公开类型（仅自测） | 远程渲染 / 录制真正开工时再决定去留 |
+
+### 2.5 着色参数
+
+| # | 项 | 内容 | 触发条件 | 出处 |
+|---|---|---|---|---|
+| S2 | 名字表与注入 | `ParameterTable::find` / `Material::set(name, value)` / 编译前注入 ABI 片段 | 宿主需要一个自定义 per-draw 参数（今天四个保留分量不够用），或第二个后端出现 | `../design/graphics-shader-params.md` §3.4–3.6 |
+| S3 | 用户扩展点 | 具名用户槽 + 保留 set/binding 段 | S2 落地，且出现宿主自定义 shader 的真实用例 | `../design/graphics-shader-params.md` §3.7 |
+| S4 | 第二个后端的 `ParameterSink` | cbuffer / `glUniform*` 等“写字节”实现 | 第二个后端出现（与 T15 同一触发） | `../design/graphics-shader-params.md` §3.5 |
 
 ## 3. 下一 session 的第一条命令
 
