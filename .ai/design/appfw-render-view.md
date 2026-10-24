@@ -267,7 +267,7 @@ F1–F6 均已落地；多格/共享会话已删除。`Viewer` 是一块区的�
 
 - 超过 4 份 3D 文档需要给 vsg 打补丁；本树保持原版 + 门禁。
 - 多窗口（一个文档一个顶层窗口）不在本设计范围。
-- **命令找视图靠全局约定**：`MainWindow::current()` + `primaryRenderControl()`（窗口上唯一注册的 3D 控件）是菜单/命令/插件的唯一入口 —— 这是"单窗口 + 每窗一块 3D 区"的**假设**而非视图选择机制：第二块 3D 区或非活动窗口目标会让它答不出"改哪一个"（`ModelRenderView::isActive()` 已靠它判身份，第二块控件出现即误判）—— backlog T3。
+- **命令找视图靠全局约定**：`MainWindow::current()` + `primaryRenderControl()`（窗口上唯一注册的 3D 控件）是菜单/命令/插件的唯一入口 —— 这是"单窗口 + 每窗一块 3D 区"的**假设**而非视图选择机制：第二块 3D 区或非活动窗口目标会让它答不出"改哪一个"（`ModelRenderView::isActive()` 已靠它判身份，第二块控件出现即误判）—— backlog T3。设计已定：目标是视图、层可空、需求按命令声明，见 `../decisions/ADR-2026-10-24-command-target.md`；实现分四步（backlog T3）。
 - 逐实例属性 / GPU indirect 不在渲染视图层，见 `../backlog/graphics.md`。
 
 ### 9.3 兼容性 / 迁移
