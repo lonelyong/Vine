@@ -283,7 +283,7 @@ P0 已实现：参数块只有一处 GLSL 声明（`shaders/vine_params.glsl`，
 ### 9.2 已知缺口 / 待办
 
 P1（名字表与 `Material::set`、用户扩展点、`ParameterSink`）与 `VineLightsBlock` 上移都是触发条件型，见
-`../backlog/graphics.md` §2.5。
+`../backlog/graphics.md` §2.5。材质块仍是 Phong：改 PBR 见 `graphics-material.md` F4 / backlog M1。
 
 ### 9.3 兼容性 / 迁移
 
