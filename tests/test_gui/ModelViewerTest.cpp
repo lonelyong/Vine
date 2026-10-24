@@ -810,7 +810,7 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     ASSERT_NE(root, nullptr);
     auto* geometry = const_cast<vn::graphics::Geometry*>(firstGeometry(*root));
     ASSERT_NE(geometry, nullptr);
-    const vn::graphics::Material* const original = geometry->material();
+    const vn::graphics::MaterialBase* const original = geometry->material();
     ASSERT_NE(original, nullptr) << "模型几何自带那份中灰材质（见 ModelRenderView::applyDefaultMaterials）";
     EXPECT_EQ(view->selectedGeometry(), nullptr) << "一开始没有选中任何东西";
 
@@ -831,7 +831,7 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     EXPECT_EQ(view->selectedGeometry(), geometry) << "命中的就是场景里那件几何";
     ASSERT_NE(geometry->material(), nullptr);
     EXPECT_NE(geometry->material(), original) << "选中要看得见：材质换成了高亮那份";
-    const vn::graphics::Material* const highlight_material = geometry->material();
+    const vn::graphics::MaterialBase* const highlight_material = geometry->material();
     const vn::Colorf highlight_colour = geometry->material()->baseColor();
     EXPECT_GT(highlight_colour.r, highlight_colour.b) << "高亮是暖色（橙），与中灰的模型分得开";
 

@@ -65,7 +65,7 @@ engine.setDevice(backend);
 | 属性 | 规则 |
 | --- | --- |
 | 变换 | **相乘**；折好的结果烘焙进 `RenderCommand::modelMatrix` |
-| `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。**它是引擎唯一的透明度通道**：内置前向着色的片元 alpha 就是它，不乘材质/纹理的 alpha（材质是共享的，乘进去会让所有用它的 drawable 一起半透明，而排序用的是这个值） |
+| `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。它是透明度的**幅度**：材质的 alpha 模式决定它怎么用（Opaque 只用它、Mask 把它当阈值、Blend 乘上材质与贴图的 alpha 当输出 alpha），排序与混合开关读**同一个**分类（`RenderCommand::isTransparent`） |
 | 渲染状态（blend / depth / cull / polygon） | **最深者覆盖**（折叠进 `RenderCommand::authoredState`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
 | 拓扑 | **不是状态**：每条 `Primitive` 自己说（数据事实，见 §3.21）；`RenderPass` 的 `topology` 可以把整片当点/线看，覆盖值由 `resolveRenderState` 报 `Pass` |
 | material / program | **图元**自己的优先 → `Geometry` 的几何级默认 → 最近的祖先 `StateNode` |
@@ -74,7 +74,7 @@ engine.setDevice(backend);
 | 画序（`Node::setDrawOrder`） | **最深者覆盖**：最近的声明赢，`clearDrawOrder()` 回到继承，默认 0。**高 = 后画**（压在上面）；它是 pass 内那张列表的**外键** —— 同序之内仍是"不透明 前→后、透明 后→前"，所以它能越过透明批次、也能被同序的深度规则保护 |
 | 实例（不是折叠，随 `Primitive` 走） | **属于一条 draw**：每个 `Primitive` 自己带一段实例矩阵和可见前缀；没有流就是普通单次 draw。多个 primitive 可以共享同一个缓冲的不同切片；实例矩阵在**该 draw 的几何局部空间**里乘 |
 
-`cmd.isTransparent` 由有效 opacity 推出，它决定这个 drawable 走管线的透明部分。
+`cmd.isTransparent` 由 opacity 与**材质解析后的 alpha 模式**一起推出（Blend 总是透明；Mask 永远不透明 —— 它裁剪而不是淡化），它决定这个 drawable 走管线的透明部分，也决定混合是否打开。
 整个折叠是**一次自顶向下**的遍历（世界矩阵 / 透明度 / 状态 / material / program 一起往下传），
 `StateNode.hpp` 的 `effectiveRenderState/effectiveMaterial/effectiveProgram`（从叶子往上走）是同一规则的
 公开拼写，两者由测试钉住一致。
@@ -102,6 +102,15 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   缺槽代价）。颜色改动是
   **动态**的：材质自己数自己的改动（`revision()`，每个 setter 先比较再决定要不要 ++，所以反复赋同值是零成本），
   后端每帧只比这一个数字，改了就在下一帧就地刷新 —— 改材质不需要任何重建，也不需要“通知后端”的调用。
+- `MaterialInstance` —— 一份材质上的**稀疏覆盖**（“这只盒子是红的、粗糙度 0.9”）：`MaterialInstance(asset)` 然后
+  `setBaseColor(...)` / `setRoughness(...)` / `setTexture(slot, ...)`，只有说过的那几项不跟随资产；`clearOverride(item)`
+  回到继承，`overrideMask()` 回答“我覆盖了哪几项”。它的 `revision()` 是父与自身的**合成**：改资产自动让所有
+  未覆盖该项的实例重写一次，不需要遍历实例。渲染里它和资产同型（都是 `MaterialBase`），所以
+  `setMaterial()` 接受两种，`RenderCommand` / `Geometry` / `Primitive` / `StateNode` 存的都是 `MaterialBasePtr`。
+- **alpha 模式**（`Material::setAlphaMode`）：有效 alpha = `opacity × 材质 baseColor.a × base 贴图 alpha`。
+  `Opaque` 忽略后两个（默认，也是旧的“材质不贡献 alpha”规则）；`Mask` 拿它当阈值，低于 `alphaCutoff` 的片元
+  `discard`，活下来的**当作不透明**、仍留在不透明队列（剪切叶子必须自遮挡）；`Blend` 拿它当输出 alpha 并进透明
+  队列 —— 延迟路径的 G-buffer 不写 Blend 内容（没有单一颜色可存），要混合的内容只能出现在前向 overlay。
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
 - `Texture` —— 2D / Cube，按层填充（`setImage()` / `setFaceImage()` / `setLayer()`；编号一律用 `layer` 词汇）。每次填充都会
   `revision()++`，后端据此区分"同一张纹理、新像素"与"同一张纹理、同样像素"（只看指针做不到）。

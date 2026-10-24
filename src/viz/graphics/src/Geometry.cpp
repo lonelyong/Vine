@@ -278,12 +278,12 @@ bool Geometry::clearInstanceTransforms(std::size_t index)
     return true;
 }
 
-raw_ptr<Material> Geometry::material() const
+raw_ptr<MaterialBase> Geometry::material() const
 {
     return material_.get();
 }
 
-void Geometry::setMaterial(intrusive_ptr<Material> m)
+void Geometry::setMaterial(MaterialBasePtr m)
 {
     if (material_.get() == m.get()) {
         return;  // an assignment that changes nothing must not cost the frame's collection

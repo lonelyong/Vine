@@ -432,6 +432,12 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
         target.material          = source.material.get();
         target.model             = source.model_matrix;
         target.opacity       = source.opacity;
+        // The transparency decision is made ONCE, here, from the command's own rule (`isTransparent`: the
+        // material's resolved alpha mode and the drawable's opacity). The plan carries the answer because
+        // compilation has only the identity, and the blend enable has to agree with the order the collector
+        // sorted by - two spellings of "is this see-through" is exactly the drift that made a Blend material sort
+        // as transparent and draw unblended (graphics-material.md 2.7).
+        target.transparent    = source.isTransparent();
         target.authored_state = source.authored_state;
         if (!source.instance_transforms.empty()) {
             target.instance_buffer   = source.instance_transforms.values.get();

@@ -33,7 +33,7 @@ struct ContentStore::Data
 
     struct LiveMaterial
     {
-        vn::intrusive_ptr<vn::graphics::Material> object{};
+        vn::intrusive_ptr<vn::graphics::MaterialBase> object{};
         std::uint64_t                                 revision{0};  ///< Edit counter; only updateMaterial() moves it.
         std::uint64_t                                 seen_revision{0};  ///< The material's own revision last accounted for.
         bool                                          described{false};
@@ -151,7 +151,7 @@ struct ContentStore::Data
     // The live set: the objects the host tracked, held so the address key cannot be recycled.
     std::unordered_map<const vn::graphics::Geometry*, LiveGeometry>     geometries;
     std::unordered_map<const vn::graphics::ShaderProgram*, LiveProgram> programs;
-    std::unordered_map<const vn::graphics::Material*, LiveMaterial>     materials;
+    std::unordered_map<const vn::graphics::MaterialBase*, LiveMaterial>     materials;
 
     /** @brief Cancels a pending release because the object is being used again.
      *
@@ -306,7 +306,7 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& p
     }
 }
 
-void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Material>& material)
+void ContentStore::track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& material)
 {
     if (material == nullptr)
     {
@@ -323,7 +323,7 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Material>& materi
     }
 }
 
-void ContentStore::updateMaterial(vn::raw_ptr<vn::graphics::Material> material)
+void ContentStore::updateMaterial(vn::raw_ptr<vn::graphics::MaterialBase> material)
 {
     if (material == nullptr)
     {
@@ -376,7 +376,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
             for (const core::CompiledCommand& command : draw.commands)
             {
                 const auto* geometry = static_cast<const vn::graphics::Geometry*>(command.geometry);
-                const auto* material = static_cast<const vn::graphics::Material*>(command.material);
+                const auto* material = static_cast<const vn::graphics::MaterialBase*>(command.material);
 
                 ensureGeometry(geometry, timeline, retirement);
                 ensureMaterial(material, timeline, retirement);
@@ -474,7 +474,7 @@ void ContentStore::ensureGeometry(const vn::graphics::Geometry* geometry, core::
     ++d->builds;
 }
 
-void ContentStore::ensureMaterial(const vn::graphics::Material* material, core::FrameTimeline& timeline,
+void ContentStore::ensureMaterial(const vn::graphics::MaterialBase* material, core::FrameTimeline& timeline,
                                   core::RetirementQueue& retirement)
 {
     auto entry = d->materials.find(material);
@@ -788,7 +788,7 @@ bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram>
     return true;
 }
 
-bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::Material> material,
+bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material,
                                    core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     if (material == nullptr)

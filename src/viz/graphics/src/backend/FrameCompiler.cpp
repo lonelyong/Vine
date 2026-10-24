@@ -377,6 +377,7 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
         out.material          = command.material;
         out.model             = command.model;
         out.opacity           = command.opacity;
+        out.transparent       = command.transparent;
         out.instance_buffer   = command.instance_buffer;
         out.instance_revision = command.instance_revision;
         out.first_instance    = command.first_instance;
@@ -388,12 +389,13 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
         // The item whose destination is the draw block rather than the pipeline (a point's size is a
         // vertex-shader output), so it travels beside the opacity instead of into `dynamic`.
         out.point_size = resolved.pointSize;
-        // THE ENGINE'S TRANSPARENCY CHANNEL IS THE COMMAND'S OPACITY, and this is the only place that can weigh it
-        // against the authored blend state: a translucent command blends with the standard pair even though its
-        // content authored none (no StateNode has to say "and blend"), while an opaque command that authored none
-        // stays unblended - what `ResolvedRenderState::blend` documents. The two spellings cannot disagree because
-        // this is the one place that derives one from the other (see Node::setOpacity / Material's "always opaque").
-        if (out.opacity < 1.0F - 1e-6F) {
+        // THE ENGINE'S TRANSPARENCY DECISION IS THE COMMAND'S, made when the typed command was read
+        // (`RenderCommand::isTransparent`: the material's resolved alpha mode plus the drawable's opacity), and the
+        // plan carried it here as one bool. A translucent command blends with the standard pair even though its
+        // content authored none (no StateNode has to say "and blend"), and an opaque one that authored none stays
+        // unblended - what `ResolvedRenderState::blend` documents. The order and the blend factor read the same
+        // answer because this is the one place that derives one from the other.
+        if (out.transparent) {
             resolved.blend.enabled = true;
         }
         out.dynamic = resolveDynamicState(resolved);

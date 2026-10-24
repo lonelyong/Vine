@@ -4,7 +4,7 @@
 #include <optional>
 
 #include "Group.hpp"
-// Included rather than forward-declared: this class HOLDS an intrusive_ptr<Material>, so every translation
+// Included rather than forward-declared: this class HOLDS an intrusive_ptr<MaterialBase>, so every translation
 // unit that destroys a StateNode instantiates the reference-count hooks and needs the complete type.
 #include "Material.hpp"
 
@@ -200,7 +200,7 @@ class VN_GRAPHICS_API StateNode : public Group {
      *
      * @param material Material, or nullptr to clear.
      */
-    void setMaterial(intrusive_ptr<Material> material);
+    void setMaterial(MaterialBasePtr material);
 
     /** @brief Clears this node's material override so it is inherited. */
     void clearMaterial();
@@ -209,7 +209,7 @@ class VN_GRAPHICS_API StateNode : public Group {
      *
      * @return The material, or null when unset (the nearest ancestor's applies).
      */
-    raw_ptr<Material> material() const;
+    raw_ptr<MaterialBase> material() const;
 
     /** @brief Gets this node's whole optional state block.
      *
@@ -229,7 +229,7 @@ class VN_GRAPHICS_API StateNode : public Group {
   private:
     RenderState state_;
     intrusive_ptr<ShaderProgram> program_;
-    intrusive_ptr<Material> material_;
+    MaterialBasePtr   material_;
 };
 
 using StateNodePtr = intrusive_ptr<StateNode>;
@@ -279,6 +279,6 @@ VN_GRAPHICS_API ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node);
  * @param node Node to resolve for (typically a Geometry).
  * @return The material to render with, or null when neither the leaf nor any ancestor sets one.
  */
-VN_GRAPHICS_API MaterialPtr effectiveMaterial(raw_ptr<const Node> node);
+VN_GRAPHICS_API MaterialBasePtr effectiveMaterial(raw_ptr<const Node> node);
 
 VN_GRAPHICS_NS_END

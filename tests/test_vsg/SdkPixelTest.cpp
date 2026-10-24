@@ -313,7 +313,9 @@ namespace
 /// 用的就是夹具那张 quad 的顶点（`[-0.9, 0.9]` 的方块、法向 +z、两个三角形），只是颜色归调用方给 —— 两张叠在
 /// 一起的四边形是"谁在上面"这件事唯一能读出来的形状。
 vn::intrusive_ptr<vn::graphics::MatrixTransform> makeCoplanarQuad(const vn::intrusive_ptr<vn::graphics::Group>& parent,
-                                                                  const vn::Colorf& colour)
+                                                                  const vn::Colorf& colour,
+                                                                  vn::graphics::AlphaMode mode =
+                                                                      vn::graphics::AlphaMode::Opaque)
 {
     const float half = 0.9F;
     const float z    = 0.0F;
@@ -329,6 +331,7 @@ vn::intrusive_ptr<vn::graphics::MatrixTransform> makeCoplanarQuad(const vn::intr
 
     const vn::intrusive_ptr<vn::graphics::Material> material(new vn::graphics::Material());
     material->setBaseColor(colour);
+    material->setAlphaMode(mode);
 
     const vn::intrusive_ptr<vn::graphics::StateNode> state(new vn::graphics::StateNode());
     state->setMaterial(material);
@@ -401,4 +404,58 @@ TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
     EXPECT_TRUE(dominantly(centre_after, 'r'))
         << "红的那张声明了更高的画序 ⇒ 它后画、压在上面（这正是高亮 / 描边的做法）";
     EXPECT_NE(centre_before.r, centre_after.r) << "同一个像素真的换了主人，不是两次读到同一张残影";
+}
+
+// 透明度的三个模式**是像素**（graphics-material.md 2.7 / F7 / T4）：同一张四边形、同一个无光照档程序，只换材质的
+// 模式与自身的 alpha —— 于是"模式做了什么"可以直接读出来，而不用先相信着色器里的分支。
+//
+// 三个相位用的是**同一份材质**，在两次读之间改它的值：后端每帧重读命令里的材质（`ContentStore::updateMaterial`
+// 读的是 `revision()`），所以改材质不需要重建场景 —— 这正是设计里"材质改了就下一帧生效"那条。
+TEST(SdkPixelTest, TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends)
+{
+    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+
+    const vn::intrusive_ptr<vn::graphics::Group> root(new vn::graphics::Group());
+    // alpha = 0.25 的 Mask：低于默认 cutoff（0.5）⇒ 整片被 discard，画面留着清屏色。
+    const auto quad = makeCoplanarQuad(root, vn::Colorf(1.0F, 0.0F, 0.0F, 0.25F), vn::graphics::AlphaMode::Mask);
+
+    const vn::intrusive_ptr<vn::graphics::Scene> scene(new vn::graphics::Scene());
+    scene->setRoot(root);
+
+    vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+    pass->setName(vn::String(u8"alpha_mode_picture"));
+    pass->setCamera(fixture.camera);
+    pass->setRenderTarget(fixture.target);
+    pass->setClearEnabled(true);
+    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    pass->setShouldClearDepth(true);
+    // 无光照档：这条量的是"模式"，不是光照算术。
+    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
+    fixture.engine->addPass(pass, scene, 0);
+
+    const auto centre = [&]() { return fixture.read().pixel(SdkPixelFixture::kSide / 2, SdkPixelFixture::kSide / 2); };
+
+    // ① Mask + alpha 0.25：低于 cutoff，几何不写任何像素。
+    const Rgba8 cut = centre();
+    std::printf("[sdk-pixels] mask 0.25: (%u,%u,%u)\n", cut.r, cut.g, cut.b);
+    EXPECT_EQ(cut.r, 0U) << "Mask 低于 cutoff 的片元必须整片消失（清屏色保留）";
+
+    // ② 同一个材质把自身 alpha 抬到 0.75（越过 cutoff）：几何出现，且**完全不透明**（Mask 不淡化，它裁剪）。
+    auto* const state_node = dynamic_cast<vn::graphics::StateNode*>(quad->children().front().get());
+    ASSERT_NE(state_node, nullptr) << "夹具的四边形挂在 StateNode 下";
+    auto* const leaf = dynamic_cast<vn::graphics::Material*>(state_node->material());
+    ASSERT_NE(leaf, nullptr) << "夹具的四边形自带一份材质";
+    leaf->setBaseColor(vn::Colorf(1.0F, 0.0F, 0.0F, 0.75F));
+    const Rgba8 kept = centre();
+    std::printf("[sdk-pixels] mask 0.75: (%u,%u,%u)\n", kept.r, kept.g, kept.b);
+    EXPECT_GT(kept.r, 200U) << "存活下来的片元是底座色本身（Mask 存活即不透明：alpha 0.75 不该把它压暗）";
+
+    // ③ Blend + alpha 0.5：模式让这条 drawable 进透明队列、打开混合，输出 α = opacity × 材质 α = 0.5，
+    //    于是在全黑清屏上留下底色的一半。
+    leaf->setAlphaMode(vn::graphics::AlphaMode::Blend);
+    leaf->setBaseColor(vn::Colorf(1.0F, 0.0F, 0.0F, 0.5F));
+    const Rgba8 blended = centre();
+    std::printf("[sdk-pixels] blend 0.5: (%u,%u,%u)\n", blended.r, blended.g, blended.b);
+    EXPECT_GT(blended.r, 100U) << "Blend 必须混合（半个底色）——0 意味着模式没让这条 drawable 打开混合";
+    EXPECT_LT(blended.r, 200U) << "也不该是整块底色 ——那是不透明的那个值";
 }

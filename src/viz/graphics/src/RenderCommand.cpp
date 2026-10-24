@@ -5,15 +5,15 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> m, const Mat4d& model,
+RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model,
                              std::uint32_t primitive_index)
   : geometry(std::move(g))
   , primitive_index(primitive_index)
   , material(std::move(m))
   , model_matrix(model)
 {
-    // Opacity/transparency are folded by the scene collector from leaf and
-    // subtree opacity only; a material never contributes transparency.
+    // Opacity is folded by the scene collector from leaf and subtree opacity. A material contributes the MODE
+    // (Blend says "sort me as transparent"), never the magnitude - see RenderCommand::isTransparent().
 }
 
 VN_GRAPHICS_NS_END

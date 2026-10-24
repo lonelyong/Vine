@@ -7,6 +7,7 @@ set(SRC_FILE_LIST
 	RenderSurfaceTest.cpp
 	ChannelSliceTest.cpp
 	EmbeddedShadersTest.cpp
+	MaterialInstanceTest.cpp
 	ShaderAbiTest.cpp
 	ModelSceneTest.cpp
 )

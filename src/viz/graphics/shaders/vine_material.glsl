@@ -39,6 +39,7 @@ struct VineSurface
     float metallic;     ///< 0 = dielectric, 1 = metal.
     float roughness;    ///< Perceptual roughness, 0..1.
     float occlusion;    ///< The occlusion factor x its slot (1 = unoccluded).
+    float alpha;        ///< The material's own alpha: the base factor's a x its slot's a.
 };
 
 #ifdef VINE_TEXTURED
@@ -76,6 +77,10 @@ VineSurface vineSurfaceFromFactors(vec3 n)
     surface.metallic   = clamp(material.params.x, 0.0, 1.0);
     surface.roughness  = clamp(material.params.y, 0.0, 1.0);
     surface.occlusion  = clamp(material.params.z, 0.0, 1.0);
+    // The material's own alpha: the MODE decides what it does (a threshold for Mask, the blend factor for Blend,
+    // nothing at all for Opaque - see the stages), and its second input is the drawable's opacity, which arrives
+    // per drawable and is not a material fact (graphics-material.md 2.7).
+    surface.alpha      = clamp(material.base_color.a, 0.0, 1.0);
     return surface;
 }
 
@@ -127,7 +132,11 @@ VineSurface vineSampleMaterial(vec3 n, vec3 position, vec3 direction)
     VineSurface surface = vineSurfaceFromFactors(n);
     if ((material.flags.x & VINE_MATERIAL_FLAG_BASE_COLOR) != 0u)
     {
-        surface.base_color *= texture(baseColorMap, direction).rgb;
+        // rgb is the albedo and a is the slot's own alpha: BOTH travel, because a cut-out leaf's shape is in its
+        // map's alpha (a Mask material's whole point) and a blended surface's coverage is too.
+        vec4 texel         = texture(baseColorMap, direction);
+        surface.base_color *= texel.rgb;
+        surface.alpha      *= texel.a;
     }
     // The four data slots are not sampled: a direction is not a surface parameterisation (see the file note).
     return surface;
@@ -152,7 +161,11 @@ VineSurface vineSampleMaterial(vec3 n, vec3 position, vec2 uv)
     VineSurface surface = vineSurfaceFromFactors(n);
     if ((material.flags.x & VINE_MATERIAL_FLAG_BASE_COLOR) != 0u)
     {
-        surface.base_color *= texture(baseColorMap, uv).rgb;
+        vec4 texel          = texture(baseColorMap, uv);
+        surface.base_color *= texel.rgb;
+        // The slot's own alpha multiplies the material's: a cut-out leaf's shape lives in the map, and a blended
+        // surface's coverage does too.
+        surface.alpha      *= texel.a;
     }
     if ((material.flags.x & VINE_MATERIAL_FLAG_METALLIC_ROUGHNESS) != 0u)
     {

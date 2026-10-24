@@ -66,13 +66,9 @@ void main()
     // a pass over its vertices (and the vertex colour stream stays free to carry
     // authored colours, which its alpha does not compete with).
     //
-    // It is also the engine's ONLY transparency input, which is why neither the
-    // material's alpha nor the texture's is multiplied in here: a material is
-    // shared by every drawable that uses it ("a translucent material" would make
-    // all of them translucent, and the per-drawable value it would fight with is
-    // the one the engine sorts by), and the deferred path discards them anyway
-    // (its lighting program writes alpha 1) - so reading them here would make the
-    // same asset translucent in forward and opaque in deferred.
+    // It is also the per-drawable half of the engine's transparency INPUT, and the material's alpha mode decides
+    // how the two are used (see the block below): the engine sorts a drawable by this value plus the mode
+    // (`RenderCommand::isTransparent`), so the picture and the order read the same pair.
     float alpha = draw.params.x;
     // The surface: this stage's geometric normal, then the material's five slots on top of its factors - the
     // same function the G-buffer writer calls, so one material has ONE surface on both paths.
@@ -81,6 +77,29 @@ void main()
 #else
     VineSurface surface = vineSurfaceFromFactors(n);
 #endif
+    // THE ALPHA MODE, in one place for both paths' shading stages (graphics-material.md 2.7/3.5): the effective
+    // alpha is the drawable's opacity times the material's own alpha (its factor times its base map's), and the
+    // mode says which of three things that product means.
+    {
+        const uint alpha_mode = (material.flags.x >> VINE_MATERIAL_ALPHA_MODE_SHIFT) & 3u;
+        if (alpha_mode == 1u)
+        {
+            // Mask: the product is a THRESHOLD, not an opacity. A fragment that survives is fully opaque and the
+            // drawable stays in the opaque queue, because a cut-out leaf must still occlude itself (C4).
+            if (draw.params.x * surface.alpha < material.params.w)
+            {
+                discard;
+            }
+        }
+        else if (alpha_mode == 2u)
+        {
+            // Blend: the product IS the output alpha. The drawable is in the transparent queue by its mode alone
+            // (RenderCommand::isTransparent), so the order and the blend factor are the same two numbers.
+            alpha = draw.params.x * surface.alpha;
+        }
+        // Opaque ignores both material alphas and keeps the drawable's own opacity, which is what a host fades a
+        // whole object with - and the deferred path sees the same value (it is read from the same draw block).
+    }
 #ifdef VINE_VERTEX_COLOR
     // An AUTHORED vertex colour modulates the albedo only. Its alpha is
     // deliberately NOT an opacity input: opacity belongs to the draw block, so

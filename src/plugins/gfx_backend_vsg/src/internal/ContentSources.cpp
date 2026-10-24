@@ -187,58 +187,59 @@ namespace
 ///
 /// Presence is the one thing the bits say: a slot's map and sampler travel through MaterialFacts, because a
 /// map is an image and an image is not a texel of material state.
-[[nodiscard]] std::uint32_t textureSlotBits(const vn::graphics::Material& material) noexcept
+[[nodiscard]] std::uint32_t textureSlotBits(const vn::graphics::MaterialParameters& values) noexcept
 {
     std::uint32_t bits = 0U;
-    if (material.hasTexture(vn::graphics::TextureSlot::BaseColor)) {
+    if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::BaseColor)].texture != nullptr) {
         bits |= vn::graphics::kMaterialFlagBaseColor;
     }
-    if (material.hasTexture(vn::graphics::TextureSlot::MetallicRoughness)) {
+    if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::MetallicRoughness)].texture !=
+        nullptr) {
         bits |= vn::graphics::kMaterialFlagMetallicRoughness;
     }
-    if (material.hasTexture(vn::graphics::TextureSlot::Normal)) {
+    if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::Normal)].texture != nullptr) {
         bits |= vn::graphics::kMaterialFlagNormal;
     }
-    if (material.hasTexture(vn::graphics::TextureSlot::Occlusion)) {
+    if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::Occlusion)].texture != nullptr) {
         bits |= vn::graphics::kMaterialFlagOcclusion;
     }
-    if (material.hasTexture(vn::graphics::TextureSlot::Emissive)) {
+    if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::Emissive)].texture != nullptr) {
         bits |= vn::graphics::kMaterialFlagEmissive;
     }
     return bits;
 }
 
-/// @brief Packs @p material's fields into the ABI's block, field for field.
+/// @brief Packs a material's RESOLVED values into the ABI's block, field for field.
 ///
-/// The ONE spelling of the mapping: buildMaterialFacts writes it, and nothing else re-derives it.
+/// The ONE spelling of the mapping: buildMaterialFacts writes it, and nothing else re-derives it. It reads the
+/// resolved parameters rather than a Material, so an asset and an instance over one pack through the same code
+/// (graphics-material.md 2.2/C3).
 /// The values are packed VERBATIM - no clamping and no sanitising: a material is data the host authored, and
 /// the shader clamps what it draws (graphics-material.md N2).
-[[nodiscard]] vn::graphics::VineMaterialBlock blockOfMaterial(const vn::graphics::Material& material) noexcept
+[[nodiscard]] vn::graphics::VineMaterialBlock blockOfMaterial(const vn::graphics::MaterialParameters& values) noexcept
 {
-    const vn::Colorf base     = material.baseColor();
-    const vn::Colorf emissive = material.emissive();
-
     vn::graphics::VineMaterialBlock block{};  // its member defaults are the default material
-    block.base_color = { base.r, base.g, base.b, base.a };
-    block.emissive   = { emissive.r, emissive.g, emissive.b, emissive.a };
-    block.params     = { material.metallic(), material.roughness(), material.occlusion(), material.alphaCutoff() };
+    block.base_color = { values.base_color.r, values.base_color.g, values.base_color.b, values.base_color.a };
+    block.emissive   = { values.emissive.r, values.emissive.g, values.emissive.b, values.emissive.a };
+    block.params     = { values.metallic, values.roughness, values.occlusion, values.alpha_cutoff };
     // The flag row: the present texture slots (bits 0-4) and the alpha mode (bits 8-9).
-    block.flags[0] = textureSlotBits(material) |
-                     (alphaModeBits(material.alphaMode()) << vn::graphics::kMaterialAlphaModeShift);
+    block.flags[0] = textureSlotBits(values) |
+                     (alphaModeBits(values.alpha_mode) << vn::graphics::kMaterialAlphaModeShift);
     return block;
 }
 
 }  // namespace
 
-FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_t revision,
+FactMiss buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uint64_t revision,
                             MaterialFacts& out, std::vector<std::byte>& storage)
 {
     // The block's MEMBERS are the payload, and `{}` is aggregate initialisation: it initialises the members
     // from their defaults (the ABI states the default material's values) and leaves the struct's tail padding
-    // alone. What decides whether a material changed is the number it reports (Material::revision), never a byte
-    // comparison of these bytes (which would report "changed" for a material that did not).
-    const vn::graphics::VineMaterialBlock block =
-        material != nullptr ? blockOfMaterial(*material) : vn::graphics::VineMaterialBlock{};
+    // alone. What decides whether a material changed is the number it reports (MaterialBase::revision), never a
+    // byte comparison of these bytes (which would report "changed" for a material that did not).
+    const vn::graphics::VineMaterialBlock block = material != nullptr
+                                                       ? blockOfMaterial(material->resolved())
+                                                       : vn::graphics::VineMaterialBlock{};
 
     storage.assign(sizeof(block), std::byte{ 0 });
     std::memcpy(storage.data(), &block, sizeof(block));
@@ -249,12 +250,13 @@ FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_
     out.block     = storage;
     // AFTER the entry is reset: the texture SET is a fact of the material like the block is, and any present
     // slot is what decides whether the drawable takes the `VINE_TEXTURED` variant of its program
-    // (api/ProgramVariant).
+    // (api/ProgramVariant). A slot's map and its sampler come from the same side of the resolution (instance
+    // or asset), because a slot is ONE item there.
     if (material != nullptr) {
+        const vn::graphics::MaterialParameters& values = material->resolved();
         for (std::uint32_t index = 0U; index < vn::graphics::kTextureSlotCount; ++index) {
-            const auto slot             = static_cast<vn::graphics::TextureSlot>(index);
-            out.slots[index].texture    = material->texture(slot);
-            out.slots[index].sampler    = material->sampler(slot);
+            out.slots[index].texture = values.textures[index].texture.get();
+            out.slots[index].sampler = values.textures[index].sampler;
         }
     }
     return FactMiss::None;

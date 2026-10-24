@@ -179,30 +179,41 @@ TEST(ShaderAbiTest, TheShaderBlockNamesAreTheL1Names)
     EXPECT_NE(gbuffer_fs.find("uniform VineMaterialBlock"), std::string::npos);
 }
 
-TEST(ShaderAbiTest, TheForwardFragmentsAlphaIsTheDrawablesOpacityAlone)
+TEST(ShaderAbiTest, TheAlphaModeDecidesWhatTheMaterialsAlphaMeans)
 {
-    // The engine has ONE transparency channel - the per-drawable opacity - and it is the one the
-    // collection pass sorts by, the one the deferred path carries, and the one the opacity pixel gate
-    // measures. The forward stage used to multiply the material's own alpha and the sampled texel's
-    // alpha into its output alpha as well: the object then blended (blending is always on for the
-    // content pipelines) while the engine had classified it opaque and sorted it front-to-back, and
-    // the SAME asset stayed opaque on the deferred path (whose lighting program writes alpha 1). This
-    // pins the one-input rule in the text, because the structural gates around the block layout and
-    // the variant defines are all blind to an extra factor in a float expression.
+    // ONE PRODUCT, THREE USES (graphics-material.md 2.7/3.5). The effective alpha is
+    // `draw.params.x` (the drawable's opacity) x the material's own alpha x its base map's alpha, and the
+    // material's MODE says what that product means: Opaque ignores both material alphas, Mask uses the product
+    // as a threshold and keeps its survivors fully opaque, Blend uses it as the blend factor. This pins the
+    // three branches in the shipped text, because the structural gates around the block layout and the variant
+    // defines are blind to a factor that went missing from a float expression.
     const std::string forward_fs = asByteString(shaders::kBuiltinForwardFrag);
-    EXPECT_NE(forward_fs.find("float alpha = draw.params.x;"), std::string::npos)
-        << "the fragment alpha must be the drawable's opacity";
-    EXPECT_EQ(forward_fs.find("material.base_color.a"), std::string::npos)
-        << "the material's alpha must not scale the fragment alpha (a shared material would make "
-           "every drawable that uses it translucent, in an order nobody sorted)";
-    EXPECT_EQ(forward_fs.find("alpha *= texel.a"), std::string::npos)
-        << "the sampled texel's alpha must not scale the fragment alpha either (same reason, and the "
-           "deferred path discards it, so the two paths would disagree about one asset)";
+    EXPECT_NE(forward_fs.find("(material.flags.x >> VINE_MATERIAL_ALPHA_MODE_SHIFT) & 3u"), std::string::npos)
+        << "the mode rides the block's flag row (bits 8-9) - a shader must not invent its own numbering";
+    EXPECT_NE(forward_fs.find("if (draw.params.x * surface.alpha < material.params.w)"), std::string::npos)
+        << "Mask cuts on the PRODUCT of the two alphas against the material's cutoff";
+    EXPECT_NE(forward_fs.find("discard;"), std::string::npos) << "Mask discards, it does not fade";
+    EXPECT_NE(forward_fs.find("alpha = draw.params.x * surface.alpha;"), std::string::npos)
+        << "Blend outputs the product, which is what the transparent queue sorted by";
+    // The material's alpha is read through the surface (one place, both paths), not multiplied in ad hoc here:
+    // the G-buffer writer asks the same function the same question. What this pins is that the stage's own
+    // branches use `surface.alpha` and never a texel it sampled itself.
+    EXPECT_EQ(forward_fs.find("vine_color.a"), std::string::npos)
+        << "a vertex colour's alpha is still not an opacity input (it means what the model says it means)";
+    const std::string material_fs = asByteString(shaders::kBuiltinForwardFrag);
+    EXPECT_NE(material_fs.find("surface.alpha      = clamp(material.base_color.a, 0.0, 1.0);"), std::string::npos)
+        << "the inlined sample function is where the material's own alpha enters";
+    EXPECT_NE(material_fs.find("surface.alpha      *= texel.a;"), std::string::npos)
+        << "and the base slot's own alpha multiplies it - the shape of a cut-out leaf lives there";
 
-    // The block the shading declares is the engine's material ABI and nothing else: fields no accessor
-    // could set and no stage read are gone rather than declared (see VineMaterialBlock).
-    EXPECT_EQ(forward_fs.find("alphaMask"), std::string::npos);
+    // The G-buffer records opaque and masked content only (N4): a blended surface has no single value to store.
     const std::string gbuffer_fs = asByteString(shaders::kBuiltinGbufferFrag);
+    EXPECT_NE(gbuffer_fs.find("(material.flags.x >> VINE_MATERIAL_ALPHA_MODE_SHIFT) & 3u"), std::string::npos)
+        << "the writer reads the same mode bits";
+    EXPECT_NE(gbuffer_fs.find("if (alpha_mode == 2u)"), std::string::npos) << "Blend is not recorded";
+    EXPECT_NE(gbuffer_fs.find("draw.params.x * surface.alpha < material.params.w"), std::string::npos)
+        << "and Mask cuts the same holes the forward stage does - the same two inputs, not a copy of one";
+    EXPECT_EQ(forward_fs.find("alphaMask"), std::string::npos);
     EXPECT_EQ(gbuffer_fs.find("alphaMask"), std::string::npos);
 }
 

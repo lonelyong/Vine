@@ -291,8 +291,8 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     bool                                       fitted_ = false;
     /// 当前选中的几何：空 = 没选中。
     vn::intrusive_ptr<vn::graphics::Geometry> selected_geometry_;
-    /// 选中前的材质：取消选择时原样还回去。
-    vn::intrusive_ptr<vn::graphics::Material> selected_material_;
+    /// 选中前的材质：取消选择时原样还回去（哪一种是素材还是它上面的实例，视图不关心）。
+    vn::intrusive_ptr<vn::graphics::MaterialBase> selected_material_;
     /// 高亮材质（第一次选中时才造）：橙色、低高光，与中灰的模型放在一起一眼能认出"选中的是它"。
     vn::intrusive_ptr<vn::graphics::Material>  highlight_;
 };
@@ -357,7 +357,7 @@ inline void ModelRenderView::selectAt(double nx, double ny)
             highlight_->setRoughness(0.333f);
         }
         selected_geometry_ = hit.geometry;
-        selected_material_ = vn::intrusive_ptr<vn::graphics::Material>(hit.geometry->material());
+        selected_material_ = vn::intrusive_ptr<vn::graphics::MaterialBase>(hit.geometry->material());
         selected_geometry_->setMaterial(highlight_);
     }
 

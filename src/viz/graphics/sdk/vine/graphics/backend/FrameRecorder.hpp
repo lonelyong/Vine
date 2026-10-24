@@ -171,7 +171,11 @@ struct CollectedCommand
     ProgramRef    program{};                    ///< The command's own program; null = the frame's default.
     const void*   material{nullptr};            ///< Material identity, or nullptr.
     vn::math::Mat4d model{};                  ///< World-space model matrix.
-    float         opacity{1.0F};                ///< Effective opacity (the engine's only transparency channel).
+    float             opacity{1.0F};                ///< Effective opacity (the drawable's half of the alpha rule).
+    /// Whether this command belongs in the transparent queue, from `RenderCommand::isTransparent` (the
+    /// material's resolved alpha mode plus the opacity). Carried because the plan has only identities, and the
+    /// blend enable must be the same answer the collector sorted by (graphics-material.md 2.7).
+    bool              transparent{false};
     vn::graphics::RenderState authored_state{};  ///< What the CONTENT authored, item by item (see the resolution).
     /// The instance stream, BORROWED for the frame (the primitive's slice holds it): null for a plain draw.
     const vn::Buffer<float>* instance_buffer{nullptr};

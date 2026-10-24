@@ -21,9 +21,12 @@ layout(location = 2) out vec4 out_emissive;
 layout(location = 3) out vec4 out_position;
 // The material this stage PROJECTS into the G-buffer: the ONE declaration of the parameter blocks (see
 // vine_params.glsl), so a deferred drawable and a forward one of the same material shade the same bytes.
-// `base_color.a` (the material's own alpha) is not read here either - the engine's transparency is the
-// per-drawable opacity, and it reaches the composite through the lighting pass, not through this attachment.
+// `base_color.a` is read for the ALPHA MODE's sake (Mask's threshold and Blend's exclusion), never written into
+// an attachment - the attachments carry the surface, and the composite's alpha is the lighting pass's.
 #define VINE_PARAM_MATERIAL
+// The per-drawable block, read for `params.x`: the drawable's opacity is the Mask threshold's second input, and
+// reading the SAME value the forward stage reads is what makes the two paths cut the same holes.
+#define VINE_PARAM_DRAW
 #include "vine_params.glsl"
 // The SAME surface the forward stage shades: the material's five slots, their packing and what an absent slot
 // contributes are stated once (vine_material.glsl), which is what keeps a deferred picture from disagreeing
@@ -43,6 +46,20 @@ void main()
 #else
     VineSurface surface = vineSurfaceFromFactors(n);
 #endif
+    // WHAT IS NOT RECORDED (graphics-material.md N4): a BLENDED surface has no single value to store - its
+    // colour is a mix with whatever is behind it - and baking one would shade it as if it were opaque. So the
+    // geometry pass records opaque and masked content only; a host that wants blended content on this path puts
+    // it in a forward overlay pass, which is what the Deferred preset does. A masked fragment that survives the
+    // threshold is fully opaque, exactly as in the forward stage.
+    const uint alpha_mode = (material.flags.x >> VINE_MATERIAL_ALPHA_MODE_SHIFT) & 3u;
+    if (alpha_mode == 2u)
+    {
+        discard;
+    }
+    if (alpha_mode == 1u && draw.params.x * surface.alpha < material.params.w)
+    {
+        discard;
+    }
     // Most of this design's work happens in ONE line: the surface is stored, not shaded. The albedo is the
     // material's BASE colour (not its diffuse lobe): the lighting pass derives the diffuse part and the
     // reflectance from it and the metallic it reads beside the normal, so f0 is never stored - a derived value

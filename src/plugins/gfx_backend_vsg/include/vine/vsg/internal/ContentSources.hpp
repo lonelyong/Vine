@@ -95,13 +95,17 @@ VN_VSG_NS_BEGIN
 
 /** @brief Builds the material table entry for @p material, or for the DEFAULT material when it is null.
  *
- * @param material SDK material to describe, or nullptr for the engine's default material.
+ * @details
+ * - It takes a MaterialBase, so an asset and an instance over one are both describable: the block is packed from
+ *   `resolved()`, which is exactly the set of values the two kinds agree on (graphics-material.md 2.2).
+ *
+ * @param material SDK material (or instance) to describe, or nullptr for the engine's default material.
  * @param revision Revision the caller tracks this material's edits at.
  * @param out      Receives the entry (its block span points into @p storage).
  * @param storage  Caller-owned storage the entry borrows; resized to the block's size and must outlive it.
  * @return None always: an absent material is a describable thing (see the file note), not a miss.
  */
-[[nodiscard]] FactMiss buildMaterialFacts(const vn::graphics::Material* material, std::uint64_t revision,
+[[nodiscard]] FactMiss buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uint64_t revision,
                                           MaterialFacts& out, std::vector<std::byte>& storage);
 
 VN_VSG_NS_END

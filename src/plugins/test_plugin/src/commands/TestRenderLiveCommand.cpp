@@ -103,8 +103,8 @@ vn::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecutionCo
     // Each demo triangle lives under its own MatrixTransform as one leaf
     // Geometry child; grab the leaf for the visibility blink below.
     auto* mover_geom = dynamic_cast<vn::graphics::Geometry*>(mover->children().front().get());
-    auto* base_mat = dynamic_cast<vn::graphics::Geometry*>(base->children().front().get())
-                         ->material();
+    auto* base_mat = dynamic_cast<vn::graphics::Material*>(
+        dynamic_cast<vn::graphics::Geometry*>(base->children().front().get())->material());
 
     s_timer = new QTimer(QCoreApplication::instance());
     int tick = 0;

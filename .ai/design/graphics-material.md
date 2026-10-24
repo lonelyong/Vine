@@ -98,28 +98,28 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
 | F1 | `Material` 资产 | PBR 因子 + 纹理集 + alpha 模式；setter 只移动 revision | 已做 |
-| F2 | `MaterialInstance` | 引用一个资产，稀疏覆盖因子 / 纹理 / alpha | 未做 |
+| F2 | `MaterialInstance` | 引用一个资产，稀疏覆盖因子 / 纹理 / alpha | 已做 |
 | F3 | 纹理集 | 五个语义槽 + 每槽 `Sampler` + kind/格式校验 | 已做（格式校验随 F11） |
 | F4 | 材质块 v2 | 仍 64 B：base_color / emissive / params / flags | 已做 |
 | F5 | forward PBR | GGX 直接光 + ambient，含 normal/ORM/emissive 槽 | 已做 |
 | F6 | deferred PBR | G-buffer 还原 + 同一 BRDF + emissive/occlusion | 已做 |
-| F7 | alpha 模式 | Opaque / Mask / Blend 的排序、discard 与输出 alpha | 未做 |
+| F7 | alpha 模式 | Opaque / Mask / Blend 的排序、discard 与输出 alpha | 已做 |
 | F8 | 导入转换 | asset `Color/Phong/Pbr` → 引擎 PBR，去掉近似 | 已做 |
 | F9 | 变体 | `VINE_TEXTURED` 二元位 + 常量回退 | 已做 |
-| F10 | 上传去重 | 实例复合 revision；改资产使实例重写 | 未做 |
-| F11 | 诊断 | 缺槽 / 格式不符 / Cube 进非 base 槽 / 无效覆盖 | 未做 |
+| F10 | 上传去重 | 实例复合 revision；改资产使实例重写 | 已做 |
+| F11 | 诊断 | 缺槽 / 格式不符 / Cube 进非 base 槽 / 无效覆盖 | 未做（缺槽已计数，逐材质上报待办） |
 
 ### 3.2 F1–F2 资产与实例
 
 - **行为**：`Material` 的字段 = base_color（线性 RGBA）、emissive（RGB + 强度）、metallic、roughness、
-  occlusion、alpha_mode、alpha_cutoff、五个纹理槽。`MaterialInstance` 的字段 = 一个 `MaterialPtr` +
-  同样字段的 optional 版本 + 纹理槽 optional 版本。
-- **约束**（C1）：实例只有一个父，父不能是实例（不链式）；`G1` 一个定义。
-- **要求**（R1）：解析结果 = 父值逐项被覆盖替换，得到一份与 `Material` 同形的
-  `MaterialParameters`；解析缓存随父 revision 失效。
+  occlusion、alpha_mode、alpha_cutoff、五个纹理槽；`MaterialInstance` = 一个 `Material` 父 + 同样字段的
+  optional 版（`MaterialItem` 一位一项，纹理槽每槽一位）。两者都通过 `MaterialBase::resolved()` 回答。
+- **约束**（C1）：实例只有一个父，父不能是实例（父的类型就是 `Material`）；`G1` 一个定义。
+- **要求**（R1）：解析结果 = 父值逐项被覆盖替换，得到一份 `MaterialParameters`；解析缓存以
+  （父 revision，自身 revision）为键，命中时只比两个数。
 - **验收**（T1）：父改基色、实例覆盖粗糙度——实例只剩两者的组合，未覆盖项跟随父。
 - **注意**（N1）：覆盖项不能持有第二份纹理引用而不进 revision；`setTexture(slot, ...)` 与
-  `clearTexture(slot)` 都动 revision。
+  `clearOverride` 都动 revision。
 
 ### 3.3 F3 纹理集
 
@@ -217,7 +217,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 | R1 | 实例解析缓存以（父 revision，自身 revision）为键，父改动自动失效。 |
 | R2 | 采样器按 `Sampler` 值缓存；同状态共享一个 sampler 对象。 |
 | R3 | forward 与 deferred 共用一份 BRDF 与一份灯求值。 |
-| R4 | 逐 drawable 的透明度幅度只有 `draw.params.x` 一个来源。 |
+| R4 | 逐 drawable 的透明度幅度只有 `draw.params.x` 一个来源；排序与混合开关读**同一个**分类结果。 |
 
 ### 5.3 不变量（N#）
 
@@ -253,10 +253,10 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 实例解析：覆盖项与继承项正确组合 | `MaterialInstanceTest.*`（新增） |
+| T1 | 实例解析：覆盖项与继承项正确组合 | `MaterialInstanceTest.*` |
 | T2 | 采样器按值共享、贴图只上传一次 | `MaterialImagesTest.SamplerByValue*` |
 | T3 | forward 与 deferred 同像素一致 | `ContentPassTest.TheMaterialShadesTheSameValueOnBothPaths` |
-| T4 | Mask discard 与 Blend 排序 | `GraphicsTest.*AlphaMode*` |
+| T4 | Mask discard 与 Blend 排序 | `SdkPixelTest.TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends` |
 | T5 | 导入逐字段一致 | `ModelSceneTest.PbrMaterialIsNotApproximated` |
 | T6 | 变体矩阵与绑定计数同步 | `EmbeddedShadersTest` / `ProgramAbiTest` |
 
@@ -264,31 +264,31 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 ### 9.1 当前状态
 
-**M1（模型 + 块 + 导入）、M2（纹理集 + 二元变体）与 M3（两条路径的 PBR）已落地**（2026-10-24）：`Material` 是
-PBR 因子 + 五个纹理槽（每槽 = 贴图 + `Sampler`，槽身份定绑定与色彩空间），块是 64 B 的
-`base_color / emissive / params / flags`（flags 的 bit0–4 逐槽存在），`materialFrom` 的固定表就位、`PbrMaterial`
-逐字段直传；内容集绑定固定为 material 0 / 槽 1–5 / lights 6 / shadow 7–8，`VINE_TEXTURED` 一个位声明全部五槽。
-着色是 GGX / Smith / Schlick（`vine_brdf.glsl`）：forward 直接调用，deferred 从新 G-buffer（八面体法线 + 两个
-因子、emissive + occlusion、全部 16F）还原同一组输入后调用同一函数；五槽全部参与画面，缺槽按 flags 短路成常量，
-Blinn-Phong 桥与其两个 helper 已删除。alpha 模式仍只进块不参与着色（M4）。
+**M1–M4 已全部落地**（2026-10-24，M4 = 实例 + alpha 模式），只剩 F11 的逐材质诊断：`Material` /`MaterialInstance`
+共享 `MaterialBase` 与 `MaterialParameters`，持有处一律 `MaterialBasePtr`；块与内容集绑定自 M1–M3 未变（material 0 /
+槽 1–5 / lights 6 / shadow 7–8，`VINE_TEXTURED` 一个位），着色是 GGX / Smith / Schlick（`vine_brdf.glsl`），
+forward 与 deferred 从各自的输入还原同一组表面再调用同一函数。alpha 三支已进着色：Opaque 忽略材质 alpha、Mask 按
+`opacity × 材质 α × 贴图 α` 裁剪后视作不透明、Blend 用该乘积作输出 alpha，排序与混合开关读同一个分类结果。
 
 ### 9.2 已知缺口 / 待办
 
-- 落地分四步：M1 模型与块（F1/F4/F8）、M2 纹理集与变体（F3/F9）、M3 两条路径的 BRDF 与 G-buffer（F5/F6）
-  已做；M4 实例与 alpha 模式（F2/F7/F10/F11）未做。
+- 落地分四步：M1 模型与块（F1/F4/F8）、M2 纹理集与变体（F3/F9）、M3 两条路径的 BRDF 与 G-buffer（F5/F6）、
+  M4 实例与 alpha 模式（F2/F7/F10）已做；剩 F11 的逐材质诊断（缺槽已计数，但“格式不符 / Cube 进非 base 槽”
+  还没上报 —— `ContentSets` 只计数不报，逐材质 episode 需要一条从 `ContentPass` 到它的通道）。
 - 镜像 UV 下的导数切线基是已知近似，不是 bug；需要时再引入切线通道。
 - IBL、SSAO、透射（KHR_materials_transmission）不在本设计内。
 
 ### 9.3 兼容性 / 迁移
 
 - `setDiffuse` → `setBaseColor`，`setAmbient` / `setSpecular` / `setShininess` 删除；`setTexture(t)` → `setTexture(TextureSlot::BaseColor, t, {})`，`texture()` → `texture(slot)`。
-- `MaterialPtr` 在持有处改为 `MaterialBasePtr`；`vn::geometry` 侧不变。落地时同步修改 `graphics-scene.md` F7、`graphics-rendering.md` F23/N6、`graphics-shader-params.md` 的 material 块行与 §2.2、`vsg-backend.md` 的变体与上传小节。
+- `MaterialPtr` 在持有处改为 `MaterialBasePtr`（已落地：`RenderCommand` / `Geometry` / `Primitive` / `StateNode`
+  与 `effectiveMaterial`）；`vn::geometry` 侧不变。实例用 `MaterialInstance(parent)` + `setX` / `clearOverride`。
 
 ## 10. 参考
 
 ### 10.1 代码
 
-- `src/viz/graphics/sdk/vine/graphics/Material.hpp` · `ShaderAbi.hpp` · `Sampler.hpp` · `Texture.hpp`
+- `src/viz/graphics/sdk/vine/graphics/MaterialBase.hpp` · `Material.hpp` · `MaterialInstance.hpp` · `ShaderAbi.hpp`
 - `shaders/vine_params.glsl` · `vine_material.glsl` · `vine_brdf.glsl` · `vine_gbuffer.glsl`
 - `shaders/builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag`
 - `ContentSources.cpp`（`blockOfMaterial`）· `ProgramVariant.hpp` · `MaterialImages.hpp` · `ModelScene.cpp`（`materialFrom`）

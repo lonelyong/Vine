@@ -96,7 +96,10 @@ struct CompiledCommand
     ProgramRef    program{};              ///< The command's own program, or the frame's default (resolved).
     const void*   material{nullptr};      ///< Material identity, or nullptr.
     vn::math::Mat4d model{};            ///< World-space model matrix.
-    float         opacity{1.0F};          ///< Effective opacity.
+    float         opacity{1.0F};          ///< Effective opacity (the drawable's half of the alpha rule).
+    /// Whether this drawable blends, carried from the collected command (see CollectedCommand::transparent):
+    /// the material's mode decided it, and the blend enable must not re-derive it from a different input.
+    bool          transparent{false};
     /// Point size in framebuffer pixels: the resolved state's one item whose consumer is the DRAW BLOCK rather
     /// than the pipeline (`VineDrawBlock::params.y`). The content's word and the pass override are already
     /// weighed by resolveRenderState, so this is the answer, not a claim.

@@ -92,7 +92,7 @@ class ContentStore
      * @param material Material the host shades with; null is ignored (content without a material is answered
      *                 for by the default entry, which needs no tracking).
      */
-    void track(const vn::intrusive_ptr<vn::graphics::Material>& material);
+    void track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& material);
 
     /**
      * @brief Touches @p material: refreshes its entry when the material reports that it changed.
@@ -109,7 +109,7 @@ class ContentStore
      *
      * @param material Material to touch; null is ignored (the default entry describes itself).
      */
-    void updateMaterial(vn::raw_ptr<vn::graphics::Material> material);
+    void updateMaterial(vn::raw_ptr<vn::graphics::MaterialBase> material);
 
     /**
      * @brief Ensures the tables answer for everything @p frame names, and returns them.
@@ -200,7 +200,7 @@ class ContentStore
      * @return true when the request was accepted (or the object was not resident); false when it could not be
      *         parked safely.
      */
-    bool releaseMaterial(vn::raw_ptr<const vn::graphics::Material> material, core::FrameTimeline& timeline,
+    bool releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material, core::FrameTimeline& timeline,
                          core::RetirementQueue& retirement);
 
     /** @brief Forgets every tracked object and every entry. The session-teardown path: nothing is parked. */
@@ -245,7 +245,7 @@ class ContentStore
                         core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named material (see tablesFor). */
-    void ensureMaterial(const vn::graphics::Material* material, core::FrameTimeline& timeline,
+    void ensureMaterial(const vn::graphics::MaterialBase* material, core::FrameTimeline& timeline,
                         core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named program IN ONE GEOMETRY-FREE KIND (see tablesFor). */

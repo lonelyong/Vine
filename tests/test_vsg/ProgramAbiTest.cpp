@@ -297,13 +297,15 @@ TEST(ProgramAbiTest, TheScreenProgramsBindTheAttachmentTheirFactoryNamed)
 
 TEST(ProgramAbiTest, TheGbufferAndSkyboxProgramsDeclareTheSlotsTheirShadingReads)
 {
-    // The G-buffer geometry stage: the material and the draw block (the vertex stage's point size), the camera
-    // matrices as push constants, and the map only in the variant that samples one. It declares no lights and
-    // (unlike the forward program) no shadow block.
+    // The G-buffer geometry stage: the material and the draw block, the camera matrices as push constants, and
+    // the map only in the variant that samples one. It declares no lights and (unlike the forward program) no
+    // shadow block. The DRAW block is declared by BOTH stages since the alpha mode work: the vertex stage writes
+    // gl_PointSize from `params.y` and the fragment stage reads `params.x` as the Mask threshold's second input
+    // (graphics-material.md 2.7) - one set, read from two stages, so the ports match.
     const ProgramAbi gbuffer = scan(*vn::graphics::gbufferGeometryProgram());
     ASSERT_EQ(gbuffer.bindings.size(), 2U);
     expectBlock(gbuffer, 0U, 0U, AbiBlockRole::Material, kFragment, sizeof(vn::graphics::VineMaterialBlock));
-    expectBlock(gbuffer, 1U, 0U, AbiBlockRole::Draw, kVertex, sizeof(vn::graphics::VineDrawBlock));
+    expectBlock(gbuffer, 1U, 0U, AbiBlockRole::Draw, kVertex | kFragment, sizeof(vn::graphics::VineDrawBlock));
     ASSERT_EQ(gbuffer.pushes.size(), 1U);
     EXPECT_EQ(gbuffer.pushes[0].size, 128U);
     EXPECT_EQ(gbuffer.pushes[0].stages, kVertex);

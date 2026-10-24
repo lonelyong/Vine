@@ -165,7 +165,7 @@ raw_ptr<ShaderProgram> StateNode::program() const
     return program_.get();
 }
 
-void StateNode::setMaterial(intrusive_ptr<Material> material)
+void StateNode::setMaterial(MaterialBasePtr material)
 {
     announceContentChange();
     material_ = std::move(material);
@@ -177,7 +177,7 @@ void StateNode::clearMaterial()
     material_.reset();
 }
 
-raw_ptr<Material> StateNode::material() const
+raw_ptr<MaterialBase> StateNode::material() const
 {
     return material_.get();
 }
@@ -236,32 +236,32 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
     return ShaderProgramPtr();
 }
 
-MaterialPtr effectiveMaterial(raw_ptr<const Node> node)
+MaterialBasePtr effectiveMaterial(raw_ptr<const Node> node)
 {
     // A leaf Geometry's own material wins; otherwise the nearest ancestor StateNode material applies; otherwise
     // the engine default (null). Deliberately the SAME shape as effectiveProgram() above: both are
     // single-valued overrides that replace the shading, as opposed to the render-state items, which fold
     // item by item.
     if (node == nullptr) {
-        return MaterialPtr();
+        return MaterialBasePtr();
     }
     // Same rule as effectiveProgram: the first primitive's own material, then the geometry's default.
     if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
         if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->material != nullptr) {
-            return MaterialPtr(draw->material);
+            return MaterialBasePtr(draw->material);
         }
-        if (raw_ptr<Material> own = geometry->material()) {
-            return MaterialPtr(own);
+        if (raw_ptr<MaterialBase> own = geometry->material()) {
+            return MaterialBasePtr(own);
         }
     }
     for (const Node* current = node->parent(); current != nullptr; current = current->parent()) {
         if (const auto* state_node = dynamic_cast<const StateNode*>(current)) {
-            if (raw_ptr<Material> ancestor = state_node->material()) {
-                return MaterialPtr(ancestor);
+            if (raw_ptr<MaterialBase> ancestor = state_node->material()) {
+                return MaterialBasePtr(ancestor);
             }
         }
     }
-    return MaterialPtr();
+    return MaterialBasePtr();
 }
 
 VN_GRAPHICS_NS_END

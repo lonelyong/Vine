@@ -31,8 +31,8 @@ struct VN_GRAPHICS_API RenderCommand {
     /** Which of the geometry's primitives this command draws (its index, see Geometry::primitive). */
     std::uint32_t primitive_index{0};
 
-    /** Material to use. */
-    MaterialPtr material;
+    /** Material to use (an asset, or an instance over one - see MaterialBase). */
+    MaterialBasePtr material;
 
     /** Effective shader program (leaf/StateNode resolution), null = default.
      *
@@ -47,16 +47,30 @@ struct VN_GRAPHICS_API RenderCommand {
     /** @brief Returns whether the object is transparent and therefore needs sorted rendering.
      *
      * @details
-     * - DERIVED from @ref opacity, never stored: two fields for one fact let a caller set `opacity = 0.5` without the
-     *   flag (the command then sorts into the opaque batch and draws with the wrong blend expectation) or set the
-     *   flag alone (it draws as opaque).
-     * - Scene::collectRenderCommands is the only producer and derives it the same way, so the two spellings cannot
-     *   disagree — and the epsilon lives here, once, instead of at every producer.
+     * - DERIVED, never stored: two fields for one fact let a caller set `opacity = 0.5` without the flag (the
+     *   command then sorts into the opaque batch and draws with the wrong blend expectation) or set the flag
+     *   alone (it draws as opaque).
+     * - TWO INPUTS, ONE ANSWER (graphics-material.md §2.7): the material's resolved alpha MODE and the
+     *   drawable's opacity. `Blend` is transparent whatever the opacity; `Mask` is opaque to the sort even at
+     *   opacity < 1, because its alpha cuts fragments out instead of fading the surface (C4) - a masked leaf that
+     *   moved to the transparent queue would stop occluding itself; everything else is transparent exactly when
+     *   the effective opacity is below 1.
+     * - `Scene::collectRenderCommands` is the only producer and sorts on this, so the two cannot disagree - and
+     *   the epsilon lives here, once, instead of at every producer.
      *
-     * @return true when the effective opacity is below 1 (within the comparison epsilon).
+     * @return true when this draw belongs in the transparent queue.
      */
     [[nodiscard]] bool isTransparent() const noexcept
     {
+        if (material != nullptr) {
+            const AlphaMode mode = material->alphaMode();
+            if (mode == AlphaMode::Blend) {
+                return true;
+            }
+            if (mode == AlphaMode::Mask) {
+                return false;
+            }
+        }
         return opacity < 1.0f - 1e-6f;
     }
 
@@ -114,7 +128,7 @@ struct VN_GRAPHICS_API RenderCommand {
      * @param model         World-space model matrix.
      * @param primitive_index Which of @p g's primitives this command draws.
      */
-    RenderCommand(intrusive_ptr<Geometry> g, intrusive_ptr<Material> m, const Mat4d& model,
+    RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model,
                   std::uint32_t primitive_index = 0);
 
     /** @brief Gets the primitive this command draws (null when the geometry no longer has it).

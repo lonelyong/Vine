@@ -310,7 +310,7 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
 struct InheritedState
 {
     RenderState            state;                  ///< Fold of every StateNode above this node (deeper overrides).
-    raw_ptr<Material>      material;               ///< Nearest StateNode material above this node, or null.
+    raw_ptr<MaterialBase>  material;               ///< Nearest StateNode material above this node, or null.
     raw_ptr<ShaderProgram> program;                ///< Nearest StateNode program above this node, or null.
     std::uint32_t          layers = kDefaultLayer;    ///< Nearest layer declaration above, resolved (see Node::setLayers).
     int                    draw_order = 0;            ///< Nearest draw-order declaration above (see Node::setDrawOrder).
@@ -389,7 +389,7 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     subtree.draw_order     = node->drawOrder().value_or(inherited.draw_order);
     if (const auto* state_node = dynamic_cast<const StateNode*>(node)) {
         subtree.state.merge(state_node->renderState());
-        if (raw_ptr<Material> material = state_node->material()) {
+        if (raw_ptr<MaterialBase> material = state_node->material()) {
             subtree.material = material;
         }
         if (raw_ptr<ShaderProgram> program = state_node->program()) {
@@ -422,11 +422,11 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             if (primitive->hasInstances() && primitive->visibleInstanceCount() == 0u) {
                 continue;
             }
-            const raw_ptr<Material> geometry_material = geometry->material();
-            const MaterialPtr       material =
+            const raw_ptr<MaterialBase> geometry_material = geometry->material();
+            const MaterialBasePtr       material =
                 primitive->material != nullptr
                     ? primitive->material
-                    : (geometry_material != nullptr ? MaterialPtr(geometry_material) : MaterialPtr(subtree.material));
+                    : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : MaterialBasePtr(subtree.material));
             const raw_ptr<ShaderProgram> geometry_program = geometry->program();
             const ShaderProgramPtr       program =
                 primitive->program != nullptr

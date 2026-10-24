@@ -2,148 +2,86 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-VN_OBJECT_META_IMPL(Material, vn::Object);
+VN_OBJECT_META_IMPL(Material, MaterialBase);
 
 Material::Material() = default;
-
-String Material::name() const
-{
-    return name_;
-}
-
-void Material::setName(const String& name)
-{
-    // A NAME IS NOT SHADING: it never moves the revision (see revision()), so renaming a material cannot make a
-    // consumer rebuild what it already answered.
-    name_ = name;
-}
-
-Colorf Material::baseColor() const
-{
-    return base_color_;
-}
 
 void Material::setBaseColor(const Colorf& color)
 {
     // Each setter compares FIRST (see revision()): a host that re-applies the values it already set - the common
     // "recompute my settings every frame" shape - costs nothing, and a consumer keyed on the revision keeps what
     // it has instead of rebuilding an identical row.
-    if (base_color_ == color)
+    if (parameters_.base_color == color)
     {
         return;
     }
-    base_color_ = color;
+    parameters_.base_color = color;
     ++revision_;
-}
-
-Colorf Material::emissive() const
-{
-    return emissive_;
 }
 
 void Material::setEmissive(const Colorf& color)
 {
-    if (emissive_ == color)
+    if (parameters_.emissive == color)
     {
         return;
     }
-    emissive_ = color;
+    parameters_.emissive = color;
     ++revision_;
-}
-
-float Material::metallic() const
-{
-    return metallic_;
 }
 
 void Material::setMetallic(float metallic)
 {
-    if (metallic_ == metallic)
+    if (parameters_.metallic == metallic)
     {
         return;
     }
-    metallic_ = metallic;
+    parameters_.metallic = metallic;
     ++revision_;
-}
-
-float Material::roughness() const
-{
-    return roughness_;
 }
 
 void Material::setRoughness(float roughness)
 {
-    if (roughness_ == roughness)
+    if (parameters_.roughness == roughness)
     {
         return;
     }
-    roughness_ = roughness;
+    parameters_.roughness = roughness;
     ++revision_;
-}
-
-float Material::occlusion() const
-{
-    return occlusion_;
 }
 
 void Material::setOcclusion(float occlusion)
 {
-    if (occlusion_ == occlusion)
+    if (parameters_.occlusion == occlusion)
     {
         return;
     }
-    occlusion_ = occlusion;
+    parameters_.occlusion = occlusion;
     ++revision_;
-}
-
-AlphaMode Material::alphaMode() const
-{
-    return alpha_mode_;
 }
 
 void Material::setAlphaMode(AlphaMode mode)
 {
-    if (alpha_mode_ == mode)
+    if (parameters_.alpha_mode == mode)
     {
         return;
     }
-    alpha_mode_ = mode;
+    parameters_.alpha_mode = mode;
     ++revision_;
-}
-
-float Material::alphaCutoff() const
-{
-    return alpha_cutoff_;
 }
 
 void Material::setAlphaCutoff(float cutoff)
 {
-    if (alpha_cutoff_ == cutoff)
+    if (parameters_.alpha_cutoff == cutoff)
     {
         return;
     }
-    alpha_cutoff_ = cutoff;
+    parameters_.alpha_cutoff = cutoff;
     ++revision_;
-}
-
-raw_ptr<Texture> Material::texture(TextureSlot slot) const
-{
-    return textures_[static_cast<std::size_t>(slot)].texture.get();
-}
-
-const Sampler& Material::sampler(TextureSlot slot) const
-{
-    return textures_[static_cast<std::size_t>(slot)].sampler;
-}
-
-bool Material::hasTexture(TextureSlot slot) const
-{
-    return textures_[static_cast<std::size_t>(slot)].texture != nullptr;
 }
 
 void Material::setTexture(TextureSlot slot, intrusive_ptr<Texture> texture, const Sampler& sampler)
 {
-    TextureSlotBinding& binding = textures_[static_cast<std::size_t>(slot)];
+    TextureSlotBinding& binding = parameters_.textures[static_cast<std::size_t>(slot)];
     // A slot is (map, state): either one changing is one edit, and re-stating what the material already holds
     // is none - the same rule every other setter follows (see revision()).
     if (binding.texture.get() == texture.get() && binding.sampler == sampler) {
@@ -157,10 +95,15 @@ void Material::setTexture(TextureSlot slot, intrusive_ptr<Texture> texture, cons
 void Material::clearTexture(TextureSlot slot)
 {
     // The STATE stays with the slot: clearing the map is not a statement about the next map's filtering.
-    setTexture(slot, nullptr, textures_[static_cast<std::size_t>(slot)].sampler);
+    setTexture(slot, nullptr, parameters_.textures[static_cast<std::size_t>(slot)].sampler);
 }
 
-std::uint64_t Material::revision() const
+const MaterialParameters& Material::resolved() const noexcept
+{
+    return parameters_;
+}
+
+std::uint64_t Material::revision() const noexcept
 {
     return revision_;
 }

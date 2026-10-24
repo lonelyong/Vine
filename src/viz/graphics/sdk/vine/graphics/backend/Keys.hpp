@@ -289,7 +289,7 @@ struct VN_GRAPHICS_API DynamicState
 struct InstanceSlot
 {
     vn::math::Mat4d model_matrix;          ///< World-space model matrix.
-    float         opacity{1.0F};            ///< Effective opacity (the engine's only transparency channel).
+    float         opacity{1.0F};            ///< Effective opacity (the drawable's half of the alpha rule).
     const void*   material{nullptr};        ///< Material identity.
     std::uint64_t material_revision{0};     ///< Material revision (drives the in-place refresh).
 };

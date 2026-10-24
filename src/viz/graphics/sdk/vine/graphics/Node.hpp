@@ -184,9 +184,10 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      * @details
      * - Not the folded value: a drawable's effective opacity is scene.opacity() x every ancestor's
      *   opacity() x its own, clamped to [0, 1] at the drawn leaf (see RenderCommand::opacity).
-     * - The engine's only transparency channel: built-in forward shading writes it as the fragment
-     *   alpha, and a material does not contribute (a shared material's alpha would make every drawable
-     *   using it translucent).
+     * - The per-drawable half of the transparency INPUT: the material's alpha mode says what the product with
+     *   the material's own alpha means (Opaque ignores it, Mask thresholds it, Blend blends it), so a shared
+     *   material's alpha cannot fade every drawable that uses it on its own - the mode has to say so
+     *   (graphics-material.md 2.7).
      *
      * @return This node's own multiplier.
      */

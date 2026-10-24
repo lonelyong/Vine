@@ -66,7 +66,7 @@ ABI、流、目标寿命、WSI、证据、引擎侧。时间线归 git。
 | F6 | 目标、寿命与设备空闲 | 改目标创建/销毁、借深度、读回 | P43–P53 |
 | F7 | WSI 与窗口 | 改呈现、resize、窗口尺寸、测试窗口 | P54–P60 |
 | F8 | 证据、门禁与构建 | 加用例、改门禁、加 `.cpp` | P61–P75 |
-| F9 | 引擎侧（场景桥与着色约定） | 改声明/绑定、材质、色彩空间、G-buffer | P76–P84 |
+| F9 | 引擎侧（场景桥与着色约定） | 改声明/绑定、材质、色彩空间、G-buffer | P76–P86 |
 
 ## 4. 公开接口
 
@@ -249,6 +249,8 @@ ABI、流、目标寿命、WSI、证据、引擎侧。时间线归 git。
 | P82 | episode 是调用方的 | 半片 / 灯掉落 / 拒绝报告各归各；`ContentPass` 每帧新建，状态挂它会每帧重报 |
 | P83 | 缺槽的 stand-in 图只管“绑得上” | 槽不存在的判据是块里的 flags，**不是** stand-in 的值：漏掉短路的 normal 槽会被白图抵成 45°、emissive 槽会把物体点亮成白 | 把缺 normal / emissive 的材质与有图的材质并排画：前者外观变了就是短路没生效 | `vine_material.glsl` 的 `if ((material.flags.x & …) != 0u)` 是唯一读槽处 |
 | P84 | 法线贴图的 green 方向 | glTF 的法线图是 OpenGL 朝向（图内 +Y 向上），本引擎的 v 向下（Vulkan 原点在顶行）；照抄别的引擎的切线基会整张图镜像，光照看着“歪”但没有报错 | 平面法线图不应改变外观（P4）；Y 倾斜的图在水平与垂直两个平面上应分别向“上/下”偏 | 采样后翻 green，且切线基只用 `vine_material.glsl` 的那一份 |
+| P85 | 排序与混合开关读两个输入 | `isTransparent()` 说“进透明队列”，但混合仍由 `opacity < 1` 打开：Blend 材质 opacity = 1 时排进了透明队列却**不混合**，alpha 写进去也没人用 | 按材质模式画一张 Blend 叶子：画面与本应混合的值差一块，且 `isTransparent()` 为 true | 分类只做一次（`RenderCommand::isTransparent`），计划带着那个 bool（`CollectedCommand::transparent`），`FrameCompiler` 只读它 |
+| P86 | 实例的解析缓存漏掉父 revision | 改资产后实例仍画旧值，且没有日志；`revision()` 若只数自身就是这个问题 | 父改一份基色，实例的像素不变；`revision()` 前后相同 | 缓存键是（父 revision，自身 revision），`revision()` 本身也是“解析过一次”的副作用；P3 的测试就钉这条 |
 
 ## 7. 已否决选项
 
