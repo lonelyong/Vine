@@ -24,9 +24,12 @@ VN_APPFWGUI_NS_BEGIN
  * - Resolution happens at DISPATCH time and travels with the execution, so a command never asks "what is current"
  *   while it runs: two windows or two panes can each carry their own answer.
  * - Why not let the command read `GuiApplication::centralDocumentHost()->currentView()` instead (three lines, no
- *   window, no cast)? Because that answers "what is current NOW, in this application": a command that awaits lets
- *   the user switch documents meanwhile, and a second window's command would land on the first window's view. The
- *   window argument here is what lets the answer belong to the dispatcher (and lets a test point at its own host).
+ *   window, no cast)? Because that answers "what is current NOW": a command that awaits lets the user switch tabs
+ *   meanwhile, and when two views are visible at once (MDI / split) there is no single "current" that says which one
+ *   the command came from. The window argument here is what lets the answer belong to the dispatcher (and lets a test
+ *   point at its own host).
+ * - What is NOT resolved yet: the initiating view. Resolution uses the host's current view, which is exactly right for
+ *   tabs (one view visible) and not enough for MDI/split - that is where "the initiator wins" has to be added.
  *
  * @param window Window the dispatch came from; may be null, and so may its dock manager and central host.
  * @return The target; every layer may be null.
