@@ -12,7 +12,6 @@ VN_APPFWGUI_NS_BEGIN
 class RibbonBar;
 class StatusBar;
 class DockPanelManager;
-class RenderControl;
 
 class VN_APPFW_API MainWindow : public Window {
     VN_OBJECT_META_DECL
@@ -37,22 +36,10 @@ class VN_APPFW_API MainWindow : public Window {
     raw_ptr<StatusBar>        statusBar() const;
     raw_ptr<DockPanelManager> dockPanelManager() const;
 
-    /** @brief Returns the 3D area a command should act on, or nullptr when there is none.
-     *
-     * @details
-     * - DERIVED, not published: `central document host -> current view -> DocumentView::renderControl()`.
-     *   "Which pane" is the view's answer, because it is the view that created the panes; the window only asks the
-     *   view that is on screen, so an off-screen view is never consulted and the answer stays single-valued even
-     *   when several areas exist.
-     * - NO ACTIVE DOCUMENT, NO TARGET: when the central area is not a document host, no view is shown, or the shown
-     *   view has no 3D area, the answer is nullptr. There is no "the shell's own 3D page" fallback: the central slot
-     *   is where the document host installs, and every 3D area in an application belongs to a view.
-     * - A command that needs this answer treats nullptr as "nothing to act on" and says so - it is the normal state
-     *   of a window with no document open, not a failure.
-     *
-     * @return The active render control of the shown view, or nullptr when no view with a 3D area is on screen.
-     */
-    RenderControl* primaryRenderControl() const;
+    // "Which 3D area?" is NOT answered here any more: a command reads it from its execution target
+    // (gui::resolveCommandTarget() at dispatch, see CommandTarget.hpp), which keeps the answer per execution instead
+    // of per window. The window still CREATES the document host that owns the views - it just does not republish what
+    // they answer.
 
   private:
     struct Impl;

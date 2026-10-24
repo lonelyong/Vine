@@ -28,21 +28,19 @@ inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wi
  * include 它的翻译单元，连带把"哪些命令属于本插件"这件事藏进静态初始化）—— 插件在自己的 `load()` 里按名字逐个
  * `registerCommand<T>()`：一处说得清、可读、用例也能照做（见 ModelViewerPlugin）。名字是下面那几个常量。
  *
- * **作用在哪个视图上**：控制器那个视图（`RenderControl::view()`）—— 一块渲染区只画一幅画（多格已下线，见
- * `RenderSurface`）。`primaryRenderControl()`（"当前文档视图 → 它的活动窗格"，派生回答）仍然用来找**窗口**上那块
- * 3D 控件 —— 那是框架给的通道（那接口的注释就是"让别的插件够到渲染引擎/场景，不必依赖 app_shell 内部"）。于是
- * 这条命令不需要认识任何具体视图类。两道守卫让它不会改错东西：
+ * **作用在哪个视图上**：**派发时解析出的目标**（`CommandExecutionContext::target()`）—— 目标是视图，视图
+ * 自己回答它那块 3D 区（`DocumentView::renderControl()`），一块渲染区只画一幅画（多格已下线，见
+ * `RenderSurface`）。命令因此不需要认识任何具体视图类，也不需要问“谁是当前窗口”：目标随执行走，两个窗口/两个
+ * 窗格各答各的。前提用 `CommandFlags::NeedsView` 声明，缺 3D 区时由框架统一拒绝（不再在这里写空链判断）。
  *
- *  - 当前文档不是模型文档 ⇒ `NotApplicable`：演示文档的视图不该被模型查看器的命令改掉；
- *  - 还没有视图上屏（文档开着但没显示过）⇒ 同样 `NotApplicable`，并说清原因（不静默）。
+ * 剩下的一道守卫是**类型**：
+ *
+ *  - 目标文档不是模型文档 ⇒ `NotApplicable`：演示文档的视图不该被模型查看器的命令改掉。
  *
  * **改哪条链**：视图的配方（哪条链、带不带坐标轴、带不带帧率读数）归 `PassChain`，模式则是链**已经建好之后**
- * 还能改的那一项（见 `PassChain::setShadingMode()`）。所以这里分两条路：
- *
- *  - 视图**就是控件自己的视图** ⇒ 交给 `RenderControl::setShadingMode()`：控件知道这条链是不是它建的，
- *    能改就直接改（零重建），改不了就带着新档重建一次（延迟链没有可改的几何趟，重建时按实面那条前置链搭）；
- *  - 视图是**宿主自己搭的**（别的插件把自己的 `PassChain` 采纳到了它上面）⇒ 直接问那条链，它说不行就是
- *    `NotApplicable` 并说清原因 —— 别人建的链怎么重建是别人的事，本命令不去替它做决定。
+ * 还能改的那一项。交给 `RenderControl::setShadingMode()`：控件知道这条链是不是它建的，能改就直接改（零重建），
+ * 改不了就带着新档重建一次（延迟链没有可改的几何趟，重建时按实面那条前置链搭）。“怎么重建”是那块区的主人的事，
+ * 本命令不替它做决定。
  *
  * **模式归视图、不归文档**：每份文档自带视图，所以换一份文档时它以默认（实面）出现。想让它跟着文档走就得把模式
  * 存进文档 —— 那是编辑器那一档的事（文档只拿数据，见 ModelDocument 的说明）。
@@ -50,9 +48,9 @@ inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wi
 class ShadingModeCommand : public vn::appfw::Command {
   public:
     vn::String            group() const override { return u8"显示"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::NeedsView; }
 
-    /// 执行：设当前视图那条链的着色模式（见类注释里的两道守卫与"改哪条链"）。
+    /// 执行：设目标视图那条链的着色模式（见类注释里的守卫与"改哪条链"）。
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override;
 
   protected:

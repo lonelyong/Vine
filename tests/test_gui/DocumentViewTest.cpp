@@ -312,14 +312,13 @@ TEST(DocumentViewTest, NoActiveDocumentMeansNoCommandTarget)
     }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
-    EXPECT_EQ(window.primaryRenderControl(), nullptr) << "没有当前文档：没有目标";
+    EXPECT_TRUE(vn::appfw::gui::resolveCommandTarget(&window).isEmpty()) << "没有当前文档：没有目标";
 
     // 文档活跃，但它的视图是 2D（不回答 3D 区）⇒ 仍然没有目标：**文档活跃 ≠ 有 3D 目标**。
     vn::appfw::Document* document = openDocument(documents, kShownType);
     ASSERT_NE(document, nullptr);
     ASSERT_TRUE(documents.setCurrent(document));
     ASSERT_NE(host.currentView(), nullptr) << "视图在屏幕上";
-    EXPECT_EQ(window.primaryRenderControl(), nullptr) << "这个视图没有 3D 区可回答";
 
     // 派发解析给出的是**只有文档**的目标：文档层有了，3D 区那层没有 —— 于是 NeedsView 的命令会得到统一拒绝，
     // 而 NeedsDocument 的命令照常跑（2D 文档不是二等公民）。
@@ -331,5 +330,5 @@ TEST(DocumentViewTest, NoActiveDocumentMeansNoCommandTarget)
     ASSERT_TRUE(documents.setCurrent(nullptr));
     EXPECT_EQ(host.currentView(), nullptr);
     EXPECT_EQ(book.destroyed, 0) << "下屏不是销毁";
-    EXPECT_EQ(window.primaryRenderControl(), nullptr);
+    EXPECT_TRUE(vn::appfw::gui::resolveCommandTarget(&window).isEmpty());
 }

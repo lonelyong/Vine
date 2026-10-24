@@ -64,9 +64,9 @@
  * view's answer to "which 3D area do commands act on". Views already had that getter; it is now the override rather
  * than a second accessor beside it. It is what lets the window DERIVE its primary control instead of taking a pointer
  * a view published into a window-wide slot - two visible areas cannot share one slot (see
- * `.ai/decisions/ADR-2026-10-24-command-target.md`). The slot went with it: `MainWindow::setPrimaryRenderControl()` is
- * removed, and `primaryRenderControl()` answers nullptr when no view with a 3D area is on screen - no active document,
- * no target. The command side moved too: `CommandFlags` gained `NeedsDocument`/`NeedsView`, and
+ * `.ai/decisions/ADR-2026-10-24-command-target.md`). The slot went with it, and so did the window-level query:
+ * `MainWindow::setPrimaryRenderControl()` and `primaryRenderControl()` are removed, replaced by the execution target
+ * (`gui::resolveCommandTarget()` at dispatch) - no active document, no target. The command side moved too: `CommandFlags` gained `NeedsDocument`/`NeedsView`, and
  * `CommandExecutionContext` gained `target()` returning a `CommandTarget{document, view}` (appended last), so the
  * framework refuses a command whose declared layer is missing instead of every command writing its own empty-chain
  * guard.

@@ -14,8 +14,6 @@
 #include <SARibbon.h>
 
 #include <vine/appfw/Application.hpp>
-#include <vine/appfw/gui/CentralDocumentHost.hpp>
-#include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/Gui.hpp>
@@ -134,25 +132,6 @@ raw_ptr<StatusBar> MainWindow::statusBar() const
 raw_ptr<DockPanelManager> MainWindow::dockPanelManager() const
 {
     return dptr()->dock_panel_mgr.get();
-}
-
-RenderControl* MainWindow::primaryRenderControl() const
-{
-    // DERIVED in one place: the shown document's view answers which of its panes is active (see the header). No
-    // fallback slot - with no document view on screen there is nothing for a command to act on.
-    const DockPanelManager* docks = dockPanelManager();
-    if (docks == nullptr) {
-        return nullptr;
-    }
-
-    UIElement* central = docks->centralWidget();
-    auto*      host    = dynamic_cast<CentralDocumentHost*>(central);
-    if (host == nullptr) {
-        return nullptr;
-    }
-
-    DocumentView* view = host->currentView();
-    return view != nullptr ? view->renderControl() : nullptr;
 }
 
 inline auto MainWindow::dptr() -> Impl*

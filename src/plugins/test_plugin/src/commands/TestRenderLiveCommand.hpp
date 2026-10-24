@@ -22,7 +22,7 @@ class TestRenderLiveCommand : public Command {
     {
         return u8"实时渲染演示：循环透明度/可见性/颜色/位移";
     }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    CommandFlags flags() const override { return CommandFlags::NeedsView; }
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

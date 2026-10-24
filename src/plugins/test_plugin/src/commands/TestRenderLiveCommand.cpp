@@ -6,8 +6,7 @@
 #include <cmath>
 
 #include <vine/Colorf.hpp>
-#include <vine/appfw/gui/GuiApplication.hpp>
-#include <vine/appfw/gui/MainWindow.hpp>
+#include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
@@ -81,9 +80,9 @@ VN_OBJECT_META_IMPL(TestRenderLiveCommand, Command)
 
 vn::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecutionContext* context)
 {
-    auto* gui_app =
-        vn::obj_cast<vn::appfw::gui::GuiApplication>(context ? context->application() : nullptr);
-    auto* rc = gui_app ? gui_app->mainWindow()->primaryRenderControl() : nullptr;
+    // 目标就是派发解析出的那块 3D 区（`NeedsView` 已在命令体之前拒绝了没有它的情形）。
+    auto* view = context != nullptr ? vn::appfw::gui::targetView(context->target()) : nullptr;
+    auto* rc   = view != nullptr ? view->renderControl() : nullptr;
     if (rc == nullptr) {
         co_return CommandResult(CommandStatus::Failed, String(u8"未找到主渲染视图"));
     }

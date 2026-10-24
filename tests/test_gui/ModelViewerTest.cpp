@@ -474,11 +474,12 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     auto* scene_view = control->view();
     ASSERT_NE(scene_view, nullptr);
     ASSERT_NE(scene_view->chain(), nullptr) << "上屏之后视图该有自己的默认管线";
-    // 命令靠“窗口**派生**出的那块 3D 区”找到要改的东西：当前文档 → 它的视图 → 视图回答的活动窗格（视图不再往
-    // 窗口上发布任何东西，见 ADR-2026-10-24-command-target.md），所以先把这两件事说清楚：现在的主窗口就是这一个，
-    // 而这份文档的视图正在上屏。
+    // 命令靠**派发时解析出的目标**找到要改的东西（目标是视图，视图自己回答它那块 3D 区 —— 不再有发布到窗口的槽，
+    // 见 ADR-2026-10-24-command-target.md），所以先把这两件事说清楚：现在的主窗口就是这一个，而这份文档的视图
+    // 正在上屏。
     ASSERT_EQ(vn::appfw::gui::MainWindow::current(), &window);
-    ASSERT_EQ(window.primaryRenderControl(), control) << "视图上屏时，窗口从当前视图派生出它的控件（命令层的唯一入口）";
+    ASSERT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), view)
+        << "派发解析出的目标就是这块视图（不再有窗口级的第二处回答）";
 
     // 命令按名字注册（插件自己的自动登记队列只在插件模块里 flush，这里是可执行文件 ⇒ 用例显式登记）。
     ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingLitCommand>(
@@ -507,7 +508,8 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         { vn::model_viewer::kShadingModeWireframeCommand, vn::graphics::ShadingMode::Wireframe, true },
     };
     for (const Case& item : cases) {
-        const auto result = commands->executeCommandAndWait(vn::String(item.command));
+        const auto result = commands->executeCommandAndWait(vn::String(item.command),
+                                                            vn::appfw::gui::resolveCommandTarget(&window));
         EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success)
             << "命令该成功（说清了什么就不算失败：" << result.message().as_std_str() << "）";
         EXPECT_EQ(scene_view->chain()->shadingMode(), item.mode);
@@ -525,7 +527,7 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         }
     }
 
-    // 命令改的是**这个控件的视图**（一块区只画一幅画，多格已下线）：`primaryRenderControl()` 找到窗口上那块 3D 控件，
+    // 命令改的是**目标的视图**（一块区只画一幅画，多格已下线）：目标在派发时解析（当前文档视图 → 它的控件），
     // 命令就作用在它的视图上 —— 不需要焦点、也不需要认识任何具体视图类。
     EXPECT_EQ(scene_view, control->view()) << "这份文档的视图就是控件那个视图";
 
@@ -538,18 +540,20 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         scene_view->setChain(vn::graphics::PassChain::build(control->engine(), options));
     }
     ASSERT_NE(scene_view->chain(), nullptr);
-    const auto host_chain_run = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeUnlitCommand));
+    const auto host_chain_run = commands->executeCommandAndWait(
+        vn::String(vn::model_viewer::kShadingModeUnlitCommand), vn::appfw::gui::resolveCommandTarget(&window));
     EXPECT_EQ(host_chain_run.status(), vn::appfw::CommandStatus::Success);
     EXPECT_EQ(scene_view->chain()->shadingMode(), vn::graphics::ShadingMode::Unlit)
-        << "宿主搭的链也换得了这一档（命令问的就是那条链）";
+        << "宿主搭的链也换得了这一档（怎么重建归控件）";
 
     // 守卫：当前文档不是模型（这里直接清掉当前文档）⇒ 命令如实说"不适用"，而不是去改别人的视图。
     ASSERT_TRUE(documents->setCurrent(nullptr));
-    const auto refused = commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeWireframeCommand));
+    const auto refused = commands->executeCommandAndWait(
+        vn::String(vn::model_viewer::kShadingModeWireframeCommand), vn::appfw::gui::resolveCommandTarget(&window));
     EXPECT_EQ(refused.status(), vn::appfw::CommandStatus::NotApplicable);
     EXPECT_FALSE(refused.message().empty()) << "要说清为什么（不静默）";
-    // 没有当前文档就没有上屏的视图：窗口不再回答任何 3D 区 —— 不是谁“收回”了，是没有人被问到。
-    EXPECT_EQ(window.primaryRenderControl(), nullptr) << "没有上屏的视图时窗口没有 3D 区可回答";
+    // 没有当前文档就没有上屏的视图：派发解析得出**空目标**（不是谁“收回”了，是没有人被问到）。
+    EXPECT_TRUE(vn::appfw::gui::resolveCommandTarget(&window).isEmpty()) << "没有上屏的视图时没有目标可给";
 }
 
 TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
@@ -586,11 +590,10 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     EXPECT_EQ(first->renderControl()->engine(), first->renderControl()->view()->engine())
         << "自己的控件服务自己的 view";
 
-    // The window DERIVES the 3D area a command acts on: the shown document view answers which of its panes is
-    // active, and no view publishes itself into a window-wide slot any more (a single slot cannot be shared by
-    // two visible areas - see ADR-2026-10-24-command-target.md).
-    EXPECT_EQ(window.primaryRenderControl(), first->renderControl())
-        << "当前文档视图的活动窗格就是窗口该回答的那块 3D 区";
+    // The dispatch resolves the target from the shown view: no view publishes itself into a window-wide slot, and
+    // two visible areas each keep their own answer (see ADR-2026-10-24-command-target.md).
+    EXPECT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), first)
+        << "当前文档视图就是派发该给出的那块 3D 区";
 
     // 第二份：另一个视图、另一块渲染面、另一个引擎 —— 资源不共享（共享的只有 DockPanel/Ribbon 那套外壳）。
     ASSERT_NE(openModel(documents, u8"网格", vn::model_viewer::makeGridMesh(2)), nullptr);
@@ -600,8 +603,8 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     EXPECT_NE(second->renderControl(), first->renderControl()) << "每份文档一块自己的渲染面";
     EXPECT_NE(second->renderControl()->engine(), first->renderControl()->engine()) << "各自的会话，不共享";
     EXPECT_NE(second->renderControl()->view(), first->renderControl()->view()) << "各自的 view";
-    EXPECT_EQ(window.primaryRenderControl(), second->renderControl())
-        << "切到第二份文档，窗口的答案跟着换（派生，不是谁最后发布）";
+    EXPECT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), second)
+        << "切到第二份文档，派发的目标跟着换（派生，不是谁最后发布）";
 
     // 关掉一份：只有它那份资源跟着消失，另一份还在（视图按实例缓存）。
     ASSERT_NE(documents.current(), nullptr);

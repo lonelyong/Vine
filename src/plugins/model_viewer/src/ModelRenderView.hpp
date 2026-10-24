@@ -143,9 +143,9 @@ class ModelPickManipulator final : public vn::graphics::CameraManipulator
  *  - **自带灯与帧率读数**：灯挂在场景上（`scene->addLighting(LightRig::studio())`，没人装就只有后端的常量填充，
  *    画面是一片平色），帧率读数由**控件的查看器预设**提供（`control_->setViewerOptions(... .stats = true)`，
  *    尺寸与比例归链维护）—— 读数归本视图，因为"这一份文档的帧率"就是这一块渲染面的帧率。
- *  - **回答"命令该作用在哪块区"**：`renderControl()` 返回本视图自己的控件（本视图只有一个窗格）；窗口据此
- *    **派生**出 `primaryRenderControl()`，本视图不再往窗口上发布任何东西 —— 别的插件（本插件的"显示模式"命令、
- *    `test_plugin` 的实时渲染演示）仍不必认识任何具体视图类，就能拿到当前那块渲染面。
+ *  - **回答"命令该作用在哪块区"**：`renderControl()` 返回本视图自己的控件（本视图只有一个窗格）；命令在派发时
+ *    解析出的目标就是本视图，于是别的插件（本插件的"显示模式"命令、`test_plugin` 的实时渲染演示）不必认识任何
+ *    具体视图类，也不用去问窗口“谁是当前的”。
  *  - **点击选中**：本视图自己带一个拾取型操纵器（`ModelPickManipulator`：导航原样转发给轨道操纵器，另外把"点击"
  *    交回本视图），点到谁就把谁的材质换成**高亮材质**（原来那份留着，落空或换选时原样还回去）。选择是**业务**（住
  *    在这份视图里），图形层只提供射线拾取（`Camera::screenToWorldRay` + `RayIntersection`）与材质 —— 框架里没有
@@ -203,8 +203,8 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
      * @brief 命令该作用于的那块 3D 区 —— 也就是本视图自己的渲染控件（本视图只有一个窗格）。
      *
      * @details
-     * - 窗口据此**派生**出 `primaryRenderControl()`（见 ADR-2026-10-24-command-target.md）：视图有多个窗格时在这里
-     *   改答用户最后用的那一个，框架不用动。
+     * - 命令在派发时解析出的目标就是本视图（见 ADR-2026-10-24-command-target.md）：视图有多个窗格时在这里改答
+     *   用户最后用的那一个，框架不用动。
      * - 覆盖基类的查询，不是额外的状态：控件随本视图生灭，覆盖它只是把“哪一块”说出来。
      *
      * @return 控件；生命周期与本视图相同。

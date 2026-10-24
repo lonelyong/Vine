@@ -29,9 +29,9 @@ namespace vn::demo
  *    `activate()` 再试）；
  *  - 会话起来之后才去装贴图（`assembleDemoContentLater()`，它自己等 attach 结束），重活仍在别的线程上。
  *
- * 这块控件由视图自己回答给窗口（`renderControl()`：本视图只有一个窗格）—— 窗口据此**派生**
- * `primaryRenderControl()`，别的插件（`test_plugin` 的实时渲染演示就是）不必认识任何具体视图类；视图不再往窗口上
- * 发布任何东西（没有发布槽，见 ADR-2026-10-24-command-target.md）。
+ * 这块控件由视图自己回答（`renderControl()`：本视图只有一个窗格），派发时解析的目标就是本视图 —— 别的插件
+ * （`test_plugin` 的实时渲染演示就是）不必认识任何具体视图类；视图不往窗口上发布任何东西（没有发布槽，见
+ * ADR-2026-10-24-command-target.md）。
  */
 class DemoView final : public vn::appfw::gui::DocumentView
 {

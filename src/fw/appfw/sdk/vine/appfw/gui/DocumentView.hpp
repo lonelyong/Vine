@@ -80,15 +80,16 @@ class VN_APPFW_API DocumentView : public UIElement {
      * @brief Returns the render control a command should act on in this view, or null when the view has no 3D area.
      *
      * @details
-     * - The view answers, because the view owns the area: `MainWindow::primaryRenderControl()` reaches this through
-     *   the document host's current view, so no view publishes itself into a window-wide slot any more.
+     * - The view answers, because the view owns the area: `gui::resolveCommandTarget()` reaches this through the
+     *   document host's current view when a command is dispatched, so no view publishes itself into a window-wide
+     *   slot any more.
      * - A view that hosts SEVERAL panes answers for the one the user last worked in - **the view owns that decision**,
      *   because it is the view that created the panes; the framework keeps no pane registry and no layout rule.
      * - A 2D view (and a view that draws nothing) returns null - "this view has no 3D area" - which is a legal
      *   answer, not a failure.
      * - The answer is NOT gated on activation: it is a query and not state that switches off, so an off-screen view
-     *   returns the same control before and after `activate()`. WHO may ask is the caller's decision - `MainWindow::
-     *   primaryRenderControl()` asks only the host's current view, so an inactive view is never consulted.
+     *   returns the same control before and after `activate()`. WHO may ask is the caller's decision -
+     *   `gui::resolveCommandTarget()` asks only the host's current view, so an inactive view is never consulted.
      * - Do not ask the window "am I the one on screen?" from inside `activate()`: the host CLEARS its current view
      *   before calling activate() and installs the new one after, so there the window answers "no view", whatever
      *   this view would say. Activation is already the signal - it is the callback you are in.
