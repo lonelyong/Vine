@@ -81,6 +81,8 @@
  */
 VN_VSG_NS_BEGIN
 
+class ContentStore;
+
 /** @brief The sampled-input sets a session may reuse, keyed by the images they name.
  *
  * WHY IT EXISTS. A sampled-input set is built from a pass' inputs, and a steady frame's inputs are the same
@@ -252,6 +254,11 @@ class VN_VSG_API ContentPass
         /// The sampled-input sets this pass may REUSE (see InputSetCache). Null when the caller keeps none,
         /// in which case every pass builds its own set - which is correct and writes a descriptor per pass.
         InputSetCache*         input_sets{nullptr};
+        /// Where the MATERIAL SLOT reports' episodes live (a per-material, per-slot memory - see
+        /// api/ContentStore::claimSlotReport). Null - the default, and what a hand-built scope means - reports
+        /// every pass, which is one sentence per frame in the frame path; the content world hands its store in
+        /// so a wrong slot says so once per material edit (graphics-material.md F11).
+        ContentStore*          store{nullptr};
     };
 
   public:
@@ -316,6 +323,20 @@ class VN_VSG_API ContentPass
      * @param pass  The compiled pass (its resolved shadow).
      */
     void reportShadowNotSampled(const Scope::Entry& entry, const core::CompiledPass& pass);
+
+    /** @brief Reports a material's texture slots that do not match what the slot declares, once per episode.
+     *
+     * @details
+     * - The contract (graphics-material.md 2.9 / C2): a cube map only in the base-colour slot, and colour slots
+     *   holding sRGB maps while data slots hold linear ones. What is wrong with a map is checked from the facts
+     *   (`api/MaterialSlotCheck`), which is what makes the same check testable without a device.
+     * - ONCE PER MATERIAL AND SLOT, not once per frame: the memory lives in the store's per-material entry
+     *   (`ContentStore::claimSlotReport`), and a material edit re-arms it - so the sentence follows the
+     *   material's values, not the frame rate (pitfall P82).
+     *
+     * @param material The material's facts, as the plan's tables answered them.
+     */
+    void reportMaterialSlots(const MaterialFacts& material);
 
     /** @brief Builds the pass' sampled-input set and its bind command for a CONTENT half, or null when there
      *         is nothing to bind.

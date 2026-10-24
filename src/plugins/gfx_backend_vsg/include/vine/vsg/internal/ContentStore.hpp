@@ -112,6 +112,26 @@ class ContentStore
     void updateMaterial(vn::raw_ptr<vn::graphics::MaterialBase> material);
 
     /**
+     * @brief Claims the right to report one of @p identity 's texture slots, once per episode.
+     *
+     * WHY IT IS HERE. A wrong slot (a cube map in a normal slot, a byte map in the wrong colour space) is a
+     * fact about a MATERIAL, and the sentence belongs to the recorder - which is per frame (see
+     * ContentPass). What has to outlive the frame is the memory of having said it, and the one long-lived
+     * record keyed by material is this store's entry (graphics-material.md F11 / pitfall P82).
+     *
+     * THE STORE STILL REPORTS NOTHING (see the file note): this answers "is this the first time?" and records
+     * it, the caller writes the sentence. An EPISODE ends when the material's values change - the entry is
+     * re-armed with each new description - so a host that fixes one map and breaks another hears about the
+     * second.
+     *
+     * @param identity Material identity, the pointer the facts carry (`MaterialFacts::material`).
+     * @param slot     Slot index, in `vn::graphics::TextureSlot` order.
+     * @return true when this episode has not reported that slot yet (an untracked material always answers
+     *         true: there is no record to remember it in).
+     */
+    [[nodiscard]] bool claimSlotReport(const void* identity, std::size_t slot) noexcept;
+
+    /**
      * @brief Ensures the tables answer for everything @p frame names, and returns them.
      *
      * The walk is what decides the work: every content command names a geometry, a material and a program

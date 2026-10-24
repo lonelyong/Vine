@@ -107,7 +107,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 | F8 | 导入转换 | asset `Color/Phong/Pbr` → 引擎 PBR，去掉近似 | 已做 |
 | F9 | 变体 | `VINE_TEXTURED` 二元位 + 常量回退 | 已做 |
 | F10 | 上传去重 | 实例复合 revision；改资产使实例重写 | 已做 |
-| F11 | 诊断 | 缺槽 / 格式不符 / Cube 进非 base 槽 / 无效覆盖 | 未做（缺槽已计数，逐材质上报待办） |
+| F11 | 诊断 | 缺槽 / 格式不符 / Cube 进非 base 槽 / 无效覆盖 | 已做（缺槽计数；其余逐材质一次） |
 
 ### 3.2 F1–F2 资产与实例
 
@@ -259,6 +259,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 | T4 | Mask discard 与 Blend 排序 | `SdkPixelTest.TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends` |
 | T5 | 导入逐字段一致 | `ModelSceneTest.PbrMaterialIsNotApproximated` |
 | T6 | 变体矩阵与绑定计数同步 | `EmbeddedShadersTest` / `ProgramAbiTest` |
+| T7 | 槽契约的判定与回话节奏 | `MaterialSlotCheckTest.*` / `ContentStoreTest.AWrongMaterialSlotIsReportedOncePerEpisode` |
 
 ## 9. 状态与演进
 
@@ -272,9 +273,8 @@ forward 与 deferred 从各自的输入还原同一组表面再调用同一函�
 
 ### 9.2 已知缺口 / 待办
 
-- 落地分四步：M1 模型与块（F1/F4/F8）、M2 纹理集与变体（F3/F9）、M3 两条路径的 BRDF 与 G-buffer（F5/F6）、
-  M4 实例与 alpha 模式（F2/F7/F10）已做；剩 F11 的逐材质诊断（缺槽已计数，但“格式不符 / Cube 进非 base 槽”
-  还没上报 —— `ContentSets` 只计数不报，逐材质 episode 需要一条从 `ContentPass` 到它的通道）。
+- 落地分四步：M1–M4 已全部落地（F1/F3–F10）；F11 的逐材质诊断也已接上（判定在 `MaterialSlotCheck`，
+  episode 记在 `ContentStore` 的每材料一条记录里，变化后重新武装）。
 - 镜像 UV 下的导数切线基是已知近似，不是 bug；需要时再引入切线通道。
 - IBL、SSAO、透射（KHR_materials_transmission）不在本设计内。
 
@@ -291,7 +291,7 @@ forward 与 deferred 从各自的输入还原同一组表面再调用同一函�
 - `src/viz/graphics/sdk/vine/graphics/MaterialBase.hpp` · `Material.hpp` · `MaterialInstance.hpp` · `ShaderAbi.hpp`
 - `shaders/vine_params.glsl` · `vine_material.glsl` · `vine_brdf.glsl` · `vine_gbuffer.glsl`
 - `shaders/builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag`
-- `ContentSources.cpp`（`blockOfMaterial`）· `ProgramVariant.hpp` · `MaterialImages.hpp` · `ModelScene.cpp`（`materialFrom`）
+- `ContentSources.cpp`（`blockOfMaterial`）· `MaterialSlotCheck.hpp`（F11 的判定）· `ProgramVariant.hpp` · `MaterialImages.hpp` · `ModelScene.cpp`（`materialFrom`）
 
 ### 10.2 文档、ADR 与外部资料
 

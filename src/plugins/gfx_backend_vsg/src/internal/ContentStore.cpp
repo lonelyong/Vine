@@ -35,7 +35,11 @@ struct ContentStore::Data
     {
         vn::intrusive_ptr<vn::graphics::MaterialBase> object{};
         std::uint64_t                                 revision{0};  ///< Edit counter; only updateMaterial() moves it.
-        std::uint64_t                                 seen_revision{0};  ///< The material's own revision last accounted for.
+        /// Which of its texture slots have already been reported in THIS episode (a bit per slot, see
+        /// claimSlotReport). A new description - i.e. the material's values changed - re-arms it, because a
+        /// host that fixes a map and breaks another one has a new thing to say.
+        std::uint32_t slots_reported{0};
+        std::uint64_t seen_revision{0};  ///< The material's own revision last accounted for.
         bool                                          described{false};
         std::uint64_t                                 described_revision{0};
         std::uint64_t                                 release_token{0};
@@ -355,6 +359,28 @@ void ContentStore::updateMaterial(vn::raw_ptr<vn::graphics::MaterialBase> materi
     }
     live.seen_revision = seen;
     ++live.revision;
+    // A NEW DESCRIPTION IS A NEW EPISODE for the slot reports too: the values changed, so what is wrong with
+    // them may have too (see claimSlotReport).
+    live.slots_reported = 0U;
+}
+
+bool ContentStore::claimSlotReport(const void* identity, std::size_t slot) noexcept
+{
+    const auto entry = d->materials.find(static_cast<const vn::graphics::MaterialBase*>(identity));
+    if (entry == d->materials.end() || slot >= vn::graphics::kTextureSlotCount)
+    {
+        // Nothing to remember against (an untracked material, or no slot): say "report it", because a caller
+        // that says nothing at all would hide a real problem; the recorder's own per-pass state is what keeps
+        // that from repeating every frame.
+        return true;
+    }
+    const std::uint32_t bit = 1U << slot;
+    if ((entry->second.slots_reported & bit) != 0U)
+    {
+        return false;  // already said in this episode
+    }
+    entry->second.slots_reported |= bit;
+    return true;
 }
 
 const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, core::FrameTimeline& timeline,
@@ -501,6 +527,8 @@ void ContentStore::ensureMaterial(const vn::graphics::MaterialBase* material, co
     const FactMiss             miss             = buildMaterialFacts(material, live.revision, fresh, storage->block);
     live.described                              = true;
     live.described_revision                     = live.revision;
+    // A fresh description starts a fresh episode for the material's slot reports (see claimSlotReport).
+    live.slots_reported                         = 0U;
     // The row about to be written carries the values the material has RIGHT NOW, so that is the revision this entry
     // has accounted for: the next touch of an unedited material is then a no-op instead of a second description of
     // the same values.

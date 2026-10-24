@@ -111,6 +111,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   `Opaque` 忽略后两个（默认，也是旧的“材质不贡献 alpha”规则）；`Mask` 拿它当阈值，低于 `alphaCutoff` 的片元
   `discard`，活下来的**当作不透明**、仍留在不透明队列（剪切叶子必须自遮挡）；`Blend` 拿它当输出 alpha 并进透明
   队列 —— 延迟路径的 G-buffer 不写 Blend 内容（没有单一颜色可存），要混合的内容只能出现在前向 overlay。
+- **槽的契约会自己报一次**：cube map 只允许进 base colour 槽（其余四个用 UV 参数化表面），颜色槽要 sRGB 格式、
+  数据槽要线性格式。不符时画面照画（在一次材质修改后报一次 `DiagnosticCategory::MaterialSlot`），不会因为一个
+  gamma 错就丢 drawable。
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
 - `Texture` —— 2D / Cube，按层填充（`setImage()` / `setFaceImage()` / `setLayer()`；编号一律用 `layer` 词汇）。每次填充都会
   `revision()++`，后端据此区分"同一张纹理、新像素"与"同一张纹理、同样像素"（只看指针做不到）。

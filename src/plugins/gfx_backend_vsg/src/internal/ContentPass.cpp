@@ -19,8 +19,10 @@
 
 #include <vine/vsg/internal/ContentPush.hpp>
 #include <vine/vsg/internal/ContentSets.hpp>
+#include <vine/vsg/internal/ContentStore.hpp>
 #include <vine/vsg/internal/DrawBlock.hpp>
 #include <vine/vsg/internal/LightBlock.hpp>
+#include <vine/vsg/internal/MaterialSlotCheck.hpp>
 #include <vine/vsg/internal/ShadowBlock.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 
@@ -1076,6 +1078,12 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
         return false;
     }
 
+    // WHAT THE MATERIAL'S MAPS ARE, versus what their slots declare (graphics-material.md 2.9/C2/F11): a wrong
+    // map still draws - refusing a drawable over a colour space would be worse than a gamma-shifted picture -
+    // but the host hears about it once per material edit. Said HERE, before any half is looked for, because it is
+    // a fact about the material rather than about this pass' ability to draw the command.
+    reportMaterialSlots(*material.entry);
+
     // THE INSTANCE STREAM, BEFORE ANY PIPELINE IS ACQUIRED: a draw that names no stream cannot be instanced,
     // and a stream whose visible range does not fit the buffer would read another scope's matrices (or past
     // the buffer). Both are refused here, by name, rather than drawn as a guess.
@@ -1517,6 +1525,30 @@ void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::
 vn::graphics::ReportOnce& ContentPass::lightsEpisode() noexcept
 {
     return scope_.lights_dropped_episode != nullptr ? *scope_.lights_dropped_episode : scope_.lights_dropped;
+}
+
+void ContentPass::reportMaterialSlots(const MaterialFacts& material)
+{
+    for (std::size_t slot = 0; slot < material.slots.size(); ++slot)
+    {
+        const SlotViolation violation = materialSlotViolation(material, slot);
+        if (violation == SlotViolation::None)
+        {
+            continue;
+        }
+        // THE EPISODE IS THE MATERIAL'S, not this pass' (see ContentStore::claimSlotReport): a pass is built per
+        // frame, so its own state would repeat the sentence 60 times a second. Without a store (a hand-built
+        // scope) there is no memory to claim against and the scope's lifetime is the episode - which is what a
+        // unit test wants.
+        if (scope_.store != nullptr && !scope_.store->claimSlotReport(material.material, slot))
+        {
+            continue;
+        }
+        const char* const name = materialSlotName(slot);
+        diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::MaterialSlot,
+                            vn::String::fromUtf8(std::string("the material's ") + (name != nullptr ? name : "texture") +
+                                                 " slot: " + slotViolationText(violation)));
+    }
 }
 
 void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera)

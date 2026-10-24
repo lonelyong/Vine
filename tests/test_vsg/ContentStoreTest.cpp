@@ -478,6 +478,43 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     EXPECT_EQ(store.materialEntries(), 1U);
 }
 
+TEST(ContentStoreTest, AWrongMaterialSlotIsReportedOncePerEpisode)
+{
+    // graphics-material.md F11 / pitfall P82: the sentence about a wrong slot belongs to the recorder, which is
+    // rebuilt every frame - so the MEMORY has to live somewhere that is not. It lives here, one bit per slot in
+    // the material's own entry, and an edit re-arms it (the values changed, so what is wrong with them may have).
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    const auto   material = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+
+    store.track(geometry);
+    store.track(program);
+    store.track(material);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
+                                  program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement);  // the first description opens the episode
+
+    EXPECT_TRUE(store.claimSlotReport(material.get(), 2U)) << "the first frame says it";
+    EXPECT_FALSE(store.claimSlotReport(material.get(), 2U)) << "the second does not";
+    EXPECT_TRUE(store.claimSlotReport(material.get(), 3U)) << "another slot is its own report";
+
+    // An edit is a new episode: a host that fixed one map and broke another hears about the second.
+    material->setBaseColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
+    store.updateMaterial(material.get());
+    EXPECT_TRUE(store.claimSlotReport(material.get(), 2U)) << "the material changed: the episode restarted";
+    EXPECT_FALSE(store.claimSlotReport(material.get(), 2U));
+
+    // An untracked material has no record to remember it in: the answer is "report it" rather than silence - the
+    // recorder's own per-pass state is what keeps that from repeating every frame.
+    const auto untracked = ::material(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    EXPECT_TRUE(store.claimSlotReport(untracked.get(), 2U));
+    EXPECT_TRUE(store.claimSlotReport(untracked.get(), 2U)) << "and it stays that way: there is nothing to record";
+}
+
 TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
 {
     ContentStore store;

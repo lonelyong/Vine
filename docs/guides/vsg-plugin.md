@@ -68,7 +68,7 @@
 | --- | --- |
 | 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `SessionDrive` `SessionContent` `SessionMove` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` |
 | 内容层 | `ContentAssembly` `ContentPass` `ContentHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentSweep` `ContentImages` `ContentPush` `ContentSets` `ContentPipeline` |
-| 数据与表 | `GeometryFacts` `DrawBlock` `LightBlock` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` |
+| 数据与表 | `GeometryFacts` `DrawBlock` `LightBlock` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `MaterialSlotCheck` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` |
 | 目标与读回 | `OffscreenTarget` `HostTargets` `HostReadback` `WhiteImage` |
 | 内部视图（仅测试） | `BackendContent` |
 

@@ -57,6 +57,10 @@ enum class DiagnosticCategory : std::uint8_t
                            ///< material arena): the affected draws are skipped and the storage grows before the
                            ///< next frame. The picture is right except for those skipped draws, which is why this
                            ///< is a warning rather than an error - and the host can release content to avoid it.
+    MaterialSlot,          ///< A material's texture slot does not match what the slot declares (a cube map in a
+                           ///< data slot, a map in the wrong colour space): reported once per material and slot,
+                           ///< and the picture is drawn with what the slot can bind (graphics-material.md F11).
+                           ///< A slot the material does not have at all is not this - that is a legal material.
 
     Count, ///< Number of categories (not a category itself; keeps count arrays sized).
 };

@@ -1470,10 +1470,10 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     // The texture: 2x2, four colours, filled through the engine's own API (the description is the contract,
     // the image is the content).
     const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Srgb));
     {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         const std::uint8_t         texels[4][4]{ { 255U, 0U, 0U, 255U },      // the base row's first texel
                                                  { 0U, 255U, 0U, 255U },      // and its second
@@ -1726,7 +1726,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     // the cube's seams (the taps reach the neighbouring face), so a face's colour is only pure inside it.
     constexpr int kFaceSize = 4;
     const vn::intrusive_ptr<vn::graphics::CubeMap> cube(
-        new vn::graphics::CubeMap(kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+        new vn::graphics::CubeMap(kFaceSize, vn::imaging::PixelFormat::Rgba8Srgb));
     const std::uint8_t face_colors[6][4]{ { 255U, 0U, 0U, 255U },      // PosX: red
                                           { 0U, 255U, 0U, 255U },      // NegX: green
                                           { 0U, 0U, 255U, 255U },      // PosY: blue
@@ -1735,7 +1735,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
                                           { 0U, 255U, 255U, 255U } };  // NegZ: cyan
     for (int face = 0; face < cube->layerCount(); ++face) {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         for (std::size_t texel = 0; texel < pixels.size() / 4U; ++texel) {
             for (std::size_t byte = 0; byte < 4U; ++byte) {
@@ -1972,7 +1972,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
 
     const auto fill = [](vn::graphics::Texture2D& texture, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         pixels[0] = static_cast<std::byte>(r);
         pixels[1] = static_cast<std::byte>(g);
@@ -1981,7 +1981,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
         texture.setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
     };
     const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+        new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
     fill(*texture, 255U, 0U, 0U);
 
     const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
@@ -2252,10 +2252,10 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
 
     // The texture the textured variant samples: one magenta texel, a colour no other node writes.
     const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+        new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
     {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         pixels[0] = static_cast<std::byte>(255U);
         pixels[1] = static_cast<std::byte>(0U);
@@ -5378,10 +5378,10 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     ASSERT_NE(storage, nullptr);
 
     const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+        new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
     {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         pixels[0]                          = static_cast<std::byte>(255U);
         pixels[1]                          = static_cast<std::byte>(0U);
@@ -5646,9 +5646,9 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     // Two one-texel textures: magenta for the left half, green for the right.
     const auto make_texture = [](std::uint8_t r, std::uint8_t g, std::uint8_t b) {
         const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-            new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         pixels[0]                          = static_cast<std::byte>(r);
         pixels[1]                          = static_cast<std::byte>(g);
@@ -5878,9 +5878,9 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     // Two one-texel textures: magenta for the left half, green for the right.
     const auto make_texture = [](std::uint8_t r, std::uint8_t g, std::uint8_t b) {
         const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-            new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         pixels[0]                          = static_cast<std::byte>(r);
         pixels[1]                          = static_cast<std::byte>(g);
@@ -6101,9 +6101,9 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     // Two one-texel textures: magenta for the left half, green for the right.
     const auto make_texture = [](std::uint8_t r, std::uint8_t g, std::uint8_t b) {
         const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-            new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         pixels[0]                          = static_cast<std::byte>(r);
         pixels[1]                          = static_cast<std::byte>(g);
@@ -6352,7 +6352,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     // the cache's LINEAR filter).
     constexpr int kFaceSize = 4;
     const vn::intrusive_ptr<vn::graphics::CubeMap> sky_cube(
-        new vn::graphics::CubeMap(kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+        new vn::graphics::CubeMap(kFaceSize, vn::imaging::PixelFormat::Rgba8Srgb));
     const std::uint8_t face_colors[6][4]{ { 255U, 0U, 0U, 255U },      // PosX: red
                                           { 0U, 255U, 0U, 255U },      // NegX: green
                                           { 0U, 0U, 255U, 255U },      // PosY: blue
@@ -6361,7 +6361,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
                                           { 0U, 255U, 255U, 255U } };  // NegZ: cyan
     for (int face = 0; face < sky_cube->layerCount(); ++face) {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         for (std::size_t texel = 0; texel < pixels.size() / 4U; ++texel) {
             for (std::size_t byte = 0; byte < 4U; ++byte) {
@@ -6374,10 +6374,10 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     // A 2D texture for the mismatch row: it is complete and uploadable, and it still cannot fill a cube
     // declaration - so the picture must be the declared kind's white (and the sets layer counts it).
     const vn::intrusive_ptr<vn::graphics::Texture2D> flat_texture(
-        new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+        new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
     {
         auto image = vn::intrusive_ptr<vn::imaging::Image>(
-            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+            new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
         const std::span<std::byte> pixels = image->mipData(0);
         pixels[0]                          = std::byte{ 0U };
         pixels[1]                          = std::byte{ 255U };

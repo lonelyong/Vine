@@ -167,6 +167,9 @@ bool ContentAssembly::record(const core::CompiledPass& pass, const core::RenderP
     // ContentPass::Scope and the note on the halves' own state).
     scope.lights_dropped_episode    = &d->lightsDroppedFor(pass.pass);
     scope.empty_rectangle_episode   = &d->empty_rectangle;
+    // The material-slot reports belong to the MATERIAL, so their episodes live in the store's per-material
+    // entries (see ContentStore::claimSlotReport) - the pass itself is per frame.
+    scope.store                     = d->store;
 
     ContentPass recorder(scope, *d->diagnostics);
     return recorder.record(pass, *d->facts, compatibility, inputs, view_block, out);

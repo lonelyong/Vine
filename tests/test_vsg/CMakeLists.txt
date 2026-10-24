@@ -14,6 +14,7 @@ set(SRC_FILE_LIST
 	DrawBlockTest.cpp
 	GeometryFactsTest.cpp
 	ContentSourcesTest.cpp
+	MaterialSlotCheckTest.cpp
 	ProgramAbiTest.cpp
 	ContentPassTest.cpp
 	MsaaTargetTest.cpp
@@ -147,6 +148,7 @@ target_sources(${TEST_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ShadowBlock.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/GeometryFacts.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentSources.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/MaterialSlotCheck.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ProgramAbi.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentPush.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/WhiteImage.cpp
