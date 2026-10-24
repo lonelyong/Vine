@@ -65,12 +65,13 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## backlog/ —— 开放待办（3）
+## backlog/ —— 开放待办（4）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
 
 - `graphics.md` —— graphics / vsg 的开放待办（内容、后端资源、平台、对象模型）。
 - `appfw-startup.md` —— 启动流程剩余项（Windows 半边）。
+- `appfw-gui.md` —— 视图与命令目标的剩余项（MDI/分屏：多页宿主 + 发起控件优先）。
 - `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
 
 ## memory/ —— 模块要点（8）
