@@ -10,7 +10,7 @@
 
 | # | 项 | 内容 | 出处 |
 |---|---|---|---|
-| S1 | 参数 Schema P0 | 参数清单 + 生成器（C++ 结构体 / GLSL 片段 / 偏移表），生成结果与现行 `ShaderAbi.hpp` 逐字节一致；先证明等价，不加新能力 | `../design/graphics-shader-params.md` §3.2–3.3、§3.8 |
+| S1 | 参数块去重与收敛 | 五个块的 GLSL 声明抽成一个共享片段（构建期 inline），C++ 定义收拢到一处；不改字节、不改接口 | `../design/graphics-shader-params.md` §2.1、§3.2–3.3 |
 
 其余条目都缺一个真实消费方、一次真实负载，或被上游卡住。
 
@@ -58,7 +58,7 @@
 | # | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|---|
 | S2 | 名字表与注入 | `ParameterTable::find` / `Material::set(name, value)` / 编译前注入 ABI 片段 | 宿主需要一个自定义 per-draw 参数（今天四个保留分量不够用），或第二个后端出现 | `../design/graphics-shader-params.md` §3.4–3.6 |
-| S3 | 用户扩展点 | 具名用户槽 + 保留 set/binding 段 | S2 落地，且出现宿主自定义 shader 的真实用例 | `../design/graphics-shader-params.md` §3.7 |
+| S3 | 用户扩展点 | 具名用户槽 + 保留 set/binding 段 | S2 落地，且出现宿主自定义 shader 的真实用例 | `../design/graphics-shader-params.md` §3.6 |
 | S4 | 第二个后端的 `ParameterSink` | cbuffer / `glUniform*` 等“写字节”实现 | 第二个后端出现（与 T15 同一触发） | `../design/graphics-shader-params.md` §3.5 |
 
 ## 3. 下一 session 的第一条命令

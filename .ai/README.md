@@ -24,7 +24,7 @@
 - `graphics-content-lifecycle.md` —— 内容释放与缓存策略。
 - `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑索引 / 否决项 / 门禁。
 - `vsg-pitfalls.md` —— vsg 后端 P1–P82 坑表，按九个风险域分组，每条带症状与判据。
-- `graphics-shader-params.md` —— 着色参数 ABI：Schema 生成 C++/GLSL/偏移表，名字只在接线期。
+- `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 
 **appfw（11）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
@@ -52,7 +52,7 @@
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
-- `ADR-2026-10-24-shader-parameter-schema.md` —— 着色参数走 Schema 生成，不走运行时反射与材质 DSL。
+- `ADR-2026-10-24-shader-parameter-abi.md` —— 着色参数手写 + 去重，不做反射与材质 DSL。
 - `ADR-2026-10-23-no-multi-parent-dag.md` —— 不引入多父，严格树 + 实例化。
 - `ADR-2026-10-23-instancing-per-primitive.md` —— 实例化挂在 `Primitive`，不做作用域。
 - `ADR-2026-10-23-l2a-reverted.md` —— L2a 回撤，分层目标等 L2b 一起做。
