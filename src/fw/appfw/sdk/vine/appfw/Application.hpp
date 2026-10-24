@@ -445,6 +445,23 @@ class VN_APPFW_API Application : public Object {
     bool isBusy() const;
 
   public:
+    /**
+     * @brief Gets the process's Application, or null when none exists.
+     *
+     * @details
+     * - ONE per process: it is set when an Application is constructed and cleared when that instance is destroyed,
+     *   so a static, a plugin entry point or a Qt slot with no reference in hand can still reach the services
+     *   (command manager, config registry, event bus, main-thread dispatcher).
+     * - An ATOMIC read: safe to call from any thread. Every current() call site in the framework still guards on
+     *   null, because "no application yet" and "the application is being torn down" are both legal.
+     * - It is NOT a service locator. Code that is HANDED an application - a command's
+     *   CommandExecutionContext::application(), a plugin's hook argument, a widget's parent chain - must use that
+     *   one; reaching for current() there hides a dependency the caller could have stated, and makes a test that
+     *   runs two applications in one process untestable. The legitimate users are exactly the places with no
+     *   reference: static registrars, plugin entry points, and GUI slots reached through Qt's signal routing.
+     *
+     * @return The live Application, or null when none was constructed or one is already gone.
+     */
     static raw_ptr<Application> current();
 
   protected:

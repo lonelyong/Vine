@@ -401,8 +401,6 @@ src/base/window/sdk/vine/window/WindowContext.hpp	return|WindowContext::height
 src/base/window/sdk/vine/window/WindowContext.hpp	return|WindowContext::isVisible
 src/base/window/sdk/vine/window/WindowContext.hpp	return|WindowContext::title
 src/base/window/sdk/vine/window/WindowContext.hpp	return|WindowContext::width
-src/fw/appfw/sdk/vine/appfw/Application.hpp	brief|Application::current
-src/fw/appfw/sdk/vine/appfw/Application.hpp	return|Application::current
 src/fw/appfw/sdk/vine/appfw/CommandManager.hpp	brief|CommandExecutedEventArgs::CommandExecutedEventArgs
 src/fw/appfw/sdk/vine/appfw/CommandManager.hpp	brief|CommandExecutedEventArgs::command
 src/fw/appfw/sdk/vine/appfw/CommandManager.hpp	brief|CommandExecutedEventArgs::result
