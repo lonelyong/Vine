@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include <QLabel>
+#include <QVBoxLayout>
 #include <QWidget>
 
 #include <memory>
@@ -29,6 +30,7 @@
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
+#include <vine/appfw/gui/RenderControl.hpp>
 
 namespace
 {
@@ -133,6 +135,48 @@ QString messageOnPage(vn::appfw::gui::UIElement* page)
     }
     return text;
 }
+
+/// 两窗格的用例视图：一块区里两块 3D 区，**哪一块算数由视图自己回答**（用户最后在那块里干活）。
+///
+/// 框架不建窗格注册表、不做焦点路由（appfw-render-view.md §6.4）：视图想切哪块就改自己这个指针，命令每次派发
+/// 读到的就是它 —— 这也是“多窗格时框架不用改”这句话的可执行版本。
+class TwoPaneView final : public vn::appfw::gui::DocumentView {
+  public:
+    TwoPaneView(vn::appfw::Document& document, ViewBook& book)
+      : DocumentView(document, new QWidget())
+      , book_(&book)
+    {
+        ++book_->created;
+        panes_[0] = new vn::appfw::gui::RenderControl();
+        panes_[1] = new vn::appfw::gui::RenderControl();
+
+        auto* layout = new QVBoxLayout(impl<QWidget>());
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->addWidget(panes_[0]->impl<QWidget>());
+        layout->addWidget(panes_[1]->impl<QWidget>());
+    }
+
+    ~TwoPaneView() override { ++book_->destroyed; }
+
+    vn::appfw::gui::UIElement* content() override { return this; }
+
+    /// @return 用户最后在里面干活的那一块（框架只搬家，不猜）。
+    vn::appfw::gui::RenderControl* renderControl() const override { return panes_[active_]; }
+
+    /// 用户在这块里干活（真视图会在获得焦点/被点击时这么做）。
+    ///
+    /// @param index 0 或 1。
+    void usePane(int index) { active_ = index; }
+
+    /// @param index 0 或 1。
+    /// @return 那一块的控件。
+    vn::appfw::gui::RenderControl* pane(int index) const { return panes_[index]; }
+
+  private:
+    ViewBook*                      book_ = nullptr;
+    vn::appfw::gui::RenderControl* panes_[2]{ nullptr, nullptr };
+    int                            active_ = 0;
+};
 
 } // namespace
 
@@ -331,4 +375,45 @@ TEST(DocumentViewTest, NoActiveDocumentMeansNoCommandTarget)
     EXPECT_EQ(host.currentView(), nullptr);
     EXPECT_EQ(book.destroyed, 0) << "下屏不是销毁";
     EXPECT_TRUE(vn::appfw::gui::resolveCommandTarget(&window).isEmpty());
+}
+
+TEST(DocumentViewTest, AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast)
+{
+    // ADR-2026-10-24 的最后一条：目标带的是**视图**，不是某一块控件 —— 视图自己有多个窗格时，哪一块算数由它
+    // 回答。所以“一视图两窗格”不需要框架加注册表、加焦点路由，也不需要命令认识窗格：它问目标，目标问视图。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TwoPaneView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+    vn::appfw::Document*                 document = openDocument(documents, kShownType);
+    ASSERT_NE(document, nullptr);
+    ASSERT_TRUE(documents.setCurrent(document));
+
+    auto* view = dynamic_cast<TwoPaneView*>(host.currentView());
+    ASSERT_NE(view, nullptr) << "中央区里应该是那个两窗格视图";
+    ASSERT_NE(view->pane(0), view->pane(1)) << "两块真的不是同一块";
+
+    // 派发的目标就是**这个视图**：两块都在它里面，框架不替它选。
+    const auto first_target = vn::appfw::gui::resolveCommandTarget(&window);
+    EXPECT_EQ(first_target.document, document);
+    EXPECT_EQ(vn::appfw::gui::targetView(first_target), view);
+    EXPECT_EQ(vn::appfw::gui::targetView(first_target)->renderControl(), view->pane(0))
+        << "命令从目标拿到的就是视图当前那一块";
+
+    // 用户换到第二块：视图改自己的指针，下一次派发的目标随之改答 —— 框架代码一行没动。
+    view->usePane(1);
+    const auto second_target = vn::appfw::gui::resolveCommandTarget(&window);
+    EXPECT_EQ(vn::appfw::gui::targetView(second_target), view) << "仍然是同一个视图";
+    EXPECT_EQ(vn::appfw::gui::targetView(second_target)->renderControl(), view->pane(1))
+        << "另一块窗格不会让命令改错东西";
 }

@@ -256,6 +256,7 @@
 | T4 | 宿主主 pass 接管、释放视图 | `AHostPassTakesTheAreaAndTheViewerStandsDown`、`ReleasingTheViewTakesItOutOfTheArea` |
 | T5 | 输入到视图、拖拽仍转向机 | `TheViewReceivesInputAndADragKeepsSteeringIt` |
 | T6 | 每个文档视图自带渲染面；第 5 块给理由 | `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderSurface`、`VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException` |
+| T7 | 一视图两窗格：目标带视图，哪块算数由视图答 | `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast` |
 
 ## 9. 状态与演进
 
@@ -267,8 +268,7 @@ F1–F6 均已落地；多格/共享会话已删除。`Viewer` 是一块区的�
 
 - 超过 4 份 3D 文档需要给 vsg 打补丁；本树保持原版 + 门禁。
 - 多窗口（一个文档一个顶层窗口）不在本设计范围。
-- **命令找视图**：派发时解析目标（`gui::resolveCommandTarget()`：当前文档视图 → 它的文档）并随执行走，窗口级的
-  `primaryRenderControl()` 与发布槽均已删除；发起者所在窗口还不是解析输入（单窗口假设，见 ADR-2026-10-24-command-target）。
+- **命令找视图**：派发时解析目标（`gui::resolveCommandTarget()`：当前文档视图 → 它的文档）并随执行走；窗口级 `primaryRenderControl()` 与发布槽均已删除（发起者所在窗口还不是解析输入，见 ADR-2026-10-24-command-target）。
 - 逐实例属性 / GPU indirect 不在渲染视图层，见 `../backlog/graphics.md`。
 
 ### 9.3 兼容性 / 迁移
