@@ -90,7 +90,7 @@ using vn::vsg::ContentPipeline;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
 using vn::vsg::kLightKindEmpty;
-using vn::vsg::kLightSlots;
+using vn::graphics::kMaxLights;
 using vn::vsg::MaterialFacts;
 using vn::vsg::OffscreenTarget;
 using vn::vsg::packLightBlock;
@@ -332,7 +332,7 @@ TEST(LightBlockTest, AnEmptyAnnouncementIsLitByTheFillAndCountsNothing)
 
     EXPECT_EQ(represented, 0U) << "nothing was announced, so nothing is dropped either";
     EXPECT_FLOAT_EQ(block.ambient[0], 0.15F) << "and the scene is still visible instead of multiplied by zero";
-    for (std::size_t slot = 0; slot < kLightSlots; ++slot)
+    for (std::size_t slot = 0; slot < kMaxLights; ++slot)
     {
         EXPECT_FLOAT_EQ(block.position_kind[slot][3], kLightKindEmpty) << "slot " << slot << " says UNUSED";
         EXPECT_FLOAT_EQ(block.direction_range[slot][0], 0.0F);
@@ -410,7 +410,7 @@ TEST(LightBlockTest, OnlyEightLightsGetSlots)
     }
 
     VineLightsBlock block;
-    EXPECT_EQ(packLightBlock(announced, camera, block), kLightSlots)
+    EXPECT_EQ(packLightBlock(announced, camera, block), kMaxLights)
         << "the block holds eight: the caller reports the difference once per episode";
     EXPECT_FLOAT_EQ(block.color_intensity[0][0], 0.1F);
     EXPECT_FLOAT_EQ(block.color_intensity[7][0], 0.8F) << "in announcement order, and the ninth has no slot";

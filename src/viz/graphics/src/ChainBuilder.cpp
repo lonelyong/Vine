@@ -138,40 +138,74 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
 
 void ChainBuilder::reportRequestedShadows() const
 {
-    // A shadow is asked for by the LIGHT (Light::isCastingShadow + ShadowSettings) —
-    // that is where the request lives, and it outlives any one pipeline. What
-    // this reports is the request the pipeline did NOT honour: a forward path
-    // builds no shadow at all yet (S2b), and a deferred path asked to shade with
-    // the host's own program builds none either (it said so where it decided).
-    // A report that fires whenever a request EXISTS — what this did while the
-    // deferred path already built the pass — tells the host its picture is
-    // unshadowed while it is shadowed, which is worse than saying nothing.
-    std::size_t requesting = 0;
-    for (const Scene* scene : { content_.get(), transparent_.get() }) {
-        if (scene == nullptr) {
+    // A shadow is asked for by the LIGHT (Light::isCastingShadow + ShadowSettings) - that is where the request lives,
+    // and it outlives any one pipeline. What this reports is the request the built-in chain did NOT honour, and it
+    // has exactly THREE reasons - counted apart, because "N lights cast nothing" cannot be told from a mistyped
+    // setting:
+    //
+    //   1. the chain builds ONE map, so a SECOND caster has none (by design, see graphics-rendering.md N8);
+    //   2. a POINT light cannot be put in that map at all: it needs six faces of one (backlog S6);
+    //   3. a path with no lit shading to shadow - the host's own lighting program, or a mode that does not shade -
+    //      builds no pass even for the first caster.
+    //
+    // A report that fires whenever a request EXISTS - what this did while the deferred path already built the pass -
+    // tells the host its picture is unshadowed while it is shadowed, which is worse than saying nothing.
+    std::size_t buildable       = 0;  // enabled casters of a kind the chain CAN build a 2D map for
+    std::size_t unrepresentable = 0;  // enabled casters no 2D map represents (a point light)
+    for (const Scene* scene : { content_.get(), transparent_.get() })
+    {
+        if (scene == nullptr)
+        {
             continue;
         }
-        for (const auto& light : scene->lights()) {
-            if (light != nullptr && light->isEnabled() && light->isCastingShadow()) {
-                ++requesting;
+        for (const auto& light : scene->lights())
+        {
+            if (light == nullptr || !light->isEnabled() || !light->isCastingShadow())
+            {
+                continue;
+            }
+            if (light->type() == LightType::Directional || light->type() == LightType::Spot)
+            {
+                ++buildable;
+            }
+            else
+            {
+                ++unrepresentable;
             }
         }
     }
-    if (requesting <= shadows_built_) {
-        return;
-    }
-    const std::size_t unbuilt = requesting - shadows_built_;
+
     // The integer goes in as ASCII digits, like every other message in the SDK.
-    const std::string   digits = std::to_string(unbuilt);
-    const std::u8string count_text(digits.begin(), digits.end());
-    engine_->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                 vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                 String(count_text) +
-                                     String(u8" shadow-casting light(s) in this pipeline's content have no shadow "
-                                            u8"pass (only directional and spot lights cast, its path builds none, "
-                                            u8"or its lighting program is the host's; see "
-                                            u8".ai/design/graphics-rendering.md §2.7 and §6 N8): those lights "
-                                            u8"cast nothing"));
+    const auto report = [this](const std::string& message)
+    {
+        engine_->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                     vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                     String::fromUtf8(message));
+    };
+
+    if (buildable > shadows_built_)
+    {
+        const std::string unbuilt = std::to_string(buildable - shadows_built_);
+        if (shadows_built_ == 0U)
+        {
+            report(unbuilt + " shadow-casting light(s) have no shadow pass: this chain's path builds none (its"
+                             " lighting program is the host's, or its shading mode has nothing to shade from). See"
+                             " .ai/design/graphics-rendering.md §2.7");
+        }
+        else
+        {
+            report(unbuilt + " shadow-casting light(s) are not built: this chain builds ONE shadow map, for the"
+                             " first enabled directional or spot light of its content, so a second caster stays"
+                             " unshadowed. See .ai/design/graphics-rendering.md §2.7 and §6 N8");
+        }
+    }
+    if (unrepresentable > 0U)
+    {
+        const std::string points = std::to_string(unrepresentable);
+        report(points + " shadow-casting point light(s) cast nothing in this chain: a point light's shadow is six faces"
+                        " of one map, which this pipeline does not build (backlog S6). See"
+                        " .ai/design/graphics-rendering.md §6 N8");
+    }
 }
 
 namespace

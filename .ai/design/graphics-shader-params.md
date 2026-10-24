@@ -65,7 +65,9 @@
 | draw | 模型矩阵、不透明度、点大小、用户槽 | 每 draw（ring + dynamic offset） |
 | material | 环境 / 漫反射 / 高光 / 光泽 | 每材质（去重后） |
 | shadow | 光空间矩阵、阴影参数 | 每 pass |
-| lights | 一盏环境光 + 8 个带类型的灯（方向光 / 点光 / 聚光；位置与方向都在视图空间） | 每 view |
+| lights | 一盏环境光 + `kMaxLights` 个带类型的灯（方向光 / 点光 / 聚光；位置与方向都在视图空间） | 每 view |
+
+`kMaxLights`（`ShaderAbi.hpp`）是这个容量的唯一定义：GLSL 数组长度、后端块结构体尺寸、掉落文案里的数字都由它派生，`EmbeddedShadersTest` 从嵌入的着色器文本读回数组长度对齐。它不是内容上限 —— `Scene::addLight` 不设限（见 `graphics-scene.md` §2.7）。
 
 逐顶点与逐实例数据**不是参数**：位置 / 法线 / 颜色 / UV 走 canonical attribute，自定义通道保留源
 location（≥ 3，避开 8 与 12–15，见 `ShaderAbi.hpp`）。

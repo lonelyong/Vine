@@ -41,6 +41,8 @@
 2.6 **拾取是机制**：射线 + 场景走查；选择/描边/框选不在框架里。
 2.7 **灯是场景的环境量**：灯挂在 `Scene` 上而不是节点上（一个场景一份光照，每个 pass 拿到同一份，所以主/离屏/阴影 pass 的灯永远一致），位置与方向都是世界坐标。节点灯（灯跟着子树动）与逐 draw 选灯是触发条件型（backlog T7 / S7），不是今天的模型。
 
+**场景不设灯数上限**：`addLight` / `setLighting` 有多少收多少，因为容量是光照程序的属性而不是内容的语义 —— 同一个 Scene 今天被 forward 与 deferred 两条路径画，将来可能被容量不同的宿主程序画。上限在 `kMaxLights`（`ShaderAbi.hpp`），超出的灯在打包时不被表示，按 episode 报一次 `ChannelIgnored` 警告（见 `graphics-shader-params.md` §2.2）。要限制灯数的是选灯策略（backlog S7），不是 `Scene` 的一道上限。
+
 ## 3. 功能点
 
 ### 3.1 节点与树

@@ -114,7 +114,18 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
  *   (path), and the per-pass options of the passes the path and the overlays need.
  * - Shadows are NOT here — a shadow is requested by the LIGHT that casts it (Light::isCastingShadow) and honoured by the
  *   chain that draws that light's content, because a light outlives any one chain and a scene may be drawn by
- *   several (see PassStage::Depth and .ai/design/graphics-architecture.md §2).
+ *   several (see PassStage::Depth and .ai/design/graphics-rendering.md §2.7).
+ * - THE BUILT-IN SHADOW PIPELINE'S BOUNDARY, in one place: it builds ONE shadow map per chain, for the FIRST enabled
+ *   shadow-casting light of `content` whose kind is DIRECTIONAL (orthographic light camera) or SPOT (perspective
+ *   light camera, eye at the light). Everything else casts nothing, and the build says which case it was:
+ *   - a SECOND caster has no map — one map per chain is the rule, not a limit of the pass model;
+ *   - a POINT caster never casts — its shadow is six faces of one map, which this pipeline does not build
+ *     (backlog S6);
+ *   - a path that has no lit shading to shadow (the host's own lighting program, or a mode that does not shade)
+ *     builds no pass at all.
+ *   Each of the three is reported once per build (UnsupportedRequest) rather than leaving a silently unshadowed
+ *   picture; a host that wants per-light shadows composes its own passes (see PassStage::Depth and the design doc
+ *   above).
  */
 struct VN_GRAPHICS_API ChainDesc {
     /** @brief Camera the produced scene passes frame (borrowed).

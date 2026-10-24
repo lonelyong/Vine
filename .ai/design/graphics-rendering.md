@@ -37,6 +37,12 @@
 2.6 **阴影是普通 pass**：灯声明，链建 depth-only pass，没有引擎级阴影子系统。
 2.7 **阴影的四个归属**：请求在灯（`Light::setCastShadow` + `ShadowSettings`）、身份在图（`RenderTarget::setShadowOf` 与 `setProducerViewProjection`，plan 只抄成 `CompiledPass::shadow`）、约定在内置 ABI（`VineShadowBlock` 与阴影项，可选变体）、组合在预设（`ChainBuilder` 的 recipe）。引擎核心的 `PassDesc` 没有 shadow 字段（见 D5）。
 
+  **内置阴影管线的能力边界**（`PassChain::build` 造的那条，不是 pass 模型的上限）：
+  - **一张图**：每链只建一张阴影图，服务**一盏灯** —— 内容里第一个 enabled、`isCastingShadow` 且种类可建的方向光或聚光。第二盏投射灯没有图。
+  - **两种光相机**：方向光走正交拟合（`directionalShadowMatrix`），聚光走透视拟合（眼在灯位、锥角=外锥角×1.02，`spotShadowMatrix`）；两者出口都是同一份 `VineShadowBlock`（一张矩阵），着色不分流。
+  - **点光不支持**：点光的阴影是同一张图的六个面，今天的 ABI 没有多矩阵 / cube，所以点光 `setCastShadow` 在这条管线里一定不建 pass（backlog S6）。
+  - **三种不建的理由分开报**（每 build 一次，`UnsupportedRequest`）：第二个投射灯 / 点光不可表示 / 这条路本身不产生光照（宿主自己的 lighting program、或不需要着色的 mode）。分着数是为了让“N 盏灯没投影”能被定位，而不是靠猜。
+
 ## 3. 功能点
 
 ### 3.1 目标
@@ -86,7 +92,7 @@
 | F21 | 内置程序 | forward / flat / gbuffer / deferred lighting / shadowed；`builtin_<角色>.<阶段>`。 |
 | F22 | ABI | 顶点 location、`VineViewBlock` / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`、128 B push。 |
 | F23 | 透明度 | 唯一通道是 `Node::opacity`；材质不贡献 alpha；blend 恒开。 |
-| F24 | 阴影 | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`；光相机由 `directionalShadowMatrix`（正交）/ `spotShadowMatrix`（透视）推导。 |
+| F24 | 阴影 | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`；光相机由 `directionalShadowMatrix`（正交）/ `spotShadowMatrix`（透视）推导。**每链一张图、一盏灯（第一个可建的方向光或聚光）**，点光不支持（见 2.7）。 |
 | F25 | 阴影目标 | depth-only `RenderTarget` + `shadowOf` 声明；采样走 `VineShadowBlock`。 |
 
 ## 4. 公开接口
@@ -153,7 +159,7 @@
 | N5 | `Sampler` 是缓存键：字段必须是有限数；NaN 会让缓存每帧 miss。 |
 | N6 | 材质不贡献 alpha；透明度只来自 `Node::opacity`。 |
 | N7 | `ShaderAbi` 的块布局 / location 改一个必须同时改 C++ 与 GLSL。 |
-| N8 | 阴影投射灯是方向光与聚光（正交 / 透视光相机，同一张 2D 深度图、同一份 `VineShadowBlock`）；点光需要六面 cube，`setCastShadow` 在点光上不建 pass，由 `ChainBuilder::reportRequestedShadows` 报出（backlog S6）。CSM / PCSS 不做。 |
+| N8 | 阴影投射灯是方向光与聚光（正交 / 透视光相机，同一张 2D 深度图、同一份 `VineShadowBlock`）；**每链只有一张图** —— 第二个投射灯没有图；点光需要六面 cube，`setCastShadow` 在点光上不建 pass。三种不建的理由（第二个投射灯 / 点光 / 这条路不产生光照）由 `ChainBuilder::reportRequestedShadows` 分别报出，见 2.7 与 backlog S6。CSM / PCSS 不做。 |
 
 ## 6. 注意事项与陷阱
 

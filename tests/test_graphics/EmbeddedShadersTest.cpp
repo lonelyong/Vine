@@ -282,6 +282,34 @@ TEST(EmbeddedShadersTest, TheAbiLocationsMatchTheShaderText)
     }
 }
 
+TEST(EmbeddedShadersTest, TheLightBlockDeclaresOneSlotPerLightTheCapacityAllows)
+{
+    // kMaxLights is the ONE statement of how many lights a drawing call can have lit (ShaderAbi.hpp); the light
+    // block's GLSL arrays are its other end. The block struct's sizeof static_assert pins the C++ side, and this
+    // pins the GLSL side, so raising the capacity in one place only is a failing test rather than a block whose
+    // arrays the shader reads past.
+    const std::string slots = "[" + std::to_string(kMaxLights) + "]";
+    for (const std::string_view name : { "builtin_forward.frag", "builtin_deferred_lighting.frag" })
+    {
+        std::string source;
+        for (const Entry& entry : kAll)
+        {
+            if (entry.name == name)
+            {
+                source = asByteString(entry.source);
+                break;
+            }
+        }
+        ASSERT_FALSE(source.empty()) << name << " is embedded";
+        for (const std::string_view field : { "position_kind", "direction_range", "color_intensity", "cone" })
+        {
+            const std::string declaration = "vec4 " + std::string(field) + slots;
+            EXPECT_NE(source.find(declaration), std::string::npos)
+                << name << " declares " << declaration << " (kMaxLights is " << kMaxLights << ")";
+        }
+    }
+}
+
 TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceCarries)
 {
     // The shadowed variant of the lighting program is the shipped source with two insertions, and

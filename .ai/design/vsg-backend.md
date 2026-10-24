@@ -269,7 +269,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | D3 | 自建管线绕开 vsg | 会与 vsg 的 state 装配 / 记录路径分叉；收益只在冷启动。 |
 | D4 | Wayland | 只按 WSI 契约实现；没有真机验证。 |
 | D5 | 后端自己再排一次 pass | 调度上移引擎；两套排序 = 两套帧词汇。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |
-| D6 | 超过灯块槽数的灯不做 | 灯块 8 个带类型的槽（位置/方向/范围/锥角），超出的按 episode 报掉落；不做逐对象选灯（见 `graphics-shader-params.md`）。 |
+| D6 | 超过灯块槽数的灯不做 | 灯块 `kMaxLights`（`ShaderAbi.hpp`）个带类型的槽（位置/方向/范围/锥角），超出的按 episode 报掉落；不做逐对象选灯（见 `graphics-shader-params.md`）。 |
 
 ## 8. 测试与验收
 

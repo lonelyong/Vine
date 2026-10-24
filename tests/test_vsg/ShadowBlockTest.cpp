@@ -81,7 +81,7 @@ using vn::vsg::ContentPipeline;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
 using vn::vsg::InputImages;
-using vn::vsg::kLightSlots;
+using vn::graphics::kMaxLights;
 using vn::vsg::MaterialFacts;
 using vn::vsg::OffscreenTarget;
 using vn::vsg::packLightBlock;
@@ -302,7 +302,7 @@ TEST(ShadowBlockTest, ACasterTheBlockCannotNameLeavesTheSwitchOff)
     const void* const    owner  = reinterpret_cast<const void*>(0x51U);
 
     std::vector<LightRef> announced;
-    for (std::size_t index = 0; index < kLightSlots; ++index)
+    for (std::size_t index = 0; index < kMaxLights; ++index)
     {
         announced.push_back(makeSun(reinterpret_cast<const void*>(0x60U + index), 0.1, 0.0, 0.0));
     }
@@ -321,8 +321,8 @@ TEST(ShadowBlockTest, ACasterTheBlockCannotNameLeavesTheSwitchOff)
 
     // The block still represents the lights that FIT (the caller's drop report is about the ninth).
     VineLightsBlock lights_block;
-    EXPECT_EQ(packLightBlock(draw.lights, draw.camera, lights_block), kLightSlots);
-    EXPECT_EQ(packedSlotOf(draw.lights, owner), kLightSlots)
+    EXPECT_EQ(packLightBlock(draw.lights, draw.camera, lights_block), kMaxLights);
+    EXPECT_EQ(packedSlotOf(draw.lights, owner), kMaxLights)
         << "and the owner is not one of them - the same answer the packing just gave";
 }
 
@@ -353,15 +353,15 @@ TEST(ShadowBlockTest, TheSlotHelperAgreesWithThePacking)
     for (const auto& [light, colour] : expected)
     {
         const std::size_t slot = packedSlotOf(announced, light->identity);
-        ASSERT_LT(slot, kLightSlots) << "an enabled directional light has a slot";
+        ASSERT_LT(slot, kMaxLights) << "an enabled directional light has a slot";
         EXPECT_FLOAT_EQ(block.color_intensity[slot][0], colour)
             << "the slot the helper reports is where the packing put THIS light's colour";
     }
-    EXPECT_EQ(packedSlotOf(announced, off.identity), kLightSlots)
+    EXPECT_EQ(packedSlotOf(announced, off.identity), kMaxLights)
         << "a disabled light was never packed";
-    EXPECT_EQ(packedSlotOf(announced, ambient.identity), kLightSlots)
+    EXPECT_EQ(packedSlotOf(announced, ambient.identity), kMaxLights)
         << "an ambient light fills the ambient field, not a slot";
-    EXPECT_EQ(packedSlotOf(announced, unplaced.identity), kLightSlots)
+    EXPECT_EQ(packedSlotOf(announced, unplaced.identity), kMaxLights)
         << "a positional light nobody placed takes no slot (the packing skips it too)";
 }
 
@@ -658,7 +658,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     // cannot be named, so the switch stays off and every carried light contributes. The eight carried lights are
     // equal greys, so the band's colour is ambient + 8 x 0.05.
     std::vector<vn::intrusive_ptr<Light>> grey_suns;
-    while (grey_suns.size() < vn::vsg::kLightSlots)
+    while (grey_suns.size() < vn::graphics::kMaxLights)
     {
         grey_suns.push_back(make_sun(0.05, 0.05, 0.05));
     }

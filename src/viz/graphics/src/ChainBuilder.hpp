@@ -50,7 +50,15 @@ class ChainBuilder
     /** @brief Adds the optional HUD overlays to @p chain. */
     bool applyOverlays(PassChain& chain, const ChainDesc& desc);
 
-    /** @brief Reports the shadow-casting lights this build did NOT honour. */
+    /**
+     * @brief Reports the shadow-casting lights this build did NOT honour.
+     *
+     * @details
+     * - Three reasons, counted apart and each named in its own message: a SECOND caster (the chain builds one map),
+     *   a POINT caster (six faces; backlog S6) and a path that has no lit shading to shadow.
+     * - Silent when everything asked for was built - a report that fires on a request the chain honoured tells the
+     *   host its picture is unshadowed while it is shadowed.
+     */
     void reportRequestedShadows() const;
 
   private:

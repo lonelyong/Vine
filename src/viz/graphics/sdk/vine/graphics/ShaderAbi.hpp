@@ -184,6 +184,25 @@ struct alignas(16) VineMaterialBlock
 };
 
 /**
+ * @brief How many typed lights one drawing call can have lit - the light block's slot count.
+ *
+ * @details
+ * - The light block (`VineLightsBlock`, declared once in the GLSL `shaders/vine_params.glsl` and packed by the
+ *   backend) carries one ambient plus this many typed lights, in announcement order: directional, point and spot
+ *   alike. A drawing call that announces more has the extra ones reported (a `ChannelIgnored` warning, once per
+ *   episode - see ContentPass::reportLightsDropped) rather than refused.
+ * - It is a SHADING capacity, not a scene limit: `Scene::addLight` takes any number of lights, because the same
+ *   content may be drawn by a program with a different capacity (a host's own lighting stage, or a later block with
+ *   more slots). Ask this constant when building a rig; do not cap the content to it.
+ * - ONE number, several consumers: the GLSL arrays are this length, the backend's block struct is sized by it, and a
+ *   test reads the declared length back out of the embedded shader text - so a change reaches both sides or fails.
+ *
+ * @note The ambient term is not a slot: an enabled ambient light fills the block's ambient field, so any number of
+ *       them are represented by one value (the last one wins) and only typed lights consume a slot.
+ */
+inline constexpr std::size_t kMaxLights = 8U;
+
+/**
  * @brief Per-pass shadow data block the shading reads (L1 shape).
  *
  * @details

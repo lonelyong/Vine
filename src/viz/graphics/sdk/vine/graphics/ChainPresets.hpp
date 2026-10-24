@@ -37,7 +37,8 @@ class ShaderProgram;
  *
  * @details
  * - Samples the G-buffer's albedo / normal / specular / view-position attachments (binding 0..3) and shades ambient
- *   plus up to three directional lights whose parameters arrive in the backend's view-space push block.
+ *   plus up to `kMaxLights` typed lights (directional / point / spot, positions and directions in view space) from
+ *   the light block at binding 5 - the same block the forward program reads.
  * - The program - and the GLSL it is built from - is owned by the SDK (see BuiltinShaders.hpp); callers may still
  *   override it through ChainDesc::lighting_program.
  *
@@ -60,6 +61,9 @@ class ShaderProgram;
 /** @brief The light camera a directional shadow is rendered with.
  *
  * @details
+ * - One of the TWO light-camera derivations the built-in shadow pass uses: a directional light through this
+ *   orthographic fit, a spot through @ref spotShadowMatrix's perspective one. A point light has neither (its shadow
+ *   is six faces; backlog S6), so a chain built by PassChain::build never casts one.
  * - Orthographic, looking along @p light's direction, framing @p bounds: the eye is pulled back past the box along
  *   the light, the window covers the box's diagonal (a sphere of that radius fits every orientation, so the fit does
  *   not have to know which way the light comes from), and the depth range reaches from in front of the box to well

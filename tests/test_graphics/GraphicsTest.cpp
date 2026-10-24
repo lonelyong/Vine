@@ -6163,6 +6163,67 @@ TEST(PassChainTest, AShadowThisChainCannotShadeIsReported)
     EXPECT_TRUE(reported.empty());
 }
 
+TEST(PassChainTest, TheBuiltInChainsShadowBoundaryNamesItsThreeCases)
+{
+    // The built-in chain's shadow boundary is a CAPABILITY, not an accident, so each way of falling outside it is
+    // reported in its own words: a SECOND caster (one map per chain), a POINT caster (six faces, backlog S6) and a
+    // path with no shading to shadow (covered by AShadowThisChainCannotShadeIsReported). A single "N lights cast
+    // nothing" leaves a host unable to tell a typo from a design limit.
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    std::vector<RenderDiagnostic> reported;
+    engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    ChainDesc options;
+    options.camera  = cam.get();
+    options.content = content;
+
+    // ONE map per chain: the first caster is built, the second is what the report is about.
+    auto sun  = LightPtr(Light::createDirectional());
+    auto fill = LightPtr(Light::createDirectional());
+    sun->setCastShadow(true);
+    fill->setCastShadow(true);
+    content->addLight(sun);
+    content->addLight(fill);
+
+    ASSERT_NE(PassChain::build(engine.get(), options), nullptr);
+    ASSERT_EQ(reported.size(), 1u) << "one report, and it is about the SECOND caster";
+    EXPECT_EQ(reported[0].category, DiagnosticCategory::UnsupportedRequest);
+    EXPECT_NE(reported[0].message.find(u8"ONE shadow map"), vn::String::npos);
+    EXPECT_NE(reported[0].message.find(u8"1 shadow-casting light(s) are not built"), vn::String::npos);
+
+    // A POINT caster is not "a second caster": it has no face this pipeline can map, and the sentence says which
+    // limit it hit - the difference between "add another pass" and "the ABI has no cube yet".
+    reported.clear();
+    content->clearLights();
+    auto point = LightPtr(Light::createPoint(Vec3d(0.0, 0.0, 2.0), 10.0F));
+    point->setCastShadow(true);
+    content->addLight(point);
+
+    ASSERT_NE(PassChain::build(engine.get(), options), nullptr);
+    ASSERT_EQ(reported.size(), 1u);
+    EXPECT_NE(reported[0].message.find(u8"point light(s) cast nothing"), vn::String::npos);
+    EXPECT_NE(reported[0].message.find(u8"backlog S6"), vn::String::npos);
+
+    // Both limits at once are two facts, so two reports: a second caster has no map, and a point has no face.
+    reported.clear();
+    content->clearLights();
+    auto first       = LightPtr(Light::createDirectional());
+    auto second      = LightPtr(Light::createDirectional());
+    auto point_light = LightPtr(Light::createPoint(Vec3d(0.0, 0.0, 2.0), 10.0F));
+    first->setCastShadow(true);
+    second->setCastShadow(true);
+    point_light->setCastShadow(true);
+    content->addLight(first);
+    content->addLight(second);
+    content->addLight(point_light);
+
+    ASSERT_NE(PassChain::build(engine.get(), options), nullptr);
+    EXPECT_EQ(reported.size(), 2u) << "the second caster and the point caster are separate reasons";
+}
+
 /**
  * @brief The deferred path BUILDS the shadow an isCastingShadow light asks for.
  *

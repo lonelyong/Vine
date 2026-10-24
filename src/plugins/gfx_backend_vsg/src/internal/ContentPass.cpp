@@ -1548,7 +1548,8 @@ void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represe
     else
     {
         message = std::to_string(announced - represented) + " of " + std::to_string(announced) + " announced";
-        message += " light(s) are not lit (a positional light nobody placed, or a light beyond the block's eight";
+        message += " light(s) are not lit (a positional light nobody placed, or a light beyond the block's ";
+        message += std::to_string(vn::graphics::kMaxLights);
         message += " slots)";
     }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,

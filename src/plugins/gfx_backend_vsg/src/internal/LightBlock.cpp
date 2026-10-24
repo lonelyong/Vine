@@ -103,12 +103,12 @@ std::size_t packedSlotOf(std::span<const core::LightRef> lights, const void* lig
         {
             return slot;
         }
-        if (++slot == kLightSlots)
+        if (++slot == vn::graphics::kMaxLights)
         {
             break;  // the block is full: a later light has no slot a shader could name it by
         }
     }
-    return kLightSlots;
+    return vn::graphics::kMaxLights;
 }
 
 std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::CameraSnapshot& camera,
@@ -119,7 +119,7 @@ std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::C
     out = VineLightsBlock{};
     // An empty slot says so. A zeroed kind would read as `Ambient` (0), which is a kind the ARRAY does not carry -
     // a shader that trusted it would evaluate a light that is not there.
-    for (std::size_t slot = 0U; slot < kLightSlots; ++slot)
+    for (std::size_t slot = 0U; slot < vn::graphics::kMaxLights; ++slot)
     {
         out.position_kind[slot][3] = kLightKindEmpty;
     }
@@ -145,7 +145,7 @@ std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::C
             has_ambient = true;
             continue;
         }
-        if (packed == kLightSlots)
+        if (packed == vn::graphics::kMaxLights)
         {
             continue;  // the block is full: a later light has no slot a shader could name it by
         }
