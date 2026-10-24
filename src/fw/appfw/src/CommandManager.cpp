@@ -897,9 +897,12 @@ void CommandManager::Impl::setDisabledPreference(const String& name, bool disabl
  */
 class CommandManager::Context : public CommandExecutionContext {
   public:
-    Context(CommandManager* manager, std::shared_ptr<Chain> chain)
+    Context(CommandManager* manager, std::shared_ptr<Chain> chain, Document* target_document = nullptr,
+            vn::Object* target_view = nullptr)
       : manager_(manager)
       , chain_(std::move(chain))
+      , target_document_(target_document)
+      , target_view_(target_view)
     {}
 
     Application* application() const override
@@ -974,9 +977,25 @@ class CommandManager::Context : public CommandExecutionContext {
         co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested);
     }
 
+    Document* targetDocument() const override
+    {
+        return target_document_;
+    }
+
+    vn::Object* targetView() const override
+    {
+        return target_view_;
+    }
+
   private:
     CommandManager*        manager_;
     std::shared_ptr<Chain> chain_;
+
+    // What the dispatch resolved for this execution, or empty. Filled by the dispatch path (ADR-2026-10-24
+    // step 2); until then every execution carries an empty target, which is exactly the state
+    // CommandFlags::NeedsDocument / NeedsView refuse.
+    Document*  target_document_ = nullptr;
+    vn::Object* target_view_     = nullptr;
 };
 
 CommandManager::CommandManager(Application* app)
@@ -1099,6 +1118,24 @@ vn::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command* 
     const bool         exclusive = testFlag(flags, CommandFlags::Exclusive);
     const bool         top_level = scope == ChainScope::TopLevel;
 
+    // Uniform target checks, before anything is taken over or admitted: a command that declares the layer it acts
+    // on never writes its own empty-chain guard, and the refusal says which layer is missing. NotApplicable is an
+    // explanation, not a failure - a console or headless run is a legal host, not a broken one.
+    //
+    // The target is a local until the context is built (further down, where the chain exists): the dispatch attaches
+    // it (ADR-2026-10-24 step 2), and until then every execution carries an empty one - which is exactly the state
+    // these two flags refuse.
+    Document*   target_document = nullptr;
+    vn::Object* target_view     = nullptr;
+    if (testFlag(flags, CommandFlags::NeedsDocument) && target_document == nullptr) {
+        VN_LOGI("Command needs a document and this execution has none: {}", toUtf8View(command->name()));
+        co_return CommandResult(CommandStatus::NotApplicable, String(u8"该命令需要一份打开的文档。"));
+    }
+    if (testFlag(flags, CommandFlags::NeedsView) && target_view == nullptr) {
+        VN_LOGI("Command needs a view and this execution has none: {}", toUtf8View(command->name()));
+        co_return CommandResult(CommandStatus::NotApplicable, String(u8"该命令需要一块 3D 视图。"));
+    }
+
     if (exclusive && top_level) {
         switch (co_await d->takeOverForeground(*command)) {
         case Impl::TakeOverOutcome::TakenOver:
@@ -1179,7 +1216,9 @@ vn::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command* 
         }
     } guard{ chain.get(), command };
 
-    Context context(this, chain);
+    // The chain exists from here on (admit() above created it), so the context can hold it - and the target the
+    // checks at the top of this frame used.
+    Context context(this, chain, target_document, target_view);
 
     // Undoable commands notify the document to snapshot its state first. The
     // handler is taken under the lock and called outside it: it is user code from

@@ -66,7 +66,9 @@
  * a view published into a window-wide slot - two visible areas cannot share one slot (see
  * `.ai/decisions/ADR-2026-10-24-command-target.md`). The slot went with it: `MainWindow::setPrimaryRenderControl()` is
  * removed, and `primaryRenderControl()` answers nullptr when no view with a 3D area is on screen - no active document,
- * no target.
+ * no target. The command side moved too: `CommandFlags` gained `NeedsDocument`/`NeedsView`, and
+ * `CommandExecutionContext` gained `targetDocument()`/`targetView()` (appended last) so the framework refuses a command
+ * whose declared layer is missing instead of every command writing its own empty-chain guard.
  *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * VN_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about

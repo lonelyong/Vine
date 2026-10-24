@@ -291,6 +291,41 @@ class LongCommand : public vn::appfw::Command {
 
 VN_OBJECT_META_IMPL(LongCommand, vn::appfw::Command)
 
+// 声明"我需要一份文档"的命令：缺目标时框架在命令体之前就拒绝。命令体只会返回 Success，
+// 所以"结果不是 Success"一定是框架给的。
+class NeedsDocumentCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
+
+  public:
+    vn::String name() const override { return u8"needs_document"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"needs a document"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::NeedsDocument; }
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
+    {
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
+    }
+};
+
+VN_OBJECT_META_IMPL(NeedsDocumentCommand, vn::appfw::Command)
+
+// 声明"我需要一块 3D 视图"的命令（同上：体的返回值证明不了什么，结果只能来自框架）。
+class NeedsViewCommand : public vn::appfw::Command {
+    VN_OBJECT_META_DECL;
+
+  public:
+    vn::String name() const override { return u8"needs_view"; }
+    vn::String group() const override { return u8"Test"; }
+    vn::String description() const override { return u8"needs a view"; }
+    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::NeedsView; }
+    vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
+    {
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
+    }
+};
+
+VN_OBJECT_META_IMPL(NeedsViewCommand, vn::appfw::Command)
+
 // 嵌套子命令：LongRunning，复用父命令的取消/进度宿主。
 class NestedChildCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
@@ -1618,6 +1653,40 @@ TEST_F(GuiTest, CommandManager_RegistrationOwner)
     // 清理注册，避免影响其它用例。
     cm->unregisterCommand(otherName);
     cm->unregisterCommand(ownedName);
+}
+
+TEST_F(GuiTest, CommandManager_MissingTargetIsRefusedBeforeTheBodyRuns)
+{
+    // 命令声明它需要哪一层，框架统一拒绝：命令体自己不再写一遍空链判断，结果里说清缺什么。
+    // 今天派发还没有附带目标（ADR-2026-10-24 第 2 步），所以两次执行都应该被拒绝 —— 这正是
+    // 控制台/无 GUI 宿主看到的形状。
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    cm->unregisterCommand(vn::String(u8"needs_document"));
+    cm->unregisterCommand(vn::String(u8"needs_view"));
+    ASSERT_TRUE(cm->registerCommand<NeedsDocumentCommand>(vn::String(u8"needs_document")));
+    ASSERT_TRUE(cm->registerCommand<NeedsViewCommand>(vn::String(u8"needs_view")));
+
+    const auto document_level = cm->executeCommandAndWait(vn::String(u8"needs_document"));
+    EXPECT_EQ(document_level.status(), vn::appfw::CommandStatus::NotApplicable)
+        << "缺文档时是 NotApplicable（解释），不是 Failed（失败）";
+    EXPECT_FALSE(document_level.message().empty()) << "要说清缺什么";
+
+    const auto view_level = cm->executeCommandAndWait(vn::String(u8"needs_view"));
+    EXPECT_EQ(view_level.status(), vn::appfw::CommandStatus::NotApplicable);
+    EXPECT_FALSE(view_level.message().empty());
+
+    // 没有声明前提的命令照旧跑：拒绝只发生在声明过的那一条路上。
+    cm->unregisterCommand(vn::String(u8"dummy"));
+    ASSERT_TRUE(cm->registerCommand<DummyCommand>(vn::String(u8"dummy")));
+    EXPECT_EQ(cm->executeCommandAndWait(vn::String(u8"dummy")).status(), vn::appfw::CommandStatus::Success);
+
+    cm->unregisterCommand(vn::String(u8"needs_document"));
+    cm->unregisterCommand(vn::String(u8"needs_view"));
+    cm->unregisterCommand(vn::String(u8"dummy"));
 }
 
 TEST_F(GuiTest, ConfigRegistry_StandardCategories)

@@ -16,6 +16,7 @@ VN_APPFW_NS_BEGIN
 class Application;
 class CommandManager;
 class Command;
+class Document;
 
 /**
  * @brief Execution characteristics of a Command.
@@ -75,7 +76,24 @@ enum class CommandFlags : std::uint32_t
      * commands are rejected with a "another operation is in progress" result
      * and the UI may show a progress bar with a cancel button.
      */
-    LongRunning = 1 << 2
+    LongRunning = 1 << 2,
+
+    /**
+     * @brief Acts on the document the dispatch resolved, not on whatever happens to be current.
+     *
+     * The framework refuses the command with NotApplicable when the execution carries no document,
+     * so the body does not write that guard itself (see CommandExecutionContext::targetDocument()).
+     */
+    NeedsDocument = 1 << 3,
+
+    /**
+     * @brief Acts on the presentation (a view's 3D area) the dispatch resolved.
+     *
+     * Refused with NotApplicable when the execution carries no view - a console command, a headless run
+     * and a window with no document open all have none. The view is read through
+     * CommandExecutionContext::targetView().
+     */
+    NeedsView = 1 << 4
 };
 
 /**
@@ -292,6 +310,34 @@ class VN_APPFW_API CommandExecutionContext
      *       indices of implementations compiled against an older header.
      */
     virtual vn::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) = 0;
+
+    /**
+     * @brief Returns the document this execution was dispatched for, or nullptr.
+     *
+     * @details
+     * - Empty is a legal state: a console command, a headless run and a window with nothing open all
+     *   have no document. CommandFlags::NeedsDocument turns that state into a uniform NotApplicable
+     *   result before the body runs, so the body reads the target without guarding for it.
+     * - The target is what the dispatch resolved (see `.ai/decisions/ADR-2026-10-24-command-target.md`),
+     *   not "whatever is current": the two differ as soon as a second window or a second pane exists.
+     *
+     * @return The target document, or nullptr when this execution has none.
+     */
+    virtual Document* targetDocument() const = 0;
+
+    /**
+     * @brief Returns the presentation this execution was dispatched for, as an opaque object, or nullptr.
+     *
+     * @details
+     * - Opaque on purpose: the command layer names the target without importing GUI types. GUI code
+     *   reads the same answer typed, through `gui::CommandTarget::of(context)` - the one place that
+     *   casts.
+     * - nullptr is a legal state (a console command, a headless run, a 2D view); CommandFlags::NeedsView
+     *   turns it into a uniform NotApplicable result before the body runs.
+     *
+     * @return The target view as an Object, or nullptr when this execution has none.
+     */
+    virtual vn::Object* targetView() const = 0;
 };
 
 /**
