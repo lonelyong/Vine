@@ -25,6 +25,7 @@
 - 不让 `core` 认识 `Vfs`/IO；`Document::save()` 无参数。
 - 不做 `closeAll()`、`dirtyChanged`、按插件记 owner。
 - 多窗口（一个文档一个顶层窗口）不在本设计范围。
+- 默认宿主同一时刻只显示一个视图（tab 风格）；多个视图并排可见（MDI/分屏）不做，几块 3D 区并排由**视图自己的窗格**表达（见 `../decisions/ADR-2026-10-24-tabs-not-mdi.md`）。
 
 ### 1.4 一句话结论
 
