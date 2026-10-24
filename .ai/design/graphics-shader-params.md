@@ -67,7 +67,7 @@
 | shadow | 光空间矩阵、阴影参数 | 每 pass |
 | lights | 一盏环境光 + `kMaxLights` 个带类型的灯（方向光 / 点光 / 聚光；位置与方向都在视图空间） | 每 view |
 
-`kMaxLights`（`ShaderAbi.hpp`）是这个容量的唯一定义：GLSL 数组长度、后端块结构体尺寸、掉落文案里的数字都由它派生，`EmbeddedShadersTest` 从嵌入的着色器文本读回数组长度对齐。它不是内容上限 —— `Scene::addLight` 不设限（见 `graphics-scene.md` §2.7）。
+表里两处要点：`params` 的 `x` 是有效不透明度（唯一透明通道）、`y` 是点大小（framebuffer 像素，顶点阶段写进 `gl_PointSize`；由 `StateNode::setPointSize` 或 pass 覆盖决定、解析后**进 draw 块而不是 `PipelineKey`**，所以两个尺寸共用一条 pipeline）、`z`/`w` 是用户槽。`kMaxLights`（`ShaderAbi.hpp`）是灯容量的唯一定义（GLSL 数组长度、后端结构体尺寸、掉落文案都由它派生，`EmbeddedShadersTest` 读回数组长度），它**不是**内容上限（`Scene::addLight` 不设限，见 `graphics-scene.md` §2.7）。
 
 逐顶点与逐实例数据**不是参数**：位置 / 法线 / 颜色 / UV 走 canonical attribute，自定义通道保留源
 location（≥ 3，避开 8 与 12–15，见 `ShaderAbi.hpp`）。
@@ -247,6 +247,7 @@ C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份�
 | P6 | 用户重复声明同名块 | 重定义 → 编译失败；这是特性，不是限制 |
 | P7 | 片段改了而嵌入没重跑 | 片段必须在 `VineShaders.cmake` 的 `INCLUDES` 里：否则生成规则不依赖它，嵌入副本静默变旧；T3 用展开后的哈希兜底 |
 | P8 | 守卫写错（多声明或漏声明块） | 多声明 → program 多一个必须填的 binding；漏声明 → 未声明标识符。两者都在 `ProgramAbiTest` 的绑定数断言或编译时暴露 |
+| P9 | 把点大小（或任何顶点阶段要读的值）当成 pipeline 状态 | Vulkan 里点大小是 `gl_PointSize` 输出，不是光栅状态；放进 `PipelineKey` = 一个尺寸一个 pipeline，而且动它还要重编。它的终点是 draw 块的 `params.y`（下限 1.0，`largePoints` 是设备要求），`PrimitiveDrawTest` 用像素数钉住整条路 |
 
 ## 7. 已否决选项
 

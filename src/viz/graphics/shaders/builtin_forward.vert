@@ -4,6 +4,10 @@
 // branch that tests it stays dead, with no error from any layer). Keep the list in sync with the
 // backend's variants — scripts/vine_shader_check.sh compiles every combination of these names.
 #pragma import_defines (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE, VINE_INSTANCED)
+// The per-drawable block, read here for `params.y` (the point size). The vertex stage used to see only the push
+// constants; the block's set is already visible to this stage, so the size costs one read, not a new binding.
+#define VINE_PARAM_DRAW
+#include "vine_params.glsl"
 layout(push_constant) uniform PushConstants
 {
     mat4 projection;
@@ -76,7 +80,11 @@ void main()
     // maintenance5 (and with no tessellation / geometry stage) a point draw from a stage that never
     // writes it is invalid, at pipeline creation and at every draw (VUID-...-topology-08773 and
     // VUID-...-primitiveTopology-10748). 1.0 is Vulkan's own default, so any geometry of this engine
-    // may be drawn as points and nothing changes for triangles; a caller that wants larger points
-    // supplies a program of its own, because this one has no point-size input.
-    gl_PointSize = 1.0;
+    // may be drawn as points and nothing changes for triangles.
+    //
+    // THE SIZE COMES FROM THE DRAW BLOCK (`params.y`): a StateNode's setPointSize, or the pass'
+    // point-size override, already resolved and floored at 1.0 by resolveRenderState. It is data, not
+    // state, so changing it never recompiles this pipeline; triangles and lines ignore the value, and a
+    // device wider than one pixel needs the largePoints feature (which the backend requires).
+    gl_PointSize = draw.params.y;
 }

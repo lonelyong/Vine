@@ -4351,8 +4351,13 @@ TEST(ContentPassTest, ASpecularIntensityScalesWhatTheSurfaceReflects)
     std::unique_ptr<BlockDescriptors> gbuffer_set =
         BlockDescriptors::forAbi(gbuffer_facts.abi, 0U, created.device, *storage);
     ASSERT_NE(gbuffer_set, nullptr);
+    // The G-buffer geometry stage declares the DRAW block too: the vertex stage writes gl_PointSize from it
+    // (`params.y`), so a caller serving that half owes it the same set the forward path already builds.
+    std::unique_ptr<BlockDescriptors> gbuffer_draw_set =
+        BlockDescriptors::forAbi(gbuffer_facts.abi, 1U, created.device, *storage);
+    ASSERT_NE(gbuffer_draw_set, nullptr) << "the G-buffer program declares its DRAW block in set 1";
     BlockDescriptors* const forward_sets[]{ forward_set.get(), forward_draw_set.get() };
-    BlockDescriptors* const gbuffer_sets[]{ gbuffer_set.get() };
+    BlockDescriptors* const gbuffer_sets[]{ gbuffer_set.get(), gbuffer_draw_set.get() };
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     storage->beginFrame();

@@ -46,6 +46,8 @@ const char* featureName(DeviceFeature feature) noexcept
     {
     case DeviceFeature::FillModeNonSolid:
         return "fillModeNonSolid";
+    case DeviceFeature::LargePoints:
+        return "largePoints";
     case DeviceFeature::IndependentBlend:
         return "independentBlend";
     case DeviceFeature::SamplerAnisotropy:

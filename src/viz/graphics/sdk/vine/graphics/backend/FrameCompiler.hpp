@@ -97,6 +97,10 @@ struct CompiledCommand
     const void*   material{nullptr};      ///< Material identity, or nullptr.
     vn::math::Mat4d model{};            ///< World-space model matrix.
     float         opacity{1.0F};          ///< Effective opacity.
+    /// Point size in framebuffer pixels: the resolved state's one item whose consumer is the DRAW BLOCK rather
+    /// than the pipeline (`VineDrawBlock::params.y`). The content's word and the pass override are already
+    /// weighed by resolveRenderState, so this is the answer, not a claim.
+    float         point_size{1.0F};
     DynamicState  dynamic{};              ///< The dynamic layer, resolved (see resolveDynamicState).
     /// The instance stream, BORROWED from the collected frame: null for a plain draw.
     const vn::Buffer<float>* instance_buffer{nullptr};

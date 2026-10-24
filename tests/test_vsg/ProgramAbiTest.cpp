@@ -124,7 +124,9 @@ TEST(ProgramAbiTest, TheForwardProgramDeclaresTheContentAbiTheExistingBackendSer
     expectBlock(abi, 0U, 5U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
     expectSampler(abi, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
     expectBlock(abi, 0U, 4U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
-    expectBlock(abi, 1U, 0U, AbiBlockRole::Draw, kFragment, sizeof(vn::graphics::VineDrawBlock));
+    // The draw block is declared by BOTH stages now: the fragment reads `params.x` (opacity), the vertex stage
+    // reads `params.y` (the point size it writes to gl_PointSize), so the binding's stage flags are the union.
+    expectBlock(abi, 1U, 0U, AbiBlockRole::Draw, kVertex | kFragment, sizeof(vn::graphics::VineDrawBlock));
 
     // The texcoord slot's sampler is NOT declared by this variant: that is the fact the serving layer will
     // read to decide whether a pipeline needs the binding at all. Binding 2 is the slot the lights used to take;
@@ -286,11 +288,13 @@ TEST(ProgramAbiTest, TheScreenProgramsBindTheAttachmentTheirFactoryNamed)
 
 TEST(ProgramAbiTest, TheGbufferAndSkyboxProgramsDeclareTheSlotsTheirShadingReads)
 {
-    // The G-buffer geometry stage: the material and the camera matrices, and the map only in the variant
-    // that samples one. It declares no lights and (unlike the forward program) no shadow block.
+    // The G-buffer geometry stage: the material and the draw block (the vertex stage's point size), the camera
+    // matrices as push constants, and the map only in the variant that samples one. It declares no lights and
+    // (unlike the forward program) no shadow block.
     const ProgramAbi gbuffer = scan(*vn::graphics::gbufferGeometryProgram());
-    ASSERT_EQ(gbuffer.bindings.size(), 1U);
+    ASSERT_EQ(gbuffer.bindings.size(), 2U);
     expectBlock(gbuffer, 0U, 0U, AbiBlockRole::Material, kFragment, sizeof(vn::graphics::VineMaterialBlock));
+    expectBlock(gbuffer, 1U, 0U, AbiBlockRole::Draw, kVertex, sizeof(vn::graphics::VineDrawBlock));
     ASSERT_EQ(gbuffer.pushes.size(), 1U);
     EXPECT_EQ(gbuffer.pushes[0].size, 128U);
     EXPECT_EQ(gbuffer.pushes[0].stages, kVertex);

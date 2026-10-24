@@ -385,6 +385,9 @@ std::span<const CompiledCommand> FrameCompiler::resolveCommands(const CollectedD
         // (StateResolution.hpp).
         vn::graphics::ResolvedRenderState resolved =
             resolveRenderState(command.authored_state, pass_state, command.topology).state;
+        // The item whose destination is the draw block rather than the pipeline (a point's size is a
+        // vertex-shader output), so it travels beside the opacity instead of into `dynamic`.
+        out.point_size = resolved.pointSize;
         // THE ENGINE'S TRANSPARENCY CHANNEL IS THE COMMAND'S OPACITY, and this is the only place that can weigh it
         // against the authored blend state: a translucent command blends with the standard pair even though its
         // content authored none (no StateNode has to say "and blend"), while an opaque command that authored none

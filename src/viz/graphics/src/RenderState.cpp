@@ -19,6 +19,9 @@ void RenderState::merge(const RenderState& other)
     if (other.polygonOffset) {
         polygonOffset = other.polygonOffset;
     }
+    if (other.pointSize) {
+        pointSize = other.pointSize;
+    }
 }
 
 VN_GRAPHICS_NS_END

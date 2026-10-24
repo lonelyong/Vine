@@ -98,6 +98,23 @@ std::optional<PolygonOffset> StateNode::polygonOffset() const
     return state_.polygonOffset;
 }
 
+void StateNode::setPointSize(float size)
+{
+    announceContentChange();
+    state_.pointSize = size;
+}
+
+void StateNode::clearPointSize()
+{
+    announceContentChange();
+    state_.pointSize.reset();
+}
+
+std::optional<float> StateNode::pointSize() const
+{
+    return state_.pointSize;
+}
+
 const RenderState& StateNode::renderState() const
 {
     return state_;

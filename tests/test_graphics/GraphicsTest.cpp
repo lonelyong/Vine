@@ -3197,6 +3197,8 @@ class MockBackend : public RenderBackend {
     std::vector<const ShaderProgram*> last_programs;
     // Rasterisation mode of the commands of the last content draw (per command).
     std::vector<PolygonMode> last_polygon_modes;
+    /// The EFFECTIVE point size of every command, resolved the same way (see last_polygon_modes).
+    std::vector<float> last_point_sizes;
     int light_sets = 0;
     std::size_t last_light_count = 0;
     const Light* last_light = nullptr;
@@ -3348,6 +3350,8 @@ class MockBackend : public RenderBackend {
         last_polygon_modes.reserve(commands.size());
         last_commands_authored_polygon_modes.clear();
         last_commands_authored_polygon_modes.reserve(commands.size());
+        last_point_sizes.clear();
+        last_point_sizes.reserve(commands.size());
         for (const auto& command : commands) {
             last_programs.push_back(program_override != nullptr ? program_override : command.program.get());
             last_commands_authored_polygon_modes.push_back(command.authored_state.polygonMode);
@@ -3357,6 +3361,9 @@ class MockBackend : public RenderBackend {
             last_polygon_modes.push_back(
                 resolveRenderState(command.authored_state, pass_state, Topology::Triangles)
                     .state.polygonMode);
+            last_point_sizes.push_back(
+                resolveRenderState(command.authored_state, pass_state, Topology::Triangles)
+                    .state.pointSize);
         }
     }
 
@@ -4638,6 +4645,52 @@ TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeCl
     engine->frame();
     ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
     EXPECT_EQ(backend->last_polygon_modes[0], PolygonMode::Line);
+}
+
+TEST(SceneViewViewportTest, ThePassLevelPointSizeOverridesTheContentAndNeverReachesZero)
+{
+    // The companion of the polygon-mode override for the "show me this scene as points" view: a point cloud at
+    // one pixel cannot be read, so the pass may size it. What is pinned here is the same pair as above - the
+    // override really reaches the commands the backend sees, and clearing it puts the content's value back -
+    // plus the floor: a non-positive size resolves to one pixel from either side.
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+
+    auto root = intrusive_ptr<StateNode>(new StateNode());
+    root->setPointSize(3.0F);
+    root->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -2.0), nullptr, u8"points"));
+    view->scene()->setRoot(root);
+
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    backend->ok   = true;
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto pipeline            = buildFor(*view, engine.get());
+    ASSERT_NE(pipeline, nullptr);
+    RenderPass* const window = pipeline->presentingPass();
+    ASSERT_NE(window, nullptr);
+
+    // The content's own size reaches the backend, and the default is one pixel.
+    engine->frame();
+    ASSERT_EQ(backend->last_point_sizes.size(), 1u);
+    EXPECT_FLOAT_EQ(backend->last_point_sizes[0], 3.0F);
+    EXPECT_FALSE(window->pointSizeOverride().has_value());
+
+    // The pass wins over the content ("show me the points, big"), with no rebuild.
+    window->setPointSizeOverride(6.0F);
+    ASSERT_EQ(window->pointSizeOverride(), 6.0F);
+    engine->frame();
+    ASSERT_EQ(backend->last_point_sizes.size(), 1u);
+    EXPECT_FLOAT_EQ(backend->last_point_sizes[0], 6.0F);
+
+    // Cleared: back to the content's 3, not to a forced value.
+    window->clearPointSizeOverride();
+    EXPECT_FALSE(window->pointSizeOverride().has_value());
+    engine->frame();
+    ASSERT_EQ(backend->last_point_sizes.size(), 1u);
+    EXPECT_FLOAT_EQ(backend->last_point_sizes[0], 3.0F);
 }
 
 TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
@@ -7903,6 +7956,7 @@ TEST(StateNodeTest, NewNodeHasNoState)
     EXPECT_FALSE(state.cullMode().has_value());
     EXPECT_FALSE(state.blend().has_value());
     EXPECT_FALSE(state.polygonMode().has_value());
+    EXPECT_FALSE(state.pointSize().has_value());
 }
 
 TEST(StateNodeTest, TopologyIsNotStateAtAll)
@@ -7957,6 +8011,51 @@ TEST(StateNodeTest, SettersAndClears)
     EXPECT_FALSE(state.hasState());
     EXPECT_FALSE(state.blend().has_value());
     EXPECT_FALSE(state.polygonMode().has_value());
+}
+
+TEST(StateNodeTest, ThePointSizeIsStateForTheContentAndDataForTheBackend)
+{
+    // The point size is authored like every other state item (it inherits from an enclosing StateNode and the
+    // pass may override it), but its DESTINATION is the draw block rather than the pipeline: a point's size is
+    // a vertex-shader output, so two sizes must not become two pipeline variants.
+    StateNode node;
+    node.setPointSize(3.0F);
+    ASSERT_TRUE(node.pointSize().has_value());
+    EXPECT_FLOAT_EQ(*node.pointSize(), 3.0F);
+    EXPECT_TRUE(node.hasState());
+
+    // Nothing authored: the documented default of one pixel.
+    const ResolvedCommandState defaults = resolveRenderState(RenderState{}, PassRenderState{}, Topology::Points);
+    EXPECT_FLOAT_EQ(defaults.state.pointSize, 1.0F);
+    EXPECT_EQ(defaults.origin.pointSize, StateOrigin::Default);
+
+    // The content's own word, and the ONE item that does not enter the dynamic state (the backend ships it in
+    // the draw block, see packDrawBlock).
+    const ResolvedCommandState authored =
+        resolveRenderState(node.renderState(), PassRenderState{}, Topology::Points);
+    EXPECT_FLOAT_EQ(authored.state.pointSize, 3.0F);
+    EXPECT_EQ(authored.origin.pointSize, StateOrigin::Content);
+
+    // The pass OVERRIDE wins - "show me this scene as points" has to be able to size them.
+    PassRenderState viewing;
+    viewing.pointSize = 5.0F;
+    const ResolvedCommandState overridden = resolveRenderState(node.renderState(), viewing, Topology::Points);
+    EXPECT_FLOAT_EQ(overridden.state.pointSize, 5.0F);
+    EXPECT_EQ(overridden.origin.pointSize, StateOrigin::Pass);
+
+    // A non-positive size is raised to one pixel from EITHER side: "0" must not become a second way to hide
+    // geometry, and no device accepts a zero point size.
+    StateNode zero;
+    zero.setPointSize(0.0F);
+    EXPECT_FLOAT_EQ(resolveRenderState(zero.renderState(), PassRenderState{}, Topology::Points).state.pointSize, 1.0F);
+    PassRenderState zero_pass;
+    zero_pass.pointSize = -4.0F;
+    EXPECT_FLOAT_EQ(resolveRenderState(RenderState{}, zero_pass, Topology::Points).state.pointSize, 1.0F);
+
+    // Saving and clearing round-trip through the block the fold reads.
+    node.clearPointSize();
+    EXPECT_FALSE(node.pointSize().has_value());
+    EXPECT_FALSE(node.hasState());
 }
 
 TEST(StateNodeTest, ResolveAppliesDefaults)

@@ -26,6 +26,10 @@ struct VN_GRAPHICS_API ResolvedRenderState
     BlendState   blend;                        ///< Blending (default: disabled).
     PolygonMode  polygonMode = PolygonMode::Fill;  ///< Polygon mode (default: fill).
     PolygonOffset polygonOffset{};                 ///< Depth bias (default: none).
+    /// Point size in framebuffer pixels (default: 1). It is the ONE resolved item whose destination is the
+    /// DRAW BLOCK (`VineDrawBlock::params.y`), because a point's size is a vertex-shader output rather than
+    /// API state: it never enters a pipeline key, so two point sizes share one pipeline.
+    float        pointSize = 1.0F;
     /// The EFFECTIVE primitive topology of the draw: the PRIMITIVE's own value (see Primitive.hpp), or the
     /// pass' override of it for the whole view. It has no "content" layer and no default here - a command
     /// without a primitive draws nothing - so this is filled by the caller that knows the data.
@@ -37,7 +41,8 @@ inline bool operator==(const ResolvedRenderState& lhs, const ResolvedRenderState
 {
     return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
            lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.polygonOffset == rhs.polygonOffset && lhs.topology == rhs.topology;
+           lhs.polygonOffset == rhs.polygonOffset && lhs.topology == rhs.topology &&
+           lhs.pointSize == rhs.pointSize;
 }
 
 /** @brief Returns whether two resolved states differ. */
@@ -68,6 +73,7 @@ struct VN_GRAPHICS_API RenderStateOrigin
     StateOrigin blend{StateOrigin::Default};        ///< Where the blend state came from.
     StateOrigin polygonMode{StateOrigin::Default};  ///< Where the rasterisation mode came from.
     StateOrigin polygonOffset{StateOrigin::Default};  ///< Where the depth bias came from.
+    StateOrigin pointSize{StateOrigin::Default};    ///< Where the point size came from.
     StateOrigin topology{StateOrigin::Default};     ///< Where the topology came from (Data or Pass).
 };
 
@@ -91,6 +97,10 @@ struct VN_GRAPHICS_API PassRenderState
 {
     DepthMode                  depth{DepthMode::TestAndWrite};  ///< Depth policy for content that authored none.
     std::optional<PolygonMode> polygonMode{};                   ///< Rasterisation override for every command.
+    /// Point-size override for every command, in framebuffer pixels. Like the two below it, it is a viewing
+    /// switch: the pass that turns a scene into points has to be able to size them, and what the content
+    /// authored stays the content's own word for the passes that draw it as geometry.
+    std::optional<float>       pointSize{};
     /// Primitive-topology override for every command ("show me this scene as points"). It overrides what the
     /// DATA states, because how a view looks at a scene is the pass' decision - the same rule the rasterisation
     /// mode already follows. The data keeps saying what it is; a pipeline is compiled per effective topology.

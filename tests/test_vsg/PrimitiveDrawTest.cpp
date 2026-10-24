@@ -266,3 +266,63 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
     EXPECT_EQ(assembly->uploads().uploads(), uploads_after_first) << "稳态帧重传了流";
     EXPECT_EQ(aliases_after_second - aliases_after_first, 9U) << "稳态帧的九次取流必须全部命中已建的绑定";
 }
+
+TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
+{
+    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+
+    // The same four points, drawn twice: once at the default one-pixel size and once with the StateNode saying
+    // nine. Everything else is identical (one geometry, one primitive, one program, one pipeline), so the pixel
+    // counts are a proof of the WHOLE path `params.y` travels - resolved state -> draw block -> the vertex
+    // stage's gl_PointSize - and of the claim that a size change never forks a pipeline.
+    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    geometry->setPositions(packVec3({ kPointsX, -0.6F, kPlaneZ, kPointsX, -0.2F, kPlaneZ, //
+                                      kPointsX, 0.2F, kPlaneZ, kPointsX, 0.6F, kPlaneZ }));
+    geometry->setNormals(packVec3({ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
+
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(
+        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 3U }));
+    geometry->clearPrimitives();
+    Primitive markers;
+    markers.topology = Topology::Points;
+    markers.indices  = Primitive::IndexSpan::slice(arena, 0U, 4U);
+    const vn::intrusive_ptr<Material> blue(new Material());
+    blue->setDiffuse(vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F));
+    markers.material = blue;
+    geometry->addPrimitive(markers);
+    geometry->bumpRevision();
+
+    const vn::intrusive_ptr<StateNode> state(new StateNode());
+    state->addChild(geometry);
+    const vn::intrusive_ptr<Scene> scene(new Scene());
+    scene->setRoot(state);
+
+    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+    pass->setName(vn::String(u8"points"));
+    pass->setCamera(fixture.camera);
+    pass->setRenderTarget(fixture.target);
+    pass->setClearEnabled(true);
+    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    pass->setShouldClearDepth(true);
+    pass->setDepthMode(DepthMode::Disabled);
+    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
+    fixture.engine->addPass(pass, scene, 0);
+
+    const PixelProbe one = fixture.read();
+    ASSERT_TRUE(one.valid()) << "画出来的这一帧必须读得回来";
+    const PartPixels single_pixel = countParts(one);
+
+    // The content authored the size: the same command, the same pipeline, a different draw-block value.
+    state->setPointSize(9.0F);
+    const PixelProbe nine = fixture.read();
+    ASSERT_TRUE(nine.valid());
+    const PartPixels nine_pixels = countParts(nine);
+
+    std::printf("[primitives] point size 1 -> %zu px, size 9 -> %zu px\n", single_pixel.blue, nine_pixels.blue);
+
+    EXPECT_GT(single_pixel.blue, 2U) << "四个 1 像素的点都没画出来，先查点管线本身";
+    // Four 9x9 squares cover far more than eight times four single pixels, even after the ones near the frame's
+    // edge lose a row or a column to clipping.
+    EXPECT_GT(nine_pixels.blue, single_pixel.blue * 8U)
+        << "点大小没有到达 gl_PointSize（状态没进 draw 块，或顶点阶段没写它）";
+}

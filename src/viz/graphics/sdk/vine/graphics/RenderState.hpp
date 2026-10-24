@@ -174,13 +174,30 @@ struct VN_GRAPHICS_API RenderState
     std::optional<PolygonMode>   polygonMode;    ///< Polygon rasterisation override.
     std::optional<PolygonOffset> polygonOffset;  ///< Depth-bias override (coplanar surfaces).
 
+    /**
+     * @brief Pixel size of a point primitive (framebuffer pixels), the override for a subtree.
+     *
+     * @details
+     * - This is the ONE item whose value ends up in the DRAW BLOCK rather than in the pipeline or its
+     *   dynamic state: a point's size is a vertex-shader output (`gl_PointSize`), so changing it re-uploads
+     *   one per-draw value and never recompiles a pipeline. It inherits like every other item and the pass
+     *   may override it (a "show me this scene as points" view needs points it can see), but its consumer
+     *   is `VineDrawBlock::params.y` - see StateResolution.hpp.
+     * - It only does anything for POINT rasterisation (`Topology::Points`, or `PolygonMode::Point` on
+     *   triangle data). Triangles and lines ignore it, and that is not an error: the value still says what
+     *   it says, there is simply nothing to size.
+     * - Values below 1.0 are raised to 1.0 (see resolveRenderState): a point is at least one sample, and
+     *   "0" must not become a second way to hide geometry.
+     */
+    std::optional<float> pointSize;
+
     /** @brief Returns whether no item is set.
      *
      * @return true when every item is unset (the block contributes nothing).
      */
     bool empty() const
     {
-        return !depth && !cullMode && !blend && !polygonMode && !polygonOffset;
+        return !depth && !cullMode && !blend && !polygonMode && !polygonOffset && !pointSize;
     }
 
     /** @brief Overlays another state block onto this one.
@@ -198,7 +215,7 @@ inline bool operator==(const RenderState& lhs, const RenderState& rhs)
 {
     return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
            lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.polygonOffset == rhs.polygonOffset;
+           lhs.polygonOffset == rhs.polygonOffset && lhs.pointSize == rhs.pointSize;
 }
 
 /** @brief Returns whether two optional state blocks differ. */

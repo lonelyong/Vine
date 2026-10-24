@@ -177,6 +177,9 @@ struct VN_GRAPHICS_API PassDesc
     intrusive_ptr<ShaderProgram> program_override{ nullptr };
     /// The rasterisation override (the wireframe path), or unset for the content's own modes.
     std::optional<PolygonMode> polygon_mode;
+    /// The point-size override (the "show me this scene as points" path), or unset for the content's own
+    /// sizes. Framebuffer pixels; it is data (the draw block's `params.y`), not pipeline state.
+    std::optional<float> point_size;
     /// The pass-scoped depth policy.
     DepthMode depth_mode{ DepthMode::TestAndWrite };
     /// Which layers of the CONTENT this pass draws (see Node::setLayers): a node whose layers do not

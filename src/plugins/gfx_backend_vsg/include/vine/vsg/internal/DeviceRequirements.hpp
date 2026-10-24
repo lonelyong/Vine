@@ -59,6 +59,8 @@ inline constexpr std::uint32_t kRequiredApiVersion = makeApiVersion(1, 4);
  * @details
  * - What each one buys, so a reader can tell a real requirement from a preference:
  *   * FillModeNonSolid - wireframe rendering (a polygon mode of Line);
+ *   * LargePoints - a point primitive larger than one pixel (the vertex stage writes `gl_PointSize`, and a
+ *     value above 1.0 is invalid without this feature);
  *   * IndependentBlend - MRT pipelines whose attachments blend differently (a G-buffer);
  *   * SamplerAnisotropy - the samplers ask for it, so not requesting the feature is a validation error,
  *     not a degradation;
@@ -69,6 +71,7 @@ inline constexpr std::uint32_t kRequiredApiVersion = makeApiVersion(1, 4);
 enum class DeviceFeature : std::uint8_t
 {
     FillModeNonSolid,                       ///< Wireframe polygon mode.
+    LargePoints,                            ///< Point primitives larger than one pixel.
     IndependentBlend,                       ///< Per-attachment blending (MRT).
     SamplerAnisotropy,                      ///< Anisotropic sampling.
     ExtendedDynamicState2,                  ///< The dynamic state the pipelines assume.

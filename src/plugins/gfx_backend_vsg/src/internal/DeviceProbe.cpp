@@ -29,6 +29,10 @@ void noteFeatures(const VkPhysicalDeviceFeatures& core_features,
     {
         facts.note(DeviceFeature::FillModeNonSolid);
     }
+    if (core_features.largePoints == VK_TRUE)
+    {
+        facts.note(DeviceFeature::LargePoints);
+    }
     if (core_features.independentBlend == VK_TRUE)
     {
         facts.note(DeviceFeature::IndependentBlend);

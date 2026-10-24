@@ -122,6 +122,28 @@ class VN_GRAPHICS_API StateNode : public Group {
      */
     std::optional<PolygonOffset> polygonOffset() const;
 
+    /** @brief Sets the pixel size of point primitives for this subtree.
+     *
+     * @details
+     * - The size reaches the shading as the draw block's `params.y` (a vertex-shader output, `gl_PointSize`),
+     *   so it is per-drawable data rather than pipeline state: changing it never recompiles a pipeline.
+     * - Only POINT rasterisation uses it (`Topology::Points`, or `PolygonMode::Point` on triangle data);
+     *   triangles and lines ignore it. Values below 1.0 are raised to 1.0, and the device clamps the result
+     *   to its own point-size range.
+     *
+     * @param size Point size in framebuffer pixels.
+     */
+    void setPointSize(float size);
+
+    /** @brief Clears the point-size override so enclosing state is inherited. */
+    void clearPointSize();
+
+    /** @brief Gets the point-size override.
+     *
+     * @return The size in framebuffer pixels, or nullopt when unset (the enclosing state applies, then 1).
+     */
+    std::optional<float> pointSize() const;
+
     /** @brief Sets a custom shader program for this subtree.
      *
      * Program resolution (graphics-rendering.md): a leaf Geometry's own program

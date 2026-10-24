@@ -4,6 +4,10 @@
 // tests it stays dead. Keep the list in sync with the backend's variants - scripts/vine_shader_check.sh
 // compiles every combination of these names.
 #pragma import_defines (VINE_DIFFUSE_MAP, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE, VINE_INSTANCED)
+// The same per-drawable block the forward stage reads, read here for the same reason: `params.y` is the point
+// size, and a POINT_LIST pipeline needs this stage to write gl_PointSize statically.
+#define VINE_PARAM_DRAW
+#include "vine_params.glsl"
 layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;
 layout(location = 0) in vec3 vine_Vertex;
 layout(location = 1) in vec3 vine_Normal;
@@ -48,7 +52,8 @@ void main()
     vine_texcoord = vine_TexCoord0;
 #endif
     gl_Position = pc.projection * view_pos;
-    // The same obligation the forward stage states: a POINT_LIST pipeline needs a stage that
-    // statically writes gl_PointSize, and 1.0 keeps a points draw legal without inventing a size.
-    gl_PointSize = 1.0;
+    // The same obligation the forward stage states: a POINT_LIST pipeline needs a stage that statically
+    // writes gl_PointSize. The size is the draw block's `params.y` (resolved from a StateNode's
+    // setPointSize or the pass' override), so a point cloud keeps its size in the G-buffer pass too.
+    gl_PointSize = draw.params.y;
 }

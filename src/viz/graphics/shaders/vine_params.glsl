@@ -42,7 +42,8 @@ layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 #ifdef VINE_PARAM_DRAW
 // The per-drawable values: the model matrix and four scalars the host rewrites once per drawn command
 // instead of once per vertex. `params.x` is the drawable's effective opacity (scene x node x geometry);
-// y, z and w are reserved.
+// `params.y` is the point size in framebuffer pixels (the vertex stages write it to gl_PointSize; 1.0 when
+// nobody authored one); z and w are reserved.
 //
 // It is its OWN set (1) because it is bound PER DRAWABLE with a dynamic offset: the scene shares one buffer
 // and one descriptor set, and each draw selects its slot.

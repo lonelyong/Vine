@@ -21,9 +21,11 @@ void packDrawBlock(const core::CompiledCommand& command, vn::graphics::VineDrawB
         }
     }
 
-    // The engine's only per-drawable value, and the reserved user slot (zero until something defines it).
+    // params.x is the engine's transparency channel; params.y is the point size the resolved state produced
+    // (see ResolvedRenderState::pointSize - the one state item whose destination is this block). z and w stay
+    // reserved for the user parameter slot.
     out.params[0] = command.opacity;
-    out.params[1] = 0.0F;
+    out.params[1] = command.point_size;
     out.params[2] = 0.0F;
     out.params[3] = 0.0F;
 }

@@ -642,6 +642,32 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
     void clearPolygonModeOverride() noexcept { desc_.polygon_mode.reset(); }
 
     /**
+     * @brief Gets the pass-level point-size override.
+     *
+     * @return The size in framebuffer pixels, or nullopt when each command keeps its own.
+     */
+    [[nodiscard]] std::optional<float> pointSizeOverride() const noexcept { return desc_.point_size; }
+
+    /**
+     * @brief Draws every point this pass renders at @p size pixels.
+     *
+     * @details
+     * - The companion of setPolygonModeOverride for the "show me this scene as points" view: a point cloud at
+     *   one pixel cannot be read, and the size is a VIEWING choice exactly like the rasterisation mode.
+     * - It beats what the content authored (a StateNode's `setPointSize`), and unset leaves the content's own
+     *   value alone.
+     * - Unlike the polygon mode it is not API state: it reaches the shading as the draw block's `params.y`,
+     *   so overriding it costs one per-draw value and never a pipeline recompile. Values below 1.0 are raised
+     *   to 1.0, and it only affects POINT rasterisation.
+     *
+     * @param size Point size in framebuffer pixels.
+     */
+    void setPointSizeOverride(float size) noexcept { desc_.point_size = size; }
+
+    /// @brief Removes the point-size override, leaving each command's own size in effect.
+    void clearPointSizeOverride() noexcept { desc_.point_size.reset(); }
+
+    /**
      * @brief Describes what this pass issues this frame: its target, its state and its drawing calls.
      *
      * @details

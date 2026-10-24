@@ -310,6 +310,23 @@ TEST(EmbeddedShadersTest, TheLightBlockDeclaresOneSlotPerLightTheCapacityAllows)
     }
 }
 
+TEST(EmbeddedShadersTest, TheContentVertexStagesSizeTheirPointsFromTheDrawBlock)
+{
+    // A POINT_LIST pipeline needs a vertex stage that STATICALLY writes gl_PointSize, and the engine's size is the
+    // draw block's `params.y` (a StateNode's setPointSize or the pass' override, already resolved). A stage that
+    // wrote a constant instead would silently ignore both, which is the failure this pins.
+    for (const std::u8string_view source : { kBuiltinForwardVert, kBuiltinGbufferVert })
+    {
+        const std::string text = asByteString(source);
+        EXPECT_NE(text.find("#define VINE_PARAM_DRAW"), std::string::npos)
+            << "the vertex stage must declare the draw block it reads the size from";
+        EXPECT_NE(text.find("#include \"vine_params.glsl\""), std::string::npos)
+            << "and take the declaration from the ONE fragment, never a copy";
+        EXPECT_NE(text.find("gl_PointSize = draw.params.y"), std::string::npos)
+            << "the size is the per-draw value, not a literal";
+    }
+}
+
 TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceCarries)
 {
     // The shadowed variant of the lighting program is the shipped source with two insertions, and

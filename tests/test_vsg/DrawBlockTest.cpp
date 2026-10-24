@@ -90,9 +90,17 @@ TEST(DrawBlockTest, TheModelMatrixLandsColumnMajorAndTheOpacityInTheParameterSlo
     EXPECT_FLOAT_EQ(block.model[15], 33.0F);
 
     EXPECT_FLOAT_EQ(block.params[0], 0.375F);
-    EXPECT_FLOAT_EQ(block.params[1], 0.0F);  // the reserved user slot packs as zero, not as a leftover
-    EXPECT_FLOAT_EQ(block.params[2], 0.0F);
+    EXPECT_FLOAT_EQ(block.params[1], 1.0F);  // the point size's default: one pixel, not zero
+    EXPECT_FLOAT_EQ(block.params[2], 0.0F);  // the reserved user slot packs as zero, not as a leftover
     EXPECT_FLOAT_EQ(block.params[3], 0.0F);
+
+    // A resolved point size travels beside the opacity, in the same block: it is data (the vertex stage writes
+    // it to gl_PointSize), so it never becomes a pipeline's business.
+    command.point_size = 4.5F;
+    vn::graphics::VineDrawBlock sized;
+    packDrawBlock(command, sized);
+    EXPECT_FLOAT_EQ(sized.params[1], 4.5F);
+    EXPECT_FLOAT_EQ(sized.params[0], 0.375F) << "the opacity is untouched";
 }
 
 TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)

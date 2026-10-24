@@ -127,13 +127,16 @@ struct alignas(16) VineViewBlock
 /**
  * @brief Per-draw data block the built-in shading reads (L1 shape).
  *
- * @note The user parameter slot is reserved for the per-drawable values (P10: material overrides / user parameters);
- *       until then it packs as zero.
+ * @note The parameter slot's first two lanes are the engine's: `x` is the drawable's effective opacity (the
+ *       ONE transparency channel, see BlendState) and `y` is the point size in framebuffer pixels (the resolved
+ *       state item whose destination is this block - see RenderState::pointSize; the content vertex stages write
+ *       it to `gl_PointSize`, and 1.0 means nobody authored one). `z` and `w` stay reserved for the user parameter
+ *       slot (P10: material overrides / user parameters); until then they pack as zero.
  */
 struct alignas(16) VineDrawBlock
 {
     std::array<float, 16> model{};  ///< Object -> world (column-major mat4).
-    std::array<float, 4>  params{}; ///< User parameter slot (reserved).
+    std::array<float, 4>  params{}; ///< x = opacity, y = point size (px), z/w = user slot (reserved).
 };
 
 /**
