@@ -217,3 +217,35 @@ TEST(ShadowPixelTest, TheSameShadowFallsWhenTheFrameCompositesAnOverlay)
     const vn::graphics::backend::PixelProbe read_back = fixture.read();
     expectTheShadowFalls(read_back);
 }
+
+/**
+ * @brief 同一条内容走 FORWARD 路径时，影子同样要落在该落的地方。
+ *
+ * WHY IT IS A THIRD CASE. 前向路径的接线是另一套：阴影图是**主 pass 的输入**，而不是一条全屏光照 pass 的
+ * 输入；着色项由内容程序（`forwardProgram()`，无条件带阴影 ABI）在逐 drawable 的块里拿开关。这两处任一
+ * 接错，deferred 的两个用例全绿而 forward 没有影子。
+ */
+TEST(ShadowPixelTest, TheSameShadowFallsOnTheForwardPath)
+{
+    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+
+    fixture.scene = buildCastingScene();
+
+    ChainDesc options;
+    options.path    = ShadingPath::Forward;
+    options.camera  = fixture.camera.get();
+    options.content = fixture.scene;
+    vn::intrusive_ptr<PassChain> pipeline = PassChain::build(fixture.engine.get(), options);
+    ASSERT_NE(pipeline, nullptr);
+
+    vn::graphics::RenderPass* const picture = pipeline->presentingPass();
+    ASSERT_NE(picture, nullptr);
+    picture->setRenderTarget(fixture.target);
+    picture->setClearEnabled(true);
+    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    picture->setShouldClearDepth(true);
+
+    const vn::graphics::backend::PixelProbe read_back = fixture.read();
+    printAscii(read_back);
+    expectTheShadowFalls(read_back);
+}

@@ -90,6 +90,19 @@ bool declaresMaterialSampler(const ContentPipeline& layer, std::uint32_t set) no
     return false;
 }
 
+/** @brief Whether the set declares the shadow map - an image the PASS owns, not the drawable's. */
+bool declaresShadowSampler(const ContentPipeline& layer, std::uint32_t set) noexcept
+{
+    for (const AbiBinding& binding : layer.abi().bindings)
+    {
+        if (binding.set == set && isSampled(binding) && imageOriginOf(binding.name) == ImageOrigin::Shadow)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 struct ContentSets::Data
@@ -102,6 +115,16 @@ struct ContentSets::Data
         ProgramVariant variant{};
         std::uint32_t  set{0};
         BlockDescriptors::ImageSource source{};
+        /// The shadow map the set binds, or null when it declares none.
+        ///
+        /// PART OF THE KEY because the map arrives LATE: a recording that builds this set before the shadow
+        /// pass has promoted its depth (a warm-up frame, or the first frame of a session) resolves nothing and
+        /// the set is built with the stand-in white image - whose `texture().r` is 1.0, i.e. "a caster at the
+        /// near plane for every fragment". Keyed by the image, that set stops being a hit the moment the real
+        /// map exists; unkeyed, it answered for the rest of the session and the whole picture shaded as shadowed
+        /// (measured 2026-10-24 on the forward path, where the map reaches the draws through a CONTENT set - the
+        /// full-screen path builds its set per call and was unaffected).
+        const void* shadow{nullptr};
 
         [[nodiscard]] friend bool operator==(const Key&, const Key&) noexcept = default;
     };
@@ -362,6 +385,16 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
                 // it with an empty source lets every drawable of this variant share it.
                 key.source = declaresMaterialSampler(*entry->pipelines, set) ? source
                                                                               : BlockDescriptors::ImageSource{};
+                // The map is the PASS' image, resolved the way ensure() will resolve it - so the key states
+                // what the set actually binds (see Key::shadow).
+                if (declaresShadowSampler(*entry->pipelines, set))
+                {
+                    vn::vsg::SamplerImage shadow_map;
+                    if (vn::vsg::shadowImageOf(pass, inputs, entry->pipelines->depthSampler(), shadow_map))
+                    {
+                        key.shadow = shadow_map.view.get();
+                    }
+                }
                 d->ensure(key, *entry, pass, inputs);
             }
         }

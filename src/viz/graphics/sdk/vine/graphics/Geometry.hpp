@@ -365,6 +365,11 @@ class VN_GRAPHICS_API Geometry : public Node {
      * - The units of a segment are VERTICES, not scalars: the stride is the role's, and a caller should not
      *   have to know it. A @p vertex_count of 0 means "the rest of @p positions from @p first_vertex", NOT
      *   an empty channel - to clear the channel, pass a null buffer.
+     * - DATA IMPLIES A DRAW: the FIRST positions installed on a primitive-less geometry also state the
+     *   default draw (triangles over the vertex streams, non-indexed - see addBuffer). A caller that states
+     *   its own draw then REPLACES index 0 (setPrimitive(0, …)) or clears the list first; calling
+     *   addPrimitive() after this line APPENDS a second draw, and the default one is a triangle list the
+     *   caller never asked for.
      *
      * @param positions    Vertex scalars to read (three floats per vertex), or null for an empty channel.
      * @param first_vertex First vertex of this geometry's segment.
@@ -473,6 +478,12 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   entry - the overwhelming case, and the one whose per-draw numbers (index span, topology) used to
      *   live on the geometry itself. Material and program stay on the geometry as DEFAULTS (see
      *   setMaterial / setProgram); a primitive may state its own.
+     * - MINDS THE DEFAULT DRAW. Installing positions already stated a default (non-indexed triangles, see
+     *   setPositions), so a host that means "this is THE draw" replaces index 0 with setPrimitive(0, …) or
+     *   clears the list first; appending here leaves TWO draws, and the default one is a triangle list over
+     *   the whole vertex stream - four of a box's eight triangles mix corners of different faces, which is a
+     *   picture nobody can grep for (measured 2026-10-24: a direction box smeared its cube map across the
+     *   scene). Appending is for a geometry of SEVERAL parts.
      * - A new draw changes the picture, so the call announces the geometry's content change: a scene memo
      *   cannot answer from the list it built before this call. It does NOT move @ref revision - that stays
      *   the caller's separate announcement for the DATA (see setRevision).
