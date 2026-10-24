@@ -23,9 +23,9 @@ class ShaderProgram;
 /** @brief Builds the default G-buffer geometry program (scene -> MRT).
  *
  * @details
- * - The canonical four outputs the Deferred preset's G-buffer declares: albedo (0), view-space normal + shininess
- *   (1), specular (2) and view-space position (3). It matches the backend's per-material block and view-space light
- *   ABI.
+ * - The canonical four outputs the Deferred preset's G-buffer declares: base colour (0), the view-space shading
+ *   normal with roughness and metallic beside it (1), emission with occlusion (2) and the view position (3). The
+ *   packing is shaders/vine_gbuffer.glsl; it matches the backend's per-material block and view-space light ABI.
  * - The program - and the GLSL it is built from - is owned by the SDK (see BuiltinShaders.hpp); callers may still
  *   override it through ChainDesc::gbuffer_program.
  *
@@ -36,9 +36,9 @@ class ShaderProgram;
 /** @brief Builds the default deferred-lighting fragment program (fullscreen).
  *
  * @details
- * - Samples the G-buffer's albedo / normal / specular / view-position attachments (binding 0..3) and shades ambient
- *   plus up to `kMaxLights` typed lights (directional / point / spot, positions and directions in view space) from
- *   the light block at binding 5 - the same block the forward program reads.
+ * - Samples the G-buffer's four colour attachments (binding 0..3) and shades ambient plus up to `kMaxLights` typed
+ *   lights (directional / point / spot, positions and directions in view space) from the light block at binding 6 -
+ *   the same block the forward program reads, and the same BRDF (shaders/vine_brdf.glsl).
  * - The program - and the GLSL it is built from - is owned by the SDK (see BuiltinShaders.hpp); callers may still
  *   override it through ChainDesc::lighting_program.
  *
@@ -49,8 +49,8 @@ class ShaderProgram;
 /** @brief Builds the canonical G-buffer MRT target of the Deferred preset.
  *
  * @details
- * - Four colour attachments - albedo (RGBA16F), view normal + shininess (RGBA16F), specular (RGBA8), view position
- *   (RGBA16F) - plus depth (D24).
+ * - Four colour attachments - base colour (RGBA16F), the octahedral normal with roughness / metallic (RGBA16F),
+ *   emission + occlusion (RGBA16F, because emission is HDR), view position (RGBA16F) - plus depth (D24).
  *
  * @param width  Target width in pixels (<= 0 uses 640).
  * @param height Target height in pixels (<= 0 uses 360).

@@ -7506,15 +7506,18 @@ TEST(PassChainTest, DefaultGbufferTargetIsCanonicalLayout)
     ASSERT_NE(gbuffer, nullptr);
     EXPECT_EQ(gbuffer->width(), 320);
     EXPECT_EQ(gbuffer->height(), 180);
-    EXPECT_EQ(gbuffer->colorCount(), 4);  // albedo / normal+shininess / spec / pos
+    EXPECT_EQ(gbuffer->colorCount(), 4);  // base colour / normal+factors / emission+occlusion / position
     EXPECT_TRUE(gbuffer->hasDepth());
     // THE FORMATS ARE PART OF THE LAYOUT, and the albedo's is a measured choice (D5, 2026-09-25): the 8-bit
     // store's step reaches the eye multiplied by the light, so it is invisible under the demo's dim lighting
     // and clearly visible under a bright one (2 LSB of error / 16 levels against 1 LSB / 62 levels for the
-    // half-float store - see ContentPassTest's `MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd`).
-    EXPECT_EQ(gbuffer->colorFormat(0), RenderTarget::ColorFormat::RGBA16F);  // albedo
-    EXPECT_EQ(gbuffer->colorFormat(1), RenderTarget::ColorFormat::RGBA16F);  // view normal + shininess
-    EXPECT_EQ(gbuffer->colorFormat(2), RenderTarget::ColorFormat::RGBA8);    // specular colour
+    // half-float store - see ContentPassTest's `MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd`). Every attachment
+    // that CAN carry a value above 1 or below 0 is half float for the same kind of reason: emission is HDR, and
+    // the view position's z is negative (an 8-bit store clips it to zero, which the lighting reads as its
+    // "nothing was drawn" background).
+    EXPECT_EQ(gbuffer->colorFormat(0), RenderTarget::ColorFormat::RGBA16F);  // base colour
+    EXPECT_EQ(gbuffer->colorFormat(1), RenderTarget::ColorFormat::RGBA16F);  // normal + roughness + metallic
+    EXPECT_EQ(gbuffer->colorFormat(2), RenderTarget::ColorFormat::RGBA16F);  // emission + occlusion (HDR)
     EXPECT_EQ(gbuffer->colorFormat(3), RenderTarget::ColorFormat::RGBA16F);  // view position
 
     // Non-positive sizes fall back to the default resolution.
@@ -12806,7 +12809,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     // Declares the third image and NOTHING else: no input name, no pass-side index. The DECLARATION
     // carries which target (and which image of it the host means); the PROGRAM carries which attachment
     // it reads, because in the fullscreen ABI that IS the sampler binding.
-    auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.specular"));
+    auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.emissive"));
     sampled->bind(source, 2);
     auto preview = intrusive_ptr<ScreenPass>(new ScreenPass());
     preview->setName(u8"preview");

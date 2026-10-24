@@ -97,7 +97,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - `Material` —— metallic-roughness PBR 因子（`baseColor / emissive / metallic / roughness / occlusion /
   alphaMode / alphaCutoff`）+ 五个语义纹理槽（`TextureSlot`：base colour / metallic-roughness / normal /
   occlusion / emissive，每槽一个 `Sampler`；`setTexture(slot, texture, sampler)` / `texture(slot)`）。Phong 资产由
-  导入器（`ModelScene.cpp` 的 `materialFrom`）按固定表转换，引擎内只有一套材质语义。颜色改动是
+  导入器（`ModelScene.cpp` 的 `materialFrom`）按固定表转换，引擎内只有一套材质语义；着色是 GGX / Smith /
+  Schlick 一套（`shaders/vine_brdf.glsl`），前向与延迟读同一份表面（`vine_material.glsl` 定纹理槽的通道打包与
+  缺槽代价）。颜色改动是
   **动态**的：材质自己数自己的改动（`revision()`，每个 setter 先比较再决定要不要 ++，所以反复赋同值是零成本），
   后端每帧只比这一个数字，改了就在下一帧就地刷新 —— 改材质不需要任何重建，也不需要“通知后端”的调用。
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
@@ -375,11 +377,12 @@ compose->setViewport(surface_w - 320 - 8, 8, 320, 180);
 以及**借用深度**。
 
 ```cpp
-// ① 规范 G-buffer：告警里说的 4 张彩色附件（albedo / view normal+shininess / specular / view position）
-//    + D24 深度。几何 program 必须写这 4 个输出。
-//    albedo 附件装的是**漫反射项**（base colour × (1 - metallic)），specular 附件装的是 metallic-roughness
-//    推导出的反射率（`vineMaterialF0`：介质的 0.04 灰、金属的 base colour）：光照侧直接乘它们，
-//    所以前向与延迟两条路读的是同一份材质因子。
+// ① 规范 G-buffer：告警里说的 4 张彩色附件（base colour / 八面体法线+粗糙度+金属度 /
+//    emissive+遮挡 / view position）+ D24 深度，全部 16F。几何 program 必须写这 4 个输出。
+//    打包契约只有一家：shaders/vine_gbuffer.glsl（写侧 encode、读侧 decode 在同一文件）。
+//    附件 0 装**基础色**（不是漫反射项），附件 1 的 rg 是八面体法线、b/a 是 roughness/metallic；
+//    反射率 f0 **不存**：两条路径都用 mix(0.04, base, metallic) 推——存派生值是两条路开始分歧的起点。
+//    附件 2 的 rgb 是自发光（HDR，所以这张升到 16F），a 是遮挡因子（只缩放 ambient，直接光不受）。
 //    位置的 w 是**契约的一半**：写过的像素写 1（清除留下的透明黑是 0），光照 program 用它区分
 //    "背景" 与 "几何"；距离判据做不到——相机贴住的像素视图位置就是 ~0（2026-09-25 修）。
 auto gbuffer = defaultGbufferTarget(width, height);
@@ -1340,7 +1343,7 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 | `VINE_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口**路径**（`forward` / `deferred`）。**默认 `deferred`**；`*_shadowed` 两个取值只为兼容旧脚本保留，选的是与**同名无后缀**完全相同的那条路径 —— 阴影现在两条路径都会建（`addDemoLighting` 给主方向光设了 `castShadow`），后缀不再代表"另一条管线" |
 | `VINE_SHADER_PRESET` | 任意值 | 把内容程序换成 `flatForwardProgram()`（验证平直着色通路） |
 | `VINE_FRAME_PLAN` | 任意值 | attach 那一帧之后把**帧计划**打进日志：一行一 pass（顺序、目标、相机、清屏、视口、输入输出、**上一帧各自的记录耗时**）—— 见 §3.12 |
-| `VINE_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（albedo / normal / specular / view position）的 PiP 预览 |
+| `VINE_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（base colour / normal+factors / emissive+occlusion / view position）的 PiP 预览 |
 | `VINE_VSG_DEFERRED` | 任意值 | 加一条独立的"全屏延迟光照"pass（读 G-buffer 显示光照结果），用于 A/B 对照 |
 | `VINE_VSG_OFFSCREEN_MULTISLOT` | 任意值 | 把一个离屏 target 烘成两个内容槽（主场景 + 顶层叠加）并以 PiP 显示 |
 | `VINE_VSG_SLOT_DEMO` | 任意值 | 在主相机上再叠一个 (相机, 内容槽) 的 overlay pass，验证同视角多槽绘制 |
@@ -1360,15 +1363,15 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 自己的坐标系里），逐片元插值后由 `samplerCube` 归一化 —— 于是每个面都是正确的探针投影，环境看起来像"贴/投在盒子上"（也
 就是容易被读成"看到盒子里面"的那种观感）。这是 cube probe 的定义，不是缺陷；想要 `reflect(view_dir, n)` 的镜面观感需要
 另一条着色规则，即给这只盒子自己的 `ShaderProgram`（引擎的 set 只有"按顶点给的方向采样"这一条规则，见 `addCubeMappedBox`
-的注释）。另外 cube map 在这里当 albedo 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。
+的注释）。另外 cube map 在这里当 base colour 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。
 
-延迟（默认）路径还在左上角画**四格 G-buffer 预览**：按顺序是 albedo、视图法线+光泽（法线装在 rgb、`shininess/256` 装在
-alpha）、specular（反射率 F0）、视图位置。每格是一次全屏复制（`screenCopyProgram(n)`，n 就是**附件下标**），源是那条管线自己的
-G-buffer。判"有没有画"的看法线格和 albedo 格：法线格应是场景的法线（夹具那只 `(0,0,1)` 的四边形复制回来是**纯蓝**），
-albedo 格应是场景的颜色。位置格**天生就暗**——视图位置的 z 是负的（视图朝向的那根轴），复制进 8 位窗口时钳成 0 ——
-那不是"没画"。后三格**停在透明黑**（`(0,0,0,0)`，即附件的清屏值）才是接线断了：G-buffer 那道几何 pass 必须带
-`program_override`（见 §3 的"配方与 pass 属性"一节），否则每个物体用自己的/前向的程序画，只写 albedo 一张附件，其余
-三张就停在清屏值上（2026-10-11 修掉的那个：默认 demo 的后三格全黑）。
+延迟（默认）路径还在左上角画**四格 G-buffer 预览**：按顺序是 base colour、法线（八面体编码在 rg，b/a 是 roughness /
+metallic）、emissive（rgb）+ 遮挡（a）、视图位置。每格是一次全屏复制（`screenCopyProgram(n)`，n 就是**附件下标**），源是
+那条管线自己的 G-buffer。判"有没有画"的看法线格和基础色格：法线格对着一面正对相机的表面应是**纯蓝**（八面体 (0,0)
+在 rg、粗糙度在 b），基础色格应是场景的颜色。位置格**天生就暗**——视图位置的 z 是负的（视图朝向的那根轴），复制进 8 位窗口时
+钳成 0 ——那不是"没画"；emissive 格对不发光材质是**纯黑但 alpha = 1**（遮挡因子）。后三格**整格透明黑**（`(0,0,0,0)`，
+即附件的清屏值）才是接线断了：G-buffer 那道几何 pass 必须带 `program_override`（见 §3 的"配方与 pass 属性"一节），否则
+每个物体用自己的/前向的程序画，只写基础色一张附件，其余三张就停在清屏值上（2026-10-11 修掉的那个：默认 demo 的后三格全黑）。
 
 叠加场景（延迟路径 `DemoScene::buildScene()` 的覆盖层）现在只放**会混合**的内容：半透明盒子和星点 sprite。它的那趟**不写深度**
 （`DepthMode::TestOnly`，半透明内容的规则），因此 pass 内的 drawable **无法自遮挡** —— 一只不透明的封闭盒子放进去会
@@ -1400,7 +1403,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 | 路径 | 装配内容 |
 | --- | --- |
 | `ShadingPath::Forward` | 一个 `PassStage::Shading` 的窗口场景 pass 画内容（可选叠加场景是同一窗口 pass 里带深度的第二笔，`PassStage::Transparent`）。 |
-| `ShadingPath::Deferred` | `PassStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：albedo RGBA8、view normal+shininess RGBA16F、specular RGBA8、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
+| `ShadingPath::Deferred` | `PassStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：base colour RGBA16F、八面体法线+roughness+metallic RGBA16F、emissive+occlusion RGBA16F、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
 
 **demo 的内容是一套词汇表、两条装配线。** 两个示例（forward / deferred）画同一批**切片**，各自只加自己确实画得对的
 那些（规则写在 `DemoScene::buildScene()` 一处，见 `src/plugins/demo_plugin/src/DemoScene.hpp`）：
@@ -1413,7 +1416,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 | 会混合的一对（半透明盒 + 星点云） | 主场景 | 叠加场景 |
 | 天空盒 | 叠加场景 | 叠加场景 |
 
-延迟路径画不了会混合的一对（G-buffer 那趟没有可混合的目标，它写的是 albedo/normal/…，不是合成结果），也画不了特性展示
+延迟路径画不了会混合的一对（G-buffer 那趟没有可混合的目标，它写的是 base colour / normal / …，不是合成结果），也画不了特性展示
 （几何阶段会替换每个 drawable 自己的程序），所以那对走叠加场景；前向路径则在一个场景里画完，只要一个 sky-only 的覆盖层。
 结论：**一个 `Scene` 对象无法同时服务两条路径，但“词汇表”可以** —— 共享的部分只写一次，路径差异只有一处表达。
 

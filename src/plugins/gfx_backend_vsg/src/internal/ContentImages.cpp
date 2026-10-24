@@ -16,7 +16,7 @@ ImageOrigin imageOriginOf(std::string_view name) noexcept
     // The names the engine's programs spend: the DRAWABLE's own maps - the five texture slots on the content
     // programs, and `skyMap` on the sky program, which samples the sky box's own cube map out of its MATERIAL
     // (see builtin_skybox.frag) - and the map a pass resolves (`shadow_map`). Every OTHER name is a texture the
-    // pass' inputs offer - the engine's screen programs (albedo_tex, normal_tex, spec_tex, pos_tex, screen_tex)
+    // pass' inputs offer - the engine's screen programs (albedo_tex, normal_tex, emissive_tex, pos_tex, screen_tex)
     // are all of that kind, and so is any name a host invents for a picture it declared as an input.
     if (materialSlotOf(name).has_value())
     {

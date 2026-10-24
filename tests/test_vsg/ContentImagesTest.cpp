@@ -57,7 +57,7 @@ TEST(ContentImagesTest, TheNameStatesWhereTheImageComesFrom)
     EXPECT_EQ(imageOriginOf("diffuseMap"), ImageOrigin::Material);
     EXPECT_EQ(imageOriginOf("skyMap"), ImageOrigin::Material);
     EXPECT_EQ(imageOriginOf("shadow_map"), ImageOrigin::Shadow);
-    for (const char* name : { "albedo_tex", "normal_tex", "spec_tex", "pos_tex", "screen_tex", "map_tex", "" })
+    for (const char* name : { "albedo_tex", "normal_tex", "emissive_tex", "pos_tex", "screen_tex", "map_tex", "" })
     {
         EXPECT_EQ(imageOriginOf(name), ImageOrigin::Input) << "the name '" << name << "' is an input texture";
     }

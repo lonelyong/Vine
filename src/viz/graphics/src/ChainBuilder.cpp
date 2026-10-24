@@ -387,9 +387,11 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
         shadow_map = buildShadowPass(pipeline, shadow_light);
     }
 
-    // Canonical G-buffer (shared factory): albedo (0), view normal +
-    // shininess (1), specular (2), view position (3) and depth. The geometry
-    // program must write exactly these outputs.
+    // Canonical G-buffer (shared factory): base colour (0), the octahedral
+    // shading normal with roughness / metallic beside it (1), emission with
+    // occlusion in alpha (2), view position (3) and depth. The geometry
+    // program must write exactly these outputs (shaders/vine_gbuffer.glsl
+    // states the packing).
     auto gbuffer = defaultGbufferTarget(width, height);
 
     // G-buffer geometry pass (order < 0), publishing the target as "GBuffer".

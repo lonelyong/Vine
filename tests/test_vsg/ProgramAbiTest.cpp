@@ -254,7 +254,7 @@ TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndT
     ASSERT_EQ(plain.bindings.size(), 5U);
     expectSampler(plain, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "albedo_tex");
     expectSampler(plain, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "normal_tex");
-    expectSampler(plain, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "spec_tex");
+    expectSampler(plain, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "emissive_tex");
     expectSampler(plain, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "pos_tex");
     expectBlock(plain, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
     // The lights are a BLOCK, not a push: the full-screen program declares no push range at all (a host's own

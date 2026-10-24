@@ -46,9 +46,14 @@ intrusive_ptr<RenderTarget> defaultGbufferTarget(int width, int height)
     // can no longer be read back as a target attachment - the previews copy it through a program, which is how
     // the demo shows it.
     gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F);
-    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F); // att 1: view normal (+ shininess)
-    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA8);   // att 2: specular
-    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F); // att 3: view position
+    // att 1: the shading normal (octahedral, 2 channels) + the two factors that make the surface metallic-roughness.
+    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F);
+    // att 2: emission + occlusion - HALF FLOAT because emission is HDR (graphics-material.md 2.8/N3): an 8-bit
+    // attachment clips a glow above 1 before the lighting pass ever adds it to the picture, and unlike the albedo
+    // above there is no second store to fall back on - the value IS the light the surface adds.
+    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F);
+    // att 3: view position (half float for the same reason as the normal: 8 bits clip its negative z).
+    gbuffer->attachColor(RenderTarget::ColorFormat::RGBA16F);
     gbuffer->attachDepth(RenderTarget::DepthFormat::D24);
     gbuffer->setName(u8"gbuffer");
     return gbuffer;

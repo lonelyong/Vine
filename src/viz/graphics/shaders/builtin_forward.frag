@@ -27,24 +27,12 @@ layout(location = 0) out vec4 out_color;
 #define VINE_PARAM_DRAW
 #define VINE_PARAM_LIGHTS
 #include "vine_params.glsl"
-
-#ifdef VINE_TEXTURED
-// The five slots of the texture set, at the content set's fixed bindings (graphics-material.md §3.3): the base
-// colour may be a cube map (its kind follows the vertex stage's texcoord width), the other four are 2-D data
-// maps. A slot the material does not have is bound to its type's constant fallback, and the block's flags
-// short-circuit it at run time - the variant is binary, so all five are declared together.
-#if defined(VINE_TEXCOORD_CUBE)
-layout(set = 0, binding = 1) uniform samplerCube baseColorMap;
-#elif defined(VINE_TEXCOORD_UV)
-layout(set = 0, binding = 1) uniform sampler2D baseColorMap;
-#else
-#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
-#endif
-layout(set = 0, binding = 2) uniform sampler2D metallicRoughnessMap;
-layout(set = 0, binding = 3) uniform sampler2D normalMap;
-layout(set = 0, binding = 4) uniform sampler2D occlusionMap;
-layout(set = 0, binding = 5) uniform sampler2D emissiveMap;
-#endif
+// The material's texture set (its slots, their packing, and what an absent slot contributes) - the SAME
+// fragment the G-buffer writer includes, so the forward and the deferred picture of one material cannot come
+// from two readings of one map. It declares the five samplers itself, so this stage states only the coordinate.
+#include "vine_material.glsl"
+// The one specular model both paths shade with (GGX / Smith / Schlick).
+#include "vine_brdf.glsl"
 
 // The shadow this pass declared, if any: the map it named as an INPUT and the block that places a
 // fragment in it (ShaderAbi.hpp). DECLARED ALWAYS, unlike the deferred lighting program's two
@@ -72,7 +60,6 @@ void main()
     vec3 n = normalize(vine_view_normal);
 #endif
     vec3 view_dir = normalize(-vine_view_pos);
-    vec3 albedo = material.base_color.rgb;
     // The drawable's opacity is a PER-DRAWABLE VALUE, not a per-vertex one: it
     // arrives in the draw block and is rewritten in place when the command's
     // opacity changes, so a translucent drawable costs O(1) per frame instead of
@@ -87,10 +74,12 @@ void main()
     // (its lighting program writes alpha 1) - so reading them here would make the
     // same asset translucent in forward and opaque in deferred.
     float alpha = draw.params.x;
+    // The surface: this stage's geometric normal, then the material's five slots on top of its factors - the
+    // same function the G-buffer writer calls, so one material has ONE surface on both paths.
 #ifdef VINE_TEXTURED
-    // M2 wires the BASE slot into the picture. metallic-roughness / normal / occlusion / emissive are
-    // declared and bound (the variant is binary, not per slot) and become inputs of the real BRDF in M3.
-    albedo *= texture(baseColorMap, vine_uv).rgb;
+    VineSurface surface = vineSampleMaterial(n, vine_view_pos, vine_uv);
+#else
+    VineSurface surface = vineSurfaceFromFactors(n);
 #endif
 #ifdef VINE_VERTEX_COLOR
     // An AUTHORED vertex colour modulates the albedo only. Its alpha is
@@ -98,31 +87,34 @@ void main()
     // one drawable's alpha cannot leak into another geometry that shares the
     // same vertex stream, and a model's fourth colour component means what the
     // model says it means.
-    albedo *= vine_color.rgb;
+    surface.base_color *= vine_color.rgb;
 #endif
 #ifdef VINE_UNLIT
     // Unlit: the surface colour IS the answer - no light term, no specular, and the drawable's opacity
     // unchanged. It is the mode that separates "is this the shape?" from "is this the shading?" (a viewer
     // that has to answer "why is it flat?" wants to be able to switch the lighting OFF first), and the one
     // a data-driven preview wants: the authored colour, with nothing invented on top of it.
-    out_color = vec4(albedo, alpha);
+    out_color = vec4(surface.base_color, alpha);
     return;
 #endif
 #ifdef VINE_NORMALS
     // View-space normals as colour, the debugging view every 3D tool carries: it answers "which way does
     // this surface face" with no light involved at all (blue = facing the camera). Alpha is 1: the picture
     // is a readout, not content, so nothing translucent about the content should show through it.
-    out_color = vec4(normalize(n) * 0.5 + 0.5, 1.0);
+    // It shows the SHADING normal - the one the lit branch below shades with - so a normal map's effect is
+    // visible in the readout instead of being a difference between two pictures nobody can compare.
+    out_color = vec4(normalize(surface.normal) * 0.5 + 0.5, 1.0);
     return;
 #endif
-    // The M1 bridge from the PBR factors to the Phong terms this stage still draws with (see
-    // vine_params.glsl): the diffuse lobe is what a dielectric reflects, the highlight tint is what a metal
-    // reflects, and both are driven by the SAME base colour the host authored. It leaves with M3's BRDF.
-    float metallic  = clamp(material.params.x, 0.0, 1.0);
-    vec3  diffuse   = albedo * (1.0 - metallic);
-    vec3  f0        = vineMaterialF0(albedo, metallic);
-    float shininess = vineMaterialShininess(material.params.y);
-    vec3 color = diffuse * (lights.ambient.rgb * lights.ambient.a);
+    // Ambient is the engine's analytic fill, not a light: it is what a surface would receive from everywhere,
+    // so the OCCLUSION slot scales it (an AO map says which cavities the environment cannot reach) while the
+    // direct lights below are not scaled by it - a light that reaches a cavity still reaches it, and
+    // screen-space occlusion is out of this design's scope (graphics-material.md 1.3).
+    vec3 color = surface.base_color * (1.0 - surface.metallic) * (lights.ambient.rgb * lights.ambient.a)
+               * surface.occlusion;
+    // Emission is the surface's own light: it is added once, unscaled by any light and unshadowed - a glowing
+    // surface glows in the dark, and a shadow cannot dim it.
+    color += surface.emissive;
     // The shadow term below is the SAME text the deferred lighting program inserts, and it reads the
     // fragment's view position by one name in both programs: here it arrives as a varying, there it is
     // read out of the G-buffer.
@@ -139,22 +131,20 @@ void main()
         }
         vec3 c = lights.color_intensity[i].rgb;
         float a = lights.color_intensity[i].a;
-        float ndl = max(dot(n, L), 0.0);
+        float ndl = max(dot(surface.normal, L), 0.0);
         // The shadow ABI's term goes here: it scales this light's ndl by whether the map found a
         // caster in front of this fragment. The line below IS that insertion point, and it is the same
         // text the deferred lighting program carries (so the two paths cannot drift).
         // VINE_SHADOW_TERM
-        color += diffuse * c * a * ndl * attenuation;
-        // Specular is gated by ndl like the diffuse term: a face turned away
-        // from the light must not receive a highlight (see builtin_deferred_lighting.frag
-        // for the full reasoning).
+        // One term for the whole BRDF, gated by ndl: a face turned away from the light receives nothing at
+        // all (its BRDF value would still be non-zero, because only the cosine is zero), which is also why
+        // the gate sits here rather than around the specular lobe alone.
         if (ndl > 0.0)
         {
-            vec3 h = normalize(L + view_dir);
-            float spec = pow(max(dot(n, h), 0.0), shininess);
-            // The reflectance the metallic-roughness pair implies (vineMaterialF0): the same value the
-            // G-buffer writer stores, so the forward and the deferred picture agree by construction.
-            color += c * a * spec * f0 * ndl * attenuation;
+            // The SAME function the deferred lighting program calls (vine_brdf.glsl): radiance, the cosine
+            // and the light's attenuation are this stage's factors, the rest is the surface's.
+            color += vineEvaluateBRDF(surface.base_color, surface.metallic, surface.roughness, surface.normal,
+                                      view_dir, L) * c * a * ndl * attenuation;
         }
     }
     out_color = vec4(color, alpha);

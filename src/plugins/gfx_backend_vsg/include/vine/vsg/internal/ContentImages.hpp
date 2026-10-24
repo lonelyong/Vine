@@ -22,7 +22,7 @@
  * `metallicRoughnessMap`, `normalMap`, `occlusionMap`, `emissiveMap`) are the drawable's own maps, `skyMap`
  * is the drawable's own texture TOO (the sky box carries its map in its material and the sky program names
  * that map `skyMap` - see builtin_skybox.frag), `shadow_map` is the map its pass declared, and every other
- * name (`albedo_tex`, `normal_tex`, `spec_tex`, `pos_tex`, `screen_tex`, ...) is a texture an earlier pass
+ * name (`albedo_tex`, `normal_tex`, `emissive_tex`, `pos_tex`, `screen_tex`, ...) is a texture an earlier pass
  * produced - one of the pass' declared INPUTS. The NAME is the contract: the same name in different sets is
  * the same thing, and a set index is only where a text happens to put it (the engine puts the material, the
  * diffuse map and the shadow map in one set, and a G-buffer's four pictures in another).

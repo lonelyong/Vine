@@ -10,7 +10,7 @@
 
 | # | 项 | 内容 | 出处 |
 |---|---|---|---|
-| M1 | 材质 PBR 落地（续） | 第 1 步（模型 + 块 + 导入）已于 2026-10-24 落地；剩 M2 纹理集与变体 → M3 两条路径的 BRDF 与 G-buffer → M4 实例与 alpha 模式 | `../design/graphics-material.md` §9.2 |
+| M1 | 材质 PBR 落地（续） | 第 1–3 步已于 2026-10-24 落地（模型 + 块 + 导入、纹理集 + 变体、两条路径的 BRDF 与 G-buffer）；剩 M4 实例与 alpha 模式 | `../design/graphics-material.md` §9.2 |
 
 ## 2. 触发条件型
 

@@ -31,9 +31,9 @@
 // that times the drawable's opacity (draw.params.x), because a material is shared by every drawable that uses
 // it - and `flags`'s bits 8-9 say how the alpha is meant to be used (0 opaque, 1 mask, 2 blend).
 //
-// M1 BRIDGE: the bytes are the PBR factors, but both shading paths still draw with Blinn-Phong until the GGX
-// BRDF lands (graphics-material.md §9.2, M3). The two conversions below are the bridge's ONLY spelling, so the
-// forward and the deferred path cannot drift apart while they wait - and they leave with it.
+// The slot bits are what lets ONE variant serve every material (graphics-material.md 2.5): the program declares
+// all five samplers (see vine_material.glsl) and a slot the flags leave clear is never read, so the shader
+// itself decides what an absent slot contributes instead of depending on the stand-in image's value.
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
     vec4  base_color;   // rgb = linear albedo, a = material alpha
@@ -42,22 +42,15 @@ layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
     uvec4 flags;        // bit0-4 = texture slots, bit8-9 = alpha mode (0 opaque, 1 mask, 2 blend)
 } material;
 
-// Perceived roughness -> the Blinn-Phong exponent the bridge draws with: the inverse of the import table's
-// sqrt(2 / (n + 2)). Floored and capped so the exponent stays finite and fits what the G-buffer can carry -
-// a roughness of 0 would ask for an infinite exponent, and 256 is the largest value `shininess / 256` stores
-// in that attachment's alpha.
-float vineMaterialShininess(float roughness)
-{
-    float perceptual = clamp(roughness, 0.0, 1.0);
-    return clamp(2.0 / max(perceptual * perceptual, 1e-4) - 2.0, 1.0, 256.0);
-}
-
-// Reflectance at normal incidence, from the metallic-roughness pair: a dielectric's 0.04 grey at metallic 0,
-// the base colour itself at metallic 1. ONE spelling for the forward term and the G-buffer writer.
-vec3 vineMaterialF0(vec3 base_color, float metallic)
-{
-    return mix(vec3(0.04), base_color, clamp(metallic, 0.0, 1.0));
-}
+// The slot-exists bits of `flags.x`, in `TextureSlot` order. ShaderAbi.hpp is their C++ spelling
+// (kMaterialFlagBaseColor .. kMaterialFlagEmissive, kMaterialAlphaModeShift); the numbers are repeated here
+// because GLSL cannot ask C++, and a test pins the two lists against each other (EmbeddedShadersTest).
+const uint VINE_MATERIAL_FLAG_BASE_COLOR         = 1u << 0;
+const uint VINE_MATERIAL_FLAG_METALLIC_ROUGHNESS = 1u << 1;
+const uint VINE_MATERIAL_FLAG_NORMAL             = 1u << 2;
+const uint VINE_MATERIAL_FLAG_OCCLUSION          = 1u << 3;
+const uint VINE_MATERIAL_FLAG_EMISSIVE           = 1u << 4;
+const uint VINE_MATERIAL_ALPHA_MODE_SHIFT        = 8u;
 #endif
 
 #ifdef VINE_PARAM_DRAW

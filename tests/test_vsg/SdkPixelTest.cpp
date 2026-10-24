@@ -230,8 +230,8 @@ TEST(SdkPixelTest, TheFixtureAlsoDrawsContentWithNoViewAtAll)
 // asserted where wiring lives (test_graphics). What a host sees is one step further and this is where it is
 // caught: the pass can carry the program and still leave three attachments at their clear, and the demo's
 // default scene showed exactly that - the last three G-buffer previews were BLACK rectangles, because the
-// geometry pass drew every body through a one-output program (albedo landed, normal / specular / position kept
-// their transparent-black clear). So the copies below are the demo's own declarations - the SDK's
+// geometry pass drew every body through a one-output program (base colour landed, normal / emission / position
+// kept their transparent-black clear). So the copies below are the demo's own declarations - the SDK's
 // screenCopyProgram(n) over an ImageRef bound to (target, n) - and the assertion is on what they land.
 TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
 {
@@ -290,14 +290,18 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     }
 
     for (int attachment = 0; attachment < 4; ++attachment) {
-        EXPECT_TRUE(covered(copies[static_cast<std::size_t>(attachment)]))
+        // 第 2 张附件的 rgb 是自发光，而夹具的材质不自发光：这一格"被写过"的证据是 alpha = 遮挡因子 1，不是 rgb。
+        // 其余三张写的是颜色，透明黑就是没写。
+        const Rgba8& pixel = copies[static_cast<std::size_t>(attachment)];
+        const bool   written = attachment == 2 ? pixel.a != 0U : covered(pixel);
+        EXPECT_TRUE(written)
             << "第 " << attachment
             << " 格是透明黑：那张附件留着清屏色 = 几何 pass 没写它（正是后三格全黑的那个失败）";
     }
     // 附件下标真的换了东西：四格里读到的不是同一张附件（绑定恒为 0 会让下面两条红），而且法线那张确实是法线
-    // ——夹具的四边形法向 (0,0,1)，写进去的 z 就是蓝通道拉满。
-    EXPECT_NE(copies[1], copies[0]) << "法线格与 albedo 格必须不是同一个像素值";
-    EXPECT_GT(copies[1].b, copies[1].r) << "法线格以蓝为主（(0,0,1) 的法向写进 F16 的目标再复制回来）";
+    // ——夹具的四边形法向 (0,0,1) 的八面体编码是 (0,0)，所以 rg 归零，蓝通道留的是材质的粗糙度。
+    EXPECT_NE(copies[1], copies[0]) << "法线格与基础色格必须不是同一个像素值";
+    EXPECT_GT(copies[1].b, copies[1].r) << "法线格以蓝为主（(0,0,1) 的八面体编码占 rg，粗糙度写在 b）";
     EXPECT_GT(copies[1].b, copies[1].g);
 }
 

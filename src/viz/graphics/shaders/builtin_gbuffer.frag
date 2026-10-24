@@ -15,58 +15,46 @@ layout(location = 2) in vec2 vine_texcoord;
 #error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
 #endif
 #endif
-layout(location = 0) out vec4 out_albedo;
+layout(location = 0) out vec4 out_base_color;
 layout(location = 1) out vec4 out_normal;
-layout(location = 2) out vec4 out_specular;
+layout(location = 2) out vec4 out_emissive;
 layout(location = 3) out vec4 out_position;
-// The material this stage writes the G-buffer's albedo and specular from: the ONE declaration of the
-// parameter blocks (see vine_params.glsl), so a deferred drawable and a forward one of the same material
-// shade the same bytes. `base_color.a` (the material's own alpha) is not read here either - the engine's
-// transparency is the per-drawable opacity, and it reaches the composite through the lighting pass, not
-// through this attachment.
+// The material this stage PROJECTS into the G-buffer: the ONE declaration of the parameter blocks (see
+// vine_params.glsl), so a deferred drawable and a forward one of the same material shade the same bytes.
+// `base_color.a` (the material's own alpha) is not read here either - the engine's transparency is the
+// per-drawable opacity, and it reaches the composite through the lighting pass, not through this attachment.
 #define VINE_PARAM_MATERIAL
 #include "vine_params.glsl"
-#ifdef VINE_TEXTURED
-// The same five slots the forward stage declares, at the same bindings: the base colour may be a cube map
-// (kind follows the vertex stage's texcoord width), the other four are 2-D data maps. Missing slots bind their
-// type's constant fallback; the block's flags short-circuit them at run time.
-#if defined(VINE_TEXCOORD_CUBE)
-layout(set = 0, binding = 1) uniform samplerCube baseColorMap;
-#elif defined(VINE_TEXCOORD_UV)
-layout(set = 0, binding = 1) uniform sampler2D baseColorMap;
-#else
-#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
-#endif
-layout(set = 0, binding = 2) uniform sampler2D metallicRoughnessMap;
-layout(set = 0, binding = 3) uniform sampler2D normalMap;
-layout(set = 0, binding = 4) uniform sampler2D occlusionMap;
-layout(set = 0, binding = 5) uniform sampler2D emissiveMap;
-#endif
+// The SAME surface the forward stage shades: the material's five slots, their packing and what an absent slot
+// contributes are stated once (vine_material.glsl), which is what keeps a deferred picture from disagreeing
+// with the forward one about a material.
+#include "vine_material.glsl"
+// The attachment packing this stage writes and the lighting pass reads (vine_gbuffer.glsl): the octahedral
+// normal encoding, and the note that says what rides each channel.
+#include "vine_gbuffer.glsl"
 void main()
 {
-    // The material's colour IS the albedo, modulated by its base-colour texture when it has one. The sampling
-    // is behind VINE_TEXTURED, which the backend sets only for a material carrying any texture slot: an
-    // untextured drawable takes the variant with no sampler at all, so a deferred scene of untextured content
-    // (the demo's opaque stack) costs exactly what it did before this stage could sample.
-    //
-    // This is what makes an OPAQUE textured drawable possible on the deferred path at all - and it
-    // matters beyond looks: the G-buffer pass writes depth, so opaque content here occludes itself and
-    // others correctly, unlike a drawable pushed into the forward overlay pass (whose depth-TEST-only
-    // rule cannot self-occlude).
-    vec3 albedo = material.base_color.rgb;
+    // The geometric normal, then the material's own surface on top of it: the shading normal a normal map
+    // produces is what the G-buffer must carry, because the lighting pass cannot rebuild it - it has no UVs, no
+    // derivatives of a model surface and no tangent basis, which is the whole reason this pass exists.
+    vec3 n = normalize(vine_view_normal);
 #ifdef VINE_TEXTURED
-    albedo *= texture(baseColorMap, vine_texcoord).rgb;
+    VineSurface surface = vineSampleMaterial(n, vine_view_pos, vine_texcoord);
+#else
+    VineSurface surface = vineSurfaceFromFactors(n);
 #endif
-    // The M1 bridge (see vine_params.glsl): the attachment carries what the lighting pass multiplies by the
-    // light terms, so it is the DIFFUSE lobe - a metal reflects rather than scatters - while the specular
-    // attachment carries the reflectance. Both derive from the same authored base colour.
-    float metallic = clamp(material.params.x, 0.0, 1.0);
-    out_albedo = vec4(albedo * (1.0 - metallic), 1.0);
-    out_normal = vec4(normalize(vine_view_normal), vineMaterialShininess(material.params.y) / 256.0);
-    // The attachment carries the reflectance the metallic-roughness pair implies (vineMaterialF0), which is
-    // the product the lighting program multiplies by - so the deferred highlight honours the PBR factors
-    // exactly like the forward program does. The alpha channel stays 1: nothing reads it yet.
-    out_specular = vec4(vineMaterialF0(albedo, metallic), 1.0);
+    // Most of this design's work happens in ONE line: the surface is stored, not shaded. The albedo is the
+    // material's BASE colour (not its diffuse lobe): the lighting pass derives the diffuse part and the
+    // reflectance from it and the metallic it reads beside the normal, so f0 is never stored - a derived value
+    // in an attachment is how two paths come to disagree about it (vine_gbuffer.glsl).
+    out_base_color = vec4(surface.base_color, 1.0);
+    // rg = the shading normal (octahedral), b = roughness, a = metallic: one row of the surface the deferred
+    // pass rebuilds, which is the design's point that the G-buffer IS the material's projection.
+    out_normal = vec4(vineOctahedralEncode(surface.normal), surface.roughness, surface.metallic);
+    // Emission is HDR and the occlusion factor is a per-texel scalar: the emissive attachment is a half-float
+    // one for that reason (graphics-material.md N3), and its alpha is the occlusion the lighting pass scales
+    // the ambient term by.
+    out_emissive = vec4(surface.emissive, surface.occlusion);
     // w = 1 marks "this pixel was written", and the deferred lighting program's background test reads it
     // (a cleared pixel keeps the transparent black it was cleared with, w = 0) - the two programs are the
     // two halves of one contract, so this channel is not spare.

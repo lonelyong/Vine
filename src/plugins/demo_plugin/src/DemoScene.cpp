@@ -1228,10 +1228,10 @@ vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget();
  *
  * Bakes the engine scene into the canonical G-buffer (ChainPresets'
  * default geometry program + target) and shows each colour attachment as a
- * small picture-in-picture: 0 = albedo, 1 = view normal (+ shininess in
- * alpha), 2 = specular, 3 = view position. Lets the MRT writes be validated
- * independently of the lighting pass, while the main window keeps its forward
- * view.
+ * small picture-in-picture: 0 = base colour, 1 = shading normal (octahedral,
+ * with roughness / metallic beside it), 2 = emission (+ occlusion in alpha),
+ * 3 = view position. Lets the MRT writes be validated independently of the
+ * lighting pass, while the main window keeps its forward view.
  *
  * @param render_control Render view whose engine receives the passes.
  */
@@ -1261,8 +1261,8 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     // Preview each colour attachment of the same published target: each preview declares the SAME wire
     // at the grain it really is — one image, not "a name plus an attachment index". The identity is
     // the address (target + attachment), so the producer's whole-target promise above answers it.
-    static const vn::String preview_labels[] = { u8"GBuffer.albedo", u8"GBuffer.normal",
-                                                   u8"GBuffer.specular", u8"GBuffer.position" };
+    static const vn::String preview_labels[] = { u8"GBuffer.base_color", u8"GBuffer.normal",
+                                                   u8"GBuffer.emissive", u8"GBuffer.position" };
     const double dpr   = render_control->devicePixelRatio();
     const int    pip_w = static_cast<int>(108.0 * dpr);
     const int    pip_h = static_cast<int>(61.0 * dpr);
@@ -1337,12 +1337,12 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
 }
 
 /**
- * @brief Builds a shared G-buffer MRT target (albedo / normal / spec / pos).
+ * @brief Builds a shared G-buffer MRT target (base colour / normal+fators / emission+occlusion / position).
  *
- * Four colour attachments (albedo RGBA8, view-space normal RGBA16F with alpha
- * = shininess / 256, specular colour RGBA8, view-space position RGBA16F) plus
- * a depth attachment. Position is stored so the deferred lighting pass is
- * exact under the backend's depth convention.
+ * Four colour attachments plus a depth attachment, all four of them half float - the canonical shape lives in
+ * ChainPresets::defaultGbufferTarget, and what each attachment carries is the packing contract in
+ * shaders/vine_gbuffer.glsl. Position is stored so the deferred lighting pass is exact under the backend's
+ * depth convention.
  *
  * @return The target with four colour attachments + depth.
  */

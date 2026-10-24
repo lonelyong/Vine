@@ -66,7 +66,7 @@ ABI、流、目标寿命、WSI、证据、引擎侧。时间线归 git。
 | F6 | 目标、寿命与设备空闲 | 改目标创建/销毁、借深度、读回 | P43–P53 |
 | F7 | WSI 与窗口 | 改呈现、resize、窗口尺寸、测试窗口 | P54–P60 |
 | F8 | 证据、门禁与构建 | 加用例、改门禁、加 `.cpp` | P61–P75 |
-| F9 | 引擎侧（场景桥与着色约定） | 改声明/绑定、材质、色彩空间、G-buffer | P76–P82 |
+| F9 | 引擎侧（场景桥与着色约定） | 改声明/绑定、材质、色彩空间、G-buffer | P76–P84 |
 
 ## 4. 公开接口
 
@@ -247,6 +247,8 @@ ABI、流、目标寿命、WSI、证据、引擎侧。时间线归 git。
 | P80 | 材质块是 4×16 B 的 PBR 行 | 行序 `base_color / emissive / params / flags`；自写 shader 抄旧成员会在错误的偏移上取值（`diffuse` 会读到 offset 16 的 emissive） |
 | P81 | G-buffer albedo 用 16F | 8 位暗色阶在亮光下露台阶；`intensity ≤ 1` 时两者一样 |
 | P82 | episode 是调用方的 | 半片 / 灯掉落 / 拒绝报告各归各；`ContentPass` 每帧新建，状态挂它会每帧重报 |
+| P83 | 缺槽的 stand-in 图只管“绑得上” | 槽不存在的判据是块里的 flags，**不是** stand-in 的值：漏掉短路的 normal 槽会被白图抵成 45°、emissive 槽会把物体点亮成白 | 把缺 normal / emissive 的材质与有图的材质并排画：前者外观变了就是短路没生效 | `vine_material.glsl` 的 `if ((material.flags.x & …) != 0u)` 是唯一读槽处 |
+| P84 | 法线贴图的 green 方向 | glTF 的法线图是 OpenGL 朝向（图内 +Y 向上），本引擎的 v 向下（Vulkan 原点在顶行）；照抄别的引擎的切线基会整张图镜像，光照看着“歪”但没有报错 | 平面法线图不应改变外观（P4）；Y 倾斜的图在水平与垂直两个平面上应分别向“上/下”偏 | 采样后翻 green，且切线基只用 `vine_material.glsl` 的那一份 |
 
 ## 7. 已否决选项
 

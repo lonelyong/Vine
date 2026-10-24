@@ -3396,8 +3396,9 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
 {
     // THE ENGINE'S OWN SCREEN LIGHTING, end to end. `BuiltinShaders::shadowedDeferredLightProgram` is the text
     // the engine's deferred renderer draws its lighting pass with, and it declares its shadow ABI by hand:
-    // the map at binding 5 (the source's four colours take 0..3 and its depth would take 4) and its block at
-    // 6. This frame draws it over a four-attachment G-buffer, twice - once with a map cleared to the far
+    // the map at binding 7 and its block at 8 (the source's four colours take 0..3, its depth would take 4 and
+    // the lights take 6). This frame draws it over a four-attachment G-buffer, twice - once with a map cleared
+    // to the far
     // plane (nothing casts: the sun reaches every fragment) and once cleared to 1.0 (a caster at the near
     // plane: the sun is scaled away) - plus the engine's UNSHADOWED variant over the same G-buffer.
     //
@@ -3405,34 +3406,39 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     // at binding 4: a layer that just appended the inputs' textures would bind the map one binding too low
     // and the shader would read undefined data where its text hard-codes 5.
     //
-    // The numbers: albedo (0.5, 0.25, 1.0), view normal (0, 0, 1), view position (0, 0, -2), an ambient light
+    // The numbers: base colour (0.5, 0.25, 1.0), view normal (0, 0, 1), a FULLY ROUGH DIELECTRIC (the two
+    // factors ride the normal attachment), no emission, view position (0, 0, -2), an ambient light
     // (0.1, 0.1, 0.1) and ONE directional sun (0.4, 0.4, 0) whose view direction is (0, 0, -1) with the camera
-    // at +Z - so ndl = 1 and the specular term is zero (the G-buffer's specular is black). Lit is
-    // (0.25, 0.125, 0.1) and shadowed is (0.05, 0.025, 0.1): the sun's half of the picture IS the map.
+    // at +Z - so ndl = 1. Ambient is base x 0.1 = (0.05, 0.025, 0.1), the shadowed picture exactly.
     //
-    // The writer's normal attachment carries the material's SHININESS in its alpha, the engine's own
-    // G-buffer convention (`builtin_gbuffer.frag` writes `clamp(shininess / 256, 0, 1)` there), and this
-    // material's shininess is ZERO (a legitimate one - the SDK's default is 32, which the L2 measured as
-    // "an always-on blend scaled every stored normal to 12.5% of its value"). Zero is the case that shows
-    // the rule: an alpha of 0 blended over the attachment's transparent-black clear leaves the WHOLE
-    // normal at 0, the shading reads it as a direction it cannot normalize, and the sun disappears -
-    // which is what this picture asserted before the delivery learned to write several attachments
-    // unblended (see makeDynamicStateCommand's opaque rule).
+    // The sun adds the BRDF's value at the highlight's peak, and roughness 1 is what keeps that arithmetic
+    // readable: alpha is 1, so the GGX distribution is 1/pi, the Smith visibility 1/4 and the Fresnel 0.04
+    // (a dielectric's f0 at the peak) - a specular share of 0.3% on top of the diffuse lobe's 0.96, which is
+    // invisible at 8 bits. So the lit picture is still "base x (ambient + a nearly full sun)", within a couple
+    // of LSB of the value this case asserted before the real BRDF landed - and it is the same on BOTH paths,
+    // which is what the case is about.
+    //
+    // The writer's normal attachment carries the material's METALLIC in its alpha (the packing contract,
+    // shaders/vine_gbuffer.glsl), and a dielectric's metallic is ZERO. Zero is the case that shows the delivery
+    // rule: an alpha of 0 blended over the attachment's transparent-black clear leaves the WHOLE normal at 0,
+    // the shading decodes it into a direction it cannot use, and the sun disappears - which is what this
+    // picture asserted before the delivery learned to write several attachments unblended (see
+    // makeDynamicStateCommand's opaque rule).
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    // The G-buffer: the engine's four attachments AND their formats (`defaultGbufferTarget`): albedo and
-    // specular are RGBA8, while the view normal and the view position are RGBA16F - an eight-bit attachment
-    // clamps the position's negative z (the view's own axis) to zero, which the lighting reads as its
-    // "nothing was drawn" background.
+    // The G-buffer: the engine's four attachments AND their formats (`defaultGbufferTarget`): all four are
+    // RGBA16F, because the two that must not be clipped are the normal (its octahedral coordinates are signed)
+    // and the position (its z is negative - an eight-bit attachment clamps it to zero, which the lighting reads
+    // as its "nothing was drawn" background). The emission's HDR value is the reason the third one is not 8 bit.
     OffscreenTarget::TargetLayout gbuffer_layout;
     gbuffer_layout.width         = kSize;
     gbuffer_layout.height        = kSize;
-    gbuffer_layout.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F,
-                                     RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F };
+    gbuffer_layout.color_formats = { RenderTarget::ColorFormat::RGBA16F, RenderTarget::ColorFormat::RGBA16F,
+                                     RenderTarget::ColorFormat::RGBA16F, RenderTarget::ColorFormat::RGBA16F };
     std::unique_ptr<OffscreenTarget> gbuffer = OffscreenTarget::create(created.device, gbuffer_layout);
     ASSERT_NE(gbuffer, nullptr);
     ASSERT_EQ(gbuffer->colorAttachmentCount(), 4U);
@@ -3501,9 +3507,9 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
 
     // The G-buffer writer: a CONTENT program that writes all four attachments from a clip-space triangle. Its
     // text declares NOTHING (no blocks, no samplers, no push), so the content path's own arrangement is the
-    // whole interface it needs. Its outputs are the engine's own four (albedo / normal with the shininess
-    // in alpha / specular / position), so what the lighting pass below reads is the shape a real G-buffer
-    // has.
+    // whole interface it needs. Its outputs are the engine's own four, in the packing the engine's writer and
+    // its lighting pass agree on (shaders/vine_gbuffer.glsl): base colour / the octahedral normal with roughness
+    // and metallic beside it / emission with occlusion in alpha / position.
     const vn::intrusive_ptr<ShaderProgram> writer_program(new ShaderProgram());
     {
         ShaderStage vertex;
@@ -3514,15 +3520,19 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 albedo_out;\n"
+            "layout(location = 0) out vec4 base_color_out;\n"
             "layout(location = 1) out vec4 normal_out;\n"
-            "layout(location = 2) out vec4 specular_out;\n"
+            "layout(location = 2) out vec4 emissive_out;\n"
             "layout(location = 3) out vec4 position_out;\n"
             "void main() {\n"
-            "    albedo_out   = vec4(0.5, 0.25, 1.0, 1.0);\n"
-            "    normal_out   = vec4(0.0, 0.0, 1.0, 0.0);\n"
-            "    specular_out = vec4(0.0, 0.0, 0.0, 1.0);\n"
-            "    position_out = vec4(0.0, 0.0, -2.0, 1.0);\n"
+            "    base_color_out = vec4(0.5, 0.25, 1.0, 1.0);\n"
+            // (0, 0) is the octahedral encoding of the view-space normal (0, 0, 1) and 1.0 / 0.0 are the
+            // roughness / metallic beside it: one FULLY ROUGH DIELECTRIC, whose GGX lobe is the widest one the
+            // model has - so the sun's share of the picture below is its diffuse term.
+            "    normal_out     = vec4(0.0, 0.0, 1.0, 0.0);\n"
+            // No emission, and occlusion 1: the ambient term is the base colour times the ambient light alone.
+            "    emissive_out   = vec4(0.0, 0.0, 0.0, 1.0);\n"
+            "    position_out   = vec4(0.0, 0.0, -2.0, 1.0);\n"
             "}\n"));
         writer_program->addStage(vertex);
         writer_program->addStage(fragment);
@@ -3809,7 +3819,7 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     };
     const Rgba8 lit_pixel = lit->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
     EXPECT_TRUE(near(lit_pixel.r, 0.25) && near(lit_pixel.g, 0.125) && near(lit_pixel.b, 0.1))
-        << "the engine's lighting over a map of 0.0 must shade albedo * (ambient + sun), got ("
+        << "the engine's lighting over a map of 0.0 must shade base * (ambient + nearly all of the sun), got ("
         << static_cast<int>(lit_pixel.r) << ", " << static_cast<int>(lit_pixel.g) << ", "
         << static_cast<int>(lit_pixel.b) << ")";
 
@@ -3860,8 +3870,8 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     OffscreenTarget::TargetLayout gbuffer_layout;
     gbuffer_layout.width         = kSize;
     gbuffer_layout.height        = kSize;
-    gbuffer_layout.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F,
-                                     RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F };
+    gbuffer_layout.color_formats = { RenderTarget::ColorFormat::RGBA16F, RenderTarget::ColorFormat::RGBA16F,
+                                     RenderTarget::ColorFormat::RGBA16F, RenderTarget::ColorFormat::RGBA16F };
     std::unique_ptr<OffscreenTarget> gbuffer = OffscreenTarget::create(created.device, gbuffer_layout);
     ASSERT_NE(gbuffer, nullptr);
     ASSERT_EQ(gbuffer->colorAttachmentCount(), 4U);
@@ -3897,17 +3907,17 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 albedo_out;\n"
+            "layout(location = 0) out vec4 base_color_out;\n"
             "layout(location = 1) out vec4 normal_out;\n"
-            "layout(location = 2) out vec4 specular_out;\n"
+            "layout(location = 2) out vec4 emissive_out;\n"
             "layout(location = 3) out vec4 position_out;\n"
             "void main() {\n"
-            "    albedo_out   = vec4(1.0, 0.25, 0.25, 1.0);\n"
-            "    normal_out   = vec4(0.0, 0.0, 1.0, 0.0);\n"
-            "    specular_out = vec4(0.0, 0.0, 0.0, 1.0);\n"
+            "    base_color_out = vec4(1.0, 0.25, 0.25, 1.0);\n"
+            "    normal_out     = vec4(0.0, 0.0, 1.0, 0.0);\n"
+            "    emissive_out   = vec4(0.0, 0.0, 0.0, 1.0);\n"
             // w = 1: this pixel WAS written (the engine's G-buffer writes the same), and the distance to the
             // origin is zero because the camera is touching this fragment.
-            "    position_out = vec4(0.0, 0.0, 0.0, 1.0);\n"
+            "    position_out   = vec4(0.0, 0.0, 0.0, 1.0);\n"
             "}\n"));
         writer_program->addStage(vertex);
         writer_program->addStage(fragment);
@@ -4109,21 +4119,24 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
         << static_cast<int>(untouched.g) << ", " << static_cast<int>(untouched.b) << ")";
 }
 
-TEST(ContentPassTest, TheMaterialsReflectanceReachesBothPaths)
+TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
 {
-    // The material's highlight is the reflectance its factors imply (`vineMaterialF0`): a dielectric's 0.04
-    // grey, a metal's own base colour. This case pins that the base colour reaches the shading in BOTH paths the
-    // engine draws with - the forward lit program and the G-buffer writer + its lighting pass - because "one
-    // fact, one spelling" is the point: the writer stores the reflectance in its attachment, and the forward
-    // program derives the same value into its sum.
+    // ONE MATERIAL, TWO PATHS, ONE ANSWER. This case pins the design's T3 from the outside: the same material,
+    // the same sun and the same camera drawn through the forward program and through the G-buffer writer plus
+    // its lighting pass must land on the same pixel - because both shade with the same BRDF (vine_brdf.glsl)
+    // and the writer stores the surface the lighting pass rebuilds, not a shade of it.
     //
-    // The material is chosen so the answer is one multiplication wide: it is METALLIC, so neither the ambient
-    // fill nor the sun's diffuse term contributes and the reflectance IS the base colour; and the geometry faces
-    // the camera with the sun straight behind the lens - so `L`, the view direction and the normal all point the
-    // same way, `dot(n, h) == 1` and `pow(..., shininess) == 1`: the lit value IS `sun_colour(0.5) x base`. A
-    // black base therefore lands on 0 and a quarter-grey one on 0.125; a path that ignored the material's
-    // factors would draw the 0.8 grey default and land on 0.4 (and one that kept a metal's diffuse lobe would
-    // land on 0.25 for the quarter material - 64, not 32).
+    // The material is chosen so the answer is one multiplication wide: it is METALLIC, so there is no diffuse
+    // lobe at all and the value is the specular term alone; and the geometry faces the camera with the sun
+    // straight behind the lens, so `L`, the view direction and the normal all point the same way and the
+    // sample sits exactly at the highlight's peak (n.h = 1).
+    //
+    // At that peak the arithmetic is closed-form, which is what makes the expected number checkable by hand:
+    // with perceptual roughness 0.5 (alpha = 0.25) the GGX distribution is 16/pi and the height-correlated
+    // Smith visibility 1/4, so D * Vis = 4/pi, and the Fresnel term is the metal's own f0 = base colour at
+    // v.h = 1. The picture is therefore `sun_colour x base x 4/pi` = 0.5 x 0.25 x 1.2732 = 0.159. A path that
+    // ignored the material's factors would draw the 0.8 grey default (0.51 - clamped to white), and one that
+    // still carried the retired Blinn-Phong bridge would draw 0.125: neither is within reach of the tolerance.
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
     {
@@ -4144,8 +4157,8 @@ TEST(ContentPassTest, TheMaterialsReflectanceReachesBothPaths)
     OffscreenTarget::TargetLayout gbuffer_layout;
     gbuffer_layout.width         = kSize;
     gbuffer_layout.height        = kSize;
-    gbuffer_layout.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F,
-                                     RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F };
+    gbuffer_layout.color_formats = { RenderTarget::ColorFormat::RGBA16F, RenderTarget::ColorFormat::RGBA16F,
+                                     RenderTarget::ColorFormat::RGBA16F, RenderTarget::ColorFormat::RGBA16F };
     std::unique_ptr<OffscreenTarget> gbuffer = OffscreenTarget::create(created.device, gbuffer_layout);
     ASSERT_NE(gbuffer, nullptr);
 
@@ -4165,8 +4178,10 @@ TEST(ContentPassTest, TheMaterialsReflectanceReachesBothPaths)
     camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
                                   vn::math::Vec3d(0.0, 1.0, 0.0));
 
-    // A metal's reflectance IS its base colour (a dielectric would add its own diffuse lobe on top, which this
-    // one-multiplication case wants out of the way): black reflects nothing, a quarter grey reflects a quarter.
+    // A metal's specular term IS its base colour (a dielectric would add its own diffuse lobe on top, which
+    // this one-multiplication case wants out of the way): black reflects nothing, a quarter grey reflects a
+    // quarter times the lobe's peak. The roughness stays the SDK default (0.5), which is what makes the peak's
+    // D * Vis exactly 4/pi - see the case's opening note.
     const vn::intrusive_ptr<Material> black_material(new Material());
     black_material->setBaseColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
     black_material->setMetallic(1.0F);
@@ -4436,15 +4451,16 @@ TEST(ContentPassTest, TheMaterialsReflectanceReachesBothPaths)
         << static_cast<int>(silent.g) << ", " << static_cast<int>(silent.b)
         << ") - 0.4 here means the material's factors never reached the shader";
     const Rgba8 quarter = forward_quarter->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
-    EXPECT_TRUE(near(quarter.r, 0.125) && near(quarter.g, 0.125) && near(quarter.b, 0.125))
-        << "a quarter-grey metal must land on sun_colour x base = 0.125, got (" << static_cast<int>(quarter.r)
-        << ", " << static_cast<int>(quarter.g) << ", " << static_cast<int>(quarter.b) << ")";
+    EXPECT_TRUE(near(quarter.r, 0.159) && near(quarter.g, 0.159) && near(quarter.b, 0.159))
+        << "a quarter-grey metal at the highlight's peak must land on sun_colour x base x 4/pi = 0.159, got ("
+        << static_cast<int>(quarter.r) << ", " << static_cast<int>(quarter.g) << ", "
+        << static_cast<int>(quarter.b) << ") - 0.125 means the retired Blinn-Phong bridge is still drawing";
     const Rgba8 shaded = deferred->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
-    EXPECT_TRUE(near(shaded.r, 0.125) && near(shaded.g, 0.125) && near(shaded.b, 0.125))
-        << "the DEFERRED path must shade the same value (the G-buffer's specular attachment carries the "
-           "reflectance the forward term derives), got ("
+    EXPECT_TRUE(near(shaded.r, 0.159) && near(shaded.g, 0.159) && near(shaded.b, 0.159))
+        << "the DEFERRED path must shade the same value: the writer stores the surface and this pass runs the "
+           "same BRDF, so the two paths can only differ by the attachment's quantisation, got ("
         << static_cast<int>(shaded.r) << ", " << static_cast<int>(shaded.g) << ", " << static_cast<int>(shaded.b)
-        << ") - 0.5 here means the writer folded nothing";
+        << ")";
 }
 
 TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
@@ -5003,7 +5019,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     eight_bit_layout.width         = kSize;
     eight_bit_layout.height        = kSize;
     eight_bit_layout.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F,
-                                       RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA16F };
+                                       RenderTarget::ColorFormat::RGBA16F, RenderTarget::ColorFormat::RGBA16F };
     OffscreenTarget::TargetLayout half_float_layout = eight_bit_layout;
     half_float_layout.color_formats[0]              = RenderTarget::ColorFormat::RGBA16F;
     std::unique_ptr<OffscreenTarget> eight_bit_gbuffer =
@@ -5044,15 +5060,15 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 albedo_out;\n"
+            "layout(location = 0) out vec4 base_color_out;\n"
             "layout(location = 1) out vec4 normal_out;\n"
-            "layout(location = 2) out vec4 specular_out;\n"
+            "layout(location = 2) out vec4 emissive_out;\n"
             "layout(location = 3) out vec4 position_out;\n"
             "void main() {\n"
-            "    albedo_out   = vec4(vec3(gl_FragCoord.x / 64.0 * 0.06), 1.0);\n"
-            "    normal_out   = vec4(0.0, 0.0, 1.0, 0.0);\n"
-            "    specular_out = vec4(0.0, 0.0, 0.0, 1.0);\n"
-            "    position_out = vec4(0.0, 0.0, -5.0, 1.0);\n"
+            "    base_color_out = vec4(vec3(gl_FragCoord.x / 64.0 * 0.06), 1.0);\n"
+            "    normal_out     = vec4(0.0, 0.0, 1.0, 0.0);\n"
+            "    emissive_out   = vec4(0.0, 0.0, 0.0, 1.0);\n"
+            "    position_out   = vec4(0.0, 0.0, -5.0, 1.0);\n"
             "}\n"));
         writer->addStage(vertex);
         writer->addStage(fragment);

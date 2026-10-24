@@ -33,6 +33,7 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace vn::graphics;
@@ -327,12 +328,92 @@ TEST(EmbeddedShadersTest, TheContentVertexStagesSizeTheirPointsFromTheDrawBlock)
     }
 }
 
+TEST(EmbeddedShadersTest, TheMaterialSlotBitsAgreeWithTheBlockAbi)
+{
+    // ShaderAbi.hpp is the C++ half of the material block (kMaterialFlagBaseColor .. kMaterialFlagEmissive,
+    // kMaterialAlphaModeShift) and vine_params.glsl is its GLSL half. GLSL cannot ask C++, so the numbers are
+    // written twice - and a bit moved in one place only makes every textured material read its neighbour's
+    // slot (or none), with no layer reporting it. This pins the two lists against each other.
+    const auto declared = [](std::string_view name, std::uint32_t value) {
+        std::uint32_t bit = 0;
+        while ((value >> bit) != 1U) {
+            ++bit;
+        }
+        // The declarations are aligned with spaces, so the NAME is searched first and the initialiser after it.
+        return std::pair<std::string, std::string>{ std::string(name),
+                                                    "= 1u << " + std::to_string(bit) + ";" };
+    };
+    const std::string shading_stages = asByteString(kBuiltinForwardFrag) + asByteString(kBuiltinGbufferFrag);
+    for (const auto& [name, value] : { std::pair<std::string_view, std::uint32_t>{
+                                          "VINE_MATERIAL_FLAG_BASE_COLOR", kMaterialFlagBaseColor },
+                                      { "VINE_MATERIAL_FLAG_METALLIC_ROUGHNESS", kMaterialFlagMetallicRoughness },
+                                      { "VINE_MATERIAL_FLAG_NORMAL", kMaterialFlagNormal },
+                                      { "VINE_MATERIAL_FLAG_OCCLUSION", kMaterialFlagOcclusion },
+                                      { "VINE_MATERIAL_FLAG_EMISSIVE", kMaterialFlagEmissive } }) {
+        const auto [declaration, initialiser] = declared(name, value);
+        const std::size_t at                  = shading_stages.find(declaration);
+        ASSERT_NE(at, std::string::npos) << declaration << " must be declared in vine_params.glsl";
+        EXPECT_NE(shading_stages.find(initialiser, at), std::string::npos)
+            << declaration << " must take " << initialiser << " (ShaderAbi.hpp's value is " << value << ")";
+    }
+    const std::size_t shift_at = shading_stages.find("VINE_MATERIAL_ALPHA_MODE_SHIFT");
+    ASSERT_NE(shift_at, std::string::npos) << "the alpha mode's shift is part of the block's GLSL";
+    EXPECT_NE(shading_stages.find("= " + std::to_string(kMaterialAlphaModeShift) + "u;", shift_at),
+              std::string::npos)
+        << "the alpha mode's shift is the block's, not a literal a shader invents";
+}
+
+TEST(EmbeddedShadersTest, TheSharedFragmentsAreInlinedIntoTheStagesThatUseThem)
+{
+    // The shading is split across fragments that both paths include (vine_brdf.glsl is the BRDF's one home,
+    // vine_material.glsl the texture set's, vine_gbuffer.glsl the attachment packing's). What ships is the
+    // EXPANDED text (cmake/VineEmbedShaders.cmake), so a stage's source carries the function - and a stage that
+    // lost an include still compiles, it just shades with whatever it happens to have. These assertions are the
+    // cheap half of that: the functions each stage is supposed to be made of are IN its text.
+    const auto carries = [](std::u8string_view source, std::string_view needle, std::string_view stage) {
+        EXPECT_NE(asByteString(source).find(needle), std::string::npos)
+            << stage << " must carry " << needle << " (its fragment was not inlined)";
+    };
+    carries(kBuiltinForwardFrag, "vec3 vineEvaluateBRDF(", "builtin_forward.frag");
+    carries(kBuiltinForwardFrag, "VineSurface vineSampleMaterial(", "builtin_forward.frag");
+    carries(kBuiltinGbufferFrag, "vec2 vineOctahedralEncode(", "builtin_gbuffer.frag");
+    carries(kBuiltinGbufferFrag, "VineSurface vineSampleMaterial(", "builtin_gbuffer.frag");
+    carries(kBuiltinDeferredLightingFrag, "vec3 vineEvaluateBRDF(", "builtin_deferred_lighting.frag");
+    carries(kBuiltinDeferredLightingFrag, "vec3 vineOctahedralDecode(", "builtin_deferred_lighting.frag");
+    // The retired bridge: neither helper may come back, because a shader that shades Phong terms again is a
+    // second shading model beside the BRDF, and nothing would compare the two.
+    for (const std::u8string_view source : { kBuiltinForwardFrag, kBuiltinGbufferFrag, kBuiltinDeferredLightingFrag }) {
+        EXPECT_EQ(asByteString(source).find("vineMaterialShininess"), std::string::npos)
+            << "the M1 bridge's exponent helper is gone (graphics-material.md 9.2, M3)";
+        EXPECT_EQ(asByteString(source).find("vineMaterialF0"), std::string::npos);
+    }
+}
+
+TEST(EmbeddedShadersTest, TheGbufferWriterAndTheLightingPassShareOnePacking)
+{
+    // The two halves of the G-buffer contract: the writer encodes and the lighting pass decodes with the SAME
+    // octahedral pair (vine_gbuffer.glsl). If one of them were inlined from a stale copy - or hand-rolled - the
+    // deferred picture would rotate every normal and no layer would report it.
+    const std::string writer   = asByteString(kBuiltinGbufferFrag);
+    const std::string lighting = asByteString(kBuiltinDeferredLightingFrag);
+    EXPECT_NE(writer.find("vineOctahedralEncode"), std::string::npos);
+    EXPECT_NE(lighting.find("vineOctahedralDecode"), std::string::npos);
+    // The factors ride the normal attachment (the packing's own rule): b = roughness, a = metallic on the write
+    // side, and the same two channels on the read side.
+    EXPECT_NE(writer.find("vineOctahedralEncode(surface.normal), surface.roughness, surface.metallic"),
+              std::string::npos)
+        << "the writer stores the normal and both factors in one row";
+    EXPECT_NE(lighting.find("vineOctahedralDecode(n4.rg)"), std::string::npos);
+    EXPECT_NE(lighting.find("clamp(n4.b, 0.0, 1.0)"), std::string::npos) << "b is the roughness";
+    EXPECT_NE(lighting.find("clamp(n4.a, 0.0, 1.0)"), std::string::npos) << "a is the metallic";
+}
+
 TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceCarries)
 {
     // The shadowed variant of the lighting program is the shipped source with two insertions, and
     // its bindings are part of the shadow ABI (see BuiltinShaders::deferredLightProgram): the map
-    // at binding 5 and its block at 6, right after the canonical G-buffer's four colours and the
-    // depth slot. A source edit that moves or renames a marker must fail HERE — the alternative is
+    // at binding 7 and its block at 8, right after the canonical G-buffer's four colours, its depth slot and
+    // the lights at 6. A source edit that moves or renames a marker must fail HERE — the alternative is
     // a program that builds without complaint and whose shadow terms are whatever used to follow.
     const std::string source = asByteString(kBuiltinDeferredLightingFrag);
     EXPECT_NE(source.find("// VINE_SHADOW_BINDINGS"), std::string::npos) << "the declarations' marker";
