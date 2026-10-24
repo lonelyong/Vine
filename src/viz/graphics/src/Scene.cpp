@@ -562,9 +562,23 @@ void Scene::setRoot(intrusive_ptr<Node> root)
     if (root_ == root) {
         return; // no content change: keep the frame's memo usable
     }
+    // A root must be a ROOT (see the class note): a node that is still a child of a Group is detached first,
+    // exactly like Group::addChild detaches from the old parent. Without this, "set this as my root" would
+    // silently render the subtree at another tree's transform. Only Groups own children, so the cast is the
+    // same one Group::addChild uses to reach an old parent.
+    if (root != nullptr && root->parent() != nullptr) {
+        if (auto* old_parent = dynamic_cast<Group*>(root->parent())) {
+            old_parent->removeChild(root.get());
+        }
+    }
     root_ = std::move(root);
     detail::announceLayerChange();
     invalidateContent();
+}
+
+bool Scene::hasRootedRoot() const
+{
+    return root_ != nullptr && root_->parent() == nullptr;
 }
 
 NodePtr Scene::findNode(const String& name) const
@@ -633,7 +647,7 @@ bool Scene::hasLights() const
 
 Aabbd Scene::boundingBox(std::uint32_t layer_mask) const
 {
-    if (!visible_ || root_ == nullptr) {
+    if (!visible_ || !hasRootedRoot()) {
         return Aabbd::empty();
     }
     return visibleWorldBox(*root_, kDefaultLayer, layer_mask);
@@ -657,8 +671,10 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
                                                                                     std::uint32_t layer_mask) const
 {
     // The empty answer, shared rather than built: an empty scene asks for nothing, and paying an allocation
-    // for "nothing" would make the cheap case the expensive one.
-    if (!visible_ || root_ == nullptr) {
+    // for "nothing" would make the cheap case the expensive one. A root that is no longer a ROOT is the same
+    // answer, and the check runs BEFORE the memo lookup on purpose: the memo must not hand back a list built
+    // while the node was still this scene's root (see setRoot).
+    if (!visible_ || !hasRootedRoot()) {
         return noCommands();
     }
     // The shape is part of the view: the projection encodes it (the camera states it, see Camera), so the memo

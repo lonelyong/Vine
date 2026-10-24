@@ -597,6 +597,57 @@ TEST(SceneTest, OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks)
     EXPECT_EQ(scene.contentCollectReuseCount(), 2u);
 }
 
+TEST(SceneTest, SettingAParentedNodeAsRootDetachesIt)
+{
+    // "Set this as my root" cannot mean "render this subtree at another tree's transform": a node that is still
+    // a child of some Group is detached first, exactly like Group::addChild detaches from the old parent.
+    Scene scene;
+    auto  host = intrusive_ptr<Group>(new Group());
+    auto  node = intrusive_ptr<Group>(new Group());
+    host->addChild(node);
+    ASSERT_EQ(node->parent(), host.get());
+    ASSERT_EQ(host->children().size(), 1u);
+
+    scene.setRoot(node);
+
+    EXPECT_EQ(node->parent(), nullptr);
+    EXPECT_TRUE(host->children().empty());
+    EXPECT_EQ(scene.root().get(), node.get());
+}
+
+TEST(SceneTest, ARootAttachedElsewhereTakesTheSceneOutOfThePicture)
+{
+    // Two scenes may draw one subtree while it IS a root (both fold their own scene-level state). Attaching it
+    // under another Group makes it not a root, so both scenes draw nothing - rather than drawing it at the other
+    // tree's transform, and rather than serving the list memoised before the move.
+    Scene first;
+    Scene second;
+    auto  root = setIdentityRoot(first);
+    second.setRoot(root);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    first.setContentFrame(1);
+    second.setContentFrame(1);
+    ASSERT_EQ(first.collectRenderCommands(&cam)->size(), 1u);
+    ASSERT_EQ(second.collectRenderCommands(&cam)->size(), 1u);
+    EXPECT_FALSE(first.boundingBox().isEmpty());
+
+    auto host = intrusive_ptr<Group>(new Group());
+    host->addChild(root);
+    ASSERT_NE(root->parent(), nullptr) << "the node is no longer a root";
+
+    // The frame token advances, but even a surviving memo entry must not answer: the guard runs before the lookup.
+    first.setContentFrame(2);
+    second.setContentFrame(2);
+    EXPECT_TRUE(first.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(second.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(first.boundingBox().isEmpty());
+    EXPECT_TRUE(second.boundingBox().isEmpty());
+}
+
 TEST(SceneTest, CollectCommandsNullCameraYieldsEmpty)
 {
     Scene scene;

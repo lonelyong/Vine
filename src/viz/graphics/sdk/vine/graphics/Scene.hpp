@@ -30,6 +30,9 @@ struct RenderCommand;
  * - Exactly one root node (an empty scene has no root and renders nothing), the scene's light sources, and
  *   the tree queries: bounding box, name-based search, render-command collection. Content is composed
  *   under the root through Group (typically a Group holding the world's top-level subtrees).
+ * - The root is a ROOT: the tree a scene renders is entered at a parentless node. setRoot() detaches a node
+ *   that is still attached elsewhere, and a root attached elsewhere afterwards takes the scene out of the
+ *   picture (see setRoot).
  */
 class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     VN_OBJECT_META_DECL;
@@ -91,11 +94,19 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     NodePtr root() const;
 
-    /** @brief Sets the root node of the scene.
+    /** @brief Sets the root node of the scene, detaching it from any tree it is still a child of.
      *
      * @details
      * - Replaces any previous root; content is composed by attaching subtrees under @p root (typically a
      *   Group) before rendering.
+     * - A root must be a ROOT: a node that is still a child of some Group is detached from it first, the same
+     *   way Group::addChild detaches a node from its old parent. "Set this as my root" therefore never means
+     *   "render this subtree at another tree's transform".
+     *
+     * @note
+     * - The reverse move is not undone: a root attached to another tree AFTER this call (Group::addChild) is
+     *   no longer a root, so the scene draws nothing - collection and bounding box answer empty without
+     *   serving the list memoised while the node was still a root (see collectRenderCommands).
      *
      * @param root Root node to render; null empties the scene.
      */
@@ -170,7 +181,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * @details
      * - Hidden content contributes nothing at any depth: an invisible node prunes its whole subtree from the
      *   union, the same rule the collection and ray walks apply. Empty when the scene itself is hidden, has
-     *   no root, or the root is hidden.
+     *   no root, the root is hidden, or the root is no longer a root (see setRoot).
      * - @p layer_mask selects like the collection does (see collectRenderCommands): a drawn node whose
      *   resolved layers do not intersect the mask contributes nothing; a node that re-declares its layers
      *   counts under its own declaration (containers are structure); kAllLayers (the default) measures
@@ -195,6 +206,8 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *   back-to-front.
      * - The list is immutable by contract and stays valid until the scene changes or the content frame ends (see
      *   setContentFrame): do not hold it past the frame it was collected in.
+     * - A root that is no longer a root (it was attached under another Group after setRoot) takes the scene out
+     *   of the picture: the empty list is answered, never the list memoised while the node was still a root.
      *
      * @param camera Camera used for culling/ordering. Its own aspect is the picture's shape (see Camera - one
      *               camera, one picture shape), and the memo matches on the view-projection it was built with, so a
@@ -271,6 +284,16 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     [[nodiscard]] std::uint64_t contentCollectReuseCount() const noexcept;
 
   private:
+    /** @brief Whether this scene still has a root that is a ROOT: non-null and without a parent.
+     *
+     * @details
+     * - The one predicate behind "this scene is a picture": a root attached to another tree is not this
+     *   scene's root any more, so the picture is empty (see setRoot).
+     *
+     * @return true when the scene has a parentless root.
+     */
+    [[nodiscard]] bool hasRootedRoot() const;
+
     String name_;
     bool visible_ = true;
     float opacity_ = 1.0f;

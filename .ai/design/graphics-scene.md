@@ -1,7 +1,7 @@
 # graphics 场景图：节点、状态、收集、层、拾取
 
 > **状态**：现行
-> **最后核对**：2026-10-23
+> **最后核对**：2026-10-24
 > **范围**：严格树、状态折叠、收集 memo、层与拾取。
 > **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
 > `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`。
@@ -43,6 +43,7 @@
 2.7 **灯是场景的环境量**：灯挂在 `Scene` 上而不是节点上（一个场景一份光照，每个 pass 拿到同一份，所以主/离屏/阴影 pass 的灯永远一致），位置与方向都是世界坐标。节点灯（灯跟着子树动）与逐 draw 选灯是触发条件型（backlog T7 / S7），不是今天的模型。
 
 **场景不设灯数上限**：`addLight` / `setLighting` 有多少收多少，因为容量是光照程序的属性而不是内容的语义 —— 同一个 Scene 今天被 forward 与 deferred 两条路径画，将来可能被容量不同的宿主程序画。上限在 `kMaxLights`（`ShaderAbi.hpp`），超出的灯在打包时不被表示，按 episode 报一次 `ChannelIgnored` 警告（见 `graphics-shader-params.md` §2.2）。要限制灯数的是选灯策略（backlog S7），不是 `Scene` 的一道上限。
+2.8 **根必须是根**：场景从一个无父节点进入。`setRoot` 先把已在别的 Group 下的节点摘下来（与 `Group::addChild` 自动脱离旧父同一条规则）；根在之后被别的树收养，就不再是这个场景的根——收集与包围盒一律为空，且检查在 memo 查询之前，所以不会返回移动前的列表。两个场景可以共用同一棵仍是根的子树（各自的场景级状态、memo 独立），接缝只在“它还是不是根”。
 
 ## 3. 功能点
 
@@ -129,7 +130,7 @@
 
 | 接口 | 作用 |
 |---|---|
-| `Scene::setRoot()` / `root()` / `clear()` | 内容根 |
+| `Scene::setRoot()` / `root()` / `clear()` | 内容根（已在别处的节点先被摘下） |
 | `Scene::setVisible()` / `setOpacity()` | 场景级折叠 |
 | `Scene::addLight()` / `lights()` / `setLighting()` | 灯 |
 | `Scene::collectRenderCommands()` | 收集 |
@@ -177,6 +178,7 @@
 | N6 | AutoTransform 的自动旋转在节点自身坐标系里算；父缩放进入最终大小。 |
 | N7 | 拾取只打三角形图元；线/点不是表面。 |
 | N8 | `Camera` 自带 aspect；pass 矩形与相机形状不一致会在编译期报出来。 |
+| N9 | 根必须仍是根：`setRoot` 会摘下已在别的 Group 下的节点；根被 `Group::addChild` 收养后，该场景的收集与包围盒为空，且不复用收养前的 memo。 |
 
 ## 6. 注意事项与陷阱
 
@@ -210,6 +212,7 @@
 | T2 | `SceneContentCacheTest`：编辑一个场景不丢另一个场景的 memo。 |
 | T3 | `SceneLayersTest` / `AutoTransformTest` / `PositionAttitudeTransformTest`。 |
 | T4 | 移动子树移入视锥不被陈旧盒藏掉；层冲突只报一次。 |
+| T5 | `SceneTest.SettingAParentedNodeAsRootDetachesIt` / `SceneTest.ARootAttachedElsewhereTakesTheSceneOutOfThePicture`。 |
 
 ## 9. 状态与演进
 
