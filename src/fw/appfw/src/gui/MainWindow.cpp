@@ -14,6 +14,8 @@
 #include <SARibbon.h>
 
 #include <vine/appfw/Application.hpp>
+#include <vine/appfw/gui/CentralDocumentHost.hpp>
+#include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/Gui.hpp>
@@ -142,6 +144,20 @@ void MainWindow::setPrimaryRenderControl(RenderControl* control)
 
 RenderControl* MainWindow::primaryRenderControl() const
 {
+    // DERIVED, in one place: the shown document's view answers which of its panes is active, and the explicitly
+    // registered control is only the shell's own area (see the header's contract). A view that published itself
+    // here instead made the answer the LAST publisher's, which two visible areas cannot share.
+    if (const DockPanelManager* docks = dockPanelManager()) {
+        if (UIElement* central = docks->centralWidget()) {
+            if (auto* host = dynamic_cast<CentralDocumentHost*>(central)) {
+                if (DocumentView* view = host->currentView()) {
+                    if (RenderControl* active = view->activeRenderControl()) {
+                        return active;
+                    }
+                }
+            }
+        }
+    }
     return dptr()->primary_render_control;
 }
 

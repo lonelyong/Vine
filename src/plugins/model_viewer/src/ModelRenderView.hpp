@@ -168,8 +168,7 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     explicit ModelRenderView(ModelDocument& document)
       : DocumentView(document, new QWidget())
       , model_(&document)
-    {
-        // 本视图自己的渲染控件，铺满本视图的控件 —— 它和视图一起生、一起死（控件树是它的拥有者：
+    {        // 本视图自己的渲染控件，铺满本视图的控件 —— 它和视图一起生、一起死（控件树是它的拥有者：
         // RenderControl 自己会在它的控件随父销毁时自毁）。
         control_ = new vn::appfw::gui::RenderControl();
         auto* layout = new QVBoxLayout(impl<QWidget>());
@@ -196,11 +195,20 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView
     void activate() override;
 
     /**
-     * @brief 这份文档下屏：收回发布给窗口的那块"当前 3D 视图"。
-     *
-     * 只收回自己发布的那一个；场景与控件留着（视图是实例的，切回来要保住视角）。
+     * @brief 这份文档下屏：场景与控件留着（视图是实例的，切回来要保住视角），没有窗口级状态要收。
      */
     void deactivate() override;
+
+    /**
+     * @brief 命令该作用于的那块 3D 区：本视图只有一个窗格，所以就是它自己的控件。
+     *
+     * @details
+     * - 视图回答“哪个窗格”才能让窗口**派生**出 `primaryRenderControl()`（见 ADR-2026-10-24-command-target.md）：
+     *   视图有多个窗格时在这里改答活动的那一个，框架不用动。
+     *
+     * @return 本视图的渲染控件。
+     */
+    vn::appfw::gui::RenderControl* activeRenderControl() override { return control_; }
 
     /**
      * @brief 本视图自己的渲染控件（自己的面/会话/设备）。
@@ -455,23 +463,13 @@ inline void ModelRenderView::activate()
         fitted_ = true;
     }
 
-    // 发布"当前 3D 视图"（见类注释）：谁上屏谁发布，于是别的插件（本插件的显示模式命令、test_plugin 的实时渲染
-    // 演示）不必认识任何具体视图类就能拿到当前那块渲染面。
-    if (auto* window = vn::appfw::gui::MainWindow::current();
-        window != nullptr && window->primaryRenderControl() != control_)
-    {
-        window->setPrimaryRenderControl(control_);
-    }
+    // 发布"当前 3D 视图"：现在由窗口**派生**回答（当前文档视图 → 活动窗格），视图不再往窗口里写任何东西 ——
+    // 单槽发布会让两个可见区域互相覆盖（见 ADR-2026-10-24-command-target.md）。
 }
 
 void ModelRenderView::deactivate()
 {
-    // 下屏时收回去（见类注释）：只收回**自己**发布的那一个，别的视图发布的东西不碰。
-    if (auto* window = vn::appfw::gui::MainWindow::current();
-        window != nullptr && window->primaryRenderControl() == control_)
-    {
-        window->setPrimaryRenderControl(nullptr);
-    }
+    // 下屏的收尾：视图不持有任何窗口级状态，所以这里没有要收的东西（见上）。
 }
 
 /**

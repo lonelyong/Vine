@@ -37,19 +37,28 @@ class VN_APPFW_API MainWindow : public Window {
     raw_ptr<StatusBar>        statusBar() const;
     raw_ptr<DockPanelManager> dockPanelManager() const;
 
-    /** @brief Registers the central render view control.
+    /** @brief Registers the control the SHELL itself shows when no document view is up.
      *
-     * The app shell sets the single 3D view it hosts here so other plugins
-     * (e.g. tests, editors) can reach the render engine/scene without
-     * depending on app shell internals.
+     * @details
+     * - A document view is NOT registered here: the window answers with the shown document's view instead (see
+     *   primaryRenderControl), so a view never has to publish itself into a window-wide slot.
+     * - This setter is for the area the shell owns (the demo view, a host's own 3D page): it is the FALLBACK, used
+     *   when the central widget is not a document host or the current document has no 3D view.
      *
-     * @param control Render control, or nullptr to clear.
+     * @param control The shell's own render control, or nullptr to clear.
      */
     void setPrimaryRenderControl(RenderControl* control);
 
-    /** @brief Gets the registered central render view control.
+    /** @brief Gets the 3D area commands should act on: the shown document view's active pane, else the shell's own.
      *
-     * @return The render control, or nullptr when none was registered.
+     * @details
+     * - DERIVED, not published: the answer is `central document host -> current view -> activeRenderControl()`,
+     *   which is where "which pane" belongs (the view created it - see DocumentView::activeRenderControl). Only when
+     *   there is no document view (or it has no 3D area) does the explicitly registered fallback answer.
+     * - That makes the query single-valued even when several areas exist: a document view with two panes answers its
+     *   active one, and a view that is not on screen cannot answer at all.
+     *
+     * @return The active render control, or nullptr when no 3D area is showing.
      */
     RenderControl* primaryRenderControl() const;
 

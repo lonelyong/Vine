@@ -584,6 +584,12 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     EXPECT_EQ(first->renderControl()->engine(), first->renderControl()->view()->engine())
         << "自己的控件服务自己的 view";
 
+    // The window DERIVES the 3D area a command acts on: the shown document view answers which of its panes is
+    // active, and no view publishes itself into a window-wide slot any more (a single slot cannot be shared by
+    // two visible areas - see ADR-2026-10-24-command-target.md).
+    EXPECT_EQ(window.primaryRenderControl(), first->renderControl())
+        << "当前文档视图的活动窗格就是窗口该回答的那块 3D 区";
+
     // 第二份：另一个视图、另一块渲染面、另一个引擎 —— 资源不共享（共享的只有 DockPanel/Ribbon 那套外壳）。
     ASSERT_NE(openModel(documents, u8"网格", vn::model_viewer::makeGridMesh(2)), nullptr);
     auto* second = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
@@ -592,6 +598,8 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     EXPECT_NE(second->renderControl(), first->renderControl()) << "每份文档一块自己的渲染面";
     EXPECT_NE(second->renderControl()->engine(), first->renderControl()->engine()) << "各自的会话，不共享";
     EXPECT_NE(second->renderControl()->view(), first->renderControl()->view()) << "各自的 view";
+    EXPECT_EQ(window.primaryRenderControl(), second->renderControl())
+        << "切到第二份文档，窗口的答案跟着换（派生，不是谁最后发布）";
 
     // 关掉一份：只有它那份资源跟着消失，另一份还在（视图按实例缓存）。
     ASSERT_NE(documents.current(), nullptr);

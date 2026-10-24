@@ -60,11 +60,16 @@
  * and `RibbonButton::checkable()/checked()` became `isEnabled()/isCheckable()/isChecked()`. The setters are
  * unchanged, and `ProgressPresenter` inherits the renamed getters.
  *
+ * 9u: `DocumentView` gained `activeRenderControl()` (appended last, so the earlier virtuals keep their slots). It is
+ * the view's answer to "which of my panes is the one a command acts on", and it is what lets the window DERIVE its
+ * primary control instead of taking a pointer a view published into a window-wide slot - two visible areas cannot
+ * share one slot (see `.ai/decisions/ADR-2026-10-24-command-target.md`).
+ *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * VN_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
  * the host's own binaries, which are built and rebuilt together with the framework.
  */
-#define VN_APPFW_PLUGIN_ABI_VERSION 8u
+#define VN_APPFW_PLUGIN_ABI_VERSION 9u
 
 VN_APPFW_NS_BEGIN
 

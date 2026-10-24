@@ -8,6 +8,8 @@ VN_APPFW_NS_END
 
 VN_APPFWGUI_NS_BEGIN
 
+class RenderControl;
+
 /**
  * @brief One document's presentation: what turns a `Document` into something on screen.
  *
@@ -24,6 +26,10 @@ VN_APPFWGUI_NS_BEGIN
  * shell around them - dock panels and ribbon menus - not the document area.
  *
  * VIEW STATE IS NOT DOCUMENT STATE: it is never saved, never makes a document dirty, and disappears with the view.
+ *
+ * THE VIEW IS WHERE "WHICH 3D AREA?" IS ANSWERED: `activeRenderControl()` names the pane a command should act on, so
+ * the window derives its primary control from the current view instead of a view publishing itself into a
+ * window-wide slot (see `../decisions/ADR-2026-10-24-command-target.md`).
  */
 class VN_APPFW_API DocumentView : public UIElement {
     VN_OBJECT_META_DECL
@@ -69,6 +75,23 @@ class VN_APPFW_API DocumentView : public UIElement {
      * A 3D view detaches what it bound in activate(); a 2D view normally does nothing.
      */
     virtual void deactivate() {}
+
+    /**
+     * @brief Returns the render control of the part of this view a command should act on, or null.
+     *
+     * @details
+     * - A view that hosts ONE 3D area returns that area's control. A view that hosts SEVERAL panes returns the one
+     *   the user last worked in - **the view owns that decision**, because it is the view that created the panes; the
+     *   framework keeps no pane registry and no layout rule.
+     * - This is the accessor that turns "which 3D area is current" into a DERIVED question: `MainWindow::
+     *   primaryRenderControl()` answers it through the document host's current view, so no view has to publish
+     *   itself into a window-wide slot any more.
+     * - A 2D view (and a view that draws nothing) returns null - "this view has no 3D area" - which is a legal
+     *   answer, not a failure.
+     *
+     * @return The active pane's render control, or null when this view has none.
+     */
+    virtual RenderControl* activeRenderControl() { return nullptr; }
 
   protected:
     /**
