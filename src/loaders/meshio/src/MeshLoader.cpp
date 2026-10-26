@@ -37,8 +37,8 @@ using Vec2fArray          = vn::geometry::Vec2fArray;
 using Vec3fArray          = vn::geometry::Vec3fArray;
 using Vec4fArray          = vn::geometry::Vec4fArray;
 
-/** @brief AABB diagonal length above which the source unit is millimeters. */
-constexpr float kMmThreshold = 10.0f;
+/** @brief AABB diagonal, in source units, above which the source is read as millimetres rather than metres. */
+constexpr float kMillimetreThreshold = 10.0f;
 
 // Both lists carry aiProcess_GenNormals, and it is worth knowing why. A file may describe no normals at all (an OBJ
 // without `vn`), or ones that are worse than none: many STL writers store a zero facet normal and expect the reader to
@@ -101,6 +101,25 @@ bool drainStream(std::istream& in, std::vector<unsigned char>& out)
 }
 
 /**
+ * @brief Records why a load is about to answer null, and hands that answer back.
+ *
+ * Every entry fails the same way, so the reason is written in one place rather than in a lambda apiece: the caller gets
+ * a null and, when it asked for one, the class of failure.
+ *
+ * @param error The caller's out-parameter; null when the caller does not care.
+ * @param reason The failure class to record.
+ * @return An empty pointer of the entry's result type.
+ */
+template <typename Result>
+vn::intrusive_ptr<Result> failed(vn::io::IoError* error, vn::io::IoError reason)
+{
+    if (error != nullptr) {
+        *error = reason;
+    }
+    return {};
+}
+
+/**
  * @brief The vertex arrays one builder accumulates, and the facts a multi-mesh build has to remember.
  *
  * Every conversion from an assimp mesh to Vine vertex data goes through appendMeshAttributes(), so this is the ONE
@@ -126,23 +145,26 @@ struct MeshSink
 };
 
 /**
- * @brief What both builders share: the scene they read, and the ONE translation from an assimp mesh to Vine arrays.
+ * @brief What both builders share: the scene and the options they were given, and the ONE translation from an assimp
+ * mesh to Vine arrays.
  *
  * Private inheritance in both builders, deliberately: the base is a tool, not an interface, so nothing outside the two
  * builders can use it. The split the file follows is the one the two entries force - what BOTH need lives here
  * (protected), and what exists for one entry lives private in that entry's builder (materials and node building in
- * ModelBuilder, node walking and scaling in MergedMeshBuilder).
+ * ModelBuilder, node walking in MergedMeshBuilder).
  */
 class MeshBuilderBase
 {
   protected:
     /**
-     * @brief Binds the builder to the scene it reads.
+     * @brief Binds the builder to the scene it reads and the options it measures against.
      *
+     * @param options The load options; they outlive the builder.
      * @param scene The parsed scene; it outlives the builder.
      */
-    explicit MeshBuilderBase(const aiScene& scene) noexcept
-      : scene_(&scene)
+    MeshBuilderBase(const MeshLoader::Options& options, const aiScene& scene) noexcept
+      : options_(options)
+      , scene_(scene)
     {
     }
 
@@ -151,7 +173,7 @@ class MeshBuilderBase
      *
      * @return The parsed scene the builder was constructed with.
      */
-    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_; }
+    [[nodiscard]] const aiScene& scene() const noexcept { return scene_; }
 
     /**
      * @brief Appends one assimp mesh's vertex data to @p sink.
@@ -222,22 +244,22 @@ class MeshBuilderBase
     }
 
     /**
-     * @brief Converts a measured diagonal length into the factor the load options ask for.
+     * @brief Returns the factor that takes a source in its own units to the output unit the options name.
      *
      * Both entries share this rule, so the same source is scaled the same way whichever one reads it.
      *
-     * @param options The load options.
-     * @param diagonal The AABB diagonal length of the source, in source units.
-     * @return The factor the geometry has to be scaled by.
+     * @param diagonal The source's AABB diagonal, in source units; Auto reads the unit off it.
+     * @return The factor the geometry has to be scaled by: 1.0 when the options ask for no scaling.
      */
-    static double scaleFactorOf(const MeshLoader::Options& options, double diagonal)
+    double unitScaleFor(double diagonal) const
     {
-        if (options.scale_mode == MeshLoader::ScaleMode::Auto) {
-            const auto unit = diagonal > kMmThreshold ? MeshLoader::LengthUnit::Millimeter : MeshLoader::LengthUnit::Meter;
-            return static_cast<double>(options.auto_scale_output_unit) / static_cast<double>(unit);
+        if (options_.scale_mode == MeshLoader::ScaleMode::Auto) {
+            const auto unit =
+                diagonal > kMillimetreThreshold ? MeshLoader::LengthUnit::Millimeter : MeshLoader::LengthUnit::Meter;
+            return static_cast<double>(options_.auto_scale_output_unit) / static_cast<double>(unit);
         }
-        if (options.scale_mode == MeshLoader::ScaleMode::Custom) {
-            return options.custom_scale_factor;
+        if (options_.scale_mode == MeshLoader::ScaleMode::Custom) {
+            return options_.custom_scale_factor;
         }
         return 1.0;
     }
@@ -266,7 +288,8 @@ class MeshBuilderBase
     static vn::Colorf toVnColor(const aiColor4D& color) { return vn::Colorf(color.r, color.g, color.b, color.a); }
 
   private:
-    const aiScene* scene_{ nullptr }; ///< The parsed scene; borrowed for the builder's whole life.
+    const MeshLoader::Options& options_; ///< The load options the scale rule reads.
+    const aiScene&              scene_;  ///< The parsed scene; borrowed for the builder's whole life.
 };
 
 /**
@@ -285,8 +308,7 @@ class MergedMeshBuilder final : private MeshBuilderBase
      * @param scene The parsed scene.
      */
     MergedMeshBuilder(const MeshLoader::Options& options, const aiScene& scene)
-      : MeshBuilderBase(scene)
-      , options_(options)
+      : MeshBuilderBase(options, scene)
     {
         sink_.pad_missing_colors = true; // a merged entry has to fill in the meshes that author no colour
     }
@@ -298,7 +320,7 @@ class MergedMeshBuilder final : private MeshBuilderBase
      */
     vn::intrusive_ptr<Mesh> build()
     {
-        appendNode(*scene().mRootNode);
+        appendSceneGeometry(*scene().mRootNode);
 
         auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
         mesh->setPositions(std::move(sink_.positions));
@@ -318,11 +340,11 @@ class MergedMeshBuilder final : private MeshBuilderBase
 
   private:
     /**
-     * @brief Appends every mesh of @p node, and of its children, to the sink.
+     * @brief Appends the geometry of @p node and of its children, in scene order.
      *
      * @param node The node to walk; the transforms are already baked, so no matrix is threaded through.
      */
-    void appendNode(const aiNode& node)
+    void appendSceneGeometry(const aiNode& node)
     {
         for (unsigned int i = 0; i < node.mNumMeshes; ++i) {
             const unsigned int index = node.mMeshes[i];
@@ -331,7 +353,7 @@ class MergedMeshBuilder final : private MeshBuilderBase
             }
         }
         for (unsigned int i = 0; i < node.mNumChildren; ++i) {
-            appendNode(*node.mChildren[i]);
+            appendSceneGeometry(*node.mChildren[i]);
         }
     }
 
@@ -342,8 +364,7 @@ class MergedMeshBuilder final : private MeshBuilderBase
      */
     void applyScale(IndexedTriangleMesh& mesh) const;
 
-    const MeshLoader::Options& options_; ///< The load options the scale rule reads.
-    MeshSink                   sink_;    ///< The arrays being merged.
+    MeshSink sink_; ///< The arrays being merged.
 };
 
 void MergedMeshBuilder::applyScale(IndexedTriangleMesh& mesh) const
@@ -365,7 +386,7 @@ void MergedMeshBuilder::applyScale(IndexedTriangleMesh& mesh) const
         max.z = std::max(max.z, v.z);
     }
 
-    const double scale_factor = MeshBuilderBase::scaleFactorOf(options_, (max - min).length());
+    const double scale_factor = unitScaleFor((max - min).length());
     if (scale_factor != 1.0) {
         Vec3fArray scaled;
         scaled.reserve(positions.size());
@@ -395,8 +416,7 @@ class ModelBuilder final : private MeshBuilderBase
      * @param scene The parsed scene.
      */
     ModelBuilder(const MeshLoader::Options& options, const aiScene& scene)
-      : MeshBuilderBase(scene)
-      , options_(options)
+      : MeshBuilderBase(options, scene)
     {
     }
 
@@ -456,12 +476,11 @@ class ModelBuilder final : private MeshBuilderBase
     /// Folds the load options' scale into @p root's transform, once for the whole model.
     void applyScale(std::uint32_t root);
 
-    const MeshLoader::Options& options_; ///< The load options the scale rule reads.
-    std::vector<Model::Entry>   meshes_; ///< One entry per assimp mesh, in scene order.
-    std::vector<Model::Node>    nodes_;  ///< The nodes built so far, children before parents.
-    vn::math::Vec3f             min_{};  ///< Lower corner of the model box.
-    vn::math::Vec3f             max_{};  ///< Upper corner of the model box.
-    bool                        has_bounds_{ false }; ///< true once a vertex has been measured.
+    std::vector<Model::Entry> meshes_; ///< One entry per assimp mesh, in scene order.
+    std::vector<Model::Node>  nodes_;  ///< The nodes built so far, children before parents.
+    vn::math::Vec3f           min_{};  ///< Lower corner of the model box.
+    vn::math::Vec3f           max_{};  ///< Upper corner of the model box.
+    bool                      has_bounds_{ false }; ///< true once a vertex has been measured.
 };
 
 vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
@@ -611,7 +630,7 @@ void ModelBuilder::applyScale(std::uint32_t root)
         return;
     }
 
-    const double factor = MeshBuilderBase::scaleFactorOf(options_, (max_ - min_).length());
+    const double factor = unitScaleFor((max_ - min_).length());
     if (factor == 1.0) {
         return;
     }
@@ -703,27 +722,20 @@ void MeshLoader::clearCache()
 
 vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file_path, vn::io::IoError* error)
 {
-    const auto failed = [error](vn::io::IoError reason) {
-        if (error != nullptr) {
-            *error = reason;
-        }
-        return vn::intrusive_ptr<Mesh>{};
-    };
-
     if (error != nullptr) {
         *error = vn::io::IoError::Ok;
     }
 
     std::error_code ec;
     if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
-        return failed(vn::io::IoError::NotFound);
+        return failed<Mesh>(error, vn::io::IoError::NotFound);
     }
 
     vn::crypto::ByteSequenceFingerprint fingerprint;
     try {
         fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
     } catch (const std::exception&) {
-        return failed(vn::io::IoError::IoFailure); // a file this process may not read is not geometry either
+        return failed<Mesh>(error, vn::io::IoError::IoFailure); // a file this process may not read is not geometry either
     }
 
     if (auto cached = cache_.get(fingerprint); cached && cached->merged) {
@@ -733,7 +745,7 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file
     Assimp::Importer     importer;
     const aiScene* const scene = importer.ReadFile(reinterpret_cast<const char*>(file_path.u8string().data()), kLoadFlags);
     if (scene == nullptr) {
-        return failed(vn::io::IoError::InvalidData); // the bytes are not a model this build can parse
+        return failed<Mesh>(error, vn::io::IoError::InvalidData); // the bytes are not a model this build can parse
     }
 
     const auto mesh = MergedMeshBuilder(options_, *scene).build();
@@ -748,35 +760,21 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file
 vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(std::istream& in, const char* format_hint, vn::io::IoError* error)
 {
     std::vector<unsigned char> bytes;
-    const bool                 read = drainStream(in, bytes);
-    if (error != nullptr) {
-        *error = vn::io::IoError::Ok;
+    if (!drainStream(in, bytes)) {
+        return failed<Mesh>(error, vn::io::IoError::IoFailure); // a stream that broke is not content to parse
     }
-    if (!read) {
-        if (error != nullptr) {
-            *error = vn::io::IoError::IoFailure;
-        }
-        return {}; // a stream that broke is not content assimp should be asked to read
-    }
-    return loadMergedBytes(bytes, format_hint, error);
+    return loadMergedBytes(bytes, format_hint, error); // the bytes entry records Ok, or the reason it stopped
 }
 
 vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& bytes, const char* format_hint,
                                                    vn::io::IoError* error)
 {
-    const auto failed = [error](vn::io::IoError reason) {
-        if (error != nullptr) {
-            *error = reason;
-        }
-        return vn::intrusive_ptr<Mesh>{};
-    };
-
     if (error != nullptr) {
         *error = vn::io::IoError::Ok;
     }
 
     if (bytes.empty()) {
-        return failed(vn::io::IoError::InvalidData);
+        return failed<Mesh>(error, vn::io::IoError::InvalidData);
     }
     const char* const hint = format_hint != nullptr ? format_hint : "";
 
@@ -791,7 +789,7 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& 
     Assimp::Importer importer;
     const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kLoadFlags, hint);
     if (scene == nullptr) {
-        return failed(vn::io::IoError::InvalidData);
+        return failed<Mesh>(error, vn::io::IoError::InvalidData);
     }
 
     const auto mesh = MergedMeshBuilder(options_, *scene).build();
@@ -805,27 +803,20 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& 
 
 vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path, vn::io::IoError* error)
 {
-    const auto failed = [error](vn::io::IoError reason) {
-        if (error != nullptr) {
-            *error = reason;
-        }
-        return vn::intrusive_ptr<Model>{};
-    };
-
     if (error != nullptr) {
         *error = vn::io::IoError::Ok;
     }
 
     std::error_code ec;
     if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
-        return failed(vn::io::IoError::NotFound);
+        return failed<Model>(error, vn::io::IoError::NotFound);
     }
 
     vn::crypto::ByteSequenceFingerprint fingerprint;
     try {
         fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
     } catch (const std::exception&) {
-        return failed(vn::io::IoError::IoFailure);
+        return failed<Model>(error, vn::io::IoError::IoFailure);
     }
 
     if (auto cached = cache_.get(fingerprint); cached && cached->model) {
@@ -835,7 +826,7 @@ vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path
     Assimp::Importer     importer;
     const aiScene* const scene = importer.ReadFile(reinterpret_cast<const char*>(file_path.u8string().data()), kModelFlags);
     if (scene == nullptr) {
-        return failed(vn::io::IoError::InvalidData);
+        return failed<Model>(error, vn::io::IoError::InvalidData);
     }
     return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }
@@ -843,35 +834,21 @@ vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path
 vn::intrusive_ptr<Model> MeshLoader::load(std::istream& in, const char* format_hint, vn::io::IoError* error)
 {
     std::vector<unsigned char> bytes;
-    const bool                 read = drainStream(in, bytes);
-    if (error != nullptr) {
-        *error = vn::io::IoError::Ok;
+    if (!drainStream(in, bytes)) {
+        return failed<Model>(error, vn::io::IoError::IoFailure); // a stream that broke is not content to parse
     }
-    if (!read) {
-        if (error != nullptr) {
-            *error = vn::io::IoError::IoFailure;
-        }
-        return {}; // a stream that broke is not content assimp should be asked to read
-    }
-    return loadBytes(bytes, format_hint, error);
+    return loadBytes(bytes, format_hint, error); // the bytes entry records Ok, or the reason it stopped
 }
 
 vn::intrusive_ptr<Model> MeshLoader::loadBytes(std::vector<unsigned char>& bytes, const char* format_hint,
                                                vn::io::IoError* error)
 {
-    const auto failed = [error](vn::io::IoError reason) {
-        if (error != nullptr) {
-            *error = reason;
-        }
-        return vn::intrusive_ptr<Model>{};
-    };
-
     if (error != nullptr) {
         *error = vn::io::IoError::Ok;
     }
 
     if (bytes.empty()) {
-        return failed(vn::io::IoError::InvalidData);
+        return failed<Model>(error, vn::io::IoError::InvalidData);
     }
     const char* const hint = format_hint != nullptr ? format_hint : "";
 
@@ -886,7 +863,7 @@ vn::intrusive_ptr<Model> MeshLoader::loadBytes(std::vector<unsigned char>& bytes
     Assimp::Importer importer;
     const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kModelFlags, hint);
     if (scene == nullptr) {
-        return failed(vn::io::IoError::InvalidData);
+        return failed<Model>(error, vn::io::IoError::InvalidData);
     }
     return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }

@@ -50,7 +50,7 @@ using Vec3f               = vn::math::Vec3f;
  * An empty `indices` view means "non-indexed": a scene is only built for a mesh that passed `isValid()`, and a valid
  * indexed mesh always holds at least one triangle.
  */
-struct MeshData
+struct MeshView
 {
     /// Vertex positions; never empty for a valid triangle mesh.
     std::span<const Vec3f> positions;
@@ -111,12 +111,12 @@ class SceneWriterBase
      * @throws std::invalid_argument when the mesh is invalid.
      * @throws std::runtime_error when the mesh type is unsupported.
      */
-    static MeshData dataOf(const Mesh& mesh);
+    static MeshView viewOf(const Mesh& mesh);
 
     const MeshExporter::Options& options_; ///< The export options the scale factor comes from.
 };
 
-MeshData SceneWriterBase::dataOf(const Mesh& mesh)
+MeshView SceneWriterBase::viewOf(const Mesh& mesh)
 {
     if (!mesh.isValid()) {
         throw std::invalid_argument("MeshExporter: mesh is invalid");
@@ -138,7 +138,7 @@ MeshData SceneWriterBase::dataOf(const Mesh& mesh)
 
 void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
 {
-    const MeshData data = dataOf(mesh);
+    const MeshView view = viewOf(mesh);
 
     const vn::String& name = mesh.name();
     if (!name.empty()) {
@@ -146,57 +146,57 @@ void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
     }
     io_mesh.mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
 
-    if (!data.positions.empty()) {
-        io_mesh.mNumVertices = static_cast<unsigned int>(data.positions.size());
+    if (!view.positions.empty()) {
+        io_mesh.mNumVertices = static_cast<unsigned int>(view.positions.size());
         io_mesh.mVertices    = new aiVector3D[io_mesh.mNumVertices];
 
         const auto factor = static_cast<ai_real>(options_.scale_factor);
         for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-            const Vec3f& v      = data.positions[i];
+            const Vec3f& v       = view.positions[i];
             io_mesh.mVertices[i] = aiVector3D(v.x * factor, v.y * factor, v.z * factor);
         }
 
-        if (data.normals.size() == data.positions.size()) {
+        if (view.normals.size() == view.positions.size()) {
             io_mesh.mNormals = new aiVector3D[io_mesh.mNumVertices];
             for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-                const Vec3f& n     = data.normals[i];
+                const Vec3f& n      = view.normals[i];
                 io_mesh.mNormals[i] = aiVector3D(n.x, n.y, n.z);
             }
         }
 
-        if (data.texcoords.size() == data.positions.size()) {
+        if (view.texcoords.size() == view.positions.size()) {
             io_mesh.mNumUVComponents[0] = 2;
             io_mesh.mTextureCoords[0]   = new aiVector3D[io_mesh.mNumVertices];
             for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-                const vn::math::Vec2f& t     = data.texcoords[i];
+                const vn::math::Vec2f& t     = view.texcoords[i];
                 io_mesh.mTextureCoords[0][i] = aiVector3D(t.x, t.y, 0.0f);
             }
         }
 
         // The colour set a material multiplies into its base colour: four channels per vertex, written only when
         // the array covers every vertex (see the doc above).
-        if (data.colors.size() == data.positions.size()) {
+        if (view.colors.size() == view.positions.size()) {
             io_mesh.mColors[0] = new aiColor4D[io_mesh.mNumVertices];
             for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-                const vn::math::Vec4f& c  = data.colors[i];
-                io_mesh.mColors[0][i]     = aiColor4D(c.x, c.y, c.z, c.w);
+                const vn::math::Vec4f& c = view.colors[i];
+                io_mesh.mColors[0][i]    = aiColor4D(c.x, c.y, c.z, c.w);
             }
         }
     }
 
-    const std::size_t triangle_count = data.indices.empty() ? data.positions.size() / 3 : data.indices.size() / 3;
+    const std::size_t triangle_count = view.indices.empty() ? view.positions.size() / 3 : view.indices.size() / 3;
     io_mesh.mNumFaces                = static_cast<unsigned int>(triangle_count);
     io_mesh.mFaces                   = new aiFace[io_mesh.mNumFaces];
     for (unsigned int i = 0; i < io_mesh.mNumFaces; ++i) {
         io_mesh.mFaces[i].mNumIndices = 3;
-        if (!data.indices.empty()) {
-            const std::size_t base           = static_cast<std::size_t>(i) * 3;
-            io_mesh.mFaces[i].mIndices       = new unsigned int[3]{ data.indices[base],
-                                                                    data.indices[base + 1],
-                                                                    data.indices[base + 2] };
+        if (!view.indices.empty()) {
+            const std::size_t base     = static_cast<std::size_t>(i) * 3;
+            io_mesh.mFaces[i].mIndices = new unsigned int[3]{ view.indices[base],
+                                                              view.indices[base + 1],
+                                                              view.indices[base + 2] };
         } else {
-            const unsigned int base          = i * 3;
-            io_mesh.mFaces[i].mIndices       = new unsigned int[3]{ base, base + 1, base + 2 };
+            const unsigned int base    = i * 3;
+            io_mesh.mFaces[i].mIndices = new unsigned int[3]{ base, base + 1, base + 2 };
         }
     }
 }
@@ -243,7 +243,7 @@ MeshSceneWriter::MeshSceneWriter(const MeshExporter::Options& options, const Mes
 
 void MeshSceneWriter::fill(const Mesh& mesh)
 {
-    aiScene& ai_scene = *scene_;
+    aiScene& ai_scene      = *scene_;
 
     ai_scene.mMaterials    = new aiMaterial*[1]{ new aiMaterial() }; // the default a mesh without a material uses
     ai_scene.mNumMaterials = 1;
@@ -295,17 +295,17 @@ class ModelSceneWriter final : private SceneWriterBase
      *
      * @return The index of every material written, keyed by the material it came from.
      */
-    MaterialIndexMap fillMaterials();
+    MaterialIndexMap writeMaterials();
 
     /**
      * @brief Writes one mesh per entry, each pointed at the material its entry names.
      *
-     * @param material_indices The indices fillMaterials() assigned.
+     * @param material_indices The indices writeMaterials() assigned.
      */
-    void fillMeshes(const MaterialIndexMap& material_indices);
+    void writeMeshes(const MaterialIndexMap& material_indices);
 
     /// Writes the node tree, starting at the model's root.
-    void fillRoot();
+    void writeRoot();
 
     /**
      * @brief Builds one aiNode subtree from a model node.
@@ -517,12 +517,12 @@ ModelSceneWriter::ModelSceneWriter(const MeshExporter::Options& options, const M
     validate();
 
     // A mesh names its material by index, so the material array is numbered first and the meshes then look theirs up.
-    const MaterialIndexMap material_indices = fillMaterials();
-    fillMeshes(material_indices);
-    fillRoot();
+    const MaterialIndexMap material_indices = writeMaterials();
+    writeMeshes(material_indices);
+    writeRoot();
 }
 
-ModelSceneWriter::MaterialIndexMap ModelSceneWriter::fillMaterials()
+ModelSceneWriter::MaterialIndexMap ModelSceneWriter::writeMaterials()
 {
     const std::vector<Model::Entry>& entries = model_.meshes();
 
@@ -549,7 +549,7 @@ ModelSceneWriter::MaterialIndexMap ModelSceneWriter::fillMaterials()
     return indices;
 }
 
-void ModelSceneWriter::fillMeshes(const MaterialIndexMap& material_indices)
+void ModelSceneWriter::writeMeshes(const MaterialIndexMap& material_indices)
 {
     const std::vector<Model::Entry>& entries = model_.meshes();
     if (entries.empty()) {
@@ -569,7 +569,7 @@ void ModelSceneWriter::fillMeshes(const MaterialIndexMap& material_indices)
     }
 }
 
-void ModelSceneWriter::fillRoot()
+void ModelSceneWriter::writeRoot()
 {
     scene_->mRootNode = buildNode(model_.root());
 }
