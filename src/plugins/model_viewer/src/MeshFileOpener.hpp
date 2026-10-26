@@ -113,8 +113,8 @@ inline void ensureSmoothNormals(vn::geometry::Model& model)
  * 这里是**打开器**：怎么读由它决定（见 appfw-document-model.md §5.1），谁造载荷谁只需要说清位置。它和内存载荷的
  * 打开器是同一形状，区别只有一处 —— 这个真的去调格式加载器。
  *
- * 用**本地的**加载器实例，而不是 `MeshLoader::defaultInstance()`：单例的 options 是共享可变状态，为了查看器的
- * 尺度去改它会波及机器人那条管线；本地实例顺带让两次并发打开不抢同一个加载器（`MeshLoader` 的方法不线程安全）。
+ * 用**本地的**加载器实例，而不是 `MeshLoader::defaultInstance()`：选项在构造时给出，不共享可变状态，为了查看器的
+ * 尺度去改单例会波及机器人那条管线；本地实例顺带让两次并发打开不抢同一个加载器（`MeshLoader` 的方法不线程安全）。
  *
  * @param payload 载荷：要读的文件路径。
  * @return 新文档（调用方拥有）；读不出来、或读出来不是三角网格时是空指针。
@@ -125,8 +125,7 @@ inline vn::appfw::Document* openMeshFilePayload(const MeshFilePayload& payload)
         return nullptr;
     }
 
-    vn::meshio::MeshLoader loader;
-    loader.setOptions(viewerLoadOptions());
+    vn::meshio::MeshLoader loader(viewerLoadOptions());
 
     // 结构要留下来（节点变换、多部件、每部件材质）：`load` 而不是摊平的 `loadMerged`。
     auto model = loader.load(payload.file_path);

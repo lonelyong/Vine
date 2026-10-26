@@ -393,12 +393,10 @@ const vn::Colorf& baseColorOf(const vn::geometry::Material& material)
     }
 }
 
-/// Configures @p loader to apply no scale, so positions can be compared with the source.
-void useNoScale(MeshLoader& loader)
+/// The options every test here wants: no scaling, so positions can be compared with the source.
+MeshLoader::Options noScaling()
 {
-    MeshLoader::Options options;
-    options.scale_mode = MeshLoader::ScaleMode::Disabled;
-    loader.setOptions(options);
+    return MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
 }
 
 } // namespace
@@ -411,15 +409,12 @@ TEST(MeshFidelityTest, EveryVertexAttributeSurvivesARoundTrip)
 
     const std::filesystem::path path = dir.path() / "rich.ply";
 
-    MeshExporter exporter;
-    exporter.options().scale_factor = 1.0;
-    exporter.options().format       = MeshExporter::Options::Format::Binary;
+    MeshExporter exporter(MeshExporter::Options{ .format = MeshExporter::Options::Format::Binary });
     ASSERT_NO_THROW(exporter.exportAs(*cube, u8"ply", path));
 
     // PLY is the family that can spell every attribute the mesh holds, so it is the one the claim is made against.
     // The MODEL entry is what reads them back: the merged entry says it records no texture coordinates.
-    MeshLoader loader;
-    useNoScale(loader);
+    MeshLoader loader(noScaling());
     const auto model = loader.load(path);
     ASSERT_TRUE(model);
     ASSERT_EQ(model->meshes().size(), 1u);
@@ -442,12 +437,10 @@ TEST(MeshFidelityTest, TheMergedEntryKeepsEveryAttributeItRecords)
     stripTexcoords(expected);
 
     const std::filesystem::path path = dir.path() / "merged.ply";
-    MeshExporter                exporter;
-    exporter.options().format = MeshExporter::Options::Format::Binary;
+    MeshExporter                exporter(MeshExporter::Options{ .format = MeshExporter::Options::Format::Binary });
     ASSERT_NO_THROW(exporter.exportAs(*cube, u8"ply", path));
 
-    MeshLoader loader;
-    useNoScale(loader);
+    MeshLoader loader(noScaling());
     const auto merged = loader.loadMerged(path);
     ASSERT_TRUE(merged);
 
@@ -467,12 +460,10 @@ TEST(MeshFidelityTest, ANonIndexedMeshSurvivesTheSameTrip)
     const auto    expected = trianglesOf(*soup);
 
     const std::filesystem::path path = dir.path() / "soup.ply";
-    MeshExporter                exporter;
-    exporter.options().format = MeshExporter::Options::Format::Binary;
+    MeshExporter                exporter(MeshExporter::Options{ .format = MeshExporter::Options::Format::Binary });
     ASSERT_NO_THROW(exporter.exportAs(*soup, u8"ply", path));
 
-    MeshLoader loader;
-    useNoScale(loader);
+    MeshLoader loader(noScaling());
     const auto model = loader.load(path);
     ASSERT_TRUE(model);
     ASSERT_EQ(model->meshes().size(), 1u);
@@ -533,8 +524,7 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
     MeshExporter                exporter;
     ASSERT_NO_THROW(exporter.exportAs(*model, u8"collada", path));
 
-    MeshLoader loader;
-    useNoScale(loader);
+    MeshLoader loader(noScaling());
     const auto reloaded = loader.load(path);
     ASSERT_TRUE(reloaded);
 
@@ -590,8 +580,7 @@ TEST(MeshFidelityTest, AFileWithoutNormalsArrivesWithDerivedOnes)
     const TempDir dir;
     writeFile(dir.path() / "plain.obj", kPlainObj);
 
-    MeshLoader loader;
-    useNoScale(loader);
+    MeshLoader loader(noScaling());
 
     // Both entries state a normal per vertex: a mesh the file describes without normals is not handed out without them,
     // because an absent normal means "derive it from the geometry" to the renderer, not "draw it flat".
@@ -626,13 +615,11 @@ TEST(MeshFidelityTest, TheExportScaleFactorReachesEveryVertex)
     }
 
     const std::filesystem::path path = dir.path() / "scaled.ply";
-    MeshExporter                exporter;
-    exporter.options().format       = MeshExporter::Options::Format::Binary;
-    exporter.options().scale_factor = 3.0;
+    MeshExporter                exporter(MeshExporter::Options{ .scale_factor = 3.0,
+                                                                 .format = MeshExporter::Options::Format::Binary });
     ASSERT_NO_THROW(exporter.exportAs(*cube, u8"ply", path));
 
-    MeshLoader loader;
-    useNoScale(loader);
+    MeshLoader loader(noScaling());
     const auto merged = loader.loadMerged(path);
     ASSERT_TRUE(merged);
 
@@ -652,11 +639,8 @@ TEST(MeshFidelityTest, TheLoadScaleRuleIsTheSameForBothEntries)
     const TempDir dir;
     writeFile(dir.path() / "plain.obj", kPlainObj);
 
-    MeshLoader          loader;
-    MeshLoader::Options options;
-    options.scale_mode         = MeshLoader::ScaleMode::Custom;
-    options.custom_scale_factor = 2.5;
-    loader.setOptions(options);
+    MeshLoader loader(MeshLoader::Options{ .scale_mode          = MeshLoader::ScaleMode::Custom,
+                                           .custom_scale_factor = 2.5 });
 
     // The merged entry bakes the factor into the vertices...
     const auto merged = loader.loadMerged(dir.path() / "plain.obj");

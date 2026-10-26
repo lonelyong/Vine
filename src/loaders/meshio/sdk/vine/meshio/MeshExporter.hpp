@@ -50,7 +50,17 @@ class VN_MESHIO_API MeshExporter
 
     // 构造函数区块
   public:
-    MeshExporter();
+    /**
+     * @brief Creates an exporter with @p options.
+     *
+     * @details
+     * - The options belong to THIS exporter, so two callers that need different scale factors or encodings each keep
+     *   their own instead of taking turns on one. defaultInstance() is the convenience instance for a caller that
+     *   wants the defaults and does not mind sharing.
+     *
+     * @param options The export options; the default states scale 1.0 and binary output.
+     */
+    explicit MeshExporter(Options options = {});
     MeshExporter(const MeshExporter&) = delete;
     MeshExporter(MeshExporter&&) = delete;
     ~MeshExporter();
@@ -67,16 +77,9 @@ class VN_MESHIO_API MeshExporter
     /**
      * @brief Returns the export options.
      *
-     * @return Mutable reference to the options.
+     * @return The options this exporter was constructed with.
      */
-    Options& options() noexcept;
-
-    /**
-     * @brief Sets the export options.
-     *
-     * @param options The new options.
-     */
-    void setOptions(const Options& options);
+    [[nodiscard]] const Options& options() const noexcept;
 
     /**
      * @brief Exports a mesh as the named format, side files included.

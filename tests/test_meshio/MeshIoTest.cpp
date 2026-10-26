@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -13,6 +14,7 @@
 #include <vine/geometry/ColorMaterial.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/Model.hpp>
+#include <vine/io/IoError.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/math/Vector4.hpp>
 #include <vine/meshio/MeshExporter.hpp>
@@ -99,10 +101,58 @@ TEST(MeshIoTest, IsSupportedFormat)
     EXPECT_FALSE(MeshLoader::isSupportedFormat("model"));
 }
 
+TEST(MeshIoTest, TheExtensionTableNamesWhatTheLoaderActuallyReads)
+{
+    // The table is what a file picker filters on, so an extension missing from it is a file the USER cannot pick even
+    // though the loader reads it - which is exactly what happened while the table was written by hand: .ply, the format
+    // the exporter beside this loader writes, was absent from it.
+    const auto   path = std::filesystem::temp_directory_path() / "vn_meshio_supported.ply";
+    MeshExporter exporter;
+    ASSERT_NO_THROW(exporter.exportAs(*makeCube(), u8"ply", path));
+
+    EXPECT_TRUE(MeshLoader::isSupportedFormat(path)) << "a format this module writes is a format it reads";
+
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
+    EXPECT_TRUE(loader.loadMerged(path)) << "the table admits a format the loader can open";
+
+    std::filesystem::remove(path);
+}
+
 TEST(MeshIoTest, LoadMissingFileReturnsNull)
 {
-    MeshLoader loader;
-    EXPECT_FALSE(loader.loadMerged(std::filesystem::temp_directory_path() / "vn_no_such_file.stl"));
+    MeshLoader      loader;
+    vn::io::IoError error   = vn::io::IoError::Ok;
+    const auto      missing = loader.loadMerged(std::filesystem::temp_directory_path() / "vn_no_such_file.stl", &error);
+    EXPECT_FALSE(missing);
+    EXPECT_EQ(error, vn::io::IoError::NotFound) << "a path that is not there is not the same failure as a broken file";
+}
+
+TEST(MeshIoTest, LoadSaysWhyItFailed)
+{
+    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_garbage.stl";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out << "this is not a mesh";
+    }
+
+    MeshLoader      loader;
+    vn::io::IoError error = vn::io::IoError::Ok;
+    EXPECT_FALSE(loader.loadMerged(path, &error));
+    EXPECT_EQ(error, vn::io::IoError::InvalidData) << "a file that is not geometry is its own failure";
+
+    // The other entry answers the same way, and a call that succeeds reports Ok.
+    std::istringstream garbage("nope");
+    EXPECT_FALSE(loader.load(garbage, "stl", &error));
+    EXPECT_EQ(error, vn::io::IoError::InvalidData);
+
+    MeshExporter exporter;
+    const auto   good = std::filesystem::temp_directory_path() / "vn_meshio_good.stl";
+    writeTriangleStl(good);
+    EXPECT_TRUE(loader.loadMerged(good, &error));
+    EXPECT_EQ(error, vn::io::IoError::Ok);
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(good);
 }
 
 TEST(MeshIoTest, LoadAndExportObjRoundTrip)
@@ -114,13 +164,11 @@ TEST(MeshIoTest, LoadAndExportObjRoundTrip)
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_cube.obj";
 
     MeshExporter exporter;
-    exporter.options().scale_factor = 1.0;
     ASSERT_NO_THROW(exporter.exportAs(*cube, u8"obj", path));
     EXPECT_TRUE(std::filesystem::exists(path));
     EXPECT_GT(std::filesystem::file_size(path), 0u);
 
-    MeshLoader loader;
-    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
     const auto loaded = loader.loadMerged(path);
     ASSERT_TRUE(loaded);
     EXPECT_EQ(loaded->shapeType(), ShapeType::IndexedTriangleMesh);
@@ -143,11 +191,9 @@ TEST(MeshIoTest, VertexColorsSurviveAPlyRoundTrip)
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_colors.ply";
 
     MeshExporter exporter;
-    exporter.options().scale_factor = 1.0;
     ASSERT_NO_THROW(exporter.exportAs(*cube, u8"ply", path));
 
-    MeshLoader loader;
-    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
 
     // The merged entry keeps the colours because every source mesh authored them. The importer may split and
     // reorder vertices (a generated facet normal cannot be shared around a corner), so the invariants are
@@ -202,8 +248,7 @@ TEST(MeshIoTest, MergedEntryPadsMeshesThatAuthorNoColourWithWhite)
     model->setRoot(0u);
 
     MeshExporter exporter;
-    MeshLoader   loader;
-    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
+    MeshLoader   loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
 
     const auto load_merged = [&](const char* name) {
         const auto path = std::filesystem::temp_directory_path() / name;
@@ -246,9 +291,7 @@ TEST(MeshIoTest, ExportAsciiStl)
     const auto cube = makeCube();
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_cube.stl";
 
-    MeshExporter exporter;
-    exporter.options().scale_factor = 1.0;
-    exporter.options().format       = MeshExporter::Options::Format::Ascii;
+    MeshExporter exporter(MeshExporter::Options{ .format = MeshExporter::Options::Format::Ascii });
     ASSERT_NO_THROW(exporter.exportAs(*cube, u8"stl", path));
     EXPECT_TRUE(std::filesystem::exists(path));
     EXPECT_GT(std::filesystem::file_size(path), 0u);
@@ -268,30 +311,33 @@ TEST(MeshIoTest, LoadCachesSameFile)
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_cache.stl";
     writeTriangleStl(path);
 
-    MeshLoader loader;
-    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
     const auto first  = loader.loadMerged(path);
     const auto second = loader.loadMerged(path);
     ASSERT_TRUE(first);
     ASSERT_TRUE(second);
-    EXPECT_EQ(first.get(), second.get());
+    EXPECT_EQ(first.get(), second.get()) << "the same file is parsed once";
+
+    // Clearing releases what the loader kept; the next load builds its own result.
+    loader.clearCache();
+    const auto third = loader.loadMerged(path);
+    ASSERT_TRUE(third);
+    EXPECT_NE(first.get(), third.get()) << "a cleared cache hands out a freshly built mesh";
 
     std::filesystem::remove(path);
 }
 
-TEST(MeshIoTest, LoadDifferentOptionsNotCached)
+TEST(MeshIoTest, DifferentOptionsBuildDifferentGeometry)
 {
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_opts.stl";
     writeTriangleStl(path);
 
-    MeshLoader loader;
-    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
-    const auto first = loader.loadMerged(path);
+    // Options belong to the loader that holds them, so two policies are two loaders - each with its own cache.
+    MeshLoader plain(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
+    MeshLoader scaled(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Custom, .custom_scale_factor = 2.0 });
 
-    loader.options().scale_mode         = MeshLoader::ScaleMode::Custom;
-    loader.options().custom_scale_factor = 2.0;
-    const auto second = loader.loadMerged(path);
-
+    const auto first  = plain.loadMerged(path);
+    const auto second = scaled.loadMerged(path);
     ASSERT_TRUE(first);
     ASSERT_TRUE(second);
     EXPECT_NE(first.get(), second.get());
@@ -304,9 +350,8 @@ TEST(MeshIoTest, CustomScaleMultipliesVertices)
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_scale.stl";
     writeTriangleStl(path);
 
-    MeshLoader loader;
-    loader.options().scale_mode         = MeshLoader::ScaleMode::Custom;
-    loader.options().custom_scale_factor = 3.0;
+    MeshLoader loader(
+        MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Custom, .custom_scale_factor = 3.0 });
     const auto mesh = loader.loadMerged(path);
     ASSERT_TRUE(mesh);
 
@@ -331,13 +376,11 @@ TEST(MeshIoTest, ExportAsWritesTheNamedFormat)
     const auto cube = makeCube();
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_export_as.stl";
 
-    MeshExporter exporter;
-    exporter.options().format = MeshExporter::Options::Format::Ascii;
+    MeshExporter exporter(MeshExporter::Options{ .format = MeshExporter::Options::Format::Ascii });
     ASSERT_NO_THROW(exporter.exportAs(*cube, u8"stl", path)) << "the family name picks the text variant from the options";
     ASSERT_TRUE(std::filesystem::exists(path));
 
-    MeshLoader loader;
-    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
     const auto loaded = loader.loadMerged(path);
     ASSERT_TRUE(loaded);
     EXPECT_EQ(vn::obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), cube->triangleCount());

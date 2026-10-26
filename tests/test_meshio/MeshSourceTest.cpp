@@ -519,8 +519,7 @@ TEST(ObjSourceTest, LoadsItsColoursBackThroughMeshLoader)
     ObjSource source(makeColouredQuad());
     std::istringstream in{ textOf(drain(source)) };
 
-    MeshLoader loader;
-    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
     const auto loaded = loader.loadMerged(in, "obj");
     ASSERT_NE(loaded, nullptr);
     ASSERT_FALSE(loaded->colors().empty()) << "assimp reads the extended vertex line";

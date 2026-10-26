@@ -916,8 +916,6 @@ src/fw/appfw/sdk/vine/appfw/gui/Window.hpp	return|Window::windowTitle
 src/loaders/brepio/sdk/vine/brepio/BrepExporter.hpp	brief|BrepExporter::BrepExporter
 src/loaders/brepio/sdk/vine/brepio/BrepLoader.hpp	brief|BrepLoader::BrepLoader
 src/loaders/imageio/sdk/vine/imageio/ImageCodec.hpp	return|saveImage
-src/loaders/meshio/sdk/vine/meshio/MeshExporter.hpp	brief|MeshExporter::MeshExporter
-src/loaders/meshio/sdk/vine/meshio/MeshLoader.hpp	brief|MeshLoader::MeshLoader
 src/robotics/core/sdk/vine/robotics/kinematics/DHTransformConverter.hpp	brief|isMdhRepresentable
 src/robotics/core/sdk/vine/robotics/kinematics/DHTransformConverter.hpp	brief|isSdhRepresentable
 src/robotics/core/sdk/vine/robotics/kinematics/DHTransformConverter.hpp	brief|mdhToTransform

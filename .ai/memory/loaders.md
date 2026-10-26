@@ -143,7 +143,9 @@ loaders 在其上）；且 meshio 早就吃 iobase 产的 `zlibstatic`，构建�
   别把"有 BrepLoader" 误读成"能读 STEP"。
 - `brepio` 的加载后端（OCCT）将来以 `PRIVATE` 链进 `brepio` 即可，**mesh-only 消费者不受影响**。
   这正是拆模块要换来的东西。
-- `MeshLoader` 有**两条入口两套缓存**（键都是 (指纹, Options)）：`loadMerged()` → 烘平合并的单 mesh；`load()` → 保留结构的 `geometry::Model`（命名对齐 VMR，旧 `loadModel()` 已改名）。改 `Options` 时 `operator==` 与 `OptionsHash` 必须同时改。
+- `MeshLoader` 有**两条入口**：`loadMerged()` → 烘平合并的单 mesh；`load()` → 保留结构的 `geometry::Model`（命名对齐 VMR，旧 `loadModel()` 已改名）。缓存按**内容指纹**记一条 `Cached{merged, model}`——2026-10-26 起不再按 Options 分组，因为 Options 改成**构造时给**：一个 loader 一套策略，两套策略就两个 loader（`OptionsHash` 随之删除）。
+- **失败要说原因**（2026-10-26）：四个入口都带尾参 `vn::io::IoError* error = nullptr`，成功写 `Ok`，失败写 `NotFound` / `IoFailure` / `InvalidData`。别只看返回 null —— 指纹构造函数会抛（权限、被占用），入口已接住并折成 `IoFailure`；而以前这条路径会把异常冒给调用方。`clearCache()` 释放缓存里的几何。
+- **`supportedExtensions()` 现在问 assimp**（`Importer::GetExtensionList`，返回 `*.obj;*.stl` 形式，逐 token 去掉 `*.`）：手写表曾漏掉 `.ply`/`.glb`，而 `loadMerged` 其实读得了 —— 选择器会因此隐藏能打开的文件。`MeshIoTest.TheExtensionTableNamesWhatTheLoaderActuallyReads` 钉住“表 ⟺ 真能读”。
 - **导出入口（对齐 VMR）**：`MeshExporter::exportAs(mesh|model, format, path|stream)` 是通用入口（**无**类型化 `exportAsStl`/`exportAsObj`：二者只吃 mesh、与 model 入口不对称，已删除；OBJ 流式写 `objnomtl`）。`format` 是**写入器格式名**（`obj`、`objnomtl`、`collada`、`gltf2`、`stlb`/`stl`、`plyb`/`ply`、`fbx`/`fbxa`），**不是文件扩展名** —— 写 .dae 要传 `collada`，传 `dae` 会被拒绝并列出可用格式。`createSource(mesh|model, format)` 在首次 `size()`/`read()` 时才用同一写入器产出字节（写入器只能写内存镜像 ⇒ 整份文件在内存里），`rewind()` 回放同一份；STL/OBJ 的逐记录流式源仍是 `BinStlSource`/`AsciiStlSource`/`ObjSource`。
 - **`MeshLoader::supportedExtensions()` 是静态成员（2026-10-10）**：以前它是 `MeshLoader.cpp` 里匿名命名空间的自由函数，
   只有 DLL 内部看得见；现在公开，因为**选择器要拿它做过滤器**（`model_viewer` 的 `open_mesh_file` 就是这么用的）——

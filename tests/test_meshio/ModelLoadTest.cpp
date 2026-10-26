@@ -151,10 +151,8 @@ TEST(ModelLoadTest, KeepsEveryPartAndItsMaterial)
     writeFile(obj_path, kTwoObjectObj);
     writeFile(dir.path() / "parts.mtl", kTwoMaterialMtl);
 
-    MeshLoader::Options options;
-    options.scale_mode = MeshLoader::ScaleMode::Disabled; // the assertion below is about structure, not units
-    MeshLoader loader;
-    loader.setOptions(options);
+    // The assertion below is about structure, not units.
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
 
     auto model = loader.load(obj_path);
     ASSERT_TRUE(model);
@@ -203,10 +201,7 @@ TEST(ModelLoadTest, ReadsPartsFromAStreamButNotTheMaterialLibrary)
     // could supply do not.
     std::istringstream in{ kTwoObjectObj };
 
-    MeshLoader::Options options;
-    options.scale_mode = MeshLoader::ScaleMode::Disabled;
-    MeshLoader loader;
-    loader.setOptions(options);
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
 
     auto model = loader.load(in, "obj");
     ASSERT_TRUE(model);
@@ -227,9 +222,8 @@ TEST(ModelLoadTest, ReadsPartsFromAStreamButNotTheMaterialLibrary)
     writeFile(dir.path() / "parts.obj", kTwoObjectObj);
     writeFile(dir.path() / "parts.mtl", kTwoMaterialMtl);
 
-    MeshLoader by_path;
-    by_path.setOptions(options);
-    auto with_library = by_path.load(dir.path() / "parts.obj");
+    MeshLoader by_path(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
+    auto       with_library = by_path.load(dir.path() / "parts.obj");
     ASSERT_TRUE(with_library);
     ASSERT_TRUE(with_library->meshes()[0].material);
     const auto& from_library = obj_cast<vn::geometry::PhongMaterial>(*with_library->meshes()[0].material);
@@ -242,10 +236,7 @@ TEST(ModelLoadTest, KeepsTheTransformOfANodeInsteadOfBakingIt)
 {
     std::istringstream in{ kShiftedCollada };
 
-    MeshLoader::Options options;
-    options.scale_mode = MeshLoader::ScaleMode::Disabled;
-    MeshLoader loader;
-    loader.setOptions(options);
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
 
     auto model = loader.load(in, "dae");
     ASSERT_TRUE(model);
@@ -278,12 +269,9 @@ TEST(ModelLoadTest, ExportsTheModelAndKeepsItsPartsAndMaterials)
     writeFile(dir.path() / "parts.obj", kTwoObjectObj);
     writeFile(dir.path() / "parts.mtl", kTwoMaterialMtl);
 
-    MeshLoader::Options options;
-    options.scale_mode = MeshLoader::ScaleMode::Disabled;
-
-    MeshLoader loader;
-    loader.setOptions(options);
-    const auto model = loader.load(dir.path() / "parts.obj");
+    const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
+    MeshLoader  loader(options);
+    const auto  model = loader.load(dir.path() / "parts.obj");
     ASSERT_TRUE(model);
 
     const auto   exported = dir.path() / "roundtrip.obj";
@@ -291,8 +279,7 @@ TEST(ModelLoadTest, ExportsTheModelAndKeepsItsPartsAndMaterials)
     ASSERT_NO_THROW(exporter.exportAs(*model, u8"obj", exported));
     ASSERT_TRUE(std::filesystem::exists(exported));
 
-    MeshLoader reader;
-    reader.setOptions(options);
+    MeshLoader reader(options);
     const auto reloaded = reader.load(exported);
     ASSERT_TRUE(reloaded);
     ASSERT_EQ(reloaded->meshes().size(), 2u);
@@ -309,12 +296,9 @@ TEST(ModelLoadTest, ExportsNodeTransformsInsteadOfBakingThem)
 {
     std::istringstream in{ kShiftedCollada };
 
-    MeshLoader::Options options;
-    options.scale_mode = MeshLoader::ScaleMode::Disabled;
-
-    MeshLoader loader;
-    loader.setOptions(options);
-    const auto model = loader.load(in, "dae");
+    const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
+    MeshLoader  loader(options);
+    const auto  model = loader.load(in, "dae");
     ASSERT_TRUE(model);
 
     const TempDir dir;
@@ -323,8 +307,7 @@ TEST(ModelLoadTest, ExportsNodeTransformsInsteadOfBakingThem)
     MeshExporter exporter;
     ASSERT_NO_THROW(exporter.exportAs(*model, u8"collada", exported)); // the writer's name: collada writes the .dae file
 
-    MeshLoader reader;
-    reader.setOptions(options);
+    MeshLoader reader(options);
     const auto reloaded = reader.load(exported);
     ASSERT_TRUE(reloaded);
 
@@ -344,12 +327,9 @@ TEST(ModelLoadTest, ACreateSourceExportsTheModelWhenPulled)
 {
     std::istringstream in{ kShiftedCollada };
 
-    MeshLoader::Options options;
-    options.scale_mode = MeshLoader::ScaleMode::Disabled;
-
-    MeshLoader loader;
-    loader.setOptions(options);
-    const auto model = loader.load(in, "dae");
+    const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
+    MeshLoader  loader(options);
+    const auto  model = loader.load(in, "dae");
     ASSERT_TRUE(model);
 
     MeshExporter exporter;
@@ -372,8 +352,7 @@ TEST(ModelLoadTest, ACreateSourceExportsTheModelWhenPulled)
     ASSERT_EQ(offset, bytes.size());
 
     std::istringstream again(bytes, std::ios::binary);
-    MeshLoader         reader;
-    reader.setOptions(options);
+    MeshLoader         reader(options);
     const auto reloaded = reader.load(again, "dae");
     ASSERT_TRUE(reloaded);
     ASSERT_EQ(reloaded->meshes().size(), 1u);

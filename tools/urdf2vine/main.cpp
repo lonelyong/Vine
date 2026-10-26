@@ -293,9 +293,10 @@ int main(int argc, char** argv)
     // scaling infers the source unit from the AABB diagonal and converts to
     // mm, so both meter-based and mm-based URDF mesh packages convert
     // correctly (URDF joint origins are meters and scaled separately).
-    vn::meshio::MeshLoader mesh_loader;
-    mesh_loader.options().scale_mode            = vn::meshio::MeshLoader::ScaleMode::Auto;
-    mesh_loader.options().auto_scale_output_unit = vn::meshio::MeshLoader::LengthUnit::Millimeter;
+    vn::meshio::MeshLoader mesh_loader(vn::meshio::MeshLoader::Options{
+        .scale_mode             = vn::meshio::MeshLoader::ScaleMode::Auto,
+        .auto_scale_output_unit = vn::meshio::MeshLoader::LengthUnit::Millimeter,
+    });
 
     // Named materials are collected per device and referenced by name.
     std::map<String, vn::intrusive_ptr<vn::geometry::Material>> material_lib;

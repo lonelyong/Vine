@@ -20,6 +20,7 @@
 #include <vine/geometry/PbrMaterial.hpp>
 #include <vine/geometry/PhongMaterial.hpp>
 #include <vine/math/Matrix4x4.hpp>
+#include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
 
 VN_MESHIO_NS_BEGIN
@@ -311,7 +312,6 @@ class MergedMeshBuilder final : private MeshBuilderBase
         if (sink_.every_mesh_has_normals) {
             mesh->setNormals(std::move(sink_.normals));
         }
-        mesh->setTexcoords({}); // the merged form keeps none (see MeshSink)
         applyScale(*mesh);
         return mesh;
     }
@@ -456,9 +456,6 @@ class ModelBuilder final : private MeshBuilderBase
     /// Folds the load options' scale into @p root's transform, once for the whole model.
     void applyScale(std::uint32_t root);
 
-    /// Builds the matrix that scales every axis by one factor.
-    static vn::math::Mat4d uniformScale(double factor);
-
     const MeshLoader::Options& options_; ///< The load options the scale rule reads.
     std::vector<Model::Entry>   meshes_; ///< One entry per assimp mesh, in scene order.
     std::vector<Model::Node>    nodes_;  ///< The nodes built so far, children before parents.
@@ -466,11 +463,6 @@ class ModelBuilder final : private MeshBuilderBase
     vn::math::Vec3f             max_{};  ///< Upper corner of the model box.
     bool                        has_bounds_{ false }; ///< true once a vertex has been measured.
 };
-
-vn::math::Mat4d ModelBuilder::uniformScale(double factor)
-{
-    return vn::math::Mat4d(factor, 0.0, 0.0, 0.0, 0.0, factor, 0.0, 0.0, 0.0, 0.0, factor, 0.0, 0.0, 0.0, 0.0, 1.0);
-}
 
 vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
 {
@@ -517,10 +509,11 @@ vn::intrusive_ptr<Mesh> ModelBuilder::makeMesh(const aiMesh& source) const
     mesh->setPositions(std::move(sink.positions));
     mesh->setIndices(std::move(sink.indices));
     mesh->setTexcoords(std::move(sink.texcoords));
-    if (sink.every_mesh_has_normals) {
+    // One mesh was appended, so "this mesh authored the attribute" is what the sink holds: an empty array is absent.
+    if (!sink.normals.empty()) {
         mesh->setNormals(std::move(sink.normals));
     }
-    if (sink.any_mesh_has_colors) {
+    if (!sink.colors.empty()) {
         mesh->setColors(std::move(sink.colors));
     }
     if (source.mName.length > 0) {
@@ -554,6 +547,8 @@ void ModelBuilder::collectEntries()
 
 void ModelBuilder::growBounds(const Mesh& mesh, const vn::math::Mat4d& world)
 {
+    // Written out instead of a matrix-times-point call: the vertices are float and the transform is double, so the
+    // helper would widen every vertex into a Point3d first - a copy per vertex in the one place a model is measured.
     for (const vn::math::Vec3f& point : mesh.positions()) {
         const auto x = static_cast<float>(world.element(0, 0) * point.x + world.element(0, 1) * point.y
                                           + world.element(0, 2) * point.z + world.element(0, 3));
@@ -621,7 +616,7 @@ void ModelBuilder::applyScale(std::uint32_t root)
         return;
     }
 
-    nodes_[root].transform = uniformScale(factor) * nodes_[root].transform;
+    nodes_[root].transform = vn::math::scale(factor) * nodes_[root].transform;
 }
 
 vn::intrusive_ptr<Model> ModelBuilder::build()
@@ -645,14 +640,37 @@ vn::intrusive_ptr<Model> ModelBuilder::build()
 
 const std::set<String>& MeshLoader::supportedExtensions()
 {
-    static const std::set<String> extensions = {
-        u8".stl", u8".obj", u8".gltf", u8".3mf", u8".3ds", u8".dxf",
-        u8".ifc", u8".ac", u8".ac3d", u8".lxo", u8".fbx", u8".dae",
-    };
+    // ASKED, not listed: the importer registry inside assimp is what decides whether a file can be opened, so a table
+    // kept here was a second answer that went stale the first time a format was added - it was already missing .ply,
+    // the very format the exporter beside this file writes. What comes back is assimp's own text form ("*.obj;*.stl"),
+    // which is why each token loses its "*." before it becomes an extension here.
+    static const std::set<String> extensions = [] {
+        Assimp::Importer importer;
+        std::string      listed;
+        importer.GetExtensionList(listed);
+
+        std::set<String> parsed;
+        std::size_t      begin = 0;
+        while (begin < listed.size()) {
+            const std::size_t end   = listed.find_first_of("; ", begin);
+            const std::string token = listed.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+            begin                   = end == std::string::npos ? listed.size() : end + 1;
+
+            const std::size_t star = token.find("*.");
+            const std::string name = star == std::string::npos ? token : token.substr(star + 2);
+            if (!name.empty()) {
+                parsed.insert(String::fromUtf8("." + name).toLower());
+            }
+        }
+        return parsed;
+    }();
     return extensions;
 }
 
-MeshLoader::MeshLoader() = default;
+MeshLoader::MeshLoader(Options options)
+  : options_(std::move(options))
+{
+}
 
 MeshLoader::~MeshLoader() = default;
 
@@ -673,151 +691,202 @@ bool MeshLoader::isSupportedFormat(const std::filesystem::path& file_path)
     return supportedExtensions().contains(String(file_path.extension().u8string()).toLower());
 }
 
-MeshLoader::Options& MeshLoader::options() noexcept
+const MeshLoader::Options& MeshLoader::options() const noexcept
 {
     return options_;
 }
 
-void MeshLoader::setOptions(const Options& options)
+void MeshLoader::clearCache()
 {
-    options_ = options;
+    cache_.clear();
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file_path)
+vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file_path, vn::io::IoError* error)
 {
-    std::error_code ec;
-    if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
-        return {};
+    const auto failed = [error](vn::io::IoError reason) {
+        if (error != nullptr) {
+            *error = reason;
+        }
+        return vn::intrusive_ptr<Mesh>{};
+    };
+
+    if (error != nullptr) {
+        *error = vn::io::IoError::Ok;
     }
 
-    const vn::crypto::ByteSequenceFingerprint fingerprint(file_path);
-    if (auto cached = cache_.get(fingerprint))
-    {
-        const auto& option_map = cached->option_shape_map;
-        const auto  it         = option_map.find(options_);
-        if (it != option_map.end())
-        {
-            return it->second;
-        }
+    std::error_code ec;
+    if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
+        return failed(vn::io::IoError::NotFound);
+    }
+
+    vn::crypto::ByteSequenceFingerprint fingerprint;
+    try {
+        fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
+    } catch (const std::exception&) {
+        return failed(vn::io::IoError::IoFailure); // a file this process may not read is not geometry either
+    }
+
+    if (auto cached = cache_.get(fingerprint); cached && cached->merged) {
+        return cached->merged;
     }
 
     Assimp::Importer     importer;
     const aiScene* const scene = importer.ReadFile(reinterpret_cast<const char*>(file_path.u8string().data()), kLoadFlags);
-    if (!scene) {
-        return {};
+    if (scene == nullptr) {
+        return failed(vn::io::IoError::InvalidData); // the bytes are not a model this build can parse
     }
 
     const auto mesh = MergedMeshBuilder(options_, *scene).build();
 
-    if (fingerprint)
-    {
-        auto cached = cache_.get(fingerprint).value_or(CacheData{});
-        cached.option_shape_map.insert_or_assign(options_, mesh);
-        cache_.set(fingerprint, std::move(cached), -1);
-    }
+    auto cached   = cache_.get(fingerprint).value_or(Cached{});
+    cached.merged = mesh;
+    cache_.set(fingerprint, std::move(cached));
 
     return mesh;
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(std::istream& in, const char* format_hint)
+vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(std::istream& in, const char* format_hint, vn::io::IoError* error)
 {
     std::vector<unsigned char> bytes;
-    if (!drainStream(in, bytes)) {
+    const bool                 read = drainStream(in, bytes);
+    if (error != nullptr) {
+        *error = vn::io::IoError::Ok;
+    }
+    if (!read) {
+        if (error != nullptr) {
+            *error = vn::io::IoError::IoFailure;
+        }
         return {}; // a stream that broke is not content assimp should be asked to read
     }
-    return loadMergedBytes(bytes, format_hint);
+    return loadMergedBytes(bytes, format_hint, error);
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& bytes, const char* format_hint)
+vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& bytes, const char* format_hint,
+                                                   vn::io::IoError* error)
 {
+    const auto failed = [error](vn::io::IoError reason) {
+        if (error != nullptr) {
+            *error = reason;
+        }
+        return vn::intrusive_ptr<Mesh>{};
+    };
+
+    if (error != nullptr) {
+        *error = vn::io::IoError::Ok;
+    }
+
     if (bytes.empty()) {
-        return {};
+        return failed(vn::io::IoError::InvalidData);
     }
     const char* const hint = format_hint != nullptr ? format_hint : "";
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once and reused.
     const vn::crypto::ByteSequenceFingerprint fingerprint(
         std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
-    if (auto cached = cache_.get(fingerprint)) {
-        const auto& option_map = cached->option_shape_map;
-        const auto  it         = option_map.find(options_);
-        if (it != option_map.end()) {
-            return it->second;
-        }
+    if (auto cached = cache_.get(fingerprint); cached && cached->merged) {
+        return cached->merged;
     }
 
     // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
-    Assimp::Importer    importer;
-    const aiScene*      scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kLoadFlags, hint);
+    Assimp::Importer importer;
+    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kLoadFlags, hint);
     if (scene == nullptr) {
-        return {};
+        return failed(vn::io::IoError::InvalidData);
     }
 
     const auto mesh = MergedMeshBuilder(options_, *scene).build();
 
-    auto cached = cache_.get(fingerprint).value_or(CacheData{});
-    cached.option_shape_map.insert_or_assign(options_, mesh);
-    cache_.set(fingerprint, std::move(cached), -1);
+    auto cached   = cache_.get(fingerprint).value_or(Cached{});
+    cached.merged = mesh;
+    cache_.set(fingerprint, std::move(cached));
 
     return mesh;
 }
 
-vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path)
+vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path, vn::io::IoError* error)
 {
-    std::error_code ec;
-    if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
-        return {};
+    const auto failed = [error](vn::io::IoError reason) {
+        if (error != nullptr) {
+            *error = reason;
+        }
+        return vn::intrusive_ptr<Model>{};
+    };
+
+    if (error != nullptr) {
+        *error = vn::io::IoError::Ok;
     }
 
-    const vn::crypto::ByteSequenceFingerprint fingerprint(file_path);
-    if (auto cached = cache_.get(fingerprint)) {
-        const auto& option_map = cached->option_model_map;
-        const auto  it         = option_map.find(options_);
-        if (it != option_map.end()) {
-            return it->second;
-        }
+    std::error_code ec;
+    if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
+        return failed(vn::io::IoError::NotFound);
+    }
+
+    vn::crypto::ByteSequenceFingerprint fingerprint;
+    try {
+        fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
+    } catch (const std::exception&) {
+        return failed(vn::io::IoError::IoFailure);
+    }
+
+    if (auto cached = cache_.get(fingerprint); cached && cached->model) {
+        return cached->model;
     }
 
     Assimp::Importer     importer;
     const aiScene* const scene = importer.ReadFile(reinterpret_cast<const char*>(file_path.u8string().data()), kModelFlags);
-    if (!scene) {
-        return {};
+    if (scene == nullptr) {
+        return failed(vn::io::IoError::InvalidData);
     }
     return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }
 
-vn::intrusive_ptr<Model> MeshLoader::load(std::istream& in, const char* format_hint)
+vn::intrusive_ptr<Model> MeshLoader::load(std::istream& in, const char* format_hint, vn::io::IoError* error)
 {
     std::vector<unsigned char> bytes;
-    if (!drainStream(in, bytes)) {
+    const bool                 read = drainStream(in, bytes);
+    if (error != nullptr) {
+        *error = vn::io::IoError::Ok;
+    }
+    if (!read) {
+        if (error != nullptr) {
+            *error = vn::io::IoError::IoFailure;
+        }
         return {}; // a stream that broke is not content assimp should be asked to read
     }
-    return loadBytes(bytes, format_hint);
+    return loadBytes(bytes, format_hint, error);
 }
 
-vn::intrusive_ptr<Model> MeshLoader::loadBytes(std::vector<unsigned char>& bytes, const char* format_hint)
+vn::intrusive_ptr<Model> MeshLoader::loadBytes(std::vector<unsigned char>& bytes, const char* format_hint,
+                                               vn::io::IoError* error)
 {
+    const auto failed = [error](vn::io::IoError reason) {
+        if (error != nullptr) {
+            *error = reason;
+        }
+        return vn::intrusive_ptr<Model>{};
+    };
+
+    if (error != nullptr) {
+        *error = vn::io::IoError::Ok;
+    }
+
     if (bytes.empty()) {
-        return {};
+        return failed(vn::io::IoError::InvalidData);
     }
     const char* const hint = format_hint != nullptr ? format_hint : "";
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once per entry.
     const vn::crypto::ByteSequenceFingerprint fingerprint(
         std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
-    if (auto cached = cache_.get(fingerprint)) {
-        const auto& option_map = cached->option_model_map;
-        const auto  it         = option_map.find(options_);
-        if (it != option_map.end()) {
-            return it->second;
-        }
+    if (auto cached = cache_.get(fingerprint); cached && cached->model) {
+        return cached->model;
     }
 
     // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
-    Assimp::Importer    importer;
-    const aiScene*      scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kModelFlags, hint);
+    Assimp::Importer importer;
+    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kModelFlags, hint);
     if (scene == nullptr) {
-        return {};
+        return failed(vn::io::IoError::InvalidData);
     }
     return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }
@@ -826,9 +895,9 @@ vn::intrusive_ptr<Model> MeshLoader::cacheModel(const vn::crypto::ByteSequenceFi
                                                 vn::intrusive_ptr<Model>                      model)
 {
     if (fingerprint) {
-        auto cached = cache_.get(fingerprint).value_or(CacheData{});
-        cached.option_model_map.insert_or_assign(options_, model);
-        cache_.set(fingerprint, std::move(cached), -1);
+        auto cached  = cache_.get(fingerprint).value_or(Cached{});
+        cached.model = model;
+        cache_.set(fingerprint, std::move(cached));
     }
     return model;
 }

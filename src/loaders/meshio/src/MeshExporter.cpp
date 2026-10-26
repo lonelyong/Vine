@@ -474,25 +474,25 @@ void ModelSceneWriter::validate() const
 {
     const std::vector<Model::Node>& nodes = model_.nodes();
     if (nodes.empty() || model_.root() >= nodes.size()) {
-        throw std::invalid_argument("MeshExporter::exportAs: the model has no root node");
+        throw std::invalid_argument("MeshExporter: the model has no root node");
     }
 
     for (const Model::Node& node : nodes) {
         for (const std::uint32_t child : node.children) {
             if (child >= nodes.size()) {
-                throw std::invalid_argument("MeshExporter::exportAs: a node child index is out of range");
+                throw std::invalid_argument("MeshExporter: a node child index is out of range");
             }
         }
         for (const std::uint32_t mesh : node.meshes) {
             if (mesh >= model_.meshes().size()) {
-                throw std::invalid_argument("MeshExporter::exportAs: a node mesh index is out of range");
+                throw std::invalid_argument("MeshExporter: a node mesh index is out of range");
             }
         }
     }
 
     for (const Model::Entry& entry : model_.meshes()) {
         if (!entry.mesh) {
-            throw std::invalid_argument("MeshExporter::exportAs: the model holds an empty mesh entry");
+            throw std::invalid_argument("MeshExporter: the model holds an empty mesh entry");
         }
     }
 }
@@ -619,7 +619,7 @@ void ensureFormatAvailable(const Assimp::Exporter& exporter, const std::string& 
         }
         supported += desc->id;
     }
-    throw std::runtime_error("MeshExporter::exportAs: unsupported format '" + format_id + "'. Supported: " + supported);
+    throw std::runtime_error("MeshExporter: unsupported format '" + format_id + "'. Supported: " + supported);
 }
 
 /**
@@ -643,7 +643,7 @@ void writeScene(const aiScene& scene, const std::string& format_id, const std::f
     const aiReturn status = exporter.Export(&scene, format_id.c_str(),
                                             reinterpret_cast<const char*>(file_path.u8string().data()), 0, &properties);
     if (status != AI_SUCCESS) {
-        throw std::runtime_error("MeshExporter::exportAs: failed to export as '" + format_id + "', "
+        throw std::runtime_error("MeshExporter: failed to export as '" + format_id + "', "
                                  + std::string(exporter.GetErrorString()));
     }
 }
@@ -668,18 +668,18 @@ void writeScene(const aiScene& scene, const std::string& format_id, std::ostream
     Assimp::ExportProperties properties;
     const aiExportDataBlob*  blob = exporter.ExportToBlob(&scene, format_id.c_str(), 0, &properties);
     if (blob == nullptr || blob->data == nullptr) {
-        throw std::runtime_error("MeshExporter::exportAs: failed to export as '" + format_id + "', "
+        throw std::runtime_error("MeshExporter: failed to export as '" + format_id + "', "
                                  + std::string(exporter.GetErrorString()));
     }
     if (blob->next != nullptr) {
         // One stream holds one file; a format that writes several needs names and places for the others.
-        throw std::runtime_error("MeshExporter::exportAs: '" + format_id
+        throw std::runtime_error("MeshExporter: '" + format_id
                                  + "' writes more than one file, which a stream cannot hold");
     }
 
     out.write(static_cast<const char*>(blob->data), static_cast<std::streamsize>(blob->size));
     if (!out) {
-        throw std::runtime_error("MeshExporter::exportAs: writing the exported " + format_id + " failed");
+        throw std::runtime_error("MeshExporter: writing the exported " + format_id + " failed");
     }
 }
 
@@ -762,7 +762,10 @@ class ExportedBlobSource final : public vn::io::DataSource
 
 } // namespace
 
-MeshExporter::MeshExporter() = default;
+MeshExporter::MeshExporter(Options options)
+  : options_(std::move(options))
+{
+}
 
 MeshExporter::~MeshExporter() = default;
 
@@ -772,14 +775,9 @@ MeshExporter& MeshExporter::defaultInstance()
     return instance;
 }
 
-MeshExporter::Options& MeshExporter::options() noexcept
+const MeshExporter::Options& MeshExporter::options() const noexcept
 {
     return options_;
-}
-
-void MeshExporter::setOptions(const Options& options)
-{
-    options_ = options;
 }
 
 void MeshExporter::exportAs(const Mesh& mesh, const vn::String& format, const std::filesystem::path& file_path) const
@@ -812,11 +810,9 @@ std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(const vn::intrusi
     const Options options = options_;
     return std::make_shared<ExportedBlobSource>([mesh, format = std::move(format), options](std::ostream& out) {
         if (!mesh) {
-            throw std::invalid_argument("MeshExporter::createSource: the mesh is null");
+            throw std::invalid_argument("MeshExporter: createSource was handed a null mesh");
         }
-        MeshExporter exporter;
-        exporter.setOptions(options);
-        exporter.exportAs(*mesh, format, out);
+        MeshExporter(options).exportAs(*mesh, format, out);
     });
 }
 
@@ -826,11 +822,9 @@ std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(const vn::intrusi
     const Options options = options_;
     return std::make_shared<ExportedBlobSource>([model, format = std::move(format), options](std::ostream& out) {
         if (!model) {
-            throw std::invalid_argument("MeshExporter::createSource: the model is null");
+            throw std::invalid_argument("MeshExporter: createSource was handed a null model");
         }
-        MeshExporter exporter;
-        exporter.setOptions(options);
-        exporter.exportAs(*model, format, out);
+        MeshExporter(options).exportAs(*model, format, out);
     });
 }
 
