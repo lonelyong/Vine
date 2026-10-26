@@ -350,6 +350,14 @@ class ModelSceneWriter final : private SceneWriterBase
     static void fillMaterial(aiMaterial& io_material, const Material& material);
 
     /**
+     * @brief Converts a Vine colour into an assimp one.
+     *
+     * @param color The source colour (linear RGBA).
+     * @return The same colour in assimp's representation.
+     */
+    static aiColor4D toAiColor(const vn::Colorf& color);
+
+    /**
      * @brief Converts a Vine model matrix into the assimp layout.
      *
      * Both use the column-vector convention with the translation in the fourth column, so the elements map one to one.
@@ -367,9 +375,14 @@ class ModelSceneWriter final : private SceneWriterBase
 void ModelSceneWriter::addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type,
                                 unsigned int index)
 {
-    const aiColor4D value(static_cast<ai_real>(color.r), static_cast<ai_real>(color.g), static_cast<ai_real>(color.b),
-                          static_cast<ai_real>(color.a));
+    const aiColor4D value = toAiColor(color);
     io_material.AddProperty(&value, 1, key, type, index);
+}
+
+aiColor4D ModelSceneWriter::toAiColor(const vn::Colorf& color)
+{
+    return aiColor4D(static_cast<ai_real>(color.r), static_cast<ai_real>(color.g), static_cast<ai_real>(color.b),
+                     static_cast<ai_real>(color.a));
 }
 
 void ModelSceneWriter::fillMaterial(aiMaterial& io_material, const Material& material)

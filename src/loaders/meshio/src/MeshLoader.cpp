@@ -243,7 +243,7 @@ class MeshBuilderBase
     }
 
     /**
-     * @brief Copies an assimp node matrix into ours.
+     * @brief Converts an assimp node matrix into a Vine one.
      *
      * Both sides multiply a matrix with a column vector and keep the translation in the fourth column, so the elements
      * travel one to one - no transpose is involved.
@@ -251,19 +251,19 @@ class MeshBuilderBase
      * @param source The assimp matrix.
      * @return The same transform in our layout.
      */
-    static vn::math::Mat4d toMatrix(const aiMatrix4x4& source)
+    static vn::math::Mat4d toVnMatrix(const aiMatrix4x4& source)
     {
         return vn::math::Mat4d(source.a1, source.a2, source.a3, source.a4, source.b1, source.b2, source.b3, source.b4,
                                source.c1, source.c2, source.c3, source.c4, source.d1, source.d2, source.d3, source.d4);
     }
 
     /**
-     * @brief Converts an assimp colour to ours.
+     * @brief Converts an assimp colour into a Vine one.
      *
      * @param color The assimp colour.
      * @return The same colour (linear RGBA: the loader passes the file's values through).
      */
-    static vn::Colorf colorOf(const aiColor4D& color) { return vn::Colorf(color.r, color.g, color.b, color.a); }
+    static vn::Colorf toVnColor(const aiColor4D& color) { return vn::Colorf(color.r, color.g, color.b, color.a); }
 
   private:
     const aiScene* scene_{ nullptr }; ///< The parsed scene; borrowed for the builder's whole life.
@@ -484,12 +484,12 @@ vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
 
     vn::intrusive_ptr<Material> material;
     if (has_metallic || has_roughness || (has_opacity && opacity < 1.0f)) {
-        material = vn::make_intrusive<vn::geometry::PbrMaterial>(colorOf(diffuse), metallic, roughness, opacity);
+        material = vn::make_intrusive<vn::geometry::PbrMaterial>(toVnColor(diffuse), metallic, roughness, opacity);
     } else if (has_specular || has_shininess) {
-        material = vn::make_intrusive<vn::geometry::PhongMaterial>(colorOf(ambient), colorOf(diffuse), colorOf(specular),
-                                                                  shininess);
+        material = vn::make_intrusive<vn::geometry::PhongMaterial>(toVnColor(ambient), toVnColor(diffuse),
+                                                                  toVnColor(specular), shininess);
     } else {
-        material = vn::make_intrusive<vn::geometry::ColorMaterial>(colorOf(diffuse));
+        material = vn::make_intrusive<vn::geometry::ColorMaterial>(toVnColor(diffuse));
     }
 
     aiString name;
@@ -574,7 +574,7 @@ void ModelBuilder::growBounds(const Mesh& mesh, const vn::math::Mat4d& world)
 
 std::uint32_t ModelBuilder::appendNode(const aiNode& source, const vn::math::Mat4d& parent_world)
 {
-    const vn::math::Mat4d local = toMatrix(source.mTransformation);
+    const vn::math::Mat4d local = toVnMatrix(source.mTransformation);
     const vn::math::Mat4d world = parent_world * local;
 
     std::vector<std::uint32_t> children;
