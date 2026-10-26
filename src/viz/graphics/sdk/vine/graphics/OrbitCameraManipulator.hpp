@@ -120,6 +120,8 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
      * - Positions the orbit centre at the scene bounding-box centre and picks an eye-to-centre distance
      *   that fits the scene into the vertical/horizontal field of view (perspective) or the frustum
      *   height (orthographic).
+     * - The camera's near/far planes are scaled with that distance (1% and 100x of it), because the camera's
+     *   defaults stop at the unit scale: a millimetre-scale model would otherwise sit behind the far plane.
      *
      * @return true when a scene with valid bounds was fitted.
      */

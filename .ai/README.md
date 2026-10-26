@@ -87,7 +87,7 @@
 - `robotics-kinematics.md` —— Robotics kinematics 要点。
 - `robotics-proximity.md` —— Robotics proximity 要点。
 
-## bugs/ —— 已修复 Bug 记录（8）
+## bugs/ —— 已修复 Bug 记录（9）
 
 现象 / 根因 / 修复 / 涉及文件 / 验证，一 bug 一文件；标题带历史标记，内容按当时名字保留。
 
@@ -99,5 +99,6 @@
 - `docking-flyout-under-render.md`
 - `docking-layout-transitions.md`
 - `docking-tab-dangling-client.md`
+- `model-viewer-fit-not-framing.md`
 
 约定：`memory/` 保持简短要点式；详细设计放 `design/`；bug 一条一文件。

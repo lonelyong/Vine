@@ -618,7 +618,7 @@ TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)
     // 文件载荷那条路（打开器自己调 MeshLoader）。这条钉两件事：①读出来的模型真的走到**渲染几何**上（而不只是文档
     // 里有个网格）；②查看器**不做单位换算** —— 屏幕上就是文件里写的坐标。加载器默认的 Auto 会把这份 1 单位的三角形
     // 放大 1000 倍，而内存载荷那个盒子是 ±1，两份文档会差出三个数量级。
-    const std::filesystem::path stl_path = std::filesystem::temp_directory_path() / "vine_model_viewer_units.stl";
+    const std::filesystem::path stl_path = std::filesystem::temp_directory_path() / "vn_model_viewer_units.stl";
     vn::model_viewer::writeTriangleStlFile(stl_path);
 
     vn::appfw::DocumentManager           documents;
@@ -874,6 +874,76 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     ASSERT_NE(geometry->material(), nullptr);
     EXPECT_EQ(geometry->material(), highlight_material) << "高亮材质是视图自己那一份，跨次拾取复用";
     EXPECT_EQ(geometry->material()->baseColor().r, highlight_colour.r);
+}
+
+// 适应屏幕：视图装的是"拾取型"操纵器，它包着一个轨道操纵器 —— 场景必须一并交给内层。少了它，
+// `fitToScreen()` 永远没有包围盒可用，打开文件时的自动对焦与右键菜单都会退化成默认相机：默认站在 z=5，
+// 毫米级模型因此显得巨大，而滚轮步长按当前距离比例放大，几乎缩不回来。
+// 模型按毫米建模（边长 2000），顺带钉住第二件事：取景要把相机的近/远平面一起放大 —— 默认 far=1000 会把
+// 取景后的模型整个挡在远平面外面。
+TEST(ModelViewerTest, ThePickManipulatorFramesTheSceneItDraws)
+{
+    vn::appfw::DocumentManager           documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow           window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ASSERT_TRUE(registerModelType(documents));
+    ASSERT_TRUE(registerModelOpener(documents));
+    ASSERT_TRUE(views.registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    // 毫米级的立方体：边长 2000，半对角线约 1732 —— 正是报告里那个工作台的量级。
+    auto box = vn::model_viewer::makeBoxMesh();
+    vn::geometry::Vec3fArray scaled;
+    scaled.reserve(box->positions().size());
+    for (const auto& position : box->positions()) {
+        scaled.emplace_back(position.x * 1000.0f, position.y * 1000.0f, position.z * 1000.0f);
+    }
+    box->setPositions(std::move(scaled));
+    ASSERT_NE(openModel(documents, u8"毫米级立方体", box), nullptr);
+
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+    view->activate(); // 场景是懒建的：上屏（这里显式叫一次）才造
+
+    auto* control = view->renderControl();
+    ASSERT_NE(control, nullptr);
+    auto* scene_view = control->view();
+    ASSERT_NE(scene_view, nullptr);
+    auto* camera = scene_view->camera();
+    ASSERT_NE(camera, nullptr);
+
+    const auto scene = scene_view->scene();
+    ASSERT_NE(scene, nullptr);
+    ASSERT_NE(scene->root(), nullptr) << "场景里得有内容，取景才有范围";
+    const auto bounds = scene->boundingBox();
+    ASSERT_TRUE(bounds.isValid());
+    const double radius = (bounds.size() * 0.5).length();
+
+    // 先把相机塞到内容里去：一次真的取景必须把它推到包围盒外。
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 0.2), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->setPerspective(90.0, 0.1, 1000.0);
+    camera->setAspect(1.0);
+
+    ASSERT_TRUE(scene_view->fitToScreen())
+        << "拾取型操纵器必须把场景交给内层轨道操纵器，否则 fitToScreen 没有包围盒可用";
+
+    const double distance = (camera->eye() - camera->target()).length();
+    EXPECT_GT(distance, radius) << "整个模型都在眼前";
+    EXPECT_LT(distance, radius * 10.0) << "按内容的规模取景，而不是退回默认相机的站位";
+
+    const auto centre = bounds.center();
+    EXPECT_NEAR(camera->target().x, centre.x, 1e-3);
+    EXPECT_NEAR(camera->target().y, centre.y, 1e-3);
+    EXPECT_NEAR(camera->target().z, centre.z, 1e-3);
+
+    // 默认 far=1000 会把取景后的模型整个挡在外面 —— 近/远平面要跟着内容放大。
+    EXPECT_LT(camera->nearPlane(), distance - radius) << "内容不能被近平面切掉";
+    EXPECT_GT(camera->farPlane(), distance + radius) << "内容不能落在远平面之外";
 }
 
 /// 记录它拿到的目标：命令实例随执行销毁，所以记在静态上（用例自己清零）。

@@ -279,6 +279,19 @@ bool OrbitCameraManipulator::fitToScreen()
         distance_ = std::max(radius * margin / std::max(sin_half, 1e-6), radius * 1.05);
     }
     distance_ = clampDistance(distance_);
+    // The camera's clip planes belong to the content as much as the distance does: the default 0.1..1000 frustum
+    // stops at the unit scale, so a millimetre-scale model - and the distance a fit gives it - would sit entirely
+    // behind the far plane. Scale both with the fitted distance, keeping the 1:10000 depth ratio the defaults use.
+    const double near_plane = std::max(distance_ * 0.01, 1e-4);
+    const double far_plane  = std::max(distance_ * 100.0, near_plane * 1000.0);
+    if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
+        const double tan_ortho = std::tan(fov_rad * 0.5);
+        const double half_h    = distance_ * tan_ortho;
+        const double half_w    = half_h * viewportAspect();
+        cam->setOrthographic(-half_w, half_w, -half_h, half_h, near_plane, far_plane);
+    } else {
+        cam->setPerspective(cam->fieldOfView(), near_plane, far_plane);
+    }
     // Frame the model level: drop any accumulated roll.
     roll_ = 0.0;
     apply();

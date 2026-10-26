@@ -63,12 +63,15 @@ class ModelPickManipulator final : public vn::graphics::CameraManipulator
      * @brief 造一个转发型操纵器。
      *
      * @param camera 这份视图的相机（内层轨道操纵器也绑它）。
+     * @param scene 这份视图的场景。内层轨道操纵器要用它算包围盒：`fitToScreen()` 取得的是场景内容的范围，
+     *        不是相机自己的默认站位 —— 少了它，适应屏幕就退化成回到默认相机。
      * @param on_click 点击回调，收**归一化**屏幕坐标（[0, 1]，左上角原点）。
      */
-    ModelPickManipulator(vn::raw_ptr<vn::graphics::Camera> camera, std::function<void(double, double)> on_click)
+    ModelPickManipulator(vn::raw_ptr<vn::graphics::Camera> camera, vn::raw_ptr<vn::graphics::Scene> scene,
+                         std::function<void(double, double)> on_click)
       : vn::graphics::CameraManipulator(camera)
       , on_click_(std::move(on_click))
-      , inner_(vn::make_intrusive<vn::graphics::OrbitCameraManipulator>(camera))
+      , inner_(vn::make_intrusive<vn::graphics::OrbitCameraManipulator>(camera, scene))
     {
     }
 
@@ -407,9 +410,10 @@ inline void ModelRenderView::buildScene()
     view_ = vn::intrusive_ptr<vn::graphics::SceneView>(control_view);
 
     // 拾取型操纵器：导航一字不改（每个事件转发给内层轨道操纵器），点击交回本视图（见 ModelPickManipulator 的注释）。
-    // 相机由 view 提供（`SceneView::camera()`），视口尺寸由 onResize 那条路进来 —— 两者都在操纵器手里。
+    // 相机由 view 提供（`SceneView::camera()`），视口尺寸由 onResize 那条路进来 —— 两者都在操纵器手里；
+    // 场景一并交给它，否则适应屏幕（激活时的自动对焦与右键菜单）拿不到内容范围。
     view_->setManipulator(vn::make_intrusive<ModelPickManipulator>(
-        view_->camera(), [this](double nx, double ny) { selectAt(nx, ny); }));
+        view_->camera(), view_->scene().get(), [this](double nx, double ny) { selectAt(nx, ny); }));
 
     // 文件里没声明材质的网格（STL 就是这种）补一份中灰：整棵子树共用**同一份**材质对象，后端能把它们
     // 归成一个批次；没有这一步，它们会落到引擎默认材质上（查看器不该让同一个模型有两种外观）。
