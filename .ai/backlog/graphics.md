@@ -30,6 +30,7 @@
 | T9 | V2 | `forget(view)` 依赖 vsg `protected` 池 | 升级 vsg 时与 V1 一起复核 | 本行 |
 | T10 | V3 | 拿不到 `VkPipelineCache`（第三实参写死 `VK_NULL_HANDLE`） | 推上游；影响冷启动 / 换会话 | 本行 |
 | T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在 | 上游支持后合并每 pass 的 begin | 本行 |
+| T19 | fan 像素用例时好时坏（根因指向缓冲寿命） | `PrimitiveDrawTest.AStripAndAFanCoverTheSameQuadAListDoes` **不是稳定红**：套件内 6/6 红，单跑 2/3 绿，加一次图片转储反而全绿；失败时 list=strip=1444、fan=1083，转储显示画的是"下半 + 左右两条楔形"——三角形顶点落在画面中心，而几何里没有那个顶点。**把每次 draw 的 `Geometry`（连同它的缓冲）保活后 8/8 全绿** ⇒ 与拓扑映射无关（两处 `TRIANGLE_FAN` 映射都对，`PipelineKey` 含拓扑）；三块索引 arena 的地址在失败的那次 run 里也互不相同，排除索引缓冲的简单地址复用。剩下最可疑的是 draw 之后缓冲被释放/复用与 `StreamUploads`（`StreamKey` = 地址 + revision + 切片）之间的关系。 | 下次动 `StreamUploads` / `SharedStreams` / 顶点缓冲别名，或 CI 上再出现 | 本行 |
 
 ### 2.3 平台与验证
 | # | 项 | 内容 | 触发条件 |
