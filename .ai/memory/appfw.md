@@ -78,7 +78,7 @@
 
 ## 已知缺口
 
-- `MeshLoader::load()` 只吃 `std::filesystem::path`，没有字节/`DataStream`/`Vfs` 重载 ⇒ 文档模型说的
+- `MeshLoader::load()` / `loadMerged()` 只吃路径与流，没有 `Vfs` 入口 ⇒ 文档模型说的
   “`Vfs` + 虚拟路径”今天读不进模型文件。
 - 面板注册表不存在 ⇒ 面板只能插件自己建、自己挂；视图那一半已经落地。
 - 同时最多 4 份 3D 文档；要更多得给 vsg 打补丁（本树保持 vsg 原版 + 门禁）。

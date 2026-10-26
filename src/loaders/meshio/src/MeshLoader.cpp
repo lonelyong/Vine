@@ -558,7 +558,7 @@ void MeshLoader::setOptions(const Options& options)
     options_ = options;
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::load(const std::filesystem::path& file_path)
+vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file_path)
 {
     std::error_code ec;
     if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
@@ -596,16 +596,16 @@ vn::intrusive_ptr<Mesh> MeshLoader::load(const std::filesystem::path& file_path)
     return mesh;
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::load(std::istream& in, const char* format_hint)
+vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(std::istream& in, const char* format_hint)
 {
     std::vector<unsigned char> bytes;
     if (!drainStream(in, bytes)) {
         return {}; // a stream that broke is not content assimp should be asked to read
     }
-    return loadBytes(bytes, format_hint);
+    return loadMergedBytes(bytes, format_hint);
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::loadBytes(std::vector<unsigned char>& bytes, const char* format_hint)
+vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& bytes, const char* format_hint)
 {
     if (bytes.empty()) {
         return {};
@@ -641,7 +641,7 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadBytes(std::vector<unsigned char>& bytes,
     return mesh;
 }
 
-vn::intrusive_ptr<Model> MeshLoader::loadModel(const std::filesystem::path& file_path)
+vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path)
 {
     std::error_code ec;
     if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
@@ -662,19 +662,19 @@ vn::intrusive_ptr<Model> MeshLoader::loadModel(const std::filesystem::path& file
     if (!scene) {
         return {};
     }
-    return rememberModel(fingerprint, buildModel(*scene, options_));
+    return cacheModel(fingerprint, buildModel(*scene, options_));
 }
 
-vn::intrusive_ptr<Model> MeshLoader::loadModel(std::istream& in, const char* format_hint)
+vn::intrusive_ptr<Model> MeshLoader::load(std::istream& in, const char* format_hint)
 {
     std::vector<unsigned char> bytes;
     if (!drainStream(in, bytes)) {
         return {}; // a stream that broke is not content assimp should be asked to read
     }
-    return loadModelBytes(bytes, format_hint);
+    return loadBytes(bytes, format_hint);
 }
 
-vn::intrusive_ptr<Model> MeshLoader::loadModelBytes(std::vector<unsigned char>& bytes, const char* format_hint)
+vn::intrusive_ptr<Model> MeshLoader::loadBytes(std::vector<unsigned char>& bytes, const char* format_hint)
 {
     if (bytes.empty()) {
         return {};
@@ -698,11 +698,11 @@ vn::intrusive_ptr<Model> MeshLoader::loadModelBytes(std::vector<unsigned char>& 
     if (scene == nullptr) {
         return {};
     }
-    return rememberModel(fingerprint, buildModel(*scene, options_));
+    return cacheModel(fingerprint, buildModel(*scene, options_));
 }
 
-vn::intrusive_ptr<Model> MeshLoader::rememberModel(const vn::crypto::ByteSequenceFingerprint& fingerprint,
-                                                   vn::intrusive_ptr<Model>                      model)
+vn::intrusive_ptr<Model> MeshLoader::cacheModel(const vn::crypto::ByteSequenceFingerprint& fingerprint,
+                                                vn::intrusive_ptr<Model>                      model)
 {
     if (fingerprint) {
         auto cached = cache_.get(fingerprint).value_or(CacheData{});

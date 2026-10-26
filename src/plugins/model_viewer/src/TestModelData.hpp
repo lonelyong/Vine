@@ -16,7 +16,7 @@ namespace vn::model_viewer
  * @brief 测试用的模型数据：两个内存网格 + 一个最小 STL 写盘。
  *
  * 这个插件是**测试用**的，所以数据自己带：仓库里没有随包发布的网格文件（`test_data/` 只有图像和机器人），
- * 也没有"从 Vfs 读网格"的通路（`MeshLoader::load()` 只吃 `std::filesystem::path`，见 OpenMeshFileCommand）。
+ * 也没有"从 Vfs 读网格"的通路（`MeshLoader::load()` / `loadMerged()` 只吃路径与流，没有 Vfs 入口，见 OpenMeshFileCommand）。
  * 等这两件里任意一件有了，把这里换成真文件即可 —— 打开器那一侧一行都不用动。
  */
 

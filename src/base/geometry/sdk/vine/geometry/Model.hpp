@@ -28,7 +28,7 @@ VN_GEOMETRY_NS_BEGIN
  * The meshes are in their own local space: a mesh holds the vertices the source
  * gave and a node's transform places them, so nothing is baked twice. Reading a
  * model as one flat mesh with the transforms applied is what
- * MeshLoader::loadMergedMesh() does.
+ * MeshLoader::loadMerged() does.
  *
  * Names live where they belong: a mesh is named through Shape::name() and a
  * material through Material::name(), so the model itself stores no strings

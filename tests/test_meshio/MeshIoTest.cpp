@@ -97,7 +97,7 @@ TEST(MeshIoTest, IsSupportedFormat)
 TEST(MeshIoTest, LoadMissingFileReturnsNull)
 {
     MeshLoader loader;
-    EXPECT_FALSE(loader.load(std::filesystem::temp_directory_path() / "vine_no_such_file.stl"));
+    EXPECT_FALSE(loader.loadMerged(std::filesystem::temp_directory_path() / "vine_no_such_file.stl"));
 }
 
 TEST(MeshIoTest, LoadAndExportObjRoundTrip)
@@ -110,13 +110,13 @@ TEST(MeshIoTest, LoadAndExportObjRoundTrip)
 
     MeshExporter exporter;
     exporter.options().scale_factor = 1.0;
-    ASSERT_NO_THROW(exporter.exportAsObj(*cube, path));
+    ASSERT_NO_THROW(exporter.exportAs(*cube, u8"obj", path));
     EXPECT_TRUE(std::filesystem::exists(path));
     EXPECT_GT(std::filesystem::file_size(path), 0u);
 
     MeshLoader loader;
     loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
-    const auto loaded = loader.load(path);
+    const auto loaded = loader.loadMerged(path);
     ASSERT_TRUE(loaded);
     EXPECT_EQ(loaded->shapeType(), ShapeType::IndexedTriangleMesh);
 
@@ -134,7 +134,7 @@ TEST(MeshIoTest, ExportAsciiStl)
     MeshExporter exporter;
     exporter.options().scale_factor = 1.0;
     exporter.options().format       = MeshExporter::Options::Format::Ascii;
-    ASSERT_NO_THROW(exporter.exportAsStl(*cube, path));
+    ASSERT_NO_THROW(exporter.exportAs(*cube, u8"stl", path));
     EXPECT_TRUE(std::filesystem::exists(path));
     EXPECT_GT(std::filesystem::file_size(path), 0u);
 
@@ -145,7 +145,7 @@ TEST(MeshIoTest, ExportInvalidMeshThrows)
 {
     IndexedTriangleMesh empty;
     MeshExporter        exporter;
-    EXPECT_THROW(exporter.exportAsObj(empty, "invalid.obj"), std::invalid_argument);
+    EXPECT_THROW(exporter.exportAs(empty, u8"obj", "invalid.obj"), std::invalid_argument);
 }
 
 TEST(MeshIoTest, LoadCachesSameFile)
@@ -155,8 +155,8 @@ TEST(MeshIoTest, LoadCachesSameFile)
 
     MeshLoader loader;
     loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
-    const auto first  = loader.load(path);
-    const auto second = loader.load(path);
+    const auto first  = loader.loadMerged(path);
+    const auto second = loader.loadMerged(path);
     ASSERT_TRUE(first);
     ASSERT_TRUE(second);
     EXPECT_EQ(first.get(), second.get());
@@ -171,11 +171,11 @@ TEST(MeshIoTest, LoadDifferentOptionsNotCached)
 
     MeshLoader loader;
     loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
-    const auto first = loader.load(path);
+    const auto first = loader.loadMerged(path);
 
     loader.options().scale_mode         = MeshLoader::ScaleMode::Custom;
     loader.options().custom_scale_factor = 2.0;
-    const auto second = loader.load(path);
+    const auto second = loader.loadMerged(path);
 
     ASSERT_TRUE(first);
     ASSERT_TRUE(second);
@@ -192,7 +192,7 @@ TEST(MeshIoTest, CustomScaleMultipliesVertices)
     MeshLoader loader;
     loader.options().scale_mode         = MeshLoader::ScaleMode::Custom;
     loader.options().custom_scale_factor = 3.0;
-    const auto mesh = loader.load(path);
+    const auto mesh = loader.loadMerged(path);
     ASSERT_TRUE(mesh);
 
     const auto& itm       = vn::obj_cast<IndexedTriangleMesh>(*mesh);
@@ -209,4 +209,30 @@ TEST(MeshIoTest, CustomScaleMultipliesVertices)
     EXPECT_TRUE(has_scaled);
 
     std::filesystem::remove(path);
+}
+
+TEST(MeshIoTest, ExportAsWritesTheNamedFormat)
+{
+    const auto cube = makeCube();
+    const auto path = std::filesystem::temp_directory_path() / "vine_meshio_export_as.stl";
+
+    MeshExporter exporter;
+    exporter.options().format = MeshExporter::Options::Format::Ascii;
+    ASSERT_NO_THROW(exporter.exportAs(*cube, u8"stl", path)) << "the family name picks the text variant from the options";
+    ASSERT_TRUE(std::filesystem::exists(path));
+
+    MeshLoader loader;
+    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
+    const auto loaded = loader.loadMerged(path);
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(vn::obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), cube->triangleCount());
+
+    std::filesystem::remove(path);
+}
+
+TEST(MeshIoTest, ExportAsRefusesAnUnknownFormat)
+{
+    MeshExporter exporter;
+    EXPECT_THROW(exporter.exportAs(*makeCube(), u8"not_a_format", std::filesystem::temp_directory_path() / "vine_unknown.bin"),
+                 std::runtime_error);
 }

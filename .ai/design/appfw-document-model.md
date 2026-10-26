@@ -228,7 +228,7 @@ core 文档模型、打开/保存、类型元数据、视图层与中央宿主�
 
 ### 9.2 已知缺口 / 待办
 
-- `MeshLoader::load()` 只吃 `std::filesystem::path`，没有字节/`DataStream`/`Vfs` 重载 ⇒
+- `MeshLoader::load()` / `loadMerged()` 只吃路径与流，没有 `Vfs` 入口 ⇒
   “`Vfs` + 虚拟路径”的模型文件读不进。
 - 面板注册表不存在 ⇒ 面板只能插件自己建自己挂。
 - 多窗口不在本设计范围。

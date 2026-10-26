@@ -22,10 +22,10 @@ VN_MESHIO_NS_BEGIN
 /**
  * @brief Utility class for loading mesh models (STL, OBJ, ...).
  *
- * Loaded meshes are cached by content fingerprint, so loading the same file
- * again reuses the previously built mesh instead of re-reading and re-parsing
- * it. The cache groups meshes by load options, because different options can
- * produce different scaled meshes from the same source file.
+ * The two entries are named after what they hand back: load() keeps what the source described (node tree, meshes,
+ * materials), loadMerged() flattens the same file into one mesh. Both results are cached by content fingerprint, so
+ * loading the same file again reuses what was built before, and the cache groups results by load options, because
+ * different options can produce different scaled geometry from the same source file.
  *
  * @note The cache is not thread-safe; concurrent loads through the same
  *       loader instance must be avoided.
@@ -146,89 +146,93 @@ class VN_MESHIO_API MeshLoader
     void setOptions(const Options& options);
 
     /**
-     * @brief Loads a mesh model from a file.
-     *
-     * @param file_path The model file path (STL, OBJ, ...).
-     * @return The loaded mesh, or null on failure.
-     */
-    vn::intrusive_ptr<vn::geometry::Mesh> load(const std::filesystem::path& file_path);
-
-    /**
-     * @brief Loads a mesh model from a stream.
-     *
-     * assimp parses a memory image rather than a stream, so the stream is drained first: this entry trades the temporary
-     * file for one copy of the model in memory, and it is how a model that lives in a package is loaded without touching
-     * the file system at all (wrap a VfsEntrySource in a vn::io::DataSourceStream to read one). The result is cached by
-     * content fingerprint exactly like the path entry, so the same model loaded either way is parsed once.
-     *
-     * @param in The stream to read; it is read to its end.
-     * @param format_hint The format to parse as (assimp's format id, e.g. "stl" or "obj"); required, because an
-     *        in-memory image carries no file name to infer the format from.
-     * @return The loaded mesh, or null when the stream is empty, broke, or held content assimp cannot read.
-     */
-    vn::intrusive_ptr<vn::geometry::Mesh> load(std::istream& in, const char* format_hint);
-
-    /**
      * @brief Loads a whole model from a file, keeping its structure.
      *
-     * Where load() flattens everything into one mesh, this entry keeps what the source described: the node tree with
-     * its transforms, one entry per mesh, and the material each mesh uses. The meshes stay in their own local space
-     * (nothing is baked), and texture coordinates are kept, because a caller that asked for the structure wants what
-     * the file held.
+     * This is the entry that keeps what the source described: the node tree with its transforms, one entry per mesh,
+     * and the material each mesh uses. The meshes stay in their own local space (nothing is baked), and texture
+     * coordinates are kept, because a caller that asked for the structure wants what the file held.
      *
-     * Parent directories are irrelevant here; nothing is written. Like load(), the result is cached by content
+     * Parent directories are irrelevant here; nothing is written. Like loadMerged(), the result is cached by content
      * fingerprint, so the same file read through either entry is parsed once per entry.
      *
      * @param file_path The model file path (STL, OBJ, glTF, ...).
-     * @return The model, or null when the file is missing or held content assimp cannot read.
+     * @return The model, or null when the file is missing or holds content in no format this loader can parse.
      */
-    vn::intrusive_ptr<vn::geometry::Model> loadModel(const std::filesystem::path& file_path);
+    vn::intrusive_ptr<vn::geometry::Model> load(const std::filesystem::path& file_path);
 
     /**
      * @brief Loads a whole model from a stream, keeping its structure.
      *
-     * The stream is drained first, exactly like load(): assimp parses a memory image rather than a stream, so this is
-     * the entry that reads a model out of a package without touching the file system.
+     * The stream is drained first, exactly like loadMerged(): the loader parses a memory image rather than a stream,
+     * so this is the entry that reads a model out of a package without touching the file system.
      *
      * @param in The stream to read; it is read to its end.
-     * @param format_hint The format to parse as (assimp's format id, e.g. "stl" or "obj"); required, because an
-     *        in-memory image carries no file name to infer the format from.
-     * @return The model, or null when the stream is empty, broke, or held content assimp cannot read.
+     * @param format_hint The format to parse as: one of supportedExtensions(), with or without the leading dot (e.g.
+     *        "stl" or ".stl"); required, because a memory image carries no file name to infer the format from.
+     * @return The model, or null when the stream is empty, broke, or held content in no format this loader can parse.
      */
-    vn::intrusive_ptr<vn::geometry::Model> loadModel(std::istream& in, const char* format_hint);
+    vn::intrusive_ptr<vn::geometry::Model> load(std::istream& in, const char* format_hint);
+
+    /**
+     * @brief Loads a mesh model from a file as one flattened mesh.
+     *
+     * Every mesh the source holds is concatenated into one mesh with the node transforms applied; materials and the
+     * node tree are dropped, so a caller that needs either wants load() instead.
+     *
+     * @param file_path The model file path (STL, OBJ, ...).
+     * @return The loaded mesh, or null on failure.
+     */
+    vn::intrusive_ptr<vn::geometry::Mesh> loadMerged(const std::filesystem::path& file_path);
+
+    /**
+     * @brief Loads a mesh model from a stream as one flattened mesh.
+     *
+     * The loader parses a memory image rather than a stream, so the stream is drained first: this entry trades the
+     * temporary file for one copy of the model in memory, and it is how a model that lives in a package is loaded
+     * without touching the file system at all (wrap a VfsEntrySource in a vn::io::DataSourceStream to read one). The
+     * result is cached by content fingerprint exactly like the path entry, so the same model loaded either way is
+     * parsed once.
+     *
+     * @param in The stream to read; it is read to its end.
+     * @param format_hint The format to parse as: one of supportedExtensions(), with or without the leading dot (e.g.
+     *        "stl" or ".stl"); required, because a memory image carries no file name to infer the format from.
+     * @return The loaded mesh, or null when the stream is empty, broke, or held content in no format this loader can
+     *         parse.
+     */
+    vn::intrusive_ptr<vn::geometry::Mesh> loadMerged(std::istream& in, const char* format_hint);
 
     // 方法区块
   private:
     /**
-     * @brief Parses the bytes of a model, sharing the cache with the path entry.
+     * @brief Parses a whole model from the bytes of a model file, sharing the cache with the path entry.
      *
      * The counterpart of the path entry: what that one reads from a file, this one is handed as the bytes the file was
      * read into, so a model that lives in a package is parsed the same way as one that lives on disk.
      *
      * @param bytes The bytes of the model; they stay alive for the duration of the call.
      * @param format_hint The format to parse as.
-     * @return The loaded mesh, or null on failure.
+     * @return The model, or null on failure.
      */
-    vn::intrusive_ptr<vn::geometry::Mesh> loadBytes(std::vector<unsigned char>& bytes, const char* format_hint);
+    vn::intrusive_ptr<vn::geometry::Model> loadBytes(std::vector<unsigned char>& bytes, const char* format_hint);
 
     /**
-     * @brief Parses a whole model from the bytes of a model file, sharing the cache with the path entry.
+     * @brief Parses the bytes of a model into one flattened mesh, sharing the cache with the path entry.
      *
      * @param bytes The bytes of the model; they stay alive for the duration of the call.
      * @param format_hint The format to parse as.
-     * @return The model, or null on failure.
+     * @return The loaded mesh, or null on failure.
      */
-    vn::intrusive_ptr<vn::geometry::Model> loadModelBytes(std::vector<unsigned char>& bytes, const char* format_hint);
+    vn::intrusive_ptr<vn::geometry::Mesh> loadMergedBytes(std::vector<unsigned char>& bytes, const char* format_hint);
 
     /**
-     * @brief Hands a built model to the cache, and back to the caller.
+     * @brief Caches a built model under its content fingerprint and hands it to the caller.
      *
      * @param fingerprint The content fingerprint; an empty one is not cached.
-     * @param model The model to remember; it is returned unchanged.
+     * @param model The model to cache; it is returned unchanged.
      * @return The model the caller receives.
      */
-    vn::intrusive_ptr<vn::geometry::Model> rememberModel(const vn::crypto::ByteSequenceFingerprint& fingerprint,
-                                                         vn::intrusive_ptr<vn::geometry::Model>        model);
+    vn::intrusive_ptr<vn::geometry::Model> cacheModel(const vn::crypto::ByteSequenceFingerprint& fingerprint,
+                                                      vn::intrusive_ptr<vn::geometry::Model>        model);
 
     // 类型声明区块
   private:

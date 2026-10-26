@@ -255,7 +255,7 @@ TEST(BinStlSourceTest, LoadsBackThroughMeshLoader)
     }
 
     // The reference reader is assimp: what it makes of the file is the check that the layout is a real STL.
-    auto loaded = MeshLoader::defaultInstance().load(file);
+    auto loaded = MeshLoader::defaultInstance().loadMerged(file);
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), 2u);
 }
@@ -405,7 +405,7 @@ TEST(AsciiStlSourceTest, LoadsBackThroughMeshLoader)
     EXPECT_TRUE(text.starts_with("solid ")) << "the entry holds the text this source produced";
 
     vn::io::DataSourceStream stream(**entry);
-    auto                       loaded = MeshLoader::defaultInstance().load(stream, "stl");
+    auto                       loaded = MeshLoader::defaultInstance().loadMerged(stream, "stl");
     ASSERT_NE(loaded, nullptr) << "the file assimp could not read:\n" << text;
     EXPECT_EQ(stream.error(), IoError::Ok) << "the entry read cleanly through the stream";
     EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), 2u);
@@ -495,7 +495,7 @@ TEST(ObjSourceTest, LoadsBackThroughMeshLoader)
 
     // The entry is read as a stream, so the model never becomes a file anywhere in this chain.
     vn::io::DataSourceStream stream(**entry);
-    auto                       loaded = MeshLoader::defaultInstance().load(stream, "obj");
+    auto                       loaded = MeshLoader::defaultInstance().loadMerged(stream, "obj");
     ASSERT_NE(loaded, nullptr) << "the file assimp could not read:\n" << text;
     EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), 2u);
 }

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <ios>
 #include <memory>
 #include <sstream>
@@ -50,12 +51,12 @@ vn::intrusive_ptr<IndexedTriangleMesh> makeTriangle()
 TEST(MeshStreamIoTest, ExportsToAStreamAndLoadsBackFromOne)
 {
     std::ostringstream out(std::ios::binary);
-    MeshExporter::defaultInstance().exportAsStl(*makeTriangle(), out);
+    MeshExporter::defaultInstance().exportAs(*makeTriangle(), u8"stl", out);
     const std::string bytes = out.str();
     ASSERT_FALSE(bytes.empty());
 
     std::istringstream in(bytes, std::ios::binary);
-    auto               loaded = MeshLoader::defaultInstance().load(in, "stl");
+    auto               loaded = MeshLoader::defaultInstance().loadMerged(in, "stl");
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), 1u);
 }
@@ -63,7 +64,7 @@ TEST(MeshStreamIoTest, ExportsToAStreamAndLoadsBackFromOne)
 TEST(MeshStreamIoTest, ExportsObjToAStreamAndLoadsBackFromOne)
 {
     std::ostringstream out(std::ios::binary);
-    MeshExporter::defaultInstance().exportAsObj(*makeTriangle(), out);
+    MeshExporter::defaultInstance().exportAs(*makeTriangle(), u8"objnomtl", out);
     const std::string text = out.str();
     ASSERT_FALSE(text.empty());
 
@@ -71,7 +72,7 @@ TEST(MeshStreamIoTest, ExportsObjToAStreamAndLoadsBackFromOne)
     EXPECT_EQ(text.find("mtllib"), std::string::npos);
 
     std::istringstream in(text, std::ios::binary);
-    auto               loaded = MeshLoader::defaultInstance().load(in, "obj");
+    auto               loaded = MeshLoader::defaultInstance().loadMerged(in, "obj");
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), 1u);
 }
@@ -88,7 +89,7 @@ TEST(MeshStreamIoTest, LoadsAnEntryOfAPackageWithoutTouchingTheFileSystem)
     DataSourceStream stream(**entry);
     EXPECT_EQ(stream.size(), 84u + 50u * 1u);
 
-    auto loaded = MeshLoader::defaultInstance().load(stream, "stl");
+    auto loaded = MeshLoader::defaultInstance().loadMerged(stream, "stl");
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), 1u);
     EXPECT_EQ(stream.error(), IoError::Ok) << "the entry read cleanly";
@@ -97,9 +98,60 @@ TEST(MeshStreamIoTest, LoadsAnEntryOfAPackageWithoutTouchingTheFileSystem)
 TEST(MeshStreamIoTest, RefusesAnEmptyOrBrokenStream)
 {
     std::istringstream empty;
-    EXPECT_EQ(MeshLoader::defaultInstance().load(empty, "stl"), nullptr) << "there is nothing to parse";
+    EXPECT_EQ(MeshLoader::defaultInstance().loadMerged(empty, "stl"), nullptr) << "there is nothing to parse";
 
     std::istringstream broken(std::ios::binary);
     broken.setstate(std::ios::badbit);
-    EXPECT_EQ(MeshLoader::defaultInstance().load(broken, "stl"), nullptr) << "a stream that broke is not content";
+    EXPECT_EQ(MeshLoader::defaultInstance().loadMerged(broken, "stl"), nullptr) << "a stream that broke is not content";
+}
+
+TEST(MeshStreamIoTest, FormatHintAcceptsTheSpellingSupportedExtensionsUses)
+{
+    // supportedExtensions() spells its entries with the leading dot, so a caller that hands one back verbatim must get
+    // the same result as one that drops the dot. A local loader keeps the check honest: the shared instance could
+    // answer from its cache, and the hint is not part of the cache key.
+    std::ostringstream out(std::ios::binary);
+    MeshExporter::defaultInstance().exportAs(*makeTriangle(), u8"stl", out);
+
+    MeshLoader         loader;
+    std::istringstream in(out.str(), std::ios::binary);
+    auto               loaded = loader.loadMerged(in, ".stl");
+    ASSERT_NE(loaded, nullptr) << "the dotted spelling from supportedExtensions() is accepted";
+    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), 1u);
+}
+
+TEST(MeshStreamIoTest, ACreateSourceExportsOnTheFirstPullAndReplays)
+{
+    const auto package_path = std::filesystem::temp_directory_path() / "vine_meshio_export_source.zip";
+
+    {
+        MeshExporter exporter;
+        const auto   source = exporter.createSource(makeTriangle(), u8"stl");
+        ASSERT_NE(source, nullptr);
+
+        // Binary STL: the 84-byte prefix and one 50-byte triangle. Asking for the size is the first pull.
+        EXPECT_EQ(source->size(), 84u + 50u * 1u);
+        EXPECT_EQ(source->error(), IoError::Ok);
+
+        ZipArchive package;
+        ASSERT_EQ(package.addFile(u8"geoms/triangle.stl", source), IoError::Ok);
+        ASSERT_EQ(package.saveAs(package_path), IoError::Ok);
+    }
+
+    {
+        const auto opened = ZipArchive::open(package_path, ZipArchive::OpenMode::ReadOnly);
+        ASSERT_TRUE(opened.ok());
+        auto entry = opened->openRead(u8"geoms/triangle.stl");
+        ASSERT_TRUE(entry.ok());
+
+        DataSourceStream stream(**entry);
+        MeshLoader       loader;
+        const auto       loaded = loader.loadMerged(stream, "stl");
+        ASSERT_NE(loaded, nullptr);
+        EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded).triangleCount(), 1u);
+    }
+
+    // The archive keeps its file open on Windows, so both scopes end before the file is removed.
+    std::error_code ec;
+    std::filesystem::remove(package_path, ec);
 }

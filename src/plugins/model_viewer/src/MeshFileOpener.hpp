@@ -128,8 +128,8 @@ inline vn::appfw::Document* openMeshFilePayload(const MeshFilePayload& payload)
     vn::meshio::MeshLoader loader;
     loader.setOptions(viewerLoadOptions());
 
-    // 结构要留下来（节点变换、多部件、每部件材质）：`loadModel` 而不是摊平的 `load`。
-    auto model = loader.loadModel(payload.file_path);
+    // 结构要留下来（节点变换、多部件、每部件材质）：`load` 而不是摊平的 `loadMerged`。
+    auto model = loader.load(payload.file_path);
     if (model == nullptr) {
         VN_LOGW("model_viewer: could not read '{}'", payload.file_path.string());
         return nullptr;

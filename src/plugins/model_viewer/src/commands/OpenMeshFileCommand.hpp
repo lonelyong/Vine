@@ -14,7 +14,7 @@ namespace vn::model_viewer
  * 提示、过滤、存在性校验、GUI 的选择器全在框架里，命令这边只需要说清"要什么"。
  *
  * 这条载荷说的是**磁盘上的一个文件**（`MeshFilePayload` 就带一个 `std::filesystem::path`）：位置是载荷给的，
- * 怎么读是打开器的事。加载器本身早就通了字节与流（`load(std::istream&, hint)` / `loadModel(std::istream&, hint)`，
+ * 怎么读是打开器的事。加载器本身早就通了字节与流（`loadMerged(std::istream&, hint)` / `load(std::istream&, hint)`，
  * 配 `DataStream` 可以包住 `VfsEntrySource`），"包里的模型"要的是**另一条载荷**，而不是改这条（见
  * appfw-document-model.md §5.1 与 §12）。
  *

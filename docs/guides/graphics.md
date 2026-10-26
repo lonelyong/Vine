@@ -1075,7 +1075,7 @@ if (hit.hit) { /* hit.geometry / hit.distance / hit.normal */ }
 ```cpp
 #include <vine/graphics/ModelScene.hpp>
 
-auto model = loader.loadModel(path);                                  // 保留节点树与材质
+auto model = loader.load(path);                                       // 保留节点树与材质
 const vn::graphics::ModelScene converted = vn::graphics::sceneFromModel(*model);
 if (converted.root != nullptr) {
     scene->setRoot(converted.root);                                   // 内容场景是调用方的

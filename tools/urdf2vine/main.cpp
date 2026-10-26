@@ -156,7 +156,7 @@ Isometry3d parseOrigin(const tinyxml2::XMLElement* xe_origin)
 vn::intrusive_ptr<vn::geometry::Shape> loadShape(vn::meshio::MeshLoader& loader,
                                                      const std::filesystem::path& path)
 {
-    const auto mesh = loader.load(path);
+    const auto mesh = loader.loadMerged(path);
     if (mesh == nullptr) {
         throw std::runtime_error("failed to load mesh: " + path.string());
     }

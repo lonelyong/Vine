@@ -74,7 +74,7 @@ loaders 在其上）；且 meshio 早就吃 iobase 产的 `zlibstatic`，构建�
 
 给 `MeshLoader` / `MeshExporter` 各加一个流入口，配合 iobase 的 `DataSourceStream`（`DataSource` → `std::istream`）：
 
-- `MeshLoader::load(std::istream& in, const char* format_hint)`：先把流 `drain` 成一段内存，再 `Importer::ReadFileFromMemory`
+- `MeshLoader::loadMerged(std::istream& in, const char* format_hint)`：先把流 `drain` 成一段内存，再 `Importer::ReadFileFromMemory`
   （assimp 只吃路径或内存；**hint 必需**，内存里没有扩展名可猜）。指纹按**读到的字节**算 ⇒ 与 `load(path)` **命中同一条缓存**。
 - `MeshExporter::exportAsStl(const Mesh&, std::ostream& out)`：assimp 没有流式写出面 ⇒ `ExportToBlob` 拿整份 blob 再推给流
   （**省临时文件，不省内存**）。文件目标仍优先 path 重载。
@@ -143,13 +143,14 @@ loaders 在其上）；且 meshio 早就吃 iobase 产的 `zlibstatic`，构建�
   别把"有 BrepLoader" 误读成"能读 STEP"。
 - `brepio` 的加载后端（OCCT）将来以 `PRIVATE` 链进 `brepio` 即可，**mesh-only 消费者不受影响**。
   这正是拆模块要换来的东西。
-- `MeshLoader` 有**两条入口两套缓存**（键都是 (指纹, Options)）：`load()` → 烘平合并的单 mesh；`loadModel()` → 保留结构的 `geometry::Model`。改 `Options` 时 `operator==` 与 `OptionsHash` 必须同时改。
+- `MeshLoader` 有**两条入口两套缓存**（键都是 (指纹, Options)）：`loadMerged()` → 烘平合并的单 mesh；`load()` → 保留结构的 `geometry::Model`（命名对齐 VMR，旧 `loadModel()` 已改名）。改 `Options` 时 `operator==` 与 `OptionsHash` 必须同时改。
+- **导出入口（对齐 VMR）**：`MeshExporter::exportAs(mesh|model, format, path|stream)` 是通用入口（**无**类型化 `exportAsStl`/`exportAsObj`：二者只吃 mesh、与 model 入口不对称，已删除；OBJ 流式写 `objnomtl`）。`format` 是**写入器格式名**（`obj`、`objnomtl`、`collada`、`gltf2`、`stlb`/`stl`、`plyb`/`ply`、`fbx`/`fbxa`），**不是文件扩展名** —— 写 .dae 要传 `collada`，传 `dae` 会被拒绝并列出可用格式。`createSource(mesh|model, format)` 在首次 `size()`/`read()` 时才用同一写入器产出字节（写入器只能写内存镜像 ⇒ 整份文件在内存里），`rewind()` 回放同一份；STL/OBJ 的逐记录流式源仍是 `BinStlSource`/`AsciiStlSource`/`ObjSource`。
 - **`MeshLoader::supportedExtensions()` 是静态成员（2026-10-10）**：以前它是 `MeshLoader.cpp` 里匿名命名空间的自由函数，
   只有 DLL 内部看得见；现在公开，因为**选择器要拿它做过滤器**（`model_viewer` 的 `open_mesh_file` 就是这么用的）——
   "加载器真能读什么"只能有一个答案，抄一份到插件里迟早与它漂移。返回 `const std::set<vn::String>&`
   （小写、带前导点；SDK 文本一律 `vn::String`，不对外给 `std::string`）。
 - **新增 `src/**/*.cpp` 要 `touch` 该模块的 `CMakeLists.txt`**：`vn_add_library` 的 `file(GLOB ...)` 没有 `CONFIGURE_DEPENDS`（测试目标用的是 `CONFIGURE_DEPENDS`，新增测试文件自动生效）。
-- `MeshLoader::load()` 有**按内容指纹的内存缓存**（`Crypto` + `Runtime::InMemoryCache`），
+- `MeshLoader::load()` / `loadMerged()` 都有**按内容指纹的内存缓存**（`Crypto` + `Runtime::InMemoryCache`），
   所以这两条依赖是 **PUBLIC**（缓存类型出现在公开头里）。
 - **新增/移动文件后必须 `cmake -S . -B build`**（`vn_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）。
 - **搬完后记得清陈旧产物**：`rm -rf build/src/loaders/<old> build/lib/libvi<Old>*`，
