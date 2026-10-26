@@ -104,10 +104,10 @@ void setAttr(tinyxml2::XMLElement* xe, const char* name, const String& value)
  * @brief Writes a mesh as one geometry file into a VFS.
  *
  * A mesh is one file, never one entry per array. Which form that file takes is decided by what it has to hold: binary STL
- * when STL holds all of it, and the self-describing form when the mesh carries texture coordinates STL has no place for
- * (see MeshBin.hpp). The arrays are read straight from the buffers that already hold them, so the geometry is not copied
- * on its way into the package - and the source holds them, so a backend that writes the package later needs nothing kept
- * alive by the caller.
+ * when STL holds all of it, and the self-describing form when the mesh carries texture coordinates or vertex colours STL
+ * has no place for (see MeshBin.hpp). The arrays are read straight from the buffers that already hold them, so the geometry
+ * is not copied on its way into the package - and the source holds them, so a backend that writes the package later needs
+ * nothing kept alive by the caller.
  *
  * @param vfs The active VFS.
  * @param geom_seq Sequence counter for unique names (incremented).

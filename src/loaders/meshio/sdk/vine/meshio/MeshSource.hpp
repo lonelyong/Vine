@@ -163,6 +163,26 @@ class VN_MESHIO_API MeshSource : public vn::io::DataSource
     [[nodiscard]] bool hasNormals() const noexcept;
 
     /**
+     * @brief Reports whether the mesh carries per-vertex colours.
+     *
+     * A format that has no place for them (STL) says so by refusing the mesh; one that can spell them (OBJ) writes
+     * them beside the position, which is why the accessor lives here rather than in either of the two.
+     *
+     * @return true when there is one linear RGBA colour per position.
+     */
+    [[nodiscard]] bool hasColors() const noexcept;
+
+    /**
+     * @brief Reads one vertex colour.
+     *
+     * @param vertex Vertex index.
+     * @param out Receives the four linear RGBA channels (the authored alpha included - what a format does with it is
+     *        the format's business; OBJ's vertex extension carries rgb only).
+     * @return true on success, false when the mesh carries no colour for that vertex.
+     */
+    [[nodiscard]] bool colorAt(std::uint64_t vertex, float (&out)[4]) const;
+
+    /**
      * @brief Reports the factor every vertex is multiplied by.
      *
      * @return The scale factor.

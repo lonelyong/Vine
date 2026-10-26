@@ -8,6 +8,7 @@
 #include <fstream>
 #include <memory>
 #include <span>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,7 @@
 #include <vine/io/Stream.hpp>
 #include <vine/io/ZipArchive.hpp>
 #include <vine/math/Vector3.hpp>
+#include <vine/math/Vector4.hpp>
 #include <vine/meshio/AsciiStlSource.hpp>
 #include <vine/meshio/BinStlSource.hpp>
 #include <vine/meshio/MeshLoader.hpp>
@@ -167,6 +169,19 @@ vn::intrusive_ptr<TriangleMesh> makeSoupQuad()
     return mesh;
 }
 
+/**
+ * @brief The indexed quad, with one linear RGBA colour per vertex.
+ *
+ * @return Four vertices, each a different colour.
+ */
+vn::intrusive_ptr<IndexedTriangleMesh> makeColouredQuad()
+{
+    auto mesh = makeIndexedQuad();
+    mesh->setColors({ vn::math::Vec4f(1.0f, 0.0f, 0.0f, 1.0f), vn::math::Vec4f(0.0f, 1.0f, 0.0f, 1.0f),
+                      vn::math::Vec4f(0.0f, 0.0f, 1.0f, 1.0f), vn::math::Vec4f(1.0f, 1.0f, 0.0f, 1.0f) });
+    return mesh;
+}
+
 } // namespace
 
 TEST(BinStlSourceTest, StatesTheExactLengthOfTheStlItWrites)
@@ -297,6 +312,18 @@ TEST(BinStlSourceTest, RefusesAMeshItCannotWrite)
         << "the refusal is visible where the source is handed over, not only at save time";
 }
 
+TEST(BinStlSourceTest, RefusesAMeshThatAuthorsVertexColours)
+{
+    // STL holds nothing per vertex, so the colour cannot be written. Refusing is what keeps a file without it from
+    // looking like a successful export.
+    BinStlSource source(makeColouredQuad());
+    EXPECT_EQ(source.error(), IoError::InvalidData);
+    EXPECT_EQ(source.size(), 0u);
+
+    std::array<std::byte, 16> head{};
+    EXPECT_EQ(source.read(head), 0u);
+}
+
 TEST(BinStlSourceTest, RefusesAMeshEditedAfterItWasHandedOver)
 {
     auto      mesh = makeIndexedQuad();
@@ -423,6 +450,13 @@ TEST(AsciiStlSourceTest, RefusesAMeshItCannotWrite)
         << "the refusal is visible where the source is handed over, not only at save time";
 }
 
+TEST(AsciiStlSourceTest, RefusesAMeshThatAuthorsVertexColours)
+{
+    const AsciiStlSource source(makeColouredQuad());
+    EXPECT_EQ(source.error(), IoError::InvalidData) << "STL holds nothing per vertex";
+    EXPECT_EQ(source.size(), 0u);
+}
+
 TEST(AsciiStlSourceTest, RefusesAMeshEditedAfterItWasHandedOver)
 {
     auto           mesh = makeIndexedQuad();
@@ -465,6 +499,32 @@ TEST(ObjSourceTest, NamesTheNormalsItWrites)
     const std::string text = textOf(drain(source));
     EXPECT_EQ(countLines(text, "vn"), 4u) << "one normal per vertex";
     EXPECT_NE(text.find("f 1//1 2//2 3//3\n"), std::string::npos) << "a face names the normal of each of its corners";
+}
+
+TEST(ObjSourceTest, WritesAuthoredColoursOnTheVertexLine)
+{
+    ObjSource         source(makeColouredQuad());
+    const std::string text = textOf(drain(source));
+
+    // The colour rides the SAME "v" line, rgb only: OBJ's vertex extension has no fourth component, so the authored
+    // alpha is a value this format cannot state.
+    EXPECT_NE(text.find("v 0 0 0 1 0 0\n"), std::string::npos) << text;
+    EXPECT_NE(text.find("v 1 0 0 0 1 0\n"), std::string::npos) << text;
+    EXPECT_EQ(countLines(text, "v"), 4u) << "a colour is not a record of its own";
+    EXPECT_NE(text.find("f 1 2 3\n"), std::string::npos) << "the faces are unchanged by the colour";
+}
+
+TEST(ObjSourceTest, LoadsItsColoursBackThroughMeshLoader)
+{
+    ObjSource source(makeColouredQuad());
+    std::istringstream in{ textOf(drain(source)) };
+
+    MeshLoader loader;
+    loader.options().scale_mode = MeshLoader::ScaleMode::Disabled;
+    const auto loaded = loader.loadMerged(in, "obj");
+    ASSERT_NE(loaded, nullptr);
+    ASSERT_FALSE(loaded->colors().empty()) << "assimp reads the extended vertex line";
+    EXPECT_EQ(loaded->colors().size(), loaded->positions().size());
 }
 
 TEST(ObjSourceTest, HandsOutPiecesSmallerThanALine)

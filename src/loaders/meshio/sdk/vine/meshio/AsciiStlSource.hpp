@@ -28,6 +28,9 @@ VN_MESHIO_NS_BEGIN
  * triangle taken from the winding and no per-vertex attributes. MeshExporter's STL entry goes through assimp and does not
  * promise identical bytes.
  *
+ * A MESH THAT AUTHORS VERTEX COLOURS IS REFUSED (error() reports it): STL has no place for them, and writing the file
+ * without them would silently change the content. Ask for ObjSource, or MeshExporter's PLY/glTF entry instead.
+ *
  * @note A mesh the consumer must keep unchanged until the pull is finished is exactly the contract every borrowed
  *       source carries; this one turns a violation into a failed pull (IoError::InvalidData) rather than into wrong
  *       bytes.
@@ -38,8 +41,9 @@ class VN_MESHIO_API AsciiStlSource final : public MeshSource
     /**
      * @brief Sources a mesh as text STL.
      *
-     * @param mesh The mesh to write; the source holds it. A null, invalid, empty or unsupported mesh is reported through
-     *        error() instead of failing here, so the caller sees it where every other source defect surfaces.
+     * @param mesh The mesh to write; the source holds it. A null, invalid, empty or unsupported mesh - including one
+     *        that authors vertex colours, which STL has no place for - is reported through error() instead of failing
+     *        here, so the caller sees it where every other source defect surfaces.
      * @param scale Factor applied to every vertex, matching what MeshExporter's scale_factor does; 1.0 writes the mesh
      *        as it is.
      */

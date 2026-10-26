@@ -118,18 +118,20 @@ inline void facetNormal(const float (&a)[3], const float (&b)[3], const float (&
 /**
  * @brief Whether a mesh carries something binary STL has no place for.
  *
- * STL holds a facet normal and three vertices per triangle, and nothing per vertex - so a mesh with texture
- * coordinates has to be written in the other form (`.vmesh`) instead of being quietly written without them. Per-vertex
- * normals are not part of this test: STL does carry a normal, it just carries one per facet, and a mesh whose normals
- * are per-vertex is a mesh that is textured in practice (which is what the texture coordinates say).
+ * STL holds a facet normal and three vertices per triangle, and NOTHING per vertex - so a mesh with texture
+ * coordinates or vertex colours has to be written in the other form (`.vmesh`) instead of being quietly written
+ * without them. Per-vertex normals are not part of this test: STL does carry a normal, it just carries one per facet.
  *
  * @param mesh The mesh about to be written.
  * @return true when binary STL would lose part of it, false when it holds all of it.
  */
 [[nodiscard]] inline bool stlWouldLose(const vn::geometry::Mesh& mesh) noexcept
 {
-    const auto texcoords = mesh.texcoordsBuffer();
-    return texcoords != nullptr && texcoords->size() != 0;
+    const auto texcoords       = mesh.texcoordsBuffer();
+    const auto colors          = mesh.colorsBuffer();
+    const bool keeps_texcoords = texcoords != nullptr && texcoords->size() != 0;
+    const bool keeps_colors    = colors != nullptr && colors->size() != 0;
+    return keeps_texcoords || keeps_colors;
 }
 
 /**
@@ -150,6 +152,9 @@ enum class MeshFlag : std::uint16_t
     Texcoords = 1u << 2,
     /// Triangle indices, one 32-bit number each.
     Indices = 1u << 3,
+    /// Per-vertex colours, four floats each (linear RGBA). A build that predates this block refuses the whole file
+    /// rather than read it without the colours, which is what the unknown-flag check below is for.
+    Colours = 1u << 4,
 
     /// The numbers are big-endian; a file says so itself, because this build writes the machine's own order.
     BigEndian = 1u << 8,
@@ -159,7 +164,7 @@ enum class MeshFlag : std::uint16_t
 inline constexpr std::uint16_t kMeshKnownFlags
     = static_cast<std::uint16_t>(MeshFlag::Positions) | static_cast<std::uint16_t>(MeshFlag::Normals)
       | static_cast<std::uint16_t>(MeshFlag::Texcoords) | static_cast<std::uint16_t>(MeshFlag::Indices)
-      | static_cast<std::uint16_t>(MeshFlag::BigEndian);
+      | static_cast<std::uint16_t>(MeshFlag::Colours) | static_cast<std::uint16_t>(MeshFlag::BigEndian);
 
 /// Whether this machine writes its numbers big-endian, which is what a file written here says about itself.
 inline constexpr bool kMeshHostIsBigEndian = (std::endian::native == std::endian::big);
@@ -210,6 +215,9 @@ struct MeshHeader
         }
         if (has(MeshFlag::Texcoords)) {
             total += vertex_count * sizeof(vn::math::Vec2f);
+        }
+        if (has(MeshFlag::Colours)) {
+            total += vertex_count * sizeof(vn::math::Vec4f);
         }
         if (has(MeshFlag::Indices)) {
             total += indexCount() * sizeof(std::uint32_t);
@@ -295,6 +303,7 @@ struct MeshArrays
     vn::intrusive_ptr<const vn::Buffer<float>>         positions;
     vn::intrusive_ptr<const vn::Buffer<float>>         normals;
     vn::intrusive_ptr<const vn::Buffer<float>>         texcoords;
+    vn::intrusive_ptr<const vn::Buffer<float>>         colors;
     vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices;
     std::uint64_t                                      vertex_count{ 0 };
     std::uint64_t                                      triangle_count{ 0 };
@@ -324,6 +333,7 @@ struct MeshArrays
             arrays.positions     = indexed.positionsBuffer();
             arrays.normals       = indexed.normalsBuffer();
             arrays.texcoords     = indexed.texcoordsBuffer();
+            arrays.colors        = indexed.colorsBuffer();
             arrays.indices       = indexed.indicesBuffer();
             arrays.triangle_count = indexed.triangleCount();
             break;
@@ -333,6 +343,7 @@ struct MeshArrays
             arrays.positions       = soup.positionsBuffer();
             arrays.normals         = soup.normalsBuffer();
             arrays.texcoords       = soup.texcoordsBuffer();
+            arrays.colors          = soup.colorsBuffer();
             arrays.triangle_count  = soup.triangleCount();
             break;
         }
@@ -349,6 +360,7 @@ struct MeshArrays
         // "none" here, which is what both writers and the file forms mean by it.
         arrays.normals   = arrays.normals != nullptr && arrays.normals->size() != 0 ? arrays.normals : nullptr;
         arrays.texcoords = arrays.texcoords != nullptr && arrays.texcoords->size() != 0 ? arrays.texcoords : nullptr;
+        arrays.colors    = arrays.colors != nullptr && arrays.colors->size() != 0 ? arrays.colors : nullptr;
         arrays.indices   = arrays.indices != nullptr && arrays.indices->size() != 0 ? arrays.indices : nullptr;
 
         // A mesh whose arrays do not describe the same mesh is refused here, once, for both forms: a file holding a normal
@@ -359,7 +371,8 @@ struct MeshArrays
             = arrays.indices == nullptr || arrays.indices->size() == arrays.triangle_count * 3u;
         const bool strided_arrays
             = (arrays.normals == nullptr || arrays.normals->size() == arrays.vertex_count * 3u)
-              && (arrays.texcoords == nullptr || arrays.texcoords->size() == arrays.vertex_count * 2u);
+              && (arrays.texcoords == nullptr || arrays.texcoords->size() == arrays.vertex_count * 2u)
+              && (arrays.colors == nullptr || arrays.colors->size() == arrays.vertex_count * 4u);
         if (!whole_vertices || !whole_triangles || !strided_arrays || !cornersAreInRange(arrays)) {
             return MeshArrays{};
         }
@@ -391,9 +404,11 @@ struct MeshArrays
 /**
  * @brief A mesh as one file, written while the consumer pulls it.
  *
- * The header says which arrays follow and how many elements each holds, so the file describes itself. The arrays are read
- * straight from the mesh's buffers, so a package stores the geometry without a copy of it - and the source holds those
- * buffers, so a backend that writes the package later needs nothing kept alive by the caller.
+ * The header says which arrays follow and how many elements each holds, so the file describes itself. It is the form
+ * for everything binary STL has no place for: a texture coordinate or a vertex colour is per-vertex data, and STL
+ * holds none (see stlWouldLose()). The arrays are read straight from the mesh's buffers, so a package stores the
+ * geometry without a copy of it - and the source holds those buffers, so a backend that writes the package later needs
+ * nothing kept alive by the caller.
  *
  * A mesh that was edited after it was handed over is refused (`IoError::InvalidData`), the way every borrowed source here
  * refuses one.
@@ -420,6 +435,7 @@ class MeshBinSource final : public vn::io::DataSource
         positions_             = arrays.positions;
         normals_               = arrays.normals;
         texcoords_             = arrays.texcoords;
+        colors_                = arrays.colors;
         indices_               = arrays.indices;
         header_.vertex_count   = arrays.vertex_count;
         header_.triangle_count = arrays.triangle_count;
@@ -429,13 +445,15 @@ class MeshBinSource final : public vn::io::DataSource
         addBlock(positions_, MeshFlag::Positions, header_.vertex_count, sizeof(vn::math::Vec3f));
         addBlock(normals_, MeshFlag::Normals, header_.vertex_count, sizeof(vn::math::Vec3f));
         addBlock(texcoords_, MeshFlag::Texcoords, header_.vertex_count, sizeof(vn::math::Vec2f));
+        addBlock(colors_, MeshFlag::Colours, header_.vertex_count, sizeof(vn::math::Vec4f));
         addBlock(indices_, MeshFlag::Indices, header_.indexCount(), sizeof(std::uint32_t));
 
         writeMeshHeader(header_bytes_, header_);
         revisions_[0] = positions_->revision();
         revisions_[1] = normals_ != nullptr ? normals_->revision() : 0;
         revisions_[2] = texcoords_ != nullptr ? texcoords_->revision() : 0;
-        revisions_[3] = indices_ != nullptr ? indices_->revision() : 0;
+        revisions_[3] = colors_ != nullptr ? colors_->revision() : 0;
+        revisions_[4] = indices_ != nullptr ? indices_->revision() : 0;
     }
 
     /**
@@ -562,19 +580,21 @@ class MeshBinSource final : public vn::io::DataSource
         return (positions_ == nullptr || positions_->revision() == revisions_[0])
                && (normals_ == nullptr || normals_->revision() == revisions_[1])
                && (texcoords_ == nullptr || texcoords_->revision() == revisions_[2])
-               && (indices_ == nullptr || indices_->revision() == revisions_[3]);
+               && (colors_ == nullptr || colors_->revision() == revisions_[3])
+               && (indices_ == nullptr || indices_->revision() == revisions_[4]);
     }
 
     vn::intrusive_ptr<const vn::Buffer<float>>         positions_;
     vn::intrusive_ptr<const vn::Buffer<float>>         normals_;
     vn::intrusive_ptr<const vn::Buffer<float>>         texcoords_;
+    vn::intrusive_ptr<const vn::Buffer<float>>         colors_;
     vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices_;
 
     MeshHeader                        header_{};
     std::array<char, kMeshHeaderSize> header_bytes_{};
-    std::array<Block, 4>              blocks_{};
+    std::array<Block, 5>              blocks_{};
     std::size_t                       block_count_{ 0 };
-    std::array<std::uint64_t, 4>      revisions_{};
+    std::array<std::uint64_t, 5>      revisions_{};
     std::uint64_t                     cursor_{ 0 };
     vn::io::IoError                   error_{ vn::io::IoError::Ok };
 };
@@ -589,8 +609,9 @@ inline constexpr std::uint64_t kMaxStlTriangles = 0xFFFFFFFFull;
  * @brief A mesh as one binary STL file, written while the consumer pulls it.
  *
  * Binary STL holds a facet normal and three vertices per triangle and nothing per vertex, so it is the form for a mesh
- * that has no texture coordinates (see stlWouldLose()); the other form is for the rest. The bytes are laid out here
- * rather than by a third-party writer, so what a package holds does not depend on another library's idea of STL.
+ * that has neither texture coordinates nor vertex colours (see stlWouldLose()); the other form is for the rest. The bytes
+ * are laid out here rather than by a third-party writer, so what a package holds does not depend on another library's idea
+ * of STL.
  *
  * The facet normal a mesh already carries is written as it is when all three of a triangle's corners agree on one - which
  * is what a mesh that came from STL looks like. Recomputing it from the winding would silently overwrite what the model
@@ -841,6 +862,7 @@ struct MeshBinData
     vn::geometry::Vec3fArray  positions; ///< Vertex positions.
     vn::geometry::Vec3fArray  normals;   ///< Per-vertex normals, empty when the file has none.
     vn::geometry::Vec2fArray  texcoords; ///< Per-vertex texture coordinates, empty when the file has none.
+    vn::geometry::Vec4fArray  colors;    ///< Per-vertex colours (linear RGBA), empty when the file has none.
     vn::geometry::UInt32Array indices;   ///< Triangle indices, empty for a triangle soup.
 };
 
@@ -884,6 +906,7 @@ inline bool readMeshBin(vn::io::Vfs& vfs, const std::filesystem::path& path, Mes
     const auto fits = [total](std::uint64_t count, std::uint64_t element) { return count <= total / element; };
     if (!fits(header.vertex_count, sizeof(vn::math::Vec3f))
         || (header.has(MeshFlag::Texcoords) && !fits(header.vertex_count, sizeof(vn::math::Vec2f)))
+        || (header.has(MeshFlag::Colours) && !fits(header.vertex_count, sizeof(vn::math::Vec4f)))
         || (header.has(MeshFlag::Indices) && (!fits(header.indexCount(), sizeof(std::uint32_t)) || header.indexCount() % 3u != 0))) {
         return false;
     }
@@ -898,6 +921,9 @@ inline bool readMeshBin(vn::io::Vfs& vfs, const std::filesystem::path& path, Mes
         return false;
     }
     if (header.has(MeshFlag::Texcoords) && !readBlock(source, header.vertex_count, out.texcoords)) {
+        return false;
+    }
+    if (header.has(MeshFlag::Colours) && !readBlock(source, header.vertex_count, out.colors)) {
         return false;
     }
     if (header.has(MeshFlag::Indices) && !readBlock(source, header.indexCount(), out.indices)) {
@@ -942,6 +968,9 @@ inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromBin(vn::io::Vfs& vfs, const
         if (!data.texcoords.empty()) {
             mesh->setTexcoords(std::move(data.texcoords));
         }
+        if (!data.colors.empty()) {
+            mesh->setColors(std::move(data.colors));
+        }
         return mesh;
     }
 
@@ -952,6 +981,9 @@ inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromBin(vn::io::Vfs& vfs, const
     }
     if (!data.texcoords.empty()) {
         mesh->setTexcoords(std::move(data.texcoords));
+    }
+    if (!data.colors.empty()) {
+        mesh->setColors(std::move(data.colors));
     }
     mesh->setIndices(std::move(data.indices));
     return mesh;
@@ -999,6 +1031,7 @@ inline bool readStl(vn::io::Vfs& vfs, const std::filesystem::path& path, MeshBin
     out.positions.clear();
     out.normals.clear();
     out.texcoords.clear(); // a form that cannot hold them leaves none behind
+    out.colors.clear();
     out.indices.clear();
     out.positions.reserve(static_cast<std::size_t>(triangles) * 3u);
     out.normals.reserve(triangles);

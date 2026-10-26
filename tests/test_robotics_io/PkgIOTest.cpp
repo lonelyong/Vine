@@ -415,6 +415,45 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     EXPECT_FLOAT_EQ(m->normals()[2].z, 1.0f);
 }
 
+TEST(PkgIOTest, VertexColorsRoundTripThroughTheSelfDescribingForm)
+{
+    auto table = std::make_unique<RigidObject>(u8"table");
+    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                      vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+    // Binary STL has nowhere to put a per-vertex colour, so a coloured mesh takes the self-describing form.
+    mesh->setColors(vn::geometry::Vec4fArray{ vn::math::Vec4f(1.0f, 0.0f, 0.0f, 1.0f),
+                                              vn::math::Vec4f(0.0f, 1.0f, 0.0f, 0.5f),
+                                              vn::math::Vec4f(0.0f, 0.0f, 1.0f, 0.25f) });
+    table->body().visuals().resize(1);
+    table->body().visuals()[0].setShape(mesh);
+
+    auto cell = std::make_unique<Workcell>();
+    cell->addSceneObject(std::move(table));
+
+    vn::io::ZipArchive vfs;
+    WorkcellIO             io;
+    io.savePkg(*cell, vfs);
+
+    const auto geoms = vfs.list(std::filesystem::path(u8"geoms"));
+    ASSERT_TRUE(geoms.ok());
+    ASSERT_EQ(geoms->size(), 1u);
+    EXPECT_EQ(geoms->front().name(), std::filesystem::path(u8"mesh0.vmesh"));
+    // header + positions + colours
+    EXPECT_EQ(geoms->front().size, 24u + 3u * 12u + 3u * 16u);
+
+    auto loaded = io.loadPkg(vfs);
+    ASSERT_NE(loaded, nullptr);
+    auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
+    ASSERT_NE(t, nullptr);
+    const auto* const m =
+        dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    ASSERT_NE(m, nullptr);
+    ASSERT_EQ(m->colors().size(), 3u);
+    EXPECT_FLOAT_EQ(m->colors()[1].y, 1.0f);
+    EXPECT_FLOAT_EQ(m->colors()[2].w, 0.25f);
+}
+
 TEST(PkgIOTest, SharedMeshStoredOnce)
 {
     auto table = std::make_unique<RigidObject>(u8"table");

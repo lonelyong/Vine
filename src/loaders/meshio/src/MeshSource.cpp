@@ -21,6 +21,8 @@ using IndexedTriangleMesh = vn::geometry::IndexedTriangleMesh;
 
 /// Floats per vertex in the mesh's position and normal storage.
 constexpr std::size_t kFloatsPerVertex = 3;
+/// Floats per vertex in the mesh's colour storage: the linear RGBA the shader ABI's colour attribute carries.
+constexpr std::size_t kFloatsPerColour = 4;
 /// Corners per triangle.
 constexpr std::uint64_t kCornersPerTriangle = 3;
 
@@ -32,11 +34,14 @@ struct MeshSource::Impl
     vn::intrusive_ptr<const vn::Buffer<float>> positions;
     /// The normal storage, or null when the mesh carries none.
     vn::intrusive_ptr<const vn::Buffer<float>> normals;
+    /// The colour storage, or null when the mesh carries none.
+    vn::intrusive_ptr<const vn::Buffer<float>> colors;
     /// The index storage, or null for a triangle soup (three consecutive positions per triangle).
     vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices;
 
     std::uint64_t positions_revision{ 0 };
     std::uint64_t normals_revision{ 0 };
+    std::uint64_t colors_revision{ 0 };
     std::uint64_t indices_revision{ 0 };
 
     float         scale{ 1.0f };
@@ -73,6 +78,7 @@ MeshSource::MeshSource(vn::intrusive_ptr<const Mesh> mesh, double scale)
         const auto& indexed = obj_cast<IndexedTriangleMesh>(*mesh);
         impl->positions     = indexed.positionsBuffer();
         impl->normals       = indexed.normalsBuffer();
+        impl->colors        = indexed.colorsBuffer();
         impl->indices       = indexed.indicesBuffer();
         impl->triangles     = indexed.triangleCount();
         break;
@@ -81,6 +87,7 @@ MeshSource::MeshSource(vn::intrusive_ptr<const Mesh> mesh, double scale)
         const auto& soup = obj_cast<TriangleMesh>(*mesh);
         impl->positions  = soup.positionsBuffer();
         impl->normals    = soup.normalsBuffer();
+        impl->colors     = soup.colorsBuffer();
         impl->triangles  = soup.triangleCount();
         break;
     }
@@ -101,10 +108,16 @@ MeshSource::MeshSource(vn::intrusive_ptr<const Mesh> mesh, double scale)
     if (impl->normals != nullptr && impl->normals->size() / kFloatsPerVertex != impl->vertices) {
         impl->normals = nullptr; // a normal count that does not match the positions is not a per-vertex normal
     }
+    if (impl->colors != nullptr && impl->colors->size() / kFloatsPerColour != impl->vertices) {
+        impl->colors = nullptr; // a colour count that does not match the positions is not a per-vertex colour
+    }
 
     impl->positions_revision = impl->positions->revision();
     if (impl->normals != nullptr) {
         impl->normals_revision = impl->normals->revision();
+    }
+    if (impl->colors != nullptr) {
+        impl->colors_revision = impl->colors->revision();
     }
     if (impl->indices != nullptr) {
         impl->indices_revision = impl->indices->revision();
@@ -179,6 +192,7 @@ std::size_t MeshSource::read(std::span<std::byte> out)
     // storage it was given, which is the content it promised.
     if (impl->positions->revision() != impl->positions_revision
         || (impl->normals != nullptr && impl->normals->revision() != impl->normals_revision)
+        || (impl->colors != nullptr && impl->colors->revision() != impl->colors_revision)
         || (impl->indices != nullptr && impl->indices->revision() != impl->indices_revision)) {
         impl->error = vn::io::IoError::InvalidData;
         return 0;
@@ -246,6 +260,24 @@ bool MeshSource::normalAt(std::uint64_t vertex, float (&out)[3]) const
     out[0]              = values[0];
     out[1]              = values[1];
     out[2]              = values[2];
+    return true;
+}
+
+bool MeshSource::hasColors() const noexcept
+{
+    return impl->colors != nullptr;
+}
+
+bool MeshSource::colorAt(std::uint64_t vertex, float (&out)[4]) const
+{
+    if (impl->colors == nullptr || vertex >= impl->vertices) {
+        return false;
+    }
+    const float* values = impl->colors->data() + vertex * kFloatsPerColour;
+    out[0]              = values[0];
+    out[1]              = values[1];
+    out[2]              = values[2];
+    out[3]              = values[3];
     return true;
 }
 

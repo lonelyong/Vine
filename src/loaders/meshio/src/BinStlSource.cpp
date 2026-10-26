@@ -52,6 +52,13 @@ BinStlSource::BinStlSource(vn::intrusive_ptr<const Mesh> mesh, double scale) : M
         return;
     }
 
+    // STL holds nothing per vertex, so an authored colour is content this form cannot write: refusing is what keeps
+    // "written without it" from looking like success (the package path makes the same call in detail::stlWouldLose).
+    if (hasColors()) {
+        refuse();
+        return;
+    }
+
     // The triangle count goes into a 32-bit field, so this is the one thing binary STL cannot write.
     if (triangleCount() > kMaxTriangles) {
         refuse();

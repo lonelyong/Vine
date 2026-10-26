@@ -471,6 +471,36 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     std::uint32_t texcoordComponents() const;
 
+    /** @brief Sets the per-vertex colours (location kColorLocation), FOUR scalars per vertex (linear RGBA).
+     *
+     * @details
+     * - Optional: a geometry without colours is drawn WITHOUT a colour attribute (the shading does not fetch
+     *   one), which is not the same thing as a channel of white — a null buffer or an empty one both mean
+     *   absent.
+     * - The values are LINEAR light, like every colour this module accepts (see ClearPolicy); alpha is the
+     *   per-vertex opacity the shading multiplies into the material's own.
+     * - The defaults state the WHOLE buffer; stating a vertex range states an arena's segment (see
+     *   setPositions for the units).
+     *
+     * @param colors       Colour scalars to read (four floats per vertex), or null for an empty channel.
+     * @param first_vertex First vertex of this geometry's segment.
+     * @param vertex_count Vertices in the segment, or 0 for the rest of @p colors from @p first_vertex.
+     */
+    void setColors(intrusive_ptr<const vn::Buffer<float>> colors, std::size_t first_vertex = 0u,
+                   std::size_t vertex_count = 0u);
+
+    /** @brief Returns whether the colour slot (location kColorLocation) holds a channel.
+     *
+     * @return true when colours are attached.
+     */
+    bool hasColors() const;
+
+    /** @brief Gets the number of vertices the colour slot covers (0 when it holds no channel).
+     *
+     * @return The vertex count of the colour channel.
+     */
+    std::size_t colorCount() const;
+
     /** @brief Adds a draw of this geometry's data (see Primitive).
      *
      * @details
@@ -743,6 +773,16 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   keep in step.
      */
     using IndexStream = BufferSlice<std::uint32_t>;
+
+    /** @brief The vertex attribute location that carries per-vertex colours.
+     *
+     * @details
+     * - The VALUE is the shader ABI's (`attributeLocation(VertexAttribute::Color)`, see ShaderAbi.hpp): the
+     *   engine's stages declare a `vec4` there and the backend binds the array as its colour stream, so the
+     *   number is a fact both sides read rather than a convention.
+     * - It is a CANONICAL location: a custom channel must not take it (see AttributeChannel).
+     */
+    static constexpr std::uint32_t kColorLocation = attributeLocation(VertexAttribute::Color);
 
     /** @brief The vertex attribute location that carries texture coordinates.
      *

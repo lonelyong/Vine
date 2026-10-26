@@ -179,6 +179,12 @@ class VN_MESHIO_API MeshLoader
      * Every mesh the source holds is concatenated into one mesh with the node transforms applied; materials and the
      * node tree are dropped, so a caller that needs either wants load() instead.
      *
+     * @details
+     * - ATTRIBUTES follow the meshes: vertex colours are kept when at least one mesh authors them, and the vertices of
+     *   the meshes that author none carry opaque white - the multiplicative identity the shading applies - so each part
+     *   looks the way it would on its own. Normals the source only partly provides are dropped whole and derived from the
+     *   geometry instead, because a zero normal is not "no normal". Texture coordinates are not kept by this entry.
+     *
      * @param file_path The model file path (STL, OBJ, ...).
      * @return The loaded mesh, or null on failure.
      */

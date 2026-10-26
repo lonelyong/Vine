@@ -11,6 +11,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Rect3.hpp>
+#include <vine/math/Vector4.hpp>
 
 #include "Array.hpp"
 #include "Shape.hpp"
@@ -22,21 +23,21 @@ using vn::math::Aabbf;
 /**
  * @brief Base class for polygonal mesh shapes.
  *
- * Vertex storage (positions, normals, texture coordinates) is shared by all meshes here; derived classes
- * add their own topology (e.g. an index array).
+ * Vertex storage (positions, normals, texture coordinates and vertex colours) is shared by all meshes here;
+ * derived classes add their own topology (e.g. an index array).
  *
  * STORAGE IS PACKED SCALARS. Attributes live in `Buffer<float>` — three floats per position or normal, two
- * per texcoord — and indices in `Buffer<uint32_t>`. Those are exactly the shapes a device uploads, so a
- * renderer-side holder takes the SAME buffer handle instead of repacking a copy: one allocation, read by
- * both sides. Pinning the element type to float is what makes that possible — a channel can hold the handle
- * directly, with no type erasure and no cached pointer that a later edit could leave dangling. (When the
+ * per texcoord, four per colour — and indices in `Buffer<uint32_t>`. Those are exactly the shapes a device
+ * uploads, so a renderer-side holder takes the SAME buffer handle instead of repacking a copy: one allocation,
+ * read by both sides. Pinning the element type to float is what makes that possible — a channel can hold the
+ * handle directly, with no type erasure and no cached pointer that a later edit could leave dangling. (When the
  * mesh held a bare `std::vector`, a second holder could only read it through a reference, so it had to COPY,
  * which put every vertex in memory twice.)
  *
- * TYPED ACCESS. The accessors still hand out `Vec3f` / `Vec2f` views — the SAME bytes, reinterpreted.
- * `Vector3` is a union of `{T x, y, z}` and `T data[3]`, so a run of three floats IS a `Vec3f`; that union is
- * what makes the reinterpretation sound, and the layout it relies on is static_asserted in Mesh.cpp.
- * Modelling, collision, picking and IO therefore keep the typed access they had.
+ * TYPED ACCESS. The accessors still hand out `Vec3f` / `Vec2f` / `Vec4f` views — the SAME bytes, reinterpreted.
+ * `Vector3` and `Vector4` are unions of `{T x, y, z(, w)}` and `T data[3|4]`, so a run of three (four) floats IS
+ * a `Vec3f` (`Vec4f`); that union is what makes the reinterpretation sound, and the layout it relies on is
+ * static_asserted in Mesh.cpp. Modelling, collision, picking and IO therefore keep the typed access they had.
  *
  * BORROWED ACCESS. The accessors return `std::span`, which is `pointer` + `count`. Borrowed means borrowed,
  * though — a view must not outlive the mesh, and an edit that GROWS the storage invalidates it.
@@ -55,6 +56,8 @@ class VN_GEOMETRY_API Mesh : public Shape {
     static constexpr std::uint32_t kVec3Components = 3u;
     /// Scalar floats per texcoord element (uv).
     static constexpr std::uint32_t kVec2Components = 2u;
+    /// Scalar floats per colour element (linear rgba).
+    static constexpr std::uint32_t kVec4Components = 4u;
 
   protected:
     /// Protected so Mesh cannot be instantiated directly; allocates the empty attribute buffers every
@@ -88,6 +91,22 @@ class VN_GEOMETRY_API Mesh : public Shape {
      */
     [[nodiscard]]
     std::span<const vn::math::Vec2f> texcoords() const;
+
+    /**
+     * @brief Returns the per-vertex colours.
+     *
+     * @details
+     * - Four scalars per vertex — LINEAR RGBA, alpha being the per-vertex opacity — which is the shape the
+     *   canonical colour channel at shader location 2 reads (see the graphics ShaderAbi). Linear is the
+     *   graphics module's contract for every colour it is handed, so a value decoded from a file or a palette
+     *   is converted once, on the way in.
+     * - OPTIONAL: a mesh that authors no colours answers an empty view. An absent colour channel is not a
+     *   white one — the renderer then draws without the attribute instead of fetching a constant.
+     *
+     * @return Read-only view over the colours, empty when none were set.
+     */
+    [[nodiscard]]
+    std::span<const vn::math::Vec4f> colors() const;
 
     /**
      * @brief Returns the shareable handle to the vertex positions.
@@ -128,6 +147,16 @@ class VN_GEOMETRY_API Mesh : public Shape {
     intrusive_ptr<const Buffer<float>> texcoordsBuffer() const;
 
     /**
+     * @brief Returns the shareable handle to the per-vertex colours.
+     *
+     * See positionsBuffer() for the lifetime and revision contract.
+     *
+     * @return Handle to the colour buffer (never null; empty when unset; `kVec4Components` floats per vertex).
+     */
+    [[nodiscard]]
+    intrusive_ptr<const Buffer<float>> colorsBuffer() const;
+
+    /**
      * @brief Replaces the vertex positions.
      *
      * @param positions New position array.
@@ -147,6 +176,18 @@ class VN_GEOMETRY_API Mesh : public Shape {
      * @param texcoords New texcoord array.
      */
     void setTexcoords(Vec2fArray texcoords);
+
+    /**
+     * @brief Replaces the per-vertex colours.
+     *
+     * @details
+     * - Four linear RGBA scalars per vertex (see colors()).
+     * - LIKE the other optional attributes, an EMPTY array removes the colours: "no colours" and "an empty
+     *   colour array" are one state, so a consumer's test is one question (`colors().empty()`).
+     *
+     * @param colors New colour array (empty to remove the attribute).
+     */
+    void setColors(Vec4fArray colors);
 
     /**
      * @brief Returns the number of stored vertices.
@@ -225,6 +266,8 @@ class VN_GEOMETRY_API Mesh : public Shape {
     intrusive_ptr<Buffer<float>> normals_;
     /// Optional per-vertex texture coordinates (empty when unset; `kVec2Components` floats per vertex).
     intrusive_ptr<Buffer<float>> texcoords_;
+    /// Optional per-vertex colours (empty when unset; `kVec4Components` floats per vertex, linear RGBA).
+    intrusive_ptr<Buffer<float>> colors_;
 
   private:
     /// Cached axis-aligned bounding box (empty until set or computed).

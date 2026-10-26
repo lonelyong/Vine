@@ -3,9 +3,12 @@
 // source asks for it on this line: a name missing here is silently dropped and the branch that tests it
 // stays dead. Keep the list in sync with the backend's variants - scripts/vn_shader_check.sh compiles
 // every combination of these names.
-#pragma import_defines (VN_TEXTURED, VN_TEXCOORD_UV, VN_TEXCOORD_CUBE)
+#pragma import_defines (VN_VERTEX_COLOR, VN_TEXTURED, VN_TEXCOORD_UV, VN_TEXCOORD_CUBE)
 layout(location = 0) in vec3 vn_view_pos;
 layout(location = 1) in vec3 vn_view_normal;
+#ifdef VN_VERTEX_COLOR
+layout(location = 3) in vec4 vn_color;
+#endif
 #ifdef VN_TEXTURED
 #if defined(VN_TEXCOORD_CUBE)
 layout(location = 2) in vec3 vn_texcoord;
@@ -64,6 +67,12 @@ void main()
     // material's BASE colour (not its diffuse lobe): the lighting pass derives the diffuse part and the
     // reflectance from it and the metallic it reads beside the normal, so f0 is never stored - a derived value
     // in an attachment is how two paths come to disagree about it (vine_gbuffer.glsl).
+#ifdef VN_VERTEX_COLOR
+    // An AUTHORED vertex colour modulates the albedo only - the same rule and the same reason the forward stage
+    // states: its alpha is not an opacity input, because opacity belongs to the draw block, and a model's fourth
+    // colour component means what the model says it means.
+    vn_surface.base_color *= vn_color.rgb;
+#endif
     vn_out_base_color = vec4(vn_surface.base_color, 1.0);
     // rg = the shading normal (octahedral), b = roughness, a = metallic: one row of the surface the deferred
     // pass rebuilds, which is the design's point that the G-buffer IS the material's projection.

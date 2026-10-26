@@ -34,6 +34,7 @@ using Model               = vn::geometry::Model;
 using UInt32Array         = vn::geometry::UInt32Array;
 using Vec2fArray          = vn::geometry::Vec2fArray;
 using Vec3fArray          = vn::geometry::Vec3fArray;
+using Vec4fArray          = vn::geometry::Vec4fArray;
 
 /** @brief AABB diagonal length above which the source unit is millimeters. */
 constexpr float kMmThreshold = 10.0f;
@@ -99,113 +100,253 @@ bool drainStream(std::istream& in, std::vector<unsigned char>& out)
 }
 
 /**
- * @brief Recursively collects every mesh of an assimp scene.
+ * @brief The vertex arrays one builder accumulates, and the facts a multi-mesh build has to remember.
  *
- * All meshes are merged into single arrays; indices are rebased so they stay
- * valid across the concatenated vertex list.
- *
- * @param scene The assimp scene.
- * @param node The current scene node.
- * @param positions Output vertex positions.
- * @param normals Output vertex normals.
- * @param indices Output triangle indices.
+ * Every conversion from an assimp mesh to Vine vertex data goes through appendMeshAttributes(), so this is the ONE
+ * shape "a mesh became vertex data" takes. The two flags are decisions a MERGE has to make and a single-mesh build
+ * does not, which is why they belong to the target being filled rather than to the conversion:
+ * - pad_missing_colors: a mesh that authors no colour carries OPAQUE WHITE, the multiplicative identity the shading
+ *   applies - exactly what "no colour channel" means - so a merged entry looks like its parts drawn on their own.
+ * - keep_texcoords: the merged entry answers "give me the triangles" and records none; a model entry keeps what the
+ *   file held.
  */
-void collectAssimpNode(const aiScene* scene,
-                       const aiNode* node,
-                       Vec3fArray& positions,
-                       Vec3fArray& normals,
-                       UInt32Array& indices)
+struct MeshSink
 {
-    for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
-        const aiMesh*      ai_mesh     = scene->mMeshes[node->mMeshes[i]];
-        const std::uint32_t vertex_base = static_cast<std::uint32_t>(positions.size());
+    Vec3fArray  positions; ///< Vertices appended so far, in scene order.
+    Vec3fArray  normals;   ///< Per-vertex normals, in the same order as @ref positions.
+    Vec4fArray  colors;    ///< Per-vertex colours (linear RGBA), in the same order as @ref positions.
+    Vec2fArray  texcoords; ///< Per-vertex texture coordinates, when @ref keep_texcoords is on.
+    UInt32Array indices;   ///< Triangle corners, rebased onto @ref positions.
 
-        if (ai_mesh->HasPositions()) {
-            positions.reserve(positions.size() + ai_mesh->mNumVertices);
-            for (unsigned int j = 0; j < ai_mesh->mNumVertices; ++j) {
-                const aiVector3D& v = ai_mesh->mVertices[j];
-                positions.emplace_back(v.x, v.y, v.z);
+    bool pad_missing_colors{ false };    ///< White for a mesh that authors none (see the note above).
+    bool keep_texcoords{ false };        ///< Whether texture coordinates are recorded at all.
+    bool any_mesh_has_colors{ false };   ///< True once an appended mesh AUTHORED a colour.
+    bool every_mesh_has_normals{ true }; ///< False once an appended mesh carried none.
+};
+
+/**
+ * @brief What both builders share: the scene they read, and the ONE translation from an assimp mesh to Vine arrays.
+ *
+ * Private inheritance in both builders, deliberately: the base is a tool, not an interface, so nothing outside the two
+ * builders can use it. The split the file follows is the one the two entries force - what BOTH need lives here
+ * (protected), and what exists for one entry lives private in that entry's builder (materials and node building in
+ * ModelBuilder, node walking and scaling in MergedMeshBuilder).
+ */
+class MeshBuilderBase
+{
+  protected:
+    /**
+     * @brief Binds the builder to the scene it reads.
+     *
+     * @param scene The parsed scene; it outlives the builder.
+     */
+    explicit MeshBuilderBase(const aiScene& scene) noexcept
+      : scene_(&scene)
+    {
+    }
+
+    /**
+     * @brief Returns the scene being read.
+     *
+     * @return The parsed scene the builder was constructed with.
+     */
+    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_; }
+
+    /**
+     * @brief Appends one assimp mesh's vertex data to @p sink.
+     *
+     * The ONE place an aiMesh becomes Vine arrays: positions, the authored normals, the authored (or padded) colours,
+     * the texture coordinates when the sink wants them, and the triangle corners rebased onto the vertices the sink
+     * already holds.
+     *
+     * @param source The assimp mesh to append; a mesh without positions contributes nothing.
+     * @param sink   The arrays being filled; its flags decide padding and whether coordinates are kept.
+     */
+    static void appendMeshAttributes(const aiMesh& source, MeshSink& sink)
+    {
+        if (!source.HasPositions()) {
+            return; // nothing to append: the corners of a mesh without vertices name nothing
+        }
+
+        const auto vertex_base = static_cast<std::uint32_t>(sink.positions.size());
+
+        sink.positions.reserve(sink.positions.size() + source.mNumVertices);
+        for (unsigned int i = 0; i < source.mNumVertices; ++i) {
+            const aiVector3D& v = source.mVertices[i];
+            sink.positions.emplace_back(v.x, v.y, v.z);
+        }
+
+        if (source.HasNormals()) {
+            sink.normals.reserve(sink.normals.size() + source.mNumVertices);
+            for (unsigned int i = 0; i < source.mNumVertices; ++i) {
+                const aiVector3D& n = source.mNormals[i];
+                sink.normals.emplace_back(n.x, n.y, n.z);
+            }
+        } else {
+            sink.every_mesh_has_normals = false; // a zero normal is not "no normal" (see MeshSink)
+        }
+
+        if (source.HasVertexColors(0)) {
+            sink.any_mesh_has_colors = true;
+            sink.colors.reserve(sink.colors.size() + source.mNumVertices);
+            for (unsigned int i = 0; i < source.mNumVertices; ++i) {
+                const aiColor4D& c = source.mColors[0][i];
+                sink.colors.emplace_back(c.r, c.g, c.b, c.a);
+            }
+        } else if (sink.pad_missing_colors) {
+            // The vertices are already in the list, so the colour array has to stay parallel to it: white modulates
+            // the albedo by nothing, which is what "this mesh authors no colour" means to the shading.
+            sink.colors.insert(sink.colors.end(), source.mNumVertices, vn::math::Vec4f(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+
+        if (sink.keep_texcoords && source.HasTextureCoords(0)) {
+            sink.texcoords.reserve(sink.texcoords.size() + source.mNumVertices);
+            for (unsigned int i = 0; i < source.mNumVertices; ++i) {
+                const aiVector3D& t = source.mTextureCoords[0][i];
+                sink.texcoords.emplace_back(t.x, t.y);
             }
         }
 
-        if (ai_mesh->HasNormals()) {
-            normals.reserve(normals.size() + ai_mesh->mNumVertices);
-            for (unsigned int j = 0; j < ai_mesh->mNumVertices; ++j) {
-                const aiVector3D& n = ai_mesh->mNormals[j];
-                normals.emplace_back(n.x, n.y, n.z);
-            }
-        }
-
-        if (ai_mesh->HasFaces()) {
-            indices.reserve(indices.size() + ai_mesh->mNumFaces * 3);
-            for (unsigned int j = 0; j < ai_mesh->mNumFaces; ++j) {
-                const aiFace& face = ai_mesh->mFaces[j];
+        if (source.HasFaces()) {
+            sink.indices.reserve(sink.indices.size() + static_cast<std::size_t>(source.mNumFaces) * 3u);
+            for (unsigned int i = 0; i < source.mNumFaces; ++i) {
+                const aiFace& face = source.mFaces[i];
                 if (face.mNumIndices == 3) {
-                    indices.push_back(face.mIndices[0] + vertex_base);
-                    indices.push_back(face.mIndices[1] + vertex_base);
-                    indices.push_back(face.mIndices[2] + vertex_base);
+                    sink.indices.push_back(face.mIndices[0] + vertex_base);
+                    sink.indices.push_back(face.mIndices[1] + vertex_base);
+                    sink.indices.push_back(face.mIndices[2] + vertex_base);
                 }
             }
         }
     }
 
-    for (unsigned int i = 0; i < node->mNumChildren; ++i) {
-        collectAssimpNode(scene, node->mChildren[i], positions, normals, indices);
+    /**
+     * @brief Converts a measured diagonal length into the factor the load options ask for.
+     *
+     * Both entries share this rule, so the same source is scaled the same way whichever one reads it.
+     *
+     * @param options The load options.
+     * @param diagonal The AABB diagonal length of the source, in source units.
+     * @return The factor the geometry has to be scaled by.
+     */
+    static double scaleFactorOf(const MeshLoader::Options& options, double diagonal)
+    {
+        if (options.scale_mode == MeshLoader::ScaleMode::Auto) {
+            const auto unit = diagonal > kMmThreshold ? MeshLoader::LengthUnit::Millimeter : MeshLoader::LengthUnit::Meter;
+            return static_cast<double>(options.auto_scale_output_unit) / static_cast<double>(unit);
+        }
+        if (options.scale_mode == MeshLoader::ScaleMode::Custom) {
+            return options.custom_scale_factor;
+        }
+        return 1.0;
     }
-}
+
+    /**
+     * @brief Copies an assimp node matrix into ours.
+     *
+     * Both sides multiply a matrix with a column vector and keep the translation in the fourth column, so the elements
+     * travel one to one - no transpose is involved.
+     *
+     * @param source The assimp matrix.
+     * @return The same transform in our layout.
+     */
+    static vn::math::Mat4d toMatrix(const aiMatrix4x4& source)
+    {
+        return vn::math::Mat4d(source.a1, source.a2, source.a3, source.a4, source.b1, source.b2, source.b3, source.b4,
+                               source.c1, source.c2, source.c3, source.c4, source.d1, source.d2, source.d3, source.d4);
+    }
+
+    /**
+     * @brief Converts an assimp colour to ours.
+     *
+     * @param color The assimp colour.
+     * @return The same colour (linear RGBA: the loader passes the file's values through).
+     */
+    static vn::Colorf colorOf(const aiColor4D& color) { return vn::Colorf(color.r, color.g, color.b, color.a); }
+
+  private:
+    const aiScene* scene_{ nullptr }; ///< The parsed scene; borrowed for the builder's whole life.
+};
 
 /**
- * @brief Merges an assimp scene into one indexed triangle mesh.
+ * @brief Builds the flattened entry: every mesh in ONE vertex list, with the node transforms applied by assimp.
  *
- * @param mesh The target mesh.
- * @param scene The assimp scene.
+ * aiProcess_PreTransformVertices has already baked the graph, so this builder walks the tree only to find the meshes
+ * in scene order; materials and structure are what a caller of this entry asked to drop (see loadMerged).
  */
-void mergeAssimpScene(IndexedTriangleMesh& mesh, const aiScene* scene)
+class MergedMeshBuilder final : private MeshBuilderBase
 {
-    Vec3fArray  positions;
-    Vec3fArray  normals;
-    UInt32Array indices;
-
-    collectAssimpNode(scene, scene->mRootNode, positions, normals, indices);
-
-    mesh.setPositions(std::move(positions));
-    mesh.setNormals(std::move(normals));
-    mesh.setTexcoords({});
-    mesh.setIndices(std::move(indices));
-}
-
-/**
- * @brief Converts a measured diagonal length into the factor the load options ask for.
- *
- * Both entries share this rule, so the same source is scaled the same way whichever one reads it.
- *
- * @param options The load options.
- * @param diagonal The AABB diagonal length of the source, in source units.
- * @return The factor the geometry has to be scaled by.
- */
-double scaleFactorOf(const MeshLoader::Options& options, double diagonal)
-{
-    if (options.scale_mode == MeshLoader::ScaleMode::Auto) {
-        const auto unit = diagonal > kMmThreshold ? MeshLoader::LengthUnit::Millimeter : MeshLoader::LengthUnit::Meter;
-        return static_cast<double>(options.auto_scale_output_unit) / static_cast<double>(unit);
+  public:
+    /**
+     * @brief Binds the builder to the scene and the options whose scale rule it applies.
+     *
+     * @param options The load options.
+     * @param scene The parsed scene.
+     */
+    MergedMeshBuilder(const MeshLoader::Options& options, const aiScene& scene)
+      : MeshBuilderBase(scene)
+      , options_(options)
+    {
+        sink_.pad_missing_colors = true; // a merged entry has to fill in the meshes that author no colour
     }
-    if (options.scale_mode == MeshLoader::ScaleMode::Custom) {
-        return options.custom_scale_factor;
-    }
-    return 1.0;
-}
 
-/**
- * @brief Scales the vertices of a mesh according to the load options.
- *
- * Auto mode infers the source unit from the AABB diagonal length: a diagonal
- * above kMmThreshold is treated as millimeters, otherwise as meters. The
- * vertices are then converted to the configured output unit.
- *
- * @param options The load options.
- * @param mesh The mesh to scale.
- */
-void applyScale(const MeshLoader::Options& options, IndexedTriangleMesh& mesh)
+    /**
+     * @brief Merges the whole scene into one indexed triangle mesh.
+     *
+     * @return The merged mesh; its arrays are empty when the scene holds no usable mesh.
+     */
+    vn::intrusive_ptr<Mesh> build()
+    {
+        appendNode(*scene().mRootNode);
+
+        auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
+        mesh->setPositions(std::move(sink_.positions));
+        mesh->setIndices(std::move(sink_.indices));
+        // A colour array exists only when some mesh AUTHORED one; the other vertices already carry the white that
+        // means "no colour channel" (see MeshSink). A partial NORMAL array is dropped instead of invented: an absent
+        // channel already means "derive them from the geometry" to the renderer.
+        if (sink_.any_mesh_has_colors) {
+            mesh->setColors(std::move(sink_.colors));
+        }
+        if (sink_.every_mesh_has_normals) {
+            mesh->setNormals(std::move(sink_.normals));
+        }
+        mesh->setTexcoords({}); // the merged form keeps none (see MeshSink)
+        applyScale(*mesh);
+        return mesh;
+    }
+
+  private:
+    /**
+     * @brief Appends every mesh of @p node, and of its children, to the sink.
+     *
+     * @param node The node to walk; the transforms are already baked, so no matrix is threaded through.
+     */
+    void appendNode(const aiNode& node)
+    {
+        for (unsigned int i = 0; i < node.mNumMeshes; ++i) {
+            const unsigned int index = node.mMeshes[i];
+            if (index < scene().mNumMeshes) {
+                MeshBuilderBase::appendMeshAttributes(*scene().mMeshes[index], sink_);
+            }
+        }
+        for (unsigned int i = 0; i < node.mNumChildren; ++i) {
+            appendNode(*node.mChildren[i]);
+        }
+    }
+
+    /**
+     * @brief Scales the merged vertices by the factor the load options state.
+     *
+     * @param mesh The mesh to scale in place; a mesh without vertices is left as it is.
+     */
+    void applyScale(IndexedTriangleMesh& mesh) const;
+
+    const MeshLoader::Options& options_; ///< The load options the scale rule reads.
+    MeshSink                   sink_;    ///< The arrays being merged.
+};
+
+void MergedMeshBuilder::applyScale(IndexedTriangleMesh& mesh) const
 {
     // A borrowed view is enough here: the loop below reads it before setPositions() replaces the storage.
     const auto positions = mesh.positions();
@@ -224,8 +365,7 @@ void applyScale(const MeshLoader::Options& options, IndexedTriangleMesh& mesh)
         max.z = std::max(max.z, v.z);
     }
 
-    const double scale_factor = scaleFactorOf(options, (max - min).length());
-
+    const double scale_factor = MeshBuilderBase::scaleFactorOf(options_, (max - min).length());
     if (scale_factor != 1.0) {
         Vec3fArray scaled;
         scaled.reserve(positions.size());
@@ -239,55 +379,100 @@ void applyScale(const MeshLoader::Options& options, IndexedTriangleMesh& mesh)
 }
 
 /**
- * @brief Copies an assimp node matrix into ours.
+ * @brief Builds the structured entry: the node tree, one entry per mesh in its own local space, and the materials.
  *
- * Both sides multiply a matrix with a column vector and keep the translation in the fourth column, so the elements travel
- * one to one - no transpose is involved.
- *
- * @param source The assimp matrix.
- * @return The same transform in our layout.
+ * Nothing is baked - a node's transform stays on the node and a mesh two nodes refer to stays one mesh - which is the
+ * whole difference from MergedMeshBuilder. The model's scale is the same rule the merged entry uses, folded once into
+ * the root's transform so the parts keep their places.
  */
-vn::math::Mat4d toMatrix(const aiMatrix4x4& source)
+class ModelBuilder final : private MeshBuilderBase
 {
-    return vn::math::Mat4d(source.a1, source.a2, source.a3, source.a4, source.b1, source.b2, source.b3, source.b4,
-                           source.c1, source.c2, source.c3, source.c4, source.d1, source.d2, source.d3, source.d4);
-}
+  public:
+    /**
+     * @brief Binds the builder to the scene and the options whose scale rule it applies.
+     *
+     * @param options The load options.
+     * @param scene The parsed scene.
+     */
+    ModelBuilder(const MeshLoader::Options& options, const aiScene& scene)
+      : MeshBuilderBase(scene)
+      , options_(options)
+    {
+    }
 
-/**
- * @brief Builds the matrix that scales every axis by one factor.
- *
- * @param factor The scale factor.
- * @return The uniform scale matrix.
- */
-vn::math::Mat4d uniformScale(double factor)
+    /**
+     * @brief Builds the model from the whole scene.
+     *
+     * @return The model; it holds a root node and no entries when the scene carries no mesh.
+     */
+    vn::intrusive_ptr<Model> build();
+
+  private:
+    /**
+     * @brief Reads one assimp material into the concrete material type that fits it.
+     *
+     * assimp describes every format's material through the same generic keys, so the type is chosen by what the source
+     * actually provided rather than by the format it came from. A metallic/roughness pair asks for PbrMaterial, and so
+     * does a material that is not fully opaque: only PbrMaterial carries opacity, so there the shading model is the part
+     * that gives way. A specular color or a shininess is PhongMaterial, which is what an MTL describes. A plain diffuse
+     * color is already a ColorMaterial. A material carries its own name, so nothing keeps a name table next to it.
+     *
+     * @param source The assimp material.
+     * @return The material; never null.
+     */
+    static vn::intrusive_ptr<Material> makeMaterial(const aiMaterial& source);
+
+    /**
+     * @brief Builds one mesh from an assimp mesh, in the mesh's own space.
+     *
+     * The vertices are copied as they are: nothing is baked here, so a mesh two nodes refer to stays one mesh. Texture
+     * coordinates and vertex colours are kept, because a caller that asked for the structure wants what the file held.
+     *
+     * @param source The assimp mesh.
+     * @return The mesh.
+     */
+    vn::intrusive_ptr<Mesh> makeMesh(const aiMesh& source) const;
+
+    /// Builds one entry per assimp mesh, sharing the material each mesh names.
+    void collectEntries();
+
+    /**
+     * @brief Appends one assimp node and its children, children first.
+     *
+     * @param source The assimp node.
+     * @param parent_world The transform of the parent chain; the node's own rides on top of it for measuring.
+     * @return The index of the node that was added.
+     */
+    std::uint32_t appendNode(const aiNode& source, const vn::math::Mat4d& parent_world);
+
+    /**
+     * @brief Grows the model box by @p mesh placed at @p world.
+     *
+     * @param mesh The mesh to measure.
+     * @param world The transform the vertices are placed by; the box is therefore in model space.
+     */
+    void growBounds(const Mesh& mesh, const vn::math::Mat4d& world);
+
+    /// Folds the load options' scale into @p root's transform, once for the whole model.
+    void applyScale(std::uint32_t root);
+
+    /// Builds the matrix that scales every axis by one factor.
+    static vn::math::Mat4d uniformScale(double factor);
+
+    const MeshLoader::Options& options_; ///< The load options the scale rule reads.
+    std::vector<Model::Entry>   meshes_; ///< One entry per assimp mesh, in scene order.
+    std::vector<Model::Node>    nodes_;  ///< The nodes built so far, children before parents.
+    vn::math::Vec3f             min_{};  ///< Lower corner of the model box.
+    vn::math::Vec3f             max_{};  ///< Upper corner of the model box.
+    bool                        has_bounds_{ false }; ///< true once a vertex has been measured.
+};
+
+vn::math::Mat4d ModelBuilder::uniformScale(double factor)
 {
     return vn::math::Mat4d(factor, 0.0, 0.0, 0.0, 0.0, factor, 0.0, 0.0, 0.0, 0.0, factor, 0.0, 0.0, 0.0, 0.0, 1.0);
 }
 
-/**
- * @brief Converts an assimp color to ours.
- *
- * @param color The assimp color.
- * @return The color.
- */
-vn::Colorf colorOf(const aiColor4D& color)
-{
-    return vn::Colorf(color.r, color.g, color.b, color.a);
-}
-
-/**
- * @brief Reads one assimp material into the concrete material type that fits it.
- *
- * assimp describes every format's material through the same generic keys, so the type is chosen by what the source
- * actually provided rather than by the format it came from. A metallic/roughness pair asks for PbrMaterial, and so does a
- * material that is not fully opaque: only PbrMaterial carries opacity, so there the shading model is the part that gives
- * way. A specular color or a shininess is PhongMaterial, which is what an MTL describes. A plain diffuse color is already
- * a ColorMaterial. A material carries its own name, so nothing keeps a name table next to it.
- *
- * @param source The assimp material.
- * @return The material; never null.
- */
-vn::intrusive_ptr<Material> makeMaterial(const aiMaterial& source)
+vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
 {
     aiColor4D ambient{ 0.0f, 0.0f, 0.0f, 1.0f };
     aiColor4D diffuse{ 1.0f, 1.0f, 1.0f, 1.0f };
@@ -322,87 +507,52 @@ vn::intrusive_ptr<Material> makeMaterial(const aiMaterial& source)
     return material;
 }
 
-/**
- * @brief Builds one mesh from an assimp mesh, in the mesh's own space.
- *
- * The vertices are copied as they are: nothing is baked here, so a mesh two nodes refer to stays one mesh. Texture
- * coordinates are kept, because a caller that asked for the structure wants what the file held.
- *
- * @param source The assimp mesh.
- * @return The mesh.
- */
-vn::intrusive_ptr<Mesh> makeMesh(const aiMesh& source)
+vn::intrusive_ptr<Mesh> ModelBuilder::makeMesh(const aiMesh& source) const
 {
-    Vec3fArray  positions;
-    Vec3fArray  normals;
-    Vec2fArray  texcoords;
-    UInt32Array indices;
-
-    if (source.HasPositions()) {
-        positions.reserve(source.mNumVertices);
-        for (unsigned int i = 0; i < source.mNumVertices; ++i) {
-            const aiVector3D& v = source.mVertices[i];
-            positions.emplace_back(v.x, v.y, v.z);
-        }
-    }
-    if (source.HasNormals()) {
-        normals.reserve(source.mNumVertices);
-        for (unsigned int i = 0; i < source.mNumVertices; ++i) {
-            const aiVector3D& n = source.mNormals[i];
-            normals.emplace_back(n.x, n.y, n.z);
-        }
-    }
-    if (source.HasTextureCoords(0)) {
-        texcoords.reserve(source.mNumVertices);
-        for (unsigned int i = 0; i < source.mNumVertices; ++i) {
-            const aiVector3D& t = source.mTextureCoords[0][i];
-            texcoords.emplace_back(t.x, t.y);
-        }
-    }
-    if (source.HasFaces()) {
-        indices.reserve(source.mNumFaces * 3);
-        for (unsigned int i = 0; i < source.mNumFaces; ++i) {
-            const aiFace& face = source.mFaces[i];
-            if (face.mNumIndices == 3) {
-                indices.push_back(face.mIndices[0]);
-                indices.push_back(face.mIndices[1]);
-                indices.push_back(face.mIndices[2]);
-            }
-        }
-    }
+    MeshSink sink;
+    sink.keep_texcoords = true; // the structured entry keeps what the file held
+    appendMeshAttributes(source, sink);
 
     auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
-    mesh->setPositions(std::move(positions));
-    mesh->setNormals(std::move(normals));
-    mesh->setTexcoords(std::move(texcoords));
-    mesh->setIndices(std::move(indices));
+    mesh->setPositions(std::move(sink.positions));
+    mesh->setIndices(std::move(sink.indices));
+    mesh->setTexcoords(std::move(sink.texcoords));
+    if (sink.every_mesh_has_normals) {
+        mesh->setNormals(std::move(sink.normals));
+    }
+    if (sink.any_mesh_has_colors) {
+        mesh->setColors(std::move(sink.colors));
+    }
     if (source.mName.length > 0) {
         mesh->setName(String::fromUtf8(std::string_view(source.mName.C_Str(), source.mName.length)));
     }
     return mesh;
 }
 
-/**
- * @brief The state one model build carries while the assimp scene is walked.
- */
-struct ModelBuilder
+void ModelBuilder::collectEntries()
 {
-    std::vector<vn::intrusive_ptr<Material>> materials;         ///< One material per assimp material, shared by its meshes.
-    std::vector<Model::Entry>                meshes;            ///< One entry per assimp mesh, in scene order.
-    std::vector<Model::Node>                 nodes;             ///< The nodes built so far, children before parents.
-    vn::math::Vec3f                          min{};             ///< Lower corner of the model box.
-    vn::math::Vec3f                          max{};             ///< Upper corner of the model box.
-    bool                                     has_bounds{ false }; ///< true once a vertex has been measured.
-};
+    std::vector<vn::intrusive_ptr<Material>> materials;
+    materials.reserve(scene().mNumMaterials);
+    for (unsigned int i = 0; i < scene().mNumMaterials; ++i) {
+        const aiMaterial* const source = scene().mMaterials[i];
+        materials.push_back(source != nullptr ? makeMaterial(*source) : nullptr);
+    }
 
-/**
- * @brief Grows a model's bounding box by a mesh placed at a transform.
- *
- * @param builder The model being built; its box is grown.
- * @param mesh The mesh to measure.
- * @param world The transform the vertices are placed by; the box is therefore in model space.
- */
-void growBounds(ModelBuilder& builder, const Mesh& mesh, const vn::math::Mat4d& world)
+    meshes_.reserve(scene().mNumMeshes);
+    for (unsigned int i = 0; i < scene().mNumMeshes; ++i) {
+        const aiMesh* const source = scene().mMeshes[i];
+        Model::Entry        entry;
+        if (source != nullptr) {
+            entry.mesh = makeMesh(*source);
+            if (source->mMaterialIndex < materials.size()) {
+                entry.material = materials[source->mMaterialIndex];
+            }
+        }
+        meshes_.push_back(std::move(entry));
+    }
+}
+
+void ModelBuilder::growBounds(const Mesh& mesh, const vn::math::Mat4d& world)
 {
     for (const vn::math::Vec3f& point : mesh.positions()) {
         const auto x = static_cast<float>(world.element(0, 0) * point.x + world.element(0, 1) * point.y
@@ -412,33 +562,22 @@ void growBounds(ModelBuilder& builder, const Mesh& mesh, const vn::math::Mat4d& 
         const auto z = static_cast<float>(world.element(2, 0) * point.x + world.element(2, 1) * point.y
                                           + world.element(2, 2) * point.z + world.element(2, 3));
 
-        if (!builder.has_bounds) {
-            builder.min        = vn::math::Vec3f(x, y, z);
-            builder.max        = builder.min;
-            builder.has_bounds = true;
+        if (!has_bounds_) {
+            min_        = vn::math::Vec3f(x, y, z);
+            max_        = min_;
+            has_bounds_ = true;
             continue;
         }
-        builder.min.x = std::min(builder.min.x, x);
-        builder.min.y = std::min(builder.min.y, y);
-        builder.min.z = std::min(builder.min.z, z);
-        builder.max.x = std::max(builder.max.x, x);
-        builder.max.y = std::max(builder.max.y, y);
-        builder.max.z = std::max(builder.max.z, z);
+        min_.x = std::min(min_.x, x);
+        min_.y = std::min(min_.y, y);
+        min_.z = std::min(min_.z, z);
+        max_.x = std::max(max_.x, x);
+        max_.y = std::max(max_.y, y);
+        max_.z = std::max(max_.z, z);
     }
 }
 
-/**
- * @brief Turns one assimp node into a model node, its children first.
- *
- * The children come first because a node refers to them by index, so the vector grows bottom up: the root ends up as the
- * last node, and that index is what the model's root is set to.
- *
- * @param builder The model being built.
- * @param source The assimp node.
- * @param parent_world The transform of the parent chain; the node's own transform rides on top of it for measuring.
- * @return The index of the node that was added.
- */
-std::uint32_t buildNode(ModelBuilder& builder, const aiNode& source, const vn::math::Mat4d& parent_world)
+std::uint32_t ModelBuilder::appendNode(const aiNode& source, const vn::math::Mat4d& parent_world)
 {
     const vn::math::Mat4d local = toMatrix(source.mTransformation);
     const vn::math::Mat4d world = parent_world * local;
@@ -446,18 +585,18 @@ std::uint32_t buildNode(ModelBuilder& builder, const aiNode& source, const vn::m
     std::vector<std::uint32_t> children;
     children.reserve(source.mNumChildren);
     for (unsigned int i = 0; i < source.mNumChildren; ++i) {
-        children.push_back(buildNode(builder, *source.mChildren[i], world));
+        children.push_back(appendNode(*source.mChildren[i], world));
     }
 
     std::vector<std::uint32_t> meshes;
     meshes.reserve(source.mNumMeshes);
     for (unsigned int i = 0; i < source.mNumMeshes; ++i) {
         const std::uint32_t index = source.mMeshes[i];
-        if (index >= builder.meshes.size()) {
+        if (index >= meshes_.size() || meshes_[index].mesh == nullptr) {
             continue; // an index the scene does not hold names nothing
         }
         meshes.push_back(index);
-        growBounds(builder, *builder.meshes[index].mesh, world);
+        growBounds(*meshes_[index].mesh, world);
     }
 
     Model::Node node;
@@ -467,52 +606,38 @@ std::uint32_t buildNode(ModelBuilder& builder, const aiNode& source, const vn::m
     node.children  = std::move(children);
     node.meshes    = std::move(meshes);
 
-    builder.nodes.push_back(std::move(node));
-    return static_cast<std::uint32_t>(builder.nodes.size() - 1);
+    nodes_.push_back(std::move(node));
+    return static_cast<std::uint32_t>(nodes_.size() - 1);
 }
 
-/**
- * @brief Builds a model from a parsed assimp scene.
- *
- * @param scene The parsed scene.
- * @param options The load options.
- * @return The model.
- */
-vn::intrusive_ptr<Model> buildModel(const aiScene& scene, const MeshLoader::Options& options)
+void ModelBuilder::applyScale(std::uint32_t root)
 {
-    ModelBuilder builder;
-
-    builder.materials.reserve(scene.mNumMaterials);
-    for (unsigned int i = 0; i < scene.mNumMaterials; ++i) {
-        builder.materials.push_back(makeMaterial(*scene.mMaterials[i]));
+    if (!has_bounds_) {
+        return;
     }
 
-    builder.meshes.reserve(scene.mNumMeshes);
-    for (unsigned int i = 0; i < scene.mNumMeshes; ++i) {
-        const aiMesh& source = *scene.mMeshes[i];
-        Model::Entry  entry;
-        entry.mesh = makeMesh(source);
-        if (source.mMaterialIndex < builder.materials.size()) {
-            entry.material = builder.materials[source.mMaterialIndex];
-        }
-        builder.meshes.push_back(std::move(entry));
+    const double factor = MeshBuilderBase::scaleFactorOf(options_, (max_ - min_).length());
+    if (factor == 1.0) {
+        return;
     }
 
-    const std::uint32_t root = buildNode(builder, *scene.mRootNode, vn::math::Mat4d{});
+    nodes_[root].transform = uniformScale(factor) * nodes_[root].transform;
+}
+
+vn::intrusive_ptr<Model> ModelBuilder::build()
+{
+    collectEntries();
+
+    const std::uint32_t root = appendNode(*scene().mRootNode, vn::math::Mat4d{});
 
     // One factor for the whole model, folded into the root's transform: a uniform scale applied there scales the vertices
     // and the offsets between nodes alike, so the parts stay where the source put them.
-    if (builder.has_bounds) {
-        const double factor = scaleFactorOf(options, (builder.max - builder.min).length());
-        if (factor != 1.0) {
-            builder.nodes[root].transform = uniformScale(factor) * builder.nodes[root].transform;
-        }
-    }
+    applyScale(root);
 
     auto model = vn::make_intrusive<Model>();
     model->setRoot(root);
-    model->setNodes(std::move(builder.nodes));
-    model->setMeshes(std::move(builder.meshes));
+    model->setNodes(std::move(nodes_));
+    model->setMeshes(std::move(meshes_));
     return model;
 }
 
@@ -582,9 +707,7 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file
         return {};
     }
 
-    auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
-    mergeAssimpScene(*mesh, scene);
-    applyScale(options_, *mesh);
+    const auto mesh = MergedMeshBuilder(options_, *scene).build();
 
     if (fingerprint)
     {
@@ -630,9 +753,7 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& 
         return {};
     }
 
-    auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
-    mergeAssimpScene(*mesh, scene);
-    applyScale(options_, *mesh);
+    const auto mesh = MergedMeshBuilder(options_, *scene).build();
 
     auto cached = cache_.get(fingerprint).value_or(CacheData{});
     cached.option_shape_map.insert_or_assign(options_, mesh);
@@ -662,7 +783,7 @@ vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path
     if (!scene) {
         return {};
     }
-    return cacheModel(fingerprint, buildModel(*scene, options_));
+    return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }
 
 vn::intrusive_ptr<Model> MeshLoader::load(std::istream& in, const char* format_hint)
@@ -698,7 +819,7 @@ vn::intrusive_ptr<Model> MeshLoader::loadBytes(std::vector<unsigned char>& bytes
     if (scene == nullptr) {
         return {};
     }
-    return cacheModel(fingerprint, buildModel(*scene, options_));
+    return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }
 
 vn::intrusive_ptr<Model> MeshLoader::cacheModel(const vn::crypto::ByteSequenceFingerprint& fingerprint,

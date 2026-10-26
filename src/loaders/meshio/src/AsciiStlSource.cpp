@@ -100,6 +100,11 @@ std::size_t writeWrapper(std::span<char> out, std::string_view keyword)
 AsciiStlSource::AsciiStlSource(vn::intrusive_ptr<const Mesh> mesh, double scale) : MeshSource(std::move(mesh), scale)
 {
     // No length is stated: a text format only knows its size once it is laid out, and the pull can end on its own.
+
+    // STL holds nothing per vertex, so an authored colour is content this form cannot write (see BinStlSource).
+    if (hasColors()) {
+        refuse();
+    }
 }
 
 AsciiStlSource::~AsciiStlSource() = default;

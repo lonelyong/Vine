@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string_view>
 
 #include <vine/intrusive_ptr.hpp>
 #include <vine/geometry/Mesh.hpp>
@@ -24,10 +25,15 @@ VN_MESHIO_NS_BEGIN
  * header whose length is patched in afterwards, which costs a few header bytes); one whose format has to record the
  * length before the bytes cannot.
  *
- * GEOMETRY ONLY. The file carries positions, and the mesh's per-vertex normals when it has them ("f v//vn"); it carries
- * no material library, which is a second file that one stream cannot hold. That is also what MeshExporter's stream entry
- * does, so the two agree in spirit - but the BYTES ARE THIS LIBRARY'S OWN, not assimp's: the same geometry, written here
- * with one line per vertex and per triangle, without assimp's vertex dedup or material grouping.
+ * GEOMETRY ONLY. The file carries positions, the mesh's per-vertex normals when it has them ("f v//vn"), and its
+ * authored vertex colours when it has them - the extension readers understand, "v x y z r g b", which rides the SAME
+ * vertex line so the record walk stays one record per vertex. It carries no material library, which is a second file
+ * that one stream cannot hold. That is also what MeshExporter's stream entry does, so the two agree in spirit - but the
+ * BYTES ARE THIS LIBRARY'S OWN, not assimp's: the same geometry, written here with one line per vertex and per triangle,
+ * without assimp's vertex dedup or material grouping.
+ *
+ * THE COLOUR'S ALPHA IS NOT WRITTEN: the OBJ vertex extension has no fourth component, so an authored alpha stays a
+ * mesh-side value this format cannot state. RGB is what every reader of coloured OBJ agrees on.
  *
  * @note A mesh the consumer must keep unchanged until the pull is finished is exactly the contract every borrowed
  *       source carries; this one turns a violation into a failed pull (IoError::InvalidData) rather than into wrong
@@ -88,6 +94,26 @@ class VN_MESHIO_API ObjSource final : public MeshSource
      * @return The bytes the line holds, or 0 when the mesh does not hold what the line names.
      */
     std::size_t renderRecord(std::uint64_t index, std::span<char> out) override;
-};
+  private:
+    /**
+     * @brief Appends one line of numbers after @p keyword.
+     *
+     * @param out The line being built.
+     * @param keyword The keyword the line starts with, e.g. "v" or "vn".
+     * @param values The numbers the line carries.
+     * @return The bytes the line holds, or 0 when it does not fit @p out.
+     */
+    static std::size_t writeLine(std::span<char> out, std::string_view keyword, std::span<const float> values);
+
+    /**
+     * @brief Appends one face corner: a vertex index, and the normal index the same line names when the mesh has normals.
+     *
+     * @param out The line being built.
+     * @param at Offset to append at.
+     * @param vertex The corner's vertex index, counting from zero.
+     * @param normals Whether the corner also names a normal ("v//vn" rather than "v").
+     * @return The offset after the corner, or detail::kNoRoom when it does not fit.
+     */
+    static std::size_t writeCorner(std::span<char> out, std::size_t at, std::uint32_t vertex, bool normals);};
 
 VN_MESHIO_NS_END

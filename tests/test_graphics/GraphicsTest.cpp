@@ -3129,6 +3129,37 @@ TEST(MeshTest, AttributesSharedOnBase)
     EXPECT_EQ(mesh->normals().size(), 3u);
 }
 
+TEST(MeshTest, ColorsAreOptionalAndSharedLikeTheOtherAttributes)
+{
+    auto mesh = makeUnitTriangle();
+
+    // Absent by DEFAULT, and absent is the EMPTY array on a handle that always exists - the same contract
+    // normals and texcoords follow, so no consumer has to tell "null buffer" from "no data".
+    EXPECT_TRUE(mesh->colors().empty());
+    ASSERT_NE(mesh->colorsBuffer(), nullptr);
+    EXPECT_EQ(mesh->colorsBuffer()->size(), 0u);
+
+    // Four linear RGBA scalars per vertex; alpha is the per-vertex opacity.
+    mesh->setColors({ vn::math::Vec4f(1.0f, 0.0f, 0.0f, 1.0f), vn::math::Vec4f(0.0f, 1.0f, 0.0f, 0.5f),
+                      vn::math::Vec4f(0.0f, 0.0f, 1.0f, 0.25f) });
+
+    ASSERT_EQ(mesh->colors().size(), 3u);
+    EXPECT_FLOAT_EQ(mesh->colors()[1].y, 1.0f);
+    EXPECT_FLOAT_EQ(mesh->colors()[2].w, 0.25f);
+
+    // ONE allocation: the typed view and the scalar run a consumer uploads are the same bytes.
+    const auto shared = mesh->colorsBuffer();
+    ASSERT_NE(shared, nullptr);
+    EXPECT_EQ(shared->size(), 3u * vn::geometry::Mesh::kVec4Components);
+    EXPECT_EQ(shared->data(), reinterpret_cast<const float*>(mesh->colors().data()));
+    EXPECT_EQ(shared->bytes().size(), 3u * sizeof(vn::math::Vec4f));
+
+    // An empty array REMOVES the colours: "none" is one state however it was reached.
+    mesh->setColors({});
+    EXPECT_TRUE(mesh->colors().empty());
+    EXPECT_EQ(mesh->colorsBuffer()->size(), 0u);
+}
+
 TEST(MeshTest, AttributeStorageIsSharedNotCopied)
 {
     intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh(new vn::geometry::IndexedTriangleMesh());
@@ -8976,6 +9007,32 @@ TEST(GeometryTest, ConverterSkipsTexcoordsThatDoNotMatchTheVertexCount)
     const auto geom = geometryFromShape(*mesh);
     ASSERT_NE(geom.get(), nullptr);
     EXPECT_FALSE(geom->hasTexcoords());
+}
+
+TEST(GeometryTest, ConverterForwardsVertexColorsWhenTheyMatchTheVertexCount)
+{
+    // No colours authored: no colour channel at all (not a white one) - the shading then fetches nothing.
+    EXPECT_FALSE(geometryFromShape(*makeUnitTriangle())->hasColors());
+
+    auto mesh = makeUnitTriangle();
+    mesh->setColors({ vn::math::Vec4f(1.0f, 0.0f, 0.0f, 1.0f), vn::math::Vec4f(0.0f, 1.0f, 0.0f, 1.0f),
+                      vn::math::Vec4f(0.0f, 0.0f, 1.0f, 1.0f) });
+
+    const auto geom = geometryFromShape(*mesh);
+    ASSERT_NE(geom.get(), nullptr);
+    EXPECT_TRUE(geom->hasColors());
+    EXPECT_EQ(geom->colorCount(), 3u);
+
+    const AttributeChannel* colors = geom->buffer(Geometry::kColorLocation);
+    ASSERT_NE(colors, nullptr);
+    EXPECT_EQ(Geometry::kColorLocation, 2u) << "the colour attribute is the shader ABI's location 2";
+    EXPECT_EQ(colors->components, 4u) << "the engine's stages declare the colour as a vec4";
+    EXPECT_EQ(colors->scalars().data(), mesh->colorsBuffer()->data()) << "one allocation, not a repack";
+
+    // A colour array that cannot be indexed per vertex is dropped, exactly like a mismatched texcoord array.
+    auto mismatched = makeUnitTriangle();
+    mismatched->setColors({ vn::math::Vec4f(1.0f, 0.0f, 0.0f, 1.0f) });
+    EXPECT_FALSE(geometryFromShape(*mismatched)->hasColors());
 }
 
 TEST(GeometryTest, OpenAttributeChannelList)

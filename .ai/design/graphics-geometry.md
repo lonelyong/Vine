@@ -1,7 +1,7 @@
 # graphics 几何：通道、图元、实例、revision
 
 > **状态**：现行
-> **最后核对**：2026-10-23
+> **最后核对**：2026-10-26
 > **范围**：`Geometry` 通道集、`Primitive` 一次 draw、实例流、revision 与存储共享。
 > **权威来源**：`Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp`。
 > **待办**：`../backlog/graphics.md`
@@ -43,7 +43,7 @@
 |---|---|---|
 | F1 | 规范通道 | positions / normals / texcoords / colour；location 由 `ShaderAbi` 定义。 |
 | F2 | 自定义通道 | location 3 起，`addBuffer(location, AttributeChannel)`。 |
-| F3 | 共享 buffer | `setPositions` / `setNormals` / `setTexcoords2/3` 接收 `intrusive_ptr<const Buffer<float>>`。 |
+| F3 | 共享 buffer | `setPositions` / `setNormals` / `setTexcoords2/3` / `setColors` 接收 `intrusive_ptr<const Buffer<float>>`。 |
 | F4 | Arena 切片 | `first_vertex` / `vertex_count`；一个 buffer 装多个几何的顶点。 |
 | F5 | 视图访问 | `scalars()` / `xyz()` / `vec3View()` / `vertexCount()` / `stride()`。 |
 
@@ -102,7 +102,7 @@
 | 接口 | 作用 |
 |---|---|
 | `addBuffer()` / `removeBuffer()` / `buffer()` / `bufferCount()` / `bufferLocations()` | 通道 |
-| `setPositions()` / `setNormals()` / `setTexcoords2/3()` / `has*()` / `*Count()` | 规范通道 |
+| `setPositions()` / `setNormals()` / `setTexcoords2/3()` / `setColors()` / `has*()` / `*Count()` | 规范通道 |
 | `addPrimitive()` / `setPrimitive()` / `clearPrimitives()` / `primitive()` / `primitives()` | 图元 |
 | `material()` / `setMaterial()` / `program()` / `setProgram()` | 几何级默认 |
 | `revision()` / `setRevision()` / `bumpRevision()` | 形状公告 |

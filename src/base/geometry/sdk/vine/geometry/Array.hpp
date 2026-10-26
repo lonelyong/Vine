@@ -7,11 +7,13 @@
 
 #include <vine/math/Point2.hpp>
 #include <vine/math/Vector3.hpp>
+#include <vine/math/Vector4.hpp>
 
 VN_GEOMETRY_NS_BEGIN
 
 using Vec3fArray  = std::vector<vn::math::Vec3f>;
 using Vec3dArray  = std::vector<vn::math::Vec3d>;
+using Vec4fArray  = std::vector<vn::math::Vec4f>;
 using Vec2fArray  = std::vector<vn::math::Vec2f>;
 using Vec2dArray  = std::vector<vn::math::Vec2d>;
 using UInt32Array = std::vector<std::uint32_t>;

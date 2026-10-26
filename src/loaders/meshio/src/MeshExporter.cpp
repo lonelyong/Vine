@@ -45,23 +45,26 @@ using TriangleMesh        = vn::geometry::TriangleMesh;
 using Vec3f               = vn::math::Vec3f;
 
 /**
- * @brief RAII owner for a manually built assimp scene.
+ * @brief Owns a manually built assimp scene.
  *
- * The aiScene destructor releases every sub-object recursively (root node, meshes, faces, materials), so exporting can
- * throw without leaking and the guard needs no manual cleanup.
+ * The aiScene destructor releases every sub-object recursively (root node, meshes, faces, materials), so building can
+ * throw without leaking and the owner needs no manual cleanup. It cannot be copied: the sub-objects are raw pointers
+ * that exactly one owner has to release.
  */
-class AiSceneGuard
+class OwnedScene
 {
   public:
+    OwnedScene() = default;
+    OwnedScene(const OwnedScene&) = delete;
+    OwnedScene& operator=(const OwnedScene&) = delete;
+
     /**
      * @brief Returns the managed scene.
      *
-     * @return The scene pointer.
+     * @return The scene pointer; it stays valid as long as this object lives.
      */
-    aiScene* get() noexcept
-    {
-        return &scene_;
-    }
+    aiScene* get() noexcept { return &scene_; }
+    const aiScene* get() const noexcept { return &scene_; }
 
   private:
     aiScene scene_{};
@@ -81,19 +84,65 @@ struct MeshData
     std::span<const Vec3f> normals;
     /// Optional per-vertex texture coordinates (empty when absent).
     std::span<const vn::math::Vec2f> texcoords;
+    /// Optional per-vertex colours, linear RGBA (empty when absent).
+    std::span<const vn::math::Vec4f> colors;
     /// Triangle indices; empty for a non-indexed mesh.
     std::span<const std::uint32_t> indices;
 };
 
 /**
- * @brief Reads the geometry of a mesh through either triangle representation.
+ * @brief What both scene writers share: the options a mesh's vertices are scaled by, and the ONE translation from a
+ * Vine mesh to an aiMesh.
  *
- * @param mesh The source mesh.
- * @return The geometry views.
- * @throws std::invalid_argument when the mesh is invalid.
- * @throws std::runtime_error when the mesh type is unsupported.
+ * Private inheritance in both writers, deliberately: the base is a tool, not an interface, so nothing outside the two
+ * writers can use it. The split is the one the two entry shapes force - the mesh translation is needed by both, the
+ * materials and the node tree only by ModelSceneWriter - while naming a format and writing a file belong to neither and
+ * stay free functions below.
  */
-MeshData meshDataOf(const Mesh& mesh)
+class SceneWriterBase
+{
+  protected:
+    /**
+     * @brief Binds the writer to the options its scale factor comes from.
+     *
+     * @param options The export options; they outlive the writer.
+     */
+    explicit SceneWriterBase(const MeshExporter::Options& options) noexcept
+      : options_(options)
+    {
+    }
+
+    /**
+     * @brief Fills one aiMesh from a Vine mesh.
+     *
+     * The ONE place a Vine mesh becomes an assimp mesh: the name, the scaled positions, the normals, the texture
+     * coordinates, the vertex colours and the triangle corners. An attribute whose length does not match the vertex
+     * count is dropped, because a reader would go past its array. A format that has nowhere to put an attribute (binary
+     * STL and texture coordinates, say) drops it itself - the scene states what the mesh holds, and the writer decides
+     * what it can spell.
+     *
+     * @param io_mesh The assimp mesh to fill; the scene that holds it releases what is allocated here.
+     * @param mesh The source mesh.
+     * @throws std::invalid_argument when the mesh is invalid.
+     * @throws std::runtime_error when the mesh type is unsupported.
+     */
+    void fillMesh(aiMesh& io_mesh, const Mesh& mesh) const;
+
+  private:
+    /**
+     * @brief Reads the geometry of a mesh through either triangle representation.
+     *
+     * @param mesh The source mesh.
+     * @return The geometry views.
+     * @throws std::invalid_argument when the mesh is invalid.
+     * @throws std::runtime_error when the mesh type is unsupported.
+     */
+    static MeshData dataOf(const Mesh& mesh);
+
+    const MeshExporter::Options& options_; ///< The export options the scale factor comes from.
+};
+
+MeshData SceneWriterBase::dataOf(const Mesh& mesh)
 {
     if (!mesh.isValid()) {
         throw std::invalid_argument("MeshExporter: mesh is invalid");
@@ -102,32 +151,20 @@ MeshData meshDataOf(const Mesh& mesh)
     switch (mesh.shapeType()) {
       case vn::geometry::ShapeType::IndexedTriangleMesh: {
           const auto& itm = obj_cast<IndexedTriangleMesh>(mesh);
-          return { itm.positions(), itm.normals(), itm.texcoords(), itm.indices() };
+          return { itm.positions(), itm.normals(), itm.texcoords(), itm.colors(), itm.indices() };
       }
       case vn::geometry::ShapeType::TriangleMesh: {
           const auto& tm = obj_cast<TriangleMesh>(mesh);
-          return { tm.positions(), tm.normals(), tm.texcoords(), {} };
+          return { tm.positions(), tm.normals(), tm.texcoords(), tm.colors(), {} };
       }
       default:
           throw std::runtime_error("MeshExporter: unsupported mesh type");
     }
 }
 
-/**
- * @brief Fills one aiMesh from a Vine mesh.
- *
- * The name, positions (scaled), normals and texture coordinates are written when the mesh holds them; an attribute
- * whose length does not match the vertex count is dropped, because a renderer reading it would go past its array.
- *
- * @param io_mesh The assimp mesh to fill.
- * @param mesh The source mesh.
- * @param scale Factor applied to every vertex.
- * @throws std::invalid_argument when the mesh is invalid.
- * @throws std::runtime_error when the mesh type is unsupported.
- */
-void fillAiMesh(aiMesh& io_mesh, const Mesh& mesh, double scale)
+void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
 {
-    const MeshData data = meshDataOf(mesh);
+    const MeshData data = dataOf(mesh);
 
     const vn::String& name = mesh.name();
     if (!name.empty()) {
@@ -139,7 +176,7 @@ void fillAiMesh(aiMesh& io_mesh, const Mesh& mesh, double scale)
         io_mesh.mNumVertices = static_cast<unsigned int>(data.positions.size());
         io_mesh.mVertices    = new aiVector3D[io_mesh.mNumVertices];
 
-        const auto factor = static_cast<ai_real>(scale);
+        const auto factor = static_cast<ai_real>(options_.scale_factor);
         for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
             const Vec3f& v      = data.positions[i];
             io_mesh.mVertices[i] = aiVector3D(v.x * factor, v.y * factor, v.z * factor);
@@ -157,15 +194,25 @@ void fillAiMesh(aiMesh& io_mesh, const Mesh& mesh, double scale)
             io_mesh.mNumUVComponents[0] = 2;
             io_mesh.mTextureCoords[0]   = new aiVector3D[io_mesh.mNumVertices];
             for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-                const vn::math::Vec2f& t           = data.texcoords[i];
-                io_mesh.mTextureCoords[0][i]      = aiVector3D(t.x, t.y, 0.0f);
+                const vn::math::Vec2f& t     = data.texcoords[i];
+                io_mesh.mTextureCoords[0][i] = aiVector3D(t.x, t.y, 0.0f);
+            }
+        }
+
+        // The colour set a material multiplies into its base colour: four channels per vertex, written only when
+        // the array covers every vertex (see the doc above).
+        if (data.colors.size() == data.positions.size()) {
+            io_mesh.mColors[0] = new aiColor4D[io_mesh.mNumVertices];
+            for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
+                const vn::math::Vec4f& c  = data.colors[i];
+                io_mesh.mColors[0][i]     = aiColor4D(c.x, c.y, c.z, c.w);
             }
         }
     }
 
     const std::size_t triangle_count = data.indices.empty() ? data.positions.size() / 3 : data.indices.size() / 3;
-    io_mesh.mNumFaces               = static_cast<unsigned int>(triangle_count);
-    io_mesh.mFaces                  = new aiFace[io_mesh.mNumFaces];
+    io_mesh.mNumFaces                = static_cast<unsigned int>(triangle_count);
+    io_mesh.mFaces                   = new aiFace[io_mesh.mNumFaces];
     for (unsigned int i = 0; i < io_mesh.mNumFaces; ++i) {
         io_mesh.mFaces[i].mNumIndices = 3;
         if (!data.indices.empty()) {
@@ -181,31 +228,175 @@ void fillAiMesh(aiMesh& io_mesh, const Mesh& mesh, double scale)
 }
 
 /**
- * @brief Adds one colour property in the layout an assimp material key names.
+ * @brief Writes one mesh: a scene with that mesh, the default material, and a root node that names it.
  *
- * @param io_material The material to add to.
- * @param color The colour.
- * @param key The property key, e.g. AI_MATKEY_COLOR_DIFFUSE.
- * @param type The key's type part.
- * @param index The key's index part.
+ * This is the whole of the mesh entry - the materials and the structure a model carries are what a caller of it does
+ * not have.
  */
-void addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type, unsigned int index)
+class MeshSceneWriter final : private SceneWriterBase
+{
+  public:
+    /**
+     * @brief Builds the scene for @p mesh.
+     *
+     * @param options The export options (scale factor).
+     * @param mesh The source mesh.
+     * @throws std::invalid_argument when the mesh is invalid.
+     * @throws std::runtime_error when the mesh type is unsupported.
+     */
+    MeshSceneWriter(const MeshExporter::Options& options, const Mesh& mesh);
+
+    /**
+     * @brief Returns the scene that was built.
+     *
+     * @return The scene; it stays valid as long as this writer lives.
+     */
+    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_.get(); }
+
+  private:
+    /// Fills the scene: the default material, the mesh, and a root node that refers to mesh 0.
+    void fill(const Mesh& mesh);
+
+    OwnedScene scene_; ///< The scene this writer builds.
+};
+
+MeshSceneWriter::MeshSceneWriter(const MeshExporter::Options& options, const Mesh& mesh)
+  : SceneWriterBase(options)
+{
+    fill(mesh);
+}
+
+void MeshSceneWriter::fill(const Mesh& mesh)
+{
+    aiScene& ai_scene = *scene_.get();
+
+    ai_scene.mMaterials    = new aiMaterial*[1]{ new aiMaterial() }; // the default a mesh without a material uses
+    ai_scene.mNumMaterials = 1;
+
+    ai_scene.mMeshes    = new aiMesh*[1]{ new aiMesh{} };
+    ai_scene.mNumMeshes = 1;
+
+    ai_scene.mRootNode             = new aiNode{};
+    ai_scene.mRootNode->mMeshes    = new unsigned int[1]{ 0 };
+    ai_scene.mRootNode->mNumMeshes = 1;
+
+    fillMesh(*ai_scene.mMeshes[0], mesh);
+}
+
+/**
+ * @brief Writes a model: its node tree, one mesh per entry in its own space, and the materials those entries name.
+ *
+ * Nothing is baked - a node's transform stays on the node, and a mesh two nodes refer to is written once - which is the
+ * whole difference from MeshSceneWriter. Material index 0 is the default a mesh without a material uses; every distinct
+ * material the entries refer to takes the next index, so a material two entries share is written once.
+ */
+class ModelSceneWriter final : private SceneWriterBase
+{
+  private:
+    /// The index each distinct material was written at, keyed by the material it came from.
+    using MaterialIndexMap = std::unordered_map<const Material*, unsigned int>;
+
+  public:
+    /**
+     * @brief Builds the scene for @p model.
+     *
+     * @param options The export options (scale factor).
+     * @param model The source model; it outlives the writer.
+     * @throws std::invalid_argument when the model is malformed.
+     * @throws std::runtime_error when a mesh type is unsupported.
+     */
+    ModelSceneWriter(const MeshExporter::Options& options, const Model& model);
+
+    /**
+     * @brief Returns the scene that was built.
+     *
+     * @return The scene; it stays valid as long as this writer lives.
+     */
+    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_.get(); }
+
+  private:
+    /**
+     * @brief Writes the default material and one per distinct material the entries refer to.
+     *
+     * @return The index of every material written, keyed by the material it came from.
+     */
+    MaterialIndexMap fillMaterials();
+
+    /**
+     * @brief Writes one mesh per entry, each pointed at the material its entry names.
+     *
+     * @param material_indices The indices fillMaterials() assigned.
+     */
+    void fillMeshes(const MaterialIndexMap& material_indices);
+
+    /// Writes the node tree, starting at the model's root.
+    void fillRoot();
+
+    /**
+     * @brief Builds one aiNode subtree from a model node.
+     *
+     * @param index The node index to build; the model being written holds it.
+     * @return The new node; the scene that owns the subtree releases it.
+     */
+    aiNode* buildNode(std::uint32_t index) const;
+
+    /**
+     * @brief Checks the indices the model's nodes and entries carry.
+     *
+     * A model is a set of arrays that refer to each other, so an index that points outside its array is a broken model,
+     * not something to read past.
+     *
+     * @throws std::invalid_argument when the root, a child index, a mesh index or an entry is missing.
+     */
+    void validate() const;
+
+    /**
+     * @brief Writes one colour property in the layout an assimp material key names.
+     *
+     * @param io_material The material to add to.
+     * @param color The colour.
+     * @param key The property key, e.g. AI_MATKEY_COLOR_DIFFUSE.
+     * @param type The key's type part.
+     * @param index The key's index part.
+     */
+    static void addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type,
+                         unsigned int index);
+
+    /**
+     * @brief Fills one aiMaterial from a Vine material.
+     *
+     * The keys mirror the ones the loader reads, so a model written and read back keeps its material category and
+     * colours; a PBR material is written through the metallic/roughness factors, a Phong material through its specular
+     * terms.
+     *
+     * @param io_material The assimp material to fill.
+     * @param material The source material.
+     */
+    static void fillMaterial(aiMaterial& io_material, const Material& material);
+
+    /**
+     * @brief Converts a Vine model matrix into the assimp layout.
+     *
+     * Both use the column-vector convention with the translation in the fourth column, so the elements map one to one.
+     *
+     * @param transform The source matrix.
+     * @return The same matrix in assimp's representation.
+     */
+    static aiMatrix4x4 toAiMatrix(const vn::math::Mat4d& transform);
+
+    const Model& model_; ///< The model being written; the node indices refer to it.
+    OwnedScene   scene_; ///< The scene this writer builds.
+};
+
+void ModelSceneWriter::addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type,
+                                unsigned int index)
 {
     const aiColor4D value(static_cast<ai_real>(color.r), static_cast<ai_real>(color.g), static_cast<ai_real>(color.b),
                           static_cast<ai_real>(color.a));
     io_material.AddProperty(&value, 1, key, type, index);
 }
 
-/**
- * @brief Fills one aiMaterial from a Vine material.
- *
- * The keys mirror the ones the loader reads, so a model written and read back keeps its material category and colours;
- * a PBR material is written through the metallic/roughness factors, a Phong material through its specular terms.
- *
- * @param io_material The assimp material to fill.
- * @param material The source material.
- */
-void fillAiMaterial(aiMaterial& io_material, const Material& material)
+void ModelSceneWriter::fillMaterial(aiMaterial& io_material, const Material& material)
 {
     if (!material.name().empty()) {
         aiString name;
@@ -252,15 +443,7 @@ void fillAiMaterial(aiMaterial& io_material, const Material& material)
     }
 }
 
-/**
- * @brief Converts a Vine model matrix into the assimp layout.
- *
- * Both use the column-vector convention with the translation in the fourth column, so the elements map one to one.
- *
- * @param transform The source matrix.
- * @return The same matrix in assimp's representation.
- */
-aiMatrix4x4 toAiMatrix(const vn::math::Mat4d& transform)
+aiMatrix4x4 ModelSceneWriter::toAiMatrix(const vn::math::Mat4d& transform)
 {
     aiMatrix4x4 result;
     result.a1 = static_cast<ai_real>(transform.element(0, 0));
@@ -282,16 +465,9 @@ aiMatrix4x4 toAiMatrix(const vn::math::Mat4d& transform)
     return result;
 }
 
-/**
- * @brief Builds one aiNode subtree from a model node.
- *
- * @param model The model the indices belong to.
- * @param index The node index to build.
- * @return The new node; the caller owns it.
- */
-aiNode* buildAiNode(const Model& model, std::uint32_t index)
+aiNode* ModelSceneWriter::buildNode(std::uint32_t index) const
 {
-    const Model::Node& source = model.nodes()[index];
+    const Model::Node& source = model_.nodes()[index];
 
     auto node = std::make_unique<aiNode>();
     if (!source.name.empty()) {
@@ -312,25 +488,16 @@ aiNode* buildAiNode(const Model& model, std::uint32_t index)
         // Zero-initialised so a failure while building a later child leaves no undetermined pointer to delete.
         node->mChildren = new aiNode*[node->mNumChildren]();
         for (unsigned int i = 0; i < node->mNumChildren; ++i) {
-            node->mChildren[i] = buildAiNode(model, source.children[i]);
+            node->mChildren[i] = buildNode(source.children[i]);
         }
     }
     return node.release();
 }
 
-/**
- * @brief Checks the indices a model's nodes and entries carry.
- *
- * A model is a set of arrays that refer to each other, so an index that points outside its array is a broken model, not
- * something to read past.
- *
- * @param model The model to check.
- * @throws std::invalid_argument when the root, a child index, a mesh index or an entry is missing.
- */
-void validateModel(const Model& model)
+void ModelSceneWriter::validate() const
 {
-    const std::vector<Model::Node>& nodes = model.nodes();
-    if (nodes.empty() || model.root() >= nodes.size()) {
+    const std::vector<Model::Node>& nodes = model_.nodes();
+    if (nodes.empty() || model_.root() >= nodes.size()) {
         throw std::invalid_argument("MeshExporter::exportAs: the model has no root node");
     }
 
@@ -341,97 +508,81 @@ void validateModel(const Model& model)
             }
         }
         for (const std::uint32_t mesh : node.meshes) {
-            if (mesh >= model.meshes().size()) {
+            if (mesh >= model_.meshes().size()) {
                 throw std::invalid_argument("MeshExporter::exportAs: a node mesh index is out of range");
             }
         }
     }
 
-    for (const Model::Entry& entry : model.meshes()) {
+    for (const Model::Entry& entry : model_.meshes()) {
         if (!entry.mesh) {
             throw std::invalid_argument("MeshExporter::exportAs: the model holds an empty mesh entry");
         }
     }
 }
 
-/**
- * @brief Builds an assimp scene that holds one mesh and one default material.
- *
- * @param guard Owns the built scene.
- * @param mesh The source mesh.
- * @param options The export options (scale factor).
- * @throws std::invalid_argument when the mesh is invalid.
- * @throws std::runtime_error when the mesh type is unsupported.
- */
-void buildAiScene(AiSceneGuard& guard, const Mesh& mesh, const MeshExporter::Options& options)
+ModelSceneWriter::ModelSceneWriter(const MeshExporter::Options& options, const Model& model)
+  : SceneWriterBase(options)
+  , model_(model)
 {
-    aiScene& ai_scene = *guard.get();
+    validate();
 
-    ai_scene.mMaterials    = new aiMaterial*[1]{ new aiMaterial() };
-    ai_scene.mNumMaterials = 1;
-
-    ai_scene.mMeshes    = new aiMesh*[1]{ new aiMesh{} };
-    ai_scene.mNumMeshes = 1;
-
-    ai_scene.mRootNode              = new aiNode{};
-    ai_scene.mRootNode->mMeshes     = new unsigned int[1]{ 0 };
-    ai_scene.mRootNode->mNumMeshes  = 1;
-
-    fillAiMesh(*ai_scene.mMeshes[0], mesh, options.scale_factor);
+    // A mesh names its material by index, so the material array is numbered first and the meshes then look theirs up.
+    const MaterialIndexMap material_indices = fillMaterials();
+    fillMeshes(material_indices);
+    fillRoot();
 }
 
-/**
- * @brief Builds an assimp scene that keeps a model's node tree, meshes and materials.
- *
- * Material index 0 is the default a mesh without a material uses; every distinct material the entries refer to takes the
- * next index, so a material two entries share is written once.
- *
- * @param guard Owns the built scene.
- * @param model The source model.
- * @param options The export options (scale factor).
- * @throws std::invalid_argument when the model is malformed.
- * @throws std::runtime_error when a mesh type is unsupported.
- */
-void buildAiScene(AiSceneGuard& guard, const Model& model, const MeshExporter::Options& options)
+ModelSceneWriter::MaterialIndexMap ModelSceneWriter::fillMaterials()
 {
-    validateModel(model);
+    const std::vector<Model::Entry>& entries = model_.meshes();
 
-    aiScene& ai_scene = *guard.get();
-
-    const std::vector<Model::Entry>& entries = model.meshes();
-
-    std::vector<const Material*>                      material_order;
-    std::unordered_map<const Material*, unsigned int> material_indices;
+    // Two entries may share a material, so this pass both numbers the distinct ones and records where each went.
+    std::vector<const Material*> order;
+    order.reserve(entries.size());
+    MaterialIndexMap indices;
     for (const Model::Entry& entry : entries) {
-        if (entry.material && material_indices.find(entry.material.get()) == material_indices.end()) {
-            material_indices.emplace(entry.material.get(), static_cast<unsigned int>(material_order.size()) + 1);
-            material_order.push_back(entry.material.get());
+        const Material* const material = entry.material.get();
+        if (material != nullptr && indices.find(material) == indices.end()) {
+            indices.emplace(material, static_cast<unsigned int>(order.size()) + 1);
+            order.push_back(material);
         }
     }
 
-    const std::size_t material_count = material_order.size() + 1;
-    ai_scene.mMaterials    = new aiMaterial*[material_count]();
-    ai_scene.mNumMaterials = static_cast<unsigned int>(material_count);
-    ai_scene.mMaterials[0] = new aiMaterial();
-    for (std::size_t i = 0; i < material_order.size(); ++i) {
+    aiScene& ai_scene      = *scene_.get();
+    ai_scene.mMaterials    = new aiMaterial*[order.size() + 1]();
+    ai_scene.mNumMaterials = static_cast<unsigned int>(order.size() + 1);
+    ai_scene.mMaterials[0] = new aiMaterial(); // index 0 is the default a mesh without a material uses
+    for (std::size_t i = 0; i < order.size(); ++i) {
         ai_scene.mMaterials[i + 1] = new aiMaterial();
-        fillAiMaterial(*ai_scene.mMaterials[i + 1], *material_order[i]);
+        fillMaterial(*ai_scene.mMaterials[i + 1], *order[i]);
+    }
+    return indices;
+}
+
+void ModelSceneWriter::fillMeshes(const MaterialIndexMap& material_indices)
+{
+    const std::vector<Model::Entry>& entries = model_.meshes();
+    if (entries.empty()) {
+        return; // a scene without meshes keeps the null array, which every writer accepts
     }
 
-    if (!entries.empty()) {
-        ai_scene.mMeshes    = new aiMesh*[entries.size()]();
-        ai_scene.mNumMeshes = static_cast<unsigned int>(entries.size());
-        for (std::size_t i = 0; i < entries.size(); ++i) {
-            const Model::Entry& entry = entries[i];
-            ai_scene.mMeshes[i]       = new aiMesh{};
-            fillAiMesh(*ai_scene.mMeshes[i], *entry.mesh, options.scale_factor);
-            if (entry.material) {
-                ai_scene.mMeshes[i]->mMaterialIndex = material_indices.at(entry.material.get());
-            }
+    aiScene& ai_scene   = *scene_.get();
+    ai_scene.mMeshes    = new aiMesh*[entries.size()]();
+    ai_scene.mNumMeshes = static_cast<unsigned int>(entries.size());
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const Model::Entry& entry = entries[i];
+        ai_scene.mMeshes[i]       = new aiMesh{};
+        fillMesh(*ai_scene.mMeshes[i], *entry.mesh);
+        if (entry.material) {
+            ai_scene.mMeshes[i]->mMaterialIndex = material_indices.at(entry.material.get());
         }
     }
+}
 
-    ai_scene.mRootNode = buildAiNode(model, model.root());
+void ModelSceneWriter::fillRoot()
+{
+    scene_.get()->mRootNode = buildNode(model_.root());
 }
 
 /**
@@ -657,30 +808,26 @@ void MeshExporter::setOptions(const Options& options)
 
 void MeshExporter::exportAs(const Mesh& mesh, const vn::String& format, const std::filesystem::path& file_path) const
 {
-    AiSceneGuard guard;
-    buildAiScene(guard, mesh, options_);
-    writeScene(*guard.get(), resolveFormatId(format, options_.format), file_path);
+    const MeshSceneWriter writer(options_, mesh);
+    writeScene(writer.scene(), resolveFormatId(format, options_.format), file_path);
 }
 
 void MeshExporter::exportAs(const Mesh& mesh, const vn::String& format, std::ostream& out) const
 {
-    AiSceneGuard guard;
-    buildAiScene(guard, mesh, options_);
-    writeScene(*guard.get(), resolveFormatId(format, options_.format), out);
+    const MeshSceneWriter writer(options_, mesh);
+    writeScene(writer.scene(), resolveFormatId(format, options_.format), out);
 }
 
 void MeshExporter::exportAs(const Model& model, const vn::String& format, const std::filesystem::path& file_path) const
 {
-    AiSceneGuard guard;
-    buildAiScene(guard, model, options_);
-    writeScene(*guard.get(), resolveFormatId(format, options_.format), file_path);
+    const ModelSceneWriter writer(options_, model);
+    writeScene(writer.scene(), resolveFormatId(format, options_.format), file_path);
 }
 
 void MeshExporter::exportAs(const Model& model, const vn::String& format, std::ostream& out) const
 {
-    AiSceneGuard guard;
-    buildAiScene(guard, model, options_);
-    writeScene(*guard.get(), resolveFormatId(format, options_.format), out);
+    const ModelSceneWriter writer(options_, model);
+    writeScene(writer.scene(), resolveFormatId(format, options_.format), out);
 }
 
 std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(const vn::intrusive_ptr<const Mesh>& mesh,

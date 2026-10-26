@@ -31,6 +31,7 @@ namespace
 /// Scalars per vertex of an attribute channel — the mesh's own element layout, which sharing reads directly.
 constexpr std::uint32_t kVec3Components = vn::geometry::Mesh::kVec3Components;
 constexpr std::uint32_t kVec2Components = vn::geometry::Mesh::kVec2Components;
+constexpr std::uint32_t kVec4Components = vn::geometry::Mesh::kVec4Components;
 
 }  // namespace
 
@@ -157,6 +158,26 @@ void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, s
     // may read these three as a volume coordinate); the engine's own program reads it as a direction.
     addBuffer(kTexCoordLocation,
               AttributeChannel::slice(std::move(texcoords), kVec3Components, first_vertex, vertex_count));
+}
+
+void Geometry::setColors(intrusive_ptr<const vn::Buffer<float>> colors, std::size_t first_vertex,
+                         std::size_t vertex_count)
+{
+    // Four scalars per vertex, the width the canonical colour attribute is DECLARED with (a `vec4` in the
+    // engine's stages): a caller states VERTICES and the stride is the ABI's, as with every other role.
+    addBuffer(kColorLocation,
+              AttributeChannel::slice(std::move(colors), kVec4Components, first_vertex, vertex_count));
+}
+
+bool Geometry::hasColors() const
+{
+    return hasBuffer(kColorLocation);
+}
+
+std::size_t Geometry::colorCount() const
+{
+    const AttributeChannel* colors = buffer(kColorLocation);
+    return colors != nullptr ? colors->vertexCount() : 0u;
 }
 
 namespace
@@ -484,6 +505,7 @@ GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
     const auto positions = mesh->positions();
     const auto normals   = mesh->normals();
     const auto texcoords = mesh->texcoords();
+    const auto colors    = mesh->colors();
 
     // The mesh OWNS the vertex data and the geometry BORROWS it, so both sides read ONE allocation. The
     // mesh already stores the scalars, so there is no conversion to do and nothing to repack.
@@ -493,6 +515,12 @@ GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
     }
     if (texcoords.size() == positions.size()) {
         geometry->setTexcoords2(mesh->texcoordsBuffer());
+    }
+    // A colour channel is forwarded only when it is AUTHORED and indexed per vertex: an empty array is "no
+    // colours" (not a white channel), and a length that disagrees with the vertices would be read with the
+    // wrong colour.
+    if (!colors.empty() && colors.size() == positions.size()) {
+        geometry->setColors(mesh->colorsBuffer());
     }
     // A mesh shape is ONE triangle draw: the primitive states the topology and the index span, which is where
     // both belong now (see Primitive.hpp). An unindexed mesh states no indices and draws its vertex streams.

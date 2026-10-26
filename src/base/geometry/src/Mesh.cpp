@@ -9,14 +9,16 @@ VN_GEOMETRY_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Mesh, Shape)
 
-// The typed accessors hand out Vec3f / Vec2f views over the SAME scalars the renderer reads, so the two
-// layouts must match exactly. Vector3 is a union of `{T x, y, z}` and `T data[3]`, which is what makes the
-// reinterpretation sound; these asserts make a future change (padding, reordering, a wider element) fail the
-// build instead of silently misreading every vertex.
+// The typed accessors hand out Vec3f / Vec2f / Vec4f views over the SAME scalars the renderer reads, so the
+// two layouts must match exactly. Vector3 and Vector4 are unions of `{T x, y, z(, w)}` and `T data[3|4]`, which
+// is what makes the reinterpretation sound; these asserts make a future change (padding, reordering, a wider
+// element) fail the build instead of silently misreading every vertex.
 static_assert(sizeof(vn::math::Vec3f) == Mesh::kVec3Components * sizeof(float));
 static_assert(alignof(vn::math::Vec3f) == alignof(float));
 static_assert(sizeof(vn::math::Vec2f) == Mesh::kVec2Components * sizeof(float));
 static_assert(alignof(vn::math::Vec2f) == alignof(float));
+static_assert(sizeof(vn::math::Vec4f) == Mesh::kVec4Components * sizeof(float));
+static_assert(alignof(vn::math::Vec4f) == alignof(float));
 
 namespace
 {
@@ -43,6 +45,18 @@ std::span<const vn::math::Vec2f> asVec2(std::span<const float> scalars)
 {
     return { reinterpret_cast<const vn::math::Vec2f*>(scalars.data()),
              scalars.size() / Mesh::kVec2Components };
+}
+
+/**
+ * @brief Views a run of packed scalars as Vec4 elements.
+ *
+ * @param scalars Scalars of the attribute (`kVec4Components` per element).
+ * @return The same bytes as Vec4f elements.
+ */
+std::span<const vn::math::Vec4f> asVec4(std::span<const float> scalars)
+{
+    return { reinterpret_cast<const vn::math::Vec4f*>(scalars.data()),
+             scalars.size() / Mesh::kVec4Components };
 }
 
 /**
@@ -78,12 +92,28 @@ std::vector<float> packVec2(Vec2fArray elements)
     return scalars;
 }
 
+/**
+ * @brief Reinterprets a Vec4 array as the scalars the buffer stores.
+ *
+ * @param elements Elements to reinterpret.
+ * @return The same bytes as a scalar array.
+ */
+std::vector<float> packVec4(Vec4fArray elements)
+{
+    std::vector<float> scalars(elements.size() * Mesh::kVec4Components);
+    if (!scalars.empty()) {
+        std::memcpy(scalars.data(), elements.data(), scalars.size() * sizeof(float));
+    }
+    return scalars;
+}
+
 }  // namespace
 
 Mesh::Mesh()
   : positions_(makeBuffer(std::vector<float>{}))
   , normals_(makeBuffer(std::vector<float>{}))
   , texcoords_(makeBuffer(std::vector<float>{}))
+  , colors_(makeBuffer(std::vector<float>{}))
 {
 }
 
@@ -102,6 +132,11 @@ std::span<const vn::math::Vec2f> Mesh::texcoords() const
     return asVec2(texcoords_->view());
 }
 
+std::span<const vn::math::Vec4f> Mesh::colors() const
+{
+    return asVec4(colors_->view());
+}
+
 intrusive_ptr<const Buffer<float>> Mesh::positionsBuffer() const
 {
     return positions_;
@@ -117,6 +152,11 @@ intrusive_ptr<const Buffer<float>> Mesh::texcoordsBuffer() const
     return texcoords_;
 }
 
+intrusive_ptr<const Buffer<float>> Mesh::colorsBuffer() const
+{
+    return colors_;
+}
+
 void Mesh::setPositions(Vec3fArray positions)
 {
     positions_ = makeBuffer(packVec3(std::move(positions)));
@@ -130,6 +170,11 @@ void Mesh::setNormals(Vec3fArray normals)
 void Mesh::setTexcoords(Vec2fArray texcoords)
 {
     texcoords_ = makeBuffer(packVec2(std::move(texcoords)));
+}
+
+void Mesh::setColors(Vec4fArray colors)
+{
+    colors_ = makeBuffer(packVec4(std::move(colors)));
 }
 
 std::size_t Mesh::vertexCount() const
@@ -162,6 +207,8 @@ void Mesh::clearAttributes()
     announceChange(normals_);
     texcoords_->clear();
     announceChange(texcoords_);
+    colors_->clear();
+    announceChange(colors_);
     aabb_ = Aabbf::empty();
 }
 

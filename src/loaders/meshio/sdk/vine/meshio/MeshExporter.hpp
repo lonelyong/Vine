@@ -19,6 +19,11 @@ VN_MESHIO_NS_BEGIN
  *
  * exportAs() names the format at the call, and the same set of entries serves a mesh and a model: a mesh is one
  * geometry, a model keeps the node tree, the separate meshes and the materials a source described.
+ *
+ * WHAT A FORMAT CANNOT SPELL IS DROPPED, NOT REPORTED: the scene states every attribute the mesh holds - normals,
+ * texture coordinates, vertex colours - and the writer keeps the ones its format has a place for. Binary STL, for one,
+ * holds nothing per vertex, so a coloured mesh exported as STL arrives without the colours. Ask for a format that
+ * carries what the mesh holds (PLY, glTF2, FBX) when losing an attribute matters.
  */
 class VN_MESHIO_API MeshExporter
 {
