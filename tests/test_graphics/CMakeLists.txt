@@ -10,6 +10,7 @@ set(SRC_FILE_LIST
 	MaterialInstanceTest.cpp
 	ShaderAbiTest.cpp
 	ModelSceneTest.cpp
+	MeshShapeTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
