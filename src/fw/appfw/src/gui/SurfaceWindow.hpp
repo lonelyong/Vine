@@ -206,7 +206,7 @@ class SurfaceWindow : public QWindow {
      * @return The bound window handle, or nullptr (no target, or a target that owns its own window).
      */
     void* nativeTargetHandle() const;
-    /** @brief Arms the platform-window recreation test hatch (VINE_RECREATE_SURFACE_MS), once per session. */
+    /** @brief Arms the platform-window recreation test hatch (VN_RECREATE_SURFACE_MS), once per session. */
     void armRecreateHatch();
 
     /** @brief Picks the first registered render backend unless the host attached one. Idempotent. */
@@ -221,7 +221,7 @@ class SurfaceWindow : public QWindow {
     /** @brief Gets the native handle of the render surface (HWND on Windows). */
     void* nativeHandle() const;
 
-    /** @brief Recreates the native render surface, forcing the follow path (test hatch, VINE_RECREATE_SURFACE_MS).
+    /** @brief Recreates the native render surface, forcing the follow path (test hatch, VN_RECREATE_SURFACE_MS).
      *
      * A window-system recreation cannot be produced on demand from outside the process, and the answer to it
      * (re-announce the handle) is the thing worth gating. */

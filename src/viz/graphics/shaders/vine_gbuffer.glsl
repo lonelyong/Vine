@@ -28,31 +28,31 @@
 /**
  * @brief Encodes a unit view-space normal into the two channels attachment 1's rg carries.
  *
- * @param n Shading normal (not required to be normalized; the projection normalizes by the L1 norm).
+ * @param vn_n Shading normal (not required to be normalized; the projection normalizes by the L1 norm).
  * @return The octahedral coordinates, each in [-1, 1].
  */
-vec2 vineOctahedralEncode(vec3 n)
+vec2 vnOctahedralEncode(vec3 vn_n)
 {
     // Project onto the L1 sphere: every direction lands on the octahedron |x| + |y| + |z| = 1.
-    n /= max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
-    vec2 sign_xy = vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    vn_n /= max(abs(vn_n.x) + abs(vn_n.y) + abs(vn_n.z), 1e-6);
+    vec2 vn_sign_xy = vec2(vn_n.x >= 0.0 ? 1.0 : -1.0, vn_n.y >= 0.0 ? 1.0 : -1.0);
     // The lower hemisphere folds up onto the upper one, keeping the sign that makes the fold reversible.
-    return n.z >= 0.0 ? n.xy : (1.0 - abs(n.yx)) * sign_xy;
+    return vn_n.z >= 0.0 ? vn_n.xy : (1.0 - abs(vn_n.yx)) * vn_sign_xy;
 }
 
 /**
  * @brief Decodes the two channels of attachment 1's rg back into a unit view-space normal.
  *
- * @param encoded The octahedral coordinates, each in [-1, 1].
+ * @param vn_encoded The octahedral coordinates, each in [-1, 1].
  * @return The unit normal the writer encoded.
  */
-vec3 vineOctahedralDecode(vec2 encoded)
+vec3 vnOctahedralDecode(vec2 vn_encoded)
 {
-    vec3 n = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
-    if (n.z < 0.0)
+    vec3 vn_n = vec3(vn_encoded, 1.0 - abs(vn_encoded.x) - abs(vn_encoded.y));
+    if (vn_n.z < 0.0)
     {
-        vec2 sign_xy = vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
-        n.xy = (1.0 - abs(n.yx)) * sign_xy;
+        vec2 vn_sign_xy = vec2(vn_n.x >= 0.0 ? 1.0 : -1.0, vn_n.y >= 0.0 ? 1.0 : -1.0);
+        vn_n.xy = (1.0 - abs(vn_n.yx)) * vn_sign_xy;
     }
-    return normalize(n);
+    return normalize(vn_n);
 }

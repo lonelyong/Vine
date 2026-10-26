@@ -337,13 +337,13 @@ TEST_F(VsgBackendPluginTest, ConfigFileRoundTripPersistsDisabledPlugins)
 {
     ASSERT_NE(s_app, nullptr);
 
-    const auto path = std::filesystem::temp_directory_path() / "vine_config_roundtrip_test.json";
+    const auto path = std::filesystem::temp_directory_path() / "vn_config_roundtrip_test.json";
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
     // A plugin location outside the program directory, registered like an
     // installed plugin would be.
-    const auto user_plugins = std::filesystem::temp_directory_path() / "vine_roundtrip_plugins";
+    const auto user_plugins = std::filesystem::temp_directory_path() / "vn_roundtrip_plugins";
     std::filesystem::remove_all(user_plugins, ec);
     ASSERT_TRUE(std::filesystem::create_directories(user_plugins, ec));
 

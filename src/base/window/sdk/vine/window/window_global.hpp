@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <vine/vine_global.hpp>
+#include <vine/vn_global.hpp>
 
 #ifdef VN_WINDOW_LIB
 #    define VN_WINDOW_API VN_EXPORT

@@ -147,7 +147,7 @@ class DemoScene
     void installContent(const DemoCubeImages& images);
 
     /**
-     * @brief Dev switch (`VINE_FRAME_PLAN`): logs the plan of the frame that just rendered.
+     * @brief Dev switch (`VN_FRAME_PLAN`): logs the plan of the frame that just rendered.
      *
      * One line per pass - order, target, camera, content, clear, viewport, inputs / output, and how long THAT
      * PASS took to record last frame (see RenderEngine::framePlan). The answer to "what is this pipeline

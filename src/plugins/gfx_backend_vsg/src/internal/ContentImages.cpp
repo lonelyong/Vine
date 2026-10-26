@@ -7,22 +7,22 @@ VN_VSG_NS_BEGIN
 namespace
 {
 /// The five slot names, in `TextureSlot` order: the one spelling of "which name is which slot".
-constexpr std::string_view kSlotNames[] = { "baseColorMap", "metallicRoughnessMap", "normalMap", "occlusionMap",
-                                            "emissiveMap" };
+constexpr std::string_view kSlotNames[] = { "vn_baseColorMap", "vn_metallicRoughnessMap", "vn_normalMap", "vn_occlusionMap",
+                                            "vn_emissiveMap" };
 }  // namespace
 
 ImageOrigin imageOriginOf(std::string_view name) noexcept
 {
     // The names the engine's programs spend: the DRAWABLE's own maps - the five texture slots on the content
-    // programs, and `skyMap` on the sky program, which samples the sky box's own cube map out of its MATERIAL
-    // (see builtin_skybox.frag) - and the map a pass resolves (`shadow_map`). Every OTHER name is a texture the
-    // pass' inputs offer - the engine's screen programs (albedo_tex, normal_tex, emissive_tex, pos_tex, screen_tex)
+    // programs, and `vn_skyMap` on the sky program, which samples the sky box's own cube map out of its MATERIAL
+    // (see builtin_skybox.frag) - and the map a pass resolves (`vn_shadow_map`). Every OTHER name is a texture the
+    // pass' inputs offer - the engine's screen programs (vn_albedo_tex, vn_normal_tex, vn_emissive_tex, vn_pos_tex, vn_screen_tex)
     // are all of that kind, and so is any name a host invents for a picture it declared as an input.
     if (materialSlotOf(name).has_value())
     {
         return ImageOrigin::Material;
     }
-    if (name == std::string_view("shadow_map"))
+    if (name == std::string_view("vn_shadow_map"))
     {
         return ImageOrigin::Shadow;
     }
@@ -39,7 +39,7 @@ std::optional<std::size_t> materialSlotOf(std::string_view name) noexcept
         }
     }
     // The single-map era's name, and the sky program's name for the same image: both are the base-colour slot.
-    if (name == std::string_view("diffuseMap") || name == std::string_view("skyMap"))
+    if (name == std::string_view("vn_diffuseMap") || name == std::string_view("vn_skyMap"))
     {
         return 0U;
     }

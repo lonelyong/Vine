@@ -28,7 +28,7 @@ target_compile_definitions(${GFX_BACKEND_VSG_TARGET} PRIVATE VN_GRAPHICS_BACKEND
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(FetchContent)
-if(VINE_USE_FETCHCONTENT)
+if(VN_USE_FETCHCONTENT)
     # Static third-party libs (glslang, vsg) are baked into the plugin DLL.
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
@@ -56,7 +56,7 @@ if(VINE_USE_FETCHCONTENT)
         # glslang now lives in this build tree; its static targets must be
         # folded into vsg's export set and its headers mirrored into the
         # installed layout (see below) before vsg is built.
-        set(VINE_VSG_GLSLANG_IN_TREE TRUE)
+        set(VN_VSG_GLSLANG_IN_TREE TRUE)
 
         # An installed glslang ships its SPIRV headers as include/glslang/SPIRV,
         # the layout vsg's ShaderCompiler.cpp expects. In-tree glslang keeps
@@ -113,7 +113,7 @@ if(VINE_USE_FETCHCONTENT)
     FetchContent_MakeAvailable(vsg)
     vn_group_targets_folder(${vsg_SOURCE_DIR} third_party)
 
-    if(VINE_VSG_GLSLANG_IN_TREE)
+    if(VN_VSG_GLSLANG_IN_TREE)
         # vsg registers install/export of its vsgTargets export set during its
         # own configure. As a static library, vsg re-exports the PRIVATE
         # glslang link dependencies through that set, and CMake requires each
@@ -134,7 +134,7 @@ if(VINE_USE_FETCHCONTENT)
 else()
     # Consume vsg from vcpkg or a local install (e.g. /opt/opensrc/VSG).
     # NOTE: a local install built without glslang disables runtime shader
-    # compilation (vsg ShaderCompiler); use VINE_USE_FETCHCONTENT=ON for a
+    # compilation (vsg ShaderCompiler); use VN_USE_FETCHCONTENT=ON for a
     # glslang-enabled vsg.
     find_package(vsg CONFIG REQUIRED)
 endif()

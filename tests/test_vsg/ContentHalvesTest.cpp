@@ -64,34 +64,34 @@ ShaderStage stage(ShaderStageType type, const char* source)
     return out;
 }
 
-/// @brief A content program whose fragment stage gates its sampler on `VINE_TEXTURED` - one text, two ABIs.
+/// @brief A content program whose fragment stage gates its sampler on `VN_TEXTURED` - one text, two ABIs.
 /// The texts are written the way the engine's own stages are (see builtin_forward.vert) so they COMPILE: this
 /// producer builds real layers.
 constexpr const char* kGatedVertexSource =
-    "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV)\n"
+    "#pragma import_defines (VN_TEXTURED, VN_TEXCOORD_UV)\n"
     "layout(location = 0) in vec3 position;\n"
-    "#ifdef VINE_TEXTURED\n"
+    "#ifdef VN_TEXTURED\n"
     "layout(location = 8) in vec2 texcoord;\n"
     "#endif\n"
     "void main() { gl_Position = vec4(position, 1.0); }\n";
 
 constexpr const char* kGatedFragmentSource =
-    "#pragma import_defines (VINE_TEXTURED)\n"
+    "#pragma import_defines (VN_TEXTURED)\n"
     "layout(location = 0) out vec4 outColor;\n"
     "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
     "{\n"
     "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
     "} material;\n"
-    "#ifdef VINE_TEXTURED\n"
-    "layout(set = 0, binding = 1) uniform sampler2D baseColorMap;\n"
+    "#ifdef VN_TEXTURED\n"
+    "layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;\n"
     "#endif\n"
     "void main() { outColor = material.base_color; }\n";
 
 constexpr const char* kScreenFragmentSource =
     "#version 450\n"
-    "layout(location = 0) in vec2 vine_uv;\n"
+    "layout(location = 0) in vec2 vn_uv;\n"
     "layout(location = 0) out vec4 outColor;\n"
-    "void main() { outColor = vec4(vine_uv, 0.0, 1.0); }\n";
+    "void main() { outColor = vec4(vn_uv, 0.0, 1.0); }\n";
 
 /// @brief A content program with both stages.
 vn::intrusive_ptr<ShaderProgram> contentProgram()
@@ -283,7 +283,7 @@ TEST(ContentHalvesTest, TheHalvesEpisodeStateIsTheHalvesOwn)
 {
     // THE REPORT OF A HALF SPANS FRAMES (and passes): the frame path builds a ContentPass - and its episode
     // state - per FRAME, so a sentence about a half that repeats while the condition holds would be said
-    // again every frame (measured 2026-09-24 on the demo's `shadow_map` warning). The entries now carry the
+    // again every frame (measured 2026-09-24 on the demo's `vn_shadow_map` warning). The entries now carry the
     // HALF's own state, and the half lives as long as the tables answer for it.
     const auto program  = contentProgram();
     const auto geometry = quad();
@@ -588,7 +588,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     // the OLD revision's entry is gone, exactly as api/ContentStore leaves it once its own window is past.
     ShaderStage patched = stage(ShaderStageType::Fragment, kGatedFragmentSource);
     patched.source      = vn::String(reinterpret_cast<const char8_t*>(
-        "#pragma import_defines (VINE_TEXTURED)\n"
+        "#pragma import_defines (VN_TEXTURED)\n"
         "layout(location = 0) out vec4 outColor;\n"
         "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
         "{\n"

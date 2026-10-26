@@ -154,7 +154,7 @@ constexpr std::uint32_t kMaterialAlphaModeShift = 8u;
  * @details
  * - The order is `TextureSlot`'s: base colour, metallic-roughness, normal, occlusion, emissive. A set bit means
  *   the slot carries a map; the shader samples it instead of that slot's constant fallback.
- * - A slot that exists takes the same program VARIANT as any other (the binary `VINE_TEXTURED`, see
+ * - A slot that exists takes the same program VARIANT as any other (the binary `VN_TEXTURED`, see
  *   graphics-material.md §2.5): these bits short-circuit per slot at run time, they do not select a pipeline.
  */
 constexpr std::uint32_t kMaterialFlagBaseColor       = 1u << 0u;

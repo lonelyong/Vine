@@ -14,7 +14,7 @@ endif()
 # Third-party dependencies are downloaded via FetchContent by default. Turn
 # this OFF to consume them from vcpkg or a local/system install instead; a
 # toolchain or prefix path must then make find_package() locate them.
-option(VINE_USE_FETCHCONTENT "Automatically download third-party dependencies via FetchContent" ON)
+option(VN_USE_FETCHCONTENT "Automatically download third-party dependencies via FetchContent" ON)
 
 # CMAKE_INSTALL_BINDIR: Executable programs
 include(GNUInstallDirs)

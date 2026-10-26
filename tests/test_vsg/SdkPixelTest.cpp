@@ -105,7 +105,7 @@ bool onSilhouette(const PixelProbe& probe, int x, int y)
 // 那条几何 pass 产出的 —— 正是这一条要探的那张画面。
 TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     vn::intrusive_ptr<SceneView> view(new SceneView());
     view->setEngine(fixture.engine.get());
@@ -195,7 +195,7 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
 // 视图，如果夹具只能通过视图工作，那它量到的就是自己的脚手架。
 TEST(SdkPixelTest, TheFixtureAlsoDrawsContentWithNoViewAtAll)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     vn::intrusive_ptr<RenderPass> pass(new RenderPass());
     pass->setName(vn::String(u8"hand_wired_picture"));
@@ -235,7 +235,7 @@ TEST(SdkPixelTest, TheFixtureAlsoDrawsContentWithNoViewAtAll)
 // screenCopyProgram(n) over an ImageRef bound to (target, n) - and the assertion is on what they land.
 TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     ChainDesc options;
     options.path    = ShadingPath::Deferred;
@@ -367,7 +367,7 @@ bool dominantly(const vn::graphics::backend::Rgba8& pixel, char channel)
 // `setDrawOrder(1)` 就把它翻过来 —— 描边 / 贴花 / 高亮那一类"必须压在已经画好的东西上面"的声明就靠这个。
 TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     const vn::intrusive_ptr<vn::graphics::Group> root(new vn::graphics::Group());
     const auto red   = makeCoplanarQuad(root, vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
@@ -417,7 +417,7 @@ TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
 // 读的是 `revision()`），所以改材质不需要重建场景 —— 这正是设计里"材质改了就下一帧生效"那条。
 TEST(SdkPixelTest, TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     const vn::intrusive_ptr<vn::graphics::Group> root(new vn::graphics::Group());
     // alpha = 0.25 的 Mask：低于默认 cutoff（0.5）⇒ 整片被 discard，画面留着清屏色。

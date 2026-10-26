@@ -249,7 +249,7 @@ FactMiss buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uin
     out.revision  = revision;
     out.block     = storage;
     // AFTER the entry is reset: the texture SET is a fact of the material like the block is, and any present
-    // slot is what decides whether the drawable takes the `VINE_TEXTURED` variant of its program
+    // slot is what decides whether the drawable takes the `VN_TEXTURED` variant of its program
     // (api/ProgramVariant). A slot's map and its sampler come from the same side of the resolution (instance
     // or asset), because a slot is ONE item there.
     if (material != nullptr) {

@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <vine/vine_global.hpp>
+#include <vine/vn_global.hpp>
 
 /**
  * @file async_global.hpp

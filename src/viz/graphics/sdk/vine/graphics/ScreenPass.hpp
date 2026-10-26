@@ -57,7 +57,7 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
      *
      * @details
      * - The fragment stage compiles against the full-screen ABI (see BuiltinShaders::fullscreenVertexProgram):
-     *   `vine_uv` arrives at location 0 spanning [0, 1] top row first, the stage writes its own
+     *   `vn_uv` arrives at location 0 spanning [0, 1] top row first, the stage writes its own
      *   `layout(location = 0) out vec4`, and the resolved source's colour attachments bind as sampled
      *   textures at binding 0..N-1 - binding i reads attachment i (BuiltinShaders::screenCopyProgram(n) does
      *   exactly this). The content scene's lights (setCamera / the pass camera) arrive as push constants.

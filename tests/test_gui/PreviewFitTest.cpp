@@ -88,7 +88,7 @@ TEST(PreviewFitTest, AVeryThinSourceStillGetsAPixel)
 
 TEST(PreviewFitTest, TheEmissionRowsTileShowsItsOcclusion)
 {
-    // The strip and the VINE_VSG_GBUFFER overlay both ask this one function, and it was answered in two
+    // The strip and the VN_VSG_GBUFFER overlay both ask this one function, and it was answered in two
     // places once: the deferred strip kept copying attachment 2 whole, so the default demo showed a black
     // tile whatever the pass did (attachment 2 is emission - HDR, zero without emitters - plus occlusion
     // in its alpha, which is the write evidence a tile exists to show).

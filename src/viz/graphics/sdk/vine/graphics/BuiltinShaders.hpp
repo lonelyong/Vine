@@ -90,7 +90,7 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> unlitForwardProgram();
  *   surface faces (blue = towards the camera) with no light involved, so a normal that is missing,
  *   zero, inside out or per-face where it should be per-vertex is visible at a glance instead of being
  *   inferred from shading.
- * - The normal it writes is the one the LIT path would shade with, so a VINE_FLAT combination
+ * - The normal it writes is the one the LIT path would shade with, so a VN_FLAT combination
  *   (per-face derivatives) reads the same facets this program's smooth form hides - see the fragment
  *   source.
  *
@@ -117,7 +117,7 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
  * - The sampler KIND follows the texcoord channel's width, exactly like the engine's own content
  *   stages (three scalars: a cube map; two: a 2-D map), which is what keeps a material of the wrong
  *   kind from becoming an unbindable descriptor. The returned program therefore names BOTH kinds in
- *   its import pragma (VINE_TEXCOORD_UV / VINE_TEXCOORD_CUBE) and samples the pair when neither is
+ *   its import pragma (VN_TEXCOORD_UV / VN_TEXCOORD_CUBE) and samples the pair when neither is
  *   set — which is the shape its PROGRAM-LEVEL compile gets (a stage set is built once with no
  *   defines, see VsgPipelineFactory) and the shape a mis-widthed channel takes. A backend that hands
  *   the sampler kind to the texcoord width (which is what the vsg backend's rule does) keeps it
@@ -134,10 +134,10 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
  * @details
  * - This is the interface a fullscreen fragment stage compiles against, whether it is one of the SDK's
  *   (deferredLightProgram / screenCopyProgram) or the host's own:
- *   - the fragment stage declares `layout(location = 0) in vec2 vine_uv;`, spanning [0, 1] over the
+ *   - the fragment stage declares `layout(location = 0) in vec2 vn_uv;`, spanning [0, 1] over the
  *     destination rectangle with (0, 0) at the TOP-LEFT of the source image AS THE READ-BACK API
  *     RETURNS IT — a copy samples it directly, with no Y flip;
- *   - it declares its own outputs (`layout(location = 0) out vec4 out_color;`);
+ *   - it declares its own outputs (`layout(location = 0) out vec4 vn_out_color;`);
  *   - source textures arrive at binding 0..N-1 (see ScreenPass::setProgram);
  *   - there is no vertex buffer and no vertex-side push constant: the triangle is three vertices
  *     generated from gl_VertexIndex.

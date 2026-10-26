@@ -122,7 +122,7 @@ TEST(MeshStreamIoTest, FormatHintAcceptsTheSpellingSupportedExtensionsUses)
 
 TEST(MeshStreamIoTest, ACreateSourceExportsOnTheFirstPullAndReplays)
 {
-    const auto package_path = std::filesystem::temp_directory_path() / "vine_meshio_export_source.zip";
+    const auto package_path = std::filesystem::temp_directory_path() / "vn_meshio_export_source.zip";
 
     {
         MeshExporter exporter;

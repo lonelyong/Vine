@@ -32,7 +32,7 @@ whose fate under the move nobody decided. A member in the tables that vsg no
 longer has is a finding too, so the tables cannot rot.
 
 Usage: python3 scripts/check_vsg_window_surface_state.py [path/to/vsg-src]
-       (default: build*/_deps/vsg-src, or $VINE_VSG_SRC_DIR)
+       (default: build*/_deps/vsg-src, or $VN_VSG_SRC_DIR)
 Exit status: 1 on findings; 0 with a SKIPPED line when the vsg source is not
 present (a fresh checkout has not configured yet, and a check that cannot see
 the answer must not pretend the answer is "fine").
@@ -100,7 +100,7 @@ def find_vsg_root(argv):
     """Return the vsg source root: the directory holding include/ and src/."""
     if argv and argv[0].strip():
         return pathlib.Path(argv[0])
-    env = os.environ.get("VINE_VSG_SRC_DIR")
+    env = os.environ.get("VN_VSG_SRC_DIR")
     if env:
         return pathlib.Path(env)
     for candidate in sorted(REPO_ROOT.glob("build*/_deps/vsg-src")):

@@ -122,7 +122,7 @@
 | 问题 | 位置 | 说明 |
 |---|---|---|
 | `removeDockPanel` 双重释放 + `userData` 悬垂 | `src/gui/DockPanelManager.cpp` | 包装对象与容器双方都认为自己是所有者；`closePane` 之后按 `state() != Hidden` 判断是否真被关闭回调否决，成功才 `setUserData(nullptr)` + `setOwnsImpl(false)` + `deletePane()`，最后 `delete panel` |
-| 记忆的停靠区域会过期 | `src/gui/DockPanel.cpp` | `_vine_dockarea` 只在 `addDockPanel()` 写，而 `dockArea()` 早已改成动态查询；现在改为脱离停靠树之前（`setFloating(true)` / `pin()` / `collapse()`）用 `dockPositionOf()` 记录实时位置，停靠回来时还原 |
+| 记忆的停靠区域会过期 | `src/gui/DockPanel.cpp` | `_vn_dockarea` 只在 `addDockPanel()` 写，而 `dockArea()` 早已改成动态查询；现在改为脱离停靠树之前（`setFloating(true)` / `pin()` / `collapse()`）用 `dockPositionOf()` 记录实时位置，停靠回来时还原 |
 | `static_cast<QWidget*>(impl())` 不安全 | `src/gui/DockPanel.cpp`、`src/gui/DockPanelManager.cpp` | 改为 `qobject_cast<QWidget*>()`，impl 不是 QWidget 时不再被误当成 QWidget |
 
 新增测试（`tests/test_gui/test_gui.cpp`）：
@@ -131,7 +131,7 @@
 - `GuiTest.DockPanel_TabDetachCollapsesGroup`：从 Tab 组拖出（走等价的公共 API）后，组内剩余面板仍是正常停靠面板，被拖出的成为浮窗且能停靠回来。
 - `GuiTest.DockPanelManager_RemoveDockPanel`：移除面板后管理器无残留，同组另一个面板仍可见可用。
 - `DockGeometryTest.FloatingMinimum` / `DockGeometryTest.TitleBarStaysReachable`：几何规则（下限、不改小已有下限、越界拉回、屏内不动）的直接用例。
-- ASan 门禁：`VINE_ASAN_FILTER='GuiTest.DockPanel*:GuiTest.DockPanelManager*:DockGeometryTest.*' scripts/asan_check.sh` → PASS。
+- ASan 门禁：`VN_ASAN_FILTER='GuiTest.DockPanel*:GuiTest.DockPanelManager*:DockGeometryTest.*' scripts/asan_check.sh` → PASS。
 
 **无自动化用例的部分**：Tab 拖出/拖入的拖放命中、Flyout 拖出，需要真实鼠标抓取与窗口管理器配合，只能手工验证（本次改动按代码路径逐条核对：标题栏发送的仍是全局坐标，`floatingPaneStartMove` / `floatingPaneEndMove` 的调用点未变）。
 

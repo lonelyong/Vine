@@ -4,7 +4,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(FetchContent)
 
-if(VINE_USE_FETCHCONTENT)
+if(VN_USE_FETCHCONTENT)
     # libsodium is a pure autotools project (no CMakeLists.txt), so it cannot be
     # consumed via FetchContent. wolfSSL ships a CMake build, exposes a single
     # wolfssl target and can be trimmed to crypto-only (hashes, AES, ChaCha20,

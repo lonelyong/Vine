@@ -89,7 +89,7 @@ struct ViewportRect
  * WHICH KIND OF DRAW DECIDES WHETHER THE PICTURE BLENDS, and the two kinds want opposite things:
  *
  *   * a CONTENT draw is a surface, and the engine's per-drawable opacity can drop below 1 without a
- *     pipeline rebuild (`vine_draw.params.x`), so a single-colour-attachment picture keeps the standard
+ *     pipeline rebuild (`vn_draw.params.x`), so a single-colour-attachment picture keeps the standard
  *     pair - the pipeline cannot know, the command has to say;
  *   * a FULL-SCREEN draw is a WRITE: a copy or a post-process overwrites the rectangle it covers, and the
  *     engine's screen ABI carries no opacity at all. The previous implementation's full-screen pipelines

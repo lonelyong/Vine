@@ -12,9 +12,9 @@
 #    define VN_TEST_FIXTURE_API __attribute__((visibility("default")))
 #endif
 
-extern "C" VN_TEST_FIXTURE_API int vine_test_fixture_answer();
+extern "C" VN_TEST_FIXTURE_API int vn_test_fixture_answer();
 
-extern "C" VN_TEST_FIXTURE_API int vine_test_fixture_answer()
+extern "C" VN_TEST_FIXTURE_API int vn_test_fixture_answer()
 {
     return 42;
 }

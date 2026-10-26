@@ -178,8 +178,8 @@ bool programImportsDefine(vn::raw_ptr<const vn::graphics::ShaderProgram> program
         if (open == std::string::npos || close == std::string::npos) {
             continue;
         }
-        // The list is comma-separated: the name has to match a whole entry, or "VINE_A" would be found
-        // inside "VINE_AB" and a program would be credited with an opt-in it never wrote.
+        // The list is comma-separated: the name has to match a whole entry, or "VN_A" would be found
+        // inside "VN_AB" and a program would be credited with an opt-in it never wrote.
         const std::string list = source.substr(open + 1, close - open - 1);
         std::size_t       at   = 0;
         while (at < list.size()) {

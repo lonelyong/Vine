@@ -91,7 +91,7 @@ endStartupProgress();
 | F2 | 宿主启动工作 | 宿主重写 `startup()`，重活 `co_await vn::async::run(...)` | 已落地 |
 | F3 | 插件加载 | `loadAllAsync()` 启动门；`loadAll()` 同步门 | 已落地 |
 | F4 | 取消 | stop token；`cancelStartup()` 走 `exit(0)` | 已落地 |
-| F5 | 占用门禁 | `VINE_GATE_BOOT_OCCUPANCY_MS` 默认 150 ms | 已落地 |
+| F5 | 占用门禁 | `VN_GATE_BOOT_OCCUPANCY_MS` 默认 150 ms | 已落地 |
 | F6 | 同步 init | `RenderControl::init()` 在应用线程一次付掉 | 已落地 |
 
 ### 3.1.1 F1 三拍驱动
@@ -131,9 +131,9 @@ endStartupProgress();
 ### 3.1.5 F5 占用门禁
 
 - **行为**：应用线程最长一次连续占用打到 stderr（10 ms 定时器量间隔）；
-  `scripts/vsg_rewrite_gate.sh` 的应用阶段要求 `<= VINE_GATE_BOOT_OCCUPANCY_MS`（默认 150 ms）。
+  `scripts/vsg_rewrite_gate.sh` 的应用阶段要求 `<= VN_GATE_BOOT_OCCUPANCY_MS`（默认 150 ms）。
 - **约束**（C5）：把某段搬回应用线程 ⇒ 门禁直接红；日志里没有这一行也算红。
-- **要求**（R5）：反证用 `VINE_GATE_BOOT_OCCUPANCY_MS=1` 跑同一道门。
+- **要求**（R5）：反证用 `VN_GATE_BOOT_OCCUPANCY_MS=1` 跑同一道门。
 - **验收**（T5）：`[FAIL] app ... the boot held the application thread for N ms`。
 - **注意**（N5）：默认值是实测的两倍，免得机器一忙就假红。
 
@@ -203,7 +203,7 @@ endStartupProgress();
 ### 6.1 把宿主工作内联回主线程
 
 - 会怎么错：主线程被占住，窗口不刷新、取消点不到；占用门禁红。
-- 怎么判：`VINE_GATE_BOOT_OCCUPANCY_MS` 超限；10 ms 定时器不跳。
+- 怎么判：`VN_GATE_BOOT_OCCUPANCY_MS` 超限；10 ms 定时器不跳。
 - 怎么防：宿主重写 `startup()`，`co_await vn::async::run(work)`。
 
 ### 6.2 同步门用 `Task::result()`

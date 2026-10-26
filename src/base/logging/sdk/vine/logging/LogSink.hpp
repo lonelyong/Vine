@@ -65,7 +65,7 @@ class VN_LOGGING_API LogSink
      * @brief Returns a sink writing to a daily-rotating log file.
      *
      * The file name is derived from base_path by inserting the date before the
-     * extension, e.g. "vine_2026-08-30.log" for base "vine.log". A new file is
+     * extension, e.g. "vn_2026-08-30.log" for base "vine.log". A new file is
      * started every day at midnight; once max_files dated files exist the old
      * ones are pruned (files from previous runs are left untouched).
      *

@@ -438,7 +438,7 @@ VkFormat formatForComponents(std::uint32_t components)
 
 std::string customAttributeName(std::uint32_t location)
 {
-    return "vine_Attribute" + std::to_string(location);
+    return "vn_Attribute" + std::to_string(location);
 }
 
 VkShaderStageFlagBits stageFlag(vn::graphics::ShaderStageType type)

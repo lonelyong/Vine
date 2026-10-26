@@ -22,30 +22,30 @@ std::vector<std::string> ProgramVariant::defines() const
     names.reserve(4U);
     // The kind is NOT optional (see the declaration): it is the one name every variant states, because a
     // stage that samples the slot without it refuses to build.
-    names.emplace_back(cube_texcoord ? "VINE_TEXCOORD_CUBE" : "VINE_TEXCOORD_UV");
+    names.emplace_back(cube_texcoord ? "VN_TEXCOORD_CUBE" : "VN_TEXCOORD_UV");
     if (textured) {
-        names.emplace_back("VINE_TEXTURED");
+        names.emplace_back("VN_TEXTURED");
     }
     if (vertex_color) {
-        names.emplace_back("VINE_VERTEX_COLOR");
+        names.emplace_back("VN_VERTEX_COLOR");
     }
     if (instanced) {
-        names.emplace_back("VINE_INSTANCED");
+        names.emplace_back("VN_INSTANCED");
     }
     return names;
 }
 
 std::string ProgramVariant::describe() const
 {
-    std::string text = cube_texcoord ? "VINE_TEXCOORD_CUBE" : "VINE_TEXCOORD_UV";
+    std::string text = cube_texcoord ? "VN_TEXCOORD_CUBE" : "VN_TEXCOORD_UV";
     if (textured) {
-        text += ", VINE_TEXTURED";
+        text += ", VN_TEXTURED";
     }
     if (vertex_color) {
-        text += ", VINE_VERTEX_COLOR";
+        text += ", VN_VERTEX_COLOR";
     }
     if (instanced) {
-        text += ", VINE_INSTANCED";
+        text += ", VN_INSTANCED";
     }
     return text;
 }

@@ -123,7 +123,7 @@ Mat4d spotShadowMatrix(const Light& light, const vn::math::Aabbd& bounds, Camera
     const double far_plane  = std::max(axis_max, near_plane + 1.0);
 
     // The cone the map covers is the spot's OUTER cone plus a small margin: the map edge then sits where the light is
-    // already at zero strength (see vineEvaluateLight), so nothing fades at the map's border.
+    // already at zero strength (see vnEvaluateLight), so nothing fades at the map's border.
     const double half_angle = std::clamp(light.outerConeAngle() * 1.02, 0.5, 85.0);
     const double fov_y      = 2.0 * half_angle;
 

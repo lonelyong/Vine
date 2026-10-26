@@ -32,10 +32,10 @@
  * answer them the same way, so they are answered here, once.
  *
  * WHERE EACH IMAGE COMES FROM:
- *   * a texture-slot name (`baseColorMap` … `emissiveMap`, Material): the drawable's own map for that slot,
+ *   * a texture-slot name (`vn_baseColorMap` … `vn_emissiveMap`, Material): the drawable's own map for that slot,
  *     through @p images - an absent slot (or one whose texture cannot be used) takes the white fallback, the
  *     value the engine's own stages are written against ("no map" is white, not an unwritten binding).
- *   * `shadow_map` (Shadow): the map the pass' plan resolved (api/ContentImages::shadowImageOf), or the white
+ *   * `vn_shadow_map` (Shadow): the map the pass' plan resolved (api/ContentImages::shadowImageOf), or the white
  *     stand-in - a 2D one, or a CUBE one when the text declares `samplerCube` (a 2D view where a cube is
  *     declared is an invalid descriptor, not an untextured draw).
  *   * every other name (Input): the pass' declared inputs, in the same order the pass' own input set binds

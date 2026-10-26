@@ -210,7 +210,7 @@ struct VN_GRAPHICS_API PipelineKey
 
     /// Which VARIANT of that program this pipeline is compiled for. The core carries it as a NUMBER
     /// because the defines it stands for are the engine's naming rather than the core's, and
-    /// `api/ProgramVariant` is the one spelling of what the number means (the `VINE_TEXTURED`
+    /// `api/ProgramVariant` is the one spelling of what the number means (the `VN_TEXTURED`
     /// family the engine's own stages gate their declarations on). Two variants of one program agree
     /// on every other field here and must never share a pipeline: their texts differ, so the same
     /// draws would come out as different pictures.

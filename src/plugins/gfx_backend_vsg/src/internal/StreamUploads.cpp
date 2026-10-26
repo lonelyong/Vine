@@ -14,7 +14,7 @@ namespace
  *
  * @details
  * - 0-3 are vsg's canonical arrays (position, normal, texcoord, colour). The instance matrix is the next
- *   free binding, and it is the one `ContentPipeline::create` declares when the `VINE_INSTANCED` define is
+ *   free binding, and it is the one `ContentPipeline::create` declares when the `VN_INSTANCED` define is
  *   in the variant's list.
  */
 constexpr std::uint32_t kInstanceBinding = 4U;

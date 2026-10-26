@@ -105,7 +105,7 @@
   版本号；后端有权依赖 1.4 的核心行为，把低版本设备"跑子集"当成可接受会让宿主从驱动深处才知道。
   判据：`tests/test_vsg/DeviceRequirementsTest.cpp`。
 * `vn_add_plugin(... gfx_backend_vsg)`：MODULE 库；部署到 `<exe>/plugins/vine/gfx_backend_vsgd.*`。
-* `VINE_USE_FETCHCONTENT=ON`（推荐）：静态 glslang + vsg **v1.1.16** 打进插件，保留运行期 `ShaderCompiler`
+* `VN_USE_FETCHCONTENT=ON`（推荐）：静态 glslang + vsg **v1.1.16** 打进插件，保留运行期 `ShaderCompiler`
   （自定义 program 需要）；`OFF`：走 vcpkg/本机 vsg——**没有 glslang 的预装 vsg 会让 program 路径静默失效**。
 * 链接 `vsg::vsg` + appfw（插件基类）+ graphics（接口与注册表）。
 * **插件源列表是 GLOB**：`src/` 下新增 `.cpp` 要重新 configure；`tests/test_vsg/CMakeLists.txt` 要显式加两处

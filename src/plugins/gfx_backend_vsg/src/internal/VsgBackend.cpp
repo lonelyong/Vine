@@ -494,7 +494,7 @@ bool VsgBackend::initialize()
 {
     // The host's announcements and the debug switch are the DEVICE's: every window is created with the size the
     // surface last announced, and with the same layers.
-    const bool validation = std::getenv("VINE_VSG_DEBUG_LAYER") != nullptr;
+    const bool validation = std::getenv("VN_VSG_DEBUG_LAYER") != nullptr;
 
     if (d->desc.presentation == vn::graphics::DevicePresentation::None)
     {

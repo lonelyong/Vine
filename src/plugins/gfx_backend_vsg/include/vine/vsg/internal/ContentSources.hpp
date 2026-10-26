@@ -74,7 +74,7 @@ VN_VSG_NS_BEGIN
  *
  * The full-screen ABI is the engine's, not the host's: the fragment stage is the program's own, and the
  * VERTEX stage is the engine's canonical full-screen triangle (`BuiltinShaders::fullscreenVertexProgram` -
- * three vertices generated from `gl_VertexIndex`, `vine_uv` at location 0, no vertex buffer and no
+ * three vertices generated from `gl_VertexIndex`, `vn_uv` at location 0, no vertex buffer and no
  * vertex-side constants). A vertex stage the program happens to carry is IGNORED, because that is what the
  * contract says (`DrawDescription` with `Kind::Screen`: the draw's `program` is its FRAGMENT stage - the
  * backend provides the fullscreen vertex stage): honouring one would compile a triangle the engine's fragment

@@ -920,7 +920,7 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
 
     // ON: the switch is the environment's, read once when the session comes up (and restored here, so the
     // rest of the process - and the next session - sees what it saw before).
-    setEnvironmentFlag("VINE_VSG_PROFILE", true);
+    setEnvironmentFlag("VN_VSG_PROFILE", true);
     {
         Session session;
         ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
@@ -958,5 +958,5 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
             }
         }
     }
-    setEnvironmentFlag("VINE_VSG_PROFILE", false);
+    setEnvironmentFlag("VN_VSG_PROFILE", false);
 }

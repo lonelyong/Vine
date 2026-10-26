@@ -67,7 +67,7 @@ std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
 /**
  * @brief The render graph @p child stands for, whether it is the graph itself or a wrapper around it.
  *
- * A session started with VINE_VSG_PROFILE puts a named `vsg::InstrumentationNode` in front of every pass'
+ * A session started with VN_VSG_PROFILE puts a named `vsg::InstrumentationNode` in front of every pass'
  * render graph in the command graph (see detail::applyRecordPlan and VsgGpuProfile.hpp), so the graph a
  * child list entry MEANS is one level down in that case. Everything that matches a child against a graph
  * asks this instead of comparing pointers, which keeps the wrapping invisible to the record order.

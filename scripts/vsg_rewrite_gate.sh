@@ -12,7 +12,7 @@
 #   1. build                        — `ninja -C <build>` (skip with --no-build).
 #   2. device-free + device suite   — every case in `test_vsg`, INCLUDING the real-device ones. A
 #                                     device case that SKIPS is not evidence: the run fails unless
-#                                     VINE_GATE_ALLOW_SKIPS=1, because "every device case skipped"
+#                                     VN_GATE_ALLOW_SKIPS=1, because "every device case skipped"
 #                                     would otherwise read as green.
 #   3. validation layer             — the same suite with VK_LAYER_KHRONOS_validation: zero `VUID` /
 #                                     `Validation Error` lines in the output.
@@ -35,9 +35,9 @@
 #                                     picture wrong": both of the rewrite's picture regressions (a
 #                                     sky-only frame after a resize, squashed previews) passed every
 #                                     test in this gate and were found by looking at the window. A run
-#                                     without DISPLAY skips it unless VINE_GATE_ALLOW_SKIPS=1, and a run
+#                                     without DISPLAY skips it unless VN_GATE_ALLOW_SKIPS=1, and a run
 #                                     whose demo never reports its window FAILS. It also guards the boot's
-#                                     own timing (the demo prints it under VINE_BOOT_TIMING=1): the longest
+#                                     own timing (the demo prints it under VN_BOOT_TIMING=1): the longest
 #                                     single stretch the boot holds the APPLICATION THREAD for, bounded PER
 #                                     DEVICE CLASS - 150 ms on hardware (measured 74-92 ms in the current shape
 #                                     against 414 ms when the whole session attach ran on the application
@@ -65,22 +65,22 @@
 # Env:
 #   VK_ICD_FILENAMES       Existing selection wins; otherwise lavapipe is auto-detected
 #                          (lvp_icd.json) when present, so the device cases really run.
-#   VINE_GATE_ALLOW_SKIPS=1  Accept a run with skipped cases (they are printed, not hidden). Also makes
+#   VN_GATE_ALLOW_SKIPS=1  Accept a run with skipped cases (they are printed, not hidden). Also makes
 #                          a missing DISPLAY a skipped app stage instead of a failure.
-#   VINE_GATE_TEST=<path>    Test binary to run instead of <BUILD_DIR>/bin/test_vsg.
-#   VINE_GATE_APP=<path>     Application to run instead of <BUILD_DIR>/bin/Vine.
-#   VINE_GATE_APP_FIRST=WxH   Size the demo's window is set to BEFORE the first sample (default 800x600,
+#   VN_GATE_TEST=<path>    Test binary to run instead of <BUILD_DIR>/bin/test_vsg.
+#   VN_GATE_APP=<path>     Application to run instead of <BUILD_DIR>/bin/Vine.
+#   VN_GATE_APP_FIRST=WxH   Size the demo's window is set to BEFORE the first sample (default 800x600,
 #                          the demo's own default; the app's start-up size is not deterministic).
-#   VINE_GATE_APP_RESIZE=WxH Size the demo's top-level window is dragged to (default 1120x420).
-#   VINE_GATE_APP_SETTLE=N   Seconds to let the demo build and present its scene (default 4).
-#   VINE_GATE_APP_AFTER=N    Seconds to settle after the resize before the second sample (default 3).
-#   VINE_GATE_APP_MIN_CONTENT=P  Percent of the render area that must not be near-black (default 30).
-#   VINE_GATE_APP_MIN_PREVIEW=C  Max channel the G-buffer preview strip must reach (default 64).
-#   VINE_GATE_BOOT_OCCUPANCY_MS=N  Override the boot's app-thread occupancy budget (default 150 ms on a
+#   VN_GATE_APP_RESIZE=WxH Size the demo's top-level window is dragged to (default 1120x420).
+#   VN_GATE_APP_SETTLE=N   Seconds to let the demo build and present its scene (default 4).
+#   VN_GATE_APP_AFTER=N    Seconds to settle after the resize before the second sample (default 3).
+#   VN_GATE_APP_MIN_CONTENT=P  Percent of the render area that must not be near-black (default 30).
+#   VN_GATE_APP_MIN_PREVIEW=C  Max channel the G-buffer preview strip must reach (default 64).
+#   VN_GATE_BOOT_OCCUPANCY_MS=N  Override the boot's app-thread occupancy budget (default 150 ms on a
 #                          hardware device, 650 ms on a software rasteriser - see the app stage).
-#   VINE_GATE_APP_MAX_BACKGROUND=P  Percent of the picture the flat background colour may cover (default 5;
+#   VN_GATE_APP_MAX_BACKGROUND=P  Percent of the picture the flat background colour may cover (default 5;
 #                                measured 0.00% when healthy, 14.53% when the whole view goes flat).
-#   VINE_GATE_KEEP_LOGS=1    Keep the logs of a clean run too (chasing a flake across runs).
+#   VN_GATE_KEEP_LOGS=1    Keep the logs of a clean run too (chasing a flake across runs).
 #
 # Exit code 0 only when every stage is clean; 1 otherwise. The last lines are a stage summary.
 
@@ -129,9 +129,9 @@ if [ ! -d "$BUILD_DIR" ]; then
 fi
 BUILD_DIR="$(cd "$BUILD_DIR" && pwd)"
 
-TEST_BIN="${VINE_GATE_TEST:-$BUILD_DIR/bin/test_vsg}"
+TEST_BIN="${VN_GATE_TEST:-$BUILD_DIR/bin/test_vsg}"
 if [ ! -x "$TEST_BIN" ]; then
-    echo "no test binary at $TEST_BIN (build it first, or pass VINE_GATE_TEST)" >&2
+    echo "no test binary at $TEST_BIN (build it first, or pass VN_GATE_TEST)" >&2
     exit 1
 fi
 
@@ -161,7 +161,7 @@ LOG_DIR="$(mktemp -d)"
 # run, and killing them took the suite back to three runs of zero failures). The app is started with `exec` so
 # the pid the gate holds IS the application's - killing a subshell around it would leave the window.
 #
-# VINE_GATE_KEEP_LOGS=1 keeps the logs of a clean run too (chasing a flake across runs).
+# VN_GATE_KEEP_LOGS=1 keeps the logs of a clean run too (chasing a flake across runs).
 APP_PID=""
 cleanup_app() {
     if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
@@ -175,7 +175,7 @@ cleanup_app() {
     fi
     APP_PID=""
 }
-trap 'cleanup_app; if [ "${#FAILED_STAGES[@]}" -eq 0 ] && [ "${VINE_GATE_KEEP_LOGS:-0}" != "1" ]; then rm -rf "$LOG_DIR"; else echo "   logs kept in $LOG_DIR"; fi' EXIT
+trap 'cleanup_app; if [ "${#FAILED_STAGES[@]}" -eq 0 ] && [ "${VN_GATE_KEEP_LOGS:-0}" != "1" ]; then rm -rf "$LOG_DIR"; else echo "   logs kept in $LOG_DIR"; fi' EXIT
 
 FAILED_STAGES=()
 record_stage() { # name, ok(0/1), evidence
@@ -247,10 +247,10 @@ check_suite() { # stage-name, logfile, needs-cases(0/1)    local name="$1"
         status=1
         evidence="$evidence (no case reported OK: the run proved nothing)"
     fi
-    if [ "$skipped" -ne 0 ] && [ "${VINE_GATE_ALLOW_SKIPS:-0}" != "1" ]; then
+    if [ "$skipped" -ne 0 ] && [ "${VN_GATE_ALLOW_SKIPS:-0}" != "1" ]; then
         status=1
         grep '^\[  SKIPPED  \]' "$log" | sed 's/^/         /'
-        evidence="$evidence (set VINE_GATE_ALLOW_SKIPS=1 to accept skips)"
+        evidence="$evidence (set VN_GATE_ALLOW_SKIPS=1 to accept skips)"
     fi
     if [ "$status" -ne 0 ]; then
         grep -E '^\[  FAILED  \]' "$log" | sed 's/^/         /'
@@ -392,8 +392,8 @@ fi
 # THE FIRST SAMPLE'S WINDOW SIZE IS SET BY THE GATE, not inherited from the app: the demo's start-up size
 # is not deterministic (its docks grow with their content - six starts measured 2026-09-25 produced six
 # different render areas, and one run opened at 3418x1110 where a healthy picture read content 6.85%).
-# The gate drags the window to VINE_GATE_APP_FIRST first, so what is judged is the picture, and then to a
-# DIFFERENT size (VINE_GATE_APP_RESIZE) for the second sample, which is the resize half of the stage.
+# The gate drags the window to VN_GATE_APP_FIRST first, so what is judged is the picture, and then to a
+# DIFFERENT size (VN_GATE_APP_RESIZE) for the second sample, which is the resize half of the stage.
 app_pixel_ids() { # the pixel report on stdin -> "<width> <height>" of the render area
     sed -n 's/^window 0x[0-9a-fA-F]*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1
 }
@@ -474,25 +474,25 @@ app_known_vuids() { # the VUID names this stage tolerates, one per line, with th
 }
 
 check_app() {
-    local app_bin="${VINE_GATE_APP:-$BUILD_DIR/bin/Vine}"
-    local settle="${VINE_GATE_APP_SETTLE:-4}"
-    local after="${VINE_GATE_APP_AFTER:-3}"
-    local want_content="${VINE_GATE_APP_MIN_CONTENT:-30}"
-    local want_preview="${VINE_GATE_APP_MIN_PREVIEW:-64}"
-    local max_background="${VINE_GATE_APP_MAX_BACKGROUND:-5}"
-    local drag="${VINE_GATE_APP_RESIZE:-1120x420}"
+    local app_bin="${VN_GATE_APP:-$BUILD_DIR/bin/Vine}"
+    local settle="${VN_GATE_APP_SETTLE:-4}"
+    local after="${VN_GATE_APP_AFTER:-3}"
+    local want_content="${VN_GATE_APP_MIN_CONTENT:-30}"
+    local want_preview="${VN_GATE_APP_MIN_PREVIEW:-64}"
+    local max_background="${VN_GATE_APP_MAX_BACKGROUND:-5}"
+    local drag="${VN_GATE_APP_RESIZE:-1120x420}"
 
     if [ ! -x "$app_bin" ]; then
-        record_stage "app (deferred demo)" 1 "no application at $app_bin (build it, or pass VINE_GATE_APP)"
+        record_stage "app (deferred demo)" 1 "no application at $app_bin (build it, or pass VN_GATE_APP)"
         return
     fi
     if [ -z "${DISPLAY:-}" ]; then
         # A window needs a display: no display is a SKIP, and the same rule as a skipped case applies - a
         # gate that silently drops a stage reads as green without having judged anything.
-        if [ "${VINE_GATE_ALLOW_SKIPS:-0}" = "1" ]; then
-            record_stage "app (deferred demo)" 0 "skipped (DISPLAY unset; accepted by VINE_GATE_ALLOW_SKIPS=1)"
+        if [ "${VN_GATE_ALLOW_SKIPS:-0}" = "1" ]; then
+            record_stage "app (deferred demo)" 0 "skipped (DISPLAY unset; accepted by VN_GATE_ALLOW_SKIPS=1)"
         else
-            record_stage "app (deferred demo)" 1 "DISPLAY is unset, so no application window can be judged (set VINE_GATE_ALLOW_SKIPS=1 to accept)"
+            record_stage "app (deferred demo)" 1 "DISPLAY is unset, so no application window can be judged (set VN_GATE_ALLOW_SKIPS=1 to accept)"
         fi
         return
     fi
@@ -505,7 +505,7 @@ check_app() {
     # `--open demo` is part of the stage: the demo scene is a DOCUMENT now (demo_plugin registers type "demo", and
     # nothing of it is built until that document is opened - see appfw-document-model.md §12). Without it the app
     # starts with an empty central area and there would be no 3D picture to judge at all.
-    ( cd "$BUILD_DIR" && exec env QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" VINE_VSG_DEBUG_LAYER=1 VINE_BOOT_TIMING=1 \
+    ( cd "$BUILD_DIR" && exec env QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" VN_VSG_DEBUG_LAYER=1 VN_BOOT_TIMING=1 \
         "$app_bin" --open demo >"$log" 2>&1 ) &
     APP_PID=$!
     local app_pid="$APP_PID"
@@ -536,7 +536,7 @@ check_app() {
     #    inherited from the app (the same drag a user makes; the second sample still resizes to a DIFFERENT
     #    size, which is what keeps the "follows a resize" half of this stage honest). 800x600 is the
     #    demo's own default and yields the 378x247 render area the recorded evidence lines were taken at.
-    local first="${VINE_GATE_APP_FIRST:-800x600}"
+    local first="${VN_GATE_APP_FIRST:-800x600}"
     if ! python3 "$ROOT/scripts/xwinresize.py" "$APP_WINDOW" "${first%x*}" "${first#*x}" >/dev/null 2>&1; then
         kill "$app_pid" 2>/dev/null
         wait "$app_pid" 2>/dev/null
@@ -640,7 +640,7 @@ check_app() {
             status=1
         fi
     done
-    # 4. The boot's own timing. The application prints one line under VINE_BOOT_TIMING=1: how long the boot held the
+    # 4. The boot's own timing. The application prints one line under VN_BOOT_TIMING=1: how long the boot held the
     #    APPLICATION THREAD in its longest single stretch, and when that stretch ended. That number is the whole point
     #    of the boot's shape - what runs on the pool (session attach, its warm-up frame, the content load) does not
     #    block the loop, what has to stay on the thread does - so it is guarded here instead of living in a commit
@@ -653,8 +653,8 @@ check_app() {
     #    unchanged. Hence 150 ms for a hardware device and 650 ms for a software rasteriser (~1.5x the worst
     #    measurement here) - and on a software device this row is only a smoke bound: it catches work moving back
     #    onto the thread in multiples, not a subtle one, because the wait it measures is the device's own speed.
-    #    VINE_GATE_BOOT_OCCUPANCY_MS overrides either (to probe the check itself).
-    local boot_budget="${VINE_GATE_BOOT_OCCUPANCY_MS:-}"
+    #    VN_GATE_BOOT_OCCUPANCY_MS overrides either (to probe the check itself).
+    local boot_budget="${VN_GATE_BOOT_OCCUPANCY_MS:-}"
     if [ -z "$boot_budget" ]; then
         if [ "$SOFTWARE_DEVICE" -eq 1 ]; then boot_budget=650; else boot_budget=150; fi
     fi

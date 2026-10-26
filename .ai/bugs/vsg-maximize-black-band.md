@@ -38,7 +38,7 @@
    `7003,1561`（x > 2352）；修后 `16,776 96x96` / `2239,844 105x36`，都在窗口内。
 2. 程序槽的 rebuild identity 去掉目标表面尺寸（`src/plugins/gfx_backend_vsg/src/VsgProgramSlot.cpp`，
    字段在 `include/vine/vsg/VsgRenderTargetEntry.hpp`）：节点的几何是全屏三角形、矩形是**动态状态**
-   （每帧从 pass 的 viewport 写进 `slot.camera->viewportState`），而每个全屏片段阶段都按 `vine_uv` 采样、
+   （每帧从 pass 的 viewport 写进 `slot.camera->viewportState`），而每个全屏片段阶段都按 `vn_uv` 采样、
    与尺寸无关。「矩形是动态而不是烤死的」由自检的 PiP 相位**反证**：PiP 在 96x54 的小矩形里采到**整个**
    源，而它的管线是按**表面**尺寸烤的。
 3. 中间帧的取舍（`src/fw/appfw/src/gui/RenderControl.cpp::handleSurfaceUpdate`）：**保持一帧**。

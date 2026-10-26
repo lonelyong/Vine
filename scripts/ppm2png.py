@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ppm2png.py — convert a P6 PPM into a PNG using only the Python standard library (zlib/struct).
 
-The PPM this was written for came from the (since removed) vsg_color_probe's VINE_PROBE_CAPTURE;
+The PPM this was written for came from the (since removed) vsg_color_probe's VN_PROBE_CAPTURE;
 it is a plain P6 reader, so any PPM writer can feed it.
 
 Usage: python3 scripts/ppm2png.py in.ppm out.png

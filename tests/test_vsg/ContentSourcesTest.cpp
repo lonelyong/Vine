@@ -137,8 +137,8 @@ TEST(ContentSourcesTest, AScreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgno
     EXPECT_FALSE(facts.shaders.vertex.empty()) << "the entry carries the engine's full-screen vertex stage";
     EXPECT_NE(facts.shaders.vertex.find("gl_VertexIndex"), std::string::npos)
         << "the engine's vertex stage generates its vertices from gl_VertexIndex";
-    EXPECT_NE(facts.shaders.vertex.find("vine_uv"), std::string::npos)
-        << "and it hands the fragment stage the interface the full-screen ABI states (vine_uv at location 0)";
+    EXPECT_NE(facts.shaders.vertex.find("vn_uv"), std::string::npos)
+        << "and it hands the fragment stage the interface the full-screen ABI states (vn_uv at location 0)";
     EXPECT_EQ(facts.shaders.entry, "main");
 
     // A vertex stage the program carries anyway is IGNORED, because the contract says so ("vertex stage, if

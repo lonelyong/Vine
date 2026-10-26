@@ -151,7 +151,7 @@ void expectTheShadowFalls(const vn::graphics::backend::PixelProbe& probe)
 
 TEST(ShadowPixelTest, ACastingSunDarkensTheGroundWhereItsShadowFalls)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     fixture.scene = buildCastingScene();
 
@@ -191,7 +191,7 @@ TEST(ShadowPixelTest, ACastingSunDarkensTheGroundWhereItsShadowFalls)
  */
 TEST(ShadowPixelTest, TheSameShadowFallsWhenTheFrameCompositesAnOverlay)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     fixture.scene = buildCastingScene();
 
@@ -227,7 +227,7 @@ TEST(ShadowPixelTest, TheSameShadowFallsWhenTheFrameCompositesAnOverlay)
  */
 TEST(ShadowPixelTest, TheSameShadowFallsOnTheForwardPath)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     fixture.scene = buildCastingScene();
 

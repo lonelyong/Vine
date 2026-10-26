@@ -1,7 +1,7 @@
 ﻿include(GoogleTest)
 include(FetchContent)
 
-if(VINE_USE_FETCHCONTENT)
+if(VN_USE_FETCHCONTENT)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
     set(BUILD_GTEST ON CACHE BOOL "" FORCE)

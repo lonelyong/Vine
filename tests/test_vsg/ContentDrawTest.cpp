@@ -418,14 +418,14 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
 
     ContentPipeline::Shaders shaders;
     shaders.vertex = "#version 450\n"
-                     "layout(location = 0) out vec2 vine_uv;\n"
-                     "void main() { vine_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
-                     "              gl_Position = vec4(vine_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
+                     "layout(location = 0) out vec2 vn_uv;\n"
+                     "void main() { vn_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+                     "              gl_Position = vec4(vn_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
     shaders.fragment = "#version 450\n"
-                       "layout(location = 0) in vec2 vine_uv;\n"
+                       "layout(location = 0) in vec2 vn_uv;\n"
                        "layout(location = 0) out vec4 out_color;\n"
                        "layout(binding = 0) uniform sampler2D picture;\n"
-                       "void main() { out_color = texture(picture, vine_uv); }\n";
+                       "void main() { out_color = texture(picture, vn_uv); }\n";
     // The layer's set is what the text declares: scan the pair (the engine's table entry does exactly that).
     vn::vsg::ProgramAbi abi;
     ASSERT_EQ(vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::vsg::FactMiss::None);

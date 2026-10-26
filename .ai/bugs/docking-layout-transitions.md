@@ -17,7 +17,7 @@
 - **几何规则各处自写**：产生浮动窗格有四条路径（标题栏、Tab 条、Flyout、公共 API），没有任何一条约束尺寸或位置。
 - **拖动所有权没有交接**：Tab 拖出由 `DockingPaneTabbedContainer` 发起并持有鼠标抓取，而拖出过程会重排/可能销毁 Tab 组，抓取在拖动进行中被丢掉；原代码用 `move()` 纠正位置，掩盖了症状。
 - **落点靠魔数**：`floatPane(QPoint(-deltaPos.x(), -10))` 把 Tab 标签内的局部 X 当偏移量，标题栏高度写死 `10`（实际是 `6 + fontMetrics().height()`）。
-- **两处"真相"**：`DockPanel` 把停靠区域缓存在 `_vine_dockarea` 属性里（只在 `addDockPanel()` 写），而 `dockArea()` 早已改成动态查询，缓存过期后停靠回错误的一侧。
+- **两处"真相"**：`DockPanel` 把停靠区域缓存在 `_vn_dockarea` 属性里（只在 `addDockPanel()` 写），而 `dockArea()` 早已改成动态查询，缓存过期后停靠回错误的一侧。
 - **双重所有权**：包装对象与 `DockingPaneContainer` 都认为自己是所有者；`userData()` 在包装对象销毁后仍被库内关闭回调使用。
 
 ## 修复
@@ -47,7 +47,7 @@
 
 - `tests/test_gui/test_gui.cpp` 新增 5 个用例：`DockPanel_FloatRoundTripKeepsArea`、`DockPanel_TabDetachCollapsesGroup`、`DockPanelManager_RemoveDockPanel`、`DockGeometryTest.FloatingMinimum`、`DockGeometryTest.TitleBarStaysReachable`。
 - 另加 `DockPanel_PinnedFlyoutIsAnchoredToDockArea`：四条边各自动隐藏后点击边条按钮，断言飞窗贴边坐标与停靠区几何一致（含内容最小尺寸大于飞窗请求尺寸的情况）。- `test_gui` 158 个用例全通过；`test_core` / `test_vsg` / `test_async` / `test_progress` / `test_math` / `test_logging` 全通过。
-- ASan：`VINE_ASAN_FILTER='GuiTest.DockPanel*:GuiTest.DockPanelManager*:DockGeometryTest.*' scripts/asan_check.sh` → PASS。
+- ASan：`VN_ASAN_FILTER='GuiTest.DockPanel*:GuiTest.DockPanelManager*:DockGeometryTest.*' scripts/asan_check.sh` → PASS。
 - 严格告警扫描（`-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion`）在改动行上无新增告警。
 
 ## 遗留 / 有意未做

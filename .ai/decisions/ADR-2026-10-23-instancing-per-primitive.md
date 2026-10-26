@@ -20,7 +20,7 @@
 ## 决定
 
 选 **C**：`Primitive` 增加 `instance_transforms`（16 float/实例，列主序 mat4）+
-`visible_instances`；收集按 primitive 出行；后端 binding 4 + `VINE_INSTANCED`；
+`visible_instances`；收集按 primitive 出行；后端 binding 4 + `VN_INSTANCED`；
 没有 `InstanceScope`。
 
 ## 后果

@@ -5,7 +5,7 @@
  * Device-free by construction: `vsg::Image`, `vsg::ImageView` and `vsg::Sampler` are create-infos until a
  * `vsg::Context` compiles them, so what is checked here is that the fallback IS what a declared set needs
  * (an image view, a sampler, and the white texel as data the compile-time transfer uploads). The pixel half
- * - a program whose `diffuseMap` reads white, so the shading is the material's own colour - lives in
+ * - a program whose `vn_diffuseMap` reads white, so the shading is the material's own colour - lives in
  * ContentPassTest.
  */
 

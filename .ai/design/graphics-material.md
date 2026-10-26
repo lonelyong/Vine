@@ -58,18 +58,18 @@ PBR，引擎内部只有一个语义。两条路径、导入器与测试只需�
 base_color 允许 Cube（沿用“采样器种类跟几何 texcoord 宽度”的规则）；其余四槽只收 D2。UV 集固定为 0，
 第二个 UV 是几何格式变更，不是材质变更。
 
-2.5 **变体是“有没有纹理集”，不是“有哪几个槽”**（`G10`）：`VINE_TEXTURED` 一个布尔位。有任意一槽时程序
+2.5 **变体是“有没有纹理集”，不是“有哪几个槽”**（`G10`）：`VN_TEXTURED` 一个布尔位。有任意一槽时程序
 声明全部五个采样器，**槽是否存在由块里的 flags 逐槽短路**：缺的槽不采样，按槽给常量（base / MR / AO 乘 1、
 normal 平直、emissive 黑）。绑定的 stand-in 只为“描述符合法 + 种类正确”存在，它的**值**不参与画面。逐槽位会得到
-2^5 组合 × 两条路径 × 阴影变体，撑爆管线缓存与 `vine_shader_check.sh` 的组合门禁；二元位保住“无纹理内容零采样器”。
+2^5 组合 × 两条路径 × 阴影变体，撑爆管线缓存与 `vn_shader_check.sh` 的组合门禁；二元位保住“无纹理内容零采样器”。
 
 2.6 **一个 BRDF，两条路径**（`G1` `G5`）：`shaders/vine_brdf.glsl` 是 GGX / Smith / Schlick 的唯一实现：
-forward 直接调用；deferred 先把 G-buffer 还原成同样的输入再调用。`vineEvaluateLight` 继续是灯的唯一实现。
+forward 直接调用；deferred 先把 G-buffer 还原成同样的输入再调用。`vnEvaluateLight` 继续是灯的唯一实现。
 槽到表面输入的翻译（通道打包、缺槽常量、法线切线基）同属一个契约，它的一个家是 `vine_material.glsl`，
 两个写表面的 stage（forward / G-buffer）都 include 它。
 
 2.7 **透明度：模式在材质，幅度在 drawable**（`G1` `G4`）：`AlphaMode::Opaque | Mask | Blend`；有效 alpha =
-`draw.params.x`（drawable opacity）× `material.base_color.a` × 可选 base 贴图 alpha。
+`vn_draw.params.x`（drawable opacity）× `vn_material.base_color.a` × 可选 base 贴图 alpha。
 `RenderCommand::isTransparent()` 改为“opacity < 1 **或** 材质是 Blend”；Mask 在着色阶段按 cutoff discard，
 不参与排序，留在不透明 pass。这取代旧的“材质不贡献 alpha”规则，让排序与着色读同一对输入（见 N5）。
 Blend 内容走 forward overlay，deferred 的 G-buffer 只收不透明与 Mask。
@@ -105,7 +105,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 | F6 | deferred PBR | G-buffer 还原 + 同一 BRDF + emissive/occlusion | 已做 |
 | F7 | alpha 模式 | Opaque / Mask / Blend 的排序、discard 与输出 alpha | 已做 |
 | F8 | 导入转换 | asset `Color/Phong/Pbr` → 引擎 PBR，去掉近似 | 已做 |
-| F9 | 变体 | `VINE_TEXTURED` 二元位 + 常量回退 | 已做 |
+| F9 | 变体 | `VN_TEXTURED` 二元位 + 常量回退 | 已做 |
 | F10 | 上传去重 | 实例复合 revision；改资产使实例重写 | 已做 |
 | F11 | 诊断 | 缺槽 / 格式不符 / Cube 进非 base 槽 / 无效覆盖 | 已做（缺槽计数；其余逐材质一次） |
 
@@ -154,7 +154,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 - **行为**：Opaque 忽略 alpha；Mask 在 base 采样后 `discard`；Blend 输出 a 并进透明队列。排序键
   = opacity < 1 或模式为 Blend（§2.7）。
 - **约束**（C4）：Mask 不能进透明队列（否则排序把本该不透明的写进 overlay，失去自遮挡）。
-- **要求**（R4）：`draw.params.x` 仍是唯一逐 drawable 幅度；材质不复制它。
+- **要求**（R4）：`vn_draw.params.x` 仍是唯一逐 drawable 幅度；材质不复制它。
 - **验收**（T4）：Mask 叶子在 cutoff 两侧正确 discard；Blend 叶子按 opacity × material alpha 混合。
 - **注意**（N4）：deferred 的 G-buffer 不写 Blend 内容；它只能出现在 forward overlay。
 
@@ -171,8 +171,8 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 - **行为**：`ProgramVariant` 增加 `textured`（任一槽存在）；`diffuse_map` 位被 `textured` 取代。
   实例的复合 revision 让 arena 重写；诊断走 `DiagnosticsRoute` 的 episode 规则。
-- **约束**（C6）：`vine_shader_check.sh` 的组合数 = 现有位 × 1，不随槽数增长；
-  `ProgramAbi` 扫描到的五个采样器声明随 `VINE_TEXTURED` 出现。
+- **约束**（C6）：`vn_shader_check.sh` 的组合数 = 现有位 × 1，不随槽数增长；
+  `ProgramAbi` 扫描到的五个采样器声明随 `VN_TEXTURED` 出现。
 - **验收**（T6）：`EmbeddedShadersTest` 的变体矩阵与 `ProgramAbiTest` 的绑定计数同步更新。
 
 ## 4. 公开接口
@@ -193,9 +193,9 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 | 接口 | 契约 |
 |---|---|
 | `VineMaterialBlock`（64 B） | 见 F4 的偏移表；`operator==` 保持默认 |
-| `vine_material.glsl` | `VineSurface vineSampleMaterial(n, position, coord)`：五槽 → 表面；缺槽按 flags 短路 |
-| `vine_brdf.glsl` | `vineEvaluateBRDF(base, metallic, roughness, N, V, L)`：不含 radiance 与余弦（调用方乘） |
-| `vine_gbuffer.glsl` | `vineOctahedralEncode` / `Decode` 与四张附件的打包注释；`VINE_TEXTURED` 声明五槽采样器 |
+| `vine_material.glsl` | `VineSurface vnSampleMaterial(vn_n, vn_position, vn_uv)`：五槽 → 表面；缺槽按 flags 短路 |
+| `vine_brdf.glsl` | `vnEvaluateBRDF(vn_base_color, vn_metallic, vn_roughness, vn_n, vn_v, vn_l)`：不含 radiance 与余弦（调用方乘） |
+| `vine_gbuffer.glsl` | `vnOctahedralEncode` / `vnOctahedralDecode` 与四张附件的打包注释；`VN_TEXTURED` 声明五槽采样器 |
 
 ## 5. 约束、要求与不变量
 
@@ -217,7 +217,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 | R1 | 实例解析缓存以（父 revision，自身 revision）为键，父改动自动失效。 |
 | R2 | 采样器按 `Sampler` 值缓存；同状态共享一个 sampler 对象。 |
 | R3 | forward 与 deferred 共用一份 BRDF 与一份灯求值。 |
-| R4 | 逐 drawable 的透明度幅度只有 `draw.params.x` 一个来源；排序与混合开关读**同一个**分类结果。 |
+| R4 | 逐 drawable 的透明度幅度只有 `vn_draw.params.x` 一个来源；排序与混合开关读**同一个**分类结果。 |
 
 ### 5.3 不变量（N#）
 
@@ -267,7 +267,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
 
 **M1–M4 已全部落地**（2026-10-24，M4 = 实例 + alpha 模式），只剩 F11 的逐材质诊断：`Material` /`MaterialInstance`
 共享 `MaterialBase` 与 `MaterialParameters`，持有处一律 `MaterialBasePtr`；块与内容集绑定自 M1–M3 未变（material 0 /
-槽 1–5 / lights 6 / shadow 7–8，`VINE_TEXTURED` 一个位），着色是 GGX / Smith / Schlick（`vine_brdf.glsl`），
+槽 1–5 / lights 6 / shadow 7–8，`VN_TEXTURED` 一个位），着色是 GGX / Smith / Schlick（`vine_brdf.glsl`），
 forward 与 deferred 从各自的输入还原同一组表面再调用同一函数。alpha 三支已进着色：Opaque 忽略材质 alpha、Mask 按
 `opacity × 材质 α × 贴图 α` 裁剪后视作不透明、Blend 用该乘积作输出 alpha，排序与混合开关读同一个分类结果。
 

@@ -21,9 +21,9 @@
 #   scripts/asan_check.sh [BUILD_DIR]     BUILD_DIR defaults to <root>/build-asan
 #
 # Wider runs:
-#   VINE_ASAN_FILTER='*' scripts/asan_check.sh              # whole test_gui suite
-#   VINE_ASAN_TARGET=test_core VINE_ASAN_FILTER='*' scripts/asan_check.sh
-#   VINE_ASAN_LEAKS=1 scripts/asan_check.sh                 # + LeakSanitizer
+#   VN_ASAN_FILTER='*' scripts/asan_check.sh              # whole test_gui suite
+#   VN_ASAN_TARGET=test_core VN_ASAN_FILTER='*' scripts/asan_check.sh
+#   VN_ASAN_LEAKS=1 scripts/asan_check.sh                 # + LeakSanitizer
 #
 # The vsg BACKEND, under STRICT leak judging. What a report may still contain,
 # and why, is part of the judge (measured 2026-09-25, design §11.16df):
@@ -36,10 +36,10 @@
 #     ~6 KB in ~106 chunks beyond the loader's 808 B, every entry indirect, the
 #     allocation frames inside glslang's SPIR-V builder whenever the symbolizer
 #     resolves the plugin (see the spv::Builder entry in asan_leaks.supp).
-#     NOT a claimed-clean configuration: test_gui with VINE_ASAN_FILTER='*'
-#     VINE_ASAN_LEAKS=1 still reports that suite's own direct leaks (13 roots in
+#     NOT a claimed-clean configuration: test_gui with VN_ASAN_FILTER='*'
+#     VN_ASAN_LEAKS=1 still reports that suite's own direct leaks (13 roots in
 #     GuiTest::SetUp / buildDock, 2026-09-26) - its leak story is its own item.
-#   VINE_ASAN_TARGET=test_vsg VINE_ASAN_FILTER='*' VINE_ASAN_LEAKS=1 scripts/asan_check.sh
+#   VN_ASAN_TARGET=test_vsg VN_ASAN_FILTER='*' VN_ASAN_LEAKS=1 scripts/asan_check.sh
 #       (the device cases connect to X and close it again themselves - see
 #        TestXConnection in tests/test_vsg/TestHostWindow.hpp - and SKIP without
 #        DISPLAY. CoreAllocationGateTest's mallinfo2-teeth case skips under ASan:
@@ -47,7 +47,7 @@
 #   vsg_backend_selftest no longer exists: it drove the retired renderer and went
 #   with it (see src/plugins/gfx_backend_vsg/CMakeLists.txt). The app gate in
 #   scripts/vsg_rewrite_gate.sh is the end-to-end evidence now.
-# VINE_ASAN_LEAK_SCOPE remains the FALLBACK for a run whose leaks are not excused
+# VN_ASAN_LEAK_SCOPE remains the FALLBACK for a run whose leaks are not excused
 # yet: it reports leaks outside the pattern without failing the run. Prefer
 # excusing them properly (a justified entry) over scoping them away, because a
 # scope also hides the next leak in the same run.
@@ -62,7 +62,7 @@
 # runtime, and the run dies before any test executes with "Your application is
 # linked against incompatible ASan runtimes" (measured 2026-09-25 on a tree that
 # predated the CC derivation below; test_gui/test_vsg never noticed, because
-# they link no C-built library). VINE_ASAN_RECONFIG=1 does NOT switch an
+# they link no C-built library). VN_ASAN_RECONFIG=1 does NOT switch an
 # existing cache's compiler - remove the build dir and let the script configure
 # a consistent one.
 #
@@ -73,16 +73,16 @@
 # nobody owns - a test-fixture/DockPanel-ownership item, not an EventBus one.
 #
 # Env overrides:
-#   VINE_ASAN_FILTER   gtest filter        (default 'EventBusTest.*')
-#   VINE_ASAN_TARGET   cmake target        (default test_gui)
-#   VINE_ASAN_LEAKS    1 to enable leak detection (default 0: the framework
+#   VN_ASAN_FILTER   gtest filter        (default 'EventBusTest.*')
+#   VN_ASAN_TARGET   cmake target        (default test_gui)
+#   VN_ASAN_LEAKS    1 to enable leak detection (default 0: the framework
 #                      deliberately leaks QApplication/QCoreApplication, so leak
 #                      reports are noise until that is fixed - see
 #                      .ai/design/appfw-eventbus.md)
-#   VINE_ASAN_JOBS     build parallelism   (default: nproc)
-#   VINE_ASAN_RECONFIG 1 to force a re-configure of BUILD_DIR
-#   VINE_ASAN_LOG      path of the run log (default: BUILD/asan_<target>.log)
-#   VINE_ASAN_QPA_PLATFORM  Qt platform plugin for the run (default: offscreen).
+#   VN_ASAN_JOBS     build parallelism   (default: nproc)
+#   VN_ASAN_RECONFIG 1 to force a re-configure of BUILD_DIR
+#   VN_ASAN_LOG      path of the run log (default: BUILD/asan_<target>.log)
+#   VN_ASAN_QPA_PLATFORM  Qt platform plugin for the run (default: offscreen).
 #                      The gate must NOT inherit the desktop's plugin: under ASan
 #                      the xcb plugin loads libxkbcommon-x11, which reports a read
 #                      past the end of the XKB keymap in strndup and aborts the
@@ -98,16 +98,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD="${1:-$ROOT/build-asan}"
 
-TARGET="${VINE_ASAN_TARGET:-test_gui}"
-FILTER="${VINE_ASAN_FILTER:-EventBusTest.*}"
-LEAKS="${VINE_ASAN_LEAKS:-0}"
+TARGET="${VN_ASAN_TARGET:-test_gui}"
+FILTER="${VN_ASAN_FILTER:-EventBusTest.*}"
+LEAKS="${VN_ASAN_LEAKS:-0}"
 # When set (a grep -E pattern, e.g. 'vn::vsg'), a LeakSanitizer report that mentions NO frame matching it
 # is reported but does not fail the run: the run judges the pattern's own allocations. Unset = every leak
 # fails, which is what the appfw gate wants. Use it only while a report is not excused yet (see the recipes
 # in this file's header): a justified entry in asan_leaks.supp is the stronger answer.
-LEAK_SCOPE="${VINE_ASAN_LEAK_SCOPE:-}"
-JOBS="${VINE_ASAN_JOBS:-$(nproc 2>/dev/null || echo 8)}"
-RECONFIG="${VINE_ASAN_RECONFIG:-0}"
+LEAK_SCOPE="${VN_ASAN_LEAK_SCOPE:-}"
+JOBS="${VN_ASAN_JOBS:-$(nproc 2>/dev/null || echo 8)}"
+RECONFIG="${VN_ASAN_RECONFIG:-0}"
 
 CXX_BIN="${CXX:-}"
 CC_BIN="${CC:-}"
@@ -222,7 +222,7 @@ fi
 echo "[info] $BIN is ASan-instrumented"
 
 # ---- Run --------------------------------------------------------------------
-export QT_QPA_PLATFORM="${VINE_ASAN_QPA_PLATFORM:-offscreen}"
+export QT_QPA_PLATFORM="${VN_ASAN_QPA_PLATFORM:-offscreen}"
 export ASAN_OPTIONS="detect_leaks=${LEAKS}:halt_on_error=1:detect_stack_use_after_return=1:strict_string_checks=1:allocator_may_return_null=0"
 export LSAN_OPTIONS="report_objects=1"
 SUPP="$SCRIPT_DIR/asan_leaks.supp"
@@ -233,7 +233,7 @@ if [ -f "$SUPP" ]; then
     export LSAN_OPTIONS
 fi
 
-LOG="${VINE_ASAN_LOG:-$BUILD/asan_${TARGET}.log}"
+LOG="${VN_ASAN_LOG:-$BUILD/asan_${TARGET}.log}"
 echo "[info] $TARGET --gtest_filter='$FILTER'  (QT_QPA_PLATFORM=$QT_QPA_PLATFORM)"
 echo "[info] log: $LOG"
 "$BIN" --gtest_filter="$FILTER" >"$LOG" 2>&1

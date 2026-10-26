@@ -49,7 +49,7 @@
 
 ### 2.1 一份声明，一处
 
-- **GLSL**：五个块的声明在 `shaders/vine_params.glsl`；shader 用 `#define VINE_PARAM_<块>` 声明自己要哪些，
+- **GLSL**：五个块的声明在 `shaders/vine_params.glsl`；shader 用 `#define VN_PARAM_<块>` 声明自己要哪些，
   再 `#include "vine_params.glsl"`，构建期把片段 inline 进嵌入字符串。影子块是唯一例外：它的 set/binding
   属于声明它的 program，唯一声明在 `BuiltinShaders::shadowBindings()`。
 - **C++**：四个 L1 块在 `ShaderAbi.hpp` 一处；`VineLightsBlock` 与打包同住后端 `LightBlock.hpp`（上移见 §3.3）。
@@ -119,13 +119,13 @@ include 解析，也不需要编译器扩展；用户 shader 想用同一套块�
 它（variant 的）descriptor 接口——后端按声明服务绑定，一个没人读的块仍然是一个有人要填的 binding：
 
 ```glsl
-#define VINE_PARAM_MATERIAL
-#define VINE_PARAM_DRAW
-#define VINE_PARAM_LIGHTS
+#define VN_PARAM_MATERIAL
+#define VN_PARAM_DRAW
+#define VN_PARAM_LIGHTS
 #include "vine_params.glsl"
 ```
 
-守卫是 `VINE_PARAM_MATERIAL` / `VINE_PARAM_DRAW` / `VINE_PARAM_LIGHTS`；`#include` 必须独占一行行首（P5）。
+守卫是 `VN_PARAM_MATERIAL` / `VN_PARAM_DRAW` / `VN_PARAM_LIGHTS`；`#include` 必须独占一行行首（P5）。
 影子块（§1.1）与 view 块不在片段里：view 块没有内置 shader 声明它——content 路径把视图实现成 128 B push
 range（见 `ContentPush.hpp`），想要这个块的 program 按自己的布局声明它。
 
@@ -141,7 +141,7 @@ C++ 侧保持手写与 `static_assert`：四个 L1 块在 `ShaderAbi.hpp` 一处
 
 嵌入前由 `cmake/VineEmbedShaders.cmake` 把片段展开进每个 shader 的字符串：运行时不解析 include、不落盘，
 打包形态不变。片段文件在 `cmake/VineShaders.cmake` 的 `INCLUDES` 里声明，否则改片段不会重跑生成（P7）。
-离线门禁 `vine_shader_check.sh` 用同一个展开脚本编译并校验每个变体，所以“门禁过” = “嵌入的就是编译的”。
+离线门禁 `vn_shader_check.sh` 用同一个展开脚本编译并校验每个变体，所以“门禁过” = “嵌入的就是编译的”。
 
 ### 3.4 F4 名字解析（P1）
 
@@ -176,7 +176,7 @@ Vulkan 后端实现为映射 ring + dynamic offset；别的后端实现成 cbuff
 
 ### 3.7 F8–F9 门禁与等价性
 
-- 嵌入副本与源文件一致：`vine_shader_check.sh` 的 SHA 校验已覆盖；
+- 嵌入副本与源文件一致：`vn_shader_check.sh` 的 SHA 校验已覆盖；
 - 未知 `vn_` 名字：按需加（可选，不是 P0 的前置）；
 - 等价性：P0 不改任何字节与接口，`BlockStorageTest` / `StateNodeTest` 不改。
 
@@ -184,7 +184,7 @@ Vulkan 后端实现为映射 ring + dynamic offset；别的后端实现成 cbuff
 
 ### 4.1 共享片段的契约
 
-片段决定：块名、set/binding、成员名、类型与顺序；`#ifdef VINE_PARAM_<块>` 决定一个 shader 声明哪些块。它是
+片段决定：块名、set/binding、成员名、类型与顺序；`#ifdef VN_PARAM_<块>` 决定一个 shader 声明哪些块。它是
 C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份就是新的 owner。唯一的例外是影子块：它声明在
 `BuiltinShaders::shadowBindings()`，因为它的 set/binding 由声明它的 program 决定（§1.1）。
 
@@ -224,7 +224,7 @@ C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份�
 | # | 要求 |
 |---|---|
 | R1 | P0 不改字节、不改接口、不改测试。 |
-| R2 | 嵌入副本与展开后的源一致由 `vine_shader_check.sh` 保证。 |
+| R2 | 嵌入副本与展开后的源一致由 `vn_shader_check.sh` 保证。 |
 | R3 | 后端只写字节，不解释值、不解析名字。 |
 
 ### 5.3 不变量（N#）
@@ -265,7 +265,7 @@ C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份�
 |---|---|---|
 | T1 | 字节与接口不变 | `test_graphics` / `test_vsg` 全绿，`vsg_rewrite_gate.sh` 0 VUID |
 | T2 | 每个块只有一处声明 | `grep -rn 'uniform Vine\w*Block' src/`：只命中 `shaders/vine_params.glsl` 与 `BuiltinShaders.cpp` 的 `shadowBindings()` |
-| T3 | 嵌入副本与展开后的源一致 | `scripts/vine_shader_check.sh`（展开后的哈希与字节数） |
+| T3 | 嵌入副本与展开后的源一致 | `scripts/vn_shader_check.sh`（展开后的哈希与字节数） |
 | T4 | 未知名字被拒（P1） | `Material::set("Nope", 1.0F)` 返回错误 |
 | T5 | 片段真的进了程序文本 | 删掉声明 → 未声明标识符，构建期门禁失败（与 T3 同一条命令） |
 | T6 | 每个 program 只声明自己的块 | `ProgramAbiTest`：forward 5 个绑定、gbuffer 1 个 |

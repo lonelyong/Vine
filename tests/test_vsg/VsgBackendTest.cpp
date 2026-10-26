@@ -2087,7 +2087,7 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
             "#version 450\n"
-            "layout(location = 0) in vec2 vine_uv;\n"
+            "layout(location = 0) in vec2 vn_uv;\n"
             "layout(location = 0) out vec4 out_color;\n"
             "layout(binding = 1) uniform sampler2D imported_tex;\n"
             "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));

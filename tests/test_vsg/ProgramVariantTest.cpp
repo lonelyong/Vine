@@ -76,7 +76,7 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
     EXPECT_FALSE(flat.cube_texcoord);
     const std::vector<std::string> flat_names = flat.defines();
     ASSERT_EQ(flat_names.size(), 1U);
-    EXPECT_EQ(flat_names[0], "VINE_TEXCOORD_UV");
+    EXPECT_EQ(flat_names[0], "VN_TEXCOORD_UV");
 
     ProgramVariant cube;
     cube.cube_texcoord = true;
@@ -84,9 +84,9 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
     cube.vertex_color  = true;
     const std::vector<std::string> cube_names = cube.defines();
     ASSERT_EQ(cube_names.size(), 3U);
-    EXPECT_EQ(cube_names[0], "VINE_TEXCOORD_CUBE");
-    EXPECT_EQ(cube_names[1], "VINE_TEXTURED");
-    EXPECT_EQ(cube_names[2], "VINE_VERTEX_COLOR");
+    EXPECT_EQ(cube_names[0], "VN_TEXCOORD_CUBE");
+    EXPECT_EQ(cube_names[1], "VN_TEXTURED");
+    EXPECT_EQ(cube_names[2], "VN_VERTEX_COLOR");
 
     // The instance stream is a switch too: it changes the vertex input the layer declares, so it must
     // change the identity the pool and the half are filed under.
@@ -94,8 +94,8 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
     instanced.instanced = true;
     const std::vector<std::string> instanced_names = instanced.defines();
     ASSERT_EQ(instanced_names.size(), 2U);
-    EXPECT_EQ(instanced_names[0], "VINE_TEXCOORD_UV");
-    EXPECT_EQ(instanced_names[1], "VINE_INSTANCED");
+    EXPECT_EQ(instanced_names[0], "VN_TEXCOORD_UV");
+    EXPECT_EQ(instanced_names[1], "VN_INSTANCED");
 
     // The number the pipeline key carries must tell the variants apart - all of them.
     std::vector<std::uint32_t> seen;
@@ -180,14 +180,14 @@ TEST(ProgramVariantTest, TheEnginesOwnForwardProgramDescribesItselfPerVariant)
     };
 
     // WITHOUT the set's define the engine's forward stage declares no sampler at all - the five
-    // declarations sit behind `#ifdef VINE_TEXTURED` - and its ABI is the material block, the lights
+    // declarations sit behind `#ifdef VN_TEXTURED` - and its ABI is the material block, the lights
     // and the rest.
     ProgramFacts without;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, without), FactMiss::None);
     EXPECT_EQ(samplerAt(without, 0U, 1U), AbiDescriptorKind::UniformBlock)
         << "an untextured variant declares no sampler at the map's binding";
     ASSERT_EQ(without.shaders.defines.size(), 1U);
-    EXPECT_EQ(without.shaders.defines[0], "VINE_TEXCOORD_UV");
+    EXPECT_EQ(without.shaders.defines[0], "VN_TEXCOORD_UV");
 
     // WITH it, the same text describes a sampler at (0,1) - and its KIND follows the variant: a UV pair
     // asks for `sampler2D`, a three-scalar slot for `samplerCube`. A layout scanned for the wrong one is

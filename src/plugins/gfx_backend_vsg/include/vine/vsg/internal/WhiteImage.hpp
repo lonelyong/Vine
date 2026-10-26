@@ -13,7 +13,7 @@
  * fallback every program that samples a material's texture slot needs).
  *
  * WHY A FALLBACK AT ALL. The engine's shaders sample the material's map unconditionally
- * (`texture(diffuseMap, uv)`), and its ABI says what "the material has no texture" means: the sample is
+ * (`texture(vn_diffuseMap, uv)`), and its ABI says what "the material has no texture" means: the sample is
  * WHITE, so the shading is the material's own colour. A backend therefore cannot leave that binding empty -
  * a descriptor that was never written is not "no map", it is undefined data (and with validation on, a
  * validation error). The honest spelling is the one the engine documents: bind an image, and that image is

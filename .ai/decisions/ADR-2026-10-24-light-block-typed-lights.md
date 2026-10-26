@@ -39,7 +39,7 @@
    push range，`ScreenDraw::push` 留给宿主程序。
 6. **选灯仍是「按声明顺序」**，掉落的灯在两条路径都按 episode 报（全屏路径此前静默）。
 7. **shading 落地**：点光/聚光的求值（方向、距离衰减、锥体）在 `vine_params.glsl` 的
-   `vineEvaluateLight` 一处，forward 与 deferred 各自只保留自己的材质路径。
+   `vnEvaluateLight` 一处，forward 与 deferred 各自只保留自己的材质路径。
 8. **逐灯阴影不做**：点光/聚光即使请求 `setCastShadow` 也不会有 caster（阴影仍是方向光的正交相机），
    该请求被报出来，不静默。
 

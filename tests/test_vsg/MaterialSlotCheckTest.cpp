@@ -127,11 +127,11 @@ TEST(MaterialSlotCheckTest, TheSentenceNamesTheBindingTheShaderUses)
 {
     // The message names the slot by the name its BINDING is resolved by (api/ContentImages::materialSlotOf), so a
     // host can connect the sentence to its shader's declaration without a second table.
-    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::BaseColor)), "baseColorMap");
-    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::MetallicRoughness)), "metallicRoughnessMap");
-    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::Normal)), "normalMap");
-    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::Occlusion)), "occlusionMap");
-    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::Emissive)), "emissiveMap");
+    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::BaseColor)), "vn_baseColorMap");
+    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::MetallicRoughness)), "vn_metallicRoughnessMap");
+    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::Normal)), "vn_normalMap");
+    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::Occlusion)), "vn_occlusionMap");
+    EXPECT_STREQ(materialSlotName(indexOf(vn::graphics::TextureSlot::Emissive)), "vn_emissiveMap");
 
     EXPECT_STREQ(slotViolationText(SlotViolation::None), "");
     EXPECT_STRNE(slotViolationText(SlotViolation::CubeInDataSlot), "");

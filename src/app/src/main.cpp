@@ -33,7 +33,7 @@ namespace
 /**
  * @brief Dumps a symbolised stack of the crashing thread next to the exe.
  *
- * Dev aid: on an unhandled exception writes "vine_crash.log" in the executable
+ * Dev aid: on an unhandled exception writes "vn_crash.log" in the executable
  * directory (function names + source lines from the Debug PDBs) so crashes in
  * third-party code can be diagnosed without a debugger attached.
  *
@@ -53,7 +53,7 @@ LONG WINAPI vineCrashFilter(EXCEPTION_POINTERS* ep)
 
     char path[MAX_PATH];
     strcpy_s(path, exe_path);
-    strcat_s(path, "\\vine_crash.log");
+    strcat_s(path, "\\vn_crash.log");
 
     HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -209,15 +209,15 @@ int main(int argc, char** argv)
         },
     });
 
-    // 启动期应用线程最长连续占用（`VINE_BOOT_TIMING=1`；门禁读这一行）。这是"启动不会把界面卡住"的实测依据：
+    // 启动期应用线程最长连续占用（`VN_BOOT_TIMING=1`；门禁读这一行）。这是"启动不会把界面卡住"的实测依据：
     // 现在的形状里，会话 attach（设备/管线）与 warm-up 那一帧都在池上跑，剩下的账是 功能栏+面板 / 取句柄+尺寸 /
     // 收尾 三段（2026-09-26 实测 74 ms；改成同步形状时它是 414 ms 一整段）。守着它的地方：
-    // scripts/vsg_rewrite_gate.sh 的应用阶段（阈值 VINE_GATE_BOOT_OCCUPANCY_MS）。
+    // scripts/vsg_rewrite_gate.sh 的应用阶段（阈值 VN_GATE_BOOT_OCCUPANCY_MS）。
     //
     // 这一行同时报告那一段"什么时候"发生（`ending ... ms after start`）：门禁变红时，光看一个数分不清是"该上池的
     // 活干在了线程上"还是"这台机器/这个驱动整体慢"；日志时间戳对上扬弃点就知道它落在启动的哪一段（会话 attach /
     // 首次 present / 插件加载），诊断不用再重建。附带的偏差：10 ms 定时器本身会把 0–10 ms 算进空转。
-    if (qEnvironmentVariableIsSet("VINE_BOOT_TIMING")) {
+    if (qEnvironmentVariableIsSet("VN_BOOT_TIMING")) {
         static QElapsedTimer since_start;
         static qint64        last_tick = 0;
         static qint64        worst_gap     = 0;

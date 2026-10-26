@@ -42,50 +42,55 @@ struct VineSurface
     float alpha;        ///< The material's own alpha: the base factor's a x its slot's a.
 };
 
-#ifdef VINE_TEXTURED
+#ifdef VN_TEXTURED
 // The five slots at the content set's fixed bindings (graphics-material.md 3.3): the base colour may be a cube
 // map, whose kind follows the vertex stage's texcoord width; the other four are 2-D data maps. The variant is
-// BINARY (one VINE_TEXTURED bit for the whole set, see 2.5), so all five are declared together even though a
+// BINARY (one VN_TEXTURED bit for the whole set, see 2.5), so all five are declared together even though a
 // material rarely has more than two.
-#if defined(VINE_TEXCOORD_CUBE)
-layout(set = 0, binding = 1) uniform samplerCube baseColorMap;
-#elif defined(VINE_TEXCOORD_UV)
-layout(set = 0, binding = 1) uniform sampler2D baseColorMap;
+//
+// THE FIVE NAMES ARE ABI KEYS, not this file's locals: the backend decides what a declared sampler receives BY
+// NAME (ContentImages::imageOriginOf keys on these exact spellings), so the prefix is not decoration - it marks
+// the drawable's own maps as the engine's vocabulary, and renaming one side alone silently rebinds them to the
+// pass' inputs.
+#if defined(VN_TEXCOORD_CUBE)
+layout(set = 0, binding = 1) uniform samplerCube vn_baseColorMap;
+#elif defined(VN_TEXCOORD_UV)
+layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;
 #else
-#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE
+#error a sampled texcoord slot needs one kind: define VN_TEXCOORD_UV or VN_TEXCOORD_CUBE
 #endif
-layout(set = 0, binding = 2) uniform sampler2D metallicRoughnessMap;
-layout(set = 0, binding = 3) uniform sampler2D normalMap;
-layout(set = 0, binding = 4) uniform sampler2D occlusionMap;
-layout(set = 0, binding = 5) uniform sampler2D emissiveMap;
+layout(set = 0, binding = 2) uniform sampler2D vn_metallicRoughnessMap;
+layout(set = 0, binding = 3) uniform sampler2D vn_normalMap;
+layout(set = 0, binding = 4) uniform sampler2D vn_occlusionMap;
+layout(set = 0, binding = 5) uniform sampler2D vn_emissiveMap;
 #endif
 
 /**
  * @brief Builds the surface a material WITHOUT any texture slot describes: its factors alone.
  *
- * @param n View-space geometric normal (the normal slot cannot perturb it - there is no slot).
+ * @param vn_n View-space geometric normal (the normal slot cannot perturb it - there is no slot).
  * @return The surface the factors describe.
  */
-VineSurface vineSurfaceFromFactors(vec3 n)
+VineSurface vnSurfaceFromFactors(vec3 vn_n)
 {
-    VineSurface surface;
-    surface.base_color = material.base_color.rgb;
+    VineSurface vn_surface;
+    vn_surface.base_color = vn_material.base_color.rgb;
     // The emissive factor is rgb and its STRENGTH is alpha: a material can emit without carrying a map, which
     // is why the factor is applied here and the slot multiplies on top of it (glTF's emissiveFactor rule).
-    surface.emissive   = material.emissive.rgb * material.emissive.a;
-    surface.normal     = n;
-    surface.metallic   = clamp(material.params.x, 0.0, 1.0);
-    surface.roughness  = clamp(material.params.y, 0.0, 1.0);
-    surface.occlusion  = clamp(material.params.z, 0.0, 1.0);
+    vn_surface.emissive   = vn_material.emissive.rgb * vn_material.emissive.a;
+    vn_surface.normal     = vn_n;
+    vn_surface.metallic   = clamp(vn_material.params.x, 0.0, 1.0);
+    vn_surface.roughness  = clamp(vn_material.params.y, 0.0, 1.0);
+    vn_surface.occlusion  = clamp(vn_material.params.z, 0.0, 1.0);
     // The material's own alpha: the MODE decides what it does (a threshold for Mask, the blend factor for Blend,
     // nothing at all for Opaque - see the stages), and its second input is the drawable's opacity, which arrives
     // per drawable and is not a material fact (graphics-material.md 2.7).
-    surface.alpha      = clamp(material.base_color.a, 0.0, 1.0);
-    return surface;
+    vn_surface.alpha      = clamp(vn_material.base_color.a, 0.0, 1.0);
+    return vn_surface;
 }
 
-#ifdef VINE_TEXTURED
-#ifdef VINE_TEXCOORD_UV
+#ifdef VN_TEXTURED
+#ifdef VN_TEXCOORD_UV
 /**
  * @brief The tangent basis a tangent-space normal map is expressed in, from screen-space derivatives.
  *
@@ -94,106 +99,106 @@ VineSurface vineSurfaceFromFactors(vec3 n)
  * approximation exactly where the UV mapping is degenerate (a mirrored island flips the bitangent's sign, which
  * cannot be recovered from derivatives alone) - stated as a known limit, not a bug (9.2).
  *
- * @param n        View-space geometric normal the frame is orthogonalized against.
- * @param position View-space fragment position (the very value the deferred path stores).
- * @param uv       The UV pair the normal map is sampled with.
+ * @param vn_n        View-space geometric normal the frame is orthogonalized against.
+ * @param vn_position View-space fragment position (the very value the deferred path stores).
+ * @param vn_uv       The UV pair the normal map is sampled with.
  * @return A matrix whose columns are the tangents along +u, along +v and the normal.
  */
-mat3 vineCotangentFrame(vec3 n, vec3 position, vec2 uv)
+mat3 vnCotangentFrame(vec3 vn_n, vec3 vn_position, vec2 vn_uv)
 {
-    vec3 dp1 = dFdx(position);
-    vec3 dp2 = dFdy(position);
-    vec2 duv1 = dFdx(uv);
-    vec2 duv2 = dFdy(uv);
+    vec3 vn_dp1 = dFdx(vn_position);
+    vec3 vn_dp2 = dFdy(vn_position);
+    vec2 vn_duv1 = dFdx(vn_uv);
+    vec2 vn_duv2 = dFdy(vn_uv);
     // The two tangents are (dP/du) and (dP/dv) recovered from the screen-space derivatives by the same
     // Gram-Schmidt step that makes them orthogonal to n - solving the 2x2 system the derivatives state.
-    vec3 dp2perp = cross(dp2, n);
-    vec3 dp1perp = cross(n, dp1);
-    vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
-    vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+    vec3 vn_dp2perp = cross(vn_dp2, vn_n);
+    vec3 vn_dp1perp = cross(vn_n, vn_dp1);
+    vec3 vn_t = vn_dp2perp * vn_duv1.x + vn_dp1perp * vn_duv2.x;
+    vec3 vn_b = vn_dp2perp * vn_duv1.y + vn_dp1perp * vn_duv2.y;
     // A degenerate mapping (all vertices sharing one UV) leaves both tangents at zero; scaling by 0 gives a
     // basis that drops the perturbation instead of a NaN that poisons the whole picture.
-    float scale = inversesqrt(max(dot(t, t), dot(b, b)) + 1e-12);
-    return mat3(t * scale, b * scale, n);
+    float vn_scale = inversesqrt(max(dot(vn_t, vn_t), dot(vn_b, vn_b)) + 1e-12);
+    return mat3(vn_t * vn_scale, vn_b * vn_scale, vn_n);
 }
 #endif
 
-#if defined(VINE_TEXCOORD_CUBE)
+#if defined(VN_TEXCOORD_CUBE)
 /**
  * @brief Builds the surface of a CUBE-mapped material: the base slot sampled by direction, factors for the rest.
  *
- * @param n         View-space geometric normal.
- * @param position  View-space fragment position (unused; the parameter keeps the two overloads' shapes equal).
- * @param direction Unit direction the base slot is sampled along (the geometry's three-scalar texcoord).
+ * @param vn_n         View-space geometric normal.
+ * @param vn_position  View-space fragment position (unused; the parameter keeps the two overloads' shapes equal).
+ * @param vn_direction Unit direction the base slot is sampled along (the geometry's three-scalar texcoord).
  * @return The surface.
  */
-VineSurface vineSampleMaterial(vec3 n, vec3 position, vec3 direction)
+VineSurface vnSampleMaterial(vec3 vn_n, vec3 vn_position, vec3 vn_direction)
 {
-    VineSurface surface = vineSurfaceFromFactors(n);
-    if ((material.flags.x & VINE_MATERIAL_FLAG_BASE_COLOR) != 0u)
+    VineSurface vn_surface = vnSurfaceFromFactors(vn_n);
+    if ((vn_material.flags.x & VN_MATERIAL_FLAG_BASE_COLOR) != 0u)
     {
         // rgb is the albedo and a is the slot's own alpha: BOTH travel, because a cut-out leaf's shape is in its
         // map's alpha (a Mask material's whole point) and a blended surface's coverage is too.
-        vec4 texel         = texture(baseColorMap, direction);
-        surface.base_color *= texel.rgb;
-        surface.alpha      *= texel.a;
+        vec4 vn_texel         = texture(vn_baseColorMap, vn_direction);
+        vn_surface.base_color *= vn_texel.rgb;
+        vn_surface.alpha      *= vn_texel.a;
     }
     // The four data slots are not sampled: a direction is not a surface parameterisation (see the file note).
-    return surface;
+    return vn_surface;
 }
 #else
 /**
  * @brief Builds the surface a material's five slots describe.
  *
- * @param n      View-space geometric normal (the frame the normal slot perturbs).
- * @param position View-space fragment position, for the derivative tangent basis.
- * @param uv     The UV pair every slot is sampled with (one UV set, set 0 - graphics-material.md 2.4).
+ * @param vn_n        View-space geometric normal (the frame the normal slot perturbs).
+ * @param vn_position View-space fragment position, for the derivative tangent basis.
+ * @param vn_uv       The UV pair every slot is sampled with (one UV set, set 0 - graphics-material.md 2.4).
  * @return The surface.
  *
- * @warning The fetches sit in branches on `material.flags`, which is a UNIFORM block value: the branches are
+ * @warning The fetches sit in branches on `vn_material.flags`, which is a UNIFORM block value: the branches are
  *          dynamically uniform per drawable, which is what makes implicit-LOD sampling in them well defined. A
  *          per-fragment flag would need explicit LODs here.
  * @note The parameters are unused when the material has no slot, and the branches are the reason the fetches
  *       are not unconditional: a slotless material in the textured variant must not pay four texture reads.
  */
-VineSurface vineSampleMaterial(vec3 n, vec3 position, vec2 uv)
+VineSurface vnSampleMaterial(vec3 vn_n, vec3 vn_position, vec2 vn_uv)
 {
-    VineSurface surface = vineSurfaceFromFactors(n);
-    if ((material.flags.x & VINE_MATERIAL_FLAG_BASE_COLOR) != 0u)
+    VineSurface vn_surface = vnSurfaceFromFactors(vn_n);
+    if ((vn_material.flags.x & VN_MATERIAL_FLAG_BASE_COLOR) != 0u)
     {
-        vec4 texel          = texture(baseColorMap, uv);
-        surface.base_color *= texel.rgb;
+        vec4 vn_texel          = texture(vn_baseColorMap, vn_uv);
+        vn_surface.base_color *= vn_texel.rgb;
         // The slot's own alpha multiplies the material's: a cut-out leaf's shape lives in the map, and a blended
         // surface's coverage does too.
-        surface.alpha      *= texel.a;
+        vn_surface.alpha      *= vn_texel.a;
     }
-    if ((material.flags.x & VINE_MATERIAL_FLAG_METALLIC_ROUGHNESS) != 0u)
+    if ((vn_material.flags.x & VN_MATERIAL_FLAG_METALLIC_ROUGHNESS) != 0u)
     {
         // One map, two factors: G is roughness and B is metallic, multiplied by the material's own factors -
         // which is what makes an absent map's white stand-in the multiplicative identity (see the file note).
-        vec4 texel            = texture(metallicRoughnessMap, uv);
-        surface.roughness    *= texel.g;
-        surface.metallic     *= texel.b;
+        vec4 vn_texel            = texture(vn_metallicRoughnessMap, vn_uv);
+        vn_surface.roughness    *= vn_texel.g;
+        vn_surface.metallic     *= vn_texel.b;
     }
-    if ((material.flags.x & VINE_MATERIAL_FLAG_OCCLUSION) != 0u)
+    if ((vn_material.flags.x & VN_MATERIAL_FLAG_OCCLUSION) != 0u)
     {
-        surface.occlusion *= texture(occlusionMap, uv).r;
+        vn_surface.occlusion *= texture(vn_occlusionMap, vn_uv).r;
     }
-    if ((material.flags.x & VINE_MATERIAL_FLAG_EMISSIVE) != 0u)
+    if ((vn_material.flags.x & VN_MATERIAL_FLAG_EMISSIVE) != 0u)
     {
-        surface.emissive *= texture(emissiveMap, uv).rgb;
+        vn_surface.emissive *= texture(vn_emissiveMap, vn_uv).rgb;
     }
-    if ((material.flags.x & VINE_MATERIAL_FLAG_NORMAL) != 0u)
+    if ((vn_material.flags.x & VN_MATERIAL_FLAG_NORMAL) != 0u)
     {
-        vec3 tangent_normal = texture(normalMap, uv).xyz * 2.0 - 1.0;
+        vec3 vn_tangent_normal = texture(vn_normalMap, vn_uv).xyz * 2.0 - 1.0;
         // glTF's normal maps are authored for OpenGL, where +Y points UP the image, while this engine's v grows
         // DOWN it (Vulkan's origin is the top row - the same fact that makes the G-buffer upright). The basis
         // is built from the sampler's own coordinate system, so the green channel is flipped here; without it
         // every normal map is lit as if the surface were mirrored about its u axis.
-        tangent_normal.y = -tangent_normal.y;
-        surface.normal   = normalize(vineCotangentFrame(n, position, uv) * tangent_normal);
+        vn_tangent_normal.y = -vn_tangent_normal.y;
+        vn_surface.normal   = normalize(vnCotangentFrame(vn_n, vn_position, vn_uv) * vn_tangent_normal);
     }
-    return surface;
+    return vn_surface;
 }
 #endif
 #endif

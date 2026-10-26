@@ -372,7 +372,7 @@ class VN_VSG_API ContentPass
      * built per call; the engine's passes make one full-screen call each.
      *
      * WHAT IT REFUSES, and each by name: a source that is not one of the pass' declared inputs; a produced input
-     * that is not the source; a text that declares `shadow_map` when the pass resolved no readable map (a text
+     * that is not the source; a text that declares `vn_shadow_map` when the pass resolved no readable map (a text
      * that names the map is a text that shades a shadow - the engine picks its shadowed variant only when a
      * shadow exists); and a mismatch between the pass' imported textures and the sampler bindings its text
      * declares.

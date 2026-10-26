@@ -237,7 +237,7 @@ struct SurfaceWindow::Impl {
     bool has_session = false;
     /// true while the last attach attempt reported success (implies has_session).
     bool backend_live = false;
-    /// Whether the VINE_RECREATE_SURFACE_MS test hatch has been armed.
+    /// Whether the VN_RECREATE_SURFACE_MS test hatch has been armed.
     bool recreate_hatch_armed = false;
     /// Lifecycle, published through state() / on_state_changed.
     State state = State::Pending;
@@ -425,7 +425,7 @@ void SurfaceWindow::armRecreateHatch()
     if (d->recreate_hatch_armed) {
         return;
     }
-    if (const char* recreate_ms = std::getenv("VINE_RECREATE_SURFACE_MS"); recreate_ms != nullptr && *recreate_ms != '\0') {
+    if (const char* recreate_ms = std::getenv("VN_RECREATE_SURFACE_MS"); recreate_ms != nullptr && *recreate_ms != '\0') {
         d->recreate_hatch_armed = true;
         const int delay_ms      = std::atoi(recreate_ms);
         QTimer::singleShot(delay_ms, this, [this] { recreateSurface(); });
@@ -675,7 +675,7 @@ void SurfaceWindow::handleUpdate()
 
     // The resize: swapchain at the final size, view aspect, ONE frame at that size - and no frame before the
     // layout step. A present before it would be the OLD picture stretched to the new aspect (a fullscreen program
-    // samples its source through vine_uv), and the frame that follows snaps it back; that was tried on Windows and
+    // samples its source through vn_uv), and the frame that follows snaps it back; that was tried on Windows and
     // rejected in favour of never showing a distorted picture (the grown part of the client area is simply filled
     // by this frame). See .ai/memory/graphics.md (2026-09-17).
     feedSurfaceSize(w, h);
@@ -714,7 +714,7 @@ bool SurfaceWindow::init()
         return false;
     }
 
-    // Test hatch: force a platform-window recreation after VINE_RECREATE_SURFACE_MS, once per session (following a
+    // Test hatch: force a platform-window recreation after VN_RECREATE_SURFACE_MS, once per session (following a
     // recreated window re-enters here, and re-arming would recreate it forever). See recreateSurface().
     armRecreateHatch();
 

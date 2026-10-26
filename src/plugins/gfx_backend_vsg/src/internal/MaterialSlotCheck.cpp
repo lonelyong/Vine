@@ -82,11 +82,11 @@ const char* materialSlotName(std::size_t slot) noexcept
 {
     switch (slot)
     {
-    case static_cast<std::size_t>(vn::graphics::TextureSlot::BaseColor): return "baseColorMap";
-    case static_cast<std::size_t>(vn::graphics::TextureSlot::MetallicRoughness): return "metallicRoughnessMap";
-    case static_cast<std::size_t>(vn::graphics::TextureSlot::Normal): return "normalMap";
-    case static_cast<std::size_t>(vn::graphics::TextureSlot::Occlusion): return "occlusionMap";
-    case static_cast<std::size_t>(vn::graphics::TextureSlot::Emissive): return "emissiveMap";
+    case static_cast<std::size_t>(vn::graphics::TextureSlot::BaseColor): return "vn_baseColorMap";
+    case static_cast<std::size_t>(vn::graphics::TextureSlot::MetallicRoughness): return "vn_metallicRoughnessMap";
+    case static_cast<std::size_t>(vn::graphics::TextureSlot::Normal): return "vn_normalMap";
+    case static_cast<std::size_t>(vn::graphics::TextureSlot::Occlusion): return "vn_occlusionMap";
+    case static_cast<std::size_t>(vn::graphics::TextureSlot::Emissive): return "vn_emissiveMap";
     default: return nullptr;
     }
 }

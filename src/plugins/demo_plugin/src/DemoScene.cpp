@@ -79,14 +79,14 @@ namespace
  *   <build>/bin/<exe>  + <build>/bin/test_data    -> exeDir / "test_data"
  *   <prefix>/bin/<exe> + <prefix>/test_data       -> exeDir / ".." / "test_data"
  *
- * VINE_TEST_DATA_DIR overrides both, which is how a run points at the source tree (or any other copy)
+ * VN_TEST_DATA_DIR overrides both, which is how a run points at the source tree (or any other copy)
  * without rebuilding. The tests use the same name for the same meaning, so one variable moves both.
  *
  * @return The asset directory, or an empty path when no candidate exists.
  */
 std::filesystem::path demoAssetDirectory()
 {
-    if (const char* override_dir = std::getenv("VINE_TEST_DATA_DIR"); override_dir != nullptr && *override_dir != '\0') {
+    if (const char* override_dir = std::getenv("VN_TEST_DATA_DIR"); override_dir != nullptr && *override_dir != '\0') {
         return std::filesystem::path(override_dir);
     }
     const std::string exe = vn::system::Process::currentExecutablePath().as_std_str();
@@ -574,7 +574,7 @@ vn::intrusive_ptr<vn::graphics::ShaderProgram> makeStarPointProgram()
     vs.type   = ShaderStageType::Vertex;
     vs.source = u8"#version 450\n"
                 u8"layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
-                u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                u8"layout(location = 0) in vec3 vn_Vertex;\n"
                 u8"layout(location = 0) out vec4 vColor;\n"
                 // Small HSV->RGB helper so each point can carry its own
                 // rainbow colour without a colour attribute.
@@ -585,15 +585,15 @@ vn::intrusive_ptr<vn::graphics::ShaderProgram> makeStarPointProgram()
                 u8"}\n"
                 u8"void main()\n"
                 u8"{\n"
-                u8"    gl_Position = pc.projection * pc.modelView * vec4(vine_Vertex, 1.0);\n"
+                u8"    gl_Position = pc.projection * pc.modelView * vec4(vn_Vertex, 1.0);\n"
                 // A POINT_LIST pipeline must write gl_PointSize or it trips
                 // VUID-VkGraphicsPipelineCreateInfo-topology-08773. A large
                 // size leaves room for the procedural star shape in the FS.
                 u8"    gl_PointSize = 40.0;\n"
                 // Per-point colour: hue wraps around the point's angle,
                 // then shifts with height so stacked points differ.
-                u8"    float hue = 0.5 + 0.5 * atan(vine_Vertex.z, vine_Vertex.x) / 3.14159265;\n"
-                u8"    hue = fract(hue + vine_Vertex.y * 0.35);\n"
+                u8"    float hue = 0.5 + 0.5 * atan(vn_Vertex.z, vn_Vertex.x) / 3.14159265;\n"
+                u8"    hue = fract(hue + vn_Vertex.y * 0.35);\n"
                 u8"    vColor = vec4(hsv2rgb(vec3(hue, 0.85, 0.95)), 1.0);\n"
                 u8"}\n";
     program->addStage(vs);
@@ -666,7 +666,7 @@ void addGbufferVariety(vn::graphics::Group* root)
 /**
  * @brief Adds the slices only the FORWARD showcase draws: the content a G-buffer pass cannot draw.
  *
- * Shown under VINE_PIPELINE=forward. Every slice here is one the Deferred G-buffer geometry pass would
+ * Shown under VN_PIPELINE=forward. Every slice here is one the Deferred G-buffer geometry pass would
  * override or mis-light, because that pass replaces each drawable's program with its own geometry stage:
  *  - StateNode{ PolygonMode::Line } box          -> per-subtree polygon state
  *  - StateNode{ CullMode::Back } box             -> per-subtree culling state
@@ -713,8 +713,8 @@ void addForwardShowcase(vn::graphics::Group* root)
         vs.type   = ShaderStageType::Vertex;
         vs.source = u8"#version 450\n"
                     u8"layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
-                    u8"layout(location = 0) in vec3 vine_Vertex;\n"
-                    u8"void main(){ gl_Position = pc.projection * pc.modelView * vec4(vine_Vertex, 1.0); }\n";
+                    u8"layout(location = 0) in vec3 vn_Vertex;\n"
+                    u8"void main(){ gl_Position = pc.projection * pc.modelView * vec4(vn_Vertex, 1.0); }\n";
         program->addStage(vs);
         ShaderStage fs;
         fs.type   = ShaderStageType::Fragment;
@@ -738,10 +738,10 @@ void addForwardShowcase(vn::graphics::Group* root)
         vs.type   = ShaderStageType::Vertex;
         vs.source = u8"#version 450\n"
                     u8"layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
-                    u8"layout(location = 0) in vec3 vine_Vertex;\n"
+                    u8"layout(location = 0) in vec3 vn_Vertex;\n"
                     // A POINT_LIST pipeline must write gl_PointSize or it trips
                     // VUID-VkGraphicsPipelineCreateInfo-topology-08773.
-                    u8"void main(){ gl_Position = pc.projection * pc.modelView * vec4(vine_Vertex, 1.0); gl_PointSize = 3.0; }\n";
+                    u8"void main(){ gl_Position = pc.projection * pc.modelView * vec4(vn_Vertex, 1.0); gl_PointSize = 3.0; }\n";
         program->addStage(vs);
         ShaderStage fs;
         fs.type   = ShaderStageType::Fragment;
@@ -948,9 +948,9 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
     fill->setIntensity(0.5f);
     scene->addLight(fill);
 
-    // Dev switch: VINE_VSG_EXTRA_SUNS adds two more directional lights so the
+    // Dev switch: VN_VSG_EXTRA_SUNS adds two more directional lights so the
     // scene exercises the deferred light pass' full three-light capacity.
-    if (std::getenv("VINE_VSG_EXTRA_SUNS") != nullptr) {
+    if (std::getenv("VN_VSG_EXTRA_SUNS") != nullptr) {
         auto sun2 = vn::graphics::Light::createDirectional(vn::math::Vec3d(-0.9, -0.3, -0.5));
         sun2->setName(u8"scene_sun2");
         sun2->setColor(vn::Colorf(0.6f, 0.8f, 1.0f, 1.0f));
@@ -978,7 +978,7 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
 /**
  * @brief TEMP GPU-validation hook for the v3 render-to-texture chain.
  *
- * When the environment variable VINE_VSG_OFFSCREEN is set, registers:
+ * When the environment variable VN_VSG_OFFSCREEN is set, registers:
  *   1. an order < 0 pass that renders the engine scene into an off-screen
  *      RGBA8 + depth RenderTarget each frame (publishing it as "SceneColor"),
  *      exercising the vsg render-to-texture path, and
@@ -994,7 +994,7 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
  */
 void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
 {
-    const char* enabled = std::getenv("VINE_VSG_OFFSCREEN");
+    const char* enabled = std::getenv("VN_VSG_OFFSCREEN");
     if (enabled == nullptr || enabled[0] == '\0') {
         return;
     }
@@ -1080,7 +1080,7 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
 }
 
 /**
- * @brief Adds a second content slot on the main camera (env VINE_VSG_SLOT_DEMO).
+ * @brief Adds a second content slot on the main camera (env VN_VSG_SLOT_DEMO).
  *
  * Demonstrates same-camera stacking: a pass that shares the MAIN camera but
  * runs at a higher order (20, after the order-0 window pass) draws its own
@@ -1097,7 +1097,7 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
  */
 void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
 {
-    if (std::getenv("VINE_VSG_SLOT_DEMO") == nullptr) {
+    if (std::getenv("VN_VSG_SLOT_DEMO") == nullptr) {
         return;
     }
     auto* engine = render_control->engine();
@@ -1136,7 +1136,7 @@ void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
 
 /**
  * @brief Bakes ONE off-screen target with two content slots (env
- * VINE_VSG_OFFSCREEN_MULTISLOT).
+ * VN_VSG_OFFSCREEN_MULTISLOT).
  *
  * Demonstrates C6.4: the same RenderTarget is rendered by two passes that
  * share the master camera but run at distinct orders (-2 and -1), so each is
@@ -1155,7 +1155,7 @@ void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
  */
 void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
 {
-    if (std::getenv("VINE_VSG_OFFSCREEN_MULTISLOT") == nullptr) {
+    if (std::getenv("VN_VSG_OFFSCREEN_MULTISLOT") == nullptr) {
         return;
     }
     auto* engine = render_control->engine();
@@ -1236,7 +1236,7 @@ vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget();
 
 /**
  * @brief Previews the Deferred G-buffer's colour attachments (env
- * VINE_VSG_GBUFFER).
+ * VN_VSG_GBUFFER).
  *
  * Bakes the engine scene into the canonical G-buffer (ChainPresets'
  * default geometry program + target) and shows each colour attachment as a
@@ -1249,7 +1249,7 @@ vn::intrusive_ptr<vn::graphics::RenderTarget> makeGbufferTarget();
  */
 void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
 {
-    if (std::getenv("VINE_VSG_GBUFFER") == nullptr) {
+    if (std::getenv("VN_VSG_GBUFFER") == nullptr) {
         return;
     }
     auto* engine = render_control->engine();
@@ -1304,7 +1304,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
 
 /**
  * @brief Renders the engine scene into a G-buffer and lights it in a
- * fullscreen deferred pass (env VINE_VSG_DEFERRED).
+ * fullscreen deferred pass (env VN_VSG_DEFERRED).
  *
  * S2a vertical slice: the G-buffer geometry pass (three colour attachments:
  * albedo / view normal / view position) runs off-screen; a fullscreen
@@ -1318,7 +1318,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
  */
 void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
 {
-    if (std::getenv("VINE_VSG_DEFERRED") == nullptr) {
+    if (std::getenv("VN_VSG_DEFERRED") == nullptr) {
         return;
     }
     auto* engine = render_control->engine();
@@ -1403,16 +1403,16 @@ void addOverlayLightRig(vn::graphics::Scene& overlay)
 /**
  * @brief Returns whether the demo should run the Deferred pipeline.
  *
- * The DEFAULT demo (no env) is now Deferred. VINE_PIPELINE=forward /
+ * The DEFAULT demo (no env) is now Deferred. VN_PIPELINE=forward /
  * forward / forward_shadowed selects the forward preset (which shows the forward
  * feature-showcase scene), deferred / deferred_shadowed forces Deferred, and the
- * legacy VINE_VSG_DEFERRED_FULL alias is subsumed by the deferred default.
+ * legacy VN_VSG_DEFERRED_FULL alias is subsumed by the deferred default.
  * Shadows are on in every mode now (the key sun casts - see addDemoLighting), so
  * the *_shadowed names only name a path.
  */
 bool demoUsesDeferred()
 {
-    if (const char* mode = std::getenv("VINE_PIPELINE"); mode != nullptr) {
+    if (const char* mode = std::getenv("VN_PIPELINE"); mode != nullptr) {
         return std::strcmp(mode, "deferred") == 0 || std::strcmp(mode, "deferred_shadowed") == 0;
     }
     return true; // default demo = Deferred
@@ -1420,15 +1420,15 @@ bool demoUsesDeferred()
 
 /**
  * @brief Assembles the main-window pipeline from the shared presets, plus an
- * axis-gizmo HUD overlay (env VINE_PIPELINE).
+ * axis-gizmo HUD overlay (env VN_PIPELINE).
  *
  * Values: forward | deferred | forward_shadowed | deferred_shadowed. The
  * *_shadowed names are kept for scripts written before shadows became the demo's
  * default (the key sun casts in every mode now) and select the same path as their
  * unshadowed twin. With no env var the DEFAULT is the DEFERRED preset (the
  * default demo also draws the G-buffer's four colour attachments as small
- * top-left previews); set VINE_PIPELINE=forward to switch to the forward
- * feature-showcase scene. The legacy VINE_VSG_DEFERRED_FULL alias is subsumed by
+ * top-left previews); set VN_PIPELINE=forward to switch to the forward
+ * feature-showcase scene. The legacy VN_VSG_DEFERRED_FULL alias is subsumed by
  * the deferred default.
  *
  * An axis gizmo mirroring the view camera is always added (configurable via
@@ -1448,13 +1448,13 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     }
 
     using vn::graphics::ShadingPath;
-    // Default demo path = Deferred (see demoUsesDeferred); VINE_PIPELINE keeps
+    // Default demo path = Deferred (see demoUsesDeferred); VN_PIPELINE keeps
     // forward available for the forward feature-showcase scene. Shadows are the demo's DEFAULT now
     // (the key sun casts - see addDemoLighting), so the *_shadowed values only name a PATH: they stay
     // accepted so scripts written against the older spelling keep working, and they select exactly what
     // their unshadowed twin selects.
     ShadingPath path = demoUsesDeferred() ? ShadingPath::Deferred : ShadingPath::Forward;
-    if (const char* mode = std::getenv("VINE_PIPELINE"); mode != nullptr) {
+    if (const char* mode = std::getenv("VN_PIPELINE"); mode != nullptr) {
         if (std::strcmp(mode, "deferred_shadowed") == 0) {
             path = ShadingPath::Deferred;
         }
@@ -1495,7 +1495,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // the default demo shows the G-buffer alongside the lit window result
     // (0 = base colour, 1 = shading normal + roughness/metallic, 2 = emission + occlusion, 3 = view
     // position - the packing is shaders/vine_gbuffer.glsl). WHICH CHANNELS a tile shows is
-    // `previewChannelsOf` (PreviewFit.hpp), the same answer the VINE_VSG_GBUFFER strip uses: attachment
+    // `previewChannelsOf` (PreviewFit.hpp), the same answer the VN_VSG_GBUFFER strip uses: attachment
     // 2's content rides in its alpha, so a whole-texel copy of it is a black rectangle either way.
     // The four previews and the one layout step below keep them in step with the
     // window: a preview copies the WHOLE attachment, so its rectangle takes the
@@ -1595,7 +1595,7 @@ vn::async::Task<DemoCubeImages> loadDemoCubeImagesAsync()
     if (!std::filesystem::is_directory(images)) {
         std::fprintf(stderr,
                      "[demo] cube map: no assets beside the executable (looked for 'images' under "
-                     "'%s' and its parent; set VINE_TEST_DATA_DIR to point at test_data) - the "
+                     "'%s' and its parent; set VN_TEST_DATA_DIR to point at test_data) - the "
                      "cube maps are skipped\n",
                      demoAssetDirectory().string().c_str());
         co_return std::move(*staged);
@@ -1678,39 +1678,39 @@ void DemoScene::install()
     auto* render_control = control_;
 
     // Scene content: ONE composition rule for both examples (see buildScene). The default demo is
-    // Deferred; VINE_PIPELINE=forward selects the forward feature-showcase path.
+    // Deferred; VN_PIPELINE=forward selects the forward feature-showcase path.
     // No asset is read here: the two cube maps arrive later (loadDemoCubeImagesAsync + installContent).
     auto overlay_scene = buildScene(demoUsesDeferred());
 
     addDemoLighting(render_control);
     addOffscreenValidationPass(render_control);
-    // Dev switch: VINE_VSG_SLOT_DEMO stacks a second (camera, content slot) overlay pass on the main
+    // Dev switch: VN_VSG_SLOT_DEMO stacks a second (camera, content slot) overlay pass on the main
     // camera to validate same-view multi-slot drawing.
     addSlotOverlayDemo(render_control);
-    // Dev switch: VINE_VSG_OFFSCREEN_MULTISLOT bakes ONE off-screen target with two content slots
+    // Dev switch: VN_VSG_OFFSCREEN_MULTISLOT bakes ONE off-screen target with two content slots
     // (main scene + on-top overlay) shown via PiP.
     addOffscreenMultiSlotDemo(render_control);
-    // Dev switch: VINE_VSG_GBUFFER previews the Deferred G-buffer's colour attachments
+    // Dev switch: VN_VSG_GBUFFER previews the Deferred G-buffer's colour attachments
     // (albedo / normal / spec / view pos) via PiP.
     addGbufferDemo(render_control);
-    // Dev switch: VINE_VSG_DEFERRED adds a fullscreen deferred-lighting pass that reads the G-buffer
+    // Dev switch: VN_VSG_DEFERRED adds a fullscreen deferred-lighting pass that reads the G-buffer
     // and shows the lit result (A/B preview).
     addDeferredDemo(render_control);
-    // Main pipeline: env VINE_PIPELINE (forward | deferred | forward_shadowed | deferred_shadowed)
+    // Main pipeline: env VN_PIPELINE (forward | deferred | forward_shadowed | deferred_shadowed)
     // selects a shared preset; the DEFAULT is Deferred (demoUsesDeferred). An axis-gizmo HUD overlay
     // rides on the built pipeline. Under Deferred the overlay scene is handed to the builder as
     // transparent content, so it composites depth-on over the deferred-lit result.
     addDemoPipeline(render_control, overlay_scene);
-    // Dev switch: setting VINE_SHADER_PRESET names the FLAT program as the default content program,
+    // Dev switch: setting VN_SHADER_PRESET names the FLAT program as the default content program,
     // exercising the whole engine/backend path (default = forwardProgram(), set by the engine).
-    if (std::getenv("VINE_SHADER_PRESET") != nullptr) {
+    if (std::getenv("VN_SHADER_PRESET") != nullptr) {
         render_control->engine()->setDefaultContentProgram(vn::graphics::flatForwardProgram());
     }
 }
 
 void DemoScene::logFramePlan() const
 {
-    if (std::getenv("VINE_FRAME_PLAN") == nullptr || control_ == nullptr || control_->engine() == nullptr) {
+    if (std::getenv("VN_FRAME_PLAN") == nullptr || control_ == nullptr || control_->engine() == nullptr) {
         return;
     }
     // The table goes out as one log record (timestamp, thread, log file) - a dev switch that says nothing is

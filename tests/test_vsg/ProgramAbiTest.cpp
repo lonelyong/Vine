@@ -122,7 +122,7 @@ TEST(ProgramAbiTest, TheForwardProgramDeclaresTheContentAbiTheExistingBackendSer
     ASSERT_EQ(abi.bindings.size(), 5U);
     expectBlock(abi, 0U, 0U, AbiBlockRole::Material, kFragment, sizeof(vn::graphics::VineMaterialBlock));
     expectBlock(abi, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
-    expectSampler(abi, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
+    expectSampler(abi, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "vn_shadow_map");
     expectBlock(abi, 0U, 8U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
     // The draw block is declared by BOTH stages now: the fragment reads `params.x` (opacity), the vertex stage
     // reads `params.y` (the point size it writes to gl_PointSize), so the binding's stage flags are the union.
@@ -160,23 +160,23 @@ TEST(ProgramAbiTest, TheDiffuseSamplerIsTheVariantsFactAndAVariantThatCannotComp
     // ONE define turns on the whole set: all five slots are declared together (a per-slot variant would
     // multiply the pipeline cache by 32 - graphics-material.md §2.5). The base colour's KIND follows the
     // texcoord width; the other four are 2-D data maps.
-    const ProgramAbi uv = scan(*program, { "VINE_TEXTURED", "VINE_TEXCOORD_UV" });
-    expectSampler(uv, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "baseColorMap");
-    expectSampler(uv, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "metallicRoughnessMap");
-    expectSampler(uv, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "normalMap");
-    expectSampler(uv, 0U, 4U, AbiDescriptorKind::Sampler2D, kFragment, "occlusionMap");
-    expectSampler(uv, 0U, 5U, AbiDescriptorKind::Sampler2D, kFragment, "emissiveMap");
+    const ProgramAbi uv = scan(*program, { "VN_TEXTURED", "VN_TEXCOORD_UV" });
+    expectSampler(uv, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "vn_baseColorMap");
+    expectSampler(uv, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "vn_metallicRoughnessMap");
+    expectSampler(uv, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "vn_normalMap");
+    expectSampler(uv, 0U, 4U, AbiDescriptorKind::Sampler2D, kFragment, "vn_occlusionMap");
+    expectSampler(uv, 0U, 5U, AbiDescriptorKind::Sampler2D, kFragment, "vn_emissiveMap");
     EXPECT_EQ(uv.bindings.size(), 10U) << "five blocks and five slots";
 
-    const ProgramAbi cube = scan(*program, { "VINE_TEXTURED", "VINE_TEXCOORD_CUBE" });
-    expectSampler(cube, 0U, 1U, AbiDescriptorKind::SamplerCube, kFragment, "baseColorMap");
+    const ProgramAbi cube = scan(*program, { "VN_TEXTURED", "VN_TEXCOORD_CUBE" });
+    expectSampler(cube, 0U, 1U, AbiDescriptorKind::SamplerCube, kFragment, "vn_baseColorMap");
     EXPECT_EQ(cube.bindings.size(), 10U);
 
     // A texcoord slot that was asked for without its kind: the source says `#error`, and a variant whose own
     // text refuses to compile must not come back as "a program without a texture set".
     ProgramFacts facts;
     ASSERT_EQ(buildProgramFacts(*program, facts), FactMiss::None);
-    const std::string_view only_map[] = { "VINE_TEXTURED" };
+    const std::string_view only_map[] = { "VN_TEXTURED" };
     ProgramAbi             refused;
     EXPECT_EQ(scanProgramAbi(facts.shaders.vertex, facts.shaders.fragment, only_map, refused), FactMiss::Malformed);
 }
@@ -187,12 +187,12 @@ TEST(ProgramAbiTest, TheFlatForwardProgramIsTheSameAbiAndItsDefineComesFromTheTe
     const ProgramAbi smooth = scan(*vn::graphics::forwardProgram());
     EXPECT_EQ(flat.bindings.size(), smooth.bindings.size());
 
-    // `VINE_FLAT` is a define the TEXT carries (`#define VINE_FLAT 1`), not one the source imports: the
+    // `VN_FLAT` is a define the TEXT carries (`#define VN_FLAT 1`), not one the source imports: the
     // compiler drops a define the source never asks for, so the two must not be conflated.
-    const std::vector<std::string> expected = { "VINE_INSTANCED", "VINE_TEXCOORD_CUBE", "VINE_TEXCOORD_UV",
-                                                "VINE_TEXTURED", "VINE_VERTEX_COLOR" };
+    const std::vector<std::string> expected = { "VN_INSTANCED", "VN_TEXCOORD_CUBE", "VN_TEXCOORD_UV",
+                                                "VN_TEXTURED", "VN_VERTEX_COLOR" };
     EXPECT_EQ(flat.import_defines, expected);
-    EXPECT_EQ(std::find(expected.begin(), expected.end(), "VINE_FLAT"), expected.end());
+    EXPECT_EQ(std::find(expected.begin(), expected.end(), "VN_FLAT"), expected.end());
 }
 
 TEST(ProgramAbiTest, EveryModeOfTheForwardProgramDeclaresTheSameAbi)
@@ -220,12 +220,12 @@ layout(location = 0) in vec3 position;
 void main() { gl_Position = vec4(position, 1.0); }
 )";
     constexpr const char* kOwnFragment = R"(#version 450
-#define VINE_EXTRA 1
+#define VN_EXTRA 1
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
     vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;
 } material;
-#ifdef VINE_EXTRA
+#ifdef VN_EXTRA
 layout(set = 0, binding = 1, std140) uniform SomeOtherBlock { vec4 value; } extra;
 #endif
 void main() {}
@@ -234,7 +234,7 @@ void main() {}
     ProgramAbi abi;
     ASSERT_EQ(scanProgramAbi(kOwnVertex, kOwnFragment, {}, abi), FactMiss::None);
 
-    // The text defined VINE_EXTRA itself, so the conditional declaration is part of the facts...
+    // The text defined VN_EXTRA itself, so the conditional declaration is part of the facts...
     ASSERT_EQ(abi.bindings.size(), 2U);
     // ...and its ROLE is foreign: the block sits where the shipped programs declare the diffuse map, and a
     // position is not a role (only the L1 type name is).
@@ -252,10 +252,10 @@ TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndT
     const ProgramAbi plain = scanScreen(*vn::graphics::deferredLightProgram());
     // Four G-buffer samplers and the light block both paths carry (at the binding the SDK's programs share).
     ASSERT_EQ(plain.bindings.size(), 5U);
-    expectSampler(plain, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "albedo_tex");
-    expectSampler(plain, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "normal_tex");
-    expectSampler(plain, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "emissive_tex");
-    expectSampler(plain, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "pos_tex");
+    expectSampler(plain, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "vn_albedo_tex");
+    expectSampler(plain, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "vn_normal_tex");
+    expectSampler(plain, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "vn_emissive_tex");
+    expectSampler(plain, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "vn_pos_tex");
     expectBlock(plain, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
     // The lights are a BLOCK, not a push: the full-screen program declares no push range at all (a host's own
     // screen program may declare one - see ContentPipeline::Settings).
@@ -267,7 +267,7 @@ TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndT
     const ProgramAbi shadowed = scanScreen(*shadowed_program);
     ASSERT_EQ(shadowed.bindings.size(), 7U);
     expectBlock(shadowed, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
-    expectSampler(shadowed, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "shadow_map");
+    expectSampler(shadowed, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "vn_shadow_map");
     expectBlock(shadowed, 0U, 8U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
 }
 
@@ -275,12 +275,12 @@ TEST(ProgramAbiTest, TheScreenProgramsBindTheAttachmentTheirFactoryNamed)
 {
     const ProgramAbi first = scanScreen(*vn::graphics::screenCopyProgram(0));
     ASSERT_EQ(first.bindings.size(), 1U);
-    expectSampler(first, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "screen_tex");
+    expectSampler(first, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "vn_screen_tex");
     EXPECT_TRUE(first.pushes.empty());
 
     const ProgramAbi third = scanScreen(*vn::graphics::screenCopyProgram(2));
     ASSERT_EQ(third.bindings.size(), 1U);
-    expectSampler(third, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "screen_tex");
+    expectSampler(third, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "vn_screen_tex");
 
     // The engine's full-screen vertex stage declares nothing at all: it generates its triangle. It has no
     // fragment stage of its own (the fragment stage is the host's), so its text is scanned as a vertex-only
@@ -310,20 +310,20 @@ TEST(ProgramAbiTest, TheGbufferAndSkyboxProgramsDeclareTheSlotsTheirShadingReads
     EXPECT_EQ(gbuffer.pushes[0].size, 128U);
     EXPECT_EQ(gbuffer.pushes[0].stages, kVertex);
 
-    const ProgramAbi gbuffer_mapped = scan(*vn::graphics::gbufferGeometryProgram(), { "VINE_TEXTURED", "VINE_TEXCOORD_UV" });
-    expectSampler(gbuffer_mapped, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "baseColorMap");
-    expectSampler(gbuffer_mapped, 0U, 5U, AbiDescriptorKind::Sampler2D, kFragment, "emissiveMap");
+    const ProgramAbi gbuffer_mapped = scan(*vn::graphics::gbufferGeometryProgram(), { "VN_TEXTURED", "VN_TEXCOORD_UV" });
+    expectSampler(gbuffer_mapped, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "vn_baseColorMap");
+    expectSampler(gbuffer_mapped, 0U, 5U, AbiDescriptorKind::Sampler2D, kFragment, "vn_emissiveMap");
     EXPECT_EQ(gbuffer_mapped.bindings.size(), 7U) << "two blocks and five slots";
 
     // The sky: its map sits in the same slot the content stages keep for the material's texture, and the
     // sampler KIND follows the texcoord width - including "no kind at all", which is the pair branch.
     const auto skybox = vn::graphics::skyboxProgram();
-    const ProgramAbi cube = scan(*skybox, { "VINE_TEXCOORD_CUBE" });
-    expectSampler(cube, 0U, 1U, AbiDescriptorKind::SamplerCube, kFragment, "skyMap");
+    const ProgramAbi cube = scan(*skybox, { "VN_TEXCOORD_CUBE" });
+    expectSampler(cube, 0U, 1U, AbiDescriptorKind::SamplerCube, kFragment, "vn_skyMap");
     EXPECT_EQ(cube.bindings.size(), 1U);   // no material, no lights: nothing is lit
 
     const ProgramAbi pair = scan(*skybox);
-    expectSampler(pair, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "skyMap");
+    expectSampler(pair, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "vn_skyMap");
     ASSERT_EQ(pair.pushes.size(), 1U);
     EXPECT_EQ(pair.pushes[0].stages, kVertex);
 }
@@ -411,13 +411,13 @@ void main() {}
     }
     {
         // A conditional expression outside the scan's grammar (no `defined`) is reported, not evaluated.
-        constexpr const char* kFragment = "#version 450\n#if VINE_SOMETHING\nvoid main() {}\n#endif\n";
+        constexpr const char* kFragment = "#version 450\n#if VN_SOMETHING\nvoid main() {}\n#endif\n";
         ProgramAbi abi;
         EXPECT_EQ(scanProgramAbi(kEmpty, kFragment, {}, abi), FactMiss::Malformed);
     }
     {
         // An unterminated conditional leaves the text's shape unknown.
-        constexpr const char* kFragment = "#version 450\n#ifdef VINE_X\nvoid main() {}\n";
+        constexpr const char* kFragment = "#version 450\n#ifdef VN_X\nvoid main() {}\n";
         ProgramAbi abi;
         EXPECT_EQ(scanProgramAbi(kEmpty, kFragment, {}, abi), FactMiss::Malformed);
     }

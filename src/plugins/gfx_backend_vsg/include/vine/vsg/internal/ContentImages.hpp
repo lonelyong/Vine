@@ -18,29 +18,29 @@
  *
  * WHY A NAME TABLE AND NOT A SET INDEX. A program's text says where its samplers live (`layout(set = ...,
  * binding = ...)`) and what they are CALLED, and the layer serves the text as written (see api/ProgramAbi).
- * The engine's own programs spend the names this way: the five texture-set names (`baseColorMap`,
- * `metallicRoughnessMap`, `normalMap`, `occlusionMap`, `emissiveMap`) are the drawable's own maps, `skyMap`
+ * The engine's own programs spend the names this way: the five texture-set names (`vn_baseColorMap`,
+ * `vn_metallicRoughnessMap`, `vn_normalMap`, `vn_occlusionMap`, `vn_emissiveMap`) are the drawable's own maps, `vn_skyMap`
  * is the drawable's own texture TOO (the sky box carries its map in its material and the sky program names
- * that map `skyMap` - see builtin_skybox.frag), `shadow_map` is the map its pass declared, and every other
- * name (`albedo_tex`, `normal_tex`, `emissive_tex`, `pos_tex`, `screen_tex`, ...) is a texture an earlier pass
+ * that map `vn_skyMap` - see builtin_skybox.frag), `vn_shadow_map` is the map its pass declared, and every other
+ * name (`vn_albedo_tex`, `vn_normal_tex`, `vn_emissive_tex`, `vn_pos_tex`, `vn_screen_tex`, ...) is a texture an earlier pass
  * produced - one of the pass' declared INPUTS. The NAME is the contract: the same name in different sets is
  * the same thing, and a set index is only where a text happens to put it (the engine puts the material, the
  * diffuse map and the shadow map in one set, and a G-buffer's four pictures in another).
  *
  * WHAT THE LAYER FILLS TODAY, and who owns each row. ONE row has its producer inside this backend:
- *   * `Shadow` (`shadow_map`): the map is the one the pass' plan resolved (`shadowImageOf`), and a pass whose
+ *   * `Shadow` (`vn_shadow_map`): the map is the one the pass' plan resolved (`shadowImageOf`), and a pass whose
  *     plan resolved one reports a program that declares none - the map would never reach its drawables
  *     otherwise, silently.
  * The other two rows are the CALLER's, because the caller is the one that owns the image:
- *   * `Material` (`baseColorMap` and the other four slots, plus `skyMap`): the DRAWABLE's own textures. The
- *     engine's sky program names the sky box's own cube map `skyMap` and samples it at the base-colour
- *     slot, which is the binding `baseColorMap` names on every other content program. A slot without a
+ *   * `Material` (`vn_baseColorMap` and the other four slots, plus `vn_skyMap`): the DRAWABLE's own textures. The
+ *     engine's sky program names the sky box's own cube map `vn_skyMap` and samples it at the base-colour
+ *     slot, which is the binding `vn_baseColorMap` names on every other content program. A slot without a
  *     usable texture takes the white fallback OF THE DECLARED KIND (api/WhiteImage, api/MaterialImages::whiteCube - "no map" is
  *     WHITE, not an unwritten binding, and a 2D view where the text declares `samplerCube` is an invalid
  *     descriptor rather than an untextured draw).
  *   * `Input`: the pass' declared inputs, in declaration order - input by input, each one's colour
  *     attachments in attachment order and then its depth, the same order the pass' own input set binds them.
- *   * ... and a `shadow_map` with no resolved map takes the SAME white stand-in: the engine's programs read
+ *   * ... and a `vn_shadow_map` with no resolved map takes the SAME white stand-in: the engine's programs read
  *     the map under the shadow block's switch (VineShadowBlock::params.x), and while that switch is off the
  *     picture is exactly the material's - so the stand-in's value has to be the multiply's identity.
  *
@@ -78,13 +78,13 @@ struct InputImages
 enum class ImageOrigin
 {
     Material,  ///< One of the material's five texture slots (see materialSlotOf).
-    Shadow,    ///< The map the pass' plan resolved (`shadow_map`); a pass without one takes the white stand-in.
+    Shadow,    ///< The map the pass' plan resolved (`vn_shadow_map`); a pass without one takes the white stand-in.
     Input,     ///< Any other name: a texture the pass' declared inputs offer, in declaration order.
 };
 
 /** @brief Gets where a declared sampler's @p name takes its image from.
  *
- * @param name The declared instance name (`baseColorMap`, `shadow_map`, `skyMap`, ...); an empty name is a
+ * @param name The declared instance name (`vn_baseColorMap`, `vn_shadow_map`, `vn_skyMap`, ...); an empty name is a
  *             declaration the scan could not name, which is served like any other input texture.
  * @return The origin the name states (see the file note for what each one is filled from).
  */
@@ -93,8 +93,8 @@ enum class ImageOrigin
 /** @brief Gets the material texture slot a sampler declaration names, as an index into `MaterialFacts::slots`.
  *
  * @details
- * - The five names are the set's own: `baseColorMap`, `metallicRoughnessMap`, `normalMap`, `occlusionMap`,
- *   `emissiveMap` - one per `TextureSlot`, in that order. `diffuseMap` (the single-map era) and `skyMap`
+ * - The five names are the set's own: `vn_baseColorMap`, `vn_metallicRoughnessMap`, `vn_normalMap`, `vn_occlusionMap`,
+ *   `vn_emissiveMap` - one per `TextureSlot`, in that order. `vn_diffuseMap` (the single-map era) and `vn_skyMap`
  *   (the sky program's name for the same image) both mean the base-colour slot.
  * - A name that is not one of these is not a material sampler at all; the caller decides what that means
  *   for the binding (a declared `sampler2D` still needs an image).
@@ -111,7 +111,7 @@ struct SamplerImage
     ::vsg::ref_ptr<::vsg::Sampler>   sampler;  ///< The filter it is read with (NEAREST for depths).
 };
 
-/** @brief Gets whether @p abi samples the map its plan resolved: it declares a sampler named `shadow_map`.
+/** @brief Gets whether @p abi samples the map its plan resolved: it declares a sampler named `vn_shadow_map`.
  *
  * This is the by-name half of "does the shadow reach this program", and it does NOT ask which set or binding
  * the text names: a program that declares the map anywhere can read it, and one that declares it nowhere
@@ -131,7 +131,7 @@ struct SamplerImage
  * @param abi     The bindings the program's text declares.
  * @param set     Descriptor set index.
  * @param binding Receives the declared binding when the text names one there.
- * @return true when the set declares a sampler named `shadow_map`.
+ * @return true when the set declares a sampler named `vn_shadow_map`.
  */
 [[nodiscard]] bool shadowBindingOf(const ProgramAbi& abi, std::uint32_t set, std::uint32_t& binding) noexcept;
 
@@ -154,7 +154,7 @@ struct SamplerImage
  * The map is the INPUT the plan resolved (core::FrameCompiler's `resolveShadow`: the first input whose target
  * states it is a map, whose depth is sampleable and whose producer published how to read it) - so the picker
  * asks the plan, and falls back to walking the inputs with the SAME three facts only to find which offered
- * image that is. A caller binds the answer at the binding its text names for `shadow_map`, and binds
+ * image that is. A caller binds the answer at the binding its text names for `vn_shadow_map`, and binds
  * @ref SamplerImage empty (the white stand-in) when this returns false.
  *
  * @param pass          The compiled pass (its resolved shadow, and the inputs it was resolved from).

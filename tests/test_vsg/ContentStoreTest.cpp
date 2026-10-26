@@ -60,34 +60,34 @@ ShaderStage stage(ShaderStageType type, const char* source)
     return out;
 }
 
-/// @brief A content program whose fragment stage gates its sampler on `VINE_TEXTURED`: one text, two ABIs.
+/// @brief A content program whose fragment stage gates its sampler on `VN_TEXTURED`: one text, two ABIs.
 constexpr const char* kGatedVertexSource =
     "#version 450\n"
-    "#pragma import_defines (VINE_TEXTURED)\n"
+    "#pragma import_defines (VN_TEXTURED)\n"
     "layout(location = 0) in vec3 position;\n"
-    "#ifdef VINE_TEXTURED\n"
+    "#ifdef VN_TEXTURED\n"
     "layout(location = 8) in vec2 texcoord;\n"
     "#endif\n"
     "void main() { gl_Position = vec4(position, 1.0); }\n";
 
 constexpr const char* kGatedFragmentSource =
     "#version 450\n"
-    "#pragma import_defines (VINE_TEXTURED)\n"
+    "#pragma import_defines (VN_TEXTURED)\n"
     "layout(location = 0) out vec4 color;\n"
     "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
     "{\n"
     "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
     "} material;\n"
-    "#ifdef VINE_TEXTURED\n"
-    "layout(set = 0, binding = 1) uniform sampler2D baseColorMap;\n"
+    "#ifdef VN_TEXTURED\n"
+    "layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;\n"
     "#endif\n"
     "void main() { color = material.base_color; }\n";
 
 constexpr const char* kScreenFragmentSource =
     "#version 450\n"
-    "layout(location = 0) in vec2 vine_uv;\n"
+    "layout(location = 0) in vec2 vn_uv;\n"
     "layout(location = 0) out vec4 color;\n"
-    "void main() { color = vec4(vine_uv, 0.0, 1.0); }\n";
+    "void main() { color = vec4(vn_uv, 0.0, 1.0); }\n";
 
 /// @brief A content program with both stages (the identity the plan names).
 vn::intrusive_ptr<ShaderProgram> contentProgram()

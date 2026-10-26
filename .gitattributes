@@ -1,9 +1,12 @@
 # Shader sources are embedded verbatim into a generated header, and
 # VineEmbedShaders.cmake rejects CR bytes because the embedded text must match the
 # file on disk byte for byte. Force LF in the working tree so a Windows checkout
-# with core.autocrlf=true cannot break the build.
+# with core.autocrlf=true cannot break the build. The `.glsl` entries are the
+# INCLUDED fragments (vine_params.glsl, vine_material.glsl, ...), which are inlined
+# into every stage that includes them and are as CR-sensitive as the stages are.
 *.vert text eol=lf
 *.frag text eol=lf
+*.glsl text eol=lf
 *.comp text eol=lf
 *.geom text eol=lf
 *.tesc text eol=lf

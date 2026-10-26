@@ -337,7 +337,7 @@ TEST(CryptoTest, FingerprintFromFile)
 {
     // The file constructor must produce the same fingerprint as the span one.
     const auto data = makeBytes(300);
-    const auto path = std::filesystem::temp_directory_path() / "vine_fingerprint_test.bin";
+    const auto path = std::filesystem::temp_directory_path() / "vn_fingerprint_test.bin";
     {
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));

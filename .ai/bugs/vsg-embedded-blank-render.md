@@ -10,7 +10,7 @@
 ## 现象
 
 嵌入式路径即使初始化成功，视图也只有清屏色、没有任何几何体；而独立窗口路径
-（`makeRawDemoNode`，`VINE_VSG_OWN_WINDOW=1`）能正常显示三角形。
+（`makeRawDemoNode`，`VN_VSG_OWN_WINDOW=1`）能正常显示三角形。
 
 ## 根因
 

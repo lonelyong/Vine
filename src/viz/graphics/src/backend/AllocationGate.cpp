@@ -7,7 +7,7 @@
 #endif
 
 #if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
-#    define VINE_HAVE_MALLINFO2 1
+#    define VN_HAVE_MALLINFO2 1
 #endif
 
 namespace
@@ -23,7 +23,7 @@ struct HeapUsage
 /// @brief The platform's heap-usage reading (see the header: unsupported is reported, never faked).
 HeapUsage heapUsage() noexcept
 {
-#if defined(VINE_HAVE_MALLINFO2)
+#if defined(VN_HAVE_MALLINFO2)
     const struct mallinfo2 info = mallinfo2();
     return HeapUsage{true, static_cast<std::size_t>(info.uordblks)};
 #elif defined(__GLIBC__)

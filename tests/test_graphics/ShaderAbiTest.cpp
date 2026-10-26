@@ -188,30 +188,30 @@ TEST(ShaderAbiTest, TheAlphaModeDecidesWhatTheMaterialsAlphaMeans)
     // three branches in the shipped text, because the structural gates around the block layout and the variant
     // defines are blind to a factor that went missing from a float expression.
     const std::string forward_fs = asByteString(shaders::kBuiltinForwardFrag);
-    EXPECT_NE(forward_fs.find("(material.flags.x >> VINE_MATERIAL_ALPHA_MODE_SHIFT) & 3u"), std::string::npos)
+    EXPECT_NE(forward_fs.find("(vn_material.flags.x >> VN_MATERIAL_ALPHA_MODE_SHIFT) & 3u"), std::string::npos)
         << "the mode rides the block's flag row (bits 8-9) - a shader must not invent its own numbering";
-    EXPECT_NE(forward_fs.find("if (draw.params.x * surface.alpha < material.params.w)"), std::string::npos)
+    EXPECT_NE(forward_fs.find("if (vn_draw.params.x * vn_surface.alpha < vn_material.params.w)"), std::string::npos)
         << "Mask cuts on the PRODUCT of the two alphas against the material's cutoff";
     EXPECT_NE(forward_fs.find("discard;"), std::string::npos) << "Mask discards, it does not fade";
-    EXPECT_NE(forward_fs.find("alpha = draw.params.x * surface.alpha;"), std::string::npos)
+    EXPECT_NE(forward_fs.find("vn_alpha = vn_draw.params.x * vn_surface.alpha;"), std::string::npos)
         << "Blend outputs the product, which is what the transparent queue sorted by";
     // The material's alpha is read through the surface (one place, both paths), not multiplied in ad hoc here:
     // the G-buffer writer asks the same function the same question. What this pins is that the stage's own
     // branches use `surface.alpha` and never a texel it sampled itself.
-    EXPECT_EQ(forward_fs.find("vine_color.a"), std::string::npos)
+    EXPECT_EQ(forward_fs.find("vn_color.a"), std::string::npos)
         << "a vertex colour's alpha is still not an opacity input (it means what the model says it means)";
     const std::string material_fs = asByteString(shaders::kBuiltinForwardFrag);
-    EXPECT_NE(material_fs.find("surface.alpha      = clamp(material.base_color.a, 0.0, 1.0);"), std::string::npos)
+    EXPECT_NE(material_fs.find("vn_surface.alpha      = clamp(vn_material.base_color.a, 0.0, 1.0);"), std::string::npos)
         << "the inlined sample function is where the material's own alpha enters";
-    EXPECT_NE(material_fs.find("surface.alpha      *= texel.a;"), std::string::npos)
+    EXPECT_NE(material_fs.find("vn_surface.alpha      *= vn_texel.a;"), std::string::npos)
         << "and the base slot's own alpha multiplies it - the shape of a cut-out leaf lives there";
 
     // The G-buffer records opaque and masked content only (N4): a blended surface has no single value to store.
     const std::string gbuffer_fs = asByteString(shaders::kBuiltinGbufferFrag);
-    EXPECT_NE(gbuffer_fs.find("(material.flags.x >> VINE_MATERIAL_ALPHA_MODE_SHIFT) & 3u"), std::string::npos)
+    EXPECT_NE(gbuffer_fs.find("(vn_material.flags.x >> VN_MATERIAL_ALPHA_MODE_SHIFT) & 3u"), std::string::npos)
         << "the writer reads the same mode bits";
-    EXPECT_NE(gbuffer_fs.find("if (alpha_mode == 2u)"), std::string::npos) << "Blend is not recorded";
-    EXPECT_NE(gbuffer_fs.find("draw.params.x * surface.alpha < material.params.w"), std::string::npos)
+    EXPECT_NE(gbuffer_fs.find("if (vn_alpha_mode == 2u)"), std::string::npos) << "Blend is not recorded";
+    EXPECT_NE(gbuffer_fs.find("vn_draw.params.x * vn_surface.alpha < vn_material.params.w"), std::string::npos)
         << "and Mask cuts the same holes the forward stage does - the same two inputs, not a copy of one";
     EXPECT_EQ(forward_fs.find("alphaMask"), std::string::npos);
     EXPECT_EQ(gbuffer_fs.find("alphaMask"), std::string::npos);

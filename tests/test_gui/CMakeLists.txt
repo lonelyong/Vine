@@ -44,7 +44,7 @@ target_sources(${TEST_NAME}
             ${CMAKE_SOURCE_DIR}/src/plugins/model_viewer/src/commands/ShadingModeCommands.cpp)
 
 # A plugin loaded from OUTSIDE the application directory (which is exactly what UserPluginSandbox
-# copies into /tmp/vine_test_plugins) cannot use its own RUNPATH to find anything: the loader only
+# copies into /tmp/vn_test_plugins) cannot use its own RUNPATH to find anything: the loader only
 # has the libraries the HOST process already loaded, and dlopen reports the plugin itself as
 # "missing dependency: <plugin>" without naming the library. The sandbox loads app_shell and
 # test_plugin, and app_shell needs Appfw / Graphics / Qt (:Logging comes through Appfw) - all of
@@ -69,25 +69,25 @@ target_link_libraries(${TEST_NAME}
 # built before the handshake existed, one built against a newer framework. They live
 # here (not in src/plugins) because only the tests consume them and they are never
 # deployed; the tests load them by the paths injected below.
-add_library(vine_plugin_fixture_legacy MODULE fixtures/LegacyPlugin.cpp)
-add_library(vine_plugin_fixture_future MODULE fixtures/FuturePlugin.cpp)
-add_library(vine_plugin_fixture_chain MODULE fixtures/ChainPlugin.cpp)
-add_library(vine_plugin_fixture_loop_a MODULE fixtures/LoopAPlugin.cpp)
-add_library(vine_plugin_fixture_loop_b MODULE fixtures/LoopBPlugin.cpp)
-foreach(fixture vine_plugin_fixture_legacy vine_plugin_fixture_future vine_plugin_fixture_chain
-        vine_plugin_fixture_loop_a vine_plugin_fixture_loop_b)
+add_library(vn_plugin_fixture_legacy MODULE fixtures/LegacyPlugin.cpp)
+add_library(vn_plugin_fixture_future MODULE fixtures/FuturePlugin.cpp)
+add_library(vn_plugin_fixture_chain MODULE fixtures/ChainPlugin.cpp)
+add_library(vn_plugin_fixture_loop_a MODULE fixtures/LoopAPlugin.cpp)
+add_library(vn_plugin_fixture_loop_b MODULE fixtures/LoopBPlugin.cpp)
+foreach(fixture vn_plugin_fixture_legacy vn_plugin_fixture_future vn_plugin_fixture_chain
+        vn_plugin_fixture_loop_a vn_plugin_fixture_loop_b)
     set_target_properties(${fixture} PROPERTIES PREFIX "" FOLDER test)
     target_link_libraries(${fixture} PRIVATE vn::Appfw)
 endforeach()
 
 target_compile_definitions(${TEST_NAME} PRIVATE
-    VINE_LEGACY_ABI_PLUGIN="$<TARGET_FILE:vine_plugin_fixture_legacy>"
-    VINE_FUTURE_ABI_PLUGIN="$<TARGET_FILE:vine_plugin_fixture_future>"
-    VINE_CHAIN_PLUGIN="$<TARGET_FILE:vine_plugin_fixture_chain>"
-    VINE_LOOP_A_PLUGIN="$<TARGET_FILE:vine_plugin_fixture_loop_a>"
-    VINE_LOOP_B_PLUGIN="$<TARGET_FILE:vine_plugin_fixture_loop_b>")
-add_dependencies(${TEST_NAME} vine_plugin_fixture_legacy vine_plugin_fixture_future vine_plugin_fixture_chain
-                 vine_plugin_fixture_loop_a vine_plugin_fixture_loop_b)
+    VN_LEGACY_ABI_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_legacy>"
+    VN_FUTURE_ABI_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_future>"
+    VN_CHAIN_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_chain>"
+    VN_LOOP_A_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_loop_a>"
+    VN_LOOP_B_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_loop_b>")
+add_dependencies(${TEST_NAME} vn_plugin_fixture_legacy vn_plugin_fixture_future vn_plugin_fixture_chain
+                 vn_plugin_fixture_loop_a vn_plugin_fixture_loop_b)
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 

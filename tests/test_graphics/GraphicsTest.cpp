@@ -5939,9 +5939,9 @@ TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
     ShaderStage fs;
     fs.type = ShaderStageType::Fragment;
     fs.source = u8"#version 450\n"
-                u8"layout(location = 0) in vec2 vine_uv;\n"
+                u8"layout(location = 0) in vec2 vn_uv;\n"
                 u8"layout(location = 0) out vec4 out_color;\n"
-                u8"void main() { out_color = vec4(vine_uv, 0.0, 1.0); }\n";
+                u8"void main() { out_color = vec4(vn_uv, 0.0, 1.0); }\n";
     program->addStage(fs);
 
     auto light = intrusive_ptr<ScreenPass>(new ScreenPass());
@@ -6375,7 +6375,7 @@ TEST(PassChainTest, AShadowThisChainCannotShadeIsReported)
     // declares its map as an input, so there is nothing to report. Whether that shadow then reaches
     // the picture is decided by the content PROGRAM — the set declares the ABI and the program has to
     // use it — which is a per-drawable question the backend answers (see the vsg backend's
-    // "declares no shadow_map" report).
+    // "declares no vn_shadow_map" report).
     EXPECT_TRUE(reported.empty()) << "the forward path builds the shadow pass, so it has nothing to report";
     EXPECT_NE(forward->presentingPass(), nullptr);
     EXPECT_EQ(forward->offscreenTarget(), nullptr);
@@ -8933,7 +8933,7 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
 {
     // The number is part of the contract only in the sense that it must stay
     // stable and must not collide with the custom-channel range the backend
-    // forwards; the backend binds the array under vine_TexCoord0 by name.
+    // forwards; the backend binds the array under vn_TexCoord0 by name.
     EXPECT_EQ(Geometry::kTexCoordLocation, 8u);
 
     Geometry geom;

@@ -46,7 +46,7 @@ enum class SlotViolation
  * @brief Gets the slot's name from the ABI's vocabulary (the name its binding is resolved by).
  *
  * @param slot Slot index, in `vn::graphics::TextureSlot` order.
- * @return The name (`baseColorMap`, ...), or `nullptr` when the index is not a slot.
+ * @return The name (`vn_baseColorMap`, ...), or `nullptr` when the index is not a slot.
  */
 [[nodiscard]] const char* materialSlotName(std::size_t slot) noexcept;
 

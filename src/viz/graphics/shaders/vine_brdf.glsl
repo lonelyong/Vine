@@ -22,59 +22,59 @@
 // a 0.25-alpha surface, the same mapping glTF's metallic-roughness materials assume.
 
 // The GGX distribution: how much of the microfacet population points along the half vector.
-float vineDistributionGGX(float n_dot_h, float alpha)
+float vnDistributionGGX(float vn_n_dot_h, float vn_alpha)
 {
-    float a2 = alpha * alpha;
-    float d  = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
-    return a2 / max(3.14159265 * d * d, 1e-7);
+    float vn_a2 = vn_alpha * vn_alpha;
+    float vn_d  = vn_n_dot_h * vn_n_dot_h * (vn_a2 - 1.0) + 1.0;
+    return vn_a2 / max(3.14159265 * vn_d * vn_d, 1e-7);
 }
 
 // Height-correlated Smith visibility, already divided by the 4 * (n.l) * (n.v) the microfacet integral needs.
 // The correlated form is what keeps a grazing light from shading a black band at the silhouette.
-float vineVisibilitySmith(float n_dot_l, float n_dot_v, float alpha)
+float vnVisibilitySmith(float vn_n_dot_l, float vn_n_dot_v, float vn_alpha)
 {
-    float a2   = alpha * alpha;
-    float l    = n_dot_v * sqrt(n_dot_l * n_dot_l * (1.0 - a2) + a2);
-    float v    = n_dot_l * sqrt(n_dot_v * n_dot_v * (1.0 - a2) + a2);
-    return 0.5 / max(l + v, 1e-7);
+    float vn_a2   = vn_alpha * vn_alpha;
+    float vn_l    = vn_n_dot_v * sqrt(vn_n_dot_l * vn_n_dot_l * (1.0 - vn_a2) + vn_a2);
+    float vn_v    = vn_n_dot_l * sqrt(vn_n_dot_v * vn_n_dot_v * (1.0 - vn_a2) + vn_a2);
+    return 0.5 / max(vn_l + vn_v, 1e-7);
 }
 
 // Schlick's approximation: the reflectance at normal incidence (f0) bends toward 1 at grazing angles.
-vec3 vineFresnelSchlick(vec3 f0, float v_dot_h)
+vec3 vnFresnelSchlick(vec3 vn_f0, float vn_v_dot_h)
 {
-    return f0 + (1.0 - f0) * pow(clamp(1.0 - v_dot_h, 0.0, 1.0), 5.0);
+    return vn_f0 + (1.0 - vn_f0) * pow(clamp(1.0 - vn_v_dot_h, 0.0, 1.0), 5.0);
 }
 
 // The BRDF's value for a surface of these factors seen from `v` along a light `l` (all three directions of ONE
 // space - this engine shades in view space, so they are view-space vectors, normalized).
 //
-// @param base_color Linear albedo: the material's base colour with its slot and the vertex colour applied.
-// @param metallic   0 = dielectric, 1 = metal; the dielectric part keeps its diffuse lobe, the metal does not.
-// @param roughness  Perceptual roughness, 0..1; see the note above about the alpha = roughness^2 mapping.
-// @param n          Shading normal, normalized.
-// @param v          Unit direction from the surface TOWARD the eye.
-// @param l          Unit direction from the surface toward the light.
+// @param vn_base_color Linear albedo: the material's base colour with its slot and the vertex colour applied.
+// @param vn_metallic   0 = dielectric, 1 = metal; the dielectric part keeps its diffuse lobe, the metal does not.
+// @param vn_roughness  Perceptual roughness, 0..1; see the note above about the alpha = roughness^2 mapping.
+// @param vn_n          Shading normal, normalized.
+// @param vn_v          Unit direction from the surface TOWARD the eye.
+// @param vn_l          Unit direction from the surface toward the light.
 // @return The BRDF's value: (diffuse + specular). Multiply by radiance, n.l and attenuation at the call site.
-vec3 vineEvaluateBRDF(vec3 base_color, float metallic, float roughness, vec3 n, vec3 v, vec3 l)
+vec3 vnEvaluateBRDF(vec3 vn_base_color, float vn_metallic, float vn_roughness, vec3 vn_n, vec3 vn_v, vec3 vn_l)
 {
-    vec3  h       = normalize(l + v);
-    float n_dot_l = max(dot(n, l), 0.0);
+    vec3  vn_h       = normalize(vn_l + vn_v);
+    float vn_n_dot_l = max(dot(vn_n, vn_l), 0.0);
     // A view direction on or behind the surface's own plane has no defined reflection; the clamp keeps the
     // visibility term finite instead of producing the NaN a sqrt of a negative would.
-    float n_dot_v = max(dot(n, v), 1e-4);
-    float n_dot_h = max(dot(n, h), 0.0);
-    float v_dot_h = max(dot(v, h), 0.0);
+    float vn_n_dot_v = max(dot(vn_n, vn_v), 1e-4);
+    float vn_n_dot_h = max(dot(vn_n, vn_h), 0.0);
+    float vn_v_dot_h = max(dot(vn_v, vn_h), 0.0);
     // A floor, not a guard: roughness 0 would make alpha 0, and the distribution's 0/0 limit is the delta a
     // real surface never has (a perfectly smooth mirror needs a reflection probe, which is out of scope).
-    float alpha = max(roughness * roughness, 1e-3);
+    float vn_alpha = max(vn_roughness * vn_roughness, 1e-3);
 
-    vec3 f0 = mix(vec3(0.04), base_color, clamp(metallic, 0.0, 1.0));
-    vec3 f  = vineFresnelSchlick(f0, v_dot_h);
+    vec3 vn_f0 = mix(vec3(0.04), vn_base_color, clamp(vn_metallic, 0.0, 1.0));
+    vec3 vn_f  = vnFresnelSchlick(vn_f0, vn_v_dot_h);
 
-    vec3 specular = f * (vineDistributionGGX(n_dot_h, alpha) * vineVisibilitySmith(n_dot_l, n_dot_v, alpha));
+    vec3 vn_specular = vn_f * (vnDistributionGGX(vn_n_dot_h, vn_alpha) * vnVisibilitySmith(vn_n_dot_l, vn_n_dot_v, vn_alpha));
     // What the dielectric part scatters, minus the light it reflects: a metal scatters nothing (1 - metallic),
     // and the (1 - f) keeps a bright Fresnel edge from adding diffuse energy that was already reflected.
-    vec3 diffuse = base_color * (1.0 - clamp(metallic, 0.0, 1.0)) * (1.0 - f);
+    vec3 vn_diffuse = vn_base_color * (1.0 - clamp(vn_metallic, 0.0, 1.0)) * (1.0 - vn_f);
 
-    return diffuse + specular;
+    return vn_diffuse + vn_specular;
 }

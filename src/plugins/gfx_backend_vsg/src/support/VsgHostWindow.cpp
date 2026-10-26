@@ -97,7 +97,7 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     // could not be driven from a host's own calls. The hatch makes the COMPARISON fail instead, which is
     // the same code path the real condition takes: selftest_hostsurface.cpp sets it and asserts both the
     // report and the rebuild.
-    const bool format_cannot_serve = std::getenv("VINE_HOST_MOVE_FORMAT_MISMATCH") != nullptr ||
+    const bool format_cannot_serve = std::getenv("VN_HOST_MOVE_FORMAT_MISMATCH") != nullptr ||
                                      _imageFormat.format != previous_format;
     if (format_cannot_serve) {
         // A different presentation format means a different render pass, and every pipeline was compiled

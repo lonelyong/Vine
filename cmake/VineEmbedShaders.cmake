@@ -21,9 +21,9 @@
 #             ';'-separated list would be re-split by CMake's list expansion).
 #   NAMESPACE C++ namespace for the generated constants (e.g. vn::vsg::shaders).
 #
-# Mode used by the offline gate (scripts/vine_shader_check.sh), which must compile
+# Mode used by the offline gate (scripts/vn_shader_check.sh), which must compile
 # and hash exactly the text the build embeds:
-#   VINE_EXPAND_ONLY=ON  Expand the single SOURCE's includes into OUT and return.
+#   VN_EXPAND_ONLY=ON  Expand the single SOURCE's includes into OUT and return.
 #
 # The header is only rewritten when its content changes, so an unchanged shader
 # does not make every includer recompile.
@@ -48,7 +48,7 @@ endif()
 # @param source_dir  Directory the include names are resolved against (the including file's).
 # @param depth       Current nesting depth (0 for a shader source).
 # @param out_var     Variable that receives the expanded text (set in the caller's scope).
-function(vine_expand_includes content_var source_dir depth out_var)
+function(vn_expand_includes content_var source_dir depth out_var)
     set(_content "${${content_var}}")
     if(depth GREATER 8)
         message(FATAL_ERROR
@@ -79,23 +79,23 @@ function(vine_expand_includes content_var source_dir depth out_var)
         endif()
         file(READ "${_fragment}" _fragment_text)
         math(EXPR _nested_depth "${depth} + 1")
-        vine_expand_includes(_fragment_text "${source_dir}" "${_nested_depth}" _fragment_text)
+        vn_expand_includes(_fragment_text "${source_dir}" "${_nested_depth}" _fragment_text)
         string(REPLACE "${_include_line}" "\n${_fragment_text}" _content "${_content}")
     endwhile()
     set(${out_var} "${_content}" PARENT_SCOPE)
 endfunction()
 
 # Expand-only mode: one source in, its expanded text out, nothing else touched.
-if(VINE_EXPAND_ONLY)
+if(VN_EXPAND_ONLY)
     string(REPLACE "," ";" _expand_sources "${SOURCES}")
     list(LENGTH _expand_sources _expand_count)
     if(NOT _expand_count EQUAL 1)
-        message(FATAL_ERROR "VineEmbedShaders: VINE_EXPAND_ONLY takes exactly one source, got ${SOURCES}")
+        message(FATAL_ERROR "VineEmbedShaders: VN_EXPAND_ONLY takes exactly one source, got ${SOURCES}")
     endif()
     set(_expand_source "${_expand_sources}")
     get_filename_component(_expand_dir "${_expand_source}" DIRECTORY)
     file(READ "${_expand_source}" _expand_text)
-    vine_expand_includes(_expand_text "${_expand_dir}" 0 _expand_text)
+    vn_expand_includes(_expand_text "${_expand_dir}" 0 _expand_text)
     file(WRITE "${OUT}" "${_expand_text}")
     return()
 endif()
@@ -105,7 +105,7 @@ if(NOT NAMESPACE)
 endif()
 
 # The generated text is wrapped in a raw string literal with this delimiter.
-set(_delimiter "VINE_GLSL")
+set(_delimiter "VN_GLSL")
 set(_opener "R\"${_delimiter}(")
 set(_closer ")${_delimiter}\"")
 
@@ -149,7 +149,7 @@ foreach(_source IN LISTS _sources)
     # The fragment lines are replaced BEFORE the guards and the hash below: what is embedded - and what a
     # backend compiles - is the expanded text, so its size and hash are the expanded text's.
     get_filename_component(_source_dir "${_source}" DIRECTORY)
-    vine_expand_includes(_content "${_source_dir}" 0 _content)
+    vn_expand_includes(_content "${_source_dir}" 0 _content)
 
     # Guard 1: file(READ) converts CRLF to LF, and the compiler would do the same
     # again, so a CR would make the embedded text differ from the file on disk.

@@ -150,14 +150,14 @@ ContentPipeline::Shaders screenShaders()
 {
     ContentPipeline::Shaders shaders;
     shaders.vertex = "#version 450\n"
-                     "layout(location = 0) out vec2 vine_uv;\n"
-                     "void main() { vine_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
-                     "              gl_Position = vec4(vine_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
+                     "layout(location = 0) out vec2 vn_uv;\n"
+                     "void main() { vn_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+                     "              gl_Position = vec4(vn_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
     shaders.fragment = "#version 450\n"
-                       "layout(location = 0) in vec2 vine_uv;\n"
+                       "layout(location = 0) in vec2 vn_uv;\n"
                        "layout(location = 0) out vec4 out_color;\n"
                        "layout(binding = 0) uniform sampler2D picture;\n"
-                       "void main() { out_color = texture(picture, vine_uv); }\n";
+                       "void main() { out_color = texture(picture, vn_uv); }\n";
     return shaders;
 }
 
@@ -304,11 +304,11 @@ TEST(ContentPipelineTest, AnInstanceVariantDeclaresThePerInstanceStreamTheShader
 {
     ContentPipeline::Shaders shaders = contentShaders();
     shaders.vertex = "#version 450\n"
-                     "#pragma import_defines(VINE_INSTANCED)\n"
+                     "#pragma import_defines(VN_INSTANCED)\n"
                      "layout(location = 0) in vec3 position;\n"
                      "layout(location = 12) in mat4 instance_model;\n"
                      "void main() { gl_Position = instance_model * vec4(position, 1.0); }\n";
-    shaders.defines = { "VINE_INSTANCED" };
+    shaders.defines = { "VN_INSTANCED" };
 
     vn::vsg::GeometryFacts geometry;
     vn::vsg::ChannelFacts position;
@@ -354,7 +354,7 @@ TEST(ContentPipelineTest, AnInstanceVariantWithoutThePragmaIsRefused)
     // pragma the text would compile as a non-instanced shader while the layer declared binding 4: a picture
     // with every instance at the same transform. The layer refuses instead of guessing.
     ContentPipeline::Shaders shaders = contentShaders();
-    shaders.defines                  = { "VINE_INSTANCED" };
+    shaders.defines                  = { "VN_INSTANCED" };
 
     vn::vsg::GeometryFacts geometry;
     vn::vsg::ChannelFacts position;
@@ -551,12 +551,12 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     const auto refusing = [](const std::string& declaration) {
         ContentPipeline::Shaders shaders;
         shaders.vertex   = "#version 450\n"
-                           "layout(location = 0) out vec2 vine_uv;\n"
-                           "void main() { vine_uv = vec2(0.0); gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }\n";
+                           "layout(location = 0) out vec2 vn_uv;\n"
+                           "void main() { vn_uv = vec2(0.0); gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }\n";
         shaders.fragment = "#version 450\n"
-                           "layout(location = 0) in vec2 vine_uv;\n"
+                           "layout(location = 0) in vec2 vn_uv;\n"
                            "layout(location = 0) out vec4 out_color;\n" +
-                           declaration + "\nvoid main() { out_color = vec4(vine_uv, 0.0, 1.0); }\n";
+                           declaration + "\nvoid main() { out_color = vec4(vn_uv, 0.0, 1.0); }\n";
         vn::vsg::ProgramAbi abi;
         if (vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
             return std::unique_ptr<ContentPipeline>{};
@@ -572,7 +572,7 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
         << "the light block both paths carry is exactly what a screen text declares";
     EXPECT_EQ(refusing("layout(binding = 7, std140) uniform VineMaterialBlock { vec4 ambient; } material;"), nullptr)
         << "a content-only block is not this ABI's";
-    EXPECT_NE(refusing("layout(binding = 6) uniform sampler2D shadow_map;"), nullptr)
+    EXPECT_NE(refusing("layout(binding = 6) uniform sampler2D vn_shadow_map;"), nullptr)
         << "while the shadow's pair is exactly what a screen text may declare";
 }
 
@@ -808,7 +808,7 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
               nullptr);
     // A sampler in the block set is FINE now: the engine's own set 0 carries the material block AND the
     // diffuse map, so the two kinds share a set (the caller supplies the image - see api/BlockDescriptors).
-    auto map_in_a_block_set = layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D diffuseMap;");
+    auto map_in_a_block_set = layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;");
     ASSERT_NE(map_in_a_block_set, nullptr);
     EXPECT_EQ(map_in_a_block_set->samplerBindings(0U).size(), 1U);
     EXPECT_EQ(map_in_a_block_set->samplerBindings(0U)[0], 1U);
@@ -817,14 +817,14 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     // A sampler kind this backend has no view for (neither 2D nor cube).
     EXPECT_EQ(layerDeclaring("layout(set = 1, binding = 0) uniform sampler3D volume_tex;"), nullptr);
     // A CUBE declaration is SERVED: the engine's sky program samples the sky box's own cube map out of its
-    // material, and the by-name policy hands the drawable's own texture to `skyMap` exactly as it does to
-    // `diffuseMap` (api/ContentImages) - the cube view itself comes from api/MaterialImages.
-    auto cube_map = layerDeclaring("layout(set = 0, binding = 1) uniform samplerCube skyMap;");
+    // material, and the by-name policy hands the drawable's own texture to `vn_skyMap` exactly as it does to
+    // `vn_diffuseMap` (api/ContentImages) - the cube view itself comes from api/MaterialImages.
+    auto cube_map = layerDeclaring("layout(set = 0, binding = 1) uniform samplerCube vn_skyMap;");
     ASSERT_NE(cube_map, nullptr);
     EXPECT_EQ(cube_map->samplerBindings(0U).size(), 1U);
     EXPECT_EQ(cube_map->samplerBindings(0U)[0], 1U);
     // ... and the 2D declaration of the same name is the pair branch the sky program also ships.
-    auto flat_sky = layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D skyMap;");
+    auto flat_sky = layerDeclaring("layout(set = 0, binding = 1) uniform sampler2D vn_skyMap;");
     ASSERT_NE(flat_sky, nullptr);
 
     // A block that reads a PREFIX of the L1 struct is fine: the range it is bound with covers what it reads.

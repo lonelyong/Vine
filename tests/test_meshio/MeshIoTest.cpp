@@ -97,7 +97,7 @@ TEST(MeshIoTest, IsSupportedFormat)
 TEST(MeshIoTest, LoadMissingFileReturnsNull)
 {
     MeshLoader loader;
-    EXPECT_FALSE(loader.loadMerged(std::filesystem::temp_directory_path() / "vine_no_such_file.stl"));
+    EXPECT_FALSE(loader.loadMerged(std::filesystem::temp_directory_path() / "vn_no_such_file.stl"));
 }
 
 TEST(MeshIoTest, LoadAndExportObjRoundTrip)
@@ -106,7 +106,7 @@ TEST(MeshIoTest, LoadAndExportObjRoundTrip)
     ASSERT_TRUE(cube->isValid());
     ASSERT_EQ(cube->triangleCount(), 12u);
 
-    const auto path = std::filesystem::temp_directory_path() / "vine_meshio_cube.obj";
+    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_cube.obj";
 
     MeshExporter exporter;
     exporter.options().scale_factor = 1.0;
@@ -129,7 +129,7 @@ TEST(MeshIoTest, LoadAndExportObjRoundTrip)
 TEST(MeshIoTest, ExportAsciiStl)
 {
     const auto cube = makeCube();
-    const auto path = std::filesystem::temp_directory_path() / "vine_meshio_cube.stl";
+    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_cube.stl";
 
     MeshExporter exporter;
     exporter.options().scale_factor = 1.0;
@@ -150,7 +150,7 @@ TEST(MeshIoTest, ExportInvalidMeshThrows)
 
 TEST(MeshIoTest, LoadCachesSameFile)
 {
-    const auto path = std::filesystem::temp_directory_path() / "vine_meshio_cache.stl";
+    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_cache.stl";
     writeTriangleStl(path);
 
     MeshLoader loader;
@@ -166,7 +166,7 @@ TEST(MeshIoTest, LoadCachesSameFile)
 
 TEST(MeshIoTest, LoadDifferentOptionsNotCached)
 {
-    const auto path = std::filesystem::temp_directory_path() / "vine_meshio_opts.stl";
+    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_opts.stl";
     writeTriangleStl(path);
 
     MeshLoader loader;
@@ -186,7 +186,7 @@ TEST(MeshIoTest, LoadDifferentOptionsNotCached)
 
 TEST(MeshIoTest, CustomScaleMultipliesVertices)
 {
-    const auto path = std::filesystem::temp_directory_path() / "vine_meshio_scale.stl";
+    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_scale.stl";
     writeTriangleStl(path);
 
     MeshLoader loader;
@@ -214,7 +214,7 @@ TEST(MeshIoTest, CustomScaleMultipliesVertices)
 TEST(MeshIoTest, ExportAsWritesTheNamedFormat)
 {
     const auto cube = makeCube();
-    const auto path = std::filesystem::temp_directory_path() / "vine_meshio_export_as.stl";
+    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_export_as.stl";
 
     MeshExporter exporter;
     exporter.options().format = MeshExporter::Options::Format::Ascii;
@@ -233,6 +233,6 @@ TEST(MeshIoTest, ExportAsWritesTheNamedFormat)
 TEST(MeshIoTest, ExportAsRefusesAnUnknownFormat)
 {
     MeshExporter exporter;
-    EXPECT_THROW(exporter.exportAs(*makeCube(), u8"not_a_format", std::filesystem::temp_directory_path() / "vine_unknown.bin"),
+    EXPECT_THROW(exporter.exportAs(*makeCube(), u8"not_a_format", std::filesystem::temp_directory_path() / "vn_unknown.bin"),
                  std::runtime_error);
 }

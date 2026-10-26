@@ -5,7 +5,7 @@
  * Device-free by construction: the images are `vsg::ImageView` / `vsg::Sampler` create-infos and the plan is
  * values, so what is checked here is the POLICY - the names the engine's ABI reserves, and that the map is
  * picked by the identity the plan resolved rather than by position. The pixel half (a program whose
- * `shadow_map` reads the depth its pass declared, and the white stand-in when the pass declared none) lives
+ * `vn_shadow_map` reads the depth its pass declared, and the white stand-in when the pass declared none) lives
  * in ContentPassTest.
  */
 
@@ -51,37 +51,42 @@ AbiBinding sampler(const char* name, std::uint32_t set, std::uint32_t binding)
 TEST(ContentImagesTest, TheNameStatesWhereTheImageComesFrom)
 {
     // The names the engine's programs spend, and the catch-all the engine's screen programs live in. The
-    // drawable's own map is ONE row under two names: `diffuseMap` on the content programs and `skyMap` on
+    // drawable's own map is ONE row under two names: `vn_diffuseMap` on the content programs and `vn_skyMap` on
     // the sky program, which samples the sky box's own cube map out of its material (see builtin_skybox.frag:
-    // "the ABI's diffuseMap slot").
-    EXPECT_EQ(imageOriginOf("diffuseMap"), ImageOrigin::Material);
-    EXPECT_EQ(imageOriginOf("skyMap"), ImageOrigin::Material);
-    EXPECT_EQ(imageOriginOf("shadow_map"), ImageOrigin::Shadow);
-    for (const char* name : { "albedo_tex", "normal_tex", "emissive_tex", "pos_tex", "screen_tex", "map_tex", "" })
+    // "the ABI's vn_diffuseMap slot").
+    EXPECT_EQ(imageOriginOf("vn_diffuseMap"), ImageOrigin::Material);
+    EXPECT_EQ(imageOriginOf("vn_skyMap"), ImageOrigin::Material);
+    EXPECT_EQ(imageOriginOf("vn_shadow_map"), ImageOrigin::Shadow);
+    for (const char* name :
+         { "vn_albedo_tex", "vn_normal_tex", "vn_emissive_tex", "vn_pos_tex", "vn_screen_tex", "map_tex", "" })
     {
         EXPECT_EQ(imageOriginOf(name), ImageOrigin::Input) << "the name '" << name << "' is an input texture";
     }
-    // A name is not a pattern: a longer or differently spelled one is a different declaration.
+    // A name is not a pattern: a longer or differently spelled one is a different declaration, and the prefix
+    // is PART of the key - the unprefixed spellings are ordinary host names, not the engine's vocabulary.
     EXPECT_EQ(imageOriginOf("diffuseMap2"), ImageOrigin::Input);
     EXPECT_EQ(imageOriginOf("shadowMap"), ImageOrigin::Input);
     EXPECT_EQ(imageOriginOf("SkyMap"), ImageOrigin::Input);
+    EXPECT_EQ(imageOriginOf("diffuseMap"), ImageOrigin::Input);
+    EXPECT_EQ(imageOriginOf("baseColorMap"), ImageOrigin::Input);
+    EXPECT_EQ(imageOriginOf("shadow_map"), ImageOrigin::Input);
 }
 
 TEST(ContentImagesTest, AProgramSamplesTheShadowItAsksForByNameWhateverItsBinding)
 {
     ProgramAbi material_only;
-    material_only.bindings.push_back(sampler("diffuseMap", 0U, 1U));
+    material_only.bindings.push_back(sampler("vn_diffuseMap", 0U, 1U));
     EXPECT_FALSE(samplesShadowMap(material_only));
     EXPECT_FALSE(samplesShadowMap(ProgramAbi{}));
 
     // Where the text puts it does not matter: the name is what says the program can read the map.
     ProgramAbi engine_shaped;
-    engine_shaped.bindings.push_back(sampler("shadow_map", 0U, 3U));
-    engine_shaped.bindings.push_back(sampler("diffuseMap", 0U, 1U));
+    engine_shaped.bindings.push_back(sampler("vn_shadow_map", 0U, 3U));
+    engine_shaped.bindings.push_back(sampler("vn_diffuseMap", 0U, 1U));
     EXPECT_TRUE(samplesShadowMap(engine_shaped));
 
     ProgramAbi elsewhere;
-    elsewhere.bindings.push_back(sampler("shadow_map", 3U, 7U));
+    elsewhere.bindings.push_back(sampler("vn_shadow_map", 3U, 7U));
     EXPECT_TRUE(samplesShadowMap(elsewhere));
 }
 

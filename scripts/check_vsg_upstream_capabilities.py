@@ -22,7 +22,7 @@ The two claims:
 Usage:
     check_vsg_upstream_capabilities.py [vsg-root]
 
-The vsg root is taken from the argument, else $VINE_VSG_SRC_DIR, else the first
+The vsg root is taken from the argument, else $VN_VSG_SRC_DIR, else the first
 build*/_deps/vsg-src that exists. When no vsg checkout is present the check is
 SKIPPED and exits 0 (a source-less tree cannot falsify the claims).
 
@@ -43,7 +43,7 @@ VULKAN_HEADERS = "include/vsg/vk/vulkan.h"
 def find_vsg_root(argv: list[str]) -> pathlib.Path | None:
     if len(argv) > 1:
         return pathlib.Path(argv[1])
-    env = os.environ.get("VINE_VSG_SRC_DIR")
+    env = os.environ.get("VN_VSG_SRC_DIR")
     if env:
         return pathlib.Path(env)
     for candidate in sorted(pathlib.Path(".").glob("build*/_deps/vsg-src")):
@@ -110,7 +110,7 @@ def check_dynamic_rendering(root: pathlib.Path) -> list[tuple[bool, str]]:
 def main(argv: list[str]) -> int:
     root = find_vsg_root(argv)
     if root is None or not root.is_dir():
-        print("SKIPPED — no vsg checkout found (pass the vsg root, or set VINE_VSG_SRC_DIR)")
+        print("SKIPPED — no vsg checkout found (pass the vsg root, or set VN_VSG_SRC_DIR)")
         return 0
 
     claims = [("V3/D28: vsg uses no VkPipelineCache", check_pipeline_cache(root)),

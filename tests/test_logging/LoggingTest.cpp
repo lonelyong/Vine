@@ -204,7 +204,7 @@ TEST(LogSinkTest, StreamSinkWritesToStream)
 
 TEST(LogSinkTest, FileSinkWritesToFile)
 {
-    const auto path = std::filesystem::temp_directory_path() / "vine_test_log.txt";
+    const auto path = std::filesystem::temp_directory_path() / "vn_test_log.txt";
     std::filesystem::remove(path);
 
     // Scope the logger/sink so the file handle is released before removal;
@@ -228,14 +228,14 @@ TEST(LogSinkTest, FileSinkWritesToFile)
 
 TEST(LogSinkTest, DailyFileSinkWritesToDatedFile)
 {
-    const auto base = std::filesystem::temp_directory_path() / "vine_test_daily.log";
+    const auto base = std::filesystem::temp_directory_path() / "vn_test_daily.log";
 
     // The sink inserts the local date before the extension:
-    // base "vine_test_daily.log" -> "vine_test_daily_YYYY-MM-DD.log".
+    // base "vn_test_daily.log" -> "vn_test_daily_YYYY-MM-DD.log".
     const auto now = std::time(nullptr);
     const auto tm  = *std::localtime(&now);
     std::ostringstream name;
-    name << "vine_test_daily_" << std::put_time(&tm, "%Y-%m-%d") << ".log";
+    name << "vn_test_daily_" << std::put_time(&tm, "%Y-%m-%d") << ".log";
     const auto path = std::filesystem::temp_directory_path() / name.str();
     std::filesystem::remove(path);
 
@@ -294,7 +294,7 @@ TEST(LogTest, SetLevelControlsDefaultLogger)
 
 TEST(LogTest, InitWithFileSinkWritesToFile)
 {
-    const auto path = std::filesystem::temp_directory_path() / "vine_test_log_sink.txt";
+    const auto path = std::filesystem::temp_directory_path() / "vn_test_log_sink.txt";
     std::filesystem::remove(path);
 
     initDefault(LogConfig{ .pattern = "%v", .sinks = { LogSink::file(path) } });

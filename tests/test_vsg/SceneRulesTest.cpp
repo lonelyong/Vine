@@ -379,15 +379,15 @@ TEST(SceneRulesTest, CustomAttributeNameIsStableAndDistinctFromTheBuiltIns)
 {
     // The ShaderSet binding and the configurator's assignArray both call this, so a rename that
     // updated only one side would leave the attribute silently unbound.
-    EXPECT_EQ(customAttributeName(3u), "vine_Attribute3");
-    EXPECT_EQ(customAttributeName(7u), "vine_Attribute7");
+    EXPECT_EQ(customAttributeName(3u), "vn_Attribute3");
+    EXPECT_EQ(customAttributeName(7u), "vn_Attribute7");
     EXPECT_EQ(customAttributeName(3u), customAttributeName(3u));
     EXPECT_NE(customAttributeName(3u), customAttributeName(4u));
     for (std::uint32_t location : { 3u, 4u, 10u }) {
         const std::string name = customAttributeName(location);
-        EXPECT_NE(name, "vine_Vertex");
-        EXPECT_NE(name, "vine_Normal");
-        EXPECT_NE(name, "vine_Color");
+        EXPECT_NE(name, "vn_Vertex");
+        EXPECT_NE(name, "vn_Normal");
+        EXPECT_NE(name, "vn_Color");
         EXPECT_NE(name, "material");
     }
 }

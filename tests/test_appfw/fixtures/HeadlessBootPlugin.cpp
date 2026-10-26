@@ -1,6 +1,6 @@
 // 测试夹具：一个什么都不做的插件，用来钉住"加载插件是框架的内置启动动作"。
 // 用例把它拷进一个空目录当配置文件里的 built_in_plugin_dir，于是 loadAll() 只会扫描到它。
-// 只有 test_appfw 构建它（与 test_gui 的 vine_plugin_fixture_* 同一套做法），不影响别的扫描。
+// 只有 test_appfw 构建它（与 test_gui 的 vn_plugin_fixture_* 同一套做法），不影响别的扫描。
 //
 // 它还带一条**只在用例设了配置时才走**的启动写法：与界面无关的长活丢到池上，回来时回应用线程再继续
 // （`plugins.headless_boot.pool_ms`）。插件在池上那段里循环空着，应用线程谁也占不到它。

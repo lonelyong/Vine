@@ -88,7 +88,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 
 **实例化**不是子树状态，而是 **`Primitive` 的 draw 参数**：每个 `Primitive` 可以带一段列主序 `mat4`
 （每实例 16 个 float），收集时把切片、`first_instance`、`instance_count` 写进该 primitive 的命令，
-后端以 binding 4 的逐实例顶点流喂给 `#ifdef VINE_INSTANCED` 的顶点阶段。可见前缀只改 draw 参数，
+后端以 binding 4 的逐实例顶点流喂给 `#ifdef VN_INSTANCED` 的顶点阶段。可见前缀只改 draw 参数，
 不重传缓冲；包围盒和拾取按 primitive 的可见实例展开，命中结果给
 `geometry + primitiveIndex + instanceIndex`。逐实例材质/颜色/排序不在这一层：一条 draw 里它们必须相同。
 
@@ -493,7 +493,7 @@ auto pipeline = PassChain::build(&engine, options);
 pipeline->resize(surface_w, surface_h, device_pixel_ratio);  // 同时管离屏 / 合成 target（device 像素）与 HUD 叠加（逻辑像素）
 
 // 内容着色：必须**显式指定**程序。没有 shader preset 枚举，也没有兜底——
-// 引擎默认用的是命名的 forward 程序（flat 是它的同一对 stage + `#define VINE_FLAT 1`）：
+// 引擎默认用的是命名的 forward 程序（flat 是它的同一对 stage + `#define VN_FLAT 1`）：
 engine.setDefaultContentProgram(flatForwardProgram());   // 会话默认：没写 program 的 drawable 用它
 engine.setDefaultContentProgram(forwardProgram());       // 回到默认前向着色
 
@@ -619,7 +619,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 自定义通道**沿用自己的源 location**（转发范围 `L ≥ 3 且 L ≠ 8`）—— 当初避开 vsg 那套 0..11 密集编号就是为了
 不撞号；即使现在只剩一套编号，这个保留规则也不变（`L == 8` 的通道不转发）。
 
-> 另一个常见误记：`enableArray("vine_TexCoord0", …, 8)` 里的 **8 是数组下标（喂入顺序里的位置，= Vulkan binding）**，不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
+> 另一个常见误记：`enableArray("vn_TexCoord0", …, 8)` 里的 **8 是数组下标（喂入顺序里的位置，= Vulkan binding）**，不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
 
 **四个 canonical location 为什么是 0 / 1 / 2 / 8**：自定义路径下“通道 location = shader location”，而自定义通道的转发范围是
 `L ≥ 3 且 L ≠ 8` —— 所以 canonical 只有 `0/1/2` 三个位置能用，texcoord 必须去 `≥ 3` 区里占一个**保留号**：
@@ -627,7 +627,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | 位置 | 给谁 | 为什么是这个号 |
 | --- | --- | --- |
 | 0 / 1 | 位置、法线 | 与 vsg 一致 ⇒ 只读位置/法线的 shader 两条路径通用 |
-| 2 | 颜色 | `< 3` 的最后一个空位（vsg 内建 set 里颜色在 **6**，2..6 被它自己的 `vsg_TexCoord0..3`(2..5) 与 `vsg_Color`(6) 占满；我们的 set 用 `vine_Color`(2) / `vine_TexCoord0`(8)，见 §3.8 的表） |
+| 2 | 颜色 | `< 3` 的最后一个空位（vsg 内建 set 里颜色在 **6**，2..6 被它自己的 `vsg_TexCoord0..3`(2..5) 与 `vsg_Color`(6) 占满；我们的 set 用 `vn_Color`(2) / `vn_TexCoord0`(8)，见 §3.8 的表） |
 | 8 | texcoord | `≥ 3` 里由模块**显式保留**：通道 location == 8 的通道**不转发**，用户占不掉它（`Geometry::kTexCoordLocation`） |
 | 3..7、9.. | 自定义通道 | 全留给你（vsg 的 8 是 `vsg_Rotation`；两套 set 永不同时存在，撞号无害） |
 
@@ -648,7 +648,7 @@ layout(location = 5) in vec3 inTangent;    // 自定义：就是 Geometry 的 lo
 layout(location = 9) in vec4 inTint;       // 自定义：就是 Geometry 的 loc 9
 
 layout(set = 0, binding = 0) uniform VineMaterialBlock { /* 与内建路径同一个材质值 */ };
-layout(set = 0, binding = 1) uniform sampler2D baseColorMap;  // 五槽之一（1–5），需 VINE_TEXTURED
+layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;  // 五槽之一（1–5），需 VN_TEXTURED
 layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 ```
 
@@ -682,7 +682,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 **命名规则**：`builtin_<角色>.<阶段>`，例如 `builtin_deferred_lighting.frag`。`builtin_` 前缀是"这段文本归引擎"
 （宿主自己的 shader 永远不会出现在这个目录里），角色是**渲染器**的词（`forward` / `gbuffer` / `deferred_lighting` /
 `skybox` / `screen_copy` / `fullscreen`，也是别的引擎里同一个位置会有的词），阶段就是后缀 —— 角色里不重复阶段或
-目标（`gbuffer` 已经说了它写 G-buffer，不必再写 `_geometry`），也不带产品名或 C++ 的词（`vine_` / `vsg_` /
+目标（`gbuffer` 已经说了它写 G-buffer，不必再写 `_geometry`），也不带产品名或 C++ 的词（`vn_` / `vsg_` /
 `std_forward` 都试过并改掉了：后者读起来是 `std::forward`）。生成常量按同一条规则推导
 （`builtin_forward.vert` → `kBuiltinForwardVert`），**内建 program 也叫这个名字**（`builtin_forward`，同一份文件
 出多个 program 时加后缀：`builtin_forward_flat`、`builtin_forward_unlit`、`builtin_forward_normals`、
@@ -693,7 +693,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 **所有 GLSL 都归 SDK**：后端**没有**自己的 shader 目录（曾经有，2026-09-13 收回来了），它只决定怎么编译和绑。
 | 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §10 |
 
-> 这些 shader 是**真文件**（不是 C++ 字符串）：改了 `.glsl` 直接重编，`bash scripts/vine_shader_check.sh`
+> 这些 shader 是**真文件**（不是 C++ 字符串）：改了 `.glsl` 直接重编，`bash scripts/vn_shader_check.sh`
 > 会先把每个 shader（含各 define 变体）过一遍 glslangValidator，再核对嵌入副本与文件是否逐字节一致。
 
 ### 3.9 颜色空间：内部一律线性，编码只发生在两头
@@ -934,7 +934,7 @@ frame plan: 11 pass(es)
   没跑的 pass 是 0。
 - 自 M7 起这张表是**编译出来的那一帧**（`RenderEngine::compileFrame`）：帧循环执行的就是它，所以"表里写的"与"这一帧画的"
   是同一个答案，而不是事后的观察。
-- demo 有现成开关：`VINE_FRAME_PLAN=1` 会在 attach 那一帧之后把它打进日志（见 §4.2）。
+- demo 有现成开关：`VN_FRAME_PLAN=1` 会在 attach 那一帧之后把它打进日志（见 §4.2）。
 
 ### 3.13 一条描述符声明一个 pass：`PassDesc`（含 transient 目标）
 
@@ -1195,7 +1195,7 @@ scene_rt->setSamples(4);              // 默认 1；0 也当 1（不存在“零
 - **换样本数是换形状**：活目标把 `setSamples` 改成另一个数，下一帧会重建它的图像、帧缓冲与通道；正在被别人借
   深度时不能重建（与 `shareDepth` 那条拒绝同源）。
 - **代价**：显存与带宽大致随样本数成倍增长，颜色还要每帧多一次全图“读 + 写”（解析）。4× 在 1080p 上已经很可
-  观 —— 先量再定，`VINE_FRAME_PLAN=1` 与 `frameReport()` 能看每帧时间。
+  观 —— 先量再定，`VN_FRAME_PLAN=1` 与 `frameReport()` 能看每帧时间。
 
 ### 3.21 一个几何体多个图元：一份顶点，几条 draw
 
@@ -1335,7 +1335,7 @@ root->addChild(label);
 ### 4.1 构建
 
 ```bash
-cmake -S . -B build -G Ninja            # 第三方依赖走 FetchContent（VINE_USE_FETCHCONTENT=ON，默认）
+cmake -S . -B build -G Ninja            # 第三方依赖走 FetchContent（VN_USE_FETCHCONTENT=ON，默认）
 cmake --build build                     # 性能跑用 -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target Vine       # 只建 demo 应用
 ```
@@ -1353,22 +1353,22 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 
 | 环境变量 | 取值 | 作用 |
 | --- | --- | --- |
-| `VINE_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口**路径**（`forward` / `deferred`）。**默认 `deferred`**；`*_shadowed` 两个取值只为兼容旧脚本保留，选的是与**同名无后缀**完全相同的那条路径 —— 阴影现在两条路径都会建（`addDemoLighting` 给主方向光设了 `castShadow`），后缀不再代表"另一条管线" |
-| `VINE_SHADER_PRESET` | 任意值 | 把内容程序换成 `flatForwardProgram()`（验证平直着色通路） |
-| `VINE_FRAME_PLAN` | 任意值 | attach 那一帧之后把**帧计划**打进日志：一行一 pass（顺序、目标、相机、清屏、视口、输入输出、**上一帧各自的记录耗时**）—— 见 §3.12 |
-| `VINE_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（base colour / normal+factors / emissive+occlusion / view position）的 PiP 预览 |
-| `VINE_VSG_DEFERRED` | 任意值 | 加一条独立的"全屏延迟光照"pass（读 G-buffer 显示光照结果），用于 A/B 对照 |
-| `VINE_VSG_OFFSCREEN_MULTISLOT` | 任意值 | 把一个离屏 target 烘成两个内容槽（主场景 + 顶层叠加）并以 PiP 显示 |
-| `VINE_VSG_SLOT_DEMO` | 任意值 | 在主相机上再叠一个 (相机, 内容槽) 的 overlay pass，验证同视角多槽绘制 |
-| `VINE_VSG_OWN_WINDOW` | 任意值 | **临时逃生口**：后端自建窗口而非用宿主窗口（仅测试用；会忽略公告的表面尺寸） |
-| `VINE_TEST_DATA_DIR` | 目录 | demo 与各测试共用的**资产根目录**。不给时的查找顺序是 `<exe>/test_data` → `<exe>/../test_data`（源码树、build 树、安装树三种布局都覆盖）；demo 的 cube map 就从这里读，找不到时**跳过那只盒子并报一行**，而不是贴一张白图 |
+| `VN_PIPELINE` | `forward` / `deferred` / `forward_shadowed` / `deferred_shadowed` | 选主窗口**路径**（`forward` / `deferred`）。**默认 `deferred`**；`*_shadowed` 两个取值只为兼容旧脚本保留，选的是与**同名无后缀**完全相同的那条路径 —— 阴影现在两条路径都会建（`addDemoLighting` 给主方向光设了 `castShadow`），后缀不再代表"另一条管线" |
+| `VN_SHADER_PRESET` | 任意值 | 把内容程序换成 `flatForwardProgram()`（验证平直着色通路） |
+| `VN_FRAME_PLAN` | 任意值 | attach 那一帧之后把**帧计划**打进日志：一行一 pass（顺序、目标、相机、清屏、视口、输入输出、**上一帧各自的记录耗时**）—— 见 §3.12 |
+| `VN_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（base colour / normal+factors / emissive+occlusion / view position）的 PiP 预览 |
+| `VN_VSG_DEFERRED` | 任意值 | 加一条独立的"全屏延迟光照"pass（读 G-buffer 显示光照结果），用于 A/B 对照 |
+| `VN_VSG_OFFSCREEN_MULTISLOT` | 任意值 | 把一个离屏 target 烘成两个内容槽（主场景 + 顶层叠加）并以 PiP 显示 |
+| `VN_VSG_SLOT_DEMO` | 任意值 | 在主相机上再叠一个 (相机, 内容槽) 的 overlay pass，验证同视角多槽绘制 |
+| `VN_VSG_OWN_WINDOW` | 任意值 | **临时逃生口**：后端自建窗口而非用宿主窗口（仅测试用；会忽略公告的表面尺寸） |
+| `VN_TEST_DATA_DIR` | 目录 | demo 与各测试共用的**资产根目录**。不给时的查找顺序是 `<exe>/test_data` → `<exe>/../test_data`（源码树、build 树、安装树三种布局都覆盖）；demo 的 cube map 就从这里读，找不到时**跳过那只盒子并报一行**，而不是贴一张白图 |
 
 默认 demo（不给任何环境变量）的画面：不透明堆叠 + 主方向光投在 6×6 地面上的**阴影** + 一只**贴 cube map 的盒子** `env_box`。
 它的材质纹理按**方向**采样（texcoord 通道是 3 分量，引擎据此编译 `samplerCube` 变体，见 `Geometry::setTexcoords3()`），六张面图是
 `test_data/images/posx.jpg … negz.jpg`，读入后盒式滤波到 256²/面、再交给 `CubeMap::setFaceImage()` 的**具名**面（`posx` → `+X` … `negz` → `-Z`，
 不靠目录排序：六个名字排出来是 -X 在 +X 前面）。盒子放在**不透明场景**里：G-buffer 的几何阶段现在和
 前向阶段一样**采样材质的纹理**（2D 或 cube，按 texcoord 通道宽度选 sampler kind，见 `builtin_gbuffer.frag`），
-所以带贴图的盒子可以画在**写深度**的那一趟里、自己遮挡住背面。**纹理采样由 `VINE_TEXTURED` 门控，而后端只在材质的五个纹理槽
+所以带贴图的盒子可以画在**写深度**的那一趟里、自己遮挡住背面。**纹理采样由 `VN_TEXTURED` 门控，而后端只在材质的五个纹理槽
 至少有一个真有可用贴图时才发这个 define** ⇒ 无纹理的不透明内容（demo 整堆盒子）连 sampler 都不声明、也没有纹理取样，
 和加这个能力之前一样便宜。
 
@@ -1410,7 +1410,7 @@ HDR 且这个场景不发光，直接拷 rgb 会得到一块**读起来像"没�
   （内容 push constant ABI 不带），所以飞得离原点很远时会看到盒子的外面。demo 的轨道相机从 ~10 单位的距离
   乘性缩放，要飞出去得很远。
 
-shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.frag`，构建期嵌入，`vine_shader_check.sh` 逐 define
+shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.frag`，构建期嵌入，`vn_shader_check.sh` 逐 define
 组合编译），`BuiltinShaders::skyboxProgram()` 只是它的命名入口 —— 和 `forwardProgram()` / `gbufferGeometryProgram()`
 同一条路。
 
@@ -1439,8 +1439,8 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 **阴影由投影的那盏灯提出请求**（`Light::castShadow()` + `ShadowSettings{resolution, bias, filter}` /
 `ShadowFilter::{None, Hard, PCF}`），**两条路径都会**为它建一条 depth-only 的阴影 pass
 （`PassStage::Depth`，默认 1024²，`directionalShadowMatrix()` 从光那一侧框住内容）。
-内容集合**无条件**声明阴影 ABI（set 0：map 在 3、块在 4；全屏的延迟光照程序用 5 / 6），`shadow.params.x` 是开关 ——
-没有可用阴影时程序一次都不采那张图。宿主自己的程序声明了 `shadow_map` 却没带上它时，会**按 drawable** 报一条
+内容集合**无条件**声明阴影 ABI（set 0：map 在 3、块在 4；全屏的延迟光照程序用 5 / 6），`vn_shadow.params.x` 是开关 ——
+没有可用阴影时程序一次都不采那张图。宿主自己的程序声明了 `vn_shadow_map` 却没带上它时，会**按 drawable** 报一条
 `DiagnosticCategory::UnsupportedRequest`，而不是画出一张"没有阴影的阴影"。两个约定不同、且都写在 ABI 里：矩阵是
 **SDK 裁剪约定**（y 向上、z 0 近 → 1 远），纹理是**后端约定**（reverse-Z、near = 1 → far = 0、v = 0 是世界的"上"），
 着色器里各转一次。判据（三次像素断言 + 逐项变异）见 `.ai/design/graphics-architecture.md` §8.2 / §8.3 / §9。内容着色侧
@@ -1448,11 +1448,11 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 
 ```bash
 ./build/bin/Vine --open demo                                # deferred（默认）
-VINE_PIPELINE=forward  ./build/bin/Vine --open demo         # forward
-VINE_VSG_GBUFFER=1     ./build/bin/Vine --open demo         # + G-buffer 预览
-VINE_VSG_DEFERRED=1    ./build/bin/Vine --open demo         # + 独立延迟光照 pass
-VINE_VSG_OFFSCREEN_MULTISLOT=1 ./build/bin/Vine --open demo # 离屏 + PiP
-VINE_PIPELINE=forward_shadowed ./build/bin/Vine --open demo # 接受；与 forward 完全相同（阴影已是默认）
+VN_PIPELINE=forward  ./build/bin/Vine --open demo         # forward
+VN_VSG_GBUFFER=1     ./build/bin/Vine --open demo         # + G-buffer 预览
+VN_VSG_DEFERRED=1    ./build/bin/Vine --open demo         # + 独立延迟光照 pass
+VN_VSG_OFFSCREEN_MULTISLOT=1 ./build/bin/Vine --open demo # 离屏 + PiP
+VN_PIPELINE=forward_shadowed ./build/bin/Vine --open demo # 接受；与 forward 完全相同（阴影已是默认）
 ```
 
 ### 4.4 无头验证（仓库门禁跑的就是这些）
@@ -1465,7 +1465,7 @@ VINE_PIPELINE=forward_shadowed ./build/bin/Vine --open demo # 接受；与 forwa
 
 bash scripts/vsg_rewrite_gate.sh      # 一条命令的后端门禁：构建 + 全套件（设备用例不许 SKIP）+ validation 层
                                       # 0 VUID + 同步验证 0 SYNC-HAZARD + 卫生脚本 + 自检相位行逐字节 + 真窗口读像素
-bash scripts/vine_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
+bash scripts/vn_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
 ctest --test-dir build                # CTest 视角（24 个套件；见下面那段的口径）
 ```
 
@@ -1491,7 +1491,7 @@ ctest --test-dir build                # CTest 视角（24 个套件；见下面�
 后端自检（`./build/bin/vsg_backend_selftest`，上面两个脚本都会跑它）会驱动整条管线 —— forward、
 deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据行。
 `scripts/vsg_selftest_evidence.sh` 是渲染改动的主要回归门禁：**逐字节相同否则失败**（`--update` 重设
-基线）。用 `VINE_SELFTEST_FRAMES` 可以加大每个相位的帧数做压力跑。
+基线）。用 `VN_SELFTEST_FRAMES` 可以加大每个相位的帧数做压力跑。
 
 仓库有 **24 个 CTest 套件**（`ctest --test-dir build -C Release`），2026-10-13 实测 **24/24 通过**：
 早先在这里登记为"既有失败"的 `test_cppstd`（5）/ `test_runtime`（28）/ `test_system`（12 + 1 skip）现在都是绿的。

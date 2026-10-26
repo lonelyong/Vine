@@ -87,8 +87,8 @@ std::filesystem::path freshPluginDirectory(const std::string& stem)
 /// @return The directory holding nothing but the fixture plugin.
 std::filesystem::path bootPluginDirectory()
 {
-    const std::filesystem::path fixture = VINE_HEADLESS_BOOT_PLUGIN;
-    const std::filesystem::path dir     = freshPluginDirectory("vine_test_appfw_plugins");
+    const std::filesystem::path fixture = VN_HEADLESS_BOOT_PLUGIN;
+    const std::filesystem::path dir     = freshPluginDirectory("vn_test_appfw_plugins");
 
     std::error_code ec;
     std::filesystem::copy_file(fixture, dir / ("headless_boot" + fixture.extension().string()),
@@ -102,10 +102,10 @@ std::filesystem::path bootPluginDirectory()
 /// @return The directory holding the two fixtures that claim one identity.
 std::filesystem::path twinPluginDirectory()
 {
-    const std::filesystem::path dir = freshPluginDirectory("vine_test_appfw_twins");
+    const std::filesystem::path dir = freshPluginDirectory("vn_test_appfw_twins");
 
     std::error_code ec;
-    for (const char* const fixture : { VINE_HEADLESS_BOOT_PLUGIN, VINE_TWIN_IDENTITY_PLUGIN }) {
+    for (const char* const fixture : { VN_HEADLESS_BOOT_PLUGIN, VN_TWIN_IDENTITY_PLUGIN }) {
         const std::filesystem::path library = fixture;
         std::filesystem::copy_file(library, dir / library.filename(), std::filesystem::copy_options::overwrite_existing, ec);
     }
@@ -529,7 +529,7 @@ TEST(HeadlessBootTest, ARegistrationThatDisagreesWithItsLibraryIsReportedAndTheL
 
     // 手写一份"名字与 uuid 都跟库里不符"的注册文件（安装器或人手写错就是这样）。指向库文件的注册
     // 才做这个比对：目录注册没法说清里面的每个插件是谁。
-    const std::filesystem::path fixture  = VINE_HEADLESS_BOOT_PLUGIN;
+    const std::filesystem::path fixture  = VN_HEADLESS_BOOT_PLUGIN;
     const std::filesystem::path library  = dir / ("headless_boot" + fixture.extension().string());
     const std::filesystem::path registry = app->pluginRegistrationDirectory() / "mismatch.plugin";
 
@@ -606,7 +606,7 @@ TEST(HeadlessBootTest, ARegisteredDocumentTypeRecordsTheRegistrationOwnerTag)
     config.load_plugins   = false; // 这里只钉“标签→注册表”这条线，不加载任何插件
 
     // 不扫真正的内置插件目录（那里面是 GUI 插件）：给一个空目录。
-    vn::appfw::PluginManager::setBuiltInPluginDirectory(freshPluginDirectory("vine_test_appfw_documents"));
+    vn::appfw::PluginManager::setBuiltInPluginDirectory(freshPluginDirectory("vn_test_appfw_documents"));
 
     auto app = std::make_unique<WorkingHostApplication>(config, 1, argv);
     ASSERT_NE(app, nullptr);

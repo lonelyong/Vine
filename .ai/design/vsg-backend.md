@@ -180,7 +180,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 | # | 功能 | 说明 |
 |---|---|---|
 | F16 | 流共享 | `StreamKey` = buffer + 该 buffer 的 revision + 段；index 归一到整段 buffer。 |
-| F17 | 自定义属性 | location 3 起，转发 `vine_Attribute{location}`。 |
+| F17 | 自定义属性 | location 3 起，转发 `vn_Attribute{location}`。 |
 | F18 | 块存储 | 一个 mapped buffer：view / draw / material 三区；每帧 ring；稳态零写。 |
 | F19 | 描述符 | 一个 set，3 个 dynamic uniform binding（0 view / 1 draw / 2 material）。 |
 | F20 | 材质 arena | 每槽 `copies` 份；槽满 `Refused`；扩容只换 material 区。 |
@@ -191,7 +191,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 |---|---|---|
 | F21 | 纹理上传 | `MaterialImages` 键 `(Texture*, revision)`；D2 / Cube 视图；白 cube 兜底。 |
 | F22 | sampler | 按值缓存；`InputSetCache` 键 `(view, sampler)`。 |
-| F23 | 着色器文件 | `builtin_<角色>.<阶段>`；构建期嵌入；`vine_` 前缀。 |
+| F23 | 着色器文件 | `builtin_<角色>.<阶段>`；构建期嵌入；`vn_` 前缀。 |
 | F24 | 变体文本 | `#pragma import_defines` 决定文本；漏写会静默丢弃。 |
 | F25 | 证据 | 相位表 + 计数器 + 像素；`vsg_rewrite_gate.sh` 读 VUID / SYNC-HAZARD / 画面。 |
 

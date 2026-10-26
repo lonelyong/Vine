@@ -187,7 +187,7 @@ void DockPanelManager::addDockPanel(DockPanel* panel, DockAreas area)
         auto st = oc->state();
         if (st == DockingPaneBase::Docked || st == DockingPaneBase::Tabbed) {
             // Check if this panel is in the same target area via stored property
-            auto areaVar = oc->property("_vine_dockarea");
+            auto areaVar = oc->property("_vn_dockarea");
             if (areaVar.isValid() && areaVar.toInt() == static_cast<int>(area)) {
                 ++sameAreaCount;
                 if (!neighbor)
@@ -203,7 +203,7 @@ void DockPanelManager::addDockPanel(DockPanel* panel, DockAreas area)
 
     // Remember which area this panel belongs to
     if (auto* dpc = qobject_cast<DockingPaneContainer*>(dp))
-        dpc->setProperty("_vine_dockarea", static_cast<int>(area));
+        dpc->setProperty("_vn_dockarea", static_cast<int>(area));
 }
 
 void DockPanelManager::removeDockPanel(DockPanel* panel)

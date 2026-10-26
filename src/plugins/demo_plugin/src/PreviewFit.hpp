@@ -9,7 +9,7 @@
 /**
  * @brief The rectangle a preview draws its source into: the slot's box, letterboxed to the source's aspect.
  *
- * WHY THIS EXISTS. A fullscreen program maps `vine_uv` over the DESTINATION rectangle (see
+ * WHY THIS EXISTS. A fullscreen program maps `vn_uv` over the DESTINATION rectangle (see
  * BuiltinShaders::fullscreenVertexProgram), so copying a whole attachment into a rectangle of another
  * aspect squeezes it. The G-buffer follows the window while a preview slot is a fixed box, so widening the
  * window made the four previews look squashed and narrowing it stretched them - the copy is isotropic only
@@ -32,7 +32,7 @@ namespace vn::demo
  * wrote this" evidence the other tiles give by being coloured.
  *
  * WHY IT LIVES HERE, NEXT TO THE FIT. It is the same question as the letterbox arithmetic - what a preview
- * tile SHOWS - and it was answered in two places (the deferred strip and the VINE_VSG_GBUFFER strip) once
+ * tile SHOWS - and it was answered in two places (the deferred strip and the VN_VSG_GBUFFER strip) once
  * only, so one of them kept drawing the black tile. One function, both callers, one unit test.
  *
  * @param attachment Colour attachment index of the target being previewed.

@@ -237,13 +237,13 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         // The device profiler, when the environment asked for one: installed AFTER the record-and-submit
         // task, because the task is what the viewer propagates instrumentation through (the legacy
         // backend's own order, for the same reason).
-        if (std::getenv("VINE_VSG_PROFILE") != nullptr)
+        if (std::getenv("VN_VSG_PROFILE") != nullptr)
         {
             auto settings                        = ::vsg::Profiler::Settings::create();
-            settings->cpu_instrumentation_level  = envLevel("VINE_VSG_PROFILE_CPU", 0U);
+            settings->cpu_instrumentation_level  = envLevel("VN_VSG_PROFILE_CPU", 0U);
             // Level 1 is the level the executor's per-pass wrappers carry; a higher level timestamps every
             // recorded node and the profiler's fixed pool then drops what does not fit, silently.
-            settings->gpu_instrumentation_level  = envLevel("VINE_VSG_PROFILE_GPU", 1U);
+            settings->gpu_instrumentation_level  = envLevel("VN_VSG_PROFILE_GPU", 1U);
             impl->profiler                       = ::vsg::Profiler::create(settings);
             impl->viewer->assignInstrumentation(impl->profiler);
         }

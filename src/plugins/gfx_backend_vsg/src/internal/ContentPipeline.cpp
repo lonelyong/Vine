@@ -453,9 +453,9 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi, 
     // and the variant's own define is the one switch that asks for both the shader text and the four
     // attributes that feed it. Deriving the layout here - from the same define list the compiler receives -
     // is what keeps the pipeline's vertex input and its text from disagreeing.
-    const bool instanced = std::find(shaders.defines.begin(), shaders.defines.end(), "VINE_INSTANCED") !=
+    const bool instanced = std::find(shaders.defines.begin(), shaders.defines.end(), "VN_INSTANCED") !=
                            shaders.defines.end();
-    if (instanced && !shaderImportsDefine(shaders.vertex, "VINE_INSTANCED"))
+    if (instanced && !shaderImportsDefine(shaders.vertex, "VN_INSTANCED"))
     {
         return nullptr;  // the define would be dropped by vsg: the program does not opt in
     }

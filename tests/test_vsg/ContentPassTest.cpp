@@ -427,7 +427,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
         vertex.source = vn::String(
-            reinterpret_cast<const char8_t*>("#pragma import_defines(VINE_INSTANCED)\n"
+            reinterpret_cast<const char8_t*>("#pragma import_defines(VN_INSTANCED)\n"
                                              "layout(location = 0) in vec3 position;\n"
                                              "layout(location = 12) in mat4 instance_model;\n"
                                              "void main() { gl_Position = instance_model * vec4(position, 1.0); }\n"));
@@ -443,7 +443,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     variant.instanced = true;
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, variant, program_facts), FactMiss::None);
-    ASSERT_TRUE(program_facts.shaders.vertex.find("VINE_INSTANCED") != std::string::npos);
+    ASSERT_TRUE(program_facts.shaders.vertex.find("VN_INSTANCED") != std::string::npos);
 
     Triangle                                   triangle;
     const vn::intrusive_ptr<Geometry>        geometry(new Geometry());
@@ -1449,7 +1449,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     // The other half of AMaterialWithoutAMapSamplesWhite: the material HAS a texture, and what the shader
     // reads has to be the pixels the caller filled in. api/MaterialImages describes the image - a
     // data-backed vsg::Image, which the viewer's transfer step uploads before the frame that samples it
-    // records - the caller binds its view and sampler where its text declares `diffuseMap`, and this frame
+    // records - the caller binds its view and sampler where its text declares `vn_diffuseMap`, and this frame
     // draws a quad whose UVs run 0..1 over a 2x2 texture of four distinct colours: each quadrant of the
     // picture is one texel, so "the map reached the shader" is a picture rather than a claim.
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
@@ -1521,8 +1521,8 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
             "{\n"
             "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
             "} material;\n"
-            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
-            "void main() { outColor = vec4(texture(diffuseMap, uv).rgb, 1.0); }\n"));
+            "layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
+            "void main() { outColor = vec4(texture(vn_diffuseMap, uv).rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -1775,11 +1775,11 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
             "{\n"
             "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
             "} material;\n"
-            "layout(set = 0, binding = 1) uniform samplerCube diffuseMap;\n"
+            "layout(set = 0, binding = 1) uniform samplerCube vn_diffuseMap;\n"
             "void main()\n"
             "{\n"
             "    vec3 direction = normalize(vec3(uv * 2.0 - 1.0, 0.5));\n"
-            "    outColor = vec4(texture(diffuseMap, direction).rgb, 1.0);\n"
+            "    outColor = vec4(texture(vn_diffuseMap, direction).rgb, 1.0);\n"
             "}\n"));
         program->addStage(vertex);
         program->addStage(fragment);
@@ -2018,8 +2018,8 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
             "{\n"
             "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
             "} material;\n"
-            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
-            "void main() { outColor = vec4(texture(diffuseMap, uv).rgb, 1.0); }\n"));
+            "layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
+            "void main() { outColor = vec4(texture(vn_diffuseMap, uv).rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -2233,7 +2233,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     // paint the texture's colour on both sides of the picture.
     //
     // The program is written the way the engine's own stages are (see builtin_forward.vert): the texcoord
-    // input and the sampler sit behind `VINE_DIFFUSE_MAP`, the slot's kind is `#error`-guarded, and the
+    // input and the sampler sit behind `VN_DIFFUSE_MAP`, the slot's kind is `#error`-guarded, and the
     // fragment shades the material's own colour when the map is not defined.
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
@@ -2275,15 +2275,15 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
         vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "#pragma import_defines (VN_TEXTURED, VN_TEXCOORD_UV, VN_TEXCOORD_CUBE)\n"
             "layout(location = 0) in vec3 position;\n"
-            "#ifdef VINE_TEXTURED\n"
-            "#if defined(VINE_TEXCOORD_CUBE)\n"
+            "#ifdef VN_TEXTURED\n"
+            "#if defined(VN_TEXCOORD_CUBE)\n"
             "layout(location = 8) in vec3 texcoord;\n"
-            "#elif defined(VINE_TEXCOORD_UV)\n"
+            "#elif defined(VN_TEXCOORD_UV)\n"
             "layout(location = 8) in vec2 texcoord;\n"
             "#else\n"
-            "#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE\n"
+            "#error a sampled texcoord slot needs one kind: define VN_TEXCOORD_UV or VN_TEXCOORD_CUBE\n"
             "#endif\n"
             "#endif\n"
             "layout(location = 0) out vec2 uv;\n"
@@ -2291,7 +2291,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
             "void main()\n"
             "{\n"
             "    gl_Position = pc.projection * pc.modelView * vec4(position, 1.0);\n"
-            "#ifdef VINE_TEXTURED\n"
+            "#ifdef VN_TEXTURED\n"
             "    uv = texcoord;\n"
             "#else\n"
             "    uv = vec2(0.0);\n"
@@ -2300,20 +2300,20 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "#pragma import_defines (VN_TEXTURED, VN_TEXCOORD_UV, VN_TEXCOORD_CUBE)\n"
             "layout(location = 0) in vec2 uv;\n"
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
             "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "#ifdef VINE_TEXTURED\n"
-            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+            "#ifdef VN_TEXTURED\n"
+            "layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
             "#endif\n"
             "void main()\n"
             "{\n"
-            "#ifdef VINE_TEXTURED\n"
-            "    outColor = vec4(texture(diffuseMap, uv).rgb, 1.0);\n"
+            "#ifdef VN_TEXTURED\n"
+            "    outColor = vec4(texture(vn_diffuseMap, uv).rgb, 1.0);\n"
             "#else\n"
             "    outColor = vec4(material.base_color.rgb, 1.0);\n"
             "#endif\n"
@@ -2780,7 +2780,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
 TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
 {
     // The engine's contract for "this material has no texture": the sample is WHITE, so the shading is the
-    // material's own colour. A program that samples `diffuseMap` therefore cannot have that binding empty -
+    // material's own colour. A program that samples `vn_diffuseMap` therefore cannot have that binding empty -
     // an unwritten descriptor is undefined data, not "no map" - and this case draws exactly that program with
     // the fallback bound: the map half of the declared set is a 1x1 white image (api/WhiteImage), whose fill
     // is recorded before the content, and the picture is the material's diffuse multiplied by white.
@@ -2822,8 +2822,8 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
             "{\n"
             "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
-            "void main() { outColor = vec4(texture(diffuseMap, vec2(0.5, 0.5)).rgb * material.base_color.rgb, 1.0); }\n"));
+            "layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
+            "void main() { outColor = vec4(texture(vn_diffuseMap, vec2(0.5, 0.5)).rgb * material.base_color.rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -2975,7 +2975,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
 
 TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
 {
-    // THE ENGINE'S SHADOW ABI on the content path: the forward program declares `shadow_map` at set 0 /
+    // THE ENGINE'S SHADOW ABI on the content path: the forward program declares `vn_shadow_map` at set 0 /
     // binding 3 (next to the material at 0 and the map at 1) and reads it under the shadow block's switch.
     // Which image that binding carries is decided BY NAME (api/ContentImages): the map the pass' plan
     // RESOLVED - the input whose target states whose shadow it is - and the white stand-in when the plan
@@ -3068,11 +3068,11 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
         u8"{\n"
         u8"    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
         u8"} material;\n"
-        u8"layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
-        u8"layout(set = 0, binding = 3) uniform sampler2D shadow_map;\n"
+        u8"layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
+        u8"layout(set = 0, binding = 3) uniform sampler2D vn_shadow_map;\n"
         u8"void main() {\n"
-        u8"    vec3  albedo = texture(diffuseMap, vec2(0.5, 0.5)).rgb;\n"
-        u8"    float mapped = texture(shadow_map, vec2(0.5, 0.5)).r;\n"
+        u8"    vec3  albedo = texture(vn_diffuseMap, vec2(0.5, 0.5)).rgb;\n"
+        u8"    float mapped = texture(vn_shadow_map, vec2(0.5, 0.5)).r;\n"
         u8"    outColor = vec4(albedo * material.base_color.rgb * mapped, 1.0);\n"
         u8"}\n");
     const vn::intrusive_ptr<ShaderProgram> unshadowed_program = make_program(
@@ -3081,9 +3081,9 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
         u8"{\n"
         u8"    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
         u8"} material;\n"
-        u8"layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+        u8"layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
         u8"void main() {\n"
-        u8"    vec3 albedo = texture(diffuseMap, vec2(0.5, 0.5)).rgb;\n"
+        u8"    vec3 albedo = texture(vn_diffuseMap, vec2(0.5, 0.5)).rgb;\n"
         u8"    outColor = vec4(albedo * material.base_color.rgb, 1.0);\n"
         u8"}\n");
     ProgramFacts shadow_facts;
@@ -3241,7 +3241,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     EXPECT_EQ(shadow_image.sampler, shadow_layer->depthSampler());
 
     // The caller's sets, built per pass from what the policy picked: the map where the text names it, the
-    // white stand-in where the pass resolved none, and the material's own fallback for `diffuseMap`.
+    // white stand-in where the pass resolved none, and the material's own fallback for `vn_diffuseMap`.
     const vn::vsg::BlockDescriptors::SampledBinding with_map[] = {
         { 1U, white->view(), white->sampler() }, { 3U, shadow_image.view, shadow_image.sampler }
     };
@@ -4350,7 +4350,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
         lighting_layer.get(), &lighting_draws } };
 
     // The declared sets, from the programs' OWN declarations: the engine's forward program carries the
-    // material and the lights in set 0 (with the `shadow_map` slot its text declares, which this pass does
+    // material and the lights in set 0 (with the `vn_shadow_map` slot its text declares, which this pass does
     // not resolve - the WHITE stand-in is what the engine's own path binds there, see api/WhiteImage) and
     // the DRAW block in its own set 1; the G-buffer writer carries the material alone.
     const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
@@ -5352,7 +5352,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     // The tables a recording reads are PRODUCED (see api/ContentStore): the host tracks its live objects,
     // and the store answers for exactly what the frame's plan names, at the revision each object is at
     // NOW. This pass draws through tables nobody built by hand - and it draws ONE program twice, in one
-    // pass, with two variants whose PUSH DECLARATIONS differ (`VINE_DIFFUSE_MAP` gates the push constant
+    // pass, with two variants whose PUSH DECLARATIONS differ (`VN_DIFFUSE_MAP` gates the push constant
     // block itself), so the entry a drawable is served decides whether its matrices exist at all:
     //
     //   * the PLAIN command is collected FIRST (its half is the right of the picture), so the store builds
@@ -5401,22 +5401,22 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
         vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "#pragma import_defines (VN_TEXTURED, VN_TEXCOORD_UV, VN_TEXCOORD_CUBE)\n"
             "layout(location = 0) in vec3 position;\n"
-            "#ifdef VINE_TEXTURED\n"
-            "#if defined(VINE_TEXCOORD_CUBE)\n"
+            "#ifdef VN_TEXTURED\n"
+            "#if defined(VN_TEXCOORD_CUBE)\n"
             "layout(location = 8) in vec3 texcoord;\n"
-            "#elif defined(VINE_TEXCOORD_UV)\n"
+            "#elif defined(VN_TEXCOORD_UV)\n"
             "layout(location = 8) in vec2 texcoord;\n"
             "#else\n"
-            "#error a sampled texcoord slot needs one kind: define VINE_TEXCOORD_UV or VINE_TEXCOORD_CUBE\n"
+            "#error a sampled texcoord slot needs one kind: define VN_TEXCOORD_UV or VN_TEXCOORD_CUBE\n"
             "#endif\n"
             "layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;\n"
             "#endif\n"
             "layout(location = 0) out vec2 uv;\n"
             "void main()\n"
             "{\n"
-            "#ifdef VINE_TEXTURED\n"
+            "#ifdef VN_TEXTURED\n"
             "    gl_Position = pc.projection * pc.modelView * vec4(position, 1.0);\n"
             "    uv = texcoord;\n"
             "#else\n"
@@ -5427,20 +5427,20 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
         fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#pragma import_defines (VINE_TEXTURED, VINE_TEXCOORD_UV, VINE_TEXCOORD_CUBE)\n"
+            "#pragma import_defines (VN_TEXTURED, VN_TEXCOORD_UV, VN_TEXCOORD_CUBE)\n"
             "layout(location = 0) in vec2 uv;\n"
             "layout(location = 0) out vec4 outColor;\n"
             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
             "{\n"
             "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
             "} material;\n"
-            "#ifdef VINE_TEXTURED\n"
-            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
+            "#ifdef VN_TEXTURED\n"
+            "layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
             "#endif\n"
             "void main()\n"
             "{\n"
-            "#ifdef VINE_TEXTURED\n"
-            "    outColor = vec4(texture(diffuseMap, uv).rgb, 1.0);\n"
+            "#ifdef VN_TEXTURED\n"
+            "    outColor = vec4(texture(vn_diffuseMap, uv).rgb, 1.0);\n"
             "#else\n"
             "    outColor = vec4(material.base_color.rgb, 1.0);\n"
             "#endif\n"
@@ -5690,8 +5690,8 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
             "{\n"
             "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
             "} material;\n"
-            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
-            "void main() { outColor = vec4(texture(diffuseMap, uv).rgb, 1.0); }\n"));
+            "layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
+            "void main() { outColor = vec4(texture(vn_diffuseMap, uv).rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -5922,8 +5922,8 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
             "{\n"
             "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
             "} material;\n"
-            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
-            "void main() { outColor = vec4(texture(diffuseMap, uv).rgb, 1.0); }\n"));
+            "layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
+            "void main() { outColor = vec4(texture(vn_diffuseMap, uv).rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -6145,8 +6145,8 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
             "{\n"
             "    vec4 ambient; vec4 diffuse; vec4 specular; float shininess;\n"
             "} material;\n"
-            "layout(set = 0, binding = 1) uniform sampler2D diffuseMap;\n"
-            "void main() { outColor = vec4(texture(diffuseMap, uv).rgb, 1.0); }\n"));
+            "layout(set = 0, binding = 1) uniform sampler2D vn_diffuseMap;\n"
+            "void main() { outColor = vec4(texture(vn_diffuseMap, uv).rgb, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -6324,13 +6324,13 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
 
 TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
 {
-    // The SDK's OWN sky program (`BuiltinShaders::skyboxProgram`) names its map `skyMap`, and the sky box
+    // The SDK's OWN sky program (`BuiltinShaders::skyboxProgram`) names its map `vn_skyMap`, and the sky box
     // carries that map in its MATERIAL (see builtin_skybox.frag: "the material's texture ... the ABI's
-    // diffuseMap slot"). This case pins what that name resolves to: the DRAWABLE's own map - one geometry
+    // vn_diffuseMap slot"). This case pins what that name resolves to: the DRAWABLE's own map - one geometry
     // channel of directions, one cube map, nothing assembled by hand - so the authored direction decides
     // which face is read, a material with no map takes the DECLARED kind's white, and a map of the other
     // kind (a 2D texture where the text declares `samplerCube`) is answered the same way instead of being
-    // written into the slot as an invalid descriptor. Until `skyMap` was read as the drawable's map the
+    // written into the slot as an invalid descriptor. Until `vn_skyMap` was read as the drawable's map the
     // whole program was refused where its layer would be built.
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
     if (!created.ok)
@@ -6513,7 +6513,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, content_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
         << "the SDK's own sky text is served, not refused";
-    // TWO halves, because a material without a map is a different VARIANT of the program (VINE_DIFFUSE_MAP);
+    // TWO halves, because a material without a map is a different VARIANT of the program (VN_DIFFUSE_MAP);
     // the text is the same either way, and the variant is what the tables key their entries by.
     EXPECT_EQ(assembly.halves().halves(), 2U);
     // THREE sets: the sky box's cube (one source for both directions), the bare material's empty source and

@@ -3,7 +3,7 @@
 //
 // The host must refuse it rather than read a PluginInfo whose layout it cannot
 // trust (see PluginAbi), and say so in the log. Only the tests build this fixture,
-// and they load it by the path injected as VINE_LEGACY_ABI_PLUGIN.
+// and they load it by the path injected as VN_LEGACY_ABI_PLUGIN.
 #include <vine/appfw/Plugin.hpp>
 
 extern "C" const vn::appfw::PluginInfo* vinePluginQuery()

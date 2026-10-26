@@ -64,7 +64,7 @@
 | F11 | 实例流 | `BufferSlice<float> instance_transforms`，每实例 16 float 列主序 mat4。 |
 | F12 | 可见前缀 | `std::optional<size_t> visible_instances`；只改 draw 参数，不重传。 |
 | F13 | 收集 | 每个 primitive 一条命令；可见数为 0 只跳过该 primitive。 |
-| F14 | 后端 | binding 4 的逐实例流 + `VINE_INSTANCED`（bit 8）+ `Draw.instances` / `firstInstance`。 |
+| F14 | 后端 | binding 4 的逐实例流 + `VN_INSTANCED`（bit 8）+ `Draw.instances` / `firstInstance`。 |
 | F15 | 包围盒 | 每条 primitive 的可见实例矩阵变换局部盒后的并集。 |
 | F16 | 拾取 | 逐 primitive、逐可见实例；结果 `geometry + primitiveIndex + instanceIndex`。 |
 

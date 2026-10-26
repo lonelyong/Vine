@@ -3,7 +3,7 @@ vn_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(FetchContent)
-if(VINE_USE_FETCHCONTENT)
+if(VN_USE_FETCHCONTENT)
     # tinyxml2 is baked into the RoboticsIO DLL as a static library. Its
     # pkg-config block breaks under multi-config generators; see the patch.
     FetchContent_Declare(tinyxml2

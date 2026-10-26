@@ -22,7 +22,7 @@ String fixturePath()
 TEST(DynamicLibraryLoaderTest, LoadMissingReturnsNull)
 {
     DynamicLibraryLoader loader;
-    EXPECT_EQ(loader.load(u8"vine_no_such_library_xyz"), nullptr);
+    EXPECT_EQ(loader.load(u8"vn_no_such_library_xyz"), nullptr);
 }
 
 TEST(DynamicLibraryLoaderTest, ReusesAlreadyLoadedLibrary)
@@ -43,7 +43,7 @@ TEST(DynamicLibraryLoaderTest, ReusesAlreadyLoadedLibrary)
 TEST(DynamicLibraryLoaderTest, FindReturnsNullWhenNotLoaded)
 {
     DynamicLibraryLoader loader;
-    EXPECT_EQ(loader.find(u8"vine_no_such_library_xyz"), nullptr);
+    EXPECT_EQ(loader.find(u8"vn_no_such_library_xyz"), nullptr);
 }
 
 TEST(DynamicLibraryLoaderTest, SharedInstanceIsSingle)
@@ -51,7 +51,7 @@ TEST(DynamicLibraryLoaderTest, SharedInstanceIsSingle)
     auto& a = DynamicLibraryLoader::instance();
     auto& b = DynamicLibraryLoader::instance();
     EXPECT_EQ(&a, &b);
-    EXPECT_EQ(a.load(u8"vine_no_such_library_xyz"), nullptr);
+    EXPECT_EQ(a.load(u8"vn_no_such_library_xyz"), nullptr);
 }
 
 TEST(DynamicLibraryLoaderTest, ResolvesKnownSymbol)
@@ -62,12 +62,12 @@ TEST(DynamicLibraryLoaderTest, ResolvesKnownSymbol)
 
     // The fixture exports this one symbol; calling it proves resolveSymbol() hands back the real
     // function rather than an address somewhere inside the library.
-    auto* answer = lib->resolveSymbol<int()>(u8"vine_test_fixture_answer");
+    auto* answer = lib->resolveSymbol<int()>(u8"vn_test_fixture_answer");
     ASSERT_NE(answer, nullptr);
     EXPECT_EQ(answer(), 42);
 
     // A name the fixture does not export resolves to nothing.
-    EXPECT_EQ(lib->resolveSymbol<int()>(u8"vine_test_fixture_missing"), nullptr);
+    EXPECT_EQ(lib->resolveSymbol<int()>(u8"vn_test_fixture_missing"), nullptr);
 }
 
 TEST(DynamicLibraryLoaderTest, SearchPathResolvesAndDeduplicates)

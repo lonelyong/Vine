@@ -168,8 +168,8 @@ class Session
 
     /** @brief Whether this session measures the device (see @ref gpuProfile).
      *
-     * The switch is the environment's, read ONCE when the session comes up: `VINE_VSG_PROFILE` asks for a
-     * profiler, `VINE_VSG_PROFILE_CPU` / `VINE_VSG_PROFILE_GPU` set its two instrumentation levels (defaults
+     * The switch is the environment's, read ONCE when the session comes up: `VN_VSG_PROFILE` asks for a
+     * profiler, `VN_VSG_PROFILE_CPU` / `VN_VSG_PROFILE_GPU` set its two instrumentation levels (defaults
      * 0 and 1 - level 1 is the per-pass level the executor's wrappers carry; a higher level timestamps every
      * recorded node and the profiler's fixed query pool then drops what does not fit, silently).
      *

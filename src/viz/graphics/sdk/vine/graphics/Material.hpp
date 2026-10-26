@@ -29,7 +29,7 @@ VN_GRAPHICS_NS_BEGIN
  * - The material counts its own edits (`revision()`), because every shading value travels through a setter; a
  *   consumer that answers for a material caches on that number instead of reading the values back every frame.
  * - Textures are a five-slot SET (`TextureSlot`): each slot is a map plus its `Sampler`, the slot's identity
- *   decides its binding and colour space, and a material carrying any slot takes the program's `VINE_TEXTURED`
+ *   decides its binding and colour space, and a material carrying any slot takes the program's `VN_TEXTURED`
  *   variant (five samplers; an absent slot is short-circuited by the block's flags - graphics-material.md §2.5).
  * - It is a MaterialBase, not the only one: `MaterialInstance` overrides some of these values for one drawable
  *   without copying the asset (graphics-material.md 2.2). A host that wants a per-object tint or a swapped normal

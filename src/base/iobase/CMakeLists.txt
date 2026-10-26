@@ -3,7 +3,7 @@ vn_add_library(IOBASE_TARGET_NAME IOBase)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(FetchContent)
-if(VINE_USE_FETCHCONTENT)
+if(VN_USE_FETCHCONTENT)
     # madler/zlib always defines both a shared and a static target; the patch
     # removes the shared one so only zlibstatic is built and listed.
     FetchContent_Declare(zlib

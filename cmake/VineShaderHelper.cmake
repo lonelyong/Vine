@@ -30,7 +30,7 @@
 include_guard(GLOBAL)
 
 # Generated headers live here; consumers get this on their include path.
-set(VINE_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated")
+set(VN_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated")
 
 # vn_declare_embedded_shaders — declares the generation rule for one header.
 #
@@ -57,13 +57,13 @@ function(vn_declare_embedded_shaders)
         message(FATAL_ERROR "vn_declare_embedded_shaders: SOURCES is required")
     endif()
 
-    get_property(declared GLOBAL PROPERTY VINE_EMBEDDED_SHADERS_DECLARED)
+    get_property(declared GLOBAL PROPERTY VN_EMBEDDED_SHADERS_DECLARED)
     if(ARG_OUTPUT IN_LIST declared)
         message(FATAL_ERROR
             "vn_declare_embedded_shaders: ${ARG_OUTPUT} is already declared")
     endif()
 
-    set(header "${VINE_GENERATED_INCLUDE_DIR}/${ARG_OUTPUT}")
+    set(header "${VN_GENERATED_INCLUDE_DIR}/${ARG_OUTPUT}")
     set(sources "")
     foreach(source IN LISTS ARG_SOURCES)
         if(NOT IS_ABSOLUTE "${source}")
@@ -105,10 +105,10 @@ function(vn_declare_embedded_shaders)
         VERBATIM
     )
 
-    add_custom_target(vine_embed_shaders_${rule_suffix} DEPENDS "${header}")
+    add_custom_target(vn_embed_shaders_${rule_suffix} DEPENDS "${header}")
 
-    set_property(GLOBAL APPEND PROPERTY VINE_EMBEDDED_SHADERS_DECLARED "${ARG_OUTPUT}")
-    set_property(GLOBAL APPEND PROPERTY VINE_EMBEDDED_SHADER_SOURCES ${sources})
+    set_property(GLOBAL APPEND PROPERTY VN_EMBEDDED_SHADERS_DECLARED "${ARG_OUTPUT}")
+    set_property(GLOBAL APPEND PROPERTY VN_EMBEDDED_SHADER_SOURCES ${sources})
 endfunction()
 
 # vn_use_embedded_shaders — wires a target that includes a declared header.
@@ -123,7 +123,7 @@ function(vn_use_embedded_shaders target)
         message(FATAL_ERROR "vn_use_embedded_shaders: OUTPUT is required")
     endif()
 
-    get_property(declared GLOBAL PROPERTY VINE_EMBEDDED_SHADERS_DECLARED)
+    get_property(declared GLOBAL PROPERTY VN_EMBEDDED_SHADERS_DECLARED)
     if(NOT ARG_OUTPUT IN_LIST declared)
         message(FATAL_ERROR
             "vn_use_embedded_shaders: ${ARG_OUTPUT} was never declared; "
@@ -131,9 +131,9 @@ function(vn_use_embedded_shaders target)
     endif()
 
     string(MAKE_C_IDENTIFIER "${ARG_OUTPUT}" rule_suffix)
-    set(header "${VINE_GENERATED_INCLUDE_DIR}/${ARG_OUTPUT}")
-    target_include_directories(${target} PRIVATE "${VINE_GENERATED_INCLUDE_DIR}")
-    add_dependencies(${target} vine_embed_shaders_${rule_suffix})
+    set(header "${VN_GENERATED_INCLUDE_DIR}/${ARG_OUTPUT}")
+    target_include_directories(${target} PRIVATE "${VN_GENERATED_INCLUDE_DIR}")
+    add_dependencies(${target} vn_embed_shaders_${rule_suffix})
     if(ARG_SOURCES)
         target_sources(${target} PRIVATE "${header}")
     endif()

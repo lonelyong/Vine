@@ -40,7 +40,7 @@
 
 #include <SARibbon.h>
 
-#include <vine/vine_global.hpp>
+#include <vine/vn_global.hpp>
 
 #include <vine/appfw/Command.hpp>
 #include <vine/appfw/CommandManager.hpp>
@@ -1026,7 +1026,7 @@ TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
     cfg->setString(u8"name", u8"Vine");
     cfg->setInt(u8"max", 100);
 
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vine_config_save_test";
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vn_config_save_test";
     std::error_code             ec;
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir, ec);
@@ -2582,7 +2582,7 @@ ScriptedStdinBuf& scriptedStdin()
 std::filesystem::path makeTempCaseDir(const char* tag)
 {
     static std::atomic<int> counter{ 0 };
-    const auto              dir = std::filesystem::temp_directory_path() / ("vine_test_userio_" + std::string(tag) + "_" + std::to_string(++counter));
+    const auto              dir = std::filesystem::temp_directory_path() / ("vn_test_userio_" + std::string(tag) + "_" + std::to_string(++counter));
 
     std::error_code error;
     std::filesystem::remove_all(dir, error);
@@ -4812,12 +4812,12 @@ class UserPluginSandbox {
   private:
     static std::filesystem::path emptyDirectory()
     {
-        return std::filesystem::temp_directory_path() / "vine_sandbox_empty_plugin_dir";
+        return std::filesystem::temp_directory_path() / "vn_sandbox_empty_plugin_dir";
     }
 
     vn::appfw::PluginManager*           manager_;
     std::unique_ptr<BuiltInPluginDirectoryScope> directory_scope_;
-    std::filesystem::path       directory_{ std::filesystem::temp_directory_path() / "vine_test_plugins" };
+    std::filesystem::path       directory_{ std::filesystem::temp_directory_path() / "vn_test_plugins" };
     vn::String                registration_;
 };
 
@@ -5159,7 +5159,7 @@ TEST(PluginLifecycleTest, ConfigFileIsOptIn)
     auto* app = GuiEnv::app.get();
     ASSERT_NE(app, nullptr);
 
-    const auto path = std::filesystem::temp_directory_path() / "vine_test_config_never_created.json";
+    const auto path = std::filesystem::temp_directory_path() / "vn_test_config_never_created.json";
     std::filesystem::remove(path);
 
     EXPECT_TRUE(app->setConfigFile(path)) << "文件不存在不是错误：首次运行用默认值";
@@ -5474,7 +5474,7 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     }
 
     std::error_code ec;
-    const auto      user_dir = std::filesystem::temp_directory_path() / "vine_user_plugins_test";
+    const auto      user_dir = std::filesystem::temp_directory_path() / "vn_user_plugins_test";
     std::filesystem::remove_all(user_dir, ec);
     ASSERT_TRUE(std::filesystem::create_directories(user_dir, ec));
 
@@ -5503,12 +5503,12 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     EXPECT_EQ(pm->pluginRegistrations().size(), 1u);
 
     // 相对路径必须落盘成绝对路径：注册文件是下次启动读的，那时的工作目录未必定是同一个。
-    const auto relative_dir = std::filesystem::temp_directory_path() / "vine_relative_plugins_test";
+    const auto relative_dir = std::filesystem::temp_directory_path() / "vn_relative_plugins_test";
     std::filesystem::remove_all(relative_dir, ec);
     ASSERT_TRUE(std::filesystem::create_directories(relative_dir, ec));
     const auto previous_directory = std::filesystem::current_path();
     std::filesystem::current_path(std::filesystem::temp_directory_path(), ec);
-    const auto relative_id = pm->installPlugin(u8"vine_relative_plugins_test", vn::appfw::PluginScope::User);
+    const auto relative_id = pm->installPlugin(u8"vn_relative_plugins_test", vn::appfw::PluginScope::User);
     std::filesystem::current_path(previous_directory, ec);
     ASSERT_FALSE(relative_id.empty()) << "相对路径也应能注册";
     const auto relative_entries = pm->pluginRegistrations();
@@ -5648,7 +5648,7 @@ TEST(PluginLifecycleTest, InstalledLocationIsDiscoveredAndDeduplicated)
 
     // 源 2：另一个目录里的同一插件。它只会被发现，不会被实例化。
     std::error_code ec;
-    const auto      second_dir = std::filesystem::temp_directory_path() / "vine_test_plugins_second";
+    const auto      second_dir = std::filesystem::temp_directory_path() / "vn_test_plugins_second";
     std::filesystem::remove_all(second_dir, ec);
     ASSERT_TRUE(std::filesystem::create_directories(second_dir, ec));
     ASSERT_TRUE(std::filesystem::copy_file(source, second_dir / source.filename(),
@@ -5773,10 +5773,10 @@ TEST(PluginLifecycleTest, InstallRejectsUnusableRegistrationId)
 
     // 以分隔符结尾的目录：取目录名作为 id，而不是因为 filename() 为空
     // （directory / ""）就拼出一个注册目录之外的文件。
-    const std::filesystem::path trailing = std::filesystem::temp_directory_path() / "vine_plugins_trailing";
+    const std::filesystem::path trailing = std::filesystem::temp_directory_path() / "vn_plugins_trailing";
     std::filesystem::create_directories(trailing, ec);
     const vn::String id = pm->installPlugin(vn::String((trailing / "").u8string()), vn::appfw::PluginScope::User);
-    EXPECT_TRUE(id == u8"vine_plugins_trailing") << "应当取目录名，而不是写出畸形文件名";
+    EXPECT_TRUE(id == u8"vn_plugins_trailing") << "应当取目录名，而不是写出畸形文件名";
     if (!id.empty()) {
         EXPECT_TRUE(pm->uninstallPlugin(id, vn::appfw::PluginScope::User));
     }
@@ -5784,7 +5784,7 @@ TEST(PluginLifecycleTest, InstallRejectsUnusableRegistrationId)
     EXPECT_EQ(pm->pluginRegistrations().size(), baseline) << "临时注册应当被清掉";
 
     // 名字含 ':'（Windows 上是盘符/数据流分隔符）：拒绝，且不留文件。
-    const std::filesystem::path bad = std::filesystem::temp_directory_path() / "vine_bad:name";
+    const std::filesystem::path bad = std::filesystem::temp_directory_path() / "vn_bad:name";
     std::filesystem::create_directories(bad, ec);
     EXPECT_TRUE(pm->installPlugin(vn::String(bad.u8string()), vn::appfw::PluginScope::User).empty())
         << "含 ':' 的名字必须被拒绝";
@@ -5805,8 +5805,8 @@ TEST(PluginLifecycleTest, PluginsWithoutCompatibleAbiAreRefused)
     auto* pm = app->pluginManager();
     ASSERT_NE(pm, nullptr);
 
-    const std::filesystem::path legacy(VINE_LEGACY_ABI_PLUGIN);
-    const std::filesystem::path future(VINE_FUTURE_ABI_PLUGIN);
+    const std::filesystem::path legacy(VN_LEGACY_ABI_PLUGIN);
+    const std::filesystem::path future(VN_FUTURE_ABI_PLUGIN);
     ASSERT_TRUE(std::filesystem::exists(legacy)) << legacy;
     ASSERT_TRUE(std::filesystem::exists(future)) << future;
 
@@ -5876,7 +5876,7 @@ TEST(PluginLifecycleTest, DisabledDependencyBlocksDependentsTransitively)
 
     // 第三个夹具（依赖 test_plugin）摆进沙箱目录，它才在扫描范围内。
     std::error_code             ec;
-    const std::filesystem::path chain_lib(VINE_CHAIN_PLUGIN);
+    const std::filesystem::path chain_lib(VN_CHAIN_PLUGIN);
     std::filesystem::copy_file(chain_lib, sandbox.directory() / chain_lib.filename(),
                                std::filesystem::copy_options::overwrite_existing, ec);
     ASSERT_TRUE(std::filesystem::exists(sandbox.directory() / chain_lib.filename()));
@@ -5928,7 +5928,7 @@ TEST(PluginLifecycleTest, UnresolvablePluginsAreSkippedWhileTheRestLoads)
     ASSERT_FALSE(sandbox.registration().empty());
 
     std::error_code             ec;
-    const std::filesystem::path chain_lib(VINE_CHAIN_PLUGIN);
+    const std::filesystem::path chain_lib(VN_CHAIN_PLUGIN);
     std::filesystem::copy_file(chain_lib, sandbox.directory() / chain_lib.filename(),
                                std::filesystem::copy_options::overwrite_existing, ec);
     ASSERT_TRUE(std::filesystem::exists(sandbox.directory() / chain_lib.filename()));
@@ -5965,7 +5965,7 @@ TEST(PluginLifecycleTest, DeclaredDependencyCycleIsPrunedNotFatal)
     ASSERT_FALSE(sandbox.registration().empty());
 
     std::error_code ec;
-    for (const char* fixture : { VINE_LOOP_A_PLUGIN, VINE_LOOP_B_PLUGIN }) {
+    for (const char* fixture : { VN_LOOP_A_PLUGIN, VN_LOOP_B_PLUGIN }) {
         const std::filesystem::path library(fixture);
         std::filesystem::copy_file(library, sandbox.directory() / library.filename(),
                                    std::filesystem::copy_options::overwrite_existing, ec);

@@ -29,7 +29,7 @@ namespace
 {
 
 /// Key under which a pane remembers the area it should dock back to.
-constexpr const char* kAreaProperty = "_vine_dockarea";
+constexpr const char* kAreaProperty = "_vn_dockarea";
 
 /// Maps a dock area to the position DockingPanes expects.
 ///
@@ -249,7 +249,7 @@ DockAreas DockPanel::dockArea() const
     case DockingPaneBase::Tabbed:
     {
         // Derive the current area dynamically so it stays correct even after
-        // the pane was moved by dragging (the stored _vine_dockarea property
+        // the pane was moved by dragging (the stored _vn_dockarea property
         // is only refreshed by addDockPanel()).
         auto* mgr = c->dockingManager();
         if (mgr) {
@@ -262,7 +262,7 @@ DockAreas DockPanel::dockArea() const
             }
         }
         // Fall back to the remembered area if the position cannot be derived.
-        auto var = c->property("_vine_dockarea");
+        auto var = c->property("_vn_dockarea");
         if (var.isValid())
             return static_cast<DockAreas>(var.toInt());
         return DockAreas::None;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vine_shader_check.sh — Offline validation of every embedded GLSL shader.
+# vn_shader_check.sh — Offline validation of every embedded GLSL shader.
 #
 # Shaders are compiled at RUNTIME (vsg ShaderCompiler / glslang), so a syntax
 # error, an unbalanced variant #if, or a bad binding would only show up as a
@@ -8,15 +8,15 @@
 #
 #   0. EXPAND   replace every `#include "vine_params.glsl"` line with the
 #               fragment's text using the SAME script the build uses
-#               (cmake/VineEmbedShaders.cmake, VINE_EXPAND_ONLY). What this gate
+#               (cmake/VineEmbedShaders.cmake, VN_EXPAND_ONLY). What this gate
 #               then compiles and hashes is exactly what the build embeds — one
 #               expansion implementation, so the two cannot disagree.
 #   1. COMPILE  every shader under a shaders/ directory with glslangValidator,
 #               once per combination of the variant defines the backend may set
-#               (VINE_VERTEX_COLOR, VINE_DIFFUSE_MAP, VINE_FLAT) crossed with
-#               each texcoord kind (VINE_TEXCOORD_UV / VINE_TEXCOORD_CUBE, of
+#               (VN_VERTEX_COLOR, VN_DIFFUSE_MAP, VN_FLAT) crossed with
+#               each texcoord kind (VN_TEXCOORD_UV / VN_TEXCOORD_CUBE, of
 #               which the backend sets exactly one). A shader that uses
-#               `#ifdef VINE_VERTEX_COLOR` therefore has to compile in BOTH
+#               `#ifdef VN_VERTEX_COLOR` therefore has to compile in BOTH
 #               variants in the same run, which is what the runtime does per
 #               drawable. Unused defines are inert in GLSL, so the matrix needs
 #               no manifest to stay in sync with the sources.
@@ -32,11 +32,11 @@
 # a failure rather than a dead file, and a fragment no shader includes is one too.
 #
 # Usage:
-#   scripts/vine_shader_check.sh [BUILD_DIR]      BUILD_DIR defaults to <root>/build
+#   scripts/vn_shader_check.sh [BUILD_DIR]      BUILD_DIR defaults to <root>/build
 #
 # Env overrides:
 #   GLSLANG_VALIDATOR      Validator binary (default: glslangValidator on PATH).
-#   VINE_SHADER_CHECK_STAGE  glslang target env (default: vulkan1.1).
+#   VN_SHADER_CHECK_STAGE  glslang target env (default: vulkan1.1).
 #   CMAKE_BIN              cmake binary (default: cmake on PATH).
 #
 # Exit code 0 when every shader compiles and every embedded copy is in sync.
@@ -48,7 +48,7 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD="${1:-$ROOT/build}"
 
 VALIDATOR="${GLSLANG_VALIDATOR:-$(command -v glslangValidator || true)}"
-TARGET_ENV="${VINE_SHADER_CHECK_STAGE:-vulkan1.1}"
+TARGET_ENV="${VN_SHADER_CHECK_STAGE:-vulkan1.1}"
 CMAKE="${CMAKE_BIN:-$(command -v cmake || true)}"
 
 INVENTORY="$ROOT/cmake/VineShaders.cmake"
@@ -56,14 +56,14 @@ INVENTORY="$ROOT/cmake/VineShaders.cmake"
 # The variant defines the backend can set on a compiled stage. Keep in sync with
 # the define names used by the shaders themselves (the compile matrix below is
 # what catches a mismatch).
-VARIANT_DEFINES=(VINE_VERTEX_COLOR VINE_DIFFUSE_MAP VINE_FLAT VINE_INSTANCED)
+VARIANT_DEFINES=(VN_VERTEX_COLOR VN_DIFFUSE_MAP VN_FLAT VN_INSTANCED)
 # The texcoord KIND is not an on/off flag: the backend sets EXACTLY ONE of these
 # on every content variant (the geometry's texcoord width decides which), and the
 # shaders reject a sampled slot whose kind is unstated (#error) rather than
 # defaulting to one. The matrix therefore runs every flag combination once per
 # kind — the shapes a real variant can have — instead of the full cross product,
 # which would keep generating states the sources now refuse on purpose.
-VARIANT_KINDS=(VINE_TEXCOORD_UV VINE_TEXCOORD_CUBE)
+VARIANT_KINDS=(VN_TEXCOORD_UV VN_TEXCOORD_CUBE)
 
 FAILED=0
 
@@ -104,7 +104,7 @@ declare -A EXPANDED   # <source path relative to ROOT> -> expanded copy
 for shader in "${SHADERS[@]}"; do
     rel="${shader#"$ROOT"/}"
     out="$EXPANDED_DIR/${rel//\//__}"
-    if "$CMAKE" "-DOUT=$out" "-DSOURCES=$shader" -DVINE_EXPAND_ONLY=ON \
+    if "$CMAKE" "-DOUT=$out" "-DSOURCES=$shader" -DVN_EXPAND_ONLY=ON \
         -P "$ROOT/cmake/VineEmbedShaders.cmake" >"$WORK/expand.log" 2>&1; then
         EXPANDED["$rel"]="$out"
     else
@@ -208,7 +208,7 @@ else
             expanded="${EXPANDED[$rel]:-}"
             if [ -z "$expanded" ]; then
                 expanded="$EXPANDED_DIR/${rel//\//__}.sync"
-                if ! "$CMAKE" "-DOUT=$expanded" "-DSOURCES=$source" -DVINE_EXPAND_ONLY=ON \
+                if ! "$CMAKE" "-DOUT=$expanded" "-DSOURCES=$source" -DVN_EXPAND_ONLY=ON \
                     -P "$ROOT/cmake/VineEmbedShaders.cmake" >"$WORK/expand.log" 2>&1; then
                     echo "[FAIL] $name: #include expansion failed"
                     sed 's/^/       /' "$WORK/expand.log"

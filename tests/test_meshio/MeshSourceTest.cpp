@@ -51,7 +51,7 @@ class TempDir
     {
         static std::atomic<unsigned long long> counter{ 0 };
         std::error_code                        ec;
-        path_ = std::filesystem::temp_directory_path(ec) / ("vine_stl_" + std::to_string(counter.fetch_add(1)));
+        path_ = std::filesystem::temp_directory_path(ec) / ("vn_stl_" + std::to_string(counter.fetch_add(1)));
         std::filesystem::create_directories(path_, ec);
     }
 

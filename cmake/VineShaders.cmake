@@ -36,11 +36,11 @@
 #     the built-in pipeline carries the same word (see RenderPipelineBuilder: pass `gbuffer`,
 #     `deferred_lighting`).
 #
-#   vine_<topic>.glsl   e.g. vine_params.glsl
+#   vn_<topic>.glsl   e.g. vine_params.glsl
 #
 #   * A FRAGMENT, not a stage: it has no `#version` and no `main`, it is not embedded on its own,
 #     and a shader names it with `#include "vine_params.glsl"` (the build inlines it - see
-#     cmake/VineEmbedShaders.cmake). `vine_` rather than `builtin_` because what it holds is the
+#     cmake/VineEmbedShaders.cmake). `vn_` rather than `builtin_` because what it holds is the
 #     engine's ABI vocabulary (the parameter blocks), not the text of one stage; `.glsl` because
 #     the extension names its role in the build: an include, never a compiled stage.
 #   * It is declared under INCLUDES below, not SOURCES: the entry is not a program, but the
@@ -51,7 +51,7 @@
 # (builtin_forward.vert -> kBuiltinForwardVert).
 # Adding a fragment: drop the .glsl there, list it under INCLUDES, and `#include` it from the
 # stages that need it.
-# scripts/vine_shader_check.sh validates every shader listed here.
+# scripts/vn_shader_check.sh validates every shader listed here.
 
 include(VineShaderHelper)
 

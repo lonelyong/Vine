@@ -5,7 +5,7 @@
 //
 // The handshake is hand-written rather than taken from VN_DECLARE_PLUGIN, precisely
 // because the current SDK cannot express a revision from the future. Only the tests
-// build this fixture, and they load it by the path injected as VINE_FUTURE_ABI_PLUGIN.
+// build this fixture, and they load it by the path injected as VN_FUTURE_ABI_PLUGIN.
 #include <vine/appfw/Plugin.hpp>
 
 extern "C" const vn::appfw::PluginAbi* vinePluginAbi()

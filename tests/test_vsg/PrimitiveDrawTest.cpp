@@ -205,7 +205,7 @@ vn::intrusive_ptr<Scene> makeThreePartScene()
 // vertex set and still reach the rasteriser as separate draws - and that is a picture plus a binding count.
 TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUpload)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     const vn::intrusive_ptr<Scene> scene = makeThreePartScene();
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
@@ -269,7 +269,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
 
 TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     // The same four points, drawn twice: once at the default one-pixel size and once with the StateNode saying
     // nine. Everything else is identical (one geometry, one primitive, one program, one pipeline), so the pixel
@@ -329,7 +329,7 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
 
 TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     // The same quad, assembled three ways: six indices as a list, four as a strip, four as a fan. The pixel
     // counts must agree, because the only thing that differs is which triples the assembler forms.
@@ -384,7 +384,7 @@ TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
 
 TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
 {
-    VINE_SKIP_WITHOUT_SDK_DEVICE(fixture);
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
     // The CAD case: one horizontal LINE primitive drawn twice, at the default one-pixel width and with the
     // StateNode saying four. A rasterised line's width is dynamic state (`vkCmdSetLineWidth`), so the picture

@@ -84,7 +84,7 @@ class SdkPixelFixture
 /// failure of the case rather than a skip of the machine. It lives here rather than in one case file because the
 /// device cases are spread over several, and a case that forgot one of the three checks would report a missing
 /// device as a failing feature.
-#define VINE_SKIP_WITHOUT_SDK_DEVICE(fixture)                                                                   \
+#define VN_SKIP_WITHOUT_SDK_DEVICE(fixture)                                                                   \
     if (!SdkPixelFixture::available()) {                                                                        \
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";                      \
     }                                                                                                           \

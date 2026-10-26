@@ -54,7 +54,7 @@ const ImageFileFormat kContainers[] = { ImageFileFormat::Png, ImageFileFormat::B
  */
 std::filesystem::path assetPath(const std::string& relative)
 {
-    return std::filesystem::path(VINE_TEST_DATA_DIR) / relative;
+    return std::filesystem::path(VN_TEST_DATA_DIR) / relative;
 }
 
 /**
@@ -369,7 +369,7 @@ TEST(ImageEncodeTest, OnlyTheBaseLevelIsWritten)
 
 TEST(ImageEncodeTest, SavesAndLoadsThroughARealFile)
 {
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vine_imageio_roundtrip.png";
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vn_imageio_roundtrip.png";
     std::filesystem::remove(path);
 
     const auto source = patternImage(9, 4, PixelFormat::Rgba8Unorm);
@@ -425,7 +425,7 @@ TEST(ImageDecodeTest, ReportsAMissingFileAsARuntimeError)
 
 TEST(ImageDecodeTest, ReportsAnEmptyFileAsARuntimeError)
 {
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vine_imageio_empty.png";
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vn_imageio_empty.png";
     {
         std::ofstream create(path, std::ios::binary | std::ios::trunc);
         ASSERT_TRUE(static_cast<bool>(create));

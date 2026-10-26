@@ -231,7 +231,7 @@ class ContentPipeline
      * WHERE THE IMAGES COME FROM is the pass', not a caller's: the source's colour attachments occupy
      * bindings 0..N-1 (the ABI's own convention: "binding i is attachment i"), the source's depth takes the
      * next free binding when a shader may sample it, the pass' imported textures fill the text's remaining
-     * declared sampler bindings in input declaration order, a declared `shadow_map` takes ITS binding, and a
+     * declared sampler bindings in input declaration order, a declared `vn_shadow_map` takes ITS binding, and a
      * declared shadow block takes its own. `sampledSetLayout` answers that layout per (colours, depths) - the
      * pass builds the set from it (see ContentPass), which is why `declaredSets()` is empty for this kind.
      *
@@ -360,7 +360,7 @@ class ContentPipeline
      *
      * A FULL-SCREEN layer's is the engine's screen ABI plus whatever the text declares: the source's colour
      * attachments at bindings 0..color_bindings-1 (binding i IS attachment i), the source's depth at the next
-     * binding, and then the text's own declarations - a `shadow_map` at the binding the text names (not at
+     * binding, and then the text's own declarations - a `vn_shadow_map` at the binding the text names (not at
      * "the next free slot": the engine's shadowed lighting program hard-codes 5 for a four-colour G-buffer,
      * so a pass whose source depth is NOT sampleable would otherwise put the map one binding too low), and a
      * declared shadow block at its own binding. A depth slot never takes a binding the text names for

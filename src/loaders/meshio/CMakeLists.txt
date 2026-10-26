@@ -10,7 +10,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(FetchContent)
 
-if(VINE_USE_FETCHCONTENT)
+if(VN_USE_FETCHCONTENT)
     # assimp is baked into the MeshIO DLL as a static library. Only the library
     # itself is built: no samples, no tests, no CLI tools, no viewer.
     FetchContent_Declare(assimp

@@ -217,7 +217,7 @@ struct MaterialFacts
     /// The five texture slots, in `TextureSlot` order. A null map means the slot is absent - which is what the
     /// block's flag bits say as well (this list is what the CONTENT layer resolves images from, the flags are
     /// what the shader reads). It is a fact the content layer needs: any present slot is what puts the drawable
-    /// in the program's `VINE_TEXTURED` variant (see api/ProgramVariant). Each pointer is borrowed with the
+    /// in the program's `VN_TEXTURED` variant (see api/ProgramVariant). Each pointer is borrowed with the
     /// entry - the material owns it.
     std::array<MaterialSlotFacts, vn::graphics::kTextureSlotCount> slots{};
 };

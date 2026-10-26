@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <vine/vine_global.hpp>
+#include <vine/vn_global.hpp>
 
 #ifdef VN_CRYPTO_LIB
 #    define VN_CRYPTO_API VN_EXPORT

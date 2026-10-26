@@ -35,7 +35,7 @@ backlog T16 的两个触发条件都已经出现：
 2. **资产 / 实例两级**：`Material`（资产）与 `MaterialInstance`（稀疏覆盖）共享 `MaterialBase`；
    `RenderCommand` 持有 `MaterialBasePtr`。实例解析结果按（父 revision，自身 revision）缓存。
 3. **纹理集 + 二元变体**：五个语义槽（base_color / metallic_roughness / normal / occlusion / emissive），
-   每槽带 `Sampler`；`VINE_TEXTURED` 一个布尔位决定是否声明五个采样器，缺槽绑类型化常量回退。
+   每槽带 `Sampler`；`VN_TEXTURED` 一个布尔位决定是否声明五个采样器，缺槽绑类型化常量回退。
 4. **透明度**：`AlphaMode::Opaque | Mask | Blend` 在材质上；幅度仍是 drawable opacity；有效 alpha 是两者与
    base 贴图 alpha 的乘积；`isTransparent()` 同时读两个输入。取代旧规则“材质不贡献 alpha”。
 5. **G-buffer**：四张附件重排为 albedo / 八面体 normal + roughness + metallic / emissive + occlusion /
@@ -67,6 +67,6 @@ backlog T16 的两个触发条件都已经出现：
 - 单贴图与 64 B 块：`src/viz/graphics/sdk/vine/graphics/Material.hpp`、`ShaderAbi.hpp` 的
   `VineMaterialBlock`、`shaders/vine_params.glsl`。
 - 变体机制与门禁：`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/ProgramVariant.hpp`、
-  `scripts/vine_shader_check.sh`。
+  `scripts/vn_shader_check.sh`。
 - 采样器按值缓存已经存在：`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/MaterialImages.hpp`
   （`acquire(texture, sampler, why)`）。

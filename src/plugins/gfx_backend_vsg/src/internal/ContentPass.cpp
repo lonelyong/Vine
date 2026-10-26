@@ -73,7 +73,7 @@ std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
  * (see ContentPipeline::kInputSet) FOR THE PROGRAMS THAT READ THEM THERE, while the engine's own programs
  * keep every map outside that set - the material block and the diffuse map at set 0, the per-drawable block
  * at set 1 - and are served by name instead (see api/ContentImages: a texture slot from the material,
- * `shadow_map` from the pass' resolved images). Compiling such a program against an input set is a LAYOUT
+ * `vn_shadow_map` from the pass' resolved images). Compiling such a program against an input set is a LAYOUT
  * question rather than a size one: its per-drawable block lives in set 1, and a sampled set in that slot is
  * exactly the mismatch ContentPipeline::acquire's guard refuses - measured: every command of the engine's
  * forward path was refused ("its pipeline identity has no compiled pipeline"), 42 lines per frame, with the
@@ -744,7 +744,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     if (declares_map && !vn::vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image))
     {
         reportRefused("a full-screen drawing call",
-                      "its program declares `shadow_map` and this pass resolved no readable map (the depth is "
+                      "its program declares `vn_shadow_map` and this pass resolved no readable map (the depth is "
                       "not sampleable, or the producer published no matrix)");
         return false;
     }
@@ -1518,7 +1518,7 @@ void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::
     }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                        vn::String::fromUtf8("the pass declared a shadow, but the program shading it declares no `shadow_map` "
+                        vn::String::fromUtf8("the pass declared a shadow, but the program shading it declares no `vn_shadow_map` "
                                  "sampler, so the map does not reach its drawables: they are shaded unshadowed"));
 }
 

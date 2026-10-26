@@ -71,6 +71,11 @@ intrusive_ptr<ShaderProgram> makeProgram(const char8_t* name, std::u8string_view
  * depends on how many other things a pipeline happens to have cannot be written down (see
  * .ai/design/graphics-architecture.md §9).
  *
+ * @note
+ * - `vn_shadow_map` is an ABI KEY, not a local: the backend decides what a declared sampler gets BY NAME
+ *   (ContentImages::imageOriginOf keys on this exact spelling), so this declaration is that contract's other
+ *   half - renaming one side alone rebinds the slot to a pass input instead.
+ *
  * @param set_index     Descriptor set both bindings live in.
  * @param map_binding   Binding the map takes (the block follows it).
  * @param qualify_set   Whether to spell the set out. A fullscreen program's source declares set 0
@@ -87,14 +92,14 @@ std::u8string shadowBindings(std::uint32_t set_index, std::uint32_t map_binding,
         return qualify_set ? std::u8string(u8"layout(set = ") + digits(set_index) + u8", binding = " + digits(binding) + u8")"
                            : std::u8string(u8"layout(binding = ") + digits(binding) + u8")";
     };
-    std::u8string text = layout(map_binding) + u8" uniform sampler2D shadow_map;\n";
+    std::u8string text = layout(map_binding) + u8" uniform sampler2D vn_shadow_map;\n";
     text += (qualify_set ? std::u8string(u8"layout(set = ") + digits(set_index) + u8", binding = " + digits(map_binding + 1u)
                                   + u8", std140) uniform VineShadowBlock\n{\n"
                         : std::u8string(u8"layout(binding = ") + digits(map_binding + 1u)
                               + u8", std140) uniform VineShadowBlock\n{\n");
     text += u8"    mat4 viewToLight;   // view space -> light clip\n";
     text += u8"    vec4 params;        // x = enabled, y = depth bias, z = strength, w = the light it belongs to\n";
-    text += u8"} shadow;";
+    text += u8"} vn_shadow;";
     return text;
 }
 
@@ -113,7 +118,7 @@ std::u8string shadowBindings(std::uint32_t set_index, std::uint32_t map_binding,
  * phase, which asserts exactly that they do not move).
  */
 constexpr char8_t shadow_term[] =
-    u8"        if (shadow.params.x > 0.5 && i == int(shadow.params.w))\n"
+    u8"        if (vn_shadow.params.x > 0.5 && vn_i == int(vn_shadow.params.w))\n"
     u8"        {\n"
     u8"            // Where this fragment lands in the LIGHT's map, and how deep the nearest caster\n"
     u8"            // the map found is. Outside the map's rectangle nothing casts, so the fragment\n"
@@ -128,22 +133,22 @@ constexpr char8_t shadow_term[] =
     u8"            // the sun (a z that never matches) or samples a mirrored texel (a v that lands\n"
     u8"            // somewhere else). Both were measured, one bug at a time, by vsg_backend_selftest's\n"
     u8"            // deferred shadow phase - it is the only gate that can see them.\n"
-    u8"            vec4  light_clip = shadow.viewToLight * vec4(pos, 1.0);\n"
-    u8"            vec3  light_uv   = light_clip.xyz / light_clip.w;\n"
-    u8"            vec2  map_uv     = light_uv.xy * vec2(0.5, -0.5) + 0.5;\n"
-    u8"            float frag       = 1.0 - (light_uv.z * 0.5 + 0.5);\n"
-    u8"            if (all(greaterThan(map_uv, vec2(0.0))) && all(lessThan(map_uv, vec2(1.0))))\n"
+    u8"            vec4  vn_light_clip = vn_shadow.viewToLight * vec4(vn_pos, 1.0);\n"
+    u8"            vec3  vn_light_uv   = vn_light_clip.xyz / vn_light_clip.w;\n"
+    u8"            vec2  vn_map_uv     = vn_light_uv.xy * vec2(0.5, -0.5) + 0.5;\n"
+    u8"            float vn_frag       = 1.0 - (vn_light_uv.z * 0.5 + 0.5);\n"
+    u8"            if (all(greaterThan(vn_map_uv, vec2(0.0))) && all(lessThan(vn_map_uv, vec2(1.0))))\n"
     u8"            {\n"
-    u8"                float caster = texture(shadow_map, map_uv).r;\n"
+    u8"                float vn_caster = texture(vn_shadow_map, vn_map_uv).r;\n"
     u8"                // Reverse-Z: being in FRONT of the caster is a LARGER value, so the bias\n"
     u8"                // that keeps a surface out of its own shadow leans the same way.\n"
-    u8"                float lit    = (frag + shadow.params.y) >= caster ? 1.0 : 0.0;\n"
-    u8"                ndl *= mix(1.0, lit, clamp(shadow.params.z, 0.0, 1.0));\n"
+    u8"                float vn_lit    = (vn_frag + vn_shadow.params.y) >= vn_caster ? 1.0 : 0.0;\n"
+    u8"                vn_ndl *= mix(1.0, vn_lit, clamp(vn_shadow.params.z, 0.0, 1.0));\n"
     u8"            }\n"
     u8"        }";
 
-constexpr char8_t shadow_bindings_marker[] = u8"// VINE_SHADOW_BINDINGS";
-constexpr char8_t shadow_term_marker[]     = u8"// VINE_SHADOW_TERM";
+constexpr char8_t shadow_bindings_marker[] = u8"// VN_SHADOW_BINDINGS";
+constexpr char8_t shadow_term_marker[]     = u8"// VN_SHADOW_TERM";
 
 /**
  * @brief Inserts the shadow ABI at a shipped source's two markers.
@@ -186,7 +191,7 @@ bool insertShadowAbi(std::u8string& source, std::u8string_view declarations, std
  * A source that LOST a marker is not refused here, unlike the deferred lighting program: this is the
  * engine's default content program, and taking every drawable in the session down over a comment
  * would be a wild overreaction. The consequence of a lost marker is "no shadow reaches this text",
- * and that is not silent: the backend reports a drawable whose program declares no shadow_map while
+ * and that is not silent: the backend reports a drawable whose program declares no vn_shadow_map while
  * its pass declared a shadow input (see SceneBridge), and EmbeddedShadersTest asserts both markers
  * against the shipped source.
  *
@@ -208,7 +213,7 @@ intrusive_ptr<ShaderProgram> forwardProgram()
     // The forward content program carries the shadow ABI UNCONDITIONALLY (see the .frag: the content
     // set is shared per (target, depth mode) and a session picks the content program once, so a
     // shadowed variant would double that cache for every target and a host's own program would still
-    // have no shadowed twin to pick). `shadow.params.x` is the switch the one text takes both paths
+    // have no shadowed twin to pick). `vn_shadow.params.x` is the switch the one text takes both paths
     // with, which is what the ABI's params block is for (ShaderAbi.hpp).
     return makeProgram(u8"builtin_forward", shaders::kBuiltinForwardVert, forwardFragmentSource());
 }
@@ -224,7 +229,7 @@ intrusive_ptr<ShaderProgram> flatForwardProgram()
     // it is a different program text, which is what a program IS, and it keeps this program's identity
     // independent of any backend's define plumbing.
     return makeProgram(u8"builtin_forward_flat", shaders::kBuiltinForwardVert,
-                       withDefine(forwardFragmentSource(), u8"#define VINE_FLAT 1"));
+                       withDefine(forwardFragmentSource(), u8"#define VN_FLAT 1"));
 }
 
 intrusive_ptr<ShaderProgram> gbufferGeometryProgram()
@@ -237,7 +242,7 @@ intrusive_ptr<ShaderProgram> unlitForwardProgram()
     // One define on the same text, like the flat preset: the material / map / vertex-colour inputs are the same
     // expressions, so "unlit" cannot drift from "lit" about what the surface COLOUR is - it only skips the sum.
     return makeProgram(u8"builtin_forward_unlit", shaders::kBuiltinForwardVert,
-                       withDefine(forwardFragmentSource(), u8"#define VINE_UNLIT 1"));
+                       withDefine(forwardFragmentSource(), u8"#define VN_UNLIT 1"));
 }
 
 intrusive_ptr<ShaderProgram> normalsForwardProgram()
@@ -245,7 +250,7 @@ intrusive_ptr<ShaderProgram> normalsForwardProgram()
     // Same text again: the normal this writes is the very one the lit path shades with, which is what makes the
     // readout trustworthy (a separate normal pass could disagree with the lighting and nobody would notice).
     return makeProgram(u8"builtin_forward_normals", shaders::kBuiltinForwardVert,
-                       withDefine(forwardFragmentSource(), u8"#define VINE_NORMALS 1"));
+                       withDefine(forwardFragmentSource(), u8"#define VN_NORMALS 1"));
 }
 
 intrusive_ptr<ShaderProgram> skyboxProgram()
@@ -270,7 +275,7 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment, ScreenCopyChannel
     // line that states it. The marker below is asserted against the shipped source by
     // EmbeddedShadersTest, so an edit to the .frag cannot silently turn every copy into a copy of
     // attachment 0 — the failure mode this substitution would otherwise hide.
-    constexpr char8_t marker[] = u8"layout(binding = 0) uniform sampler2D screen_tex;";
+    constexpr char8_t marker[] = u8"layout(binding = 0) uniform sampler2D vn_screen_tex;";
     std::u8string     source(shaders::kBuiltinScreenCopyFrag);
     // The integer goes in as ASCII digits; the digits are the same in char8_t.
     const std::string digits   = std::to_string(attachment);
@@ -279,7 +284,7 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment, ScreenCopyChannel
         const std::size_t at = source.find(marker);
         if (at != std::u8string::npos) {
             const std::u8string line =
-                std::u8string(u8"layout(binding = ") + attachment_text + u8") uniform sampler2D screen_tex;";
+                std::u8string(u8"layout(binding = ") + attachment_text + u8") uniform sampler2D vn_screen_tex;";
             source.replace(at, sizeof(marker) - 1u, line);
         }
     }
@@ -287,12 +292,12 @@ intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment, ScreenCopyChannel
     // same way: a row whose content rides in its alpha (a G-buffer's emission + occlusion - emission is
     // HDR and usually zero, the alpha is the occlusion AND the row's write evidence) is otherwise an
     // empty tile that reads as "the pass wrote nothing" (graphics-material.md 2.8).
-    constexpr char8_t output_marker[] = u8"out_color = texture(screen_tex, vine_uv);";
+    constexpr char8_t output_marker[] = u8"vn_out_color = texture(vn_screen_tex, vn_uv);";
     if (channels == ScreenCopyChannels::Alpha) {
         const std::size_t at = source.find(output_marker);
         if (at != std::u8string::npos) {
             source.replace(at, sizeof(output_marker) - 1u,
-                           std::u8string(u8"out_color = vec4(vec3(texture(screen_tex, vine_uv).a), 1.0);"));
+                           std::u8string(u8"vn_out_color = vec4(vec3(texture(vn_screen_tex, vn_uv).a), 1.0);"));
         }
     }
 
