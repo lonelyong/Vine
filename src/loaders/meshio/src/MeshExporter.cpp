@@ -45,6 +45,26 @@ using TriangleMesh        = vn::geometry::TriangleMesh;
 using Vec3f               = vn::math::Vec3f;
 
 /**
+ * @brief Copies one per-vertex channel into the bare array an aiMesh holds, converting each element on the way.
+ *
+ * An aiMesh owns raw arrays, so a channel is always a `new[]` and a loop; the conversion is the only part that differs
+ * between them, which is why a channel states only that.
+ *
+ * @param channel The source values, one per vertex.
+ * @param convert Turns one source value into the assimp one.
+ * @return The new array; the scene that holds the mesh releases it.
+ */
+template <typename Target, typename Source, typename Convert>
+Target* copyChannel(std::span<const Source> channel, Convert convert)
+{
+    auto* array = new Target[channel.size()];
+    for (std::size_t i = 0; i < channel.size(); ++i) {
+        array[i] = convert(channel[i]);
+    }
+    return array;
+}
+
+/**
  * @brief View over the geometry of a triangle mesh, independent of whether it is stored as indexed or non-indexed.
  *
  * An empty `indices` view means "non-indexed": a scene is only built for a mesh that passed `isValid()`, and a valid
@@ -148,39 +168,25 @@ void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
 
     if (!view.positions.empty()) {
         io_mesh.mNumVertices = static_cast<unsigned int>(view.positions.size());
-        io_mesh.mVertices    = new aiVector3D[io_mesh.mNumVertices];
 
         const auto factor = static_cast<ai_real>(options_.scale_factor);
-        for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-            const Vec3f& v       = view.positions[i];
-            io_mesh.mVertices[i] = aiVector3D(v.x * factor, v.y * factor, v.z * factor);
-        }
+        io_mesh.mVertices = copyChannel<aiVector3D>(
+            view.positions, [factor](const Vec3f& v) { return aiVector3D(v.x * factor, v.y * factor, v.z * factor); });
 
+        // An attribute is written only when its array covers every vertex, so a partial one is absent rather than read
+        // past; an attribute the mesh does not hold is simply not there.
         if (view.normals.size() == view.positions.size()) {
-            io_mesh.mNormals = new aiVector3D[io_mesh.mNumVertices];
-            for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-                const Vec3f& n      = view.normals[i];
-                io_mesh.mNormals[i] = aiVector3D(n.x, n.y, n.z);
-            }
+            io_mesh.mNormals = copyChannel<aiVector3D>(view.normals, [](const Vec3f& n) { return aiVector3D(n.x, n.y, n.z); });
         }
 
         if (view.texcoords.size() == view.positions.size()) {
             io_mesh.mNumUVComponents[0] = 2;
-            io_mesh.mTextureCoords[0]   = new aiVector3D[io_mesh.mNumVertices];
-            for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-                const vn::math::Vec2f& t     = view.texcoords[i];
-                io_mesh.mTextureCoords[0][i] = aiVector3D(t.x, t.y, 0.0f);
-            }
+            io_mesh.mTextureCoords[0]   = copyChannel<aiVector3D>(view.texcoords, [](const vn::math::Vec2f& t) { return aiVector3D(t.x, t.y, 0.0f); });
         }
 
-        // The colour set a material multiplies into its base colour: four channels per vertex, written only when
-        // the array covers every vertex (see the doc above).
+        // The colour set a material multiplies into its base colour: four channels per vertex.
         if (view.colors.size() == view.positions.size()) {
-            io_mesh.mColors[0] = new aiColor4D[io_mesh.mNumVertices];
-            for (unsigned int i = 0; i < io_mesh.mNumVertices; ++i) {
-                const vn::math::Vec4f& c = view.colors[i];
-                io_mesh.mColors[0][i]    = aiColor4D(c.x, c.y, c.z, c.w);
-            }
+            io_mesh.mColors[0] = copyChannel<aiColor4D>(view.colors, [](const vn::math::Vec4f& c) { return aiColor4D(c.x, c.y, c.z, c.w); });
         }
     }
 
@@ -188,16 +194,12 @@ void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
     io_mesh.mNumFaces                = static_cast<unsigned int>(triangle_count);
     io_mesh.mFaces                   = new aiFace[io_mesh.mNumFaces];
     for (unsigned int i = 0; i < io_mesh.mNumFaces; ++i) {
+        const unsigned int base       = i * 3;
         io_mesh.mFaces[i].mNumIndices = 3;
-        if (!view.indices.empty()) {
-            const std::size_t base     = static_cast<std::size_t>(i) * 3;
-            io_mesh.mFaces[i].mIndices = new unsigned int[3]{ view.indices[base],
-                                                              view.indices[base + 1],
-                                                              view.indices[base + 2] };
-        } else {
-            const unsigned int base    = i * 3;
-            io_mesh.mFaces[i].mIndices = new unsigned int[3]{ base, base + 1, base + 2 };
-        }
+        // A non-indexed mesh names its corners by position, so triangle i is the vertices 3i, 3i+1 and 3i+2.
+        io_mesh.mFaces[i].mIndices    = view.indices.empty()
+            ? new unsigned int[3]{ base, base + 1, base + 2 }
+            : new unsigned int[3]{ view.indices[base], view.indices[base + 1], view.indices[base + 2] };
     }
 }
 
@@ -228,9 +230,6 @@ class MeshSceneWriter final : private SceneWriterBase
     [[nodiscard]] const aiScene& scene() const noexcept { return *scene_; }
 
   private:
-    /// Fills the scene: the default material, the mesh, and a root node that refers to mesh 0.
-    void fill(const Mesh& mesh);
-
     /// The scene being built; aiScene releases the root node, meshes, faces and materials it holds.
     std::unique_ptr<aiScene> scene_{ std::make_unique<aiScene>() };
 };
@@ -238,12 +237,7 @@ class MeshSceneWriter final : private SceneWriterBase
 MeshSceneWriter::MeshSceneWriter(const MeshExporter::Options& options, const Mesh& mesh)
   : SceneWriterBase(options)
 {
-    fill(mesh);
-}
-
-void MeshSceneWriter::fill(const Mesh& mesh)
-{
-    aiScene& ai_scene      = *scene_;
+    aiScene& ai_scene = *scene_;
 
     ai_scene.mMaterials    = new aiMaterial*[1]{ new aiMaterial() }; // the default a mesh without a material uses
     ai_scene.mNumMaterials = 1;
@@ -303,9 +297,6 @@ class ModelSceneWriter final : private SceneWriterBase
      * @param material_indices The indices writeMaterials() assigned.
      */
     void writeMeshes(const MaterialIndexMap& material_indices);
-
-    /// Writes the node tree, starting at the model's root.
-    void writeRoot();
 
     /**
      * @brief Builds one aiNode subtree from a model node.
@@ -371,6 +362,19 @@ class ModelSceneWriter final : private SceneWriterBase
     /// The scene being built; aiScene releases the root node, meshes, faces and materials it holds.
     std::unique_ptr<aiScene> scene_{ std::make_unique<aiScene>() };
 };
+
+ModelSceneWriter::ModelSceneWriter(const MeshExporter::Options& options, const Model& model)
+  : SceneWriterBase(options)
+  , model_(model)
+{
+    validate();
+
+    // A mesh names its material by index, so the material array is numbered first and the meshes then look theirs up.
+    const MaterialIndexMap material_indices = writeMaterials();
+    writeMeshes(material_indices);
+
+    scene_->mRootNode = buildNode(model_.root());
+}
 
 void ModelSceneWriter::addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type,
                                 unsigned int index)
@@ -510,18 +514,6 @@ void ModelSceneWriter::validate() const
     }
 }
 
-ModelSceneWriter::ModelSceneWriter(const MeshExporter::Options& options, const Model& model)
-  : SceneWriterBase(options)
-  , model_(model)
-{
-    validate();
-
-    // A mesh names its material by index, so the material array is numbered first and the meshes then look theirs up.
-    const MaterialIndexMap material_indices = writeMaterials();
-    writeMeshes(material_indices);
-    writeRoot();
-}
-
 ModelSceneWriter::MaterialIndexMap ModelSceneWriter::writeMaterials()
 {
     const std::vector<Model::Entry>& entries = model_.meshes();
@@ -532,10 +524,11 @@ ModelSceneWriter::MaterialIndexMap ModelSceneWriter::writeMaterials()
     MaterialIndexMap indices;
     for (const Model::Entry& entry : entries) {
         const Material* const material = entry.material.get();
-        if (material != nullptr && indices.find(material) == indices.end()) {
-            indices.emplace(material, static_cast<unsigned int>(order.size()) + 1);
-            order.push_back(material);
+        if (material == nullptr || indices.contains(material)) {
+            continue; // no material, or one an earlier entry already numbered
         }
+        indices.emplace(material, static_cast<unsigned int>(order.size()) + 1);
+        order.push_back(material);
     }
 
     aiScene& ai_scene      = *scene_;
@@ -567,11 +560,6 @@ void ModelSceneWriter::writeMeshes(const MaterialIndexMap& material_indices)
             ai_scene.mMeshes[i]->mMaterialIndex = material_indices.at(entry.material.get());
         }
     }
-}
-
-void ModelSceneWriter::writeRoot()
-{
-    scene_->mRootNode = buildNode(model_.root());
 }
 
 /**
@@ -636,6 +624,21 @@ void ensureFormatAvailable(const Assimp::Exporter& exporter, const std::string& 
 }
 
 /**
+ * @brief Reports a failed export, with the writer's own reason appended.
+ *
+ * Both write targets fail the same way, so the wording lives in one place rather than in each of them.
+ *
+ * @param exporter The writer that failed; its error string is the detail.
+ * @param format_id The resolved format name.
+ * @throws std::runtime_error always.
+ */
+[[noreturn]] void throwExportFailure(const Assimp::Exporter& exporter, const std::string& format_id)
+{
+    throw std::runtime_error("MeshExporter: failed to export as '" + format_id + "', "
+                             + std::string(exporter.GetErrorString()));
+}
+
+/**
  * @brief Writes a scene to a file, creating missing parent directories.
  *
  * @param scene The scene to write.
@@ -656,8 +659,7 @@ void writeScene(const aiScene& scene, const std::string& format_id, const std::f
     const aiReturn status = exporter.Export(&scene, format_id.c_str(),
                                             reinterpret_cast<const char*>(file_path.u8string().data()), 0, &properties);
     if (status != AI_SUCCESS) {
-        throw std::runtime_error("MeshExporter: failed to export as '" + format_id + "', "
-                                 + std::string(exporter.GetErrorString()));
+        throwExportFailure(exporter, format_id);
     }
 }
 
@@ -681,8 +683,7 @@ void writeScene(const aiScene& scene, const std::string& format_id, std::ostream
     Assimp::ExportProperties properties;
     const aiExportDataBlob*  blob = exporter.ExportToBlob(&scene, format_id.c_str(), 0, &properties);
     if (blob == nullptr || blob->data == nullptr) {
-        throw std::runtime_error("MeshExporter: failed to export as '" + format_id + "', "
-                                 + std::string(exporter.GetErrorString()));
+        throwExportFailure(exporter, format_id);
     }
     if (blob->next != nullptr) {
         // One stream holds one file; a format that writes several needs names and places for the others.
