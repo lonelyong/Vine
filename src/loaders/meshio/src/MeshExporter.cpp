@@ -45,32 +45,6 @@ using TriangleMesh        = vn::geometry::TriangleMesh;
 using Vec3f               = vn::math::Vec3f;
 
 /**
- * @brief Owns a manually built assimp scene.
- *
- * The aiScene destructor releases every sub-object recursively (root node, meshes, faces, materials), so building can
- * throw without leaking and the owner needs no manual cleanup. It cannot be copied: the sub-objects are raw pointers
- * that exactly one owner has to release.
- */
-class OwnedScene
-{
-  public:
-    OwnedScene() = default;
-    OwnedScene(const OwnedScene&) = delete;
-    OwnedScene& operator=(const OwnedScene&) = delete;
-
-    /**
-     * @brief Returns the managed scene.
-     *
-     * @return The scene pointer; it stays valid as long as this object lives.
-     */
-    aiScene* get() noexcept { return &scene_; }
-    const aiScene* get() const noexcept { return &scene_; }
-
-  private:
-    aiScene scene_{};
-};
-
-/**
  * @brief View over the geometry of a triangle mesh, independent of whether it is stored as indexed or non-indexed.
  *
  * An empty `indices` view means "non-indexed": a scene is only built for a mesh that passed `isValid()`, and a valid
@@ -251,13 +225,14 @@ class MeshSceneWriter final : private SceneWriterBase
      *
      * @return The scene; it stays valid as long as this writer lives.
      */
-    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_.get(); }
+    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_; }
 
   private:
     /// Fills the scene: the default material, the mesh, and a root node that refers to mesh 0.
     void fill(const Mesh& mesh);
 
-    OwnedScene scene_; ///< The scene this writer builds.
+    /// The scene being built; aiScene releases the root node, meshes, faces and materials it holds.
+    std::unique_ptr<aiScene> scene_{ std::make_unique<aiScene>() };
 };
 
 MeshSceneWriter::MeshSceneWriter(const MeshExporter::Options& options, const Mesh& mesh)
@@ -268,7 +243,7 @@ MeshSceneWriter::MeshSceneWriter(const MeshExporter::Options& options, const Mes
 
 void MeshSceneWriter::fill(const Mesh& mesh)
 {
-    aiScene& ai_scene = *scene_.get();
+    aiScene& ai_scene = *scene_;
 
     ai_scene.mMaterials    = new aiMaterial*[1]{ new aiMaterial() }; // the default a mesh without a material uses
     ai_scene.mNumMaterials = 1;
@@ -312,7 +287,7 @@ class ModelSceneWriter final : private SceneWriterBase
      *
      * @return The scene; it stays valid as long as this writer lives.
      */
-    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_.get(); }
+    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_; }
 
   private:
     /**
@@ -385,7 +360,8 @@ class ModelSceneWriter final : private SceneWriterBase
     static aiMatrix4x4 toAiMatrix(const vn::math::Mat4d& transform);
 
     const Model& model_; ///< The model being written; the node indices refer to it.
-    OwnedScene   scene_; ///< The scene this writer builds.
+    /// The scene being built; aiScene releases the root node, meshes, faces and materials it holds.
+    std::unique_ptr<aiScene> scene_{ std::make_unique<aiScene>() };
 };
 
 void ModelSceneWriter::addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type,
@@ -549,7 +525,7 @@ ModelSceneWriter::MaterialIndexMap ModelSceneWriter::fillMaterials()
         }
     }
 
-    aiScene& ai_scene      = *scene_.get();
+    aiScene& ai_scene      = *scene_;
     ai_scene.mMaterials    = new aiMaterial*[order.size() + 1]();
     ai_scene.mNumMaterials = static_cast<unsigned int>(order.size() + 1);
     ai_scene.mMaterials[0] = new aiMaterial(); // index 0 is the default a mesh without a material uses
@@ -567,7 +543,7 @@ void ModelSceneWriter::fillMeshes(const MaterialIndexMap& material_indices)
         return; // a scene without meshes keeps the null array, which every writer accepts
     }
 
-    aiScene& ai_scene   = *scene_.get();
+    aiScene& ai_scene   = *scene_;
     ai_scene.mMeshes    = new aiMesh*[entries.size()]();
     ai_scene.mNumMeshes = static_cast<unsigned int>(entries.size());
     for (std::size_t i = 0; i < entries.size(); ++i) {
@@ -582,7 +558,7 @@ void ModelSceneWriter::fillMeshes(const MaterialIndexMap& material_indices)
 
 void ModelSceneWriter::fillRoot()
 {
-    scene_.get()->mRootNode = buildNode(model_.root());
+    scene_->mRootNode = buildNode(model_.root());
 }
 
 /**
