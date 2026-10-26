@@ -95,7 +95,13 @@ def existing_docs() -> set[str]:
 
 def existing_paths() -> set[str]:
     """Every path this repository has, as repo-relative strings."""
-    return {str(p) for base in UNIT_ROOTS + ("scripts", "cmake", "docs") for p in (ROOT / base).rglob("*")}
+    # POSIX separators on purpose: resolves() compares token SUFFIXES, so an OS-native path would make every
+    # module-relative reference (`src/gui/RenderControl.cpp`) look stale on a machine whose separator is "\".
+    return {
+        p.relative_to(ROOT).as_posix()
+        for base in UNIT_ROOTS + ("scripts", "cmake", "docs")
+        for p in (ROOT / base).rglob("*")
+    }
 
 
 def resolves(token: str, paths: set[str]) -> bool:
