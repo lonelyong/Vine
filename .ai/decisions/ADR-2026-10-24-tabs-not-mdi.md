@@ -1,9 +1,14 @@
 # ADR-2026-10-24：一个窗口同一时刻只显示一个视图（tab，不做 MDI / 分屏）
 
-- 状态：已采纳
+- 状态：已采纳（**仍是现行结论**；2026-10-28 补充：文档可浮到**另一个顶层窗口**，那是浮动不是分屏）
 - 日期：2026-10-24
 - 相关：`../design/appfw-document-model.md`（§1.3） · `../design/appfw-render-view.md`（§9.2） ·
-  `../decisions/ADR-2026-10-24-command-target.md`、`../decisions/ADR-2026-10-24-command-target-no-window-query.md`
+  `../decisions/ADR-2026-10-24-command-target.md`、`../decisions/ADR-2026-10-24-command-target-no-window-query.md` ·
+  `../decisions/ADR-2026-10-28-document-tabs-and-floating.md`
+
+> **补充（2026-10-28）**：多文档的 tab 条已经落地（`CentralDocumentHost`），文档还能浮到自己的顶层窗口。
+> 本文的决定不变：**每个窗口同一时刻仍只有一个可见视图**；浮动窗口是另一个窗口，不是同窗分屏；
+> “文档不进停靠树”见 `ADR-2026-10-28-document-tabs-and-floating.md`。
 
 ## 背景
 

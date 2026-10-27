@@ -10,7 +10,9 @@
 
 #include <gtest/gtest.h>
 
+#include <QCoreApplication>
 #include <QLabel>
+#include <QTabBar>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -39,7 +41,7 @@ constexpr const char8_t* kShownType = u8"view_test";       ///< 登记了视图�
 constexpr const char8_t* kBlindType = u8"view_test_blind"; ///< 没登记视图的类型
 
 /// 用例文档：报一个类型 id，标题固定，方便断言"显示的是哪一份"。
-class TestDocument final : public vn::appfw::Document {
+class TestDocument : public vn::appfw::Document {
   public:
     explicit TestDocument(vn::String type_id) : type_id_(std::move(type_id)) {}
 
@@ -49,6 +51,14 @@ class TestDocument final : public vn::appfw::Document {
 
   private:
     vn::String type_id_;
+};
+
+/// 拒绝关闭的用例文档：浮动窗口的 X 必须走管理器，管理器则尊重 canClose()。
+class VetoDocument final : public TestDocument {
+  public:
+    explicit VetoDocument(vn::String type_id) : TestDocument(std::move(type_id)) {}
+
+    bool canClose() const override { return false; }
 };
 
 /// 用例载荷：框架只按类型匹配，这里只要有个能造文档的载荷。
@@ -112,10 +122,33 @@ vn::appfw::Document* openDocument(vn::appfw::DocumentManager& documents, const c
     return documents.open(&payload);
 }
 
+/// 登记一个只造“拒绝关闭”文档的类型（浮动窗口的关闭路径用它）。
+bool registerVetoType(vn::appfw::DocumentManager& documents, const char8_t* type_id)
+{
+    vn::appfw::DocumentTypeRegistration registration;
+    registration.type_id = type_id;
+    if (!documents.registerType(registration)) {
+        return false;
+    }
+
+    return documents.registerOpener<TestPayload>({
+        .type_id = type_id,
+        .open    = [type_id](const TestPayload&) -> vn::appfw::Document* { return new VetoDocument(type_id); },
+        .refine  = [type_id](const TestPayload& payload) { return payload.type_id == vn::String(type_id) ? 1 : 0; },
+    });
+}
+
 /// 当前那份视图，取不回 TestView 时是空（工厂只造 TestView，所以这里是在断言这件事）。
 TestView* shownView(vn::appfw::gui::CentralDocumentHost& host)
 {
     return dynamic_cast<TestView*>(host.currentView());
+}
+
+/// 宿主自己的 tab 条（宿主根控件是容器的子控件，不是公开 API：用例直接看它）。
+QTabBar* tabStrip(vn::appfw::gui::CentralDocumentHost& host)
+{
+    auto* root = host.impl<QWidget>();
+    return root != nullptr ? root->findChild<QTabBar*>() : nullptr;
 }
 
 /// 说明页上那句话（把页里的所有 QLabel 拼起来），没有说明页时返回空。
@@ -416,4 +449,218 @@ TEST(DocumentViewTest, AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast)
     EXPECT_EQ(vn::appfw::gui::targetView(second_target), view) << "仍然是同一个视图";
     EXPECT_EQ(vn::appfw::gui::targetView(second_target)->renderControl(), view->pane(1))
         << "另一块窗格不会让命令改错东西";
+}
+
+// ============ 多文档：tab 与浮动 ============
+
+TEST(DocumentViewTest, EveryOpenDocumentGetsATabAndATabSelectionSelectsTheDocument)
+{
+    // tab 是“打开集合”的呈现，不是“视图缓存”的呈现：打开的每一份都有自己的格子，而视图仍然懒建。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* first  = openDocument(documents, kShownType);
+    vn::appfw::Document* second = openDocument(documents, kShownType);
+    vn::appfw::Document* third  = openDocument(documents, kShownType);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(third, nullptr);
+
+    EXPECT_EQ(host.documentCount(), 3) << "打开的每一份都有 tab";
+    EXPECT_EQ(host.documentAt(0), first);
+    EXPECT_EQ(host.documentAt(1), second);
+    EXPECT_EQ(host.documentAt(2), third);
+    EXPECT_EQ(host.documentAt(3), nullptr) << "越界不含糊";
+    EXPECT_EQ(book.created, 0) << "tab 不是视图：没显示过就没有视图";
+
+    auto* strip = tabStrip(host);
+    ASSERT_NE(strip, nullptr);
+    EXPECT_EQ(strip->count(), 3);
+    EXPECT_FALSE(strip->isHidden()) << "多于一份文档时 tab 条是显示的";
+
+    // 管理器 → tab 条：选中哪份，格子就选哪个。
+    ASSERT_TRUE(documents.setCurrent(second));
+    EXPECT_EQ(strip->currentIndex(), 1);
+
+    // tab 条 → 管理器：用户点格子就是“选中这份文档”（管理器仍是唯一的所有者）。
+    strip->setCurrentIndex(2);
+    EXPECT_EQ(documents.current(), third);
+    EXPECT_EQ(host.documentAt(strip->currentIndex()), third);
+
+    // 关一份 ⇒ 它那一格消失，其余顺序不变。
+    ASSERT_TRUE(documents.close(second));
+    EXPECT_EQ(host.documentCount(), 2);
+    EXPECT_EQ(host.documentAt(0), first);
+    EXPECT_EQ(host.documentAt(1), third);
+    EXPECT_EQ(strip->count(), 2);
+}
+
+TEST(DocumentViewTest, SwitchingTabsReusesEachViewAndNeverReinstallsTheCentralArea)
+{
+    // 契约 1 与契约 3 在多文档下仍然成立：切 tab 只切页，不重建视图、不重父化宿主。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* first  = openDocument(documents, kShownType);
+    vn::appfw::Document* second = openDocument(documents, kShownType);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    ASSERT_TRUE(documents.setCurrent(first));
+    ASSERT_EQ(book.created, 1);
+
+    TestView* first_view = shownView(host);
+    ASSERT_NE(first_view, nullptr);
+    auto* first_page = first_view->content()->impl<QWidget>();
+    ASSERT_NE(first_page, nullptr);
+
+    QWidget* const central_window = first_page->window();
+    ASSERT_NE(central_window, nullptr);
+
+    ASSERT_TRUE(documents.setCurrent(second));
+    EXPECT_EQ(book.created, 2) << "第二份自己一份视图";
+
+    ASSERT_TRUE(documents.setCurrent(first));
+    EXPECT_EQ(book.created, 2) << "切回来是复用，不是重建";
+    EXPECT_EQ(shownView(host), first_view);
+    EXPECT_EQ(first_page->window(), central_window) << "切 tab 不重父化 ⇒ 原生窗口不重建";
+    EXPECT_EQ(docks->centralWidget(), &host) << "中央槽只装一次";
+    EXPECT_TRUE(host.ownsCentralArea());
+}
+
+TEST(DocumentViewTest, ADocumentFloatsIntoItsOwnWindowAndDocksBackIntoItsTab)
+{
+    // 浮动是“搬到一个自己的顶层窗口”，不是“停靠到某个停靠区”：页控件换窗口，文档与视图都不变。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* document = openDocument(documents, kShownType);
+    ASSERT_NE(document, nullptr);
+    ASSERT_TRUE(documents.setCurrent(document));
+
+    TestView* view = shownView(host);
+    ASSERT_NE(view, nullptr);
+    auto* page = view->content()->impl<QWidget>();
+    ASSERT_NE(page, nullptr);
+
+    QWidget* const central_window = page->window();
+    ASSERT_NE(central_window, nullptr);
+
+    host.setFloating(*document, true);
+
+    EXPECT_TRUE(host.isFloating(*document));
+    EXPECT_EQ(host.documentCount(), 1) << "浮动不改变 tab 集合";
+    EXPECT_EQ(book.created, 1) << "浮动不换视图";
+    EXPECT_EQ(host.currentView(), view);
+    EXPECT_EQ(host.shownContent(), view->content());
+    ASSERT_NE(page->window(), nullptr);
+    EXPECT_NE(page->window(), central_window) << "页控件搬到了自己的顶层窗口";
+
+    // 停回来：页控件回到中央区那个窗口，视图还是同一个。
+    host.setFloating(*document, false);
+
+    EXPECT_FALSE(host.isFloating(*document));
+    EXPECT_EQ(page->window(), central_window);
+    EXPECT_EQ(host.currentView(), view);
+    EXPECT_EQ(book.destroyed, 0) << "浮动/停回都不是销毁";
+}
+
+TEST(DocumentViewTest, ClosingAFloatedDocumentsWindowGoesThroughTheManagerSoAVetoKeepsIt)
+{
+    // 浮动窗口的 X 不是“删窗口”，而是“请求关闭文档”：canClose() 否决时窗口和文档都还在（否则关一半），
+    // 不否决时文档真的关掉、窗口跟着消失。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    constexpr const char8_t* kVetoType = u8"view_test_veto";
+
+    ASSERT_TRUE(registerVetoType(documents, kVetoType));
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kVetoType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* veto   = openDocument(documents, kVetoType);
+    vn::appfw::Document* normal = openDocument(documents, kShownType);
+    ASSERT_NE(veto, nullptr);
+    ASSERT_NE(normal, nullptr);
+
+    // 否决：X 之后文档与窗口都还在。
+    ASSERT_TRUE(documents.setCurrent(veto));
+    host.setFloating(*veto, true);
+    ASSERT_TRUE(host.isFloating(*veto));
+
+    auto* veto_page = shownView(host)->content()->impl<QWidget>();
+    ASSERT_NE(veto_page, nullptr);
+    ASSERT_NE(veto_page->window(), nullptr);
+
+    veto_page->window()->close();
+    QCoreApplication::processEvents(); // 关闭是排到下一轮事件循环的（窗口不能在 closeEvent 里被删）
+
+    EXPECT_TRUE(host.isFloating(*veto)) << "canClose() 否决 ⇒ 窗口还在";
+    EXPECT_EQ(documents.current(), veto) << "文档也还在、仍是当前";
+    EXPECT_EQ(host.documentCount(), 2);
+    EXPECT_EQ(book.destroyed, 0);
+
+    // 不否决：X 真的关掉文档，窗口随之销毁。
+    ASSERT_TRUE(documents.setCurrent(normal));
+    host.setFloating(*normal, true);
+    ASSERT_TRUE(host.isFloating(*normal));
+
+    auto* normal_page = shownView(host)->content()->impl<QWidget>();
+    ASSERT_NE(normal_page, nullptr);
+    ASSERT_NE(normal_page->window(), nullptr);
+
+    normal_page->window()->close();
+    QCoreApplication::processEvents();
+
+    EXPECT_FALSE(host.isFloating(*normal)) << "关掉的文档不该还有浮动窗口";
+    EXPECT_EQ(host.documentCount(), 1);
+    EXPECT_EQ(book.destroyed, 1);
 }

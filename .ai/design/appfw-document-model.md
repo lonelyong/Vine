@@ -1,7 +1,7 @@
 # appfw 文档模型设计
 
 > **状态**：现行
-> **最后核对**：2026-10-23
+> **最后核对**：2026-10-28
 > **范围**：文档身份/生命周期、打开与保存、类型元数据、视图层与中央客户区。
 > **权威来源**：`Document.hpp`、`DocumentManager.hpp`、`DocumentView.hpp`、`tests/test_appfw` / `tests/test_gui`。
 > **待办**：无（开放项见 `../backlog/`）
@@ -18,6 +18,7 @@
 - 框架定义**文档身份 + 生命周期**：`Document` + `DocumentManager`。
 - 文档类型由插件注册；打开按载荷类型路由；保存写回文档来源。
 - 视图层按文档实例；中央区由宿主决定怎么摆。
+- 多文档：每个打开的文档一格 tab（只有一份时不显示条）；视图可以浮到自己的顶层窗口，并且只能停回中央区。
 
 ### 1.3 非目标
 
@@ -25,7 +26,8 @@
 - 不让 `core` 认识 `Vfs`/IO；`Document::save()` 无参数。
 - 不做 `closeAll()`、`dirtyChanged`、按插件记 owner。
 - 多窗口（一个文档一个顶层窗口）不在本设计范围。
-- 默认宿主同一时刻只显示一个视图（tab 风格）；多个视图并排可见（MDI/分屏）不做，几块 3D 区并排由**视图自己的窗格**表达（见 `../decisions/ADR-2026-10-24-tabs-not-mdi.md`）。
+- 默认宿主同一时刻只**显示一个**视图（tab 风格）；多个视图并排可见（MDI/分屏）不做，几块 3D 区并排由**视图自己的窗格**表达（见 `../decisions/ADR-2026-10-24-tabs-not-mdi.md`）。
+  **浮动**是另一个顶层窗口（每个窗口仍只有一个可见视图），且**文档不进停靠树**（见 `../decisions/ADR-2026-10-28-document-tabs-and-floating.md`）。
 
 ### 1.4 一句话结论
 
@@ -70,7 +72,7 @@
 | F2 | 类型注册 | `registerType(type_id, display_name, factory)`；重名拒绝 | 已落地 |
 | F3 | 打开 | `open(payload)` 按载荷 C++ 类型路由 | 已落地 |
 | F4 | 保存 | `save()` 无参写回 `DocumentSource`；基类默认拒绝 | 已落地 |
-| F5 | 视图层 | `DocumentView` + 注册表 + 中央宿主 | 已落地 |
+| F5 | 视图层 | `DocumentView` + 注册表 + 中央宿主（tab 条、浮动窗口） | 已落地 |
 | F6 | 类型元数据/面板 | `DocumentTypeInfo` + `DocumentManagerDialog` | 已落地 |
 
 ### 3.1.1 F1 文档语义
@@ -110,10 +112,14 @@
 
 - **行为**：`gui::DocumentView`（`Control` 薄包装 + `document()` + `content()` + `activate()`/`deactivate()`）；
   `DocumentViewRegistry`（type_id → 工厂，一类型一个）；`gui::CentralDocumentHost`。
-- **约束**（C5）：视图按文档实例；`content()` 是放进中央区的东西；2D/3D 都返回自己。
-- **要求**（R5）：宿主拥有视图对象、容器拥有页控件；交给宿主的视图必须 `owns=false` 包控件。
-- **验收**（T5）：`tests/test_gui/DocumentViewTest.cpp`（5 条）。
-- **注意**（N5）：中央区单槽、`setCentralWidget()` 重父化；放容器、只装一次、内部切页。
+  宿主给每个打开的文档一格 tab（顺序 = 打开/拖动的顺序，只有一份时隐藏条）；`setFloating()` 把页控件搬进
+  一个自己的顶层窗口，`setFloating(..., false)` 把它收回来。
+- **约束**（C5、C7）：视图按文档实例；`content()` 是放进中央区的东西；2D/3D 都返回自己；文档从不进入
+  DockingPanes 的停靠树。
+- **要求**（R5、R7）：宿主拥有视图对象与浮动窗口、容器拥有页控件；tab 选中与 `DocumentManager` 的 current 只由
+  管理器决定（两边都是“请求”，由它反选）。
+- **验收**（T5）：`tests/test_gui/DocumentViewTest.cpp`（11 条，含 tab/浮动/关闭否决）。
+- **注意**（N5、N6、N7）：中央区单槽、`setCentralWidget()` 重父化；放容器、只装一次、内部切页。
 
 ### 3.1.6 F6 类型元数据/面板
 
@@ -142,7 +148,9 @@
 | --- | --- | --- |
 | `DocumentView` | `document()` / `content()` / `activate()` / `deactivate()` | 按文档实例 |
 | `DocumentViewRegistry` | type_id → 工厂 | 重复/空 id/空工厂拒绝 |
-| `CentralDocumentHost` | 中央区页容器 | 六条契约见头文件 |
+| `CentralDocumentHost` | 中央区页容器 + tab 条 | 六条契约见头文件 |
+| `documentCount()` / `documentAt(i)` | 打开集合的文法投影（一格 tab 一份） | 顺序 = 打开/拖动后的顺序 |
+| `isFloating(doc)` / `setFloating(doc, bool)` | 浮动到自己的顶层窗口 / 停回中央区 | 不是停靠：窗口没有 dock 目标 |
 
 ## 5. 约束、要求与不变量
 
@@ -156,6 +164,7 @@
 | C4 | `DocumentSource` 是值类型，不派生；没有来源 = 空值。 |
 | C5 | 视图按文档实例；`content()` 是放进中央区的东西。 |
 | C6 | 类型没有启用/禁用开关；owner 来自 `registrationOwner()`。 |
+| C7 | 文档永不进入 DockingPanes 的停靠树：它的位置只有“中央区 tab”与“自己的浮动窗口”两种。 |
 
 ### 5.2 要求（R#）
 
@@ -167,6 +176,7 @@
 | R4 | core 不认识 `Vfs`；`save()` 无参。 |
 | R5 | 宿主拥有视图对象、容器拥有页控件；`owns=false`。 |
 | R6 | 面板如实显示可创建/只能打开。 |
+| R7 | tab 选中与 current 只由 `DocumentManager` 决定：两边都只是请求，由它反选另一边（不得两套真相）。 |
 
 ### 5.3 不变量（N#）
 
@@ -177,6 +187,8 @@
 | N3 | 载荷只在 `open()` 期间有效；文档不得存指向载荷的指针。 |
 | N4 | 视图按文档实例；切回复用同一个，关闭才销毁。 |
 | N5 | 中央区单槽、重父化；容器只装一次。 |
+| N6 | 浮动窗口不是停靠窗格：它没有 dock 目标，也不能被拖到边缘/自动隐藏条；回来的路只有“停靠”按钮/API/关文档。 |
+| N7 | 页面在 tab（`QStackedWidget`）与浮动窗口之间搬一次家：建两个父窗口而不同时挂，靠 `takePage()` 先脱离。 |
 
 ## 6. 注意事项与陷阱
 
@@ -197,6 +209,18 @@
 - 会怎么错：关文档就销毁 `Vfs`，文档的 `save()` 还要用它。
 - 怎么判：`Vfs` 借用、无内部锁。
 - 怎么防：宿主按“先关文档、再销毁 Vfs”；同一 `Vfs` 不跨线程。
+
+### 6.4 浮动 = 重父化
+
+- 会怎么错：以为把一个 3D 页搬进浮动窗口就等于新建一个渲染会话（于是重新 `init()`），或者反过来以为可以只换 widget 而不触发原生窗口重建。
+- 怎么判：原生窗口重建后 `RenderControl` 会回到 `Pending` 再回到 `Presenting`；会话/设备/管线不换（`appfw-render-surface.md` F3/C3）。
+- 怎么防：浮动只搬页控件，不动会话；不要为浮动新建 `RenderControl`。
+
+### 6.5 两套“当前”
+
+- 会怎么错：tab 条自己记住选中项、管理器另有 current，切一次就对不上（命令落到别的文档）。
+- 怎么判：`documentAt(strip->currentIndex()) == documents.current()` 必须在任何操作后成立。
+- 怎么防：tab 选中只调 `setCurrent()`，`currentChanged` 反选 tab（`R7`）；装/删 tab 时用 `QSignalBlocker`，不让 Qt 的“自动选中第一个”变成一次选中。
 
 ## 7. 已否决选项
 

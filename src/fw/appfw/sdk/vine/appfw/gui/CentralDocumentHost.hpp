@@ -44,6 +44,17 @@ class DockPanelManager;
  * A 3D view presents through the shared render control (see DocumentView), so switching between two 3D documents does
  * not reparent anything either.
  *
+ * MULTI-DOCUMENT: every open document gets one tab, in the order it was opened (moving a tab reorders the strip and
+ * nothing else). The strip appears only when a second document is open, so a single-document application sees no tab
+ * bar at all. Selecting a tab calls DocumentManager::setCurrent(), and a `currentChanged` coming the other way selects
+ * the matching tab - the manager stays the single owner of "which document".
+ *
+ * FLOATING IS NOT DOCKING: setFloating() moves the view's page into a small top-level window this host owns. That
+ * window is deliberately NOT a DockingPane, so it has no docking targets at all - it cannot be dropped on an edge, an
+ * auto-hide strip or another pane, and its only ways back are the dock button, the API, or closing the document. That
+ * is the whole rule: a document is shown either as a tab in the central area or as its own window, never as a dock
+ * panel (see .ai/design/appfw-document-model.md and ADR-2026-10-28-document-tabs-and-floating.md).
+ *
  * THREAD AFFINITY: application (GUI) thread only.
  */
 class VN_APPFW_API CentralDocumentHost : public Control {
@@ -96,6 +107,46 @@ class VN_APPFW_API CentralDocumentHost : public Control {
     raw_ptr<DocumentView> viewFor(const vn::appfw::Document& document) const;
 
     /**
+     * @brief Floats a document's view into its own window, or docks it back into the tab strip.
+     *
+     * @details
+     * - Floating builds the document's view on demand (the first one it needs), takes its page out of the central
+     *   stack and puts it in a top-level window this host owns.
+     * - The window is not a docking pane on purpose: it has no drop targets, so the document can only come back here
+     *   (the window's dock button, this call, or closing the document).
+     * - Docking back puts the page into the central stack again, at the document's tab position; it becomes the
+     *   visible page only when the document is current.
+     * - A document whose type has no view cannot float: there is no page to move, so the call does nothing.
+     *
+     * @param document Document to move; must be open in this host's manager.
+     * @param floating true to float, false to dock back.
+     */
+    void setFloating(vn::appfw::Document& document, bool floating);
+
+    /**
+     * @brief Reports whether a document is shown in its own window.
+     *
+     * @param document Document to query.
+     * @return true when the document is floating, false when it is (or is not) presented in the tab strip.
+     */
+    [[nodiscard]] bool isFloating(const vn::appfw::Document& document) const;
+
+    /**
+     * @brief Number of open documents presented by this host (one tab each, floating included).
+     *
+     * @return The tab count; 0 when the manager has no documents.
+     */
+    [[nodiscard]] int documentCount() const;
+
+    /**
+     * @brief Gets the document behind a tab.
+     *
+     * @param index Tab position, 0-based, in open/moved order.
+     * @return The document, or nullptr when @p index is out of range.
+     */
+    [[nodiscard]] vn::appfw::Document* documentAt(int index) const;
+
+    /**
      * @brief Reports whether the host has taken over the central slot.
      *
      * @return true once the host installed its container into the docking layout.
@@ -105,11 +156,10 @@ class VN_APPFW_API CentralDocumentHost : public Control {
   private:
     void present(vn::appfw::Document* document);
     void setShown(DocumentView* view);
+    void showView(DocumentView& view);
     void showMessage(const String& text, bool take_over);
-    void releaseView(vn::appfw::Document& document);
     void installIntoCentralArea();
     DocumentView* obtainView(vn::appfw::Document& document);
-
   private:
     struct Impl;
     Impl*       dptr();
