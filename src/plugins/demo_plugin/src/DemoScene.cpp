@@ -51,6 +51,7 @@
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/imageio/ImageCodec.hpp>
+#include <vine/io/IoError.hpp>
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/system/Process.hpp>
@@ -191,9 +192,9 @@ constexpr DemoCubeFace kSkyCubeFaces[] = {
  * so this is where the demo's start-up is spent: the decode is the expensive half. Nothing here creates a
  * graphics object or touches a widget.
  *
- * A face that cannot be read is REPORTED and comes back empty instead of throwing: the twelve reads run
- * concurrently and one missing file must not fail the others. The caller then skips that whole map - a cube
- * map with a white face would look like a shading bug.
+ * A face that cannot be read is REPORTED and comes back empty: the twelve reads run concurrently and one
+ * missing file must not fail the others. The caller then skips that whole map - a cube map with a white
+ * face would look like a shading bug.
  *
  * @param file Face file (under the demo's images directory).
  * @param side Edge length, in texels, to box-filter the face down to.
@@ -201,14 +202,13 @@ constexpr DemoCubeFace kSkyCubeFaces[] = {
  */
 vn::intrusive_ptr<vn::imaging::Image> readDemoFace(const std::filesystem::path& file, int side)
 {
-    try {
-        return boxFilterRgba(*vn::imageio::loadImage(file, vn::imaging::PixelFormat::Rgba8Srgb), side);
-    }
-    catch (const std::exception& error) {
+    const auto loaded = vn::imageio::loadImage(file, vn::imaging::PixelFormat::Rgba8Srgb);
+    if (!loaded) {
         std::fprintf(stderr, "[demo] cube map: '%s' could not be read (%s) - the cube map is skipped\n", file.string().c_str(),
-                     error.what());
+                     vn::io::ioErrorName(loaded.error()));
         return {};
     }
+    return boxFilterRgba(*loaded.value(), side);
 }
 
 /// Edge length of the BOX cube map's faces, in texels.

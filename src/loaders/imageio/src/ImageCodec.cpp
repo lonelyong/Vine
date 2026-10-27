@@ -6,9 +6,8 @@
 #include <fstream>
 #include <limits>
 #include <memory>
-#include <stdexcept>
-#include <string>
-#include <string_view>
+#include <system_error>
+#include <vector>
 
 #include "StbConfig.hpp"
 
@@ -104,34 +103,6 @@ void swizzleRedBlue(std::span<std::byte> pixels) noexcept
 }
 
 /**
- * @brief Compares ASCII text without regard to case.
- *
- * The text is UTF-8 rather than plain `char` because it comes straight from `std::filesystem::path::u8string()`,
- * the only path conversion that is lossless on Windows (where the native form is UTF-16, so `native()` cannot
- * be compared against an ASCII suffix at all).
- *
- * @param text    Text to compare.
- * @param literal Lowercase UTF-8 literal to compare against.
- * @return true when they are equal ignoring ASCII case.
- */
-bool equalsIgnoreCaseAscii(std::u8string_view text, std::u8string_view literal) noexcept
-{
-    if (text.size() != literal.size()) {
-        return false;
-    }
-
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-        const char          lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
-        if (lower != static_cast<char>(literal[i])) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-/**
  * @brief Appends whatever the encoder hands over to a byte vector.
  *
  * Matches stb's `stbi_write_func`, which is how the encoders write into memory instead of to a path.
@@ -153,94 +124,21 @@ void appendEncodedBytes(void* context, void* data, int size)
 
 } // namespace
 
-const char* formatName(ImageFileFormat format) noexcept
-{
-    switch (format) {
-        case ImageFileFormat::Png:
-            return "PNG";
-        case ImageFileFormat::Jpeg:
-            return "JPEG";
-        case ImageFileFormat::Bmp:
-            return "BMP";
-        case ImageFileFormat::Tga:
-            return "TGA";
-
-        case ImageFileFormat::Unknown:
-            break;
-    }
-
-    return "Unknown"; // Also the answer for an out-of-range cast.
-}
-
-ImageFileFormat formatFromPath(const std::filesystem::path& path)
-{
-    // Materialised rather than viewed: extension() returns a temporary path, and u8string() a temporary
-    // string, so a view of either would dangle at the end of the full expression.
-    const std::u8string extension = path.extension().u8string();
-
-    if (equalsIgnoreCaseAscii(extension, u8".png")) {
-        return ImageFileFormat::Png;
-    }
-    if (equalsIgnoreCaseAscii(extension, u8".jpg") || equalsIgnoreCaseAscii(extension, u8".jpeg")) {
-        return ImageFileFormat::Jpeg;
-    }
-    if (equalsIgnoreCaseAscii(extension, u8".bmp")) {
-        return ImageFileFormat::Bmp;
-    }
-    if (equalsIgnoreCaseAscii(extension, u8".tga")) {
-        return ImageFileFormat::Tga;
-    }
-
-    return ImageFileFormat::Unknown;
-}
-
-bool canRead(ImageFileFormat format) noexcept
-{
-    switch (format) {
-        case ImageFileFormat::Png:
-        case ImageFileFormat::Jpeg:
-        case ImageFileFormat::Bmp:
-        case ImageFileFormat::Tga:
-            return true;
-
-        case ImageFileFormat::Unknown:
-            break;
-    }
-
-    return false;
-}
-
-bool canWrite(ImageFileFormat format) noexcept
-{
-    switch (format) {
-        case ImageFileFormat::Png:
-        case ImageFileFormat::Bmp:
-        case ImageFileFormat::Tga:
-            return true;
-
-        // JPEG writing is lossy and needs a quality parameter this API deliberately has no place for;
-        // refusing here rather than silently defaulting keeps the choice with the caller.
-        case ImageFileFormat::Jpeg:
-        case ImageFileFormat::Unknown:
-            break;
-    }
-
-    return false;
-}
-
-intrusive_ptr<imaging::Image> decodeImage(std::span<const std::byte> bytes, PixelFormat format)
+vn::io::Result<intrusive_ptr<imaging::Image>> decodeImage(std::span<const std::byte> bytes, PixelFormat format)
 {
     const int channels = channelsForContainer(format);
     if (channels == 0) {
-        throw std::invalid_argument("decodeImage: the requested pixel format is not an 8-bit colour layout");
+        // Not a broken file: this module simply has no way to store the layout, so the caller asked for
+        // something no container has a form for.
+        return vn::io::IoError::Unsupported;
     }
     if (bytes.empty()) {
-        throw std::invalid_argument("decodeImage: the input buffer is empty");
+        return vn::io::IoError::InvalidData; // an empty buffer holds no image
     }
     if (bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         // stb takes the length as an int; refusing here keeps a huge buffer from wrapping into a
         // silently truncated decode.
-        throw std::invalid_argument("decodeImage: the input buffer is larger than the decoder can address");
+        return vn::io::IoError::CapacityExceeded;
     }
 
     int width           = 0;
@@ -250,8 +148,7 @@ intrusive_ptr<imaging::Image> decodeImage(std::span<const std::byte> bytes, Pixe
                                                    static_cast<int>(bytes.size()), &width, &height, &source_channels, channels);
 
     if (decoded == nullptr) {
-        const char* reason = stbi_failure_reason();
-        throw std::runtime_error(std::string("decodeImage: ") + ((reason != nullptr) ? reason : "unknown decoder failure"));
+        return vn::io::IoError::InvalidData; // the bytes are not an image this build can decode
     }
 
     // stb hands over a heap buffer; free it on every path out of here.
@@ -275,46 +172,51 @@ intrusive_ptr<imaging::Image> decodeImage(std::span<const std::byte> bytes, Pixe
     return image;
 }
 
-intrusive_ptr<imaging::Image> loadImage(const std::filesystem::path& path, PixelFormat format)
+vn::io::Result<intrusive_ptr<imaging::Image>> loadImage(const std::filesystem::path& path, PixelFormat format)
 {
+    std::error_code ec;
+    if (path.empty() || !std::filesystem::is_regular_file(path, ec) || ec) {
+        return vn::io::IoError::NotFound; // there is no file to decode
+    }
+
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) {
-        throw std::runtime_error("loadImage: cannot open for reading: " + path.string());
+        return vn::io::IoError::IoFailure; // the file is there but this process may not read it
     }
 
     const std::streamoff size = input.tellg();
     if (size <= 0) {
-        throw std::runtime_error("loadImage: the file is empty: " + path.string());
+        return vn::io::IoError::InvalidData; // an empty file holds no image
     }
 
     input.seekg(0);
     if (!input) {
-        throw std::runtime_error("loadImage: cannot seek: " + path.string());
+        return vn::io::IoError::IoFailure;
     }
 
     std::vector<std::byte> bytes(static_cast<std::size_t>(size));
     input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     if (!input) {
-        throw std::runtime_error("loadImage: short read: " + path.string());
+        return vn::io::IoError::IoFailure; // a short read is not content to decode
     }
 
     return decodeImage(bytes, format);
 }
 
-std::vector<std::byte> encodeImage(const imaging::Image& image, ImageFileFormat format)
+vn::io::Result<std::vector<std::byte>> encodeImage(const imaging::Image& image, ImageFileFormat format)
 {
     if (!canWrite(format)) {
-        throw std::invalid_argument(std::string("encodeImage: ") + formatName(format) + " cannot be written");
+        return vn::io::IoError::Unsupported;
     }
 
     const int channels = channelsForContainer(image.format());
     if (channels == 0) {
-        throw std::invalid_argument("encodeImage: the image's pixel layout is not an 8-bit colour layout");
+        return vn::io::IoError::Unsupported; // this module has no way to store the layout
     }
 
     const std::span<const std::byte> base = image.mipData(0);
     if (base.empty()) {
-        throw std::invalid_argument("encodeImage: the image has no pixels");
+        return vn::io::IoError::InvalidData; // an image with no pixels states nothing
     }
 
     // The encoders read RGBA order, so a BGRA image is converted into a scratch copy rather than having
@@ -355,25 +257,29 @@ std::vector<std::byte> encodeImage(const imaging::Image& image, ImageFileFormat 
     }
 
     if (written == 0 || encoded.empty()) {
-        throw std::runtime_error(std::string("encodeImage: the ") + formatName(format) + " encoder produced nothing");
+        return vn::io::IoError::IoFailure; // the encoder ran but produced nothing
     }
 
     return encoded;
 }
 
-void saveImage(const std::filesystem::path& path, const imaging::Image& image, ImageFileFormat format)
+vn::io::IoError saveImage(const std::filesystem::path& path, const imaging::Image& image, ImageFileFormat format)
 {
-    const std::vector<std::byte> bytes = encodeImage(image, format);
+    const vn::io::Result<std::vector<std::byte>> encoded = encodeImage(image, format);
+    if (!encoded.ok()) {
+        return encoded.error();
+    }
+
+    const std::vector<std::byte>& bytes = encoded.value();
 
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) {
-        throw std::runtime_error("saveImage: cannot open for writing: " + path.string());
+        return vn::io::IoError::IoFailure;
     }
 
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    if (!output) {
-        throw std::runtime_error("saveImage: write failed: " + path.string());
-    }
+    output.flush();
+    return output ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
 }
 
 VN_IMAGEIO_NS_END

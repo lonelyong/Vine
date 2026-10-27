@@ -4,15 +4,17 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
-#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 #include <vine/imageio/ImageCodec.hpp>
+#include <vine/io/IoError.hpp>
 
 using vn::imaging::bytesPerPixel;
 using vn::imaging::Image;
@@ -22,11 +24,14 @@ using vn::imageio::canWrite;
 using vn::imageio::decodeImage;
 using vn::imageio::encodeImage;
 using vn::imageio::formatFromPath;
+using vn::imageio::formatInfo;
 using vn::imageio::formatName;
 using vn::imageio::ImageFileFormat;
 using vn::imageio::loadImage;
 using vn::imageio::saveImage;
+using vn::imageio::supportedExtensions;
 using vn::intrusive_ptr;
+using vn::io::IoError;
 
 namespace
 {
@@ -101,6 +106,25 @@ std::vector<std::byte> bytesOf(const Image& image, int mip = 0)
     return std::vector<std::byte>(level.begin(), level.end());
 }
 
+/**
+ * @brief Unwraps a result the test expects to carry a value.
+ *
+ * A failed call reports a test failure and yields the default value instead of aborting inside the
+ * unwrap: the assertion that failed is what the reader needs to see.
+ *
+ * @param result Result to unwrap.
+ * @return The carried value, or a default-constructed one when the call failed.
+ */
+template <typename T>
+T mustOk(vn::io::Result<T> result)
+{
+    if (!result.ok()) {
+        ADD_FAILURE() << "expected success, got " << result.error();
+        return T{};
+    }
+    return std::move(result).take();
+}
+
 } // namespace
 
 // ============ Containers ============
@@ -128,6 +152,38 @@ TEST(ImageFileFormatTest, ReadsEveryContainerItAdvertisesAndWritesThree)
     EXPECT_TRUE(canWrite(ImageFileFormat::Tga));
     EXPECT_FALSE(canWrite(ImageFileFormat::Jpeg)) << "writing JPEG is lossy and needs a quality parameter";
     EXPECT_FALSE(canWrite(ImageFileFormat::Unknown));
+}
+
+TEST(ImageFileFormatTest, TheTableStatesEachFormatsExtensionsAndCapabilities)
+{
+    for (const ImageFileFormat format :
+         { ImageFileFormat::Png, ImageFileFormat::Jpeg, ImageFileFormat::Bmp, ImageFileFormat::Tga }) {
+        SCOPED_TRACE(formatName(format));
+
+        const auto& info = formatInfo(format);
+        ASSERT_FALSE(info.extensions.empty()) << "a format the enum names must name its extension(s)";
+        EXPECT_EQ(info.can_read, canRead(format));
+        EXPECT_EQ(info.can_write, canWrite(format));
+
+        for (const char* const extension : info.extensions) {
+            EXPECT_EQ(formatFromPath(std::string("frame") + extension), format) << "the table's own spelling must round-trip";
+            EXPECT_EQ(supportedExtensions().count(vn::String::fromUtf8(extension)), 1u)
+                << "a readable format's extensions are offered to a file picker";
+        }
+    }
+
+    EXPECT_TRUE(formatInfo(ImageFileFormat::Unknown).extensions.empty());
+    EXPECT_FALSE(formatInfo(ImageFileFormat::Unknown).can_read);
+    EXPECT_FALSE(formatInfo(ImageFileFormat::Unknown).can_write);
+}
+
+TEST(ImageFileFormatTest, TheExtensionListIsDerivedFromTheTable)
+{
+    EXPECT_EQ(supportedExtensions().size(), std::size_t{ 5 }) << "png, jpg, jpeg, bmp, tga";
+
+    for (const char* const extension : { ".png", ".jpg", ".jpeg", ".bmp", ".tga" }) {
+        EXPECT_EQ(supportedExtensions().count(vn::String::fromUtf8(extension)), 1u) << extension;
+    }
 }
 
 TEST(ImageFileFormatTest, ReadsTheFormatOutOfAPathsExtension)
@@ -160,7 +216,7 @@ TEST(ImageFileFormatTest, APathWithNoExtensionIsNotMistakenForOne)
 
 TEST(ImageDecodeTest, DecodesARealJpegCubeFace)
 {
-    const auto image = loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgba8Unorm);
+    const auto image = mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgba8Unorm));
 
     ASSERT_NE(image, nullptr);
     EXPECT_EQ(image->width(), 2048);
@@ -188,7 +244,7 @@ TEST(ImageDecodeTest, DecodesEveryAssetUnderBothNamingSets)
         ASSERT_TRUE(std::filesystem::exists(path)) << "missing test asset: " << path.string();
         EXPECT_EQ(formatFromPath(path), ImageFileFormat::Jpeg);
 
-        const auto image = loadImage(path, PixelFormat::Rgba8Unorm);
+        const auto image = mustOk(loadImage(path, PixelFormat::Rgba8Unorm));
         EXPECT_EQ(image->width(), 2048);
         EXPECT_EQ(image->height(), 2048);
     }
@@ -198,10 +254,10 @@ TEST(ImageDecodeTest, TheRequestedLayoutDecidesTheChannelCountNotTheFile)
 {
     // A JPEG stores three channels, but the caller asks for what it needs: that is how decoded pixels
     // become a layout a GPU actually has.
-    EXPECT_EQ(loadImage(assetPath("images/posx.jpg"), PixelFormat::R8Unorm)->totalByteSize(), std::size_t{ 2048 } * 2048);
-    EXPECT_EQ(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgb8Unorm)->totalByteSize(), std::size_t{ 2048 } * 2048 * 3);
-    EXPECT_EQ(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgba8Unorm)->totalByteSize(), std::size_t{ 2048 } * 2048 * 4);
-    EXPECT_EQ(loadImage(assetPath("images/posx.jpg"), PixelFormat::Bgra8Unorm)->totalByteSize(), std::size_t{ 2048 } * 2048 * 4);
+    EXPECT_EQ(mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::R8Unorm))->totalByteSize(), std::size_t{ 2048 } * 2048);
+    EXPECT_EQ(mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgb8Unorm))->totalByteSize(), std::size_t{ 2048 } * 2048 * 3);
+    EXPECT_EQ(mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgba8Unorm))->totalByteSize(), std::size_t{ 2048 } * 2048 * 4);
+    EXPECT_EQ(mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Bgra8Unorm))->totalByteSize(), std::size_t{ 2048 } * 2048 * 4);
 }
 
 TEST(ImageDecodeTest, ASingleChannelIsLumaAndNotTheSourcesRed)
@@ -212,9 +268,9 @@ TEST(ImageDecodeTest, ASingleChannelIsLumaAndNotTheSourcesRed)
     // before they are clamped, so recomputing luma out of the decoded RGB bytes can differ from it by a
     // step. That is a property of the decoder, not of this API, and asserting it would pin the wrong thing.
     const auto colour_image = patternImage(16, 4, PixelFormat::Rgb8Unorm);
-    const std::vector<std::byte> png = encodeImage(*colour_image, ImageFileFormat::Png);
+    const std::vector<std::byte> png = mustOk(encodeImage(*colour_image, ImageFileFormat::Png));
 
-    const auto grey = decodeImage(png, PixelFormat::R8Unorm);
+    const auto grey = mustOk(decodeImage(png, PixelFormat::R8Unorm));
 
     const std::span<const std::byte> colour = colour_image->mipData(0);
     const std::span<const std::byte> luma   = grey->mipData(0);
@@ -238,8 +294,8 @@ TEST(ImageDecodeTest, ASingleChannelIsLumaAndNotTheSourcesRed)
 
 TEST(ImageDecodeTest, ASingleChannelOfARealJpegIsNotACopyOfItsRedChannel)
 {
-    const auto rgb  = loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgb8Unorm);
-    const auto grey = loadImage(assetPath("images/posx.jpg"), PixelFormat::R8Unorm);
+    const auto rgb  = mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgb8Unorm));
+    const auto grey = mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::R8Unorm));
 
     const std::span<const std::byte> colour = rgb->mipData(0);
     const std::span<const std::byte> luma   = grey->mipData(0);
@@ -254,16 +310,16 @@ TEST(ImageDecodeTest, ASingleChannelOfARealJpegIsNotACopyOfItsRedChannel)
 
 TEST(ImageDecodeTest, RefusesTwoChannelLayoutsBecauseTwoChannelsInAFileMeanGreyPlusAlpha)
 {
-    const std::vector<std::byte> encoded = encodeImage(*patternImage(4, 4, PixelFormat::Rgba8Unorm), ImageFileFormat::Png);
+    const std::vector<std::byte> encoded = mustOk(encodeImage(*patternImage(4, 4, PixelFormat::Rgba8Unorm), ImageFileFormat::Png));
 
-    EXPECT_THROW(decodeImage(encoded, PixelFormat::Rg8Unorm), std::invalid_argument)
+    EXPECT_EQ(decodeImage(encoded, PixelFormat::Rg8Unorm).error(), IoError::Unsupported)
         << "Rg8Unorm means red + green; answering it with luma and alpha would be a lie";
 }
 
 TEST(ImageDecodeTest, DecodingIntoThreeOrFourChannelsGivesTheSameColourChannels)
 {
-    const auto rgb  = loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgb8Unorm);
-    const auto rgba = loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgba8Unorm);
+    const auto rgb  = mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgb8Unorm));
+    const auto rgba = mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgba8Unorm));
 
     const std::span<const std::byte> packed = rgb->mipData(0);
     const std::span<const std::byte> wide   = rgba->mipData(0);
@@ -279,8 +335,8 @@ TEST(ImageDecodeTest, DecodingIntoThreeOrFourChannelsGivesTheSameColourChannels)
 
 TEST(ImageDecodeTest, BgraIsRgbaWithRedAndBlueSwapped)
 {
-    const auto rgba = loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgba8Unorm);
-    const auto bgra = loadImage(assetPath("images/posx.jpg"), PixelFormat::Bgra8Unorm);
+    const auto rgba = mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Rgba8Unorm));
+    const auto bgra = mustOk(loadImage(assetPath("images/posx.jpg"), PixelFormat::Bgra8Unorm));
 
     ASSERT_EQ(rgba->totalByteSize(), bgra->totalByteSize());
 
@@ -319,10 +375,10 @@ TEST(ImageEncodeTest, EveryWritableContainerRoundTripsEveryLayoutExactly)
 
             const auto source = patternImage(7, 5, layout);
 
-            const std::vector<std::byte> encoded = encodeImage(*source, container);
+            const std::vector<std::byte> encoded = mustOk(encodeImage(*source, container));
             ASSERT_FALSE(encoded.empty());
 
-            const auto decoded = decodeImage(encoded, layout);
+            const auto decoded = mustOk(decodeImage(encoded, layout));
 
             EXPECT_EQ(decoded->width(), 7);
             EXPECT_EQ(decoded->height(), 5);
@@ -337,12 +393,12 @@ TEST(ImageEncodeTest, ABgraRoundTripIsNotSilentlyRebuiltAsRgba)
 {
     const auto source = patternImage(4, 2, PixelFormat::Bgra8Unorm);
 
-    const std::vector<std::byte> encoded = encodeImage(*source, ImageFileFormat::Png);
+    const std::vector<std::byte> encoded = mustOk(encodeImage(*source, ImageFileFormat::Png));
 
     // Decoded back as RGBA, the channels must come out swapped relative to the BGRA source: that is what
     // proves the encoder really wrote the red and blue the caller put there, rather than swapping twice.
-    const auto as_rgba = decodeImage(encoded, PixelFormat::Rgba8Unorm);
-    const auto as_bgra = decodeImage(encoded, PixelFormat::Bgra8Unorm);
+    const auto as_rgba = mustOk(decodeImage(encoded, PixelFormat::Rgba8Unorm));
+    const auto as_bgra = mustOk(decodeImage(encoded, PixelFormat::Bgra8Unorm));
 
     const std::vector<std::byte> source_bytes = bytesOf(*source);
 
@@ -360,7 +416,7 @@ TEST(ImageEncodeTest, OnlyTheBaseLevelIsWritten)
     const auto source = patternImage(8, 8, PixelFormat::Rgba8Unorm, 4);
     ASSERT_EQ(source->mipCount(), 4);
 
-    const auto decoded = decodeImage(encodeImage(*source, ImageFileFormat::Png), PixelFormat::Rgba8Unorm);
+    const auto decoded = mustOk(decodeImage(mustOk(encodeImage(*source, ImageFileFormat::Png)), PixelFormat::Rgba8Unorm));
 
     EXPECT_EQ(decoded->mipCount(), 1) << "PNG cannot carry a chain, so the base level is a level-1 image";
     EXPECT_EQ(decoded->totalByteSize(), source->mipByteSize(0));
@@ -373,11 +429,11 @@ TEST(ImageEncodeTest, SavesAndLoadsThroughARealFile)
     std::filesystem::remove(path);
 
     const auto source = patternImage(9, 4, PixelFormat::Rgba8Unorm);
-    saveImage(path, *source, ImageFileFormat::Png);
+    ASSERT_EQ(saveImage(path, *source, ImageFileFormat::Png), IoError::Ok);
 
     ASSERT_TRUE(std::filesystem::exists(path));
 
-    const auto loaded = loadImage(path, PixelFormat::Rgba8Unorm);
+    const auto loaded = mustOk(loadImage(path, PixelFormat::Rgba8Unorm));
     EXPECT_EQ(loaded->width(), 9);
     EXPECT_EQ(loaded->height(), 4);
     EXPECT_EQ(bytesOf(*loaded), bytesOf(*source));
@@ -389,41 +445,41 @@ TEST(ImageEncodeTest, SavesAndLoadsThroughARealFile)
 
 TEST(ImageDecodeTest, RefusesALayoutAContainerCannotHold)
 {
-    const std::vector<std::byte> encoded = encodeImage(*patternImage(4, 4, PixelFormat::Rgba8Unorm), ImageFileFormat::Png);
+    const std::vector<std::byte> encoded = mustOk(encodeImage(*patternImage(4, 4, PixelFormat::Rgba8Unorm), ImageFileFormat::Png));
 
-    EXPECT_THROW(decodeImage(encoded, PixelFormat::Rgba16Float), std::invalid_argument);
-    EXPECT_THROW(decodeImage(encoded, PixelFormat::R32Float), std::invalid_argument);
-    EXPECT_THROW(decodeImage(encoded, PixelFormat::D32Float), std::invalid_argument);
-    EXPECT_THROW(decodeImage(encoded, PixelFormat::Unknown), std::invalid_argument);
+    EXPECT_EQ(decodeImage(encoded, PixelFormat::Rgba16Float).error(), IoError::Unsupported);
+    EXPECT_EQ(decodeImage(encoded, PixelFormat::R32Float).error(), IoError::Unsupported);
+    EXPECT_EQ(decodeImage(encoded, PixelFormat::D32Float).error(), IoError::Unsupported);
+    EXPECT_EQ(decodeImage(encoded, PixelFormat::Unknown).error(), IoError::Unsupported);
 }
 
 TEST(ImageDecodeTest, RefusesAnEmptyBuffer)
 {
-    EXPECT_THROW(decodeImage({}, PixelFormat::Rgba8Unorm), std::invalid_argument);
+    EXPECT_EQ(decodeImage({}, PixelFormat::Rgba8Unorm).error(), IoError::InvalidData);
 }
 
-TEST(ImageDecodeTest, ReportsUndecodableBytesAsARuntimeError)
+TEST(ImageDecodeTest, ReportsUndecodableBytesAsInvalidData)
 {
     const std::vector<std::byte> garbage(64, std::byte{ 0x7F });
-    EXPECT_THROW(decodeImage(garbage, PixelFormat::Rgba8Unorm), std::runtime_error);
+    EXPECT_EQ(decodeImage(garbage, PixelFormat::Rgba8Unorm).error(), IoError::InvalidData);
 }
 
-TEST(ImageDecodeTest, ReportsATruncatedImageAsARuntimeError)
+TEST(ImageDecodeTest, ReportsATruncatedImageAsInvalidData)
 {
-    std::vector<std::byte> encoded = encodeImage(*patternImage(16, 16, PixelFormat::Rgba8Unorm), ImageFileFormat::Png);
+    std::vector<std::byte> encoded = mustOk(encodeImage(*patternImage(16, 16, PixelFormat::Rgba8Unorm), ImageFileFormat::Png));
     ASSERT_GT(encoded.size(), 16u);
 
     // Keep the header (so the container is recognised) and drop the pixel data.
     encoded.resize(encoded.size() / 3);
-    EXPECT_THROW(decodeImage(encoded, PixelFormat::Rgba8Unorm), std::runtime_error);
+    EXPECT_EQ(decodeImage(encoded, PixelFormat::Rgba8Unorm).error(), IoError::InvalidData);
 }
 
-TEST(ImageDecodeTest, ReportsAMissingFileAsARuntimeError)
+TEST(ImageDecodeTest, ReportsAMissingFileAsNotFound)
 {
-    EXPECT_THROW(loadImage(assetPath("images/does_not_exist.png"), PixelFormat::Rgba8Unorm), std::runtime_error);
+    EXPECT_EQ(loadImage(assetPath("images/does_not_exist.png"), PixelFormat::Rgba8Unorm).error(), IoError::NotFound);
 }
 
-TEST(ImageDecodeTest, ReportsAnEmptyFileAsARuntimeError)
+TEST(ImageDecodeTest, ReportsAnEmptyFileAsInvalidData)
 {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "vn_imageio_empty.png";
     {
@@ -431,7 +487,7 @@ TEST(ImageDecodeTest, ReportsAnEmptyFileAsARuntimeError)
         ASSERT_TRUE(static_cast<bool>(create));
     }
 
-    EXPECT_THROW(loadImage(path, PixelFormat::Rgba8Unorm), std::runtime_error);
+    EXPECT_EQ(loadImage(path, PixelFormat::Rgba8Unorm).error(), IoError::InvalidData);
 
     std::filesystem::remove(path);
 }
@@ -440,9 +496,9 @@ TEST(ImageEncodeTest, RefusesAContainerItCannotWrite)
 {
     const auto source = patternImage(4, 4, PixelFormat::Rgba8Unorm);
 
-    EXPECT_THROW(encodeImage(*source, ImageFileFormat::Jpeg), std::invalid_argument);
-    EXPECT_THROW(encodeImage(*source, ImageFileFormat::Unknown), std::invalid_argument);
-    EXPECT_THROW(encodeImage(*source, static_cast<ImageFileFormat>(200)), std::invalid_argument);
+    EXPECT_EQ(encodeImage(*source, ImageFileFormat::Jpeg).error(), IoError::Unsupported);
+    EXPECT_EQ(encodeImage(*source, ImageFileFormat::Unknown).error(), IoError::Unsupported);
+    EXPECT_EQ(encodeImage(*source, static_cast<ImageFileFormat>(200)).error(), IoError::Unsupported);
 }
 
 TEST(ImageEncodeTest, RefusesAnImageALayoutAContainerCannotHold)
@@ -450,14 +506,14 @@ TEST(ImageEncodeTest, RefusesAnImageALayoutAContainerCannotHold)
     const auto float_image = intrusive_ptr<Image>(new Image(4, 4, PixelFormat::Rgba16Float));
     const auto two_channel = intrusive_ptr<Image>(new Image(4, 4, PixelFormat::Rg8Unorm));
 
-    EXPECT_THROW(encodeImage(*float_image, ImageFileFormat::Png), std::invalid_argument);
-    EXPECT_THROW(encodeImage(*two_channel, ImageFileFormat::Png), std::invalid_argument);
+    EXPECT_EQ(encodeImage(*float_image, ImageFileFormat::Png).error(), IoError::Unsupported);
+    EXPECT_EQ(encodeImage(*two_channel, ImageFileFormat::Png).error(), IoError::Unsupported);
 }
 
-TEST(ImageEncodeTest, ReportsAnUnwritablePathAsARuntimeError)
+TEST(ImageEncodeTest, ReportsAnUnwritablePathAsIoFailure)
 {
     const std::filesystem::path path = assetPath("images/this_directory_does_not_exist/out.png");
     const auto                source = patternImage(4, 4, PixelFormat::Rgba8Unorm);
 
-    EXPECT_THROW(saveImage(path, *source, ImageFileFormat::Png), std::runtime_error);
+    EXPECT_EQ(saveImage(path, *source, ImageFileFormat::Png), IoError::IoFailure);
 }

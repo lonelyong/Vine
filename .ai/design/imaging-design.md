@@ -208,7 +208,7 @@ GPU 资源（纹理/采样器/设备）留在 `graphics`，两边只靠 `Intrusi
 ### 9.1 当前状态
 
 `PixelFormat` / `Image` 已落地；`graphics::Texture`（2D + Cube）与 `Material::textureFile()` → `Texture*`
-迁移已完成；`ImageIO` 解码已实现。
+迁移已完成；`ImageIO` 解码已实现（公开面见 `imageio-design.md`）。
 
 ### 9.2 已知缺口 / 待办
 
@@ -235,6 +235,7 @@ GPU 资源（纹理/采样器/设备）留在 `graphics`，两边只靠 `Intrusi
 
 - `.ai/memory/imaging.md`
 - `.ai/design/graphics-rendering.md`
+- `imageio-design.md`
 - `../backlog/`
 
 ### 10.3 外部资料

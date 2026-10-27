@@ -6,5 +6,5 @@
 # thing that carries stb.
 vn_add_library(IMAGEIO_TARGET_NAME ImageIO)
 
-target_link_libraries(${IMAGEIO_TARGET_NAME} PUBLIC vn::Imaging)
+target_link_libraries(${IMAGEIO_TARGET_NAME} PUBLIC vn::Imaging vn::IOBase)
 target_link_libraries(${IMAGEIO_TARGET_NAME} PRIVATE tp::stb)

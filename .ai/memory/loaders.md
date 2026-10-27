@@ -34,6 +34,11 @@ loaders/*     ← 用三方库把数据从文件里读出来/写回去
   读写回 `Unsupported`，`formatFromPath()` 照常回答。OCCT 8 的流读取是 `ReadStream(fileName, stream)`（没有单参数版），
   path 入口走 `ReadFile`；`BRepTools` 的 Read/Write 返回 `void`。
 - `BrepShape` 持有 `std::shared_ptr<const TopoDS_Shape>`：`setShape()` 接管所有权，`shape()` 借用。
+- imageio（`src/loaders/imageio`）：**无状态自由函数**（`decodeImage` / `loadImage` / `encodeImage` / `saveImage`），
+  读 `Result`、写 `IoError`，与上面两个模块同一套词汇；能力来自一张 `ImageFormatInfo` 表（`formatInfo()` /
+  `supportedExtensions()` 都从它取，JPEG 只读 = `can_write == false`）。**没有 Loader/Exporter 类**：没有 options
+  也没有缓存，照搬形状只是多一层生命周期（`../design/imageio-design.md` 的 `D1`）。stb 仍 PRIVATE，公开面只多一个
+  `IOBase`（`Result` / `IoError`）。
 
 ## 现状与坑
 

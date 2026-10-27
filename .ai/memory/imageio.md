@@ -1,13 +1,15 @@
 # imageio 模块笔记
 
 > 定位依据见 `.ai/design/imaging-design.md`（§3「与 graphics 的分工铁律」那套推理同样适用于这里）。
+> 公开面（能力表、失败分类、否决项）见 `.ai/design/imageio-design.md`。
 > 这里只记**结论 + 判据**。
 
 ## 事实速查
 
 - 目录 `src/loaders/imageio/`，短名 **`ImageIO`** → 别名 `vn::ImageIO`，宏 `VN_IMAGEIO_API` / `VN_IMAGEIO_LIB`，
   命名空间 `vn::imageio`，头 `<vine/imageio/ImageCodec.hpp>`。
-- 依赖：**PUBLIC `vn::Imaging`** + **PRIVATE `tp::stb`**（静态烘进 DLL，消费者看不到 stb）。
+- 依赖：**PUBLIC `vn::Imaging` + `vn::IOBase`**（`Result` / `IoError` 在公开签名里）+ **PRIVATE `tp::stb`**
+  （静态烘进 DLL，消费者看不到 stb）。
 - 注册点：`src/loaders/CMakeLists.txt`、`tests/CMakeLists.txt`、`third_party/CMakeLists.txt`
   （新增 `third_party/stb/CMakeLists.txt`，INTERFACE target `stb` / 别名 **`tp::stb`**）。
 - **改完新文件必须 `cmake -S . -B build`**（`vn_add_library` 的 glob 没有 `CONFIGURE_DEPENDS`）。
@@ -56,15 +58,18 @@ stb 的通道数含义**不是** R/G/B/A 的顺序展开：
 
 ```cpp
 enum class ImageFileFormat { Unknown, Png, Jpeg, Bmp, Tga };
+struct ImageFormatInfo { std::span<const char* const> extensions; bool can_read; bool can_write; };
+const ImageFormatInfo& formatInfo(ImageFileFormat) noexcept;    // 表：扩展名 + 能力，其余查询都走它
 const char*     formatName(ImageFileFormat) noexcept;
 ImageFileFormat formatFromPath(const std::filesystem::path&);   // 按扩展名，仅作提示
 bool canRead(ImageFileFormat) noexcept;    // 4 个都行
 bool canWrite(ImageFileFormat) noexcept;   // PNG/BMP/TGA；JPEG 不行（有损且需质量参数）
+const std::set<vn::String>& supportedExtensions();   // 由表生成（png/jpg/jpeg/bmp/tga）
 
-intrusive_ptr<imaging::Image> decodeImage(std::span<const std::byte>, imaging::PixelFormat);
-intrusive_ptr<imaging::Image> loadImage(const std::filesystem::path&, imaging::PixelFormat);
-std::vector<std::byte>        encodeImage(const imaging::Image&, ImageFileFormat);
-void                          saveImage(const std::filesystem::path&, const imaging::Image&, ImageFileFormat);
+vn::io::Result<intrusive_ptr<imaging::Image>> decodeImage(std::span<const std::byte>, imaging::PixelFormat);
+vn::io::Result<intrusive_ptr<imaging::Image>> loadImage(const std::filesystem::path&, imaging::PixelFormat);
+vn::io::Result<std::vector<std::byte>>        encodeImage(const imaging::Image&, ImageFileFormat);
+vn::io::IoError                               saveImage(const std::filesystem::path&, const imaging::Image&, ImageFileFormat);
 ```
 
 - **容器由字节嗅探，不由扩展名**（解码从不看扩展名 —— 文件名撒谎也解得对）。
@@ -72,7 +77,9 @@ void                          saveImage(const std::filesystem::path&, const imag
   24-bit 纹理格式"。BGRA 用解码后交换 R/B 实现（stb 只产 RGBA）。
 - 解码结果**恒为 1 个 mip**（容器存一张图；链是另一件事）。
 - 编码**只写 base mip**（PNG/BMP/TGA 装不下链）。
-- 失败：`std::invalid_argument`（布局/容器不支持、空缓冲）+ `std::runtime_error`（解不了、文件读不了）。
+- 失败**是值**（2026-10-27，与 meshio/brepio 同一套）：布局无对应形态 / 容器不可写 → `Unsupported`；空缓冲、
+  空文件、不可解码 → `InvalidData`；文件不存在 → `NotFound`；读写失败、编码器无产出 → `IoFailure`；
+  缓冲超 `INT_MAX` → `CapacityExceeded`。不再抛异常。
 
 ## BMP 的能力边界（**坑**）
 

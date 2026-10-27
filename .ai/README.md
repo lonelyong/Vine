@@ -11,7 +11,7 @@
 （ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
 一 bug 一文件。历史归 git，不放进 `design/`。
 
-## design/ —— 现行设计文档（27）
+## design/ —— 现行设计文档（28）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -40,9 +40,10 @@
 - `appfw-userio.md` —— UserIO。
 - `appfw-document-model.md` —— 文档模型（身份 + 生命周期 + 类型注册）。
 
-**base 与其他（7）**
+**base 与其他（8）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
+- `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
 - `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。
 - `meshio-brepio-design.md` —— meshio / brepio 的公开面（草案：格式枚举、`Result`/`IoError`、无单例）。
 - `robotics-io-design.md` —— Robotics IO（XML、VFS 打包、材质库）。

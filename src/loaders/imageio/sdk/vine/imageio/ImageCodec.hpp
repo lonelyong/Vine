@@ -5,12 +5,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <set>
 #include <span>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/io/IoError.hpp>
 
 VN_IMAGEIO_NS_BEGIN
 
@@ -33,6 +36,31 @@ enum class ImageFileFormat : std::uint8_t {
     Bmp,         ///< BMP. Read and written.
     Tga,         ///< TGA. Read and written.
 };
+
+/**
+ * @brief The static facts a container format has, as one value.
+ *
+ * @details
+ * - `extensions` is the single spelling `formatFromPath()` matches against: lowercase and with the leading
+ *   dot. JPEG names two spellings, every other format names one; `Unknown` names none.
+ * - `can_read` / `can_write` are what `canRead()` and `canWrite()` answer. They are stated in ONE table so a
+ *   format's name, extension and capabilities cannot drift apart into one switch each.
+ */
+struct ImageFormatInfo
+{
+    std::span<const char* const> extensions; ///< Lowercase extensions with the leading dot (".jpg", ".jpeg"); empty for Unknown.
+    bool                         can_read;   ///< Whether decodeImage() accepts the container.
+    bool                         can_write;  ///< Whether encodeImage() can produce the container.
+};
+
+/**
+ * @brief Gets the static facts of a container format.
+ *
+ * @param format Format to query.
+ * @return The format's facts; a value with no extension and neither capability for ImageFileFormat::Unknown
+ *         and any out-of-range value.
+ */
+VN_IMAGEIO_API const ImageFormatInfo& formatInfo(ImageFileFormat format) noexcept;
 
 /**
  * @brief Gets a stable, human-readable name for a container format, for diagnostics.
@@ -72,6 +100,18 @@ VN_IMAGEIO_API bool canRead(ImageFileFormat format) noexcept;
 VN_IMAGEIO_API bool canWrite(ImageFileFormat format) noexcept;
 
 /**
+ * @brief Returns the file extensions this module can read.
+ *
+ * @details
+ * - The set is generated from the format table, so "what a file picker offers" and "what the decoder
+ *   accepts" are one list: a format added to the table shows up here without a second edit.
+ * - Extensions are lowercase and carry the leading dot, e.g. `{".bmp", ".jpeg", ".jpg", ".png", ".tga"}`.
+ *
+ * @return The supported extension set.
+ */
+VN_IMAGEIO_API const std::set<vn::String>& supportedExtensions();
+
+/**
  * @brief Decodes an image from bytes already in memory.
  *
  * The container is detected from the bytes, so the same call handles every readable format and a wrong file
@@ -92,22 +132,23 @@ VN_IMAGEIO_API bool canWrite(ImageFileFormat format) noexcept;
  *
  * @param bytes  Encoded file bytes.
  * @param format Pixel layout to decode into; must be one of the 8-bit colour layouts.
- * @return The decoded image, never null.
- * @throws std::invalid_argument if @p format is not an 8-bit colour layout, or @p bytes is empty.
- * @throws std::runtime_error if the bytes are not a readable image, carrying the decoder's own reason.
+ * @return The decoded image; `IoError::Unsupported` when @p format is not an 8-bit colour layout (this
+ *         module has no way to store it), `IoError::InvalidData` when @p bytes is empty or does not hold a
+ *         readable image, `IoError::CapacityExceeded` when the buffer is larger than the decoder can
+ *         address.
  */
-VN_IMAGEIO_API intrusive_ptr<imaging::Image> decodeImage(std::span<const std::byte> bytes, imaging::PixelFormat format);
+[[nodiscard]] VN_IMAGEIO_API vn::io::Result<vn::intrusive_ptr<imaging::Image>> decodeImage(std::span<const std::byte> bytes, imaging::PixelFormat format);
 
 /**
  * @brief Decodes an image from a file.
  *
  * @param path   File to read.
  * @param format Pixel layout to decode into; must be one of the 8-bit colour layouts.
- * @return The decoded image, never null.
- * @throws std::invalid_argument if @p format is not an 8-bit colour layout.
- * @throws std::runtime_error if the file cannot be read or does not hold a readable image.
+ * @return The decoded image; `IoError::NotFound` when @p path is not a regular file, `IoError::IoFailure`
+ *         when it exists but cannot be read, and `decodeImage()`'s failures for the content (an empty file
+ *         is `IoError::InvalidData`).
  */
-VN_IMAGEIO_API intrusive_ptr<imaging::Image> loadImage(const std::filesystem::path& path, imaging::PixelFormat format);
+[[nodiscard]] VN_IMAGEIO_API vn::io::Result<vn::intrusive_ptr<imaging::Image>> loadImage(const std::filesystem::path& path, imaging::PixelFormat format);
 
 /**
  * @brief Encodes an image into bytes in the given container.
@@ -121,12 +162,11 @@ VN_IMAGEIO_API intrusive_ptr<imaging::Image> loadImage(const std::filesystem::pa
  *
  * @param image  Image to encode.
  * @param format Container to produce; must be one this module can write.
- * @return The encoded bytes, never empty.
- * @throws std::invalid_argument if @p format cannot be written, or the image's pixel layout is not one of
- *         the 8-bit colour layouts.
- * @throws std::runtime_error if the encoder fails.
+ * @return The encoded bytes; `IoError::Unsupported` when @p format cannot be written or the image's pixel
+ *         layout is not one of the 8-bit colour layouts, `IoError::InvalidData` when the image has no
+ *         pixels, `IoError::IoFailure` when the encoder fails.
  */
-VN_IMAGEIO_API std::vector<std::byte> encodeImage(const imaging::Image& image, ImageFileFormat format);
+[[nodiscard]] VN_IMAGEIO_API vn::io::Result<std::vector<std::byte>> encodeImage(const imaging::Image& image, ImageFileFormat format);
 
 /**
  * @brief Encodes an image and writes it to a file.
@@ -137,10 +177,9 @@ VN_IMAGEIO_API std::vector<std::byte> encodeImage(const imaging::Image& image, I
  * @param path   File to write; an existing file is replaced.
  * @param image  Image to encode.
  * @param format Container to produce; must be one this module can write.
- * @throws std::invalid_argument if @p format cannot be written, or the image's pixel layout is not one of
- *         the 8-bit colour layouts.
- * @throws std::runtime_error if the file cannot be written or the encoder fails.
+ * @return `IoError::Ok` on success; `encodeImage()`'s failures for the content, `IoError::IoFailure` when
+ *         the file cannot be opened or written.
  */
-VN_IMAGEIO_API void saveImage(const std::filesystem::path& path, const imaging::Image& image, ImageFileFormat format);
+[[nodiscard]] VN_IMAGEIO_API vn::io::IoError saveImage(const std::filesystem::path& path, const imaging::Image& image, ImageFileFormat format);
 
 VN_IMAGEIO_NS_END
