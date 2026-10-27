@@ -582,6 +582,7 @@ class VN_CORE_API String final {
 
     /** Insert a single character at the specified position
      *  @param pos The position to insert at
+     *  @param count 
      *  @param ch The character to insert
      *  @return Reference to this string
      *  @note Shifts all characters from pos onwards to the right
@@ -1490,10 +1491,9 @@ class VN_CORE_API String final {
 
         // strtol saturates at LONG_MIN/LONG_MAX and reports that through errno, so the
         // range check has to be explicit: casting the saturated value would wrap it.
-        errno            = 0;
-        const long value = std::strtol(str, &endptr, base);
-        const bool parsed =
-            endptr != str && errno != ERANGE && value >= static_cast<long>(INT_MIN) && value <= static_cast<long>(INT_MAX);
+        errno             = 0;
+        const long value  = std::strtol(str, &endptr, base);
+        const bool parsed = endptr != str && errno != ERANGE && value >= static_cast<long>(INT_MIN) && value <= static_cast<long>(INT_MAX);
         if (ok) {
             *ok = parsed;
         }
@@ -1543,6 +1543,7 @@ class VN_CORE_API String final {
   public:
     /** Create a string from local 8-bit encoded data
      *  @param data Pointer to local 8-bit encoded character array
+     *  @param count The number of code units to read (default: npos = until null terminator)
      *  @return A new String with the decoded data
      *  @note The encoding depends on the platform's locale settings
      *  @throws e.g., invalid encoding or unsupported locale
@@ -1608,7 +1609,7 @@ class VN_CORE_API String final {
      *  @return Reference to this string
      *  @note Transfers ownership of the buffer from right to this string
      */
-    constexpr String& operator=(String&& right)
+    constexpr String& operator=(String&& right) noexcept
     {
         stdstr_ = std::move(right.stdstr_);
         return *this;
@@ -1802,7 +1803,7 @@ inline constexpr bool isValidUtf8(std::string_view text) noexcept
 }
 
 template <typename T>
-size_t cstrlen(const T* data)
+inline size_t cstrlen(const T* data)
 {
     const T* p = data;
     while (*p != T(0)) ++p;
@@ -1815,8 +1816,7 @@ VN_CORE_NS_END
  *  Declared next to the type, like the standard library does for std::string and std::string_view.
  */
 template <>
-struct std::hash<VN_ROOT_NS::String>
-{
+struct std::hash<VN_ROOT_NS::String> {
     /** @brief Hashes the UTF-8 bytes of a String.
      *
      * @param str The string to hash.

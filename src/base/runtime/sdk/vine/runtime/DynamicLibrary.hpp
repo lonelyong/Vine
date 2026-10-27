@@ -37,7 +37,11 @@ class VN_RUNTIME_API DynamicLibrary {
      * @return The symbol cast to T*, or nullptr when the symbol is not found.
      */
     template <typename T>
-    T* resolveSymbol(const String& symbol) const;
+    T resolveSymbol(const String& symbol) const
+    {
+        static_assert(std::is_pointer_v<T> && std::is_function_v<std::remove_pointer_t<T>>, "DynamicLibrary::resolveSymbol, T must be a function pointer type");
+        return static_cast<T>(resolveSymbolRaw(symbol));
+    }
 
     /**
      * @brief Returns the raw platform library handle.
@@ -78,11 +82,5 @@ class VN_RUNTIME_API DynamicLibrary {
 
     friend class DynamicLibraryLoader;
 };
-
-template <typename T>
-T* DynamicLibrary::resolveSymbol(const String& symbol) const
-{
-    return reinterpret_cast<T*>(resolveSymbolRaw(symbol));
-}
 
 VN_RUNTIME_NS_END

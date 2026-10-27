@@ -75,13 +75,13 @@ std::filesystem::path executableDir()
 {
 #if defined(_WIN32)
     std::array<wchar_t, MAX_PATH> buf{};
-    const DWORD len = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+    const DWORD                   len = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
     if (len > 0 && len < buf.size()) {
         return std::filesystem::path(std::wstring(buf.data(), len)).parent_path();
     }
 #elif defined(__linux__)
     std::array<char, 4096> buf{};
-    const auto len = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
+    const auto             len = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
     if (len > 0) {
         return std::filesystem::path(std::string(buf.data(), static_cast<std::size_t>(len))).parent_path();
     }
@@ -232,18 +232,19 @@ void logRefusal(const String& name, bool policy_disables)
  * @param scope             Location class the plugin was found in.
  * @param framework_version Framework version the library was built with.
  */
-void rememberDiscovered(std::vector<PluginEntry>& discovered, const PluginInfo& info, const std::filesystem::path& path, PluginScope scope,
-                        const String& framework_version)
+void rememberDiscovered(std::vector<PluginEntry>&    discovered,
+                        const PluginInfo&            info,
+                        const std::filesystem::path& path,
+                        PluginScope                  scope,
+                        const String&                framework_version)
 {
-    const auto known = std::find_if(discovered.begin(), discovered.end(),
-        [&info](const PluginEntry& entry) { return entry.info.name == info.name; });
+    const auto known = std::find_if(discovered.begin(), discovered.end(), [&info](const PluginEntry& entry) { return entry.info.name == info.name; });
     if (known != discovered.end()) {
         // The same name provided by a second location: the first one (higher
         // precedence) is the plugin, but a different identity is worth reporting
         // because it means two unrelated plugins picked the same name.
         if (!info.uuid.isNull() && !known->info.uuid.isNull() && info.uuid != known->info.uuid) {
-            VN_LOGW("Two different plugins are named '{}': keeping '{}', ignoring '{}'",
-                   toUtf8(info.name), toUtf8(known->path), toUtf8(path));
+            VN_LOGW("Two different plugins are named '{}': keeping '{}', ignoring '{}'", toUtf8(info.name), toUtf8(known->path), toUtf8(path));
         }
         return;
     }
@@ -254,13 +255,16 @@ void rememberDiscovered(std::vector<PluginEntry>& discovered, const PluginInfo& 
     // list (a human has to see them to fix it) and the log names both, because nothing else would
     // ever tell: the names differ, so every other check here passes.
     if (!info.uuid.isNull()) {
-        const auto same_identity = std::find_if(discovered.begin(), discovered.end(),
-            [&info](const PluginEntry& entry) { return entry.info.uuid == info.uuid; });
+        const auto same_identity =
+            std::find_if(discovered.begin(), discovered.end(), [&info](const PluginEntry& entry) { return entry.info.uuid == info.uuid; });
         if (same_identity != discovered.end()) {
             VN_LOGW("Two plugins declare the same identity: '{}' at '{}' and '{}' at '{}' both report uuid '{}'; "
                     "a plugin's uuid must be its own",
-                   toUtf8(same_identity->info.name), toUtf8(same_identity->path), toUtf8(info.name), toUtf8(path),
-                   toUtf8(info.uuid.toString()));
+                    toUtf8(same_identity->info.name),
+                    toUtf8(same_identity->path),
+                    toUtf8(info.name),
+                    toUtf8(path),
+                    toUtf8(info.uuid.toString()));
         }
     }
 
@@ -417,7 +421,7 @@ std::vector<PluginRegistration> registrationsIn(const std::filesystem::path& dir
  */
 std::filesystem::path normalizedPath(const std::filesystem::path& path)
 {
-    std::error_code ec;
+    std::error_code       ec;
     std::filesystem::path result = std::filesystem::weakly_canonical(path, ec);
     if (ec) {
         result = path.lexically_normal();
@@ -546,12 +550,15 @@ std::filesystem::path pluginExtension()
  */
 struct QueriedLibrary {
     vn::runtime::DynamicLibrary* lib{};
-    const PluginInfo*              info{};
-    String                         framework_version;  ///< Version the library reported as built with.
-    String                         rejection;          ///< Non-empty: why this host refuses the library.
+    const PluginInfo*            info{};
+    String                       framework_version; ///< Version the library reported as built with.
+    String                       rejection;         ///< Non-empty: why this host refuses the library.
 
     /// true when the host may read the plugin's metadata.
-    bool isUsable() const noexcept { return lib != nullptr && info != nullptr; }
+    bool isUsable() const noexcept
+    {
+        return lib != nullptr && info != nullptr;
+    }
 };
 
 /**
@@ -573,35 +580,32 @@ QueriedLibrary queryLibrary(const std::filesystem::path& library)
     QueriedLibrary result;
     result.lib = vn::runtime::DynamicLibraryLoader::instance().load(String(library.u8string()));
     if (result.lib == nullptr) {
-        return result;  // not loadable at all: not a plugin location the host can use
+        return result; // not loadable at all: not a plugin location the host can use
     }
 
-    using AbiFn = const PluginAbi* ();
-    const auto      abi      = result.lib->resolveSymbol<AbiFn>(u8"vinePluginAbi");
+    using AbiFn               = const PluginAbi*();
+    const auto       abi      = result.lib->resolveSymbol<AbiFn*>(u8"vinePluginAbi");
     const PluginAbi* declared = abi != nullptr ? abi() : nullptr;
     if (declared == nullptr) {
         result.rejection = String::fromUtf8("Plugin library '" + toUtf8(library) +
-                                    "' declares no ABI handshake (vinePluginAbi), so it was built against a framework "
-                                    "older than this one. Rebuild the plugin against this framework.");
+                                            "' declares no ABI handshake (vinePluginAbi), so it was built against a framework "
+                                            "older than this one. Rebuild the plugin against this framework.");
         return result;
     }
     if (!PluginManager::isPluginAbiCompatible(*declared)) {
         const bool newer = declared->abi_version > VN_APPFW_PLUGIN_ABI_VERSION;
-        result.rejection = String::fromUtf8("Plugin library '" + toUtf8(library) + "' declares ABI revision " +
-                                    std::to_string(declared->abi_version) + " (built with framework " +
-                                    (declared->framework_version != nullptr ? declared->framework_version : "unknown") +
-                                    "), which is " + (newer ? "newer" : "older") + " than this host's " +
-                                    std::to_string(VN_APPFW_PLUGIN_ABI_VERSION) + " (framework " VN_APPFW_VERSION +
-                                    "). Rebuild the plugin against this framework.");
+        result.rejection = String::fromUtf8("Plugin library '" + toUtf8(library) + "' declares ABI revision " + std::to_string(declared->abi_version) +
+                                            " (built with framework " + (declared->framework_version != nullptr ? declared->framework_version : "unknown") +
+                                            "), which is " + (newer ? "newer" : "older") + " than this host's " + std::to_string(VN_APPFW_PLUGIN_ABI_VERSION) +
+                                            " (framework " VN_APPFW_VERSION + "). Rebuild the plugin against this framework.");
         return result;
     }
-    result.framework_version =
-        declared->framework_version != nullptr ? String::fromUtf8(declared->framework_version) : String{};
+    result.framework_version = declared->framework_version != nullptr ? String::fromUtf8(declared->framework_version) : String{};
 
-    using QueryFn = const PluginInfo* ();
-    const auto query = result.lib->resolveSymbol<QueryFn>(u8"vinePluginQuery");
+    using QueryFn    = const PluginInfo*();
+    const auto query = result.lib->resolveSymbol<QueryFn*>(u8"vinePluginQuery");
     if (query == nullptr) {
-        result.lib = nullptr;  // Not a Vine plugin: no metadata to report, no complaint either.
+        result.lib = nullptr; // Not a Vine plugin: no metadata to report, no complaint either.
         return result;
     }
     result.info = query();
@@ -662,8 +666,7 @@ std::filesystem::path resolvePluginPath(const String& name_or_path)
  * RAII: restores the previous owner on destruction so the plugin's commands
  * (vinePluginRegisterCommands and the load lifecycle) are attributed to it.
  */
-class RegistrationOwnerScope
-{
+class RegistrationOwnerScope {
   public:
     RegistrationOwnerScope(CommandManager* manager, const String& owner)
       : manager_(manager)
@@ -694,8 +697,7 @@ class RegistrationOwnerScope
  * manager from its own lifecycle would interleave with the local batch of
  * instances the outer call is creating, which its rollback path cannot untangle.
  */
-class ScopedFlag
-{
+class ScopedFlag {
   public:
     /**
      * @brief Sets the flag; it is cleared when the scope ends.
@@ -708,7 +710,10 @@ class ScopedFlag
         flag_ = true;
     }
 
-    ~ScopedFlag() { flag_ = false; }
+    ~ScopedFlag()
+    {
+        flag_ = false;
+    }
 
     ScopedFlag(const ScopedFlag&)            = delete;
     ScopedFlag& operator=(const ScopedFlag&) = delete;
@@ -717,15 +722,13 @@ class ScopedFlag
     bool& flag_;
 };
 
-} // namespace
-
 /**
  * @brief A loaded plugin, its instance and the library it came from.
  */
 struct LoadedPlugin {
     String                name;
     Plugin*               plugin;
-    std::filesystem::path path;  // Library file the plugin was loaded from.
+    std::filesystem::path path; // Library file the plugin was loaded from.
 };
 
 /**
@@ -735,9 +738,9 @@ struct LoadedPlugin {
  * vinePluginQuery() can be resolved for dependency resolution.
  */
 struct Candidate {
-    std::filesystem::path          path;
+    std::filesystem::path        path;
     vn::runtime::DynamicLibrary* lib;
-    const PluginInfo*              info;
+    const PluginInfo*            info;
 };
 
 /// Runs the unload lifecycle of one plugin, swallowing and logging exceptions.
@@ -751,7 +754,7 @@ bool unloadOnePlugin(Plugin* plugin, const String& name)
         return true;
     }
 
-    Application* app = Application::current();
+    Application*           app = Application::current();
     RegistrationOwnerScope owner_scope(app ? app->commandManager() : nullptr, name);
     PluginLoadContext      context(app, name);
     try {
@@ -786,6 +789,8 @@ bool unloadLoadedPlugins(std::vector<LoadedPlugin>& loaded)
     }
     return ok;
 }
+
+} // namespace
 
 struct PluginManager::Impl {
     /// Loaded plugins, in load order (dependencies before their dependents).
@@ -885,8 +890,7 @@ Plugin* PluginManager::load(const String& name_or_path)
 
     // The metadata of a plugin that is not loaded is still reported, so a
     // disabled or skipped plugin stays visible in the plugin list.
-    rememberDiscovered(d->discovered, *info, path, isBuiltInPath(path) ? PluginScope::BuiltIn : PluginScope::User,
-                       queried.framework_version);
+    rememberDiscovered(d->discovered, *info, path, isBuiltInPath(path) ? PluginScope::BuiltIn : PluginScope::User, queried.framework_version);
 
     // Reuse an already-loaded plugin with the same name.
     for (const auto& lp : d->plugins) {
@@ -908,8 +912,7 @@ Plugin* PluginManager::load(const String& name_or_path)
     // plugin anyway, but say so, because it may assume its dependencies are
     // already initialized.
     for (const auto& dep : info->dependencies) {
-        const bool dep_loaded = std::any_of(d->plugins.begin(), d->plugins.end(),
-            [&dep](const LoadedPlugin& lp) { return lp.name == dep; });
+        const bool dep_loaded = std::any_of(d->plugins.begin(), d->plugins.end(), [&dep](const LoadedPlugin& lp) { return lp.name == dep; });
         if (!dep_loaded) {
             VN_LOGW("Plugin '{}' declares dependency '{}', which is not loaded", toUtf8(info->name), toUtf8(dep));
         }
@@ -921,8 +924,8 @@ Plugin* PluginManager::load(const String& name_or_path)
     // only once per process and a retry would reuse that same instance. The
     // instance itself belongs to the library (it is never destroyed), so the only
     // way back to a consistent state is running the unload lifecycle.
-    using CreateFn = Plugin* ();
-    const auto create = queried.lib->resolveSymbol<CreateFn>(u8"vinePluginCreate");
+    using CreateFn    = Plugin*();
+    const auto create = queried.lib->resolveSymbol<CreateFn*>(u8"vinePluginCreate");
     if (!create) {
         return nullptr;
     }
@@ -942,10 +945,10 @@ Plugin* PluginManager::load(const String& name_or_path)
         // code and flushes its per-module queue into the CommandManager. The owner
         // scope attributes every command registered during the plugin's load
         // (module commands + lifecycle) to this plugin.
-        using RegisterFn = void(CommandManager*);
-        const auto register_cmds = queried.lib->resolveSymbol<RegisterFn>(u8"vinePluginRegisterCommands");
-        Application* app = Application::current();
-        CommandManager* cm = app ? app->commandManager() : nullptr;
+        using RegisterFn              = void(CommandManager*);
+        const auto      register_cmds = queried.lib->resolveSymbol<RegisterFn*>(u8"vinePluginRegisterCommands");
+        Application*    app           = Application::current();
+        CommandManager* cm            = app ? app->commandManager() : nullptr;
         {
             RegistrationOwnerScope owner_scope(cm, info->name);
             if (register_cmds) {
@@ -961,12 +964,9 @@ Plugin* PluginManager::load(const String& name_or_path)
             PluginLoadContext context(app, info->name);
             // 每个钩子都跑在**这次启动的环境**里：钩子用 `co_await async::currentStopToken()` 就地拿到同一个
             // 停止令牌，不必由框架当参数传、也不必去摸全局上报口。环境里放的就是上下文里那一个。
-            static_cast<void>(MainThreadDispatcher::runToCompletion(
-                async::withStopToken(context.stopToken(), plugin->preLoad(&context))));
-            static_cast<void>(MainThreadDispatcher::runToCompletion(
-                async::withStopToken(context.stopToken(), plugin->load(&context))));
-            static_cast<void>(MainThreadDispatcher::runToCompletion(
-                async::withStopToken(context.stopToken(), plugin->postLoad(&context))));
+            static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->preLoad(&context))));
+            static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->load(&context))));
+            static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->postLoad(&context))));
         }
     }
     catch (const std::exception& e) {
@@ -990,8 +990,8 @@ namespace
 
 /// What one load pass may load, and whether the plan covers everything it found.
 struct LoadPlan {
-    std::vector<const Candidate*> planned;           ///< In dependency order; points into the pass's candidate list.
-    bool                          complete{ true };  ///< false: something was left out (its reason is already logged).
+    std::vector<const Candidate*> planned;          ///< In dependency order; points into the pass's candidate list.
+    bool                          complete{ true }; ///< false: something was left out (its reason is already logged).
 };
 
 /**
@@ -1009,8 +1009,10 @@ struct LoadPlan {
  * @param loaded          Plugins already loaded; they are no candidates again.
  * @return The candidates, in scan order.
  */
-std::vector<Candidate> collectCandidates(const PluginManager& manager, std::vector<PluginEntry>& discovered,
-                                         std::vector<String>& policy_disabled, const std::vector<LoadedPlugin>& loaded)
+std::vector<Candidate> collectCandidates(const PluginManager&             manager,
+                                         std::vector<PluginEntry>&        discovered,
+                                         std::vector<String>&             policy_disabled,
+                                         const std::vector<LoadedPlugin>& loaded)
 {
     discovered.clear();
     policy_disabled.clear();
@@ -1019,11 +1021,11 @@ std::vector<Candidate> collectCandidates(const PluginManager& manager, std::vect
     struct Source {
         std::filesystem::path     path;
         PluginScope               scope;
-        bool                      registration_enabled;  // false: a registration disables it for everyone.
-        const PluginRegistration* registration{};        // the file this source came from; null for the application's directory.
+        bool                      registration_enabled; // false: a registration disables it for everyone.
+        const PluginRegistration* registration{};       // the file this source came from; null for the application's directory.
     };
 
-    std::vector<Source>         sources;
+    std::vector<Source> sources;
     sources.push_back(Source{ PluginManager::builtInPluginDirectory(), PluginScope::BuiltIn, true, nullptr });
 
     // Registrations are read on every scan, so installing or removing a plugin (or editing a
@@ -1034,7 +1036,9 @@ std::vector<Candidate> collectCandidates(const PluginManager& manager, std::vect
             VN_LOGI("Plugin registration '{}' disables its plugin for all users", toUtf8(registration.id));
         }
         sources.push_back(Source{ std::filesystem::path(std::u8string_view(registration.path.data(), registration.path.size())),
-                                  registration.scope, registration.enabled, &registration });
+                                  registration.scope,
+                                  registration.enabled,
+                                  &registration });
     }
 
     // Step 2: the metadata of every unfiltered, valid Vine plugin. No instance is created yet; only
@@ -1057,7 +1061,7 @@ std::vector<Candidate> collectCandidates(const PluginManager& manager, std::vect
                 continue;
             }
             if (!queried.isUsable()) {
-                continue;  // not a loadable Vine plugin
+                continue; // not a loadable Vine plugin
             }
             const PluginInfo* info = queried.info;
 
@@ -1070,12 +1074,17 @@ std::vector<Candidate> collectCandidates(const PluginManager& manager, std::vect
             if (source.registration != nullptr && found.size() == 1) {
                 if (!source.registration->name.empty() && source.registration->name != info->name) {
                     VN_LOGW("Plugin registration '{}' names plugin '{}', but the library at '{}' reports '{}'; the library wins",
-                           toUtf8(source.registration->id), toUtf8(source.registration->name), toUtf8(path), toUtf8(info->name));
+                            toUtf8(source.registration->id),
+                            toUtf8(source.registration->name),
+                            toUtf8(path),
+                            toUtf8(info->name));
                 }
                 if (!source.registration->uuid.isNull() && !info->uuid.isNull() && source.registration->uuid != info->uuid) {
                     VN_LOGW("Plugin registration '{}' records uuid '{}', but the library at '{}' reports '{}'; the library wins",
-                           toUtf8(source.registration->id), toUtf8(source.registration->uuid.toString()), toUtf8(path),
-                           toUtf8(info->uuid.toString()));
+                            toUtf8(source.registration->id),
+                            toUtf8(source.registration->uuid.toString()),
+                            toUtf8(path),
+                            toUtf8(info->uuid.toString()));
                 }
             }
 
@@ -1090,16 +1099,15 @@ std::vector<Candidate> collectCandidates(const PluginManager& manager, std::vect
                 policy_disabled.push_back(info->name);
             }
 
-            const bool already_loaded = std::any_of(loaded.begin(), loaded.end(),
-                [&info](const LoadedPlugin& lp) { return lp.name == info->name; });
+            const bool already_loaded = std::any_of(loaded.begin(), loaded.end(), [&info](const LoadedPlugin& lp) { return lp.name == info->name; });
             if (already_loaded) {
                 continue;
             }
 
             // The same plugin can be provided by several locations (the application directory, a
             // per-user registration, a machine-wide registration): load it once, from the first one.
-            const bool already_candidate = std::any_of(candidates.begin(), candidates.end(),
-                [&info](const Candidate& c) { return c.info->name == info->name; });
+            const bool already_candidate =
+                std::any_of(candidates.begin(), candidates.end(), [&info](const Candidate& c) { return c.info->name == info->name; });
             if (already_candidate) {
                 continue;
             }
@@ -1135,19 +1143,19 @@ std::vector<Candidate> collectCandidates(const PluginManager& manager, std::vect
  * @param discovered Discovery list, to tell "missing" from "disabled" from "blocked".
  * @return The plan; the reason for everything left out is logged here.
  */
-LoadPlan resolveLoadPlan(const PluginManager& manager, const std::vector<Candidate>& candidates,
-                         const std::vector<LoadedPlugin>& loaded, const std::vector<PluginEntry>& discovered)
+LoadPlan resolveLoadPlan(const PluginManager&             manager,
+                         const std::vector<Candidate>&    candidates,
+                         const std::vector<LoadedPlugin>& loaded,
+                         const std::vector<PluginEntry>&  discovered)
 {
     std::vector<const Candidate*> planned;
     planned.reserve(candidates.size());
     std::vector<String> satisfiable;
     satisfiable.reserve(loaded.size() + candidates.size());
     for (const auto& lp : loaded) {
-        satisfiable.push_back(lp.name);  // already loaded: a satisfied dependency
+        satisfiable.push_back(lp.name); // already loaded: a satisfied dependency
     }
-    const auto isSatisfiable = [&satisfiable](const String& name) {
-        return std::find(satisfiable.begin(), satisfiable.end(), name) != satisfiable.end();
-    };
+    const auto isSatisfiable = [&satisfiable](const String& name) { return std::find(satisfiable.begin(), satisfiable.end(), name) != satisfiable.end(); };
     for (bool progressed = true; progressed;) {
         progressed = false;
         for (const auto& c : candidates) {
@@ -1155,7 +1163,7 @@ LoadPlan resolveLoadPlan(const PluginManager& manager, const std::vector<Candida
                 continue;
             }
             if (std::all_of(c.info->dependencies.begin(), c.info->dependencies.end(), isSatisfiable)) {
-                planned.push_back(&c);  // its dependencies are in the set: it may join it
+                planned.push_back(&c); // its dependencies are in the set: it may join it
                 satisfiable.push_back(c.info->name);
                 progressed = true;
             }
@@ -1172,10 +1180,11 @@ LoadPlan resolveLoadPlan(const PluginManager& manager, const std::vector<Candida
         std::vector<String> skipped;
         std::vector<String> blocked;
     };
+
     std::vector<LoadProblem> problems;
     for (const auto& c : candidates) {
         if (isSatisfiable(c.info->name)) {
-            continue;  // planned
+            continue; // planned
         }
         LoadProblem problem{ c.info->name };
         for (const auto& dep : c.info->dependencies) {
@@ -1185,12 +1194,11 @@ LoadPlan resolveLoadPlan(const PluginManager& manager, const std::vector<Candida
             if (PluginManager::isSkipped(dep)) {
                 problem.skipped.push_back(dep);
             }
-            else if (const PluginEntry* entry = findDiscovered(discovered, dep);
-                     entry != nullptr && !manager.isPluginEnabled(dep)) {
+            else if (const PluginEntry* entry = findDiscovered(discovered, dep); entry != nullptr && !manager.isPluginEnabled(dep)) {
                 problem.disabled.push_back(dep);
             }
             else if (findDiscovered(discovered, dep) != nullptr) {
-                problem.blocked.push_back(dep);  // discovered and enabled, but not loadable
+                problem.blocked.push_back(dep); // discovered and enabled, but not loadable
             }
             else {
                 problem.missing.push_back(dep);
@@ -1202,14 +1210,16 @@ LoadPlan resolveLoadPlan(const PluginManager& manager, const std::vector<Candida
     // A cluster whose members only depend on each other is a declared cycle; saying so beats leaving
     // the reader with mutual "not loadable" lines.
     const bool cyclic = !problems.empty() && std::all_of(problems.begin(), problems.end(), [&problems](const LoadProblem& problem) {
-        return std::all_of(problem.blocked.begin(), problem.blocked.end(), [&problems](const String& blocked) {
-            return std::any_of(problems.begin(), problems.end(), [&blocked](const LoadProblem& other) { return other.plugin == blocked; });
-        }) && problem.missing.empty() && problem.disabled.empty() && problem.skipped.empty();
+        return std::all_of(problem.blocked.begin(),
+                           problem.blocked.end(),
+                           [&problems](const String& blocked) {
+                               return std::any_of(problems.begin(), problems.end(), [&blocked](const LoadProblem& other) { return other.plugin == blocked; });
+                           }) &&
+               problem.missing.empty() && problem.disabled.empty() && problem.skipped.empty();
     });
 
     if (!problems.empty()) {
-        std::string report = "Plugin dependency resolution: " + std::to_string(problems.size()) +
-                             " plugin(s) will not be loaded (the rest still loads):";
+        std::string report = "Plugin dependency resolution: " + std::to_string(problems.size()) + " plugin(s) will not be loaded (the rest still loads):";
         for (const auto& problem : problems) {
             report += "\n  Plugin '";
             report += toUtf8(problem.plugin);
@@ -1277,8 +1287,8 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
         if (startup != nullptr) {
             startup->setLabel(String::fromUtf8("正在创建插件 " + toUtf8(name)));
         }
-        using CreateFn = Plugin* ();
-        const auto create = candidate->lib->resolveSymbol<CreateFn>(u8"vinePluginCreate");
+        using CreateFn    = Plugin*();
+        const auto create = candidate->lib->resolveSymbol<CreateFn*>(u8"vinePluginCreate");
         if (!create) {
             VN_LOGE("Plugin '{}' has no create entry point", toUtf8(name));
             return false;
@@ -1291,10 +1301,10 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
 
         // Register the plugin's commands (VN_DECLARE_COMMAND) inside its own module. The owner scope
         // tags these module commands with the plugin name.
-        using RegisterFn = void(CommandManager*);
-        const auto register_cmds = candidate->lib->resolveSymbol<RegisterFn>(u8"vinePluginRegisterCommands");
-        Application* app = Application::current();
-        CommandManager* cm = app ? app->commandManager() : nullptr;
+        using RegisterFn              = void(CommandManager*);
+        const auto      register_cmds = candidate->lib->resolveSymbol<RegisterFn*>(u8"vinePluginRegisterCommands");
+        Application*    app           = Application::current();
+        CommandManager* cm            = app ? app->commandManager() : nullptr;
         {
             RegistrationOwnerScope owner_scope(cm, name);
             if (register_cmds) {
@@ -1340,12 +1350,13 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         co_await async::withStopToken(context.stopToken(), lp.plugin->preLoad(&context));
     }
 
-    std::size_t loaded_units = 0;  // plugins whose load() has returned: one unit of the progress each
+    std::size_t loaded_units = 0; // plugins whose load() has returned: one unit of the progress each
     for (const auto& lp : created) {
         RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
         PluginLoadContext      context(Application::current(), lp.name);
         if (startup != nullptr) {
-            startup->setLabel(String::fromUtf8("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")"));
+            startup->setLabel(
+                String::fromUtf8("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")"));
         }
         if (startup != nullptr && startup->stopToken().stop_requested()) {
             VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(lp.name));
@@ -1370,7 +1381,6 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
 }
 
 } // namespace
-
 
 bool PluginManager::loadAll()
 {
@@ -1474,16 +1484,12 @@ bool PluginManager::unloadAll()
     for (const auto& lp : d->plugins) {
         // unloadOrder() only reads the metadata and the loaded flag; the scope and
         // the remaining state flags are placeholders.
-        entries.push_back(PluginEntry{ .info  = lp.plugin->info(),
-                                       .path  = lp.path,
-                                       .scope = PluginScope::BuiltIn,
-                                       .loaded = true });
+        entries.push_back(PluginEntry{ .info = lp.plugin->info(), .path = lp.path, .scope = PluginScope::BuiltIn, .loaded = true });
     }
 
     bool ok = true;
     for (const auto& name : unloadOrder(entries)) {
-        const auto it = std::find_if(d->plugins.begin(), d->plugins.end(),
-            [&name](const LoadedPlugin& lp) { return lp.name == name; });
+        const auto it = std::find_if(d->plugins.begin(), d->plugins.end(), [&name](const LoadedPlugin& lp) { return lp.name == name; });
         if (it == d->plugins.end()) {
             continue; // Already gone (a plugin unloaded a sibling re-entrantly).
         }
@@ -1605,9 +1611,7 @@ std::vector<PluginEntry> PluginManager::pluginEntries() const
 
     // The directory iteration order is unspecified; sort by name so the plugin
     // list a UI builds from this is stable across platforms.
-    std::sort(entries.begin(), entries.end(), [](const PluginEntry& lhs, const PluginEntry& rhs) {
-        return lhs.info.name < rhs.info.name;
-    });
+    std::sort(entries.begin(), entries.end(), [](const PluginEntry& lhs, const PluginEntry& rhs) { return lhs.info.name < rhs.info.name; });
     return entries;
 }
 
@@ -1615,10 +1619,10 @@ bool PluginManager::isPluginEnabled(const String& name) const
 {
     // The same four inputs pluginEntries() snapshots for a whole list; here they
     // are read for one name, so the answer is always current.
-    const PluginEntry* entry    = findDiscovered(d->discovered, name);
-    const bool         built_in = entry != nullptr && entry->scope == PluginScope::BuiltIn;
-    const bool         skipped  = isSkipped(name);
-    const bool         policy   = isPolicyDisabled(name, {});
+    const PluginEntry* entry           = findDiscovered(d->discovered, name);
+    const bool         built_in        = entry != nullptr && entry->scope == PluginScope::BuiltIn;
+    const bool         skipped         = isSkipped(name);
+    const bool         policy          = isPolicyDisabled(name, {});
     // The per-user preference comes from the host ConfigManager when there is one,
     // and from the process-local list otherwise.
     const std::vector<String> disabled = disabledNames(d->disabled_fallback);
@@ -1629,7 +1633,7 @@ bool PluginManager::isPluginEnabled(const String& name) const
 bool PluginManager::isPolicyDisabled(const String& name, const std::filesystem::path& library) const
 {
     if (std::find(d->policy_disabled.begin(), d->policy_disabled.end(), name) != d->policy_disabled.end()) {
-        return true;  // recorded by the scan that discovered the plugin
+        return true; // recorded by the scan that discovered the plugin
     }
 
     // Not known yet: no scan has run, or the plugin was named explicitly. Reading the
@@ -1646,8 +1650,7 @@ bool PluginManager::isPolicyDisabled(const String& name, const std::filesystem::
             continue;
         }
         // A registration names the library itself or the directory holding it.
-        const std::filesystem::path registered =
-            normalizedPath(std::filesystem::path(std::u8string_view(registration.path.data(), registration.path.size())));
+        const std::filesystem::path registered = normalizedPath(std::filesystem::path(std::u8string_view(registration.path.data(), registration.path.size())));
         if (registered == loaded || registered == loaded.parent_path()) {
             return true;
         }
@@ -1662,8 +1665,7 @@ bool PluginManager::setPluginEnabled(const String& name, bool enabled)
         return false;
     }
 
-    if (const PluginEntry* entry = findDiscovered(d->discovered, name);
-        entry != nullptr && entry->scope == PluginScope::BuiltIn) {
+    if (const PluginEntry* entry = findDiscovered(d->discovered, name); entry != nullptr && entry->scope == PluginScope::BuiltIn) {
         VN_LOGW("Plugin '{}' is provided by the application and cannot be disabled; ask the application to stop shipping it", toUtf8(name));
         return false;
     }
@@ -1696,8 +1698,7 @@ bool PluginManager::setPluginEnabled(const String& name, bool enabled)
             disabled.push_back(name);
         }
         cfg->setStringArray(disabledConfigKey(), disabled);
-        VN_LOGI("Plugin '{}' is now {}; the change takes effect at the next start", toUtf8(name),
-               enabled ? "enabled" : "disabled");
+        VN_LOGI("Plugin '{}' is now {}; the change takes effect at the next start", toUtf8(name), enabled ? "enabled" : "disabled");
         return true;
     }
 
@@ -1735,8 +1736,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
         return {};
     }
     if (scope == PluginScope::BuiltIn) {
-        VN_LOGW("Refusing to register '{}' as an application-provided plugin; what ships with the application is not installed by the user",
-               toUtf8(path));
+        VN_LOGW("Refusing to register '{}' as an application-provided plugin; what ships with the application is not installed by the user", toUtf8(path));
         return {};
     }
 
@@ -1766,10 +1766,9 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
     if (scope == PluginScope::AllUsers) {
         // The first system directory that can be written to wins; a normal user
         // has none, which is the signal to fall back to the per-user scope.
-        bool                          found = false;
+        bool                                     found = false;
         const std::vector<std::filesystem::path> system =
-            Application::current() ? Application::current()->allUsersPluginRegistrationDirectories()
-                                   : std::vector<std::filesystem::path>{};
+            Application::current() ? Application::current()->allUsersPluginRegistrationDirectories() : std::vector<std::filesystem::path>{};
         for (const auto& candidate : system) {
             if (std::filesystem::is_directory(candidate, ec) || std::filesystem::create_directories(candidate, ec)) {
                 directory = candidate;

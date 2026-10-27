@@ -28,7 +28,7 @@ TEST(DynamicLibraryLoaderTest, LoadMissingReturnsNull)
 TEST(DynamicLibraryLoaderTest, ReusesAlreadyLoadedLibrary)
 {
     DynamicLibraryLoader loader;
-    const String      path = fixturePath();
+    const String         path = fixturePath();
 
     auto* first  = loader.load(path);
     auto* second = loader.load(path);
@@ -62,20 +62,20 @@ TEST(DynamicLibraryLoaderTest, ResolvesKnownSymbol)
 
     // The fixture exports this one symbol; calling it proves resolveSymbol() hands back the real
     // function rather than an address somewhere inside the library.
-    auto* answer = lib->resolveSymbol<int()>(u8"vn_test_fixture_answer");
+    auto* answer = lib->resolveSymbol<int (*)()>(u8"vn_test_fixture_answer");
     ASSERT_NE(answer, nullptr);
     EXPECT_EQ(answer(), 42);
 
     // A name the fixture does not export resolves to nothing.
-    EXPECT_EQ(lib->resolveSymbol<int()>(u8"vn_test_fixture_missing"), nullptr);
+    EXPECT_EQ(lib->resolveSymbol<int (*)()>(u8"vn_test_fixture_missing"), nullptr);
 }
 
 TEST(DynamicLibraryLoaderTest, SearchPathResolvesAndDeduplicates)
 {
     DynamicLibraryLoader loader;
 
-    const String path      = fixturePath();
-    const auto   slash     = path.rfind(u8'/');
+    const String path  = fixturePath();
+    const auto   slash = path.rfind(u8'/');
     ASSERT_NE(slash, String::npos);
     const String directory = path.substr(0, slash);
     const String name      = path.substr(slash + 1);
