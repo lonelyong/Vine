@@ -3,6 +3,7 @@
 /vsc_build
 /build_*
 /build-*
+/vcpkg_installed
 /dist
 .vscode
 .vs
