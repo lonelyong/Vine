@@ -655,6 +655,8 @@ const std::set<String>& MeshLoader::supportedExtensions()
     return extensions;
 }
 
+MeshLoader::MeshLoader() = default;
+
 MeshLoader::MeshLoader(Options options)
   : options_(std::move(options))
 {

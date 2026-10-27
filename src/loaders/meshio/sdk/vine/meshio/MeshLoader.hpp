@@ -99,6 +99,16 @@ class VN_MESHIO_API MeshLoader
 
   public:
     /**
+     * @brief Creates a loader with the default options.
+     *
+     * @details
+     * - Equivalent to `MeshLoader(Options{})`: Auto scaling to millimetres (see Options).
+     * - Declared separately because a default argument cannot be written for the nested Options type here: its
+     *   default member initializers are not available yet while the enclosing class is still being defined.
+     */
+    MeshLoader();
+
+    /**
      * @brief Creates a loader with @p options.
      *
      * @details
@@ -106,9 +116,9 @@ class VN_MESHIO_API MeshLoader
      *   their own instance instead of taking turns on one. There is no shared default instance, because its options
      *   would be shared mutable state and its cache is not thread-safe.
      *
-     * @param options The load options; the default is Auto scaling to millimetres (see Options).
+     * @param options The load options.
      */
-    explicit MeshLoader(Options options = {});
+    explicit MeshLoader(Options options);
     MeshLoader(const MeshLoader&) = delete;
     MeshLoader(MeshLoader&&) = delete;
     ~MeshLoader();

@@ -2,6 +2,7 @@
 #include "runtime_global.hpp"
 
 #include <memory>
+#include <type_traits>
 
 #include <vine/String.hpp>
 
@@ -32,15 +33,19 @@ class VN_RUNTIME_API DynamicLibrary {
     /**
      * @brief Resolves an exported symbol.
      *
-     * @tparam T Type of the symbol; typically a function pointer type.
+     * @tparam T Type of the symbol; must be a function pointer type.
      * @param symbol Name of the exported symbol.
-     * @return The symbol cast to T*, or nullptr when the symbol is not found.
+     * @return The symbol cast to T, or nullptr when the symbol is not found.
+     *
+     * @note
+     * - The conversion is a `reinterpret_cast`: a raw symbol address arrives as `void*`, and the
+     *   standard allows a `static_cast` only between pointers to objects.
      */
     template <typename T>
     T resolveSymbol(const String& symbol) const
     {
         static_assert(std::is_pointer_v<T> && std::is_function_v<std::remove_pointer_t<T>>, "DynamicLibrary::resolveSymbol, T must be a function pointer type");
-        return static_cast<T>(resolveSymbolRaw(symbol));
+        return reinterpret_cast<T>(resolveSymbolRaw(symbol));
     }
 
     /**

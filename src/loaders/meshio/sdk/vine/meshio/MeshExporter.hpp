@@ -56,15 +56,25 @@ class VN_MESHIO_API MeshExporter {
 
   public:
     /**
+     * @brief Creates an exporter with the default options.
+     *
+     * @details
+     * - Equivalent to `MeshExporter(Options{})`: scale 1.0 and binary output.
+     * - Declared separately because a default argument cannot be written for the nested Options type here: its
+     *   default member initializers are not available yet while the enclosing class is still being defined.
+     */
+    MeshExporter();
+
+    /**
      * @brief Creates an exporter with @p options.
      *
      * @details
      * - The options belong to THIS exporter, so two callers that need different scale factors or encodings each keep
      *   their own instead of taking turns on one. There is no shared default instance.
      *
-     * @param options The export options; the default states scale 1.0 and binary output.
+     * @param options The export options.
      */
-    explicit MeshExporter(Options options = {});
+    explicit MeshExporter(Options options);
     MeshExporter(const MeshExporter&) = delete;
     MeshExporter(MeshExporter&&)      = delete;
     ~MeshExporter();

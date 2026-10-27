@@ -788,6 +788,8 @@ class RefusedSource final : public vn::io::DataSource
 
 } // namespace
 
+MeshExporter::MeshExporter() = default;
+
 MeshExporter::MeshExporter(Options options)
   : options_(std::move(options))
 {
