@@ -1,132 +1,180 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 #include <sstream>
+#include <string>
 
 #include <vine/brepio/BrepExporter.hpp>
+#include <vine/brepio/BrepFormat.hpp>
 #include <vine/brepio/BrepLoader.hpp>
 #include <vine/geometry/BrepShape.hpp>
+#include <vine/io/IoError.hpp>
+#include <vine/intrusive_ptr.hpp>
 
+#if defined(VN_BREPIO_HAS_OCCT)
+#include <memory>
+
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <TopoDS_Shape.hxx>
+#endif
+
+using vn::brepio::BrepExporter;
+using vn::brepio::BrepFormat;
 using vn::brepio::BrepLoader;
+using vn::brepio::formatFromPath;
+using vn::brepio::formatName;
+using vn::io::IoError;
 
 namespace
 {
 
-/**
- * @brief Stand-in exporter that records which write entry it was called through.
- *
- * No OpenCASCADE backend is linked yet, so an abstract exporter has no real implementation to test; this one pins the
- * pair of write entries instead (a file target and a stream target, both part of the abstraction).
- */
-class RecordingExporter final : public vn::brepio::BrepExporter
+/// Whether this build has a backend. The tests below state the contract for both builds instead of assuming one.
+bool hasBackend()
 {
-    VN_OBJECT_META_DECL;
-
-  public:
-    bool save(const std::filesystem::path& path, const vn::geometry::BrepShape& shape) override
-    {
-        static_cast<void>(shape);
-        file_path_ = path;
-        ++file_calls_;
-        return true;
-    }
-
-    bool save(std::ostream& out, const vn::geometry::BrepShape& shape) override
-    {
-        static_cast<void>(shape);
-        out << "brep";
-        ++stream_calls_;
-        return static_cast<bool>(out);
-    }
-
-    bool canExport(const vn::geometry::BrepShape& shape) const override
-    {
-        static_cast<void>(shape);
-        return true;
-    }
-
-    /**
-     * @brief Returns the path the file entry was given.
-     *
-     * @return The recorded path.
-     */
-    const std::filesystem::path& filePath() const noexcept { return file_path_; }
-
-    /**
-     * @brief Returns how often the file entry was called.
-     *
-     * @return The call count.
-     */
-    int fileCalls() const noexcept { return file_calls_; }
-
-    /**
-     * @brief Returns how often the stream entry was called.
-     *
-     * @return The call count.
-     */
-    int streamCalls() const noexcept { return stream_calls_; }
-
-  private:
-    std::filesystem::path file_path_;
-    int                   file_calls_{ 0 };
-    int                   stream_calls_{ 0 };
-};
+    return !BrepLoader::supportedExtensions().empty();
+}
 
 } // namespace
 
-VN_OBJECT_META_IMPL(RecordingExporter, vn::brepio::BrepExporter)
-
-TEST(BrepIoTest, BrepIsSupportedFormat)
+TEST(BrepIoTest, FormatVocabularyIsTheReadContract)
 {
-    EXPECT_TRUE(BrepLoader::isSupportedFormat("part.stp"));
-    EXPECT_TRUE(BrepLoader::isSupportedFormat("part.step"));
-    EXPECT_TRUE(BrepLoader::isSupportedFormat("part.igs"));
-    EXPECT_TRUE(BrepLoader::isSupportedFormat("part.iges"));
-    EXPECT_TRUE(BrepLoader::isSupportedFormat("part.IGS"));
-    EXPECT_FALSE(BrepLoader::isSupportedFormat("part.stl"));
-    EXPECT_FALSE(BrepLoader::isSupportedFormat("part.obj"));
-    EXPECT_FALSE(BrepLoader::isSupportedFormat("part.txt"));
-    EXPECT_FALSE(BrepLoader::isSupportedFormat("part"));
+    // The extension lookup names the format whether or not a backend is linked: naming a format and being able to read
+    // it are two different facts.
+    EXPECT_EQ(formatFromPath("part.stp"), BrepFormat::Step);
+    EXPECT_EQ(formatFromPath("part.step"), BrepFormat::Step);
+    EXPECT_EQ(formatFromPath("part.igs"), BrepFormat::Iges);
+    EXPECT_EQ(formatFromPath("part.iges"), BrepFormat::Iges);
+    EXPECT_EQ(formatFromPath("part.IGES"), BrepFormat::Iges);
+    EXPECT_EQ(formatFromPath("part.brep"), BrepFormat::Brep);
+    EXPECT_EQ(formatFromPath("part.stl"), BrepFormat::Unknown);
+    EXPECT_EQ(formatFromPath("part.txt"), BrepFormat::Unknown);
+    EXPECT_EQ(formatFromPath("part"), BrepFormat::Unknown) << "no extension names no format";
+
+    EXPECT_STREQ(formatName(BrepFormat::Step), "step");
+    EXPECT_STREQ(formatName(BrepFormat::Unknown), "Unknown");
 }
 
-TEST(BrepIoTest, BrepDefaultInstanceIsSingleton)
+TEST(BrepIoTest, TheExtensionListNamesWhatTheLoaderCanOpen)
 {
-    EXPECT_EQ(&BrepLoader::defaultInstance(), &BrepLoader::defaultInstance());
+    // With a backend the list holds every spelling the table declares; without one it is empty, because offering a STEP
+    // file this build would refuse is worse than offering none.
+    if (hasBackend()) {
+        EXPECT_EQ(BrepLoader::supportedExtensions().size(), 5u);
+        for (const char* extension : { ".stp", ".step", ".igs", ".iges", ".brep" }) {
+            EXPECT_TRUE(BrepLoader::supportedExtensions().contains(vn::String::fromUtf8(extension))) << extension;
+        }
+    }
+    else {
+        EXPECT_TRUE(BrepLoader::supportedExtensions().empty());
+    }
 }
 
-TEST(BrepIoTest, BrepOptionsRoundTrip)
+TEST(BrepIoTest, LoadRefusesWithAValueNotAnException)
 {
-    // The option interface is usable even though loading is not wired in yet.
-    BrepLoader          loader;
-    BrepLoader::Options options;
-    options.placeholder = 'x';
-    loader.setOptions(options);
-    EXPECT_EQ(loader.options().placeholder, 'x');
-    EXPECT_TRUE(loader.options() == options);
+    // A failure is a classified value: no throw, no null without a reason.
+    BrepLoader loader;
+
+    auto unknown = loader.load("part.txt");
+    ASSERT_FALSE(unknown) << "an extension the table does not name is refused before any read";
+    EXPECT_EQ(unknown.error(), IoError::Unsupported);
+
+    auto missing = loader.load("vn_no_such_part.step");
+    ASSERT_FALSE(missing);
+    EXPECT_EQ(missing.error(), hasBackend() ? IoError::NotFound : IoError::Unsupported);
+
+    std::istringstream garbage("this is not a solid");
+    auto               by_stream = loader.load(garbage, BrepFormat::Step);
+    ASSERT_FALSE(by_stream);
+    EXPECT_EQ(by_stream.error(), hasBackend() ? IoError::InvalidData : IoError::Unsupported);
+
+    loader.clearCache(); // callable in both builds
 }
 
-TEST(BrepIoTest, BrepExporterAnswersBothTargets)
+TEST(BrepIoTest, AnUnknownStreamFormatIsUnsupported)
 {
-    RecordingExporter       exporter;
-    vn::geometry::BrepShape shape;
-
-    std::ostringstream out;
-    EXPECT_TRUE(exporter.save(out, shape));
-    EXPECT_EQ(out.str(), "brep");
-    EXPECT_EQ(exporter.streamCalls(), 1);
-
-    EXPECT_TRUE(exporter.save("part.step", shape));
-    EXPECT_EQ(exporter.filePath(), std::filesystem::path("part.step"));
-    EXPECT_EQ(exporter.fileCalls(), 1);
-
-    EXPECT_TRUE(exporter.canExport(shape));
-}
-
-TEST(BrepIoTest, BrepLoaderTakesAStreamAndAFormatHint)
-{
-    // Both entries exist and agree today: without OpenCASCADE there is nothing to parse with.
     BrepLoader         loader;
-    std::istringstream step("ISO-10303-21;\nHEADER;\nENDSEC;\n");
-    EXPECT_EQ(loader.load(step, "step"), nullptr);
-    EXPECT_EQ(loader.load("part.step"), nullptr);
+    std::istringstream in("anything");
+    auto               result = loader.load(in, BrepFormat::Unknown);
+    ASSERT_FALSE(result) << "a stream has no extension, so the format must be stated";
+    EXPECT_EQ(result.error(), IoError::Unsupported);
 }
+
+TEST(BrepIoTest, ExportWithoutAShapeIsInvalidData)
+{
+    vn::geometry::BrepShape shape; // no shape: there is nothing to write, backend or not
+
+    BrepExporter       exporter;
+    std::ostringstream out;
+    EXPECT_EQ(exporter.exportAs(shape, BrepFormat::Step, out), IoError::InvalidData);
+
+    auto source = exporter.createSource(vn::intrusive_ptr<const vn::geometry::BrepShape>{}, BrepFormat::Step);
+    ASSERT_NE(source, nullptr) << "the source contract is never-null; the refusal travels in error()";
+    EXPECT_EQ(source->size(), 0u);
+    EXPECT_EQ(source->error(), IoError::InvalidData);
+}
+
+TEST(BrepIoTest, AnEmptyShapeIsNotValid)
+{
+    vn::geometry::BrepShape shape;
+    EXPECT_EQ(shape.shape(), nullptr);
+    EXPECT_FALSE(shape.isValid());
+
+    auto owned = vn::make_intrusive<vn::geometry::BrepShape>();
+    owned->setShape({}); // clearing is allowed and leaves it invalid
+    EXPECT_FALSE(owned->isValid());
+}
+
+#if defined(VN_BREPIO_HAS_OCCT)
+TEST(BrepIoTest, ExportsABoxAndReadsItBack)
+{
+    // A real solid through every declared format: writer, reader, and the fingerprint cache that links them.
+    auto solid = vn::make_intrusive<vn::geometry::BrepShape>();
+    solid->setShape(std::make_shared<const TopoDS_Shape>(BRepPrimAPI_MakeBox(10.0, 20.0, 30.0).Shape()));
+    ASSERT_TRUE(solid->isValid());
+
+    const auto dir = std::filesystem::temp_directory_path() / "vn_brepio_roundtrip";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    BrepExporter exporter;
+    BrepLoader   loader;
+
+    const struct Case
+    {
+        BrepFormat  format;
+        const char* name;
+    } cases[] = {
+        { BrepFormat::Step, "box.step" },
+        { BrepFormat::Iges, "box.igs" },
+        { BrepFormat::Brep, "box.brep" },
+    };
+
+    for (const Case& item : cases) {
+        const auto path = dir / item.name;
+        EXPECT_EQ(exporter.exportAs(*solid, item.format, path), IoError::Ok) << item.name;
+        ASSERT_TRUE(std::filesystem::exists(path)) << item.name;
+
+        auto loaded = loader.load(path);
+        ASSERT_TRUE(loaded) << item.name;
+        EXPECT_TRUE(loaded.value()->isValid()) << item.name;
+
+        // The same bytes through the stream entry hit the same cache entry.
+        std::ifstream      file(path, std::ios::binary);
+        std::ostringstream bytes;
+        bytes << file.rdbuf();
+        std::istringstream image(bytes.str(), std::ios::binary);
+        auto               by_stream = loader.load(image, item.format);
+        ASSERT_TRUE(by_stream) << item.name;
+        EXPECT_EQ(by_stream.value().get(), loaded.value().get()) << "content, not the path, keys the cache";
+    }
+
+    // The lazy source writes the same content the stream entry does.
+    auto source = exporter.createSource(solid, BrepFormat::Step);
+    ASSERT_NE(source, nullptr);
+    EXPECT_GT(source->size(), 0u) << "asking for the size is the first pull";
+    EXPECT_EQ(source->error(), IoError::Ok);
+
+    std::filesystem::remove_all(dir);
+}
+#endif

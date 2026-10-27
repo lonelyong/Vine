@@ -1,7 +1,7 @@
 # loaders/ 层模块索引
 
-> 各模块自己的详细笔记：`meshio` / `brepio` 见本文；`imageio` 见 `.ai/memory/imageio.md`。
-> 定位依据（为什么加载器不做成 base 模块）见 `.ai/design/imaging-design.md` §3。
+> meshio / brepio 见本文；`imageio` 见 `.ai/memory/imageio.md`。
+> 现行设计：`../design/meshio-brepio-design.md`。
 
 ## 三层结构与不变量
 
@@ -13,154 +13,62 @@ loaders/*     ← 用三方库把数据从文件里读出来/写回去
 **不变量**：数据模块（`geometry` / `imaging`）**不依赖任何三方库**；三方库只在 `loaders/` 里、
 以 `PRIVATE` 链接、静态烘进各自 DLL。所以消费者看不到它们，也不会被迫构建它们。
 
-## 2026-09-12：`modelio` 拆成 `meshio` + `brepio`
+## 公开面（2026-10-27 重新设计）
 
-**为什么拆**：`modelio` 里是两件不相关的事 —— mesh I/O（**绑 assimp**）和 B-rep I/O（**零三方依赖**）。
-只有一半需要 assimp，合在一起意味着"只想要 B-rep 加载器的人也得构建 assimp"。
-模块名 `modelio` 对两半都不贴切。
-
-**拆法**（纯拆分，零行为改动）：
-
-| | `vn::MeshIO` | `vn::BrepIO` |
-| --- | --- | --- |
-| 目录 | `src/loaders/meshio/` | `src/loaders/brepio/` |
-| 短名 / 宏 / 命名空间 | `MeshIO` / `VN_MESHIO_*` / `vn::meshio` | `BrepIO` / `VN_BREPIO_*` / `vn::brepio` |
-| 头 | `MeshLoader.hpp` `MeshExporter.hpp` | `BrepLoader.hpp` `BrepExporter.hpp` |
-| 依赖 | PUBLIC `Runtime Geometry Crypto` + **PRIVATE `assimp::assimp zlibstatic`** | PUBLIC `Runtime Geometry Crypto`（**零三方**） |
-| 测试 | `tests/test_meshio`（**8**） | `tests/test_brepio`（**3**） |
-
-- assimp 的 FetchContent 块**整体搬到 `meshio`**；`brepio` 的 CMakeLists 只有两行。
-  注意 assimp 吃 `base/iobase` 产出的 `zlibstatic`，所以 `src/CMakeLists.txt` 里 `base` 必须先于
-  `loaders` 配置（原有约束，未变）。
-- 消费方：只有 `tools/urdf2vine`（用 `MeshLoader`）→ 改成 `vn::MeshIO` + `vn::meshio`。
-- **体积证据**：`libviMeshIOd.so` **87.8 MB**（assimp 在内）vs `libviBrepIOd.so` **708 KB** ——
-  拆开的收益是具体的。
-
-## 2026-09-28：三个 mesh 内容源（`BinStlSource` / `AsciiStlSource` / `ObjSource`）—— 写出推迟到 save
-
-**新增** `sdk/vine/meshio/MeshSource.hpp`（抽象基类，导出）+ `BinStlSource.hpp` / `AsciiStlSource.hpp` / `ObjSource.hpp`
-（各一个 .cpp）：源把一棵 `Mesh` 现排成字节，但**构造时不转** —— 字节在 `read()` 被拉时才由 mesh 现算。
-用法 `archive.addFile(u8"geoms/link.stl", std::make_shared<BinStlSource>(mesh))`，`ZipArchive::saveAs` 时才真正排版
-（libzip 按需拉），全程 O(块)、没有模型的第二份拷贝。
-
-**为什么是一个基类三个格式**：三者共享的全部东西（持有 mesh、盯 `Buffer::revision()`、拉取游标、一条记录的 scratch、
-“末尾验长度”）与格式无关，“一条记录长什么样”才与格式有关 —— 所以基类做前者，格式只答三个问题：
-**几条记录** / **一条最多多少字节** / **第 i 条怎么排**。名字也不是多余的：使用者拿的就是三种格式之一。
-判据可复用：**共享的部分必须是“与格式无关”的那一半**，否则就变成"为了少写十行而多一层"。
-
-为什么是 `DataSource` 而不是“一个 STL 的 istream”（2026-09-28 定稿，判据值得复用）：
-
-- **所有源都是“拉时生成”**：`ifstream` 也是从文件系统现取字节，它只是**标准库已经写好了 streambuf**。所以“从 mesh 现转”不是特例；
-  真正要选的是”包装成 streambuf 还是实现 `DataSource`“。
-- 写 streambuf 要实现 `underflow`/`xsgetn`/`seekoff`/`seekpos` + get-area 约定（容易错）；`DataSource` 只要 `size`/`rewind`/`read`/`error`。
-- `DataSource` 路线**自持 mesh 句柄**，不用调用方保住一个栈对象活到 `saveAs()`。
-- **固定布局的能报长度**：binary STL 是定长（80 字节头 + 4 字节三角形数 + 50 字节/三角形）⇒ `size() = 84 + 50n` 不必先排版就知道；
-  **文本布局的报 `kUnknownSize`**（`AsciiStlSource` / `ObjSource`）—— 从前这是硬门槛（“ZIP 得先知道长度”），现在不是：
-  libzip 对没声明长度的源写 **zip64 头 + 写完回填**（`.ai/design/iobase-vfs-design.md` §8.5 末条），代价只是那条目 zip64。
-- **现在自己写 writer**（三个源都是），所以 byte 与 `MeshExporter` 的路径/流重载**不一致**：assimp 会去重顶点、按材质分组，
-  我们一行一顶点/一面。两者只承诺“同一几何、合法文件”，**不承诺字节相同** —— 故用例只钉“包内往返”（`MeshLoader` 读回）与文本形态，
-  不钉与 `exportAs*` 的输出相等。**assimp 帮不上忙**：它的写出面只有“落文件”（`Exporter::Export`）或“整份 blob”。
-
-实现要点：**每条记录都是“序号（或三角形号）的纯函数”** ⇒ 调用方的缓冲把一条记录切开时，重新生成一次即可（没有半成品状态要携带）；
-`rewind()` 只归零游标/记录号，两次 save 内容逐字节一致。**改过的 mesh 会被拒**：基类存了交接时三个 `Buffer` 的 `revision()`，
-每次 `read()` 比对，动过就报 `InvalidData`（把“一半旧一半新”从静默错误变成失败的 save）；
-而**替换**缓冲（`setPositions`）不算改 —— 源继续读它当初拿到的那份存储，正是它承诺的内容。
-
-**依赖变化**：`MeshIO` 现在 **PUBLIC 链 `IOBase`**（`MeshSource` 把 `vn::io::DataSource` 放进公开签名）。分层允许（两者都在 `base`，
-loaders 在其上）；且 meshio 早就吃 iobase 产的 `zlibstatic`，构建顺序本来就在它之后。
-若将来不想让 loaders 链 iobase：把 `Stream.hpp` 的词汇下沉 core（iobase 侧已无 Vfs 名字，可整头平移）。
-
-## 2026-09-28：进出 `std::istream`/`std::ostream` 的两个入口
-
-给 `MeshLoader` / `MeshExporter` 各加一个流入口，配合 iobase 的 `DataSourceStream`（`DataSource` → `std::istream`）：
-
-- `MeshLoader::loadMerged(std::istream& in, const char* format_hint)`：先把流 `drain` 成一段内存，再 `Importer::ReadFileFromMemory`
-  （assimp 只吃路径或内存；**hint 必需**，内存里没有扩展名可猜）。指纹按**读到的字节**算 ⇒ 与 `load(path)` **命中同一条缓存**。
-- `MeshExporter::exportAsStl(const Mesh&, std::ostream& out)`：assimp 没有流式写出面 ⇒ `ExportToBlob` 拿整份 blob 再推给流
-  （**省临时文件，不省内存**）。文件目标仍优先 path 重载。
-- `MeshExporter::exportAsObj(const Mesh&, std::ostream& out)`：同理，但走 assimp 的 **`"objnomtl"`**（无材质变体）——
-  普通 `"obj"` 写出器**总会另开一个 `.mtl` 文件**（`ExportToBlob` 返回的是 blob **链**，一个流装不下），
-  若只推第一个 blob，文本里的 `mtllib`/`usemtl` 就会指向一个从没写出来的库。两个写出入口共用
-  `writeSceneToStream()`（blob → 流，并拒绝"写出多于一个文件"的情况）。
-- 结果：包内模型**不用落盘**就能读回 —— 条目 → `vn::io::DataSourceStream` → `load(stream, "stl"/"obj")`；
-  两个格式各有"写出到流 → 从流读回"的往返用例（`MeshStreamIoTest`，配合 iobase 的 `DataSourceStreamTest`）。
-
-## 2026-09-28：brepio 跟上同一对入口（对称性）
-
-`BrepLoader` / `BrepExporter` 与 meshio 对齐 **文件 + 流** 两个目标：
-
-- `BrepLoader::load(std::istream& in, const char* format_hint)`：hint 是扩展名形式（`".step"`/`"step"`）。
-  **OCCT 的 reader 本身就吃流**（`STEPControl_Reader::ReadStream` / `IGESControl_Reader::ReadStream`）⇒ 不像 meshio 需要先 drain，
-  所以这里**刻意没有**内存镜像那一步。**当前仍是桩**（返回 null，与 `load(path)` 一致，无 OCCT）；注释里写明"这就是后端将来落地的地方"。
-- `BrepExporter::save(std::ostream& out, const BrepShape& shape)`：**纯虚**，与 `save(path, shape)` 并列 ——
-  写出器必须对两个目标都表态（造不出来就 `return false`）。OCCT 的 writer 也吃流（`STEPControl_Writer::WriteStream` /
-  `IGESControl_Writer::Write`），所以"能写文件就能写流"在这个后端上成立。
-- 没有 OCCT ⇒ 无法测真解析/真排版；测试用**替身写出器**（测试文件内的 `RecordingExporter`，带 `VN_OBJECT_META_IMPL`）
-  钉住两个入口都被调用、且参数正确；loader 侧钉住两个入口今天都返回 null（用例名就写着 "NotWiredYet" 的语义）。
-
-**2026-09-28 实跑（两模块同批）**：`test_meshio` 21/21、`test_brepio` 5/5、`test_iobase` 85/85、`test_robotics_io`（另一个消费者）也过；构建 0 warning。
-首跑抓到一处**用例自身的错**：`StlSourceTest.AppliesTheScaleFactor` 写死 `134` 字节，而 `makeIndexedQuad()` 是**两个**三角形（`84 + 50×2`）——
-尺寸类的断言要用表达式（`84u + 50u * 2u`）而不是手算常量，否则几何夹具一改就错得没道理。
-
-**同日第二批（三个源）实跑**：`test_meshio` 31/31、`test_iobase` 86/86、`test_brepio` 5/5、`test_robotics_io` 过；构建 0 warning。
-首跑 3 红：两处是用例自己的错（缩进的 `vertex` 行没被行首匹配算上；尺寸断言手算常量），
-**一处是真缺陷（在 iobase）**：从**保存过的包**里读一个**压缩**条目再 `rewind()` 会得到空流且不报错 ——
-`EntryReadStream::seek` 直接用 `zip_fseek`，而 libzip **不支持** seek 压缩条目（`zip_fseek` 手册：“only works on uncompressed (stored), unencrypted data”），
-且**一次被拒的 seek 会毒化它自己的 reader**（`zip_fread` 之后永远返回 -1）；旧用例只跑了内存态/未压缩条目，所以一直绿。
-修法：用 `zip_file_is_seekable()` 分流 —— 可 seek 就真 seek，不可 seek 就 `zip_fopen_index` **重新打开**（向前偏移用读并丢弃），失败落进 `error_`。
-
-## 2026-09-29：模型加载 —— `geometry::Model` + `MeshLoader::loadModel`
-
-**问题**：`MeshLoader::load` 把 `aiScene` 压成一个 `IndexedTriangleMesh`，于是材质、名字、节点树、贴图全丢；OBJ 的 `mtllib` 从流入口根本读不到（内存导入没有文件名，assimp 的 `MemoryIOSystem::Open("foo.mtl")` 会转发给默认 IOSystem ⇒ 落到进程 CWD）。
-
-**形状**（用户逐条定稿）：新增 `vn::geometry::Model`，只装对象、不装“文件遗物”：
-
-- `Model::Node{ name, transform(Mat4d), children[], meshes[] }` —— `aiNode` 的镜像；节点带**局部**变换，子节点 / 网格都是**下标**（所以这三个嵌套记录离开 model 没有意义，它们就是 `Model` 的内部类）。
-- `Model::Entry{ intrusive_ptr<Mesh> mesh, intrusive_ptr<Material> material }` —— `aiMesh` + `mMaterialIndex`（下标在加载时解析掉；一份 `aiMaterial` 只 new 一个对象，多个 entry 共享，所以没有材质表也没有索引）。
-- **材质不复用不新建记录**：`geometry::Material` 家族直接用。名字不另存字符串 —— `Shape` / `Material` 现在实现 `vn::INameable`，加载时把名字写进对象本身；贴图路径（`map_kd`）就此不记（要它得给 geometry 加贴图概念，那是 base 的活）。
-- 因此 `Model` 里没有任何格式 / 文件词汇，`loaders/` 的三方依赖不外泄。
-
-**为什么放 `geometry` 而不是 meshio**：它是数据不是 I/O；只想“持有 / 传递”一个加载结果的人链 `geometry`（轻）就够，不必为此链 `MeshIO`（`libviMeshIOd.so` **87.8 MB**，assimp 在内）。也符合既有分工：加载器返回数据模块的类型（`MeshLoader`→`geometry::Mesh`、`BrepLoader`→`geometry::BrepShape`）。
-
-**空间约定**：parts 在**局部空间**（不烘烤），`ScaleMode` 的换算**折进根节点变换**（uniform scale 左乘根节点：顶点与节点间偏移一起放大，不破坏相对位置）。要世界坐标 / 平铺就用 `load` —— 它就是“替你烘烤并拼接”的那个。
-
-**两套 flags**：`loadModel` **不能**带 `aiProcess_PreTransformVertices`（该后处理会删掉节点图、把变换烘进顶点），也不带 `aiProcess_OptimizeMeshes`（会合并 mesh、清空节点）。所以两条入口是**两次解析、两份缓存**（键仍是 (指纹, Options)）。顶点 UV 只在 `loadModel` 侧保留（`load` 路径保持原样：不带上）。
-
-**法线（2026-10-10）**：两条入口都带 **`aiProcess_GenNormals`** —— 文件没有法线时由 assimp 补**逐面**法线，文件给了就原样保留（assimp 只对"没有法线数组"的 mesh 生成）。加它的理由是实测出来的两种"看起来有、其实没有"：①OBJ 没有 `vn`；②**很多 STL 写出器把面法线写成 0**，而 `aiProcess_FindInvalidData`（两份列表里都有，且跑在 `GenFaceNormals` **之前**）把零长法线判非法后会 `delete[]` 整条数组 —— 所以那种 STL 到我们手里是"完全没法线"，光靠渲染侧兜底就只能平面着色。代价是**顶点会被拆开**：逐面法线不能被顶点周围的多个面共享，而 `aiProcess_JoinIdenticalVertices` 跑在它之后 ⇒ 合并得少（assimp 文档原话："#aiProcess_JoinIdenticalVertices is *senseless* then"）。对 STL（本来就每面独占 3 顶点的三角汤）几乎无损失，对"几何共享但没给法线"的 OBJ 会变平面着色 + 顶点变多 —— 这是认下来的取舍：宁可平面着色，也不要一份"没有法线"的网格。
-
-**材质类型的选择**（读 assimp 通用键，不认格式名）：`$mat.metallicFactor|roughnessFactor` → `PbrMaterial`；`$mat.opacity < 1` 也→ `PbrMaterial`（**只有它装得下透明度**，代价是这种材质丢 Ks）；`$clr.specular` / `$mat.shininess` → `PhongMaterial`（MTL 本相）；只有 `$clr.diffuse` → `ColorMaterial`；源里没有材质 → 空指针。消费方按 `materialType()` 分派，别 `obj_cast` 假设具体类型。
-
-**矩阵约定（定稿前已核实，坑记下）**：assimp 的 `aiMatrix4x4` 是**列向量约定 + 平移在第 4 列**（`Translation()` 写 a4/b4/c4，`operator*=` 就是 M·N），与 `math::Matrix4x4`（`y = M * x`、平移第 4 列、`Order=ColMajor`）一致 ⇒ 16 个元素**直接对应，不转置**。
-
-**同轮**：`Shape` / `Material` 实现 `vn::INameable`（`VN_OBJECT_META_IMPL(Shape, vn::Object, vn::INameable)`）—— 几何基类的公开布局变化，消费者需重编。
-
-**实跑**：`test_meshio` **34/34**（新增 `ModelLoadTest` 三条：多部件 + MTL 的名字 / 类型 / UV；流入口“有名字、没参数”；COLLADA 节点平移“变换留在节点上、顶点不烘、`load` 才烘”）；`test_robotics_core` / `test_robotics_io` / `test_graphics` / `test_gui` 全绿；静态门禁全 0。
+- 两个模块同形：`MeshFormat` / `BrepFormat` 枚举 + `formatFromPath()` / `formatName()`
+  （meshio 另有 `formatInfo()`）；读返回 `vn::io::Result<T>`，写返回 `vn::io::IoError`；类只有
+  `Loader`（options + cache）与 `Exporter`（options）。
+- **格式表是唯一词汇**：`supportedExtensions()` 由枚举生成；表外扩展名 `load()` 直接回 `Unsupported`
+  （不再透传 assimp 的注册表，`.3ds`/`.x`/`.x3d` 需在表里加一行）。`exportAs` 不再吃写入器名
+  （`objnomtl`/`collada`/`gltf2` 都收进枚举里）。
+- **无单例**：`defaultInstance()` 已删；options 构造时给、只读，缓存属于实例且**不线程安全**。
+- meshio 六个导出入口：`exportAs(mesh|model, format, path|stream)` + `createSource(mesh|model, format)`。
+  - Model → STL/PLY 的烘平由 **assimp 的导出器注册**完成（`stl`/`ply` 强制 `aiProcess_PreTransformVertices`，
+    并先复制场景）；OBJ 导出器自己按节点累积矩阵写顶点。我们只建忠实的 aiScene，**不要再自己烘一遍**。
+  - `streamable == false` 的格式（`.gltf` 要 `.bin`、`.3mf` 走路径）在 stream/source 目标上回 `Unsupported`；
+    Model → stream 的 OBJ 丢 `.mtl`，几何与名字保留。
+- `MeshSource` 与 `BinStlSource` / `AsciiStlSource` / `ObjSource` 已删：`createSource()` 是唯一懒入口，
+  内容由 `exportAs(stream)` 产出（**整份进内存**，首次拉取时生成，`rewind()` 重放）。
+- brepio：`find_package(OpenCASCADE CONFIG QUIET)` 可选链接（PRIVATE：`TKDESTEP` `TKDEIGES` `TKXSBase` `TKBRep`
+  `TKTopAlgo` `TKernel` `TKMath`），找到才定义 `VN_BREPIO_HAS_OCCT`；找不到的构建里 `supportedExtensions()` 为空、
+  读写回 `Unsupported`，`formatFromPath()` 照常回答。OCCT 8 的流读取是 `ReadStream(fileName, stream)`（没有单参数版），
+  path 入口走 `ReadFile`；`BRepTools` 的 Read/Write 返回 `void`。
+- `BrepShape` 持有 `std::shared_ptr<const TopoDS_Shape>`：`setShape()` 接管所有权，`shape()` 借用。
 
 ## 现状与坑
 
-- **`BrepLoader::load()` 仍是桩**，返回 null（`BrepLoader.cpp` 的 TODO：需要 OpenCASCADE）。
-  能用的只有 `isSupportedFormat` / `options` / `defaultInstance`。**测试只覆盖这些** ——
-  别把"有 BrepLoader" 误读成"能读 STEP"。
-- `brepio` 的加载后端（OCCT）将来以 `PRIVATE` 链进 `brepio` 即可，**mesh-only 消费者不受影响**。
-  这正是拆模块要换来的东西。
-- `MeshLoader` 有**两条入口**：`loadMerged()` → 烘平合并的单 mesh；`load()` → 保留结构的 `geometry::Model`（命名对齐 VMR，旧 `loadModel()` 已改名）。缓存按**内容指纹**记一条 `Cached{merged, model}`——2026-10-26 起不再按 Options 分组，因为 Options 改成**构造时给**：一个 loader 一套策略，两套策略就两个 loader（`OptionsHash` 随之删除）。
-- **失败要说原因**（2026-10-26）：四个入口都带尾参 `vn::io::IoError* error = nullptr`，成功写 `Ok`，失败写 `NotFound` / `IoFailure` / `InvalidData`。别只看返回 null —— 指纹构造函数会抛（权限、被占用），入口已接住并折成 `IoFailure`；而以前这条路径会把异常冒给调用方。`clearCache()` 释放缓存里的几何。
-- **`supportedExtensions()` 现在问 assimp**（`Importer::GetExtensionList`，返回 `*.obj;*.stl` 形式，逐 token 去掉 `*.`）：手写表曾漏掉 `.ply`/`.glb`，而 `loadMerged` 其实读得了 —— 选择器会因此隐藏能打开的文件。`MeshIoTest.TheExtensionTableNamesWhatTheLoaderActuallyReads` 钉住“表 ⟺ 真能读”。
-- **导出入口（对齐 VMR）**：`MeshExporter::exportAs(mesh|model, format, path|stream)` 是通用入口（**无**类型化 `exportAsStl`/`exportAsObj`：二者只吃 mesh、与 model 入口不对称，已删除；OBJ 流式写 `objnomtl`）。`format` 是**写入器格式名**（`obj`、`objnomtl`、`collada`、`gltf2`、`stlb`/`stl`、`plyb`/`ply`、`fbx`/`fbxa`），**不是文件扩展名** —— 写 .dae 要传 `collada`，传 `dae` 会被拒绝并列出可用格式。`createSource(mesh|model, format)` 在首次 `size()`/`read()` 时才用同一写入器产出字节（写入器只能写内存镜像 ⇒ 整份文件在内存里），`rewind()` 回放同一份；STL/OBJ 的逐记录流式源仍是 `BinStlSource`/`AsciiStlSource`/`ObjSource`。
-- **`MeshLoader::supportedExtensions()` 是静态成员（2026-10-10）**：以前它是 `MeshLoader.cpp` 里匿名命名空间的自由函数，
-  只有 DLL 内部看得见；现在公开，因为**选择器要拿它做过滤器**（`model_viewer` 的 `open_mesh_file` 就是这么用的）——
-  "加载器真能读什么"只能有一个答案，抄一份到插件里迟早与它漂移。返回 `const std::set<vn::String>&`
-  （小写、带前导点；SDK 文本一律 `vn::String`，不对外给 `std::string`）。
-- **新增 `src/**/*.cpp` 要 `touch` 该模块的 `CMakeLists.txt`**：`vn_add_library` 的 `file(GLOB ...)` 没有 `CONFIGURE_DEPENDS`（测试目标用的是 `CONFIGURE_DEPENDS`，新增测试文件自动生效）。
-- `MeshLoader::load()` / `loadMerged()` 都有**按内容指纹的内存缓存**（`Crypto` + `Runtime::InMemoryCache`），
-  所以这两条依赖是 **PUBLIC**（缓存类型出现在公开头里）。
-- **新增/移动文件后必须 `cmake -S . -B build`**（`vn_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）。
-- **搬完后记得清陈旧产物**：`rm -rf build/src/loaders/<old> build/lib/libvi<Old>*`，
-  否则旧 `.so` 会留在 `build/lib` 里造成困惑（本仓有过"构建产物不一致导致假结果"的教训，见
-  `.ai/memory/graphics.md` 的验证口径章节）。
+- **新增 `src/**/*.cpp` 要 `cmake -S . -B build`**（`vn_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）；
+  新增测试 `.cpp` 用的是 `CONFIGURE_DEPENDS`，会自动生效。
+- 路径入口读两遍文件（一遍算指纹、一遍解析）；流入口先把流 `drain` 成字节，所以与 path 入口命中同一条缓存。
+- 失败分类就是那四类：`Unsupported`（表外扩展名 / 无后端 / 非流式目标）、`NotFound`、`IoFailure`、`InvalidData`；
+  `Result` 的 `*` / `->` 在失败时是 UB，先判 `ok()`。
+- 两条 assimp 后处理表：`loadMerged()` 带 `aiProcess_PreTransformVertices`，`load()` **绝不能**带（会删节点图）。
+- 法线：两份列表都带 `aiProcess_GenNormals`，代价是逐面法线导致顶点拆分（`JoinIdenticalVertices` 因此少合并）；
+  换来"文件没给法线"时不会交出一份无法线的网格。
+- 矩阵：assimp 的 `aiMatrix4x4` 与 `vn::math::Matrix4x4` 都是列向量约定、平移在第 4 列，16 个元素直接对应，**不转置**。
+- 材质类型按 assimp 通用键选择：`$mat.metallicFactor|roughnessFactor` → `PbrMaterial`；`$mat.opacity < 1` 也 → Pbr
+  （只有它装得下透明度）；`$clr.specular`/`$mat.shininess` → `PhongMaterial`；只有 `$clr.diffuse` → `ColorMaterial`。
+- robotics/io 有自己的 `StlMeshSource`（不链 assimp，见 `MeshBin.hpp`），与 meshio 的写出刻意重复：合并会让
+  robotics 为一份 STL 写出器背上 assimp。
+- iobase 的坑（真缺陷，已修）：libzip 不支持 seek **压缩**条目，且一次被拒的 seek 会毒化 reader —— `zip_file_is_seekable()`
+  分流，不可 seek 就重新 `zip_fopen_index`（见 `../design/iobase-vfs-design.md`）。
+- **OCCT 运行时不要进 `build/bin`**：不拷 DLL，让 `F:/vcpkg/installed/x64-windows/bin` 在 `PATH` 上即可；
+  vcpkg 工具链构建由 applocal 拷，手工 glob 拷贝是错的做法（曾把 50 个 `TK*.dll` 倒进 bin）。
+- **清单模式与全局安装不能共用**：清单已改名 `_vcpkg.json`（CMake / vcpkg 只认 `vcpkg.json`，改名即关掉清单模式），
+  依赖声明仍留在里面给 CI 用；本机的 `CMAKE_TOOLCHAIN_FILE=F:/vcpkg/scripts/buildsystems/vcpkg.cmake` 写在
+  `.vscode/settings.json` 的 `cmake.configureSettings` 里 → 经典模式，直接用 `VCPKG_INSTALLED_DIR`（默认
+  `F:/vcpkg/installed`）里的全局安装，并由 applocal 把 DLL 拷到输出目录，不需要手工拷。
+  为什么不能再叫 `vcpkg.json`：它会按 `builtin-baseline`（opencascade 解析成 8.0.1#0）重解析，全局装的是 8.0.0#0；
+  `overrides` 能钉回 8.0.0，但依赖链（`freetype` `libpng` `zlib` `brotli` `bzip2` `opengl*` `egl-registry`
+  `vcpkg-cmake*`）在当前 baseline 里都更新 → 仍要重建，重建还要 vcpkg 自己下 CMake 4.4.3（本机 SSL 不通）；
+  且清单模式会把 `VCPKG_INSTALLED_DIR` 里**未声明的包全删**（实测列出 boost/opencv/pcl 数百条 "will be removed"）。
+- **待办**：`.3ds`/`.x`/`.x3d` 不在表内；PLY 没有原生逐记录写出（都走 assimp 的整份映像）。
 
-## 判据（2026-09-12）
+## 历史登记 —— 2026-09-12 modelio 拆分 / 2026-09-28 三个内容源
 
-- `test_meshio` **8** + `test_brepio` **3** = 11（与拆分前 `test_modelio` 的 11 个一致，**零丢失**）；
-- 全量 `ninja` **零 error / 零 warning**；`urdf2vine` 正常链接构建；
-- 全仓 `modelio` 引用清零（只剩两个 CMakeLists 里刻意的 "Split out of the former `modelio`"）。
+- `modelio` 拆成 `meshio`（绑 assimp）与 `brepio`（当时零三方依赖）。体积证据：`libviMeshIOd.so` 87.8 MB vs
+  `libviBrepIOd.so` 708 KB。
+- 2026-09-28 的 `MeshSource` / `BinStlSource` / `AsciiStlSource` / `ObjSource` 家族（`sdk/vine/meshio/MeshSource.hpp`）
+  让包内写出不落临时文件；2026-10-27 收进 `MeshExporter::createSource()`，那几个类退出 SDK。
+- 它们当时的选择仍然成立：所有源都是"拉时生成"，用 `DataSource` 而不是自定义 `streambuf`；固定布局能报长度，
+  文本布局报 `kUnknownSize`；改过的 mesh 会被拒（revision 比对）。

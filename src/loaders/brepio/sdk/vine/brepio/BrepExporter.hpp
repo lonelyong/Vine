@@ -1,60 +1,72 @@
-﻿#pragma once
+#pragma once
 
 #include "brepio_global.hpp"
 
 #include <filesystem>
+#include <memory>
 #include <ostream>
 
-#include <vine/Object.hpp>
-#include <vine/RefCounted.hpp>
 #include <vine/geometry/BrepShape.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/io/IoError.hpp>
+#include <vine/io/Stream.hpp>
+
+#include "BrepFormat.hpp"
 
 VN_BREPIO_NS_BEGIN
 
 /**
- * @brief Abstract exporter that writes a B-rep solid to a file.
+ * @brief Exports B-rep solids (STEP, IGES, B-rep).
  *
- * Concrete B-rep exporters (STEP, IGES, ...) derive from this class and
- * write a BrepShape into the target format.
+ * @details
+ * - Every entry answers a vn::io::IoError instead of throwing.
+ * - The target decides how many files one write may produce: a path can hold a companion file, a stream or a data
+ *   source holds exactly one self-contained file. All three formats this module declares are single-file.
+ * - A build without the OpenCASCADE backend keeps the contract but cannot write anything: every export answers
+ *   IoError::Unsupported.
  */
-class VN_BREPIO_API BrepExporter : public vn::Object, public vn::RefCounted<BrepExporter> {
-    VN_OBJECT_META_DECL;
-
+class VN_BREPIO_API BrepExporter
+{
   public:
     BrepExporter();
-    ~BrepExporter() override;
 
   public:
     /**
-     * @brief Writes a B-rep solid to a file.
+     * @brief Writes a solid to a file.
      *
-     * @param path  File to write.
-     * @param shape B-rep solid to export.
-     * @return true on success.
+     * @param shape     The solid to export.
+     * @param format    The target format.
+     * @param file_path The output file path; missing parent directories are created.
+     * @return IoError::Ok on success; Unsupported when the format names no format or this build has no backend,
+     *         InvalidData when the solid is not exportable, IoFailure when the file cannot be written.
      */
-    virtual bool save(const std::filesystem::path& path, const vn::geometry::BrepShape& shape) = 0;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::BrepShape& shape, BrepFormat format,
+                                           const std::filesystem::path& file_path) const;
 
     /**
-     * @brief Writes a B-rep solid to a stream.
+     * @brief Writes a solid into one stream.
      *
-     * The stream entry sits next to the file entry so that every exporter answers both targets: a caller whose output
-     * is a package, a socket or a test needs no temporary file. OpenCASCADE's writers take a stream
-     * (STEPControl_Writer::WriteStream, IGESControl_Writer::Write), so an exporter that can write a file can write a
-     * stream; an exporter that cannot must say so and return false.
-     *
-     * @param out   Stream to write to.
-     * @param shape B-rep solid to export.
-     * @return true on success.
+     * @param shape  The solid to export.
+     * @param format The target format.
+     * @param out    The stream to write; it must outlive the call.
+     * @return IoError::Ok on success; Unsupported when the format names no format or this build has no backend,
+     *         InvalidData when the solid is not exportable, IoFailure when the stream refuses the bytes.
      */
-    virtual bool save(std::ostream& out, const vn::geometry::BrepShape& shape) = 0;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::BrepShape& shape, BrepFormat format,
+                                           std::ostream& out) const;
 
     /**
-     * @brief Returns whether this exporter supports the given solid.
+     * @brief Creates a source that exports a solid on demand.
      *
-     * @param shape B-rep solid to check.
-     * @return true when the solid is supported.
+     * This is how a solid reaches a package (a Vfs entry) without a temporary file; the first pull produces the bytes
+     * and rewind() replays them. A build without a backend answers a source whose error() is IoError::Unsupported.
+     *
+     * @param shape  The solid to export; the source holds it.
+     * @param format The target format.
+     * @return The source; never null. A refusal surfaces through the source's error(), not here.
      */
-    virtual bool canExport(const vn::geometry::BrepShape& shape) const = 0;
+    std::shared_ptr<vn::io::DataSource> createSource(vn::intrusive_ptr<const vn::geometry::BrepShape> shape,
+                                                     BrepFormat                                    format) const;
 };
 
 VN_BREPIO_NS_END

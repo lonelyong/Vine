@@ -1,148 +1,86 @@
-﻿#pragma once
+#pragma once
 
 #include "brepio_global.hpp"
 
-#include <cstddef>
 #include <filesystem>
-#include <functional>
 #include <istream>
-#include <unordered_map>
+#include <set>
 
-#include <vine/intrusive_ptr.hpp>
+#include <vine/String.hpp>
 #include <vine/crypto/ByteSequenceFingerprint.hpp>
 #include <vine/geometry/BrepShape.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/io/IoError.hpp>
 #include <vine/runtime/InMemoryCache.hpp>
+
+#include "BrepFormat.hpp"
 
 VN_BREPIO_NS_BEGIN
 
 /**
- * @brief Utility class for loading boundary-representation models (STEP, IGES).
+ * @brief Loads boundary-representation models (STEP, IGES, B-rep).
  *
- * Loaded B-rep solids are cached by content fingerprint, so loading the same
- * file again reuses the previously built solid instead of re-parsing it. The
- * cache groups solids by load options.
+ * @details
+ * - Both entries answer a vn::io::Result: the solid on success, the failure class otherwise.
+ * - A build without the OpenCASCADE backend keeps this contract but cannot open anything: supportedExtensions() is
+ *   empty and every load answers IoError::Unsupported. formatFromPath() still names the format - the format is a
+ *   fact, the ability to read it is not.
+ * - Loaded solids are cached by content fingerprint, so loading the same file again reuses what was built before.
  *
- * @note The cache is not thread-safe; concurrent loads through the same
- *       loader instance must be avoided.
+ * @warning The cache is not thread-safe: one loader instance must not be used from two threads at the same time.
  */
 class VN_BREPIO_API BrepLoader
 {
-    // 类型声明区块
-  public:
-    /** @brief Load options. */
-    struct Options
-    {
-        /// Placeholder option, reserved for future use.
-        char placeholder{};
-
-        /**
-         * @brief Compares two option sets for equality.
-         *
-         * @param rhs The option set to compare with.
-         * @return true when every field matches.
-         */
-        bool operator==(const Options& rhs) const noexcept
-        {
-            return placeholder == rhs.placeholder;
-        }
-    };
-
-    /** @brief Hash functor for Options. */
-    struct OptionsHash
-    {
-        /**
-         * @brief Computes a hash of the options.
-         *
-         * @param options The option set.
-         * @return The hash value.
-         */
-        std::size_t operator()(const Options& options) const noexcept
-        {
-            return std::hash<char>{}(options.placeholder);
-        }
-    };
-
-    // 构造函数区块
   public:
     BrepLoader();
     BrepLoader(const BrepLoader&) = delete;
     BrepLoader(BrepLoader&&) = delete;
     ~BrepLoader();
 
-    // 方法区块
   public:
     /**
-     * @brief Returns the shared default loader instance.
+     * @brief Returns the file extensions this loader can read.
      *
-     * @return The singleton instance.
+     * The single source of truth for "what can be opened": generated from the format table, and empty when the build
+     * has no backend, because a file picker must not offer a STEP file this loader would refuse.
+     *
+     * @return The supported extension set (e.g. {".stp", ".step", ...}), empty without a backend.
      */
-    static BrepLoader& defaultInstance();
+    static const std::set<vn::String>& supportedExtensions();
 
     /**
-     * @brief Checks whether a file is a supported B-rep format.
+     * @brief Drops every cached solid.
      *
-     * @param file_path The model file path.
-     * @return true when the file extension is supported.
+     * @details What callers already hold stays valid: this releases the cache's share, not theirs.
      */
-    static bool isSupportedFormat(const std::filesystem::path& file_path);
-
-    /**
-     * @brief Returns the load options.
-     *
-     * @return Mutable reference to the options.
-     */
-    Options& options() noexcept;
-
-    /**
-     * @brief Returns the load options.
-     *
-     * @return Const reference to the options.
-     */
-    const Options& options() const noexcept;
-
-    /**
-     * @brief Sets the load options.
-     *
-     * @param options The new options.
-     */
-    void setOptions(const Options& options);
+    void clearCache();
 
     /**
      * @brief Loads a B-rep solid from a file.
      *
-     * @param file_path The model file path (STEP, IGES).
-     * @return The loaded solid, or null on failure.
+     * @param file_path The model file path; its extension selects the format.
+     * @return The solid, or the failure class: Unsupported when the extension names no format or this build has no
+     *         backend, NotFound when the file is not there, IoFailure when it cannot be read, InvalidData when it cannot
+     *         be parsed.
      */
-    vn::intrusive_ptr<vn::geometry::BrepShape> load(const std::filesystem::path& file_path);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> load(
+        const std::filesystem::path& file_path);
 
     /**
      * @brief Loads a B-rep solid from a stream.
      *
-     * The stream entry mirrors the mesh loader's: a model that lives in a package (a VFS entry, a memory buffer) is
-     * loaded without writing a temporary file first. OpenCASCADE's readers take a stream directly
-     * (STEPControl_Reader::ReadStream), so unlike the mesh loader nothing has to be drained up front.
+     * A stream carries no file name, so the format is stated rather than inferred. Unlike the mesh loader there is no
+     * guessing: the readers are selected by the format, they do not sniff the content.
      *
-     * @note Not wired in yet: no OpenCASCADE backend is linked, so this returns null exactly like the path entry.
-     *
-     * @param in The stream to read; the reader consumes as much of it as it needs.
-     * @param format_hint The model format, given as a file extension such as ".step" or ".stp"; required, because a
-     *        stream carries no file name to infer the format from.
-     * @return The loaded solid, or null on failure.
+     * @param in     The stream to read; it is read to its end.
+     * @param format The format to parse as; BrepFormat::Unknown is refused with IoError::Unsupported.
+     * @return The solid, or the failure class (see the path entry).
      */
-    vn::intrusive_ptr<vn::geometry::BrepShape> load(std::istream& in, const char* format_hint);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> load(std::istream& in, BrepFormat format);
 
-    // 类型声明区块
   private:
-    /** @brief Per-file cached solids, grouped by load options. */
-    struct CacheData
-    {
-        std::unordered_map<Options, vn::intrusive_ptr<vn::geometry::BrepShape>, OptionsHash> option_shape_map;
-    };
-
-    // 字段区块
-  private:
-    Options options_;
-    vn::runtime::InMemoryCache<vn::crypto::ByteSequenceFingerprint, CacheData> cache_;
+    /// Solids already built, keyed by the content fingerprint of the file they came from.
+    vn::runtime::InMemoryCache<vn::crypto::ByteSequenceFingerprint, vn::intrusive_ptr<vn::geometry::BrepShape>> cache_;
 };
 
 VN_BREPIO_NS_END

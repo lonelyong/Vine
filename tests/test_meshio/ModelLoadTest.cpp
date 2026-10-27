@@ -15,6 +15,7 @@
 #include <vine/geometry/PhongMaterial.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/meshio/MeshExporter.hpp>
+#include <vine/meshio/MeshFormat.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
 using vn::obj_cast;
@@ -154,8 +155,9 @@ TEST(ModelLoadTest, KeepsEveryPartAndItsMaterial)
     // The assertion below is about structure, not units.
     MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
 
-    auto model = loader.load(obj_path);
-    ASSERT_TRUE(model);
+    auto loaded = loader.load(obj_path);
+    ASSERT_TRUE(loaded);
+    const auto model = loaded.take();
 
     // Two objects are two parts, and each part is one triangle of its own.
     ASSERT_EQ(model->meshes().size(), 2u);
@@ -186,12 +188,15 @@ TEST(ModelLoadTest, KeepsEveryPartAndItsMaterial)
     EXPECT_LT(model->root(), model->nodes().size());
 
     // The flattened entry still reads the same file, and it holds both parts at once.
-    auto merged = loader.loadMerged(obj_path);
-    ASSERT_TRUE(merged);
+    auto loaded_merged = loader.loadMerged(obj_path);
+    ASSERT_TRUE(loaded_merged);
+    auto merged = loaded_merged.take();
     EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*merged).triangleCount(), 2u);
 
     // The same path loads once: the cache hands back the very model it built.
-    EXPECT_EQ(loader.load(obj_path).get(), model.get());
+    auto again = loader.load(obj_path);
+    ASSERT_TRUE(again);
+    EXPECT_EQ(again.value().get(), model.get());
 }
 
 TEST(ModelLoadTest, ReadsPartsFromAStreamButNotTheMaterialLibrary)
@@ -203,8 +208,9 @@ TEST(ModelLoadTest, ReadsPartsFromAStreamButNotTheMaterialLibrary)
 
     MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
 
-    auto model = loader.load(in, "obj");
-    ASSERT_TRUE(model);
+    auto loaded = loader.load(in, vn::meshio::MeshFormat::Obj);
+    ASSERT_TRUE(loaded);
+    const auto model = loaded.take();
     ASSERT_EQ(model->meshes().size(), 2u);
     EXPECT_NE(findNode(*model, "first"), nullptr);
 
@@ -223,8 +229,9 @@ TEST(ModelLoadTest, ReadsPartsFromAStreamButNotTheMaterialLibrary)
     writeFile(dir.path() / "parts.mtl", kTwoMaterialMtl);
 
     MeshLoader by_path(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
-    auto       with_library = by_path.load(dir.path() / "parts.obj");
-    ASSERT_TRUE(with_library);
+    auto       loaded_library = by_path.load(dir.path() / "parts.obj");
+    ASSERT_TRUE(loaded_library);
+    const auto with_library = loaded_library.take();
     ASSERT_TRUE(with_library->meshes()[0].material);
     const auto& from_library = obj_cast<vn::geometry::PhongMaterial>(*with_library->meshes()[0].material);
     EXPECT_FLOAT_EQ(from_library.diffuse().r, 1.0f);
@@ -238,8 +245,9 @@ TEST(ModelLoadTest, KeepsTheTransformOfANodeInsteadOfBakingIt)
 
     MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
 
-    auto model = loader.load(in, "dae");
-    ASSERT_TRUE(model);
+    auto loaded = loader.load(in, vn::meshio::MeshFormat::Collada);
+    ASSERT_TRUE(loaded);
+    const auto model = loaded.take();
 
     // The transform sits on the node...
     const Model::Node* shifted = findNode(*model, "shifted");
@@ -256,8 +264,9 @@ TEST(ModelLoadTest, KeepsTheTransformOfANodeInsteadOfBakingIt)
 
     // The flattened entry bakes that transform, which is the difference between the two entries.
     std::istringstream again{ kShiftedCollada };
-    auto               merged = loader.loadMerged(again, "dae");
-    ASSERT_TRUE(merged);
+    auto               loaded_merged = loader.loadMerged(again, vn::meshio::MeshFormat::Collada);
+    ASSERT_TRUE(loaded_merged);
+    auto        merged = loaded_merged.take();
     const auto& merged_positions = obj_cast<IndexedTriangleMesh>(*merged).positions();
     ASSERT_EQ(merged_positions.size(), 3u);
     EXPECT_FLOAT_EQ(merged_positions[0].x, 10.0f);
@@ -271,17 +280,19 @@ TEST(ModelLoadTest, ExportsTheModelAndKeepsItsPartsAndMaterials)
 
     const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
     MeshLoader  loader(options);
-    const auto  model = loader.load(dir.path() / "parts.obj");
-    ASSERT_TRUE(model);
+    auto        loaded_parts = loader.load(dir.path() / "parts.obj");
+    ASSERT_TRUE(loaded_parts);
+    const auto  model = loaded_parts.take();
 
     const auto   exported = dir.path() / "roundtrip.obj";
     MeshExporter exporter;
-    ASSERT_NO_THROW(exporter.exportAs(*model, u8"obj", exported));
+    ASSERT_EQ(exporter.exportAs(*model, vn::meshio::MeshFormat::Obj, exported), vn::io::IoError::Ok);
     ASSERT_TRUE(std::filesystem::exists(exported));
 
     MeshLoader reader(options);
-    const auto reloaded = reader.load(exported);
-    ASSERT_TRUE(reloaded);
+    auto       loaded_reloaded = reader.load(exported);
+    ASSERT_TRUE(loaded_reloaded);
+    const auto reloaded = loaded_reloaded.take();
     ASSERT_EQ(reloaded->meshes().size(), 2u);
     EXPECT_NE(findNode(*reloaded, "first"), nullptr);
     EXPECT_NE(findNode(*reloaded, "second"), nullptr);
@@ -298,18 +309,20 @@ TEST(ModelLoadTest, ExportsNodeTransformsInsteadOfBakingThem)
 
     const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
     MeshLoader  loader(options);
-    const auto  model = loader.load(in, "dae");
-    ASSERT_TRUE(model);
+    auto        loaded = loader.load(in, vn::meshio::MeshFormat::Collada);
+    ASSERT_TRUE(loaded);
+    const auto  model = loaded.take();
 
     const TempDir dir;
     const auto    exported = dir.path() / "roundtrip.dae";
 
     MeshExporter exporter;
-    ASSERT_NO_THROW(exporter.exportAs(*model, u8"collada", exported)); // the writer's name: collada writes the .dae file
+    ASSERT_EQ(exporter.exportAs(*model, vn::meshio::MeshFormat::Collada, exported), vn::io::IoError::Ok);
 
     MeshLoader reader(options);
-    const auto reloaded = reader.load(exported);
-    ASSERT_TRUE(reloaded);
+    auto       loaded_reloaded = reader.load(exported);
+    ASSERT_TRUE(loaded_reloaded);
+    const auto reloaded = loaded_reloaded.take();
 
     // The transform is still a property of the node...
     const Model::Node* shifted = findNode(*reloaded, "shifted");
@@ -329,11 +342,12 @@ TEST(ModelLoadTest, ACreateSourceExportsTheModelWhenPulled)
 
     const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
     MeshLoader  loader(options);
-    const auto  model = loader.load(in, "dae");
-    ASSERT_TRUE(model);
+    auto        loaded = loader.load(in, vn::meshio::MeshFormat::Collada);
+    ASSERT_TRUE(loaded);
+    const auto  model = loaded.take();
 
     MeshExporter exporter;
-    const auto   source = exporter.createSource(model, u8"collada");
+    const auto   source = exporter.createSource(model, vn::meshio::MeshFormat::Collada);
     ASSERT_NE(source, nullptr);
 
     std::string bytes(static_cast<std::size_t>(source->size()), '\0');
@@ -353,8 +367,9 @@ TEST(ModelLoadTest, ACreateSourceExportsTheModelWhenPulled)
 
     std::istringstream again(bytes, std::ios::binary);
     MeshLoader         reader(options);
-    const auto reloaded = reader.load(again, "dae");
-    ASSERT_TRUE(reloaded);
+    auto               loaded_reloaded = reader.load(again, vn::meshio::MeshFormat::Collada);
+    ASSERT_TRUE(loaded_reloaded);
+    const auto reloaded = loaded_reloaded.take();
     ASSERT_EQ(reloaded->meshes().size(), 1u);
     EXPECT_NE(findNode(*reloaded, "shifted"), nullptr);
 }

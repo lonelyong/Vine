@@ -563,138 +563,117 @@ void ModelSceneWriter::writeMeshes(const MaterialIndexMap& material_indices)
 }
 
 /**
- * @brief One format family whose binary and text spellings are separate format names.
- */
-struct FormatVariants
-{
-    const char* family; ///< Name callers ask for.
-    const char* binary; ///< Format name that writes the binary variant.
-    const char* ascii;  ///< Format name that writes the text variant.
-};
-
-/// Families that Options::format switches between; every other format name is passed through unchanged.
-constexpr FormatVariants kVariantFormats[] = {
-    { "stl", "stlb", "stl" },
-    { "ply", "plyb", "ply" },
-    { "fbx", "fbx", "fbxa" },
-};
-
-/**
- * @brief Resolves a requested format into the name the writer knows.
+ * @brief Maps a format to the writer id this assimp build registers.
  *
- * @param format The requested format: a family or an explicit format name.
- * @param encoding The binary/text choice; only a family in kVariantFormats responds to it.
- * @return The format name to write with.
+ * @param format The target format.
+ * @param encoding The binary/text choice; only a format whose info reports an encoding choice responds to it.
+ * @param keeps_side_files Whether the target can hold a companion file (a path can, a stream cannot).
+ * @return The writer id, or null for MeshFormat::Unknown.
  */
-std::string resolveFormatId(const vn::String& format, MeshExporter::Options::Format encoding)
+const char* writerId(MeshFormat format, MeshExporter::Encoding encoding, bool keeps_side_files) noexcept
 {
-    const std::string name = format.toLower().as_std_str();
-    for (const FormatVariants& variant : kVariantFormats) {
-        if (name == variant.family) {
-            return encoding == MeshExporter::Options::Format::Ascii ? variant.ascii : variant.binary;
-        }
+    switch (format) {
+      case MeshFormat::Stl:
+          return encoding == MeshExporter::Encoding::Text ? "stl" : "stlb";
+      case MeshFormat::Obj:
+          return keeps_side_files ? "obj" : "objnomtl";
+      case MeshFormat::Ply:
+          return encoding == MeshExporter::Encoding::Text ? "ply" : "plyb";
+      case MeshFormat::Gltf:
+          return "gltf2";
+      case MeshFormat::Glb:
+          return "glb2";
+      case MeshFormat::Fbx:
+          return encoding == MeshExporter::Encoding::Text ? "fbxa" : "fbx";
+      case MeshFormat::Collada:
+          return "collada";
+      case MeshFormat::ThreeMf:
+          return "3mf";
+      case MeshFormat::Unknown:
+          break;
     }
-    return name;
+    return nullptr;
 }
 
 /**
- * @brief Refuses a format the writer does not know, listing the ones it does.
+ * @brief Reports whether this build's writer knows a format id.
  *
- * @param exporter The writer whose format table is checked.
- * @param format_id The resolved format name.
- * @throws std::runtime_error when the format is not in the table.
+ * @param exporter The writer whose registry is checked.
+ * @param format_id The writer id to look for.
+ * @return true when the id is registered.
  */
-void ensureFormatAvailable(const Assimp::Exporter& exporter, const std::string& format_id)
+bool writerExists(const Assimp::Exporter& exporter, const char* format_id)
 {
-    std::string supported;
     for (std::size_t i = 0; i < exporter.GetExportFormatCount(); ++i) {
         const aiExportFormatDesc* desc = exporter.GetExportFormatDescription(i);
-        if (desc == nullptr || desc->id == nullptr) {
-            continue;
+        if (desc != nullptr && desc->id != nullptr && std::strcmp(format_id, desc->id) == 0) {
+            return true;
         }
-        if (format_id == desc->id) {
-            return;
-        }
-        if (!supported.empty()) {
-            supported += ", ";
-        }
-        supported += desc->id;
     }
-    throw std::runtime_error("MeshExporter: unsupported format '" + format_id + "'. Supported: " + supported);
-}
-
-/**
- * @brief Reports a failed export, with the writer's own reason appended.
- *
- * Both write targets fail the same way, so the wording lives in one place rather than in each of them.
- *
- * @param exporter The writer that failed; its error string is the detail.
- * @param format_id The resolved format name.
- * @throws std::runtime_error always.
- */
-[[noreturn]] void throwExportFailure(const Assimp::Exporter& exporter, const std::string& format_id)
-{
-    throw std::runtime_error("MeshExporter: failed to export as '" + format_id + "', "
-                             + std::string(exporter.GetErrorString()));
+    return false;
 }
 
 /**
  * @brief Writes a scene to a file, creating missing parent directories.
  *
  * @param scene The scene to write.
- * @param format_id The resolved format name.
+ * @param format_id The writer id.
  * @param file_path The output file path.
- * @throws std::runtime_error when the format is unavailable or the write fails.
+ * @return IoError::Ok on success; Unsupported when this build has no such writer, IoFailure when the file cannot be
+ *         written.
  */
-void writeScene(const aiScene& scene, const std::string& format_id, const std::filesystem::path& file_path)
+vn::io::IoError writeScene(const aiScene& scene, const char* format_id, const std::filesystem::path& file_path)
 {
     Assimp::Exporter exporter;
-    ensureFormatAvailable(exporter, format_id);
+    if (!writerExists(exporter, format_id)) {
+        return vn::io::IoError::Unsupported;
+    }
 
-    if (file_path.has_parent_path()) {
-        std::filesystem::create_directories(file_path.parent_path());
+    try {
+        if (file_path.has_parent_path()) {
+            std::filesystem::create_directories(file_path.parent_path());
+        }
+    } catch (const std::exception&) {
+        return vn::io::IoError::IoFailure;
     }
 
     Assimp::ExportProperties properties;
-    const aiReturn status = exporter.Export(&scene, format_id.c_str(),
-                                            reinterpret_cast<const char*>(file_path.u8string().data()), 0, &properties);
-    if (status != AI_SUCCESS) {
-        throwExportFailure(exporter, format_id);
-    }
+    const aiReturn          status = exporter.Export(&scene, format_id,
+                                                     reinterpret_cast<const char*>(file_path.u8string().data()), 0,
+                                                     &properties);
+    return status == AI_SUCCESS ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
 }
 
 /**
  * @brief Writes a scene into a stream through the writer's memory image.
  *
  * The writer has no stream target: the whole file is built first and handed over afterwards. That is the price of not
- * naming a file, and the reason the path overloads stay the recommended ones.
+ * naming a file.
  *
  * @param scene The scene to write.
- * @param format_id The resolved format name.
+ * @param format_id The writer id.
  * @param out The stream to write; it must outlive the call.
- * @throws std::runtime_error when the format is unavailable, the writer fails, it writes more than one file, or the
- *         stream refuses the bytes.
+ * @return IoError::Ok on success; Unsupported when this build has no such writer or it produces more than one file,
+ *         IoFailure when the writer or the stream fails.
  */
-void writeScene(const aiScene& scene, const std::string& format_id, std::ostream& out)
+vn::io::IoError writeScene(const aiScene& scene, const char* format_id, std::ostream& out)
 {
     Assimp::Exporter exporter;
-    ensureFormatAvailable(exporter, format_id);
+    if (!writerExists(exporter, format_id)) {
+        return vn::io::IoError::Unsupported;
+    }
 
     Assimp::ExportProperties properties;
-    const aiExportDataBlob*  blob = exporter.ExportToBlob(&scene, format_id.c_str(), 0, &properties);
+    const aiExportDataBlob*  blob = exporter.ExportToBlob(&scene, format_id, 0, &properties);
     if (blob == nullptr || blob->data == nullptr) {
-        throwExportFailure(exporter, format_id);
+        return vn::io::IoError::IoFailure;
     }
     if (blob->next != nullptr) {
-        // One stream holds one file; a format that writes several needs names and places for the others.
-        throw std::runtime_error("MeshExporter: '" + format_id
-                                 + "' writes more than one file, which a stream cannot hold");
+        return vn::io::IoError::Unsupported; // one stream holds one file, and this writer produced several
     }
 
     out.write(static_cast<const char*>(blob->data), static_cast<std::streamsize>(blob->size));
-    if (!out) {
-        throw std::runtime_error("MeshExporter: writing the exported " + format_id + " failed");
-    }
+    return out ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
 }
 
 /**
@@ -707,8 +686,8 @@ void writeScene(const aiScene& scene, const std::string& format_id, std::ostream
 class ExportedBlobSource final : public vn::io::DataSource
 {
   public:
-    /// Writes the whole content into the stream it is handed.
-    using Producer = std::function<void(std::ostream&)>;
+    /// Writes the whole content into the stream it is handed, and reports why it could not.
+    using Producer = std::function<vn::io::IoError(std::ostream&)>;
 
     /**
      * @brief Creates a source that runs the producer on the first pull.
@@ -749,7 +728,7 @@ class ExportedBlobSource final : public vn::io::DataSource
     }
 
   private:
-    /// Runs the producer once; a failure is remembered and reported through error().
+    /// Runs the producer once; its failure is remembered and reported through error().
     void produce() const
     {
         if (produced_) {
@@ -759,12 +738,14 @@ class ExportedBlobSource final : public vn::io::DataSource
 
         std::ostringstream image(std::ios::binary);
         try {
-            producer_(image);
+            error_ = producer_(image);
         } catch (const std::exception&) {
             error_ = vn::io::IoError::IoFailure;
             return;
         }
-        bytes_ = image.str();
+        if (error_ == vn::io::IoError::Ok) {
+            bytes_ = image.str();
+        }
     }
 
     Producer                producer_;
@@ -772,6 +753,37 @@ class ExportedBlobSource final : public vn::io::DataSource
     mutable bool            produced_{ false };
     mutable vn::io::IoError error_{ vn::io::IoError::Ok };
     std::size_t             cursor_{ 0 };
+};
+
+/**
+ * @brief A source that produces nothing and states why.
+ *
+ * createSource() answers a source for every format, so a format the target cannot serve (no single self-contained file)
+ * is reported through error() instead of by returning null: a container asks that question before it takes the source.
+ */
+class RefusedSource final : public vn::io::DataSource
+{
+  public:
+    /**
+     * @brief Creates a source that reports @p error and yields no bytes.
+     *
+     * @param error The failure to report.
+     */
+    explicit RefusedSource(vn::io::IoError error) noexcept
+      : error_(error)
+    {
+    }
+
+    [[nodiscard]] std::uint64_t size() const override { return 0; }
+
+    void rewind() override {}
+
+    [[nodiscard]] std::size_t read(std::span<std::byte>) override { return 0; }
+
+    [[nodiscard]] vn::io::IoError error() const override { return error_; }
+
+  private:
+    vn::io::IoError error_;
 };
 
 } // namespace
@@ -783,62 +795,110 @@ MeshExporter::MeshExporter(Options options)
 
 MeshExporter::~MeshExporter() = default;
 
-MeshExporter& MeshExporter::defaultInstance()
-{
-    static MeshExporter instance;
-    return instance;
-}
-
 const MeshExporter::Options& MeshExporter::options() const noexcept
 {
     return options_;
 }
 
-void MeshExporter::exportAs(const Mesh& mesh, const vn::String& format, const std::filesystem::path& file_path) const
+vn::io::IoError MeshExporter::exportAs(const Mesh& mesh, MeshFormat format, const std::filesystem::path& file_path) const
 {
-    const MeshSceneWriter writer(options_, mesh);
-    writeScene(writer.scene(), resolveFormatId(format, options_.format), file_path);
+    const char* const format_id = writerId(format, options_.encoding, /*keeps_side_files=*/true);
+    if (format_id == nullptr) {
+        return vn::io::IoError::Unsupported;
+    }
+
+    try {
+        const MeshSceneWriter writer(options_, mesh);
+        return writeScene(writer.scene(), format_id, file_path);
+    } catch (const std::exception&) {
+        return vn::io::IoError::InvalidData; // the mesh is not geometry this writer can state
+    }
 }
 
-void MeshExporter::exportAs(const Mesh& mesh, const vn::String& format, std::ostream& out) const
+vn::io::IoError MeshExporter::exportAs(const Model& model, MeshFormat format,
+                                       const std::filesystem::path& file_path) const
 {
-    const MeshSceneWriter writer(options_, mesh);
-    writeScene(writer.scene(), resolveFormatId(format, options_.format), out);
+    const char* const format_id = writerId(format, options_.encoding, /*keeps_side_files=*/true);
+    if (format_id == nullptr) {
+        return vn::io::IoError::Unsupported;
+    }
+
+    try {
+        const ModelSceneWriter writer(options_, model);
+        return writeScene(writer.scene(), format_id, file_path);
+    } catch (const std::exception&) {
+        return vn::io::IoError::InvalidData; // the model is malformed, or holds a mesh this writer cannot state
+    }
 }
 
-void MeshExporter::exportAs(const Model& model, const vn::String& format, const std::filesystem::path& file_path) const
+vn::io::IoError MeshExporter::exportAs(const Mesh& mesh, MeshFormat format, std::ostream& out) const
 {
-    const ModelSceneWriter writer(options_, model);
-    writeScene(writer.scene(), resolveFormatId(format, options_.format), file_path);
+    if (!formatInfo(format).streamable) {
+        return vn::io::IoError::Unsupported; // one stream holds one file, and this format's normal form is two
+    }
+    const char* const format_id = writerId(format, options_.encoding, /*keeps_side_files=*/false);
+    if (format_id == nullptr) {
+        return vn::io::IoError::Unsupported;
+    }
+
+    try {
+        const MeshSceneWriter writer(options_, mesh);
+        return writeScene(writer.scene(), format_id, out);
+    } catch (const std::exception&) {
+        return vn::io::IoError::InvalidData;
+    }
 }
 
-void MeshExporter::exportAs(const Model& model, const vn::String& format, std::ostream& out) const
+vn::io::IoError MeshExporter::exportAs(const Model& model, MeshFormat format, std::ostream& out) const
 {
-    const ModelSceneWriter writer(options_, model);
-    writeScene(writer.scene(), resolveFormatId(format, options_.format), out);
+    if (!formatInfo(format).streamable) {
+        return vn::io::IoError::Unsupported;
+    }
+
+    // A stream cannot hold the companion a path target gets (OBJ's .mtl, glTF's .bin): the geometry, the names and the
+    // node tree are kept, the companion is not.
+    const char* const format_id = writerId(format, options_.encoding, /*keeps_side_files=*/false);
+    if (format_id == nullptr) {
+        return vn::io::IoError::Unsupported;
+    }
+
+    try {
+        const ModelSceneWriter writer(options_, model);
+        return writeScene(writer.scene(), format_id, out);
+    } catch (const std::exception&) {
+        return vn::io::IoError::InvalidData;
+    }
 }
 
-std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(const vn::intrusive_ptr<const Mesh>& mesh,
-                                                              vn::String                               format) const
+std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr<const Mesh> mesh,
+                                                              MeshFormat                    format) const
 {
+    if (!formatInfo(format).streamable) {
+        return std::make_shared<RefusedSource>(vn::io::IoError::Unsupported);
+    }
+
     const Options options = options_;
-    return std::make_shared<ExportedBlobSource>([mesh, format = std::move(format), options](std::ostream& out) {
+    return std::make_shared<ExportedBlobSource>([mesh = std::move(mesh), format, options](std::ostream& out) {
         if (!mesh) {
-            throw std::invalid_argument("MeshExporter: createSource was handed a null mesh");
+            return vn::io::IoError::InvalidData; // a null mesh is not content to write
         }
-        MeshExporter(options).exportAs(*mesh, format, out);
+        return MeshExporter(options).exportAs(*mesh, format, out);
     });
 }
 
-std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(const vn::intrusive_ptr<const Model>& model,
-                                                              vn::String                                format) const
+std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr<const Model> model,
+                                                              MeshFormat                     format) const
 {
+    if (!formatInfo(format).streamable) {
+        return std::make_shared<RefusedSource>(vn::io::IoError::Unsupported);
+    }
+
     const Options options = options_;
-    return std::make_shared<ExportedBlobSource>([model, format = std::move(format), options](std::ostream& out) {
+    return std::make_shared<ExportedBlobSource>([model = std::move(model), format, options](std::ostream& out) {
         if (!model) {
-            throw std::invalid_argument("MeshExporter: createSource was handed a null model");
+            return vn::io::IoError::InvalidData;
         }
-        MeshExporter(options).exportAs(*model, format, out);
+        return MeshExporter(options).exportAs(*model, format, out);
     });
 }
 

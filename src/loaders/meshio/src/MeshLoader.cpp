@@ -23,6 +23,8 @@
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include "FormatTable.hpp"
+
 VN_MESHIO_NS_BEGIN
 
 namespace
@@ -98,25 +100,6 @@ bool drainStream(std::istream& in, std::vector<unsigned char>& out)
         }
     }
     return !in.bad();
-}
-
-/**
- * @brief Records why a load is about to answer null, and hands that answer back.
- *
- * Every entry fails the same way, so the reason is written in one place rather than in a lambda apiece: the caller gets
- * a null and, when it asked for one, the class of failure.
- *
- * @param error The caller's out-parameter; null when the caller does not care.
- * @param reason The failure class to record.
- * @return An empty pointer of the entry's result type.
- */
-template <typename Result>
-vn::intrusive_ptr<Result> failed(vn::io::IoError* error, vn::io::IoError reason)
-{
-    if (error != nullptr) {
-        *error = reason;
-    }
-    return {};
 }
 
 /**
@@ -659,27 +642,13 @@ vn::intrusive_ptr<Model> ModelBuilder::build()
 
 const std::set<String>& MeshLoader::supportedExtensions()
 {
-    // ASKED, not listed: the importer registry inside assimp is what decides whether a file can be opened, so a table
-    // kept here was a second answer that went stale the first time a format was added - it was already missing .ply,
-    // the very format the exporter beside this file writes. What comes back is assimp's own text form ("*.obj;*.stl"),
-    // which is why each token loses its "*." before it becomes an extension here.
+    // Generated from the format table: the set a file picker filters on and the formats the loader actually accepts are
+    // one list, so a format added to the enum shows up here without a second edit - and a table that says .ply is
+    // impossible to forget again, which is exactly what a hand-written copy did before.
     static const std::set<String> extensions = [] {
-        Assimp::Importer importer;
-        std::string      listed;
-        importer.GetExtensionList(listed);
-
         std::set<String> parsed;
-        std::size_t      begin = 0;
-        while (begin < listed.size()) {
-            const std::size_t end   = listed.find_first_of("; ", begin);
-            const std::string token = listed.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
-            begin                   = end == std::string::npos ? listed.size() : end + 1;
-
-            const std::size_t star = token.find("*.");
-            const std::string name = star == std::string::npos ? token : token.substr(star + 2);
-            if (!name.empty()) {
-                parsed.insert(String::fromUtf8("." + name).toLower());
-            }
+        for (const MeshFormat format : detail::allFormats()) {
+            parsed.insert(String::fromUtf8(std::string(formatInfo(format).extension)));
         }
         return parsed;
     }();
@@ -693,23 +662,6 @@ MeshLoader::MeshLoader(Options options)
 
 MeshLoader::~MeshLoader() = default;
 
-MeshLoader& MeshLoader::defaultInstance()
-{
-    static MeshLoader instance;
-    return instance;
-}
-
-bool MeshLoader::isSupportedFormat(const std::filesystem::path& file_path)
-{
-    if (!file_path.has_extension()) {
-        return false;
-    }
-
-    // Compare in the same spelling the table uses (lowercase, leading dot): the bytes come from the path as they are,
-    // and String::toLower() only folds the ASCII range, which is all an extension needs.
-    return supportedExtensions().contains(String(file_path.extension().u8string()).toLower());
-}
-
 const MeshLoader::Options& MeshLoader::options() const noexcept
 {
     return options_;
@@ -720,22 +672,41 @@ void MeshLoader::clearCache()
     cache_.clear();
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file_path, vn::io::IoError* error)
+namespace
 {
-    if (error != nullptr) {
-        *error = vn::io::IoError::Ok;
+
+/**
+ * @brief Turns a stated format into the token the parser expects, or none at all.
+ *
+ * The parser takes an extension-shaped hint ("stl", "dae"); Unknown states nothing, which is the only honest answer
+ * for a caller that let the content speak for itself.
+ *
+ * @param hint The format the caller stated.
+ * @return The extension without its dot, or an empty string for Unknown.
+ */
+std::string formatHintToken(MeshFormat hint)
+{
+    return hint != MeshFormat::Unknown ? std::string(formatInfo(hint).extension + 1) : std::string{};
+}
+
+} // namespace
+
+vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMerged(const std::filesystem::path& file_path)
+{
+    if (formatFromPath(file_path) == MeshFormat::Unknown) {
+        return vn::io::IoError::Unsupported; // the table is the read contract, so an unnamed extension is not read
     }
 
     std::error_code ec;
     if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
-        return failed<Mesh>(error, vn::io::IoError::NotFound);
+        return vn::io::IoError::NotFound;
     }
 
     vn::crypto::ByteSequenceFingerprint fingerprint;
     try {
         fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
     } catch (const std::exception&) {
-        return failed<Mesh>(error, vn::io::IoError::IoFailure); // a file this process may not read is not geometry either
+        return vn::io::IoError::IoFailure; // a file this process may not read is not geometry either
     }
 
     if (auto cached = cache_.get(fingerprint); cached && cached->merged) {
@@ -745,7 +716,7 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file
     Assimp::Importer     importer;
     const aiScene* const scene = importer.ReadFile(reinterpret_cast<const char*>(file_path.u8string().data()), kLoadFlags);
     if (scene == nullptr) {
-        return failed<Mesh>(error, vn::io::IoError::InvalidData); // the bytes are not a model this build can parse
+        return vn::io::IoError::InvalidData; // the bytes are not a model this build can parse
     }
 
     const auto mesh = MergedMeshBuilder(options_, *scene).build();
@@ -757,26 +728,21 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(const std::filesystem::path& file
     return mesh;
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::loadMerged(std::istream& in, const char* format_hint, vn::io::IoError* error)
+vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMerged(std::istream& in, MeshFormat hint)
 {
     std::vector<unsigned char> bytes;
     if (!drainStream(in, bytes)) {
-        return failed<Mesh>(error, vn::io::IoError::IoFailure); // a stream that broke is not content to parse
+        return vn::io::IoError::IoFailure; // a stream that broke is not content to parse
     }
-    return loadMergedBytes(bytes, format_hint, error); // the bytes entry records Ok, or the reason it stopped
+    return loadMergedBytes(bytes, hint);
 }
 
-vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& bytes, const char* format_hint,
-                                                   vn::io::IoError* error)
+vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMergedBytes(std::vector<unsigned char>& bytes, MeshFormat hint)
 {
-    if (error != nullptr) {
-        *error = vn::io::IoError::Ok;
-    }
-
     if (bytes.empty()) {
-        return failed<Mesh>(error, vn::io::IoError::InvalidData);
+        return vn::io::IoError::InvalidData;
     }
-    const char* const hint = format_hint != nullptr ? format_hint : "";
+    const std::string token = formatHintToken(hint);
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once and reused.
     const vn::crypto::ByteSequenceFingerprint fingerprint(
@@ -787,9 +753,10 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& 
 
     // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
     Assimp::Importer importer;
-    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kLoadFlags, hint);
+    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kLoadFlags,
+                                                         token.empty() ? nullptr : token.c_str());
     if (scene == nullptr) {
-        return failed<Mesh>(error, vn::io::IoError::InvalidData);
+        return vn::io::IoError::InvalidData;
     }
 
     const auto mesh = MergedMeshBuilder(options_, *scene).build();
@@ -801,22 +768,22 @@ vn::intrusive_ptr<Mesh> MeshLoader::loadMergedBytes(std::vector<unsigned char>& 
     return mesh;
 }
 
-vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path, vn::io::IoError* error)
+vn::io::Result<vn::intrusive_ptr<Model>> MeshLoader::load(const std::filesystem::path& file_path)
 {
-    if (error != nullptr) {
-        *error = vn::io::IoError::Ok;
+    if (formatFromPath(file_path) == MeshFormat::Unknown) {
+        return vn::io::IoError::Unsupported; // the table is the read contract, so an unnamed extension is not read
     }
 
     std::error_code ec;
     if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
-        return failed<Model>(error, vn::io::IoError::NotFound);
+        return vn::io::IoError::NotFound;
     }
 
     vn::crypto::ByteSequenceFingerprint fingerprint;
     try {
         fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
     } catch (const std::exception&) {
-        return failed<Model>(error, vn::io::IoError::IoFailure);
+        return vn::io::IoError::IoFailure;
     }
 
     if (auto cached = cache_.get(fingerprint); cached && cached->model) {
@@ -826,31 +793,26 @@ vn::intrusive_ptr<Model> MeshLoader::load(const std::filesystem::path& file_path
     Assimp::Importer     importer;
     const aiScene* const scene = importer.ReadFile(reinterpret_cast<const char*>(file_path.u8string().data()), kModelFlags);
     if (scene == nullptr) {
-        return failed<Model>(error, vn::io::IoError::InvalidData);
+        return vn::io::IoError::InvalidData;
     }
     return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }
 
-vn::intrusive_ptr<Model> MeshLoader::load(std::istream& in, const char* format_hint, vn::io::IoError* error)
+vn::io::Result<vn::intrusive_ptr<Model>> MeshLoader::load(std::istream& in, MeshFormat hint)
 {
     std::vector<unsigned char> bytes;
     if (!drainStream(in, bytes)) {
-        return failed<Model>(error, vn::io::IoError::IoFailure); // a stream that broke is not content to parse
+        return vn::io::IoError::IoFailure; // a stream that broke is not content to parse
     }
-    return loadBytes(bytes, format_hint, error); // the bytes entry records Ok, or the reason it stopped
+    return loadBytes(bytes, hint);
 }
 
-vn::intrusive_ptr<Model> MeshLoader::loadBytes(std::vector<unsigned char>& bytes, const char* format_hint,
-                                               vn::io::IoError* error)
+vn::io::Result<vn::intrusive_ptr<Model>> MeshLoader::loadBytes(std::vector<unsigned char>& bytes, MeshFormat hint)
 {
-    if (error != nullptr) {
-        *error = vn::io::IoError::Ok;
-    }
-
     if (bytes.empty()) {
-        return failed<Model>(error, vn::io::IoError::InvalidData);
+        return vn::io::IoError::InvalidData;
     }
-    const char* const hint = format_hint != nullptr ? format_hint : "";
+    const std::string token = formatHintToken(hint);
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once per entry.
     const vn::crypto::ByteSequenceFingerprint fingerprint(
@@ -861,9 +823,10 @@ vn::intrusive_ptr<Model> MeshLoader::loadBytes(std::vector<unsigned char>& bytes
 
     // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
     Assimp::Importer importer;
-    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kModelFlags, hint);
+    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kModelFlags,
+                                                         token.empty() ? nullptr : token.c_str());
     if (scene == nullptr) {
-        return failed<Model>(error, vn::io::IoError::InvalidData);
+        return vn::io::IoError::InvalidData;
     }
     return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }

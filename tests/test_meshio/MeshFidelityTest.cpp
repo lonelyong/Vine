@@ -27,6 +27,7 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/math/Vector4.hpp>
 #include <vine/meshio/MeshExporter.hpp>
+#include <vine/meshio/MeshFormat.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
 using vn::geometry::ColorMaterial;
@@ -39,6 +40,7 @@ using vn::math::Vec2f;
 using vn::math::Vec3f;
 using vn::math::Vec4f;
 using vn::meshio::MeshExporter;
+using vn::meshio::MeshFormat;
 using vn::meshio::MeshLoader;
 
 namespace
@@ -409,14 +411,15 @@ TEST(MeshFidelityTest, EveryVertexAttributeSurvivesARoundTrip)
 
     const std::filesystem::path path = dir.path() / "rich.ply";
 
-    MeshExporter exporter(MeshExporter::Options{ .format = MeshExporter::Options::Format::Binary });
-    ASSERT_NO_THROW(exporter.exportAs(*cube, u8"ply", path));
+    MeshExporter exporter;
+    ASSERT_EQ(exporter.exportAs(*cube, MeshFormat::Ply, path), vn::io::IoError::Ok);
 
     // PLY is the family that can spell every attribute the mesh holds, so it is the one the claim is made against.
     // The MODEL entry is what reads them back: the merged entry says it records no texture coordinates.
     MeshLoader loader(noScaling());
-    const auto model = loader.load(path);
-    ASSERT_TRUE(model);
+    auto       loaded_model = loader.load(path);
+    ASSERT_TRUE(loaded_model);
+    const auto model = loaded_model.take();
     ASSERT_EQ(model->meshes().size(), 1u);
     const vn::geometry::Mesh& loaded = *model->meshes()[0].mesh;
 
@@ -437,12 +440,13 @@ TEST(MeshFidelityTest, TheMergedEntryKeepsEveryAttributeItRecords)
     stripTexcoords(expected);
 
     const std::filesystem::path path = dir.path() / "merged.ply";
-    MeshExporter                exporter(MeshExporter::Options{ .format = MeshExporter::Options::Format::Binary });
-    ASSERT_NO_THROW(exporter.exportAs(*cube, u8"ply", path));
+    MeshExporter exporter;
+    ASSERT_EQ(exporter.exportAs(*cube, MeshFormat::Ply, path), vn::io::IoError::Ok);
 
     MeshLoader loader(noScaling());
-    const auto merged = loader.loadMerged(path);
-    ASSERT_TRUE(merged);
+    auto       loaded = loader.loadMerged(path);
+    ASSERT_TRUE(loaded);
+    const auto merged = loaded.take();
 
     EXPECT_TRUE(merged->texcoords().empty()) << "the merged entry states it records no texture coordinates";
     ASSERT_EQ(merged->normals().size(), merged->positions().size());
@@ -460,12 +464,13 @@ TEST(MeshFidelityTest, ANonIndexedMeshSurvivesTheSameTrip)
     const auto    expected = trianglesOf(*soup);
 
     const std::filesystem::path path = dir.path() / "soup.ply";
-    MeshExporter                exporter(MeshExporter::Options{ .format = MeshExporter::Options::Format::Binary });
-    ASSERT_NO_THROW(exporter.exportAs(*soup, u8"ply", path));
+    MeshExporter exporter;
+    ASSERT_EQ(exporter.exportAs(*soup, MeshFormat::Ply, path), vn::io::IoError::Ok);
 
     MeshLoader loader(noScaling());
-    const auto model = loader.load(path);
-    ASSERT_TRUE(model);
+    auto       loaded = loader.load(path);
+    ASSERT_TRUE(loaded);
+    const auto model = loaded.take();
     ASSERT_EQ(model->meshes().size(), 1u);
 
     // The importer rebuilds the topology, so the shape may come back indexed - the triangles are what must match.
@@ -521,12 +526,13 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
     model->setRoot(1u);
 
     const std::filesystem::path path = dir.path() / "model.dae";
-    MeshExporter                exporter;
-    ASSERT_NO_THROW(exporter.exportAs(*model, u8"collada", path));
+    MeshExporter exporter;
+    ASSERT_EQ(exporter.exportAs(*model, MeshFormat::Collada, path), vn::io::IoError::Ok);
 
     MeshLoader loader(noScaling());
-    const auto reloaded = loader.load(path);
-    ASSERT_TRUE(reloaded);
+    auto       loaded = loader.load(path);
+    ASSERT_TRUE(loaded);
+    const auto reloaded = loaded.take();
 
     // The tree: same names, and the child's transform is still a property of the node.
     const Model::Node* reloaded_child = findNode(*reloaded, "child");
@@ -584,15 +590,17 @@ TEST(MeshFidelityTest, AFileWithoutNormalsArrivesWithDerivedOnes)
 
     // Both entries state a normal per vertex: a mesh the file describes without normals is not handed out without them,
     // because an absent normal means "derive it from the geometry" to the renderer, not "draw it flat".
-    const auto merged = loader.loadMerged(dir.path() / "plain.obj");
-    ASSERT_TRUE(merged);
+    auto       loaded = loader.loadMerged(dir.path() / "plain.obj");
+    ASSERT_TRUE(loaded);
+    const auto merged = loaded.take();
     ASSERT_EQ(merged->normals().size(), merged->positions().size());
     for (const Vec3f& normal : merged->normals()) {
         EXPECT_NEAR(normal.length(), 1.0f, 1e-4f) << "a derived normal is not a unit vector";
     }
 
-    const auto model = loader.load(dir.path() / "plain.obj");
-    ASSERT_TRUE(model);
+    auto       loaded_model = loader.load(dir.path() / "plain.obj");
+    ASSERT_TRUE(loaded_model);
+    const auto model = loaded_model.take();
     ASSERT_EQ(model->meshes().size(), 1u);
     const vn::geometry::Mesh& entry_mesh = *model->meshes()[0].mesh;
     EXPECT_EQ(entry_mesh.normals().size(), entry_mesh.positions().size());
@@ -615,13 +623,13 @@ TEST(MeshFidelityTest, TheExportScaleFactorReachesEveryVertex)
     }
 
     const std::filesystem::path path = dir.path() / "scaled.ply";
-    MeshExporter                exporter(MeshExporter::Options{ .scale_factor = 3.0,
-                                                                 .format = MeshExporter::Options::Format::Binary });
-    ASSERT_NO_THROW(exporter.exportAs(*cube, u8"ply", path));
+    MeshExporter exporter(MeshExporter::Options{ .scale_factor = 3.0 });
+    ASSERT_EQ(exporter.exportAs(*cube, MeshFormat::Ply, path), vn::io::IoError::Ok);
 
     MeshLoader loader(noScaling());
-    const auto merged = loader.loadMerged(path);
-    ASSERT_TRUE(merged);
+    auto       loaded = loader.loadMerged(path);
+    ASSERT_TRUE(loaded);
+    const auto merged = loaded.take();
 
     std::vector<Triangle> actual = trianglesOf(*merged);
     stripTexcoords(actual);
@@ -643,17 +651,19 @@ TEST(MeshFidelityTest, TheLoadScaleRuleIsTheSameForBothEntries)
                                            .custom_scale_factor = 2.5 });
 
     // The merged entry bakes the factor into the vertices...
-    const auto merged = loader.loadMerged(dir.path() / "plain.obj");
-    ASSERT_TRUE(merged);
-    float largest = 0.0f;
+    auto       loaded = loader.loadMerged(dir.path() / "plain.obj");
+    ASSERT_TRUE(loaded);
+    const auto merged = loaded.take();
+    float      largest = 0.0f;
     for (const Vec3f& position : merged->positions()) {
         largest = std::max({ largest, position.x, position.y, position.z });
     }
     EXPECT_NEAR(largest, 5.0f, 1e-4f) << "a vertex of the plain triangle was not scaled";
 
     // ...while the model entry folds the same factor into the root, so the parts keep their places.
-    const auto model = loader.load(dir.path() / "plain.obj");
-    ASSERT_TRUE(model);
+    auto       loaded_model = loader.load(dir.path() / "plain.obj");
+    ASSERT_TRUE(loaded_model);
+    const auto model = loaded_model.take();
     ASSERT_LT(model->root(), model->nodes().size());
     const Model::Node& root = model->nodes()[model->root()];
     EXPECT_NEAR(static_cast<float>(root.transform.element(0, 0)), 2.5f, 1e-4f);

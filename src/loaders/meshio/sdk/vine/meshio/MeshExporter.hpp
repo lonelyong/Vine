@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "meshio_global.hpp"
 
@@ -6,74 +6,70 @@
 #include <memory>
 #include <ostream>
 
-#include <vine/String.hpp>
-#include <vine/intrusive_ptr.hpp>
 #include <vine/geometry/Mesh.hpp>
 #include <vine/geometry/Model.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/io/IoError.hpp>
 #include <vine/io/Stream.hpp>
+
+#include "MeshFormat.hpp"
 
 VN_MESHIO_NS_BEGIN
 
 /**
- * @brief Utility class for exporting meshes and models (STL, OBJ, ...).
+ * @brief Exports meshes and models (STL, OBJ, glTF, ...).
  *
- * exportAs() names the format at the call, and the same set of entries serves a mesh and a model: a mesh is one
- * geometry, a model keeps the node tree, the separate meshes and the materials a source described.
+ * @details
+ * - The TARGET decides how many files one write may produce: a path can hold a companion file (OBJ's .mtl, glTF's
+ *   .bin), a stream or a data source holds exactly one self-contained file.
+ * - A Model written to a format that cannot carry node transforms (STL, PLY) is flattened by the writer: the node
+ *   transforms are applied and every mesh lands in the same file. Several meshes are written side by side - nothing is
+ *   merged into a single mesh, and no boolean fusion is performed.
+ * - WHAT A FORMAT CANNOT SPELL IS DROPPED: an attribute the target format has no place for (STL carries neither
+ *   materials nor texture coordinates) is not an error. What IS an error is a target that cannot hold the content at
+ *   all, which answers IoError::Unsupported.
+ * - Every entry answers a vn::io::IoError instead of throwing: the writer's own failures are IoFailure, malformed
+ *   geometry is InvalidData, and a target the format cannot serve is Unsupported.
  *
- * WHAT A FORMAT CANNOT SPELL IS DROPPED, NOT REPORTED: the scene states every attribute the mesh holds - normals,
- * texture coordinates, vertex colours - and the writer keeps the ones its format has a place for. Binary STL, for one,
- * holds nothing per vertex, so a coloured mesh exported as STL arrives without the colours. Ask for a format that
- * carries what the mesh holds (PLY, glTF2, FBX) when losing an attribute matters.
+ * @warning
+ * - An exporter is not thread-safe: one instance must not be used from two threads at the same time.
  */
-class VN_MESHIO_API MeshExporter
-{
-    // 类型声明区块
+class VN_MESHIO_API MeshExporter {
   public:
-    /** @brief Export options. */
-    struct Options
+    /** @brief Whether a format that has both spellings is written as binary or as text. */
+    enum class Encoding
     {
-        /** @brief Vertex scale factor applied on export; 1.0 means no scaling. */
-        double scale_factor{ 1.0 };
-
-        /** @brief Whether the target format is written as binary or text. */
-        enum class Format
-        {
-            /// Binary format (STL, glTF, PLY, FBX, ...).
-            Binary,
-            /// Text format (STL, glTF, PLY, FBX, OBJ, ...).
-            Ascii,
-        };
-
-        /// Binary or text; ignored when the target format does not support it.
-        Format format{ Format::Binary };
+        /// Binary variant (STL, PLY, FBX).
+        Binary,
+        /// Text variant (STL, PLY, FBX).
+        Text,
     };
 
-    // 构造函数区块
+    /** @brief Export options. */
+    struct Options {
+        /// Vertex scale factor applied on export; 1.0 means no scaling.
+        double scale_factor{ 1.0 };
+
+        /// Binary or text; ignored by a format whose info does not report an encoding choice.
+        Encoding encoding{ Encoding::Binary };
+    };
+
   public:
     /**
      * @brief Creates an exporter with @p options.
      *
      * @details
      * - The options belong to THIS exporter, so two callers that need different scale factors or encodings each keep
-     *   their own instead of taking turns on one. defaultInstance() is the convenience instance for a caller that
-     *   wants the defaults and does not mind sharing.
+     *   their own instead of taking turns on one. There is no shared default instance.
      *
      * @param options The export options; the default states scale 1.0 and binary output.
      */
     explicit MeshExporter(Options options = {});
     MeshExporter(const MeshExporter&) = delete;
-    MeshExporter(MeshExporter&&) = delete;
+    MeshExporter(MeshExporter&&)      = delete;
     ~MeshExporter();
 
-    // 方法区块
   public:
-    /**
-     * @brief Returns the shared default exporter instance.
-     *
-     * @return The singleton instance.
-     */
-    static MeshExporter& defaultInstance();
-
     /**
      * @brief Returns the export options.
      *
@@ -82,105 +78,101 @@ class VN_MESHIO_API MeshExporter
     [[nodiscard]] const Options& options() const noexcept;
 
     /**
-     * @brief Exports a mesh as the named format, side files included.
+     * @brief Writes a mesh to a file.
      *
      * @details
-     * - format is either a family whose binary/text variant Options::format picks ("stl", "ply", "fbx"), or an
-     *   explicit writer format name ("obj", "objnomtl", "collada", "gltf2", "3mf", ...); it is the format name, not
-     *   the file extension, that selects the writer.
-     * - A format that writes side files (the OBJ material library) places them next to file_path.
-     * - Options::scale_factor scales the vertices; nothing else about the mesh is changed.
+     * - The format is stated, not guessed from the path: a typo in a file name cannot silently produce a format the
+     *   caller did not ask for.
+     * - Missing parent directories are created. A mesh carries no material, so the OBJ written here is self-contained
+     *   (no .mtl) and every format's output is one file.
      *
-     * @param mesh The mesh to export.
-     * @param format The target format.
-     * @param file_path The output file path; missing parent directories are created.
-     * @throws std::invalid_argument when the mesh is invalid.
-     * @throws std::runtime_error when the mesh type is unsupported, the format is not available, or the export fails.
+     * @param mesh      The mesh to export.
+     * @param format    The target format.
+     * @param file_path The output file path.
+     * @return IoError::Ok on success; InvalidData when the mesh is invalid or of an unsupported type, Unsupported when
+     *         the format cannot be written by this build, IoFailure when the file cannot be written.
      */
-    void exportAs(const vn::geometry::Mesh& mesh, const vn::String& format, const std::filesystem::path& file_path) const;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::Mesh& mesh, MeshFormat format, const std::filesystem::path& file_path) const;
 
     /**
-     * @brief Exports a mesh as the named format into one stream.
-     *
-     * @details
-     * - The writer produces a memory image, so the bytes exist in full before they are handed over: this entry saves
-     *   the temporary file, not the memory.
-     * - One stream holds one file, so a format that writes side files is refused here; ask for "objnomtl" when the
-     *   OBJ has to be self-contained.
-     *
-     * @param mesh The mesh to export.
-     * @param format The target format.
-     * @param out The stream to write; it must outlive the call.
-     * @throws std::invalid_argument when the mesh is invalid.
-     * @throws std::runtime_error when the mesh type is unsupported, the format is not available, the format needs more
-     *         than one file, or the stream refuses the bytes.
-     */
-    void exportAs(const vn::geometry::Mesh& mesh, const vn::String& format, std::ostream& out) const;
-
-    /**
-     * @brief Exports a whole model as the named format, keeping its structure.
+     * @brief Writes a whole model to a file, keeping its structure.
      *
      * @details
      * - The node tree, every mesh and the material each mesh uses are written as the source described them; a node's
-     *   transform stays on the node instead of being baked into its vertices.
-     * - Options::scale_factor scales the vertices of every mesh; node transforms are written unchanged, so a scaled
-     *   model keeps the layout its nodes state.
-     * - A format that writes side files (the OBJ material library) places them next to file_path.
+     *   transform stays on the node instead of being baked into its vertices. A format that cannot carry transforms
+     *   (STL, PLY) is flattened by the writer instead, and the parts land in the same file.
+     * - A format that writes a companion file (OBJ's .mtl, glTF's .bin) places it next to @p file_path.
      *
-     * @param model The model to export.
-     * @param format The target format.
+     * @param model     The model to export.
+     * @param format    The target format.
      * @param file_path The output file path; missing parent directories are created.
-     * @throws std::invalid_argument when the model has no root node or holds an empty mesh entry.
-     * @throws std::runtime_error when a mesh type is unsupported, the format is not available, or the export fails.
+     * @return IoError::Ok on success; InvalidData when the model is malformed, Unsupported when the format cannot be
+     *         written by this build, IoFailure when a file cannot be written.
      */
-    void exportAs(const vn::geometry::Model& model, const vn::String& format, const std::filesystem::path& file_path) const;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::Model& model, MeshFormat format, const std::filesystem::path& file_path) const;
 
     /**
-     * @brief Exports a whole model as the named format into one stream.
+     * @brief Writes a mesh into one stream.
      *
-     * The structure is kept exactly as the path entry keeps it; one stream holds one file, so a format that writes
-     * side files is refused here.
+     * @details
+     * - One stream holds one file, so the format must be streamable (see MeshFormatInfo::streamable): a format whose
+     *   model form needs a companion file is refused here with IoError::Unsupported.
+     * - The content is the same file exportAs(path) would write for a mesh.
      *
-     * @param model The model to export.
+     * @param mesh   The mesh to export.
      * @param format The target format.
-     * @param out The stream to write; it must outlive the call.
-     * @throws std::invalid_argument when the model has no root node or holds an empty mesh entry.
-     * @throws std::runtime_error when a mesh type is unsupported, the format is not available, the format needs more
-     *         than one file, or the stream refuses the bytes.
+     * @param out    The stream to write; it must outlive the call.
+     * @return IoError::Ok on success; InvalidData for invalid geometry, Unsupported when the format cannot be streamed
+     *         or is not available in this build, IoFailure when the stream refuses the bytes.
      */
-    void exportAs(const vn::geometry::Model& model, const vn::String& format, std::ostream& out) const;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::Mesh& mesh, MeshFormat format, std::ostream& out) const;
+
+    /**
+     * @brief Writes a whole model into one stream.
+     *
+     * @details
+     * - One stream holds one file: a model written here keeps its node tree when the format can carry one, and drops
+     *   the companion file a path target would get (an OBJ keeps its geometry and names, not its .mtl).
+     * - A format that cannot exist as one self-contained file answers IoError::Unsupported.
+     *
+     * @param model  The model to export.
+     * @param format The target format.
+     * @param out    The stream to write; it must outlive the call.
+     * @return IoError::Ok on success; InvalidData for a malformed model, Unsupported when the format cannot be streamed
+     *         or is not available in this build, IoFailure when the stream refuses the bytes.
+     */
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::Model& model, MeshFormat format, std::ostream& out) const;
 
     /**
      * @brief Creates a source that exports a mesh on demand.
      *
      * @details
+     * - This is how a mesh reaches a package (a Vfs entry) without a temporary file: the source pulls the bytes the
+     *   exporter writes, so the caller never materializes one itself.
      * - Nothing is written here: the first pull (size() or read()) produces the content, and rewind() replays the same
-     *   bytes, so a package saved twice exports once.
-     * - The source holds the mesh, and the options are the ones in effect when it is created.
-     * - The content is produced by the writer exportAs(stream) uses, so the whole file exists in memory once it has
-     *   been pulled. BinStlSource, AsciiStlSource and ObjSource stay the record-by-record alternative for their formats.
-     * - A format that writes side files cannot be produced into one source; exportAs(path) is the entry for those.
+     *   bytes, so a container saved twice exports once.
+     * - The source holds the mesh; the options are the ones in effect when it is created.
+     * - The bytes are produced by exportAs(stream), so a streamable format yields the same content through either
+     *   entry. A format that is not streamable yields a source whose error() is IoError::Unsupported.
      *
-     * @param mesh The mesh to export; the source holds it.
-     * @param format The target format; the options' snapshot resolves a family name the same way exportAs() does.
-     * @return The source; never null. A mesh the writer refuses surfaces through the source's error(), not here.
+     * @param mesh   The mesh to export; the source holds it.
+     * @param format The target format.
+     * @return The source; never null. A refusal surfaces through the source's error(), not here.
      */
-    std::shared_ptr<vn::io::DataSource> createSource(const vn::intrusive_ptr<const vn::geometry::Mesh>& mesh,
-                                                     vn::String                                       format) const;
+    std::shared_ptr<vn::io::DataSource> createSource(vn::intrusive_ptr<const vn::geometry::Mesh> mesh, MeshFormat format) const;
 
     /**
      * @brief Creates a source that exports a whole model on demand.
      *
-     * Like the mesh entry, but the content keeps the node tree, the separate meshes and the materials.
+     * Like the mesh entry, but the content keeps the node tree, the separate meshes and the materials (except the
+     * companion file a path target would carry, which one file cannot hold).
      *
-     * @param model The model to export; the source holds it.
-     * @param format The target format; the options' snapshot resolves a family name the same way exportAs() does.
-     * @return The source; never null. A model the writer refuses surfaces through the source's error(), not here.
+     * @param model  The model to export; the source holds it.
+     * @param format The target format.
+     * @return The source; never null. A refusal surfaces through the source's error(), not here.
      */
-    std::shared_ptr<vn::io::DataSource> createSource(const vn::intrusive_ptr<const vn::geometry::Model>& model,
-                                                     vn::String                                        format) const;
+    std::shared_ptr<vn::io::DataSource> createSource(vn::intrusive_ptr<const vn::geometry::Model> model, MeshFormat format) const;
 
-    // 字段区块
   private:
     Options options_;
 };

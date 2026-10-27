@@ -1,4 +1,4 @@
-﻿#include <vine/geometry/BrepShape.hpp>
+#include <vine/geometry/BrepShape.hpp>
 
 VN_GEOMETRY_NS_BEGIN
 
@@ -11,14 +11,14 @@ BrepShape::BrepShape()
 
 BrepShape::~BrepShape() = default;
 
-const TopoDS_Shape* BrepShape::shape() const
+const TopoDS_Shape* BrepShape::shape() const noexcept
 {
-    return shape_;
+    return shape_.get();
 }
 
-void BrepShape::setShape(TopoDS_Shape* shape)
+void BrepShape::setShape(std::shared_ptr<const TopoDS_Shape> shape)
 {
-    shape_ = shape;
+    shape_ = std::move(shape);
 }
 
 bool BrepShape::isValid() const

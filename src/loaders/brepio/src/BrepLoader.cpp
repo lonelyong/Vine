@@ -1,8 +1,21 @@
-﻿#include <vine/brepio/BrepLoader.hpp>
+#include <vine/brepio/BrepLoader.hpp>
 
-#include <algorithm>
-#include <cctype>
+#include <array>
+#include <span>
 #include <string>
+
+#include "BrepFormatTable.hpp"
+
+#if defined(VN_BREPIO_HAS_OCCT)
+#include <sstream>
+
+#include <BRep_Builder.hxx>
+#include <BRepTools.hxx>
+#include <IFSelect_ReturnStatus.hxx>
+#include <IGESControl_Reader.hxx>
+#include <STEPControl_Reader.hxx>
+#include <TopoDS_Shape.hxx>
+#endif
 
 VN_BREPIO_NS_BEGIN
 
@@ -10,85 +23,250 @@ namespace
 {
 
 /**
- * @brief Returns whether the extension denotes a STEP file.
+ * @brief Whether this build links the OpenCASCADE backend.
  *
- * @param extension The lowercase file extension.
- * @return true for ".stp" or ".step".
+ * One switch decides the whole module's capability: without a backend there is nothing to parse or write, so
+ * supportedExtensions() stays empty and every load answers IoError::Unsupported. formatFromPath() keeps naming the
+ * formats, because the format is a fact and the ability to read it is not.
  */
-bool isStpExtension(const std::string& extension)
+#if defined(VN_BREPIO_HAS_OCCT)
+constexpr bool kBackendAvailable = true;
+#else
+constexpr bool kBackendAvailable = false;
+#endif
+
+} // namespace
+
+#if defined(VN_BREPIO_HAS_OCCT)
+
+namespace
 {
-    return extension == ".stp" || extension == ".step";
+
+/**
+ * @brief Reads a whole stream into a string, so the bytes can be fingerprinted and parsed.
+ *
+ * @param in The stream to read.
+ * @param out Receives the bytes, appended to what is already there.
+ * @return true when the stream reached its end without breaking.
+ */
+bool drain(std::istream& in, std::string& out)
+{
+    std::array<char, 64U * 1024U> chunk{};
+    for (;;) {
+        in.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        const std::streamsize got = in.gcount();
+        if (got > 0) {
+            out.append(chunk.data(), static_cast<std::size_t>(got));
+        }
+        if (got < static_cast<std::streamsize>(chunk.size())) {
+            break;
+        }
+    }
+    return !in.bad();
 }
 
 /**
- * @brief Returns whether the extension denotes an IGES file.
+ * @brief Reads a solid from a file with the reader the format names.
  *
- * @param extension The lowercase file extension.
- * @return true for ".iges" or ".igs".
+ * @param file_path The file to read.
+ * @param format The format to parse as.
+ * @return The shape; null when the reader could not produce one.
  */
-bool isIgesExtension(const std::string& extension)
+TopoDS_Shape readFile(const std::string& file_path, BrepFormat format)
 {
-    return extension == ".iges" || extension == ".igs";
+    TopoDS_Shape shape;
+    switch (format) {
+      case BrepFormat::Step: {
+          STEPControl_Reader reader;
+          if (reader.ReadFile(file_path.c_str()) != IFSelect_RetDone) {
+              return {};
+          }
+          reader.TransferRoots();
+          shape = reader.OneShape();
+          break;
+      }
+      case BrepFormat::Iges: {
+          IGESControl_Reader reader;
+          if (reader.ReadFile(file_path.c_str()) != IFSelect_RetDone) {
+              return {};
+          }
+          reader.TransferRoots();
+          shape = reader.OneShape();
+          break;
+      }
+      case BrepFormat::Brep: {
+          BRep_Builder builder;
+          BRepTools::Read(shape, file_path.c_str(), builder); // void since OCCT 8; a failure leaves the shape null
+          if (shape.IsNull()) {
+              return {};
+          }
+          break;
+      }
+      case BrepFormat::Unknown:
+          break;
+    }
+    return shape;
+}
+
+/**
+ * @brief Reads a solid from a stream with the reader the format names.
+ *
+ * @param in The stream holding the file.
+ * @param format The format to parse as.
+ * @return The shape; null when the reader could not produce one.
+ */
+TopoDS_Shape readStream(std::istream& in, BrepFormat format)
+{
+    TopoDS_Shape shape;
+    switch (format) {
+      case BrepFormat::Step: {
+          STEPControl_Reader reader;
+          if (reader.ReadStream("model.step", in) != IFSelect_RetDone) {
+              return {};
+          }
+          reader.TransferRoots();
+          shape = reader.OneShape();
+          break;
+      }
+      case BrepFormat::Iges: {
+          IGESControl_Reader reader;
+          if (reader.ReadStream("model.igs", in) != IFSelect_RetDone) {
+              return {};
+          }
+          reader.TransferRoots();
+          shape = reader.OneShape();
+          break;
+      }
+      case BrepFormat::Brep: {
+          BRep_Builder builder;
+          BRepTools::Read(shape, in, builder); // void since OCCT 8; a failed read leaves the shape null
+          if (shape.IsNull()) {
+              return {};
+          }
+          break;
+      }
+      case BrepFormat::Unknown:
+          break;
+    }
+    return shape;
+}
+
+/**
+ * @brief Wraps a shape the reader produced into the geometry handle the API hands out.
+ *
+ * @param shape The shape; ownership moves into the returned solid.
+ * @return The solid, or InvalidData when the reader produced nothing.
+ */
+vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> wrap(TopoDS_Shape shape)
+{
+    if (shape.IsNull()) {
+        return vn::io::IoError::InvalidData;
+    }
+    auto brep = vn::make_intrusive<vn::geometry::BrepShape>();
+    brep->setShape(std::make_shared<const TopoDS_Shape>(std::move(shape)));
+    return brep;
 }
 
 } // namespace
+
+#endif // VN_BREPIO_HAS_OCCT
 
 BrepLoader::BrepLoader() = default;
 
 BrepLoader::~BrepLoader() = default;
 
-BrepLoader& BrepLoader::defaultInstance()
+const std::set<String>& BrepLoader::supportedExtensions()
 {
-    static BrepLoader instance;
-    return instance;
+    static const std::set<String> extensions = [] {
+        std::set<String> parsed;
+        if (!kBackendAvailable) {
+            return parsed; // no reader: offering a file this loader would refuse is worse than offering none
+        }
+        for (const BrepFormat format : detail::allFormats()) {
+            for (const char* const extension : detail::extensionsOf(format)) {
+                parsed.insert(String::fromUtf8(std::string(extension)));
+            }
+        }
+        return parsed;
+    }();
+    return extensions;
 }
 
-bool BrepLoader::isSupportedFormat(const std::filesystem::path& file_path)
+void BrepLoader::clearCache()
 {
-    if (!file_path.has_extension()) {
-        return false;
+    cache_.clear();
+}
+
+vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(
+    const std::filesystem::path& file_path)
+{
+    const BrepFormat format = formatFromPath(file_path);
+    if (format == BrepFormat::Unknown) {
+        return vn::io::IoError::Unsupported; // names no format this module handles
     }
 
-    std::string extension = file_path.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::error_code ec;
+    if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
+        return vn::io::IoError::NotFound;
+    }
 
-    return isStpExtension(extension) || isIgesExtension(extension);
+    vn::crypto::ByteSequenceFingerprint fingerprint;
+    try {
+        fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
+    } catch (const std::exception&) {
+        return vn::io::IoError::IoFailure; // a file this process may not read is not a solid either
+    }
+
+    if (auto cached = cache_.get(fingerprint)) {
+        return *cached;
+    }
+
+#if defined(VN_BREPIO_HAS_OCCT)
+    // The readers take a path; the fingerprint pass above already paid for reading the bytes.
+    const auto loaded = wrap(readFile(file_path.string(), format));
+    if (!loaded) {
+        return loaded;
+    }
+    cache_.set(fingerprint, *loaded);
+    return loaded;
+#else
+    return vn::io::IoError::Unsupported; // no reader is linked into this build
+#endif
 }
 
-BrepLoader::Options& BrepLoader::options() noexcept
+vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(std::istream& in, BrepFormat format)
 {
-    return options_;
-}
+    if (format == BrepFormat::Unknown) {
+        return vn::io::IoError::Unsupported; // a stream has no extension, so the caller must state the format
+    }
 
-const BrepLoader::Options& BrepLoader::options() const noexcept
-{
-    return options_;
-}
+#if defined(VN_BREPIO_HAS_OCCT)
+    std::string bytes;
+    if (!drain(in, bytes)) {
+        return vn::io::IoError::IoFailure; // a stream that broke is not content to parse
+    }
+    if (bytes.empty()) {
+        return vn::io::IoError::InvalidData;
+    }
 
-void BrepLoader::setOptions(const Options& options)
-{
-    options_ = options;
-}
+    // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once.
+    const vn::crypto::ByteSequenceFingerprint fingerprint(
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
+    if (auto cached = cache_.get(fingerprint)) {
+        return *cached;
+    }
 
-vn::intrusive_ptr<vn::geometry::BrepShape> BrepLoader::load(const std::filesystem::path& file_path)
-{
-    // TODO: STEP/IGES parsing requires OpenCASCADE (STEPControl_Reader /
-    // IGESControl_Reader), which is not linked into the project yet. The
-    // file-fingerprint cache (cache_) is defined and ready to be used once
-    // the backend is wired in.
-    return {};
-}
-
-vn::intrusive_ptr<vn::geometry::BrepShape> BrepLoader::load(std::istream& in, const char* format_hint)
-{
-    // TODO: this is where the backend goes once OpenCASCADE is linked; its readers take a stream directly
-    // (STEPControl_Reader::ReadStream / IGESControl_Reader::ReadStream), so nothing has to be drained here.
-    // Until then the entry answers the way the path entry does, so a caller can be written once and both
-    // entries start working together.
+    std::istringstream image(bytes, std::ios::binary);
+    auto               loaded = wrap(readStream(image, format));
+    if (!loaded) {
+        return loaded;
+    }
+    cache_.set(fingerprint, *loaded);
+    return loaded;
+#else
     static_cast<void>(in);
-    static_cast<void>(format_hint);
-    return {};
+    return vn::io::IoError::Unsupported; // no reader is linked into this build
+#endif
 }
 
 VN_BREPIO_NS_END

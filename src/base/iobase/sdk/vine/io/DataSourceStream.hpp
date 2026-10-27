@@ -17,7 +17,7 @@ VN_IO_NS_BEGIN
  * The fourth member of the memory-stream family (core has the span, the growing buffer and the chunked one): this one
  * covers bytes that a DataSource produces rather than bytes that already sit somewhere. That is what lets anything
  * written against std::istream - a parser, assimp's reader, a test - consume a tree entry (VfsEntrySource) or a
- * generated model (meshio's BinStlSource) without an intermediate buffer and without a temporary file.
+ * generated model (meshio's MeshExporter::createSource) without an intermediate buffer and without a temporary file.
  *
  * IT STARTS AT THE SOURCE'S FIRST BYTE: the constructor rewinds, because a stream describes one piece of content from
  * its beginning. A source that cannot restart leaves the stream empty and says so through error().
