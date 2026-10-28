@@ -246,8 +246,8 @@ Scope 那条红、`detach` 那条仍绿。恢复后 150/150 绿。
 ```cpp
 enum class CancelPolicy
 {
-    Destroy,      ///< 触发事件后立刻销毁未完成的孩子（今天的语义；孩子必须 cancellation-safe）
-    StopAndWait,  ///< 先请求停止，再等它们收尾（Trio/Kotlin/P2300 的语义；孩子必须响应停止）
+    Destroy,      // 触发事件后立刻销毁未完成的孩子（今天的语义；孩子必须 cancellation-safe）
+    StopAndWait,  // 先请求停止，再等它们收尾（Trio/Kotlin/P2300 的语义；孩子必须响应停止）
 };
 ```
 

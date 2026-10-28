@@ -2,8 +2,8 @@
 
 #include "core_global.hpp"
 
-#include <cstddef>
 #include <concepts>
+#include <cstddef>
 
 VN_CORE_NS_BEGIN
 
@@ -15,8 +15,7 @@ VN_CORE_NS_BEGIN
  * base-class pointer and callers never need to downcast.
  */
 template <typename T>
-class IHierarchyNode
-{
+class IHierarchyNode {
   public:
     /** @brief Default virtual destructor. */
     virtual ~IHierarchyNode() = default;

@@ -50,9 +50,9 @@ constexpr std::size_t kMouseButtonCount = static_cast<std::size_t>(vn::window::M
 const char* stateName(State state)
 {
     switch (state) {
-        case State::Pending:    return "Pending";
-        case State::Presenting: return "Presenting";
-        case State::Failed:     return "Failed";
+    case State::Pending: return "Pending";
+    case State::Presenting: return "Presenting";
+    case State::Failed: return "Failed";
     }
     return "?";
 }
@@ -88,12 +88,12 @@ vn::window::MouseButton toMouseButton(Qt::MouseButton b)
 {
     using namespace vn::window;
     switch (b) {
-        case Qt::LeftButton:   return MouseButton::Left;
-        case Qt::RightButton:  return MouseButton::Right;
-        case Qt::MiddleButton: return MouseButton::Middle;
-        case Qt::XButton1:     return MouseButton::XButton1;
-        case Qt::XButton2:     return MouseButton::XButton2;
-        default:               return MouseButton::None;
+    case Qt::LeftButton: return MouseButton::Left;
+    case Qt::RightButton: return MouseButton::Right;
+    case Qt::MiddleButton: return MouseButton::Middle;
+    case Qt::XButton1: return MouseButton::XButton1;
+    case Qt::XButton2: return MouseButton::XButton2;
+    default: return MouseButton::None;
     }
 }
 
@@ -107,55 +107,54 @@ vn::window::KeyCode toKeyCode(int key, bool numpad)
         return static_cast<KC>(static_cast<int>(KC::A) + (key - Qt::Key_A));
     }
     if (key >= Qt::Key_0 && key <= Qt::Key_9) {
-        return numpad ? static_cast<KC>(static_cast<int>(KC::Numpad0) + (key - Qt::Key_0))
-                      : static_cast<KC>(static_cast<int>(KC::D0) + (key - Qt::Key_0));
+        return numpad ? static_cast<KC>(static_cast<int>(KC::Numpad0) + (key - Qt::Key_0)) : static_cast<KC>(static_cast<int>(KC::D0) + (key - Qt::Key_0));
     }
     if (key >= Qt::Key_F1 && key <= Qt::Key_F12) {
         return static_cast<KC>(static_cast<int>(KC::F1) + (key - Qt::Key_F1));
     }
 
     switch (key) {
-        case Qt::Key_Space:        return KC::Space;
-        case Qt::Key_Return:       return numpad ? KC::NumpadEnter : KC::Enter;
-        case Qt::Key_Enter:        return KC::NumpadEnter;
-        case Qt::Key_Tab:          return KC::Tab;
-        case Qt::Key_Backspace:    return KC::Backspace;
-        case Qt::Key_Delete:       return KC::Delete;
-        case Qt::Key_Insert:       return KC::Insert;
-        case Qt::Key_Home:         return KC::Home;
-        case Qt::Key_End:          return KC::End;
-        case Qt::Key_PageUp:       return KC::PageUp;
-        case Qt::Key_PageDown:     return KC::PageDown;
-        case Qt::Key_Left:         return KC::Left;
-        case Qt::Key_Right:        return KC::Right;
-        case Qt::Key_Up:           return KC::Up;
-        case Qt::Key_Down:         return KC::Down;
-        case Qt::Key_Shift:        return KC::Shift;
-        case Qt::Key_Control:      return KC::Control;
-        case Qt::Key_Alt:          return KC::Alt;
-        case Qt::Key_Meta:         return KC::Super;
-        case Qt::Key_Minus:        return numpad ? KC::NumpadSubtract : KC::Minus;
-        case Qt::Key_Equal:        return KC::Equal;
-        case Qt::Key_Plus:         return numpad ? KC::NumpadAdd : KC::Equal;
-        case Qt::Key_Asterisk:     return numpad ? KC::NumpadMultiply : KC::Unknown;
-        case Qt::Key_Slash:        return numpad ? KC::NumpadDivide : KC::Slash;
-        case Qt::Key_Period:       return numpad ? KC::NumpadDecimal : KC::Period;
-        case Qt::Key_BracketLeft:  return KC::BracketLeft;
-        case Qt::Key_BracketRight: return KC::BracketRight;
-        case Qt::Key_Backslash:    return KC::Backslash;
-        case Qt::Key_Semicolon:    return KC::Semicolon;
-        case Qt::Key_Apostrophe:   return KC::Apostrophe;
-        case Qt::Key_Comma:        return KC::Comma;
-        case Qt::Key_QuoteLeft:    return KC::Grave;
-        case Qt::Key_Escape:       return KC::Escape;
-        case Qt::Key_Print:        return KC::PrintScreen;
-        case Qt::Key_Pause:        return KC::Pause;
-        case Qt::Key_Menu:         return KC::Menu;
-        case Qt::Key_Context1:     return KC::ContextMenu;
-        case Qt::Key_CapsLock:     return KC::CapsLock;
-        case Qt::Key_NumLock:      return KC::NumLock;
-        case Qt::Key_ScrollLock:   return KC::ScrollLock;
-        default:                   break;
+    case Qt::Key_Space: return KC::Space;
+    case Qt::Key_Return: return numpad ? KC::NumpadEnter : KC::Enter;
+    case Qt::Key_Enter: return KC::NumpadEnter;
+    case Qt::Key_Tab: return KC::Tab;
+    case Qt::Key_Backspace: return KC::Backspace;
+    case Qt::Key_Delete: return KC::Delete;
+    case Qt::Key_Insert: return KC::Insert;
+    case Qt::Key_Home: return KC::Home;
+    case Qt::Key_End: return KC::End;
+    case Qt::Key_PageUp: return KC::PageUp;
+    case Qt::Key_PageDown: return KC::PageDown;
+    case Qt::Key_Left: return KC::Left;
+    case Qt::Key_Right: return KC::Right;
+    case Qt::Key_Up: return KC::Up;
+    case Qt::Key_Down: return KC::Down;
+    case Qt::Key_Shift: return KC::Shift;
+    case Qt::Key_Control: return KC::Control;
+    case Qt::Key_Alt: return KC::Alt;
+    case Qt::Key_Meta: return KC::Super;
+    case Qt::Key_Minus: return numpad ? KC::NumpadSubtract : KC::Minus;
+    case Qt::Key_Equal: return KC::Equal;
+    case Qt::Key_Plus: return numpad ? KC::NumpadAdd : KC::Equal;
+    case Qt::Key_Asterisk: return numpad ? KC::NumpadMultiply : KC::Unknown;
+    case Qt::Key_Slash: return numpad ? KC::NumpadDivide : KC::Slash;
+    case Qt::Key_Period: return numpad ? KC::NumpadDecimal : KC::Period;
+    case Qt::Key_BracketLeft: return KC::BracketLeft;
+    case Qt::Key_BracketRight: return KC::BracketRight;
+    case Qt::Key_Backslash: return KC::Backslash;
+    case Qt::Key_Semicolon: return KC::Semicolon;
+    case Qt::Key_Apostrophe: return KC::Apostrophe;
+    case Qt::Key_Comma: return KC::Comma;
+    case Qt::Key_QuoteLeft: return KC::Grave;
+    case Qt::Key_Escape: return KC::Escape;
+    case Qt::Key_Print: return KC::PrintScreen;
+    case Qt::Key_Pause: return KC::Pause;
+    case Qt::Key_Menu: return KC::Menu;
+    case Qt::Key_Context1: return KC::ContextMenu;
+    case Qt::Key_CapsLock: return KC::CapsLock;
+    case Qt::Key_NumLock: return KC::NumLock;
+    case Qt::Key_ScrollLock: return KC::ScrollLock;
+    default: break;
     }
     return KC::Unknown;
 }
@@ -175,7 +174,7 @@ vn::window::MouseEvent toMouseEvent(const QMouseEvent& event, vn::window::MouseB
 /** @brief Translates a Qt key event into the input event the view consumes. */
 vn::window::KeyEvent toKeyEvent(const QKeyEvent& event, bool pressed)
 {
-    const bool numpad = bool(event.modifiers() & Qt::KeypadModifier);
+    const bool           numpad = bool(event.modifiers() & Qt::KeypadModifier);
     vn::window::KeyEvent e;
     e.code      = toKeyCode(event.key(), numpad);
     e.modifiers = toModifiers(event.modifiers());
@@ -187,7 +186,7 @@ vn::window::KeyEvent toKeyEvent(const QKeyEvent& event, bool pressed)
 /** @brief Translates a Qt wheel event into the input event the view consumes. */
 vn::window::ScrollEvent toScrollEvent(const QWheelEvent& event)
 {
-    const auto delta = event.angleDelta();
+    const auto              delta = event.angleDelta();
     vn::window::ScrollEvent e;
     // Qt angleDelta is in 1/8-degree units; convert to notches/lines.
     e.deltaX    = delta.x() / 120.0;
@@ -204,23 +203,20 @@ vn::window::ScrollEvent toScrollEvent(const QWheelEvent& event)
 String targetRefusalReason(vn::graphics::SurfaceTargetResult why)
 {
     switch (why) {
-        case vn::graphics::SurfaceTargetResult::NoPresentation:
-            return u8"the render backend presents nothing, so this window has no target to draw through";
-        case vn::graphics::SurfaceTargetResult::UnsupportedSurface:
-            return u8"the render backend cannot serve this window (it is not a surface it presents through)";
-        case vn::graphics::SurfaceTargetResult::WindowOccupied:
-            return u8"this window already has a live surface target (one window carries one swapchain)";
-        case vn::graphics::SurfaceTargetResult::Ok:
-            break;
+    case vn::graphics::SurfaceTargetResult::NoPresentation: return u8"the render backend presents nothing, so this window has no target to draw through";
+    case vn::graphics::SurfaceTargetResult::UnsupportedSurface:
+        return u8"the render backend cannot serve this window (it is not a surface it presents through)";
+    case vn::graphics::SurfaceTargetResult::WindowOccupied: return u8"this window already has a live surface target (one window carries one swapchain)";
+    case vn::graphics::SurfaceTargetResult::Ok: break;
     }
     return u8"the render backend handed out no surface target";
 }
 
-}  // namespace
+} // namespace
 
 struct SurfaceWindow::Impl {
     /// The widget the surface is embedded in (the control's own); parent of the context menu.
-    QWidget* host = nullptr;
+    QWidget*                                      host = nullptr;
     vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
     /// This surface's own view: one control holds one session (see appfw-document-model.md §9).
     vn::intrusive_ptr<vn::graphics::SceneView> view;
@@ -234,32 +230,32 @@ struct SurfaceWindow::Impl {
     std::unique_ptr<Viewer> viewer;
     /// true once a device and its pipelines were built on the surface's window: what makes a new handle a
     /// re-announce rather than a first attach, and what keeps the surface following a recreated window.
-    bool has_session = false;
+    bool has_session          = false;
     /// true while the last attach attempt reported success (implies has_session).
-    bool backend_live = false;
+    bool backend_live         = false;
     /// Whether the VN_RECREATE_SURFACE_MS test hatch has been armed.
     bool recreate_hatch_armed = false;
     /// Lifecycle, published through state() / on_state_changed.
-    State state = State::Pending;
+    State state               = State::Pending;
     /// Why the state reached Failed.
     String failure_reason;
     /// The platform refused a surface that is not on screen: the control was asked to show it, once.
     bool needs_visible_surface = false;
     /// Whether the "waiting for a usable surface" line was already said.
-    bool deferral_logged = false;
+    bool deferral_logged       = false;
     /// Right-press tracking: a release within 6 px is a click (context menu), a drag is a pan.
-    bool right_press_active = false;
-    double right_press_x = 0.0;
-    double right_press_y = 0.0;
+    bool   right_press_active  = false;
+    double right_press_x       = 0.0;
+    double right_press_y       = 0.0;
     /// Whether the native surface exists and is laid out (cleared while Qt replaces the platform window).
-    bool surface_ok = false;
+    bool surface_ok            = false;
     /// Coalesces resize/surface-created notices into one deferred update.
-    bool resize_pending = false;
+    bool resize_pending        = false;
     /// Last client size reported, by either the host widget or this window (the other one repeats it).
-    int last_width = -1;
-    int last_height = -1;
+    int last_width             = -1;
+    int last_height            = -1;
     /// Device pixel ratio that went with them: a scale-factor change is a surface change too.
-    double last_ratio = 0.0;
+    double last_ratio          = 0.0;
     /// Which view owns which point of the surface: ONE area, one picture (see routedView).
     /// The view each HELD button's drag belongs to, by MouseButton index - one entry per button, so a second
     /// button pressed elsewhere starts its own drag instead of taking the first one's, and releasing it cannot end
@@ -267,12 +263,12 @@ struct SurfaceWindow::Impl {
     vn::intrusive_ptr<vn::graphics::SceneView> captured_views[kMouseButtonCount];
     /// Buttons currently held on this surface, one bit per button (see bitFor): "a button is down" is what makes a
     /// pointer move repaint, and what a key event belongs to (a modifier pressed during a drag is that drag's).
-    unsigned held_buttons = 0;
+    unsigned held_buttons              = 0;
     /// The button whose press started the most recent drag: where a MOVE goes while it is still held (an event
     /// that carries no button of its own).
     vn::window::MouseButton last_press = vn::window::MouseButton::None;
     /// The timer that drives frames when continuous rendering is on (created on first use, owned by this window).
-    QTimer* continuous = nullptr;
+    QTimer* continuous                 = nullptr;
     /// For the lifecycle log lines (construction -> attach -> first frame).
     std::chrono::steady_clock::time_point created_at{};
 
@@ -324,12 +320,10 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // screen.
 
     d->created_at = std::chrono::steady_clock::now();
-    d->engine     = vn::intrusive_ptr<vn::graphics::RenderEngine>(
-        new vn::graphics::RenderEngine());
+    d->engine     = vn::intrusive_ptr<vn::graphics::RenderEngine>(new vn::graphics::RenderEngine());
     // The engine is a pure scheduler (no passes, camera-agnostic); the view owns the camera, the content scene
     // and the orbit manipulator, and the pipeline it has adopted owns the passes that present them.
-    d->view = vn::intrusive_ptr<vn::graphics::SceneView>(
-        new vn::graphics::SceneView());
+    d->view       = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
     d->view->setEngine(d->engine.get());
     // The one thing that knows which passes draw into THIS surface: the control falls back to its own view (see
     // init()), and a host that brought a main pass of its own declares it here (RenderSurface::present). The AREA is
@@ -339,7 +333,7 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // The area's picture (see Viewer): the control's own view, registered with the default request but neither a
     // chain nor a declaration - the first attach is where that becomes a picture, so a host that never touches the
     // viewer pays no build until there is an area to draw into.
-    d->viewer = std::make_unique<Viewer>(d->engine.get(), d->surface.get(), d->view);
+    d->viewer  = std::make_unique<Viewer>(d->engine.get(), d->surface.get(), d->view);
 
     // Backend diagnostics become log records: a windowed app never shows stderr, and a rejected geometry, a
     // fallback shader or an off-screen target that could not be built would otherwise go unseen.
@@ -347,15 +341,9 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
         auto&             logger  = vn::logging::defaultLogger();
         const std::string message = diagnostic.message.as_std_str();
         switch (diagnostic.severity) {
-            case vn::graphics::DiagnosticSeverity::Error:
-                logger.error("[graphics] {}", message);
-                break;
-            case vn::graphics::DiagnosticSeverity::Warning:
-                logger.warn("[graphics] {}", message);
-                break;
-            case vn::graphics::DiagnosticSeverity::Info:
-                logger.info("[graphics] {}", message);
-                break;
+        case vn::graphics::DiagnosticSeverity::Error: logger.error("[graphics] {}", message); break;
+        case vn::graphics::DiagnosticSeverity::Warning: logger.warn("[graphics] {}", message); break;
+        case vn::graphics::DiagnosticSeverity::Info: logger.info("[graphics] {}", message); break;
         }
     });
 
@@ -444,8 +432,7 @@ void SurfaceWindow::useDefaultBackend()
 
     const auto entries = vn::graphics::RenderBackendRegistry::instance().entries();
     if (!entries.empty()) {
-        d->engine->setDevice(
-            entries.front().factory->create());
+        d->engine->setDevice(entries.front().factory->create());
     }
 
     // A default orbit manipulator (bound to the view's camera and scene) is
@@ -499,7 +486,6 @@ vn::graphics::SceneView* SurfaceWindow::routedView(int, int)
     return d->view.get();
 }
 
-
 void SurfaceWindow::pushToView(vn::graphics::SceneView* target, const vn::window::MouseEvent& event)
 {
     if (target != nullptr) {
@@ -530,11 +516,12 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
             d->right_press_active = true;
             d->right_press_x      = event.x;
             d->right_press_y      = event.y;
-        } else if (d->right_press_active) {
+        }
+        else if (d->right_press_active) {
             d->right_press_active = false;
             const double dx       = event.x - d->right_press_x;
             const double dy       = event.y - d->right_press_y;
-            if ((dx * dx + dy * dy) < 36.0) {  // within 6 px: a click
+            if ((dx * dx + dy * dy) < 36.0) { // within 6 px: a click
                 QTimer::singleShot(0, this, [this] { showContextMenu(); });
             }
         }
@@ -551,7 +538,7 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
     if (is_press) {
         const auto index = static_cast<std::size_t>(event.button);
         d->held_buttons |= Impl::bitFor(event.button);
-        d->last_press = event.button;
+        d->last_press            = event.button;
         d->captured_views[index] = vn::intrusive_ptr<vn::graphics::SceneView>(d->view.get(), true);
     }
 
@@ -569,7 +556,7 @@ void SurfaceWindow::handleMouse(const vn::window::MouseEvent& event)
     // A pure hover (no button held) only refreshes while a drag is in flight.
     pushToView(target, event);
     if (is_release) {
-        d->captured_views[static_cast<std::size_t>(event.button)] = nullptr;  // this drag is over
+        d->captured_views[static_cast<std::size_t>(event.button)] = nullptr; // this drag is over
         d->held_buttons &= ~Impl::bitFor(event.button);
         if (d->held_buttons == 0u) {
             d->last_press = vn::window::MouseButton::None;
@@ -586,6 +573,7 @@ void SurfaceWindow::handleScroll(const vn::window::ScrollEvent& event)
     pushToView(routedView(static_cast<int>(event.x), static_cast<int>(event.y)), event);
     renderFrame();
 }
+
 void SurfaceWindow::handleKey(const vn::window::KeyEvent& event)
 {
     // A key has no position: it goes to the view the pointer captured (a keyboard modifier during a drag belongs
@@ -656,9 +644,9 @@ void SurfaceWindow::scheduleUpdate()
 void SurfaceWindow::handleUpdate()
 {
     d->resize_pending = false;
-    const int w  = width();
-    const int h  = height();
-    void* handle = nativeHandle();
+    const int w       = width();
+    const int h       = height();
+    void*     handle  = nativeHandle();
 
     // Nothing to update while the surface is not there (Qt destroying/recreating the platform window, or the
     // window not laid out): the surface events that follow bring this back in.
@@ -688,7 +676,7 @@ bool SurfaceWindow::init()
     // NOW - after Qt recreated the platform window this has to re-attach (a re-announce, so the backend can move)
     // rather than report the old attach as current.
     if (d->backend_live && nativeHandle() == nativeTargetHandle()) {
-        return true;  // Already bound to this very surface (backend_live implies has_session).
+        return true; // Already bound to this very surface (backend_live implies has_session).
     }
 
     if (d->state == SurfaceState::Failed) {
@@ -726,19 +714,17 @@ bool SurfaceWindow::init()
             // Once per session: this line is the answer to "why is my render area empty?". It also says how long
             // the caller's own startup kept the surface unusable.
             d->deferral_logged = true;
-            vn::logging::defaultLogger().info(
-                "[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
-                width(),
-                height(),
-                elapsedMs(d->created_at));
+            vn::logging::defaultLogger().info("[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
+                                              width(),
+                                              height(),
+                                              elapsedMs(d->created_at));
         }
         return d->backend_live;
     }
     if (d->has_session && handle != nativeTargetHandle()) {
         // The platform window was recreated: re-announce the new handle on the TARGET (WindowPresentTarget::
         // setWindowHandle) instead of tearing the session down, so the device and every compiled pipeline stay.
-        vn::logging::defaultLogger().info(
-            "[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
+        vn::logging::defaultLogger().info("[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
     }
     // The window this area is presented through belongs to the AREA, and the DEVICE is what makes the target that
     // names it (RenderDevice::createSurfaceTarget): the device is the party that knows whether it presents at all
@@ -747,9 +733,7 @@ bool SurfaceWindow::init()
     // the target the area already holds - the device, its caches and every compiled pipeline stay behind that.
     if (d->surface->target() == nullptr) {
         vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
-        if (vn::raw_ptr<vn::graphics::WindowPresentTarget> target =
-                d->engine->device()->createSurfaceTarget(handle, &why);
-            target != nullptr) {
+        if (vn::raw_ptr<vn::graphics::WindowPresentTarget> target = d->engine->device()->createSurfaceTarget(handle, &why); target != nullptr) {
             d->surface->bindTarget(target);
         }
         else {
@@ -778,8 +762,8 @@ bool SurfaceWindow::init()
         // area so the next attach can use it. Said out loud once - it also explains a longer startup there.
         if (!d->needs_visible_surface) {
             d->needs_visible_surface = true;
-            vn::logging::defaultLogger().info(
-                "[RenderControl] attaching to a surface that is not on screen failed: this platform wants a visible window, showing the surface so the next attach can use it");
+            vn::logging::defaultLogger().info("[RenderControl] attaching to a surface that is not on screen failed: this platform wants a visible window, "
+                                              "showing the surface so the next attach can use it");
             if (on_needs_visible_surface) {
                 on_needs_visible_surface();
             }
@@ -789,8 +773,7 @@ bool SurfaceWindow::init()
 
     // The attach's own timing, on its own line: this is the device + session + pipeline build, the half a startup
     // cares about (the frame below is the other half, and the Presenting transition logs it).
-    vn::logging::defaultLogger().info("[RenderControl] session up after {} ms (device, session and pipelines)",
-                                        elapsedMs(d->created_at));
+    vn::logging::defaultLogger().info("[RenderControl] session up after {} ms (device, session and pipelines)", elapsedMs(d->created_at));
     d->has_session = true;
     // failureReason() is the answer only while the state is Failed: a session that comes up after a failed attempt
     // clears the old verdict, so a host that reports the reason cannot keep showing one for a running session.
@@ -830,7 +813,7 @@ void SurfaceWindow::showContextMenu()
     if (d->view == nullptr) {
         return;
     }
-    QMenu menu(d->host);
+    QMenu    menu(d->host);
     QAction* fit = menu.addAction(QString::fromUtf8("适应屏幕"));
     QObject::connect(fit, &QAction::triggered, [this] { fitToScreen(); });
     menu.exec(QCursor::pos());
@@ -875,18 +858,18 @@ void SurfaceWindow::setState(SurfaceState next)
     // whether a startup pays the device and pipeline build before its window exists.
     if (next == SurfaceState::Failed) {
         vn::logging::defaultLogger().error("[RenderControl] surface {} -> {} after {} ms: {}",
-                                             stateName(previous),
-                                             stateName(next),
-                                             elapsedMs(d->created_at),
-                                             d->failure_reason.as_std_str());
+                                           stateName(previous),
+                                           stateName(next),
+                                           elapsedMs(d->created_at),
+                                           d->failure_reason.as_std_str());
     }
     else {
         vn::logging::defaultLogger().info("[RenderControl] surface {} -> {} after {} ms (surface visible={}, exposed={})",
-                                            stateName(previous),
-                                            stateName(next),
-                                            elapsedMs(d->created_at),
-                                            isVisible(),
-                                            isExposed());
+                                          stateName(previous),
+                                          stateName(next),
+                                          elapsedMs(d->created_at),
+                                          isVisible(),
+                                          isExposed());
     }
 
     if (on_state_changed) {
@@ -910,20 +893,21 @@ bool SurfaceWindow::event(QEvent* event)
 {
     // The one event kind QWindow has no protected handler for: the phases of the native platform surface.
     switch (event->type()) {
-        case QEvent::PlatformSurface: {
-            auto* e = static_cast<QPlatformSurfaceEvent*>(event);
-            // Qt destroys and recreates the native platform window (a new HWND / xcb window) on
-            // layout changes, screen changes and reparents: report both phases, and the session
-            // keeps itself and moves onto the new surface on the second one.
-            if (e->surfaceEventType() == QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
-                handleDestroyed();
-            } else if (e->surfaceEventType() == QPlatformSurfaceEvent::SurfaceCreated) {
-                noteSurfaceUsable();
-            }
-            break;
+    case QEvent::PlatformSurface:
+    {
+        auto* e = static_cast<QPlatformSurfaceEvent*>(event);
+        // Qt destroys and recreates the native platform window (a new HWND / xcb window) on
+        // layout changes, screen changes and reparents: report both phases, and the session
+        // keeps itself and moves onto the new surface on the second one.
+        if (e->surfaceEventType() == QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
+            handleDestroyed();
         }
-        default:
-            break;
+        else if (e->surfaceEventType() == QPlatformSurfaceEvent::SurfaceCreated) {
+            noteSurfaceUsable();
+        }
+        break;
+    }
+    default: break;
     }
     return QWindow::event(event);
 }
@@ -941,9 +925,9 @@ bool SurfaceWindow::eventFilter(QObject* watched, QEvent* event)
     // what carries the surface's final size, a show is the "we have reached the screen" that a surface which has
     // not attached yet is waiting for.
     if (event->type() == QEvent::Resize) {
-        handleResized(static_cast<QResizeEvent*>(event)->size().width(),
-                      static_cast<QResizeEvent*>(event)->size().height());
-    } else if (event->type() == QEvent::Show) {
+        handleResized(static_cast<QResizeEvent*>(event)->size().width(), static_cast<QResizeEvent*>(event)->size().height());
+    }
+    else if (event->type() == QEvent::Show) {
         scheduleUpdate();
     }
     return QWindow::eventFilter(watched, event);

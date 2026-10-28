@@ -50,7 +50,7 @@ enum class DeviceKind
 enum class LengthUnit
 {
     /// Meter.
-    Meter = 1,
+    Meter      = 1,
     /// Millimeter (in-memory default).
     Millimeter = 1000,
 };
@@ -62,8 +62,7 @@ enum class LengthUnit
  * fields (timestamps, length unit, default IK solver) are carried here so
  * the IO layer can round-trip them.
  */
-struct VN_ROBOTICS_CORE_API DeviceMetadata
-{
+struct VN_ROBOTICS_CORE_API DeviceMetadata {
     // 身份信息
     String id;
     String name; // 设备原本名称(非实例名称)
@@ -89,8 +88,7 @@ struct VN_ROBOTICS_CORE_API DeviceMetadata
  * Visuals reference device materials by name; the material object is shared
  * between the library and the referencing visuals.
  */
-struct VN_ROBOTICS_CORE_API DeviceMaterial
-{
+struct VN_ROBOTICS_CORE_API DeviceMaterial {
     /// Material name (unique within a device).
     String name;
     /// The material object.
@@ -108,21 +106,20 @@ struct VN_ROBOTICS_CORE_API DeviceMaterial
  * Supports clone() for deep-copying the definition (e.g. one builder snapshot
  * per build()). Owns links and joints with unique ownership.
  */
-struct VN_ROBOTICS_CORE_API DeviceData
-{
-    DeviceMetadata                                  metadata;
-    DeviceKind                                      kind{ DeviceKind::Other };
+struct VN_ROBOTICS_CORE_API DeviceData {
+    DeviceMetadata metadata;
+    DeviceKind     kind{ DeviceKind::Other };
     /// Named material library; visuals reference these by name.
-    std::vector<DeviceMaterial>                     materials;
-    std::vector<std::unique_ptr<Link>>              links;
-    std::vector<std::unique_ptr<Joint>>             joints;
+    std::vector<DeviceMaterial>         materials;
+    std::vector<std::unique_ptr<Link>>  links;
+    std::vector<std::unique_ptr<Joint>> joints;
 
-    DeviceData() = default;
+    DeviceData()                                 = default;
     // 独占所有权, 不可拷贝; 虚析构支持派生定义数据多态
-    virtual ~DeviceData() = default;
-    DeviceData(const DeviceData&)            = delete;
-    DeviceData& operator=(const DeviceData&) = delete;
-    DeviceData(DeviceData&&) noexcept        = default;
+    virtual ~DeviceData()                        = default;
+    DeviceData(const DeviceData&)                = delete;
+    DeviceData& operator=(const DeviceData&)     = delete;
+    DeviceData(DeviceData&&) noexcept            = default;
     DeviceData& operator=(DeviceData&&) noexcept = default;
 
     /**
@@ -165,8 +162,7 @@ struct VN_ROBOTICS_CORE_API DeviceData
  *    the same Workcell and must outlive its children (the Workcell detaches
  *    children when a device is removed).
  */
-class VN_ROBOTICS_CORE_API Device : public SceneObject
-{
+class VN_ROBOTICS_CORE_API Device : public SceneObject {
   protected:
     /**
      * @brief Constructs an empty device; configure it with init().

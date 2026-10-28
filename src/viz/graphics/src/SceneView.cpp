@@ -21,9 +21,7 @@
 VN_GRAPHICS_NS_BEGIN
 
 namespace
-{
-
-}  // namespace
+{} // namespace
 
 SceneView::SceneView()
   : camera_(make_intrusive<Camera>())
@@ -99,7 +97,7 @@ void SceneView::checkChainContent()
 {
     raw_ptr<RenderEngine> engine = engine_.get();
     if (pipeline_ == nullptr || scene_ == nullptr || engine == nullptr) {
-        content_mismatch_.rearm();   // nothing to be wrong about yet: a later break is a new episode
+        content_mismatch_.rearm(); // nothing to be wrong about yet: a later break is a new episode
         return;
     }
     if (pipeline_->draws(scene_.get())) {
@@ -109,12 +107,12 @@ void SceneView::checkChainContent()
     if (!content_mismatch_.shouldReport()) {
         return;
     }
-    engine->reportEngineProblem(
-        vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-        u8"this view adopted a pipeline whose passes draw other content: none of them draws the view's scene, so the"
-        u8" view's content never reaches the surface - build the chain for the view's scene"
-        u8" (ChainDesc::content), or bind the pass that should draw it"
-        u8" (RenderEngine::bindPassContent)");
+    engine->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
+                                u8"this view adopted a pipeline whose passes draw other content: none of them draws the view's scene, so the"
+                                u8" view's content never reaches the surface - build the chain for the view's scene"
+                                u8" (ChainDesc::content), or bind the pass that should draw it"
+                                u8" (RenderEngine::bindPassContent)");
 }
 
 int SceneView::surfaceWidth() const noexcept
@@ -134,8 +132,8 @@ double SceneView::surfacePixelRatio() const noexcept
 
 void SceneView::applySurfaceGeometry()
 {
-    const int    surface_w = surfaceWidth();
-    const int    surface_h = surfaceHeight();
+    const int surface_w = surfaceWidth();
+    const int surface_h = surfaceHeight();
     if (surface_w <= 0 || surface_h <= 0) {
         return;
     }
@@ -209,8 +207,7 @@ raw_ptr<CameraManipulator> SceneView::manipulator()
         // Default orbit manipulator bound to this view's camera and content
         // scene; created lazily so it snapshots its home from the camera's
         // final placement (after the application has framed the view).
-        manipulator_ = intrusive_ptr<CameraManipulator>(
-            new OrbitCameraManipulator(camera_.get(), scene_.get()));
+        manipulator_ = intrusive_ptr<CameraManipulator>(new OrbitCameraManipulator(camera_.get(), scene_.get()));
     }
     // One place keeps the router pointed at the manipulator that is really here, including the lazy default -
     // otherwise the first event would find a router that never heard of it.

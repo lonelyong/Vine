@@ -36,8 +36,7 @@ namespace detail
  * - A viewer with no window is a legitimate user of this class: the off-screen session's viewer polls nothing at all,
  *   and the class states that explicitly instead of relying on an empty window list.
  */
-class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer>
-{
+class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer> {
   public:
     /**
      * @brief Drops the buffered framework events when asked, and polls nothing.
@@ -47,8 +46,7 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer>
      */
     bool pollEvents(bool discard_previous_events) override
     {
-        if (discard_previous_events)
-        {
+        if (discard_previous_events) {
             this->getEvents().clear();
         }
         return false;
@@ -75,37 +73,30 @@ class EmbeddedViewer : public ::vsg::Inherit<::vsg::Viewer, EmbeddedViewer>
  */
 inline bool submitViewerTasks(::vsg::Viewer& viewer, std::string& failure)
 {
-    for (const auto& task : viewer.recordAndSubmitTasks)
-    {
-        for (auto& graph : task->commandGraphs)
-        {
+    for (const auto& task : viewer.recordAndSubmitTasks) {
+        for (auto& graph : task->commandGraphs) {
             graph->reset();
         }
     }
 
-    for (const auto& task : viewer.recordAndSubmitTasks)
-    {
-        try
-        {
+    for (const auto& task : viewer.recordAndSubmitTasks) {
+        try {
             // The frame stamp the viewer itself would have handed the task (it owns it): a submission that
             // sees no stamp is a submission of no frame.
             const ::vsg::ref_ptr<::vsg::FrameStamp> frame_stamp(viewer.getFrameStamp());
             const VkResult                          result = task->submit(frame_stamp);
-            if (result != VK_SUCCESS)
-            {
+            if (result != VK_SUCCESS) {
                 failure = "the queue submission reported VkResult " + std::to_string(static_cast<int>(result));
                 return false;
             }
         }
-        catch (const ::vsg::Exception& error)
-        {
+        catch (const ::vsg::Exception& error) {
             // vsg's own failure vocabulary, and NOT a std::exception (a plain struct with message + result):
             // a command buffer that cannot be allocated throws here, out of the record step.
             failure = "vsg::Exception: " + error.message + " (VkResult " + std::to_string(error.result) + ")";
             return false;
         }
-        catch (const std::exception& error)
-        {
+        catch (const std::exception& error) {
             failure = std::string("std::exception: ") + error.what();
             return false;
         }
@@ -113,6 +104,6 @@ inline bool submitViewerTasks(::vsg::Viewer& viewer, std::string& failure)
     return true;
 }
 
-}  // namespace detail
+} // namespace detail
 
 VN_VSG_NS_END

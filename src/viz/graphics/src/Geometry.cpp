@@ -7,11 +7,11 @@
 #include <utility>
 #include <vector>
 
+#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/Mesh.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
-#include <vine/geometry/Mesh.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -28,12 +28,13 @@ Geometry::~Geometry() = default;
 
 namespace
 {
+
 /// Scalars per vertex of an attribute channel — the mesh's own element layout, which sharing reads directly.
 constexpr std::uint32_t kVec3Components = vn::geometry::Mesh::kVec3Components;
 constexpr std::uint32_t kVec2Components = vn::geometry::Mesh::kVec2Components;
 constexpr std::uint32_t kVec4Components = vn::geometry::Mesh::kVec4Components;
 
-}  // namespace
+} // namespace
 
 void Geometry::addBuffer(std::uint32_t location, const AttributeChannel& buffer)
 {
@@ -83,15 +84,13 @@ std::vector<std::uint32_t> Geometry::bufferLocations() const
     return locations;
 }
 
-void Geometry::setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex,
-                            std::size_t vertex_count)
+void Geometry::setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex, std::size_t vertex_count)
 {
     // The location is the shader ABI's (ShaderAbi.hpp), never a number written here: the built-in
     // shaders declare the attribute where attributeLocation() says, so the two move together.
     // ONE door: a whole buffer is the segment form with the whole range stated (slice() takes VERTICES),
     // so "which part of an arena" cannot come to mean one thing here and another there.
-    addBuffer(attributeLocation(VertexAttribute::Position),
-              AttributeChannel::slice(std::move(positions), kVec3Components, first_vertex, vertex_count));
+    addBuffer(attributeLocation(VertexAttribute::Position), AttributeChannel::slice(std::move(positions), kVec3Components, first_vertex, vertex_count));
 }
 
 bool Geometry::hasPositions() const
@@ -105,11 +104,9 @@ std::size_t Geometry::positionCount() const
     return positions != nullptr ? positions->vertexCount() : 0u;
 }
 
-void Geometry::setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex,
-                          std::size_t vertex_count)
+void Geometry::setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex, std::size_t vertex_count)
 {
-    addBuffer(attributeLocation(VertexAttribute::Normal),
-              AttributeChannel::slice(std::move(normals), kVec3Components, first_vertex, vertex_count));
+    addBuffer(attributeLocation(VertexAttribute::Normal), AttributeChannel::slice(std::move(normals), kVec3Components, first_vertex, vertex_count));
 }
 
 bool Geometry::hasNormals() const
@@ -123,12 +120,10 @@ std::size_t Geometry::normalCount() const
     return normals != nullptr ? normals->vertexCount() : 0u;
 }
 
-void Geometry::setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
-                             std::size_t vertex_count)
+void Geometry::setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex, std::size_t vertex_count)
 {
     // Two scalars per vertex here, and a caller states VERTICES: a segment of three vertices is six scalars.
-    addBuffer(kTexCoordLocation,
-              AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
+    addBuffer(kTexCoordLocation, AttributeChannel::slice(std::move(texcoords), kVec2Components, first_vertex, vertex_count));
 }
 
 bool Geometry::hasTexcoords() const
@@ -150,23 +145,19 @@ std::uint32_t Geometry::texcoordComponents() const
     return texcoords != nullptr ? texcoords->components : 0u;
 }
 
-void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex,
-                             std::size_t vertex_count)
+void Geometry::setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex, std::size_t vertex_count)
 {
     // The SAME slot as setTexcoords2, with the other width: three scalars per vertex, which is what a cube
     // map is sampled by direction with. What the width MEANS stays the sampler's business (a user program
     // may read these three as a volume coordinate); the engine's own program reads it as a direction.
-    addBuffer(kTexCoordLocation,
-              AttributeChannel::slice(std::move(texcoords), kVec3Components, first_vertex, vertex_count));
+    addBuffer(kTexCoordLocation, AttributeChannel::slice(std::move(texcoords), kVec3Components, first_vertex, vertex_count));
 }
 
-void Geometry::setColors(intrusive_ptr<const vn::Buffer<float>> colors, std::size_t first_vertex,
-                         std::size_t vertex_count)
+void Geometry::setColors(intrusive_ptr<const vn::Buffer<float>> colors, std::size_t first_vertex, std::size_t vertex_count)
 {
     // Four scalars per vertex, the width the canonical colour attribute is DECLARED with (a `vec4` in the
     // engine's stages): a caller states VERTICES and the stride is the ABI's, as with every other role.
-    addBuffer(kColorLocation,
-              AttributeChannel::slice(std::move(colors), kVec4Components, first_vertex, vertex_count));
+    addBuffer(kColorLocation, AttributeChannel::slice(std::move(colors), kVec4Components, first_vertex, vertex_count));
 }
 
 bool Geometry::hasColors() const
@@ -182,18 +173,17 @@ std::size_t Geometry::colorCount() const
 
 namespace
 {
+
 /// @brief Whether two primitives describe the same draw (an assignment that changes nothing).
 bool samePrimitive(const Primitive& a, const Primitive& b) noexcept
 {
-    return a.topology == b.topology && a.indices.values.get() == b.indices.values.get() &&
-           a.indices.first == b.indices.first && a.indices.count == b.indices.count &&
-           a.material.get() == b.material.get() && a.program.get() == b.program.get() &&
-           a.instance_transforms.values.get() == b.instance_transforms.values.get() &&
-           a.instance_transforms.first == b.instance_transforms.first &&
-           a.instance_transforms.count == b.instance_transforms.count &&
-           a.visible_instances == b.visible_instances;
+    return a.topology == b.topology && a.indices.values.get() == b.indices.values.get() && a.indices.first == b.indices.first &&
+           a.indices.count == b.indices.count && a.material.get() == b.material.get() && a.program.get() == b.program.get() &&
+           a.instance_transforms.values.get() == b.instance_transforms.values.get() && a.instance_transforms.first == b.instance_transforms.first &&
+           a.instance_transforms.count == b.instance_transforms.count && a.visible_instances == b.visible_instances;
 }
-}  // namespace
+
+} // namespace
 
 void Geometry::addPrimitive(Primitive primitive)
 {
@@ -210,7 +200,7 @@ void Geometry::setPrimitive(std::size_t index, Primitive primitive)
         return;
     }
     if (samePrimitive(primitives_[index], primitive)) {
-        return;   // an assignment that changes nothing must not cost the frame's collection
+        return; // an assignment that changes nothing must not cost the frame's collection
     }
     primitives_[index] = std::move(primitive);
     invalidateBounds();
@@ -307,7 +297,7 @@ raw_ptr<MaterialBase> Geometry::material() const
 void Geometry::setMaterial(MaterialBasePtr m)
 {
     if (material_.get() == m.get()) {
-        return;  // an assignment that changes nothing must not cost the frame's collection
+        return; // an assignment that changes nothing must not cost the frame's collection
     }
     material_ = std::move(m);
     // The collector folds this default into the primitive's material; a memo built before the edit must
@@ -355,6 +345,7 @@ std::size_t Geometry::vertexCount() const
 
 namespace
 {
+
 /**
  * @brief Computes the local-space AABB of the location-0 position buffer.
  *
@@ -374,7 +365,7 @@ Aabbd scanLocalBounds(const Geometry* geometry)
     if (positions == nullptr || positions->empty() || positions->components < 3u) {
         return Aabbd::empty();
     }
-    Aabbd box = Aabbd::empty();
+    Aabbd             box   = Aabbd::empty();
     const std::size_t count = positions->vertexCount();
     for (std::size_t v = 0; v < count; ++v) {
         const std::array<float, 3> p = positions->xyz(v);
@@ -382,7 +373,8 @@ Aabbd scanLocalBounds(const Geometry* geometry)
     }
     return box;
 }
-}  // namespace
+
+} // namespace
 
 Aabbd Geometry::localBounds() const
 {
@@ -396,17 +388,14 @@ Aabbd Geometry::localBounds() const
     // culling, paid before any culling decision could save anything. The keys are the stream the box was
     // computed from plus this geometry's revision, so a writer that announces an edit gets a fresh box
     // (the same "announce it and consumers may cache" contract every other cache here follows).
-    const AttributeChannel* positions = buffer(attributeLocation(VertexAttribute::Position));
-    const void* const       buffer_ptr = positions != nullptr ? positions->values.get() : nullptr;
-    const std::uint64_t     buffer_revision =
-        positions != nullptr && positions->values != nullptr ? positions->values->revision() : 0u;
-    const std::size_t positions_offset = positions != nullptr ? positions->offset : 0u;
-    const std::size_t positions_scalars = positions != nullptr ? positions->scalarCount : 0u;
+    const AttributeChannel* positions         = buffer(attributeLocation(VertexAttribute::Position));
+    const void* const       buffer_ptr        = positions != nullptr ? positions->values.get() : nullptr;
+    const std::uint64_t     buffer_revision   = positions != nullptr && positions->values != nullptr ? positions->values->revision() : 0u;
+    const std::size_t       positions_offset  = positions != nullptr ? positions->offset : 0u;
+    const std::size_t       positions_scalars = positions != nullptr ? positions->scalarCount : 0u;
 
-    const bool cached = local_bounds_.valid && local_bounds_.buffer == buffer_ptr &&
-                        local_bounds_.revision == buffer_revision &&
-                        local_bounds_.offset == positions_offset && local_bounds_.scalars == positions_scalars &&
-                        local_bounds_.geometry_revision == revision_;
+    const bool cached = local_bounds_.valid && local_bounds_.buffer == buffer_ptr && local_bounds_.revision == buffer_revision &&
+                        local_bounds_.offset == positions_offset && local_bounds_.scalars == positions_scalars && local_bounds_.geometry_revision == revision_;
     if (!cached) {
         local_bounds_.buffer            = buffer_ptr;
         local_bounds_.revision          = buffer_revision;
@@ -428,14 +417,14 @@ bool Geometry::subtreeBounds(Aabbd& box) const
         return false;
     }
     const Aabbd data_box = localBounds();
-    box = Aabbd::empty();
+    box                  = Aabbd::empty();
     if (primitives_.empty()) {
         box = data_box;
         return true;
     }
     for (const Primitive& primitive : primitives_) {
         if (!primitive.hasInstances()) {
-            box.expandBy(data_box);  // this draw is one placement of the data
+            box.expandBy(data_box); // this draw is one placement of the data
             continue;
         }
         const std::size_t visible = primitive.visibleInstanceCount();
@@ -491,8 +480,7 @@ intrusive_ptr<Buffer<float>> packAttribute(std::span<const vn::math::Vec2f> vert
 
 intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> indices)
 {
-    return intrusive_ptr<Buffer<std::uint32_t>>(
-        new Buffer<std::uint32_t>(std::vector<std::uint32_t>(indices.begin(), indices.end())));
+    return intrusive_ptr<Buffer<std::uint32_t>>(new Buffer<std::uint32_t>(std::vector<std::uint32_t>(indices.begin(), indices.end())));
 }
 
 GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)

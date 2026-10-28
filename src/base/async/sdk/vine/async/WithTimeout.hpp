@@ -25,15 +25,15 @@ VN_ASYNC_NS_BEGIN
  *
  * Derives from vn::Exception with code Exception::TIMEOUT.
  */
-class TimeoutException : public vn::Exception
-{
+class TimeoutException : public vn::Exception {
   public:
     TimeoutException()
       : vn::Exception(vn::Exception::Code::TIMEOUT, String(u8"operation timed out"))
     {}
 };
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Throws the timeout exception; noreturn gives the coroutine no
@@ -47,7 +47,7 @@ namespace detail {
 /**
  * @brief A task that "wins" the timeout race by throwing TimeoutException.
  */
-template<typename T>
+template <typename T>
 [[nodiscard]]
 Task<T> timeoutTask(std::chrono::milliseconds timeout, CancellationToken token)
 {
@@ -74,13 +74,10 @@ Task<T> timeoutTask(std::chrono::milliseconds timeout, CancellationToken token)
  * @param policy What to do with the race's loser; defaults to destroying it.
  * @return A task yielding the result or throwing TimeoutException.
  */
-template<typename T>
-    requires (!std::is_void_v<T>)
+template <typename T>
+requires(!std::is_void_v<T>)
 [[nodiscard]]
-Task<T> withTimeout(Task<T> task,
-                    std::chrono::milliseconds timeout,
-                    CancellationToken token = {},
-                    CancelPolicy policy = CancelPolicy::Destroy)
+Task<T> withTimeout(Task<T> task, std::chrono::milliseconds timeout, CancellationToken token = {}, CancelPolicy policy = CancelPolicy::Destroy)
 {
     std::vector<Task<T>> race;
     race.push_back(std::move(task));
@@ -100,10 +97,7 @@ Task<T> withTimeout(Task<T> task,
  * @return A task completing on success or throwing TimeoutException.
  */
 [[nodiscard]]
-inline Task<void> withTimeout(Task<void> task,
-                              std::chrono::milliseconds timeout,
-                              CancellationToken token = {},
-                              CancelPolicy policy = CancelPolicy::Destroy)
+inline Task<void> withTimeout(Task<void> task, std::chrono::milliseconds timeout, CancellationToken token = {}, CancelPolicy policy = CancelPolicy::Destroy)
 {
     // Races the task against timeoutTask<void>, which throws TimeoutException
     // when the timer fires. If the task finishes first, whenAny destroys the

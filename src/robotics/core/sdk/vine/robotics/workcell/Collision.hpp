@@ -17,8 +17,7 @@ VN_ROBOTICS_WORKCELL_NS_BEGIN
  * the collision shape is usually a simpler approximation (box/sphere) than
  * the rendered mesh; it carries no material.
  */
-class Collision
-{
+class Collision {
   public:
     /**
      * @brief Returns the collision shape.
@@ -62,7 +61,7 @@ class Collision
 
   private:
     vn::intrusive_ptr<vn::geometry::Shape> shape_;
-    math::Isometry3d                          tf_;
+    math::Isometry3d                       tf_;
 };
 
 VN_ROBOTICS_WORKCELL_NS_END

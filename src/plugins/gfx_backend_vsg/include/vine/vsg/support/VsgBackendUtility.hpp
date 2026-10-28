@@ -25,8 +25,8 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/graphics/Viewport.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include <vine/vsg/support/VsgFwd.hpp>
 
@@ -36,10 +36,9 @@ namespace detail
 {
 
 /** @brief One record-order dependency: @ref consumer must be recorded after @ref source. */
-struct GraphOrderEdge
-{
-    std::size_t consumer = 0; ///< Node index that must come later.
-    std::size_t source   = 0; ///< Node index that must come first.
+struct GraphOrderEdge {
+    std::size_t consumer = 0; // Node index that must come later.
+    std::size_t source   = 0; // Node index that must come first.
 };
 
 /**
@@ -61,8 +60,7 @@ struct GraphOrderEdge
  *                   self edges are ignored.
  * @return Node indices in dependency-valid order (size @p node_count).
  */
-std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
-                                                const std::vector<GraphOrderEdge>& edges);
+std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count, const std::vector<GraphOrderEdge>& edges);
 
 /**
  * @brief The render graph @p child stands for, whether it is the graph itself or a wrapper around it.
@@ -112,8 +110,7 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std:
  * @param binding Binding within that set.
  * @return true when a stage declares it.
  */
-bool programDeclaresBinding(vn::raw_ptr<const vn::graphics::ShaderProgram> program, std::uint32_t set,
-                            std::uint32_t binding);
+bool programDeclaresBinding(vn::raw_ptr<const vn::graphics::ShaderProgram> program, std::uint32_t set, std::uint32_t binding);
 
 /**
  * @brief Whether any stage of @p program asks for @p define in its `#pragma import_defines` list.

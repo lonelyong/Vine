@@ -22,11 +22,11 @@ VN_GRAPHICS_NS_BEGIN
  */
 enum class VertexAttribute
 {
-    Position,      ///< Object-space position (the only required attribute).
-    Normal,        ///< Shading normal (derived when the geometry authors none).
-    Color,         ///< Optional per-vertex colour (define-gated on the vsg set).
-    TexCoord0,     ///< Optional texture coordinate (define-gated on the vsg set).
-    InstanceModel, ///< One instance's local model matrix (four consecutive locations).
+    Position,      // Object-space position (the only required attribute).
+    Normal,        // Shading normal (derived when the geometry authors none).
+    Color,         // Optional per-vertex colour (define-gated on the vsg set).
+    TexCoord0,     // Optional texture coordinate (define-gated on the vsg set).
+    InstanceModel, // One instance's local model matrix (four consecutive locations).
 };
 
 /** @brief The number of shader locations one instance matrix occupies. */
@@ -50,8 +50,7 @@ constexpr std::uint32_t kInstanceMatrixComponents = kInstanceMatrixColumns * 4u;
  */
 constexpr std::uint32_t attributeLocation(VertexAttribute attribute) noexcept
 {
-    switch (attribute)
-    {
+    switch (attribute) {
     case VertexAttribute::Position: return 0u;
     case VertexAttribute::Normal: return 1u;
     case VertexAttribute::Color: return 2u;
@@ -91,15 +90,12 @@ constexpr std::uint32_t instanceMatrixLocation(std::uint32_t column) noexcept
  */
 constexpr bool isCanonicalAttributeLocation(std::uint32_t location) noexcept
 {
-    if (location >= attributeLocation(VertexAttribute::InstanceModel) &&
-        location < attributeLocation(VertexAttribute::InstanceModel) + kInstanceMatrixColumns)
+    if (location >= attributeLocation(VertexAttribute::InstanceModel) && location < attributeLocation(VertexAttribute::InstanceModel) + kInstanceMatrixColumns)
     {
-        return true;  // the four instance-matrix columns
+        return true; // the four instance-matrix columns
     }
-    return location == attributeLocation(VertexAttribute::Position) ||
-           location == attributeLocation(VertexAttribute::Normal) ||
-           location == attributeLocation(VertexAttribute::Color) ||
-           location == attributeLocation(VertexAttribute::TexCoord0);
+    return location == attributeLocation(VertexAttribute::Position) || location == attributeLocation(VertexAttribute::Normal) ||
+           location == attributeLocation(VertexAttribute::Color) || location == attributeLocation(VertexAttribute::TexCoord0);
 }
 
 /**
@@ -114,14 +110,13 @@ constexpr bool isCanonicalAttributeLocation(std::uint32_t location) noexcept
  * - Matrices are column-major, matching the math module's convention; a backend whose shader language needs row-major
  *   translates when it fills the block.
  */
-struct alignas(16) VineViewBlock
-{
-    std::array<float, 16> view{};      ///< World -> view (column-major mat4).
-    std::array<float, 16> inv_view{};  ///< View -> world (column-major mat4).
-    std::array<float, 16> proj{};      ///< View -> clip (column-major mat4).
-    std::array<float, 16> view_proj{}; ///< World -> clip (column-major mat4).
-    std::array<float, 4>  cam_pos{};   ///< World-space camera position; w reserved.
-    std::array<float, 4>  frame{};     ///< x = time (s), y/z = viewport size, w = flags.
+struct alignas(16) VineViewBlock {
+    std::array<float, 16> view{};      // World -> view (column-major mat4).
+    std::array<float, 16> inv_view{};  // View -> world (column-major mat4).
+    std::array<float, 16> proj{};      // View -> clip (column-major mat4).
+    std::array<float, 16> view_proj{}; // World -> clip (column-major mat4).
+    std::array<float, 4>  cam_pos{};   // World-space camera position; w reserved.
+    std::array<float, 4>  frame{};     // x = time (s), y/z = viewport size, w = flags.
 };
 
 /**
@@ -133,10 +128,9 @@ struct alignas(16) VineViewBlock
  *       it to `gl_PointSize`, and 1.0 means nobody authored one). `z` and `w` stay reserved for the user parameter
  *       slot (P10: material overrides / user parameters); until then they pack as zero.
  */
-struct alignas(16) VineDrawBlock
-{
-    std::array<float, 16> model{};  ///< Object -> world (column-major mat4).
-    std::array<float, 4>  params{}; ///< x = opacity, y = point size (px), z/w = user slot (reserved).
+struct alignas(16) VineDrawBlock {
+    std::array<float, 16> model{};  // Object -> world (column-major mat4).
+    std::array<float, 4>  params{}; // x = opacity, y = point size (px), z/w = user slot (reserved).
 };
 
 /**
@@ -157,11 +151,11 @@ constexpr std::uint32_t kMaterialAlphaModeShift = 8u;
  * - A slot that exists takes the same program VARIANT as any other (the binary `VN_TEXTURED`, see
  *   graphics-material.md §2.5): these bits short-circuit per slot at run time, they do not select a pipeline.
  */
-constexpr std::uint32_t kMaterialFlagBaseColor       = 1u << 0u;
+constexpr std::uint32_t kMaterialFlagBaseColor         = 1u << 0u;
 constexpr std::uint32_t kMaterialFlagMetallicRoughness = 1u << 1u;
-constexpr std::uint32_t kMaterialFlagNormal          = 1u << 2u;
-constexpr std::uint32_t kMaterialFlagOcclusion       = 1u << 3u;
-constexpr std::uint32_t kMaterialFlagEmissive        = 1u << 4u;
+constexpr std::uint32_t kMaterialFlagNormal            = 1u << 2u;
+constexpr std::uint32_t kMaterialFlagOcclusion         = 1u << 3u;
+constexpr std::uint32_t kMaterialFlagEmissive          = 1u << 4u;
 
 /**
  * @brief Per-material data block the built-in shading reads (L1 shape).
@@ -187,13 +181,12 @@ constexpr std::uint32_t kMaterialFlagEmissive        = 1u << 4u;
  *   ones: content without a material must look like content with a default one, so "the default material" has one
  *   definition rather than two.
  */
-struct alignas(16) VineMaterialBlock
-{
-    std::array<float, 4>         base_color{ 0.8f, 0.8f, 0.8f, 1.0f }; ///< rgb = albedo, a = material alpha.
-    std::array<float, 4>         emissive{ 0.0f, 0.0f, 0.0f, 1.0f };   ///< rgb = emission, a = strength.
-    std::array<float, 4>         params{ 0.0f, 0.5f, 1.0f, 0.5f };     ///< x metallic, y roughness, z occlusion,
-                                                                       ///< w alpha cutoff.
-    std::array<std::uint32_t, 4> flags{}; ///< bit0-4 texture slots, bit8-9 alpha mode; rest reserved.
+struct alignas(16) VineMaterialBlock {
+    std::array<float, 4>         base_color{ 0.8f, 0.8f, 0.8f, 1.0f }; // rgb = albedo, a = material alpha.
+    std::array<float, 4>         emissive{ 0.0f, 0.0f, 0.0f, 1.0f };   // rgb = emission, a = strength.
+    std::array<float, 4>         params{ 0.0f, 0.5f, 1.0f, 0.5f };     // x metallic, y roughness, z occlusion,
+                                                                       // w alpha cutoff.
+    std::array<std::uint32_t, 4> flags{};                              // bit0-4 texture slots, bit8-9 alpha mode; rest reserved.
 
     /**
      * @brief Field-wise equality of two blocks.
@@ -269,11 +262,10 @@ inline constexpr std::size_t kMaxLights = 8U;
  *   end of the map — and getting either sign wrong is invisible: the picture loses its sun, or samples a mirrored
  *   texel. Both were measured, one at a time, by vsg_backend_selftest's deferred shadow phase.
  */
-struct alignas(16) VineShadowBlock
-{
-    std::array<float, 16> view_to_light{}; ///< View space -> the SDK's light clip, column-major (see the conventions
-                                           ///< above before sampling a map with it).
-    std::array<float, 4>  params{};        ///< x = enabled, y = bias, z = strength, w = the light the map belongs to.
+struct alignas(16) VineShadowBlock {
+    std::array<float, 16> view_to_light{}; // View space -> the SDK's light clip, column-major (see the conventions
+                                           // above before sampling a map with it).
+    std::array<float, 4>  params{};        // x = enabled, y = bias, z = strength, w = the light the map belongs to.
 };
 
 // The structs ARE the shader ABI: a member added here without updating the GLSL

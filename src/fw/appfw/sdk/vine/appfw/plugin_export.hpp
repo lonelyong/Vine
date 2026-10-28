@@ -2,8 +2,8 @@
 
 #include "appfw_global.hpp"
 
-#include "command_export.hpp"
 #include "Plugin.hpp"
+#include "command_export.hpp"
 
 /**
  * @brief Export visibility for plugin entry points.
@@ -17,7 +17,8 @@
 #    define VN_PLUGIN_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" {
+extern "C"
+{
     /**
      * @brief ABI handshake: the first entry point the host calls on a plugin.
      *
@@ -96,29 +97,40 @@ extern "C" {
  * @param PluginIcon Inline SVG source used as the plugin icon; empty uses the host's default icon.
  * @param PluginDependencies Braced list of plugin names this plugin requires.
  */
-#define VN_DECLARE_PLUGIN(PluginClass, PluginUuid, PluginName, PluginDisplayName, PluginVersion, PluginDescription, PluginVendor, PluginEmail, PluginRepo, PluginIcon, PluginDependencies) \
-    VN_DEFINE_MODULE_COMMAND_QUEUE()                                                                                  \
-    extern "C" VN_PLUGIN_EXPORT const vn::appfw::PluginAbi* vinePluginAbi()                                        \
-    {                                                                                                                \
-        static const vn::appfw::PluginAbi s_abi{ VN_APPFW_PLUGIN_ABI_VERSION, VN_APPFW_VERSION };                     \
-        return &s_abi;                                                                                               \
-    }                                                                                                                \
-    extern "C" VN_PLUGIN_EXPORT const vn::appfw::PluginInfo* vinePluginQuery()                                      \
-    {                                                                                                                \
-        static const vn::appfw::PluginInfo s_info{ vn::Uuid::parse(PluginUuid), PluginName, PluginDisplayName, PluginVersion, \
-                                                     PluginDescription, PluginVendor, PluginEmail, PluginRepo, PluginIcon,     \
-                                                     PluginDependencies };                                           \
-        return &s_info;                                                                                              \
-    }                                                                                                                \
-    extern "C" VN_PLUGIN_EXPORT vn::appfw::Plugin* vinePluginCreate()                                               \
-    {                                                                                                                \
-        static vn::appfw::Plugin* s_instance = nullptr;                                                            \
-        if (s_instance == nullptr) {                                                                                 \
-            s_instance = new PluginClass();                                                                          \
-        }                                                                                                            \
-        return s_instance;                                                                                           \
-    }                                                                                                                \
-    extern "C" VN_PLUGIN_EXPORT void vinePluginRegisterCommands(vn::appfw::CommandManager* manager)                \
-    {                                                                                                                \
-        vn::appfw::detail::flushQueuedCommands(vn::appfw::detail::moduleCommandQueue(), manager);                 \
+#define VN_DECLARE_PLUGIN(PluginClass,                                                                                                                         \
+                          PluginUuid,                                                                                                                          \
+                          PluginName,                                                                                                                          \
+                          PluginDisplayName,                                                                                                                   \
+                          PluginVersion,                                                                                                                       \
+                          PluginDescription,                                                                                                                   \
+                          PluginVendor,                                                                                                                        \
+                          PluginEmail,                                                                                                                         \
+                          PluginRepo,                                                                                                                          \
+                          PluginIcon,                                                                                                                          \
+                          PluginDependencies)                                                                                                                  \
+    VN_DEFINE_MODULE_COMMAND_QUEUE()                                                                                                                           \
+    extern "C" VN_PLUGIN_EXPORT const vn::appfw::PluginAbi* vinePluginAbi()                                                                                    \
+    {                                                                                                                                                          \
+        static const vn::appfw::PluginAbi s_abi{ VN_APPFW_PLUGIN_ABI_VERSION, VN_APPFW_VERSION };                                                              \
+        return &s_abi;                                                                                                                                         \
+    }                                                                                                                                                          \
+    extern "C" VN_PLUGIN_EXPORT const vn::appfw::PluginInfo* vinePluginQuery()                                                                                 \
+    {                                                                                                                                                          \
+        static const vn::appfw::PluginInfo s_info{                                                                                                             \
+            vn::Uuid::parse(PluginUuid), PluginName, PluginDisplayName, PluginVersion, PluginDescription, PluginVendor, PluginEmail, PluginRepo, PluginIcon,   \
+            PluginDependencies                                                                                                                                 \
+        };                                                                                                                                                     \
+        return &s_info;                                                                                                                                        \
+    }                                                                                                                                                          \
+    extern "C" VN_PLUGIN_EXPORT vn::appfw::Plugin* vinePluginCreate()                                                                                          \
+    {                                                                                                                                                          \
+        static vn::appfw::Plugin* s_instance = nullptr;                                                                                                        \
+        if (s_instance == nullptr) {                                                                                                                           \
+            s_instance = new PluginClass();                                                                                                                    \
+        }                                                                                                                                                      \
+        return s_instance;                                                                                                                                     \
+    }                                                                                                                                                          \
+    extern "C" VN_PLUGIN_EXPORT void vinePluginRegisterCommands(vn::appfw::CommandManager* manager)                                                            \
+    {                                                                                                                                                          \
+        vn::appfw::detail::flushQueuedCommands(vn::appfw::detail::moduleCommandQueue(), manager);                                                              \
     }

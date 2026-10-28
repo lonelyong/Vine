@@ -14,7 +14,7 @@ bool sameValue(const float* a, const float* b) noexcept
     return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
 }
 
-}  // namespace
+} // namespace
 
 bool AttachmentClear::operator==(const AttachmentClear& other) const noexcept
 {
@@ -28,12 +28,10 @@ bool DepthClear::operator==(const DepthClear& other) const noexcept
 
 bool PassClearPlan::operator==(const PassClearPlan& other) const noexcept
 {
-    return colors == other.colors && has_depth == other.has_depth && depth == other.depth &&
-           bootstrap == other.bootstrap;
+    return colors == other.colors && has_depth == other.has_depth && depth == other.depth && bootstrap == other.bootstrap;
 }
 
-PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& policy, bool bootstrap,
-                              bool depth_borrowed) noexcept
+PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& policy, bool bootstrap, bool depth_borrowed) noexcept
 {
     PassClearPlan plan;
     plan.bootstrap = bootstrap;
@@ -46,7 +44,7 @@ PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& polic
         // stated a value for keeps the transparent black it was constructed with - the value that means "nothing
         // here". Painting the extras the pass' colour is the wrong picture that looks plausible.
         if (bootstrap || policy.color) {
-            attachment.load = LoadOp::Clear;
+            attachment.load    = LoadOp::Clear;
             const float* value = kTransparentBlack;
             if (index == 0U) {
                 value = policy.color_value;
@@ -84,22 +82,19 @@ ImageLayout depthFinalLayout(const TargetShape& shape, bool depth_sampleable) no
     // "Depth-only and sampleable" is the shadow-map shape (see the declaration): the depth IS the picture, so it
     // ends where a shader reads it. A target with colour attachments keeps its depth an attachment - the next
     // pass depth-tests against it, and that pass' own layout is the attachment one.
-    return shape.color_formats.empty() && shape.depth_format.has_value() && depth_sampleable
-               ? ImageLayout::ShaderReadOnly
-               : ImageLayout::DepthAttachment;
+    return shape.color_formats.empty() && shape.depth_format.has_value() && depth_sampleable ? ImageLayout::ShaderReadOnly : ImageLayout::DepthAttachment;
 }
 
-LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_final,
-                                 ImageLayout depth_steady, ImageLayout depth_final) noexcept
+LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_final, ImageLayout depth_steady, ImageLayout depth_final) noexcept
 {
     LoadOpVariantKey variant;
     if (!plan.colors.empty()) {
         // The colour attachments move together (rule 4), so attachment 0 speaks for the set.
         const AttachmentClear& color = plan.colors.front();
-        variant.color_load    = color.load;
-        variant.color_store   = color.store;
-        variant.color_initial = color.load == LoadOp::Clear ? ImageLayout::Undefined : color_final;
-        variant.color_final   = color_final;
+        variant.color_load           = color.load;
+        variant.color_store          = color.store;
+        variant.color_initial        = color.load == LoadOp::Clear ? ImageLayout::Undefined : color_final;
+        variant.color_final          = color_final;
     }
     variant.has_depth = plan.has_depth;
     if (plan.has_depth) {

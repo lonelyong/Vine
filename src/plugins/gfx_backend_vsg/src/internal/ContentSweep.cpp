@@ -2,8 +2,10 @@
 
 VN_VSG_NS_BEGIN
 
-SweepOutcome releaseAbandonedContent(ContentStore& store, MaterialImages& images, core::FrameTimeline& timeline,
-                                     core::RetirementQueue& retirement,
+SweepOutcome releaseAbandonedContent(ContentStore&             store,
+                                     MaterialImages&           images,
+                                     core::FrameTimeline&      timeline,
+                                     core::RetirementQueue&    retirement,
                                      std::vector<const void*>& released_materials)
 {
     SweepOutcome outcome;

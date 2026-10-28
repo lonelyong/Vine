@@ -15,37 +15,29 @@ bool Shape::isValid() const
 
 bool Shape::hasVolume(double eps) const
 {
-    (void)eps;  // reserved for mesh volume significance checks.
-    switch (shape_type_)
-    {
+    (void)eps; // reserved for mesh volume significance checks.
+    switch (shape_type_) {
     case ShapeType::Box:
     case ShapeType::Cylinder:
     case ShapeType::Cone:
     case ShapeType::Sphere:
-    case ShapeType::Ellipsoid:
-        return true;
-    default:
-        return false;
+    case ShapeType::Ellipsoid: return true;
+    default: return false;
     }
 }
 
 ShapeKind Shape::shapeKind() const
 {
-    switch (shape_type_)
-    {
+    switch (shape_type_) {
     case ShapeType::Box:
     case ShapeType::Cylinder:
     case ShapeType::Cone:
     case ShapeType::Sphere:
-    case ShapeType::Ellipsoid:
-        return ShapeKind::Primitive;
+    case ShapeType::Ellipsoid: return ShapeKind::Primitive;
     case ShapeType::TriangleMesh:
-    case ShapeType::IndexedTriangleMesh:
-        return ShapeKind::Mesh;
-    case ShapeType::Brep:
-        return ShapeKind::Brep;
-    default:
-        return ShapeKind::Unknown;
+    case ShapeType::IndexedTriangleMesh: return ShapeKind::Mesh;
+    case ShapeType::Brep: return ShapeKind::Brep;
+    default: return ShapeKind::Unknown;
     }
 }
 

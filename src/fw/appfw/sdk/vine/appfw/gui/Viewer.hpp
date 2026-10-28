@@ -9,10 +9,12 @@
 
 namespace vn::graphics
 {
+
 class RenderEngine;
 class RenderSurface;
 class SceneView;
-}  // namespace vn::graphics
+
+} // namespace vn::graphics
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -42,8 +44,7 @@ class RenderControl;
  * chain from being built beside it: such a pass makes isActive() answer false, and takeArea() leaves the area
  * alone. A view whose drawing a host takes over is given back with release().
  */
-class VN_APPFW_API Viewer
-{
+class VN_APPFW_API Viewer {
   public:
     /**
      * @brief Creates a viewer for one render area, drawing the area with @p view.
@@ -57,8 +58,7 @@ class VN_APPFW_API Viewer
      * @param view    The view that draws the area; null leaves the viewer with no view (nothing to build for and
      *                nothing to declare).
      */
-    Viewer(raw_ptr<vn::graphics::RenderEngine> engine, raw_ptr<vn::graphics::RenderSurface> surface,
-           intrusive_ptr<vn::graphics::SceneView> view);
+    Viewer(raw_ptr<vn::graphics::RenderEngine> engine, raw_ptr<vn::graphics::RenderSurface> surface, intrusive_ptr<vn::graphics::SceneView> view);
 
     /**
      * @brief Destroys the viewer.

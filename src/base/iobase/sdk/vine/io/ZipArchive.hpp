@@ -10,10 +10,10 @@
 #include <string>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/io/Stream.hpp>
 #include <vine/io/Vfs.hpp>
-#include <vine/String.hpp>
 
 VN_IO_NS_BEGIN
 
@@ -45,8 +45,7 @@ VN_IO_NS_BEGIN
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API ZipArchive : public Vfs
-{
+class VN_IOBASE_API ZipArchive : public Vfs {
   public:
     using Vfs::read; // the override below would otherwise hide the base's sink-push overload
     /**
@@ -54,14 +53,14 @@ class VN_IOBASE_API ZipArchive : public Vfs
      */
     enum class OpenMode : std::uint8_t
     {
-        ReadOnly,  ///< Every change is refused with IoError::ReadOnly.
-        ReadWrite, ///< The source plus an overlay; commit() may write back.
+        ReadOnly,  // Every change is refused with IoError::ReadOnly.
+        ReadWrite, // The source plus an overlay; commit() may write back.
     };
 
     ZipArchive();
     ~ZipArchive() override;
 
-    ZipArchive(const ZipArchive&) = delete;
+    ZipArchive(const ZipArchive&)            = delete;
     ZipArchive& operator=(const ZipArchive&) = delete;
 
     /**
@@ -489,34 +488,32 @@ class VN_IOBASE_API ZipArchive : public Vfs
     /**
      * @brief Where the content of one entry comes from.
      */
-    struct Entry
-    {
+    struct Entry {
         /// What the entry is: kind, and the size/checksum the source archive
         /// recorded (0 when only entrySize() knows). The path is the table key.
         VfsEntryInfo info;
 
-        std::vector<unsigned char>  data;                  ///< Buffered content.
-        std::filesystem::path       src;                   ///< Content file when from_file is true.
-        std::shared_ptr<DataSource> generator;             ///< Pull source, read while the archive is written.
-        std::string                 stored_name;           ///< Name the source archive held, verbatim; empty for an entry this archive created itself.
-        std::uint64_t               source_index{ 0 };     ///< Index in the source archive when from_source is true.
+        std::vector<unsigned char>  data;              // Buffered content.
+        std::filesystem::path       src;               // Content file when from_file is true.
+        std::shared_ptr<DataSource> generator;         // Pull source, read while the archive is written.
+        std::string                 stored_name;       // Name the source archive held, verbatim; empty for an entry this archive created itself.
+        std::uint64_t               source_index{ 0 }; // Index in the source archive when from_source is true.
         bool                        from_file{ false };
-        bool                        from_source{ false }; ///< Content still lives in the opened archive.
+        bool                        from_source{ false }; // Content still lives in the opened archive.
     };
 
     /**
      * @brief The open source archive, shared with the readers handed out for it.
      */
-    struct ArchiveHandle
-    {
+    struct ArchiveHandle {
         ArchiveHandle();
         ~ArchiveHandle();
-        ArchiveHandle(const ArchiveHandle&) = delete;
+        ArchiveHandle(const ArchiveHandle&)            = delete;
         ArchiveHandle& operator=(const ArchiveHandle&) = delete;
 
-        std::vector<unsigned char>     owned;              ///< Bytes the handle owns, when they were handed over.
-        std::span<const unsigned char> bytes;              ///< The ZIP bytes: the owned block, or the caller's borrow.
-        void*                          archive{ nullptr }; ///< libzip's zip_t.
+        std::vector<unsigned char>     owned;              // Bytes the handle owns, when they were handed over.
+        std::span<const unsigned char> bytes;              // The ZIP bytes: the owned block, or the caller's borrow.
+        void*                          archive{ nullptr }; // libzip's zip_t.
     };
 
     /**
@@ -608,10 +605,10 @@ class VN_IOBASE_API ZipArchive : public Vfs
      */
     [[nodiscard]] IoError adoptFile(const std::filesystem::path& path);
 
-    std::map<std::filesystem::path, Entry> entries_; ///< Entry name to where its content comes from.
-    std::shared_ptr<ArchiveHandle> handle_;       ///< The source archive, when this one was opened.
-    std::filesystem::path          source_path_;  ///< File the handle came from, when it is file-backed.
-    bool                           read_only_{ false }; ///< Set by open() with OpenMode::ReadOnly.
+    std::map<std::filesystem::path, Entry> entries_;            // Entry name to where its content comes from.
+    std::shared_ptr<ArchiveHandle>         handle_;             // The source archive, when this one was opened.
+    std::filesystem::path                  source_path_;        // File the handle came from, when it is file-backed.
+    bool                                   read_only_{ false }; // Set by open() with OpenMode::ReadOnly.
 };
 
 VN_IO_NS_END

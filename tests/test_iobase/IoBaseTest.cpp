@@ -27,15 +27,13 @@ namespace
 /**
  * @brief Creates a unique temporary directory that is removed on destruction.
  */
-class TempDir
-{
+class TempDir {
   public:
     TempDir()
     {
         static std::atomic<unsigned long long> counter{ 0 };
         std::error_code                        ec;
-        path_ = std::filesystem::temp_directory_path(ec) /
-                ("vn_iobase_" + std::to_string(counter.fetch_add(1)));
+        path_ = std::filesystem::temp_directory_path(ec) / ("vn_iobase_" + std::to_string(counter.fetch_add(1)));
         std::filesystem::create_directories(path_, ec);
     }
 
@@ -45,7 +43,10 @@ class TempDir
         std::filesystem::remove_all(path_, ec);
     }
 
-    const std::filesystem::path& path() const { return path_; }
+    const std::filesystem::path& path() const
+    {
+        return path_;
+    }
 
   private:
     std::filesystem::path path_;
@@ -56,8 +57,7 @@ class TempDir
  */
 bool hasEntry(const std::vector<vn::io::VfsEntryInfo>& entries, const std::filesystem::path& path)
 {
-    return std::any_of(entries.begin(), entries.end(),
-                       [&path](const vn::io::VfsEntryInfo& info) { return info.path == path; });
+    return std::any_of(entries.begin(), entries.end(), [&path](const vn::io::VfsEntryInfo& info) { return info.path == path; });
 }
 
 /**
@@ -88,13 +88,12 @@ TEST(IoBaseTest, CompressRoundTrip)
 TEST(IoBaseTest, DecompressRejectsGarbage)
 {
     const unsigned char garbage[] = { 0xFF, 0xFE, 0x00, 0x01, 0x02 };
-    EXPECT_EQ(Zip::decompress(std::span<const unsigned char>(garbage, sizeof(garbage))).error(),
-              vn::io::IoError::InvalidData);
+    EXPECT_EQ(Zip::decompress(std::span<const unsigned char>(garbage, sizeof(garbage))).error(), vn::io::IoError::InvalidData);
 }
 
 TEST(IoBaseTest, ZipEntryRoundTrip)
 {
-    TempDir                 dir;
+    TempDir                     dir;
     const std::filesystem::path zip_path = dir.path() / "single.zip";
     const std::string           content  = "hello zip world";
 
@@ -169,7 +168,7 @@ TEST(IoBaseTest, ZipReadEntryVerifiesTheChecksum)
 
 TEST(IoBaseTest, ZipArchiveAddDirectoryRoundTrip)
 {
-    TempDir                 dir;
+    TempDir                     dir;
     const std::filesystem::path source   = dir.path() / "src";
     const std::filesystem::path dest     = dir.path() / "dest";
     const std::filesystem::path zip_path = dir.path() / "dir.zip";
@@ -258,15 +257,18 @@ void addText(ZipArchive& archive, const std::filesystem::path& name, const std::
  * A ZIP pulls content only while it is written, so the counters are how a test
  * tells "read while saving" apart from "read up front".
  */
-class GeneratedSource final : public vn::io::DataSource
-{
+class GeneratedSource final : public vn::io::DataSource {
   public:
     GeneratedSource(std::uint64_t produced, std::uint64_t reported, unsigned char fill)
-        : produced_(produced), reported_(reported), fill_(fill)
-    {
-    }
+      : produced_(produced)
+      , reported_(reported)
+      , fill_(fill)
+    {}
 
-    std::uint64_t size() const override { return reported_; }
+    std::uint64_t size() const override
+    {
+        return reported_;
+    }
 
     void rewind() override
     {
@@ -286,8 +288,15 @@ class GeneratedSource final : public vn::io::DataSource
         return take;
     }
 
-    [[nodiscard]] int pulls() const noexcept { return pulls_; }
-    [[nodiscard]] int rewinds() const noexcept { return rewinds_; }
+    [[nodiscard]] int pulls() const noexcept
+    {
+        return pulls_;
+    }
+
+    [[nodiscard]] int rewinds() const noexcept
+    {
+        return rewinds_;
+    }
 
   private:
     std::uint64_t produced_;
@@ -301,14 +310,12 @@ class GeneratedSource final : public vn::io::DataSource
 /**
  * @brief Records every chunk a streaming read pushes, for comparing against read().
  */
-class CaptureSink final : public vn::io::DataSink
-{
+class CaptureSink final : public vn::io::DataSink {
   public:
     vn::io::IoError write(std::span<const std::byte> bytes) override
     {
         ++chunks;
-        bytes_.insert(bytes_.end(), reinterpret_cast<const unsigned char*>(bytes.data()),
-                      reinterpret_cast<const unsigned char*>(bytes.data()) + bytes.size());
+        bytes_.insert(bytes_.end(), reinterpret_cast<const unsigned char*>(bytes.data()), reinterpret_cast<const unsigned char*>(bytes.data()) + bytes.size());
         return vn::io::IoError::Ok;
     }
 
@@ -319,10 +326,11 @@ class CaptureSink final : public vn::io::DataSink
 /**
  * @brief Refuses the chunk whose 1-based number is given, to pin "the sink's error is returned".
  */
-class RefusingSink final : public vn::io::DataSink
-{
+class RefusingSink final : public vn::io::DataSink {
   public:
-    explicit RefusingSink(std::size_t refuse_at) : refuse_at_(refuse_at) {}
+    explicit RefusingSink(std::size_t refuse_at)
+      : refuse_at_(refuse_at)
+    {}
 
     vn::io::IoError write(std::span<const std::byte> bytes) override
     {
@@ -353,8 +361,7 @@ std::vector<unsigned char> drain(vn::io::VfsEntrySource& stream)
     std::array<std::byte, 4096> buffer{};
     std::size_t                 got = 0;
     while ((got = stream.read(buffer)) != 0) {
-        out.insert(out.end(), reinterpret_cast<const unsigned char*>(buffer.data()),
-                   reinterpret_cast<const unsigned char*>(buffer.data()) + got);
+        out.insert(out.end(), reinterpret_cast<const unsigned char*>(buffer.data()), reinterpret_cast<const unsigned char*>(buffer.data()) + got);
     }
     return out;
 }
@@ -445,8 +452,7 @@ TEST(IoBaseTest, ZipArchiveOpensWithoutReadingContent)
     auto stream = opened->openRead(u8"mesh.bin");
     ASSERT_TRUE(stream.ok());
     std::array<std::byte, 4096> buffer{};
-    while ((*stream)->read(buffer) != 0) {
-    }
+    while ((*stream)->read(buffer) != 0) {}
     EXPECT_EQ((*stream)->error(), vn::io::IoError::IoFailure) << "a damaged entry is not a clean end";
 
     // The push variant ends the same way: the damage surfaces as IoFailure, not as a clean end.
@@ -502,12 +508,14 @@ TEST(IoBaseTest, ZipArchiveWritesFragmentedContent)
     TempDir    dir;
     const auto zip_path = dir.path() / "fragments.zip";
 
-    const std::vector<unsigned char> first{ 'a', 'b' };
-    const std::vector<unsigned char> second{ 'c' };
-    const std::vector<unsigned char> third{ 'd', 'e', 'f' };
-    const std::vector<vn::io::Fragment> pieces{ { first.data(), first.size() },
-                                                 { second.data(), second.size() },
-                                                 { third.data(), third.size() } };
+    const std::vector<unsigned char>    first{ 'a', 'b' };
+    const std::vector<unsigned char>    second{ 'c' };
+    const std::vector<unsigned char>    third{ 'd', 'e', 'f' };
+    const std::vector<vn::io::Fragment> pieces{
+        { first.data(),  first.size()  },
+        { second.data(), second.size() },
+        { third.data(),  third.size()  }
+    };
 
     ZipArchive archive;
     ASSERT_EQ(archive.addFile(u8"joined.bin", pieces), vn::io::IoError::Ok);
@@ -562,12 +570,12 @@ TEST(IoBaseTest, ZipArchivePullsGeneratedContent)
 
     // The declared size is authoritative: a source that stops early fails the save
     // instead of writing a truncated entry, and one that stops late is cut off.
-    auto short_source = std::make_shared<GeneratedSource>(10, 20, static_cast<unsigned char>(0x11));
+    auto       short_source = std::make_shared<GeneratedSource>(10, 20, static_cast<unsigned char>(0x11));
     ZipArchive truncating;
     ASSERT_EQ(truncating.addFile(u8"short.bin", short_source), vn::io::IoError::Ok);
     EXPECT_NE(truncating.saveAs(dir.path() / "short.zip"), vn::io::IoError::Ok);
 
-    auto long_source = std::make_shared<GeneratedSource>(20, 10, static_cast<unsigned char>(0x22));
+    auto       long_source = std::make_shared<GeneratedSource>(20, 10, static_cast<unsigned char>(0x22));
     ZipArchive clipped;
     ASSERT_EQ(clipped.addFile(u8"clip.bin", long_source), vn::io::IoError::Ok);
     ASSERT_EQ(clipped.saveAs(dir.path() / "clip.zip"), vn::io::IoError::Ok);
@@ -586,12 +594,15 @@ TEST(IoBaseTest, DirectoryVfsAssemblesSourcesThroughTheBaseInterface)
     std::filesystem::create_directories(root, ec);
     ASSERT_FALSE(ec);
 
-    DirectoryVfs   real(root);
+    DirectoryVfs real(root);
     vn::io::Vfs& base = real; // a caller usually holds the base interface only
 
-    const std::vector<unsigned char>      first{ 'a', 'b' };
-    const std::vector<unsigned char>      second{ 'c' };
-    const std::vector<vn::io::Fragment> pieces{ { first.data(), first.size() }, { second.data(), second.size() } };
+    const std::vector<unsigned char>    first{ 'a', 'b' };
+    const std::vector<unsigned char>    second{ 'c' };
+    const std::vector<vn::io::Fragment> pieces{
+        { first.data(),  first.size()  },
+        { second.data(), second.size() }
+    };
     ASSERT_EQ(base.addFile(u8"joined.bin", pieces), vn::io::IoError::Ok);
     ASSERT_EQ(real.addFile(u8"direct.bin", pieces), vn::io::IoError::Ok); // the base overload stays reachable on the backend itself
     const auto joined = base.read(u8"joined.bin");
@@ -614,7 +625,9 @@ TEST(IoBaseTest, DirectoryVfsAssemblesSourcesThroughTheBaseInterface)
     EXPECT_EQ(base.addFile(u8"null.bin", std::shared_ptr<vn::io::DataSource>{}), vn::io::IoError::InvalidData);
     auto short_source = std::make_shared<GeneratedSource>(2, 8, static_cast<unsigned char>(0x11));
     EXPECT_EQ(base.addFile(u8"short.bin", short_source), vn::io::IoError::InvalidData);
-    const std::vector<vn::io::Fragment> dataless{ { nullptr, 3 } };
+    const std::vector<vn::io::Fragment> dataless{
+        { nullptr, 3 }
+    };
     EXPECT_EQ(base.addFile(u8"dataless.bin", dataless), vn::io::IoError::InvalidData);
     EXPECT_FALSE(base.exists(u8"null.bin"));
     EXPECT_FALSE(base.exists(u8"short.bin"));
@@ -626,13 +639,16 @@ TEST(IoBaseTest, ZipArchiveKeepsSourcesLazyThroughTheBaseInterface)
     TempDir    dir;
     const auto zip_path = dir.path() / "base.zip";
 
-    const std::vector<unsigned char>      head{ 'a', 'b' };
-    const std::vector<unsigned char>      tail{ 'c', 'd', 'e' };
-    const std::vector<vn::io::Fragment> pieces{ { head.data(), head.size() }, { tail.data(), tail.size() } };
+    const std::vector<unsigned char>    head{ 'a', 'b' };
+    const std::vector<unsigned char>    tail{ 'c', 'd', 'e' };
+    const std::vector<vn::io::Fragment> pieces{
+        { head.data(), head.size() },
+        { tail.data(), tail.size() }
+    };
     auto source = std::make_shared<GeneratedSource>(3 * 1024, 3 * 1024, static_cast<unsigned char>(0x27));
 
     {
-        ZipArchive     archive;
+        ZipArchive   archive;
         vn::io::Vfs& base = archive; // the override, not the default, has to run here
 
         ASSERT_EQ(base.addFile(u8"gen.bin", source), vn::io::IoError::Ok);
@@ -640,7 +656,9 @@ TEST(IoBaseTest, ZipArchiveKeepsSourcesLazyThroughTheBaseInterface)
         EXPECT_EQ(source->pulls(), 0) << "the archive defers the pull to the save";
         EXPECT_EQ(source->rewinds(), 0);
 
-        const std::vector<vn::io::Fragment> dataless{ { nullptr, 3 } };
+        const std::vector<vn::io::Fragment> dataless{
+            { nullptr, 3 }
+        };
         EXPECT_EQ(base.addFile(u8"dataless.bin", dataless), vn::io::IoError::InvalidData);
 
         ASSERT_EQ(base.saveAs(zip_path), vn::io::IoError::Ok);

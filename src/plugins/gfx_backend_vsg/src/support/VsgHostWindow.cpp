@@ -17,13 +17,13 @@ void* VsgHostWindow::hostHandle() const noexcept
     return hostHandleToVoid(_window);
 }
 
-VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
-    Inherit(traits)
+VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits)
+  : Inherit(traits)
 {
     // The base class adopted the handle the traits carry; a window that arrives without one is not
     // something this class can serve.
     if (hostHandle() == nullptr) {
-        throw ::vsg::Exception{"VsgHostWindow needs a host window handle in its traits.", VK_ERROR_INVALID_EXTERNAL_HANDLE};
+        throw ::vsg::Exception{ "VsgHostWindow needs a host window handle in its traits.", VK_ERROR_INVALID_EXTERNAL_HANDLE };
     }
 
     // Whatever the base class registered ON the window it adopted is withdrawn before anything else runs: the
@@ -39,8 +39,7 @@ VsgHostWindow::VsgHostWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
     // for it. The handle is part of it too, and it is the only way to tell which window to look at: a
     // reader that wants the pixels (scripts/xwin2ppm.py) has to name THIS window, because a Qt container
     // keeps the render area as a child and the parent's name matches several windows.
-    VN_LOGI("[VsgHostWindow] attached to the host window 0x{:x} ({}x{}, mapped={})", hostHandleValue(_window),
-           _extent2D.width, _extent2D.height, visible());
+    VN_LOGI("[VsgHostWindow] attached to the host window 0x{:x} ({}x{}, mapped={})", hostHandleValue(_window), _extent2D.width, _extent2D.height, visible());
 }
 
 bool VsgHostWindow::moveToHostSurface(void* native_handle)
@@ -97,8 +96,7 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     // could not be driven from a host's own calls. The hatch makes the COMPARISON fail instead, which is
     // the same code path the real condition takes: selftest_hostsurface.cpp sets it and asserts both the
     // report and the rebuild.
-    const bool format_cannot_serve = std::getenv("VN_HOST_MOVE_FORMAT_MISMATCH") != nullptr ||
-                                     _imageFormat.format != previous_format;
+    const bool format_cannot_serve = std::getenv("VN_HOST_MOVE_FORMAT_MISMATCH") != nullptr || _imageFormat.format != previous_format;
     if (format_cannot_serve) {
         // A different presentation format means a different render pass, and every pipeline was compiled
         // against the one this session has: no move can serve that, so the caller starts a new session.
@@ -115,7 +113,9 @@ bool VsgHostWindow::moveToHostSurface(void* native_handle)
     // log says so because it is otherwise invisible. The new handle goes in for the same reason the attach
     // line carries it: whoever reads the pixels has to follow the session to the window it moved to.
     VN_LOGI("[VsgHostWindow] moved to the host's new window 0x{:x} ({}x{}); the device and its pipelines were kept",
-           hostHandleValue(_window), _extent2D.width, _extent2D.height);
+            hostHandleValue(_window),
+            _extent2D.width,
+            _extent2D.height);
     return true;
 }
 

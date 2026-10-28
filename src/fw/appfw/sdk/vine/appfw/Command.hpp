@@ -159,8 +159,7 @@ enum class CommandStatus : std::uint8_t
  * (usually set on failure), and optional business data produced by the
  * command. succeeded() reports whether the command completed successfully.
  */
-class VN_APPFW_API CommandResult
-{
+class VN_APPFW_API CommandResult {
   public:
     CommandResult() = default;
 
@@ -217,8 +216,8 @@ class VN_APPFW_API CommandResult
 
   private:
     CommandStatus status_ = CommandStatus::Success;
-    String message_;
-    std::any data_;
+    String        message_;
+    std::any      data_;
 };
 
 /**
@@ -233,8 +232,7 @@ class VN_APPFW_API CommandResult
  * - The view is an opaque Object here on purpose: the command layer names the target without importing GUI types.
  *   GUI code reads it typed through `gui::targetView(target)`.
  */
-struct CommandTarget
-{
+struct CommandTarget {
     /// The document the execution acts on, or nullptr.
     Document* document = nullptr;
 
@@ -246,7 +244,10 @@ struct CommandTarget
      *
      * @return true when the execution has nothing to act on.
      */
-    bool isEmpty() const noexcept { return document == nullptr && view == nullptr; }
+    bool isEmpty() const noexcept
+    {
+        return document == nullptr && view == nullptr;
+    }
 };
 
 /**
@@ -257,8 +258,7 @@ struct CommandTarget
  * application(). The CommandManager provides a private implementation; user
  * code never constructs a context directly.
  */
-class VN_APPFW_API CommandExecutionContext
-{
+class VN_APPFW_API CommandExecutionContext {
   public:
     virtual ~CommandExecutionContext() = default;
 
@@ -367,8 +367,7 @@ class VN_APPFW_API CommandExecutionContext
  * chain and cancellation source (every LongRunning command still owns its own
  * ProgressHost) and is bounded by CommandManager::maxChainDepth().
  */
-class VN_APPFW_API Command : public Object
-{
+class VN_APPFW_API Command : public Object {
     VN_OBJECT_META_DECL;
     VN_DISABLE_COPY_MOVE(Command);
 
@@ -403,7 +402,10 @@ class VN_APPFW_API Command : public Object
      *
      * @return The description, empty when not provided.
      */
-    virtual String description() const { return {}; }
+    virtual String description() const
+    {
+        return {};
+    }
 
     /**
      * @brief Execution characteristics of this command.

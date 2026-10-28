@@ -16,6 +16,7 @@
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/vsg/internal/BackendContent.hpp>
 #include <vine/vsg/internal/ContentAssembly.hpp>
 #include <vine/vsg/internal/ContentHalves.hpp>
@@ -27,12 +28,11 @@
 #include <vine/vsg/internal/MaterialImages.hpp>
 #include <vine/vsg/internal/VsgBackend.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
 
 #include <vine/Buffer.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/DepthMode.hpp>
-#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
@@ -53,7 +53,6 @@
 #include "TestGeometryBuilders.hpp"
 
 using vn::graphics::Geometry;
-using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderPass;
@@ -61,14 +60,15 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
+using vn::graphics::backend::depthPlan;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::VariantPool;
+using vn::test::setPrimitiveIndices;
+using vn::vsg::BlockStorage;
 using vn::vsg::ContentAssembly;
 using vn::vsg::ContentStore;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::depthPlan;
-using vn::vsg::BlockStorage;
 using vn::vsg::HostTargets;
 using vn::vsg::PassRegistry;
-using vn::graphics::backend::VariantPool;
 using vn::vsg::WindowTarget;
 using vn::vsg::detail::BackendContentAccess;
 
@@ -80,33 +80,34 @@ using vn::vsg::detail::BackendContentAccess;
  * this holds THAT window's target and names it in the frame, which is exactly what a host does; everything the cases
  * assert about the device (counters, clock, storage, targets) is inherited unchanged.
  */
-class DirectDriveBackend : public vn::vsg::VsgBackend
-{
+class DirectDriveBackend : public vn::vsg::VsgBackend {
   public:
     /// @brief Creates the device @p desc asks for (see VsgBackend's constructor); this drive adds no opinion of its own.
     ///
     /// @param desc How the device reaches the display (a case about a display-less device states None).
-    explicit DirectDriveBackend(const vn::graphics::DeviceDesc& desc = {}) : vn::vsg::VsgBackend(desc) {}
+    explicit DirectDriveBackend(const vn::graphics::DeviceDesc& desc = {})
+      : vn::vsg::VsgBackend(desc)
+    {}
 
     /// The window's handle is the target's CREATION input; a second announcement MOVES the target that exists.
     void setWindowHandle(void* native_handle)
     {
-        if (target_ == nullptr)
-        {
+        if (target_ == nullptr) {
             target_ = createSurfaceTarget(native_handle);
         }
-        else
-        {
+        else {
             target_->setWindowHandle(native_handle);
         }
     }
 
-    [[nodiscard]] void* nativeHandle() const { return target_ != nullptr ? target_->nativeHandle() : nullptr; }
+    [[nodiscard]] void* nativeHandle() const
+    {
+        return target_ != nullptr ? target_->nativeHandle() : nullptr;
+    }
 
     void resize(int width, int height)
     {
-        if (target_ != nullptr)
-        {
+        if (target_ != nullptr) {
             target_->resize(width, height);
         }
     }
@@ -128,14 +129,16 @@ class DirectDriveBackend : public vn::vsg::VsgBackend
         vn::vsg::VsgBackend::executeFrame(frame, present_to);
     }
 
-    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> target() const { return target_; }
+    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> target() const
+    {
+        return target_;
+    }
 
   private:
     /// The target of window 0, asked for on first use (see the one-argument executeFrame).
     [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> heldTarget()
     {
-        if (target_ == nullptr)
-        {
+        if (target_ == nullptr) {
             target_ = BackendContentAccess::surfaceTarget(*this, 0);
         }
         return target_;
@@ -143,7 +146,7 @@ class DirectDriveBackend : public vn::vsg::VsgBackend
 
     /// Null until a case asks: stated here rather than left to `new X()` zero-initializing it (that help is what this
     /// class' constructor takes away - a user-provided constructor makes the value-initialization stop at the members).
-    vn::raw_ptr<vn::graphics::WindowPresentTarget> target_{nullptr};
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> target_{ nullptr };
 };
 
 /// The name the cases use: the device they drive, one window each (see DirectDriveBackend).
@@ -193,8 +196,7 @@ bool isGreenClear(const std::array<std::uint8_t, 3>& pixel)
 bool isRed(const std::array<std::uint8_t, 3>& pixel)
 {
     return isColourByte(pixel[1], 0.0) &&
-           ((isColourByte(pixel[0], 1.0) && isColourByte(pixel[2], 0.0)) ||
-            (isColourByte(pixel[2], 1.0) && isColourByte(pixel[0], 0.0)));
+           ((isColourByte(pixel[0], 1.0) && isColourByte(pixel[2], 0.0)) || (isColourByte(pixel[2], 1.0) && isColourByte(pixel[0], 0.0)));
 }
 
 /// @brief Whether a pixel is anything but the window's own background (what an UNTOUCHED window shows).
@@ -209,12 +211,11 @@ bool arrived(const std::array<std::uint8_t, 3>& pixel)
 }
 
 /// @brief A red triangle under a view-block program: the content the off-screen cases draw.
-struct TriangleFixture
-{
+struct TriangleFixture {
     vn::intrusive_ptr<ShaderProgram> program;
     vn::intrusive_ptr<Geometry>      geometry;
     vn::intrusive_ptr<Material>      material;
-    std::vector<RenderCommand>         commands;
+    std::vector<RenderCommand>       commands;
 };
 
 /// @brief Builds the triangle fixture: a view-block vertex stage and a constant red fragment stage.
@@ -226,27 +227,24 @@ TriangleFixture makeTriangle()
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
     fixture.program = program;
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
-        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
@@ -271,8 +269,7 @@ TriangleFixture makeTriangle()
 vn::intrusive_ptr<vn::graphics::Camera> cameraLookingAt(double x)
 {
     vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->lookAt(vn::math::Vec3d(x, 0.0, 1.5), vn::math::Vec3d(x, 0.0, 0.0),
-                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->lookAt(vn::math::Vec3d(x, 0.0, 1.5), vn::math::Vec3d(x, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
     return camera;
 }
@@ -331,12 +328,11 @@ std::vector<std::uint32_t> gridIndices(int side)
 /// One counter per ANSWER, not per layer: a row (re)built says the edit was DATA the tables had to be told
 /// about, an upload says bytes reached the device as a NEW stream, a compile says the edit was IDENTITY,
 /// and a reuse says the frame switched between variants the pool already had.
-struct EditCostCounters
-{
-    std::uint64_t builds{0};   ///< `ContentStore::builds()`: table rows (re)built.
-    std::uint64_t uploads{0};  ///< `StreamUploads::uploads()`: streams uploaded as new objects.
-    std::uint64_t created{0};  ///< `VariantPool::created()`: pipelines compiled.
-    std::uint64_t reused{0};   ///< `VariantPool::reused()`: variant switches the pool served.
+struct EditCostCounters {
+    std::uint64_t builds{ 0 };  // `ContentStore::builds()`: table rows (re)built.
+    std::uint64_t uploads{ 0 }; // `StreamUploads::uploads()`: streams uploaded as new objects.
+    std::uint64_t created{ 0 }; // `VariantPool::created()`: pipelines compiled.
+    std::uint64_t reused{ 0 };  // `VariantPool::reused()`: variant switches the pool served.
 };
 
 /// @brief Reads @ref EditCostCounters off a live backend.
@@ -345,8 +341,7 @@ struct EditCostCounters
 /// @param assembly The facade's content world (its stream sharing owns the upload count).
 /// @param pool     The facade's compiled-pipeline pool.
 /// @return The counters as they are now.
-EditCostCounters readEditCosts(const ContentStore& store, ContentAssembly& assembly,
-                               const vn::graphics::backend::VariantPool& pool)
+EditCostCounters readEditCosts(const ContentStore& store, ContentAssembly& assembly, const vn::graphics::backend::VariantPool& pool)
 {
     EditCostCounters counters;
     counters.builds  = store.builds();
@@ -357,12 +352,11 @@ EditCostCounters readEditCosts(const ContentStore& store, ContentAssembly& assem
 }
 
 /// @brief What one regime moved, as signed deltas (a counter that went backwards is a bug worth seeing).
-struct EditCostDelta
-{
-    std::int64_t builds{0};   ///< Rows rebuilt.
-    std::int64_t uploads{0};  ///< Streams uploaded.
-    std::int64_t created{0};  ///< Pipelines compiled.
-    std::int64_t reused{0};   ///< Variant switches served by the pool.
+struct EditCostDelta {
+    std::int64_t builds{ 0 };  // Rows rebuilt.
+    std::int64_t uploads{ 0 }; // Streams uploaded.
+    std::int64_t created{ 0 }; // Pipelines compiled.
+    std::int64_t reused{ 0 };  // Variant switches served by the pool.
 };
 
 /// @brief Subtracts two @ref EditCostCounters samples.
@@ -372,9 +366,7 @@ struct EditCostDelta
 /// @return The signed deltas.
 EditCostDelta editCostDelta(const EditCostCounters& before, const EditCostCounters& after)
 {
-    const auto step = [](std::uint64_t from, std::uint64_t to) {
-        return static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from);
-    };
+    const auto    step = [](std::uint64_t from, std::uint64_t to) { return static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from); };
     EditCostDelta delta;
     delta.builds  = step(before.builds, after.builds);
     delta.uploads = step(before.uploads, after.uploads);
@@ -383,21 +375,21 @@ EditCostDelta editCostDelta(const EditCostCounters& before, const EditCostCounte
     return delta;
 }
 
-}  // namespace
+} // namespace
 
 TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItCannotServe)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    std::size_t                     seen = 0;
+    std::size_t                   seen = 0;
     backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
 
@@ -413,8 +405,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     // may acquire an image, and the present is the only call that hands it back (see api/Session).
     ASSERT_TRUE(backend->initialize());
     EXPECT_TRUE(backend->initialized());
-    for (int index = 0; index < 3; ++index)
-    {
+    for (int index = 0; index < 3; ++index) {
         backend->executeFrame(vn::graphics::FrameDescription{});
     }
     EXPECT_EQ(backend->framesPresented(), 3U);
@@ -435,10 +426,10 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     // with no target is Invalid, and each reason is said ONCE per episode - the request is synchronous, and a
     // caller polling a target that is not ready yet must not be flooded.
     const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
-    std::vector<std::uint8_t>               pixels;
-    std::vector<float>                      depths;
-    const std::size_t                       before_unserved = backend->diagnosticCount();
-    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
+    std::vector<std::uint8_t>             pixels;
+    std::vector<float>                    depths;
+    const std::size_t                     before_unserved = backend->diagnosticCount();
+    vn::graphics::ReadbackResult          why             = vn::graphics::ReadbackResult::Ok;
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
     EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady) << "this backend was never told about it";
     EXPECT_TRUE(pixels.empty()) << "a refused read leaves the destination untouched";
@@ -475,8 +466,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     //    A pass that was never announced to the engine is exactly this shape.
     const vn::intrusive_ptr<RenderPass> quiet(new RenderPass());
     backend->executeFrame(TestFrame().pass(quiet.get()).value());
-    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U)
-        << "a pass that issues nothing is not a mistake, and nothing needs saying about it";
+    EXPECT_EQ(backend->diagnosticCount(), before_unserved + 3U) << "a pass that issues nothing is not a mistake, and nothing needs saying about it";
     EXPECT_EQ(backend->framesPresented(), 4U) << "and the frame it was part of still presents";
 
     // 6. The announced size is the SURFACE's, and this backend FOLLOWS the surface it is on (the SDK's
@@ -513,8 +503,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
 
 TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
@@ -538,13 +527,13 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
 
     backend->executeFrame(TestFrame()
-        .pass(pass.get())
-        .order(0)
-        .target(nullptr)
-        .clear(vn::graphics::ClearPolicy{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true })
-        .depth(vn::graphics::DepthMode::TestAndWrite)
-        .content(fixture.commands, camera.get())
-        .value());
+                              .pass(pass.get())
+                              .order(0)
+                              .target(nullptr)
+                              .clear(vn::graphics::ClearPolicy{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true })
+                              .depth(vn::graphics::DepthMode::TestAndWrite)
+                              .content(fixture.commands, camera.get())
+                              .value());
 
     report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
@@ -554,8 +543,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
 
     // The retention numbers come out of the SAME answer, and they agree with the backend's own accessor.
     ASSERT_TRUE(report.retention.has_value());
-    EXPECT_EQ(report.retention->device_waits, backend->deviceWaits())
-        << "the counter the host reads is the one the backend counted";
+    EXPECT_EQ(report.retention->device_waits, backend->deviceWaits()) << "the counter the host reads is the one the backend counted";
     EXPECT_EQ(report.retention->device_waits, 0U) << "the frame path never idles the device";
 
     // The frame clock, as a host can see it: SUBMITTED is not COMPLETED, and the difference is what is
@@ -566,12 +554,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
     EXPECT_EQ(report.progress->inFlight(), report.progress->submitted - report.progress->completed);
 
     // One more frame, drawn this time: it reaches the queue, so the submitted watermark moves by one.
-    backend->executeFrame(TestFrame()
-        .pass(pass.get())
-        .order(0)
-        .target(nullptr)
-        .content(fixture.commands, camera.get())
-        .value());
+    backend->executeFrame(TestFrame().pass(pass.get()).order(0).target(nullptr).content(fixture.commands, camera.get()).value());
 
     const std::uint64_t submitted_before = report.progress->submitted;
     report                               = backend->frameReport();
@@ -585,16 +568,14 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
 
 TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
@@ -605,7 +586,8 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setDiagnosticSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
 
@@ -615,8 +597,7 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->nativeHandle(), host.handle());
-    for (int index = 0; index < 2; ++index)
-    {
+    for (int index = 0; index < 2; ++index) {
         backend->executeFrame(vn::graphics::FrameDescription{});
     }
     EXPECT_EQ(backend->framesPresented(), 2U);
@@ -641,31 +622,30 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
 
 TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    std::size_t                     seen = 0;
+    std::size_t                   seen = 0;
     backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
     backend->setWindowHandle(host.handle());
@@ -679,28 +659,26 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
-        fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { outColor = vec4(vb.frame.y / 128.0, abs(vb.cam_pos.x), vb.frame.z / 96.0, 1.0); }\n"));
+        fragment.type = ShaderStageType::Fragment;
+        fragment.source =
+            vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                        "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                        "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                        "void main() { outColor = vec4(vb.frame.y / 128.0, abs(vb.cam_pos.x), vb.frame.z / 96.0, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
-        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
@@ -716,19 +694,19 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera_a = cameraLookingAt(0.5);
     const vn::intrusive_ptr<vn::graphics::Camera> camera_b = cameraLookingAt(-0.5);
-    const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
 
     const vn::graphics::ClearPolicy clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&](const vn::graphics::Camera* frame_camera) {
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
-            .content(commands, frame_camera)
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(commands, frame_camera)
+                                  .value());
     };
     // The display path lags the session's presents, so a picture is read after a couple more frames that
     // carry the SAME picture. A plan-free frame is not a settle: it repaints the window with the session's
@@ -758,17 +736,14 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     EXPECT_EQ(registry.live(), 1U);
     const auto& recorded = BackendContentAccess::executor(*backend).recorded();
     ASSERT_EQ(recorded.size(), 1U);
-    EXPECT_EQ(recorded[0], registry.adopt(pass.get()))
-        << "the frame records the pass its entry named, under that identity";
+    EXPECT_EQ(recorded[0], registry.adopt(pass.get())) << "the frame records the pass its entry named, under that identity";
 
     settle(camera_a.get());
-    const auto left_a = host.waitForPixel(kWidth / 4, kHeight / 2, arrived,
-                                          std::chrono::milliseconds{ 500 });  // inside the triangle
-    const auto right_a = host.pixel(3 * kWidth / 4, kHeight / 2);            // never: the clear
-    EXPECT_TRUE(isColourByte(left_a[1], 0.5))
-        << "the camera's x reached the fragment stage through the view block the facade built: got ("
-        << static_cast<int>(left_a[0]) << ", " << static_cast<int>(left_a[1]) << ", "
-        << static_cast<int>(left_a[2]) << ")";
+    const auto left_a  = host.waitForPixel(kWidth / 4, kHeight / 2, arrived, std::chrono::milliseconds{ 500 }); // inside the triangle
+    const auto right_a = host.pixel(3 * kWidth / 4, kHeight / 2);                                               // never: the clear
+    EXPECT_TRUE(isColourByte(left_a[1], 0.5)) << "the camera's x reached the fragment stage through the view block the facade built: got ("
+                                              << static_cast<int>(left_a[0]) << ", " << static_cast<int>(left_a[1]) << ", " << static_cast<int>(left_a[2])
+                                              << ")";
     EXPECT_TRUE(isColourByte(left_a[0], 1.0)) << "and the window's width came with it";
     EXPECT_TRUE(isColourByte(left_a[2], 1.0)) << "and so did its height";
     EXPECT_TRUE(isGreenClear(right_a)) << "the right quarter is the pass' clear, so the view really moved it";
@@ -788,12 +763,10 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     settle(camera_b.get());
     const auto left_b  = host.pixel(kWidth / 4, kHeight / 2);
     const auto right_b = host.pixel(3 * kWidth / 4, kHeight / 2);
-    EXPECT_TRUE(isGreenClear(left_b)) << "the previous frame's picture is gone, got ("
-                                      << static_cast<int>(left_b[0]) << ", " << static_cast<int>(left_b[1])
+    EXPECT_TRUE(isGreenClear(left_b)) << "the previous frame's picture is gone, got (" << static_cast<int>(left_b[0]) << ", " << static_cast<int>(left_b[1])
                                       << ", " << static_cast<int>(left_b[2]) << ")";
-    EXPECT_TRUE(isColourByte(right_b[1], 0.5))
-        << "and this frame's landed where its camera put it: got (" << static_cast<int>(right_b[0])
-        << ", " << static_cast<int>(right_b[1]) << ", " << static_cast<int>(right_b[2]) << ")";
+    EXPECT_TRUE(isColourByte(right_b[1], 0.5)) << "and this frame's landed where its camera put it: got (" << static_cast<int>(right_b[0]) << ", "
+                                               << static_cast<int>(right_b[1]) << ", " << static_cast<int>(right_b[2]) << ")";
     EXPECT_EQ(backend->deviceWaits(), 0U) << "the content path never stops the device";
 
     // 5. The pass identity is this layer's bookkeeping: the SDK's releasePass() forgets it (nothing retained
@@ -803,8 +776,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     backend->releasePass(pass.get());
     EXPECT_FALSE(registry.contains(pass.get()));
     EXPECT_EQ(registry.live(), 0U);
-    EXPECT_NE(registry.adopt(pass.get()), first_id)
-        << "a pass announced again (a frame naming it once more) gets a new identity";
+    EXPECT_NE(registry.adopt(pass.get()), first_id) << "a pass announced again (a frame naming it once more) gets a new identity";
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());
@@ -812,33 +784,32 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
 
 TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    std::size_t                     seen     = 0;
-    std::vector<std::string>        messages;
+    std::size_t                   seen = 0;
+    std::vector<std::string>      messages;
     backend->setDiagnosticSink([&seen, &messages](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         messages.push_back(as_bytes(diagnostic.message));
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
     backend->setWindowHandle(host.handle());
@@ -904,16 +875,15 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_EQ(recorded[1], BackendContentAccess::passes(*backend).adopt(window_pass.get()));
 
     // The facts of a BUILT target, which are what the plan was compiled from.
-    HostTargets&       targets = BackendContentAccess::targets(*backend);
-    HostTargets::Entry* entry  = targets.find(offscreen.get());
+    HostTargets&        targets = BackendContentAccess::targets(*backend);
+    HostTargets::Entry* entry   = targets.find(offscreen.get());
     ASSERT_NE(entry, nullptr);
     ASSERT_NE(entry->target, nullptr) << "the target was built when its first pass was announced";
     TargetFacts row;
     targets.facts(*entry, row);
     EXPECT_EQ(row.wanted.width, 64);
     EXPECT_EQ(row.wanted.height, 64);
-    EXPECT_FALSE(row.wanted.shape.device_color_formats.empty())
-        << "a built target states the device's own spelling of its shape";
+    EXPECT_FALSE(row.wanted.shape.device_color_formats.empty()) << "a built target states the device's own spelling of its shape";
     EXPECT_TRUE(row.current.built) << "its first pass has been recorded (see OffscreenTarget::written)";
     EXPECT_EQ(row.depth.has_depth, false) << "the host attached no depth";
 
@@ -924,9 +894,8 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     const auto left   = host.waitForPixel(kWidth / 4, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
     const auto right  = host.pixel(3 * kWidth / 4, kHeight / 2);
     const auto corner = host.pixel(2, 2);
-    EXPECT_TRUE(isRed(left)) << "the triangle drawn into the TARGET reached the window through the screen draw: got ("
-                             << static_cast<int>(left[0]) << ", " << static_cast<int>(left[1]) << ", "
-                             << static_cast<int>(left[2]) << ") read-error " << static_cast<int>(host.readError())
+    EXPECT_TRUE(isRed(left)) << "the triangle drawn into the TARGET reached the window through the screen draw: got (" << static_cast<int>(left[0]) << ", "
+                             << static_cast<int>(left[1]) << ", " << static_cast<int>(left[2]) << ") read-error " << static_cast<int>(host.readError())
                              << " (see HostWindowReadTest: a refusal is not a black pixel)";
     EXPECT_TRUE(isGreenClear(right)) << "the rest of the window is the TARGET's clear, not the window's own";
     EXPECT_TRUE(isGreenClear(corner));
@@ -949,8 +918,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_EQ(entry->target->colorAttachmentCount(), 2U) << "the rebuild gave the target the shape the host asked for";
     EXPECT_EQ(backend->diagnosticCount(), 0U);
     settle();
-    EXPECT_TRUE(isRed(host.pixel(kWidth / 4, kHeight / 2)))
-        << "the screen still samples attachment 0 of the rebuilt target";
+    EXPECT_TRUE(isRed(host.pixel(kWidth / 4, kHeight / 2))) << "the screen still samples attachment 0 of the rebuilt target";
 
     // 4. The release announcement: everything this backend held for the target goes, and the host may destroy
     // the object (nothing may be dereferenced after this call - see the SDK's note).
@@ -968,7 +936,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     const vn::intrusive_ptr<RenderTarget> lenderless(new RenderTarget());
     lenderless->setName(u8"composite");
     lenderless->attachColor(RenderTarget::ColorFormat::RGBA8);
-    lenderless->shareDepth(offscreen);  // the lender was released a moment ago
+    lenderless->shareDepth(offscreen); // the lender was released a moment ago
     lenderless->setSize(32, 32);
     backend->setRenderTarget(lenderless.get());
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "outside a frame nothing is said: this is configuration";
@@ -1001,8 +969,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
 
 TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
@@ -1018,9 +985,9 @@ TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
     target->setSize(32, 32);
 
-    const TriangleFixture triangle = makeTriangle();
-    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
-    const vn::intrusive_ptr<RenderPass>          pass(new RenderPass());
+    const TriangleFixture                         triangle = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera   = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
     const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive_content = [&] {
@@ -1033,12 +1000,7 @@ TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
                                   .value());
     };
     const auto drive_empty = [&] {
-        backend->executeFrame(TestFrame()
-                                  .pass(pass.get())
-                                  .target(target.get())
-                                  .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
-                                  .value());
+        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).value());
     };
 
     // Warm the session up so its in-flight count is learned and the release can be parked (a session that
@@ -1058,8 +1020,7 @@ TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
 
     EXPECT_FALSE(backend->releaseContent(pass.get())) << "a pass is not content";
     const vn::intrusive_ptr<Material> never_seen(new Material());
-    EXPECT_TRUE(backend->releaseContent(never_seen.get()))
-        << "an object with no residency is already released";
+    EXPECT_TRUE(backend->releaseContent(never_seen.get())) << "an object with no residency is already released";
 
     ASSERT_TRUE(backend->releaseContent(triangle.geometry.get()));
     ASSERT_TRUE(backend->releaseContent(triangle.material.get()));
@@ -1097,22 +1058,20 @@ TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
  */
 TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1124,16 +1083,13 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
 
     // A 2x2 texture filled with magenta: neither the destination's blue clear nor an absent texture's white
     // stand-in can produce it.
-    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
     {
-        const vn::intrusive_ptr<vn::imaging::Image> image(
-            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-        const std::span<std::byte> pixels = image->mipData(0);
-        for (std::size_t index = 0; index < pixels.size(); ++index)
-        {
+        const vn::intrusive_ptr<vn::imaging::Image> image(new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte>                  pixels = image->mipData(0);
+        for (std::size_t index = 0; index < pixels.size(); ++index) {
             const std::uint8_t channel = static_cast<std::uint8_t>(index % 4U);
-            pixels[index] = static_cast<std::byte>(channel == 1U ? 0U : 255U);
+            pixels[index]              = static_cast<std::byte>(channel == 1U ? 0U : 255U);
         }
         texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
@@ -1144,34 +1100,31 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 out_color;\n"
-            "layout(set = 1, binding = 0) uniform sampler2D imported_tex;\n"
-            "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 out_color;\n"
+                                                                      "layout(set = 1, binding = 0) uniform sampler2D imported_tex;\n"
+                                                                      "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const TriangleFixture triangle = makeTriangle();
-    std::vector<RenderCommand> commands = triangle.commands;
-    commands.front().program            = program;
+    const TriangleFixture      triangle                  = makeTriangle();
+    std::vector<RenderCommand> commands                  = triangle.commands;
+    commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy               destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     const auto drive = [&] {
         backend->executeFrame(TestFrame()
                                   .pass(pass_object.get(), 0)
                                   .target(destination.get())
-                                  .inputs(std::vector<vn::graphics::ImageSource>{
-                                      vn::graphics::ImageSource::imported(texture.get()) })
+                                  .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(texture.get()) })
                                   .clear(destination_clear)
                                   .depth(vn::graphics::DepthMode::Disabled)
                                   .content(commands, camera.get())
@@ -1179,18 +1132,16 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
     };
     drive();
 
-    EXPECT_EQ(BackendContentAccess::executor(*backend).recorded().size(), 1U)
-        << "the content pass was recorded (no packet means no draw)";
+    EXPECT_EQ(BackendContentAccess::executor(*backend).recorded().size(), 1U) << "the content pass was recorded (no packet means no draw)";
 
     std::vector<std::uint8_t>    pixels;
     vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
     const std::size_t at = (40U * 64U + 16U) * 4U;
     ASSERT_LT(at + 3U, pixels.size());
-    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) &&
-                isColourByte(pixels[at + 2], 1.0))
-        << "the imported texture is what the content program samples: got (" << static_cast<int>(pixels[at])
-        << ", " << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) && isColourByte(pixels[at + 2], 1.0))
+        << "the imported texture is what the content program samples: got (" << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1]) << ", "
+        << static_cast<int>(pixels[at + 2]) << ")";
     EXPECT_EQ(pixels[at + 3], 255U);
 
     // The texture is resident in the image cache; releasing it drops that entry, and the next frame uploads it
@@ -1205,8 +1156,7 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
     std::vector<std::uint8_t> again;
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, again, &why));
     ASSERT_LT(at + 3U, again.size());
-    EXPECT_TRUE(isColourByte(again[at], 1.0) && isColourByte(again[at + 1], 0.0) &&
-                isColourByte(again[at + 2], 1.0))
+    EXPECT_TRUE(isColourByte(again[at], 1.0) && isColourByte(again[at + 1], 0.0) && isColourByte(again[at + 2], 1.0))
         << "the re-acquired upload is still the magenta texture";
     EXPECT_TRUE(images->has(texture.get())) << "the next acquire cached it again";
 }
@@ -1222,22 +1172,20 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
  */
 TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1250,24 +1198,21 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
     // Six 4x4 faces in Vulkan's layer order (CubeMap::Face), each a solid distinct colour. Four texels rather
     // than one: the cache's LINEAR filter bleeds across the cube's seams, and a face's colour is only pure
     // inside it (the same measurement ContentPassTest's cube case records).
-    constexpr int kFaceSize = 4;
-    const vn::intrusive_ptr<vn::graphics::CubeMap> cube(
-        new vn::graphics::CubeMap(kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
-    const std::uint8_t face_colours[6][4]{ { 0U, 255U, 0U, 255U },      // PosX: green (the one this case reads)
-                                           { 255U, 0U, 0U, 255U },      // NegX: red
-                                           { 0U, 0U, 255U, 255U },      // PosY: blue
-                                           { 255U, 255U, 0U, 255U },    // NegY: yellow
-                                           { 255U, 0U, 255U, 255U },    // PosZ: magenta
-                                           { 0U, 255U, 255U, 255U } };  // NegZ: cyan
-    for (int face = 0; face < cube->layerCount(); ++face)
-    {
-        const vn::intrusive_ptr<vn::imaging::Image> image(
-            new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
-        const std::span<std::byte> pixels = image->mipData(0);
-        for (std::size_t texel = 0; texel < pixels.size() / 4U; ++texel)
-        {
-            for (std::size_t byte = 0; byte < 4U; ++byte)
-            {
+    constexpr int                                  kFaceSize = 4;
+    const vn::intrusive_ptr<vn::graphics::CubeMap> cube(new vn::graphics::CubeMap(kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+    const std::uint8_t                             face_colours[6][4]{
+        { 0U,   255U, 0U,   255U }, // PosX: green (the one this case reads)
+        { 255U, 0U,   0U,   255U }, // NegX: red
+        { 0U,   0U,   255U, 255U }, // PosY: blue
+        { 255U, 255U, 0U,   255U }, // NegY: yellow
+        { 255U, 0U,   255U, 255U }, // PosZ: magenta
+        { 0U,   255U, 255U, 255U }
+    }; // NegZ: cyan
+    for (int face = 0; face < cube->layerCount(); ++face) {
+        const vn::intrusive_ptr<vn::imaging::Image> image(new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte>                  pixels = image->mipData(0);
+        for (std::size_t texel = 0; texel < pixels.size() / 4U; ++texel) {
+            for (std::size_t byte = 0; byte < 4U; ++byte) {
                 pixels[texel * 4U + byte] = static_cast<std::byte>(face_colours[face][byte]);
             }
         }
@@ -1280,50 +1225,45 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 out_color;\n"
-            "layout(set = 1, binding = 0) uniform samplerCube imported_cube;\n"
-            "void main() { out_color = texture(imported_cube, vec3(1.0, 0.0, 0.0)); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 out_color;\n"
+                                                                      "layout(set = 1, binding = 0) uniform samplerCube imported_cube;\n"
+                                                                      "void main() { out_color = texture(imported_cube, vec3(1.0, 0.0, 0.0)); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const TriangleFixture triangle = makeTriangle();
-    std::vector<RenderCommand> commands = triangle.commands;
-    commands.front().program            = program;
+    const TriangleFixture      triangle                  = makeTriangle();
+    std::vector<RenderCommand> commands                  = triangle.commands;
+    commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy               destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(pass_object.get(), 0)
                               .target(destination.get())
-                              .inputs(std::vector<vn::graphics::ImageSource>{
-                                  vn::graphics::ImageSource::imported(cube.get()) })
+                              .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(cube.get()) })
                               .clear(destination_clear)
                               .depth(vn::graphics::DepthMode::Disabled)
                               .content(commands, camera.get())
                               .value());
 
-    EXPECT_EQ(BackendContentAccess::executor(*backend).recorded().size(), 1U)
-        << "the content pass was recorded (no packet means no draw)";
+    EXPECT_EQ(BackendContentAccess::executor(*backend).recorded().size(), 1U) << "the content pass was recorded (no packet means no draw)";
 
     std::vector<std::uint8_t>    pixels;
     vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
     const std::size_t at = (40U * 64U + 16U) * 4U;
     ASSERT_LT(at + 3U, pixels.size());
-    EXPECT_TRUE(isColourByte(pixels[at], 0.0) && isColourByte(pixels[at + 1], 1.0) &&
-                isColourByte(pixels[at + 2], 0.0))
-        << "the cube's +X face is what the content program samples: got (" << static_cast<int>(pixels[at])
-        << ", " << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_TRUE(isColourByte(pixels[at], 0.0) && isColourByte(pixels[at + 1], 1.0) && isColourByte(pixels[at + 2], 0.0))
+        << "the cube's +X face is what the content program samples: got (" << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1]) << ", "
+        << static_cast<int>(pixels[at + 2]) << ")";
     EXPECT_EQ(pixels[at + 3], 255U);
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a complete cube is uploaded silently";
 }
@@ -1337,22 +1277,20 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
  */
 TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1364,40 +1302,36 @@ TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
 
     // Not one face is filled: the upload is refused as Incomplete, which is the case the white stand-in
     // exists for.
-    const vn::intrusive_ptr<vn::graphics::CubeMap> cube(
-        new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm));
+    const vn::intrusive_ptr<vn::graphics::CubeMap> cube(new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm));
 
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 out_color;\n"
-            "layout(set = 1, binding = 0) uniform samplerCube imported_cube;\n"
-            "void main() { out_color = texture(imported_cube, vec3(1.0, 0.0, 0.0)); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 out_color;\n"
+                                                                      "layout(set = 1, binding = 0) uniform samplerCube imported_cube;\n"
+                                                                      "void main() { out_color = texture(imported_cube, vec3(1.0, 0.0, 0.0)); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const TriangleFixture triangle = makeTriangle();
-    std::vector<RenderCommand> commands = triangle.commands;
-    commands.front().program            = program;
+    const TriangleFixture      triangle                  = makeTriangle();
+    std::vector<RenderCommand> commands                  = triangle.commands;
+    commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy               destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(pass_object.get(), 0)
                               .target(destination.get())
-                              .inputs(std::vector<vn::graphics::ImageSource>{
-                                  vn::graphics::ImageSource::imported(cube.get()) })
+                              .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(cube.get()) })
                               .clear(destination_clear)
                               .depth(vn::graphics::DepthMode::Disabled)
                               .content(commands, camera.get())
@@ -1410,10 +1344,9 @@ TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
     const std::size_t at = (40U * 64U + 16U) * 4U;
     ASSERT_LT(at + 3U, pixels.size());
-    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 1.0) &&
-                isColourByte(pixels[at + 2], 1.0))
-        << "the white CUBE stand-in is what the content program samples: got (" << static_cast<int>(pixels[at])
-        << ", " << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 1.0) && isColourByte(pixels[at + 2], 1.0))
+        << "the white CUBE stand-in is what the content program samples: got (" << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1])
+        << ", " << static_cast<int>(pixels[at + 2]) << ")";
     EXPECT_EQ(pixels[at + 3], 255U);
 }
 
@@ -1427,22 +1360,20 @@ TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
  */
 TEST(VsgBackendTest, TheCapabilitiesAnswerTheFeaturesTheDeviceActuallyHas)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1450,17 +1381,13 @@ TEST(VsgBackendTest, TheCapabilitiesAnswerTheFeaturesTheDeviceActuallyHas)
     const vn::graphics::Capabilities caps = backend->capabilities();
     EXPECT_TRUE(caps.render_targets);
     EXPECT_TRUE(caps.presentation);
-    EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::Wireframe))
-        << "the device floor requires fillModeNonSolid";
-    EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering))
-        << "the device floor requires samplerAnisotropy";
+    EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::Wireframe)) << "the device floor requires fillModeNonSolid";
+    EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering)) << "the device floor requires samplerAnisotropy";
     EXPECT_GE(caps.max_anisotropy, 1.0F);
-    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering),
-              caps.max_anisotropy > 1.0F)
+    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering), caps.max_anisotropy > 1.0F)
         << "the feature bit and the limit are the same device fact";
     EXPECT_GE(caps.max_color_attachments, 4U) << "the G-buffer carries four colour attachments";
-    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::GpuTimings),
-              backend->capabilities().supports(vn::graphics::Capabilities::Feature::GpuTimings))
+    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::GpuTimings), backend->capabilities().supports(vn::graphics::Capabilities::Feature::GpuTimings))
         << "the answer is the device's, and asking again does not change it";
 }
 
@@ -1473,22 +1400,20 @@ TEST(VsgBackendTest, TheCapabilitiesAnswerTheFeaturesTheDeviceActuallyHas)
  */
 TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1501,20 +1426,15 @@ TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
 
     vn::graphics::ClearPolicy clear;
-    clear.color  = vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F);  // attachment 0: red
-    clear.depth  = false;                      // there is no depth attachment
-    clear.extra_colors.push_back(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F));  // attachment 1: green
+    clear.color = vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F);                 // attachment 0: red
+    clear.depth = false;                                              // there is no depth attachment
+    clear.extra_colors.push_back(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F)); // attachment 1: green
 
-    backend->executeFrame(TestFrame()
-                              .pass(pass.get(), 0)
-                              .target(target.get())
-                              .clear(clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
-                              .value());
+    backend->executeFrame(TestFrame().pass(pass.get(), 0).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::Disabled).value());
 
     const auto readAttachment = [&backend, &target](int attachment, std::vector<std::uint8_t>& pixels) {
         vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
-        const bool                    ok  = backend->readColorBuffer(target.get(), attachment, pixels, &why);
+        const bool                   ok  = backend->readColorBuffer(target.get(), attachment, pixels, &why);
         EXPECT_TRUE(ok) << "attachment " << attachment << " is read back";
         EXPECT_EQ(why, vn::graphics::ReadbackResult::Ok);
         return ok;
@@ -1524,19 +1444,16 @@ TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
     ASSERT_TRUE(readAttachment(0, first));
     const std::size_t at = (4U * 16U + 4U) * 4U;
     ASSERT_LT(at + 3U, first.size());
-    EXPECT_TRUE(isColourByte(first[at], 1.0) && isColourByte(first[at + 1], 0.0) &&
-                isColourByte(first[at + 2], 0.0))
-        << "attachment 0 is the colour stated for it: got (" << static_cast<int>(first[at]) << ", "
-        << static_cast<int>(first[at + 1]) << ", " << static_cast<int>(first[at + 2]) << ")";
+    EXPECT_TRUE(isColourByte(first[at], 1.0) && isColourByte(first[at + 1], 0.0) && isColourByte(first[at + 2], 0.0))
+        << "attachment 0 is the colour stated for it: got (" << static_cast<int>(first[at]) << ", " << static_cast<int>(first[at + 1]) << ", "
+        << static_cast<int>(first[at + 2]) << ")";
 
     std::vector<std::uint8_t> second;
     ASSERT_TRUE(readAttachment(1, second));
     ASSERT_LT(at + 3U, second.size());
-    EXPECT_TRUE(isColourByte(second[at], 0.0) && isColourByte(second[at + 1], 1.0) &&
-                isColourByte(second[at + 2], 0.0))
-        << "attachment 1 is the colour stated for IT, not the pass' colour: got ("
-        << static_cast<int>(second[at]) << ", " << static_cast<int>(second[at + 1]) << ", "
-        << static_cast<int>(second[at + 2]) << ")";
+    EXPECT_TRUE(isColourByte(second[at], 0.0) && isColourByte(second[at + 1], 1.0) && isColourByte(second[at + 2], 0.0))
+        << "attachment 1 is the colour stated for IT, not the pass' colour: got (" << static_cast<int>(second[at]) << ", " << static_cast<int>(second[at + 1])
+        << ", " << static_cast<int>(second[at + 2]) << ")";
 
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a per-attachment clear is not a report";
 }
@@ -1552,22 +1469,20 @@ TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
  */
 TEST(VsgBackendTest, AClearColourIsAStoredLinearValueNotAnEncodedOne)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 64, 64);
+    TestHostWindow                host(connection, screen, 64, 64);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1579,23 +1494,17 @@ TEST(VsgBackendTest, AClearColourIsAStoredLinearValueNotAnEncodedOne)
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
 
     vn::graphics::ClearPolicy clear;
-    clear.color = vn::Color(128, 128, 128, 255).toLinear();  // ≈ 0.2159: the light #808080 stands for
+    clear.color = vn::Color(128, 128, 128, 255).toLinear(); // ≈ 0.2159: the light #808080 stands for
     clear.depth = false;                                    // there is no depth attachment
 
-    backend->executeFrame(TestFrame()
-                              .pass(pass.get(), 0)
-                              .target(target.get())
-                              .clear(clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
-                              .value());
+    backend->executeFrame(TestFrame().pass(pass.get(), 0).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::Disabled).value());
 
     std::vector<std::uint8_t>    pixels;
     vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "the target is read back";
     const std::size_t at = (8U * 16U + 8U) * 4U;
     ASSERT_LT(at + 3U, pixels.size());
-    EXPECT_NEAR(static_cast<int>(pixels[at]), 55, 1)
-        << "0.2159 stored in 8 bits is 55; 128 would mean the colour was ENCODED before it reached the target";
+    EXPECT_NEAR(static_cast<int>(pixels[at]), 55, 1) << "0.2159 stored in 8 bits is 55; 128 would mean the colour was ENCODED before it reached the target";
     EXPECT_NEAR(static_cast<int>(pixels[at + 1]), 55, 1);
     EXPECT_NEAR(static_cast<int>(pixels[at + 2]), 55, 1);
     EXPECT_EQ(pixels[at + 3], 255U) << "alpha is a fraction, and it crosses without a transfer function";
@@ -1612,22 +1521,20 @@ TEST(VsgBackendTest, AClearColourIsAStoredLinearValueNotAnEncodedOne)
  */
 TEST(VsgBackendTest, TheFrameReportSaysHowManyFramesWereHandedToPresent)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                        host(connection, screen, 128, 96);
     vn::intrusive_ptr<DirectDriveBackend> backend(new DirectDriveBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1659,22 +1566,20 @@ TEST(VsgBackendTest, TheFrameReportSaysHowManyFramesWereHandedToPresent)
  */
 TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1686,18 +1591,15 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
 
     // One texture, two fills: magenta first, yellow after `setImage`. Neither colour can come from the
     // destination's blue clear or from an absent texture's white stand-in.
-    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-    const auto fill = [&texture](bool yellow) {
-        const vn::intrusive_ptr<vn::imaging::Image> image(
-            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-        const std::span<std::byte> pixels = image->mipData(0);
-        for (std::size_t index = 0; index < pixels.size(); ++index)
-        {
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    const auto                                       fill = [&texture](bool yellow) {
+        const vn::intrusive_ptr<vn::imaging::Image> image(new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte>                  pixels = image->mipData(0);
+        for (std::size_t index = 0; index < pixels.size(); ++index) {
             const std::uint8_t channel = static_cast<std::uint8_t>(index % 4U);
             // magenta (255, 0, 255): the green channel is zero; yellow (255, 255, 0): the blue one is.
-            const std::uint8_t zeroed = yellow ? 2U : 1U;
-            pixels[index]             = static_cast<std::byte>(channel == zeroed ? 0U : 255U);
+            const std::uint8_t zeroed  = yellow ? 2U : 1U;
+            pixels[index]              = static_cast<std::byte>(channel == zeroed ? 0U : 255U);
         }
         texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
     };
@@ -1708,34 +1610,31 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 out_color;\n"
-            "layout(set = 1, binding = 0) uniform sampler2D imported_tex;\n"
-            "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 out_color;\n"
+                                                                      "layout(set = 1, binding = 0) uniform sampler2D imported_tex;\n"
+                                                                      "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const TriangleFixture triangle = makeTriangle();
-    std::vector<RenderCommand> commands = triangle.commands;
-    commands.front().program            = program;
+    const TriangleFixture      triangle                  = makeTriangle();
+    std::vector<RenderCommand> commands                  = triangle.commands;
+    commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
-    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy               destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     const auto drive = [&]() {
         backend->executeFrame(TestFrame()
                                   .pass(pass_object.get(), 0)
                                   .target(destination.get())
-                                  .inputs(std::vector<vn::graphics::ImageSource>{
-                                      vn::graphics::ImageSource::imported(texture.get()) })
+                                  .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(texture.get()) })
                                   .clear(destination_clear)
                                   .depth(vn::graphics::DepthMode::Disabled)
                                   .content(commands, camera.get())
@@ -1746,8 +1645,7 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
         vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
         EXPECT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
         const std::size_t at = (32U * 64U + 32U) * 4U;
-        if (at + 3U >= pixels.size())
-        {
+        if (at + 3U >= pixels.size()) {
             return std::array<std::uint8_t, 4>{};
         }
         return std::array<std::uint8_t, 4>{ pixels[at], pixels[at + 1U], pixels[at + 2U], pixels[at + 3U] };
@@ -1758,10 +1656,9 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
 
     drive();
     const std::array<std::uint8_t, 4> before = centre();
-    EXPECT_TRUE(isColourByte(before[0], 1.0) && isColourByte(before[1], 0.0) &&
-                isColourByte(before[2], 1.0))
-        << "the first frame samples the first fill (magenta): got (" << static_cast<int>(before[0]) << ", "
-        << static_cast<int>(before[1]) << ", " << static_cast<int>(before[2]) << ")";
+    EXPECT_TRUE(isColourByte(before[0], 1.0) && isColourByte(before[1], 0.0) && isColourByte(before[2], 1.0))
+        << "the first frame samples the first fill (magenta): got (" << static_cast<int>(before[0]) << ", " << static_cast<int>(before[1]) << ", "
+        << static_cast<int>(before[2]) << ")";
     EXPECT_EQ(images->count(), 1U) << "the first frame cached the imported texture";
     const std::uint64_t first_revision = texture->revision();
 
@@ -1773,10 +1670,8 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
     EXPECT_TRUE(isColourByte(after[0], 1.0) && isColourByte(after[1], 1.0) && isColourByte(after[2], 0.0))
         << "the next frame samples the re-filled texture (yellow); magenta would mean the old upload was "
            "kept: got ("
-        << static_cast<int>(after[0]) << ", " << static_cast<int>(after[1]) << ", "
-        << static_cast<int>(after[2]) << ")";
-    EXPECT_EQ(images->count(), 1U)
-        << "the new revision replaced the entry instead of adding a second one for the same texture";
+        << static_cast<int>(after[0]) << ", " << static_cast<int>(after[1]) << ", " << static_cast<int>(after[2]) << ")";
+    EXPECT_EQ(images->count(), 1U) << "the new revision replaced the entry instead of adding a second one for the same texture";
 }
 
 /*
@@ -1790,22 +1685,20 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
  */
 TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1815,15 +1708,12 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
     destination->attachColor(RenderTarget::ColorFormat::RGBA8);
     destination->setSize(64, 64);
 
-    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
     {
-        const vn::intrusive_ptr<vn::imaging::Image> image(
-            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-        const std::span<std::byte> pixels = image->mipData(0);
-        for (std::size_t texel = 0; texel < 4; ++texel)
-        {
-            const bool left = (texel % 2U) == 0U;
+        const vn::intrusive_ptr<vn::imaging::Image> image(new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte>                  pixels = image->mipData(0);
+        for (std::size_t texel = 0; texel < 4; ++texel) {
+            const bool left         = (texel % 2U) == 0U;
             pixels[texel * 4U + 0U] = static_cast<std::byte>(left ? 255 : 0);
             pixels[texel * 4U + 1U] = static_cast<std::byte>(left ? 0 : 255);
             pixels[texel * 4U + 2U] = std::byte{ 0 };
@@ -1833,11 +1723,11 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
     }
 
     vn::graphics::Sampler clamp;
-    clamp.min_filter  = vn::graphics::Sampler::Filter::Nearest;
-    clamp.mag_filter  = vn::graphics::Sampler::Filter::Nearest;
-    clamp.mipmap_mode = vn::graphics::Sampler::MipmapMode::Nearest;
-    clamp.address_u   = vn::graphics::Sampler::AddressMode::ClampToEdge;
-    clamp.address_v   = vn::graphics::Sampler::AddressMode::ClampToEdge;
+    clamp.min_filter             = vn::graphics::Sampler::Filter::Nearest;
+    clamp.mag_filter             = vn::graphics::Sampler::Filter::Nearest;
+    clamp.mipmap_mode            = vn::graphics::Sampler::MipmapMode::Nearest;
+    clamp.address_u              = vn::graphics::Sampler::AddressMode::ClampToEdge;
+    clamp.address_v              = vn::graphics::Sampler::AddressMode::ClampToEdge;
     vn::graphics::Sampler repeat = clamp;
     repeat.address_u             = vn::graphics::Sampler::AddressMode::Repeat;
     repeat.address_v             = vn::graphics::Sampler::AddressMode::Repeat;
@@ -1846,38 +1736,35 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 out_color;\n"
-            "layout(set = 1, binding = 0) uniform sampler2D clamp_tex;\n"
-            "layout(set = 1, binding = 1) uniform sampler2D repeat_tex;\n"
-            "void main() {\n"
-            "    vec2 uv = vec2(1.25, 0.5);\n"
-            "    out_color = vec4(texture(clamp_tex, uv).r, texture(repeat_tex, uv).r, 0.0, 1.0);\n"
-            "}\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 out_color;\n"
+                                                                      "layout(set = 1, binding = 0) uniform sampler2D clamp_tex;\n"
+                                                                      "layout(set = 1, binding = 1) uniform sampler2D repeat_tex;\n"
+                                                                      "void main() {\n"
+                                                                      "    vec2 uv = vec2(1.25, 0.5);\n"
+                                                                      "    out_color = vec4(texture(clamp_tex, uv).r, texture(repeat_tex, uv).r, 0.0, 1.0);\n"
+                                                                      "}\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const TriangleFixture triangle = makeTriangle();
-    std::vector<RenderCommand> commands = triangle.commands;
-    commands.front().program            = program;
+    const TriangleFixture      triangle                  = makeTriangle();
+    std::vector<RenderCommand> commands                  = triangle.commands;
+    commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
-    const vn::intrusive_ptr<RenderPass> pass_object(new RenderPass());
-    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy               destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(pass_object.get(), 0)
                               .target(destination.get())
-                              .inputs(std::vector<vn::graphics::ImageSource>{
-                                  vn::graphics::ImageSource::imported(texture.get(), clamp),
-                                  vn::graphics::ImageSource::imported(texture.get(), repeat) })
+                              .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(texture.get(), clamp),
+                                                                              vn::graphics::ImageSource::imported(texture.get(), repeat) })
                               .clear(destination_clear)
                               .depth(vn::graphics::DepthMode::Disabled)
                               .content(commands, camera.get())
@@ -1890,11 +1777,9 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
     const std::size_t at = (32U * 64U + 32U) * 4U;
     ASSERT_LT(at + 3U, pixels.size());
-    EXPECT_TRUE(isColourByte(pixels[at], 0.0) && isColourByte(pixels[at + 1], 1.0) &&
-                isColourByte(pixels[at + 2], 0.0))
-        << "clamp reads the edge (r=0) and repeat wraps to the left texel (r=1): got ("
-        << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1]) << ", "
-        << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_TRUE(isColourByte(pixels[at], 0.0) && isColourByte(pixels[at + 1], 1.0) && isColourByte(pixels[at + 2], 0.0))
+        << "clamp reads the edge (r=0) and repeat wraps to the left texel (r=1): got (" << static_cast<int>(pixels[at]) << ", "
+        << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
     EXPECT_EQ(pixels[at + 3], 255U);
 
     vn::vsg::MaterialImages* const images = BackendContentAccess::images(*backend);
@@ -1913,22 +1798,20 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
  */
 TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1948,18 +1831,16 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 first;\n"
-            "layout(location = 1) out vec4 second;\n"
-            "void main() { first = vec4(0.0, 1.0, 0.0, 1.0);\n"
-            "              second = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 first;\n"
+                                                                      "layout(location = 1) out vec4 second;\n"
+                                                                      "void main() { first = vec4(0.0, 1.0, 0.0, 1.0);\n"
+                                                                      "              second = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
         producer_program->addStage(vertex);
         producer_program->addStage(fragment);
     }
@@ -1970,32 +1851,30 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 out_color;\n"
-            "layout(set = 1, binding = 0) uniform sampler2D declared_tex;\n"
-            "void main() { out_color = texture(declared_tex, vec2(0.5)); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 out_color;\n"
+                                                                      "layout(set = 1, binding = 0) uniform sampler2D declared_tex;\n"
+                                                                      "void main() { out_color = texture(declared_tex, vec2(0.5)); }\n"));
         consumer_program->addStage(vertex);
         consumer_program->addStage(fragment);
     }
 
-    const TriangleFixture triangle = makeTriangle();
+    const TriangleFixture      triangle          = makeTriangle();
     std::vector<RenderCommand> producer_commands = triangle.commands;
     producer_commands.front().program            = producer_program;
     std::vector<RenderCommand> consumer_commands = triangle.commands;
     consumer_commands.front().program            = consumer_program;
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
-    const vn::intrusive_ptr<RenderPass> producer_pass(new RenderPass());
-    const vn::intrusive_ptr<RenderPass> consumer_pass(new RenderPass());
-    const vn::graphics::ClearPolicy source_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
-    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           producer_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass>           consumer_pass(new RenderPass());
+    const vn::graphics::ClearPolicy               source_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::graphics::ClearPolicy               destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(producer_pass.get(), -1)
@@ -2005,8 +1884,7 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
                               .content(producer_commands, camera.get())
                               .pass(consumer_pass.get(), 0)
                               .target(destination.get())
-                              .inputs(std::vector<vn::graphics::ImageSource>{
-                                  vn::graphics::ImageSource::producedImage(source.get(), 1, false) })
+                              .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::producedImage(source.get(), 1, false) })
                               .clear(destination_clear)
                               .depth(vn::graphics::DepthMode::Disabled)
                               .content(consumer_commands, camera.get())
@@ -2019,11 +1897,9 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
     const std::size_t at = (32U * 64U + 32U) * 4U;
     ASSERT_LT(at + 3U, pixels.size());
-    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) &&
-                isColourByte(pixels[at + 2], 0.0))
-        << "the declared attachment 1 is what the content program samples: got ("
-        << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1]) << ", "
-        << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) && isColourByte(pixels[at + 2], 0.0))
+        << "the declared attachment 1 is what the content program samples: got (" << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1])
+        << ", " << static_cast<int>(pixels[at + 2]) << ")";
     EXPECT_FALSE(isColourByte(pixels[at], 0.0) && isColourByte(pixels[at + 1], 1.0))
         << "green would be attachment 0: the whole-target offer reached the content input set";
     EXPECT_EQ(pixels[at + 3], 255U);
@@ -2039,22 +1915,20 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
  */
 TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow                host(connection, screen, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -2067,16 +1941,13 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
     destination->attachColor(RenderTarget::ColorFormat::RGBA8);
     destination->setSize(64, 64);
 
-    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
     {
-        const vn::intrusive_ptr<vn::imaging::Image> image(
-            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-        const std::span<std::byte> pixels = image->mipData(0);
-        for (std::size_t index = 0; index < pixels.size(); ++index)
-        {
+        const vn::intrusive_ptr<vn::imaging::Image> image(new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte>                  pixels = image->mipData(0);
+        for (std::size_t index = 0; index < pixels.size(); ++index) {
             const std::uint8_t channel = static_cast<std::uint8_t>(index % 4U);
-            pixels[index] = static_cast<std::byte>(channel == 1U ? 0U : 255U);
+            pixels[index]              = static_cast<std::byte>(channel == 1U ? 0U : 255U);
         }
         texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
@@ -2085,21 +1956,20 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
     {
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "#version 450\n"
-            "layout(location = 0) in vec2 vn_uv;\n"
-            "layout(location = 0) out vec4 out_color;\n"
-            "layout(binding = 1) uniform sampler2D imported_tex;\n"
-            "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("#version 450\n"
+                                                                      "layout(location = 0) in vec2 vn_uv;\n"
+                                                                      "layout(location = 0) out vec4 out_color;\n"
+                                                                      "layout(binding = 1) uniform sampler2D imported_tex;\n"
+                                                                      "void main() { out_color = texture(imported_tex, vec2(0.5)); }\n"));
         program->addStage(fragment);
     }
 
-    const TriangleFixture triangle = makeTriangle();
-    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vn::intrusive_ptr<RenderPass> source_pass(new RenderPass());
-    const vn::intrusive_ptr<RenderPass> screen_pass(new RenderPass());
-    const vn::graphics::ClearPolicy source_clear{ vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F), true };
-    const vn::graphics::ClearPolicy destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const TriangleFixture                         triangle = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera   = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>           source_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass>           screen_pass(new RenderPass());
+    const vn::graphics::ClearPolicy               source_clear{ vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F), true };
+    const vn::graphics::ClearPolicy               destination_clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
     backend->executeFrame(TestFrame()
                               .pass(source_pass.get(), -1)
@@ -2109,9 +1979,8 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
                               .content(triangle.commands, camera.get())
                               .pass(screen_pass.get(), 0)
                               .target(destination.get())
-                              .inputs(std::vector<vn::graphics::ImageSource>{
-                                  vn::graphics::ImageSource::imported(texture.get()),
-                                  vn::graphics::ImageSource::producedTarget(source.get()) })
+                              .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(texture.get()),
+                                                                              vn::graphics::ImageSource::producedTarget(source.get()) })
                               .clear(destination_clear)
                               .depth(vn::graphics::DepthMode::Disabled)
                               .screen(source.get(), program.get(), camera.get())
@@ -2122,26 +1991,22 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
     const std::size_t at = (40U * 64U + 16U) * 4U;
     ASSERT_LT(at + 3U, pixels.size());
-    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) &&
-                isColourByte(pixels[at + 2], 1.0))
-        << "the imported texture is what the full-screen program samples: got ("
-        << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1]) << ", "
-        << static_cast<int>(pixels[at + 2]) << ")";
+    EXPECT_TRUE(isColourByte(pixels[at], 1.0) && isColourByte(pixels[at + 1], 0.0) && isColourByte(pixels[at + 2], 1.0))
+        << "the imported texture is what the full-screen program samples: got (" << static_cast<int>(pixels[at]) << ", " << static_cast<int>(pixels[at + 1])
+        << ", " << static_cast<int>(pixels[at + 2]) << ")";
     EXPECT_EQ(pixels[at + 3], 255U);
 }
 
 TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
@@ -2150,11 +2015,12 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     TestHostWindow host(connection, screen, 128, 96);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    std::size_t                     seen = 0;
+    std::size_t                   seen = 0;
     backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
     backend->setWindowHandle(host.handle());
@@ -2168,20 +2034,20 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     target->attachDepth(RenderTarget::DepthFormat::D32F);
     target->setSize(64, 64);
 
-    const TriangleFixture             triangle = makeTriangle();
-    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vn::graphics::ClearPolicy                 clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+    const TriangleFixture                         triangle = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera   = cameraLookingAt(0.5);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&]() {
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(target.get())
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
-            .content(triangle.commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(target.get())
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(triangle.commands, camera.get())
+                                  .value());
     };
 
     drive();
@@ -2190,8 +2056,8 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     const std::size_t waits_before = backend->deviceWaits();
 
     // 1. The colour attachment, as the SDK promises it: tightly packed RGBA8 rows, the picture the frame left.
-    std::vector<std::uint8_t>      pixels;
-    std::vector<float>             depths;
+    std::vector<std::uint8_t>    pixels;
+    std::vector<float>           depths;
     vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "the pixels are read back";
     EXPECT_EQ(why, vn::graphics::ReadbackResult::Ok);
@@ -2204,12 +2070,11 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     // the format defines (which is exactly why the WINDOW probes read the outer two as a set).
     const auto inside = pixel(16, 40);
     EXPECT_TRUE(isColourByte(inside[0], 1.0) && isColourByte(inside[1], 0.0) && isColourByte(inside[2], 0.0))
-        << "the triangle is where the camera put it: got (" << static_cast<int>(inside[0]) << ", "
-        << static_cast<int>(inside[1]) << ", " << static_cast<int>(inside[2]) << ")";
+        << "the triangle is where the camera put it: got (" << static_cast<int>(inside[0]) << ", " << static_cast<int>(inside[1]) << ", "
+        << static_cast<int>(inside[2]) << ")";
     EXPECT_EQ(inside[3], 255U) << "and it is opaque";
     const auto outside = pixel(48, 8);
-    EXPECT_TRUE(isGreenClear({ outside[0], outside[1], outside[2] }))
-        << "outside the triangle is the pass' clear, read back in the image's own order";
+    EXPECT_TRUE(isGreenClear({ outside[0], outside[1], outside[2] })) << "outside the triangle is the pass' clear, read back in the image's own order";
     EXPECT_EQ(backend->deviceWaits(), waits_before + 1U) << "the readback stopped the device exactly once";
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a readback that works says nothing";
 
@@ -2221,8 +2086,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     EXPECT_GT(depths[40U * 64U + 16U], 0.05F) << "the triangle's depth is not the far plane";
     EXPECT_LT(depths[40U * 64U + 16U], 0.95F);
     EXPECT_FLOAT_EQ(depths[8U * 64U + 48U], 0.0F) << "the clear is the reverse-Z far plane";
-    for (const float value : depths)
-    {
+    for (const float value : depths) {
         EXPECT_GE(value, 0.0F);
         EXPECT_LE(value, 1.0F);
     }
@@ -2243,7 +2107,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     const vn::intrusive_ptr<RenderTarget> floats(new RenderTarget());
     floats->attachColor(RenderTarget::ColorFormat::RGBA16F);
     floats->setSize(8, 8);
-    backend->setRenderTarget(floats.get());  // held and built (no frame is needed to build one)
+    backend->setRenderTarget(floats.get()); // held and built (no frame is needed to build one)
     EXPECT_FALSE(backend->readColorBuffer(floats.get(), 0, scratch, &why));
     EXPECT_EQ(why, vn::graphics::ReadbackResult::Unsupported) << "this backend packs RGBA8 only";
     EXPECT_EQ(backend->deviceWaits(), waits_before + 2U) << "a refused readback never stops the device";
@@ -2301,16 +2165,14 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
 // 跨帧子类（末帧读到别帧的数据 / 绑定冻结）。
 TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
@@ -2325,7 +2187,8 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
     backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[cross-frame] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
     backend->setWindowHandle(host.handle());
@@ -2340,23 +2203,22 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
-        fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { outColor = vec4(step(0.75, abs(vb.cam_pos.x)), 0.5, 0.0, 1.0); }\n"));
+        fragment.type = ShaderStageType::Fragment;
+        fragment.source =
+            vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                        "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                        "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                        "void main() { outColor = vec4(step(0.75, abs(vb.cam_pos.x)), 0.5, 0.0, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
     const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
         new vn::Buffer<float>(std::vector<float>{ -2.0F, -2.0F, 0.5F, 2.0F, -2.0F, 0.5F, 2.0F, 2.0F, 0.5F, -2.0F, 2.0F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
@@ -2384,25 +2246,23 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
     const auto drive_into = [&](RenderTarget* where, double camera_x) {
         const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(camera_x);
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(where)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(where)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(commands, camera.get())
+                                  .value());
     };
 
     // 帧 1..5：相机 0.95..0.75（红通道类 1）；末帧 0.1（类 0）——它的输出留在 target 上。
     const auto phase_start = std::chrono::steady_clock::now();
-    for (int i = 0; i < 5; ++i)
-    {
+    for (int i = 0; i < 5; ++i) {
         drive_into(target.get(), 0.95 - 0.05 * i);
     }
     drive_into(target.get(), 0.1);
     // 帧 7..14：相机 0.9（类 1），打进窗口。任何"末帧读到别帧数据"都会把它的红通道翻到 255。
-    for (int i = 7; i <= 14; ++i)
-    {
+    for (int i = 7; i <= 14; ++i) {
         drive_into(nullptr, 0.9);
     }
     const auto phase_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - phase_start).count();
@@ -2421,14 +2281,22 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
 
     // 五个采样点全在末帧的四边形内：绿通道必须是 0.5 那类（quad 画到了），红通道必须是 0 那类
     // （末帧读到的是自己的视图块）。红通道若成群出现 255，就是读到了别帧的数据。
-    const int offsets[][2] = { { 0, 0 }, { -150, 0 }, { 150, 0 }, { 0, -150 }, { 0, 150 } };
-    for (const auto& offset : offsets)
-    {
+    const int offsets[][2] = {
+        { 0,    0    },
+        { -150, 0    },
+        { 150,  0    },
+        { 0,    -150 },
+        { 0,    150  }
+    };
+    for (const auto& offset : offsets) {
         const auto sample = pixel(kTargetSide / 2 + offset[0], kTargetSide / 2 + offset[1]);
         std::printf("[cross-frame] pixel(%d,%d) = (%u, %u, %u, %u)\n",
-                    kTargetSide / 2 + offset[0], kTargetSide / 2 + offset[1],
-                    static_cast<unsigned>(sample[0]), static_cast<unsigned>(sample[1]),
-                    static_cast<unsigned>(sample[2]), static_cast<unsigned>(sample[3]));
+                    kTargetSide / 2 + offset[0],
+                    kTargetSide / 2 + offset[1],
+                    static_cast<unsigned>(sample[0]),
+                    static_cast<unsigned>(sample[1]),
+                    static_cast<unsigned>(sample[2]),
+                    static_cast<unsigned>(sample[3]));
         EXPECT_GT(sample[1], 100U) << "the quad covered this sample (green 0.5)";
         EXPECT_LT(sample[0], 8U) << "this frame must be shaded from its OWN view block (step(0.75, 0.1) = 0); "
                                     "a read of any other frame's block (>=0.75) flips the red channel to 255";
@@ -2442,31 +2310,30 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
 
 TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    std::size_t                     seen = 0;
+    std::size_t                   seen = 0;
     backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
     backend->setWindowHandle(host.handle());
@@ -2480,28 +2347,26 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
-        fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { outColor = vec4(vb.frame.y / 160.0, abs(vb.cam_pos.x), vb.frame.z / 192.0, 1.0); }\n"));
+        fragment.type = ShaderStageType::Fragment;
+        fragment.source =
+            vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                        "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                        "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                        "void main() { outColor = vec4(vb.frame.y / 160.0, abs(vb.cam_pos.x), vb.frame.z / 192.0, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
-        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
@@ -2516,18 +2381,18 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     const std::vector<RenderCommand> commands{ command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vn::graphics::ClearPolicy                 clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&] {
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(commands, camera.get())
+                                  .value());
     };
     const auto settle = [&] {
         drive();
@@ -2541,9 +2406,8 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     // unit to its right) with the extent encoded in it.
     const auto before_left  = host.waitForPixel(kWidth / 4, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
     const auto before_right = host.pixel(3 * kWidth / 4, kHeight / 2);
-    EXPECT_TRUE(isColourByte(before_left[1], 0.5))
-        << "the camera's x is in the picture, got (" << static_cast<int>(before_left[0]) << ", "
-        << static_cast<int>(before_left[1]) << ", " << static_cast<int>(before_left[2]) << ")";
+    EXPECT_TRUE(isColourByte(before_left[1], 0.5)) << "the camera's x is in the picture, got (" << static_cast<int>(before_left[0]) << ", "
+                                                   << static_cast<int>(before_left[1]) << ", " << static_cast<int>(before_left[2]) << ")";
     EXPECT_TRUE((isColourByte(before_left[0], 0.8) && isColourByte(before_left[2], 0.5)) ||
                 (isColourByte(before_left[2], 0.8) && isColourByte(before_left[0], 0.5)))
         << "and the surface's 128x96 came with it (the outer bytes are read as a set: the server picks the order)";
@@ -2558,12 +2422,10 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     backend->resize(0, 0);
     EXPECT_EQ(backend->deviceWaits(), waits_before) << "a size no surface can have is not followed";
 
-    ASSERT_TRUE(host.resize(96, 64))
-        << "the platform must have the new size before it is announced: the backend follows the surface by "
-           "reading it once (see TestHostWindow::resize)";
+    ASSERT_TRUE(host.resize(96, 64)) << "the platform must have the new size before it is announced: the backend follows the surface by "
+                                        "reading it once (see TestHostWindow::resize)";
     backend->resize(96, 64);
-    EXPECT_EQ(backend->deviceWaits(), waits_before + 1U)
-        << "following the surface rebuilds the swapchain, and that stops the device";
+    EXPECT_EQ(backend->deviceWaits(), waits_before + 1U) << "following the surface rebuilds the swapchain, and that stops the device";
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "a live size event is served now";
     WindowTarget* window = BackendContentAccess::windowTarget(*backend);
     ASSERT_NE(window, nullptr);
@@ -2576,13 +2438,12 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     settle();
     const auto after_left  = host.waitForPixel(96 / 4, 64 / 2, arrived, std::chrono::milliseconds{ 500 });
     const auto after_right = host.pixel(3 * 96 / 4, 64 / 2);
-    EXPECT_TRUE(isColourByte(after_left[1], 0.5))
-        << "the picture is still there, got (" << static_cast<int>(after_left[0]) << ", "
-        << static_cast<int>(after_left[1]) << ", " << static_cast<int>(after_left[2]) << ")";
+    EXPECT_TRUE(isColourByte(after_left[1], 0.5)) << "the picture is still there, got (" << static_cast<int>(after_left[0]) << ", "
+                                                  << static_cast<int>(after_left[1]) << ", " << static_cast<int>(after_left[2]) << ")";
     EXPECT_TRUE((isColourByte(after_left[0], 0.6) && isColourByte(after_left[2], 1.0 / 3.0)) ||
                 (isColourByte(after_left[2], 0.6) && isColourByte(after_left[0], 1.0 / 3.0)))
-        << "and the view block carries 96x64 now, not the size the window came up at: got ("
-        << static_cast<int>(after_left[0]) << ", " << static_cast<int>(after_left[2]) << ")";
+        << "and the view block carries 96x64 now, not the size the window came up at: got (" << static_cast<int>(after_left[0]) << ", "
+        << static_cast<int>(after_left[2]) << ")";
     EXPECT_TRUE(isGreenClear(after_right)) << "the right quarter is the clear colour at the new size too";
     EXPECT_EQ(seen, backend->diagnosticCount());
 
@@ -2592,31 +2453,30 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
 
 TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    std::size_t                     seen = 0;
+    std::size_t                   seen = 0;
     backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
     backend->setWindowHandle(host.handle());
@@ -2634,8 +2494,8 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     shadow->setDepthPromotion(true);
 
     backend->setRenderTarget(shadow.get());
-    HostTargets& targets              = BackendContentAccess::targets(*backend);
-    HostTargets::Entry* shadow_entry  = targets.find(shadow.get());
+    HostTargets&        targets      = BackendContentAccess::targets(*backend);
+    HostTargets::Entry* shadow_entry = targets.find(shadow.get());
     ASSERT_NE(shadow_entry, nullptr);
     ASSERT_NE(shadow_entry->target, nullptr) << "a depth-only target is built like any other";
     EXPECT_EQ(shadow_entry->target->colorAttachmentCount(), 0U);
@@ -2666,31 +2526,30 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
 
 TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    std::size_t                     seen = 0;
+    std::size_t                   seen = 0;
     backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[facade] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
     backend->setWindowHandle(host.handle());
@@ -2705,28 +2564,25 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "void main() { gl_Position = vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
-            "{\n"
-            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-            "} material;\n"
-            "void main() { outColor = material.base_color; }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                                                                      "{\n"
+                                                                      "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                                                      "} material;\n"
+                                                                      "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
-        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
@@ -2741,18 +2597,18 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     const std::vector<RenderCommand> commands{ command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
-    const vn::intrusive_ptr<RenderPass>             pass(new RenderPass());
-    const vn::graphics::ClearPolicy                 clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&] {
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(commands, camera.get())
+                                  .value());
     };
     const auto settle = [&] {
         drive();
@@ -2760,8 +2616,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     };
     // The two outer bytes are the red and blue of the material's diffuse, in the server's order.
     const auto outer = [](const std::array<std::uint8_t, 3>& pixel, double red, double blue) {
-        return (isColourByte(pixel[0], red) && isColourByte(pixel[2], blue)) ||
-               (isColourByte(pixel[2], red) && isColourByte(pixel[0], blue));
+        return (isColourByte(pixel[0], red) && isColourByte(pixel[2], blue)) || (isColourByte(pixel[2], red) && isColourByte(pixel[0], blue));
     };
 
     ContentStore* store = BackendContentAccess::store(*backend);
@@ -2772,11 +2627,9 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     // The vertex stage passes the geometry's own coordinates through, so the triangle covers the middle of
     // the window: probe inside it, and off to the left for the clear.
     const auto first = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
-    EXPECT_TRUE(isColourByte(first[1], 0.5)) << "the material's green byte reached the picture, got ("
-                                            << static_cast<int>(first[0]) << ", " << static_cast<int>(first[1])
-                                            << ", " << static_cast<int>(first[2]) << ") read-error "
-                                            << static_cast<int>(host.readError())
-                                            << " (see HostWindowReadTest: a refusal is not a black pixel)";
+    EXPECT_TRUE(isColourByte(first[1], 0.5)) << "the material's green byte reached the picture, got (" << static_cast<int>(first[0]) << ", "
+                                             << static_cast<int>(first[1]) << ", " << static_cast<int>(first[2]) << ") read-error "
+                                             << static_cast<int>(host.readError()) << " (see HostWindowReadTest: a refusal is not a black pixel)";
     EXPECT_TRUE(outer(first, 0.25, 0.75)) << "and so did red and blue, in the server's order";
 
     // The host edits the material and DOES NOTHING ELSE. There is no announcement to make: the SDK's
@@ -2788,10 +2641,8 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     EXPECT_EQ(store->builds(), builds_before + 1U) << "the edit replaced exactly that material's row";
     settle();
     const auto edited = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
-    EXPECT_TRUE(isColourByte(edited[1], 0.25)) << "the edit lands on the very next frame, got ("
-                                               << static_cast<int>(edited[0]) << ", "
-                                               << static_cast<int>(edited[1]) << ", "
-                                               << static_cast<int>(edited[2]) << ")";
+    EXPECT_TRUE(isColourByte(edited[1], 0.25)) << "the edit lands on the very next frame, got (" << static_cast<int>(edited[0]) << ", "
+                                               << static_cast<int>(edited[1]) << ", " << static_cast<int>(edited[2]) << ")";
     EXPECT_TRUE(outer(edited, 0.75, 0.5)) << "and the outer channels followed";
 
     // A frame that changes nothing compares and writes nothing: the touch must not rebuild the row it just
@@ -2827,16 +2678,14 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     // the "no compile" rows falsifiable instead of vacuous.
     //
     // Run it where the numbers matter: ./build-release/bin/test_vsg --gtest_filter='*MeasureWhatEachKind*'
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
@@ -2854,7 +2703,8 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     backend->setDiagnosticSink([&seen](const vn::graphics::RenderDiagnostic& diagnostic) {
         ++seen;
         std::printf("[cost] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
     backend->setWindowHandle(host.handle());
@@ -2865,10 +2715,9 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     const auto material_program = [](const char* body) {
         const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
         ShaderStage                            vertex;
-        vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        vertex.type      = ShaderStageType::Vertex;
+        vertex.source    = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                       "void main() { gl_Position = vec4(position, 1.0); }\n"));
         std::string text = "layout(location = 0) out vec4 outColor;\n"
                            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
                            "{\n"
@@ -2885,14 +2734,12 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         return program;
     };
     const vn::intrusive_ptr<ShaderProgram> program_a = material_program("outColor = material.base_color;");
-    const vn::intrusive_ptr<ShaderProgram> program_b =
-        material_program("vec4 tinted = material.base_color * 1.0; outColor = tinted;");
+    const vn::intrusive_ptr<ShaderProgram> program_b = material_program("vec4 tinted = material.base_color * 1.0; outColor = tinted;");
 
     vn::intrusive_ptr<Geometry>          geometry(new Geometry());
     vn::intrusive_ptr<vn::Buffer<float>> positions(new vn::Buffer<float>(gridPositions(kGridSide)));
     geometry->setPositions(positions);
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(gridIndices(kGridSide))));
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(gridIndices(kGridSide))));
     geometry->bumpRevision();
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -2919,24 +2766,24 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(commands, camera.get())
+                                  .value());
         const auto ended = std::chrono::steady_clock::now();
         return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(ended - began).count();
     };
 
-    std::printf("\n");  // the measurements get their own lines
+    std::printf("\n"); // the measurements get their own lines
     for (int settle = 0; settle < 6; ++settle) {
-        drive();  // the session's opening frames compile the initial pipelines and settle the window
+        drive(); // the session's opening frames compile the initial pipelines and settle the window
     }
 
     const auto run = [&](const char* label, int frames, auto&& edit) {
-        const EditCostCounters before = readEditCosts(*store, *assembly, pool);
+        const EditCostCounters before   = readEditCosts(*store, *assembly, pool);
         double                 frame_us = 0.0;
         for (int frame = 0; frame < frames; ++frame) {
             edit(frame);
@@ -2946,8 +2793,11 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         const EditCostDelta    change = editCostDelta(before, after);
         std::printf("[cost] %-32s frame %8.1f us/f"
                     " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
-                    label, frame_us / frames, static_cast<long long>(change.builds),
-                    static_cast<long long>(change.uploads), static_cast<long long>(change.created),
+                    label,
+                    frame_us / frames,
+                    static_cast<long long>(change.builds),
+                    static_cast<long long>(change.uploads),
+                    static_cast<long long>(change.created),
                     static_cast<long long>(change.reused));
         return std::pair<EditCostCounters, EditCostCounters>{ before, after };
     };
@@ -2976,8 +2826,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         const auto pixel = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
         EXPECT_TRUE(isColourByte(pixel[1], 0.4)) << "the mesh is still what the centre probe sees";
         EXPECT_TRUE(isColourByte(pixel[0], 0.54) && isColourByte(pixel[2], 0.54))
-            << "and the LAST edited colour is in the picture (read-error " << static_cast<int>(host.readError())
-            << ")";
+            << "and the LAST edited colour is in the picture (read-error " << static_cast<int>(host.readError()) << ")";
     }
 
     // 2. GEOMETRY, A NEW BUFFER: the host re-created the vertex data every frame (a new Buffer object) and
@@ -2990,13 +2839,11 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     //    announcement must never do is compile, and that is what the `created` row below gates on.
     {
         const auto [before, after] = run("geometry: a new buffer", kFramesPerRegime, [&](int) {
-            geometry->setPositions(
-                vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(gridPositions(kGridSide))));
+            geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(gridPositions(kGridSide))));
             geometry->bumpRevision();
         });
         const EditCostDelta change = editCostDelta(before, after);
-        EXPECT_GE(change.uploads, kFramesPerRegime)
-            << "the bytes are re-sent every frame (one upload per stream the geometry names)";
+        EXPECT_GE(change.uploads, kFramesPerRegime) << "the bytes are re-sent every frame (one upload per stream the geometry names)";
         EXPECT_EQ(change.builds, kFramesPerRegime) << "each announcement is a new revision: one row";
         EXPECT_EQ(change.created, 0) << "the vertex layout did not change, so no pipeline is compiled";
     }
@@ -3032,7 +2879,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         drive();
         const auto left = host.waitForPixel(8, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
         EXPECT_TRUE(isGreenClear(left)) << "the shifted bytes reached the frame: the left edge is background"
-                                       << " again (read-error " << static_cast<int>(host.readError()) << ")";
+                                        << " again (read-error " << static_cast<int>(host.readError()) << ")";
         const auto centre = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
         EXPECT_TRUE(isColourByte(centre[0], 0.54)) << "and the middle is still the mesh";
     }
@@ -3042,8 +2889,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     //    the mesh, which is what shows the flip reached the rasteriser instead of a local variable.
     {
         const auto [before, after] = run("state: cull mode flipped", kFramesPerRegime, [&](int frame) {
-            commands[0].authored_state.cullMode =
-                (frame % 2 == 0) ? vn::graphics::CullMode::Back : vn::graphics::CullMode::None;
+            commands[0].authored_state.cullMode = (frame % 2 == 0) ? vn::graphics::CullMode::Back : vn::graphics::CullMode::None;
         });
         const EditCostDelta change = editCostDelta(before, after);
         EXPECT_EQ(change.builds, 0) << "a state change is not content: no row is built";
@@ -3059,21 +2905,23 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     //    identity, so the FIRST frame with the second one compiles a pipeline - reported on its own line as
     //    the cold number - and every frame after that is a variant switch the pool already has.
     {
-        const EditCostCounters cold_before    = readEditCosts(*store, *assembly, pool);
-        commands[0].program                   = program_b;
-        const double           cold_us        = drive();
-        const EditCostCounters cold_after     = readEditCosts(*store, *assembly, pool);
-        const EditCostDelta    cold_change    = editCostDelta(cold_before, cold_after);
+        const EditCostCounters cold_before = readEditCosts(*store, *assembly, pool);
+        commands[0].program                = program_b;
+        const double           cold_us     = drive();
+        const EditCostCounters cold_after  = readEditCosts(*store, *assembly, pool);
+        const EditCostDelta    cold_change = editCostDelta(cold_before, cold_after);
         std::printf("[cost] %-32s frame %8.1f us"
                     " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
-                    "program switched (first, cold)", cold_us,
-                    static_cast<long long>(cold_change.builds), static_cast<long long>(cold_change.uploads),
-                    static_cast<long long>(cold_change.created), static_cast<long long>(cold_change.reused));
+                    "program switched (first, cold)",
+                    cold_us,
+                    static_cast<long long>(cold_change.builds),
+                    static_cast<long long>(cold_change.uploads),
+                    static_cast<long long>(cold_change.created),
+                    static_cast<long long>(cold_change.reused));
         EXPECT_EQ(cold_change.created, 1) << "the first frame with a program compiles exactly one pipeline";
 
-        const auto [before, after] = run("program switched every frame", kFramesPerRegime, [&](int frame) {
-            commands[0].program = (frame % 2 == 0) ? program_a : program_b;
-        });
+        const auto [before, after] =
+            run("program switched every frame", kFramesPerRegime, [&](int frame) { commands[0].program = (frame % 2 == 0) ? program_a : program_b; });
         const EditCostDelta change = editCostDelta(before, after);
         EXPECT_EQ(change.created, 0) << "both variants are in the pool: no frame after the first compiles";
         EXPECT_GE(change.reused, kFramesPerRegime) << "every frame's switch is served by the variant pool";
@@ -3096,8 +2944,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         }
         drive();
         const EditCostCounters after = readEditCosts(*store, *assembly, pool);
-        EXPECT_EQ(after.created - before.created, 1U)
-            << "a different topology class is a different pipeline (see PipelineKey::topology)";
+        EXPECT_EQ(after.created - before.created, 1U) << "a different topology class is a different pipeline (see PipelineKey::topology)";
         EXPECT_EQ(after.uploads - before.uploads, 0U) << "and it moves no bytes either";
     }
 
@@ -3128,16 +2975,14 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     // 512x512 (16.98 MiB) cost +30..42 ms/frame on lavapipe - roughly LINEAR in bytes, so the cost is
     // the re-sent bytes (at 60 fps the 512 case alone asks for ~1 GB/s of upload bandwidth a host with
     // per-channel revisions simply would not send).
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
@@ -3161,29 +3006,26 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "void main() { gl_Position = vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
-            "{\n"
-            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-            "} material;\n"
-            "void main() { outColor = material.base_color; }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                                                                      "{\n"
+                                                                      "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                                                      "} material;\n"
+                                                                      "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
     // The mesh: 512x512 vertices with all four canonical channels and the index list every cell needs.
     const std::size_t vertex_count = static_cast<std::size_t>(kSide) * static_cast<std::size_t>(kSide);
-    const std::size_t index_count =
-        static_cast<std::size_t>(kSide - 1) * static_cast<std::size_t>(kSide - 1) * 6U;
-    const std::size_t stream_bytes = vertex_count * 3U * 4U * 3U  // positions + normals + colour
-                                     + vertex_count * 2U * 4U     // texcoords (two components)
-                                     + (index_count + 6U) * 4U;   // the whole index buffer (see below)
+    const std::size_t index_count  = static_cast<std::size_t>(kSide - 1) * static_cast<std::size_t>(kSide - 1) * 6U;
+    const std::size_t stream_bytes = vertex_count * 3U * 4U * 3U // positions + normals + colour
+                                     + vertex_count * 2U * 4U    // texcoords (two components)
+                                     + (index_count + 6U) * 4U;  // the whole index buffer (see below)
 
     const auto repeating = [&](std::vector<float> one, std::size_t count) {
         std::vector<float> values;
@@ -3194,23 +3036,18 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
         return values;
     };
 
-    const vn::intrusive_ptr<vn::Buffer<float>> normals(
-        new vn::Buffer<float>(repeating({ 0.0F, 0.0F, 1.0F }, vertex_count)));
-    const vn::intrusive_ptr<vn::Buffer<float>> colour(
-        new vn::Buffer<float>(repeating({ 0.8F, 0.8F, 0.8F }, vertex_count)));
-    const vn::intrusive_ptr<vn::Buffer<float>> texcoords(
-        new vn::Buffer<float>(repeating({ 0.0F, 0.0F }, vertex_count)));
+    const vn::intrusive_ptr<vn::Buffer<float>> normals(new vn::Buffer<float>(repeating({ 0.0F, 0.0F, 1.0F }, vertex_count)));
+    const vn::intrusive_ptr<vn::Buffer<float>> colour(new vn::Buffer<float>(repeating({ 0.8F, 0.8F, 0.8F }, vertex_count)));
+    const vn::intrusive_ptr<vn::Buffer<float>> texcoords(new vn::Buffer<float>(repeating({ 0.0F, 0.0F }, vertex_count)));
 
-    vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    vn::intrusive_ptr<Geometry> geometry(new Geometry());
     // The index buffer: the two screen-covering triangles FIRST - they are ALL the draw takes (the
     // six-index slice below) - then the full grid triangulation. The frame's raster cost therefore
     // vanishes, while the index STREAM stays the WHOLE buffer: the key normalises to it (see
     // src/internal/GeometryFacts.cpp), which is the part of B6's story this recipe must keep.
-    const std::vector<float> grid_vertex_data = gridPositions(kSide);
-    std::vector<std::uint32_t> index_data{ 0U, static_cast<std::uint32_t>(kSide - 1),
-                                           static_cast<std::uint32_t>(kSide * kSide - 1), 0U,
-                                           static_cast<std::uint32_t>(kSide * kSide - 1),
-                                           static_cast<std::uint32_t>((kSide - 1) * kSide) };
+    const std::vector<float>   grid_vertex_data = gridPositions(kSide);
+    std::vector<std::uint32_t> index_data{ 0U, static_cast<std::uint32_t>(kSide - 1),         static_cast<std::uint32_t>(kSide * kSide - 1),
+                                           0U, static_cast<std::uint32_t>(kSide * kSide - 1), static_cast<std::uint32_t>((kSide - 1) * kSide) };
     {
         const std::vector<std::uint32_t> grid = gridIndices(kSide);
         index_data.insert(index_data.end(), grid.begin(), grid.end());
@@ -3219,12 +3056,9 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     vn::intrusive_ptr<vn::Buffer<float>> positions(new vn::Buffer<float>(grid_vertex_data));
     geometry->setPositions(positions);
     geometry->setNormals(normals);
-    geometry->addBuffer(vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Color),
-                        vn::graphics::AttributeChannel::shared(colour, 3U));
+    geometry->addBuffer(vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Color), vn::graphics::AttributeChannel::shared(colour, 3U));
     geometry->setTexcoords2(texcoords);
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-                             new vn::Buffer<std::uint32_t>(index_data)),
-                         0U, 6U);
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(index_data)), 0U, 6U);
     geometry->bumpRevision();
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -3248,13 +3082,13 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(commands, camera.get())
+                                  .value());
         const auto ended = std::chrono::steady_clock::now();
         return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(ended - began).count();
     };
@@ -3262,14 +3096,16 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     std::printf("\n");
     std::printf("[b6] mesh %dx%d (%zu verts), 4 channels + indices: the WHOLE mesh is %.2f MiB, and each "
                 "stream is announced on its own buffer\n",
-                kSide, kSide, vertex_count,
+                kSide,
+                kSide,
+                vertex_count,
                 static_cast<double>(stream_bytes) / (1024.0 * 1024.0));
     for (int settle = 0; settle < 6; ++settle) {
-        drive();  // the session's opening frames compile the initial pipelines and settle the window
+        drive(); // the session's opening frames compile the initial pipelines and settle the window
     }
 
     const auto run = [&](const char* label, int frames, auto&& edit) {
-        const EditCostCounters before = readEditCosts(*store, *assembly, pool);
+        const EditCostCounters before   = readEditCosts(*store, *assembly, pool);
         double                 frame_us = 0.0;
         for (int frame = 0; frame < frames; ++frame) {
             edit(frame);
@@ -3279,8 +3115,11 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
         const EditCostDelta    change = editCostDelta(before, after);
         std::printf("[b6] %-32s frame %8.1f us/f"
                     " | builds %+4lld uploads %+4lld created %+4lld reused %+4lld\n",
-                    label, frame_us / frames, static_cast<long long>(change.builds),
-                    static_cast<long long>(change.uploads), static_cast<long long>(change.created),
+                    label,
+                    frame_us / frames,
+                    static_cast<long long>(change.builds),
+                    static_cast<long long>(change.uploads),
+                    static_cast<long long>(change.created),
                     static_cast<long long>(change.reused));
         return std::pair<EditCostCounters, EditCostCounters>{ before, after };
     };
@@ -3304,8 +3143,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
         const EditCostDelta change = editCostDelta(before, after);
         EXPECT_EQ(change.builds, kFramesPerRegime) << "the geometry announced a shape change: one row";
         EXPECT_EQ(change.created, 0) << "bytes are data: the pipeline key cannot see them";
-        EXPECT_EQ(change.uploads, 1LL * kFramesPerRegime)
-            << "only the channel whose buffer changed is sent; the rest of the mesh is aliased";
+        EXPECT_EQ(change.uploads, 1LL * kFramesPerRegime) << "only the channel whose buffer changed is sent; the rest of the mesh is aliased";
     }
 
     // ONE channel EDITED IN PLACE and announced on its buffer (the spelling Buffer's contract names): every
@@ -3338,16 +3176,15 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
         });
         const EditCostDelta change = editCostDelta(before, after);
         EXPECT_EQ(change.builds, 0) << "four byte edits are still not a shape change";
-        EXPECT_EQ(change.uploads, 4LL * kFramesPerRegime)
-            << "one per announced buffer: the index stream and the untouched rows are not re-sent";
+        EXPECT_EQ(change.uploads, 4LL * kFramesPerRegime) << "one per announced buffer: the index stream and the untouched rows are not re-sent";
         EXPECT_EQ(change.created, 0) << "and no variant either way";
     }
 
     drive();
     const auto centre = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
     EXPECT_TRUE(isColourByte(centre[0], 0.3) && isColourByte(centre[1], 0.4) && isColourByte(centre[2], 0.3))
-        << "the mesh is still what the centre probe sees, got (" << static_cast<int>(centre[0]) << ", "
-        << static_cast<int>(centre[1]) << ", " << static_cast<int>(centre[2]) << ")";
+        << "the mesh is still what the centre probe sees, got (" << static_cast<int>(centre[0]) << ", " << static_cast<int>(centre[1]) << ", "
+        << static_cast<int>(centre[2]) << ")";
     EXPECT_EQ(backend->deviceWaits(), 0U) << "re-sending the mesh stops nothing";
     backend->shutdown();
     EXPECT_TRUE(host.alive());
@@ -3367,16 +3204,14 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     // The numbers are PRINTED for the design log; what is ASSERTED is machine-independent: nothing
     // compiles or uploads in any regime, the arena's counters say exactly what the growth implies, and
     // the window stays the clear colour - the drawings really did land nothing.
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
@@ -3397,28 +3232,27 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "void main() { gl_Position = vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
-            "{\n"
-            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-            "} material;\n"
-            "void main() { outColor = material.base_color; }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                                                                      "{\n"
+                                                                      "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                                                      "} material;\n"
+                                                                      "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
     // Three IDENTICAL vertices: a zero-area triangle, which rasterises to no fragment at all.
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
-        std::vector<float>{ -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F })));
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+    geometry->setPositions(
+        vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F })));
+    setPrimitiveIndices(*geometry,
+                        0U,
+                        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
     geometry->bumpRevision();
 
     const auto material_set = [](std::size_t count) {
@@ -3426,15 +3260,14 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         materials.reserve(count);
         for (std::size_t index = 0; index < count; ++index) {
             const vn::intrusive_ptr<Material> material(new Material());
-            const float shade = 0.2F + 0.6F * static_cast<float>(index % 16U) / 15.0F;
+            const float                       shade = 0.2F + 0.6F * static_cast<float>(index % 16U) / 15.0F;
             material->setBaseColor(vn::Colorf(shade, 0.4F, 1.0F - shade, 1.0F));
             materials.push_back(std::move(material));
         }
         return materials;
     };
 
-    const auto commands_for = [&](const std::vector<vn::intrusive_ptr<Material>>& materials,
-                                  std::size_t count) {
+    const auto commands_for = [&](const std::vector<vn::intrusive_ptr<Material>>& materials, std::size_t count) {
         std::vector<RenderCommand> built(count);
         for (std::size_t index = 0; index < count; ++index) {
             built[index].geometry = geometry;
@@ -3459,38 +3292,36 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(commands, camera.get())
+                                  .value());
         const auto ended = std::chrono::steady_clock::now();
         return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(ended - began).count();
     };
 
-    struct MaterialCounters
-    {
-        std::uint64_t writes{0};
-        std::uint64_t hits{0};
-        std::uint64_t refusals{0};
-        std::size_t   live{0};
-    };
-    const auto read_material = [&]() {
-        const BlockStorage* storage = BackendContentAccess::storage(*backend);
-        return MaterialCounters{ storage->materialWrites(), storage->materialHits(),
-                                 storage->materialRefusals(), storage->liveMaterials() };
+    struct MaterialCounters {
+        std::uint64_t writes{ 0 };
+        std::uint64_t hits{ 0 };
+        std::uint64_t refusals{ 0 };
+        std::size_t   live{ 0 };
     };
 
-    struct RegimeCost
-    {
+    const auto read_material = [&]() {
+        const BlockStorage* storage = BackendContentAccess::storage(*backend);
+        return MaterialCounters{ storage->materialWrites(), storage->materialHits(), storage->materialRefusals(), storage->liveMaterials() };
+    };
+
+    struct RegimeCost {
         EditCostDelta content;
-        std::int64_t  writes{0};
-        std::int64_t  hits{0};
-        std::int64_t  refusals{0};
-        std::size_t   live{0};
-        double        frame_us{0.0};
+        std::int64_t  writes{ 0 };
+        std::int64_t  hits{ 0 };
+        std::int64_t  refusals{ 0 };
+        std::size_t   live{ 0 };
+        double        frame_us{ 0.0 };
     };
 
     std::printf("\n");
@@ -3498,34 +3329,30 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         for (int warm = 0; warm < 3; ++warm) {
             drive();
         }
-        const EditCostCounters before  = readEditCosts(*store, *assembly, pool);
+        const EditCostCounters before          = readEditCosts(*store, *assembly, pool);
         const MaterialCounters material_before = read_material();
-        double                 frame_us = 0.0;
+        double                 frame_us        = 0.0;
         for (int frame = 0; frame < kFramesPerRegime; ++frame) {
             frame_us += drive();
         }
-        const EditCostCounters after  = readEditCosts(*store, *assembly, pool);
+        const EditCostCounters after          = readEditCosts(*store, *assembly, pool);
         const MaterialCounters material_after = read_material();
-        const EditCostDelta    change = editCostDelta(before, after);
-        const auto             step   = [](std::uint64_t from, std::uint64_t to) {
-            return static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from);
-        };
-        const std::int64_t writes   = step(material_before.writes, material_after.writes);
-        const std::int64_t hits     = step(material_before.hits, material_after.hits);
-        const std::int64_t refusals = step(material_before.refusals, material_after.refusals);
+        const EditCostDelta    change         = editCostDelta(before, after);
+        const auto             step     = [](std::uint64_t from, std::uint64_t to) { return static_cast<std::int64_t>(to) - static_cast<std::int64_t>(from); };
+        const std::int64_t     writes   = step(material_before.writes, material_after.writes);
+        const std::int64_t     hits     = step(material_before.hits, material_after.hits);
+        const std::int64_t     refusals = step(material_before.refusals, material_after.refusals);
         std::printf("[a4] %-26s frame %7.1f us/f"
                     " | uploads %+3lld created %+3lld | write/f %7.1f hit/f %7.1f refuse/f %7.1f live %zu\n",
-                    label, frame_us / kFramesPerRegime,
-                    static_cast<long long>(change.uploads), static_cast<long long>(change.created),
+                    label,
+                    frame_us / kFramesPerRegime,
+                    static_cast<long long>(change.uploads),
+                    static_cast<long long>(change.created),
                     static_cast<double>(writes) / kFramesPerRegime,
                     static_cast<double>(hits) / kFramesPerRegime,
-                    static_cast<double>(refusals) / kFramesPerRegime, material_after.live);
-        return RegimeCost{ change,
-                           writes,
-                           hits,
-                           refusals,
-                           material_after.live,
-                           frame_us / kFramesPerRegime };
+                    static_cast<double>(refusals) / kFramesPerRegime,
+                    material_after.live);
+        return RegimeCost{ change, writes, hits, refusals, material_after.live, frame_us / kFramesPerRegime };
     };
 
     for (int settle = 0; settle < 6; ++settle) {
@@ -3543,33 +3370,30 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     EXPECT_EQ(one.live, 1U);
 
     // 2. MANY commands, ONE material: everything the delta over regime 1 shows is the per-command floor.
-    commands = commands_for(material_set(1U), 2000U);
+    commands              = commands_for(material_set(1U), 2000U);
     const RegimeCost many = measure("2000 commands, 1 material");
     EXPECT_EQ(many.content.uploads, 0);
     EXPECT_EQ(many.content.created, 0) << "2000 commands of one program/layout/geometry compile nothing";
     EXPECT_EQ(many.writes, 0);
     EXPECT_EQ(many.hits, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
     EXPECT_EQ(many.refusals, 0);
-    EXPECT_EQ(many.live, 1U)
-        << "the first 2000-command frame grew the block storage (the draw budget), arena included: "
-           "this arena has noted one material, and a slot leaves only when the host releases it";
-    std::printf("[a4] per-command floor ~= %.2f us/frame (2000-command frame minus the one-command frame)\n",
-                (many.frame_us - one.frame_us) / 1999.0);
+    EXPECT_EQ(many.live, 1U) << "the first 2000-command frame grew the block storage (the draw budget), arena included: "
+                                "this arena has noted one material, and a slot leaves only when the host releases it";
+    std::printf("[a4] per-command floor ~= %.2f us/frame (2000-command frame minus the one-command frame)\n", (many.frame_us - one.frame_us) / 1999.0);
 
     // 3. 200 distinct materials: still served from the starting 256 slots - no write, no refusal, every note
     //    a hit.
-    commands = commands_for(material_set(200U), 200U);
+    commands                 = commands_for(material_set(200U), 200U);
     const RegimeCost fitting = measure("200 commands, 200 materials");
     EXPECT_EQ(fitting.writes, 0) << "the live set fits the arena: nothing is rewritten";
     EXPECT_EQ(fitting.hits, static_cast<std::int64_t>(kFramesPerRegime) * 200);
     EXPECT_EQ(fitting.refusals, 0);
-    EXPECT_EQ(fitting.live, 200U)
-        << "the previous regime's material was abandoned and its slot returned by the sweep: the live set is "
-           "exactly this regime's 200, not 201";
+    EXPECT_EQ(fitting.live, 200U) << "the previous regime's material was abandoned and its slot returned by the sweep: the live set is "
+                                     "exactly this regime's 200, not 201";
 
     // 4. 300 distinct materials: the arena GROWS before recording instead of churning. After the warm-up the
     //    replacement has happened, so the measured regime is all hits.
-    commands = commands_for(material_set(300U), 300U);
+    commands               = commands_for(material_set(300U), 300U);
     const RegimeCost tight = measure("300 commands, 300 materials");
     EXPECT_EQ(tight.writes, 0) << "the replacement happened during the warm-up: the measured regime is steady";
     EXPECT_EQ(tight.hits, static_cast<std::int64_t>(kFramesPerRegime) * 300);
@@ -3577,7 +3401,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     EXPECT_EQ(tight.live, 300U) << "the replacement starts empty and holds exactly this frame's materials";
 
     // 5. THE EXTREME: 2000 distinct materials - one more growth, then the same steady shape.
-    commands = commands_for(material_set(2000U), 2000U);
+    commands               = commands_for(material_set(2000U), 2000U);
     const RegimeCost churn = measure("2000 commands, 2000 materials");
     EXPECT_EQ(churn.writes, 0);
     EXPECT_EQ(churn.hits, static_cast<std::int64_t>(kFramesPerRegime) * 2000);
@@ -3587,8 +3411,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     // The drawings landed nothing: whatever the regimes did to the arena, the window is still the clear.
     drive();
     const auto centre = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
-    EXPECT_TRUE(isGreenClear(centre)) << "a zero-area triangle lands no fragment, got ("
-                                      << static_cast<int>(centre[0]) << ", " << static_cast<int>(centre[1])
+    EXPECT_TRUE(isGreenClear(centre)) << "a zero-area triangle lands no fragment, got (" << static_cast<int>(centre[0]) << ", " << static_cast<int>(centre[1])
                                       << ", " << static_cast<int>(centre[2]) << ")";
     EXPECT_EQ(backend->deviceWaits(), 0U) << "2000 notes a frame stop nothing";
     backend->shutdown();
@@ -3602,23 +3425,21 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
     // read the NEW material's bytes - the picture was silently wrong. Now the storage is sized before the
     // recording, so every quad paints its own material; the first and last cells are the discriminator
     // (material 0 is blue, material 299 is red).
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
     const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 64;
-    constexpr int kHeight = 64;
+    constexpr int  kWidth  = 64;
+    constexpr int  kHeight = 64;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
@@ -3635,40 +3456,36 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
-            "{\n"
-            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-            "} material;\n"
-            "void main() { outColor = material.base_color; }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                                                                      "{\n"
+                                                                      "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                                                      "} material;\n"
+                                                                      "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
     // 20 x 15 cells, each a small quad in world space; the camera sees the whole [-1,1] square.
-    constexpr int   kCols = 20;
-    constexpr int   kRows = 15;
-    constexpr float kHalf = 0.03F;
-    std::vector<vn::intrusive_ptr<Geometry>>    geometries;
-    std::vector<vn::intrusive_ptr<Material>>    materials;
-    std::vector<RenderCommand>                  commands;
-    std::vector<std::pair<float, float>>        centres;
+    constexpr int                            kCols = 20;
+    constexpr int                            kRows = 15;
+    constexpr float                          kHalf = 0.03F;
+    std::vector<vn::intrusive_ptr<Geometry>> geometries;
+    std::vector<vn::intrusive_ptr<Material>> materials;
+    std::vector<RenderCommand>               commands;
+    std::vector<std::pair<float, float>>     centres;
     geometries.reserve(kCols * kRows);
     materials.reserve(kCols * kRows);
     commands.reserve(kCols * kRows);
     centres.reserve(kCols * kRows);
-    for (int row = 0; row < kRows; ++row)
-    {
-        for (int col = 0; col < kCols; ++col)
-        {
+    for (int row = 0; row < kRows; ++row) {
+        for (int col = 0; col < kCols; ++col) {
             const std::size_t index = static_cast<std::size_t>(row * kCols + col);
             const float       cx    = -0.95F + 0.1F * static_cast<float>(col);
             const float       cy    = -0.7F + 0.1F * static_cast<float>(row);
@@ -3676,15 +3493,16 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
 
             const vn::intrusive_ptr<Geometry> geometry(new Geometry());
             geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
-                std::vector<float>{ cx - kHalf, cy - kHalf, 0.0F, cx + kHalf, cy - kHalf, 0.0F,
-                                    cx + kHalf, cy + kHalf, 0.0F, cx - kHalf, cy + kHalf, 0.0F })));
-            setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-                new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+                std::vector<float>{ cx - kHalf, cy - kHalf, 0.0F, cx + kHalf, cy - kHalf, 0.0F, cx + kHalf, cy + kHalf, 0.0F, cx - kHalf, cy + kHalf, 0.0F })));
+            setPrimitiveIndices(
+                *geometry,
+                0U,
+                vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
             geometry->setRevision(1U);
             geometries.push_back(geometry);
 
             const vn::intrusive_ptr<Material> material(new Material());
-            const float red = static_cast<float>(index) / static_cast<float>(kCols * kRows - 1);
+            const float                       red = static_cast<float>(index) / static_cast<float>(kCols * kRows - 1);
             material->setBaseColor(vn::Colorf(red, 0.0F, 1.0F - red, 1.0F));
             materials.push_back(material);
 
@@ -3714,8 +3532,8 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
 
     const auto sample = [&](std::size_t index) {
         const auto& [cx, cy] = centres[index];
-        const int px = static_cast<int>((cx + 1.0F) * 0.5F * static_cast<float>(kWidth - 1));
-        const int py = static_cast<int>((1.0F - cy) * 0.5F * static_cast<float>(kHeight - 1));
+        const int         px = static_cast<int>((cx + 1.0F) * 0.5F * static_cast<float>(kWidth - 1));
+        const int         py = static_cast<int>((1.0F - cy) * 0.5F * static_cast<float>(kHeight - 1));
         const std::size_t at = (static_cast<std::size_t>(py) * kWidth + static_cast<std::size_t>(px)) * 4U;
         return std::array<int, 3>{ pixels[at], pixels[at + 1U], pixels[at + 2U] };
     };
@@ -3730,8 +3548,8 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
     EXPECT_LT(last[2], 16);
 
     // A middle material, to show the whole range travelled and not just the two ends.
-    const std::size_t middle = (kCols * kRows) / 2U;
-    const auto        centre = sample(middle);
+    const std::size_t middle   = (kCols * kRows) / 2U;
+    const auto        centre   = sample(middle);
     const int         expected = static_cast<int>(middle * 255U / (kCols * kRows - 1U));
     EXPECT_NEAR(centre[0], expected, 8) << "material " << middle << " painted its own red";
     EXPECT_NEAR(centre[2], 255 - expected, 8) << "and its own blue";
@@ -3750,23 +3568,21 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
     //
     // Nothing is drawn: this is the cache's contract, not a frame's. The numbers are printed; the assertions
     // are the misses counted through has().
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
@@ -3778,11 +3594,9 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
     EXPECT_EQ(images->count(), 0U) << "a session that drew nothing caches no texture";
 
     const auto make_texture = [](int side, unsigned shade) {
-        const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-            new vn::graphics::Texture2D(side, side, vn::imaging::PixelFormat::Rgba8Unorm));
-        const vn::intrusive_ptr<vn::imaging::Image> image(
-            new vn::imaging::Image(side, side, vn::imaging::PixelFormat::Rgba8Unorm));
-        const std::span<std::byte> pixels = image->mipData(0);
+        const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(side, side, vn::imaging::PixelFormat::Rgba8Unorm));
+        const vn::intrusive_ptr<vn::imaging::Image>      image(new vn::imaging::Image(side, side, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte>                       pixels = image->mipData(0);
         for (std::size_t index = 0; index < pixels.size(); ++index) {
             pixels[index] = static_cast<std::byte>((index + shade) & 0xFFU);
         }
@@ -3790,8 +3604,8 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
         return texture;
     };
     const auto acquire = [&](const vn::intrusive_ptr<vn::graphics::Texture2D>& texture) {
-        vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
-        const vn::vsg::SamplerImage acquired = images->acquire(texture.get(), reason);
+        vn::vsg::detail::TextureReject reason   = vn::vsg::detail::TextureReject::Ok;
+        const vn::vsg::SamplerImage    acquired = images->acquire(texture.get(), reason);
         EXPECT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete 2D texture must upload";
         EXPECT_NE(acquired.view, nullptr);
         EXPECT_NE(acquired.sampler, nullptr);
@@ -3812,7 +3626,7 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
             acquire(filler.back());
         }
         ASSERT_EQ(images->count(), 256U);
-        acquire(oldest);  // a hit
+        acquire(oldest); // a hit
         const auto one_past = make_texture(2, 9U);
         acquire(one_past);
         EXPECT_EQ(images->count(), 257U) << "one more live texture is one more entry";
@@ -3832,11 +3646,10 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
         return misses;
     };
     const auto time_pass = [&](const std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>>& set) {
-        const auto        began = std::chrono::steady_clock::now();
+        const auto        began  = std::chrono::steady_clock::now();
         const std::size_t misses = pass(set);
-        const auto        ended = std::chrono::steady_clock::now();
-        const double      millis =
-            std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(ended - began).count();
+        const auto        ended  = std::chrono::steady_clock::now();
+        const double      millis = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(ended - began).count();
         return std::pair<std::size_t, double>{ misses, millis };
     };
 
@@ -3846,12 +3659,11 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
     for (unsigned index = 0; index < 200U; ++index) {
         fitting.push_back(make_texture(64, index));
     }
-    const auto [first_fitting, first_fitting_ms]   = time_pass(fitting);
-    const auto [after_fitting, after_fitting_ms]   = time_pass(fitting);
+    const auto [first_fitting, first_fitting_ms] = time_pass(fitting);
+    const auto [after_fitting, after_fitting_ms] = time_pass(fitting);
     EXPECT_EQ(first_fitting, 200U) << "first sight of every texture rebuilds it";
     EXPECT_EQ(after_fitting, 0U) << "a set that fits the bound is served every pass";
-    std::printf("[a6] 200-texture pass: %zu misses then %zu; %.2f ms then %.2f ms\n", first_fitting,
-                after_fitting, first_fitting_ms, after_fitting_ms);
+    std::printf("[a6] 200-texture pass: %zu misses then %zu; %.2f ms then %.2f ms\n", first_fitting, after_fitting, first_fitting_ms, after_fitting_ms);
 
     // 3. PAST THE OLD BOUND: 300 more textures, all live - every one is resident and the next pass is a
     //    pure hit run (the old 256-entry bound rebuilt all of them every pass).
@@ -3868,7 +3680,10 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
     const auto [after_exceeding, after_exceeding_ms] = time_pass(exceeding);
     EXPECT_EQ(after_exceeding, 0U) << "a set larger than the old bound is served every pass";
     std::printf("[a6] 300-texture pass (past the old bound): %zu misses then %zu; %.2f ms then %.2f ms\n",
-                first_exceeding, after_exceeding, first_exceeding_ms, after_exceeding_ms);
+                first_exceeding,
+                after_exceeding,
+                first_exceeding_ms,
+                after_exceeding_ms);
     EXPECT_EQ(images->count(), 757U);
 
     backend->shutdown();
@@ -3887,8 +3702,7 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
  */
 TEST(VsgBackendTest, AWorkingSetLargerThanTheOldTextureBoundStaysResident)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
@@ -3896,15 +3710,12 @@ TEST(VsgBackendTest, AWorkingSetLargerThanTheOldTextureBoundStaysResident)
 
     vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
     ASSERT_NE(images, nullptr);
-    const auto reported = [&backend]() {
-        return backend->diagnosticCount(vn::graphics::DiagnosticCategory::ResourcePressure);
-    };
-    const std::size_t before = reported();
+    const auto        reported = [&backend]() { return backend->diagnosticCount(vn::graphics::DiagnosticCategory::ResourcePressure); };
+    const std::size_t before   = reported();
 
     const auto sample = [&images](const vn::intrusive_ptr<vn::graphics::Texture2D>& texture, unsigned shade) {
-        const vn::intrusive_ptr<vn::imaging::Image> image(
-            new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-        const std::span<std::byte> pixels = image->mipData(0);
+        const vn::intrusive_ptr<vn::imaging::Image> image(new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte>                  pixels = image->mipData(0);
         std::fill(pixels.begin(), pixels.end(), static_cast<std::byte>(shade & 0xFFU));
         texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
 
@@ -3913,13 +3724,11 @@ TEST(VsgBackendTest, AWorkingSetLargerThanTheOldTextureBoundStaysResident)
         ASSERT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete 2D texture must upload";
     };
 
-    constexpr std::size_t kTextures = 300U;
+    constexpr std::size_t                                   kTextures = 300U;
     std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>> textures;
     textures.reserve(kTextures);
-    for (std::size_t index = 0; index < kTextures; ++index)
-    {
-        textures.push_back(
-            vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
+    for (std::size_t index = 0; index < kTextures; ++index) {
+        textures.push_back(vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
         sample(textures.back(), static_cast<unsigned>(index));
     }
     EXPECT_EQ(images->count(), kTextures) << "every live texture is resident past the old bound";
@@ -3951,23 +3760,21 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     // back at their baseline - the sweep's counters (releasedContentObjects / releasedTextures /
     // releasedStreams) are the proof the letting-go happened - and what the ledger always shows as the
     // residue is the material arena's slot handling, which has no release path at all (eviction only).
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
@@ -3991,13 +3798,13 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
 
     const auto drive = [&]() {
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::Disabled)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .content(commands, camera.get())
+                                  .value());
     };
 
     constexpr int kCycles = 12;
@@ -4011,10 +3818,11 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
         {
             // What the host makes THIS cycle: its own geometry, material, program and texture...
             const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-            geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
-                std::vector<float>{ -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F })));
-            setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-                new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+            geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
+                new vn::Buffer<float>(std::vector<float>{ -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F, -0.5F, -0.5F, 0.5F })));
+            setPrimitiveIndices(*geometry,
+                                0U,
+                                vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
             geometry->bumpRevision();
 
             const vn::intrusive_ptr<Material> material(new Material());
@@ -4024,37 +3832,32 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
             {
                 ShaderStage vertex;
                 vertex.type   = ShaderStageType::Vertex;
-                vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-                    "layout(location = 0) in vec3 position;\n"
-                    "void main() { gl_Position = vec4(position, 1.0); }\n"));
+                vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                            "void main() { gl_Position = vec4(position, 1.0); }\n"));
                 ShaderStage fragment;
                 fragment.type   = ShaderStageType::Fragment;
-                fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-                    "layout(location = 0) out vec4 outColor;\n"
-                    "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
-                    "{\n"
-                    "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-                    "} material;\n"
-                    "void main() { outColor = material.base_color; }\n"));
+                fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                              "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                                                                              "{\n"
+                                                                              "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                                                              "} material;\n"
+                                                                              "void main() { outColor = material.base_color; }\n"));
                 program->addStage(vertex);
                 program->addStage(fragment);
             }
 
-            commands = std::vector<RenderCommand>(1U);
+            commands             = std::vector<RenderCommand>(1U);
             commands[0].geometry = geometry;
             commands[0].material = material;
             commands[0].program  = program;
 
             // ... and a texture of its own, acquired through the cache the way a declared set would.
-            const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-                new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+            const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
             {
-                const vn::intrusive_ptr<vn::imaging::Image> image(
-                    new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-                const std::span<std::byte> pixels = image->mipData(0);
+                const vn::intrusive_ptr<vn::imaging::Image> image(new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+                const std::span<std::byte>                  pixels = image->mipData(0);
                 for (std::size_t index = 0; index < pixels.size(); ++index) {
-                    pixels[index] = static_cast<std::byte>(
-                        (index * 7U + static_cast<std::size_t>(cycle)) & 0xFFU);
+                    pixels[index] = static_cast<std::byte>((index * 7U + static_cast<std::size_t>(cycle)) & 0xFFU);
                 }
                 texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
             }
@@ -4063,7 +3866,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
             EXPECT_EQ(reason, vn::vsg::detail::TextureReject::Ok);
             EXPECT_TRUE(images->has(texture.get())) << "the cache holds this cycle's texture, for now";
 
-            drive();  // the one frame that names all of it
+            drive(); // the one frame that names all of it
         }
         // The host lets EVERYTHING go here (the references above are gone).
         commands.clear();
@@ -4085,17 +3888,22 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     }
     run_cycle(0);
     settle_frames();
-    const std::size_t retained_after_warmup = store->retained();
-    const std::size_t base_geometry         = store->geometryEntries();
-    const std::size_t base_material         = store->materialEntries();
-    const std::size_t base_program          = store->programEntries();
-    const std::size_t base_slots            = storage->liveMaterials();
-    const std::size_t base_streams          = assembly->uploads().live();
+    const std::size_t retained_after_warmup    = store->retained();
+    const std::size_t base_geometry            = store->geometryEntries();
+    const std::size_t base_material            = store->materialEntries();
+    const std::size_t base_program             = store->programEntries();
+    const std::size_t base_slots               = storage->liveMaterials();
+    const std::size_t base_streams             = assembly->uploads().live();
     const std::size_t released_objects_before  = backend->releasedContentObjects();
     const std::size_t released_textures_before = backend->releasedTextures();
     std::printf("[a3] warm-up: rows g%zu m%zu p%zu retained %zu (pre-slot-knowledge drops stay for the "
                 "session), slots %zu, streams %zu\n",
-                base_geometry, base_material, base_program, retained_after_warmup, base_slots, base_streams);
+                base_geometry,
+                base_material,
+                base_program,
+                retained_after_warmup,
+                base_slots,
+                base_streams);
 
     for (int cycle = 0; cycle < kCycles; ++cycle) {
         run_cycle(cycle + 1);
@@ -4108,21 +3916,25 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
         EXPECT_EQ(assembly->uploads().live(), base_streams) << "cycle " << cycle << ": the streams are let go";
         std::printf("[a3] cycle %2d: entries g%zu m%zu p%zu | images %zu streams %zu slots %zu | released "
                     "objects %zu textures %zu streams %zu\n",
-                    cycle, store->geometryEntries(), store->materialEntries(), store->programEntries(),
-                    images->count(), assembly->uploads().live(), storage->liveMaterials(),
-                    backend->releasedContentObjects(), backend->releasedTextures(),
+                    cycle,
+                    store->geometryEntries(),
+                    store->materialEntries(),
+                    store->programEntries(),
+                    images->count(),
+                    assembly->uploads().live(),
+                    storage->liveMaterials(),
+                    backend->releasedContentObjects(),
+                    backend->releasedTextures(),
                     backend->releasedStreams());
     }
 
     // THE RELEASES REALLY HAPPENED, once per object and once per texture - the counters the sweep feeds.
     EXPECT_EQ(backend->releasedContentObjects() - released_objects_before, static_cast<std::size_t>(kCycles) * 3U)
         << "a geometry, a material and a program per cycle";
-    EXPECT_EQ(backend->releasedTextures() - released_textures_before, static_cast<std::size_t>(kCycles))
-        << "one texture per cycle";
+    EXPECT_EQ(backend->releasedTextures() - released_textures_before, static_cast<std::size_t>(kCycles)) << "one texture per cycle";
     EXPECT_GE(backend->releasedStreams(), static_cast<std::size_t>(kCycles))
         << "the streams of the dropped geometries are let go once the naming window passes";
-    EXPECT_EQ(store->retained(), retained_after_warmup)
-        << "no drop during the measured cycles needed retention: every park came due";
+    EXPECT_EQ(store->retained(), retained_after_warmup) << "no drop during the measured cycles needed retention: every park came due";
     EXPECT_LE(store->retained(), 3U) << "only the first drops, before the slots were learned, are kept";
 
     // THE ONE RESIDUE the ledger shows: material SLOTS have no release path (eviction only, see §11.16cx),
@@ -4131,7 +3943,9 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     EXPECT_LE(slots, 256U) << "the arena's bound still holds";
     std::printf("[a3] residue: %zu/%zu material slots held, %zu above the session's baseline (no release "
                 "path - eviction only)\n",
-                slots, base_slots + static_cast<std::size_t>(kCycles), slots - base_slots);
+                slots,
+                base_slots + static_cast<std::size_t>(kCycles),
+                slots - base_slots);
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());
@@ -4146,30 +3960,26 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     // the growth reported as its own fact. The pixels are the evidence for both halves: frame 1 shows the
     // first command's colour only, frame 2 shows the second command's colour on top - which cannot happen
     // unless BOTH draw blocks landed in the replacement's bytes through sets that were repointed.
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::vector<std::string>      messages;
-    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
-        messages.push_back(as_bytes(diagnostic.message));
-    });
+    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) { messages.push_back(as_bytes(diagnostic.message)); });
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
@@ -4181,28 +3991,25 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "void main() { gl_Position = vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
-            "{\n"
-            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-            "} material;\n"
-            "void main() { outColor = material.base_color; }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                                                                      "{\n"
+                                                                      "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                                                      "} material;\n"
+                                                                      "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
-        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
@@ -4229,13 +4036,8 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     const auto drive = [&] {
         // Depth off, so the second drawing call is simply the one whose colour the probe sees - the pass states it
         // once, for its whole content (see PassRenderState).
-        backend->executeFrame(TestFrame()
-                                  .pass(pass.get())
-                                  .target(nullptr)
-                                  .clear(clear)
-                                  .depth(vn::graphics::DepthMode::Disabled)
-                                  .content(commands, camera.get())
-                                  .value());
+        backend->executeFrame(
+            TestFrame().pass(pass.get()).target(nullptr).clear(clear).depth(vn::graphics::DepthMode::Disabled).content(commands, camera.get()).value());
     };
 
     // Put the drive on a storage that fits ONE draw block: the frame below will ask for two.
@@ -4253,14 +4055,14 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     ASSERT_EQ(backend->diagnosticCount(), 1U) << "the refused drawing call is reported once";
     EXPECT_NE(std::string::npos, messages.back().find("budget is full"));
     const auto dropped = host.waitForPixel(
-        kWidth / 2, kHeight / 2,
+        kWidth / 2,
+        kHeight / 2,
         [](const std::array<std::uint8_t, 3>& pixel) { return isColourByte(pixel[1], 0.6); },
         std::chrono::milliseconds{ 500 });
-    EXPECT_TRUE(isColourByte(dropped[1], 0.6))
-        << "frame 1 shows the FIRST command's colour: the second was dropped (read-error "
-        << static_cast<int>(host.readError()) << ")";
+    EXPECT_TRUE(isColourByte(dropped[1], 0.6)) << "frame 1 shows the FIRST command's colour: the second was dropped (read-error "
+                                               << static_cast<int>(host.readError()) << ")";
 
-    drive();  // its beginFrame() is where the growth happens
+    drive(); // its beginFrame() is where the growth happens
     BlockStorage* const grown_storage = BackendContentAccess::storage(*backend);
     ASSERT_NE(grown_storage, tight_storage) << "the storage was replaced, not resized";
     EXPECT_GT(grown_storage->capacityBytes(), tight_capacity);
@@ -4271,11 +4073,11 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     ASSERT_EQ(backend->diagnosticCount(), 2U) << "the growth is its own fact, said once";
     EXPECT_NE(std::string::npos, messages.back().find("grew")) << "and the host can see why the refusals stop";
     const auto grown_pixel = host.waitForPixel(
-        kWidth / 2, kHeight / 2,
+        kWidth / 2,
+        kHeight / 2,
         [](const std::array<std::uint8_t, 3>& pixel) { return isColourByte(pixel[1], 0.2); },
         std::chrono::milliseconds{ 500 });
-    EXPECT_TRUE(isColourByte(grown_pixel[1], 0.2))
-        << "frame 2 shows the SECOND command on top: both blocks landed in the replacement's bytes";
+    EXPECT_TRUE(isColourByte(grown_pixel[1], 0.2)) << "frame 2 shows the SECOND command on top: both blocks landed in the replacement's bytes";
 
     EXPECT_EQ(backend->deviceWaits(), 0U) << "growing between frames stops nothing";
     backend->shutdown();
@@ -4291,30 +4093,26 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
     // framework on this machine reports exactly the assumed count, so the deeper count is stated through
     // the seam that exists for it (see assumeInFlightSlots); the branch it reaches is the branch a real
     // deeper framework reaches.
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::vector<std::string>      messages;
-    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
-        messages.push_back(as_bytes(diagnostic.message));
-    });
+    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) { messages.push_back(as_bytes(diagnostic.message)); });
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
@@ -4333,16 +4131,16 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
     const std::vector<RenderCommand>              no_commands;
     const auto                                    drive = [&] {
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::Disabled)
-            .content(no_commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .content(no_commands, camera.get())
+                                  .value());
     };
 
-    drive();  // its beginFrame() finds the rings too shallow for the stated count
+    drive(); // its beginFrame() finds the rings too shallow for the stated count
 
     BlockStorage* const after = BackendContentAccess::storage(*backend);
     ASSERT_NE(after, before) << "replaced, not resized - the same swap growth makes";
@@ -4352,8 +4150,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
     EXPECT_EQ(after->layout().materials.copies, deeper);
     EXPECT_GT(after->capacityBytes(), before_capacity);
     ASSERT_EQ(backend->diagnosticCount(), 1U) << "the re-layout is its own fact, said once";
-    EXPECT_NE(std::string::npos, messages.back().find("in-flight count (4)"))
-        << "and the host can read WHY the bytes moved";
+    EXPECT_NE(std::string::npos, messages.back().find("in-flight count (4)")) << "and the host can read WHY the bytes moved";
     EXPECT_EQ(after->overflows(), 0U);
 
     // AND IT SETTLES: the count it was re-laid out for is the count it now serves, so the next frame leaves
@@ -4376,23 +4173,21 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
     //     Filament / Unity treat an opaque material, even though the shader wrote an alpha below 1);
     //   * the same command at opacity 0.5 -> HALF red / HALF blue (the standard SRC_ALPHA pair).
     // The read-back accepts 0.5's linear AND sRGB spellings but not 1.0's, so the pair tells the two apart.
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
@@ -4406,23 +4201,21 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "void main() { gl_Position = vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "void main() { outColor = vec4(1.0, 0.0, 0.0, 0.5); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "void main() { outColor = vec4(1.0, 0.0, 0.0, 0.5); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
-    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices = vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
@@ -4446,53 +4239,48 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
 
     const auto drive = [&](const std::vector<RenderCommand>& commands) {
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::Disabled)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .content(commands, camera.get())
+                                  .value());
     };
 
     // The display path lags the session's presents: present the SAME picture once more, then read (a
     // plan-free frame would repaint the window with the session's own graph).
     drive(opaque_commands);
     drive(opaque_commands);
-    const auto opaque_centre = host.waitForPixel(
-        kWidth / 2, kHeight / 2, [](const std::array<std::uint8_t, 3>& pixel) { return isRed(pixel); },
-        std::chrono::milliseconds{ 500 });
-    EXPECT_TRUE(isRed(opaque_centre))
-        << "an opaque command writes its colour unchanged (blending off, shader alpha ignored), got ("
-        << static_cast<int>(opaque_centre[0]) << ", " << static_cast<int>(opaque_centre[1]) << ", "
-        << static_cast<int>(opaque_centre[2]) << ")";
+    const auto opaque_centre =
+        host.waitForPixel(kWidth / 2, kHeight / 2, [](const std::array<std::uint8_t, 3>& pixel) { return isRed(pixel); }, std::chrono::milliseconds{ 500 });
+    EXPECT_TRUE(isRed(opaque_centre)) << "an opaque command writes its colour unchanged (blending off, shader alpha ignored), got ("
+                                      << static_cast<int>(opaque_centre[0]) << ", " << static_cast<int>(opaque_centre[1]) << ", "
+                                      << static_cast<int>(opaque_centre[2]) << ")";
     EXPECT_FALSE(isColourByte(opaque_centre[0], 0.5) || isColourByte(opaque_centre[2], 0.5))
-        << "and the blue clear did not survive at half strength, got ("
-        << static_cast<int>(opaque_centre[0]) << ", " << static_cast<int>(opaque_centre[1]) << ", "
-        << static_cast<int>(opaque_centre[2]) << ")";
+        << "and the blue clear did not survive at half strength, got (" << static_cast<int>(opaque_centre[0]) << ", " << static_cast<int>(opaque_centre[1])
+        << ", " << static_cast<int>(opaque_centre[2]) << ")";
 
     drive(translucent_commands);
     drive(translucent_commands);
     const auto translucent_centre = host.waitForPixel(
-        kWidth / 2, kHeight / 2,
+        kWidth / 2,
+        kHeight / 2,
         [](const std::array<std::uint8_t, 3>& pixel) { return isColourByte(pixel[2], 0.5); },
         std::chrono::milliseconds{ 500 });
     // Both outer channels are 0.5, so the surface's byte order does not matter for the centre.
     EXPECT_TRUE(isColourByte(translucent_centre[0], 0.5))
-        << "src * SRC_ALPHA: the fragment's red at half alpha, got ("
-        << static_cast<int>(translucent_centre[0]) << ", " << static_cast<int>(translucent_centre[1]) << ", "
-        << static_cast<int>(translucent_centre[2]) << ")";
+        << "src * SRC_ALPHA: the fragment's red at half alpha, got (" << static_cast<int>(translucent_centre[0]) << ", "
+        << static_cast<int>(translucent_centre[1]) << ", " << static_cast<int>(translucent_centre[2]) << ")";
     EXPECT_TRUE(isColourByte(translucent_centre[2], 0.5))
-        << "dst * ONE_MINUS_SRC_ALPHA: the clear's blue survives at half strength, got ("
-        << static_cast<int>(translucent_centre[0]) << ", " << static_cast<int>(translucent_centre[1]) << ", "
-        << static_cast<int>(translucent_centre[2]) << ")";
+        << "dst * ONE_MINUS_SRC_ALPHA: the clear's blue survives at half strength, got (" << static_cast<int>(translucent_centre[0]) << ", "
+        << static_cast<int>(translucent_centre[1]) << ", " << static_cast<int>(translucent_centre[2]) << ")";
 
     // The corner never saw a fragment: the pass' own clear, in whichever byte order the surface uses.
-    const auto corner = host.pixel(1, 1);
-    const bool blue_clear = (isColourByte(corner[0], 0.0) && isColourByte(corner[2], 1.0)) ||
-                            (isColourByte(corner[2], 0.0) && isColourByte(corner[0], 1.0));
-    EXPECT_TRUE(blue_clear) << "the corner is the blue clear, got (" << static_cast<int>(corner[0]) << ", "
-                            << static_cast<int>(corner[1]) << ", " << static_cast<int>(corner[2]) << ")";
+    const auto corner     = host.pixel(1, 1);
+    const bool blue_clear = (isColourByte(corner[0], 0.0) && isColourByte(corner[2], 1.0)) || (isColourByte(corner[2], 0.0) && isColourByte(corner[0], 1.0));
+    EXPECT_TRUE(blue_clear) << "the corner is the blue clear, got (" << static_cast<int>(corner[0]) << ", " << static_cast<int>(corner[1]) << ", "
+                            << static_cast<int>(corner[2]) << ")";
 
     EXPECT_EQ(backend->deviceWaits(), 0U) << "reading the picture stops nothing";
     backend->shutdown();
@@ -4513,31 +4301,27 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     //
     // The per-frame record / commit times are PRINTED for the design log; nothing machine-dependent is
     // asserted.
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
-    constexpr int kDraws  = 2000;  // the design log's trigger scale
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
+    constexpr int  kDraws  = 2000; // the design log's trigger scale
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::vector<std::string>      messages;
-    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) {
-        messages.push_back(as_bytes(diagnostic.message));
-    });
+    backend->setDiagnosticSink([&messages](const vn::graphics::RenderDiagnostic& diagnostic) { messages.push_back(as_bytes(diagnostic.message)); });
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->diagnosticCount(), 0U);
@@ -4546,28 +4330,25 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "void main() { gl_Position = vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "void main() { gl_Position = vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
-            "{\n"
-            "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-            "} material;\n"
-            "void main() { outColor = material.base_color; }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "layout(set = 0, binding = 2, std140) uniform VineMaterialBlock\n"
+                                                                      "{\n"
+                                                                      "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                                                      "} material;\n"
+                                                                      "void main() { outColor = material.base_color; }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
-        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
@@ -4588,13 +4369,13 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     const auto drive = [&]() {
         const auto began = std::chrono::steady_clock::now();
         backend->executeFrame(TestFrame()
-            .pass(pass.get())
-            .order(0)
-            .target(nullptr)
-            .clear(clear)
-            .depth(vn::graphics::DepthMode::Disabled)
-            .content(commands, camera.get())
-            .value());
+                                  .pass(pass.get())
+                                  .order(0)
+                                  .target(nullptr)
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .content(commands, camera.get())
+                                  .value());
         const auto ended = std::chrono::steady_clock::now();
         return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(ended - began).count();
     };
@@ -4644,7 +4425,8 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     // The picture after all of it: the triangle the commands draw, and a frame path that never stopped the
     // device while the storage was replaced under it.
     const auto pixel = host.waitForPixel(
-        kWidth / 2, kHeight / 2,
+        kWidth / 2,
+        kHeight / 2,
         [](const std::array<std::uint8_t, 3>& value) { return isColourByte(value[1], 0.6); },
         std::chrono::milliseconds{ 500 });
     EXPECT_TRUE(isColourByte(pixel[1], 0.6)) << "the 2000-call pass still lands in the window";
@@ -4654,7 +4436,7 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     EXPECT_TRUE(host.alive());
 }
 
-#endif  // !defined(_WIN32)
+#endif // !defined(_WIN32)
 
 TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTarget)
 {
@@ -4662,15 +4444,13 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     // surface plus a swapchain and the platform allows one live swapchain per window; the DEVICE is the thing that
     // is shared. So: the same window asked for twice is the "occupied" episode, said once; a different window gets
     // its own target object - and the first window is answered by the aggregate itself (RenderBackend).
-    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend>               backend(new VsgBackend());
     std::vector<vn::graphics::RenderDiagnostic> reported;
-    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
-        reported.push_back(diagnostic);
-    });
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
     // The device's own window (no handle): the device answers for it itself, so a host that drives one window
     // directly has one object to hold.
-    vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
+    vn::graphics::SurfaceTargetResult              why = vn::graphics::SurfaceTargetResult::Ok;
     vn::raw_ptr<vn::graphics::WindowPresentTarget> own = backend->createSurfaceTarget(nullptr, &why);
     ASSERT_NE(own, nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
@@ -4686,22 +4466,20 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     EXPECT_EQ(reported.front().severity, vn::graphics::DiagnosticSeverity::Warning);
 
     EXPECT_EQ(backend->createSurfaceTarget(nullptr, &why), nullptr);
-    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
-        << "one report per episode, however often the same ask comes";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U) << "one report per episode, however often the same ask comes";
 
     // The device comes up on the one window it serves. (Done HERE, before the second window is asked for: every
     // window a device knows is brought up by initialize(), and `second` below is a value the test can name but the
     // platform cannot adopt as a window - while a target asked for on a LIVE device never needs to be adopted at
     // all, which is the fact this case tests.)
-    if (deviceCaseAvailable())
-    {
+    if (deviceCaseAvailable()) {
         ASSERT_TRUE(backend->initialize());
         EXPECT_EQ(backend->deviceWaits(), 0U) << "serving a window is not a device stop";
     }
 
     // A DIFFERENT window: served, through its own target object (the same device, one more surface and swapchain).
-    int  second = 0;
-    vn::raw_ptr<vn::graphics::WindowPresentTarget> other = backend->createSurfaceTarget(&second, &why);
+    int                                            second = 0;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> other  = backend->createSurfaceTarget(&second, &why);
     ASSERT_NE(other, nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
     EXPECT_NE(other, own) << "and it is not the first window's target";
@@ -4710,15 +4488,13 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     EXPECT_NE(static_cast<const void*>(other), static_cast<const void*>(backend.get()));
     EXPECT_EQ(other->nativeHandle(), nullptr) << "nothing is attached before ITS session comes up";
     EXPECT_EQ(backend->windowCount(), 2U);
-    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
-        << "a second window is not an episode";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U) << "a second window is not an episode";
     EXPECT_EQ(backend->deviceWaits(), 0U) << "handing out a target is not a device stop either";
 }
 
 TEST(VsgBackendTest, ANullTargetRunsTheFrameWithoutAnyWindow)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
@@ -4726,15 +4502,13 @@ TEST(VsgBackendTest, ANullTargetRunsTheFrameWithoutAnyWindow)
     // `.ai/design/graphics-architecture.md` §6): it is the off-screen form. It acquires nothing, presents nothing,
     // brings no window into existence, and reports nothing - and the next frame through a window's target still
     // presents exactly once.
-    vn::intrusive_ptr<vn::vsg::VsgBackend> backend(new vn::vsg::VsgBackend());
+    vn::intrusive_ptr<vn::vsg::VsgBackend>      backend(new vn::vsg::VsgBackend());
     std::vector<vn::graphics::RenderDiagnostic> reported;
-    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
-        reported.push_back(diagnostic);
-    });
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
     // The window is asked for BEFORE the device comes up (the SDK's order), so this case can drive a windowed frame
     // afterwards without depending on the device's own window.
-    vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
+    vn::graphics::SurfaceTargetResult              why    = vn::graphics::SurfaceTargetResult::Ok;
     vn::raw_ptr<vn::graphics::WindowPresentTarget> window = backend->createSurfaceTarget(nullptr, &why);
     ASSERT_NE(window, nullptr);
     ASSERT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
@@ -4761,19 +4535,16 @@ TEST(VsgBackendTest, ANullTargetRunsTheFrameWithoutAnyWindow)
     //    window's does (see core::DeviceClock). Each session learns its in-flight count over its own first frames, so
     //    drive enough of both and read the completed watermark - a session that never reports would keep the device's
     //    minimum pinned where it joined, and this number would stay 0.
-    for (int index = 0; index < 3; ++index)
-    {
+    for (int index = 0; index < 3; ++index) {
         backend->executeFrame(vn::graphics::FrameDescription{});
     }
-    for (int index = 0; index < 4; ++index)
-    {
+    for (int index = 0; index < 4; ++index) {
         backend->executeFrame(vn::graphics::FrameDescription{}, window);
     }
     const vn::graphics::FrameReport evidence = backend->frameReport();
     ASSERT_TRUE(evidence.progress.has_value());
     EXPECT_EQ(backend->framesPresented(), 5U) << "the window's frames present; the off-screen ones never do";
-    EXPECT_GT(evidence.progress->completed, 0U)
-        << "the off-screen session's evidence reached the device clock (the watermark is the minimum over sources)";
+    EXPECT_GT(evidence.progress->completed, 0U) << "the off-screen session's evidence reached the device clock (the watermark is the minimum over sources)";
     EXPECT_LE(evidence.progress->completed, evidence.progress->submitted);
 
     backend->shutdown();
@@ -4781,8 +4552,7 @@ TEST(VsgBackendTest, ANullTargetRunsTheFrameWithoutAnyWindow)
 
 TEST(VsgBackendTest, ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWindow)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
@@ -4794,11 +4564,9 @@ TEST(VsgBackendTest, ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWind
     desc.presentation = vn::graphics::DevicePresentation::None;
     // The plain device, not this file's drive: that one holds a window's target so a case can name it, and this device
     // has no window to hold (its one-argument executeFrame would ask for window 0's target and be answered NoPresentation).
-    vn::intrusive_ptr<vn::vsg::VsgBackend> backend(new vn::vsg::VsgBackend(desc));
+    vn::intrusive_ptr<vn::vsg::VsgBackend>      backend(new vn::vsg::VsgBackend(desc));
     std::vector<vn::graphics::RenderDiagnostic> reported;
-    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
-        reported.push_back(diagnostic);
-    });
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
     // 1. It says so before anything is created, and asking for a window is the silent NoPresentation.
     EXPECT_FALSE(backend->capabilities().presentation) << "a device created to present nothing says so";
@@ -4825,15 +4593,14 @@ TEST(VsgBackendTest, ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWind
     const vn::graphics::FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.progress.has_value()) << "the device's frame clock answers it";
     EXPECT_EQ(report.progress->submitted, 1U) << "the frame really reached the queue";
-    for (int index = 0; index < 2; ++index)
-    {
+    for (int index = 0; index < 2; ++index) {
         backend->executeFrame(vn::graphics::FrameDescription{});
     }
     EXPECT_EQ(backend->framesPresented(), 0U);
 
     backend->shutdown();
     EXPECT_FALSE(backend->initialized());
-    backend->shutdown();  // idempotent, as for any other device
+    backend->shutdown(); // idempotent, as for any other device
     EXPECT_EQ(reported.size(), backend->diagnosticCount());
 }
 
@@ -4844,11 +4611,9 @@ TEST(VsgBackendTest, ADeviceCreatedOnAHandleWithoutOneIsRefusedWithItsReason)
     // and with a sentence the host can act on.
     vn::graphics::DeviceDesc desc;
     desc.presentation = vn::graphics::DevicePresentation::Handle;
-    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
+    vn::intrusive_ptr<VsgBackend>               backend(new VsgBackend(desc));
     std::vector<vn::graphics::RenderDiagnostic> reported;
-    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
-        reported.push_back(diagnostic);
-    });
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
     EXPECT_TRUE(backend->capabilities().presentation) << "it was created TO present";
     EXPECT_FALSE(backend->initialize());
@@ -4862,8 +4627,7 @@ TEST(VsgBackendTest, ADeviceCreatedOnAHandleWithoutOneIsRefusedWithItsReason)
 
 TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
@@ -4871,24 +4635,32 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
     // and this device can only serve the window it handed out: a frame naming another device's target is wiring
     // this backend could not have produced, so nothing is recorded and the reason is said once per episode
     // instead of being drawn into someone else's window.
-    class ForeignTarget : public vn::graphics::WindowPresentTarget
-    {
+    class ForeignTarget : public vn::graphics::WindowPresentTarget {
       public:
-        void setWindowHandle(void*) override {}
-        [[nodiscard]] void* nativeHandle() const override { return nullptr; }
-        void resize(int, int) override {}
-        void present() override { ++presents; }
+        void setWindowHandle(void*) override
+        {}
+
+        [[nodiscard]] void* nativeHandle() const override
+        {
+            return nullptr;
+        }
+
+        void resize(int, int) override
+        {}
+
+        void present() override
+        {
+            ++presents;
+        }
 
         int presents = 0;
     };
 
-    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    vn::intrusive_ptr<VsgBackend>               backend(new VsgBackend());
     std::vector<vn::graphics::RenderDiagnostic> reported;
-    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
-        reported.push_back(diagnostic);
-    });
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
-    vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
+    vn::graphics::SurfaceTargetResult              why = vn::graphics::SurfaceTargetResult::Ok;
     vn::raw_ptr<vn::graphics::WindowPresentTarget> own = backend->createSurfaceTarget(nullptr, &why);
     ASSERT_NE(own, nullptr);
     ASSERT_TRUE(backend->initialize());
@@ -4902,8 +4674,7 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
     EXPECT_EQ(foreign.presents, 0) << "the foreign surface was not presented through";
 
     backend->executeFrame(vn::graphics::FrameDescription{}, &foreign);
-    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
-        << "one report per episode";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U) << "one report per episode";
 
     // Its OWN target is served, and it is the one the frame is presented through.
     const std::uint64_t before = backend->framesPresented();
@@ -4920,8 +4691,7 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
 // （`createDevice`，无头相位与测试走它）和会话（应用走它）。这条用例把"两扇门都答成理由、而且理由说得出上限"钉住。
 TEST(VsgBackendTest, ADeviceCapThatIsReachedIsAReasonAndNotAnException)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
@@ -4931,8 +4701,7 @@ TEST(VsgBackendTest, ADeviceCapThatIsReachedIsAReasonAndNotAnException)
     // 1. The window-less seam: fill this build's slots, then ask for one more.
     std::vector<vn::vsg::DeviceResult> held;
     held.reserve(cap);
-    for (std::uint32_t index = 0; index < cap; ++index)
-    {
+    for (std::uint32_t index = 0; index < cap; ++index) {
         held.push_back(vn::vsg::createDevice());
         ASSERT_TRUE(held.back().ok) << "slot " << index << ": " << as_bytes(held.back().error);
     }
@@ -4951,9 +4720,7 @@ TEST(VsgBackendTest, ADeviceCapThatIsReachedIsAReasonAndNotAnException)
     {
         vn::intrusive_ptr<VsgBackend>               backend(new VsgBackend());
         std::vector<vn::graphics::RenderDiagnostic> reported;
-        backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) {
-            reported.push_back(diagnostic);
-        });
+        backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
         EXPECT_FALSE(backend->initialize()) << "a session cannot come up without a device";
         EXPECT_FALSE(backend->initialized());

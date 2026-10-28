@@ -13,9 +13,21 @@ class ClearCommand : public Command {
     VN_DECLARE_COMMAND(ClearCommand, u8"clear")
 
   public:
-    String group() const override { return u8"控制台"; }
-    String description() const override { return u8"清空控制台"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"控制台";
+    }
+
+    String description() const override
+    {
+        return u8"清空控制台";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

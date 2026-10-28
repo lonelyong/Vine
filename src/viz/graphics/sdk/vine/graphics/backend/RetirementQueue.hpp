@@ -35,8 +35,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /**
  * @brief The park queue (see the file note for what it owns and the two rules that order it).
  */
-class VN_GRAPHICS_API RetirementQueue
-{
+class VN_GRAPHICS_API RetirementQueue {
   public:
     /** @brief What the queue runs when a resource's turn comes. Owns nothing; it is the release act. */
     using ReleaseFn = std::function<void()>;
@@ -121,16 +120,15 @@ class VN_GRAPHICS_API RetirementQueue
 
 
   private:
-    struct Entry
-    {
-        std::uint64_t retire_at{0};  ///< First completed frame at which the object is safe to release.
-        ReleaseFn     release;       ///< What to run then.
+    struct Entry {
+        std::uint64_t retire_at{ 0 }; // First completed frame at which the object is safe to release.
+        ReleaseFn     release;        // What to run then.
     };
 
-    std::uint32_t      slots_{0};  ///< 0 = the session never learned the count: parking is off.
+    std::uint32_t      slots_{ 0 }; // 0 = the session never learned the count: parking is off.
     std::vector<Entry> parked_;
-    std::size_t        released_{0};
-    std::size_t        device_waits_{0};
+    std::size_t        released_{ 0 };
+    std::size_t        device_waits_{ 0 };
 };
 
 VN_GRAPHICSBACKEND_NS_END

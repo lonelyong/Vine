@@ -47,8 +47,15 @@ inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wi
  */
 class ShadingModeCommand : public vn::appfw::Command {
   public:
-    vn::String            group() const override { return u8"显示"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::NeedsView; }
+    vn::String group() const override
+    {
+        return u8"显示";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::NeedsView;
+    }
 
     /// 执行：设目标视图那条链的着色模式（见类注释里的守卫与"改哪条链"）。
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override;
@@ -63,11 +70,21 @@ class SetShadingLitCommand : public ShadingModeCommand {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return vn::String(kShadingModeLitCommand); }
-    vn::String description() const override { return u8"实面：环境光 + 主光 + 补光（默认）"; }
+    vn::String name() const override
+    {
+        return vn::String(kShadingModeLitCommand);
+    }
+
+    vn::String description() const override
+    {
+        return u8"实面：环境光 + 主光 + 补光（默认）";
+    }
 
   protected:
-    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Lit; }
+    vn::graphics::ShadingMode mode() const override
+    {
+        return vn::graphics::ShadingMode::Lit;
+    }
 };
 
 /// 平面：同样的光照，法线取三角面（没有逐顶点法线的数据也看得出形状）。
@@ -75,11 +92,21 @@ class SetShadingFlatCommand : public ShadingModeCommand {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return vn::String(kShadingModeFlatCommand); }
-    vn::String description() const override { return u8"平面：逐面法线（同一个三角形的每个像素一个朝向）"; }
+    vn::String name() const override
+    {
+        return vn::String(kShadingModeFlatCommand);
+    }
+
+    vn::String description() const override
+    {
+        return u8"平面：逐面法线（同一个三角形的每个像素一个朝向）";
+    }
 
   protected:
-    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Flat; }
+    vn::graphics::ShadingMode mode() const override
+    {
+        return vn::graphics::ShadingMode::Flat;
+    }
 };
 
 /// 无光照：只画表面色（材质 / 贴图 / 顶点色），没有任何光照项。
@@ -87,11 +114,21 @@ class SetShadingUnlitCommand : public ShadingModeCommand {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return vn::String(kShadingModeUnlitCommand); }
-    vn::String description() const override { return u8"无光照：只画表面色 —— 分清是形状不对还是光照不对"; }
+    vn::String name() const override
+    {
+        return vn::String(kShadingModeUnlitCommand);
+    }
+
+    vn::String description() const override
+    {
+        return u8"无光照：只画表面色 —— 分清是形状不对还是光照不对";
+    }
 
   protected:
-    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Unlit; }
+    vn::graphics::ShadingMode mode() const override
+    {
+        return vn::graphics::ShadingMode::Unlit;
+    }
 };
 
 /// 法线：把视图空间法线当颜色画（蓝 = 朝着相机）。
@@ -99,11 +136,21 @@ class SetShadingNormalsCommand : public ShadingModeCommand {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return vn::String(kShadingModeNormalsCommand); }
-    vn::String description() const override { return u8"法线：视图空间法线当颜色（看朝向、缺失或内外翻的法线）"; }
+    vn::String name() const override
+    {
+        return vn::String(kShadingModeNormalsCommand);
+    }
+
+    vn::String description() const override
+    {
+        return u8"法线：视图空间法线当颜色（看朝向、缺失或内外翻的法线）";
+    }
 
   protected:
-    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Normals; }
+    vn::graphics::ShadingMode mode() const override
+    {
+        return vn::graphics::ShadingMode::Normals;
+    }
 };
 
 /// 线框：只画三角面的边，用无光照的表面色。
@@ -111,11 +158,21 @@ class SetShadingWireframeCommand : public ShadingModeCommand {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return vn::String(kShadingModeWireframeCommand); }
-    vn::String description() const override { return u8"线框：只画三角面的边（看网格怎么连的）"; }
+    vn::String name() const override
+    {
+        return vn::String(kShadingModeWireframeCommand);
+    }
+
+    vn::String description() const override
+    {
+        return u8"线框：只画三角面的边（看网格怎么连的）";
+    }
 
   protected:
-    vn::graphics::ShadingMode mode() const override { return vn::graphics::ShadingMode::Wireframe; }
+    vn::graphics::ShadingMode mode() const override
+    {
+        return vn::graphics::ShadingMode::Wireframe;
+    }
 };
 
 } // namespace vn::model_viewer

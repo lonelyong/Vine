@@ -186,8 +186,7 @@ void DockingPaneTabbedContainer::saveLayout(QDomNode* parentNode, bool includeGe
     // on an out-of-range index is undefined behaviour.
     const int selectedIndex = m_stackedWidget->currentIndex();
 
-    domElement.setAttribute("selectedTab",
-                            (selectedIndex >= 0 && selectedIndex < m_paneList.count()) ? m_paneList.at(selectedIndex)->id() : QString());
+    domElement.setAttribute("selectedTab", (selectedIndex >= 0 && selectedIndex < m_paneList.count()) ? m_paneList.at(selectedIndex)->id() : QString());
 
     if (includeGeometry) {
         domElement.setAttribute("geometry", (QString)this->saveGeometry().toBase64());

@@ -48,8 +48,7 @@ namespace
 [[maybe_unused]] void busyOnApplicationThread(int milliseconds)
 {
     const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
-    while (std::chrono::steady_clock::now() < until) {
-    }
+    while (std::chrono::steady_clock::now() < until) {}
 }
 
 } // namespace
@@ -64,7 +63,7 @@ vn::async::Task<void> HeadlessBootPlugin::load(PluginLoadContext* context)
         throw std::runtime_error("headless_boot_plugin: load() ran off the application thread");
     }
 
-    ConfigManager* config = app != nullptr ? app->configManager() : nullptr;
+    ConfigManager* config  = app != nullptr ? app->configManager() : nullptr;
     const int      pool_ms = config != nullptr ? config->getInt(u8"plugins.headless_boot.pool_ms", 0) : 0;
 
     // 测试钩子：这一拍里就请求取消（模拟用户按了启动框上的关闭——它就是往这个 token 上写），并且**记下**
@@ -74,8 +73,7 @@ vn::async::Task<void> HeadlessBootPlugin::load(PluginLoadContext* context)
         if (StartupProgress* const progress = StartupProgress::current(); progress != nullptr) {
             progress->requestCancel();
         }
-        config->setBool(u8"plugins.headless_boot.saw_token",
-                        context != nullptr && context->stopToken().stop_requested());
+        config->setBool(u8"plugins.headless_boot.saw_token", context != nullptr && context->stopToken().stop_requested());
 
         // 同一个令牌还必须从这个口看得到：框架把启动 token 当成钩子的**环境**交进来
         // （async::withStopToken()），钩子用 `co_await currentStopToken()` 就地读。没有这条接线时读到的是
@@ -97,7 +95,16 @@ vn::async::Task<void> HeadlessBootPlugin::load(PluginLoadContext* context)
     co_await Plugin::load(context);
 }
 
-VN_DECLARE_PLUGIN(HeadlessBootPlugin, u8"6a1b6d0e-0000-4000-8000-0000000000f1", u8"headless_boot_plugin", u8"Headless boot fixture",
-                  u8"0.1.0", u8"Test fixture the framework loads during the startup phase", u8"Vine", u8"", u8"", u8"", {})
+VN_DECLARE_PLUGIN(HeadlessBootPlugin,
+                  u8"6a1b6d0e-0000-4000-8000-0000000000f1",
+                  u8"headless_boot_plugin",
+                  u8"Headless boot fixture",
+                  u8"0.1.0",
+                  u8"Test fixture the framework loads during the startup phase",
+                  u8"Vine",
+                  u8"",
+                  u8"",
+                  u8"",
+                  {})
 
 VN_APPFW_NS_END

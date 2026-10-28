@@ -23,8 +23,7 @@ class Logger;
  * behind a private implementation. Sinks are shared on copy, so the same sink
  * may be attached to several loggers.
  */
-class VN_LOGGING_API LogSink
-{
+class VN_LOGGING_API LogSink {
   public:
     /**
      * @brief Returns a colored console sink writing to standard error.

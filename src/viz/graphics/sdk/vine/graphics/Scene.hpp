@@ -7,9 +7,9 @@
 
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
+#include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
-#include <vine/String.hpp>
 
 #include "CollectView.hpp"
 #include "Light.hpp"
@@ -220,9 +220,8 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *                   contains a node that declared ViewDependence::ViewAndViewport.
      * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(
-        raw_ptr<const Camera> camera, std::uint32_t layer_mask = kAllLayers,
-        const Viewport* viewport = nullptr) const;
+    std::shared_ptr<const std::vector<RenderCommand>>
+    collectRenderCommands(raw_ptr<const Camera> camera, std::uint32_t layer_mask = kAllLayers, const Viewport* viewport = nullptr) const;
 
     /** @brief Collects the commands for one explicit view (the primary entry point).
      *
@@ -237,8 +236,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * @param layer_mask Layers this picture draws (see Node::setLayers).
      * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(
-        const CollectView& view, std::uint32_t layer_mask = kAllLayers) const;
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const CollectView& view, std::uint32_t layer_mask = kAllLayers) const;
 
     /** @brief Opens the content frame the collected-command memo belongs to (and ages what nothing asked for).
      *
@@ -294,10 +292,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     [[nodiscard]] bool hasRootedRoot() const;
 
-    String name_;
-    bool visible_ = true;
-    float opacity_ = 1.0f;
-    NodePtr root_;
+    String                name_;
+    bool                  visible_ = true;
+    float                 opacity_ = 1.0f;
+    NodePtr               root_;
     std::vector<LightPtr> lights_;
 
     /** @brief Collected-command memo (defined in the .cpp: it holds commands). */
@@ -305,9 +303,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     // Bumped by every scene-level content change, so a memo built before the
     // change is not reused (see invalidateContent).
-    std::uint64_t content_revision_ = 1;
+    std::uint64_t content_revision_   = 1;
     // Token of the content frame currently open, 0 = none (no memoising).
-    std::uint64_t content_frame_ = 0;
+    std::uint64_t content_frame_      = 0;
     // THIS SCENE'S ROOT SUBTREE content epoch when the memo was last validated: a different value means something in
     // this scene's graph changed since (Node::announceContentChange climbs to the root), so every collected list may
     // be stale and the memo is dropped before it is looked up again. Another scene's edits leave it alone. Mutable:
@@ -317,7 +315,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     // when nothing asked for them in the previous frame - so the memo is bounded by the views drawn, not by frames.
     mutable std::unique_ptr<ContentMemo> content_memo_;
     mutable std::uint64_t                content_collect_count_ = 0;
-    mutable std::uint64_t                content_reuse_count_ = 0;
+    mutable std::uint64_t                content_reuse_count_   = 0;
 };
 
 using ScenePtr = intrusive_ptr<Scene>;

@@ -33,8 +33,7 @@ namespace vn::demo
  * （`test_plugin` 的实时渲染演示就是）不必认识任何具体视图类；视图不往窗口上发布任何东西（没有发布槽，见
  * ADR-2026-10-24-command-target.md）。
  */
-class DemoView final : public vn::appfw::gui::DocumentView
-{
+class DemoView final : public vn::appfw::gui::DocumentView {
   public:
     /**
      * @brief 造一份演示视图（连同它自己的渲染面）。
@@ -44,7 +43,7 @@ class DemoView final : public vn::appfw::gui::DocumentView
     explicit DemoView(DemoDocument& document)
       : DocumentView(document, new QWidget())
     {
-        control_ = new vn::appfw::gui::RenderControl();
+        control_     = new vn::appfw::gui::RenderControl();
         auto* layout = new QVBoxLayout(impl<QWidget>());
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(control_->impl<QWidget>());
@@ -52,7 +51,10 @@ class DemoView final : public vn::appfw::gui::DocumentView
 
   public:
     /// @return 本视图自己（连带它自己的渲染控件）：一实例一页。
-    vn::appfw::gui::UIElement* content() override { return this; }
+    vn::appfw::gui::UIElement* content() override
+    {
+        return this;
+    }
 
     /// 上屏：首次造骨架，并把"建会话 + 开内容"安排到**下一拍**（见 activate 的注释）。
     void activate() override;
@@ -63,10 +65,13 @@ class DemoView final : public vn::appfw::gui::DocumentView
     /// @brief 命令该作用于的那块 3D 区：本视图只有一个窗格，就是它自己的渲染控件。
     ///
     /// @return 控件；生命周期与本视图相同。
-    vn::appfw::gui::RenderControl* renderControl() const override { return control_; }
+    vn::appfw::gui::RenderControl* renderControl() const override
+    {
+        return control_;
+    }
 
   private:
-    vn::appfw::gui::RenderControl* control_         = nullptr;
+    vn::appfw::gui::RenderControl* control_ = nullptr;
     std::shared_ptr<DemoScene>     scene_;
     bool                           attach_posted_   = false;
     bool                           content_started_ = false;
@@ -74,8 +79,7 @@ class DemoView final : public vn::appfw::gui::DocumentView
 
 inline void DemoView::activate()
 {
-    if (scene_ == nullptr)
-    {
+    if (scene_ == nullptr) {
         scene_ = std::make_shared<DemoScene>(control_);
         scene_->install();
     }
@@ -86,13 +90,11 @@ inline void DemoView::activate()
     // 那几百毫秒不会以"半成品"的样子露在屏上；真正被挪到池上的是**资源**（十二张面，见 assembleDemoContentLater()）。
     // TODO(生命周期)：这一支捕获 this —— 文档在 attach 途中被关掉时会悬空（视图与它的控件都随文档消失）。
     // 要定的是"谁替这个异步负责"：宿主驱动（宿主拥有视图，天然知道它什么时候死）或让视图/场景共享控件所有权。
-    if (!attach_posted_)
-    {
+    if (!attach_posted_) {
         attach_posted_ = true;
         [](DemoView* self) -> vn::async::DetachedTask {
             const bool attached = co_await self->control_->initAsync();
-            if (attached && !self->content_started_)
-            {
+            if (attached && !self->content_started_) {
                 self->content_started_ = true;
                 // Dev switch: the first frame is rendered (by the attach), so the plan's per-pass record costs are
                 // real - this is the moment "what does this pipeline draw" can be answered with numbers.
@@ -120,8 +122,7 @@ inline void DemoView::deactivate()
 inline vn::appfw::gui::DocumentView* createDemoView(vn::appfw::Document& document)
 {
     auto* demo = dynamic_cast<DemoDocument*>(&document);
-    if (demo == nullptr)
-    {
+    if (demo == nullptr) {
         return nullptr;
     }
     return new DemoView(*demo);

@@ -6,13 +6,13 @@
 #include <span>
 #include <vector>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentPass.hpp>
-#include <vine/vsg/internal/StateCommands.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentPass.hpp>
+#include <vine/vsg/internal/StateCommands.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -49,8 +49,7 @@
 VN_VSG_NS_BEGIN
 
 /** @brief Produces the compiled halves a pass' draws need (see the file note). */
-class ContentHalves
-{
+class ContentHalves {
   public:
     /**
      * @brief Creates the producer.
@@ -79,10 +78,8 @@ class ContentHalves
      * @param retirement Where halves whose key left the tables are parked.
      * @return The entries, valid until the next call - they borrow this producer's own storage.
      */
-    [[nodiscard]] std::span<const ContentPass::Scope::Entry> halvesFor(const core::CompiledPass& pass,
-                                                                       const ContentFacts& facts,
-                                                                       core::FrameTimeline& timeline,
-                                                                       core::RetirementQueue& retirement);
+    [[nodiscard]] std::span<const ContentPass::Scope::Entry>
+    halvesFor(const core::CompiledPass& pass, const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Gets how many compiled halves are alive (a steady pass raises this by nothing). */
     [[nodiscard]] std::size_t halves() const noexcept;

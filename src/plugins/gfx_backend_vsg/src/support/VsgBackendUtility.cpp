@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include <vsg/app/RenderGraph.h>
@@ -19,8 +19,7 @@ VN_VSG_NS_BEGIN
 namespace detail
 {
 
-std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
-                                                const std::vector<GraphOrderEdge>& edges)
+std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count, const std::vector<GraphOrderEdge>& edges)
 {
     std::vector<std::vector<std::size_t>> consumers(node_count);
     std::vector<std::size_t>              indegree(node_count, 0);
@@ -60,8 +59,8 @@ std::vector<std::size_t> stableTopologicalOrder(std::size_t node_count,
 
 bool supportsRequiredVulkanVersion(std::uint32_t api_version) noexcept
 {
-    const std::uint32_t major = VK_API_VERSION_MAJOR(api_version);
-    const std::uint32_t minor = VK_API_VERSION_MINOR(api_version);
+    const std::uint32_t major      = VK_API_VERSION_MAJOR(api_version);
+    const std::uint32_t minor      = VK_API_VERSION_MINOR(api_version);
     const std::uint32_t want_major = VK_API_VERSION_MAJOR(kRequiredVulkanVersion);
     const std::uint32_t want_minor = VK_API_VERSION_MINOR(kRequiredVulkanVersion);
     return major > want_major || (major == want_major && minor >= want_minor);
@@ -87,18 +86,18 @@ const ::vsg::RenderGraph* underlyingGraph(const ::vsg::Node* child) noexcept
 }
 
 void removeGraphChild(::vsg::Group* graph, const ::vsg::ref_ptr<::vsg::Node>& node)
-{    if (graph == nullptr) {
+{
+    if (graph == nullptr) {
         return;
     }
     auto& children = graph->children;
     // Matched THROUGH a profiling wrapper (see underlyingGraph): a profiled session's command graph holds
     // wrappers, and a pass being retired must still be found and detached by the graph it stands for.
-    children.erase(std::remove_if(children.begin(), children.end(),
-                                  [&node](const ::vsg::ref_ptr<::vsg::Node>& child) {
-                                      return child.get() == node.get() ||
-                                             underlyingGraph(child.get()) == node.get();
-                                  }),
-                   children.end());
+    children.erase(
+        std::remove_if(children.begin(),
+                       children.end(),
+                       [&node](const ::vsg::ref_ptr<::vsg::Node>& child) { return child.get() == node.get() || underlyingGraph(child.get()) == node.get(); }),
+        children.end());
 }
 
 std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std::string& source)
@@ -115,14 +114,13 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std:
         while (digit < text.size() && !std::isdigit(static_cast<unsigned char>(text[digit]))) {
             ++digit;
         }
-        return digit < text.size() ? static_cast<std::uint32_t>(std::strtoul(text.c_str() + digit, nullptr, 10))
-                                   : fallback;
+        return digit < text.size() ? static_cast<std::uint32_t>(std::strtoul(text.c_str() + digit, nullptr, 10)) : fallback;
     };
 
     std::vector<std::pair<std::uint32_t, std::uint32_t>> bindings;
     std::size_t                                          pos = 0;
     while ((pos = source.find("layout", pos)) != std::string::npos) {
-        const std::size_t open = source.find('(', pos);
+        const std::size_t open  = source.find('(', pos);
         const std::size_t close = open == std::string::npos ? std::string::npos : source.find(')', open);
         if (close == std::string::npos) {
             break;
@@ -137,12 +135,10 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> declaredBindings(const std:
     return bindings;
 }
 
-
-bool programDeclaresBinding(vn::raw_ptr<const vn::graphics::ShaderProgram> program, std::uint32_t set,
-                           std::uint32_t binding)
+bool programDeclaresBinding(vn::raw_ptr<const vn::graphics::ShaderProgram> program, std::uint32_t set, std::uint32_t binding)
 {
     if (program == nullptr) {
-        return false;   // no program: nothing of its own to declare anything
+        return false; // no program: nothing of its own to declare anything
     }
     for (std::size_t i = 0; i < program->stageCount(); ++i) {
         const auto* stage = program->stage(i);
@@ -161,7 +157,7 @@ bool programDeclaresBinding(vn::raw_ptr<const vn::graphics::ShaderProgram> progr
 bool programImportsDefine(vn::raw_ptr<const vn::graphics::ShaderProgram> program, const std::string& define)
 {
     if (program == nullptr || define.empty()) {
-        return false;   // no program: nothing of its own to ask for
+        return false; // no program: nothing of its own to ask for
     }
     for (std::size_t i = 0; i < program->stageCount(); ++i) {
         const auto* stage = program->stage(i);
@@ -173,7 +169,7 @@ bool programImportsDefine(vn::raw_ptr<const vn::graphics::ShaderProgram> program
         if (pragma == std::string::npos) {
             continue;
         }
-        const std::size_t open = source.find('(', pragma);
+        const std::size_t open  = source.find('(', pragma);
         const std::size_t close = open == std::string::npos ? std::string::npos : source.find(')', open);
         if (open == std::string::npos || close == std::string::npos) {
             continue;
@@ -206,7 +202,7 @@ bool nameVulkanObject(const ::vsg::Device& device, std::uint64_t handle, VkObjec
     }
     const ::vsg::InstanceExtensions* extensions = instance->getExtensions();
     if (extensions == nullptr || extensions->vkSetDebugUtilsObjectNameEXT == nullptr) {
-        return false;  // this instance cannot name objects: nothing to report, nothing to do
+        return false; // this instance cannot name objects: nothing to report, nothing to do
     }
     VkDebugUtilsObjectNameInfoEXT info{};
     info.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;

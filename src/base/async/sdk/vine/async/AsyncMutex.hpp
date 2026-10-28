@@ -26,12 +26,11 @@ VN_ASYNC_NS_BEGIN
  * Never resume a waiter while holding the internal mutex_: the resumed
  * coroutine may immediately lock or unlock this mutex again.
  */
-class AsyncMutex
-{
+class AsyncMutex {
   public:
     AsyncMutex() noexcept = default;
 
-    AsyncMutex(const AsyncMutex&) = delete;
+    AsyncMutex(const AsyncMutex&)            = delete;
     AsyncMutex& operator=(const AsyncMutex&) = delete;
 
     ~AsyncMutex()
@@ -46,18 +45,19 @@ class AsyncMutex
      *
      * @return true if acquired, false if already locked.
      */
-[[nodiscard]]
+    [[nodiscard]]
     bool try_lock() noexcept;
 
     /**
      * @brief Awaiter that acquires the mutex, suspending if it is held.
      */
-    class LockAwaiter
-    {
+    class LockAwaiter {
       public:
-        explicit LockAwaiter(AsyncMutex& mutex) noexcept : mutex_(mutex) {}
+        explicit LockAwaiter(AsyncMutex& mutex) noexcept
+          : mutex_(mutex)
+        {}
 
-        LockAwaiter(const LockAwaiter&) = delete;
+        LockAwaiter(const LockAwaiter&)            = delete;
         LockAwaiter& operator=(const LockAwaiter&) = delete;
 
         ~LockAwaiter() noexcept;
@@ -70,7 +70,8 @@ class AsyncMutex
 
         bool await_suspend(std::coroutine_handle<> h) noexcept;
 
-        void await_resume() const noexcept {}
+        void await_resume() const noexcept
+        {}
 
       private:
         friend class AsyncMutex;
@@ -110,7 +111,7 @@ class AsyncMutex
     std::mutex mutex_{};
 
     /// true while a coroutine owns the mutex; stays true during waiter hand-off.
-    bool locked_{ false };
+    bool         locked_{ false };
     LockAwaiter* head_{ nullptr };
     LockAwaiter* tail_{ nullptr };
 };
@@ -118,12 +119,13 @@ class AsyncMutex
 /**
  * @brief RAII guard that unlocks an AsyncMutex on destruction.
  */
-class AsyncLockGuard
-{
+class AsyncLockGuard {
   public:
     AsyncLockGuard() noexcept = default;
 
-    explicit AsyncLockGuard(AsyncMutex* mutex) noexcept : mutex_(mutex) {}
+    explicit AsyncLockGuard(AsyncMutex* mutex) noexcept
+      : mutex_(mutex)
+    {}
 
     /// Transfers ownership of the held lock; the source guard becomes empty.
     AsyncLockGuard(AsyncLockGuard&& other) noexcept
@@ -132,8 +134,7 @@ class AsyncLockGuard
 
     AsyncLockGuard& operator=(AsyncLockGuard&& other) noexcept
     {
-        if (this != &other)
-        {
+        if (this != &other) {
             unlock();
             mutex_ = std::exchange(other.mutex_, nullptr);
         }
@@ -145,7 +146,7 @@ class AsyncLockGuard
         unlock();
     }
 
-    AsyncLockGuard(const AsyncLockGuard&) = delete;
+    AsyncLockGuard(const AsyncLockGuard&)            = delete;
     AsyncLockGuard& operator=(const AsyncLockGuard&) = delete;
 
     /**
@@ -153,8 +154,7 @@ class AsyncLockGuard
      */
     void unlock() noexcept
     {
-        if (mutex_)
-        {
+        if (mutex_) {
             mutex_->unlock();
             mutex_ = nullptr;
         }
@@ -180,12 +180,14 @@ class AsyncLockGuard
  *
  * Usage: auto guard = co_await lockAsync(mutex);
  */
-class AsyncLockGuardAwaiter
-{
+class AsyncLockGuardAwaiter {
   public:
-    explicit AsyncLockGuardAwaiter(AsyncMutex& mutex) noexcept : mutex_(mutex), lock_(mutex) {}
+    explicit AsyncLockGuardAwaiter(AsyncMutex& mutex) noexcept
+      : mutex_(mutex)
+      , lock_(mutex)
+    {}
 
-    AsyncLockGuardAwaiter(const AsyncLockGuardAwaiter&) = delete;
+    AsyncLockGuardAwaiter(const AsyncLockGuardAwaiter&)            = delete;
     AsyncLockGuardAwaiter& operator=(const AsyncLockGuardAwaiter&) = delete;
 
     [[nodiscard]]
@@ -222,8 +224,7 @@ inline AsyncLockGuardAwaiter lockAsync(AsyncMutex& mutex)
 
 inline bool AsyncMutex::tryAcquireLocked() noexcept
 {
-    if (locked_)
-    {
+    if (locked_) {
         return false;
     }
     locked_ = true;
@@ -243,8 +244,7 @@ inline bool AsyncMutex::LockAwaiter::await_suspend(std::coroutine_handle<> h) no
     // be lost and this coroutine would never wake.
     waiter_ = h;
     std::lock_guard lock(mutex_.mutex_);
-    if (mutex_.tryAcquireLocked())
-    {
+    if (mutex_.tryAcquireLocked()) {
         waiter_ = {};
         return false; // do not suspend
     }
@@ -254,8 +254,7 @@ inline bool AsyncMutex::LockAwaiter::await_suspend(std::coroutine_handle<> h) no
 
 inline AsyncMutex::LockAwaiter::~LockAwaiter() noexcept
 {
-    if (waiter_)
-    {
+    if (waiter_) {
         std::lock_guard lock(mutex_.mutex_);
         mutex_.dequeue(*this);
     }
@@ -267,16 +266,13 @@ inline void AsyncMutex::unlock() noexcept
     {
         std::lock_guard lock(mutex_);
         assert(locked_);
-        if (head_)
-        {
+        if (head_) {
             popped = head_;
             head_  = head_->next_;
-            if (!head_)
-            {
+            if (!head_) {
                 tail_ = nullptr;
             }
-            else
-            {
+            else {
                 // Detach the old head from its successor so a later dequeue of
                 // the successor cannot write through the old head's freed frame.
                 head_->prev_ = nullptr;
@@ -284,15 +280,13 @@ inline void AsyncMutex::unlock() noexcept
             popped->next_ = nullptr;
             popped->prev_ = nullptr;
         }
-        else
-        {
+        else {
             locked_ = false;
         }
     }
-    if (popped)
-    {
-        auto h    = popped->waiter_;
-        popped->waiter_ = {};   // ownership transfers to the waiter
+    if (popped) {
+        auto h          = popped->waiter_;
+        popped->waiter_ = {}; // ownership transfers to the waiter
         h.resume();
     }
 }
@@ -301,12 +295,10 @@ inline void AsyncMutex::enqueue(LockAwaiter& a) noexcept
 {
     a.prev_ = tail_;
     a.next_ = nullptr;
-    if (tail_)
-    {
+    if (tail_) {
         tail_->next_ = &a;
     }
-    else
-    {
+    else {
         head_ = &a;
     }
     tail_ = &a;
@@ -314,25 +306,20 @@ inline void AsyncMutex::enqueue(LockAwaiter& a) noexcept
 
 inline void AsyncMutex::dequeue(LockAwaiter& a) noexcept
 {
-    if (a.prev_)
-    {
+    if (a.prev_) {
         a.prev_->next_ = a.next_;
     }
-    else if (head_ == &a)
-    {
+    else if (head_ == &a) {
         head_ = a.next_;
     }
-    else
-    {
-        return;   // not in the queue
+    else {
+        return; // not in the queue
     }
 
-    if (a.next_)
-    {
+    if (a.next_) {
         a.next_->prev_ = a.prev_;
     }
-    else if (tail_ == &a)
-    {
+    else if (tail_ == &a) {
         tail_ = a.prev_;
     }
 

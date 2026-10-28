@@ -14,8 +14,7 @@ DeviceClock::WindowId DeviceClock::addWindow() noexcept
 
 void DeviceClock::removeWindow(WindowId window) noexcept
 {
-    if (window >= windows_.size())
-    {
+    if (window >= windows_.size()) {
         return;
     }
     windows_[window].live = false;
@@ -24,8 +23,7 @@ void DeviceClock::removeWindow(WindowId window) noexcept
 
 void DeviceClock::setWindowSlots(WindowId window, std::uint32_t slots) noexcept
 {
-    if (window >= windows_.size())
-    {
+    if (window >= windows_.size()) {
         return;
     }
     windows_[window].slots = slots;
@@ -33,13 +31,11 @@ void DeviceClock::setWindowSlots(WindowId window, std::uint32_t slots) noexcept
 
 void DeviceClock::windowCompleted(WindowId window, std::uint64_t frame) noexcept
 {
-    if (window >= windows_.size())
-    {
+    if (window >= windows_.size()) {
         return;
     }
     Window& entry = windows_[window];
-    if (entry.slots == 0)
-    {
+    if (entry.slots == 0) {
         // It does not know how many frames may be in flight, so it cannot say which frame its evidence covers: the
         // report is dropped rather than guessed at (see setWindowSlots).
         return;
@@ -82,10 +78,8 @@ std::uint64_t DeviceClock::completedFrame() const noexcept
 std::uint32_t DeviceClock::widestSlots() const noexcept
 {
     std::uint32_t widest = 0;
-    for (const Window& window : windows_)
-    {
-        if (window.live)
-        {
+    for (const Window& window : windows_) {
+        if (window.live) {
             widest = std::max(widest, window.slots);
         }
     }
@@ -94,8 +88,7 @@ std::uint32_t DeviceClock::widestSlots() const noexcept
 
 std::size_t DeviceClock::windows() const noexcept
 {
-    return static_cast<std::size_t>(std::count_if(windows_.begin(), windows_.end(),
-                                                  [](const Window& window) { return window.live; }));
+    return static_cast<std::size_t>(std::count_if(windows_.begin(), windows_.end(), [](const Window& window) { return window.live; }));
 }
 
 void DeviceClock::updateWatermark() noexcept
@@ -103,16 +96,13 @@ void DeviceClock::updateWatermark() noexcept
     // THE MINIMUM, over the windows that still exist (see the file note for why it is a minimum and not a maximum).
     // With no window at all the last watermark stands: nothing new was submitted, so nothing new is proven or
     // disproven.
-    bool          any = false;
+    bool          any   = false;
     std::uint64_t least = 0;
-    for (const Window& window : windows_)
-    {
-        if (!window.live)
-        {
+    for (const Window& window : windows_) {
+        if (!window.live) {
             continue;
         }
-        if (window.slots == 0)
-        {
+        if (window.slots == 0) {
             // A window that never learned its in-flight count proves NOTHING: its evidence would be a guess, and a
             // guess in this direction destroys an object a submitted command buffer still names.
             return;
@@ -120,8 +110,7 @@ void DeviceClock::updateWatermark() noexcept
         least = any ? std::min(least, window.completed) : window.completed;
         any   = true;
     }
-    if (!any)
-    {
+    if (!any) {
         return;
     }
     completed_ = std::max(completed_, least);

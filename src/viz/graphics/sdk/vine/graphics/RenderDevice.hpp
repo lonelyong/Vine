@@ -13,8 +13,8 @@
 #include "Diagnostics.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
-#include "WindowPresentTarget.hpp"
 #include "ShaderProgram.hpp"
+#include "WindowPresentTarget.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -35,11 +35,11 @@ class RenderTarget;
  */
 enum class ReadbackResult
 {
-    Ok,          ///< The pixels / depths were read.
-    Unsupported, ///< This device cannot read this back: no readback support, or a format / usage it does not decode.
-    NotReady,    ///< There is nothing to read yet: unknown target, no built attachments, no usable size.
-    Invalid,     ///< The request itself was wrong (no target, attachment index out of range).
-    Failed,      ///< The copy was attempted and failed (no usable device, submission error).
+    Ok,          // The pixels / depths were read.
+    Unsupported, // This device cannot read this back: no readback support, or a format / usage it does not decode.
+    NotReady,    // There is nothing to read yet: unknown target, no built attachments, no usable size.
+    Invalid,     // The request itself was wrong (no target, attachment index out of range).
+    Failed,      // The copy was attempted and failed (no usable device, submission error).
 };
 
 /**
@@ -57,13 +57,13 @@ enum class ReadbackResult
  */
 enum class SurfaceTargetResult
 {
-    Ok,                 ///< The target was created.
-    NoPresentation,     ///< This device presents nothing at all: it has no window half (never an error - see
-                        ///< Capabilities::presentation).
-    UnsupportedSurface, ///< This device has a window half but cannot serve THIS surface (a kind it does not
-                        ///< decode, or a window it does not own).
-    WindowOccupied,     ///< The window already has a live target: one window carries one live swapchain,
-                        ///< so the second ask is refused.
+    Ok,                 // The target was created.
+    NoPresentation,     // This device presents nothing at all: it has no window half (never an error - see
+                        // Capabilities::presentation).
+    UnsupportedSurface, // This device has a window half but cannot serve THIS surface (a kind it does not
+                        // decode, or a window it does not own).
+    WindowOccupied,     // The window already has a live target: one window carries one live swapchain,
+                        // so the second ask is refused.
 };
 
 /**
@@ -83,19 +83,18 @@ enum class SurfaceTargetResult
  */
 enum class DevicePresentation
 {
-    None,   ///< The device presents nothing: `capabilities().presentation == false`, and createSurfaceTarget
-            ///< answers NoPresentation without a report.
-    Probe,  ///< The device presents; with no window asked for it brings up one of its own (the default).
-    Handle, ///< The device presents; the host's window is the creation input (see DeviceDesc::native_handle).
+    None,   // The device presents nothing: `capabilities().presentation == false`, and createSurfaceTarget
+            // answers NoPresentation without a report.
+    Probe,  // The device presents; with no window asked for it brings up one of its own (the default).
+    Handle, // The device presents; the host's window is the creation input (see DeviceDesc::native_handle).
 };
 
 /** @brief What a device is created with: how it reaches the display, and the window that is part of what it IS. */
-struct VN_GRAPHICS_API DeviceDesc
-{
-    DevicePresentation presentation{DevicePresentation::Probe}; ///< How this device reaches the display.
+struct VN_GRAPHICS_API DeviceDesc {
+    DevicePresentation presentation{ DevicePresentation::Probe }; // How this device reaches the display.
     /// The host's window handle (HWND / xcb_window_t carried as `void*`) when @ref presentation is Handle; ignored
     /// otherwise. A Handle without a handle is a wiring error, and the device reports it when it is brought up.
-    void* native_handle{nullptr};
+    void* native_handle{ nullptr };
 };
 
 /**
@@ -146,8 +145,7 @@ struct VN_GRAPHICS_API DeviceDesc
  * - RenderBackend is the aggregate a device that also executes frames and presents through one window implements
  *   today (see its own note); a device is reference-counted through that aggregate, which is what a factory returns.
  */
-class VN_GRAPHICS_API RenderDevice
-{
+class VN_GRAPHICS_API RenderDevice {
   public:
     virtual ~RenderDevice() = default;
 
@@ -227,8 +225,7 @@ class VN_GRAPHICS_API RenderDevice
      *         is gone, and a resize or a present afterwards is a no-op that answers the truth), it does not hand the
      *         area a dangling object.
      */
-    [[nodiscard]] virtual raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
-                                                                         SurfaceTargetResult* why = nullptr)
+    [[nodiscard]] virtual raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle, SurfaceTargetResult* why = nullptr)
     {
         (void)native_handle;
         if (why != nullptr) {
@@ -333,8 +330,7 @@ class VN_GRAPHICS_API RenderDevice
      * @return true when the pixels were read; false when the read could not be performed (see @p why and the
      *         diagnostics channel).
      */
-    virtual bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
-                                 std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
+    virtual bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
     {
         (void)target;
         (void)attachment;
@@ -362,8 +358,7 @@ class VN_GRAPHICS_API RenderDevice
      * @return true when the depth values were read; false when the read could not be performed (see @p why and the
      *         diagnostics channel).
      */
-    virtual bool readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths,
-                                ReadbackResult* why = nullptr)
+    virtual bool readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why = nullptr)
     {
         (void)target;
         (void)outDepths;
@@ -494,7 +489,10 @@ class VN_GRAPHICS_API RenderDevice
      *
      * @return The active diagnostic route.
      */
-    [[nodiscard]] Diagnostics& diagnosticsRoute() noexcept { return *route_; }
+    [[nodiscard]] Diagnostics& diagnosticsRoute() noexcept
+    {
+        return *route_;
+    }
 
     /**
      * @brief Reports one diagnostic to the installed sink and counts it.
@@ -513,7 +511,7 @@ class VN_GRAPHICS_API RenderDevice
 
   private:
     /// The route used when no engine handed one over (see setDiagnosticsRoute).
-    Diagnostics  owned_route_;
+    Diagnostics owned_route_;
     /// The route this device's own accessors answer from: its own, always - every report also reaches it, so its
     /// count is the whole truth about what this device said (see setDiagnosticsRoute).
     Diagnostics* route_ = &owned_route_;

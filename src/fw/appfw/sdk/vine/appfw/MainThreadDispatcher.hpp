@@ -35,7 +35,7 @@ VN_APPFW_NS_BEGIN
  */
 class VN_APPFW_API MainThreadDispatcher {
   public:
-    MainThreadDispatcher() = default;
+    MainThreadDispatcher()  = default;
     ~MainThreadDispatcher() = default;
 
     /**
@@ -107,8 +107,7 @@ class VN_APPFW_API MainThreadDispatcher {
      * Returned by resumeOnMainThread(): a command that was resumed on a worker thread (a timer,
      * an IO read) awaits it to reach the application thread again before touching UI.
      */
-    class ResumeOnMainThread
-    {
+    class ResumeOnMainThread {
       public:
         ResumeOnMainThread() noexcept = default;
 
@@ -136,7 +135,8 @@ class VN_APPFW_API MainThreadDispatcher {
             }
         }
 
-        void await_resume() const noexcept {}
+        void await_resume() const noexcept
+        {}
     };
 
     /**
@@ -180,7 +180,7 @@ class VN_APPFW_API MainThreadDispatcher {
      * @param task Coroutine to drive to completion on the calling thread.
      * @return What the coroutine produced.
      */
-    template<typename T>
+    template <typename T>
     static T runToCompletion(vn::async::Task<T> task)
     {
         return vn::async::runToCompletion(std::move(task), [] { deliverQueuedApplicationCalls(); });

@@ -24,17 +24,15 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
-#include <vine/vsg/internal/DrawBlock.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/vsg/internal/DrawBlock.hpp>
 
+using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
-using vn::math::Mat4d;
-using vn::vsg::packDrawBlock;
 using vn::graphics::backend::CompiledCommand;
 using vn::graphics::backend::CompiledFrame;
-using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameCompiler;
 using vn::graphics::backend::FrameFacts;
@@ -42,6 +40,8 @@ using vn::graphics::backend::FrameRecorder;
 using vn::graphics::backend::FrameToken;
 using vn::graphics::backend::Observe;
 using vn::graphics::backend::TargetFacts;
+using vn::math::Mat4d;
+using vn::vsg::packDrawBlock;
 
 namespace
 {
@@ -50,17 +50,15 @@ namespace
 Mat4d nonSymmetric()
 {
     Mat4d matrix;
-    for (int row = 0; row < 4; ++row)
-    {
-        for (int column = 0; column < 4; ++column)
-        {
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
             matrix(row, column) = static_cast<double>(row * 10 + column);
         }
     }
     return matrix;
 }
 
-}  // namespace
+} // namespace
 
 TEST(DrawBlockTest, TheModelMatrixLandsColumnMajorAndTheOpacityInTheParameterSlot)
 {
@@ -72,13 +70,10 @@ TEST(DrawBlockTest, TheModelMatrixLandsColumnMajorAndTheOpacityInTheParameterSlo
     packDrawBlock(command, block);
 
     // (row, column) at `column * 4 + row`: a row-major packing would put 1 where 10 belongs (and vice versa).
-    for (int row = 0; row < 4; ++row)
-    {
-        for (int column = 0; column < 4; ++column)
-        {
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
             const std::size_t index = static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row);
-            EXPECT_FLOAT_EQ(block.model[index], static_cast<float>(row * 10 + column))
-                << "row " << row << ", column " << column;
+            EXPECT_FLOAT_EQ(block.model[index], static_cast<float>(row * 10 + column)) << "row " << row << ", column " << column;
         }
     }
 
@@ -90,8 +85,8 @@ TEST(DrawBlockTest, TheModelMatrixLandsColumnMajorAndTheOpacityInTheParameterSlo
     EXPECT_FLOAT_EQ(block.model[15], 33.0F);
 
     EXPECT_FLOAT_EQ(block.params[0], 0.375F);
-    EXPECT_FLOAT_EQ(block.params[1], 1.0F);  // the point size's default: one pixel, not zero
-    EXPECT_FLOAT_EQ(block.params[2], 0.0F);  // the reserved user slot packs as zero, not as a leftover
+    EXPECT_FLOAT_EQ(block.params[1], 1.0F); // the point size's default: one pixel, not zero
+    EXPECT_FLOAT_EQ(block.params[2], 0.0F); // the reserved user slot packs as zero, not as a leftover
     EXPECT_FLOAT_EQ(block.params[3], 0.0F);
 
     // A resolved point size travels beside the opacity, in the same block: it is data (the vertex stage writes
@@ -123,13 +118,13 @@ TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
     const std::vector<TargetFacts> table{ facts };
 
     Mat4d model;
-    model(0, 3) = 5.0;   // x translation
-    model(1, 3) = -2.0;  // y translation
-    model(2, 3) = 1.5;   // z translation
+    model(0, 3) = 5.0;  // x translation
+    model(1, 3) = -2.0; // y translation
+    model(2, 3) = 1.5;  // z translation
 
     RenderCommand command;
     command.model_matrix = model;
-    command.opacity     = 0.25F;
+    command.opacity      = 0.25F;
     const std::vector<RenderCommand> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });

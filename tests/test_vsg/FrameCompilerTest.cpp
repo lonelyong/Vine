@@ -37,6 +37,7 @@ using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
 using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
+using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::Sampler;
@@ -48,7 +49,6 @@ using vn::graphics::backend::CompiledInput;
 using vn::graphics::backend::CompiledPass;
 using vn::graphics::backend::CompiledShape;
 using vn::graphics::backend::DepthFacts;
-using vn::graphics::Diagnostics;
 using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameCompiler;
@@ -66,13 +66,12 @@ namespace
 {
 
 /// @brief One recorder and one compiler over one arena, with the facts table they are driven with.
-struct Rig
-{
-    FrameArena    arena{ 128 * 1024 };
-    Diagnostics   diagnostics;
-    Observe       observe;
-    FrameRecorder recorder{ arena, diagnostics, observe };
-    FrameCompiler compiler{ arena, diagnostics, observe };
+struct Rig {
+    FrameArena               arena{ 128 * 1024 };
+    Diagnostics              diagnostics;
+    Observe                  observe;
+    FrameRecorder            recorder{ arena, diagnostics, observe };
+    FrameCompiler            compiler{ arena, diagnostics, observe };
     std::vector<TargetFacts> facts;
 
     /// @brief Compiles the frame the recorder just collected.
@@ -85,12 +84,12 @@ struct Rig
     void addTarget(const void* identity, int width, int height, bool built, int colors = 1)
     {
         TargetFacts entry;
-        entry.target         = identity;
-        entry.wanted.width   = width;
-        entry.wanted.height  = height;
-        entry.wanted.shape   = colorShape(colors);
-        entry.current.desc   = entry.wanted;
-        entry.current.built  = built;
+        entry.target        = identity;
+        entry.wanted.width  = width;
+        entry.wanted.height = height;
+        entry.wanted.shape  = colorShape(colors);
+        entry.current.desc  = entry.wanted;
+        entry.current.built = built;
         facts.push_back(entry);
     }
 
@@ -98,8 +97,7 @@ struct Rig
     static TargetShape colorShape(int colors = 1)
     {
         TargetShape shape;
-        for (int index = 0; index < colors; ++index)
-        {
+        for (int index = 0; index < colors; ++index) {
             shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
         }
         return shape;
@@ -112,7 +110,7 @@ std::vector<RenderCommand> oneCommand()
     return std::vector<RenderCommand>{ RenderCommand{} };
 }
 
-}  // namespace
+} // namespace
 
 TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState)
 {
@@ -121,22 +119,21 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     // triangle lies exactly at the reverse-Z far plane (z = 0.0, where a window's depth is cleared to), so any
     // depth test rejects the whole overlay. Taking the pass' TestAndWrite would make an overlay vanish on a
     // window and look fine on a colour-only target, which is the kind of difference no counter can report.
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> source(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
     r.addTarget(source.get(), 64, 64, true);
     r.addTarget(destination.get(), 64, 64, true);
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<RenderCommand>               commands = oneCommand();
     vn::intrusive_ptr<vn::graphics::ShaderProgram> screen_program(new vn::graphics::ShaderProgram());
 
     ASSERT_TRUE(r.recorder.beginFrame(FrameToken{ 1 }));
     ASSERT_TRUE(r.recorder.beginPass(1));
     ASSERT_TRUE(r.recorder.setRenderTarget(destination.get()));
     ASSERT_TRUE(r.recorder.setPassInputs(std::vector<RenderTarget*>{ source.get() }));
-    ASSERT_TRUE(r.recorder.setViewport(4, 8, 16, 32));  // the picture-in-picture rectangle
-    ASSERT_TRUE(r.recorder.drawScreenProgram(source.get(), screen_program.get(), nullptr))
-        << "the full-screen call must be collected";
+    ASSERT_TRUE(r.recorder.setViewport(4, 8, 16, 32)); // the picture-in-picture rectangle
+    ASSERT_TRUE(r.recorder.drawScreenProgram(source.get(), screen_program.get(), nullptr)) << "the full-screen call must be collected";
     ASSERT_TRUE(r.recorder.render(commands, nullptr)) << "a content draw of the same pass: both kinds coexist";
     ASSERT_TRUE(r.recorder.endPass());
 
@@ -156,7 +153,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     ASSERT_EQ(frame.passes.size(), 2u);
     EXPECT_EQ(r.recorder.description().passes[0].draws.size(), 2u)
         << "the recorder keeps both call kinds (a dropped one would make the plan look deliberately small)";
-    const CompiledPass& consumer = frame.passes[0];  // the order it was handed: the engine sorts before this
+    const CompiledPass& consumer = frame.passes[0]; // the order it was handed: the engine sorts before this
     ASSERT_EQ(consumer.draws.size(), 2u);
 
     const CompiledDraw& screen = consumer.draws[0];
@@ -178,21 +175,20 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     const CompiledDraw& content = consumer.draws[1];
     EXPECT_EQ(content.kind, DrawKind::Content);
     ASSERT_EQ(content.commands.size(), 1u) << "the content call of the same pass is unchanged";
-    EXPECT_EQ(content.commands[0].dynamic.depth, consumer.state.depth)
-        << "and a content command still takes the pass' depth policy";
+    EXPECT_EQ(content.commands[0].dynamic.depth, consumer.state.depth) << "and a content command still takes the pass' depth policy";
 }
 
 TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
-{    // The plan carries the pass' declared inputs because a binding layer needs two things the description
+{ // The plan carries the pass' declared inputs because a binding layer needs two things the description
     // cannot keep for it: WHICH target each input reads, and how many colour textures it offers (the count a
     // sampled-input set binds). Both are answered here from the same facts the pass' own target came from.
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> source(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
     r.addTarget(source.get(), 64, 64, true, /*colors=*/2);
     r.addTarget(destination.get(), 64, 64, true);
 
-    std::vector<RenderTarget*> inputs{ source.get(), nullptr };  // the second one nobody produced this frame
+    std::vector<RenderTarget*>       inputs{ source.get(), nullptr }; // the second one nobody produced this frame
     const std::vector<RenderCommand> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -210,7 +206,7 @@ TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
 
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.passes.size(), 2u);
-    EXPECT_EQ(frame.passes[0].pass, 1u);  // the order it was handed, unchanged
+    EXPECT_EQ(frame.passes[0].pass, 1u); // the order it was handed, unchanged
     const CompiledPass& consumer = frame.passes[0];
     ASSERT_EQ(consumer.inputs.size(), 2u);
     EXPECT_EQ(consumer.inputs[0].target, static_cast<const void*>(source.get()));
@@ -228,13 +224,12 @@ TEST(FrameCompilerTest, AnImportedTextureInputIsAFirstClassInputWithNoProducerEd
     // An imported texture has no pass that writes it, so it must not create a dependency edge - and it still
     // offers one colour image to bind, exactly like a produced attachment. The plan is the one place both
     // kinds become the same shape (see .ai/design/graphics-rendering.md).
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
     r.addTarget(destination.get(), 64, 64, true);
-    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-    std::vector<vn::graphics::ImageSource> inputs{ vn::graphics::ImageSource::imported(texture.get()) };
-    const std::vector<RenderCommand> commands = oneCommand();
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    std::vector<vn::graphics::ImageSource>           inputs{ vn::graphics::ImageSource::imported(texture.get()) };
+    const std::vector<RenderCommand>                 commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -262,11 +257,10 @@ TEST(FrameCompilerTest, AnImportedTextureInputCarriesItsDeclaredSampler)
 {
     // The state belongs to the INPUT, not to the texture: one texture may appear twice with different states,
     // and the plan has to keep them apart so the binding layer builds two samplers (see MaterialImages).
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
     r.addTarget(destination.get(), 64, 64, true);
-    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(
-        new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
+    const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
 
     Sampler point_clamp;
     point_clamp.min_filter  = Sampler::Filter::Nearest;
@@ -294,20 +288,19 @@ TEST(FrameCompilerTest, AnImportedTextureInputCarriesItsDeclaredSampler)
     ASSERT_EQ(frame.passes[0].inputs.size(), 2u);
     ASSERT_TRUE(frame.passes[0].inputs[0].sampler.has_value());
     EXPECT_EQ(*frame.passes[0].inputs[0].sampler, point_clamp);
-    EXPECT_FALSE(frame.passes[0].inputs[1].sampler.has_value())
-        << "the second declaration states nothing and must not inherit the first one's state";
+    EXPECT_FALSE(frame.passes[0].inputs[1].sampler.has_value()) << "the second declaration states nothing and must not inherit the first one's state";
     EXPECT_EQ(frame.passes[0].inputs[0].texture, static_cast<const void*>(texture.get()));
     EXPECT_EQ(frame.passes[0].inputs[1].texture, static_cast<const void*>(texture.get()));
 }
 
 TEST(FrameCompilerTest, AnInputTheFactsCannotAnswerIsReportedAndOffersNothing)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
-    vn::intrusive_ptr<RenderTarget> stranger(new RenderTarget());  // never handed to the backend's facts
+    vn::intrusive_ptr<RenderTarget> stranger(new RenderTarget()); // never handed to the backend's facts
     r.addTarget(destination.get(), 64, 64, true);
 
-    std::vector<RenderTarget*> inputs{ stranger.get() };
+    std::vector<RenderTarget*>       inputs{ stranger.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -337,32 +330,34 @@ TEST(FrameCompilerTest, ThePlanResolvesAShadowFromWhatTheTargetStates)
     // plain depth (a G-buffer's), a map nobody published a matrix for, a map whose depth is not sampleable, and a
     // map that is usable - declared LAST, so a resolution that stopped at the first sampleable depth would pick the
     // wrong one.
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> gbuffer(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> map_no_matrix(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> map_flat(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> map_ok(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> colour(new RenderTarget());
-    const void* const                 light = reinterpret_cast<const void*>(0x15U);
+    const void* const               light = reinterpret_cast<const void*>(0x15U);
     r.addTarget(colour.get(), 64, 64, true);
 
     const auto depth_target = [&r, light](const void* identity, bool promotion, bool is_map, bool with_matrix) {
         TargetFacts entry;
-        entry.target        = identity;
-        entry.wanted.width  = 64;
-        entry.wanted.height = 64;
-        entry.wanted.shape.depth_format = RenderTarget::DepthFormat::D32;
-        entry.current.desc  = entry.wanted;
-        entry.current.built = true;
-        entry.depth.has_depth = true;
-        entry.depth.promotion = promotion;
-        entry.shadow.light = is_map ? light : nullptr;
+        entry.target                     = identity;
+        entry.wanted.width               = 64;
+        entry.wanted.height              = 64;
+        entry.wanted.shape.depth_format  = RenderTarget::DepthFormat::D32;
+        entry.current.desc               = entry.wanted;
+        entry.current.built              = true;
+        entry.depth.has_depth            = true;
+        entry.depth.promotion            = promotion;
+        entry.shadow.light               = is_map ? light : nullptr;
         entry.shadow.has_view_projection = with_matrix;
         entry.shadow.view_projection     = with_matrix ? vn::math::Mat4d{} : vn::math::Mat4d{};
         r.facts.push_back(entry);
     };
-    depth_target(gbuffer.get(), /*promotion*/ true, /*is_map*/ false,
-                 /*with_matrix*/ true);  // a depth WITH a matrix that nobody claims as a shadow
+    depth_target(gbuffer.get(),
+                 /*promotion*/ true,
+                 /*is_map*/ false,
+                 /*with_matrix*/ true); // a depth WITH a matrix that nobody claims as a shadow
     depth_target(map_no_matrix.get(), /*promotion*/ true, /*is_map*/ true, /*with_matrix*/ false);
     depth_target(map_flat.get(), /*promotion*/ false, /*is_map*/ true, /*with_matrix*/ true);
     depth_target(map_ok.get(), /*promotion*/ true, /*is_map*/ true, /*with_matrix*/ true);
@@ -406,7 +401,7 @@ TEST(FrameCompilerTest, ThePlanResolvesAShadowFromWhatTheTargetStates)
 
 TEST(FrameCompilerTest, AViewportNobodyAnnouncedBecomesTheWholeTarget)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 640, 360, true);
 
@@ -415,9 +410,9 @@ TEST(FrameCompilerTest, AViewportNobodyAnnouncedBecomesTheWholeTarget)
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
-    r.recorder.render(commands, nullptr);  // nothing announced
+    r.recorder.render(commands, nullptr); // nothing announced
     r.recorder.setViewport(10, 20, 30, 40);
-    r.recorder.render(commands, nullptr);  // this one announced a rectangle
+    r.recorder.render(commands, nullptr); // this one announced a rectangle
     r.recorder.endPass();
     r.recorder.endFrame();
 
@@ -428,22 +423,21 @@ TEST(FrameCompilerTest, AViewportNobodyAnnouncedBecomesTheWholeTarget)
     EXPECT_EQ(frame.passes[0].viewport.height, 360);
 
     ASSERT_EQ(frame.passes[0].draws.size(), 2u);
-    EXPECT_EQ(frame.passes[0].draws[0].viewport.width, 640);  // resolved, not left at zero
+    EXPECT_EQ(frame.passes[0].draws[0].viewport.width, 640); // resolved, not left at zero
     EXPECT_EQ(frame.passes[0].draws[1].viewport.x, 10);
     EXPECT_EQ(frame.passes[0].draws[1].viewport.width, 30);
 }
 
 TEST(FrameCompilerTest, TheFirstWriterOfAFreshTargetBootstrapsAndTheSecondDoesNot)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
-    r.addTarget(target.get(), 64, 64, /*built=*/false);  // freshly laid out: nothing to load
+    r.addTarget(target.get(), 64, 64, /*built=*/false); // freshly laid out: nothing to load
 
     const std::vector<RenderCommand> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
-    for (const std::uint32_t id : { 1u, 2u })
-    {
+    for (const std::uint32_t id : { 1u, 2u }) {
         r.recorder.beginPass(id);
         r.recorder.setRenderTarget(target.get());
         r.recorder.render(commands, nullptr);
@@ -454,7 +448,7 @@ TEST(FrameCompilerTest, TheFirstWriterOfAFreshTargetBootstrapsAndTheSecondDoesNo
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.passes.size(), 2u);
     EXPECT_TRUE(frame.passes[0].bootstrap);
-    EXPECT_FALSE(frame.passes[1].bootstrap);  // it loads what the first one wrote
+    EXPECT_FALSE(frame.passes[1].bootstrap); // it loads what the first one wrote
 
     ASSERT_EQ(frame.targets.size(), 1u);
     EXPECT_EQ(frame.targets[0].decision.action, TargetAction::Repair);
@@ -463,7 +457,7 @@ TEST(FrameCompilerTest, TheFirstWriterOfAFreshTargetBootstrapsAndTheSecondDoesNo
 
 TEST(FrameCompilerTest, ASteadyTargetNeedsNoBootstrap)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, /*built=*/true);
 
@@ -472,7 +466,7 @@ TEST(FrameCompilerTest, ASteadyTargetNeedsNoBootstrap)
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
-    r.recorder.setClearPolicy(ClearValues{});  // announced, but nothing is being rebuilt
+    r.recorder.setClearPolicy(ClearValues{}); // announced, but nothing is being rebuilt
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();
     r.recorder.endFrame();
@@ -485,7 +479,7 @@ TEST(FrameCompilerTest, ASteadyTargetNeedsNoBootstrap)
 
 TEST(FrameCompilerTest, TheTargetTableSaysWhatEachTargetNeeds)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> steady(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> resized(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> reshaped(new RenderTarget());
@@ -503,8 +497,7 @@ TEST(FrameCompilerTest, TheTargetTableSaysWhatEachTargetNeeds)
 
     const std::vector<RenderCommand> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
-    for (const auto& target : { steady, resized, reshaped })
-    {
+    for (const auto& target : { steady, resized, reshaped }) {
         r.recorder.beginPass(1);
         r.recorder.setRenderTarget(target.get());
         r.recorder.render(commands, nullptr);
@@ -521,9 +514,9 @@ TEST(FrameCompilerTest, TheTargetTableSaysWhatEachTargetNeeds)
 
 TEST(FrameCompilerTest, APassIntoATargetWhoseExtentIsNotUsableIsNotCompiledAndNotABug)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
-    r.addTarget(target.get(), 0, 0, /*built=*/false);  // laid out at 0x0: nothing may be drawn into it yet
+    r.addTarget(target.get(), 0, 0, /*built=*/false); // laid out at 0x0: nothing may be drawn into it yet
 
     const std::vector<RenderCommand> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -537,12 +530,12 @@ TEST(FrameCompilerTest, APassIntoATargetWhoseExtentIsNotUsableIsNotCompiledAndNo
     EXPECT_TRUE(frame.passes.empty());
     ASSERT_EQ(frame.targets.size(), 1u);
     EXPECT_EQ(frame.targets[0].decision.reason, RepairReason::SizeUnknown);
-    EXPECT_TRUE(r.diagnostics.clean());  // a target with no size yet is a state, not a mistake
+    EXPECT_TRUE(r.diagnostics.clean()); // a target with no size yet is a state, not a mistake
 }
 
 TEST(FrameCompilerTest, APassDrawingIntoAnUnknownTargetIsNotCompiledAndIsReported)
 {
-    Rig r;  // no facts at all: the backend has never heard of this target
+    Rig r; // no facts at all: the backend has never heard of this target
 
     const std::vector<RenderCommand> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -559,13 +552,13 @@ TEST(FrameCompilerTest, APassDrawingIntoAnUnknownTargetIsNotCompiledAndIsReporte
 
 TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
     // A command that authored its own depth state (a StateNode set it) and one that did not.
     RenderCommand authored;
-    authored.authored_state.depth = vn::graphics::DepthState{};  // test + write, as a StateNode would state it
+    authored.authored_state.depth = vn::graphics::DepthState{}; // test + write, as a StateNode would state it
     RenderCommand inherited;                                    // nothing authored: the pass' policy applies
 
     const std::vector<RenderCommand> commands{ authored, inherited };
@@ -573,7 +566,7 @@ TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
-    r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthMode::Disabled });  // HUD pass
+    r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthMode::Disabled }); // HUD pass
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();
     r.recorder.endFrame();
@@ -591,7 +584,7 @@ TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
 
 TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
@@ -599,7 +592,7 @@ TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)
     // left the default. The resolve copies what the content said and leaves the
     // reverse-Z inversion to the Vulkan boundary.
     RenderCommand authored;
-    authored.authored_state.depth         = vn::graphics::DepthState{};
+    authored.authored_state.depth          = vn::graphics::DepthState{};
     authored.authored_state.depth->compare = vn::graphics::CompareOp::LessEqual;
     RenderCommand inherited;
 
@@ -617,8 +610,7 @@ TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)
     ASSERT_EQ(frame.passes[0].draws.size(), 1u);
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 2u);
     EXPECT_EQ(frame.passes[0].draws[0].commands[0].dynamic.compare, vn::graphics::CompareOp::LessEqual);
-    EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.compare, vn::graphics::CompareOp::Less)
-        << "the untouched default is carried as-is";
+    EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.compare, vn::graphics::CompareOp::Less) << "the untouched default is carried as-is";
 }
 
 TEST(FrameCompilerTest, AnOpaqueCommandDoesNotBlendAndATranslucentOneDoes)
@@ -627,7 +619,7 @@ TEST(FrameCompilerTest, AnOpaqueCommandDoesNotBlendAndATranslucentOneDoes)
     // resolved state documents "default: disabled"); a command whose OPACITY is below 1 is translucent, because
     // opacity is the engine's transparency channel - and the content must not also have to state a blend for it
     // (Node::setOpacity is enough). A StateNode that authored the blend turns it on whatever the opacity is.
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
@@ -651,19 +643,15 @@ TEST(FrameCompilerTest, AnOpaqueCommandDoesNotBlendAndATranslucentOneDoes)
     ASSERT_EQ(frame.passes[0].draws.size(), 1u);
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 3u);
 
-    EXPECT_FALSE(frame.passes[0].draws[0].commands[0].dynamic.blend.enabled)
-        << "an opaque command that authored no blend does not blend";
-    EXPECT_TRUE(frame.passes[0].draws[0].commands[1].dynamic.blend.enabled)
-        << "opacity below 1 is the engine's transparency channel and turns blending on";
-    EXPECT_TRUE(frame.passes[0].draws[0].commands[2].dynamic.blend.enabled)
-        << "a StateNode's blend is carried as authored";
-    EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.blend.src, BlendFactor::SrcAlpha)
-        << "and the translucent path keeps the standard pair";
+    EXPECT_FALSE(frame.passes[0].draws[0].commands[0].dynamic.blend.enabled) << "an opaque command that authored no blend does not blend";
+    EXPECT_TRUE(frame.passes[0].draws[0].commands[1].dynamic.blend.enabled) << "opacity below 1 is the engine's transparency channel and turns blending on";
+    EXPECT_TRUE(frame.passes[0].draws[0].commands[2].dynamic.blend.enabled) << "a StateNode's blend is carried as authored";
+    EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.blend.src, BlendFactor::SrcAlpha) << "and the translucent path keeps the standard pair";
 }
 
 TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
@@ -673,7 +661,7 @@ TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
 
     RenderCommand with_own;
     with_own.program = own;
-    RenderCommand without;
+    RenderCommand                    without;
     const std::vector<RenderCommand> commands{ with_own, without };
 
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -693,13 +681,13 @@ TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
 
 TEST(FrameCompilerTest, TheCompilerKeepsTheOrderTheEngineAnnounced)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> produced(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> composed(new RenderTarget());
     r.addTarget(produced.get(), 64, 64, true);
     r.addTarget(composed.get(), 64, 64, true);
 
-    std::vector<RenderTarget*> inputs{ produced.get() };
+    std::vector<RenderTarget*>       inputs{ produced.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -724,7 +712,7 @@ TEST(FrameCompilerTest, TheCompilerKeepsTheOrderTheEngineAnnounced)
 
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.passes.size(), 2u);
-    EXPECT_EQ(frame.passes[0].pass, 7u);  // the order it was handed, unchanged
+    EXPECT_EQ(frame.passes[0].pass, 7u); // the order it was handed, unchanged
     EXPECT_EQ(frame.passes[1].pass, 9u);
     EXPECT_EQ(frame.passes[0].schedule_index, 0u);
     EXPECT_EQ(frame.passes[1].schedule_index, 1u);
@@ -732,7 +720,7 @@ TEST(FrameCompilerTest, TheCompilerKeepsTheOrderTheEngineAnnounced)
 
 TEST(FrameCompilerTest, TheCompilerDoesNotReorderOrDropWhatTheEngineHandedOver)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> left(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> right(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> plain(new RenderTarget());
@@ -740,25 +728,25 @@ TEST(FrameCompilerTest, TheCompilerDoesNotReorderOrDropWhatTheEngineHandedOver)
     r.addTarget(right.get(), 64, 64, true);
     r.addTarget(plain.get(), 64, 64, true);
 
-    std::vector<RenderTarget*> reads_right{ right.get() };
-    std::vector<RenderTarget*> reads_left{ left.get() };
+    std::vector<RenderTarget*>       reads_right{ right.get() };
+    std::vector<RenderTarget*>       reads_left{ left.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
 
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(left.get());
-    r.recorder.setPassInputs(reads_right);  // pass 1 reads what pass 2 writes
+    r.recorder.setPassInputs(reads_right); // pass 1 reads what pass 2 writes
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();
 
     r.recorder.beginPass(2);
     r.recorder.setRenderTarget(right.get());
-    r.recorder.setPassInputs(reads_left);  // and pass 2 reads what pass 1 writes
+    r.recorder.setPassInputs(reads_left); // and pass 2 reads what pass 1 writes
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();
 
-    r.recorder.beginPass(3);  // nothing to do with the cycle
+    r.recorder.beginPass(3); // nothing to do with the cycle
     r.recorder.setRenderTarget(plain.get());
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();
@@ -783,12 +771,12 @@ TEST(FrameCompilerTest, TheCompilerDoesNotReorderOrDropWhatTheEngineHandedOver)
 
 TEST(FrameCompilerTest, APreservedDepthIsCarriedToThePassThatMustNotClearIt)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
-    r.facts[0].depth.has_depth               = true;
-    r.facts[0].depth.promotion                = true;   // the host wanted a sampleable depth
-    r.facts[0].depth.any_pass_preserves_depth = true;   // ...but a later pass reads what this one writes
+    r.facts[0].depth.has_depth                = true;
+    r.facts[0].depth.promotion                = true; // the host wanted a sampleable depth
+    r.facts[0].depth.any_pass_preserves_depth = true; // ...but a later pass reads what this one writes
 
     const std::vector<RenderCommand> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -801,22 +789,22 @@ TEST(FrameCompilerTest, APreservedDepthIsCarriedToThePassThatMustNotClearIt)
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.targets.size(), 1u);
     EXPECT_TRUE(frame.targets[0].depth.preserve);
-    EXPECT_FALSE(frame.targets[0].depth.sampleable);  // promotion revoked by the preserving pass
+    EXPECT_FALSE(frame.targets[0].depth.sampleable); // promotion revoked by the preserving pass
     ASSERT_EQ(frame.passes.size(), 1u);
-    EXPECT_TRUE(frame.passes[0].depth_preserved);     // the clear rules read this
+    EXPECT_TRUE(frame.passes[0].depth_preserved); // the clear rules read this
 }
 
 TEST(FrameCompilerTest, ThePlanCarriesWhatAPipelineIdentityNeedsFromThePass)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
     // A two-colour-attachment target whose depth the host wants to sample.
     r.facts[0].wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA16F);
-    r.facts[0].current.desc = r.facts[0].wanted;
-    r.facts[0].depth.has_depth  = true;
-    r.facts[0].depth.promotion  = true;
+    r.facts[0].current.desc    = r.facts[0].wanted;
+    r.facts[0].depth.has_depth = true;
+    r.facts[0].depth.promotion = true;
 
     const std::vector<RenderCommand> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -836,8 +824,7 @@ TEST(FrameCompilerTest, ThePlanCarriesWhatAPipelineIdentityNeedsFromThePass)
 
     // ...and the SAME fact revokes it when a pass preserves the depth (the M3c rule, seen from the plan).
     r.facts[0].depth.any_pass_preserves_depth = true;
-    const CompiledFrame& again =
-        r.compiler.compile(r.recorder.description(), FrameFacts{ r.facts });
+    const CompiledFrame& again                = r.compiler.compile(r.recorder.description(), FrameFacts{ r.facts });
     ASSERT_EQ(again.passes.size(), 1u);
     EXPECT_TRUE(again.passes[0].depth_preserved);
     EXPECT_FALSE(again.passes[0].depth_sampleable);
@@ -845,11 +832,11 @@ TEST(FrameCompilerTest, ThePlanCarriesWhatAPipelineIdentityNeedsFromThePass)
 
 TEST(FrameCompilerTest, ThePlanCarriesTheShapeItsFactsStated)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
     r.facts[0].wanted.shape.depth_format         = RenderTarget::DepthFormat::D32F;
-    r.facts[0].wanted.shape.device_color_formats = { 44U };  // the layer compares these, never interprets them
+    r.facts[0].wanted.shape.device_color_formats = { 44U }; // the layer compares these, never interprets them
     r.facts[0].wanted.shape.device_depth_format  = 37U;
     r.facts[0].current.desc                      = r.facts[0].wanted;
 
@@ -889,7 +876,7 @@ TEST(FrameCompilerTest, ThePlanCarriesTheShapeItsFactsStated)
 
 TEST(FrameCompilerTest, AStatedShapeIsComparedOnlyWhereItStatesSomething)
 {
-    TargetShape actual;  // what a target really reports: the engine's spellings and the device's
+    TargetShape actual; // what a target really reports: the engine's spellings and the device's
     actual.color_formats        = { RenderTarget::ColorFormat::RGBA8 };
     actual.depth_format         = RenderTarget::DepthFormat::D32F;
     actual.device_color_formats = { 44U, 45U };
@@ -950,13 +937,13 @@ TEST(FrameCompilerTest, AStatedShapeIsComparedOnlyWhereItStatesSomething)
 
 TEST(FrameCompilerTest, TheFrameCarriesWhatTheRecorderSnapshottedWithoutReworkingIt)
 {
-    Rig r;
+    Rig                             r;
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 32, 32, true);
 
-    auto                       sun      = vn::graphics::Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    auto                                    sun = vn::graphics::Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
     std::vector<const vn::graphics::Light*> lights{ sun.get() };
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<RenderCommand>        commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);

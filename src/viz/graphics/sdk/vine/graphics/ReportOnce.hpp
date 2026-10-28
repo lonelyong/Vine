@@ -18,8 +18,7 @@
 VN_GRAPHICS_NS_BEGIN
 
 /** @brief "Report this condition once, until something says the episode ended". */
-class VN_GRAPHICS_API ReportOnce
-{
+class VN_GRAPHICS_API ReportOnce {
   public:
     /** @brief Gets whether this episode still needs reporting, and records that it was.
      *
@@ -43,7 +42,7 @@ class VN_GRAPHICS_API ReportOnce
     void rearm() noexcept;
 
   private:
-    bool reported_{false};
+    bool reported_{ false };
 };
 
 VN_GRAPHICS_NS_END

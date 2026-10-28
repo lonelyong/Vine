@@ -2,9 +2,9 @@
 
 #include <vine/robotics/robot_core_global.hpp>
 
+#include <vine/RefCounted.hpp>
 #include <vine/geometry/Shape.hpp>
 #include <vine/intrusive_ptr.hpp>
-#include <vine/RefCounted.hpp>
 
 VN_ROBOTICS_PROXIMITY_NS_BEGIN
 

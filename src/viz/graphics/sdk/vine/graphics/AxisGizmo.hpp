@@ -171,15 +171,15 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
     Viewport box_{};
     /// Source camera followed each frame (non-owning).
     raw_ptr<Camera> source_camera_ = nullptr;
-    double axis_length_ = 1.0;
-    double thickness_ = 0.09;
-    double pixel_ratio_ = 1.0;
-    int margin_px_ = 16;
-    int size_px_ = 96;
-    int surface_w_ = 0;
-    int surface_h_ = 0;
-    int area_x_ = 0;
-    int area_y_ = 0;
+    double          axis_length_   = 1.0;
+    double          thickness_     = 0.09;
+    double          pixel_ratio_   = 1.0;
+    int             margin_px_     = 16;
+    int             size_px_       = 96;
+    int             surface_w_     = 0;
+    int             surface_h_     = 0;
+    int             area_x_        = 0;
+    int             area_y_        = 0;
 };
 
 using AxisGizmoPtr = intrusive_ptr<AxisGizmo>;

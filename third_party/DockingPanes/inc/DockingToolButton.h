@@ -65,7 +65,7 @@ class DockingToolButton : public QPushButton {
 
   private:
     ButtonType m_buttonType;
-    bool       m_highlight; ///< Hover highlight.
+    bool       m_highlight; // Hover highlight.
 };
 
 #endif // DOCKINGTOOLBUTTON_H

@@ -32,19 +32,27 @@
  * X11 only, like the cases that use it: this class IS an XCB window, so it does not exist where XCB does not.
  * The callers guard their bodies the same way and SKIP instead of failing where there is no display.
  */
-class TestHostWindow
-{
+class TestHostWindow {
   public:
     TestHostWindow(xcb_connection_t* connection, xcb_screen_t* screen, int width, int height)
       : connection_(connection)
     {
         window_                      = xcb_generate_id(connection_);
         const std::uint32_t mask     = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-        const std::uint32_t values[] = { screen->black_pixel,
-                                         XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_EXPOSURE };
-        xcb_create_window(connection_, XCB_COPY_FROM_PARENT, window_, screen->root, 0, 0,
-                          static_cast<std::uint16_t>(width), static_cast<std::uint16_t>(height), 0,
-                          XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, mask, values);
+        const std::uint32_t values[] = { screen->black_pixel, XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_EXPOSURE };
+        xcb_create_window(connection_,
+                          XCB_COPY_FROM_PARENT,
+                          window_,
+                          screen->root,
+                          0,
+                          0,
+                          static_cast<std::uint16_t>(width),
+                          static_cast<std::uint16_t>(height),
+                          0,
+                          XCB_WINDOW_CLASS_INPUT_OUTPUT,
+                          screen->root_visual,
+                          mask,
+                          values);
         xcb_map_window(connection_, window_);
         xcb_flush(connection_);
         // THE WINDOW IS VIEWABLE BEFORE THE FIRST FRAME IS PRESENTED, and that is a measured requirement,
@@ -57,8 +65,7 @@ class TestHostWindow
         // all within 2 s, while the SAME server reported ordinary windows viewable immediately.
         const auto map_requested = std::chrono::steady_clock::now();
         viewable_at_creation_    = waitUntilViewable(kViewDeadline);
-        view_wait_               = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - map_requested);
+        view_wait_               = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - map_requested);
     }
 
     TestHostWindow(const TestHostWindow&)            = delete;
@@ -111,24 +118,19 @@ class TestHostWindow
      */
     [[nodiscard]] bool resize(int width, int height)
     {
-        const std::uint32_t values[] = { static_cast<std::uint32_t>(width),
-                                         static_cast<std::uint32_t>(height) };
+        const std::uint32_t values[] = { static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height) };
         xcb_configure_window(connection_, window_, XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
         xcb_flush(connection_);
         const auto deadline = std::chrono::steady_clock::now() + kResizeDeadline;
-        for (;;)
-        {
-            if (auto* reply = xcb_get_geometry_reply(connection_, xcb_get_geometry(connection_, window_), nullptr))
-            {
+        for (;;) {
+            if (auto* reply = xcb_get_geometry_reply(connection_, xcb_get_geometry(connection_, window_), nullptr)) {
                 const bool applied = reply->width == width && reply->height == height;
                 std::free(reply);
-                if (applied)
-                {
+                if (applied) {
                     return true;
                 }
             }
-            if (std::chrono::steady_clock::now() >= deadline)
-            {
+            if (std::chrono::steady_clock::now() >= deadline) {
                 return false;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -138,11 +140,9 @@ class TestHostWindow
     /** @brief Whether the window still exists (the session must not have destroyed the host's own window). */
     [[nodiscard]] bool alive() const
     {
-        const auto* reply =
-            xcb_get_window_attributes_reply(connection_, xcb_get_window_attributes(connection_, window_), nullptr);
-        const bool alive = reply != nullptr;
-        if (reply != nullptr)
-        {
+        const auto* reply = xcb_get_window_attributes_reply(connection_, xcb_get_window_attributes(connection_, window_), nullptr);
+        const bool  alive = reply != nullptr;
+        if (reply != nullptr) {
             std::free(const_cast<xcb_get_window_attributes_reply_t*>(reply));
         }
         return alive;
@@ -180,18 +180,14 @@ class TestHostWindow
     [[nodiscard]] bool waitUntilViewable(std::chrono::milliseconds deadline) const
     {
         const auto give_up = std::chrono::steady_clock::now() + deadline;
-        for (;;)
-        {
-            const auto* reply = xcb_get_window_attributes_reply(
-                connection_, xcb_get_window_attributes(connection_, window_), nullptr);
-            const bool viewable = reply != nullptr && reply->map_state == XCB_MAP_STATE_VIEWABLE;
+        for (;;) {
+            const auto* reply    = xcb_get_window_attributes_reply(connection_, xcb_get_window_attributes(connection_, window_), nullptr);
+            const bool  viewable = reply != nullptr && reply->map_state == XCB_MAP_STATE_VIEWABLE;
             std::free(const_cast<xcb_get_window_attributes_reply_t*>(reply));
-            if (viewable)
-            {
+            if (viewable) {
                 return true;
             }
-            if (std::chrono::steady_clock::now() >= give_up)
-            {
+            if (std::chrono::steady_clock::now() >= give_up) {
                 return false;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -212,14 +208,12 @@ class TestHostWindow
     {
         (void)waitUntilViewable(kReadDeadline);
         const xcb_get_image_cookie_t cookie =
-            xcb_get_image(connection_, XCB_IMAGE_FORMAT_Z_PIXMAP, window_, static_cast<std::int16_t>(x),
-                          static_cast<std::int16_t>(y), 1U, 1U, ~0U);
+            xcb_get_image(connection_, XCB_IMAGE_FORMAT_Z_PIXMAP, window_, static_cast<std::int16_t>(x), static_cast<std::int16_t>(y), 1U, 1U, ~0U);
         xcb_generic_error_t*   error = nullptr;
         xcb_get_image_reply_t* reply = xcb_get_image_reply(connection_, cookie, &error);
         last_read_error_             = error != nullptr ? static_cast<std::uint8_t>(error->error_code) : 0U;
         std::free(error);
-        if (reply == nullptr)
-        {
+        if (reply == nullptr) {
             return { 0U, 0U, 0U };
         }
         const std::uint8_t*               data = xcb_get_image_data(reply);
@@ -274,19 +268,15 @@ class TestHostWindow
      * @return The last pixel read (the first one @p accept accepted, when it did).
      */
     template <typename Accept>
-    [[nodiscard]] std::array<std::uint8_t, 3> waitForPixel(int x, int y, Accept accept,
-                                                           std::chrono::milliseconds deadline) const
+    [[nodiscard]] std::array<std::uint8_t, 3> waitForPixel(int x, int y, Accept accept, std::chrono::milliseconds deadline) const
     {
         const auto deadline_at = std::chrono::steady_clock::now() + deadline;
-        for (;;)
-        {
+        for (;;) {
             const std::array<std::uint8_t, 3> pixel = this->pixel(x, y);
-            if (accept(pixel))
-            {
+            if (accept(pixel)) {
                 return pixel;
             }
-            if (std::chrono::steady_clock::now() >= deadline_at)
-            {
+            if (std::chrono::steady_clock::now() >= deadline_at) {
                 return pixel;
             }
             std::this_thread::sleep_for(kProbeInterval);
@@ -294,11 +284,11 @@ class TestHostWindow
     }
 
   private:
-    xcb_connection_t*        connection_;
-    xcb_window_t             window_{ 0 };
-    bool                     viewable_at_creation_{ false };  ///< See wasViewableAtCreation.
-    std::chrono::milliseconds view_wait_{ 0 };                 ///< See viewWait.
-    mutable std::uint8_t     last_read_error_{ 0 };            ///< See readError: written by the const reads above.
+    xcb_connection_t*         connection_;
+    xcb_window_t              window_{ 0 };
+    bool                      viewable_at_creation_{ false }; // See wasViewableAtCreation.
+    std::chrono::milliseconds view_wait_{ 0 };                // See viewWait.
+    mutable std::uint8_t      last_read_error_{ 0 };          // See readError: written by the const reads above.
 };
 
 /**
@@ -310,15 +300,15 @@ class TestHostWindow
  * it is declared BEFORE the objects built on it: C++ destroys in reverse declaration order, so the windows
  * go first and this closes the connection last.
  */
-class TestXConnection
-{
+class TestXConnection {
   public:
-    explicit TestXConnection(xcb_connection_t* connection) noexcept : connection_(connection) {}
+    explicit TestXConnection(xcb_connection_t* connection) noexcept
+      : connection_(connection)
+    {}
 
     ~TestXConnection()
     {
-        if (connection_ != nullptr)
-        {
+        if (connection_ != nullptr) {
             xcb_disconnect(connection_);
         }
     }
@@ -330,4 +320,4 @@ class TestXConnection
     xcb_connection_t* connection_;
 };
 
-#endif  // !_WIN32
+#endif // !_WIN32

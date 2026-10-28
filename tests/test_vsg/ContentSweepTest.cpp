@@ -25,38 +25,26 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
-#include <vine/intrusive_ptr.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
+#include <vine/intrusive_ptr.hpp>
 
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
 #include <vine/vsg/internal/ContentSweep.hpp>
 #include <vine/vsg/internal/ProgramVariant.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
 
 #include "TestGeometryBuilders.hpp"
 
 using vn::graphics::Geometry;
-using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
-using vn::imaging::Image;
-using vn::imaging::PixelFormat;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentStore;
-using vn::vsg::detail::TextureReject;
-using vn::vsg::MaterialImages;
-using vn::vsg::SweepOutcome;
-using vn::vsg::releaseAbandonedContent;
-using vn::vsg::findGeometry;
-using vn::vsg::findMaterial;
-using vn::vsg::findProgram;
 using vn::graphics::backend::CompiledCommand;
 using vn::graphics::backend::CompiledDraw;
 using vn::graphics::backend::CompiledFrame;
@@ -65,6 +53,18 @@ using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::ProgramRef;
 using vn::graphics::backend::RetirementQueue;
+using vn::imaging::Image;
+using vn::imaging::PixelFormat;
+using vn::test::setPrimitiveIndices;
+using vn::vsg::ContentFacts;
+using vn::vsg::ContentStore;
+using vn::vsg::findGeometry;
+using vn::vsg::findMaterial;
+using vn::vsg::findProgram;
+using vn::vsg::MaterialImages;
+using vn::vsg::releaseAbandonedContent;
+using vn::vsg::SweepOutcome;
+using vn::vsg::detail::TextureReject;
 
 namespace
 {
@@ -98,11 +98,12 @@ vn::intrusive_ptr<ShaderProgram> contentProgram()
 vn::intrusive_ptr<Geometry> quad()
 {
     const auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
-    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
-        std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-                                           new vn::Buffer<std::uint32_t>(
-                                               std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
+    setPrimitiveIndices(
+        *geometry,
+        0U,
+        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
     return geometry;
 }
@@ -112,8 +113,7 @@ vn::intrusive_ptr<Material> material(vn::intrusive_ptr<Texture2D> texture = {})
 {
     const auto out = vn::intrusive_ptr<Material>(new Material());
     out->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
-    if (texture != nullptr)
-    {
+    if (texture != nullptr) {
         out->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     }
     return out;
@@ -128,8 +128,7 @@ vn::intrusive_ptr<Texture2D> readyTexture()
 }
 
 /// @brief One frame's plan, built by hand: the store walks identities, and a hand-built plan has them.
-struct Plan
-{
+struct Plan {
     std::vector<CompiledCommand> commands;
     std::vector<CompiledDraw>    draws;
     std::vector<CompiledPass>    passes;
@@ -137,8 +136,7 @@ struct Plan
 };
 
 /// @brief A plan with one pass and one content draw naming @p geometry, @p program and @p material.
-std::unique_ptr<Plan> contentPlan(const void* geometry, std::uint64_t geometry_revision, const void* program,
-                                  const void* material)
+std::unique_ptr<Plan> contentPlan(const void* geometry, std::uint64_t geometry_revision, const void* program, const void* material)
 {
     auto plan = std::make_unique<Plan>();
 
@@ -170,15 +168,15 @@ void releaseUpTo(FrameTimeline& timeline, RetirementQueue& retirement, std::uint
     retirement.advance(timeline);
 }
 
-}  // namespace
+} // namespace
 
 TEST(ContentSweepTest, NothingIsLetGoWhileTheHostStillHoldsEverything)
 {
-    ContentStore                            store;
-    const std::shared_ptr<MaterialImages>    cache = MaterialImages::create();
-    FrameTimeline                           timeline;
-    RetirementQueue                         retirement(1U);
-    std::vector<const void*>                released_materials;
+    ContentStore                          store;
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    FrameTimeline                         timeline;
+    RetirementQueue                       retirement(1U);
+    std::vector<const void*>              released_materials;
     ASSERT_NE(cache, nullptr);
 
     const auto geometry = quad();
@@ -215,7 +213,7 @@ TEST(ContentSweepTest, NothingIsLetGoWhileTheHostStillHoldsEverything)
 TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAtThePark)
 {
     ContentStore                          store;
-    const std::shared_ptr<MaterialImages>  cache = MaterialImages::create();
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
     std::vector<const void*>              released_materials;
@@ -258,8 +256,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     // The ROWS stay answerable until the park comes due: a plan recorded in the frame that is being finished
     // may still name them (see api/ContentSweep), which is why this half parks instead of erasing.
     EXPECT_GE(retirement.pending(), 1U);
-    EXPECT_TRUE(findGeometry(facts, geometry_address, geometry_revision).found())
-        << "the row of the dropped geometry still answers while its park is open";
+    EXPECT_TRUE(findGeometry(facts, geometry_address, geometry_revision).found()) << "the row of the dropped geometry still answers while its park is open";
     EXPECT_EQ(store.geometryEntries(), 1U);
 
     // And once the slots that could still name them are past, they leave.
@@ -272,7 +269,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
 TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)
 {
     ContentStore                          store;
-    const std::shared_ptr<MaterialImages>  cache = MaterialImages::create();
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
     std::vector<const void*>              released_materials;
@@ -304,7 +301,7 @@ TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)
 TEST(ContentSweepTest, TheDefaultMaterialIsNeverAbandoned)
 {
     ContentStore                          store;
-    const std::shared_ptr<MaterialImages>  cache = MaterialImages::create();
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
     std::vector<const void*>              released_materials;

@@ -15,12 +15,13 @@ class AsyncReaderWriterLock;
 /**
  * @brief RAII guard releasing a held read lock on destruction.
  */
-class AsyncReaderGuard
-{
+class AsyncReaderGuard {
   public:
     AsyncReaderGuard() noexcept = default;
 
-    explicit AsyncReaderGuard(AsyncReaderWriterLock* lock) noexcept : lock_(lock) {}
+    explicit AsyncReaderGuard(AsyncReaderWriterLock* lock) noexcept
+      : lock_(lock)
+    {}
 
     AsyncReaderGuard(AsyncReaderGuard&& other) noexcept
       : lock_(std::exchange(other.lock_, nullptr))
@@ -28,10 +29,8 @@ class AsyncReaderGuard
 
     AsyncReaderGuard& operator=(AsyncReaderGuard&& other) noexcept
     {
-        if (this != &other)
-        {
-            if (lock_)
-            {
+        if (this != &other) {
+            if (lock_) {
                 release();
             }
             lock_ = std::exchange(other.lock_, nullptr);
@@ -41,13 +40,12 @@ class AsyncReaderGuard
 
     ~AsyncReaderGuard()
     {
-        if (lock_)
-        {
+        if (lock_) {
             release();
         }
     }
 
-    AsyncReaderGuard(const AsyncReaderGuard&) = delete;
+    AsyncReaderGuard(const AsyncReaderGuard&)            = delete;
     AsyncReaderGuard& operator=(const AsyncReaderGuard&) = delete;
 
   private:
@@ -59,12 +57,13 @@ class AsyncReaderGuard
 /**
  * @brief RAII guard releasing a held write lock on destruction.
  */
-class AsyncWriterGuard
-{
+class AsyncWriterGuard {
   public:
     AsyncWriterGuard() noexcept = default;
 
-    explicit AsyncWriterGuard(AsyncReaderWriterLock* lock) noexcept : lock_(lock) {}
+    explicit AsyncWriterGuard(AsyncReaderWriterLock* lock) noexcept
+      : lock_(lock)
+    {}
 
     AsyncWriterGuard(AsyncWriterGuard&& other) noexcept
       : lock_(std::exchange(other.lock_, nullptr))
@@ -72,10 +71,8 @@ class AsyncWriterGuard
 
     AsyncWriterGuard& operator=(AsyncWriterGuard&& other) noexcept
     {
-        if (this != &other)
-        {
-            if (lock_)
-            {
+        if (this != &other) {
+            if (lock_) {
                 release();
             }
             lock_ = std::exchange(other.lock_, nullptr);
@@ -85,13 +82,12 @@ class AsyncWriterGuard
 
     ~AsyncWriterGuard()
     {
-        if (lock_)
-        {
+        if (lock_) {
             release();
         }
     }
 
-    AsyncWriterGuard(const AsyncWriterGuard&) = delete;
+    AsyncWriterGuard(const AsyncWriterGuard&)            = delete;
     AsyncWriterGuard& operator=(const AsyncWriterGuard&) = delete;
 
   private:
@@ -127,34 +123,33 @@ class AsyncWriterGuard
  * at a time (never holding a waiter pointer across a resume), so a resumed
  * reader whose completion destroys a sibling waiter is safe: the destroyed
  * sibling unregisters itself from the shared list.
-  *
+ *
  * Threading: the lock's state is mutex-guarded, so an acquire and the release that follows it
  * may come from different threads; the waiters a release wakes are resumed on the releasing
  * thread. The lock must outlive every coroutine waiting on it.
  */
-class AsyncReaderWriterLock
-{
+class AsyncReaderWriterLock {
   public:
     AsyncReaderWriterLock() noexcept = default;
 
-    AsyncReaderWriterLock(const AsyncReaderWriterLock&) = delete;
+    AsyncReaderWriterLock(const AsyncReaderWriterLock&)            = delete;
     AsyncReaderWriterLock& operator=(const AsyncReaderWriterLock&) = delete;
 
     /**
      * @brief Awaiter that acquires a read lock and yields a guard.
      */
-    class ReaderAwaiter
-    {
+    class ReaderAwaiter {
       public:
-        explicit ReaderAwaiter(AsyncReaderWriterLock& lock) noexcept : lock_(lock) {}
+        explicit ReaderAwaiter(AsyncReaderWriterLock& lock) noexcept
+          : lock_(lock)
+        {}
 
-        ReaderAwaiter(const ReaderAwaiter&) = delete;
+        ReaderAwaiter(const ReaderAwaiter&)            = delete;
         ReaderAwaiter& operator=(const ReaderAwaiter&) = delete;
 
         ~ReaderAwaiter() noexcept
         {
-            if (waiter_)
-            {
+            if (waiter_) {
                 std::lock_guard<std::mutex> lock(lock_.mutex_);
                 lock_.dequeueReader(*this);
             }
@@ -173,8 +168,7 @@ class AsyncReaderWriterLock
             // could be lost and this coroutine would never wake.
             waiter_ = h;
             std::lock_guard<std::mutex> lock(lock_.mutex_);
-            if (!lock_.writer_ && !lock_.writers_head_)
-            {
+            if (!lock_.writer_ && !lock_.writers_head_) {
                 ++lock_.readers_;
                 waiter_ = {};
                 return false; // Acquired inline.
@@ -196,26 +190,26 @@ class AsyncReaderWriterLock
         std::coroutine_handle<> waiter_{};
         /// true after a release granted this reader's slot but before it is
         /// resumed; distinguishes granted readers from later-queued ones.
-        bool                    granted_{ false };
-        ReaderAwaiter*          next_{ nullptr };
-        ReaderAwaiter*          prev_{ nullptr };
+        bool           granted_{ false };
+        ReaderAwaiter* next_{ nullptr };
+        ReaderAwaiter* prev_{ nullptr };
     };
 
     /**
      * @brief Awaiter that acquires a write lock and yields a guard.
      */
-    class WriterAwaiter
-    {
+    class WriterAwaiter {
       public:
-        explicit WriterAwaiter(AsyncReaderWriterLock& lock) noexcept : lock_(lock) {}
+        explicit WriterAwaiter(AsyncReaderWriterLock& lock) noexcept
+          : lock_(lock)
+        {}
 
-        WriterAwaiter(const WriterAwaiter&) = delete;
+        WriterAwaiter(const WriterAwaiter&)            = delete;
         WriterAwaiter& operator=(const WriterAwaiter&) = delete;
 
         ~WriterAwaiter() noexcept
         {
-            if (waiter_)
-            {
+            if (waiter_) {
                 std::lock_guard<std::mutex> lock(lock_.mutex_);
                 lock_.dequeueWriter(*this);
             }
@@ -234,10 +228,9 @@ class AsyncReaderWriterLock
             // could be lost and this coroutine would never wake.
             waiter_ = h;
             std::lock_guard<std::mutex> lock(lock_.mutex_);
-            if (lock_.readers_ == 0 && !lock_.writer_)
-            {
+            if (lock_.readers_ == 0 && !lock_.writer_) {
                 lock_.writer_ = true;
-                waiter_ = {};
+                waiter_       = {};
                 return false; // Acquired inline.
             }
             lock_.enqueueWriter(*this);
@@ -305,11 +298,10 @@ class AsyncReaderWriterLock
     void dequeueWriter(WriterAwaiter& a) noexcept;
 
     /// Waiters to resume after a release, collected under mutex_.
-    struct WakeBatch
-    {
+    struct WakeBatch {
         WriterAwaiter* writer{ nullptr };
         /// true when queued readers were granted and must be resumed.
-        bool           wake_readers{ false };
+        bool wake_readers{ false };
     };
 
     /// Detaches one queued writer or all queued readers; mutex_ must be held.
@@ -343,8 +335,7 @@ inline void AsyncWriterGuard::release() noexcept
 inline bool AsyncReaderWriterLock::tryAcquireReader() noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!writer_ && !writers_head_)
-    {
+    if (!writer_ && !writers_head_) {
         ++readers_;
         return true;
     }
@@ -354,8 +345,7 @@ inline bool AsyncReaderWriterLock::tryAcquireReader() noexcept
 inline bool AsyncReaderWriterLock::tryAcquireWriter() noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (readers_ == 0 && !writer_)
-    {
+    if (readers_ == 0 && !writer_) {
         writer_ = true;
         return true;
     }
@@ -369,8 +359,7 @@ inline void AsyncReaderWriterLock::unlockRead() noexcept
         std::lock_guard<std::mutex> lock(mutex_);
         assert(readers_ > 0);
         --readers_;
-        if (readers_ == 0)
-        {
+        if (readers_ == 0) {
             batch = takeWaitersLocked();
         }
     }
@@ -384,7 +373,7 @@ inline void AsyncReaderWriterLock::unlockWrite() noexcept
         std::lock_guard<std::mutex> lock(mutex_);
         assert(writer_);
         writer_ = false;
-        batch = takeWaitersLocked();
+        batch   = takeWaitersLocked();
     }
     resume(batch);
 }
@@ -392,32 +381,27 @@ inline void AsyncReaderWriterLock::unlockWrite() noexcept
 inline AsyncReaderWriterLock::WakeBatch AsyncReaderWriterLock::takeWaitersLocked() noexcept
 {
     WakeBatch batch;
-    if (writers_head_)
-    {
-        batch.writer = writers_head_;
+    if (writers_head_) {
+        batch.writer  = writers_head_;
         writers_head_ = batch.writer->next_;
-        if (!writers_head_)
-        {
+        if (!writers_head_) {
             writers_tail_ = nullptr;
         }
-        else
-        {
+        else {
             // Detach the old head from its successor so a later dequeue of the
             // successor cannot write through the old head's freed frame.
             writers_head_->prev_ = nullptr;
         }
         batch.writer->next_ = nullptr;
         batch.writer->prev_ = nullptr;
-        writer_ = true; // The woken writer now holds the lock.
+        writer_             = true; // The woken writer now holds the lock.
     }
-    else
-    {
+    else {
         // Grant every queued reader at once and mark each as granted. They
         // stay in the shared list so the resume loop can pop one at a time
         // and so an abandoned (destroyed) granted reader unregisters itself.
         batch.wake_readers = true;
-        for (auto* a = readers_head_; a; a = a->next_)
-        {
+        for (auto* a = readers_head_; a; a = a->next_) {
             a->granted_ = true;
         }
         readers_ += waiting_readers_; // Grant the woken readers.
@@ -428,15 +412,13 @@ inline AsyncReaderWriterLock::WakeBatch AsyncReaderWriterLock::takeWaitersLocked
 
 inline void AsyncReaderWriterLock::resume(WakeBatch batch) noexcept
 {
-    if (batch.writer)
-    {
-        auto h = batch.writer->waiter_;
+    if (batch.writer) {
+        auto h                = batch.writer->waiter_;
         batch.writer->waiter_ = {};
         h.resume();
         return;
     }
-    if (!batch.wake_readers)
-    {
+    if (!batch.wake_readers) {
         return;
     }
     // All readers were granted at once (readers_ already includes them). Pop
@@ -445,33 +427,28 @@ inline void AsyncReaderWriterLock::resume(WakeBatch batch) noexcept
     // never leaves a stale pointer: the destroyed sibling unregisters itself
     // and is simply not found on the next iteration. Readers that queued after
     // the grant sit behind the granted ones and are never popped.
-    for (;;)
-    {
+    for (;;) {
         ReaderAwaiter* a = nullptr;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (readers_head_ && readers_head_->granted_)
-            {
-                a = readers_head_;
+            if (readers_head_ && readers_head_->granted_) {
+                a             = readers_head_;
                 readers_head_ = a->next_;
-                if (!readers_head_)
-                {
+                if (!readers_head_) {
                     readers_tail_ = nullptr;
                 }
-                else
-                {
+                else {
                     readers_head_->prev_ = nullptr;
                 }
-                a->next_ = nullptr;
-                a->prev_ = nullptr;
+                a->next_    = nullptr;
+                a->prev_    = nullptr;
                 a->granted_ = false;
             }
         }
-        if (!a)
-        {
+        if (!a) {
             break;
         }
-        auto h = a->waiter_;
+        auto h     = a->waiter_;
         a->waiter_ = {};
         h.resume(); // Resume outside the lock.
     }
@@ -481,14 +458,12 @@ inline void AsyncReaderWriterLock::enqueueReader(ReaderAwaiter& a) noexcept
 {
     ++waiting_readers_;
     a.granted_ = false;
-    a.prev_ = readers_tail_;
-    a.next_ = nullptr;
-    if (readers_tail_)
-    {
+    a.prev_    = readers_tail_;
+    a.next_    = nullptr;
+    if (readers_tail_) {
         readers_tail_->next_ = &a;
     }
-    else
-    {
+    else {
         readers_head_ = &a;
     }
     readers_tail_ = &a;
@@ -496,34 +471,27 @@ inline void AsyncReaderWriterLock::enqueueReader(ReaderAwaiter& a) noexcept
 
 inline void AsyncReaderWriterLock::dequeueReader(ReaderAwaiter& a) noexcept
 {
-    if (a.prev_)
-    {
+    if (a.prev_) {
         a.prev_->next_ = a.next_;
     }
-    else if (readers_head_ == &a)
-    {
+    else if (readers_head_ == &a) {
         readers_head_ = a.next_;
     }
-    else
-    {
+    else {
         return;
     }
 
-    if (a.next_)
-    {
+    if (a.next_) {
         a.next_->prev_ = a.prev_;
     }
-    else if (readers_tail_ == &a)
-    {
+    else if (readers_tail_ == &a) {
         readers_tail_ = a.prev_;
     }
 
-    if (a.granted_)
-    {
+    if (a.granted_) {
         --readers_; // Destroyed before resuming; its granted slot is returned.
     }
-    else
-    {
+    else {
         --waiting_readers_;
     }
     a.prev_ = nullptr;
@@ -534,12 +502,10 @@ inline void AsyncReaderWriterLock::enqueueWriter(WriterAwaiter& a) noexcept
 {
     a.prev_ = writers_tail_;
     a.next_ = nullptr;
-    if (writers_tail_)
-    {
+    if (writers_tail_) {
         writers_tail_->next_ = &a;
     }
-    else
-    {
+    else {
         writers_head_ = &a;
     }
     writers_tail_ = &a;
@@ -547,25 +513,20 @@ inline void AsyncReaderWriterLock::enqueueWriter(WriterAwaiter& a) noexcept
 
 inline void AsyncReaderWriterLock::dequeueWriter(WriterAwaiter& a) noexcept
 {
-    if (a.prev_)
-    {
+    if (a.prev_) {
         a.prev_->next_ = a.next_;
     }
-    else if (writers_head_ == &a)
-    {
+    else if (writers_head_ == &a) {
         writers_head_ = a.next_;
     }
-    else
-    {
+    else {
         return;
     }
 
-    if (a.next_)
-    {
+    if (a.next_) {
         a.next_->prev_ = a.prev_;
     }
-    else if (writers_tail_ == &a)
-    {
+    else if (writers_tail_ == &a) {
         writers_tail_ = a.prev_;
     }
 

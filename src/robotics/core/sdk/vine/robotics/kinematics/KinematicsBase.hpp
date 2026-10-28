@@ -6,8 +6,8 @@
 #include <memory>
 #include <vector>
 
-#include <vine/raw_ptr.hpp>
 #include <vine/math/Isometry3.hpp>
+#include <vine/raw_ptr.hpp>
 #include <vine/robotics/kinematics/DofInfo.hpp>
 #include <vine/robotics/kinematics/Frame.hpp>
 #include <vine/robotics/kinematics/IKSolver.hpp>
@@ -34,8 +34,7 @@ enum class IKSolverType
  * acceleration limits. Joint values are read and written through a scene
  * State; the concrete subclass provides the IK solving.
  */
-class VN_ROBOTICS_CORE_API KinematicsBase
-{
+class VN_ROBOTICS_CORE_API KinematicsBase {
   public:
     virtual ~KinematicsBase() = default;
 
@@ -244,11 +243,7 @@ class VN_ROBOTICS_CORE_API KinematicsBase
      * @return All feasible joint-state solutions, empty when the frames do
      *         not match the chain.
      */
-    std::vector<Q> solveIK(const math::Isometry3d& pose,
-                           raw_ptr<const Frame>    end,
-                           raw_ptr<const Frame>    base,
-                           const State&            state,
-                           const Q&                guess = {});
+    std::vector<Q> solveIK(const math::Isometry3d& pose, raw_ptr<const Frame> end, raw_ptr<const Frame> base, const State& state, const Q& guess = {});
 
     /**
      * @brief Writes the joint values of this chain into a scene state.
@@ -267,17 +262,17 @@ class VN_ROBOTICS_CORE_API KinematicsBase
     Q getQ(const State& state) const;
 
   protected:
-    std::vector<DofType>          dofs_;
-    Q                             lower_bounds_;
-    Q                             upper_bounds_;
-    Q                             velocity_limits_;
-    Q                             acceleration_limits_;
-    Q                             resolutions_;
-    raw_ptr<Frame>                common_base_{ nullptr };
-    std::vector<raw_ptr<Frame>>   end_joints_;
-    std::vector<raw_ptr<Frame>>   joints_;
-    IKSolverType                  default_ik_solver_type_{ IKSolverType::Iterative };
-    std::unique_ptr<IKSolver>     ik_solver_;
+    std::vector<DofType>        dofs_;
+    Q                           lower_bounds_;
+    Q                           upper_bounds_;
+    Q                           velocity_limits_;
+    Q                           acceleration_limits_;
+    Q                           resolutions_;
+    raw_ptr<Frame>              common_base_{ nullptr };
+    std::vector<raw_ptr<Frame>> end_joints_;
+    std::vector<raw_ptr<Frame>> joints_;
+    IKSolverType                default_ik_solver_type_{ IKSolverType::Iterative };
+    std::unique_ptr<IKSolver>   ik_solver_;
 };
 
 VN_ROBOTICS_KINEMATICS_NS_END

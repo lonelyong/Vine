@@ -2,8 +2,8 @@
 
 #include <cstdint>
 
-#include <vsg/core/ref_ptr.h>
 #include <vsg/core/Exception.h>
+#include <vsg/core/ref_ptr.h>
 #include <vsg/vk/Device.h>
 #include <vsg/vk/Instance.h>
 
@@ -26,20 +26,18 @@
 VN_VSG_NS_BEGIN
 
 /** @brief What a caller may ask about the device it wants. */
-struct DeviceOptions
-{
-    bool validation{false};  ///< Enable the validation layer (a phase that asserts behaviour wants it).
+struct DeviceOptions {
+    bool validation{ false }; // Enable the validation layer (a phase that asserts behaviour wants it).
 };
 
 /** @brief What creating a device produced. */
-struct DeviceResult
-{
-    bool                          ok{false};         ///< Whether a device satisfying the policy was created.
-    vn::String                  error;            ///< Why not, in the caller's words (empty when ok).
-    bool                          validation{false}; ///< Whether the validation layer is ACTUALLY enabled.
-    ::vsg::ref_ptr<::vsg::Instance> instance;       ///< The instance the device belongs to.
-    ::vsg::ref_ptr<::vsg::Device>   device;         ///< The logical device.
-    int                           queue_family{-1}; ///< The graphics queue family the device was built with.
+struct DeviceResult {
+    bool                            ok{ false };         // Whether a device satisfying the policy was created.
+    vn::String                      error;               // Why not, in the caller's words (empty when ok).
+    bool                            validation{ false }; // Whether the validation layer is ACTUALLY enabled.
+    ::vsg::ref_ptr<::vsg::Instance> instance;            // The instance the device belongs to.
+    ::vsg::ref_ptr<::vsg::Device>   device;              // The logical device.
+    int                             queue_family{ -1 };  // The graphics queue family the device was built with.
 };
 
 /** @brief Creates a device that satisfies the device-floor policy, without creating a window.

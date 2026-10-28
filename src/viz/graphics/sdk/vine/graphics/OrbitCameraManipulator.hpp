@@ -266,31 +266,31 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     raw_ptr<Scene> scene_ = nullptr;
 
-    Vec3d center_{ 0.0, 0.0, 0.0 };
+    Vec3d  center_{ 0.0, 0.0, 0.0 };
     double distance_ = 10.0;
-    double yaw_ = 0.0;
-    double pitch_ = 0.0;
-    double roll_ = 0.0;  // signed camera roll about its forward axis (-pi, pi].
+    double yaw_      = 0.0;
+    double pitch_    = 0.0;
+    double roll_     = 0.0; // signed camera roll about its forward axis (-pi, pi].
 
     // Snapshot for home().
-    Vec3d home_center_{ 0.0, 0.0, 0.0 };
+    Vec3d  home_center_{ 0.0, 0.0, 0.0 };
     double home_distance_ = 10.0;
-    double home_yaw_ = 0.0;
-    double home_pitch_ = 0.0;
-    double home_roll_ = 0.0;
+    double home_yaw_      = 0.0;
+    double home_pitch_    = 0.0;
+    double home_roll_     = 0.0;
 
-    bool zoom_to_cursor_ = true;
-    double min_distance_ = 0.0;  // 0 => derive from the near plane.
+    bool   zoom_to_cursor_ = true;
+    double min_distance_   = 0.0; // 0 => derive from the near plane.
 
     // Current interaction anchor (pick point, scene centre or origin): the
     // rotate pivot and the pan/zoom depth reference / zoom-to-cursor anchor.
     Vec3d anchor_{ 0.0, 0.0, 0.0 };
-    bool anchor_on_ray_ = false;  // anchor was a geometry hit on the cursor ray.
+    bool  anchor_on_ray_ = false; // anchor was a geometry hit on the cursor ray.
 
-    CameraManipulator::DragAction drag_ = CameraManipulator::DragAction::None;
-    double last_x_ = 0.0;
-    double last_y_ = 0.0;
-    bool pointer_known_ = false;
+    CameraManipulator::DragAction drag_          = CameraManipulator::DragAction::None;
+    double                        last_x_        = 0.0;
+    double                        last_y_        = 0.0;
+    bool                          pointer_known_ = false;
 
     // Viewport size in device pixels (fed by onResize).
     int viewport_w_ = 800;
@@ -299,11 +299,11 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     // Sensitivity of drag-based interactions (radians / pixels).
     double drag_sensitivity_ = 0.01;
     // Zoom factor per wheel notch.
-    double wheel_factor_ = 1.15;
+    double wheel_factor_     = 1.15;
     // First-person movement step per key event (world units).
-    double move_step_ = 0.5;
+    double move_step_        = 0.5;
     // First-person yaw/pitch rotation per key event (radians).
-    double rotate_step_ = 0.05;
+    double rotate_step_      = 0.05;
 };
 
 VN_GRAPHICS_NS_END

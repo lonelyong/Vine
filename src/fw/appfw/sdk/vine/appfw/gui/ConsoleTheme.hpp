@@ -1,7 +1,7 @@
 ﻿#pragma once
 
-#include <vine/appfw/appfw_global.hpp>
 #include <vine/Color.hpp>
+#include <vine/appfw/appfw_global.hpp>
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -10,11 +10,11 @@ VN_APPFWGUI_NS_BEGIN
  */
 enum class ConsoleMessageType
 {
-    Normal,   ///< Plain output.
-    Command,  ///< Command echo.
-    Prompt,   ///< Prompt for user input.
-    Warning,  ///< Warning output.
-    Error     ///< Error output.
+    Normal,  // Plain output.
+    Command, // Command echo.
+    Prompt,  // Prompt for user input.
+    Warning, // Warning output.
+    Error    // Error output.
 };
 
 /**
@@ -23,8 +23,7 @@ enum class ConsoleMessageType
  * Provides light and dark presets; the active preset follows the application
  * theme and can be overridden through ConsolePanel::setTheme().
  */
-struct ConsoleTheme
-{
+struct ConsoleTheme {
     Color normal;
     Color command;
     Color prompt;
@@ -36,8 +35,7 @@ struct ConsoleTheme
      */
     static ConsoleTheme light()
     {
-        return { Color(0x1a1a1affu), Color(0x1e5aa8ffu), Color(0x2e7d32ffu),
-                 Color(0xc88700ffu), Color(0xd32f2fffu) };
+        return { Color(0x1a1a1affu), Color(0x1e5aa8ffu), Color(0x2e7d32ffu), Color(0xc88700ffu), Color(0xd32f2fffu) };
     }
 
     /**
@@ -45,8 +43,7 @@ struct ConsoleTheme
      */
     static ConsoleTheme dark()
     {
-        return { Color(0xe0e0e0ffu), Color(0x7fa8e0ffu), Color(0x8fd18fffu),
-                 Color(0xe0b04cffu), Color(0xf28b82ffu) };
+        return { Color(0xe0e0e0ffu), Color(0x7fa8e0ffu), Color(0x8fd18fffu), Color(0xe0b04cffu), Color(0xf28b82ffu) };
     }
 };
 

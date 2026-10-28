@@ -12,15 +12,15 @@
 #include <unordered_set>
 #include <vector>
 
+#include <vine/MemoryStream.hpp>
 #include <vine/crypto/ByteSequenceFingerprint.hpp>
 #include <vine/crypto/Hash.hpp>
 #include <vine/crypto/HashCalculator.hpp>
-#include <vine/MemoryStream.hpp>
 
+using vn::MemoryStream;
 using vn::crypto::ByteSequenceFingerprint;
 using vn::crypto::Hash;
 using vn::crypto::HashCalculator;
-using vn::MemoryStream;
 
 namespace
 {
@@ -44,8 +44,7 @@ std::vector<std::byte> makeBytes(std::size_t size)
 /**
  * @brief An istream buffer that rejects every seek operation.
  */
-class NonSeekableBuffer : public std::streambuf
-{
+class NonSeekableBuffer : public std::streambuf {
   public:
     NonSeekableBuffer(const char* data, std::size_t size)
     {
@@ -63,7 +62,6 @@ class NonSeekableBuffer : public std::streambuf
         return pos_type(off_type(-1));
     }
 };
-
 
 template <std::size_t N>
 std::string toHex(const std::array<std::uint8_t, N>& digest)
@@ -123,8 +121,7 @@ TEST(CryptoTest, Sha224KnownVector)
 TEST(CryptoTest, Sha384KnownVector)
 {
     // Well-known SHA-384 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha384("abc", 3)),
-              "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
+    EXPECT_EQ(toHex(Hash::sha384("abc", 3)), "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
 }
 
 TEST(CryptoTest, Sha512KnownVector)
@@ -143,15 +140,13 @@ TEST(CryptoTest, Sha3_224KnownVector)
 TEST(CryptoTest, Sha3_256KnownVector)
 {
     // Well-known SHA3-256 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha3_256("abc", 3)),
-              "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532");
+    EXPECT_EQ(toHex(Hash::sha3_256("abc", 3)), "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532");
 }
 
 TEST(CryptoTest, Sha3_384KnownVector)
 {
     // Well-known SHA3-384 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha3_384("abc", 3)),
-              "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25");
+    EXPECT_EQ(toHex(Hash::sha3_384("abc", 3)), "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25");
 }
 
 TEST(CryptoTest, Sha3_512KnownVector)
@@ -210,7 +205,7 @@ TEST(CryptoTest, HashCalculatorByName)
 
 TEST(CryptoTest, HashCalculatorFromMemoryStream)
 {
-    MemoryStream stream(std::as_bytes(std::span<const char>("abc", 3)));
+    MemoryStream   stream(std::as_bytes(std::span<const char>("abc", 3)));
     HashCalculator calc(u8"md5");
     calc << stream;
     EXPECT_EQ(toHex(calc.digest()), "900150983cd24fb0d6963f7d28e17f72");
@@ -245,7 +240,7 @@ TEST(CryptoTest, FingerprintEmpty)
 TEST(CryptoTest, FingerprintRawSmallData)
 {
     // Data no larger than kFingerprintSize is stored raw.
-    const auto data = makeBytes(ByteSequenceFingerprint::kFingerprintSize);
+    const auto              data = makeBytes(ByteSequenceFingerprint::kFingerprintSize);
     ByteSequenceFingerprint fp(data);
     EXPECT_TRUE(fp);
     EXPECT_EQ(fp.size(), data.size());
@@ -259,7 +254,7 @@ TEST(CryptoTest, FingerprintRawSmallData)
 TEST(CryptoTest, FingerprintRawDetectsDifference)
 {
     // Raw fingerprints differ when a single byte changes.
-    auto data = makeBytes(32);
+    auto                    data = makeBytes(32);
     ByteSequenceFingerprint fp(data);
     data.back() = std::byte(0xFF);
     EXPECT_NE(fp, ByteSequenceFingerprint(data));
@@ -268,7 +263,7 @@ TEST(CryptoTest, FingerprintRawDetectsDifference)
 TEST(CryptoTest, FingerprintSha256MediumData)
 {
     // Data larger than kFingerprintSize but no larger than 1 MiB is hashed.
-    const auto data = makeBytes(1000);
+    const auto              data = makeBytes(1000);
     ByteSequenceFingerprint fp(data);
     EXPECT_EQ(fp.size(), data.size());
     EXPECT_EQ(fp.mode(), ByteSequenceFingerprint::FingerprintMode::SHA256);
@@ -278,13 +273,13 @@ TEST(CryptoTest, FingerprintSha256MediumData)
 TEST(CryptoTest, FingerprintSampledLargeData)
 {
     // Data larger than 1 MiB uses the sampled mode and detects a mid-file change.
-    const auto data = makeBytes(1024 * 1024 + 17);
+    const auto              data = makeBytes(1024 * 1024 + 17);
     ByteSequenceFingerprint fp(data);
     EXPECT_EQ(fp.size(), data.size());
     EXPECT_EQ(fp.mode(), ByteSequenceFingerprint::FingerprintMode::SAMPLED_SHA256);
     EXPECT_EQ(fp, ByteSequenceFingerprint(data));
 
-    auto changed = data;
+    auto changed             = data;
     changed[data.size() / 2] = std::byte(0xFF);
     EXPECT_NE(fp, ByteSequenceFingerprint(changed));
 }
@@ -292,21 +287,17 @@ TEST(CryptoTest, FingerprintSampledLargeData)
 TEST(CryptoTest, FingerprintModeBoundary)
 {
     // 128 B is raw, 129 B switches to SHA256; 1 MiB is SHA256, 1 MiB + 1 switches to sampled.
-    EXPECT_EQ(ByteSequenceFingerprint(makeBytes(ByteSequenceFingerprint::kFingerprintSize)).mode(),
-              ByteSequenceFingerprint::FingerprintMode::RAW);
-    EXPECT_EQ(ByteSequenceFingerprint(makeBytes(ByteSequenceFingerprint::kFingerprintSize + 1)).mode(),
-              ByteSequenceFingerprint::FingerprintMode::SHA256);
-    EXPECT_EQ(ByteSequenceFingerprint(makeBytes(1024 * 1024)).mode(),
-              ByteSequenceFingerprint::FingerprintMode::SHA256);
-    EXPECT_EQ(ByteSequenceFingerprint(makeBytes(1024 * 1024 + 1)).mode(),
-              ByteSequenceFingerprint::FingerprintMode::SAMPLED_SHA256);
+    EXPECT_EQ(ByteSequenceFingerprint(makeBytes(ByteSequenceFingerprint::kFingerprintSize)).mode(), ByteSequenceFingerprint::FingerprintMode::RAW);
+    EXPECT_EQ(ByteSequenceFingerprint(makeBytes(ByteSequenceFingerprint::kFingerprintSize + 1)).mode(), ByteSequenceFingerprint::FingerprintMode::SHA256);
+    EXPECT_EQ(ByteSequenceFingerprint(makeBytes(1024 * 1024)).mode(), ByteSequenceFingerprint::FingerprintMode::SHA256);
+    EXPECT_EQ(ByteSequenceFingerprint(makeBytes(1024 * 1024 + 1)).mode(), ByteSequenceFingerprint::FingerprintMode::SAMPLED_SHA256);
 }
 
 TEST(CryptoTest, FingerprintDifferentModesNeverEqual)
 {
     // Fingerprints built from the same bytes but at different sizes are never equal.
-    const auto small  = makeBytes(ByteSequenceFingerprint::kFingerprintSize);
-    const auto medium = makeBytes(ByteSequenceFingerprint::kFingerprintSize + 1);
+    const auto                    small  = makeBytes(ByteSequenceFingerprint::kFingerprintSize);
+    const auto                    medium = makeBytes(ByteSequenceFingerprint::kFingerprintSize + 1);
     const ByteSequenceFingerprint raw_fp(small);
     const ByteSequenceFingerprint sha_fp(medium);
     EXPECT_NE(raw_fp.mode(), sha_fp.mode());
@@ -327,9 +318,9 @@ TEST(CryptoTest, FingerprintFromStream)
 TEST(CryptoTest, FingerprintNonSeekableStreamThrows)
 {
     // A stream that cannot seek must be rejected.
-    const char      data[] = "hello world";
+    const char        data[] = "hello world";
     NonSeekableBuffer buf(data, sizeof data - 1);
-    std::istream     stream(&buf);
+    std::istream      stream(&buf);
     EXPECT_THROW(ByteSequenceFingerprint fp(stream), std::runtime_error);
 }
 
@@ -351,7 +342,7 @@ TEST(CryptoTest, FingerprintFromFile)
 TEST(CryptoTest, FingerprintHash)
 {
     // Equal fingerprints hash equally and can be used in unordered containers.
-    const auto data = makeBytes(1000);
+    const auto                                  data = makeBytes(1000);
     std::unordered_set<ByteSequenceFingerprint> set;
     set.insert(ByteSequenceFingerprint(data));
     set.insert(ByteSequenceFingerprint(data));

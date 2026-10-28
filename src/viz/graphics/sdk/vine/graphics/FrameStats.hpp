@@ -19,11 +19,10 @@ VN_GRAPHICS_NS_BEGIN
  * - A backend that keeps no counters answers "no counters" rather than zeros - an empty frame and an unmeasured one
  *   are different answers.
  */
-struct VN_GRAPHICS_API FrameCounters
-{
-    std::uint64_t passes{0};            ///< Pass scopes recorded.
-    std::uint64_t draws{0};             ///< Draw calls recorded.
-    std::uint64_t invalid_schedules{0}; ///< Cyclic pass-dependency components skipped (reported by the engine).
+struct VN_GRAPHICS_API FrameCounters {
+    std::uint64_t passes{ 0 };            // Pass scopes recorded.
+    std::uint64_t draws{ 0 };             // Draw calls recorded.
+    std::uint64_t invalid_schedules{ 0 }; // Cyclic pass-dependency components skipped (reported by the engine).
 };
 
 /**
@@ -33,10 +32,9 @@ struct VN_GRAPHICS_API FrameCounters
  * - Cumulative for the backend's lifetime, unlike FrameCounters: these are the numbers behind "the frame path never
  *   idles the device" and "the retained set does not grow with the frame count".
  */
-struct VN_GRAPHICS_API RetentionStats
-{
-    std::uint64_t released_nodes{0}; ///< Objects released so far.
-    std::uint64_t device_waits{0};   ///< Counted device idles (destructive paths only).
+struct VN_GRAPHICS_API RetentionStats {
+    std::uint64_t released_nodes{ 0 }; // Objects released so far.
+    std::uint64_t device_waits{ 0 };   // Counted device idles (destructive paths only).
 };
 
 /**
@@ -52,10 +50,9 @@ struct VN_GRAPHICS_API RetentionStats
  * - Cumulative for the backend's lifetime, like RetentionStats. There is no frame-scoped half here, because a
  *   watermark that could go backwards would be a lie.
  */
-struct VN_GRAPHICS_API FrameProgress
-{
-    std::uint64_t submitted{0}; ///< Frames handed to the queue so far.
-    std::uint64_t completed{0}; ///< Frames whose GPU work is provably done (monotonic).
+struct VN_GRAPHICS_API FrameProgress {
+    std::uint64_t submitted{ 0 }; // Frames handed to the queue so far.
+    std::uint64_t completed{ 0 }; // Frames whose GPU work is provably done (monotonic).
     /// Frames handed to the platform's PRESENT path so far (monotonic).
     ///
     /// PRECISELY WHAT IT PROVES: the executor reached the present call for this frame and the platform accepted it
@@ -63,7 +60,7 @@ struct VN_GRAPHICS_API FrameProgress
     /// present-timing extension this backend does not require - and it is not the same clock as @ref completed:
     /// a frame can be GPU-complete and still queued for presentation. A host reading the WINDOW itself (a
     /// screenshot, a pixel probe) waits for THIS number to reach the frame it wants, then reads.
-    std::uint64_t presented{0};
+    std::uint64_t presented{ 0 };
 
     /**
      * @brief Gets how many frames are submitted and not yet provably complete.
@@ -92,11 +89,10 @@ struct VN_GRAPHICS_API FrameProgress
  * - The whole answer is asked once (RenderEngine::frameReport hands it over unchanged), so a host reads the same
  *   numbers the backend's own evidence uses instead of counting a second time from outside.
  */
-struct VN_GRAPHICS_API FrameReport
-{
-    std::optional<FrameCounters>  counters;  ///< The frame that just ended; disengaged when none are kept.
-    std::optional<RetentionStats> retention; ///< Cumulative retention; disengaged when none are kept.
-    std::optional<FrameProgress>  progress;  ///< Where the frame clock is; disengaged when none is kept.
+struct VN_GRAPHICS_API FrameReport {
+    std::optional<FrameCounters>  counters;  // The frame that just ended; disengaged when none are kept.
+    std::optional<RetentionStats> retention; // Cumulative retention; disengaged when none are kept.
+    std::optional<FrameProgress>  progress;  // Where the frame clock is; disengaged when none is kept.
 };
 
 VN_GRAPHICS_NS_END

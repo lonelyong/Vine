@@ -18,21 +18,23 @@ namespace VN_ROOT_NS
 namespace graphics
 {
 namespace backend
-{
-}
-}  // namespace graphics
+{}
+
+} // namespace graphics
+
 namespace vsg
 {
 namespace core = ::VN_ROOT_NS::graphics::backend;
-}  // namespace vsg
-}  // namespace VN_ROOT_NS
 
-#define VN_VSG_NS_BEGIN                                                                                                                                    \
-    namespace VN_ROOT_NS                                                                                                                                   \
-    {                                                                                                                                                     \
-    namespace vsg                                                                                                                                         \
+} // namespace vsg
+} // namespace VN_ROOT_NS
+
+#define VN_VSG_NS_BEGIN                                                                                                                                        \
+    namespace VN_ROOT_NS                                                                                                                                       \
+    {                                                                                                                                                          \
+    namespace vsg                                                                                                                                              \
     {
 
-#define VN_VSG_NS_END                                                                                                                                      \
-    }                                                                                                                                                     \
+#define VN_VSG_NS_END                                                                                                                                          \
+    }                                                                                                                                                          \
     }

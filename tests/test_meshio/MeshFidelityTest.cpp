@@ -14,14 +14,14 @@
 #include <vector>
 
 #include <vine/Colorf.hpp>
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/Model.hpp>
-#include <vine/geometry/PhongMaterial.hpp>
 #include <vine/geometry/PbrMaterial.hpp>
+#include <vine/geometry/PhongMaterial.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector2.hpp>
 #include <vine/math/Vector3.hpp>
@@ -47,8 +47,7 @@ namespace
 {
 
 /** @brief A unique temporary directory that is removed when it goes out of scope. */
-class TempDir
-{
+class TempDir {
   public:
     TempDir()
     {
@@ -67,7 +66,10 @@ class TempDir
     TempDir(const TempDir&)            = delete;
     TempDir& operator=(const TempDir&) = delete;
 
-    const std::filesystem::path& path() const { return path_; }
+    const std::filesystem::path& path() const
+    {
+        return path_;
+    }
 
   private:
     std::filesystem::path path_;
@@ -89,8 +91,7 @@ void writeFile(const std::filesystem::path& path, const std::string& text)
  * vertex list: joining identical vertices, splitting a corner whose normal cannot be shared, and reordering all leave
  * the sequence of triangles-with-attributes unchanged, while a dropped or altered attribute does not.
  */
-struct Corner
-{
+struct Corner {
     Vec3f position;
     Vec3f normal;
     Vec2f texcoord;
@@ -112,18 +113,12 @@ constexpr float kColorByteTolerance = 1.0f / 255.0f + 1e-4f;
 /** @brief Returns whether two corners agree on every attribute within their tolerances. */
 bool cornersMatch(const Corner& actual, const Corner& expected, float tolerance, float color_tolerance)
 {
-    return std::abs(actual.position.x - expected.position.x) <= tolerance
-        && std::abs(actual.position.y - expected.position.y) <= tolerance
-        && std::abs(actual.position.z - expected.position.z) <= tolerance
-        && std::abs(actual.normal.x - expected.normal.x) <= tolerance
-        && std::abs(actual.normal.y - expected.normal.y) <= tolerance
-        && std::abs(actual.normal.z - expected.normal.z) <= tolerance
-        && std::abs(actual.texcoord.x - expected.texcoord.x) <= tolerance
-        && std::abs(actual.texcoord.y - expected.texcoord.y) <= tolerance
-        && std::abs(actual.color.x - expected.color.x) <= color_tolerance
-        && std::abs(actual.color.y - expected.color.y) <= color_tolerance
-        && std::abs(actual.color.z - expected.color.z) <= color_tolerance
-        && std::abs(actual.color.w - expected.color.w) <= color_tolerance;
+    return std::abs(actual.position.x - expected.position.x) <= tolerance && std::abs(actual.position.y - expected.position.y) <= tolerance &&
+           std::abs(actual.position.z - expected.position.z) <= tolerance && std::abs(actual.normal.x - expected.normal.x) <= tolerance &&
+           std::abs(actual.normal.y - expected.normal.y) <= tolerance && std::abs(actual.normal.z - expected.normal.z) <= tolerance &&
+           std::abs(actual.texcoord.x - expected.texcoord.x) <= tolerance && std::abs(actual.texcoord.y - expected.texcoord.y) <= tolerance &&
+           std::abs(actual.color.x - expected.color.x) <= color_tolerance && std::abs(actual.color.y - expected.color.y) <= color_tolerance &&
+           std::abs(actual.color.z - expected.color.z) <= color_tolerance && std::abs(actual.color.w - expected.color.w) <= color_tolerance;
 }
 
 /** @brief Returns whether @p actual holds the same three corners as @p expected, allowing the cyclic rotation. */
@@ -146,12 +141,10 @@ std::string describe(const Triangle& triangle)
 {
     std::string text;
     for (const Corner& corner : triangle) {
-        text += "[" + std::to_string(corner.position.x) + "," + std::to_string(corner.position.y) + ","
-              + std::to_string(corner.position.z) + " n(" + std::to_string(corner.normal.x) + ","
-              + std::to_string(corner.normal.y) + "," + std::to_string(corner.normal.z) + ") uv("
-              + std::to_string(corner.texcoord.x) + "," + std::to_string(corner.texcoord.y) + ") c("
-              + std::to_string(corner.color.x) + "," + std::to_string(corner.color.y) + ","
-              + std::to_string(corner.color.z) + "," + std::to_string(corner.color.w) + ")] ";
+        text += "[" + std::to_string(corner.position.x) + "," + std::to_string(corner.position.y) + "," + std::to_string(corner.position.z) + " n(" +
+                std::to_string(corner.normal.x) + "," + std::to_string(corner.normal.y) + "," + std::to_string(corner.normal.z) + ") uv(" +
+                std::to_string(corner.texcoord.x) + "," + std::to_string(corner.texcoord.y) + ") c(" + std::to_string(corner.color.x) + "," +
+                std::to_string(corner.color.y) + "," + std::to_string(corner.color.z) + "," + std::to_string(corner.color.w) + ")] ";
     }
     return text;
 }
@@ -174,10 +167,11 @@ std::vector<Triangle> trianglesOf(const vn::geometry::Mesh& mesh)
 
     std::vector<std::uint32_t> indices;
     if (mesh.shapeType() == ShapeType::IndexedTriangleMesh) {
-        const auto& indexed = vn::obj_cast<IndexedTriangleMesh>(mesh);
-        const std::span<const std::uint32_t> view = indexed.indices();
+        const auto&                          indexed = vn::obj_cast<IndexedTriangleMesh>(mesh);
+        const std::span<const std::uint32_t> view    = indexed.indices();
         indices.assign(view.begin(), view.end());
-    } else {
+    }
+    else {
         indices.resize(positions.size());
         std::iota(indices.begin(), indices.end(), std::uint32_t{ 0 });
     }
@@ -220,8 +214,7 @@ std::vector<Triangle> trianglesOf(const vn::geometry::Mesh& mesh)
  * @param tolerance Largest per-component difference accepted for a position, a normal or a texcoord.
  * @param color_tolerance Largest per-channel difference accepted for a colour.
  */
-void expectSameGeometry(std::span<const Triangle> actual, std::span<const Triangle> expected, float tolerance,
-                        float color_tolerance)
+void expectSameGeometry(std::span<const Triangle> actual, std::span<const Triangle> expected, float tolerance, float color_tolerance)
 {
     ASSERT_EQ(actual.size(), expected.size()) << "the round trip changed the triangle count";
     std::vector<bool> claimed(actual.size(), false);
@@ -281,12 +274,20 @@ vn::intrusive_ptr<IndexedTriangleMesh> makeRichCube()
     }
 
     // Outward-facing, counter-clockwise seen from outside.
-    const std::array<std::array<std::size_t, 3>, 12> faces{ { { 0, 3, 2 }, { 0, 2, 1 }, // z = -1
-                                                               { 4, 5, 6 }, { 4, 6, 7 }, // z = 1
-                                                               { 0, 1, 5 }, { 0, 5, 4 }, // y = -1
-                                                               { 3, 7, 6 }, { 3, 6, 2 }, // y = 1
-                                                               { 0, 4, 7 }, { 0, 7, 3 }, // x = -1
-                                                               { 1, 2, 6 }, { 1, 6, 5 } } }; // x = 1
+    const std::array<std::array<std::size_t, 3>, 12> faces{
+        { { 0, 3, 2 },
+         { 0, 2, 1 }, // z = -1
+          { 4, 5, 6 },
+         { 4, 6, 7 }, // z = 1
+          { 0, 1, 5 },
+         { 0, 5, 4 }, // y = -1
+          { 3, 7, 6 },
+         { 3, 6, 2 }, // y = 1
+          { 0, 4, 7 },
+         { 0, 7, 3 }, // x = -1
+          { 1, 2, 6 },
+         { 1, 6, 5 } }
+    }; // x = 1
     for (const auto& face : faces) {
         cube->addTriangle(vertex_id[face[0]], vertex_id[face[1]], vertex_id[face[2]]);
     }
@@ -327,10 +328,10 @@ vn::intrusive_ptr<TriangleMesh> makeRichTriangleSoup()
     const std::span<const Vec2f> texcoords = cube->texcoords();
     const std::span<const Vec4f> colors    = cube->colors();
 
-    vn::geometry::Vec3fArray positions;
-    vn::geometry::Vec3fArray soup_normals;
-    vn::geometry::Vec2fArray soup_texcoords;
-    vn::geometry::Vec4fArray soup_colors;
+    vn::geometry::Vec3fArray             positions;
+    vn::geometry::Vec3fArray             soup_normals;
+    vn::geometry::Vec2fArray             soup_texcoords;
+    vn::geometry::Vec4fArray             soup_colors;
     const std::span<const std::uint32_t> indices = cube->indices();
     positions.reserve(indices.size());
     soup_normals.reserve(indices.size());
@@ -368,9 +369,7 @@ f 1 2 3
 const Model::Node* findNode(const Model& model, const std::string& name)
 {
     const std::vector<Model::Node>& nodes = model.nodes();
-    const auto it = std::find_if(nodes.begin(), nodes.end(), [&](const Model::Node& node) {
-        return node.name.as_std_str() == name;
-    });
+    const auto                      it    = std::find_if(nodes.begin(), nodes.end(), [&](const Model::Node& node) { return node.name.as_std_str() == name; });
     return it != nodes.end() ? &*it : nullptr;
 }
 
@@ -386,12 +385,9 @@ const Model::Node* findNode(const Model& model, const std::string& name)
 const vn::Colorf& baseColorOf(const vn::geometry::Material& material)
 {
     switch (material.materialType()) {
-      case vn::geometry::MaterialType::Phong:
-          return static_cast<const PhongMaterial&>(material).diffuse();
-      case vn::geometry::MaterialType::Pbr:
-          return static_cast<const vn::geometry::PbrMaterial&>(material).baseColor();
-      default:
-          return static_cast<const ColorMaterial&>(material).color();
+    case vn::geometry::MaterialType::Phong: return static_cast<const PhongMaterial&>(material).diffuse();
+    case vn::geometry::MaterialType::Pbr: return static_cast<const vn::geometry::PbrMaterial&>(material).baseColor();
+    default: return static_cast<const ColorMaterial&>(material).color();
     }
 }
 
@@ -440,7 +436,7 @@ TEST(MeshFidelityTest, TheMergedEntryKeepsEveryAttributeItRecords)
     stripTexcoords(expected);
 
     const std::filesystem::path path = dir.path() / "merged.ply";
-    MeshExporter exporter;
+    MeshExporter                exporter;
     ASSERT_EQ(exporter.exportAs(*cube, MeshFormat::Ply, path), vn::io::IoError::Ok);
 
     MeshLoader loader(noScaling());
@@ -464,7 +460,7 @@ TEST(MeshFidelityTest, ANonIndexedMeshSurvivesTheSameTrip)
     const auto    expected = trianglesOf(*soup);
 
     const std::filesystem::path path = dir.path() / "soup.ply";
-    MeshExporter exporter;
+    MeshExporter                exporter;
     ASSERT_EQ(exporter.exportAs(*soup, MeshFormat::Ply, path), vn::io::IoError::Ok);
 
     MeshLoader loader(noScaling());
@@ -481,7 +477,7 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
 {
     const TempDir dir;
 
-    const auto cube = makeRichCube();
+    const auto                  cube          = makeRichCube();
     const std::vector<Triangle> cube_expected = trianglesOf(*cube);
 
     auto flat_mesh = vn::make_intrusive<IndexedTriangleMesh>();
@@ -495,8 +491,7 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
     flat_mesh->setNormals({ Vec3f(0, 0, 1), Vec3f(0, 0, 1), Vec3f(0, 0, 1) });
     const std::vector<Triangle> flat_expected = trianglesOf(*flat_mesh);
 
-    auto shiny = vn::make_intrusive<PhongMaterial>(vn::Colorf(0.25f, 0.25f, 0.25f), vn::Colorf(0.5f, 0.25f, 0.125f),
-                                                   vn::Colorf(1.0f, 1.0f, 1.0f), 64.0f);
+    auto shiny = vn::make_intrusive<PhongMaterial>(vn::Colorf(0.25f, 0.25f, 0.25f), vn::Colorf(0.5f, 0.25f, 0.125f), vn::Colorf(1.0f, 1.0f, 1.0f), 64.0f);
     shiny->setName(vn::String::fromUtf8("shiny"));
     auto flat = vn::make_intrusive<ColorMaterial>(vn::Colorf(0.25f, 0.5f, 0.75f));
     flat->setName(vn::String::fromUtf8("flat"));
@@ -512,7 +507,7 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
     model->setMeshes({ cube_entry, flat_entry });
 
     Model::Node child;
-    child.name = vn::String::fromUtf8("child");
+    child.name      = vn::String::fromUtf8("child");
     // Translated, so a baked-in transform would show up as moved vertices.
     child.transform = vn::math::Mat4d(1, 0, 0, 2, 0, 1, 0, 3, 0, 0, 1, 4, 0, 0, 0, 1);
     child.meshes    = { 1u };
@@ -526,7 +521,7 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
     model->setRoot(1u);
 
     const std::filesystem::path path = dir.path() / "model.dae";
-    MeshExporter exporter;
+    MeshExporter                exporter;
     ASSERT_EQ(exporter.exportAs(*model, MeshFormat::Collada, path), vn::io::IoError::Ok);
 
     MeshLoader loader(noScaling());
@@ -551,7 +546,8 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
         const std::size_t triangle_count = trianglesOf(*entry.mesh).size();
         if (triangle_count == cube_expected.size()) {
             reloaded_cube = &entry;
-        } else if (triangle_count == flat_expected.size()) {
+        }
+        else if (triangle_count == flat_expected.size()) {
             reloaded_triangle = &entry;
         }
     }
@@ -590,7 +586,7 @@ TEST(MeshFidelityTest, AFileWithoutNormalsArrivesWithDerivedOnes)
 
     // Both entries state a normal per vertex: a mesh the file describes without normals is not handed out without them,
     // because an absent normal means "derive it from the geometry" to the renderer, not "draw it flat".
-    auto       loaded = loader.loadMerged(dir.path() / "plain.obj");
+    auto loaded = loader.loadMerged(dir.path() / "plain.obj");
     ASSERT_TRUE(loaded);
     const auto merged = loaded.take();
     ASSERT_EQ(merged->normals().size(), merged->positions().size());
@@ -598,7 +594,7 @@ TEST(MeshFidelityTest, AFileWithoutNormalsArrivesWithDerivedOnes)
         EXPECT_NEAR(normal.length(), 1.0f, 1e-4f) << "a derived normal is not a unit vector";
     }
 
-    auto       loaded_model = loader.load(dir.path() / "plain.obj");
+    auto loaded_model = loader.load(dir.path() / "plain.obj");
     ASSERT_TRUE(loaded_model);
     const auto model = loaded_model.take();
     ASSERT_EQ(model->meshes().size(), 1u);
@@ -623,7 +619,7 @@ TEST(MeshFidelityTest, TheExportScaleFactorReachesEveryVertex)
     }
 
     const std::filesystem::path path = dir.path() / "scaled.ply";
-    MeshExporter exporter(MeshExporter::Options{ .scale_factor = 3.0 });
+    MeshExporter                exporter(MeshExporter::Options{ .scale_factor = 3.0 });
     ASSERT_EQ(exporter.exportAs(*cube, MeshFormat::Ply, path), vn::io::IoError::Ok);
 
     MeshLoader loader(noScaling());
@@ -647,13 +643,12 @@ TEST(MeshFidelityTest, TheLoadScaleRuleIsTheSameForBothEntries)
     const TempDir dir;
     writeFile(dir.path() / "plain.obj", kPlainObj);
 
-    MeshLoader loader(MeshLoader::Options{ .scale_mode          = MeshLoader::ScaleMode::Custom,
-                                           .custom_scale_factor = 2.5 });
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Custom, .custom_scale_factor = 2.5 });
 
     // The merged entry bakes the factor into the vertices...
-    auto       loaded = loader.loadMerged(dir.path() / "plain.obj");
+    auto loaded = loader.loadMerged(dir.path() / "plain.obj");
     ASSERT_TRUE(loaded);
-    const auto merged = loaded.take();
+    const auto merged  = loaded.take();
     float      largest = 0.0f;
     for (const Vec3f& position : merged->positions()) {
         largest = std::max({ largest, position.x, position.y, position.z });
@@ -661,7 +656,7 @@ TEST(MeshFidelityTest, TheLoadScaleRuleIsTheSameForBothEntries)
     EXPECT_NEAR(largest, 5.0f, 1e-4f) << "a vertex of the plain triangle was not scaled";
 
     // ...while the model entry folds the same factor into the root, so the parts keep their places.
-    auto       loaded_model = loader.load(dir.path() / "plain.obj");
+    auto loaded_model = loader.load(dir.path() / "plain.obj");
     ASSERT_TRUE(loaded_model);
     const auto model = loaded_model.take();
     ASSERT_LT(model->root(), model->nodes().size());

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentAssembly.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
@@ -8,7 +9,6 @@
 #include <vine/vsg/internal/VsgBackend.hpp>
 #include <vine/vsg/internal/VsgExecutor.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -31,8 +31,7 @@ namespace detail
 {
 
 /** @brief The api-internal view of a facade's content world and pass identities. */
-class BackendContentAccess
-{
+class BackendContentAccess {
   public:
     /** @brief Gets the pass identities the facade has adopted (see api/PassRegistry).
      *
@@ -112,8 +111,7 @@ class BackendContentAccess
      * @param index   Window index (0 is the window the device brings up for itself).
      * @return The target, or null when no such window exists.
      */
-    [[nodiscard]] static vn::raw_ptr<vn::graphics::WindowPresentTarget> surfaceTarget(VsgBackend& backend,
-                                                                                      std::size_t index) noexcept;
+    [[nodiscard]] static vn::raw_ptr<vn::graphics::WindowPresentTarget> surfaceTarget(VsgBackend& backend, std::size_t index) noexcept;
 
     /** @brief Gets the session's window as the frame's default-framebuffer target.
      *
@@ -162,6 +160,6 @@ class BackendContentAccess
     [[nodiscard]] static core::VariantPool& pool(VsgBackend& backend) noexcept;
 };
 
-}  // namespace detail
+} // namespace detail
 
 VN_VSG_NS_END

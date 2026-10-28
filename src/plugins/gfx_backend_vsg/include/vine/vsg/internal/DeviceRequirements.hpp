@@ -45,8 +45,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
  * @param patch Version patch.
  * @return The packed version, comparable with a device's reported version.
  */
-[[nodiscard]] constexpr std::uint32_t makeApiVersion(std::uint32_t major, std::uint32_t minor,
-                                                     std::uint32_t patch = 0) noexcept
+[[nodiscard]] constexpr std::uint32_t makeApiVersion(std::uint32_t major, std::uint32_t minor, std::uint32_t patch = 0) noexcept
 {
     return (major << 22U) | (minor << 12U) | patch;
 }
@@ -72,16 +71,16 @@ inline constexpr std::uint32_t kRequiredApiVersion = makeApiVersion(1, 4);
  */
 enum class DeviceFeature : std::uint8_t
 {
-    FillModeNonSolid,                       ///< Wireframe polygon mode.
-    LargePoints,                            ///< Point primitives larger than one pixel.
-    WideLines,                              ///< Line primitives wider than one pixel.
-    IndependentBlend,                       ///< Per-attachment blending (MRT).
-    SamplerAnisotropy,                      ///< Anisotropic sampling.
-    ExtendedDynamicState2,                  ///< The dynamic state the pipelines assume.
-    ExtendedDynamicState3PolygonMode,       ///< Polygon mode as dynamic state.
-    ExtendedDynamicState3ColorBlendEnable,  ///< Per-attachment blend enable.
-    ExtendedDynamicState3ColorBlendEquation,///< Per-attachment blend equation.
-    Count,                                  ///< Number of features (not a feature).
+    FillModeNonSolid,                        // Wireframe polygon mode.
+    LargePoints,                             // Point primitives larger than one pixel.
+    WideLines,                               // Line primitives wider than one pixel.
+    IndependentBlend,                        // Per-attachment blending (MRT).
+    SamplerAnisotropy,                       // Anisotropic sampling.
+    ExtendedDynamicState2,                   // The dynamic state the pipelines assume.
+    ExtendedDynamicState3PolygonMode,        // Polygon mode as dynamic state.
+    ExtendedDynamicState3ColorBlendEnable,   // Per-attachment blend enable.
+    ExtendedDynamicState3ColorBlendEquation, // Per-attachment blend equation.
+    Count,                                   // Number of features (not a feature).
 };
 
 /** @brief How many features a device must have. */
@@ -99,20 +98,19 @@ inline constexpr std::size_t kDeviceFeatureCount = static_cast<std::size_t>(Devi
  */
 enum class DeviceExtension : std::uint8_t
 {
-    ExtendedDynamicState2,  ///< The dynamic state promoted into 1.3 as a core block.
-    ExtendedDynamicState3,  ///< Polygon mode, per-attachment blend enable and equation (core on no version).
-    Count,                  ///< Number of extensions (not an extension).
+    ExtendedDynamicState2, // The dynamic state promoted into 1.3 as a core block.
+    ExtendedDynamicState3, // Polygon mode, per-attachment blend enable and equation (core on no version).
+    Count,                 // Number of extensions (not an extension).
 };
 
 /** @brief How many extensions a device must offer. */
 inline constexpr std::size_t kDeviceExtensionCount = static_cast<std::size_t>(DeviceExtension::Count);
 
 /** @brief What a device offers, in the terms this policy checks. */
-struct VN_VSG_API DeviceFacts
-{
-    std::uint32_t api_version{0};  ///< A physical device's reported version (NOT the instance's).
-    std::uint32_t features{0};     ///< Bit i is set when DeviceFeature(i) is present.
-    std::uint32_t extensions{0};   ///< Bit i is set when DeviceExtension(i) is available.
+struct VN_VSG_API DeviceFacts {
+    std::uint32_t api_version{ 0 }; // A physical device's reported version (NOT the instance's).
+    std::uint32_t features{ 0 };    // Bit i is set when DeviceFeature(i) is present.
+    std::uint32_t extensions{ 0 };  // Bit i is set when DeviceExtension(i) is available.
 
     /** @brief Gets whether @p feature is present.
      *

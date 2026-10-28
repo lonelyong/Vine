@@ -4,21 +4,21 @@
 
 VN_GRAPHICSBACKEND_NS_BEGIN
 
-VariantPool::VariantPool(std::size_t capacity) : capacity_(std::max<std::size_t>(capacity, 1U))
-{
-}
+VariantPool::VariantPool(std::size_t capacity)
+  : capacity_(std::max<std::size_t>(capacity, 1U))
+{}
 
 VariantPool::Lookup VariantPool::acquire(const PipelineKey& key)
 {
     const auto found = index_.find(key);
     if (found != index_.end()) {
         ++reused_;
-        return {Action::Reused, found->second->id};
+        return { Action::Reused, found->second->id };
     }
 
-    Entry entry{key, next_id_++};
+    Entry entry{ key, next_id_++ };
     order_.push_back(std::move(entry));
-    const auto position = std::prev(order_.end());
+    const auto position   = std::prev(order_.end());
     index_[position->key] = position;
     by_id_[position->id]  = position;
     ++created_;
@@ -35,7 +35,7 @@ VariantPool::Lookup VariantPool::acquire(const PipelineKey& key)
         ++evictions_;
     }
 
-    return {Action::Created, id};
+    return { Action::Created, id };
 }
 
 bool VariantPool::contains(std::uint64_t id) const noexcept

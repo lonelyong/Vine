@@ -17,7 +17,8 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Shared completion state of a TaskCompletionSource.
@@ -26,25 +27,23 @@ namespace detail {
  * alive even after the source itself is destroyed. The value is moved out by
  * the first awaiter; with a move-only T await the returned task only once.
  */
-template<typename T>
-struct TcsState
-{
-    std::mutex mutex;
-    bool completed{ false };
-    std::optional<T> value{};
-    std::exception_ptr exception{};
+template <typename T>
+struct TcsState {
+    std::mutex                           mutex;
+    bool                                 completed{ false };
+    std::optional<T>                     value{};
+    std::exception_ptr                   exception{};
     std::vector<std::coroutine_handle<>> waiters;
 };
 
 /**
  * @brief Shared completion state of a void TaskCompletionSource.
  */
-template<>
-struct TcsState<void>
-{
-    std::mutex mutex;
-    bool completed{ false };
-    std::exception_ptr exception{};
+template <>
+struct TcsState<void> {
+    std::mutex                           mutex;
+    bool                                 completed{ false };
+    std::exception_ptr                   exception{};
     std::vector<std::coroutine_handle<>> waiters;
 };
 
@@ -55,19 +54,19 @@ struct TcsState<void>
  * destruction, so a completed-but-abandoned await never resumes a destroyed
  * coroutine (mirrors AsyncEvent's safety).
  */
-template<typename T>
-class TcsAwaiter
-{
+template <typename T>
+class TcsAwaiter {
   public:
-    explicit TcsAwaiter(std::shared_ptr<TcsState<T>> state) noexcept : state_(std::move(state)) {}
+    explicit TcsAwaiter(std::shared_ptr<TcsState<T>> state) noexcept
+      : state_(std::move(state))
+    {}
 
-    TcsAwaiter(const TcsAwaiter&) = delete;
+    TcsAwaiter(const TcsAwaiter&)            = delete;
     TcsAwaiter& operator=(const TcsAwaiter&) = delete;
 
     ~TcsAwaiter() noexcept
     {
-        if (handle_)
-        {
+        if (handle_) {
             std::lock_guard<std::mutex> lock(state_->mutex);
             std::erase(state_->waiters, handle_);
         }
@@ -94,8 +93,7 @@ class TcsAwaiter
     {
         handle_ = h;
         std::lock_guard<std::mutex> lock(state_->mutex);
-        if (state_->completed)
-        {
+        if (state_->completed) {
             return false; // Already completed; do not suspend.
         }
         return detail::tryRegisterWaiter(state_->waiters, h, failure_);
@@ -108,23 +106,20 @@ class TcsAwaiter
      */
     decltype(auto) await_resume()
     {
-        if (failure_)
-        {
+        if (failure_) {
             std::rethrow_exception(std::exchange(failure_, nullptr));
         }
-        if (state_->exception)
-        {
+        if (state_->exception) {
             std::rethrow_exception(state_->exception);
         }
-        if constexpr (!std::is_void_v<T>)
-        {
+        if constexpr (!std::is_void_v<T>) {
             return std::move(*state_->value);
         }
     }
 
   private:
     std::shared_ptr<TcsState<T>> state_;
-    std::coroutine_handle<> handle_{};
+    std::coroutine_handle<>      handle_{};
 
     /// Why the waiter could not be registered; rethrown by await_resume().
     std::exception_ptr failure_{};
@@ -138,16 +133,14 @@ class TcsAwaiter
  * destroys a still-suspended sibling (e.g. a whenAny winner) unregisters it
  * from the shared list, so the next iteration simply does not find it.
  */
-template<typename T>
+template <typename T>
 inline void resumeWaitersOneByOne(const std::shared_ptr<TcsState<T>>& state) noexcept
 {
-    for (;;)
-    {
+    for (;;) {
         std::coroutine_handle<> h;
         {
             std::lock_guard<std::mutex> lock(state->mutex);
-            if (state->waiters.empty())
-            {
+            if (state->waiters.empty()) {
                 break;
             }
             h = state->waiters.back();
@@ -174,18 +167,17 @@ inline void resumeWaitersOneByOne(const std::shared_ptr<TcsState<T>>& state) noe
  * either a std::exception_ptr or any exception object.
  *
  * @tparam T Result type; void for a result-less source.
-  *
+ *
  * Threading: the internal state is mutex-guarded, so a completion may arrive from any thread - a
  * callback, an event handler, a worker - and concurrent awaits are supported. Waiters are
  * resumed on the thread that completes the source, and the source must outlive them.
  */
-template<typename T>
-class TaskCompletionSource
-{
+template <typename T>
+class TaskCompletionSource {
   public:
     TaskCompletionSource() = default;
 
-    TaskCompletionSource(const TaskCompletionSource&) = delete;
+    TaskCompletionSource(const TaskCompletionSource&)            = delete;
     TaskCompletionSource& operator=(const TaskCompletionSource&) = delete;
 
     /**
@@ -209,8 +201,7 @@ class TaskCompletionSource
     {
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
-            if (impl_->completed)
-            {
+            if (impl_->completed) {
                 throw std::logic_error("async::TaskCompletionSource: already completed");
             }
             impl_->value.emplace(std::move(value));
@@ -225,13 +216,12 @@ class TaskCompletionSource
      * @param value Result delivered to every awaiting task.
      * @return true if this call completed the source.
      */
-[[nodiscard]]
+    [[nodiscard]]
     bool trySetResult(T value)
     {
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
-            if (impl_->completed)
-            {
+            if (impl_->completed) {
                 return false;
             }
             impl_->value.emplace(std::move(value));
@@ -248,14 +238,12 @@ class TaskCompletionSource
      */
     void setException(std::exception_ptr exception)
     {
-        if (!exception)
-        {
+        if (!exception) {
             throw std::invalid_argument("async::TaskCompletionSource: null exception");
         }
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
-            if (impl_->completed)
-            {
+            if (impl_->completed) {
                 throw std::logic_error("async::TaskCompletionSource: already completed");
             }
             impl_->exception = std::move(exception);
@@ -270,7 +258,7 @@ class TaskCompletionSource
      * @tparam E Exception type.
      * @param exception Exception object to copy into the source.
      */
-    template<typename E>
+    template <typename E>
     void setException(const E& exception)
     {
         setException(std::make_exception_ptr(exception));
@@ -282,17 +270,15 @@ class TaskCompletionSource
      * @param exception Exception to rethrow from every awaiting task.
      * @return true if this call completed the source.
      */
-[[nodiscard]]
+    [[nodiscard]]
     bool trySetException(std::exception_ptr exception)
     {
-        if (!exception)
-        {
+        if (!exception) {
             return false;
         }
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
-            if (impl_->completed)
-            {
+            if (impl_->completed) {
                 return false;
             }
             impl_->exception = std::move(exception);
@@ -309,8 +295,8 @@ class TaskCompletionSource
      * @param exception Exception object to copy into the source.
      * @return true if this call completed the source.
      */
-    template<typename E>
-[[nodiscard]]
+    template <typename E>
+    [[nodiscard]]
     bool trySetException(const E& exception)
     {
         return trySetException(std::make_exception_ptr(exception));
@@ -327,13 +313,11 @@ class TaskCompletionSource
     [[nodiscard]]
     Task<T> task()
     {
-        if constexpr (std::is_void_v<T>)
-        {
+        if constexpr (std::is_void_v<T>) {
             co_await detail::TcsAwaiter<T>{ impl_ };
             co_return;
         }
-        else
-        {
+        else {
             co_return co_await detail::TcsAwaiter<T>{ impl_ };
         }
     }
@@ -345,13 +329,12 @@ class TaskCompletionSource
 /**
  * @brief TaskCompletionSource specialization for void results.
  */
-template<>
-class TaskCompletionSource<void>
-{
+template <>
+class TaskCompletionSource<void> {
   public:
     TaskCompletionSource() = default;
 
-    TaskCompletionSource(const TaskCompletionSource&) = delete;
+    TaskCompletionSource(const TaskCompletionSource&)            = delete;
     TaskCompletionSource& operator=(const TaskCompletionSource&) = delete;
 
     /**
@@ -373,8 +356,7 @@ class TaskCompletionSource<void>
     {
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
-            if (impl_->completed)
-            {
+            if (impl_->completed) {
                 throw std::logic_error("async::TaskCompletionSource: already completed");
             }
             impl_->completed = true;
@@ -387,13 +369,12 @@ class TaskCompletionSource<void>
      *
      * @return true if this call completed the source.
      */
-[[nodiscard]]
+    [[nodiscard]]
     bool trySetResult()
     {
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
-            if (impl_->completed)
-            {
+            if (impl_->completed) {
                 return false;
             }
             impl_->completed = true;
@@ -409,14 +390,12 @@ class TaskCompletionSource<void>
      */
     void setException(std::exception_ptr exception)
     {
-        if (!exception)
-        {
+        if (!exception) {
             throw std::invalid_argument("async::TaskCompletionSource: null exception");
         }
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
-            if (impl_->completed)
-            {
+            if (impl_->completed) {
                 throw std::logic_error("async::TaskCompletionSource: already completed");
             }
             impl_->exception = std::move(exception);
@@ -431,7 +410,7 @@ class TaskCompletionSource<void>
      * @tparam E Exception type.
      * @param exception Exception object to copy into the source.
      */
-    template<typename E>
+    template <typename E>
     void setException(const E& exception)
     {
         setException(std::make_exception_ptr(exception));
@@ -443,17 +422,15 @@ class TaskCompletionSource<void>
      * @param exception Exception to rethrow from every awaiting task.
      * @return true if this call completed the source.
      */
-[[nodiscard]]
+    [[nodiscard]]
     bool trySetException(std::exception_ptr exception)
     {
-        if (!exception)
-        {
+        if (!exception) {
             return false;
         }
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
-            if (impl_->completed)
-            {
+            if (impl_->completed) {
                 return false;
             }
             impl_->exception = std::move(exception);
@@ -470,8 +447,8 @@ class TaskCompletionSource<void>
      * @param exception Exception object to copy into the source.
      * @return true if this call completed the source.
      */
-    template<typename E>
-[[nodiscard]]
+    template <typename E>
+    [[nodiscard]]
     bool trySetException(const E& exception)
     {
         return trySetException(std::make_exception_ptr(exception));

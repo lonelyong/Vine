@@ -51,4 +51,3 @@ class VN_GRAPHICS_API MatrixTransform : public Group {
 using MatrixTransformPtr = intrusive_ptr<MatrixTransform>;
 
 VN_GRAPHICS_NS_END
-

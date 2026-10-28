@@ -1,4 +1,3 @@
-#include <vine/async/Task.hpp>
 #include <vine/async/AsyncConditionVariable.hpp>
 #include <vine/async/AsyncEvent.hpp>
 #include <vine/async/AsyncLatch.hpp>
@@ -6,8 +5,8 @@
 #include <vine/async/AsyncQueue.hpp>
 #include <vine/async/AsyncReaderWriterLock.hpp>
 #include <vine/async/AsyncSemaphore.hpp>
-#include <vine/async/Concepts.hpp>
 #include <vine/async/Cancellation.hpp>
+#include <vine/async/Concepts.hpp>
 #include <vine/async/DetachedTask.hpp>
 #include <vine/async/Finally.hpp>
 #include <vine/async/Generator.hpp>
@@ -18,6 +17,7 @@
 #include <vine/async/SharedTask.hpp>
 #include <vine/async/Sleep.hpp>
 #include <vine/async/StopToken.hpp>
+#include <vine/async/Task.hpp>
 #include <vine/async/TaskCombinators.hpp>
 #include <vine/async/TaskCompletionSource.hpp>
 #include <vine/async/ThreadPoolScheduler.hpp>
@@ -30,8 +30,8 @@
 
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <coroutine>
 #include <cstddef>
@@ -42,12 +42,13 @@
 #include <vector>
 
 #if defined(__linux__)
-#include <dirent.h>
+#    include <dirent.h>
 #endif
 
 using namespace vn;
 
-namespace {
+namespace
+{
 
 async::Task<int> answer()
 {
@@ -194,17 +195,13 @@ async::Task<void> awaitEventFlag(async::AsyncEvent& event, bool& ran)
  * cancelled is stored only when the sleep was cancelled, and finished always, so a test can tell
  * "the token reached the sleep" from "the sleep ran to its deadline".
  */
-async::Task<void> sleepInEnvironment(std::chrono::milliseconds duration,
-                                     std::atomic<bool>& cancelled,
-                                     std::atomic<bool>& finished)
+async::Task<void> sleepInEnvironment(std::chrono::milliseconds duration, std::atomic<bool>& cancelled, std::atomic<bool>& finished)
 {
     const std::stop_token inherited = co_await async::currentStopToken();
-    try
-    {
+    try {
         co_await async::sleepFor(duration, inherited);
     }
-    catch (const async::TaskCancelledException&)
-    {
+    catch (const async::TaskCancelledException&) {
         cancelled.store(true, std::memory_order_release);
     }
     finished.store(true, std::memory_order_release);
@@ -214,16 +211,13 @@ async::Task<void> sleepInEnvironment(std::chrono::milliseconds duration,
 bool waitForFlag(const std::atomic<bool>& flag, std::chrono::milliseconds budget)
 {
     const auto deadline = std::chrono::steady_clock::now() + budget;
-    while (!flag.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
-    {
+    while (!flag.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return flag.load(std::memory_order_acquire);
 }
 
-async::Task<void> eventWaitCount(async::AsyncEvent& event,
-                                 std::atomic<int>& registered,
-                                 std::atomic<int>& woken)
+async::Task<void> eventWaitCount(async::AsyncEvent& event, std::atomic<int>& registered, std::atomic<int>& woken)
 {
     ++registered;
     co_await event;
@@ -239,17 +233,14 @@ async::Task<void> awaitEventTwice(async::AsyncEvent& event, int& resumes)
     co_return;
 }
 
-async::Task<void> eventReArmOnce(async::AsyncEvent& event,
-                                 std::atomic<bool>& registered,
-                                 std::atomic<int>& woken,
-                                 std::atomic<bool>& rearmed)
+async::Task<void> eventReArmOnce(async::AsyncEvent& event, std::atomic<bool>& registered, std::atomic<int>& woken, std::atomic<bool>& rearmed)
 {
     registered.store(true); // About to register the gen-1 waiter.
     co_await event;         // Generation 1.
     woken.fetch_add(1);
-    event.reset();          // Re-arm for the next read (VisualUserIO pattern).
+    event.reset(); // Re-arm for the next read (VisualUserIO pattern).
     rearmed.store(true);
-    co_await event;         // Generation 2.
+    co_await event; // Generation 2.
     woken.fetch_add(1);
 }
 
@@ -299,10 +290,7 @@ async::Task<void> mutexIncrement(async::AsyncMutex& mutex, int& counter)
     mutex.unlock();
 }
 
-async::DetachedTask mutexHolder(async::AsyncMutex& mutex,
-                                async::AsyncEvent& held,
-                                async::AsyncEvent& release,
-                                std::atomic<bool>& done)
+async::DetachedTask mutexHolder(async::AsyncMutex& mutex, async::AsyncEvent& held, async::AsyncEvent& release, std::atomic<bool>& done)
 {
     co_await mutex.lock();
     held.set();
@@ -335,11 +323,19 @@ static_assert(async::Awaitable<async::AsyncEvent::Awaiter>);
 static_assert(!async::Awaitable<int>);
 static_assert(!async::Awaitable<async::Task<int>&>); // Task is rvalue-awaitable only.
 
-struct IllegalAwaiter
-{
-    bool await_ready() const noexcept { return true; }
-    int  await_suspend(std::coroutine_handle<>) const noexcept { return 0; }
-    void await_resume() const noexcept {}
+struct IllegalAwaiter {
+    bool await_ready() const noexcept
+    {
+        return true;
+    }
+
+    int await_suspend(std::coroutine_handle<>) const noexcept
+    {
+        return 0;
+    }
+
+    void await_resume() const noexcept
+    {}
 };
 
 static_assert(!async::Awaitable<IllegalAwaiter>);
@@ -347,30 +343,43 @@ static_assert(!async::Awaitable<IllegalAwaiter>);
 /// await_suspend must not return a reference to a handle: the language allows
 /// only void, bool or a coroutine_handle value (clang rejects this form, g++
 /// currently accepts it, so rejecting it keeps the concept portable).
-struct ReferenceReturningAwaiter
-{
-    bool                     await_ready() const noexcept { return true; }
+struct ReferenceReturningAwaiter {
+    bool await_ready() const noexcept
+    {
+        return true;
+    }
+
     std::coroutine_handle<>& await_suspend(std::coroutine_handle<>) const noexcept;
-    void                     await_resume() const noexcept {}
+
+    void await_resume() const noexcept
+    {}
 };
 
 static_assert(!async::Awaitable<ReferenceReturningAwaiter>);
 
 /// await_ready only has to convert contextually to bool, exactly as co_await
 /// requires, so a returning-int awaiter is legal (measured on clang and g++).
-struct ContextualBoolAwaiter
-{
-    int  await_ready() const noexcept { return 1; }
-    void await_suspend(std::coroutine_handle<>) const noexcept {}
-    void await_resume() const noexcept {}
+struct ContextualBoolAwaiter {
+    int await_ready() const noexcept
+    {
+        return 1;
+    }
+
+    void await_suspend(std::coroutine_handle<>) const noexcept
+    {}
+
+    void await_resume() const noexcept
+    {}
 };
 
 static_assert(async::Awaitable<ContextualBoolAwaiter>);
 
 /// Scheduler whose schedule() returns a Task instead of a bare awaiter.
-struct TaskReturningScheduler
-{
-    async::Task<void> schedule() { co_return; }
+struct TaskReturningScheduler {
+    async::Task<void> schedule()
+    {
+        co_return;
+    }
 };
 
 static_assert(async::Schedulable<async::InlineScheduler>);
@@ -386,12 +395,12 @@ static_assert(async::StorableValue<void>);
 static_assert(!async::StorableValue<int&>);
 static_assert(!async::StorableValue<int[3]>);
 
-template<typename T>
+template <typename T>
 async::Task<T> taskOfType(); // Declared only: substitution, no coroutine created.
 
 /// Whether Task<T> is a valid specialization at all (checked as a concept, so
 /// the constraint failure stays a substitution failure).
-template<typename T>
+template <typename T>
 concept TaskAcceptsResult = requires { taskOfType<T>(); };
 
 static_assert(TaskAcceptsResult<int>);
@@ -419,12 +428,10 @@ async::Task<void> scopeAwaitEvent(async::AsyncEvent& event)
 
 async::Task<void> sleepCancel(CancellationToken token, bool& cancelled)
 {
-    try
-    {
+    try {
         co_await async::sleepFor(std::chrono::milliseconds(100), token);
     }
-    catch (const async::TaskCancelledException&)
-    {
+    catch (const async::TaskCancelledException&) {
         cancelled = true;
     }
 }
@@ -462,24 +469,18 @@ async::Task<void> rwBasic(async::AsyncReaderWriterLock& lock, int& value)
     co_return;
 }
 
-async::Task<void> rwReaderConcurrent(async::AsyncReaderWriterLock& lock,
-                                     std::atomic<int>& active,
-                                     std::atomic<int>& max_active)
+async::Task<void> rwReaderConcurrent(async::AsyncReaderWriterLock& lock, std::atomic<int>& active, std::atomic<int>& max_active)
 {
     auto guard = co_await lock.readerLock();
     (void)guard;
     int now = ++active;
     int cur = max_active.load();
-    while (cur < now && !max_active.compare_exchange_weak(cur, now))
-    {
-    }
+    while (cur < now && !max_active.compare_exchange_weak(cur, now)) {}
     co_await async::sleepFor(std::chrono::milliseconds(20));
     --active;
 }
 
-async::DetachedTask rwReaderHold(async::AsyncReaderWriterLock& lock,
-                                 async::AsyncEvent& r1_held,
-                                 async::AsyncEvent& w1_done)
+async::DetachedTask rwReaderHold(async::AsyncReaderWriterLock& lock, async::AsyncEvent& r1_held, async::AsyncEvent& w1_done)
 {
     auto guard = co_await lock.readerLock();
     (void)guard;
@@ -487,9 +488,7 @@ async::DetachedTask rwReaderHold(async::AsyncReaderWriterLock& lock,
     co_await w1_done;
 }
 
-async::DetachedTask rwWriterThen(async::AsyncReaderWriterLock& lock,
-                                 async::AsyncEvent& w1_done,
-                                 std::atomic<bool>& ran)
+async::DetachedTask rwWriterThen(async::AsyncReaderWriterLock& lock, async::AsyncEvent& w1_done, std::atomic<bool>& ran)
 {
     auto guard = co_await lock.writerLock();
     (void)guard;
@@ -504,10 +503,7 @@ async::DetachedTask rwReaderThen(async::AsyncReaderWriterLock& lock, std::atomic
     ran.store(true);
 }
 
-async::DetachedTask rwWriterHolder(async::AsyncReaderWriterLock& lock,
-                                   async::AsyncEvent& held,
-                                   async::AsyncEvent& release,
-                                   std::atomic<bool>& done)
+async::DetachedTask rwWriterHolder(async::AsyncReaderWriterLock& lock, async::AsyncEvent& held, async::AsyncEvent& release, std::atomic<bool>& done)
 {
     auto guard = co_await lock.writerLock();
     (void)guard;
@@ -516,9 +512,7 @@ async::DetachedTask rwWriterHolder(async::AsyncReaderWriterLock& lock,
     done.store(true);
 }
 
-async::DetachedTask rwWriterHoldRelease(async::AsyncReaderWriterLock& lock,
-                                        async::AsyncEvent& held,
-                                        async::AsyncEvent& release)
+async::DetachedTask rwWriterHoldRelease(async::AsyncReaderWriterLock& lock, async::AsyncEvent& held, async::AsyncEvent& release)
 {
     auto guard = co_await lock.writerLock();
     (void)guard;
@@ -533,9 +527,7 @@ async::Task<void> rwWriterLockUnlock(async::AsyncReaderWriterLock& lock)
     co_return;
 }
 
-async::DetachedTask cvWaiterDetached(async::AsyncMutex& mutex,
-                                     async::AsyncConditionVariable& cv,
-                                     bool& woken)
+async::DetachedTask cvWaiterDetached(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, bool& woken)
 {
     co_await mutex.lock();
     co_await cv.wait(mutex);
@@ -543,10 +535,7 @@ async::DetachedTask cvWaiterDetached(async::AsyncMutex& mutex,
     mutex.unlock();
 }
 
-async::Task<void> cvWaiterCount(async::AsyncMutex& mutex,
-                                async::AsyncConditionVariable& cv,
-                                std::atomic<int>& registered,
-                                std::atomic<int>& woken)
+async::Task<void> cvWaiterCount(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<int>& registered, std::atomic<int>& woken)
 {
     co_await mutex.lock();
     ++registered;
@@ -562,9 +551,7 @@ async::Task<void> cvWait(async::AsyncMutex& mutex, async::AsyncConditionVariable
     mutex.unlock();
 }
 
-async::Task<void> cvWaitBool(async::AsyncMutex& mutex,
-                             async::AsyncConditionVariable& cv,
-                             bool& woken)
+async::Task<void> cvWaitBool(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, bool& woken)
 {
     co_await mutex.lock();
     co_await cv.wait(mutex);
@@ -572,9 +559,7 @@ async::Task<void> cvWaitBool(async::AsyncMutex& mutex,
     mutex.unlock();
 }
 
-async::Task<void> cvWaitOnce(async::AsyncMutex& mutex,
-                             async::AsyncConditionVariable& cv,
-                             std::atomic<int>& completed)
+async::Task<void> cvWaitOnce(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<int>& completed)
 {
     co_await mutex.lock();
     co_await cv.wait(mutex);
@@ -582,9 +567,7 @@ async::Task<void> cvWaitOnce(async::AsyncMutex& mutex,
     ++completed;
 }
 
-async::Task<void> cvWaitFlag(async::AsyncMutex& mutex,
-                             async::AsyncConditionVariable& cv,
-                             std::atomic<bool>& woken)
+async::Task<void> cvWaitFlag(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<bool>& woken)
 {
     co_await mutex.lock();
     co_await cv.wait(mutex);
@@ -592,9 +575,7 @@ async::Task<void> cvWaitFlag(async::AsyncMutex& mutex,
     mutex.unlock();
 }
 
-async::Task<void> cvWaitReacquire(async::AsyncMutex& mutex,
-                                  async::AsyncConditionVariable& cv,
-                                  std::atomic<bool>& ok)
+async::Task<void> cvWaitReacquire(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<bool>& ok)
 {
     co_await mutex.lock();
     co_await cv.wait(mutex);
@@ -684,8 +665,7 @@ async::Task<void> sharedAwaitCheck(async::SharedTask<int>& st, std::atomic<bool>
 async::Task<int> retryAttempts(int& attempts, int failBelow)
 {
     ++attempts;
-    if (attempts < failBelow)
-    {
+    if (attempts < failBelow) {
         throw std::runtime_error("transient");
     }
     co_return 42;
@@ -698,78 +678,59 @@ async::Task<int> retryFail(int& attempts)
     co_return 0;
 }
 
-async::Task<void> eventLoser(async::AsyncEvent& event,
-                             std::atomic<int>& registered,
-                             std::atomic<int>& woken)
+async::Task<void> eventLoser(async::AsyncEvent& event, std::atomic<int>& registered, std::atomic<int>& woken)
 {
     ++registered;
     co_await event;
     ++woken;
 }
 
-async::Task<void> eventMakeAny(async::AsyncEvent& event,
-                               std::atomic<int>& registered,
-                               std::atomic<int>& woken)
+async::Task<void> eventMakeAny(async::AsyncEvent& event, std::atomic<int>& registered, std::atomic<int>& woken)
 {
     std::vector<async::AnyTask> tasks;
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         tasks.push_back(async::discard(eventLoser(event, registered, woken)));
     }
     co_await async::whenAny(std::move(tasks));
 }
 
-async::Task<void> semLoser(async::AsyncSemaphore& sem,
-                           std::atomic<int>& registered,
-                           std::atomic<int>& acquired)
+async::Task<void> semLoser(async::AsyncSemaphore& sem, std::atomic<int>& registered, std::atomic<int>& acquired)
 {
     ++registered;
     co_await sem.acquire();
     ++acquired;
 }
 
-async::Task<void> semMakeAny(async::AsyncSemaphore& sem,
-                             std::atomic<int>& registered,
-                             std::atomic<int>& acquired)
+async::Task<void> semMakeAny(async::AsyncSemaphore& sem, std::atomic<int>& registered, std::atomic<int>& acquired)
 {
     std::vector<async::AnyTask> tasks;
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         tasks.push_back(async::discard(semLoser(sem, registered, acquired)));
     }
     co_await async::whenAny(std::move(tasks));
 }
 
-async::Task<void> queueLoser(async::AsyncQueue<int>& queue,
-                             std::atomic<int>& registered,
-                             std::atomic<int>& popped)
+async::Task<void> queueLoser(async::AsyncQueue<int>& queue, std::atomic<int>& registered, std::atomic<int>& popped)
 {
     ++registered;
-    try
-    {
+    try {
         co_await queue.pop();
     }
-    catch (const std::runtime_error&)
-    {
+    catch (const std::runtime_error&) {
     }
     ++popped;
 }
 
-async::Task<void> queueMakeAny(async::AsyncQueue<int>& queue,
-                               std::atomic<int>& registered,
-                               std::atomic<int>& popped)
+async::Task<void> queueMakeAny(async::AsyncQueue<int>& queue, std::atomic<int>& registered, std::atomic<int>& popped)
 {
     std::vector<async::AnyTask> tasks;
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         tasks.push_back(async::discard(queueLoser(queue, registered, popped)));
     }
     co_await async::whenAny(std::move(tasks));
 }
 
-async::Task<void> rwReaderLoser(async::AsyncReaderWriterLock& lock,
-                                std::atomic<int>& registered,
-                                std::atomic<int>& acquired)
+async::Task<void> rwReaderLoser(async::AsyncReaderWriterLock& lock, std::atomic<int>& registered, std::atomic<int>& acquired)
 {
     ++registered;
     auto guard = co_await lock.readerLock();
@@ -777,21 +738,16 @@ async::Task<void> rwReaderLoser(async::AsyncReaderWriterLock& lock,
     ++acquired;
 }
 
-async::Task<void> rwReaderMakeAny(async::AsyncReaderWriterLock& lock,
-                                  std::atomic<int>& registered,
-                                  std::atomic<int>& acquired)
+async::Task<void> rwReaderMakeAny(async::AsyncReaderWriterLock& lock, std::atomic<int>& registered, std::atomic<int>& acquired)
 {
     std::vector<async::AnyTask> tasks;
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         tasks.push_back(async::discard(rwReaderLoser(lock, registered, acquired)));
     }
     co_await async::whenAny(std::move(tasks));
 }
 
-async::Task<void> tcsLoser(async::TaskCompletionSource<int>& tcs,
-                           std::atomic<int>& registered,
-                           std::atomic<int>& completed)
+async::Task<void> tcsLoser(async::TaskCompletionSource<int>& tcs, std::atomic<int>& registered, std::atomic<int>& completed)
 {
     ++registered;
     int v = co_await tcs.task();
@@ -799,22 +755,16 @@ async::Task<void> tcsLoser(async::TaskCompletionSource<int>& tcs,
     ++completed;
 }
 
-async::Task<void> tcsMakeAny(async::TaskCompletionSource<int>& tcs,
-                             std::atomic<int>& registered,
-                             std::atomic<int>& completed)
+async::Task<void> tcsMakeAny(async::TaskCompletionSource<int>& tcs, std::atomic<int>& registered, std::atomic<int>& completed)
 {
     std::vector<async::AnyTask> tasks;
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         tasks.push_back(async::discard(tcsLoser(tcs, registered, completed)));
     }
     co_await async::whenAny(std::move(tasks));
 }
 
-async::Task<void> cvLoser(async::AsyncMutex& mutex,
-                          async::AsyncConditionVariable& cv,
-                          std::atomic<int>& registered,
-                          std::atomic<int>& woken)
+async::Task<void> cvLoser(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<int>& registered, std::atomic<int>& woken)
 {
     co_await mutex.lock();
     ++registered;
@@ -823,14 +773,10 @@ async::Task<void> cvLoser(async::AsyncMutex& mutex,
     mutex.unlock();
 }
 
-async::Task<void> cvMakeAny(async::AsyncMutex& mutex,
-                            async::AsyncConditionVariable& cv,
-                            std::atomic<int>& registered,
-                            std::atomic<int>& woken)
+async::Task<void> cvMakeAny(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<int>& registered, std::atomic<int>& woken)
 {
     std::vector<async::AnyTask> tasks;
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         tasks.push_back(async::discard(cvLoser(mutex, cv, registered, woken)));
     }
     co_await async::whenAny(std::move(tasks));
@@ -847,21 +793,17 @@ std::atomic<bool> s_scopeChildFinished{ false };
  * one resumed it. cancelled_seen is published last, with release, so a reader that waits for
  * it can read wake_thread without a race.
  */
-async::DetachedTask cancellationProbe(std::vector<async::AnyTask> tasks,
-                                      CancellationToken token,
-                                      std::atomic<bool>& cancelled_seen,
-                                      std::thread::id& wake_thread)
+async::DetachedTask
+cancellationProbe(std::vector<async::AnyTask> tasks, CancellationToken token, std::atomic<bool>& cancelled_seen, std::thread::id& wake_thread)
 {
-    try
-    {
+    try {
         // Destroy, explicitly: the probe's children park on a task that never reads its environment
         // token, so under the default StopAndWait the composition would wait for that child forever
         // (the price pinned by WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken). This probe is
         // about where the cancellation is observed, not about the policy.
         co_await async::whenAll(std::move(tasks), token, async::CancelPolicy::Destroy);
     }
-    catch (const async::TaskCancelledException&)
-    {
+    catch (const async::TaskCancelledException&) {
         wake_thread = std::this_thread::get_id();
         cancelled_seen.store(true, std::memory_order_release);
     }
@@ -877,19 +819,14 @@ async::Task<void> scopeChildThatReports(async::AsyncEvent& release, std::atomic<
 /**
  * @brief Joins a scope whose child is still running, recording where the cancellation is seen.
  */
-async::DetachedTask scopeJoinProbe(async::AsyncEvent& release,
-                                   CancellationToken token,
-                                   std::atomic<bool>& cancelled_seen,
-                                   std::thread::id& wake_thread)
+async::DetachedTask scopeJoinProbe(async::AsyncEvent& release, CancellationToken token, std::atomic<bool>& cancelled_seen, std::thread::id& wake_thread)
 {
     async::Scope scope;
     scope.add(scopeChildThatReports(release, s_scopeChildFinished));
-    try
-    {
+    try {
         co_await scope.join(token);
     }
-    catch (const async::TaskCancelledException&)
-    {
+    catch (const async::TaskCancelledException&) {
         wake_thread = std::this_thread::get_id();
         cancelled_seen.store(true, std::memory_order_release);
     }
@@ -901,13 +838,21 @@ async::DetachedTask scopeJoinProbe(async::AsyncEvent& release,
  * The shape of a step that belongs to another thread's loop: instead of resuming itself, the coroutine hands its handle
  * over, so it only continues once the owner of that loop runs it - which is what the pump of runToCompletion() is for.
  */
-struct PostedResume
-{
+struct PostedResume {
     std::coroutine_handle<>* slot;
 
-    [[nodiscard]] bool await_ready() const noexcept { return false; }
-    void await_suspend(std::coroutine_handle<> handle) const noexcept { *slot = handle; }
-    void await_resume() const noexcept {}
+    [[nodiscard]] bool await_ready() const noexcept
+    {
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<> handle) const noexcept
+    {
+        *slot = handle;
+    }
+
+    void await_resume() const noexcept
+    {}
 };
 
 /// Task whose only step is posted for another loop to run: on its own it can never finish.
@@ -944,7 +889,7 @@ async::Task<int> sleepThenAnswer(std::chrono::milliseconds delay)
  * @param timeout How long to wait for it.
  * @return true when fn() finished in time, false when it is still blocked.
  */
-template<typename Fn>
+template <typename Fn>
 bool runBoundedly(Fn fn, std::chrono::milliseconds timeout = std::chrono::seconds(5))
 {
     std::atomic<bool> finished{ false };
@@ -954,13 +899,11 @@ bool runBoundedly(Fn fn, std::chrono::milliseconds timeout = std::chrono::second
     });
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (!finished.load() && std::chrono::steady_clock::now() < deadline)
-    {
+    while (!finished.load() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    if (!finished.load())
-    {
+    if (!finished.load()) {
         worker.detach();
         return false;
     }
@@ -992,11 +935,10 @@ TEST(TaskTest, RunToCompletionRunsThePumpWhileTheTaskWaits)
     const bool finished = runBoundedly([&] {
         result = async::runToCompletion(postedStepProbe(&posted, &reached), [&] {
             ++pumps;
-            if (posted != nullptr)
-            {
+            if (posted != nullptr) {
                 const std::coroutine_handle<> handle = posted;
-                posted = {};
-                handle.resume();  // the loop the task is waiting for, driven from the pump
+                posted                               = {};
+                handle.resume(); // the loop the task is waiting for, driven from the pump
             }
         });
     });
@@ -1033,20 +975,17 @@ TEST(TaskTest, RunToCompletionThrowsWhenThePostedStepThrows)
     std::string             what;
 
     const bool finished = runBoundedly([&] {
-        try
-        {
+        try {
             async::runToCompletion(postedFailureProbe(&posted), [&] {
-                if (posted != nullptr)
-                {
+                if (posted != nullptr) {
                     const std::coroutine_handle<> handle = posted;
-                    posted = {};
-                    resumed = true;
+                    posted                               = {};
+                    resumed                              = true;
                     handle.resume();
                 }
             });
         }
-        catch (const std::runtime_error& e)
-        {
+        catch (const std::runtime_error& e) {
             what = e.what();
         }
     });
@@ -1058,7 +997,7 @@ TEST(TaskTest, RunToCompletionThrowsWhenThePostedStepThrows)
 
 TEST(TaskTest, LazySemantics)
 {
-    bool ran = false;
+    bool ran  = false;
     auto task = lazyProbe(ran);
     EXPECT_FALSE(ran);
     EXPECT_EQ(std::move(task).result(), 7);
@@ -1072,7 +1011,7 @@ TEST(TaskTest, ExceptionPropagates)
 
 TEST(TaskTest, MoveSemantics)
 {
-    auto task = answer();
+    auto task  = answer();
     auto moved = std::move(task);
     EXPECT_FALSE(static_cast<bool>(task));
     EXPECT_TRUE(static_cast<bool>(moved));
@@ -1134,7 +1073,7 @@ TEST(AsyncEventTest, WaiterDestroyedWhileQueued)
     async::whenAny(std::move(race)).result();
 
     // Setting the event must not resume the destroyed waiter.
-    bool ran = false;
+    bool ran  = false;
     auto task = awaitEventFlag(event, ran);
     event.set();
     std::move(task).result();
@@ -1160,21 +1099,17 @@ TEST(AsyncEventTest, SetBeforeAwaitResumesImmediately)
 TEST(AsyncEventTest, MultipleWaitersAllWoken)
 {
     async::AsyncEvent event;
-    std::atomic<int> registered{ 0 };
-    std::atomic<int> woken{ 0 };
+    std::atomic<int>  registered{ 0 };
+    std::atomic<int>  woken{ 0 };
 
     std::vector<async::Task<void>> tasks;
-    for (int i = 0; i < 5; ++i)
-    {
+    for (int i = 0; i < 5; ++i) {
         tasks.push_back(eventWaitCount(event, registered, woken));
     }
     auto all = async::whenAll(std::move(tasks));
 
-    std::thread runner([&all, &registered] {
-        std::move(all).result();
-    });
-    while (registered.load() < 5)
-    {
+    std::thread runner([&all, &registered] { std::move(all).result(); });
+    while (registered.load() < 5) {
         std::this_thread::yield();
     }
     event.set(); // Wakes all registered waiters.
@@ -1189,8 +1124,8 @@ TEST(AsyncEventTest, ResetThenAwaitSuspends)
     event.reset();
     EXPECT_FALSE(event.isSet());
 
-    bool ran = false;
-    auto task = awaitEventFlag(event, ran);
+    bool        ran  = false;
+    auto        task = awaitEventFlag(event, ran);
     std::thread setter([&event] {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         event.set();
@@ -1203,7 +1138,7 @@ TEST(AsyncEventTest, ResetThenAwaitSuspends)
 TEST(AsyncEventTest, ReAwaitAfterSetResumesImmediately)
 {
     async::AsyncEvent event;
-    int resumes = 0;
+    int               resumes = 0;
 
     auto task = awaitEventTwice(event, resumes);
 
@@ -1228,10 +1163,9 @@ TEST(AsyncEventTest, SetDoesNotReleaseNextGeneration)
     std::atomic<int>  woken{ 0 };
     std::atomic<bool> rearmed{ false };
 
-    auto task = eventReArmOnce(event, registered, woken, rearmed);
+    auto        task = eventReArmOnce(event, registered, woken, rearmed);
     std::thread runner([&] { std::move(task).result(); });
-    while (!registered.load())
-    {
+    while (!registered.load()) {
         std::this_thread::yield();
     }
     // Let the runner finish enqueueing the gen-1 waiter and suspend.
@@ -1254,19 +1188,17 @@ TEST(AsyncEventTest, ConcurrentSetResetStress)
 {
     async::AsyncEvent event;
     std::atomic<bool> stop{ false };
-    std::atomic<int> completed{ 0 };
+    std::atomic<int>  completed{ 0 };
 
     std::thread flipper([&] {
-        while (!stop.load())
-        {
+        while (!stop.load()) {
             event.set();
             event.reset();
         }
     });
 
     // Repeatedly await while another thread flips set/reset; must never hang.
-    for (int i = 0; i < 100; ++i)
-    {
+    for (int i = 0; i < 100; ++i) {
         auto task = awaitEvent(event);
         std::move(task).result();
         ++completed;
@@ -1279,14 +1211,14 @@ TEST(AsyncEventTest, ConcurrentSetResetStress)
 TEST(SchedulerTest, InlineSchedulerRunsInline)
 {
     async::InlineScheduler scheduler;
-    auto task = scheduleInline(scheduler);
+    auto                   task = scheduleInline(scheduler);
     EXPECT_EQ(std::move(task).result(), 1);
 }
 
 TEST(SchedulerTest, ScheduleOnRunsTask)
 {
     async::InlineScheduler scheduler;
-    auto task = async::scheduleOn(scheduler, answer());
+    auto                   task = async::scheduleOn(scheduler, answer());
     EXPECT_EQ(std::move(task).result(), 42);
 }
 
@@ -1303,7 +1235,7 @@ TEST(SchedulerTest, ScheduleMayReturnATask)
 TEST(CancellationTest, TokenAliases)
 {
     vn::CancellationSource source;
-    vn::CancellationToken token = source.get_token();
+    vn::CancellationToken  token = source.get_token();
     EXPECT_FALSE(token.stop_requested());
     source.request_stop();
     EXPECT_TRUE(token.stop_requested());
@@ -1312,12 +1244,11 @@ TEST(CancellationTest, TokenAliases)
 TEST(TaskTest, DiscardErasesResultType)
 {
     std::vector<async::AnyTask> pending;
-    pending.push_back(async::discard(answer()));   // Task<int> -> Task<void>
-    pending.push_back(async::discard(noop()));     // Task<void> -> Task<void>
-    pending.push_back(async::discard(addOne(1)));  // Task<int> -> Task<void>
+    pending.push_back(async::discard(answer()));  // Task<int> -> Task<void>
+    pending.push_back(async::discard(noop()));    // Task<void> -> Task<void>
+    pending.push_back(async::discard(addOne(1))); // Task<int> -> Task<void>
 
-    for (auto& t : pending)
-    {
+    for (auto& t : pending) {
         std::move(t).result();
     }
     SUCCEED();
@@ -1389,7 +1320,7 @@ TEST(TaskTest, WhenAnyCompletesOnFirst)
     tasks.push_back(noop());
 
     async::whenAny(std::move(tasks)).result();
-    EXPECT_FALSE(ran);   // the never-completing task is destroyed with the composition
+    EXPECT_FALSE(ran); // the never-completing task is destroyed with the composition
 }
 
 TEST(TaskTest, WithCancellationThrowsWhenCancelled)
@@ -1417,9 +1348,7 @@ TEST(TaskTest, WhenAllAlreadyCancelled)
     std::vector<async::AnyTask> tasks;
     tasks.push_back(async::discard(never()));
 
-    EXPECT_THROW(
-        async::whenAll(std::move(tasks), source.get_token()).result(),
-        async::TaskCancelledException);
+    EXPECT_THROW(async::whenAll(std::move(tasks), source.get_token()).result(), async::TaskCancelledException);
 }
 
 TEST(TaskTest, WhenAllCancellation)
@@ -1460,8 +1389,7 @@ TEST(GeneratorTest, YieldsSequence)
     auto gen = gen123();
 
     std::vector<int> values;
-    for (int v : gen)
-    {
+    for (int v : gen) {
         values.push_back(v);
     }
     ASSERT_EQ(values.size(), 3u);
@@ -1491,9 +1419,8 @@ TEST(GeneratorTest, SatisfiesTheCxx20InputRangeContract)
     EXPECT_EQ(std::ranges::distance(counted), 3);
 
     auto taken = gen123();
-    int sum   = 0;
-    for (int v : std::views::take(taken, 2))
-    {
+    int  sum   = 0;
+    for (int v : std::views::take(taken, 2)) {
         sum += v;
     }
     EXPECT_EQ(sum, 3);
@@ -1515,22 +1442,21 @@ TEST(AsyncMutexTest, LockUnlock)
 TEST(AsyncMutexTest, LockGuardReleases)
 {
     async::AsyncMutex mutex;
-    auto task = lockGuardRelease(mutex);
+    auto              task = lockGuardRelease(mutex);
     std::move(task).result();
-    EXPECT_TRUE(mutex.try_lock());   // released when the guard was destroyed
+    EXPECT_TRUE(mutex.try_lock()); // released when the guard was destroyed
     mutex.unlock();
 }
 
 TEST(AsyncMutexTest, FifoOrder)
 {
     async::AsyncMutex mutex;
-    std::vector<int> order;
+    std::vector<int>  order;
 
     EXPECT_TRUE(mutex.try_lock()); // Hold the lock so later tasks queue.
 
     async::Scope scope;
-    for (int i = 1; i <= 4; ++i)
-    {
+    for (int i = 1; i <= 4; ++i) {
         scope.add(fifoWorker(mutex, order, i));
     }
 
@@ -1559,8 +1485,7 @@ TEST(AsyncMutexTest, WaiterDestroyedWhileQueued)
     async::whenAny(std::move(race)).result();
 
     release.set();
-    for (int i = 0; i < 1000 && !holder_done.load(); ++i)
-    {
+    for (int i = 0; i < 1000 && !holder_done.load(); ++i) {
         std::this_thread::yield();
     }
     EXPECT_TRUE(holder_done.load());
@@ -1569,23 +1494,20 @@ TEST(AsyncMutexTest, WaiterDestroyedWhileQueued)
 TEST(AsyncMutexTest, ContentionStress)
 {
     async::AsyncMutex mutex;
-    constexpr int kThreads = 8;
-    constexpr int kIterations = 2000;
-    int counter = 0;
+    constexpr int     kThreads    = 8;
+    constexpr int     kIterations = 2000;
+    int               counter     = 0;
 
     std::vector<std::thread> threads;
-    for (int t = 0; t < kThreads; ++t)
-    {
+    for (int t = 0; t < kThreads; ++t) {
         threads.emplace_back([&]() {
-            for (int i = 0; i < kIterations; ++i)
-            {
+            for (int i = 0; i < kIterations; ++i) {
                 auto task = mutexIncrement(mutex, counter);
                 std::move(task).result();
             }
         });
     }
-    for (auto& t : threads)
-    {
+    for (auto& t : threads) {
         t.join();
     }
     EXPECT_EQ(counter, kThreads * kIterations);
@@ -1604,7 +1526,7 @@ TEST(AsyncSemaphoreTest, AcquireRelease)
 TEST(AsyncSemaphoreTest, WaiterResumedOnRelease)
 {
     async::AsyncSemaphore sem(0);
-    bool acquired = false;
+    bool                  acquired = false;
     semAcquireSet(sem, acquired);
 
     sem.release();
@@ -1613,9 +1535,9 @@ TEST(AsyncSemaphoreTest, WaiterResumedOnRelease)
 
 TEST(ThreadPoolSchedulerTest, ResumeOnPool)
 {
-    vn::ThreadPool pool(2);
+    vn::ThreadPool             pool(2);
     async::ThreadPoolScheduler scheduler(pool);
-    bool ran = false;
+    bool                       ran = false;
 
     auto task = resumeOnPoolTask(scheduler, ran);
 
@@ -1626,15 +1548,15 @@ TEST(ThreadPoolSchedulerTest, ResumeOnPool)
 TEST(ThreadPoolSchedulerTest, RunOnPool)
 {
     vn::ThreadPool pool(2);
-    auto task = async::runOn(pool, [](int a, int b) { return a + b; }, 20, 22);
+    auto           task = async::runOn(pool, [](int a, int b) { return a + b; }, 20, 22);
     EXPECT_EQ(std::move(task).result(), 42);
 }
 
 TEST(ThreadPoolSchedulerTest, RunOnPoolVoid)
 {
     vn::ThreadPool pool(2);
-    bool ran = false;
-    auto task = async::runOn(pool, [&ran] { ran = true; });
+    bool           ran  = false;
+    auto           task = async::runOn(pool, [&ran] { ran = true; });
     std::move(task).result();
     EXPECT_TRUE(ran);
 }
@@ -1647,7 +1569,7 @@ TEST(ThreadPoolSchedulerTest, RunUsesDefaultPool)
 
 TEST(ThreadPoolSchedulerTest, RunVoidUsesDefaultPool)
 {
-    bool ran = false;
+    bool ran  = false;
     auto task = async::run([&ran] { ran = true; });
     std::move(task).result();
     EXPECT_TRUE(ran);
@@ -1656,7 +1578,7 @@ TEST(ThreadPoolSchedulerTest, RunVoidUsesDefaultPool)
 TEST(TaskCompletionSourceTest, CompleteWithValue)
 {
     async::TaskCompletionSource<int> tcs;
-    auto task = tcs.task();
+    auto                             task = tcs.task();
     tcs.setResult(42);
     EXPECT_EQ(std::move(task).result(), 42);
 }
@@ -1678,7 +1600,7 @@ TEST(TaskCompletionSourceTest, CompleteWithException)
 TEST(TaskCompletionSourceTest, VoidSource)
 {
     async::TaskCompletionSource<void> tcs;
-    auto task = tcs.task();
+    auto                              task = tcs.task();
     tcs.setResult();
     std::move(task).result();
     SUCCEED();
@@ -1687,8 +1609,8 @@ TEST(TaskCompletionSourceTest, VoidSource)
 TEST(TaskCompletionSourceTest, MultipleWaiters)
 {
     async::TaskCompletionSource<int> tcs;
-    auto t1 = tcs.task();
-    auto t2 = tcs.task();
+    auto                             t1 = tcs.task();
+    auto                             t2 = tcs.task();
     tcs.setResult(7);
     EXPECT_EQ(std::move(t1).result(), 7);
     EXPECT_EQ(std::move(t2).result(), 7);
@@ -1711,8 +1633,8 @@ TEST(TaskCompletionSourceTest, SetTwiceThrows)
 TEST(TaskCompletionSourceTest, SetFromAnotherThread)
 {
     async::TaskCompletionSource<int> tcs;
-    auto task = tcs.task();
-    std::thread setter([&tcs] {
+    auto                             task = tcs.task();
+    std::thread                      setter([&tcs] {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         tcs.setResult(99);
     });
@@ -1723,8 +1645,8 @@ TEST(TaskCompletionSourceTest, SetFromAnotherThread)
 TEST(ScopeTest, AddAndJoin)
 {
     async::Scope scope;
-    bool a = false;
-    bool b = false;
+    bool         a = false;
+    bool         b = false;
     scope.add(noop());
     scope.add(scopeFlag(a));
     scope.add(scopeFlag(b));
@@ -1735,7 +1657,7 @@ TEST(ScopeTest, AddAndJoin)
 
 TEST(ScopeTest, JoinWaitsForSlowChild)
 {
-    async::Scope scope;
+    async::Scope      scope;
     async::AsyncEvent slow;
     scope.add(scopeAwaitEvent(slow));
 
@@ -1785,8 +1707,7 @@ TEST(ScopeTest, JoinCancellationWakesOffTheCancellersStackAndLeavesTheChildRunni
     // The cancelled join did not destroy the child: releasing it still runs its body.
     release.set();
     for (auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-         !s_scopeChildFinished.load(std::memory_order_acquire)
-         && std::chrono::steady_clock::now() < deadline;)
+         !s_scopeChildFinished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline;)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -1795,11 +1716,10 @@ TEST(ScopeTest, JoinCancellationWakesOffTheCancellersStackAndLeavesTheChildRunni
 
 TEST(ScopeTest, RunsChildrenOnPool)
 {
-    async::Scope scope;
-    vn::ThreadPool pool(2);
+    async::Scope     scope;
+    vn::ThreadPool   pool(2);
     std::atomic<int> counter{ 0 };
-    for (int i = 0; i < 4; ++i)
-    {
+    for (int i = 0; i < 4; ++i) {
         scope.add(async::runOn(pool, [&counter] { return ++counter; }));
     }
     scope.join().result();
@@ -1808,7 +1728,7 @@ TEST(ScopeTest, RunsChildrenOnPool)
 
 TEST(TypedWhenAllTest, TupleResult)
 {
-    auto task = async::whenAll(answer(), addOne(10));
+    auto task   = async::whenAll(answer(), addOne(10));
     auto [a, b] = std::move(task).result();
     EXPECT_EQ(a, 42);
     EXPECT_EQ(b, 11);
@@ -1857,23 +1777,18 @@ TEST(TypedWhenAnyTest, RethrowsFirstFailure)
 
 TEST(TypedWhenAnyTest, VariadicReturnsFirst)
 {
-    auto task = async::whenAny(delayed(1, std::chrono::milliseconds(60)),
-                               delayed(2, std::chrono::milliseconds(10)));
+    auto task = async::whenAny(delayed(1, std::chrono::milliseconds(60)), delayed(2, std::chrono::milliseconds(10)));
     EXPECT_EQ(std::move(task).result(), 2);
 }
 
 /// Returns 7 after sleeping in its own environment, recording how that sleep ended.
-async::Task<int> sleepThenSeven(std::chrono::milliseconds duration,
-                                std::atomic<bool>& cancelled,
-                                std::atomic<bool>& finished)
+async::Task<int> sleepThenSeven(std::chrono::milliseconds duration, std::atomic<bool>& cancelled, std::atomic<bool>& finished)
 {
     const std::stop_token inherited = co_await async::currentStopToken();
-    try
-    {
+    try {
         co_await async::sleepFor(duration, inherited);
     }
-    catch (const async::TaskCancelledException&)
-    {
+    catch (const async::TaskCancelledException&) {
         cancelled.store(true, std::memory_order_release);
     }
     finished.store(true, std::memory_order_release);
@@ -1909,22 +1824,15 @@ TEST(TypedWhenAnyTest, StopAndWaitWaitsForTheLoserItAskedToStop)
     tasks.push_back(sleepThenSeven(std::chrono::milliseconds(50), cancelled, finished));
 
     std::thread runner([&] {
-        try
-        {
-            value.store(async::whenAny(std::move(tasks),
-                                       source.get_token(),
-                                       async::CancelPolicy::StopAndWait)
-                            .result(),
-                        std::memory_order_release);
+        try {
+            value.store(async::whenAny(std::move(tasks), source.get_token(), async::CancelPolicy::StopAndWait).result(), std::memory_order_release);
         }
-        catch (const async::TaskCancelledException&)
-        {
+        catch (const async::TaskCancelledException&) {
         }
         returned.store(true, std::memory_order_release);
     });
 
-    if (!waitForFlag(returned, std::chrono::milliseconds(1000)))
-    {
+    if (!waitForFlag(returned, std::chrono::milliseconds(1000))) {
         source.request_stop();
     }
     runner.join();
@@ -1956,16 +1864,10 @@ TEST(TypedWhenAnyTest, StopAndWaitIsHeldByALoserItCannotAskToStop)
     tasks.push_back(valueFromEvent(release, loser_finished));
 
     std::thread runner([&] {
-        try
-        {
-            value.store(async::whenAny(std::move(tasks),
-                                       source.get_token(),
-                                       async::CancelPolicy::StopAndWait)
-                            .result(),
-                        std::memory_order_release);
+        try {
+            value.store(async::whenAny(std::move(tasks), source.get_token(), async::CancelPolicy::StopAndWait).result(), std::memory_order_release);
         }
-        catch (const async::TaskCancelledException&)
-        {
+        catch (const async::TaskCancelledException&) {
         }
         returned.store(true, std::memory_order_release);
     });
@@ -1974,8 +1876,7 @@ TEST(TypedWhenAnyTest, StopAndWaitIsHeldByALoserItCannotAskToStop)
         << "the winner's completion must not end a StopAndWait composition while a loser is running";
 
     release.set();
-    if (!waitForFlag(returned, std::chrono::milliseconds(1000)))
-    {
+    if (!waitForFlag(returned, std::chrono::milliseconds(1000))) {
         source.request_stop();
     }
     runner.join();
@@ -1989,16 +1890,15 @@ TEST(SleepTest, SleepsForDuration)
 {
     auto start = std::chrono::steady_clock::now();
     async::sleepFor(std::chrono::milliseconds(50)).result();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - start);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
     EXPECT_GE(elapsed.count(), 40);
 }
 
 TEST(SleepTest, CancellationThrows)
 {
     vn::CancellationSource source;
-    bool cancelled = false;
-    auto runner = sleepCancel(source.get_token(), cancelled);
+    bool                   cancelled = false;
+    auto                   runner    = sleepCancel(source.get_token(), cancelled);
 
     std::thread canceller([&source] {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -2021,7 +1921,7 @@ TEST(AsyncQueueTest, PushPop)
 TEST(AsyncQueueTest, PopWaitsForPush)
 {
     async::AsyncQueue<int> queue;
-    int got = 0;
+    int                    got = 0;
     queuePopDetached(queue, got);
     queue.push(42).result();
     EXPECT_EQ(got, 42);
@@ -2063,8 +1963,8 @@ TEST(AsyncLatchTest, CountDownReleases)
 TEST(AsyncLatchTest, WaitSuspendsUntilReady)
 {
     async::AsyncLatch latch(1);
-    bool released = false;
-    auto task = latchWaitFlag(latch, released);
+    bool              released = false;
+    auto              task     = latchWaitFlag(latch, released);
 
     std::thread t([&latch] {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -2078,20 +1978,19 @@ TEST(AsyncLatchTest, WaitSuspendsUntilReady)
 TEST(AsyncRwLockTest, BasicReadWrite)
 {
     async::AsyncReaderWriterLock lock;
-    int value = 0;
-    auto task = rwBasic(lock, value);
+    int                          value = 0;
+    auto                         task  = rwBasic(lock, value);
     std::move(task).result();
 }
 
 TEST(AsyncRwLockTest, ConcurrentReaders)
 {
     async::AsyncReaderWriterLock lock;
-    std::atomic<int> active{ 0 };
-    std::atomic<int> max_active{ 0 };
+    std::atomic<int>             active{ 0 };
+    std::atomic<int>             max_active{ 0 };
 
     std::vector<async::Task<void>> tasks;
-    for (int i = 0; i < 3; ++i)
-    {
+    for (int i = 0; i < 3; ++i) {
         tasks.push_back(rwReaderConcurrent(lock, active, max_active));
     }
     async::whenAll(std::move(tasks)).result();
@@ -2101,10 +2000,10 @@ TEST(AsyncRwLockTest, ConcurrentReaders)
 TEST(AsyncRwLockTest, WriterPreference)
 {
     async::AsyncReaderWriterLock lock;
-    async::AsyncEvent r1_held;
-    async::AsyncEvent w1_done;
-    std::atomic<bool> w1_ran{ false };
-    std::atomic<bool> r2_ran{ false };
+    async::AsyncEvent            r1_held;
+    async::AsyncEvent            w1_done;
+    std::atomic<bool>            w1_ran{ false };
+    std::atomic<bool>            r2_ran{ false };
 
     // R1 holds a read lock until w1_done.
     rwReaderHold(lock, r1_held, w1_done);
@@ -2119,8 +2018,7 @@ TEST(AsyncRwLockTest, WriterPreference)
     EXPECT_FALSE(r2_ran.load()); // Writer is queued: reader must not acquire.
 
     w1_done.set(); // Release R1: W1 runs first, then R2.
-    for (int i = 0; i < 1000 && !r2_ran.load(); ++i)
-    {
+    for (int i = 0; i < 1000 && !r2_ran.load(); ++i) {
         std::this_thread::yield();
     }
     EXPECT_TRUE(w1_ran.load());
@@ -2130,9 +2028,9 @@ TEST(AsyncRwLockTest, WriterPreference)
 TEST(AsyncRwLockTest, WaiterDestroyedWhileQueued)
 {
     async::AsyncReaderWriterLock lock;
-    async::AsyncEvent held;
-    async::AsyncEvent release;
-    std::atomic<bool> holder_done{ false };
+    async::AsyncEvent            held;
+    async::AsyncEvent            release;
+    std::atomic<bool>            holder_done{ false };
 
     rwWriterHolder(lock, held, release, holder_done);
     awaitEvent(held).result();
@@ -2145,8 +2043,7 @@ TEST(AsyncRwLockTest, WaiterDestroyedWhileQueued)
     async::whenAny(std::move(race)).result();
 
     release.set();
-    for (int i = 0; i < 1000 && !holder_done.load(); ++i)
-    {
+    for (int i = 0; i < 1000 && !holder_done.load(); ++i) {
         std::this_thread::yield();
     }
     EXPECT_TRUE(holder_done.load());
@@ -2154,14 +2051,13 @@ TEST(AsyncRwLockTest, WaiterDestroyedWhileQueued)
 
 TEST(AsyncConditionVariableTest, NotifyResumesWaiter)
 {
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    bool woken = false;
+    bool                          woken = false;
     cvWaiterDetached(mutex, cv, woken);
 
     cv.notify_one();
-    for (int i = 0; i < 1000 && !woken; ++i)
-    {
+    for (int i = 0; i < 1000 && !woken; ++i) {
         std::this_thread::yield();
     }
     EXPECT_TRUE(woken);
@@ -2169,33 +2065,31 @@ TEST(AsyncConditionVariableTest, NotifyResumesWaiter)
 
 TEST(AsyncConditionVariableTest, NotifyBeforeWaitIsConsumed)
 {
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
 
     cv.notify_one(); // No waiter: preserved as a pending notification.
 
     bool woken = false;
-    auto task = cvWaitBool(mutex, cv, woken);
+    auto task  = cvWaitBool(mutex, cv, woken);
     std::move(task).result();
     EXPECT_TRUE(woken);
 }
 
 TEST(AsyncConditionVariableTest, NotifyAllWakesAll)
 {
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    std::atomic<int> registered{ 0 };
-    std::atomic<int> woken{ 0 };
+    std::atomic<int>              registered{ 0 };
+    std::atomic<int>              woken{ 0 };
 
     std::vector<async::Task<void>> tasks;
-    for (int i = 0; i < 4; ++i)
-    {
+    for (int i = 0; i < 4; ++i) {
         tasks.push_back(cvWaiterCount(mutex, cv, registered, woken));
     }
-    auto all = async::whenAll(std::move(tasks));
+    auto        all = async::whenAll(std::move(tasks));
     std::thread runner([&all, &registered] { std::move(all).result(); });
-    while (registered.load() < 4)
-    {
+    while (registered.load() < 4) {
         std::this_thread::yield();
     }
     cv.notify_all();
@@ -2205,26 +2099,23 @@ TEST(AsyncConditionVariableTest, NotifyAllWakesAll)
 
 TEST(AsyncConditionVariableTest, NotifyOneWakesSingleWaiter)
 {
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    std::atomic<int> registered{ 0 };
-    std::atomic<int> woken{ 0 };
+    std::atomic<int>              registered{ 0 };
+    std::atomic<int>              woken{ 0 };
 
     std::vector<async::Task<void>> tasks;
-    for (int i = 0; i < 3; ++i)
-    {
+    for (int i = 0; i < 3; ++i) {
         tasks.push_back(cvWaiterCount(mutex, cv, registered, woken));
     }
-    auto all = async::whenAll(std::move(tasks));
+    auto        all = async::whenAll(std::move(tasks));
     std::thread runner([&all, &registered] { std::move(all).result(); });
-    while (registered.load() < 3)
-    {
+    while (registered.load() < 3) {
         std::this_thread::yield();
     }
 
     cv.notify_one(); // Wakes exactly one waiter.
-    for (int i = 0; i < 1000 && woken.load() < 1; ++i)
-    {
+    for (int i = 0; i < 1000 && woken.load() < 1; ++i) {
         std::this_thread::yield();
     }
     EXPECT_EQ(woken.load(), 1);
@@ -2236,7 +2127,7 @@ TEST(AsyncConditionVariableTest, NotifyOneWakesSingleWaiter)
 
 TEST(AsyncConditionVariableTest, WaiterDestroyedWhileWaiting)
 {
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
 
     // A waiter that acquires the mutex and waits on the CV, then is destroyed
@@ -2254,9 +2145,9 @@ TEST(AsyncConditionVariableTest, WaiterDestroyedWhileWaiting)
 
 TEST(AsyncConditionVariableTest, WaitReacquiresMutex)
 {
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    std::atomic<bool> ok{ false };
+    std::atomic<bool>             ok{ false };
 
     auto w1 = cvWaitReacquire(mutex, cv, ok);
 
@@ -2278,19 +2169,17 @@ TEST(AsyncConditionVariableTest, NotifyAllWinnerDestroysLoserIsSafe)
     // held raw waiter pointers across the resume would resume the loser's
     // dangling handle. The implementation must pop and resume one waiter at a
     // time so a destroyed sibling is simply unregistered and never touched.
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    std::atomic<int> registered{ 0 };
-    std::atomic<int> woken{ 0 };
+    std::atomic<int>              registered{ 0 };
+    std::atomic<int>              woken{ 0 };
 
-    for (int iter = 0; iter < 200; ++iter)
-    {
+    for (int iter = 0; iter < 200; ++iter) {
         registered.store(0);
         woken.store(0);
-        auto any = cvMakeAny(mutex, cv, registered, woken);
+        auto        any = cvMakeAny(mutex, cv, registered, woken);
         std::thread runner([&any, &registered] { std::move(any).result(); });
-        while (registered.load() < 2)
-        {
+        while (registered.load() < 2) {
             std::this_thread::yield();
         }
         // Give both waiters time to finish registering (unlock + enqueue).
@@ -2303,21 +2192,19 @@ TEST(AsyncConditionVariableTest, NotifyAllWinnerDestroysLoserIsSafe)
 
 TEST(AsyncConditionVariableTest, ConcurrentNotifyAllStress)
 {
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    std::atomic<int> completed{ 0 };
-    std::atomic<int> active{ 0 };
-    std::atomic<bool> stop{ false };
+    std::atomic<int>              completed{ 0 };
+    std::atomic<int>              active{ 0 };
+    std::atomic<bool>             stop{ false };
 
     // One notifier floods notify_all while several threads run waiters to
     // completion; the notifier keeps going until every in-flight waiter is
     // done, so no waiter is left suspended and the test cannot deadlock.
     std::thread notifier([&] {
-        for (;;)
-        {
+        for (;;) {
             cv.notify_all();
-            if (stop.load() && active.load() == 0)
-            {
+            if (stop.load() && active.load() == 0) {
                 break;
             }
             std::this_thread::yield();
@@ -2325,11 +2212,9 @@ TEST(AsyncConditionVariableTest, ConcurrentNotifyAllStress)
     });
 
     std::vector<std::thread> waiters;
-    for (int t = 0; t < 4; ++t)
-    {
+    for (int t = 0; t < 4; ++t) {
         waiters.emplace_back([&] {
-            while (!stop.load())
-            {
+            while (!stop.load()) {
                 ++active;
                 cvWaitOnce(mutex, cv, completed).result();
                 --active;
@@ -2340,8 +2225,7 @@ TEST(AsyncConditionVariableTest, ConcurrentNotifyAllStress)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     stop.store(true);
     notifier.join();
-    for (auto& w : waiters)
-    {
+    for (auto& w : waiters) {
         w.join();
     }
     EXPECT_GT(completed.load(), 0);
@@ -2352,12 +2236,11 @@ TEST(AsyncConditionVariableTest, RepeatedWaitNotifyCycles)
     // Each cycle: a fresh lazy waiter, a sticky notify issued before it even
     // starts, then the waiter consumes the sticky notification and completes.
     // Exercises re-wait after a wake plus the sticky-flag round trip.
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    for (int i = 0; i < 1000; ++i)
-    {
+    for (int i = 0; i < 1000; ++i) {
         std::atomic<bool> woken{ false };
-        auto task = cvWaitFlag(mutex, cv, woken);
+        auto              task = cvWaitFlag(mutex, cv, woken);
         cv.notify_one(); // No waiter yet; preserved as a pending notification.
         std::move(task).result();
         EXPECT_TRUE(woken.load());
@@ -2372,22 +2255,18 @@ TEST(AsyncConditionVariableTest, SingleNotifyNoLostWakeup)
     // fixed notify_all arms the sticky atomically with the check, so exactly
     // one notify per wait is never lost. Probabilistic by nature; the bounded
     // spin turns a lost wakeup into a clean failure instead of a hang.
-    async::AsyncMutex mutex;
+    async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
 
-    for (int iter = 0; iter < 1000; ++iter)
-    {
+    for (int iter = 0; iter < 1000; ++iter) {
         std::atomic<bool> woken{ false };
 
-        std::thread waiter([&] {
-            cvWaitFlag(mutex, cv, woken).result();
-        });
+        std::thread waiter([&] { cvWaitFlag(mutex, cv, woken).result(); });
 
         std::this_thread::yield();
         cv.notify_all(); // Exactly one notification; must not be lost.
 
-        for (int i = 0; i < 100000 && !woken.load(); ++i)
-        {
+        for (int i = 0; i < 100000 && !woken.load(); ++i) {
             std::this_thread::yield();
         }
         waiter.join();
@@ -2403,7 +2282,7 @@ TEST(TaskCombinatorTest, TransformMapsResult)
 
 TEST(TaskCombinatorTest, TransformVoid)
 {
-    int side = 0;
+    int  side = 0;
     auto task = async::transform(noop(), [&side] {
         side = 1;
         return 7;
@@ -2426,15 +2305,13 @@ TEST(TaskCombinatorTest, AndThenVoid)
 
 TEST(WithTimeoutTest, CompletesInTime)
 {
-    auto task = async::withTimeout(delayed(42, std::chrono::milliseconds(10)),
-                                   std::chrono::milliseconds(500));
+    auto task = async::withTimeout(delayed(42, std::chrono::milliseconds(10)), std::chrono::milliseconds(500));
     EXPECT_EQ(std::move(task).result(), 42);
 }
 
 TEST(WithTimeoutTest, TimesOut)
 {
-    auto task = async::withTimeout(delayed(1, std::chrono::milliseconds(500)),
-                                   std::chrono::milliseconds(30));
+    auto task = async::withTimeout(delayed(1, std::chrono::milliseconds(500)), std::chrono::milliseconds(30));
     EXPECT_THROW(std::move(task).result(), async::TimeoutException);
 }
 
@@ -2446,16 +2323,16 @@ TEST(WithTimeoutTest, TimesOutVoid)
 
 TEST(RetryTest, SucceedsAfterRetries)
 {
-    int attempts = 0;
-    auto task = async::retry([&] { return retryAttempts(attempts, 3); }, 5);
+    int  attempts = 0;
+    auto task     = async::retry([&] { return retryAttempts(attempts, 3); }, 5);
     EXPECT_EQ(std::move(task).result(), 42);
     EXPECT_EQ(attempts, 3);
 }
 
 TEST(RetryTest, FailsAfterAttempts)
 {
-    int attempts = 0;
-    auto task = async::retry([&] { return retryFail(attempts); }, 3);
+    int  attempts = 0;
+    auto task     = async::retry([&] { return retryFail(attempts); }, 3);
     EXPECT_THROW(std::move(task).result(), std::runtime_error);
     EXPECT_EQ(attempts, 3);
 }
@@ -2463,7 +2340,7 @@ TEST(RetryTest, FailsAfterAttempts)
 TEST(FinallyTest, RunsOnExit)
 {
     bool cleaned = false;
-    auto task = finallyRunsOnExit(cleaned);
+    auto task    = finallyRunsOnExit(cleaned);
     EXPECT_EQ(std::move(task).result(), 42);
     EXPECT_TRUE(cleaned);
 }
@@ -2471,7 +2348,7 @@ TEST(FinallyTest, RunsOnExit)
 TEST(FinallyTest, RunsOnException)
 {
     bool cleaned = false;
-    auto task = finallyRunsOnException(cleaned);
+    auto task    = finallyRunsOnException(cleaned);
     EXPECT_THROW(std::move(task).result(), std::runtime_error);
     EXPECT_TRUE(cleaned);
 }
@@ -2479,14 +2356,14 @@ TEST(FinallyTest, RunsOnException)
 TEST(FinallyTest, DismissSkips)
 {
     bool cleaned = false;
-    auto task = finallyDismiss(cleaned);
+    auto task    = finallyDismiss(cleaned);
     std::move(task).result();
     EXPECT_FALSE(cleaned);
 }
 
 TEST(YieldTest, Resumes)
 {
-    bool ran = false;
+    bool ran  = false;
     auto task = yieldRan(ran);
     std::move(task).result();
     EXPECT_TRUE(ran);
@@ -2494,8 +2371,8 @@ TEST(YieldTest, Resumes)
 
 TEST(SharedTaskTest, MultipleAwaitSameResult)
 {
-    int runs = 0;
-    auto st = async::sharedTask(sharedSource(runs));
+    int  runs = 0;
+    auto st   = async::sharedTask(sharedSource(runs));
 
     int a = sharedAwaitInt(st).result();
     int b = sharedAwaitInt(st).result();
@@ -2524,10 +2401,10 @@ TEST(SharedTaskTest, ExceptionPropagatesToAll)
 
 TEST(SharedTaskTest, CopyableAndShared)
 {
-    auto st = async::sharedTask(answer());
+    auto st  = async::sharedTask(answer());
     auto st2 = st; // Copy: both point at the same computation.
-    int a = sharedAwaitInt(st).result();
-    int b = sharedAwaitInt(st2).result();
+    int  a   = sharedAwaitInt(st).result();
+    int  b   = sharedAwaitInt(st2).result();
     EXPECT_EQ(a, 42);
     EXPECT_EQ(b, 42);
 }
@@ -2535,7 +2412,7 @@ TEST(SharedTaskTest, CopyableAndShared)
 TEST(SharedTaskTest, VoidSharedTask)
 {
     bool ran = false;
-    auto st = async::sharedTask(sharedSourceVoid(ran));
+    auto st  = async::sharedTask(sharedSourceVoid(ran));
     sharedAwaitVoid(st).result();
     EXPECT_TRUE(ran);
 }
@@ -2543,16 +2420,14 @@ TEST(SharedTaskTest, VoidSharedTask)
 TEST(SharedTaskTest, ConcurrentAwaitersRunOnce)
 {
     std::atomic<int> runs{ 0 };
-    auto st = async::sharedTask(sharedSourceSlow(runs));
+    auto             st = async::sharedTask(sharedSourceSlow(runs));
 
     std::vector<async::Task<int>> tasks;
-    for (int i = 0; i < 4; ++i)
-    {
+    for (int i = 0; i < 4; ++i) {
         tasks.push_back(sharedAwaitInt(st));
     }
     auto results = async::whenAll(std::move(tasks)).result();
-    for (int r : results)
-    {
+    for (int r : results) {
         EXPECT_EQ(r, 7);
     }
     EXPECT_EQ(runs.load(), 1);
@@ -2569,8 +2444,8 @@ TEST(SharedTaskTest, EmptySharedTask)
 
 TEST(SharedTaskTest, LazyDoesNotRunUntilFirstAwait)
 {
-    int runs = 0;
-    auto st = async::sharedTask(sharedSource(runs));
+    int  runs = 0;
+    auto st   = async::sharedTask(sharedSource(runs));
     EXPECT_EQ(runs, 0); // Creating the SharedTask does not run the source.
 
     int v = sharedAwaitInt(st).result();
@@ -2586,11 +2461,10 @@ TEST(SharedTaskTest, SharedTaskDestroyedWhileRunning)
 
     auto st = async::sharedTask(sharedSourceEvent(release, source_started));
 
-    auto t = sharedAwaitCheck(st, got);
+    auto        t = sharedAwaitCheck(st, got);
     std::thread runner([&] { std::move(t).result(); });
 
-    while (!source_started.load())
-    {
+    while (!source_started.load()) {
         std::this_thread::yield();
     }
     st = async::SharedTask<int>{}; // Drop the handle while the source runs.
@@ -2602,7 +2476,7 @@ TEST(SharedTaskTest, SharedTaskDestroyedWhileRunning)
 TEST(SharedTaskTest, WaiterDestroyedBeforeCompletion)
 {
     async::AsyncEvent release;
-    auto st = async::sharedTask(sharedSourceRelease(release));
+    auto              st = async::sharedTask(sharedSourceRelease(release));
 
     // An abandoned waiter: whenAny destroys it while it is suspended awaiting
     // st; its awaiter must unregister so completion never resumes a dead frame.
@@ -2626,7 +2500,7 @@ TEST(TaskTest, WhenAllEmptyVectorSucceeds)
 TEST(TaskTest, WhenAllTypedEmptyReturnsEmptyVector)
 {
     std::vector<async::Task<int>> tasks;
-    auto result = async::whenAll(std::move(tasks)).result();
+    auto                          result = async::whenAll(std::move(tasks)).result();
     EXPECT_TRUE(result.empty());
 }
 
@@ -2641,11 +2515,10 @@ TEST(TaskTest, WhenAllCancelledDoesNotStartChildren)
     vn::CancellationSource source;
     source.request_stop();
 
-    bool ran = false;
+    bool                          ran = false;
     std::vector<async::Task<int>> tasks;
     tasks.push_back(ranOne(ran));
-    EXPECT_THROW(async::whenAll(std::move(tasks), source.get_token()).result(),
-                 async::TaskCancelledException);
+    EXPECT_THROW(async::whenAll(std::move(tasks), source.get_token()).result(), async::TaskCancelledException);
     EXPECT_FALSE(ran); // Children must not start when already cancelled.
 }
 
@@ -2658,13 +2531,11 @@ TEST(TaskTest, WhenAllVariadicVoidCancelledDoesNotStartChildren)
     source.request_stop();
 
     bool ran = false;
-    EXPECT_THROW(async::whenAll(source.get_token(), ranOneVoid(ran)).result(),
-                 async::TaskCancelledException);
+    EXPECT_THROW(async::whenAll(source.get_token(), ranOneVoid(ran)).result(), async::TaskCancelledException);
     EXPECT_FALSE(ran);
 
     bool ran_any = false;
-    EXPECT_THROW(async::whenAny(source.get_token(), ranOneVoid(ran_any), noop()).result(),
-                 async::TaskCancelledException);
+    EXPECT_THROW(async::whenAny(source.get_token(), ranOneVoid(ran_any), noop()).result(), async::TaskCancelledException);
     EXPECT_FALSE(ran_any);
 }
 
@@ -2687,16 +2558,14 @@ TEST(AsyncEventTest, SetWinnerDestroysLoserIsSafe)
     std::atomic<int> registered{ 0 };
     std::atomic<int> woken{ 0 };
 
-    for (int iter = 0; iter < 200; ++iter)
-    {
+    for (int iter = 0; iter < 200; ++iter) {
         async::AsyncEvent event;
         registered.store(0);
         woken.store(0);
 
-        auto any = eventMakeAny(event, registered, woken);
+        auto        any = eventMakeAny(event, registered, woken);
         std::thread runner([&any, &registered] { std::move(any).result(); });
-        while (registered.load() < 2)
-        {
+        while (registered.load() < 2) {
             std::this_thread::yield();
         }
         std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -2712,18 +2581,16 @@ TEST(AsyncSemaphoreTest, ReleaseWinnerDestroysLoserIsSafe)
     // resuming could resume a dangling handle when the resumed waiter is a
     // whenAny winner whose completion destroys the still-suspended loser.
     async::AsyncSemaphore sem(0);
-    std::atomic<int> registered{ 0 };
-    std::atomic<int> acquired{ 0 };
+    std::atomic<int>      registered{ 0 };
+    std::atomic<int>      acquired{ 0 };
 
-    for (int iter = 0; iter < 200; ++iter)
-    {
+    for (int iter = 0; iter < 200; ++iter) {
         registered.store(0);
         acquired.store(0);
 
-        auto any = semMakeAny(sem, registered, acquired);
+        auto        any = semMakeAny(sem, registered, acquired);
         std::thread runner([&any, &registered] { std::move(any).result(); });
-        while (registered.load() < 2)
-        {
+        while (registered.load() < 2) {
             std::this_thread::yield();
         }
         std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -2741,16 +2608,14 @@ TEST(AsyncQueueTest, CloseWinnerDestroysLoserIsSafe)
     std::atomic<int> registered{ 0 };
     std::atomic<int> popped{ 0 };
 
-    for (int iter = 0; iter < 200; ++iter)
-    {
+    for (int iter = 0; iter < 200; ++iter) {
         async::AsyncQueue<int> queue(0);
         registered.store(0);
         popped.store(0);
 
-        auto any = queueMakeAny(queue, registered, popped);
+        auto        any = queueMakeAny(queue, registered, popped);
         std::thread runner([&any, &registered] { std::move(any).result(); });
-        while (registered.load() < 2)
-        {
+        while (registered.load() < 2) {
             std::this_thread::yield();
         }
         std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -2766,24 +2631,22 @@ TEST(AsyncRwLockTest, UnlockWriteWinnerDestroysLoserReaderIsSafe)
     // resume would resume a dangling sibling when the resumed reader is a
     // whenAny winner whose completion destroys the still-suspended loser.
     async::AsyncReaderWriterLock lock;
-    async::AsyncEvent held;
-    async::AsyncEvent release;
-    std::atomic<int> registered{ 0 };
-    std::atomic<int> acquired{ 0 };
+    async::AsyncEvent            held;
+    async::AsyncEvent            release;
+    std::atomic<int>             registered{ 0 };
+    std::atomic<int>             acquired{ 0 };
 
     // Hold the write lock so readers queue.
     rwWriterHoldRelease(lock, held, release);
     awaitEvent(held).result();
 
-    for (int iter = 0; iter < 200; ++iter)
-    {
+    for (int iter = 0; iter < 200; ++iter) {
         registered.store(0);
         acquired.store(0);
 
-        auto any = rwReaderMakeAny(lock, registered, acquired);
+        auto        any = rwReaderMakeAny(lock, registered, acquired);
         std::thread runner([&any, &registered] { std::move(any).result(); });
-        while (registered.load() < 2)
-        {
+        while (registered.load() < 2) {
             std::this_thread::yield();
         }
         std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -2801,16 +2664,14 @@ TEST(TaskCompletionSourceTest, SetResultWinnerDestroysLoserIsSafe)
     std::atomic<int> registered{ 0 };
     std::atomic<int> completed{ 0 };
 
-    for (int iter = 0; iter < 200; ++iter)
-    {
+    for (int iter = 0; iter < 200; ++iter) {
         async::TaskCompletionSource<int> tcs;
         registered.store(0);
         completed.store(0);
 
-        auto any = tcsMakeAny(tcs, registered, completed);
+        auto        any = tcsMakeAny(tcs, registered, completed);
         std::thread runner([&any, &registered] { std::move(any).result(); });
-        while (registered.load() < 2)
-        {
+        while (registered.load() < 2) {
             std::this_thread::yield();
         }
         std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -2825,7 +2686,8 @@ TEST(TaskCompletionSourceTest, SetResultWinnerDestroysLoserIsSafe)
 // Each test names the invariant it pins down and the failure mode it guards.
 // ---------------------------------------------------------------------------
 
-namespace {
+namespace
+{
 
 async::Generator<int> genEmpty()
 {
@@ -2840,8 +2702,7 @@ async::Generator<int> genThrowBeforeYield()
 
 async::Task<void> yieldLoop(unsigned iterations)
 {
-    for (unsigned i = 0; i < iterations; ++i)
-    {
+    for (unsigned i = 0; i < iterations; ++i) {
         co_await async::yield();
     }
     co_return;
@@ -2852,8 +2713,7 @@ async::Task<void> yieldLoopDepth(unsigned iterations, std::ptrdiff_t& depth)
 {
     char* top    = static_cast<char*>(__builtin_frame_address(0));
     char* bottom = top;
-    for (unsigned i = 0; i < iterations; ++i)
-    {
+    for (unsigned i = 0; i < iterations; ++i) {
         bottom = static_cast<char*>(__builtin_frame_address(0));
         co_await async::yield();
     }
@@ -2862,9 +2722,7 @@ async::Task<void> yieldLoopDepth(unsigned iterations, std::ptrdiff_t& depth)
 }
 #endif
 
-async::Task<void> eventGen2Waiter(async::AsyncEvent& event,
-                                  std::atomic<int>& woken,
-                                  std::atomic<int>& is_set)
+async::Task<void> eventGen2Waiter(async::AsyncEvent& event, std::atomic<int>& woken, std::atomic<int>& is_set)
 {
     co_await event;
     is_set.store(event.isSet() ? 1 : 0); // Woken while the event is clear => spurious.
@@ -2872,22 +2730,17 @@ async::Task<void> eventGen2Waiter(async::AsyncEvent& event,
     co_return;
 }
 
-async::Task<void> eventReArmAndFinish(async::AsyncEvent& event,
-                                      async::Scope& scope,
-                                      std::atomic<int>& registered,
-                                      std::atomic<int>& gen2_woken,
-                                      std::atomic<int>& gen2_is_set)
+async::Task<void>
+eventReArmAndFinish(async::AsyncEvent& event, async::Scope& scope, std::atomic<int>& registered, std::atomic<int>& gen2_woken, std::atomic<int>& gen2_is_set)
 {
     ++registered;
-    co_await event; // gen-1 waiter, queued first, so it is the first one resumed
-    event.reset();  // re-arm while set() is still unwinding (the read-loop pattern)
+    co_await event;                                             // gen-1 waiter, queued first, so it is the first one resumed
+    event.reset();                                              // re-arm while set() is still unwinding (the read-loop pattern)
     scope.add(eventGen2Waiter(event, gen2_woken, gen2_is_set)); // gen-2 waiter, queued now
-    co_return; // finishing makes whenAny the winner: the sibling below is destroyed
+    co_return;                                                  // finishing makes whenAny the winner: the sibling below is destroyed
 }
 
-async::Task<void> eventBoundaryWaiter(async::AsyncEvent& event,
-                                      std::atomic<int>& registered,
-                                      std::atomic<int>& ran)
+async::Task<void> eventBoundaryWaiter(async::AsyncEvent& event, std::atomic<int>& registered, std::atomic<int>& ran)
 {
     ++registered;
     co_await event; // gen-1 waiter, queued second => it is the generation boundary
@@ -2896,11 +2749,11 @@ async::Task<void> eventBoundaryWaiter(async::AsyncEvent& event,
 }
 
 async::Task<void> eventRaceReArmWithBoundarySibling(async::AsyncEvent& event,
-                                                    async::Scope& scope,
-                                                    std::atomic<int>& registered,
-                                                    std::atomic<int>& gen2_woken,
-                                                    std::atomic<int>& gen2_is_set,
-                                                    std::atomic<int>& boundary_ran)
+                                                    async::Scope&      scope,
+                                                    std::atomic<int>&  registered,
+                                                    std::atomic<int>&  gen2_woken,
+                                                    std::atomic<int>&  gen2_is_set,
+                                                    std::atomic<int>&  boundary_ran)
 {
     std::vector<async::AnyTask> race;
     race.push_back(async::discard(eventReArmAndFinish(event, scope, registered, gen2_woken, gen2_is_set)));
@@ -2935,18 +2788,14 @@ TEST(AsyncDefectRegressionTest, EventKeepsNextGenerationParkedWhenBoundaryIsDest
     // wakeup that breaks waiters which do not re-check their predicate (the
     // sequential read loops in ConsoleUserIO / VisualUserIO).
     async::AsyncEvent event;
-    async::Scope scope;
-    std::atomic<int> registered{ 0 };
-    std::atomic<int> gen2_woken{ 0 };
-    std::atomic<int> gen2_is_set{ -1 };
-    std::atomic<int> boundary_ran{ 0 };
+    async::Scope      scope;
+    std::atomic<int>  registered{ 0 };
+    std::atomic<int>  gen2_woken{ 0 };
+    std::atomic<int>  gen2_is_set{ -1 };
+    std::atomic<int>  boundary_ran{ 0 };
 
-    std::thread runner([&] {
-        eventRaceReArmWithBoundarySibling(
-            event, scope, registered, gen2_woken, gen2_is_set, boundary_ran).result();
-    });
-    while (registered.load() < 2)
-    {
+    std::thread runner([&] { eventRaceReArmWithBoundarySibling(event, scope, registered, gen2_woken, gen2_is_set, boundary_ran).result(); });
+    while (registered.load() < 2) {
         std::this_thread::yield();
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(20)); // both gen-1 waiters parked
@@ -3020,7 +2869,8 @@ TEST(AsyncDefectRegressionTest, YieldLoopStackIsConstant)
     yieldLoop(100000).result();
 }
 
-namespace {
+namespace
+{
 
 #if defined(__GNUC__) || defined(__clang__)
 /// Opaque barrier: the pointer escapes into inline asm, so the compiler cannot
@@ -3042,8 +2892,7 @@ void keepFramePaddingAlive(const void* p, std::size_t n) noexcept
 /// Coroutine-frame padding: a frame this large is served by its own mmap'ed
 /// chunk, so resuming it after destruction faults on the unmapped page instead
 /// of quietly reading freed-but-mapped memory.
-struct FramePadding
-{
+struct FramePadding {
     std::array<unsigned char, 256 * 1024> bytes{};
 };
 
@@ -3075,9 +2924,9 @@ TEST(AsyncDefectRegressionTest, SharedTaskResumesWaitersOneAtATime)
     // otherwise (measured: 20/20 faults with padded frames and the settle
     // window below, 19/20 without either).
     std::atomic<int> runs{ 0 };
-    auto st = async::sharedTask(sharedSourceSlow(runs)); // sleeps 30 ms, then yields 7
+    auto             st = async::sharedTask(sharedSourceSlow(runs)); // sleeps 30 ms, then yields 7
 
-    std::atomic<int> resumed{ 0 };
+    std::atomic<int>            resumed{ 0 };
     std::vector<async::AnyTask> race;
     race.reserve(2);
     race.push_back(async::discard(sharedAwaitCounted(st, resumed)));
@@ -3093,8 +2942,8 @@ TEST(AsyncDefectRegressionTest, SharedTaskResumesWaitersOneAtATime)
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     EXPECT_TRUE(st.isReady());
-    EXPECT_EQ(runs.load(), 1);    // The source still ran exactly once.
-    EXPECT_EQ(resumed.load(), 1); // Only the winner ran; the loser was destroyed.
+    EXPECT_EQ(runs.load(), 1);                 // The source still ran exactly once.
+    EXPECT_EQ(resumed.load(), 1);              // Only the winner ran; the loser was destroyed.
     EXPECT_EQ(sharedAwaitInt(st).result(), 7); // Completion stayed usable.
 }
 
@@ -3104,17 +2953,16 @@ TEST(AsyncDefectRegressionTest, SharedTaskResumesWaitersOneAtATime)
 // of detail::TimerService (Sleep.hpp).
 // ---------------------------------------------------------------------------
 
-namespace {
+namespace
+{
 
 #if defined(__linux__)
 /// Number of OS threads this process currently has (Linux: /proc/self/task).
 long osThreadCount()
 {
     long count = 0;
-    if (DIR* dir = opendir("/proc/self/task"))
-    {
-        while (readdir(dir) != nullptr)
-        {
+    if (DIR* dir = opendir("/proc/self/task")) {
+        while (readdir(dir) != nullptr) {
             ++count;
         }
         closedir(dir);
@@ -3139,27 +2987,21 @@ async::Task<void> sleepFlag(std::chrono::milliseconds duration, std::atomic<bool
 
 async::Task<void> cancellableSleepFor(vn::CancellationToken token, std::atomic<bool>& cancelled)
 {
-    try
-    {
+    try {
         co_await async::sleepFor(std::chrono::milliseconds(500), token);
     }
-    catch (const async::TaskCancelledException&)
-    {
+    catch (const async::TaskCancelledException&) {
         cancelled.store(true);
     }
     co_return;
 }
 
-async::Task<void> sleepRecordingThread(vn::CancellationToken token,
-                                       std::thread::id& wake_thread,
-                                       std::atomic<bool>& cancelled)
+async::Task<void> sleepRecordingThread(vn::CancellationToken token, std::thread::id& wake_thread, std::atomic<bool>& cancelled)
 {
-    try
-    {
+    try {
         co_await async::sleepFor(std::chrono::milliseconds(500), token);
     }
-    catch (const async::TaskCancelledException&)
-    {
+    catch (const async::TaskCancelledException&) {
         wake_thread = std::this_thread::get_id(); // The thread the resume ran on.
         cancelled.store(true);
     }
@@ -3177,8 +3019,7 @@ TEST(SleepTimerTest, ConcurrentSleepsShareOneTimerThread)
     const long before = osThreadCount();
 #endif
     std::atomic<int> completed{ 0 };
-    for (int i = 0; i < 32; ++i)
-    {
+    for (int i = 0; i < 32; ++i) {
         scope.add(sleepCounted(std::chrono::milliseconds(100), completed));
     }
 #if defined(__linux__)
@@ -3196,27 +3037,23 @@ TEST(SleepTimerTest, CancellationWakesPromptly)
     // at the next slice boundary. The timer service resumes the waiter on the
     // cancelling thread, so the bound below has ~20x margin.
     long long worst = 0;
-    for (int i = 0; i < 5; ++i)
-    {
+    for (int i = 0; i < 5; ++i) {
         vn::CancellationSource source;
-        std::atomic<bool>        cancelled{ false };
-        auto                     task = cancellableSleepFor(source.get_token(), cancelled);
+        std::atomic<bool>      cancelled{ false };
+        auto                   task = cancellableSleepFor(source.get_token(), cancelled);
 
         std::chrono::steady_clock::time_point requested{};
-        std::thread canceller([&source, &requested] {
+        std::thread                           canceller([&source, &requested] {
             std::this_thread::sleep_for(std::chrono::milliseconds(23));
             requested = std::chrono::steady_clock::now();
             source.request_stop();
         });
         std::move(task).result();
-        const auto latency = std::chrono::duration_cast<std::chrono::microseconds>(
-                                 std::chrono::steady_clock::now() - requested)
-                                 .count();
+        const auto latency = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - requested).count();
         canceller.join();
 
         EXPECT_TRUE(cancelled.load());
-        if (latency > worst)
-        {
+        if (latency > worst) {
             worst = latency;
         }
     }
@@ -3232,9 +3069,9 @@ TEST(SleepTimerTest, CancellationResumesOnTheTimerThreadNotTheCancellers)
     // full test_gui runs failed its exclusive-takeover handshake, against 0/10
     // for the thread-based implementation.
     vn::CancellationSource source;
-    std::thread::id          wake_thread{};
-    std::atomic<bool>        cancelled{ false };
-    auto                     task = sleepRecordingThread(source.get_token(), wake_thread, cancelled);
+    std::thread::id        wake_thread{};
+    std::atomic<bool>      cancelled{ false };
+    auto                   task = sleepRecordingThread(source.get_token(), wake_thread, cancelled);
 
     std::thread::id canceller_thread{};
     std::thread     canceller([&] {
@@ -3264,13 +3101,10 @@ TEST(SleepTimerTest, ShorterDeadlineInsertedLaterStillFiresFirst)
 
     const auto start = std::chrono::steady_clock::now();
     scope.add(sleepFlag(std::chrono::milliseconds(20), short_done));
-    while (!short_done.load() && std::chrono::steady_clock::now() - start < std::chrono::seconds(1))
-    {
+    while (!short_done.load() && std::chrono::steady_clock::now() - start < std::chrono::seconds(1)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::steady_clock::now() - start)
-                            .count();
+    const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
 
     EXPECT_TRUE(short_done.load());
     EXPECT_LT(waited, 150); // Should be ~20 ms; a missed notify would be ~380 ms.
@@ -3284,17 +3118,14 @@ TEST(SleepTimerTest, ManyStaggeredDeadlinesAllFireOnce)
     // Exercises the worker's "pop one due node per lock, resume outside" loop:
     // 100 deadlines land in one narrow window, so the queue is repeatedly
     // non-empty and several nodes are due at the same wake-up.
-    async::Scope      scope;
-    std::atomic<int>  completed{ 0 };
-    const auto        start = std::chrono::steady_clock::now();
-    for (int i = 0; i < 100; ++i)
-    {
+    async::Scope     scope;
+    std::atomic<int> completed{ 0 };
+    const auto       start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; ++i) {
         scope.add(sleepCounted(std::chrono::milliseconds(1 + i % 20), completed));
     }
     scope.join().result();
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now() - start)
-                             .count();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
 
     EXPECT_EQ(completed.load(), 100);
     EXPECT_LT(elapsed, 400); // ~20 ms of deadlines; serialization would show here.
@@ -3331,23 +3162,21 @@ TEST(SleepTimerTest, AbandonedSleepIsDroppedWithoutResuming)
  * task's error. Escaping an await_suspend that is noexcept would terminate the process instead,
  * which is what the tests below catch.
  */
-struct ThrowingMove
-{
+struct ThrowingMove {
     /// Which move attempt throws; 0 means none.
     inline static int s_throw_on{ 0 };
 
     /// Move attempts so far; reset by the tests.
     inline static int s_moves{ 0 };
 
-    ThrowingMove() = default;
-    ThrowingMove(const ThrowingMove&) = delete;
+    ThrowingMove()                               = default;
+    ThrowingMove(const ThrowingMove&)            = delete;
     ThrowingMove& operator=(const ThrowingMove&) = delete;
-    ThrowingMove& operator=(ThrowingMove&&) = delete;
+    ThrowingMove& operator=(ThrowingMove&&)      = delete;
 
     ThrowingMove(ThrowingMove&&)
     {
-        if (++s_moves == s_throw_on)
-        {
+        if (++s_moves == s_throw_on) {
             throw std::runtime_error("throwing move");
         }
     }
@@ -3366,8 +3195,7 @@ async::Task<void> pushAndCount(async::AsyncQueue<int>& queue, int value, std::at
 }
 
 /// Waiter container whose registration always fails, so the no-throw path can be exercised.
-struct FailingWaiters
-{
+struct FailingWaiters {
     void push_back(std::coroutine_handle<>)
     {
         throw std::bad_alloc{};
@@ -3375,16 +3203,23 @@ struct FailingWaiters
 };
 
 /// Awaiter whose await_suspend result is none of the three forms the language allows.
-struct IllegalSuspendResult
-{
-    bool await_ready() const noexcept { return false; }
-    int  await_suspend(std::coroutine_handle<>) const noexcept { return 0; }
-    void await_resume() const noexcept {}
+struct IllegalSuspendResult {
+    bool await_ready() const noexcept
+    {
+        return false;
+    }
+
+    int await_suspend(std::coroutine_handle<>) const noexcept
+    {
+        return 0;
+    }
+
+    void await_resume() const noexcept
+    {}
 };
 
 /// Type that is not awaitable at all.
-struct NotAwaitable
-{};
+struct NotAwaitable {};
 
 // The Awaitable concept accepts what co_await accepts - including the module's own awaitables,
 // which are reachable only through operator co_await - and rejects what the compiler would
@@ -3406,8 +3241,8 @@ TEST(AsyncDetailTest, AThrowingWaiterListIsReportedInsteadOfEscaping)
     // and letting it escape would leave the coroutine suspended with nothing holding it. The
     // failure is captured and rethrown from await_resume() instead - on the coroutine's own
     // stack, where unhandled_exception() turns it into the task's error.
-    FailingWaiters      waiters;
-    std::exception_ptr  failure{};
+    FailingWaiters     waiters;
+    std::exception_ptr failure{};
 
     EXPECT_FALSE(async::detail::tryRegisterWaiter(waiters, std::coroutine_handle<>{}, failure));
     ASSERT_NE(failure, nullptr);
@@ -3423,19 +3258,16 @@ TEST(WhenAnyTest, AValueThatCannotBeMovedBecomesTheCompositionsError)
     // task's error. Only runtime_error is caught, so any other outcome - including a terminate -
     // fails the test.
     bool any_threw = false;
-    for (int move = 1; move <= 8; ++move)
-    {
+    for (int move = 1; move <= 8; ++move) {
         ThrowingMove::s_moves    = 0;
         ThrowingMove::s_throw_on = move;
 
         std::vector<async::Task<ThrowingMove>> tasks;
         tasks.push_back(throwingMoveTask());
-        try
-        {
+        try {
             static_cast<void>(async::whenAny(std::move(tasks)).result());
         }
-        catch (const std::runtime_error&)
-        {
+        catch (const std::runtime_error&) {
             any_threw = true; // the move failure came out as the task's error
         }
     }
@@ -3450,12 +3282,12 @@ TEST(AsyncQueueTest, ABoundedPushClaimsItsSlotInsideTheEnqueue)
     // A bounded awaiter therefore may not report "ready": that would enqueue from await_resume(),
     // after the lock had been released, and two pushers could both claim the same free slot. An
     // unbounded queue has no bound to keep, so it stays inline.
-    auto bounded    = std::make_shared<async::detail::AsyncQueueState<int>>();
+    auto bounded      = std::make_shared<async::detail::AsyncQueueState<int>>();
     bounded->capacity = 1;
     async::detail::QueuePushAwaiter<int> bounded_push(bounded, 1);
     EXPECT_FALSE(bounded_push.await_ready());
 
-    auto unbounded = std::make_shared<async::detail::AsyncQueueState<int>>();
+    auto                                 unbounded = std::make_shared<async::detail::AsyncQueueState<int>>();
     async::detail::QueuePushAwaiter<int> unbounded_push(unbounded, 2);
     EXPECT_TRUE(unbounded_push.await_ready());
 }
@@ -3466,14 +3298,12 @@ TEST(AsyncQueueTest, ABoundedQueueNeverHoldsMoreThanItsCapacity)
     // has to hold for every interleaving. The room is claimed under the same lock that enqueues,
     // so a second pusher cannot slip into a slot that was free when it looked - which is what
     // the check-then-enqueue shape let happen.
-    for (int attempt = 0; attempt < 20; ++attempt)
-    {
+    for (int attempt = 0; attempt < 20; ++attempt) {
         async::AsyncQueue<int> queue(1);
         std::atomic<int>       completed{ 0 };
 
         std::vector<std::thread> pushers;
-        for (int i = 0; i < 4; ++i)
-        {
+        for (int i = 0; i < 4; ++i) {
             pushers.emplace_back([&queue, i, &completed] {
                 auto push = pushAndCount(queue, i, completed);
                 push.result(); // blocks until this push has been enqueued
@@ -3483,16 +3313,15 @@ TEST(AsyncQueueTest, ABoundedQueueNeverHoldsMoreThanItsCapacity)
         const int settled = completed.load(std::memory_order_acquire);
 
         // Free every slot so the parked pushers finish and the threads can join.
-        for (int i = 0; i < 4; ++i)
-        {
+        for (int i = 0; i < 4; ++i) {
             static_cast<void>(queue.pop().result());
         }
-        for (auto& pusher : pushers)
-        {
+        for (auto& pusher : pushers) {
             pusher.join();
         }
 
-        EXPECT_EQ(settled, 1) << "attempt " << attempt << ": a bounded queue of capacity 1 "
+        EXPECT_EQ(settled, 1) << "attempt " << attempt
+                              << ": a bounded queue of capacity 1 "
                                  "accepted more than one push with no consumer";
     }
 }
@@ -3533,8 +3362,7 @@ TEST(TaskTest, WhenAllAsksTheSurvivorsToStopAndWaitsForThem)
     EXPECT_TRUE(cancelled.load()) << "the survivor never saw a stop request: the composition's "
                                      "environment token did not reach its body";
     EXPECT_TRUE(finished.load()) << "the composition returned while a child was still running";
-    EXPECT_LT(elapsed, std::chrono::milliseconds(1000))
-        << "waiting must mean waiting for the child to finish, not for its own deadline";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(1000)) << "waiting must mean waiting for the child to finish, not for its own deadline";
 }
 
 TEST(TaskTest, WhenAllDestroyPolicyNeverAsksTheSurvivorsToStop)
@@ -3550,15 +3378,12 @@ TEST(TaskTest, WhenAllDestroyPolicyNeverAsksTheSurvivorsToStop)
     tasks.push_back(sleepInEnvironment(std::chrono::milliseconds(200), cancelled, finished));
 
     const auto start = std::chrono::steady_clock::now();
-    EXPECT_THROW(
-        async::whenAll(std::move(tasks), vn::CancellationToken{}, async::CancelPolicy::Destroy).result(),
-        std::runtime_error);
+    EXPECT_THROW(async::whenAll(std::move(tasks), vn::CancellationToken{}, async::CancelPolicy::Destroy).result(), std::runtime_error);
     const auto elapsed = std::chrono::steady_clock::now() - start;
 
     EXPECT_FALSE(cancelled.load()) << "Destroy must not ask anyone to stop";
     EXPECT_TRUE(finished.load()) << "All mode waits for every child even under Destroy";
-    EXPECT_GE(elapsed, std::chrono::milliseconds(150))
-        << "nothing asked the survivor to wind down, so it ran to its own deadline";
+    EXPECT_GE(elapsed, std::chrono::milliseconds(150)) << "nothing asked the survivor to wind down, so it ran to its own deadline";
 }
 
 TEST(TaskTest, WhenAllStopAndWaitOnCancellationAsksAndWaits)
@@ -3580,15 +3405,13 @@ TEST(TaskTest, WhenAllStopAndWaitOnCancellationAsksAndWaits)
     });
 
     const auto start = std::chrono::steady_clock::now();
-    EXPECT_THROW(async::whenAll(std::move(tasks), source.get_token(), async::CancelPolicy::StopAndWait).result(),
-                 async::TaskCancelledException);
+    EXPECT_THROW(async::whenAll(std::move(tasks), source.get_token(), async::CancelPolicy::StopAndWait).result(), async::TaskCancelledException);
     const auto elapsed = std::chrono::steady_clock::now() - start;
     canceller.join();
 
     EXPECT_TRUE(cancelled.load()) << "the composition's stop request did not reach the child's sleep";
     EXPECT_TRUE(finished.load()) << "the cancellation was reported before the child had finished";
-    EXPECT_LT(elapsed, std::chrono::milliseconds(1000))
-        << "the child was asked to stop, so the wait is its wind-down and not its deadline";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(1000)) << "the child was asked to stop, so the wait is its wind-down and not its deadline";
 }
 
 /// Waits on a plain event and never reads its environment token: a child StopAndWait cannot ask to stop.
@@ -3613,12 +3436,10 @@ TEST(TaskTest, WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken)
     tasks.push_back(async::discard(childThatIgnoresItsToken(release, child_finished)));
 
     std::thread runner([&] {
-        try
-        {
+        try {
             async::whenAll(std::move(tasks)).result();
         }
-        catch (const std::runtime_error&)
-        {
+        catch (const std::runtime_error&) {
         }
         returned.store(true, std::memory_order_release);
     });
@@ -3651,12 +3472,10 @@ TEST(TaskTest, WhenAnyStopAndWaitIsHeldByALoserItCannotAskToStop)
     tasks.push_back(childThatIgnoresItsToken(release, loser_finished));
 
     std::thread runner([&] {
-        try
-        {
+        try {
             async::whenAny(std::move(tasks), source.get_token(), async::CancelPolicy::StopAndWait).result();
         }
-        catch (const async::TaskCancelledException&)
-        {
+        catch (const async::TaskCancelledException&) {
         }
         returned.store(true, std::memory_order_release);
     });
@@ -3665,8 +3484,7 @@ TEST(TaskTest, WhenAnyStopAndWaitIsHeldByALoserItCannotAskToStop)
         << "the winner's completion must not end a StopAndWait whenAny while a loser is running";
 
     release.set();
-    if (!waitForFlag(returned, std::chrono::milliseconds(1000)))
-    {
+    if (!waitForFlag(returned, std::chrono::milliseconds(1000))) {
         needed_escape = true;
         source.request_stop();
     }
@@ -3688,7 +3506,7 @@ TEST(StopTokenTest, ATaskNobodyHandedATokenToSeesAnEmptyEnvironment)
 
 TEST(StopTokenTest, WithStopTokenBecomesTheTasksOwnEnvironment)
 {
-    vn::CancellationSource source;
+    vn::CancellationSource         source;
     std::optional<std::stop_token> seen;
 
     std::move(async::withStopToken(source.get_token(), readEnvironment(seen))).result();
@@ -3708,16 +3526,13 @@ TEST(StopTokenTest, AHandedOverTokenReachesWorkDeepInsideTheBody)
     std::atomic<bool>      cancelled{ false };
     std::atomic<bool>      finished{ false };
 
-    std::thread driver([&] {
-        std::move(async::withStopToken(source.get_token(),
-                                       sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished)))
-            .result();
-    });
+    std::thread driver(
+        [&] { std::move(async::withStopToken(source.get_token(), sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished))).result(); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     const auto requested = std::chrono::steady_clock::now();
     source.request_stop();
-    const bool woken = waitForFlag(finished, std::chrono::milliseconds(1000));
+    const bool woken   = waitForFlag(finished, std::chrono::milliseconds(1000));
     const auto latency = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - requested).count();
     driver.join();
 
@@ -3761,15 +3576,13 @@ TEST(ScopeTest, JoinStopAndWaitAsksTheChildrenToStopAndWaitsForThem)
     });
 
     const auto start = std::chrono::steady_clock::now();
-    EXPECT_THROW(scope.join(source.get_token(), async::CancelPolicy::StopAndWait).result(),
-                 async::TaskCancelledException);
+    EXPECT_THROW(scope.join(source.get_token(), async::CancelPolicy::StopAndWait).result(), async::TaskCancelledException);
     const auto elapsed = std::chrono::steady_clock::now() - start;
     canceller.join();
 
     EXPECT_TRUE(cancelled.load()) << "the scope's stop request did not reach the child's sleep";
     EXPECT_TRUE(finished.load()) << "join() reported the cancellation before the child had finished";
-    EXPECT_LT(elapsed, std::chrono::milliseconds(1000))
-        << "the child was asked to stop, so the wait is its wind-down and not its deadline";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(1000)) << "the child was asked to stop, so the wait is its wind-down and not its deadline";
 }
 
 TEST(ScopeTest, ADetachedScopeLeavesItsChildrenAlone)

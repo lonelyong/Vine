@@ -12,19 +12,19 @@
 
 #define VN_CORE_NS_END VN_ROOT_NS_END
 
-#define VN_DECLARE_PIMPL(ClassName)                                                                                                                             \
+#define VN_DECLARE_PIMPL(ClassName)                                                                                                                            \
     class ClassName;                                                                                                                                           \
     class ClassName##Private;
 
-#define VN_DECLARE_DPTR(ClassName)                                                                                                                              \
+#define VN_DECLARE_DPTR(ClassName)                                                                                                                             \
   protected:                                                                                                                                                   \
     ClassName##Private* const d_ptr;
 
-#define VN_DECLARE_VPTR(ClassName)                                                                                                                              \
+#define VN_DECLARE_VPTR(ClassName)                                                                                                                             \
   protected:                                                                                                                                                   \
     ClassName* v_ptr;
 
-#define VN_DECLARE_PRIVATE(ClassName)                                                                                                                           \
+#define VN_DECLARE_PRIVATE(ClassName)                                                                                                                          \
   public:                                                                                                                                                      \
     friend class ClassName##Private;                                                                                                                           \
     inline ClassName##Private* getDPtr()                                                                                                                       \
@@ -44,7 +44,7 @@
 //   public:                                                                                                              \
 //     virtual ~ClassName();
 
-#define VN_DECLARE_PUBLIC(ClassName)                                                                                                                            \
+#define VN_DECLARE_PUBLIC(ClassName)                                                                                                                           \
   public:                                                                                                                                                      \
     friend class ClassName;                                                                                                                                    \
     inline ClassName* getVPtr()                                                                                                                                \
@@ -62,7 +62,7 @@
 #define VN_V(ClassName) auto* const v = getVPtr();
 
 // 定义类的侵入式指针类型，并前向声明类（需先包含 <vine/intrusive_ptr.hpp>）
-#define VN_DEFINE_PTR(ClassName)                                                                                                                                \
+#define VN_DEFINE_PTR(ClassName)                                                                                                                               \
     class ClassName;                                                                                                                                           \
-    using ClassName##SharedPtr = intrusive_ptr<ClassName>;                                                                                                    \
+    using ClassName##SharedPtr = intrusive_ptr<ClassName>;                                                                                                     \
     // using ClassName##WeakPtr   = std::weak_ptr<ClassName>;

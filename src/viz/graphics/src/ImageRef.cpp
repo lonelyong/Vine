@@ -4,7 +4,10 @@ VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(ImageRef, vn::Object);
 
-ImageRef::ImageRef(const String& label, Kind kind) : label_(label), kind_(kind) {}
+ImageRef::ImageRef(const String& label, Kind kind)
+  : label_(label)
+  , kind_(kind)
+{}
 
 const String& ImageRef::label() const noexcept
 {

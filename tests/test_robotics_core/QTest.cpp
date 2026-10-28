@@ -69,8 +69,8 @@ TEST(QTest, ElemMul)
 
 TEST(QTest, ConcatAndAppend)
 {
-    Q a{ 1.0, 2.0 };
-    Q b{ 3.0 };
+    Q       a{ 1.0, 2.0 };
+    Q       b{ 3.0 };
     const Q c = a.concat(b);
     EXPECT_EQ(c, (Q{ 1.0, 2.0, 3.0 }));
 
@@ -92,7 +92,7 @@ TEST(QTest, SubQ)
 
 TEST(QTest, Set)
 {
-    Q           a(5);
+    Q            a(5);
     const double vals[] = { 9.0, 8.0 };
     a.set(2, vals, 2);
     EXPECT_EQ(a[2], 9.0);
@@ -113,7 +113,7 @@ TEST(QTest, Norm)
 
 TEST(QTest, ToStdVector)
 {
-    Q                          a{ 1.0, 2.0, 3.0 };
+    Q                         a{ 1.0, 2.0, 3.0 };
     const std::vector<double> v = a.toStdVector();
     ASSERT_EQ(v.size(), 3u);
     EXPECT_EQ(v[0], 1.0);

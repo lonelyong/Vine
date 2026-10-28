@@ -3,16 +3,17 @@
 #include "geometry_global.hpp"
 
 #include <vine/INameable.hpp>
-#include <vine/math/Math.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
+#include <vine/math/Math.hpp>
 
 VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief Coarse shape family used for category-level dispatch.
  */
-enum class ShapeKind {
+enum class ShapeKind
+{
     /// Not a concrete shape yet.
     Unknown = 0,
     /// Parametric primitive (Primitive).
@@ -26,7 +27,8 @@ enum class ShapeKind {
 /**
  * @brief Concrete shape type used for fine-grained dispatch.
  */
-enum class ShapeType {
+enum class ShapeType
+{
     /// Not a concrete shape yet.
     Unknown = 0,
     /// Axis-aligned box (Box).

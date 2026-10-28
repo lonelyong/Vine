@@ -16,8 +16,7 @@ VN_CRYPTO_NS_BEGIN
  * Data is fed in chunks through write() or operator<< and the digest is
  * produced once at the end. Supports every algorithm exposed by Hash.
  */
-class VN_CRYPTO_API HashCalculator
-{
+class VN_CRYPTO_API HashCalculator {
   public:
     /**
      * @brief Supported hash algorithms.
@@ -59,7 +58,7 @@ class VN_CRYPTO_API HashCalculator
     HashCalculator(HashCalculator&&) noexcept;
     HashCalculator& operator=(HashCalculator&&) noexcept;
 
-    HashCalculator(const HashCalculator&) = delete;
+    HashCalculator(const HashCalculator&)            = delete;
     HashCalculator& operator=(const HashCalculator&) = delete;
 
     /**

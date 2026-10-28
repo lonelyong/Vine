@@ -34,8 +34,7 @@
 VN_VSG_NS_BEGIN
 
 /** @brief The live pass identities, and the number each of them answers (see the file note). */
-class VN_VSG_API PassRegistry
-{
+class VN_VSG_API PassRegistry {
   public:
     PassRegistry() = default;
 
@@ -67,8 +66,8 @@ class VN_VSG_API PassRegistry
     [[nodiscard]] std::size_t live() const noexcept;
 
   private:
-    std::map<const void*, core::PassId> ids_;          ///< The live identities, in address order (few passes).
-    core::PassId                        next_{1};      ///< Next number to hand out; 0 stays "no pass".
+    std::map<const void*, core::PassId> ids_;       // The live identities, in address order (few passes).
+    core::PassId                        next_{ 1 }; // Next number to hand out; 0 stays "no pass".
 };
 
 VN_VSG_NS_END

@@ -49,18 +49,18 @@ class VN_GEOMETRY_API Model : public vn::Object, public vn::RefCounted<Model> {
      * node, which is why a node on its own means nothing.
      */
     struct Node {
-        String                     name;      ///< Node name; empty when the source named none.
-        math::Mat4d                transform; ///< Transform of the node relative to its parent.
-        std::vector<std::uint32_t> children;  ///< Indices of the child nodes.
-        std::vector<std::uint32_t> meshes;    ///< Indices of the mesh entries this node draws.
+        String                     name;      // Node name; empty when the source named none.
+        math::Mat4d                transform; // Transform of the node relative to its parent.
+        std::vector<std::uint32_t> children;  // Indices of the child nodes.
+        std::vector<std::uint32_t> meshes;    // Indices of the mesh entries this node draws.
     };
 
     /**
      * @brief One mesh of the model, together with the material it uses.
      */
     struct Entry {
-        intrusive_ptr<Mesh>     mesh;     ///< The mesh; never null in a filled entry.
-        intrusive_ptr<Material> material; ///< The material the mesh uses; null when the source declared none.
+        intrusive_ptr<Mesh>     mesh;     // The mesh; never null in a filled entry.
+        intrusive_ptr<Material> material; // The material the mesh uses; null when the source declared none.
     };
 
   public:

@@ -31,51 +31,50 @@ VN_GRAPHICS_NS_BEGIN
  * - A `Sampler` doubles as a cache key (see the backend's image cache), so its fields are compared by value:
  *   pass finite numbers. A NaN compares unequal to itself and would miss the cache on every frame.
  */
-struct VN_GRAPHICS_API Sampler
-{
+struct VN_GRAPHICS_API Sampler {
     /** @brief How a texel is filtered when it is magnified or minified. */
     enum class Filter : std::uint8_t
     {
-        Nearest, ///< The nearest texel (blocky, exact).
-        Linear,  ///< Bilinear interpolation (smooth).
+        Nearest, // The nearest texel (blocky, exact).
+        Linear,  // Bilinear interpolation (smooth).
     };
 
     /** @brief How two mip levels are blended. */
     enum class MipmapMode : std::uint8_t
     {
-        Nearest, ///< One level is chosen.
-        Linear,  ///< Two levels are interpolated.
+        Nearest, // One level is chosen.
+        Linear,  // Two levels are interpolated.
     };
 
     /** @brief What a coordinate outside [0, 1] reads. */
     enum class AddressMode : std::uint8_t
     {
-        Repeat,            ///< Tiles the image.
-        MirroredRepeat,    ///< Tiles it with every other tile flipped.
-        ClampToEdge,       ///< Repeats the edge texel.
-        ClampToBorder,     ///< Reads @ref border_color outside the image.
-        MirrorClampToEdge, ///< Mirrors once, then repeats the edge texel.
+        Repeat,            // Tiles the image.
+        MirroredRepeat,    // Tiles it with every other tile flipped.
+        ClampToEdge,       // Repeats the edge texel.
+        ClampToBorder,     // Reads @ref border_color outside the image.
+        MirrorClampToEdge, // Mirrors once, then repeats the edge texel.
     };
 
     /** @brief The value `ClampToBorder` reads outside the image. */
     enum class BorderColor : std::uint8_t
     {
-        TransparentBlack, ///< (0, 0, 0, 0).
-        OpaqueBlack,      ///< (0, 0, 0, 1).
-        OpaqueWhite,      ///< (1, 1, 1, 1).
+        TransparentBlack, // (0, 0, 0, 0).
+        OpaqueBlack,      // (0, 0, 0, 1).
+        OpaqueWhite,      // (1, 1, 1, 1).
     };
 
-    Filter      min_filter{Filter::Linear};        ///< Filter for minified texels.
-    Filter      mag_filter{Filter::Linear};        ///< Filter for magnified texels.
-    MipmapMode  mipmap_mode{MipmapMode::Linear};    ///< How mip levels are blended.
-    AddressMode address_u{AddressMode::Repeat};     ///< Wrap mode for the u axis.
-    AddressMode address_v{AddressMode::Repeat};     ///< Wrap mode for the v axis.
-    AddressMode address_w{AddressMode::Repeat};     ///< Wrap mode for the w axis (3D/cube sampling).
-    BorderColor border_color{BorderColor::TransparentBlack};  ///< Value read by ClampToBorder.
-    float       anisotropy{1.0F};  ///< Requested anisotropy (1 = off; the backend clamps it to the device limit).
-    float       lod_bias{0.0F};    ///< Bias added to the computed level of detail.
-    float       min_lod{0.0F};     ///< Lowest level of detail the sampler may read.
-    float       max_lod{1000.0F};  ///< Highest level of detail the sampler may read (Vulkan's clamp value).
+    Filter      min_filter{ Filter::Linear };                  // Filter for minified texels.
+    Filter      mag_filter{ Filter::Linear };                  // Filter for magnified texels.
+    MipmapMode  mipmap_mode{ MipmapMode::Linear };             // How mip levels are blended.
+    AddressMode address_u{ AddressMode::Repeat };              // Wrap mode for the u axis.
+    AddressMode address_v{ AddressMode::Repeat };              // Wrap mode for the v axis.
+    AddressMode address_w{ AddressMode::Repeat };              // Wrap mode for the w axis (3D/cube sampling).
+    BorderColor border_color{ BorderColor::TransparentBlack }; // Value read by ClampToBorder.
+    float       anisotropy{ 1.0F };                            // Requested anisotropy (1 = off; the backend clamps it to the device limit).
+    float       lod_bias{ 0.0F };                              // Bias added to the computed level of detail.
+    float       min_lod{ 0.0F };                               // Lowest level of detail the sampler may read.
+    float       max_lod{ 1000.0F };                            // Highest level of detail the sampler may read (Vulkan's clamp value).
 
     /** @brief States whether two sampler descriptions are the same state.
      *

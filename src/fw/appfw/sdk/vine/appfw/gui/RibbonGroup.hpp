@@ -110,7 +110,7 @@ class VN_APPFW_API RibbonGroup : public Control {
      * @note The panel does not own the QAction; when the passed item is
      * destroyed the button is cleared automatically.
      */
-    void          setOptionAction(RibbonAction* item);
+    void                  setOptionAction(RibbonAction* item);
     raw_ptr<RibbonAction> optionAction() const;
 
   private:

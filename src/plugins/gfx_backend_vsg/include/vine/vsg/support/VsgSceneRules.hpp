@@ -65,10 +65,10 @@ namespace detail
  */
 enum class ChannelShape
 {
-    Ok,            ///< Usable: one typed value per vertex.
-    Components,    ///< Component count is outside 1..4.
-    NotDivisible,  ///< Float count is not a whole number of vertices.
-    VertexCount,   ///< Vertex count does not match the mesh's.
+    Ok,           // Usable: one typed value per vertex.
+    Components,   // Component count is outside 1..4.
+    NotDivisible, // Float count is not a whole number of vertices.
+    VertexCount,  // Vertex count does not match the mesh's.
 };
 
 /**
@@ -89,8 +89,7 @@ ChannelShape channelShape(const vn::graphics::AttributeChannel& attr, std::size_
  * @param shape        Why channelShape rejected it (never Ok).
  * @return The message to report.
  */
-vn::String ignoredChannelMessage(std::uint32_t location, const vn::graphics::AttributeChannel& attr,
-                                   std::size_t vertex_count, ChannelShape shape);
+vn::String ignoredChannelMessage(std::uint32_t location, const vn::graphics::AttributeChannel& attr, std::size_t vertex_count, ChannelShape shape);
 
 /**
  * @brief Why an attribute channel could not be unpacked as xyz.
@@ -101,9 +100,9 @@ vn::String ignoredChannelMessage(std::uint32_t location, const vn::graphics::Att
  */
 enum class XyzUnpack
 {
-    Ok,            ///< Unpacked into the output array.
-    NotXyzStride,  ///< Component count is not a usable xyz stride (needs 3 or 4).
-    NotDivisible,  ///< Float count is not a whole number of vertices at that stride.
+    Ok,           // Unpacked into the output array.
+    NotXyzStride, // Component count is not a usable xyz stride (needs 3 or 4).
+    NotDivisible, // Float count is not a whole number of vertices at that stride.
 };
 
 /**
@@ -260,11 +259,11 @@ VkFormat vkFormatFor(vn::imaging::PixelFormat format) noexcept;
  */
 enum class TextureReject
 {
-    Ok,                 ///< Usable: every face is filled and the format has a Vulkan counterpart.
-    Absent,             ///< No texture at all (a material without one).
-    Incomplete,         ///< Not every face has been filled yet.
-    UnsupportedFormat,  ///< The pixel layout has no Vulkan format (a three-channel layout).
-    Inconsistent,       ///< The pixel data does not account for what the description claims (see textureDataMatchesExtent).
+    Ok,                // Usable: every face is filled and the format has a Vulkan counterpart.
+    Absent,            // No texture at all (a material without one).
+    Incomplete,        // Not every face has been filled yet.
+    UnsupportedFormat, // The pixel layout has no Vulkan format (a three-channel layout).
+    Inconsistent,      // The pixel data does not account for what the description claims (see textureDataMatchesExtent).
 };
 
 /**
@@ -343,8 +342,7 @@ vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Textur
  * @param meshNormals Optional mesh normals (may be empty).
  * @return Normal array, one vec3 per position.
  */
-::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vn::math::Vec3f> positions,
-                                            std::span<const vn::math::Vec3f> meshNormals);
+::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vn::math::Vec3f> positions, std::span<const vn::math::Vec3f> meshNormals);
 
 /**
  * @brief Builds the per-vertex normal array of an indexed mesh.
@@ -359,9 +357,8 @@ vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Textur
  * @param indices     Triangle indices (three per triangle).
  * @return Normal array, one vec3 per position.
  */
-::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(std::span<const vn::math::Vec3f> positions,
-                                                   std::span<const vn::math::Vec3f> meshNormals,
-                                                   const ::vsg::uintArray& indices);
+::vsg::ref_ptr<::vsg::vec3Array>
+makeIndexedNormals(std::span<const vn::math::Vec3f> positions, std::span<const vn::math::Vec3f> meshNormals, const ::vsg::uintArray& indices);
 
 /**
  * @brief Wraps a Vine buffer as a REAL vsg array that reads it in place.
@@ -398,15 +395,14 @@ vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Textur
  * @return The array, reading @p buffer's memory from @p offset_scalars on.
  */
 template <typename Array, typename Element>
-::vsg::ref_ptr<Array> aliasArray(intrusive_ptr<const vn::Buffer<Element>> buffer, std::size_t count,
-                                 std::size_t offset_scalars = 0u)
+::vsg::ref_ptr<Array> aliasArray(intrusive_ptr<const vn::Buffer<Element>> buffer, std::size_t count, std::size_t offset_scalars = 0u)
 {
     using ArrayElement = typename Array::value_type;
-    static_assert(sizeof(ArrayElement) % sizeof(Element) == 0u,
-                  "an aliased array element must cover a whole number of buffer elements");
+    static_assert(sizeof(ArrayElement) % sizeof(Element) == 0u, "an aliased array element must cover a whole number of buffer elements");
     return Array::create(::vsg::ref_ptr<::vsg::Data>(VsgBufferView<Element>::create(std::move(buffer))),
                          static_cast<std::uint32_t>(offset_scalars * sizeof(Element)),
-                         static_cast<std::uint32_t>(sizeof(ArrayElement)), static_cast<std::uint32_t>(count));
+                         static_cast<std::uint32_t>(sizeof(ArrayElement)),
+                         static_cast<std::uint32_t>(count));
 }
 
 /**
@@ -428,9 +424,8 @@ template <typename Array, typename Element>
  *                       custom channel can be a segment of an arena like every other channel.
  * @return Typed array reading @p values.
  */
-::vsg::ref_ptr<::vsg::Data> aliasTypedVertexData(std::uint32_t components,
-                                                intrusive_ptr<const vn::Buffer<float>> values,
-                                                std::size_t vertex_count, std::size_t offset_scalars = 0u);
+::vsg::ref_ptr<::vsg::Data>
+aliasTypedVertexData(std::uint32_t components, intrusive_ptr<const vn::Buffer<float>> values, std::size_t vertex_count, std::size_t offset_scalars = 0u);
 
 /**
  * @brief The Vulkan vertex-input format of a channel with @p components scalars per vertex.
@@ -522,7 +517,8 @@ inline constexpr std::uint64_t hashCombine(std::uint64_t hash, std::uint64_t val
  * @param extra_channels Forwarded channels (empty = built-in layout only).
  * @return Layout hash.
  */
-template <class ChannelRange> std::uint64_t vertexLayoutHash(const ChannelRange& extra_channels)
+template <class ChannelRange>
+std::uint64_t vertexLayoutHash(const ChannelRange& extra_channels)
 {
     std::uint64_t layout = kLayoutSeed;
     for (const auto& channel : extra_channels) {
@@ -561,9 +557,11 @@ template <class ChannelRange> std::uint64_t vertexLayoutHash(const ChannelRange&
  * @param layout   Hash of the geometry's forwarded custom channels (see vertexLayoutHash).
  * @return The content hash used as the variant cache key.
  */
-std::uint64_t hashStateVariant(const vn::graphics::ShaderProgram* program, const vn::graphics::Material* material,
-                               const void* texture_resource,
-                               const vn::graphics::ResolvedRenderState& state, std::uint64_t layout);
+std::uint64_t hashStateVariant(const vn::graphics::ShaderProgram*       program,
+                               const vn::graphics::Material*            material,
+                               const void*                              texture_resource,
+                               const vn::graphics::ResolvedRenderState& state,
+                               std::uint64_t                            layout);
 
 /**
  * @brief How many colour attachments the slot's shader set declares.

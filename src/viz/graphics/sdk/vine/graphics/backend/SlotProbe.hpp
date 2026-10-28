@@ -34,10 +34,9 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief What one slot probe learned. */
-struct SlotProbeOutcome
-{
-    std::uint32_t slots{0};             ///< Slots the framework answered for; 0 means "could not learn".
-    bool          probe_failed{false};  ///< No slot could be answered at all.
+struct SlotProbeOutcome {
+    std::uint32_t slots{ 0 };            // Slots the framework answered for; 0 means "could not learn".
+    bool          probe_failed{ false }; // No slot could be answered at all.
 };
 
 /** @brief The slot count this backend expects a viewer of this fleet to own.
@@ -83,8 +82,7 @@ inline constexpr std::uint32_t kAssumedInFlightSlots = 3;
  * @param limit Highest slot count to look for; the probe stops there.
  * @return The count, and whether probing failed (no slot answered at all).
  */
-[[nodiscard]] VN_GRAPHICS_API SlotProbeOutcome probeSlotCount(const std::function<bool(std::uint32_t)>& has_slot,
-                                              std::uint32_t limit = 64) noexcept;
+[[nodiscard]] VN_GRAPHICS_API SlotProbeOutcome probeSlotCount(const std::function<bool(std::uint32_t)>& has_slot, std::uint32_t limit = 64) noexcept;
 
 /**
  * @brief Folds per-frame probe answers into the session's real in-flight count.
@@ -95,8 +93,7 @@ inline constexpr std::uint32_t kAssumedInFlightSlots = 3;
  *   consecutive equal answers are therefore what "known" means here, and a session acts on the number only once it is
  *   known.
  */
-class VN_GRAPHICS_API SlotTracker
-{
+class VN_GRAPHICS_API SlotTracker {
   public:
     /** @brief Folds one frame's probe answer in.
      *
@@ -122,10 +119,10 @@ class VN_GRAPHICS_API SlotTracker
 
 
   private:
-    std::uint32_t best_{0};        ///< Highest answer seen.
-    std::uint32_t previous_{0};    ///< The previous frame's answer.
-    bool          known_{false};   ///< The answer stopped growing.
-    std::size_t   frames_{0};      ///< Frames observed.
+    std::uint32_t best_{ 0 };      // Highest answer seen.
+    std::uint32_t previous_{ 0 };  // The previous frame's answer.
+    bool          known_{ false }; // The answer stopped growing.
+    std::size_t   frames_{ 0 };    // Frames observed.
 };
 
 VN_GRAPHICSBACKEND_NS_END

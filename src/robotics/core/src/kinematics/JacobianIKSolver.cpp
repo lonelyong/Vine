@@ -41,12 +41,16 @@ inline math::Vec3d orientationError(const math::Quatd& current, const math::Quat
     math::Quatd qe = target * current.conj();
     qe.normalize();
     if (qe.w < 0.0) {
-        qe.x = -qe.x; qe.y = -qe.y; qe.z = -qe.z; qe.w = -qe.w;
+        qe.x = -qe.x;
+        qe.y = -qe.y;
+        qe.z = -qe.z;
+        qe.w = -qe.w;
     }
     const double v_norm = std::sqrt(qe.x * qe.x + qe.y * qe.y + qe.z * qe.z);
-    if (v_norm < 1e-15) return { 0.0, 0.0, 0.0 };
+    if (v_norm < 1e-15)
+        return { 0.0, 0.0, 0.0 };
     const double theta = 2.0 * std::atan2(v_norm, qe.w);
-    const double s = theta / v_norm;
+    const double s     = theta / v_norm;
     return { s * qe.x, s * qe.y, s * qe.z };
 }
 
@@ -66,8 +70,12 @@ bool solve6x6(double A[6][6], double b[6], double x[6])
         int    piv = i;
         double pv  = std::abs(A[i][i]);
         for (int r = i + 1; r < N; ++r)
-            if (std::abs(A[r][i]) > pv) { pv = std::abs(A[r][i]); piv = r; }
-        if (pv < 1e-15) return false;
+            if (std::abs(A[r][i]) > pv) {
+                pv  = std::abs(A[r][i]);
+                piv = r;
+            }
+        if (pv < 1e-15)
+            return false;
         if (piv != i) {
             for (int c = i; c < N; ++c) std::swap(A[i][c], A[piv][c]);
             std::swap(b[i], b[piv]);
@@ -138,19 +146,20 @@ bool withinBounds(std::span<const DofInfo> dofs, std::span<const double> q)
  * All other buffers are caller-allocated and reused — zero heap traffic
  * in the hot loop.
  */
-bool solveFromSeed(std::span<const DofInfo>        dofs,
-                   const math::Isometry3d&          target,
-                   const IterativeIKSolver&         settings,
-                   std::vector<Q>&                  solutions,
-                   std::span<math::Isometry3d>      T_chain,
-                   std::span<math::Vec3d>           p_world,
-                   std::span<math::Vec3d>           z_world,
-                   std::span<double>                Jc,
-                   std::span<double>                q,
-                   std::span<double>                dq)
+bool solveFromSeed(std::span<const DofInfo>    dofs,
+                   const math::Isometry3d&     target,
+                   const IterativeIKSolver&    settings,
+                   std::vector<Q>&             solutions,
+                   std::span<math::Isometry3d> T_chain,
+                   std::span<math::Vec3d>      p_world,
+                   std::span<math::Vec3d>      z_world,
+                   std::span<double>           Jc,
+                   std::span<double>           q,
+                   std::span<double>           dq)
 {
     const size_t n = dofs.size();
-    if (n == 0) return false;
+    if (n == 0)
+        return false;
 
     const std::array<bool, 6>& enabled   = settings.constraintMask();
     const double               tolerance = settings.maxError();
@@ -162,20 +171,18 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
         // ---- forward kinematics ----
         math::Isometry3d T;
         for (size_t i = 0; i < n; ++i) {
-            T = T * dofs[i].origin;                       // joint input frame
-            p_world[i] = T.translation.asVector();         //   → position p_i
-            z_world[i] = T.rotation * dofs[i].axis;        //   → axis     z_i
+            T          = T * dofs[i].origin;        // joint input frame
+            p_world[i] = T.translation.asVector();  //   → position p_i
+            z_world[i] = T.rotation * dofs[i].axis; //   → axis     z_i
 
             if (dofs[i].type == DofType::PrismaticJoint) {
                 const double d = q[i];
-                T = T * math::Isometry3d(
-                    math::Point3d(dofs[i].axis.x * d, dofs[i].axis.y * d, dofs[i].axis.z * d),
-                    math::Quatd(1, 0, 0, 0));
-            } else {
-                T = T * math::Isometry3d(math::Point3d(0, 0, 0),
-                                         math::Quatd(q[i], dofs[i].axis));
+                T              = T * math::Isometry3d(math::Point3d(dofs[i].axis.x * d, dofs[i].axis.y * d, dofs[i].axis.z * d), math::Quatd(1, 0, 0, 0));
             }
-            T_chain[i] = T;                                // joint output frame
+            else {
+                T = T * math::Isometry3d(math::Point3d(0, 0, 0), math::Quatd(q[i], dofs[i].axis));
+            }
+            T_chain[i] = T; // joint output frame
         }
         const math::Isometry3d& T_ee = T_chain.back();
 
@@ -192,11 +199,13 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
         for (int c = 0; c < 3; ++c) {
             if (enabled[c]) {
                 err += pos_c[c] * pos_c[c];
-                if (std::abs(pos_c[c]) > tolerance) converged = false;
+                if (std::abs(pos_c[c]) > tolerance)
+                    converged = false;
             }
             if (enabled[c + 3]) {
                 err += rot_c[c] * rot_c[c];
-                if (std::abs(rot_c[c]) > tolerance) converged = false;
+                if (std::abs(rot_c[c]) > tolerance)
+                    converged = false;
             }
         }
 
@@ -218,34 +227,31 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
             if (dofs[i].type == DofType::PrismaticJoint) {
                 Jv = z_world[i];
                 Jw = { 0, 0, 0 };
-            } else {
+            }
+            else {
                 Jv = z_world[i].cross(p_ee - p_world[i]);
                 Jw = z_world[i];
             }
             double* col = &Jc[i * 6];
-            col[0] = enabled[0] ? kPosWeight * Jv.x : 0.0;
-            col[1] = enabled[1] ? kPosWeight * Jv.y : 0.0;
-            col[2] = enabled[2] ? kPosWeight * Jv.z : 0.0;
-            col[3] = enabled[3] ? kRotWeight * Jw.x : 0.0;
-            col[4] = enabled[4] ? kRotWeight * Jw.y : 0.0;
-            col[5] = enabled[5] ? kRotWeight * Jw.z : 0.0;
+            col[0]      = enabled[0] ? kPosWeight * Jv.x : 0.0;
+            col[1]      = enabled[1] ? kPosWeight * Jv.y : 0.0;
+            col[2]      = enabled[2] ? kPosWeight * Jv.z : 0.0;
+            col[3]      = enabled[3] ? kRotWeight * Jw.x : 0.0;
+            col[4]      = enabled[4] ? kRotWeight * Jw.y : 0.0;
+            col[5]      = enabled[5] ? kRotWeight * Jw.z : 0.0;
         }
 
         // ---- error vector (weighted, disabled components zeroed) ----
-        const double e_vec[6] = { enabled[0] ? kPosWeight * pos_err.x : 0.0,
-                                  enabled[1] ? kPosWeight * pos_err.y : 0.0,
-                                  enabled[2] ? kPosWeight * pos_err.z : 0.0,
-                                  enabled[3] ? kRotWeight * rot_err.x : 0.0,
-                                  enabled[4] ? kRotWeight * rot_err.y : 0.0,
-                                  enabled[5] ? kRotWeight * rot_err.z : 0.0 };
+        const double e_vec[6] = { enabled[0] ? kPosWeight * pos_err.x : 0.0, enabled[1] ? kPosWeight * pos_err.y : 0.0,
+                                  enabled[2] ? kPosWeight * pos_err.z : 0.0, enabled[3] ? kRotWeight * rot_err.x : 0.0,
+                                  enabled[4] ? kRotWeight * rot_err.y : 0.0, enabled[5] ? kRotWeight * rot_err.z : 0.0 };
 
         // ---- DLS: accumulate J·Jᵀ (6×6) + λ²I ----
         double JJt[6][6] = {};
         for (size_t i = 0; i < n; ++i) {
             const double* col = &Jc[i * 6];
             for (int r = 0; r < 6; ++r)
-                for (int c = 0; c < 6; ++c)
-                    JJt[r][c] += col[r] * col[c];
+                for (int c = 0; c < 6; ++c) JJt[r][c] += col[r] * col[c];
         }
         const double lambda2 = lambda * lambda;
         for (int i = 0; i < 6; ++i) JJt[i][i] += lambda2;
@@ -264,15 +270,13 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
         // ---- Δq = Jᵀ·y  (damped minimum-norm, works for all n) ----
         for (size_t i = 0; i < n; ++i) {
             const double* col = &Jc[i * 6];
-            dq[i] = col[0] * y[0] + col[1] * y[1] + col[2] * y[2] +
-                    col[3] * y[3] + col[4] * y[4] + col[5] * y[5];
+            dq[i]             = col[0] * y[0] + col[1] * y[1] + col[2] * y[2] + col[3] * y[3] + col[4] * y[4] + col[5] * y[5];
         }
 
         // ---- step clamp (per-joint-type limits), joint limits ----
         double step = 1.0;
         for (size_t i = 0; i < n; ++i) {
-            const double limit = (dofs[i].type == DofType::PrismaticJoint)
-                                     ? kMaxLinearStep : kMaxAngularStep;
+            const double limit = (dofs[i].type == DofType::PrismaticJoint) ? kMaxLinearStep : kMaxAngularStep;
             if (std::abs(dq[i]) > limit)
                 step = std::min(step, limit / std::abs(dq[i]));
         }
@@ -286,7 +290,8 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
         // ---- adaptive damping (heuristic, not true LM) ----
         if (err < prev_err) {
             lambda = std::max(kMinLambda, lambda * 0.7);
-        } else {
+        }
+        else {
             lambda = std::min(lambda * 2.0, kMaxLambda);
         }
         prev_err = err;
@@ -309,19 +314,19 @@ bool solveFromSeed(std::span<const DofInfo>        dofs,
  * All working buffers are allocated once here and reused across seeds
  * and iterations.
  */
-bool JacobianIKSolver::solve(const math::Isometry3d& target,
-                             std::vector<Q>&          solutions) const
+bool JacobianIKSolver::solve(const math::Isometry3d& target, std::vector<Q>& solutions) const
 {
     const size_t n = dofs_.size();
-    if (n == 0) return false;
+    if (n == 0)
+        return false;
 
     // -------- pre-allocated buffers (reused across all seeds) --------
     std::vector<math::Isometry3d> T_chain(n);
     std::vector<math::Vec3d>      p_world(n);
     std::vector<math::Vec3d>      z_world(n);
-    std::vector<double>           Jc(n * 6);   // Jacobian columns, 6 doubles/joint
-    std::vector<double>           q(n);        // working joint vector
-    std::vector<double>           dq(n);       // joint update
+    std::vector<double>           Jc(n * 6); // Jacobian columns, 6 doubles/joint
+    std::vector<double>           q(n);      // working joint vector
+    std::vector<double>           dq(n);     // joint update
 
     std::mt19937                           rng(42);
     std::uniform_real_distribution<double> dist(-math::PI, math::PI);
@@ -343,7 +348,8 @@ bool JacobianIKSolver::solve(const math::Isometry3d& target,
             if (lo < hi) {
                 std::uniform_real_distribution<double> jdist(lo, hi);
                 q[i] = jdist(rng);
-            } else {
+            }
+            else {
                 q[i] = dist(rng);
             }
         }

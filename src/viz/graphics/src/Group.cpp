@@ -48,8 +48,7 @@ void Group::removeChild(raw_ptr<Node> child)
     if (child == nullptr) {
         return;
     }
-    auto it = std::find_if(children_.begin(), children_.end(),
-                           [child](const NodePtr& ptr) { return ptr.get() == child; });
+    auto it = std::find_if(children_.begin(), children_.end(), [child](const NodePtr& ptr) { return ptr.get() == child; });
     if (it != children_.end()) {
         child->parent_ = nullptr;
         children_.erase(it);

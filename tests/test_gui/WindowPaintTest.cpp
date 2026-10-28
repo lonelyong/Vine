@@ -28,8 +28,8 @@ namespace guifw = vn::appfw::gui;
 
 TEST(WindowPaintTest, APaintOfAnythingThatIsAlreadyInsideTheWindowCounts)
 {
-    QWidget        native;
-    auto*          child = new QWidget(&native);
+    QWidget       native;
+    auto*         child = new QWidget(&native);
     guifw::Window window(&native, false);
     ASSERT_FALSE(window.hasPainted());
 
@@ -42,7 +42,7 @@ TEST(WindowPaintTest, APaintOfAnythingThatIsAlreadyInsideTheWindowCounts)
 
 TEST(WindowPaintTest, APaintOfAWidgetThatArrivesLaterCounts)
 {
-    QWidget        native;
+    QWidget       native;
     guifw::Window window(&native, false);
     ASSERT_FALSE(window.hasPainted());
 
@@ -57,10 +57,10 @@ TEST(WindowPaintTest, APaintOfAWidgetThatArrivesLaterCounts)
 
 TEST(WindowPaintTest, TheFirstPaintIsReportedOnceThroughItsSignal)
 {
-    QWidget        native;
+    QWidget       native;
     guifw::Window window(&native, false);
 
-    int reports = 0;
+    int                  reports    = 0;
     const vn::Connection connection = window.first_paint.connect([&reports] { ++reports; });
 
     QEvent paint(QEvent::Paint);
@@ -75,13 +75,13 @@ TEST(WindowPaintTest, TheFirstPaintIsReportedOnceThroughItsSignal)
 
 TEST(WindowPaintTest, AWindowHasNotPaintedUntilTheQueueHasBeenDispatched)
 {
-    QWidget        native;
+    QWidget       native;
     guifw::Window window(&native, false);
 
     // 还没 show：没有平台窗口，也就没有任何绘制。
     EXPECT_FALSE(window.hasPainted());
 
-    int reports = 0;
+    int                  reports    = 0;
     const vn::Connection connection = window.first_paint.connect([&reports] { ++reports; });
 
     window.show();

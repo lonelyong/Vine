@@ -8,6 +8,7 @@
 #include <vine/Colorf.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
+#include <vine/geometry/Array.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
@@ -16,7 +17,6 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
-#include <vine/geometry/Array.hpp>
 #include <vine/math/Transform3.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -40,15 +40,10 @@ using vn::math::Vec3f;
  * @param at      World-space position.
  * @return The created node (kept alive by the scene).
  */
-intrusive_ptr<vn::graphics::MatrixTransform> addDemoTriangle(vn::graphics::Scene* scene,
-                                                              const vn::Colorf& diffuse,
-                                                              const vn::String& name,
-                                                              const Vec3d& at)
+intrusive_ptr<vn::graphics::MatrixTransform> addDemoTriangle(vn::graphics::Scene* scene, const vn::Colorf& diffuse, const vn::String& name, const Vec3d& at)
 {
     // One triangle in the XY plane, authored directly as positions.
-    const vn::geometry::Vec3fArray positions = { Vec3f(-1.0f, -1.0f, 0.0f),
-                                                   Vec3f(1.0f, -1.0f, 0.0f),
-                                                   Vec3f(0.0f, 1.0f, 0.0f) };
+    const vn::geometry::Vec3fArray positions = { Vec3f(-1.0f, -1.0f, 0.0f), Vec3f(1.0f, -1.0f, 0.0f), Vec3f(0.0f, 1.0f, 0.0f) };
 
     auto geometry = make_intrusive<vn::graphics::Geometry>();
     geometry->setName(name);
@@ -58,8 +53,7 @@ intrusive_ptr<vn::graphics::MatrixTransform> addDemoTriangle(vn::graphics::Scene
     material->setBaseColor(diffuse);
     geometry->setMaterial(material);
 
-    auto node = intrusive_ptr<vn::graphics::MatrixTransform>(
-        new vn::graphics::MatrixTransform());
+    auto node = intrusive_ptr<vn::graphics::MatrixTransform>(new vn::graphics::MatrixTransform());
     node->setName(name);
     node->setMatrix(vn::math::translate(at));
     node->addChild(geometry);
@@ -74,7 +68,7 @@ intrusive_ptr<vn::graphics::MatrixTransform> addDemoTriangle(vn::graphics::Scene
     return node;
 }
 
-}  // namespace
+} // namespace
 
 VN_OBJECT_META_IMPL(TestRenderLiveCommand, Command)
 
@@ -95,26 +89,22 @@ vn::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecutionCo
 
     // Keep an owning reference so the content outlives the passes binding it.
     auto scene = rc->view()->scene();
-    auto base  = addDemoTriangle(scene.get(), vn::Colorf(0.8f, 0.2f, 0.2f, 1.0f), u8"live_base",
-                                 Vec3d(0.0, 0.0, -4.0));
-    auto mover = addDemoTriangle(scene.get(), vn::Colorf(0.2f, 0.4f, 0.9f, 1.0f), u8"live_mover",
-                                 Vec3d(3.0, 0.0, -6.0));
+    auto base  = addDemoTriangle(scene.get(), vn::Colorf(0.8f, 0.2f, 0.2f, 1.0f), u8"live_base", Vec3d(0.0, 0.0, -4.0));
+    auto mover = addDemoTriangle(scene.get(), vn::Colorf(0.2f, 0.4f, 0.9f, 1.0f), u8"live_mover", Vec3d(3.0, 0.0, -6.0));
 
     // Each demo triangle lives under its own MatrixTransform as one leaf
     // Geometry child; grab the leaf for the visibility blink below.
     auto* mover_geom = dynamic_cast<vn::graphics::Geometry*>(mover->children().front().get());
-    auto* base_mat = dynamic_cast<vn::graphics::Material*>(
-        dynamic_cast<vn::graphics::Geometry*>(base->children().front().get())->material());
+    auto* base_mat   = dynamic_cast<vn::graphics::Material*>(dynamic_cast<vn::graphics::Geometry*>(base->children().front().get())->material());
 
-    s_timer = new QTimer(QCoreApplication::instance());
+    s_timer  = new QTimer(QCoreApplication::instance());
     int tick = 0;
     QObject::connect(s_timer, &QTimer::timeout, [=]() mutable {
         ++tick;
         const double t = tick * 0.05;
 
         // Node transform updates live (matrix path).
-        mover->setMatrix(
-            vn::math::translate(Vec3d(3.0 * std::cos(t), 1.2 * std::sin(t), -6.0)));
+        mover->setMatrix(vn::math::translate(Vec3d(3.0 * std::cos(t), 1.2 * std::sin(t), -6.0)));
 
         // Node-level opacity oscillates (per-vertex alpha path).
         mover->setOpacity(0.2f + 0.8f * static_cast<float>(0.5 + 0.5 * std::sin(t)));
@@ -124,9 +114,7 @@ vn::async::Task<CommandResult> TestRenderLiveCommand::execute(CommandExecutionCo
 
         // Material base colour cycles through hues (per-material block path).
         const float c = static_cast<float>(t);
-        base_mat->setBaseColor(vn::Colorf(0.5f + 0.5f * std::sin(c),
-                                          0.5f + 0.5f * std::sin(c + 2.1f),
-                                          0.5f + 0.5f * std::sin(c + 4.2f), 1.0f));
+        base_mat->setBaseColor(vn::Colorf(0.5f + 0.5f * std::sin(c), 0.5f + 0.5f * std::sin(c + 2.1f), 0.5f + 0.5f * std::sin(c + 4.2f), 1.0f));
 
         rc->renderFrame();
     });

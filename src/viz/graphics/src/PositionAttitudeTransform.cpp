@@ -78,8 +78,8 @@ Mat4d PositionAttitudeTransform::localTransformMatrix() const
 
 void PositionAttitudeTransform::recompose()
 {
-    matrix_ = vn::math::translate(Vec3d(position_.x, position_.y, position_.z)) * vn::math::rotate(attitude_) *
-              vn::math::scale(scale_) * vn::math::translate(Vec3d(-pivot_.x, -pivot_.y, -pivot_.z));
+    matrix_ = vn::math::translate(Vec3d(position_.x, position_.y, position_.z)) * vn::math::rotate(attitude_) * vn::math::scale(scale_) *
+              vn::math::translate(Vec3d(-pivot_.x, -pivot_.y, -pivot_.z));
     // The placement changed: every box above is stale and every collected command would say a different
     // matrix (see Node::invalidateBounds).
     invalidateBounds();

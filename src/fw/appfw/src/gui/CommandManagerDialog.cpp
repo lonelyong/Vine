@@ -41,10 +41,10 @@ VN_OBJECT_META_IMPL(CommandManagerDialog, Window)
 
 struct CommandManagerDialog::Impl : public WindowData {
     vn::appfw::CommandManager* manager       = nullptr;
-    QLineEdit*                   filter        = nullptr;
-    QTableWidget*                table         = nullptr;
-    QPushButton*                 toggle_btn    = nullptr;
-    QLabel*                      message_label = nullptr;
+    QLineEdit*                 filter        = nullptr;
+    QTableWidget*              table         = nullptr;
+    QPushButton*               toggle_btn    = nullptr;
+    QLabel*                    message_label = nullptr;
 };
 
 CommandManagerDialog::CommandManagerDialog(vn::appfw::CommandManager* manager)
@@ -66,7 +66,8 @@ CommandManagerDialog::CommandManagerDialog(vn::appfw::CommandManager* manager)
     lay->addWidget(data->filter);
 
     data->table = new QTableWidget(0, 6, root);
-    data->table->setHorizontalHeaderLabels({ QStringLiteral("名称"), QStringLiteral("状态"), QStringLiteral("别名"), QStringLiteral("来源插件"), QStringLiteral("分组"), QStringLiteral("描述") });
+    data->table->setHorizontalHeaderLabels(
+        { QStringLiteral("名称"), QStringLiteral("状态"), QStringLiteral("别名"), QStringLiteral("来源插件"), QStringLiteral("分组"), QStringLiteral("描述") });
     data->table->horizontalHeader()->setStretchLastSection(true);
     data->table->setSelectionBehavior(QAbstractItemView::SelectRows);
     data->table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -188,7 +189,7 @@ void CommandManagerDialog::toggleSelectedEnabled()
         return;
     }
 
-    const auto* u16   = name_item->text().utf16();
+    const auto*  u16  = name_item->text().utf16();
     const String name = String::fromUtf16(reinterpret_cast<const char16_t*>(u16), name_item->text().size());
 
     // Disabling is a flag on the registration, never a removal, so the command keeps
@@ -213,8 +214,8 @@ void CommandManagerDialog::updateActions()
         return;
     }
 
-    const auto* u16   = item->text().utf16();
-    const String name = String::fromUtf16(reinterpret_cast<const char16_t*>(u16), item->text().size());
+    const auto*  u16     = item->text().utf16();
+    const String name    = String::fromUtf16(reinterpret_cast<const char16_t*>(u16), item->text().size());
     const bool   enabled = data->manager != nullptr && data->manager->isCommandEnabled(name);
 
     data->toggle_btn->setText(enabled ? QStringLiteral("禁用命令") : QStringLiteral("启用命令"));

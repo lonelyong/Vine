@@ -131,8 +131,7 @@ TEST(MeshStreamIoTest, LoadsAnEntryOfAPackageWithoutTouchingTheFileSystem)
     // The model never becomes a file: it is generated into a package and read straight back out of it.
     MeshExporter exporter;
     ZipArchive   package;
-    ASSERT_EQ(package.addFile(u8"geoms/link.stl", exporter.createSource(makeTriangle(), MeshFormat::Stl)),
-              IoError::Ok);
+    ASSERT_EQ(package.addFile(u8"geoms/link.stl", exporter.createSource(makeTriangle(), MeshFormat::Stl)), IoError::Ok);
 
     auto entry = package.openRead(u8"geoms/link.stl");
     ASSERT_TRUE(entry.ok());

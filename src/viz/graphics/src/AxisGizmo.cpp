@@ -4,6 +4,7 @@
 #include <utility>
 
 #include <vine/Colorf.hpp>
+#include <vine/geometry/Array.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -11,7 +12,6 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/geometry/Array.hpp>
 
 #include "PixelGeometry.hpp"
 
@@ -34,31 +34,30 @@ namespace
  * @param mn        Minimum corner.
  * @param mx        Maximum corner.
  */
-void appendBox(vn::geometry::Vec3fArray& positions, vn::geometry::Vec3fArray& normals,
-               vn::geometry::UInt32Array& indices, const vn::math::Vec3f& mn,
-               const vn::math::Vec3f& mx)
+void appendBox(vn::geometry::Vec3fArray&  positions,
+               vn::geometry::Vec3fArray&  normals,
+               vn::geometry::UInt32Array& indices,
+               const vn::math::Vec3f&     mn,
+               const vn::math::Vec3f&     mx)
 {
     using vn::math::Vec3f;
 
-    const Vec3f c = (mn + mx) * 0.5f;
-    const float h[3] = { (mx.x - mn.x) * 0.5f, (mx.y - mn.y) * 0.5f, (mx.z - mn.z) * 0.5f };
-    const auto axis = [](int a) {
-        return a == 0 ? Vec3f(1.0f, 0.0f, 0.0f) : (a == 1 ? Vec3f(0.0f, 1.0f, 0.0f)
-                                                           : Vec3f(0.0f, 0.0f, 1.0f));
-    };
+    const Vec3f c     = (mn + mx) * 0.5f;
+    const float h[3]  = { (mx.x - mn.x) * 0.5f, (mx.y - mn.y) * 0.5f, (mx.z - mn.z) * 0.5f };
+    const auto  axis  = [](int a) { return a == 0 ? Vec3f(1.0f, 0.0f, 0.0f) : (a == 1 ? Vec3f(0.0f, 1.0f, 0.0f) : Vec3f(0.0f, 0.0f, 1.0f)); };
     const float cu[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
     const float cv[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
 
     for (int f = 0; f < 6; ++f) {
-        const int a = f / 2;        // face normal axis.
-        const bool neg = (f % 2) == 1;
-        const int nxt = (a + 1) % 3;
-        const int nxt2 = (a + 2) % 3;
-        const int ua = neg ? nxt2 : nxt;
-        const int va = neg ? nxt : nxt2;
-        const Vec3f n = neg ? -axis(a) : axis(a);
-        const Vec3f u = axis(ua);
-        const Vec3f v = axis(va);
+        const int   a    = f / 2; // face normal axis.
+        const bool  neg  = (f % 2) == 1;
+        const int   nxt  = (a + 1) % 3;
+        const int   nxt2 = (a + 2) % 3;
+        const int   ua   = neg ? nxt2 : nxt;
+        const int   va   = neg ? nxt : nxt2;
+        const Vec3f n    = neg ? -axis(a) : axis(a);
+        const Vec3f u    = axis(ua);
+        const Vec3f v    = axis(va);
 
         const std::uint32_t base = static_cast<std::uint32_t>(positions.size());
         for (int k = 0; k < 4; ++k) {
@@ -74,7 +73,7 @@ void appendBox(vn::geometry::Vec3fArray& positions, vn::geometry::Vec3fArray& no
     }
 }
 
-}  // namespace
+} // namespace
 
 AxisGizmo::AxisGizmo()
 {
@@ -86,8 +85,7 @@ AxisGizmo::AxisGizmo()
     // Framing distance chosen so the unit sticks fill most of the square
     // sub-viewport (half-height = 3.3 * tan(22.5) ~ 1.37 world units maps a
     // length-1 stick to ~73% of the half box).
-    camera_->lookAt(vn::math::Vec3d(0.0, 0.0, 3.3), vn::math::Vec3d(0.0, 0.0, 0.0),
-                                   vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera_->lookAt(vn::math::Vec3d(0.0, 0.0, 3.3), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera_->setPerspective(45.0, 0.05, 20.0);
     // The picture's shape is the camera's (see Camera), and the box this camera frames is a SQUARE
     // (see onSurfaceResized) - so it is 1:1, stated here where the camera is configured rather than left to
@@ -164,8 +162,7 @@ void AxisGizmo::onSurfaceResized(int width, int height)
     }
     // Convert the host's logical surface size into device pixels, which is the space the backend's native
     // surface uses for viewports.
-    const detail::DeviceSize device =
-        detail::toDeviceSize(detail::LogicalSize{ surface_w_, surface_h_ }, detail::PixelRatio{ pixel_ratio_ });
+    const detail::DeviceSize device = detail::toDeviceSize(detail::LogicalSize{ surface_w_, surface_h_ }, detail::PixelRatio{ pixel_ratio_ });
     if (!device.isValid()) {
         return;
     }
@@ -178,7 +175,7 @@ void AxisGizmo::onSurfaceResized(int width, int height)
     // handed to the backend rather than a stated decision.
     const int fitted = device.height - 2 * margin_px_;
     const int side   = fitted > 0 ? (size_px_ > fitted ? fitted : size_px_) : 0;
-    box_ = Viewport{ area_x_ + margin_px_, area_y_ + device.height - margin_px_ - side, side, side };
+    box_             = Viewport{ area_x_ + margin_px_, area_y_ + device.height - margin_px_ - side, side, side };
 }
 
 void AxisGizmo::setAreaOrigin(int x, int y)
@@ -210,22 +207,23 @@ void AxisGizmo::rebuild()
     const float t = static_cast<float>(thickness_);
 
     struct Stick {
-        Vec3f mn;
-        Vec3f mx;
+        Vec3f  mn;
+        Vec3f  mx;
         Colorf color;
     };
+
     const Stick sticks[3] = {
-        { Vec3f(0.0f, -t, -t), Vec3f(l, t, t), Colorf(0.9f, 0.2f, 0.2f, 1.0f) },
-        { Vec3f(-t, 0.0f, -t), Vec3f(t, l, t), Colorf(0.2f, 0.8f, 0.2f, 1.0f) },
-        { Vec3f(-t, -t, 0.0f), Vec3f(t, t, l), Colorf(0.2f, 0.4f, 0.95f, 1.0f) },
+        { Vec3f(0.0f, -t,   -t),   Vec3f(l, t, t), Colorf(0.9f, 0.2f, 0.2f,  1.0f) },
+        { Vec3f(-t,   0.0f, -t),   Vec3f(t, l, t), Colorf(0.2f, 0.8f, 0.2f,  1.0f) },
+        { Vec3f(-t,   -t,   0.0f), Vec3f(t, t, l), Colorf(0.2f, 0.4f, 0.95f, 1.0f) },
     };
 
     auto scene = make_intrusive<Scene>();
     // Single root: one identity Group owns the three axis sticks.
-    auto root = make_intrusive<Group>();
+    auto root  = make_intrusive<Group>();
     for (const auto& stick : sticks) {
-        vn::geometry::Vec3fArray positions;
-        vn::geometry::Vec3fArray normals;
+        vn::geometry::Vec3fArray  positions;
+        vn::geometry::Vec3fArray  normals;
         vn::geometry::UInt32Array indices;
         appendBox(positions, normals, indices, stick.mn, stick.mx);
 

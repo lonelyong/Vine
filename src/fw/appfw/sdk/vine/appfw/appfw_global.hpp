@@ -23,21 +23,21 @@
 #    define VN_APPFW_VERSION "unknown"
 #endif
 
-#define VN_APPFW_NS_BEGIN                                                                                                                                       \
-    namespace VN_ROOT_NS                                                                                                                                        \
+#define VN_APPFW_NS_BEGIN                                                                                                                                      \
+    namespace VN_ROOT_NS                                                                                                                                       \
     {                                                                                                                                                          \
     namespace appfw                                                                                                                                            \
     {
 
-#define VN_APPFW_NS_END                                                                                                                                         \
+#define VN_APPFW_NS_END                                                                                                                                        \
     }                                                                                                                                                          \
     }
 
-#define VN_APPFWGUI_NS_BEGIN                                                                                                                                    \
-    VN_APPFW_NS_BEGIN                                                                                                                                           \
+#define VN_APPFWGUI_NS_BEGIN                                                                                                                                   \
+    VN_APPFW_NS_BEGIN                                                                                                                                          \
     namespace gui                                                                                                                                              \
     {
 
-#define VN_APPFWGUI_NS_END                                                                                                                                      \
-    VN_APPFW_NS_END                                                                                                                                             \
+#define VN_APPFWGUI_NS_END                                                                                                                                     \
+    VN_APPFW_NS_END                                                                                                                                            \
     }

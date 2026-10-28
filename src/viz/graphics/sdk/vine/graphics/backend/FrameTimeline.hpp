@@ -29,19 +29,20 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief Identity of one frame between executeFrame() and present(). */
-struct FrameToken
-{
-    std::uint64_t frame{0};  ///< 1-based frame number; 0 means "no frame".
+struct FrameToken {
+    std::uint64_t frame{ 0 }; // 1-based frame number; 0 means "no frame".
 
     /** @brief Whether this token names a frame. */
-    [[nodiscard]] constexpr explicit operator bool() const noexcept { return frame != 0; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept
+    {
+        return frame != 0;
+    }
 };
 
 /**
  * @brief The frame clock (see the file note for what it is shared by, and for the completion rule).
  */
-class VN_GRAPHICS_API FrameTimeline
-{
+class VN_GRAPHICS_API FrameTimeline {
   public:
     /** @brief Opens a frame and mints its token.
      *
@@ -115,9 +116,9 @@ class VN_GRAPHICS_API FrameTimeline
 
 
   private:
-    std::uint64_t submitted_{0};   ///< Frames submitted.
-    std::uint64_t completed_{0};   ///< Frames provably complete (monotonic).
-    FrameToken    open_{};         ///< The frame between begin() and submitted().
+    std::uint64_t submitted_{ 0 }; // Frames submitted.
+    std::uint64_t completed_{ 0 }; // Frames provably complete (monotonic).
+    FrameToken    open_{};         // The frame between begin() and submitted().
 };
 
 VN_GRAPHICSBACKEND_NS_END

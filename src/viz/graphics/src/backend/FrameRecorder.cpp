@@ -14,20 +14,19 @@ namespace
 ProgramRef programRef(const vn::graphics::ShaderProgram* program) noexcept
 {
     ProgramRef ref;
-    if (program != nullptr)
-    {
+    if (program != nullptr) {
         ref.program  = program;
         ref.revision = program->revision();
     }
     return ref;
 }
 
-}  // namespace
+} // namespace
 
 FrameRecorder::FrameRecorder(FrameArena& arena, Diagnostics& diagnostics, Observe& observe) noexcept
-    : arena_(arena)
-    , diagnostics_(diagnostics)
-    , observe_(observe)
+  : arena_(arena)
+  , diagnostics_(diagnostics)
+  , observe_(observe)
 {
     // Working memory for one frame's collection. Reserved once, so a steady frame's collection does not
     // allocate: a scene with more passes or more drawing calls than this grows on its first frames and
@@ -38,9 +37,8 @@ FrameRecorder::FrameRecorder(FrameArena& arena, Diagnostics& diagnostics, Observ
 
 bool FrameRecorder::beginFrame(FrameToken token)
 {
-    if (frame_open_)
-    {
-        return false;  // one frame at a time: nothing may be collected into two
+    if (frame_open_) {
+        return false; // one frame at a time: nothing may be collected into two
     }
     frame_open_ = true;
 
@@ -65,16 +63,14 @@ bool FrameRecorder::beginFrame(FrameToken token)
 
 bool FrameRecorder::endFrame()
 {
-    if (!frame_open_ || pass_open_)
-    {
-        return false;  // nothing to close, or a scope still open
+    if (!frame_open_ || pass_open_) {
+        return false; // nothing to close, or a scope still open
     }
 
     // The pass records are published in one arena array: the compiler reads them after this frame's calls
     // are over, and the caller's own containers are gone by then.
     const std::span<CollectedPass> published = arena_.makeArray<CollectedPass>(passes_.size());
-    for (std::size_t i = 0; i < passes_.size(); ++i)
-    {
+    for (std::size_t i = 0; i < passes_.size(); ++i) {
         published[i] = passes_[i];
     }
     description_.passes = published;
@@ -83,9 +79,8 @@ bool FrameRecorder::endFrame()
 
 bool FrameRecorder::swapBuffers()
 {
-    if (!frame_open_ || pass_open_)
-    {
-        return false;  // the present closes a committed frame, and never an open scope
+    if (!frame_open_ || pass_open_) {
+        return false; // the present closes a committed frame, and never an open scope
     }
     frame_open_ = false;
     return true;
@@ -93,54 +88,50 @@ bool FrameRecorder::swapBuffers()
 
 bool FrameRecorder::beginPass(PassId pass)
 {
-    if (!frame_open_ || pass_open_)
-    {
-        return false;  // no frame to belong to, or a scope is already open (the outer one keeps its state)
+    if (!frame_open_ || pass_open_) {
+        return false; // no frame to belong to, or a scope is already open (the outer one keeps its state)
     }
     pass_open_ = true;
 
-    pass_open_              = true;
-    pass_id_                = pass;
-    order_                  = 0;
-    pass_target_            = nullptr;
-    pass_has_clear_         = false;
-    pass_clear_             = ClearValues{};
-    pass_state_             = vn::graphics::PassRenderState{};
-    pass_depth_range_       = vn::graphics::DepthRange{};
-    pass_inputs_            = {};
-    pending_has_viewport_   = false;
-    pending_viewport_       = {};
-    pending_lights_         = {};
+    pass_open_            = true;
+    pass_id_              = pass;
+    order_                = 0;
+    pass_target_          = nullptr;
+    pass_has_clear_       = false;
+    pass_clear_           = ClearValues{};
+    pass_state_           = vn::graphics::PassRenderState{};
+    pass_depth_range_     = vn::graphics::DepthRange{};
+    pass_inputs_          = {};
+    pending_has_viewport_ = false;
+    pending_viewport_     = {};
+    pending_lights_       = {};
     open_draws_.clear();
     return true;
 }
 
 bool FrameRecorder::endPass()
 {
-    if (!pass_open_)
-    {
-        return false;  // nothing to close
+    if (!pass_open_) {
+        return false; // nothing to close
     }
 
     // A scope enters the plan when it can have an effect: it drew something, or it announced a clear (a
     // clear is applied by the pass' own load-op, so a clear-only pass is a real pass with no draws). Every
     // other attribute of a scope that drew nothing is dropped here, which is what stops it from leaking
     // into the next pass.
-    if (!open_draws_.empty() || pass_has_clear_)
-    {
+    if (!open_draws_.empty() || pass_has_clear_) {
         CollectedPass record;
-        record.pass      = pass_id_;
-        record.order     = order_;
-        record.target    = pass_target_;
-        record.inputs    = pass_inputs_;
-        record.has_clear = pass_has_clear_;
-        record.clear     = pass_clear_;
-        record.state     = pass_state_;
+        record.pass        = pass_id_;
+        record.order       = order_;
+        record.target      = pass_target_;
+        record.inputs      = pass_inputs_;
+        record.has_clear   = pass_has_clear_;
+        record.clear       = pass_clear_;
+        record.state       = pass_state_;
         record.depth_range = pass_depth_range_;
 
         const std::span<CollectedDraw> draws = arena_.makeArray<CollectedDraw>(open_draws_.size());
-        for (std::size_t i = 0; i < open_draws_.size(); ++i)
-        {
+        for (std::size_t i = 0; i < open_draws_.size(); ++i) {
             draws[i] = open_draws_[i];
         }
         record.draws = draws;
@@ -149,9 +140,9 @@ bool FrameRecorder::endPass()
         ++observe_.counters().passes;
     }
 
-    pass_open_                 = false;
-    scope_target_              = nullptr;
-    scope_target_released_     = false;
+    pass_open_             = false;
+    scope_target_          = nullptr;
+    scope_target_released_ = false;
     open_draws_.clear();
     pass_inputs_ = {};
     return true;
@@ -159,9 +150,8 @@ bool FrameRecorder::endPass()
 
 bool FrameRecorder::setPassOrder(int order)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
     order_ = order;
     return true;
@@ -169,22 +159,20 @@ bool FrameRecorder::setPassOrder(int order)
 
 bool FrameRecorder::setRenderTarget(const void* target)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
 
-    pass_target_               = target;
-    scope_target_              = target;
-    scope_target_released_     = false;  // a new announcement is the target the scope draws into now (see the file note)
+    pass_target_           = target;
+    scope_target_          = target;
+    scope_target_released_ = false; // a new announcement is the target the scope draws into now (see the file note)
     return true;
 }
 
 bool FrameRecorder::setViewport(int x, int y, int width, int height)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
     pending_has_viewport_ = true;
     pending_viewport_     = vn::graphics::Viewport{ x, y, width, height };
@@ -193,9 +181,8 @@ bool FrameRecorder::setViewport(int x, int y, int width, int height)
 
 bool FrameRecorder::setDepthRange(const vn::graphics::DepthRange& range)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
     pass_depth_range_ = range;
     return true;
@@ -203,9 +190,8 @@ bool FrameRecorder::setDepthRange(const vn::graphics::DepthRange& range)
 
 bool FrameRecorder::setClearPolicy(const ClearValues& policy)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
     pass_has_clear_ = true;
     pass_clear_     = policy;
@@ -214,9 +200,8 @@ bool FrameRecorder::setClearPolicy(const ClearValues& policy)
 
 bool FrameRecorder::setPassState(const vn::graphics::PassRenderState& state)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
     pass_state_ = state;
     return true;
@@ -224,16 +209,14 @@ bool FrameRecorder::setPassState(const vn::graphics::PassRenderState& state)
 
 bool FrameRecorder::setPassInputs(std::span<const vn::graphics::ImageSource> inputs)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
 
     // COPIED, not held: the engine's resolved-input vector is a reused member that the next pass refills
     // (RenderEngine::resolvePassInputs), so holding a span into it would read the next pass' inputs.
     const std::span<InputRef> copy = arena_.makeArray<InputRef>(inputs.size());
-    for (std::size_t i = 0; i < inputs.size(); ++i)
-    {
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
         copy[i].source = inputs[i];
     }
     pass_inputs_ = copy;
@@ -242,19 +225,16 @@ bool FrameRecorder::setPassInputs(std::span<const vn::graphics::ImageSource> inp
 
 bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
 
     const std::span<InputRef> copy = arena_.makeArray<InputRef>(inputs.size());
-    for (std::size_t i = 0; i < inputs.size(); ++i)
-    {
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
         // This convenience spelling receives pointers the caller only READS; ImageSource names the target as
         // mutable because a source may also be a producer's handle. Nothing here writes through it.
-        copy[i].source = inputs[i] != nullptr
-                             ? vn::graphics::ImageSource::producedTarget(const_cast<vn::graphics::RenderTarget*>(inputs[i]))
-                             : vn::graphics::ImageSource{};
+        copy[i].source =
+            inputs[i] != nullptr ? vn::graphics::ImageSource::producedTarget(const_cast<vn::graphics::RenderTarget*>(inputs[i])) : vn::graphics::ImageSource{};
     }
     pass_inputs_ = copy;
     return true;
@@ -262,21 +242,19 @@ bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* co
 
 bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to fill, or the scope's target is gone (see the file note)
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
     }
     snapshotLights(lights);
     return true;
 }
 
 bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
-                           const vn::graphics::Camera*                    camera,
-                           const vn::graphics::ShaderProgram*             program_override)
+                           const vn::graphics::Camera*                  camera,
+                           const vn::graphics::ShaderProgram*           program_override)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to draw in, or its target is gone: nothing is redirected
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to draw in, or its target is gone: nothing is redirected
     }
 
     // A CALL WITH NOTHING TO DRAW IS NOT A DRAW. The engine really announces one, and it is not exotic: the
@@ -287,8 +265,7 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
     // log's last one). The call is still a call: what it announced is consumed below, exactly as it is for a
     // call that draws, so a host's announcement never leaks into the next call - only the DRAW is not
     // recorded, because there is nothing in it (see FrameCounters::draws: "draw calls recorded").
-    if (!commands.empty())
-    {
+    if (!commands.empty()) {
         CollectedDraw draw;
         draw.kind         = DrawKind::Content;
         draw.camera       = snapshotCamera(camera);
@@ -309,12 +286,10 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
     return true;
 }
 
-bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program,
-                                      const vn::graphics::Camera* camera)
+bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::Camera* camera)
 {
-    if (!pass_open_ || scope_target_released_)
-    {
-        return false;  // no scope to draw in, or its target is gone: nothing is redirected
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to draw in, or its target is gone: nothing is redirected
     }
 
     CollectedDraw draw;
@@ -350,10 +325,9 @@ bool FrameRecorder::releaseRenderTarget(const void* target)
     // going away. An open scope that announced it may not keep that pointer, so the announcement is dropped
     // here and the scope is done - its remaining effects are dropped and its draws are skipped rather than
     // redirected to the default framebuffer (see the file note).
-    if (pass_open_ && scope_target_ == target)
-    {
-        scope_target_              = nullptr;
-        scope_target_released_     = true;
+    if (pass_open_ && scope_target_ == target) {
+        scope_target_          = nullptr;
+        scope_target_released_ = true;
     }
     return true;
 }
@@ -376,12 +350,10 @@ bool FrameRecorder::inPass() const noexcept
 void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> lights)
 {
     const std::span<LightRef> copy = arena_.makeArray<LightRef>(lights.size());
-    for (std::size_t i = 0; i < lights.size(); ++i)
-    {
+    for (std::size_t i = 0; i < lights.size(); ++i) {
         const vn::graphics::Light* light = lights[i];
-        if (light == nullptr)
-        {
-            continue;  // a null entry stays the default "disabled" light: the array keeps its positions
+        if (light == nullptr) {
+            continue; // a null entry stays the default "disabled" light: the array keeps its positions
         }
         LightRef& ref     = copy[i];
         ref.identity      = light;
@@ -392,30 +364,27 @@ void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> l
         ref.has_direction = light->hasDirection();
         ref.cast_shadow   = light->isCastingShadow();
         ref.shadow_bias   = light->shadowSettings().bias;
-        if (ref.has_direction)
-        {
+        if (ref.has_direction) {
             ref.direction = light->direction();
         }
-        ref.has_position        = light->hasPosition();
-        ref.range               = light->range();
-        ref.inner_cone_degrees  = light->innerConeAngle();
-        ref.outer_cone_degrees  = light->outerConeAngle();
-        if (ref.has_position)
-        {
+        ref.has_position       = light->hasPosition();
+        ref.range              = light->range();
+        ref.inner_cone_degrees = light->innerConeAngle();
+        ref.outer_cone_degrees = light->outerConeAngle();
+        if (ref.has_position) {
             ref.position = light->position();
         }
     }
     pending_lights_ = copy;
 }
 
-std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
-    std::span<const vn::graphics::RenderCommand> commands, const vn::graphics::ShaderProgram* program_override)
+std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<const vn::graphics::RenderCommand> commands,
+                                                                  const vn::graphics::ShaderProgram*           program_override)
 {
     const std::span<CollectedCommand> copy = arena_.makeArray<CollectedCommand>(commands.size());
-    for (std::size_t i = 0; i < commands.size(); ++i)
-    {
+    for (std::size_t i = 0; i < commands.size(); ++i) {
         const vn::graphics::RenderCommand& source = commands[i];
-        CollectedCommand&                    target = copy[i];
+        CollectedCommand&                  target = copy[i];
 
         target.geometry          = source.geometry.get();
         target.geometry_revision = source.geometry != nullptr ? source.geometry->revision() : 0;
@@ -428,10 +397,10 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
         }
         // The pass' override wins over the command's own program (see render()): the identity the plan keys its
         // pipeline variants by is therefore the EFFECTIVE one, and nothing downstream needs to know about overrides.
-        target.program           = programRef(program_override != nullptr ? program_override : source.program.get());
-        target.material          = source.material.get();
-        target.model             = source.model_matrix;
-        target.opacity       = source.opacity;
+        target.program        = programRef(program_override != nullptr ? program_override : source.program.get());
+        target.material       = source.material.get();
+        target.model          = source.model_matrix;
+        target.opacity        = source.opacity;
         // The transparency decision is made ONCE, here, from the command's own rule (`isTransparent`: the
         // material's resolved alpha mode and the drawable's opacity). The plan carries the answer because
         // compilation has only the identity, and the blend enable has to agree with the order the collector
@@ -452,9 +421,8 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(
 CameraSnapshot FrameRecorder::snapshotCamera(const vn::graphics::Camera* camera) const
 {
     CameraSnapshot snapshot;
-    if (camera == nullptr)
-    {
-        return snapshot;  // present stays false: "the call named no camera" is a fact, not a default
+    if (camera == nullptr) {
+        return snapshot; // present stays false: "the call named no camera" is a fact, not a default
     }
     snapshot.present    = true;
     snapshot.view       = camera->viewMatrix();

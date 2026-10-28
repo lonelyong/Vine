@@ -2,9 +2,9 @@
 
 #include <atomic>
 
-#include <vine/intrusive_ptr.hpp>
-#include <vine/RefCounted.hpp>
 #include <vine/Object.hpp>
+#include <vine/RefCounted.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 using vn::IPtr;
 using vn::RefCounted;
@@ -18,10 +18,12 @@ struct Widget : RefCounted<Widget> {
 
 struct Counted : RefCounted<Counted> {
     static inline int live = 0;
+
     Counted()
     {
         ++live;
     }
+
     ~Counted()
     {
         --live;
@@ -46,13 +48,14 @@ class Service : public vn::Object, public RefCounted<Service> {
 // A type that provides its own intrusive ref counting via free functions.
 // Demonstrates that no common base class is required.
 struct HandRolled {
-    static inline int                    live = 0;
+    static inline int                  live = 0;
     mutable std::atomic<unsigned long> refs{ 0 };
 
     HandRolled()
     {
         ++live;
     }
+
     ~HandRolled()
     {
         --live;
@@ -123,8 +126,8 @@ TEST(IntrusivePtrTest, StaticAndDynamicCast)
     EXPECT_EQ(d->extra, 42);
     EXPECT_EQ(b->useCount(), 3ul);
 
-    IPtr<Base>     base_only(new Base());
-    IPtr<Derived>  failed = vn::dynamic_pointer_cast<Derived>(base_only);
+    IPtr<Base>    base_only(new Base());
+    IPtr<Derived> failed = vn::dynamic_pointer_cast<Derived>(base_only);
     EXPECT_FALSE(failed);
 }
 

@@ -48,10 +48,10 @@ enum class WindowState
  */
 enum class RibbonButtonStyle
 {
-    IconOnly,       ///< Icon only
-    TextOnly,       ///< Text only
-    TextBesideIcon, ///< Text to the right of the icon
-    TextUnderIcon,  ///< Text below the icon
+    IconOnly,       // Icon only
+    TextOnly,       // Text only
+    TextBesideIcon, // Text to the right of the icon
+    TextUnderIcon,  // Text below the icon
 };
 
 /**
@@ -66,9 +66,9 @@ enum class RibbonButtonStyle
  */
 enum class RibbonItemSize
 {
-    Large,  ///< Large: full row, icon on top and text below
-    Medium, ///< Medium: two side by side occupy two rows in three-row mode
-    Small,  ///< Small: one row (normal toolbar button)
+    Large,  // Large: full row, icon on top and text below
+    Medium, // Medium: two side by side occupy two rows in three-row mode
+    Small,  // Small: one row (normal toolbar button)
 };
 
 /**
@@ -76,9 +76,9 @@ enum class RibbonItemSize
  */
 enum class RibbonPanelLayoutMode
 {
-    ThreeRow,  ///< Three-row mode (Office style, default)
-    TwoRow,    ///< Two-row mode (WPS compact style)
-    SingleRow, ///< Single-row mode: all buttons act as Small, titles hidden by default
+    ThreeRow,  // Three-row mode (Office style, default)
+    TwoRow,    // Two-row mode (WPS compact style)
+    SingleRow, // Single-row mode: all buttons act as Small, titles hidden by default
 };
 
 /**
@@ -87,12 +87,12 @@ enum class RibbonPanelLayoutMode
  */
 enum class RibbonStyle
 {
-    ThreeRowLoose,    ///< Three rows, loose
-    ThreeRowCompact,  ///< Three rows, compact
-    TwoRowLoose,      ///< Two rows, loose
-    TwoRowCompact,    ///< Two rows, compact (WPS style)
-    SingleRowLoose,   ///< Single row, loose
-    SingleRowCompact, ///< Single row, compact
+    ThreeRowLoose,    // Three rows, loose
+    ThreeRowCompact,  // Three rows, compact
+    TwoRowLoose,      // Two rows, loose
+    TwoRowCompact,    // Two rows, compact (WPS style)
+    SingleRowLoose,   // Single row, loose
+    SingleRowCompact, // Single row, compact
 };
 
 VN_APPFWGUI_NS_END

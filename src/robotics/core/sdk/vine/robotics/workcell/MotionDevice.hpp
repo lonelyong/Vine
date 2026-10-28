@@ -22,8 +22,7 @@ VN_ROBOTICS_WORKCELL_NS_BEGIN
  * solver belongs to the not-yet-modeled metadata); it exists so a device can
  * downcast its definition data and so derived clones keep the concrete type.
  */
-struct VN_ROBOTICS_CORE_API MotionDeviceData : DeviceData
-{
+struct VN_ROBOTICS_CORE_API MotionDeviceData : DeviceData {
     /**
      * @brief Creates a deep copy as a MotionDeviceData.
      *
@@ -43,8 +42,7 @@ struct VN_ROBOTICS_CORE_API MotionDeviceData : DeviceData
  * velocity/acceleration bounds. Currently every motion device is treated as a
  * single serial chain.
  */
-class VN_ROBOTICS_CORE_API MotionDevice : public Device
-{
+class VN_ROBOTICS_CORE_API MotionDevice : public Device {
   public:
     /**
      * @brief Constructs an empty motion device; configure it with init().
@@ -186,10 +184,10 @@ class VN_ROBOTICS_CORE_API MotionDevice : public Device
   private:
     std::unique_ptr<kinematics::SerialKinematics> kinematics_;
     kinematics::Q                                 home_q_;
-    kinematics::Q                     lower_bounds_;
-    kinematics::Q                     upper_bounds_;
-    kinematics::Q                     velocity_limits_;
-    kinematics::Q                     acceleration_limits_;
+    kinematics::Q                                 lower_bounds_;
+    kinematics::Q                                 upper_bounds_;
+    kinematics::Q                                 velocity_limits_;
+    kinematics::Q                                 acceleration_limits_;
 };
 
 VN_ROBOTICS_WORKCELL_NS_END

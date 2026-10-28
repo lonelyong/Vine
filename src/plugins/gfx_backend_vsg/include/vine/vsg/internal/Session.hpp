@@ -37,8 +37,10 @@
  */
 namespace vn::vsg::detail
 {
+
 class SessionContentAccess;
-}  // namespace vn::vsg::detail
+
+} // namespace vn::vsg::detail
 
 VN_VSG_NS_BEGIN
 
@@ -46,34 +48,32 @@ namespace api
 {
 
 /** @brief What a session needs to come up. */
-struct SessionOptions
-{
-    int  width{640};          ///< Window width in device pixels (the swapchain follows it).
-    int  height{360};         ///< Window height in device pixels.
-    bool validation{false};   ///< Whether to ask the loader for the validation layer.
+struct SessionOptions {
+    int  width{ 640 };        // Window width in device pixels (the swapchain follows it).
+    int  height{ 360 };       // Window height in device pixels.
+    bool validation{ false }; // Whether to ask the loader for the validation layer.
     /// The host's native window handle (an HWND / an xcb_window_t carried as `void*`), or nullptr to let
     /// the session create a window of its own. Re-announcing a DIFFERENT handle moves an established
     /// session onto it, keeping the device and every compiled pipeline (see core::planSessionMove).
-    void* native_handle{nullptr};
+    void* native_handle{ nullptr };
     /// A device to render on instead of creating one (ONE DEVICE, SEVERAL WINDOWS), carried as `void*` because
     /// this header deliberately names no graphics type - the value is a `vsg::Device*`, and the session takes its
     /// own reference to it. Null (the default) means this session creates its own device through its window,
     /// which is what a Vulkan device needs when there is no window to share yet (the surface comes first).
     /// The device must be one created WITH a surface (it presents), and one whose physical device can serve this
     /// window's surface: a device built without a surface cannot serve a window at all.
-    void* device{nullptr};
+    void* device{ nullptr };
     /// The DEVICE's frame clock and park queue, when this session is one of several windows on one device (see
     /// core::DeviceClock for why the completion evidence belongs to the device and not to a window). Null = this
     /// session owns its own, which is what a session driven on its own needs; both must outlive the session.
-    core::DeviceClock*        clock{nullptr};
-    core::RetirementQueue*    retirement{nullptr};
+    core::DeviceClock*     clock{ nullptr };
+    core::RetirementQueue* retirement{ nullptr };
 };
 
 /**
  * @brief One window/device/swapchain session with the frame pairing the contract requires.
  */
-class Session
-{
+class Session {
   public:
     Session();
     ~Session();
@@ -178,24 +178,22 @@ class Session
     [[nodiscard]] bool profiling() const noexcept;
 
     /** @brief One measured pass of the newest frame the profile could read. */
-    struct GpuSample
-    {
+    struct GpuSample {
         /// The measured graph's ADDRESS, as an opaque key: compare it, never dereference it (a measured
         /// frame may name a graph that has since been released, and the legacy backend measured the crash
         /// that reading such an entry causes).
-        const void* key{nullptr};
-        double      gpu_ms{0.0};  ///< Device time between the pass' two timestamps.
+        const void* key{ nullptr };
+        double      gpu_ms{ 0.0 }; // Device time between the pass' two timestamps.
     };
 
     /** @brief What the profile knows about the newest frame with readable results. */
-    struct GpuProfile
-    {
-        bool                   enabled{false};               ///< The switch asked for measurement.
-        bool                   timestamps_available{false};  ///< The device can write timestamps at all.
-        bool                   readable{false};              ///< A frame's results were ready.
-        std::uint64_t          age_frames{0};                ///< Frames between this read and that frame.
-        double                 frame_gpu_ms{0.0};            ///< The command buffer's own interval.
-        std::vector<GpuSample> passes;                       ///< One per measured pass, in log order.
+    struct GpuProfile {
+        bool                   enabled{ false };              // The switch asked for measurement.
+        bool                   timestamps_available{ false }; // The device can write timestamps at all.
+        bool                   readable{ false };             // A frame's results were ready.
+        std::uint64_t          age_frames{ 0 };               // Frames between this read and that frame.
+        double                 frame_gpu_ms{ 0.0 };           // The command buffer's own interval.
+        std::vector<GpuSample> passes;                        // One per measured pass, in log order.
     };
 
     /** @brief Reads the newest measured frame WITHOUT waiting for the device.
@@ -281,6 +279,6 @@ class Session
     std::unique_ptr<Impl> impl;
 };
 
-}  // namespace api
+} // namespace api
 
 VN_VSG_NS_END

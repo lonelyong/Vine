@@ -9,16 +9,15 @@
 
 VN_VSG_NS_BEGIN
 
-struct WhiteImage::Data
-{
+struct WhiteImage::Data {
     ::vsg::ref_ptr<::vsg::Image>     image;
     ::vsg::ref_ptr<::vsg::ImageView> view;
     ::vsg::ref_ptr<::vsg::Sampler>   sampler;
 };
 
-WhiteImage::WhiteImage() : d(std::make_unique<Data>())
-{
-}
+WhiteImage::WhiteImage()
+  : d(std::make_unique<Data>())
+{}
 
 std::shared_ptr<WhiteImage> WhiteImage::create()
 {

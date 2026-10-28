@@ -37,6 +37,13 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
@@ -45,13 +52,6 @@
 #include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
 #include <vine/vsg/internal/VsgExecutor.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/Streams.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/support/VsgDynamicState.hpp>
 
 #include "DevicePhases.hpp"
@@ -62,40 +62,27 @@
 /// hand over the same bytes, so the evidence runs through the same door.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
 {
-    return array == nullptr
-               ? std::span<const float>{}
-               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
 }
 
 /// @brief The scalars of a float array, as the upload layer takes them.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const float>{}
-                            : std::span<const float>(array->data(), array->size());
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(array->data(), array->size());
 }
 
 /// @brief The indices of an index array, as the upload layer takes them.
 inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const std::uint32_t>{}
-                            : std::span<const std::uint32_t>(array->data(), array->size());
+    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
+using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentPipeline;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::PassContent;
-using vn::vsg::StreamUploads;
-using vn::vsg::ViewportRect;
-using vn::vsg::VsgExecutor;
 using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::backend::CompiledPass;
-using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameCompiler;
 using vn::graphics::backend::FrameFacts;
@@ -115,6 +102,15 @@ using vn::graphics::backend::TargetDesc;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
 using vn::graphics::backend::VariantPool;
+using vn::vsg::BlockDescriptors;
+using vn::vsg::BlockStorage;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentPipeline;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::PassContent;
+using vn::vsg::StreamUploads;
+using vn::vsg::ViewportRect;
+using vn::vsg::VsgExecutor;
 
 namespace
 {
@@ -134,9 +130,9 @@ constexpr float kClear[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
 ContentPipeline::Shaders triangleShaders()
 {
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "void main() { gl_Position = vec4(position.x, position.y, 0.5, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) in vec3 position;\n"
+                       "void main() { gl_Position = vec4(position.x, position.y, 0.5, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 outColor;\n"
                        "void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
@@ -151,14 +147,13 @@ std::vector<std::byte> bytesOf(std::size_t count)
 }
 
 /// @brief Two off-screen targets, one device, and the whole pipeline that produces a compiled frame.
-struct Fixture
-{
-    FrameArena                  arena{ 64 * 1024 };
-    Diagnostics                 diagnostics;
-    Observe                     observe;
-    FrameRecorder               recorder{ arena, diagnostics, observe };
-    FrameCompiler               compiler{ arena, diagnostics, observe };
-    vn::vsg::DeviceResult     created;
+struct Fixture {
+    FrameArena                       arena{ 64 * 1024 };
+    Diagnostics                      diagnostics;
+    Observe                          observe;
+    FrameRecorder                    recorder{ arena, diagnostics, observe };
+    FrameCompiler                    compiler{ arena, diagnostics, observe };
+    vn::vsg::DeviceResult            created;
     std::unique_ptr<OffscreenTarget> first;
     std::unique_ptr<OffscreenTarget> second;
     std::vector<TargetFacts>         facts;
@@ -167,26 +162,24 @@ struct Fixture
 
     // The content world: what records a draw is the layer that owns these, not the executor. The fixture
     // builds the same stack the MRT case does, over a shader pair that draws a solid triangle.
-    std::unique_ptr<BlockStorage>       storage;
-    std::unique_ptr<BlockDescriptors>   descriptors;
-    std::unique_ptr<ContentPipeline>    pipelines;
-    std::unique_ptr<StreamUploads>      uploads;
-    std::unique_ptr<ContentDraw>        draws;
-    VariantPool                         pool;
-    std::unique_ptr<StateRegistry>      registry;
+    std::unique_ptr<BlockStorage>     storage;
+    std::unique_ptr<BlockDescriptors> descriptors;
+    std::unique_ptr<ContentPipeline>  pipelines;
+    std::unique_ptr<StreamUploads>    uploads;
+    std::unique_ptr<ContentDraw>      draws;
+    VariantPool                       pool;
+    std::unique_ptr<StateRegistry>    registry;
 
     bool build()
     {
         created = vn::vsg::createDevice();
-        if (!created.ok)
-        {
+        if (!created.ok) {
             return false;
         }
 
         first  = makeTarget();
         second = makeTarget();
-        if (first == nullptr || second == nullptr)
-        {
+        if (first == nullptr || second == nullptr) {
             return false;
         }
         executor.addTarget(first.get(), first.get());
@@ -200,8 +193,7 @@ struct Fixture
     bool buildContent()
     {
         storage = BlockStorage::create(created.device, BlockStorage::Layout{});
-        if (storage == nullptr)
-        {
+        if (storage == nullptr) {
             return false;
         }
         const ContentPipeline::Shaders shader_pair = triangleShaders();
@@ -210,8 +202,7 @@ struct Fixture
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
-        if (descriptors == nullptr)
-        {
+        if (descriptors == nullptr) {
             return false;
         }
 
@@ -219,19 +210,17 @@ struct Fixture
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
         ContentPipeline::Settings              settings;
         settings.color_attachments = 1U;
-        pipelines = ContentPipeline::create(abi,
-                                           std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
-                                           std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                           shader_pair, settings);
-        if (pipelines == nullptr)
-        {
+        pipelines                  = ContentPipeline::create(abi,
+                                                             std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                                             shader_pair,
+                                                             settings);
+        if (pipelines == nullptr) {
             return false;
         }
 
         uploads  = std::make_unique<StreamUploads>();
-        draws    = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(
-                                                     created.device->vk(), created.instance->vk()));
+        draws    = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         return true;
     }
@@ -243,8 +232,7 @@ struct Fixture
         const auto view     = storage->writeView(bytesOf(288U));
         const auto block    = storage->writeDraw(bytesOf(80U));
         const auto material = storage->writeMaterial(&material_identity, 1U, bytesOf(64U));
-        if (!view.valid || !block.valid)
-        {
+        if (!view.valid || !block.valid) {
             return {};
         }
 
@@ -278,22 +266,20 @@ struct Fixture
 
         const auto vertex_bind = uploads->acquireVertex(vertex_key, scalarsOf(positions));
         const auto index_bind  = uploads->acquireIndex(index_key, indicesOf(indices));
-        if (vertex_bind.bind == nullptr || index_bind.bind == nullptr)
-        {
+        if (vertex_bind.bind == nullptr || index_bind.bind == nullptr) {
             return {};
         }
 
         ContentDraw::Draw draw;
-        static int       program = 0;
-        draw.key.program                      = &program;
-        draw.key.revision                     = 1U;
-        draw.key.vertex_layout.canonical_mask = 0x1U;
-        draw.key.compatibility                = first->shape().compatibility();
-        draw.key.sampled_color_count          = 0U;
-        draw.dynamic                          = pass.draws[0].commands[0].dynamic;
+        static int        program                                    = 0;
+        draw.key.program                                             = &program;
+        draw.key.revision                                            = 1U;
+        draw.key.vertex_layout.canonical_mask                        = 0x1U;
+        draw.key.compatibility                                       = first->shape().compatibility();
+        draw.key.sampled_color_count                                 = 0U;
+        draw.dynamic                                                 = pass.draws[0].commands[0].dynamic;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
-            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
-                                                                               material.offset })
+            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
         };
         // The program's own text declares no blocks, so its pipeline layout declares no sets either and there
         // is nothing to bind: a set the layout does not have is an invalid handle, not an empty bind (the
@@ -301,12 +287,13 @@ struct Fixture
         if (!descriptors->shape().empty()) {
             draw.blocks = block_binds;
         }
-        draw.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
-        draw.index        = index_bind.bind;
-        draw.viewport     = ViewportRect{ static_cast<float>(pass.viewport.x), static_cast<float>(pass.viewport.y),
-                                          static_cast<float>(pass.viewport.width),
-                                          static_cast<float>(pass.viewport.height) };
-        draw.index_count      = 3U;
+        draw.vertex_binds      = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
+        draw.index             = index_bind.bind;
+        draw.viewport          = ViewportRect{ static_cast<float>(pass.viewport.x),
+                                               static_cast<float>(pass.viewport.y),
+                                               static_cast<float>(pass.viewport.width),
+                                               static_cast<float>(pass.viewport.height) };
+        draw.index_count       = 3U;
         draw.color_attachments = pass.color_attachments;
         return draws->record(*registry, draw);
     }
@@ -320,8 +307,7 @@ struct Fixture
         layout.width  = kSize;
         layout.height = kSize;
         auto target   = OffscreenTarget::create(created.device, layout);
-        if (target == nullptr)
-        {
+        if (target == nullptr) {
             return nullptr;
         }
 
@@ -354,7 +340,7 @@ struct Fixture
     }
 
     /// @brief Records the compiled frame and renders it once.
-    ::vsg::ref_ptr<::vsg::CommandGraph> last_graph;  ///< The graph the last render() recorded into.
+    ::vsg::ref_ptr<::vsg::CommandGraph> last_graph; // The graph the last render() recorded into.
 
     bool render(const CompiledFrame& frame, std::span<const PassContent> content = {})
     {
@@ -363,8 +349,7 @@ struct Fixture
         last_graph = command_graph;
 
         viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
-        if (!viewer->compile())
-        {
+        if (!viewer->compile()) {
             return false;
         }
         viewer->advanceToNextFrame();
@@ -391,15 +376,18 @@ bool isGreen(const Rgba8& pixel)
     return pixel.g > 200 && pixel.r < 40 && pixel.b < 40;
 }
 
-}  // namespace
+} // namespace
 
 void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     const float kFirst[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
 
     auto target = OffscreenTarget::create(device.device,
-                                          OffscreenTarget::Layout{ 8U, 4U,
-                                                                   { kFirst[0], kFirst[1], kFirst[2], 1.0F } });
+                                          OffscreenTarget::Layout{
+                                            8U,
+                                            4U,
+                                            { kFirst[0], kFirst[1], kFirst[2], 1.0F }
+    });
     ASSERT_NE(target, nullptr);
     ++counters.targets_built;
 
@@ -407,7 +395,11 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     // targets, so this one must not move - the observable that says "the plan was applied" rather than
     // "everything the executor holds was reshaped".
     auto bystander = OffscreenTarget::create(device.device,
-                                             OffscreenTarget::Layout{ 8U, 4U, { 0.0F, 0.0F, 0.0F, 1.0F } });
+                                             OffscreenTarget::Layout{
+                                               8U,
+                                               4U,
+                                               { 0.0F, 0.0F, 0.0F, 1.0F }
+    });
     ASSERT_NE(bystander, nullptr);
     ++counters.targets_built;
 
@@ -434,8 +426,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
         table[0].current = target->instance();
         return table;
     };
-    const auto record_frame = [&](std::uint64_t token, const ClearValues& policy,
-                                  const std::vector<TargetFacts>& table) {
+    const auto record_frame = [&](std::uint64_t token, const ClearValues& policy, const std::vector<TargetFacts>& table) {
         EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
         EXPECT_TRUE(recorder.beginPass(1U));
         EXPECT_TRUE(recorder.setRenderTarget(handle.get()));
@@ -448,8 +439,8 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     // The whole frame drive: the plan's answers become real, the plan is recorded, and the frame is submitted
     // through the executor's own step (which also says whether the submission happened).
     const auto drive = [&](const CompiledFrame& frame, const std::vector<TargetFacts>& table) {
-        const VsgExecutor::TargetApplications applied = executor.applyTargetPlans(frame, table, timeline, queue);
-        auto command_graph = ::vsg::CommandGraph::create(device.device, device.queue_family);
+        const VsgExecutor::TargetApplications applied       = executor.applyTargetPlans(frame, table, timeline, queue);
+        auto                                  command_graph = ::vsg::CommandGraph::create(device.device, device.queue_family);
         EXPECT_TRUE(executor.record(frame, command_graph));
         EXPECT_EQ(executor.skipped(), 0U) << "every pass of the plan has a target this executor holds";
         // A second colour attachment is only readable if its copy is recorded too (the executor hands out
@@ -502,8 +493,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     // The recording that follows lands in the new images, whose clear is what the probe reads.
     const auto           table_2 = facts_of(TargetDesc{ 16, 12, target->shape() });
     const CompiledFrame* second  = record_frame(2U, fill, table_2);
-    ASSERT_EQ(static_cast<int>(second->targets[0].decision.action),
-              static_cast<int>(TargetAction::ResizeInPlace));
+    ASSERT_EQ(static_cast<int>(second->targets[0].decision.action), static_cast<int>(TargetAction::ResizeInPlace));
     {
         const VsgExecutor::TargetApplications applied = drive(*second, table_2);
         EXPECT_EQ(applied.resized, 1U) << "the plan's answer became a replacement";
@@ -538,8 +528,8 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     // (see CompiledShape) - while a HALF-stated device list (the old shape's, with one more engine format
     // pushed onto it) would describe a target nobody asked for, which the record step reports.
     TargetShape wanted_shape;
-    wanted_shape.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA8 };
-    wanted_shape.depth_format  = RenderTarget::DepthFormat::D32F;
+    wanted_shape.color_formats   = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA8 };
+    wanted_shape.depth_format    = RenderTarget::DepthFormat::D32F;
     const auto           table_3 = facts_of(TargetDesc{ 16, 12, wanted_shape });
     const CompiledFrame* third   = record_frame(3U, fill, table_3);
     ASSERT_EQ(static_cast<int>(third->targets[0].decision.action), static_cast<int>(TargetAction::Rebuild));
@@ -597,16 +587,15 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     lender_layout.clear.color_value[0] = 0.5F;
 
     OffscreenTarget::TargetLayout borrower_layout = lender_layout;
-    borrower_layout.clear.color_value[0] = 0.25F;  // a different clear: the two pictures are told apart
+    borrower_layout.clear.color_value[0]          = 0.25F; // a different clear: the two pictures are told apart
 
     auto lender = OffscreenTarget::create(device.device, lender_layout);
     EXPECT_NE(lender, nullptr);
     auto borrower = OffscreenTarget::create(device.device, borrower_layout, lender.get());
     EXPECT_NE(borrower, nullptr) << "the borrower (its own colour, the lender's depth) must be creatable";
     counters.targets_built += 2U;
-    if (lender == nullptr || borrower == nullptr)
-    {
-        return;  // the assertions above already failed; the rest would read through a null
+    if (lender == nullptr || borrower == nullptr) {
+        return; // the assertions above already failed; the rest would read through a null
     }
 
     FrameArena      arena(64 * 1024);
@@ -625,8 +614,7 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
         policy.color       = true;
         policy.depth       = true;
         policy.depth_value = 0.0F;
-        for (std::size_t index = 0; index < 4U; ++index)
-        {
+        for (std::size_t index = 0; index < 4U; ++index) {
             policy.color_value[index] = layout.clear.color_value[index];
         }
         return policy;
@@ -635,24 +623,23 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     // The facts state what each target should become; the sizing is the caller's, so one lambda fills them for
     // whichever frame is being compiled.
     std::vector<TargetFacts> facts(2U);
-    const auto facts_for = [&facts](const OffscreenTarget& borrower_target, const OffscreenTarget& lender_target,
-                                    int width, int height) {
+    const auto               facts_for = [&facts](const OffscreenTarget& borrower_target, const OffscreenTarget& lender_target, int width, int height) {
         const auto one = [width, height](const OffscreenTarget& target) {
             TargetFacts entry;
-            entry.target        = &target;
-            entry.wanted.width  = width;
-            entry.wanted.height = height;
-            entry.wanted.shape  = target.shape();
-            entry.current       = target.instance();
+            entry.target                                 = &target;
+            entry.wanted.width                           = width;
+            entry.wanted.height                          = height;
+            entry.wanted.shape                           = target.shape();
+            entry.current                                = target.instance();
             // The LEASE, stated the way the target itself reports it: without this the executor cannot know
             // that one target's framebuffer names the other's depth image - and its ordering rule has nothing
             // to order by (measured while writing this phase: the borrower was applied first and refused).
             const vn::graphics::backend::DepthPlan depth = target.depth();
-            entry.depth.has_depth                = depth.has_depth;
-            entry.depth.borrowed                 = depth.borrowed;
-            entry.depth.source                   = depth.source;
-            entry.depth.promotion                = depth.sampleable;
-            entry.depth.any_pass_preserves_depth = depth.preserve;
+            entry.depth.has_depth                        = depth.has_depth;
+            entry.depth.borrowed                         = depth.borrowed;
+            entry.depth.source                           = depth.source;
+            entry.depth.promotion                        = depth.sampleable;
+            entry.depth.any_pass_preserves_depth         = depth.preserve;
             return entry;
         };
         facts[0] = one(borrower_target);
@@ -664,10 +651,9 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     // compiler keeps the order it is handed (the engine is the one scheduler). A borrower that runs before
     // its lender LOADs a depth nothing has written yet (VUID-vkCmdDraw-None-09600), so this phase submits
     // only frames written lender first, and keeps the borrower-first one as a PLAN (see below).
-    const auto record_frame = [&](std::uint64_t token, int width, int height,
-                                  bool borrower_first) -> const CompiledFrame* {
-        const std::uint32_t first  = borrower_first ? 1U : 2U;
-        const std::uint32_t second = borrower_first ? 2U : 1U;
+    const auto record_frame = [&](std::uint64_t token, int width, int height, bool borrower_first) -> const CompiledFrame* {
+        const std::uint32_t    first         = borrower_first ? 1U : 2U;
+        const std::uint32_t    second        = borrower_first ? 2U : 1U;
         const OffscreenTarget& first_target  = borrower_first ? *borrower : *lender;
         const OffscreenTarget& second_target = borrower_first ? *lender : *borrower;
         EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
@@ -716,13 +702,10 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     const CompiledFrame* growth = record_frame(2U, 16, 12, /*borrower_first=*/true);
     ASSERT_NE(growth, nullptr);
     ASSERT_EQ(growth->targets.size(), 2U);
-    ASSERT_EQ(growth->targets[0].target, borrower.get())
-        << "the plan names the BORROWER first: a walk in this order is the wrong one, which is the point";
+    ASSERT_EQ(growth->targets[0].target, borrower.get()) << "the plan names the BORROWER first: a walk in this order is the wrong one, which is the point";
     ASSERT_EQ(growth->targets[1].target, lender.get());
-    ASSERT_EQ(static_cast<int>(growth->targets[0].decision.action),
-              static_cast<int>(TargetAction::ResizeInPlace));
-    ASSERT_EQ(static_cast<int>(growth->targets[1].decision.action),
-              static_cast<int>(TargetAction::ResizeInPlace));
+    ASSERT_EQ(static_cast<int>(growth->targets[0].decision.action), static_cast<int>(TargetAction::ResizeInPlace));
+    ASSERT_EQ(static_cast<int>(growth->targets[1].decision.action), static_cast<int>(TargetAction::ResizeInPlace));
 
     const VsgExecutor::TargetApplications applied = executor.applyTargetPlans(*growth, facts, timeline, queue);
     EXPECT_EQ(applied.resized, 2U) << "the lender first and the borrower after it: both extents were replaced";
@@ -762,10 +745,8 @@ int Fixture::material_identity = 0;
 TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)
 {
     Fixture fixture;
-    if (!fixture.build() || !fixture.buildContent())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build() || !fixture.buildContent()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     ClearValues clear;
@@ -784,8 +765,7 @@ TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)
     fixture.recorder.endPass();
     fixture.recorder.endFrame();
 
-    const CompiledFrame& frame =
-        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
+    const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
     ASSERT_EQ(frame.passes.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1U);
@@ -802,9 +782,8 @@ TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)
     // The triangle is inside the pass (green at the centre), and the background is the PLAN's clear colour -
     // not the target's own, which the pass graph never used.
     const Rgba8 centre = fixture.centre(*fixture.first);
-    EXPECT_TRUE(isGreen(centre)) << "the recorded content must be drawn inside the pass, got ("
-                                 << static_cast<int>(centre.r) << ", " << static_cast<int>(centre.g) << ", "
-                                 << static_cast<int>(centre.b) << ")";
+    EXPECT_TRUE(isGreen(centre)) << "the recorded content must be drawn inside the pass, got (" << static_cast<int>(centre.r) << ", "
+                                 << static_cast<int>(centre.g) << ", " << static_cast<int>(centre.b) << ")";
 
     const Rgba8 corner = fixture.first->probe().pixel(1, 1);
     EXPECT_NEAR(static_cast<int>(corner.r), 64, 2) << "the background is the plan's clear colour";
@@ -816,10 +795,8 @@ TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)
 TEST(ExecutorTest, TheRecordOrderIsTheOrderTheFrameWasHandedInAndThePixelsFollowIt)
 {
     Fixture fixture;
-    if (!fixture.build())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     ASSERT_NE(fixture.first, nullptr);
@@ -859,13 +836,10 @@ TEST(ExecutorTest, TheRecordOrderIsTheOrderTheFrameWasHandedInAndThePixelsFollow
     // ...and the pixels say the same thing: the LAST pass each target was handed is the one left standing.
     const Rgba8 first_pixel  = fixture.centre(*fixture.first);
     const Rgba8 second_pixel = fixture.centre(*fixture.second);
-    EXPECT_TRUE(isGreen(first_pixel)) << "target A must end on its last handed pass (green), got ("
-                                      << static_cast<int>(first_pixel.r) << ", " << static_cast<int>(first_pixel.g)
-                                      << ", " << static_cast<int>(first_pixel.b) << ")";
-    EXPECT_TRUE(isRed(second_pixel)) << "target B must end on its last handed pass (red), got ("
-                                     << static_cast<int>(second_pixel.r) << ", "
-                                     << static_cast<int>(second_pixel.g) << ", "
-                                     << static_cast<int>(second_pixel.b) << ")";
+    EXPECT_TRUE(isGreen(first_pixel)) << "target A must end on its last handed pass (green), got (" << static_cast<int>(first_pixel.r) << ", "
+                                      << static_cast<int>(first_pixel.g) << ", " << static_cast<int>(first_pixel.b) << ")";
+    EXPECT_TRUE(isRed(second_pixel)) << "target B must end on its last handed pass (red), got (" << static_cast<int>(second_pixel.r) << ", "
+                                     << static_cast<int>(second_pixel.g) << ", " << static_cast<int>(second_pixel.b) << ")";
 
     EXPECT_TRUE(fixture.diagnostics.clean());
 }
@@ -873,10 +847,8 @@ TEST(ExecutorTest, TheRecordOrderIsTheOrderTheFrameWasHandedInAndThePixelsFollow
 TEST(ExecutorTest, APlanThatDisagreesWithTheTargetAboutItsShapeIsNotRecorded)
 {
     Fixture fixture;
-    if (!fixture.build())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     // The facts say the target has two colour attachments; the target that answers for that identity has one.
@@ -889,8 +861,7 @@ TEST(ExecutorTest, APlanThatDisagreesWithTheTargetAboutItsShapeIsNotRecorded)
     fixture.clearPass(fixture.first.get(), 1U, 0, 1.0F, 1.0F, 1.0F);
     fixture.recorder.endFrame();
 
-    const CompiledFrame& frame =
-        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
+    const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
     ASSERT_EQ(frame.passes.size(), 1U);
     EXPECT_EQ(frame.passes[0].color_attachments, 2U);
 
@@ -904,10 +875,8 @@ TEST(ExecutorTest, APlanThatDisagreesWithTheTargetAboutItsShapeIsNotRecorded)
 TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
 {
     Fixture fixture;
-    if (!fixture.build())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     // The truth about the target the plan resolves to: one colour attachment, and the DEVICE format its
@@ -928,8 +897,7 @@ TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
     drifted[0].wanted.shape.color_formats[0] = RenderTarget::ColorFormat::RGBA16F;
     drifted[0].current.desc                  = drifted[0].wanted;
 
-    const CompiledFrame& engine_drift =
-        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
+    const CompiledFrame& engine_drift = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
     ASSERT_EQ(engine_drift.passes.size(), 1U);
     ASSERT_EQ(engine_drift.targets.size(), 1U);
     EXPECT_EQ(engine_drift.passes[0].color_attachments, 1U) << "the count agrees: only the format drifted";
@@ -942,19 +910,15 @@ TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
 
     // (2) The engine's spelling is back; the DEVICE's drifted - and this one the engine cannot even express
     // (both spellings are RGBA8 to it), which is what the plan's copy of the device formats is for.
-    const std::uint32_t other_format = actual.device_color_formats[0] == VK_FORMAT_R8G8B8A8_UNORM
-                                           ? VK_FORMAT_B8G8R8A8_UNORM
-                                           : VK_FORMAT_R8G8B8A8_UNORM;
-    drifted[0].wanted.shape.color_formats[0]        = actual.color_formats[0];
-    drifted[0].wanted.shape.device_color_formats    = { other_format };
-    drifted[0].current.desc                         = drifted[0].wanted;
+    const std::uint32_t other_format         = actual.device_color_formats[0] == VK_FORMAT_R8G8B8A8_UNORM ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+    drifted[0].wanted.shape.color_formats[0] = actual.color_formats[0];
+    drifted[0].wanted.shape.device_color_formats = { other_format };
+    drifted[0].current.desc                      = drifted[0].wanted;
 
-    const CompiledFrame& device_drift =
-        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
+    const CompiledFrame& device_drift = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
     ASSERT_EQ(device_drift.passes.size(), 1U);
     ASSERT_EQ(device_drift.targets[0].shape.device_color_formats.size(), 1U);
-    EXPECT_EQ(device_drift.targets[0].shape.device_color_formats[0], other_format)
-        << "the plan carries the device's spelling it was told";
+    EXPECT_EQ(device_drift.targets[0].shape.device_color_formats[0], other_format) << "the plan carries the device's spelling it was told";
 
     auto device_graph = ::vsg::CommandGraph::create(fixture.created.device, fixture.created.queue_family);
     EXPECT_FALSE(fixture.executor.record(device_drift, device_graph));
@@ -963,10 +927,9 @@ TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
 
     // (3) Told the truth, the SAME frame records: what was wrong was the plan's account of the target, not
     // the target.
-    drifted[0].wanted.shape = actual;
-    drifted[0].current.desc = drifted[0].wanted;
-    const CompiledFrame& truthful =
-        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
+    drifted[0].wanted.shape       = actual;
+    drifted[0].current.desc       = drifted[0].wanted;
+    const CompiledFrame& truthful = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
     ASSERT_EQ(truthful.passes.size(), 1U);
 
     auto served_graph = ::vsg::CommandGraph::create(fixture.created.device, fixture.created.queue_family);
@@ -978,10 +941,8 @@ TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
 TEST(ExecutorTest, ApplyingThePlansAnswerRepairsWhatTheRecordStepWouldOnlyReport)
 {
     Fixture fixture;
-    if (!fixture.build())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     // The SAME drift the case above reports - the facts ask for a second colour attachment the target does not
@@ -999,8 +960,7 @@ TEST(ExecutorTest, ApplyingThePlansAnswerRepairsWhatTheRecordStepWouldOnlyReport
     fixture.clearPass(fixture.second.get(), 1U, 0, 1.0F, 1.0F, 1.0F);
     fixture.recorder.endFrame();
 
-    const CompiledFrame& frame =
-        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
+    const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
     ASSERT_EQ(frame.passes.size(), 1U);
     ASSERT_EQ(frame.targets.size(), 1U);
     EXPECT_EQ(frame.targets[0].target, fixture.second.get());
@@ -1008,10 +968,9 @@ TEST(ExecutorTest, ApplyingThePlansAnswerRepairsWhatTheRecordStepWouldOnlyReport
     EXPECT_EQ(static_cast<int>(frame.targets[0].decision.action), static_cast<int>(TargetAction::Rebuild))
         << "the facts describe a shape the target does not have yet";
 
-    FrameTimeline                          timeline;
-    RetirementQueue                        queue(3U);
-    const VsgExecutor::TargetApplications  applied =
-        fixture.executor.applyTargetPlans(frame, fixture.facts, timeline, queue);
+    FrameTimeline                         timeline;
+    RetirementQueue                       queue(3U);
+    const VsgExecutor::TargetApplications applied = fixture.executor.applyTargetPlans(frame, fixture.facts, timeline, queue);
     EXPECT_EQ(applied.rebuilt, 1U) << "the plan's answer became a real rebuild";
     EXPECT_EQ(applied.resized + applied.refused + applied.failed, 0U);
     EXPECT_EQ(fixture.second->colorAttachmentCount(), 2U);
@@ -1031,14 +990,12 @@ TEST(ExecutorTest, ApplyingThePlansAnswerRepairsWhatTheRecordStepWouldOnlyReport
 TEST(ExecutorTest, APassIntoTheDefaultFramebufferIsReportedRatherThanDrawnSomewhereElse)
 {
     Fixture fixture;
-    if (!fixture.build())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     fixture.recorder.beginFrame(FrameToken{ 1 });
-    fixture.clearPass(nullptr, 9U, 0, 1.0F, 1.0F, 1.0F);  // the window pass: this executor does not serve it
+    fixture.clearPass(nullptr, 9U, 0, 1.0F, 1.0F, 1.0F); // the window pass: this executor does not serve it
     fixture.recorder.endFrame();
 
     // The window is a target the BACKEND knows (it compiled the pass), it is just not one this executor can
@@ -1049,8 +1006,8 @@ TEST(ExecutorTest, APassIntoTheDefaultFramebufferIsReportedRatherThanDrawnSomewh
     window.wanted.width  = 128;
     window.wanted.height = 128;
     window.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    window.current.desc  = window.wanted;
-    window.current.built = true;
+    window.current.desc            = window.wanted;
+    window.current.built           = true;
     std::vector<TargetFacts> facts = fixture.facts;
     facts.push_back(window);
 
@@ -1069,10 +1026,8 @@ TEST(ExecutorTest, APassIntoTheDefaultFramebufferIsReportedRatherThanDrawnSomewh
 TEST(ExecutorTest, ProfilingOffAddsNothingToTheRecordedGraph)
 {
     Fixture fixture;
-    if (!fixture.build())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     ASSERT_NE(fixture.first, nullptr);
@@ -1080,8 +1035,7 @@ TEST(ExecutorTest, ProfilingOffAddsNothingToTheRecordedGraph)
     fixture.clearPass(fixture.first.get(), 1U, 0, 1.0F, 0.0F, 0.0F);
     fixture.recorder.endFrame();
 
-    const CompiledFrame& frame =
-        fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
+    const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ fixture.facts });
     ASSERT_EQ(frame.passes.size(), 1U);
 
     // The default: no measurement, so the command graph is the pass graphs themselves - a frame that
@@ -1093,10 +1047,8 @@ TEST(ExecutorTest, ProfilingOffAddsNothingToTheRecordedGraph)
     ASSERT_FALSE(fixture.executor.profiling());
 
     std::size_t wrappers = 0;
-    for (const ::vsg::ref_ptr<::vsg::Node>& child : fixture.last_graph->children)
-    {
-        if (dynamic_cast<const ::vsg::InstrumentationNode*>(child.get()) != nullptr)
-        {
+    for (const ::vsg::ref_ptr<::vsg::Node>& child : fixture.last_graph->children) {
+        if (dynamic_cast<const ::vsg::InstrumentationNode*>(child.get()) != nullptr) {
             ++wrappers;
         }
     }
@@ -1106,10 +1058,8 @@ TEST(ExecutorTest, ProfilingOffAddsNothingToTheRecordedGraph)
 TEST(ExecutorTest, ProfilingWrapsEachPassAndNamesItForTheCapture)
 {
     Fixture fixture;
-    if (!fixture.build())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     ASSERT_NE(fixture.first, nullptr);
@@ -1142,11 +1092,9 @@ TEST(ExecutorTest, ProfilingWrapsEachPassAndNamesItForTheCapture)
     EXPECT_EQ(entry.name, "target0@0") << "the name is for a capture: target<i>@<schedule>";
 
     std::size_t wrappers = 0;
-    for (const ::vsg::ref_ptr<::vsg::Node>& child : fixture.last_graph->children)
-    {
+    for (const ::vsg::ref_ptr<::vsg::Node>& child : fixture.last_graph->children) {
         const auto* wrapper = dynamic_cast<const ::vsg::InstrumentationNode*>(child.get());
-        if (wrapper != nullptr)
-        {
+        if (wrapper != nullptr) {
             ++wrappers;
             EXPECT_EQ(wrapper->child.get(), entry.graph) << "the wrapper wraps THE pass graph, not a copy";
         }
@@ -1196,21 +1144,19 @@ TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
     // api/VsgBackend registers, and the same name the target's images get for the validation layer). This case
     // drives the report through the executor and reads the message off the sink.
     Fixture fixture;
-    if (!fixture.build())
-    {
-        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): "
-                     << fixture.created.error.as_std_str();
+    if (!fixture.build()) {
+        GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << fixture.created.error.as_std_str();
     }
 
     // A lender and a borrower: the borrower's depth is the lender's image, so the borrower may not grow past
     // it (VUID-VkFramebufferCreateInfo-pAttachments-00861, see core::coversBorrowers). A plan that asks it to
     // is REFUSED - and the refusal is exactly the answer that has to name the target.
     OffscreenTarget::TargetLayout layout;
-    layout.width         = 8U;
-    layout.height        = 6U;
-    layout.color_formats = { RenderTarget::ColorFormat::RGBA8 };
-    layout.depth_format  = RenderTarget::DepthFormat::D32;
-    std::unique_ptr<OffscreenTarget> lender   = OffscreenTarget::create(fixture.created.device, layout);
+    layout.width                            = 8U;
+    layout.height                           = 6U;
+    layout.color_formats                    = { RenderTarget::ColorFormat::RGBA8 };
+    layout.depth_format                     = RenderTarget::DepthFormat::D32;
+    std::unique_ptr<OffscreenTarget> lender = OffscreenTarget::create(fixture.created.device, layout);
     ASSERT_NE(lender, nullptr);
     std::unique_ptr<OffscreenTarget> borrower = OffscreenTarget::create(fixture.created.device, layout, lender.get());
     ASSERT_NE(borrower, nullptr);
@@ -1223,20 +1169,20 @@ TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
     fixture.diagnostics.setSink([&said](const auto& diagnostic) { said.push_back(diagnostic.message.as_std_str()); });
 
     std::vector<TargetFacts> lying(2U);
-    lying[0].target              = lender.get();
-    lying[0].wanted.width        = 8;
-    lying[0].wanted.height       = 6;
-    lying[0].wanted.shape        = lender->shape();
+    lying[0].target        = lender.get();
+    lying[0].wanted.width  = 8;
+    lying[0].wanted.height = 6;
+    lying[0].wanted.shape  = lender->shape();
     // A shape change on the LENDER: a target another target loads the depth of does not rebuild (see
     // OffscreenTarget::rebuild), so this is the answer that gets refused.
     lying[0].wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA16F);
-    lying[0].current             = lender->instance();
-    lying[1]                     = lying[0];
-    lying[1].target              = borrower.get();
-    lying[1].wanted.width        = 8;
-    lying[1].wanted.height       = 6;
-    lying[1].wanted.shape        = borrower->shape();
-    lying[1].current             = borrower->instance();
+    lying[0].current       = lender->instance();
+    lying[1]               = lying[0];
+    lying[1].target        = borrower.get();
+    lying[1].wanted.width  = 8;
+    lying[1].wanted.height = 6;
+    lying[1].wanted.shape  = borrower->shape();
+    lying[1].current       = borrower->instance();
 
     fixture.recorder.beginFrame(FrameToken{ 1 });
     fixture.clearPass(lender.get(), 1U, 0, 1.0F, 0.0F, 0.0F);
@@ -1245,11 +1191,10 @@ TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
 
     vn::graphics::backend::FrameTimeline   timeline;
     vn::graphics::backend::RetirementQueue queue(3U);
-    const VsgExecutor::TargetApplications applied = fixture.executor.applyTargetPlans(frame, lying, timeline, queue);
+    const VsgExecutor::TargetApplications  applied = fixture.executor.applyTargetPlans(frame, lying, timeline, queue);
     EXPECT_EQ(applied.refused, 1U) << "a lender with a borrower does not rebuild because a plan says so";
     EXPECT_EQ(applied.resized + applied.rebuilt + applied.failed, 0U);
 
     ASSERT_EQ(said.size(), 1U) << "one report, and it went to the host's sink";
-    EXPECT_NE(said.front().find("probe-lender"), std::string::npos)
-        << "the report has to say WHICH target, got: " << said.front();
+    EXPECT_NE(said.front().find("probe-lender"), std::string::npos) << "the report has to say WHICH target, got: " << said.front();
 }

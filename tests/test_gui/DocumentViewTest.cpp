@@ -32,9 +32,9 @@
 #include <vine/appfw/gui/CentralDocumentHost.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/Control.hpp>
+#include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
-#include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
@@ -42,17 +42,30 @@
 namespace
 {
 
-constexpr const char8_t* kShownType = u8"view_test";       ///< 登记了视图的类型
-constexpr const char8_t* kBlindType = u8"view_test_blind"; ///< 没登记视图的类型
+constexpr const char8_t* kShownType = u8"view_test";       // 登记了视图的类型
+constexpr const char8_t* kBlindType = u8"view_test_blind"; // 没登记视图的类型
 
 /// 用例文档：报一个类型 id，标题固定，方便断言"显示的是哪一份"。
 class TestDocument : public vn::appfw::Document {
   public:
-    explicit TestDocument(vn::String type_id) : type_id_(std::move(type_id)) {}
+    explicit TestDocument(vn::String type_id)
+      : type_id_(std::move(type_id))
+    {}
 
-    vn::String typeId() const override { return type_id_; }
-    vn::String title() const override { return u8"用例文档"; }
-    bool       isDirty() const override { return false; }
+    vn::String typeId() const override
+    {
+        return type_id_;
+    }
+
+    vn::String title() const override
+    {
+        return u8"用例文档";
+    }
+
+    bool isDirty() const override
+    {
+        return false;
+    }
 
   private:
     vn::String type_id_;
@@ -61,9 +74,14 @@ class TestDocument : public vn::appfw::Document {
 /// 拒绝关闭的用例文档：浮动窗口的 X 必须走管理器，管理器则尊重 canClose()。
 class VetoDocument final : public TestDocument {
   public:
-    explicit VetoDocument(vn::String type_id) : TestDocument(std::move(type_id)) {}
+    explicit VetoDocument(vn::String type_id)
+      : TestDocument(std::move(type_id))
+    {}
 
-    bool canClose() const override { return false; }
+    bool canClose() const override
+    {
+        return false;
+    }
 };
 
 /// 用例载荷：框架只按类型匹配，这里只要有个能造文档的载荷。
@@ -77,8 +95,8 @@ VN_OBJECT_META_IMPL(TestPayload, vn::Object)
 
 /// 视图的记账本：造过几份、销毁过几份。
 struct ViewBook {
-    int                   created   = 0;
-    int                   destroyed = 0;
+    int created   = 0;
+    int destroyed = 0;
 };
 
 /// 用例视图：带自己的状态（被激活过几次），用来钉"按实例缓存 ⇒ 状态还在"。
@@ -91,10 +109,20 @@ class TestView final : public vn::appfw::gui::DocumentView {
         ++book_->created;
     }
 
-    ~TestView() override { ++book_->destroyed; }
+    ~TestView() override
+    {
+        ++book_->destroyed;
+    }
 
-    vn::appfw::gui::UIElement* content() override { return this; }
-    void                       activate() override { ++activations; }
+    vn::appfw::gui::UIElement* content() override
+    {
+        return this;
+    }
+
+    void activate() override
+    {
+        ++activations;
+    }
 
     /// 视图自己的状态：切走再切回来必须还在（相机/选择/滚动在那个真视图里就是这个位置）。
     int activations = 0;
@@ -113,9 +141,9 @@ bool registerType(vn::appfw::DocumentManager& documents, const char8_t* type_id)
     }
 
     return documents.registerOpener<TestPayload>({
-        .type_id = type_id,
-        .open    = [type_id](const TestPayload&) -> vn::appfw::Document* { return new TestDocument(type_id); },
-        .refine  = [type_id](const TestPayload& payload) { return payload.type_id == vn::String(type_id) ? 1 : 0; },
+      .type_id = type_id,
+      .open    = [type_id](const TestPayload&) -> vn::appfw::Document* { return new TestDocument(type_id); },
+      .refine  = [type_id](const TestPayload& payload) { return payload.type_id == vn::String(type_id) ? 1 : 0; },
     });
 }
 
@@ -137,9 +165,9 @@ bool registerVetoType(vn::appfw::DocumentManager& documents, const char8_t* type
     }
 
     return documents.registerOpener<TestPayload>({
-        .type_id = type_id,
-        .open    = [type_id](const TestPayload&) -> vn::appfw::Document* { return new VetoDocument(type_id); },
-        .refine  = [type_id](const TestPayload& payload) { return payload.type_id == vn::String(type_id) ? 1 : 0; },
+      .type_id = type_id,
+      .open    = [type_id](const TestPayload&) -> vn::appfw::Document* { return new VetoDocument(type_id); },
+      .refine  = [type_id](const TestPayload& payload) { return payload.type_id == vn::String(type_id) ? 1 : 0; },
     });
 }
 
@@ -175,9 +203,9 @@ QString messageOnPage(vn::appfw::gui::UIElement* page)
 }
 
 /// 恢复进程共享的应用 palette：主题用例改了它，就算断言中途退出也不能留给后面的用例。
-struct PaletteRestorer
-{
+struct PaletteRestorer {
     QPalette original = qApp->palette();
+
     ~PaletteRestorer()
     {
         qApp->setPalette(original);
@@ -205,21 +233,36 @@ class TwoPaneView final : public vn::appfw::gui::DocumentView {
         layout->addWidget(panes_[1]->impl<QWidget>());
     }
 
-    ~TwoPaneView() override { ++book_->destroyed; }
+    ~TwoPaneView() override
+    {
+        ++book_->destroyed;
+    }
 
-    vn::appfw::gui::UIElement* content() override { return this; }
+    vn::appfw::gui::UIElement* content() override
+    {
+        return this;
+    }
 
     /// @return 用户最后在里面干活的那一块（框架只搬家，不猜）。
-    vn::appfw::gui::RenderControl* renderControl() const override { return panes_[active_]; }
+    vn::appfw::gui::RenderControl* renderControl() const override
+    {
+        return panes_[active_];
+    }
 
     /// 用户在这块里干活（真视图会在获得焦点/被点击时这么做）。
     ///
     /// @param index 0 或 1。
-    void usePane(int index) { active_ = index; }
+    void usePane(int index)
+    {
+        active_ = index;
+    }
 
     /// @param index 0 或 1。
     /// @return 那一块的控件。
-    vn::appfw::gui::RenderControl* pane(int index) const { return panes_[index]; }
+    vn::appfw::gui::RenderControl* pane(int index) const
+    {
+        return panes_[index];
+    }
 
   private:
     ViewBook*                      book_ = nullptr;
@@ -237,20 +280,14 @@ TEST(DocumentViewTest, ATypeHasOneViewAndAnEmptyOrNullRegistrationIsRefused)
     EXPECT_TRUE(views.types().empty());
 
     ViewBook book;
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
     EXPECT_TRUE(views.hasView(kShownType));
     ASSERT_EQ(views.types().size(), 1u);
     EXPECT_EQ(views.types()[0], kShownType);
 
     // 一类型一份视图：第二次登记被拒（不悄悄换掉已经造出来的那些视图的来源）。
-    EXPECT_FALSE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
-    EXPECT_FALSE(views.registerView(vn::String(), [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    EXPECT_FALSE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
+    EXPECT_FALSE(views.registerView(vn::String(), [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     // 没登记的类型：create() 返回空（不猜、不兜底）。
     TestDocument blind(kBlindType);
@@ -271,9 +308,9 @@ TEST(DocumentViewTest, TheGuiApplicationIsWhereTheRegistryAndTheHostComeFrom)
 
 TEST(DocumentViewTest, TheHostLeavesTheCentralContentAloneUntilADocumentIsShown)
 {
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
@@ -302,18 +339,16 @@ TEST(DocumentViewTest, TheHostLeavesTheCentralContentAloneUntilADocumentIsShown)
 
 TEST(DocumentViewTest, ViewsAreBuiltPerDocumentInstanceAndKeptUntilTheDocumentCloses)
 {
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -362,18 +397,16 @@ TEST(DocumentViewTest, ViewsAreBuiltPerDocumentInstanceAndKeptUntilTheDocumentCl
 
 TEST(DocumentViewTest, ATypeWithoutAViewGetsAPageThatNamesIt)
 {
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kBlindType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -386,8 +419,7 @@ TEST(DocumentViewTest, ATypeWithoutAViewGetsAPageThatNamesIt)
     EXPECT_TRUE(host.ownsCentralArea()) << "有文档要显示（只是没有视图）⇒ 该接管来说清楚";
 
     const QString message = messageOnPage(host.shownContent());
-    EXPECT_TRUE(message.contains(QStringLiteral("view_test_blind"))) << "说明页要点出类型 id，实际是: "
-                                                                     << message.toStdString();
+    EXPECT_TRUE(message.contains(QStringLiteral("view_test_blind"))) << "说明页要点出类型 id，实际是: " << message.toStdString();
     EXPECT_TRUE(message.contains(QStringLiteral("没有注册视图")));
 }
 
@@ -395,18 +427,16 @@ TEST(DocumentViewTest, NoActiveDocumentMeansNoCommandTarget)
 {
     // 窗口的 3D 区是**派生**的（当前文档视图 → 它的活动窗格），不是谁发布进窗口的槽：没有当前文档就没有可回答的
     // 东西 —— "没有目标"是正常状态，不是失败。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
     EXPECT_TRUE(vn::appfw::gui::resolveCommandTarget(&window).isEmpty()) << "没有当前文档：没有目标";
@@ -434,21 +464,19 @@ TEST(DocumentViewTest, AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast)
 {
     // ADR-2026-10-24 的最后一条：目标带的是**视图**，不是某一块控件 —— 视图自己有多个窗格时，哪一块算数由它
     // 回答。所以“一视图两窗格”不需要框架加注册表、加焦点路由，也不需要命令认识窗格：它问目标，目标问视图。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TwoPaneView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TwoPaneView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
-    vn::appfw::Document*                 document = openDocument(documents, kShownType);
+    vn::appfw::Document*                document = openDocument(documents, kShownType);
     ASSERT_NE(document, nullptr);
     ASSERT_TRUE(documents.setCurrent(document));
 
@@ -460,15 +488,13 @@ TEST(DocumentViewTest, AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast)
     const auto first_target = vn::appfw::gui::resolveCommandTarget(&window);
     EXPECT_EQ(first_target.document, document);
     EXPECT_EQ(vn::appfw::gui::targetView(first_target), view);
-    EXPECT_EQ(vn::appfw::gui::targetView(first_target)->renderControl(), view->pane(0))
-        << "命令从目标拿到的就是视图当前那一块";
+    EXPECT_EQ(vn::appfw::gui::targetView(first_target)->renderControl(), view->pane(0)) << "命令从目标拿到的就是视图当前那一块";
 
     // 用户换到第二块：视图改自己的指针，下一次派发的目标随之改答 —— 框架代码一行没动。
     view->usePane(1);
     const auto second_target = vn::appfw::gui::resolveCommandTarget(&window);
     EXPECT_EQ(vn::appfw::gui::targetView(second_target), view) << "仍然是同一个视图";
-    EXPECT_EQ(vn::appfw::gui::targetView(second_target)->renderControl(), view->pane(1))
-        << "另一块窗格不会让命令改错东西";
+    EXPECT_EQ(vn::appfw::gui::targetView(second_target)->renderControl(), view->pane(1)) << "另一块窗格不会让命令改错东西";
 }
 
 // ============ 多文档：tab 与浮动 ============
@@ -476,26 +502,24 @@ TEST(DocumentViewTest, AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast)
 TEST(DocumentViewTest, EveryOpenDocumentGetsATabAndATabSelectionSelectsTheDocument)
 {
     // tab 是“打开集合”的呈现，不是“视图缓存”的呈现：打开的每一份都有自己的格子，而视图仍然懒建。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
     // 管理器 → 界面这条路的观察点：用户换文档必须真的产生一次 currentChanged，而不是 UI 自己改了个选中项。
     int                  changes      = 0;
     vn::appfw::Document* last_changed = nullptr;
-    const vn::Connection recording    = documents.currentChanged.connect(
-        [&changes, &last_changed](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
+    const vn::Connection recording =
+        documents.currentChanged.connect([&changes, &last_changed](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
             ++changes;
             last_changed = args.document();
         });
@@ -548,18 +572,16 @@ TEST(DocumentViewTest, ClosingTheCurrentDocumentSelectsTheTabThatTakesItsPlaceAn
     // 但 tab 条表达不了“什么都没选中”（Qt 6.10 实测：有 tab 时 setCurrentIndex(-1) 是空操作），所以宿主在关闭后向
     // 管理器**请求**选中接替那一格：仍是请求，管理器仍是唯一所有者（R7），否则就会出现“条上选着某一份，中央区却说
     // 没有当前文档”（N8）。另外只剩一份时条要收起来——和“打开第一份时不显示”必须是同一条规则，否则打开与关闭不对称。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -602,18 +624,16 @@ TEST(DocumentViewTest, TheStripReResolvesItsPaletteWhenTheThemeChanges)
 {
     // QSS 里的 palette(role) 在 polish 时解析一次；主题切换只换 QApplication 的 palette。宿主必须让 strip 重新解析，
     // 否则切到深色后 tab 条还停在浅色，直到下次启动（实测：不重设样式表时 grab 出来的像素不变）。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -648,25 +668,22 @@ TEST(DocumentViewTest, TheStripReResolvesItsPaletteWhenTheThemeChanges)
 
     EXPECT_EQ(image.pixelColor(tab_rect.left() + 4, tab_rect.top() + 4), QColor(9, 8, 7))
         << "主题变色后 strip 必须重新解析 palette 角色，而不是停在旧颜色（选中格 = palette(base)）";
-    EXPECT_EQ(image.pixelColor(image.width() - 4, image.height() - 4), QColor(1, 2, 3))
-        << "条本身的背景 = palette(window)";
+    EXPECT_EQ(image.pixelColor(image.width() - 4, image.height() - 4), QColor(1, 2, 3)) << "条本身的背景 = palette(window)";
 }
 
 TEST(DocumentViewTest, SwitchingTabsReusesEachViewAndNeverReinstallsTheCentralArea)
 {
     // 契约 1 与契约 3 在多文档下仍然成立：切 tab 只切页，不重建视图、不重父化宿主。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -700,18 +717,16 @@ TEST(DocumentViewTest, SwitchingTabsReusesEachViewAndNeverReinstallsTheCentralAr
 TEST(DocumentViewTest, ADocumentFloatsIntoItsOwnWindowAndDocksBackIntoItsTab)
 {
     // 浮动是“搬到一个自己的顶层窗口”，不是“停靠到某个停靠区”：页控件换窗口，文档与视图都不变。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -736,8 +751,7 @@ TEST(DocumentViewTest, ADocumentFloatsIntoItsOwnWindowAndDocksBackIntoItsTab)
     ASSERT_NE(page->window(), nullptr);
     EXPECT_NE(page->window(), central_window) << "页控件搬到了自己的顶层窗口";
     EXPECT_NE(host.shownContent(), view->content()) << "页搬走了，中央区不再显示它";
-    EXPECT_TRUE(messageOnPage(host.shownContent()).contains(QStringLiteral("独立窗口")))
-        << "中央区说明当前文档在自己的窗口里，而不是显示别的文档";
+    EXPECT_TRUE(messageOnPage(host.shownContent()).contains(QStringLiteral("独立窗口"))) << "中央区说明当前文档在自己的窗口里，而不是显示别的文档";
 
     // 停回来：页控件回到中央区那个窗口，视图还是同一个。
     host.setFloating(*document, false);
@@ -753,18 +767,16 @@ TEST(DocumentViewTest, TheCentralAreaOnlyEverShowsTheCurrentDocument)
 {
     // 一个不变量：中央区显示的**永远**是当前文档的页，或说明页；绝不显示另一份文档的页。
     // 这正是 tab 选中、current 与中央内容在任意操作后都一致的原因。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -809,18 +821,16 @@ TEST(DocumentViewTest, TheCentralAreaOnlyEverShowsTheCurrentDocument)
 TEST(DocumentViewTest, ActivatingAFloatingDocumentsWindowSelectsIt)
 {
     // 焦点跟随文档：几个文档各有窗口时，被激活的那个就是当前文档，tab 也跟着选它。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -861,24 +871,20 @@ TEST(DocumentViewTest, ClosingAFloatedDocumentsWindowGoesThroughTheManagerSoAVet
 {
     // 浮动窗口的 X 不是“删窗口”，而是“请求关闭文档”：canClose() 否决时窗口和文档都还在（否则关一半），
     // 不否决时文档真的关掉、窗口跟着消失。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
-    ViewBook book;
+    ViewBook                 book;
     constexpr const char8_t* kVetoType = u8"view_test_veto";
 
     ASSERT_TRUE(registerVetoType(documents, kVetoType));
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kVetoType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kVetoType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
@@ -925,18 +931,16 @@ TEST(DocumentViewTest, ClosingADocumentThroughTheApiAlsoClosesItsTabAndFloatingW
 {
     // 关闭不只发生在“点 tab / 点窗口的 X”上：DocumentManager::close() 是 API，界面必须同样收干净 —— tab、页控件、
     // 浮动窗口都不留。否则 API 关闭之后，屏幕上还挂着一份已经不存在的文档。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
 
     ViewBook book;
     ASSERT_TRUE(registerType(documents, kShownType));
-    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
-        return new TestView(document, book);
-    }));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) { return new TestView(document, book); }));
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 

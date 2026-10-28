@@ -16,9 +16,9 @@
 #include <cstdint>
 #include <limits>
 
-#include <vine/appfw/gui/MessageBox.hpp>
 #include "Convert.hpp"
 #include "WindowData.hpp"
+#include <vine/appfw/gui/MessageBox.hpp>
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -171,8 +171,8 @@ VN_OBJECT_META_IMPL(InputBox, Window)
 struct InputBox::Impl : public WindowData {
     /// One built row of the form.
     struct Entry {
-        Field*   field;  ///< Borrowed field definition.
-        QWidget* editor; ///< Editor created for the field.
+        Field*   field;  // Borrowed field definition.
+        QWidget* editor; // Editor created for the field.
     };
 
     String              prompt;

@@ -4,7 +4,7 @@ VN_MATH_NS_BEGIN
 
 #define TMPL_PREFIX template <typename T>
 
- 
+
 #undef TMPL_PREFIX
 
 template class VN_MATH_API Point2<float>;

@@ -309,19 +309,19 @@ template VN_MATH_API bool decompose(const Matrix4x4<double, ColMajor>&, Vector3<
 template VN_MATH_API bool decompose(const Matrix4x4<float, RowMajor>&, Vector3<float>&, Quaternion<float>&, Vector3<float>&);
 template VN_MATH_API bool decompose(const Matrix4x4<double, RowMajor>&, Vector3<double>&, Quaternion<double>&, Vector3<double>&);
 
-template VN_MATH_API Matrix4x4<float, ColMajor>  rotate(const Vector3<float>&, float);
+template VN_MATH_API Matrix4x4<float, ColMajor> rotate(const Vector3<float>&, float);
 template VN_MATH_API Matrix4x4<double, ColMajor> rotate(const Vector3<double>&, double);
-template VN_MATH_API Matrix4x4<float, RowMajor>  rotate(const Vector3<float>&, float);
+template VN_MATH_API Matrix4x4<float, RowMajor> rotate(const Vector3<float>&, float);
 template VN_MATH_API Matrix4x4<double, RowMajor> rotate(const Vector3<double>&, double);
 
-template VN_MATH_API Matrix4x4<float, ColMajor>  lookAt(const Point3<float>&, const Point3<float>&, const Vector3<float>&);
+template VN_MATH_API Matrix4x4<float, ColMajor> lookAt(const Point3<float>&, const Point3<float>&, const Vector3<float>&);
 template VN_MATH_API Matrix4x4<double, ColMajor> lookAt(const Point3<double>&, const Point3<double>&, const Vector3<double>&);
-template VN_MATH_API Matrix4x4<float, RowMajor>  lookAt(const Point3<float>&, const Point3<float>&, const Vector3<float>&);
+template VN_MATH_API Matrix4x4<float, RowMajor> lookAt(const Point3<float>&, const Point3<float>&, const Vector3<float>&);
 template VN_MATH_API Matrix4x4<double, RowMajor> lookAt(const Point3<double>&, const Point3<double>&, const Vector3<double>&);
 
-template VN_MATH_API Matrix4x4<float, ColMajor>  reflect(const Vector3<float>&, float);
+template VN_MATH_API Matrix4x4<float, ColMajor> reflect(const Vector3<float>&, float);
 template VN_MATH_API Matrix4x4<double, ColMajor> reflect(const Vector3<double>&, double);
-template VN_MATH_API Matrix4x4<float, RowMajor>  reflect(const Vector3<float>&, float);
+template VN_MATH_API Matrix4x4<float, RowMajor> reflect(const Vector3<float>&, float);
 template VN_MATH_API Matrix4x4<double, RowMajor> reflect(const Vector3<double>&, double);
 
 VN_MATH_NS_END

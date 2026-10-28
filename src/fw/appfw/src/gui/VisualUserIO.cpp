@@ -83,8 +83,7 @@ VN_OBJECT_META_IMPL(VisualUserIO, UserIO)
 ///
 /// Nested and defined here rather than private members on the class, so that the public header stays free of the state
 /// and of the helpers below - a host binds a console panel, it has no business with the rest (VisualUserIO.hpp).
-struct VisualUserIO::Impl
-{
+struct VisualUserIO::Impl {
     enum class PendingRead
     {
         None,
@@ -103,18 +102,22 @@ struct VisualUserIO::Impl
     /// Built by the getXxxAsync() entry points, because that is where the options live; the prompt text arrives already
     /// woven with the requirements so the visual and the headless implementations show the same words.
     struct ReadUi {
-        ConsoleInputAction action;            ///< Picker the input line offers; kind == None for a plain read.
-        String             prompt;            ///< Prompt text to show.
-        String             initial_text;      ///< Text to pre-fill the input line with (the caller's suggestion).
-        FileReadOptions    file_options;      ///< What the answer has to look like; only the file kinds use it.
-        DirReadOptions     dir_options;       ///< What the answer has to look like; only the directory kinds use it.
+        ConsoleInputAction action;       // Picker the input line offers; kind == None for a plain read.
+        String             prompt;       // Prompt text to show.
+        String             initial_text; // Text to pre-fill the input line with (the caller's suggestion).
+        FileReadOptions    file_options; // What the answer has to look like; only the file kinds use it.
+        DirReadOptions     dir_options;  // What the answer has to look like; only the directory kinds use it.
     };
 
     /// Releases the interaction slot when the read ends - however it ends,
     /// including a coroutine frame that is destroyed before it ever resumed.
     struct ReadScope {
         Impl* self;
-        ~ReadScope() { self->endRead(); }
+
+        ~ReadScope()
+        {
+            self->endRead();
+        }
     };
 
     /// Prompt bookkeeping of the read that is waiting for input.
@@ -135,7 +138,9 @@ struct VisualUserIO::Impl
         DirReadOptions  dir_options;
     };
 
-    explicit Impl(VisualUserIO* owner) : owner(owner) {}
+    explicit Impl(VisualUserIO* owner)
+      : owner(owner)
+    {}
 
     void setConsolePanel(ConsolePanel* console);
     void setCommandManager(vn::appfw::CommandManager* manager);
@@ -185,7 +190,7 @@ struct VisualUserIO::Impl
     VisualUserIO* owner{ nullptr };
 
     vn::async::AsyncEvent done;
-    std::atomic<bool>    cancelled{ false };
+    std::atomic<bool>     cancelled{ false };
 
     /// The interaction slot: only one read may wait for the user at a time, because
     /// the console shows a single prompt and two waiting reads would share done
@@ -193,10 +198,10 @@ struct VisualUserIO::Impl
     /// so a second read can never slip in.
     std::atomic<PendingRead> pending{ PendingRead::None };
 
-    String        string_result;
-    int           int_result{ 0 };
-    double        double_result{ 0.0 };
-    math::Point3d point_result;
+    String                string_result;
+    int                   int_result{ 0 };
+    double                double_result{ 0.0 };
+    math::Point3d         point_result;
     std::filesystem::path path_result;
     PathList              paths_result;
 
@@ -211,7 +216,9 @@ struct VisualUserIO::Impl
     std::shared_ptr<PromptState> prompt_state{ std::make_shared<PromptState>() };
 };
 
-VisualUserIO::VisualUserIO() : d(std::make_unique<Impl>(this)) {}
+VisualUserIO::VisualUserIO()
+  : d(std::make_unique<Impl>(this))
+{}
 
 VisualUserIO::~VisualUserIO() = default;
 
@@ -231,8 +238,7 @@ void VisualUserIO::Impl::setConsolePanel(ConsolePanel* console)
     }
 
     this->console = console;
-    if (this->console == nullptr)
-    {
+    if (this->console == nullptr) {
         return;
     }
     line_handler   = this->console->lineEntered.connect([this](const String& text) { onLineEntered(text); });
@@ -256,39 +262,33 @@ void VisualUserIO::Impl::setCommandManager(vn::appfw::CommandManager* manager)
     if (manager != nullptr && !commands_handler.isActive()) {
         // The completion list is a snapshot: follow the command set so commands of
         // plugins that register after the console was bound still show up.
-        commands_handler = manager->commandsChanged.connect(
-            [this](vn::appfw::CommandManager&, vn::EventArgs&) { refreshCompletion(); });
+        commands_handler = manager->commandsChanged.connect([this](vn::appfw::CommandManager&, vn::EventArgs&) { refreshCompletion(); });
     }
     refreshCompletion();
 }
 
 void VisualUserIO::Impl::refreshCompletion()
 {
-    if (!console || !owner->commandManager())
-    {
+    if (!console || !owner->commandManager()) {
         return;
     }
 
     auto* pm = Application::current() ? Application::current()->pluginManager() : nullptr;
 
     std::vector<ConsoleCommandEntry> entries;
-    for (const auto& info : owner->commandManager()->commandInfos())
-    {
+    for (const auto& info : owner->commandManager()->commandInfos()) {
         // A disabled command cannot run, so offering it for completion would only
         // lead to a failed execution.
-        if (!info.enabled)
-        {
+        if (!info.enabled) {
             continue;
         }
 
         // The popup prefix is the plugin's human-friendly display name.
         String source = info.owner;
-        if (pm != nullptr && !info.owner.empty())
-        {
-            if (auto* plugin = pm->plugin(info.owner))
-            {
+        if (pm != nullptr && !info.owner.empty()) {
+            if (auto* plugin = pm->plugin(info.owner)) {
                 const auto pinfo = plugin->info();
-                source = pinfo.display_name.empty() ? pinfo.name : pinfo.display_name;
+                source           = pinfo.display_name.empty() ? pinfo.name : pinfo.display_name;
             }
         }
         entries.push_back(ConsoleCommandEntry{ info.name, info.description, info.aliases, source });
@@ -305,8 +305,7 @@ void VisualUserIO::putString(const String& str)
 
 void VisualUserIO::Impl::putString(const String& str)
 {
-    if (console == nullptr)
-    {
+    if (console == nullptr) {
         return;
     }
 
@@ -324,8 +323,7 @@ void VisualUserIO::clear()
 
 void VisualUserIO::Impl::clear()
 {
-    if (console == nullptr)
-    {
+    if (console == nullptr) {
         return;
     }
 
@@ -345,8 +343,7 @@ void VisualUserIO::Impl::cancelPendingInput()
     // whole bound. Application::shutdown() calls this while the event loop is already
     // stopped, and it may be called from another thread, so nothing here may end up
     // touching the panel.
-    if (pending.load() != PendingRead::None)
-    {
+    if (pending.load() != PendingRead::None) {
         cancelInteraction();
     }
 }
@@ -354,8 +351,7 @@ void VisualUserIO::Impl::cancelPendingInput()
 bool VisualUserIO::Impl::beginRead(PendingRead kind, const String& prompt)
 {
     PendingRead expected = PendingRead::None;
-    if (!pending.compare_exchange_strong(expected, kind))
-    {
+    if (!pending.compare_exchange_strong(expected, kind)) {
         VN_LOGW("A user-input read is already waiting; refusing the new one");
         return false;
     }
@@ -375,8 +371,7 @@ void VisualUserIO::Impl::endRead() noexcept
     // The picker belongs to the read that asked for it: dropping it here keeps the button from outliving its prompt (and
     // from being clicked for a read that is over). Reads end on the thread that completed them - for a console read that
     // is the application thread, where this call runs inline - so this cannot overtake the next read's own setup.
-    if (console != nullptr)
-    {
+    if (console != nullptr) {
         auto* panel = console;
         onConsolePanel(panel, [](ConsolePanel* target) { target->setInputAction(ConsoleInputAction{}); });
     }
@@ -384,14 +379,12 @@ void VisualUserIO::Impl::endRead() noexcept
 
 vn::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const ReadUi& ui)
 {
-    if (!beginRead(kind, ui.prompt))
-    {
+    if (!beginRead(kind, ui.prompt)) {
         co_return false;
     }
     const ReadScope scope{ this }; // frees the interaction slot however this ends
 
-    if (console != nullptr)
-    {
+    if (console != nullptr) {
         auto* panel = console;
         // The prompt is recorded here, inside the marshalled call, so the member it
         // lives in is only ever touched on the application thread (repromptError()
@@ -414,8 +407,7 @@ vn::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const String
 {
     Impl::ReadUi ui;
     ui.prompt = prompt;
-    if (!co_await d->waitForInput(Impl::PendingRead::String, ui))
-    {
+    if (!co_await d->waitForInput(Impl::PendingRead::String, ui)) {
         co_return std::nullopt;
     }
     co_return d->string_result;
@@ -425,8 +417,7 @@ vn::async::Task<std::optional<int>> VisualUserIO::getIntAsync(const String& prom
 {
     Impl::ReadUi ui;
     ui.prompt = prompt;
-    if (!co_await d->waitForInput(Impl::PendingRead::Int, ui))
-    {
+    if (!co_await d->waitForInput(Impl::PendingRead::Int, ui)) {
         co_return std::nullopt;
     }
     co_return d->int_result;
@@ -436,8 +427,7 @@ vn::async::Task<std::optional<double>> VisualUserIO::getDoubleAsync(const String
 {
     Impl::ReadUi ui;
     ui.prompt = prompt;
-    if (!co_await d->waitForInput(Impl::PendingRead::Double, ui))
-    {
+    if (!co_await d->waitForInput(Impl::PendingRead::Double, ui)) {
         co_return std::nullopt;
     }
     co_return d->double_result;
@@ -447,8 +437,7 @@ vn::async::Task<std::optional<math::Point3d>> VisualUserIO::getPoint3dAsync(cons
 {
     Impl::ReadUi ui;
     ui.prompt = prompt;
-    if (!co_await d->waitForInput(Impl::PendingRead::Point, ui))
-    {
+    if (!co_await d->waitForInput(Impl::PendingRead::Point, ui)) {
         co_return std::nullopt;
     }
     co_return d->point_result;
@@ -464,16 +453,13 @@ namespace
 /// reach into, so the caller (a member of this class) passes the result in.
 String pickerFilter(const std::vector<String>& patterns)
 {
-    if (patterns.empty())
-    {
+    if (patterns.empty()) {
         return {};
     }
 
     String joined;
-    for (const String& pattern : patterns)
-    {
-        if (!joined.empty())
-        {
+    for (const String& pattern : patterns) {
+        if (!joined.empty()) {
             joined += u8" ";
         }
         joined += pattern;
@@ -485,8 +471,7 @@ String pickerFilter(const std::vector<String>& patterns)
 
 } // namespace
 
-vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getFileAsync(const String&           prompt,
-                                                                                const FileReadOptions& options)
+vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getFileAsync(const String& prompt, const FileReadOptions& options)
 {
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::File;
@@ -496,8 +481,7 @@ vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getFileAsync
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.file_options   = options;
 
-    if (!co_await d->waitForInput(Impl::PendingRead::File, ui))
-    {
+    if (!co_await d->waitForInput(Impl::PendingRead::File, ui)) {
         co_return std::nullopt;
     }
     co_return d->path_result;
@@ -513,8 +497,7 @@ vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getFilesAsync(con
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.file_options   = options;
 
-    if (!co_await d->waitForInput(Impl::PendingRead::Files, ui))
-    {
+    if (!co_await d->waitForInput(Impl::PendingRead::Files, ui)) {
         co_return std::nullopt;
     }
     co_return d->paths_result;
@@ -529,8 +512,7 @@ vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getDirAsync(
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.dir_options    = options;
 
-    if (!co_await d->waitForInput(Impl::PendingRead::Dir, ui))
-    {
+    if (!co_await d->waitForInput(Impl::PendingRead::Dir, ui)) {
         co_return std::nullopt;
     }
     co_return d->path_result;
@@ -545,8 +527,7 @@ vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getDirsAsync(cons
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.dir_options    = options;
 
-    if (!co_await d->waitForInput(Impl::PendingRead::Dirs, ui))
-    {
+    if (!co_await d->waitForInput(Impl::PendingRead::Dirs, ui)) {
         co_return std::nullopt;
     }
     co_return d->paths_result;
@@ -554,35 +535,29 @@ vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getDirsAsync(cons
 
 void VisualUserIO::Impl::onLineEntered(const String& text)
 {
-    if (pending != PendingRead::None)
-    {
+    if (pending != PendingRead::None) {
         parseAndComplete(text);
         return;
     }
 
-    if (owner->commandManager() && owner->commandManager()->runningCount() > 0)
-    {
-        if (console)
-        {
+    if (owner->commandManager() && owner->commandManager()->runningCount() > 0) {
+        if (console) {
             console->append(ConsoleMessageType::Warning, String(u8"命令正在执行，请稍候"));
         }
         return;
     }
 
-    if (console)
-    {
+    if (console) {
         console->append(ConsoleMessageType::Command, text);
     }
 
-    if (owner->commandManager())
-    {
+    if (owner->commandManager()) {
         // 异步启动命令；失败信息在命令完成后回写。
         // 命令可能在任意线程上结束（await 了定时器/异步读取），因此回写必须
         // 编组到应用线程：控制台面板是 QWidget，只有应用线程可以碰。
         [](Impl* self, vn::async::Task<CommandResult> task) -> vn::async::DetachedTask {
             const auto result = co_await std::move(task);
-            if (result.succeeded())
-            {
+            if (result.succeeded()) {
                 co_return;
             }
 
@@ -590,27 +565,23 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
             // the current context was missing, so show that as a warning - and stay quiet
             // when it did not explain, because "命令执行失败" would be a fault report for
             // something that never went wrong.
-            if (result.status() == CommandStatus::NotApplicable)
-            {
+            if (result.status() == CommandStatus::NotApplicable) {
                 const auto& message = result.message();
-                if (!message.empty())
-                {
+                if (!message.empty()) {
                     self->appendOnApplicationThread(message, ConsoleMessageType::Warning);
                 }
                 co_return;
             }
 
             const auto& message = result.message();
-            self->appendOnApplicationThread(message.empty() ? String(u8"命令执行失败") : message,
-                                            ConsoleMessageType::Error);
+            self->appendOnApplicationThread(message.empty() ? String(u8"命令执行失败") : message, ConsoleMessageType::Error);
         }(this, owner->commandManager()->executeCommandAsync(text, resolveCommandTarget(MainWindow::current())));
     }
 }
 
 void VisualUserIO::Impl::appendOnApplicationThread(const String& message, ConsoleMessageType type)
 {
-    if (!console)
-    {
+    if (!console) {
         return;
     }
 
@@ -620,40 +591,32 @@ void VisualUserIO::Impl::appendOnApplicationThread(const String& message, Consol
 
 void VisualUserIO::Impl::onEscape()
 {
-    if (pending != PendingRead::None)
-    {
+    if (pending != PendingRead::None) {
         cancelInteraction();
     }
-    else if (owner->commandManager() && owner->commandManager()->runningCount() > 0)
-    {
+    else if (owner->commandManager() && owner->commandManager()->runningCount() > 0) {
         // Cancel the foreground command chain (the one the console just showed as
         // running). Chains pushed out of the foreground are only reachable through
         // cancelAll().
         owner->commandManager()->cancelCurrent();
     }
-    else if (console)
-    {
+    else if (console) {
         console->clearInput();
     }
 }
 
 void VisualUserIO::Impl::parseAndComplete(const String& text)
 {
-    switch (pending)
-    {
-    case PendingRead::String:
-        completeString(text);
-        break;
+    switch (pending) {
+    case PendingRead::String: completeString(text); break;
 
     case PendingRead::Int:
     {
         int value = 0;
-        if (VisualUserIO::parseInt(text, value))
-        {
+        if (VisualUserIO::parseInt(text, value)) {
             completeInt(value);
         }
-        else
-        {
+        else {
             repromptError(String(u8"请输入整数"));
         }
         break;
@@ -663,12 +626,10 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
     {
         bool         ok    = false;
         const double value = text.trimmed().toDouble(&ok);
-        if (ok && std::isfinite(value))
-        {
+        if (ok && std::isfinite(value)) {
             completeDouble(value);
         }
-        else
-        {
+        else {
             repromptError(String(u8"请输入数字"));
         }
         break;
@@ -677,16 +638,14 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
     case PendingRead::Point:
     {
         const auto parts = text.split(u8',');
-        if (parts.size() == 3)
-        {
+        if (parts.size() == 3) {
             bool   xOk = false;
             bool   yOk = false;
             bool   zOk = false;
             double x   = parts[0].trimmed().toDouble(&xOk);
             double y   = parts[1].trimmed().toDouble(&yOk);
             double z   = parts[2].trimmed().toDouble(&zOk);
-            if (xOk && yOk && zOk)
-            {
+            if (xOk && yOk && zOk) {
                 math::Point3d p;
                 p.x = x;
                 p.y = y;
@@ -702,12 +661,10 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
     case PendingRead::File:
     {
         const PathCheck check = checkPath(text, prompt_state->file_options);
-        if (check.ok)
-        {
+        if (check.ok) {
             completePath(check.path);
         }
-        else
-        {
+        else {
             repromptPathError(check.message, text);
         }
         break;
@@ -716,12 +673,10 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
     case PendingRead::Files:
     {
         const PathLineCheck check = checkPathLine(text, prompt_state->file_options);
-        if (check.ok)
-        {
+        if (check.ok) {
             completePaths(check.paths);
         }
-        else
-        {
+        else {
             repromptPathError(check.message, text);
         }
         break;
@@ -730,12 +685,10 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
     case PendingRead::Dir:
     {
         const PathCheck check = checkPath(text, prompt_state->dir_options);
-        if (check.ok)
-        {
+        if (check.ok) {
             completePath(check.path);
         }
-        else
-        {
+        else {
             repromptPathError(check.message, text);
         }
         break;
@@ -744,26 +697,22 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
     case PendingRead::Dirs:
     {
         const PathLineCheck check = checkPathLine(text, prompt_state->dir_options);
-        if (check.ok)
-        {
+        if (check.ok) {
             completePaths(check.paths);
         }
-        else
-        {
+        else {
             repromptPathError(check.message, text);
         }
         break;
     }
 
-    case PendingRead::None:
-        break;
+    case PendingRead::None: break;
     }
 }
 
 void VisualUserIO::Impl::repromptPathError(const String& message, const String& text)
 {
-    if (!console)
-    {
+    if (!console) {
         return;
     }
 
@@ -779,8 +728,7 @@ void VisualUserIO::Impl::repromptPathError(const String& message, const String& 
 
 void VisualUserIO::Impl::repromptError(const String& message)
 {
-    if (!console)
-    {
+    if (!console) {
         return;
     }
 

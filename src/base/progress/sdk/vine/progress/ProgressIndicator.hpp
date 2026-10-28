@@ -28,8 +28,7 @@ class ProgressScope;
  * ambient host is the one caller that cares, and it turns the callback into its
  * change signal.
  */
-class VN_PROGRESS_API ProgressIndicator
-{
+class VN_PROGRESS_API ProgressIndicator {
   public:
     friend class ProgressRange;
     friend class ProgressScope;
@@ -125,17 +124,17 @@ class VN_PROGRESS_API ProgressIndicator
      */
     void announceIfSignificant(double new_position);
 
-    std::atomic<double>     position_{0.0};
+    std::atomic<double> position_{ 0.0 };
 
     /// Position last announced through the position callback.
-    std::atomic<double>     announced_{0.0};
+    std::atomic<double> announced_{ 0.0 };
 
     /// Installed by setPositionCallback(); read by the reporting path.
-    std::function<void()>   on_position_;
+    std::function<void()> on_position_;
 
-    ProgressScope*          root_scope_{nullptr};
+    ProgressScope* root_scope_{ nullptr };
 
-    std::stop_token         token_;
+    std::stop_token token_;
 };
 
 VN_PROGRESS_NS_END

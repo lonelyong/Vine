@@ -29,12 +29,11 @@ VN_BREPIO_NS_BEGIN
  *
  * @warning The cache is not thread-safe: one loader instance must not be used from two threads at the same time.
  */
-class VN_BREPIO_API BrepLoader
-{
+class VN_BREPIO_API BrepLoader {
   public:
     BrepLoader();
     BrepLoader(const BrepLoader&) = delete;
-    BrepLoader(BrepLoader&&) = delete;
+    BrepLoader(BrepLoader&&)      = delete;
     ~BrepLoader();
 
   public:
@@ -63,8 +62,7 @@ class VN_BREPIO_API BrepLoader
      *         backend, NotFound when the file is not there, IoFailure when it cannot be read, InvalidData when it cannot
      *         be parsed.
      */
-    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> load(
-        const std::filesystem::path& file_path);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> load(const std::filesystem::path& file_path);
 
     /**
      * @brief Loads a B-rep solid from a stream.

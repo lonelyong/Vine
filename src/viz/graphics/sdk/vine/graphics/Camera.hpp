@@ -49,8 +49,8 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
   public:
     enum class ProjectionType
     {
-        Perspective,  ///< Perspective projection.
-        Orthographic, ///< Orthographic projection.
+        Perspective,  // Perspective projection.
+        Orthographic, // Orthographic projection.
     };
 
   public:

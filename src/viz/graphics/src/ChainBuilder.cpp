@@ -6,14 +6,14 @@
 #include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/Light.hpp>
-#include <vine/math/Point3.hpp>
-#include <vine/math/Rect3.hpp>
 #include <vine/graphics/PassDesc.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/math/Point3.hpp>
+#include <vine/math/Rect3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -22,8 +22,7 @@ namespace detail
 
 ChainBuilder::ChainBuilder(raw_ptr<RenderEngine> engine)
   : engine_(engine)
-{
-}
+{}
 
 intrusive_ptr<PassChain> ChainBuilder::build(const ChainDesc& options)
 {
@@ -32,21 +31,20 @@ intrusive_ptr<PassChain> ChainBuilder::build(const ChainDesc& options)
     }
     // The request is a value; the builder copies what it needs for THIS build once, so the recipes below read a
     // snapshot instead of a host's object that could change half way through.
-    camera_      = options.camera;
-    content_     = options.content;
-    transparent_ = options.transparent;
-    shadows_built_  = 0;
-    content_layers_ = options.layer_mask;
+    camera_                = options.camera;
+    content_               = options.content;
+    transparent_           = options.transparent;
+    shadows_built_         = 0;
+    content_layers_        = options.layer_mask;
     // The chain IS its registration: each pass is filed with it as owner, so a build that stops half way (or a host
     // that drops the handle) takes its passes back out of the frame. The handles are leases; the engine may die
     // first and the chain then answers "gone" instead of reaching into freed memory.
-    auto pipeline = make_intrusive<PassChain>(engine_->passes(), engine_->diagnostics());
+    auto pipeline          = make_intrusive<PassChain>(engine_->passes(), engine_->diagnostics());
     // The chain the REQUEST assembles is not always the chain it names: a mode that needs the geometry pass
     // decides it (see effectivePath). The chain records what it was built as, because "can this chain
     // express that mode" is what a later setShadingMode() is answered from.
     const ShadingPath path = PassChain::effectivePath(options);
-    const bool        ok   = (path == ShadingPath::Forward) ? buildForwardPath(*pipeline)
-                                                            : buildDeferredPath(*pipeline, options);
+    const bool        ok   = (path == ShadingPath::Forward) ? buildForwardPath(*pipeline) : buildDeferredPath(*pipeline, options);
     if (!ok) {
         return nullptr;
     }
@@ -98,12 +96,11 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         // Registered through the same public entry a host uses (see PassChain::addOverlay): the recipe states the
         // overlay's CONTENT, the label its pass carries, and how it re-anchors itself - a third overlay is another
         // call, not a change to PassChain.
-        pipeline.addOverlay(String(PassChain::kGizmoRole), gizmo.get(), desc,
-                            [gizmo](RenderPass& hud, int width, int height, double ratio) {
-                                gizmo->setPixelRatio(ratio);
-                                gizmo->onSurfaceResized(width, height);
-                                hud.setViewport(gizmo->boxViewport());
-                            });
+        pipeline.addOverlay(String(PassChain::kGizmoRole), gizmo.get(), desc, [gizmo](RenderPass& hud, int width, int height, double ratio) {
+            gizmo->setPixelRatio(ratio);
+            gizmo->onSurfaceResized(width, height);
+            hud.setViewport(gizmo->boxViewport());
+        });
     }
 
     // A frame-rate readout (bottom-right corner). It measures the actual
@@ -126,12 +123,11 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         desc.depth_mode    = DepthMode::Disabled;
         // Measure the frame rate and repaint the digits (see FpsOverlay::update).
         desc.before_draw   = [fps] { fps->update(); };
-        pipeline.addOverlay(String(PassChain::kStatsRole), fps.get(), desc,
-                            [fps](RenderPass& hud, int width, int height, double ratio) {
-                                fps->setPixelRatio(ratio);
-                                fps->onSurfaceResized(width, height);
-                                hud.setViewport(fps->boxViewport());
-                            });
+        pipeline.addOverlay(String(PassChain::kStatsRole), fps.get(), desc, [fps](RenderPass& hud, int width, int height, double ratio) {
+            fps->setPixelRatio(ratio);
+            fps->onSurfaceResized(width, height);
+            hud.setViewport(fps->boxViewport());
+        });
     }
     return true;
 }
@@ -150,57 +146,46 @@ void ChainBuilder::reportRequestedShadows() const
     //
     // A report that fires whenever a request EXISTS - what this did while the deferred path already built the pass -
     // tells the host its picture is unshadowed while it is shadowed, which is worse than saying nothing.
-    std::size_t buildable       = 0;  // enabled casters of a kind the chain CAN build a 2D map for
-    std::size_t unrepresentable = 0;  // enabled casters no 2D map represents (a point light)
-    for (const Scene* scene : { content_.get(), transparent_.get() })
-    {
-        if (scene == nullptr)
-        {
+    std::size_t buildable       = 0; // enabled casters of a kind the chain CAN build a 2D map for
+    std::size_t unrepresentable = 0; // enabled casters no 2D map represents (a point light)
+    for (const Scene* scene : { content_.get(), transparent_.get() }) {
+        if (scene == nullptr) {
             continue;
         }
-        for (const auto& light : scene->lights())
-        {
-            if (light == nullptr || !light->isEnabled() || !light->isCastingShadow())
-            {
+        for (const auto& light : scene->lights()) {
+            if (light == nullptr || !light->isEnabled() || !light->isCastingShadow()) {
                 continue;
             }
-            if (light->type() == LightType::Directional || light->type() == LightType::Spot)
-            {
+            if (light->type() == LightType::Directional || light->type() == LightType::Spot) {
                 ++buildable;
             }
-            else
-            {
+            else {
                 ++unrepresentable;
             }
         }
     }
 
     // The integer goes in as ASCII digits, like every other message in the SDK.
-    const auto report = [this](const std::string& message)
-    {
+    const auto report = [this](const std::string& message) {
         engine_->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                      vn::graphics::DiagnosticCategory::UnsupportedRequest,
                                      String::fromUtf8(message));
     };
 
-    if (buildable > shadows_built_)
-    {
+    if (buildable > shadows_built_) {
         const std::string unbuilt = std::to_string(buildable - shadows_built_);
-        if (shadows_built_ == 0U)
-        {
+        if (shadows_built_ == 0U) {
             report(unbuilt + " shadow-casting light(s) have no shadow pass: this chain's path builds none (its"
                              " lighting program is the host's, or its shading mode has nothing to shade from). See"
                              " .ai/design/graphics-rendering.md §2.7");
         }
-        else
-        {
+        else {
             report(unbuilt + " shadow-casting light(s) are not built: this chain builds ONE shadow map, for the"
                              " first enabled directional or spot light of its content, so a second caster stays"
                              " unshadowed. See .ai/design/graphics-rendering.md §2.7 and §6 N8");
         }
     }
-    if (unrepresentable > 0U)
-    {
+    if (unrepresentable > 0U) {
         const std::string points = std::to_string(unrepresentable);
         report(points + " shadow-casting point light(s) cast nothing in this chain: a point light's shadow is six faces"
                         " of one map, which this pipeline does not build (backlog S6). See"
@@ -231,24 +216,23 @@ intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
     // one taken from its cone. A POINT light has no pass yet (it needs six faces; see backlog S6) and is reported
     // rather than silently ignored.
     for (const auto& light : content->lights()) {
-        if (light != nullptr && light->isEnabled() && light->isCastingShadow() &&
-            (light->type() == LightType::Directional || light->type() == LightType::Spot)) {
-            return light;   // a strong handle: the map holds its light (RenderTarget::setShadowOf)
+        if (light != nullptr && light->isEnabled() && light->isCastingShadow() && (light->type() == LightType::Directional || light->type() == LightType::Spot))
+        {
+            return light; // a strong handle: the map holds its light (RenderTarget::setShadowOf)
         }
     }
     return nullptr;
 }
 
-}  // namespace
+} // namespace
 
-intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline,
-                                                                  const intrusive_ptr<const Light>& shadow_light_owner)
+intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline, const intrusive_ptr<const Light>& shadow_light_owner)
 {
     // The map keeps the light it belongs to alive (RenderTarget::setShadowOf): a retained target can
     // outlive the scene that built it, and a consumer reads the light through the map.
     const Light& shadow_light = *shadow_light_owner;
-    const int resolution = static_cast<int>(shadow_light.shadowSettings().resolution);
-    auto      shadow_map = make_intrusive<RenderTarget>();
+    const int    resolution   = static_cast<int>(shadow_light.shadowSettings().resolution);
+    auto         shadow_map   = make_intrusive<RenderTarget>();
     shadow_map->setName(u8"shadow_map");
     shadow_map->setSize(resolution > 0 ? resolution : 1024, resolution > 0 ? resolution : 1024);
     shadow_map->attachDepth(RenderTarget::DepthFormat::D24);
@@ -266,9 +250,8 @@ intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline,
     // order and RenderPass stays a generic stage.
     shadow_map->setShadowOf(shadow_light_owner);
     const vn::math::Aabbd shadow_bounds = content_->boundingBox();
-    shadow_map->setProducerViewProjection(shadow_light.type() == LightType::Spot
-                                              ? spotShadowMatrix(shadow_light, shadow_bounds, *light_camera)
-                                              : directionalShadowMatrix(shadow_light, shadow_bounds, *light_camera));
+    shadow_map->setProducerViewProjection(shadow_light.type() == LightType::Spot ? spotShadowMatrix(shadow_light, shadow_bounds, *light_camera)
+                                                                                 : directionalShadowMatrix(shadow_light, shadow_bounds, *light_camera));
 
     PassDesc desc;
     desc.name          = u8"shadow";
@@ -307,11 +290,11 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
     // The forward content pass IS the lit result, so it lives at the shading
     // stage; there is no separate geometry pass to place.
     PassDesc main_desc;
-    main_desc.name    = u8"main";
-    main_desc.tag     = u8"Opaque";
-    main_desc.stage   = PassStage::Shading;
-    main_desc.camera  = intrusive_ptr<Camera>(camera_);
-    main_desc.content = content_;
+    main_desc.name       = u8"main";
+    main_desc.tag        = u8"Opaque";
+    main_desc.stage      = PassStage::Shading;
+    main_desc.camera     = intrusive_ptr<Camera>(camera_);
+    main_desc.content    = content_;
     main_desc.layer_mask = content_layers_;
     if (shadow_map != nullptr) {
         main_desc.input_targets = { shadow_map };
@@ -322,12 +305,12 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
     // opaque depth the main pass just wrote (see setTransparentContent).
     if (transparent_ != nullptr) {
         PassDesc transparent_desc;
-        transparent_desc.name    = u8"forward_transparent";
-        transparent_desc.tag     = u8"Transparent";
-        transparent_desc.stage   = PassStage::Transparent;
-        transparent_desc.camera  = camera_;
-        transparent_desc.content = transparent_;
-        transparent_desc.layer_mask = content_layers_;
+        transparent_desc.name          = u8"forward_transparent";
+        transparent_desc.tag           = u8"Transparent";
+        transparent_desc.stage         = PassStage::Transparent;
+        transparent_desc.camera        = camera_;
+        transparent_desc.content       = transparent_;
+        transparent_desc.layer_mask    = content_layers_;
         // Translucent / overlay content: depth-TESTS against the opaque depth
         // the main content pass just wrote, but does NOT write depth (standard
         // alpha-blend rule) and does not clear.
@@ -352,7 +335,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
 
     // Programs default to the built-in temporary shaders so the preset works
     // out of the box; explicit programs in the options override them.
-    intrusive_ptr<ShaderProgram> gbuf_program = options.gbuffer_program;
+    intrusive_ptr<ShaderProgram> gbuf_program  = options.gbuffer_program;
     intrusive_ptr<ShaderProgram> light_program = options.lighting_program;
     if (gbuf_program == nullptr) {
         gbuf_program = defaultGbufferGeometryProgram();
@@ -396,24 +379,24 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
 
     // G-buffer geometry pass (order < 0), publishing the target as "GBuffer".
     PassDesc gbuf_desc;
-    gbuf_desc.name          = u8"gbuffer";
-    gbuf_desc.tag           = u8"GBuffer";
-    gbuf_desc.stage         = PassStage::Geometry;
-    gbuf_desc.camera        = camera_;
-    gbuf_desc.content       = content_;
-    gbuf_desc.layer_mask    = content_layers_;
-    gbuf_desc.writes        = gbuffer;
+    gbuf_desc.name             = u8"gbuffer";
+    gbuf_desc.tag              = u8"GBuffer";
+    gbuf_desc.stage            = PassStage::Geometry;
+    gbuf_desc.camera           = camera_;
+    gbuf_desc.content          = content_;
+    gbuf_desc.layer_mask       = content_layers_;
+    gbuf_desc.writes           = gbuffer;
     // The program is a SCENE pass' override (`PassDesc::program_override`): `PassDesc::program` is the
     // full-screen field a Screen pass draws through, so naming it here left the G-buffer pass with no program at
     // all - every body then drew with its own (or the engine's forward) program, which writes ONE colour output:
     // the geometry landed in albedo and the normal / specular / position attachments kept their transparent-black
     // clear, so the lighting read nothing and a PiP of either of those three was black.
     gbuf_desc.program_override = std::move(gbuf_program);
-    gbuf_desc.output_name   = u8"GBuffer";
+    gbuf_desc.output_name      = u8"GBuffer";
     // The same wire, declared at object level: this pass is the G-buffer's ONLY writer, so it owns the
     // hand-off and promises the whole target (one line instead of one per colour attachment — the
     // promise is shape-agnostic). The name above still drives the per-frame registry (design §14).
-    gbuf_desc.output_target = gbuffer;
+    gbuf_desc.output_target    = gbuffer;
     pipeline.addPass(gbuf_desc);
 
     // Fullscreen deferred lighting. Without transparent content it runs at
@@ -423,13 +406,13 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // off-screen, so the same program shades into a composite target instead.
     if (transparent_ == nullptr) {
         PassDesc light_desc;
-        light_desc.name    = u8"deferred_lighting";
-        light_desc.tag     = u8"Lighting";
-        light_desc.stage   = PassStage::Shading;
-        light_desc.kind    = PassKind::Screen;
-        light_desc.camera  = intrusive_ptr<Camera>(camera_);
-        light_desc.content = content_;
-        light_desc.input_names = { u8"GBuffer" };
+        light_desc.name          = u8"deferred_lighting";
+        light_desc.tag           = u8"Lighting";
+        light_desc.stage         = PassStage::Shading;
+        light_desc.kind          = PassKind::Screen;
+        light_desc.camera        = intrusive_ptr<Camera>(camera_);
+        light_desc.content       = content_;
+        light_desc.input_names   = { u8"GBuffer" };
         // It reads the WHOLE G-buffer: a fullscreen program receives every colour attachment of its
         // source (plus its depth while that one is sampleable) and picks by binding, so the unit it
         // consumes is the target — one declaration instead of "name + attachment index".
@@ -442,7 +425,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
             // BuiltinShaders::deferredLightProgram), and the engine's plan has no shadow field to fill.
             light_desc.input_targets.push_back(shadow_map);
         }
-        light_desc.program = std::move(light_program);
+        light_desc.program                    = std::move(light_program);
         const intrusive_ptr<RenderPass> light = pipeline.addPass(light_desc);
 
         pipeline.setOffscreenTarget(std::move(gbuffer));
@@ -467,19 +450,19 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // Fullscreen deferred lighting (order 0) INTO the composite: a depth-off
     // program that overwrites every pixel with the lit opaque result.
     PassDesc light_desc;
-    light_desc.name    = u8"deferred_lighting";
-    light_desc.tag     = u8"Lighting";
-    light_desc.stage   = PassStage::Shading;
-    light_desc.kind    = PassKind::Screen;
-    light_desc.camera  = intrusive_ptr<Camera>(camera_);
-    light_desc.content = content_;
-    light_desc.writes  = composite;
+    light_desc.name          = u8"deferred_lighting";
+    light_desc.tag           = u8"Lighting";
+    light_desc.stage         = PassStage::Shading;
+    light_desc.kind          = PassKind::Screen;
+    light_desc.camera        = intrusive_ptr<Camera>(camera_);
+    light_desc.content       = content_;
+    light_desc.writes        = composite;
     light_desc.input_names   = { u8"GBuffer" };
-    light_desc.input_targets = { gbuffer };   // reads the whole G-buffer (see the comment on the program path)
+    light_desc.input_targets = { gbuffer }; // reads the whole G-buffer (see the comment on the program path)
     if (shadow_map != nullptr) {
         light_desc.input_targets.push_back(shadow_map);
     }
-    light_desc.program = std::move(light_program);
+    light_desc.program    = std::move(light_program);
     // The edge, stated by the pass that draws against it (see DepthView): the composite has no depth of its
     // own, so what it tests against is the G-buffer's.
     light_desc.depth_view = depthViewOf(gbuffer);
@@ -491,13 +474,13 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // lit opaque result. It is the composite's last writer, so it publishes
     // the target as "Composite".
     PassDesc transparent_desc;
-    transparent_desc.name    = u8"forward_transparent";
-    transparent_desc.tag     = u8"Transparent";
-    transparent_desc.stage   = PassStage::Transparent;
-    transparent_desc.camera  = intrusive_ptr<Camera>(camera_);
-    transparent_desc.content = transparent_;
-    transparent_desc.layer_mask = content_layers_;
-    transparent_desc.writes  = composite;
+    transparent_desc.name          = u8"forward_transparent";
+    transparent_desc.tag           = u8"Transparent";
+    transparent_desc.stage         = PassStage::Transparent;
+    transparent_desc.camera        = intrusive_ptr<Camera>(camera_);
+    transparent_desc.content       = transparent_;
+    transparent_desc.layer_mask    = content_layers_;
+    transparent_desc.writes        = composite;
     transparent_desc.clear_enabled = false;
     transparent_desc.depth_mode    = DepthMode::TestOnly;
     transparent_desc.output_name   = u8"Composite";
@@ -514,17 +497,17 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // (RenderSurface::present), which is what keeps a default forward pass from
     // being added beside it. The HUD overlays (orders 10 / 30) stack above it.
     PassDesc present_desc;
-    present_desc.name   = u8"present";
-    present_desc.tag    = u8"Present";
-    present_desc.stage  = PassStage::Present;
-    present_desc.kind   = PassKind::Screen;
-    present_desc.camera = intrusive_ptr<Camera>(camera_);
+    present_desc.name                       = u8"present";
+    present_desc.tag                        = u8"Present";
+    present_desc.stage                      = PassStage::Present;
+    present_desc.kind                       = PassKind::Screen;
+    present_desc.camera                     = intrusive_ptr<Camera>(camera_);
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
     // "present the baked target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a
     // backend-side default (see ScreenPass::setProgram).
-    present_desc.program = screenCopyProgram();
-    present_desc.input_names   = { u8"Composite" };
-    present_desc.input_targets = { composite };   // it presents the whole baked target
+    present_desc.program                    = screenCopyProgram();
+    present_desc.input_names                = { u8"Composite" };
+    present_desc.input_targets              = { composite }; // it presents the whole baked target
     const intrusive_ptr<RenderPass> present = pipeline.addPass(present_desc);
 
     pipeline.setOffscreenTarget(std::move(gbuffer));
@@ -533,7 +516,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     return true;
 }
 
-}  // namespace detail
+} // namespace detail
 
 ShadingPath PassChain::effectivePath(const ChainDesc& options) noexcept
 {

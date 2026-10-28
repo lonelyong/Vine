@@ -23,8 +23,8 @@ vn::async::Task<CommandResult> ToggleConsoleLogCommand::execute(CommandExecution
         co_return CommandResult(CommandStatus::Failed, String(u8"配置管理器不可用"));
     }
 
-    const String key      = consoleLogConfigKey();
-    const bool   enabled  = !cfg->getBool(key, true);
+    const String key     = consoleLogConfigKey();
+    const bool   enabled = !cfg->getBool(key, true);
     cfg->setBool(key, enabled); // 触发 changed，AppShellPlugin 同步 sink 的原子开关
 
     if (io) {

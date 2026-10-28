@@ -21,7 +21,7 @@ struct RenderControl::Impl : public ControlData {
     SurfaceWindow* surface = nullptr;
     /// The widget that holds the surface (a QWindowContainer). What the host sees of this control is this
     /// widget's visibility: a frame in the surface is what makes it worth showing (see the constructor).
-    QWidget* container = nullptr;
+    QWidget* container     = nullptr;
 };
 
 RenderControl::RenderControl()
@@ -85,7 +85,7 @@ RenderControl::~RenderControl()
     // the object UIElement keeps in its d and releases with the rest of the control.
     auto* data = dptr();
     if (data != nullptr && data->surface != nullptr) {
-        data->surface->on_state_changed        = nullptr;
+        data->surface->on_state_changed         = nullptr;
         data->surface->on_needs_visible_surface = nullptr;
     }
 }
@@ -157,7 +157,7 @@ double RenderControl::devicePixelRatio() const
 }
 
 RenderControl::SurfaceState RenderControl::state() const
-{ 
+{
     return dptr()->surface->state();
 }
 

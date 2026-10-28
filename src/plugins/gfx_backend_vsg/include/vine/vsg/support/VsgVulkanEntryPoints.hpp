@@ -22,8 +22,7 @@ namespace detail
  * pointers belong to one device, which is why this is a value rather than a process-wide table — two
  * sessions on two devices must not inherit each other's.
  */
-struct DynamicStateEntryPoints
-{
+struct DynamicStateEntryPoints {
     PFN_vkCmdSetPolygonModeEXT        set_polygon_mode         = nullptr;
     PFN_vkCmdSetColorBlendEnableEXT   set_color_blend_enable   = nullptr;
     PFN_vkCmdSetColorBlendEquationEXT set_color_blend_equation = nullptr;

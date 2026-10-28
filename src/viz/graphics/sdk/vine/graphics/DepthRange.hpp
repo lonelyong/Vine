@@ -27,24 +27,29 @@ VN_GRAPHICS_NS_BEGIN
  * - The pass is the right owner rather than the camera: one camera can be drawn by a main pass, a shadow pass
  *   and an overlay pass, and the overlay is exactly the one that wants its own band.
  */
-struct VN_GRAPHICS_API DepthRange
-{
-    float min = 0.0F;  ///< Depth-buffer value at the FAR end of the band (the clear value when default).
-    float max = 1.0F;  ///< Depth-buffer value at the NEAR end of the band.
+struct VN_GRAPHICS_API DepthRange {
+    float min = 0.0F; // Depth-buffer value at the FAR end of the band (the clear value when default).
+    float max = 1.0F; // Depth-buffer value at the NEAR end of the band.
 
     /**
      * @brief Returns whether this is the whole-buffer interval, i.e. no remapping.
      *
      * @return True when the band is {0, 1}.
      */
-    [[nodiscard]] bool isDefault() const noexcept { return min == 0.0F && max == 1.0F; }
+    [[nodiscard]] bool isDefault() const noexcept
+    {
+        return min == 0.0F && max == 1.0F;
+    }
 
     /**
      * @brief Returns whether the band is inside the buffer and non-inverted.
      *
      * @return True when 0 <= @ref min <= @ref max <= 1.
      */
-    [[nodiscard]] bool isValid() const noexcept { return min >= 0.0F && max <= 1.0F && min <= max; }
+    [[nodiscard]] bool isValid() const noexcept
+    {
+        return min >= 0.0F && max <= 1.0F && min <= max;
+    }
 };
 
 /** @brief Returns whether two depth ranges are equal. */

@@ -13,15 +13,13 @@
  * exactly that step, at a frame a case chooses: everything above it (the executor's submit, the session's
  * commit, the mark, the report) is the production code.
  */
-class FailingStepNode : public ::vsg::Group
-{
+class FailingStepNode : public ::vsg::Group {
   public:
-    bool armed{false};  ///< Whether the next record step throws (disarmed: an ordinary empty group).
+    bool armed{ false }; // Whether the next record step throws (disarmed: an ordinary empty group).
 
     void accept(::vsg::RecordTraversal& visitor) const override
     {
-        if (armed)
-        {
+        if (armed) {
             throw ::vsg::Exception{ "the submission step failed (test)", VK_ERROR_DEVICE_LOST };
         }
         ::vsg::Group::traverse(visitor);

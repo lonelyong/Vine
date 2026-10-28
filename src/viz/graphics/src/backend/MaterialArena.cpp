@@ -50,20 +50,20 @@ MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t rev
             // The bytes the storage holds are the bytes the material has: this is the steady frame, and the
             // whole reason materials have their own arena instead of a per-frame write.
             ++hits_;
-            return {WriteKind::Unchanged, entry.slot, entry.last_copy, 0};
+            return { WriteKind::Unchanged, entry.slot, entry.last_copy, 0 };
         }
         if (entry.last_write_frame != frame_) {
-            entry.revision        = revision;
-            entry.last_copy       = copy;
+            entry.revision         = revision;
+            entry.last_copy        = copy;
             entry.last_write_frame = frame_;
             ++writes_;
             bytes_written_ += layout_.block_bytes;
-            return {WriteKind::Rewritten, entry.slot, copy, layout_.block_bytes};
+            return { WriteKind::Rewritten, entry.slot, copy, layout_.block_bytes };
         }
         // Already written this frame: the second edit of a value the GPU can only ever see one version of.
         entry.revision = revision;
         ++hits_;
-        return {WriteKind::Unchanged, entry.slot, entry.last_copy, 0};
+        return { WriteKind::Unchanged, entry.slot, entry.last_copy, 0 };
     }
 
     // A FULL ARENA IS REFUSED, NOT EVICTED. Reusing a live material's slot could overwrite bytes a draw
@@ -73,7 +73,7 @@ MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t rev
     if (entries_.size() >= layout_.capacity) {
         refused_this_frame_.insert(material);
         ++refusals_;
-        return {WriteKind::Refused, 0U, 0U, 0U};
+        return { WriteKind::Refused, 0U, 0U, 0U };
     }
 
     std::uint32_t slot = 0;
@@ -85,11 +85,11 @@ MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t rev
         slot = next_slot_++;
     }
 
-    entries_.emplace(material, Entry{material, revision, slot, frame_, copy});
+    entries_.emplace(material, Entry{ material, revision, slot, frame_, copy });
     ++allocations_;
     ++writes_;
     bytes_written_ += layout_.block_bytes;
-    return {WriteKind::Allocated, slot, copy, layout_.block_bytes};
+    return { WriteKind::Allocated, slot, copy, layout_.block_bytes };
 }
 
 bool MaterialArena::release(const void* material) noexcept

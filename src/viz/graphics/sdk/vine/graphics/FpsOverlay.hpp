@@ -138,8 +138,7 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay> 
      *   changes). At the default 0.5 s a human gets about two figures a second, and the caller only
      *   repaints when the ROUNDED value changes, so a steady frame rate costs no data work at all.
      */
-    struct VN_GRAPHICS_API Sampler
-    {
+    struct VN_GRAPHICS_API Sampler {
         /** @brief Seconds one published figure averages over: the sampling interval (must be > 0).
          *
          * @details
@@ -248,14 +247,14 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay> 
     // box to drop, instead of a mesh built from a bar spec.
     std::vector<vn::math::Vec3f> row_positions_;
 
-    double pixel_ratio_ = 1.0;
-    int    box_width_px_ = 105;
+    double pixel_ratio_   = 1.0;
+    int    box_width_px_  = 105;
     int    box_height_px_ = 36;
-    int    margin_px_ = 8;
-    int    surface_w_ = 0;
-    int    surface_h_ = 0;
-    int    area_x_ = 0;
-    int    area_y_ = 0;
+    int    margin_px_     = 8;
+    int    surface_w_     = 0;
+    int    surface_h_     = 0;
+    int    area_x_        = 0;
+    int    area_y_        = 0;
 
     // The frame clock the sampler is fed from, the sampler itself, and the value the row currently shows.
     std::chrono::steady_clock::time_point last_tick_{};

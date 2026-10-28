@@ -10,10 +10,10 @@
 #include <vector>
 
 #include <vine/Buffer.hpp>
-#include <vine/intrusive_ptr.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/geometry/Array.hpp>
 #include <vine/geometry/Shape.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "Node.hpp"
 #include "Primitive.hpp"
@@ -54,8 +54,7 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  *   stride(), never "three floats per vertex"), so a vec4 position channel keeps its xyz and skips the
  *   trailing w.
  */
-struct VN_GRAPHICS_API AttributeChannel
-{
+struct VN_GRAPHICS_API AttributeChannel {
     /// The scalars, or null when the channel holds nothing. Not snapshotted: every accessor reads through it.
     intrusive_ptr<const vn::Buffer<float>> values;
     /// Scalar components per vertex (1..4).
@@ -98,10 +97,8 @@ struct VN_GRAPHICS_API AttributeChannel
      * @param scalar_count Scalars to read, or 0 for the rest of @p values from @p offset.
      * @return The channel, reading that buffer's scalars.
      */
-    [[nodiscard]] static AttributeChannel shared(intrusive_ptr<const vn::Buffer<float>> values,
-                                                std::uint32_t                          components,
-                                                std::size_t                            offset       = 0u,
-                                                std::size_t                            scalar_count = 0u)
+    [[nodiscard]] static AttributeChannel
+    shared(intrusive_ptr<const vn::Buffer<float>> values, std::uint32_t components, std::size_t offset = 0u, std::size_t scalar_count = 0u)
     {
         AttributeChannel out;
         out.values      = std::move(values);
@@ -128,12 +125,10 @@ struct VN_GRAPHICS_API AttributeChannel
      * @param vertex_count Vertices in the segment (0 for the rest of the buffer from @p first_vertex).
      * @return The channel, reading that segment.
      */
-    [[nodiscard]] static AttributeChannel slice(intrusive_ptr<const vn::Buffer<float>> values,
-                                               std::uint32_t components, std::size_t first_vertex,
-                                               std::size_t vertex_count)
+    [[nodiscard]] static AttributeChannel
+    slice(intrusive_ptr<const vn::Buffer<float>> values, std::uint32_t components, std::size_t first_vertex, std::size_t vertex_count)
     {
-        return shared(std::move(values), components, first_vertex * components,
-                      vertex_count == 0u ? 0u : vertex_count * components);
+        return shared(std::move(values), components, first_vertex * components, vertex_count == 0u ? 0u : vertex_count * components);
     }
 
     /**
@@ -159,7 +154,10 @@ struct VN_GRAPHICS_API AttributeChannel
     }
 
     /** @brief Returns whether no scalar data is attached (or the slice lies past the end of its buffer). */
-    bool empty() const { return floatCount() == 0u; }
+    bool empty() const
+    {
+        return floatCount() == 0u;
+    }
 
     /** @brief Returns the packed scalars as a view.
      *
@@ -215,7 +213,10 @@ struct VN_GRAPHICS_API AttributeChannel
      *
      * @return Components per vertex as declared by the buffer.
      */
-    std::uint32_t stride() const { return components; }
+    std::uint32_t stride() const
+    {
+        return components;
+    }
 
     /** @brief Returns the number of complete vertices in this channel's scalars.
      *
@@ -375,8 +376,7 @@ class VN_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p positions from @p first_vertex.
      */
-    void setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex = 0u,
-                      std::size_t vertex_count = 0u);
+    void setPositions(intrusive_ptr<const vn::Buffer<float>> positions, std::size_t first_vertex = 0u, std::size_t vertex_count = 0u);
 
     /** @brief Returns whether positions (location 0) are present.
      *
@@ -401,8 +401,7 @@ class VN_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p normals from @p first_vertex.
      */
-    void setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex = 0u,
-                    std::size_t vertex_count = 0u);
+    void setNormals(intrusive_ptr<const vn::Buffer<float>> normals, std::size_t first_vertex = 0u, std::size_t vertex_count = 0u);
 
     /** @brief Returns whether normals (location 1) are present.
      *
@@ -432,8 +431,7 @@ class VN_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p texcoords from @p first_vertex.
      */
-    void setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex = 0u,
-                       std::size_t vertex_count = 0u);
+    void setTexcoords2(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex = 0u, std::size_t vertex_count = 0u);
 
     /** @brief Sets the texture coordinates (location kTexCoordLocation) made of THREE scalars per vertex.
      *
@@ -450,8 +448,7 @@ class VN_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p texcoords from @p first_vertex.
      */
-    void setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex = 0u,
-                       std::size_t vertex_count = 0u);
+    void setTexcoords3(intrusive_ptr<const vn::Buffer<float>> texcoords, std::size_t first_vertex = 0u, std::size_t vertex_count = 0u);
 
     /** @brief Returns whether the texcoord slot (location kTexCoordLocation) holds a channel.
      *
@@ -486,8 +483,7 @@ class VN_GRAPHICS_API Geometry : public Node {
      * @param first_vertex First vertex of this geometry's segment.
      * @param vertex_count Vertices in the segment, or 0 for the rest of @p colors from @p first_vertex.
      */
-    void setColors(intrusive_ptr<const vn::Buffer<float>> colors, std::size_t first_vertex = 0u,
-                   std::size_t vertex_count = 0u);
+    void setColors(intrusive_ptr<const vn::Buffer<float>> colors, std::size_t first_vertex = 0u, std::size_t vertex_count = 0u);
 
     /** @brief Returns whether the colour slot (location kColorLocation) holds a channel.
      *
@@ -810,15 +806,14 @@ class VN_GRAPHICS_API Geometry : public Node {
      * written through a raw pointer is announced by bumping one of them (the contract every cache in this
      * codebase keys on), so a box computed from the old bytes is never served for the new ones.
      */
-    struct LocalBoundsCache
-    {
-        const void*   buffer   = nullptr; ///< Positions buffer the box was computed from.
-        std::uint64_t revision = 0;       ///< That buffer's revision at the time.
-        std::size_t   offset   = 0;       ///< First scalar of the positions segment.
-        std::size_t   scalars  = 0;       ///< Scalars the positions segment covered (0 = to the end).
-        std::uint64_t geometry_revision = 0; ///< This geometry's revision at the time.
-        Aabbd         box;                ///< The box those keys describe.
-        bool          valid = false;      ///< False until something was computed.
+    struct LocalBoundsCache {
+        const void*   buffer            = nullptr; // Positions buffer the box was computed from.
+        std::uint64_t revision          = 0;       // That buffer's revision at the time.
+        std::size_t   offset            = 0;       // First scalar of the positions segment.
+        std::size_t   scalars           = 0;       // Scalars the positions segment covered (0 = to the end).
+        std::uint64_t geometry_revision = 0;       // This geometry's revision at the time.
+        Aabbd         box;                         // The box those keys describe.
+        bool          valid = false;               // False until something was computed.
     };
 
     std::map<std::uint32_t, AttributeChannel> attributes_;

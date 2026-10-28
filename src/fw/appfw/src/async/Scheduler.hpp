@@ -6,9 +6,12 @@
 
 #include <vine/appfw/appfw_global.hpp>
 
-namespace vn {
-namespace appfw {
-namespace async {
+namespace vn
+{
+namespace appfw
+{
+namespace async
+{
 
 /**
  * @brief Scheduler that resumes coroutines on the thread of this QObject.
@@ -17,17 +20,17 @@ namespace async {
  * coroutines. The scheduler must outlive every coroutine scheduled on it, and
  * the owning thread must run an event loop.
  */
-class VN_APPFW_API Scheduler final : public QObject
-{
+class VN_APPFW_API Scheduler final : public QObject {
   public:
     explicit Scheduler(QObject* parent = nullptr);
 
     ~Scheduler() override;
 
-    class ScheduleAwaiter
-    {
+    class ScheduleAwaiter {
       public:
-        explicit ScheduleAwaiter(Scheduler* scheduler) noexcept : scheduler_(scheduler) {}
+        explicit ScheduleAwaiter(Scheduler* scheduler) noexcept
+          : scheduler_(scheduler)
+        {}
 
         [[nodiscard]]
         bool await_ready() const noexcept
@@ -40,7 +43,8 @@ class VN_APPFW_API Scheduler final : public QObject
             scheduler_->postResume(h);
         }
 
-        void await_resume() const noexcept {}
+        void await_resume() const noexcept
+        {}
 
       private:
         Scheduler* scheduler_;
@@ -58,4 +62,4 @@ class VN_APPFW_API Scheduler final : public QObject
 
 } // namespace async
 } // namespace appfw
-} // namespace vine
+} // namespace vn

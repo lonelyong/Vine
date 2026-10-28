@@ -13,9 +13,21 @@ class ToggleConsoleLogCommand : public Command {
     VN_DECLARE_COMMAND(ToggleConsoleLogCommand, u8"log_to_console")
 
   public:
-    String group() const override { return u8"控制台"; }
-    String description() const override { return u8"开启/关闭日志输出到控制台"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"控制台";
+    }
+
+    String description() const override
+    {
+        return u8"开启/关闭日志输出到控制台";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

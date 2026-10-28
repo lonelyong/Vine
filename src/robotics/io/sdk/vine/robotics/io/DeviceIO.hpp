@@ -3,15 +3,17 @@
 #include <filesystem>
 #include <memory>
 
-#include <vine/io/Vfs.hpp>
-#include <vine/robotics/io/robot_io_global.hpp>
-#include <vine/robotics/io/XmlIOBase.hpp>
-#include <vine/robotics/workcell/Device.hpp>
 #include <vine/String.hpp>
+#include <vine/io/Vfs.hpp>
+#include <vine/robotics/io/XmlIOBase.hpp>
+#include <vine/robotics/io/robot_io_global.hpp>
+#include <vine/robotics/workcell/Device.hpp>
 
 namespace tinyxml2
 {
+
 class XMLDocument;
+
 } // namespace tinyxml2
 
 VN_ROBOTICS_IO_NS_BEGIN
@@ -26,22 +28,17 @@ VN_ROBOTICS_IO_NS_BEGIN
  * context, so a DeviceIO object is reentrant and safe to reuse, including
  * from multiple threads (each operation carries its own context).
  */
-class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase
-{
+class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase {
   public:
     /**
      * @brief Load options.
      */
-    struct LoadOptions
-    {
-    };
+    struct LoadOptions {};
 
     /**
      * @brief Save options.
      */
-    struct SaveOptions
-    {
-    };
+    struct SaveOptions {};
 
   public:
     /**
@@ -56,8 +53,7 @@ class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase
      * @return The device, owned by the caller.
      * @throws std::runtime_error on failure.
      */
-    std::unique_ptr<workcell::Device> loadXml(const std::filesystem::path& file_path,
-                                              const LoadOptions&           options = {});
+    std::unique_ptr<workcell::Device> loadXml(const std::filesystem::path& file_path, const LoadOptions& options = {});
 
     /**
      * @brief Loads a device from a device package (.vdevpkg).
@@ -70,8 +66,7 @@ class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase
      * @return The device, owned by the caller.
      * @throws std::runtime_error on failure.
      */
-    std::unique_ptr<workcell::Device> loadPkg(const std::filesystem::path& pkg_path,
-                                              const LoadOptions&           options = {});
+    std::unique_ptr<workcell::Device> loadPkg(const std::filesystem::path& pkg_path, const LoadOptions& options = {});
 
     /**
      * @brief Loads a device from a device package held in a VFS.
@@ -96,8 +91,7 @@ class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase
      * @param options Save options.
      * @throws std::runtime_error on failure.
      */
-    void savePkg(const workcell::Device& dev, const std::filesystem::path& pkg_path,
-                 const SaveOptions& options = {});
+    void savePkg(const workcell::Device& dev, const std::filesystem::path& pkg_path, const SaveOptions& options = {});
 
     /**
      * @brief Exports a device's resources into a VFS.
@@ -125,8 +119,7 @@ class VN_ROBOTICS_IO_API DeviceIO : public XmlIOBase
      * @param options Load options.
      * @return The device, owned by the caller.
      */
-    std::unique_ptr<workcell::Device> loadXmlFromVfs(vn::io::Vfs& vfs, const std::filesystem::path& vfs_path,
-                                                     const LoadOptions& options = {});
+    std::unique_ptr<workcell::Device> loadXmlFromVfs(vn::io::Vfs& vfs, const std::filesystem::path& vfs_path, const LoadOptions& options = {});
 
   private:
     /**

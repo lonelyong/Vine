@@ -20,9 +20,9 @@ VN_GRAPHICS_NS_BEGIN
  */
 enum class PolygonMode
 {
-    Fill,  ///< Filled polygons (the default).
-    Line,  ///< Wireframe outlines.
-    Point, ///< Points at the polygon vertices.
+    Fill,  // Filled polygons (the default).
+    Line,  // Wireframe outlines.
+    Point, // Points at the polygon vertices.
 };
 
 VN_GRAPHICS_NS_END

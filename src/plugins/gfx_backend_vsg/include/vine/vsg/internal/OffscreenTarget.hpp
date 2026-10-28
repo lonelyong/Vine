@@ -21,7 +21,9 @@
 
 namespace vsg
 {
+
 class Device;
+
 }
 
 /**
@@ -65,15 +67,13 @@ class Device;
 VN_VSG_NS_BEGIN
 
 /** @brief An off-screen colour target plus its copy-back path. */
-class OffscreenTarget
-{
+class OffscreenTarget {
   public:
     /** @brief The target's shape and what the pass clears it to. */
-    struct Layout
-    {
-        std::uint32_t width{256};          ///< Image width in pixels.
-        std::uint32_t height{256};         ///< Image height in pixels.
-        float         clear_color[4]{ 0.0F, 0.0F, 0.0F, 1.0F };  ///< Clear value (RGBA, linear).
+    struct Layout {
+        std::uint32_t width{ 256 };                             // Image width in pixels.
+        std::uint32_t height{ 256 };                            // Image height in pixels.
+        float         clear_color[4]{ 0.0F, 0.0F, 0.0F, 1.0F }; // Clear value (RGBA, linear).
     };
 
     /** @brief The target's shape in the engine's terms: several colour attachments, optional depth.
@@ -82,15 +82,14 @@ class OffscreenTarget
      * into has to be expressible in the SDK's vocabulary, and the conversion to the API's enums is the API
      * layer's job (the same mapping the pipeline factory uses).
      */
-    struct TargetLayout
-    {
-        std::uint32_t                                          width{256};   ///< Extent in pixels.
-        std::uint32_t                                          height{256};
-        std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats{ vn::graphics::RenderTarget::ColorFormat::RGBA8 };
-        std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;  ///< Absent for colour only.
-        bool           depth_sampleable{false};  ///< The host asked for a depth a shader may sample (promotion).
-        std::uint32_t  samples{1};               ///< Samples per pixel (1 = no multisampling; see RenderTarget::setSamples).
-        core::ClearValues clear;        ///< What the pass clears (bootstrap applies).
+    struct TargetLayout {
+        std::uint32_t                                          width{ 256 }; // Extent in pixels.
+        std::uint32_t                                          height{ 256 };
+        std::vector<vn::graphics::RenderTarget::ColorFormat>   color_formats{ vn::graphics::RenderTarget::ColorFormat::RGBA8 };
+        std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;              // Absent for colour only.
+        bool                                                   depth_sampleable{ false }; // The host asked for a depth a shader may sample (promotion).
+        std::uint32_t                                          samples{ 1 }; // Samples per pixel (1 = no multisampling; see RenderTarget::setSamples).
+        core::ClearValues                                      clear;        // What the pass clears (bootstrap applies).
     };
 
   public:
@@ -120,12 +119,12 @@ class OffscreenTarget
      * @return The target, or null when any image, the pass or a readback buffer could not be created, or when
      *         the borrowed depth does not fit (no source depth, mismatched formats, a LOAD plan without one).
      */
-    static std::unique_ptr<OffscreenTarget> create(::vsg::ref_ptr<::vsg::Device> device, const TargetLayout& layout,
-                                                   const OffscreenTarget* depth_source = nullptr);
+    static std::unique_ptr<OffscreenTarget>
+    create(::vsg::ref_ptr<::vsg::Device> device, const TargetLayout& layout, const OffscreenTarget* depth_source = nullptr);
 
     ~OffscreenTarget();
 
-    OffscreenTarget(const OffscreenTarget&) = delete;
+    OffscreenTarget(const OffscreenTarget&)            = delete;
     OffscreenTarget& operator=(const OffscreenTarget&) = delete;
 
   public:
@@ -400,13 +399,12 @@ class OffscreenTarget
     [[nodiscard]] std::uint64_t generation() const noexcept;
 
     /** @brief What a plan-driven extent change did (see @ref resize). */
-    struct Resized
-    {
-        core::TargetDecision decision{};      ///< The plan's own answer (`planTarget`).
-        bool                 replaced{false}; ///< Attachments were replaced (the extent really changed).
-        bool                 refused{false};  ///< A depth lease blocked it (see the declaration of resize).
-        bool                 parked{false};   ///< What was replaced went to the retirement queue.
-        std::uint64_t        generation{0};   ///< The generation in force when the call returned.
+    struct Resized {
+        core::TargetDecision decision{};        // The plan's own answer (`planTarget`).
+        bool                 replaced{ false }; // Attachments were replaced (the extent really changed).
+        bool                 refused{ false };  // A depth lease blocked it (see the declaration of resize).
+        bool                 parked{ false };   // What was replaced went to the retirement queue.
+        std::uint64_t        generation{ 0 };   // The generation in force when the call returned.
     };
 
     /** @brief Re-points a BORROWER's framebuffer at the image its lender currently serves.
@@ -468,17 +466,15 @@ class OffscreenTarget
      *         `replaced == false`: `refused` says a lease blocked it, and an action of ResizeInPlace (or
      *         Rebuild) without a refusal says the build itself failed, leaving the target serving what it had.
      */
-    [[nodiscard]] Resized resize(std::uint32_t width, std::uint32_t height, const core::FrameTimeline& timeline,
-                                 core::RetirementQueue& retirement);
+    [[nodiscard]] Resized resize(std::uint32_t width, std::uint32_t height, const core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief What a plan-driven shape change did (see @ref rebuild). */
-    struct Rebuilt
-    {
-        core::TargetDecision decision{};      ///< The plan's own answer (`planTarget`).
-        bool                 replaced{false}; ///< The shape really changed and is now served.
-        bool                 refused{false};  ///< A depth lease blocked it (see the declaration of rebuild).
-        bool                 parked{false};   ///< The replaced objects went to the retirement queue.
-        std::uint64_t        generation{0};   ///< The generation in force when the call returned.
+    struct Rebuilt {
+        core::TargetDecision decision{};        // The plan's own answer (`planTarget`).
+        bool                 replaced{ false }; // The shape really changed and is now served.
+        bool                 refused{ false };  // A depth lease blocked it (see the declaration of rebuild).
+        bool                 parked{ false };   // The replaced objects went to the retirement queue.
+        std::uint64_t        generation{ 0 };   // The generation in force when the call returned.
     };
 
     /** @brief Makes the target serve a new SHAPE, the way the plan says (`core::planTarget`).
@@ -524,8 +520,7 @@ class OffscreenTarget
      *         An action of `Rebuild` without `replaced` says the build itself failed (a description the
      *         driver refused): the target still serves the shape it had.
      */
-    [[nodiscard]] Rebuilt rebuild(const TargetLayout& wanted, const core::FrameTimeline& timeline,
-                                  core::RetirementQueue& retirement);
+    [[nodiscard]] Rebuilt rebuild(const TargetLayout& wanted, const core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
   private:
     struct Data;
@@ -554,27 +549,25 @@ class OffscreenTarget
 
     /** @brief Everything that depends on the extent: what a resize replaces and what it must keep alive until
      *         the retirement queue releases it. */
-    struct Attachments
-    {
+    struct Attachments {
         /// @brief One colour attachment and the memory its pixels are copied back into.
-        struct Color
-        {
+        struct Color {
             /// The attachment the pass DRAWS into: multisampled when the target asks for it, otherwise the
             /// image a later pass samples and a readback copies.
-            ::vsg::ref_ptr<::vsg::Image>                         image;
-            ::vsg::ref_ptr<::vsg::ImageView>                     view;
+            ::vsg::ref_ptr<::vsg::Image>     image;
+            ::vsg::ref_ptr<::vsg::ImageView> view;
             /// Where a multisampled pass RESOLVES into (single-sample): the image later passes sample, the
             /// readback copies from, and the one that carries the picture between frames. Null when the
             /// target is single-sample (then @ref image is that image).
             ::vsg::ref_ptr<::vsg::Image>                         resolve_image;
             ::vsg::ref_ptr<::vsg::ImageView>                     resolve_view;
-            ::vsg::ref_ptr<::vsg::Commands>                      capture;  ///< Empty when the format is unreadable.
+            ::vsg::ref_ptr<::vsg::Commands>                      capture; // Empty when the format is unreadable.
             ::vsg::ref_ptr<::vsg::Buffer>                        destination;
             ::vsg::ref_ptr<::vsg::DeviceMemory>                  destination_memory;
             ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> mapped;
             /// Whether the copy node was handed out for recording (see capture). A fresh set starts
             /// UNCLEARED here: its buffers hold whatever the allocation held, which is not a picture.
-            bool                                                 captured{false};
+            bool captured{ false };
 
             /** @brief Gets the image that holds the PICTURE (the resolved one when multisampled). */
             [[nodiscard]] const ::vsg::ref_ptr<::vsg::Image>& picture() const noexcept
@@ -583,19 +576,19 @@ class OffscreenTarget
             }
         };
 
-        std::vector<Color>                                   colors;
-        ::vsg::ref_ptr<::vsg::Image>                         depth_image;   ///< Empty when the depth is borrowed.
-        ::vsg::ref_ptr<::vsg::ImageView>                     depth_view;    ///< Empty when the depth is borrowed.
+        std::vector<Color>               colors;
+        ::vsg::ref_ptr<::vsg::Image>     depth_image; // Empty when the depth is borrowed.
+        ::vsg::ref_ptr<::vsg::ImageView> depth_view;  // Empty when the depth is borrowed.
         /// Where a MULTISAMPLED pass resolves the depth into (single-sample): the image later passes sample,
         /// a borrower attaches, and the depth readback copies. Null when the target is single-sample (then
         /// @ref depth_image is that image) or when the depth is borrowed (the lender's picture answers).
         ::vsg::ref_ptr<::vsg::Image>                         depth_resolve_image;
         ::vsg::ref_ptr<::vsg::ImageView>                     depth_resolve_view;
-        ::vsg::ref_ptr<::vsg::Commands>                      depth_capture;  ///< Empty when the format is unreadable.
+        ::vsg::ref_ptr<::vsg::Commands>                      depth_capture; // Empty when the format is unreadable.
         ::vsg::ref_ptr<::vsg::Buffer>                        depth_destination;
         ::vsg::ref_ptr<::vsg::DeviceMemory>                  depth_destination_memory;
         ::vsg::ref_ptr<::vsg::MappedData<::vsg::ubyteArray>> depth_mapped;
-        bool                                                 depth_captured{false};  ///< See Color::captured.
+        bool                                                 depth_captured{ false }; // See Color::captured.
         ::vsg::ref_ptr<::vsg::Framebuffer>                   framebuffer;
         ::vsg::ref_ptr<::vsg::RenderGraph>                   render_graph;
 

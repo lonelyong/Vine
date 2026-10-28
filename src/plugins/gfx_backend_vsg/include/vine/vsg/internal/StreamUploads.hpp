@@ -2,8 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <memory>
+#include <span>
 
 #include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
@@ -57,29 +57,26 @@
 VN_VSG_NS_BEGIN
 
 /** @brief Shared stream uploads, keyed by `core::StreamKey`. */
-class StreamUploads
-{
+class StreamUploads {
   public:
     /** @brief What an acquire did. */
     enum class Action : std::uint8_t
     {
-        Uploaded,  ///< A bind was built for this stream (the bytes will be uploaded once).
-        Aliased,   ///< An existing bind serves this stream.
-        Refused,   ///< This stream may not be shared (see the file note); the caller builds a private bind.
+        Uploaded, // A bind was built for this stream (the bytes will be uploaded once).
+        Aliased,  // An existing bind serves this stream.
+        Refused,  // This stream may not be shared (see the file note); the caller builds a private bind.
     };
 
     /** @brief The answer of @ref acquireVertex. */
-    struct VertexResult
-    {
-        Action                                       action{Action::Refused};  ///< What happened.
-        ::vsg::ref_ptr<::vsg::BindVertexBuffers>     bind;                    ///< The bind (null when refused).
+    struct VertexResult {
+        Action                                   action{ Action::Refused }; // What happened.
+        ::vsg::ref_ptr<::vsg::BindVertexBuffers> bind;                      // The bind (null when refused).
     };
 
     /** @brief The answer of @ref acquireIndex. */
-    struct IndexResult
-    {
-        Action                                       action{Action::Refused};  ///< What happened.
-        ::vsg::ref_ptr<::vsg::BindIndexBuffer>       bind;                    ///< The bind (null when refused).
+    struct IndexResult {
+        Action                                 action{ Action::Refused }; // What happened.
+        ::vsg::ref_ptr<::vsg::BindIndexBuffer> bind;                      // The bind (null when refused).
     };
 
     /** @brief Sentinel: a shader location that has no canonical binding (a custom channel). */
@@ -93,7 +90,7 @@ class StreamUploads
     explicit StreamUploads(std::size_t capacity = core::SharedStreams::kDefaultCapacity);
     ~StreamUploads();
 
-    StreamUploads(const StreamUploads&) = delete;
+    StreamUploads(const StreamUploads&)            = delete;
     StreamUploads& operator=(const StreamUploads&) = delete;
 
   public:
@@ -145,6 +142,7 @@ class StreamUploads
      * @return How many entries left (each one's bind went with it).
      */
     std::uint64_t releaseUnseen();
+
   public:
     /** @brief Gets the number of entries the registry holds. */
     [[nodiscard]] std::size_t live() const noexcept;

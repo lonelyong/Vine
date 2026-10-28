@@ -33,21 +33,20 @@
 #include <vsg/app/WindowTraits.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
+#include <vine/vsg/internal/BlockStorage.hpp>
 
 #include "SdkPixelFixture.hpp"
 
-using vn::vsg::BlockStorage;
 using vn::graphics::backend::kAssumedInFlightSlots;
 using vn::graphics::backend::perFrameCopies;
+using vn::vsg::BlockStorage;
 
 namespace
 {
 
 /// @brief A window (and with it a device) the test owns, plus a storage built on that device.
-class Fixture
-{
+class Fixture {
   public:
     /** @brief Whether this machine can run the device cases at all.
      *
@@ -88,8 +87,8 @@ class Fixture
         window.reset();
     }
 
-    ::vsg::ref_ptr<::vsg::Window>  window;
-    ::vsg::ref_ptr<::vsg::Device>  device;
+    ::vsg::ref_ptr<::vsg::Window> window;
+    ::vsg::ref_ptr<::vsg::Device> device;
     std::unique_ptr<BlockStorage> storage;
 };
 
@@ -104,8 +103,7 @@ std::vector<std::byte> readBack(const BlockStorage& storage, std::uint64_t offse
 {
     const std::span<const std::byte> bytes = storage.bytes();
     EXPECT_LE(offset + size, bytes.size()) << "the read-back must stay inside the mapping";
-    return std::vector<std::byte>(bytes.begin() + static_cast<std::ptrdiff_t>(offset),
-                                  bytes.begin() + static_cast<std::ptrdiff_t>(offset + size));
+    return std::vector<std::byte>(bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + size));
 }
 
 /// @brief Whether @p offset (and its block) falls inside the region [base, base + bytes).
@@ -114,7 +112,7 @@ bool inside(std::uint64_t offset, std::size_t size, std::uint64_t base, std::uin
     return offset >= base && offset + size <= base + bytes;
 }
 
-}  // namespace
+} // namespace
 
 TEST(BlockStorageTest, ANullDeviceYieldsNoStorage)
 {
@@ -139,13 +137,12 @@ TEST(BlockStorageTest, TheRegionsAreLaidOutOnceAndDoNotOverlap)
     // (BlockStorage::uniformAlignment: every region's stride is alignUp'ed to it; a device reporting 0
     // takes the fallback) - the next occurrence has to arrive with its inputs attached.
     const auto&       limits = fixture.device->getPhysicalDevice()->getProperties().limits;
-    const std::string probe =
-        "minUniformBufferOffsetAlignment=" + std::to_string(limits.minUniformBufferOffsetAlignment) + "\n  views [0, " +
-        std::to_string(regions.views_bytes) + ") stride " + std::to_string(strides.view) + " | draws [" +
-        std::to_string(regions.draws_base) + ", " + std::to_string(regions.draws_base + regions.draws_bytes) +
-        ") stride " + std::to_string(strides.draw) + " | materials [" + std::to_string(regions.materials_base) +
-        ", " + std::to_string(regions.materials_base + regions.materials_bytes) + ") stride " +
-        std::to_string(strides.material) + " | capacity " + std::to_string(fixture.storage->capacityBytes());
+    const std::string probe  = "minUniformBufferOffsetAlignment=" + std::to_string(limits.minUniformBufferOffsetAlignment) + "\n  views [0, " +
+                               std::to_string(regions.views_bytes) + ") stride " + std::to_string(strides.view) + " | draws [" +
+                               std::to_string(regions.draws_base) + ", " + std::to_string(regions.draws_base + regions.draws_bytes) + ") stride " +
+                               std::to_string(strides.draw) + " | materials [" + std::to_string(regions.materials_base) + ", " +
+                               std::to_string(regions.materials_base + regions.materials_bytes) + ") stride " + std::to_string(strides.material) +
+                               " | capacity " + std::to_string(fixture.storage->capacityBytes());
     SCOPED_TRACE(probe);
     std::printf("[storage] %s\n", probe.c_str());
 
@@ -156,8 +153,7 @@ TEST(BlockStorageTest, TheRegionsAreLaidOutOnceAndDoNotOverlap)
     EXPECT_LE(regions.draws_base + regions.draws_bytes, regions.materials_base);
     EXPECT_GT(regions.materials_bytes, 0U);
     EXPECT_EQ(fixture.storage->capacityBytes(), regions.materials_base + regions.materials_bytes);
-    EXPECT_EQ(fixture.storage->bytes().size(), fixture.storage->capacityBytes())
-        << "the whole buffer is mapped: every write goes straight into it";
+    EXPECT_EQ(fixture.storage->bytes().size(), fixture.storage->capacityBytes()) << "the whole buffer is mapped: every write goes straight into it";
     ASSERT_NE(fixture.storage->buffer(), nullptr);
 }
 
@@ -170,10 +166,10 @@ TEST(BlockStorageTest, EveryBlockIsReadBackFromInsideItsOwnRegion)
     ASSERT_TRUE(fixture.build({}));
     const BlockStorage::Regions regions = fixture.storage->regions();
 
-    const std::vector<std::byte> view = blockOf(288, 0x11);
-    const std::vector<std::byte> draw = blockOf(80, 0x22);
-    const std::vector<std::byte> material = blockOf(64, 0x33);
-    const int                 material_identity = 0;
+    const std::vector<std::byte> view              = blockOf(288, 0x11);
+    const std::vector<std::byte> draw              = blockOf(80, 0x22);
+    const std::vector<std::byte> material          = blockOf(64, 0x33);
+    const int                    material_identity = 0;
 
     fixture.storage->beginFrame();
     const auto view_result     = fixture.storage->writeView(view);
@@ -201,10 +197,9 @@ TEST(BlockStorageTest, TheDefaultsOwnOneSlabMoreThanTheFramesInFlight)
     // another frame's matrices - the frame being recorded writes the slab the OLDEST frame still allowed to
     // be in flight reads, because the framework only proves a frame finished when its slot is recycled.
     const BlockStorage::Layout layout;
-    const std::uint32_t       copies = perFrameCopies(kAssumedInFlightSlots);
+    const std::uint32_t        copies = perFrameCopies(kAssumedInFlightSlots);
 
-    EXPECT_GT(copies, kAssumedInFlightSlots)
-        << "a ring of exactly the in-flight count hands the oldest in-flight frame the newest frame's bytes";
+    EXPECT_GT(copies, kAssumedInFlightSlots) << "a ring of exactly the in-flight count hands the oldest in-flight frame the newest frame's bytes";
     EXPECT_EQ(layout.views.slabs, copies);
     EXPECT_EQ(layout.draws.slabs, copies);
     EXPECT_EQ(layout.lights.slabs, copies);
@@ -227,8 +222,7 @@ TEST(BlockStorageTest, AShallowLayoutIsRaisedToTheInFlightFloorAndNeverShrunk)
     shallow.shadows.slabs    = 3U;
     shallow.materials.copies = 3U;
 
-    EXPECT_FALSE(BlockStorage::hasSlabsForInFlight(shallow, kAssumedInFlightSlots))
-        << "three slabs for three frames in flight is the torn-picture shape";
+    EXPECT_FALSE(BlockStorage::hasSlabsForInFlight(shallow, kAssumedInFlightSlots)) << "three slabs for three frames in flight is the torn-picture shape";
 
     const BlockStorage::Layout raised = BlockStorage::layoutForInFlight(shallow, kAssumedInFlightSlots);
     EXPECT_TRUE(BlockStorage::hasSlabsForInFlight(raised, kAssumedInFlightSlots));
@@ -244,8 +238,7 @@ TEST(BlockStorageTest, AShallowLayoutIsRaisedToTheInFlightFloorAndNeverShrunk)
     BlockStorage::Layout mixed;
     mixed.views.slabs = 6U;
     mixed.draws.slabs = 2U;
-    EXPECT_FALSE(BlockStorage::hasSlabsForInFlight(mixed, kAssumedInFlightSlots))
-        << "one short shape makes the whole layout unsafe";
+    EXPECT_FALSE(BlockStorage::hasSlabsForInFlight(mixed, kAssumedInFlightSlots)) << "one short shape makes the whole layout unsafe";
     const BlockStorage::Layout fixed = BlockStorage::layoutForInFlight(mixed, kAssumedInFlightSlots);
     EXPECT_EQ(fixed.views.slabs, 6U);
     EXPECT_EQ(fixed.draws.slabs, floor_copies);
@@ -254,8 +247,7 @@ TEST(BlockStorageTest, AShallowLayoutIsRaisedToTheInFlightFloorAndNeverShrunk)
     // not shrink what is already there.
     EXPECT_FALSE(BlockStorage::hasSlabsForInFlight(raised, 4U));
     EXPECT_EQ(BlockStorage::layoutForInFlight(raised, 4U).views.slabs, perFrameCopies(4U));
-    EXPECT_EQ(BlockStorage::layoutForInFlight(raised, 2U).views.slabs, floor_copies)
-        << "the ring is not shrunk to what a shallower count would ask for";
+    EXPECT_EQ(BlockStorage::layoutForInFlight(raised, 2U).views.slabs, floor_copies) << "the ring is not shrunk to what a shallower count would ask for";
 
     // Strides and budgets are not the shape's business: only the slab counts move.
     BlockStorage::Layout budgeted    = raised;
@@ -299,8 +291,7 @@ TEST(BlockStorageTest, AStorageBuiltFromAShallowLayoutOwnsTheInFlightFloor)
     }
     EXPECT_NE(offsets[0], offsets[1]);
     EXPECT_NE(offsets[1], offsets[2]);
-    EXPECT_NE(offsets[3], offsets[0])
-        << "the oldest of the three frames in flight is only proved finished when its slot is recycled";
+    EXPECT_NE(offsets[3], offsets[0]) << "the oldest of the three frames in flight is only proved finished when its slot is recycled";
     EXPECT_EQ(offsets[4], offsets[0]) << "four slabs is the whole ring: the fifth frame wraps into the first";
     EXPECT_EQ(fixture.storage->overflows(), 0U);
 }
@@ -310,9 +301,9 @@ TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightD
     if (!Fixture::available()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
-    Fixture fixture;
+    Fixture              fixture;
     BlockStorage::Layout layout;
-    layout.views.slabs = perFrameCopies(3U);  // three frames in flight: four slabs (see core::perFrameCopies)
+    layout.views.slabs = perFrameCopies(3U); // three frames in flight: four slabs (see core::perFrameCopies)
     ASSERT_TRUE(fixture.build(layout));
 
     const std::vector<std::byte> block = blockOf(288, 0x44);
@@ -325,9 +316,8 @@ TEST(BlockStorageTest, TheSlabsRotateSoASteadyFrameWritesWhereTheFramesInFlightD
 
     EXPECT_NE(offsets[0], offsets[1]) << "frame 1 must not write over the frame the GPU may still read";
     EXPECT_NE(offsets[1], offsets[2]);
-    EXPECT_NE(offsets[3], offsets[0])
-        << "frame 3 writes while frame 0 may still be reading slab 0: the oldest of the three frames in flight"
-           " is only proved finished when its slot is recycled, which is not until frame 3 has been submitted";
+    EXPECT_NE(offsets[3], offsets[0]) << "frame 3 writes while frame 0 may still be reading slab 0: the oldest of the three frames in flight"
+                                         " is only proved finished when its slot is recycled, which is not until frame 3 has been submitted";
     EXPECT_EQ(fixture.storage->overflows(), 0U);
 }
 
@@ -336,13 +326,13 @@ TEST(BlockStorageTest, AFramePastItsBudgetIsRefusedButAsksForAReplacement)
     if (!Fixture::available()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
-    Fixture fixture;
+    Fixture              fixture;
     BlockStorage::Layout layout;
     layout.draws.blocks_per_frame = 2;
     ASSERT_TRUE(fixture.build(layout));
 
-    const std::vector<std::byte> block      = blockOf(80, 0x55);
-    const std::uint64_t          capacity   = fixture.storage->capacityBytes();
+    const std::vector<std::byte> block    = blockOf(80, 0x55);
+    const std::uint64_t          capacity = fixture.storage->capacityBytes();
 
     fixture.storage->beginFrame();
     EXPECT_TRUE(fixture.storage->writeDraw(block).valid);
@@ -367,8 +357,7 @@ TEST(BlockStorageTest, AFramePastItsBudgetIsRefusedButAsksForAReplacement)
     // The replacement the policy spells serves all three, and starts with no request of its own.
     const BlockStorage::Layout grown = BlockStorage::grownLayout(layout, need);
     EXPECT_EQ(grown.draws.blocks_per_frame, 4U) << "doubling (2 -> 4) already covers the need (3)";
-    EXPECT_EQ(grown.views.blocks_per_frame, layout.views.blocks_per_frame)
-        << "a region the need leaves alone keeps its budget";
+    EXPECT_EQ(grown.views.blocks_per_frame, layout.views.blocks_per_frame) << "a region the need leaves alone keeps its budget";
 
     std::unique_ptr<BlockStorage> replacement = BlockStorage::create(fixture.device, grown);
     ASSERT_NE(replacement, nullptr) << "the grown layout could not be built on this device";
@@ -386,21 +375,16 @@ TEST(BlockStorageTest, TheGrowthPolicyDoublesWhileItCoversAndTakesABiggerNeed)
     // cannot hide behind a device case's skip.
     const BlockStorage::Layout current;
 
-    EXPECT_EQ(BlockStorage::grownLayout(current, BlockStorage::Growth{}).draws.blocks_per_frame, 1024U)
-        << "nothing asked means nothing changes";
+    EXPECT_EQ(BlockStorage::grownLayout(current, BlockStorage::Growth{}).draws.blocks_per_frame, 1024U) << "nothing asked means nothing changes";
 
-    const BlockStorage::Layout doubled =
-        BlockStorage::grownLayout(current, BlockStorage::Growth{ 0U, 1200U, 0U, 0U });
+    const BlockStorage::Layout doubled = BlockStorage::grownLayout(current, BlockStorage::Growth{ 0U, 1200U, 0U, 0U });
     EXPECT_EQ(doubled.draws.blocks_per_frame, 2048U) << "a need inside the doubling grows to 2x (amortised)";
     EXPECT_EQ(doubled.views.blocks_per_frame, 256U) << "regions without a request keep their budget";
 
-    const BlockStorage::Layout covered =
-        BlockStorage::grownLayout(current, BlockStorage::Growth{ 0U, 5000U, 0U, 0U });
-    EXPECT_EQ(covered.draws.blocks_per_frame, 5000U)
-        << "a need past the doubling wins: one big frame must not grow twice";
+    const BlockStorage::Layout covered = BlockStorage::grownLayout(current, BlockStorage::Growth{ 0U, 5000U, 0U, 0U });
+    EXPECT_EQ(covered.draws.blocks_per_frame, 5000U) << "a need past the doubling wins: one big frame must not grow twice";
 
-    const BlockStorage::Layout views =
-        BlockStorage::grownLayout(current, BlockStorage::Growth{ 300U, 0U, 0U, 0U });
+    const BlockStorage::Layout views = BlockStorage::grownLayout(current, BlockStorage::Growth{ 300U, 0U, 0U, 0U });
     EXPECT_EQ(views.views.blocks_per_frame, 512U) << "doubling (256 -> 512) covers a 300-block need";
     EXPECT_EQ(views.draws.blocks_per_frame, 1024U) << "and the region without a request is untouched";
 }
@@ -420,8 +404,7 @@ TEST(BlockStorageTest, AnOversizedBlockIsRefusedBeforeItConsumesAnything)
     EXPECT_FALSE(fixture.storage->writeView(oversized).valid);
     EXPECT_EQ(fixture.storage->oversized(), 1U);
     EXPECT_EQ(fixture.storage->writes(), 0U) << "nothing was copied";
-    EXPECT_TRUE(fixture.storage->writeView(proper).valid)
-        << "a refused oversized block must not have consumed the frame's budget";
+    EXPECT_TRUE(fixture.storage->writeView(proper).valid) << "a refused oversized block must not have consumed the frame's budget";
 }
 
 TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBlock)
@@ -449,10 +432,8 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
     const auto steady = fixture.storage->writeMaterial(&material, 1, second);
     EXPECT_EQ(steady.kind, vn::graphics::backend::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(steady.bytes, 0U);
-    EXPECT_EQ(steady.offset, allocated.offset)
-        << "a hit still names the block: a draw binds THAT offset (offset 0 is another region's data)";
-    EXPECT_EQ(readBack(*fixture.storage, allocated.offset, first.size()), first)
-        << "a steady frame must not have overwritten anything";
+    EXPECT_EQ(steady.offset, allocated.offset) << "a hit still names the block: a draw binds THAT offset (offset 0 is another region's data)";
+    EXPECT_EQ(readBack(*fixture.storage, allocated.offset, first.size()), first) << "a steady frame must not have overwritten anything";
 
     // An edit: exactly one block, wherever this frame's copy lives.
     fixture.storage->beginFrame();
@@ -466,8 +447,7 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
     EXPECT_EQ(deduped.kind, vn::graphics::backend::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(deduped.bytes, 0U);
     EXPECT_EQ(deduped.offset, rewritten.offset) << "the frame's copy is where both answers point";
-    EXPECT_EQ(readBack(*fixture.storage, rewritten.offset, third.size()), third)
-        << "the frame's copy still holds the version the draw will use";
+    EXPECT_EQ(readBack(*fixture.storage, rewritten.offset, third.size()), third) << "the frame's copy still holds the version the draw will use";
     EXPECT_EQ(fixture.storage->materialWrites(), 2U);
     EXPECT_EQ(fixture.storage->bytesWritten(), first.size() * 2U);
 }
@@ -477,9 +457,9 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
     if (!Fixture::available()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
-    Fixture fixture;
+    Fixture              fixture;
     BlockStorage::Layout layout;
-    layout.materials.copies = perFrameCopies(3U);  // three frames in flight: four copies (see the arena's note)
+    layout.materials.copies = perFrameCopies(3U); // three frames in flight: four copies (see the arena's note)
     ASSERT_TRUE(fixture.build(layout));
 
     const int material = 0;
@@ -491,8 +471,8 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
         fixture.storage->beginFrame();
         const std::vector<std::byte> block  = blockOf(64, revision);
         const auto                   result = fixture.storage->writeMaterial(&material, revision, block);
-        ASSERT_EQ(result.kind, revision == 1 ? vn::graphics::backend::MaterialArena::WriteKind::Allocated
-                                             : vn::graphics::backend::MaterialArena::WriteKind::Rewritten);
+        ASSERT_EQ(result.kind,
+                  revision == 1 ? vn::graphics::backend::MaterialArena::WriteKind::Allocated : vn::graphics::backend::MaterialArena::WriteKind::Rewritten);
         EXPECT_EQ(readBack(*fixture.storage, result.offset, block.size()), block);
         offsets.push_back(result.offset);
     }
@@ -507,7 +487,7 @@ TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
     if (!Fixture::available()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
-    Fixture fixture;
+    Fixture              fixture;
     BlockStorage::Layout layout;
     layout.materials.capacity = 2U;
     ASSERT_TRUE(fixture.build(layout));
@@ -537,7 +517,7 @@ TEST(BlockStorageTest, TheMaterialRegionGrowsWhileTheOthersStay)
 {
     BlockStorage::Layout current;
     current.views.blocks_per_frame = 10U;
-    current.materials.capacity       = 2U;
+    current.materials.capacity     = 2U;
 
     BlockStorage::Growth request{};
     request.materials = 3U;

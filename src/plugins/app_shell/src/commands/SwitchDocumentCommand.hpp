@@ -21,9 +21,20 @@ class SwitchDocumentCommand : public Command {
     VN_DECLARE_COMMAND(SwitchDocumentCommand, u8"switch_document")
 
   public:
-    String       group() const override { return u8"文档"; }
-    String       description() const override { return u8"按标题或类型 id 切换当前文档"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"文档";
+    }
+
+    String description() const override
+    {
+        return u8"按标题或类型 id 切换当前文档";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
 
     /**
      * @brief Asks for a title or type id and makes the matching document current.

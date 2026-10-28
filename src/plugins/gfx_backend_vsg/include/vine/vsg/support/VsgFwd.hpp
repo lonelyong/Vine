@@ -33,4 +33,4 @@ class View;
 class Viewer;
 class Window;
 
-}  // namespace vsg
+} // namespace vsg

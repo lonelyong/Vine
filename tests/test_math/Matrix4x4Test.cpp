@@ -5,7 +5,8 @@
 
 using namespace vn::math;
 
-TEST(Matrix4x4, setToIdentity) {
+TEST(Matrix4x4, setToIdentity)
+{
     Mat4d m;
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
@@ -19,19 +20,22 @@ TEST(Matrix4x4, setToIdentity) {
     }
 }
 
-TEST(Matrix4x4, transpose) {
+TEST(Matrix4x4, transpose)
+{
     Mat4d m;
     m(1, 3) = 6;
     m.transpose();
     ASSERT_TRUE(m(3, 1) == 6);
 }
 
-TEST(Matrix4x4, isIdentity) {
+TEST(Matrix4x4, isIdentity)
+{
     Mat4d m;
     ASSERT_TRUE(m.isIdentity());
 }
 
-TEST(Matrix4x4, multiplyAssign) {
+TEST(Matrix4x4, multiplyAssign)
+{
     Mat4d a = translate(1.0, 2.0, 3.0);
 
     Mat4d b = scale(2.0, 3.0, 4.0);
@@ -46,17 +50,19 @@ TEST(Matrix4x4, multiplyAssign) {
     }
 }
 
-TEST(Matrix4x4, makeRotationZeroAngleMakesIdentity) {
+TEST(Matrix4x4, makeRotationZeroAngleMakesIdentity)
+{
     Mat4d m;
     m = translate(9.0, 8.0, 7.0);
     m = rotate(Vec3d(1.0, 0.0, 0.0), 0.0);
     EXPECT_TRUE(m.isIdentity());
 }
 
-TEST(Matrix4x4, transformVectorAndPoint) {
+TEST(Matrix4x4, transformVectorAndPoint)
+{
     Mat4d m = translate(10.0, 20.0, 30.0);
 
-    Vec3d v(1.0, 2.0, 3.0);
+    Vec3d   v(1.0, 2.0, 3.0);
     Point3d p(1.0, 2.0, 3.0);
 
     // Vector should ignore translation.
@@ -72,7 +78,8 @@ TEST(Matrix4x4, transformVectorAndPoint) {
     EXPECT_DOUBLE_EQ(p2.z, 33.0);
 }
 
-TEST(Matrix4x4, invertAffineRoundTrip) {
+TEST(Matrix4x4, invertAffineRoundTrip)
+{
     constexpr double pi = 3.14159265358979323846;
 
     Mat4d t = translate(5.0, -2.0, 1.5);
@@ -81,9 +88,9 @@ TEST(Matrix4x4, invertAffineRoundTrip) {
 
     Mat4d s = scale(2.0, 3.0, 4.0);
 
-    Mat4d m = t * r * s;
+    Mat4d m   = t * r * s;
     Mat4d inv = m.inverted();
-    Mat4d id = m * inv;
+    Mat4d id  = m * inv;
 
     for (int i = 0; i < 4; ++i) {
         for (int j = 0; j < 4; ++j) {
@@ -97,9 +104,10 @@ TEST(Matrix4x4, invertAffineRoundTrip) {
     }
 }
 
-TEST(Matrix4x4, quaternionRotationMatchesAxisAngle) {
+TEST(Matrix4x4, quaternionRotationMatchesAxisAngle)
+{
     constexpr double half_pi = 1.5707963267948966;
-    Quatd q(half_pi, Vec3d(0.0, 0.0, 1.0));
+    Quatd            q(half_pi, Vec3d(0.0, 0.0, 1.0));
 
     Mat4d mq = rotate(q);
 
@@ -112,7 +120,8 @@ TEST(Matrix4x4, quaternionRotationMatchesAxisAngle) {
     }
 }
 
-TEST(Matrix4x4, isRigidRejectsScaleAndReflection) {
+TEST(Matrix4x4, isRigidRejectsScaleAndReflection)
+{
     Mat4d rigid = rotate(Vec3d(0.0, 1.0, 0.0), 0.3);
     rigid(0, 3) = 1.0;
     rigid(1, 3) = 2.0;
@@ -126,9 +135,10 @@ TEST(Matrix4x4, isRigidRejectsScaleAndReflection) {
     EXPECT_FALSE(reflected.isRigid());
 }
 
-TEST(Matrix4x4, perspectiveMapsPointWithHomogeneousDivide) {
+TEST(Matrix4x4, perspectiveMapsPointWithHomogeneousDivide)
+{
     constexpr double pi = 3.14159265358979323846;
-    Mat4d p = perspective<double>(pi / 2.0, 1.0, 1.0, 100.0);
+    Mat4d            p  = perspective<double>(pi / 2.0, 1.0, 1.0, 100.0);
 
     Point3d view_pt(0.0, 0.0, -2.0);
     Point3d clip_ndc = p * view_pt;

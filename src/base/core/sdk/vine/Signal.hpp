@@ -60,10 +60,15 @@ class Connection {
      *
      * @param other Handle to move from; it stops owning the subscription.
      */
-    Connection(Connection&& other) noexcept : state_(std::move(other.state_)) { }
+    Connection(Connection&& other) noexcept
+      : state_(std::move(other.state_))
+    {}
 
     /// @brief Cancels what this handle owns. Destroying an empty handle does nothing.
-    ~Connection() { disconnect(); }
+    ~Connection()
+    {
+        disconnect();
+    }
 
     Connection(const Connection&)            = delete;
     Connection& operator=(const Connection&) = delete;
@@ -107,7 +112,10 @@ class Connection {
      * For a handler that should stay subscribed for as long as the Signal lives, such as a
      * widget wiring an internal behaviour onto its own signal.
      */
-    void detach() noexcept { state_.reset(); }
+    void detach() noexcept
+    {
+        state_.reset();
+    }
 
     /**
      * @brief Reports whether the handler can still be called.
@@ -125,7 +133,10 @@ class Connection {
      *
      * @return true while the slot exists and has not been cancelled.
      */
-    explicit operator bool() const noexcept { return isActive(); }
+    explicit operator bool() const noexcept
+    {
+        return isActive();
+    }
 
   private:
     /**
@@ -133,7 +144,9 @@ class Connection {
      *
      * @param state Slot state to own.
      */
-    explicit Connection(std::shared_ptr<State> state) noexcept : state_(std::move(state)) { }
+    explicit Connection(std::shared_ptr<State> state) noexcept
+      : state_(std::move(state))
+    {}
 
     /// The subscription this handle owns, weakly: a handle that outlives its Signal is inert.
     std::weak_ptr<State> state_;
@@ -189,7 +202,7 @@ class Signal {
      * the callback lives here, because only the Signal calls it.
      */
     struct Slot : Connection::State {
-        Handler           callback;
+        Handler callback;
     };
 
     /// The slot table: immutable once published, replaced as a whole by every mutation, and
@@ -314,10 +327,7 @@ class Signal {
         // Cancelled slots - a Connection that already destroyed itself - are dropped while
         // the table is being copied anyway, so subscribing and unsubscribing in a loop does
         // not grow it.
-        next->erase(std::remove_if(next->begin(), next->end(),
-                                   [](const auto& existing) {
-                                       return !existing->alive.load(std::memory_order_relaxed);
-                                   }),
+        next->erase(std::remove_if(next->begin(), next->end(), [](const auto& existing) { return !existing->alive.load(std::memory_order_relaxed); }),
                     next->end());
 
         next->push_back(std::move(slot));

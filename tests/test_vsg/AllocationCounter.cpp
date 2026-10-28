@@ -63,16 +63,14 @@ void* allocateAligned(std::size_t bytes, std::size_t alignment)
 #if defined(_MSC_VER)
     return _aligned_malloc(bytes, alignment);
 #else
-    if (alignment <= alignof(std::max_align_t))
-    {
+    if (alignment <= alignof(std::max_align_t)) {
         return std::malloc(bytes);
     }
     void* block = nullptr;
     // `posix_memalign` (not `std::aligned_alloc`): the latter requires the size to be a multiple of the
     // alignment, which the language's aligned allocation functions do not guarantee - they are given
     // whatever the caller asked for.
-    if (::posix_memalign(&block, alignment, bytes) != 0)
-    {
+    if (::posix_memalign(&block, alignment, bytes) != 0) {
         return nullptr;
     }
     return block;
@@ -94,7 +92,7 @@ void releaseAligned(void* block) noexcept
     return true;
 }();
 
-}  // namespace
+} // namespace
 
 // --- the replaceable allocation functions -----------------------------------------------------------
 //
@@ -104,8 +102,7 @@ void releaseAligned(void* block) noexcept
 void* operator new(std::size_t bytes)
 {
     AllocationGate::noteAllocation(bytes);
-    if (void* block = std::malloc(bytes == 0U ? 1U : bytes))
-    {
+    if (void* block = std::malloc(bytes == 0U ? 1U : bytes)) {
         return block;
     }
     throw std::bad_alloc();
@@ -130,8 +127,7 @@ void* operator new[](std::size_t bytes, const std::nothrow_t& tag) noexcept
 void* operator new(std::size_t bytes, std::align_val_t alignment)
 {
     AllocationGate::noteAllocation(bytes);
-    if (void* block = allocateAligned(bytes == 0U ? 1U : bytes, static_cast<std::size_t>(alignment)))
-    {
+    if (void* block = allocateAligned(bytes == 0U ? 1U : bytes, static_cast<std::size_t>(alignment))) {
         return block;
     }
     throw std::bad_alloc();

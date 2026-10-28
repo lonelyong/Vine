@@ -28,8 +28,7 @@ class VN_GEOMETRY_API PhongMaterial : public Material {
      * @param specular  Specular reflectance (linear RGBA).
      * @param shininess Specular exponent; larger values give sharper highlights.
      */
-    PhongMaterial(const vn::Colorf& ambient, const vn::Colorf& diffuse,
-        const vn::Colorf& specular, float shininess = 32.0f);
+    PhongMaterial(const vn::Colorf& ambient, const vn::Colorf& diffuse, const vn::Colorf& specular, float shininess = 32.0f);
 
   public:
     /**

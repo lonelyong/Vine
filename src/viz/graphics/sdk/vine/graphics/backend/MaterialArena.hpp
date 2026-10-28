@@ -38,39 +38,36 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief Persistent material storage: slots, in-flight copies and write accounting. */
-class VN_GRAPHICS_API MaterialArena
-{
+class VN_GRAPHICS_API MaterialArena {
   public:
     /** @brief The arena's shape, all of it known before anything is written. */
-    struct Layout
-    {
-        std::uint32_t block_bytes{64};       ///< Bytes one material block occupies (the engine's material ABI).
+    struct Layout {
+        std::uint32_t block_bytes{ 64 }; // Bytes one material block occupies (the engine's material ABI).
         /// Copies per slot, one MORE than the frames that may be in flight (see perFrameCopies and
         /// FrameRing::Layout::slabs: the same rule, for the same reason).
-        std::uint32_t copies{perFrameCopies(kAssumedInFlightSlots)};
+        std::uint32_t copies{ perFrameCopies(kAssumedInFlightSlots) };
         /// Slots this arena can hold. It is the size of the buffer the API layer allocates, NOT a policy on
         /// live materials: past it note() answers Refused and the layer replaces the arena with a larger one
         /// (see capacityNeed); nothing is evicted to make room.
-        std::uint32_t capacity{256};
+        std::uint32_t capacity{ 256 };
     };
 
     /** @brief How a note was answered. */
     enum class WriteKind : std::uint8_t
     {
-        Allocated,  ///< The material had no slot: one was allocated and its block written.
-        Rewritten,  ///< The revision moved: the new bytes were written into the material's copy.
-        Unchanged,  ///< The revision matched what the storage holds: nothing was written.
-        Refused,    ///< The arena is full: no slot was allocated and nothing was written (see capacityNeed).
+        Allocated, // The material had no slot: one was allocated and its block written.
+        Rewritten, // The revision moved: the new bytes were written into the material's copy.
+        Unchanged, // The revision matched what the storage holds: nothing was written.
+        Refused,   // The arena is full: no slot was allocated and nothing was written (see capacityNeed).
     };
 
     /** @brief The answer of @ref note. */
-    struct Write
-    {
-        WriteKind     kind{WriteKind::Unchanged};  ///< What happened.
-        std::uint32_t slot{0};                     ///< Slot the material occupies (meaningful for Allocated /
-                                                   ///< Rewritten; meaningless for Refused).
-        std::uint32_t copy{0};                     ///< In-flight copy written (meaningful for Allocated / Rewritten).
-        std::uint64_t bytes{0};                    ///< Bytes written (0 for Unchanged and Refused).
+    struct Write {
+        WriteKind     kind{ WriteKind::Unchanged }; // What happened.
+        std::uint32_t slot{ 0 };                    // Slot the material occupies (meaningful for Allocated /
+                                                    // Rewritten; meaningless for Refused).
+        std::uint32_t copy{ 0 };                    // In-flight copy written (meaningful for Allocated / Rewritten).
+        std::uint64_t bytes{ 0 };                   // Bytes written (0 for Unchanged and Refused).
     };
 
   public:
@@ -80,7 +77,7 @@ class VN_GRAPHICS_API MaterialArena
      */
     explicit MaterialArena(const Layout& layout);
 
-    MaterialArena(const MaterialArena&) = delete;
+    MaterialArena(const MaterialArena&)            = delete;
     MaterialArena& operator=(const MaterialArena&) = delete;
 
   public:
@@ -172,33 +169,32 @@ class VN_GRAPHICS_API MaterialArena
     void clear() noexcept;
 
   private:
-    struct Entry
-    {
-        const void*   material{nullptr};    ///< The identity this slot belongs to.
-        std::uint64_t revision{0};          ///< Revision whose bytes the slot holds.
-        std::uint32_t slot{0};              ///< Slot index.
-        std::uint64_t last_write_frame{0};  ///< Frame of the last write (the per-frame dedupe).
-        std::uint32_t last_copy{0};         ///< Copy the last write went to.
+    struct Entry {
+        const void*   material{ nullptr };   // The identity this slot belongs to.
+        std::uint64_t revision{ 0 };         // Revision whose bytes the slot holds.
+        std::uint32_t slot{ 0 };             // Slot index.
+        std::uint64_t last_write_frame{ 0 }; // Frame of the last write (the per-frame dedupe).
+        std::uint32_t last_copy{ 0 };        // Copy the last write went to.
     };
 
     /** @brief Gets the copy the current frame writes to. */
     [[nodiscard]] std::uint32_t currentCopy() const noexcept;
 
   private:
-    Layout        layout_;
-    bool          started_{false};
-    std::uint64_t frame_{0};
-    std::uint32_t next_slot_{0};
+    Layout                     layout_;
+    bool                       started_{ false };
+    std::uint64_t              frame_{ 0 };
+    std::uint32_t              next_slot_{ 0 };
     std::vector<std::uint32_t> free_slots_;
 
-    std::unordered_map<const void*, Entry> entries_;  ///< Material -> its slot (no order: nothing is evicted).
+    std::unordered_map<const void*, Entry> entries_; // Material -> its slot (no order: nothing is evicted).
 
-    std::uint64_t writes_{0};
-    std::uint64_t allocations_{0};
-    std::uint64_t hits_{0};
-    std::uint64_t                               refusals_{0};
-    std::unordered_set<const void*>            refused_this_frame_;  ///< Distinct materials refused this frame.
-    std::uint64_t                              bytes_written_{0};
+    std::uint64_t                   writes_{ 0 };
+    std::uint64_t                   allocations_{ 0 };
+    std::uint64_t                   hits_{ 0 };
+    std::uint64_t                   refusals_{ 0 };
+    std::unordered_set<const void*> refused_this_frame_; // Distinct materials refused this frame.
+    std::uint64_t                   bytes_written_{ 0 };
 };
 
 VN_GRAPHICSBACKEND_NS_END

@@ -8,8 +8,8 @@
 #include <vsg/core/Exception.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/internal/SessionDrive.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
+#include <vine/vsg/internal/SessionDrive.hpp>
 
 VN_VSG_NS_BEGIN
 
@@ -22,37 +22,35 @@ namespace
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
 
-}  // namespace
+} // namespace
 
-struct OffscreenSession::Impl
-{
-    core::FrameTimeline   timeline;        ///< One clock for the session, when the device's is not borrowed.
-    core::RetirementQueue retirement{0};   ///< Constructed for real once the slots are learned.
+struct OffscreenSession::Impl {
+    core::FrameTimeline   timeline;        // One clock for the session, when the device's is not borrowed.
+    core::RetirementQueue retirement{ 0 }; // Constructed for real once the slots are learned.
     /// The DEVICE's clock and park queue, when this session is one of several frame sources on one device (see
     /// core::DeviceClock): the borrowed pair then REPLACES the two above, which stay unused.
-    core::DeviceClock*     clock{nullptr};
-    core::RetirementQueue* shared_retirement{nullptr};
-    core::DeviceClock::WindowId clock_window{0};
-    bool                        clock_window_live{false};
-    vn::graphics::Diagnostics*  diagnostics{nullptr};  ///< Where the session's reasons go (borrowed).
+    core::DeviceClock*          clock{ nullptr };
+    core::RetirementQueue*      shared_retirement{ nullptr };
+    core::DeviceClock::WindowId clock_window{ 0 };
+    bool                        clock_window_live{ false };
+    vn::graphics::Diagnostics*  diagnostics{ nullptr }; // Where the session's reasons go (borrowed).
     /// The device is BORROWED (the session takes its own reference to the caller's object): an off-screen session
     /// submits onto a device somebody else created and keeps alive.
     ::vsg::ref_ptr<::vsg::Device> device;
     ::vsg::ref_ptr<::vsg::Viewer> viewer;
-    int                    queue_family{-1};
-    std::uint32_t          slots{0};         ///< In-flight slots the tracker learned (0 = not learned yet).
-    core::SlotTracker      slot_tracker;     ///< Folds per-frame probes until the count stops growing.
-    std::uint64_t          lost_frames{0};   ///< Commits whose submission did not happen (see commitFrame).
+    int                           queue_family{ -1 };
+    std::uint32_t                 slots{ 0 };       // In-flight slots the tracker learned (0 = not learned yet).
+    core::SlotTracker             slot_tracker;     // Folds per-frame probes until the count stops growing.
+    std::uint64_t                 lost_frames{ 0 }; // Commits whose submission did not happen (see commitFrame).
     /// The frame clock the view block reads: this session's own start is the zero of its time line.
     std::chrono::steady_clock::time_point started_at{};
-    float                                 frame_seconds{0.0F};
-    bool                                  ready{false};
+    float                                 frame_seconds{ 0.0F };
+    bool                                  ready{ false };
 };
 
 OffscreenSession::OffscreenSession()
   : impl(std::make_unique<Impl>())
-{
-}
+{}
 
 OffscreenSession::~OffscreenSession()
 {
@@ -65,17 +63,16 @@ bool OffscreenSession::initialize(const OffscreenSessionOptions& options, vn::gr
 
     // IDEMPOTENT, and that is the whole of this session's move table: it has no surface to keep or move, so a
     // second announcement of the same device changes nothing (see the header).
-    if (impl->ready)
-    {
+    if (impl->ready) {
         return true;
     }
 
     shutdown();
 
     impl->device = ::vsg::ref_ptr<::vsg::Device>(static_cast<::vsg::Device*>(options.device));
-    if (impl->device == nullptr || options.queue_family < 0)
-    {
-        diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
+    if (impl->device == nullptr || options.queue_family < 0) {
+        diagnostics.report(DiagnosticSeverity::Error,
+                           DiagnosticCategory::InitFailed,
                            vn::String::fromUtf8("the off-screen session needs a device and its graphics queue family"));
         shutdown();
         return false;
@@ -86,14 +83,12 @@ bool OffscreenSession::initialize(const OffscreenSessionOptions& options, vn::gr
     // because what it decides (whether a shared buffer or pipeline may be destroyed) is a device question.
     impl->clock             = options.clock;
     impl->shared_retirement = options.retirement;
-    if (impl->clock != nullptr)
-    {
+    if (impl->clock != nullptr) {
         impl->clock_window      = impl->clock->addWindow();
         impl->clock_window_live = true;
     }
 
-    try
-    {
+    try {
         impl->viewer = ::vsg::ref_ptr<::vsg::Viewer>(new detail::EmbeddedViewer());
 
         // A WINDOWLESS COMMAND GRAPH is the framework's own spelling of "a submission that neither acquires an image
@@ -104,34 +99,32 @@ bool OffscreenSession::initialize(const OffscreenSessionOptions& options, vn::gr
         impl->viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ graph });
 
         const auto compiled = impl->viewer->compile();
-        if (!compiled)
-        {
-            diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
+        if (!compiled) {
+            diagnostics.report(DiagnosticSeverity::Error,
+                               DiagnosticCategory::InitFailed,
                                vn::String::fromUtf8("the off-screen session failed to compile: " + compiled.message));
             shutdown();
             return false;
         }
 
-        impl->ready       = true;
-        impl->started_at  = std::chrono::steady_clock::now();
+        impl->ready         = true;
+        impl->started_at    = std::chrono::steady_clock::now();
         impl->frame_seconds = 0.0F;
         return true;
     }
-    catch (const ::vsg::Exception& error)
-    {
+    catch (const ::vsg::Exception& error) {
         // vsg's own failure vocabulary: `vsg::Exception` is NOT a `std::exception`, so both are caught (see
         // deviceFailureMessage for the one a host actually meets).
-        diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
-                           vn::String::fromUtf8(std::string("the off-screen session failed to initialize: ") +
-                                                error.message));
+        diagnostics.report(DiagnosticSeverity::Error,
+                           DiagnosticCategory::InitFailed,
+                           vn::String::fromUtf8(std::string("the off-screen session failed to initialize: ") + error.message));
         shutdown();
         return false;
     }
-    catch (const std::exception& error)
-    {
-        diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
-                           vn::String::fromUtf8(std::string("the off-screen session failed to initialize: ") +
-                                                error.what()));
+    catch (const std::exception& error) {
+        diagnostics.report(DiagnosticSeverity::Error,
+                           DiagnosticCategory::InitFailed,
+                           vn::String::fromUtf8(std::string("the off-screen session failed to initialize: ") + error.what()));
         shutdown();
         return false;
     }
@@ -139,8 +132,7 @@ bool OffscreenSession::initialize(const OffscreenSessionOptions& options, vn::gr
 
 void OffscreenSession::shutdown() noexcept
 {
-    if (!impl)
-    {
+    if (!impl) {
         return;
     }
 
@@ -159,8 +151,7 @@ void OffscreenSession::shutdown() noexcept
     impl->queue_family  = -1;
     // The DEVICE's bookkeeping goes last, and only if it was this session's to leave: a session that goes away stops
     // constraining the device's watermark, which is what lets the remaining ones advance it.
-    if (impl->clock != nullptr && impl->clock_window_live)
-    {
+    if (impl->clock != nullptr && impl->clock_window_live) {
         impl->clock->removeWindow(impl->clock_window);
     }
     impl->clock_window_live = false;
@@ -175,8 +166,7 @@ bool OffscreenSession::initialized() const noexcept
 
 core::FrameToken OffscreenSession::beginFrame()
 {
-    if (!impl || !impl->ready)
-    {
+    if (!impl || !impl->ready) {
         return {};
     }
 
@@ -191,8 +181,7 @@ core::FrameToken OffscreenSession::beginFrame()
     impl->viewer->advanceToNextFrame();
     impl->viewer->handleEvents();
 
-    if (!impl->slot_tracker.known())
-    {
+    if (!impl->slot_tracker.known()) {
         probeSlots();
     }
 
@@ -202,53 +191,45 @@ core::FrameToken OffscreenSession::beginFrame()
 void OffscreenSession::probeSlots()
 {
     const auto outcome = core::probeSlotCount([this](std::uint32_t index) {
-        return !impl->viewer->recordAndSubmitTasks.empty() &&
-               impl->viewer->recordAndSubmitTasks.front()->fence(index) != nullptr;
+        return !impl->viewer->recordAndSubmitTasks.empty() && impl->viewer->recordAndSubmitTasks.front()->fence(index) != nullptr;
     });
 
-    if (!impl->slot_tracker.observe(outcome))
-    {
+    if (!impl->slot_tracker.observe(outcome)) {
         // Still filling: there is no window yet, and nothing to report - parking is simply unavailable
         // (RetirementQueue::retire() refuses rather than guessing).
         return;
     }
 
     impl->slots = impl->slot_tracker.slots();
-    if (impl->shared_retirement != nullptr && impl->clock != nullptr)
-    {
+    if (impl->shared_retirement != nullptr && impl->clock != nullptr) {
         // A device's park window is the WIDEST any of its frame sources learned: a park made during this session's
         // frame may name something a window with more slots still has in flight (see core::DeviceClock::widestSlots).
         impl->clock->setWindowSlots(impl->clock_window, impl->slots);
         impl->shared_retirement->setSlots(impl->clock->widestSlots());
     }
-    else
-    {
+    else {
         impl->retirement.setSlots(impl->slots);
     }
 
-    if (impl->diagnostics == nullptr || impl->slot_tracker.agreesWithAssumption())
-    {
+    if (impl->diagnostics == nullptr || impl->slot_tracker.agreesWithAssumption()) {
         return;
     }
-    impl->diagnostics->report(DiagnosticSeverity::Info, DiagnosticCategory::UnsupportedRequest,
-                              vn::String::fromUtf8("the off-screen session's in-flight slot count is " +
-                                                   std::to_string(impl->slots) + ", not the " +
-                                                   std::to_string(core::kAssumedInFlightSlots) +
-                                                   " this code was written against (learned over " +
+    impl->diagnostics->report(DiagnosticSeverity::Info,
+                              DiagnosticCategory::UnsupportedRequest,
+                              vn::String::fromUtf8("the off-screen session's in-flight slot count is " + std::to_string(impl->slots) + ", not the " +
+                                                   std::to_string(core::kAssumedInFlightSlots) + " this code was written against (learned over " +
                                                    std::to_string(impl->slot_tracker.framesObserved()) + " frames)"));
 }
 
 bool OffscreenSession::commitFrame()
 {
-    if (!impl || !impl->ready)
-    {
+    if (!impl || !impl->ready) {
         return false;
     }
-    if (!timeline().hasOpenFrame())
-    {
-        if (impl->diagnostics != nullptr)
-        {
-            impl->diagnostics->report(DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
+    if (!timeline().hasOpenFrame()) {
+        if (impl->diagnostics != nullptr) {
+            impl->diagnostics->report(DiagnosticSeverity::Warning,
+                                      DiagnosticCategory::PassProtocolViolation,
                                       vn::String::fromUtf8("the off-screen commitFrame() had no open frame"));
         }
         return false;
@@ -260,17 +241,16 @@ bool OffscreenSession::commitFrame()
     impl->viewer->update();
 
     std::string failure;
-    if (!detail::submitViewerTasks(*impl->viewer, failure))
-    {
+    if (!detail::submitViewerTasks(*impl->viewer, failure)) {
         // The submission did NOT happen: nothing was handed to the queue, so nothing may claim it did - no
         // completion evidence and no present. The frame itself is over (its graph was recorded, so it cannot be
         // retried): the timeline abandons the token, which keeps the submitted watermark a count of SUBMISSIONS.
         timeline().abandoned(token);
         retirement().advance(timeline());
         ++impl->lost_frames;
-        if (impl->diagnostics != nullptr)
-        {
-            impl->diagnostics->report(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed,
+        if (impl->diagnostics != nullptr) {
+            impl->diagnostics->report(DiagnosticSeverity::Error,
+                                      DiagnosticCategory::SubmissionFailed,
                                       vn::String::fromUtf8("the off-screen frame's submission did not happen, so "
                                                            "nothing it recorded was performed - the failure was: " +
                                                            failure));
@@ -278,19 +258,16 @@ bool OffscreenSession::commitFrame()
         return false;
     }
 
-    if (impl->slots != 0 && frame_number > impl->slots)
-    {
+    if (impl->slots != 0 && frame_number > impl->slots) {
         // THIS SESSION'S evidence, not the device's: the recycled slot proves the work IT submitted up to this frame
         // is finished. The device folds every source's report by minimum (see core::DeviceClock) - which is the
         // whole reason an off-screen frame has to report at all: without it the watermark would stay pinned where
         // this session joined.
         const std::uint64_t proven = frame_number - impl->slots;
-        if (impl->clock != nullptr && impl->clock_window_live)
-        {
+        if (impl->clock != nullptr && impl->clock_window_live) {
             impl->clock->windowCompleted(impl->clock_window, proven);
         }
-        else
-        {
+        else {
             timeline().completeUpTo(proven);
         }
     }
@@ -326,8 +303,7 @@ float OffscreenSession::frameSeconds() const noexcept
 
 std::size_t OffscreenSession::deviceWaits() const noexcept
 {
-    if (impl == nullptr)
-    {
+    if (impl == nullptr) {
         return 0;
     }
     return impl->shared_retirement != nullptr ? impl->shared_retirement->deviceWaits() : impl->retirement.deviceWaits();
@@ -335,12 +311,11 @@ std::size_t OffscreenSession::deviceWaits() const noexcept
 
 void OffscreenSession::waitDeviceIdle() noexcept
 {
-    if (!impl || !impl->viewer || timeline().submittedFrame() == 0)
-    {
-        return;  // nothing was ever submitted: there is nothing to wait for
+    if (!impl || !impl->viewer || timeline().submittedFrame() == 0) {
+        return; // nothing was ever submitted: there is nothing to wait for
     }
     impl->viewer->deviceWaitIdle();
-    retirement().noteDeviceWait();  // the same counter deviceWaits() answers with
+    retirement().noteDeviceWait(); // the same counter deviceWaits() answers with
 }
 
 int OffscreenSession::queueFamily() const noexcept
@@ -360,8 +335,7 @@ core::RetirementQueue& OffscreenSession::retirement() noexcept
 
 ::vsg::ref_ptr<::vsg::CommandGraph> OffscreenSession::makeFrameGraph() const
 {
-    if (!impl || !impl->ready)
-    {
+    if (!impl || !impl->ready) {
         return {};
     }
     // Bound to the DEVICE and its queue family - the framework's spelling of "a submission with no window": no
@@ -371,21 +345,17 @@ core::RetirementQueue& OffscreenSession::retirement() noexcept
 
 bool OffscreenSession::assignFrameGraphs(const ::vsg::CommandGraphs& graphs)
 {
-    if (!impl || !impl->ready || impl->viewer == nullptr)
-    {
+    if (!impl || !impl->ready || impl->viewer == nullptr) {
         return false;
     }
     // THE TASK SURVIVES THE HANDOVER: it owns the fences and semaphores a submission in flight still names, so the
     // graphs are given to it instead of the task list being rebuilt (the windowed session's rule, for the same
     // measured reason).
-    if (impl->viewer->recordAndSubmitTasks.empty())
-    {
+    if (impl->viewer->recordAndSubmitTasks.empty()) {
         impl->viewer->assignRecordAndSubmitTaskAndPresentation(graphs);
     }
-    else
-    {
-        for (const auto& task : impl->viewer->recordAndSubmitTasks)
-        {
+    else {
+        for (const auto& task : impl->viewer->recordAndSubmitTasks) {
             task->commandGraphs = graphs;
         }
     }
@@ -394,11 +364,10 @@ bool OffscreenSession::assignFrameGraphs(const ::vsg::CommandGraphs& graphs)
     // (descriptor sets above all) are created by exactly that pass, and the record step would otherwise find them
     // missing.
     const ::vsg::CompileResult compiled = impl->viewer->compile();
-    if (!compiled)
-    {
-        if (impl->diagnostics != nullptr)
-        {
-            impl->diagnostics->report(DiagnosticSeverity::Warning, DiagnosticCategory::InitFailed,
+    if (!compiled) {
+        if (impl->diagnostics != nullptr) {
+            impl->diagnostics->report(DiagnosticSeverity::Warning,
+                                      DiagnosticCategory::InitFailed,
                                       vn::String::fromUtf8(std::string("the content of an off-screen frame did not "
                                                                        "compile: ") +
                                                            compiled.message));
@@ -408,6 +377,6 @@ bool OffscreenSession::assignFrameGraphs(const ::vsg::CommandGraphs& graphs)
     return true;
 }
 
-}  // namespace api
+} // namespace api
 
 VN_VSG_NS_END

@@ -30,16 +30,14 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief The state of one pass: variant selection plus the dynamic block's issued values. */
-class VN_GRAPHICS_API StateRegistry
-{
+class VN_GRAPHICS_API StateRegistry {
   public:
     /** @brief What a draw has to do with the state, given what this registry last answered. */
-    struct Resolution
-    {
-        std::uint64_t variant{0};            ///< The variant to bind.
-        bool          variant_switched{false};  ///< A different variant than the last one resolved here.
-        bool          dynamic_issued{false};    ///< The dynamic block has to be issued before drawing.
-        bool          inputs_issued{false};     ///< The sampled-input set has to be bound before drawing.
+    struct Resolution {
+        std::uint64_t variant{ 0 };              // The variant to bind.
+        bool          variant_switched{ false }; // A different variant than the last one resolved here.
+        bool          dynamic_issued{ false };   // The dynamic block has to be issued before drawing.
+        bool          inputs_issued{ false };    // The sampled-input set has to be bound before drawing.
     };
 
   public:
@@ -49,7 +47,7 @@ class VN_GRAPHICS_API StateRegistry
      */
     explicit StateRegistry(VariantPool& pool) noexcept;
 
-    StateRegistry(const StateRegistry&) = delete;
+    StateRegistry(const StateRegistry&)            = delete;
     StateRegistry& operator=(const StateRegistry&) = delete;
 
   public:
@@ -63,8 +61,7 @@ class VN_GRAPHICS_API StateRegistry
      *               a property of the PASS (its inputs), so one bind per pass is the right cost - not one per draw.
      * @return The variant and the three costs (see @ref Resolution).
      */
-    [[nodiscard]] Resolution resolve(const PipelineKey& key, const DynamicState& state,
-                                     const void* inputs = nullptr);
+    [[nodiscard]] Resolution resolve(const PipelineKey& key, const DynamicState& state, const void* inputs = nullptr);
 
     /** @brief Forgets what is bound, so the next resolution issues everything again.
      *
@@ -101,16 +98,16 @@ class VN_GRAPHICS_API StateRegistry
 
   private:
     VariantPool*  pool_;
-    bool          bound_{false};
-    std::uint64_t current_variant_{0};
+    bool          bound_{ false };
+    std::uint64_t current_variant_{ 0 };
     DynamicState  current_state_{};
-    const void*   current_inputs_{nullptr};  ///< The sampled-input set the pass already bound (null = none yet).
-    std::uint64_t resolutions_{0};
-    std::uint64_t variant_switches_{0};
-    std::uint64_t dynamic_issued_{0};
-    std::uint64_t dynamic_skipped_{0};
-    std::uint64_t inputs_issued_{0};
-    std::uint64_t inputs_skipped_{0};
+    const void*   current_inputs_{ nullptr }; // The sampled-input set the pass already bound (null = none yet).
+    std::uint64_t resolutions_{ 0 };
+    std::uint64_t variant_switches_{ 0 };
+    std::uint64_t dynamic_issued_{ 0 };
+    std::uint64_t dynamic_skipped_{ 0 };
+    std::uint64_t inputs_issued_{ 0 };
+    std::uint64_t inputs_skipped_{ 0 };
 };
 
 VN_GRAPHICSBACKEND_NS_END

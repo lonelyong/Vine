@@ -9,10 +9,10 @@
 #endif
 
 #define VN_MESHIO_NS_BEGIN                                                                                                                                     \
-    VN_ROOT_NS_BEGIN                                                                                                                                             \
-    namespace meshio                                                                                                                                          \
+    VN_ROOT_NS_BEGIN                                                                                                                                           \
+    namespace meshio                                                                                                                                           \
     {
 
 #define VN_MESHIO_NS_END                                                                                                                                       \
-    VN_ROOT_NS_END                                                                                                                                               \
+    VN_ROOT_NS_END                                                                                                                                             \
     }

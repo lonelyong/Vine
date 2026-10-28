@@ -22,8 +22,7 @@ namespace
 /**
  * @brief Adapts a user callback to the spdlog sink interface.
  */
-class FunctionSink final : public spdlog::sinks::base_sink<std::mutex>
-{
+class FunctionSink final : public spdlog::sinks::base_sink<std::mutex> {
   public:
     explicit FunctionSink(std::function<void(LogLevel, const std::string&)> fn)
       : fn_(std::move(fn))
@@ -46,7 +45,8 @@ class FunctionSink final : public spdlog::sinks::base_sink<std::mutex>
         fn_(toLogLevel(msg.level), line);
     }
 
-    void flush_() override {}
+    void flush_() override
+    {}
 
   private:
     std::function<void(LogLevel, const std::string&)> fn_;
@@ -90,8 +90,7 @@ LogSink LogSink::dailyFile(const std::filesystem::path& base_path, std::size_t m
 {
     LogSink result;
     result.d       = std::make_shared<Impl>();
-    result.d->sink = std::make_shared<spdlog::sinks::daily_file_sink_mt>(
-        base_path.string(), 0, 0, false, static_cast<std::uint16_t>(max_files));
+    result.d->sink = std::make_shared<spdlog::sinks::daily_file_sink_mt>(base_path.string(), 0, 0, false, static_cast<std::uint16_t>(max_files));
     return result;
 }
 

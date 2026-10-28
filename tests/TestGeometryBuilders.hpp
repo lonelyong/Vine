@@ -27,14 +27,15 @@ namespace vn::test
  * @param first_index First index of the segment.
  * @param index_count Indices the segment covers, or 0 for the rest.
  */
-inline void setPrimitiveIndices(vn::graphics::Geometry& geometry, std::size_t index,
+inline void setPrimitiveIndices(vn::graphics::Geometry&                            geometry,
+                                std::size_t                                        index,
                                 vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices,
-                                std::size_t first_index = 0U, std::size_t index_count = 0U)
+                                std::size_t                                        first_index = 0U,
+                                std::size_t                                        index_count = 0U)
 {
     using vn::graphics::Primitive;
-    const auto span = (first_index == 0U && index_count == 0U)
-                          ? Primitive::IndexSpan::whole(std::move(indices))
-                          : Primitive::IndexSpan::slice(std::move(indices), first_index, index_count);
+    const auto span = (first_index == 0U && index_count == 0U) ? Primitive::IndexSpan::whole(std::move(indices))
+                                                               : Primitive::IndexSpan::slice(std::move(indices), first_index, index_count);
     if (geometry.primitiveCount() == 0U && index == 0U) {
         Primitive draw;
         draw.indices = span;
@@ -49,4 +50,4 @@ inline void setPrimitiveIndices(vn::graphics::Geometry& geometry, std::size_t in
     geometry.setPrimitive(index, std::move(draw));
 }
 
-}  // namespace vn::test
+} // namespace vn::test

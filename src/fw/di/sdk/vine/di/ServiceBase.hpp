@@ -18,7 +18,7 @@ class VN_DI_API ServiceBase : public Object, public RefCounted<ServiceBase> {
     VN_OBJECT_META_DECL
 
   public:
-    ServiceBase() = default;
+    ServiceBase()          = default;
     virtual ~ServiceBase() = default;
 };
 

@@ -13,7 +13,7 @@ String renderApiToString(RenderApi api)
         return u8"unknown";
     }
 
-    String result;
+    String     result;
     const auto append = [&result](const char8_t* token) {
         if (!result.empty()) {
             result += u8" | ";
@@ -41,13 +41,12 @@ String renderApiToString(RenderApi api)
 
 struct RenderBackendRegistry::Data {
     std::map<String, RenderBackendFactory*> factories;
-    std::mutex mutex;
+    std::mutex                              mutex;
 };
 
 RenderBackendRegistry::RenderBackendRegistry()
   : d(std::make_unique<Data>())
-{
-}
+{}
 
 RenderBackendRegistry::~RenderBackendRegistry() = default;
 
@@ -69,7 +68,7 @@ void RenderBackendRegistry::registerFactory(raw_ptr<RenderBackendFactory> factor
 vn::intrusive_ptr<RenderBackend> RenderBackendRegistry::create(const String& name, const DeviceDesc& desc) const
 {
     std::lock_guard<std::mutex> lock(d->mutex);
-    const auto it = d->factories.find(name);
+    const auto                  it = d->factories.find(name);
     if (it == d->factories.end()) {
         return {};
     }
@@ -79,7 +78,7 @@ vn::intrusive_ptr<RenderBackend> RenderBackendRegistry::create(const String& nam
 std::vector<String> RenderBackendRegistry::names() const
 {
     std::lock_guard<std::mutex> lock(d->mutex);
-    std::vector<String> result;
+    std::vector<String>         result;
     result.reserve(d->factories.size());
     for (const auto& [name, _] : d->factories) {
         result.push_back(name);
@@ -90,7 +89,7 @@ std::vector<String> RenderBackendRegistry::names() const
 std::vector<RenderBackendRegistry::Entry> RenderBackendRegistry::entries() const
 {
     std::lock_guard<std::mutex> lock(d->mutex);
-    std::vector<Entry> result;
+    std::vector<Entry>          result;
     result.reserve(d->factories.size());
     for (const auto& [name, factory] : d->factories) {
         result.push_back(Entry{ factory->info(), factory });

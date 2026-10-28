@@ -142,7 +142,8 @@ Application::Application(ApplicationData* data, const AppConfig& config, int arg
     // application; an identity the host set before this constructor is kept.
     if (!config.organization.empty()) {
         QCoreApplication::setOrganizationName(toQString(config.organization));
-    } else if (QCoreApplication::organizationName().isEmpty()) {
+    }
+    else if (QCoreApplication::organizationName().isEmpty()) {
         QCoreApplication::setOrganizationName(toQString(Application::defaultOrganizationName()));
     }
     if (!config.name.empty()) {
@@ -151,16 +152,16 @@ Application::Application(ApplicationData* data, const AppConfig& config, int arg
 
     dptr()->load_plugins = config.load_plugins;
 
-    dptr()->plugin_manager  = std::make_unique<PluginManager>();
-    dptr()->service_manager = std::make_unique<ServiceManager>();
-    dptr()->command_manager = std::make_unique<CommandManager>(this);
-    dptr()->config_manager  = std::make_unique<ConfigManager>();
-    dptr()->config_registry = std::make_unique<ConfigRegistry>();
+    dptr()->plugin_manager   = std::make_unique<PluginManager>();
+    dptr()->service_manager  = std::make_unique<ServiceManager>();
+    dptr()->command_manager  = std::make_unique<CommandManager>(this);
+    dptr()->config_manager   = std::make_unique<ConfigManager>();
+    dptr()->config_registry  = std::make_unique<ConfigRegistry>();
     dptr()->document_manager = std::make_unique<DocumentManager>(this);
-    dptr()->main_dispatcher = std::make_unique<MainThreadDispatcher>();
+    dptr()->main_dispatcher  = std::make_unique<MainThreadDispatcher>();
     // The marshaller is injected and outlives the bus (ApplicationData declares it
     // before the bus, so it is destroyed after it).
-    dptr()->event_bus = std::make_unique<EventBus>(dptr()->main_dispatcher.get());
+    dptr()->event_bus        = std::make_unique<EventBus>(dptr()->main_dispatcher.get());
 }
 
 Application::~Application()
@@ -302,7 +303,7 @@ int Application::run()
 
     // 循环跑着的时候收尾是用法错误（见 shutdown()）：这一位就是那句话的判据。
     d->loop_running = true;
-    const int code = d->app->exec();
+    const int code  = d->app->exec();
     d->loop_running = false;
 
     shutdown();
@@ -413,7 +414,7 @@ void Application::shutdown()
 
     // Persist last: plugin unload and the final events may still change values.
     if (!dptr()->config_file.empty()) {
-        const String path(dptr()->config_file.u8string());
+        const String    path(dptr()->config_file.u8string());
         std::error_code ec;
         std::filesystem::create_directories(dptr()->config_file.parent_path(), ec);
         if (!dptr()->config_manager->save(path)) {
@@ -495,7 +496,7 @@ std::vector<std::filesystem::path> Application::allUsersPluginRegistrationDirect
 
         // Same layout as dataDirectory(), but below the system root: the
         // organization/application part always comes from the process identity.
-        std::filesystem::path dir = root;
+        std::filesystem::path dir          = root;
         const QString         organization = QCoreApplication::organizationName();
         if (!organization.isEmpty()) {
             dir /= toPath(organization);

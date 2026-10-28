@@ -21,7 +21,8 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief One pending wake-up in the shared timer service.
@@ -32,8 +33,7 @@ namespace detail {
  * deadline queue, `aborted` records a token cancellation that arrived while
  * arming, and `settled` is the claim deciding who may resume the continuation.
  */
-struct TimerNode
-{
+struct TimerNode {
     std::chrono::steady_clock::time_point deadline{};
     std::coroutine_handle<>               continuation{};
 
@@ -63,10 +63,9 @@ using WakeAction = void (*)(void*) noexcept;
 /**
  * @brief One wake-up posted by another thread, waiting for the timer thread to run it.
  */
-struct PostedWake
-{
-    std::shared_ptr<void> owner{};                        ///< Kept alive until action has run.
-    WakeAction            action{ nullptr };              ///< Invoked with owner.get(); never null.
+struct PostedWake {
+    std::shared_ptr<void> owner{};           // Kept alive until action has run.
+    WakeAction            action{ nullptr }; // Invoked with owner.get(); never null.
 };
 
 /**
@@ -84,8 +83,7 @@ struct PostedWake
  * thread (blocking exit) or leave a pending waiter with a destroyed mutex. The
  * running worker keeps the object reachable, so it is not a reported leak.
  */
-class TimerService
-{
+class TimerService {
   public:
     /**
      * @brief Returns the process-wide service, starting its thread on first use.
@@ -144,7 +142,7 @@ class TimerService
   private:
     TimerService() noexcept = default;
 
-    TimerService(const TimerService&) = delete;
+    TimerService(const TimerService&)            = delete;
     TimerService& operator=(const TimerService&) = delete;
 
     /// Timer thread body: wait for the earliest deadline, then wake one waiter.
@@ -177,8 +175,7 @@ inline TimerService& TimerService::instance() noexcept
 
 inline void TimerService::ensureWorkerLocked()
 {
-    if (!worker_.joinable())
-    {
+    if (!worker_.joinable()) {
         worker_ = std::thread([this] { run(); });
     }
 }
@@ -186,8 +183,7 @@ inline void TimerService::ensureWorkerLocked()
 inline bool TimerService::install(const std::shared_ptr<TimerNode>& node)
 {
     std::lock_guard lock(mutex_);
-    if (node->aborted)
-    {
+    if (node->aborted) {
         return false; // Cancelled while arming: never schedule a dead wait.
     }
     node->installed = true;
@@ -202,13 +198,11 @@ inline void TimerService::requestAbort(const std::shared_ptr<TimerNode>& node) n
 {
     {
         std::lock_guard lock(mutex_);
-        if (node->settled || node->queued)
-        {
+        if (node->settled || node->queued) {
             return;
         }
         node->aborted = true;
-        if (!node->installed)
-        {
+        if (!node->installed) {
             // install() sees `aborted` and refuses to suspend; nothing to resume.
             return;
         }
@@ -242,7 +236,7 @@ inline void TimerService::cancel(const std::shared_ptr<TimerNode>& node) noexcep
  * @tparam State Type holding the AsyncEvent `done` to wake; must have such a member.
  * @param state State to wake; kept alive until the wake-up has run.
  */
-template<typename State>
+template <typename State>
 void deferWake(const std::shared_ptr<State>& state) noexcept
 {
     TimerService::instance().postWake(state, [](void* p) noexcept { static_cast<State*>(p)->done.set(); });
@@ -250,8 +244,7 @@ void deferWake(const std::shared_ptr<State>& state) noexcept
 
 inline void TimerService::postWake(std::shared_ptr<void> owner, WakeAction action) noexcept
 {
-    if (!action)
-    {
+    if (!action) {
         return;
     }
     {
@@ -269,12 +262,10 @@ inline void TimerService::postWake(std::shared_ptr<void> owner, WakeAction actio
 inline void TimerService::run() noexcept
 {
     std::unique_lock<std::mutex> lock(mutex_);
-    for (;;)
-    {
+    for (;;) {
         // 1. Wake-ups posted by other threads come first, whatever the clock says: they are
         //    already due by the time they are queued.
-        if (!posted_.empty())
-        {
+        if (!posted_.empty()) {
             PostedWake wake = std::move(posted_.front());
             posted_.pop_front();
             lock.unlock();
@@ -285,19 +276,16 @@ inline void TimerService::run() noexcept
 
         // 2. Cancelled waits wake next, whatever their deadline: they were
         //    queued by requestAbort() rather than by the clock.
-        if (!early_.empty())
-        {
+        if (!early_.empty()) {
             auto node = early_.front().lock();
             early_.pop_front();
 
             std::coroutine_handle<> continuation{};
-            if (node && !node->settled)
-            {
+            if (node && !node->settled) {
                 node->settled = true;
                 continuation  = node->continuation;
             }
-            if (continuation)
-            {
+            if (continuation) {
                 lock.unlock();
                 continuation.resume(); // Never hold the mutex across a resume.
                 lock.lock();
@@ -305,14 +293,12 @@ inline void TimerService::run() noexcept
             continue;
         }
 
-        if (timers_.empty())
-        {
+        if (timers_.empty()) {
             cv_.wait(lock); // Nothing pending: no polling, no wake-ups.
             continue;
         }
 
-        if (timers_.begin()->first > std::chrono::steady_clock::now())
-        {
+        if (timers_.begin()->first > std::chrono::steady_clock::now()) {
             // Sleep exactly until the earliest deadline; install() and
             // requestAbort() notify when the queue changes.
             cv_.wait_until(lock, timers_.begin()->first);
@@ -327,14 +313,12 @@ inline void TimerService::run() noexcept
         timers_.erase(it);
 
         std::coroutine_handle<> continuation{};
-        if (node && !node->settled)
-        {
+        if (node && !node->settled) {
             node->settled = true;
             continuation  = node->continuation;
         }
 
-        if (continuation)
-        {
+        if (continuation) {
             lock.unlock();
             continuation.resume(); // Never hold the mutex across a resume.
             lock.lock();
@@ -351,13 +335,15 @@ inline void TimerService::run() noexcept
  * awaiting frame before the deadline abandons the wait, so the timer thread
  * never resumes a destroyed frame.
  */
-class SleepAwaiter
-{
+class SleepAwaiter {
   public:
     SleepAwaiter(std::chrono::milliseconds duration, CancellationToken token)
-      : node_(std::make_shared<TimerNode>()), duration_(duration), token_(std::move(token))
+      : node_(std::make_shared<TimerNode>())
+      , duration_(duration)
+      , token_(std::move(token))
     {}
-    SleepAwaiter(const SleepAwaiter&) = delete;
+
+    SleepAwaiter(const SleepAwaiter&)            = delete;
     SleepAwaiter& operator=(const SleepAwaiter&) = delete;
 
     /**
@@ -372,8 +358,7 @@ class SleepAwaiter
     ~SleepAwaiter() noexcept
     {
         abort_.reset();
-        if (scheduled_)
-        {
+        if (scheduled_) {
             TimerService::instance().cancel(node_);
         }
     }
@@ -401,8 +386,7 @@ class SleepAwaiter
         node_->deadline     = std::chrono::steady_clock::now() + duration_;
         node_->continuation = h;
 
-        if (token_.stop_possible())
-        {
+        if (token_.stop_possible()) {
             // May invoke the callback synchronously when the token is already
             // stopped. requestAbort() then only marks the node, so nothing is
             // resumed while we are still inside await_suspend.
@@ -413,8 +397,7 @@ class SleepAwaiter
         // destructor (which may run on that thread, at the deadline) reads this
         // flag, so it has to be written before the node becomes visible.
         scheduled_ = true;
-        if (!TimerService::instance().install(node_))
-        {
+        if (!TimerService::instance().install(node_)) {
             scheduled_ = false; // Never published, so there is nothing to cancel.
             return false;       // Cancelled while arming: no wait, await_resume throws.
         }
@@ -426,19 +409,20 @@ class SleepAwaiter
      */
     void await_resume()
     {
-        if (token_.stop_requested())
-        {
+        if (token_.stop_requested()) {
             throw TaskCancelledException{};
         }
     }
 
   private:
     /// Stop-callback body: asks the service to wake this wait early.
-    struct AbortRequest
-    {
+    struct AbortRequest {
         std::shared_ptr<TimerNode> node;
 
-        void operator()() const noexcept { TimerService::instance().requestAbort(node); }
+        void operator()() const noexcept
+        {
+            TimerService::instance().requestAbort(node);
+        }
     };
 
     /// This wait's identity in the timer service; the awaiter owns it.

@@ -30,10 +30,10 @@ namespace
  */
 struct FakeNativeWindow {
     String title;
-    int    width = 0;
-    int    height = 0;
+    int    width   = 0;
+    int    height  = 0;
     bool   visible = false;
-    void*  handle = nullptr;
+    void*  handle  = nullptr;
 };
 
 /**
@@ -49,22 +49,41 @@ class TestWindowContext : public WindowContext {
   public:
     explicit TestWindowContext(FakeNativeWindow* native)
       : native_(native)
-    {
-    }
+    {}
+
     ~TestWindowContext() override = default;
 
   public:
-    String title() const override { return native_ != nullptr ? native_->title : String(); }
-    int width() const override { return native_ != nullptr ? native_->width : 0; }
-    int height() const override { return native_ != nullptr ? native_->height : 0; }
-    bool isVisible() const override { return native_ != nullptr && native_->visible; }
-    void* nativeHandle() const override { return native_ != nullptr ? native_->handle : nullptr; }
+    String title() const override
+    {
+        return native_ != nullptr ? native_->title : String();
+    }
+
+    int width() const override
+    {
+        return native_ != nullptr ? native_->width : 0;
+    }
+
+    int height() const override
+    {
+        return native_ != nullptr ? native_->height : 0;
+    }
+
+    bool isVisible() const override
+    {
+        return native_ != nullptr && native_->visible;
+    }
+
+    void* nativeHandle() const override
+    {
+        return native_ != nullptr ? native_->handle : nullptr;
+    }
 
   private:
     FakeNativeWindow* native_ = nullptr;
 };
 
-}  // namespace
+} // namespace
 
 VN_OBJECT_META_IMPL(TestWindowContext, vn::window::WindowContext);
 
@@ -72,7 +91,7 @@ VN_OBJECT_META_IMPL(TestWindowContext, vn::window::WindowContext);
 
 TEST(WindowContextTest, DefaultsFromNativeWindow)
 {
-    FakeNativeWindow native;
+    FakeNativeWindow  native;
     TestWindowContext context(&native);
     EXPECT_TRUE(context.title().empty());
     EXPECT_EQ(context.width(), 0);
@@ -84,12 +103,12 @@ TEST(WindowContextTest, DefaultsFromNativeWindow)
 TEST(WindowContextTest, QueriesForwardNativeState)
 {
     FakeNativeWindow native;
-    native.title = u8"Render View";
-    native.width = 800;
-    native.height = 600;
-    native.visible = true;
+    native.title    = u8"Render View";
+    native.width    = 800;
+    native.height   = 600;
+    native.visible  = true;
     int fake_handle = 0x1234;
-    native.handle = &fake_handle;
+    native.handle   = &fake_handle;
 
     TestWindowContext context(&native);
     EXPECT_EQ(context.title(), u8"Render View");
@@ -113,14 +132,16 @@ TEST(WindowContextTest, NullNativeWindowYieldsDefaults)
 
 TEST(WindowContextTest, ResizeSignalFires)
 {
-    FakeNativeWindow native;
+    FakeNativeWindow  native;
     TestWindowContext context(&native);
-    int captured_w = 0;
-    int captured_h = 0;
-    context.resized.connect([&](int w, int h) {
-        captured_w = w;
-        captured_h = h;
-    }).detach();
+    int               captured_w = 0;
+    int               captured_h = 0;
+    context.resized
+        .connect([&](int w, int h) {
+            captured_w = w;
+            captured_h = h;
+        })
+        .detach();
 
     context.resized.trigger(640, 480);
     EXPECT_EQ(captured_w, 640);
@@ -131,13 +152,13 @@ TEST(WindowContextTest, ResizeSignalFires)
 
 TEST(WindowContextTest, KeyEventDispatched)
 {
-    FakeNativeWindow native;
+    FakeNativeWindow  native;
     TestWindowContext context(&native);
-    KeyCode received = KeyCode::Unknown;
+    KeyCode           received = KeyCode::Unknown;
     context.key.connect([&](const KeyEvent& e) { received = e.code; }).detach();
 
     KeyEvent e;
-    e.code = KeyCode::Escape;
+    e.code    = KeyCode::Escape;
     e.pressed = true;
     context.postEvent(e);
     EXPECT_EQ(received, KeyCode::Escape);
@@ -145,13 +166,13 @@ TEST(WindowContextTest, KeyEventDispatched)
 
 TEST(WindowContextTest, KeyEventModifiers)
 {
-    FakeNativeWindow native;
+    FakeNativeWindow  native;
     TestWindowContext context(&native);
-    ModifierKey received = ModifierKey::None;
+    ModifierKey       received = ModifierKey::None;
     context.key.connect([&](const KeyEvent& e) { received = e.modifiers; }).detach();
 
     KeyEvent e;
-    e.code = KeyCode::A;
+    e.code      = KeyCode::A;
     e.modifiers = ModifierKey::Shift | ModifierKey::Control;
     context.postEvent(e);
     EXPECT_TRUE(testFlag(received, ModifierKey::Shift));
@@ -162,19 +183,21 @@ TEST(WindowContextTest, KeyEventModifiers)
 
 TEST(WindowContextTest, MouseEventDispatched)
 {
-    FakeNativeWindow native;
+    FakeNativeWindow  native;
     TestWindowContext context(&native);
-    MouseEvent received;
-    bool fired = false;
-    context.mouse.connect([&](const MouseEvent& e) {
-        received = e;
-        fired    = true;
-    }).detach();
+    MouseEvent        received;
+    bool              fired = false;
+    context.mouse
+        .connect([&](const MouseEvent& e) {
+            received = e;
+            fired    = true;
+        })
+        .detach();
 
     MouseEvent e;
-    e.button = MouseButton::Left;
-    e.x = 12.0;
-    e.y = 34.0;
+    e.button  = MouseButton::Left;
+    e.x       = 12.0;
+    e.y       = 34.0;
     e.pressed = true;
     context.postEvent(e);
     EXPECT_TRUE(fired);
@@ -188,9 +211,9 @@ TEST(WindowContextTest, MouseEventDispatched)
 
 TEST(WindowContextTest, ScrollEventDispatched)
 {
-    FakeNativeWindow native;
+    FakeNativeWindow  native;
     TestWindowContext context(&native);
-    ScrollEvent received;
+    ScrollEvent       received;
     context.scroll.connect([&](const ScrollEvent& e) { received = e; }).detach();
 
     ScrollEvent e;
@@ -203,7 +226,7 @@ TEST(WindowContextTest, ScrollEventDispatched)
 
 TEST(WindowContextTest, WindowEventDispatched)
 {
-    FakeNativeWindow native;
+    FakeNativeWindow  native;
     TestWindowContext context(&native);
     WindowEvent::Type received = WindowEvent::Type::Resize;
     context.windowEvent.connect([&](const WindowEvent& e) { received = e.type; }).detach();

@@ -15,13 +15,13 @@ VN_APPFW_NS_BEGIN
  */
 enum class StandardCategory
 {
-    General,    ///< 通用
-    Appearance, ///< 外观
-    Logging,    ///< 日志
-    Files,      ///< 文件
-    Editor,     ///< 编辑器
-    Rendering,  ///< 渲染
-    Plugins,    ///< 插件
+    General,    // 通用
+    Appearance, // 外观
+    Logging,    // 日志
+    Files,      // 文件
+    Editor,     // 编辑器
+    Rendering,  // 渲染
+    Plugins,    // 插件
 };
 
 /**
@@ -32,14 +32,14 @@ enum class StandardCategory
  */
 enum class StandardGroup
 {
-    Startup,  ///< 启动
-    Behavior, ///< 行为
-    Theme,    ///< 主题
-    Language, ///< 语言
-    Console,  ///< 控制台
-    File,     ///< 文件
-    Autosave, ///< 自动保存
-    Paths,    ///< 路径
+    Startup,  // 启动
+    Behavior, // 行为
+    Theme,    // 主题
+    Language, // 语言
+    Console,  // 控制台
+    File,     // 文件
+    Autosave, // 自动保存
+    Paths,    // 路径
 };
 
 /**

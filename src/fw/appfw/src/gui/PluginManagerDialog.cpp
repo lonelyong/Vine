@@ -29,12 +29,12 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-#include <vine/appfw/CommandManager.hpp>
-#include <vine/appfw/ConfigItem.hpp>
-#include <vine/appfw/Plugin.hpp>
 #include "Convert.hpp"
 #include "TableStyle.hpp"
 #include "WindowData.hpp"
+#include <vine/appfw/CommandManager.hpp>
+#include <vine/appfw/ConfigItem.hpp>
+#include <vine/appfw/Plugin.hpp>
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -76,8 +76,7 @@ std::filesystem::path toPath(const String& text)
 ///
 /// A registration points either at the library file itself or at a directory
 /// that holds it (see PluginManager::installPlugin).
-const vn::appfw::PluginRegistration* findRegistration(const std::vector<vn::appfw::PluginRegistration>& registrations,
-                                                        const std::filesystem::path&                       library)
+const vn::appfw::PluginRegistration* findRegistration(const std::vector<vn::appfw::PluginRegistration>& registrations, const std::filesystem::path& library)
 {
     for (const auto& registration : registrations) {
         const std::filesystem::path path = toPath(registration.path);
@@ -92,9 +91,9 @@ const vn::appfw::PluginRegistration* findRegistration(const std::vector<vn::appf
 QString scopeLabel(vn::appfw::PluginScope scope)
 {
     switch (scope) {
-    case vn::appfw::PluginScope::BuiltIn:  return QStringLiteral("程序自带");
+    case vn::appfw::PluginScope::BuiltIn: return QStringLiteral("程序自带");
     case vn::appfw::PluginScope::AllUsers: return QStringLiteral("所有用户");
-    case vn::appfw::PluginScope::User:     return QStringLiteral("仅当前用户");
+    case vn::appfw::PluginScope::User: return QStringLiteral("仅当前用户");
     }
     return QStringLiteral("未知");
 }
@@ -221,32 +220,32 @@ VN_OBJECT_META_IMPL(PluginManagerDialog, Window)
 
 struct PluginManagerDialog::Impl : public WindowData {
     vn::appfw::PluginManager* manager        = nullptr;
-    QLineEdit*                  filter         = nullptr;
-    QListWidget*                list           = nullptr;
-    QPushButton*                load_btn       = nullptr;
-    QToolButton*                install_btn    = nullptr;
-    QStackedWidget*             stack          = nullptr;
-    QLabel*                     icon_label     = nullptr;
-    QLabel*                     title_label    = nullptr;
-    QLabel*                     subtitle_label = nullptr;
-    QLabel*                     meta_label     = nullptr;
-    QLabel*                     status_badge   = nullptr;
-    QLabel*                     status_label   = nullptr;
-    QLabel*                     desc_label     = nullptr;
-    QLabel*                     id_label       = nullptr;
-    QLabel*                     version_label  = nullptr;
-    QLabel*                     scope_label    = nullptr;
-    QLabel*                     dep_label      = nullptr;
-    QLabel*                     uuid_label     = nullptr;
-    QLabel*                     path_label     = nullptr;
-    QLabel*                     built_label    = nullptr;
-    QLabel*                     email_label    = nullptr;
-    QLabel*                     repo_label     = nullptr;
-    QLabel*                     message_label  = nullptr;
-    QTableWidget*               cmd_table      = nullptr;
-    QTableWidget*               cfg_table      = nullptr;
-    QPushButton*                toggle_btn     = nullptr;
-    QPushButton*                uninstall_btn  = nullptr;
+    QLineEdit*                filter         = nullptr;
+    QListWidget*              list           = nullptr;
+    QPushButton*              load_btn       = nullptr;
+    QToolButton*              install_btn    = nullptr;
+    QStackedWidget*           stack          = nullptr;
+    QLabel*                   icon_label     = nullptr;
+    QLabel*                   title_label    = nullptr;
+    QLabel*                   subtitle_label = nullptr;
+    QLabel*                   meta_label     = nullptr;
+    QLabel*                   status_badge   = nullptr;
+    QLabel*                   status_label   = nullptr;
+    QLabel*                   desc_label     = nullptr;
+    QLabel*                   id_label       = nullptr;
+    QLabel*                   version_label  = nullptr;
+    QLabel*                   scope_label    = nullptr;
+    QLabel*                   dep_label      = nullptr;
+    QLabel*                   uuid_label     = nullptr;
+    QLabel*                   path_label     = nullptr;
+    QLabel*                   built_label    = nullptr;
+    QLabel*                   email_label    = nullptr;
+    QLabel*                   repo_label     = nullptr;
+    QLabel*                   message_label  = nullptr;
+    QTableWidget*             cmd_table      = nullptr;
+    QTableWidget*             cfg_table      = nullptr;
+    QPushButton*              toggle_btn     = nullptr;
+    QPushButton*              uninstall_btn  = nullptr;
 
     /// Repository URL of the selected plugin; the info tab links to it.
     QString current_repo;
@@ -576,23 +575,22 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
         auto* data = dptr();
         auto* item = data->list->itemAt(pos);
 
-        const String selected = item ? Convert::fromQString(item->data(Qt::UserRole).toString()) : String{};
-        const auto   entries  = data->manager ? data->manager->pluginEntries() : std::vector<vn::appfw::PluginEntry>{};
+        const String selected     = item ? Convert::fromQString(item->data(Qt::UserRole).toString()) : String{};
+        const auto   entries      = data->manager ? data->manager->pluginEntries() : std::vector<vn::appfw::PluginEntry>{};
         // Named copies: findRegistration()/findEntry() would return pointers into
         // temporaries otherwise.
-        const auto  registrations = data->manager ? data->manager->pluginRegistrations()
-                                                  : std::vector<vn::appfw::PluginRegistration>{};
+        const auto  registrations = data->manager ? data->manager->pluginRegistrations() : std::vector<vn::appfw::PluginRegistration>{};
         const auto* entry         = findEntry(entries, selected);
 
         // Same rule as the buttons: only offer the actions that can take effect.
-        const bool toggleable = entry != nullptr && entry->scope != vn::appfw::PluginScope::BuiltIn && !entry->skipped;
+        const bool  toggleable   = entry != nullptr && entry->scope != vn::appfw::PluginScope::BuiltIn && !entry->skipped;
         const auto* registration = entry != nullptr ? findRegistration(registrations, entry->path) : nullptr;
 
-        QMenu menu(data->list);
-        QAction* view_action      = menu.addAction(QStringLiteral("查看详情"));
+        QMenu    menu(data->list);
+        QAction* view_action = menu.addAction(QStringLiteral("查看详情"));
         view_action->setEnabled(entry != nullptr);
-        QAction* toggle_action    = menu.addAction(entry != nullptr && entry->enabled ? QStringLiteral("禁用插件（重启后生效）")
-                                                                                   : QStringLiteral("启用插件（重启后生效）"));
+        QAction* toggle_action =
+            menu.addAction(entry != nullptr && entry->enabled ? QStringLiteral("禁用插件（重启后生效）") : QStringLiteral("启用插件（重启后生效）"));
         toggle_action->setVisible(toggleable);
         QAction* uninstall_action = menu.addAction(QStringLiteral("卸载插件（移除注册，重启生效）"));
         uninstall_action->setVisible(registration != nullptr);
@@ -610,23 +608,30 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
                 data->list->setCurrentItem(item);
             }
             showDetail(selected);
-        } else if (chosen == toggle_action) {
+        }
+        else if (chosen == toggle_action) {
             if (item) {
                 data->list->setCurrentItem(item);
             }
             togglePluginEnabled();
-        } else if (chosen == uninstall_action) {
+        }
+        else if (chosen == uninstall_action) {
             uninstallSelectedPlugin();
-        } else if (chosen == copy_path_action && entry != nullptr) {
+        }
+        else if (chosen == copy_path_action && entry != nullptr) {
             QGuiApplication::clipboard()->setText(QString::fromUtf8(entry->path.u8string().c_str()));
             data->message_label->setText(QStringLiteral("已复制库路径。"));
-        } else if (chosen == load_action) {
+        }
+        else if (chosen == load_action) {
             loadPlugin();
-        } else if (chosen == install_action) {
+        }
+        else if (chosen == install_action) {
             installPlugin(vn::appfw::PluginScope::User);
-        } else if (chosen == install_all_users_action) {
+        }
+        else if (chosen == install_all_users_action) {
             installPlugin(vn::appfw::PluginScope::AllUsers);
-        } else if (chosen == refresh_action) {
+        }
+        else if (chosen == refresh_action) {
             refresh();
         }
     });
@@ -645,8 +650,7 @@ void PluginManagerDialog::loadPlugin()
     if (!data->manager) {
         return;
     }
-    const QString file = QFileDialog::getOpenFileName(
-        nullptr, QStringLiteral("选择插件库"), QString(), QStringLiteral("插件库 (*.dll *.so *.dylib)"));
+    const QString file = QFileDialog::getOpenFileName(nullptr, QStringLiteral("选择插件库"), QString(), QStringLiteral("插件库 (*.dll *.so *.dylib)"));
     if (file.isEmpty()) {
         return;
     }
@@ -666,8 +670,7 @@ void PluginManagerDialog::refresh()
 {
     auto* data = dptr();
 
-    const String  prev = data->list->currentItem() ? Convert::fromQString(data->list->currentItem()->data(Qt::UserRole).toString())
-                                                   : String{};
+    const String  prev   = data->list->currentItem() ? Convert::fromQString(data->list->currentItem()->data(Qt::UserRole).toString()) : String{};
     const QString filter = data->filter != nullptr ? data->filter->text().trimmed() : QString();
 
     data->list->blockSignals(true);
@@ -681,14 +684,13 @@ void PluginManagerDialog::refresh()
         for (const auto& entry : data->manager->pluginEntries()) {
             const String  plugin_name = entry.info.name;
             const QString name        = Convert::toQString(plugin_name);
-            const QString display =
-                entry.info.display_name.empty() ? name : Convert::toQString(entry.info.display_name);
+            const QString display     = entry.info.display_name.empty() ? name : Convert::toQString(entry.info.display_name);
 
             // The filter matches what the eye can see: name, display name, vendor
             // and description.
-            QString haystack = display + QLatin1Char(' ') + name + QLatin1Char(' ') + Convert::toQString(entry.info.vendor)
-                               + QLatin1Char(' ') + Convert::toQString(entry.info.description);
-            const bool matches = filter.isEmpty() || haystack.toLower().contains(filter.toLower());
+            QString    haystack = display + QLatin1Char(' ') + name + QLatin1Char(' ') + Convert::toQString(entry.info.vendor) + QLatin1Char(' ') +
+                                  Convert::toQString(entry.info.description);
+            const bool matches  = filter.isEmpty() || haystack.toLower().contains(filter.toLower());
 
             auto* item = new QListWidgetItem(data->list);
             item->setData(Qt::UserRole, name);
@@ -751,8 +753,8 @@ void PluginManagerDialog::installPlugin(vn::appfw::PluginScope scope)
     // The location may be a plugin library or a directory of them, anywhere on
     // disk: that is how a plugin installed outside the program directory is
     // registered. It takes effect at the next start, so nothing is loaded here.
-    const QString file = QFileDialog::getOpenFileName(
-        nullptr, QStringLiteral("选择插件库或插件目录"), QString(), QStringLiteral("插件库 (*.dll *.so *.dylib)"));
+    const QString file =
+        QFileDialog::getOpenFileName(nullptr, QStringLiteral("选择插件库或插件目录"), QString(), QStringLiteral("插件库 (*.dll *.so *.dylib)"));
     if (file.isEmpty()) {
         return;
     }
@@ -760,12 +762,11 @@ void PluginManagerDialog::installPlugin(vn::appfw::PluginScope scope)
     const String path = Convert::fromQString(file);
     const String id   = data->manager->installPlugin(path, scope);
     if (!id.empty()) {
-        data->message_label->setText(QStringLiteral("已注册（") + scopeLabel(scope) + QStringLiteral("）：") + file
-                                     + QStringLiteral("，重启后加载。"));
+        data->message_label->setText(QStringLiteral("已注册（") + scopeLabel(scope) + QStringLiteral("）：") + file + QStringLiteral("，重启后加载。"));
     }
     else if (scope == vn::appfw::PluginScope::AllUsers) {
-        data->message_label->setText(QStringLiteral("为所有用户注册失败（需要管理员权限，或文件不存在）：") + file
-                                     + QStringLiteral("；可改用“仅当前用户”安装。"));
+        data->message_label->setText(QStringLiteral("为所有用户注册失败（需要管理员权限，或文件不存在）：") + file +
+                                     QStringLiteral("；可改用“仅当前用户”安装。"));
     }
     else {
         data->message_label->setText(QStringLiteral("注册失败（文件不存在或无法写入注册目录）：") + file);
@@ -800,9 +801,8 @@ void PluginManagerDialog::uninstallSelectedPlugin()
     // Removing the registration takes effect at the next start; a running plugin
     // keeps running until then (see PluginManager::uninstallPlugin).
     const bool removed = data->manager->uninstallPlugin(registration->id, registration->scope);
-    data->message_label->setText(removed ? QStringLiteral("已移除注册（") + scopeLabel(registration->scope)
-                                               + QStringLiteral("）：重启后不再加载。")
-                                        : QStringLiteral("移除注册失败：注册文件不存在或不可写。"));
+    data->message_label->setText(removed ? QStringLiteral("已移除注册（") + scopeLabel(registration->scope) + QStringLiteral("）：重启后不再加载。")
+                                         : QStringLiteral("移除注册失败：注册文件不存在或不可写。"));
     refresh();
 }
 
@@ -824,8 +824,7 @@ void PluginManagerDialog::togglePluginEnabled()
     // running state is untouched and the change applies at the next start. An
     // application-provided plugin is refused (see PluginManager::setPluginEnabled).
     if (data->manager->setPluginEnabled(name, !entry->enabled)) {
-        data->message_label->setText(entry->enabled ? QStringLiteral("已禁用，重启后生效。")
-                                                    : QStringLiteral("已启用，重启后生效。"));
+        data->message_label->setText(entry->enabled ? QStringLiteral("已禁用，重启后生效。") : QStringLiteral("已启用，重启后生效。"));
     }
     else {
         data->message_label->setText(QStringLiteral("程序自带的插件不能禁用；它由程序决定是否随包发布。"));
@@ -854,9 +853,7 @@ void PluginManagerDialog::showDetail(const vn::String& name)
     const auto* registration  = entry != nullptr ? findRegistration(registrations, entry->path) : nullptr;
 
     const QString id      = Convert::toQString(name);
-    const QString display = entry != nullptr && !entry->info.display_name.empty()
-                                ? Convert::toQString(entry->info.display_name)
-                                : id;
+    const QString display = entry != nullptr && !entry->info.display_name.empty() ? Convert::toQString(entry->info.display_name) : id;
 
     // ---- Header: icon, title, identity, vendor contact, state badge ----
     data->icon_label->setPixmap(data->iconFor(entry != nullptr ? entry->info.icon : vn::String{}, 56));
@@ -869,7 +866,7 @@ void PluginManagerDialog::showDetail(const vn::String& name)
     data->subtitle_label->setText(subtitle);
 
     // Vendor and mail address as one clickable line; both are optional.
-    QString meta;
+    QString    meta;
     const auto append_meta = [&meta](const QString& text) {
         if (text.isEmpty()) {
             return;
@@ -897,8 +894,7 @@ void PluginManagerDialog::showDetail(const vn::String& name)
     const bool toggleable = entry != nullptr && entry->scope != vn::appfw::PluginScope::BuiltIn && !entry->skipped;
     data->toggle_btn->setVisible(toggleable);
     if (toggleable) {
-        data->toggle_btn->setText(entry->enabled ? QStringLiteral("禁用插件（重启后生效）")
-                                                 : QStringLiteral("启用插件（重启后生效）"));
+        data->toggle_btn->setText(entry->enabled ? QStringLiteral("禁用插件（重启后生效）") : QStringLiteral("启用插件（重启后生效）"));
     }
 
     data->uninstall_btn->setVisible(registration != nullptr);
@@ -909,30 +905,24 @@ void PluginManagerDialog::showDetail(const vn::String& name)
     data->current_repo = entry != nullptr && !entry->info.repo.empty() ? Convert::toQString(entry->info.repo) : QString();
 
     // ---- Info tab: the description leads, then the metadata ----
-    data->desc_label->setText(entry != nullptr && !entry->info.description.empty()
-                                  ? Convert::toQString(entry->info.description)
-                                  : QStringLiteral("—"));
+    data->desc_label->setText(entry != nullptr && !entry->info.description.empty() ? Convert::toQString(entry->info.description) : QStringLiteral("—"));
     const auto value = [](const vn::String& text) { return text.empty() ? QStringLiteral("—") : Convert::toQString(text); };
 
     data->id_label->setText(display == id ? id : display + QStringLiteral("（") + id + QStringLiteral("）"));
     data->version_label->setText(entry != nullptr ? value(entry->info.version) : QStringLiteral("—"));
-    data->scope_label->setText(entry != nullptr ? scopeLabel(entry->scope)
-                                                       + (registration != nullptr ? QStringLiteral("  ·  可卸载")
-                                                                                  : QStringLiteral("  ·  不可禁用或卸载"))
+    data->scope_label->setText(entry != nullptr ? scopeLabel(entry->scope) +
+                                                      (registration != nullptr ? QStringLiteral("  ·  可卸载") : QStringLiteral("  ·  不可禁用或卸载"))
                                                 : QStringLiteral("—"));
     data->dep_label->setText(entry != nullptr ? joinStrings(entry->info.dependencies) : QStringLiteral("—"));
-    data->uuid_label->setText(entry != nullptr && !entry->info.uuid.isNull() ? Convert::toQString(entry->info.uuid.toString())
-                                                                            : QStringLiteral("—"));
-    data->path_label->setText(entry != nullptr && !entry->path.empty() ? QString::fromUtf8(entry->path.u8string().c_str())
-                                                                      : QStringLiteral("—"));
+    data->uuid_label->setText(entry != nullptr && !entry->info.uuid.isNull() ? Convert::toQString(entry->info.uuid.toString()) : QStringLiteral("—"));
+    data->path_label->setText(entry != nullptr && !entry->path.empty() ? QString::fromUtf8(entry->path.u8string().c_str()) : QStringLiteral("—"));
     data->path_label->setToolTip(data->path_label->text());
     // The version the library was built with (PluginAbi): a plugin compiled against
     // another framework build is usually the first thing to check when it misbehaves.
     data->built_label->setText(entry != nullptr ? value(entry->framework_version) : QStringLiteral("—"));
     data->built_label->setToolTip(QStringLiteral("本程序内置的框架版本：%1").arg(QStringLiteral(VN_APPFW_VERSION)));
     data->email_label->setText(entry != nullptr && !entry->info.email.empty()
-                                   ? QStringLiteral("<a href=\"mailto:%1\">%1</a>")
-                                         .arg(Convert::toQString(entry->info.email).toHtmlEscaped())
+                                   ? QStringLiteral("<a href=\"mailto:%1\">%1</a>").arg(Convert::toQString(entry->info.email).toHtmlEscaped())
                                    : QStringLiteral("—"));
     data->repo_label->setText(!data->current_repo.isEmpty()
                                   ? QStringLiteral("<a href=\"%1\">%2</a>").arg(data->current_repo, data->current_repo.toHtmlEscaped())

@@ -22,9 +22,20 @@ class CloseDocumentCommand : public Command {
     VN_DECLARE_COMMAND(CloseDocumentCommand, u8"close_document")
 
   public:
-    String       group() const override { return u8"文档"; }
-    String       description() const override { return u8"关闭当前文档"; }
-    CommandFlags flags() const override { return CommandFlags::NeedsDocument; }
+    String group() const override
+    {
+        return u8"文档";
+    }
+
+    String description() const override
+    {
+        return u8"关闭当前文档";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::NeedsDocument;
+    }
 
     /**
      * @brief Closes the dispatch target through DocumentManager::close().

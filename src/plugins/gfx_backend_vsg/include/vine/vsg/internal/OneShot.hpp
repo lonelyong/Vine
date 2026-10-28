@@ -32,26 +32,22 @@ VN_VSG_NS_BEGIN
  * @param timeout_ns How long to wait for the fence before giving up.
  * @return true when the submission was handed to the queue (submitCommandsToQueue waits for the fence).
  */
-inline bool submitCommandsOnce(::vsg::Device& device, const ::vsg::ref_ptr<::vsg::Commands>& commands,
-                               std::uint64_t timeout_ns = 100'000'000'000ull)
+inline bool submitCommandsOnce(::vsg::Device& device, const ::vsg::ref_ptr<::vsg::Commands>& commands, std::uint64_t timeout_ns = 100'000'000'000ull)
 {
     ::vsg::PhysicalDevice* physical = device.getPhysicalDevice();
-    if (physical == nullptr || commands == nullptr)
-    {
+    if (physical == nullptr || commands == nullptr) {
         return false;
     }
     const auto queue_family = physical->getQueueFamily(VK_QUEUE_GRAPHICS_BIT);
     auto       command_pool = ::vsg::CommandPool::create(&device, queue_family);
     auto       fence        = ::vsg::Fence::create(&device);
     auto       queue        = device.getQueue(queue_family);
-    if (command_pool == nullptr || fence == nullptr || queue == nullptr)
-    {
+    if (command_pool == nullptr || fence == nullptr || queue == nullptr) {
         return false;
     }
-    ::vsg::submitCommandsToQueue(command_pool, fence, timeout_ns, queue,
-                                 [&commands](::vsg::CommandBuffer& command_buffer) {
-                                     commands->record(command_buffer);
-                                 });
+    ::vsg::submitCommandsToQueue(command_pool, fence, timeout_ns, queue, [&commands](::vsg::CommandBuffer& command_buffer) {
+        commands->record(command_buffer);
+    });
     // submitCommandsToQueue() waits on the fence unless the submission failed: a failed submit is the only
     // way out of it with the commands unperformed, and the caller answers for that either way.
     return true;

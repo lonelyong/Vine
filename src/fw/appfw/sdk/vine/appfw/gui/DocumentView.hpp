@@ -67,14 +67,16 @@ class VN_APPFW_API DocumentView : public UIElement {
      *
      * A 3D view builds the SceneView it holds on its own render control here; a 2D view normally does nothing.
      */
-    virtual void activate() {}
+    virtual void activate()
+    {}
 
     /**
      * @brief Called when this view stops being the one on screen (another view took its place, or the area went empty).
      *
      * A 3D view detaches what it bound in activate(); a 2D view normally does nothing.
      */
-    virtual void deactivate() {}
+    virtual void deactivate()
+    {}
 
     /**
      * @brief Returns the render control a command should act on in this view, or null when the view has no 3D area.
@@ -96,7 +98,10 @@ class VN_APPFW_API DocumentView : public UIElement {
      *
      * @return This view's render control, or null when it has none.
      */
-    virtual RenderControl* renderControl() const { return nullptr; }
+    virtual RenderControl* renderControl() const
+    {
+        return nullptr;
+    }
 
   protected:
     /**

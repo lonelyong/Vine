@@ -39,20 +39,20 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
 #include <vine/vsg/internal/ContentSources.hpp>
 #include <vine/vsg/internal/ProgramAbi.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
 
-using vn::vsg::buildScreenProgramFacts;
-using vn::vsg::ContentPipeline;
-using vn::vsg::FactMiss;
-using vn::vsg::ProgramFacts;
 using vn::graphics::backend::DynamicState;
 using vn::graphics::backend::PipelineKey;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
+using vn::vsg::buildScreenProgramFacts;
+using vn::vsg::ContentPipeline;
+using vn::vsg::FactMiss;
+using vn::vsg::ProgramFacts;
 
 namespace
 {
@@ -61,10 +61,10 @@ namespace
 ContentPipeline::Shaders contentShaders()
 {
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "layout(push_constant) uniform pc { mat4 projection; mat4 modelView; } pc_data;\n"
-                     "void main() { gl_Position = pc_data.projection * pc_data.modelView * vec4(position, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) in vec3 position;\n"
+                       "layout(push_constant) uniform pc { mat4 projection; mat4 modelView; } pc_data;\n"
+                       "void main() { gl_Position = pc_data.projection * pc_data.modelView * vec4(position, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 outColor;\n"
                        "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n";
@@ -85,7 +85,7 @@ ContentPipeline::VertexAttribute positionAttribute()
 /// @brief An identity with all identity-layer inputs filled in.
 PipelineKey contentKey(std::uint64_t revision)
 {
-    static int program = 0;
+    static int  program = 0;
     PipelineKey key;
     key.program                      = &program;
     key.revision                     = revision;
@@ -109,8 +109,10 @@ std::unique_ptr<ContentPipeline> makeLayer()
     const ContentPipeline::Shaders         shaders   = contentShaders();
     const ContentPipeline::VertexBinding   binding   = positionBinding();
     const ContentPipeline::VertexAttribute attribute = positionAttribute();
-    return ContentPipeline::create(abiOf(shaders), std::span<const ContentPipeline::VertexBinding>(&binding, 1),
-                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders);
+    return ContentPipeline::create(abiOf(shaders),
+                                   std::span<const ContentPipeline::VertexBinding>(&binding, 1),
+                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1),
+                                   shaders);
 }
 
 /// @brief The layer under test with caller-chosen shader text.
@@ -118,8 +120,10 @@ std::unique_ptr<ContentPipeline> makeLayerWith(const ContentPipeline::Shaders& s
 {
     const ContentPipeline::VertexBinding   binding   = positionBinding();
     const ContentPipeline::VertexAttribute attribute = positionAttribute();
-    return ContentPipeline::create(abiOf(shaders), std::span<const ContentPipeline::VertexBinding>(&binding, 1),
-                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders);
+    return ContentPipeline::create(abiOf(shaders),
+                                   std::span<const ContentPipeline::VertexBinding>(&binding, 1),
+                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1),
+                                   shaders);
 }
 
 /// @brief The layer under test built with explicit settings (what the identity says beyond the text).
@@ -128,8 +132,10 @@ std::unique_ptr<ContentPipeline> makeLayerWithSettings(const ContentPipeline::Se
     const ContentPipeline::Shaders         shaders   = contentShaders();
     const ContentPipeline::VertexBinding   binding   = positionBinding();
     const ContentPipeline::VertexAttribute attribute = positionAttribute();
-    return ContentPipeline::create(abiOf(shaders), std::span<const ContentPipeline::VertexBinding>(&binding, 1),
-                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders,
+    return ContentPipeline::create(abiOf(shaders),
+                                   std::span<const ContentPipeline::VertexBinding>(&binding, 1),
+                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1),
+                                   shaders,
                                    settings);
 }
 
@@ -149,10 +155,10 @@ const T* stateOf(const ::vsg::GraphicsPipeline& pipeline)
 ContentPipeline::Shaders screenShaders()
 {
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) out vec2 vn_uv;\n"
-                     "void main() { vn_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
-                     "              gl_Position = vec4(vn_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) out vec2 vn_uv;\n"
+                       "void main() { vn_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+                       "              gl_Position = vec4(vn_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) in vec2 vn_uv;\n"
                        "layout(location = 0) out vec4 out_color;\n"
@@ -176,24 +182,24 @@ std::unique_ptr<ContentPipeline> screenLayer(const ContentPipeline::Shaders& sha
 /// @brief An identity of the full-screen kind (kind = Screen: the other descriptor ABI).
 PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
 {
-    static int program = 0;
+    static int  program = 0;
     PipelineKey key;
-    key.kind                     = vn::graphics::backend::DrawKind::Screen;
-    key.program                  = &program;
-    key.revision                 = revision;
-    key.compatibility.samples    = 1U;
-    key.sampled_color_count      = sampled_colors;
+    key.kind                  = vn::graphics::backend::DrawKind::Screen;
+    key.program               = &program;
+    key.revision              = revision;
+    key.compatibility.samples = 1U;
+    key.sampled_color_count   = sampled_colors;
     return key;
 }
 
-}  // namespace
+} // namespace
 
 TEST(ContentPipelineTest, TheSameIdentityIsBuiltOnce)
 {
     auto layer = makeLayer();
     ASSERT_NE(layer, nullptr) << "the shader pair must compile";
 
-    VariantPool      pool;
+    VariantPool       pool;
     const PipelineKey key = contentKey(1);
 
     const auto first  = layer->acquire(pool, key);
@@ -217,7 +223,7 @@ TEST(ContentPipelineTest, AnIdentityChangeIsANewPipeline)
 
     VariantPool pool;
     const auto  first  = layer->acquire(pool, contentKey(1));
-    const auto  second = layer->acquire(pool, contentKey(2));  // the program's revision moved
+    const auto  second = layer->acquire(pool, contentKey(2)); // the program's revision moved
 
     EXPECT_EQ(second.action, VariantPool::Action::Created);
     EXPECT_NE(first.pipeline, second.pipeline);
@@ -235,7 +241,7 @@ TEST(ContentPipelineTest, TheTopologyTheSettingsNameIsWhatThePipelineBakes)
     // undefined behaviour rather than a picture. The class is therefore identity, and the create-info has to
     // state the one the key names - a default layer keeps the engine's own default.
     ContentPipeline::Settings points;
-    points.topology = vn::graphics::Topology::Points;
+    points.topology  = vn::graphics::Topology::Points;
     auto point_layer = makeLayerWithSettings(points);
     ASSERT_NE(point_layer, nullptr);
 
@@ -268,8 +274,7 @@ TEST(ContentPipelineTest, TheEditableHalfIsDeclaredDynamic)
     const auto* dynamic = stateOf<::vsg::DynamicState>(*result.pipeline);
     ASSERT_NE(dynamic, nullptr) << "every content pipeline declares its dynamic states";
     const auto declares = [dynamic](VkDynamicState state) {
-        return std::find(dynamic->dynamicStates.begin(), dynamic->dynamicStates.end(), state) !=
-               dynamic->dynamicStates.end();
+        return std::find(dynamic->dynamicStates.begin(), dynamic->dynamicStates.end(), state) != dynamic->dynamicStates.end();
     };
     EXPECT_TRUE(declares(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE));
     EXPECT_TRUE(declares(VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE));
@@ -303,15 +308,15 @@ TEST(ContentPipelineTest, TheEditableHalfIsDeclaredDynamic)
 TEST(ContentPipelineTest, AnInstanceVariantDeclaresThePerInstanceStreamTheShaderImports)
 {
     ContentPipeline::Shaders shaders = contentShaders();
-    shaders.vertex = "#version 450\n"
-                     "#pragma import_defines(VN_INSTANCED)\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "layout(location = 12) in mat4 instance_model;\n"
-                     "void main() { gl_Position = instance_model * vec4(position, 1.0); }\n";
-    shaders.defines = { "VN_INSTANCED" };
+    shaders.vertex                   = "#version 450\n"
+                                       "#pragma import_defines(VN_INSTANCED)\n"
+                                       "layout(location = 0) in vec3 position;\n"
+                                       "layout(location = 12) in mat4 instance_model;\n"
+                                       "void main() { gl_Position = instance_model * vec4(position, 1.0); }\n";
+    shaders.defines                  = { "VN_INSTANCED" };
 
     vn::vsg::GeometryFacts geometry;
-    vn::vsg::ChannelFacts position;
+    vn::vsg::ChannelFacts  position;
     position.key.kind       = vn::graphics::backend::StreamKind::Vertex;
     position.key.location   = 0U;
     position.key.components = 3U;
@@ -320,9 +325,8 @@ TEST(ContentPipelineTest, AnInstanceVariantDeclaresThePerInstanceStreamTheShader
     geometry.channels       = std::span<const vn::vsg::ChannelFacts>(&position, 1U);
 
     ContentPipeline::Settings settings;
-    settings.color_attachments = 1U;
-    std::unique_ptr<ContentPipeline> layer =
-        ContentPipeline::create(abiOf(shaders), geometry, shaders, settings);
+    settings.color_attachments             = 1U;
+    std::unique_ptr<ContentPipeline> layer = ContentPipeline::create(abiOf(shaders), geometry, shaders, settings);
     ASSERT_NE(layer, nullptr) << "the vertex text imports the define, so the layout may be built";
 
     VariantPool pool;
@@ -333,8 +337,7 @@ TEST(ContentPipelineTest, AnInstanceVariantDeclaresThePerInstanceStreamTheShader
     ASSERT_NE(vertex_input, nullptr);
     ASSERT_EQ(vertex_input->vertexBindingDescriptions.size(), 2U);
     EXPECT_EQ(vertex_input->vertexBindingDescriptions[0].binding, 0U);
-    EXPECT_EQ(vertex_input->vertexBindingDescriptions[1].binding, 4U)
-        << "the instance stream has its own binding, past the geometry's channels";
+    EXPECT_EQ(vertex_input->vertexBindingDescriptions[1].binding, 4U) << "the instance stream has its own binding, past the geometry's channels";
     EXPECT_EQ(vertex_input->vertexBindingDescriptions[1].stride, 64U) << "four vec4 columns";
     EXPECT_EQ(vertex_input->vertexBindingDescriptions[1].inputRate, VK_VERTEX_INPUT_RATE_INSTANCE);
 
@@ -357,7 +360,7 @@ TEST(ContentPipelineTest, AnInstanceVariantWithoutThePragmaIsRefused)
     shaders.defines                  = { "VN_INSTANCED" };
 
     vn::vsg::GeometryFacts geometry;
-    vn::vsg::ChannelFacts position;
+    vn::vsg::ChannelFacts  position;
     position.key.kind       = vn::graphics::backend::StreamKind::Vertex;
     position.key.location   = 0U;
     position.key.components = 3U;
@@ -373,12 +376,12 @@ TEST(ContentPipelineTest, AnInstanceVariantWithoutThePragmaIsRefused)
 TEST(ContentPipelineTest, AGeometryChannelCannotTakeAnInstanceSlot)
 {
     ContentPipeline::Shaders shaders = contentShaders();
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 12) in vec4 custom;\n"
-                     "void main() { gl_Position = custom; }\n";
+    shaders.vertex                   = "#version 450\n"
+                                       "layout(location = 12) in vec4 custom;\n"
+                                       "void main() { gl_Position = custom; }\n";
 
     vn::vsg::GeometryFacts geometry;
-    vn::vsg::ChannelFacts custom;
+    vn::vsg::ChannelFacts  custom;
     custom.key.kind       = vn::graphics::backend::StreamKind::Vertex;
     custom.key.location   = 12U;
     custom.key.components = 4U;
@@ -430,10 +433,10 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // attachments and depth - 2D views, one per binding - so a text declaring a cube asks for an image this
     // ABI has nowhere to take from (a cube map is a content drawable's own map, see api/ContentImages).
     ContentPipeline::Shaders cube_screen = screenShaders();
-    cube_screen.fragment                = "#version 450\n"
-                                          "layout(location = 0) out vec4 out_color;\n"
-                                          "layout(set = 0, binding = 0) uniform samplerCube sky;\n"
-                                          "void main() { out_color = texture(sky, vec3(0.0, 0.0, 1.0)); }\n";
+    cube_screen.fragment                 = "#version 450\n"
+                                           "layout(location = 0) out vec4 out_color;\n"
+                                           "layout(set = 0, binding = 0) uniform samplerCube sky;\n"
+                                           "void main() { out_color = texture(sky, vec3(0.0, 0.0, 1.0)); }\n";
     EXPECT_EQ(screenLayer(cube_screen), nullptr);
 
     // The text declares `layout(binding = 0) uniform sampler2D picture;` - so the SET IS THE TEXT'S: a pass
@@ -484,8 +487,7 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     // shadow ABI's bindings down by hand: the lights at 6 (the binding both paths share), the source's four
     // colours take 0..3 and its depth would take 4, and the map and the block follow at 7 and 8. The layer's
     // set is what the TEXT declares, so those numbers are the text's - and the layer has to serve them.
-    const vn::intrusive_ptr<vn::graphics::ShaderProgram> program =
-        vn::graphics::shadowedDeferredLightProgram();
+    const vn::intrusive_ptr<vn::graphics::ShaderProgram> program = vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(program, nullptr);
     ProgramFacts facts;
     ASSERT_EQ(buildScreenProgramFacts(*program, facts), FactMiss::None);
@@ -514,14 +516,15 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     const auto set = layer->sampledSetLayout(4U, 0U);
     ASSERT_NE(set, nullptr);
     std::vector<std::uint32_t> bindings;
-    for (const auto& entry : set->bindings) { bindings.push_back(entry.binding); }
+    for (const auto& entry : set->bindings) {
+        bindings.push_back(entry.binding);
+    }
     ASSERT_EQ(bindings.size(), 7U) << "four colours, the lights, the map and the block";
     EXPECT_EQ(bindings[0], 0U);
     EXPECT_EQ(bindings[4], 6U) << "the light block both paths carry";
     EXPECT_EQ(bindings[5], 7U) << "the map takes its declared binding";
     EXPECT_EQ(bindings[6], 8U) << "and the shadow block takes its own";
-    EXPECT_EQ(std::find(bindings.begin(), bindings.end(), 5U), bindings.end())
-        << "nothing lives at 5: the source offers no depth";
+    EXPECT_EQ(std::find(bindings.begin(), bindings.end(), 5U), bindings.end()) << "nothing lives at 5: the source offers no depth";
     for (const auto& entry : set->bindings) {
         if (entry.binding == 8U) {
             // DYNAMIC, and that is the point: the block's offset moves every frame (the arena writes one block
@@ -538,7 +541,9 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     const auto with_depth = layer->sampledSetLayout(4U, 1U);
     ASSERT_NE(with_depth, nullptr);
     std::vector<std::uint32_t> with_depth_bindings;
-    for (const auto& entry : with_depth->bindings) { with_depth_bindings.push_back(entry.binding); }
+    for (const auto& entry : with_depth->bindings) {
+        with_depth_bindings.push_back(entry.binding);
+    }
     ASSERT_EQ(with_depth_bindings.size(), 8U) << "the depth takes 4, so everything after it slides by none";
     EXPECT_EQ(with_depth_bindings[4], 4U) << "the source's own depth";
     EXPECT_EQ(with_depth_bindings[5], 6U) << "the lights did not move";
@@ -563,8 +568,7 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
         }
         return ContentPipeline::createScreen(abi, shaders);
     };
-    EXPECT_EQ(refusing("layout(set = 1, binding = 0) uniform sampler2D picture;"), nullptr)
-        << "the full-screen ABI is set 0 and nothing else";
+    EXPECT_EQ(refusing("layout(set = 1, binding = 0) uniform sampler2D picture;"), nullptr) << "the full-screen ABI is set 0 and nothing else";
     EXPECT_NE(refusing("layout(binding = 5, std140) uniform VineLightsBlock "
                        "{ vec4 ambient; vec4 position_kind[8]; vec4 direction_range[8]; "
                        "vec4 color_intensity[8]; vec4 cone[8]; } lights;"),
@@ -572,8 +576,7 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
         << "the light block both paths carry is exactly what a screen text declares";
     EXPECT_EQ(refusing("layout(binding = 7, std140) uniform VineMaterialBlock { vec4 ambient; } material;"), nullptr)
         << "a content-only block is not this ABI's";
-    EXPECT_NE(refusing("layout(binding = 6) uniform sampler2D vn_shadow_map;"), nullptr)
-        << "while the shadow's pair is exactly what a screen text may declare";
+    EXPECT_NE(refusing("layout(binding = 6) uniform sampler2D vn_shadow_map;"), nullptr) << "while the shadow's pair is exactly what a screen text may declare";
 }
 
 TEST(ContentPipelineTest, AScreenPipelineBakesTheLegacyFullscreenShape)
@@ -591,8 +594,7 @@ TEST(ContentPipelineTest, AScreenPipelineBakesTheLegacyFullscreenShape)
 
     const auto* vertex_input = stateOf<::vsg::VertexInputState>(*screen.pipeline);
     ASSERT_NE(vertex_input, nullptr);
-    EXPECT_TRUE(vertex_input->vertexBindingDescriptions.empty())
-        << "the vertices are generated, so no stream is declared";
+    EXPECT_TRUE(vertex_input->vertexBindingDescriptions.empty()) << "the vertices are generated, so no stream is declared";
     EXPECT_TRUE(vertex_input->vertexAttributeDescriptions.empty());
 
     const auto* raster = stateOf<::vsg::RasterizationState>(*screen.pipeline);
@@ -642,8 +644,8 @@ TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline
     // The count is part of the identity: two counts are two pipelines, and each was compiled against its own
     // layout.
     VariantPool pool;
-    PipelineKey plain       = contentKey(1);
-    PipelineKey sampling    = contentKey(1);
+    PipelineKey plain            = contentKey(1);
+    PipelineKey sampling         = contentKey(1);
     sampling.sampled_color_count = 1U;
 
     const auto without = layer->acquire(pool, plain);
@@ -652,10 +654,8 @@ TEST(ContentPipelineTest, ASampledInputCountGetsItsOwnSetLayoutAndItsOwnPipeline
     ASSERT_NE(with.pipeline, nullptr);
     EXPECT_NE(without.pipeline, with.pipeline);
     EXPECT_EQ(pool.created(), 2U);
-    EXPECT_EQ(without.pipeline->layout->setLayouts.size(), 0U)
-        << "the text declares no blocks: a pass with no inputs binds nothing at all";
-    EXPECT_EQ(with.pipeline->layout->setLayouts.size(), 2U)
-        << "the (empty) set before the samplers and the sampled set itself";
+    EXPECT_EQ(without.pipeline->layout->setLayouts.size(), 0U) << "the text declares no blocks: a pass with no inputs binds nothing at all";
+    EXPECT_EQ(with.pipeline->layout->setLayouts.size(), 2U) << "the (empty) set before the samplers and the sampled set itself";
     EXPECT_EQ(layer->acquire(pool, sampling).action, VariantPool::Action::Reused);
 }
 
@@ -664,8 +664,8 @@ TEST(ContentPipelineTest, DynamicStateChurnNeverReachesThePoolOrThisLayer)
     auto layer = makeLayer();
     ASSERT_NE(layer, nullptr);
 
-    VariantPool   pool;
-    StateRegistry registry(pool);
+    VariantPool       pool;
+    StateRegistry     registry(pool);
     const PipelineKey key = contentKey(1);
 
     (void)registry.resolve(key, DynamicState{});
@@ -688,7 +688,7 @@ TEST(ContentPipelineTest, AnEvictedIdentityCostsThisLayerItsObject)
     auto layer = makeLayer();
     ASSERT_NE(layer, nullptr);
 
-    VariantPool pool(1);  // one identity at a time: the second acquire evicts the first
+    VariantPool pool(1); // one identity at a time: the second acquire evicts the first
     const auto  first  = layer->acquire(pool, contentKey(1));
     const auto  second = layer->acquire(pool, contentKey(2));
 
@@ -707,7 +707,7 @@ TEST(ContentPipelineTest, AnEvictedIdentityCostsThisLayerItsObject)
 TEST(ContentPipelineTest, AShaderPairThatDoesNotCompileYieldsNoLayer)
 {
     ContentPipeline::Shaders broken = contentShaders();
-    broken.fragment = "#version 450\nvoid main() { this is not glsl; }\n";
+    broken.fragment                 = "#version 450\nvoid main() { this is not glsl; }\n";
 
     auto layer = makeLayerWith(broken);
     EXPECT_EQ(layer, nullptr) << "a layer that can never build a pipeline must say so before anything is drawn";
@@ -720,10 +720,10 @@ TEST(ContentPipelineTest, TheLayoutFollowsTheDeclarationsWhereverTheyPutTheBlock
     // the draw block in set 1 - a third arrangement again). All of them are served the same way: the layout is
     // read out of the text, and the shape a caller must build its set from is answered by the same facts.
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "layout(set = 1, binding = 0, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
-                     "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) in vec3 position;\n"
+                       "layout(set = 1, binding = 0, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
+                       "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 outColor;\n"
                        "layout(set = 0, binding = 3, std140) uniform VineMaterialBlock\n"
@@ -762,13 +762,13 @@ TEST(ContentPipelineTest, TheLayoutFollowsTheDeclarationsWhereverTheyPutTheBlock
     // contiguous range from 0 - and the ones in between are REAL, EMPTY descriptor set layouts, because a
     // null entry in a pipeline layout is not "no set", it is an invalid handle.
     ContentPipeline::Shaders gapped;
-    gapped.vertex   = "#version 450\n"
-                      "layout(location = 0) in vec3 position;\n"
-                      "void main() { gl_Position = vec4(position, 1.0); }\n";
-    gapped.fragment = "#version 450\n"
-                      "layout(location = 0) out vec4 outColor;\n"
-                      "layout(set = 2, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;\n"
-                      "void main() { outColor = lights.light0; }\n";
+    gapped.vertex     = "#version 450\n"
+                        "layout(location = 0) in vec3 position;\n"
+                        "void main() { gl_Position = vec4(position, 1.0); }\n";
+    gapped.fragment   = "#version 450\n"
+                        "layout(location = 0) out vec4 outColor;\n"
+                        "layout(set = 2, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;\n"
+                        "void main() { outColor = lights.light0; }\n";
     auto gapped_layer = makeLayerWith(gapped);
     ASSERT_NE(gapped_layer, nullptr);
     ASSERT_EQ(gapped_layer->declaredSets().size(), 1U);
@@ -838,10 +838,10 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     // nothing cannot bind an image at binding 0, so the pipeline is refused for that key and only that key.
     auto sampling = layerDeclaring("layout(set = 1, binding = 0) uniform sampler2D picture;");
     ASSERT_NE(sampling, nullptr);
-    VariantPool      pool;
-    const auto       no_inputs = sampling->acquire(pool, contentKey(1));
+    VariantPool pool;
+    const auto  no_inputs = sampling->acquire(pool, contentKey(1));
     EXPECT_EQ(no_inputs.pipeline, nullptr) << "a sampler the pass' input count cannot reach has no image to bind";
-    PipelineKey      with_input = contentKey(1);
+    PipelineKey with_input         = contentKey(1);
     with_input.sampled_color_count = 1U;
     EXPECT_NE(sampling->acquire(pool, with_input).pipeline, nullptr);
 }
@@ -857,7 +857,8 @@ TEST(ContentPipelineTest, APushNobodyCouldFillIsRefusedWhereTheLayoutIsBuilt)
         ContentPipeline::Shaders shaders;
         shaders.vertex   = "#version 450\n"
                            "layout(location = 0) in vec3 position;\n"
-                           "layout(push_constant) uniform PushConstants { " + members +
+                           "layout(push_constant) uniform PushConstants { " +
+                           members +
                            " } pc;\n"
                            "void main() { gl_Position = vec4(position, 1.0); }\n";
         shaders.fragment = "#version 450\n"

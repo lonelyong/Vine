@@ -33,7 +33,7 @@ void SerialKinematics::init(raw_ptr<Frame> base, raw_ptr<Frame> end)
     // 遍历运动链收集所有坐标系(运动关节 + 固定坐标系), 按链序(base -> end)
     std::vector<raw_ptr<Frame>> chain;
     std::size_t                 total_dof = 0;
-    raw_ptr<Frame>              f = end;
+    raw_ptr<Frame>              f         = end;
     while (f) {
         chain.push_back(f);
         total_dof += f->dofInfos().size();
@@ -79,7 +79,7 @@ void SerialKinematics::init(raw_ptr<Frame> base, raw_ptr<Frame> end)
         }
         for (const auto& dof : frame->dofInfos()) {
             DofInfo effective = dof;
-            effective.origin = fixed_accum * effective.origin;
+            effective.origin  = fixed_accum * effective.origin;
             dofs_.push_back(effective.type);
             lower_bounds_.append(effective.lower);
             upper_bounds_.append(effective.upper);
@@ -104,16 +104,10 @@ void SerialKinematics::setIKSolverType(IKSolverType type)
     // 先配置基类的默认求解器类型, 再据此重建底层求解器
     KinematicsBase::setIKSolverType(type);
     switch (default_ik_solver_type_) {
-        case IKSolverType::None:
-            ik_solver_.reset();
-            break;
-        case IKSolverType::Pieper:
-            ik_solver_ = std::make_unique<PieperIKSolver>(ik_dofs_);
-            break;
-        case IKSolverType::Iterative:
-        default:
-            ik_solver_ = std::make_unique<JacobianIKSolver>(ik_dofs_);
-            break;
+    case IKSolverType::None: ik_solver_.reset(); break;
+    case IKSolverType::Pieper: ik_solver_ = std::make_unique<PieperIKSolver>(ik_dofs_); break;
+    case IKSolverType::Iterative:
+    default: ik_solver_ = std::make_unique<JacobianIKSolver>(ik_dofs_); break;
     }
 }
 

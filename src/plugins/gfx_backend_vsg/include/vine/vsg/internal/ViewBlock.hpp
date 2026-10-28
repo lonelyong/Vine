@@ -62,8 +62,8 @@ VN_VSG_NS_BEGIN
  * @param height       Height of the target the pass draws into, in device pixels.
  * @return The block, in the ABI's shape (`VineViewBlock`), ready for BlockStorage::writeView.
  */
-[[nodiscard]] vn::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera, float time_seconds,
-                                                           std::uint32_t width, std::uint32_t height) noexcept;
+[[nodiscard]] vn::graphics::VineViewBlock
+buildViewBlock(const core::CameraSnapshot& camera, float time_seconds, std::uint32_t width, std::uint32_t height) noexcept;
 
 /** @brief Folds one projection matrix written in the SDK's clip convention into this device's (see the file
  *         note: y down, z `0.5 - 0.5 * z`).

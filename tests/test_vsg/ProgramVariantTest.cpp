@@ -24,8 +24,8 @@
 #include <vine/vsg/internal/ProgramVariant.hpp>
 
 using vn::graphics::attributeLocation;
-using vn::graphics::VertexAttribute;
 using vn::graphics::Texture2D;
+using vn::graphics::VertexAttribute;
 using vn::imaging::PixelFormat;
 using vn::vsg::AbiBinding;
 using vn::vsg::AbiDescriptorKind;
@@ -66,7 +66,7 @@ GeometryFacts geometryWith(std::vector<ChannelFacts>& storage)
     return facts;
 }
 
-}  // namespace
+} // namespace
 
 TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
 {
@@ -79,9 +79,9 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
     EXPECT_EQ(flat_names[0], "VN_TEXCOORD_UV");
 
     ProgramVariant cube;
-    cube.cube_texcoord = true;
-    cube.textured      = true;
-    cube.vertex_color  = true;
+    cube.cube_texcoord                        = true;
+    cube.textured                             = true;
+    cube.vertex_color                         = true;
     const std::vector<std::string> cube_names = cube.defines();
     ASSERT_EQ(cube_names.size(), 3U);
     EXPECT_EQ(cube_names[0], "VN_TEXCOORD_CUBE");
@@ -91,7 +91,7 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
     // The instance stream is a switch too: it changes the vertex input the layer declares, so it must
     // change the identity the pool and the half are filed under.
     ProgramVariant instanced;
-    instanced.instanced = true;
+    instanced.instanced                            = true;
     const std::vector<std::string> instanced_names = instanced.defines();
     ASSERT_EQ(instanced_names.size(), 2U);
     EXPECT_EQ(instanced_names[0], "VN_TEXCOORD_UV");
@@ -101,10 +101,10 @@ TEST(ProgramVariantTest, TheDefinesAreTheEnginesOwnNames)
     std::vector<std::uint32_t> seen;
     for (int mask = 0; mask < 16; ++mask) {
         ProgramVariant variant;
-        variant.textured      = (mask & 1) != 0;
-        variant.vertex_color  = (mask & 2) != 0;
-        variant.cube_texcoord = (mask & 4) != 0;
-        variant.instanced     = (mask & 8) != 0;
+        variant.textured         = (mask & 1) != 0;
+        variant.vertex_color     = (mask & 2) != 0;
+        variant.cube_texcoord    = (mask & 4) != 0;
+        variant.instanced        = (mask & 8) != 0;
         const std::uint32_t bits = variant.bits();
         EXPECT_EQ(std::find(seen.begin(), seen.end(), bits), seen.end()) << "two variants share a key number";
         seen.push_back(bits);
@@ -118,8 +118,8 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
     // declaration at all - and the UV kind, which every variant states.
     std::vector<ChannelFacts> bare{ channelAt(attributeLocation(VertexAttribute::Position), 3U) };
     {
-        GeometryFacts geometry = geometryWith(bare);
-        MaterialFacts material;
+        GeometryFacts        geometry = geometryWith(bare);
+        MaterialFacts        material;
         const ProgramVariant variant = variantOf(material, geometry);
         EXPECT_FALSE(variant.textured);
         EXPECT_FALSE(variant.vertex_color);
@@ -127,13 +127,12 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
     }
 
     // A material with a texture asks for the sampler...
-    std::vector<ChannelFacts> uvs{ channelAt(attributeLocation(VertexAttribute::Position), 3U),
-                                   channelAt(attributeLocation(VertexAttribute::TexCoord0), 2U) };
+    std::vector<ChannelFacts> uvs{ channelAt(attributeLocation(VertexAttribute::Position), 3U), channelAt(attributeLocation(VertexAttribute::TexCoord0), 2U) };
     {
-        GeometryFacts geometry = geometryWith(uvs);
+        GeometryFacts                      geometry = geometryWith(uvs);
         const vn::intrusive_ptr<Texture2D> texture(new Texture2D(2, 2, PixelFormat::Rgba8Unorm));
-        MaterialFacts material;
-        material.slots[0].texture = texture.get();
+        MaterialFacts                      material;
+        material.slots[0].texture    = texture.get();
         const ProgramVariant variant = variantOf(material, geometry);
         EXPECT_TRUE(variant.textured);
         EXPECT_FALSE(variant.cube_texcoord) << "two scalars are a UV pair";
@@ -152,8 +151,7 @@ TEST(ProgramVariantTest, TheRuleFollowsTheChannelWidthTheTextureAndTheAuthoredCo
 
     // The colour define follows an AUTHORED colour channel: a derived one (the backend's own white
     // carrier) is not a colour the geometry wrote, so shading it with a multiply would only cost.
-    std::vector<ChannelFacts> authored{ channelAt(attributeLocation(VertexAttribute::Position), 3U),
-                                        channelAt(attributeLocation(VertexAttribute::Color), 4U) };
+    std::vector<ChannelFacts> authored{ channelAt(attributeLocation(VertexAttribute::Position), 3U), channelAt(attributeLocation(VertexAttribute::Color), 4U) };
     std::vector<ChannelFacts> derived{ channelAt(attributeLocation(VertexAttribute::Position), 3U),
                                        channelAt(attributeLocation(VertexAttribute::Color), 4U, /*buffer*/ nullptr) };
     {
@@ -176,7 +174,7 @@ TEST(ProgramVariantTest, TheEnginesOwnForwardProgramDescribesItselfPerVariant)
                 return declared.kind;
             }
         }
-        return AbiDescriptorKind::UniformBlock;  // "absent": the block kind stands for nothing declared
+        return AbiDescriptorKind::UniformBlock; // "absent": the block kind stands for nothing declared
     };
 
     // WITHOUT the set's define the engine's forward stage declares no sampler at all - the five
@@ -184,8 +182,7 @@ TEST(ProgramVariantTest, TheEnginesOwnForwardProgramDescribesItselfPerVariant)
     // and the rest.
     ProgramFacts without;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, without), FactMiss::None);
-    EXPECT_EQ(samplerAt(without, 0U, 1U), AbiDescriptorKind::UniformBlock)
-        << "an untextured variant declares no sampler at the map's binding";
+    EXPECT_EQ(samplerAt(without, 0U, 1U), AbiDescriptorKind::UniformBlock) << "an untextured variant declares no sampler at the map's binding";
     ASSERT_EQ(without.shaders.defines.size(), 1U);
     EXPECT_EQ(without.shaders.defines[0], "VN_TEXCOORD_UV");
 

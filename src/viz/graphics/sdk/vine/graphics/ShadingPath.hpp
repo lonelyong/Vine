@@ -15,9 +15,10 @@ VN_GRAPHICS_NS_BEGIN
  *   effects) are ORTHOGONAL to it: they add passes and inputs to whichever path is chosen (see
  *   PassStage), so making the path a type would need one subclass per combination.
  */
-enum class ShadingPath {
-    Forward,  ///< One window scene pass drawing the content.
-    Deferred, ///< A G-buffer pass (offscreen MRT) + a fullscreen lighting pass.
+enum class ShadingPath
+{
+    Forward,  // One window scene pass drawing the content.
+    Deferred, // A G-buffer pass (offscreen MRT) + a fullscreen lighting pass.
 };
 
 VN_GRAPHICS_NS_END

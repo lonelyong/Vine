@@ -17,7 +17,7 @@ Registration& Registration::instance(ServiceBase* inst)
     if (inst && !inst->isKindOf(service_type_)) {
         throw vn::Exception(vn::Exception::INVALID_ARGUMENTS, u8"The 'inst' is not kind of the service type.");
     }
-    inst_     = inst;                        // The container takes ownership through intrusive_ptr.
+    inst_     = inst;                // The container takes ownership through intrusive_ptr.
     lifetime_ = Lifetime::Singleton; // A pre-set instance is inherently shared.
     return *this;
 }

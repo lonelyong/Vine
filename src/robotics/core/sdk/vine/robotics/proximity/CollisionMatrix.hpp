@@ -60,8 +60,7 @@ class CollisionMatrix final {
             throw std::logic_error("CollisionMatrix::registerObject, null object.");
         }
         if (!registered_objects_.insert(object).second) {
-            throw std::logic_error("CollisionMatrix::registerObject, object already registered: "
-                                   + object->name().as_std_str());
+            throw std::logic_error("CollisionMatrix::registerObject, object already registered: " + object->name().as_std_str());
         }
     }
 
@@ -102,9 +101,7 @@ class CollisionMatrix final {
     std::vector<const vn::INamed*> registeredObjects() const
     {
         std::vector<const vn::INamed*> objects(registered_objects_.begin(), registered_objects_.end());
-        std::sort(objects.begin(), objects.end(), [](const vn::INamed* a, const vn::INamed* b) {
-            return a->name() < b->name();
-        });
+        std::sort(objects.begin(), objects.end(), [](const vn::INamed* a, const vn::INamed* b) { return a->name() < b->name(); });
         return objects;
     }
 
@@ -182,8 +179,7 @@ class CollisionMatrix final {
      * @param object_b Owner B.
      * @return The options, or std::nullopt when either owner is unregistered.
      */
-    std::optional<CollisionOptions> collisionOptions(const vn::INamed* object_a,
-                                                     const vn::INamed* object_b) const
+    std::optional<CollisionOptions> collisionOptions(const vn::INamed* object_a, const vn::INamed* object_b) const
     {
         if (!containsObject(object_a) || !containsObject(object_b)) {
             return std::nullopt;
@@ -216,8 +212,7 @@ class CollisionMatrix final {
     void ignoreAgainstAll(const vn::INamed* object)
     {
         if (!containsObject(object)) {
-            throw std::logic_error("CollisionMatrix::ignoreAgainstAll, object not registered: "
-                                   + (object ? object->name().as_std_str() : "null"));
+            throw std::logic_error("CollisionMatrix::ignoreAgainstAll, object not registered: " + (object ? object->name().as_std_str() : "null"));
         }
         for (const auto* const other : registered_objects_) {
             if (other != object) {
@@ -252,9 +247,8 @@ class CollisionMatrix final {
             throw std::logic_error("CollisionMatrix, a == b is not a valid pair.");
         }
         if (!containsObject(object_a) || !containsObject(object_b)) {
-            throw std::logic_error("CollisionMatrix, object not registered: "
-                                   + (object_a ? object_a->name().as_std_str() : "null") + " / "
-                                   + (object_b ? object_b->name().as_std_str() : "null"));
+            throw std::logic_error("CollisionMatrix, object not registered: " + (object_a ? object_a->name().as_std_str() : "null") + " / " +
+                                   (object_b ? object_b->name().as_std_str() : "null"));
         }
     }
 

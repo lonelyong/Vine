@@ -11,14 +11,12 @@
 #include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 
+#include <vine/imageio/ImageCodec.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
-#include <vine/imageio/ImageCodec.hpp>
 #include <vine/io/IoError.hpp>
 
-using vn::imaging::bytesPerPixel;
-using vn::imaging::Image;
-using vn::imaging::PixelFormat;
+using vn::intrusive_ptr;
 using vn::imageio::canRead;
 using vn::imageio::canWrite;
 using vn::imageio::decodeImage;
@@ -30,7 +28,9 @@ using vn::imageio::ImageFileFormat;
 using vn::imageio::loadImage;
 using vn::imageio::saveImage;
 using vn::imageio::supportedExtensions;
-using vn::intrusive_ptr;
+using vn::imaging::bytesPerPixel;
+using vn::imaging::Image;
+using vn::imaging::PixelFormat;
 using vn::io::IoError;
 
 namespace
@@ -41,8 +41,8 @@ namespace
 /// `Rg8Unorm` is deliberately not here: a container's two channels mean grey + alpha, and refusing the
 /// mismatch is the codec's documented behaviour (see the test that pins it).
 const PixelFormat kLayouts[] = {
-    PixelFormat::R8Unorm,    PixelFormat::R8Srgb,     PixelFormat::Rgb8Unorm,  PixelFormat::Rgb8Srgb,
-    PixelFormat::Rgba8Unorm, PixelFormat::Rgba8Srgb,  PixelFormat::Bgra8Unorm, PixelFormat::Bgra8Srgb,
+    PixelFormat::R8Unorm,    PixelFormat::R8Srgb,    PixelFormat::Rgb8Unorm,  PixelFormat::Rgb8Srgb,
+    PixelFormat::Rgba8Unorm, PixelFormat::Rgba8Srgb, PixelFormat::Bgra8Unorm, PixelFormat::Bgra8Srgb,
 };
 
 /// Every container this module writes.
@@ -85,7 +85,8 @@ intrusive_ptr<Image> patternImage(int width, int height, PixelFormat format, int
         for (std::size_t p = 0; p + static_cast<std::size_t>(channels) <= pixels.size(); p += static_cast<std::size_t>(channels)) {
             for (int c = 0; c < channels; ++c) {
                 // Varies with the pixel (so rows differ) and with the channel (so a swap is visible).
-                pixels[p + static_cast<std::size_t>(c)] = std::byte{ static_cast<unsigned char>((p * 7 + static_cast<std::size_t>(c) * 101 + mip * 13) & 0xFFu) };
+                pixels[p + static_cast<std::size_t>(c)] =
+                    std::byte{ static_cast<unsigned char>((p * 7 + static_cast<std::size_t>(c) * 101 + mip * 13) & 0xFFu) };
             }
         }
     }
@@ -156,8 +157,7 @@ TEST(ImageFileFormatTest, ReadsEveryContainerItAdvertisesAndWritesThree)
 
 TEST(ImageFileFormatTest, TheTableStatesEachFormatsExtensionsAndCapabilities)
 {
-    for (const ImageFileFormat format :
-         { ImageFileFormat::Png, ImageFileFormat::Jpeg, ImageFileFormat::Bmp, ImageFileFormat::Tga }) {
+    for (const ImageFileFormat format : { ImageFileFormat::Png, ImageFileFormat::Jpeg, ImageFileFormat::Bmp, ImageFileFormat::Tga }) {
         SCOPED_TRACE(formatName(format));
 
         const auto& info = formatInfo(format);
@@ -167,8 +167,7 @@ TEST(ImageFileFormatTest, TheTableStatesEachFormatsExtensionsAndCapabilities)
 
         for (const char* const extension : info.extensions) {
             EXPECT_EQ(formatFromPath(std::string("frame") + extension), format) << "the table's own spelling must round-trip";
-            EXPECT_EQ(supportedExtensions().count(vn::String::fromUtf8(extension)), 1u)
-                << "a readable format's extensions are offered to a file picker";
+            EXPECT_EQ(supportedExtensions().count(vn::String::fromUtf8(extension)), 1u) << "a readable format's extensions are offered to a file picker";
         }
     }
 
@@ -231,10 +230,8 @@ TEST(ImageDecodeTest, DecodesEveryAssetUnderBothNamingSets)
     // The point is that the whole asset set is usable, not just the file one test happens to pick: a
     // cubemap test will need all six faces of a set to decode.
     const char* const files[] = {
-        "images/posx.jpg", "images/negx.jpg", "images/posy.jpg",
-        "images/negy.jpg", "images/posz.jpg", "images/negz.jpg",
-        "images/front.jpg", "images/back.jpg", "images/left.jpg",
-        "images/right.jpg", "images/top.jpg", "images/bottom.jpg",
+        "images/posx.jpg",  "images/negx.jpg", "images/posy.jpg", "images/negy.jpg",  "images/posz.jpg", "images/negz.jpg",
+        "images/front.jpg", "images/back.jpg", "images/left.jpg", "images/right.jpg", "images/top.jpg",  "images/bottom.jpg",
     };
 
     for (const char* file : files) {
@@ -267,8 +264,8 @@ TEST(ImageDecodeTest, ASingleChannelIsLumaAndNotTheSourcesRed)
     // Not on the JPEG assets: over JPEG the decoder computes luma from its own intermediate components
     // before they are clamped, so recomputing luma out of the decoded RGB bytes can differ from it by a
     // step. That is a property of the decoder, not of this API, and asserting it would pin the wrong thing.
-    const auto colour_image = patternImage(16, 4, PixelFormat::Rgb8Unorm);
-    const std::vector<std::byte> png = mustOk(encodeImage(*colour_image, ImageFileFormat::Png));
+    const auto                   colour_image = patternImage(16, 4, PixelFormat::Rgb8Unorm);
+    const std::vector<std::byte> png          = mustOk(encodeImage(*colour_image, ImageFileFormat::Png));
 
     const auto grey = mustOk(decodeImage(png, PixelFormat::R8Unorm));
 
@@ -340,7 +337,7 @@ TEST(ImageDecodeTest, BgraIsRgbaWithRedAndBlueSwapped)
 
     ASSERT_EQ(rgba->totalByteSize(), bgra->totalByteSize());
 
-    const std::span<const std::byte> wide = rgba->mipData(0);
+    const std::span<const std::byte> wide    = rgba->mipData(0);
     const std::span<const std::byte> swapped = bgra->mipData(0);
 
     for (const std::size_t pixel : { std::size_t{ 0 }, std::size_t{ 1234 } }) {
@@ -512,8 +509,8 @@ TEST(ImageEncodeTest, RefusesAnImageALayoutAContainerCannotHold)
 
 TEST(ImageEncodeTest, ReportsAnUnwritablePathAsIoFailure)
 {
-    const std::filesystem::path path = assetPath("images/this_directory_does_not_exist/out.png");
-    const auto                source = patternImage(4, 4, PixelFormat::Rgba8Unorm);
+    const std::filesystem::path path   = assetPath("images/this_directory_does_not_exist/out.png");
+    const auto                  source = patternImage(4, 4, PixelFormat::Rgba8Unorm);
 
     EXPECT_EQ(saveImage(path, *source, ImageFileFormat::Png), IoError::IoFailure);
 }

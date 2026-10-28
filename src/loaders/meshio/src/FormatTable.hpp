@@ -5,6 +5,7 @@
 #include <vine/meshio/MeshFormat.hpp>
 
 VN_MESHIO_NS_BEGIN
+
 namespace detail
 {
 
@@ -19,4 +20,5 @@ namespace detail
 std::span<const MeshFormat> allFormats() noexcept;
 
 } // namespace detail
+
 VN_MESHIO_NS_END

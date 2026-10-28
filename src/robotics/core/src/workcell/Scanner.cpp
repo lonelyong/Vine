@@ -48,12 +48,12 @@ std::unique_ptr<DeviceData> ScannerData::clone() const
     auto out = std::make_unique<ScannerData>();
     out->copyBaseFrom(*this);
     for (const auto& cam : cameras) {
-        auto c = std::make_unique<Scanner::Camera>(*cam);
+        auto c   = std::make_unique<Scanner::Camera>(*cam);
         c->frame = nullptr; // frame 绑定由设备构建时按 frame_name 重建
         out->cameras.push_back(std::move(c));
     }
     for (const auto& proj : projectors) {
-        auto p = std::make_unique<Scanner::Projector>(*proj);
+        auto p   = std::make_unique<Scanner::Projector>(*proj);
         p->frame = nullptr;
         out->projectors.push_back(std::move(p));
     }
@@ -63,7 +63,7 @@ std::unique_ptr<DeviceData> ScannerData::clone() const
 std::unique_ptr<ScannerData> Scanner::asScannerData(std::unique_ptr<DeviceData> data)
 {
     // 定义数据向下转型为 ScannerData; 若为普通 DeviceData 则包装补全
-    auto* const raw = data.release();
+    auto* const                  raw = data.release();
     std::unique_ptr<ScannerData> sdata(dynamic_cast<ScannerData*>(raw));
     if (!sdata) {
         sdata = std::make_unique<ScannerData>();

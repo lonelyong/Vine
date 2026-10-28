@@ -75,7 +75,7 @@ IoError MountVfs::mount(const std::filesystem::path& prefix, std::shared_ptr<Vfs
     }
 
     std::filesystem::path normalized;
-    const IoError        err = detail::normalizeVfsPath(prefix, normalized);
+    const IoError         err = detail::normalizeVfsPath(prefix, normalized);
     if (err != IoError::Ok) {
         return err;
     }
@@ -370,8 +370,7 @@ IoError MountVfs::rename(const std::filesystem::path& from, const std::filesyste
     if (!content.ok()) {
         return content.error();
     }
-    err = destination->backend->addFile(relativeTo(destination->prefix, target),
-                                        std::span<const unsigned char>(content.value()));
+    err = destination->backend->addFile(relativeTo(destination->prefix, target), std::span<const unsigned char>(content.value()));
     if (err != IoError::Ok) {
         return err;
     }
@@ -476,13 +475,11 @@ std::vector<const MountVfs::Mount*> MountVfs::route(const std::filesystem::path&
             group.push_back(&mount);
         }
     }
-    std::stable_sort(group.begin(), group.end(),
-                     [](const Mount* left, const Mount* right) { return left->priority > right->priority; });
+    std::stable_sort(group.begin(), group.end(), [](const Mount* left, const Mount* right) { return left->priority > right->priority; });
     return group;
 }
 
-const MountVfs::Mount* MountVfs::firstHit(const std::vector<const Mount*>& group,
-                                           const std::filesystem::path&    normalized) const
+const MountVfs::Mount* MountVfs::firstHit(const std::vector<const Mount*>& group, const std::filesystem::path& normalized) const
 {
     for (const Mount* mount : group) {
         if (mount->backend->stat(relativeTo(mount->prefix, normalized)).ok()) {
@@ -492,8 +489,7 @@ const MountVfs::Mount* MountVfs::firstHit(const std::vector<const Mount*>& group
     return nullptr;
 }
 
-const MountVfs::Mount* MountVfs::writeTarget(const std::vector<const Mount*>& group,
-                                              const std::filesystem::path&    normalized) const
+const MountVfs::Mount* MountVfs::writeTarget(const std::vector<const Mount*>& group, const std::filesystem::path& normalized) const
 {
     for (const Mount* mount : group) {
         if (mount->backend->stat(relativeTo(mount->prefix, normalized)).ok()) {

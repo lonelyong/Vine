@@ -13,22 +13,30 @@
 #include <vine/graphics/Texture.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentStore.hpp>
-#include <vine/vsg/internal/ProgramVariant.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/vsg/internal/ContentStore.hpp>
+#include <vine/vsg/internal/ProgramVariant.hpp>
 
 #include "TestGeometryBuilders.hpp"
 
 using vn::graphics::Geometry;
-using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
+using vn::graphics::backend::CompiledCommand;
+using vn::graphics::backend::CompiledDraw;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::backend::CompiledPass;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::FrameTimeline;
+using vn::graphics::backend::ProgramRef;
+using vn::graphics::backend::RetirementQueue;
+using vn::test::setPrimitiveIndices;
 using vn::vsg::ContentFacts;
 using vn::vsg::ContentStore;
 using vn::vsg::FactMiss;
@@ -38,14 +46,6 @@ using vn::vsg::findProgram;
 using vn::vsg::GeometryFacts;
 using vn::vsg::MaterialFacts;
 using vn::vsg::ProgramVariant;
-using vn::graphics::backend::CompiledCommand;
-using vn::graphics::backend::CompiledDraw;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::CompiledPass;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::ProgramRef;
-using vn::graphics::backend::RetirementQueue;
 
 namespace
 {
@@ -61,33 +61,30 @@ ShaderStage stage(ShaderStageType type, const char* source)
 }
 
 /// @brief A content program whose fragment stage gates its sampler on `VN_TEXTURED`: one text, two ABIs.
-constexpr const char* kGatedVertexSource =
-    "#version 450\n"
-    "#pragma import_defines (VN_TEXTURED)\n"
-    "layout(location = 0) in vec3 position;\n"
-    "#ifdef VN_TEXTURED\n"
-    "layout(location = 8) in vec2 texcoord;\n"
-    "#endif\n"
-    "void main() { gl_Position = vec4(position, 1.0); }\n";
+constexpr const char* kGatedVertexSource = "#version 450\n"
+                                           "#pragma import_defines (VN_TEXTURED)\n"
+                                           "layout(location = 0) in vec3 position;\n"
+                                           "#ifdef VN_TEXTURED\n"
+                                           "layout(location = 8) in vec2 texcoord;\n"
+                                           "#endif\n"
+                                           "void main() { gl_Position = vec4(position, 1.0); }\n";
 
-constexpr const char* kGatedFragmentSource =
-    "#version 450\n"
-    "#pragma import_defines (VN_TEXTURED)\n"
-    "layout(location = 0) out vec4 color;\n"
-    "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
-    "{\n"
-    "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-    "} material;\n"
-    "#ifdef VN_TEXTURED\n"
-    "layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;\n"
-    "#endif\n"
-    "void main() { color = material.base_color; }\n";
+constexpr const char* kGatedFragmentSource = "#version 450\n"
+                                             "#pragma import_defines (VN_TEXTURED)\n"
+                                             "layout(location = 0) out vec4 color;\n"
+                                             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+                                             "{\n"
+                                             "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                             "} material;\n"
+                                             "#ifdef VN_TEXTURED\n"
+                                             "layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;\n"
+                                             "#endif\n"
+                                             "void main() { color = material.base_color; }\n";
 
-constexpr const char* kScreenFragmentSource =
-    "#version 450\n"
-    "layout(location = 0) in vec2 vn_uv;\n"
-    "layout(location = 0) out vec4 color;\n"
-    "void main() { color = vec4(vn_uv, 0.0, 1.0); }\n";
+constexpr const char* kScreenFragmentSource = "#version 450\n"
+                                              "layout(location = 0) in vec2 vn_uv;\n"
+                                              "layout(location = 0) out vec4 color;\n"
+                                              "void main() { color = vec4(vn_uv, 0.0, 1.0); }\n";
 
 /// @brief A content program with both stages (the identity the plan names).
 vn::intrusive_ptr<ShaderProgram> contentProgram()
@@ -110,28 +107,26 @@ vn::intrusive_ptr<ShaderProgram> screenProgram()
 vn::intrusive_ptr<Geometry> quad(bool texcoords = false)
 {
     const auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
-    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
-        std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
-    if (texcoords)
-    {
-        geometry->setTexcoords2(vn::intrusive_ptr<const vn::Buffer<float>>(
-            new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F })));
+    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
+    if (texcoords) {
+        geometry->setTexcoords2(
+            vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F })));
     }
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-                                           new vn::Buffer<std::uint32_t>(
-                                               std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    setPrimitiveIndices(
+        *geometry,
+        0U,
+        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
     return geometry;
 }
 
 /// @brief A material with a diffuse colour, and (when @p texture is not null) a texture to sample.
-vn::intrusive_ptr<Material> material(vn::Colorf diffuse,
-                                       vn::intrusive_ptr<Texture2D> texture = {})
+vn::intrusive_ptr<Material> material(vn::Colorf diffuse, vn::intrusive_ptr<Texture2D> texture = {})
 {
     const auto out = vn::intrusive_ptr<Material>(new Material());
     out->setBaseColor(diffuse);
-    if (texture != nullptr)
-    {
+    if (texture != nullptr) {
         out->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     }
     return out;
@@ -141,8 +136,7 @@ vn::intrusive_ptr<Material> material(vn::Colorf diffuse,
 vn::graphics::VineMaterialBlock blockOf(const MaterialFacts& facts)
 {
     vn::graphics::VineMaterialBlock block{};
-    if (facts.block.size() == sizeof(block))
-    {
+    if (facts.block.size() == sizeof(block)) {
         std::memcpy(&block, facts.block.data(), sizeof(block));
     }
     return block;
@@ -150,8 +144,7 @@ vn::graphics::VineMaterialBlock blockOf(const MaterialFacts& facts)
 
 /// @brief One frame's plan, built by hand: the store walks identities, and a hand-built plan is the
 /// smallest thing that has them.
-struct Plan
-{
+struct Plan {
     std::vector<CompiledCommand> commands;
     std::vector<CompiledDraw>    draws;
     std::vector<CompiledPass>    passes;
@@ -159,8 +152,7 @@ struct Plan
 };
 
 /// @brief A content command naming @p geometry (at @p geometry_revision), @p program and @p material.
-CompiledCommand command(const void* geometry, std::uint64_t geometry_revision, const void* program,
-                        const void* material)
+CompiledCommand command(const void* geometry, std::uint64_t geometry_revision, const void* program, const void* material)
 {
     CompiledCommand out;
     out.geometry          = geometry;
@@ -173,7 +165,7 @@ CompiledCommand command(const void* geometry, std::uint64_t geometry_revision, c
 /// @brief A plan with one pass and one content draw over @p commands.
 std::unique_ptr<Plan> contentPlan(std::vector<CompiledCommand> commands, const ShaderProgram* program = nullptr)
 {
-    auto plan     = std::make_unique<Plan>();
+    auto plan      = std::make_unique<Plan>();
     plan->commands = std::move(commands);
 
     CompiledDraw draw;
@@ -185,8 +177,7 @@ std::unique_ptr<Plan> contentPlan(std::vector<CompiledCommand> commands, const S
     pass.draws = plan->draws;
     plan->passes.push_back(pass);
     plan->frame.passes = plan->passes;
-    if (program != nullptr)
-    {
+    if (program != nullptr) {
         plan->frame.default_program = ProgramRef{ program, 0U };
     }
     return plan;
@@ -216,7 +207,7 @@ void releaseUpTo(FrameTimeline& timeline, RetirementQueue& retirement, std::uint
     retirement.advance(timeline);
 }
 
-}  // namespace
+} // namespace
 
 TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
 {
@@ -234,8 +225,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(named.get(), named->revision(), program.get(), material.get()) },
-                                  program.get());
+    const auto          plan  = contentPlan({ command(named.get(), named->revision(), program.get(), material.get()) }, program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
     EXPECT_EQ(store.geometryEntries(), 1U) << "the geometry no plan names is not built";
@@ -248,9 +238,8 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     EXPECT_TRUE(findMaterial(facts, material.get()).found());
 
     // A second frame naming the other three builds the other three, and nothing else.
-    const auto other_plan =
-        contentPlan({ command(unnamed.get(), unnamed->revision(), program.get(), nullptr) }, program.get());
-    const ContentFacts& second = store.tablesFor(other_plan->frame, timeline, retirement);
+    const auto          other_plan = contentPlan({ command(unnamed.get(), unnamed->revision(), program.get(), nullptr) }, program.get());
+    const ContentFacts& second     = store.tablesFor(other_plan->frame, timeline, retirement);
     EXPECT_EQ(store.geometryEntries(), 2U);
     EXPECT_EQ(store.programEntries(), 1U);
     EXPECT_EQ(store.materialEntries(), 2U) << "the default material joins the table the first time content without one is named";
@@ -272,13 +261,11 @@ TEST(ContentStoreTest, ASteadyFrameBuildsNothing)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                            program.get());
+    const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
     const std::uint64_t built = store.builds();
 
-    for (int frame = 0; frame < 3; ++frame)
-    {
+    for (int frame = 0; frame < 3; ++frame) {
         ASSERT_TRUE(store.tablesFor(plan->frame, timeline, retirement).programs.data() == facts.programs.data())
             << "the tables are the same storage each frame";
         EXPECT_EQ(store.builds(), built) << "a steady frame builds nothing";
@@ -303,8 +290,7 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                  program.get());
+    const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
     EXPECT_EQ(facts.program_order.size(), facts.programs.size());
@@ -313,15 +299,13 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
     ASSERT_FALSE(facts.program_order.empty()) << "one program was described, so its table has a row";
 
     // And the order is the one the lookups search, so the recording's own three questions answer through it.
-    const auto found_program  = findProgram(facts, ProgramRef{ program.get(), program->revision() },
-                                            ProgramVariant{}, DrawKind::Content);
+    const auto found_program  = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content);
     const auto found_geometry = findGeometry(facts, geometry.get(), geometry->revision());
     const auto found_material = findMaterial(facts, material.get());
     EXPECT_TRUE(found_program.entry != nullptr);
     EXPECT_TRUE(found_geometry.entry != nullptr);
     EXPECT_TRUE(found_material.entry != nullptr);
-    EXPECT_EQ(found_geometry.entry, &facts.geometries[facts.geometry_order.front()])
-        << "the answer IS the row the order names";
+    EXPECT_EQ(found_geometry.entry, &facts.geometries[facts.geometry_order.front()]) << "the answer IS the row the order names";
 }
 
 TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
@@ -343,27 +327,22 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                  program.get());
+    const auto plan   = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     const auto covers = [](const ContentFacts& facts) {
         const auto is_permutation = [](std::span<const std::uint32_t> order, std::size_t rows) {
-            if (order.size() != rows)
-            {
-                return false;  // the order does not cover the table: it fell behind an append or an erase
+            if (order.size() != rows) {
+                return false; // the order does not cover the table: it fell behind an append or an erase
             }
             std::vector<std::uint32_t> sorted(order.begin(), order.end());
             std::sort(sorted.begin(), sorted.end());
-            for (std::size_t index = 0U; index < rows; ++index)
-            {
-                if (sorted[index] != index)
-                {
+            for (std::size_t index = 0U; index < rows; ++index) {
+                if (sorted[index] != index) {
                     return false;
                 }
             }
             return true;
         };
-        return is_permutation(facts.program_order, facts.programs.size()) &&
-               is_permutation(facts.geometry_order, facts.geometries.size()) &&
+        return is_permutation(facts.program_order, facts.programs.size()) && is_permutation(facts.geometry_order, facts.geometries.size()) &&
                is_permutation(facts.material_order, facts.materials.size());
     };
 
@@ -404,8 +383,7 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
-                                  program.get());
+    const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_TRUE(findGeometry(first, geometry.get(), geometry->revision()).found());
     const std::uint64_t old_revision = geometry->revision();
@@ -418,8 +396,7 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_EQ(store.geometryEntries(), 2U) << "the new revision JOINS the table, it does not replace it";
     EXPECT_TRUE(findGeometry(second, geometry.get(), new_revision).found()) << "the live revision answers";
-    EXPECT_TRUE(findGeometry(second, geometry.get(), old_revision).found())
-        << "and so does the revision a recorded frame may still name";
+    EXPECT_TRUE(findGeometry(second, geometry.get(), old_revision).found()) << "and so does the revision a recorded frame may still name";
     EXPECT_EQ(retirement.pending(), 1U) << "the supersession was parked";
 
     // Not yet due: the park's window is the slots that could still record the old revision.
@@ -430,8 +407,7 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     EXPECT_EQ(retirement.pending(), 0U);
     EXPECT_EQ(store.geometryEntries(), 1U) << "the superseded revision left the table";
-    EXPECT_EQ(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry.get(), old_revision).miss,
-              FactMiss::Revision)
+    EXPECT_EQ(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry.get(), old_revision).miss, FactMiss::Revision)
         << "a plan naming it now misses with Revision (the identity is known, that revision is not)";
 }
 
@@ -449,10 +425,9 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                  program.get());
-    const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
-    const auto           first_block = blockOf(*findMaterial(first, material.get()).entry);
+    const auto          plan        = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
+    const ContentFacts& first       = store.tablesFor(plan->frame, timeline, retirement);
+    const auto          first_block = blockOf(*findMaterial(first, material.get()).entry);
     EXPECT_FLOAT_EQ(first_block.base_color[0], 0.25F);
 
     // The host edits the material. The material moves its own revision (Material::revision - every shading value
@@ -494,9 +469,8 @@ TEST(ContentStoreTest, AWrongMaterialSlotIsReportedOncePerEpisode)
 
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                  program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);  // the first description opens the episode
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement); // the first description opens the episode
 
     EXPECT_TRUE(store.claimSlotReport(material.get(), 2U)) << "the first frame says it";
     EXPECT_FALSE(store.claimSlotReport(material.get(), 2U)) << "the second does not";
@@ -529,8 +503,7 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                  program.get());
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
 
     // A TOUCH IS ONE NUMBER (see ContentStore::updateMaterial): the facade touches every material a frame commands,
@@ -538,9 +511,8 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     // build nothing and park nothing, or every frame would rebuild every material row. Re-applying the values the
     // material already holds is the other half of the same guarantee: it does not move the revision either.
     const std::uint64_t builds_before = store.builds();
-    for (int frame = 0; frame < 5; ++frame)
-    {
-        material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));  // same value: not an edit
+    for (int frame = 0; frame < 5; ++frame) {
+        material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F)); // same value: not an edit
         store.updateMaterial(material.get());
         (void)store.tablesFor(plan->frame, timeline, retirement);
     }
@@ -563,11 +535,11 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
 TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
 {
     ContentStore store;
-    const auto   geometry   = quad(true);  // the texcoord channel is what a cube variant would widen
-    const auto   program    = contentProgram();
-    const auto   texture    = vn::intrusive_ptr<Texture2D>(new Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
-    const auto   textured   = ::material(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F), texture);
-    const auto   plain      = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto   geometry = quad(true); // the texcoord channel is what a cube variant would widen
+    const auto   program  = contentProgram();
+    const auto   texture  = vn::intrusive_ptr<Texture2D>(new Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    const auto   textured = ::material(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F), texture);
+    const auto   plain    = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     store.track(geometry);
     store.track(program);
@@ -577,9 +549,9 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), textured.get()),
-                                    command(geometry.get(), geometry->revision(), program.get(), plain.get()) },
-                                  program.get());
+    const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), textured.get()),
+                                              command(geometry.get(), geometry->revision(), program.get(), plain.get()) },
+                                            program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
     ASSERT_EQ(store.programEntries(), 2U) << "one program, two texts: two entries";
@@ -592,8 +564,7 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     const auto plain_entry    = findProgram(facts, ProgramRef{ program.get(), program->revision() }, plain_variant, DrawKind::Content);
     ASSERT_TRUE(textured_entry.found());
     ASSERT_TRUE(plain_entry.found());
-    EXPECT_EQ(textured_entry.entry->abi.bindings.size(), plain_entry.entry->abi.bindings.size() + 1U)
-        << "the sampler is what the material's texture adds";
+    EXPECT_EQ(textured_entry.entry->abi.bindings.size(), plain_entry.entry->abi.bindings.size() + 1U) << "the sampler is what the material's texture adds";
     EXPECT_NE(textured_entry.entry->shaders.defines, plain_entry.entry->shaders.defines);
 
     // The variant the store built each entry for is the one the DRAWABLE asked for (see api/ProgramVariant).
@@ -616,15 +587,12 @@ TEST(ContentStoreTest, AScreenProgramGetsTheEnginesOwnVertexStage)
     ASSERT_EQ(store.programEntries(), 1U);
     // Asked for as the call it was described FOR: this program's entry answers the full-screen ABI (see
     // ProgramFacts::kind), and asking for the content one is a miss rather than the other build.
-    const auto entry =
-        findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Screen);
+    const auto entry = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Screen);
     ASSERT_TRUE(entry.found());
     EXPECT_EQ(entry.entry->kind, DrawKind::Screen);
     EXPECT_NE(entry.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos)
         << "the full-screen ABI's vertex stage is the engine's triangle, not the host's";
-    EXPECT_FALSE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{},
-                             DrawKind::Content)
-                     .found())
+    EXPECT_FALSE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).found())
         << "a program only ever described as a screen call has no content entry";
 }
 
@@ -641,8 +609,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                  program.get());
+    const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
 
     EXPECT_EQ(store.geometryEntries(), 0U);
@@ -666,8 +633,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
-                                  program.get());
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
     ASSERT_EQ(store.programEntries(), 1U);
@@ -680,7 +646,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     EXPECT_TRUE(released_materials.empty());
 
     // The host lets the geometry go: the store's share is the last one.
-    const void* const identity = geometry.get();
+    const void* const   identity = geometry.get();
     const std::uint64_t revision = geometry->revision();
     geometry.reset();
     EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
@@ -705,8 +671,7 @@ TEST(ContentStoreTest, AReleaseIsCancelledByTheNextUse)
 
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                  program.get());
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
@@ -717,9 +682,7 @@ TEST(ContentStoreTest, AReleaseIsCancelledByTheNextUse)
     store.track(geometry);
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     EXPECT_EQ(store.geometryEntries(), 1U);
-    EXPECT_TRUE(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry.get(),
-                             geometry->revision())
-                    .found());
+    EXPECT_TRUE(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry.get(), geometry->revision()).found());
 }
 
 TEST(ContentStoreTest, AReleaseWithoutReuseDropsTheRowsAtThePark)
@@ -732,8 +695,7 @@ TEST(ContentStoreTest, AReleaseWithoutReuseDropsTheRowsAtThePark)
 
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
-                                  program.get());
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
@@ -770,13 +732,12 @@ TEST(ContentStoreTest, AReleaseWithoutAParkingWindowChangesNothing)
     store.track(geometry);
 
     FrameTimeline   timeline;
-    RetirementQueue retirement(0U);  // the session has not learned its in-flight count
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+    RetirementQueue retirement(0U); // the session has not learned its in-flight count
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
-    EXPECT_FALSE(store.releaseGeometry(geometry.get(), timeline, retirement))
-        << "a release that cannot be parked must be refused, not guessed";
+    EXPECT_FALSE(store.releaseGeometry(geometry.get(), timeline, retirement)) << "a release that cannot be parked must be refused, not guessed";
     EXPECT_EQ(retirement.pending(), 0U);
     EXPECT_EQ(store.geometryEntries(), 1U);
 
@@ -795,8 +756,7 @@ TEST(ContentStoreTest, AReleaseThenAnEditKeepsTheNewRevisionAfterThePark)
 
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) },
-                                  program.get());
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
     const std::uint64_t old_revision = geometry->revision();
 
@@ -812,8 +772,7 @@ TEST(ContentStoreTest, AReleaseThenAnEditKeepsTheNewRevisionAfterThePark)
 
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     const ContentFacts& after = store.tablesFor(plan->frame, timeline, retirement);
-    EXPECT_TRUE(findGeometry(after, geometry.get(), new_revision).found())
-        << "the cancelled release must not erase the revision the host is using now";
+    EXPECT_TRUE(findGeometry(after, geometry.get(), new_revision).found()) << "the cancelled release must not erase the revision the host is using now";
     EXPECT_EQ(store.geometryEntries(), 1U);
 }
 
@@ -829,8 +788,7 @@ TEST(ContentStoreTest, AReleaseOfAProgramOrMaterialDropsItsRows)
 
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
-    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) },
-                                  program.get());
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.programEntries(), 1U);
     ASSERT_EQ(store.materialEntries(), 1U);
@@ -849,7 +807,7 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
 {
     ContentStore store;
     const auto   geometry = quad();
-    const auto   program  = contentProgram();  // both stages: describable as content AND as a screen call
+    const auto   program  = contentProgram(); // both stages: describable as content AND as a screen call
 
     store.track(geometry);
     store.track(program);
@@ -858,8 +816,7 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
     RetirementQueue retirement(1U);
 
     // One frame shades CONTENT with it...
-    const auto content_plan =
-        contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
+    const auto content_plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     (void)store.tablesFor(content_plan->frame, timeline, retirement);
     ASSERT_EQ(store.programEntries(), 1U);
 
@@ -870,10 +827,8 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
     const ContentFacts& facts       = store.tablesFor(screen_plan->frame, timeline, retirement);
 
     ASSERT_EQ(store.programEntries(), 2U) << "one text, two entries: the two calls are different ABIs";
-    const auto content =
-        findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content);
-    const auto screen =
-        findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Screen);
+    const auto content = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content);
+    const auto screen  = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Screen);
     ASSERT_TRUE(content.found());
     ASSERT_TRUE(screen.found());
     EXPECT_NE(content.entry, screen.entry) << "each call gets its own entry";
@@ -882,6 +837,5 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
     // And the entries really are those two builds: the content one carries the HOST's vertex stage, the screen
     // one the engine's generated triangle (see api/ContentSources).
     EXPECT_EQ(content.entry->shaders.vertex, std::string(kGatedVertexSource));
-    EXPECT_NE(screen.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos)
-        << "the full-screen entry's vertex stage is the engine's, not the host's";
+    EXPECT_NE(screen.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos) << "the full-screen entry's vertex stage is the engine's, not the host's";
 }

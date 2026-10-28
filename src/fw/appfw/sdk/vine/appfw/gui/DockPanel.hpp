@@ -37,7 +37,7 @@ class VN_APPFW_API DockPanel : public Control {
      *       client is swapped), so a caller that keeps the old UIElement must not own
      *       its impl. The pane's own destrutor takes the current content with it.
      */
-    void       setContent(UIElement* c);
+    void               setContent(UIElement* c);
     raw_ptr<UIElement> content() const;
 
     // State queries

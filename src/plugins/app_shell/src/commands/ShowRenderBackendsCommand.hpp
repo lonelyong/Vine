@@ -18,9 +18,21 @@ class ShowRenderBackendsCommand : public Command {
     VN_DECLARE_COMMAND(ShowRenderBackendsCommand, u8"show_render_backends")
 
   public:
-    String group() const override { return u8"插件"; }
-    String description() const override { return u8"显示已注册渲染后端"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"插件";
+    }
+
+    String description() const override
+    {
+        return u8"显示已注册渲染后端";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

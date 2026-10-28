@@ -3,10 +3,10 @@
 #include <cstddef>
 #include <vector>
 
-#include <vine/vsg/internal/ContentStore.hpp>
-#include <vine/vsg/internal/MaterialImages.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/vsg/internal/ContentStore.hpp>
+#include <vine/vsg/internal/MaterialImages.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -46,13 +46,12 @@
 VN_VSG_NS_BEGIN
 
 /** @brief What one sweep let go (see the file note). */
-struct SweepOutcome
-{
+struct SweepOutcome {
     /// Objects the content tables stopped answering for: one per geometry, program or material whose last
     /// holder was the store (its rows are parked, see the file note).
-    std::size_t objects{0};
+    std::size_t objects{ 0 };
     /// Textures the material-image cache dropped: one per texture whose last holder was that cache.
-    std::size_t textures{0};
+    std::size_t textures{ 0 };
 };
 
 /**
@@ -68,9 +67,10 @@ struct SweepOutcome
  *                            their arena slots (see BlockStorage::releaseMaterial).
  * @return What the sweep let go (never an error: an object somebody else holds is simply not this sweep's).
  */
-[[nodiscard]] SweepOutcome releaseAbandonedContent(ContentStore& store, MaterialImages& images,
-                                                   core::FrameTimeline& timeline,
-                                                   core::RetirementQueue& retirement,
+[[nodiscard]] SweepOutcome releaseAbandonedContent(ContentStore&             store,
+                                                   MaterialImages&           images,
+                                                   core::FrameTimeline&      timeline,
+                                                   core::RetirementQueue&    retirement,
                                                    std::vector<const void*>& released_materials);
 
 VN_VSG_NS_END

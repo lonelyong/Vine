@@ -20,6 +20,8 @@
 
 #include "VfsTestSupport.hpp"
 
+using vfstest::bytesOf;
+using vfstest::TempDir;
 using vn::io::BufferSliceSource;
 using vn::io::DataSource;
 using vn::io::DirectoryVfs;
@@ -30,8 +32,6 @@ using vn::io::kUnknownSize;
 using vn::io::OstreamSink;
 using vn::io::VfsEntrySource;
 using vn::io::ZipArchive;
-using vfstest::bytesOf;
-using vfstest::TempDir;
 
 namespace
 {
@@ -39,15 +39,16 @@ namespace
 /**
  * @brief A stream buffer that offers no seek, the way a pipe or socket does.
  */
-class PipeBuf : public std::streambuf
-{
+class PipeBuf : public std::streambuf {
   public:
     /**
      * @brief Feeds the given text, one read at a time.
      *
      * @param text The bytes this buffer serves.
      */
-    explicit PipeBuf(std::string text) : text_(std::move(text)) {}
+    explicit PipeBuf(std::string text)
+      : text_(std::move(text))
+    {}
 
   protected:
     /**
@@ -87,8 +88,7 @@ class PipeBuf : public std::streambuf
 /**
  * @brief A source that stops after four bytes and says whether that was a failure.
  */
-class ShortSource final : public DataSource
-{
+class ShortSource final : public DataSource {
   public:
     /**
      * @brief Promises @p promised bytes and delivers four of them.
@@ -96,9 +96,15 @@ class ShortSource final : public DataSource
      * @param promised Length this source claims, so a consumer can see it fall short.
      * @param reason What error() answers once it stopped, IoError::Ok for a silent short stop.
      */
-    ShortSource(std::uint64_t promised, IoError reason) : promised_(promised), reason_(reason) {}
+    ShortSource(std::uint64_t promised, IoError reason)
+      : promised_(promised)
+      , reason_(reason)
+    {}
 
-    std::uint64_t size() const override { return promised_; }
+    std::uint64_t size() const override
+    {
+        return promised_;
+    }
 
     void rewind() override
     {
@@ -120,7 +126,10 @@ class ShortSource final : public DataSource
         return got;
     }
 
-    IoError error() const override { return stopped_ ? reason_ : IoError::Ok; }
+    IoError error() const override
+    {
+        return stopped_ ? reason_ : IoError::Ok;
+    }
 
   private:
     static constexpr std::size_t kDelivered = 4;
@@ -136,8 +145,7 @@ class ShortSource final : public DataSource
  * It reports kUnknownSize, so the only way to find the end is to pull until it returns nothing - and with
  * @p broken_with set it does exactly that halfway through, that time with a reason attached.
  */
-class UnmeasuredSource final : public DataSource
-{
+class UnmeasuredSource final : public DataSource {
   public:
     /**
      * @brief Builds a source over the given payload.
@@ -146,11 +154,14 @@ class UnmeasuredSource final : public DataSource
      * @param broken_with The reason to report after half the payload, or IoError::Ok to deliver all of it.
      */
     explicit UnmeasuredSource(std::string payload, IoError broken_with = IoError::Ok)
-        : payload_(std::move(payload)), broken_with_(broken_with)
-    {
-    }
+      : payload_(std::move(payload))
+      , broken_with_(broken_with)
+    {}
 
-    std::uint64_t size() const override { return kUnknownSize; }
+    std::uint64_t size() const override
+    {
+        return kUnknownSize;
+    }
 
     void rewind() override
     {
@@ -174,7 +185,10 @@ class UnmeasuredSource final : public DataSource
         return got;
     }
 
-    IoError error() const override { return stopped_ ? broken_with_ : IoError::Ok; }
+    IoError error() const override
+    {
+        return stopped_ ? broken_with_ : IoError::Ok;
+    }
 
   private:
     std::string payload_;
@@ -189,8 +203,7 @@ class UnmeasuredSource final : public DataSource
  * A backend that materializes the content first leaves nothing on disk until the pull is over; one that streams grows
  * the file as the bytes are produced. Recording the largest size seen during the pull is what tells the two apart.
  */
-class WatchingSource final : public DataSource
-{
+class WatchingSource final : public DataSource {
   public:
     /**
      * @brief Builds a source that watches a directory while it produces its payload.
@@ -199,13 +212,19 @@ class WatchingSource final : public DataSource
      * @param payload The bytes to produce.
      */
     WatchingSource(std::filesystem::path directory, std::string payload)
-        : directory_(std::move(directory)), payload_(std::move(payload))
+      : directory_(std::move(directory))
+      , payload_(std::move(payload))
+    {}
+
+    std::uint64_t size() const override
     {
+        return kUnknownSize;
     }
 
-    std::uint64_t size() const override { return kUnknownSize; }
-
-    void rewind() override { position_ = 0; }
+    void rewind() override
+    {
+        position_ = 0;
+    }
 
     std::size_t read(std::span<std::byte> out) override
     {
@@ -230,7 +249,10 @@ class WatchingSource final : public DataSource
      *
      * @return That size in bytes, 0 when nothing was ever there.
      */
-    [[nodiscard]] std::uint64_t largestOnDisk() const noexcept { return largest_on_disk_; }
+    [[nodiscard]] std::uint64_t largestOnDisk() const noexcept
+    {
+        return largest_on_disk_;
+    }
 
   private:
     std::filesystem::path directory_;
@@ -250,8 +272,7 @@ std::vector<unsigned char> drain(VfsEntrySource& source)
     std::vector<unsigned char>  out;
     std::array<std::byte, 1024> buffer{};
     for (std::size_t got = 0; (got = source.read(buffer)) != 0;) {
-        out.insert(out.end(), reinterpret_cast<const unsigned char*>(buffer.data()),
-                   reinterpret_cast<const unsigned char*>(buffer.data()) + got);
+        out.insert(out.end(), reinterpret_cast<const unsigned char*>(buffer.data()), reinterpret_cast<const unsigned char*>(buffer.data()) + got);
     }
     return out;
 }
@@ -316,7 +337,7 @@ TEST(AdaptersTest, IstreamSourcesPullsTheStreamIntoThePackage)
 
 TEST(AdaptersTest, IstreamSourceMeasuresAStreamOfUnknownLength)
 {
-    const std::string payload = "measured content, not a byte more";
+    const std::string  payload = "measured content, not a byte more";
     std::istringstream in(payload, std::ios::binary);
 
     auto source = std::make_shared<IstreamSource>(in, kUnknownSize);
@@ -362,17 +383,16 @@ TEST(AdaptersTest, IstreamSourceConvertsWhilePulling)
     }
 
     vn::InputSpanStream in(std::as_bytes(std::span<const double>(values)));
-    IstreamSource      source(in, values.size(), vn::io::Conversion<double, float>{ [](auto from, auto to) {
-        std::transform(from.begin(), from.end(), to.begin(), [](double value) { return static_cast<float>(value); });
-    } });
+    IstreamSource       source(in, values.size(), vn::io::Conversion<double, float>{ [](auto from, auto to) {
+                             std::transform(from.begin(), from.end(), to.begin(), [](double value) { return static_cast<float>(value); });
+                               } });
     EXPECT_EQ(source.size(), expected.size());
 
     // Pulled three bytes at a time, so most calls land inside an element and the leftover has to be carried.
     std::vector<unsigned char> pulled;
     std::array<std::byte, 3>   tiny{};
     for (std::size_t got = 0; (got = source.read(tiny)) != 0;) {
-        pulled.insert(pulled.end(), reinterpret_cast<const unsigned char*>(tiny.data()),
-                      reinterpret_cast<const unsigned char*>(tiny.data()) + got);
+        pulled.insert(pulled.end(), reinterpret_cast<const unsigned char*>(tiny.data()), reinterpret_cast<const unsigned char*>(tiny.data()) + got);
     }
     EXPECT_EQ(source.error(), IoError::Ok);
     EXPECT_EQ(pulled, expected);
@@ -389,7 +409,7 @@ TEST(AdaptersTest, IstreamSourceConvertsWhilePulling)
 
 TEST(AdaptersTest, OstreamSinkConvertsWhilePushing)
 {
-    const std::vector<double> values{ 1.0, -2.5, 3.25, 4.125, 0.5 };
+    const std::vector<double>  values{ 1.0, -2.5, 3.25, 4.125, 0.5 };
     std::vector<unsigned char> raw(values.size() * sizeof(double));
     std::memcpy(raw.data(), values.data(), raw.size());
 
@@ -402,15 +422,13 @@ TEST(AdaptersTest, OstreamSinkConvertsWhilePushing)
     std::ostringstream out(std::ios::binary);
     {
         OstreamSink sink(out, vn::io::Conversion<double, float>{ [](auto from, auto to) {
-                            std::transform(from.begin(), from.end(), to.begin(),
-                                           [](double value) { return static_cast<float>(value); });
-                        } });
+                             std::transform(from.begin(), from.end(), to.begin(), [](double value) { return static_cast<float>(value); });
+                         } });
 
         // Pushed three bytes at a time, so a chunk boundary sits inside an element almost every call.
         for (std::size_t off = 0; off < raw.size(); off += 3) {
             const std::size_t count = std::min<std::size_t>(3, raw.size() - off);
-            ASSERT_EQ(sink.write(std::span<const std::byte>(reinterpret_cast<const std::byte*>(raw.data() + off), count)),
-                      IoError::Ok);
+            ASSERT_EQ(sink.write(std::span<const std::byte>(reinterpret_cast<const std::byte*>(raw.data() + off), count)), IoError::Ok);
         }
         EXPECT_EQ(sink.finalize(), IoError::Ok);
     }
@@ -495,7 +513,7 @@ TEST(AdaptersTest, BufferSliceSourceWritesTheBufferItHolds)
     EXPECT_EQ(source->size(), 6u * sizeof(float));
 
     // Pulled in pieces that do not line up with an element, since nothing here looks at elements.
-    std::vector<std::byte> pulled;
+    std::vector<std::byte>   pulled;
     std::array<std::byte, 5> piece{};
     for (std::size_t got = 0; (got = source->read(piece)) != 0;) {
         pulled.insert(pulled.end(), piece.begin(), piece.begin() + static_cast<std::ptrdiff_t>(got));
@@ -511,9 +529,9 @@ TEST(AdaptersTest, BufferSliceSourceWritesTheBufferItHolds)
 
 TEST(AdaptersTest, BufferSliceSourceRefusesABufferEditedAfterHandover)
 {
-    auto                                    buffer = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>{ 1.0f, 2.0f, 3.0f });
-    BufferSliceSource<float>                source(buffer);
-    std::array<std::byte, 4>                piece{};
+    auto                     buffer = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>{ 1.0f, 2.0f, 3.0f });
+    BufferSliceSource<float> source(buffer);
+    std::array<std::byte, 4> piece{};
 
     ASSERT_EQ(source.read(piece), 4u);
 
@@ -549,16 +567,14 @@ TEST(AdaptersTest, DirectoryVfsPublishesNothingWhenAStreamingSourceFails)
     ASSERT_EQ(folder->addFile(u8"blob.bin", bytesOf("the content that was there")), IoError::Ok);
 
     // The name is taken, so the replacement is refused before the source is pulled at all.
-    EXPECT_EQ(folder->addFile(u8"blob.bin", std::make_shared<UnmeasuredSource>("replacement that stops", IoError::IoFailure)),
-              IoError::AlreadyExists);
+    EXPECT_EQ(folder->addFile(u8"blob.bin", std::make_shared<UnmeasuredSource>("replacement that stops", IoError::IoFailure)), IoError::AlreadyExists);
     const auto kept = folder->read(u8"blob.bin");
     ASSERT_TRUE(kept.ok());
     EXPECT_EQ(std::string(kept->begin(), kept->end()), "the content that was there");
 
     // A source that stops halfway never becomes a file: the bytes go through a sibling temporary that is dropped, so
     // half of the content is never published under the target name.
-    EXPECT_EQ(folder->addFile(u8"new.bin", std::make_shared<UnmeasuredSource>("replacement that stops", IoError::IoFailure)),
-              IoError::IoFailure);
+    EXPECT_EQ(folder->addFile(u8"new.bin", std::make_shared<UnmeasuredSource>("replacement that stops", IoError::IoFailure)), IoError::IoFailure);
     EXPECT_EQ(folder->read(u8"new.bin").error(), IoError::NotFound);
     EXPECT_EQ(folder->read(u8"new.bin.vine-tmp").error(), IoError::NotFound) << "the temporary is not left behind";
 }
@@ -569,11 +585,11 @@ TEST(AdaptersTest, DirectoryVfsWritesBorrowedPiecesWithoutAssemblingThem)
     const auto    folder = DirectoryVfs::openDirectory(dir.path());
     ASSERT_NE(folder, nullptr);
 
-    const std::string first  = "0123456789";
-    const std::string second = "abcdefghij";
+    const std::string             first  = "0123456789";
+    const std::string             second = "abcdefghij";
     const std::array<Fragment, 3> pieces{
-        Fragment{ reinterpret_cast<const unsigned char*>(first.data()), 4 },
-        Fragment{ reinterpret_cast<const unsigned char*>(second.data()), 3 },
+        Fragment{ reinterpret_cast<const unsigned char*>(first.data()),     4 },
+        Fragment{ reinterpret_cast<const unsigned char*>(second.data()),    3 },
         Fragment{ reinterpret_cast<const unsigned char*>(first.data()) + 4, 6 },
     };
 
@@ -582,9 +598,10 @@ TEST(AdaptersTest, DirectoryVfsWritesBorrowedPiecesWithoutAssemblingThem)
     ASSERT_TRUE(stored.ok());
     EXPECT_EQ(std::string(stored->begin(), stored->end()), "0123abc456789") << "the pieces are written in order";
 
-    const std::array<Fragment, 1> broken{ Fragment{ nullptr, 4 } };
-    EXPECT_EQ(folder->addFile(u8"broken.bin", broken), IoError::InvalidData)
-        << "a piece that claims bytes it does not have is refused";
+    const std::array<Fragment, 1> broken{
+        Fragment{ nullptr, 4 }
+    };
+    EXPECT_EQ(folder->addFile(u8"broken.bin", broken), IoError::InvalidData) << "a piece that claims bytes it does not have is refused";
     EXPECT_FALSE(folder->exists(u8"broken.bin"));
 }
 
@@ -628,8 +645,7 @@ TEST(AdaptersTest, AddFileReportsWhyAnUnmeasuredSourceStoppedShort)
     // A backend that materializes learns the verdict while it is being fed, so nothing is left behind.
     const auto folder = DirectoryVfs::openDirectory(dir.path());
     ASSERT_NE(folder, nullptr);
-    EXPECT_EQ(folder->addFile(u8"broken.bin", std::make_shared<UnmeasuredSource>(payload, IoError::IoFailure)),
-              IoError::IoFailure);
+    EXPECT_EQ(folder->addFile(u8"broken.bin", std::make_shared<UnmeasuredSource>(payload, IoError::IoFailure)), IoError::IoFailure);
     EXPECT_FALSE(folder->exists(u8"broken.bin")) << "content that did not check out must not be written";
 
     // A backend that keeps the source learns it when the source is pulled - here, and then at saveAs().
@@ -693,8 +709,7 @@ TEST(AdaptersTest, RestartsACompressedEntryOfASavedPackage)
     auto source = opened->openRead(u8"blob.bin");
     ASSERT_TRUE(source.ok());
     EXPECT_EQ((*source)->size(), payload.size());
-    ASSERT_FALSE((*source)->seekable())
-        << "the fixture has to be compressed, or this test says nothing about the reopen path";
+    ASSERT_FALSE((*source)->seekable()) << "the fixture has to be compressed, or this test says nothing about the reopen path";
 
     std::array<std::byte, 64> head{};
     ASSERT_EQ((*source)->read(head), 64u);

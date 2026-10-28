@@ -12,9 +12,9 @@ struct DocumentViewRegistry::Impl {
     std::map<String, std::function<DocumentView*(Document&)>> factories;
 };
 
-DocumentViewRegistry::DocumentViewRegistry() : d(std::make_unique<Impl>())
-{
-}
+DocumentViewRegistry::DocumentViewRegistry()
+  : d(std::make_unique<Impl>())
+{}
 
 DocumentViewRegistry::~DocumentViewRegistry() = default;
 

@@ -12,10 +12,10 @@
 #include <type_traits>
 
 #include <vine/Buffer.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/io/Stream.hpp>
 #include <vine/io/io_global.hpp>
-#include <vine/intrusive_ptr.hpp>
 
 VN_IO_NS_BEGIN
 
@@ -30,8 +30,7 @@ VN_IO_NS_BEGIN
  * @tparam Out Element type produced; must be trivially copyable, since it is handed over as bytes.
  */
 template <typename In, typename Out>
-struct Conversion
-{
+struct Conversion {
     /// Elements in, elements out: both spans always hold the same number of elements.
     std::function<void(std::span<const In>, std::span<Out>)> convert;
 };
@@ -58,8 +57,7 @@ struct Conversion
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API IstreamSource final : public DataSource
-{
+class VN_IOBASE_API IstreamSource final : public DataSource {
   public:
     /**
      * @brief Sources the next @p size bytes of a stream, unchanged.
@@ -81,15 +79,14 @@ class VN_IOBASE_API IstreamSource final : public DataSource
     template <typename In, typename Out>
     IstreamSource(std::istream& in, std::uint64_t count, Conversion<In, Out> conversion)
       : IstreamSource(in, count, sizeof(In), sizeof(Out), wrap<In, Out>(std::move(conversion)))
-    {
-    }
+    {}
 
     /**
      * @brief Destroys the source.
      */
     ~IstreamSource() override;
 
-    IstreamSource(const IstreamSource&) = delete;
+    IstreamSource(const IstreamSource&)            = delete;
     IstreamSource& operator=(const IstreamSource&) = delete;
     IstreamSource(IstreamSource&&) noexcept;
     IstreamSource& operator=(IstreamSource&&) noexcept;
@@ -137,8 +134,7 @@ class VN_IOBASE_API IstreamSource final : public DataSource
      * @return The same conversion, taking and producing bytes.
      */
     template <typename In, typename Out>
-    [[nodiscard]] static std::function<void(std::span<const std::byte>, std::span<std::byte>)> wrap(
-        Conversion<In, Out> conversion)
+    [[nodiscard]] static std::function<void(std::span<const std::byte>, std::span<std::byte>)> wrap(Conversion<In, Out> conversion)
     {
         static_assert(std::is_trivially_copyable_v<In>, "In is read as bytes, so it has to be trivially copyable");
         static_assert(std::is_trivially_copyable_v<Out>, "Out is handed over as bytes, so it has to be trivially copyable");
@@ -157,7 +153,10 @@ class VN_IOBASE_API IstreamSource final : public DataSource
      * @param out_element Bytes of one element produced.
      * @param convert Type-erased block conversion, or null for a plain byte copy.
      */
-    IstreamSource(std::istream& in, std::uint64_t count, std::size_t in_element, std::size_t out_element,
+    IstreamSource(std::istream&                                                         in,
+                  std::uint64_t                                                         count,
+                  std::size_t                                                           in_element,
+                  std::size_t                                                           out_element,
                   std::function<void(std::span<const std::byte>, std::span<std::byte>)> convert);
 
     std::unique_ptr<Impl> impl;
@@ -182,8 +181,7 @@ class VN_IOBASE_API IstreamSource final : public DataSource
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API OstreamSink final : public DataSink
-{
+class VN_IOBASE_API OstreamSink final : public DataSink {
   public:
     /**
      * @brief Writes every chunk to a stream, unchanged.
@@ -204,15 +202,14 @@ class VN_IOBASE_API OstreamSink final : public DataSink
     template <typename In, typename Out>
     OstreamSink(std::ostream& out, Conversion<In, Out> conversion)
       : OstreamSink(out, sizeof(In), sizeof(Out), wrap<In, Out>(std::move(conversion)))
-    {
-    }
+    {}
 
     /**
      * @brief Destroys the sink.
      */
     ~OstreamSink() override;
 
-    OstreamSink(const OstreamSink&) = delete;
+    OstreamSink(const OstreamSink&)            = delete;
     OstreamSink& operator=(const OstreamSink&) = delete;
     OstreamSink(OstreamSink&&) noexcept;
     OstreamSink& operator=(OstreamSink&&) noexcept;
@@ -245,8 +242,7 @@ class VN_IOBASE_API OstreamSink final : public DataSink
      * @return The same conversion, taking and producing bytes.
      */
     template <typename In, typename Out>
-    [[nodiscard]] static std::function<void(std::span<const std::byte>, std::span<std::byte>)> wrap(
-        Conversion<In, Out> conversion)
+    [[nodiscard]] static std::function<void(std::span<const std::byte>, std::span<std::byte>)> wrap(Conversion<In, Out> conversion)
     {
         static_assert(std::is_trivially_copyable_v<In>, "In arrives as bytes, so it has to be trivially copyable");
         static_assert(std::is_trivially_copyable_v<Out>, "Out is handed over as bytes, so it has to be trivially copyable");
@@ -264,7 +260,9 @@ class VN_IOBASE_API OstreamSink final : public DataSink
      * @param out_element Bytes of one element written.
      * @param convert Type-erased block conversion, or null for a plain byte copy.
      */
-    OstreamSink(std::ostream& out, std::size_t in_element, std::size_t out_element,
+    OstreamSink(std::ostream&                                                         out,
+                std::size_t                                                           in_element,
+                std::size_t                                                           out_element,
                 std::function<void(std::span<const std::byte>, std::span<std::byte>)> convert);
 
     std::unique_ptr<Impl> impl;
@@ -289,8 +287,7 @@ class VN_IOBASE_API OstreamSink final : public DataSink
  * @tparam T The element type; it has to be a plain type, since the bytes are the buffer's own layout.
  */
 template <typename T>
-class BufferSliceSource final : public DataSource
-{
+class BufferSliceSource final : public DataSource {
   public:
     /**
      * @brief Sources a whole buffer.
@@ -298,10 +295,10 @@ class BufferSliceSource final : public DataSource
      * @param buffer The buffer to write; the source holds it. A null buffer is reported through error() like every other
      *        defect of a source, so the caller sees it where all of them surface instead of crashing here.
      */
-    explicit BufferSliceSource(vn::intrusive_ptr<const vn::Buffer<T>> buffer) : buffer_(std::move(buffer))
+    explicit BufferSliceSource(vn::intrusive_ptr<const vn::Buffer<T>> buffer)
+      : buffer_(std::move(buffer))
     {
-        static_assert(std::is_trivially_copyable_v<T>,
-                      "the bytes of a buffer are its elements, so it has to be a plain type");
+        static_assert(std::is_trivially_copyable_v<T>, "the bytes of a buffer are its elements, so it has to be a plain type");
         if (buffer_ == nullptr) {
             error_ = IoError::InvalidData;
             return;
@@ -322,7 +319,10 @@ class BufferSliceSource final : public DataSource
     /**
      * @brief Restarts the content from the buffer's first element.
      */
-    void rewind() override { cursor_ = 0; }
+    void rewind() override
+    {
+        cursor_ = 0;
+    }
 
     /**
      * @brief Writes the next chunk of the buffer's bytes.
@@ -356,7 +356,10 @@ class BufferSliceSource final : public DataSource
      * @return IoError::Ok while the buffer writes cleanly, IoError::InvalidData when it was null or was edited after it
      *         was handed over.
      */
-    [[nodiscard]] IoError error() const override { return error_; }
+    [[nodiscard]] IoError error() const override
+    {
+        return error_;
+    }
 
   private:
     vn::intrusive_ptr<const vn::Buffer<T>> buffer_;

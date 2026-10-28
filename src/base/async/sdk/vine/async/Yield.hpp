@@ -14,8 +14,7 @@ VN_ASYNC_NS_BEGIN
  * threads, then transfers control back to the same coroutine, which therefore
  * continues on the same thread without growing the machine stack.
  */
-class YieldAwaiter
-{
+class YieldAwaiter {
   public:
     /**
      * @brief Always suspends so the yield actually happens.
@@ -46,7 +45,8 @@ class YieldAwaiter
         return h;
     }
 
-    void await_resume() const noexcept {}
+    void await_resume() const noexcept
+    {}
 };
 
 /**

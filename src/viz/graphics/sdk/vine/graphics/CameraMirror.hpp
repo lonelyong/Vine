@@ -8,7 +8,8 @@ VN_GRAPHICS_NS_BEGIN
 class Camera;
 
 /** @brief How a camera follows another camera's view. */
-enum class MirrorMode {
+enum class MirrorMode
+{
     /// Camera is fully independent (e.g. a minimap or a 2D screen HUD).
     None = 0,
     /// Copy only the source orientation; keep the target's own framing.

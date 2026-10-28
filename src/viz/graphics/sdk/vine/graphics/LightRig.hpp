@@ -34,10 +34,10 @@ class VN_GRAPHICS_API LightRig {
      * @brief One light of a rig: what addTo() creates.
      */
     struct Entry {
-        Colorf          color{};                ///< RGB colour in [0,1] (alpha ignored).
-        float           intensity{ 1.0f };       ///< Intensity multiplier (1 is neutral).
-        bool            directional{ false };   ///< true: directional along @ref direction; false: ambient.
-        vn::math::Vec3d direction{};            ///< Travel direction in world space (directional entries only).
+        Colorf          color{};              // RGB colour in [0,1] (alpha ignored).
+        float           intensity{ 1.0f };    // Intensity multiplier (1 is neutral).
+        bool            directional{ false }; // true: directional along @ref direction; false: ambient.
+        vn::math::Vec3d direction{};          // Travel direction in world space (directional entries only).
 
         /// @brief Returns whether this entry's direction is usable (a directional light pointing nowhere lights
         /// nothing).

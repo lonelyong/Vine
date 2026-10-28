@@ -27,12 +27,12 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include <vine/appfw/Application.hpp>
-#include <vine/appfw/gui/GuiApplication.hpp>
 #include "CommandCompleter.hpp"
 #include "CommandHistory.hpp"
 #include "ControlData.hpp"
 #include "Convert.hpp"
+#include <vine/appfw/Application.hpp>
+#include <vine/appfw/gui/GuiApplication.hpp>
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -147,7 +147,7 @@ struct ConsolePanel::Impl : public ControlData {
 
     /// Two-pixel line under the input line, shown while a read offers a picker: it marks "this line is answering
     /// something" without the panel growing a border of its own.
-    QWidget*        accent = nullptr;
+    QWidget* accent = nullptr;
 
     /// Picker the input line offers; kind == None while the line is a plain command line.
     ConsoleInputAction action;
@@ -294,7 +294,7 @@ void ConsolePanel::clearInput()
 
 void ConsolePanel::setInputAction(const ConsoleInputAction& action)
 {
-    auto* data    = dptr();
+    auto* data   = dptr();
     data->action = action;
     data->applyInputAction();
 }
@@ -355,8 +355,7 @@ void ConsolePanel::Impl::applyInputAction()
 
     // The icon comes from the style rather than from a resource: appfw ships no icon files, and a standard icon follows
     // the platform and its palette for free.
-    auto* pick = new QAction(input->style()->standardIcon(directory ? QStyle::SP_DirOpenIcon : QStyle::SP_FileIcon),
-                             QString(), input);
+    auto* pick = new QAction(input->style()->standardIcon(directory ? QStyle::SP_DirOpenIcon : QStyle::SP_FileIcon), QString(), input);
     pick->setToolTip(Convert::toQString(action.tooltip));
     QObject::connect(pick, &QAction::triggered, input, [this] { openPicker(); });
 
@@ -375,32 +374,27 @@ void ConsolePanel::Impl::openPicker()
 
     // Where to start: the input line already points at something (the suggestion), so use it - a directory directly, a
     // file through its folder.
-    const QString typed = input->text();
+    const QString   typed = input->text();
     const QFileInfo typed_info(typed);
     QString         start = typed_info.isDir() ? typed : typed_info.absolutePath();
     if (start.isEmpty() || !QFileInfo::exists(start)) {
         start.clear();
     }
 
-    const QString     filter = Convert::toQString(action.filter);
-    QWidget* const    parent = input->window();
-    const QString     title  = opened_for == ConsoleInputKind::File        ? QStringLiteral("选择文件")
-                               : opened_for == ConsoleInputKind::Files     ? QStringLiteral("选择文件（可多选）")
-                               : opened_for == ConsoleInputKind::Directory ? QStringLiteral("选择目录")
-                                                                           : QStringLiteral("选择目录（可多选）");
-    QStringList       picked;
+    const QString  filter = Convert::toQString(action.filter);
+    QWidget* const parent = input->window();
+    const QString  title  = opened_for == ConsoleInputKind::File        ? QStringLiteral("选择文件")
+                            : opened_for == ConsoleInputKind::Files     ? QStringLiteral("选择文件（可多选）")
+                            : opened_for == ConsoleInputKind::Directory ? QStringLiteral("选择目录")
+                                                                        : QStringLiteral("选择目录（可多选）");
+    QStringList    picked;
 
     switch (opened_for) {
-    case ConsoleInputKind::File:
-        picked.append(QFileDialog::getOpenFileName(parent, title, start, filter));
-        break;
-    case ConsoleInputKind::Files:
-        picked = QFileDialog::getOpenFileNames(parent, title, start, filter);
-        break;
-    case ConsoleInputKind::Directory:
-        picked.append(QFileDialog::getExistingDirectory(parent, title, start));
-        break;
-    case ConsoleInputKind::Directories: {
+    case ConsoleInputKind::File: picked.append(QFileDialog::getOpenFileName(parent, title, start, filter)); break;
+    case ConsoleInputKind::Files: picked = QFileDialog::getOpenFileNames(parent, title, start, filter); break;
+    case ConsoleInputKind::Directory: picked.append(QFileDialog::getExistingDirectory(parent, title, start)); break;
+    case ConsoleInputKind::Directories:
+    {
         // A native directory dialog cannot select several directories, so this one case has to be the Qt dialog; every
         // other case keeps the platform's own.
         QFileDialog dialog(parent, title, start);
@@ -413,8 +407,7 @@ void ConsolePanel::Impl::openPicker()
         picked = dialog.selectedFiles();
         break;
     }
-    case ConsoleInputKind::None:
-        break;
+    case ConsoleInputKind::None: break;
     }
 
     // The dialog ran a nested event loop, and calls posted from other threads keep running inside it: the read may be

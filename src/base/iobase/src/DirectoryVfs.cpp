@@ -65,8 +65,7 @@ IoError writeThroughTemporary(const std::filesystem::path& real, const std::func
 
 DirectoryVfs::DirectoryVfs(const std::filesystem::path& root)
   : root_(root)
-{
-}
+{}
 
 DirectoryVfs::~DirectoryVfs() = default;
 
@@ -79,8 +78,7 @@ std::unique_ptr<DirectoryVfs> DirectoryVfs::openDirectory(const std::filesystem:
     return std::make_unique<DirectoryVfs>(dir);
 }
 
-IoError DirectoryVfs::resolve(const std::filesystem::path& vfs_path, std::filesystem::path& normalized,
-                              std::filesystem::path& out) const
+IoError DirectoryVfs::resolve(const std::filesystem::path& vfs_path, std::filesystem::path& normalized, std::filesystem::path& out) const
 {
     const IoError error = detail::normalizeVfsPath(vfs_path, normalized);
     if (error != IoError::Ok) {
@@ -172,7 +170,7 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path
         const bool is_dir = entry_type == std::filesystem::file_type::directory;
 
         const std::filesystem::path name = entry.path().filename();
-        VfsEntryInfo info;
+        VfsEntryInfo                info;
         info.path = detail::joinVfs(base, name);
         info.kind = is_dir ? VfsEntryKind::Directory : VfsEntryKind::File;
         if (!is_dir) {
@@ -305,7 +303,7 @@ IoError DirectoryVfs::createDirectories(const std::filesystem::path& path)
         return IoError::Ok; // the root always exists
     }
 
-    std::error_code ec;
+    std::error_code                  ec;
     const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
     if (type == std::filesystem::file_type::directory) {
         return IoError::Ok; // already there
@@ -452,8 +450,7 @@ namespace
  * The stream owns its handle, which is what lets it outlive the tree (see
  * VfsEntrySource); a file that disappears mid-read fails at the next read().
  */
-class FileReadStream final : public VfsEntrySource
-{
+class FileReadStream final : public VfsEntrySource {
   public:
     /**
      * @brief Adopts an open binary file.
@@ -464,8 +461,7 @@ class FileReadStream final : public VfsEntrySource
     FileReadStream(std::ifstream file, std::uint64_t size)
       : file_(std::move(file))
       , size_(size)
-    {
-    }
+    {}
 
     /**
      * @brief Reads the next chunk.
@@ -490,21 +486,30 @@ class FileReadStream final : public VfsEntrySource
      * @return IoError::Ok while the file reads cleanly, IoError::IoFailure
      *         when a read failed.
      */
-    IoError error() const override { return error_; }
+    IoError error() const override
+    {
+        return error_;
+    }
 
     /**
      * @brief Reports the file size the reader was opened with.
      *
      * @return The size in bytes.
      */
-    std::uint64_t size() const noexcept override { return size_; }
+    std::uint64_t size() const noexcept override
+    {
+        return size_;
+    }
 
     /**
      * @brief Reports that this reader can position itself directly.
      *
      * @return true always: a real file seeks without decoding anything.
      */
-    bool seekable() const noexcept override { return true; }
+    bool seekable() const noexcept override
+    {
+        return true;
+    }
 
     /**
      * @brief Positions the reader at an absolute offset.

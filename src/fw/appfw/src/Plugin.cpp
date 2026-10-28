@@ -64,4 +64,5 @@ vn::async::Task<void> Plugin::postLoad(PluginLoadContext* context)
 
 void Plugin::unload(PluginLoadContext* context)
 {}
+
 VN_APPFW_NS_END

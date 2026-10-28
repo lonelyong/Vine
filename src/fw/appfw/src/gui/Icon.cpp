@@ -9,18 +9,17 @@ struct Icon::Impl {
 };
 
 Icon::Icon()
-    : d(new Impl())
-{
-}
+  : d(new Impl())
+{}
 
 Icon::Icon(const QIcon& qicon)
-    : d(new Impl())
+  : d(new Impl())
 {
     d->qicon = qicon;
 }
 
 Icon::Icon(const String& path)
-    : d(new Impl())
+  : d(new Impl())
 {
     auto utf16 = path.toUtf16();
 
@@ -28,14 +27,16 @@ Icon::Icon(const String& path)
 }
 
 Icon::Icon(const Icon& other)
-    : d(new Impl())
+  : d(new Impl())
 {
     d->qicon = other.d->qicon;
 }
 
 Icon& Icon::operator=(const Icon& other)
 {
-    if (this != &other) { d->qicon = other.d->qicon; }
+    if (this != &other) {
+        d->qicon = other.d->qicon;
+    }
 
     return *this;
 }

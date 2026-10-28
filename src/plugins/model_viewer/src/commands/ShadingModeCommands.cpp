@@ -30,24 +30,21 @@ vn::async::Task<vn::appfw::CommandResult> ShadingModeCommand::execute(vn::appfw:
     // 守卫：演示文档也有视图，但那是演示的视图 —— 模型查看器的命令不该改它（appfw-document-model.md：一个文档
     // 一个视图，谁的东西谁改）。
     if (target.document == nullptr || target.document->typeId() != vn::String(ModelDocument::kTypeId)) {
-        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::NotApplicable,
-                                           vn::String(u8"当前文档不是模型文档：先打开（或切到）一份模型"));
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::NotApplicable, vn::String(u8"当前文档不是模型文档：先打开（或切到）一份模型"));
     }
 
     // 视图与它那块控件：目标是数据，所以拿不到时仍要说清楚，而不是解引用空指针（正常派发走不到这里）。
     auto* view    = vn::appfw::gui::targetView(target);
     auto* control = view != nullptr ? view->renderControl() : nullptr;
     if (control == nullptr) {
-        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::NotApplicable,
-                                           vn::String(u8"目标视图没有 3D 区：把这份模型显示出来再试"));
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::NotApplicable, vn::String(u8"目标视图没有 3D 区：把这份模型显示出来再试"));
     }
 
     // 模式是这条链**建好之后**还能改的那一项（见 PassChain::setShadingMode()）。交给控件：它知道链是不是它建的
     // —— 能直接改就是零重建，链表达不了就带着新档重建一次（延迟链没有可改的几何趟，重建时按实面那条前置链搭，
     // 见 PassChain::effectivePath）。“怎么重建”是这块区的主人的事，本命令不替它做决定。
     if (!control->setShadingMode(mode())) {
-        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed,
-                                           vn::String(u8"这一档没能生效：图形层拒绝了这次重建（见诊断）"));
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::String(u8"这一档没能生效：图形层拒绝了这次重建（见诊断）"));
     }
 
     co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success, description());

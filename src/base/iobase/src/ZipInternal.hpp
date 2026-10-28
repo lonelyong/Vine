@@ -9,9 +9,9 @@
 
 #include <zip.h>
 
+#include <vine/String.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/io/Vfs.hpp>
-#include <vine/String.hpp>
 
 #include "VfsInternal.hpp"
 
@@ -28,13 +28,12 @@ namespace detail
  * the same entry through VfsEntryInfo, which carries the kind in its own words and
  * never a trailing '/'.
  */
-struct StoredEntry
-{
-    std::filesystem::path name;           ///< Virtual path the stored name resolves to.
-    std::string           stored;         ///< The name exactly as the archive holds it, trailing '/' included.
-    std::uint64_t         size{ 0 };      ///< Uncompressed size in bytes; 0 for a directory.
-    std::uint32_t         crc{ 0 };       ///< Checksum recorded by the archive; 0 for a directory.
-    bool                  is_directory{ false }; ///< true when the stored name marks a directory.
+struct StoredEntry {
+    std::filesystem::path name;                  // Virtual path the stored name resolves to.
+    std::string           stored;                // The name exactly as the archive holds it, trailing '/' included.
+    std::uint64_t         size{ 0 };             // Uncompressed size in bytes; 0 for a directory.
+    std::uint32_t         crc{ 0 };              // Checksum recorded by the archive; 0 for a directory.
+    bool                  is_directory{ false }; // true when the stored name marks a directory.
 };
 
 /**
@@ -118,12 +117,11 @@ inline Result<std::vector<StoredEntry>> readEntries(zip_t* archive)
         // the UTF-8 flag and the Unicode Path extra field have had their say. libzip
         // would otherwise translate anything that is not UTF-8 as CP437, which invents
         // text the archive never held - and a repack would then write that invention out.
-        if (zip_stat_index(archive, i, ZIP_STAT_NAME | ZIP_STAT_SIZE | ZIP_STAT_CRC | ZIP_FL_ENC_RAW, &st) != 0 ||
-            st.name == nullptr) {
+        if (zip_stat_index(archive, i, ZIP_STAT_NAME | ZIP_STAT_SIZE | ZIP_STAT_CRC | ZIP_FL_ENC_RAW, &st) != 0 || st.name == nullptr) {
             return IoError::InvalidData;
         }
 
-        StoredEntry entry;
+        StoredEntry       entry;
         const std::size_t length = std::strlen(st.name);
         const IoError     named  = fromStoredName(st.name, length, entry.name, entry.is_directory);
         if (named != IoError::Ok) {
@@ -181,7 +179,7 @@ inline std::string toStoredName(const std::filesystem::path& name, bool is_direc
  */
 inline IoError fromStoredName(const char* bytes, std::size_t length, std::filesystem::path& out, bool& is_directory)
 {
-    is_directory = length != 0 && bytes[length - 1] == '/';
+    is_directory           = length != 0 && bytes[length - 1] == '/';
     const std::size_t kept = is_directory ? length - 1 : length;
     if (kept == 0) {
         return IoError::InvalidData; // an entry naming the root says nothing a tree can use
@@ -204,7 +202,8 @@ inline IoError fromStoredName(const char* bytes, std::size_t length, std::filesy
     // byte as its own code point instead of failing.
     try {
         out = std::filesystem::path(std::string(bytes, kept));
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         out = std::filesystem::path(promoteBytesToText(bytes, kept));
     }
     return IoError::Ok;
@@ -213,10 +212,9 @@ inline IoError fromStoredName(const char* bytes, std::size_t length, std::filesy
 /**
  * @brief An entry found by name, with the kind the archive recorded for it.
  */
-struct LocatedEntry
-{
-    zip_int64_t index{ -1 };           ///< Position of the entry in the archive.
-    bool        is_directory{ false }; ///< true when the stored name marks a directory.
+struct LocatedEntry {
+    zip_int64_t index{ -1 };           // Position of the entry in the archive.
+    bool        is_directory{ false }; // true when the stored name marks a directory.
 };
 
 /**

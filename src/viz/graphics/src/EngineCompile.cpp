@@ -22,6 +22,7 @@ VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
+
 /// @brief The shape difference between a pass' rectangle and its camera's picture that is rounding, not a mistake.
 ///
 /// A pane's rectangle is the pane's logical size scaled by the pixel ratio, and that conversion truncates (see
@@ -63,7 +64,8 @@ std::string shapeText(double shape)
     std::snprintf(buffer, sizeof(buffer), "%.3g:1", shape);
     return std::string(buffer);
 }
-}  // namespace
+
+} // namespace
 
 void RenderEngine::compileFrame()
 {
@@ -117,7 +119,7 @@ void RenderEngine::compileFrame()
         PlanRow&          row  = plan_rows_[index];
         RenderPass* const pass = row.pass;
         if (pass == nullptr) {
-            continue;  // excluded by the scheduler (disabled or cyclic); buildFrameValue never sees it
+            continue; // excluded by the scheduler (disabled or cyclic); buildFrameValue never sees it
         }
         // What this pass reads: everything that RUNS before it, which is now the scheduled order and no longer
         // "whatever happened to be registered earlier".
@@ -159,7 +161,7 @@ void RenderEngine::scheduleRows()
     for (std::uint32_t index = 0; index < count; ++index) {
         RenderPass* const pass = plan_rows_[index].pass;
         if (pass == nullptr || !pass->isEnabled()) {
-            scheduler_->exclude(index);  // a disabled pass neither runs nor orders anything this frame
+            scheduler_->exclude(index); // a disabled pass neither runs nor orders anything this frame
         }
     }
 
@@ -169,8 +171,7 @@ void RenderEngine::scheduleRows()
     // draw, not a substitute for one.
     const auto writes = [](const RenderPass& pass) -> bool {
         if (const auto* screen = dynamic_cast<const ScreenPass*>(&pass)) {
-            return screen->program() != nullptr &&
-                   (!pass.inputs().empty() || !pass.inputTargets().empty() || !pass.inputNames().empty());
+            return screen->program() != nullptr && (!pass.inputs().empty() || !pass.inputTargets().empty() || !pass.inputNames().empty());
         }
         return pass.camera() != nullptr && (pass.content() != nullptr || pass.isClearEnabled());
     };
@@ -180,7 +181,7 @@ void RenderEngine::scheduleRows()
         }
         for (std::uint32_t producer = 0; producer < count; ++producer) {
             if (producer == consumer) {
-                continue;  // sampling what this pass itself writes is the feedback pattern, not a cycle
+                continue; // sampling what this pass itself writes is the feedback pattern, not a cycle
             }
             RenderPass* const writer = plan_rows_[producer].pass;
             if (writer != nullptr && writer->isEnabled() && writer->renderTarget() == target && writes(*writer)) {
@@ -205,8 +206,9 @@ void RenderEngine::scheduleRows()
         for (const String& name : pass->inputNames()) {
             for (std::uint32_t producer = 0; producer < count; ++producer) {
                 RenderPass* const writer = plan_rows_[producer].pass;
-                if (producer != consumer && writer != nullptr && writer->isEnabled() &&
-                    writer->renderTarget() != nullptr && writer->outputName() == name && writes(*writer)) {
+                if (producer != consumer && writer != nullptr && writer->isEnabled() && writer->renderTarget() != nullptr && writer->outputName() == name &&
+                    writes(*writer))
+                {
                     scheduler_->addEdge(producer, consumer);
                 }
             }
@@ -244,28 +246,26 @@ void RenderEngine::scheduleRows()
 }
 
 void RenderEngine::buildFrameValue()
-{    // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
+{ // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
     // issue" is a fact of the frame (its scope opens and closes, and a backend keys per-pass retained state by
     // it), which is not the same fact as "this pass did not run" - a disabled pass has no entry at all.
     //
     // The entries are REUSED rather than rebuilt (see below): a steady frame hands over the same pass list with the
     // same input lists, so it must not free and re-allocate them 60 times a second.
-    std::size_t used = 0;
+    std::size_t used           = 0;
     // A window pass has no target to read a device-pixel size from. The engine states the surface size (converted
     // with the surface's pixel ratio) on every pass; RenderPass::describe prefers a sub-viewport or the target's
     // own size, so off-screen passes are unaffected.
-    const double pixel_ratio = area_ != nullptr ? area_->pixelRatio() : 1.0;
-    const int device_width =
-        static_cast<int>(std::lround(static_cast<double>(surface_width_) * pixel_ratio));
-    const int device_height =
-        static_cast<int>(std::lround(static_cast<double>(surface_height_) * pixel_ratio));
+    const double pixel_ratio   = area_ != nullptr ? area_->pixelRatio() : 1.0;
+    const int    device_width  = static_cast<int>(std::lround(static_cast<double>(surface_width_) * pixel_ratio));
+    const int    device_height = static_cast<int>(std::lround(static_cast<double>(surface_height_) * pixel_ratio));
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
     // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
     for (const std::uint32_t index : frame_order_) {
         PlanRow&          row  = plan_rows_[index];
         RenderPass* const pass = row.pass;
         if (pass == nullptr || !pass->isEnabled()) {
-            continue;  // the scheduler never puts a pass that does not run into the order
+            continue; // the scheduler never puts a pass that does not run into the order
         }
         // THIS IS WHAT A PASS COSTS THE FRAME. Under a value-driven frame the work is here: the hook runs, the
         // inputs are told, the pass describes itself (collecting and culling its content) - and the run then only
@@ -302,10 +302,8 @@ void RenderEngine::buildFrameValue()
             entry.draw.reset();
         }
         if (index < slots_.size()) {
-            slots_[index].record_micros = static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
-                                                                      pass_started)
-                    .count());
+            slots_[index].record_micros =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - pass_started).count());
         }
     }
     // A frame with fewer running passes than the last one drops the surplus entries (the only frame that frees
@@ -360,10 +358,8 @@ void RenderEngine::collectPictureShapeMismatches()
             continue;
         }
 
-        const Camera& camera   = *pass->camera();
-        const double  picture  = camera.projectionType() == Camera::ProjectionType::Orthographic
-                                     ? orthographicShape(camera)
-                                     : camera.aspect();
+        const Camera& camera    = *pass->camera();
+        const double  picture   = camera.projectionType() == Camera::ProjectionType::Orthographic ? orthographicShape(camera) : camera.aspect();
         const double  rectangle = static_cast<double>(width) / static_cast<double>(height);
         // A sub-pixel difference is a device-pixel rounding, not a mistake: the rectangle of a pane is the pane's
         // logical size scaled by the pixel ratio, and that conversion truncates (see PixelGeometry.hpp's
@@ -372,8 +368,9 @@ void RenderEngine::collectPictureShapeMismatches()
             continue;
         }
 
-        auto known = std::find_if(shape_mismatches_last_frame_.begin(), shape_mismatches_last_frame_.end(),
-                                  [pass](const ShapeMismatchEpisode& episode) { return episode.pass == pass; });
+        auto known = std::find_if(shape_mismatches_last_frame_.begin(), shape_mismatches_last_frame_.end(), [pass](const ShapeMismatchEpisode& episode) {
+            return episode.pass == pass;
+        });
         ShapeMismatchEpisode episode;
         episode.pass = pass;
         if (known != shape_mismatches_last_frame_.end()) {
@@ -383,9 +380,9 @@ void RenderEngine::collectPictureShapeMismatches()
             // The numbers go in as ASCII digits, like every other message in the SDK (see
             // the chain build).
             const std::string size_text = std::to_string(width) + "x" + std::to_string(height);
-            noteProblem(String(u8"pass '") + reportedPassName(pass) + String(u8"' draws into a ") +
-                        String(toU8(size_text)) + String(u8" rectangle, but its camera is projected for a picture "
-                                                        u8"of ") +
+            noteProblem(String(u8"pass '") + reportedPassName(pass) + String(u8"' draws into a ") + String(toU8(size_text)) +
+                        String(u8" rectangle, but its camera is projected for a picture "
+                               u8"of ") +
                         String(toU8(shapeText(picture))) +
                         String(u8" - the picture is stretched (the content was culled for one shape and lands in "
                                u8"another). Give the camera the shape of the rectangle it draws into "
@@ -442,10 +439,8 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
         for (const ImageInput& input : pass->inputs()) {
             if (raw_ptr<ImageRef> image = input.image(); image != nullptr) {
                 raw_ptr<RenderTarget> target = resolveDeclaredImage(pass, *image);
-                out.push_back(target != nullptr
-                                  ? ImageSource::producedImage(target, image->attachment(),
-                                                               image->kind() == ImageRef::Kind::Depth)
-                                  : ImageSource{});
+                out.push_back(target != nullptr ? ImageSource::producedImage(target, image->attachment(), image->kind() == ImageRef::Kind::Depth)
+                                                : ImageSource{});
             }
             else if (raw_ptr<Texture> texture = input.texture(); texture != nullptr) {
                 out.push_back(ImageSource::imported(texture, input.sampler()));
@@ -476,15 +471,13 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
     // wiring is the engine's job, so it says so. A pass may declare several alternative names (a chain that
     // falls back), so this only fires when NONE of them resolved - and the compile forgets the problem the
     // moment one of them resolves, which is what re-arms it.
-    const bool any_resolved = std::any_of(out.begin(), out.end(),
-                                         [](const ImageSource& source) { return static_cast<bool>(source); });
+    const bool any_resolved = std::any_of(out.begin(), out.end(), [](const ImageSource& source) { return static_cast<bool>(source); });
     if (any_resolved) {
         return;
     }
     reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::ContentSkipped,
-                        String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") +
-                            names.front() +
+                        String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") + names.front() +
                             String(u8"' but no pass published it this frame; the pass draws nothing"
                                    u8" (check the producer's order, its enabled state and its output name)"));
 }
@@ -496,7 +489,7 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
     }
     const String& name = pass->outputName();
     if (name.empty()) {
-        return;   // an empty name is how a pass says "do not publish me": not a problem to report
+        return; // an empty name is how a pass says "do not publish me": not a problem to report
     }
     raw_ptr<RenderTarget> target = pass->renderTarget();
     if (target == nullptr) {
@@ -505,12 +498,12 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
         // produced it this frame", pointing at the consumer for the producer's mistake.
         reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                             vn::graphics::DiagnosticCategory::ContentSkipped,
-                            String(u8"pass '") + reportedPassName(pass) +
-                                String(u8"' publishes the output name '") + name +
+                            String(u8"pass '") + reportedPassName(pass) + String(u8"' publishes the output name '") + name +
                                 String(u8"' but renders into the window (no render target), so nothing is"
                                        u8" published and a consumer of '") +
-                                name + String(u8"' finds nothing — give the pass a render target, or drop the"
-                                              u8" output name"));
+                                name +
+                                String(u8"' finds nothing — give the pass a render target, or drop the"
+                                       u8" output name"));
         return;
     }
     if (detail::FramePublication* published = resources_->findPublication(name); published != nullptr) {
@@ -518,17 +511,14 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
             // Two passes published DIFFERENT targets under one name: every consumer of that name silently gets
             // whichever pass ran last, and only the whole table can see the collision (each pass is
             // individually valid).
-            const String first =
-                published->target->name().empty() ? String(u8"(unnamed)") : published->target->name();
+            const String first  = published->target->name().empty() ? String(u8"(unnamed)") : published->target->name();
             const String second = target->name().empty() ? String(u8"(unnamed)") : target->name();
             reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                 vn::graphics::DiagnosticCategory::ContentSkipped,
-                                String(u8"pass output '") + name +
-                                    String(u8"' is published by two passes this frame (targets '") + first +
-                                    String(u8"' and '") + second + String(u8"'); every consumer of '") + name +
-                                    String(u8"' samples whichever pass ran last"));
+                                String(u8"pass output '") + name + String(u8"' is published by two passes this frame (targets '") + first +
+                                    String(u8"' and '") + second + String(u8"'); every consumer of '") + name + String(u8"' samples whichever pass ran last"));
         }
-        published->target = target;   // the latest publication serves the name for the rest of the frame
+        published->target = target; // the latest publication serves the name for the rest of the frame
         return;
     }
     resources_->recordPublication(pass, target);
@@ -539,38 +529,34 @@ void RenderEngine::noteProblem(String message)
     // One problem per sentence per frame: the checks visit a subject once, but a subject can be reached from
     // more than one direction (a second and a third claimant of one image), and one mistake should read as one
     // message. The episode rule decides whether it is said out loud at all (see reportPlanProblems).
-    const auto known = std::find_if(plan_problems_.begin(), plan_problems_.end(),
-                                    [&message](const PlanProblem& problem) { return problem.message == message; });
+    const auto known =
+        std::find_if(plan_problems_.begin(), plan_problems_.end(), [&message](const PlanProblem& problem) { return problem.message == message; });
     if (known == plan_problems_.end()) {
         plan_problems_.push_back(PlanProblem{ std::move(message) });
     }
 }
 
-bool RenderEngine::unusableInputReported(raw_ptr<const RenderPass> pass,
-                                         const OutputIdentity& identity) const noexcept
+bool RenderEngine::unusableInputReported(raw_ptr<const RenderPass> pass, const OutputIdentity& identity) const noexcept
 {
     const auto key = std::make_pair(pass, identity);
-    return std::any_of(unusable_inputs_this_frame_.begin(), unusable_inputs_this_frame_.end(),
+    return std::any_of(unusable_inputs_this_frame_.begin(),
+                       unusable_inputs_this_frame_.end(),
                        [&key](const std::pair<raw_ptr<const RenderPass>, OutputIdentity>& entry) {
-                           return entry.first == key.first && entry.second.target == key.second.target &&
-                                  entry.second.attachment == key.second.attachment &&
-                                  entry.second.depth == key.second.depth &&
-                                  entry.second.declared == key.second.declared;
+                           return entry.first == key.first && entry.second.target == key.second.target && entry.second.attachment == key.second.attachment &&
+                                  entry.second.depth == key.second.depth && entry.second.declared == key.second.declared;
                        });
 }
 
 void RenderEngine::reportPlanProblems()
 {
     for (const PlanProblem& problem : plan_problems_) {
-        const auto previous = std::find_if(previous_problems_.begin(), previous_problems_.end(),
-                                           [&problem](const PlanProblem& earlier) {
-                                               return problem.message == earlier.message;
-                                           });
+        const auto previous = std::find_if(previous_problems_.begin(), previous_problems_.end(), [&problem](const PlanProblem& earlier) {
+            return problem.message == earlier.message;
+        });
         if (previous != previous_problems_.end()) {
-            continue;   // the same problem, in the same words: this episode has already been said
+            continue; // the same problem, in the same words: this episode has already been said
         }
-        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                            vn::graphics::DiagnosticCategory::ContentSkipped, problem.message);
+        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped, problem.message);
     }
     // What this compile found becomes what the next compile compares against: a problem that is gone drops out,
     // so the same breakage later is a new episode.
@@ -592,9 +578,8 @@ intrusive_ptr<RenderPass> RenderEngine::insertSlot(Slot slot)
     }
     // Keep the slots ascending by order; equal orders preserve insertion order (stable), so ties are resolved
     // by the addPass() call sequence.
-    const int order = slot.order;
-    const auto it   = std::find_if(slots_.begin(), slots_.end(),
-                                   [order](const Slot& existing) { return existing.order > order; });
+    const int  order      = slot.order;
+    const auto it         = std::find_if(slots_.begin(), slots_.end(), [order](const Slot& existing) { return existing.order > order; });
     const auto registered = slots_.insert(it, std::move(slot));
     return registered->pass;
 }
@@ -665,7 +650,7 @@ intrusive_ptr<RenderPass> RenderEngine::addPassOwnedBy(const PassDesc& desc, raw
 void RenderEngine::removePassesOwnedBy(const Object* owner) noexcept
 {
     if (owner == nullptr) {
-        return;  // unowned passes belong to whoever added them; no chain can take them back
+        return; // unowned passes belong to whoever added them; no chain can take them back
     }
     // Collected first: removePass() mutates the table, and the release path it takes (backend state, an owned
     // target) must run once per pass - which is exactly what removePass does for a handle.

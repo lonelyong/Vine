@@ -9,8 +9,8 @@
 #include <gtest/gtest.h>
 
 using namespace vn::graphics;
-using vn::intrusive_ptr;
 using vn::Color;
+using vn::intrusive_ptr;
 
 namespace
 {
@@ -27,12 +27,11 @@ namespace
  * @param options The build options (chain, mode, overlays; see ChainDesc).
  * @return The chain that was built and adopted; null when the builder refused @p options.
  */
-intrusive_ptr<PassChain> buildFor(const intrusive_ptr<SceneView>& view, RenderEngine* engine,
-                                 const ChainDesc& options = {})
+intrusive_ptr<PassChain> buildFor(const intrusive_ptr<SceneView>& view, RenderEngine* engine, const ChainDesc& options = {})
 {
-    ChainDesc request = options;
-    request.camera    = view->camera();
-    request.content   = view->scene();
+    ChainDesc request                 = options;
+    request.camera                    = view->camera();
+    request.content                   = view->scene();
     intrusive_ptr<PassChain> pipeline = PassChain::build(engine, request);
     if (pipeline != nullptr) {
         view->setChain(pipeline);
@@ -49,7 +48,7 @@ intrusive_ptr<SceneView> viewOn(RenderEngine* engine, const ChainDesc& options =
     return view;
 }
 
-}  // namespace
+} // namespace
 
 /**
  * @brief One render area: the ONE pass that paints this window, and the size it is painted at.
@@ -66,8 +65,8 @@ TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
     // The declaration a host makes when it has no main pass of its own: this area is presented by the pass of the
     // pipeline the VIEW adopted. The area resolves the pass back through the view (it builds nothing), so the host
     // order is: build, adopt, declare.
-    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view    = intrusive_ptr<SceneView>(new SceneView());
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
     auto surface = engine->createSurface();
 
@@ -88,8 +87,7 @@ TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
 
     // Naming the very pass that presents the area is the same picture again - not a second presentation.
     EXPECT_FALSE(surface->present(pipeline->presentingPass()));
-    EXPECT_EQ(surface->presentedView(), view.get())
-        << "declaring the pass again must not turn the view's presentation into a host pass";
+    EXPECT_EQ(surface->presentedView(), view.get()) << "declaring the pass again must not turn the view's presentation into a host pass";
 
     // Dismissing it empties the area and leaves the view alone: the pipeline is the view's, not the surface's.
     EXPECT_TRUE(surface->dismiss(view.get()));
@@ -158,8 +156,8 @@ TEST(RenderSurfaceTest, ThePassFollowsARebuiltPipeline)
 TEST(RenderSurfaceTest, AViewWithNoPipelineIsRefusedOutLoud)
 {
     // A declaration without a chain would leave a host believing a window is being drawn into while nothing draws.
-    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view    = intrusive_ptr<SceneView>(new SceneView());
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
     auto surface = engine->createSurface();
 
@@ -200,8 +198,7 @@ TEST(RenderSurfaceTest, ASecondAreaIsAConstructionFailureNotASecondObject)
     auto third  = engine->createSurface();
     EXPECT_EQ(second, nullptr) << "there is no second area to get";
     EXPECT_EQ(third, nullptr);
-    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u)
-        << "one condition, one report - not one per attempt";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u) << "one condition, one report - not one per attempt";
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // The area the engine drives is untouched by the refusals: it still decides what this engine presents.
@@ -289,8 +286,7 @@ TEST(RenderSurfaceTest, OneAreaDrawsOnePicture)
     engine->addPass(host_pass, 40);
     EXPECT_FALSE(surface->present(host_pass.get()));
     EXPECT_EQ(surface->presentedView(), first.get());
-    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u)
-        << "one condition, one report - not one per attempt";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u) << "one condition, one report - not one per attempt";
 
     // Taking the first picture away arms the next report: a host that fixes it hears about a NEW conflict.
     ASSERT_TRUE(surface->dismiss(first.get()));
@@ -315,8 +311,7 @@ TEST(RenderSurfaceTest, TheAreaOwnsTheSizeAndTheViewReadsIt)
     EXPECT_EQ(view->surfaceHeight(), 600);
     EXPECT_EQ(view->surfacePixelRatio(), 2.0);
     EXPECT_NEAR(view->camera()->aspect(), 800.0 / 600.0, 1e-9) << "the camera is shaped for the area";
-    EXPECT_FALSE(surface->presentingPass()->hasViewport())
-        << "a full-area picture is what a pass without a viewport already means";
+    EXPECT_FALSE(surface->presentingPass()->hasViewport()) << "a full-area picture is what a pass without a viewport already means";
 
     // State the size before anything is presented: the view that comes later is laid out with it at once. A second
     // WINDOW is a second engine (see RenderEngine::createSurface), which is what this half uses.
@@ -335,17 +330,16 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     // What the area owns is WHO paints it - not whether that pass clears. The pass' own ask stands (a HUD-style pass
     // that draws over what is there keeps asking for no clear), and the backend's rule (the first clear announced per
     // attachment wins) is exactly the swapchain's own: one area, one picture, one clear.
-    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto view    = viewOn(engine.get());
-    auto surface = engine->createSurface();
-    RenderPass* const window = view->chain()->presentingPass();
+    auto              engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto              view    = viewOn(engine.get());
+    auto              surface = engine->createSurface();
+    RenderPass* const window  = view->chain()->presentingPass();
     ASSERT_NE(window, nullptr);
     EXPECT_TRUE(window->isClearEnabled());
 
     ASSERT_TRUE(surface->present(*view));
     EXPECT_TRUE(window->isClearEnabled()) << "the presentation's own ask is untouched";
-    EXPECT_EQ(window->clearColor(), Color(51, 51, 51, 255).toLinear())
-        << "the window's grey is the linear light that displays as #333333";
+    EXPECT_EQ(window->clearColor(), Color(51, 51, 51, 255).toLinear()) << "the window's grey is the linear light that displays as #333333";
 
     window->setClearEnabled(false);
     ChainDesc with_gizmo;
@@ -357,9 +351,9 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
 
     // Deferred: the picture is a fullscreen pass over the whole area, whose program is a ScreenPass and therefore asks
     // for no clear at all - being the area's picture does not make it want one.
-    auto deferred_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto      deferred_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     ChainDesc deferred;
-    deferred.path = ShadingPath::Deferred;
+    deferred.path      = ShadingPath::Deferred;
     auto deferred_view = viewOn(deferred_engine.get(), deferred);
     auto deferred_area = deferred_engine->createSurface();
     ASSERT_TRUE(deferred_area->present(*deferred_view));
@@ -443,7 +437,7 @@ TEST(RenderSurfaceTest, AnAreaOutlivingItsEngineAnswersNothingInsteadOfCallingIn
         surface     = engine->createSurface();
         surface->resize(640, 480, 1.0);
         EXPECT_FALSE(surface->hasPresentation());
-    }   // the engine goes first
+    } // the engine goes first
 
     EXPECT_FALSE(surface->hasPresentation());
     EXPECT_EQ(surface->presentingPass(), nullptr);

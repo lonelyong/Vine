@@ -3,10 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/math/Vector2.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/math/Vector4.hpp>

@@ -336,7 +336,7 @@ class Quaternion {
     [[nodiscard]]
     constexpr Quaternion<T> operator/(T right) const
     {
-        auto           rcp = T(1) / right;
+        auto          rcp = T(1) / right;
         Quaternion<T> q;
         q.x = x * rcp;
         q.y = y * rcp;

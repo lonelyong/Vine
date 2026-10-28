@@ -17,15 +17,16 @@ VN_GRAPHICS_NS_BEGIN
  * - The scale is documented rather than private so a host that registers its own pass (RenderEngine::addPass) can
  *   place it by intent too, instead of guessing where the gaps are.
  */
-enum class PassStage {
-    Depth,       ///< Produces depth for later sampling: shadow maps, depth prepasses.
-    Geometry,    ///< Opaque scene content (the G-buffer pass on a deferred path).
-    Effect,      ///< Screen-space effects reading Geometry's outputs (e.g. SSAO).
-    Shading,     ///< The lit result: the forward content pass, or the deferred lighting pass.
-    Transparent, ///< Forward-only content composited over the shaded result.
-    Present,     ///< Presents a baked result to the window (deferred + forward content).
-    Overlay,     ///< HUD passes drawn over everything the frame shaded.
-    Preview,     ///< Host / debug preview screens (PiP, attachment previews), above the HUD.
+enum class PassStage
+{
+    Depth,       // Produces depth for later sampling: shadow maps, depth prepasses.
+    Geometry,    // Opaque scene content (the G-buffer pass on a deferred path).
+    Effect,      // Screen-space effects reading Geometry's outputs (e.g. SSAO).
+    Shading,     // The lit result: the forward content pass, or the deferred lighting pass.
+    Transparent, // Forward-only content composited over the shaded result.
+    Present,     // Presents a baked result to the window (deferred + forward content).
+    Overlay,     // HUD passes drawn over everything the frame shaded.
+    Preview,     // Host / debug preview screens (PiP, attachment previews), above the HUD.
 };
 
 /**
@@ -42,8 +43,7 @@ enum class PassStage {
  */
 constexpr int passStageOrder(PassStage stage) noexcept
 {
-    switch (stage)
-    {
+    switch (stage) {
     case PassStage::Depth: return -100;
     case PassStage::Geometry: return -40;
     case PassStage::Effect: return -20;

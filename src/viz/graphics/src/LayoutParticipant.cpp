@@ -7,7 +7,7 @@ VN_GRAPHICS_NS_BEGIN
 void LayoutParticipant::resize(int width, int height, double pixel_ratio)
 {
     if (width <= 0 || height <= 0) {
-        return;  // a size that is not a size is not an announcement
+        return; // a size that is not a size is not an announcement
     }
     width_  = width;
     height_ = height;
@@ -41,7 +41,7 @@ void LayoutParticipant::apply(const StepWithRatio& view_step) const
 void LayoutParticipant::applySize(int width, int height, double pixel_ratio, const StepWithRatio& view_step) const
 {
     if (width <= 0 || height <= 0) {
-        return;  // a size that is not a size is not a layout
+        return; // a size that is not a size is not a layout
     }
     if (view_step) {
         view_step(width, height, pixel_ratio);

@@ -41,8 +41,7 @@ namespace detail
  * @tparam Element Scalar element type of the buffer.
  */
 template <typename Element>
-class VsgBufferView : public ::vsg::Inherit<::vsg::Data, VsgBufferView<Element>>
-{
+class VsgBufferView : public ::vsg::Inherit<::vsg::Data, VsgBufferView<Element>> {
   public:
     /**
      * @brief Creates a view over @p buffer.
@@ -61,31 +60,70 @@ class VsgBufferView : public ::vsg::Inherit<::vsg::Data, VsgBufferView<Element>>
     VsgBufferView& operator=(const VsgBufferView&) = delete;
 
   public:
-    std::size_t valueSize() const override { return sizeof(Element); }
+    std::size_t valueSize() const override
+    {
+        return sizeof(Element);
+    }
 
-    std::size_t valueCount() const override { return buffer_ != nullptr ? buffer_->size() : 0u; }
+    std::size_t valueCount() const override
+    {
+        return buffer_ != nullptr ? buffer_->size() : 0u;
+    }
 
-    bool dataAvailable() const override { return buffer_ != nullptr && !buffer_->empty(); }
+    bool dataAvailable() const override
+    {
+        return buffer_ != nullptr && !buffer_->empty();
+    }
 
-    std::size_t dataSize() const override { return valueCount() * sizeof(Element); }
+    std::size_t dataSize() const override
+    {
+        return valueCount() * sizeof(Element);
+    }
 
-    void* dataPointer() override { return const_cast<Element*>(elements()); }
+    void* dataPointer() override
+    {
+        return const_cast<Element*>(elements());
+    }
 
-    const void* dataPointer() const override { return elements(); }
+    const void* dataPointer() const override
+    {
+        return elements();
+    }
 
-    void* dataPointer(std::size_t index) override { return const_cast<Element*>(elements() + index); }
+    void* dataPointer(std::size_t index) override
+    {
+        return const_cast<Element*>(elements() + index);
+    }
 
-    const void* dataPointer(std::size_t index) const override { return elements() + index; }
+    const void* dataPointer(std::size_t index) const override
+    {
+        return elements() + index;
+    }
 
-    void* dataRelease() override { return nullptr; }
+    void* dataRelease() override
+    {
+        return nullptr;
+    }
 
-    std::uint32_t dimensions() const override { return 1u; }
+    std::uint32_t dimensions() const override
+    {
+        return 1u;
+    }
 
-    std::uint32_t width() const override { return static_cast<std::uint32_t>(valueCount()); }
+    std::uint32_t width() const override
+    {
+        return static_cast<std::uint32_t>(valueCount());
+    }
 
-    std::uint32_t height() const override { return 1u; }
+    std::uint32_t height() const override
+    {
+        return 1u;
+    }
 
-    std::uint32_t depth() const override { return 1u; }
+    std::uint32_t depth() const override
+    {
+        return 1u;
+    }
 
     ::vsg::ref_ptr<::vsg::Object> clone(const ::vsg::CopyOp&) const override
     {
@@ -94,7 +132,10 @@ class VsgBufferView : public ::vsg::Inherit<::vsg::Data, VsgBufferView<Element>>
     }
 
   private:
-    const Element* elements() const { return buffer_ != nullptr ? buffer_->data() : nullptr; }
+    const Element* elements() const
+    {
+        return buffer_ != nullptr ? buffer_->data() : nullptr;
+    }
 
   private:
     intrusive_ptr<const vn::Buffer<Element>> buffer_;

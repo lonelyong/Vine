@@ -21,8 +21,7 @@ namespace
 /**
  * @brief Frame with a configurable number of revolute dofs and bounds.
  */
-class TestJoint : public Frame
-{
+class TestJoint : public Frame {
   public:
     explicit TestJoint(std::size_t dof, double lower = -3.14, double upper = 3.14)
     {
@@ -57,10 +56,10 @@ void expectNear(const Isometry3d& a, const Isometry3d& b)
 
 TEST(SerialKinematicsTest, BuildsChainFromFrameTree)
 {
-    Frame base;
+    Frame     base;
     TestJoint j1(1);
     TestJoint j2(1);
-    Frame end;
+    Frame     end;
     base.addChild(&j1);
     j1.addChild(&j2);
     j2.addChild(&end);
@@ -124,7 +123,7 @@ TEST(SerialKinematicsTest, SolverInstanceAlwaysMatchesReportedType)
 
 TEST(SerialKinematicsTest, GetSetQ)
 {
-    Frame base;
+    Frame     base;
     TestJoint j1(1);
     TestJoint j2(1);
     base.addChild(&j1);
@@ -170,9 +169,9 @@ TEST(SerialKinematicsTest, FixedChainHasZeroDof)
 
 TEST(SerialKinematicsTest, InterspersedFixedFrameAccumulatesIntoOrigin)
 {
-    Frame base;
+    Frame     base;
     TestJoint j1(1);
-    Frame fixed;
+    Frame     fixed;
     TestJoint j2(1);
     base.addChild(&j1);
     j1.addChild(&fixed);

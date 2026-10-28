@@ -9,14 +9,14 @@
 #include <vine/brepio/BrepFormat.hpp>
 #include <vine/brepio/BrepLoader.hpp>
 #include <vine/geometry/BrepShape.hpp>
-#include <vine/io/IoError.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/io/IoError.hpp>
 
 #if defined(VN_BREPIO_HAS_OCCT)
-#include <memory>
+#    include <memory>
 
-#include <BRepPrimAPI_MakeBox.hxx>
-#include <TopoDS_Shape.hxx>
+#    include <BRepPrimAPI_MakeBox.hxx>
+#    include <TopoDS_Shape.hxx>
 #endif
 
 using vn::brepio::BrepExporter;
@@ -140,13 +140,12 @@ TEST(BrepIoTest, ExportsABoxAndReadsItBack)
     BrepExporter exporter;
     BrepLoader   loader;
 
-    const struct Case
-    {
+    const struct Case {
         BrepFormat  format;
         const char* name;
     } cases[] = {
         { BrepFormat::Step, "box.step" },
-        { BrepFormat::Iges, "box.igs" },
+        { BrepFormat::Iges, "box.igs"  },
         { BrepFormat::Brep, "box.brep" },
     };
 

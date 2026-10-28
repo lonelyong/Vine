@@ -35,8 +35,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /**
  * @brief A bump allocator for one frame's plan (see the file note for the ownership rule it enforces).
  */
-class VN_GRAPHICS_API FrameArena
-{
+class VN_GRAPHICS_API FrameArena {
   public:
     /** @brief Creates an arena whose chunks are @p chunk_size bytes each.
      *
@@ -76,14 +75,13 @@ class VN_GRAPHICS_API FrameArena
     template <typename T>
     [[nodiscard]] std::span<T> makeArray(std::size_t count)
     {
-        if (count == 0)
-        {
+        if (count == 0) {
             return {};
         }
         void* raw = allocate(count * sizeof(T), alignof(T));
         // The first element is `raw`, NOT what the construction helper returns: it returns the pointer
         // PAST the constructed range, and a span built from that would point out of the block.
-        T* first = static_cast<T*>(raw);
+        T* first  = static_cast<T*>(raw);
         std::uninitialized_value_construct_n(first, count);
         return std::span<T>(first, count);
     }
@@ -100,13 +98,11 @@ class VN_GRAPHICS_API FrameArena
     template <typename T>
     [[nodiscard]] std::span<const T> copy(std::span<const T> source)
     {
-        if (source.empty())
-        {
+        if (source.empty()) {
             return {};
         }
         std::span<T> destination = makeArray<T>(source.size());
-        for (std::size_t i = 0; i < source.size(); ++i)
-        {
+        for (std::size_t i = 0; i < source.size(); ++i) {
             destination[i] = source[i];
         }
         return destination;
@@ -140,20 +136,19 @@ class VN_GRAPHICS_API FrameArena
 
   private:
     /** @brief One block of storage. Blocks already handed out are never moved between chunks. */
-    struct Chunk
-    {
-        std::unique_ptr<std::byte[]> storage;       ///< The block itself.
-        std::size_t                  capacity{0};   ///< Bytes in the block.
-        std::size_t                  used{0};       ///< Bytes handed out of it this frame.
+    struct Chunk {
+        std::unique_ptr<std::byte[]> storage;       // The block itself.
+        std::size_t                  capacity{ 0 }; // Bytes in the block.
+        std::size_t                  used{ 0 };     // Bytes handed out of it this frame.
     };
 
     /** @brief Starts a chunk able to hold at least @p bytes, and counts it. */
     void addChunk(std::size_t bytes);
 
-    std::vector<Chunk> chunks_;         ///< Storage, in the order it was started.
-    std::size_t        chunk_size_{0};  ///< Size of a new chunk when a request fits in one.
-    std::size_t        cursor_{0};      ///< Chunk the next allocation comes from.
-    std::size_t        allocations_{0}; ///< Chunks started after construction.
+    std::vector<Chunk> chunks_;           // Storage, in the order it was started.
+    std::size_t        chunk_size_{ 0 };  // Size of a new chunk when a request fits in one.
+    std::size_t        cursor_{ 0 };      // Chunk the next allocation comes from.
+    std::size_t        allocations_{ 0 }; // Chunks started after construction.
 };
 
 VN_GRAPHICSBACKEND_NS_END

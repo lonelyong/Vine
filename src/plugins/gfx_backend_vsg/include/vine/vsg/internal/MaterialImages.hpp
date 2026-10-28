@@ -10,13 +10,15 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include <vine/vsg/support/VsgSceneRules.hpp>
 #include <vine/vsg/internal/ContentImages.hpp>
+#include <vine/vsg/support/VsgSceneRules.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 namespace vn::graphics
 {
+
 class Texture;
+
 }
 
 VN_VSG_NS_BEGIN
@@ -83,8 +85,7 @@ han queried (see
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the
 backend.
  */
-class MaterialImages
-{
+class MaterialImages {
   public:
     /** @brief Why there is NO entry bound: the host owns the memory policy.
      *
@@ -127,8 +128,7 @@ ct::Ok`.
      * @return The images to bind, never null (its members are never null either
 ).
      */
-    [[nodiscard]] SamplerImage acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
-                                       detail::TextureReject& reason);
+    [[nodiscard]] SamplerImage acquire(vn::raw_ptr<const vn::graphics::Texture> texture, detail::TextureReject& reason);
     /**
      * @brief Gets (or builds) the images @p texture is sampled through with an EXPLICIT state.
      *
@@ -143,8 +143,7 @@ ct::Ok`.
      * @param reason  Receives why the texture was not uploaded, or `TextureReject::Ok`.
      * @return The image and the sampler for @p sampler, never null.
      */
-    [[nodiscard]] SamplerImage acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
-                                       const vn::graphics::Sampler& sampler, detail::TextureReject& reason);
+    [[nodiscard]] SamplerImage acquire(vn::raw_ptr<const vn::graphics::Texture> texture, const vn::graphics::Sampler& sampler, detail::TextureReject& reason);
 
     /** @brief Gets the number of EXPLICIT sampler states cached (the per-texture default samplers excluded). */
     [[nodiscard]] std::size_t samplerCount() const noexcept;
@@ -238,13 +237,12 @@ e default of 1 keeps a cache
 
     ~MaterialImages();
 
-    MaterialImages(const MaterialImages&) = delete;
+    MaterialImages(const MaterialImages&)            = delete;
     MaterialImages& operator=(const MaterialImages&) = delete;
 
   private:
     /** @brief The shared body of the two acquires; @p state null means the backend's default sampler. */
-    [[nodiscard]] SamplerImage acquireImpl(vn::raw_ptr<const vn::graphics::Texture> texture,
-                                           const vn::graphics::Sampler* state, detail::TextureReject& reason);
+    [[nodiscard]] SamplerImage acquireImpl(vn::raw_ptr<const vn::graphics::Texture> texture, const vn::graphics::Sampler* state, detail::TextureReject& reason);
 
     struct Data;
     // Lexically after Data so the out-of-line destructor is the only place that needs the complete

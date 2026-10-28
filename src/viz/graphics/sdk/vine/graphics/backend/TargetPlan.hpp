@@ -42,19 +42,19 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /** @brief What to do with an off-screen target this frame. */
 enum class TargetAction : std::uint8_t
 {
-    None,           ///< Usable as it is.
-    Repair,         ///< Nothing may be drawn into it yet (see RepairReason); no GPU object changes.
-    ResizeInPlace,  ///< Same shape, new extent: replace images/views/framebuffers and re-point descriptors.
-    Rebuild,        ///< The shape changed: rebuild the pass graph, the framebuffer and the pipelines.
+    None,          // Usable as it is.
+    Repair,        // Nothing may be drawn into it yet (see RepairReason); no GPU object changes.
+    ResizeInPlace, // Same shape, new extent: replace images/views/framebuffers and re-point descriptors.
+    Rebuild,       // The shape changed: rebuild the pass graph, the framebuffer and the pipelines.
 };
 
 /** @brief Why a target has to be repaired before it can be used. */
 enum class RepairReason : std::uint8_t
 {
-    None,          ///< Not a repair.
-    SizeUnknown,   ///< The extent is not usable (0 in either dimension), so nothing can be built.
-    Bootstrap,     ///< Freshly built or invalidated: the first pass in must clear (an UNDEFINED image cannot be
-                   ///< loaded).
+    None,        // Not a repair.
+    SizeUnknown, // The extent is not usable (0 in either dimension), so nothing can be built.
+    Bootstrap,   // Freshly built or invalidated: the first pass in must clear (an UNDEFINED image cannot be
+                 // loaded).
 };
 
 /**
@@ -70,14 +70,13 @@ enum class RepairReason : std::uint8_t
  *   RenderPassCompatibility). 0, the device's UNDEFINED, means "no such attachment" - and, for a shape
  *   that never learned them, "not known".
  */
-struct VN_GRAPHICS_API TargetShape
-{
-    std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
-    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for a colour-only target.
-    std::vector<std::uint32_t> device_color_formats;  ///< The same attachments, as the device spells them.
-    std::uint32_t              device_depth_format{0}; ///< The device's depth format; 0 = no depth.
-    std::uint32_t              samples{1};             ///< Sample count.
-    std::uint32_t              subpass{0};             ///< Subpass the pipeline targets.
+struct VN_GRAPHICS_API TargetShape {
+    std::vector<vn::graphics::RenderTarget::ColorFormat>   color_formats;            // One per colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;             // Absent for a colour-only target.
+    std::vector<std::uint32_t>                             device_color_formats;     // The same attachments, as the device spells them.
+    std::uint32_t                                          device_depth_format{ 0 }; // The device's depth format; 0 = no depth.
+    std::uint32_t                                          samples{ 1 };             // Sample count.
+    std::uint32_t                                          subpass{ 0 };             // Subpass the pipeline targets.
 
     /** @brief Compares the compatibility-relevant properties. */
     [[nodiscard]] bool operator==(const TargetShape& other) const noexcept;
@@ -97,30 +96,27 @@ struct VN_GRAPHICS_API TargetShape
 };
 
 /** @brief A target as the frame wants it: an extent plus a shape. */
-struct VN_GRAPHICS_API TargetDesc
-{
-    int         width{0};   ///< Extent in device pixels (0 = not known yet).
-    int         height{0};  ///< Extent in device pixels (0 = not known yet).
-    TargetShape shape;      ///< Compatibility-relevant shape.
+struct VN_GRAPHICS_API TargetDesc {
+    int         width{ 0 };  // Extent in device pixels (0 = not known yet).
+    int         height{ 0 }; // Extent in device pixels (0 = not known yet).
+    TargetShape shape;       // Compatibility-relevant shape.
 
     /** @brief Compares extent and shape. */
     [[nodiscard]] bool operator==(const TargetDesc& other) const noexcept;
 };
 
 /** @brief What the backend currently has for a target. */
-struct TargetInstance
-{
-    TargetDesc    desc;                     ///< The description the current attachments were built for.
-    std::uint64_t generation{0};            ///< Bumped every time the attachments were replaced.
-    bool          built{false};             ///< Attachments exist for desc.
-    bool          attachments_invalidated{false};  ///< They exist but no longer describe anything usable.
+struct TargetInstance {
+    TargetDesc    desc;                             // The description the current attachments were built for.
+    std::uint64_t generation{ 0 };                  // Bumped every time the attachments were replaced.
+    bool          built{ false };                   // Attachments exist for desc.
+    bool          attachments_invalidated{ false }; // They exist but no longer describe anything usable.
 };
 
 /** @brief The plan for one target. */
-struct TargetDecision
-{
-    TargetAction action{TargetAction::None};      ///< What to do.
-    RepairReason reason{RepairReason::None};      ///< Why, when action is Repair.
+struct TargetDecision {
+    TargetAction action{ TargetAction::None }; // What to do.
+    RepairReason reason{ RepairReason::None }; // Why, when action is Repair.
 };
 
 /** @brief Decides what has to happen to @p current so it can serve @p wanted.
@@ -139,24 +135,22 @@ struct TargetDecision
 [[nodiscard]] VN_GRAPHICS_API TargetDecision planTarget(const TargetInstance& current, const TargetDesc& wanted) noexcept;
 
 /** @brief The depth facts a target's plan is derived from. */
-struct DepthFacts
-{
-    bool        has_depth{false};                 ///< The target has a depth attachment.
-    bool        promotion{false};                 ///< The host asked for a sampleable depth.
-    bool        borrowed{false};                  ///< The depth attachment is another target's image.
-    const void* source{nullptr};                  ///< The lender, when borrowed.
-    bool        any_pass_preserves_depth{false};  ///< Some pass of this target depth-LOADs what an earlier pass
-                                                  ///< wrote.
+struct DepthFacts {
+    bool        has_depth{ false };                // The target has a depth attachment.
+    bool        promotion{ false };                // The host asked for a sampleable depth.
+    bool        borrowed{ false };                 // The depth attachment is another target's image.
+    const void* source{ nullptr };                 // The lender, when borrowed.
+    bool        any_pass_preserves_depth{ false }; // Some pass of this target depth-LOADs what an earlier pass
+                                                   // wrote.
 };
 
 /** @brief The depth plan for one target. */
-struct DepthPlan
-{
-    bool        has_depth{false};    ///< There is a depth attachment.
-    bool        sampleable{false};   ///< Shaders may sample it (promotion survived, nothing preserves it).
-    bool        borrowed{false};     ///< It is the lender's image; the policy is the lender's.
-    bool        preserve{false};     ///< A pass depends on the depth an earlier pass wrote.
-    const void* source{nullptr};     ///< The lender, when borrowed.
+struct DepthPlan {
+    bool        has_depth{ false };  // There is a depth attachment.
+    bool        sampleable{ false }; // Shaders may sample it (promotion survived, nothing preserves it).
+    bool        borrowed{ false };   // It is the lender's image; the policy is the lender's.
+    bool        preserve{ false };   // A pass depends on the depth an earlier pass wrote.
+    const void* source{ nullptr };   // The lender, when borrowed.
 };
 
 /** @brief Derives the depth plan from the facts that interact (see the file note).

@@ -15,8 +15,7 @@ VN_ROBOTICS_KINEMATICS_NS_BEGIN
  * DofInfos. Picks an IK solver at construction: Pieper when the chain is a
  * supported 6-DOF spherical-wrist robot, Jacobian (iterative) otherwise.
  */
-class VN_ROBOTICS_CORE_API SerialKinematics : public KinematicsBase
-{
+class VN_ROBOTICS_CORE_API SerialKinematics : public KinematicsBase {
   public:
     /**
      * @brief Builds the serial-chain model between base and end.

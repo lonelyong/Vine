@@ -18,10 +18,10 @@ VN_BREPIO_NS_BEGIN
  */
 enum class BrepFormat : std::uint8_t
 {
-    Unknown = 0, ///< Not a format: an unrecognised extension, or no hint at all.
-    Step,        ///< STEP (.stp, .step); text.
-    Iges,        ///< IGES (.igs, .iges); text.
-    Brep,        ///< OpenCASCADE's native B-Rep (.brep); binary.
+    Unknown = 0, // Not a format: an unrecognised extension, or no hint at all.
+    Step,        // STEP (.stp, .step); text.
+    Iges,        // IGES (.igs, .iges); text.
+    Brep,        // OpenCASCADE's native B-Rep (.brep); binary.
 };
 
 /**

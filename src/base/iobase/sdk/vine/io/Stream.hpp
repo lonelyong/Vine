@@ -32,10 +32,9 @@ inline constexpr std::uint64_t kUnknownSize = std::numeric_limits<std::uint64_t>
  * into one block. The bytes stay owned by the caller and must stay alive until
  * the save finishes.
  */
-struct Fragment
-{
-    const unsigned char* data{ nullptr }; ///< Start of the piece.
-    std::uint64_t        size{ 0 };       ///< Length of the piece in bytes.
+struct Fragment {
+    const unsigned char* data{ nullptr }; // Start of the piece.
+    std::uint64_t        size{ 0 };       // Length of the piece in bytes.
 };
 
 /**
@@ -49,8 +48,7 @@ struct Fragment
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API DataSource
-{
+class VN_IOBASE_API DataSource {
   public:
     virtual ~DataSource() = default;
 
@@ -91,7 +89,10 @@ class VN_IOBASE_API DataSource
      * @return IoError::Ok while the content reads cleanly, IoError::IoFailure when
      *         it could not be produced; the default is a clean source.
      */
-    [[nodiscard]] virtual IoError error() const { return IoError::Ok; }
+    [[nodiscard]] virtual IoError error() const
+    {
+        return IoError::Ok;
+    }
 };
 
 /**
@@ -104,8 +105,7 @@ class VN_IOBASE_API DataSource
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API DataSink
-{
+class VN_IOBASE_API DataSink {
   public:
     virtual ~DataSink() = default;
 

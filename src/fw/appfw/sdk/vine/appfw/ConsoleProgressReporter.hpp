@@ -16,8 +16,7 @@ VN_APPFW_NS_BEGIN
  * A plain value type at namespace scope, like CommandManager's CommandInfo: callers construct it
  * and pass it, and the reporter keeps a copy.
  */
-struct ConsoleProgressOptions
-{
+struct ConsoleProgressOptions {
     /// Shortest gap between two consecutive lines.
     std::chrono::milliseconds interval{ 200 };
     /// How long an operation runs before its first line is printed.
@@ -48,8 +47,7 @@ struct ConsoleProgressOptions
  * is public so a host that runs its own loop can drive the reporter from there, and so tests can
  * step it deterministically.
  */
-class VN_APPFW_API ConsoleProgressReporter
-{
+class VN_APPFW_API ConsoleProgressReporter {
   public:
     /// Tuning of the printed lines; see ConsoleProgressOptions.
     using Options = ConsoleProgressOptions;

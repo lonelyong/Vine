@@ -4,13 +4,13 @@
 #include <utility>
 
 #include <vine/Colorf.hpp>
+#include <vine/geometry/Array.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/geometry/Array.hpp>
 
 #include "PixelGeometry.hpp"
 
@@ -34,31 +34,30 @@ namespace
  * @param mn        Minimum corner.
  * @param mx        Maximum corner.
  */
-void appendBox(vn::geometry::Vec3fArray& positions, vn::geometry::Vec3fArray& normals,
-               vn::geometry::UInt32Array& indices, const vn::math::Vec3f& mn,
-               const vn::math::Vec3f& mx)
+void appendBox(vn::geometry::Vec3fArray&  positions,
+               vn::geometry::Vec3fArray&  normals,
+               vn::geometry::UInt32Array& indices,
+               const vn::math::Vec3f&     mn,
+               const vn::math::Vec3f&     mx)
 {
     using vn::math::Vec3f;
 
-    const Vec3f c = (mn + mx) * 0.5f;
-    const float h[3] = { (mx.x - mn.x) * 0.5f, (mx.y - mn.y) * 0.5f, (mx.z - mn.z) * 0.5f };
-    const auto axis = [](int a) {
-        return a == 0 ? Vec3f(1.0f, 0.0f, 0.0f) : (a == 1 ? Vec3f(0.0f, 1.0f, 0.0f)
-                                                          : Vec3f(0.0f, 0.0f, 1.0f));
-    };
+    const Vec3f c     = (mn + mx) * 0.5f;
+    const float h[3]  = { (mx.x - mn.x) * 0.5f, (mx.y - mn.y) * 0.5f, (mx.z - mn.z) * 0.5f };
+    const auto  axis  = [](int a) { return a == 0 ? Vec3f(1.0f, 0.0f, 0.0f) : (a == 1 ? Vec3f(0.0f, 1.0f, 0.0f) : Vec3f(0.0f, 0.0f, 1.0f)); };
     const float cu[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
     const float cv[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
 
     for (int f = 0; f < 6; ++f) {
-        const int  a = f / 2; // face normal axis
-        const bool neg  = (f % 2) == 1;
-        const int  nxt  = (a + 1) % 3;
-        const int  nxt2 = (a + 2) % 3;
-        const int  ua   = neg ? nxt2 : nxt;
-        const int  va   = neg ? nxt : nxt2;
-        const Vec3f n   = neg ? -axis(a) : axis(a);
-        const Vec3f u   = axis(ua);
-        const Vec3f v   = axis(va);
+        const int   a    = f / 2; // face normal axis
+        const bool  neg  = (f % 2) == 1;
+        const int   nxt  = (a + 1) % 3;
+        const int   nxt2 = (a + 2) % 3;
+        const int   ua   = neg ? nxt2 : nxt;
+        const int   va   = neg ? nxt : nxt2;
+        const Vec3f n    = neg ? -axis(a) : axis(a);
+        const Vec3f u    = axis(ua);
+        const Vec3f v    = axis(va);
 
         const std::uint32_t base = static_cast<std::uint32_t>(positions.size());
         for (int k = 0; k < 4; ++k) {
@@ -75,17 +74,16 @@ void appendBox(vn::geometry::Vec3fArray& positions, vn::geometry::Vec3fArray& no
 }
 
 /** @brief One seven-segment bar: centre offset and half extents in-plane. */
-struct BarSpec
-{
+struct BarSpec {
     double dx, dy, hx, hy;
 };
 
 /// Three digits, seven segments each: the row's bars, in the order the pattern bits use.
-constexpr std::size_t kSegmentCount = 3u * 7u;
+constexpr std::size_t kSegmentCount   = 3u * 7u;
 /// Vertices one bar contributes (six flat faces of four corners).
 constexpr std::size_t kVerticesPerBar = 24u;
 /// Indices one bar contributes (six quads = twelve triangles).
-constexpr std::size_t kIndicesPerBar = 36u;
+constexpr std::size_t kIndicesPerBar  = 36u;
 
 /// The colour a lit bar shows. Ambient-only lighting makes the material's diffuse the colour that
 /// reaches the frame, so this IS the readout's on-screen colour: a BRIGHT near-white green, because the
@@ -93,7 +91,7 @@ constexpr std::size_t kIndicesPerBar = 36u;
 /// sky or a mid-tone surface.
 constexpr Colorf kLit{ 0.70f, 1.00f, 0.75f, 1.0f };
 
-}  // namespace
+} // namespace
 
 FpsOverlay::FpsOverlay()
 {
@@ -103,8 +101,7 @@ FpsOverlay::FpsOverlay()
     // (see onSurfaceResized) - the box is fitted and scaled there, and a picture projected for a shape the box
     // does not have is a stretched readout.
     camera_ = make_intrusive<Camera>();
-    camera_->lookAt(vn::math::Vec3d(0.0, 0.0, 1.6), vn::math::Vec3d(0.0, 0.0, 0.0),
-                                   vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera_->lookAt(vn::math::Vec3d(0.0, 0.0, 1.6), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera_->setPerspective(45.0, 0.05, 20.0);
     rebuild();
 }
@@ -156,7 +153,7 @@ const FpsOverlay::Sampler& FpsOverlay::sampler() const noexcept
 bool FpsOverlay::Sampler::addFrame(double dt_seconds) noexcept
 {
     if (!(dt_seconds > 0.0)) {
-        return false;  // a clock that did not move is not a frame, and feeding it would only add time
+        return false; // a clock that did not move is not a frame, and feeding it would only add time
     }
     ++frames_;
     elapsed_seconds_ += dt_seconds;
@@ -186,8 +183,7 @@ void FpsOverlay::onSurfaceResized(int width, int height)
     }
     // Convert the host's logical surface size into device pixels, the space the backend's native surface
     // uses for viewports.
-    const detail::DeviceSize device =
-        detail::toDeviceSize(detail::LogicalSize{ surface_w_, surface_h_ }, detail::PixelRatio{ pixel_ratio_ });
+    const detail::DeviceSize device = detail::toDeviceSize(detail::LogicalSize{ surface_w_, surface_h_ }, detail::PixelRatio{ pixel_ratio_ });
     if (!device.isValid()) {
         return;
     }
@@ -198,13 +194,13 @@ void FpsOverlay::onSurfaceResized(int width, int height)
     int h = box_height_px_;
     if (w > device.width - 2 * margin_px_) {
         const double scale = static_cast<double>(device.width - 2 * margin_px_) / w;
-        w = static_cast<int>(w * scale);
-        h = static_cast<int>(h * scale);
+        w                  = static_cast<int>(w * scale);
+        h                  = static_cast<int>(h * scale);
     }
     if (h > device.height - 2 * margin_px_) {
         const double scale = static_cast<double>(device.height - 2 * margin_px_) / h;
-        w = static_cast<int>(w * scale);
-        h = static_cast<int>(h * scale);
+        w                  = static_cast<int>(w * scale);
+        h                  = static_cast<int>(h * scale);
     }
     if (w <= 0 || h <= 0) {
         return;
@@ -262,10 +258,9 @@ void FpsOverlay::updateReadout(double dt)
     shown_value_ = value;
 
     // abcdefg bitmaps, bit 0 = a.
-    static const std::uint8_t kDigitSegments[10] = { 0x3F, 0x06, 0x5B, 0x4F, 0x66,
-                                                     0x6D, 0x7D, 0x07, 0x7F, 0x6F };
-    const int digit_values[3] = { (value / 100) % 10, (value / 10) % 10, value % 10 };
-    std::uint32_t pattern = 0u;
+    static const std::uint8_t kDigitSegments[10] = { 0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F };
+    const int                 digit_values[3]    = { (value / 100) % 10, (value / 10) % 10, value % 10 };
+    std::uint32_t             pattern            = 0u;
     for (int d = 0; d < 3; ++d) {
         pattern |= static_cast<std::uint32_t>(kDigitSegments[digit_values[d]]) << (d * 7);
     }
@@ -287,7 +282,7 @@ void FpsOverlay::writePattern(std::uint32_t pattern)
         if ((pattern & (1u << seg)) != 0u) {
             continue;
         }
-        const std::size_t       base      = seg * kVerticesPerBar;
+        const std::size_t     base      = seg * kVerticesPerBar;
         const vn::math::Vec3f collapsed = positions[base];
         for (std::size_t v = 0; v < kVerticesPerBar; ++v) {
             positions[base + v] = collapsed;
@@ -312,19 +307,19 @@ void FpsOverlay::rebuild()
 
     // Seven-segment geometry in the z == 0 plane. Order: a b c d e f g =
     // top, upper-right, lower-right, bottom, lower-left, upper-left, middle.
-    static constexpr double kCellW = 0.60;
-    static constexpr double kCellH = 1.00;
-    static constexpr double kBarT  = 0.12; // bar thickness in-plane
-    static constexpr double kBarD  = 0.06; // bar depth out of plane
-    static constexpr double kGap   = 0.14;
-    static const BarSpec kSegments[7] = {
-        { kCellW / 2.0, kCellH,       (kCellW - kBarT) / 2.0, kBarT / 2.0 },                 // a
-        { kCellW,       kCellH * 0.75, kBarT / 2.0, (kCellH / 2.0 - kBarT) / 2.0 },         // b
-        { kCellW,       kCellH * 0.25, kBarT / 2.0, (kCellH / 2.0 - kBarT) / 2.0 },         // c
-        { kCellW / 2.0, 0.0,          (kCellW - kBarT) / 2.0, kBarT / 2.0 },                 // d
-        { 0.0,          kCellH * 0.25, kBarT / 2.0, (kCellH / 2.0 - kBarT) / 2.0 },         // e
-        { 0.0,          kCellH * 0.75, kBarT / 2.0, (kCellH / 2.0 - kBarT) / 2.0 },         // f
-        { kCellW / 2.0, kCellH / 2.0, (kCellW - kBarT) / 2.0, kBarT / 2.0 },                 // g
+    static constexpr double kCellW       = 0.60;
+    static constexpr double kCellH       = 1.00;
+    static constexpr double kBarT        = 0.12; // bar thickness in-plane
+    static constexpr double kBarD        = 0.06; // bar depth out of plane
+    static constexpr double kGap         = 0.14;
+    static const BarSpec    kSegments[7] = {
+        { kCellW / 2.0, kCellH,        (kCellW - kBarT) / 2.0, kBarT / 2.0                  }, // a
+        { kCellW,       kCellH * 0.75, kBarT / 2.0,            (kCellH / 2.0 - kBarT) / 2.0 }, // b
+        { kCellW,       kCellH * 0.25, kBarT / 2.0,            (kCellH / 2.0 - kBarT) / 2.0 }, // c
+        { kCellW / 2.0, 0.0,           (kCellW - kBarT) / 2.0, kBarT / 2.0                  }, // d
+        { 0.0,          kCellH * 0.25, kBarT / 2.0,            (kCellH / 2.0 - kBarT) / 2.0 }, // e
+        { 0.0,          kCellH * 0.75, kBarT / 2.0,            (kCellH / 2.0 - kBarT) / 2.0 }, // f
+        { kCellW / 2.0, kCellH / 2.0,  (kCellW - kBarT) / 2.0, kBarT / 2.0                  }, // g
     };
     // Centre the 3-digit row on the origin.
     const double row_width = 3.0 * kCellW + 2.0 * kGap;
@@ -334,8 +329,8 @@ void FpsOverlay::rebuild()
     // The row is built with EVERY segment lit: this is the template writePattern() copies its lit bars
     // from, and it is what fixes the geometry's vertex and index count for the rest of its life -- what a
     // change edits is which of those bars carry area, never how many vertices exist.
-    vn::geometry::Vec3fArray positions;
-    vn::geometry::Vec3fArray normals;
+    vn::geometry::Vec3fArray  positions;
+    vn::geometry::Vec3fArray  normals;
     vn::geometry::UInt32Array indices;
     positions.reserve(kSegmentCount * kVerticesPerBar);
     normals.reserve(kSegmentCount * kVerticesPerBar);

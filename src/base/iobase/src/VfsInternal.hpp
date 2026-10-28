@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
-#include <vine/io/IoError.hpp>
-#include <vine/io/io_global.hpp>
-#include <vine/io/Stream.hpp>
 #include <vine/String.hpp>
+#include <vine/io/IoError.hpp>
+#include <vine/io/Stream.hpp>
+#include <vine/io/io_global.hpp>
 
 VN_IO_NS_BEGIN
 
@@ -21,8 +21,7 @@ namespace detail
 /**
  * @brief A sink that collects the bytes it is handed in one buffer.
  */
-class VectorSink final : public DataSink
-{
+class VectorSink final : public DataSink {
   public:
     /**
      * @brief Appends the bytes to what was collected.
@@ -42,14 +41,20 @@ class VectorSink final : public DataSink
      *
      * @return The content as it arrived.
      */
-    [[nodiscard]] const std::vector<unsigned char>& bytes() const noexcept { return bytes_; }
+    [[nodiscard]] const std::vector<unsigned char>& bytes() const noexcept
+    {
+        return bytes_;
+    }
 
     /**
      * @brief Hands the collected content over, leaving the sink empty.
      *
      * @return The content as it arrived.
      */
-    [[nodiscard]] std::vector<unsigned char> take() noexcept { return std::move(bytes_); }
+    [[nodiscard]] std::vector<unsigned char> take() noexcept
+    {
+        return std::move(bytes_);
+    }
 
   private:
     std::vector<unsigned char> bytes_;
@@ -77,8 +82,7 @@ inline IoError pumpSource(DataSource& source, DataSink& sink)
     std::array<std::byte, 64U * 1024U> chunk{};
     std::uint64_t                      produced = 0;
     while (true) {
-        const std::size_t want = measured ? static_cast<std::size_t>(std::min<std::uint64_t>(chunk.size(), stated - produced))
-                                          : chunk.size();
+        const std::size_t want = measured ? static_cast<std::size_t>(std::min<std::uint64_t>(chunk.size(), stated - produced)) : chunk.size();
         if (want == 0) {
             break; // every promised byte has arrived
         }

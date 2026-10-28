@@ -108,7 +108,7 @@ void ProgressScope::complete()
     }
 
     const double current = localToGlobal(local_pos_);
-    local_pos_ = local_length_;
+    local_pos_           = local_length_;
 
     const double delta = global_length_ - current;
     if (delta > 0.0) {

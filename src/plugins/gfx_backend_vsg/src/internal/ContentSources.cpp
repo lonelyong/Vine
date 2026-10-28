@@ -19,8 +19,7 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFa
     return buildProgramFacts(program, ProgramVariant{}, out);
 }
 
-FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const ProgramVariant& variant,
-                           ProgramFacts& out)
+FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const ProgramVariant& variant, ProgramFacts& out)
 {
     out          = ProgramFacts{};
     out.program  = &program;
@@ -28,14 +27,12 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const Pro
 
     const vn::graphics::ShaderStage* vertex   = nullptr;
     const vn::graphics::ShaderStage* fragment = nullptr;
-    std::size_t                        extra    = 0;
+    std::size_t                      extra    = 0;
 
-    for (const vn::graphics::ShaderStage& stage : program.stages())
-    {
-        switch (stage.type)
-        {
+    for (const vn::graphics::ShaderStage& stage : program.stages()) {
+        switch (stage.type) {
         case vn::graphics::ShaderStageType::Vertex:
-            extra += vertex != nullptr ? 1U : 0U;  // a second vertex stage cannot be compiled into one pipeline
+            extra += vertex != nullptr ? 1U : 0U; // a second vertex stage cannot be compiled into one pipeline
             vertex = &stage;
             break;
         case vn::graphics::ShaderStageType::Fragment:
@@ -43,25 +40,21 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const Pro
             fragment = &stage;
             break;
         case vn::graphics::ShaderStageType::Compute:
-            ++extra;  // a compute stage is not content: this backend's content pipeline is two graphics stages
+            ++extra; // a compute stage is not content: this backend's content pipeline is two graphics stages
             break;
         }
     }
 
-    if (vertex == nullptr && fragment == nullptr)
-    {
-        return FactMiss::Unknown;  // nothing to describe
+    if (vertex == nullptr && fragment == nullptr) {
+        return FactMiss::Unknown; // nothing to describe
     }
-    if (vertex == nullptr || fragment == nullptr || extra != 0U)
-    {
+    if (vertex == nullptr || fragment == nullptr || extra != 0U) {
         return FactMiss::Malformed;
     }
-    if (vertex->source.empty() || fragment->source.empty())
-    {
-        return FactMiss::Malformed;  // a stage with no source is not a program
+    if (vertex->source.empty() || fragment->source.empty()) {
+        return FactMiss::Malformed; // a stage with no source is not a program
     }
-    if (vertex->entryPoint != fragment->entryPoint)
-    {
+    if (vertex->entryPoint != fragment->entryPoint) {
         // The pipeline carries ONE entry point for both stages, so a program whose stages disagree about it is
         // not expressible - and compiling "main" there would run a function the host did not name.
         return FactMiss::Malformed;
@@ -71,8 +64,8 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const Pro
     out.shaders.fragment = std::string(fragment->source.as_std_str());
     out.shaders.entry    = std::string(vertex->entryPoint.as_std_str());
     out.shaders.defines  = variant.defines();
-    out.variant          = variant;   // the entry says which of the program's texts it is (see findProgram)
-    out.kind             = core::DrawKind::Content;  // ... and which drawing CALL it answers (see ProgramFacts)
+    out.variant          = variant;                 // the entry says which of the program's texts it is (see findProgram)
+    out.kind             = core::DrawKind::Content; // ... and which drawing CALL it answers (see ProgramFacts)
 
     // The ABI is scanned from the same two texts, for the SAME variant the layer will compile them with:
     // the layout a pipeline is built against and the module it compiles cannot disagree about which
@@ -85,8 +78,7 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const Pro
     for (const std::string& define : defines) {
         names.emplace_back(define);
     }
-    if (scanProgramAbi(out.shaders.vertex, out.shaders.fragment, names, out.abi) != FactMiss::None)
-    {
+    if (scanProgramAbi(out.shaders.vertex, out.shaders.fragment, names, out.abi) != FactMiss::None) {
         out = ProgramFacts{};
         return FactMiss::Malformed;
     }
@@ -100,34 +92,29 @@ FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, Pro
     out.revision = program.revision();
 
     const vn::graphics::ShaderStage* fragment = nullptr;
-    std::size_t                        extra    = 0;
-    std::size_t                        seen     = 0;
+    std::size_t                      extra    = 0;
+    std::size_t                      seen     = 0;
 
-    for (const vn::graphics::ShaderStage& stage : program.stages())
-    {
+    for (const vn::graphics::ShaderStage& stage : program.stages()) {
         ++seen;
-        switch (stage.type)
-        {
-        case vn::graphics::ShaderStageType::Vertex:
-            break;  // ignored by the contract: the full-screen vertex stage is the engine's (see the header)
+        switch (stage.type) {
+        case vn::graphics::ShaderStageType::Vertex: break; // ignored by the contract: the full-screen vertex stage is the engine's (see the header)
         case vn::graphics::ShaderStageType::Fragment:
-            extra += fragment != nullptr ? 1U : 0U;  // a second fragment stage cannot be compiled into one
+            extra += fragment != nullptr ? 1U : 0U; // a second fragment stage cannot be compiled into one
             fragment = &stage;
             break;
         case vn::graphics::ShaderStageType::Compute:
-            ++extra;  // a compute stage is not a screen draw: the full-screen path is one fragment stage
+            ++extra; // a compute stage is not a screen draw: the full-screen path is one fragment stage
             break;
         }
     }
 
-    if (fragment == nullptr)
-    {
+    if (fragment == nullptr) {
         // "The program says nothing" and "it says something this kind of draw cannot be" are different
         // answers: only the first is a lookup miss the table reports as unknown content.
         return seen == 0U ? FactMiss::Unknown : FactMiss::Malformed;
     }
-    if (extra != 0U || fragment->source.empty())
-    {
+    if (extra != 0U || fragment->source.empty()) {
         return FactMiss::Malformed;
     }
 
@@ -135,13 +122,11 @@ FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, Pro
     // second copy of the GLSL - is what makes it impossible for a full-screen program to be compiled against
     // a triangle the engine did not state (the previous implementation's factory reads it the same way).
     const auto fullscreen_vertex = vn::graphics::fullscreenVertexProgram();
-    if (fullscreen_vertex == nullptr || fullscreen_vertex->stage(0) == nullptr)
-    {
-        return FactMiss::Malformed;  // the engine's own vertex stage is missing: nothing to compose
+    if (fullscreen_vertex == nullptr || fullscreen_vertex->stage(0) == nullptr) {
+        return FactMiss::Malformed; // the engine's own vertex stage is missing: nothing to compose
     }
     const vn::graphics::ShaderStage* vertex = fullscreen_vertex->stage(0);
-    if (vertex->entryPoint != fragment->entryPoint)
-    {
+    if (vertex->entryPoint != fragment->entryPoint) {
         // One entry point serves both stages of the pipeline, so a fragment stage whose entry is not the
         // canonical vertex stage's is not expressible (compiling "main" there would run a function the host
         // did not name).
@@ -157,8 +142,7 @@ FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, Pro
 
     // The composed pair's own declarations - the engine's triangle declares none, so the ABI is the host's
     // fragment stage's (see api/ProgramAbi.hpp).
-    if (scanProgramAbi(out.shaders.vertex, out.shaders.fragment, {}, out.abi) != FactMiss::None)
-    {
+    if (scanProgramAbi(out.shaders.vertex, out.shaders.fragment, {}, out.abi) != FactMiss::None) {
         out = ProgramFacts{};
         return FactMiss::Malformed;
     }
@@ -174,8 +158,7 @@ namespace
 /// number here instead of silently inheriting one the shader reads as something else.
 [[nodiscard]] constexpr std::uint32_t alphaModeBits(vn::graphics::AlphaMode mode) noexcept
 {
-    switch (mode)
-    {
+    switch (mode) {
     case vn::graphics::AlphaMode::Opaque: return 0u;
     case vn::graphics::AlphaMode::Mask: return 1u;
     case vn::graphics::AlphaMode::Blend: return 2u;
@@ -193,8 +176,7 @@ namespace
     if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::BaseColor)].texture != nullptr) {
         bits |= vn::graphics::kMaterialFlagBaseColor;
     }
-    if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::MetallicRoughness)].texture !=
-        nullptr) {
+    if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::MetallicRoughness)].texture != nullptr) {
         bits |= vn::graphics::kMaterialFlagMetallicRoughness;
     }
     if (values.textures[static_cast<std::size_t>(vn::graphics::TextureSlot::Normal)].texture != nullptr) {
@@ -218,36 +200,32 @@ namespace
 /// the shader clamps what it draws (graphics-material.md N2).
 [[nodiscard]] vn::graphics::VineMaterialBlock blockOfMaterial(const vn::graphics::MaterialParameters& values) noexcept
 {
-    vn::graphics::VineMaterialBlock block{};  // its member defaults are the default material
+    vn::graphics::VineMaterialBlock block{}; // its member defaults are the default material
     block.base_color = { values.base_color.r, values.base_color.g, values.base_color.b, values.base_color.a };
     block.emissive   = { values.emissive.r, values.emissive.g, values.emissive.b, values.emissive.a };
     block.params     = { values.metallic, values.roughness, values.occlusion, values.alpha_cutoff };
     // The flag row: the present texture slots (bits 0-4) and the alpha mode (bits 8-9).
-    block.flags[0] = textureSlotBits(values) |
-                     (alphaModeBits(values.alpha_mode) << vn::graphics::kMaterialAlphaModeShift);
+    block.flags[0]   = textureSlotBits(values) | (alphaModeBits(values.alpha_mode) << vn::graphics::kMaterialAlphaModeShift);
     return block;
 }
 
-}  // namespace
+} // namespace
 
-FactMiss buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uint64_t revision,
-                            MaterialFacts& out, std::vector<std::byte>& storage)
+FactMiss buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uint64_t revision, MaterialFacts& out, std::vector<std::byte>& storage)
 {
     // The block's MEMBERS are the payload, and `{}` is aggregate initialisation: it initialises the members
     // from their defaults (the ABI states the default material's values) and leaves the struct's tail padding
     // alone. What decides whether a material changed is the number it reports (MaterialBase::revision), never a
     // byte comparison of these bytes (which would report "changed" for a material that did not).
-    const vn::graphics::VineMaterialBlock block = material != nullptr
-                                                       ? blockOfMaterial(material->resolved())
-                                                       : vn::graphics::VineMaterialBlock{};
+    const vn::graphics::VineMaterialBlock block = material != nullptr ? blockOfMaterial(material->resolved()) : vn::graphics::VineMaterialBlock{};
 
     storage.assign(sizeof(block), std::byte{ 0 });
     std::memcpy(storage.data(), &block, sizeof(block));
 
-    out           = MaterialFacts{};
-    out.material  = material;  // null for the default material: an identity that content without one matches
-    out.revision  = revision;
-    out.block     = storage;
+    out          = MaterialFacts{};
+    out.material = material; // null for the default material: an identity that content without one matches
+    out.revision = revision;
+    out.block    = storage;
     // AFTER the entry is reset: the texture SET is a fact of the material like the block is, and any present
     // slot is what decides whether the drawable takes the `VN_TEXTURED` variant of its program
     // (api/ProgramVariant). A slot's map and its sampler come from the same side of the resolution (instance

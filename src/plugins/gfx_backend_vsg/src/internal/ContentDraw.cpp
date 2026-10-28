@@ -2,11 +2,11 @@
 
 VN_VSG_NS_BEGIN
 
-ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
-                         detail::DynamicStateEntryPoints entry_points) noexcept
-  : pipelines_(&pipelines), pool_(&pool), entry_points_(entry_points)
-{
-}
+ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points) noexcept
+  : pipelines_(&pipelines)
+  , pool_(&pool)
+  , entry_points_(entry_points)
+{}
 
 ::vsg::ref_ptr<::vsg::StateGroup> ContentDraw::record(core::StateRegistry& registry, const Draw& draw)
 {
@@ -23,7 +23,7 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     // dynamic block only when a value differs from what this pass already issued, and the sampled-input set
     // only when this pass has not already bound that very set.
     const core::StateRegistry::Resolution resolution = registry.resolve(draw.key, draw.dynamic, draw.inputs.get());
-    const ContentPipeline::Result       compiled     = pipelines_->acquire(*pool_, draw.key);
+    const ContentPipeline::Result         compiled   = pipelines_->acquire(*pool_, draw.key);
     if (compiled.pipeline == nullptr) {
         // Nothing is recorded: a group without a pipeline bind would draw with whatever was bound last.
         ++refusals_;
@@ -78,8 +78,7 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     // function for the draw that says neither).
     if (draw.index != nullptr) {
         commands->addChild(draw.index);
-        commands->addChild(::vsg::DrawIndexed::create(draw.index_count, draw.instances, draw.first_index,
-                                                     draw.vertex_offset, draw.first_instance));
+        commands->addChild(::vsg::DrawIndexed::create(draw.index_count, draw.instances, draw.first_index, draw.vertex_offset, draw.first_instance));
     }
     else {
         commands->addChild(::vsg::Draw::create(draw.vertex_count, draw.instances, 0U, draw.first_instance));
@@ -96,7 +95,7 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     // draw is a different SHAPE, not a different bookkeeping. Its sampled set IS the whole state it binds, so
     // it plays the role the content path's inputs play (one bind per pass that samples).
     const core::StateRegistry::Resolution resolution = registry.resolve(draw.key, draw.dynamic, draw.samplers.get());
-    const ContentPipeline::Result       compiled     = pipelines_->acquire(*pool_, draw.key);
+    const ContentPipeline::Result         compiled   = pipelines_->acquire(*pool_, draw.key);
     if (compiled.pipeline == nullptr) {
         // Nothing is recorded: a group without a pipeline bind would draw with whatever was bound last.
         ++refusals_;
@@ -110,7 +109,9 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
     }
     if (resolution.dynamic_issued) {
         // A full-screen draw does not blend (see makeDynamicStateCommand): it writes the rectangle.
-        group->add(makeDynamicStateCommand(draw.dynamic, draw.color_attachments, entry_points_,
+        group->add(makeDynamicStateCommand(draw.dynamic,
+                                           draw.color_attachments,
+                                           entry_points_,
                                            /*draws_content*/ false));
         ++dynamic_commands_;
     }

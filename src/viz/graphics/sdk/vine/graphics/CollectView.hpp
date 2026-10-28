@@ -33,11 +33,11 @@ using vn::math::Vec3d;
  *   (OSG: NodeVisitor + FrameStamp); putting them here would make the scene memo stale every frame.
  */
 struct VN_GRAPHICS_API CollectView {
-    Mat4d    projection{};            ///< Camera projection matrix.
-    Mat4d    view{};                  ///< Camera world-to-view matrix.
-    Vec3d    eye{};                   ///< Camera eye point in world space.
-    Vec3d    up{ 0.0, 1.0, 0.0 };     ///< Camera up direction in world space.
-    Viewport viewport{};              ///< Device-pixel draw rectangle; invalid = not stated.
+    Mat4d    projection{};        // Camera projection matrix.
+    Mat4d    view{};              // Camera world-to-view matrix.
+    Vec3d    eye{};               // Camera eye point in world space.
+    Vec3d    up{ 0.0, 1.0, 0.0 }; // Camera up direction in world space.
+    Viewport viewport{};          // Device-pixel draw rectangle; invalid = not stated.
 
     /** @brief Gets the projection * view product (the matrix a cull/lod query projects with). */
     [[nodiscard]] Mat4d viewProjection() const

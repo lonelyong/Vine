@@ -17,15 +17,15 @@ extern "C" const vn::appfw::PluginAbi* vinePluginAbi()
 extern "C" const vn::appfw::PluginInfo* vinePluginQuery()
 {
     static const vn::appfw::PluginInfo s_info{ vn::Uuid::parse(u8"6a1b6d0e-0000-4000-8000-000000000002"),
-                                                 u8"future_plugin",
-                                                 u8"Future plugin",
-                                                 u8"9.9.9",
-                                                 u8"Built against a newer framework",
-                                                 u8"Vine",
-                                                 u8"",
-                                                 u8"",
-                                                 u8"",
-                                                 {} };
+                                               u8"future_plugin",
+                                               u8"Future plugin",
+                                               u8"9.9.9",
+                                               u8"Built against a newer framework",
+                                               u8"Vine",
+                                               u8"",
+                                               u8"",
+                                               u8"",
+                                               {} };
     return &s_info;
 }
 

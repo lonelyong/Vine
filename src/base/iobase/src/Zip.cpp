@@ -43,7 +43,7 @@ std::uint32_t crc32Of(std::span<const unsigned char> bytes)
     std::size_t   offset = 0;
     while (offset < bytes.size()) {
         const std::size_t step = std::min<std::size_t>(bytes.size() - offset, 1u << 30);
-        crc = static_cast<std::uint32_t>(::crc32(crc, bytes.data() + offset, static_cast<uInt>(step)));
+        crc                    = static_cast<std::uint32_t>(::crc32(crc, bytes.data() + offset, static_cast<uInt>(step)));
         offset += step;
     }
     return crc;
@@ -72,7 +72,7 @@ Result<std::vector<unsigned char>> Zip::decompress(std::span<const unsigned char
     while (capacity <= kMaxDecompressedBytes) {
         std::vector<unsigned char> out(capacity);
         uLongf                     dest_len = static_cast<uLongf>(capacity);
-        const int rc = ::uncompress(out.data(), &dest_len, bytes.data(), static_cast<uLong>(bytes.size()));
+        const int                  rc       = ::uncompress(out.data(), &dest_len, bytes.data(), static_cast<uLong>(bytes.size()));
         if (rc == Z_OK) {
             out.resize(static_cast<std::size_t>(dest_len));
             return out;
@@ -246,8 +246,7 @@ Result<std::vector<VfsEntryInfo>> Zip::entries(std::span<const unsigned char> by
     return detail::toEntryInfos(result.value());
 }
 
-Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& path,
-                                                 const std::filesystem::path& name)
+Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& path, const std::filesystem::path& name)
 {
     if (name.empty()) {
         return IoError::InvalidPath;
@@ -317,8 +316,7 @@ Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& p
     return out;
 }
 
-Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char> bytes,
-                                                 const std::filesystem::path& name)
+Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char> bytes, const std::filesystem::path& name)
 {
     if (name.empty()) {
         return IoError::InvalidPath;

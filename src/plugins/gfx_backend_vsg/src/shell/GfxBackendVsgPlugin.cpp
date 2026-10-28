@@ -31,6 +31,14 @@ void GfxBackendVsgPlugin::unload(vn::appfw::PluginLoadContext* context)
 
 VN_VSG_NS_END
 
-VN_DECLARE_PLUGIN(vn::vsg::GfxBackendVsgPlugin, u8"51fd4cc0-07c2-484c-bd2b-c99a51a848e7", u8"gfx_backend_vsg", u8"VSG 渲染后端",
-                 u8"1.0.0", u8"VulkanSceneGraph 渲染后端插件，通过 RenderBackendRegistry 注册 vsg 后端",
-                 u8"Vine", u8"dev@vine.example", u8"https://github.com/vine/gfx_backend_vsg", u8"", {})
+VN_DECLARE_PLUGIN(vn::vsg::GfxBackendVsgPlugin,
+                  u8"51fd4cc0-07c2-484c-bd2b-c99a51a848e7",
+                  u8"gfx_backend_vsg",
+                  u8"VSG 渲染后端",
+                  u8"1.0.0",
+                  u8"VulkanSceneGraph 渲染后端插件，通过 RenderBackendRegistry 注册 vsg 后端",
+                  u8"Vine",
+                  u8"dev@vine.example",
+                  u8"https://github.com/vine/gfx_backend_vsg",
+                  u8"",
+                  {})

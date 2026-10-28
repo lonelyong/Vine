@@ -11,7 +11,16 @@ class LoopAPlugin : public Plugin {
 
 VN_OBJECT_META_IMPL(LoopAPlugin, Plugin)
 
-VN_DECLARE_PLUGIN(LoopAPlugin, u8"6a1b6d0e-0000-4000-8000-00000000000a", u8"loop_a", u8"Loop A", u8"0.1.0",
-                  u8"Test fixture in a dependency cycle with loop_b", u8"Vine", u8"", u8"", u8"", { u8"loop_b" })
+VN_DECLARE_PLUGIN(LoopAPlugin,
+                  u8"6a1b6d0e-0000-4000-8000-00000000000a",
+                  u8"loop_a",
+                  u8"Loop A",
+                  u8"0.1.0",
+                  u8"Test fixture in a dependency cycle with loop_b",
+                  u8"Vine",
+                  u8"",
+                  u8"",
+                  u8"",
+                  { u8"loop_b" })
 
 VN_APPFW_NS_END

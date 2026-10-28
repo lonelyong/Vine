@@ -4,8 +4,8 @@
 #include <vine/vsg/support/RenderStateMapper.hpp>
 
 using namespace vn::graphics;
-using vn::vsg::RenderStateObjects;
 using vn::vsg::makeRenderStateObjects;
+using vn::vsg::RenderStateObjects;
 
 namespace
 {
@@ -66,30 +66,22 @@ TEST(RenderStateMapperTest, DepthCompareInvertsForReverseZ)
 {
     // The SDK compare ops describe closeness; vsg's reverse-Z projection maps
     // "closer/farther" onto the inverted Vulkan op.
-    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Less)).depthStencil->depthCompareOp,
-              VK_COMPARE_OP_GREATER);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::LessEqual)).depthStencil->depthCompareOp,
-              VK_COMPARE_OP_GREATER_OR_EQUAL);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Greater)).depthStencil->depthCompareOp,
-              VK_COMPARE_OP_LESS);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::GreaterEqual)).depthStencil->depthCompareOp,
-              VK_COMPARE_OP_LESS_OR_EQUAL);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Equal)).depthStencil->depthCompareOp,
-              VK_COMPARE_OP_EQUAL);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::NotEqual)).depthStencil->depthCompareOp,
-              VK_COMPARE_OP_NOT_EQUAL);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Always)).depthStencil->depthCompareOp,
-              VK_COMPARE_OP_ALWAYS);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Never)).depthStencil->depthCompareOp,
-              VK_COMPARE_OP_NEVER);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Less)).depthStencil->depthCompareOp, VK_COMPARE_OP_GREATER);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::LessEqual)).depthStencil->depthCompareOp, VK_COMPARE_OP_GREATER_OR_EQUAL);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Greater)).depthStencil->depthCompareOp, VK_COMPARE_OP_LESS);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::GreaterEqual)).depthStencil->depthCompareOp, VK_COMPARE_OP_LESS_OR_EQUAL);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Equal)).depthStencil->depthCompareOp, VK_COMPARE_OP_EQUAL);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::NotEqual)).depthStencil->depthCompareOp, VK_COMPARE_OP_NOT_EQUAL);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Always)).depthStencil->depthCompareOp, VK_COMPARE_OP_ALWAYS);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithDepth(CompareOp::Never)).depthStencil->depthCompareOp, VK_COMPARE_OP_NEVER);
 }
 
 TEST(RenderStateMapperTest, DepthTestAndWriteMapDirectly)
 {
     ResolvedRenderState state;
-    state.depth.test = false;
+    state.depth.test  = false;
     state.depth.write = false;
-    const auto o = makeRenderStateObjects(state);
+    const auto o      = makeRenderStateObjects(state);
     EXPECT_EQ(o.depthStencil->depthTestEnable, VK_FALSE);
     EXPECT_EQ(o.depthStencil->depthWriteEnable, VK_FALSE);
 }
@@ -97,9 +89,9 @@ TEST(RenderStateMapperTest, DepthTestAndWriteMapDirectly)
 TEST(RenderStateMapperTest, CullModeAndPolygonMap)
 {
     ResolvedRenderState state;
-    state.cullMode = CullMode::Back;
+    state.cullMode    = CullMode::Back;
     state.polygonMode = PolygonMode::Line;
-    auto o = makeRenderStateObjects(state);
+    auto o            = makeRenderStateObjects(state);
     EXPECT_EQ(o.rasterization->cullMode, VK_CULL_MODE_BACK_BIT);
     EXPECT_EQ(o.rasterization->polygonMode, VK_POLYGON_MODE_LINE);
     // The mask means what the SDK says only PAIRED with the front face (see the default-state test): with
@@ -107,38 +99,32 @@ TEST(RenderStateMapperTest, CullModeAndPolygonMap)
     // would draw its interior instead of its outside, silently.
     EXPECT_EQ(o.rasterization->frontFace, VK_FRONT_FACE_CLOCKWISE);
 
-    state.cullMode = CullMode::Front;
+    state.cullMode    = CullMode::Front;
     state.polygonMode = PolygonMode::Point;
-    o = makeRenderStateObjects(state);
+    o                 = makeRenderStateObjects(state);
     EXPECT_EQ(o.rasterization->cullMode, VK_CULL_MODE_FRONT_BIT);
     EXPECT_EQ(o.rasterization->polygonMode, VK_POLYGON_MODE_POINT);
 }
 
 TEST(RenderStateMapperTest, TopologyMaps)
 {
-    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::Points)).inputAssembly->topology,
-              VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::Lines)).inputAssembly->topology,
-              VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::Points)).inputAssembly->topology, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::Lines)).inputAssembly->topology, VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
     // The strip and fan forms are values of their own: the engine keeps one pipeline per enum value even though
     // the API would let a dynamic set stay inside the same topology class (see Topology.hpp).
-    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::Triangles)).inputAssembly->topology,
-              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::TriangleStrip)).inputAssembly->topology,
-              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::TriangleFan)).inputAssembly->topology,
-              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN);
-    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::LineStrip)).inputAssembly->topology,
-              VK_PRIMITIVE_TOPOLOGY_LINE_STRIP);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::Triangles)).inputAssembly->topology, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::TriangleStrip)).inputAssembly->topology, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::TriangleFan)).inputAssembly->topology, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN);
+    EXPECT_EQ(makeRenderStateObjects(resolveWithTopology(Topology::LineStrip)).inputAssembly->topology, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP);
 }
 
 TEST(RenderStateMapperTest, BlendFactorsAppliedWhenEnabled)
 {
     ResolvedRenderState state;
     state.blend.enabled = true;
-    state.blend.src = BlendFactor::SrcColor;
-    state.blend.dst = BlendFactor::DstColor;
-    const auto o = makeRenderStateObjects(state);
+    state.blend.src     = BlendFactor::SrcColor;
+    state.blend.dst     = BlendFactor::DstColor;
+    const auto o        = makeRenderStateObjects(state);
     ASSERT_EQ(o.colorBlend->attachments.size(), 1u);
     const auto& a = o.colorBlend->attachments[0];
     EXPECT_EQ(a.blendEnable, VK_TRUE);
@@ -148,4 +134,4 @@ TEST(RenderStateMapperTest, BlendFactorsAppliedWhenEnabled)
     EXPECT_EQ(a.dstAlphaBlendFactor, VK_BLEND_FACTOR_DST_COLOR);
 }
 
-}  // namespace
+} // namespace

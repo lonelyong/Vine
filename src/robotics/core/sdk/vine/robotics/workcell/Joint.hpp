@@ -30,8 +30,7 @@ VN_ROBOTICS_WORKCELL_NS_BEGIN
  *
  * Owned by a Device through a smart pointer.
  */
-class VN_ROBOTICS_CORE_API Joint : public kinematics::Frame
-{
+class VN_ROBOTICS_CORE_API Joint : public kinematics::Frame {
   public:
     /**
      * @brief Constructs a fixed joint.

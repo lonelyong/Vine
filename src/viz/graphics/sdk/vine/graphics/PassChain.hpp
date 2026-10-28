@@ -23,8 +23,10 @@ VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
+
 class ChainBuilder;
-}  // namespace detail
+
+} // namespace detail
 
 class AxisGizmo;
 class Camera;
@@ -176,7 +178,7 @@ struct VN_GRAPHICS_API ChainDesc {
      * - The host keeps the G-buffer in step with the surface via PassChain::resize() (e.g. from a SceneView
      *   surface-layout step).
      */
-    int offscreen_width = 0;
+    int offscreen_width  = 0;
     int offscreen_height = 0;
 
     /** @brief Which layers of the CONTENT the built chain draws (see Node::setLayers / RenderPass::setLayerMask).
@@ -267,6 +269,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     /** @brief Destroys the chain: it hands every pass it registered back to the engine while the engine is still
      *         there, and answers nothing once it is gone. */
     ~PassChain();
+
   public:
     /** @brief Builds the chain @p desc describes, registering its passes on @p engine.
      *
@@ -380,10 +383,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      * @param layout  Lays the overlay out for a surface size (see OverlayLayout).
      * @return The registered pass, or null when the engine is gone or that pass was already registered.
      */
-    raw_ptr<RenderPass> addOverlay(const String&   role,
-                                   raw_ptr<Object> content,
-                                   const PassDesc& desc,
-                                   OverlayLayout   layout = {});
+    raw_ptr<RenderPass> addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayLayout layout = {});
 
     /** @brief Gets an overlay's pass (see addOverlay).
      *
@@ -569,8 +569,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     void setCompositeTarget(intrusive_ptr<RenderTarget> target);
 
     /** @brief One HUD overlay: the role its pass is registered under, its content, and how it lays itself out. */
-    struct Overlay
-    {
+    struct Overlay {
         String          role;
         raw_ptr<Object> content{ nullptr };
         OverlayLayout   layout;
@@ -587,12 +586,12 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     // out-of-line destructor, so this header does not pull RenderEngine.hpp in.
     // The two narrow contracts this chain depends on (see the class note). Both carry a lease, so the engine may
     // die first and the chain answers "gone" instead of reaching into freed memory.
-    PassRegistry    registry_;
+    PassRegistry     registry_;
     DiagnosticsRoute diagnostics_;
     // Every pass this chain registered lives in the engine's own slot table with `owner = this` (see
     // RenderEngine::addPassOwnedBy), so "a pass the chain registered is a pass the chain unregisters" needs no second
     // list here (see the destructor) and a named pass is found by its role instead of by a field per pass.
-    intrusive_ptr<RenderPass> window_pass_;
+    intrusive_ptr<RenderPass>   window_pass_;
     intrusive_ptr<RenderTarget> offscreen_target_;
     intrusive_ptr<RenderTarget> composite_target_;
     // The overlays, as VALUES (see addOverlay): a role (which is also the name the pass is registered under), the
@@ -602,8 +601,8 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     // The chain this pipeline was built as (the EFFECTIVE one) and the mode its picture means: what
     // setShadingMode decides "can this be expressed" on, and what a rebuild would start from. Set by the
     // builder, which is the only thing that builds chains.
-    ShadingPath path_{ShadingPath::Forward};
-    ShadingMode mode_{ShadingMode::Lit};
+    ShadingPath path_{ ShadingPath::Forward };
+    ShadingMode mode_{ ShadingMode::Lit };
     // "This chain cannot express that mode" is one condition, not a per-call event (see setShadingMode), and so is
     // "this chain has no such overlay" (see setGizmoVisible / setStatsVisible).
     ReportOnce mode_refused_;

@@ -80,7 +80,7 @@ std::filesystem::path PluginLoadContext::ensureDataDirectory()
     // Keyed by the plugin name so the same plugin keeps its files when its
     // library is moved (e.g. a user-installed plugin living outside the
     // application directory).
-    const std::u8string name(d->plugin_name);
+    const std::u8string   name(d->plugin_name);
     std::filesystem::path dir = d->app->pluginDataDirectory() / std::filesystem::path(name);
 
     std::error_code ec;

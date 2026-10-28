@@ -53,14 +53,8 @@ constexpr float kMillimetreThreshold = 10.0f;
 // whose facets are meant to be flat anyway.
 
 /** @brief Post-processing every load runs, whichever entry it came in through. */
-constexpr unsigned int kLoadFlags = aiProcess_Triangulate
-    | aiProcess_JoinIdenticalVertices
-    | aiProcess_FindInvalidData
-    | aiProcess_GenNormals
-    | aiProcess_ImproveCacheLocality
-    | aiProcess_FixInfacingNormals
-    | aiProcess_PreTransformVertices
-    | aiProcess_OptimizeMeshes;
+constexpr unsigned int kLoadFlags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_FindInvalidData | aiProcess_GenNormals |
+                                    aiProcess_ImproveCacheLocality | aiProcess_FixInfacingNormals | aiProcess_PreTransformVertices | aiProcess_OptimizeMeshes;
 
 /**
  * @brief Post-processing the model entry runs.
@@ -69,12 +63,8 @@ constexpr unsigned int kLoadFlags = aiProcess_Triangulate
  * the vertices, and aiProcess_OptimizeMeshes would merge meshes and drop nodes - both would throw away the structure
  * this entry exists to keep.
  */
-constexpr unsigned int kModelFlags = aiProcess_Triangulate
-    | aiProcess_JoinIdenticalVertices
-    | aiProcess_FindInvalidData
-    | aiProcess_GenNormals
-    | aiProcess_ImproveCacheLocality
-    | aiProcess_FixInfacingNormals;
+constexpr unsigned int kModelFlags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_FindInvalidData | aiProcess_GenNormals |
+                                     aiProcess_ImproveCacheLocality | aiProcess_FixInfacingNormals;
 
 /** @brief Bytes the stream entry moves per read while it drains a stream. */
 constexpr std::size_t kDrainChunk = 64U * 1024U;
@@ -113,18 +103,17 @@ bool drainStream(std::istream& in, std::vector<unsigned char>& out)
  * - keep_texcoords: the merged entry answers "give me the triangles" and records none; a model entry keeps what the
  *   file held.
  */
-struct MeshSink
-{
-    Vec3fArray  positions; ///< Vertices appended so far, in scene order.
-    Vec3fArray  normals;   ///< Per-vertex normals, in the same order as @ref positions.
-    Vec4fArray  colors;    ///< Per-vertex colours (linear RGBA), in the same order as @ref positions.
-    Vec2fArray  texcoords; ///< Per-vertex texture coordinates, when @ref keep_texcoords is on.
-    UInt32Array indices;   ///< Triangle corners, rebased onto @ref positions.
+struct MeshSink {
+    Vec3fArray  positions; // Vertices appended so far, in scene order.
+    Vec3fArray  normals;   // Per-vertex normals, in the same order as @ref positions.
+    Vec4fArray  colors;    // Per-vertex colours (linear RGBA), in the same order as @ref positions.
+    Vec2fArray  texcoords; // Per-vertex texture coordinates, when @ref keep_texcoords is on.
+    UInt32Array indices;   // Triangle corners, rebased onto @ref positions.
 
-    bool pad_missing_colors{ false };    ///< White for a mesh that authors none (see the note above).
-    bool keep_texcoords{ false };        ///< Whether texture coordinates are recorded at all.
-    bool any_mesh_has_colors{ false };   ///< True once an appended mesh AUTHORED a colour.
-    bool every_mesh_has_normals{ true }; ///< False once an appended mesh carried none.
+    bool pad_missing_colors{ false };    // White for a mesh that authors none (see the note above).
+    bool keep_texcoords{ false };        // Whether texture coordinates are recorded at all.
+    bool any_mesh_has_colors{ false };   // True once an appended mesh AUTHORED a colour.
+    bool every_mesh_has_normals{ true }; // False once an appended mesh carried none.
 };
 
 /**
@@ -136,8 +125,7 @@ struct MeshSink
  * (protected), and what exists for one entry lives private in that entry's builder (materials and node building in
  * ModelBuilder, node walking in MergedMeshBuilder).
  */
-class MeshBuilderBase
-{
+class MeshBuilderBase {
   protected:
     /**
      * @brief Binds the builder to the scene it reads and the options it measures against.
@@ -148,15 +136,17 @@ class MeshBuilderBase
     MeshBuilderBase(const MeshLoader::Options& options, const aiScene& scene) noexcept
       : options_(options)
       , scene_(scene)
-    {
-    }
+    {}
 
     /**
      * @brief Returns the scene being read.
      *
      * @return The parsed scene the builder was constructed with.
      */
-    [[nodiscard]] const aiScene& scene() const noexcept { return scene_; }
+    [[nodiscard]] const aiScene& scene() const noexcept
+    {
+        return scene_;
+    }
 
     /**
      * @brief Appends one assimp mesh's vertex data to @p sink.
@@ -188,7 +178,8 @@ class MeshBuilderBase
                 const aiVector3D& n = source.mNormals[i];
                 sink.normals.emplace_back(n.x, n.y, n.z);
             }
-        } else {
+        }
+        else {
             sink.every_mesh_has_normals = false; // a zero normal is not "no normal" (see MeshSink)
         }
 
@@ -199,7 +190,8 @@ class MeshBuilderBase
                 const aiColor4D& c = source.mColors[0][i];
                 sink.colors.emplace_back(c.r, c.g, c.b, c.a);
             }
-        } else if (sink.pad_missing_colors) {
+        }
+        else if (sink.pad_missing_colors) {
             // The vertices are already in the list, so the colour array has to stay parallel to it: white modulates
             // the albedo by nothing, which is what "this mesh authors no colour" means to the shading.
             sink.colors.insert(sink.colors.end(), source.mNumVertices, vn::math::Vec4f(1.0f, 1.0f, 1.0f, 1.0f));
@@ -237,8 +229,7 @@ class MeshBuilderBase
     double unitScaleFor(double diagonal) const
     {
         if (options_.scale_mode == MeshLoader::ScaleMode::Auto) {
-            const auto unit =
-                diagonal > kMillimetreThreshold ? MeshLoader::LengthUnit::Millimeter : MeshLoader::LengthUnit::Meter;
+            const auto unit = diagonal > kMillimetreThreshold ? MeshLoader::LengthUnit::Millimeter : MeshLoader::LengthUnit::Meter;
             return static_cast<double>(options_.auto_scale_output_unit) / static_cast<double>(unit);
         }
         if (options_.scale_mode == MeshLoader::ScaleMode::Custom) {
@@ -258,8 +249,22 @@ class MeshBuilderBase
      */
     static vn::math::Mat4d toVnMatrix(const aiMatrix4x4& source)
     {
-        return vn::math::Mat4d(source.a1, source.a2, source.a3, source.a4, source.b1, source.b2, source.b3, source.b4,
-                               source.c1, source.c2, source.c3, source.c4, source.d1, source.d2, source.d3, source.d4);
+        return vn::math::Mat4d(source.a1,
+                               source.a2,
+                               source.a3,
+                               source.a4,
+                               source.b1,
+                               source.b2,
+                               source.b3,
+                               source.b4,
+                               source.c1,
+                               source.c2,
+                               source.c3,
+                               source.c4,
+                               source.d1,
+                               source.d2,
+                               source.d3,
+                               source.d4);
     }
 
     /**
@@ -268,11 +273,14 @@ class MeshBuilderBase
      * @param color The assimp colour.
      * @return The same colour (linear RGBA: the loader passes the file's values through).
      */
-    static vn::Colorf toVnColor(const aiColor4D& color) { return vn::Colorf(color.r, color.g, color.b, color.a); }
+    static vn::Colorf toVnColor(const aiColor4D& color)
+    {
+        return vn::Colorf(color.r, color.g, color.b, color.a);
+    }
 
   private:
-    const MeshLoader::Options& options_; ///< The load options the scale rule reads.
-    const aiScene&              scene_;  ///< The parsed scene; borrowed for the builder's whole life.
+    const MeshLoader::Options& options_; // The load options the scale rule reads.
+    const aiScene&             scene_;   // The parsed scene; borrowed for the builder's whole life.
 };
 
 /**
@@ -281,8 +289,7 @@ class MeshBuilderBase
  * aiProcess_PreTransformVertices has already baked the graph, so this builder walks the tree only to find the meshes
  * in scene order; materials and structure are what a caller of this entry asked to drop (see loadMerged).
  */
-class MergedMeshBuilder final : private MeshBuilderBase
-{
+class MergedMeshBuilder final : private MeshBuilderBase {
   public:
     /**
      * @brief Binds the builder to the scene and the options whose scale rule it applies.
@@ -347,7 +354,7 @@ class MergedMeshBuilder final : private MeshBuilderBase
      */
     void applyScale(IndexedTriangleMesh& mesh) const;
 
-    MeshSink sink_; ///< The arrays being merged.
+    MeshSink sink_; // The arrays being merged.
 };
 
 void MergedMeshBuilder::applyScale(IndexedTriangleMesh& mesh) const
@@ -374,9 +381,7 @@ void MergedMeshBuilder::applyScale(IndexedTriangleMesh& mesh) const
         Vec3fArray scaled;
         scaled.reserve(positions.size());
         for (const auto& v : positions) {
-            scaled.emplace_back(static_cast<float>(v.x * scale_factor),
-                                static_cast<float>(v.y * scale_factor),
-                                static_cast<float>(v.z * scale_factor));
+            scaled.emplace_back(static_cast<float>(v.x * scale_factor), static_cast<float>(v.y * scale_factor), static_cast<float>(v.z * scale_factor));
         }
         mesh.setPositions(std::move(scaled));
     }
@@ -389,8 +394,7 @@ void MergedMeshBuilder::applyScale(IndexedTriangleMesh& mesh) const
  * whole difference from MergedMeshBuilder. The model's scale is the same rule the merged entry uses, folded once into
  * the root's transform so the parts keep their places.
  */
-class ModelBuilder final : private MeshBuilderBase
-{
+class ModelBuilder final : private MeshBuilderBase {
   public:
     /**
      * @brief Binds the builder to the scene and the options whose scale rule it applies.
@@ -400,8 +404,7 @@ class ModelBuilder final : private MeshBuilderBase
      */
     ModelBuilder(const MeshLoader::Options& options, const aiScene& scene)
       : MeshBuilderBase(options, scene)
-    {
-    }
+    {}
 
     /**
      * @brief Builds the model from the whole scene.
@@ -459,11 +462,11 @@ class ModelBuilder final : private MeshBuilderBase
     /// Folds the load options' scale into @p root's transform, once for the whole model.
     void applyScale(std::uint32_t root);
 
-    std::vector<Model::Entry> meshes_; ///< One entry per assimp mesh, in scene order.
-    std::vector<Model::Node>  nodes_;  ///< The nodes built so far, children before parents.
-    vn::math::Vec3f           min_{};  ///< Lower corner of the model box.
-    vn::math::Vec3f           max_{};  ///< Upper corner of the model box.
-    bool                      has_bounds_{ false }; ///< true once a vertex has been measured.
+    std::vector<Model::Entry> meshes_;              // One entry per assimp mesh, in scene order.
+    std::vector<Model::Node>  nodes_;               // The nodes built so far, children before parents.
+    vn::math::Vec3f           min_{};               // Lower corner of the model box.
+    vn::math::Vec3f           max_{};               // Upper corner of the model box.
+    bool                      has_bounds_{ false }; // true once a vertex has been measured.
 };
 
 vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
@@ -487,10 +490,11 @@ vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
     vn::intrusive_ptr<Material> material;
     if (has_metallic || has_roughness || (has_opacity && opacity < 1.0f)) {
         material = vn::make_intrusive<vn::geometry::PbrMaterial>(toVnColor(diffuse), metallic, roughness, opacity);
-    } else if (has_specular || has_shininess) {
-        material = vn::make_intrusive<vn::geometry::PhongMaterial>(toVnColor(ambient), toVnColor(diffuse),
-                                                                  toVnColor(specular), shininess);
-    } else {
+    }
+    else if (has_specular || has_shininess) {
+        material = vn::make_intrusive<vn::geometry::PhongMaterial>(toVnColor(ambient), toVnColor(diffuse), toVnColor(specular), shininess);
+    }
+    else {
         material = vn::make_intrusive<vn::geometry::ColorMaterial>(toVnColor(diffuse));
     }
 
@@ -552,12 +556,9 @@ void ModelBuilder::growBounds(const Mesh& mesh, const vn::math::Mat4d& world)
     // Written out instead of a matrix-times-point call: the vertices are float and the transform is double, so the
     // helper would widen every vertex into a Point3d first - a copy per vertex in the one place a model is measured.
     for (const vn::math::Vec3f& point : mesh.positions()) {
-        const auto x = static_cast<float>(world.element(0, 0) * point.x + world.element(0, 1) * point.y
-                                          + world.element(0, 2) * point.z + world.element(0, 3));
-        const auto y = static_cast<float>(world.element(1, 0) * point.x + world.element(1, 1) * point.y
-                                          + world.element(1, 2) * point.z + world.element(1, 3));
-        const auto z = static_cast<float>(world.element(2, 0) * point.x + world.element(2, 1) * point.y
-                                          + world.element(2, 2) * point.z + world.element(2, 3));
+        const auto x = static_cast<float>(world.element(0, 0) * point.x + world.element(0, 1) * point.y + world.element(0, 2) * point.z + world.element(0, 3));
+        const auto y = static_cast<float>(world.element(1, 0) * point.x + world.element(1, 1) * point.y + world.element(1, 2) * point.z + world.element(1, 3));
+        const auto z = static_cast<float>(world.element(2, 0) * point.x + world.element(2, 1) * point.y + world.element(2, 2) * point.z + world.element(2, 3));
 
         if (!has_bounds_) {
             min_        = vn::math::Vec3f(x, y, z);
@@ -597,8 +598,7 @@ std::uint32_t ModelBuilder::appendNode(const aiNode& source, const vn::math::Mat
     }
 
     Model::Node node;
-    node.name      = source.mName.length > 0 ? String::fromUtf8(std::string_view(source.mName.C_Str(), source.mName.length))
-                                            : String{};
+    node.name      = source.mName.length > 0 ? String::fromUtf8(std::string_view(source.mName.C_Str(), source.mName.length)) : String{};
     node.transform = local;
     node.children  = std::move(children);
     node.meshes    = std::move(meshes);
@@ -659,8 +659,7 @@ MeshLoader::MeshLoader() = default;
 
 MeshLoader::MeshLoader(Options options)
   : options_(std::move(options))
-{
-}
+{}
 
 MeshLoader::~MeshLoader() = default;
 
@@ -707,7 +706,8 @@ vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMerged(const std::filesy
     vn::crypto::ByteSequenceFingerprint fingerprint;
     try {
         fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::IoFailure; // a file this process may not read is not geometry either
     }
 
@@ -747,16 +747,14 @@ vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMergedBytes(std::vector<
     const std::string token = formatHintToken(hint);
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once and reused.
-    const vn::crypto::ByteSequenceFingerprint fingerprint(
-        std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
+    const vn::crypto::ByteSequenceFingerprint fingerprint(std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
     if (auto cached = cache_.get(fingerprint); cached && cached->merged) {
         return cached->merged;
     }
 
     // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
     Assimp::Importer importer;
-    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kLoadFlags,
-                                                         token.empty() ? nullptr : token.c_str());
+    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kLoadFlags, token.empty() ? nullptr : token.c_str());
     if (scene == nullptr) {
         return vn::io::IoError::InvalidData;
     }
@@ -784,7 +782,8 @@ vn::io::Result<vn::intrusive_ptr<Model>> MeshLoader::load(const std::filesystem:
     vn::crypto::ByteSequenceFingerprint fingerprint;
     try {
         fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::IoFailure;
     }
 
@@ -817,24 +816,21 @@ vn::io::Result<vn::intrusive_ptr<Model>> MeshLoader::loadBytes(std::vector<unsig
     const std::string token = formatHintToken(hint);
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once per entry.
-    const vn::crypto::ByteSequenceFingerprint fingerprint(
-        std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
+    const vn::crypto::ByteSequenceFingerprint fingerprint(std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
     if (auto cached = cache_.get(fingerprint); cached && cached->model) {
         return cached->model;
     }
 
     // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
     Assimp::Importer importer;
-    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kModelFlags,
-                                                         token.empty() ? nullptr : token.c_str());
+    const aiScene*   scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), kModelFlags, token.empty() ? nullptr : token.c_str());
     if (scene == nullptr) {
         return vn::io::IoError::InvalidData;
     }
     return cacheModel(fingerprint, ModelBuilder(options_, *scene).build());
 }
 
-vn::intrusive_ptr<Model> MeshLoader::cacheModel(const vn::crypto::ByteSequenceFingerprint& fingerprint,
-                                                vn::intrusive_ptr<Model>                      model)
+vn::intrusive_ptr<Model> MeshLoader::cacheModel(const vn::crypto::ByteSequenceFingerprint& fingerprint, vn::intrusive_ptr<Model> model)
 {
     if (fingerprint) {
         auto cached  = cache_.get(fingerprint).value_or(Cached{});

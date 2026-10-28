@@ -33,8 +33,9 @@ VN_IMAGING_NS_BEGIN
  * It exists so that a default-constructed or out-of-range format is detectably wrong instead of silently
  * aliasing the first real format.
  */
-enum class PixelFormat : std::uint8_t {
-    Unknown = 0, ///< Not a format: the value a default-constructed PixelFormat has.
+enum class PixelFormat : std::uint8_t
+{
+    Unknown = 0, // Not a format: the value a default-constructed PixelFormat has.
     R8Unorm,
     R8Srgb,
     Rg8Unorm,

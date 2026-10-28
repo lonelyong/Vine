@@ -67,8 +67,7 @@ VN_VSG_NS_BEGIN
  * @param out      Receives the entry (its `shaders.defines` are the variant's).
  * @return None when the entry was built; Unknown/Malformed exactly as the untagged overload says.
  */
-[[nodiscard]] FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program,
-                                         const ProgramVariant&                  variant, ProgramFacts& out);
+[[nodiscard]] FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const ProgramVariant& variant, ProgramFacts& out);
 
 /** @brief Builds the program table entry for a FULL-SCREEN program (see core::DrawKind::Screen).
  *
@@ -105,7 +104,7 @@ VN_VSG_NS_BEGIN
  * @param storage  Caller-owned storage the entry borrows; resized to the block's size and must outlive it.
  * @return None always: an absent material is a describable thing (see the file note), not a miss.
  */
-[[nodiscard]] FactMiss buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uint64_t revision,
-                                          MaterialFacts& out, std::vector<std::byte>& storage);
+[[nodiscard]] FactMiss
+buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uint64_t revision, MaterialFacts& out, std::vector<std::byte>& storage);
 
 VN_VSG_NS_END

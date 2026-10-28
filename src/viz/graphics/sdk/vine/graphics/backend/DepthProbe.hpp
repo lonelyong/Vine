@@ -24,8 +24,7 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief Depth values of one attachment, in the row-major, tightly packed order the copy produced. */
-class VN_GRAPHICS_API DepthProbe
-{
+class VN_GRAPHICS_API DepthProbe {
   public:
     /** @brief Constructs an invalid probe (no pixels). */
     DepthProbe() = default;
@@ -79,8 +78,8 @@ class VN_GRAPHICS_API DepthProbe
     [[nodiscard]] const std::vector<float>& values() const noexcept;
 
   private:
-    int                width_{0};
-    int                height_{0};
+    int                width_{ 0 };
+    int                height_{ 0 };
     std::vector<float> values_;
 };
 

@@ -1,25 +1,23 @@
 
+#include <chrono>
 #include <gtest/gtest.h>
 #include <unordered_set>
 #include <vector>
-#include <chrono>
 
 TEST(TestPerf, VectorVsUnorderedSet)
 {
     constexpr size_t N = 100000000;
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
-    std::unordered_set<int> set;
+    std::unordered_set<int>                        set;
     set.reserve(N);
-    for(size_t i = 0; i < N; ++i)
-    {
+    for (size_t i = 0; i < N; ++i) {
         set.insert(i);
     }
     std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-    std::vector<int> vec;
+    std::vector<int>                               vec;
     vec.reserve(N);
-    for(size_t i = 0; i < N; ++i)
-    {
+    for (size_t i = 0; i < N; ++i) {
         vec.push_back(i);
     }
     std::chrono::high_resolution_clock::time_point t3 = std::chrono::high_resolution_clock::now();

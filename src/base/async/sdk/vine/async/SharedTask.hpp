@@ -19,21 +19,19 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Cached result storage; empty for a void shared task.
  */
-template<typename T>
-struct SharedValue
-{
+template <typename T>
+struct SharedValue {
     std::optional<T> value{};
 };
 
-template<>
-struct SharedValue<void>
-{
-};
+template <>
+struct SharedValue<void> {};
 
 /**
  * @brief Shared state of a SharedTask: the source task plus the cached outcome.
@@ -50,15 +48,14 @@ struct SharedValue<void>
  *   Completed: completed == true, result or exception set; awaiters read
  *   the cache directly.
  */
-template<typename T>
-struct SharedTaskState
-{
-    std::mutex mutex;
-    std::optional<Task<T>> source{};
-    bool started{ false };
-    bool completed{ false };
-    SharedValue<T> result{};
-    std::exception_ptr exception{};
+template <typename T>
+struct SharedTaskState {
+    std::mutex                           mutex;
+    std::optional<Task<T>>               source{};
+    bool                                 started{ false };
+    bool                                 completed{ false };
+    SharedValue<T>                       result{};
+    std::exception_ptr                   exception{};
     std::vector<std::coroutine_handle<>> waiters;
 };
 
@@ -75,7 +72,7 @@ struct SharedTaskState
  * the next iteration simply does not find it. Swapping the whole list out
  * first would resume a destroyed frame instead.
  */
-template<typename T>
+template <typename T>
 DetachedTask runShared(std::shared_ptr<SharedTaskState<T>> state)
 {
     Task<T> source;
@@ -85,36 +82,30 @@ DetachedTask runShared(std::shared_ptr<SharedTaskState<T>> state)
         state->source.reset();
     }
 
-    try
-    {
-        if constexpr (std::is_void_v<T>)
-        {
+    try {
+        if constexpr (std::is_void_v<T>) {
             co_await std::move(source);
         }
-        else
-        {
+        else {
             std::optional<T> value;
             value.emplace(co_await std::move(source));
             std::lock_guard<std::mutex> lock(state->mutex);
             state->result.value = std::move(value);
         }
     }
-    catch (...)
-    {
+    catch (...) {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->exception = std::current_exception();
     }
 
-    for (;;)
-    {
+    for (;;) {
         std::coroutine_handle<> h;
         {
             std::lock_guard<std::mutex> lock(state->mutex);
             // Published before the first resume: a waiter resumed below may
             // re-enter (await the SharedTask again) and must see it completed.
             state->completed = true;
-            if (state->waiters.empty())
-            {
+            if (state->waiters.empty()) {
                 break;
             }
             h = state->waiters.back();
@@ -127,21 +118,19 @@ DetachedTask runShared(std::shared_ptr<SharedTaskState<T>> state)
 /**
  * @brief Awaiter that awaits a SharedTask; unregisters on destruction.
  */
-template<typename T>
-class SharedTaskAwaiter
-{
+template <typename T>
+class SharedTaskAwaiter {
   public:
     explicit SharedTaskAwaiter(std::shared_ptr<SharedTaskState<T>> state) noexcept
       : state_(std::move(state))
     {}
 
-    SharedTaskAwaiter(const SharedTaskAwaiter&) = delete;
+    SharedTaskAwaiter(const SharedTaskAwaiter&)            = delete;
     SharedTaskAwaiter& operator=(const SharedTaskAwaiter&) = delete;
 
     ~SharedTaskAwaiter() noexcept
     {
-        if (handle_)
-        {
+        if (handle_) {
             std::lock_guard<std::mutex> lock(state_->mutex);
             std::erase(state_->waiters, handle_);
         }
@@ -170,28 +159,24 @@ class SharedTaskAwaiter
      */
     bool await_suspend(std::coroutine_handle<> h) noexcept
     {
-        handle_ = h;
+        handle_           = h;
         bool should_start = false;
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->completed)
-            {
+            if (state_->completed) {
                 return false;
             }
-            if (!state_->started)
-            {
+            if (!state_->started) {
                 state_->started = true;
-                should_start = true;
+                should_start    = true;
             }
         }
-        if (should_start)
-        {
+        if (should_start) {
             detail::runShared(state_);
         }
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->completed)
-            {
+            if (state_->completed) {
                 return false; // Completed during spawn; resume inline.
             }
             return detail::tryRegisterWaiter(state_->waiters, h, failure_);
@@ -205,23 +190,20 @@ class SharedTaskAwaiter
      */
     decltype(auto) await_resume()
     {
-        if (failure_)
-        {
+        if (failure_) {
             std::rethrow_exception(std::exchange(failure_, nullptr));
         }
-        if (state_->exception)
-        {
+        if (state_->exception) {
             std::rethrow_exception(state_->exception);
         }
-        if constexpr (!std::is_void_v<T>)
-        {
+        if constexpr (!std::is_void_v<T>) {
             return std::as_const(*state_->result.value);
         }
     }
 
   private:
     std::shared_ptr<SharedTaskState<T>> state_;
-    std::coroutine_handle<> handle_{};
+    std::coroutine_handle<>             handle_{};
 
     /// Why the waiter could not be registered; rethrown by await_resume().
     std::exception_ptr failure_{};
@@ -247,15 +229,14 @@ class SharedTaskAwaiter
  * @tparam T Result type; void for a result-less shared task. Must be storable
  *           (see StorableValue).
  */
-template<StorableValue T>
-class SharedTask
-{
+template <StorableValue T>
+class SharedTask {
   public:
     using value_type = T;
 
     SharedTask() noexcept = default;
 
-    SharedTask(const SharedTask&) = default;
+    SharedTask(const SharedTask&)            = default;
     SharedTask& operator=(const SharedTask&) = default;
 
     /**
@@ -266,8 +247,7 @@ class SharedTask
     [[nodiscard]]
     bool isReady() const noexcept
     {
-        if (!state_)
-        {
+        if (!state_) {
             return false;
         }
         std::lock_guard<std::mutex> lock(state_->mutex);
@@ -291,15 +271,13 @@ class SharedTask
      * @return The shared result (const reference).
      */
     [[nodiscard]]
-    decltype(auto) result() const requires (!std::is_void_v<T>)
+    decltype(auto) result() const requires(!std::is_void_v<T>)
     {
-        if (!state_)
-        {
+        if (!state_) {
             throw std::logic_error("async::SharedTask: accessing an empty task");
         }
         std::lock_guard<std::mutex> lock(state_->mutex);
-        if (state_->exception)
-        {
+        if (state_->exception) {
             std::rethrow_exception(state_->exception);
         }
         return std::as_const(*state_->result.value);
@@ -311,15 +289,14 @@ class SharedTask
     [[nodiscard]]
     detail::SharedTaskAwaiter<T> operator co_await() const
     {
-        if (!state_)
-        {
+        if (!state_) {
             throw std::logic_error("async::SharedTask: awaiting an empty task");
         }
         return detail::SharedTaskAwaiter<T>{ state_ };
     }
 
   private:
-    template<StorableValue U>
+    template <StorableValue U>
     friend SharedTask<U> sharedTask(Task<U>);
 
     explicit SharedTask(std::shared_ptr<detail::SharedTaskState<T>> state) noexcept
@@ -339,7 +316,7 @@ class SharedTask
  * @param task Source task; must be non-empty.
  * @return A copyable SharedTask sharing the single computation.
  */
-template<StorableValue T>
+template <StorableValue T>
 [[nodiscard]]
 SharedTask<T> sharedTask(Task<T> task)
 {

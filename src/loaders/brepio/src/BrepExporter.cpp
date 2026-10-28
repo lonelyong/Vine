@@ -5,16 +5,16 @@
 #include <exception>
 #include <fstream>
 #include <functional>
-#include <sstream>
 #include <span>
+#include <sstream>
 #include <string>
 
 #if defined(VN_BREPIO_HAS_OCCT)
-#include <BRepTools.hxx>
-#include <IFSelect_ReturnStatus.hxx>
-#include <IGESControl_Writer.hxx>
-#include <STEPControl_Writer.hxx>
-#include <TopoDS_Shape.hxx>
+#    include <BRepTools.hxx>
+#    include <IFSelect_ReturnStatus.hxx>
+#    include <IGESControl_Writer.hxx>
+#    include <STEPControl_Writer.hxx>
+#    include <TopoDS_Shape.hxx>
 #endif
 
 VN_BREPIO_NS_BEGIN
@@ -40,8 +40,7 @@ constexpr bool kBackendLinked = false;
  * createSource() answers a source for every format, so a build without a backend reports the refusal through error()
  * instead of returning null: a container asks that question before it takes the source.
  */
-class RefusedSource final : public vn::io::DataSource
-{
+class RefusedSource final : public vn::io::DataSource {
   public:
     /**
      * @brief Creates a source that reports @p error and yields no bytes.
@@ -50,16 +49,25 @@ class RefusedSource final : public vn::io::DataSource
      */
     explicit RefusedSource(vn::io::IoError error) noexcept
       : error_(error)
+    {}
+
+    [[nodiscard]] std::uint64_t size() const override
     {
+        return 0;
     }
 
-    [[nodiscard]] std::uint64_t size() const override { return 0; }
+    void rewind() override
+    {}
 
-    void rewind() override {}
+    [[nodiscard]] std::size_t read(std::span<std::byte>) override
+    {
+        return 0;
+    }
 
-    [[nodiscard]] std::size_t read(std::span<std::byte>) override { return 0; }
-
-    [[nodiscard]] vn::io::IoError error() const override { return error_; }
+    [[nodiscard]] vn::io::IoError error() const override
+    {
+        return error_;
+    }
 
   private:
     vn::io::IoError error_;
@@ -71,8 +79,7 @@ class RefusedSource final : public vn::io::DataSource
  * Nothing is written at construction. The first size() or read() runs the writer into a memory image, after which the
  * bytes are held here and rewind() replays them - a package that saves twice exports once.
  */
-class ExportedBlobSource final : public vn::io::DataSource
-{
+class ExportedBlobSource final : public vn::io::DataSource {
   public:
     /// Writes the whole content into the stream it is handed, and reports why it could not.
     using Producer = std::function<vn::io::IoError(std::ostream&)>;
@@ -84,8 +91,7 @@ class ExportedBlobSource final : public vn::io::DataSource
      */
     explicit ExportedBlobSource(Producer producer)
       : producer_(std::move(producer))
-    {
-    }
+    {}
 
     [[nodiscard]] std::uint64_t size() const override
     {
@@ -127,7 +133,8 @@ class ExportedBlobSource final : public vn::io::DataSource
         std::ostringstream image(std::ios::binary);
         try {
             error_ = producer_(image);
-        } catch (const std::exception&) {
+        }
+        catch (const std::exception&) {
             error_ = vn::io::IoError::IoFailure;
             return;
         }
@@ -156,26 +163,27 @@ class ExportedBlobSource final : public vn::io::DataSource
 vn::io::IoError writeStream(const TopoDS_Shape& shape, BrepFormat format, std::ostream& out)
 {
     switch (format) {
-      case BrepFormat::Step: {
-          STEPControl_Writer writer;
-          if (writer.Transfer(shape, STEPControl_AsIs) != IFSelect_RetDone) {
-              return vn::io::IoError::InvalidData; // the solid is not something STEP can state
-          }
-          return writer.WriteStream(out) == IFSelect_RetDone ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
-      }
-      case BrepFormat::Iges: {
-          IGESControl_Writer writer;
-          if (!writer.AddShape(shape)) {
-              return vn::io::IoError::InvalidData;
-          }
-          writer.ComputeModel();
-          return writer.Write(out) ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
-      }
-      case BrepFormat::Brep:
-          BRepTools::Write(shape, out); // void since OCCT 8; a failure surfaces as an exception or a bad stream
-          return out ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
-      case BrepFormat::Unknown:
-          break;
+    case BrepFormat::Step:
+    {
+        STEPControl_Writer writer;
+        if (writer.Transfer(shape, STEPControl_AsIs) != IFSelect_RetDone) {
+            return vn::io::IoError::InvalidData; // the solid is not something STEP can state
+        }
+        return writer.WriteStream(out) == IFSelect_RetDone ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
+    }
+    case BrepFormat::Iges:
+    {
+        IGESControl_Writer writer;
+        if (!writer.AddShape(shape)) {
+            return vn::io::IoError::InvalidData;
+        }
+        writer.ComputeModel();
+        return writer.Write(out) ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
+    }
+    case BrepFormat::Brep:
+        BRepTools::Write(shape, out); // void since OCCT 8; a failure surfaces as an exception or a bad stream
+        return out ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
+    case BrepFormat::Unknown: break;
     }
     return vn::io::IoError::Unsupported;
 }
@@ -186,8 +194,7 @@ vn::io::IoError writeStream(const TopoDS_Shape& shape, BrepFormat format, std::o
 
 BrepExporter::BrepExporter() = default;
 
-vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, BrepFormat format,
-                                       const std::filesystem::path& file_path) const
+vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, BrepFormat format, const std::filesystem::path& file_path) const
 {
     if (format == BrepFormat::Unknown) {
         return vn::io::IoError::Unsupported;
@@ -204,7 +211,8 @@ vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, Bre
         if (file_path.has_parent_path()) {
             std::filesystem::create_directories(file_path.parent_path());
         }
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::IoFailure;
     }
 
@@ -221,7 +229,8 @@ vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, Bre
         const std::string bytes = image.str();
         file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
         return file ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::IoFailure;
     }
 #else
@@ -230,8 +239,7 @@ vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, Bre
 #endif
 }
 
-vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, BrepFormat format,
-                                       std::ostream& out) const
+vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, BrepFormat format, std::ostream& out) const
 {
     if (format == BrepFormat::Unknown) {
         return vn::io::IoError::Unsupported;
@@ -246,7 +254,8 @@ vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, Bre
 #if defined(VN_BREPIO_HAS_OCCT)
     try {
         return writeStream(*shape.shape(), format, out);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::IoFailure;
     }
 #else
@@ -255,8 +264,7 @@ vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, Bre
 #endif
 }
 
-std::shared_ptr<vn::io::DataSource> BrepExporter::createSource(vn::intrusive_ptr<const vn::geometry::BrepShape> shape,
-                                                              BrepFormat format) const
+std::shared_ptr<vn::io::DataSource> BrepExporter::createSource(vn::intrusive_ptr<const vn::geometry::BrepShape> shape, BrepFormat format) const
 {
     if (!shape) {
         return std::make_shared<RefusedSource>(vn::io::IoError::InvalidData); // nothing to write, in any build
@@ -265,9 +273,7 @@ std::shared_ptr<vn::io::DataSource> BrepExporter::createSource(vn::intrusive_ptr
         return std::make_shared<RefusedSource>(vn::io::IoError::Unsupported);
     }
 
-    return std::make_shared<ExportedBlobSource>([shape = std::move(shape), format](std::ostream& out) {
-        return BrepExporter().exportAs(*shape, format, out);
-    });
+    return std::make_shared<ExportedBlobSource>([shape = std::move(shape), format](std::ostream& out) { return BrepExporter().exportAs(*shape, format, out); });
 }
 
 VN_BREPIO_NS_END

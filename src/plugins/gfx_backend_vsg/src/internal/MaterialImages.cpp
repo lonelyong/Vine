@@ -23,6 +23,7 @@ VN_VSG_NS_BEGIN
 
 namespace
 {
+
 // The device-free decisions are the backend's own and spelled ONCE (see VsgSceneRules): what a texture has
 // to be before it can be uploaded, what one mip level's extent is, which Vulkan format a pixel layout has,
 // and what anisotropy a device's limit is worth asking for. A second copy here would be a second truth,
@@ -59,8 +60,7 @@ using detail::vkFormatFor;
         const auto width  = levelExtent(texture.width(), level);
         const auto height = levelExtent(texture.height(), level);
 
-        layout->at(level) =
-            ::vsg::uivec4(width, height, 1U, static_cast<std::uint32_t>(offset));
+        layout->at(level) = ::vsg::uivec4(width, height, 1U, static_cast<std::uint32_t>(offset));
         offset += layer_count * bytes_per_texel * static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     }
     return layout;
@@ -91,10 +91,13 @@ using detail::vkFormatFor;
  * @param bytes_per_texel Texel width in bytes.
  * @return The array over @p storage, or null when no vsg type is that wide.
  */
-::vsg::ref_ptr<::vsg::Data> makeTexelArray(::vsg::ref_ptr<::vsg::ubyteArray> storage,
-                                           ::vsg::ref_ptr<::vsg::MipmapLayout> layout, std::uint32_t width,
-                                           std::uint32_t height, std::uint32_t layers,
-                                           const ::vsg::Data::Properties& properties, std::uint32_t bytes_per_texel)
+::vsg::ref_ptr<::vsg::Data> makeTexelArray(::vsg::ref_ptr<::vsg::ubyteArray>   storage,
+                                           ::vsg::ref_ptr<::vsg::MipmapLayout> layout,
+                                           std::uint32_t                       width,
+                                           std::uint32_t                       height,
+                                           std::uint32_t                       layers,
+                                           const ::vsg::Data::Properties&      properties,
+                                           std::uint32_t                       bytes_per_texel)
 {
     const std::uint32_t stride = bytes_per_texel;
 
@@ -108,23 +111,12 @@ using detail::vkFormatFor;
     };
 
     switch (bytes_per_texel) {
-        case 1U:
-            return (layers > 1U) ? make3d(static_cast<::vsg::ubyteArray3D*>(nullptr))
-                                 : make2d(static_cast<::vsg::ubyteArray2D*>(nullptr));
-        case 2U:
-            return (layers > 1U) ? make3d(static_cast<::vsg::ushortArray3D*>(nullptr))
-                                 : make2d(static_cast<::vsg::ushortArray2D*>(nullptr));
-        case 4U:
-            return (layers > 1U) ? make3d(static_cast<::vsg::uintArray3D*>(nullptr))
-                                 : make2d(static_cast<::vsg::uintArray2D*>(nullptr));
-        case 8U:
-            return (layers > 1U) ? make3d(static_cast<::vsg::doubleArray3D*>(nullptr))
-                                 : make2d(static_cast<::vsg::doubleArray2D*>(nullptr));
-        case 16U:
-            return (layers > 1U) ? make3d(static_cast<::vsg::vec4Array3D*>(nullptr))
-                                 : make2d(static_cast<::vsg::uivec4Array2D*>(nullptr));
-        default:
-            return {};
+    case 1U: return (layers > 1U) ? make3d(static_cast<::vsg::ubyteArray3D*>(nullptr)) : make2d(static_cast<::vsg::ubyteArray2D*>(nullptr));
+    case 2U: return (layers > 1U) ? make3d(static_cast<::vsg::ushortArray3D*>(nullptr)) : make2d(static_cast<::vsg::ushortArray2D*>(nullptr));
+    case 4U: return (layers > 1U) ? make3d(static_cast<::vsg::uintArray3D*>(nullptr)) : make2d(static_cast<::vsg::uintArray2D*>(nullptr));
+    case 8U: return (layers > 1U) ? make3d(static_cast<::vsg::doubleArray3D*>(nullptr)) : make2d(static_cast<::vsg::doubleArray2D*>(nullptr));
+    case 16U: return (layers > 1U) ? make3d(static_cast<::vsg::vec4Array3D*>(nullptr)) : make2d(static_cast<::vsg::uivec4Array2D*>(nullptr));
+    default: return {};
     }
 }
 
@@ -144,8 +136,7 @@ using detail::vkFormatFor;
  * @param bytes   Receives the staged byte count on success (every layer of every level); untouched otherwise.
  * @return The image, ready for the transfer step to upload, or null (the caller reports @p reason).
  */
-::vsg::ref_ptr<::vsg::Image> makeImage(const vn::graphics::Texture& texture, VkFormat format,
-                                       TextureReject& reason, std::uint64_t& bytes)
+::vsg::ref_ptr<::vsg::Image> makeImage(const vn::graphics::Texture& texture, VkFormat format, TextureReject& reason, std::uint64_t& bytes)
 {
     // The staging below sizes each layer's slot from the texture's EXTENT and copies the layer's own bytes
     // into it, so a texture whose data disagrees with that extent would write past the slot (and a chain
@@ -160,17 +151,16 @@ using detail::vkFormatFor;
     const auto height          = static_cast<std::uint32_t>(texture.height());
     const auto mip_levels      = static_cast<std::uint32_t>(texture.mipCount());
     const auto layer_count     = static_cast<std::uint32_t>(texture.layerCount());
-    const auto bytes_per_texel  = static_cast<std::uint32_t>(vn::imaging::bytesPerPixel(texture.format()));
-    const bool is_cube          = texture.kind() == vn::graphics::Texture::Kind::Cube;
+    const auto bytes_per_texel = static_cast<std::uint32_t>(vn::imaging::bytesPerPixel(texture.format()));
+    const bool is_cube         = texture.kind() == vn::graphics::Texture::Kind::Cube;
 
     auto layout = makeMipmapLayout(texture);
 
     std::size_t total = 0U;
     for (std::uint32_t level = 0; level < mip_levels; ++level) {
         const auto entry = layout->at(level);
-        total = static_cast<std::size_t>(entry.w) +
-                static_cast<std::size_t>(bytes_per_texel) * static_cast<std::size_t>(entry.x) *
-                    static_cast<std::size_t>(entry.y) * static_cast<std::size_t>(layer_count);
+        total            = static_cast<std::size_t>(entry.w) + static_cast<std::size_t>(bytes_per_texel) * static_cast<std::size_t>(entry.x) *
+                                                                   static_cast<std::size_t>(entry.y) * static_cast<std::size_t>(layer_count);
     }
 
     auto  storage = ::vsg::ubyteArray::create(static_cast<std::uint32_t>(total));
@@ -180,13 +170,10 @@ using detail::vkFormatFor;
     // cannot drift out of step with what is written.
     for (std::uint32_t level = 0; level < mip_levels; ++level) {
         const auto entry      = layout->at(level);
-        const auto layer_span = static_cast<std::size_t>(bytes_per_texel) * static_cast<std::size_t>(entry.x) *
-                                static_cast<std::size_t>(entry.y);
+        const auto layer_span = static_cast<std::size_t>(bytes_per_texel) * static_cast<std::size_t>(entry.x) * static_cast<std::size_t>(entry.y);
         for (std::uint32_t layer = 0; layer < layer_count; ++layer) {
-            const auto level_bytes =
-                texture.layer(static_cast<int>(layer))->mipData(static_cast<int>(level));
-            std::memcpy(staged + entry.w + static_cast<std::size_t>(layer) * layer_span, level_bytes.data(),
-                        level_bytes.size());
+            const auto level_bytes = texture.layer(static_cast<int>(layer))->mipData(static_cast<int>(level));
+            std::memcpy(staged + entry.w + static_cast<std::size_t>(layer) * layer_span, level_bytes.data(), level_bytes.size());
         }
     }
 
@@ -209,7 +196,7 @@ using detail::vkFormatFor;
         return {};
     }
 
-    auto image = ::vsg::Image::create();
+    auto image           = ::vsg::Image::create();
     image->data          = texels;
     image->imageType     = VK_IMAGE_TYPE_2D;
     image->format        = format;
@@ -231,11 +218,11 @@ using detail::vkFormatFor;
  */
 ::vsg::ref_ptr<::vsg::Sampler> makeDefaultSampler(std::uint32_t mip_levels, float max_anisotropy)
 {
-    auto sampler       = ::vsg::Sampler::create();
-    sampler->maxLod    = static_cast<float>(mip_levels);
+    auto sampler              = ::vsg::Sampler::create();
+    sampler->maxLod           = static_cast<float>(mip_levels);
     // A single-level image has nothing to interpolate BETWEEN: leaving the mipmap mode on linear would
     // make the GPU filter across levels that do not exist.
-    sampler->mipmapMode = (mip_levels > 1U) ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler->mipmapMode       = (mip_levels > 1U) ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
     // Anisotropy only means anything with a mip chain to choose between, and only where the device enabled
     // the samplerAnisotropy feature - which is why the request comes from the device's own limit.
     sampler->anisotropyEnable = (mip_levels > 1U) ? VK_TRUE : VK_FALSE;
@@ -252,25 +239,18 @@ VkFilter mapFilter(vn::graphics::Sampler::Filter filter) noexcept
 /** @brief Maps the SDK's mip mode to Vulkan's. */
 VkSamplerMipmapMode mapMipmapMode(vn::graphics::Sampler::MipmapMode mode) noexcept
 {
-    return mode == vn::graphics::Sampler::MipmapMode::Nearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST
-                                                              : VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    return mode == vn::graphics::Sampler::MipmapMode::Nearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR;
 }
 
 /** @brief Maps the SDK's address mode to Vulkan's. */
 VkSamplerAddressMode mapAddressMode(vn::graphics::Sampler::AddressMode mode) noexcept
 {
-    switch (mode)
-    {
-    case vn::graphics::Sampler::AddressMode::Repeat:
-        return VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    case vn::graphics::Sampler::AddressMode::MirroredRepeat:
-        return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-    case vn::graphics::Sampler::AddressMode::ClampToEdge:
-        return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    case vn::graphics::Sampler::AddressMode::ClampToBorder:
-        return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    case vn::graphics::Sampler::AddressMode::MirrorClampToEdge:
-        return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
+    switch (mode) {
+    case vn::graphics::Sampler::AddressMode::Repeat: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    case vn::graphics::Sampler::AddressMode::MirroredRepeat: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case vn::graphics::Sampler::AddressMode::ClampToEdge: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    case vn::graphics::Sampler::AddressMode::ClampToBorder: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    case vn::graphics::Sampler::AddressMode::MirrorClampToEdge: return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
     }
     return VK_SAMPLER_ADDRESS_MODE_REPEAT;
 }
@@ -278,14 +258,10 @@ VkSamplerAddressMode mapAddressMode(vn::graphics::Sampler::AddressMode mode) noe
 /** @brief Maps the SDK's border colour to Vulkan's. */
 VkBorderColor mapBorderColor(vn::graphics::Sampler::BorderColor color) noexcept
 {
-    switch (color)
-    {
-    case vn::graphics::Sampler::BorderColor::TransparentBlack:
-        return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-    case vn::graphics::Sampler::BorderColor::OpaqueBlack:
-        return VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    case vn::graphics::Sampler::BorderColor::OpaqueWhite:
-        return VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    switch (color) {
+    case vn::graphics::Sampler::BorderColor::TransparentBlack: return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    case vn::graphics::Sampler::BorderColor::OpaqueBlack: return VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    case vn::graphics::Sampler::BorderColor::OpaqueWhite: return VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
     }
     return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 }
@@ -305,24 +281,23 @@ VkBorderColor mapBorderColor(vn::graphics::Sampler::BorderColor color) noexcept
 ::vsg::ref_ptr<::vsg::Sampler> makeDeclaredSampler(const vn::graphics::Sampler& state, float max_anisotropy)
 {
     auto sampler = ::vsg::Sampler::create();
-    if (sampler == nullptr)
-    {
+    if (sampler == nullptr) {
         return {};
     }
-    sampler->magFilter       = mapFilter(state.mag_filter);
-    sampler->minFilter       = mapFilter(state.min_filter);
-    sampler->mipmapMode      = mapMipmapMode(state.mipmap_mode);
-    sampler->addressModeU    = mapAddressMode(state.address_u);
-    sampler->addressModeV    = mapAddressMode(state.address_v);
-    sampler->addressModeW    = mapAddressMode(state.address_w);
-    sampler->borderColor     = mapBorderColor(state.border_color);
-    sampler->mipLodBias      = state.lod_bias;
+    sampler->magFilter        = mapFilter(state.mag_filter);
+    sampler->minFilter        = mapFilter(state.min_filter);
+    sampler->mipmapMode       = mapMipmapMode(state.mipmap_mode);
+    sampler->addressModeU     = mapAddressMode(state.address_u);
+    sampler->addressModeV     = mapAddressMode(state.address_v);
+    sampler->addressModeW     = mapAddressMode(state.address_w);
+    sampler->borderColor      = mapBorderColor(state.border_color);
+    sampler->mipLodBias       = state.lod_bias;
     // The LOD range is sanitised rather than rejected: a max below the min is a clamp, not a different state,
     // and Vulkan requires maxLod >= minLod.
-    const float min_lod      = std::max(0.0F, state.min_lod);
-    sampler->minLod          = min_lod;
-    sampler->maxLod          = std::max(min_lod, state.max_lod);
-    const bool anisotropic   = state.anisotropy > 1.0F && max_anisotropy > 1.0F;
+    const float min_lod       = std::max(0.0F, state.min_lod);
+    sampler->minLod           = min_lod;
+    sampler->maxLod           = std::max(min_lod, state.max_lod);
+    const bool anisotropic    = state.anisotropy > 1.0F && max_anisotropy > 1.0F;
     sampler->anisotropyEnable = anisotropic ? VK_TRUE : VK_FALSE;
     sampler->maxAnisotropy    = anisotropic ? std::min(state.anisotropy, max_anisotropy) : 1.0F;
     return sampler;
@@ -340,7 +315,7 @@ VkBorderColor mapBorderColor(vn::graphics::Sampler::BorderColor color) noexcept
  */
 SamplerImage makeWhiteCube(float max_anisotropy)
 {
-    constexpr std::uint32_t kFaces        = 6U;
+    constexpr std::uint32_t kFaces         = 6U;
     constexpr std::uint32_t kBytesPerTexel = 4U;
 
     auto storage = ::vsg::ubyteArray::create(kFaces * kBytesPerTexel);
@@ -349,15 +324,14 @@ SamplerImage makeWhiteCube(float max_anisotropy)
     }
 
     ::vsg::Data::Properties properties;
-    properties.format         = VK_FORMAT_R8G8B8A8_UNORM;
-    properties.mipLevels      = 1U;
-    properties.imageViewType  = VK_IMAGE_VIEW_TYPE_CUBE;
+    properties.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    properties.mipLevels     = 1U;
+    properties.imageViewType = VK_IMAGE_VIEW_TYPE_CUBE;
 
     auto layout    = ::vsg::MipmapLayout::create(1U);
     layout->at(0U) = ::vsg::uivec4(1U, 1U, 1U, 0U);
 
-    auto texels = ::vsg::uintArray3D::create(storage, 0U, kBytesPerTexel, 1U, 1U, kFaces, properties,
-                                             layout.get());
+    auto texels = ::vsg::uintArray3D::create(storage, 0U, kBytesPerTexel, 1U, 1U, kFaces, properties, layout.get());
     if (texels == nullptr) {
         return SamplerImage{};
     }
@@ -382,7 +356,7 @@ SamplerImage makeWhiteCube(float max_anisotropy)
     return white_cube;
 }
 
-}  // namespace
+} // namespace
 
 /**
  * @brief The cache's retained state.
@@ -391,24 +365,21 @@ SamplerImage makeWhiteCube(float max_anisotropy)
  * built from, and counts the bytes it stages so a host can read what is resident. There is no capacity:
  * entries leave when their texture is released, never to make room (see the class note).
  */
-struct MaterialImages::Data
-{
+struct MaterialImages::Data {
     /** @brief One texture's uploaded view, plus the content revision and the bytes it was built from. */
-    struct Entry
-    {
-        vn::intrusive_ptr<const vn::graphics::Texture> owner;      ///< The key object, held (see the note).
-        ::vsg::ref_ptr<::vsg::ImageView>               view;       ///< The view every state samples.
-        ::vsg::ref_ptr<::vsg::Sampler>                 default_sampler;  ///< The no-state sampler (see
-                                                                        ///< makeDefaultSampler).
-        std::uint64_t                                  revision{0};
-        std::uint64_t                                  bytes{0};  ///< Staged bytes (every layer of every level).
+    struct Entry {
+        vn::intrusive_ptr<const vn::graphics::Texture> owner;           // The key object, held (see the note).
+        ::vsg::ref_ptr<::vsg::ImageView>               view;            // The view every state samples.
+        ::vsg::ref_ptr<::vsg::Sampler>                 default_sampler; // The no-state sampler (see
+                                                                        // makeDefaultSampler).
+        std::uint64_t                                  revision{ 0 };
+        std::uint64_t                                  bytes{ 0 }; // Staged bytes (every layer of every level).
     };
 
     /** @brief One explicitly declared state and the sampler built from it. */
-    struct SamplerEntry
-    {
-        vn::graphics::Sampler            state{};
-        ::vsg::ref_ptr<::vsg::Sampler>   sampler;
+    struct SamplerEntry {
+        vn::graphics::Sampler          state{};
+        ::vsg::ref_ptr<::vsg::Sampler> sampler;
     };
 
     using Map = std::unordered_map<const vn::graphics::Texture*, Entry>;
@@ -416,36 +387,33 @@ struct MaterialImages::Data
     /** @brief Gets the sampler for @p state, building and remembering it on first use. */
     ::vsg::ref_ptr<::vsg::Sampler> samplerFor(const vn::graphics::Sampler& state)
     {
-        for (const SamplerEntry& entry : samplers)
-        {
-            if (entry.state == state)
-            {
+        for (const SamplerEntry& entry : samplers) {
+            if (entry.state == state) {
                 return entry.sampler;
             }
         }
         auto sampler = makeDeclaredSampler(state, max_anisotropy);
-        if (sampler != nullptr)
-        {
+        if (sampler != nullptr) {
             samplers.push_back(SamplerEntry{ state, sampler });
         }
         return sampler;
     }
 
-    Map                            cache;
+    Map cache;
     /// The declared states this cache has built samplers for: one per distinct state, so two passes that state
     /// the same fields share one VkSampler and a texture is never re-uploaded for a sampling change.
-    std::vector<SamplerEntry>      samplers;
+    std::vector<SamplerEntry> samplers;
     /// The staged bytes of every live entry (what bytes() answers; kept in step with insertions and erasures).
-    std::uint64_t                  bytes_total{0};
-    std::shared_ptr<WhiteImage>    white;
-    SamplerImage                   white_cube;
+    std::uint64_t               bytes_total{ 0 };
+    std::shared_ptr<WhiteImage> white;
+    SamplerImage                white_cube;
     // What the device offers (see setMaxAnisotropy); 1 is the safe answer for a cache that was never told.
-    float                          max_anisotropy = 1.0F;
+    float max_anisotropy = 1.0F;
 };
 
-MaterialImages::MaterialImages() : d(new Data())
-{
-}
+MaterialImages::MaterialImages()
+  : d(new Data())
+{}
 
 MaterialImages::~MaterialImages() = default;
 
@@ -461,8 +429,7 @@ std::shared_ptr<MaterialImages> MaterialImages::create()
 void MaterialImages::setMaxAnisotropy(float device_limit) noexcept
 {
     const float clamped = anisotropyFor(device_limit);
-    if (clamped != d->max_anisotropy)
-    {
+    if (clamped != d->max_anisotropy) {
         // An explicit state's anisotropy is clamped with this limit, so a sampler built under the old one is
         // not the state it now declares. Dropping the cache rebuilds them on next use; descriptor sets that
         // already name them keep their own references.
@@ -498,14 +465,12 @@ SamplerImage MaterialImages::whiteCube() const noexcept
     return d->white_cube;
 }
 
-SamplerImage MaterialImages::acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
-                                     detail::TextureReject& reason)
+SamplerImage MaterialImages::acquire(vn::raw_ptr<const vn::graphics::Texture> texture, detail::TextureReject& reason)
 {
     return acquireImpl(texture, nullptr, reason);
 }
 
-SamplerImage MaterialImages::acquire(vn::raw_ptr<const vn::graphics::Texture> texture,
-                                     const vn::graphics::Sampler& sampler, detail::TextureReject& reason)
+SamplerImage MaterialImages::acquire(vn::raw_ptr<const vn::graphics::Texture> texture, const vn::graphics::Sampler& sampler, detail::TextureReject& reason)
 {
     return acquireImpl(texture, &sampler, reason);
 }
@@ -515,8 +480,7 @@ std::size_t MaterialImages::samplerCount() const noexcept
     return d->samplers.size();
 }
 
-SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture> texture,
-                                         const vn::graphics::Sampler* state, detail::TextureReject& reason)
+SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture> texture, const vn::graphics::Sampler* state, detail::TextureReject& reason)
 {
     // The fallback follows the texture's KIND when there is a texture to ask: a cube slot with an unusable
     // cube would otherwise be bound a 2D view, which is an invalid descriptor rather than an untextured draw.
@@ -526,10 +490,8 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
     // same either way, and the descriptor keeps the state the pass declared.
     const auto fallback = [&](bool cube) -> SamplerImage {
         SamplerImage answer = cube ? whiteCube() : white();
-        if (state != nullptr)
-        {
-            if (const auto sampler = d->samplerFor(*state); sampler != nullptr)
-            {
+        if (state != nullptr) {
+            if (const auto sampler = d->samplerFor(*state); sampler != nullptr) {
                 answer.sampler = sampler;
             }
         }
@@ -544,7 +506,7 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
     // Held before the map is touched: replacing an entry can drop the last other reference to the texture,
     // and the raw pointer this call was handed would then dangle mid-function.
     vn::intrusive_ptr<const vn::graphics::Texture> owner(texture);
-    const std::uint64_t                               revision = texture->revision();
+    const std::uint64_t                            revision = texture->revision();
 
     auto found = d->cache.find(texture);
     if (found == d->cache.end() || found->second.revision != revision) {
@@ -556,20 +518,19 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
             return fallback(false);
         }
 
-        TextureReject build_reason;  // left at Ok unless the build refuses
-        std::uint64_t bytes        = 0;
-        auto          image        = makeImage(*texture, format, build_reason, bytes);
+        TextureReject build_reason; // left at Ok unless the build refuses
+        std::uint64_t bytes = 0;
+        auto          image = makeImage(*texture, format, build_reason, bytes);
         if (image == nullptr) {
             reason = build_reason;
             return fallback(false);
         }
 
         // The VIEW is shared by every sampler state the texture is read with; only the sampler changes.
-        ::vsg::ref_ptr<::vsg::ImageView> view = ::vsg::ImageView::create(image);
-        ::vsg::ref_ptr<::vsg::Sampler>   default_sampler =
-            makeDefaultSampler(static_cast<std::uint32_t>(texture->mipCount()), d->max_anisotropy);
+        ::vsg::ref_ptr<::vsg::ImageView> view            = ::vsg::ImageView::create(image);
+        ::vsg::ref_ptr<::vsg::Sampler>   default_sampler = makeDefaultSampler(static_cast<std::uint32_t>(texture->mipCount()), d->max_anisotropy);
         if (view == nullptr || default_sampler == nullptr) {
-            reason = TextureReject::Inconsistent;  // creation refused: the caller reports it, nothing is cached
+            reason = TextureReject::Inconsistent; // creation refused: the caller reports it, nothing is cached
             return fallback(false);
         }
 
@@ -577,10 +538,7 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
         if (found != d->cache.end()) {
             d->bytes_total -= found->second.bytes;
         }
-        found = d->cache
-                    .insert_or_assign(texture, Data::Entry{ std::move(owner), view, default_sampler, revision,
-                                                            bytes })
-                    .first;
+        found = d->cache.insert_or_assign(texture, Data::Entry{ std::move(owner), view, default_sampler, revision, bytes }).first;
         d->bytes_total += bytes;
     }
 

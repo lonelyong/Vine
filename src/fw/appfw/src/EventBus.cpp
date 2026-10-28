@@ -44,7 +44,7 @@ void forEachInterface(std::span<const vn::Type* const> roots, std::vector<const 
         const vn::Type* itf = stack.back();
         stack.pop_back();
         if (itf == nullptr || std::ranges::find(visited, itf) != visited.end()) {
-            continue;  // already visited (or malformed metadata): prune the subtree
+            continue; // already visited (or malformed metadata): prune the subtree
         }
         visited.push_back(itf);
         visit(itf);
@@ -71,16 +71,31 @@ class SubscriptionState {
       , tag_(std::move(tag))
     {}
 
-    std::size_t id() const noexcept { return id_; }
+    std::size_t id() const noexcept
+    {
+        return id_;
+    }
 
     /// Free-form label the subscriber passed to subscribe(); may be empty.
-    const String& tag() const noexcept { return tag_; }
+    const String& tag() const noexcept
+    {
+        return tag_;
+    }
 
-    bool isActive() const noexcept { return active_.load(std::memory_order_acquire); }
+    bool isActive() const noexcept
+    {
+        return active_.load(std::memory_order_acquire);
+    }
 
-    void deactivate() noexcept { active_.store(false, std::memory_order_release); }
+    void deactivate() noexcept
+    {
+        active_.store(false, std::memory_order_release);
+    }
 
-    void invoke(const std::shared_ptr<const Object>& event) const { handler_(event); }
+    void invoke(const std::shared_ptr<const Object>& event) const
+    {
+        handler_(event);
+    }
 
   private:
     const std::size_t id_;
@@ -100,12 +115,12 @@ struct SubscriptionEntry {
 /// Never throws: the observation path must not become a new failure source, and
 /// the caller is already handling an exception.
 void reportHandlerError(const std::shared_ptr<const EventBusErrorHandler>& handler,
-                        const std::shared_ptr<SubscriptionState>&     state,
-                        const std::shared_ptr<const Object>&          event,
-                        SubscriptionThreadMode                        mode,
-                        bool                                          deferred,
-                        const std::exception*                         error,
-                        std::exception_ptr                            error_ptr) noexcept
+                        const std::shared_ptr<SubscriptionState>&          state,
+                        const std::shared_ptr<const Object>&               event,
+                        SubscriptionThreadMode                             mode,
+                        bool                                               deferred,
+                        const std::exception*                              error,
+                        std::exception_ptr                                 error_ptr) noexcept
 {
     // Logging cannot throw (see Logger: every level function is noexcept and reports
     // a failure on stderr instead), so it needs no guard of its own here.
@@ -137,11 +152,11 @@ void reportHandlerError(const std::shared_ptr<const EventBusErrorHandler>& handl
     }
 }
 
-void deliver(const std::shared_ptr<SubscriptionState>&               state,
-             const std::shared_ptr<const Object>&                    event,
-             const std::shared_ptr<const EventBusErrorHandler>&      error_handler,
-             SubscriptionThreadMode                                  mode,
-             bool                                                    deferred) noexcept
+void deliver(const std::shared_ptr<SubscriptionState>&          state,
+             const std::shared_ptr<const Object>&               event,
+             const std::shared_ptr<const EventBusErrorHandler>& error_handler,
+             SubscriptionThreadMode                             mode,
+             bool                                               deferred) noexcept
 {
     try {
         state->invoke(event);
@@ -162,9 +177,9 @@ void deliver(const std::shared_ptr<SubscriptionState>&               state,
  */
 class Payload {
   public:
-    Payload(std::weak_ptr<SubscriptionState>           state,
-            std::shared_ptr<const Object>              event,
-            SubscriptionThreadMode                     mode,
+    Payload(std::weak_ptr<SubscriptionState>            state,
+            std::shared_ptr<const Object>               event,
+            SubscriptionThreadMode                      mode,
             std::shared_ptr<const EventBusErrorHandler> error_handler)
       : state_(std::move(state))
       , event_(std::move(event))
@@ -172,18 +187,30 @@ class Payload {
       , error_handler_(std::move(error_handler))
     {}
 
-    std::shared_ptr<SubscriptionState> lockState() const noexcept { return state_.lock(); }
+    std::shared_ptr<SubscriptionState> lockState() const noexcept
+    {
+        return state_.lock();
+    }
 
-    const std::shared_ptr<const Object>& event() const noexcept { return event_; }
+    const std::shared_ptr<const Object>& event() const noexcept
+    {
+        return event_;
+    }
 
-    SubscriptionThreadMode mode() const noexcept { return mode_; }
+    SubscriptionThreadMode mode() const noexcept
+    {
+        return mode_;
+    }
 
-    const std::shared_ptr<const EventBusErrorHandler>& errorHandler() const noexcept { return error_handler_; }
+    const std::shared_ptr<const EventBusErrorHandler>& errorHandler() const noexcept
+    {
+        return error_handler_;
+    }
 
   private:
-    const std::weak_ptr<SubscriptionState>           state_;
-    const std::shared_ptr<const Object>              event_;
-    const SubscriptionThreadMode                     mode_;
+    const std::weak_ptr<SubscriptionState>            state_;
+    const std::shared_ptr<const Object>               event_;
+    const SubscriptionThreadMode                      mode_;
     const std::shared_ptr<const EventBusErrorHandler> error_handler_;
 };
 
@@ -207,7 +234,7 @@ class DeliveryRegistry {
     {
         const auto locked = payload.lock();
         if (locked == nullptr) {
-            return;  // already dropped by clear()
+            return; // already dropped by clear()
         }
         std::shared_ptr<Payload> removed;
         {
@@ -258,7 +285,10 @@ class Delivery {
       , payload_(std::move(payload))
     {}
 
-    ~Delivery() { registry_->remove(payload_); }
+    ~Delivery()
+    {
+        registry_->remove(payload_);
+    }
 
     Delivery(const Delivery&)            = delete;
     Delivery& operator=(const Delivery&) = delete;
@@ -269,11 +299,11 @@ class Delivery {
     {
         const auto payload = payload_.lock();
         if (payload == nullptr) {
-            return;  // dropped by shutdown()/~EventBus
+            return; // dropped by shutdown()/~EventBus
         }
         const auto state = payload->lockState();
         if (state == nullptr || !state->isActive()) {
-            return;  // subscription cancelled, or the bus was stopped
+            return; // subscription cancelled, or the bus was stopped
         }
         deliver(state, payload->event(), payload->errorHandler(), payload->mode(), /* deferred */ true);
     }
@@ -288,7 +318,8 @@ class EventChannel {
   public:
     /// Registers a subscription and hands the reaped entries back to the caller,
     /// which destroys them once every lock has been released.
-    std::shared_ptr<SubscriptionState> subscribe(SubscriptionState::Handler handler, SubscriptionThreadMode mode, String tag, std::vector<SubscriptionEntry>& garbage);
+    std::shared_ptr<SubscriptionState>
+    subscribe(SubscriptionState::Handler handler, SubscriptionThreadMode mode, String tag, std::vector<SubscriptionEntry>& garbage);
 
     /// Appends a snapshot of the live subscriptions; reaped entries are moved to
     /// garbage so that the caller destroys their closures outside every lock.
@@ -305,7 +336,8 @@ class EventChannel {
     mutable std::mutex             mutex_;
 };
 
-std::shared_ptr<SubscriptionState> EventChannel::subscribe(SubscriptionState::Handler handler, SubscriptionThreadMode mode, String tag, std::vector<SubscriptionEntry>& garbage)
+std::shared_ptr<SubscriptionState>
+EventChannel::subscribe(SubscriptionState::Handler handler, SubscriptionThreadMode mode, String tag, std::vector<SubscriptionEntry>& garbage)
 {
     std::lock_guard                    lock(mutex_);
     std::shared_ptr<SubscriptionState> state = std::make_shared<SubscriptionState>(++last_id_, std::move(handler), std::move(tag));
@@ -355,9 +387,15 @@ struct Subscription::Control {
       : state_(std::move(state))
     {}
 
-    ~Control() { state_->deactivate(); }
+    ~Control()
+    {
+        state_->deactivate();
+    }
 
-    bool isActive() const noexcept { return state_->isActive(); }
+    bool isActive() const noexcept
+    {
+        return state_->isActive();
+    }
 
     std::shared_ptr<SubscriptionState> state_;
 };
@@ -415,9 +453,9 @@ struct EventBus::Impl {
           : impl_(&impl)
         {
             if (impl_->stopped.load(std::memory_order_acquire)) {
-                return;  // fast reject: a stopping bus never admits again
+                return; // fast reject: a stopping bus never admits again
             }
-            Impl::enterCall(impl_);  // may allocate: keep it outside the count
+            Impl::enterCall(impl_); // may allocate: keep it outside the count
             std::lock_guard lock(impl_->call_mutex);
             if (impl_->state != BusState::Running) {
                 Impl::leaveCall(impl_);
@@ -442,7 +480,10 @@ struct EventBus::Impl {
         CallGuard& operator=(const CallGuard&) = delete;
 
         /// false when the bus was already stopping or stopped: the call must do nothing.
-        bool admitted() const noexcept { return admitted_; }
+        bool admitted() const noexcept
+        {
+            return admitted_;
+        }
 
       private:
         Impl* const impl_;
@@ -462,7 +503,7 @@ struct EventBus::Impl {
     std::condition_variable call_cv;
     int                     active_calls    = 0;
     BusState                state           = BusState::Running;
-    bool                    shutdown_result = false;  // meaningful once state == Stopped
+    bool                    shutdown_result = false; // meaningful once state == Stopped
     // Thread performing the Stopping -> Stopped transition; guarded by call_mutex and
     // only meaningful while state == Stopping. A reentrant stop request from that same
     // thread (a handler-closure destructor running inside cancelSubscriptions) must not
@@ -476,7 +517,7 @@ struct EventBus::Impl {
     // single load unless a handler is installed, so the happy path stays as is.
     std::atomic<bool>                           has_error_handler{ false };
     mutable std::mutex                          error_mutex;
-    std::shared_ptr<const EventBusErrorHandler> error_handler;  // guarded by error_mutex
+    std::shared_ptr<const EventBusErrorHandler> error_handler; // guarded by error_mutex
 
     /// Installs (or clears) the error handler.
     void setErrorHandler(EventBusErrorHandler handler);
@@ -496,7 +537,7 @@ struct EventBus::Impl {
 
     static std::vector<CallDepth>& callDepths() noexcept;
     /// Admitted calls the current thread holds on impl (0 when it holds none).
-    static int  callDepth(const Impl* impl) noexcept;
+    static int callDepth(const Impl* impl) noexcept;
     /// Records one admitted call of the current thread; may allocate.
     static void enterCall(const Impl* impl);
     /// Drops one admitted call of the current thread.
@@ -601,7 +642,7 @@ void EventBus::Impl::collectPlan(const Object& event, std::vector<SubscriptionEn
     // dispatch only affects later publications. `visited` prunes the interface walk,
     // so a diamond hierarchy is walked once.
     std::vector<SubscriptionEntry> garbage;
-    std::vector<vn::TypeId>      visited;
+    std::vector<vn::TypeId>        visited;
     {
         std::shared_lock lock(mutex);
         const auto       consider = [&](const vn::Type* type) {
@@ -752,7 +793,7 @@ bool EventBus::drainPendingDeliveries(std::chrono::steady_clock::time_point dead
         return true;
     }
     if (dispatcher_ == nullptr) {
-        return false;  // nothing can marshal them: they will never run here
+        return false; // nothing can marshal them: they will never run here
     }
     while (d->deliveries->pendingCount() != 0) {
         if (std::chrono::steady_clock::now() >= deadline) {
@@ -760,7 +801,7 @@ bool EventBus::drainPendingDeliveries(std::chrono::steady_clock::time_point dead
         }
         const auto before = d->deliveries->pendingCount();
         if (!dispatcher_->deliverPostedCalls()) {
-            return false;  // only the application thread can pump the queue
+            return false; // only the application thread can pump the queue
         }
         if (d->deliveries->pendingCount() >= before) {
             // Nothing ran in this round: another thread may own the queue, so give
@@ -809,11 +850,12 @@ void EventBus::setErrorHandler(EventBusErrorHandler handler)
     d->setErrorHandler(std::move(handler));
 }
 
-Subscription EventBus::subscribeErased(vn::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag)
+Subscription
+EventBus::subscribeErased(vn::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag)
 {
     const Impl::CallGuard guard(*d);
     if (!guard.admitted()) {
-        return Subscription();  // stopping or stopped: never register again
+        return Subscription(); // stopping or stopped: never register again
     }
 
     std::shared_ptr<SubscriptionState> state;
@@ -854,7 +896,7 @@ void EventBus::publish(const std::shared_ptr<const Object>& event)
     }
     const Impl::CallGuard guard(*d);
     if (!guard.admitted()) {
-        return;  // stopping or stopped: no new work enters the bus
+        return; // stopping or stopped: no new work enters the bus
     }
 
     std::vector<SubscriptionEntry> plan;
@@ -865,11 +907,11 @@ void EventBus::publish(const std::shared_ptr<const Object>& event)
     const bool marshaller_ready = dispatcher_ != nullptr && MainThreadDispatcher::hasEventLoop();
     const bool on_main_thread   = !marshaller_ready || MainThreadDispatcher::isMainThread();
     // Error observation snapshot: one load when no handler is installed.
-    const auto error_handler = d->has_error_handler.load(std::memory_order_acquire) ? d->currentErrorHandler() : nullptr;
+    const auto error_handler    = d->has_error_handler.load(std::memory_order_acquire) ? d->currentErrorHandler() : nullptr;
 
     for (const auto& entry : plan) {
         if (!entry.state->isActive()) {
-            continue;  // cancelled by unsubscribe()/shutdown() before its turn
+            continue; // cancelled by unsubscribe()/shutdown() before its turn
         }
         const bool defer = entry.mode == SubscriptionThreadMode::Main || (entry.mode == SubscriptionThreadMode::Auto && !on_main_thread);
         if (!defer || !marshaller_ready) {

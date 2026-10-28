@@ -13,8 +13,7 @@ VN_APPFWGUI_NS_BEGIN
 /**
  * @brief Up/down command history for the console input line.
  */
-class CommandHistory
-{
+class CommandHistory {
   public:
     /**
      * @brief Records a command; empty commands are ignored.
@@ -23,8 +22,7 @@ class CommandHistory
      */
     void add(String command)
     {
-        if (command.empty())
-        {
+        if (command.empty()) {
             return;
         }
         items_.push_back(std::move(command));
@@ -39,12 +37,10 @@ class CommandHistory
      */
     String previous(const String& currentInput)
     {
-        if (pos_ == items_.size())
-        {
+        if (pos_ == items_.size()) {
             saved_ = currentInput;
         }
-        if (pos_ > 0)
-        {
+        if (pos_ > 0) {
             --pos_;
         }
         return pos_ < items_.size() ? items_[pos_] : String();
@@ -57,8 +53,7 @@ class CommandHistory
      */
     String next()
     {
-        if (pos_ + 1 < items_.size())
-        {
+        if (pos_ + 1 < items_.size()) {
             ++pos_;
             return items_[pos_];
         }

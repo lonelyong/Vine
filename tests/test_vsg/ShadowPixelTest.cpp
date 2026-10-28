@@ -53,18 +53,17 @@ vn::intrusive_ptr<Geometry> makeGroundQuad(double half, double z)
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     const float                       h  = static_cast<float>(half);
     const float                       fz = static_cast<float>(z);
-    geometry->setPositions(vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -h, -h, fz, h, -h, fz, h, h, fz, -h, h, fz })));
+    geometry->setPositions(vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -h, -h, fz, h, -h, fz, h, h, fz, -h, h, fz })));
     geometry->setNormals(vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
-                                                  1.0F })));
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F })));
+    setPrimitiveIndices(*geometry,
+                        0U,
+                        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf::kWhite);
-    material->setRoughness(1.0F);   // 无高光：影子区只剩环境项，"太阳这一项有没有"就是整张图的对比
+    material->setRoughness(1.0F); // 无高光：影子区只剩环境项，"太阳这一项有没有"就是整张图的对比
     geometry->setMaterial(material);
     return geometry;
 }
@@ -112,7 +111,7 @@ vn::intrusive_ptr<Scene> buildCastingScene()
 {
     const vn::intrusive_ptr<Group> root(new Group());
     addQuad(root.get(), makeGroundQuad(0.95, 0.0));
-    addQuad(root.get(), makeGroundQuad(0.25, 0.5));   // 挡板：半边 0.25，悬在地面上方 0.5
+    addQuad(root.get(), makeGroundQuad(0.25, 0.5)); // 挡板：半边 0.25，悬在地面上方 0.5
 
     const vn::intrusive_ptr<Scene> content(new Scene());
     content->setRoot(root);
@@ -147,7 +146,7 @@ void expectTheShadowFalls(const vn::graphics::backend::PixelProbe& probe)
     EXPECT_LT(shadowed, lit - 40) << "挡板的影子区必须比亮区暗：这就是'阴影图里到底有没有影子'的那张图";
 }
 
-}  // namespace
+} // namespace
 
 TEST(ShadowPixelTest, ACastingSunDarkensTheGroundWhereItsShadowFalls)
 {
@@ -156,9 +155,9 @@ TEST(ShadowPixelTest, ACastingSunDarkensTheGroundWhereItsShadowFalls)
     fixture.scene = buildCastingScene();
 
     ChainDesc options;
-    options.path    = ShadingPath::Deferred;
-    options.camera  = fixture.camera.get();
-    options.content = fixture.scene;
+    options.path                          = ShadingPath::Deferred;
+    options.camera                        = fixture.camera.get();
+    options.content                       = fixture.scene;
     vn::intrusive_ptr<PassChain> pipeline = PassChain::build(fixture.engine.get(), options);
     ASSERT_NE(pipeline, nullptr);
 
@@ -170,8 +169,8 @@ TEST(ShadowPixelTest, ACastingSunDarkensTheGroundWhereItsShadowFalls)
     picture->setShouldClearDepth(true);
 
     // 计划里必须真的有一条 shadow pass：没有它，"地面很亮"和"地面亮且被影子切过"是同一张图。
-    const vn::graphics::FramePlan plan = fixture.engine->framePlan();
-    bool                         has_shadow_pass = false;
+    const vn::graphics::FramePlan plan            = fixture.engine->framePlan();
+    bool                          has_shadow_pass = false;
     for (const vn::graphics::PassPlan& row : plan.passes) {
         has_shadow_pass = has_shadow_pass || (row.name == vn::String(u8"shadow"));
     }
@@ -200,10 +199,10 @@ TEST(ShadowPixelTest, TheSameShadowFallsWhenTheFrameCompositesAnOverlay)
     overlay->setRoot(vn::intrusive_ptr<Group>(new Group()));
 
     ChainDesc options;
-    options.path        = ShadingPath::Deferred;
-    options.camera      = fixture.camera.get();
-    options.content     = fixture.scene;
-    options.transparent = overlay;
+    options.path                          = ShadingPath::Deferred;
+    options.camera                        = fixture.camera.get();
+    options.content                       = fixture.scene;
+    options.transparent                   = overlay;
     vn::intrusive_ptr<PassChain> pipeline = PassChain::build(fixture.engine.get(), options);
     ASSERT_NE(pipeline, nullptr);
 
@@ -232,9 +231,9 @@ TEST(ShadowPixelTest, TheSameShadowFallsOnTheForwardPath)
     fixture.scene = buildCastingScene();
 
     ChainDesc options;
-    options.path    = ShadingPath::Forward;
-    options.camera  = fixture.camera.get();
-    options.content = fixture.scene;
+    options.path                          = ShadingPath::Forward;
+    options.camera                        = fixture.camera.get();
+    options.content                       = fixture.scene;
     vn::intrusive_ptr<PassChain> pipeline = PassChain::build(fixture.engine.get(), options);
     ASSERT_NE(pipeline, nullptr);
 

@@ -1,5 +1,5 @@
-﻿#include <vine/crypto/Hash.hpp>
-#include <vine/MemoryStream.hpp>
+﻿#include <vine/MemoryStream.hpp>
+#include <vine/crypto/Hash.hpp>
 
 #include <array>
 #include <span>
@@ -23,8 +23,7 @@ namespace
  * @tparam Init Update Final Free Streaming functions.
  * @tparam Size Digest size in bytes.
  */
-template <typename HashT, int (*Init)(HashT*), int (*Update)(HashT*, const byte*, word32),
-          int (*Final)(HashT*, byte*), void (*Free)(HashT*), std::size_t Size>
+template <typename HashT, int (*Init)(HashT*), int (*Update)(HashT*, const byte*, word32), int (*Final)(HashT*, byte*), void (*Free)(HashT*), std::size_t Size>
 std::array<std::uint8_t, Size> digest(const void* data, std::size_t size)
 {
     std::array<std::uint8_t, Size> out{};

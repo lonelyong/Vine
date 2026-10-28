@@ -14,12 +14,12 @@
  * Scope: hashes (MD5/SHA-1/SHA-256/CRC32), ciphers (AES/RSA/ChaCha20) and
  * HMAC. Key management and certificates belong to higher layers (appfw).
  */
-#define VN_CRYPTO_NS_BEGIN                                                                                                                               \
-    namespace VN_ROOT_NS                                                                                                                                 \
-    {                                                                                                                                                   \
-    namespace crypto                                                                                                                                    \
+#define VN_CRYPTO_NS_BEGIN                                                                                                                                     \
+    namespace VN_ROOT_NS                                                                                                                                       \
+    {                                                                                                                                                          \
+    namespace crypto                                                                                                                                           \
     {
 
-#define VN_CRYPTO_NS_END                                                                                                                                 \
-    }                                                                                                                                                   \
+#define VN_CRYPTO_NS_END                                                                                                                                       \
+    }                                                                                                                                                          \
     }

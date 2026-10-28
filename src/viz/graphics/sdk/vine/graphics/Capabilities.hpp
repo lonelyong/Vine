@@ -21,8 +21,7 @@ VN_GRAPHICS_NS_BEGIN
  * - It lives in its own header because it is a LEAF of the SDK's vocabulary: the engine answers it
  *   (RenderEngine::capabilities) without knowing the backend contract, so this must not drag that in.
  */
-struct VN_GRAPHICS_API Capabilities
-{
+struct VN_GRAPHICS_API Capabilities {
     /**
      * @brief One YES/NO fact a host has to know BEFORE it plans a frame (see supports).
      *
@@ -49,7 +48,7 @@ struct VN_GRAPHICS_API Capabilities
 
     /// Off-screen render targets are built, drawn into and sampled (see RenderDevice::setRenderTarget); false
     /// means a non-null target is ignored and the pass draws into the default framebuffer.
-    bool render_targets{false};
+    bool render_targets{ false };
 
     /// Frames can be presented somewhere: this session has a window to show a picture through (see
     /// RenderDevice::createSurfaceTarget, and RenderSurface::bindTarget for the window an area is bound to).
@@ -58,17 +57,17 @@ struct VN_GRAPHICS_API Capabilities
     /// whole frames and presents nothing (an offline bake, a display-less run). It answers "was this session
     /// opened with a presentation intent at all" - which is why it is asked before a host plans a frame, rather
     /// than discovered from a present that did nothing.
-    bool presentation{false};
+    bool presentation{ false };
 
     /// The features this backend answers TRUE, one bit per Feature (see supports / bit).
-    std::uint32_t features{0};
+    std::uint32_t features{ 0 };
 
     /// The largest anisotropic filtering factor the device honours (1 = no anisotropy).
     ///
     /// A LIMIT, not a feature: the feature bit says "anisotropy is available at all", this says how far a sample
     /// request is honoured before the backend clamps it - which is what a host showing or clamping a quality
     /// setting needs.
-    float max_anisotropy{1.0F};
+    float max_anisotropy{ 1.0F };
 
     /// The largest sample count a render target may ask for (1 = multisampling is not available).
     ///
@@ -76,7 +75,7 @@ struct VN_GRAPHICS_API Capabilities
     /// above this is refused by the backend that would have to build the images (reported once, never
     /// silently lowered). The count reported is the one BOTH the colour and the depth attachment support,
     /// because one target has one sample count.
-    std::uint32_t max_samples{1};
+    std::uint32_t max_samples{ 1 };
 
     /// The widest LINE primitive the device rasterises, in framebuffer pixels (1 = line width is fixed).
     ///
@@ -85,7 +84,7 @@ struct VN_GRAPHICS_API Capabilities
     /// 1.0 even with the feature on. `RenderState::lineWidth` is clamped to it, so a host that offers a width
     /// slider reads this, and a host that needs thick lines regardless of the device should generate geometry
     /// instead (a rasterised line cannot get joins, caps or antialiasing anyway).
-    float max_line_width{1.0F};
+    float max_line_width{ 1.0F };
 
     /// How many colour attachments one render target may carry.
     ///
@@ -93,7 +92,7 @@ struct VN_GRAPHICS_API Capabilities
     /// would have to build the attachment, with a diagnostic naming the count. A HOST reads this before authoring
     /// an MRT pipeline, because only the host can decide what to do when the device cannot serve the shape it
     /// wants - the engine never silently drops an attachment.
-    std::uint32_t max_color_attachments{1};
+    std::uint32_t max_color_attachments{ 1 };
 
     /**
      * @brief Answers one feature (see Feature).
@@ -117,7 +116,7 @@ struct VN_GRAPHICS_API Capabilities
      */
     [[nodiscard]] static constexpr std::uint32_t bit(Feature feature) noexcept
     {
-        return std::uint32_t{1} << static_cast<std::uint32_t>(feature);
+        return std::uint32_t{ 1 } << static_cast<std::uint32_t>(feature);
     }
 };
 

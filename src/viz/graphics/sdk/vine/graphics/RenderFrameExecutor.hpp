@@ -53,8 +53,7 @@ VN_GRAPHICS_NS_BEGIN
  *   concurrent and never reentrant. An executor may therefore keep its state unsynchronised, but must not assume it
  *   stays on the same thread across an initialize()/shutdown() pair (see RenderDevice).
  */
-class VN_GRAPHICS_API RenderFrameExecutor
-{
+class VN_GRAPHICS_API RenderFrameExecutor {
   public:
     virtual ~RenderFrameExecutor() = default;
 

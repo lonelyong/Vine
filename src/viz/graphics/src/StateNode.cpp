@@ -225,8 +225,7 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
             return ShaderProgramPtr(own);
         }
     }
-    for (const Node* current = node->parent(); current != nullptr;
-         current = current->parent()) {
+    for (const Node* current = node->parent(); current != nullptr; current = current->parent()) {
         if (const auto* state_node = dynamic_cast<const StateNode*>(current)) {
             if (raw_ptr<ShaderProgram> ancestor = state_node->program()) {
                 return ShaderProgramPtr(ancestor);

@@ -12,14 +12,14 @@ VN_GRAPHICS_NS_BEGIN
  */
 enum class CompareOp
 {
-    Never,       ///< Depth never passes.
-    Less,        ///< Pass when the fragment is closer than the stored depth.
-    Equal,       ///< Pass when the depths are equal.
-    LessEqual,   ///< Pass when the fragment is closer or equal.
-    Greater,     ///< Pass when the fragment is farther.
-    NotEqual,    ///< Pass when the depths differ.
-    GreaterEqual, ///< Pass when the fragment is farther or equal.
-    Always,      ///< Depth always passes.
+    Never,        // Depth never passes.
+    Less,         // Pass when the fragment is closer than the stored depth.
+    Equal,        // Pass when the depths are equal.
+    LessEqual,    // Pass when the fragment is closer or equal.
+    Greater,      // Pass when the fragment is farther.
+    NotEqual,     // Pass when the depths differ.
+    GreaterEqual, // Pass when the fragment is farther or equal.
+    Always,       // Depth always passes.
 };
 
 /**
@@ -38,9 +38,9 @@ enum class CompareOp
  */
 enum class CullMode
 {
-    None,  ///< No faces are culled (two-sided rendering).
-    Front, ///< Counter-clockwise (front-facing) triangles are culled.
-    Back,  ///< Clockwise (back-facing) triangles are culled.
+    None,  // No faces are culled (two-sided rendering).
+    Front, // Counter-clockwise (front-facing) triangles are culled.
+    Back,  // Clockwise (back-facing) triangles are culled.
 };
 
 /**
@@ -48,26 +48,25 @@ enum class CullMode
  */
 enum class BlendFactor
 {
-    Zero,               ///< 0.
-    One,                ///< 1.
-    SrcAlpha,           ///< Source alpha.
-    OneMinusSrcAlpha,   ///< 1 - source alpha.
-    DstAlpha,           ///< Destination alpha.
-    OneMinusDstAlpha,   ///< 1 - destination alpha.
-    SrcColor,           ///< Source color.
-    OneMinusSrcColor,   ///< 1 - source color.
-    DstColor,           ///< Destination color.
-    OneMinusDstColor,   ///< 1 - destination color.
+    Zero,             // 0.
+    One,              // 1.
+    SrcAlpha,         // Source alpha.
+    OneMinusSrcAlpha, // 1 - source alpha.
+    DstAlpha,         // Destination alpha.
+    OneMinusDstAlpha, // 1 - destination alpha.
+    SrcColor,         // Source color.
+    OneMinusSrcColor, // 1 - source color.
+    DstColor,         // Destination color.
+    OneMinusDstColor, // 1 - destination color.
 };
 
 /**
  * @brief Concrete depth-test state (defaults applied).
  */
-struct VN_GRAPHICS_API DepthState
-{
-    bool      test    = true;                ///< Depth test enabled.
-    bool      write   = true;                ///< Depth writes enabled.
-    CompareOp compare = CompareOp::Less;      ///< Depth comparison function.
+struct VN_GRAPHICS_API DepthState {
+    bool      test    = true;            // Depth test enabled.
+    bool      write   = true;            // Depth writes enabled.
+    CompareOp compare = CompareOp::Less; // Depth comparison function.
 };
 
 /** @brief Returns whether two depth states are equal. */
@@ -96,11 +95,10 @@ inline bool operator!=(const DepthState& lhs, const DepthState& rhs)
  * - A backend whose target carries several colour attachments never blends them (they hold data, not a
  *   surface), and a full-screen draw writes its rectangle; both are target-shape rules, not this flag.
  */
-struct VN_GRAPHICS_API BlendState
-{
-    bool        enabled = false;                           ///< Blending enabled.
-    BlendFactor src     = BlendFactor::SrcAlpha;           ///< Source blend factor.
-    BlendFactor dst     = BlendFactor::OneMinusSrcAlpha;   ///< Destination blend factor.
+struct VN_GRAPHICS_API BlendState {
+    bool        enabled = false;                         // Blending enabled.
+    BlendFactor src     = BlendFactor::SrcAlpha;         // Source blend factor.
+    BlendFactor dst     = BlendFactor::OneMinusSrcAlpha; // Destination blend factor.
 };
 
 /** @brief Returns whether two blend states are equal. */
@@ -134,13 +132,15 @@ inline bool operator!=(const BlendState& lhs, const BlendState& rhs)
  * - {0, 0} is "no offset at all", and that is the default: a pipeline without an offset behaves exactly
  *   as it did before this type existed.
  */
-struct VN_GRAPHICS_API PolygonOffset
-{
-    float factor = 0.0F;  ///< Depth offset per unit of polygon slope.
-    float units  = 0.0F;  ///< Constant depth offset, in depth-buffer units.
+struct VN_GRAPHICS_API PolygonOffset {
+    float factor = 0.0F; // Depth offset per unit of polygon slope.
+    float units  = 0.0F; // Constant depth offset, in depth-buffer units.
 
     /** @brief Returns whether this offset does nothing (the default). */
-    [[nodiscard]] bool isZero() const noexcept { return factor == 0.0F && units == 0.0F; }
+    [[nodiscard]] bool isZero() const noexcept
+    {
+        return factor == 0.0F && units == 0.0F;
+    }
 };
 
 /** @brief Returns whether two polygon offsets are equal. */
@@ -166,13 +166,12 @@ inline bool operator!=(const PolygonOffset& lhs, const PolygonOffset& rhs)
  * - This is the VOCABULARY only: what a content author may say. Which layer wins, and what an unset item
  *   becomes, is the priority table in StateResolution.hpp.
  */
-struct VN_GRAPHICS_API RenderState
-{
-    std::optional<DepthState>    depth;          ///< Depth test/write/compare override.
-    std::optional<CullMode>      cullMode;       ///< Face culling override.
-    std::optional<BlendState>    blend;          ///< Blending override.
-    std::optional<PolygonMode>   polygonMode;    ///< Polygon rasterisation override.
-    std::optional<PolygonOffset> polygonOffset;  ///< Depth-bias override (coplanar surfaces).
+struct VN_GRAPHICS_API RenderState {
+    std::optional<DepthState>    depth;         // Depth test/write/compare override.
+    std::optional<CullMode>      cullMode;      // Face culling override.
+    std::optional<BlendState>    blend;         // Blending override.
+    std::optional<PolygonMode>   polygonMode;   // Polygon rasterisation override.
+    std::optional<PolygonOffset> polygonOffset; // Depth-bias override (coplanar surfaces).
 
     /**
      * @brief Pixel size of a point primitive (framebuffer pixels), the override for a subtree.
@@ -227,10 +226,8 @@ struct VN_GRAPHICS_API RenderState
 /** @brief Returns whether two optional state blocks are equal. */
 inline bool operator==(const RenderState& lhs, const RenderState& rhs)
 {
-    return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
-           lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.polygonOffset == rhs.polygonOffset && lhs.pointSize == rhs.pointSize &&
-           lhs.lineWidth == rhs.lineWidth;
+    return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode && lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
+           lhs.polygonOffset == rhs.polygonOffset && lhs.pointSize == rhs.pointSize && lhs.lineWidth == rhs.lineWidth;
 }
 
 /** @brief Returns whether two optional state blocks differ. */

@@ -18,8 +18,7 @@ VN_APPFWGUI_NS_BEGIN
  *
  * This is a private header: only the class implementations in this directory include it.
  */
-struct WindowData : public ControlData
-{
+struct WindowData : public ControlData {
     /// Watches the window's widget tree for its first paint; see Window::hasPainted().
     /// Held as a QObject* because the watcher is a Window.cpp detail: this header carries the pointer, not the type.
     QObject* paint_watcher = nullptr;

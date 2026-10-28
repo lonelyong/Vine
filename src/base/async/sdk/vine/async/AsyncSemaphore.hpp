@@ -15,12 +15,13 @@ VN_ASYNC_NS_BEGIN
  * permit is released, the next waiter is resumed on the thread that called
  * release(). Thread-safe.
  */
-class AsyncSemaphore
-{
+class AsyncSemaphore {
   public:
-    explicit AsyncSemaphore(std::ptrdiff_t count = 0) noexcept : count_(count) {}
+    explicit AsyncSemaphore(std::ptrdiff_t count = 0) noexcept
+      : count_(count)
+    {}
 
-    AsyncSemaphore(const AsyncSemaphore&) = delete;
+    AsyncSemaphore(const AsyncSemaphore&)            = delete;
     AsyncSemaphore& operator=(const AsyncSemaphore&) = delete;
 
     ~AsyncSemaphore() = default;
@@ -30,7 +31,7 @@ class AsyncSemaphore
      *
      * @return true if a permit was consumed, false if none is available.
      */
-[[nodiscard]]
+    [[nodiscard]]
     bool try_acquire() noexcept;
 
     /**
@@ -43,12 +44,13 @@ class AsyncSemaphore
     /**
      * @brief Awaiter that consumes a permit, suspending if none is available.
      */
-    class AcquireAwaiter
-    {
+    class AcquireAwaiter {
       public:
-        explicit AcquireAwaiter(AsyncSemaphore& semaphore) noexcept : semaphore_(semaphore) {}
+        explicit AcquireAwaiter(AsyncSemaphore& semaphore) noexcept
+          : semaphore_(semaphore)
+        {}
 
-        AcquireAwaiter(const AcquireAwaiter&) = delete;
+        AcquireAwaiter(const AcquireAwaiter&)            = delete;
         AcquireAwaiter& operator=(const AcquireAwaiter&) = delete;
 
         ~AcquireAwaiter() noexcept;
@@ -61,7 +63,8 @@ class AsyncSemaphore
 
         bool await_suspend(std::coroutine_handle<> h) noexcept;
 
-        void await_resume() const noexcept {}
+        void await_resume() const noexcept
+        {}
 
       private:
         friend class AsyncSemaphore;
@@ -87,8 +90,8 @@ class AsyncSemaphore
     void enqueue(AcquireAwaiter& a) noexcept;
     void dequeue(AcquireAwaiter& a) noexcept;
 
-    std::mutex     mutex_{};
-    std::ptrdiff_t count_;
+    std::mutex      mutex_{};
+    std::ptrdiff_t  count_;
     AcquireAwaiter* head_{ nullptr };
     AcquireAwaiter* tail_{ nullptr };
 };
@@ -96,8 +99,7 @@ class AsyncSemaphore
 inline bool AsyncSemaphore::try_acquire() noexcept
 {
     std::lock_guard lock(mutex_);
-    if (count_ > 0)
-    {
+    if (count_ > 0) {
         --count_;
         return true;
     }
@@ -108,11 +110,10 @@ inline bool AsyncSemaphore::AcquireAwaiter::await_suspend(std::coroutine_handle<
 {
     waiter_ = h;
     std::lock_guard lock(semaphore_.mutex_);
-    if (semaphore_.count_ > 0)
-    {
+    if (semaphore_.count_ > 0) {
         --semaphore_.count_;
         waiter_ = {};
-        return false;   // do not suspend
+        return false; // do not suspend
     }
     semaphore_.enqueue(*this);
     return true;
@@ -120,8 +121,7 @@ inline bool AsyncSemaphore::AcquireAwaiter::await_suspend(std::coroutine_handle<
 
 inline AsyncSemaphore::AcquireAwaiter::~AcquireAwaiter() noexcept
 {
-    if (waiter_)
-    {
+    if (waiter_) {
         std::lock_guard lock(semaphore_.mutex_);
         semaphore_.dequeue(*this);
     }
@@ -139,21 +139,17 @@ inline void AsyncSemaphore::release(std::ptrdiff_t n) noexcept
     // the destroyed sibling unregisters itself and is simply not popped. A
     // concurrent fast-path acquirer may take a permit between iterations; the
     // permit count stays exact, so no permit is lost or double-granted.
-    for (;;)
-    {
+    for (;;) {
         std::coroutine_handle<> h;
         {
             std::lock_guard lock(mutex_);
-            if (head_ && count_ > 0)
-            {
+            if (head_ && count_ > 0) {
                 auto* a = head_;
-                head_ = head_->next_;
-                if (!head_)
-                {
+                head_   = head_->next_;
+                if (!head_) {
                     tail_ = nullptr;
                 }
-                else
-                {
+                else {
                     // Detach the old head from its successor: otherwise the
                     // successor's prev_ would still point at a's frame, and a
                     // later dequeue of that successor would write through the
@@ -163,12 +159,11 @@ inline void AsyncSemaphore::release(std::ptrdiff_t n) noexcept
                 a->prev_ = nullptr;
                 a->next_ = nullptr;
                 --count_;
-                h = a->waiter_;
+                h          = a->waiter_;
                 a->waiter_ = {};
             }
         }
-        if (!h)
-        {
+        if (!h) {
             break;
         }
         h.resume(); // Resume outside the lock.
@@ -179,12 +174,10 @@ inline void AsyncSemaphore::enqueue(AcquireAwaiter& a) noexcept
 {
     a.prev_ = tail_;
     a.next_ = nullptr;
-    if (tail_)
-    {
+    if (tail_) {
         tail_->next_ = &a;
     }
-    else
-    {
+    else {
         head_ = &a;
     }
     tail_ = &a;
@@ -192,25 +185,20 @@ inline void AsyncSemaphore::enqueue(AcquireAwaiter& a) noexcept
 
 inline void AsyncSemaphore::dequeue(AcquireAwaiter& a) noexcept
 {
-    if (a.prev_)
-    {
+    if (a.prev_) {
         a.prev_->next_ = a.next_;
     }
-    else if (head_ == &a)
-    {
+    else if (head_ == &a) {
         head_ = a.next_;
     }
-    else
-    {
-        return;   // not in the queue
+    else {
+        return; // not in the queue
     }
 
-    if (a.next_)
-    {
+    if (a.next_) {
         a.next_->prev_ = a.prev_;
     }
-    else if (tail_ == &a)
-    {
+    else if (tail_ == &a) {
         tail_ = a.prev_;
     }
 

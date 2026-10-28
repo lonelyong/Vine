@@ -30,28 +30,28 @@
 #    define VN_ROOT_NS vine
 #endif
 
-#define VN_ROOT_NS_BEGIN                                                                                                                                        \
-    namespace VN_ROOT_NS                                                                                                                                        \
+#define VN_ROOT_NS_BEGIN                                                                                                                                       \
+    namespace VN_ROOT_NS                                                                                                                                       \
     {
 
 #define VN_ROOT_NS_END }
 
-#define VN_DISABLE_COPY(ClassName)                                                                                                                              \
+#define VN_DISABLE_COPY(ClassName)                                                                                                                             \
   private:                                                                                                                                                     \
     ClassName(const ClassName&)            = delete;                                                                                                           \
     ClassName& operator=(const ClassName&) = delete;
 
-#define VN_DISABLE_MOVE(ClassName)                                                                                                                              \
+#define VN_DISABLE_MOVE(ClassName)                                                                                                                             \
   private:                                                                                                                                                     \
     ClassName(ClassName&&)            = delete;                                                                                                                \
     ClassName& operator=(ClassName&&) = delete;
 
-#define VN_DISABLE_COPY_MOVE(ClassName)                                                                                                                         \
-    VN_DISABLE_COPY(ClassName)                                                                                                                                  \
+#define VN_DISABLE_COPY_MOVE(ClassName)                                                                                                                        \
+    VN_DISABLE_COPY(ClassName)                                                                                                                                 \
     VN_DISABLE_MOVE(ClassName)
 
 
-#define VN_ENABLE_ENUM_FLAGS(Enum)                                                                                                                              \
+#define VN_ENABLE_ENUM_FLAGS(Enum)                                                                                                                             \
     inline constexpr Enum& operator|=(Enum& left, Enum right)                                                                                                  \
     {                                                                                                                                                          \
         return left = static_cast<Enum>(static_cast<std::underlying_type_t<Enum>>(left) | static_cast<std::underlying_type_t<Enum>>(right));                   \

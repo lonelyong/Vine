@@ -24,9 +24,9 @@
 #include <vine/appfw/gui/CentralDocumentHost.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/Control.hpp>
+#include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
-#include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
@@ -38,9 +38,9 @@
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderSurface.hpp>
 #include <vine/graphics/Scene.hpp>
+#include <vine/graphics/SceneView.hpp>
 #include <vine/window/InputEvent.hpp>
 #include <vine/window/MouseButton.hpp>
-#include <vine/graphics/SceneView.hpp>
 
 #include "MeshFileOpener.hpp"
 #include "ModelDocument.hpp"
@@ -56,7 +56,7 @@ namespace
 struct TestMeshPayload : public vn::Object {
     VN_OBJECT_META_DECL;
 
-    vn::String                                          name;
+    vn::String                                           name;
     vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh;
 };
 
@@ -65,9 +65,20 @@ VN_OBJECT_META_IMPL(TestMeshPayload, vn::Object)
 /// 一个**不是模型**的文档：面板该照样报它的类型与标题，三个数则说"不是模型文档"。
 class OtherDocument : public vn::appfw::Document {
   public:
-    vn::String typeId() const override { return u8"other"; }
-    vn::String title() const override { return u8"别的文档"; }
-    bool       isDirty() const override { return false; }
+    vn::String typeId() const override
+    {
+        return u8"other";
+    }
+
+    vn::String title() const override
+    {
+        return u8"别的文档";
+    }
+
+    bool isDirty() const override
+    {
+        return false;
+    }
 };
 
 constexpr const char8_t* kModelType = vn::model_viewer::ModelDocument::kTypeId;
@@ -84,10 +95,8 @@ bool registerModelType(vn::appfw::DocumentManager& documents)
 bool registerModelOpener(vn::appfw::DocumentManager& documents)
 {
     return documents.registerOpener<TestMeshPayload>({
-        .type_id = kModelType,
-        .open    = [](const TestMeshPayload& payload) -> vn::appfw::Document* {
-            return new vn::model_viewer::ModelDocument(payload.name, payload.mesh);
-        },
+      .type_id = kModelType,
+      .open    = [](const TestMeshPayload& payload) -> vn::appfw::Document* { return new vn::model_viewer::ModelDocument(payload.name, payload.mesh); },
     });
 }
 
@@ -95,11 +104,9 @@ bool registerModelOpener(vn::appfw::DocumentManager& documents)
 bool registerMeshFileOpener(vn::appfw::DocumentManager& documents)
 {
     return documents.registerOpener<vn::model_viewer::MeshFilePayload>({
-        .type_id = kModelType,
-        .open    = [](const vn::model_viewer::MeshFilePayload& payload) -> vn::appfw::Document* {
-            return vn::model_viewer::openMeshFilePayload(payload);
-        },
-        .source_scheme = u8"file",
+      .type_id       = kModelType,
+      .open          = [](const vn::model_viewer::MeshFilePayload& payload) -> vn::appfw::Document* { return vn::model_viewer::openMeshFilePayload(payload); },
+      .source_scheme = u8"file",
     });
 }
 
@@ -107,7 +114,7 @@ bool registerMeshFileOpener(vn::appfw::DocumentManager& documents)
 struct TestModelTreePayload : public vn::Object {
     VN_OBJECT_META_DECL;
 
-    vn::String                            name;
+    vn::String                             name;
     vn::intrusive_ptr<vn::geometry::Model> model;
 };
 
@@ -116,17 +123,15 @@ VN_OBJECT_META_IMPL(TestModelTreePayload, vn::Object)
 bool registerModelTreeOpener(vn::appfw::DocumentManager& documents)
 {
     return documents.registerOpener<TestModelTreePayload>({
-        .type_id = kModelType,
-        .open    = [](const TestModelTreePayload& payload) -> vn::appfw::Document* {
-            return new vn::model_viewer::ModelDocument(payload.name,
-                                                       vn::intrusive_ptr<vn::geometry::Model>(payload.model));
-        },
+      .type_id = kModelType,
+      .open    = [](const TestModelTreePayload& payload) -> vn::appfw::Document* {
+          return new vn::model_viewer::ModelDocument(payload.name, vn::intrusive_ptr<vn::geometry::Model>(payload.model));
+      },
     });
 }
 
 /// 开一份模型文档并把它设为当前（"打开就显示这一份"是宿主的策略，用例里这样模拟）。
-vn::appfw::Document* openModel(vn::appfw::DocumentManager& documents, vn::String name,
-                               vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh)
+vn::appfw::Document* openModel(vn::appfw::DocumentManager& documents, vn::String name, vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh)
 {
     TestMeshPayload payload;
     payload.name = std::move(name);
@@ -192,10 +197,10 @@ void collectGeometries(const vn::graphics::Node& node, std::vector<const vn::gra
 /// 一个三角形，平移到 @p cx（两个部件并排，拾取能分清谁是谁）。
 vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> makePartMesh(const char8_t* name, float cx)
 {
-    auto mesh = vn::make_intrusive<vn::geometry::IndexedTriangleMesh>();
-    const auto a = mesh->addVertex(vn::math::Vec3f{ cx - 0.5F, -0.5F, 0.0F });
-    const auto b = mesh->addVertex(vn::math::Vec3f{ cx + 0.5F, -0.5F, 0.0F });
-    const auto c = mesh->addVertex(vn::math::Vec3f{ cx, 0.5F, 0.0F });
+    auto       mesh = vn::make_intrusive<vn::geometry::IndexedTriangleMesh>();
+    const auto a    = mesh->addVertex(vn::math::Vec3f{ cx - 0.5F, -0.5F, 0.0F });
+    const auto b    = mesh->addVertex(vn::math::Vec3f{ cx + 0.5F, -0.5F, 0.0F });
+    const auto c    = mesh->addVertex(vn::math::Vec3f{ cx, 0.5F, 0.0F });
     mesh->addTriangle(a, b, c);
     mesh->setName(name);
     return mesh;
@@ -312,9 +317,9 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnLights)
     // 灯是**场景**的属性（`Scene::addLight`），而每个视图有自己的场景：没人给这份文档装灯，它就落在"零灯"
     // 那一档 —— 后端在没有环境光时只补一个 0.15 常量填充，网格被画成一片平色，看起来就是"没有光照效果"。
     // 这条钉住"视图自带灯"，以及灯是**世界固定**的方向光（不跟相机走：绕行时明暗只随几何变）。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
@@ -340,7 +345,7 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnLights)
     const auto& lights = scene->lights();
     ASSERT_GE(lights.size(), 3u) << "环境光 + 主光 + 补光：少了就只剩平色";
 
-    std::size_t ambient = 0;
+    std::size_t ambient     = 0;
     std::size_t directional = 0;
     for (const auto& light : lights) {
         if (light == nullptr || !light->isEnabled()) {
@@ -353,8 +358,7 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnLights)
             ++directional;
             // 方向光必须有真实方向（零向量照不出明暗差别）。
             const auto direction = light->direction();
-            EXPECT_GT(std::abs(direction.x) + std::abs(direction.y) + std::abs(direction.z), 0.0)
-                << "方向光的朝向不能是零向量";
+            EXPECT_GT(std::abs(direction.x) + std::abs(direction.y) + std::abs(direction.z), 0.0) << "方向光的朝向不能是零向量";
         }
     }
     EXPECT_EQ(ambient, 1u) << "恰好一盏环境光：多了会洗掉明暗";
@@ -370,9 +374,9 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     // ModelRenderView::buildScene）：查看器不再自己造 pass、不再自己接尺寸与比例。这条钉四件事：①读数在、且在画；
     // ②它是**查看器那条链**的一部分（不是随手挂在引擎上的孤儿）；③`activate()` 可重复（不重建、不叠 pass）；
     // ④显示/隐藏是零重建的开关。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
@@ -401,8 +405,7 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     // 读数（内容对象）与画它的 pass 是两件事：可见性问 pass（enabled 是声明状态），内容归对象。
     auto* readout = view->fpsOverlay();
     ASSERT_NE(readout, nullptr) << "查看器要让链带上帧率读数";
-    EXPECT_EQ(static_cast<const void*>(readout), static_cast<const void*>(pipeline->fpsOverlay()))
-        << "读数必须是那条链里的一个，不是另挂在引擎上的孤儿 pass";
+    EXPECT_EQ(static_cast<const void*>(readout), static_cast<const void*>(pipeline->fpsOverlay())) << "读数必须是那条链里的一个，不是另挂在引擎上的孤儿 pass";
     auto* readout_pass = pipeline->fpsOverlayPass();
     ASSERT_NE(readout_pass, nullptr);
     EXPECT_TRUE(readout_pass->isEnabled());
@@ -425,8 +428,8 @@ TEST(ModelViewerTest, TheSceneCarriesItsOwnFrameRateReadout)
     EXPECT_TRUE(readout_pass->isEnabled());
 
     // 关掉之后**重建**（预设加一个坐标轴 ⇒ 一条新链）不该把它偷偷点亮：重建读的是活着那条链的运行期选择。
-    vn::intrusive_ptr<vn::graphics::PassChain> old_pipeline(pipeline);  // 拿住它：地址会因为回收而被重用，比对象才作数
-    auto options = control->viewerOptions();
+    vn::intrusive_ptr<vn::graphics::PassChain> old_pipeline(pipeline); // 拿住它：地址会因为回收而被重用，比对象才作数
+    auto                                       options = control->viewerOptions();
     EXPECT_TRUE(pipeline->setStatsVisible(false));
     options.gizmo = true;
     ASSERT_TRUE(control->setViewerOptions(options)) << "结构变化 = 一次建链";
@@ -478,20 +481,14 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     // 见 ADR-2026-10-24-command-target.md），所以先把这两件事说清楚：现在的主窗口就是这一个，而这份文档的视图
     // 正在上屏。
     ASSERT_EQ(vn::appfw::gui::MainWindow::current(), &window);
-    ASSERT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), view)
-        << "派发解析出的目标就是这块视图（不再有窗口级的第二处回答）";
+    ASSERT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), view) << "派发解析出的目标就是这块视图（不再有窗口级的第二处回答）";
 
     // 命令按名字注册（插件自己的自动登记队列只在插件模块里 flush，这里是可执行文件 ⇒ 用例显式登记）。
-    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingLitCommand>(
-        vn::String(vn::model_viewer::kShadingModeLitCommand)));
-    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingFlatCommand>(
-        vn::String(vn::model_viewer::kShadingModeFlatCommand)));
-    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingUnlitCommand>(
-        vn::String(vn::model_viewer::kShadingModeUnlitCommand)));
-    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingNormalsCommand>(
-        vn::String(vn::model_viewer::kShadingModeNormalsCommand)));
-    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingWireframeCommand>(
-        vn::String(vn::model_viewer::kShadingModeWireframeCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingLitCommand>(vn::String(vn::model_viewer::kShadingModeLitCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingFlatCommand>(vn::String(vn::model_viewer::kShadingModeFlatCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingUnlitCommand>(vn::String(vn::model_viewer::kShadingModeUnlitCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingNormalsCommand>(vn::String(vn::model_viewer::kShadingModeNormalsCommand)));
+    ASSERT_TRUE(commands->registerCommand<vn::model_viewer::SetShadingWireframeCommand>(vn::String(vn::model_viewer::kShadingModeWireframeCommand)));
 
     // 五档各跑一遍：每一档都要求"视图那条链真的换了档"，而且**别的设置还在**（帧率读数是查看器开的，命令走的是链上
     // 那一处开关，不该顺手把它关掉）。
@@ -500,24 +497,22 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         vn::graphics::ShadingMode mode;
         bool                      wireframe;
     };
+
     const Case cases[] = {
-        { vn::model_viewer::kShadingModeLitCommand, vn::graphics::ShadingMode::Lit, false },
-        { vn::model_viewer::kShadingModeFlatCommand, vn::graphics::ShadingMode::Flat, false },
-        { vn::model_viewer::kShadingModeUnlitCommand, vn::graphics::ShadingMode::Unlit, false },
-        { vn::model_viewer::kShadingModeNormalsCommand, vn::graphics::ShadingMode::Normals, false },
-        { vn::model_viewer::kShadingModeWireframeCommand, vn::graphics::ShadingMode::Wireframe, true },
+        { vn::model_viewer::kShadingModeLitCommand,       vn::graphics::ShadingMode::Lit,       false },
+        { vn::model_viewer::kShadingModeFlatCommand,      vn::graphics::ShadingMode::Flat,      false },
+        { vn::model_viewer::kShadingModeUnlitCommand,     vn::graphics::ShadingMode::Unlit,     false },
+        { vn::model_viewer::kShadingModeNormalsCommand,   vn::graphics::ShadingMode::Normals,   false },
+        { vn::model_viewer::kShadingModeWireframeCommand, vn::graphics::ShadingMode::Wireframe, true  },
     };
     for (const Case& item : cases) {
-        const auto result = commands->executeCommandAndWait(vn::String(item.command),
-                                                            vn::appfw::gui::resolveCommandTarget(&window));
-        EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success)
-            << "命令该成功（说清了什么就不算失败：" << result.message().as_std_str() << "）";
+        const auto result = commands->executeCommandAndWait(vn::String(item.command), vn::appfw::gui::resolveCommandTarget(&window));
+        EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success) << "命令该成功（说清了什么就不算失败：" << result.message().as_std_str() << "）";
         EXPECT_EQ(scene_view->chain()->shadingMode(), item.mode);
         EXPECT_TRUE(scene_view->chain()->isStatsVisible()) << "命令不该把帧率读数顺手关掉";
         // 线框是"程序 + 光栅化"两个覆盖；其余档不许留下光栅化覆盖。
-        const auto polygon = scene_view->chain()->presentingPass() != nullptr
-                                 ? scene_view->chain()->presentingPass()->polygonModeOverride()
-                                 : std::optional<vn::graphics::PolygonMode>{};
+        const auto polygon = scene_view->chain()->presentingPass() != nullptr ? scene_view->chain()->presentingPass()->polygonModeOverride()
+                                                                              : std::optional<vn::graphics::PolygonMode>{};
         if (item.wireframe) {
             ASSERT_TRUE(polygon.has_value());
             EXPECT_EQ(*polygon, vn::graphics::PolygonMode::Line);
@@ -540,16 +535,15 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         scene_view->setChain(vn::graphics::PassChain::build(control->engine(), options));
     }
     ASSERT_NE(scene_view->chain(), nullptr);
-    const auto host_chain_run = commands->executeCommandAndWait(
-        vn::String(vn::model_viewer::kShadingModeUnlitCommand), vn::appfw::gui::resolveCommandTarget(&window));
+    const auto host_chain_run =
+        commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeUnlitCommand), vn::appfw::gui::resolveCommandTarget(&window));
     EXPECT_EQ(host_chain_run.status(), vn::appfw::CommandStatus::Success);
-    EXPECT_EQ(scene_view->chain()->shadingMode(), vn::graphics::ShadingMode::Unlit)
-        << "宿主搭的链也换得了这一档（怎么重建归控件）";
+    EXPECT_EQ(scene_view->chain()->shadingMode(), vn::graphics::ShadingMode::Unlit) << "宿主搭的链也换得了这一档（怎么重建归控件）";
 
     // 守卫：当前文档不是模型（这里直接清掉当前文档）⇒ 命令如实说"不适用"，而不是去改别人的视图。
     ASSERT_TRUE(documents->setCurrent(nullptr));
-    const auto refused = commands->executeCommandAndWait(
-        vn::String(vn::model_viewer::kShadingModeWireframeCommand), vn::appfw::gui::resolveCommandTarget(&window));
+    const auto refused =
+        commands->executeCommandAndWait(vn::String(vn::model_viewer::kShadingModeWireframeCommand), vn::appfw::gui::resolveCommandTarget(&window));
     EXPECT_EQ(refused.status(), vn::appfw::CommandStatus::NotApplicable);
     EXPECT_FALSE(refused.message().empty()) << "要说清为什么（不静默）";
     // 没有当前文档就没有上屏的视图：派发解析得出**空目标**（不是谁“收回”了，是没有人被问到）。
@@ -561,9 +555,9 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     // 视图层那三段（注册表 / 宿主 / 中央容器）在 DocumentViewTest 里各自被钉过；这条钉的是**插件自己**那一段，
     // 以及"一个文档 = 一个视图 = 它自己那份资源"：视图自带渲染控件（自己的面/会话/设备），两份文档的控件与引擎
     // **都不是同一个**；宿主看到的是一实例一页（`content()` 就是视图自己）。
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
@@ -587,13 +581,11 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     EXPECT_EQ(first->content(), first) << "视图交出去的就是它自己：一实例一页";
     EXPECT_EQ(host.shownContent(), first);
     EXPECT_NE(first->renderControl(), nullptr);
-    EXPECT_EQ(first->renderControl()->engine(), first->renderControl()->view()->engine())
-        << "自己的控件服务自己的 view";
+    EXPECT_EQ(first->renderControl()->engine(), first->renderControl()->view()->engine()) << "自己的控件服务自己的 view";
 
     // The dispatch resolves the target from the shown view: no view publishes itself into a window-wide slot, and
     // two visible areas each keep their own answer (see ADR-2026-10-24-command-target.md).
-    EXPECT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), first)
-        << "当前文档视图就是派发该给出的那块 3D 区";
+    EXPECT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), first) << "当前文档视图就是派发该给出的那块 3D 区";
 
     // 第二份：另一个视图、另一块渲染面、另一个引擎 —— 资源不共享（共享的只有 DockPanel/Ribbon 那套外壳）。
     ASSERT_NE(openModel(documents, u8"网格", vn::model_viewer::makeGridMesh(2)), nullptr);
@@ -603,8 +595,7 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     EXPECT_NE(second->renderControl(), first->renderControl()) << "每份文档一块自己的渲染面";
     EXPECT_NE(second->renderControl()->engine(), first->renderControl()->engine()) << "各自的会话，不共享";
     EXPECT_NE(second->renderControl()->view(), first->renderControl()->view()) << "各自的 view";
-    EXPECT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), second)
-        << "切到第二份文档，派发的目标跟着换（派生，不是谁最后发布）";
+    EXPECT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), second) << "切到第二份文档，派发的目标跟着换（派生，不是谁最后发布）";
 
     // 关掉当前那份：它的视图和它那套资源跟着消失，另一份接替成为当前文档（tab 条表达不了“什么都没选中”，
     // 所以宿主在 close 之后请求接替的那一格）。另一份的视图和资源原样还在 —— 视图仍按实例缓存。
@@ -717,8 +708,7 @@ TEST(ModelViewerTest, AMultiPartModelReachesTheSceneAsPartsAndSelectionPicksOne)
     // 相机与视口由用例定死（同点击用例）：世界 x = ±1 在 400×400 的画面上落在像素 93 / 307。
     auto* camera = scene_view->camera();
     ASSERT_NE(camera, nullptr);
-    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 7.0), vn::math::Vec3d(0.0, 0.0, 0.0),
-                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 7.0), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setPerspective(30.0, 0.1, 100.0);
     camera->setAspect(1.0);
     scene_view->resize(400, 400, 1.0);
@@ -768,9 +758,9 @@ TEST(ModelViewerTest, AMultiPartModelReachesTheSceneAsPartsAndSelectionPicksOne)
 // 不选中 —— 没有这条松弛量，转完相机就会顺手选中一个东西。
 TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
 {
-    vn::appfw::DocumentManager          documents;
+    vn::appfw::DocumentManager           documents;
     vn::appfw::gui::DocumentViewRegistry views;
-    vn::appfw::gui::MainWindow          window;
+    vn::appfw::gui::MainWindow           window;
 
     auto* docks = window.dockPanelManager();
     ASSERT_NE(docks, nullptr);
@@ -794,8 +784,7 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     // 偏出 1.6 左右，**真的落空**（判"点空白"必须真的落空，否则量到的是别的东西）。
     auto* camera = scene_view->camera();
     ASSERT_NE(camera, nullptr);
-    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 7.0), vn::math::Vec3d(0.0, 0.0, 0.0),
-                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 7.0), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setPerspective(30.0, 0.1, 100.0);
     camera->setAspect(1.0);
     scene_view->resize(400, 400, 1.0);
@@ -803,8 +792,7 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     // ① 视图装的操纵器是自己的拾取型（不是默认那个裸轨道操纵器）。
     auto* manipulator = scene_view->manipulator();
     ASSERT_NE(manipulator, nullptr);
-    EXPECT_NE(dynamic_cast<vn::model_viewer::ModelPickManipulator*>(manipulator), nullptr)
-        << "视图必须把点击交回自己（ModelPickManipulator）";
+    EXPECT_NE(dynamic_cast<vn::model_viewer::ModelPickManipulator*>(manipulator), nullptr) << "视图必须把点击交回自己（ModelPickManipulator）";
 
     const auto scene = scene_view->scene();
     ASSERT_NE(scene, nullptr);
@@ -834,7 +822,7 @@ TEST(ModelViewerTest, AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt)
     ASSERT_NE(geometry->material(), nullptr);
     EXPECT_NE(geometry->material(), original) << "选中要看得见：材质换成了高亮那份";
     const vn::graphics::MaterialBase* const highlight_material = geometry->material();
-    const vn::Colorf highlight_colour = geometry->material()->baseColor();
+    const vn::Colorf                        highlight_colour   = geometry->material()->baseColor();
     EXPECT_GT(highlight_colour.r, highlight_colour.b) << "高亮是暖色（橙），与中灰的模型分得开";
 
     // ③ 点空白（角落）：取消选择，材质**原样**还回去。
@@ -899,7 +887,7 @@ TEST(ModelViewerTest, ThePickManipulatorFramesTheSceneItDraws)
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
     // 毫米级的立方体：边长 2000，半对角线约 1732 —— 正是报告里那个工作台的量级。
-    auto box = vn::model_viewer::makeBoxMesh();
+    auto                     box = vn::model_viewer::makeBoxMesh();
     vn::geometry::Vec3fArray scaled;
     scaled.reserve(box->positions().size());
     for (const auto& position : box->positions()) {
@@ -931,8 +919,7 @@ TEST(ModelViewerTest, ThePickManipulatorFramesTheSceneItDraws)
     camera->setPerspective(90.0, 0.1, 1000.0);
     camera->setAspect(1.0);
 
-    ASSERT_TRUE(scene_view->fitToScreen())
-        << "拾取型操纵器必须把场景交给内层轨道操纵器，否则 fitToScreen 没有包围盒可用";
+    ASSERT_TRUE(scene_view->fitToScreen()) << "拾取型操纵器必须把场景交给内层轨道操纵器，否则 fitToScreen 没有包围盒可用";
 
     const double distance = (camera->eye() - camera->target()).length();
     EXPECT_GT(distance, radius) << "整个模型都在眼前";
@@ -949,19 +936,32 @@ TEST(ModelViewerTest, ThePickManipulatorFramesTheSceneItDraws)
 }
 
 /// 记录它拿到的目标：命令实例随执行销毁，所以记在静态上（用例自己清零）。
-class TargetRecordingCommand final : public vn::appfw::Command
-{
+class TargetRecordingCommand final : public vn::appfw::Command {
   public:
     /// 最近一次执行收到的目标。
     static inline vn::appfw::CommandTarget s_seen{};
 
   public:
-    vn::String name() const override { return u8"record_target"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"records the execution target"; }
+    vn::String name() const override
+    {
+        return u8"record_target";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"records the execution target";
+    }
 
     // 声明它需要视图：没拿到目标时框架应该在命令体之前就拒绝。
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::NeedsView; }
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::NeedsView;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -1010,7 +1010,7 @@ TEST(ModelViewerTest, TheCommandTargetTravelsWithTheExecution)
 
     // 不给目标：同一条命令被框架统一拒绝，命令体一次都不跑。
     TargetRecordingCommand::s_seen = {};
-    const auto refused = commands.executeCommandAndWait(vn::String(u8"record_target"));
+    const auto refused             = commands.executeCommandAndWait(vn::String(u8"record_target"));
     EXPECT_EQ(refused.status(), vn::appfw::CommandStatus::NotApplicable);
     EXPECT_FALSE(refused.message().empty()) << "要说清缺什么";
     EXPECT_TRUE(TargetRecordingCommand::s_seen.isEmpty()) << "拒绝发生在命令体之前";

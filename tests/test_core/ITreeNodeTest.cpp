@@ -40,7 +40,7 @@ class Node : public IHierarchyNode<Node> {
     }
 
   private:
-    Node*               parent_;
+    Node*              parent_;
     std::vector<Node*> children_;
 };
 

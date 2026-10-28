@@ -41,8 +41,7 @@ VN_APPFW_NS_BEGIN
  * Thread contract: stage()/setDone()/setLabel()/complete() are called by the reporting thread (the application thread
  * during a boot), while label()/fraction() are read from wherever a presenter runs.
  */
-class VN_APPFW_API StartupProgress
-{
+class VN_APPFW_API StartupProgress {
   public:
     StartupProgress();
     ~StartupProgress();

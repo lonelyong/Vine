@@ -38,8 +38,7 @@
  * asked HERE, once (see available()), and the other device cases ask it too instead of the proxy. A machine
  * that cannot serve the fixture says so by returning false from up().
  */
-class SdkPixelFixture
-{
+class SdkPixelFixture {
   public:
     /// @brief Side of the picture in pixels: small enough to read whole, big enough to hold edges.
     static constexpr int kSide = 64;
@@ -70,11 +69,11 @@ class SdkPixelFixture
     /// @return The picture, or an INVALID probe when the readback was refused (the reason is printed).
     vn::graphics::backend::PixelProbe read();
 
-    vn::intrusive_ptr<vn::vsg::VsgBackend>          backend;
-    vn::intrusive_ptr<vn::graphics::RenderEngine>   engine;
-    vn::intrusive_ptr<vn::graphics::RenderTarget>   target;
-    vn::intrusive_ptr<vn::graphics::Scene>          scene;
-    vn::intrusive_ptr<vn::graphics::Camera>         camera;
+    vn::intrusive_ptr<vn::vsg::VsgBackend>        backend;
+    vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
+    vn::intrusive_ptr<vn::graphics::RenderTarget> target;
+    vn::intrusive_ptr<vn::graphics::Scene>        scene;
+    vn::intrusive_ptr<vn::graphics::Camera>       camera;
 };
 
 /// @brief Opens a device case (or skips it), with a fixture named @p fixture.
@@ -84,14 +83,14 @@ class SdkPixelFixture
 /// failure of the case rather than a skip of the machine. It lives here rather than in one case file because the
 /// device cases are spread over several, and a case that forgot one of the three checks would report a missing
 /// device as a failing feature.
-#define VN_SKIP_WITHOUT_SDK_DEVICE(fixture)                                                                   \
-    if (!SdkPixelFixture::available()) {                                                                        \
-        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";                      \
-    }                                                                                                           \
-    SdkPixelFixture fixture;                                                                                    \
-    if (!fixture.up()) {                                                                                        \
-        GTEST_SKIP() << "the SDK session cannot come up on this machine (see the diagnostics above)";           \
-    }                                                                                                           \
-    if (!fixture.backend->capabilities().render_targets) {                                                      \
-        GTEST_SKIP() << "this device cannot serve off-screen pixels";                                           \
+#define VN_SKIP_WITHOUT_SDK_DEVICE(fixture)                                                                                                                    \
+    if (!SdkPixelFixture::available()) {                                                                                                                       \
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";                                                                     \
+    }                                                                                                                                                          \
+    SdkPixelFixture fixture;                                                                                                                                   \
+    if (!fixture.up()) {                                                                                                                                       \
+        GTEST_SKIP() << "the SDK session cannot come up on this machine (see the diagnostics above)";                                                          \
+    }                                                                                                                                                          \
+    if (!fixture.backend->capabilities().render_targets) {                                                                                                     \
+        GTEST_SKIP() << "this device cannot serve off-screen pixels";                                                                                          \
     }

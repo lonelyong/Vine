@@ -41,27 +41,34 @@ using vn::appfw::gui::RenderControl;
 /// told, and how often initialize() was called. A stub also makes the failure paths reachable
 /// without a GPU, which is what pins "retries, then gives up" and "never attaches to an empty
 /// surface".
-class StubBackend : public vn::graphics::RenderBackend
-{
+class StubBackend : public vn::graphics::RenderBackend {
   public:
     /// The WINDOW HALF of the stub (see vn::graphics::RenderDevice::createSurfaceTarget): everything the control
     /// asks about the surface - the window the target was made for, the size it was told, the presents it drove.
-    class StubSurface : public vn::graphics::WindowPresentTarget
-    {
+    class StubSurface : public vn::graphics::WindowPresentTarget {
       public:
         void setWindowHandle(void* handle) override
         {
             last_handle = handle;
             ++handle_calls;
         }
-        [[nodiscard]] void* nativeHandle() const override { return last_handle; }
+
+        [[nodiscard]] void* nativeHandle() const override
+        {
+            return last_handle;
+        }
+
         void resize(int w, int h) override
         {
             width  = w;
             height = h;
             ++resize_calls;
         }
-        void present() override { ++presents; }
+
+        void present() override
+        {
+            ++presents;
+        }
 
       public:
         int   handle_calls{ 0 };
@@ -86,10 +93,12 @@ class StubBackend : public vn::graphics::RenderBackend
 
     /// Whether this device is up (see RenderDevice::initialized): the CONTROL is its creator, so the attach asks -
     /// the engine, which only borrows it, never brings it up.
-    [[nodiscard]] bool initialized() const noexcept override { return up; }
+    [[nodiscard]] bool initialized() const noexcept override
+    {
+        return up;
+    }
 
-    void executeFrame(const vn::graphics::FrameDescription& frame,
-                      vn::graphics::PresentTarget* present_to = nullptr) override
+    void executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
@@ -103,15 +112,19 @@ class StubBackend : public vn::graphics::RenderBackend
         }
     }
 
-    void setRenderTarget(vn::graphics::RenderTarget*) override {}
+    void setRenderTarget(vn::graphics::RenderTarget*) override
+    {}
 
-    [[nodiscard]] vn::graphics::RenderFrameExecutor& executor() override { return *this; }
+    [[nodiscard]] vn::graphics::RenderFrameExecutor& executor() override
+    {
+        return *this;
+    }
 
     /// Hands out the one window half this stub has (see RenderDevice::createSurfaceTarget): the window the control
     /// asks for is remembered, so "the target was made for THIS window" is checkable without a GPU. A stub whose
     /// `presents_nothing` is set answers the way a display-less device does, without a report.
-    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget>
-    createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why = nullptr) override
+    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> createSurfaceTarget(void*                              native_handle,
+                                                                                     vn::graphics::SurfaceTargetResult* why = nullptr) override
     {
         ++target_calls;
         if (presents_nothing) {
@@ -139,14 +152,14 @@ class StubBackend : public vn::graphics::RenderBackend
     /// Whether this device is up (see RenderDevice::initialized): false until its creator brings it up.
     bool up{ false };
 
-    int   initialize_calls{ 0 };
-    int   shutdown_calls{ 0 };
-    int   target_calls{ 0 };
+    int initialize_calls{ 0 };
+    int shutdown_calls{ 0 };
+    int target_calls{ 0 };
     /// How many frames the control's views ran, how many drawing calls they carried, and what each frame named as
     /// the surface it resolves to: the stub's own reading of the value the engine handed over (see
     /// RenderFrameExecutor::executeFrame).
-    int   frames{ 0 };
-    std::size_t draws{ 0 };
+    int                                       frames{ 0 };
+    std::size_t                               draws{ 0 };
     std::vector<vn::graphics::PresentTarget*> present_targets;
 };
 
@@ -170,8 +183,7 @@ bool pumpUntil(const std::function<bool()>& done, int timeout_ms)
 
 /// 记录型操纵器：只回答"哪些事件到了这个视图"。分屏那两条用例用它把**路由**变成可断言的事实 —— 相机怎么动是
 /// OrbitCameraManipulator 自己的用例的事，这里问的是"这条输入到底去了哪一格"。
-class RecordingManipulator : public vn::graphics::CameraManipulator
-{
+class RecordingManipulator : public vn::graphics::CameraManipulator {
   public:
     /// 需要一个相机（基类要它）：用哪个都行 —— 这个双只是"事件到了没有"的记录器，不驱动任何相机。
     explicit RecordingManipulator(vn::raw_ptr<vn::graphics::Camera> camera)
@@ -179,14 +191,43 @@ class RecordingManipulator : public vn::graphics::CameraManipulator
     {}
 
   public:
-    void apply() override {}
-    void onMousePress(const vn::window::MouseEvent&) override { ++mouse_presses; }
-    void onMouseMove(const vn::window::MouseEvent&) override { ++mouse_moves; }
-    void onMouseRelease(const vn::window::MouseEvent&) override { ++mouse_releases; }
-    void onScroll(const vn::window::ScrollEvent&) override { ++scrolls; }
-    void onKeyDown(const vn::window::KeyEvent&) override { ++key_downs; }
-    void onKeyUp(const vn::window::KeyEvent&) override { ++key_ups; }
-    void onResize(const vn::window::ResizeEvent&) override { ++resizes; }
+    void apply() override
+    {}
+
+    void onMousePress(const vn::window::MouseEvent&) override
+    {
+        ++mouse_presses;
+    }
+
+    void onMouseMove(const vn::window::MouseEvent&) override
+    {
+        ++mouse_moves;
+    }
+
+    void onMouseRelease(const vn::window::MouseEvent&) override
+    {
+        ++mouse_releases;
+    }
+
+    void onScroll(const vn::window::ScrollEvent&) override
+    {
+        ++scrolls;
+    }
+
+    void onKeyDown(const vn::window::KeyEvent&) override
+    {
+        ++key_downs;
+    }
+
+    void onKeyUp(const vn::window::KeyEvent&) override
+    {
+        ++key_ups;
+    }
+
+    void onResize(const vn::window::ResizeEvent&) override
+    {
+        ++resizes;
+    }
 
   public:
     int mouse_presses{ 0 };
@@ -199,8 +240,7 @@ class RecordingManipulator : public vn::graphics::CameraManipulator
 };
 
 /// Hosts a RenderControl in a window, with a stub backend unless asked not to have one.
-class HostedControl
-{
+class HostedControl {
   public:
     explicit HostedControl(bool with_backend = true)
     {
@@ -227,16 +267,33 @@ class HostedControl
         window_.resize(320, 240);
     }
 
-    void show() { window_.show(); }
+    void show()
+    {
+        window_.show();
+    }
 
     /// Resizes the window the control lives in (the layout then gives the surface the new area).
     /// @param w New window width.
     /// @param h New window height.
-    void resizeWindow(int w, int h) { window_.resize(w, h); }
+    void resizeWindow(int w, int h)
+    {
+        window_.resize(w, h);
+    }
 
-    RenderControl* control() const { return control_; }
-    StubBackend*   stub() const { return stub_; }
-    QWindow*       surface() const { return surface_; }
+    RenderControl* control() const
+    {
+        return control_;
+    }
+
+    StubBackend* stub() const
+    {
+        return stub_;
+    }
+
+    QWindow* surface() const
+    {
+        return surface_;
+    }
 
   private:
     QWidget                      window_;
@@ -342,7 +399,7 @@ TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
     auto*         control = host.control();
     ASSERT_NE(control, nullptr);
 
-    vn::appfw::gui::ViewerOptions options;  // 预设：延迟（宿主写的就是它，链只是它的实现）
+    vn::appfw::gui::ViewerOptions options; // 预设：延迟（宿主写的就是它，链只是它的实现）
     options.path = vn::graphics::ShadingPath::Deferred;
     ASSERT_TRUE(control->setViewerOptions(options));
     auto* pipeline = control->view()->chain();
@@ -376,8 +433,9 @@ TEST(RenderControlTest, ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt)
     EXPECT_EQ(control->viewerOptions().mode, vn::graphics::ShadingMode::Lit);
 }
 
-// 构造只组装：`new RenderControl()` 返回时**没有** attach（状态停在 Pending），配置写在它之后的同步代码里；// 第一拍兜底才 attach —— 而兜底用的正是宿主刚装上的那个后端（不是注册表里的默认）。这就是"配置窗口"，
-// 也是 SDK 写的次序（构造 ⇒ setDevice() ⇒ init()）不再依赖"构造那一刻注册表里有没有后端"的原因。
+// 构造只组装：`new RenderControl()` 返回时**没有** attach（状态停在 Pending），配置写在它之后的同步代码里；// 第一拍兜底才 attach ——
+// 而兜底用的正是宿主刚装上的那个后端（不是注册表里的默认）。这就是"配置窗口"， 也是 SDK 写的次序（构造 ⇒ setDevice() ⇒
+// init()）不再依赖"构造那一刻注册表里有没有后端"的原因。
 TEST(RenderControlTest, ConstructionOnlyComposesAndTheFirstTurnAttaches)
 {
     HostedControl host; // 后端在构造之后才装
@@ -483,8 +541,7 @@ TEST(RenderControlTest, ContinuousRenderingDrivesFramesWithoutInput)
     EXPECT_EQ(host.stub()->surface_half.presents, idle_before) << "按需模式：没人输入就不出帧";
 
     host.control()->setContinuousRendering(true, 10);
-    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents >= idle_before + 3; }, 3000))
-        << "连续渲染开着时应当自己出帧（不需要任何输入）";
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents >= idle_before + 3; }, 3000)) << "连续渲染开着时应当自己出帧（不需要任何输入）";
 
     // 关掉：帧数必须停住。给足两倍以上的滴答周期，避免把"刚好在跑的那一帧"当成还在继续。
     host.control()->setContinuousRendering(false);
@@ -520,13 +577,12 @@ TEST(RenderControlTest, InitAsyncCompletesWithoutSuspending)
     EXPECT_GT(host.stub()->initialize_calls, 0);
 }
 
-TEST(RenderControlTest, ReportsTheLifecycleThroughStateChanges){
+TEST(RenderControlTest, ReportsTheLifecycleThroughStateChanges)
+{
     HostedControl host;
 
     std::vector<RenderControl::SurfaceState> seen;
-    auto subscription = host.control()->state_changed.connect([&seen](RenderControl::SurfaceState state) {
-        seen.push_back(state);
-    });
+    auto subscription = host.control()->state_changed.connect([&seen](RenderControl::SurfaceState state) { seen.push_back(state); });
 
     host.show();
     ASSERT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
@@ -646,9 +702,9 @@ TEST(RenderControlTest, HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles)
 
     // 布局落下后尺寸被对齐：swapchain 按真实尺寸重建，随后首帧呈现。
     host.resizeWindow(640, 480);
-    ASSERT_TRUE(pumpUntil([&] {
-        return host.stub()->surface_half.width == host.surface()->width() && host.stub()->surface_half.height == host.surface()->height();
-    }, 3000));
+    ASSERT_TRUE(
+        pumpUntil([&] { return host.stub()->surface_half.width == host.surface()->width() && host.stub()->surface_half.height == host.surface()->height(); },
+                  3000));
     EXPECT_GT(host.stub()->surface_half.width, 1);
     EXPECT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
 }
@@ -669,9 +725,7 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
     const int handle_calls_before = host.stub()->surface_half.handle_calls;
 
     std::vector<RenderControl::SurfaceState> seen;
-    auto subscription = host.control()->state_changed.connect([&seen](RenderControl::SurfaceState state) {
-        seen.push_back(state);
-    });
+    auto subscription = host.control()->state_changed.connect([&seen](RenderControl::SurfaceState state) { seen.push_back(state); });
 
     // 平台窗口重建，就是 RenderControl 钩子里的那三件事（换屏/reparent 在测试里无法按需触发）。
     QWindow* surface = host.surface();
@@ -679,10 +733,9 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
     surface->create();
     surface->show();
 
-    ASSERT_TRUE(pumpUntil([&] {
-        return host.stub()->surface_half.last_handle != first_handle
-               && host.control()->state() == RenderControl::SurfaceState::Presenting;
-    }, 3000));
+    ASSERT_TRUE(
+        pumpUntil([&] { return host.stub()->surface_half.last_handle != first_handle && host.control()->state() == RenderControl::SurfaceState::Presenting; },
+                  3000));
     EXPECT_GT(host.stub()->surface_half.handle_calls, handle_calls_before);
     EXPECT_TRUE(surface->isVisible()); // 新窗口里重新落一帧之后才再上屏
 
@@ -709,7 +762,7 @@ TEST(RenderControlTest, TheViewerDrawsTheAreaFromItsRequest)
     EXPECT_EQ(viewer->view(), control->view());
     EXPECT_EQ(surface->presentedView(), control->view());
 
-    const int sessions_before = host.stub()->initialize_calls;  // 设备 = 会话：换请求不该多一个设备
+    const int sessions_before = host.stub()->initialize_calls; // 设备 = 会话：换请求不该多一个设备
 
     // 一条请求：要坐标轴、不要读数。它建的链就采纳在视图上（并仍然是这块区的呈现）。
     vn::appfw::gui::ViewerOptions wanted;
@@ -744,8 +797,8 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     ASSERT_NE(control->viewer(), nullptr);
 
     vn::graphics::ChainDesc options;
-    options.camera  = view->camera();
-    options.content = view->scene();
+    options.camera     = view->camera();
+    options.content    = view->scene();
     auto host_pipeline = vn::graphics::PassChain::build(control->engine(), options);
     ASSERT_NE(host_pipeline, nullptr);
     ASSERT_TRUE(surface->present(host_pipeline->presentingPass()));
@@ -764,14 +817,13 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     ASSERT_TRUE(pumpUntil([&] { return live.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
     EXPECT_TRUE(live.control()->viewer()->isActive());
 
-    auto* live_view = live.control()->view();
+    auto*                   live_view = live.control()->view();
     vn::graphics::ChainDesc live_options;
     live_options.camera  = live_view->camera();
     live_options.content = live_view->scene();
-    auto taken_over = vn::graphics::PassChain::build(live.control()->engine(), live_options);
+    auto taken_over      = vn::graphics::PassChain::build(live.control()->engine(), live_options);
     ASSERT_NE(taken_over, nullptr);
-    EXPECT_FALSE(live.control()->surface()->present(taken_over->presentingPass()))
-        << "查看器还在呈现这块区：第二条呈现是被拒的";
+    EXPECT_FALSE(live.control()->surface()->present(taken_over->presentingPass())) << "查看器还在呈现这块区：第二条呈现是被拒的";
     ASSERT_TRUE(live.control()->viewer()->release(live_view)) << "查看器放手";
     ASSERT_TRUE(live.control()->surface()->present(taken_over->presentingPass()));
     EXPECT_FALSE(live.control()->viewer()->isActive()) << "接管之后：呈现者是宿主自建的 pass";
@@ -814,11 +866,11 @@ TEST(RenderControlTest, ARebuildCarriesTheLiveChainsRuntimeChoices)
     auto*         viewer  = control->viewer();
     ASSERT_NE(viewer, nullptr);
 
-    vn::appfw::gui::ViewerOptions options;  // 延迟链 + 两个档都要：坐标轴 + 读数
-    options.path = vn::graphics::ShadingPath::Deferred;
+    vn::appfw::gui::ViewerOptions options; // 延迟链 + 两个档都要：坐标轴 + 读数
+    options.path  = vn::graphics::ShadingPath::Deferred;
     options.gizmo = true;
     options.stats = true;
-    ASSERT_TRUE(control->setViewerOptions(options));  // 控件的老入口 = 作用于第一格
+    ASSERT_TRUE(control->setViewerOptions(options)); // 控件的老入口 = 作用于第一格
     auto* first = control->view()->chain();
     ASSERT_NE(first, nullptr);
     EXPECT_EQ(first->shadingPath(), vn::graphics::ShadingPath::Deferred);
@@ -876,15 +928,14 @@ TEST(RenderControlTest, TheControlAsksItsDeviceForTheTargetOfTheWindowItGot)
 TEST(RenderControlTest, ADeviceThatPresentsNothingFailsTheAttachWithItsReason)
 {
     HostedControl host;
-    auto*         control = host.control();
-    host.stub()->presents_nothing = true;  // 这台设备没有窗口那一半（构造只组装，所以这一句赶在 attach 前）
+    auto*         control         = host.control();
+    host.stub()->presents_nothing = true; // 这台设备没有窗口那一半（构造只组装，所以这一句赶在 attach 前）
 
     ASSERT_TRUE(pumpUntil([&] { return control->state() == RenderControl::SurfaceState::Failed; }, 3000));
     EXPECT_EQ(host.stub()->target_calls, 1) << "控件向设备要过目标：它问的就是这个窗口";
     EXPECT_EQ(host.stub()->initialize_calls, 0) << "没有窗口就没有会话：设备不白起一次";
     EXPECT_EQ(host.stub()->surface_half.presents, 0);
-    EXPECT_NE(control->failureReason().as_std_str().find("presents nothing"), std::string::npos)
-        << "宿主读到的理由说了为什么（无呈现能力）";
+    EXPECT_NE(control->failureReason().as_std_str().find("presents nothing"), std::string::npos) << "宿主读到的理由说了为什么（无呈现能力）";
 }
 
 // 内容掩码（`.ai/design/graphics-scene.md` 的 L1）在 appfw 这一侧的入口：`ViewerOptions::layer_mask` 原样进配方，
@@ -905,7 +956,7 @@ TEST(RenderControlTest, TheViewerOptionsLayerMaskReachesTheContentPassesAndNotTh
 
     vn::appfw::gui::ViewerOptions wanted;
     wanted.layer_mask = 1u << 1;
-    wanted.gizmo      = true;  // 两个 HUD 档，用来钉"内容选择不碰 UI"
+    wanted.gizmo      = true; // 两个 HUD 档，用来钉"内容选择不碰 UI"
     wanted.stats      = true;
     ASSERT_TRUE(viewer->setViewerOptions(wanted));
     EXPECT_EQ(viewer->viewerOptions().layer_mask, 1u << 1) << "请求被记着：下一次重建从它开始";
@@ -927,5 +978,3 @@ TEST(RenderControlTest, TheViewerOptionsLayerMaskReachesTheContentPassesAndNotTh
     EXPECT_EQ(hud_passes, 2u) << "请求了坐标轴与读数，两条都在";
     control->renderFrame();
 }
-
-

@@ -7,7 +7,8 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Registers a waiter without letting a failure escape a suspension point.
@@ -31,17 +32,15 @@ namespace detail {
  * @param failure Receives the exception to rethrow from await_resume() when this returns false.
  * @return true when the handle is registered, false when the failure was captured instead.
  */
-template<typename Container>
+template <typename Container>
 [[nodiscard]]
 bool tryRegisterWaiter(Container& waiters, std::coroutine_handle<> h, std::exception_ptr& failure) noexcept
 {
-    try
-    {
+    try {
         waiters.push_back(h);
         return true;
     }
-    catch (...)
-    {
+    catch (...) {
         failure = std::current_exception();
         return false;
     }

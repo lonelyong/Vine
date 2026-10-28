@@ -14,11 +14,11 @@
 
 #include "VfsTestSupport.hpp"
 
+using vfstest::bytesOf;
+using vfstest::TempDir;
 using vn::io::DirectoryVfs;
 using vn::io::IoError;
 using vn::io::ZipArchive;
-using vfstest::bytesOf;
-using vfstest::TempDir;
 
 namespace
 {
@@ -54,7 +54,7 @@ std::string exerciseOwnStorage(int index)
     }
 
     // An in-memory archive touches the compression library through its own handle.
-    ZipArchive archive;
+    ZipArchive        archive;
     const std::string filler(200, static_cast<char>('a' + index));
     if (archive.addFile(u8"a.bin", bytesOf(text)) != IoError::Ok) {
         return "archive write failed";

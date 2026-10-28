@@ -31,18 +31,12 @@ namespace
 const char* kindToStr(workcell::DeviceKind kind)
 {
     switch (kind) {
-    case workcell::DeviceKind::Manipulator:
-        return "Manipulator";
-    case workcell::DeviceKind::ExternalAxis:
-        return "ExternalAxis";
-    case workcell::DeviceKind::Positioner:
-        return "Positioner";
-    case workcell::DeviceKind::Scanner:
-        return "Scanner";
-    case workcell::DeviceKind::Tool:
-        return "Tool";
-    default:
-        return "Other";
+    case workcell::DeviceKind::Manipulator: return "Manipulator";
+    case workcell::DeviceKind::ExternalAxis: return "ExternalAxis";
+    case workcell::DeviceKind::Positioner: return "Positioner";
+    case workcell::DeviceKind::Scanner: return "Scanner";
+    case workcell::DeviceKind::Tool: return "Tool";
+    default: return "Other";
     }
 }
 
@@ -94,8 +88,7 @@ const char* toCStr(const String& s)
 bool getAttrDouble(const tinyxml2::XMLElement* xe, const char* name, double& out)
 {
     const char* const value = xe->Attribute(name);
-    return value != nullptr && vn::robotics::io::detail::strToDouble(
-                                   String::fromUtf8(value), out);
+    return value != nullptr && vn::robotics::io::detail::strToDouble(String::fromUtf8(value), out);
 }
 
 /**
@@ -132,18 +125,17 @@ std::unique_ptr<workcell::Device> DeviceIO::loadXml(const std::filesystem::path&
         dir = std::filesystem::path(".");
     }
     vn::io::DirectoryVfs vfs(dir);
-    auto                   dev = loadXmlFromVfs(vfs, detail::pathLeafName(file_path), options);
+    auto                 dev = loadXmlFromVfs(vfs, detail::pathLeafName(file_path), options);
     dev->setFilePath(file_path);
     return dev;
 }
 
-std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vn::io::Vfs& vfs, const std::filesystem::path& vfs_path,
-                                                           const LoadOptions& options)
+std::unique_ptr<workcell::Device> DeviceIO::loadXmlFromVfs(vn::io::Vfs& vfs, const std::filesystem::path& vfs_path, const LoadOptions& options)
 {
     (void)options;
     ParseOptions opts;
     ParseContext ctx(opts);
-    ctx.vfs = &vfs;
+    ctx.vfs        = &vfs;
     const auto xml = detail::readText(vfs, vfs_path);
     if (!xml) {
         throw std::runtime_error("DeviceIO::loadXml, failed to read vfs file: " + vfs_path.generic_string());
@@ -171,14 +163,13 @@ std::unique_ptr<workcell::Device> DeviceIO::parseDeviceInternal(ParseContext& ct
     uint16_t major = 0, minor = 0;
     parseVersion(ctx, major, minor, xe_device);
     if (major != VN_ROBOTICS_IO_VERSION_MAJOR || minor != VN_ROBOTICS_IO_VERSION_MINOR) {
-        throw std::runtime_error("DeviceIO::parseDeviceInternal, unsupported version: " + std::to_string(major) + "."
-                                 + std::to_string(minor));
+        throw std::runtime_error("DeviceIO::parseDeviceInternal, unsupported version: " + std::to_string(major) + "." + std::to_string(minor));
     }
 
     // ---- identity / kind ----
-    const String name = attr(xe_device, "name");
-    const String kind_str = attr(xe_device, "kind");
-    const workcell::DeviceKind kind = kindFromStr(kind_str);
+    const String               name     = attr(xe_device, "name");
+    const String               kind_str = attr(xe_device, "kind");
+    const workcell::DeviceKind kind     = kindFromStr(kind_str);
 
     // ---- metadata (carries the length unit) ----
     workcell::DeviceMetadata meta;
@@ -189,16 +180,14 @@ std::unique_ptr<workcell::Device> DeviceIO::parseDeviceInternal(ParseContext& ct
         meta.name = name;
     }
     // Length scale: file unit -> in-memory mm.
-    const double file_value = meta.length_unit == workcell::LengthUnit::Meter
-                                  ? static_cast<double>(workcell::LengthUnit::Meter)
-                                  : static_cast<double>(workcell::LengthUnit::Millimeter);
+    const double file_value      = meta.length_unit == workcell::LengthUnit::Meter ? static_cast<double>(workcell::LengthUnit::Meter)
+                                                                                   : static_cast<double>(workcell::LengthUnit::Millimeter);
     ctx.options.len_unit_scaling = static_cast<double>(workcell::LengthUnit::Millimeter) / file_value;
 
     // ---- materials (named library, visual references resolve against it) ----
     std::vector<workcell::DeviceMaterial> materials;
     if (auto* const xe_materials = xe_device->FirstChildElement("materials")) {
-        for (auto* xe_mat = xe_materials->FirstChildElement("material"); xe_mat;
-             xe_mat = xe_mat->NextSiblingElement("material")) {
+        for (auto* xe_mat = xe_materials->FirstChildElement("material"); xe_mat; xe_mat = xe_mat->NextSiblingElement("material")) {
             const String mat_name = attr(xe_mat, "name");
             if (mat_name.empty()) {
                 continue;
@@ -212,10 +201,9 @@ std::unique_ptr<workcell::Device> DeviceIO::parseDeviceInternal(ParseContext& ct
     }
 
     // ---- links ----
-    std::vector<std::unique_ptr<workcell::Link>>   links;
-    std::map<String, raw_ptr<workcell::Link>>      link_by_name;
-    for (auto* xe_link = xe_device->FirstChildElement("link"); xe_link;
-         xe_link       = xe_link->NextSiblingElement("link")) {
+    std::vector<std::unique_ptr<workcell::Link>> links;
+    std::map<String, raw_ptr<workcell::Link>>    link_by_name;
+    for (auto* xe_link = xe_device->FirstChildElement("link"); xe_link; xe_link = xe_link->NextSiblingElement("link")) {
         auto link = std::make_unique<workcell::Link>(String());
         parseLink(ctx, *link, xe_link);
         link_by_name[link->name()] = link.get();
@@ -227,19 +215,17 @@ std::unique_ptr<workcell::Device> DeviceIO::parseDeviceInternal(ParseContext& ct
 
     // ---- joints ----
     std::vector<std::unique_ptr<workcell::Joint>> joints;
-    for (auto* xe_joint = xe_device->FirstChildElement("joint"); xe_joint;
-         xe_joint       = xe_joint->NextSiblingElement("joint")) {
+    for (auto* xe_joint = xe_device->FirstChildElement("joint"); xe_joint; xe_joint = xe_joint->NextSiblingElement("joint")) {
         joints.push_back(parseJoint(ctx, xe_joint, link_by_name));
     }
 
     // ---- device by kind ----
-    std::unique_ptr<workcell::Device> dev;
+    std::unique_ptr<workcell::Device>     dev;
     std::unique_ptr<workcell::DeviceData> data;
     if (kind == workcell::DeviceKind::Scanner) {
         auto sdata = std::make_unique<workcell::ScannerData>();
-        for (auto* xe_cam = xe_device->FirstChildElement("camera"); xe_cam;
-             xe_cam       = xe_cam->NextSiblingElement("camera")) {
-            auto cam  = std::make_unique<workcell::Scanner::Camera>();
+        for (auto* xe_cam = xe_device->FirstChildElement("camera"); xe_cam; xe_cam = xe_cam->NextSiblingElement("camera")) {
+            auto cam        = std::make_unique<workcell::Scanner::Camera>();
             cam->frame_name = attr(xe_cam, "frame");
             for (const char* tag : { "design", "calibrated" }) {
                 if (const auto* xe_intr = xe_cam->FirstChildElement(tag)) {
@@ -258,9 +244,8 @@ std::unique_ptr<workcell::Device> DeviceIO::parseDeviceInternal(ParseContext& ct
             }
             sdata->cameras.push_back(std::move(cam));
         }
-        for (auto* xe_proj = xe_device->FirstChildElement("projector"); xe_proj;
-             xe_proj       = xe_proj->NextSiblingElement("projector")) {
-            auto proj  = std::make_unique<workcell::Scanner::Projector>();
+        for (auto* xe_proj = xe_device->FirstChildElement("projector"); xe_proj; xe_proj = xe_proj->NextSiblingElement("projector")) {
+            auto proj        = std::make_unique<workcell::Scanner::Projector>();
             proj->frame_name = attr(xe_proj, "frame");
             for (const char* tag : { "design", "calibrated" }) {
                 if (const auto* xe_params = xe_proj->FirstChildElement(tag)) {
@@ -282,10 +267,10 @@ std::unique_ptr<workcell::Device> DeviceIO::parseDeviceInternal(ParseContext& ct
         dev  = std::make_unique<workcell::Scanner>();
     }
     else {
-        auto mdata       = std::make_unique<workcell::MotionDeviceData>();
-        mdata->kind      = kind;
-        data             = std::move(mdata);
-        dev              = std::make_unique<workcell::MotionDevice>();
+        auto mdata  = std::make_unique<workcell::MotionDeviceData>();
+        mdata->kind = kind;
+        data        = std::move(mdata);
+        dev         = std::make_unique<workcell::MotionDevice>();
     }
 
     data->metadata  = std::move(meta);
@@ -312,9 +297,9 @@ std::unique_ptr<workcell::Device> DeviceIO::parseDeviceInternal(ParseContext& ct
 
 std::unique_ptr<tinyxml2::XMLDocument> DeviceIO::buildDoc(const workcell::Device& dev, ExportContext& ctx)
 {
-    auto           doc = std::make_unique<tinyxml2::XMLDocument>();
-    auto* const    xe_device = doc->NewElement("device");
-    const auto&    meta = dev.metadata();
+    auto        doc       = std::make_unique<tinyxml2::XMLDocument>();
+    auto* const xe_device = doc->NewElement("device");
+    const auto& meta      = dev.metadata();
     xe_device->SetAttribute("name", toCStr(!meta.name.empty() ? meta.name : meta.model));
     xe_device->SetAttribute("kind", kindToStr(dev.deviceKind()));
     exportVersion(ctx, VN_ROBOTICS_IO_VERSION_MAJOR, VN_ROBOTICS_IO_VERSION_MINOR, xe_device);
@@ -354,7 +339,7 @@ void DeviceIO::savePkg(const workcell::Device& dev, vn::io::Vfs& vfs, const Save
     (void)options;
     ExportOptions opts;
     ExportContext ctx(opts);
-    ctx.vfs = &vfs;
+    ctx.vfs                  = &vfs;
     const auto           doc = buildDoc(dev, ctx);
     tinyxml2::XMLPrinter printer;
     doc->Print(&printer);
@@ -379,12 +364,10 @@ void DeviceIO::exportDeviceInternal(ExportContext& ctx, const workcell::Device& 
                     detail::appendWarning(ctx.msgs, "DeviceIO::exportDeviceInternal, unsupported material type in library, skipped.");
                     continue;
                 }
-                const auto& c     = color->color();
-                std::string rgba  = std::string(detail::doubleToStr(c.r).as_std_str()) + " "
-                                  + std::string(detail::doubleToStr(c.g).as_std_str()) + " "
-                                  + std::string(detail::doubleToStr(c.b).as_std_str()) + " "
-                                  + std::string(detail::doubleToStr(c.a).as_std_str());
-                auto xe_mat = xe_device->GetDocument()->NewElement("material");
+                const auto& c      = color->color();
+                std::string rgba   = std::string(detail::doubleToStr(c.r).as_std_str()) + " " + std::string(detail::doubleToStr(c.g).as_std_str()) + " " +
+                                     std::string(detail::doubleToStr(c.b).as_std_str()) + " " + std::string(detail::doubleToStr(c.a).as_std_str());
+                auto        xe_mat = xe_device->GetDocument()->NewElement("material");
                 xe_mat->SetAttribute("name", toCStr(entry.name));
                 xe_mat->SetAttribute("color", rgba.c_str());
                 xe_materials->LinkEndChild(xe_mat);
@@ -409,7 +392,7 @@ void DeviceIO::exportDeviceInternal(ExportContext& ctx, const workcell::Device& 
         if (cam) {
             xe_cam->SetAttribute("frame", toCStr(cam->frame ? cam->frame->name() : cam->frame_name));
             for (const char* tag : { "design", "calibrated" }) {
-                const auto& intr = std::string(tag) == "design" ? cam->design_intrinsics : cam->calibrated_intrinsics;
+                const auto& intr    = std::string(tag) == "design" ? cam->design_intrinsics : cam->calibrated_intrinsics;
                 auto        xe_intr = xe_device->GetDocument()->NewElement(tag);
                 setAttrDouble(xe_intr, "width", intr.width);
                 setAttrDouble(xe_intr, "height", intr.height);
@@ -429,7 +412,7 @@ void DeviceIO::exportDeviceInternal(ExportContext& ctx, const workcell::Device& 
         if (proj) {
             xe_proj->SetAttribute("frame", toCStr(proj->frame ? proj->frame->name() : proj->frame_name));
             for (const char* tag : { "design", "calibrated" }) {
-                const auto& params = std::string(tag) == "design" ? proj->design_params : proj->calibrated_params;
+                const auto& params    = std::string(tag) == "design" ? proj->design_params : proj->calibrated_params;
                 auto        xe_params = xe_device->GetDocument()->NewElement(tag);
                 setAttrDouble(xe_params, "fov_w", params.fov_w);
                 setAttrDouble(xe_params, "fov_h", params.fov_h);

@@ -15,7 +15,7 @@ namespace
 /** @brief The validation layer, when a caller asks for it. */
 constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
-}  // namespace
+} // namespace
 
 vn::String deviceFailureMessage(const ::vsg::Exception& error)
 {
@@ -37,8 +37,7 @@ DeviceResult createDevice(const DeviceOptions& options)
     DeviceResult result;
 
     ::vsg::Names layers;
-    if (options.validation)
-    {
+    if (options.validation) {
         layers.push_back(kValidationLayer);
     }
 
@@ -51,24 +50,23 @@ DeviceResult createDevice(const DeviceOptions& options)
     // this loop would end the walk at the first version instead of trying the next one: the descending order
     // would exist in the source and nowhere else. The result is caught and turned into "try the next one".
     const auto createInstance = [&layers](std::uint32_t version) -> ::vsg::ref_ptr<::vsg::Instance> {
-        try
-        {
+        try {
             // No window, so no surface and no instance extensions: this is the whole reason the seam exists.
             return ::vsg::Instance::create(::vsg::Names{}, layers, version);
         }
-        catch (const ::vsg::Exception&)
-        {
+        catch (const ::vsg::Exception&) {
             return nullptr;
         }
     };
 
-    for (const std::uint32_t version : { core::makeApiVersion(1, 4, 0), core::makeApiVersion(1, 3, 0),
-                                         core::makeApiVersion(1, 2, 0), core::makeApiVersion(1, 1, 0),
+    for (const std::uint32_t version : { core::makeApiVersion(1, 4, 0),
+                                         core::makeApiVersion(1, 3, 0),
+                                         core::makeApiVersion(1, 2, 0),
+                                         core::makeApiVersion(1, 1, 0),
                                          core::makeApiVersion(1, 0, 0) })
     {
         result.instance = createInstance(version);
-        if (result.instance != nullptr)
-        {
+        if (result.instance != nullptr) {
             break;
         }
     }
@@ -79,22 +77,21 @@ DeviceResult createDevice(const DeviceOptions& options)
     // "validation-clean" has to be able to see that the layer is not there, or its three-way evidence
     // (validation and counters and pixels) silently becomes two-way. So the layer is dropped and
     // `DeviceResult::validation` says so.
-    if (result.instance == nullptr && !layers.empty())
-    {
+    if (result.instance == nullptr && !layers.empty()) {
         layers.clear();
-        for (const std::uint32_t version : { core::makeApiVersion(1, 4, 0), core::makeApiVersion(1, 3, 0),
-                                             core::makeApiVersion(1, 2, 0), core::makeApiVersion(1, 1, 0),
+        for (const std::uint32_t version : { core::makeApiVersion(1, 4, 0),
+                                             core::makeApiVersion(1, 3, 0),
+                                             core::makeApiVersion(1, 2, 0),
+                                             core::makeApiVersion(1, 1, 0),
                                              core::makeApiVersion(1, 0, 0) })
         {
             result.instance = createInstance(version);
-            if (result.instance != nullptr)
-            {
+            if (result.instance != nullptr) {
                 break;
             }
         }
     }
-    if (result.instance == nullptr)
-    {
+    if (result.instance == nullptr) {
         result.error = vn::String(u8"no Vulkan loader (no instance could be created)");
         return result;
     }
@@ -105,15 +102,12 @@ DeviceResult createDevice(const DeviceOptions& options)
     // loader lists first rather than an arbitrary one.
     ::vsg::ref_ptr<::vsg::PhysicalDevice> chosen;
     int                                   queue_family = -1;
-    for (const ::vsg::ref_ptr<::vsg::PhysicalDevice>& physical : result.instance->getPhysicalDevices())
-    {
-        if (physical == nullptr || !api::describePhysicalDevice(*physical).usable)
-        {
+    for (const ::vsg::ref_ptr<::vsg::PhysicalDevice>& physical : result.instance->getPhysicalDevices()) {
+        if (physical == nullptr || !api::describePhysicalDevice(*physical).usable) {
             continue;
         }
         const int family = physical->getQueueFamily(VK_QUEUE_GRAPHICS_BIT);
-        if (family < 0)
-        {
+        if (family < 0) {
             continue;
         }
         chosen       = physical;
@@ -121,8 +115,7 @@ DeviceResult createDevice(const DeviceOptions& options)
         break;
     }
 
-    if (chosen == nullptr)
-    {
+    if (chosen == nullptr) {
         result.error = vn::String(u8"no device satisfies the device-floor requirements");
         return result;
     }
@@ -130,7 +123,9 @@ DeviceResult createDevice(const DeviceOptions& options)
     ::vsg::ref_ptr<::vsg::DeviceFeatures> feature_chain = ::vsg::DeviceFeatures::create();
     applyRequiredFeatures(feature_chain);
 
-    const ::vsg::QueueSettings queue_settings{ ::vsg::QueueSetting{ queue_family, std::vector<float>{ 1.0F } } };
+    const ::vsg::QueueSettings queue_settings{
+        ::vsg::QueueSetting{ queue_family, std::vector<float>{ 1.0F } }
+    };
     // The extensions the pipeline layer declares dynamic state from (see requiredDeviceExtensions): passing
     // an empty list here is what makes a "dynamic state" the driver may never be told about.
     //
@@ -138,18 +133,14 @@ DeviceResult createDevice(const DeviceOptions& options)
     // refusal a caller actually meets is the device cap (see deviceFailureMessage): this seam answers with a
     // reason like every other failure it can have, because "a device could not be created" is a value here,
     // never an exception out of a caller's back.
-    try
-    {
-        result.device = ::vsg::Device::create(chosen.get(), queue_settings, layers, requiredDeviceExtensions(),
-                                             feature_chain);
+    try {
+        result.device = ::vsg::Device::create(chosen.get(), queue_settings, layers, requiredDeviceExtensions(), feature_chain);
     }
-    catch (const ::vsg::Exception& error)
-    {
+    catch (const ::vsg::Exception& error) {
         result.error = deviceFailureMessage(error);
         return result;
     }
-    if (result.device == nullptr)
-    {
+    if (result.device == nullptr) {
         result.error = vn::String(u8"the device could not be created with the required features");
         return result;
     }

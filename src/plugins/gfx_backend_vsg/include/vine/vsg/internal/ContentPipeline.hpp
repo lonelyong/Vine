@@ -12,10 +12,10 @@
 #include <vsg/state/Sampler.h>
 #include <vsg/state/ShaderStage.h>
 
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/ProgramAbi.hpp>
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/vsg/internal/ProgramAbi.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -77,8 +77,7 @@ VN_VSG_NS_BEGIN
 struct GeometryFacts;
 
 /** @brief Content pipelines: identity in, `vsg::GraphicsPipeline` out. */
-class ContentPipeline
-{
+class ContentPipeline {
   public:
     /** @brief The set THIS backward's own arrangement puts a pass' sampled inputs in (the engine's programs
      *         declare their maps in their own sets instead - see api/ProgramAbi). A sampler declared in this
@@ -88,28 +87,25 @@ class ContentPipeline
     static constexpr std::uint32_t kInputSet = 1U;
 
     /** @brief One vertex stream the pipeline declares. */
-    struct VertexBinding
-    {
-        std::uint32_t binding{0};            ///< Binding index the array is bound at.
-        std::uint32_t stride{0};             ///< Bytes between two elements.
-        bool          per_instance{false};   ///< Instance rate instead of vertex rate.
+    struct VertexBinding {
+        std::uint32_t binding{ 0 };          // Binding index the array is bound at.
+        std::uint32_t stride{ 0 };           // Bytes between two elements.
+        bool          per_instance{ false }; // Instance rate instead of vertex rate.
     };
 
     /** @brief One attribute the pipeline declares. */
-    struct VertexAttribute
-    {
-        std::uint32_t location{0};   ///< Shader location.
-        std::uint32_t binding{0};    ///< Binding the value is read from.
-        std::uint32_t format{0};     ///< `VkFormat` of the component.
-        std::uint32_t offset{0};     ///< Byte offset inside the element.
+    struct VertexAttribute {
+        std::uint32_t location{ 0 }; // Shader location.
+        std::uint32_t binding{ 0 };  // Binding the value is read from.
+        std::uint32_t format{ 0 };   // `VkFormat` of the component.
+        std::uint32_t offset{ 0 };   // Byte offset inside the element.
     };
 
     /** @brief The GLSL text the pipeline's shader stages are compiled from, and the variant's defines. */
-    struct Shaders
-    {
-        std::string              vertex;    ///< Vertex stage source.
-        std::string              fragment;  ///< Fragment stage source.
-        std::string              entry{"main"};  ///< Entry point of both stages.
+    struct Shaders {
+        std::string vertex;          // Vertex stage source.
+        std::string fragment;        // Fragment stage source.
+        std::string entry{ "main" }; // Entry point of both stages.
         /// The defines this compile asks for (see api/ProgramVariant). The texts are the SAME text for
         /// every variant of a program - what changes is which of their `#pragma import_defines` names
         /// are defined, and vsg delivers a name only when the source asks for it AND the caller lists
@@ -119,26 +115,24 @@ class ContentPipeline
     };
 
     /** @brief What the pipeline is built against, besides the identity. */
-    struct Settings
-    {
-        std::uint32_t color_attachments{1};  ///< Colour attachments the blend state declares.
-        std::uint32_t push_bytes{0};         ///< The FULL-SCREEN path's push budget, when its text declares one: a
-                                             ///< content program's push ranges are its own declarations (see
-                                             ///< `create`), and the SDK's own screen programs declare none - they
-                                             ///< read their lights from the light block (see LightBlock).
+    struct Settings {
+        std::uint32_t color_attachments{ 1 }; // Colour attachments the blend state declares.
+        std::uint32_t push_bytes{ 0 };        // The FULL-SCREEN path's push budget, when its text declares one: a
+                                              // content program's push ranges are its own declarations (see
+                                              // `create`), and the SDK's own screen programs declare none - they
+                                              // read their lights from the light block (see LightBlock).
         /// The primitive assembly the pipeline's STATIC topology states. It is part of the identity rather
         /// than runtime state because of the API's rule: a topology set dynamically may only be of the same
         /// CLASS as this baked value, so a layer built for another class cannot serve the draw at all (see
         /// core::PipelineKey::topology).
-        vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
+        vn::graphics::Topology topology{ vn::graphics::Topology::Triangles };
     };
 
     /** @brief What an acquire did. */
-    struct Result
-    {
-        core::VariantPool::Action                action{core::VariantPool::Action::Created};  ///< Created or reused.
-        std::uint64_t                            id{0};      ///< The variant id the pool handed out.
-        ::vsg::ref_ptr<::vsg::GraphicsPipeline>   pipeline;  ///< The pipeline (null when it could not be built).
+    struct Result {
+        core::VariantPool::Action               action{ core::VariantPool::Action::Created }; // Created or reused.
+        std::uint64_t                           id{ 0 };                                      // The variant id the pool handed out.
+        ::vsg::ref_ptr<::vsg::GraphicsPipeline> pipeline;                                     // The pipeline (null when it could not be built).
     };
 
   public:
@@ -171,10 +165,11 @@ class ContentPipeline
      *         that can never build a pipeline has nothing to offer, and the caller reports it rather than
      *         drawing an empty frame).
      */
-    static std::unique_ptr<ContentPipeline> create(const ProgramAbi& abi,
-                                                   std::span<const VertexBinding>  bindings,
+    static std::unique_ptr<ContentPipeline> create(const ProgramAbi&                abi,
+                                                   std::span<const VertexBinding>   bindings,
                                                    std::span<const VertexAttribute> attributes,
-                                                   const Shaders& shaders, const Settings& settings);
+                                                   const Shaders&                   shaders,
+                                                   const Settings&                  settings);
 
     /** @brief Creates the layer for a content program with the default settings (see @ref Settings).
      *
@@ -184,10 +179,8 @@ class ContentPipeline
      * @param shaders    GLSL text of both stages.
      * @return The layer, or null when the GLSL did not compile or a declaration cannot be served.
      */
-    static std::unique_ptr<ContentPipeline> create(const ProgramAbi& abi,
-                                                   std::span<const VertexBinding>  bindings,
-                                                   std::span<const VertexAttribute> attributes,
-                                                   const Shaders& shaders);
+    static std::unique_ptr<ContentPipeline>
+    create(const ProgramAbi& abi, std::span<const VertexBinding> bindings, std::span<const VertexAttribute> attributes, const Shaders& shaders);
 
     /** @brief Creates the layer for a content program over one geometry ENTRY's channels.
      *
@@ -209,8 +202,7 @@ class ContentPipeline
      * @return The layer, or null when the GLSL did not compile, a declaration cannot be served, or a channel
      *         has no canonical binding.
      */
-    static std::unique_ptr<ContentPipeline> create(const ProgramAbi& abi, const GeometryFacts& geometry,
-                                                   const Shaders& shaders, const Settings& settings);
+    static std::unique_ptr<ContentPipeline> create(const ProgramAbi& abi, const GeometryFacts& geometry, const Shaders& shaders, const Settings& settings);
 
     /** @brief Creates a FULL-SCREEN layer: the other descriptor ABI, whose set is what the text declares.
      *
@@ -241,8 +233,7 @@ class ContentPipeline
      * @return The layer, or null when the GLSL did not compile or a declaration breaks one of the rules
      *         above (a layer that can never build a pipeline has nothing to offer).
      */
-    static std::unique_ptr<ContentPipeline> createScreen(const ProgramAbi& abi, const Shaders& shaders,
-                                                         const Settings& settings);
+    static std::unique_ptr<ContentPipeline> createScreen(const ProgramAbi& abi, const Shaders& shaders, const Settings& settings);
 
     /** @brief Creates a full-screen layer with the default settings (see @ref Settings).
      *
@@ -254,7 +245,7 @@ class ContentPipeline
 
     ~ContentPipeline();
 
-    ContentPipeline(const ContentPipeline&) = delete;
+    ContentPipeline(const ContentPipeline&)            = delete;
     ContentPipeline& operator=(const ContentPipeline&) = delete;
 
   public:
@@ -345,8 +336,7 @@ class ContentPipeline
      *                               takes the binding its text names - see @ref sampledSetLayout).
      * @return The layout, or null when it could not be created (or does not exist for this kind).
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layoutFor(std::uint32_t sampled_color_bindings,
-                                                                 std::uint32_t sampled_depth_bindings);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layoutFor(std::uint32_t sampled_color_bindings, std::uint32_t sampled_depth_bindings);
 
     /** @brief Gets (or builds and keeps) the sampled-input set layout for @p color_bindings colour samplers
      *         and @p depth_bindings depth samplers.
@@ -373,8 +363,7 @@ class ContentPipeline
      * @return The set layout, or null for zero bindings (a layer with nothing to sample and nothing declared
      *         has no such set).
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSetLayout> sampledSetLayout(std::uint32_t color_bindings,
-                                                                             std::uint32_t depth_bindings);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSetLayout> sampledSetLayout(std::uint32_t color_bindings, std::uint32_t depth_bindings);
 
     /** @brief Gets the sampler the sampled-input set binds its IMAGES with.
      *

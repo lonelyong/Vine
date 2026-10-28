@@ -55,13 +55,12 @@ void Device::initDevice(std::unique_ptr<DeviceData> data)
     const auto& def_joints = owned_data_->joints;
 
     // ---- 构建连杆图：每个连杆记录入边(指向它的关节)与出边(它指向的关节) ----
-    struct Node
-    {
-        Link* link{ nullptr };
+    struct Node {
+        Link*               link{ nullptr };
         std::vector<Joint*> incoming;
     };
 
-    std::unordered_map<Link*, Node>               nodes;
+    std::unordered_map<Link*, Node>                nodes;
     std::unordered_map<Link*, std::vector<Joint*>> outgoing;
 
     for (const auto& link : def_links) {
@@ -89,7 +88,8 @@ void Device::initDevice(std::unique_ptr<DeviceData> data)
                 throw std::logic_error("Device::initDevice, multiple base links found.");
             }
             base_link = link;
-        } else if (node.incoming.size() > 1) {
+        }
+        else if (node.incoming.size() > 1) {
             throw std::logic_error("Device::initDevice, a link has multiple parent joints.");
         }
     }
@@ -115,7 +115,7 @@ void Device::initDevice(std::unique_ptr<DeviceData> data)
     std::unordered_set<Link*> visited;
     visited.insert(base_link);
 
-    std::vector<Link*> ordered_links;
+    std::vector<Link*>  ordered_links;
     std::vector<Joint*> ordered_joints;
 
     while (!link_queue.empty()) {
@@ -162,8 +162,8 @@ void Device::initDevice(std::unique_ptr<DeviceData> data)
         frames_.push_back(joint);
     }
 
-    links_  = std::move(ordered_links);
-    joints_ = std::move(ordered_joints);
+    links_    = std::move(ordered_links);
+    joints_   = std::move(ordered_joints);
     is_valid_ = true;
 }
 

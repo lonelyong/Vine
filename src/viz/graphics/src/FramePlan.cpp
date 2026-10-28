@@ -16,8 +16,7 @@ std::string pointerText(const void* pointer)
         return "-";
     }
     char buffer[2 + sizeof(std::uintptr_t) * 2 + 1]{};
-    std::snprintf(buffer, sizeof(buffer), "0x%llx",
-                  static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(pointer)));
+    std::snprintf(buffer, sizeof(buffer), "0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(pointer)));
     return buffer;
 }
 
@@ -31,8 +30,12 @@ std::string clearText(const PassPlan& pass)
     // light, and telling which one this is was the whole point (see ClearPolicy). Three decimals is finer than an
     // 8-bit sRGB step at the values a pass usually clears to.
     char color[256]{};
-    std::snprintf(color, sizeof(color), "linear(%.3f,%.3f,%.3f,%.3f)", static_cast<double>(pass.clear_color.r),
-                  static_cast<double>(pass.clear_color.g), static_cast<double>(pass.clear_color.b),
+    std::snprintf(color,
+                  sizeof(color),
+                  "linear(%.3f,%.3f,%.3f,%.3f)",
+                  static_cast<double>(pass.clear_color.r),
+                  static_cast<double>(pass.clear_color.g),
+                  static_cast<double>(pass.clear_color.b),
                   static_cast<double>(pass.clear_color.a));
     return std::string(color) + (pass.clears_depth ? ",depth)" : ")");
 }
@@ -68,11 +71,10 @@ std::string viewportText(const PassPlan& pass)
         return "full";
     }
     const Viewport& rect = *pass.viewport;
-    return "[" + std::to_string(rect.x) + "," + std::to_string(rect.y) + " " + std::to_string(rect.width) + "x" +
-           std::to_string(rect.height) + "]";
+    return "[" + std::to_string(rect.x) + "," + std::to_string(rect.y) + " " + std::to_string(rect.width) + "x" + std::to_string(rect.height) + "]";
 }
 
-}  // namespace
+} // namespace
 
 String FramePlan::describe() const
 {

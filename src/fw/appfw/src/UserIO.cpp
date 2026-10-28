@@ -100,7 +100,7 @@ UserIO::PathCheck UserIO::checkPath(const String& text, const DirReadOptions& op
 {
     FileReadOptions file_options;
     file_options.require_existing = options.require_existing;
-    file_options.suggested_path = options.suggested_path;
+    file_options.suggested_path   = options.suggested_path;
     return checkPath(text, /*directory=*/true, file_options);
 }
 
@@ -131,7 +131,7 @@ UserIO::PathCheck UserIO::checkPath(const String& text, bool directory, const Fi
     }
 
     if (!directory && !options.extensions.empty()) {
-        const String name = String(path.filename().u8string()).toLower();
+        const String name    = String(path.filename().u8string()).toLower();
         bool         matched = false;
         for (const String& extension : options.extensions) {
             const String normalized = normalizeExtension(extension);
@@ -184,7 +184,7 @@ UserIO::PathLineCheck UserIO::checkPathLine(const String& text, const DirReadOpt
 {
     FileReadOptions file_options;
     file_options.require_existing = options.require_existing;
-    file_options.suggested_path = options.suggested_path;
+    file_options.suggested_path   = options.suggested_path;
     return checkPathLine(text, file_options);
 }
 

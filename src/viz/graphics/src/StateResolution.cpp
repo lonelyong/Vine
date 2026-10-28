@@ -20,7 +20,7 @@ constexpr float kMinimumPointSize = 1.0F;
 /// non-positive request is raised to it instead of becoming "invisible".
 constexpr float kMinimumLineWidth = 1.0F;
 
-}  // namespace
+} // namespace
 
 ResolvedRenderState resolveRenderState(const RenderState& state)
 {
@@ -49,30 +49,29 @@ ResolvedRenderState resolveRenderState(const RenderState& state)
     return resolved;
 }
 
-ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass,
-                                        Topology data_topology)
+ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass, Topology data_topology)
 {
     ResolvedCommandState resolved;
 
     // The content's word first, item by item: what a StateNode authored is kept (and says so), everything it did
     // not author is still the "nobody said" case the defaults below answer.
     if (authored.cullMode) {
-        resolved.state.cullMode = *authored.cullMode;
+        resolved.state.cullMode  = *authored.cullMode;
         resolved.origin.cullMode = StateOrigin::Content;
     }
     if (authored.blend) {
-        resolved.state.blend = *authored.blend;
+        resolved.state.blend  = *authored.blend;
         resolved.origin.blend = StateOrigin::Content;
     }
     if (authored.polygonMode) {
-        resolved.state.polygonMode = *authored.polygonMode;
+        resolved.state.polygonMode  = *authored.polygonMode;
         resolved.origin.polygonMode = StateOrigin::Content;
     }
     // A depth bias is something the CONTENT says about its own surfaces (this decal sits on that panel), so it
     // has no pass layer: nothing a view chooses can make two coplanar faces stop fighting without also changing
     // what the content means.
     if (authored.polygonOffset) {
-        resolved.state.polygonOffset = *authored.polygonOffset;
+        resolved.state.polygonOffset  = *authored.polygonOffset;
         resolved.origin.polygonOffset = StateOrigin::Content;
     }
     // The point size is content-authored state like the rest, and it is the one item whose destination is the
@@ -98,20 +97,20 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
     // all - and the COMPARE stays whatever the content resolved to (the pass has no opinion about it, see
     // PassRenderState).
     if (authored.depth) {
-        resolved.state.depth        = *authored.depth;
-        resolved.origin.depth       = StateOrigin::Content;
+        resolved.state.depth  = *authored.depth;
+        resolved.origin.depth = StateOrigin::Content;
     }
     else {
-        resolved.state.depth.test    = pass.depth != DepthMode::Disabled;
-        resolved.state.depth.write   = pass.depth == DepthMode::TestAndWrite;
-        resolved.origin.depth        = StateOrigin::Pass;
+        resolved.state.depth.test  = pass.depth != DepthMode::Disabled;
+        resolved.state.depth.write = pass.depth == DepthMode::TestAndWrite;
+        resolved.origin.depth      = StateOrigin::Pass;
     }
 
     // Rasterisation is an OVERRIDE, so it comes last and wins even over a content-authored mode: it is the
     // "show me the edges" switch, and a switch a content-authored Line could veto would never take the picture
     // back to Fill (see PassRenderState).
     if (pass.polygonMode) {
-        resolved.state.polygonMode = *pass.polygonMode;
+        resolved.state.polygonMode  = *pass.polygonMode;
         resolved.origin.polygonMode = StateOrigin::Pass;
     }
 

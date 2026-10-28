@@ -183,8 +183,9 @@ class VN_APPFW_API CentralDocumentHost : public Control {
      */
     void syncToCurrentDocument();
 
-    void installIntoCentralArea();
+    void          installIntoCentralArea();
     DocumentView* obtainView(vn::appfw::Document& document);
+
   private:
     struct Impl;
     Impl*       dptr();

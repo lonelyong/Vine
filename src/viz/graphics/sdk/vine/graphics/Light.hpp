@@ -1,12 +1,12 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
-#include <vine/intrusive_ptr.hpp>
+#include <vine/Colorf.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
-#include <vine/Colorf.hpp>
-#include <vine/math/Vector3.hpp>
 #include <vine/String.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/math/Vector3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -21,11 +21,12 @@ using LightPtr = intrusive_ptr<Light>;
  *   packed block stores one as a float per slot, so renumbering the enumerators would silently turn every
  *   point light into a directional one. They are written out for that reason, not for style.
  */
-enum class LightType {
-    Ambient     = 0, ///< Constant, directionless fill light (not packed into the lights array).
-    Directional = 1, ///< Parallel light from an infinite distance (e.g. the sun).
-    Point       = 2, ///< Omni-directional light from a position.
-    Spot        = 3, ///< Cone light from a position, along a direction.
+enum class LightType
+{
+    Ambient     = 0, // Constant, directionless fill light (not packed into the lights array).
+    Directional = 1, // Parallel light from an infinite distance (e.g. the sun).
+    Point       = 2, // Omni-directional light from a position.
+    Spot        = 3, // Cone light from a position, along a direction.
 };
 
 /**
@@ -40,8 +41,8 @@ enum class LightType {
  *   did. A filter arrives together with the implementation that honours it, not before.
  */
 struct VN_GRAPHICS_API ShadowSettings {
-    uint32_t resolution = 1024;   ///< Shadow-map side length in texels.
-    float    bias       = 0.002f; ///< Depth bias used to avoid self-shadowing.
+    uint32_t resolution = 1024;   // Shadow-map side length in texels.
+    float    bias       = 0.002f; // Depth bias used to avoid self-shadowing.
 };
 
 /**
@@ -98,8 +99,8 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      * @param range       Distance at which the contribution reaches zero (see setRange).
      * @return The new light (white, full intensity, enabled).
      */
-    static LightPtr createSpot(const vn::math::Vec3d& position, const vn::math::Vec3d& direction,
-                               double inner_angle = 15.0, double outer_angle = 30.0, float range = 10.0F);
+    static LightPtr
+    createSpot(const vn::math::Vec3d& position, const vn::math::Vec3d& direction, double inner_angle = 15.0, double outer_angle = 30.0, float range = 10.0F);
 
   public:
     /** @brief Gets the light name.
@@ -290,18 +291,18 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
 
 
   private:
-    String                              name_;
-    LightType                           type_{ LightType::Ambient };
-    bool                                enabled_{ true };
-    Colorf                              color_{ 1.0f, 1.0f, 1.0f, 1.0f };
-    float                               intensity_{ 1.0f };
-    vn::math::Vec3d                   direction_{ 0.0, 0.0, -1.0 };
-    vn::math::Vec3d                   position_{ 0.0, 0.0, 0.0 };
-    float                               range_{ 0.0f };
-    double                              inner_cone_degrees_{ 15.0 };
-    double                              outer_cone_degrees_{ 30.0 };
-    bool                                cast_shadow_{ false };
-    ShadowSettings                      shadow_settings_;
+    String          name_;
+    LightType       type_{ LightType::Ambient };
+    bool            enabled_{ true };
+    Colorf          color_{ 1.0f, 1.0f, 1.0f, 1.0f };
+    float           intensity_{ 1.0f };
+    vn::math::Vec3d direction_{ 0.0, 0.0, -1.0 };
+    vn::math::Vec3d position_{ 0.0, 0.0, 0.0 };
+    float           range_{ 0.0f };
+    double          inner_cone_degrees_{ 15.0 };
+    double          outer_cone_degrees_{ 30.0 };
+    bool            cast_shadow_{ false };
+    ShadowSettings  shadow_settings_;
 };
 
 VN_GRAPHICS_NS_END

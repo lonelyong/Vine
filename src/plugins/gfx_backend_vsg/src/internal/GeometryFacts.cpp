@@ -16,22 +16,12 @@ namespace
 /// @brief The canonical role a location carries, or nothing when it is a custom channel.
 [[nodiscard]] bool canonicalRoleOf(std::uint32_t location, vn::graphics::VertexAttribute& role) noexcept
 {
-    switch (location)
-    {
-    case 0U:
-        role = vn::graphics::VertexAttribute::Position;
-        return true;
-    case 1U:
-        role = vn::graphics::VertexAttribute::Normal;
-        return true;
-    case 2U:
-        role = vn::graphics::VertexAttribute::Color;
-        return true;
-    case 8U:
-        role = vn::graphics::VertexAttribute::TexCoord0;
-        return true;
-    default:
-        return false;
+    switch (location) {
+    case 0U: role = vn::graphics::VertexAttribute::Position; return true;
+    case 1U: role = vn::graphics::VertexAttribute::Normal; return true;
+    case 2U: role = vn::graphics::VertexAttribute::Color; return true;
+    case 8U: role = vn::graphics::VertexAttribute::TexCoord0; return true;
+    default: return false;
     }
 }
 
@@ -40,8 +30,7 @@ namespace
 {
     std::vector<std::uint32_t> canonical;
     std::vector<std::uint32_t> custom;
-    for (const std::uint32_t location : locations)
-    {
+    for (const std::uint32_t location : locations) {
         vn::graphics::VertexAttribute role{};
         (canonicalRoleOf(location, role) ? canonical : custom).push_back(location);
     }
@@ -51,11 +40,12 @@ namespace
     return canonical;
 }
 
-}  // namespace
+} // namespace
 
-FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFacts& out,
-                            std::vector<ChannelFacts>& storage,
-                            std::vector<PrimitiveFacts>& primitive_storage)
+FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry,
+                            GeometryFacts&                out,
+                            std::vector<ChannelFacts>&    storage,
+                            std::vector<PrimitiveFacts>&  primitive_storage)
 {
     storage.clear();
     primitive_storage.clear();
@@ -70,9 +60,8 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
     }
 
     const std::vector<std::uint32_t> locations = geometry.bufferLocations();
-    if (locations.empty())
-    {
-        return FactMiss::Unknown;  // nothing to describe
+    if (locations.empty()) {
+        return FactMiss::Unknown; // nothing to describe
     }
 
     bool        positioned        = false;
@@ -80,30 +69,25 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
     std::size_t vertex_base       = 0;
     bool        base_known        = false;
 
-    for (const std::uint32_t location : orderedLocations(locations))
-    {
+    for (const std::uint32_t location : orderedLocations(locations)) {
         const vn::graphics::AttributeChannel* channel = geometry.buffer(location);
-        if (channel == nullptr || channel->values == nullptr || channel->components == 0U)
-        {
-            continue;  // an empty channel feeds nothing, so it is not part of the layout either
+        if (channel == nullptr || channel->values == nullptr || channel->components == 0U) {
+            continue; // an empty channel feeds nothing, so it is not part of the layout either
         }
 
         const std::span<const float> scalars = channel->scalars();
-        if (scalars.empty())
-        {
+        if (scalars.empty()) {
             continue;
         }
 
         // Every channel of one geometry must start at the same VERTEX: the draw's indices name vertices, and a
         // channel that began elsewhere would read a different vertex for the same index.
         const std::size_t base = channel->offset / channel->components;
-        if (!base_known)
-        {
+        if (!base_known) {
             vertex_base = base;
             base_known  = true;
         }
-        else if (vertex_base != base)
-        {
+        else if (vertex_base != base) {
             return FactMiss::Malformed;
         }
 
@@ -126,11 +110,9 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
         storage.push_back(facts);
 
         vn::graphics::VertexAttribute role{};
-        if (canonicalRoleOf(location, role))
-        {
+        if (canonicalRoleOf(location, role)) {
             out.layout.canonical_mask |= 1U << static_cast<std::uint32_t>(role);
-            if (role == vn::graphics::VertexAttribute::Position)
-            {
+            if (role == vn::graphics::VertexAttribute::Position) {
                 positioned        = true;
                 // The vertices a NON-indexed draw assembles from: the position stream's own count, which is
                 // also what the SDK's `Geometry::vertexCount()` reports (positions are the one required
@@ -138,19 +120,16 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
                 position_vertices = channel->vertexCount();
             }
         }
-        else
-        {
+        else {
             out.layout.custom_locations.push_back(location);
         }
     }
 
-    if (storage.empty())
-    {
+    if (storage.empty()) {
         return FactMiss::Unknown;
     }
-    if (!positioned)
-    {
-        return FactMiss::Malformed;  // positions are the one required attribute
+    if (!positioned) {
+        return FactMiss::Malformed; // positions are the one required attribute
     }
 
     // The entry BORROWS the caller's storage: the channels are read in the order they were built in (canonical
@@ -160,9 +139,8 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
     // The vertices a NON-indexed draw assembles from: the position stream's own count. It is stated once, for
     // the geometry, because it is a property of the data - every non-indexed primitive draws all of it.
     out.vertex_count = static_cast<std::uint32_t>(position_vertices);
-    if (out.vertex_count == 0U)
-    {
-        return FactMiss::Malformed;  // positions too short to form a single vertex: nothing to assemble
+    if (out.vertex_count == 0U) {
+        return FactMiss::Malformed; // positions too short to form a single vertex: nothing to assemble
     }
 
     // ONE ROW PER PRIMITIVE, in the geometry's own order: the plan names a draw by its primitive index, so
@@ -170,21 +148,17 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
     // buffer (see the file note): the bind aliases it and the draw states the span, which is what lets
     // primitives slicing one arena share a single upload.
     primitive_storage.reserve(geometry.primitiveCount());
-    for (std::size_t index = 0; index < geometry.primitiveCount(); ++index)
-    {
+    for (std::size_t index = 0; index < geometry.primitiveCount(); ++index) {
         const vn::graphics::Primitive* primitive = geometry.primitive(index);
-        if (primitive == nullptr)
-        {
-            continue;  // cannot happen (the index is in range); a missing row would misalign the plan's
+        if (primitive == nullptr) {
+            continue; // cannot happen (the index is in range); a missing row would misalign the plan's
         }
         PrimitiveFacts row;
         row.topology = primitive->topology;
-        if (primitive->isIndexed())
-        {
+        if (primitive->isIndexed()) {
             const vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> index_buffer = primitive->indices.values;
-            if (index_buffer == nullptr || primitive->indexCount() == 0U)
-            {
-                return FactMiss::Malformed;  // an indexed primitive that draws no index: nothing to assemble
+            if (index_buffer == nullptr || primitive->indexCount() == 0U) {
+                return FactMiss::Malformed; // an indexed primitive that draws no index: nothing to assemble
             }
             IndexFacts index_facts;
             index_facts.key.kind       = core::StreamKind::Index;
@@ -193,20 +167,19 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFact
             index_facts.key.buffer     = index_buffer.get();
             index_facts.key.revision   = index_buffer->revision();
             index_facts.key.offset     = 0U;
-            index_facts.key.count      = 0U;  // the whole buffer: primitives over one arena share one upload
+            index_facts.key.count      = 0U; // the whole buffer: primitives over one arena share one upload
             index_facts.values         = index_buffer;
             row.indices                = index_facts;
             row.index_count            = static_cast<std::uint32_t>(primitive->indexCount());
             row.first_index            = static_cast<std::uint32_t>(primitive->indices.begin());
         }
-        else if (out.vertex_count == 0U)
-        {
-            return FactMiss::Malformed;  // a non-indexed draw with no vertices to assemble
+        else if (out.vertex_count == 0U) {
+            return FactMiss::Malformed; // a non-indexed draw with no vertices to assemble
         }
         primitive_storage.push_back(std::move(row));
     }
     out.primitives    = primitive_storage;
-    out.vertex_offset = 0U;  // the stream starts at the geometry's first vertex (see the file note)
+    out.vertex_offset = 0U; // the stream starts at the geometry's first vertex (see the file note)
 
     return FactMiss::None;
 }

@@ -1,12 +1,12 @@
 #pragma once
 #include "graphics_global.hpp"
 
-#include <vine/intrusive_ptr.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/String.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Rect3.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "RenderTarget.hpp"
 #include "Viewport.hpp"
@@ -79,9 +79,7 @@ class ShaderProgram;
  * @param camera Receives the light camera (also usable as the shadow pass' camera).
  * @return The light camera's projection * view matrix.
  */
-[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d directionalShadowMatrix(const Light& light,
-                                                                     const vn::math::Aabbd& bounds,
-                                                                     Camera& camera);
+[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds, Camera& camera);
 
 /** @brief The light camera a SPOT shadow is rendered with.
  *
@@ -99,8 +97,7 @@ class ShaderProgram;
  * @param camera Receives the light camera (also usable as the shadow pass' camera).
  * @return The light camera's projection * view matrix.
  */
-[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d spotShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
-                                                              Camera& camera);
+[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d spotShadowMatrix(const Light& light, const vn::math::Aabbd& bounds, Camera& camera);
 
 /** @brief Recipe: render content into an off-screen target and composite it back as a picture-in-picture screen pass.
  *
@@ -123,14 +120,14 @@ class ShaderProgram;
  * @param pip           PiP sub-viewport on the output surface (device px).
  * @return The created ScreenPass (owned by the engine; do not delete), or null when the recipe was refused.
  */
-[[nodiscard]] VN_GRAPHICS_API raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine> engine,
-                                                                      raw_ptr<Camera> camera,
-                                                                      intrusive_ptr<Scene> content,
-                                                                      const String& output_slot,
-                                                                      int rt_width,
-                                                                      int rt_height,
-                                                                      RenderTarget::ColorFormat color_format,
-                                                                      RenderTarget::DepthFormat depth_format,
-                                                                      const Viewport& pip);
+[[nodiscard]] VN_GRAPHICS_API raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
+                                                                       raw_ptr<Camera>           camera,
+                                                                       intrusive_ptr<Scene>      content,
+                                                                       const String&             output_slot,
+                                                                       int                       rt_width,
+                                                                       int                       rt_height,
+                                                                       RenderTarget::ColorFormat color_format,
+                                                                       RenderTarget::DepthFormat depth_format,
+                                                                       const Viewport&           pip);
 
 VN_GRAPHICS_NS_END

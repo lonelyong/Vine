@@ -196,9 +196,21 @@ class Rect3 {
      */
     constexpr void normalize()
     {
-        if (xmax < xmin) { auto t = xmin; xmin = xmax; xmax = t; }
-        if (ymax < ymin) { auto t = ymin; ymin = ymax; ymax = t; }
-        if (zmax < zmin) { auto t = zmin; zmin = zmax; zmax = t; }
+        if (xmax < xmin) {
+            auto t = xmin;
+            xmin   = xmax;
+            xmax   = t;
+        }
+        if (ymax < ymin) {
+            auto t = ymin;
+            ymin   = ymax;
+            ymax   = t;
+        }
+        if (zmax < zmin) {
+            auto t = zmin;
+            zmin   = zmax;
+            zmax   = t;
+        }
     }
 
     /**
@@ -207,8 +219,7 @@ class Rect3 {
     [[nodiscard]]
     constexpr Rect3<T> normalized() const
     {
-        return Rect3<T>(std::min(xmin, xmax), std::min(ymin, ymax), std::min(zmin, zmax),
-                        std::max(xmin, xmax), std::max(ymin, ymax), std::max(zmin, zmax));
+        return Rect3<T>(std::min(xmin, xmax), std::min(ymin, ymax), std::min(zmin, zmax), std::max(xmin, xmax), std::max(ymin, ymax), std::max(zmin, zmax));
     }
 
     /**

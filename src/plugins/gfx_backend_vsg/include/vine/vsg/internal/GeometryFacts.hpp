@@ -53,8 +53,9 @@ VN_VSG_NS_BEGIN
  * @return None when the entry was built; Unknown when there is nothing to describe; Malformed when the
  *         geometry cannot be drawn as authored (see the file note).
  */
-[[nodiscard]] FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry, GeometryFacts& out,
-                                          std::vector<ChannelFacts>& storage,
-                                          std::vector<PrimitiveFacts>& primitive_storage);
+[[nodiscard]] FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry,
+                                          GeometryFacts&                out,
+                                          std::vector<ChannelFacts>&    storage,
+                                          std::vector<PrimitiveFacts>&  primitive_storage);
 
 VN_VSG_NS_END

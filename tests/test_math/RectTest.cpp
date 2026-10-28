@@ -6,9 +6,9 @@
 
 #include <vine/math/Math.hpp>
 #include <vine/math/Point2.hpp>
+#include <vine/math/Point3.hpp>
 #include <vine/math/Rect2.hpp>
 #include <vine/math/Rect3.hpp>
-#include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
 using namespace vn::math;
@@ -22,16 +22,16 @@ TEST(Rect2, minMax)
     auto mx = r.max();
 
     EXPECT_DOUBLE_EQ(mn.x, -3.0);
-    EXPECT_DOUBLE_EQ(mn.y,  3.0);
-    EXPECT_DOUBLE_EQ(mx.x,  2.0);
+    EXPECT_DOUBLE_EQ(mn.y, 3.0);
+    EXPECT_DOUBLE_EQ(mx.x, 2.0);
     EXPECT_DOUBLE_EQ(mx.y, 10.0);
 
-    EXPECT_DOUBLE_EQ(r.width(),  5.0);
+    EXPECT_DOUBLE_EQ(r.width(), 5.0);
     EXPECT_DOUBLE_EQ(r.height(), 7.0);
 
     auto c = r.center();
     EXPECT_DOUBLE_EQ(c.x, -0.5);
-    EXPECT_DOUBLE_EQ(c.y,  6.5);
+    EXPECT_DOUBLE_EQ(c.y, 6.5);
 }
 
 TEST(Rect2, intersectWith)
@@ -74,7 +74,7 @@ TEST(Rect3, expandBy)
     EXPECT_DOUBLE_EQ(mn.x, -6.0);
     EXPECT_DOUBLE_EQ(mn.y, -6.0);
     EXPECT_DOUBLE_EQ(mn.z, -6.0);
-    EXPECT_DOUBLE_EQ(mx.x,  4.0);
+    EXPECT_DOUBLE_EQ(mx.x, 4.0);
     EXPECT_DOUBLE_EQ(mx.y, 15.0);
     EXPECT_DOUBLE_EQ(mx.z, 10.0);
 }

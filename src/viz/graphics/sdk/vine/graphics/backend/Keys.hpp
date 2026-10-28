@@ -9,9 +9,9 @@
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateResolution.hpp>
-#include <vine/math/Matrix4x4.hpp>
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
+#include <vine/math/Matrix4x4.hpp>
 
 /**
  * @brief The three kinds of per-draw state, as separate types - so "which one may change what" is a
@@ -43,26 +43,26 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /** @brief Load operation of one attachment (backend-neutral: bound to the API's spelling in the vsg layer). */
 enum class LoadOp : std::uint8_t
 {
-    Load,     ///< Keep what the attachment holds.
-    Clear,    ///< Clear it to the pass' clear value.
-    DontCare, ///< Contents are undefined and will be fully overwritten.
+    Load,     // Keep what the attachment holds.
+    Clear,    // Clear it to the pass' clear value.
+    DontCare, // Contents are undefined and will be fully overwritten.
 };
 
 /** @brief Store operation of one attachment. */
 enum class StoreOp : std::uint8_t
 {
-    Store,    ///< Keep the result for later readers.
-    DontCare, ///< Nothing will read it back.
+    Store,    // Keep the result for later readers.
+    DontCare, // Nothing will read it back.
 };
 
 /** @brief Layout an attachment is in at a point in time (the thing a barrier changes). */
 enum class ImageLayout : std::uint8_t
 {
-    Undefined,        ///< No layout; an image being used for the first time.
-    ColorAttachment,  ///< Being written as a colour attachment.
-    DepthAttachment,  ///< Being written as a depth attachment.
-    ShaderReadOnly,   ///< Being sampled.
-    Present,          ///< Handed to the presentation engine.
+    Undefined,       // No layout; an image being used for the first time.
+    ColorAttachment, // Being written as a colour attachment.
+    DepthAttachment, // Being written as a depth attachment.
+    ShaderReadOnly,  // Being sampled.
+    Present,         // Handed to the presentation engine.
 };
 
 /**
@@ -73,23 +73,21 @@ enum class ImageLayout : std::uint8_t
  *   backend must never invent one by comparing bytes it happens to read: detection would itself become
  *   state, and a key that depends on it stops being an identity.
  */
-struct VN_GRAPHICS_API DataKey
-{
-    const void*   buffer{nullptr};  ///< Buffer the slice lives in.
-    std::uint64_t revision{0};      ///< Upstream content revision.
-    std::uint32_t components{0};    ///< Components per vertex (the stride).
-    std::uint32_t offset{0};        ///< First scalar of the slice.
-    std::uint32_t count{0};         ///< Scalars in the slice; 0 = to the end of the buffer.
+struct VN_GRAPHICS_API DataKey {
+    const void*   buffer{ nullptr }; // Buffer the slice lives in.
+    std::uint64_t revision{ 0 };     // Upstream content revision.
+    std::uint32_t components{ 0 };   // Components per vertex (the stride).
+    std::uint32_t offset{ 0 };       // First scalar of the slice.
+    std::uint32_t count{ 0 };        // Scalars in the slice; 0 = to the end of the buffer.
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const DataKey& other) const noexcept;
 };
 
 /** @brief Identity of a vertex layout: which canonical channels are fed, and at which custom locations. */
-struct VN_GRAPHICS_API VertexLayoutKey
-{
-    std::uint32_t              canonical_mask{0};     ///< Bit set of the canonical roles that are fed.
-    std::vector<std::uint32_t> custom_locations;      ///< Custom channel locations, ascending.
+struct VN_GRAPHICS_API VertexLayoutKey {
+    std::uint32_t              canonical_mask{ 0 }; // Bit set of the canonical roles that are fed.
+    std::vector<std::uint32_t> custom_locations;    // Custom channel locations, ascending.
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const VertexLayoutKey& other) const noexcept;
@@ -112,8 +110,8 @@ struct VN_GRAPHICS_API VertexLayoutKey
  */
 enum class DrawKind : std::uint8_t
 {
-    Content,   ///< A content drawing call: the pass' content, one instance per collected command.
-    Screen,    ///< A screen drawing call: a full-screen triangle sampling a target's attachments.
+    Content, // A content drawing call: the pass' content, one instance per collected command.
+    Screen,  // A screen drawing call: a full-screen triangle sampling a target's attachments.
 };
 
 /**
@@ -144,14 +142,13 @@ enum class DrawKind : std::uint8_t
  *   another render pass is undefined behaviour, and the measured run drew the right picture anyway.
  *   The validation layer's report is the evidence (and the fix is a key, not a picture).
  */
-struct VN_GRAPHICS_API RenderPassCompatibility
-{
-    std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats;  ///< One per colour attachment.
-    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format; ///< Absent for colour-only.
-    std::vector<std::uint32_t> device_color_formats;  ///< The same attachments as the device spells them.
-    std::uint32_t              device_depth_format{0}; ///< The device's depth format; 0 = no depth.
-    std::uint32_t              samples{1};             ///< Sample count.
-    std::uint32_t              subpass{0};             ///< Subpass index.
+struct VN_GRAPHICS_API RenderPassCompatibility {
+    std::vector<vn::graphics::RenderTarget::ColorFormat>   color_formats;            // One per colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;             // Absent for colour-only.
+    std::vector<std::uint32_t>                             device_color_formats;     // The same attachments as the device spells them.
+    std::uint32_t                                          device_depth_format{ 0 }; // The device's depth format; 0 = no depth.
+    std::uint32_t                                          samples{ 1 };             // Sample count.
+    std::uint32_t                                          subpass{ 0 };             // Subpass index.
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const RenderPassCompatibility& other) const noexcept;
@@ -175,17 +172,16 @@ struct VN_GRAPHICS_API RenderPassCompatibility
  *   is independent, because a later pass may load the depth an earlier one wrote while the colour is
  *   cleared, and because a borrowed depth starts in the layout its lender left it in.
  */
-struct VN_GRAPHICS_API LoadOpVariantKey
-{
-    LoadOp      color_load{LoadOp::Load};    ///< Every colour attachment: keep what is there, or clear it.
-    StoreOp     color_store{StoreOp::Store}; ///< Whether the colour survives the pass.
-    ImageLayout color_initial{ImageLayout::Undefined};  ///< Layout the colour starts in.
-    ImageLayout color_final{ImageLayout::ColorAttachment};  ///< Layout it is left in.
-    bool        has_depth{false};             ///< Whether the target has a depth attachment at all.
-    LoadOp      depth_load{LoadOp::Load};     ///< Keep the depth, or clear it.
-    StoreOp     depth_store{StoreOp::Store};  ///< Whether the depth survives the pass.
-    ImageLayout depth_initial{ImageLayout::Undefined};  ///< Layout the depth starts in.
-    ImageLayout depth_final{ImageLayout::DepthAttachment};  ///< Layout it is left in.
+struct VN_GRAPHICS_API LoadOpVariantKey {
+    LoadOp      color_load{ LoadOp::Load };                  // Every colour attachment: keep what is there, or clear it.
+    StoreOp     color_store{ StoreOp::Store };               // Whether the colour survives the pass.
+    ImageLayout color_initial{ ImageLayout::Undefined };     // Layout the colour starts in.
+    ImageLayout color_final{ ImageLayout::ColorAttachment }; // Layout it is left in.
+    bool        has_depth{ false };                          // Whether the target has a depth attachment at all.
+    LoadOp      depth_load{ LoadOp::Load };                  // Keep the depth, or clear it.
+    StoreOp     depth_store{ StoreOp::Store };               // Whether the depth survives the pass.
+    ImageLayout depth_initial{ ImageLayout::Undefined };     // Layout the depth starts in.
+    ImageLayout depth_final{ ImageLayout::DepthAttachment }; // Layout it is left in.
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const LoadOpVariantKey& other) const noexcept;
@@ -194,19 +190,18 @@ struct VN_GRAPHICS_API LoadOpVariantKey
 /**
  * @brief Identity of a compiled content pipeline. Everything in here is "changing it needs a compile".
  */
-struct VN_GRAPHICS_API PipelineKey
-{
-    DrawKind     kind{DrawKind::Content};        ///< Which of the engine's two drawing calls this is.
-    const void*  program{nullptr};               ///< Shader program (or the default content program).
-    std::uint64_t revision{0};                   ///< Program revision.
-    VertexLayoutKey vertex_layout;               ///< Vertex stream layout.
-    RenderPassCompatibility compatibility;       ///< Target shape the pipeline was compiled against.
-    bool         depth_sampleable{false};        ///< The pass samples the target's depth.
-    std::uint32_t sampled_color_count{0};        ///< Colour attachments bound as textures.
+struct VN_GRAPHICS_API PipelineKey {
+    DrawKind                kind{ DrawKind::Content }; // Which of the engine's two drawing calls this is.
+    const void*             program{ nullptr };        // Shader program (or the default content program).
+    std::uint64_t           revision{ 0 };             // Program revision.
+    VertexLayoutKey         vertex_layout;             // Vertex stream layout.
+    RenderPassCompatibility compatibility;             // Target shape the pipeline was compiled against.
+    bool                    depth_sampleable{ false }; // The pass samples the target's depth.
+    std::uint32_t           sampled_color_count{ 0 };  // Colour attachments bound as textures.
     /// DEPTH textures the pass' inputs bind. A pass whose inputs offer a sampleable depth binds it
     /// (the engine's contract for a whole-target input), and where a shader reads it is the shader's
     /// ABI - so "how many depth samplers this pipeline's set has" is identity, like the colours.
-    std::uint32_t sampled_depth_count{0};
+    std::uint32_t sampled_depth_count{ 0 };
 
     /// Which VARIANT of that program this pipeline is compiled for. The core carries it as a NUMBER
     /// because the defines it stands for are the engine's naming rather than the core's, and
@@ -214,7 +209,7 @@ struct VN_GRAPHICS_API PipelineKey
     /// family the engine's own stages gate their declarations on). Two variants of one program agree
     /// on every other field here and must never share a pipeline: their texts differ, so the same
     /// draws would come out as different pictures.
-    std::uint32_t variant{0};
+    std::uint32_t variant{ 0 };
 
     /// The primitive assembly the pipeline's STATIC topology states. It is IDENTITY rather than dynamic
     /// state, and the API is why: with `VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY` declared, the value a draw
@@ -223,7 +218,7 @@ struct VN_GRAPHICS_API PipelineKey
     /// triangle-baked pipeline is undefined behaviour rather than a picture - and the previous
     /// implementation shipped exactly that. One pipeline per class is therefore the only sound shape,
     /// and the engine's enumeration has one value per class, so the value itself is the honest key.
-    vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
+    vn::graphics::Topology topology{ vn::graphics::Topology::Triangles };
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const PipelineKey& other) const noexcept;
@@ -237,25 +232,26 @@ struct VN_GRAPHICS_API PipelineKey
  *   compare every key in the pool - and it is written over exactly the fields the equality reads, so
  *   the two cannot drift apart silently.
  */
-struct VN_GRAPHICS_API PipelineKeyHash
-{
+struct VN_GRAPHICS_API PipelineKeyHash {
     /** @brief Hashes @p key. */
     [[nodiscard]] std::size_t operator()(const PipelineKey& key) const noexcept;
 };
 
 /** @brief Per-draw state delivered with set commands: changing it must never recompile anything. */
-struct VN_GRAPHICS_API DynamicState
-{
-    vn::graphics::DepthMode     depth{vn::graphics::DepthMode::TestAndWrite};  ///< Depth test/write policy.
-    vn::graphics::CompareOp     compare{vn::graphics::CompareOp::Less};        ///< Distance-semantic compare op; the
-                                                                               ///< reverse-Z inversion happens at the
-                                                                               ///< Vulkan boundary.
-    vn::graphics::CullMode      cull_mode{vn::graphics::CullMode::None};       ///< Face culling.
-    vn::graphics::PolygonMode   polygon_mode{vn::graphics::PolygonMode::Fill}; ///< Rasterisation mode.
-    vn::graphics::PolygonOffset polygon_offset{};                               ///< Depth bias (coplanar surfaces).
-    vn::graphics::Topology      topology{vn::graphics::Topology::Triangles};   ///< Primitive assembly.    /// Width of rasterised LINE primitives, in framebuffer pixels (see RenderState::lineWidth). It is dynamic
+struct VN_GRAPHICS_API DynamicState {
+    vn::graphics::DepthMode     depth{ vn::graphics::DepthMode::TestAndWrite };  // Depth test/write policy.
+    vn::graphics::CompareOp     compare{ vn::graphics::CompareOp::Less };        // Distance-semantic compare op; the
+                                                                                 // reverse-Z inversion happens at the
+                                                                                 // Vulkan boundary.
+    vn::graphics::CullMode      cull_mode{ vn::graphics::CullMode::None };       // Face culling.
+    vn::graphics::PolygonMode   polygon_mode{ vn::graphics::PolygonMode::Fill }; // Rasterisation mode.
+    vn::graphics::PolygonOffset polygon_offset{};                                // Depth bias (coplanar surfaces).
+    vn::graphics::Topology      topology{
+        vn::graphics::Topology::Triangles
+    }; // Primitive assembly.    /// Width of rasterised LINE primitives, in framebuffer pixels (see RenderState::lineWidth). It is dynamic
     /// state of its own (`vkCmdSetLineWidth`), so it belongs here rather than in a pipeline key.
-    float                       line_width{1.0F};    vn::graphics::BlendState    blend;                                           ///< Blend state.
+    float                    line_width{ 1.0F };
+    vn::graphics::BlendState blend; // Blend state.
 
     /** @brief Compares the whole state. */
     [[nodiscard]] bool operator==(const DynamicState& other) const noexcept;
@@ -286,19 +282,17 @@ struct VN_GRAPHICS_API DynamicState
  *   what stops "the data a draw uses" from also being "the memory that holds it", which is the
  *   coupling that used to make the material manager outlive every bridge.
  */
-struct InstanceSlot
-{
-    vn::math::Mat4d model_matrix;          ///< World-space model matrix.
-    float         opacity{1.0F};            ///< Effective opacity (the drawable's half of the alpha rule).
-    const void*   material{nullptr};        ///< Material identity.
-    std::uint64_t material_revision{0};     ///< Material revision (drives the in-place refresh).
+struct InstanceSlot {
+    vn::math::Mat4d model_matrix;           // World-space model matrix.
+    float           opacity{ 1.0F };        // Effective opacity (the drawable's half of the alpha rule).
+    const void*     material{ nullptr };    // Material identity.
+    std::uint64_t   material_revision{ 0 }; // Material revision (drives the in-place refresh).
 };
 
 /** @brief One line of the key audit: a key, and what it is allowed to be built from. */
-struct KeyAuditEntry
-{
-    const char* key{nullptr};      ///< Key type's name.
-    const char* allowed{nullptr};  ///< What may enter it.
+struct KeyAuditEntry {
+    const char* key{ nullptr };     // Key type's name.
+    const char* allowed{ nullptr }; // What may enter it.
 };
 
 /** @brief Gets the key audit table (see the file note for what it is for).

@@ -4,7 +4,9 @@
 
 namespace vn::appfw
 {
+
 class Application;
+
 } // namespace vn::appfw
 
 namespace vn::model_viewer

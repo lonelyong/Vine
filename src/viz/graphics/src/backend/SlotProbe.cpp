@@ -5,23 +5,20 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 SlotProbeOutcome probeSlotCount(const std::function<bool(std::uint32_t)>& has_slot, std::uint32_t limit) noexcept
 {
     SlotProbeOutcome outcome;
-    if (!has_slot)
-    {
+    if (!has_slot) {
         outcome.probe_failed = true;
         return outcome;
     }
 
     // Slot 0 answers first: a task that owns no fences cannot be counted, and "0 slots" must never be
     // confused with "no evidence".
-    if (!has_slot(0))
-    {
+    if (!has_slot(0)) {
         outcome.probe_failed = true;
         return outcome;
     }
 
     std::uint32_t count = 0;
-    while (count < limit && has_slot(count))
-    {
+    while (count < limit && has_slot(count)) {
         ++count;
     }
 
@@ -32,21 +29,18 @@ SlotProbeOutcome probeSlotCount(const std::function<bool(std::uint32_t)>& has_sl
 
 bool SlotTracker::observe(const SlotProbeOutcome& outcome) noexcept
 {
-    if (outcome.probe_failed)
-    {
+    if (outcome.probe_failed) {
         // Nothing answered: no evidence, no growth, and no claim about the count.
         return known_;
     }
 
     ++frames_;
 
-    if (!known_ && frames_ > 1 && outcome.slots <= best_)
-    {
+    if (!known_ && frames_ > 1 && outcome.slots <= best_) {
         // The table stopped being filled: what we hold is the session's real in-flight count.
         known_ = true;
     }
-    if (outcome.slots > best_)
-    {
+    if (outcome.slots > best_) {
         best_ = outcome.slots;
     }
     previous_ = outcome.slots;

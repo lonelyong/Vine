@@ -72,8 +72,8 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
      */
     void followDocumentManager(vn::appfw::DocumentManager& documents)
     {
-        connections_.push_back(documents.currentChanged.connect(
-            [this](vn::appfw::DocumentManager& owner, vn::appfw::DocumentEventArgs&) { setDocument(owner.current()); }));
+        connections_.push_back(
+            documents.currentChanged.connect([this](vn::appfw::DocumentManager& owner, vn::appfw::DocumentEventArgs&) { setDocument(owner.current()); }));
 
         setDocument(documents.current());
     }
@@ -98,12 +98,9 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
 
         type_label_->setText(textOf(document->typeId()));
         title_label_->setText(textOf(document->title()));
-        vertices_label_->setText(model != nullptr ? QString::number(static_cast<qulonglong>(model->vertexCount()))
-                                                  : notAModelText());
-        triangles_label_->setText(model != nullptr ? QString::number(static_cast<qulonglong>(model->triangleCount()))
-                                                   : notAModelText());
-        parts_label_->setText(model != nullptr ? QString::number(static_cast<qulonglong>(model->partCount()))
-                                               : notAModelText());
+        vertices_label_->setText(model != nullptr ? QString::number(static_cast<qulonglong>(model->vertexCount())) : notAModelText());
+        triangles_label_->setText(model != nullptr ? QString::number(static_cast<qulonglong>(model->triangleCount())) : notAModelText());
+        parts_label_->setText(model != nullptr ? QString::number(static_cast<qulonglong>(model->partCount())) : notAModelText());
     }
 
     /// 回到"没有当前文档"的状态。
@@ -118,11 +115,30 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
 
   public:
     /// 面板上五行的当前文本（用例断言它们，而不是去翻 QLabel 的层级）。
-    QString typeText() const { return type_label_->text(); }
-    QString titleText() const { return title_label_->text(); }
-    QString verticesText() const { return vertices_label_->text(); }
-    QString trianglesText() const { return triangles_label_->text(); }
-    QString partsText() const { return parts_label_->text(); }
+    QString typeText() const
+    {
+        return type_label_->text();
+    }
+
+    QString titleText() const
+    {
+        return title_label_->text();
+    }
+
+    QString verticesText() const
+    {
+        return vertices_label_->text();
+    }
+
+    QString trianglesText() const
+    {
+        return triangles_label_->text();
+    }
+
+    QString partsText() const
+    {
+        return parts_label_->text();
+    }
 
   private:
     /// 加一行"名字 + 值"：名字是静态文本，值是面板要显示的东西。
@@ -141,8 +157,15 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
         return QString::fromUtf8(reinterpret_cast<const char*>(text.data()), static_cast<int>(text.size()));
     }
 
-    static QString noneText() { return QStringLiteral("—（没有当前文档）"); }
-    static QString notAModelText() { return QStringLiteral("—（不是模型文档）"); }
+    static QString noneText()
+    {
+        return QStringLiteral("—（没有当前文档）");
+    }
+
+    static QString notAModelText()
+    {
+        return QStringLiteral("—（不是模型文档）");
+    }
 
   private:
     QLabel*                     type_label_      = nullptr;

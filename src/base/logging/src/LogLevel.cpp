@@ -7,13 +7,13 @@ VN_LOGGING_NS_BEGIN
 std::string_view levelName(LogLevel level) noexcept
 {
     switch (level) {
-    case LogLevel::Trace:    return "trace";
-    case LogLevel::Debug:    return "debug";
-    case LogLevel::Info:     return "info";
-    case LogLevel::Warn:     return "warn";
-    case LogLevel::Error:    return "error";
+    case LogLevel::Trace: return "trace";
+    case LogLevel::Debug: return "debug";
+    case LogLevel::Info: return "info";
+    case LogLevel::Warn: return "warn";
+    case LogLevel::Error: return "error";
     case LogLevel::Critical: return "critical";
-    case LogLevel::Off:      return "off";
+    case LogLevel::Off: return "off";
     }
     return "info";
 }

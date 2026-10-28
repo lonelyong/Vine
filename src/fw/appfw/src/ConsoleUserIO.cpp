@@ -12,9 +12,7 @@ VN_APPFW_NS_BEGIN
 VN_OBJECT_META_IMPL(ConsoleUserIO, UserIO)
 
 namespace
-{
-
-} // namespace
+{} // namespace
 
 /**
  * @brief The background reader this IO owns, plus everything it shares with it.
@@ -26,14 +24,14 @@ namespace
  * ever touches this state, never the ConsoleUserIO that started it.
  */
 struct ConsoleUserIO::StdinReader {
-    std::mutex              mutex;
-    std::deque<String>      lines;                 ///< Lines typed while nothing waited.
-    bool                    started     = false;   ///< Guards against a second thread.
-    bool                    stopping    = false;   ///< Set by the destructor.
-    bool                    eof         = false;
-    bool                    failed      = false;
-    bool                    cancelled   = false;   ///< The waiting read was cancelled.
-    vn::async::AsyncEvent line_ready;            ///< A line arrived, or the stream ended.
+    std::mutex            mutex;
+    std::deque<String>    lines;             // Lines typed while nothing waited.
+    bool                  started   = false; // Guards against a second thread.
+    bool                  stopping  = false; // Set by the destructor.
+    bool                  eof       = false;
+    bool                  failed    = false;
+    bool                  cancelled = false; // The waiting read was cancelled.
+    vn::async::AsyncEvent line_ready;        // A line arrived, or the stream ended.
 
     /// Moves the outcome of one blocking read into this state and wakes the reader.
     void push(std::string line, bool at_eof, bool broken)
@@ -210,7 +208,7 @@ vn::async::Task<std::optional<double>> ConsoleUserIO::getDoubleAsync(const Strin
 
     bool         ok    = false;
     const double value = line->trimmed().toDouble(&ok);
-    co_return ok && std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
+    co_return ok&& std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
 }
 
 vn::async::Task<std::optional<math::Point3d>> ConsoleUserIO::getPoint3dAsync(const String& prompt)
@@ -242,9 +240,7 @@ vn::async::Task<std::optional<math::Point3d>> ConsoleUserIO::getPoint3dAsync(con
     co_return point;
 }
 
-vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::readPathAsync(const String&           prompt,
-                                                                                  const FileReadOptions& options,
-                                                                                  bool                   directory)
+vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::readPathAsync(const String& prompt, const FileReadOptions& options, bool directory)
 {
     const String requirements = requirementSummary(options.extensions, /*multiple=*/false);
     const auto   line         = co_await readLineAsync(promptWithRequirements(prompt, requirements));
@@ -252,8 +248,7 @@ vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::readPathAsy
         co_return std::nullopt;
     }
 
-    const PathCheck check = directory ? checkPath(*line, DirReadOptions{ options.require_existing, options.suggested_path })
-                                      : checkPath(*line, options);
+    const PathCheck check = directory ? checkPath(*line, DirReadOptions{ options.require_existing, options.suggested_path }) : checkPath(*line, options);
     if (!check.ok) {
         // 无头侧不重提示（那会要求一个人重打）：把原因打出来，读到此为止。
         putString(check.message);
@@ -278,8 +273,7 @@ vn::async::Task<std::optional<UserIO::PathList>> ConsoleUserIO::readPathsAsync(c
     co_return check.paths;
 }
 
-vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::getFileAsync(const String&           prompt,
-                                                                                 const FileReadOptions& options)
+vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::getFileAsync(const String& prompt, const FileReadOptions& options)
 {
     co_return co_await readPathAsync(prompt, options, /*directory=*/false);
 }
@@ -289,12 +283,11 @@ vn::async::Task<std::optional<UserIO::PathList>> ConsoleUserIO::getFilesAsync(co
     co_return co_await readPathsAsync(prompt, options);
 }
 
-vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::getDirAsync(const String&          prompt,
-                                                                                const DirReadOptions& options)
+vn::async::Task<std::optional<std::filesystem::path>> ConsoleUserIO::getDirAsync(const String& prompt, const DirReadOptions& options)
 {
     FileReadOptions as_file;
     as_file.require_existing = options.require_existing;
-    as_file.suggested_path = options.suggested_path;
+    as_file.suggested_path   = options.suggested_path;
     co_return co_await readPathAsync(prompt, as_file, /*directory=*/true);
 }
 
@@ -302,7 +295,7 @@ vn::async::Task<std::optional<UserIO::PathList>> ConsoleUserIO::getDirsAsync(con
 {
     FileReadOptions as_file;
     as_file.require_existing = options.require_existing;
-    as_file.suggested_path = options.suggested_path;
+    as_file.suggested_path   = options.suggested_path;
     co_return co_await readPathsAsync(prompt, as_file);
 }
 

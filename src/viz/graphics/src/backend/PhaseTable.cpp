@@ -11,8 +11,7 @@ bool PhaseTable::Report::ok() const noexcept
 
 void PhaseTable::add(Phase phase)
 {
-    if (phase.name == nullptr || !phase.run)
-    {
+    if (phase.name == nullptr || !phase.run) {
         return;
     }
     phases_.push_back(std::move(phase));
@@ -22,8 +21,7 @@ PhaseTable::Report PhaseTable::runAll() const
 {
     Report report;
 
-    for (const Phase& phase : phases_)
-    {
+    for (const Phase& phase : phases_) {
         const std::uint64_t before = phase.sample ? phase.sample() : 0;
         const bool          ran    = phase.run();
         const std::uint64_t after  = phase.sample ? phase.sample() : 0;
@@ -32,8 +30,7 @@ PhaseTable::Report PhaseTable::runAll() const
         // rebuilt everything" is exactly the regression this table exists to catch.
         const bool counters_ok = !phase.expect || phase.expect(before, after);
 
-        if (ran && counters_ok)
-        {
+        if (ran && counters_ok) {
             ++report.passed;
             report.lines.emplace_back(std::string("[selftest] ") + phase.name);
             continue;
@@ -44,8 +41,7 @@ PhaseTable::Report PhaseTable::runAll() const
         report.lines.emplace_back(std::string("[selftest] ") + phase.name + " FAILED: " + detail);
     }
 
-    if (report.ok())
-    {
+    if (report.ok()) {
         report.lines.emplace_back("[selftest] done");
     }
     return report;

@@ -9,13 +9,13 @@
 #include <vsg/app/Viewer.h>
 #include <vsg/nodes/InstrumentationNode.h>
 
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/Session.hpp>
-#include <vine/vsg/internal/WindowTarget.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/Session.hpp>
+#include <vine/vsg/internal/WindowTarget.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -58,8 +58,10 @@ VN_VSG_NS_BEGIN
 
 namespace api
 {
+
 class OffscreenSession;
-}  // namespace api
+
+} // namespace api
 
 /**
  * @brief The content of one pass, as the layer that owns the content world recorded it.
@@ -69,17 +71,15 @@ class OffscreenSession;
  * ends). Building it is the content layer's job, and it builds it from the same plan (`CompiledPass::draws`,
  * whose viewports and dynamic state were already resolved), which is what keeps the two halves from drifting.
  */
-struct PassContent
-{
-    core::PassId                 pass{0};   ///< Which pass of the plan this content belongs to.
-    ::vsg::ref_ptr<::vsg::Node>  content;   ///< The nodes to draw inside that pass' render graph.
+struct PassContent {
+    core::PassId                pass{ 0 }; // Which pass of the plan this content belongs to.
+    ::vsg::ref_ptr<::vsg::Node> content;   // The nodes to draw inside that pass' render graph.
 };
 
 /**
  * @brief The execution stage (see the file note for what it decides, which is nothing).
  */
-class VN_VSG_API VsgExecutor
-{
+class VN_VSG_API VsgExecutor {
   public:
     /** @brief Creates an executor reporting what it cannot serve through @p diagnostics.
      *
@@ -126,19 +126,17 @@ class VN_VSG_API VsgExecutor
      * @param content       Already-recorded content, one entry per pass that has any (may be empty).
      * @return true when every pass was recorded; false when at least one could not be (it was reported).
      */
-    bool record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg::CommandGraph> command_graph,
-                std::span<const PassContent> content = {});
+    bool record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg::CommandGraph> command_graph, std::span<const PassContent> content = {});
 
     /** @brief Gets the passes it recorded, in the order it recorded them. */
     [[nodiscard]] std::span<const core::PassId> recorded() const noexcept;
 
     /** @brief What applying a plan's target answers did (see @ref applyTargetPlans). */
-    struct TargetApplications
-    {
-        std::uint64_t resized{0};  ///< Targets whose extent was replaced (ResizeInPlace).
-        std::uint64_t rebuilt{0};  ///< Targets whose SHAPE was replaced (Rebuild; the window re-samples it).
-        std::uint64_t refused{0};  ///< A depth lease blocked it: nothing was replaced.
-        std::uint64_t failed{0};   ///< The answer could not be applied: the target keeps what it had.
+    struct TargetApplications {
+        std::uint64_t resized{ 0 }; // Targets whose extent was replaced (ResizeInPlace).
+        std::uint64_t rebuilt{ 0 }; // Targets whose SHAPE was replaced (Rebuild; the window re-samples it).
+        std::uint64_t refused{ 0 }; // A depth lease blocked it: nothing was replaced.
+        std::uint64_t failed{ 0 };  // The answer could not be applied: the target keeps what it had.
     };
 
     /**
@@ -169,8 +167,10 @@ class VN_VSG_API VsgExecutor
      * @param retirement Where replaced objects go (the caller owns it, like its device waits).
      * @return What was applied, refused and could not be built, per mode.
      */
-    TargetApplications applyTargetPlans(const core::CompiledFrame& frame, std::span<const core::TargetFacts> facts,
-                                        const core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    TargetApplications applyTargetPlans(const core::CompiledFrame&         frame,
+                                        std::span<const core::TargetFacts> facts,
+                                        const core::FrameTimeline&         timeline,
+                                        core::RetirementQueue&             retirement);
 
     /**
      * @brief Records that @p frame's submission did not happen: what its passes wrote is not there.
@@ -285,13 +285,12 @@ class VN_VSG_API VsgExecutor
     [[nodiscard]] bool profiling() const noexcept;
 
     /** @brief One recorded pass, as the measurement wrapper's attribution key. */
-    struct ProfileEntry
-    {
-        const ::vsg::RenderGraph* graph{nullptr};  ///< The pass graph the measurement interval carries.
-        core::PassId              pass{0};         ///< The pass it belongs to.
-        std::uint32_t             schedule{0};     ///< Position in the frame's execution order.
-        bool                      window{false};   ///< True for the window graph (the present path).
-        std::string               name;            ///< The wrapper's name (for a capture, not a reader).
+    struct ProfileEntry {
+        const ::vsg::RenderGraph* graph{ nullptr }; // The pass graph the measurement interval carries.
+        core::PassId              pass{ 0 };        // The pass it belongs to.
+        std::uint32_t             schedule{ 0 };    // Position in the frame's execution order.
+        bool                      window{ false };  // True for the window graph (the present path).
+        std::string               name;             // The wrapper's name (for a capture, not a reader).
     };
 
     /** @brief Gets the passes of the last recorded frame, in the order they were wrapped.
@@ -317,27 +316,31 @@ class VN_VSG_API VsgExecutor
 
   private:
     /** @brief One registered target: the identity the plan uses, and the target itself. */
-    struct Entry
-    {
-        const void*      identity{nullptr};  ///< What CompiledTarget::target carries.
-        OffscreenTarget* target{nullptr};    ///< The target, borrowed.
+    struct Entry {
+        const void*      identity{ nullptr }; // What CompiledTarget::target carries.
+        OffscreenTarget* target{ nullptr };   // The target, borrowed.
         /// @brief What the host calls this target, for the images' debug names and the diagnostics.
         ///
         /// Borrowed like the identity itself: the caller's target has to outlive the registration, and the
         /// name belongs to it. Null when the caller did not name it - naming is then simply skipped.
-        const char*      label{nullptr};
-        vn::graphics::ReportOnce unapplied;          ///< The episode @ref reportUnapplied reports this entry through.
+        const char*              label{ nullptr };
+        vn::graphics::ReportOnce unapplied; // The episode @ref reportUnapplied reports this entry through.
+
         /** @brief Re-arms the episode: the target followed its description, so a later failure is new. */
-        void noteApplied() noexcept { unapplied.rearm(); }
+        void noteApplied() noexcept
+        {
+            unapplied.rearm();
+        }
     };
 
     /** @brief The registered entry for @p identity (null for an identity this executor does not hold). */
     [[nodiscard]] Entry* entryOf(const void* identity) noexcept;
 
     /** @brief Records one pass into an off-screen target; false when it could not be served. */
-    [[nodiscard]] bool recordOffscreen(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
+    [[nodiscard]] bool recordOffscreen(const core::CompiledPass&                  pass,
+                                       const core::CompiledTarget&                compiled_target,
                                        const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
-                                       std::span<const PassContent> content);
+                                       std::span<const PassContent>               content);
 
     /** @brief Records one pass into the window's graph (see the file note for the one-clear rule).
      *
@@ -347,9 +350,10 @@ class VN_VSG_API VsgExecutor
      * @param content         Already-recorded content, one entry per pass that has any.
      * @return true when the pass was recorded.
      */
-    [[nodiscard]] bool recordWindow(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
+    [[nodiscard]] bool recordWindow(const core::CompiledPass&                  pass,
+                                    const core::CompiledTarget&                compiled_target,
                                     const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
-                                    std::span<const PassContent> content);
+                                    std::span<const PassContent>               content);
 
     /** @brief Resolves one compiled target to a registered target, or nullptr. */
     [[nodiscard]] OffscreenTarget* resolve(const core::CompiledTarget& target) const noexcept;
@@ -374,9 +378,7 @@ class VN_VSG_API VsgExecutor
      * @param window Whether this is the window graph (the present path as a whole).
      * @return What to append to the command graph.
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> recordedChild(const ::vsg::ref_ptr<::vsg::RenderGraph>& graph,
-                                                            const core::CompiledPass&                  pass,
-                                                            bool window);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::Node> recordedChild(const ::vsg::ref_ptr<::vsg::RenderGraph>& graph, const core::CompiledPass& pass, bool window);
 
     /** @brief Reports a pass it could not record. */
     void reportSkipped(const core::CompiledTarget& target, const char* why);
@@ -399,14 +401,14 @@ class VN_VSG_API VsgExecutor
 
 
   private:
-    vn::graphics::Diagnostics&        diagnostics_;  ///< The one diagnostic route.
-    std::vector<Entry>        targets_;      ///< Registered targets, borrowed.
-    WindowTarget*             window_{nullptr};       ///< The registered window (borrowed).
-    bool                      profiling_{false};  ///< Wrap each pass for measurement (see setProfiling).
-    std::vector<ProfileEntry> profile_entries_;  ///< The wrapped passes of the last recorded frame.
-    bool                      window_recorded_{false};  ///< Whether this frame's window graph is in the graph.
-    std::vector<core::PassId> recorded_;     ///< Passes recorded, in record order.
-    std::uint64_t             skipped_{0};   ///< Passes not recorded this frame.
+    vn::graphics::Diagnostics& diagnostics_;              // The one diagnostic route.
+    std::vector<Entry>         targets_;                  // Registered targets, borrowed.
+    WindowTarget*              window_{ nullptr };        // The registered window (borrowed).
+    bool                       profiling_{ false };       // Wrap each pass for measurement (see setProfiling).
+    std::vector<ProfileEntry>  profile_entries_;          // The wrapped passes of the last recorded frame.
+    bool                       window_recorded_{ false }; // Whether this frame's window graph is in the graph.
+    std::vector<core::PassId>  recorded_;                 // Passes recorded, in record order.
+    std::uint64_t              skipped_{ 0 };             // Passes not recorded this frame.
 };
 
 VN_VSG_NS_END

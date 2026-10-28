@@ -23,13 +23,14 @@ class Camera;
  * - A backend may support several families simultaneously (e.g. OGRE renders through OpenGL, Direct3D or Vulkan at
  *   runtime), so the values are bit flags: combine with `|` and test with vn::testFlag().
  */
-enum class RenderApi : std::uint32_t {
+enum class RenderApi : std::uint32_t
+{
     None     = 0,
-    Vulkan   = 1 << 0,  // Vulkan.
-    OpenGL2  = 1 << 1,  // OpenGL 2.x (fixed-function pipeline).
-    OpenGL3  = 1 << 2,  // OpenGL 3.x+ (core profile).
-    OpenGLES = 1 << 3,  // OpenGL ES (mobile/embedded).
-    Direct3D = 1 << 4,  // Direct3D 11/12.
+    Vulkan   = 1 << 0, // Vulkan.
+    OpenGL2  = 1 << 1, // OpenGL 2.x (fixed-function pipeline).
+    OpenGL3  = 1 << 2, // OpenGL 3.x+ (core profile).
+    OpenGLES = 1 << 3, // OpenGL ES (mobile/embedded).
+    Direct3D = 1 << 4, // Direct3D 11/12.
 };
 
 VN_ENABLE_ENUM_FLAGS(RenderApi)
@@ -49,12 +50,12 @@ VN_GRAPHICS_API String renderApiToString(RenderApi api);
  *   RenderBackendInfo.
  */
 struct VN_GRAPHICS_API RenderBackendInfo {
-    String name;          // Unique backend name (identifier), e.g. "vsg", "opengl3".
-    String display_name;  // Human-friendly name shown in UI; falls back to name when empty.
-    String description;   // Human-readable description.
-    String version;       // Backend version, e.g. "1.0.0".
-    String vendor;        // Author or vendor.
-    RenderApi api_flags = RenderApi::None;  // Graphics API families used by the backend (bit flags).
+    String    name;                        // Unique backend name (identifier), e.g. "vsg", "opengl3".
+    String    display_name;                // Human-friendly name shown in UI; falls back to name when empty.
+    String    description;                 // Human-readable description.
+    String    version;                     // Backend version, e.g. "1.0.0".
+    String    vendor;                      // Author or vendor.
+    RenderApi api_flags = RenderApi::None; // Graphics API families used by the backend (bit flags).
 };
 
 /**
@@ -80,7 +81,10 @@ class VN_GRAPHICS_API RenderBackendFactory {
      *
      * @return The backend name.
      */
-    virtual String name() const { return info().name; }
+    virtual String name() const
+    {
+        return info().name;
+    }
 
     /** @brief Creates a backend instance, told how its device presents.
      *
@@ -110,8 +114,8 @@ class VN_GRAPHICS_API RenderBackendRegistry {
   public:
     /** @brief Read-only snapshot of a registered backend factory. */
     struct Entry {
-        RenderBackendInfo info;        // Backend metadata (name, description, ...).
-        raw_ptr<RenderBackendFactory> factory;  // Registered factory (not owned by the registry).
+        RenderBackendInfo             info;    // Backend metadata (name, description, ...).
+        raw_ptr<RenderBackendFactory> factory; // Registered factory (not owned by the registry).
     };
 
     /** @brief Gets the process-wide registry singleton. */
@@ -157,7 +161,10 @@ class VN_GRAPHICS_API RenderBackendRegistry {
     template <typename TFactory>
     class Registrar {
       public:
-        Registrar() { RenderBackendRegistry::instance().registerFactory(&factory_); }
+        Registrar()
+        {
+            RenderBackendRegistry::instance().registerFactory(&factory_);
+        }
 
       private:
         TFactory factory_;
@@ -166,7 +173,7 @@ class VN_GRAPHICS_API RenderBackendRegistry {
   private:
     RenderBackendRegistry();
     ~RenderBackendRegistry();
-    RenderBackendRegistry(const RenderBackendRegistry&) = delete;
+    RenderBackendRegistry(const RenderBackendRegistry&)            = delete;
     RenderBackendRegistry& operator=(const RenderBackendRegistry&) = delete;
 
     struct Data;

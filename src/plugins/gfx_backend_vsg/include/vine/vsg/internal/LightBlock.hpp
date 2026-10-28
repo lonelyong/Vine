@@ -55,8 +55,7 @@ VN_VSG_NS_BEGIN
 inline constexpr float kLightKindEmpty = -1.0F;
 
 /** @brief The shading's light block: one ambient plus `kMaxLights` typed lights, all in view space. */
-struct alignas(16) VineLightsBlock
-{
+struct alignas(16) VineLightsBlock {
     /// rgb + intensity.
     std::array<float, 4> ambient{};
     /// xyz = the light's view-space position, w = its kind (`LightType` value, `kLightKindEmpty` when unused).
@@ -76,12 +75,9 @@ static_assert(sizeof(VineLightsBlock) == 16U + 4U * vn::graphics::kMaxLights * 1
               "VineLightsBlock must be one ambient vec4 plus four arrays of kMaxLights vec4");
 static_assert(alignof(VineLightsBlock) == 16U, "VineLightsBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineLightsBlock, position_kind) == 16U, "VineLightsBlock std140 offset");
-static_assert(offsetof(VineLightsBlock, direction_range) == 16U + vn::graphics::kMaxLights * 16U,
-              "VineLightsBlock std140 offset");
-static_assert(offsetof(VineLightsBlock, color_intensity) == 16U + 2U * vn::graphics::kMaxLights * 16U,
-              "VineLightsBlock std140 offset");
-static_assert(offsetof(VineLightsBlock, cone) == 16U + 3U * vn::graphics::kMaxLights * 16U,
-              "VineLightsBlock std140 offset");
+static_assert(offsetof(VineLightsBlock, direction_range) == 16U + vn::graphics::kMaxLights * 16U, "VineLightsBlock std140 offset");
+static_assert(offsetof(VineLightsBlock, color_intensity) == 16U + 2U * vn::graphics::kMaxLights * 16U, "VineLightsBlock std140 offset");
+static_assert(offsetof(VineLightsBlock, cone) == 16U + 3U * vn::graphics::kMaxLights * 16U, "VineLightsBlock std140 offset");
 
 /**
  * @brief Gets the block slot one announced light was packed into.
@@ -111,7 +107,6 @@ std::size_t packedSlotOf(std::span<const core::LightRef> lights, const void* lig
  * @param out    Receives the block; every field is written (the ambient fill included).
  * @return How many of @p lights the block represents, not counting the ambient fill.
  */
-std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::CameraSnapshot& camera,
-                           VineLightsBlock& out) noexcept;
+std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::CameraSnapshot& camera, VineLightsBlock& out) noexcept;
 
 VN_VSG_NS_END

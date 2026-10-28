@@ -15,7 +15,8 @@ VN_ASYNC_NS_BEGIN
 
 class AsyncConditionVariable;
 
-namespace detail {
+namespace detail
+{
 
 class CvWaiter;
 
@@ -27,12 +28,11 @@ class CvWaiter;
  * notified is a sticky flag that preserves a notification issued while no
  * waiter was registered; see AsyncConditionVariable for the exact semantics.
  */
-struct CvState
-{
+struct CvState {
     std::mutex mutex;
-    CvWaiter* head{ nullptr };
-    CvWaiter* tail{ nullptr };
-    bool notified{ false };
+    CvWaiter*  head{ nullptr };
+    CvWaiter*  tail{ nullptr };
+    bool       notified{ false };
 };
 
 /**
@@ -46,15 +46,16 @@ struct CvState
  * (list-structure safety). Coroutine frame lifetime follows the framework
  * contract in async_global.hpp.
  */
-class CvWaiter
-{
+class CvWaiter {
   public:
-    explicit CvWaiter(std::shared_ptr<CvState> state) noexcept : state_(std::move(state)) {}
+    explicit CvWaiter(std::shared_ptr<CvState> state) noexcept
+      : state_(std::move(state))
+    {}
 
-    CvWaiter(const CvWaiter&) = delete;
+    CvWaiter(const CvWaiter&)            = delete;
     CvWaiter& operator=(const CvWaiter&) = delete;
-    CvWaiter(CvWaiter&&) = delete;
-    CvWaiter& operator=(CvWaiter&&) = delete;
+    CvWaiter(CvWaiter&&)                 = delete;
+    CvWaiter& operator=(CvWaiter&&)      = delete;
 
     ~CvWaiter() noexcept;
 
@@ -78,7 +79,8 @@ class CvWaiter
      */
     bool await_suspend(std::coroutine_handle<> h) noexcept;
 
-    void await_resume() const noexcept {}
+    void await_resume() const noexcept
+    {}
 
   private:
     friend struct CvState;
@@ -102,20 +104,17 @@ inline bool CvWaiter::await_suspend(std::coroutine_handle<> h) noexcept
     assert(h);
     handle_ = h;
     std::lock_guard<std::mutex> lock(state_->mutex);
-    if (state_->notified)
-    {
+    if (state_->notified) {
         state_->notified = false;
         return false; // A pending notification was consumed; do not suspend.
     }
     queued_ = true;
-    prev_ = state_->tail;
-    next_ = nullptr;
-    if (state_->tail)
-    {
+    prev_   = state_->tail;
+    next_   = nullptr;
+    if (state_->tail) {
         state_->tail->next_ = this;
     }
-    else
-    {
+    else {
         state_->head = this;
     }
     state_->tail = this;
@@ -125,29 +124,24 @@ inline bool CvWaiter::await_suspend(std::coroutine_handle<> h) noexcept
 inline CvWaiter::~CvWaiter() noexcept
 {
     std::lock_guard<std::mutex> lock(state_->mutex);
-    if (queued_)
-    {
-        if (prev_)
-        {
+    if (queued_) {
+        if (prev_) {
             prev_->next_ = next_;
         }
-        else
-        {
+        else {
             assert(state_->head == this);
             state_->head = next_;
         }
-        if (next_)
-        {
+        if (next_) {
             next_->prev_ = prev_;
         }
-        else
-        {
+        else {
             assert(state_->tail == this);
             state_->tail = prev_;
         }
         queued_ = false;
-        prev_ = nullptr;
-        next_ = nullptr;
+        prev_   = nullptr;
+        next_   = nullptr;
     }
 }
 
@@ -180,17 +174,16 @@ inline CvWaiter::~CvWaiter() noexcept
  *     never holds a waiter pointer across a resume;
  *   - abandoning a wait is safe: the waiter unregisters itself (queued_).
  * queued_ protects the LIST against concurrent destruction, not the frame.
-  *
+ *
  * Threading: notify_one()/notify_all() may be called from any thread, and the waiters they wake
  * are resumed on the notifying thread. The condition variable must outlive every waiting
  * coroutine; the predicate and the mutex stay the caller's (see the loop rule above).
  */
-class AsyncConditionVariable
-{
+class AsyncConditionVariable {
   public:
     AsyncConditionVariable() noexcept = default;
 
-    AsyncConditionVariable(const AsyncConditionVariable&) = delete;
+    AsyncConditionVariable(const AsyncConditionVariable&)            = delete;
     AsyncConditionVariable& operator=(const AsyncConditionVariable&) = delete;
 
     /**
@@ -215,29 +208,24 @@ class AsyncConditionVariable
         detail::CvWaiter* w = nullptr;
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->head)
-            {
-                w = state_->head;
+            if (state_->head) {
+                w            = state_->head;
                 state_->head = w->next_;
-                if (!state_->head)
-                {
+                if (!state_->head) {
                     state_->tail = nullptr;
                 }
-                else
-                {
+                else {
                     state_->head->prev_ = nullptr;
                 }
-                w->next_ = nullptr;
-                w->prev_ = nullptr;
+                w->next_   = nullptr;
+                w->prev_   = nullptr;
                 w->queued_ = false;
             }
-            else
-            {
+            else {
                 state_->notified = true; // Preserve the notification.
             }
         }
-        if (w)
-        {
+        if (w) {
             assert(w->handle_);
             w->handle_.resume(); // Resume outside the lock.
         }
@@ -266,32 +254,26 @@ class AsyncConditionVariable
     void notify_all() noexcept
     {
         bool woke_any = false;
-        for (;;)
-        {
+        for (;;) {
             detail::CvWaiter* w = nullptr;
             {
                 std::lock_guard<std::mutex> lock(state_->mutex);
-                if (state_->head)
-                {
-                    woke_any = true;
-                    w = state_->head;
+                if (state_->head) {
+                    woke_any     = true;
+                    w            = state_->head;
                     state_->head = w->next_;
-                    if (!state_->head)
-                    {
+                    if (!state_->head) {
                         state_->tail = nullptr;
                     }
-                    else
-                    {
+                    else {
                         state_->head->prev_ = nullptr;
                     }
-                    w->next_ = nullptr;
-                    w->prev_ = nullptr;
+                    w->next_   = nullptr;
+                    w->prev_   = nullptr;
                     w->queued_ = false;
                 }
-                else
-                {
-                    if (!woke_any)
-                    {
+                else {
+                    if (!woke_any) {
                         state_->notified = true; // Preserve the notification.
                     }
                     break;

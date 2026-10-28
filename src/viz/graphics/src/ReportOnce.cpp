@@ -4,8 +4,7 @@ VN_GRAPHICS_NS_BEGIN
 
 bool ReportOnce::shouldReport() noexcept
 {
-    if (reported_)
-    {
+    if (reported_) {
         return false;
     }
     reported_ = true;

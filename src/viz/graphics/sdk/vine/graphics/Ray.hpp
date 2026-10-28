@@ -29,7 +29,8 @@ struct VN_GRAPHICS_API Ray {
      * @param d Ray direction (will be normalized).
      */
     Ray(const Vec3d& o, const Vec3d& d)
-      : origin(o), direction(d.normalized())
+      : origin(o)
+      , direction(d.normalized())
     {}
 
     /** @brief Gets a point along the ray.

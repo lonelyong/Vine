@@ -42,28 +42,25 @@ VN_ASYNC_NS_BEGIN
  * @param pump  Callable to run between waits, so the task can make progress.
  * @return The task's result.
  */
-template<typename T, typename Pump>
+template <typename T, typename Pump>
 T runToCompletion(Task<T>&& task, Pump pump)
 {
     detail::WaitEvent event;
 
-    auto syncTask = detail::makeWaitTask(std::move(task));
+    auto syncTask                    = detail::makeWaitTask(std::move(task));
     syncTask.handle_.promise().event = &event;
 
     syncTask.handle_.resume();
-    while (!event.waitFor(std::chrono::microseconds(200)))
-    {
+    while (!event.waitFor(std::chrono::microseconds(200))) {
         pump();
     }
 
     auto& promise = syncTask.handle_.promise();
-    if (promise.exception)
-    {
+    if (promise.exception) {
         std::rethrow_exception(std::move(promise.exception));
     }
 
-    if constexpr (!std::is_void_v<T>)
-    {
+    if constexpr (!std::is_void_v<T>) {
         return std::move(promise.value).value();
     }
 }

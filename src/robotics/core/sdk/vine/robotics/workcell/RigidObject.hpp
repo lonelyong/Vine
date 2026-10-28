@@ -17,8 +17,7 @@ VN_ROBOTICS_WORKCELL_NS_BEGIN
  * joints, no degrees of freedom, no kinematics. Its geometry (visuals +
  * collisions + frames) is carried by an embedded RigidBody.
  */
-class VN_ROBOTICS_CORE_API RigidObject : public SceneObject
-{
+class VN_ROBOTICS_CORE_API RigidObject : public SceneObject {
   public:
     /**
      * @brief Constructs a rigid object with the given name.

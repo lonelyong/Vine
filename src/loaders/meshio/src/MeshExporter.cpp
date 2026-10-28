@@ -8,8 +8,8 @@
 #include <functional>
 #include <memory>
 #include <ostream>
-#include <sstream>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -70,8 +70,7 @@ Target* copyChannel(std::span<const Source> channel, Convert convert)
  * An empty `indices` view means "non-indexed": a scene is only built for a mesh that passed `isValid()`, and a valid
  * indexed mesh always holds at least one triangle.
  */
-struct MeshView
-{
+struct MeshView {
     /// Vertex positions; never empty for a valid triangle mesh.
     std::span<const Vec3f> positions;
     /// Optional per-vertex normals (empty when absent).
@@ -93,8 +92,7 @@ struct MeshView
  * materials and the node tree only by ModelSceneWriter - while naming a format and writing a file belong to neither and
  * stay free functions below.
  */
-class SceneWriterBase
-{
+class SceneWriterBase {
   protected:
     /**
      * @brief Binds the writer to the options its scale factor comes from.
@@ -103,8 +101,7 @@ class SceneWriterBase
      */
     explicit SceneWriterBase(const MeshExporter::Options& options) noexcept
       : options_(options)
-    {
-    }
+    {}
 
     /**
      * @brief Fills one aiMesh from a Vine mesh.
@@ -133,7 +130,7 @@ class SceneWriterBase
      */
     static MeshView viewOf(const Mesh& mesh);
 
-    const MeshExporter::Options& options_; ///< The export options the scale factor comes from.
+    const MeshExporter::Options& options_; // The export options the scale factor comes from.
 };
 
 MeshView SceneWriterBase::viewOf(const Mesh& mesh)
@@ -143,16 +140,17 @@ MeshView SceneWriterBase::viewOf(const Mesh& mesh)
     }
 
     switch (mesh.shapeType()) {
-      case vn::geometry::ShapeType::IndexedTriangleMesh: {
-          const auto& itm = obj_cast<IndexedTriangleMesh>(mesh);
-          return { itm.positions(), itm.normals(), itm.texcoords(), itm.colors(), itm.indices() };
-      }
-      case vn::geometry::ShapeType::TriangleMesh: {
-          const auto& tm = obj_cast<TriangleMesh>(mesh);
-          return { tm.positions(), tm.normals(), tm.texcoords(), tm.colors(), {} };
-      }
-      default:
-          throw std::runtime_error("MeshExporter: unsupported mesh type");
+    case vn::geometry::ShapeType::IndexedTriangleMesh:
+    {
+        const auto& itm = obj_cast<IndexedTriangleMesh>(mesh);
+        return { itm.positions(), itm.normals(), itm.texcoords(), itm.colors(), itm.indices() };
+    }
+    case vn::geometry::ShapeType::TriangleMesh:
+    {
+        const auto& tm = obj_cast<TriangleMesh>(mesh);
+        return { tm.positions(), tm.normals(), tm.texcoords(), tm.colors(), {} };
+    }
+    default: throw std::runtime_error("MeshExporter: unsupported mesh type");
     }
 }
 
@@ -170,8 +168,7 @@ void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
         io_mesh.mNumVertices = static_cast<unsigned int>(view.positions.size());
 
         const auto factor = static_cast<ai_real>(options_.scale_factor);
-        io_mesh.mVertices = copyChannel<aiVector3D>(
-            view.positions, [factor](const Vec3f& v) { return aiVector3D(v.x * factor, v.y * factor, v.z * factor); });
+        io_mesh.mVertices = copyChannel<aiVector3D>(view.positions, [factor](const Vec3f& v) { return aiVector3D(v.x * factor, v.y * factor, v.z * factor); });
 
         // An attribute is written only when its array covers every vertex, so a partial one is absent rather than read
         // past; an attribute the mesh does not hold is simply not there.
@@ -197,9 +194,8 @@ void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
         const unsigned int base       = i * 3;
         io_mesh.mFaces[i].mNumIndices = 3;
         // A non-indexed mesh names its corners by position, so triangle i is the vertices 3i, 3i+1 and 3i+2.
-        io_mesh.mFaces[i].mIndices    = view.indices.empty()
-            ? new unsigned int[3]{ base, base + 1, base + 2 }
-            : new unsigned int[3]{ view.indices[base], view.indices[base + 1], view.indices[base + 2] };
+        io_mesh.mFaces[i].mIndices    = view.indices.empty() ? new unsigned int[3]{ base, base + 1, base + 2 }
+                                                             : new unsigned int[3]{ view.indices[base], view.indices[base + 1], view.indices[base + 2] };
     }
 }
 
@@ -209,8 +205,7 @@ void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
  * This is the whole of the mesh entry - the materials and the structure a model carries are what a caller of it does
  * not have.
  */
-class MeshSceneWriter final : private SceneWriterBase
-{
+class MeshSceneWriter final : private SceneWriterBase {
   public:
     /**
      * @brief Builds the scene for @p mesh.
@@ -227,7 +222,10 @@ class MeshSceneWriter final : private SceneWriterBase
      *
      * @return The scene; it stays valid as long as this writer lives.
      */
-    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_; }
+    [[nodiscard]] const aiScene& scene() const noexcept
+    {
+        return *scene_;
+    }
 
   private:
     /// The scene being built; aiScene releases the root node, meshes, faces and materials it holds.
@@ -259,8 +257,7 @@ MeshSceneWriter::MeshSceneWriter(const MeshExporter::Options& options, const Mes
  * whole difference from MeshSceneWriter. Material index 0 is the default a mesh without a material uses; every distinct
  * material the entries refer to takes the next index, so a material two entries share is written once.
  */
-class ModelSceneWriter final : private SceneWriterBase
-{
+class ModelSceneWriter final : private SceneWriterBase {
   private:
     /// The index each distinct material was written at, keyed by the material it came from.
     using MaterialIndexMap = std::unordered_map<const Material*, unsigned int>;
@@ -281,7 +278,10 @@ class ModelSceneWriter final : private SceneWriterBase
      *
      * @return The scene; it stays valid as long as this writer lives.
      */
-    [[nodiscard]] const aiScene& scene() const noexcept { return *scene_; }
+    [[nodiscard]] const aiScene& scene() const noexcept
+    {
+        return *scene_;
+    }
 
   private:
     /**
@@ -325,8 +325,7 @@ class ModelSceneWriter final : private SceneWriterBase
      * @param type The key's type part.
      * @param index The key's index part.
      */
-    static void addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type,
-                         unsigned int index);
+    static void addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type, unsigned int index);
 
     /**
      * @brief Fills one aiMaterial from a Vine material.
@@ -358,7 +357,7 @@ class ModelSceneWriter final : private SceneWriterBase
      */
     static aiMatrix4x4 toAiMatrix(const vn::math::Mat4d& transform);
 
-    const Model& model_; ///< The model being written; the node indices refer to it.
+    const Model& model_; // The model being written; the node indices refer to it.
     /// The scene being built; aiScene releases the root node, meshes, faces and materials it holds.
     std::unique_ptr<aiScene> scene_{ std::make_unique<aiScene>() };
 };
@@ -376,8 +375,7 @@ ModelSceneWriter::ModelSceneWriter(const MeshExporter::Options& options, const M
     scene_->mRootNode = buildNode(model_.root());
 }
 
-void ModelSceneWriter::addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type,
-                                unsigned int index)
+void ModelSceneWriter::addColor(aiMaterial& io_material, const vn::Colorf& color, const char* key, unsigned int type, unsigned int index)
 {
     const aiColor4D value = toAiColor(color);
     io_material.AddProperty(&value, 1, key, type, index);
@@ -385,8 +383,7 @@ void ModelSceneWriter::addColor(aiMaterial& io_material, const vn::Colorf& color
 
 aiColor4D ModelSceneWriter::toAiColor(const vn::Colorf& color)
 {
-    return aiColor4D(static_cast<ai_real>(color.r), static_cast<ai_real>(color.g), static_cast<ai_real>(color.b),
-                     static_cast<ai_real>(color.a));
+    return aiColor4D(static_cast<ai_real>(color.r), static_cast<ai_real>(color.g), static_cast<ai_real>(color.b), static_cast<ai_real>(color.a));
 }
 
 void ModelSceneWriter::fillMaterial(aiMaterial& io_material, const Material& material)
@@ -398,41 +395,43 @@ void ModelSceneWriter::fillMaterial(aiMaterial& io_material, const Material& mat
     }
 
     switch (material.materialType()) {
-      case vn::geometry::MaterialType::Color: {
-          const auto& color = static_cast<const vn::geometry::ColorMaterial&>(material).color();
-          addColor(io_material, color, AI_MATKEY_COLOR_DIFFUSE);
-          addColor(io_material, color, AI_MATKEY_BASE_COLOR);
-          const float opacity = color.a;
-          io_material.AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
-          break;
-      }
-      case vn::geometry::MaterialType::Phong: {
-          const auto& phong = static_cast<const vn::geometry::PhongMaterial&>(material);
-          addColor(io_material, phong.ambient(), AI_MATKEY_COLOR_AMBIENT);
-          addColor(io_material, phong.diffuse(), AI_MATKEY_COLOR_DIFFUSE);
-          addColor(io_material, phong.diffuse(), AI_MATKEY_BASE_COLOR);
-          addColor(io_material, phong.specular(), AI_MATKEY_COLOR_SPECULAR);
-          const float shininess = phong.shininess();
-          io_material.AddProperty(&shininess, 1, AI_MATKEY_SHININESS);
-          const float opacity = phong.diffuse().a;
-          io_material.AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
-          break;
-      }
-      case vn::geometry::MaterialType::Pbr: {
-          const auto& pbr = static_cast<const vn::geometry::PbrMaterial&>(material);
-          addColor(io_material, pbr.baseColor(), AI_MATKEY_COLOR_DIFFUSE);
-          addColor(io_material, pbr.baseColor(), AI_MATKEY_BASE_COLOR);
-          addColor(io_material, pbr.emissive(), AI_MATKEY_COLOR_EMISSIVE);
-          const float metallic = pbr.metallic();
-          io_material.AddProperty(&metallic, 1, AI_MATKEY_METALLIC_FACTOR);
-          const float roughness = pbr.roughness();
-          io_material.AddProperty(&roughness, 1, AI_MATKEY_ROUGHNESS_FACTOR);
-          const float opacity = pbr.opacity();
-          io_material.AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
-          break;
-      }
-      default:
-          break;
+    case vn::geometry::MaterialType::Color:
+    {
+        const auto& color = static_cast<const vn::geometry::ColorMaterial&>(material).color();
+        addColor(io_material, color, AI_MATKEY_COLOR_DIFFUSE);
+        addColor(io_material, color, AI_MATKEY_BASE_COLOR);
+        const float opacity = color.a;
+        io_material.AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
+        break;
+    }
+    case vn::geometry::MaterialType::Phong:
+    {
+        const auto& phong = static_cast<const vn::geometry::PhongMaterial&>(material);
+        addColor(io_material, phong.ambient(), AI_MATKEY_COLOR_AMBIENT);
+        addColor(io_material, phong.diffuse(), AI_MATKEY_COLOR_DIFFUSE);
+        addColor(io_material, phong.diffuse(), AI_MATKEY_BASE_COLOR);
+        addColor(io_material, phong.specular(), AI_MATKEY_COLOR_SPECULAR);
+        const float shininess = phong.shininess();
+        io_material.AddProperty(&shininess, 1, AI_MATKEY_SHININESS);
+        const float opacity = phong.diffuse().a;
+        io_material.AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
+        break;
+    }
+    case vn::geometry::MaterialType::Pbr:
+    {
+        const auto& pbr = static_cast<const vn::geometry::PbrMaterial&>(material);
+        addColor(io_material, pbr.baseColor(), AI_MATKEY_COLOR_DIFFUSE);
+        addColor(io_material, pbr.baseColor(), AI_MATKEY_BASE_COLOR);
+        addColor(io_material, pbr.emissive(), AI_MATKEY_COLOR_EMISSIVE);
+        const float metallic = pbr.metallic();
+        io_material.AddProperty(&metallic, 1, AI_MATKEY_METALLIC_FACTOR);
+        const float roughness = pbr.roughness();
+        io_material.AddProperty(&roughness, 1, AI_MATKEY_ROUGHNESS_FACTOR);
+        const float opacity = pbr.opacity();
+        io_material.AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
+        break;
+    }
+    default: break;
     }
 }
 
@@ -573,24 +572,15 @@ void ModelSceneWriter::writeMeshes(const MaterialIndexMap& material_indices)
 const char* writerId(MeshFormat format, MeshExporter::Encoding encoding, bool keeps_side_files) noexcept
 {
     switch (format) {
-      case MeshFormat::Stl:
-          return encoding == MeshExporter::Encoding::Text ? "stl" : "stlb";
-      case MeshFormat::Obj:
-          return keeps_side_files ? "obj" : "objnomtl";
-      case MeshFormat::Ply:
-          return encoding == MeshExporter::Encoding::Text ? "ply" : "plyb";
-      case MeshFormat::Gltf:
-          return "gltf2";
-      case MeshFormat::Glb:
-          return "glb2";
-      case MeshFormat::Fbx:
-          return encoding == MeshExporter::Encoding::Text ? "fbxa" : "fbx";
-      case MeshFormat::Collada:
-          return "collada";
-      case MeshFormat::ThreeMf:
-          return "3mf";
-      case MeshFormat::Unknown:
-          break;
+    case MeshFormat::Stl: return encoding == MeshExporter::Encoding::Text ? "stl" : "stlb";
+    case MeshFormat::Obj: return keeps_side_files ? "obj" : "objnomtl";
+    case MeshFormat::Ply: return encoding == MeshExporter::Encoding::Text ? "ply" : "plyb";
+    case MeshFormat::Gltf: return "gltf2";
+    case MeshFormat::Glb: return "glb2";
+    case MeshFormat::Fbx: return encoding == MeshExporter::Encoding::Text ? "fbxa" : "fbx";
+    case MeshFormat::Collada: return "collada";
+    case MeshFormat::ThreeMf: return "3mf";
+    case MeshFormat::Unknown: break;
     }
     return nullptr;
 }
@@ -633,14 +623,13 @@ vn::io::IoError writeScene(const aiScene& scene, const char* format_id, const st
         if (file_path.has_parent_path()) {
             std::filesystem::create_directories(file_path.parent_path());
         }
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::IoFailure;
     }
 
     Assimp::ExportProperties properties;
-    const aiReturn          status = exporter.Export(&scene, format_id,
-                                                     reinterpret_cast<const char*>(file_path.u8string().data()), 0,
-                                                     &properties);
+    const aiReturn           status = exporter.Export(&scene, format_id, reinterpret_cast<const char*>(file_path.u8string().data()), 0, &properties);
     return status == AI_SUCCESS ? vn::io::IoError::Ok : vn::io::IoError::IoFailure;
 }
 
@@ -683,8 +672,7 @@ vn::io::IoError writeScene(const aiScene& scene, const char* format_id, std::ost
  * bytes are held here and rewind() replays them - a package that saves twice exports once. A producer failure is
  * reported through error(), the way every other source reports one.
  */
-class ExportedBlobSource final : public vn::io::DataSource
-{
+class ExportedBlobSource final : public vn::io::DataSource {
   public:
     /// Writes the whole content into the stream it is handed, and reports why it could not.
     using Producer = std::function<vn::io::IoError(std::ostream&)>;
@@ -695,9 +683,8 @@ class ExportedBlobSource final : public vn::io::DataSource
      * @param producer The writer; it is called at most once.
      */
     explicit ExportedBlobSource(Producer producer)
-        : producer_(std::move(producer))
-    {
-    }
+      : producer_(std::move(producer))
+    {}
 
     [[nodiscard]] std::uint64_t size() const override
     {
@@ -739,7 +726,8 @@ class ExportedBlobSource final : public vn::io::DataSource
         std::ostringstream image(std::ios::binary);
         try {
             error_ = producer_(image);
-        } catch (const std::exception&) {
+        }
+        catch (const std::exception&) {
             error_ = vn::io::IoError::IoFailure;
             return;
         }
@@ -761,8 +749,7 @@ class ExportedBlobSource final : public vn::io::DataSource
  * createSource() answers a source for every format, so a format the target cannot serve (no single self-contained file)
  * is reported through error() instead of by returning null: a container asks that question before it takes the source.
  */
-class RefusedSource final : public vn::io::DataSource
-{
+class RefusedSource final : public vn::io::DataSource {
   public:
     /**
      * @brief Creates a source that reports @p error and yields no bytes.
@@ -771,16 +758,25 @@ class RefusedSource final : public vn::io::DataSource
      */
     explicit RefusedSource(vn::io::IoError error) noexcept
       : error_(error)
+    {}
+
+    [[nodiscard]] std::uint64_t size() const override
     {
+        return 0;
     }
 
-    [[nodiscard]] std::uint64_t size() const override { return 0; }
+    void rewind() override
+    {}
 
-    void rewind() override {}
+    [[nodiscard]] std::size_t read(std::span<std::byte>) override
+    {
+        return 0;
+    }
 
-    [[nodiscard]] std::size_t read(std::span<std::byte>) override { return 0; }
-
-    [[nodiscard]] vn::io::IoError error() const override { return error_; }
+    [[nodiscard]] vn::io::IoError error() const override
+    {
+        return error_;
+    }
 
   private:
     vn::io::IoError error_;
@@ -792,8 +788,7 @@ MeshExporter::MeshExporter() = default;
 
 MeshExporter::MeshExporter(Options options)
   : options_(std::move(options))
-{
-}
+{}
 
 MeshExporter::~MeshExporter() = default;
 
@@ -812,13 +807,13 @@ vn::io::IoError MeshExporter::exportAs(const Mesh& mesh, MeshFormat format, cons
     try {
         const MeshSceneWriter writer(options_, mesh);
         return writeScene(writer.scene(), format_id, file_path);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::InvalidData; // the mesh is not geometry this writer can state
     }
 }
 
-vn::io::IoError MeshExporter::exportAs(const Model& model, MeshFormat format,
-                                       const std::filesystem::path& file_path) const
+vn::io::IoError MeshExporter::exportAs(const Model& model, MeshFormat format, const std::filesystem::path& file_path) const
 {
     const char* const format_id = writerId(format, options_.encoding, /*keeps_side_files=*/true);
     if (format_id == nullptr) {
@@ -828,7 +823,8 @@ vn::io::IoError MeshExporter::exportAs(const Model& model, MeshFormat format,
     try {
         const ModelSceneWriter writer(options_, model);
         return writeScene(writer.scene(), format_id, file_path);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::InvalidData; // the model is malformed, or holds a mesh this writer cannot state
     }
 }
@@ -846,7 +842,8 @@ vn::io::IoError MeshExporter::exportAs(const Mesh& mesh, MeshFormat format, std:
     try {
         const MeshSceneWriter writer(options_, mesh);
         return writeScene(writer.scene(), format_id, out);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::InvalidData;
     }
 }
@@ -867,13 +864,13 @@ vn::io::IoError MeshExporter::exportAs(const Model& model, MeshFormat format, st
     try {
         const ModelSceneWriter writer(options_, model);
         return writeScene(writer.scene(), format_id, out);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::InvalidData;
     }
 }
 
-std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr<const Mesh> mesh,
-                                                              MeshFormat                    format) const
+std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr<const Mesh> mesh, MeshFormat format) const
 {
     if (!formatInfo(format).streamable) {
         return std::make_shared<RefusedSource>(vn::io::IoError::Unsupported);
@@ -888,8 +885,7 @@ std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr
     });
 }
 
-std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr<const Model> model,
-                                                              MeshFormat                     format) const
+std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr<const Model> model, MeshFormat format) const
 {
     if (!formatInfo(format).streamable) {
         return std::make_shared<RefusedSource>(vn::io::IoError::Unsupported);

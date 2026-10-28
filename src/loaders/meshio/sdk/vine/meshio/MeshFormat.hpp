@@ -21,15 +21,15 @@ VN_MESHIO_NS_BEGIN
  */
 enum class MeshFormat : std::uint8_t
 {
-    Unknown = 0, ///< Not a format: an unrecognised extension, or no hint at all.
-    Stl,         ///< Stereolithography (.stl); binary or text.
-    Obj,         ///< Wavefront OBJ (.obj); text.
-    Ply,         ///< Stanford polygon library (.ply); binary or text.
-    Gltf,        ///< glTF 2.0 (.gltf); writes its buffer as a companion .bin, so it needs a path.
-    Glb,         ///< glTF 2.0 binary container (.glb).
-    Fbx,         ///< Autodesk FBX (.fbx); binary or text.
-    Collada,     ///< COLLADA (.dae); text.
-    ThreeMf,     ///< 3D Manufacturing Format (.3mf); one archive, written through a path.
+    Unknown = 0, // Not a format: an unrecognised extension, or no hint at all.
+    Stl,         // Stereolithography (.stl); binary or text.
+    Obj,         // Wavefront OBJ (.obj); text.
+    Ply,         // Stanford polygon library (.ply); binary or text.
+    Gltf,        // glTF 2.0 (.gltf); writes its buffer as a companion .bin, so it needs a path.
+    Glb,         // glTF 2.0 binary container (.glb).
+    Fbx,         // Autodesk FBX (.fbx); binary or text.
+    Collada,     // COLLADA (.dae); text.
+    ThreeMf,     // 3D Manufacturing Format (.3mf); one archive, written through a path.
 };
 
 /**
@@ -42,11 +42,10 @@ enum class MeshFormat : std::uint8_t
  * - `streamable` says one self-contained file exists, which is what a stream or a data source can hold. A format that
  *   needs a second file for its normal form (.gltf's .bin) or cannot be produced without a path (.3mf) answers false.
  */
-struct MeshFormatInfo
-{
-    const char* extension;    ///< Lowercase extension with the leading dot (".stl"); "" for Unknown.
-    bool        has_encoding; ///< Whether Options::encoding selects a binary/text variant.
-    bool        streamable;   ///< Whether one self-contained file can be produced.
+struct MeshFormatInfo {
+    const char* extension;    // Lowercase extension with the leading dot (".stl"); "" for Unknown.
+    bool        has_encoding; // Whether Options::encoding selects a binary/text variant.
+    bool        streamable;   // Whether one self-contained file can be produced.
 };
 
 /**

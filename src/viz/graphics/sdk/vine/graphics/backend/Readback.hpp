@@ -52,54 +52,48 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /** @brief Which attachment of a target a readback is about. */
 enum class ReadbackKind : std::uint8_t
 {
-    Color,  ///< A colour attachment (see ReadbackRequest::attachment).
-    Depth,  ///< The depth attachment (there is at most one).
+    Color, // A colour attachment (see ReadbackRequest::attachment).
+    Depth, // The depth attachment (there is at most one).
 };
 
 /** @brief Why a readback cannot be served (see the file note for what each one lets a caller do). */
 enum class ReadbackRefusal : std::uint8_t
 {
-    None,               ///< Served (or servable): nothing to report.
-    UnknownAttachment,  ///< The target has no such attachment.
-    UnreadableFormat,   ///< This backend cannot read that attachment's format, ever.
-    NotCaptured,        ///< No copy of that attachment has been handed out for recording (yet).
+    None,              // Served (or servable): nothing to report.
+    UnknownAttachment, // The target has no such attachment.
+    UnreadableFormat,  // This backend cannot read that attachment's format, ever.
+    NotCaptured,       // No copy of that attachment has been handed out for recording (yet).
 };
 
 /** @brief What is asked for. */
-struct ReadbackRequest
-{
-    ReadbackKind  kind{ReadbackKind::Color};  ///< Which attachment kind.
-    std::uint32_t attachment{0};              ///< Colour attachment index; ignored for Depth.
+struct ReadbackRequest {
+    ReadbackKind  kind{ ReadbackKind::Color }; // Which attachment kind.
+    std::uint32_t attachment{ 0 };             // Colour attachment index; ignored for Depth.
 };
 
 /** @brief What the target currently has, as facts (no device work, no pixels).
  *
  * The extent is not among them on purpose: a live target always has a usable one (see the file note).
  */
-struct ReadbackState
-{
-    std::uint32_t color_attachments{0};  ///< How many colour attachments the target has.
-    vn::graphics::RenderTarget::ColorFormat color_format{
-        vn::graphics::RenderTarget::ColorFormat::RGBA8
-    };                                             ///< The format of the requested colour attachment.
+struct ReadbackState {
+    std::uint32_t                           color_attachments{ 0 }; // How many colour attachments the target has.
+    vn::graphics::RenderTarget::ColorFormat color_format{ vn::graphics::RenderTarget::ColorFormat::RGBA8 }; // The format of the requested colour attachment.
     /// The depth attachment's format; empty when the target has no depth at all.
     std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;
-    bool color_captured{false};  ///< A copy-back node for the requested colour attachment was handed out.
-    bool depth_captured{false};  ///< A copy-back node for the depth attachment was handed out.
+    bool                                                   color_captured{ false }; // A copy-back node for the requested colour attachment was handed out.
+    bool                                                   depth_captured{ false }; // A copy-back node for the depth attachment was handed out.
 };
 
 /** @brief The table's answer: whether the readback is servable, and why not when it is not. */
-struct ReadbackResult
-{
-    bool             ok{false};                     ///< True when the request can be served.
-    ReadbackRefusal  refusal{ReadbackRefusal::None}; ///< The category; None exactly when ok.
+struct ReadbackResult {
+    bool            ok{ false };                      // True when the request can be served.
+    ReadbackRefusal refusal{ ReadbackRefusal::None }; // The category; None exactly when ok.
 };
 
 /** @brief How one readback format packs its texels, and whether it can be read at all. */
-struct VN_GRAPHICS_API ReadbackFormat
-{
-    std::uint32_t bytes_per_texel{0};  ///< Bytes one texel occupies in the copy; 0 when unreadable.
-    bool          readable{false};     ///< Whether this backend can read that format.
+struct VN_GRAPHICS_API ReadbackFormat {
+    std::uint32_t bytes_per_texel{ 0 }; // Bytes one texel occupies in the copy; 0 when unreadable.
+    bool          readable{ false };    // Whether this backend can read that format.
 
     /** @brief Compares both halves (one spelling for one fact: no reachable unreadable pair differs). */
     [[nodiscard]] bool operator==(const ReadbackFormat& other) const noexcept;
@@ -156,7 +150,6 @@ struct VN_GRAPHICS_API ReadbackFormat
  * @param bytes  The copied bytes, in the tightly packed order the copy produced.
  * @return One value per texel, or empty when the bytes cannot be read as this format.
  */
-[[nodiscard]] VN_GRAPHICS_API std::vector<float> decodeDepth(vn::graphics::RenderTarget::DepthFormat format,
-                                             std::span<const std::byte>                 bytes);
+[[nodiscard]] VN_GRAPHICS_API std::vector<float> decodeDepth(vn::graphics::RenderTarget::DepthFormat format, std::span<const std::byte> bytes);
 
 VN_GRAPHICSBACKEND_NS_END

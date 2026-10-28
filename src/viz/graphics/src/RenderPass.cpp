@@ -15,6 +15,7 @@ VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
+
 /// @brief The colour attachment 0 clears to when the declaration states none.
 ///
 /// The value the main WINDOW pass was written against (an opaque dark grey), STATED IN THE SPACE IT IS SEEN IN and
@@ -25,14 +26,14 @@ const Colorf kDefaultClearColor = Color(51, 51, 51, 255).toLinear();
 
 /// @brief The colour an unstated attachment past the first clears to: "nothing was drawn here".
 constexpr Colorf kUnstatedClearColor{ 0.0F, 0.0F, 0.0F, 0.0F };
-}  // namespace
+
+} // namespace
 
 VN_OBJECT_META_IMPL(RenderPass, vn::Object);
 
 RenderPass::RenderPass()
-    : RenderPass(PassKind::Scene)
-{
-}
+  : RenderPass(PassKind::Scene)
+{}
 
 RenderPass::RenderPass(PassKind kind)
 {
@@ -45,7 +46,7 @@ void RenderPass::setDesc(PassDesc desc)
 {
     // The whole declaration, not a merge: whatever this pass stated before is gone, which is what makes "adopt this
     // descriptor" and "build the pass by hand" the same object (see RenderEngine::addPass).
-    desc_ = std::move(desc);
+    desc_                = std::move(desc);
     // A STATED view is applied to the declared target; an absent (or invalid) one is not a statement about the
     // target - the same rule setRenderTarget follows - so re-stating a declaration never un-says another pass' edge
     // (which is what the engine relies on when it refuses a conflicting view and adopts the rest).
@@ -57,7 +58,7 @@ void RenderPass::setDesc(PassDesc desc)
 
 void RenderPass::setRenderTarget(intrusive_ptr<RenderTarget> target)
 {
-    desc_.writes = std::move(target);
+    desc_.writes         = std::move(target);
     // The edge follows the target: a pass that stated a depth view keeps drawing against it when it is moved. A pass
     // that stated NONE does not un-say what another pass set (attaching a pass to a target is not a statement about
     // the target's depth) - hence the isValid() gate.
@@ -69,7 +70,7 @@ void RenderPass::setRenderTarget(intrusive_ptr<RenderTarget> target)
 
 void RenderPass::setDepthView(DepthView view)
 {
-    desc_.depth_view = std::move(view);
+    desc_.depth_view       = std::move(view);
     // A layered view has no mechanism until layered targets land (see DepthView): it stays a declaration and is
     // applied to nothing, so a frame never silently draws against the whole image instead of the layer.
     // An INVALID view is a statement of its own ("no borrowed depth") and clears what an earlier declaration set,
@@ -189,7 +190,7 @@ void RenderPass::fillPassFacts(PassDraw& out)
     // This pass' state for the content it draws - its depth policy and its rasterisation override, in one
     // announcement: what a backend needs to resolve each command's FINAL state
     // (StateResolution.hpp's resolveRenderState).
-    out.state    = stateOverrides();
+    out.state            = stateOverrides();
     out.draws.clear();
 }
 
@@ -206,8 +207,8 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         return true;
     }
     DrawDescription draw;
-    draw.kind   = DrawDescription::Kind::Scene;
-    draw.camera = desc_.camera.get();
+    draw.kind         = DrawDescription::Kind::Scene;
+    draw.camera       = desc_.camera.get();
     // The viewport this pass lands in, in DEVICE pixels. A sub-viewport wins; otherwise an explicit target's
     // size; otherwise the surface size the engine/chain stated for a window pass. Collection needs it for
     // view-dependent features (AutoTransform screen-space scaling), not for the backend's own viewport.
@@ -220,12 +221,11 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
             viewport = draw_size_;
         }
     }
-    const Viewport* stated_viewport = viewport.isValid() ? &viewport : nullptr;
+    const Viewport* stated_viewport                                  = viewport.isValid() ? &viewport : nullptr;
     // The shared list, not a copy of it: every pass of a frame draws the same commands, and a per-pass copy would cost
     // an intrusive_ptr increment per command plus a command-sized memcpy per pass per frame. What a pass may change is
     // its own VIEW of the list, so the copy happens below - and only for a pass that actually rewrites something.
-    const std::shared_ptr<const std::vector<RenderCommand>> commands =
-        scene->collectRenderCommands(desc_.camera.get(), desc_.layer_mask, stated_viewport);
+    const std::shared_ptr<const std::vector<RenderCommand>> commands = scene->collectRenderCommands(desc_.camera.get(), desc_.layer_mask, stated_viewport);
     // The pass lights whatever content scene it renders: forward the scene's lights so the backend can match this
     // pass's view lighting. Announced even when there are none: "there are no lights" restores a backend's default.
     std::vector<raw_ptr<const Light>> light_ptrs;
@@ -233,7 +233,7 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     for (const auto& light : scene->lights()) {
         light_ptrs.push_back(light.get());
     }
-    draw.lights = std::move(light_ptrs);
+    draw.lights   = std::move(light_ptrs);
     // A program override is the one pass-level override that still rewrites commands: replacing the program is not
     // "another state item" but "draw this content with another program", and the rewrite is what keeps a backend's
     // per-command pipeline key valid. The rasterisation override is NOT rewritten: it travels with the pass' state
@@ -260,8 +260,7 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend, r
     if (!describe(scene, description)) {
         return;
     }
-    backend->executor().executeFrame(singlePassFrame(this, /*order*/ 0, /*inputs*/ {}, std::move(description)),
-                                     present_to);
+    backend->executor().executeFrame(singlePassFrame(this, /*order*/ 0, /*inputs*/ {}, std::move(description)), present_to);
 }
 
 VN_GRAPHICS_NS_END

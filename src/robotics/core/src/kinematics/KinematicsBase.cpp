@@ -65,24 +65,17 @@ void KinematicsBase::setJointResolutions(const Q& limits)
     resolutions_ = limits;
 }
 
-std::vector<Q> KinematicsBase::solveIK(const math::Isometry3d& pose,
-                                       raw_ptr<const Frame>    end,
-                                       raw_ptr<const Frame>    base,
-                                       const State&            state,
-                                       const Q&                guess)
+std::vector<Q> KinematicsBase::solveIK(const math::Isometry3d& pose, raw_ptr<const Frame> end, raw_ptr<const Frame> base, const State& state, const Q& guess)
 {
     if (!end || !base || default_ik_solver_type_ == IKSolverType::None || joints_.empty()) {
         return {};
     }
     const auto* const first_joint_parent = joints_.front()->parent();
     const auto* const last_joint         = joints_.back();
-    if (!last_joint->isAncestorOf(end)
-        || (first_joint_parent != base && !first_joint_parent->isDescendantOf(base))) {
+    if (!last_joint->isAncestorOf(end) || (first_joint_parent != base && !first_joint_parent->isDescendantOf(base))) {
         return {};
     }
-    const auto p = Frame::frameInFrame(base, first_joint_parent, state)
-                   * pose
-                   * Frame::frameInFrame(last_joint, end, state);
+    const auto p = Frame::frameInFrame(base, first_joint_parent, state) * pose * Frame::frameInFrame(last_joint, end, state);
     return solveIK(p, guess);
 }
 
@@ -100,7 +93,7 @@ void KinematicsBase::setQ(const Q& q, State& state) const
 
 Q KinematicsBase::getQ(const State& state) const
 {
-    Q q(dof());
+    Q           q(dof());
     std::size_t offset = 0;
     for (const auto* const joint : joints_) {
         const Q jq = state.qstate(common_base_).getQ(joint);

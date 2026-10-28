@@ -25,29 +25,28 @@ LightPtr Light::createAmbient()
 
 LightPtr Light::createDirectional(const vn::math::Vec3d& direction)
 {
-    auto light = make_intrusive<Light>();
-    light->type_ = LightType::Directional;
+    auto light        = make_intrusive<Light>();
+    light->type_      = LightType::Directional;
     light->direction_ = direction;
     return light;
 }
 
 LightPtr Light::createPoint(const vn::math::Vec3d& position, float range)
 {
-    auto light = make_intrusive<Light>();
+    auto light       = make_intrusive<Light>();
     light->type_     = LightType::Point;
     light->position_ = position;
     light->range_    = range;
     return light;
 }
 
-LightPtr Light::createSpot(const vn::math::Vec3d& position, const vn::math::Vec3d& direction,
-                           double inner_angle, double outer_angle, float range)
+LightPtr Light::createSpot(const vn::math::Vec3d& position, const vn::math::Vec3d& direction, double inner_angle, double outer_angle, float range)
 {
-    auto light = make_intrusive<Light>();
-    light->type_     = LightType::Spot;
-    light->position_ = position;
+    auto light        = make_intrusive<Light>();
+    light->type_      = LightType::Spot;
+    light->position_  = position;
     light->direction_ = direction;
-    light->range_    = range;
+    light->range_     = range;
     // OUTER first: the inner setter clamps against the outer one, so this order keeps the caller's intent
     // when the two arrive the other way round (see setInnerConeAngle).
     light->setOuterConeAngle(outer_angle);
@@ -142,8 +141,7 @@ void Light::setInnerConeAngle(double degrees)
     // Clamped against the OUTER angle, so the pair always describes a cone with a non-negative soft edge: a
     // caller that states them in the other order still gets a usable light (see setOuterConeAngle).
     inner_cone_degrees_ = std::clamp(degrees, 0.0, 90.0);
-    if (inner_cone_degrees_ > outer_cone_degrees_)
-    {
+    if (inner_cone_degrees_ > outer_cone_degrees_) {
         inner_cone_degrees_ = outer_cone_degrees_;
     }
 }
@@ -156,8 +154,7 @@ double Light::outerConeAngle() const
 void Light::setOuterConeAngle(double degrees)
 {
     outer_cone_degrees_ = std::clamp(degrees, 0.0, 90.0);
-    if (outer_cone_degrees_ < inner_cone_degrees_)
-    {
+    if (outer_cone_degrees_ < inner_cone_degrees_) {
         inner_cone_degrees_ = outer_cone_degrees_;
     }
 }

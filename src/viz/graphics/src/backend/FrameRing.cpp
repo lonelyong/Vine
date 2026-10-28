@@ -14,7 +14,7 @@ std::uint64_t alignUp(std::uint64_t value, std::uint64_t alignment) noexcept
     return remainder == 0 ? value : value + (alignment - remainder);
 }
 
-}  // namespace
+} // namespace
 
 FrameRing::FrameRing(const Layout& layout)
 {
@@ -49,11 +49,10 @@ FrameRing::Reservation FrameRing::reserve() noexcept
         return {};
     }
 
-    const std::uint64_t offset = static_cast<std::uint64_t>(slot()) * slab_bytes_ +
-                                 static_cast<std::uint64_t>(reserved_) * stride_;
+    const std::uint64_t offset = static_cast<std::uint64_t>(slot()) * slab_bytes_ + static_cast<std::uint64_t>(reserved_) * stride_;
     ++reserved_;
     high_water_ = std::max(high_water_, reserved_);
-    return {true, offset};
+    return { true, offset };
 }
 
 std::uint64_t FrameRing::stride() const noexcept

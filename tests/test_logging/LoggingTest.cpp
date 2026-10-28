@@ -12,14 +12,14 @@
 #include <vine/logging/LogSink.hpp>
 #include <vine/logging/Logger.hpp>
 
-using vn::logging::LogConfig;
-using vn::logging::LogLevel;
-using vn::logging::LogSink;
-using vn::logging::Logger;
 using vn::logging::defaultLogger;
 using vn::logging::flushDefault;
 using vn::logging::initDefault;
 using vn::logging::levelName;
+using vn::logging::LogConfig;
+using vn::logging::Logger;
+using vn::logging::LogLevel;
+using vn::logging::LogSink;
 using vn::logging::parseLevel;
 
 namespace
@@ -53,10 +53,9 @@ TEST(LogLevelTest, ParseLevelUnknownMapsToInfo)
     EXPECT_EQ(parseLevel(""), LogLevel::Info);
 }
 
-struct Capture
-{
-    LogLevel     level{ LogLevel::Off };
-    std::string  line;
+struct Capture {
+    LogLevel    level{ LogLevel::Off };
+    std::string line;
 };
 
 TEST(LoggerTest, NameAndLevel)
@@ -92,12 +91,11 @@ TEST(LoggerTest, DefaultLoggerProducesNoOutput)
 TEST(LoggerTest, LogSendsFormattedMessageToSink)
 {
     Capture capture;
-    auto sink = LogSink::function(
-        [&capture](LogLevel level, const std::string& line) {
-            capture.level = level;
-            capture.line  = line;
-        });
-    Logger logger("unit", LogLevel::Trace, { sink }, "%v");
+    auto    sink = LogSink::function([&capture](LogLevel level, const std::string& line) {
+        capture.level = level;
+        capture.line  = line;
+    });
+    Logger  logger("unit", LogLevel::Trace, { sink }, "%v");
     logger.error("boom {}", 42);
     EXPECT_EQ(capture.level, LogLevel::Error);
     EXPECT_EQ(capture.line, "boom 42");
@@ -106,9 +104,8 @@ TEST(LoggerTest, LogSendsFormattedMessageToSink)
 TEST(LoggerTest, LevelFilteringSuppressesBelowThreshold)
 {
     Capture capture;
-    auto sink = LogSink::function(
-        [&capture](LogLevel, const std::string& line) { capture.line = line; });
-    Logger logger("unit", LogLevel::Error, { sink }, "%v");
+    auto    sink = LogSink::function([&capture](LogLevel, const std::string& line) { capture.line = line; });
+    Logger  logger("unit", LogLevel::Error, { sink }, "%v");
     logger.warn("should not appear");
     EXPECT_TRUE(capture.line.empty());
     logger.error("appears");
@@ -118,12 +115,11 @@ TEST(LoggerTest, LevelFilteringSuppressesBelowThreshold)
 TEST(LoggerTest, VariadicLevelMethodsForwardMessage)
 {
     Capture capture;
-    auto sink = LogSink::function(
-        [&capture](LogLevel level, const std::string& line) {
-            capture.level = level;
-            capture.line  = line;
-        });
-    Logger logger("unit", LogLevel::Trace, { sink }, "%v");
+    auto    sink = LogSink::function([&capture](LogLevel level, const std::string& line) {
+        capture.level = level;
+        capture.line  = line;
+    });
+    Logger  logger("unit", LogLevel::Trace, { sink }, "%v");
 
     logger.trace("t {}", 1);
     EXPECT_EQ(capture.level, LogLevel::Trace);
@@ -148,12 +144,11 @@ TEST(LoggerTest, VariadicLevelMethodsForwardMessage)
 TEST(LoggerTest, LogWithExplicitLevelAndMessage)
 {
     Capture capture;
-    auto sink = LogSink::function(
-        [&capture](LogLevel level, const std::string& line) {
-            capture.level = level;
-            capture.line  = line;
-        });
-    Logger logger("unit", LogLevel::Trace, { sink }, "%v");
+    auto    sink = LogSink::function([&capture](LogLevel level, const std::string& line) {
+        capture.level = level;
+        capture.line  = line;
+    });
+    Logger  logger("unit", LogLevel::Trace, { sink }, "%v");
     logger.log(LogLevel::Warn, "raw message");
     EXPECT_EQ(capture.level, LogLevel::Warn);
     EXPECT_EQ(capture.line, "raw message");
@@ -162,9 +157,8 @@ TEST(LoggerTest, LogWithExplicitLevelAndMessage)
 TEST(LoggerTest, PatternControlsFormatting)
 {
     Capture capture;
-    auto sink = LogSink::function(
-        [&capture](LogLevel, const std::string& line) { capture.line = line; });
-    Logger logger("unit", LogLevel::Info, { sink }, "[%n] %v");
+    auto    sink = LogSink::function([&capture](LogLevel, const std::string& line) { capture.line = line; });
+    Logger  logger("unit", LogLevel::Info, { sink }, "[%n] %v");
     logger.info("hello");
     EXPECT_EQ(capture.line, "[unit] hello");
 }
@@ -172,9 +166,8 @@ TEST(LoggerTest, PatternControlsFormatting)
 TEST(LoggerTest, SetPatternChangesOutput)
 {
     Capture capture;
-    auto sink = LogSink::function(
-        [&capture](LogLevel, const std::string& line) { capture.line = line; });
-    Logger logger("unit", LogLevel::Info, { sink }, "%v");
+    auto    sink = LogSink::function([&capture](LogLevel, const std::string& line) { capture.line = line; });
+    Logger  logger("unit", LogLevel::Info, { sink }, "%v");
     logger.setPattern("%n:%v");
     logger.info("msg");
     EXPECT_EQ(capture.line, "unit:msg");
@@ -189,8 +182,8 @@ TEST(LoggerTest, FlushDoesNotThrow)
 TEST(LogSinkTest, StreamSinkWritesToStream)
 {
     std::ostringstream out;
-    auto sink = LogSink::stream(out);
-    Logger logger("unit", LogLevel::Info, { sink }, "%v");
+    auto               sink = LogSink::stream(out);
+    Logger             logger("unit", LogLevel::Info, { sink }, "%v");
     logger.info("to stream");
 
     // spdlog appends the platform EOL (\r\n on Windows, \n elsewhere), so
@@ -210,7 +203,7 @@ TEST(LogSinkTest, FileSinkWritesToFile)
     // Scope the logger/sink so the file handle is released before removal;
     // Windows cannot delete a file that is still open.
     {
-        auto sink = LogSink::file(path);
+        auto   sink = LogSink::file(path);
         Logger logger("unit", LogLevel::Info, { sink }, "%v");
         logger.info("file line");
         logger.flush();
@@ -232,8 +225,8 @@ TEST(LogSinkTest, DailyFileSinkWritesToDatedFile)
 
     // The sink inserts the local date before the extension:
     // base "vn_test_daily.log" -> "vn_test_daily_YYYY-MM-DD.log".
-    const auto now = std::time(nullptr);
-    const auto tm  = *std::localtime(&now);
+    const auto         now = std::time(nullptr);
+    const auto         tm  = *std::localtime(&now);
     std::ostringstream name;
     name << "vn_test_daily_" << std::put_time(&tm, "%Y-%m-%d") << ".log";
     const auto path = std::filesystem::temp_directory_path() / name.str();
@@ -242,7 +235,7 @@ TEST(LogSinkTest, DailyFileSinkWritesToDatedFile)
     // Scope the logger/sink so the file handle is released before removal;
     // Windows cannot delete a file that is still open.
     {
-        auto sink = LogSink::dailyFile(base);
+        auto   sink = LogSink::dailyFile(base);
         Logger logger("unit", LogLevel::Info, { sink }, "%v");
         logger.info("daily line");
         logger.flush();
@@ -265,7 +258,7 @@ TEST(LogTest, DefaultLoggerHasVineName)
 
 TEST(LogTest, InitDefaultGuaranteesConsoleSink)
 {
-    initDefault();  // empty config -> a console sink is added
+    initDefault(); // empty config -> a console sink is added
     EXPECT_NO_THROW(VN_LOGI("default console log"));
     EXPECT_EQ(defaultLogger().name(), "vine");
 }
@@ -273,8 +266,7 @@ TEST(LogTest, InitDefaultGuaranteesConsoleSink)
 TEST(LogTest, InitWithFunctionSinkCapturesMacro)
 {
     std::string line;
-    auto sink = LogSink::function(
-        [&line](LogLevel, const std::string& l) { line = l; });
+    auto        sink = LogSink::function([&line](LogLevel, const std::string& l) { line = l; });
     initDefault(LogConfig{ .level = LogLevel::Info, .pattern = "%v", .sinks = { sink } });
     VN_LOGI("hello {} from macro", 42);
     EXPECT_EQ(line, "hello 42 from macro");
@@ -283,8 +275,7 @@ TEST(LogTest, InitWithFunctionSinkCapturesMacro)
 TEST(LogTest, SetLevelControlsDefaultLogger)
 {
     std::string line;
-    auto sink = LogSink::function(
-        [&line](LogLevel, const std::string& l) { line = l; });
+    auto        sink = LogSink::function([&line](LogLevel, const std::string& l) { line = l; });
     initDefault(LogConfig{ .level = LogLevel::Error, .pattern = "%v", .sinks = { sink } });
     VN_LOGI("suppressed");
     EXPECT_TRUE(line.empty());
@@ -300,7 +291,7 @@ TEST(LogTest, InitWithFileSinkWritesToFile)
     initDefault(LogConfig{ .pattern = "%v", .sinks = { LogSink::file(path) } });
     VN_LOGI("config file line");
     flushDefault();
-    initDefault();  // reset default logger, releasing the file sink handle
+    initDefault(); // reset default logger, releasing the file sink handle
 
     std::ifstream in(path);
     ASSERT_TRUE(in.good());
@@ -324,10 +315,7 @@ static_assert(noexcept(VN_LOGE("{}", 1)));
 // 这种情况必须被日志层吞掉：否则在 catch 块/析构路径上调日志就会 terminate。
 TEST(LoggerTest, SinkThrowingNonStandardExceptionDoesNotPropagate)
 {
-    Logger logger("throwing",
-                  LogLevel::Info,
-                  { LogSink::function([](LogLevel, const std::string&) { throw 42; }) },
-                  "%v");
+    Logger logger("throwing", LogLevel::Info, { LogSink::function([](LogLevel, const std::string&) { throw 42; }) }, "%v");
 
     EXPECT_NO_THROW(logger.info("a sink that throws an int"));
     EXPECT_NO_THROW(logger.log(LogLevel::Error, "a sink that throws an int"));
@@ -338,12 +326,9 @@ TEST(LoggerTest, SinkThrowingNonStandardExceptionDoesNotPropagate)
 TEST(LoggerTest, FormatMismatchDoesNotPropagate)
 {
     std::string seen;
-    Logger      logger("mismatch",
-                       LogLevel::Info,
-                       { LogSink::function([&seen](LogLevel, const std::string& line) { seen = line; }) },
-                       "%v");
+    Logger      logger("mismatch", LogLevel::Info, { LogSink::function([&seen](LogLevel, const std::string& line) { seen = line; }) }, "%v");
 
-    EXPECT_NO_THROW(logger.info("{} {}", 1));   // 少一个参数 ⇒ std::format_error
+    EXPECT_NO_THROW(logger.info("{} {}", 1)); // 少一个参数 ⇒ std::format_error
     logger.info("ok {}", 7);
     EXPECT_EQ(seen, "ok 7");
 }

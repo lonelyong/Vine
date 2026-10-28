@@ -17,9 +17,21 @@ class ListCommandsCommand : public Command {
     VN_DECLARE_COMMAND_ALIAS(u8"gcm", u8"list_commands")
 
   public:
-    String group() const override { return u8"帮助"; }
-    String description() const override { return u8"列出所有命令及其别名"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"帮助";
+    }
+
+    String description() const override
+    {
+        return u8"列出所有命令及其别名";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

@@ -5,8 +5,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model,
-                             std::uint32_t primitive_index)
+RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model, std::uint32_t primitive_index)
   : geometry(std::move(g))
   , primitive_index(primitive_index)
   , material(std::move(m))

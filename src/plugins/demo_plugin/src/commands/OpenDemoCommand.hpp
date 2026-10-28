@@ -17,9 +17,21 @@ class OpenDemoCommand : public vn::appfw::Command {
     VN_DECLARE_COMMAND(OpenDemoCommand, u8"open_demo")
 
   public:
-    vn::String                group() const override { return u8"演示"; }
-    vn::String                description() const override { return u8"打开演示场景文档（只保留一份）"; }
-    vn::appfw::CommandFlags   flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String group() const override
+    {
+        return u8"演示";
+    }
+
+    vn::String description() const override
+    {
+        return u8"打开演示场景文档（只保留一份）";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override;
 };
 

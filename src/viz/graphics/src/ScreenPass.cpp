@@ -11,7 +11,7 @@ VN_GRAPHICS_NS_BEGIN
 VN_OBJECT_META_IMPL(ScreenPass, vn::graphics::RenderPass);
 
 ScreenPass::ScreenPass()
-    : RenderPass(PassKind::Screen)
+  : RenderPass(PassKind::Screen)
 {
     // Nothing to state: "draws through a program over its resolved inputs, clears nothing" is what the KIND means
     // (see RenderPass::isClearEnabled / shouldClearDepth), so a screen pass cannot be built that halves it.

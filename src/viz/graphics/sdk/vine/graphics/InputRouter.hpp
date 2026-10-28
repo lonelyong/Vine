@@ -41,8 +41,7 @@ class CameraManipulator;
  *   framework deliberately has no opinion (see `.ai/design/graphics-architecture.md` §2.5); a
  *   router routes events, it does not own a selection.
  */
-class VN_GRAPHICS_API InputRouter
-{
+class VN_GRAPHICS_API InputRouter {
   public:
     /** @brief Builds a router with no manipulator (every event is a no-op until one is set). */
     InputRouter() = default;
@@ -51,20 +50,28 @@ class VN_GRAPHICS_API InputRouter
      *
      * @param manipulator Manipulator to call, or null.
      */
-    explicit InputRouter(raw_ptr<CameraManipulator> manipulator) noexcept : manipulator_(manipulator) {}
+    explicit InputRouter(raw_ptr<CameraManipulator> manipulator) noexcept
+      : manipulator_(manipulator)
+    {}
 
   public:
     /** @brief Sets the manipulator this router calls (borrowed; null silences it).
      *
      * @param manipulator Manipulator to call, or null.
      */
-    void setManipulator(raw_ptr<CameraManipulator> manipulator) noexcept { manipulator_ = manipulator; }
+    void setManipulator(raw_ptr<CameraManipulator> manipulator) noexcept
+    {
+        manipulator_ = manipulator;
+    }
 
     /** @brief Gets the manipulator this router calls.
      *
      * @return The manipulator, or null.
      */
-    [[nodiscard]] raw_ptr<CameraManipulator> manipulator() const noexcept { return manipulator_; }
+    [[nodiscard]] raw_ptr<CameraManipulator> manipulator() const noexcept
+    {
+        return manipulator_;
+    }
 
     /** @brief Routes a mouse event: no button is a move, a held button is a press, a released one a release.
      *

@@ -33,11 +33,11 @@ struct ConsoleCommandEntry {
  */
 enum class ConsoleInputKind
 {
-    None,         ///< A plain read: no picker.
-    File,         ///< One file.
-    Files,        ///< One or more files.
-    Directory,    ///< One directory.
-    Directories   ///< One or more directories.
+    None,       // A plain read: no picker.
+    File,       // One file.
+    Files,      // One or more files.
+    Directory,  // One directory.
+    Directories // One or more directories.
 };
 
 /**
@@ -48,9 +48,9 @@ struct ConsoleInputAction {
     ConsoleInputKind kind{ ConsoleInputKind::None };
     /// Name filter handed to the dialog as it stands, e.g. "网格文件 (*.stl *.obj);;所有文件 (*)"; empty = no filter.
     /// This string is built by the caller - the panel passes it through without looking inside.
-    String           filter;
+    String filter;
     /// Hover text and accessible name of the button, e.g. "选择文件…（.stl .obj，可多选）".
-    String           tooltip;
+    String tooltip;
 };
 
 /**

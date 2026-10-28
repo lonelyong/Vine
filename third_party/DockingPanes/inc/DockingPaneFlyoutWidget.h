@@ -104,13 +104,13 @@ class DockingPaneFlyoutWidget : public QWidget {
     QRect paneRect();
 
   Q_SIGNALS:
-    void unpinContainer(); ///< The pin button was clicked.
-    void closeContainer(); ///< The close button was clicked.
+    void unpinContainer(); // The pin button was clicked.
+    void closeContainer(); // The close button was clicked.
     void startDragFlyoutTitle(QPoint pos);
     void endDragFlyoutTitle(QPoint pos);
     void moveDragFlyoutTitle(QPoint pos);
-    void flyoutFocusLost(); ///< Focus lost / drag ended (the manager cleans up accordingly).
-    void autoHideFlyout();  ///< Auto-hide after a no-focus timeout (currently not connected).
+    void flyoutFocusLost(); // Focus lost / drag ended (the manager cleans up accordingly).
+    void autoHideFlyout();  // Auto-hide after a no-focus timeout (currently not connected).
 
   public:
     bool eventFilter(QObject* obj, QEvent* event) override;

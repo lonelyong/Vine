@@ -85,7 +85,7 @@ TEST(String, SplitBySingleDelimiter)
 TEST(String, SplitByDelimiterSet)
 {
     const vn::String text(u8"a;b|c;;d|");
-    const auto         parts = text.split({ u8';', u8'|' }, false);
+    const auto       parts = text.split({ u8';', u8'|' }, false);
 
     ASSERT_EQ(parts.size(), 4u);
     EXPECT_EQ(parts[0].as_std_u8str(), std::u8string(u8"a"));
@@ -97,7 +97,7 @@ TEST(String, SplitByDelimiterSet)
 TEST(String, SplitByStringDelimiter)
 {
     const vn::String text(u8"a<->b<-><->c");
-    const auto         keepEmpty = text.split(vn::String(u8"<->"), true);
+    const auto       keepEmpty = text.split(vn::String(u8"<->"), true);
 
     ASSERT_EQ(keepEmpty.size(), 4u);
     EXPECT_EQ(keepEmpty[0].as_std_u8str(), std::u8string(u8"a"));
@@ -112,11 +112,11 @@ TEST(String, SplitByStringDelimiter)
 
 TEST(String, Utf16RoundTrip)
 {
-    const char16_t* utf16Data = u"A中😀";
-    const vn::String s      = vn::String::fromUtf16(utf16Data);
+    const char16_t*  utf16Data = u"A中😀";
+    const vn::String s         = vn::String::fromUtf16(utf16Data);
     EXPECT_EQ(s.as_std_u8str(), std::u8string(u8"A中😀"));
 
-    const auto utf16 = s.toUtf16();
+    const auto           utf16    = s.toUtf16();
     const std::u16string expected = u"A中😀";
     EXPECT_EQ(utf16, expected);
 }
@@ -124,7 +124,7 @@ TEST(String, Utf16RoundTrip)
 TEST(String, Utf32RoundTrip)
 {
     const std::u32string source = U"A中😀";
-    const vn::String   s      = vn::String::fromUtf32(source.c_str(), source.size());
+    const vn::String     s      = vn::String::fromUtf32(source.c_str(), source.size());
     EXPECT_EQ(s.as_std_u8str(), std::u8string(u8"A中😀"));
 
     const auto utf32 = s.toUtf32();
@@ -157,7 +157,7 @@ TEST(String, NumericConversions)
 TEST(String, Local8BitAsciiRoundTrip)
 {
     const char* plain = "Hello-123";
-    const auto  s = vn::String::fromLocal8Bit(plain);
+    const auto  s     = vn::String::fromLocal8Bit(plain);
     EXPECT_EQ(s.as_std_u8str(), std::u8string(u8"Hello-123"));
     EXPECT_EQ(s.toLocal8Bit(), std::string("Hello-123"));
 }
@@ -173,7 +173,7 @@ TEST(String, InvalidUtf8DoesNotSkipFollowingByte)
     raw.push_back(static_cast<char8_t>('A'));
 
     vn::String s(raw);
-    const auto   utf32 = s.toUtf32();
+    const auto utf32 = s.toUtf32();
 
     ASSERT_EQ(utf32.size(), 4u);
     EXPECT_EQ(utf32[0], 0xFFFDu);
@@ -225,12 +225,14 @@ TEST(String, HashMatchesEquality)
 
 namespace
 {
+
 /** Compile-time probe: can a T be turned into a mutable std::u8string by an explicit cast?
  *  Written as a concept so the requirement is checked at instantiation, where an invalid cast
  *  is a substitution failure instead of a hard error.
  */
 template <typename T>
 concept CastableToMutableU8String = requires(T& value) { static_cast<std::u8string&>(value); };
+
 } // namespace
 
 TEST(String, StorageAccessIsReadOnly)
@@ -318,26 +320,24 @@ TEST(String, StdStringAndU8StringLayOutIdentically)
     // as_std_str() cannot care about - the content and the bookkeeping members all live after it,
     // which is exactly what the comparison below pins.
     constexpr std::size_t kIgnoredPrefix = sizeof(void*);
-    const auto same_bytes = [](const char* narrow, const char8_t* wide) {
+    const auto            same_bytes     = [](const char* narrow, const char8_t* wide) {
         static_assert(sizeof(std::string) == sizeof(std::u8string));
         static_assert(kIgnoredPrefix < sizeof(std::string));
         alignas(std::string) unsigned char storage[sizeof(std::string)]{};
-        unsigned char                     snapshot[sizeof(std::string)];
+        unsigned char                      snapshot[sizeof(std::string)];
 
         auto* a = ::new (static_cast<void*>(storage)) std::string(narrow);
         std::memcpy(snapshot, storage, sizeof(std::string));
         a->~basic_string();
 
-        auto* b  = ::new (static_cast<void*>(storage)) std::u8string(wide);
-        const bool identical = std::memcmp(snapshot + kIgnoredPrefix, storage + kIgnoredPrefix,
-                                           sizeof(std::string) - kIgnoredPrefix) == 0;
+        auto*      b         = ::new (static_cast<void*>(storage)) std::u8string(wide);
+        const bool identical = std::memcmp(snapshot + kIgnoredPrefix, storage + kIgnoredPrefix, sizeof(std::string) - kIgnoredPrefix) == 0;
         b->~basic_string();
         return identical;
     };
 
     EXPECT_TRUE(same_bytes("", u8"")) << "empty-string layout differs between std::string and std::u8string";
-    EXPECT_TRUE(same_bytes("abcdefghijklmno", u8"abcdefghijklmno"))
-        << "small-string layout differs between std::string and std::u8string";
+    EXPECT_TRUE(same_bytes("abcdefghijklmno", u8"abcdefghijklmno")) << "small-string layout differs between std::string and std::u8string";
 
     // Heap path: same bytes in, same bytes out through the alias.
     const vn::String long_text(std::u8string(64, u8'x'));
@@ -363,6 +363,7 @@ TEST(String, IgnoreCaseFoldsAsciiOnly)
     EXPECT_TRUE(vn::String(u8"Content-Type").startsWith(vn::String(u8"content"), true));
     EXPECT_TRUE(vn::String(u8"file.XML").endsWith(vn::String(u8".xml"), true));
 }
+
 TEST(String, FromUtf8CopiesTheBytesVerbatim)
 {
     // The narrow-to-String boundary the project crosses when a std::string-shaped API hands text over: the bytes are
@@ -397,15 +398,15 @@ TEST(String, IsValidUtf8AcceptsWellFormedSequences)
     EXPECT_TRUE(vn::isValidUtf8(""));
     EXPECT_TRUE(vn::isValidUtf8("plain ascii"));
     EXPECT_TRUE(vn::isValidUtf8("ASCII \xE4\xB8\xAD\xE6\x96\x87 mixed")); // "中文" in a run of ASCII
-    EXPECT_TRUE(vn::isValidUtf8("\xC2\x80"));             // U+0080, the first 2-code-unit code point
-    EXPECT_TRUE(vn::isValidUtf8("\xDF\xBF"));             // U+07FF, the last one
-    EXPECT_TRUE(vn::isValidUtf8("\xE0\xA0\x80"));         // U+0800, the first 3-code-unit code point
-    EXPECT_TRUE(vn::isValidUtf8("\xED\x9F\xBF"));         // U+D7FF, the last code point before the surrogates
-    EXPECT_TRUE(vn::isValidUtf8("\xEE\x80\x80"));         // U+E000, the first one after them
-    EXPECT_TRUE(vn::isValidUtf8("\xEF\xBF\xBF"));         // U+FFFF, the last one of the BMP
-    EXPECT_TRUE(vn::isValidUtf8("\xF0\x90\x80\x80"));     // U+10000, the first 4-code-unit code point
-    EXPECT_TRUE(vn::isValidUtf8("\xF0\x9F\x98\x80"));     // U+1F600
-    EXPECT_TRUE(vn::isValidUtf8("\xF4\x8F\xBF\xBF"));     // U+10FFFF, the last code point there is
+    EXPECT_TRUE(vn::isValidUtf8("\xC2\x80"));                             // U+0080, the first 2-code-unit code point
+    EXPECT_TRUE(vn::isValidUtf8("\xDF\xBF"));                             // U+07FF, the last one
+    EXPECT_TRUE(vn::isValidUtf8("\xE0\xA0\x80"));                         // U+0800, the first 3-code-unit code point
+    EXPECT_TRUE(vn::isValidUtf8("\xED\x9F\xBF"));                         // U+D7FF, the last code point before the surrogates
+    EXPECT_TRUE(vn::isValidUtf8("\xEE\x80\x80"));                         // U+E000, the first one after them
+    EXPECT_TRUE(vn::isValidUtf8("\xEF\xBF\xBF"));                         // U+FFFF, the last one of the BMP
+    EXPECT_TRUE(vn::isValidUtf8("\xF0\x90\x80\x80"));                     // U+10000, the first 4-code-unit code point
+    EXPECT_TRUE(vn::isValidUtf8("\xF0\x9F\x98\x80"));                     // U+1F600
+    EXPECT_TRUE(vn::isValidUtf8("\xF4\x8F\xBF\xBF"));                     // U+10FFFF, the last code point there is
 
     // A NUL is an ordinary byte here: the sequence is what is checked, not a C string.
     EXPECT_TRUE(vn::isValidUtf8(std::string_view("a\0b", 3)));
@@ -427,17 +428,17 @@ TEST(String, IsValidUtf8RejectsMalformedBytes)
     EXPECT_FALSE(vn::isValidUtf8("\xE2\x82\x41")); // a valid length, but the third byte is not a continuation
 
     // Overlong spellings: each one decodes to a code point that a shorter sequence already spells.
-    EXPECT_FALSE(vn::isValidUtf8("\xC0\x80"));     // U+0000 in two code units
-    EXPECT_FALSE(vn::isValidUtf8("\xC1\x81"));     // U+0041 in two code units
-    EXPECT_FALSE(vn::isValidUtf8("\xE0\x80\x80")); // U+0000 in three code units
-    EXPECT_FALSE(vn::isValidUtf8("\xE0\x9F\xBF")); // U+07FF in three code units
+    EXPECT_FALSE(vn::isValidUtf8("\xC0\x80"));         // U+0000 in two code units
+    EXPECT_FALSE(vn::isValidUtf8("\xC1\x81"));         // U+0041 in two code units
+    EXPECT_FALSE(vn::isValidUtf8("\xE0\x80\x80"));     // U+0000 in three code units
+    EXPECT_FALSE(vn::isValidUtf8("\xE0\x9F\xBF"));     // U+07FF in three code units
     EXPECT_FALSE(vn::isValidUtf8("\xF0\x80\x80\x80")); // U+0000 in four code units
     EXPECT_FALSE(vn::isValidUtf8("\xF0\x8F\xBF\xBF")); // U+FFFF in four code units
 
     // Surrogates and code points beyond U+10FFFF: a decoder refuses them, so text never holds them.
-    EXPECT_FALSE(vn::isValidUtf8("\xED\xA0\x80"));         // U+D800
-    EXPECT_FALSE(vn::isValidUtf8("\xED\xBF\xBF"));         // U+DFFF
-    EXPECT_FALSE(vn::isValidUtf8("\xF4\x90\x80\x80"));     // U+110000
+    EXPECT_FALSE(vn::isValidUtf8("\xED\xA0\x80"));     // U+D800
+    EXPECT_FALSE(vn::isValidUtf8("\xED\xBF\xBF"));     // U+DFFF
+    EXPECT_FALSE(vn::isValidUtf8("\xF4\x90\x80\x80")); // U+110000
     EXPECT_FALSE(vn::isValidUtf8("\xF5\x80\x80\x80"));
 
     // A malformed byte spoils the sequence wherever it sits, and the check never repairs one.

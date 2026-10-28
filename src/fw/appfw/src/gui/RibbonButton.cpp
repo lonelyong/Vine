@@ -76,15 +76,17 @@ RibbonButton::RibbonButton()
     // When a command is configured, execute it on click so simple command
     // buttons do not need a manually bound callback. detach() because this is the
     // widget wiring its own signal: the subscription lasts as long as the widget.
-    clicked.connect([](RibbonButton& self, EventArgs&) {
-        const String cmd = self.command();
-        if (!cmd.empty()) {
-            if (auto* app = Application::current()) {
-                // Same rule as RibbonAction: resolve the target at dispatch and let it travel with the execution.
-                app->commandManager()->executeDetached(cmd, resolveCommandTarget(MainWindow::current()));
+    clicked
+        .connect([](RibbonButton& self, EventArgs&) {
+            const String cmd = self.command();
+            if (!cmd.empty()) {
+                if (auto* app = Application::current()) {
+                    // Same rule as RibbonAction: resolve the target at dispatch and let it travel with the execution.
+                    app->commandManager()->executeDetached(cmd, resolveCommandTarget(MainWindow::current()));
+                }
             }
-        }
-    }).detach();
+        })
+        .detach();
 }
 
 RibbonButton::~RibbonButton()

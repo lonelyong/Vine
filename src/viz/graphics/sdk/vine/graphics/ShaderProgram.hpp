@@ -5,10 +5,10 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -17,9 +17,9 @@ VN_GRAPHICS_NS_BEGIN
  */
 enum class ShaderStageType
 {
-    Vertex,   ///< Vertex shader.
-    Fragment, ///< Fragment (pixel) shader.
-    Compute,  ///< Compute shader (reserved).
+    Vertex,   // Vertex shader.
+    Fragment, // Fragment (pixel) shader.
+    Compute,  // Compute shader (reserved).
 };
 
 /**
@@ -30,11 +30,10 @@ enum class ShaderStageType
  *   compiles; the render backend compiles the GLSL to SPIR-V at run time (vsg ShaderCompiler, glslang) or
  *   consumes pre-compiled SPIR-V supplied through the program.
  */
-struct VN_GRAPHICS_API ShaderStage
-{
-    ShaderStageType type = ShaderStageType::Vertex;  ///< Stage kind.
-    String source;                                   ///< GLSL source for the stage.
-    String entryPoint = u8"main";                    ///< Entry function name.
+struct VN_GRAPHICS_API ShaderStage {
+    ShaderStageType type = ShaderStageType::Vertex; // Stage kind.
+    String          source;                         // GLSL source for the stage.
+    String          entryPoint = u8"main";          // Entry function name.
 };
 
 /**
@@ -134,9 +133,9 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
     const std::vector<ShaderStage>& stages() const;
 
   private:
-    String name_;
+    String                   name_;
     std::vector<ShaderStage> stages_;
-    std::uint64_t revision_ = 0;
+    std::uint64_t            revision_ = 0;
 };
 
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;

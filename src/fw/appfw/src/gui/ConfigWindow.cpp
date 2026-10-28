@@ -136,11 +136,13 @@ int choiceIndex(const ConfigManager& config, const ConfigItem& item)
                 return static_cast<int>(i);
         }
         else if (const auto* as_double = std::any_cast<double>(&v)) {
-            if (stored ? config.getDouble(key, *as_double) == *as_double : has_default && default_type == ConfigItemType::Double && item.defaultDouble() == *as_double)
+            if (stored ? config.getDouble(key, *as_double) == *as_double
+                       : has_default && default_type == ConfigItemType::Double && item.defaultDouble() == *as_double)
                 return static_cast<int>(i);
         }
         else if (const auto* as_string = std::any_cast<String>(&v)) {
-            if (stored ? config.getString(key, *as_string) == *as_string : has_default && default_type == ConfigItemType::String && item.defaultString() == *as_string)
+            if (stored ? config.getString(key, *as_string) == *as_string
+                       : has_default && default_type == ConfigItemType::String && item.defaultString() == *as_string)
                 return static_cast<int>(i);
         }
     }
@@ -157,14 +159,11 @@ void writeEditorValue(QWidget* widget, const ConfigManager& config, const Config
     widget->blockSignals(true);
     switch (item.type()) {
     case ConfigItemType::String:
-        static_cast<QLineEdit*>(widget)->setText(
-            Convert::toQString(config.getString(key, item.hasDefault() ? item.defaultString() : String())));
+        static_cast<QLineEdit*>(widget)->setText(Convert::toQString(config.getString(key, item.hasDefault() ? item.defaultString() : String())));
         break;
     case ConfigItemType::Bool: static_cast<QCheckBox*>(widget)->setChecked(config.getBool(key, item.hasDefault() && item.defaultBool())); break;
     case ConfigItemType::Int: static_cast<QSpinBox*>(widget)->setValue(config.getInt(key, item.hasDefault() ? item.defaultInt() : 0)); break;
-    case ConfigItemType::Double:
-        static_cast<QDoubleSpinBox*>(widget)->setValue(config.getDouble(key, item.hasDefault() ? item.defaultDouble() : 0.0));
-        break;
+    case ConfigItemType::Double: static_cast<QDoubleSpinBox*>(widget)->setValue(config.getDouble(key, item.hasDefault() ? item.defaultDouble() : 0.0)); break;
     case ConfigItemType::Choice: static_cast<QComboBox*>(widget)->setCurrentIndex(choiceIndex(config, item)); break;
     }
     widget->blockSignals(false);

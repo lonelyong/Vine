@@ -25,20 +25,20 @@ namespace detail
  * the command cannot drift: a pipeline built with anything else would be a pipeline that differs from its
  * neighbours for no reason, i.e. one VkPipeline per state combination again.
  */
-inline constexpr VkBool32            kBakedDepthTestEnable  = VK_TRUE;
-inline constexpr VkBool32            kBakedDepthWriteEnable = VK_TRUE;
-inline constexpr VkCompareOp         kBakedCompareOp        = VK_COMPARE_OP_GREATER;
-inline constexpr VkCullModeFlags     kBakedCullMode         = VK_CULL_MODE_NONE;
-inline constexpr VkFrontFace         kBakedFrontFace        = VK_FRONT_FACE_CLOCKWISE;
-inline constexpr VkPrimitiveTopology kBakedTopology         = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-inline constexpr VkPolygonMode       kBakedPolygonMode      = VK_POLYGON_MODE_FILL;
-inline constexpr VkBool32            kBakedBlendEnable      = VK_FALSE;
-inline constexpr VkBlendFactor       kBakedBlendFactor      = VK_BLEND_FACTOR_ONE;
+inline constexpr VkBool32            kBakedDepthTestEnable   = VK_TRUE;
+inline constexpr VkBool32            kBakedDepthWriteEnable  = VK_TRUE;
+inline constexpr VkCompareOp         kBakedCompareOp         = VK_COMPARE_OP_GREATER;
+inline constexpr VkCullModeFlags     kBakedCullMode          = VK_CULL_MODE_NONE;
+inline constexpr VkFrontFace         kBakedFrontFace         = VK_FRONT_FACE_CLOCKWISE;
+inline constexpr VkPrimitiveTopology kBakedTopology          = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+inline constexpr VkPolygonMode       kBakedPolygonMode       = VK_POLYGON_MODE_FILL;
+inline constexpr VkBool32            kBakedBlendEnable       = VK_FALSE;
+inline constexpr VkBlendFactor       kBakedBlendFactor       = VK_BLEND_FACTOR_ONE;
 inline constexpr float               kBakedDepthBiasConstant = 0.0F;
 inline constexpr float               kBakedDepthBiasSlope    = 0.0F;
 /// @brief The line width a pipeline bakes. Dynamic state makes the value irrelevant to the pipeline, so it is
 /// the command's own default - and 1.0 is the one width every device accepts.
-inline constexpr float               kBakedLineWidth        = 1.0F;
+inline constexpr float kBakedLineWidth                       = 1.0F;
 
 /**
  * @brief The most colour attachments the blend half of this command can carry.
@@ -125,18 +125,16 @@ inline constexpr uint32_t kDynamicStateSlot = 15u;
  * above is part of it); for a foreign set it means the mapped values that were baked apply instead, which
  * is the same value by construction (see the paragraph on the invariant above).
  */
-class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicState>
-{
+class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicState> {
   public:
     /// @brief Constructs the command in the slot this backend's state commands occupy.
     ///
     /// Explicit rather than `= default`: StateCommand's default slot is 0, which is where the pipeline bind
     /// lives, so a defaulted constructor would silently replace the group's pipeline bind (see
     /// kDynamicStateSlot — that is exactly what the first version of this command did).
-    SetDynamicState() :
-        Inherit(kDynamicStateSlot)
-    {
-    }
+    SetDynamicState()
+      : Inherit(kDynamicStateSlot)
+    {}
 
     VkBool32            depth_test_enable  = kBakedDepthTestEnable;
     VkBool32            depth_write_enable = kBakedDepthWriteEnable;
@@ -151,13 +149,13 @@ class SetDynamicState : public ::vsg::Inherit<::vsg::StateCommand, SetDynamicSta
     /// dynamically but `depthBiasEnable` only from VK_EXT_extended_dynamic_state2, so a baked enable with
     /// dynamic factors is what gives one pipeline per program instead of one per offset. Zero factors are a
     /// zero offset, which is why "no polygon offset" needs no separate flag here.
-    float               depth_bias_constant = kBakedDepthBiasConstant;
-    float               depth_bias_slope    = kBakedDepthBiasSlope;
+    float depth_bias_constant              = kBakedDepthBiasConstant;
+    float depth_bias_slope                 = kBakedDepthBiasSlope;
     /// Width of rasterised LINE primitives, in framebuffer pixels (`vkCmdSetLineWidth`), already clamped to the
     /// device's lineWidthRange by the recorder that built this command.
-    float               line_width          = kBakedLineWidth;
+    float line_width                       = kBakedLineWidth;
     /// The colour attachments of the draw the command precedes (0 = a depth-only pass: no blend at all).
-    std::uint32_t color_attachment_count = 0u;
+    std::uint32_t color_attachment_count   = 0u;
     /// Per-attachment blend state: only the entries below color_attachment_count are recorded.
     std::array<VkPipelineColorBlendAttachmentState, kMaxDynamicAttachments> blend{};
     /// The extension entry points record() calls through (see DynamicStateEntryPoints).

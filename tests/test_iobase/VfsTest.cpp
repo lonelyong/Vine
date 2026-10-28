@@ -15,12 +15,12 @@
 
 #include "VfsTestSupport.hpp"
 
-using vn::io::DirectoryVfs;
-using vn::io::IoError;
-using vn::io::ZipArchive;
 using vfstest::bytesOf;
 using vfstest::sortedNames;
 using vfstest::TempDir;
+using vn::io::DirectoryVfs;
+using vn::io::IoError;
+using vn::io::ZipArchive;
 
 namespace
 {
@@ -178,9 +178,9 @@ TEST(VfsTest, ZipAddFileFromDisk)
 
 TEST(VfsTest, DirectoryVfsRoundTrip)
 {
-    const TempDir     temp;
-    const auto        root = temp.path() / "tree";
-    std::error_code   ec;
+    const TempDir   temp;
+    const auto      root = temp.path() / "tree";
+    std::error_code ec;
     std::filesystem::create_directories(root, ec);
     ASSERT_FALSE(ec);
 

@@ -6,8 +6,8 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 
 bool StreamKey::operator==(const StreamKey& other) const noexcept
 {
-    return kind == other.kind && location == other.location && components == other.components &&
-           buffer == other.buffer && revision == other.revision && offset == other.offset && count == other.count;
+    return kind == other.kind && location == other.location && components == other.components && buffer == other.buffer && revision == other.revision &&
+           offset == other.offset && count == other.count;
 }
 
 bool StreamKey::derived() const noexcept
@@ -20,9 +20,7 @@ std::size_t StreamKeyHash::operator()(const StreamKey& key) const noexcept
     // A plain combine over the fields that make up the identity. The pointer is mixed as an integer, which
     // is all a hash may assume about it (the identity comparison is what decides equality).
     std::size_t hash = static_cast<std::size_t>(key.kind);
-    const auto mix   = [&hash](std::uint64_t value) noexcept {
-        hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
-    };
+    const auto  mix  = [&hash](std::uint64_t value) noexcept { hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2); };
     mix(reinterpret_cast<std::uintptr_t>(key.buffer));
     mix(key.revision);
     mix(key.offset);
@@ -32,9 +30,9 @@ std::size_t StreamKeyHash::operator()(const StreamKey& key) const noexcept
     return hash;
 }
 
-SharedStreams::SharedStreams(std::size_t capacity) : capacity_(std::max<std::size_t>(capacity, 1U))
-{
-}
+SharedStreams::SharedStreams(std::size_t capacity)
+  : capacity_(std::max<std::size_t>(capacity, 1U))
+{}
 
 SharedStreams::Decision SharedStreams::acquire(const StreamKey& key, std::uint64_t frame)
 {
@@ -44,14 +42,14 @@ SharedStreams::Decision SharedStreams::acquire(const StreamKey& key, std::uint64
         // is alive because a frame named it, not because a tally said so (see the class note).
         found->second->last_frame = frame;
         ++aliases_;
-        return {Action::Alias, std::nullopt};
+        return { Action::Alias, std::nullopt };
     }
 
-    order_.push_back(Entry{key, frame});
+    order_.push_back(Entry{ key, frame });
     index_[key] = std::prev(order_.end());
     ++uploads_;
 
-    Decision decision{Action::Upload, std::nullopt};
+    Decision decision{ Action::Upload, std::nullopt };
 
     // Past the capacity the STALEST entry leaves the MAP - not the oldest INSERTED, which is a different row
     // as soon as a scene re-names old streams (see the class note). Readers keep reading what they bound (the
@@ -73,8 +71,7 @@ SharedStreams::Decision SharedStreams::acquire(const StreamKey& key, std::uint64
     return decision;
 }
 
-std::uint64_t SharedStreams::releaseUnseen(std::uint64_t frame, std::uint64_t grace,
-                                           std::vector<StreamKey>& dropped)
+std::uint64_t SharedStreams::releaseUnseen(std::uint64_t frame, std::uint64_t grace, std::vector<StreamKey>& dropped)
 {
     dropped.clear();
     std::uint64_t released = 0U;

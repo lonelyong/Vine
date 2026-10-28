@@ -4,9 +4,9 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-DiagnosticsRoute::DiagnosticsRoute(Lease<RenderEngine> engine) noexcept : engine_(engine)
-{
-}
+DiagnosticsRoute::DiagnosticsRoute(Lease<RenderEngine> engine) noexcept
+  : engine_(engine)
+{}
 
 bool DiagnosticsRoute::isValid() const noexcept
 {
@@ -38,8 +38,7 @@ bool DiagnosticsRoute::isClean() const noexcept
     return engine == nullptr || engine->diagnosticsClean();
 }
 
-void DiagnosticsRoute::report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category,
-                              const String& message)
+void DiagnosticsRoute::report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message)
 {
     if (raw_ptr<RenderEngine> engine = engine_.get()) {
         engine->reportEngineProblem(severity, category, message);

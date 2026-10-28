@@ -123,12 +123,12 @@ class DockingPaneBase : public QWidget {
     virtual void setId(const QString& id);
 
   protected:
-    bool                m_isClient;           ///< Whether this is the central client area.
-    DockingPaneManager* m_dockingManager;     ///< The owning manager.
-    State               m_state;              ///< Current state.
-    QString             m_name;               ///< Display name.
-    QString             m_id;                 ///< Unique identifier.
-    void*               m_userData = nullptr; ///< Host custom data.
+    bool                m_isClient;           // Whether this is the central client area.
+    DockingPaneManager* m_dockingManager;     // The owning manager.
+    State               m_state;              // Current state.
+    QString             m_name;               // Display name.
+    QString             m_id;                 // Unique identifier.
+    void*               m_userData = nullptr; // Host custom data.
 };
 
 #endif // DOCKINGPANEBASE_H

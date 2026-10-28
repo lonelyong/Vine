@@ -2,9 +2,9 @@
 
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cmath>
 #include <cstring>
 #include <span>
 #include <vector>
@@ -35,7 +35,7 @@ inline constexpr std::array<char, 4> kMeshMagic{ 'V', 'M', 'S', 'H' };
 inline constexpr std::uint16_t kMeshVersion = 2;
 
 /// Bytes of the prefix every binary STL file starts with: an 80-byte free-form header and a 32-bit triangle count.
-inline constexpr std::size_t kStlPrefixSize = 84;
+inline constexpr std::size_t kStlPrefixSize   = 84;
 /// Bytes one binary STL triangle takes: a facet normal, three vertices, and a 16-bit attribute count.
 inline constexpr std::size_t kStlTriangleSize = 50;
 
@@ -147,24 +147,23 @@ enum class MeshFlag : std::uint16_t
     /// Vertex positions, three floats each; always set, since a file without them is not a mesh.
     Positions = 1u << 0,
     /// Per-vertex normals, three floats each.
-    Normals = 1u << 1,
+    Normals   = 1u << 1,
     /// Per-vertex texture coordinates, two floats each.
     Texcoords = 1u << 2,
     /// Triangle indices, one 32-bit number each.
-    Indices = 1u << 3,
+    Indices   = 1u << 3,
     /// Per-vertex colours, four floats each (linear RGBA). A build that predates this block refuses the whole file
     /// rather than read it without the colours, which is what the unknown-flag check below is for.
-    Colours = 1u << 4,
+    Colours   = 1u << 4,
 
     /// The numbers are big-endian; a file says so itself, because this build writes the machine's own order.
     BigEndian = 1u << 8,
 };
 
 /// Every bit this build understands; anything else means a file from a later writer, which is refused rather than read.
-inline constexpr std::uint16_t kMeshKnownFlags
-    = static_cast<std::uint16_t>(MeshFlag::Positions) | static_cast<std::uint16_t>(MeshFlag::Normals)
-      | static_cast<std::uint16_t>(MeshFlag::Texcoords) | static_cast<std::uint16_t>(MeshFlag::Indices)
-      | static_cast<std::uint16_t>(MeshFlag::Colours) | static_cast<std::uint16_t>(MeshFlag::BigEndian);
+inline constexpr std::uint16_t kMeshKnownFlags = static_cast<std::uint16_t>(MeshFlag::Positions) | static_cast<std::uint16_t>(MeshFlag::Normals) |
+                                                 static_cast<std::uint16_t>(MeshFlag::Texcoords) | static_cast<std::uint16_t>(MeshFlag::Indices) |
+                                                 static_cast<std::uint16_t>(MeshFlag::Colours) | static_cast<std::uint16_t>(MeshFlag::BigEndian);
 
 /// Whether this machine writes its numbers big-endian, which is what a file written here says about itself.
 inline constexpr bool kMeshHostIsBigEndian = (std::endian::native == std::endian::big);
@@ -175,11 +174,10 @@ inline constexpr bool kMeshHostIsBigEndian = (std::endian::native == std::endian
  * The counts are the whole point of the format: with them inside the file, nothing outside it has to agree with what was
  * written - which is what the split-entry form required (an XML attribute per array, checked in a second place).
  */
-struct MeshHeader
-{
-    std::uint16_t flags{ 0 };           ///< The MeshFlag bits of this file.
-    std::uint64_t vertex_count{ 0 };    ///< Vertices the position, normal and texcoord blocks hold.
-    std::uint64_t triangle_count{ 0 };  ///< Triangles the mesh has; the index block holds three per triangle.
+struct MeshHeader {
+    std::uint16_t flags{ 0 };          // The MeshFlag bits of this file.
+    std::uint64_t vertex_count{ 0 };   // Vertices the position, normal and texcoord blocks hold.
+    std::uint64_t triangle_count{ 0 }; // Triangles the mesh has; the index block holds three per triangle.
 
     /**
      * @brief Reports whether the file holds one of the arrays.
@@ -197,7 +195,10 @@ struct MeshHeader
      *
      * @return Three per triangle.
      */
-    [[nodiscard]] std::uint64_t indexCount() const noexcept { return triangle_count * 3; }
+    [[nodiscard]] std::uint64_t indexCount() const noexcept
+    {
+        return triangle_count * 3;
+    }
 
     /**
      * @brief Reports how many bytes the whole file takes, header included.
@@ -298,8 +299,7 @@ inline bool parseMeshHeader(std::span<const std::byte> bytes, MeshHeader& out) n
  * three floats per vertex, which is why the vertex count is its size divided by three), and an index array holds one
  * number per index. Keeping that in one place is what keeps the two forms describing the same mesh.
  */
-struct MeshArrays
-{
+struct MeshArrays {
     vn::intrusive_ptr<const vn::Buffer<float>>         positions;
     vn::intrusive_ptr<const vn::Buffer<float>>         normals;
     vn::intrusive_ptr<const vn::Buffer<float>>         texcoords;
@@ -309,7 +309,10 @@ struct MeshArrays
     std::uint64_t                                      triangle_count{ 0 };
 
     /// Whether this holds a mesh that can be written: positions and at least one triangle.
-    [[nodiscard]] bool valid() const noexcept { return positions != nullptr && vertex_count != 0 && triangle_count != 0; }
+    [[nodiscard]] bool valid() const noexcept
+    {
+        return positions != nullptr && vertex_count != 0 && triangle_count != 0;
+    }
 
     /**
      * @brief Takes the arrays of a mesh; the mesh is not needed afterwards.
@@ -328,27 +331,28 @@ struct MeshArrays
         }
 
         switch (mesh.shapeType()) {
-        case vn::geometry::ShapeType::IndexedTriangleMesh: {
-            const auto& indexed  = obj_cast<vn::geometry::IndexedTriangleMesh>(mesh);
-            arrays.positions     = indexed.positionsBuffer();
-            arrays.normals       = indexed.normalsBuffer();
-            arrays.texcoords     = indexed.texcoordsBuffer();
-            arrays.colors        = indexed.colorsBuffer();
-            arrays.indices       = indexed.indicesBuffer();
+        case vn::geometry::ShapeType::IndexedTriangleMesh:
+        {
+            const auto& indexed   = obj_cast<vn::geometry::IndexedTriangleMesh>(mesh);
+            arrays.positions      = indexed.positionsBuffer();
+            arrays.normals        = indexed.normalsBuffer();
+            arrays.texcoords      = indexed.texcoordsBuffer();
+            arrays.colors         = indexed.colorsBuffer();
+            arrays.indices        = indexed.indicesBuffer();
             arrays.triangle_count = indexed.triangleCount();
             break;
         }
-        case vn::geometry::ShapeType::TriangleMesh: {
-            const auto& soup       = obj_cast<vn::geometry::TriangleMesh>(mesh);
-            arrays.positions       = soup.positionsBuffer();
-            arrays.normals         = soup.normalsBuffer();
-            arrays.texcoords       = soup.texcoordsBuffer();
-            arrays.colors          = soup.colorsBuffer();
-            arrays.triangle_count  = soup.triangleCount();
+        case vn::geometry::ShapeType::TriangleMesh:
+        {
+            const auto& soup      = obj_cast<vn::geometry::TriangleMesh>(mesh);
+            arrays.positions      = soup.positionsBuffer();
+            arrays.normals        = soup.normalsBuffer();
+            arrays.texcoords      = soup.texcoordsBuffer();
+            arrays.colors         = soup.colorsBuffer();
+            arrays.triangle_count = soup.triangleCount();
             break;
         }
-        default:
-            return arrays; // B-rep shapes and the like are not triangle meshes
+        default: return arrays; // B-rep shapes and the like are not triangle meshes
         }
 
         if (arrays.positions == nullptr) {
@@ -366,13 +370,11 @@ struct MeshArrays
         // A mesh whose arrays do not describe the same mesh is refused here, once, for both forms: a file holding a normal
         // array that is shorter than the positions, or an index that no vertex backs, would say something the mesh does
         // not - and the alternative (writing the file without the offending array) is a silent change to the content.
-        const bool whole_vertices = arrays.positions->size() % 3u == 0;
-        const bool whole_triangles
-            = arrays.indices == nullptr || arrays.indices->size() == arrays.triangle_count * 3u;
-        const bool strided_arrays
-            = (arrays.normals == nullptr || arrays.normals->size() == arrays.vertex_count * 3u)
-              && (arrays.texcoords == nullptr || arrays.texcoords->size() == arrays.vertex_count * 2u)
-              && (arrays.colors == nullptr || arrays.colors->size() == arrays.vertex_count * 4u);
+        const bool whole_vertices  = arrays.positions->size() % 3u == 0;
+        const bool whole_triangles = arrays.indices == nullptr || arrays.indices->size() == arrays.triangle_count * 3u;
+        const bool strided_arrays  = (arrays.normals == nullptr || arrays.normals->size() == arrays.vertex_count * 3u) &&
+                                     (arrays.texcoords == nullptr || arrays.texcoords->size() == arrays.vertex_count * 2u) &&
+                                     (arrays.colors == nullptr || arrays.colors->size() == arrays.vertex_count * 4u);
         if (!whole_vertices || !whole_triangles || !strided_arrays || !cornersAreInRange(arrays)) {
             return MeshArrays{};
         }
@@ -413,8 +415,7 @@ struct MeshArrays
  * A mesh that was edited after it was handed over is refused (`IoError::InvalidData`), the way every borrowed source here
  * refuses one.
  */
-class MeshBinSource final : public vn::io::DataSource
-{
+class MeshBinSource final : public vn::io::DataSource {
   public:
     /**
      * @brief Sources a mesh as one mesh file.
@@ -469,7 +470,10 @@ class MeshBinSource final : public vn::io::DataSource
     /**
      * @brief Restarts the file from its first byte.
      */
-    void rewind() override { cursor_ = 0; }
+    void rewind() override
+    {
+        cursor_ = 0;
+    }
 
     /**
      * @brief Writes the next chunk of the file.
@@ -491,13 +495,11 @@ class MeshBinSource final : public vn::io::DataSource
         if (cursor_ >= total) {
             return 0;
         }
-        const std::size_t take = static_cast<std::size_t>(
-            std::min<std::uint64_t>(out.size(), total - cursor_));
+        const std::size_t take = static_cast<std::size_t>(std::min<std::uint64_t>(out.size(), total - cursor_));
 
         std::size_t written = 0;
         if (cursor_ < kMeshHeaderSize) {
-            const std::size_t from_header = static_cast<std::size_t>(
-                std::min<std::uint64_t>(take, kMeshHeaderSize - cursor_));
+            const std::size_t from_header = static_cast<std::size_t>(std::min<std::uint64_t>(take, kMeshHeaderSize - cursor_));
             std::memcpy(out.data(), header_bytes_.data() + cursor_, from_header);
             written = from_header;
         }
@@ -517,11 +519,9 @@ class MeshBinSource final : public vn::io::DataSource
                 break;
             }
 
-            const std::size_t within = static_cast<std::size_t>(in_blocks - block_at);
-            const std::size_t take_from_block =
-                std::min<std::size_t>(take - written, static_cast<std::size_t>(blocks_[index].bytes) - within);
-            std::memcpy(out.data() + written,
-                        reinterpret_cast<const std::byte*>(blocks_[index].data) + within, take_from_block);
+            const std::size_t within          = static_cast<std::size_t>(in_blocks - block_at);
+            const std::size_t take_from_block = std::min<std::size_t>(take - written, static_cast<std::size_t>(blocks_[index].bytes) - within);
+            std::memcpy(out.data() + written, reinterpret_cast<const std::byte*>(blocks_[index].data) + within, take_from_block);
             written += take_from_block;
             at += take_from_block;
         }
@@ -536,12 +536,14 @@ class MeshBinSource final : public vn::io::DataSource
      * @return IoError::Ok while the mesh writes cleanly, IoError::InvalidData when it was refused or was edited after the
      *         source was handed over.
      */
-    [[nodiscard]] vn::io::IoError error() const override { return error_; }
+    [[nodiscard]] vn::io::IoError error() const override
+    {
+        return error_;
+    }
 
   private:
     /// One array of the file, as it is written.
-    struct Block
-    {
+    struct Block {
         const void*   data{ nullptr };
         std::uint64_t bytes{ 0 };
     };
@@ -556,8 +558,7 @@ class MeshBinSource final : public vn::io::DataSource
      * @param element Bytes one of those elements takes.
      */
     template <typename T>
-    void addBlock(const vn::intrusive_ptr<const vn::Buffer<T>>& buffer, MeshFlag flag, std::uint64_t count,
-                  std::uint64_t element) noexcept
+    void addBlock(const vn::intrusive_ptr<const vn::Buffer<T>>& buffer, MeshFlag flag, std::uint64_t count, std::uint64_t element) noexcept
     {
         const std::uint64_t bytes = buffer == nullptr ? 0 : buffer->size() * sizeof(T);
         if (buffer == nullptr || bytes != count * element) {
@@ -577,11 +578,9 @@ class MeshBinSource final : public vn::io::DataSource
      */
     [[nodiscard]] bool intact() const noexcept
     {
-        return (positions_ == nullptr || positions_->revision() == revisions_[0])
-               && (normals_ == nullptr || normals_->revision() == revisions_[1])
-               && (texcoords_ == nullptr || texcoords_->revision() == revisions_[2])
-               && (colors_ == nullptr || colors_->revision() == revisions_[3])
-               && (indices_ == nullptr || indices_->revision() == revisions_[4]);
+        return (positions_ == nullptr || positions_->revision() == revisions_[0]) && (normals_ == nullptr || normals_->revision() == revisions_[1]) &&
+               (texcoords_ == nullptr || texcoords_->revision() == revisions_[2]) && (colors_ == nullptr || colors_->revision() == revisions_[3]) &&
+               (indices_ == nullptr || indices_->revision() == revisions_[4]);
     }
 
     vn::intrusive_ptr<const vn::Buffer<float>>         positions_;
@@ -625,8 +624,7 @@ inline constexpr std::uint64_t kMaxStlTriangles = 0xFFFFFFFFull;
  * A mesh that was edited after it was handed over is refused (`IoError::InvalidData`), the way every borrowed source
  * here refuses one.
  */
-class StlMeshSource final : public vn::io::DataSource
-{
+class StlMeshSource final : public vn::io::DataSource {
   public:
     /**
      * @brief Sources a mesh as binary STL.
@@ -650,8 +648,7 @@ class StlMeshSource final : public vn::io::DataSource
         // The 80 bytes are free-form on purpose; they must not start with "solid", which is how a reader tells the text
         // form of STL apart from this one.
         static constexpr char kHeader[] = "binary STL written by vine::robotics::io";
-        static_assert(sizeof(kHeader) - 1 <= kStlPrefixSize - sizeof(std::uint32_t),
-                      "the text has to fit the 80 bytes binary STL reserves for its header");
+        static_assert(sizeof(kHeader) - 1 <= kStlPrefixSize - sizeof(std::uint32_t), "the text has to fit the 80 bytes binary STL reserves for its header");
         std::memset(prefix_.data(), 0, prefix_.size());
         std::memcpy(prefix_.data(), kHeader, sizeof(kHeader) - 1);
         putU32Le(prefix_.data() + 80, static_cast<std::uint32_t>(arrays_.triangle_count));
@@ -673,7 +670,10 @@ class StlMeshSource final : public vn::io::DataSource
     /**
      * @brief Restarts the file from its first byte.
      */
-    void rewind() override { cursor_ = 0; }
+    void rewind() override
+    {
+        cursor_ = 0;
+    }
 
     /**
      * @brief Writes the next chunk of the file.
@@ -699,17 +699,16 @@ class StlMeshSource final : public vn::io::DataSource
 
         std::size_t written = 0;
         if (cursor_ < kStlPrefixSize) {
-            const std::size_t from_prefix
-                = std::min<std::size_t>(take, kStlPrefixSize - static_cast<std::size_t>(cursor_));
+            const std::size_t from_prefix = std::min<std::size_t>(take, kStlPrefixSize - static_cast<std::size_t>(cursor_));
             std::memcpy(out.data(), prefix_.data() + cursor_, from_prefix);
             written = from_prefix;
         }
 
         while (written < take) {
-            const std::uint64_t at    = cursor_ + written;      // where in the file the next byte belongs
-            const std::uint64_t in    = at - kStlPrefixSize;    // how far into the triangles that is
-            const std::uint64_t index = in / kStlTriangleSize;  // the triangle it falls in
-            const std::size_t  within = static_cast<std::size_t>(in % kStlTriangleSize);
+            const std::uint64_t at     = cursor_ + written;     // where in the file the next byte belongs
+            const std::uint64_t in     = at - kStlPrefixSize;   // how far into the triangles that is
+            const std::uint64_t index  = in / kStlTriangleSize; // the triangle it falls in
+            const std::size_t   within = static_cast<std::size_t>(in % kStlTriangleSize);
 
             std::array<char, kStlTriangleSize> record{};
             renderTriangle(index, record.data());
@@ -729,7 +728,10 @@ class StlMeshSource final : public vn::io::DataSource
      * @return IoError::Ok while the mesh writes cleanly, IoError::InvalidData when it was refused or edited after the
      *         source was handed over, IoError::CapacityExceeded when it has more triangles than STL can state.
      */
-    [[nodiscard]] vn::io::IoError error() const override { return error_; }
+    [[nodiscard]] vn::io::IoError error() const override
+    {
+        return error_;
+    }
 
   private:
     /**
@@ -739,8 +741,8 @@ class StlMeshSource final : public vn::io::DataSource
      */
     [[nodiscard]] bool intact() const noexcept
     {
-        return (arrays_.positions == nullptr || arrays_.positions->revision() == revisions_[0])
-               && (arrays_.indices == nullptr || arrays_.indices->revision() == revisions_[1]);
+        return (arrays_.positions == nullptr || arrays_.positions->revision() == revisions_[0]) &&
+               (arrays_.indices == nullptr || arrays_.indices->revision() == revisions_[1]);
     }
 
     /**
@@ -828,11 +830,11 @@ class StlMeshSource final : public vn::io::DataSource
         out[2]                       = positions[index * 3u + 2u];
     }
 
-    MeshArrays                        arrays_{};
-    std::array<char, kStlPrefixSize>  prefix_{};
-    std::array<std::uint64_t, 2>      revisions_{};
-    std::uint64_t                     cursor_{ 0 };
-    vn::io::IoError                   error_{ vn::io::IoError::Ok };
+    MeshArrays                       arrays_{};
+    std::array<char, kStlPrefixSize> prefix_{};
+    std::array<std::uint64_t, 2>     revisions_{};
+    std::uint64_t                    cursor_{ 0 };
+    vn::io::IoError                  error_{ vn::io::IoError::Ok };
 };
 
 /**
@@ -857,13 +859,12 @@ class StlMeshSource final : public vn::io::DataSource
 /**
  * @brief The arrays one mesh file holds.
  */
-struct MeshBinData
-{
-    vn::geometry::Vec3fArray  positions; ///< Vertex positions.
-    vn::geometry::Vec3fArray  normals;   ///< Per-vertex normals, empty when the file has none.
-    vn::geometry::Vec2fArray  texcoords; ///< Per-vertex texture coordinates, empty when the file has none.
-    vn::geometry::Vec4fArray  colors;    ///< Per-vertex colours (linear RGBA), empty when the file has none.
-    vn::geometry::UInt32Array indices;   ///< Triangle indices, empty for a triangle soup.
+struct MeshBinData {
+    vn::geometry::Vec3fArray  positions; // Vertex positions.
+    vn::geometry::Vec3fArray  normals;   // Per-vertex normals, empty when the file has none.
+    vn::geometry::Vec2fArray  texcoords; // Per-vertex texture coordinates, empty when the file has none.
+    vn::geometry::Vec4fArray  colors;    // Per-vertex colours (linear RGBA), empty when the file has none.
+    vn::geometry::UInt32Array indices;   // Triangle indices, empty for a triangle soup.
 };
 
 /**
@@ -904,10 +905,10 @@ inline bool readMeshBin(vn::io::Vfs& vfs, const std::filesystem::path& path, Mes
 
     // Every count has to fit what the entry can hold, which is also what keeps the multiplication below from wrapping.
     const auto fits = [total](std::uint64_t count, std::uint64_t element) { return count <= total / element; };
-    if (!fits(header.vertex_count, sizeof(vn::math::Vec3f))
-        || (header.has(MeshFlag::Texcoords) && !fits(header.vertex_count, sizeof(vn::math::Vec2f)))
-        || (header.has(MeshFlag::Colours) && !fits(header.vertex_count, sizeof(vn::math::Vec4f)))
-        || (header.has(MeshFlag::Indices) && (!fits(header.indexCount(), sizeof(std::uint32_t)) || header.indexCount() % 3u != 0))) {
+    if (!fits(header.vertex_count, sizeof(vn::math::Vec3f)) || (header.has(MeshFlag::Texcoords) && !fits(header.vertex_count, sizeof(vn::math::Vec2f))) ||
+        (header.has(MeshFlag::Colours) && !fits(header.vertex_count, sizeof(vn::math::Vec4f))) ||
+        (header.has(MeshFlag::Indices) && (!fits(header.indexCount(), sizeof(std::uint32_t)) || header.indexCount() % 3u != 0)))
+    {
         return false;
     }
     if (header.byteCount() != total) {
@@ -948,8 +949,7 @@ inline bool readMeshBin(vn::io::Vfs& vfs, const std::filesystem::path& path, Mes
  * @param indexed Whether the description says the mesh is an indexed one.
  * @return The mesh, or null when the file cannot be read.
  */
-inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromBin(vn::io::Vfs& vfs, const std::filesystem::path& path,
-                                                         bool indexed)
+inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromBin(vn::io::Vfs& vfs, const std::filesystem::path& path, bool indexed)
 {
     MeshBinData data;
     if (!readMeshBin(vfs, path, data)) {
@@ -1062,8 +1062,7 @@ inline bool readStl(vn::io::Vfs& vfs, const std::filesystem::path& path, MeshBin
             const float       nz     = getFloatLe(record + 8);
             for (int corner = 0; corner < 3; ++corner) {
                 const char* const vertex = record + 12 + corner * 12;
-                out.positions.push_back(
-                    vn::math::Vec3f(getFloatLe(vertex), getFloatLe(vertex + 4), getFloatLe(vertex + 8)));
+                out.positions.push_back(vn::math::Vec3f(getFloatLe(vertex), getFloatLe(vertex + 4), getFloatLe(vertex + 8)));
                 out.normals.push_back(vn::math::Vec3f(nx, ny, nz));
             }
         }
@@ -1106,8 +1105,7 @@ inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromStl(vn::io::Vfs& vfs, const
  * @param indexed Whether the description says the mesh is an indexed one.
  * @return The mesh, or null when the file cannot be read or is not what the description promised.
  */
-inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromFile(vn::io::Vfs& vfs, const std::filesystem::path& path,
-                                                          bool indexed)
+inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromFile(vn::io::Vfs& vfs, const std::filesystem::path& path, bool indexed)
 {
     if (!isStlPath(path)) {
         return meshFromBin(vfs, path, indexed);

@@ -86,23 +86,23 @@ void ModelViewerPlugin::registerDocumentSurface(vn::appfw::Application& app)
     documents->registerType(registration);
 
     documents->registerOpener<MeshPayload>({
-        .type_id = ModelDocument::kTypeId,
-        .open    = [](const MeshPayload& payload) -> vn::appfw::Document* {
-            if (payload.mesh == nullptr) {
-                return nullptr; // 没有网格的载荷我不接（别的打开器还能收拾它）。
-            }
-            return new ModelDocument(payload.name, payload.mesh);
-        },
-        .source_scheme = u8"memory",
+      .type_id = ModelDocument::kTypeId,
+      .open    = [](const MeshPayload& payload) -> vn::appfw::Document* {
+          if (payload.mesh == nullptr) {
+              return nullptr; // 没有网格的载荷我不接（别的打开器还能收拾它）。
+          }
+          return new ModelDocument(payload.name, payload.mesh);
+      },
+      .source_scheme = u8"memory",
     });
 
     documents->registerOpener<MeshFilePayload>({
-        .type_id = ModelDocument::kTypeId,
-        .open    = [](const MeshFilePayload& payload) -> vn::appfw::Document* {
-            // 怎么读、用什么选项读，都在这里（header-only，所以用例可以直接拿同一段代码验）。
-            return openMeshFilePayload(payload);
-        },
-        .source_scheme = u8"file",
+      .type_id = ModelDocument::kTypeId,
+      .open    = [](const MeshFilePayload& payload) -> vn::appfw::Document* {
+          // 怎么读、用什么选项读，都在这里（header-only，所以用例可以直接拿同一段代码验）。
+          return openMeshFilePayload(payload);
+      },
+      .source_scheme = u8"file",
     });
 }
 
@@ -124,8 +124,7 @@ void registerShadingCommand(vn::appfw::CommandManager& commands, const char8_t* 
 {
     const vn::String name(id);
     if (!commands.registerCommand<CommandT>(name)) {
-        VN_LOGW("model_viewer: the command '{}' was not registered (the name is taken)",
-                reinterpret_cast<const char*>(id));
+        VN_LOGW("model_viewer: the command '{}' was not registered (the name is taken)", reinterpret_cast<const char*>(id));
     }
 }
 
@@ -171,11 +170,11 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
 
     // 五档各一个按钮：照片上的东西一眼能看出在哪一档，所以不做"勾选态"（框架今天也没有单选组的概念）。
     const std::pair<const char8_t*, const char8_t*> entries[] = {
-        { u8"实面", kShadingModeLitCommand },
-        { u8"平面", kShadingModeFlatCommand },
-        { u8"无光照", kShadingModeUnlitCommand },
-        { u8"法线", kShadingModeNormalsCommand },
-        { u8"线框", kShadingModeWireframeCommand },
+        { u8"实面",   kShadingModeLitCommand       },
+        { u8"平面",   kShadingModeFlatCommand      },
+        { u8"无光照", kShadingModeUnlitCommand     },
+        { u8"法线",   kShadingModeNormalsCommand   },
+        { u8"线框",   kShadingModeWireframeCommand },
     };
     for (const auto& [label, command] : entries) {
         auto* button = new vn::appfw::gui::RibbonButton();
@@ -220,10 +219,19 @@ void ModelViewerPlugin::installInfoPanel(vn::appfw::Application& app)
 } // namespace vn::model_viewer
 
 /// 插件图标（内联 SVG）。含逗号的 SVG 要放在命名常量里：VN_DECLARE_PLUGIN 是宏，圆括号外层的逗号会把参数切开。
-constexpr const char8_t* kPluginIcon = u8R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#2a7ac9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6z"/><path d="M4 16.4 12 12l8 4.4"/><path d="M12 3.2V12"/></g></svg>)SVG";
+constexpr const char8_t* kPluginIcon =
+    u8R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#2a7ac9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6z"/><path d="M4 16.4 12 12l8 4.4"/><path d="M12 3.2V12"/></g></svg>)SVG";
 
 // 宏在**全局命名空间**展开（VN_DEFINE_MODULE_COMMAND_QUEUE() 在 vn::appfw::detail 里定义函数，要求展开位置必须
 // 包着那个命名空间），所以类名写成全限定名 —— 同 gfx_backend_vsg 与 demo_plugin。
-VN_DECLARE_PLUGIN(vn::model_viewer::ModelViewerPlugin, u8"6d1f3b90-7c4e-4a2f-9d38-5e2b8a4c1f77", u8"model_viewer",
-                 u8"模型查看器", u8"1.0.0", u8"模型查看器：一种文档类型 + 模型信息面板（顶点数 / 三角形数）", u8"Vine",
-                 u8"dev@vine.example", u8"https://github.com/vine/model_viewer", kPluginIcon, {})
+VN_DECLARE_PLUGIN(vn::model_viewer::ModelViewerPlugin,
+                  u8"6d1f3b90-7c4e-4a2f-9d38-5e2b8a4c1f77",
+                  u8"model_viewer",
+                  u8"模型查看器",
+                  u8"1.0.0",
+                  u8"模型查看器：一种文档类型 + 模型信息面板（顶点数 / 三角形数）",
+                  u8"Vine",
+                  u8"dev@vine.example",
+                  u8"https://github.com/vine/model_viewer",
+                  kPluginIcon,
+                  {})

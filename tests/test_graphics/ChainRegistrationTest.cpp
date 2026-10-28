@@ -2,11 +2,11 @@
 #include <vine/graphics/DiagnosticsRoute.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/OutputRegistry.hpp>
+#include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/PassDesc.hpp>
 #include <vine/graphics/PassRegistry.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/Scene.hpp>
 
 #include <vine/String.hpp>
@@ -19,7 +19,8 @@ using vn::intrusive_ptr;
 using vn::raw_ptr;
 using vn::String;
 
-namespace {
+namespace
+{
 
 /*
  * @brief A declaration that asks nothing of the device: a scene pass in the HUD stage with no content and no clear.
@@ -38,7 +39,7 @@ PassDesc overlayDeclaration(const char8_t* name)
     return declaration;
 }
 
-}  // namespace
+} // namespace
 
 /*
  * @brief The chain is its own registration scope: what it registered it takes back, and only that.
@@ -86,8 +87,7 @@ TEST(ChainRegistrationTest, AChainOutlivingItsEngineAnswersNothing)
 
     EXPECT_FALSE(survivor->isValid()) << "the engine it registered on is gone";
     EXPECT_EQ(survivor->overlayPass(String(u8"doomed")), nullptr);
-    EXPECT_EQ(survivor->addOverlay(String(u8"late"), nullptr, overlayDeclaration(u8"late")), nullptr)
-        << "there is nobody left to register it on";
+    EXPECT_EQ(survivor->addOverlay(String(u8"late"), nullptr, overlayDeclaration(u8"late")), nullptr) << "there is nobody left to register it on";
 }
 
 /*
@@ -139,7 +139,7 @@ TEST(ChainRegistrationTest, AHostRegistersAThirdOverlayWithoutTouchingTheChain)
     ChainDesc options;
     options.camera      = cam.get();
     options.content     = content;
-    options.fps.enabled = true;  // one overlay the recipe knows; the host's is a second readout
+    options.fps.enabled = true; // one overlay the recipe knows; the host's is a second readout
     auto chain          = PassChain::build(engine.get(), options);
     ASSERT_NE(chain, nullptr);
     const std::size_t recipe_passes = engine->passCount();
@@ -158,15 +158,14 @@ TEST(ChainRegistrationTest, AHostRegistersAThirdOverlayWithoutTouchingTheChain)
     hud.viewport      = corner->boxViewport();
     hud.clear_enabled = false;
 
-    int    laid_out_width  = 0;
-    int    laid_out_height = 0;
-    double laid_out_ratio  = 0.0;
+    int                       laid_out_width  = 0;
+    int                       laid_out_height = 0;
+    double                    laid_out_ratio  = 0.0;
     const raw_ptr<RenderPass> hud_pass =
-        chain->addOverlay(String(u8"corner"), corner.get(), hud,
-                          [corner, &laid_out_width, &laid_out_height, &laid_out_ratio](RenderPass& pass,
-                                                                                      int width,
-                                                                                      int height,
-                                                                                      double ratio) {
+        chain->addOverlay(String(u8"corner"),
+                          corner.get(),
+                          hud,
+                          [corner, &laid_out_width, &laid_out_height, &laid_out_ratio](RenderPass& pass, int width, int height, double ratio) {
                               laid_out_width  = width;
                               laid_out_height = height;
                               laid_out_ratio  = ratio;
@@ -231,8 +230,7 @@ TEST(ChainRegistrationTest, TheHandlesOutliveTheirEngineAndThenAnswerNothing)
     EXPECT_EQ(outputs.transientCount(), 0u);
     EXPECT_EQ(diagnostics.count(), 0u);
     EXPECT_TRUE(diagnostics.isClean());
-    diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
-                       String(u8"dropped with the engine"));
+    diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest, String(u8"dropped with the engine"));
     EXPECT_EQ(diagnostics.count(), 0u) << "a report with no route is a no-op, not a crash";
 }
 

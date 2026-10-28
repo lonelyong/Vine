@@ -16,9 +16,9 @@ namespace DockingPaneGeometry
 {
 
 /// Floor for a floating pane: below this it is hard to grab again.
-constexpr int minimumWidth = 120;
+constexpr int minimumWidth   = 120;
 /// Floor for a floating pane: below this it is hard to grab again.
-constexpr int minimumHeight = 80;
+constexpr int minimumHeight  = 80;
 /// How much of the title bar must stay inside the screen for the pane to be grabbable.
 constexpr int titleBarMargin = 24;
 

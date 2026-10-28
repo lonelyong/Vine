@@ -52,8 +52,7 @@ VN_IO_NS_BEGIN
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API MountVfs : public Vfs
-{
+class VN_IOBASE_API MountVfs : public Vfs {
   public:
     /**
      * @brief Constructs an empty mounted tree.
@@ -84,12 +83,11 @@ class VN_IOBASE_API MountVfs : public Vfs
      * @return IoError::Ok, IoError::InvalidPath when prefix is not a valid
      *         virtual path, or IoError::InvalidData when backend is null.
      */
-    [[nodiscard]] IoError mount(const std::filesystem::path& prefix, std::shared_ptr<Vfs> backend, int priority = 0,
-                                bool read_only = false);
+    [[nodiscard]] IoError mount(const std::filesystem::path& prefix, std::shared_ptr<Vfs> backend, int priority = 0, bool read_only = false);
 
     // Vfs
-    using Vfs::read;    // the override below would otherwise hide the base's sink-push overload
     using Vfs::addFile; // the overrides below would otherwise hide the base's content-source overloads
+    using Vfs::read;    // the override below would otherwise hide the base's sink-push overload
 
     /**
      * @brief Reports whether no mount accepts writes.
@@ -171,8 +169,7 @@ class VN_IOBASE_API MountVfs : public Vfs
      *         IoError::IsADirectory, IoError::NotADirectory, IoError::ReadOnly,
      *         or a failure reported by the target backend.
      */
-    [[nodiscard]] IoError addFile(const std::filesystem::path& path,
-                                  const std::filesystem::path& real_path) override;
+    [[nodiscard]] IoError addFile(const std::filesystem::path& path, const std::filesystem::path& real_path) override;
 
     /**
      * @brief Adds a file from scattered buffers.
@@ -295,12 +292,11 @@ class VN_IOBASE_API MountVfs : public Vfs
     /**
      * @brief One attachment of a backend to a prefix.
      */
-    struct Mount
-    {
-        std::filesystem::path prefix;            ///< Normalized prefix; empty is the virtual root.
-        std::shared_ptr<Vfs>  backend;           ///< The mounted tree; never null.
-        int                   priority{ 0 };     ///< Higher wins inside one prefix.
-        bool                  read_only{ false }; ///< Refuses writes through this mount.
+    struct Mount {
+        std::filesystem::path prefix;             // Normalized prefix; empty is the virtual root.
+        std::shared_ptr<Vfs>  backend;            // The mounted tree; never null.
+        int                   priority{ 0 };      // Higher wins inside one prefix.
+        bool                  read_only{ false }; // Refuses writes through this mount.
     };
 
     /**
@@ -319,8 +315,7 @@ class VN_IOBASE_API MountVfs : public Vfs
      * @param normalized The normalized path.
      * @return The mount, or null when none holds the path.
      */
-    [[nodiscard]] const Mount* firstHit(const std::vector<const Mount*>& group,
-                                        const std::filesystem::path& normalized) const;
+    [[nodiscard]] const Mount* firstHit(const std::vector<const Mount*>& group, const std::filesystem::path& normalized) const;
 
     /**
      * @brief Finds the mount a write to one path has to go through.
@@ -333,8 +328,7 @@ class VN_IOBASE_API MountVfs : public Vfs
      * @param normalized The normalized path.
      * @return The target mount, or null when the write has to be refused.
      */
-    [[nodiscard]] const Mount* writeTarget(const std::vector<const Mount*>& group,
-                                           const std::filesystem::path& normalized) const;
+    [[nodiscard]] const Mount* writeTarget(const std::vector<const Mount*>& group, const std::filesystem::path& normalized) const;
 
     /**
      * @brief Finds the first mount of a group that accepts writes.

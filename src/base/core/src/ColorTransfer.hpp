@@ -27,12 +27,10 @@ namespace detail
  */
 inline float srgbToLinear(float encoded) noexcept
 {
-    if (encoded <= 0.0F)
-    {
+    if (encoded <= 0.0F) {
         return 0.0F;
     }
-    if (encoded <= 0.04045F)
-    {
+    if (encoded <= 0.04045F) {
         return encoded / 12.92F;
     }
     return std::pow((encoded + 0.055F) / 1.055F, 2.4F);
@@ -50,17 +48,15 @@ inline float srgbToLinear(float encoded) noexcept
  */
 inline float linearToSrgb(float linear) noexcept
 {
-    if (linear <= 0.0F)
-    {
+    if (linear <= 0.0F) {
         return 0.0F;
     }
-    if (linear <= 0.0031308F)
-    {
+    if (linear <= 0.0031308F) {
         return linear * 12.92F;
     }
     return 1.055F * std::pow(linear, 1.0F / 2.4F) - 0.055F;
 }
 
-}  // namespace detail
+} // namespace detail
 
 VN_CORE_NS_END

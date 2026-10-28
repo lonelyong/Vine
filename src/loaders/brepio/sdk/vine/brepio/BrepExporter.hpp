@@ -25,8 +25,7 @@ VN_BREPIO_NS_BEGIN
  * - A build without the OpenCASCADE backend keeps the contract but cannot write anything: every export answers
  *   IoError::Unsupported.
  */
-class VN_BREPIO_API BrepExporter
-{
+class VN_BREPIO_API BrepExporter {
   public:
     BrepExporter();
 
@@ -40,8 +39,7 @@ class VN_BREPIO_API BrepExporter
      * @return IoError::Ok on success; Unsupported when the format names no format or this build has no backend,
      *         InvalidData when the solid is not exportable, IoFailure when the file cannot be written.
      */
-    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::BrepShape& shape, BrepFormat format,
-                                           const std::filesystem::path& file_path) const;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::BrepShape& shape, BrepFormat format, const std::filesystem::path& file_path) const;
 
     /**
      * @brief Writes a solid into one stream.
@@ -52,8 +50,7 @@ class VN_BREPIO_API BrepExporter
      * @return IoError::Ok on success; Unsupported when the format names no format or this build has no backend,
      *         InvalidData when the solid is not exportable, IoFailure when the stream refuses the bytes.
      */
-    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::BrepShape& shape, BrepFormat format,
-                                           std::ostream& out) const;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::BrepShape& shape, BrepFormat format, std::ostream& out) const;
 
     /**
      * @brief Creates a source that exports a solid on demand.
@@ -65,8 +62,7 @@ class VN_BREPIO_API BrepExporter
      * @param format The target format.
      * @return The source; never null. A refusal surfaces through the source's error(), not here.
      */
-    std::shared_ptr<vn::io::DataSource> createSource(vn::intrusive_ptr<const vn::geometry::BrepShape> shape,
-                                                     BrepFormat                                    format) const;
+    std::shared_ptr<vn::io::DataSource> createSource(vn::intrusive_ptr<const vn::geometry::BrepShape> shape, BrepFormat format) const;
 };
 
 VN_BREPIO_NS_END

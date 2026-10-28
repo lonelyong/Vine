@@ -19,10 +19,12 @@ class QWidget;
 
 namespace vn::graphics
 {
+
 class RenderEngine;
 class RenderSurface;
 class SceneView;
-}
+
+} // namespace vn::graphics
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -179,10 +181,10 @@ class SurfaceWindow : public QWindow {
     /** @brief Renders the frame a continuous tick owes, unless there is nothing to draw into or for. */
     void tickContinuous();
     /** @brief Resolves the view that owns a surface point (the router's answer, vetted; own view otherwise). */
-    vn::graphics::SceneView* routedView(int x, int y);    /** @brief Pushes an event to @p target when it is not null (the one place a view is handed an event). */
-    void pushToView(vn::graphics::SceneView* target, const vn::window::MouseEvent& event);
-    void pushToView(vn::graphics::SceneView* target, const vn::window::ScrollEvent& event);
-    void pushToView(vn::graphics::SceneView* target, const vn::window::KeyEvent& event);
+    vn::graphics::SceneView* routedView(int x, int y); /** @brief Pushes an event to @p target when it is not null (the one place a view is handed an event). */
+    void                     pushToView(vn::graphics::SceneView* target, const vn::window::MouseEvent& event);
+    void                     pushToView(vn::graphics::SceneView* target, const vn::window::ScrollEvent& event);
+    void                     pushToView(vn::graphics::SceneView* target, const vn::window::KeyEvent& event);
     /** @brief Reports the client size once per change, whichever object saw it first. */
     void handleResized(int width, int height);
     /** @brief Records the client size on the surface, and on this surface's own view when it stands outside it. */

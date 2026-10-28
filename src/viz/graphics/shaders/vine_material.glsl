@@ -33,13 +33,13 @@
  */
 struct VineSurface
 {
-    vec3  base_color;   ///< Linear albedo: the base factor x its slot x the vertex colour.
-    vec3  emissive;     ///< Linear emission: the factor x its strength x its slot.
-    vec3  normal;       ///< View-space SHADING normal (tangent-perturbed when the material has a normal map).
-    float metallic;     ///< 0 = dielectric, 1 = metal.
-    float roughness;    ///< Perceptual roughness, 0..1.
-    float occlusion;    ///< The occlusion factor x its slot (1 = unoccluded).
-    float alpha;        ///< The material's own alpha: the base factor's a x its slot's a.
+    vec3  base_color;   // Linear albedo: the base factor x its slot x the vertex colour.
+    vec3  emissive;     // Linear emission: the factor x its strength x its slot.
+    vec3  normal;       // View-space SHADING normal (tangent-perturbed when the material has a normal map).
+    float metallic;     // 0 = dielectric, 1 = metal.
+    float roughness;    // Perceptual roughness, 0..1.
+    float occlusion;    // The occlusion factor x its slot (1 = unoccluded).
+    float alpha;        // The material's own alpha: the base factor's a x its slot's a.
 };
 
 #ifdef VN_TEXTURED

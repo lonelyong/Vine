@@ -21,16 +21,16 @@ namespace
 enum wc_HashType toWolfType(HashCalculator::Algorithm algorithm)
 {
     switch (algorithm) {
-        case HashCalculator::Algorithm::ALG_MD5: return WC_HASH_TYPE_MD5;
-        case HashCalculator::Algorithm::ALG_SHA1: return WC_HASH_TYPE_SHA;
-        case HashCalculator::Algorithm::ALG_SHA224: return WC_HASH_TYPE_SHA224;
-        case HashCalculator::Algorithm::ALG_SHA256: return WC_HASH_TYPE_SHA256;
-        case HashCalculator::Algorithm::ALG_SHA384: return WC_HASH_TYPE_SHA384;
-        case HashCalculator::Algorithm::ALG_SHA512: return WC_HASH_TYPE_SHA512;
-        case HashCalculator::Algorithm::ALG_SHA3_224: return WC_HASH_TYPE_SHA3_224;
-        case HashCalculator::Algorithm::ALG_SHA3_256: return WC_HASH_TYPE_SHA3_256;
-        case HashCalculator::Algorithm::ALG_SHA3_384: return WC_HASH_TYPE_SHA3_384;
-        case HashCalculator::Algorithm::ALG_SHA3_512: return WC_HASH_TYPE_SHA3_512;
+    case HashCalculator::Algorithm::ALG_MD5: return WC_HASH_TYPE_MD5;
+    case HashCalculator::Algorithm::ALG_SHA1: return WC_HASH_TYPE_SHA;
+    case HashCalculator::Algorithm::ALG_SHA224: return WC_HASH_TYPE_SHA224;
+    case HashCalculator::Algorithm::ALG_SHA256: return WC_HASH_TYPE_SHA256;
+    case HashCalculator::Algorithm::ALG_SHA384: return WC_HASH_TYPE_SHA384;
+    case HashCalculator::Algorithm::ALG_SHA512: return WC_HASH_TYPE_SHA512;
+    case HashCalculator::Algorithm::ALG_SHA3_224: return WC_HASH_TYPE_SHA3_224;
+    case HashCalculator::Algorithm::ALG_SHA3_256: return WC_HASH_TYPE_SHA3_256;
+    case HashCalculator::Algorithm::ALG_SHA3_384: return WC_HASH_TYPE_SHA3_384;
+    case HashCalculator::Algorithm::ALG_SHA3_512: return WC_HASH_TYPE_SHA3_512;
     }
     return WC_HASH_TYPE_MD5;
 }
@@ -44,16 +44,16 @@ enum wc_HashType toWolfType(HashCalculator::Algorithm algorithm)
 std::size_t digestSizeFor(HashCalculator::Algorithm algorithm)
 {
     switch (algorithm) {
-        case HashCalculator::Algorithm::ALG_MD5: return WC_MD5_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA1: return WC_SHA_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA224: return WC_SHA224_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA256: return WC_SHA256_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA384: return WC_SHA384_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA512: return WC_SHA512_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA3_224: return WC_SHA3_224_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA3_256: return WC_SHA3_256_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA3_384: return WC_SHA3_384_DIGEST_SIZE;
-        case HashCalculator::Algorithm::ALG_SHA3_512: return WC_SHA3_512_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_MD5: return WC_MD5_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA1: return WC_SHA_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA224: return WC_SHA224_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA256: return WC_SHA256_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA384: return WC_SHA384_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA512: return WC_SHA512_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA3_224: return WC_SHA3_224_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA3_256: return WC_SHA3_256_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA3_384: return WC_SHA3_384_DIGEST_SIZE;
+    case HashCalculator::Algorithm::ALG_SHA3_512: return WC_SHA3_512_DIGEST_SIZE;
     }
     return 0;
 }
@@ -123,8 +123,7 @@ HashCalculator::Algorithm parseAlgorithm(std::u8string_view name)
 
 } // namespace
 
-struct HashCalculator::Impl
-{
+struct HashCalculator::Impl {
     /**
      * @brief Initializes the wolfSSL hash context.
      *
@@ -133,9 +132,9 @@ struct HashCalculator::Impl
      * @throws std::runtime_error when wolfSSL initialization fails.
      */
     Impl(Algorithm algorithm, enum wc_HashType type)
-        : algorithm(algorithm)
-        , type(type)
-        , finalized(false)
+      : algorithm(algorithm)
+      , type(type)
+      , finalized(false)
     {
         std::memset(&hash, 0, sizeof hash);
         if (wc_HashInit(&hash, type) != 0) {
@@ -143,22 +142,20 @@ struct HashCalculator::Impl
         }
     }
 
-    Algorithm                algorithm;
-    enum wc_HashType         type;
-    bool                     finalized;
-    wc_HashAlg               hash;
+    Algorithm                  algorithm;
+    enum wc_HashType           type;
+    bool                       finalized;
+    wc_HashAlg                 hash;
     std::vector<unsigned char> result;
 };
 
 HashCalculator::HashCalculator(Algorithm algorithm)
-    : impl(std::make_unique<Impl>(algorithm, toWolfType(algorithm)))
-{
-}
+  : impl(std::make_unique<Impl>(algorithm, toWolfType(algorithm)))
+{}
 
 HashCalculator::HashCalculator(std::u8string_view name)
-    : HashCalculator(parseAlgorithm(name))
-{
-}
+  : HashCalculator(parseAlgorithm(name))
+{}
 
 HashCalculator::~HashCalculator() = default;
 

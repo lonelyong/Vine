@@ -543,8 +543,7 @@ TEST_F(Jacobian6DOFTest, MaxErrorIsUsedForConvergence)
     ASSERT_TRUE(solver_->solve(target, solutions));
     ASSERT_FALSE(solutions.empty());
 
-    const Isometry3d T     = forwardKinematics(dofs_, { solutions[0][0], solutions[0][1], solutions[0][2],
-                                                        solutions[0][3], solutions[0][4], solutions[0][5] });
+    const Isometry3d T     = forwardKinematics(dofs_, { solutions[0][0], solutions[0][1], solutions[0][2], solutions[0][3], solutions[0][4], solutions[0][5] });
     const Vec3d      p_err = target.translation.asVector() - T.translation.asVector();
 
     EXPECT_LT(std::abs(p_err.x), 1e-3);

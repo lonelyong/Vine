@@ -29,9 +29,10 @@ namespace
 class TestDocument : public vn::appfw::Document {
   public:
     TestDocument(vn::String type_id, bool dirty, int* destroyed)
-      : type_id_(std::move(type_id)), dirty_(dirty), destroyed_(destroyed)
-    {
-    }
+      : type_id_(std::move(type_id))
+      , dirty_(dirty)
+      , destroyed_(destroyed)
+    {}
 
     ~TestDocument() override
     {
@@ -40,15 +41,29 @@ class TestDocument : public vn::appfw::Document {
         }
     }
 
-    vn::String typeId() const override { return type_id_; }
-    vn::String title() const override { return u8"测试文档"; }
-    bool       isDirty() const override { return dirty_; }
+    vn::String typeId() const override
+    {
+        return type_id_;
+    }
 
-    void setDirty(bool dirty) { dirty_ = dirty; }
+    vn::String title() const override
+    {
+        return u8"测试文档";
+    }
+
+    bool isDirty() const override
+    {
+        return dirty_;
+    }
+
+    void setDirty(bool dirty)
+    {
+        dirty_ = dirty;
+    }
 
   private:
     vn::String type_id_;
-    bool       dirty_    = false;
+    bool       dirty_     = false;
     int*       destroyed_ = nullptr;
 };
 
@@ -57,7 +72,10 @@ class AlwaysCloseableDocument : public TestDocument {
   public:
     using TestDocument::TestDocument;
 
-    bool canClose() const override { return true; }
+    bool canClose() const override
+    {
+        return true;
+    }
 };
 
 constexpr const char8_t* kType = u8"test";
@@ -69,7 +87,7 @@ struct TestPayload : public vn::Object {
     VN_OBJECT_META_DECL;
 
     int        value = 0;
-    vn::String locator; ///< 调用方带来的“地址”（真实场景里是 Vfs 的 locator 之类），空 = 没有。
+    vn::String locator; // 调用方带来的“地址”（真实场景里是 Vfs 的 locator 之类），空 = 没有。
 };
 
 /// 第二种载荷：用来钉“没人登记过这种载荷”。
@@ -118,10 +136,18 @@ struct CountedPayload : public vn::Object {
     int value = 0;
 
     CountedPayload() = default;
-    explicit CountedPayload(int v) : value(v) {}
+
+    explicit CountedPayload(int v)
+      : value(v)
+    {}
 
     /// 只有拷贝构造计数：框架要是偷偷留了一份，就正好在这里露出来。
-    CountedPayload(const CountedPayload& other) : vn::Object(other), value(other.value) { ++s_payload_copies; }
+    CountedPayload(const CountedPayload& other)
+      : vn::Object(other)
+      , value(other.value)
+    {
+        ++s_payload_copies;
+    }
 };
 
 VN_OBJECT_META_IMPL(CountedPayload, vn::Object)
@@ -130,9 +156,9 @@ VN_OBJECT_META_IMPL(CountedPayload, vn::Object)
 class SavingDocument : public TestDocument {
   public:
     SavingDocument(vn::String type_id, int* saves)
-      : TestDocument(type_id, false, nullptr), saves_(saves)
-    {
-    }
+      : TestDocument(type_id, false, nullptr)
+      , saves_(saves)
+    {}
 
     bool save() override
     {
@@ -144,7 +170,10 @@ class SavingDocument : public TestDocument {
     }
 
     /// 真实类型在自己的 open 工厂里调 setSource()（protected）；用例用它模拟那一步。
-    void adoptSource(vn::appfw::DocumentSource source) { setSource(std::move(source)); }
+    void adoptSource(vn::appfw::DocumentSource source)
+    {
+        setSource(std::move(source));
+    }
 
   private:
     int* saves_ = nullptr;
@@ -174,9 +203,20 @@ class NamedDocument final : public vn::appfw::Document {
       , title_(std::move(title))
     {}
 
-    vn::String typeId() const override { return type_id_; }
-    vn::String title() const override { return title_; }
-    bool       isDirty() const override { return false; }
+    vn::String typeId() const override
+    {
+        return type_id_;
+    }
+
+    vn::String title() const override
+    {
+        return title_;
+    }
+
+    bool isDirty() const override
+    {
+        return false;
+    }
 
   private:
     vn::String type_id_;
@@ -267,8 +307,7 @@ TEST(DocumentTest, TheCurrentDocumentMustBeOneTheManagerOwns)
     ASSERT_NE(second, nullptr);
 
     int changes = 0;
-    manager.currentChanged.connect(
-        [&changes](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs&) { ++changes; }).detach();
+    manager.currentChanged.connect([&changes](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs&) { ++changes; }).detach();
 
     EXPECT_TRUE(manager.setCurrent(first));
     EXPECT_EQ(manager.current(), first);
@@ -322,14 +361,13 @@ TEST(DocumentTest, TheOpenSetIsLookedUpByTitleOrTypeId)
     EXPECT_EQ(manager.findByTitleOrTypeId(u8"立方体"), (std::vector<vn::appfw::Document*>{ first }));
     EXPECT_EQ(manager.findByTitleOrTypeId(u8"cube"), (std::vector<vn::appfw::Document*>{ first }));
     EXPECT_EQ(manager.findByTitleOrTypeId(u8"mesh"), (std::vector<vn::appfw::Document*>{ titled }));
-    EXPECT_EQ(manager.documents(), (std::vector<vn::appfw::Document*>{ first, grid, titled }))
-        << "查找不改变集合本身";
+    EXPECT_EQ(manager.documents(), (std::vector<vn::appfw::Document*>{ first, grid, titled })) << "查找不改变集合本身";
 }
 
 TEST(DocumentTest, ClosingADirtyDocumentIsRefusedAndChangesNothing)
 {
     vn::appfw::DocumentManager manager;
-    int destroyed = 0;
+    int                        destroyed = 0;
     ASSERT_TRUE(registerTestType(manager, true, &destroyed));
 
     vn::appfw::Document* document = manager.create(kType);
@@ -352,7 +390,7 @@ TEST(DocumentTest, ClosingADirtyDocumentIsRefusedAndChangesNothing)
 
 TEST(DocumentTest, ATypeThatAllowsClosingWhileDirtyIsClosed)
 {
-    vn::appfw::DocumentManager manager;
+    vn::appfw::DocumentManager          manager;
     vn::appfw::DocumentTypeRegistration registration;
     registration.type_id = kType;
     registration.create  = [] { return new AlwaysCloseableDocument(kType, true, nullptr); };
@@ -369,7 +407,7 @@ TEST(DocumentTest, ATypeThatAllowsClosingWhileDirtyIsClosed)
 TEST(DocumentTest, ClosingErasesTheDocumentFirstAndDestroysItAfterTheEvent)
 {
     vn::appfw::DocumentManager manager;
-    int destroyed = 0;
+    int                        destroyed = 0;
     ASSERT_TRUE(registerTestType(manager, false, &destroyed));
     vn::appfw::Document* document = manager.create(kType);
     ASSERT_NE(document, nullptr);
@@ -377,11 +415,13 @@ TEST(DocumentTest, ClosingErasesTheDocumentFirstAndDestroysItAfterTheEvent)
     std::size_t documents_seen = 99;
     vn::String  type_seen;
     bool        same_pointer = false;
-    manager.closed.connect([&](vn::appfw::DocumentManager& owner, vn::appfw::DocumentEventArgs& args) {
-        documents_seen = owner.documents().size();
-        same_pointer   = (args.document() == document);
-        type_seen      = args.document()->typeId();
-    }).detach();
+    manager.closed
+        .connect([&](vn::appfw::DocumentManager& owner, vn::appfw::DocumentEventArgs& args) {
+            documents_seen = owner.documents().size();
+            same_pointer   = (args.document() == document);
+            type_seen      = args.document()->typeId();
+        })
+        .detach();
 
     EXPECT_TRUE(manager.close(document));
     EXPECT_EQ(documents_seen, 0u) << "先出集合，再发事件（处理函数看到的是当下的集合）";
@@ -401,15 +441,18 @@ TEST(DocumentTest, ClosingTheCurrentDocumentClearsItBeforeFiringClosed)
     ASSERT_TRUE(manager.setCurrent(first));
 
     std::vector<vn::String> order;
-    manager.currentChanged.connect(
-        [&order](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
+    manager.currentChanged
+        .connect([&order](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
             order.push_back(args.document() == nullptr ? u8"cleared" : u8"current");
-        }).detach();
-    manager.closed.connect([&](vn::appfw::DocumentManager& owner, vn::appfw::DocumentEventArgs&) {
-        order.push_back(u8"closed");
-        // 宿主在这里挑下一个：这一次选择不能被随后那次通知覆盖。
-        EXPECT_TRUE(owner.setCurrent(second));
-    }).detach();
+        })
+        .detach();
+    manager.closed
+        .connect([&](vn::appfw::DocumentManager& owner, vn::appfw::DocumentEventArgs&) {
+            order.push_back(u8"closed");
+            // 宿主在这里挑下一个：这一次选择不能被随后那次通知覆盖。
+            EXPECT_TRUE(owner.setCurrent(second));
+        })
+        .detach();
 
     EXPECT_TRUE(manager.close(first));
 
@@ -445,16 +488,16 @@ TEST(DocumentTest, RegisteringATypeRecordsWhatAManagerPanelNeeds)
 
     // 打开器带来的是"这个类型能从什么造出来"——这也是面板要显示的东西（谁注册的、吃什么载荷、产什么来源方案）。
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id       = kType,
-        .priority      = 3,
-        .open          = [](const TestPayload&) -> vn::appfw::Document* { return nullptr; },
-        .source_scheme = u8"file",
+      .type_id       = kType,
+      .priority      = 3,
+      .open          = [](const TestPayload&) -> vn::appfw::Document* { return nullptr; },
+      .source_scheme = u8"file",
     }));
     ASSERT_TRUE(manager.registerOpener<OtherPayload>({
-        .type_id       = kType,
-        .priority      = 1,
-        .open          = [](const OtherPayload&) -> vn::appfw::Document* { return nullptr; },
-        .source_scheme = u8"clipboard",
+      .type_id       = kType,
+      .priority      = 1,
+      .open          = [](const OtherPayload&) -> vn::appfw::Document* { return nullptr; },
+      .source_scheme = u8"clipboard",
     }));
 
     const std::vector<vn::appfw::DocumentTypeInfo> types = manager.types();
@@ -467,8 +510,7 @@ TEST(DocumentTest, RegisteringATypeRecordsWhatAManagerPanelNeeds)
     EXPECT_TRUE(types[0].owner.empty()) << "独立管理器没有 Application，owner 只能是空";
 
     ASSERT_EQ(types[0].payload_types.size(), 2u);
-    EXPECT_EQ(types[0].payload_types[0], TestPayload::desc()->fullName())
-        << "载荷名来自载荷自己的元数据，不是登记时另给的名字（两者不会各说一套）";
+    EXPECT_EQ(types[0].payload_types[0], TestPayload::desc()->fullName()) << "载荷名来自载荷自己的元数据，不是登记时另给的名字（两者不会各说一套）";
     EXPECT_NE(types[0].payload_types[0].find(u8"TestPayload"), vn::String::npos);
     EXPECT_EQ(types[0].payload_types[1], OtherPayload::desc()->fullName()) << "按登记顺序列出";
 
@@ -494,8 +536,8 @@ TEST(DocumentTest, ATypeWithoutACreateFactoryCanOnlyBeOpened)
     EXPECT_TRUE(manager.documents().empty());
 
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id = kType,
-        .open    = [](const TestPayload&) -> vn::appfw::Document* { return new TestDocument(kType, false, nullptr); },
+      .type_id = kType,
+      .open    = [](const TestPayload&) -> vn::appfw::Document* { return new TestDocument(kType, false, nullptr); },
     }));
     TestPayload payload = makePayload(0);
     EXPECT_NE(manager.open(&payload), nullptr) << "但打开这条路是通的";
@@ -508,14 +550,14 @@ TEST(DocumentTest, AnOpenerBuildsADocumentFromAPayloadAndDecidesItsSource)
 
     int saves = 0;
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id = kType,
-        .open    = [&saves](const TestPayload& payload) -> vn::appfw::Document* {
-            auto* document = new SavingDocument(kType, &saves);
-            // 来源由**打开器**给出：只有它知道调用方带来的 locator 是什么（框架从不解释它）。
-            document->adoptSource(vn::appfw::DocumentSource{ u8"file", payload.locator });
-            return document;
-        },
-        .source_scheme = u8"file",
+      .type_id = kType,
+      .open    = [&saves](const TestPayload& payload) -> vn::appfw::Document* {
+          auto* document = new SavingDocument(kType, &saves);
+          // 来源由**打开器**给出：只有它知道调用方带来的 locator 是什么（框架从不解释它）。
+          document->adoptSource(vn::appfw::DocumentSource{ u8"file", payload.locator });
+          return document;
+      },
+      .source_scheme = u8"file",
     }));
 
     int opened = 0;
@@ -554,8 +596,8 @@ TEST(DocumentTest, TheDefaultSaveRefusesAndASourceLessDocumentCannotBeSaved)
     // 会 save() 的类型，但这次没有来源：它自己判断写不到任何地方。
     int saves = 0;
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id = kType,
-        .open    = [&saves](const TestPayload&) -> vn::appfw::Document* { return new SavingDocument(kType, &saves); },
+      .type_id = kType,
+      .open    = [&saves](const TestPayload&) -> vn::appfw::Document* { return new SavingDocument(kType, &saves); },
     }));
     TestPayload          no_source_payload = makePayload(0);
     vn::appfw::Document* sourceless        = manager.open(&no_source_payload);
@@ -569,8 +611,8 @@ TEST(DocumentTest, AnOpenerForAnUnregisteredTypeIsRefused)
 {
     vn::appfw::DocumentManager manager;
     EXPECT_FALSE(manager.registerOpener<TestPayload>({
-        .type_id = kType,
-        .open    = [](const TestPayload&) -> vn::appfw::Document* { return nullptr; },
+      .type_id = kType,
+      .open    = [](const TestPayload&) -> vn::appfw::Document* { return nullptr; },
     })) << "载荷没人能造出来，比不登记更糟：看起来能用，直到真去开一个";
     EXPECT_TRUE(manager.types().empty());
 }
@@ -580,8 +622,8 @@ TEST(DocumentTest, NothingAcceptsAnUnknownPayload)
     vn::appfw::DocumentManager manager;
     ASSERT_TRUE(registerTestType(manager, false, nullptr));
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id = kType,
-        .open    = [](const TestPayload&) -> vn::appfw::Document* { return new TestDocument(kType, false, nullptr); },
+      .type_id = kType,
+      .open    = [](const TestPayload&) -> vn::appfw::Document* { return new TestDocument(kType, false, nullptr); },
     }));
 
     OtherPayload other;
@@ -599,25 +641,35 @@ TEST(DocumentTest, TheFirstAcceptingOpenerWinsByScoreThenPriorityThenOrder)
     ASSERT_TRUE(registerTestType(manager, false, nullptr));
 
     std::vector<std::string> tried;
-    const auto               open = [](const TestPayload& payload) -> vn::appfw::Document* {
-        return payload.value > 10 ? new TestDocument(kType, false, nullptr) : nullptr;
-    };
+    const auto open = [](const TestPayload& payload) -> vn::appfw::Document* { return payload.value > 10 ? new TestDocument(kType, false, nullptr) : nullptr; };
 
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id  = kType,
-        .priority = 1,
-        .open     = [&tried, open](const TestPayload& payload) { tried.push_back("low"); return open(payload); },
+      .type_id  = kType,
+      .priority = 1,
+      .open =
+          [&tried, open](const TestPayload& payload) {
+              tried.push_back("low");
+              return open(payload);
+          },
     }));
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id  = kType,
-        .priority = 5,
-        .open     = [&tried, open](const TestPayload& payload) { tried.push_back("high"); return open(payload); },
+      .type_id  = kType,
+      .priority = 5,
+      .open =
+          [&tried, open](const TestPayload& payload) {
+              tried.push_back("high");
+              return open(payload);
+          },
     }));
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id  = kType,
-        .priority = 9,
-        .open     = [&tried, open](const TestPayload& payload) { tried.push_back("refined"); return open(payload); },
-        .refine   = [](const TestPayload& payload) { return payload.value > 10 ? 0 : 99; },
+      .type_id  = kType,
+      .priority = 9,
+      .open =
+          [&tried, open](const TestPayload& payload) {
+              tried.push_back("refined");
+              return open(payload);
+          },
+      .refine = [](const TestPayload& payload) { return payload.value > 10 ? 0 : 99; },
     }));
 
     // value = 1：会细判那个给 99 ⇒ 先试；它拒（返回 nullptr）⇒ 再按 priority 试高优先、再低优先 ⇒ 都拒 ⇒ nullptr。
@@ -668,12 +720,11 @@ TEST(DocumentTest, ANewDocumentHasNoSourceAndSourcesCompareByValue)
 TEST(DocumentTest, ADocumentClosedByItsOpenedHandlerIsNotHandedBack)
 {
     vn::appfw::DocumentManager manager;
-    int destroyed = 0;
+    int                        destroyed = 0;
     ASSERT_TRUE(registerTestType(manager, false, &destroyed));
 
-    manager.opened.connect([&destroyed](vn::appfw::DocumentManager& owner, vn::appfw::DocumentEventArgs& args) {
-        EXPECT_TRUE(owner.close(args.document()));
-    }).detach();
+    manager.opened.connect([&destroyed](vn::appfw::DocumentManager& owner, vn::appfw::DocumentEventArgs& args) { EXPECT_TRUE(owner.close(args.document())); })
+        .detach();
 
     EXPECT_EQ(manager.create(kType), nullptr) << "文档在 opened 里被关掉 ⇒ 不能把已销毁的对象交回去";
     EXPECT_TRUE(manager.documents().empty());
@@ -687,26 +738,23 @@ TEST(DocumentTest, AnOpenerRegisteredWhileMatchingDoesNotJoinThatCall)
     vn::appfw::DocumentManager manager;
     ASSERT_TRUE(registerTestType(manager, false, nullptr));
 
-    int registered_late = 0;
-    const auto open_document = [](const TestPayload&) -> vn::appfw::Document* {
-        return new TestDocument(kType, false, nullptr);
-    };
+    int        registered_late = 0;
+    const auto open_document   = [](const TestPayload&) -> vn::appfw::Document* { return new TestDocument(kType, false, nullptr); };
 
     ASSERT_TRUE(manager.registerOpener<TestPayload>({
-        .type_id       = kType,
-        .priority      = 1,
-        .open          = open_document,
-        .source_scheme = u8"file",
-        .refine        = [&](const TestPayload&) {
-            // 这个 refine 还在跑的时候就把表撑大：扩容会搬走正在执行的那个 std::function。
-            if (registered_late == 0) {
-                ++registered_late;
-                EXPECT_TRUE(manager.registerOpener<TestPayload>({ .type_id = kType,
-                                                                  .priority = 5,
-                                                                  .open     = open_document }));
-            }
-            return 0; // 我不接这个载荷
-        },
+      .type_id       = kType,
+      .priority      = 1,
+      .open          = open_document,
+      .source_scheme = u8"file",
+      .refine =
+          [&](const TestPayload&) {
+              // 这个 refine 还在跑的时候就把表撑大：扩容会搬走正在执行的那个 std::function。
+              if (registered_late == 0) {
+                  ++registered_late;
+                  EXPECT_TRUE(manager.registerOpener<TestPayload>({ .type_id = kType, .priority = 5, .open = open_document }));
+              }
+              return 0; // 我不接这个载荷
+          },
     }));
 
     // 第一个拒了，而刚登记的那个不参与这一次 ⇒ 这一次没有任何打开器。
@@ -727,12 +775,12 @@ TEST(DocumentTest, AnOpenerRegisteredForABasePayloadReceivesADerivedOne)
     int  seen_base     = -1;
     bool still_derived = false;
     ASSERT_TRUE(manager.registerOpener<BasePayload>({
-        .type_id = kType,
-        .open    = [&](const BasePayload& payload) -> vn::appfw::Document* {
-            seen_base     = payload.base;
-            still_derived = obj_cast<DerivedPayload>(&payload) != nullptr;
-            return new TestDocument(kType, false, nullptr);
-        },
+      .type_id = kType,
+      .open    = [&](const BasePayload& payload) -> vn::appfw::Document* {
+          seen_base     = payload.base;
+          still_derived = obj_cast<DerivedPayload>(&payload) != nullptr;
+          return new TestDocument(kType, false, nullptr);
+      },
     }));
 
     DerivedPayload derived;
@@ -754,29 +802,28 @@ TEST(DocumentTest, TheMostSpecificPayloadTypeIsTriedFirst)
     std::vector<std::string> tried;
     // 基类：分数与优先级都更高（99 / +9），但它在谱系上更远，所以必须后试。
     ASSERT_TRUE(manager.registerOpener<BasePayload>({
-        .type_id  = kType,
-        .priority = 9,
-        .open     = [&tried](const BasePayload&) -> vn::appfw::Document* {
-            tried.push_back("base");
-            return new TestDocument(kType, false, nullptr);
-        },
-        .refine = [](const BasePayload&) { return 99; },
+      .type_id  = kType,
+      .priority = 9,
+      .open     = [&tried](const BasePayload&) -> vn::appfw::Document* {
+          tried.push_back("base");
+          return new TestDocument(kType, false, nullptr);
+      },
+      .refine = [](const BasePayload&) { return 99; },
     }));
     // 派生：优先级是负的，而且遇上 derived == 0 就拒（"这个具体种类我不接"）。
     ASSERT_TRUE(manager.registerOpener<DerivedPayload>({
-        .type_id  = kType,
-        .priority = -5,
-        .open     = [&tried](const DerivedPayload& payload) -> vn::appfw::Document* {
-            tried.push_back("derived");
-            return payload.derived == 0 ? nullptr : new TestDocument(kType, false, nullptr);
-        },
+      .type_id  = kType,
+      .priority = -5,
+      .open     = [&tried](const DerivedPayload& payload) -> vn::appfw::Document* {
+          tried.push_back("derived");
+          return payload.derived == 0 ? nullptr : new TestDocument(kType, false, nullptr);
+      },
     }));
 
     DerivedPayload specific;
     specific.derived = 1;
     EXPECT_NE(manager.open(&specific), nullptr);
-    EXPECT_EQ(tried, (std::vector<std::string>{ "derived" }))
-        << "具体者先试，成功就不再往下试（分数 99 也抢不走）";
+    EXPECT_EQ(tried, (std::vector<std::string>{ "derived" })) << "具体者先试，成功就不再往下试（分数 99 也抢不走）";
 
     tried.clear();
     DerivedPayload refused;
@@ -793,11 +840,11 @@ TEST(DocumentTest, TheFrameworkDoesNotCopyAPayload)
 
     int value_seen = -1;
     ASSERT_TRUE(manager.registerOpener<CountedPayload>({
-        .type_id = kType,
-        .open    = [&value_seen](const CountedPayload& payload) -> vn::appfw::Document* {
-            value_seen = payload.value;
-            return new TestDocument(kType, false, nullptr);
-        },
+      .type_id = kType,
+      .open    = [&value_seen](const CountedPayload& payload) -> vn::appfw::Document* {
+          value_seen = payload.value;
+          return new TestDocument(kType, false, nullptr);
+      },
     }));
 
     CountedPayload counted(5);

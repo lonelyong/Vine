@@ -29,18 +29,20 @@ class Camera;
  */
 class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
   public:
-    enum class Mode {
-        Orbit,        ///< Orbit around a target point.
-        Pan,          ///< Pan (translate) the view.
-        Zoom,         ///< Zoom in/out.
-        FirstPerson,  ///< First-person navigation.
+    enum class Mode
+    {
+        Orbit,       // Orbit around a target point.
+        Pan,         // Pan (translate) the view.
+        Zoom,        // Zoom in/out.
+        FirstPerson, // First-person navigation.
     };
 
     /** @brief Mouse button that drives the current drag interaction. */
-    enum class DragAction {
-        None,    ///< No drag in progress.
-        Rotate,  ///< Left button: orbit (rotate).
-        Pan,     ///< Middle/right button: pan (translate).
+    enum class DragAction
+    {
+        None,   // No drag in progress.
+        Rotate, // Left button: orbit (rotate).
+        Pan,    // Middle/right button: pan (translate).
     };
 
   public:
@@ -137,7 +139,7 @@ class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
     // ---- State shared with derived classes ----
 
     raw_ptr<Camera> camera_ = nullptr;
-    Mode mode_ = Mode::Orbit;
+    Mode            mode_   = Mode::Orbit;
 };
 
 VN_GRAPHICS_NS_END

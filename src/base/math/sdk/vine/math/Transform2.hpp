@@ -52,9 +52,15 @@ Matrix3x3<T, Order> rotate(T angle)
     const auto s = std::sin(angle);
 
     Matrix3x3<T, Order> m;
-    m(0, 0) = c;    m(0, 1) = -s;   m(0, 2) = T(0);
-    m(1, 0) = s;    m(1, 1) = c;    m(1, 2) = T(0);
-    m(2, 0) = T(0); m(2, 1) = T(0); m(2, 2) = T(1);
+    m(0, 0) = c;
+    m(0, 1) = -s;
+    m(0, 2) = T(0);
+    m(1, 0) = s;
+    m(1, 1) = c;
+    m(1, 2) = T(0);
+    m(2, 0) = T(0);
+    m(2, 1) = T(0);
+    m(2, 2) = T(1);
     return m;
 }
 
@@ -72,9 +78,15 @@ Matrix3x3<T, Order> rotate(const Vector2<T>& from, const Vector2<T>& to)
     const auto s = from.x * to.y - from.y * to.x;
 
     Matrix3x3<T, Order> m;
-    m(0, 0) = c;    m(0, 1) = -s;   m(0, 2) = T(0);
-    m(1, 0) = s;    m(1, 1) = c;    m(1, 2) = T(0);
-    m(2, 0) = T(0); m(2, 1) = T(0); m(2, 2) = T(1);
+    m(0, 0) = c;
+    m(0, 1) = -s;
+    m(0, 2) = T(0);
+    m(1, 0) = s;
+    m(1, 1) = c;
+    m(1, 2) = T(0);
+    m(2, 0) = T(0);
+    m(2, 1) = T(0);
+    m(2, 2) = T(1);
     return m;
 }
 
@@ -181,7 +193,7 @@ bool decompose(const Matrix3x3<T, Order>& m, Vector2<T>& t, T& a, Vector2<T>& s)
     // Detect reflection (det < 0) and flip sign into s.x.
     if (!math::isEqual(m00 * m11 - m10 * m01, T(1), EPS<T>())) {
         s.x = -s.x;
-        a = std::atan2(-m10, -m00);
+        a   = std::atan2(-m10, -m00);
     }
     else {
         a = std::atan2(m10, m00);
@@ -198,8 +210,7 @@ bool decompose(const Matrix3x3<T, Order>& m, Vector2<T>& t, T& a, Vector2<T>& s)
 template <typename T, typename Order>
 Vector2<T> operator*(const Matrix3x3<T, Order>& m, const Vector2<T>& v)
 {
-    return Vector2<T>(m(0, 0) * v.x + m(0, 1) * v.y,
-                      m(1, 0) * v.x + m(1, 1) * v.y);
+    return Vector2<T>(m(0, 0) * v.x + m(0, 1) * v.y, m(1, 0) * v.x + m(1, 1) * v.y);
 }
 
 /**
@@ -234,9 +245,15 @@ Matrix3x3<T, Order> matrix3x3(const Isometry2<T>& tf)
     const auto s = std::sin(tf.angle);
 
     Matrix3x3<T, Order> m;
-    m(0, 0) = c;    m(0, 1) = -s;   m(0, 2) = tf.translation.x;
-    m(1, 0) = s;    m(1, 1) = c;    m(1, 2) = tf.translation.y;
-    m(2, 0) = T(0); m(2, 1) = T(0); m(2, 2) = T(1);
+    m(0, 0) = c;
+    m(0, 1) = -s;
+    m(0, 2) = tf.translation.x;
+    m(1, 0) = s;
+    m(1, 1) = c;
+    m(1, 2) = tf.translation.y;
+    m(2, 0) = T(0);
+    m(2, 1) = T(0);
+    m(2, 2) = T(1);
     return m;
 }
 

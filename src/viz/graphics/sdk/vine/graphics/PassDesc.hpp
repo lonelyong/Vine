@@ -7,8 +7,8 @@
 #include <vector>
 
 #include <vine/Colorf.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "Camera.hpp"
 #include "DepthMode.hpp"
@@ -40,8 +40,8 @@ VN_GRAPHICS_NS_BEGIN
  */
 enum class PassKind : std::uint8_t
 {
-    Scene,  ///< Draws a content scene through a camera: the ordinary pass (opaque, G-buffer, shadow, HUD).
-    Screen, ///< Draws a full-screen triangle through a program over its resolved inputs (composite, lighting).
+    Scene,  // Draws a content scene through a camera: the ordinary pass (opaque, G-buffer, shadow, HUD).
+    Screen, // Draws a full-screen triangle through a program over its resolved inputs (composite, lighting).
 };
 
 /**
@@ -52,18 +52,17 @@ enum class PassKind : std::uint8_t
  *   allocates the attachment, keys it by (identity, shape), reuses it while the declaration holds, and lets
  *   it go when the declaration goes away (see RenderEngine::transientTargetCount).
  */
-struct TransientShape
-{
+struct TransientShape {
     /// Extent in DEVICE pixels, or 0 for "the size of what this pass' frame is presenting" (see RenderEngine::resize).
-    int width{0};
+    int width{ 0 };
     /// Extent in DEVICE pixels, or 0 for the same fallback as width.
-    int height{0};
+    int height{ 0 };
     /// Colour attachments, in attachment order (empty means depth-only).
     std::vector<RenderTarget::ColorFormat> colors{ RenderTarget::ColorFormat::RGBA8 };
     /// Depth attachment, or unset for none.
     std::optional<RenderTarget::DepthFormat> depth{ RenderTarget::DepthFormat::D24 };
     /// Whether the depth attachment ends up sampleable (see RenderTarget::setDepthPromotion).
-    bool depth_promotion{true};
+    bool depth_promotion{ true };
 };
 
 /**
@@ -87,8 +86,7 @@ struct TransientShape
  *   of a frame together (which is what makes a COMPILED frame possible - RenderEngine::framePlan) and a
  *   caller writes a pass without adding a type.
  */
-struct VN_GRAPHICS_API PassDesc
-{
+struct VN_GRAPHICS_API PassDesc {
     /// Diagnostics and the frame-plan dump (see RenderEngine::framePlan).
     String name;
     /// A label for the plan and for a human reading it ("GBuffer", "Lighting", "Hud"). No behaviour.

@@ -99,7 +99,7 @@ TEST(Quaternion, multiplication)
 TEST(Quaternion, makeRotate_from_to)
 {
     constexpr double EPS = 1e-6;
-    constexpr double PI = 3.14159265358979323846;
+    constexpr double PI  = 3.14159265358979323846;
 
     // Test 90 deg rotation from X to Y
     {
@@ -204,12 +204,12 @@ TEST(Quaternion, makeRotate_from_to)
 TEST(Quaternion, slerp)
 {
     constexpr double EPS = 1e-6;
-    constexpr double PI = 3.14159265358979323846;
+    constexpr double PI  = 3.14159265358979323846;
 
     // Test boundary: t = 0 should return 'from'
     {
         // Use normalized quaternions
-        Quatd from(0.0, 0.0, 0.0, 1.0); // Identity
+        Quatd from(0.0, 0.0, 0.0, 1.0);                             // Identity
         Quatd to(0.0, 0.0, std::sin(PI / 4.0), std::cos(PI / 4.0)); // 90 deg rotation around Z
         Quatd result = Quatd::slerp(from, to, 0.0);
 
@@ -221,7 +221,7 @@ TEST(Quaternion, slerp)
 
     // Test boundary: t = 1 should return 'to'
     {
-        Quatd from(0.0, 0.0, 0.0, 1.0); // Identity
+        Quatd from(0.0, 0.0, 0.0, 1.0);                             // Identity
         Quatd to(0.0, 0.0, std::sin(PI / 4.0), std::cos(PI / 4.0)); // 90 deg rotation around Z
         Quatd result = Quatd::slerp(from, to, 1.0);
 
@@ -248,36 +248,33 @@ TEST(Quaternion, slerp)
         EXPECT_NEAR(result.w, std::cos(3.0 * PI / 8.0), EPS);
 
         // Verify result is normalized
-        double len = std::sqrt(result.x * result.x + result.y * result.y +
-                               result.z * result.z + result.w * result.w);
+        double len = std::sqrt(result.x * result.x + result.y * result.y + result.z * result.z + result.w * result.w);
         EXPECT_NEAR(len, 1.0, EPS);
     }
 
     // Test shortest path selection (negative dot product)
     {
         // Two quaternions representing similar rotations but on opposite hemispheres
-        Quatd from(0.0, 0.0, 0.1, 0.995);  // Small rotation
-        Quatd to(0.0, 0.0, -0.1, -0.995);  // Same rotation but negated (equivalent)
+        Quatd from(0.0, 0.0, 0.1, 0.995); // Small rotation
+        Quatd to(0.0, 0.0, -0.1, -0.995); // Same rotation but negated (equivalent)
 
         Quatd result = Quatd::slerp(from, to, 0.5);
 
         // Result should be close to identity or one of the inputs
         // since they represent nearly the same rotation
-        double len = std::sqrt(result.x * result.x + result.y * result.y +
-                               result.z * result.z + result.w * result.w);
+        double len = std::sqrt(result.x * result.x + result.y * result.y + result.z * result.z + result.w * result.w);
         EXPECT_NEAR(len, 1.0, EPS);
     }
 
     // Test linear interpolation fallback (very close quaternions)
     {
-        Quatd from(0.0, 0.0, 0.0, 1.0);         // Identity
-        Quatd to(0.0, 0.0, 0.001, 0.9999995);   // Nearly identity
+        Quatd from(0.0, 0.0, 0.0, 1.0);       // Identity
+        Quatd to(0.0, 0.0, 0.001, 0.9999995); // Nearly identity
 
         Quatd result = Quatd::slerp(from, to, 0.5);
 
         // Result should be normalized
-        double len = std::sqrt(result.x * result.x + result.y * result.y +
-                               result.z * result.z + result.w * result.w);
+        double len = std::sqrt(result.x * result.x + result.y * result.y + result.z * result.z + result.w * result.w);
         EXPECT_NEAR(len, 1.0, EPS);
 
         // Should be between from and to
@@ -291,9 +288,8 @@ TEST(Quaternion, slerp)
         Quatd to(0.0, 0.0, std::sin(PI / 3.0), std::cos(PI / 3.0));
 
         for (double t = 0.0; t <= 1.0; t += 0.1) {
-            Quatd result = Quatd::slerp(from, to, t);
-            double len = std::sqrt(result.x * result.x + result.y * result.y +
-                                   result.z * result.z + result.w * result.w);
+            Quatd  result = Quatd::slerp(from, to, t);
+            double len    = std::sqrt(result.x * result.x + result.y * result.y + result.z * result.z + result.w * result.w);
             EXPECT_NEAR(len, 1.0, EPS);
         }
     }

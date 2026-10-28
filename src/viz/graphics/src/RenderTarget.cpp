@@ -92,7 +92,7 @@ int RenderTarget::height() const
 
 void RenderTarget::setSize(int w, int h)
 {
-    width_ = w;
+    width_  = w;
     height_ = h;
 }
 

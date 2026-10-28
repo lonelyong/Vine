@@ -36,7 +36,8 @@ VN_CORE_NS_BEGIN
 /**
  * @brief Kind of a runtime type descriptor.
  */
-enum class TypeKind {
+enum class TypeKind
+{
     /**
      * @brief A class (concrete or abstract).
      */
@@ -218,12 +219,12 @@ class VN_CORE_API Type final {
     static Type* get(const String& full_name);
 
   private:
-    const std::type_info&  c_type_;
-    String                 name_;
-    String                 ns_;
-    String                 full_name_;
-    const Type*            parent_ = nullptr;
-    TypeKind               kind_ = TypeKind::Class;
+    const std::type_info&    c_type_;
+    String                   name_;
+    String                   ns_;
+    String                   full_name_;
+    const Type*              parent_ = nullptr;
+    TypeKind                 kind_   = TypeKind::Class;
     std::vector<const Type*> interfaces_;
 };
 
@@ -260,10 +261,10 @@ VN_CORE_NS_END
  * @param Itf The interface type being declared.
  * @param ... Interfaces extended by Itf (optional).
  */
-#define VN_DECLARE_INTERFACE(Itf, ...) \
-  public: \
-    static const vn::Type* desc() \
-    { \
-        static const vn::Type* t = new vn::Type(typeid(Itf), nullptr, vn::TypeKind::Interface __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>())); \
-        return t; \
+#define VN_DECLARE_INTERFACE(Itf, ...)                                                                                                                         \
+  public:                                                                                                                                                      \
+    static const vn::Type* desc()                                                                                                                              \
+    {                                                                                                                                                          \
+        static const vn::Type* t = new vn::Type(typeid(Itf), nullptr, vn::TypeKind::Interface __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));          \
+        return t;                                                                                                                                              \
     }

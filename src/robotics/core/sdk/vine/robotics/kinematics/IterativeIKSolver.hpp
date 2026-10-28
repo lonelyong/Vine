@@ -126,7 +126,9 @@ class VN_ROBOTICS_CORE_API IterativeIKSolver : public IKSolver {
     int                 max_iterations_{ 150 };
     int                 max_seeds_{ 8 };
     bool                clamp_to_bounds_{ true };
-    std::array<bool, 6> constraint_mask_{ { true, true, true, true, true, true } };
+    std::array<bool, 6> constraint_mask_{
+        { true, true, true, true, true, true }
+    };
 };
 
 VN_ROBOTICS_KINEMATICS_NS_END

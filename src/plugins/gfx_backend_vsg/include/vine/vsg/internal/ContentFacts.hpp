@@ -14,15 +14,15 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Sampler.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/backend/Streams.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
 #include <vine/vsg/internal/FactResult.hpp>
 #include <vine/vsg/internal/ProgramAbi.hpp>
 #include <vine/vsg/internal/ProgramVariant.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/Keys.hpp>
-#include <vine/graphics/backend/Streams.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -59,7 +59,9 @@
  */
 namespace vn::graphics
 {
+
 class Texture;
+
 }
 
 VN_VSG_NS_BEGIN
@@ -74,11 +76,10 @@ VN_VSG_NS_BEGIN
  *   announcements - the geometry's (batch: every channel re-keys) and the buffer's own (fine: only the
  *   streams reading it re-key).
  */
-struct ChannelFacts
-{
-    core::StreamKey                            key{};   ///< Kind, location, components, buffer, slice (and the
-                                                        ///< revisions it had when the entry was built).
-    vn::intrusive_ptr<const vn::Buffer<float>> values;  ///< The source scalars; read only when uploading.
+struct ChannelFacts {
+    core::StreamKey                            key{};  // Kind, location, components, buffer, slice (and the
+                                                       // revisions it had when the entry was built).
+    vn::intrusive_ptr<const vn::Buffer<float>> values; // The source scalars; read only when uploading.
 
     /** @brief Gets the stream's identity as the frame that is being recorded sees it.
      *
@@ -103,17 +104,16 @@ struct ChannelFacts
         if (values == nullptr) {
             return {};
         }
-        const std::span<const float> all = values->view();
+        const std::span<const float> all   = values->view();
         const std::size_t            begin = std::min<std::size_t>(key.offset, all.size());
         return all.subspan(begin, std::min<std::size_t>(key.count, all.size() - begin));
     }
 };
 
 /** @brief The index stream of a geometry: the same shape as one vertex channel, over indices. */
-struct IndexFacts
-{
-    core::StreamKey                                      key{};   ///< Kind Index, the whole buffer, no slice.
-    vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> values;   ///< The source indices; read only when uploading.
+struct IndexFacts {
+    core::StreamKey                                    key{};  // Kind Index, the whole buffer, no slice.
+    vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> values; // The source indices; read only when uploading.
 
     /** @brief Gets the stream's identity as the frame that is being recorded sees it (see ChannelFacts::streamKey).
      * @return The key, with the buffer's revision read live.
@@ -146,21 +146,19 @@ struct IndexFacts
  * - The stream is normalized to its WHOLE buffer (the bind aliases all of it, the draw states the span),
  *   so primitives slicing one arena share a single upload.
  */
-struct PrimitiveFacts
-{
-    vn::graphics::Topology    topology{vn::graphics::Topology::Triangles};  ///< How it assembles.
-    std::optional<IndexFacts> indices{};      ///< The index stream when this draw is indexed.
-    std::uint32_t             index_count{0}; ///< Indices it reads (indexed only).
-    std::uint32_t             first_index{0}; ///< First index of its span (indexed only).
+struct PrimitiveFacts {
+    vn::graphics::Topology    topology{ vn::graphics::Topology::Triangles }; // How it assembles.
+    std::optional<IndexFacts> indices{};                                     // The index stream when this draw is indexed.
+    std::uint32_t             index_count{ 0 };                              // Indices it reads (indexed only).
+    std::uint32_t             first_index{ 0 };                              // First index of its span (indexed only).
 };
 
 /** @brief What a geometry identity answers with: its layout, its vertex channels, and its draws. */
-struct GeometryFacts
-{
-    const void*    geometry{nullptr};   ///< The identity the plan names.
-    std::uint64_t  revision{0};         ///< The revision the plan names.
-    core::VertexLayoutKey layout{};     ///< Which channels this geometry feeds (the pipeline key's half).
-    std::span<const ChannelFacts> channels{};  ///< One per fed channel, in binding order.
+struct GeometryFacts {
+    const void*                   geometry{ nullptr }; // The identity the plan names.
+    std::uint64_t                 revision{ 0 };       // The revision the plan names.
+    core::VertexLayoutKey         layout{};            // Which channels this geometry feeds (the pipeline key's half).
+    std::span<const ChannelFacts> channels{};          // One per fed channel, in binding order.
 
     /// The draws, in the geometry's own order: `CompiledCommand::primitive` indexes this row. Empty is a
     /// fact ("this geometry draws nothing"), never a default - a geometry with data always has one.
@@ -169,8 +167,8 @@ struct GeometryFacts
     /// Vertices a NON-indexed draw reads: the position stream's own vertex count (the SDK's definition of
     /// `Geometry::vertexCount()`), because positions are the one required attribute and the only stream the
     /// count can be derived from.
-    std::uint32_t  vertex_count{0};
-    std::uint32_t  vertex_offset{0};    ///< Added to every index before fetching (indexed only).
+    std::uint32_t vertex_count{ 0 };
+    std::uint32_t vertex_offset{ 0 }; // Added to every index before fetching (indexed only).
 };
 
 /** @brief What a program identity answers with: the two stages a content pipeline compiles, and the
@@ -180,11 +178,10 @@ struct GeometryFacts
  * what the layout must be, and the layer that compiles the pair is the one that needs both halves of the
  * answer together (see api/ContentPipeline). It is scanned for the variant the layer compiles with - today
  * the source as written, so the two can never disagree about which declarations are in effect. */
-struct ProgramFacts
-{
-    const void*              program{nullptr};  ///< The identity the plan names.
-    std::uint64_t            revision{0};       ///< The revision the plan names.
-    ProgramVariant           variant{};         ///< The variant (which of the program's texts) this entry is.
+struct ProgramFacts {
+    const void*    program{ nullptr }; // The identity the plan names.
+    std::uint64_t  revision{ 0 };      // The revision the plan names.
+    ProgramVariant variant{};          // The variant (which of the program's texts) this entry is.
 
     /// Which of the engine's two drawing CALLS this entry describes. It is part of the entry's key and not a
     /// decoration: ONE program object can be described twice at one revision - as content (both stages, the
@@ -194,25 +191,23 @@ struct ProgramFacts
     /// table happened to carry first to a caller expecting the other, which is a wrong picture with no refusal
     /// anywhere: the ambiguity this field closes (measured reachable - a host that also draws its post-process
     /// program as content is the ordinary way to hit it).
-    core::DrawKind           kind{core::DrawKind::Content};
+    core::DrawKind kind{ core::DrawKind::Content };
 
-    ContentPipeline::Shaders shaders{};         ///< The GLSL those two stages consist of.
-    ProgramAbi               abi{};             ///< The bindings and push ranges those two texts declare.
+    ContentPipeline::Shaders shaders{}; // The GLSL those two stages consist of.
+    ProgramAbi               abi{};     // The bindings and push ranges those two texts declare.
 };
 
 /** @brief One material texture slot as the CONTENT layer sees it: the map and how it is read. */
-struct MaterialSlotFacts
-{
-    vn::raw_ptr<const vn::graphics::Texture> texture{};  ///< The map; null = the slot is absent.
-    vn::graphics::Sampler                    sampler{};  ///< Read state, by value (the image cache keys on it).
+struct MaterialSlotFacts {
+    vn::raw_ptr<const vn::graphics::Texture> texture{}; // The map; null = the slot is absent.
+    vn::graphics::Sampler                    sampler{}; // Read state, by value (the image cache keys on it).
 };
 
 /** @brief What a material identity answers with: the block bytes the shading reads, and its texture set. */
-struct MaterialFacts
-{
-    const void*                material{nullptr};  ///< The identity (nullptr = the default material).
-    std::uint64_t              revision{0};        ///< The revision its owner tracks its bytes at.
-    std::span<const std::byte> block{};            ///< The block; its size must be the ABI's.
+struct MaterialFacts {
+    const void*                material{ nullptr }; // The identity (nullptr = the default material).
+    std::uint64_t              revision{ 0 };       // The revision its owner tracks its bytes at.
+    std::span<const std::byte> block{};             // The block; its size must be the ABI's.
 
     /// The five texture slots, in `TextureSlot` order. A null map means the slot is absent - which is what the
     /// block's flag bits say as well (this list is what the CONTENT layer resolves images from, the flags are
@@ -223,11 +218,10 @@ struct MaterialFacts
 };
 
 /** @brief Every table a frame's content needs, borrowed for the recording. */
-struct ContentFacts
-{
-    std::span<const ProgramFacts>  programs{};    ///< Program identities → their GLSL.
-    std::span<const GeometryFacts> geometries{};  ///< Geometry identities → their streams and layout.
-    std::span<const MaterialFacts> materials{};   ///< Material identities → their block bytes.
+struct ContentFacts {
+    std::span<const ProgramFacts>  programs{};   // Program identities → their GLSL.
+    std::span<const GeometryFacts> geometries{}; // Geometry identities → their streams and layout.
+    std::span<const MaterialFacts> materials{};  // Material identities → their block bytes.
 
     /// The ROW ORDER of each table, as the lookups search it: a permutation of that table's row indices,
     /// sorted by the identity the lookup names (see @ref orderProgramRows and the file note).
@@ -323,8 +317,8 @@ void orderMaterialRows(std::span<const MaterialFacts> rows, std::vector<std::uin
  *                 be answered for both, and the two answers are different entries.
  * @return The entry, or the reason there is none.
  */
-[[nodiscard]] FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::ProgramRef& program,
-                                                   const ProgramVariant& variant, core::DrawKind kind) noexcept;
+[[nodiscard]] FactResult<ProgramFacts>
+findProgram(const ContentFacts& facts, const core::ProgramRef& program, const ProgramVariant& variant, core::DrawKind kind) noexcept;
 
 /** @brief Finds the geometry a compiled command names.
  *
@@ -336,8 +330,7 @@ void orderMaterialRows(std::span<const MaterialFacts> rows, std::vector<std::uin
  * @param revision Geometry revision the plan was collected at.
  * @return The entry, or the reason there is none (Malformed when its channels do not match its layout).
  */
-[[nodiscard]] FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, const void* geometry,
-                                                     std::uint64_t revision) noexcept;
+[[nodiscard]] FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, const void* geometry, std::uint64_t revision) noexcept;
 
 /** @brief Finds the material a compiled command names.
  *

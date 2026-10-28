@@ -60,7 +60,7 @@ TEST(MemoryStream, ReadableThroughRdbuf)
     MemoryStream stream(asBytes("hello"));
 
     std::string out(stream.size(), '\0');
-    const auto n = stream.rdbuf()->sgetn(out.data(), static_cast<std::streamsize>(out.size()));
+    const auto  n = stream.rdbuf()->sgetn(out.data(), static_cast<std::streamsize>(out.size()));
     EXPECT_EQ(static_cast<std::size_t>(n), out.size());
     EXPECT_EQ(out, "hello");
 }
@@ -166,7 +166,7 @@ TEST(MemoryStream, ReadPositionSurvivesGrowth)
 
 TEST(MemoryStream, TakesOverAVectorAndReleasesItWithoutCopying)
 {
-    std::vector<std::byte> bytes = { std::byte{ 'a' }, std::byte{ 'b' }, std::byte{ 'c' } };
+    std::vector<std::byte> bytes    = { std::byte{ 'a' }, std::byte{ 'b' }, std::byte{ 'c' } };
     const std::byte*       original = bytes.data();
 
     MemoryStream stream(std::move(bytes));
@@ -437,7 +437,7 @@ TEST(SpanStreamBuf, EmptyWindowAndMoveAreSafe)
 TEST(SpanStreamBuf, ReadOnlyViewIsZeroCopy)
 {
     const std::string text = "hello";
-    SpanStreamBuf     buf = SpanStreamBuf::readOnly(asBytes(text));
+    SpanStreamBuf     buf  = SpanStreamBuf::readOnly(asBytes(text));
 
     // The view points at the caller's bytes: nothing was copied.
     EXPECT_EQ(buf.data(), asBytes(text).data());
@@ -465,7 +465,7 @@ TEST(InputSpanStream, ReadsAZeroCopyView)
     const std::string text = "12 34";
     InputSpanStream   in(asBytes(text));
 
-    int first = 0;
+    int first  = 0;
     int second = 0;
     in >> first >> second;
 
@@ -549,7 +549,7 @@ TEST(MemoryStreamBuf, ReserveKeepsContentAndPositions)
     EXPECT_TRUE(buf.reserve(1024));
     EXPECT_TRUE(buf.reserve(1024)); // nothing to do the second time
     EXPECT_TRUE(buf.reserve(0));
-    EXPECT_EQ(buf.size(), 11u);     // content, size and positions survive
+    EXPECT_EQ(buf.size(), 11u); // content, size and positions survive
 
     char out[8]{};
     EXPECT_EQ(buf.sgetn(out, 8), 8);

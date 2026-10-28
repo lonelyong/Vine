@@ -13,9 +13,21 @@ class ShowHelpCommand : public Command {
     VN_DECLARE_COMMAND(ShowHelpCommand, u8"show_help")
 
   public:
-    String group() const override { return u8"帮助"; }
-    String description() const override { return u8"显示帮助信息"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"帮助";
+    }
+
+    String description() const override
+    {
+        return u8"显示帮助信息";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

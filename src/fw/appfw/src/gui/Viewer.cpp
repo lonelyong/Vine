@@ -12,13 +12,13 @@ VN_APPFWGUI_NS_BEGIN
 
 struct Viewer::Impl {
     /// The engine the chain is built on and registered with (borrowed; must outlive the viewer).
-    raw_ptr<vn::graphics::RenderEngine> engine = nullptr;
+    raw_ptr<vn::graphics::RenderEngine> engine   = nullptr;
     /// The area this viewer draws (borrowed; must outlive the viewer).
     raw_ptr<vn::graphics::RenderSurface> surface = nullptr;
     /// The view that draws the area, and the request its chain is built from. One area draws one picture: the view
     /// is the picture's camera and content, the request is how it is drawn.
     intrusive_ptr<vn::graphics::SceneView> view;
-    ViewerOptions                         options;
+    ViewerOptions                          options;
     /// "This view draws through another engine" is one condition, not a per-call event.
     mutable bool foreign_view_reported = false;
 
@@ -34,11 +34,9 @@ struct Viewer::Impl {
         // choice that lives on the live chain (PassChain::setGizmoVisible / setStatsVisible), so it is read from
         // there and re-stated on the new one. Only an overlay that WAS there and was hidden is carried - one this
         // build adds comes up showing, because nothing has hidden it yet.
-        vn::graphics::PassChain* const previous = view->chain();
-        const bool gizmo_was_hidden =
-            previous != nullptr && previous->gizmo() != nullptr && !previous->isGizmoVisible();
-        const bool stats_was_hidden =
-            previous != nullptr && previous->fpsOverlay() != nullptr && !previous->isStatsVisible();
+        vn::graphics::PassChain* const previous         = view->chain();
+        const bool                     gizmo_was_hidden = previous != nullptr && previous->gizmo() != nullptr && !previous->isGizmoVisible();
+        const bool                     stats_was_hidden = previous != nullptr && previous->fpsOverlay() != nullptr && !previous->isStatsVisible();
 
         // The request is the host-facing half; the CONTEXTUAL fields are filled in HERE, because this is the party
         // that knows them: the gizmo mirrors the view's camera (an overlay with no camera to mirror is exactly what
@@ -56,12 +54,11 @@ struct Viewer::Impl {
         pipeline_options.fps.enabled         = options.stats;
         pipeline_options.fps.pixel_ratio     = ratio;
 
-        pipeline_options.camera  = view->camera();
-        pipeline_options.content = view->scene();
-        vn::intrusive_ptr<vn::graphics::PassChain> pipeline =
-            vn::graphics::PassChain::build(engine, pipeline_options);
+        pipeline_options.camera                             = view->camera();
+        pipeline_options.content                            = view->scene();
+        vn::intrusive_ptr<vn::graphics::PassChain> pipeline = vn::graphics::PassChain::build(engine, pipeline_options);
         if (pipeline == nullptr) {
-            return false;  // the build reports what it refused (see PassChain::build)
+            return false; // the build reports what it refused (see PassChain::build)
         }
         if (gizmo_was_hidden) {
             (void)pipeline->setGizmoVisible(false);
@@ -90,8 +87,7 @@ struct Viewer::Impl {
     }
 };
 
-Viewer::Viewer(raw_ptr<vn::graphics::RenderEngine> engine, raw_ptr<vn::graphics::RenderSurface> surface,
-               intrusive_ptr<vn::graphics::SceneView> view)
+Viewer::Viewer(raw_ptr<vn::graphics::RenderEngine> engine, raw_ptr<vn::graphics::RenderSurface> surface, intrusive_ptr<vn::graphics::SceneView> view)
   : d(new Impl())
 {
     d->engine  = engine;
@@ -152,13 +148,11 @@ bool Viewer::setShadingMode(vn::graphics::ShadingMode mode)
     // this mode" is only the cheap path when the live chain is the one this request resolves to. Picking Lit again
     // after such a mode therefore REBUILDS the deferred chain - which is what the host asked for.
     vn::graphics::ChainDesc request;
-    request.path = d->options.path;
-    request.mode = mode;
+    request.path                            = d->options.path;
+    request.mode                            = mode;
     vn::graphics::PassChain* const pipeline = d->view->chain();
-    if (pipeline != nullptr &&
-        pipeline->shadingPath() == vn::graphics::PassChain::effectivePath(request) &&
-        pipeline->setShadingMode(mode)) {
-        d->options.mode = mode;  // remembered: the next build (any structural change) starts from here
+    if (pipeline != nullptr && pipeline->shadingPath() == vn::graphics::PassChain::effectivePath(request) && pipeline->setShadingMode(mode)) {
+        d->options.mode = mode; // remembered: the next build (any structural change) starts from here
         return true;
     }
     // The chain cannot express it (a deferred picture has no geometry pass to shade): the request itself has to

@@ -19,11 +19,11 @@ VN_GRAPHICS_NS_BEGIN
  */
 struct VN_GRAPHICS_API Viewport {
     /** @brief Origin x in device pixels. */
-    int x = 0;
+    int x      = 0;
     /** @brief Origin y in device pixels (top-left origin). */
-    int y = 0;
+    int y      = 0;
     /** @brief Width in device pixels. */
-    int width = 0;
+    int width  = 0;
     /** @brief Height in device pixels. */
     int height = 0;
 

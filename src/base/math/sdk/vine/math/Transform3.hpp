@@ -100,12 +100,24 @@ Matrix3x3<T, Order> rotate3x3(const Quaternion<T>& quat)
 template <typename T, typename Order = ColMajor>
 Matrix4x4<T, Order> rotate(const Quaternion<T>& quat)
 {
-    const auto R = rotate3x3(quat);
+    const auto          R = rotate3x3(quat);
     Matrix4x4<T, Order> m;
-    m(0, 0) = R(0, 0); m(0, 1) = R(0, 1); m(0, 2) = R(0, 2); m(0, 3) = T(0);
-    m(1, 0) = R(1, 0); m(1, 1) = R(1, 1); m(1, 2) = R(1, 2); m(1, 3) = T(0);
-    m(2, 0) = R(2, 0); m(2, 1) = R(2, 1); m(2, 2) = R(2, 2); m(2, 3) = T(0);
-    m(3, 0) = T(0);    m(3, 1) = T(0);    m(3, 2) = T(0);    m(3, 3) = T(1);
+    m(0, 0) = R(0, 0);
+    m(0, 1) = R(0, 1);
+    m(0, 2) = R(0, 2);
+    m(0, 3) = T(0);
+    m(1, 0) = R(1, 0);
+    m(1, 1) = R(1, 1);
+    m(1, 2) = R(1, 2);
+    m(1, 3) = T(0);
+    m(2, 0) = R(2, 0);
+    m(2, 1) = R(2, 1);
+    m(2, 2) = R(2, 2);
+    m(2, 3) = T(0);
+    m(3, 0) = T(0);
+    m(3, 1) = T(0);
+    m(3, 2) = T(0);
+    m(3, 3) = T(1);
     return m;
 }
 

@@ -73,9 +73,9 @@ class DockingPaneTitleWidget : public QWidget {
     void takeGrab();
 
   Q_SIGNALS:
-    void titleBarStartMove(QPoint pos); ///< Title pressed (global coordinates).
-    void titleBarEndMove(QPoint pos);   ///< Title released (global coordinates).
-    void titleBarMoved(QPoint pos);     ///< Drag move (global coordinates).
+    void titleBarStartMove(QPoint pos); // Title pressed (global coordinates).
+    void titleBarEndMove(QPoint pos);   // Title released (global coordinates).
+    void titleBarMoved(QPoint pos);     // Drag move (global coordinates).
 
   protected:
     void paintEvent(QPaintEvent* event) override;

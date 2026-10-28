@@ -4,8 +4,7 @@ VN_GRAPHICS_NS_BEGIN
 
 CameraManipulator::CameraManipulator(raw_ptr<Camera> camera)
   : camera_(camera)
-{
-}
+{}
 
 CameraManipulator::~CameraManipulator() = default;
 
@@ -30,7 +29,6 @@ bool CameraManipulator::fitToScreen()
 }
 
 void CameraManipulator::home()
-{
-}
+{}
 
 VN_GRAPHICS_NS_END

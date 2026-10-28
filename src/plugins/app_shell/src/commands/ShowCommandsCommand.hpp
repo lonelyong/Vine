@@ -13,9 +13,21 @@ class ShowCommandsCommand : public Command {
     VN_DECLARE_COMMAND(ShowCommandsCommand, u8"show_commands")
 
   public:
-    String group() const override { return u8"帮助"; }
-    String description() const override { return u8"查看与管理已注册命令"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"帮助";
+    }
+
+    String description() const override
+    {
+        return u8"查看与管理已注册命令";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

@@ -48,9 +48,7 @@ constexpr std::uint32_t kContentInputSet = 1U;
 bool shaderImportsDefine(std::string_view source, std::string_view name) noexcept
 {
     constexpr std::string_view kPragma = "#pragma import_defines";
-    for (std::size_t pos = source.find(kPragma); pos != std::string_view::npos;
-         pos = source.find(kPragma, pos + kPragma.size()))
-    {
+    for (std::size_t pos = source.find(kPragma); pos != std::string_view::npos; pos = source.find(kPragma, pos + kPragma.size())) {
         const std::size_t open  = source.find('(', pos);
         const std::size_t close = open == std::string_view::npos ? std::string_view::npos : source.find(')', open);
         if (close == std::string_view::npos) {
@@ -66,24 +64,18 @@ bool shaderImportsDefine(std::string_view source, std::string_view name) noexcep
 /** @brief The `VkFormat` of one channel: its components are 32-bit floats (see core::StreamKey). */
 std::uint32_t channelFormatOf(std::uint32_t components) noexcept
 {
-    switch (components)
-    {
-    case 1U:
-        return VK_FORMAT_R32_SFLOAT;
-    case 2U:
-        return VK_FORMAT_R32G32_SFLOAT;
-    case 3U:
-        return VK_FORMAT_R32G32B32_SFLOAT;
-    default:
-        return VK_FORMAT_R32G32B32A32_SFLOAT;
+    switch (components) {
+    case 1U: return VK_FORMAT_R32_SFLOAT;
+    case 2U: return VK_FORMAT_R32G32_SFLOAT;
+    case 3U: return VK_FORMAT_R32G32B32_SFLOAT;
+    default: return VK_FORMAT_R32G32B32A32_SFLOAT;
     }
 }
 
 /** @brief The bytes one L1 block role's ABI struct carries (0 for a role that is not a block). */
 std::uint32_t abiSizeOfRole(AbiBlockRole role) noexcept
 {
-    switch (role)
-    {
+    switch (role) {
     case AbiBlockRole::View: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineViewBlock));
     case AbiBlockRole::Draw: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineDrawBlock));
     case AbiBlockRole::Material: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineMaterialBlock));
@@ -109,34 +101,28 @@ std::uint32_t abiSizeOfRole(AbiBlockRole role) noexcept
  * @param shapes Receives the shape of each entry of @p sets.
  * @return true when every declaration can be described.
  */
-bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::DescriptorSetLayout>>& sets,
-                 std::vector<std::vector<BlockDescriptors::Binding>>& shapes,
-                 std::vector<std::vector<std::uint32_t>>& sampler_shapes)
+bool describeAbi(const ProgramAbi&                                        abi,
+                 std::vector<::vsg::ref_ptr<::vsg::DescriptorSetLayout>>& sets,
+                 std::vector<std::vector<BlockDescriptors::Binding>>&     shapes,
+                 std::vector<std::vector<std::uint32_t>>&                 sampler_shapes)
 {
     std::uint32_t set_count = 0U;
-    for (const AbiBinding& binding : abi.bindings)
-    {
-        if (binding.kind == AbiDescriptorKind::UniformBlock)
-        {
-            if (binding.role == AbiBlockRole::Foreign || binding.role == AbiBlockRole::NotABlock)
-            {
+    for (const AbiBinding& binding : abi.bindings) {
+        if (binding.kind == AbiDescriptorKind::UniformBlock) {
+            if (binding.role == AbiBlockRole::Foreign || binding.role == AbiBlockRole::NotABlock) {
                 return false;
             }
-            if (binding.layout != AbiBlockLayout::Std140 || binding.count != 1U ||
-                binding.block_size > abiSizeOfRole(binding.role))
-            {
+            if (binding.layout != AbiBlockLayout::Std140 || binding.count != 1U || binding.block_size > abiSizeOfRole(binding.role)) {
                 return false;
             }
         }
-        else
-        {
+        else {
             // A sampler may sit in ANY set the text names: the engine's own set 0 carries the material block
             // and the diffuse map side by side, and a set is a set whatever kind of binding it holds. What
             // this layer refuses is a KIND it has no view for - anything but `sampler2D` and `samplerCube`,
             // which are the two shapes a texture has (see api/MaterialImages) - and an array of samplers
             // (each binding carries one image here).
-            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.count != 1U)
-            {
+            if (binding.kind == AbiDescriptorKind::OtherSampler || binding.count != 1U) {
                 return false;
             }
         }
@@ -145,13 +131,9 @@ bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::Descri
 
     // One (set, binding) cannot be two things: a block and a sampler at the same binding would need one
     // descriptor to be a buffer and an image at once.
-    for (const AbiBinding& left : abi.bindings)
-    {
-        for (const AbiBinding& right : abi.bindings)
-        {
-            if (&left != &right && left.set == right.set && left.binding == right.binding &&
-                left.kind != right.kind)
-            {
+    for (const AbiBinding& left : abi.bindings) {
+        for (const AbiBinding& right : abi.bindings) {
+            if (&left != &right && left.set == right.set && left.binding == right.binding && left.kind != right.kind) {
                 return false;
             }
         }
@@ -160,19 +142,15 @@ bool describeAbi(const ProgramAbi& abi, std::vector<::vsg::ref_ptr<::vsg::Descri
     sets.resize(set_count);
     shapes.resize(set_count);
     sampler_shapes.resize(set_count);
-    for (std::uint32_t index = 0U; index < set_count; ++index)
-    {
+    for (std::uint32_t index = 0U; index < set_count; ++index) {
         shapes[index] = blockShapeOf(abi, index);
-        for (const AbiBinding& binding : abi.bindings)
-        {
-            if (binding.set == index && binding.kind != AbiDescriptorKind::UniformBlock)
-            {
+        for (const AbiBinding& binding : abi.bindings) {
+            if (binding.set == index && binding.kind != AbiDescriptorKind::UniformBlock) {
                 sampler_shapes[index].push_back(binding.binding);
             }
         }
         sets[index] = BlockDescriptors::layoutOfShape(shapes[index], sampler_shapes[index]);
-        if (sets[index] == nullptr)
-        {
+        if (sets[index] == nullptr) {
             return false;
         }
     }
@@ -204,12 +182,18 @@ constexpr VkExtent2D kBakedViewportExtent{ 1U, 1U };
  */
 ::vsg::ref_ptr<::vsg::DynamicState> makeDynamicStateDeclaration()
 {
-    return ::vsg::DynamicState::create(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
-                                       VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_CULL_MODE,
-                                       VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
-                                       VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
-                                       VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT, VK_DYNAMIC_STATE_VIEWPORT,
-                                       VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_LINE_WIDTH);
+    return ::vsg::DynamicState::create(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+                                       VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+                                       VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+                                       VK_DYNAMIC_STATE_CULL_MODE,
+                                       VK_DYNAMIC_STATE_FRONT_FACE,
+                                       VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
+                                       VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
+                                       VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
+                                       VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT,
+                                       VK_DYNAMIC_STATE_VIEWPORT,
+                                       VK_DYNAMIC_STATE_SCISSOR,
+                                       VK_DYNAMIC_STATE_LINE_WIDTH);
 }
 
 /// @brief The blend state's attachment list for @p color_count attachments (0 = a depth-only pass).
@@ -219,36 +203,32 @@ constexpr VkExtent2D kBakedViewportExtent{ 1U, 1U };
     attachments.reserve(color_count);
     for (std::uint32_t index = 0; index < color_count; ++index) {
         VkPipelineColorBlendAttachmentState attachment = {};
-        attachment.blendEnable         = VK_FALSE;
-        attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-        attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-        attachment.colorBlendOp        = VK_BLEND_OP_ADD;
-        attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
-        attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        attachment.blendEnable                         = VK_FALSE;
+        attachment.srcColorBlendFactor                 = VK_BLEND_FACTOR_ZERO;
+        attachment.dstColorBlendFactor                 = VK_BLEND_FACTOR_ZERO;
+        attachment.colorBlendOp                        = VK_BLEND_OP_ADD;
+        attachment.srcAlphaBlendFactor                 = VK_BLEND_FACTOR_ZERO;
+        attachment.dstAlphaBlendFactor                 = VK_BLEND_FACTOR_ZERO;
+        attachment.alphaBlendOp                        = VK_BLEND_OP_ADD;
+        attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         attachments.push_back(attachment);
     }
     return ::vsg::ColorBlendState::create(attachments);
 }
 
-}  // namespace
+} // namespace
 
-struct ContentPipeline::Data
-{
+struct ContentPipeline::Data {
     /** @brief The set layout and pipeline layout one sampled-input count is compiled against. */
-    struct Sampled
-    {
-        ::vsg::ref_ptr<::vsg::DescriptorSetLayout> set;       ///< The samplers (set 1 for content, set 0 for screen).
-        ::vsg::ref_ptr<::vsg::PipelineLayout>      pipeline;  ///< That set, in its place among the layer's sets.
+    struct Sampled {
+        ::vsg::ref_ptr<::vsg::DescriptorSetLayout> set;      // The samplers (set 1 for content, set 0 for screen).
+        ::vsg::ref_ptr<::vsg::PipelineLayout>      pipeline; // That set, in its place among the layer's sets.
     };
 
     /// @brief The pair a sampled set is built for: colour bindings and depth bindings.
-    struct SampledKey
-    {
-        std::uint32_t colors{0};  ///< Colour textures the pass binds.
-        std::uint32_t depths{0};  ///< DEPTH textures the pass binds (they follow the colours).
+    struct SampledKey {
+        std::uint32_t colors{ 0 }; // Colour textures the pass binds.
+        std::uint32_t depths{ 0 }; // DEPTH textures the pass binds (they follow the colours).
 
         /** @brief Compares the pair. */
         [[nodiscard]] bool operator==(const SampledKey& other) const noexcept
@@ -258,9 +238,8 @@ struct ContentPipeline::Data
     };
 
     /** @brief Compiles one GLSL stage, or returns an empty pointer when the compiler refuses it. */
-    ::vsg::ref_ptr<::vsg::ShaderStage> compileStage(VkShaderStageFlagBits stage, const std::string& source,
-                                                    const std::string& entry,
-                                                    const std::vector<std::string>& defines)
+    ::vsg::ref_ptr<::vsg::ShaderStage>
+    compileStage(VkShaderStageFlagBits stage, const std::string& source, const std::string& entry, const std::vector<std::string>& defines)
     {
         if (!compiler.supported()) {
             return {};
@@ -270,34 +249,33 @@ struct ContentPipeline::Data
         // `#define` only for a name the source lists in its `#pragma import_defines` line, so a variant is
         // the same text compiled with a different list - which is why the list belongs to the layer the
         // pipeline is built from, and why the ABI must have been scanned with it too.
-        if (shader_stage == nullptr || !compiler.compile(shader_stage, defines) ||
-            shader_stage->module == nullptr || shader_stage->module->code.empty()) {
+        if (shader_stage == nullptr || !compiler.compile(shader_stage, defines) || shader_stage->module == nullptr || shader_stage->module->code.empty()) {
             return {};
         }
         return shader_stage;
     }
 
-    core::DrawKind                                              kind{core::DrawKind::Content};
-    ::vsg::ShaderCompiler                                       compiler;
-    ProgramAbi                                                  abi;          ///< The facts the layer was built from.
+    core::DrawKind        kind{ core::DrawKind::Content };
+    ::vsg::ShaderCompiler compiler;
+    ProgramAbi            abi; // The facts the layer was built from.
     /// @brief One layout per set index the DECLARED BLOCKS reach (empty layouts included, see describeAbi).
-    std::vector<::vsg::ref_ptr<::vsg::DescriptorSetLayout>>     sets;
+    std::vector<::vsg::ref_ptr<::vsg::DescriptorSetLayout>> sets;
     /// @brief One shape per entry of @ref sets: which block role sits at which binding.
-    std::vector<std::vector<BlockDescriptors::Binding>>         shapes;
+    std::vector<std::vector<BlockDescriptors::Binding>> shapes;
     /// @brief One sampled-binding list per entry of @ref sets: the images the set declares (the other half of
     ///        a declared set - the engine's set 0 carries blocks AND the diffuse map).
-    std::vector<std::vector<std::uint32_t>>                     sampler_shapes;
+    std::vector<std::vector<std::uint32_t>> sampler_shapes;
     /// @brief The set indices that declare at least one block, ascending.
-    std::vector<std::uint32_t>                                  declared_sets;
+    std::vector<std::uint32_t> declared_sets;
     /// @brief The layout that fills a set index the declarations leave empty (the API wants a CONTIGUOUS
     ///        range of set layouts, and a gap is not a null entry - it is a set with no bindings).
-    ::vsg::ref_ptr<::vsg::DescriptorSetLayout>                  empty_set;
-    ::vsg::PushConstantRanges                                   push_ranges;  ///< The declared push ranges.
-    ::vsg::ShaderStages                                         stages;
-    ::vsg::ref_ptr<::vsg::PipelineLayout>                       layout;
+    ::vsg::ref_ptr<::vsg::DescriptorSetLayout> empty_set;
+    ::vsg::PushConstantRanges                  push_ranges; // The declared push ranges.
+    ::vsg::ShaderStages                        stages;
+    ::vsg::ref_ptr<::vsg::PipelineLayout>      layout;
+
     /// @brief Hash for the (colours, depths) pair (a set layout is built per distinct pair).
-    struct SampledKeyHash
-    {
+    struct SampledKeyHash {
         /** @brief Hashes the pair (the same mix the other keys use). */
         [[nodiscard]] std::size_t operator()(const SampledKey& key) const noexcept
         {
@@ -311,43 +289,41 @@ struct ContentPipeline::Data
         }
     };
 
-    std::unordered_map<SampledKey, Sampled, SampledKeyHash>     sampled;  ///< One entry per distinct pair.
-    ::vsg::ref_ptr<::vsg::Sampler>                              input_sampler;
-    ::vsg::GraphicsPipelineStates                               states;
+    std::unordered_map<SampledKey, Sampled, SampledKeyHash> sampled; // One entry per distinct pair.
+    ::vsg::ref_ptr<::vsg::Sampler>                          input_sampler;
+    ::vsg::GraphicsPipelineStates                           states;
     /// The same states with the multisample entry replaced, one set per sample count a pass drew with. The
     /// count is part of the PIPELINE's state (and of its key), not of the layer: one content layer serves
     /// every pass of its kind, and two passes that render into targets of different counts need two
     /// pipelines - which is exactly what the key already says (see core::RenderPassCompatibility::samples).
-    std::unordered_map<std::uint32_t, ::vsg::GraphicsPipelineStates> states_by_samples;
-    ::vsg::ref_ptr<::vsg::Sampler> depth_sampler;  ///< NEAREST: a depth compare reads exact texels.
+    std::unordered_map<std::uint32_t, ::vsg::GraphicsPipelineStates>           states_by_samples;
+    ::vsg::ref_ptr<::vsg::Sampler>                                             depth_sampler; // NEAREST: a depth compare reads exact texels.
     std::unordered_map<std::uint64_t, ::vsg::ref_ptr<::vsg::GraphicsPipeline>> pipelines;
-    std::uint64_t                                               compiles{0};
-    std::uint64_t                                               failures{0};
+    std::uint64_t                                                              compiles{ 0 };
+    std::uint64_t                                                              failures{ 0 };
 };
 
-ContentPipeline::ContentPipeline() : d(std::make_unique<Data>())
-{
-}
+ContentPipeline::ContentPipeline()
+  : d(std::make_unique<Data>())
+{}
 
-std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
-                                                        std::span<const VertexBinding>  bindings,
-                                                        std::span<const VertexAttribute> attributes,
-                                                        const Shaders& shaders)
+std::unique_ptr<ContentPipeline>
+ContentPipeline::create(const ProgramAbi& abi, std::span<const VertexBinding> bindings, std::span<const VertexAttribute> attributes, const Shaders& shaders)
 {
     return create(abi, bindings, attributes, shaders, Settings{});
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
-                                                        std::span<const VertexBinding>  bindings,
-                                                        std::span<const VertexAttribute> attributes,
-                                                        const Shaders& shaders, const Settings& settings)
+std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi&                abi,
+                                                         std::span<const VertexBinding>   bindings,
+                                                         std::span<const VertexAttribute> attributes,
+                                                         const Shaders&                   shaders,
+                                                         const Settings&                  settings)
 {
-    auto layer = std::unique_ptr<ContentPipeline>(new ContentPipeline());
-    layer->d->abi = abi;
+    auto layer          = std::unique_ptr<ContentPipeline>(new ContentPipeline());
+    layer->d->abi       = abi;
     layer->d->empty_set = ::vsg::DescriptorSetLayout::create();
-    if (layer->d->empty_set == nullptr ||
-        !describeAbi(abi, layer->d->sets, layer->d->shapes, layer->d->sampler_shapes)) {
-        return nullptr;  // a declaration this backend cannot describe: reported, never compiled against a guess
+    if (layer->d->empty_set == nullptr || !describeAbi(abi, layer->d->sets, layer->d->shapes, layer->d->sampler_shapes)) {
+        return nullptr; // a declaration this backend cannot describe: reported, never compiled against a guess
     }
     // A pipeline layout's set layouts are a CONTIGUOUS range from 0 and a gap is a set with no bindings - not
     // a null entry, which is an invalid handle. describeAbi is where that range is built (one entry per set
@@ -359,21 +335,17 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     // than by the caller (see Data::sampled). A set that declares both is refused above (the draw block and
     // the pass' images would have to be one descriptor set).
     for (std::uint32_t set = 0U; set < layer->d->shapes.size(); ++set) {
-        const bool has_blocks  = !layer->d->shapes[set].empty();
+        const bool has_blocks   = !layer->d->shapes[set].empty();
         const bool has_samplers = !layer->d->sampler_shapes[set].empty();
         if (has_blocks || (has_samplers && set != kContentInputSet)) {
             layer->d->declared_sets.push_back(set);
         }
     }
 
-    ::vsg::ref_ptr<::vsg::ShaderStage> vertex =
-        layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry,
-                               shaders.defines);
-    ::vsg::ref_ptr<::vsg::ShaderStage> fragment =
-        layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry,
-                               shaders.defines);
+    ::vsg::ref_ptr<::vsg::ShaderStage> vertex   = layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry, shaders.defines);
+    ::vsg::ref_ptr<::vsg::ShaderStage> fragment = layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry, shaders.defines);
     if (vertex == nullptr || fragment == nullptr) {
-        return nullptr;  // nothing to shade with: the caller reports it instead of drawing nothing
+        return nullptr; // nothing to shade with: the caller reports it instead of drawing nothing
     }
     layer->d->stages = ::vsg::ShaderStages{ vertex, fragment };
 
@@ -386,19 +358,17 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     ::vsg::PushConstantRanges push_ranges;
     for (const AbiPushRange& range : abi.pushes) {
         if (range.size == 0U) {
-            return nullptr;  // a block whose members could not be sized is not a range to declare
+            return nullptr; // a block whose members could not be sized is not a range to declare
         }
         for (const AbiPushMember& member : range.members) {
             if (!canFillPushMember(member)) {
-                return nullptr;  // a member this backend cannot fill: the pass would draw with zero bytes
+                return nullptr; // a member this backend cannot fill: the pass would draw with zero bytes
             }
         }
-        push_ranges.push_back(
-            VkPushConstantRange{ static_cast<VkShaderStageFlags>(pushStagesOf(range.stages)), range.offset,
-                                 range.size });
+        push_ranges.push_back(VkPushConstantRange{ static_cast<VkShaderStageFlags>(pushStagesOf(range.stages)), range.offset, range.size });
     }
     layer->d->push_ranges = push_ranges;
-    layer->d->layout     = ::vsg::PipelineLayout::create(layer->d->sets, push_ranges);
+    layer->d->layout      = ::vsg::PipelineLayout::create(layer->d->sets, push_ranges);
     if (layer->d->layout == nullptr) {
         return nullptr;
     }
@@ -407,31 +377,31 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     declared_bindings.reserve(bindings.size());
     for (const VertexBinding& binding : bindings) {
         VkVertexInputBindingDescription declared = {};
-        declared.binding   = binding.binding;
-        declared.stride    = binding.stride;
-        declared.inputRate = binding.per_instance ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX;
+        declared.binding                         = binding.binding;
+        declared.stride                          = binding.stride;
+        declared.inputRate                       = binding.per_instance ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX;
         declared_bindings.push_back(declared);
     }
     ::vsg::VertexInputState::Attributes declared_attributes;
     declared_attributes.reserve(attributes.size());
     for (const VertexAttribute& attribute : attributes) {
         VkVertexInputAttributeDescription declared = {};
-        declared.location = attribute.location;
-        declared.binding  = attribute.binding;
-        declared.format   = static_cast<VkFormat>(attribute.format);
-        declared.offset   = attribute.offset;
+        declared.location                          = attribute.location;
+        declared.binding                           = attribute.binding;
+        declared.format                            = static_cast<VkFormat>(attribute.format);
+        declared.offset                            = attribute.offset;
         declared_attributes.push_back(declared);
     }
 
-    auto raster_state       = ::vsg::RasterizationState::create();
-    raster_state->cullMode  = kBakedCullMode;
-    raster_state->frontFace = kBakedFrontFace;
+    auto raster_state             = ::vsg::RasterizationState::create();
+    raster_state->cullMode        = kBakedCullMode;
+    raster_state->frontFace       = kBakedFrontFace;
     auto depth_state              = ::vsg::DepthStencilState::create();
     depth_state->depthTestEnable  = kBakedDepthTestEnable;
     depth_state->depthWriteEnable = kBakedDepthWriteEnable;
     depth_state->depthCompareOp   = kBakedCompareOp;
-    auto input_assembly     = ::vsg::InputAssemblyState::create();
-    input_assembly->topology = mapTopology(settings.topology);
+    auto input_assembly           = ::vsg::InputAssemblyState::create();
+    input_assembly->topology      = mapTopology(settings.topology);
 
     layer->d->states = ::vsg::GraphicsPipelineStates{
         ::vsg::VertexInputState::create(declared_bindings, declared_attributes),
@@ -446,63 +416,46 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi,
     return layer;
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi, const GeometryFacts& geometry,
-                                                         const Shaders& shaders, const Settings& settings)
+std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi, const GeometryFacts& geometry, const Shaders& shaders, const Settings& settings)
 {
     // THE INSTANCE MATRIX IS A VERTEX-INPUT STREAM, NOT A GEOMETRY CHANNEL: each Primitive owns its stream,
     // and the variant's own define is the one switch that asks for both the shader text and the four
     // attributes that feed it. Deriving the layout here - from the same define list the compiler receives -
     // is what keeps the pipeline's vertex input and its text from disagreeing.
-    const bool instanced = std::find(shaders.defines.begin(), shaders.defines.end(), "VN_INSTANCED") !=
-                           shaders.defines.end();
-    if (instanced && !shaderImportsDefine(shaders.vertex, "VN_INSTANCED"))
-    {
-        return nullptr;  // the define would be dropped by vsg: the program does not opt in
+    const bool instanced = std::find(shaders.defines.begin(), shaders.defines.end(), "VN_INSTANCED") != shaders.defines.end();
+    if (instanced && !shaderImportsDefine(shaders.vertex, "VN_INSTANCED")) {
+        return nullptr; // the define would be dropped by vsg: the program does not opt in
     }
 
     std::vector<VertexBinding>   bindings;
     std::vector<VertexAttribute> attributes;
     bindings.reserve(geometry.channels.size() + (instanced ? 1U : 0U));
     attributes.reserve(geometry.channels.size() + (instanced ? vn::graphics::kInstanceMatrixColumns : 0U));
-    const std::uint32_t instance_first =
-        vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
-    for (const ChannelFacts& channel : geometry.channels)
-    {
+    const std::uint32_t instance_first = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
+    for (const ChannelFacts& channel : geometry.channels) {
         // The instance-matrix slots belong to the per-instance stream, never to a geometry channel: a geometry
         // that authored location 12 would collide with the per-instance binding 4 (and was refused before
         // the ABI grew that role). Keep that refusal, or a custom channel could silently become an
         // instance matrix.
-        if (channel.key.location >= instance_first &&
-            channel.key.location < instance_first + vn::graphics::kInstanceMatrixColumns)
-        {
+        if (channel.key.location >= instance_first && channel.key.location < instance_first + vn::graphics::kInstanceMatrixColumns) {
             return nullptr;
         }
         const std::uint32_t binding = StreamUploads::bindingOfCanonical(channel.key.location);
-        if (binding == StreamUploads::kNoBinding)
-        {
-            return nullptr;  // a channel the stream store cannot feed (see the header)
+        if (binding == StreamUploads::kNoBinding) {
+            return nullptr; // a channel the stream store cannot feed (see the header)
         }
-        bindings.push_back(VertexBinding{ binding,
-                                          static_cast<std::uint32_t>(channel.key.components * sizeof(float)),
-                                          false });
-        attributes.push_back(
-            VertexAttribute{ channel.key.location, binding, channelFormatOf(channel.key.components), 0U });
+        bindings.push_back(VertexBinding{ binding, static_cast<std::uint32_t>(channel.key.components * sizeof(float)), false });
+        attributes.push_back(VertexAttribute{ channel.key.location, binding, channelFormatOf(channel.key.components), 0U });
     }
-    if (instanced)
-    {
-        const std::uint32_t binding =
-            StreamUploads::bindingOfCanonical(vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel));
-        if (binding == StreamUploads::kNoBinding)
-        {
-            return nullptr;  // the ABI and the stream store disagree: never compile a guess
+    if (instanced) {
+        const std::uint32_t binding = StreamUploads::bindingOfCanonical(vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel));
+        if (binding == StreamUploads::kNoBinding) {
+            return nullptr; // the ABI and the stream store disagree: never compile a guess
         }
-        bindings.push_back(VertexBinding{ binding,
-                                          static_cast<std::uint32_t>(vn::graphics::kInstanceMatrixComponents *
-                                                                     sizeof(float)),
-                                          true });
-        for (std::uint32_t column = 0U; column < vn::graphics::kInstanceMatrixColumns; ++column)
-        {
-            attributes.push_back(VertexAttribute{ vn::graphics::instanceMatrixLocation(column), binding,
+        bindings.push_back(VertexBinding{ binding, static_cast<std::uint32_t>(vn::graphics::kInstanceMatrixComponents * sizeof(float)), true });
+        for (std::uint32_t column = 0U; column < vn::graphics::kInstanceMatrixColumns; ++column) {
+            attributes.push_back(VertexAttribute{ vn::graphics::instanceMatrixLocation(column),
+                                                  binding,
                                                   channelFormatOf(4U),
                                                   static_cast<std::uint32_t>(column * 4U * sizeof(float)) });
         }
@@ -515,15 +468,13 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
     return createScreen(abi, shaders, Settings{});
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi& abi, const Shaders& shaders,
-                                                              const Settings& settings)
+std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi& abi, const Shaders& shaders, const Settings& settings)
 {
-    auto layer = std::unique_ptr<ContentPipeline>(new ContentPipeline());
-    layer->d->kind = core::DrawKind::Screen;
-    layer->d->abi  = abi;
+    auto layer          = std::unique_ptr<ContentPipeline>(new ContentPipeline());
+    layer->d->kind      = core::DrawKind::Screen;
+    layer->d->abi       = abi;
     layer->d->empty_set = ::vsg::DescriptorSetLayout::create();
-    if (layer->d->empty_set == nullptr)
-    {
+    if (layer->d->empty_set == nullptr) {
         return nullptr;
     }
 
@@ -531,19 +482,14 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
     // programs declare `layout(binding = i)` with no set qualifier, and its shadow ABI inserts the map and
     // the block into that same set, so there is no second set for this kind to bind. The BLOCKS it may declare
     // are the light block (both paths carry it, see LightBlock) and the shadow's.
-    for (const AbiBinding& binding : abi.bindings)
-    {
-        if (binding.set != 0U)
-        {
+    for (const AbiBinding& binding : abi.bindings) {
+        if (binding.set != 0U) {
             return nullptr;
         }
-        if (binding.kind == AbiDescriptorKind::UniformBlock && binding.role != AbiBlockRole::ShadowBlock &&
-            binding.role != AbiBlockRole::Lights)
-        {
+        if (binding.kind == AbiDescriptorKind::UniformBlock && binding.role != AbiBlockRole::ShadowBlock && binding.role != AbiBlockRole::Lights) {
             return nullptr;
         }
-        if (binding.kind == AbiDescriptorKind::SamplerCube)
-        {
+        if (binding.kind == AbiDescriptorKind::SamplerCube) {
             // The full-screen ABI binds the SOURCE's attachments and depth: 2D views, one per binding, so a
             // text declaring a cube asks for an image this ABI has nowhere to take from (a cube map is a
             // CONTENT drawable's own map - see api/ContentImages). Refused here rather than filled with a 2D
@@ -551,21 +497,16 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
             return nullptr;
         }
     }
-    if (!describeAbi(abi, layer->d->sets, layer->d->shapes, layer->d->sampler_shapes))
-    {
+    if (!describeAbi(abi, layer->d->sets, layer->d->shapes, layer->d->sampler_shapes)) {
         return nullptr;
     }
     // The set a full-screen draw binds is the PASS' (it is the pass' images): nothing here is a caller's set,
     // so the list of "sets the caller builds" stays empty (see declaredSets).
 
-    ::vsg::ref_ptr<::vsg::ShaderStage> vertex =
-        layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry,
-                               shaders.defines);
-    ::vsg::ref_ptr<::vsg::ShaderStage> fragment =
-        layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry,
-                               shaders.defines);
+    ::vsg::ref_ptr<::vsg::ShaderStage> vertex   = layer->d->compileStage(VK_SHADER_STAGE_VERTEX_BIT, shaders.vertex, shaders.entry, shaders.defines);
+    ::vsg::ref_ptr<::vsg::ShaderStage> fragment = layer->d->compileStage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders.fragment, shaders.entry, shaders.defines);
     if (vertex == nullptr || fragment == nullptr) {
-        return nullptr;  // nothing to shade with: the caller reports it instead of drawing nothing
+        return nullptr; // nothing to shade with: the caller reports it instead of drawing nothing
     }
     layer->d->stages = ::vsg::ShaderStages{ vertex, fragment };
 
@@ -592,9 +533,9 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
     // overlay pipelines): no culling and no depth test, because a full-screen triangle's winding is the
     // engine's own and cutting it out is only ever a way to lose the whole picture. They are the dynamic
     // declaration's starting point - the plan's resolved state is what a draw commands.
-    auto raster_state       = ::vsg::RasterizationState::create();
-    raster_state->cullMode  = VK_CULL_MODE_NONE;
-    raster_state->frontFace = kBakedFrontFace;
+    auto raster_state             = ::vsg::RasterizationState::create();
+    raster_state->cullMode        = VK_CULL_MODE_NONE;
+    raster_state->frontFace       = kBakedFrontFace;
     auto depth_state              = ::vsg::DepthStencilState::create();
     depth_state->depthTestEnable  = VK_FALSE;
     depth_state->depthWriteEnable = VK_FALSE;
@@ -637,10 +578,8 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
     //     set) is a MAP rather than a pass input: it is served from what the caller has (a material's
     //     texture, the white fallback), so the input count has nothing to say about it.
     const std::uint32_t input_count = key.sampled_color_count + key.sampled_depth_count;
-    for (const AbiBinding& binding : d->abi.bindings)
-    {
-        if (binding.kind == AbiDescriptorKind::UniformBlock)
-        {
+    for (const AbiBinding& binding : d->abi.bindings) {
+        if (binding.kind == AbiDescriptorKind::UniformBlock) {
             if (input_count != 0U && binding.set == kContentInputSet) {
                 ++d->failures;
                 return { core::VariantPool::Action::Created, 0U, {} };
@@ -658,23 +597,22 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
     const auto found = d->pipelines.find(lookup.id);
     if (found != d->pipelines.end()) {
         // A reused identity whose object this layer already holds - the common frame path.
-        return {lookup.action, lookup.id, found->second};
+        return { lookup.action, lookup.id, found->second };
     }
 
     // The key names how many sampled colour textures this pass binds, and the pipeline layout has to be the
     // one built for exactly that count: a pipeline is compiled against one descriptor set layout, so the count
     // is identity rather than runtime state.
-    const ::vsg::ref_ptr<::vsg::PipelineLayout> layout =
-        layoutFor(key.sampled_color_count, key.sampled_depth_count);
+    const ::vsg::ref_ptr<::vsg::PipelineLayout> layout = layoutFor(key.sampled_color_count, key.sampled_depth_count);
     if (layout == nullptr) {
         ++d->failures;
-        return {lookup.action, lookup.id, {}};
+        return { lookup.action, lookup.id, {} };
     }
 
     auto pipeline = ::vsg::GraphicsPipeline::create(layout, d->stages, statesFor(key.compatibility.samples));
     if (pipeline == nullptr) {
         ++d->failures;
-        return {lookup.action, lookup.id, {}};
+        return { lookup.action, lookup.id, {} };
     }
     d->pipelines.emplace(lookup.id, pipeline);
     ++d->compiles;
@@ -683,24 +621,21 @@ ContentPipeline::Result ContentPipeline::acquire(core::VariantPool& pool, const 
     for (auto it = d->pipelines.begin(); it != d->pipelines.end();) {
         it = pool.contains(it->first) ? std::next(it) : d->pipelines.erase(it);
     }
-    return {lookup.action, lookup.id, std::move(pipeline)};
+    return { lookup.action, lookup.id, std::move(pipeline) };
 }
 
 const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t samples)
 {
     const std::uint32_t count = samples == 0U ? 1U : samples;
-    if (const auto found = d->states_by_samples.find(count); found != d->states_by_samples.end())
-    {
+    if (const auto found = d->states_by_samples.find(count); found != d->states_by_samples.end()) {
         return found->second;
     }
     // The layer's own states with ONLY the multisample entry replaced: every other state is the layer's policy
     // (topology, blend, depth), and the count is the one fact a target owns. Copying the vector shares those
     // objects, which is safe - they are never mutated after construction.
     ::vsg::GraphicsPipelineStates states = d->states;
-    for (::vsg::ref_ptr<::vsg::GraphicsPipelineState>& state : states)
-    {
-        if (state.cast<::vsg::MultisampleState>() == nullptr)
-        {
+    for (::vsg::ref_ptr<::vsg::GraphicsPipelineState>& state : states) {
+        if (state.cast<::vsg::MultisampleState>() == nullptr) {
             continue;
         }
         state = ::vsg::MultisampleState::create(vn::vsg::samplesToVk(count));
@@ -713,8 +648,7 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
     return d->layout;
 }
 
-::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings,
-                                                                             std::uint32_t depth_bindings)
+::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings, std::uint32_t depth_bindings)
 {
     const bool screen = d->kind == core::DrawKind::Screen;
     if (color_bindings == 0U && depth_bindings == 0U && (!screen || d->sets.empty())) {
@@ -734,8 +668,7 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
         return {};
     }
     constexpr VkShaderStageFlags kSamplerStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    if (screen)
-    {
+    if (screen) {
         // The engine's screen ABI plus whatever the TEXT declares: binding i is the source's attachment i
         // ("the BINDING is the attachment" - see BuiltinShaders), the source's depth follows the colours, and
         // then the text's own numbers - the shadow map at ITS binding, not at "the next free slot" (the
@@ -753,11 +686,9 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
         // binds its blocks the same way (api/BlockDescriptors): one need, one spelling. A depth slot never takes a
         // binding the text names for something else.
         const std::span<const std::uint32_t> declared_samplers =
-            d->sampler_shapes.empty() ? std::span<const std::uint32_t>{}
-                                      : std::span<const std::uint32_t>(d->sampler_shapes[0]);
+            d->sampler_shapes.empty() ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(d->sampler_shapes[0]);
         const std::span<const BlockDescriptors::Binding> declared_blocks =
-            d->shapes.empty() ? std::span<const BlockDescriptors::Binding>{}
-                              : std::span<const BlockDescriptors::Binding>(d->shapes[0]);
+            d->shapes.empty() ? std::span<const BlockDescriptors::Binding>{} : std::span<const BlockDescriptors::Binding>(d->shapes[0]);
         std::vector<std::pair<std::uint32_t, VkDescriptorType>> entries;
         entries.reserve(declared_samplers.size() + declared_blocks.size() + color_bindings + depth_bindings);
         for (std::uint32_t binding = 0; binding < color_bindings; ++binding) {
@@ -766,7 +697,7 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
         std::uint32_t slot = color_bindings;
         for (std::uint32_t placed = 0; placed < depth_bindings; ++placed) {
             while (std::find(declared_samplers.begin(), declared_samplers.end(), slot) != declared_samplers.end()) {
-                ++slot;   // the text named this binding for something of its own: the next slot is ours
+                ++slot; // the text named this binding for something of its own: the next slot is ours
             }
             entries.emplace_back(slot, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
             ++slot;
@@ -777,17 +708,14 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
         for (const BlockDescriptors::Binding& entry : declared_blocks) {
             entries.emplace_back(entry.binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
         }
-        std::sort(entries.begin(), entries.end(),
-                  [](const auto& left, const auto& right) { return left.first < right.first; });
-        entries.erase(std::unique(entries.begin(), entries.end(),
-                                  [](const auto& left, const auto& right) { return left.first == right.first; }),
+        std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
+        entries.erase(std::unique(entries.begin(), entries.end(), [](const auto& left, const auto& right) { return left.first == right.first; }),
                       entries.end());
         for (const auto& [binding, type] : entries) {
             set->addBinding(binding, type, 1U, kSamplerStages);
         }
     }
-    else
-    {
+    else {
         // One combined image sampler per texture, readable from either shading stage: the sampled inputs of a
         // pass ARE the picture it reads, and which stage reads it is the shader's business. The DEPTH textures
         // follow the colour ones (see the declaration), so a pass that samples colours and a depth reads
@@ -817,11 +745,10 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
     return set;
 }
 
-::vsg::ref_ptr<::vsg::PipelineLayout> ContentPipeline::layoutFor(std::uint32_t sampled_color_bindings,
-                                                                 std::uint32_t sampled_depth_bindings)
+::vsg::ref_ptr<::vsg::PipelineLayout> ContentPipeline::layoutFor(std::uint32_t sampled_color_bindings, std::uint32_t sampled_depth_bindings)
 {
     if (sampled_color_bindings == 0U && sampled_depth_bindings == 0U) {
-        return d->layout;  // the content layer's "blocks only" layout; nothing for a full-screen layer
+        return d->layout; // the content layer's "blocks only" layout; nothing for a full-screen layer
     }
     if (sampledSetLayout(sampled_color_bindings, sampled_depth_bindings) == nullptr) {
         return {};
@@ -841,14 +768,12 @@ const ProgramAbi& ContentPipeline::abi() const noexcept
 
 std::span<const BlockDescriptors::Binding> ContentPipeline::blockShape(std::uint32_t set) const noexcept
 {
-    return set < d->shapes.size() ? std::span<const BlockDescriptors::Binding>(d->shapes[set])
-                                  : std::span<const BlockDescriptors::Binding>{};
+    return set < d->shapes.size() ? std::span<const BlockDescriptors::Binding>(d->shapes[set]) : std::span<const BlockDescriptors::Binding>{};
 }
 
 std::span<const std::uint32_t> ContentPipeline::samplerBindings(std::uint32_t set) const noexcept
 {
-    return set < d->sampler_shapes.size() ? std::span<const std::uint32_t>(d->sampler_shapes[set])
-                                          : std::span<const std::uint32_t>{};
+    return set < d->sampler_shapes.size() ? std::span<const std::uint32_t>(d->sampler_shapes[set]) : std::span<const std::uint32_t>{};
 }
 
 std::span<const std::uint32_t> ContentPipeline::declaredSets() const noexcept
@@ -867,10 +792,10 @@ std::span<const std::uint32_t> ContentPipeline::declaredSets() const noexcept
 ::vsg::ref_ptr<::vsg::Sampler> ContentPipeline::depthSampler()
 {
     if (d->depth_sampler == nullptr) {
-        d->depth_sampler               = ::vsg::Sampler::create();
-        d->depth_sampler->magFilter    = VK_FILTER_NEAREST;
-        d->depth_sampler->minFilter    = VK_FILTER_NEAREST;
-        d->depth_sampler->mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        d->depth_sampler             = ::vsg::Sampler::create();
+        d->depth_sampler->magFilter  = VK_FILTER_NEAREST;
+        d->depth_sampler->minFilter  = VK_FILTER_NEAREST;
+        d->depth_sampler->mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     }
     return d->depth_sampler;
 }

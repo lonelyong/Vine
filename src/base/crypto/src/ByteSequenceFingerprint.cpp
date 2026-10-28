@@ -43,8 +43,7 @@ constexpr std::size_t kMaxTotalSampleBytes = 1024 * 1024;
  *
  * The total sampled amount never exceeds kMaxTotalSampleBytes.
  */
-struct SamplingConfig
-{
+struct SamplingConfig {
     std::size_t num_regions;
     std::size_t bytes_per_region;
 };
@@ -70,8 +69,7 @@ constexpr SamplingConfig chooseSamplingConfig(std::uint64_t data_size) noexcept
  * @param digest The 32-byte digest.
  * @param out The fingerprint array to fill.
  */
-void writeDigestToFingerprint(const std::array<std::uint8_t, 32>& digest,
-                              std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& out) noexcept
+void writeDigestToFingerprint(const std::array<std::uint8_t, 32>& digest, std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& out) noexcept
 {
     std::memcpy(out.data(), digest.data(), digest.size());
     std::fill(out.begin() + digest.size(), out.end(), std::byte{ 0 });
@@ -96,9 +94,11 @@ std::vector<std::uint64_t> generateSampleOffsets(std::uint64_t data_size, Sampli
         std::uint64_t offset;
         if (r == 0) {
             offset = 0;
-        } else if (r == cfg.num_regions - 1) {
+        }
+        else if (r == cfg.num_regions - 1) {
             offset = (data_size > cfg.bytes_per_region) ? (data_size - cfg.bytes_per_region) : 0;
-        } else {
+        }
+        else {
             offset = data_size * r / (cfg.num_regions - 1);
             if (offset < cfg.bytes_per_region) {
                 offset = cfg.bytes_per_region;
@@ -123,12 +123,11 @@ std::vector<std::uint64_t> generateSampleOffsets(std::uint64_t data_size, Sampli
  * @param data The input byte range (must exceed kMediumThreshold).
  * @param out The fingerprint array to fill.
  */
-void computeSampledFromSpan(std::span<const std::byte> data,
-                            std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& out)
+void computeSampledFromSpan(std::span<const std::byte> data, std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& out)
 {
-    const std::uint64_t           data_size = data.size();
-    const SamplingConfig          cfg       = chooseSamplingConfig(data_size);
-    const std::vector<std::uint64_t> offsets = generateSampleOffsets(data_size, cfg);
+    const std::uint64_t              data_size = data.size();
+    const SamplingConfig             cfg       = chooseSamplingConfig(data_size);
+    const std::vector<std::uint64_t> offsets   = generateSampleOffsets(data_size, cfg);
 
     std::vector<std::byte> sampled;
     sampled.reserve(cfg.num_regions * cfg.bytes_per_region);
@@ -160,11 +159,9 @@ void computeSampledFromSpan(std::span<const std::byte> data,
  * @param out The fingerprint array to fill.
  * @throws std::runtime_error when a seek fails.
  */
-void computeSampledFromStream(std::istream& stream,
-                              std::uint64_t data_size,
-                              std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& out)
+void computeSampledFromStream(std::istream& stream, std::uint64_t data_size, std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& out)
 {
-    const SamplingConfig          cfg       = chooseSamplingConfig(data_size);
+    const SamplingConfig             cfg     = chooseSamplingConfig(data_size);
     const std::vector<std::uint64_t> offsets = generateSampleOffsets(data_size, cfg);
 
     std::vector<std::byte> sampled;
@@ -209,9 +206,9 @@ void computeSampledFromStream(std::istream& stream,
  */
 std::array<std::uint8_t, 32> computeSha256FromStream(std::istream& stream, std::uint64_t data_size)
 {
-    HashCalculator        calc(HashCalculator::Algorithm::ALG_SHA256);
+    HashCalculator         calc(HashCalculator::Algorithm::ALG_SHA256);
     std::array<char, 4096> buffer{};
-    std::uint64_t         remaining = data_size;
+    std::uint64_t          remaining = data_size;
 
     while (remaining > 0) {
         const auto to_read = static_cast<std::streamsize>(std::min<std::uint64_t>(buffer.size(), remaining));
@@ -239,10 +236,7 @@ std::array<std::uint8_t, 32> computeSha256FromStream(std::istream& stream, std::
  * @param mode The fingerprint mode to fill.
  * @throws std::runtime_error when a read fails.
  */
-void computeFromStream(std::istream& stream,
-                       std::uint64_t data_size,
-                       std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& fp,
-                       FpMode& mode)
+void computeFromStream(std::istream& stream, std::uint64_t data_size, std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& fp, FpMode& mode)
 {
     if (data_size == 0) {
         fp.fill(std::byte{ 0 });
@@ -277,12 +271,11 @@ void computeFromStream(std::istream& stream,
 } // namespace
 
 ByteSequenceFingerprint::ByteSequenceFingerprint()
-{
-}
+{}
 
 ByteSequenceFingerprint::ByteSequenceFingerprint(const std::filesystem::path& path)
 {
-    std::error_code      ec;
+    std::error_code     ec;
     const std::uint64_t file_size = std::filesystem::file_size(path, ec);
     if (ec) {
         throw std::runtime_error("ByteSequenceFingerprint: cannot get file size for: " + path.string());
@@ -317,7 +310,8 @@ ByteSequenceFingerprint::ByteSequenceFingerprint(std::istream& stream)
         if (orig_pos >= 0) {
             stream.seekg(orig_pos, std::ios::beg);
         }
-    } else {
+    }
+    else {
         throw std::runtime_error("ByteSequenceFingerprint: non-seekable stream is not supported");
     }
 }

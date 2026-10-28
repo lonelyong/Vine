@@ -233,8 +233,7 @@ Theme resolveSystemTheme()
  *
  * 逾期不算失败：窗口系统可能永不报“已可见”，那时这里照常放行，由调用方看 `Window::hasPainted()` 判定并告警。
  */
-class AwaitStartupFrame
-{
+class AwaitStartupFrame {
   public:
     /**
      * @brief 构造一段等待。
@@ -264,7 +263,8 @@ class AwaitStartupFrame
         timer_->start(kFirstPaintDeadlineMs);
     }
 
-    void await_resume() const noexcept {}
+    void await_resume() const noexcept
+    {}
 
     ~AwaitStartupFrame()
     {
@@ -302,7 +302,7 @@ class AwaitStartupFrame
 
 vn::async::Task<void> GuiApplication::startupStart()
 {
-    auto* d             = static_cast<GuiApplicationData*>(dptr());
+    auto*         d     = static_cast<GuiApplicationData*>(dptr());
     Window* const frame = startupWindow(d);
 
     // A boot without a frame shows nothing, so there is no window that could sit there empty.
@@ -333,8 +333,7 @@ vn::async::Task<void> GuiApplication::startupStart()
     // Whatever happened, this line is the evidence that the boot reached the point where its work may start, and it is
     // the one the design documents quote (`hasPainted()` tells the two cases apart).
     if (frame->hasPainted()) {
-        VN_LOGI("startup work starting {} ms after the application was asked to run: the startup frame is on screen",
-                d->startup_requested_at.elapsed());
+        VN_LOGI("startup work starting {} ms after the application was asked to run: the startup frame is on screen", d->startup_requested_at.elapsed());
     }
     else {
         VN_LOGW("the startup phase is moving on {} ms after the application was asked to run without the startup frame "

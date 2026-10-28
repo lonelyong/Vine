@@ -8,12 +8,12 @@
 #    define VN_WINDOW_API VN_IMPORT
 #endif
 
-#define VN_WINDOW_NS_BEGIN                                                                                                                       \
-    namespace VN_ROOT_NS                                                                                                                         \
-    {                                                                                                                                           \
-    namespace window                                                                                                                            \
+#define VN_WINDOW_NS_BEGIN                                                                                                                                     \
+    namespace VN_ROOT_NS                                                                                                                                       \
+    {                                                                                                                                                          \
+    namespace window                                                                                                                                           \
     {
 
-#define VN_WINDOW_NS_END                                                                                                                         \
-    }                                                                                                                                           \
+#define VN_WINDOW_NS_END                                                                                                                                       \
+    }                                                                                                                                                          \
     }

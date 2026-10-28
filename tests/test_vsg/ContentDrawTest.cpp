@@ -25,58 +25,55 @@
 
 #include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
+#include <vsg/commands/Commands.h>
 #include <vsg/commands/Draw.h>
 #include <vsg/commands/DrawIndexed.h>
 #include <vsg/commands/SetScissor.h>
 #include <vsg/commands/SetViewport.h>
 #include <vsg/core/Array.h>
-#include <vsg/commands/Commands.h>
 #include <vsg/nodes/StateGroup.h>
 #include <vsg/state/BindDescriptorSet.h>
-#include <vsg/state/GraphicsPipeline.h>
 #include <vsg/state/Buffer.h>
 #include <vsg/state/BufferInfo.h>
 #include <vsg/state/DescriptorBuffer.h>
 #include <vsg/state/DescriptorImage.h>
 #include <vsg/state/DescriptorSet.h>
-#include <vsg/state/PushConstants.h>
 #include <vsg/state/DescriptorSetLayout.h>
+#include <vsg/state/GraphicsPipeline.h>
 #include <vsg/state/PipelineLayout.h>
+#include <vsg/state/PushConstants.h>
 
-#include <vine/vsg/support/VsgDynamicState.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
 #include <vine/vsg/internal/StateCommands.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/support/VsgDynamicState.hpp>
 
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentPipeline;
-using vn::vsg::ViewportRect;
 using vn::graphics::backend::DynamicState;
 using vn::graphics::backend::PipelineKey;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
+using vn::vsg::ContentDraw;
+using vn::vsg::ContentPipeline;
+using vn::vsg::ViewportRect;
 
 namespace
 {
 
 /// @brief Everything one recorded draw needs, built without a device.
-class Fixture
-{
+class Fixture {
   public:
     Fixture()
     {
         set_layout = ::vsg::DescriptorSetLayout::create();
-        set_layout->addBinding(0U, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-        pipeline_layout = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ set_layout },
-                                                        ::vsg::PushConstantRanges{});
+        set_layout->addBinding(0U, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1U, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+        pipeline_layout = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ set_layout }, ::vsg::PushConstantRanges{});
 
         ContentPipeline::Shaders shaders;
-        shaders.vertex = "#version 450\n"
-                         "layout(location = 0) in vec3 position;\n"
-                         "void main() { gl_Position = vec4(position, 1.0); }\n";
+        shaders.vertex   = "#version 450\n"
+                           "layout(location = 0) in vec3 position;\n"
+                           "void main() { gl_Position = vec4(position, 1.0); }\n";
         shaders.fragment = "#version 450\n"
                            "layout(location = 0) out vec4 outColor;\n"
                            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n";
@@ -86,8 +83,10 @@ class Fixture
         EXPECT_EQ(vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::vsg::FactMiss::None);
         const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-        pipelines = ContentPipeline::create(abi, std::span<const ContentPipeline::VertexBinding>(&binding, 1),
-                                            std::span<const ContentPipeline::VertexAttribute>(&attribute, 1), shaders);
+        pipelines = ContentPipeline::create(abi,
+                                            std::span<const ContentPipeline::VertexBinding>(&binding, 1),
+                                            std::span<const ContentPipeline::VertexAttribute>(&attribute, 1),
+                                            shaders);
 
         recorder = std::make_unique<ContentDraw>(*pipelines, pool);
     }
@@ -95,12 +94,11 @@ class Fixture
     /** @brief A block descriptor bind over the same set layout (what BlockDescriptors hands a real draw). */
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> blocks() const
     {
-        auto buffer = ::vsg::Buffer::create(256U, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_SHARING_MODE_EXCLUSIVE);
-        auto info   = ::vsg::BufferInfo::create(buffer, 0U, 64U);
-        auto descriptor = ::vsg::DescriptorBuffer::create(::vsg::BufferInfoList{ info }, 0U, 0U,
-                                                          VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
-        auto set = ::vsg::DescriptorSet::create(set_layout, ::vsg::Descriptors{ descriptor });
-        auto bind = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0U, set);
+        auto buffer          = ::vsg::Buffer::create(256U, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_SHARING_MODE_EXCLUSIVE);
+        auto info            = ::vsg::BufferInfo::create(buffer, 0U, 64U);
+        auto descriptor      = ::vsg::DescriptorBuffer::create(::vsg::BufferInfoList{ info }, 0U, 0U, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+        auto set             = ::vsg::DescriptorSet::create(set_layout, ::vsg::Descriptors{ descriptor });
+        auto bind            = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0U, set);
         bind->dynamicOffsets = { 0U, 0U, 0U };
         return bind;
     }
@@ -108,7 +106,7 @@ class Fixture
     /** @brief A draw of one triangle, at a known identity and state. */
     ContentDraw::Draw draw(std::uint64_t revision = 1U) const
     {
-        static int program = 0;
+        static int        program = 0;
         ContentDraw::Draw result;
         result.key.program                      = &program;
         result.key.revision                     = revision;
@@ -127,22 +125,20 @@ class Fixture
     ::vsg::ref_ptr<::vsg::PipelineLayout>      pipeline_layout;
     /// The one block bind the fixture's draws carry (a draw binds a span, one entry per declared set).
     mutable ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[1];
-    std::unique_ptr<ContentPipeline>           pipelines;
-    VariantPool                                pool;
-    std::unique_ptr<ContentDraw>               recorder;
-    ::vsg::ref_ptr<::vsg::BindVertexBuffers>   vertex_bind{
-        ::vsg::BindVertexBuffers::create(0U, ::vsg::DataList{ ::vsg::vec3Array::create(3U) })
-    };
+    std::unique_ptr<ContentPipeline>                 pipelines;
+    VariantPool                                      pool;
+    std::unique_ptr<ContentDraw>                     recorder;
+    ::vsg::ref_ptr<::vsg::BindVertexBuffers>         vertex_bind{ ::vsg::BindVertexBuffers::create(0U, ::vsg::DataList{ ::vsg::vec3Array::create(3U) }) };
 };
 
-}  // namespace
+} // namespace
 
 TEST(ContentDrawTest, TheFirstDrawRecordsThePipelineTheStateAndTheGeometry)
 {
-    Fixture             fixture;
-    StateRegistry       registry(fixture.pool);
+    Fixture                 fixture;
+    StateRegistry           registry(fixture.pool);
     const ContentDraw::Draw draw  = fixture.draw();
-    const auto          group = fixture.recorder->record(registry, draw);
+    const auto              group = fixture.recorder->record(registry, draw);
     ASSERT_NE(group, nullptr);
 
     ASSERT_EQ(group->stateCommands.size(), 3U) << "pipeline, dynamic block, block descriptors";
@@ -151,8 +147,7 @@ TEST(ContentDrawTest, TheFirstDrawRecordsThePipelineTheStateAndTheGeometry)
     EXPECT_NE(pipeline_bind->pipeline, nullptr);
     const auto* dynamic = dynamic_cast<const vn::vsg::detail::SetDynamicState*>(group->stateCommands[1].get());
     ASSERT_NE(dynamic, nullptr);
-    EXPECT_EQ(dynamic->slot, vn::vsg::detail::kDynamicStateSlot)
-        << "the dynamic command must not take the pipeline bind's slot";
+    EXPECT_EQ(dynamic->slot, vn::vsg::detail::kDynamicStateSlot) << "the dynamic command must not take the pipeline bind's slot";
     EXPECT_EQ(group->stateCommands[2], draw.blocks[0]) << "the third command is this draw's block bind";
 
     ASSERT_EQ(group->children.size(), 1U);
@@ -177,11 +172,11 @@ TEST(ContentDrawTest, TheFirstDrawRecordsThePipelineTheStateAndTheGeometry)
 
 TEST(ContentDrawTest, TheDrawCarriesTheInstanceCountAndTheFirstInstance)
 {
-    Fixture             fixture;
-    StateRegistry       registry(fixture.pool);
-    ContentDraw::Draw   draw = fixture.draw();
-    draw.instances           = 5U;
-    draw.first_instance      = 3U;
+    Fixture           fixture;
+    StateRegistry     registry(fixture.pool);
+    ContentDraw::Draw draw = fixture.draw();
+    draw.instances         = 5U;
+    draw.first_instance    = 3U;
 
     const auto group = fixture.recorder->record(registry, draw);
     ASSERT_NE(group, nullptr);
@@ -195,7 +190,7 @@ TEST(ContentDrawTest, TheDrawCarriesTheInstanceCountAndTheFirstInstance)
 
 TEST(ContentDrawTest, ANonIndexedDrawRecordsTheVertexStreamsItIsAssembledFrom)
 {
-    Fixture      fixture;
+    Fixture       fixture;
     StateRegistry registry(fixture.pool);
 
     // A point cloud: no index stream exists in the model at all, so the draw names the vertices instead - and
@@ -229,7 +224,7 @@ TEST(ContentDrawTest, ANonIndexedDrawRecordsTheVertexStreamsItIsAssembledFrom)
 
 TEST(ContentDrawTest, ADrawThatNamesNoGeometryIsRefusedBeforeAnythingIsMemoised)
 {
-    Fixture      fixture;
+    Fixture       fixture;
     StateRegistry registry(fixture.pool);
 
     ContentDraw::Draw empty = fixture.draw();
@@ -253,7 +248,7 @@ TEST(ContentDrawTest, ADrawThatNamesNoGeometryIsRefusedBeforeAnythingIsMemoised)
 
 TEST(ContentDrawTest, ASecondDrawOfTheSameVariantAndStateRecordsOnlyTheGeometry)
 {
-    Fixture      fixture;
+    Fixture       fixture;
     StateRegistry registry(fixture.pool);
 
     const auto first  = fixture.recorder->record(registry, fixture.draw());
@@ -262,8 +257,7 @@ TEST(ContentDrawTest, ASecondDrawOfTheSameVariantAndStateRecordsOnlyTheGeometry)
     ASSERT_NE(second, nullptr);
 
     EXPECT_EQ(first->stateCommands.size(), 3U);
-    EXPECT_EQ(second->stateCommands.size(), 1U)
-        << "the pipeline is already bound and the dynamic block already issued: only the blocks bind again";
+    EXPECT_EQ(second->stateCommands.size(), 1U) << "the pipeline is already bound and the dynamic block already issued: only the blocks bind again";
     EXPECT_EQ(fixture.recorder->pipeline_binds(), 1U) << "one bind per SWITCH, not per draw";
     EXPECT_EQ(fixture.recorder->dynamic_commands(), 1U);
     ASSERT_EQ(second->children.size(), 1U) << "the geometry is still recorded per draw";
@@ -272,7 +266,7 @@ TEST(ContentDrawTest, ASecondDrawOfTheSameVariantAndStateRecordsOnlyTheGeometry)
 
 TEST(ContentDrawTest, AStateChangeRecordsOnlyTheDynamicBlock)
 {
-    Fixture      fixture;
+    Fixture       fixture;
     StateRegistry registry(fixture.pool);
 
     (void)fixture.recorder->record(registry, fixture.draw());
@@ -296,15 +290,14 @@ TEST(ContentDrawTest, AStateChangeRecordsOnlyTheDynamicBlock)
 
 TEST(ContentDrawTest, AnIdentityChangeRebindsThePipeline)
 {
-    Fixture      fixture;
+    Fixture       fixture;
     StateRegistry registry(fixture.pool);
 
     (void)fixture.recorder->record(registry, fixture.draw(1U));
-    const auto changed = fixture.recorder->record(registry, fixture.draw(2U));  // the program's revision moved
+    const auto changed = fixture.recorder->record(registry, fixture.draw(2U)); // the program's revision moved
     ASSERT_NE(changed, nullptr);
 
-    ASSERT_EQ(changed->stateCommands.size(), 2U)
-        << "the pipeline is rebound, but the dynamic values did not change: they live in the recording";
+    ASSERT_EQ(changed->stateCommands.size(), 2U) << "the pipeline is rebound, but the dynamic values did not change: they live in the recording";
     EXPECT_NE(dynamic_cast<const ::vsg::BindGraphicsPipeline*>(changed->stateCommands[0].get()), nullptr);
     EXPECT_EQ(fixture.recorder->pipeline_binds(), 2U) << "a new identity is a new bind";
     EXPECT_EQ(fixture.recorder->dynamic_commands(), 1U) << "and no dynamic block: the values are already issued";
@@ -316,13 +309,13 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     const vn::vsg::detail::DynamicStateEntryPoints none;
 
     DynamicState disabled;
-    disabled.depth = vn::graphics::DepthMode::Disabled;
+    disabled.depth      = vn::graphics::DepthMode::Disabled;
     const auto no_depth = vn::vsg::makeDynamicStateCommand(disabled, 1U, none);
     EXPECT_EQ(no_depth->depth_test_enable, VK_FALSE);
     EXPECT_EQ(no_depth->depth_write_enable, VK_FALSE);
 
     DynamicState translucent;
-    translucent.depth = vn::graphics::DepthMode::TestOnly;
+    translucent.depth    = vn::graphics::DepthMode::TestOnly;
     const auto test_only = vn::vsg::makeDynamicStateCommand(translucent, 1U, none);
     EXPECT_EQ(test_only->depth_test_enable, VK_TRUE);
     EXPECT_EQ(test_only->depth_write_enable, VK_FALSE);
@@ -366,8 +359,7 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     translucent_blend.blend.enabled = true;
     const auto standard             = vn::vsg::makeDynamicStateCommand(translucent_blend, 1U, none);
     EXPECT_EQ(standard->blend[0].blendEnable, VK_TRUE) << "one attachment: the engine's opacity path";
-    EXPECT_EQ(standard->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA)
-        << "a state that opts in with the default pair gets the standard pair";
+    EXPECT_EQ(standard->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA) << "a state that opts in with the default pair gets the standard pair";
     EXPECT_EQ(standard->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
     EXPECT_EQ(standard->blend[0].srcAlphaBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA);
     EXPECT_EQ(standard->blend[0].dstAlphaBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
@@ -409,18 +401,15 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     // full-screen vertex stage, so a draw that bound an index buffer here would be drawing the wrong picture
     // with the right bookkeeping.
     const auto sampler_set_layout = ::vsg::DescriptorSetLayout::create();
-    sampler_set_layout->addBinding(0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-    sampler_set_layout->addBinding(1U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-    const auto pipeline_layout = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ sampler_set_layout },
-                                                               ::vsg::PushConstantRanges{});
+    sampler_set_layout->addBinding(0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    sampler_set_layout->addBinding(1U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1U, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    const auto pipeline_layout = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ sampler_set_layout }, ::vsg::PushConstantRanges{});
 
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) out vec2 vn_uv;\n"
-                     "void main() { vn_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
-                     "              gl_Position = vec4(vn_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) out vec2 vn_uv;\n"
+                       "void main() { vn_uv = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n"
+                       "              gl_Position = vec4(vn_uv * 2.0 - 1.0, 0.0, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) in vec2 vn_uv;\n"
                        "layout(location = 0) out vec4 out_color;\n"
@@ -432,19 +421,20 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     auto pipelines = ContentPipeline::createScreen(abi, shaders);
     ASSERT_NE(pipelines, nullptr);
 
-    VariantPool     pool;
-    StateRegistry   registry(pool);
-    ContentDraw     recorder(*pipelines, pool);
+    VariantPool   pool;
+    StateRegistry registry(pool);
+    ContentDraw   recorder(*pipelines, pool);
 
     // A descriptor set of two samplers over that layout (a real one comes from the content layer's
     // makeInputSet; here the object only has to be a well-formed bind of set 0).
     ::vsg::Descriptors descriptors;
     for (std::uint32_t binding = 0; binding < 2U; ++binding) {
         auto image = ::vsg::DescriptorImage::create(
-            ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(::vsg::ref_ptr<::vsg::Sampler>{},
-                                                           ::vsg::ref_ptr<::vsg::ImageView>{},
-                                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-            binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            ::vsg::ImageInfoList{
+              ::vsg::ImageInfo::create(::vsg::ref_ptr<::vsg::Sampler>{}, ::vsg::ref_ptr<::vsg::ImageView>{}, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+            binding,
+            0U,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         descriptors.push_back(image);
     }
     auto set = ::vsg::DescriptorSet::create(sampler_set_layout, descriptors);
@@ -457,10 +447,9 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     draw.key.revision               = 1U;
     draw.key.compatibility.samples  = 1U;
     draw.key.sampled_color_count    = 2U;
-    draw.samplers = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines->layoutFor(2U, 0U), 0U,
-                                                     set);
-    draw.push = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U, ::vsg::ubyteArray::create(128U));
-    draw.viewport = ViewportRect{ 8.0F, 8.0F, 32.0F, 16.0F };
+    draw.samplers                   = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines->layoutFor(2U, 0U), 0U, set);
+    draw.push                       = ::vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0U, ::vsg::ubyteArray::create(128U));
+    draw.viewport                   = ViewportRect{ 8.0F, 8.0F, 32.0F, 16.0F };
     ASSERT_NE(draw.samplers, nullptr) << "the set must have been created";
     ASSERT_NE(draw.push, nullptr) << "the push block must have been created";
 
@@ -474,8 +463,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     ASSERT_EQ(group->children.size(), 1U);
     const auto* commands = dynamic_cast<const ::vsg::Commands*>(group->children[0].get());
     ASSERT_NE(commands, nullptr);
-    ASSERT_EQ(commands->children.size(), 4U)
-        << "viewport, scissor, the push block, ONE draw - there is no geometry to bind";
+    ASSERT_EQ(commands->children.size(), 4U) << "viewport, scissor, the push block, ONE draw - there is no geometry to bind";
     EXPECT_NE(dynamic_cast<const ::vsg::SetViewport*>(commands->children[0].get()), nullptr);
     EXPECT_NE(dynamic_cast<const ::vsg::SetScissor*>(commands->children[1].get()), nullptr);
     const auto* push = dynamic_cast<const ::vsg::PushConstants*>(commands->children[2].get());
@@ -497,8 +485,8 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     // A second screen draw of the same pass: the variant is current, the dynamic state was issued and the
     // sampler set is already bound (it is the pass' one set), so its state group is EMPTY - while the draw
     // itself is still recorded per call, because the rectangle and the draw are what the pass fills.
-    auto second = draw;
-    second.viewport = ViewportRect{ 48.0F, 8.0F, 32.0F, 16.0F };
+    auto second      = draw;
+    second.viewport  = ViewportRect{ 48.0F, 8.0F, 32.0F, 16.0F };
     const auto again = recorder.recordScreen(registry, second);
     ASSERT_NE(again, nullptr);
     EXPECT_TRUE(again->stateCommands.empty()) << "nothing left to issue: the one set was bound by the first draw";

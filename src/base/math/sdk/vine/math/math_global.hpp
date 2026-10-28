@@ -8,11 +8,11 @@
 #    define VN_MATH_API VN_IMPORT
 #endif
 
-#define VN_MATH_NS_BEGIN                                                                                                                                        \
-    VN_ROOT_NS_BEGIN                                                                                                                                            \
+#define VN_MATH_NS_BEGIN                                                                                                                                       \
+    VN_ROOT_NS_BEGIN                                                                                                                                           \
     namespace math                                                                                                                                             \
     {
 
-#define VN_MATH_NS_END                                                                                                                                          \
-    VN_ROOT_NS_END                                                                                                                                              \
+#define VN_MATH_NS_END                                                                                                                                         \
+    VN_ROOT_NS_END                                                                                                                                             \
     }

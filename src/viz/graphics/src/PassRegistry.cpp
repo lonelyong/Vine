@@ -6,9 +6,9 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-PassRegistry::PassRegistry(Lease<RenderEngine> engine) noexcept : engine_(engine)
-{
-}
+PassRegistry::PassRegistry(Lease<RenderEngine> engine) noexcept
+  : engine_(engine)
+{}
 
 bool PassRegistry::isValid() const noexcept
 {

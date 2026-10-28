@@ -49,8 +49,8 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Texture.hpp>
-#include <vine/imaging/Image.hpp>
 #include <vine/imageio/ImageCodec.hpp>
+#include <vine/imaging/Image.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -123,29 +123,26 @@ vn::intrusive_ptr<vn::imaging::Image> boxFilterRgba(const vn::imaging::Image& so
     if (source.width() <= side || source.height() <= side) {
         return vn::intrusive_ptr<vn::imaging::Image>(const_cast<vn::imaging::Image*>(&source));
     }
-    auto       filtered   = vn::make_intrusive<vn::imaging::Image>(side, side, vn::imaging::PixelFormat::Rgba8Srgb, 1);
-    const auto source_px  = source.mipData(0);
+    auto       filtered    = vn::make_intrusive<vn::imaging::Image>(side, side, vn::imaging::PixelFormat::Rgba8Srgb, 1);
+    const auto source_px   = source.mipData(0);
     const auto filtered_px = filtered->mipData(0);
-    const int  step_x     = source.width() / side;
-    const int  step_y     = source.height() / side;
+    const int  step_x      = source.width() / side;
+    const int  step_y      = source.height() / side;
     for (int y = 0; y < side; ++y) {
         for (int x = 0; x < side; ++x) {
             int sum[4] = { 0, 0, 0, 0 };
             int count  = 0;
             for (int sy = 0; sy < step_y; ++sy) {
                 for (int sx = 0; sx < step_x; ++sx) {
-                    const std::size_t at = (static_cast<std::size_t>(y * step_y + sy) * static_cast<std::size_t>(source.width()) +
-                                            static_cast<std::size_t>(x * step_x + sx)) *
-                                           4u;
+                    const std::size_t at =
+                        (static_cast<std::size_t>(y * step_y + sy) * static_cast<std::size_t>(source.width()) + static_cast<std::size_t>(x * step_x + sx)) * 4u;
                     for (int c = 0; c < 4; ++c) {
                         sum[c] += std::to_integer<int>(source_px[at + static_cast<std::size_t>(c)]);
                     }
                     ++count;
                 }
             }
-            const std::size_t out_at = (static_cast<std::size_t>(y) * static_cast<std::size_t>(side) +
-                                        static_cast<std::size_t>(x)) *
-                                       4u;
+            const std::size_t out_at = (static_cast<std::size_t>(y) * static_cast<std::size_t>(side) + static_cast<std::size_t>(x)) * 4u;
             for (int c = 0; c < 4; ++c) {
                 filtered_px[out_at + static_cast<std::size_t>(c)] = static_cast<std::byte>(sum[c] / count);
             }
@@ -160,17 +157,19 @@ vn::intrusive_ptr<vn::imaging::Image> boxFilterRgba(const vn::imaging::Image& so
  * The mapping is EXPLICIT. The two shipped sets use different naming conventions, and neither file
  * order is the face order the map needs, so the tables below are the mapping rather than a rule.
  */
-struct DemoCubeFace
-{
-    vn::graphics::CubeMap::Face face; ///< The face this file is.
-    const char*                  file; ///< Its name under test_data/images.
+struct DemoCubeFace {
+    vn::graphics::CubeMap::Face face; // The face this file is.
+    const char*                 file; // Its name under test_data/images.
 };
 
 /** @brief The faces of the BOX cube map (named after the faces themselves). */
 constexpr DemoCubeFace kBoxCubeFaces[] = {
-    { vn::graphics::CubeMap::Face::PosX, "posx.jpg" }, { vn::graphics::CubeMap::Face::NegX, "negx.jpg" },
-    { vn::graphics::CubeMap::Face::PosY, "posy.jpg" }, { vn::graphics::CubeMap::Face::NegY, "negy.jpg" },
-    { vn::graphics::CubeMap::Face::PosZ, "posz.jpg" }, { vn::graphics::CubeMap::Face::NegZ, "negz.jpg" },
+    { vn::graphics::CubeMap::Face::PosX, "posx.jpg" },
+    { vn::graphics::CubeMap::Face::NegX, "negx.jpg" },
+    { vn::graphics::CubeMap::Face::PosY, "posy.jpg" },
+    { vn::graphics::CubeMap::Face::NegY, "negy.jpg" },
+    { vn::graphics::CubeMap::Face::PosZ, "posz.jpg" },
+    { vn::graphics::CubeMap::Face::NegZ, "negz.jpg" },
 };
 
 /**
@@ -180,9 +179,12 @@ constexpr DemoCubeFace kBoxCubeFaces[] = {
  * the two are not mistaken for each other on screen.
  */
 constexpr DemoCubeFace kSkyCubeFaces[] = {
-    { vn::graphics::CubeMap::Face::PosX, "right.jpg" },  { vn::graphics::CubeMap::Face::NegX, "left.jpg" },
-    { vn::graphics::CubeMap::Face::PosY, "top.jpg" },    { vn::graphics::CubeMap::Face::NegY, "bottom.jpg" },
-    { vn::graphics::CubeMap::Face::PosZ, "front.jpg" },  { vn::graphics::CubeMap::Face::NegZ, "back.jpg" },
+    { vn::graphics::CubeMap::Face::PosX, "right.jpg"  },
+    { vn::graphics::CubeMap::Face::NegX, "left.jpg"   },
+    { vn::graphics::CubeMap::Face::PosY, "top.jpg"    },
+    { vn::graphics::CubeMap::Face::NegY, "bottom.jpg" },
+    { vn::graphics::CubeMap::Face::PosZ, "front.jpg"  },
+    { vn::graphics::CubeMap::Face::NegZ, "back.jpg"   },
 };
 
 /**
@@ -204,7 +206,9 @@ vn::intrusive_ptr<vn::imaging::Image> readDemoFace(const std::filesystem::path& 
 {
     const auto loaded = vn::imageio::loadImage(file, vn::imaging::PixelFormat::Rgba8Srgb);
     if (!loaded) {
-        std::fprintf(stderr, "[demo] cube map: '%s' could not be read (%s) - the cube map is skipped\n", file.string().c_str(),
+        std::fprintf(stderr,
+                     "[demo] cube map: '%s' could not be read (%s) - the cube map is skipped\n",
+                     file.string().c_str(),
                      vn::io::ioErrorName(loaded.error()));
         return {};
     }
@@ -229,8 +233,8 @@ constexpr int kSkyCubeSide = 512;
  * @param what   What samples the map, for the one-line success report.
  * @return The cube map.
  */
-vn::intrusive_ptr<vn::graphics::CubeMap> makeDemoCubeMap(int side, std::span<const DemoCubeFace> faces,
-                                                        const std::array<vn::intrusive_ptr<vn::imaging::Image>, 6>& staged, const char* what)
+vn::intrusive_ptr<vn::graphics::CubeMap>
+makeDemoCubeMap(int side, std::span<const DemoCubeFace> faces, const std::array<vn::intrusive_ptr<vn::imaging::Image>, 6>& staged, const char* what)
 {
     auto cube = vn::make_intrusive<vn::graphics::CubeMap>(side, vn::imaging::PixelFormat::Rgba8Srgb, 1);
     for (std::size_t i = 0; i < faces.size(); ++i) {
@@ -239,7 +243,6 @@ vn::intrusive_ptr<vn::graphics::CubeMap> makeDemoCubeMap(int side, std::span<con
     std::fprintf(stderr, "[demo] cube map: six %dx%d faces of test_data/images loaded; %s\n", side, side, what);
     return cube;
 }
-
 
 /**
  * @brief Builds an axis-aligned box whose texcoord channel carries a DIRECTION per vertex.
@@ -281,7 +284,12 @@ vn::intrusive_ptr<vn::graphics::Geometry> makeDirectionBox(const vn::String& nam
     vn::geometry::UInt32Array indices;
 
     const int face_table[6][3] = {
-        { 0, 1, 2 }, { 1, 2, 0 }, { 2, 0, 1 }, { 0, 2, 1 }, { 1, 0, 2 }, { 2, 1, 0 },
+        { 0, 1, 2 },
+        { 1, 2, 0 },
+        { 2, 0, 1 },
+        { 0, 2, 1 },
+        { 1, 0, 2 },
+        { 2, 1, 0 },
     };
     auto axisVector = [](int axis) { return Vec3f(axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f); };
 
@@ -341,9 +349,11 @@ vn::intrusive_ptr<vn::graphics::Geometry> makeDirectionBox(const vn::String& nam
  * @param half    Half extents along X / Y / Z.
  * @return The created node (kept alive by the root group).
  */
-vn::intrusive_ptr<vn::graphics::MatrixTransform>
-addCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graphics::Texture> texture, const vn::String& name,
-                 const vn::math::Vec3d& centre, const vn::math::Vec3d& half)
+vn::intrusive_ptr<vn::graphics::MatrixTransform> addCubeMappedBox(vn::graphics::Group*                     root,
+                                                                  vn::intrusive_ptr<vn::graphics::Texture> texture,
+                                                                  const vn::String&                        name,
+                                                                  const vn::math::Vec3d&                   centre,
+                                                                  const vn::math::Vec3d&                   half)
 {
     auto geometry = makeDirectionBox(name, half);
 
@@ -802,10 +812,16 @@ struct BlendedPlacement {
 };
 
 /// Placement of the blended pair inside the forward showcase scene.
-constexpr BlendedPlacement kForwardBlended{ { 0.9, -1.1, 0.7 }, { 2.0, 0.1, 0.95 } };
+constexpr BlendedPlacement kForwardBlended{
+    { 0.9, -1.1, 0.7  },
+    { 2.0, 0.1,  0.95 }
+};
 
 /// Placement of the blended pair in the Deferred overlay scene (lifted over the opaque pillar).
-constexpr BlendedPlacement kOverlayBlended{ { 1.0, -0.9, 1.05 }, { 2.0, 0.1, 1.35 } };
+constexpr BlendedPlacement kOverlayBlended{
+    { 1.0, -0.9, 1.05 },
+    { 2.0, 0.1,  1.35 }
+};
 
 /**
  * @brief Adds the two ALPHA-BLENDED items: the translucent box and the rainbow star point cloud.
@@ -881,6 +897,7 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
         root->addChild(stars);
     }
 }
+
 } // namespace
 
 /**
@@ -970,8 +987,8 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
     auto* camera = render_control->view()->camera();
     if (camera != nullptr) {
         camera->lookAt(vn::math::Vec3d(6.5, 6.5, 5.0),  // eye: front-right, elevated
-                                      vn::math::Vec3d(0.0, 0.0, 0.6),  // target: mid-stack
-                                      vn::math::Vec3d(0.0, 0.0, 1.0)); // up: +Z
+                       vn::math::Vec3d(0.0, 0.0, 0.6),  // target: mid-stack
+                       vn::math::Vec3d(0.0, 0.0, 1.0)); // up: +Z
     }
 }
 
@@ -1059,7 +1076,7 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
         auto* engine_ptr = render_control->engine();
         int   sw         = (engine_ptr != nullptr) ? engine_ptr->surfaceWidth() : 0;
         int   sh         = (engine_ptr != nullptr) ? engine_ptr->surfaceHeight() : 0;
-        sw               = static_cast<int>(sw * dpr);   // the viewport below is device pixels (see anchorRect)
+        sw               = static_cast<int>(sw * dpr); // the viewport below is device pixels (see anchorRect)
         sh               = static_cast<int>(sh * dpr);
         if (sw <= 0 || sh <= 0) {
             sw = 1280;
@@ -1267,7 +1284,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     gbuf->setRenderTarget(target);
     gbuf->setProgramOverride(vn::graphics::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
-    gbuf->setOutputTarget(target);   // the G-buffer's only writer owns the hand-off (design §14)
+    gbuf->setOutputTarget(target); // the G-buffer's only writer owns the hand-off (design §14)
     engine->addPass(gbuf, render_control->view()->scene(), -3);
 
     // Preview each colour attachment of the same published target: each preview declares the SAME wire
@@ -1279,11 +1296,10 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     // that row is a black rectangle that reads as "the pass wrote nothing". Its alpha is the occlusion
     // factor - 1 for every written, unoccluded pixel and 0 where nothing was drawn - which is exactly
     // the write evidence the other three tiles give by being coloured.
-    static const vn::String preview_labels[] = { u8"GBuffer.base_color", u8"GBuffer.normal",
-                                                   u8"GBuffer.occlusion", u8"GBuffer.position" };
-    const double dpr   = render_control->devicePixelRatio();
-    const int    pip_w = static_cast<int>(108.0 * dpr);
-    const int    pip_h = static_cast<int>(61.0 * dpr);
+    static const vn::String preview_labels[] = { u8"GBuffer.base_color", u8"GBuffer.normal", u8"GBuffer.occlusion", u8"GBuffer.position" };
+    const double            dpr              = render_control->devicePixelRatio();
+    const int               pip_w            = static_cast<int>(108.0 * dpr);
+    const int               pip_h            = static_cast<int>(61.0 * dpr);
     for (int attachment = 0; attachment < 4; ++attachment) {
         auto screen = vn::make_intrusive<vn::graphics::ScreenPass>();
         screen->setName(u8"gbuffer_preview");
@@ -1334,7 +1350,7 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     gbuf->setRenderTarget(target);
     gbuf->setProgramOverride(vn::graphics::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
-    gbuf->setOutputTarget(target);   // the G-buffer's only writer owns the hand-off (design §14)
+    gbuf->setOutputTarget(target); // the G-buffer's only writer owns the hand-off (design §14)
     engine->addPass(gbuf, render_control->view()->scene(), -3);
 
     // Deferred-lighting preview: a fullscreen program sampling the G-buffer.
@@ -1344,7 +1360,7 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     auto         light = vn::make_intrusive<vn::graphics::ScreenPass>();
     light->setName(u8"deferred_lighting");
     light->addInputName(u8"GBuffer");
-    light->addInputTarget(target);   // a fullscreen program reads the whole source target
+    light->addInputTarget(target); // a fullscreen program reads the whole source target
     light->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
     light->setProgram(vn::graphics::defaultDeferredLightProgram());
     light->setViewport(8, 8, pw, ph);
@@ -1469,7 +1485,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     if (transparent != nullptr) {
         options.transparent = std::move(transparent);
     }
-    options.path = path;
+    options.path                = path;
     // Axis-gizmo HUD overlay: mirrors the view camera in the bottom-left.
     options.gizmo.source_camera = view->camera();
     options.gizmo.pixel_ratio   = render_control->devicePixelRatio();
@@ -1502,8 +1518,8 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // source's aspect (see fitPreviewRect) instead of squeezing it into the slot.
     std::vector<vn::intrusive_ptr<vn::graphics::ScreenPass>> previews;
     vn::intrusive_ptr<vn::graphics::RenderTarget>            preview_source;
-    int                                                          pip_w = 0;
-    int                                                          pip_h = 0;
+    int                                                      pip_w = 0;
+    int                                                      pip_h = 0;
     if (path == ShadingPath::Deferred) {
         const double dpr = render_control->devicePixelRatio();
         pip_w            = static_cast<int>(160.0 * dpr);
@@ -1511,8 +1527,8 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         // The G-buffer the builder created, reached through the pipeline handle: the previews declare
         // the one image they sample (target + attachment) instead of a name plus an index — the same
         // wire the builder's producer promised as a whole target.
-        auto*        gbuffer = pipeline->offscreenTarget();
-        preview_source       = vn::intrusive_ptr<vn::graphics::RenderTarget>(gbuffer);
+        auto* gbuffer    = pipeline->offscreenTarget();
+        preview_source   = vn::intrusive_ptr<vn::graphics::RenderTarget>(gbuffer);
         for (int attachment = 0; attachment < 4; ++attachment) {
             auto preview = vn::make_intrusive<vn::graphics::ScreenPass>();
             preview->setName(u8"gbuffer_preview");
@@ -1528,7 +1544,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
                 preview->addInput(image);
             }
             const int x = 8 + attachment * (pip_w + 8);
-            preview->setViewport(x, 8, pip_w, pip_h);   // the layout step re-fits it to the source's aspect
+            preview->setViewport(x, 8, pip_w, pip_h); // the layout step re-fits it to the source's aspect
             previews.push_back(preview);
             engine->addPass(preview, 120 + attachment);
         }
@@ -1541,8 +1557,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // off-screen targets (so the light pass samples them 1:1 with the swapchain,
     // instead of the 2x-upscaled soft image logical sizing produced) and the
     // logical size for the HUD overlays (which apply the ratio themselves).
-    view->addSurfaceLayout([pipeline, render_control, previews = std::move(previews), preview_source, pip_w,
-                            pip_h](int width, int height) {
+    view->addSurfaceLayout([pipeline, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int width, int height) {
         pipeline->resize(width, height, render_control->devicePixelRatio());
         if (preview_source == nullptr || previews.empty()) {
             return;
@@ -1551,7 +1566,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         const int source_height = preview_source->height();
         for (std::size_t index = 0; index < previews.size(); ++index) {
             const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
-            const vn::graphics::Viewport rect = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
+            const vn::graphics::Viewport rect   = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
             previews[index]->setViewport(rect.x, rect.y, rect.width, rect.height);
         }
     });
@@ -1615,17 +1630,15 @@ vn::async::Task<DemoCubeImages> loadDemoCubeImagesAsync()
     }
     co_await vn::async::whenAll(std::move(jobs));
 
-    const auto all_there = [](const auto& faces) {
-        return std::all_of(faces.begin(), faces.end(), [](const auto& face) { return face != nullptr; });
-    };
+    const auto all_there = [](const auto& faces) { return std::all_of(faces.begin(), faces.end(), [](const auto& face) { return face != nullptr; }); };
     staged->box_complete = all_there(staged->box);
     staged->sky_complete = all_there(staged->sky);
     co_return std::move(*staged);
 }
 
-DemoScene::DemoScene(vn::appfw::gui::RenderControl* control) : control_(control)
-{
-}
+DemoScene::DemoScene(vn::appfw::gui::RenderControl* control)
+  : control_(control)
+{}
 
 vn::intrusive_ptr<vn::graphics::Scene> DemoScene::buildScene(bool deferred)
 {
@@ -1658,7 +1671,7 @@ vn::intrusive_ptr<vn::graphics::Scene> DemoScene::buildScene(bool deferred)
     // has to fill the background BEFORE the translucent box blends over it - a sky added after would
     // paint over the blended box instead of behind it. The slot is a group created here and filled by
     // installContent(); creating it empty keeps the sky in that position whatever the asset's timing is.
-    sky_group_ = vn::make_intrusive<Group>();
+    sky_group_        = vn::make_intrusive<Group>();
     sky_group_->setName(u8"sky_slot");
     overlay_root->addChild(sky_group_);
     if (deferred) {
@@ -1732,17 +1745,17 @@ void DemoScene::installContent(const DemoCubeImages& images)
     // box's shadow - the shadow is shown by the stack on the ground instead.
     if (images.box_complete && content_root_ != nullptr) {
         addDemoCubeMappedBox(content_root_.get(),
-                             makeDemoCubeMap(kBoxCubeSide, kBoxCubeFaces, images.box,
-                                             "box 'env_box' samples it by direction (3-component texcoords)"),
-                             Vec3d(1.5, 1.2, 0.5), Vec3d(0.5, 0.5, 0.5));
+                             makeDemoCubeMap(kBoxCubeSide, kBoxCubeFaces, images.box, "box 'env_box' samples it by direction (3-component texcoords)"),
+                             Vec3d(1.5, 1.2, 0.5),
+                             Vec3d(0.5, 0.5, 0.5));
     }
 
     // The sky goes into the slot buildScene left first in the overlay root, so it stays behind the blended
     // pair however late the map arrives.
     if (images.sky_complete && sky_group_ != nullptr) {
-        addDemoSkyBox(sky_group_.get(), kSkyRadius,
-                      makeDemoCubeMap(kSkyCubeSide, kSkyCubeFaces, images.sky,
-                                      "sky box 'sky_box' samples it by direction (3-component texcoords)"));
+        addDemoSkyBox(sky_group_.get(),
+                      kSkyRadius,
+                      makeDemoCubeMap(kSkyCubeSide, kSkyCubeFaces, images.sky, "sky box 'sky_box' samples it by direction (3-component texcoords)"));
     }
 
     // The surface renders ON DEMAND, so putting content into the scene produces no frame by itself: without this
@@ -1753,5 +1766,4 @@ void DemoScene::installContent(const DemoCubeImages& images)
     control_->renderFrame();
 }
 
-}  // namespace vn::demo
-
+} // namespace vn::demo

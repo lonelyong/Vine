@@ -22,14 +22,13 @@ vn::async::Task<CommandResult> ShowRenderBackendsCommand::execute(CommandExecuti
         // 每行输出：名称 (显示名) [技术] 描述 [版本, 厂商]；entries() 已按名字母序排列。
         for (const auto& entry : entries) {
             const auto& info = entry.info;
-            String line = info.name;
+            String      line = info.name;
 
             if (!info.display_name.empty() && info.display_name != info.name) {
                 line += String(u8" (") + info.display_name + String(u8")");
             }
             if (info.api_flags != vn::graphics::RenderApi::None) {
-                line += String(u8"  [") + vn::graphics::renderApiToString(info.api_flags)
-                        + String(u8"]");
+                line += String(u8"  [") + vn::graphics::renderApiToString(info.api_flags) + String(u8"]");
             }
             if (!info.description.empty()) {
                 line += String(u8"  ") + info.description;

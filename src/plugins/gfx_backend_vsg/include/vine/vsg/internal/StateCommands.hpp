@@ -7,9 +7,9 @@
 #include <vsg/core/ref_ptr.h>
 
 #include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/backend/Keys.hpp>
 #include <vine/vsg/support/VsgDynamicState.hpp>
 #include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
-#include <vine/graphics/backend/Keys.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -45,12 +45,11 @@
 VN_VSG_NS_BEGIN
 
 /** @brief The rectangle a draw covers: the viewport and the scissor are the same rectangle. */
-struct ViewportRect
-{
-    float x{0.0F};          ///< Left edge in framebuffer coordinates.
-    float y{0.0F};          ///< Top edge in framebuffer coordinates.
-    float width{0.0F};      ///< Width in pixels.
-    float height{0.0F};     ///< Height in pixels.
+struct ViewportRect {
+    float x{ 0.0F };      // Left edge in framebuffer coordinates.
+    float y{ 0.0F };      // Top edge in framebuffer coordinates.
+    float width{ 0.0F };  // Width in pixels.
+    float height{ 0.0F }; // Height in pixels.
 };
 
 /** @brief Maps the engine's primitive topology onto the API's enum.
@@ -98,9 +97,10 @@ struct ViewportRect
  *     the destination away and the pass shows NOTHING (measured: three of the demo's four G-buffer previews
  *     were invisible while the clear colour of the pass stayed on screen).
  */
-[[nodiscard]] ::vsg::ref_ptr<detail::SetDynamicState> makeDynamicStateCommand(
-    const core::DynamicState& state, std::uint32_t color_attachments,
-    const detail::DynamicStateEntryPoints& entry_points, bool draws_content = true);
+[[nodiscard]] ::vsg::ref_ptr<detail::SetDynamicState> makeDynamicStateCommand(const core::DynamicState&              state,
+                                                                              std::uint32_t                          color_attachments,
+                                                                              const detail::DynamicStateEntryPoints& entry_points,
+                                                                              bool                                   draws_content = true);
 
 /** @brief Builds the viewport command for @p rect.
  *
@@ -111,9 +111,7 @@ struct ViewportRect
  *                    buffer.
  * @return The command (never null).
  */
-[[nodiscard]] ::vsg::ref_ptr<::vsg::SetViewport> makeViewportCommand(const ViewportRect& rect,
-                                                                   float              depth_min = 0.0F,
-                                                                   float              depth_max = 1.0F);
+[[nodiscard]] ::vsg::ref_ptr<::vsg::SetViewport> makeViewportCommand(const ViewportRect& rect, float depth_min = 0.0F, float depth_max = 1.0F);
 
 /** @brief Builds the scissor command for @p rect.
  *

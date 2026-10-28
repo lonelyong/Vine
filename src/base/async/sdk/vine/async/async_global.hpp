@@ -27,11 +27,11 @@
  * co_await/co_return/co_yield are unaffected.
  */
 
-#define VN_ASYNC_NS_BEGIN \
-    VN_ROOT_NS_BEGIN \
-    namespace async \
+#define VN_ASYNC_NS_BEGIN                                                                                                                                      \
+    VN_ROOT_NS_BEGIN                                                                                                                                           \
+    namespace async                                                                                                                                            \
     {
 
-#define VN_ASYNC_NS_END \
-    } \
+#define VN_ASYNC_NS_END                                                                                                                                        \
+    }                                                                                                                                                          \
     VN_ROOT_NS_END

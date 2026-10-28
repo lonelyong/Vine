@@ -49,8 +49,7 @@ TEST(PreviewFitTest, ADegenerateSourceAnswersTheSlotItself)
 {
     // "Not laid out yet" is not an aspect to fit: the slot is the answer, so the preview shows the whole
     // (empty) attachment rather than nothing at all.
-    for (const vn::graphics::Viewport& rect : { fitPreviewRect(0, 200, 8, 8, 160, 100),
-                                                  fitPreviewRect(320, 0, 8, 8, 160, 100) }) {
+    for (const vn::graphics::Viewport& rect : { fitPreviewRect(0, 200, 8, 8, 160, 100), fitPreviewRect(320, 0, 8, 8, 160, 100) }) {
         EXPECT_EQ(rect.x, 8);
         EXPECT_EQ(rect.y, 8);
         EXPECT_EQ(rect.width, 160);
@@ -94,7 +93,6 @@ TEST(PreviewFitTest, TheEmissionRowsTileShowsItsOcclusion)
     // in its alpha, which is the write evidence a tile exists to show).
     EXPECT_EQ(previewChannelsOf(0), vn::graphics::ScreenCopyChannels::All);
     EXPECT_EQ(previewChannelsOf(1), vn::graphics::ScreenCopyChannels::All);
-    EXPECT_EQ(previewChannelsOf(2), vn::graphics::ScreenCopyChannels::Alpha)
-        << "attachment 2's content rides in its alpha (graphics-material.md 2.8)";
+    EXPECT_EQ(previewChannelsOf(2), vn::graphics::ScreenCopyChannels::Alpha) << "attachment 2's content rides in its alpha (graphics-material.md 2.8)";
     EXPECT_EQ(previewChannelsOf(3), vn::graphics::ScreenCopyChannels::All);
 }

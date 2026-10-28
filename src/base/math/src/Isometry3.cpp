@@ -47,7 +47,7 @@ Isometry3<T>& Isometry3<T>::preRotate(const Quaternion<T>& quat)
 {
     // T := T_rot * T = (quat * q, quat * t)
     translation = quat * translation;
-    rotation = quat * rotation;
+    rotation    = quat * rotation;
     return *this;
 }
 
@@ -78,9 +78,7 @@ Isometry3<T> Isometry3<T>::operator*(const Isometry3<T>& right) const
     Isometry3<T> result;
     result.rotation    = rotation * right.rotation;
     const auto rotated = rotation * right.translation;
-    result.translation = Point3<T>(translation.x + rotated.x,
-                                   translation.y + rotated.y,
-                                   translation.z + rotated.z);
+    result.translation = Point3<T>(translation.x + rotated.x, translation.y + rotated.y, translation.z + rotated.z);
     return result;
 }
 
@@ -96,9 +94,7 @@ Point3<T> operator*(const Isometry3<T>& t, const Point3<T>& p)
 {
     // p' = q * p + t
     const auto rotated = t.rotation * p;
-    return Point3<T>(rotated.x + t.translation.x,
-                     rotated.y + t.translation.y,
-                     rotated.z + t.translation.z);
+    return Point3<T>(rotated.x + t.translation.x, rotated.y + t.translation.y, rotated.z + t.translation.z);
 }
 
 template <typename T>

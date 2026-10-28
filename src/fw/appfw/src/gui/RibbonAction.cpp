@@ -32,17 +32,19 @@ RibbonAction::RibbonAction()
     // When a command is configured, execute it when the action is triggered.
     // detach(): this is the widget wiring its own signal, so the subscription should last
     // exactly as long as the widget does.
-    triggered.connect([](RibbonAction& self, EventArgs&) {
-        const String cmd = self.command();
-        if (!cmd.empty()) {
-            if (auto* app = Application::current()) {
-                // Resolve at dispatch and carry it: a ribbon control belongs to one window, so the window that is
-                // current here is the one whose view the command acts on (single window today; the initiator's own
-                // window once there are several).
-                app->commandManager()->executeDetached(cmd, resolveCommandTarget(MainWindow::current()));
+    triggered
+        .connect([](RibbonAction& self, EventArgs&) {
+            const String cmd = self.command();
+            if (!cmd.empty()) {
+                if (auto* app = Application::current()) {
+                    // Resolve at dispatch and carry it: a ribbon control belongs to one window, so the window that is
+                    // current here is the one whose view the command acts on (single window today; the initiator's own
+                    // window once there are several).
+                    app->commandManager()->executeDetached(cmd, resolveCommandTarget(MainWindow::current()));
+                }
             }
-        }
-    }).detach();
+        })
+        .detach();
 }
 
 RibbonAction::~RibbonAction()

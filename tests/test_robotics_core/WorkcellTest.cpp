@@ -39,14 +39,14 @@ void expectNear(const Isometry3d& a, const Isometry3d& b)
  */
 std::unique_ptr<DeviceData> makeRobotData()
 {
-    auto data = std::make_unique<DeviceData>();
+    auto data            = std::make_unique<DeviceData>();
     data->metadata.name  = u8"UR";
     data->metadata.model = u8"UR10";
 
-    auto base_link = std::make_unique<Link>(u8"base_link");
-    auto link1     = std::make_unique<Link>(u8"link1");
-    auto link2     = std::make_unique<Link>(u8"link2");
-    Link* const base_ptr = base_link.get();
+    auto        base_link = std::make_unique<Link>(u8"base_link");
+    auto        link1     = std::make_unique<Link>(u8"link1");
+    auto        link2     = std::make_unique<Link>(u8"link2");
+    Link* const base_ptr  = base_link.get();
     Link* const link1_ptr = link1.get();
     Link* const link2_ptr = link2.get();
 
@@ -59,8 +59,8 @@ std::unique_ptr<DeviceData> makeRobotData()
     joint1->setParentLink(base_ptr);
     joint1->setChildLink(link1_ptr);
     DofInfo dof1;
-    dof1.lower = -3.14;
-    dof1.upper = 3.14;
+    dof1.lower          = -3.14;
+    dof1.upper          = 3.14;
     dof1.velocity_limit = 1.5;
     joint1->setDofInfos({ dof1 });
 
@@ -69,8 +69,8 @@ std::unique_ptr<DeviceData> makeRobotData()
     joint2->setParentLink(link1_ptr);
     joint2->setChildLink(link2_ptr);
     DofInfo dof2;
-    dof2.lower = -2.0;
-    dof2.upper = 2.0;
+    dof2.lower          = -2.0;
+    dof2.upper          = 2.0;
     dof2.velocity_limit = 1.0;
     joint2->setDofInfos({ dof2 });
 
@@ -104,7 +104,7 @@ TEST(WorkcellTest, AddAndFindObjects)
     ASSERT_NE(robot_ptr->data(), nullptr);
     EXPECT_EQ(robot_ptr->data()->metadata.name, u8"UR");
 
-    auto table = std::make_unique<RigidObject>(u8"table");
+    auto               table     = std::make_unique<RigidObject>(u8"table");
     RigidObject* const table_ptr = static_cast<RigidObject*>(cell.addSceneObject(std::move(table)));
     ASSERT_NE(table_ptr, nullptr);
     EXPECT_EQ(table_ptr->kind(), SceneObjectKind::RigidObject);
@@ -130,7 +130,7 @@ TEST(WorkcellTest, FrameTreeAndHierarchy)
     MotionDevice* const robot_ptr = static_cast<MotionDevice*>(cell.addSceneObject(std::move(robot)));
 
     // A scanner mounted on the robot's end frame becomes its child.
-    auto scanner = std::make_unique<Scanner>(u8"scanner");
+    auto           scanner     = std::make_unique<Scanner>(u8"scanner");
     Scanner* const scanner_ptr = static_cast<Scanner*>(cell.addSceneObject(std::move(scanner), robot_ptr->getEnd(0)));
     ASSERT_NE(scanner_ptr, nullptr);
 
@@ -156,10 +156,8 @@ TEST(WorkcellTest, FrameTreeAndHierarchy)
     EXPECT_EQ(descendants[0], static_cast<SceneObject*>(scanner_ptr));
 
     // Frame-to-object lookup works for device and mounted-object frames.
-    EXPECT_EQ(cell.findSceneObjectByFrame(scanner_ptr->baseFrame()),
-              static_cast<SceneObject*>(scanner_ptr));
-    EXPECT_EQ(cell.findSceneObjectByFrame(robot_ptr->joints()[0]),
-              static_cast<SceneObject*>(robot_ptr));
+    EXPECT_EQ(cell.findSceneObjectByFrame(scanner_ptr->baseFrame()), static_cast<SceneObject*>(scanner_ptr));
+    EXPECT_EQ(cell.findSceneObjectByFrame(robot_ptr->joints()[0]), static_cast<SceneObject*>(robot_ptr));
     EXPECT_EQ(cell.findSceneObjectByFrame(cell.worldFrame()), nullptr);
 }
 
@@ -213,7 +211,7 @@ TEST(WorkcellTest, ReparentAndRename)
     robot->init(makeRobotData());
     MotionDevice* const robot_ptr = static_cast<MotionDevice*>(cell.addSceneObject(std::move(robot)));
 
-    auto table = std::make_unique<RigidObject>(u8"table");
+    auto               table     = std::make_unique<RigidObject>(u8"table");
     RigidObject* const table_ptr = static_cast<RigidObject*>(cell.addSceneObject(std::move(table)));
 
     // Mount the table under the robot's end frame.
@@ -242,7 +240,7 @@ TEST(WorkcellTest, RemoveDetachesMounted)
     robot->init(makeRobotData());
     MotionDevice* const robot_ptr = static_cast<MotionDevice*>(cell.addSceneObject(std::move(robot)));
 
-    auto scanner = std::make_unique<Scanner>(u8"scanner");
+    auto           scanner     = std::make_unique<Scanner>(u8"scanner");
     Scanner* const scanner_ptr = static_cast<Scanner*>(cell.addSceneObject(std::move(scanner), robot_ptr->getEnd(0)));
     ASSERT_NE(scanner_ptr, nullptr);
     EXPECT_EQ(cell.parentOf(scanner_ptr), static_cast<SceneObject*>(robot_ptr));
@@ -309,21 +307,21 @@ TEST(WorkcellTest, JointDofInfosFromType)
 
 TEST(WorkcellTest, ScannerCamerasAndFrameBinding)
 {
-    auto data = std::make_unique<ScannerData>();
+    auto data            = std::make_unique<ScannerData>();
     data->metadata.name  = u8"scanner_model";
     data->metadata.model = u8"LS-100";
 
     auto base_link = std::make_unique<Link>(u8"base_link");
     data->links.push_back(std::move(base_link));
 
-    auto cam = std::make_unique<Scanner::Camera>();
-    cam->frame_name = u8"camera0";
+    auto cam                      = std::make_unique<Scanner::Camera>();
+    cam->frame_name               = u8"camera0";
     cam->design_intrinsics.width  = 1920.0;
     cam->design_intrinsics.height = 1080.0;
     data->cameras.push_back(std::move(cam));
 
-    auto proj = std::make_unique<Scanner::Projector>();
-    proj->frame_name = u8"projector0";
+    auto proj                 = std::make_unique<Scanner::Projector>();
+    proj->frame_name          = u8"projector0";
     proj->design_params.fov_w = 1.2;
     data->projectors.push_back(std::move(proj));
 
@@ -392,7 +390,7 @@ TEST(FrameTest, FrameInWorldAndFrameInFrame)
 
     // tool in world: t1 * t2 * t3.
     const auto tool_in_world = Frame::frameInWorld(&tool, state);
-    const auto expected = t1 * t2 * t3;
+    const auto expected      = t1 * t2 * t3;
     expectNear(tool_in_world, expected);
 
     // j1 in world is just t1.
@@ -417,8 +415,8 @@ TEST(FrameTest, FrameInWorldAndFrameInFrame)
 TEST(FrameTest, JointTransformUsesState)
 {
     // world -> j1 (revolute about world Z).
-    Frame world;
-    Joint j1(FrameType::RevoluteJoint);
+    Frame   world;
+    Joint   j1(FrameType::RevoluteJoint);
     DofInfo dof;
     dof.type = DofType::RevoluteJoint;
     dof.axis = Vec3d{ 0.0, 0.0, 1.0 };
@@ -431,7 +429,7 @@ TEST(FrameTest, JointTransformUsesState)
 
     // Rotating 90° about Z maps the local X axis to world +Y.
     const auto j1_in_world = Frame::frameInWorld(&j1, state);
-    const auto x_axis = j1_in_world * Vec3d{ 1.0, 0.0, 0.0 };
+    const auto x_axis      = j1_in_world * Vec3d{ 1.0, 0.0, 0.0 };
     EXPECT_NEAR(x_axis[0], 0.0, 1e-9);
     EXPECT_NEAR(x_axis[1], 1.0, 1e-9);
     EXPECT_NEAR(x_axis[2], 0.0, 1e-9);

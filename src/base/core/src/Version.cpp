@@ -13,9 +13,9 @@ Version::Version(int major, int minor, int patch)
 
 Version Version::parse(const String& text)
 {
-    const char8_t* p = text.data();
+    const char8_t*    p = text.data();
     const std::size_t n = text.size();
-    std::size_t i = 0;
+    std::size_t       i = 0;
 
     auto parseInt = [&](int& out) -> bool {
         if (i >= n || p[i] < u8'0' || p[i] > u8'9') {

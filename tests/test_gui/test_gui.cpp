@@ -50,30 +50,30 @@
 #include <vine/appfw/ConfigStandard.hpp>
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/DocumentManager.hpp>
+#include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/UserIO.hpp>
-#include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/gui/ConfigWindow.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
-#include <vine/appfw/gui/PluginManagerDialog.hpp>
 #include <vine/appfw/gui/Control.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/DocumentManagerDialog.hpp>
+#include <vine/appfw/gui/PluginManagerDialog.hpp>
 
 #include <DockingPaneGeometry.h>
+#include <vine/appfw/ConsoleProgressReporter.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
+#include <vine/appfw/gui/ProgressPresenter.hpp>
 #include <vine/appfw/gui/RibbonAction.hpp>
 #include <vine/appfw/gui/RibbonBar.hpp>
 #include <vine/appfw/gui/RibbonButton.hpp>
 #include <vine/appfw/gui/RibbonGroup.hpp>
 #include <vine/appfw/gui/RibbonTab.hpp>
 #include <vine/appfw/gui/VisualUserIO.hpp>
-#include <vine/appfw/gui/ProgressPresenter.hpp>
-#include <vine/appfw/ConsoleProgressReporter.hpp>
 
 #include <vine/logging/Log.hpp>
 #include <vine/logging/LogSink.hpp>
@@ -89,8 +89,8 @@
 #include <vine/async/AsyncEvent.hpp>
 #include <vine/async/Sleep.hpp>
 
-#include <any>
 #include <algorithm>
+#include <any>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -194,8 +194,7 @@ using CapturedLine = std::pair<vn::logging::LogLevel, std::string>;
 ///
 /// 只追加、不清理：logging 没有“摘掉 sink”的接口，所以 sink 挂上就留到进程结束。
 /// 用例记住起点下标，只看自己那一段（`mark()` / `since()`）。
-struct LogCapture
-{
+struct LogCapture {
     std::mutex                mutex;
     std::vector<CapturedLine> lines;
 
@@ -226,12 +225,11 @@ LogCapture& logLines()
 void attachLogCapture()
 {
     static const bool attached = [] {
-        vn::logging::defaultLogger().addSink(vn::logging::LogSink::function(
-            [](vn::logging::LogLevel level, const std::string& message) {
-                auto& capture = logLines();
-                std::lock_guard<std::mutex> lock(capture.mutex);
-                capture.lines.emplace_back(level, message);
-            }));
+        vn::logging::defaultLogger().addSink(vn::logging::LogSink::function([](vn::logging::LogLevel level, const std::string& message) {
+            auto&                       capture = logLines();
+            std::lock_guard<std::mutex> lock(capture.mutex);
+            capture.lines.emplace_back(level, message);
+        }));
         return true;
     }();
     (void)attached;
@@ -242,10 +240,26 @@ class DummyCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"dummy"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"dummy command"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"dummy";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"dummy command";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
@@ -259,10 +273,26 @@ class PayloadCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"payload"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"command returning a payload"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"payload";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"command returning a payload";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         vn::appfw::CommandResult result(vn::appfw::CommandStatus::Success);
@@ -278,10 +308,26 @@ class LongCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"long"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"long running command"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
+    vn::String name() const override
+    {
+        return u8"long";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"long running command";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::LongRunning;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         co_await vn::async::sleepFor(std::chrono::milliseconds(120));
@@ -297,10 +343,26 @@ class NeedsDocumentCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"needs_document"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"needs a document"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::NeedsDocument; }
+    vn::String name() const override
+    {
+        return u8"needs_document";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"needs a document";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::NeedsDocument;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
@@ -314,10 +376,26 @@ class NeedsViewCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"needs_view"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"needs a view"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::NeedsView; }
+    vn::String name() const override
+    {
+        return u8"needs_view";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"needs a view";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::NeedsView;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
@@ -331,10 +409,26 @@ class NestedChildCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"nested_child"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"nested child command"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
+    vn::String name() const override
+    {
+        return u8"nested_child";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"nested child command";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::LongRunning;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         // 子命令现在是独立宿主（前台栈顶），可上报自己的进度。
@@ -368,10 +462,26 @@ class NestedProgressCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"nested_progress"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"nested progress command"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
+    vn::String name() const override
+    {
+        return u8"nested_progress";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"nested progress command";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::LongRunning;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* host = vn::appfw::ProgressHost::current();
@@ -1031,7 +1141,7 @@ TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir, ec);
     const std::filesystem::path file = dir / "config.json";
-    const vn::String          file_path(file.u8string());
+    const vn::String            file_path(file.u8string());
 
     // 成功路径：返回 true、内容可读回、原子写不留临时文件
     ASSERT_TRUE(cfg->save(file_path));
@@ -1081,15 +1191,17 @@ TEST_F(GuiTest, ConfigManager_NotifiesOnlyOnRealChanges)
     using vn::appfw::ConfigChangedEventArgs;
     using vn::appfw::ConfigManager;
 
-    auto*     cfg = new ConfigManager();
-    int       events    = 0;
-    bool      saw_empty = false;
+    auto*      cfg       = new ConfigManager();
+    int        events    = 0;
+    bool       saw_empty = false;
     vn::String last_key;
-    cfg->changed.connect([&](ConfigManager&, ConfigChangedEventArgs& e) {
-        ++events;
-        last_key  = e.key();
-        saw_empty = e.key().empty();
-    }).detach();
+    cfg->changed
+        .connect([&](ConfigManager&, ConfigChangedEventArgs& e) {
+            ++events;
+            last_key  = e.key();
+            saw_empty = e.key().empty();
+        })
+        .detach();
 
     // 同值写入 = 无变化 = 无事件：处理函数里回写同值不会自激
     cfg->setInt(u8"max", 100);
@@ -1115,7 +1227,7 @@ TEST_F(GuiTest, ConfigManager_NotifiesOnlyOnRealChanges)
     EXPECT_EQ(events, 5);
 
     // loadJson：内容变了 → 一次事件（空 key = 整个配置变了）；内容相同 → 无事件
-    auto*     other       = new ConfigManager();
+    auto* other = new ConfigManager();
     other->setInt(u8"a", 1);
     const int before_load = events;
     ASSERT_TRUE(cfg->loadJson(other->toJson()));
@@ -1126,7 +1238,7 @@ TEST_F(GuiTest, ConfigManager_NotifiesOnlyOnRealChanges)
     EXPECT_EQ(events, before_same);
 
     // clear：有值才通知，且用空 key 表示整体变化
-    saw_empty = false;
+    saw_empty              = false;
     const int before_clear = events;
     cfg->clear();
     EXPECT_EQ(events, before_clear + 1);
@@ -1278,7 +1390,10 @@ TEST(ConfigWindowTest, ChoiceWithoutMatchShowsNoSelection)
     auto*          cat = reg.addCategory(u8"C1");
     auto*          g   = cat->addGroup(u8"G");
     ConfigItem     theme(u8"theme", u8"主题", ConfigItemType::Choice);
-    theme.choices({ { 1, u8"深色" }, { 2, u8"浅色" } });
+    theme.choices({
+      { 1, u8"深色" },
+      { 2, u8"浅色" }
+    });
     theme.defaultValue(2);
     ASSERT_TRUE(g->addItem(theme));
 
@@ -1560,10 +1675,10 @@ TEST_F(GuiTest, ConfigRegistry_MetaAndOrder)
 
 TEST_F(GuiTest, ConfigManager_ChangedEvent)
 {
-    auto*        cfg   = new vn::appfw::ConfigManager();
-    int          fired = 0;
+    auto*      cfg   = new vn::appfw::ConfigManager();
+    int        fired = 0;
     vn::String lastKey;
-    auto         subscription = cfg->changed.connect([&](vn::appfw::ConfigManager&, vn::appfw::ConfigChangedEventArgs& args) {
+    auto       subscription = cfg->changed.connect([&](vn::appfw::ConfigManager&, vn::appfw::ConfigChangedEventArgs& args) {
         ++fired;
         lastKey = args.key();
     });
@@ -1645,7 +1760,8 @@ TEST_F(GuiTest, CommandManager_RegistrationOwner)
     for (const auto& info : cm->commandInfos()) {
         if (info.name == ownedName) {
             EXPECT_TRUE(info.owner == pluginName);
-        } else if (info.name == otherName) {
+        }
+        else if (info.name == otherName) {
             EXPECT_TRUE(info.owner.empty());
         }
     }
@@ -1671,8 +1787,7 @@ TEST_F(GuiTest, CommandManager_MissingTargetIsRefusedBeforeTheBodyRuns)
     ASSERT_TRUE(cm->registerCommand<NeedsViewCommand>(vn::String(u8"needs_view")));
 
     const auto document_level = cm->executeCommandAndWait(vn::String(u8"needs_document"));
-    EXPECT_EQ(document_level.status(), vn::appfw::CommandStatus::NotApplicable)
-        << "缺文档时是 NotApplicable（解释），不是 Failed（失败）";
+    EXPECT_EQ(document_level.status(), vn::appfw::CommandStatus::NotApplicable) << "缺文档时是 NotApplicable（解释），不是 Failed（失败）";
     EXPECT_FALSE(document_level.message().empty()) << "要说清缺什么";
 
     const auto view_level = cm->executeCommandAndWait(vn::String(u8"needs_view"));
@@ -1715,13 +1830,15 @@ TEST_F(GuiTest, ConfigRegistry_StandardCategories)
     EXPECT_EQ(reg.standardGroup(StandardCategory::Logging, StandardGroup::Console), console);
 
     // addItem 便捷接口
-    EXPECT_TRUE(reg.addItem(StandardCategory::Logging, StandardGroup::Console,
-                            ConfigItem(u8"logging.console_enabled", u8"日志输出到控制台", ConfigItemType::Bool), u8"app_shell"));
+    EXPECT_TRUE(reg.addItem(StandardCategory::Logging,
+                            StandardGroup::Console,
+                            ConfigItem(u8"logging.console_enabled", u8"日志输出到控制台", ConfigItemType::Bool),
+                            u8"app_shell"));
     EXPECT_NE(reg.item(u8"logging.console_enabled"), nullptr);
 
     // 重复 key 拒绝
-    EXPECT_FALSE(reg.addItem(StandardCategory::Logging, StandardGroup::Console,
-                             ConfigItem(u8"logging.console_enabled", u8"x", ConfigItemType::Bool), u8"other"));
+    EXPECT_FALSE(
+        reg.addItem(StandardCategory::Logging, StandardGroup::Console, ConfigItem(u8"logging.console_enabled", u8"x", ConfigItemType::Bool), u8"other"));
 }
 
 TEST_F(GuiTest, ConfigRegistry_Ownership)
@@ -1733,12 +1850,12 @@ TEST_F(GuiTest, ConfigRegistry_Ownership)
     using vn::appfw::StandardGroup;
 
     ConfigRegistry reg;
-    reg.addItem(StandardCategory::Logging, StandardGroup::Console,
-                ConfigItem(u8"logging.console_enabled", u8"日志输出到控制台", ConfigItemType::Bool), u8"app_shell");
-    reg.addItem(StandardCategory::Appearance, StandardGroup::Theme,
-                ConfigItem(u8"appearance.theme", u8"主题", ConfigItemType::String), u8"app_shell");
-    reg.addItem(StandardCategory::General, StandardGroup::Startup,
-                ConfigItem(u8"general.maximize", u8"最大化启动", ConfigItemType::Bool), u8"other_plugin");
+    reg.addItem(StandardCategory::Logging,
+                StandardGroup::Console,
+                ConfigItem(u8"logging.console_enabled", u8"日志输出到控制台", ConfigItemType::Bool),
+                u8"app_shell");
+    reg.addItem(StandardCategory::Appearance, StandardGroup::Theme, ConfigItem(u8"appearance.theme", u8"主题", ConfigItemType::String), u8"app_shell");
+    reg.addItem(StandardCategory::General, StandardGroup::Startup, ConfigItem(u8"general.maximize", u8"最大化启动", ConfigItemType::Bool), u8"other_plugin");
 
     auto app_items = reg.itemsForPlugin(u8"app_shell");
     ASSERT_EQ(app_items.size(), 2u);
@@ -1769,8 +1886,8 @@ TEST_F(GuiTest, PluginLoadContext_RegisterConfigItem)
     using vn::appfw::StandardCategory;
     using vn::appfw::StandardGroup;
 
-    EXPECT_TRUE(ctx.registerConfigItem(StandardCategory::Logging, StandardGroup::Console,
-                                       ConfigItem(u8"logging.file_path", u8"日志文件", ConfigItemType::String)));
+    EXPECT_TRUE(
+        ctx.registerConfigItem(StandardCategory::Logging, StandardGroup::Console, ConfigItem(u8"logging.file_path", u8"日志文件", ConfigItemType::String)));
 
     auto items = ctx.registeredConfigs();
     ASSERT_EQ(items.size(), 1u);
@@ -1846,16 +1963,17 @@ TEST_F(GuiTest, DockPanel_PinUnpin)
 TEST_F(GuiTest, DockPanel_FloatRoundTripKeepsArea)
 {
     // 四个区域各往返一次：浮动时记住“当前”所在区域，停靠回来必须回到同一侧。
-    struct Case
-    {
+    struct Case {
         guifw::DockPanel* panel;
         guifw::DockAreas  area;
     };
 
-    const Case cases[] = { { panelLeft, guifw::DockAreas::Left },
-                           { panelRight, guifw::DockAreas::Right },
-                           { panelTop, guifw::DockAreas::Top },
-                           { panelBottom2, guifw::DockAreas::Bottom } };
+    const Case cases[] = {
+        { panelLeft,    guifw::DockAreas::Left   },
+        { panelRight,   guifw::DockAreas::Right  },
+        { panelTop,     guifw::DockAreas::Top    },
+        { panelBottom2, guifw::DockAreas::Bottom }
+    };
 
     for (const auto& c : cases) {
         ASSERT_EQ(c.panel->dockArea(), c.area);
@@ -1939,15 +2057,16 @@ TEST_F(GuiTest, DockPanelManager_RemoveDockPanel)
 
 TEST_F(GuiTest, DockPanel_PinnedFlyoutIsAnchoredToDockArea)
 {
-    struct Case
-    {
+    struct Case {
         guifw::DockPanel* panel;
         const char*       side;
     };
 
-    const Case cases[] = { { panelLeft, "left" },
-                           { panelRight, "right" },
-                           { panelTop, "top" } };
+    const Case cases[] = {
+        { panelLeft,  "left"  },
+        { panelRight, "right" },
+        { panelTop,   "top"   }
+    };
 
     // 底部两个面板同属一个 tab 组，直接 pin 组内面板不生效：先把同组的面板移出。
     panelBottom2->setFloating(true);
@@ -1997,8 +2116,8 @@ TEST_F(GuiTest, DockPanel_PinnedFlyoutIsAnchoredToDockArea)
         QWidget* host = flyout->parentWidget();
         ASSERT_NE(host, nullptr);
 
-        const QRect host_rect(host->mapToGlobal(QPoint(0, 0)), host->size());
-        const QRect flyout_rect(flyout->pos(), flyout->size());
+        const QRect   host_rect(host->mapToGlobal(QPoint(0, 0)), host->size());
+        const QRect   flyout_rect(flyout->pos(), flyout->size());
         const QString side = QString::fromLatin1(c.side);
 
         if (side == QLatin1String("left")) {
@@ -2107,9 +2226,7 @@ TEST(DockGeometryTest, TitleBarStaysReachable)
     const int   titleHeight = 24;
 
     // 标题栏矩形（位置会变，每次判前重算）。
-    const auto titleBarRect = [&pane, titleHeight]() {
-        return QRect(pane.pos(), QSize(pane.width(), titleHeight));
-    };
+    const auto titleBarRect = [&pane, titleHeight]() { return QRect(pane.pos(), QSize(pane.width(), titleHeight)); };
 
     // 完全拖到屏幕外的右下角：拉回来，标题栏必须留在可用区域内。
     pane.move(available.right() + 400, available.bottom() + 400);
@@ -2177,10 +2294,10 @@ TEST_F(GuiTest, CommandManager_LongRunningCreatesAmbientHost)
     EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
 
     // Task 是惰性的：放到工作线程上跑，主线程轮询观察宿主生命周期。
-    auto                 task = cm->executeCommandAsync(name);
-    std::atomic<bool>    done{ false };
+    auto                     task = cm->executeCommandAsync(name);
+    std::atomic<bool>        done{ false };
     vn::appfw::CommandResult result;
-    std::thread runner([&] {
+    std::thread              runner([&] {
         result = std::move(task).result();
         done.store(true);
     });
@@ -2276,7 +2393,7 @@ TEST(ProgressPresenterTest, ShowsBarForActiveHostAndHidesAfter)
 // 这里手动调 poll()，所以既不依赖计时器也不依赖事件循环，节流规则可确定性断言。
 TEST(ConsoleProgressReporterTest, WritesThrottledLinesWhileAForegroundOperationRuns)
 {
-    std::vector<vn::String>                      lines;
+    std::vector<vn::String>                     lines;
     vn::appfw::ConsoleProgressReporter::Options options;
     options.interval     = std::chrono::milliseconds(0); // 手动步进不该被最小行距节流
     options.show_delay   = std::chrono::milliseconds(0);
@@ -2324,19 +2441,19 @@ TEST(ConsoleProgressReporterTest, WritesThrottledLinesWhileAForegroundOperationR
 // stop() 之后必须彻底安静。
 TEST(ConsoleProgressReporterTest, ChangeNotificationWritesLinesAndStops)
 {
-    std::vector<vn::String>                      lines;
-    std::mutex                                     lines_mutex;
+    std::vector<vn::String>                     lines;
+    std::mutex                                  lines_mutex;
     vn::appfw::ConsoleProgressReporter::Options options;
     options.interval     = std::chrono::milliseconds(10);
     options.show_delay   = std::chrono::milliseconds(0);
     options.step_percent = 10;
 
     vn::appfw::ConsoleProgressReporter reporter(
-      [&lines, &lines_mutex](const vn::String& line) {
-          std::lock_guard lock(lines_mutex);
-          lines.push_back(line);
-      },
-      options);
+        [&lines, &lines_mutex](const vn::String& line) {
+            std::lock_guard lock(lines_mutex);
+            lines.push_back(line);
+        },
+        options);
 
     vn::appfw::ProgressHost host;
     host.setForeground(true);
@@ -2380,8 +2497,8 @@ TEST(ConsoleProgressReporterTest, ChangeNotificationWritesLinesAndStops)
 // 这里让一个短命线程触发被节流的一次上报并退出，到点后仍要写出那一行。
 TEST(ConsoleProgressReporterTest, WakeupOutlivesTheThreadThatReported)
 {
-    std::vector<vn::String>                      lines;
-    std::mutex                                     lines_mutex;
+    std::vector<vn::String>                     lines;
+    std::mutex                                  lines_mutex;
     vn::appfw::ConsoleProgressReporter::Options options;
     options.interval     = std::chrono::milliseconds(50);
     options.show_delay   = std::chrono::milliseconds(0);
@@ -2392,11 +2509,11 @@ TEST(ConsoleProgressReporterTest, WakeupOutlivesTheThreadThatReported)
     host.setLabel(u8"导出");
 
     vn::appfw::ConsoleProgressReporter reporter(
-      [&lines, &lines_mutex](const vn::String& line) {
-          std::lock_guard lock(lines_mutex);
-          lines.push_back(line);
-      },
-      options);
+        [&lines, &lines_mutex](const vn::String& line) {
+            std::lock_guard lock(lines_mutex);
+            lines.push_back(line);
+        },
+        options);
 
     reporter.start();
     ASSERT_EQ(lines.size(), 1u); // show_delay 为 0 ⇒ start() 就把首行写出来了
@@ -2622,8 +2739,7 @@ class ConsoleUserIOReadTest : public ::testing::Test {
         // 让后台读线程走到 EOF 并退出 getline：它是分离线程，只有 EOF 能放它走，
         // 而它可能正阻塞在脚本缓冲里——确认它最后一次用完缓冲之后，测试才可以拆。
         scriptedStdin().set_eof();
-        EXPECT_TRUE(scriptedStdin().waitEofDelivered(previous_eof_returns_, std::chrono::seconds(5)))
-            << "后台读线程没有在 EOF 后退出";
+        EXPECT_TRUE(scriptedStdin().waitEofDelivered(previous_eof_returns_, std::chrono::seconds(5))) << "后台读线程没有在 EOF 后退出";
 
         io.reset();
         std::cout.rdbuf(previous_cout_);
@@ -2748,9 +2864,9 @@ TEST_F(ConsoleUserIOReadTest, FileReadTakesAnExistingFileAndReportsWhyItRefuses)
 // 多个路径写在一行里：';' 分隔、顺序保持、空段忽略；任何一段不合法则整条读失败（绝不部分成功）。
 TEST_F(ConsoleUserIOReadTest, MultiplePathsComeFromOneSemicolonSeparatedLine)
 {
-    const auto dir  = makeTempCaseDir("files");
-    const auto one  = dir / "one.stl";
-    const auto two  = dir / "two.stl";
+    const auto dir = makeTempCaseDir("files");
+    const auto one = dir / "one.stl";
+    const auto two = dir / "two.stl";
     touchFile(one);
     touchFile(two);
 
@@ -2802,8 +2918,8 @@ TEST_F(ConsoleUserIOReadTest, DirReadRejectsAFileAndAcceptsADirectory)
 
 TEST(ProgressPresenterTest, CancelButtonRequestsStop)
 {
-    guifw::ProgressPresenter     presenter;
-    vn::appfw::ProgressHost host;
+    guifw::ProgressPresenter presenter;
+    vn::appfw::ProgressHost  host;
     host.setForeground(true); // 取消按钮只作用于前台操作
 
     // 包装类不是 QObject：取消按钮在原生控件上查找。
@@ -2836,10 +2952,10 @@ TEST_F(GuiTest, CommandManager_NestedProgressRunsChild)
     EXPECT_FALSE(vn::appfw::ProgressHost::isActive());
 
     // 父命令为 LongRunning → 前台宿主；内部经 executeChild 运行子命令（绕过串联门）。
-    auto                 task = cm->executeCommandAsync(name);
-    std::atomic<bool>    done{ false };
+    auto                     task = cm->executeCommandAsync(name);
+    std::atomic<bool>        done{ false };
     vn::appfw::CommandResult result;
-    std::thread runner([&] {
+    std::thread              runner([&] {
         result = std::move(task).result();
         done.store(true);
     });
@@ -2891,10 +3007,25 @@ class CancellableSleepCommand : public vn::appfw::Command {
       , duration_(duration)
     {}
 
-    vn::String name() const override { return name_; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"cancellable sleep"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return name_;
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"cancellable sleep";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -2903,7 +3034,7 @@ class CancellableSleepCommand : public vn::appfw::Command {
     }
 
   private:
-    vn::String              name_;
+    vn::String                name_;
     std::chrono::milliseconds duration_;
 };
 
@@ -2915,10 +3046,25 @@ class ThrowingCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"throwing"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"throws after a suspension"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"throwing";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"throws after a suspension";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
@@ -2939,10 +3085,25 @@ class NotApplicableCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"notApplicable"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"does not apply to the current context"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"notApplicable";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"does not apply to the current context";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
@@ -2963,10 +3124,25 @@ class UndoableProbeCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"undoableProbe"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"records that it ran"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::Undoable; }
+    vn::String name() const override
+    {
+        return u8"undoableProbe";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"records that it ran";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::Undoable;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
@@ -2986,10 +3162,25 @@ class TopLevelCallingParentCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"topLevelCaller"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"calls a top-level entry from inside"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
+    vn::String name() const override
+    {
+        return u8"topLevelCaller";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"calls a top-level entry from inside";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::LongRunning;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -3000,15 +3191,15 @@ class TopLevelCallingParentCommand : public vn::appfw::Command {
         }
 
         // 父命令持有串联门（LongRunning），顶层入口会被拒。
-        const auto child      = cm->executeCommandAndWait(s_child_name);
-        s_child_status        = child.status();
-        s_child_message       = child.message();
+        const auto child = cm->executeCommandAndWait(s_child_name);
+        s_child_status   = child.status();
+        s_child_message  = child.message();
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
-    inline static vn::String              s_child_name{ u8"syncChildInsideParent" };
+    inline static vn::String               s_child_name{ u8"syncChildInsideParent" };
     inline static vn::appfw::CommandStatus s_child_status{ vn::appfw::CommandStatus::Success };
-    inline static vn::String              s_child_message;
+    inline static vn::String               s_child_message;
 };
 
 VN_OBJECT_META_IMPL(TopLevelCallingParentCommand, vn::appfw::Command)
@@ -3018,9 +3209,20 @@ class CombinedFlagsCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"combinedFlags"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"Undoable | LongRunning"; }
+    vn::String name() const override
+    {
+        return u8"combinedFlags";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"Undoable | LongRunning";
+    }
 
     vn::appfw::CommandFlags flags() const override
     {
@@ -3045,25 +3247,40 @@ class ForegroundProbeChildCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"foregroundProbe"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"records the foreground chain"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"foregroundProbe";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"records the foreground chain";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
         auto* app = context ? context->application() : nullptr;
         auto* cm  = app ? app->commandManager() : nullptr;
         if (cm) {
-            const auto* current    = cm->currentCommand();
-            s_foreground_name      = current ? current->name() : vn::String(u8"<none>");
-            s_foreground_depth     = cm->runningCount();
+            const auto* current = cm->currentCommand();
+            s_foreground_name   = current ? current->name() : vn::String(u8"<none>");
+            s_foreground_depth  = cm->runningCount();
         }
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
     inline static vn::String s_foreground_name;
-    inline static int          s_foreground_depth{ 0 };
+    inline static int        s_foreground_depth{ 0 };
 };
 
 VN_OBJECT_META_IMPL(ForegroundProbeChildCommand, vn::appfw::Command)
@@ -3074,10 +3291,25 @@ class AsyncCallingParentCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"asyncCaller"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"awaits a top-level entry from inside"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"asyncCaller";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"awaits a top-level entry from inside";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -3087,8 +3319,8 @@ class AsyncCallingParentCommand : public vn::appfw::Command {
             co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::String(u8"no manager"));
         }
 
-        const auto* before        = cm->currentCommand();
-        s_parent_is_foreground    = before != nullptr && before->name() == name();
+        const auto* before     = cm->currentCommand();
+        s_parent_is_foreground = before != nullptr && before->name() == name();
 
         const auto child = co_await cm->executeCommandAsync(s_child_name);
         s_child_status   = child.status();
@@ -3100,11 +3332,11 @@ class AsyncCallingParentCommand : public vn::appfw::Command {
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
     }
 
-    inline static vn::String              s_child_name{ u8"foregroundProbe" };
-    inline static bool                      s_parent_is_foreground{ false };
+    inline static vn::String               s_child_name{ u8"foregroundProbe" };
+    inline static bool                     s_parent_is_foreground{ false };
     inline static vn::appfw::CommandStatus s_child_status{ vn::appfw::CommandStatus::Success };
-    inline static vn::String              s_current_after;
-    inline static int                       s_depth_after{ 0 };
+    inline static vn::String               s_current_after;
+    inline static int                      s_depth_after{ 0 };
 };
 
 VN_OBJECT_META_IMPL(AsyncCallingParentCommand, vn::appfw::Command)
@@ -3115,10 +3347,25 @@ class GateHoldCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"gateHold"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"holds the serialization gate"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::LongRunning; }
+    vn::String name() const override
+    {
+        return u8"gateHold";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"holds the serialization gate";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::LongRunning;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
@@ -3137,10 +3384,25 @@ class RecursiveCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"selfNesting"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"nests into itself"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"selfNesting";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"nests into itself";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -3158,10 +3420,25 @@ class ExclusiveTakeOverCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"takeover"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"exclusive take over"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::Exclusive; }
+    vn::String name() const override
+    {
+        return u8"takeover";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"exclusive take over";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::Exclusive;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -3183,10 +3460,25 @@ class UncooperativeSleepCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"uncooperative"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"ignores cancellation"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"uncooperative";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"ignores cancellation";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
@@ -3206,10 +3498,25 @@ class ExclusiveProbeCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"probeTakeover"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"probe exclusive take over"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::Exclusive; }
+    vn::String name() const override
+    {
+        return u8"probeTakeover";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"probe exclusive take over";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::Exclusive;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
@@ -3228,10 +3535,25 @@ class NestingCancellableParentCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"nestingParent"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"nests a cancellable child"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"nestingParent";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"nests a cancellable child";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -3249,14 +3571,36 @@ class ParameterisedChildCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    explicit ParameterisedChildCommand(int magnitude) : magnitude_(magnitude) { ++s_live; }
+    explicit ParameterisedChildCommand(int magnitude)
+      : magnitude_(magnitude)
+    {
+        ++s_live;
+    }
 
-    ~ParameterisedChildCommand() override { --s_live; }
+    ~ParameterisedChildCommand() override
+    {
+        --s_live;
+    }
 
-    vn::String name() const override { return u8"parameterisedChild"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"child built by its parent"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"parameterisedChild";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"child built by its parent";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -3282,10 +3626,25 @@ class InstanceChildParentCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"instanceChildParent"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"nests a caller-supplied child"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"instanceChildParent";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"nests a caller-supplied child";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -3308,10 +3667,25 @@ class InstanceRecursiveCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"instanceRecursive"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"nests itself through instances"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"instanceRecursive";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"nests itself through instances";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -3336,10 +3710,10 @@ TEST_F(GuiTest, CommandManager_ExecuteChildRunsACallerSuppliedInstance)
     cm->unregisterCommand(name);
     ASSERT_TRUE(cm->registerCommand<InstanceChildParentCommand>(name));
 
-    InstanceChildParentCommand::s_mode       = 0;
-    ParameterisedChildCommand::s_live        = 0;
-    ParameterisedChildCommand::s_live_seen   = 0;
-    ParameterisedChildCommand::s_magnitude   = 0;
+    InstanceChildParentCommand::s_mode         = 0;
+    ParameterisedChildCommand::s_live          = 0;
+    ParameterisedChildCommand::s_live_seen     = 0;
+    ParameterisedChildCommand::s_magnitude     = 0;
     ParameterisedChildCommand::s_running_count = 0;
 
     const auto result = cm->executeCommandAndWait(name);
@@ -3494,18 +3868,17 @@ TEST_F(GuiTest, CommandManager_ExclusiveTakesOverRunningChain)
     const auto taker_name  = vn::String(u8"takeoverCmd");
     cm->unregisterCommand(victim_name);
     cm->unregisterCommand(taker_name);
-    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), victim_name,
-                                    [victim_name] {
-                                        return new CancellableSleepCommand(victim_name, std::chrono::milliseconds(300));
-                                    }));
+    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), victim_name, [victim_name] {
+        return new CancellableSleepCommand(victim_name, std::chrono::milliseconds(300));
+    }));
     ASSERT_TRUE(cm->registerCommand<ExclusiveTakeOverCommand>(taker_name));
     ExclusiveTakeOverCommand::s_ran = false;
 
     // 后台链：可取消的长睡眠，放到工作线程上驱动，主线程观察。
-    auto                        task = cm->executeCommandAsync(victim_name);
-    vn::appfw::CommandResult  victim_result;
-    std::atomic<bool>           victim_done{ false };
-    std::thread                 runner([&] {
+    auto                     task = cm->executeCommandAsync(victim_name);
+    vn::appfw::CommandResult victim_result;
+    std::atomic<bool>        victim_done{ false };
+    std::thread              runner([&] {
         victim_result = std::move(task).result();
         victim_done.store(true);
     });
@@ -3557,9 +3930,9 @@ TEST_F(GuiTest, CommandManager_ExclusiveIsRejectedWhenChainIgnoresCancellation)
     ASSERT_TRUE(cm->registerCommand<ExclusiveProbeCommand>(probe_name));
     ExclusiveProbeCommand::s_saw_victim_running = false;
 
-    auto                       task = cm->executeCommandAsync(victim_name);
+    auto                     task = cm->executeCommandAsync(victim_name);
     vn::appfw::CommandResult victim_result;
-    std::thread                runner([&] { victim_result = std::move(task).result(); });
+    std::thread              runner([&] { victim_result = std::move(task).result(); });
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     while (!UncooperativeSleepCommand::s_running.load() && std::chrono::steady_clock::now() < deadline) {
@@ -3593,36 +3966,32 @@ TEST_F(GuiTest, CommandManager_CancelCurrentStopsOnlyForegroundChain)
     const auto name_b = vn::String(u8"chainB");
     cm->unregisterCommand(name_a);
     cm->unregisterCommand(name_b);
-    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name_a,
-                                    [name_a] {
-                                        return new CancellableSleepCommand(name_a, std::chrono::milliseconds(300));
-                                    }));
-    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name_b,
-                                    [name_b] {
-                                        return new CancellableSleepCommand(name_b, std::chrono::milliseconds(300));
-                                    }));
+    ASSERT_TRUE(
+        cm->registerCommand(CancellableSleepCommand::desc(), name_a, [name_a] { return new CancellableSleepCommand(name_a, std::chrono::milliseconds(300)); }));
+    ASSERT_TRUE(
+        cm->registerCommand(CancellableSleepCommand::desc(), name_b, [name_b] { return new CancellableSleepCommand(name_b, std::chrono::milliseconds(300)); }));
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 
     // 链 A 先运行。
-    auto                       task_a = cm->executeCommandAsync(name_a);
+    auto                     task_a = cm->executeCommandAsync(name_a);
     vn::appfw::CommandResult result_a;
-    std::thread                runner_a([&] { result_a = std::move(task_a).result(); });
+    std::thread              runner_a([&] { result_a = std::move(task_a).result(); });
 
-    while ((cm->runningCount() == 0 || cm->currentCommand() == nullptr || cm->currentCommand()->name() != name_a)
-           && std::chrono::steady_clock::now() < deadline) {
+    while ((cm->runningCount() == 0 || cm->currentCommand() == nullptr || cm->currentCommand()->name() != name_a) &&
+           std::chrono::steady_clock::now() < deadline)
+    {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     ASSERT_NE(cm->currentCommand(), nullptr);
     ASSERT_EQ(cm->currentCommand()->name(), name_a);
 
     // 链 B 随后启动，成为前台链。
-    auto                       task_b = cm->executeCommandAsync(name_b);
+    auto                     task_b = cm->executeCommandAsync(name_b);
     vn::appfw::CommandResult result_b;
-    std::thread                runner_b([&] { result_b = std::move(task_b).result(); });
+    std::thread              runner_b([&] { result_b = std::move(task_b).result(); });
 
-    while ((cm->currentCommand() == nullptr || cm->currentCommand()->name() != name_b)
-           && std::chrono::steady_clock::now() < deadline) {
+    while ((cm->currentCommand() == nullptr || cm->currentCommand()->name() != name_b) && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     ASSERT_NE(cm->currentCommand(), nullptr);
@@ -3671,8 +4040,7 @@ TEST_F(GuiTest, CommandManager_RegisterValidatesAndCachesMetadata)
 
     for (int i = 0; i < 3; ++i) {
         const auto infos = cm->commandInfos();
-        const auto it    = std::find_if(infos.begin(), infos.end(),
-                                        [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
+        const auto it    = std::find_if(infos.begin(), infos.end(), [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
         ASSERT_NE(it, infos.end());
         EXPECT_EQ(it->group, vn::String(u8"Test"));
         EXPECT_EQ(it->description, vn::String(u8"dummy command"));
@@ -3705,12 +4073,10 @@ TEST_F(GuiTest, CommandManager_DisableIsAFlagAndIsPersisted)
     EXPECT_TRUE(cm->isRegistered(name)) << "禁用是标记而不是移除";
     EXPECT_FALSE(cm->isCommandEnabled(name)) << "禁用的命令不能执行";
     EXPECT_FALSE(cm->isRegistered(vn::String(u8"disableProbeAlias"))) << "别名不是注册的命令名";
-    EXPECT_FALSE(cm->isCommandEnabled(vn::String(u8"disableProbeAlias")))
-        << "别名解析到禁用的命令，同样不可执行";
+    EXPECT_FALSE(cm->isCommandEnabled(vn::String(u8"disableProbeAlias"))) << "别名解析到禁用的命令，同样不可执行";
 
     const auto infos = cm->commandInfos();
-    const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
+    const auto it    = std::find_if(infos.begin(), infos.end(), [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end()) << "禁用不把命令从列表里移除";
     EXPECT_FALSE(it->enabled);
 
@@ -3775,13 +4141,11 @@ TEST_F(GuiTest, CommandManager_NullFactoryIsTolerated)
 
     const auto name = vn::String(u8"brokenFactory");
     cm->unregisterCommand(name);
-    ASSERT_TRUE(cm->registerCommand(DummyCommand::desc(), name,
-                                    [] { return static_cast<vn::appfw::Command*>(nullptr); }));
+    ASSERT_TRUE(cm->registerCommand(DummyCommand::desc(), name, [] { return static_cast<vn::appfw::Command*>(nullptr); }));
     EXPECT_TRUE(cm->isRegistered(name));
 
     const auto infos = cm->commandInfos();
-    const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
+    const auto it    = std::find_if(infos.begin(), infos.end(), [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end());
     EXPECT_TRUE(it->group.empty());
     EXPECT_TRUE(it->description.empty());
@@ -3811,17 +4175,13 @@ TEST_F(GuiTest, CommandManager_CommandInfosAttachesAliases)
     ASSERT_TRUE(cm->registerAlias(vn::String(u8"aliasWithoutTarget"), vn::String(u8"notRegisteredAtAll")));
 
     const auto infos = cm->commandInfos();
-    const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
+    const auto it    = std::find_if(infos.begin(), infos.end(), [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end());
     ASSERT_EQ(it->aliases.size(), 1u);
     EXPECT_EQ(it->aliases.front(), vn::String(u8"aliasTargetAlias"));
 
     // 结果按名字排序。
-    EXPECT_TRUE(std::is_sorted(infos.begin(), infos.end(),
-                               [](const vn::appfw::CommandInfo& a, const vn::appfw::CommandInfo& b) {
-                                   return a.name < b.name;
-                               }));
+    EXPECT_TRUE(std::is_sorted(infos.begin(), infos.end(), [](const vn::appfw::CommandInfo& a, const vn::appfw::CommandInfo& b) { return a.name < b.name; }));
 
     // 别名可以启动目标命令。
     EXPECT_EQ(cm->executeCommandAndWait(vn::String(u8"aliasTargetAlias")).status(), vn::appfw::CommandStatus::Success);
@@ -3855,7 +4215,7 @@ TEST_F(GuiTest, CommandManager_UndoableSnapshotHandlerRunsBeforeExecution)
     // 2) 快照失败：不得执行命令（否则之后的 undo 会回到不存在的状态）。
     cm->setSnapshotHandler([] { throw std::runtime_error("snapshot boom"); });
     UndoableProbeCommand::s_ran = false;
-    const auto failed         = cm->executeCommandAndWait(name);
+    const auto failed           = cm->executeCommandAndWait(name);
     EXPECT_EQ(failed.status(), vn::appfw::CommandStatus::Failed);
     EXPECT_EQ(failed.message(), vn::String(u8"snapshot boom"));
     EXPECT_FALSE(UndoableProbeCommand::s_ran.load());
@@ -3962,7 +4322,7 @@ TEST_F(GuiTest, CommandManager_AsyncTopLevelCallInsideCommandOpensNewChain)
     ASSERT_TRUE(cm->registerCommand<ForegroundProbeChildCommand>(child_name));
     ASSERT_TRUE(cm->registerCommand<AsyncCallingParentCommand>(parent_name));
     ForegroundProbeChildCommand::s_foreground_name.clear();
-    ForegroundProbeChildCommand::s_foreground_depth = 0;
+    ForegroundProbeChildCommand::s_foreground_depth   = 0;
     AsyncCallingParentCommand::s_parent_is_foreground = false;
     AsyncCallingParentCommand::s_child_status         = vn::appfw::CommandStatus::Failed;
     AsyncCallingParentCommand::s_current_after.clear();
@@ -4014,8 +4374,7 @@ TEST_F(GuiTest, CommandManager_ResolvesAliasChains)
 
     // 两个别名都挂在最终解析到的命令下。
     const auto infos = cm->commandInfos();
-    const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
+    const auto it    = std::find_if(infos.begin(), infos.end(), [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end());
     EXPECT_EQ(it->aliases.size(), 2u);
 
@@ -4117,7 +4476,7 @@ TEST_F(GuiTest, CommandManager_CommandExceptionBecomesFailedResult)
 
     // 异常本身没有描述时，结果消息要有兜底文本（否则 UI 只能显示一条无信息的失败）。
     ThrowingCommand::s_empty_message = true;
-    const auto silent             = cm->executeCommandAndWait(name);
+    const auto silent                = cm->executeCommandAndWait(name);
     EXPECT_EQ(silent.status(), vn::appfw::CommandStatus::Failed);
     EXPECT_FALSE(silent.message().empty());
     ThrowingCommand::s_empty_message = false;
@@ -4136,15 +4495,12 @@ TEST_F(GuiTest, CommandManager_ThrowingFactoryDoesNotEscape)
     const auto name = vn::String(u8"throwingFactory");
     cm->unregisterCommand(name);
 
-    const auto factory = []() -> vn::appfw::Command* {
-        throw std::runtime_error("factory boom");
-    };
+    const auto factory = []() -> vn::appfw::Command* { throw std::runtime_error("factory boom"); };
     EXPECT_NO_THROW(EXPECT_TRUE(cm->registerCommand(DummyCommand::desc(), name, factory)));
     EXPECT_TRUE(cm->isRegistered(name));
 
     const auto infos = cm->commandInfos();
-    const auto it    = std::find_if(infos.begin(), infos.end(),
-                                    [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
+    const auto it    = std::find_if(infos.begin(), infos.end(), [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     ASSERT_NE(it, infos.end());
     EXPECT_TRUE(it->group.empty());
     EXPECT_TRUE(it->description.empty());
@@ -4171,14 +4527,11 @@ TEST_F(GuiTest, CommandManager_CancelAllReachesBackgroundChains)
     cm->unregisterCommand(name_a);
     cm->unregisterCommand(name_b);
     // A 睡很久，保证它在 B 结束后仍然活着；B 短，取消后很快落定。
-    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name_a,
-                                    [name_a] {
-                                        return new CancellableSleepCommand(name_a, std::chrono::milliseconds(3000));
-                                    }));
-    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name_b,
-                                    [name_b] {
-                                        return new CancellableSleepCommand(name_b, std::chrono::milliseconds(200));
-                                    }));
+    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name_a, [name_a] {
+        return new CancellableSleepCommand(name_a, std::chrono::milliseconds(3000));
+    }));
+    ASSERT_TRUE(
+        cm->registerCommand(CancellableSleepCommand::desc(), name_b, [name_b] { return new CancellableSleepCommand(name_b, std::chrono::milliseconds(200)); }));
     cm->clearHistory();
 
     // detached 启动 ⇒ 两者都是独立链，B 后启动成为前台。
@@ -4229,32 +4582,29 @@ TEST_F(GuiTest, CommandManager_NestedCancelledChildIsReported)
     cm->unregisterCommand(parent);
     cm->unregisterCommand(child);
     ASSERT_TRUE(cm->registerCommand<NestingCancellableParentCommand>(parent));
-    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), child, [child] {
-        return new CancellableSleepCommand(child, std::chrono::milliseconds(5000));
-    }));
+    ASSERT_TRUE(
+        cm->registerCommand(CancellableSleepCommand::desc(), child, [child] { return new CancellableSleepCommand(child, std::chrono::milliseconds(5000)); }));
     cm->clearHistory();
 
     std::atomic<int> child_executing{ 0 };
     std::atomic<int> child_executed{ 0 };
 
-    auto executing = cm->executing.connect(
-        [&](vn::appfw::CommandManager&, vn::appfw::CommandExecutingEventArgs& args) {
-            const auto* c = args.command();
-            if (c != nullptr && c->name() == child) {
-                ++child_executing;
-            }
-        });
-    auto executed = cm->executed.connect(
-        [&](vn::appfw::CommandManager&, vn::appfw::CommandExecutedEventArgs& args) {
-            const auto* c = args.command();
-            if (c != nullptr && c->name() == child) {
-                ++child_executed;
-            }
-        });
+    auto executing = cm->executing.connect([&](vn::appfw::CommandManager&, vn::appfw::CommandExecutingEventArgs& args) {
+        const auto* c = args.command();
+        if (c != nullptr && c->name() == child) {
+            ++child_executing;
+        }
+    });
+    auto executed  = cm->executed.connect([&](vn::appfw::CommandManager&, vn::appfw::CommandExecutedEventArgs& args) {
+        const auto* c = args.command();
+        if (c != nullptr && c->name() == child) {
+            ++child_executed;
+        }
+    });
 
-    auto                       task = cm->executeCommandAsync(parent);
+    auto                     task = cm->executeCommandAsync(parent);
     vn::appfw::CommandResult result;
-    std::thread                runner([&] { result = std::move(task).result(); });
+    std::thread              runner([&] { result = std::move(task).result(); });
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (cm->runningCount() < 2 && std::chrono::steady_clock::now() < deadline) {
@@ -4311,16 +4661,15 @@ TEST_F(GuiTest, CommandManager_ExclusiveStopsEveryLiveChain)
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 
     // 后台链先跑起来（她是前台），由工作线程驱动。
-    auto                       task = cm->executeCommandAsync(victim);
+    auto                     task = cm->executeCommandAsync(victim);
     vn::appfw::CommandResult victim_result;
-    std::atomic<bool>          victim_done{ false };
-    std::thread                runner([&] {
+    std::atomic<bool>        victim_done{ false };
+    std::thread              runner([&] {
         victim_result = std::move(task).result();
         victim_done.store(true);
     });
 
-    while ((cm->currentCommand() == nullptr || cm->currentCommand()->name() != victim)
-           && std::chrono::steady_clock::now() < deadline) {
+    while ((cm->currentCommand() == nullptr || cm->currentCommand()->name() != victim) && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     ASSERT_NE(cm->currentCommand(), nullptr);
@@ -4391,9 +4740,8 @@ TEST_F(GuiTest, CommandManager_CancelAllAndWaitDrainsChains)
 
     const auto name = vn::String(u8"drainTarget");
     cm->unregisterCommand(name);
-    ASSERT_TRUE(cm->registerCommand(CancellableSleepCommand::desc(), name, [name] {
-        return new CancellableSleepCommand(name, std::chrono::milliseconds(3000));
-    }));
+    ASSERT_TRUE(
+        cm->registerCommand(CancellableSleepCommand::desc(), name, [name] { return new CancellableSleepCommand(name, std::chrono::milliseconds(3000)); }));
     cm->clearHistory();
 
     cm->executeDetached(name);
@@ -4451,8 +4799,7 @@ TEST_F(GuiTest, CommandManager_DetachedFailureIsReportedOnTheApplicationThread)
     EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::Failed);
 
     // 命令已经记录完失败，但消息还没写进面板：它被投递到应用线程，等事件循环取。
-    EXPECT_FALSE(output->toPlainText().contains(u8"boom"))
-        << "失败消息不得从工作线程直接写进控制台面板";
+    EXPECT_FALSE(output->toPlainText().contains(u8"boom")) << "失败消息不得从工作线程直接写进控制台面板";
     ASSERT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
     EXPECT_TRUE(output->toPlainText().contains(u8"boom")) << "消息应已投递到应用线程";
 
@@ -4498,8 +4845,7 @@ TEST_F(GuiTest, CommandManager_DetachedNotApplicableIsExplainedAndNotReportedAsA
     const auto log_mark = logLines().mark();
     run_once();
     ASSERT_TRUE(cm->historyAt(0).has_value());
-    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::NotApplicable)
-        << "历史里记的是真实结果，不是 Failed";
+    EXPECT_EQ(cm->historyAt(0)->result.status(), vn::appfw::CommandStatus::NotApplicable) << "历史里记的是真实结果，不是 Failed";
     EXPECT_TRUE(output->toPlainText().contains(u8"当前文档不是模型文档"));
     EXPECT_FALSE(output->toPlainText().contains(u8"命令执行失败")) << "不适用不是错误";
 
@@ -4519,7 +4865,7 @@ TEST_F(GuiTest, CommandManager_DetachedNotApplicableIsExplainedAndNotReportedAsA
     // ② 没有解释：一句话都不说 —— 唯一比沉默更糟的选择是编一句不存在的故障。
     panel.clear();
     NotApplicableCommand::s_message = vn::String();
-    const auto silent_mark = logLines().mark();
+    const auto silent_mark          = logLines().mark();
     run_once();
     EXPECT_TRUE(output->toPlainText().isEmpty()) << "没有解释就不该有任何输出";
     for (const auto& [level, text] : logLines().since(silent_mark)) {
@@ -4551,7 +4897,7 @@ TEST_F(GuiTest, CommandManager_GateAdmitsAtMostOneTopLevelLongRunningCommand)
     // 阶段 1：持有者挂着不放 ⇒ 第二个顶层命令被门拒绝。
     GateHoldCommand::s_release.reset();
     vn::appfw::CommandResult holder_result;
-    std::thread                holder([&] { holder_result = cm->executeCommandAndWait(name); });
+    std::thread              holder([&] { holder_result = cm->executeCommandAndWait(name); });
 
     while (cm->runningCount() == 0 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -4669,9 +5015,7 @@ TEST_F(GuiTest, CommandManager_NestedSyncExecuteCommandDoesNotDeadlock)
     cm->unregisterCommand(child_name);
     ASSERT_TRUE(cm->registerCommand<DummyCommand>(child_name));
 
-    const auto parent = [cm, child_name]() -> vn::async::Task<vn::appfw::CommandResult> {
-        co_return cm->executeCommandAndWait(child_name);
-    };
+    const auto parent = [cm, child_name]() -> vn::async::Task<vn::appfw::CommandResult> { co_return cm->executeCommandAndWait(child_name); };
 
     const auto result = parent().result();
     EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
@@ -4693,8 +5037,7 @@ namespace
 {
 
 /// 在插件状态列表里按名字查找，未找到返回 nullptr。
-const vn::appfw::PluginEntry* findPluginEntry(const std::vector<vn::appfw::PluginEntry>& entries,
-                                                const vn::String&                        name)
+const vn::appfw::PluginEntry* findPluginEntry(const std::vector<vn::appfw::PluginEntry>& entries, const vn::String& name)
 {
     for (const auto& entry : entries) {
         if (entry.info.name == name) {
@@ -4711,8 +5054,7 @@ std::string toUtf8(const vn::String& text)
 }
 
 /// 在注册列表里按 id 查找，未找到返回 nullptr。
-const vn::appfw::PluginRegistration* findRegistration(const std::vector<vn::appfw::PluginRegistration>& registrations,
-                                                        const vn::String& id)
+const vn::appfw::PluginRegistration* findRegistration(const std::vector<vn::appfw::PluginRegistration>& registrations, const vn::String& id)
 {
     for (const auto& registration : registrations) {
         if (registration.id == id) {
@@ -4744,7 +5086,10 @@ class BuiltInPluginDirectoryScope {
         vn::appfw::PluginManager::setBuiltInPluginDirectory(dir);
     }
 
-    ~BuiltInPluginDirectoryScope() { vn::appfw::PluginManager::setBuiltInPluginDirectory(saved_); }
+    ~BuiltInPluginDirectoryScope()
+    {
+        vn::appfw::PluginManager::setBuiltInPluginDirectory(saved_);
+    }
 
     BuiltInPluginDirectoryScope(const BuiltInPluginDirectoryScope&)            = delete;
     BuiltInPluginDirectoryScope& operator=(const BuiltInPluginDirectoryScope&) = delete;
@@ -4773,8 +5118,7 @@ class UserPluginSandbox {
             if (library.empty()) {
                 continue;
             }
-            std::filesystem::copy_file(library, directory() / library.filename(),
-                                       std::filesystem::copy_options::overwrite_existing, ec);
+            std::filesystem::copy_file(library, directory() / library.filename(), std::filesystem::copy_options::overwrite_existing, ec);
         }
 
         if (manager_ != nullptr) {
@@ -4806,8 +5150,15 @@ class UserPluginSandbox {
     UserPluginSandbox(const UserPluginSandbox&)            = delete;
     UserPluginSandbox& operator=(const UserPluginSandbox&) = delete;
 
-    const std::filesystem::path& directory() const { return directory_; }
-    const vn::String&          registration() const { return registration_; }
+    const std::filesystem::path& directory() const
+    {
+        return directory_;
+    }
+
+    const vn::String& registration() const
+    {
+        return registration_;
+    }
 
   private:
     static std::filesystem::path emptyDirectory()
@@ -4815,10 +5166,10 @@ class UserPluginSandbox {
         return std::filesystem::temp_directory_path() / "vn_sandbox_empty_plugin_dir";
     }
 
-    vn::appfw::PluginManager*           manager_;
+    vn::appfw::PluginManager*                    manager_;
     std::unique_ptr<BuiltInPluginDirectoryScope> directory_scope_;
-    std::filesystem::path       directory_{ std::filesystem::temp_directory_path() / "vn_test_plugins" };
-    vn::String                registration_;
+    std::filesystem::path                        directory_{ std::filesystem::temp_directory_path() / "vn_test_plugins" };
+    vn::String                                   registration_;
 };
 
 /// 进程内的宿主跳过列表作用域：构造时替换，析构时恢复，避免用例之间互相影响。
@@ -4831,7 +5182,10 @@ class SkipListScope {
         vn::appfw::PluginManager::setSkipList(names);
     }
 
-    ~SkipListScope() { vn::appfw::PluginManager::setSkipList(saved_); }
+    ~SkipListScope()
+    {
+        vn::appfw::PluginManager::setSkipList(saved_);
+    }
 
     SkipListScope(const SkipListScope&)            = delete;
     SkipListScope& operator=(const SkipListScope&) = delete;
@@ -4968,8 +5322,7 @@ TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
 
     // 外壳自带的文档命令登记在本插件名下（VN_DECLARE_COMMAND 的模块队列在插件注册时冲刷）。
     const auto shell_has_command = [&shell_commands](const vn::String& name) {
-        return std::any_of(shell_commands.begin(), shell_commands.end(),
-                           [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
+        return std::any_of(shell_commands.begin(), shell_commands.end(), [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
     };
     EXPECT_TRUE(shell_has_command(u8"switch_document"));
     EXPECT_TRUE(shell_has_command(u8"close_document"));
@@ -4983,9 +5336,8 @@ TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
     EXPECT_TRUE(cm->isRegistered(u8"test_hello"));
 
     const auto own_commands = pm->commandInfosForPlugin(u8"test_plugin");
-    EXPECT_TRUE(std::any_of(own_commands.begin(), own_commands.end(), [](const vn::appfw::CommandInfo& info) {
-        return info.name == u8"test_hello";
-    })) << "加载后命令应归属于声明它的插件";
+    EXPECT_TRUE(std::any_of(own_commands.begin(), own_commands.end(), [](const vn::appfw::CommandInfo& info) { return info.name == u8"test_hello"; }))
+        << "加载后命令应归属于声明它的插件";
     for (const auto& info : own_commands) {
         EXPECT_TRUE(info.owner == u8"test_plugin");
     }
@@ -5095,6 +5447,7 @@ TEST(PluginLifecycleTest, SkippedDependencyBlocksDependents)
     EXPECT_TRUE(dependent->enabled);
     EXPECT_FALSE(dependent->loaded);
 }
+
 // 禁用状态持久化在配置里（键 plugins.disabled，字符串数组），随 vine.json
 // 一起重启后生效；重复禁用不产生重复项。
 TEST(PluginLifecycleTest, DisableIsPersistedInConfig)
@@ -5107,7 +5460,7 @@ TEST(PluginLifecycleTest, DisableIsPersistedInConfig)
     ASSERT_NE(cfg, nullptr);
 
     const vn::String name(u8"no_such_plugin");
-    const auto&        key = vn::appfw::PluginManager::disabledConfigKey();
+    const auto&      key = vn::appfw::PluginManager::disabledConfigKey();
     cfg->remove(key);
 
     EXPECT_TRUE(pm->setPluginEnabled(name, false));
@@ -5147,8 +5500,7 @@ TEST(PluginLifecycleTest, DefaultDataDirectoryLayout)
     // 根目录必须来自平台标准位置，不能硬编码某个系统的路径：
     // Linux $XDG_DATA_HOME（默认 ~/.local/share）、Windows %LOCALAPPDATA%、
     // macOS ~/Library/Application Support。本进程开着 Qt 测试模式，两边取同一个值。
-    const auto root = std::filesystem::path(
-        QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation).toStdU16String());
+    const auto root = std::filesystem::path(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation).toStdU16String());
     ASSERT_FALSE(root.empty());
     EXPECT_EQ(dir.parent_path().parent_path(), root);
 
@@ -5350,6 +5702,7 @@ TEST(PluginLifecycleTest, ManagerDialogShowsMetadataAndIcons)
     filter->clear();
     ASSERT_NO_FATAL_FAILURE(dialog->refresh());
 }
+
 // 卸载顺序：按插件声明的依赖计算（依赖方先于被依赖方），与"加载列表里的位置"
 // 无关——显式 load() 会把插件直接追加到末尾，可能排在它的依赖之前。
 TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
@@ -5385,8 +5738,7 @@ TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
         }
         for (const auto& dep : entry.info.dependencies) {
             if (std::find(order.begin(), order.end(), dep) != order.end()) {
-                EXPECT_LT(index_of(entry.info.name), index_of(dep))
-                    << "依赖方必须先卸载：" << toUtf8(entry.info.name);
+                EXPECT_LT(index_of(entry.info.name), index_of(dep)) << "依赖方必须先卸载：" << toUtf8(entry.info.name);
             }
         }
     }
@@ -5406,16 +5758,14 @@ TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
         make_entry(u8"child", { u8"parent" }),
         make_entry(u8"parent", {}),
     };
-    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(dependent_first),
-              (std::vector<vn::String>{ u8"child", u8"parent" }));
+    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(dependent_first), (std::vector<vn::String>{ u8"child", u8"parent" }));
 
     // 正常加载顺序也必须得到同样的结果（"列表倒序"在这里会给出错误答案）。
     const std::vector<vn::appfw::PluginEntry> dependency_first = {
         make_entry(u8"parent", {}),
         make_entry(u8"child", { u8"parent" }),
     };
-    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(dependency_first),
-              (std::vector<vn::String>{ u8"child", u8"parent" }));
+    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(dependency_first), (std::vector<vn::String>{ u8"child", u8"parent" }));
 
     // 三层链 + 未加载项参与排序（未加载不算数）+ 已不在集合里的依赖不阻塞。
     const std::vector<vn::appfw::PluginEntry> chain = {
@@ -5424,8 +5774,7 @@ TEST(PluginLifecycleTest, UnloadOrderIsReverseDependencyOrder)
         make_entry(u8"parent", {}),
         make_entry(u8"not_loaded", { u8"grandchild" }, false),
     };
-    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(chain),
-              (std::vector<vn::String>{ u8"grandchild", u8"child", u8"parent" }));
+    EXPECT_EQ(vn::appfw::PluginManager::unloadOrder(chain), (std::vector<vn::String>{ u8"grandchild", u8"child", u8"parent" }));
 
     // 声明成环（只有显式 load() 能造出来）：不能死循环，回退为传入顺序。
     const std::vector<vn::appfw::PluginEntry> cycle = {
@@ -5450,7 +5799,7 @@ TEST(PluginLifecycleTest, PluginDataDirectoryIsPerPlugin)
     EXPECT_EQ(root.filename().string(), "plugins");
 
     vn::appfw::PluginLoadContext ctx(app, u8"my_plugin");
-    const auto                    dir = ctx.ensureDataDirectory();
+    const auto                   dir = ctx.ensureDataDirectory();
     EXPECT_EQ(dir, root / "my_plugin");
     EXPECT_TRUE(std::filesystem::is_directory(dir)) << "首次调用即创建";
 
@@ -5504,8 +5853,7 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     EXPECT_TRUE(registrations[0].enabled);
     const std::string file_text(reinterpret_cast<const char*>(registrations[0].file.data()), registrations[0].file.size());
     EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(std::u8string(file_text.begin(), file_text.end()))));
-    EXPECT_NE(std::string(reinterpret_cast<const char*>(registrations[0].file.data()), registrations[0].file.size()).find("installed.d"),
-              std::string::npos);
+    EXPECT_NE(std::string(reinterpret_cast<const char*>(registrations[0].file.data()), registrations[0].file.size()).find("installed.d"), std::string::npos);
 
     // 重复安装同一位置：写同一个文件，仍然只有一条注册。
     EXPECT_TRUE(pm->installPlugin(vn::String(user_dir.u8string()), vn::appfw::PluginScope::User) == id);
@@ -5520,7 +5868,7 @@ TEST(PluginLifecycleTest, InstallWritesRegistrationFile)
     const auto relative_id = pm->installPlugin(u8"vn_relative_plugins_test", vn::appfw::PluginScope::User);
     std::filesystem::current_path(previous_directory, ec);
     ASSERT_FALSE(relative_id.empty()) << "相对路径也应能注册";
-    const auto relative_entries = pm->pluginRegistrations();
+    const auto  relative_entries = pm->pluginRegistrations();
     const auto* relative_entry   = findRegistration(relative_entries, relative_id);
     ASSERT_NE(relative_entry, nullptr);
     const std::filesystem::path stored(std::u8string_view(relative_entry->path.data(), relative_entry->path.size()));
@@ -5660,8 +6008,7 @@ TEST(PluginLifecycleTest, InstalledLocationIsDiscoveredAndDeduplicated)
     const auto      second_dir = std::filesystem::temp_directory_path() / "vn_test_plugins_second";
     std::filesystem::remove_all(second_dir, ec);
     ASSERT_TRUE(std::filesystem::create_directories(second_dir, ec));
-    ASSERT_TRUE(std::filesystem::copy_file(source, second_dir / source.filename(),
-                                           std::filesystem::copy_options::overwrite_existing, ec));
+    ASSERT_TRUE(std::filesystem::copy_file(source, second_dir / source.filename(), std::filesystem::copy_options::overwrite_existing, ec));
     const auto second_id = pm->installPlugin(vn::String(second_dir.u8string()), vn::appfw::PluginScope::User);
     ASSERT_FALSE(second_id.empty());
 
@@ -5670,10 +6017,8 @@ TEST(PluginLifecycleTest, InstalledLocationIsDiscoveredAndDeduplicated)
     // loadAll() 成功与否不是本用例的断言对象。
     static_cast<void>(pm->loadAll());
 
-    const auto  entries = pm->pluginEntries();
-    const auto  count   = std::count_if(entries.begin(), entries.end(), [](const vn::appfw::PluginEntry& e) {
-        return e.info.name == u8"test_plugin";
-    });
+    const auto entries = pm->pluginEntries();
+    const auto count   = std::count_if(entries.begin(), entries.end(), [](const vn::appfw::PluginEntry& e) { return e.info.name == u8"test_plugin"; });
     EXPECT_EQ(count, 1) << "同一插件被多处提供时只能出现一次";
 
     const auto* entry = findPluginEntry(entries, u8"test_plugin");
@@ -5686,6 +6031,7 @@ TEST(PluginLifecycleTest, InstalledLocationIsDiscoveredAndDeduplicated)
     EXPECT_TRUE(pm->uninstallPlugin(second_id, vn::appfw::PluginScope::User));
     std::filesystem::remove_all(second_dir, ec);
 }
+
 // 关闭时的反初始化：unload() 按依赖反序调用（依赖方先于被依赖方），
 // 卸载后仍保留元数据（插件信息可见），并且可以重复调用。
 TEST(PluginLifecycleTest, UnloadAllKeepsMetadataAndIsIdempotent)
@@ -5754,7 +6100,7 @@ TEST(PluginLifecycleTest, LoadAllRollsBackWhenPluginThrows)
     EXPECT_EQ(pm->plugin(u8"test_plugin"), nullptr);
 
     // 发现与加载分离：失败后元数据与路径仍可查询。
-    const auto  entries = pm->pluginEntries();
+    const auto entries = pm->pluginEntries();
     ASSERT_NE(findPluginEntry(entries, u8"test_plugin"), nullptr);
     EXPECT_FALSE(pm->libraryPath(u8"test_plugin").empty());
 
@@ -5795,10 +6141,8 @@ TEST(PluginLifecycleTest, InstallRejectsUnusableRegistrationId)
     // 名字含 ':'（Windows 上是盘符/数据流分隔符）：拒绝，且不留文件。
     const std::filesystem::path bad = std::filesystem::temp_directory_path() / "vn_bad:name";
     std::filesystem::create_directories(bad, ec);
-    EXPECT_TRUE(pm->installPlugin(vn::String(bad.u8string()), vn::appfw::PluginScope::User).empty())
-        << "含 ':' 的名字必须被拒绝";
-    EXPECT_FALSE(pm->uninstallPlugin(vn::String(u8"bad/name"), vn::appfw::PluginScope::User))
-        << "带分隔符的 id 也必须被拒绝";
+    EXPECT_TRUE(pm->installPlugin(vn::String(bad.u8string()), vn::appfw::PluginScope::User).empty()) << "含 ':' 的名字必须被拒绝";
+    EXPECT_FALSE(pm->uninstallPlugin(vn::String(u8"bad/name"), vn::appfw::PluginScope::User)) << "带分隔符的 id 也必须被拒绝";
     EXPECT_EQ(pm->pluginRegistrations().size(), baseline) << "被拒绝的注册不应留下文件";
     std::filesystem::remove_all(bad, ec);
 }
@@ -5858,8 +6202,7 @@ TEST(PluginLifecycleTest, PluginEntryReportsTheFrameworkItWasBuiltWith)
     // VN_APPFW_VERSION 是构建注入的窄字符串字面量（CMake 的 PROJECT_VERSION），
     // String 存 UTF-8 字节，所以按字节比较。
     const vn::String expected(std::u8string_view(reinterpret_cast<const char8_t*>(VN_APPFW_VERSION)));
-    EXPECT_TRUE(shell->framework_version == expected)
-        << "插件报告的应当是它编译时的框架版本（" VN_APPFW_VERSION "）";
+    EXPECT_TRUE(shell->framework_version == expected) << "插件报告的应当是它编译时的框架版本（" VN_APPFW_VERSION "）";
 }
 
 // 依赖被禁用时，依赖它的插件也不会加载——直接依赖那层已由
@@ -5886,8 +6229,7 @@ TEST(PluginLifecycleTest, DisabledDependencyBlocksDependentsTransitively)
     // 第三个夹具（依赖 test_plugin）摆进沙箱目录，它才在扫描范围内。
     std::error_code             ec;
     const std::filesystem::path chain_lib(VN_CHAIN_PLUGIN);
-    std::filesystem::copy_file(chain_lib, sandbox.directory() / chain_lib.filename(),
-                               std::filesystem::copy_options::overwrite_existing, ec);
+    std::filesystem::copy_file(chain_lib, sandbox.directory() / chain_lib.filename(), std::filesystem::copy_options::overwrite_existing, ec);
     ASSERT_TRUE(std::filesystem::exists(sandbox.directory() / chain_lib.filename()));
 
     ASSERT_TRUE(pm->setPluginEnabled(u8"app_shell", false));
@@ -5938,8 +6280,7 @@ TEST(PluginLifecycleTest, UnresolvablePluginsAreSkippedWhileTheRestLoads)
 
     std::error_code             ec;
     const std::filesystem::path chain_lib(VN_CHAIN_PLUGIN);
-    std::filesystem::copy_file(chain_lib, sandbox.directory() / chain_lib.filename(),
-                               std::filesystem::copy_options::overwrite_existing, ec);
+    std::filesystem::copy_file(chain_lib, sandbox.directory() / chain_lib.filename(), std::filesystem::copy_options::overwrite_existing, ec);
     ASSERT_TRUE(std::filesystem::exists(sandbox.directory() / chain_lib.filename()));
 
     // 禁用的是链中段：app_shell 不受影响，只有依赖它的那一截被剪掉。
@@ -5976,8 +6317,7 @@ TEST(PluginLifecycleTest, DeclaredDependencyCycleIsPrunedNotFatal)
     std::error_code ec;
     for (const char* fixture : { VN_LOOP_A_PLUGIN, VN_LOOP_B_PLUGIN }) {
         const std::filesystem::path library(fixture);
-        std::filesystem::copy_file(library, sandbox.directory() / library.filename(),
-                                   std::filesystem::copy_options::overwrite_existing, ec);
+        std::filesystem::copy_file(library, sandbox.directory() / library.filename(), std::filesystem::copy_options::overwrite_existing, ec);
         ASSERT_TRUE(std::filesystem::exists(sandbox.directory() / library.filename()));
     }
 
@@ -6054,10 +6394,25 @@ class InteractiveWaitCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"interactiveWait"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"waits for user input"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"interactiveWait";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"waits for user input";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -6070,8 +6425,7 @@ class InteractiveWaitCommand : public vn::appfw::Command {
         s_parked.store(true);
         const auto input = co_await io->getStringAsync(u8"输入点什么> ");
         s_parked.store(false);
-        co_return vn::appfw::CommandResult(
-            input.has_value() ? vn::appfw::CommandStatus::Success : vn::appfw::CommandStatus::Cancelled);
+        co_return vn::appfw::CommandResult(input.has_value() ? vn::appfw::CommandStatus::Success : vn::appfw::CommandStatus::Cancelled);
     }
 
     inline static std::atomic<bool> s_parked{ false };
@@ -6084,10 +6438,25 @@ class IntReadCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"intRead"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"reads one integer"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"intRead";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"reads one integer";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -6099,8 +6468,7 @@ class IntReadCommand : public vn::appfw::Command {
 
         const auto value = co_await io->getIntAsync(u8"n> ");
         s_value          = value;
-        co_return vn::appfw::CommandResult(value.has_value() ? vn::appfw::CommandStatus::Success
-                                                              : vn::appfw::CommandStatus::Cancelled);
+        co_return vn::appfw::CommandResult(value.has_value() ? vn::appfw::CommandStatus::Success : vn::appfw::CommandStatus::Cancelled);
     }
 
     inline static std::optional<int> s_value;
@@ -6114,10 +6482,25 @@ class WorkerThreadReadCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"workerRead"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"reads an integer after suspending"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"workerRead";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"reads an integer after suspending";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -6132,8 +6515,7 @@ class WorkerThreadReadCommand : public vn::appfw::Command {
 
         const auto value = co_await io->getIntAsync(u8"worker> ");
         s_value          = value;
-        co_return vn::appfw::CommandResult(value.has_value() ? vn::appfw::CommandStatus::Success
-                                                              : vn::appfw::CommandStatus::Cancelled);
+        co_return vn::appfw::CommandResult(value.has_value() ? vn::appfw::CommandStatus::Success : vn::appfw::CommandStatus::Cancelled);
     }
 
     inline static std::optional<int> s_value;
@@ -6143,16 +6525,30 @@ class WorkerThreadReadCommand : public vn::appfw::Command {
 
 VN_OBJECT_META_IMPL(WorkerThreadReadCommand, vn::appfw::Command)
 
-
 // 在命令内部调用"取消并排空"。
 class DrainFromInsideCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"drainFromInside"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"drains from inside itself"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return u8"drainFromInside";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"drains from inside itself";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override
     {
@@ -6177,10 +6573,25 @@ class UncooperativeSleepForCommand : public vn::appfw::Command {
       , duration_(duration)
     {}
 
-    vn::String name() const override { return name_; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"ignores cancellation"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return name_;
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"ignores cancellation";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
@@ -6193,7 +6604,7 @@ class UncooperativeSleepForCommand : public vn::appfw::Command {
     inline static std::atomic<bool> s_running{ false };
 
   private:
-    vn::String              name_;
+    vn::String                name_;
     std::chrono::milliseconds duration_;
 };
 
@@ -6260,22 +6671,27 @@ struct PathCheckProbe : vn::appfw::UserIO {
     {
         return checkPath(text, options);
     }
+
     static PathCheck check(const vn::String& text, const vn::appfw::UserIO::DirReadOptions& options)
     {
         return checkPath(text, options);
     }
+
     static PathLineCheck checkLine(const vn::String& text, const vn::appfw::UserIO::FileReadOptions& options)
     {
         return checkPathLine(text, options);
     }
+
     static std::vector<vn::String> patterns(const vn::appfw::UserIO::FileReadOptions& options)
     {
         return filterPatterns(options);
     }
+
     static vn::String summary(const std::vector<vn::String>& extensions, bool multiple)
     {
         return requirementSummary(extensions, multiple);
     }
+
     static vn::String prompt(const vn::String& text, const vn::String& summary)
     {
         return promptWithRequirements(text, summary);
@@ -6325,7 +6741,7 @@ TEST(UserIOTest, PathCheckTable)
 
     vn::appfw::UserIO::FileReadOptions save_as;
     save_as.require_existing = false;
-    save_as.extensions = { u8".stl" };
+    save_as.extensions       = { u8".stl" };
     EXPECT_TRUE(PathCheckProbe::check(pathText(dir / "brand_new.stl"), save_as).ok);
     EXPECT_FALSE(PathCheckProbe::check(pathText(dir / "brand_new.txt"), save_as).ok) << "名字仍要带对后缀";
     EXPECT_FALSE(PathCheckProbe::check(pathText(dir), save_as).ok) << "已存在的目录不能当目标文件";
@@ -6337,8 +6753,7 @@ TEST(UserIOTest, PathCheckTable)
     // 目录读是另一种提问：不吃后缀，但要求是目录。
     EXPECT_TRUE(PathCheckProbe::check(pathText(dir), vn::appfw::UserIO::DirReadOptions{}).ok);
     EXPECT_NE(PathCheckProbe::check(pathText(stl), vn::appfw::UserIO::DirReadOptions{}).message.find(u8"不是目录"), vn::String::npos);
-    EXPECT_NE(PathCheckProbe::check(pathText(dir / "nope"), vn::appfw::UserIO::DirReadOptions{}).message.find(u8"目录不存在"),
-              vn::String::npos);
+    EXPECT_NE(PathCheckProbe::check(pathText(dir / "nope"), vn::appfw::UserIO::DirReadOptions{}).message.find(u8"目录不存在"), vn::String::npos);
 
     // 多个：';' 切分、空段忽略、保序；一段坏则整条失败并指向那一段。
     const auto line = PathCheckProbe::checkLine(pathText(stl) + u8";;" + pathText(upper) + u8";", stl_only);
@@ -6346,8 +6761,7 @@ TEST(UserIOTest, PathCheckTable)
     ASSERT_EQ(line.paths.size(), 2u);
     EXPECT_EQ(line.paths[0], stl);
     EXPECT_EQ(line.paths[1], upper);
-    EXPECT_NE(PathCheckProbe::checkLine(pathText(stl) + u8";" + pathText(dir / "missing.stl"), stl_only).message.find(u8"不存在"),
-              vn::String::npos);
+    EXPECT_NE(PathCheckProbe::checkLine(pathText(stl) + u8";" + pathText(dir / "missing.stl"), stl_only).message.find(u8"不存在"), vn::String::npos);
     EXPECT_EQ(PathCheckProbe::checkLine(vn::String(u8"; ;"), stl_only).message, vn::String(u8"请输入路径"));
 
     // 提示与过滤器的拼法（两个后端共用，所以在这里钉住）。
@@ -6393,9 +6807,7 @@ TEST(UserIOTest, FileReadValidatesAndKeepsTheRejectedTextInTheLine)
     };
 
     std::optional<std::filesystem::path> picked;
-    std::thread runner([&] {
-        picked = io->getFileAsync(u8"网格> ", vn::appfw::UserIO::FileReadOptions{ { u8".stl" } }).result();
-    });
+    std::thread                          runner([&] { picked = io->getFileAsync(u8"网格> ", vn::appfw::UserIO::FileReadOptions{ { u8".stl" } }).result(); });
 
     // 提示里带上后缀：键盘用户不该靠悬浮文案才知道要什么。
     pump_until([&] { return panel.impl<QWidget>()->findChild<QPlainTextEdit*>()->toPlainText().contains(u8"网格（.stl）> "); });
@@ -6536,8 +6948,8 @@ TEST(UserIOTest, PickingFilesFillsTheLineWithoutSubmitting)
         }
     };
 
-    bool                               dialog_seen = false;
-    const auto                         script_dialog = [&dialog_seen](bool accept, const std::filesystem::path& chosen) {
+    bool       dialog_seen   = false;
+    const auto script_dialog = [&dialog_seen](bool accept, const std::filesystem::path& chosen) {
         QTimer::singleShot(0, [accept, chosen, &dialog_seen] {
             auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
             if (dialog == nullptr) {
@@ -6745,7 +7157,7 @@ TEST(UserIOTest, RebindingTheConsoleDoesNotRunALineTwice)
 {
     auto* app = GuiEnv::app.get();
     ASSERT_NE(app, nullptr);
-    auto* cm  = app->commandManager();
+    auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
     guifw::ConsolePanel panel;
@@ -6824,8 +7236,7 @@ TEST(UserIOTest, NotApplicableTypedInTheConsoleIsAHintNotAnError)
     panel.clear();
     NotApplicableCommand::s_message = vn::String();
     run_once();
-    EXPECT_EQ(output->toPlainText().trimmed(), QStringLiteral("notApplicable"))
-        << "除了输入回显，不该有任何输出";
+    EXPECT_EQ(output->toPlainText().trimmed(), QStringLiteral("notApplicable")) << "除了输入回显，不该有任何输出";
 
     NotApplicableCommand::s_message = vn::String(u8"当前上下文没有可作用的东西");
     bindConsole(app, nullptr);
@@ -6839,12 +7250,11 @@ TEST(UserIOTest, CommandsChangedReportsRegistryAndAliasEdits)
 {
     auto* app = GuiEnv::app.get();
     ASSERT_NE(app, nullptr);
-    auto* cm  = app->commandManager();
+    auto* cm = app->commandManager();
     ASSERT_NE(cm, nullptr);
 
-    int        changes = 0;
-    auto       handler = cm->commandsChanged.connect(
-        [&changes](vn::appfw::CommandManager&, vn::EventArgs&) { ++changes; });
+    int  changes = 0;
+    auto handler = cm->commandsChanged.connect([&changes](vn::appfw::CommandManager&, vn::EventArgs&) { ++changes; });
 
     const auto name = vn::String(u8"changedProbe");
     EXPECT_FALSE(cm->unregisterCommand(name)) << "未注册的名字取消失败";
@@ -6919,8 +7329,7 @@ TEST(UserIOTest, ReadStartedOnAWorkerThreadIsMarshalledAndReprompts)
     cm->executeDetached(name);
 
     wait_for([&] { return countPrompt() >= 1; });
-    EXPECT_NE(WorkerThreadReadCommand::s_read_thread, app_thread)
-        << "用例前提：这次读必须在非应用线程上发起（否则钉不住这条路径）";
+    EXPECT_NE(WorkerThreadReadCommand::s_read_thread, app_thread) << "用例前提：这次读必须在非应用线程上发起（否则钉不住这条路径）";
 
     // 非法输入：重新提示必须用同一个提示文本（它来自编组写入的提示记帐）。
     panel.lineEntered.trigger(vn::String(u8"abc"));
@@ -6981,24 +7390,24 @@ TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
         return new UncooperativeSleepForCommand(victim, std::chrono::milliseconds(800));
     }));
     ASSERT_TRUE(cm->registerCommand<ExclusiveTakeOverCommand>(taker));
-    ExclusiveTakeOverCommand::s_ran            = false;
-    UncooperativeSleepForCommand::s_running    = false;
+    ExclusiveTakeOverCommand::s_ran         = false;
+    UncooperativeSleepForCommand::s_running = false;
     cm->clearHistory();
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 
     // 旧链在跑，且它无视取消 ⇒ 排他命令会停在"等待旧链收尾"上（上界 2s）。
-    auto                       victim_task = cm->executeCommandAsync(victim);
+    auto                     victim_task = cm->executeCommandAsync(victim);
     vn::appfw::CommandResult victim_result;
-    std::thread victim_runner([&] { victim_result = std::move(victim_task).result(); });
+    std::thread              victim_runner([&] { victim_result = std::move(victim_task).result(); });
     while (!UncooperativeSleepForCommand::s_running.load() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     ASSERT_TRUE(UncooperativeSleepForCommand::s_running.load());
 
-    auto                       taker_task = cm->executeCommandAsync(taker);
+    auto                     taker_task = cm->executeCommandAsync(taker);
     vn::appfw::CommandResult taker_result;
-    std::thread taker_runner([&] { taker_result = std::move(taker_task).result(); });
+    std::thread              taker_runner([&] { taker_result = std::move(taker_task).result(); });
 
     // 让排他命令确实进入等待：它自己不执行，没有别的可观察点。
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -7006,8 +7415,7 @@ TEST_F(GuiTest, CommandManager_CancelAllAbortsWaitingTakeOver)
     const auto start = std::chrono::steady_clock::now();
     cm->cancelAll();
     taker_runner.join();
-    const auto elapsed =
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
 
     // 被打断：立刻以 Cancelled 结束（而不是等满 2s 后 Failed），命令体从未执行。
     EXPECT_EQ(taker_result.status(), vn::appfw::CommandStatus::Cancelled);
@@ -7040,10 +7448,26 @@ class ReentrancyProbeCommand : public vn::appfw::Command {
       : name_(std::move(name))
     {}
 
-    vn::String name() const override { return name_; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"reentrancy probe"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String name() const override
+    {
+        return name_;
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"reentrancy probe";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         s_runs.fetch_add(1);
@@ -7063,17 +7487,31 @@ class SlowExclusiveProbeCommand : public vn::appfw::Command {
     VN_OBJECT_META_DECL;
 
   public:
-    vn::String name() const override { return u8"exclusiveSlow"; }
-    vn::String group() const override { return u8"Test"; }
-    vn::String description() const override { return u8"slow exclusive"; }
-    vn::appfw::CommandFlags flags() const override { return vn::appfw::CommandFlags::Exclusive; }
+    vn::String name() const override
+    {
+        return u8"exclusiveSlow";
+    }
+
+    vn::String group() const override
+    {
+        return u8"Test";
+    }
+
+    vn::String description() const override
+    {
+        return u8"slow exclusive";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::Exclusive;
+    }
 
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext*) override
     {
         const int now  = s_in_flight.fetch_add(1) + 1;
         int       prev = s_max.load();
-        while (prev < now && !s_max.compare_exchange_weak(prev, now)) {
-        }
+        while (prev < now && !s_max.compare_exchange_weak(prev, now)) {}
         co_await vn::async::sleepFor(std::chrono::milliseconds(200));
         s_in_flight.fetch_sub(1);
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success);
@@ -7102,14 +7540,12 @@ TEST_F(GuiTest, CommandManager_ReentrantFactoryIsSafe)
     cm->unregisterCommand(other);
     ReentrancyProbeCommand::s_runs = 0;
 
-    bool inside_registered_other = false;
-    bool inside_infos_ok         = false;
+    bool inside_registered_other  = false;
+    bool inside_infos_ok          = false;
     bool inside_unregistered_self = false;
 
     const bool registered = cm->registerCommand(ReentrancyProbeCommand::desc(), name, [&]() -> vn::appfw::Command* {
-        inside_registered_other = cm->registerCommand(ReentrancyProbeCommand::desc(), other, [other] {
-            return new ReentrancyProbeCommand(other);
-        });
+        inside_registered_other  = cm->registerCommand(ReentrancyProbeCommand::desc(), other, [other] { return new ReentrancyProbeCommand(other); });
         inside_infos_ok          = !cm->commandInfos().empty();
         inside_unregistered_self = cm->unregisterCommand(name);
         return new ReentrancyProbeCommand(name);
@@ -7140,12 +7576,8 @@ TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
     const auto second = vn::String(u8"reentrantSecond");
     cm->unregisterCommand(first);
     cm->unregisterCommand(second);
-    ASSERT_TRUE(cm->registerCommand(ReentrancyProbeCommand::desc(), first, [first] {
-        return new ReentrancyProbeCommand(first);
-    }));
-    ASSERT_TRUE(cm->registerCommand(ReentrancyProbeCommand::desc(), second, [second] {
-        return new ReentrancyProbeCommand(second);
-    }));
+    ASSERT_TRUE(cm->registerCommand(ReentrancyProbeCommand::desc(), first, [first] { return new ReentrancyProbeCommand(first); }));
+    ASSERT_TRUE(cm->registerCommand(ReentrancyProbeCommand::desc(), second, [second] { return new ReentrancyProbeCommand(second); }));
     cm->clearHistory();
     ReentrancyProbeCommand::s_runs = 0;
 
@@ -7153,25 +7585,22 @@ TEST_F(GuiTest, CommandManager_ReentrantEventHandlerIsSafe)
     std::atomic<int> nested_status{ -1 };
 
     // 处理函数在通知里增删处理函数：本轮新增的不应被调用，注销的也不应。
-    std::atomic<int>                    late_handler_calls{ 0 };
-    vn::Connection late_handler_id{};
-    auto            subscription = cm->executed.connect(
-        [&](vn::appfw::CommandManager& manager, vn::appfw::CommandExecutedEventArgs& args) {
-            const auto* c = args.command();
-            if (c == nullptr || c->name() != first) {
-                return;
-            }
-            notifications.fetch_add(1);
-            // 重入：通知里再跑一条命令（同步入口，当前线程就是主线程）。
-            nested_status.store(static_cast<int>(manager.executeCommandAndWait(second).status()));
-            // 重入：注销刚跑完的命令（实例与注册项是两回事，不应影响本次上报）。
-            static_cast<void>(manager.unregisterCommand(first));
-            // 重入：本轮新增的处理函数不应在本次通知里被调用。
-            late_handler_id = manager.executed.connect(
-                [&late_handler_calls](vn::appfw::CommandManager&, vn::appfw::CommandExecutedEventArgs&) {
-                    late_handler_calls.fetch_add(1);
-                });
-        });
+    std::atomic<int> late_handler_calls{ 0 };
+    vn::Connection   late_handler_id{};
+    auto             subscription = cm->executed.connect([&](vn::appfw::CommandManager& manager, vn::appfw::CommandExecutedEventArgs& args) {
+        const auto* c = args.command();
+        if (c == nullptr || c->name() != first) {
+            return;
+        }
+        notifications.fetch_add(1);
+        // 重入：通知里再跑一条命令（同步入口，当前线程就是主线程）。
+        nested_status.store(static_cast<int>(manager.executeCommandAndWait(second).status()));
+        // 重入：注销刚跑完的命令（实例与注册项是两回事，不应影响本次上报）。
+        static_cast<void>(manager.unregisterCommand(first));
+        // 重入：本轮新增的处理函数不应在本次通知里被调用。
+        late_handler_id = manager.executed.connect(
+            [&late_handler_calls](vn::appfw::CommandManager&, vn::appfw::CommandExecutedEventArgs&) { late_handler_calls.fetch_add(1); });
+    });
 
     const auto result = cm->executeCommandAndWait(first);
     subscription.disconnect();
@@ -7213,8 +7642,8 @@ TEST_F(GuiTest, CommandManager_ExclusiveCommandsAreSerialized)
 
     vn::appfw::CommandResult result_a;
     vn::appfw::CommandResult result_b;
-    std::thread                runner_a([&] { result_a = cm->executeCommandAndWait(name); });
-    std::thread                runner_b([&] { result_b = cm->executeCommandAndWait(name); });
+    std::thread              runner_a([&] { result_a = cm->executeCommandAndWait(name); });
+    std::thread              runner_b([&] { result_b = cm->executeCommandAndWait(name); });
     runner_a.join();
     runner_b.join();
 
@@ -7237,13 +7666,24 @@ namespace
 /// 面板用例用的文档类型：最小实现，dirty 由构造参数给。
 class PanelDocument : public vn::appfw::Document {
   public:
-    explicit PanelDocument(bool dirty) : dirty_(dirty)
+    explicit PanelDocument(bool dirty)
+      : dirty_(dirty)
+    {}
+
+    vn::String typeId() const override
     {
+        return u8"panel_type";
     }
 
-    vn::String typeId() const override { return u8"panel_type"; }
-    vn::String title() const override { return u8"面板文档"; }
-    bool       isDirty() const override { return dirty_; }
+    vn::String title() const override
+    {
+        return u8"面板文档";
+    }
+
+    bool isDirty() const override
+    {
+        return dirty_;
+    }
 
   private:
     bool dirty_ = false;
@@ -7280,10 +7720,10 @@ TEST(DocumentManagerDialogTest, ListsWhatIsRegisteredAndWhatIsOpen)
     ASSERT_TRUE(documents.registerType(open_only));
 
     ASSERT_TRUE(documents.registerOpener<PanelPayload>({
-        .type_id       = u8"panel_type",
-        .priority      = 1,
-        .open          = [](const PanelPayload& payload) -> vn::appfw::Document* { return new PanelDocument(payload.dirty); },
-        .source_scheme = u8"file",
+      .type_id       = u8"panel_type",
+      .priority      = 1,
+      .open          = [](const PanelPayload& payload) -> vn::appfw::Document* { return new PanelDocument(payload.dirty); },
+      .source_scheme = u8"file",
     }));
 
     vn::appfw::Document* current = documents.create(u8"panel_type");
@@ -7321,15 +7761,13 @@ TEST(DocumentManagerDialogTest, ListsWhatIsRegisteredAndWhatIsOpen)
     EXPECT_EQ(types_table->item(1, 1)->text(), QStringLiteral("面板类型"));
     EXPECT_EQ(types_table->item(1, 2)->text(), QStringLiteral("主机")) << "没有注册者标签 ⇒ 主机";
     EXPECT_EQ(types_table->item(1, 3)->text(), QStringLiteral("是"));
-    EXPECT_TRUE(types_table->item(1, 4)->text().contains(QStringLiteral("PanelPayload")))
-        << "“能开什么”来自打开器，而载荷名来自载荷自己的元数据";
+    EXPECT_TRUE(types_table->item(1, 4)->text().contains(QStringLiteral("PanelPayload"))) << "“能开什么”来自打开器，而载荷名来自载荷自己的元数据";
     EXPECT_EQ(types_table->item(1, 5)->text(), QStringLiteral("file"));
 
     ASSERT_EQ(documents_table->rowCount(), 2);
     EXPECT_TRUE(documents_table->item(0, 0)->text().startsWith(QStringLiteral("● "))) << "当前文档有标记";
     EXPECT_EQ(documents_table->item(0, 1)->text(), QStringLiteral("panel_type"));
-    EXPECT_EQ(documents_table->item(0, 2)->text(), QStringLiteral("—（没有来源）"))
-        << "新建的文档没有来源，面板要说清楚而不是留空";
+    EXPECT_EQ(documents_table->item(0, 2)->text(), QStringLiteral("—（没有来源）")) << "新建的文档没有来源，面板要说清楚而不是留空";
     EXPECT_EQ(documents_table->item(0, 3)->text(), QStringLiteral("已保存"));
     EXPECT_EQ(documents_table->item(1, 3)->text(), QStringLiteral("未保存"));
     EXPECT_FALSE(documents_table->item(1, 0)->text().startsWith(QStringLiteral("● "))) << "不是当前文档";

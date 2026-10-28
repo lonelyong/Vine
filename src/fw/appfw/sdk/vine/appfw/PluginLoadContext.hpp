@@ -7,8 +7,8 @@
 #include <stop_token>
 #include <vector>
 
-#include <vine/raw_ptr.hpp>
 #include <vine/String.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "ConfigStandard.hpp"
 

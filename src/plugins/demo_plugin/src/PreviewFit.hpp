@@ -55,22 +55,21 @@ namespace vn::demo
  * @return The rectangle to draw into, centred in the slot, at least one pixel a side (the slot itself when
  *         either extent is not positive: there is no aspect to fit).
  */
-inline vn::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y,
-                                               int slot_width, int slot_height)
+inline vn::graphics::Viewport fitPreviewRect(int source_width, int source_height, int slot_x, int slot_y, int slot_width, int slot_height)
 {
     vn::graphics::Viewport rect{ slot_x, slot_y, slot_width, slot_height };
     if (source_width <= 0 || source_height <= 0 || slot_width <= 0 || slot_height <= 0) {
         return rect;
     }
-    const double scale = std::min(static_cast<double>(slot_width) / static_cast<double>(source_width),
-                                  static_cast<double>(slot_height) / static_cast<double>(source_height));
-    const int    width  = std::max(1, static_cast<int>(std::lround(static_cast<double>(source_width) * scale)));
-    const int    height = std::max(1, static_cast<int>(std::lround(static_cast<double>(source_height) * scale)));
-    rect.x              = slot_x + (slot_width - width) / 2;
-    rect.y              = slot_y + (slot_height - height) / 2;
-    rect.width          = width;
-    rect.height         = height;
+    const double scale =
+        std::min(static_cast<double>(slot_width) / static_cast<double>(source_width), static_cast<double>(slot_height) / static_cast<double>(source_height));
+    const int width  = std::max(1, static_cast<int>(std::lround(static_cast<double>(source_width) * scale)));
+    const int height = std::max(1, static_cast<int>(std::lround(static_cast<double>(source_height) * scale)));
+    rect.x           = slot_x + (slot_width - width) / 2;
+    rect.y           = slot_y + (slot_height - height) / 2;
+    rect.width       = width;
+    rect.height      = height;
     return rect;
 }
 
-}  // namespace vn::demo
+} // namespace vn::demo

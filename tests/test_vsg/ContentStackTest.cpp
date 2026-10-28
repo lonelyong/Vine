@@ -24,8 +24,8 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdlib>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <span>
 #include <vector>
@@ -35,7 +35,9 @@
 #include <vsg/core/Array.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
@@ -43,9 +45,7 @@
 #include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/Streams.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 ///
@@ -53,25 +53,27 @@
 /// hand over the same bytes, so the evidence runs through the same door.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
 {
-    return array == nullptr
-               ? std::span<const float>{}
-               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
 }
 
 /// @brief The scalars of a float array, as the upload layer takes them.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const float>{}
-                            : std::span<const float>(array->data(), array->size());
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(array->data(), array->size());
 }
 
 /// @brief The indices of an index array, as the upload layer takes them.
 inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const std::uint32_t>{}
-                            : std::span<const std::uint32_t>(array->data(), array->size());
+    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
+using vn::graphics::backend::PipelineKey;
+using vn::graphics::backend::PixelProbe;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::VariantPool;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::ContentDraw;
@@ -79,12 +81,6 @@ using vn::vsg::ContentPipeline;
 using vn::vsg::OffscreenTarget;
 using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
-using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -95,8 +91,7 @@ constexpr std::uint32_t kSize = 64U;
 std::vector<std::byte> drawBlock(float translate_x, float translate_y, float opacity)
 {
     // Column-major, the layout GLSL expects: translation lives in m[12] / m[13].
-    const std::array<float, 16> matrix{ 1.0F, 0.0F, 0.0F, 0.0F,  0.0F, 1.0F, 0.0F, 0.0F,
-                                        0.0F, 0.0F, 1.0F, 0.0F,  translate_x, translate_y, 0.0F, 1.0F };
+    const std::array<float, 16> matrix{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, translate_x, translate_y, 0.0F, 1.0F };
     std::vector<std::byte>      block(80U, std::byte{ 0 });
     std::memcpy(block.data(), matrix.data(), sizeof(matrix));
     const std::array<float, 4> params{ opacity, 0.0F, 0.0F, 0.0F };
@@ -120,10 +115,10 @@ std::vector<std::byte> materialBlock()
 ContentPipeline::Shaders contentShaders()
 {
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
-                     "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) in vec3 position;\n"
+                       "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
+                       "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 outColor;\n"
                        "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
@@ -151,20 +146,19 @@ ContentPipeline::Shaders contentShaders()
 }
 
 /// @brief What one run of the stack needs, all created on one device.
-struct Fixture
-{
+struct Fixture {
     static constexpr float kClear[4]{ 0.0F, 0.0F, 0.25F, 1.0F };
 
-    vn::vsg::DeviceResult                created;
-    std::unique_ptr<OffscreenTarget>       target;
-    std::unique_ptr<BlockStorage>          storage;
-    std::unique_ptr<BlockDescriptors>      descriptors;
-    std::unique_ptr<ContentPipeline>       pipelines;
-    std::unique_ptr<StreamUploads>         uploads;
-    std::unique_ptr<ContentDraw>           recorder;
-    VariantPool                            pool;
-    std::unique_ptr<StateRegistry>         registry;
-    ::vsg::ref_ptr<::vsg::Viewer>          viewer;
+    vn::vsg::DeviceResult             created;
+    std::unique_ptr<OffscreenTarget>  target;
+    std::unique_ptr<BlockStorage>     storage;
+    std::unique_ptr<BlockDescriptors> descriptors;
+    std::unique_ptr<ContentPipeline>  pipelines;
+    std::unique_ptr<StreamUploads>    uploads;
+    std::unique_ptr<ContentDraw>      recorder;
+    VariantPool                       pool;
+    std::unique_ptr<StateRegistry>    registry;
+    ::vsg::ref_ptr<::vsg::Viewer>     viewer;
 
     static int material_identity;
 
@@ -174,9 +168,12 @@ struct Fixture
         if (!created.ok) {
             return false;
         }
-        target = OffscreenTarget::create(created.device, OffscreenTarget::Layout{ kSize, kSize,
-                                                                                  { kClear[0], kClear[1], kClear[2],
-                                                                                    kClear[3] } });
+        target = OffscreenTarget::create(created.device,
+                                         OffscreenTarget::Layout{
+                                           kSize,
+                                           kSize,
+                                           { kClear[0], kClear[1], kClear[2], kClear[3] }
+        });
         if (target == nullptr) {
             return false;
         }
@@ -204,13 +201,11 @@ struct Fixture
             return false;
         }
 
-        uploads = std::make_unique<StreamUploads>();
+        uploads  = std::make_unique<StreamUploads>();
         // The three extension entry points, exactly as a session would fetch them: without them the dynamic
         // command skips the polygon-mode and blend calls, and the pipeline's create-info values would be the
         // picture - which is not what the phase is testing.
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
-                                                                                                 created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         return viewer != nullptr;
@@ -234,14 +229,13 @@ struct Fixture
         }
 
         ContentDraw::Draw draw;
-        static int       program = 0;
-        draw.key.program                      = &program;
-        draw.key.revision                     = 1U;
-        draw.key.vertex_layout.canonical_mask = 0x1U;
-        draw.key.compatibility.samples        = 1U;
+        static int        program                                    = 0;
+        draw.key.program                                             = &program;
+        draw.key.revision                                            = 1U;
+        draw.key.vertex_layout.canonical_mask                        = 0x1U;
+        draw.key.compatibility.samples                               = 1U;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
-            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
-                                                                               material.offset })
+            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
         };
         draw.blocks       = block_binds;
         draw.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
@@ -301,16 +295,14 @@ struct Fixture
 int Fixture::material_identity = 0;
 
 /// @brief The pixel a point in normalised device coordinates lands on (Vulkan's y points down).
-struct Pixel
-{
+struct Pixel {
     int x;
     int y;
 };
 
 Pixel pixelAt(float x_ndc, float y_ndc)
 {
-    return { static_cast<int>((x_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)),
-             static_cast<int>((y_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)) };
+    return { static_cast<int>((x_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)), static_cast<int>((y_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)) };
 }
 
 bool isGreen(const vn::graphics::backend::Rgba8& pixel)
@@ -321,13 +313,11 @@ bool isGreen(const vn::graphics::backend::Rgba8& pixel)
 /// @brief Whether @p pixel is the target's clear colour (0, 0, 0.25) within a UNORM step.
 bool isClear(const vn::graphics::backend::Rgba8& pixel)
 {
-    const auto near = [](std::uint8_t value, int expected) {
-        return std::abs(static_cast<int>(value) - expected) <= 2;
-    };
+    const auto near = [](std::uint8_t value, int expected) { return std::abs(static_cast<int>(value) - expected) <= 2; };
     return near(pixel.r, 0) && near(pixel.g, 0) && near(pixel.b, 64) && near(pixel.a, 255);
 }
 
-}  // namespace
+} // namespace
 
 TEST(ContentStackTest, ATriangleDrawnThroughTheWholeStackReachesTheTarget)
 {
@@ -344,17 +334,14 @@ TEST(ContentStackTest, ATriangleDrawnThroughTheWholeStackReachesTheTarget)
 
     // The triangle covers the centre; its corners stay the clear colour.
     const auto centre = probe.pixel(kSize / 2, kSize / 2);
-    EXPECT_TRUE(isGreen(centre)) << "the centre must hold the fragment's colour, got ("
-                                 << static_cast<int>(centre.r) << ", " << static_cast<int>(centre.g) << ", "
-                                 << static_cast<int>(centre.b) << ")";
+    EXPECT_TRUE(isGreen(centre)) << "the centre must hold the fragment's colour, got (" << static_cast<int>(centre.r) << ", " << static_cast<int>(centre.g)
+                                 << ", " << static_cast<int>(centre.b) << ")";
     const auto corner_a = probe.pixel(1, 1);
     const auto corner_b = probe.pixel(static_cast<int>(kSize) - 2, static_cast<int>(kSize) - 2);
-    EXPECT_TRUE(isClear(corner_a)) << "a corner is outside the triangle, got (" << static_cast<int>(corner_a.r)
-                                   << ", " << static_cast<int>(corner_a.g) << ", " << static_cast<int>(corner_a.b)
-                                   << ", " << static_cast<int>(corner_a.a) << ")";
-    EXPECT_TRUE(isClear(corner_b)) << "got (" << static_cast<int>(corner_b.r) << ", " << static_cast<int>(corner_b.g)
-                                   << ", " << static_cast<int>(corner_b.b) << ", " << static_cast<int>(corner_b.a)
-                                   << ")";
+    EXPECT_TRUE(isClear(corner_a)) << "a corner is outside the triangle, got (" << static_cast<int>(corner_a.r) << ", " << static_cast<int>(corner_a.g) << ", "
+                                   << static_cast<int>(corner_a.b) << ", " << static_cast<int>(corner_a.a) << ")";
+    EXPECT_TRUE(isClear(corner_b)) << "got (" << static_cast<int>(corner_b.r) << ", " << static_cast<int>(corner_b.g) << ", " << static_cast<int>(corner_b.b)
+                                   << ", " << static_cast<int>(corner_b.a) << ")";
 
     // The counters the design makes a phase assert: one upload, one pipeline, one bind of each kind.
     EXPECT_EQ(fixture.uploads->uploads(), 2U) << "positions and indices: one upload each";
@@ -386,12 +373,9 @@ TEST(ContentStackTest, EachDrawReadsItsOwnBlockThroughTheDynamicOffsets)
     const Pixel right_point = pixelAt(0.5F, 0.0F);
     const Pixel middle      = pixelAt(0.0F, 0.0F);
 
-    EXPECT_TRUE(isGreen(probe.pixel(left_point.x, left_point.y)))
-        << "the first draw's block placed its triangle on the left";
-    EXPECT_TRUE(isGreen(probe.pixel(right_point.x, right_point.y)))
-        << "the second draw's block placed ITS triangle on the right";
-    EXPECT_TRUE(isClear(probe.pixel(middle.x, middle.y)))
-        << "the gap between them was never drawn into: the two blocks really did place two triangles";
+    EXPECT_TRUE(isGreen(probe.pixel(left_point.x, left_point.y))) << "the first draw's block placed its triangle on the left";
+    EXPECT_TRUE(isGreen(probe.pixel(right_point.x, right_point.y))) << "the second draw's block placed ITS triangle on the right";
+    EXPECT_TRUE(isClear(probe.pixel(middle.x, middle.y))) << "the gap between them was never drawn into: the two blocks really did place two triangles";
 
     // Two draws of one variant: the pipeline is bound once, the dynamic block issued once, and the design's
     // "a pass' command buffer is proportional to its content" shows up here as these two numbers.

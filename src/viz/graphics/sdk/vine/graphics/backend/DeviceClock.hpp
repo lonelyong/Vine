@@ -38,8 +38,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /**
  * @brief One device's frame clock and the completion watermark its windows agree on (see the file note).
  */
-class VN_GRAPHICS_API DeviceClock
-{
+class VN_GRAPHICS_API DeviceClock {
   public:
     /** @brief Identity of one window on this device. */
     using WindowId = std::uint32_t;
@@ -121,19 +120,18 @@ class VN_GRAPHICS_API DeviceClock
 
   private:
     /// One window's contribution to the device watermark (see the file note).
-    struct Window
-    {
-        std::uint64_t completed{0};  ///< Highest frame THIS window proved finished.
-        std::uint32_t slots{0};      ///< In-flight count it learned, or 0 while unknown.
-        bool          live{true};    ///< false once removed: it stops constraining the watermark.
+    struct Window {
+        std::uint64_t completed{ 0 }; // Highest frame THIS window proved finished.
+        std::uint32_t slots{ 0 };     // In-flight count it learned, or 0 while unknown.
+        bool          live{ true };   // false once removed: it stops constraining the watermark.
     };
 
     /// Recomputes the device watermark from the live windows, and moves the timeline (monotonic).
     void updateWatermark() noexcept;
 
-    FrameTimeline      timeline_;
+    FrameTimeline       timeline_;
     std::vector<Window> windows_;
-    std::uint64_t      completed_{0};  ///< The device watermark (see completedFrame).
+    std::uint64_t       completed_{ 0 }; // The device watermark (see completedFrame).
 };
 
 VN_GRAPHICSBACKEND_NS_END

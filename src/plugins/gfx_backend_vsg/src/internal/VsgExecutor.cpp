@@ -11,14 +11,11 @@
 VN_VSG_NS_BEGIN
 
 namespace
-{
-
-}  // namespace
+{} // namespace
 
 VsgExecutor::VsgExecutor(vn::graphics::Diagnostics& diagnostics) noexcept
-    : diagnostics_(diagnostics)
-{
-}
+  : diagnostics_(diagnostics)
+{}
 
 void VsgExecutor::setWindow(WindowTarget* window) noexcept
 {
@@ -27,10 +24,8 @@ void VsgExecutor::setWindow(WindowTarget* window) noexcept
 
 void VsgExecutor::addTarget(const void* identity, OffscreenTarget* target, const char* label) noexcept
 {
-    for (Entry& entry : targets_)
-    {
-        if (entry.identity == identity)
-        {
+    for (Entry& entry : targets_) {
+        if (entry.identity == identity) {
             entry.target = target;
             entry.label  = label;
             return;
@@ -44,20 +39,17 @@ void VsgExecutor::clearTargets() noexcept
     targets_.clear();
 }
 
-bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg::CommandGraph> command_graph,
-                         std::span<const PassContent> content)
+bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg::CommandGraph> command_graph, std::span<const PassContent> content)
 {
     // The wrapped passes of the PREVIOUS frame name its graphs; this frame's intervals must not be
     // attributed to them (see profileEntries).
     profile_entries_.clear();
     recorded_.clear();
-    skipped_          = 0;
-    window_recorded_  = false;
+    skipped_         = 0;
+    window_recorded_ = false;
 
-    for (const core::CompiledPass& pass : frame.passes)
-    {
-        if (pass.target_index >= frame.targets.size())
-        {
+    for (const core::CompiledPass& pass : frame.passes) {
+        if (pass.target_index >= frame.targets.size()) {
             ++skipped_;
             continue;
         }
@@ -65,11 +57,9 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
 
         // The default framebuffer (a null identity) is the window's, everything else is an off-screen target
         // this executor was told about.
-        const bool recorded = compiled_target.target == nullptr
-                                  ? recordWindow(pass, compiled_target, command_graph, content)
-                                  : recordOffscreen(pass, compiled_target, command_graph, content);
-        if (!recorded)
-        {
+        const bool recorded = compiled_target.target == nullptr ? recordWindow(pass, compiled_target, command_graph, content)
+                                                                : recordOffscreen(pass, compiled_target, command_graph, content);
+        if (!recorded) {
             continue;
         }
         recorded_.push_back(pass.pass);
@@ -82,8 +72,7 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
     // last window pass' content, which is the same picture an empty frame presents (see api/Session): a frame
     // with no window pass does not blank the window, it just gives the fresh swapchain image a defined
     // layout. There is no pass to attribute a measurement interval to, so this graph is added UNWRAPPED.
-    if (window_ != nullptr && !window_recorded_)
-    {
+    if (window_ != nullptr && !window_recorded_) {
         window_->prepareWithoutClear();
         command_graph->addChild(window_->graph());
         window_recorded_ = true;
@@ -91,36 +80,28 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
 
     // Content for a pass the frame does not contain would silently disappear - and the pass it was meant for
     // is missing for a reason the caller has to hear (a cycle was skipped, a target could not be served).
-    for (const PassContent& packet : content)
-    {
-        const bool known = std::any_of(frame.passes.begin(), frame.passes.end(),
-                                       [&packet](const core::CompiledPass& pass) noexcept {
-                                           return pass.pass == packet.pass;
-                                       });
-        if (!known && packet.content != nullptr)
-        {
+    for (const PassContent& packet : content) {
+        const bool known =
+            std::any_of(frame.passes.begin(), frame.passes.end(), [&packet](const core::CompiledPass& pass) noexcept { return pass.pass == packet.pass; });
+        if (!known && packet.content != nullptr) {
             ++skipped_;
             diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                                 vn::graphics::DiagnosticCategory::ContentSkipped,
-                                vn::String::fromUtf8("recorded content was not placed: the plan has no pass " +
-                                         std::to_string(packet.pass) +
-                                         " (its target could not be served, or it sits on a dependency "
-                                         "cycle that was skipped)"));
+                                vn::String::fromUtf8("recorded content was not placed: the plan has no pass " + std::to_string(packet.pass) +
+                                                     " (its target could not be served, or it sits on a dependency "
+                                                     "cycle that was skipped)"));
         }
     }
 
     // The copies go after every pass, per target: a probe reads the frame's final picture, and a copy
     // recorded between two passes would read one that is not final.
-    for (const core::CompiledTarget& compiled_target : frame.targets)
-    {
+    for (const core::CompiledTarget& compiled_target : frame.targets) {
         OffscreenTarget* target = resolve(compiled_target);
-        if (target != nullptr)
-        {
+        if (target != nullptr) {
             // A depth-only target (a shadow map) copies its DEPTH back; a colour one copies attachment 0.
             // Adding the null a colour-less target would answer with a colour capture is a vsg Group with a
             // null child, which traverses into a crash the first time the frame is recorded.
-            if (auto readback = target->readback())
-            {
+            if (auto readback = target->readback()) {
                 command_graph->addChild(readback);
             }
         }
@@ -146,22 +127,17 @@ std::span<const VsgExecutor::ProfileEntry> VsgExecutor::profileEntries() const n
 
 const VsgExecutor::ProfileEntry* VsgExecutor::profileOf(const ::vsg::RenderGraph& graph) const noexcept
 {
-    for (const ProfileEntry& entry : profile_entries_)
-    {
-        if (entry.graph == &graph)
-        {
+    for (const ProfileEntry& entry : profile_entries_) {
+        if (entry.graph == &graph) {
             return &entry;
         }
     }
     return nullptr;
 }
 
-::vsg::ref_ptr<::vsg::Node> VsgExecutor::recordedChild(const ::vsg::ref_ptr<::vsg::RenderGraph>& graph,
-                                                       const core::CompiledPass&                  pass,
-                                                       bool                                       window)
+::vsg::ref_ptr<::vsg::Node> VsgExecutor::recordedChild(const ::vsg::ref_ptr<::vsg::RenderGraph>& graph, const core::CompiledPass& pass, bool window)
 {
-    if (!profiling_ || graph == nullptr)
-    {
+    if (!profiling_ || graph == nullptr) {
         return graph;
     }
     // The name is for a human reading a capture; a READER matches the graph (see setProfiling).
@@ -170,9 +146,7 @@ const VsgExecutor::ProfileEntry* VsgExecutor::profileOf(const ::vsg::RenderGraph
     entry.pass     = pass.pass;
     entry.schedule = pass.schedule_index;
     entry.window   = window;
-    entry.name     = (window ? std::string("window@")
-                             : std::string("target") + std::to_string(pass.target_index) + "@")
-                     + std::to_string(pass.schedule_index);
+    entry.name     = (window ? std::string("window@") : std::string("target") + std::to_string(pass.target_index) + "@") + std::to_string(pass.schedule_index);
 
     auto wrapper = ::vsg::InstrumentationNode::create(graph);
     wrapper->setName(entry.name);
@@ -180,13 +154,13 @@ const VsgExecutor::ProfileEntry* VsgExecutor::profileOf(const ::vsg::RenderGraph
     return wrapper;
 }
 
-bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
+bool VsgExecutor::recordOffscreen(const core::CompiledPass&                  pass,
+                                  const core::CompiledTarget&                compiled_target,
                                   const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
-                                  std::span<const PassContent> content)
+                                  std::span<const PassContent>               content)
 {
     OffscreenTarget* target = resolve(compiled_target);
-    if (target == nullptr)
-    {
+    if (target == nullptr) {
         reportSkipped(compiled_target, "this executor was not told about it");
         return false;
     }
@@ -200,12 +174,12 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
     // The FORMATS are part of it (see CompiledShape): a shape with the same count and a different format is
     // a different render pass, and the engine's vocabulary cannot tell two of them apart - which is the
     // drift this half of the check exists for.
-    if (pass.color_attachments != target->colorAttachmentCount() ||
-        pass.depth_sampleable != target->depth().sampleable ||
+    if (pass.color_attachments != target->colorAttachmentCount() || pass.depth_sampleable != target->depth().sampleable ||
         !core::statedShapeAgrees(compiled_target.shape, target->shape()))
     {
-        reportSkipped(compiled_target, "the plan and the target disagree about its shape (colour attachments, "
-                                       "formats, samples or depth)");
+        reportSkipped(compiled_target,
+                      "the plan and the target disagree about its shape (colour attachments, "
+                      "formats, samples or depth)");
         return false;
     }
 
@@ -223,11 +197,10 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
     // What the pass does to its attachments is the PLAN's decision, and both halves of it are facts the
     // executor cannot derive: whether this is the target's first writer (a fresh image cannot be loaded) and
     // whether a later pass reads the depth this one writes (never cleared). Handing them on is what makes a
-    // second pass over one target LOAD 
+    // second pass over one target LOAD
     // what the first one wrote instead of erasing it - the target builds the variant the plan asks for.
     ::vsg::ref_ptr<::vsg::RenderGraph> graph = target->passGraph(pass.clear, pass.bootstrap);
-    if (graph == nullptr)
-    {
+    if (graph == nullptr) {
         reportSkipped(compiled_target, "the target has no attachments to draw into");
         return false;
     }
@@ -235,10 +208,8 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
     // Whatever the content layer recorded for THIS pass goes inside this pass - after the plan's clear,
     // before the pass ends. The executor does not look at it: which draws it holds, and what they bind,
     // was decided where the content lives.
-    for (const PassContent& packet : content)
-    {
-        if (packet.pass == pass.pass && packet.content != nullptr)
-        {
+    for (const PassContent& packet : content) {
+        if (packet.pass == pass.pass && packet.content != nullptr) {
             graph->addChild(packet.content);
         }
     }
@@ -250,12 +221,12 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass& pass, const core::Co
     return true;
 }
 
-bool VsgExecutor::recordWindow(const core::CompiledPass& pass, const core::CompiledTarget& compiled_target,
+bool VsgExecutor::recordWindow(const core::CompiledPass&                  pass,
+                               const core::CompiledTarget&                compiled_target,
                                const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
-                               std::span<const PassContent> content)
+                               std::span<const PassContent>               content)
 {
-    if (window_ == nullptr)
-    {
+    if (window_ == nullptr) {
         reportWindowSkipped("no window target was registered with this executor");
         return false;
     }
@@ -264,8 +235,7 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass, const core::Compi
     // default framebuffer's facts (one colour attachment, no sampleable depth), and the window answers for
     // what the swapchain and its render pass really are - formats and samples included, because a window
     // whose facts state the DEVICE's spelling has to state the swapchain's own (see WindowTarget::facts).
-    if (pass.color_attachments != window_->colorAttachmentCount() ||
-        pass.depth_sampleable != window_->depthSampleable() ||
+    if (pass.color_attachments != window_->colorAttachmentCount() || pass.depth_sampleable != window_->depthSampleable() ||
         !core::statedShapeAgrees(compiled_target.shape, window_->shape()))
     {
         reportWindowSkipped("the plan and the window disagree about its shape (colour attachments, formats, "
@@ -277,8 +247,7 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass, const core::Compi
     // follows the window's live extent, and its clear values are that pass' clear policy) and puts the graph
     // into the command graph at the position that pass has in the plan. Later window passes stack on what it
     // left - the swapchain's render pass cannot express a second clear (see WindowTarget).
-    if (!window_recorded_)
-    {
+    if (!window_recorded_) {
         window_->prepare(pass.clear);
         // The window's content is THE FRAME'S: what the last recorded frame put in the retained view is
         // dropped before this frame's lands (a second frame would otherwise draw its predecessor's
@@ -291,10 +260,8 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass, const core::Compi
         window_recorded_ = true;
     }
 
-    for (const PassContent& packet : content)
-    {
-        if (packet.pass == pass.pass && packet.content != nullptr)
-        {
+    for (const PassContent& packet : content) {
+        if (packet.pass == pass.pass && packet.content != nullptr) {
             window_->addFrameContent(packet.content);
         }
     }
@@ -304,29 +271,23 @@ bool VsgExecutor::recordWindow(const core::CompiledPass& pass, const core::Compi
 std::size_t VsgExecutor::noteLostSubmission(const core::CompiledFrame& frame) noexcept
 {
     std::size_t marked = 0U;
-    for (const core::CompiledPass& pass : frame.passes)
-    {
-        if (pass.target_index >= frame.targets.size())
-        {
-            continue;  // the plan names a target it does not carry: the recorder refused it on the way in
+    for (const core::CompiledPass& pass : frame.passes) {
+        if (pass.target_index >= frame.targets.size()) {
+            continue; // the plan names a target it does not carry: the recorder refused it on the way in
         }
         const void* const identity = frame.targets[pass.target_index].target;
-        if (identity == nullptr)
-        {
-            continue;  // the default framebuffer: its contents are the presentation's, not ours
+        if (identity == nullptr) {
+            continue; // the default framebuffer: its contents are the presentation's, not ours
         }
         OffscreenTarget* target = nullptr;
-        for (const Entry& entry : targets_)
-        {
-            if (entry.identity == identity)
-            {
+        for (const Entry& entry : targets_) {
+            if (entry.identity == identity) {
                 target = entry.target;
                 break;
             }
         }
-        if (target == nullptr || target->instance().attachments_invalidated)
-        {
-            continue;  // not registered, or already marked by an earlier pass of this frame
+        if (target == nullptr || target->instance().attachments_invalidated) {
+            continue; // not registered, or already marked by an earlier pass of this frame
         }
         target->invalidateAttachments();
         ++marked;
@@ -341,25 +302,20 @@ bool VsgExecutor::submit(const core::CompiledFrame& frame, ::vsg::Viewer& viewer
     // this method exists for would slip past the second - and with it the mark. Anything else is unusual
     // enough to name as such rather than to let it end the frame drive.
     std::string failure;
-    try
-    {
+    try {
         viewer.recordAndSubmit();
         return true;
     }
-    catch (const ::vsg::Exception& error)
-    {
+    catch (const ::vsg::Exception& error) {
         failure = error.message;
-        if (error.result != 0)
-        {
+        if (error.result != 0) {
             failure += " (VkResult " + std::to_string(error.result) + ")";
         }
     }
-    catch (const std::exception& error)
-    {
+    catch (const std::exception& error) {
         failure = error.what();
     }
-    catch (...)
-    {
+    catch (...) {
         failure = "an exception of an unknown type";
     }
 
@@ -367,18 +323,17 @@ bool VsgExecutor::submit(const core::CompiledFrame& frame, ::vsg::Viewer& viewer
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Error,
                         vn::graphics::DiagnosticCategory::SubmissionFailed,
                         vn::String::fromUtf8("the frame's submission failed, so what its passes wrote was never "
-                                 "performed: " +
-                                 std::to_string(marked) +
-                                 " off-screen target(s) marked for repair (the next compiled plan bootstraps "
-                                 "them) - the failure was: " +
-                                 failure));
+                                             "performed: " +
+                                             std::to_string(marked) +
+                                             " off-screen target(s) marked for repair (the next compiled plan bootstraps "
+                                             "them) - the failure was: " +
+                                             failure));
     return false;
 }
 
 bool VsgExecutor::commit(const core::CompiledFrame& frame, api::Session& session)
 {
-    if (session.commitFrame())
-    {
+    if (session.commitFrame()) {
         return true;
     }
 
@@ -392,8 +347,7 @@ bool VsgExecutor::commit(const core::CompiledFrame& frame, api::Session& session
 
 bool VsgExecutor::commit(const core::CompiledFrame& frame, api::OffscreenSession& session)
 {
-    if (session.commitFrame())
-    {
+    if (session.commitFrame()) {
         return true;
     }
 
@@ -408,10 +362,10 @@ std::span<const core::PassId> VsgExecutor::recorded() const noexcept
     return recorded_;
 }
 
-VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::CompiledFrame& frame,
+VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::CompiledFrame&         frame,
                                                               std::span<const core::TargetFacts> facts,
-                                                              const core::FrameTimeline& timeline,
-                                                              core::RetirementQueue& retirement)
+                                                              const core::FrameTimeline&         timeline,
+                                                              core::RetirementQueue&             retirement)
 {
     TargetApplications applied;
 
@@ -422,20 +376,16 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     // Applying a borrower first would refuse its resize every frame and leave both targets at the size they
     // were built at - which is exactly what happened to the engine's deferred pipeline, silently.
     const auto factsOf = [&facts](const void* identity) -> const core::TargetFacts* {
-        for (const core::TargetFacts& entry : facts)
-        {
-            if (entry.target == identity)
-            {
+        for (const core::TargetFacts& entry : facts) {
+            if (entry.target == identity) {
                 return &entry;
             }
         }
         return nullptr;
     };
     const auto indexOf = [&frame](const void* identity) -> std::size_t {
-        for (std::size_t index = 0; index < frame.targets.size(); ++index)
-        {
-            if (frame.targets[index].target == identity)
-            {
+        for (std::size_t index = 0; index < frame.targets.size(); ++index) {
+            if (frame.targets[index].target == identity) {
                 return index;
             }
         }
@@ -449,10 +399,8 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     // these are the targets a replacement of @p identity has to answer to.
     const auto borrowersOf = [&facts](const void* identity) -> std::vector<const void*> {
         std::vector<const void*> borrowers;
-        for (const core::TargetFacts& entry : facts)
-        {
-            if (entry.depth.borrowed && entry.depth.source == identity)
-            {
+        for (const core::TargetFacts& entry : facts) {
+            if (entry.depth.borrowed && entry.depth.source == identity) {
                 borrowers.push_back(entry.target);
             }
         }
@@ -471,27 +419,21 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     // instead refused the lender's shrink while the borrower was about to follow, which left both targets at
     // the old size and reported a lease problem that was not one (measured on the demo, 2026-09-23).
     const auto coversBorrowers = [&frame, &facts, &indexOf](const void* identity, int width, int height) -> bool {
-        for (const core::TargetFacts& entry : facts)
-        {
-            if (!entry.depth.borrowed || entry.depth.source != identity)
-            {
+        for (const core::TargetFacts& entry : facts) {
+            if (!entry.depth.borrowed || entry.depth.source != identity) {
                 continue;
             }
-            int borrower_width  = entry.current.desc.width;
-            int borrower_height = entry.current.desc.height;
-            const std::size_t index = indexOf(entry.target);
-            if (index < frame.targets.size())
-            {
+            int               borrower_width  = entry.current.desc.width;
+            int               borrower_height = entry.current.desc.height;
+            const std::size_t index           = indexOf(entry.target);
+            if (index < frame.targets.size()) {
                 const core::TargetAction borrower_action = frame.targets[index].decision.action;
-                if (borrower_action == core::TargetAction::ResizeInPlace ||
-                    borrower_action == core::TargetAction::Rebuild)
-                {
+                if (borrower_action == core::TargetAction::ResizeInPlace || borrower_action == core::TargetAction::Rebuild) {
                     borrower_width  = entry.wanted.width;
                     borrower_height = entry.wanted.height;
                 }
             }
-            if (borrower_width > width || borrower_height > height)
-            {
+            if (borrower_width > width || borrower_height > height) {
                 return false;
             }
         }
@@ -505,27 +447,20 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     std::vector<std::size_t> order;
     std::vector<bool>        taken(frame.targets.size(), false);
     order.reserve(frame.targets.size());
-    for (std::size_t placed = 0; placed < frame.targets.size(); ++placed)
-    {
+    for (std::size_t placed = 0; placed < frame.targets.size(); ++placed) {
         std::size_t chosen = frame.targets.size();
-        for (std::size_t index = 0; index < frame.targets.size() && chosen == frame.targets.size(); ++index)
-        {
-            if (taken[index])
-            {
+        for (std::size_t index = 0; index < frame.targets.size() && chosen == frame.targets.size(); ++index) {
+            if (taken[index]) {
                 continue;
             }
             const std::size_t lender = indexOf(lenderOf(frame.targets[index]));
-            if (lender >= frame.targets.size() || taken[lender])
-            {
+            if (lender >= frame.targets.size() || taken[lender]) {
                 chosen = index;
             }
         }
-        if (chosen == frame.targets.size())
-        {
-            for (std::size_t index = 0; index < frame.targets.size(); ++index)
-            {
-                if (!taken[index])
-                {
+        if (chosen == frame.targets.size()) {
+            for (std::size_t index = 0; index < frame.targets.size(); ++index) {
+                if (!taken[index]) {
                     chosen = index;
                     break;
                 }
@@ -546,13 +481,11 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     // lender is enough.
     std::vector<const void*> replaced_identities;
 
-    for (const std::size_t index : order)
-    {
+    for (const std::size_t index : order) {
         const core::CompiledTarget& compiled = frame.targets[index];
-        const core::TargetAction action = compiled.decision.action;
+        const core::TargetAction    action   = compiled.decision.action;
 
-        if (compiled.target == nullptr)
-        {
+        if (compiled.target == nullptr) {
             // The default framebuffer. Its EXTENT belongs to the surface - the platform follows it and vsg
             // rebuilds the swapchain on its own (see WindowTarget::prepare) - so ResizeInPlace is already
             // true and there is nothing here to replace. Its SHAPE is the swapchain's too, and the shape
@@ -561,22 +494,18 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
             // the plan claims: a claim the swapchain does not back is counted as NOT APPLIED, and the record
             // step refuses the pass that relied on it (see its shape agreement) - which is what keeps a
             // window rebuild from being silently ignored.
-            if (action != core::TargetAction::Rebuild)
-            {
+            if (action != core::TargetAction::Rebuild) {
                 // None and the repair arms are the recording's (a bootstrap clear); ResizeInPlace is the
                 // surface's, already true.
                 continue;
             }
-            if (window_ == nullptr)
-            {
-                continue;  // not registered here: record() reports the pass that needed it
+            if (window_ == nullptr) {
+                continue; // not registered here: record() reports the pass that needed it
             }
-            if (window_->refresh())
-            {
+            if (window_->refresh()) {
                 ++applied.rebuilt;
             }
-            else
-            {
+            else {
                 // NOT reported here: the record step's shape agreement is what refuses the pass that relied on
                 // the claim (see recordWindow), so a report from this arm would say one problem twice - and the
                 // claim is often STALE rather than false (the plan was compiled from facts sampled before the
@@ -586,38 +515,33 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
             continue;
         }
 
-        if (action != core::TargetAction::ResizeInPlace && action != core::TargetAction::Rebuild)
-        {
+        if (action != core::TargetAction::ResizeInPlace && action != core::TargetAction::Rebuild) {
             // None, and the repair arms (which the recording answers with a bootstrap clear): nothing to
             // replace, so nothing is counted - a caller gates on "exactly one replacement happened".
             continue;
         }
 
         OffscreenTarget* target = resolve(compiled);
-        if (target == nullptr)
-        {
-            continue;  // not registered here: record() reports the pass that needed it
+        if (target == nullptr) {
+            continue; // not registered here: record() reports the pass that needed it
         }
 
         // The wanted description lives in the facts, not in the plan (the plan carries the answer). A target
         // the frame names but the table does not is one this call cannot act on: better nothing than a
         // description nobody gave.
         const core::TargetFacts* wanted = factsOf(compiled.target);
-        if (wanted == nullptr)
-        {
+        if (wanted == nullptr) {
             continue;
         }
 
         bool replaced = false;
-        if (action == core::TargetAction::ResizeInPlace)
-        {
+        if (action == core::TargetAction::ResizeInPlace) {
             // A LENDER may only shrink while it still covers its borrowers (see coversBorrowers): the depth
             // image is the borrowers' attachment, and a framebuffer is not allowed to be the larger of the
             // two. Refused here rather than inside the target because the borrowers are known to THIS layer
             // (they are rows of the facts table), and refusing keeps the pair legal and reported instead of
             // legal-looking and invalid.
-            if (!coversBorrowers(compiled.target, wanted->wanted.width, wanted->wanted.height))
-            {
+            if (!coversBorrowers(compiled.target, wanted->wanted.width, wanted->wanted.height)) {
                 ++applied.refused;
                 reportUnapplied(compiled,
                                 "its new extent would leave a borrower's framebuffer larger than the depth "
@@ -626,49 +550,41 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
                 continue;
             }
             const OffscreenTarget::Resized resized =
-                target->resize(static_cast<std::uint32_t>(wanted->wanted.width),
-                               static_cast<std::uint32_t>(wanted->wanted.height), timeline, retirement);
+                target->resize(static_cast<std::uint32_t>(wanted->wanted.width), static_cast<std::uint32_t>(wanted->wanted.height), timeline, retirement);
             replaced = resized.replaced;
-            if (resized.replaced)
-            {
+            if (resized.replaced) {
                 ++applied.resized;
             }
-            else if (resized.refused)
-            {
+            else if (resized.refused) {
                 ++applied.refused;
             }
-            else
-            {
+            else {
                 ++applied.failed;
             }
         }
-        else
-        {
+        else {
             // Rebuild: the plan changed the SHAPE, and everything the target is NOT changing here is its own -
             // the clear policy it was created with and whether its depth was asked to be sampleable (the plan's
             // description carries neither, see OffscreenTarget::layout).
-            OffscreenTarget::TargetLayout layout = target->layout();
-            layout.width         = static_cast<std::uint32_t>(wanted->wanted.width);
-            layout.height        = static_cast<std::uint32_t>(wanted->wanted.height);
-            layout.color_formats = wanted->wanted.shape.color_formats;
-            layout.depth_format  = wanted->wanted.shape.depth_format;
+            OffscreenTarget::TargetLayout layout   = target->layout();
+            layout.width                           = static_cast<std::uint32_t>(wanted->wanted.width);
+            layout.height                          = static_cast<std::uint32_t>(wanted->wanted.height);
+            layout.color_formats                   = wanted->wanted.shape.color_formats;
+            layout.depth_format                    = wanted->wanted.shape.depth_format;
             // The count is part of the shape the plan changed, so it travels with the formats: an image set is
             // built for ONE count, and rebuilding the attachments at the old count would leave the plan and the
             // target disagreeing (the shape agreement in record() would catch it, but only after a frame was
             // wasted on images nobody can draw into at the new count).
-            layout.samples = wanted->wanted.shape.samples;
+            layout.samples                         = wanted->wanted.shape.samples;
             const OffscreenTarget::Rebuilt rebuilt = target->rebuild(layout, timeline, retirement);
-            replaced = rebuilt.replaced;
-            if (rebuilt.replaced)
-            {
+            replaced                               = rebuilt.replaced;
+            if (rebuilt.replaced) {
                 ++applied.rebuilt;
             }
-            else if (rebuilt.refused)
-            {
+            else if (rebuilt.refused) {
                 ++applied.refused;
             }
-            else
-            {
+            else {
                 // The plan said Rebuild and nothing was replaced without a lease refusing: the description could
                 // not be built, and the target still serves the shape it had (the pass that needed the new one
                 // is reported by record()).
@@ -676,25 +592,23 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
             }
         }
 
-        if (!replaced)
-        {
+        if (!replaced) {
             // A refused or failed application used to be a counter nobody read, and that is how a leased pair
             // sat at the wrong extent for a whole session: the picture was a crop of its own top-left corner
             // and not one line said why. Reported once per EPISODE AND PER TARGET (the answer is a property of
             // the target's description, not of a frame), and deliberately NOT counted as a skipped pass: see
             // reportUnapplied.
-            reportUnapplied(compiled, action == core::TargetAction::ResizeInPlace
-                                         ? "its new extent could not be applied (a leased depth needs its lender "
-                                           "applied first, see the lease rules in OffscreenTarget)"
-                                         : "its new shape could not be applied (a leased depth cannot change shape "
-                                           "while the lease is in force)");
+            reportUnapplied(compiled,
+                            action == core::TargetAction::ResizeInPlace ? "its new extent could not be applied (a leased depth needs its lender "
+                                                                          "applied first, see the lease rules in OffscreenTarget)"
+                                                                        : "its new shape could not be applied (a leased depth cannot change shape "
+                                                                          "while the lease is in force)");
             continue;
         }
 
         replaced_identities.push_back(compiled.target);
-        if (Entry* entry = entryOf(compiled.target))
-        {
-            entry->noteApplied();  // the application took effect: a later failure is a new episode
+        if (Entry* entry = entryOf(compiled.target)) {
+            entry->noteApplied(); // the application took effect: a later failure is a new episode
         }
     }
 
@@ -702,12 +616,9 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     // borrower that rebuilt its own framebuffer against the lender's current image is already pointing at it
     // (repointBorrowedDepth says so and does nothing), and one whose own application was refused or failed
     // still names the replaced image - which is the case this pass exists for.
-    for (const void* lender : replaced_identities)
-    {
-        for (const void* borrower : borrowersOf(lender))
-        {
-            if (OffscreenTarget* borrower_target = resolveIdentity(borrower))
-            {
+    for (const void* lender : replaced_identities) {
+        for (const void* borrower : borrowersOf(lender)) {
+            if (OffscreenTarget* borrower_target = resolveIdentity(borrower)) {
                 (void)borrower_target->repointBorrowedDepth(timeline, retirement);
             }
         }
@@ -727,10 +638,8 @@ OffscreenTarget* VsgExecutor::resolve(const core::CompiledTarget& target) const 
 
 OffscreenTarget* VsgExecutor::resolveIdentity(const void* identity) const noexcept
 {
-    for (const Entry& entry : targets_)
-    {
-        if (entry.identity == identity)
-        {
+    for (const Entry& entry : targets_) {
+        if (entry.identity == identity) {
             return entry.target;
         }
     }
@@ -748,9 +657,8 @@ void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char
     // descriptions are two problems, and a single episode would report whichever failed first and swallow the
     // other until it recovered.
     Entry* entry = entryOf(target.target);
-    if (entry == nullptr || !entry->unapplied.shouldReport())
-    {
-        return;  // not registered here: record() reports the passes that needed it
+    if (entry == nullptr || !entry->unapplied.shouldReport()) {
+        return; // not registered here: record() reports the passes that needed it
     }
     const std::string which = entry->label != nullptr ? std::string(entry->label) : std::string("a target");
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
@@ -760,10 +668,8 @@ void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char
 
 VsgExecutor::Entry* VsgExecutor::entryOf(const void* identity) noexcept
 {
-    for (Entry& entry : targets_)
-    {
-        if (entry.identity == identity)
-        {
+    for (Entry& entry : targets_) {
+        if (entry.identity == identity) {
             return &entry;
         }
     }
@@ -776,8 +682,7 @@ void VsgExecutor::reportSkipped(const core::CompiledTarget& target, const char* 
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::ContentSkipped,
                         vn::String::fromUtf8(std::string("a compiled pass is not recorded: ") + why +
-                                 (target.target == nullptr ? " (the pass targets the default framebuffer)"
-                                                           : "")));
+                                             (target.target == nullptr ? " (the pass targets the default framebuffer)" : "")));
 }
 
 void VsgExecutor::reportWindowSkipped(const char* why)
@@ -785,8 +690,7 @@ void VsgExecutor::reportWindowSkipped(const char* why)
     ++skipped_;
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::ContentSkipped,
-                        vn::String::fromUtf8(std::string("a compiled pass is not recorded: ") + why +
-                                 " (the pass targets the default framebuffer)"));
+                        vn::String::fromUtf8(std::string("a compiled pass is not recorded: ") + why + " (the pass targets the default framebuffer)"));
 }
 
 VN_VSG_NS_END

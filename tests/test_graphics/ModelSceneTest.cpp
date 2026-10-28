@@ -44,10 +44,10 @@ namespace
 /// @brief One triangle, named, ready to be put in a model entry.
 vn::intrusive_ptr<IndexedTriangleMesh> makeTriangle(const char8_t* name)
 {
-    auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
-    const std::uint32_t a = mesh->addVertex(vn::math::Vec3f{ 0.0F, 0.0F, 0.0F });
-    const std::uint32_t b = mesh->addVertex(vn::math::Vec3f{ 1.0F, 0.0F, 0.0F });
-    const std::uint32_t c = mesh->addVertex(vn::math::Vec3f{ 0.0F, 1.0F, 0.0F });
+    auto                mesh = vn::make_intrusive<IndexedTriangleMesh>();
+    const std::uint32_t a    = mesh->addVertex(vn::math::Vec3f{ 0.0F, 0.0F, 0.0F });
+    const std::uint32_t b    = mesh->addVertex(vn::math::Vec3f{ 1.0F, 0.0F, 0.0F });
+    const std::uint32_t c    = mesh->addVertex(vn::math::Vec3f{ 0.0F, 1.0F, 0.0F });
     mesh->addTriangle(a, b, c);
     mesh->setName(name);
     return mesh;
@@ -68,7 +68,7 @@ const Geometry* firstGeometry(const Group& group)
 
 TEST(ModelSceneTest, TheTreeShapeNamesAndTransformsComeFromTheModel)
 {
-    Model model;
+    Model       model;
     Model::Node root;
     root.name     = u8"world";
     root.children = { 1U };
@@ -147,17 +147,15 @@ TEST(ModelSceneTest, AMeshUsedTwiceIsOneAllocationBehindTwoLeaves)
     const vn::graphics::AttributeChannel* second_positions = second->buffer(0U);
     ASSERT_NE(first_positions, nullptr);
     ASSERT_NE(second_positions, nullptr);
-    EXPECT_EQ(first_positions->values.get(), second_positions->values.get())
-        << "the vertex data is ONE allocation, shared by both leaves";
+    EXPECT_EQ(first_positions->values.get(), second_positions->values.get()) << "the vertex data is ONE allocation, shared by both leaves";
 }
 
 TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomesLeafOpacity)
 {
     auto color_material = vn::make_intrusive<ColorMaterial>(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
     color_material->setName(u8"red");
-    auto phong_material = vn::make_intrusive<PhongMaterial>(
-        vn::Colorf(0.1F, 0.1F, 0.1F, 1.0F), vn::Colorf(0.2F, 0.4F, 0.6F, 1.0F),
-        vn::Colorf(0.9F, 0.9F, 0.9F, 1.0F), 64.0F);
+    auto phong_material =
+        vn::make_intrusive<PhongMaterial>(vn::Colorf(0.1F, 0.1F, 0.1F, 1.0F), vn::Colorf(0.2F, 0.4F, 0.6F, 1.0F), vn::Colorf(0.9F, 0.9F, 0.9F, 1.0F), 64.0F);
     phong_material->setName(u8"phong");
     auto pbr_material = vn::make_intrusive<PbrMaterial>(vn::Colorf(0.8F, 0.8F, 0.8F, 1.0F), 1.0F, 0.25F, 0.4F);
     pbr_material->setName(u8"pbr");
@@ -177,7 +175,7 @@ TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomes
     Model::Entry pbr_entry;
     pbr_entry.mesh     = makeTriangle(u8"c");
     pbr_entry.material = pbr_material;
-    Model::Entry missing_entry;  // no mesh: counted, not fatal
+    Model::Entry missing_entry; // no mesh: counted, not fatal
     model.setMeshes({ color_entry, phong_entry, pbr_entry, missing_entry });
 
     const vn::graphics::ModelScene scene = sceneFromModel(model);
@@ -203,8 +201,7 @@ TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomes
     ASSERT_NE(phong, nullptr);
     ASSERT_NE(phong->material(), nullptr);
     EXPECT_FLOAT_EQ(phong->material()->baseColor().b, 0.6F) << "the diffuse reflectance is the base colour";
-    EXPECT_FLOAT_EQ(phong->material()->metallic(), 0.9F)
-        << "the specular colour's peak becomes metallic (the strongest channel, intensity 1)";
+    EXPECT_FLOAT_EQ(phong->material()->metallic(), 0.9F) << "the specular colour's peak becomes metallic (the strongest channel, intensity 1)";
     EXPECT_FLOAT_EQ(phong->material()->roughness(), std::sqrt(2.0F / (64.0F + 2.0F)))
         << "the exponent becomes the roughness by the standard Blinn-Phong -> GGX mapping";
 
@@ -251,10 +248,10 @@ TEST(ModelSceneTest, ACyclicNodeReferenceIsCutInsteadOfRecursingForever)
     Model       model;
     Model::Node root;
     root.name     = u8"root";
-    root.children = { 0U, 1U };  // 0 is the node itself
+    root.children = { 0U, 1U }; // 0 is the node itself
     Model::Node child;
     child.name     = u8"child";
-    child.children = { 0U };  // and it points back at the root
+    child.children = { 0U }; // and it points back at the root
     model.setNodes({ root, child });
     model.setRoot(0U);
 
@@ -313,7 +310,7 @@ TEST(ModelSceneTest, AnEntryIndexOutsideTheTableIsCountedNotDereferenced)
     Model       model;
     Model::Node node;
     node.name   = u8"root";
-    node.meshes = { 5U };  // no such entry
+    node.meshes = { 5U }; // no such entry
     model.setNodes({ node });
     model.setRoot(0U);
 

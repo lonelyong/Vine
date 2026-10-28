@@ -7,14 +7,14 @@
 #include "BrepFormatTable.hpp"
 
 #if defined(VN_BREPIO_HAS_OCCT)
-#include <sstream>
+#    include <sstream>
 
-#include <BRep_Builder.hxx>
-#include <BRepTools.hxx>
-#include <IFSelect_ReturnStatus.hxx>
-#include <IGESControl_Reader.hxx>
-#include <STEPControl_Reader.hxx>
-#include <TopoDS_Shape.hxx>
+#    include <BRepTools.hxx>
+#    include <BRep_Builder.hxx>
+#    include <IFSelect_ReturnStatus.hxx>
+#    include <IGESControl_Reader.hxx>
+#    include <STEPControl_Reader.hxx>
+#    include <TopoDS_Shape.hxx>
 #endif
 
 VN_BREPIO_NS_BEGIN
@@ -76,34 +76,36 @@ TopoDS_Shape readFile(const std::string& file_path, BrepFormat format)
 {
     TopoDS_Shape shape;
     switch (format) {
-      case BrepFormat::Step: {
-          STEPControl_Reader reader;
-          if (reader.ReadFile(file_path.c_str()) != IFSelect_RetDone) {
-              return {};
-          }
-          reader.TransferRoots();
-          shape = reader.OneShape();
-          break;
-      }
-      case BrepFormat::Iges: {
-          IGESControl_Reader reader;
-          if (reader.ReadFile(file_path.c_str()) != IFSelect_RetDone) {
-              return {};
-          }
-          reader.TransferRoots();
-          shape = reader.OneShape();
-          break;
-      }
-      case BrepFormat::Brep: {
-          BRep_Builder builder;
-          BRepTools::Read(shape, file_path.c_str(), builder); // void since OCCT 8; a failure leaves the shape null
-          if (shape.IsNull()) {
-              return {};
-          }
-          break;
-      }
-      case BrepFormat::Unknown:
-          break;
+    case BrepFormat::Step:
+    {
+        STEPControl_Reader reader;
+        if (reader.ReadFile(file_path.c_str()) != IFSelect_RetDone) {
+            return {};
+        }
+        reader.TransferRoots();
+        shape = reader.OneShape();
+        break;
+    }
+    case BrepFormat::Iges:
+    {
+        IGESControl_Reader reader;
+        if (reader.ReadFile(file_path.c_str()) != IFSelect_RetDone) {
+            return {};
+        }
+        reader.TransferRoots();
+        shape = reader.OneShape();
+        break;
+    }
+    case BrepFormat::Brep:
+    {
+        BRep_Builder builder;
+        BRepTools::Read(shape, file_path.c_str(), builder); // void since OCCT 8; a failure leaves the shape null
+        if (shape.IsNull()) {
+            return {};
+        }
+        break;
+    }
+    case BrepFormat::Unknown: break;
     }
     return shape;
 }
@@ -119,34 +121,36 @@ TopoDS_Shape readStream(std::istream& in, BrepFormat format)
 {
     TopoDS_Shape shape;
     switch (format) {
-      case BrepFormat::Step: {
-          STEPControl_Reader reader;
-          if (reader.ReadStream("model.step", in) != IFSelect_RetDone) {
-              return {};
-          }
-          reader.TransferRoots();
-          shape = reader.OneShape();
-          break;
-      }
-      case BrepFormat::Iges: {
-          IGESControl_Reader reader;
-          if (reader.ReadStream("model.igs", in) != IFSelect_RetDone) {
-              return {};
-          }
-          reader.TransferRoots();
-          shape = reader.OneShape();
-          break;
-      }
-      case BrepFormat::Brep: {
-          BRep_Builder builder;
-          BRepTools::Read(shape, in, builder); // void since OCCT 8; a failed read leaves the shape null
-          if (shape.IsNull()) {
-              return {};
-          }
-          break;
-      }
-      case BrepFormat::Unknown:
-          break;
+    case BrepFormat::Step:
+    {
+        STEPControl_Reader reader;
+        if (reader.ReadStream("model.step", in) != IFSelect_RetDone) {
+            return {};
+        }
+        reader.TransferRoots();
+        shape = reader.OneShape();
+        break;
+    }
+    case BrepFormat::Iges:
+    {
+        IGESControl_Reader reader;
+        if (reader.ReadStream("model.igs", in) != IFSelect_RetDone) {
+            return {};
+        }
+        reader.TransferRoots();
+        shape = reader.OneShape();
+        break;
+    }
+    case BrepFormat::Brep:
+    {
+        BRep_Builder builder;
+        BRepTools::Read(shape, in, builder); // void since OCCT 8; a failed read leaves the shape null
+        if (shape.IsNull()) {
+            return {};
+        }
+        break;
+    }
+    case BrepFormat::Unknown: break;
     }
     return shape;
 }
@@ -197,8 +201,7 @@ void BrepLoader::clearCache()
     cache_.clear();
 }
 
-vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(
-    const std::filesystem::path& file_path)
+vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(const std::filesystem::path& file_path)
 {
     const BrepFormat format = formatFromPath(file_path);
     if (format == BrepFormat::Unknown) {
@@ -213,7 +216,8 @@ vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(
     vn::crypto::ByteSequenceFingerprint fingerprint;
     try {
         fingerprint = vn::crypto::ByteSequenceFingerprint(file_path);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&) {
         return vn::io::IoError::IoFailure; // a file this process may not read is not a solid either
     }
 
@@ -250,8 +254,7 @@ vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(std:
     }
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once.
-    const vn::crypto::ByteSequenceFingerprint fingerprint(
-        std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
+    const vn::crypto::ByteSequenceFingerprint fingerprint(std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
     if (auto cached = cache_.get(fingerprint)) {
         return *cached;
     }

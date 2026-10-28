@@ -14,10 +14,9 @@ namespace
 {
 
 /// @brief Reads the process' heap usage, or reports that this platform cannot.
-struct HeapUsage
-{
-    bool        supported{false};
-    std::size_t bytes{0};
+struct HeapUsage {
+    bool        supported{ false };
+    std::size_t bytes{ 0 };
 };
 
 /// @brief The platform's heap-usage reading (see the header: unsupported is reported, never faked).
@@ -25,18 +24,18 @@ HeapUsage heapUsage() noexcept
 {
 #if defined(VN_HAVE_MALLINFO2)
     const struct mallinfo2 info = mallinfo2();
-    return HeapUsage{true, static_cast<std::size_t>(info.uordblks)};
+    return HeapUsage{ true, static_cast<std::size_t>(info.uordblks) };
 #elif defined(__GLIBC__)
     // glibc < 2.33: the old counters are `int`, so they saturate on a heap past 2 GB. Still worth
     // having on those systems, and the saturation is why mallinfo2 is preferred where it exists.
     const struct mallinfo info = mallinfo();
-    return HeapUsage{true, static_cast<std::size_t>(info.uordblks)};
+    return HeapUsage{ true, static_cast<std::size_t>(info.uordblks) };
 #else
     return HeapUsage{};
 #endif
 }
 
-}  // namespace
+} // namespace
 
 namespace
 {
@@ -46,11 +45,10 @@ namespace
 /// Function-local statics, so a global `operator new` may call into them during static initialisation - the
 /// allocation that happens before `main()` is as real as any other, and a counter that only becomes usable
 /// once some TU's dynamic initialiser ran would silently lose it.
-struct Counters
-{
-    std::atomic<std::uint64_t> count{0};
-    std::atomic<std::size_t>   bytes{0};
-    std::atomic<bool>          announced{false};
+struct Counters {
+    std::atomic<std::uint64_t> count{ 0 };
+    std::atomic<std::size_t>   bytes{ 0 };
+    std::atomic<bool>          announced{ false };
 };
 
 Counters& counters() noexcept
@@ -59,7 +57,7 @@ Counters& counters() noexcept
     return state;
 }
 
-}  // namespace
+} // namespace
 
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -104,8 +102,7 @@ std::uint64_t AllocationGate::allocationCount() noexcept
 
 void AllocationGate::begin() noexcept
 {
-    if (open_)
-    {
+    if (open_) {
         // Already measuring: the first open owns the window, so a nested one cannot shorten it.
         return;
     }
@@ -117,8 +114,7 @@ void AllocationGate::begin() noexcept
 
 std::ptrdiff_t AllocationGate::end() noexcept
 {
-    if (!open_)
-    {
+    if (!open_) {
         return 0;
     }
     open_ = false;
@@ -129,8 +125,7 @@ std::ptrdiff_t AllocationGate::end() noexcept
     allocations_ = allocationCount() - opened_count_;
     bytes_       = counters().bytes.load(std::memory_order_relaxed) - opened_bytes_;
 
-    if (!supported())
-    {
+    if (!supported()) {
         last_growth_ = 0;
         return last_growth_;
     }

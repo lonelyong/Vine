@@ -32,25 +32,22 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief Per-frame storage: a fixed ring of blocks, one slab per frame that may still read it. */
-class VN_GRAPHICS_API FrameRing
-{
+class VN_GRAPHICS_API FrameRing {
   public:
     /** @brief The ring's shape. */
-    struct Layout
-    {
-        std::uint64_t stride{80};            ///< Bytes one reservation holds (a draw block, a view block).
-        std::uint64_t alignment{256};        ///< Offset alignment; the effective stride is rounded up to it.
+    struct Layout {
+        std::uint64_t stride{ 80 };     // Bytes one reservation holds (a draw block, a view block).
+        std::uint64_t alignment{ 256 }; // Offset alignment; the effective stride is rounded up to it.
         /// Slabs owned, one MORE than the frames that may be in flight (see the file note, and
         /// perFrameCopies for the count and why the extra slab is what makes a frame correct).
-        std::uint32_t slabs{perFrameCopies(kAssumedInFlightSlots)};
-        std::uint32_t blocks_per_frame{512}; ///< Reservations a single frame may make.
+        std::uint32_t slabs{ perFrameCopies(kAssumedInFlightSlots) };
+        std::uint32_t blocks_per_frame{ 512 }; // Reservations a single frame may make.
     };
 
     /** @brief One reservation: where the block is, or that the ring refused. */
-    struct Reservation
-    {
-        bool          valid{false};  ///< false when the frame's budget was exhausted (counted, never grown).
-        std::uint64_t offset{0};     ///< Byte offset of the block (meaningful when valid).
+    struct Reservation {
+        bool          valid{ false }; // false when the frame's budget was exhausted (counted, never grown).
+        std::uint64_t offset{ 0 };    // Byte offset of the block (meaningful when valid).
     };
 
   public:
@@ -60,7 +57,7 @@ class VN_GRAPHICS_API FrameRing
      */
     explicit FrameRing(const Layout& layout);
 
-    FrameRing(const FrameRing&) = delete;
+    FrameRing(const FrameRing&)            = delete;
     FrameRing& operator=(const FrameRing&) = delete;
 
   public:
@@ -108,16 +105,16 @@ class VN_GRAPHICS_API FrameRing
     [[nodiscard]] std::uint64_t overflows() const noexcept;
 
   private:
-    std::uint64_t stride_{1};
-    std::uint64_t alignment_{1};
-    std::uint64_t slab_bytes_{1};
-    std::uint32_t slabs_{1};
-    std::uint32_t blocks_per_frame_{1};
-    bool          started_{false};
-    std::uint64_t frames_{0};
-    std::uint32_t reserved_{0};
-    std::uint32_t high_water_{0};
-    std::uint64_t overflows_{0};
+    std::uint64_t stride_{ 1 };
+    std::uint64_t alignment_{ 1 };
+    std::uint64_t slab_bytes_{ 1 };
+    std::uint32_t slabs_{ 1 };
+    std::uint32_t blocks_per_frame_{ 1 };
+    bool          started_{ false };
+    std::uint64_t frames_{ 0 };
+    std::uint32_t reserved_{ 0 };
+    std::uint32_t high_water_{ 0 };
+    std::uint64_t overflows_{ 0 };
 };
 
 VN_GRAPHICSBACKEND_NS_END

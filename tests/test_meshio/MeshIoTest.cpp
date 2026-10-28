@@ -8,11 +8,11 @@
 #include <string>
 
 #include <vine/Colorf.hpp>
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/Model.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
@@ -120,8 +120,7 @@ TEST(MeshIoTest, FormatVocabularyIsTheReadContract)
     for (const vn::String& extension : MeshLoader::supportedExtensions()) {
         const auto format = formatFromPath(std::filesystem::path(std::string("x") + extension.as_std_str()));
         EXPECT_NE(format, MeshFormat::Unknown) << extension.as_std_str();
-        EXPECT_EQ(std::string(formatInfo(format).extension), extension.as_std_str())
-            << "the table row and the picker entry are the same spelling";
+        EXPECT_EQ(std::string(formatInfo(format).extension), extension.as_std_str()) << "the table row and the picker entry are the same spelling";
     }
     EXPECT_EQ(MeshLoader::supportedExtensions().size(), 8u);
 
@@ -138,7 +137,7 @@ TEST(MeshIoTest, DaeAndColladaAreOneFormat)
     // The old API accepted "collada" but refused "dae" for the same file; the enum makes both spellings one value.
     EXPECT_EQ(formatFromPath("thing.dae"), MeshFormat::Collada);
 
-    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_thing.dae";
+    const auto   path = std::filesystem::temp_directory_path() / "vn_meshio_thing.dae";
     MeshExporter exporter;
     ASSERT_EQ(exporter.exportAs(*makeCube(), MeshFormat::Collada, path), vn::io::IoError::Ok);
 
@@ -167,8 +166,7 @@ TEST(MeshIoTest, LoadMissingFileIsNotFound)
     MeshLoader loader;
     auto       missing = loader.loadMerged(std::filesystem::temp_directory_path() / "vn_no_such_file.stl");
     EXPECT_FALSE(missing);
-    EXPECT_EQ(missing.error(), vn::io::IoError::NotFound)
-        << "a path that is not there is not the same failure as a broken file";
+    EXPECT_EQ(missing.error(), vn::io::IoError::NotFound) << "a path that is not there is not the same failure as a broken file";
 }
 
 TEST(MeshIoTest, LoadSaysWhyItFailed)
@@ -189,8 +187,7 @@ TEST(MeshIoTest, LoadSaysWhyItFailed)
     EXPECT_EQ(loader.load(garbage, MeshFormat::Stl).error(), vn::io::IoError::InvalidData);
 
     const auto unknown = std::filesystem::temp_directory_path() / "vn_meshio_model.txt";
-    EXPECT_EQ(loader.loadMerged(unknown).error(), vn::io::IoError::Unsupported)
-        << "an unnamed extension is not attempted at all";
+    EXPECT_EQ(loader.loadMerged(unknown).error(), vn::io::IoError::Unsupported) << "an unnamed extension is not attempted at all";
 
     const auto good = std::filesystem::temp_directory_path() / "vn_meshio_good.stl";
     writeTriangleStl(good);
@@ -228,9 +225,14 @@ TEST(MeshIoTest, VertexColorsSurviveAPlyRoundTrip)
 {
     // PLY is the format family that carries per-vertex colours end to end, so it is what proves both directions.
     auto cube = makeCube();
-    cube->setColors({ Vec4f(1.0f, 0.0f, 0.0f, 1.0f), Vec4f(0.0f, 1.0f, 0.0f, 1.0f), Vec4f(0.0f, 0.0f, 1.0f, 1.0f),
-                      Vec4f(1.0f, 1.0f, 0.0f, 1.0f), Vec4f(1.0f, 0.0f, 1.0f, 1.0f), Vec4f(0.0f, 1.0f, 1.0f, 1.0f),
-                      Vec4f(1.0f, 1.0f, 1.0f, 1.0f), Vec4f(0.0f, 0.0f, 0.0f, 1.0f) });
+    cube->setColors({ Vec4f(1.0f, 0.0f, 0.0f, 1.0f),
+                      Vec4f(0.0f, 1.0f, 0.0f, 1.0f),
+                      Vec4f(0.0f, 0.0f, 1.0f, 1.0f),
+                      Vec4f(1.0f, 1.0f, 0.0f, 1.0f),
+                      Vec4f(1.0f, 0.0f, 1.0f, 1.0f),
+                      Vec4f(0.0f, 1.0f, 1.0f, 1.0f),
+                      Vec4f(1.0f, 1.0f, 1.0f, 1.0f),
+                      Vec4f(0.0f, 0.0f, 0.0f, 1.0f) });
 
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_colors.ply";
 
@@ -269,10 +271,14 @@ TEST(MeshIoTest, MergedEntryPadsMeshesThatAuthorNoColourWithWhite)
     // One file, two meshes - and only the first one coloured. The merged entry has ONE vertex list, so the mesh that
     // authors no colour contributes OPAQUE WHITE: the multiplicative identity the shading applies.
     auto coloured_cube = makeCube();
-    coloured_cube->setColors({ Vec4f(0.0f, 0.0f, 0.0f, 1.0f), Vec4f(0.5f, 0.0f, 0.0f, 1.0f),
-                               Vec4f(0.0f, 0.5f, 0.0f, 1.0f), Vec4f(0.0f, 0.0f, 0.5f, 1.0f),
-                               Vec4f(0.5f, 0.5f, 0.0f, 1.0f), Vec4f(0.5f, 0.0f, 0.5f, 1.0f),
-                               Vec4f(0.0f, 0.5f, 0.5f, 1.0f), Vec4f(0.5f, 0.5f, 0.5f, 1.0f) });
+    coloured_cube->setColors({ Vec4f(0.0f, 0.0f, 0.0f, 1.0f),
+                               Vec4f(0.5f, 0.0f, 0.0f, 1.0f),
+                               Vec4f(0.0f, 0.5f, 0.0f, 1.0f),
+                               Vec4f(0.0f, 0.0f, 0.5f, 1.0f),
+                               Vec4f(0.5f, 0.5f, 0.0f, 1.0f),
+                               Vec4f(0.5f, 0.0f, 0.5f, 1.0f),
+                               Vec4f(0.0f, 0.5f, 0.5f, 1.0f),
+                               Vec4f(0.5f, 0.5f, 0.5f, 1.0f) });
     auto plain_cube = makeCube();
 
     auto model = vn::make_intrusive<vn::geometry::Model>();
@@ -300,17 +306,14 @@ TEST(MeshIoTest, MergedEntryPadsMeshesThatAuthorNoColourWithWhite)
         std::filesystem::remove(path);
         return merged;
     };
-    const auto is_white = [](const Vec4f& colour) {
-        return colour.x == 1.0f && colour.y == 1.0f && colour.z == 1.0f;
-    };
+    const auto is_white = [](const Vec4f& colour) { return colour.x == 1.0f && colour.y == 1.0f && colour.z == 1.0f; };
 
     // Mixed: the coloured mesh keeps its colours, the plain one is padded with white.
     auto mixed = load_merged("vn_meshio_mixed_colors.glb");
     ASSERT_TRUE(mixed);
     const auto& mixed_mesh = *mixed.value();
     ASSERT_EQ(mixed_mesh.colors().size(), mixed_mesh.positions().size()) << "one colour per vertex, padded or authored";
-    const std::size_t white = static_cast<std::size_t>(
-        std::count_if(mixed_mesh.colors().begin(), mixed_mesh.colors().end(), is_white));
+    const std::size_t white = static_cast<std::size_t>(std::count_if(mixed_mesh.colors().begin(), mixed_mesh.colors().end(), is_white));
     EXPECT_GT(white, 0u) << "the mesh that authors no colour carries white";
     EXPECT_LT(white, mixed_mesh.colors().size()) << "the colours the other mesh authored survived the merge";
 
@@ -334,8 +337,7 @@ TEST(MeshIoTest, ExportAsciiStl)
     const auto cube = makeCube();
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_cube_ascii.stl";
 
-    MeshExporter exporter(MeshExporter::Options{ .scale_factor = 1.0,
-                                                 .encoding     = MeshExporter::Encoding::Text });
+    MeshExporter exporter(MeshExporter::Options{ .scale_factor = 1.0, .encoding = MeshExporter::Encoding::Text });
     ASSERT_EQ(exporter.exportAs(*cube, MeshFormat::Stl, path), vn::io::IoError::Ok);
     EXPECT_TRUE(std::filesystem::exists(path));
     EXPECT_GT(std::filesystem::file_size(path), 0u);
@@ -360,8 +362,7 @@ TEST(MeshIoTest, ExportInvalidMeshIsInvalidData)
 TEST(MeshIoTest, ExportUnknownFormatIsUnsupported)
 {
     MeshExporter exporter;
-    EXPECT_EQ(exporter.exportAs(*makeCube(), MeshFormat::Unknown, std::filesystem::temp_directory_path() / "x.bin"),
-              vn::io::IoError::Unsupported);
+    EXPECT_EQ(exporter.exportAs(*makeCube(), MeshFormat::Unknown, std::filesystem::temp_directory_path() / "x.bin"), vn::io::IoError::Unsupported);
 }
 
 TEST(MeshIoTest, LoadCachesSameFile)
@@ -408,9 +409,8 @@ TEST(MeshIoTest, CustomScaleMultipliesVertices)
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_scale.stl";
     writeTriangleStl(path);
 
-    MeshLoader loader(
-        MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Custom, .custom_scale_factor = 3.0 });
-    auto mesh = loader.loadMerged(path);
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Custom, .custom_scale_factor = 3.0 });
+    auto       mesh = loader.loadMerged(path);
     ASSERT_TRUE(mesh);
 
     const auto& itm       = vn::obj_cast<IndexedTriangleMesh>(*mesh.value());
@@ -440,16 +440,16 @@ TEST(MeshIoTest, ModelToStlAppliesTransformsOnce)
     vn::geometry::Model::Node root;
     root.children = { 1u }; // the root itself draws nothing
     vn::geometry::Model::Node shifted;
-    shifted.name                       = vn::String(u8"shifted");
-    shifted.transform.element(0, 3)    = 5.0; // +5 on x
-    shifted.meshes                     = { 0u };
+    shifted.name                    = vn::String(u8"shifted");
+    shifted.transform.element(0, 3) = 5.0; // +5 on x
+    shifted.meshes                  = { 0u };
 
     auto model = vn::make_intrusive<vn::geometry::Model>();
     model->setMeshes({ entry });
     model->setNodes({ root, shifted });
     model->setRoot(0u);
 
-    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_model_flat.stl";
+    const auto   path = std::filesystem::temp_directory_path() / "vn_meshio_model_flat.stl";
     MeshExporter exporter;
     ASSERT_EQ(exporter.exportAs(*model, MeshFormat::Stl, path), vn::io::IoError::Ok);
 

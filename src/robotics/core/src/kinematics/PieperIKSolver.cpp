@@ -47,8 +47,7 @@ PieperIKSolver::PieperIKSolver(const std::vector<DofInfo>& dofs)
     // Spherical wrist: axes 4, 5 and 6 meet at a single point ⇔ a₃ = a₄ = a₅ = 0 and d₅ = 0.
     // d₅ (mdh_[4].d) is what makes the origins of frames 4 and 5 coincide, i.e. the very point
     // solve() reconstructs as (tool position − d₆·z).
-    if (std::abs(mdh_[3].a) > kEpsGeom || std::abs(mdh_[4].a) > kEpsGeom || std::abs(mdh_[5].a) > kEpsGeom ||
-        std::abs(mdh_[4].d) > kEpsGeom)
+    if (std::abs(mdh_[3].a) > kEpsGeom || std::abs(mdh_[4].a) > kEpsGeom || std::abs(mdh_[5].a) > kEpsGeom || std::abs(mdh_[4].d) > kEpsGeom)
         return;
 
     // Arm geometry (required by solveArm):
@@ -252,8 +251,7 @@ void solveWristRegular(WristContext& ctx, double theta5, std::vector<Q>& solutio
     const double s6     = A01 * R(0, 0) + A11 * R(1, 0) + M21 * R(2, 0);
     const double theta6 = std::atan2(s6, c6);
 
-    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs,
-                ctx.check_limits, solutions);
+    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs, ctx.check_limits, solutions);
 }
 
 /* Path A.2: θ₅ singular (s₅ ≈ 0) */
@@ -281,8 +279,7 @@ void solveWristSingular(WristContext& ctx, double theta5, std::vector<Q>& soluti
     }
     const double theta6 = std::atan2(s6, c6);
 
-    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs,
-                ctx.check_limits, solutions);
+    addSolution(ctx.mdh, ctx.target, { ctx.arm_q[0], ctx.arm_q[1], ctx.arm_q[2], theta4, theta5, theta6 }, ctx.dofs, ctx.check_limits, solutions);
 }
 
 // solveWrist – dispatch

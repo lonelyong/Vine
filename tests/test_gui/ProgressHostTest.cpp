@@ -100,8 +100,8 @@ TEST(ProgressHostTest, RangeIsActiveOnceOnly)
 
     // 多阶段应使用嵌套：一个顶层 scope + next() 分配子范围。
     ProgressScope root = host.scope(u8"whole", 10);
-    ProgressRange  part = root.next(4);
-    ProgressScope  stage(part, "stage", 4);
+    ProgressRange part = root.next(4);
+    ProgressScope stage(part, "stage", 4);
     EXPECT_TRUE(stage.isActive());
 }
 

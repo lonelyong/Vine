@@ -10,24 +10,24 @@
 #include <utility>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/io/Vfs.hpp>
 #include <vine/io/Zip.hpp>
 #include <vine/io/ZipArchive.hpp>
-#include <vine/String.hpp>
 
 #include "VfsTestSupport.hpp"
 
-using vn::String;
-using vn::io::VfsEntryInfo;
-using vn::io::VfsEntryKind;
-using vn::io::IoError;
-using vn::io::Zip;
-using vn::io::ZipArchive;
 using vfstest::bytesOf;
 using vfstest::findInfo;
 using vfstest::sortedNames;
 using vfstest::TempDir;
+using vn::String;
+using vn::io::IoError;
+using vn::io::VfsEntryInfo;
+using vn::io::VfsEntryKind;
+using vn::io::Zip;
+using vn::io::ZipArchive;
 
 namespace
 {
@@ -75,13 +75,11 @@ void rewriteNameInDirectory(std::vector<unsigned char>& bytes, const std::string
     // A central directory header spells its name length at 28 and its name at 46.
     int rewritten = 0;
     for (std::size_t offset = 0; offset + 46 + to.size() <= bytes.size(); ++offset) {
-        const bool is_record = bytes[offset] == 0x50 && bytes[offset + 1] == 0x4B && bytes[offset + 2] == 0x01 &&
-                               bytes[offset + 3] == 0x02;
+        const bool is_record = bytes[offset] == 0x50 && bytes[offset + 1] == 0x4B && bytes[offset + 2] == 0x01 && bytes[offset + 3] == 0x02;
         if (!is_record) {
             continue;
         }
-        const std::uint16_t length =
-                static_cast<std::uint16_t>(bytes[offset + 28] | static_cast<std::uint16_t>(bytes[offset + 29] << 8));
+        const std::uint16_t length = static_cast<std::uint16_t>(bytes[offset + 28] | static_cast<std::uint16_t>(bytes[offset + 29] << 8));
         if (length != from.size() || !std::equal(from.begin(), from.end(), bytes.begin() + offset + 46)) {
             continue;
         }
@@ -146,7 +144,7 @@ TEST(ZipArchiveTest, ArchiveIndexReportsNamesSizesAndKinds)
     EXPECT_EQ(xml_stat->crc, xml->crc);
 
     // The in-memory form reports the same index.
-    const std::vector<unsigned char> bytes = buildPackage();
+    const std::vector<unsigned char> bytes       = buildPackage();
     const auto                       from_memory = Zip::entries(bytes);
     ASSERT_TRUE(from_memory.ok());
     EXPECT_EQ(from_memory->size(), entries->size());
@@ -171,8 +169,12 @@ TEST(ZipArchiveTest, MatchesTheMemoryBackendForTheSameContent)
     auto lazy = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(lazy.ok());
 
-    for (const std::filesystem::path& dir :
-         { std::filesystem::path(u8""), std::filesystem::path(u8"geoms"), std::filesystem::path(u8"devices"), std::filesystem::path(u8"nested"), std::filesystem::path(u8"empty") }) {
+    for (const std::filesystem::path& dir : { std::filesystem::path(u8""),
+                                              std::filesystem::path(u8"geoms"),
+                                              std::filesystem::path(u8"devices"),
+                                              std::filesystem::path(u8"nested"),
+                                              std::filesystem::path(u8"empty") })
+    {
         const auto lazy_children = lazy->list(dir);
         const auto tree_children = built.list(dir);
         ASSERT_TRUE(lazy_children.ok()) << dir.generic_string();
@@ -186,8 +188,12 @@ TEST(ZipArchiveTest, MatchesTheMemoryBackendForTheSameContent)
         EXPECT_EQ(lazy->list(path).error(), built.list(path).error()) << path.generic_string();
     }
 
-    for (const std::filesystem::path& path :
-         { std::filesystem::path(u8"workcell.xml"), std::filesystem::path(u8"geoms"), std::filesystem::path(u8"geoms/base.bin"), std::filesystem::path(u8"empty"), std::filesystem::path(u8"nested/deep") }) {
+    for (const std::filesystem::path& path : { std::filesystem::path(u8"workcell.xml"),
+                                               std::filesystem::path(u8"geoms"),
+                                               std::filesystem::path(u8"geoms/base.bin"),
+                                               std::filesystem::path(u8"empty"),
+                                               std::filesystem::path(u8"nested/deep") })
+    {
         const auto lazy_info = lazy->stat(path);
         const auto tree_info = built.stat(path);
         ASSERT_TRUE(lazy_info.ok()) << path.generic_string();
@@ -197,7 +203,9 @@ TEST(ZipArchiveTest, MatchesTheMemoryBackendForTheSameContent)
         EXPECT_EQ(lazy_info->size, tree_info->size) << path.generic_string();
     }
 
-    for (const std::filesystem::path& path : { std::filesystem::path(u8"workcell.xml"), std::filesystem::path(u8"geoms/base.bin"), std::filesystem::path(u8"devices/robot.vdev") }) {
+    for (const std::filesystem::path& path :
+         { std::filesystem::path(u8"workcell.xml"), std::filesystem::path(u8"geoms/base.bin"), std::filesystem::path(u8"devices/robot.vdev") })
+    {
         const auto lazy_bytes = lazy->read(path);
         const auto tree_bytes = built.read(path);
         ASSERT_TRUE(lazy_bytes.ok()) << path.generic_string();
@@ -296,8 +304,7 @@ TEST(ZipArchiveTest, OpensBorrowedBytes)
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(buffer.data()), 11), "<workcell/>");
 
     // An empty span is not an archive.
-    EXPECT_EQ(ZipArchive::open(std::span<const unsigned char>{}, ZipArchive::OpenMode::ReadOnly).error(),
-              IoError::InvalidData);
+    EXPECT_EQ(ZipArchive::open(std::span<const unsigned char>{}, ZipArchive::OpenMode::ReadOnly).error(), IoError::InvalidData);
 }
 
 TEST(ZipArchiveTest, ReportsErrorsAndRefusesEveryChange)

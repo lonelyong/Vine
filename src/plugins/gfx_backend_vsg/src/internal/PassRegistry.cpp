@@ -4,13 +4,11 @@ VN_VSG_NS_BEGIN
 
 core::PassId PassRegistry::adopt(const void* identity)
 {
-    if (identity == nullptr)
-    {
-        return 0;  // "no pass" is spelled 0 everywhere in the plan (see the header)
+    if (identity == nullptr) {
+        return 0; // "no pass" is spelled 0 everywhere in the plan (see the header)
     }
     const auto found = ids_.find(identity);
-    if (found != ids_.end())
-    {
+    if (found != ids_.end()) {
         return found->second;
     }
     const core::PassId id = next_++;
@@ -20,8 +18,7 @@ core::PassId PassRegistry::adopt(const void* identity)
 
 bool PassRegistry::release(const void* identity) noexcept
 {
-    if (identity == nullptr)
-    {
+    if (identity == nullptr) {
         return false;
     }
     return ids_.erase(identity) != 0U;

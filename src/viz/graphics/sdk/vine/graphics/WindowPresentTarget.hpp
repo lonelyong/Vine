@@ -24,8 +24,7 @@ VN_GRAPHICS_NS_BEGIN
  * - THREADING and lifetime follow the device's own rules (see RenderDevice): one thread, serialised calls, and a
  *   target outlives neither the window it is on nor the device that made it.
  */
-class VN_GRAPHICS_API WindowPresentTarget : public PresentTarget
-{
+class VN_GRAPHICS_API WindowPresentTarget : public PresentTarget {
   public:
     /** @brief Binds a host native window this target presents through.
      *

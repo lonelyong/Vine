@@ -34,12 +34,11 @@ struct MaterialFacts;
  * half serves), and in the DRAW: a pass computes a command's variant from its material and geometry
  * (see @ref variantOf) and only a half that serves it can draw the command.
  */
-struct ProgramVariant
-{
-    bool textured{false};      ///< `VN_TEXTURED`: the material carries at least one texture slot to sample.
-    bool vertex_color{false};  ///< `VN_VERTEX_COLOR`: the geometry feeds the colour channel.
-    bool cube_texcoord{false}; ///< `VN_TEXCOORD_CUBE`; false asks for `VN_TEXCOORD_UV` instead.
-    bool instanced{false};     ///< `VN_INSTANCED`: the draw reads the per-instance model matrix at 12-15.
+struct ProgramVariant {
+    bool textured{ false };      // `VN_TEXTURED`: the material carries at least one texture slot to sample.
+    bool vertex_color{ false };  // `VN_VERTEX_COLOR`: the geometry feeds the colour channel.
+    bool cube_texcoord{ false }; // `VN_TEXCOORD_CUBE`; false asks for `VN_TEXCOORD_UV` instead.
+    bool instanced{ false };     // `VN_INSTANCED`: the draw reads the per-instance model matrix at 12-15.
 
     /** @brief Gets the number the pipeline key carries for this variant (see core::PipelineKey::variant). */
     [[nodiscard]] std::uint32_t bits() const noexcept;

@@ -5,9 +5,9 @@
 #include <memory>
 #include <mutex>
 
-#include <vine/async/AsyncEvent.hpp>
 #include <vine/appfw/ConsoleProgressReporter.hpp>
 #include <vine/appfw/UserIO.hpp>
+#include <vine/async/AsyncEvent.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -45,14 +45,10 @@ class VN_APPFW_API ConsoleUserIO : public UserIO {
     vn::async::Task<std::optional<double>>        getDoubleAsync(const String& prompt = {}) override;
     vn::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) override;
 
-    vn::async::Task<std::optional<std::filesystem::path>> getFileAsync(const String&           prompt = {},
-                                                                     const FileReadOptions& options = {}) override;
-    vn::async::Task<std::optional<PathList>>              getFilesAsync(const String&           prompt = {},
-                                                                      const FileReadOptions& options = {}) override;
-    vn::async::Task<std::optional<std::filesystem::path>> getDirAsync(const String&          prompt = {},
-                                                                     const DirReadOptions& options = {}) override;
-    vn::async::Task<std::optional<PathList>>              getDirsAsync(const String&          prompt = {},
-                                                                     const DirReadOptions& options = {}) override;
+    vn::async::Task<std::optional<std::filesystem::path>> getFileAsync(const String& prompt = {}, const FileReadOptions& options = {}) override;
+    vn::async::Task<std::optional<PathList>>              getFilesAsync(const String& prompt = {}, const FileReadOptions& options = {}) override;
+    vn::async::Task<std::optional<std::filesystem::path>> getDirAsync(const String& prompt = {}, const DirReadOptions& options = {}) override;
+    vn::async::Task<std::optional<PathList>>              getDirsAsync(const String& prompt = {}, const DirReadOptions& options = {}) override;
 
   private:
     /// State shared with the background reader thread. Both sides hold it through a
@@ -64,7 +60,11 @@ class VN_APPFW_API ConsoleUserIO : public UserIO {
     /// coroutine frame that is destroyed before it ever resumed.
     struct ReadScope {
         ConsoleUserIO* self;
-        ~ReadScope() { self->endRead(); }
+
+        ~ReadScope()
+        {
+            self->endRead();
+        }
     };
 
     /// Claims the interaction slot, starting the reader thread on first use; false
@@ -92,11 +92,11 @@ class VN_APPFW_API ConsoleUserIO : public UserIO {
     std::shared_ptr<StdinReader> reader_;
     /// Guards the interaction slot (the reader's own start flag lives under
     /// StdinReader::mutex).
-    std::mutex                   state_mutex_;
+    std::mutex state_mutex_;
     /// True while a read waits or unwinds; guarded by state_mutex_.
-    bool                         slot_busy_{ false };
+    bool slot_busy_{ false };
     /// Guards stdout so concurrent writers cannot interleave half a line.
-    std::mutex                   output_mutex_;
+    std::mutex output_mutex_;
     /// Prints the progress of a LongRunning command as throttled console lines:
     /// the headless counterpart of the GUI presenter, and the only consumer of
     /// the ambient progress registry in a host without a GUI.

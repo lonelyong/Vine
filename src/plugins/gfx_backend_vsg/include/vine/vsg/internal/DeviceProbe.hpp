@@ -29,7 +29,9 @@
  */
 namespace vsg
 {
+
 class PhysicalDevice;
+
 }
 
 VN_VSG_NS_BEGIN
@@ -38,20 +40,18 @@ namespace api
 {
 
 /** @brief One physical device, described in the terms the core policy checks. */
-struct ProbedDevice
-{
-    core::DeviceFacts facts;        ///< Reported version and the required-feature flags.
-    vn::String      name;         ///< Device name as the driver reports it (diagnostics only).
-    bool              usable{false};///< The core's verdict for this device.
+struct ProbedDevice {
+    core::DeviceFacts facts;           // Reported version and the required-feature flags.
+    vn::String        name;            // Device name as the driver reports it (diagnostics only).
+    bool              usable{ false }; // The core's verdict for this device.
 };
 
 /** @brief What an enumeration attempt found, or why it could not run. */
-struct ProbeResult
-{
-    bool                      ok{false};         ///< Whether an instance could be opened at all.
-    std::uint32_t             loader_version{0}; ///< Instance version the loader granted (diagnostic).
-    std::vector<ProbedDevice> devices;           ///< Every physical device offered, in loader order.
-    vn::String              error;             ///< Why the probe could not run, when !ok.
+struct ProbeResult {
+    bool                      ok{ false };         // Whether an instance could be opened at all.
+    std::uint32_t             loader_version{ 0 }; // Instance version the loader granted (diagnostic).
+    std::vector<ProbedDevice> devices;             // Every physical device offered, in loader order.
+    vn::String                error;               // Why the probe could not run, when !ok.
 
     /** @brief Gets how many of the offered devices satisfy the requirements. */
     [[nodiscard]] std::size_t usableCount() const noexcept;
@@ -74,6 +74,6 @@ struct ProbeResult
  */
 [[nodiscard]] ProbedDevice describePhysicalDevice(::vsg::PhysicalDevice& device);
 
-}  // namespace api
+} // namespace api
 
 VN_VSG_NS_END

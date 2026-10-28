@@ -4,14 +4,12 @@
 
 VN_VSG_NS_BEGIN
 
-bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& draw,
-                     vn::graphics::VineShadowBlock& out) noexcept
+bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& draw, vn::graphics::VineShadowBlock& out) noexcept
 {
     // Every field is written, the switch included: a block left as whatever the previous owner of these bytes wrote
     // is a shader reading another frame's shadow.
     out = vn::graphics::VineShadowBlock{};
-    if (shadow.light == nullptr || !shadow.has_view_projection || !draw.camera.present)
-    {
+    if (shadow.light == nullptr || !shadow.has_view_projection || !draw.camera.present) {
         // No map declared, no matrix published, or no view to map FROM: the ABI's switch stays off and the shader
         // takes its unshadowed path.
         return false;
@@ -23,10 +21,8 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
     // perspective one (spot); both arrive here as ONE matrix, which is why the kind check is a membership test and
     // not two code paths.
     const core::LightRef* caster = nullptr;
-    for (const core::LightRef& light : draw.lights)
-    {
-        if (light.identity == shadow.light)
-        {
+    for (const core::LightRef& light : draw.lights) {
+        if (light.identity == shadow.light) {
             caster = &light;
             break;
         }
@@ -40,8 +36,7 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
     // And it has to be a light the block can NAME: the shader scales the light whose slot the block states, so a
     // caster the block cannot carry would scale a light the map does not belong to.
     const std::size_t slot = packedSlotOf(draw.lights, shadow.light);
-    if (slot >= vn::graphics::kMaxLights)
-    {
+    if (slot >= vn::graphics::kMaxLights) {
         return false;
     }
 
@@ -52,12 +47,9 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
 
     // Column-major, the way the GLSL block reads it (a mat4 is four columns of vec4) - the same convention the
     // draw block's packing states, and the one place a transpose would be invisible with an axis-aligned light.
-    for (int column = 0; column < 4; ++column)
-    {
-        for (int row = 0; row < 4; ++row)
-        {
-            out.view_to_light[static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)] =
-                static_cast<float>(view_to_light(row, column));
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            out.view_to_light[static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)] = static_cast<float>(view_to_light(row, column));
         }
     }
     out.params = { 1.0F, caster->shadow_bias, 1.0F, static_cast<float>(slot) };

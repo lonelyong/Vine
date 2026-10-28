@@ -6,29 +6,28 @@
 
 VN_VSG_NS_BEGIN
 
-struct ContentAssembly::Data
-{
-    ContentStore*                 store{nullptr};
+struct ContentAssembly::Data {
+    ContentStore*                 store{ nullptr };
     ::vsg::ref_ptr<::vsg::Device> device{};
-    core::VariantPool*            pool{nullptr};
-    BlockStorage*                 storage{nullptr};
-    MaterialImages*               images{nullptr};
-    vn::graphics::Diagnostics*            diagnostics{nullptr};
+    core::VariantPool*            pool{ nullptr };
+    BlockStorage*                 storage{ nullptr };
+    MaterialImages*               images{ nullptr };
+    vn::graphics::Diagnostics*    diagnostics{ nullptr };
 
     std::unique_ptr<ContentHalves> halves{};
     std::unique_ptr<ContentSets>   sets{};
-    StreamUploads                  uploads{};  ///< Stream sharing spans passes and frames (keyed by revision).
+    StreamUploads                  uploads{}; // Stream sharing spans passes and frames (keyed by revision).
     /// The sampled-input sets the frames share (see api/ContentPass:InputSetCache): one per distinct set of
     /// images, which is what keeps a steady frame from writing a descriptor a pending frame still reads.
-    InputSetCache                  input_sets{};
+    InputSetCache input_sets{};
 
     /// The device's widest LINE width (see ContentPass::Scope::max_line_width): read once here, because this is
     /// the object that owns the device and the recorder that clamps the value is created per pass.
-    float                         max_line_width{1.0F};
+    float max_line_width{ 1.0F };
 
-    const ContentFacts*  facts{nullptr};
-    core::FrameTimeline* timeline{nullptr};
-    core::RetirementQueue* retirement{nullptr};
+    const ContentFacts*    facts{ nullptr };
+    core::FrameTimeline*   timeline{ nullptr };
+    core::RetirementQueue* retirement{ nullptr };
 
     /// Episode state of the light-drop sentence, PER PASS: the sentence is about a pass ("the lights the
     /// host announced do not fit the block"), and the frame path builds a scope per pass per frame - so
@@ -47,10 +46,8 @@ struct ContentAssembly::Data
      */
     [[nodiscard]] vn::graphics::ReportOnce& lightsDroppedFor(core::PassId pass) noexcept
     {
-        for (std::pair<core::PassId, vn::graphics::ReportOnce>& row : lights_dropped)
-        {
-            if (row.first == pass)
-            {
+        for (std::pair<core::PassId, vn::graphics::ReportOnce>& row : lights_dropped) {
+            if (row.first == pass) {
                 return row.second;
             }
         }
@@ -59,9 +56,13 @@ struct ContentAssembly::Data
     }
 };
 
-ContentAssembly::ContentAssembly(ContentStore& store, ::vsg::ref_ptr<::vsg::Device> device, core::VariantPool& pool,
-                                 BlockStorage& storage, MaterialImages& images, vn::graphics::Diagnostics& diagnostics) :
-    d(std::make_unique<Data>())
+ContentAssembly::ContentAssembly(ContentStore&                 store,
+                                 ::vsg::ref_ptr<::vsg::Device> device,
+                                 core::VariantPool&            pool,
+                                 BlockStorage&                 storage,
+                                 MaterialImages&               images,
+                                 vn::graphics::Diagnostics&    diagnostics)
+  : d(std::make_unique<Data>())
 {
     d->store       = &store;
     d->device      = std::move(device);
@@ -72,8 +73,7 @@ ContentAssembly::ContentAssembly(ContentStore& store, ::vsg::ref_ptr<::vsg::Devi
     // The halves' recorders issue the dynamic state of every draw, so they need the device's entry points -
     // the calls cannot be named by link (see api/StateCommands). A device-free caller of api/ContentHalves
     // leaves them empty and does not record; THIS caller has the device and is about to record.
-    d->halves      = std::make_unique<ContentHalves>(
-        pool, detail::fetchDynamicStateEntryPoints(d->device->vk(), d->device->getInstance()->vk()));
+    d->halves      = std::make_unique<ContentHalves>(pool, detail::fetchDynamicStateEntryPoints(d->device->vk(), d->device->getInstance()->vk()));
     d->sets        = std::make_unique<ContentSets>(d->device, storage, images);
     // How wide a rasterised LINE may be is the device's answer, and the API REFUSES a width above it - so it is
     // read here, once, and handed to every pass' recorder (see ContentPass::Scope::max_line_width).
@@ -84,18 +84,15 @@ ContentAssembly::ContentAssembly(ContentStore& store, ::vsg::ref_ptr<::vsg::Devi
 
 ContentAssembly::~ContentAssembly() = default;
 
-void ContentAssembly::repoint(BlockStorage& storage, core::FrameTimeline& timeline,
-                              core::RetirementQueue& retirement)
+void ContentAssembly::repoint(BlockStorage& storage, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     d->storage = &storage;
-    if (d->sets != nullptr)
-    {
+    if (d->sets != nullptr) {
         (void)d->sets->repoint(storage, timeline, retirement);
     }
 }
 
-const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame, core::FrameTimeline& timeline,
-                                                core::RetirementQueue& retirement)
+const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     d->timeline   = &timeline;
     d->retirement = &retirement;
@@ -112,19 +109,15 @@ const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame
     // (the same window every replaced object gets), and a frame that builds a set under a stale entry's key
     // would otherwise be the second writer of a set a pending command buffer reads.
     ++d->input_sets.frame;
-    for (auto it = d->input_sets.entries.begin(); it != d->input_sets.entries.end();)
-    {
-        if (it->frame + 1U >= d->input_sets.frame)
-        {
+    for (auto it = d->input_sets.entries.begin(); it != d->input_sets.entries.end();) {
+        if (it->frame + 1U >= d->input_sets.frame) {
             ++it;
             continue;
         }
-        if (it->set != nullptr)
-        {
+        if (it->set != nullptr) {
             const ::vsg::ref_ptr<::vsg::DescriptorSet> set = it->set;
-            if (!retirement.retire(timeline, [set]() { (void)set; }))
-            {
-                ++it;  // no window to park through yet: kept, which costs memory and never correctness
+            if (!retirement.retire(timeline, [set]() { (void)set; })) {
+                ++it; // no window to park through yet: kept, which costs memory and never correctness
                 continue;
             }
         }
@@ -133,43 +126,42 @@ const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame
     return *d->facts;
 }
 
-bool ContentAssembly::record(const core::CompiledPass& pass, const core::RenderPassCompatibility& compatibility,
-                             std::span<const InputImages> inputs, std::span<const std::byte> view_block,
-                             ::vsg::ref_ptr<::vsg::Node>& out)
+bool ContentAssembly::record(const core::CompiledPass&            pass,
+                             const core::RenderPassCompatibility& compatibility,
+                             std::span<const InputImages>         inputs,
+                             std::span<const std::byte>           view_block,
+                             ::vsg::ref_ptr<::vsg::Node>&         out)
 {
-    if (d->facts == nullptr)
-    {
+    if (d->facts == nullptr) {
         // A frame recorded before beginFrame() is a caller bug, not a content condition: the answer is an
         // empty node and false, with nothing reported (see the file note).
         out = ::vsg::Group::create();
         return false;
     }
 
-    const std::span<const ContentPass::Scope::Entry> entries =
-        d->halves->halvesFor(pass, *d->facts, *d->timeline, *d->retirement);
-    const std::span<BlockDescriptors* const> candidates =
-        d->sets->setsFor(pass, *d->facts, entries, inputs, *d->timeline, *d->retirement);
+    const std::span<const ContentPass::Scope::Entry> entries    = d->halves->halvesFor(pass, *d->facts, *d->timeline, *d->retirement);
+    const std::span<BlockDescriptors* const>         candidates = d->sets->setsFor(pass, *d->facts, entries, inputs, *d->timeline, *d->retirement);
 
     // One registry PER PASS: the registry's contract is "this pass' state memory" (see its header), because
     // what a recording issues is the pass' - its view block's offsets among them - and a second pass must
     // not inherit it.
-    core::StateRegistry  registry(*d->pool);
-    ContentPass::Scope   scope;
-    scope.entries    = entries;
-    scope.registry   = &registry;
-    scope.storage    = d->storage;
-    scope.block_sets = candidates;
-    scope.uploads    = &d->uploads;
-    scope.input_sets = &d->input_sets;
-    scope.max_line_width = d->max_line_width;
+    core::StateRegistry registry(*d->pool);
+    ContentPass::Scope  scope;
+    scope.entries                 = entries;
+    scope.registry                = &registry;
+    scope.storage                 = d->storage;
+    scope.block_sets              = candidates;
+    scope.uploads                 = &d->uploads;
+    scope.input_sets              = &d->input_sets;
+    scope.max_line_width          = d->max_line_width;
     // The two reports that are NOT about this frame: the light-drop sentence is about the PASS and the
     // empty-rectangle one is about the SESSION, so their episodes belong to the content world (see
     // ContentPass::Scope and the note on the halves' own state).
-    scope.lights_dropped_episode    = &d->lightsDroppedFor(pass.pass);
-    scope.empty_rectangle_episode   = &d->empty_rectangle;
+    scope.lights_dropped_episode  = &d->lightsDroppedFor(pass.pass);
+    scope.empty_rectangle_episode = &d->empty_rectangle;
     // The material-slot reports belong to the MATERIAL, so their episodes live in the store's per-material
     // entries (see ContentStore::claimSlotReport) - the pass itself is per frame.
-    scope.store                     = d->store;
+    scope.store                   = d->store;
 
     ContentPass recorder(scope, *d->diagnostics);
     return recorder.record(pass, *d->facts, compatibility, inputs, view_block, out);
@@ -185,6 +177,7 @@ ContentHalves& ContentAssembly::halves() noexcept
 {
     return *d->halves;
 }
+
 ContentSets& ContentAssembly::sets() noexcept
 {
     return *d->sets;

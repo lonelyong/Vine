@@ -15,12 +15,12 @@
  * encodings (base64/hex). File-system path operations are out of scope; they
  * belong to the system module.
  */
-#define VN_IO_NS_BEGIN                                                                                                                                   \
-    namespace VN_ROOT_NS                                                                                                                                 \
-    {                                                                                                                                                   \
-    namespace io                                                                                                                                        \
+#define VN_IO_NS_BEGIN                                                                                                                                         \
+    namespace VN_ROOT_NS                                                                                                                                       \
+    {                                                                                                                                                          \
+    namespace io                                                                                                                                               \
     {
 
-#define VN_IO_NS_END                                                                                                                                     \
-    }                                                                                                                                                   \
+#define VN_IO_NS_END                                                                                                                                           \
+    }                                                                                                                                                          \
     }

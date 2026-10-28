@@ -27,8 +27,7 @@ class Device;
  * and the joint frame for every other link. All body geometry (visuals,
  * collisions, auxiliary frames) is expressed relative to that frame.
  */
-class VN_ROBOTICS_CORE_API Link : public vn::Object, public vn::INameable
-{
+class VN_ROBOTICS_CORE_API Link : public vn::Object, public vn::INameable {
     VN_OBJECT_META(Link, vn::Object, vn::INameable);
 
   public:
@@ -160,10 +159,10 @@ class VN_ROBOTICS_CORE_API Link : public vn::Object, public vn::INameable
     void copyFrom(const Link& other);
 
   private:
-    String                 name_;
+    String                     name_;
     raw_ptr<kinematics::Frame> parent_frame_{ nullptr };
-    RigidBody              body_;
-    raw_ptr<Device>        device_{ nullptr };
+    RigidBody                  body_;
+    raw_ptr<Device>            device_{ nullptr };
 };
 
 VN_ROBOTICS_WORKCELL_NS_END

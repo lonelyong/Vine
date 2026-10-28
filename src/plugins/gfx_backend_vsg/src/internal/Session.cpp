@@ -21,11 +21,11 @@
 #include <vsg/vk/DeviceFeatures.h>
 #include <vsg/vk/PhysicalDevice.h>
 
-#include <vine/vsg/support/VsgBackendUtility.hpp>
-#include <vine/vsg/support/VsgHostWindow.hpp>
-#include <vine/vsg/internal/DeviceRequirements.hpp>
 #include <vine/graphics/backend/SessionMove.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
+#include <vine/vsg/internal/DeviceRequirements.hpp>
+#include <vine/vsg/support/VsgBackendUtility.hpp>
+#include <vine/vsg/support/VsgHostWindow.hpp>
 
 VN_VSG_NS_BEGIN
 
@@ -42,58 +42,55 @@ using vn::graphics::DiagnosticSeverity;
 unsigned int envLevel(const char* name, unsigned int fallback)
 {
     const char* value = std::getenv(name);
-    if (value == nullptr)
-    {
+    if (value == nullptr) {
         return fallback;
     }
-    char*       end     = nullptr;
-    const long  parsed  = std::strtol(value, &end, 10);
+    char*      end    = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
     return (end != nullptr && end != value && parsed > 0) ? static_cast<unsigned int>(parsed) : fallback;
 }
 
-}  // namespace
+} // namespace
 
-struct Session::Impl
-{
-    core::FrameTimeline    timeline;             ///< One clock for the session (see the class note).
-    core::RetirementQueue  retirement{0};        ///< Constructed for real once the slots are learned.
+struct Session::Impl {
+    core::FrameTimeline   timeline;        // One clock for the session (see the class note).
+    core::RetirementQueue retirement{ 0 }; // Constructed for real once the slots are learned.
     /// The DEVICE's clock and park queue, when this session is one of several windows on one device (see
     /// core::DeviceClock): the borrowed pair then REPLACES the two above, which stay unused.
-    core::DeviceClock*         clock{nullptr};
-    core::RetirementQueue*     shared_retirement{nullptr};
-    core::DeviceClock::WindowId clock_window{0};
-    bool                       clock_window_live{false};
-    vn::graphics::Diagnostics*     diagnostics{nullptr}; ///< Where the session's reasons go (borrowed).
+    core::DeviceClock*          clock{ nullptr };
+    core::RetirementQueue*      shared_retirement{ nullptr };
+    core::DeviceClock::WindowId clock_window{ 0 };
+    bool                        clock_window_live{ false };
+    vn::graphics::Diagnostics*  diagnostics{ nullptr }; // Where the session's reasons go (borrowed).
     /// The device profiler, when the switch asked for one (see Session::profiling): the executor wraps the
     /// passes, this owns the query pool and the log they are read from.
     ::vsg::ref_ptr<::vsg::Profiler> profiler;
-    ::vsg::ref_ptr<::vsg::Window> window;
-    ::vsg::ref_ptr<::vsg::Viewer> viewer;
-    ::vsg::ref_ptr<::vsg::Group>  content;  ///< What the frame renders (see SessionContentAccess).
-    std::unique_ptr<WindowTarget> window_target;  ///< The default framebuffer as a target the executor serves.
-    void*                  host_handle{nullptr}; ///< The host window this session is on, or nullptr.
-    bool                   on_host_window{false};///< Whether the session adopted a host window.
-    std::uint32_t          slots{0};             ///< In-flight slots the tracker learned (0 = not learned yet).
-    core::SlotTracker      slot_tracker;         ///< Folds per-frame probes until the count stops growing.
-    std::uint64_t          frames_presented{0};
-    std::uint64_t          lost_frames{0};  ///< Commits whose submission did not happen (see commitFrame).
+    ::vsg::ref_ptr<::vsg::Window>   window;
+    ::vsg::ref_ptr<::vsg::Viewer>   viewer;
+    ::vsg::ref_ptr<::vsg::Group>    content;                 // What the frame renders (see SessionContentAccess).
+    std::unique_ptr<WindowTarget>   window_target;           // The default framebuffer as a target the executor serves.
+    void*                           host_handle{ nullptr };  // The host window this session is on, or nullptr.
+    bool                            on_host_window{ false }; // Whether the session adopted a host window.
+    std::uint32_t                   slots{ 0 };              // In-flight slots the tracker learned (0 = not learned yet).
+    core::SlotTracker               slot_tracker;            // Folds per-frame probes until the count stops growing.
+    std::uint64_t                   frames_presented{ 0 };
+    std::uint64_t                   lost_frames{ 0 }; // Commits whose submission did not happen (see commitFrame).
     // The frame clock the view block reads (see Session::frameSeconds): the session's own start is the zero
     // of the time line, and the value is re-sampled once per opened frame.
     std::chrono::steady_clock::time_point started_at{};
-    float                                 frame_seconds{0.0F};
-    bool                   ready{false};
+    float                                 frame_seconds{ 0.0F };
+    bool                                  ready{ false };
     // Statistics about how this Session object brought sessions up. NOT reset by shutdown(): they answer
     // "what did this host's announcements cost", which a teardown does not change.
-    std::uint64_t moves{0};
-    std::uint64_t rebuilds{0};
-    std::uint64_t keeps{0};
-    std::uint64_t generation{0};
+    std::uint64_t moves{ 0 };
+    std::uint64_t rebuilds{ 0 };
+    std::uint64_t keeps{ 0 };
+    std::uint64_t generation{ 0 };
 };
 
 Session::Session()
   : impl(std::make_unique<Impl>())
-{
-}
+{}
 
 Session::~Session()
 {
@@ -113,24 +110,22 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
     facts.handle_differs   = options.native_handle != impl->host_handle;
 
     const core::MoveDecision decision = core::planSessionMove(facts);
-    if (decision.action == core::MoveAction::Keep)
-    {
+    if (decision.action == core::MoveAction::Keep) {
         ++impl->keeps;
         return true;
     }
-    if (decision.action == core::MoveAction::Move && moveTo(options.native_handle))
-    {
+    if (decision.action == core::MoveAction::Move && moveTo(options.native_handle)) {
         ++impl->moves;
         ++impl->generation;
         return true;
     }
-    if (facts.has_live_session)
-    {
+    if (facts.has_live_session) {
         // The expensive path, said out loud: the instance, the device and every compiled pipeline are about
         // to be rebuilt, and the host may be able to avoid it (a swapchain format it keeps, a window it
         // does not recreate).
         ++impl->rebuilds;
-        diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
+        diagnostics.report(DiagnosticSeverity::Warning,
+                           DiagnosticCategory::UnsupportedRequest,
                            vn::String::fromUtf8(std::string("the session is rebuilt from scratch: ") + decision.reason));
     }
 
@@ -141,19 +136,17 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
     // be destroyed - is a device question. Registered here, after the teardown above reset the previous one.
     impl->clock             = options.clock;
     impl->shared_retirement = options.retirement;
-    if (impl->clock != nullptr)
-    {
+    if (impl->clock != nullptr) {
         impl->clock_window      = impl->clock->addWindow();
         impl->clock_window_live = true;
     }
 
-    try
-    {
-        auto traits          = ::vsg::WindowTraits::create();
-        traits->windowTitle  = "Vine session";
-        traits->width        = options.width;
-        traits->height       = options.height;
-        traits->debugLayer   = options.validation;
+    try {
+        auto traits            = ::vsg::WindowTraits::create();
+        traits->windowTitle    = "Vine session";
+        traits->width          = options.width;
+        traits->height         = options.height;
+        traits->debugLayer     = options.validation;
         traits->deviceFeatures = ::vsg::DeviceFeatures::create();
         applyRequiredFeatures(traits->deviceFeatures);
         // The features and the extensions are ONE policy in two halves (see requiredDeviceExtensions): the
@@ -161,20 +154,17 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         // not for the names would compile pipelines the driver may reject. The session creates its device
         // through a window rather than through api::Device, which is exactly why the policy is a function both
         // call instead of a list written twice.
-        for (const auto& name : requiredDeviceExtensions())
-        {
+        for (const auto& name : requiredDeviceExtensions()) {
             traits->deviceExtensionNames.push_back(name);
         }
 
-        if (options.native_handle != nullptr)
-        {
+        if (options.native_handle != nullptr) {
             // The host's window is ADOPTED, not created: this is the facility that knows how (the platform
             // handle's exact type, and the rule that the host's window outlives us) - see VsgHostWindow.
             traits->nativeWindow = detail::hostHandleFromVoid(options.native_handle);
             impl->window         = ::vsg::ref_ptr<::vsg::Window>(detail::VsgHostWindow::create(traits));
         }
-        else
-        {
+        else {
             // A window of this backend's own, through the class that can also ADOPT a shared device (see
             // detail::VsgOwnedWindow): vsg's own factory cannot, and one device serving several windows is the
             // point of the session taking a device at all.
@@ -183,10 +173,8 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         impl->host_handle    = options.native_handle;
         impl->on_host_window = options.native_handle != nullptr;
 
-        if (!impl->window)
-        {
-            diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
-                               vn::String::fromUtf8("the session could not create a window"));
+        if (!impl->window) {
+            diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, vn::String::fromUtf8("the session could not create a window"));
             shutdown();
             return false;
         }
@@ -196,14 +184,13 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         // buffers, the compiled programs - belongs to the device and is shared with every other session on it.
         // This has to happen BEFORE anything asks the window for its device (the viewer does, below), because that
         // is the moment vsg would build one.
-        if (options.device != nullptr)
-        {
+        if (options.device != nullptr) {
             auto adopted = ::vsg::ref_ptr<::vsg::Device>(static_cast<::vsg::Device*>(options.device));
-            if (!detail::adoptDevice(*impl->window, adopted))
-            {
-                diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
+            if (!detail::adoptDevice(*impl->window, adopted)) {
+                diagnostics.report(DiagnosticSeverity::Error,
+                                   DiagnosticCategory::InitFailed,
                                    vn::String::fromUtf8("the session could not render on the device it was given: the "
-                                            "window is not one this backend creates, so it cannot adopt it"));
+                                                        "window is not one this backend creates, so it cannot adopt it"));
                 shutdown();
                 return false;
             }
@@ -217,9 +204,9 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         // content its own compiled pipelines (vsg compiles per view id, and the swapchain's render pass is not
         // compatible with an off-screen one of the same engine shape).
         impl->window_target = WindowTarget::create(impl->window);
-        if (impl->window_target == nullptr)
-        {
-            diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
+        if (impl->window_target == nullptr) {
+            diagnostics.report(DiagnosticSeverity::Error,
+                               DiagnosticCategory::InitFailed,
                                vn::String::fromUtf8("the session could not wrap its window as a render target"));
             shutdown();
             return false;
@@ -237,14 +224,13 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         // The device profiler, when the environment asked for one: installed AFTER the record-and-submit
         // task, because the task is what the viewer propagates instrumentation through (the legacy
         // backend's own order, for the same reason).
-        if (std::getenv("VN_VSG_PROFILE") != nullptr)
-        {
-            auto settings                        = ::vsg::Profiler::Settings::create();
-            settings->cpu_instrumentation_level  = envLevel("VN_VSG_PROFILE_CPU", 0U);
+        if (std::getenv("VN_VSG_PROFILE") != nullptr) {
+            auto settings                       = ::vsg::Profiler::Settings::create();
+            settings->cpu_instrumentation_level = envLevel("VN_VSG_PROFILE_CPU", 0U);
             // Level 1 is the level the executor's per-pass wrappers carry; a higher level timestamps every
             // recorded node and the profiler's fixed pool then drops what does not fit, silently.
-            settings->gpu_instrumentation_level  = envLevel("VN_VSG_PROFILE_GPU", 1U);
-            impl->profiler                       = ::vsg::Profiler::create(settings);
+            settings->gpu_instrumentation_level = envLevel("VN_VSG_PROFILE_GPU", 1U);
+            impl->profiler                      = ::vsg::Profiler::create(settings);
             impl->viewer->assignInstrumentation(impl->profiler);
         }
 
@@ -254,22 +240,21 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         // its count when the first frame is opened (see probeSlots).
 
         const auto compiled = impl->viewer->compile();
-        if (!compiled)
-        {
-            diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
+        if (!compiled) {
+            diagnostics.report(DiagnosticSeverity::Error,
+                               DiagnosticCategory::InitFailed,
                                vn::String::fromUtf8("the session failed to compile: " + compiled.message));
             shutdown();
             return false;
         }
 
-        impl->ready = true;
-        impl->started_at = std::chrono::steady_clock::now();
+        impl->ready         = true;
+        impl->started_at    = std::chrono::steady_clock::now();
         impl->frame_seconds = 0.0F;
         ++impl->generation;
         return true;
     }
-    catch (const ::vsg::Exception& error)
-    {
+    catch (const ::vsg::Exception& error) {
         // vsg's own failure vocabulary, caught HERE or it leaves the SDK: `vsg::Exception` is NOT a
         // `std::exception` (a plain struct with message + result), so the catch below would let it through -
         // and the one a host actually meets is the device cap (one device per render area, see
@@ -279,9 +264,9 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         shutdown();
         return false;
     }
-    catch (const std::exception& error)
-    {
-        diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed,
+    catch (const std::exception& error) {
+        diagnostics.report(DiagnosticSeverity::Error,
+                           DiagnosticCategory::InitFailed,
                            vn::String::fromUtf8(std::string("the session failed to initialize: ") + error.what()));
         shutdown();
         return false;
@@ -290,8 +275,7 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
 
 void Session::shutdown() noexcept
 {
-    if (!impl)
-    {
+    if (!impl) {
         return;
     }
 
@@ -315,8 +299,7 @@ void Session::shutdown() noexcept
     impl->content          = {};
     // The DEVICE's bookkeeping goes last, and only if it was this session's to leave (see initialize): a window
     // that goes away stops constraining the device's watermark, which is what lets the remaining ones advance it.
-    if (impl->clock != nullptr && impl->clock_window_live)
-    {
+    if (impl->clock != nullptr && impl->clock_window_live) {
         impl->clock->removeWindow(impl->clock_window);
     }
     impl->clock_window_live = false;
@@ -331,8 +314,7 @@ bool Session::initialized() const noexcept
 
 bool Session::wouldKeep(const SessionOptions& options) const noexcept
 {
-    if (impl == nullptr)
-    {
+    if (impl == nullptr) {
         return false;
     }
     // The same facts initialize() decides by: one table, so "would this be a keep" and "is this a keep" cannot
@@ -347,8 +329,7 @@ bool Session::wouldKeep(const SessionOptions& options) const noexcept
 
 core::FrameToken Session::beginFrame()
 {
-    if (!impl || !impl->ready)
-    {
+    if (!impl || !impl->ready) {
         return {};
     }
 
@@ -363,8 +344,7 @@ core::FrameToken Session::beginFrame()
     // The in-flight slot count is neither readable nor answerable in one probe (see SlotProbe): one entry of
     // the framework's slot table is filled per frame, so the session keeps folding answers in until the
     // number stops growing - and only then may anything be parked.
-    if (!impl->slot_tracker.known())
-    {
+    if (!impl->slot_tracker.known()) {
         probeSlots();
     }
 
@@ -374,12 +354,10 @@ core::FrameToken Session::beginFrame()
 void Session::probeSlots()
 {
     const auto outcome = core::probeSlotCount([this](std::uint32_t index) {
-        return !impl->viewer->recordAndSubmitTasks.empty() &&
-               impl->viewer->recordAndSubmitTasks.front()->fence(index) != nullptr;
+        return !impl->viewer->recordAndSubmitTasks.empty() && impl->viewer->recordAndSubmitTasks.front()->fence(index) != nullptr;
     });
 
-    if (!impl->slot_tracker.observe(outcome))
-    {
+    if (!impl->slot_tracker.observe(outcome)) {
         // Still filling: there is no window yet, and nothing to report - parking is simply unavailable
         // (RetirementQueue::retire() refuses rather than guessing).
         return;
@@ -388,42 +366,37 @@ void Session::probeSlots()
     impl->slots = impl->slot_tracker.slots();
     // In place: the queue's own counters (the counted device idles) must survive the moment the count is
     // learned - replacing the queue here is how a session silently loses them.
-    if (impl->shared_retirement != nullptr && impl->clock != nullptr)
-    {
+    if (impl->shared_retirement != nullptr && impl->clock != nullptr) {
         // A device's park window is the WIDEST any of its windows learned: a park made during this window's frame may
         // name something the window with more slots still has in flight (see core::DeviceClock::widestSlots).
         impl->clock->setWindowSlots(impl->clock_window, impl->slots);
         impl->shared_retirement->setSlots(impl->clock->widestSlots());
     }
-    else
-    {
+    else {
         impl->retirement.setSlots(impl->slots);
     }
 
-    if (impl->diagnostics == nullptr || impl->slot_tracker.agreesWithAssumption())
-    {
+    if (impl->diagnostics == nullptr || impl->slot_tracker.agreesWithAssumption()) {
         return;
     }
-    impl->diagnostics->report(DiagnosticSeverity::Info, DiagnosticCategory::UnsupportedRequest,
-                              vn::String::fromUtf8("the in-flight slot count is " + std::to_string(impl->slots) +
-                                       ", not the " + std::to_string(core::kAssumedInFlightSlots) +
-                                       " this code was written against (learned over " +
-                                       std::to_string(impl->slot_tracker.framesObserved()) + " frames)"));
+    impl->diagnostics->report(DiagnosticSeverity::Info,
+                              DiagnosticCategory::UnsupportedRequest,
+                              vn::String::fromUtf8("the in-flight slot count is " + std::to_string(impl->slots) + ", not the " +
+                                                   std::to_string(core::kAssumedInFlightSlots) + " this code was written against (learned over " +
+                                                   std::to_string(impl->slot_tracker.framesObserved()) + " frames)"));
 }
 
 bool Session::commitFrame()
 {
-    if (!impl || !impl->ready)
-    {
+    if (!impl || !impl->ready) {
         return false;
     }
-    if (!timeline().hasOpenFrame())
-    {
+    if (!timeline().hasOpenFrame()) {
         // Committing what was never opened would advance the deferral clocks for a frame nothing
         // accounted for; the protocol layer reports it, and here it simply does not happen.
-        if (impl->diagnostics != nullptr)
-        {
-            impl->diagnostics->report(DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
+        if (impl->diagnostics != nullptr) {
+            impl->diagnostics->report(DiagnosticSeverity::Warning,
+                                      DiagnosticCategory::PassProtocolViolation,
                                       vn::String::fromUtf8("commitFrame with no open frame"));
         }
         return false;
@@ -437,8 +410,7 @@ bool Session::commitFrame()
     // This is where the completion evidence is produced: recording frame F waits the fence of the slot
     // that recorded frame F - slots, so every frame up to that point is provably finished.
     std::string failure;
-    if (!detail::submitViewerTasks(*impl->viewer, failure))
-    {
+    if (!detail::submitViewerTasks(*impl->viewer, failure)) {
         // The submission did NOT happen: nothing was handed to the queue, so nothing may claim it did -
         // no present, no presented-frame count, no completion evidence (no slot was recycled). The frame
         // itself is over (its swapchain image was acquired and its graph was recorded, so it cannot be
@@ -454,33 +426,29 @@ bool Session::commitFrame()
         // idle - COUNTED, because vsg's buildSwapchain() waits the device before it destroys the old
         // swapchain (WindowAdapter::resize): a lost frame is the exception, and the counter is how that stays
         // visible instead of becoming a habit.
-        if (impl->window != nullptr)
-        {
+        if (impl->window != nullptr) {
             impl->window->resize();
             retirement().noteDeviceWait();
         }
-        if (impl->diagnostics != nullptr)
-        {
-            impl->diagnostics->report(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed,
+        if (impl->diagnostics != nullptr) {
+            impl->diagnostics->report(DiagnosticSeverity::Error,
+                                      DiagnosticCategory::SubmissionFailed,
                                       vn::String::fromUtf8("the frame's submission did not happen, so nothing it recorded "
-                                               "was performed and nothing was presented - the failure was: " +
-                                               failure));
+                                                           "was performed and nothing was presented - the failure was: " +
+                                                           failure));
         }
         return false;
     }
 
-    if (impl->slots != 0 && frame_number > impl->slots)
-    {
+    if (impl->slots != 0 && frame_number > impl->slots) {
         // THIS WINDOW'S evidence, not the device's: the recycled slot proves that the work this window submitted up
         // to this frame is finished. A device with several windows folds those reports by MINIMUM (see
         // core::DeviceClock), because only what every window proved is safe to call finished for a shared object.
         const std::uint64_t proven = frame_number - impl->slots;
-        if (impl->clock != nullptr && impl->clock_window_live)
-        {
+        if (impl->clock != nullptr && impl->clock_window_live) {
             impl->clock->windowCompleted(impl->clock_window, proven);
         }
-        else
-        {
+        else {
             timeline().completeUpTo(proven);
         }
     }
@@ -525,24 +493,20 @@ Session::GpuProfile Session::gpuProfile() const
 {
     GpuProfile profile;
     profile.enabled = profiling();
-    if (!profile.enabled)
-    {
+    if (!profile.enabled) {
         return profile;
     }
     // Whether this device can write timestamps at all is a device fact, not a software one: without it the
     // answer stays "enabled, nothing available" instead of looking like a frame that cost nothing.
-    const auto device   = impl->window != nullptr ? impl->window->getOrCreateDevice() : nullptr;
-    const auto physical = device != nullptr ? device->getPhysicalDevice() : nullptr;
-    profile.timestamps_available = physical != nullptr &&
-                                   physical->getProperties().limits.timestampComputeAndGraphics != VK_FALSE;
-    if (!profile.timestamps_available)
-    {
+    const auto device            = impl->window != nullptr ? impl->window->getOrCreateDevice() : nullptr;
+    const auto physical          = device != nullptr ? device->getPhysicalDevice() : nullptr;
+    profile.timestamps_available = physical != nullptr && physical->getProperties().limits.timestampComputeAndGraphics != VK_FALSE;
+    if (!profile.timestamps_available) {
         return profile;
     }
 
     const auto& log = impl->profiler->log;
-    if (log == nullptr)
-    {
+    if (log == nullptr) {
         return profile;
     }
 
@@ -550,47 +514,38 @@ Session::GpuProfile Session::gpuProfile() const
     // header), so the last frames in the log have no timestamps yet - looking further back is what turns
     // "not readable yet" into "this is the newest one".
     const auto& frames = log->frameIndices;
-    for (std::size_t index = frames.size(); index-- > 0;)
-    {
+    for (std::size_t index = frames.size(); index-- > 0;) {
         const auto& frame_entry = log->entry(frames[index]);
-        if (frame_entry.type != ::vsg::ProfileLog::FRAME || !frame_entry.enter)
-        {
-            continue;  // the ring has overwritten this frame's entry
+        if (frame_entry.type != ::vsg::ProfileLog::FRAME || !frame_entry.enter) {
+            continue; // the ring has overwritten this frame's entry
         }
         const std::uint64_t frame_end = frame_entry.reference;
-        if (frame_end <= frames[index] || (frame_end - frames[index]) >= log->entries.size())
-        {
-            continue;  // not a frame span this log still holds
+        if (frame_end <= frames[index] || (frame_end - frames[index]) >= log->entries.size()) {
+            continue; // not a frame span this log still holds
         }
 
         GpuProfile candidate;
-        candidate.enabled              = true;
-        candidate.timestamps_available = true;
-        bool        saw_frame_interval = false;
-        const double ticks_to_ms       = log->timestampScaleToMilliseconds;
-        for (std::uint64_t reference = frames[index]; reference <= frame_end; ++reference)
-        {
+        candidate.enabled               = true;
+        candidate.timestamps_available  = true;
+        bool         saw_frame_interval = false;
+        const double ticks_to_ms        = log->timestampScaleToMilliseconds;
+        for (std::uint64_t reference = frames[index]; reference <= frame_end; ++reference) {
             const auto& interval = log->entry(reference);
-            if (!interval.enter || interval.gpuTime == 0 || interval.reference <= reference ||
-                interval.reference > frame_end)
-            {
+            if (!interval.enter || interval.gpuTime == 0 || interval.reference <= reference || interval.reference > frame_end) {
                 continue;
             }
             const auto& end = log->entry(interval.reference);
-            if (end.gpuTime <= interval.gpuTime)
-            {
-                continue;  // this pair has not been read back yet
+            if (end.gpuTime <= interval.gpuTime) {
+                continue; // this pair has not been read back yet
             }
             const double milliseconds = static_cast<double>(end.gpuTime - interval.gpuTime) * ticks_to_ms;
-            if (interval.type == ::vsg::ProfileLog::COMMAND_BUFFER)
-            {
+            if (interval.type == ::vsg::ProfileLog::COMMAND_BUFFER) {
                 candidate.frame_gpu_ms = milliseconds;
                 saw_frame_interval     = true;
                 continue;
             }
-            if (interval.type != ::vsg::ProfileLog::GPU || interval.object == nullptr)
-            {
-                continue;  // an interval upstream's own hook wrote, with no object to attribute it to
+            if (interval.type != ::vsg::ProfileLog::GPU || interval.object == nullptr) {
+                continue; // an interval upstream's own hook wrote, with no object to attribute it to
             }
             GpuSample sample;
             // The ADDRESS is the key, and it is only ever compared (see GpuSample::key): the frame it names
@@ -599,8 +554,7 @@ Session::GpuProfile Session::gpuProfile() const
             sample.gpu_ms = milliseconds;
             candidate.passes.push_back(sample);
         }
-        if (saw_frame_interval || !candidate.passes.empty())
-        {
+        if (saw_frame_interval || !candidate.passes.empty()) {
             candidate.age_frames = frames.size() - 1U - index;
             candidate.readable   = true;
             profile              = std::move(candidate);
@@ -614,8 +568,7 @@ std::size_t Session::deviceWaits() const noexcept
 {
     // One number, whichever queue is in use: a session that shares its device's queue (see core::DeviceClock) is
     // counted where the device counts, so "the frame path never idles the device" stays one fact about one device.
-    if (impl == nullptr)
-    {
+    if (impl == nullptr) {
         return 0;
     }
     return impl->shared_retirement != nullptr ? impl->shared_retirement->deviceWaits() : impl->retirement.deviceWaits();
@@ -658,19 +611,16 @@ void* Session::hostHandle() const noexcept
 
 bool Session::moveTo(void* handle)
 {
-    if (!impl->ready || !impl->viewer || !impl->window || handle == nullptr)
-    {
+    if (!impl->ready || !impl->viewer || !impl->window || handle == nullptr) {
         return false;
     }
     // Only a session that ADOPTED a host window has a host surface to follow; one on a window of this
     // backend's own owns its swapchain and cannot serve the host's window.
-    if (!detail::onHostWindow(impl->window))
-    {
+    if (!detail::onHostWindow(impl->window)) {
         return false;
     }
     auto host_window = impl->window.cast<detail::VsgHostWindow>();
-    if (!host_window)
-    {
+    if (!host_window) {
         return false;
     }
 
@@ -680,14 +630,12 @@ bool Session::moveTo(void* handle)
     impl->viewer->deviceWaitIdle();
     retirement().noteDeviceWait();
 
-    if (!host_window->moveToHostSurface(handle))
-    {
-        if (impl->diagnostics != nullptr)
-        {
-            impl->diagnostics->report(
-                DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
-                vn::String::fromUtf8("the host's new window could not serve this session (a different swapchain format, "
-                         "or a window that never went as far as a device): it is rebuilt from scratch"));
+    if (!host_window->moveToHostSurface(handle)) {
+        if (impl->diagnostics != nullptr) {
+            impl->diagnostics->report(DiagnosticSeverity::Warning,
+                                      DiagnosticCategory::UnsupportedRequest,
+                                      vn::String::fromUtf8("the host's new window could not serve this session (a different swapchain format, "
+                                                           "or a window that never went as far as a device): it is rebuilt from scratch"));
         }
         return false;
     }
@@ -696,26 +644,24 @@ bool Session::moveTo(void* handle)
     return true;
 }
 
-}  // namespace api
+} // namespace api
 
 namespace detail
 {
 
 void SessionContentAccess::waitDeviceIdle(api::Session& session) noexcept
 {
-    if (session.impl == nullptr || session.impl->viewer == nullptr)
-    {
-        return;  // nothing was ever submitted: there is nothing to wait for
+    if (session.impl == nullptr || session.impl->viewer == nullptr) {
+        return; // nothing was ever submitted: there is nothing to wait for
     }
     session.impl->viewer->deviceWaitIdle();
-    session.retirement().noteDeviceWait();  // the same counter Session::deviceWaits() answers with
+    session.retirement().noteDeviceWait(); // the same counter Session::deviceWaits() answers with
 }
 
 void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
 {
-    if (session.impl == nullptr || session.impl->window == nullptr)
-    {
-        return;  // nothing is on a surface: there is nothing to follow
+    if (session.impl == nullptr || session.impl->window == nullptr) {
+        return; // nothing is on a surface: there is nothing to follow
     }
     // The window's own resize() re-reads the geometry of the surface it is on and rebuilds the swapchain
     // against it - that IS the service, because the surface owns its size (PresentTarget::resize's
@@ -744,8 +690,7 @@ void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
 
 ::vsg::ref_ptr<::vsg::Device> SessionContentAccess::device(const api::Session& session) noexcept
 {
-    if (session.impl == nullptr || session.impl->window == nullptr)
-    {
+    if (session.impl == nullptr || session.impl->window == nullptr) {
         return {};
     }
     return session.impl->window->getOrCreateDevice();
@@ -753,8 +698,7 @@ void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
 
 WindowTarget* SessionContentAccess::windowTarget(const api::Session& session) noexcept
 {
-    if (session.impl == nullptr)
-    {
+    if (session.impl == nullptr) {
         return nullptr;
     }
     return session.impl->window_target.get();
@@ -762,8 +706,7 @@ WindowTarget* SessionContentAccess::windowTarget(const api::Session& session) no
 
 ::vsg::ref_ptr<::vsg::CommandGraph> SessionContentAccess::makeFrameGraph(const api::Session& session) noexcept
 {
-    if (session.impl == nullptr || session.impl->window == nullptr)
-    {
+    if (session.impl == nullptr || session.impl->window == nullptr) {
         return {};
     }
     // Bound to the window: the graph's device and queue family come from the surface it presents, which is
@@ -773,8 +716,7 @@ WindowTarget* SessionContentAccess::windowTarget(const api::Session& session) no
 
 bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg::CommandGraphs& graphs)
 {
-    if (session.impl == nullptr || session.impl->viewer == nullptr)
-    {
+    if (session.impl == nullptr || session.impl->viewer == nullptr) {
         return false;
     }
     // THE TASKS SURVIVE THE HANDOVER, and that is the whole point: a task owns the fences and semaphores a
@@ -784,16 +726,13 @@ bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg:
     // command buffers in use, and a crash inside the validation layer that a run without it hides). One
     // frame's graphs become the session's by handing them to the tasks it already has; only a viewer with no
     // task at all (not this session: it comes up with its own frame graph) is built by the viewer.
-    if (session.impl->viewer->recordAndSubmitTasks.empty())
-    {
+    if (session.impl->viewer->recordAndSubmitTasks.empty()) {
         session.impl->viewer->assignRecordAndSubmitTaskAndPresentation(graphs);
     }
-    else
-    {
+    else {
         // One session has one task (one window, one device, one queue family), so this is a formality - and
         // it keeps every task's fences, its WSI semaphores and the window they present on untouched.
-        for (const auto& task : session.impl->viewer->recordAndSubmitTasks)
-        {
+        for (const auto& task : session.impl->viewer->recordAndSubmitTasks) {
             task->commandGraphs = graphs;
         }
     }
@@ -806,28 +745,25 @@ bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg:
 
 bool SessionContentAccess::recompile(api::Session& session)
 {
-    if (session.impl == nullptr || session.impl->viewer == nullptr)
-    {
+    if (session.impl == nullptr || session.impl->viewer == nullptr) {
         return false;
     }
     // A compile pass over the same graphs: already-compiled objects keep their implementations (a pipeline is
     // only created while its implementation is missing), and the newly attached content gets its own.
     const ::vsg::CompileResult compiled = session.impl->viewer->compile();
-    if (!compiled)
-    {
+    if (!compiled) {
         // The session never degrades silently: a pass that did not run is reported where the session's other
         // reasons go, and the caller learns about it through the return value.
-        if (session.impl->diagnostics != nullptr)
-        {
-            session.impl->diagnostics->report(api::DiagnosticSeverity::Warning, api::DiagnosticCategory::InitFailed,
-                                              vn::String::fromUtf8(std::string("the content attached to the session did not compile: ") +
-                                                            compiled.message));
+        if (session.impl->diagnostics != nullptr) {
+            session.impl->diagnostics->report(api::DiagnosticSeverity::Warning,
+                                              api::DiagnosticCategory::InitFailed,
+                                              vn::String::fromUtf8(std::string("the content attached to the session did not compile: ") + compiled.message));
         }
         return false;
     }
     return true;
 }
 
-}  // namespace detail
+} // namespace detail
 
 VN_VSG_NS_END

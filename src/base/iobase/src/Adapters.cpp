@@ -91,27 +91,28 @@ std::uint64_t measureElements(std::istream& in, std::uint64_t count, std::size_t
 
 } // namespace
 
-struct IstreamSource::Impl
-{
+struct IstreamSource::Impl {
     std::istream* in{ nullptr };
-    std::uint64_t size{ 0 };     ///< Bytes this source produces, after conversion.
-    std::uint64_t produced{ 0 }; ///< Bytes produced since the last rewind().
+    std::uint64_t size{ 0 };     // Bytes this source produces, after conversion.
+    std::uint64_t produced{ 0 }; // Bytes produced since the last rewind().
     std::size_t   in_element{ 1 };
     std::size_t   out_element{ 1 };
-    IoError       setup_error{ IoError::Ok }; ///< What the constructor settled: a bad setup survives every rewind().
+    IoError       setup_error{ IoError::Ok }; // What the constructor settled: a bad setup survives every rewind().
     IoError       error{ IoError::Ok };
     std::function<void(std::span<const std::byte>, std::span<std::byte>)> convert;
-    std::vector<std::byte> scratch;     ///< Input side of one converting chunk.
-    std::vector<std::byte> pending;     ///< One element's output the caller's buffer could not take whole.
-    std::size_t            pending_off{ 0 };
+    std::vector<std::byte>                                                scratch; // Input side of one converting chunk.
+    std::vector<std::byte>                                                pending; // One element's output the caller's buffer could not take whole.
+    std::size_t                                                           pending_off{ 0 };
 };
 
 IstreamSource::IstreamSource(std::istream& in, std::uint64_t size)
   : IstreamSource(in, size, 1, 1, nullptr)
-{
-}
+{}
 
-IstreamSource::IstreamSource(std::istream& in, std::uint64_t count, std::size_t in_element, std::size_t out_element,
+IstreamSource::IstreamSource(std::istream&                                                         in,
+                             std::uint64_t                                                         count,
+                             std::size_t                                                           in_element,
+                             std::size_t                                                           out_element,
                              std::function<void(std::span<const std::byte>, std::span<std::byte>)> convert)
   : impl(std::make_unique<Impl>())
 {
@@ -133,8 +134,8 @@ IstreamSource::IstreamSource(std::istream& in, std::uint64_t count, std::size_t 
     impl->size = elements * impl->out_element;
 }
 
-IstreamSource::~IstreamSource() = default;
-IstreamSource::IstreamSource(IstreamSource&&) noexcept = default;
+IstreamSource::~IstreamSource()                                   = default;
+IstreamSource::IstreamSource(IstreamSource&&) noexcept            = default;
 IstreamSource& IstreamSource::operator=(IstreamSource&&) noexcept = default;
 
 std::uint64_t IstreamSource::size() const noexcept
@@ -211,15 +212,14 @@ std::size_t IstreamSource::read(std::span<std::byte> out)
         }
 
         const std::uint64_t left_elements = (s.size - s.produced) / s.out_element;
-        elements = static_cast<std::size_t>(std::min<std::uint64_t>(elements, left_elements));
-        elements = std::min(elements, kElementsPerChunk);
-        const std::size_t in_bytes = elements * s.in_element;
+        elements                          = static_cast<std::size_t>(std::min<std::uint64_t>(elements, left_elements));
+        elements                          = std::min(elements, kElementsPerChunk);
+        const std::size_t in_bytes        = elements * s.in_element;
         s.scratch.resize(in_bytes);
         if (readExact(*s.in, s.scratch.data(), in_bytes, s.error) < in_bytes) {
             return written;
         }
-        s.convert(std::span<const std::byte>(s.scratch),
-                  std::span<std::byte>(out.data() + written, elements * s.out_element));
+        s.convert(std::span<const std::byte>(s.scratch), std::span<std::byte>(out.data() + written, elements * s.out_element));
         s.produced += elements * s.out_element;
         written += elements * s.out_element;
     }
@@ -231,22 +231,22 @@ IoError IstreamSource::error() const
     return impl->error;
 }
 
-struct OstreamSink::Impl
-{
-    std::ostream* out{ nullptr };
-    std::size_t   in_element{ 1 };
-    std::size_t   out_element{ 1 };
+struct OstreamSink::Impl {
+    std::ostream*                                                         out{ nullptr };
+    std::size_t                                                           in_element{ 1 };
+    std::size_t                                                           out_element{ 1 };
     std::function<void(std::span<const std::byte>, std::span<std::byte>)> convert;
-    std::vector<std::byte> remainder; ///< Bytes of an element the last chunk did not complete.
-    std::vector<std::byte> scratch;   ///< Output side of one converting chunk.
+    std::vector<std::byte>                                                remainder; // Bytes of an element the last chunk did not complete.
+    std::vector<std::byte>                                                scratch;   // Output side of one converting chunk.
 };
 
 OstreamSink::OstreamSink(std::ostream& out)
   : OstreamSink(out, 1, 1, nullptr)
-{
-}
+{}
 
-OstreamSink::OstreamSink(std::ostream& out, std::size_t in_element, std::size_t out_element,
+OstreamSink::OstreamSink(std::ostream&                                                         out,
+                         std::size_t                                                           in_element,
+                         std::size_t                                                           out_element,
                          std::function<void(std::span<const std::byte>, std::span<std::byte>)> convert)
   : impl(std::make_unique<Impl>())
 {
@@ -259,8 +259,8 @@ OstreamSink::OstreamSink(std::ostream& out, std::size_t in_element, std::size_t 
     }
 }
 
-OstreamSink::~OstreamSink() = default;
-OstreamSink::OstreamSink(OstreamSink&&) noexcept = default;
+OstreamSink::~OstreamSink()                                 = default;
+OstreamSink::OstreamSink(OstreamSink&&) noexcept            = default;
 OstreamSink& OstreamSink::operator=(OstreamSink&&) noexcept = default;
 
 IoError OstreamSink::write(std::span<const std::byte> bytes)
@@ -282,8 +282,7 @@ IoError OstreamSink::write(std::span<const std::byte> bytes)
     while (s.remainder.size() - consumed >= s.in_element) {
         const std::size_t elements = std::min((s.remainder.size() - consumed) / s.in_element, kElementsPerChunk);
         s.scratch.resize(elements * s.out_element);
-        s.convert(std::span<const std::byte>(s.remainder.data() + consumed, elements * s.in_element),
-                  std::span<std::byte>(s.scratch));
+        s.convert(std::span<const std::byte>(s.remainder.data() + consumed, elements * s.in_element), std::span<std::byte>(s.scratch));
         s.out->write(reinterpret_cast<const char*>(s.scratch.data()), static_cast<std::streamsize>(s.scratch.size()));
         if (!*s.out) {
             return IoError::IoFailure;

@@ -58,7 +58,7 @@ class ModelDocument : public vn::appfw::Document {
       : name_(std::move(name))
     {
         if (mesh != nullptr) {
-            auto model = vn::make_intrusive<vn::geometry::Model>();
+            auto                      model = vn::make_intrusive<vn::geometry::Model>();
             vn::geometry::Model::Node node;
             node.name   = name_;
             node.meshes = { 0U };
@@ -73,33 +73,54 @@ class ModelDocument : public vn::appfw::Document {
     }
 
   public:
-    vn::String typeId() const override { return vn::String(kTypeId); }
-    vn::String title() const override { return name_; }
+    vn::String typeId() const override
+    {
+        return vn::String(kTypeId);
+    }
+
+    vn::String title() const override
+    {
+        return name_;
+    }
 
     /// 查看器不改内容 ⇒ 永远不脏（编辑器那一档按自己的编辑栈实现它）。
-    bool isDirty() const override { return false; }
+    bool isDirty() const override
+    {
+        return false;
+    }
 
   public:
     /// 顶点数（面板显示的第一个数）：模型里各 entry 的顶点数之和；没有模型时是 0。
-    std::size_t vertexCount() const { return vertices_; }
+    std::size_t vertexCount() const
+    {
+        return vertices_;
+    }
 
     /// 三角形数（面板显示的第二个数）：模型里各三角网格 entry 的三角形数之和；没有模型时是 0。
-    std::size_t triangleCount() const { return triangles_; }
+    std::size_t triangleCount() const
+    {
+        return triangles_;
+    }
 
     /// 部件数（面板的第三个数）：模型里可画的 entry 个数（同一网格挂两个节点算一个部件 —— 它是一份数据）。
-    std::size_t partCount() const { return parts_; }
+    std::size_t partCount() const
+    {
+        return parts_;
+    }
 
     /**
      * @brief 返回文档持有的模型。
      *
      * @return 借用的模型，随文档一起消失；没有模型时是空指针。
      */
-    vn::raw_ptr<const vn::geometry::Model> model() const { return model_.get(); }
+    vn::raw_ptr<const vn::geometry::Model> model() const
+    {
+        return model_.get();
+    }
 
   private:
     /// 数一遍模型的规模（按 entry 算，不按节点引用算：同一网格挂两个节点仍是一份数据）。
-    static void count(const vn::geometry::Model* model, std::size_t& vertices, std::size_t& triangles,
-                      std::size_t& parts)
+    static void count(const vn::geometry::Model* model, std::size_t& vertices, std::size_t& triangles, std::size_t& parts)
     {
         vertices  = 0;
         triangles = 0;

@@ -14,13 +14,9 @@ TEST(Signal, RvalueEmitDeliveredToAllHandlers)
     std::string first;
     std::string second;
 
-    signal.connect([&](std::string value) {
-        first = value;
-    }).detach();
+    signal.connect([&](std::string value) { first = value; }).detach();
 
-    signal.connect([&](std::string value) {
-        second = value;
-    }).detach();
+    signal.connect([&](std::string value) { second = value; }).detach();
 
     signal.trigger(std::string("payload"));
 
@@ -30,7 +26,7 @@ TEST(Signal, RvalueEmitDeliveredToAllHandlers)
 
 TEST(Signal, RemoveSelfDuringEmitIsSafe)
 {
-    vn::Signal<int> signal;
+    vn::Signal<int>  signal;
     std::vector<int> called;
 
     // A handle can cancel itself from inside the handler: the leftover variable is
@@ -41,9 +37,7 @@ TEST(Signal, RemoveSelfDuringEmitIsSafe)
         self.disconnect();
     });
 
-    signal.connect([&](int value) {
-        called.push_back(value);
-    }).detach();
+    signal.connect([&](int value) { called.push_back(value); }).detach();
 
     signal.trigger(3);
     signal.trigger(4);
@@ -54,17 +48,17 @@ TEST(Signal, RemoveSelfDuringEmitIsSafe)
 
 TEST(Signal, AddDuringEmitTakesEffectNextEmit)
 {
-    vn::Signal<int> signal;
+    vn::Signal<int>  signal;
     std::vector<int> called;
 
-    signal.connect([&](int value) {
-        called.push_back(value);
-        // detach() because the handle is a temporary here: the subscription must
-        // outlive this statement to be seen by the next firing.
-        signal.connect([&](int next_value) {
-            called.push_back(next_value * 100);
-        }).detach();
-    }).detach();
+    signal
+        .connect([&](int value) {
+            called.push_back(value);
+            // detach() because the handle is a temporary here: the subscription must
+            // outlive this statement to be seen by the next firing.
+            signal.connect([&](int next_value) { called.push_back(next_value * 100); }).detach();
+        })
+        .detach();
 
     signal.trigger(1);
     signal.trigger(2);
@@ -76,11 +70,9 @@ TEST(Signal, AddDuringEmitTakesEffectNextEmit)
 TEST(Signal, BlockedSignalDoesNotEmit)
 {
     vn::Signal<int> signal;
-    int               called_count = 0;
+    int             called_count = 0;
 
-    signal.connect([&](int) {
-        ++called_count;
-    }).detach();
+    signal.connect([&](int) { ++called_count; }).detach();
 
     signal.setBlocked(true);
     signal.trigger(42);
@@ -99,20 +91,18 @@ TEST(Signal, RemoveAnotherHandlerDuringEmitSkipsIt)
     // Invariant: a handler removed while the signal is firing is not called any
     // more, even though it had not been reached yet. The firing walks a snapshot,
     // so this is what the per-subscription alive flag is for.
-    vn::Signal<int> signal;
-    std::vector<int>  called;
+    vn::Signal<int>  signal;
+    std::vector<int> called;
 
     vn::Connection victim;
-    signal.connect([&](int) {
-        called.push_back(1);
-        victim.disconnect();
-    }).detach();
-    victim = signal.connect([&](int) {
-        called.push_back(2);
-    });
-    signal.connect([&](int) {
-        called.push_back(3);
-    }).detach();
+    signal
+        .connect([&](int) {
+            called.push_back(1);
+            victim.disconnect();
+        })
+        .detach();
+    victim = signal.connect([&](int) { called.push_back(2); });
+    signal.connect([&](int) { called.push_back(3); }).detach();
 
     signal.trigger(0);
 
@@ -122,16 +112,16 @@ TEST(Signal, RemoveAnotherHandlerDuringEmitSkipsIt)
 
 TEST(Signal, ClearDuringEmitStopsTheRest)
 {
-    vn::Signal<int> signal;
-    std::vector<int>  called;
+    vn::Signal<int>  signal;
+    std::vector<int> called;
 
-    signal.connect([&](int) {
-        called.push_back(1);
-        signal.disconnectAll();
-    }).detach();
-    signal.connect([&](int) {
-        called.push_back(2);
-    }).detach();
+    signal
+        .connect([&](int) {
+            called.push_back(1);
+            signal.disconnectAll();
+        })
+        .detach();
+    signal.connect([&](int) { called.push_back(2); }).detach();
 
     signal.trigger(0);
 
@@ -153,27 +143,27 @@ TEST(Signal, ConcurrentSubscribeAndEmitIsWellDefined)
     // shape: one thread firing in a loop while another adds and removes
     // handlers).
     vn::Signal<int&> signal;
-    std::atomic<int>   fired{ 0 };
-    std::atomic<int>   stable_calls{ 0 };
+    std::atomic<int> fired{ 0 };
+    std::atomic<int> stable_calls{ 0 };
 
     // Subscribed before any thread starts: must be called by every firing.
-    signal.connect([&](int& v) {
-        stable_calls.fetch_add(1);
-        v += 1;
-    }).detach();
+    signal
+        .connect([&](int& v) {
+            stable_calls.fetch_add(1);
+            v += 1;
+        })
+        .detach();
 
     std::atomic<bool> stop{ false };
     std::thread       firer([&] {
-        while (!stop.load(std::memory_order_relaxed))
-        {
+        while (!stop.load(std::memory_order_relaxed)) {
             int value = 0;
             signal.trigger(value);
             fired.fetch_add(1, std::memory_order_relaxed);
         }
     });
 
-    for (int i = 0; i < 2000; ++i)
-    {
+    for (int i = 0; i < 2000; ++i) {
         auto subscription = signal.connect([&](int& v) { v += 100; });
         subscription.disconnect();
     }
@@ -191,17 +181,18 @@ TEST(Signal, SubscribeFromAHandlerOfTheSameSignalIsVisibleToTheNextFiring)
     // handler firing the signal again sees subscriptions made by handlers of the
     // firing that is still on the stack.
     vn::Signal<int> signal;
-    int               outer = 0;
-    int               inner = 0;
+    int             outer = 0;
+    int             inner = 0;
 
-    signal.connect([&](int) {
-        ++outer;
-        if (outer == 1)
-        {
-            signal.connect([&](int) { ++inner; }).detach();
-            signal.trigger(0); // Re-entrant firing: sees the new handler.
-        }
-    }).detach();
+    signal
+        .connect([&](int) {
+            ++outer;
+            if (outer == 1) {
+                signal.connect([&](int) { ++inner; }).detach();
+                signal.trigger(0); // Re-entrant firing: sees the new handler.
+            }
+        })
+        .detach();
 
     signal.trigger(0);
 
@@ -213,13 +204,11 @@ TEST(Signal, SubscriptionCancelsOnDestruction)
 {
     // The RAII shape: there is no disconnect call anywhere in this test, the end of the
     // scope is the disconnect.
-    vn::Signal<int> signal;
-    std::vector<int>  called;
+    vn::Signal<int>  signal;
+    std::vector<int> called;
 
     {
-        const vn::Connection subscription = signal.connect([&](int value) {
-            called.push_back(value);
-        });
+        const vn::Connection subscription = signal.connect([&](int value) { called.push_back(value); });
 
         EXPECT_TRUE(subscription.isActive());
         signal.trigger(1);
@@ -234,7 +223,7 @@ TEST(Signal, SubscriptionCancelsOnDestruction)
 TEST(Signal, ConnectionIsMovableAndDisconnectIsIdempotent)
 {
     vn::Signal<int> signal;
-    int               called = 0;
+    int             called = 0;
 
     auto outer = signal.connect([&](int) { ++called; });
 
@@ -260,8 +249,8 @@ TEST(Signal, ConnectionIsMovableAndDisconnectIsIdempotent)
 TEST(Signal, AssigningASubscriptionCancelsThePreviousSubscription)
 {
     vn::Signal<int> signal;
-    int               first  = 0;
-    int               second = 0;
+    int             first  = 0;
+    int             second = 0;
 
     auto subscription = signal.connect([&](int) { ++first; });
     subscription      = signal.connect([&](int) { ++second; });
@@ -276,7 +265,7 @@ TEST(Signal, AssigningASubscriptionCancelsThePreviousSubscription)
 TEST(Signal, DetachedSubscriptionStaysSubscribed)
 {
     vn::Signal<int> signal;
-    int               called = 0;
+    int             called = 0;
 
     {
         // detach() gives up management without cancelling: the handler stays subscribed
@@ -296,7 +285,7 @@ TEST(Signal, SubscriptionOutlivingTheSignalIsInert)
     // harmless instead of dangling.
     auto subscription = [] {
         auto local = std::make_unique<vn::Signal<int>>();
-        auto owned = local->connect([](int) { });
+        auto owned = local->connect([](int) {});
         local.reset();
         return owned;
     }();
@@ -326,11 +315,13 @@ TEST(Signal, DestroyingTheSignalFromInsideAHandlerIsSafe)
     std::vector<int> called;
     auto*            signal = new vn::Signal<int>();
 
-    signal->connect([&](int) {
-        called.push_back(1);
-        delete signal; // The firing lives on in its snapshot, not in the Signal.
-        signal = nullptr;
-    }).detach();
+    signal
+        ->connect([&](int) {
+            called.push_back(1);
+            delete signal; // The firing lives on in its snapshot, not in the Signal.
+            signal = nullptr;
+        })
+        .detach();
     signal->connect([&](int) { called.push_back(2); }).detach();
 
     signal->trigger(0);

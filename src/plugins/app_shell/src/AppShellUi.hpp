@@ -6,10 +6,13 @@
 
 VN_APPFW_NS_BEGIN
 
-namespace gui {
+namespace gui
+{
+
 class MainWindow;
 class ConsolePanel;
-}
+
+} // namespace gui
 
 /**
  * @brief Builds the app shell Ribbon tabs and their command buttons.

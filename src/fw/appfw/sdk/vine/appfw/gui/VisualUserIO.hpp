@@ -3,8 +3,8 @@
 #include <memory>
 #include <optional>
 
-#include <vine/appfw/appfw_global.hpp>
 #include <vine/appfw/UserIO.hpp>
+#include <vine/appfw/appfw_global.hpp>
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -56,14 +56,10 @@ class VN_APPFW_API VisualUserIO : public UserIO {
     virtual vn::async::Task<std::optional<double>>        getDoubleAsync(const String& prompt = {}) override;
     virtual vn::async::Task<std::optional<math::Point3d>> getPoint3dAsync(const String& prompt = {}) override;
 
-    virtual vn::async::Task<std::optional<std::filesystem::path>> getFileAsync(const String&           prompt = {},
-                                                                             const FileReadOptions& options = {}) override;
-    virtual vn::async::Task<std::optional<PathList>>              getFilesAsync(const String&           prompt = {},
-                                                                              const FileReadOptions& options = {}) override;
-    virtual vn::async::Task<std::optional<std::filesystem::path>> getDirAsync(const String&          prompt = {},
-                                                                             const DirReadOptions& options = {}) override;
-    virtual vn::async::Task<std::optional<PathList>>              getDirsAsync(const String&          prompt = {},
-                                                                             const DirReadOptions& options = {}) override;
+    virtual vn::async::Task<std::optional<std::filesystem::path>> getFileAsync(const String& prompt = {}, const FileReadOptions& options = {}) override;
+    virtual vn::async::Task<std::optional<PathList>>              getFilesAsync(const String& prompt = {}, const FileReadOptions& options = {}) override;
+    virtual vn::async::Task<std::optional<std::filesystem::path>> getDirAsync(const String& prompt = {}, const DirReadOptions& options = {}) override;
+    virtual vn::async::Task<std::optional<PathList>>              getDirsAsync(const String& prompt = {}, const DirReadOptions& options = {}) override;
 
   private:
     struct Impl;

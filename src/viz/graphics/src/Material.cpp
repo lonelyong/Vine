@@ -11,8 +11,7 @@ void Material::setBaseColor(const Colorf& color)
     // Each setter compares FIRST (see revision()): a host that re-applies the values it already set - the common
     // "recompute my settings every frame" shape - costs nothing, and a consumer keyed on the revision keeps what
     // it has instead of rebuilding an identical row.
-    if (parameters_.base_color == color)
-    {
+    if (parameters_.base_color == color) {
         return;
     }
     parameters_.base_color = color;
@@ -21,8 +20,7 @@ void Material::setBaseColor(const Colorf& color)
 
 void Material::setEmissive(const Colorf& color)
 {
-    if (parameters_.emissive == color)
-    {
+    if (parameters_.emissive == color) {
         return;
     }
     parameters_.emissive = color;
@@ -31,8 +29,7 @@ void Material::setEmissive(const Colorf& color)
 
 void Material::setMetallic(float metallic)
 {
-    if (parameters_.metallic == metallic)
-    {
+    if (parameters_.metallic == metallic) {
         return;
     }
     parameters_.metallic = metallic;
@@ -41,8 +38,7 @@ void Material::setMetallic(float metallic)
 
 void Material::setRoughness(float roughness)
 {
-    if (parameters_.roughness == roughness)
-    {
+    if (parameters_.roughness == roughness) {
         return;
     }
     parameters_.roughness = roughness;
@@ -51,8 +47,7 @@ void Material::setRoughness(float roughness)
 
 void Material::setOcclusion(float occlusion)
 {
-    if (parameters_.occlusion == occlusion)
-    {
+    if (parameters_.occlusion == occlusion) {
         return;
     }
     parameters_.occlusion = occlusion;
@@ -61,8 +56,7 @@ void Material::setOcclusion(float occlusion)
 
 void Material::setAlphaMode(AlphaMode mode)
 {
-    if (parameters_.alpha_mode == mode)
-    {
+    if (parameters_.alpha_mode == mode) {
         return;
     }
     parameters_.alpha_mode = mode;
@@ -71,8 +65,7 @@ void Material::setAlphaMode(AlphaMode mode)
 
 void Material::setAlphaCutoff(float cutoff)
 {
-    if (parameters_.alpha_cutoff == cutoff)
-    {
+    if (parameters_.alpha_cutoff == cutoff) {
         return;
     }
     parameters_.alpha_cutoff = cutoff;

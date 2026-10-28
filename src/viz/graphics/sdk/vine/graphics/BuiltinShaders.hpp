@@ -162,8 +162,8 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
  */
 enum class ScreenCopyChannels
 {
-    All,   ///< The whole texel, rgba - the plain copy.
-    Alpha, ///< Its alpha, as grey - for a row whose content rides in that channel.
+    All,   // The whole texel, rgba - the plain copy.
+    Alpha, // Its alpha, as grey - for a row whose content rides in that channel.
 };
 
 /**
@@ -181,8 +181,7 @@ enum class ScreenCopyChannels
  * @param channels   Which channels of it go on screen (see ScreenCopyChannels).
  * @return The fragment program (fresh per call; see fullscreenVertexProgram for the vertex stage).
  */
-VN_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0,
-                                                              ScreenCopyChannels channels = ScreenCopyChannels::All);
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0, ScreenCopyChannels channels = ScreenCopyChannels::All);
 
 /**
  * @brief The built-in fullscreen deferred-lighting program.

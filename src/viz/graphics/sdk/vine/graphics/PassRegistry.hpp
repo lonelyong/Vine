@@ -35,8 +35,7 @@ struct PassDesc;
  * - The engine's flat methods (`addPass`, `removePass`, `passCount`, ...) are shorthands for this handle; they exist
  *   because most callers live next to the engine, not because there is a second registry.
  */
-class VN_GRAPHICS_API PassRegistry
-{
+class VN_GRAPHICS_API PassRegistry {
   public:
     /** @brief Constructs an empty handle that refers to no engine (see isValid). */
     PassRegistry() noexcept = default;

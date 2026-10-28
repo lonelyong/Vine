@@ -14,12 +14,12 @@
 #include <type_traits>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/geometry/Array.hpp>
 #include <vine/io/Vfs.hpp>
 #include <vine/math/Vector3.hpp>
-#include <vine/robotics/kinematics/Q.hpp>
 #include <vine/robotics/io/robot_io_global.hpp>
-#include <vine/String.hpp>
+#include <vine/robotics/kinematics/Q.hpp>
 
 VN_ROBOTICS_IO_NS_BEGIN
 
@@ -132,9 +132,9 @@ inline String doubleToStr(double value)
  */
 inline bool strToDouble(const String& str, double& out)
 {
-    std::string     text   = str.as_std_str();
-    double          value  = 0.0;
-    const auto      result = std::from_chars(text.data(), text.data() + text.size(), value);
+    std::string text   = str.as_std_str();
+    double      value  = 0.0;
+    const auto  result = std::from_chars(text.data(), text.data() + text.size(), value);
     if (result.ec == std::errc() && result.ptr == text.data() + text.size()) {
         out = value;
         return true;
@@ -188,8 +188,8 @@ inline bool strToQ(const String& str, kinematics::Q& out)
  */
 inline String vec3ToStr(const math::Vec3d& v)
 {
-    std::string out = std::string(doubleToStr(v.x).as_std_str()) + ' ' + std::string(doubleToStr(v.y).as_std_str())
-                      + ' ' + std::string(doubleToStr(v.z).as_std_str());
+    std::string out =
+        std::string(doubleToStr(v.x).as_std_str()) + ' ' + std::string(doubleToStr(v.y).as_std_str()) + ' ' + std::string(doubleToStr(v.z).as_std_str());
     return String::fromUtf8(out);
 }
 
@@ -202,7 +202,7 @@ inline String vec3ToStr(const math::Vec3d& v)
  */
 inline bool strToVec3(const String& str, math::Vec3d& out)
 {
-    double x = 0.0, y = 0.0, z = 0.0;
+    double             x = 0.0, y = 0.0, z = 0.0;
     std::istringstream stream(str.as_std_str());
     if (!(stream >> x >> y >> z)) {
         return false;
@@ -264,15 +264,15 @@ static_assert(sizeof(vn::math::Vec2f) == 2U * sizeof(float), "a geometry bin hol
  * @tparam T The element type; it has to be a plain type, since the bytes are the array's own layout.
  */
 template <typename T>
-class ArraySink final : public vn::io::DataSink
-{
+class ArraySink final : public vn::io::DataSink {
   public:
     /**
      * @brief Builds a sink that fills an array.
      *
      * @param out The array to fill; it is cleared.
      */
-    explicit ArraySink(std::vector<T>& out) : out_(out)
+    explicit ArraySink(std::vector<T>& out)
+      : out_(out)
     {
         static_assert(std::is_trivially_copyable_v<T>, "an array read from bytes has to be a plain type");
         static_assert(sizeof(T) <= sizeof(pending_), "the partial element has to fit the buffer");
@@ -307,8 +307,7 @@ class ArraySink final : public vn::io::DataSink
             if (whole > 0) {
                 const std::size_t base = out_.size();
                 out_.resize(base + whole);
-                std::memcpy(reinterpret_cast<std::byte*>(out_.data()) + base * sizeof(T), bytes.data() + at,
-                            whole * sizeof(T));
+                std::memcpy(reinterpret_cast<std::byte*>(out_.data()) + base * sizeof(T), bytes.data() + at, whole * sizeof(T));
                 at += whole * sizeof(T);
             }
             const std::size_t rest = bytes.size() - at;
@@ -331,9 +330,9 @@ class ArraySink final : public vn::io::DataSink
     }
 
   private:
-    std::vector<T>&          out_;
-    std::array<std::byte, 16> pending_{};      ///< Bytes of an element that has not arrived whole.
-    std::size_t              pending_size_{ 0 };
+    std::vector<T>&           out_;
+    std::array<std::byte, 16> pending_{}; // Bytes of an element that has not arrived whole.
+    std::size_t               pending_size_{ 0 };
 };
 
 /**
@@ -368,9 +367,9 @@ inline bool readExact(vn::io::VfsEntrySource& source, std::span<std::byte> out)
 template <typename T>
 bool readBlock(vn::io::VfsEntrySource& source, std::uint64_t count, std::vector<T>& out)
 {
-    ArraySink<T>  sink(out);
-    std::uint64_t bytes = count * sizeof(T);
-    std::uint64_t done  = 0;
+    ArraySink<T>                       sink(out);
+    std::uint64_t                      bytes = count * sizeof(T);
+    std::uint64_t                      done  = 0;
     std::array<std::byte, 64U * 1024U> chunk{};
     while (done < bytes) {
         const std::size_t want = static_cast<std::size_t>(std::min<std::uint64_t>(chunk.size(), bytes - done));

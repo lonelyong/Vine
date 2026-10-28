@@ -34,7 +34,11 @@
 #include <vsg/core/Exception.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/graphics/backend/DepthProbe.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
@@ -43,37 +47,35 @@
 #include <vine/vsg/internal/HostTargets.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/graphics/backend/DepthProbe.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/Streams.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "DevicePhases.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
 {
-    return array == nullptr
-               ? std::span<const float>{}
-               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
 }
 
 /// @brief The scalars of a float array, as the upload layer takes them.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const float>{}
-                            : std::span<const float>(array->data(), array->size());
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(array->data(), array->size());
 }
 
 /// @brief The indices of an index array, as the upload layer takes them.
 inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const std::uint32_t>{}
-                            : std::span<const std::uint32_t>(array->data(), array->size());
+    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
 using vn::graphics::RenderTarget;
+using vn::graphics::backend::PixelProbe;
+using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::VariantPool;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::ContentDraw;
@@ -82,12 +84,6 @@ using vn::vsg::HostTargets;
 using vn::vsg::OffscreenTarget;
 using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
-using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -123,8 +119,7 @@ OffscreenTarget::TargetLayout depthLayout(bool sampleable)
  */
 std::vector<std::byte> drawBlock(float z, float translate_x, float green, float red)
 {
-    const std::array<float, 16> matrix{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
-                                        0.0F, 0.0F, 1.0F, 0.0F, translate_x, 0.0F, z, 1.0F };
+    const std::array<float, 16> matrix{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, translate_x, 0.0F, z, 1.0F };
     std::vector<std::byte>      block(80U, std::byte{ 0 });
     std::memcpy(block.data(), matrix.data(), sizeof(matrix));
     const std::array<float, 4> params{ green, red, 0.0F, 0.0F };
@@ -147,10 +142,10 @@ std::vector<std::byte> materialBlock()
 ContentPipeline::Shaders depthShaders()
 {
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
-                     "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) in vec3 position;\n"
+                       "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
+                       "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 outColor;\n"
                        "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
@@ -177,30 +172,30 @@ ContentPipeline::Shaders depthShaders()
 }
 
 /// @brief The device plus everything needed to record draws into it (shared by both targets).
-struct Stack
-{
-    vn::vsg::DeviceResult            created;
-    std::unique_ptr<BlockStorage>      storage;
-    std::unique_ptr<BlockDescriptors>  descriptors;
-    std::unique_ptr<ContentPipeline>   pipelines;
-    std::unique_ptr<StreamUploads>     uploads;
-    std::unique_ptr<ContentDraw>       recorder;
-    VariantPool                        pool;
-    std::unique_ptr<StateRegistry>     registry;
-    ::vsg::ref_ptr<::vsg::Viewer>      viewer;
+struct Stack {
+    vn::vsg::DeviceResult             created;
+    std::unique_ptr<BlockStorage>     storage;
+    std::unique_ptr<BlockDescriptors> descriptors;
+    std::unique_ptr<ContentPipeline>  pipelines;
+    std::unique_ptr<StreamUploads>    uploads;
+    std::unique_ptr<ContentDraw>      recorder;
+    VariantPool                       pool;
+    std::unique_ptr<StateRegistry>    registry;
+    ::vsg::ref_ptr<::vsg::Viewer>     viewer;
 
     static int material_identity;
 
     bool build(const vn::vsg::DeviceResult& device)
     {
-        created = device;  // the shared depth is a layout question, so the caller brings the layers
+        created = device; // the shared depth is a layout question, so the caller brings the layers
         if (!created.validation) {
             // The instrument is asked for and its absence is reported, not silently traded for a weaker set of
             // assertions: the layer is a separate package (see the repo's own lavapipe gate, which warns and
             // carries on). The pixels and the counters below are still asserted, which is the evidence that
             // does not depend on it.
             std::cerr << "[warning] VK_LAYER_KHRONOS_validation is not available: this phase's evidence is "
-                         "two-way (counters and pixels)" << std::endl;
+                         "two-way (counters and pixels)"
+                      << std::endl;
         }
         storage = BlockStorage::create(created.device, BlockStorage::Layout{});
         if (storage == nullptr) {
@@ -227,9 +222,7 @@ struct Stack
         }
 
         uploads  = std::make_unique<StreamUploads>();
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(
-                                                     created.device->vk(), created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         return viewer != nullptr;
@@ -253,14 +246,13 @@ struct Stack
         }
 
         ContentDraw::Draw draw;
-        static int       program = 0;
-        draw.key.program                      = &program;
-        draw.key.revision                     = 1U;
-        draw.key.vertex_layout.canonical_mask = 0x1U;
-        draw.key.compatibility.samples        = 1U;
+        static int        program                                    = 0;
+        draw.key.program                                             = &program;
+        draw.key.revision                                            = 1U;
+        draw.key.vertex_layout.canonical_mask                        = 0x1U;
+        draw.key.compatibility.samples                               = 1U;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
-            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
-                                                                               material.offset })
+            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
         };
         draw.blocks       = block_binds;
         draw.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
@@ -300,16 +292,14 @@ struct Stack
 int Stack::material_identity = 0;
 
 /// @brief The pixel a point in normalised device coordinates lands on (Vulkan's y points down).
-struct Pixel
-{
+struct Pixel {
     int x;
     int y;
 };
 
 Pixel pixelAt(float x_ndc, float y_ndc)
 {
-    return { static_cast<int>((x_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)),
-             static_cast<int>((y_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)) };
+    return { static_cast<int>((x_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)), static_cast<int>((y_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)) };
 }
 
 bool isRed(const Rgba8& pixel)
@@ -324,9 +314,7 @@ bool isGreen(const Rgba8& pixel)
 
 bool isClear(const Rgba8& pixel)
 {
-    const auto near = [](std::uint8_t value, int expected) {
-        return std::abs(static_cast<int>(value) - expected) <= 2;
-    };
+    const auto near = [](std::uint8_t value, int expected) { return std::abs(static_cast<int>(value) - expected) <= 2; };
     return near(pixel.r, 0) && near(pixel.g, 0) && near(pixel.b, 64) && near(pixel.a, 255);
 }
 
@@ -341,10 +329,10 @@ Pixel centroidOf(float translate_x)
 // (z * 0.5 + 0.5) does NOT apply, and getting it wrong is invisible in a colour picture: a "far" triangle
 // written at z = -0.5 is simply below the far plane (0.0 here) and gets rejected EVERYWHERE, which looks
 // exactly like a depth buffer that occludes it. Measured, not assumed: see the depth assertions below.
-constexpr float kFarZ  = 0.1F;   ///< Depth 0.1: in front of the clear (0.0), behind the lender's 0.5.
-constexpr float kNearZ = 0.5F;   ///< Depth 0.5: nearer, which is what reverse-Z's GREATER comparison reads.
+constexpr float kFarZ  = 0.1F; // Depth 0.1: in front of the clear (0.0), behind the lender's 0.5.
+constexpr float kNearZ = 0.5F; // Depth 0.5: nearer, which is what reverse-Z's GREATER comparison reads.
 
-}  // namespace
+} // namespace
 
 void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
@@ -362,8 +350,7 @@ void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounter
     std::unique_ptr<OffscreenTarget> borrower;
     try {
         lender   = OffscreenTarget::create(device.device, depthLayout(/*sampleable*/ false));
-        borrower = lender != nullptr ? OffscreenTarget::create(device.device, depthLayout(/*sampleable*/ false), lender.get())
-                                     : nullptr;
+        borrower = lender != nullptr ? OffscreenTarget::create(device.device, depthLayout(/*sampleable*/ false), lender.get()) : nullptr;
     }
     catch (const ::vsg::Exception& error) {
         FAIL() << "target create threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
@@ -371,7 +358,7 @@ void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounter
     ASSERT_NE(lender, nullptr);
     ASSERT_NE(borrower, nullptr) << "the shared-depth target must be creatable";
     if (lender != nullptr && borrower != nullptr) {
-        counters.targets_built += 2U;  // the lender and the borrower
+        counters.targets_built += 2U; // the lender and the borrower
     }
 
     // The lender draws one NEAR red triangle on the left; the borrower draws two FAR green triangles - one
@@ -419,7 +406,7 @@ void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounter
     try {
         stack.viewer->recordAndSubmit();
         stack.viewer->deviceWaitIdle();
-    ++counters.frames;
+        ++counters.frames;
     }
     catch (const ::vsg::Exception& error) {
         FAIL() << "submit threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
@@ -441,10 +428,9 @@ void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounter
            "test must reject it. A borrower with a depth of its own would paint this pixel green";
     const Rgba8 own_pixel    = borrower_pixels.pixel(own.x, own.y);
     const Rgba8 shared_pixel = borrower_pixels.pixel(shared.x, shared.y);
-    EXPECT_TRUE(isGreen(own_pixel)) << "borrower(" << own.x << "," << own.y << ") = r" << int(own_pixel.r) << " g"
-                                    << int(own_pixel.g) << " b" << int(own_pixel.b) << " a" << int(own_pixel.a)
-                                    << " | shared = r" << int(shared_pixel.r) << " g" << int(shared_pixel.g) << " b"
-                                    << int(shared_pixel.b)
+    EXPECT_TRUE(isGreen(own_pixel)) << "borrower(" << own.x << "," << own.y << ") = r" << int(own_pixel.r) << " g" << int(own_pixel.g) << " b"
+                                    << int(own_pixel.b) << " a" << int(own_pixel.a) << " | shared = r" << int(shared_pixel.r) << " g" << int(shared_pixel.g)
+                                    << " b" << int(shared_pixel.b)
                                     << " | the borrower's second triangle must be visible: 'the depth is shared' and "
                                        "'the borrower draws nothing' are different pictures";
     // The depth is the other half of the evidence, and the half a colour picture cannot give: "the triangle
@@ -458,12 +444,9 @@ void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounter
     EXPECT_NEAR(depth.depthAt(shared.x, shared.y), kNearZ, 0.01F)
         << "the lender's depth is still there once the borrower's pass has finished: the borrower tested "
            "against THIS value, not against a clear of its own";
-    EXPECT_NEAR(depth.depthAt(own.x, own.y), kFarZ, 0.01F)
-        << "the borrower's visible triangle wrote its own depth into the shared image";
-    EXPECT_NEAR(depth.depthAt(1, 1), 0.0F, 0.01F)
-        << "and the clear (the reverse-Z far plane) survives where neither triangle is";
-    EXPECT_EQ(depth.countNear(0.0F, 0.01F) + depth.countNear(kNearZ, 0.01F) + depth.countNear(kFarZ, 0.01F),
-              static_cast<std::size_t>(kSize) * kSize)
+    EXPECT_NEAR(depth.depthAt(own.x, own.y), kFarZ, 0.01F) << "the borrower's visible triangle wrote its own depth into the shared image";
+    EXPECT_NEAR(depth.depthAt(1, 1), 0.0F, 0.01F) << "and the clear (the reverse-Z far plane) survives where neither triangle is";
+    EXPECT_EQ(depth.countNear(0.0F, 0.01F) + depth.countNear(kNearZ, 0.01F) + depth.countNear(kFarZ, 0.01F), static_cast<std::size_t>(kSize) * kSize)
         << "every texel is one of exactly three values: a fourth would mean something wrote depth that no "
            "draw of this frame asked for";
 
@@ -480,8 +463,7 @@ void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounter
            "borrower's readback is the shared image, not a depth of its own";
     EXPECT_NEAR(borrowed_depth.depthAt(own.x, own.y), kFarZ, 0.01F)
         << "and where the borrower's triangle was visible, its far value - one image, written by two passes";
-    EXPECT_NEAR(borrowed_depth.depthAt(1, 1), 0.0F, 0.01F)
-        << "the shared clear survives where neither drew";
+    EXPECT_NEAR(borrowed_depth.depthAt(1, 1), 0.0F, 0.01F) << "the shared clear survives where neither drew";
 
     EXPECT_EQ(stack.recorder->draws(), 3U) << "three draws were recorded: one lender, two borrower";
     EXPECT_EQ(stack.recorder->refusals(), 0U);
@@ -512,8 +494,7 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
         << "borrowing a depth from a target that has none must be refused, not built";
     OffscreenTarget::TargetLayout refused = depthLayout(false);
     refused.depth_format                  = RenderTarget::DepthFormat::D24;
-    EXPECT_EQ(OffscreenTarget::create(device, refused, lender.get()), nullptr)
-        << "formats are part of the pass description: a mismatched borrow is refused";
+    EXPECT_EQ(OffscreenTarget::create(device, refused, lender.get()), nullptr) << "formats are part of the pass description: a mismatched borrow is refused";
 
     auto borrower = OffscreenTarget::create(device, depthLayout(false), lender.get());
     ASSERT_NE(borrower, nullptr);
@@ -521,11 +502,10 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
     EXPECT_EQ(borrower->depthSource(), lender.get());
     EXPECT_TRUE(borrower->depth().borrowed);
     EXPECT_FALSE(borrower->depth().sampleable) << "the policy is the lender's, not the borrower's";
-    EXPECT_TRUE(borrower->depth().preserve)
-        << "the borrower's passes read the depth the lender's pass wrote, so they never clear it: a bootstrap\n"
-           "pass that cleared it (a fresh attachment set is exactly what makes a pass bootstrap) would erase\n"
-           "the lender's depth for every reader after it - measured on the deferred demo, whose overlay then\n"
-           "depth-tested against the far plane and covered the scene with the sky for that frame";
+    EXPECT_TRUE(borrower->depth().preserve) << "the borrower's passes read the depth the lender's pass wrote, so they never clear it: a bootstrap\n"
+                                               "pass that cleared it (a fresh attachment set is exactly what makes a pass bootstrap) would erase\n"
+                                               "the lender's depth for every reader after it - measured on the deferred demo, whose overlay then\n"
+                                               "depth-tested against the far plane and covered the scene with the sky for that frame";
 
     // The borrower's pass LOADs the lender's depth, and that is exactly a depth-preserving pass: the lender's
     // promotion is revoked for as long as the loan lasts.
@@ -536,20 +516,15 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
     // lender's capture says nothing about the borrower's - a borrower whose own copy never ran would otherwise
     // answer a probe with whatever its buffer held.
     const vn::graphics::backend::ReadbackRequest depth_request{ vn::graphics::backend::ReadbackKind::Depth, 0U };
-    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal),
-              static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured));
-    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
-              static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured));
     EXPECT_TRUE(lender->captureDepth() != nullptr);
-    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal),
-              static_cast<int>(vn::graphics::backend::ReadbackRefusal::None));
-    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
-              static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured))
+    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::None));
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured))
         << "the lender's copy-back is the lender's: the borrower's probe reads the borrower's buffer";
     EXPECT_FALSE(borrower->depthProbe().valid());
     EXPECT_TRUE(borrower->captureDepth() != nullptr) << "the borrower gets its own destination and copy";
-    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal),
-              static_cast<int>(vn::graphics::backend::ReadbackRefusal::None));
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::None));
 
     borrower.reset();
     EXPECT_TRUE(lender->depth().sampleable) << "the revocation goes away with the borrower";
@@ -581,7 +556,7 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
 
     // The pair as a HOST announces it (HostTargets is where the plan's facts come from, see its note): a
     // lender with a colour attachment and a depth, and a borrower that shares that depth.
-    HostTargets targets;
+    HostTargets                           targets;
     const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
     lender->attachColor(RenderTarget::ColorFormat::RGBA8);
     lender->attachDepth(RenderTarget::DepthFormat::D24);
@@ -603,8 +578,7 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
 
     // The borrower: its passes read the lender's image, so they preserve it and never promise it to a shader.
     EXPECT_TRUE(borrower_row.depth.borrowed);
-    EXPECT_TRUE(borrower_row.depth.any_pass_preserves_depth)
-        << "a borrower's passes read the depth the lender's pass wrote and must never clear it";
+    EXPECT_TRUE(borrower_row.depth.any_pass_preserves_depth) << "a borrower's passes read the depth the lender's pass wrote and must never clear it";
     const vn::graphics::backend::DepthPlan borrower_plan = vn::graphics::backend::depthPlan(borrower_row.depth);
     EXPECT_TRUE(borrower_plan.preserve);
     EXPECT_FALSE(borrower_plan.sampleable);
@@ -613,13 +587,11 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
     // writes - and that is what keeps the depth from being called sampleable while it is somebody's attachment.
     // The host asked for promotion (the SDK's default), and the loan is what revokes it.
     EXPECT_TRUE(lender_row.depth.promotion) << "the host's own word: promotion was never turned off";
-    EXPECT_TRUE(lender_row.depth.any_pass_preserves_depth)
-        << "the lender's depth is read by the borrower's passes: it is preserved while the loan lasts";
+    EXPECT_TRUE(lender_row.depth.any_pass_preserves_depth) << "the lender's depth is read by the borrower's passes: it is preserved while the loan lasts";
     const vn::graphics::backend::DepthPlan lender_plan = vn::graphics::backend::depthPlan(lender_row.depth);
     EXPECT_TRUE(lender_plan.preserve);
-    EXPECT_FALSE(lender_plan.sampleable)
-        << "one image cannot be a texture and an attachment at the same time (measured: the deferred demo's "
-           "depth ends in the attachment layout, so a sampler on it is a validation error, not a picture)";
+    EXPECT_FALSE(lender_plan.sampleable) << "one image cannot be a texture and an attachment at the same time (measured: the deferred demo's "
+                                            "depth ends in the attachment layout, so a sampler on it is a validation error, not a picture)";
 
     // And the pair is released in the LENDER's order, which is the order a registry walks its entries in: the
     // lender's objects may go before the borrower's, and the borrower's own destruction must not read them

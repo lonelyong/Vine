@@ -1,8 +1,8 @@
 ﻿#include <vine/robotics/io/XmlIOBase.hpp>
 
 #include <cstring>
-#include <sstream>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -10,8 +10,8 @@
 #include <tinyxml2.h>
 
 #include <vine/geometry/Box.hpp>
-#include <vine/geometry/Cone.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
+#include <vine/geometry/Cone.hpp>
 #include <vine/geometry/Cylinder.hpp>
 #include <vine/geometry/Ellipsoid.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
@@ -131,8 +131,7 @@ String writeMeshFile(vn::io::Vfs& vfs, std::size_t& geom_seq, const vn::geometry
     }
 
     if (vfs.addFile(detail::vfsPath(path), std::move(source)) != vn::io::IoError::Ok) {
-        throw std::runtime_error("XmlIOBase::exportGeometry, failed to write mesh geometry into the package: "
-                                 + path.as_std_str());
+        throw std::runtime_error("XmlIOBase::exportGeometry, failed to write mesh geometry into the package: " + path.as_std_str());
     }
     return path;
 }
@@ -145,8 +144,8 @@ void XmlIOBase::parseVersion(ParseContext& ctx, uint16_t& major, uint16_t& minor
 {
     (void)ctx;
     const String version = attr(xe, "version");
-    major               = 1;
-    minor               = 0;
+    major                = 1;
+    minor                = 0;
     if (version.empty()) {
         return;
     }
@@ -177,19 +176,17 @@ void XmlIOBase::exportVersion(ExportContext& ctx, uint16_t major, uint16_t minor
 
 void XmlIOBase::parsePose(ParseContext& ctx, math::Isometry3d& pose, const tinyxml2::XMLElement* xe)
 {
-    pose = math::Isometry3d{};
+    pose                 = math::Isometry3d{};
     const String xyz_str = attr(xe, "xyz");
     if (!xyz_str.empty()) {
         math::Vec3d xyz;
         if (detail::strToVec3(xyz_str, xyz)) {
-            pose.translation = math::Point3d(xyz.x * ctx.options.len_unit_scaling,
-                                             xyz.y * ctx.options.len_unit_scaling,
-                                             xyz.z * ctx.options.len_unit_scaling);
+            pose.translation = math::Point3d(xyz.x * ctx.options.len_unit_scaling, xyz.y * ctx.options.len_unit_scaling, xyz.z * ctx.options.len_unit_scaling);
         }
     }
     const String quat_str = attr(xe, "quat");
     if (!quat_str.empty()) {
-        double x = 0.0, y = 0.0, z = 0.0, w = 1.0;
+        double             x = 0.0, y = 0.0, z = 0.0, w = 1.0;
         std::istringstream stream(quat_str.as_std_str());
         if (stream >> x >> y >> z >> w) {
             pose.rotation = math::Quatd(x, y, z, w);
@@ -200,25 +197,24 @@ void XmlIOBase::parsePose(ParseContext& ctx, math::Isometry3d& pose, const tinyx
 void XmlIOBase::exportPose(ExportContext& ctx, const math::Isometry3d& pose, tinyxml2::XMLElement* xe)
 {
     (void)ctx;
-    const auto  origin   = xe->GetDocument()->NewElement("origin");
-    const auto& t        = pose.translation;
-    const auto& q        = pose.rotation;
-    std::string xyz      = std::string(detail::doubleToStr(t.x).as_std_str()) + " " + std::string(detail::doubleToStr(t.y).as_std_str())
-                     + " " + std::string(detail::doubleToStr(t.z).as_std_str());
-    std::string quat     = std::string(detail::doubleToStr(q.x).as_std_str()) + " " + std::string(detail::doubleToStr(q.y).as_std_str())
-                     + " " + std::string(detail::doubleToStr(q.z).as_std_str()) + " " + std::string(detail::doubleToStr(q.w).as_std_str());
+    const auto  origin = xe->GetDocument()->NewElement("origin");
+    const auto& t      = pose.translation;
+    const auto& q      = pose.rotation;
+    std::string xyz    = std::string(detail::doubleToStr(t.x).as_std_str()) + " " + std::string(detail::doubleToStr(t.y).as_std_str()) + " " +
+                         std::string(detail::doubleToStr(t.z).as_std_str());
+    std::string quat   = std::string(detail::doubleToStr(q.x).as_std_str()) + " " + std::string(detail::doubleToStr(q.y).as_std_str()) + " " +
+                         std::string(detail::doubleToStr(q.z).as_std_str()) + " " + std::string(detail::doubleToStr(q.w).as_std_str());
     origin->SetAttribute("xyz", xyz.c_str());
     origin->SetAttribute("quat", quat.c_str());
     xe->LinkEndChild(origin);
 }
 
-vn::intrusive_ptr<vn::geometry::Material> XmlIOBase::parseMaterial(ParseContext& ctx,
-                                                                       const tinyxml2::XMLElement* xe)
+vn::intrusive_ptr<vn::geometry::Material> XmlIOBase::parseMaterial(ParseContext& ctx, const tinyxml2::XMLElement* xe)
 {
     (void)ctx;
     const String color_str = attr(xe, "color");
     if (!color_str.empty()) {
-        double r = 0.0, g = 0.0, b = 0.0, a = 1.0;
+        double             r = 0.0, g = 0.0, b = 0.0, a = 1.0;
         std::istringstream stream(color_str.as_std_str());
         if (stream >> r >> g >> b >> a) {
             return vn::make_intrusive<vn::geometry::ColorMaterial>(
@@ -239,8 +235,8 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
     if (tag == "box") {
         double w = 0.0, h = 0.0, d = 0.0;
         // size is space-separated "w h d"
-        const String        size_str = attr(child, "size");
-        std::istringstream  stream(size_str.as_std_str());
+        const String       size_str = attr(child, "size");
+        std::istringstream stream(size_str.as_std_str());
         if (!(stream >> w >> h >> d)) {
             return {};
         }
@@ -269,8 +265,7 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
         if (radii_str.empty() || !detail::strToVec3(radii_str, radii)) {
             return {};
         }
-        return vn::intrusive_ptr<vn::geometry::Ellipsoid>(
-            new vn::geometry::Ellipsoid(radii.x * s, radii.y * s, radii.z * s));
+        return vn::intrusive_ptr<vn::geometry::Ellipsoid>(new vn::geometry::Ellipsoid(radii.x * s, radii.y * s, radii.z * s));
     }
     if (tag == "triangle_mesh" || tag == "indexed_triangle_mesh") {
         if (ctx.vfs == nullptr) {
@@ -296,20 +291,21 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
     (void)ctx;
     auto xe_geom = xe->GetDocument()->NewElement("geometry");
     switch (shape.shapeType()) {
-    case vn::geometry::ShapeType::Box: {
+    case vn::geometry::ShapeType::Box:
+    {
         const auto* const box = dynamic_cast<const vn::geometry::Box*>(&shape);
         if (box == nullptr) {
             return;
         }
         auto        xe_box = xe->GetDocument()->NewElement("box");
-        std::string size   = std::string(detail::doubleToStr(box->width()).as_std_str()) + " "
-                         + std::string(detail::doubleToStr(box->height()).as_std_str()) + " "
-                         + std::string(detail::doubleToStr(box->depth()).as_std_str());
+        std::string size   = std::string(detail::doubleToStr(box->width()).as_std_str()) + " " + std::string(detail::doubleToStr(box->height()).as_std_str()) +
+                             " " + std::string(detail::doubleToStr(box->depth()).as_std_str());
         xe_box->SetAttribute("size", size.c_str());
         xe_geom->LinkEndChild(xe_box);
         break;
     }
-    case vn::geometry::ShapeType::Cylinder: {
+    case vn::geometry::ShapeType::Cylinder:
+    {
         const auto* const cyli = dynamic_cast<const vn::geometry::Cylinder*>(&shape);
         if (cyli == nullptr) {
             return;
@@ -320,7 +316,8 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
         xe_geom->LinkEndChild(xe_cyli);
         break;
     }
-    case vn::geometry::ShapeType::Cone: {
+    case vn::geometry::ShapeType::Cone:
+    {
         const auto* const cone = dynamic_cast<const vn::geometry::Cone*>(&shape);
         if (cone == nullptr) {
             return;
@@ -331,7 +328,8 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
         xe_geom->LinkEndChild(xe_cone);
         break;
     }
-    case vn::geometry::ShapeType::Sphere: {
+    case vn::geometry::ShapeType::Sphere:
+    {
         const auto* const sphere = dynamic_cast<const vn::geometry::Sphere*>(&shape);
         if (sphere == nullptr) {
             return;
@@ -341,21 +339,23 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
         xe_geom->LinkEndChild(xe_sphere);
         break;
     }
-    case vn::geometry::ShapeType::Ellipsoid: {
+    case vn::geometry::ShapeType::Ellipsoid:
+    {
         const auto* const ellipsoid = dynamic_cast<const vn::geometry::Ellipsoid*>(&shape);
         if (ellipsoid == nullptr) {
             return;
         }
         auto        xe_ell = xe->GetDocument()->NewElement("ellipsoid");
-        std::string radii  = std::string(detail::doubleToStr(ellipsoid->radiusX()).as_std_str()) + " "
-                          + std::string(detail::doubleToStr(ellipsoid->radiusY()).as_std_str()) + " "
-                          + std::string(detail::doubleToStr(ellipsoid->radiusZ()).as_std_str());
+        std::string radii  = std::string(detail::doubleToStr(ellipsoid->radiusX()).as_std_str()) + " " +
+                             std::string(detail::doubleToStr(ellipsoid->radiusY()).as_std_str()) + " " +
+                             std::string(detail::doubleToStr(ellipsoid->radiusZ()).as_std_str());
         xe_ell->SetAttribute("radii", radii.c_str());
         xe_geom->LinkEndChild(xe_ell);
         break;
     }
     case vn::geometry::ShapeType::TriangleMesh:
-    case vn::geometry::ShapeType::IndexedTriangleMesh: {
+    case vn::geometry::ShapeType::IndexedTriangleMesh:
+    {
         const auto* const mesh = dynamic_cast<const vn::geometry::Mesh*>(&shape);
         if (mesh == nullptr) {
             return;
@@ -377,11 +377,11 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
 
         // The element describes the FILE, not the shape in memory: a binary STL file is a soup whatever the mesh is, and
         // it holds no per-vertex arrays, so only the triangle count is worth stating.
-        const detail::MeshArrays counts       = detail::MeshArrays::take(*mesh);
-        const bool               soup_file    = detail::isStlPath(detail::vfsPath(path));
-        const bool               indexed_file = !soup_file && mesh->shapeType() == vn::geometry::ShapeType::IndexedTriangleMesh;
-        auto xe_mesh = xe->GetDocument()->NewElement(indexed_file ? "indexed_triangle_mesh" : "triangle_mesh");
-        const auto triangle_count_str = std::to_string(counts.triangle_count);
+        const detail::MeshArrays counts             = detail::MeshArrays::take(*mesh);
+        const bool               soup_file          = detail::isStlPath(detail::vfsPath(path));
+        const bool               indexed_file       = !soup_file && mesh->shapeType() == vn::geometry::ShapeType::IndexedTriangleMesh;
+        auto                     xe_mesh            = xe->GetDocument()->NewElement(indexed_file ? "indexed_triangle_mesh" : "triangle_mesh");
+        const auto               triangle_count_str = std::to_string(counts.triangle_count);
         xe_mesh->SetAttribute("triangle_count", triangle_count_str.c_str());
         if (!soup_file) {
             const auto vertex_count_str = std::to_string(counts.vertex_count);
@@ -391,9 +391,7 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
         xe_geom->LinkEndChild(xe_mesh);
         break;
     }
-    default:
-        detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, unsupported shape type, skipped.");
-        return;
+    default: detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, unsupported shape type, skipped."); return;
     }
     xe->LinkEndChild(xe_geom);
 }
@@ -445,8 +443,9 @@ void XmlIOBase::exportVisual(ExportContext& ctx, const workcell::Visual& visual,
     else if (visual.material()) {
         // In-place materials are not used; materials must be defined on the
         // device and referenced by name.
-        detail::appendWarning(ctx.msgs, "XmlIOBase::exportVisual, in-place material is not supported; "
-                "materials must be defined on the device and referenced by name.");
+        detail::appendWarning(ctx.msgs,
+                              "XmlIOBase::exportVisual, in-place material is not supported; "
+                              "materials must be defined on the device and referenced by name.");
     }
     xe->LinkEndChild(xe_visual);
 }
@@ -478,14 +477,12 @@ void XmlIOBase::parseLink(ParseContext& ctx, workcell::Link& link, const tinyxml
 {
     link.setName(attr(xe, "name"));
     auto& body = link.body();
-    for (const auto* xe_visual = xe->FirstChildElement("visual"); xe_visual;
-         xe_visual              = xe_visual->NextSiblingElement("visual")) {
+    for (const auto* xe_visual = xe->FirstChildElement("visual"); xe_visual; xe_visual = xe_visual->NextSiblingElement("visual")) {
         workcell::Visual visual;
         parseVisual(ctx, visual, xe_visual);
         body.visuals().push_back(std::move(visual));
     }
-    for (const auto* xe_collision = xe->FirstChildElement("collision"); xe_collision;
-         xe_collision             = xe_collision->NextSiblingElement("collision")) {
+    for (const auto* xe_collision = xe->FirstChildElement("collision"); xe_collision; xe_collision = xe_collision->NextSiblingElement("collision")) {
         workcell::Collision collision;
         parseCollision(ctx, collision, xe_collision);
         body.collisions().push_back(std::move(collision));
@@ -505,23 +502,24 @@ void XmlIOBase::exportLink(ExportContext& ctx, const workcell::Link& link, tinyx
     xe->LinkEndChild(xe_link);
 }
 
-std::unique_ptr<workcell::Joint> XmlIOBase::parseJoint(ParseContext& ctx,
-                                                       tinyxml2::XMLElement*                    xe,
-                                                       const std::map<String, raw_ptr<workcell::Link>>& link_by_name)
+std::unique_ptr<workcell::Joint>
+XmlIOBase::parseJoint(ParseContext& ctx, tinyxml2::XMLElement* xe, const std::map<String, raw_ptr<workcell::Link>>& link_by_name)
 {
     const String name = attr(xe, "name");
 
-    kinematics::FrameType type = kinematics::FrameType::Fixed;
+    kinematics::FrameType type     = kinematics::FrameType::Fixed;
     const String          type_str = attr(xe, "type");
     if (type_str == u8"revolute") {
         type = kinematics::FrameType::RevoluteJoint;
-    } else if (type_str == u8"prismatic") {
+    }
+    else if (type_str == u8"prismatic") {
         type = kinematics::FrameType::PrismaticJoint;
-    } else if (type_str == u8"planar") {
+    }
+    else if (type_str == u8"planar") {
         type = kinematics::FrameType::PlanarJoint;
-    } else if (!type_str.empty() && type_str != u8"fixed") {
-        detail::appendWarning(ctx.msgs, "XmlIOBase::parseJoint, (xml:%d) unknown joint type [%s], treated as fixed.", xe->GetLineNum(),
-                toCStr(type_str));
+    }
+    else if (!type_str.empty() && type_str != u8"fixed") {
+        detail::appendWarning(ctx.msgs, "XmlIOBase::parseJoint, (xml:%d) unknown joint type [%s], treated as fixed.", xe->GetLineNum(), toCStr(type_str));
     }
 
     auto joint = std::make_unique<workcell::Joint>(type);
@@ -537,7 +535,8 @@ std::unique_ptr<workcell::Joint> XmlIOBase::parseJoint(ParseContext& ctx,
     if (!parent_name.empty()) {
         if (const auto it = link_by_name.find(parent_name); it != link_by_name.end()) {
             joint->setParentLink(it->second);
-        } else {
+        }
+        else {
             detail::appendWarning(ctx.msgs, "XmlIOBase::parseJoint, (xml:%d) parent link [%s] not found.", xe->GetLineNum(), toCStr(parent_name));
         }
     }
@@ -545,7 +544,8 @@ std::unique_ptr<workcell::Joint> XmlIOBase::parseJoint(ParseContext& ctx,
     if (!child_name.empty()) {
         if (const auto it = link_by_name.find(child_name); it != link_by_name.end()) {
             joint->setChildLink(it->second);
-        } else {
+        }
+        else {
             detail::appendWarning(ctx.msgs, "XmlIOBase::parseJoint, (xml:%d) child link [%s] not found.", xe->GetLineNum(), toCStr(child_name));
         }
     }
@@ -554,7 +554,7 @@ std::unique_ptr<workcell::Joint> XmlIOBase::parseJoint(ParseContext& ctx,
     for (auto* xe_dof = xe->FirstChildElement("dof"); xe_dof; xe_dof = xe_dof->NextSiblingElement("dof")) {
         kinematics::DofInfo dof;
         const String        dof_type = attr(xe_dof, "type");
-        dof.type = dof_type == u8"prismatic" ? kinematics::DofType::PrismaticJoint : kinematics::DofType::RevoluteJoint;
+        dof.type                     = dof_type == u8"prismatic" ? kinematics::DofType::PrismaticJoint : kinematics::DofType::RevoluteJoint;
         parsePose(ctx, dof.origin, xe_dof);
         const String axis_str = attr(xe_dof, "axis");
         if (!axis_str.empty()) {
@@ -577,17 +577,10 @@ void XmlIOBase::exportJoint(ExportContext& ctx, const workcell::Joint& joint, ti
 
     const char* type_str = "fixed";
     switch (joint.frameType()) {
-    case kinematics::FrameType::RevoluteJoint:
-        type_str = "revolute";
-        break;
-    case kinematics::FrameType::PrismaticJoint:
-        type_str = "prismatic";
-        break;
-    case kinematics::FrameType::PlanarJoint:
-        type_str = "planar";
-        break;
-    default:
-        break;
+    case kinematics::FrameType::RevoluteJoint: type_str = "revolute"; break;
+    case kinematics::FrameType::PrismaticJoint: type_str = "prismatic"; break;
+    case kinematics::FrameType::PlanarJoint: type_str = "planar"; break;
+    default: break;
     }
     xe_joint->SetAttribute("type", type_str);
     if (joint.parentLink()) {
@@ -603,15 +596,12 @@ void XmlIOBase::exportJoint(ExportContext& ctx, const workcell::Joint& joint, ti
         xe_dof->SetAttribute("type", dof.type == kinematics::DofType::PrismaticJoint ? "prismatic" : "revolute");
         xe_dof->SetAttribute("axis", toCStr(detail::vec3ToStr(dof.axis)));
         // The dof origin is flattened as xyz / quat attributes on the <dof> node.
-        const auto& t        = dof.origin.translation;
-        const auto& q        = dof.origin.rotation;
-        std::string xyz      = std::string(detail::doubleToStr(t.x).as_std_str()) + " "
-                         + std::string(detail::doubleToStr(t.y).as_std_str()) + " "
-                         + std::string(detail::doubleToStr(t.z).as_std_str());
-        std::string quat     = std::string(detail::doubleToStr(q.x).as_std_str()) + " "
-                         + std::string(detail::doubleToStr(q.y).as_std_str()) + " "
-                         + std::string(detail::doubleToStr(q.z).as_std_str()) + " "
-                         + std::string(detail::doubleToStr(q.w).as_std_str());
+        const auto& t    = dof.origin.translation;
+        const auto& q    = dof.origin.rotation;
+        std::string xyz  = std::string(detail::doubleToStr(t.x).as_std_str()) + " " + std::string(detail::doubleToStr(t.y).as_std_str()) + " " +
+                           std::string(detail::doubleToStr(t.z).as_std_str());
+        std::string quat = std::string(detail::doubleToStr(q.x).as_std_str()) + " " + std::string(detail::doubleToStr(q.y).as_std_str()) + " " +
+                           std::string(detail::doubleToStr(q.z).as_std_str()) + " " + std::string(detail::doubleToStr(q.w).as_std_str());
         xe_dof->SetAttribute("xyz", xyz.c_str());
         xe_dof->SetAttribute("quat", quat.c_str());
         setAttrDouble(xe_dof, "lower", dof.lower);
@@ -626,15 +616,15 @@ void XmlIOBase::exportJoint(ExportContext& ctx, const workcell::Joint& joint, ti
 void XmlIOBase::parseDeviceMetadata(ParseContext& ctx, workcell::DeviceMetadata& metadata, const tinyxml2::XMLElement* xe)
 {
     (void)ctx;
-    metadata.id          = attr(xe, "id");
-    metadata.name        = attr(xe, "name");
-    metadata.description = attr(xe, "description");
-    metadata.sn          = attr(xe, "sn");
-    metadata.manufacturer = attr(xe, "manufacturer");
-    metadata.model       = attr(xe, "model");
-    metadata.author      = attr(xe, "author");
-    metadata.version     = attr(xe, "version");
-    metadata.create_time = attr(xe, "create_time");
+    metadata.id            = attr(xe, "id");
+    metadata.name          = attr(xe, "name");
+    metadata.description   = attr(xe, "description");
+    metadata.sn            = attr(xe, "sn");
+    metadata.manufacturer  = attr(xe, "manufacturer");
+    metadata.model         = attr(xe, "model");
+    metadata.author        = attr(xe, "author");
+    metadata.version       = attr(xe, "version");
+    metadata.create_time   = attr(xe, "create_time");
     metadata.modified_time = attr(xe, "modified_time");
 
     const String unit_str = attr(xe, "length_unit");
@@ -643,15 +633,16 @@ void XmlIOBase::parseDeviceMetadata(ParseContext& ctx, workcell::DeviceMetadata&
     const String ik_str = attr(xe, "iksolver");
     if (ik_str == u8"None") {
         metadata.ik_solver_type = kinematics::IKSolverType::None;
-    } else if (ik_str == u8"Pieper") {
+    }
+    else if (ik_str == u8"Pieper") {
         metadata.ik_solver_type = kinematics::IKSolverType::Pieper;
-    } else {
+    }
+    else {
         metadata.ik_solver_type = kinematics::IKSolverType::Iterative;
     }
 }
 
-void XmlIOBase::exportDeviceMetadata(ExportContext& ctx, const workcell::DeviceMetadata& metadata,
-                                     tinyxml2::XMLElement* xe)
+void XmlIOBase::exportDeviceMetadata(ExportContext& ctx, const workcell::DeviceMetadata& metadata, tinyxml2::XMLElement* xe)
 {
     (void)ctx;
     auto xe_meta = xe->GetDocument()->NewElement("metadata");

@@ -23,8 +23,7 @@ namespace
 using namespace vn::robotics::proximity;
 
 /// Mock geometry backend; the real one is FCL-backed and skipped here.
-class MockGeometry : public CollisionGeometry
-{
+class MockGeometry : public CollisionGeometry {
   public:
     bool buildFromShape(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) override
     {
@@ -42,13 +41,11 @@ class MockGeometry : public CollisionGeometry
 };
 
 /// Mock collision object; a real backend overrides computeWorldTransform().
-class MockCollisionObject : public CollisionObject
-{
+class MockCollisionObject : public CollisionObject {
   public:
     explicit MockCollisionObject(const vn::intrusive_ptr<CollisionGeometry>& geometry)
       : CollisionObject(geometry)
-    {
-    }
+    {}
 
     bool isValid() const override
     {
@@ -57,8 +54,7 @@ class MockCollisionObject : public CollisionObject
 };
 
 /// Mock detector; a real backend implements the do* hooks with FCL.
-class MockDetector : public CollisionDetector
-{
+class MockDetector : public CollisionDetector {
   protected:
     bool doAddCollisionObject(CollisionObject*) override
     {
@@ -76,8 +72,7 @@ class MockDetector : public CollisionDetector
     }
 
     void doEndUpdate() override
-    {
-    }
+    {}
 
     CollisionResult doCheckCollision(const CollisionRequest&) const override
     {
@@ -89,27 +84,23 @@ class MockDetector : public CollisionDetector
         return {};
     }
 
-    CollisionResult doCheckCollision(const CollisionDetector&, const CollisionRequest&,
-                                     const vn::robotics::kinematics::State&) const override
+    CollisionResult doCheckCollision(const CollisionDetector&, const CollisionRequest&, const vn::robotics::kinematics::State&) const override
     {
         return {};
     }
 };
 
 /// Mock geometry manager; the real one is FCL-backed and skipped here.
-class MockGeometryManager : public CollisionGeometryManager
-{
+class MockGeometryManager : public CollisionGeometryManager {
   public:
-    vn::intrusive_ptr<CollisionGeometry>
-        createCollisionGeometry(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const override
+    vn::intrusive_ptr<CollisionGeometry> createCollisionGeometry(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const override
     {
         vn::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
         geometry->buildFromShape(shape);
         return geometry;
     }
 
-    vn::intrusive_ptr<CollisionObject>
-        createCollisionObject(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const override
+    vn::intrusive_ptr<CollisionObject> createCollisionObject(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const override
     {
         const auto geometry = get(shape);
         if (geometry == nullptr) {
@@ -149,7 +140,7 @@ TEST(CollisionPairTest, OrderIndependentEqualityAndHash)
 
 TEST(CollisionMatrixTest, RegisterAndMinDistance)
 {
-    CollisionMatrix                   matrix;
+    CollisionMatrix                 matrix;
     vn::robotics::kinematics::Frame a;
     a.setName(vn::String(u8"a"));
     vn::robotics::kinematics::Frame b;
@@ -185,7 +176,7 @@ TEST(CollisionMatrixTest, RegisterAndMinDistance)
 
 TEST(CollisionMatrixTest, IgnoreAndShouldCheck)
 {
-    CollisionMatrix                   matrix;
+    CollisionMatrix                 matrix;
     vn::robotics::kinematics::Frame a;
     a.setName(vn::String(u8"a"));
     vn::robotics::kinematics::Frame b;
@@ -221,8 +212,8 @@ TEST(CollisionMatrixTest, IgnoreAndShouldCheck)
 
 TEST(CollisionMatrixTest, CopyOptionsAndUnregister)
 {
-    CollisionMatrix                   source;
-    CollisionMatrix                   target;
+    CollisionMatrix                 source;
+    CollisionMatrix                 target;
     vn::robotics::kinematics::Frame a;
     a.setName(vn::String(u8"a"));
     vn::robotics::kinematics::Frame b;
@@ -304,8 +295,7 @@ TEST(ProximityTest, CollisionObjectWorldTransform)
     object->setLocalTransform(translated(vn::math::Vec3d(0.0, 0.0, 3.0)));
 
     object->computeWorldTransform(state);
-    const auto expected = vn::robotics::kinematics::Frame::frameInWorld(&joint, state)
-                          * object->localTransform();
+    const auto expected = vn::robotics::kinematics::Frame::frameInWorld(&joint, state) * object->localTransform();
     EXPECT_EQ(object->worldTransform().translation.x, expected.translation.x);
     EXPECT_EQ(object->worldTransform().translation.y, expected.translation.y);
     EXPECT_EQ(object->worldTransform().translation.z, expected.translation.z);
@@ -340,7 +330,7 @@ TEST(ProximityTest, CollisionGeometryManager)
 
 TEST(ProximityTest, DetectorBookkeeping)
 {
-    MockDetector detector;
+    MockDetector                    detector;
     vn::robotics::kinematics::Frame owner;
     owner.setName(vn::String(u8"owner"));
     vn::robotics::kinematics::State state;

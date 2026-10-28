@@ -3,8 +3,8 @@
 
 #include <memory>
 
-#include <vine/raw_ptr.hpp>
 #include <vine/di/ServiceBase.hpp>
+#include <vine/raw_ptr.hpp>
 
 VN_DI_NS_BEGIN
 

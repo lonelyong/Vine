@@ -19,7 +19,8 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Shared state of a Scope: pending children, first failure, done event.
@@ -27,12 +28,11 @@ namespace detail {
  * Lives behind a shared_ptr so children (self-owned coroutines) keep it alive
  * even after the Scope object itself is destroyed.
  */
-struct ScopeState
-{
-    std::mutex mutex;
-    std::size_t pending{ 0 };
+struct ScopeState {
+    std::mutex         mutex;
+    std::size_t        pending{ 0 };
     std::exception_ptr first_exception{};
-    AsyncEvent done;
+    AsyncEvent         done;
 };
 
 /**
@@ -47,18 +47,15 @@ struct ScopeState
  * @param state Shared scope state.
  * @param task Task to run to completion.
  */
-template<typename T>
+template <typename T>
 DetachedTask runScopeChild(std::shared_ptr<ScopeState> state, Task<T> task)
 {
-    try
-    {
+    try {
         co_await std::move(task);
     }
-    catch (...)
-    {
+    catch (...) {
         std::lock_guard<std::mutex> lock(state->mutex);
-        if (!state->first_exception)
-        {
+        if (!state->first_exception) {
             state->first_exception = std::current_exception();
         }
     }
@@ -68,8 +65,7 @@ DetachedTask runScopeChild(std::shared_ptr<ScopeState> state, Task<T> task)
         std::lock_guard<std::mutex> lock(state->mutex);
         done_now = (--state->pending == 0);
     }
-    if (done_now)
-    {
+    if (done_now) {
         state->done.set();
     }
 }
@@ -100,8 +96,7 @@ DetachedTask runScopeChild(std::shared_ptr<ScopeState> state, Task<T> task)
  * the pending counter and the first-failure slot are batch-level state whose
  * add/join interleaving is intentionally left to the caller to serialize.
  */
-class Scope
-{
+class Scope {
   public:
     Scope() = default;
 
@@ -157,16 +152,15 @@ class Scope
      */
     ~Scope()
     {
-        if (!detached_)
-        {
+        if (!detached_) {
             requestStop();
         }
     }
 
-    Scope(const Scope&) = delete;
+    Scope(const Scope&)            = delete;
     Scope& operator=(const Scope&) = delete;
-    Scope(Scope&&) = delete;
-    Scope& operator=(Scope&&) = delete;
+    Scope(Scope&&)                 = delete;
+    Scope& operator=(Scope&&)      = delete;
 
     /**
      * @brief Starts a child task immediately and tracks its completion.
@@ -177,18 +171,17 @@ class Scope
      * @tparam T Result type of the task (discarded).
      * @param task Task to run; must be non-empty.
      */
-    template<typename T>
+    template <typename T>
     void add(Task<T> task)
     {
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->pending == 0)
-            {
+            if (state_->pending == 0) {
                 // A fresh batch starts: clear the previous completion state, and track this batch
                 // again - detach() applied to the batch before it.
                 state_->done.reset();
                 state_->first_exception = nullptr;
-                detached_ = false;
+                detached_               = false;
             }
             ++state_->pending;
         }
@@ -227,12 +220,10 @@ class Scope
         // stop_callback from inside its own callback (see detail::deferWake).
         std::stop_callback cancellation{ token, [state = state_]() noexcept { detail::deferWake(state); } };
 
-        for (;;)
-        {
+        for (;;) {
             {
                 std::lock_guard<std::mutex> lock(state_->mutex);
-                if (state_->pending == 0)
-                {
+                if (state_->pending == 0) {
                     break;
                 }
                 // Re-arm before waiting: done is manual-reset and may have
@@ -240,10 +231,8 @@ class Scope
                 state_->done.reset();
             }
 
-            if (token.stop_requested())
-            {
-                if (policy == CancelPolicy::Destroy)
-                {
+            if (token.stop_requested()) {
+                if (policy == CancelPolicy::Destroy) {
                     throw TaskCancelledException{};
                 }
                 // StopAndWait: ask the children to wind down and keep waiting for them; the
@@ -253,8 +242,7 @@ class Scope
 
             co_await state_->done;
 
-            if (token.stop_requested() && policy == CancelPolicy::Destroy)
-            {
+            if (token.stop_requested() && policy == CancelPolicy::Destroy) {
                 throw TaskCancelledException{};
             }
         }
@@ -264,12 +252,10 @@ class Scope
             std::lock_guard<std::mutex> lock(state_->mutex);
             ex = state_->first_exception;
         }
-        if (token.stop_requested() && policy == CancelPolicy::StopAndWait)
-        {
+        if (token.stop_requested() && policy == CancelPolicy::StopAndWait) {
             throw TaskCancelledException{};
         }
-        if (ex)
-        {
+        if (ex) {
             std::rethrow_exception(ex);
         }
     }

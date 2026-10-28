@@ -29,12 +29,13 @@ VN_IMAGEIO_NS_BEGIN
  * module does not recognise, and what a default-constructed value has, so a caller cannot accidentally
  * treat "I don't know this file" as a real format.
  */
-enum class ImageFileFormat : std::uint8_t {
-    Unknown = 0, ///< Not a format, or a container this module does not handle.
-    Png,         ///< PNG. Read and written.
-    Jpeg,        ///< JPEG. Read only (writing it is lossy and needs a quality parameter this API has no place for).
-    Bmp,         ///< BMP. Read and written.
-    Tga,         ///< TGA. Read and written.
+enum class ImageFileFormat : std::uint8_t
+{
+    Unknown = 0, // Not a format, or a container this module does not handle.
+    Png,         // PNG. Read and written.
+    Jpeg,        // JPEG. Read only (writing it is lossy and needs a quality parameter this API has no place for).
+    Bmp,         // BMP. Read and written.
+    Tga,         // TGA. Read and written.
 };
 
 /**
@@ -46,11 +47,10 @@ enum class ImageFileFormat : std::uint8_t {
  * - `can_read` / `can_write` are what `canRead()` and `canWrite()` answer. They are stated in ONE table so a
  *   format's name, extension and capabilities cannot drift apart into one switch each.
  */
-struct ImageFormatInfo
-{
-    std::span<const char* const> extensions; ///< Lowercase extensions with the leading dot (".jpg", ".jpeg"); empty for Unknown.
-    bool                         can_read;   ///< Whether decodeImage() accepts the container.
-    bool                         can_write;  ///< Whether encodeImage() can produce the container.
+struct ImageFormatInfo {
+    std::span<const char* const> extensions; // Lowercase extensions with the leading dot (".jpg", ".jpeg"); empty for Unknown.
+    bool                         can_read;   // Whether decodeImage() accepts the container.
+    bool                         can_write;  // Whether encodeImage() can produce the container.
 };
 
 /**

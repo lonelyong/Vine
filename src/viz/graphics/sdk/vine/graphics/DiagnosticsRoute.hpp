@@ -25,8 +25,7 @@ class RenderEngine;
  * - The engine may be destroyed first and the handle knows it (a `Lease`): once it is gone a report is a no-op and
  *   the counts answer zero.
  */
-class VN_GRAPHICS_API DiagnosticsRoute
-{
+class VN_GRAPHICS_API DiagnosticsRoute {
   public:
     /** @brief Constructs an empty handle that refers to no engine (see isValid). */
     DiagnosticsRoute() noexcept = default;
@@ -73,8 +72,7 @@ class VN_GRAPHICS_API DiagnosticsRoute
      * @param category Machine-matchable category the host can switch on.
      * @param message  Human-readable sentence.
      */
-    void report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category,
-                const String& message);
+    void report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message);
 
   private:
     friend class RenderEngine;

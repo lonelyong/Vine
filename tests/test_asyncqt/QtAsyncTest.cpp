@@ -1,7 +1,7 @@
-#include <vine/async/Task.hpp>
-#include <vine/async/DetachedTask.hpp>
 #include <vine/async/Cancellation.hpp>
+#include <vine/async/DetachedTask.hpp>
 #include <vine/async/Sleep.hpp>
+#include <vine/async/Task.hpp>
 
 #include <vine/CancellationToken.hpp>
 #include <vine/appfw/MainThreadDispatcher.hpp>
@@ -19,17 +19,17 @@
 
 using namespace vn;
 
-namespace {
-
-class QtAsyncTest : public ::testing::Test
+namespace
 {
+
+class QtAsyncTest : public ::testing::Test {
   protected:
     static void SetUpTestSuite()
     {
-        static int argc = 1;
-        static char arg0[] = "test_asyncqt";
+        static int   argc   = 1;
+        static char  arg0[] = "test_asyncqt";
         static char* argv[] = { arg0, nullptr };
-        app_ = std::make_unique<QCoreApplication>(argc, argv);
+        app_                = std::make_unique<QCoreApplication>(argc, argv);
     }
 
     static void TearDownTestSuite()
@@ -47,7 +47,7 @@ std::unique_ptr<QCoreApplication> QtAsyncTest::app_;
 TEST_F(QtAsyncTest, SchedulerResumesOnOwningThread)
 {
     appfw::async::Scheduler scheduler;
-    bool ran = false;
+    bool                    ran = false;
 
     auto task = [&]() -> async::DetachedTask {
         co_await scheduler.schedule();
@@ -72,7 +72,7 @@ TEST_F(QtAsyncTest, SchedulerResumesOnOwningThread)
 TEST_F(QtAsyncTest, MainThreadDispatcherResumesOnApplicationThread)
 {
     appfw::MainThreadDispatcher dispatcher;
-    QThread* const            app_thread = QCoreApplication::instance()->thread();
+    QThread* const              app_thread = QCoreApplication::instance()->thread();
 
     bool ran         = false;
     bool off_app     = false;

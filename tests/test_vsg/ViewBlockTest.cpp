@@ -31,16 +31,16 @@
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/vsg/internal/ViewBlock.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
 
 using vn::graphics::VineViewBlock;
+using vn::graphics::backend::CameraSnapshot;
 using vn::math::Mat4d;
 using vn::math::Vec3d;
 using vn::vsg::buildViewBlock;
-using vn::graphics::backend::CameraSnapshot;
 
 namespace
 {
@@ -49,8 +49,8 @@ namespace
 Mat4d deviceClip()
 {
     Mat4d fold;
-    fold.element(1, 1) = -1.0;   // y-down NDC
-    fold.element(2, 2) = -0.5;   // reverse-Z: the SDK's near (-1) becomes 1, its far (+1) becomes 0
+    fold.element(1, 1) = -1.0; // y-down NDC
+    fold.element(2, 2) = -0.5; // reverse-Z: the SDK's near (-1) becomes 1, its far (+1) becomes 0
     fold.element(2, 3) = 0.5;
     return fold;
 }
@@ -92,10 +92,8 @@ CameraSnapshot camera()
 /// @brief Compares a flat ABI matrix against a math matrix, element by element and by the ABI's order.
 void expectColumnMajor(const std::array<float, 16>& flat, const Mat4d& matrix, const char* what)
 {
-    for (std::size_t column = 0; column < 4U; ++column)
-    {
-        for (std::size_t row = 0; row < 4U; ++row)
-        {
+    for (std::size_t column = 0; column < 4U; ++column) {
+        for (std::size_t row = 0; row < 4U; ++row) {
             EXPECT_FLOAT_EQ(flat[column * 4U + row], static_cast<float>(matrix(row, column)))
                 << what << ": element (" << row << ", " << column << ") is not at column * 4 + row";
         }
@@ -106,8 +104,7 @@ void expectColumnMajor(const std::array<float, 16>& flat, const Mat4d& matrix, c
 std::array<double, 4> clip(const Mat4d& matrix, double x, double y, double z)
 {
     std::array<double, 4> out{};
-    for (std::size_t row = 0; row < 4U; ++row)
-    {
+    for (std::size_t row = 0; row < 4U; ++row) {
         out[row] = matrix(row, 0) * x + matrix(row, 1) * y + matrix(row, 2) * z + matrix(row, 3);
     }
     return out;
@@ -117,15 +114,14 @@ std::array<double, 4> clip(const Mat4d& matrix, double x, double y, double z)
 std::array<double, 4> clipOf(const std::array<float, 16>& matrix, double x, double y, double z)
 {
     std::array<double, 4> out{};
-    for (std::size_t row = 0; row < 4U; ++row)
-    {
-        out[row] = static_cast<double>(matrix[row]) * x + static_cast<double>(matrix[4U + row]) * y +
-                   static_cast<double>(matrix[8U + row]) * z + static_cast<double>(matrix[12U + row]);
+    for (std::size_t row = 0; row < 4U; ++row) {
+        out[row] = static_cast<double>(matrix[row]) * x + static_cast<double>(matrix[4U + row]) * y + static_cast<double>(matrix[8U + row]) * z +
+                   static_cast<double>(matrix[12U + row]);
     }
     return out;
 }
 
-}  // namespace
+} // namespace
 
 TEST(ViewBlockTest, TheMatricesAreColumnMajorAndComposedTheWayTheAbiSays)
 {
@@ -142,8 +138,7 @@ TEST(ViewBlockTest, TheMatricesAreColumnMajorAndComposedTheWayTheAbiSays)
     expectColumnMajor(block.view_proj, deviceClip() * (snapshot.projection * snapshot.view), "view_proj");
 
     // The inverse is an inverse, not a copy: view * view⁻¹ is the identity.
-    EXPECT_TRUE((snapshot.view.inverted() * snapshot.view).isIdentity(1e-9))
-        << "the snapshot's view has to be invertible for this case to mean anything";
+    EXPECT_TRUE((snapshot.view.inverted() * snapshot.view).isIdentity(1e-9)) << "the snapshot's view has to be invertible for this case to mean anything";
 }
 
 TEST(ViewBlockTest, TheClipMatricesAreFoldedIntoTheDevicesReverseZAndYDownConvention)
@@ -157,7 +152,7 @@ TEST(ViewBlockTest, TheClipMatricesAreFoldedIntoTheDevicesReverseZAndYDownConven
     CameraSnapshot snapshot;
     snapshot.present    = true;
     snapshot.view       = sdk_camera.viewMatrix();
-    snapshot.projection = sdk_camera.projectionMatrix();  // AN ORTHOGRAPHIC CAMERA: its shape is on the camera and unused here
+    snapshot.projection = sdk_camera.projectionMatrix(); // AN ORTHOGRAPHIC CAMERA: its shape is on the camera and unused here
     snapshot.eye        = sdk_camera.eye();
 
     // What the SDK's own matrix says: a VIEW-space point on the near plane (0.5 in front of the eye, i.e.
@@ -188,8 +183,7 @@ TEST(ViewBlockTest, TheClipMatricesAreFoldedIntoTheDevicesReverseZAndYDownConven
     // own matrix says the opposite, which is what the fold exists for.
     EXPECT_GT(clip(snapshot.projection, 0.0, 0.5, 1.5)[1], 0.0) << "the SDK's clip is y-up";
     EXPECT_LT(clipOf(block.view_proj, 0.0, 0.5, 1.5)[1], 0.0) << "the block's clip is y-down";
-    EXPECT_GT(clipOf(block.view, 0.0, 0.5, 1.5)[1], 0.0)
-        << "and the view matrix is NOT folded: view space is its own space";
+    EXPECT_GT(clipOf(block.view, 0.0, 0.5, 1.5)[1], 0.0) << "and the view matrix is NOT folded: view space is its own space";
 
     // x and w are the same in both conventions, so the fold cannot move the picture sideways.
     EXPECT_NEAR(clipOf(block.view_proj, 0.5, 0.0, 1.5)[0], 0.5, 1e-6);
@@ -219,12 +213,10 @@ TEST(ViewBlockTest, NoCameraMeansNoViewButTheFramesFactsStay)
     const CameraSnapshot empty;
     const VineViewBlock  block = buildViewBlock(empty, 3.5F, 64U, 32U);
 
-    for (const float value : block.view)
-    {
+    for (const float value : block.view) {
         EXPECT_FLOAT_EQ(value, 0.0F);
     }
-    for (const float value : block.view_proj)
-    {
+    for (const float value : block.view_proj) {
         EXPECT_FLOAT_EQ(value, 0.0F);
     }
     EXPECT_FLOAT_EQ(block.frame[0], 3.5F);

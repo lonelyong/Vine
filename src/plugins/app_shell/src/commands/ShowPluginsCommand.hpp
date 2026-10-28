@@ -13,9 +13,21 @@ class ShowPluginsCommand : public Command {
     VN_DECLARE_COMMAND(ShowPluginsCommand, u8"show_plugins")
 
   public:
-    String group() const override { return u8"插件"; }
-    String description() const override { return u8"显示已加载插件"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"插件";
+    }
+
+    String description() const override
+    {
+        return u8"显示已加载插件";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

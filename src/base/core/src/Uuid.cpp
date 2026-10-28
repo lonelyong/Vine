@@ -77,9 +77,9 @@ Uuid Uuid::parse(const String& text)
     }
 
     std::array<std::uint8_t, 16> bytes{};
-    const char8_t* p = text.data();
-    std::size_t byte_index = 0;
-    int nibble = 0;
+    const char8_t*               p          = text.data();
+    std::size_t                  byte_index = 0;
+    int                          nibble     = 0;
 
     for (std::size_t i = 0; i < 36; ++i) {
         const char8_t c = p[i];
@@ -98,8 +98,9 @@ Uuid Uuid::parse(const String& text)
         }
         if (nibble == 0) {
             bytes[byte_index] = static_cast<std::uint8_t>(v << 4);
-            nibble = 1;
-        } else {
+            nibble            = 1;
+        }
+        else {
             bytes[byte_index] |= v;
             ++byte_index;
             nibble = 0;
@@ -130,7 +131,7 @@ bool Uuid::isNull() const
 String Uuid::toString() const
 {
     static constexpr char hex[] = "0123456789abcdef";
-    std::string s;
+    std::string           s;
     s.reserve(36);
     for (std::size_t i = 0; i < 16; ++i) {
         if (i == 4 || i == 6 || i == 8 || i == 10) {

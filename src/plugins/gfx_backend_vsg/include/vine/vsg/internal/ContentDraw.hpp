@@ -5,20 +5,20 @@
 
 #include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
+#include <vsg/commands/Commands.h>
 #include <vsg/commands/Draw.h>
 #include <vsg/commands/DrawIndexed.h>
 #include <vsg/core/ref_ptr.h>
-#include <vsg/commands/Commands.h>
 #include <vsg/nodes/StateGroup.h>
 #include <vsg/state/BindDescriptorSet.h>
 #include <vsg/state/GraphicsPipeline.h>
 #include <vsg/state/PushConstants.h>
 
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/StateCommands.hpp>
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/StateCommands.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -51,14 +51,12 @@
 VN_VSG_NS_BEGIN
 
 /** @brief Records resolved draws into command graphs. */
-class ContentDraw
-{
+class ContentDraw {
   public:
     /** @brief One resolved draw: identity, state, geometry and the block set to bind. */
-    struct Draw
-    {
-        core::PipelineKey   key;                 ///< Identity (the pool answers whether it is compiled).
-        core::DynamicState  dynamic;             ///< The set-command half of the state.
+    struct Draw {
+        core::PipelineKey  key;     // Identity (the pool answers whether it is compiled).
+        core::DynamicState dynamic; // The set-command half of the state.
         /// This draw's block binds, one per set the PROGRAM declares blocks in (the canonical arrangement is
         /// one set; the engine's own programs put the per-drawable block in a set of its own). Empty for a
         /// program that declares none.
@@ -67,28 +65,28 @@ class ContentDraw
         /// offset, size and stages: see api/ContentPush and api/ProgramAbi). Empty for a program that declares
         /// none - and a program that declares one is never drawn without it (the layer refuses to compile a
         /// push whose members nobody can fill).
-        std::span<const ::vsg::ref_ptr<::vsg::PushConstants>> pushes;
-        ::vsg::ref_ptr<::vsg::BindDescriptorSet> inputs;  ///< The pass' sampled inputs, or null when it has none.
-        std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>> vertex_binds;  ///< One per channel.
+        std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>     pushes;
+        ::vsg::ref_ptr<::vsg::BindDescriptorSet>                  inputs;       // The pass' sampled inputs, or null when it has none.
+        std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>> vertex_binds; // One per channel.
         /// The index stream, or null for a NON-indexed draw. The two modes are different API calls (see
         /// api/GeometryFacts): with a stream bound, `index_count` / `first_index` / `vertex_offset` state the
         /// span the draw reads; without one, `vertex_count` is what is drawn.
-        ::vsg::ref_ptr<::vsg::BindIndexBuffer>    index;
-        ViewportRect        viewport;            ///< The rectangle the draw covers.
-        float               depth_min{0.0F};     ///< The depth band's far end the pass maps into.
-        float               depth_max{1.0F};     ///< The depth band's near end the pass maps into.
-        std::uint32_t       index_count{0};      ///< Indices to draw (indexed draws only).
-        std::uint32_t       first_index{0};      ///< First index of the span the geometry states (indexed only).
+        ::vsg::ref_ptr<::vsg::BindIndexBuffer> index;
+        ViewportRect                           viewport;          // The rectangle the draw covers.
+        float                                  depth_min{ 0.0F }; // The depth band's far end the pass maps into.
+        float                                  depth_max{ 1.0F }; // The depth band's near end the pass maps into.
+        std::uint32_t                          index_count{ 0 };  // Indices to draw (indexed draws only).
+        std::uint32_t                          first_index{ 0 };  // First index of the span the geometry states (indexed only).
         /// Vertices to draw (unindexed draws only): the draw's whole geometry, assembled from the vertex
         /// streams by the pipeline's topology.
-        std::uint32_t       vertex_count{0};
-        std::uint32_t       vertex_offset{0};    ///< Added to every index before fetching (indexed draws only).
-        std::uint32_t       instances{1};        ///< Instance count.
+        std::uint32_t vertex_count{ 0 };
+        std::uint32_t vertex_offset{ 0 }; // Added to every index before fetching (indexed draws only).
+        std::uint32_t instances{ 1 };     // Instance count.
         /// The first instance this draw reads. Vulkan offsets BOTH the per-instance vertex fetch and
         /// `gl_InstanceIndex` by it, so the instance stream can be uploaded whole and a visible prefix drawn
         /// without re-uploading it (the same spelling vsg's `Draw`/`DrawIndexed` use).
-        std::uint32_t       first_instance{0};
-        std::uint32_t       color_attachments{1};///< Colour attachments of the pass (for the blend state).
+        std::uint32_t first_instance{ 0 };
+        std::uint32_t color_attachments{ 1 }; // Colour attachments of the pass (for the blend state).
     };
 
     /** @brief One FULL-SCREEN drawing call, as the content layer resolved it (see core::DrawKind::Screen).
@@ -98,18 +96,17 @@ class ContentDraw
      * generated by the full-screen vertex stage, and the picture comes from the samplers. Everything the two
      * share is the identity arithmetic (the pool), the dynamic half of the state and the pass' registry.
      */
-    struct ScreenDraw
-    {
-        core::PipelineKey  key;                 ///< Identity (kind = Screen: the full-screen descriptor ABI).
-        core::DynamicState dynamic;             ///< The set-command half of the state.
-        ::vsg::ref_ptr<::vsg::BindDescriptorSet> samplers;  ///< Set 0: binding i is the source's attachment i.
-        ::vsg::ref_ptr<::vsg::PushConstants>     push;      ///< The push block the program declares, or null to push
-                                                            ///< none: the SDK's screen programs declare none (they
-                                                            ///< read the light block), so this is a host program's.
-        ViewportRect       viewport;            ///< The rectangle the triangle covers (the PiP sub-rectangle).
-        float              depth_min{0.0F};     ///< The depth band's far end the pass maps into.
-        float              depth_max{1.0F};     ///< The depth band's near end the pass maps into.
-        std::uint32_t      color_attachments{1};///< Colour attachments of the pass (for the blend state).
+    struct ScreenDraw {
+        core::PipelineKey                        key;                    // Identity (kind = Screen: the full-screen descriptor ABI).
+        core::DynamicState                       dynamic;                // The set-command half of the state.
+        ::vsg::ref_ptr<::vsg::BindDescriptorSet> samplers;               // Set 0: binding i is the source's attachment i.
+        ::vsg::ref_ptr<::vsg::PushConstants>     push;                   // The push block the program declares, or null to push
+                                                                         // none: the SDK's screen programs declare none (they
+                                                                         // read the light block), so this is a host program's.
+        ViewportRect                             viewport;               // The rectangle the triangle covers (the PiP sub-rectangle).
+        float                                    depth_min{ 0.0F };      // The depth band's far end the pass maps into.
+        float                                    depth_max{ 1.0F };      // The depth band's near end the pass maps into.
+        std::uint32_t                            color_attachments{ 1 }; // Colour attachments of the pass (for the blend state).
     };
 
   public:
@@ -120,10 +117,9 @@ class ContentDraw
      * @param entry_points The three extension entry points the dynamic command needs; a device-free caller
      *                     leaves them empty and the calls that need them are skipped.
      */
-    ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool,
-                detail::DynamicStateEntryPoints entry_points = {}) noexcept;
+    ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points = {}) noexcept;
 
-    ContentDraw(const ContentDraw&) = delete;
+    ContentDraw(const ContentDraw&)            = delete;
     ContentDraw& operator=(const ContentDraw&) = delete;
 
   public:
@@ -149,8 +145,7 @@ class ContentDraw
      * @param draw     The resolved full-screen draw.
      * @return The command graph, or null when the identity has no pipeline (see the file note).
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::StateGroup> recordScreen(core::StateRegistry& registry,
-                                                                 const ScreenDraw& draw);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::StateGroup> recordScreen(core::StateRegistry& registry, const ScreenDraw& draw);
 
   public:
     /** @brief Gets the number of draws recorded (content and full-screen). */
@@ -176,16 +171,16 @@ class ContentDraw
     [[nodiscard]] std::uint64_t refusals() const noexcept;
 
   private:
-    ContentPipeline*                     pipelines_;
-    core::VariantPool*                   pool_;
-    detail::DynamicStateEntryPoints      entry_points_;
-    std::uint64_t                        draws_{0};
-    std::uint64_t                        screen_draws_{0};
-    std::uint64_t                        pipeline_binds_{0};
-    std::uint64_t                        dynamic_commands_{0};
-    std::uint64_t                        input_binds_{0};
-    std::uint64_t                        push_commands_{0};
-    std::uint64_t                        refusals_{0};
+    ContentPipeline*                pipelines_;
+    core::VariantPool*              pool_;
+    detail::DynamicStateEntryPoints entry_points_;
+    std::uint64_t                   draws_{ 0 };
+    std::uint64_t                   screen_draws_{ 0 };
+    std::uint64_t                   pipeline_binds_{ 0 };
+    std::uint64_t                   dynamic_commands_{ 0 };
+    std::uint64_t                   input_binds_{ 0 };
+    std::uint64_t                   push_commands_{ 0 };
+    std::uint64_t                   refusals_{ 0 };
 };
 
 VN_VSG_NS_END

@@ -33,8 +33,8 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /** @brief Which stream a key describes. */
 enum class StreamKind : std::uint8_t
 {
-    Vertex,  ///< One vertex channel (an attribute location).
-    Index,   ///< The index stream a draw reads.
+    Vertex, // One vertex channel (an attribute location).
+    Index,  // The index stream a draw reads.
 };
 
 /**
@@ -56,15 +56,14 @@ enum class StreamKind : std::uint8_t
  *   stream and can never be shared: its bytes belong to one geometry and change with that geometry's
  *   own revision.
  */
-struct VN_GRAPHICS_API StreamKey
-{
-    StreamKind    kind{StreamKind::Vertex};  ///< Vertex channel or index stream.
-    std::uint32_t location{0};               ///< Attribute location; 0 for an index stream.
-    std::uint32_t components{0};             ///< Components per element (the packed stride); 1 for indices.
-    const void*   buffer{nullptr};           ///< Buffer the slice lives in; null for a derived channel.
-    std::uint64_t revision{0};               ///< The buffer's own revision (Buffer::revision()); 0 when derived.
-    std::uint64_t offset{0};                 ///< First element of the slice.
-    std::uint64_t count{0};                  ///< Elements the slice reads.
+struct VN_GRAPHICS_API StreamKey {
+    StreamKind    kind{ StreamKind::Vertex }; // Vertex channel or index stream.
+    std::uint32_t location{ 0 };              // Attribute location; 0 for an index stream.
+    std::uint32_t components{ 0 };            // Components per element (the packed stride); 1 for indices.
+    const void*   buffer{ nullptr };          // Buffer the slice lives in; null for a derived channel.
+    std::uint64_t revision{ 0 };              // The buffer's own revision (Buffer::revision()); 0 when derived.
+    std::uint64_t offset{ 0 };                // First element of the slice.
+    std::uint64_t count{ 0 };                 // Elements the slice reads.
 
     /** @brief Compares the whole key: this is what "the same stream" means. */
     [[nodiscard]] bool operator==(const StreamKey& other) const noexcept;
@@ -74,12 +73,10 @@ struct VN_GRAPHICS_API StreamKey
 };
 
 /** @brief Hashes a StreamKey for the registry's map. */
-struct VN_GRAPHICS_API StreamKeyHash
-{
+struct VN_GRAPHICS_API StreamKeyHash {
     /** @brief Hashes @p key. */
     std::size_t operator()(const StreamKey& key) const noexcept;
 };
-
 
 /**
  * @brief The registry of streams more than one draw reads: the geometry aliasing decision, without the bytes.
@@ -108,8 +105,7 @@ struct VN_GRAPHICS_API StreamKeyHash
  *   counts exactly those departures so a phase can see the bound being hit.
  * - NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-class VN_GRAPHICS_API SharedStreams
-{
+class VN_GRAPHICS_API SharedStreams {
   public:
     /** @brief Upper bound on the registry's map (FIFO past it, like the retained caches it replaces). */
     static constexpr std::size_t kDefaultCapacity = 512;
@@ -117,15 +113,14 @@ class VN_GRAPHICS_API SharedStreams
     /** @brief What a caller gets when it offers a stream. */
     enum class Action : std::uint8_t
     {
-        Upload,  ///< No entry had this identity: the caller uploads, and the registry now remembers it.
-        Alias,   ///< An entry had this identity: the caller reads the existing upload.
+        Upload, // No entry had this identity: the caller uploads, and the registry now remembers it.
+        Alias,  // An entry had this identity: the caller reads the existing upload.
     };
 
     /** @brief The answer of @ref acquire. */
-    struct Decision
-    {
-        Action                   action{Action::Upload};  ///< Whether to upload or to alias.
-        std::optional<StreamKey> evicted;                 ///< The entry that made room, when the bound was hit.
+    struct Decision {
+        Action                   action{ Action::Upload }; // Whether to upload or to alias.
+        std::optional<StreamKey> evicted;                  // The entry that made room, when the bound was hit.
     };
 
   public:
@@ -135,7 +130,7 @@ class VN_GRAPHICS_API SharedStreams
      */
     explicit SharedStreams(std::size_t capacity = kDefaultCapacity);
 
-    SharedStreams(const SharedStreams&) = delete;
+    SharedStreams(const SharedStreams&)            = delete;
     SharedStreams& operator=(const SharedStreams&) = delete;
 
   public:
@@ -191,20 +186,19 @@ class VN_GRAPHICS_API SharedStreams
     void clear() noexcept;
 
   private:
-    struct Entry
-    {
-        StreamKey     key;            ///< The identity this entry stands for.
-        std::uint64_t last_frame{0};  ///< The last frame that named it (the whole lifetime rule, see the class note).
+    struct Entry {
+        StreamKey     key;             // The identity this entry stands for.
+        std::uint64_t last_frame{ 0 }; // The last frame that named it (the whole lifetime rule, see the class note).
     };
 
-    std::size_t                                                         capacity_;
-    std::list<Entry>                                                    order_;  ///< Insertion order (the index into
-                                                                                 ///< it).
+    std::size_t                                                              capacity_;
+    std::list<Entry>                                                         order_; // Insertion order (the index into
+                                                                                     // it).
     std::unordered_map<StreamKey, std::list<Entry>::iterator, StreamKeyHash> index_;
-    std::uint64_t                                                       uploads_{0};
-    std::uint64_t                                                       aliases_{0};
-    std::uint64_t                                                       evictions_{0};
-    std::uint64_t                                                       unused_{0};
+    std::uint64_t                                                            uploads_{ 0 };
+    std::uint64_t                                                            aliases_{ 0 };
+    std::uint64_t                                                            evictions_{ 0 };
+    std::uint64_t                                                            unused_{ 0 };
 };
 
 VN_GRAPHICSBACKEND_NS_END

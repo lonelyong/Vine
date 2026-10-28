@@ -28,8 +28,7 @@ class Colorf;
  *   and the graphics module's fades blend light instead - that is @ref Colorf::lerp. When something genuinely needs
  *   the encoded blend, it lands here with a name that says so rather than being reached for by mistake.
  */
-class VN_CORE_API Color
-{
+class VN_CORE_API Color {
   public:
     Color() noexcept = default;
 
@@ -42,12 +41,11 @@ class VN_CORE_API Color
      * @param a Alpha channel; defaults to opaque.
      */
     constexpr Color(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a = 255) noexcept
-        : r(r)
-        , g(g)
-        , b(b)
-        , a(a)
-    {
-    }
+      : r(r)
+      , g(g)
+      , b(b)
+      , a(a)
+    {}
 
     /**
      * @brief Constructs from a packed 0xRRGGBBAA integer.
@@ -55,12 +53,11 @@ class VN_CORE_API Color
      * @param rgba Packed color; the most significant byte is red.
      */
     explicit constexpr Color(std::uint32_t rgba) noexcept
-        : r(static_cast<std::uint8_t>(rgba >> 24))
-        , g(static_cast<std::uint8_t>(rgba >> 16))
-        , b(static_cast<std::uint8_t>(rgba >> 8))
-        , a(static_cast<std::uint8_t>(rgba))
-    {
-    }
+      : r(static_cast<std::uint8_t>(rgba >> 24))
+      , g(static_cast<std::uint8_t>(rgba >> 16))
+      , b(static_cast<std::uint8_t>(rgba >> 8))
+      , a(static_cast<std::uint8_t>(rgba))
+    {}
 
     /**
      * @brief Constructs from a packed 0xAARRGGBB integer - the order Qt's `ARGB32` and Win32's `ARGB` hand you.
@@ -76,8 +73,10 @@ class VN_CORE_API Color
      */
     [[nodiscard]] static constexpr Color fromArgb(std::uint32_t argb) noexcept
     {
-        return Color{ static_cast<std::uint8_t>((argb >> 16) & 0xFFU), static_cast<std::uint8_t>((argb >> 8) & 0xFFU),
-                      static_cast<std::uint8_t>(argb & 0xFFU), static_cast<std::uint8_t>((argb >> 24) & 0xFFU) };
+        return Color{ static_cast<std::uint8_t>((argb >> 16) & 0xFFU),
+                      static_cast<std::uint8_t>((argb >> 8) & 0xFFU),
+                      static_cast<std::uint8_t>(argb & 0xFFU),
+                      static_cast<std::uint8_t>((argb >> 24) & 0xFFU) };
     }
 
     /**
@@ -93,8 +92,10 @@ class VN_CORE_API Color
      */
     [[nodiscard]] static constexpr Color fromBgr(std::uint32_t bgr) noexcept
     {
-        return Color{ static_cast<std::uint8_t>(bgr & 0xFFU), static_cast<std::uint8_t>((bgr >> 8) & 0xFFU),
-                      static_cast<std::uint8_t>((bgr >> 16) & 0xFFU), 255 };
+        return Color{ static_cast<std::uint8_t>(bgr & 0xFFU),
+                      static_cast<std::uint8_t>((bgr >> 8) & 0xFFU),
+                      static_cast<std::uint8_t>((bgr >> 16) & 0xFFU),
+                      255 };
     }
 
   public:
@@ -176,7 +177,29 @@ class VN_CORE_API Color
      */
     [[nodiscard]] static std::optional<Color> parse(const String& text);
 
-    bool operator==(const Color&) const = default;
+    constexpr bool operator==(const Color& other) const
+    {
+        return r == other.r && g == other.g && b == other.b && a == other.a;
+    }
+
+    constexpr bool operator!=(const Color& other) const
+    {
+        return !(*this == other);
+    }
+
+    constexpr bool operator<(const Color& other) const
+    {
+        if (r != other.r) {
+            return r < other.r;
+        }
+        if (g != other.g) {
+            return g < other.g;
+        }
+        if (b != other.b) {
+            return b < other.b;
+        }
+        return a < other.a;
+    }
 
   public:
     std::uint8_t r{ 255 };
@@ -201,3 +224,11 @@ class VN_CORE_API Color
 };
 
 VN_CORE_NS_END
+
+template <>
+struct std::hash<vn::Color> {
+    std::size_t operator()(const vn::Color& color) const noexcept
+    {
+        return color.toRgba32();
+    }
+};

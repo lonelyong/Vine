@@ -14,10 +14,10 @@ VN_WINDOW_NS_BEGIN
  * the key is held down.
  */
 struct VN_WINDOW_API KeyEvent {
-    KeyCode     code = KeyCode::Unknown;  ///< Physical key that changed.
+    KeyCode     code      = KeyCode::Unknown; // Physical key that changed.
     ModifierKey modifiers = ModifierKey::None;
-    bool        pressed = false;          ///< false when the key was released.
-    bool        repeat = false;           ///< true for auto-repeat presses.
+    bool        pressed   = false; // false when the key was released.
+    bool        repeat    = false; // true for auto-repeat presses.
 };
 
 /**
@@ -28,13 +28,13 @@ struct VN_WINDOW_API KeyEvent {
  * When only the pointer moved (no button involved) button is MouseButton::None.
  */
 struct VN_WINDOW_API MouseEvent {
-    MouseButton button = MouseButton::None;
+    MouseButton button    = MouseButton::None;
     ModifierKey modifiers = ModifierKey::None;
-    double      x = 0.0;
-    double      y = 0.0;
-    double      dx = 0.0;
-    double      dy = 0.0;
-    bool        pressed = false;  ///< true for a button press, false for a release.
+    double      x         = 0.0;
+    double      y         = 0.0;
+    double      dx        = 0.0;
+    double      dy        = 0.0;
+    bool        pressed   = false; // true for a button press, false for a release.
 };
 
 /**
@@ -44,13 +44,13 @@ struct VN_WINDOW_API MouseEvent {
  * positive deltaX scrolls right. Units are lines (or notches) by default.
  */
 struct VN_WINDOW_API ScrollEvent {
-    double      deltaX = 0.0;
-    double      deltaY = 0.0;
+    double      deltaX    = 0.0;
+    double      deltaY    = 0.0;
     ModifierKey modifiers = ModifierKey::None;
     /// Cursor position the wheel turned at, in the surface's logical pixels (top-left origin).
     /// A surface shared by several views routes by it; a single-view host ignores it.
-    double x = 0.0;
-    double y = 0.0;
+    double x              = 0.0;
+    double y              = 0.0;
 };
 
 /**
@@ -60,8 +60,8 @@ struct VN_WINDOW_API ScrollEvent {
  * extent the render backend should rebuild its swapchain to.
  */
 struct VN_WINDOW_API ResizeEvent {
-    int width = 0;   ///< New client width in pixels.
-    int height = 0;  ///< New client height in pixels.
+    int width  = 0; // New client width in pixels.
+    int height = 0; // New client height in pixels.
 };
 
 VN_WINDOW_NS_END

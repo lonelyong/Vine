@@ -36,9 +36,9 @@ using vn::graphics::Texture;
 using vn::graphics::Texture2D;
 using vn::imaging::Image;
 using vn::imaging::PixelFormat;
-using vn::vsg::detail::TextureReject;
 using vn::vsg::MaterialImages;
 using vn::vsg::SamplerImage;
+using vn::vsg::detail::TextureReject;
 
 namespace
 {
@@ -67,14 +67,14 @@ VkImageViewType viewTypeOf(const SamplerImage& images)
     return images.view != nullptr ? images.view->viewType : VK_IMAGE_VIEW_TYPE_MAX_ENUM;
 }
 
-}  // namespace
+} // namespace
 
 TEST(MaterialImagesTest, AMissingTextureYieldsTheSharedWhiteFallback)
 {
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    TextureReject reason = TextureReject::Ok;
+    TextureReject      reason = TextureReject::Ok;
     const SamplerImage images = cache->acquire(nullptr, reason);
 
     // Absence is not an error: the descriptor a shader samples must be bound to something, so a material
@@ -111,15 +111,15 @@ TEST(MaterialImagesTest, AFallbackFollowsTheTextureKind)
     // A cube sampler cannot bind a 2D view: a 2D view where the text declares `samplerCube` is an invalid
     // descriptor, not an untextured draw. The fallback therefore follows the texture's own kind.
     const vn::intrusive_ptr<CubeMap> unfinished_cube(new CubeMap(1, PixelFormat::Rgba8Unorm));
-    TextureReject                      reason = TextureReject::Ok;
-    const SamplerImage                 cube   = cache->acquire(unfinished_cube.get(), reason);
+    TextureReject                    reason = TextureReject::Ok;
+    const SamplerImage               cube   = cache->acquire(unfinished_cube.get(), reason);
     EXPECT_EQ(reason, TextureReject::Incomplete);
     EXPECT_EQ(viewTypeOf(cube), VK_IMAGE_VIEW_TYPE_CUBE);
     EXPECT_EQ(cube.view.get(), cache->whiteCube().view.get());
     EXPECT_NE(cube.view.get(), cache->white().view.get()) << "the two fallbacks are different images";
 
     const vn::intrusive_ptr<Texture2D> unfinished_2d(new Texture2D(1, 1, PixelFormat::Rgba8Unorm));
-    const SamplerImage                   flat = cache->acquire(unfinished_2d.get(), reason);
+    const SamplerImage                 flat = cache->acquire(unfinished_2d.get(), reason);
     EXPECT_EQ(viewTypeOf(flat), VK_IMAGE_VIEW_TYPE_2D);
 }
 
@@ -167,8 +167,8 @@ TEST(MaterialImagesTest, RefillingATextureRebuildsItsImages)
     ASSERT_NE(cache, nullptr);
 
     const vn::intrusive_ptr<Texture2D> texture = readyTexture();
-    TextureReject                        reason  = TextureReject::Ok;
-    const auto                           before  = cache->acquire(texture.get(), reason);
+    TextureReject                      reason  = TextureReject::Ok;
+    const auto                         before  = cache->acquire(texture.get(), reason);
     ASSERT_NE(before.view, nullptr);
 
     // The address is the same, so only the revision says the pixels changed: without it the entry would
@@ -198,7 +198,7 @@ TEST(MaterialImagesTest, AnExplicitStateSharesTheUploadAndCachesOneSamplerPerSta
     repeat.address_u  = Sampler::AddressMode::Repeat;
     repeat.address_v  = Sampler::AddressMode::Repeat;
 
-    TextureReject      reason = TextureReject::Ok;
+    TextureReject      reason  = TextureReject::Ok;
     const SamplerImage clamped = cache->acquire(texture.get(), clamp, reason);
     ASSERT_EQ(reason, TextureReject::Ok);
     ASSERT_NE(clamped.view, nullptr);
@@ -241,7 +241,7 @@ TEST(MaterialImagesTest, ADeclaredAnisotropyIsClampedToTheDeviceLimit)
     texture->setImage(vn::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm, 2)));
 
     Sampler state;
-    state.anisotropy = 16.0F;
+    state.anisotropy          = 16.0F;
     TextureReject      reason = TextureReject::Ok;
     const SamplerImage images = cache->acquire(texture.get(), state, reason);
     ASSERT_EQ(reason, TextureReject::Ok);
@@ -252,8 +252,8 @@ TEST(MaterialImagesTest, ADeclaredAnisotropyIsClampedToTheDeviceLimit)
     // A device that offers no anisotropy disables the feature rather than asking for an illegal factor.
     cache->setMaxAnisotropy(1.0F);
     Sampler other;
-    other.mag_filter = Sampler::Filter::Nearest;
-    other.anisotropy = 8.0F;
+    other.mag_filter        = Sampler::Filter::Nearest;
+    other.anisotropy        = 8.0F;
     const SamplerImage flat = cache->acquire(texture.get(), other, reason);
     ASSERT_NE(flat.sampler, nullptr);
     EXPECT_EQ(flat.sampler->anisotropyEnable, VK_FALSE);
@@ -265,7 +265,7 @@ TEST(MaterialImagesTest, AnEntryKeepsItsTextureAliveUntilItIsAbandoned)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    auto          texture = readyTexture();  // the app's own reference, dropped below
+    auto          texture = readyTexture(); // the app's own reference, dropped below
     TextureReject reason  = TextureReject::Ok;
     const auto    images  = cache->acquire(texture.get(), reason);
     ASSERT_NE(images.view, nullptr);
@@ -276,7 +276,7 @@ TEST(MaterialImagesTest, AnEntryKeepsItsTextureAliveUntilItIsAbandoned)
     EXPECT_TRUE(cache->has(texture.get()));
 
     const Texture* address = texture.get();
-    texture.reset();  // the cache is the only owner left
+    texture.reset(); // the cache is the only owner left
 
     EXPECT_EQ(cache->releaseAbandoned(), 1U) << "nothing can look the entry up again";
     EXPECT_FALSE(cache->has(address));
@@ -326,11 +326,11 @@ TEST(MaterialImagesTest, TheDeviceLimitIsWhatMipChainedTexturesAreFilteredWith)
     // which is the same picture as not asking at all (see MaterialImages::makeSampler).
     EXPECT_FLOAT_EQ(cache->maxAnisotropy(), 1.0F);
 
-    cache->setMaxAnisotropy(16.0F);  // what a device may report
+    cache->setMaxAnisotropy(16.0F); // what a device may report
     EXPECT_FLOAT_EQ(cache->maxAnisotropy(), 16.0F);
-    cache->setMaxAnisotropy(64.0F);  // more than this backend asks for: clamped, never an illegal request
+    cache->setMaxAnisotropy(64.0F); // more than this backend asks for: clamped, never an illegal request
     EXPECT_FLOAT_EQ(cache->maxAnisotropy(), 16.0F);
-    cache->setMaxAnisotropy(0.5F);  // a device that offers less than 1: 1 is legal on every device
+    cache->setMaxAnisotropy(0.5F); // a device that offers less than 1: 1 is legal on every device
     EXPECT_FLOAT_EQ(cache->maxAnisotropy(), 1.0F);
 
     cache->setMaxAnisotropy(16.0F);
@@ -363,8 +363,8 @@ TEST(MaterialImagesTest, ClearDropsEveryEntryAndTheFallbacks)
     ASSERT_NE(cache, nullptr);
 
     const vn::intrusive_ptr<Texture2D> texture = readyTexture();
-    TextureReject                        reason  = TextureReject::Ok;
-    const auto                           images  = cache->acquire(texture.get(), reason);
+    TextureReject                      reason  = TextureReject::Ok;
+    const auto                         images  = cache->acquire(texture.get(), reason);
     ASSERT_NE(images.view, nullptr);
     const auto white_before = cache->white().view;
 
@@ -395,7 +395,7 @@ TEST(MaterialImagesTest, EveryLiveTextureKeepsItsImages)
     ASSERT_NE(cache, nullptr);
 
     // Past the old bound (256) on purpose: a working set this size used to evict before its own next use.
-    constexpr std::size_t kTextures = 300U;
+    constexpr std::size_t                     kTextures = 300U;
     std::vector<vn::intrusive_ptr<Texture2D>> textures;
     textures.reserve(kTextures);
     for (std::size_t index = 0; index < kTextures; ++index) {
@@ -446,9 +446,9 @@ TEST(MaterialImagesTest, ACubeBecomesACubeViewOverItsSixLayers)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    const vn::intrusive_ptr<CubeMap> cube = readyCube();
-    TextureReject                      reason = TextureReject::Ok;
-    const SamplerImage                 images = cache->acquire(cube.get(), reason);
+    const vn::intrusive_ptr<CubeMap> cube   = readyCube();
+    TextureReject                    reason = TextureReject::Ok;
+    const SamplerImage               images = cache->acquire(cube.get(), reason);
 
     ASSERT_EQ(reason, TextureReject::Ok);
     ASSERT_NE(images.view, nullptr);
@@ -458,8 +458,7 @@ TEST(MaterialImagesTest, ACubeBecomesACubeViewOverItsSixLayers)
     ASSERT_NE(image, nullptr);
     EXPECT_EQ(image->arrayLayers, 6U);
     EXPECT_EQ(image->mipLevels, 1U);
-    EXPECT_TRUE((image->flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) != 0U)
-        << "a cube view over an image without the flag is invalid";
+    EXPECT_TRUE((image->flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) != 0U) << "a cube view over an image without the flag is invalid";
 
     // The layer count vsg's copy regions use comes from the DATA's depth and view type, so both are the
     // image's own declaration - a six-layer texture described by a 2D array would get one copy region.

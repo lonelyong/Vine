@@ -39,6 +39,7 @@ using vn::graphics::backend::Rgba8;
 
 namespace
 {
+
 /// @brief The world plane every part of the scene lies in (see the fixture's camera).
 constexpr float kPlaneZ = 0.5F;
 
@@ -76,11 +77,10 @@ bool bluish(const Rgba8& pixel)
 }
 
 /// @brief How many pixels each of the three parts owns.
-struct PartPixels
-{
-    std::size_t red{0};
-    std::size_t green{0};
-    std::size_t blue{0};
+struct PartPixels {
+    std::size_t red{ 0 };
+    std::size_t green{ 0 };
+    std::size_t blue{ 0 };
 };
 
 PartPixels countParts(const PixelProbe& probe)
@@ -91,9 +91,11 @@ PartPixels countParts(const PixelProbe& probe)
             const Rgba8& pixel = probe.pixel(x, y);
             if (reddish(pixel)) {
                 ++counts.red;
-            } else if (greenish(pixel)) {
+            }
+            else if (greenish(pixel)) {
                 ++counts.green;
-            } else if (bluish(pixel)) {
+            }
+            else if (bluish(pixel)) {
                 ++counts.blue;
             }
         }
@@ -130,21 +132,53 @@ vn::intrusive_ptr<Scene> makeThreePartScene()
 {
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
     geometry->setPositions(packVec3({ // 0..3 - the filled block
-                                     kFillLeft, kPartBottom, kPlaneZ, kFillRight, kPartBottom, kPlaneZ,
-                                     kFillRight, kPartTop, kPlaneZ, kFillLeft, kPartTop, kPlaneZ,
-                                     // 4..5 - the line's two ends
-                                     kLineX, kPartBottom, kPlaneZ, kLineX, kPartTop, kPlaneZ,
-                                     // 6..9 - the four points
-                                     kPointsX, -0.6F, kPlaneZ, kPointsX, -0.2F, kPlaneZ, kPointsX, 0.2F,
-                                     kPlaneZ, kPointsX, 0.6F, kPlaneZ }));
-    geometry->setNormals(packVec3({ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F,
-                                    0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
-                                    1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
+                                      kFillLeft,
+                                      kPartBottom,
+                                      kPlaneZ,
+                                      kFillRight,
+                                      kPartBottom,
+                                      kPlaneZ,
+                                      kFillRight,
+                                      kPartTop,
+                                      kPlaneZ,
+                                      kFillLeft,
+                                      kPartTop,
+                                      kPlaneZ,
+                                      // 4..5 - the line's two ends
+                                      kLineX,
+                                      kPartBottom,
+                                      kPlaneZ,
+                                      kLineX,
+                                      kPartTop,
+                                      kPlaneZ,
+                                      // 6..9 - the four points
+                                      kPointsX,
+                                      -0.6F,
+                                      kPlaneZ,
+                                      kPointsX,
+                                      -0.2F,
+                                      kPlaneZ,
+                                      kPointsX,
+                                      0.2F,
+                                      kPlaneZ,
+                                      kPointsX,
+                                      0.6F,
+                                      kPlaneZ }));
+    geometry->setNormals(packVec3({ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F,
+                                    0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
 
-    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(new vn::Buffer<std::uint32_t>(
-        std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U, // 三角形：两块拼成左边那块面
-                                    4U, 5U,                // 线：一条竖线段
-                                    6U, 7U, 8U, 9U }));    // 点：四个顶点
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U,
+                                                                                                                       1U,
+                                                                                                                       2U,
+                                                                                                                       0U,
+                                                                                                                       2U,
+                                                                                                                       3U, // 三角形：两块拼成左边那块面
+                                                                                                                       4U,
+                                                                                                                       5U, // 线：一条竖线段
+                                                                                                                       6U,
+                                                                                                                       7U,
+                                                                                                                       8U,
+                                                                                                                       9U })); // 点：四个顶点
 
     // 数据即绘制给了这条几何体一条默认图元（三角形、非索引）；这一条要的是拼出来的三条，从空开始。
     geometry->clearPrimitives();
@@ -207,7 +241,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
 {
     VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
-    const vn::intrusive_ptr<Scene> scene = makeThreePartScene();
+    const vn::intrusive_ptr<Scene>      scene = makeThreePartScene();
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
     pass->setName(vn::String(u8"three_parts"));
     pass->setCamera(fixture.camera);
@@ -227,8 +261,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
     ASSERT_EQ(picture.width(), SdkPixelFixture::kSide);
 
     const PartPixels drawn = countParts(picture);
-    std::printf("[primitives] one geometry, three primitives: red(fill)=%zu green(line)=%zu blue(points)=%zu\n",
-                drawn.red, drawn.green, drawn.blue);
+    std::printf("[primitives] one geometry, three primitives: red(fill)=%zu green(line)=%zu blue(points)=%zu\n", drawn.red, drawn.green, drawn.blue);
 
     // 三个下界各自钉一条图元：面盖住左边一大块、线是一列像素、点是四个 1 像素的点。
     EXPECT_GT(drawn.red, 800U) << "三角形图元没画出左边的面（或它的材质没被用上）";
@@ -252,7 +285,8 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
     const std::uint64_t aliases_after_first = assembly->uploads().aliases();
     std::printf("[primitives] streams: uploads=%llu aliases=%llu live=%zu\n",
                 static_cast<unsigned long long>(uploads_after_first),
-                static_cast<unsigned long long>(aliases_after_first), assembly->uploads().live());
+                static_cast<unsigned long long>(aliases_after_first),
+                assembly->uploads().live());
 
     EXPECT_EQ(uploads_after_first, 3U) << "位置 + 法线 + 索引 arena：三条图元共用 ⇒ 三次上传，不是九次";
     EXPECT_EQ(aliases_after_first, 6U) << "九次取流减三次上传：每条图元绑的是同一批流";
@@ -276,12 +310,21 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
     // counts are a proof of the WHOLE path `params.y` travels - resolved state -> draw block -> the vertex
     // stage's gl_PointSize - and of the claim that a size change never forks a pipeline.
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    geometry->setPositions(packVec3({ kPointsX, -0.6F, kPlaneZ, kPointsX, -0.2F, kPlaneZ, //
-                                      kPointsX, 0.2F, kPlaneZ, kPointsX, 0.6F, kPlaneZ }));
+    geometry->setPositions(packVec3({ kPointsX,
+                                      -0.6F,
+                                      kPlaneZ,
+                                      kPointsX,
+                                      -0.2F,
+                                      kPlaneZ, //
+                                      kPointsX,
+                                      0.2F,
+                                      kPlaneZ,
+                                      kPointsX,
+                                      0.6F,
+                                      kPlaneZ }));
     geometry->setNormals(packVec3({ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
 
-    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 3U }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 3U }));
     geometry->clearPrimitives();
     Primitive markers;
     markers.topology = Topology::Points;
@@ -323,8 +366,7 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
     EXPECT_GT(single_pixel.blue, 2U) << "四个 1 像素的点都没画出来，先查点管线本身";
     // Four 9x9 squares cover far more than eight times four single pixels, even after the ones near the frame's
     // edge lose a row or a column to clipping.
-    EXPECT_GT(nine_pixels.blue, single_pixel.blue * 8U)
-        << "点大小没有到达 gl_PointSize（状态没进 draw 块，或顶点阶段没写它）";
+    EXPECT_GT(nine_pixels.blue, single_pixel.blue * 8U) << "点大小没有到达 gl_PointSize（状态没进 draw 块，或顶点阶段没写它）";
 }
 
 TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
@@ -333,14 +375,22 @@ TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
 
     // The same quad, assembled three ways: six indices as a list, four as a strip, four as a fan. The pixel
     // counts must agree, because the only thing that differs is which triples the assembler forms.
-    const auto draw_quad = [&](Topology topology, std::vector<std::uint32_t> indices)
-    {
+    const auto draw_quad = [&](Topology topology, std::vector<std::uint32_t> indices) {
         const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-        geometry->setPositions(packVec3({ -0.6F, -0.6F, kPlaneZ, 0.6F, -0.6F, kPlaneZ, //
-                                          -0.6F, 0.6F, kPlaneZ, 0.6F, 0.6F, kPlaneZ }));
+        geometry->setPositions(packVec3({ -0.6F,
+                                          -0.6F,
+                                          kPlaneZ,
+                                          0.6F,
+                                          -0.6F,
+                                          kPlaneZ, //
+                                          -0.6F,
+                                          0.6F,
+                                          kPlaneZ,
+                                          0.6F,
+                                          0.6F,
+                                          kPlaneZ }));
         geometry->setNormals(packVec3({ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
-        const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(
-            new vn::Buffer<std::uint32_t>(std::move(indices)));
+        const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(new vn::Buffer<std::uint32_t>(std::move(indices)));
         geometry->clearPrimitives();
         Primitive quad;
         quad.topology = topology;
@@ -390,12 +440,10 @@ TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
     // StateNode saying four. A rasterised line's width is dynamic state (`vkCmdSetLineWidth`), so the picture
     // is the proof that it reached the rasteriser - and that a second width did not need a second pipeline.
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    geometry->setPositions(
-        packVec3({ -0.6F, 0.0F, kPlaneZ, 0.6F, 0.0F, kPlaneZ }));  // one horizontal segment across the frame
+    geometry->setPositions(packVec3({ -0.6F, 0.0F, kPlaneZ, 0.6F, 0.0F, kPlaneZ })); // one horizontal segment across the frame
     geometry->setNormals(packVec3({ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
 
-    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U }));
+    const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> arena(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U }));
     geometry->clearPrimitives();
     Primitive edge;
     edge.topology = Topology::Lines;
@@ -436,6 +484,5 @@ TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
     // A 1-pixel horizontal line across the frame and a 4-pixel one differ by about three rows of line length:
     // what proves the width reached the rasteriser is the RATIO, not a pixel count that depends on the frame.
     EXPECT_GT(one_pixel.blue, 10U) << "那条线根本没画出来，先查线图元本身";
-    EXPECT_GT(four_pixels.blue, one_pixel.blue * 2U)
-        << "线宽没有到达光栅器（动态状态没发出，或设备把宽度钳回了 1）";
+    EXPECT_GT(four_pixels.blue, one_pixel.blue * 2U) << "线宽没有到达光栅器（动态状态没发出，或设备把宽度钳回了 1）";
 }

@@ -31,35 +31,32 @@ Camera::ProjectionType Camera::projectionType() const
 
 void Camera::lookAt(const Vec3d& eye, const Vec3d& center, const Vec3d& up)
 {
-    eye_ = eye;
+    eye_    = eye;
     center_ = center;
-    up_ = up.normalized();
-    view_ = vn::math::lookAt(vn::math::Point3d(eye.x, eye.y, eye.z),
-                               vn::math::Point3d(center.x, center.y, center.z),
-                               up_);
+    up_     = up.normalized();
+    view_   = vn::math::lookAt(vn::math::Point3d(eye.x, eye.y, eye.z), vn::math::Point3d(center.x, center.y, center.z), up_);
 }
 
 void Camera::setPerspective(double fovy, double zNear, double zFar)
 {
     projection_type_ = ProjectionType::Perspective;
-    fov_ = fovy;
-    near_plane_ = zNear;
-    far_plane_ = zFar;
+    fov_             = fovy;
+    near_plane_      = zNear;
+    far_plane_       = zFar;
 }
 
-void Camera::setOrthographic(double left, double right, double bottom, double top,
-                                        double zNear, double zFar)
+void Camera::setOrthographic(double left, double right, double bottom, double top, double zNear, double zFar)
 {
     projection_type_ = ProjectionType::Orthographic;
     // The window is kept whole (see the header): the height alone is enough for a query but not for a
     // consumer that rebuilds the projection, which would then render a centred frustum while the engine
     // culls with an off-centre one.
-    ortho_left_   = left;
-    ortho_right_  = right;
-    ortho_bottom_ = bottom;
-    ortho_top_    = top;
-    near_plane_ = zNear;
-    far_plane_  = zFar;
+    ortho_left_      = left;
+    ortho_right_     = right;
+    ortho_bottom_    = bottom;
+    ortho_top_       = top;
+    near_plane_      = zNear;
+    far_plane_       = zFar;
 }
 
 Vec3d Camera::eye() const
@@ -163,17 +160,17 @@ Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
         // Orthographic: direction is the view direction, and the origin travels across the projection
         // WINDOW — all four bounds, so an off-centre window aims where it renders. Screen [0, 1] maps
         // onto the window linearly (the same linearity the projection has).
-        const double x = ortho_left_ + ((ndc_x + 1.0) * 0.5) * (ortho_right_ - ortho_left_);
-        const double y = ortho_bottom_ + ((ndc_y + 1.0) * 0.5) * (ortho_top_ - ortho_bottom_);
+        const double x      = ortho_left_ + ((ndc_x + 1.0) * 0.5) * (ortho_right_ - ortho_left_);
+        const double y      = ortho_bottom_ + ((ndc_y + 1.0) * 0.5) * (ortho_top_ - ortho_bottom_);
         const Vec3d  origin = eye_ + right * x + up * y;
         return Ray(origin, forward);
     }
     // Perspective: unproject through the near plane.
-    const double fov_rad = fov_ * vn::math::DEG_TO_RAD;
+    const double fov_rad  = fov_ * vn::math::DEG_TO_RAD;
     const double tan_half = std::tan(fov_rad * 0.5);
-    const double x = ndc_x * tan_half * aspect_;
-    const double y = ndc_y * tan_half;
-    const Vec3d dir = (forward + right * x + up * y).normalized();
+    const double x        = ndc_x * tan_half * aspect_;
+    const double y        = ndc_y * tan_half;
+    const Vec3d  dir      = (forward + right * x + up * y).normalized();
     return Ray(eye_, dir);
 }
 

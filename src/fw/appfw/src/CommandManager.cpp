@@ -241,7 +241,7 @@ bool updateDisabledList(std::vector<String>& list, const String& name, bool disa
 {
     const auto it = std::ranges::find(list, name);
     if (disabled == (it != list.end())) {
-        return false;  // Already in the requested state.
+        return false; // Already in the requested state.
     }
 
     if (disabled) {
@@ -473,17 +473,17 @@ struct CommandManager::Impl {
     /// How a bounded drain wait ended.
     enum class DrainOutcome
     {
-        Drained,   ///< Every chain finished within the bound.
-        TimedOut,  ///< The bound elapsed with a chain still running.
-        Cancelled  ///< A "stop everything" request invalidated the wait.
+        Drained,  // Every chain finished within the bound.
+        TimedOut, // The bound elapsed with a chain still running.
+        Cancelled // A "stop everything" request invalidated the wait.
     };
 
     /// How a takeover ended.
     enum class TakeOverOutcome
     {
-        TakenOver,      ///< Nothing is left running, the new command may start.
-        StillStopping,  ///< A predecessor outlived the bound; refuse the command.
-        Cancelled       ///< cancelAll() arrived while waiting; refuse the command.
+        TakenOver,     // Nothing is left running, the new command may start.
+        StillStopping, // A predecessor outlived the bound; refuse the command.
+        Cancelled      // cancelAll() arrived while waiting; refuse the command.
     };
 
     /// Awaits, bounded, until every given chain has no live run left.
@@ -500,9 +500,8 @@ struct CommandManager::Impl {
     ///                 DrainOutcome::Cancelled once cancelAll() bumps it. A caller
     ///                 that is itself cancelling (cancelAllAndWait) leaves it empty.
     /// @return Why the wait ended.
-    vn::async::Task<DrainOutcome> waitChainsDrained(std::vector<std::shared_ptr<Chain>> chains,
-                                                     std::chrono::milliseconds                timeout,
-                                                     std::optional<std::uint64_t>              generation = std::nullopt);
+    vn::async::Task<DrainOutcome>
+    waitChainsDrained(std::vector<std::shared_ptr<Chain>> chains, std::chrono::milliseconds timeout, std::optional<std::uint64_t> generation = std::nullopt);
 
     /// Returns a strong reference to every chain that has not ended yet.
     ///
@@ -679,10 +678,8 @@ std::vector<std::shared_ptr<CommandManager::Chain>> CommandManager::Impl::cancel
     return chains;
 }
 
-vn::async::Task<CommandManager::Impl::DrainOutcome> CommandManager::Impl::waitChainsDrained(
-    std::vector<std::shared_ptr<Chain>> chains,
-    std::chrono::milliseconds           timeout,
-    std::optional<std::uint64_t>        generation)
+vn::async::Task<CommandManager::Impl::DrainOutcome>
+CommandManager::Impl::waitChainsDrained(std::vector<std::shared_ptr<Chain>> chains, std::chrono::milliseconds timeout, std::optional<std::uint64_t> generation)
 {
     if (chains.empty()) {
         co_return DrainOutcome::Drained;
@@ -690,9 +687,7 @@ vn::async::Task<CommandManager::Impl::DrainOutcome> CommandManager::Impl::waitCh
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     for (;;) {
-        const bool drained = std::ranges::none_of(chains, [](const std::shared_ptr<Chain>& chain) {
-            return chain->liveRuns() > 0;
-        });
+        const bool drained = std::ranges::none_of(chains, [](const std::shared_ptr<Chain>& chain) { return chain->liveRuns() > 0; });
         if (drained) {
             co_return DrainOutcome::Drained;
         }
@@ -731,13 +726,11 @@ vn::async::Task<CommandManager::Impl::TakeOverOutcome> CommandManager::Impl::tak
     // observed as a new generation and aborts the wait.
     const std::uint64_t generation = cancel_generation.load(std::memory_order_relaxed);
     switch (co_await waitChainsDrained(std::move(chains), CommandManager::exclusiveDrainTimeout(), generation)) {
-    case DrainOutcome::Drained:
-        co_return TakeOverOutcome::TakenOver;
+    case DrainOutcome::Drained: co_return TakeOverOutcome::TakenOver;
     case DrainOutcome::Cancelled:
         VN_LOGW("Exclusive command cancelled while waiting for the running chain: {}", toUtf8View(command.name()));
         co_return TakeOverOutcome::Cancelled;
-    case DrainOutcome::TimedOut:
-        break;
+    case DrainOutcome::TimedOut: break;
     }
 
     VN_LOGE("Exclusive command rejected: a running chain did not stop within the drain bound: {}", toUtf8View(command.name()));
@@ -775,7 +768,7 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, ChainScope 
         return false;
     }
 
-    chain = std::make_shared<Chain>();
+    chain      = std::make_shared<Chain>();
     foreground = chain;
     rememberChain(chain);
     if (testFlag(flags, CommandFlags::LongRunning)) {
@@ -806,7 +799,7 @@ void CommandManager::Impl::recordHistory(const Command& command, const CommandRe
         // The payload is deliberately not retained: the history answers "what ran and how did it
         // end", and keeping the std::any would hold up to maxHistoryEntries() command results -
         // possibly large buffers - alive for the lifetime of the manager.
-        const CommandHistoryEntry entry{ command.name(), command.getType(), CommandResult(result.status(), result.message()) };
+        const CommandHistoryEntry   entry{ command.name(), command.getType(), CommandResult(result.status(), result.message()) };
         std::lock_guard<std::mutex> lock(mutex);
         if (history.size() >= CommandManager::maxHistoryEntries()) {
             history.pop_front();
@@ -1098,8 +1091,8 @@ std::unique_ptr<Command> CommandManager::createCommandByName(const String& name,
     return std::unique_ptr<Command>(factory());
 }
 
-vn::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain,
-                                                                      ChainScope scope, const CommandTarget& target)
+vn::async::Task<CommandResult>
+CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope, const CommandTarget& target)
 {
     if (!command) {
         co_return failedResult(String(u8"Command is null"));
@@ -1123,12 +1116,9 @@ vn::async::Task<CommandResult> CommandManager::executeCommandAsyncImpl(Command* 
 
     if (exclusive && top_level) {
         switch (co_await d->takeOverForeground(*command)) {
-        case Impl::TakeOverOutcome::TakenOver:
-            break;
-        case Impl::TakeOverOutcome::StillStopping:
-            co_return failedResult(String(u8"另一个操作仍在收尾，请稍后再试。"));
-        case Impl::TakeOverOutcome::Cancelled:
-            co_return cancelledResult();
+        case Impl::TakeOverOutcome::TakenOver: break;
+        case Impl::TakeOverOutcome::StillStopping: co_return failedResult(String(u8"另一个操作仍在收尾，请稍后再试。"));
+        case Impl::TakeOverOutcome::Cancelled: co_return cancelledResult();
         }
     }
 
@@ -1516,7 +1506,7 @@ std::vector<String> CommandManager::disabledCommands() const
 bool CommandManager::isCommandEnabled(const String& name) const
 {
     std::lock_guard<std::mutex> lock(d->registry_mutex);
-    const auto it = d->registry.find(d->resolveName(name));
+    const auto                  it = d->registry.find(d->resolveName(name));
     return it != d->registry.end() && it->second.enabled;
 }
 
@@ -1559,8 +1549,7 @@ bool CommandManager::setCommandEnabled(const String& name, bool enabled)
         VN_LOGI("Command '{}' is now {}", toUtf8View(canonical), enabled ? "enabled" : "disabled");
     }
     else {
-        VN_LOGI("Command '{}' is not registered; the preference applies when it registers again: {}", toUtf8View(canonical),
-               enabled ? "enabled" : "disabled");
+        VN_LOGI("Command '{}' is not registered; the preference applies when it registers again: {}", toUtf8View(canonical), enabled ? "enabled" : "disabled");
     }
     return true;
 }
@@ -1616,7 +1605,7 @@ std::vector<String> CommandManager::names() const
 
 std::vector<std::pair<String, String>> CommandManager::aliases() const
 {
-    std::lock_guard<std::mutex>                             lock(d->registry_mutex);
+    std::lock_guard<std::mutex>            lock(d->registry_mutex);
     std::vector<std::pair<String, String>> result;
     result.reserve(d->aliases.size());
     for (const auto& entry : d->aliases) {

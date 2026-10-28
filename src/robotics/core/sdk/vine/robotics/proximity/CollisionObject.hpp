@@ -3,10 +3,10 @@
 #include <vine/robotics/robot_core_global.hpp>
 
 #include <vine/INameable.hpp>
+#include <vine/RefCounted.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Isometry3.hpp>
 #include <vine/raw_ptr.hpp>
-#include <vine/RefCounted.hpp>
 #include <vine/robotics/kinematics/Frame.hpp>
 
 #include "CollisionGeometry.hpp"
@@ -31,12 +31,10 @@ class CollisionObject : public vn::RefCounted<CollisionObject> {
      * @param geometry The collision geometry.
      * @param local_transform The pose of the geometry in the owner/frame space.
      */
-    explicit CollisionObject(const vn::intrusive_ptr<CollisionGeometry>& geometry,
-                             const math::Isometry3d&                      local_transform = {})
+    explicit CollisionObject(const vn::intrusive_ptr<CollisionGeometry>& geometry, const math::Isometry3d& local_transform = {})
       : geometry_(geometry)
       , local_transform_(local_transform)
-    {
-    }
+    {}
 
   public:
     /**
@@ -131,8 +129,7 @@ class CollisionObject : public vn::RefCounted<CollisionObject> {
      */
     virtual void computeWorldTransform(const kinematics::State& state)
     {
-        world_transform_ = frame_ ? kinematics::Frame::frameInWorld(frame_, state) * local_transform_
-                                  : local_transform_;
+        world_transform_ = frame_ ? kinematics::Frame::frameInWorld(frame_, state) * local_transform_ : local_transform_;
     }
 
     /**

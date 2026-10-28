@@ -80,18 +80,21 @@ class BlockStorage;
 
 namespace api
 {
+
 class OffscreenSession;
 class Session;
-}  // namespace api
+
+} // namespace api
 
 namespace detail
 {
+
 class BackendContentAccess;
-}  // namespace detail
+
+} // namespace detail
 
 /** @brief The SDK's render device, driven by the rewrite's session (see the file note). */
-class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
-{
+class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
   public:
     /** @brief Creates the device @p desc asks for (see DeviceDesc and RenderDevice::capabilities).
      *
@@ -151,8 +154,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * @param why           Receives why no target was handed out (Ok when one was), or null to ignore.
      * @return The target of that window, or nullptr (see @p why).
      */
-    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget>
-    createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why = nullptr) override;
+    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> createSurfaceTarget(void*                              native_handle,
+                                                                                     vn::graphics::SurfaceTargetResult* why = nullptr) override;
 
     /** @brief Gets how many windows this device serves (0 before the first ask). */
     [[nodiscard]] std::size_t windowCount() const noexcept;
@@ -197,8 +200,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      * @param frame      The frame to run, in run order.
      * @param present_to Target the frame's default framebuffer resolves to, or nullptr to present nowhere.
      */
-    virtual void executeFrame(const vn::graphics::FrameDescription& frame,
-                              vn::graphics::PresentTarget*           present_to = nullptr) override;
+    virtual void executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to = nullptr) override;
 
     /** @brief Answers what this backend can do: off-screen targets, and presentation unless created to present nothing.
      *
@@ -234,12 +236,13 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     bool releaseContent(vn::raw_ptr<const vn::Object> content) override;
 
     /** @brief Reads a colour attachment back: the device is stopped (counted), the copy is fenced, bytes out. */
-    bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
-                         std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why = nullptr) override;
+    bool readColorBuffer(const vn::graphics::RenderTarget* target,
+                         int                               attachment,
+                         std::vector<std::uint8_t>&        outPixels,
+                         vn::graphics::ReadbackResult*     why = nullptr) override;
 
     /** @brief Reads a depth attachment back as normalised values (a borrowed depth is the source's to read). */
-    bool readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths,
-                         vn::graphics::ReadbackResult* why = nullptr) override;
+    bool readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why = nullptr) override;
 
   public:
     /** @brief Gets whether the session is up: the device contract's own answer (see RenderDevice::initialized).
@@ -365,8 +368,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
      *                         (see PassDraw::program_override), or null for each command's own program.
      */
     void collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
-                            const vn::graphics::Camera*                      camera,
-                            const vn::graphics::ShaderProgram*               program_override);
+                            const vn::graphics::Camera*                     camera,
+                            const vn::graphics::ShaderProgram*              program_override);
 
     /** @brief Creates the slot of window @p index when it does not exist yet (indices are dense and never reused).
      *
@@ -394,7 +397,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     [[nodiscard]] api::OffscreenSession* ensureOffscreenSession();
 
     /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs. */
-    void collectScreenDraw(vn::graphics::RenderTarget*                     source,
+    void collectScreenDraw(vn::graphics::RenderTarget*                    source,
                            vn::raw_ptr<const vn::graphics::ShaderProgram> program,
                            vn::raw_ptr<const vn::graphics::Camera>        camera);
 
@@ -417,13 +420,12 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend
     /// Why a target's description could not become objects (see reportUnbuildableTarget).
     enum class UnbuildableReason : std::uint8_t
     {
-        BuildFailed,        ///< The objects could not be created.
-        DepthSourceMissing, ///< The depth is borrowed from a target this backend does not hold.
-        SamplesUnsupported, ///< The sample count is above the device's, or a multisampled target borrows a depth.
+        BuildFailed,        // The objects could not be created.
+        DepthSourceMissing, // The depth is borrowed from a target this backend does not hold.
+        SamplesUnsupported, // The sample count is above the device's, or a multisampled target borrows a depth.
     };
 
-    void reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, UnbuildableReason reason,
-                                 std::uint32_t max_samples);
+    void reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, UnbuildableReason reason, std::uint32_t max_samples);
 
     /** @brief Replaces the frame's block storage when a frame outgrew it or the learned in-flight count did.
      *

@@ -33,10 +33,9 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief One phase of the backend's self-test. */
-struct Phase
-{
-    const char*           name{nullptr};  ///< Phase name, printed in the `[selftest]` line.
-    std::function<bool()> run;            ///< The assertions; false fails the phase.
+struct Phase {
+    const char*           name{ nullptr }; // Phase name, printed in the `[selftest]` line.
+    std::function<bool()> run;             // The assertions; false fails the phase.
     /// Optional: the counter this phase is gated on (read before `run` and after it).
     std::function<std::uint64_t()> sample;
     /// Optional: whether (before, after) is acceptable. Ignored when `sample` is empty.
@@ -46,15 +45,13 @@ struct Phase
 /**
  * @brief Runs the phases in order and reports in the evidence format (see the file note).
  */
-class VN_GRAPHICS_API PhaseTable
-{
+class VN_GRAPHICS_API PhaseTable {
   public:
     /** @brief The outcome of a whole run. */
-    struct VN_GRAPHICS_API Report
-    {
-        std::vector<std::string> lines;        ///< Lines to print, in order.
-        std::size_t              passed{0};    ///< Phases that passed.
-        std::size_t              failed{0};    ///< Phases that failed.
+    struct VN_GRAPHICS_API Report {
+        std::vector<std::string> lines;       // Lines to print, in order.
+        std::size_t              passed{ 0 }; // Phases that passed.
+        std::size_t              failed{ 0 }; // Phases that failed.
 
         /** @brief Whether every phase passed. */
         [[nodiscard]] bool ok() const noexcept;

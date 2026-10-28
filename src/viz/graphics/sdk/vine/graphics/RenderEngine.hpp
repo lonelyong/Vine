@@ -31,9 +31,11 @@ VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
+
 class FrameResources;
 class FrameScheduler;
-}  // namespace detail
+
+} // namespace detail
 
 class Light;
 class Scene;
@@ -62,8 +64,7 @@ class PresentTarget;
  *   without one.
  * - Drawing itself is delegated to the RenderDevice supplied via setDevice().
  */
-class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine>
-{
+class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngine> {
     VN_OBJECT_META_DECL;
 
   public:
@@ -167,7 +168,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @return The sink.
      */
-    const DiagnosticSink& diagnosticSink() const { return diagnostics_.sink(); }
+    const DiagnosticSink& diagnosticSink() const
+    {
+        return diagnostics_.sink();
+    }
 
     /** @brief Gets how many diagnostics were reported through this engine's route.
      *
@@ -210,9 +214,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param category What it is about.
      * @param message  Human-readable detail, naming the pass and the slot.
      */
-    void reportEngineProblem(vn::graphics::DiagnosticSeverity severity,
-                             vn::graphics::DiagnosticCategory category,
-                             const String&                message);
+    void reportEngineProblem(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message);
 
     /** @brief Attaches this engine to the device it borrows: ready to drive frames.
      *
@@ -558,7 +560,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     [[nodiscard]] intrusive_ptr<RenderSurface> createSurface();
 
   private:
-    friend class RenderSurface;  // its one area: announces its size, and asks whether it is the one
+    friend class RenderSurface; // its one area: announces its size, and asks whether it is the one
 
     /** @brief Records the area's size for the frame and replays it to the target once a session can honour it.
      *
@@ -587,9 +589,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         int                       order = 0;
         /// The object that registered this pass and takes it back when it dies (null = registered without an owner,
         /// e.g. straight on the engine). Opaque on purpose: the engine never calls into it, only compares it.
-        raw_ptr<Object>           owner{ nullptr };
+        raw_ptr<Object> owner{ nullptr };
         /// The role that owner gave this pass (empty = anonymous).
-        String                    role;
+        String role;
         /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
         /// Measured by the compile, where that record happens (see buildFrameValue); reported through the frame
         /// plan (see FramePlan::PassPlan::record_micros).
@@ -611,10 +613,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   image before binding it, and until then "same object" is the whole truth that exists.
      */
     struct OutputIdentity {
-        raw_ptr<const RenderTarget> target{ nullptr };      // set once the image is bound
-        int                         attachment = 0;          // colour index; kWholeTarget = the whole target
-        bool                        depth = false;           // a depth attachment is NOT attachment 0
-        raw_ptr<const ImageRef>     declared{ nullptr };    // identity while unbound
+        raw_ptr<const RenderTarget> target{ nullptr };   // set once the image is bound
+        int                         attachment = 0;      // colour index; kWholeTarget = the whole target
+        bool                        depth      = false;  // a depth attachment is NOT attachment 0
+        raw_ptr<const ImageRef>     declared{ nullptr }; // identity while unbound
 
         /// @brief The coarse form: a whole target, as a bundle declaration names it.
         static constexpr int kWholeTarget = -1;
@@ -630,8 +632,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
          */
         [[nodiscard]] bool operator==(const OutputIdentity& other) const noexcept
         {
-            return target == other.target && attachment == other.attachment && depth == other.depth &&
-                   declared == other.declared;
+            return target == other.target && attachment == other.attachment && depth == other.depth && declared == other.declared;
         }
 
         /** @brief Builds the identity of a declared output image.
@@ -680,9 +681,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   allocates nothing.
      */
     struct PlanRow {
-        raw_ptr<RenderPass>                pass{ nullptr };
-        raw_ptr<Scene>                     content{ nullptr };
-        int                                order{ 0 };
+        raw_ptr<RenderPass> pass{ nullptr };
+        raw_ptr<Scene>      content{ nullptr };
+        int                 order{ 0 };
         /// The declared inputs, resolved for this frame: one entry per declaration, in declaration order,
         /// Kind::None where nothing produced it (exactly what the pass and the backend are handed).
         std::vector<ImageSource> inputs;
@@ -698,7 +699,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   same problem.
      */
     struct PlanProblem {
-        String message;   ///< the sentence a report would carry
+        String message; // the sentence a report would carry
     };
 
     /** @brief What one pass declared about one image or target, as the wiring checks compare it.
@@ -709,18 +710,18 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   lookup benefit, and a vector keeps its capacity across frames (see collectPlanProblems).
      */
     struct Declaration {
-        raw_ptr<const ImageRef>     image{ nullptr };    ///< The fine declaration, when there was one.
-        raw_ptr<const RenderTarget> target{ nullptr };   ///< The target the declaration is about.
-        raw_ptr<const RenderPass>   pass{ nullptr };     ///< Who declared it (null: the host filled it).
-        std::size_t                 index{ 0 };          ///< Its position in the draw order.
-        OutputIdentity              identity{};          ///< The image it claims (the claimed table's key).
+        raw_ptr<const ImageRef>     image{ nullptr };  // The fine declaration, when there was one.
+        raw_ptr<const RenderTarget> target{ nullptr }; // The target the declaration is about.
+        raw_ptr<const RenderPass>   pass{ nullptr };   // Who declared it (null: the host filled it).
+        std::size_t                 index{ 0 };        // Its position in the draw order.
+        OutputIdentity              identity{};        // The image it claims (the claimed table's key).
     };
 
     /** @brief A declared image nobody bound to a target, and who declared it (see collectPlanProblems phase 4). */
     struct UnboundDeclaration {
-        raw_ptr<const ImageRef>   image{ nullptr };      ///< The unbound identity.
-        raw_ptr<const RenderPass> pass{ nullptr };       ///< Who declared it.
-        bool                      as_output{ false };    ///< Declared as an output (else as an input).
+        raw_ptr<const ImageRef>   image{ nullptr };   // The unbound identity.
+        raw_ptr<const RenderPass> pass{ nullptr };    // Who declared it.
+        bool                      as_output{ false }; // Declared as an output (else as an input).
     };
 
     /** @brief Compiles this frame's declarations into the table the frame runs from (see FramePlan).
@@ -858,8 +859,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param identity Image the input addresses.
      * @return true when the structural check reported that wire for this frame.
      */
-    [[nodiscard]] bool unusableInputReported(raw_ptr<const RenderPass> pass,
-                                             const OutputIdentity& identity) const noexcept;
+    [[nodiscard]] bool unusableInputReported(raw_ptr<const RenderPass> pass, const OutputIdentity& identity) const noexcept;
 
     /** @brief Resolves one pass' declared inputs into @p out, for this frame (see compileFrame).
      *
@@ -925,7 +925,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     void reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputIdentity& identity, const String& what);
 
     // ---- Fields ----
-    intrusive_ptr<RenderBackend>        device_;
+    intrusive_ptr<RenderBackend> device_;
     // The validity bit behind every Lease this engine handed out (see lease): set to this in the constructor and
     // cleared in the destructor, so a holder of a lease (a PassChain, say) answers "the engine is gone" instead
     // of calling into freed memory - and never has to keep the engine alive to be safe.
@@ -933,50 +933,50 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // The engine's ONE diagnostic route (see Diagnostics.hpp): the host's sink lives inside it, and the
     // backend the engine drives reports through this very instance (setDiagnosticsRoute), which is what
     // makes diagnosticCount() the whole truth instead of half of it.
-    Diagnostics                         diagnostics_;
+    Diagnostics diagnostics_;
     // The shading a drawable that names no program gets. A named program, not an enum: set once in
     // the constructor to forwardProgram(), replaced by setDefaultContentProgram(), and null means "decline".
-    intrusive_ptr<const ShaderProgram>  default_content_program_;
-    std::vector<Slot>                   slots_;         // uniform ordered draw registry
+    intrusive_ptr<const ShaderProgram> default_content_program_;
+    std::vector<Slot>                  slots_; // uniform ordered draw registry
     // The wiring checks' tables (see collectPlanProblems). MEMBERS, cleared every compile: the pass count is small, a
     // flat scan beats a tree, and a vector keeps its capacity - so a steady frame allocates nothing here.
-    std::vector<Declaration>            wiring_filled_;
-    std::vector<Declaration>            wiring_claimed_;
-    std::vector<OutputIdentity>         wiring_colliding_;
-    std::vector<UnboundDeclaration>     wiring_unbound_;
-    std::vector<OutputIdentity>         wiring_promised_images_;
+    std::vector<Declaration>        wiring_filled_;
+    std::vector<Declaration>        wiring_claimed_;
+    std::vector<OutputIdentity>     wiring_colliding_;
+    std::vector<UnboundDeclaration> wiring_unbound_;
+    std::vector<OutputIdentity>     wiring_promised_images_;
     // The shape the frame is laid out on, as the host announced it (see surfaceWidth / RenderSurface::resize):
     // recorded even before a device exists, because the passes and their targets are built from it.
-    int                                 surface_width_      = 0;
-    int                                 surface_height_     = 0;
+    int surface_width_                 = 0;
+    int surface_height_                = 0;
     // Monotonic content-frame token, announced to every rendered scene each
     // frame (Scene::setContentFrame): the passes of one frame that draw the same
     // scene through the same camera then share one tree walk instead of walking
     // it once per pass. 0 = no frame announced yet, which is also what a caller
     // that never renders sees (no memoising at all).
-    std::uint64_t                       content_frame_      = 0;
-    bool                                initialized_        = false;
+    std::uint64_t content_frame_       = 0;
+    bool          initialized_         = false;
     // The one area this engine drives (see createSurface): OWNED, because a 1:1 relation needs one of its two ends
     // to own it. It is the only place the engine reads a target from - the engine owns no window and no handle (see
     // the class contract) - and a host holding the same object cannot outlive it: dropping the host's handle leaves
     // the engine's, and the engine releases it while it is still an object (see ~RenderEngine).
-    intrusive_ptr<RenderSurface>        area_               = nullptr;
+    intrusive_ptr<RenderSurface> area_ = nullptr;
     /// "A second area was asked for" is one condition, not a per-call event (see createSurface).
-    ReportOnce                          area_refused_{};
+    ReportOnce area_refused_{};
     /// "The borrowed device is not up" is one condition too (see initialize): re-armed when a device is set, so the
     /// same device answering the same thing does not say it twice, and a different one gets its own say.
-    ReportOnce                          device_not_up_{};
+    ReportOnce device_not_up_{};
     // The target the frame path presents through when this engine has NO area (see initialize): what the device
     // made for the window it brought up itself, or nullptr when it presents nothing. Borrowed - the device owns it.
-    raw_ptr<PresentTarget>              own_target_         = nullptr;
+    raw_ptr<PresentTarget> own_target_ = nullptr;
     // The episode of "the backend cannot draw the off-screen targets the pipeline asks for" (see frame()):
     // said once, re-armed the moment no enabled pass needs a target. The shared helper, like every other
     // one-condition episode in this class.
-    ReportOnce                          unsupported_target_reported_{};
+    ReportOnce unsupported_target_reported_{};
 
     /// "A pass names a layered depth view" is one condition, not a per-pass event (see addPass): layered targets
     /// are not built yet, so the declaration is refused once rather than once per declaration.
-    ReportOnce                          layered_depth_reported_{};
+    ReportOnce layered_depth_reported_{};
     /// The depth-view conflicts already said, keyed by (target, the image it was refused): a repeated identical
     /// declaration stays silent, while a different second image gets its own sentence (see addPass).
     std::set<std::pair<raw_ptr<RenderTarget>, raw_ptr<RenderTarget>>> depth_view_conflicts_{};
@@ -999,21 +999,23 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// storage: the rows of the previous frame are dropped, not their capacity.
     FrameDescription frame_value_;
     /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
-    std::vector<PlanProblem>     plan_problems_;
-    std::vector<PlanProblem>     previous_problems_;
+    std::vector<PlanProblem> plan_problems_;
+    std::vector<PlanProblem> previous_problems_;
     /// Whether a compile is running: while it is, the checks' reports are COLLECTED rather than emitted (see
     /// reportPlanProblems). One flag, because every check keeps calling reportEngineProblem() as it always did
     /// - the compile decides what becomes an episode, not each check.
-    bool                         collecting_problems_ = false;
+    bool collecting_problems_ = false;
     /// The declared inputs the structural check spoke about in THIS compile (see unusableInputReported).
     std::set<std::pair<raw_ptr<const RenderPass>, OutputIdentity>> unusable_inputs_this_frame_;
+
     /// The passes whose picture shape was reported, and this compile's rebuild of that list (see
     /// collectPictureShapeMismatches). The rebuild IS the episode rule for this check: an entry that is not
     /// carried over re-arms its pass, so the same mismatch after it was fixed is a new report.
     struct ShapeMismatchEpisode {
-        raw_ptr<const RenderPass> pass     = nullptr;   ///< the pass whose rectangle and camera disagree
-        ReportOnce                reported;             ///< whether that pass' mismatch has been said
+        raw_ptr<const RenderPass> pass = nullptr; // the pass whose rectangle and camera disagree
+        ReportOnce                reported;       // whether that pass' mismatch has been said
     };
+
     std::vector<ShapeMismatchEpisode> shape_mismatches_this_frame_;
     std::vector<ShapeMismatchEpisode> shape_mismatches_last_frame_;
 };

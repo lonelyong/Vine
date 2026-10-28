@@ -41,10 +41,10 @@ std::vector<unsigned char> readStream(std::istream& in)
  * a source that runs short fails the save instead of silently truncating an
  * entry.
  */
-class GeneratorBridge
-{
+class GeneratorBridge {
   public:
-    explicit GeneratorBridge(std::shared_ptr<DataSource> source) : source_(std::move(source))
+    explicit GeneratorBridge(std::shared_ptr<DataSource> source)
+      : source_(std::move(source))
     {
         zip_error_init(&error_);
     }
@@ -54,7 +54,7 @@ class GeneratorBridge
         zip_error_fini(&error_);
     }
 
-    GeneratorBridge(const GeneratorBridge&) = delete;
+    GeneratorBridge(const GeneratorBridge&)            = delete;
     GeneratorBridge& operator=(const GeneratorBridge&) = delete;
 
     void rewind()
@@ -63,7 +63,10 @@ class GeneratorBridge
         produced_ = 0;
     }
 
-    std::uint64_t size() const { return source_->size(); }
+    std::uint64_t size() const
+    {
+        return source_->size();
+    }
 
     zip_int64_t read(void* data, zip_uint64_t length)
     {
@@ -86,8 +89,7 @@ class GeneratorBridge
             return 0;
         }
 
-        const std::size_t got = source_->read(
-            std::span<std::byte>(static_cast<std::byte*>(data), static_cast<std::size_t>(length)));
+        const std::size_t got = source_->read(std::span<std::byte>(static_cast<std::byte*>(data), static_cast<std::size_t>(length)));
         if (got == 0) {
             // 0 says "the content ends here"; error() tells "that was all" from "that was as far as it got".
             if (measured || source_->error() != IoError::Ok) {
@@ -106,7 +108,10 @@ class GeneratorBridge
         return static_cast<zip_int64_t>(got);
     }
 
-    zip_error_t* error() { return &error_; }
+    zip_error_t* error()
+    {
+        return &error_;
+    }
 
   private:
     std::shared_ptr<DataSource> source_;
@@ -121,14 +126,11 @@ zip_int64_t generatorCallback(void* userdata, void* data, zip_uint64_t length, z
 {
     auto* bridge = static_cast<GeneratorBridge*>(userdata);
     switch (command) {
-    case ZIP_SOURCE_OPEN:
-        bridge->rewind();
-        return 0;
-    case ZIP_SOURCE_READ:
-        return bridge->read(data, length);
-    case ZIP_SOURCE_CLOSE:
-        return 0;
-    case ZIP_SOURCE_STAT: {
+    case ZIP_SOURCE_OPEN: bridge->rewind(); return 0;
+    case ZIP_SOURCE_READ: return bridge->read(data, length);
+    case ZIP_SOURCE_CLOSE: return 0;
+    case ZIP_SOURCE_STAT:
+    {
         auto* stat = static_cast<struct zip_stat*>(data);
         zip_stat_init(stat);
         if (bridge->size() != kUnknownSize) {
@@ -140,34 +142,31 @@ zip_int64_t generatorCallback(void* userdata, void* data, zip_uint64_t length, z
         // arrived, which is exactly what an unmeasured source needs.
         return sizeof(struct zip_stat);
     }
-    case ZIP_SOURCE_ERROR:
-        return zip_error_to_data(bridge->error(), data, length);
-    case ZIP_SOURCE_FREE:
-        delete bridge;
-        return 0;
+    case ZIP_SOURCE_ERROR: return zip_error_to_data(bridge->error(), data, length);
+    case ZIP_SOURCE_FREE: delete bridge; return 0;
     case ZIP_SOURCE_SUPPORTS:
-        return zip_source_make_command_bitmap(ZIP_SOURCE_OPEN, ZIP_SOURCE_READ, ZIP_SOURCE_CLOSE, ZIP_SOURCE_STAT,
-                                              ZIP_SOURCE_ERROR, ZIP_SOURCE_FREE, -1);
-    default:
-        zip_error_set(bridge->error(), ZIP_ER_OPNOTSUPP, 0);
-        return -1;
+        return zip_source_make_command_bitmap(ZIP_SOURCE_OPEN, ZIP_SOURCE_READ, ZIP_SOURCE_CLOSE, ZIP_SOURCE_STAT, ZIP_SOURCE_ERROR, ZIP_SOURCE_FREE, -1);
+    default: zip_error_set(bridge->error(), ZIP_ER_OPNOTSUPP, 0); return -1;
     }
 }
 
 /**
  * @brief A source that walks a list of borrowed pieces without copying them.
  */
-class FragmentSource final : public DataSource
-{
+class FragmentSource final : public DataSource {
   public:
-    explicit FragmentSource(std::span<const Fragment> fragments) : fragments_(fragments.begin(), fragments.end())
+    explicit FragmentSource(std::span<const Fragment> fragments)
+      : fragments_(fragments.begin(), fragments.end())
     {
         for (const Fragment& fragment : fragments_) {
             total_ += fragment.size;
         }
     }
 
-    std::uint64_t size() const override { return total_; }
+    std::uint64_t size() const override
+    {
+        return total_;
+    }
 
     void rewind() override
     {
@@ -187,8 +186,7 @@ class FragmentSource final : public DataSource
                 continue;
             }
 
-            const std::size_t take =
-                static_cast<std::size_t>(std::min<std::uint64_t>(available, out.size() - written));
+            const std::size_t take = static_cast<std::size_t>(std::min<std::uint64_t>(available, out.size() - written));
             std::memcpy(out.data() + written, fragment.data + offset_, take);
             written += take;
             offset_ += take;
@@ -212,16 +210,20 @@ class FragmentSource final : public DataSource
 /**
  * @brief Holds an open source archive; the bytes it borrows live here too.
  */
-class ZipArchive::EntryReadStream final : public VfsEntrySource
-{
+class ZipArchive::EntryReadStream final : public VfsEntrySource {
   public:
-    EntryReadStream(std::shared_ptr<ArchiveHandle> handle, zip_file_t* file, std::uint64_t index, std::uint64_t size,
-                    std::uint32_t expected_crc)
-        : handle_(std::move(handle)), file_(file), index_(index), size_(size), expected_crc_(expected_crc)
-    {
-    }
+    EntryReadStream(std::shared_ptr<ArchiveHandle> handle, zip_file_t* file, std::uint64_t index, std::uint64_t size, std::uint32_t expected_crc)
+      : handle_(std::move(handle))
+      , file_(file)
+      , index_(index)
+      , size_(size)
+      , expected_crc_(expected_crc)
+    {}
 
-    explicit EntryReadStream(std::vector<unsigned char> bytes) : bytes_(std::move(bytes)), size_(bytes_.size()) {}
+    explicit EntryReadStream(std::vector<unsigned char> bytes)
+      : bytes_(std::move(bytes))
+      , size_(bytes_.size())
+    {}
 
     ~EntryReadStream() override
     {
@@ -230,7 +232,7 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource
         }
     }
 
-    EntryReadStream(const EntryReadStream&) = delete;
+    EntryReadStream(const EntryReadStream&)            = delete;
     EntryReadStream& operator=(const EntryReadStream&) = delete;
 
     std::size_t read(std::span<std::byte> out) override
@@ -253,8 +255,7 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource
         }
         position_ += static_cast<std::uint64_t>(got);
         if (crc_valid_ && got > 0) {
-            crc_ = static_cast<std::uint32_t>(::crc32(crc_, reinterpret_cast<const unsigned char*>(out.data()),
-                                                      static_cast<uInt>(got)));
+            crc_ = static_cast<std::uint32_t>(::crc32(crc_, reinterpret_cast<const unsigned char*>(out.data()), static_cast<uInt>(got)));
             if (position_ == size_ && expected_crc_ != 0 && crc_ != expected_crc_) {
                 // The last byte arrived, so the checksum can be settled - and libzip
                 // itself does not look at it while reading.
@@ -264,11 +265,20 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource
         return static_cast<std::size_t>(got);
     }
 
-    std::uint64_t size() const noexcept override { return size_; }
+    std::uint64_t size() const noexcept override
+    {
+        return size_;
+    }
 
-    IoError error() const override { return error_; }
+    IoError error() const override
+    {
+        return error_;
+    }
 
-    bool seekable() const noexcept override { return file_ == nullptr || zip_file_is_seekable(file_) != 0; }
+    bool seekable() const noexcept override
+    {
+        return file_ == nullptr || zip_file_is_seekable(file_) != 0;
+    }
 
     IoError seek(std::uint64_t offset) override
     {
@@ -288,7 +298,7 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource
             error_ = moved;
             return moved;
         }
-        position_ = offset;
+        position_  = offset;
         // The running checksum only holds for a straight read, so any seek but a
         // rewind turns the check off.
         crc_valid_ = offset == 0;
@@ -318,8 +328,7 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource
             return IoError::Ok;
         }
 
-        zip_file_t* const reopened =
-            zip_fopen_index(static_cast<zip_t*>(handle_->archive), static_cast<zip_uint64_t>(index_), ZIP_FL_UNCHANGED);
+        zip_file_t* const reopened = zip_fopen_index(static_cast<zip_t*>(handle_->archive), static_cast<zip_uint64_t>(index_), ZIP_FL_UNCHANGED);
         if (reopened == nullptr) {
             return IoError::IoFailure;
         }
@@ -329,9 +338,8 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource
         std::array<std::byte, 4096> skipped{};
         std::uint64_t               at = 0;
         while (at < offset) {
-            const std::size_t want =
-                static_cast<std::size_t>(std::min<std::uint64_t>(skipped.size(), offset - at));
-            const zip_int64_t got = zip_fread(file_, skipped.data(), want);
+            const std::size_t want = static_cast<std::size_t>(std::min<std::uint64_t>(skipped.size(), offset - at));
+            const zip_int64_t got  = zip_fread(file_, skipped.data(), want);
             if (got <= 0) {
                 return IoError::IoFailure; // the entry ends before the offset the directory promised
             }
@@ -339,15 +347,16 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource
         }
         return IoError::Ok;
     }
-    std::shared_ptr<ArchiveHandle> handle_; ///< Keeps the source archive alive for this reader.
-    std::vector<unsigned char>     bytes_;  ///< Buffered content, when the entry is not source-backed.
+
+    std::shared_ptr<ArchiveHandle> handle_; // Keeps the source archive alive for this reader.
+    std::vector<unsigned char>     bytes_;  // Buffered content, when the entry is not source-backed.
     zip_file_t*                    file_{ nullptr };
-    std::uint64_t                  index_{ 0 }; ///< The entry's index in the source archive, so a restart can open it again.
+    std::uint64_t                  index_{ 0 }; // The entry's index in the source archive, so a restart can open it again.
     std::uint64_t                  size_{ 0 };
     std::uint64_t                  position_{ 0 };
-    std::uint32_t                  crc_{ 0 };                            ///< Running checksum of what was read.
-    std::uint32_t                  expected_crc_{ 0 };                   ///< What the archive directory recorded.
-    bool                           crc_valid_{ true };                   ///< Cleared when the reader seeks off the start.
+    std::uint32_t                  crc_{ 0 };          // Running checksum of what was read.
+    std::uint32_t                  expected_crc_{ 0 }; // What the archive directory recorded.
+    bool                           crc_valid_{ true }; // Cleared when the reader seeks off the start.
     IoError                        error_{ IoError::Ok };
 };
 
@@ -360,9 +369,9 @@ ZipArchive::ArchiveHandle::~ArchiveHandle()
     }
 }
 
-ZipArchive::ZipArchive() = default;
-ZipArchive::~ZipArchive() = default;
-ZipArchive::ZipArchive(ZipArchive&&) noexcept = default;
+ZipArchive::ZipArchive()                                 = default;
+ZipArchive::~ZipArchive()                                = default;
+ZipArchive::ZipArchive(ZipArchive&&) noexcept            = default;
 ZipArchive& ZipArchive::operator=(ZipArchive&&) noexcept = default;
 
 bool ZipArchive::insertBytes(const std::filesystem::path& path, std::span<const unsigned char> bytes)
@@ -583,7 +592,7 @@ Result<std::vector<unsigned char>> ZipArchive::contentOf(const Entry& entry) con
 Result<std::vector<unsigned char>> ZipArchive::read(const std::filesystem::path& path) const
 {
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
+    const IoError         error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
     }
@@ -608,8 +617,7 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const std::filesystem:
         return IoError::IoFailure;
     }
 
-    zip_file_t* const file = zip_fopen_index(static_cast<zip_t*>(handle_->archive),
-                                             static_cast<zip_uint64_t>(entry.source_index), ZIP_FL_UNCHANGED);
+    zip_file_t* const file = zip_fopen_index(static_cast<zip_t*>(handle_->archive), static_cast<zip_uint64_t>(entry.source_index), ZIP_FL_UNCHANGED);
     if (file == nullptr) {
         return IoError::IoFailure;
     }
@@ -643,8 +651,7 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const std::filesystem:
     }
     // libzip's read path does not check the checksum, so the content is verified here
     // against what the archive directory recorded for the entry.
-    if (entry.info.crc != 0 &&
-        static_cast<std::uint32_t>(::crc32(0, bytes.data(), static_cast<uInt>(bytes.size()))) != entry.info.crc) {
+    if (entry.info.crc != 0 && static_cast<std::uint32_t>(::crc32(0, bytes.data(), static_cast<uInt>(bytes.size()))) != entry.info.crc) {
         return IoError::IoFailure;
     }
     return bytes;
@@ -655,7 +662,7 @@ Result<std::unique_ptr<VfsEntrySource>> ZipArchive::openRead(const std::filesyst
     // Normalized first, like read() and stat() do: a path that is not a valid virtual path is reported as such
     // instead of being looked up as a name that happens to be missing.
     std::filesystem::path norm;
-    const IoError normalized = detail::normalizeVfsPath(name, norm);
+    const IoError         normalized = detail::normalizeVfsPath(name, norm);
     if (normalized != IoError::Ok) {
         return normalized;
     }
@@ -673,14 +680,12 @@ Result<std::unique_ptr<VfsEntrySource>> ZipArchive::openRead(const std::filesyst
         if (handle_ == nullptr) {
             return IoError::IoFailure;
         }
-        zip_file_t* const file = zip_fopen_index(static_cast<zip_t*>(handle_->archive),
-                                                static_cast<zip_uint64_t>(entry.source_index), ZIP_FL_UNCHANGED);
+        zip_file_t* const file = zip_fopen_index(static_cast<zip_t*>(handle_->archive), static_cast<zip_uint64_t>(entry.source_index), ZIP_FL_UNCHANGED);
         if (file == nullptr) {
             return IoError::IoFailure;
         }
         // The handle is held by the reader, so the stream outlives this archive.
-        return std::unique_ptr<VfsEntrySource>(
-            new EntryReadStream(handle_, file, entry.source_index, entry.info.size, entry.info.crc));
+        return std::unique_ptr<VfsEntrySource>(new EntryReadStream(handle_, file, entry.source_index, entry.info.size, entry.info.crc));
     }
 
     auto bytes = contentOf(entry);
@@ -817,7 +822,7 @@ IoError ZipArchive::adoptHandle(std::shared_ptr<ArchiveHandle> handle, const std
         }
 
         Entry entry;
-        entry.stored_name  = info.stored; // kept verbatim: a legacy name is written back as it was
+        entry.stored_name  = info.stored;        // kept verbatim: a legacy name is written back as it was
         entry.from_source  = !info.is_directory; // a directory entry has no content to copy through
         entry.source_index = i;
         entry.info.kind    = info.is_directory ? VfsEntryKind::Directory : VfsEntryKind::File;
@@ -849,9 +854,8 @@ bool ZipArchive::emit(void* target) const
         // The storage layer still speaks in a flag: this is where the virtual kind is
         // turned back into the trailing '/' a ZIP marks a directory with.
         const bool        is_directory = entry.info.kind == VfsEntryKind::Directory;
-        const std::string stored = entry.stored_name.empty() ? detail::toStoredName(name, is_directory)
-                                                            : entry.stored_name;
-        zip_source_t*     source = nullptr;
+        const std::string stored       = entry.stored_name.empty() ? detail::toStoredName(name, is_directory) : entry.stored_name;
+        zip_source_t*     source       = nullptr;
 
         if (is_directory) {
             source = zip_source_buffer(archive, nullptr, 0, 0);
@@ -861,8 +865,12 @@ bool ZipArchive::emit(void* target) const
                 return false;
             }
             // Copied straight across: the bytes stay compressed and are never decompressed.
-            source = zip_source_zip_file(archive, static_cast<zip_t*>(handle_->archive),
-                                         static_cast<zip_uint64_t>(entry.source_index), ZIP_FL_UNCHANGED, 0, -1,
+            source = zip_source_zip_file(archive,
+                                         static_cast<zip_t*>(handle_->archive),
+                                         static_cast<zip_uint64_t>(entry.source_index),
+                                         ZIP_FL_UNCHANGED,
+                                         0,
+                                         -1,
                                          nullptr);
         }
         else if (entry.from_file) {
@@ -956,7 +964,7 @@ Result<std::vector<unsigned char>> ZipArchive::buildToBytes() const
     }
 
     std::vector<unsigned char> bytes(static_cast<std::size_t>(st.size));
-    const zip_uint64_t got = static_cast<zip_uint64_t>(zip_source_read(buffer, bytes.data(), st.size));
+    const zip_uint64_t         got = static_cast<zip_uint64_t>(zip_source_read(buffer, bytes.data(), st.size));
     zip_source_close(buffer);
     zip_source_free(buffer);
     zip_error_fini(&error);
@@ -1033,8 +1041,7 @@ bool ZipArchive::isDirectoryPath(const std::filesystem::path& normalized) const
 
 IoError ZipArchive::ancestorBlockerOf(const std::filesystem::path& normalized) const
 {
-    for (std::filesystem::path ancestor = detail::parentOf(normalized); !ancestor.empty();
-         ancestor = detail::parentOf(ancestor)) {
+    for (std::filesystem::path ancestor = detail::parentOf(normalized); !ancestor.empty(); ancestor = detail::parentOf(ancestor)) {
         const VfsEntryKind kind = entryKindOf(ancestor);
         if (kind == VfsEntryKind::File) {
             return IoError::NotADirectory;
@@ -1049,7 +1056,7 @@ IoError ZipArchive::ancestorBlockerOf(const std::filesystem::path& normalized) c
 Result<VfsEntryInfo> ZipArchive::stat(const std::filesystem::path& path) const
 {
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
+    const IoError         error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
     }
@@ -1059,12 +1066,9 @@ Result<VfsEntryInfo> ZipArchive::stat(const std::filesystem::path& path) const
 
     const VfsEntryKind kind = entryKindOf(norm);
     switch (kind) {
-    case VfsEntryKind::File:
-        return VfsEntryInfo{ norm, kind, sizeOf(norm), crcOf(norm) };
-    case VfsEntryKind::Directory:
-        return VfsEntryInfo{ norm, kind, 0 };
-    case VfsEntryKind::Missing:
-        break;
+    case VfsEntryKind::File: return VfsEntryInfo{ norm, kind, sizeOf(norm), crcOf(norm) };
+    case VfsEntryKind::Directory: return VfsEntryInfo{ norm, kind, 0 };
+    case VfsEntryKind::Missing: break;
     }
     return IoError::NotFound;
 }
@@ -1072,7 +1076,7 @@ Result<VfsEntryInfo> ZipArchive::stat(const std::filesystem::path& path) const
 Result<std::vector<VfsEntryInfo>> ZipArchive::list(const std::filesystem::path& dir) const
 {
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(dir, norm);
+    const IoError         error = detail::normalizeVfsPath(dir, norm);
     if (error != IoError::Ok) {
         return error;
     }
@@ -1101,7 +1105,7 @@ IoError ZipArchive::createDirectory(const std::filesystem::path& path)
         return blocked;
     }
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
+    const IoError         error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
     }
@@ -1128,7 +1132,7 @@ IoError ZipArchive::createDirectories(const std::filesystem::path& path)
         return blocked;
     }
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
+    const IoError         error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
     }
@@ -1153,7 +1157,7 @@ IoError ZipArchive::rename(const std::filesystem::path& from, const std::filesys
         return blocked;
     }
     std::filesystem::path source;
-    IoError  error = detail::normalizeVfsPath(from, source);
+    IoError               error = detail::normalizeVfsPath(from, source);
     if (error != IoError::Ok) {
         return error;
     }
@@ -1191,9 +1195,7 @@ IoError ZipArchive::rename(const std::filesystem::path& from, const std::filesys
     std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moved;
     for (const VfsEntryInfo& entry : index()) {
         if (entry.path == source || detail::isPathBelow(source, entry.path)) {
-            moved.emplace_back(entry.path, entry.path == source
-                                                 ? target
-                                                 : detail::joinVfs(target, entry.path.lexically_relative(source)));
+            moved.emplace_back(entry.path, entry.path == source ? target : detail::joinVfs(target, entry.path.lexically_relative(source)));
         }
     }
     for (const auto& [old_name, new_name] : moved) {
@@ -1210,7 +1212,7 @@ IoError ZipArchive::remove(const std::filesystem::path& path)
         return blocked;
     }
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
+    const IoError         error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
     }
@@ -1229,7 +1231,7 @@ IoError ZipArchive::removeAll(const std::filesystem::path& path)
         return blocked;
     }
     std::filesystem::path norm;
-    const IoError error = detail::normalizeVfsPath(path, norm);
+    const IoError         error = detail::normalizeVfsPath(path, norm);
     if (error != IoError::Ok) {
         return error;
     }

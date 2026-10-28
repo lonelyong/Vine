@@ -12,12 +12,9 @@ void packDrawBlock(const core::CompiledCommand& command, vn::graphics::VineDrawB
     // array, which is what the shaders (and std140) read. Written from the accessors rather than from the
     // matrix's storage so the convention is stated here, where a reader can check it against the ABI note.
     const vn::math::Mat4d& model = command.model;
-    for (int column = 0; column < 4; ++column)
-    {
-        for (int row = 0; row < 4; ++row)
-        {
-            out.model[static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)] =
-                static_cast<float>(model(row, column));
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            out.model[static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)] = static_cast<float>(model(row, column));
         }
     }
 

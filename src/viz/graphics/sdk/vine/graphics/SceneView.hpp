@@ -57,7 +57,7 @@ class Scene;
  *   hand would make the surface believe in a view nobody declared.
  */
 class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
-    friend class RenderSurface;  // binds this view to the area it presents, and hands its size back on unbind
+    friend class RenderSurface; // binds this view to the area it presents, and hands its size back on unbind
 
   public:
     /** @brief Constructs a view with a default camera and an empty content scene.
@@ -353,8 +353,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // Window input routed to the manipulator (see InputRouter). Kept fed with manipulator_ wherever that changes.
     InputRouter input_router_;
 
-    intrusive_ptr<Camera>  camera_;
-    intrusive_ptr<Scene>   scene_;
+    intrusive_ptr<Camera>            camera_;
+    intrusive_ptr<Scene>             scene_;
     intrusive_ptr<CameraManipulator> manipulator_;
 
     // The chain this view adopted, if any (setChain): what draws this view's camera and content into the

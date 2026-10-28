@@ -202,14 +202,16 @@ using RobotTable = std::array<std::array<double, 3>, 6>;
 /* MDH table of a generic 6-DOF industrial robot with a spherical wrist. */
 RobotTable baseRobot()
 {
-    return { {
-        { 0.0, 0.0, 0.0 },       /* 1: base           */
-        { -PI_HALF, 0.15, 0.0 }, /* 2: shoulder       */
-        { 0.0, 1.0, 0.0 },       /* 3: elbow          */
-        { -PI_HALF, 0.0, 0.5 },  /* 4: wrist roll     */
-        { PI_HALF, 0.0, 0.0 },   /* 5: wrist pitch    */
-        { PI_HALF, 0.0, 0.2 },   /* 6: wrist yaw/tool */
-    } };
+    return {
+        {
+         { 0.0, 0.0, 0.0 },       /* 1: base           */
+          { -PI_HALF, 0.15, 0.0 }, /* 2: shoulder       */
+          { 0.0, 1.0, 0.0 },       /* 3: elbow          */
+          { -PI_HALF, 0.0, 0.5 },  /* 4: wrist roll     */
+          { PI_HALF, 0.0, 0.0 },   /* 5: wrist pitch    */
+          { PI_HALF, 0.0, 0.2 },   /* 6: wrist yaw/tool */
+        }
+    };
 }
 
 std::vector<DofInfo> makeRobot(const RobotTable& params)
@@ -236,8 +238,7 @@ double configDistance(const Q& a, const Q& b)
  * (completeness). Completeness intentionally does not hold at a wrist singularity, where two
  * joints become dependent and the commanded configuration is not reproducible.
  */
-void checkTarget(const std::vector<DofInfo>& dofs, const PieperIKSolver& solver, const double q[6], bool expect_complete,
-                 const std::string& context)
+void checkTarget(const std::vector<DofInfo>& dofs, const PieperIKSolver& solver, const double q[6], bool expect_complete, const std::string& context)
 {
     const Isometry3d target = forwardKinematics(dofs, q);
 
@@ -265,10 +266,13 @@ void checkTarget(const std::vector<DofInfo>& dofs, const PieperIKSolver& solver,
 
         bool same = true;
         for (int i = 0; i < 6; ++i)
-            if (std::abs(normalizeAngle(sol[i] - q[i])) > 1e-5) same = false;
-        if (same) recovered = true;
+            if (std::abs(normalizeAngle(sol[i] - q[i])) > 1e-5)
+                same = false;
+        if (same)
+            recovered = true;
     }
-    if (expect_complete) EXPECT_TRUE(recovered) << "generating configuration missing: " << context;
+    if (expect_complete)
+        EXPECT_TRUE(recovered) << "generating configuration missing: " << context;
 }
 
 /* Calls checkTarget() on random configurations of a robot inside the supported class. */
@@ -325,20 +329,20 @@ TEST(PieperRobotClass, ArmVariantsRoundTrip)
         int         col;
         double      value;
     } variants[] = {
-        { "a1=0", 1, 1, 0.0 },
-        { "alpha1=+90", 1, 0, PI_HALF },
-        { "alpha3=+90", 3, 0, PI_HALF },
-        { "a2=-1.0", 2, 1, -1.0 },
-        { "d2=0.1", 1, 2, 0.1 },
-        { "d3=0.25", 2, 2, 0.25 },
-        { "d6=0", 5, 2, 0.0 },
-        { "alpha0=+90", 0, 0, PI_HALF },
+        { "a1=0",       1, 1, 0.0      },
+        { "alpha1=+90", 1, 0, PI_HALF  },
+        { "alpha3=+90", 3, 0, PI_HALF  },
+        { "a2=-1.0",    2, 1, -1.0     },
+        { "d2=0.1",     1, 2, 0.1      },
+        { "d3=0.25",    2, 2, 0.25     },
+        { "d6=0",       5, 2, 0.0      },
+        { "alpha0=+90", 0, 0, PI_HALF  },
         { "alpha4=-90", 4, 0, -PI_HALF },
         { "alpha5=-90", 5, 0, -PI_HALF },
     };
 
     for (const auto& v : variants) {
-        RobotTable params = baseRobot();
+        RobotTable params    = baseRobot();
         params[v.row][v.col] = v.value;
         SCOPED_TRACE(v.name);
         expectRoundTrip(params, 120, 100u + static_cast<unsigned>(v.row * 10 + v.col));
@@ -498,8 +502,10 @@ bool containsConfiguration(const std::vector<Q>& solutions, const double q[6], d
     for (const Q& sol : solutions) {
         bool same = true;
         for (int i = 0; i < 6; ++i)
-            if (std::abs(normalizeAngle(sol[i] - q[i])) > tolerance) same = false;
-        if (same) return true;
+            if (std::abs(normalizeAngle(sol[i] - q[i])) > tolerance)
+                same = false;
+        if (same)
+            return true;
     }
     return false;
 }
@@ -544,8 +550,8 @@ TEST(PieperSeed, SolutionsSortedByDistanceFromSeed)
     PieperIKSolver             solver(dofs);
     ASSERT_TRUE(solver.isValid());
 
-    const double   q_known[6] = { 0.3, -0.5, 1.2, 0.7, -0.4, 0.6 };
-    const Isometry3d target   = forwardKinematics(dofs, q_known);
+    const double     q_known[6] = { 0.3, -0.5, 1.2, 0.7, -0.4, 0.6 };
+    const Isometry3d target     = forwardKinematics(dofs, q_known);
 
     const Q seed{ 0.1, -0.2, 0.0, 0.4, 0.0, 0.0 };
 
@@ -556,8 +562,7 @@ TEST(PieperSeed, SolutionsSortedByDistanceFromSeed)
     const Q nearest = solutions.front();
     for (const Q& sol : solutions) EXPECT_GE(configDistance(sol, seed), configDistance(nearest, seed) - 1e-12);
 
-    for (std::size_t i = 1; i < solutions.size(); ++i)
-        EXPECT_LE(configDistance(solutions[i - 1], seed), configDistance(solutions[i], seed) + 1e-12);
+    for (std::size_t i = 1; i < solutions.size(); ++i) EXPECT_LE(configDistance(solutions[i - 1], seed), configDistance(solutions[i], seed) + 1e-12);
 
     // The seed-ordered overload must return the same set as the unsorted one.
     std::vector<Q> unsorted;
@@ -648,9 +653,8 @@ TEST(PieperCompliantConfigurations, CanonicalTwistCombinations)
                             params[4][0]      = alpha4;
                             params[5][0]      = alpha5;
 
-                            SCOPED_TRACE("alpha1=" + std::to_string(alpha1) + " alpha2=" + std::to_string(alpha2) +
-                                         " alpha3=" + std::to_string(alpha3) + " alpha4=" + std::to_string(alpha4) +
-                                         " alpha5=" + std::to_string(alpha5) + " a1=" + std::to_string(a1));
+                            SCOPED_TRACE("alpha1=" + std::to_string(alpha1) + " alpha2=" + std::to_string(alpha2) + " alpha3=" + std::to_string(alpha3) +
+                                         " alpha4=" + std::to_string(alpha4) + " alpha5=" + std::to_string(alpha5) + " a1=" + std::to_string(a1));
                             expectRoundTrip(params, 40, 101u + static_cast<unsigned>(count));
                             count++;
                         }
@@ -673,8 +677,7 @@ TEST(PieperCompliantConfigurations, NonCanonicalTwists)
                 params[4][0]      = alpha4;
                 params[5][0]      = alpha5;
 
-                SCOPED_TRACE("alpha3=" + std::to_string(alpha3) + " alpha4=" + std::to_string(alpha4) +
-                             " alpha5=" + std::to_string(alpha5));
+                SCOPED_TRACE("alpha3=" + std::to_string(alpha3) + " alpha4=" + std::to_string(alpha4) + " alpha5=" + std::to_string(alpha5));
                 expectRoundTrip(params, 20, 211u + static_cast<unsigned>(count));
                 count++;
             }
@@ -691,18 +694,18 @@ TEST(PieperCompliantConfigurations, LinkParameterVariations)
         int         col;
         double      value;
     } variations[] = {
-        { "a0=0.2", 0, 1, 0.2 },
-        { "d1=0.3", 0, 2, 0.3 },
+        { "a0=0.2",     0, 1, 0.2     },
+        { "d1=0.3",     0, 2, 0.3     },
         { "alpha0=+90", 0, 0, PI_HALF },
-        { "alpha0=180", 0, 0, PI },
-        { "a1=0", 1, 1, 0.0 },
-        { "a2=-1.0", 2, 1, -1.0 },
-        { "d2=0.15", 1, 2, 0.15 },
-        { "d3=0.2", 2, 2, 0.2 },
-        { "d4=0.1", 3, 2, 0.1 },
-        { "d4=1.0", 3, 2, 1.0 },
-        { "d6=0", 5, 2, 0.0 },
-        { "d6=1.0", 5, 2, 1.0 },
+        { "alpha0=180", 0, 0, PI      },
+        { "a1=0",       1, 1, 0.0     },
+        { "a2=-1.0",    2, 1, -1.0    },
+        { "d2=0.15",    1, 2, 0.15    },
+        { "d3=0.2",     2, 2, 0.2     },
+        { "d4=0.1",     3, 2, 0.1     },
+        { "d4=1.0",     3, 2, 1.0     },
+        { "d6=0",       5, 2, 0.0     },
+        { "d6=1.0",     5, 2, 1.0     },
     };
 
     int index = 0;

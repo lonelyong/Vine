@@ -44,28 +44,26 @@ namespace api
 {
 
 /** @brief What an off-screen session needs to come up: the device to submit on, and its graphics queue family. */
-struct OffscreenSessionOptions
-{
+struct OffscreenSessionOptions {
     /// The device to render on, carried as `void*` because the value is a `vsg::Device*` and the session takes its
     /// own reference to it. Never null: an off-screen session borrows a device, it does not create one (a Vulkan
     /// device is built with the surface it presents to, which is what the windowed session's window provides).
-    void* device{nullptr};
+    void* device{ nullptr };
     /// The device's graphics queue family: the family the command graph records on. A negative value refuses the
     /// session, because a graph without a family can neither allocate a command buffer nor reach a queue.
-    int queue_family{-1};
+    int queue_family{ -1 };
     /// The DEVICE's frame clock, when this session is one of several frame sources on one device (see
     /// core::DeviceClock). Null = this session owns its own; a borrowed one must outlive the session.
-    core::DeviceClock* clock{nullptr};
+    core::DeviceClock* clock{ nullptr };
     /// The DEVICE's park queue, which stands in for the session's own when @ref clock is borrowed. Null = own.
-    core::RetirementQueue* retirement{nullptr};
+    core::RetirementQueue* retirement{ nullptr };
 };
 
 /**
  * @brief One device's off-screen frame session: submit and completion evidence, with no window anywhere (see the
  *        file note).
  */
-class OffscreenSession
-{
+class OffscreenSession {
   public:
     OffscreenSession();
     ~OffscreenSession();
@@ -192,6 +190,6 @@ class OffscreenSession
     std::unique_ptr<Impl> impl;
 };
 
-}  // namespace api
+} // namespace api
 
 VN_VSG_NS_END

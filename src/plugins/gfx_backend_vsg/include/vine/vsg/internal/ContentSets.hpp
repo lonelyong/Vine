@@ -9,14 +9,14 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/vk/Device.h>
 
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentImages.hpp>
 #include <vine/vsg/internal/ContentPass.hpp>
 #include <vine/vsg/internal/MaterialImages.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -77,8 +77,7 @@ VN_VSG_NS_BEGIN
 [[nodiscard]] BlockDescriptors::ImageSource imageSourceOf(const MaterialFacts& material) noexcept;
 
 /** @brief Produces the declared sets a pass' drawables need (see the file note). */
-class ContentSets
-{
+class ContentSets {
   public:
     /**
      * @brief Creates the producer.
@@ -109,12 +108,12 @@ class ContentSets
      * @param retirement Where the sets whose key left the tables are parked.
      * @return The candidate sets for `Scope::block_sets`, valid until the next call.
      */
-    [[nodiscard]] std::span<BlockDescriptors* const> setsFor(const core::CompiledPass& pass,
-                                                              const ContentFacts& facts,
-                                                              std::span<const ContentPass::Scope::Entry> halves,
-                                                              std::span<const InputImages> inputs,
-                                                              core::FrameTimeline& timeline,
-                                                              core::RetirementQueue& retirement);
+    [[nodiscard]] std::span<BlockDescriptors* const> setsFor(const core::CompiledPass&                  pass,
+                                                             const ContentFacts&                        facts,
+                                                             std::span<const ContentPass::Scope::Entry> halves,
+                                                             std::span<const InputImages>               inputs,
+                                                             core::FrameTimeline&                       timeline,
+                                                             core::RetirementQueue&                     retirement);
 
     /** @brief Rebuilds every cached set over a replacement storage (what a grown budget produces).
      *
@@ -133,8 +132,7 @@ class ContentSets
      * @return How many cached sets were repointed (0 when none was built yet - the sets built next bind
      *         @p storage anyway).
      */
-    std::size_t repoint(const BlockStorage& storage, core::FrameTimeline& timeline,
-                        core::RetirementQueue& retirement);
+    std::size_t repoint(const BlockStorage& storage, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Gets how many sets are alive (a steady pass raises this by nothing). */
     [[nodiscard]] std::size_t sets() const noexcept;

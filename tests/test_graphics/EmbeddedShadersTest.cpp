@@ -64,10 +64,7 @@ void expectWholeGlslSource(std::string_view name, std::u8string_view text)
  */
 bool isAbbreviatedSha256(std::string_view hash)
 {
-    return hash.size() == 16 &&
-           std::all_of(hash.begin(), hash.end(), [](char c) {
-               return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-           });
+    return hash.size() == 16 && std::all_of(hash.begin(), hash.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 }
 
 /**
@@ -78,8 +75,7 @@ bool isAbbreviatedSha256(std::string_view hash)
  */
 const Entry* findEntry(std::string_view file_name)
 {
-    const auto it = std::find_if(std::begin(kAll), std::end(kAll),
-                                 [file_name](const Entry& entry) { return entry.name == file_name; });
+    const auto it = std::find_if(std::begin(kAll), std::end(kAll), [file_name](const Entry& entry) { return entry.name == file_name; });
     return it == std::end(kAll) ? nullptr : &*it;
 }
 
@@ -129,10 +125,9 @@ std::vector<std::string> shadow_markers()
  * @param source  Shipped source it must be derived from.
  * @param markers Marker lines the source carries (each standing alone on its line).
  */
-void expectDerivedFromSource(const std::string& text, const std::string& source,
-                             const std::vector<std::string>& markers)
+void expectDerivedFromSource(const std::string& text, const std::string& source, const std::vector<std::string>& markers)
 {
-    std::size_t              cursor = 0;   // how far into @p text the last segment ended
+    std::size_t              cursor = 0; // how far into @p text the last segment ended
     std::vector<std::size_t> cuts;
     for (const std::string& marker : markers) {
         const std::size_t at = source.find(marker);
@@ -148,17 +143,16 @@ void expectDerivedFromSource(const std::string& text, const std::string& source,
         const std::string segment = source.substr(start, cut - start);
         const std::size_t found   = text.find(segment, cursor);
         EXPECT_NE(found, std::string::npos) << "the program text must carry this segment of the file, which ends at\n  "
-                                           << segment.substr(segment.size() > 80u ? segment.size() - 80u : 0u);
+                                            << segment.substr(segment.size() > 80u ? segment.size() - 80u : 0u);
         if (found == std::string::npos) {
             return;
         }
         cursor = found + segment.size();
         // Skip the marker line itself: it is what the insertion replaced.
-        start = source.find('\n', cut) + 1u;
+        start  = source.find('\n', cut) + 1u;
     }
     const std::string tail = source.substr(start);
-    EXPECT_NE(text.find(tail, cursor), std::string::npos)
-        << "the program text must carry the file's tail, which starts at\n  " << tail.substr(0, 80u);
+    EXPECT_NE(text.find(tail, cursor), std::string::npos) << "the program text must carry the file's tail, which starts at\n  " << tail.substr(0, 80u);
 }
 
 TEST(EmbeddedShadersTest, TheDeferredProgramsUseTheEmbeddedSources)
@@ -239,8 +233,7 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     const std::size_t define_at           = flat_without_define.find(define_line);
     ASSERT_NE(define_at, std::string::npos);
     flat_without_define.erase(define_at, define_line.size());
-    EXPECT_EQ(flat_without_define, forward_fs->source.as_std_str())
-        << "the flat program is the forward text plus one define, not a second copy of the shading";
+    EXPECT_EQ(flat_without_define, forward_fs->source.as_std_str()) << "the flat program is the forward text plus one define, not a second copy of the shading";
 }
 
 /**
@@ -276,10 +269,8 @@ TEST(EmbeddedShadersTest, TheAbiLocationsMatchTheShaderText)
     EXPECT_EQ(attributeLocation(VertexAttribute::TexCoord0), 8u);
 
     const std::string forward_vs = asByteString(kBuiltinForwardVert);
-    for (const auto role : { VertexAttribute::Position, VertexAttribute::Normal, VertexAttribute::Color,
-                             VertexAttribute::TexCoord0 }) {
-        EXPECT_NE(forward_vs.find(attributeLayout(attributeLocation(role))), std::string::npos)
-            << "vertex attribute at location " << attributeLocation(role);
+    for (const auto role : { VertexAttribute::Position, VertexAttribute::Normal, VertexAttribute::Color, VertexAttribute::TexCoord0 }) {
+        EXPECT_NE(forward_vs.find(attributeLayout(attributeLocation(role))), std::string::npos) << "vertex attribute at location " << attributeLocation(role);
     }
 }
 
@@ -290,23 +281,18 @@ TEST(EmbeddedShadersTest, TheLightBlockDeclaresOneSlotPerLightTheCapacityAllows)
     // pins the GLSL side, so raising the capacity in one place only is a failing test rather than a block whose
     // arrays the shader reads past.
     const std::string slots = "[" + std::to_string(kMaxLights) + "]";
-    for (const std::string_view name : { "builtin_forward.frag", "builtin_deferred_lighting.frag" })
-    {
+    for (const std::string_view name : { "builtin_forward.frag", "builtin_deferred_lighting.frag" }) {
         std::string source;
-        for (const Entry& entry : kAll)
-        {
-            if (entry.name == name)
-            {
+        for (const Entry& entry : kAll) {
+            if (entry.name == name) {
                 source = asByteString(entry.source);
                 break;
             }
         }
         ASSERT_FALSE(source.empty()) << name << " is embedded";
-        for (const std::string_view field : { "position_kind", "direction_range", "color_intensity", "cone" })
-        {
+        for (const std::string_view field : { "position_kind", "direction_range", "color_intensity", "cone" }) {
             const std::string declaration = "vec4 " + std::string(field) + slots;
-            EXPECT_NE(source.find(declaration), std::string::npos)
-                << name << " declares " << declaration << " (kMaxLights is " << kMaxLights << ")";
+            EXPECT_NE(source.find(declaration), std::string::npos) << name << " declares " << declaration << " (kMaxLights is " << kMaxLights << ")";
         }
     }
 }
@@ -316,15 +302,11 @@ TEST(EmbeddedShadersTest, TheContentVertexStagesSizeTheirPointsFromTheDrawBlock)
     // A POINT_LIST pipeline needs a vertex stage that STATICALLY writes gl_PointSize, and the engine's size is the
     // draw block's `params.y` (a StateNode's setPointSize or the pass' override, already resolved). A stage that
     // wrote a constant instead would silently ignore both, which is the failure this pins.
-    for (const std::u8string_view source : { kBuiltinForwardVert, kBuiltinGbufferVert })
-    {
+    for (const std::u8string_view source : { kBuiltinForwardVert, kBuiltinGbufferVert }) {
         const std::string text = asByteString(source);
-        EXPECT_NE(text.find("#define VN_PARAM_DRAW"), std::string::npos)
-            << "the vertex stage must declare the draw block it reads the size from";
-        EXPECT_NE(text.find("#include \"vine_params.glsl\""), std::string::npos)
-            << "and take the declaration from the ONE fragment, never a copy";
-        EXPECT_NE(text.find("gl_PointSize = vn_draw.params.y"), std::string::npos)
-            << "the size is the per-draw value, not a literal";
+        EXPECT_NE(text.find("#define VN_PARAM_DRAW"), std::string::npos) << "the vertex stage must declare the draw block it reads the size from";
+        EXPECT_NE(text.find("#include \"vine_params.glsl\""), std::string::npos) << "and take the declaration from the ONE fragment, never a copy";
+        EXPECT_NE(text.find("gl_PointSize = vn_draw.params.y"), std::string::npos) << "the size is the per-draw value, not a literal";
     }
 }
 
@@ -340,16 +322,18 @@ TEST(EmbeddedShadersTest, TheMaterialSlotBitsAgreeWithTheBlockAbi)
             ++bit;
         }
         // The declarations are aligned with spaces, so the NAME is searched first and the initialiser after it.
-        return std::pair<std::string, std::string>{ std::string(name),
-                                                    "= 1u << " + std::to_string(bit) + ";" };
+        return std::pair<std::string, std::string>{ std::string(name), "= 1u << " + std::to_string(bit) + ";" };
     };
     const std::string shading_stages = asByteString(kBuiltinForwardFrag) + asByteString(kBuiltinGbufferFrag);
-    for (const auto& [name, value] : { std::pair<std::string_view, std::uint32_t>{
-                                          "VN_MATERIAL_FLAG_BASE_COLOR", kMaterialFlagBaseColor },
-                                      { "VN_MATERIAL_FLAG_METALLIC_ROUGHNESS", kMaterialFlagMetallicRoughness },
-                                      { "VN_MATERIAL_FLAG_NORMAL", kMaterialFlagNormal },
-                                      { "VN_MATERIAL_FLAG_OCCLUSION", kMaterialFlagOcclusion },
-                                      { "VN_MATERIAL_FLAG_EMISSIVE", kMaterialFlagEmissive } }) {
+    for (const auto& [name, value] :
+         {
+           std::pair<std::string_view, std::uint32_t>{ "VN_MATERIAL_FLAG_BASE_COLOR",         kMaterialFlagBaseColor         },
+           { "VN_MATERIAL_FLAG_METALLIC_ROUGHNESS", kMaterialFlagMetallicRoughness },
+           { "VN_MATERIAL_FLAG_NORMAL",             kMaterialFlagNormal            },
+           { "VN_MATERIAL_FLAG_OCCLUSION",          kMaterialFlagOcclusion         },
+           { "VN_MATERIAL_FLAG_EMISSIVE",           kMaterialFlagEmissive          }
+    })
+    {
         const auto [declaration, initialiser] = declared(name, value);
         const std::size_t at                  = shading_stages.find(declaration);
         ASSERT_NE(at, std::string::npos) << declaration << " must be declared in vine_params.glsl";
@@ -358,8 +342,7 @@ TEST(EmbeddedShadersTest, TheMaterialSlotBitsAgreeWithTheBlockAbi)
     }
     const std::size_t shift_at = shading_stages.find("VN_MATERIAL_ALPHA_MODE_SHIFT");
     ASSERT_NE(shift_at, std::string::npos) << "the alpha mode's shift is part of the block's GLSL";
-    EXPECT_NE(shading_stages.find("= " + std::to_string(kMaterialAlphaModeShift) + "u;", shift_at),
-              std::string::npos)
+    EXPECT_NE(shading_stages.find("= " + std::to_string(kMaterialAlphaModeShift) + "u;", shift_at), std::string::npos)
         << "the alpha mode's shift is the block's, not a literal a shader invents";
 }
 
@@ -371,8 +354,7 @@ TEST(EmbeddedShadersTest, TheSharedFragmentsAreInlinedIntoTheStagesThatUseThem)
     // lost an include still compiles, it just shades with whatever it happens to have. These assertions are the
     // cheap half of that: the functions each stage is supposed to be made of are IN its text.
     const auto carries = [](std::u8string_view source, std::string_view needle, std::string_view stage) {
-        EXPECT_NE(asByteString(source).find(needle), std::string::npos)
-            << stage << " must carry " << needle << " (its fragment was not inlined)";
+        EXPECT_NE(asByteString(source).find(needle), std::string::npos) << stage << " must carry " << needle << " (its fragment was not inlined)";
     };
     carries(kBuiltinForwardFrag, "vec3 vnEvaluateBRDF(", "builtin_forward.frag");
     carries(kBuiltinForwardFrag, "VineSurface vnSampleMaterial(", "builtin_forward.frag");
@@ -400,8 +382,7 @@ TEST(EmbeddedShadersTest, TheGbufferWriterAndTheLightingPassShareOnePacking)
     EXPECT_NE(lighting.find("vnOctahedralDecode"), std::string::npos);
     // The factors ride the normal attachment (the packing's own rule): b = roughness, a = metallic on the write
     // side, and the same two channels on the read side.
-    EXPECT_NE(writer.find("vnOctahedralEncode(vn_surface.normal), vn_surface.roughness, vn_surface.metallic"),
-              std::string::npos)
+    EXPECT_NE(writer.find("vnOctahedralEncode(vn_surface.normal), vn_surface.roughness, vn_surface.metallic"), std::string::npos)
         << "the writer stores the normal and both factors in one row";
     EXPECT_NE(lighting.find("vnOctahedralDecode(vn_n4.rg)"), std::string::npos);
     EXPECT_NE(lighting.find("clamp(vn_n4.b, 0.0, 1.0)"), std::string::npos) << "b is the roughness";
@@ -422,8 +403,7 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
     const auto plain = deferredLightProgram();
     ASSERT_NE(plain, nullptr);
     const std::string plain_text = plain->stage(0)->source.as_std_str();
-    EXPECT_EQ(plain_text.find("VN_SHADOW_"), std::string::npos)
-        << "the unshadowed program must ask the pass for no shadow binding at all";
+    EXPECT_EQ(plain_text.find("VN_SHADOW_"), std::string::npos) << "the unshadowed program must ask the pass for no shadow binding at all";
     EXPECT_EQ(plain_text.find("vn_shadow_map"), std::string::npos);
 
     const auto shadowed = shadowedDeferredLightProgram();
@@ -433,8 +413,7 @@ TEST(EmbeddedShadersTest, TheShadowedLightingProgramIsBuiltFromMarkersTheSourceC
     EXPECT_NE(shadowed_text.find("layout(binding = 8, std140) uniform VineShadowBlock"), std::string::npos)
         << "the block's GLSL type name is the L1 name (ShaderAbi.hpp)";
     EXPECT_NE(shadowed_text.find("vn_shadow.viewToLight"), std::string::npos);
-    EXPECT_EQ(shadowed_text.find("VN_SHADOW_BINDINGS"), std::string::npos)
-        << "the markers are scaffolding: the program text must not carry them";
+    EXPECT_EQ(shadowed_text.find("VN_SHADOW_BINDINGS"), std::string::npos) << "the markers are scaffolding: the program text must not carry them";
     EXPECT_EQ(shadowed_text.find("VN_SHADOW_TERM"), std::string::npos);
 }
 
@@ -480,8 +459,7 @@ TEST(EmbeddedShadersTest, TheForwardProgramDeclaresTheShadowAbiWhereTheContentSe
     EXPECT_NE(text.find("vn_shadow.viewToLight"), std::string::npos);
     // Which switch the term reads, so the two paths cannot drift into different ABIs.
     EXPECT_NE(text.find("vn_shadow.params.x"), std::string::npos);
-    EXPECT_EQ(text.find("VN_SHADOW_BINDINGS"), std::string::npos)
-        << "the markers are scaffolding: the program text must not carry them";
+    EXPECT_EQ(text.find("VN_SHADOW_BINDINGS"), std::string::npos) << "the markers are scaffolding: the program text must not carry them";
     EXPECT_EQ(text.find("VN_SHADOW_TERM"), std::string::npos);
     // The term reads the fragment's view position by ONE name in both programs (the forward path has
     // it as a varying, the deferred one reads it out of the G-buffer), which is what makes the term
@@ -532,10 +510,8 @@ TEST(EmbeddedShadersTest, AScreenCopyCanShowOneChannelOfItsAttachment)
     ASSERT_NE(plain, nullptr);
     ASSERT_GT(plain->stageCount(), 0u);
     const std::string plain_text = plain->stage(0)->source.as_std_str();
-    EXPECT_NE(plain_text.find("layout(binding = 2) uniform sampler2D vn_screen_tex;"), std::string::npos)
-        << "the attachment is the binding";
-    EXPECT_NE(plain_text.find("vn_out_color = texture(vn_screen_tex, vn_uv);"), std::string::npos)
-        << "the plain variant keeps the shipped output";
+    EXPECT_NE(plain_text.find("layout(binding = 2) uniform sampler2D vn_screen_tex;"), std::string::npos) << "the attachment is the binding";
+    EXPECT_NE(plain_text.find("vn_out_color = texture(vn_screen_tex, vn_uv);"), std::string::npos) << "the plain variant keeps the shipped output";
 
     const auto alpha = screenCopyProgram(2, ScreenCopyChannels::Alpha);
     ASSERT_NE(alpha, nullptr);
@@ -543,8 +519,7 @@ TEST(EmbeddedShadersTest, AScreenCopyCanShowOneChannelOfItsAttachment)
     const std::string alpha_text = alpha->stage(0)->source.as_std_str();
     EXPECT_NE(alpha_text.find("vn_out_color = vec4(vec3(texture(vn_screen_tex, vn_uv).a), 1.0);"), std::string::npos)
         << "the alpha variant copies that channel as grey";
-    EXPECT_EQ(alpha_text.find("vn_out_color = texture(vn_screen_tex, vn_uv);"), std::string::npos)
-        << "and nothing of the plain output is left";
+    EXPECT_EQ(alpha_text.find("vn_out_color = texture(vn_screen_tex, vn_uv);"), std::string::npos) << "and nothing of the plain output is left";
     EXPECT_NE(plain->name(), alpha->name()) << "two programs, two names (a pool keys pipelines by identity)";
     EXPECT_EQ(screenCopyProgram()->name(), u8"builtin_screen_copy") << "the no-argument form is the plain copy";
     EXPECT_EQ(screenCopyProgram(0, ScreenCopyChannels::Alpha)->name(), u8"builtin_screen_copy_alpha");
@@ -624,8 +599,8 @@ std::string nameRuleViolation(std::string_view name)
     // can see, so it is the one the gate takes.
     std::size_t word_start = 0u;
     while (word_start <= role.size()) {
-        const std::size_t word_end = std::min(role.find('_', word_start), role.size());
-        const std::string_view word = role.substr(word_start, word_end - word_start);
+        const std::size_t      word_end = std::min(role.find('_', word_start), role.size());
+        const std::string_view word     = role.substr(word_start, word_end - word_start);
         if (word == stage.substr(1u)) {
             return "role repeats the stage suffix ('" + std::string(word) + "')";
         }
@@ -637,8 +612,7 @@ std::string nameRuleViolation(std::string_view name)
 TEST(EmbeddedShadersTest, EveryShaderNameFollowsTheInventorysRule)
 {
     for (const Entry& entry : kAll) {
-        EXPECT_TRUE(nameRuleViolation(entry.name).empty())
-            << entry.name << ": " << nameRuleViolation(entry.name);
+        EXPECT_TRUE(nameRuleViolation(entry.name).empty()) << entry.name << ": " << nameRuleViolation(entry.name);
     }
     // The gate has to be able to fail, and on names this repository has actually used or flirted with.
     EXPECT_FALSE(nameRuleViolation("std_forward.vert").empty());
@@ -655,4 +629,4 @@ TEST(EmbeddedShadersTest, EveryShaderNameFollowsTheInventorysRule)
     EXPECT_TRUE(nameRuleViolation("builtin_screen_copy.frag").empty());
 }
 
-}  // namespace
+} // namespace

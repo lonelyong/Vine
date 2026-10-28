@@ -81,23 +81,20 @@ class Frustum {
      */
     static Frustum fromViewProjection(const Mat4d& vp)
     {
-        Frustum f;
-        const auto row = [&vp](int r) {
-            return Vec4d(vp.element(r, 0), vp.element(r, 1), vp.element(r, 2),
-                         vp.element(r, 3));
-        };
-        const Vec4d r0 = row(0);
-        const Vec4d r1 = row(1);
-        const Vec4d r2 = row(2);
-        const Vec4d r3 = row(3);
-        f.planes_[0] = r3 + r0;  // left
-        f.planes_[1] = r3 - r0;  // right
-        f.planes_[2] = r3 + r1;  // bottom
-        f.planes_[3] = r3 - r1;  // top
-        f.planes_[4] = r3 + r2;  // near
-        f.planes_[5] = r3 - r2;  // far
+        Frustum     f;
+        const auto  row = [&vp](int r) { return Vec4d(vp.element(r, 0), vp.element(r, 1), vp.element(r, 2), vp.element(r, 3)); };
+        const Vec4d r0  = row(0);
+        const Vec4d r1  = row(1);
+        const Vec4d r2  = row(2);
+        const Vec4d r3  = row(3);
+        f.planes_[0]    = r3 + r0; // left
+        f.planes_[1]    = r3 - r0; // right
+        f.planes_[2]    = r3 + r1; // bottom
+        f.planes_[3]    = r3 - r1; // top
+        f.planes_[4]    = r3 + r2; // near
+        f.planes_[5]    = r3 - r2; // far
         for (auto& p : f.planes_) {
-            const Vec3d n(p.x, p.y, p.z);
+            const Vec3d  n(p.x, p.y, p.z);
             const double len = n.length();
             if (len > 1e-12) {
                 p.x /= len;
@@ -121,9 +118,7 @@ class Frustum {
     {
         for (const auto& p : planes_) {
             const Vec3d n(p.x, p.y, p.z);
-            const Vec3d pos{ (n.x >= 0.0) ? box.max().x : box.min().x,
-                             (n.y >= 0.0) ? box.max().y : box.min().y,
-                             (n.z >= 0.0) ? box.max().z : box.min().z };
+            const Vec3d pos{ (n.x >= 0.0) ? box.max().x : box.min().x, (n.y >= 0.0) ? box.max().y : box.min().y, (n.z >= 0.0) ? box.max().z : box.min().z };
             if (n.dot(pos) + p.w < 0.0) {
                 return true;
             }
@@ -307,13 +302,12 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
  *       have only this form (see Node::layers): the answer is needed by the walk, and no host asks a node
  *       "which layer are you in" - that question belongs to the pass doing the drawing.
  */
-struct InheritedState
-{
-    RenderState            state;                  ///< Fold of every StateNode above this node (deeper overrides).
-    raw_ptr<MaterialBase>  material;               ///< Nearest StateNode material above this node, or null.
-    raw_ptr<ShaderProgram> program;                ///< Nearest StateNode program above this node, or null.
-    std::uint32_t          layers = kDefaultLayer;    ///< Nearest layer declaration above, resolved (see Node::setLayers).
-    int                    draw_order = 0;            ///< Nearest draw-order declaration above (see Node::setDrawOrder).
+struct InheritedState {
+    RenderState            state;                      // Fold of every StateNode above this node (deeper overrides).
+    raw_ptr<MaterialBase>  material;                   // Nearest StateNode material above this node, or null.
+    raw_ptr<ShaderProgram> program;                    // Nearest StateNode program above this node, or null.
+    std::uint32_t          layers     = kDefaultLayer; // Nearest layer declaration above, resolved (see Node::setLayers).
+    int                    draw_order = 0;             // Nearest draw-order declaration above (see Node::setDrawOrder).
 };
 
 /**
@@ -341,9 +335,16 @@ struct InheritedState
  * @param viewport_used Receives true when some node's placement also depends on the device-pixel viewport.
  * @param out        Output command list.
  */
-void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& frustum, const CollectView& view,
-                         float opacity, const InheritedState& inherited, std::uint32_t layer_mask,
-                         BoundsCache& bounds, bool& viewport_used, std::vector<RenderCommand>& out)
+void collectNodeCommands(const Node*                 node,
+                         const Mat4d&                world,
+                         const Frustum&              frustum,
+                         const CollectView&          view,
+                         float                       opacity,
+                         const InheritedState&       inherited,
+                         std::uint32_t               layer_mask,
+                         BoundsCache&                bounds,
+                         bool&                       viewport_used,
+                         std::vector<RenderCommand>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
@@ -357,8 +358,8 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
     // A view-dependent node (AutoTransform with auto-rotation or screen-space scaling) supplies its own world
     // matrix for THIS view. The collected list is memoised per view, so the answer is stable for as long as the
     // view is; ViewAndViewport additionally keys the memo on the viewport.
-    Mat4d node_world = world;
-    Mat4d view_world;
+    Mat4d                node_world = world;
+    Mat4d                view_world;
     const ViewDependence dependence = node->localToWorldForView(world, view, view_world);
     if (dependence != ViewDependence::None) {
         node_world = view_world;
@@ -423,20 +424,16 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
                 continue;
             }
             const raw_ptr<MaterialBase> geometry_material = geometry->material();
-            const MaterialBasePtr       material =
-                primitive->material != nullptr
-                    ? primitive->material
-                    : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : MaterialBasePtr(subtree.material));
+            const MaterialBasePtr material = primitive->material != nullptr
+                                                 ? primitive->material
+                                                 : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : MaterialBasePtr(subtree.material));
             const raw_ptr<ShaderProgram> geometry_program = geometry->program();
-            const ShaderProgramPtr       program =
-                primitive->program != nullptr
-                    ? primitive->program
-                    : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program)
-                                                   : ShaderProgramPtr(subtree.program));
-            auto& cmd = out.emplace_back(intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)), material,
-                                         node_world, static_cast<std::uint32_t>(index));
+            const ShaderProgramPtr       program = primitive->program != nullptr
+                                                       ? primitive->program
+                                                       : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program) : ShaderProgramPtr(subtree.program));
+            auto& cmd   = out.emplace_back(intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)), material, node_world, static_cast<std::uint32_t>(index));
             cmd.opacity = effective;
-            cmd.draw_order = subtree.draw_order;
+            cmd.draw_order     = subtree.draw_order;
             // Render state folds along the node path: every StateNode from the
             // scene root to this geometry contributes, deeper nodes overriding.
             // What arrives here is the CONTENT's word (every item optional, so
@@ -444,26 +441,33 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
             // drawing it completes the picture, in one place (see StateResolution.hpp's
             // resolveRenderState and RenderPass::stateOverrides).
             cmd.authored_state = subtree.state;
-            cmd.program = program;
+            cmd.program        = program;
             if (primitive->hasInstances()) {
                 cmd.instance_transforms = primitive->instance_transforms;
-                cmd.first_instance      = static_cast<std::uint32_t>(std::min<std::size_t>(
-                    primitive->firstInstance(), std::numeric_limits<std::uint32_t>::max()));
-                cmd.instance_count = static_cast<std::uint32_t>(std::min<std::size_t>(
-                    primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
+                cmd.first_instance = static_cast<std::uint32_t>(std::min<std::size_t>(primitive->firstInstance(), std::numeric_limits<std::uint32_t>::max()));
+                cmd.instance_count =
+                    static_cast<std::uint32_t>(std::min<std::size_t>(primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
             }
         }
         return;
     }
     if (const auto* group = dynamic_cast<const Group*>(node)) {
         for (const auto& child : group->children()) {
-            collectNodeCommands(child.get(), node_world * child->localTransformMatrix(), frustum, view, node_opacity,
-                                subtree, layer_mask, bounds, viewport_used, out);
+            collectNodeCommands(child.get(),
+                                node_world * child->localTransformMatrix(),
+                                frustum,
+                                view,
+                                node_opacity,
+                                subtree,
+                                layer_mask,
+                                bounds,
+                                viewport_used,
+                                out);
         }
     }
 }
 
-}  // namespace
+} // namespace
 
 /**
  * @brief One frame's collected command lists, keyed by the camera's view.
@@ -484,20 +488,20 @@ void collectNodeCommands(const Node* node, const Mat4d& world, const Frustum& fr
 struct Scene::ContentMemo {
     /// One view's collected list.
     struct Entry {
-        Mat4d                      view_proj;
-        Vec3d                      eye;
+        Mat4d view_proj;
+        Vec3d eye;
         // The device-pixel rectangle is part of the KEY: the same camera drawn into two PiP rectangles
         // produces different screen-space scales for view-dependent nodes (AutoTransform).
-        Viewport                   viewport;
-        std::uint64_t              revision = 0;
+        Viewport      viewport;
+        std::uint64_t revision   = 0;
         // The mask is part of the KEY, not only a parameter: two passes may draw the same view through the
         // same camera and still want DIFFERENT lists (a shadow pass drawing only casters, a main pass drawing
         // everything), so serving one's list for the other's mask would swap a few objects in and out of the
         // picture - correct-looking and wrong.
-        std::uint32_t              layer_mask = kAllLayers;
+        std::uint32_t layer_mask = kAllLayers;
         // True when the list was built by a node that also depends on the device-pixel viewport
         // (AutoTransform screen-space scaling). A list without such a node is shared across rectangles.
-        bool                       viewport_sensitive = false;
+        bool viewport_sensitive  = false;
         // SHARED and immutable once built (see collectRenderCommands): the passes of a frame hand the same list
         // around, and it is reused across frames for as long as the graph does not change.
         std::shared_ptr<const std::vector<RenderCommand>> commands;
@@ -612,8 +616,7 @@ void Scene::removeLight(raw_ptr<Light> light)
     if (light == nullptr) {
         return;
     }
-    auto it = std::find_if(lights_.begin(), lights_.end(),
-                           [light](const LightPtr& ptr) { return ptr.get() == light; });
+    auto it = std::find_if(lights_.begin(), lights_.end(), [light](const LightPtr& ptr) { return ptr.get() == light; });
     if (it != lights_.end()) {
         lights_.erase(it);
     }
@@ -653,22 +656,19 @@ Aabbd Scene::boundingBox(std::uint32_t layer_mask) const
     return visibleWorldBox(*root_, kDefaultLayer, layer_mask);
 }
 
-std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(raw_ptr<const Camera> camera,
-                                                                                    std::uint32_t layer_mask,
-                                                                                    const Viewport* viewport) const
+std::shared_ptr<const std::vector<RenderCommand>>
+Scene::collectRenderCommands(raw_ptr<const Camera> camera, std::uint32_t layer_mask, const Viewport* viewport) const
 {
     if (camera == nullptr) {
         // The empty answer, shared rather than built: a caller with no camera asks for nothing.
         return noCommands();
     }
-    const Viewport draw_viewport = viewport != nullptr ? *viewport : Viewport{};
-    const CollectView view{ camera->projectionMatrix(), camera->viewMatrix(), camera->eye(), camera->up(),
-                            draw_viewport };
+    const Viewport    draw_viewport = viewport != nullptr ? *viewport : Viewport{};
+    const CollectView view{ camera->projectionMatrix(), camera->viewMatrix(), camera->eye(), camera->up(), draw_viewport };
     return collectRenderCommands(view, layer_mask);
 }
 
-std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(const CollectView& view,
-                                                                                    std::uint32_t layer_mask) const
+std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(const CollectView& view, std::uint32_t layer_mask) const
 {
     // The empty answer, shared rather than built: an empty scene asks for nothing, and paying an allocation
     // for "nothing" would make the cheap case the expensive one. A root that is no longer a ROOT is the same
@@ -679,9 +679,9 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     }
     // The shape is part of the view: the projection encodes it (the camera states it, see Camera), so the memo
     // below (which matches on the view-projection) cannot answer for one shape with another's walk.
-    const Mat4d    view_proj = view.viewProjection();
-    const Vec3d    eye       = view.eye;
-    const Viewport viewport  = view.viewport;
+    const Mat4d    view_proj  = view.viewProjection();
+    const Vec3d    eye        = view.eye;
+    const Viewport viewport   = view.viewport;
     // THE MEMO OUTLIVES ONE FRAME. A collected list is a pure function of the graph and the view, so it is reused
     // for as long as NOTHING changed - which the graph announces through the content epoch of THIS SCENE'S ROOT
     // SUBTREE (every mutator bumps itself and every ancestor, see Node::announceContentChange). The scope is
@@ -696,16 +696,16 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     }
     // Recorded even when the memo was just cleared (or does not exist yet): the next call has to compare against
     // THIS look, or it would invalidate a memo it built itself.
-    memo_epoch_ = epoch;
+    memo_epoch_           = epoch;
     const auto memo_entry = [this, &view_proj, &eye, &viewport, layer_mask]() -> ContentMemo::Entry* {
         if (content_frame_ == 0 || content_memo_ == nullptr) {
-            return nullptr;   // nothing is memoised until a frame is open (a caller that drives it keeps walking)
+            return nullptr; // nothing is memoised until a frame is open (a caller that drives it keeps walking)
         }
         for (auto& entry : content_memo_->entries) {
             if (entry.revision == content_revision_ && entry.eye == eye && entry.layer_mask == layer_mask &&
-                (!entry.viewport_sensitive || (entry.viewport.width == viewport.width &&
-                                                entry.viewport.height == viewport.height)) &&
-                sameView(entry.view_proj, view_proj)) {
+                (!entry.viewport_sensitive || (entry.viewport.width == viewport.width && entry.viewport.height == viewport.height)) &&
+                sameView(entry.view_proj, view_proj))
+            {
                 entry.last_used_frame = content_frame_;
                 return &entry;
             }
@@ -723,11 +723,10 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     ++content_collect_count_;
 
     std::vector<RenderCommand> commands;
-    const Frustum frustum = Frustum::fromViewProjection(view_proj);
-    BoundsCache bounds;
-    bool viewport_used = false;
-    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, view, opacity_, InheritedState{}, layer_mask,
-                        bounds, viewport_used, commands);
+    const Frustum              frustum = Frustum::fromViewProjection(view_proj);
+    BoundsCache                bounds;
+    bool                       viewport_used = false;
+    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, view, opacity_, InheritedState{}, layer_mask, bounds, viewport_used, commands);
     // Where the sort puts things, in one sentence: the draw order the CONTENT declared is the outer key (see
     // Node::setDrawOrder - higher is drawn later), and inside one order: opaque front-to-back (near first),
     // transparent back-to-front (far first) after the opaque batch. Transparent objects need painter's
@@ -746,23 +745,20 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
         const auto origin = cmd.model_matrix * vn::math::Point3d(0.0, 0.0, 0.0);
         keyed.emplace_back((origin.asVector() - eye).length2(), &cmd);
     }
-    std::stable_sort(keyed.begin(), keyed.end(),
-                     [](const std::pair<double, RenderCommand*>& lhs,
-                        const std::pair<double, RenderCommand*>& rhs) {
-                         // The draw order DECLARED on the content is the outer key (see Node::setDrawOrder): a
-                         // higher order is drawn later, which is how content that must land on top of the rest
-                         // - an outline, a decal, a highlight - is expressed without its own pass. Equal orders
-                         // fall through to the ordering the collection has always produced, so the default
-                         // (everybody at 0) is bit for bit the picture it was.
-                         if (lhs.second->draw_order != rhs.second->draw_order) {
-                             return lhs.second->draw_order < rhs.second->draw_order;
-                         }
-                         if (lhs.second->isTransparent() != rhs.second->isTransparent()) {
-                             return !lhs.second->isTransparent();
-                         }
-                         return lhs.second->isTransparent() ? lhs.first > rhs.first
-                                                          : lhs.first < rhs.first;
-                     });
+    std::stable_sort(keyed.begin(), keyed.end(), [](const std::pair<double, RenderCommand*>& lhs, const std::pair<double, RenderCommand*>& rhs) {
+        // The draw order DECLARED on the content is the outer key (see Node::setDrawOrder): a
+        // higher order is drawn later, which is how content that must land on top of the rest
+        // - an outline, a decal, a highlight - is expressed without its own pass. Equal orders
+        // fall through to the ordering the collection has always produced, so the default
+        // (everybody at 0) is bit for bit the picture it was.
+        if (lhs.second->draw_order != rhs.second->draw_order) {
+            return lhs.second->draw_order < rhs.second->draw_order;
+        }
+        if (lhs.second->isTransparent() != rhs.second->isTransparent()) {
+            return !lhs.second->isTransparent();
+        }
+        return lhs.second->isTransparent() ? lhs.first > rhs.first : lhs.first < rhs.first;
+    });
     std::vector<RenderCommand> ordered;
     ordered.reserve(keyed.size());
     for (auto& [distance, cmd] : keyed) {
@@ -776,13 +772,12 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
             content_memo_ = std::make_unique<ContentMemo>();
         }
         if (ContentMemo::Entry* entry = memo_entry()) {
-            entry->commands            = shared; // the same view asked again after a change
-            entry->viewport_sensitive  = viewport_used;
+            entry->commands           = shared; // the same view asked again after a change
+            entry->viewport_sensitive = viewport_used;
         }
         else {
-            content_memo_->entries.push_back(ContentMemo::Entry{ view_proj, eye, viewport, content_revision_,
-                                                                layer_mask, viewport_used, shared,
-                                                                content_frame_ });
+            content_memo_->entries.push_back(
+                ContentMemo::Entry{ view_proj, eye, viewport, content_revision_, layer_mask, viewport_used, shared, content_frame_ });
         }
     }
     return shared;
@@ -802,10 +797,7 @@ void Scene::setContentFrame(std::uint64_t frame)
     // stops being drawn (a closed pane, a camera that went away) releases its storage instead of owning it forever.
     // This is what replaced "clear everything at every frame boundary" (see the memo note in collectRenderCommands).
     auto& entries = content_memo_->entries;
-    entries.erase(std::remove_if(entries.begin(), entries.end(),
-                                 [previous](const ContentMemo::Entry& entry) {
-                                     return entry.last_used_frame < previous;
-                                 }),
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [previous](const ContentMemo::Entry& entry) { return entry.last_used_frame < previous; }),
                   entries.end());
 }
 

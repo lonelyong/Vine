@@ -40,8 +40,7 @@ namespace
 {
 
 /// @brief A vertex channel key with the given slice, on a stand-in buffer.
-StreamKey vertexKey(std::uint32_t location, std::uint32_t components, const void* buffer, std::uint64_t revision,
-                    std::uint64_t offset, std::uint64_t count)
+StreamKey vertexKey(std::uint32_t location, std::uint32_t components, const void* buffer, std::uint64_t revision, std::uint64_t offset, std::uint64_t count)
 {
     StreamKey key;
     key.kind       = StreamKind::Vertex;
@@ -54,7 +53,7 @@ StreamKey vertexKey(std::uint32_t location, std::uint32_t components, const void
     return key;
 }
 
-}  // namespace
+} // namespace
 
 // --- stream identity -----------------------------------------------------------------------------------
 
@@ -65,8 +64,8 @@ TEST(CoreStreamsTest, StreamIdentityIsTheSliceAndTheRevision)
 
     const StreamKey first  = vertexKey(0, 3, &buffer_a, 7, 0, 12);
     const StreamKey again  = vertexKey(0, 3, &buffer_a, 7, 0, 12);
-    const StreamKey moved  = vertexKey(0, 3, &buffer_a, 7, 12, 12);   // the next segment of the same arena
-    const StreamKey filled = vertexKey(0, 3, &buffer_a, 8, 0, 12);    // refilled: the revision moved
+    const StreamKey moved  = vertexKey(0, 3, &buffer_a, 7, 12, 12); // the next segment of the same arena
+    const StreamKey filled = vertexKey(0, 3, &buffer_a, 8, 0, 12);  // refilled: the revision moved
     const StreamKey other  = vertexKey(0, 3, &buffer_b, 7, 0, 12);
 
     // The key IS the identity the alias registry looks up (CoreSharedStreamsTest observes the same rules
@@ -108,8 +107,7 @@ TEST(CoreSharedStreamsTest, ASliceThatMovedIsAUploadNotAnAlias)
     (void)registry.acquire(first, 1U);
     const SharedStreams::Decision decision = registry.acquire(next, 1U);
 
-    EXPECT_EQ(decision.action, SharedStreams::Action::Upload)
-        << "the next geometry in the same arena reads different bytes";
+    EXPECT_EQ(decision.action, SharedStreams::Action::Upload) << "the next geometry in the same arena reads different bytes";
     EXPECT_EQ(registry.uploads(), 2U);
 }
 
@@ -124,8 +122,7 @@ TEST(CoreSharedStreamsTest, ARefilledSliceIsANewStreamSoItUploadsAgain)
     const StreamKey refilled = vertexKey(0, 3, reinterpret_cast<const void*>(1), 6, 0, 12);
 
     EXPECT_EQ(registry.acquire(before, 1U).action, SharedStreams::Action::Upload);
-    EXPECT_EQ(registry.acquire(before, 2U).action, SharedStreams::Action::Alias)
-        << "the same identity named again is served by the upload it already has";
+    EXPECT_EQ(registry.acquire(before, 2U).action, SharedStreams::Action::Alias) << "the same identity named again is served by the upload it already has";
     EXPECT_EQ(registry.acquire(refilled, 3U).action, SharedStreams::Action::Upload)
         << "a refilled buffer is a different stream: it uploads again instead of aliasing";
     EXPECT_EQ(registry.uploads(), 2U);
@@ -152,8 +149,7 @@ TEST(CoreSharedStreamsTest, AnEntryNoFrameNamesForTheGraceWindowLeavesAndTheNext
     EXPECT_EQ(registry.releaseUnseen(9U, 3U, dropped), 0U) << "and it leaves exactly once";
 
     const SharedStreams::Decision again = registry.acquire(key, 9U);
-    EXPECT_EQ(again.action, SharedStreams::Action::Upload)
-        << "nothing names those bytes any more, so they have to be uploaded again";
+    EXPECT_EQ(again.action, SharedStreams::Action::Upload) << "nothing names those bytes any more, so they have to be uploaded again";
     EXPECT_EQ(registry.uploads(), 2U);
     EXPECT_EQ(registry.evictions(), 0U) << "the capacity was never the reason";
 }
@@ -199,8 +195,7 @@ TEST(CoreSharedStreamsTest, TheCapacityBoundEvictsTheStalestLookupWithoutReleasi
     EXPECT_EQ(registry.live(), 2U);
 
     const SharedStreams::Decision again = registry.acquire(first, 4U);
-    EXPECT_EQ(again.action, SharedStreams::Action::Upload)
-        << "the lookup left the map; a reader that already bound the bytes is a different question";
+    EXPECT_EQ(again.action, SharedStreams::Action::Upload) << "the lookup left the map; a reader that already bound the bytes is a different question";
     EXPECT_EQ(registry.uploads(), 4U);
 }
 
@@ -215,12 +210,11 @@ TEST(CoreSharedStreamsTest, TheBoundTakesTheStalestEntryNotTheOldestInserted)
 
     (void)registry.acquire(early_but_renamed, 1U);
     (void)registry.acquire(middle, 2U);
-    (void)registry.acquire(early_but_renamed, 3U);  // named again: it is now the freshest of the two
+    (void)registry.acquire(early_but_renamed, 3U); // named again: it is now the freshest of the two
     const SharedStreams::Decision evicting = registry.acquire(newest, 4U);
 
     ASSERT_TRUE(evicting.evicted.has_value());
-    EXPECT_TRUE(*evicting.evicted == middle)
-        << "the stalest leaves: the entry inserted first is still the one a frame named last";
+    EXPECT_TRUE(*evicting.evicted == middle) << "the stalest leaves: the entry inserted first is still the one a frame named last";
 }
 
 TEST(CoreSharedStreamsTest, TheEvictedKeyIsReportedToTheCaller)
@@ -234,9 +228,8 @@ TEST(CoreSharedStreamsTest, TheEvictedKeyIsReportedToTheCaller)
     EXPECT_FALSE(registry.acquire(second, 2U).evicted.has_value());
     const SharedStreams::Decision evicting = registry.acquire(third, 3U);
 
-    ASSERT_TRUE(evicting.evicted.has_value())
-        << "the layer that owns one object per entry has to hear about this: this is the only moment the two"
-           " can be reconciled";
+    ASSERT_TRUE(evicting.evicted.has_value()) << "the layer that owns one object per entry has to hear about this: this is the only moment the two"
+                                                 " can be reconciled";
     EXPECT_TRUE(*evicting.evicted == first) << "the stalest entry is the one that leaves";
     EXPECT_EQ(evicting.action, SharedStreams::Action::Upload);
 }
@@ -248,8 +241,8 @@ TEST(CoreMaterialArenaTest, TheFirstNoteAllocatesAndWritesOneBlock)
     MaterialArena arena({});
     arena.beginFrame();
 
-    const int                 material = 0;
-    const MaterialArena::Write write = arena.note(&material, 1);
+    const int                  material = 0;
+    const MaterialArena::Write write    = arena.note(&material, 1);
 
     EXPECT_EQ(write.kind, MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(write.bytes, 64U) << "one VineMaterialBlock";
@@ -258,8 +251,7 @@ TEST(CoreMaterialArenaTest, TheFirstNoteAllocatesAndWritesOneBlock)
     EXPECT_EQ(arena.writes(), 1U);
     EXPECT_EQ(arena.allocations(), 1U);
     EXPECT_EQ(arena.live(), 1U);
-    EXPECT_EQ(arena.capacityBytes(), 64U * arena.copies() * 256U)
-        << "block x copies x slots is what the API layer allocates";
+    EXPECT_EQ(arena.capacityBytes(), 64U * arena.copies() * 256U) << "block x copies x slots is what the API layer allocates";
     EXPECT_EQ(arena.copies(), perFrameCopies(kAssumedInFlightSlots))
         << "one copy MORE than the frames in flight: the frame being written lands on the copy the OLDEST frame "
            "still allowed to be in flight reads (see core::perFrameCopies)";
@@ -298,8 +290,7 @@ TEST(CoreMaterialArenaTest, ARevisionChangeWritesExactlyOncePerFrame)
 
     EXPECT_EQ(first.kind, MaterialArena::WriteKind::Rewritten) << "the revision moved";
     EXPECT_EQ(first.bytes, 64U);
-    EXPECT_EQ(second.kind, MaterialArena::WriteKind::Unchanged)
-        << "an application that edited twice still gives the GPU one version of the value";
+    EXPECT_EQ(second.kind, MaterialArena::WriteKind::Unchanged) << "an application that edited twice still gives the GPU one version of the value";
     EXPECT_EQ(third.kind, MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(arena.writes(), 2U);
     EXPECT_EQ(arena.bytesWritten(), 128U);
@@ -326,15 +317,14 @@ TEST(CoreMaterialArenaTest, TheCopyRotationSpansTheInFlightFrames)
     for (std::uint32_t copy = 0; copy < arena.copies(); ++copy) {
         EXPECT_EQ(copies[copy], copy) << "every frame of a full rotation writes its own copy";
     }
-    EXPECT_EQ(copies[arena.copies()], 0U)
-        << "the first copy is free again only once the frame that read it is out of flight, which is one frame "
-           "later than the number of frames in flight";
+    EXPECT_EQ(copies[arena.copies()], 0U) << "the first copy is free again only once the frame that read it is out of flight, which is one frame "
+                                             "later than the number of frames in flight";
     EXPECT_NE(arena.offsetOf(0U, copies[0]), arena.offsetOf(0U, copies[1])) << "copies are distinct blocks";
 }
 
 TEST(CoreMaterialArenaTest, AMaterialThatDoesNotFitIsRefusedNotEvicted)
 {
-    MaterialArena arena({64U, 3U, 2U});
+    MaterialArena arena({ 64U, 3U, 2U });
     arena.beginFrame();
     const int first  = 0;
     const int second = 1;
@@ -349,8 +339,7 @@ TEST(CoreMaterialArenaTest, AMaterialThatDoesNotFitIsRefusedNotEvicted)
     EXPECT_EQ(arena.refusals(), 1U);
     EXPECT_EQ(arena.live(), 2U);
     EXPECT_EQ(arena.capacityNeed(), 3U) << "one capacity would have served this frame";
-    EXPECT_EQ(arena.note(&first, 1).kind, MaterialArena::WriteKind::Unchanged)
-        << "the existing material still hits: nothing was reused under it";
+    EXPECT_EQ(arena.note(&first, 1).kind, MaterialArena::WriteKind::Unchanged) << "the existing material still hits: nothing was reused under it";
 
     // A release is what makes room - the host's decision, not the arena's.
     EXPECT_TRUE(arena.release(&first));
@@ -362,14 +351,14 @@ TEST(CoreMaterialArenaTest, AMaterialThatDoesNotFitIsRefusedNotEvicted)
 
 TEST(CoreMaterialArenaTest, TheCapacityNeedCountsDistinctRefusedMaterialsPerFrame)
 {
-    MaterialArena arena({64U, 3U, 1U});
+    MaterialArena arena({ 64U, 3U, 1U });
     arena.beginFrame();
     const int held    = 0;
     const int refused = 1;
 
     (void)arena.note(&held, 1);
     (void)arena.note(&refused, 1);
-    (void)arena.note(&refused, 1);  // the same material twice in one frame is one slot short, not two
+    (void)arena.note(&refused, 1); // the same material twice in one frame is one slot short, not two
     EXPECT_EQ(arena.refusals(), 2U) << "both notes were answered Refused";
     EXPECT_EQ(arena.capacityNeed(), 2U) << "live (1) + distinct refused (1)";
 
@@ -380,7 +369,7 @@ TEST(CoreMaterialArenaTest, TheCapacityNeedCountsDistinctRefusedMaterialsPerFram
 
 TEST(CoreMaterialArenaTest, AReleasedSlotIsReusedByTheNextMaterial)
 {
-    MaterialArena arena({64U, 3U, 2U});
+    MaterialArena arena({ 64U, 3U, 2U });
     arena.beginFrame();
     const int first  = 0;
     const int second = 1;
@@ -401,7 +390,7 @@ TEST(CoreMaterialArenaTest, AReleasedSlotIsReusedByTheNextMaterial)
 
 TEST(CoreFrameRingTest, ReservationsAreAlignedAndStayInsideTheSlab)
 {
-    FrameRing ring({80U, 256U, 2U, 2U});
+    FrameRing ring({ 80U, 256U, 2U, 2U });
     EXPECT_EQ(ring.stride(), 256U) << "the effective stride is the aligned one";
     EXPECT_EQ(ring.slabBytes(), 512U);
     EXPECT_EQ(ring.capacityBytes(), 1024U);
@@ -421,7 +410,7 @@ TEST(CoreFrameRingTest, ReservationsAreAlignedAndStayInsideTheSlab)
 
 TEST(CoreFrameRingTest, AFullFrameIsRefusedRatherThanGrown)
 {
-    FrameRing ring({64U, 64U, 3U, 2U});
+    FrameRing ring({ 64U, 64U, 3U, 2U });
     ring.beginFrame();
     EXPECT_TRUE(ring.reserve().valid);
     EXPECT_TRUE(ring.reserve().valid);
@@ -434,7 +423,7 @@ TEST(CoreFrameRingTest, AFullFrameIsRefusedRatherThanGrown)
 
 TEST(CoreFrameRingTest, TheCursorResetsEveryFrameAndTheHighWaterRemembers)
 {
-    FrameRing ring({64U, 64U, 2U, 4U});
+    FrameRing ring({ 64U, 64U, 2U, 4U });
     ring.beginFrame();
     (void)ring.reserve();
     (void)ring.reserve();

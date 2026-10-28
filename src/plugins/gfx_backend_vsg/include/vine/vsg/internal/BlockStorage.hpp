@@ -47,67 +47,61 @@
 VN_VSG_NS_BEGIN
 
 /** @brief The frame's mapped block storage (views, draws, lights, shadows, materials). */
-class BlockStorage
-{
+class BlockStorage {
   public:
     /** @brief The storage's shape. Alignment fields are not read - the device's own alignment is used. */
-    struct Layout
-    {
+    struct Layout {
         /// The slabs every ring below owns on a session whose in-flight count has not been learned yet: one
         /// MORE than that count, because a frame writes the slab the oldest frame still allowed to be in
         /// flight reads (see core::perFrameCopies - getting this wrong is not a lost frame but a wrong one).
         static constexpr std::uint32_t kAssumedSlabs = core::perFrameCopies(core::kAssumedInFlightSlots);
 
-        core::FrameRing::Layout     views{ 288U, 1U, kAssumedSlabs, 256U };   ///< View blocks (one per pass per frame).
-        core::FrameRing::Layout     draws{ 80U, 1U, kAssumedSlabs, 1024U };   ///< Draw blocks (one per draw per frame).
-        core::FrameRing::Layout     lights{ 528U, 1U, kAssumedSlabs, 1024U }; ///< Light blocks (one per drawing call).
-        core::FrameRing::Layout     shadows{ 80U, 1U, kAssumedSlabs, 1024U }; ///< Shadow blocks (one per drawing call).
-        core::MaterialArena::Layout materials{ 64U, kAssumedSlabs, 256U };    ///< Material blocks (persistent, rotating).
+        core::FrameRing::Layout     views{ 288U, 1U, kAssumedSlabs, 256U };   // View blocks (one per pass per frame).
+        core::FrameRing::Layout     draws{ 80U, 1U, kAssumedSlabs, 1024U };   // Draw blocks (one per draw per frame).
+        core::FrameRing::Layout     lights{ 528U, 1U, kAssumedSlabs, 1024U }; // Light blocks (one per drawing call).
+        core::FrameRing::Layout     shadows{ 80U, 1U, kAssumedSlabs, 1024U }; // Shadow blocks (one per drawing call).
+        core::MaterialArena::Layout materials{ 64U, kAssumedSlabs, 256U };    // Material blocks (persistent, rotating).
     };
 
     /** @brief Where a block was written. */
-    struct Block
-    {
-        bool          valid{false};  ///< false when the write was refused (see the file note).
-        std::uint64_t offset{0};     ///< Byte offset in the storage's buffer - the dynamic offset to bind.
+    struct Block {
+        bool          valid{ false }; // false when the write was refused (see the file note).
+        std::uint64_t offset{ 0 };    // Byte offset in the storage's buffer - the dynamic offset to bind.
     };
 
     /** @brief What a material write did, and where the bytes are. */
-    struct MaterialWrite
-    {
-        core::MaterialArena::WriteKind kind{core::MaterialArena::WriteKind::Unchanged};  ///< What happened.
+    struct MaterialWrite {
+        core::MaterialArena::WriteKind kind{ core::MaterialArena::WriteKind::Unchanged }; // What happened.
         /// false when the arena was full (Refused): the draw must be skipped, never bound to another material.
-        bool          valid{false};
+        bool valid{ false };
         /// Byte offset in the storage's buffer - the dynamic offset to bind, meaningful for EVERY valid answer:
         /// a hit names the block the last write left, which is exactly what a draw must bind (its bytes are the
         /// material's - see `writeMaterial`).
-        std::uint64_t offset{0};
-        std::uint64_t bytes{0};   ///< Bytes written (0 when nothing was).
+        std::uint64_t offset{ 0 };
+        std::uint64_t bytes{ 0 }; // Bytes written (0 when nothing was).
     };
 
     /** @brief The regions the buffer is divided into (what a write's offset must fall inside). */
-    struct Regions
-    {
-        std::uint64_t views_base{0};      ///< Start of the view-block region.
-        std::uint64_t views_bytes{0};     ///< Size of the view-block region.
-        std::uint64_t draws_base{0};      ///< Start of the draw-block region.
-        std::uint64_t draws_bytes{0};     ///< Size of the draw-block region.
-        std::uint64_t lights_base{0};     ///< Start of the light-block region.
-        std::uint64_t lights_bytes{0};    ///< Size of the light-block region.
-        std::uint64_t shadows_base{0};    ///< Start of the shadow-block region.
-        std::uint64_t shadows_bytes{0};   ///< Size of the shadow-block region.
-        std::uint64_t materials_base{0};  ///< Start of the material-block region.
-        std::uint64_t materials_bytes{0}; ///< Size of the material-block region.
+    struct Regions {
+        std::uint64_t views_base{ 0 };      // Start of the view-block region.
+        std::uint64_t views_bytes{ 0 };     // Size of the view-block region.
+        std::uint64_t draws_base{ 0 };      // Start of the draw-block region.
+        std::uint64_t draws_bytes{ 0 };     // Size of the draw-block region.
+        std::uint64_t lights_base{ 0 };     // Start of the light-block region.
+        std::uint64_t lights_bytes{ 0 };    // Size of the light-block region.
+        std::uint64_t shadows_base{ 0 };    // Start of the shadow-block region.
+        std::uint64_t shadows_bytes{ 0 };   // Size of the shadow-block region.
+        std::uint64_t materials_base{ 0 };  // Start of the material-block region.
+        std::uint64_t materials_bytes{ 0 }; // Size of the material-block region.
     };
 
     /** @brief The distance between two blocks of one region, including the device's alignment padding. */
-    struct Strides
-    {
-        std::uint64_t view{0};      ///< Bytes between two view blocks.
-        std::uint64_t draw{0};      ///< Bytes between two draw blocks.
-        std::uint64_t light{0};     ///< Bytes between two light blocks.
-        std::uint64_t shadow{0};    ///< Bytes between two shadow blocks.
-        std::uint64_t material{0};  ///< Bytes between two material blocks.
+    struct Strides {
+        std::uint64_t view{ 0 };     // Bytes between two view blocks.
+        std::uint64_t draw{ 0 };     // Bytes between two draw blocks.
+        std::uint64_t light{ 0 };    // Bytes between two light blocks.
+        std::uint64_t shadow{ 0 };   // Bytes between two shadow blocks.
+        std::uint64_t material{ 0 }; // Bytes between two material blocks.
     };
 
     /** @brief What the frames written so far tried to write where a budget refused them (the growth request).
@@ -116,13 +110,12 @@ class BlockStorage
      * (written or refused), or 0 when that region never ran out of budget. A region at 0 must not grow - a
      * scene that only ever filled its draw budget must not pay for bigger view blocks.
      */
-    struct Growth
-    {
-        std::uint32_t views{0};     ///< Blocks the worst frame tried to write into the view region.
-        std::uint32_t draws{0};     ///< Blocks the worst frame tried to write into the draw region.
-        std::uint32_t lights{0};    ///< Blocks the worst frame tried to write into the light region.
-        std::uint32_t shadows{0};   ///< Blocks the worst frame tried to write into the shadow region.
-        std::uint32_t materials{0}; ///< Live materials a frame needed (sized before recording; a refused note records it too).
+    struct Growth {
+        std::uint32_t views{ 0 };     // Blocks the worst frame tried to write into the view region.
+        std::uint32_t draws{ 0 };     // Blocks the worst frame tried to write into the draw region.
+        std::uint32_t lights{ 0 };    // Blocks the worst frame tried to write into the light region.
+        std::uint32_t shadows{ 0 };   // Blocks the worst frame tried to write into the shadow region.
+        std::uint32_t materials{ 0 }; // Live materials a frame needed (sized before recording; a refused note records it too).
 
         /** @brief Whether any region ran out of budget (only then is a replacement storage needed). */
         [[nodiscard]] bool needed() const noexcept
@@ -148,7 +141,7 @@ class BlockStorage
 
     ~BlockStorage();
 
-    BlockStorage(const BlockStorage&) = delete;
+    BlockStorage(const BlockStorage&)            = delete;
     BlockStorage& operator=(const BlockStorage&) = delete;
 
   public:
@@ -195,8 +188,7 @@ class BlockStorage
      * @return What happened and where the block is; the offset is valid for every answer except Refused
      *         (`valid == false`), where the caller skips the draw and growth is requested (see MaterialWrite).
      */
-    [[nodiscard]] MaterialWrite writeMaterial(const void* material, std::uint64_t revision,
-                                              std::span<const std::byte> block);
+    [[nodiscard]] MaterialWrite writeMaterial(const void* material, std::uint64_t revision, std::span<const std::byte> block);
 
     /** @brief Returns a material's slot to the arena (the application is done with it).
      *

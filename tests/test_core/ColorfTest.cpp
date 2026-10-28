@@ -117,8 +117,7 @@ TEST(ColorfTest, TheTwoSpacesAreExactInversesOverEveryByte)
 {
     // Every 8-bit value must survive a decode-then-encode round trip: that is what makes the pair "the" bridge
     // between the two spellings rather than two independent approximations.
-    for (int value = 0; value <= 255; ++value)
-    {
+    for (int value = 0; value <= 255; ++value) {
         const auto  byte = static_cast<std::uint8_t>(value);
         const Color color(byte, byte, byte, byte);
         EXPECT_EQ(color.toLinear().toColor(), color) << "byte " << value << " did not survive the round trip";
@@ -134,6 +133,5 @@ TEST(ColorfTest, AlphaCrossesTheBoundaryWithoutBeingEncoded)
     EXPECT_NEAR(decoded.a, 128.0f / 255.0f, 1e-6f) << "white's alpha is the fraction the byte names";
     EXPECT_EQ(Colorf(0.0f, 0.0f, 0.0f, 128.0f / 255.0f).toColor().a, 128);
 
-    EXPECT_NEAR(Color(0, 0, 0, 64).toLinear().a, 64.0f / 255.0f, 1e-6f)
-        << "a dark colour's alpha is untouched by the transfer function";
+    EXPECT_NEAR(Color(0, 0, 0, 64).toLinear().a, 64.0f / 255.0f, 1e-6f) << "a dark colour's alpha is untouched by the transfer function";
 }

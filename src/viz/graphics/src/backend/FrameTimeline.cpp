@@ -4,20 +4,18 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 
 FrameToken FrameTimeline::begin() noexcept
 {
-    if (open_)
-    {
+    if (open_) {
         // Already inside a frame: hand the same token back rather than inventing a second frame that
         // nothing would ever commit. The protocol layer reports the mismatch.
         return open_;
     }
-    open_ = FrameToken{submitted_ + 1};
+    open_ = FrameToken{ submitted_ + 1 };
     return open_;
 }
 
 void FrameTimeline::submitted(FrameToken token) noexcept
 {
-    if (!open_ || token.frame != open_.frame)
-    {
+    if (!open_ || token.frame != open_.frame) {
         // A stale or foreign token: the timeline only moves for the frame it actually opened.
         return;
     }
@@ -27,9 +25,8 @@ void FrameTimeline::submitted(FrameToken token) noexcept
 
 void FrameTimeline::abandoned(FrameToken token) noexcept
 {
-    if (!open_ || token.frame != open_.frame)
-    {
-        return;  // the same rule as submitted(): a stale token never closes a frame it does not name
+    if (!open_ || token.frame != open_.frame) {
+        return; // the same rule as submitted(): a stale token never closes a frame it does not name
     }
     // The token is spent (the frame cannot be retried), but nothing was handed to the queue: the frame is
     // over and the SUBMITTED watermark deliberately does not move (see the declaration).
@@ -38,8 +35,7 @@ void FrameTimeline::abandoned(FrameToken token) noexcept
 
 void FrameTimeline::completeUpTo(std::uint64_t frame) noexcept
 {
-    if (frame > completed_)
-    {
+    if (frame > completed_) {
         completed_ = frame;
     }
 }

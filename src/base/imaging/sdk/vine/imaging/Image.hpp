@@ -155,9 +155,9 @@ class VN_IMAGING_API Image : public Object, public RefCounted<Image> {
   private:
     std::vector<std::size_t> mip_offsets_;
     std::vector<std::byte>   pixels_;
-    int                      width_ = 0;
-    int                      height_ = 0;
-    PixelFormat              format_ = PixelFormat::Unknown;
+    int                      width_     = 0;
+    int                      height_    = 0;
+    PixelFormat              format_    = PixelFormat::Unknown;
     int                      mip_count_ = 1;
 };
 

@@ -17,24 +17,25 @@ VN_ASYNC_NS_BEGIN
  *
  * @tparam F Callback type invoked on destruction.
  */
-template<typename F>
-class Finally
-{
+template <typename F>
+class Finally {
   public:
-    explicit Finally(F f) noexcept : f_(std::move(f)) {}
-
-    Finally(Finally&& other) noexcept
-      : f_(std::move(other.f_)), active_(std::exchange(other.active_, false))
+    explicit Finally(F f) noexcept
+      : f_(std::move(f))
     {}
 
-    Finally(const Finally&) = delete;
+    Finally(Finally&& other) noexcept
+      : f_(std::move(other.f_))
+      , active_(std::exchange(other.active_, false))
+    {}
+
+    Finally(const Finally&)            = delete;
     Finally& operator=(const Finally&) = delete;
-    Finally& operator=(Finally&&) = delete;
+    Finally& operator=(Finally&&)      = delete;
 
     ~Finally()
     {
-        if (active_)
-        {
+        if (active_) {
             f_();
         }
     }
@@ -63,7 +64,7 @@ class Finally
  * @param f Callback invoked on destruction; must not throw.
  * @return A move-only guard.
  */
-template<typename F>
+template <typename F>
 [[nodiscard]]
 Finally<std::decay_t<F>> makeFinally(F&& f)
 {

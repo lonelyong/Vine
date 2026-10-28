@@ -4,11 +4,11 @@
 #include <cstdint>
 #include <vector>
 
+#include <vine/Object.hpp>
+#include <vine/RefCounted.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/raw_ptr.hpp>
-#include <vine/Object.hpp>
-#include <vine/RefCounted.hpp>
 
 #include "DepthView.hpp"
 #include "Light.hpp"
@@ -29,19 +29,21 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     VN_OBJECT_META_DECL;
 
   public:
-    enum class ColorFormat {
-        RGBA8,    ///< 8-bit unsigned normalized RGBA. A PROJECTION: it covers the linear (`*_UNORM`) and the
-                  ///< sRGB (`*_SRGB`) spelling of that depth, and which one a target really uses is the
-                  ///< BACKEND's pick (see the note on the surface below).
-        RGBA16F,  ///< 16-bit float RGBA (linear; there is no sRGB spelling of a float format).
-        RGBA32F,  ///< 32-bit float RGBA (linear).
+    enum class ColorFormat
+    {
+        RGBA8,   // 8-bit unsigned normalized RGBA. A PROJECTION: it covers the linear (`*_UNORM`) and the
+                 // sRGB (`*_SRGB`) spelling of that depth, and which one a target really uses is the
+                 // BACKEND's pick (see the note on the surface below).
+        RGBA16F, // 16-bit float RGBA (linear; there is no sRGB spelling of a float format).
+        RGBA32F, // 32-bit float RGBA (linear).
     };
 
-    enum class DepthFormat {
-        D16,   ///< 16-bit depth.
-        D24,   ///< 24-bit depth.
-        D32,   ///< 32-bit unsigned depth.
-        D32F,  ///< 32-bit float depth.
+    enum class DepthFormat
+    {
+        D16,  // 16-bit depth.
+        D24,  // 24-bit depth.
+        D32,  // 32-bit unsigned depth.
+        D32F, // 32-bit float depth.
     };
 
   public:
@@ -282,18 +284,18 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     String name_;
     // One entry per configured color attachment, in attachment order.
     std::vector<ColorFormat> color_formats_;
-    DepthFormat depth_format_ = DepthFormat::D24;
-    bool has_depth_ = false;
-    bool depth_promotion_ = true;            // depth ends sampleable (SHADER_READ_ONLY)
-    DepthView depth_view_;                   // the depth image this target draws against (invalid = own)
+    DepthFormat              depth_format_    = DepthFormat::D24;
+    bool                     has_depth_       = false;
+    bool                     depth_promotion_ = true; // depth ends sampleable (SHADER_READ_ONLY)
+    DepthView                depth_view_;             // the depth image this target draws against (invalid = own)
     // The view-projection the producer rendered this target with (see
     // setProducerViewProjection); identity until someone states one.
-    Mat4d producer_view_projection_;
-    bool  producer_view_projection_stated_ = false;
-    intrusive_ptr<const Light> shadow_of_;   // whose shadow map this is, when it is one (held: see setShadowOf)
-    int           width_   = 1;
-    int           height_  = 1;
-    std::uint32_t samples_ = 1;  // samples per pixel (see setSamples; 1 = none)
+    Mat4d                      producer_view_projection_;
+    bool                       producer_view_projection_stated_ = false;
+    intrusive_ptr<const Light> shadow_of_; // whose shadow map this is, when it is one (held: see setShadowOf)
+    int                        width_   = 1;
+    int                        height_  = 1;
+    std::uint32_t              samples_ = 1; // samples per pixel (see setSamples; 1 = none)
 };
 
 using RenderTargetPtr = intrusive_ptr<RenderTarget>;

@@ -10,7 +10,7 @@ namespace
 
 class IGreeter {
   public:
-    virtual ~IGreeter() = default;
+    virtual ~IGreeter()               = default;
     virtual const char* greet() const = 0;
 
     VN_DECLARE_INTERFACE(IGreeter)
@@ -18,7 +18,7 @@ class IGreeter {
 
 class INameable {
   public:
-    virtual ~INameable() = default;
+    virtual ~INameable()             = default;
     virtual const char* name() const = 0;
 
     VN_DECLARE_INTERFACE(INameable)

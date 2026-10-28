@@ -5,8 +5,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 bool DeviceFacts::has(DeviceFeature feature) const noexcept
 {
     const auto index = static_cast<std::uint32_t>(feature);
-    if (index >= kDeviceFeatureCount)
-    {
+    if (index >= kDeviceFeatureCount) {
         return false;
     }
     return (features & (1U << index)) != 0U;
@@ -15,8 +14,7 @@ bool DeviceFacts::has(DeviceFeature feature) const noexcept
 void DeviceFacts::note(DeviceFeature feature) noexcept
 {
     const auto index = static_cast<std::uint32_t>(feature);
-    if (index < kDeviceFeatureCount)
-    {
+    if (index < kDeviceFeatureCount) {
         features |= (1U << index);
     }
 }
@@ -24,8 +22,7 @@ void DeviceFacts::note(DeviceFeature feature) noexcept
 bool DeviceFacts::has(DeviceExtension extension) const noexcept
 {
     const auto index = static_cast<std::uint32_t>(extension);
-    if (index >= kDeviceExtensionCount)
-    {
+    if (index >= kDeviceExtensionCount) {
         return false;
     }
     return (extensions & (1U << index)) != 0U;
@@ -34,36 +31,24 @@ bool DeviceFacts::has(DeviceExtension extension) const noexcept
 void DeviceFacts::note(DeviceExtension extension) noexcept
 {
     const auto index = static_cast<std::uint32_t>(extension);
-    if (index < kDeviceExtensionCount)
-    {
+    if (index < kDeviceExtensionCount) {
         extensions |= (1U << index);
     }
 }
 
 const char* featureName(DeviceFeature feature) noexcept
 {
-    switch (feature)
-    {
-    case DeviceFeature::FillModeNonSolid:
-        return "fillModeNonSolid";
-    case DeviceFeature::LargePoints:
-        return "largePoints";
-    case DeviceFeature::WideLines:
-        return "wideLines";
-    case DeviceFeature::IndependentBlend:
-        return "independentBlend";
-    case DeviceFeature::SamplerAnisotropy:
-        return "samplerAnisotropy";
-    case DeviceFeature::ExtendedDynamicState2:
-        return "extendedDynamicState2";
-    case DeviceFeature::ExtendedDynamicState3PolygonMode:
-        return "extendedDynamicState3PolygonMode";
-    case DeviceFeature::ExtendedDynamicState3ColorBlendEnable:
-        return "extendedDynamicState3ColorBlendEnable";
-    case DeviceFeature::ExtendedDynamicState3ColorBlendEquation:
-        return "extendedDynamicState3ColorBlendEquation";
-    case DeviceFeature::Count:
-        break;
+    switch (feature) {
+    case DeviceFeature::FillModeNonSolid: return "fillModeNonSolid";
+    case DeviceFeature::LargePoints: return "largePoints";
+    case DeviceFeature::WideLines: return "wideLines";
+    case DeviceFeature::IndependentBlend: return "independentBlend";
+    case DeviceFeature::SamplerAnisotropy: return "samplerAnisotropy";
+    case DeviceFeature::ExtendedDynamicState2: return "extendedDynamicState2";
+    case DeviceFeature::ExtendedDynamicState3PolygonMode: return "extendedDynamicState3PolygonMode";
+    case DeviceFeature::ExtendedDynamicState3ColorBlendEnable: return "extendedDynamicState3ColorBlendEnable";
+    case DeviceFeature::ExtendedDynamicState3ColorBlendEquation: return "extendedDynamicState3ColorBlendEquation";
+    case DeviceFeature::Count: break;
     }
     return "";
 }
@@ -78,10 +63,8 @@ bool supportsRequiredVersion(std::uint32_t api_version) noexcept
 std::size_t missingFeatureCount(const DeviceFacts& facts) noexcept
 {
     std::size_t missing = 0;
-    for (std::size_t i = 0; i < kDeviceFeatureCount; ++i)
-    {
-        if (!facts.has(static_cast<DeviceFeature>(i)))
-        {
+    for (std::size_t i = 0; i < kDeviceFeatureCount; ++i) {
+        if (!facts.has(static_cast<DeviceFeature>(i))) {
             ++missing;
         }
     }
@@ -91,10 +74,8 @@ std::size_t missingFeatureCount(const DeviceFacts& facts) noexcept
 std::size_t missingExtensionCount(const DeviceFacts& facts) noexcept
 {
     std::size_t missing = 0;
-    for (std::size_t i = 0; i < kDeviceExtensionCount; ++i)
-    {
-        if (!facts.has(static_cast<DeviceExtension>(i)))
-        {
+    for (std::size_t i = 0; i < kDeviceExtensionCount; ++i) {
+        if (!facts.has(static_cast<DeviceExtension>(i))) {
             ++missing;
         }
     }
@@ -103,22 +84,17 @@ std::size_t missingExtensionCount(const DeviceFacts& facts) noexcept
 
 const char* extensionName(DeviceExtension extension) noexcept
 {
-    switch (extension)
-    {
-    case DeviceExtension::ExtendedDynamicState2:
-        return "VK_EXT_extended_dynamic_state2";
-    case DeviceExtension::ExtendedDynamicState3:
-        return "VK_EXT_extended_dynamic_state3";
-    case DeviceExtension::Count:
-        break;
+    switch (extension) {
+    case DeviceExtension::ExtendedDynamicState2: return "VK_EXT_extended_dynamic_state2";
+    case DeviceExtension::ExtendedDynamicState3: return "VK_EXT_extended_dynamic_state3";
+    case DeviceExtension::Count: break;
     }
     return "";
 }
 
 bool satisfiesRequirements(const DeviceFacts& facts) noexcept
 {
-    return supportsRequiredVersion(facts.api_version) && missingFeatureCount(facts) == 0 &&
-           missingExtensionCount(facts) == 0;
+    return supportsRequiredVersion(facts.api_version) && missingFeatureCount(facts) == 0 && missingExtensionCount(facts) == 0;
 }
 
 VN_GRAPHICSBACKEND_NS_END

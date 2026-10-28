@@ -55,8 +55,7 @@ TEST(ColorTest, Presets)
 
 TEST(ColorTest, HexTextIsOneTextPerValueAndTheEncodedHalf)
 {
-    EXPECT_EQ(Color(255, 0, 0, 255).toString(), String(u8"#ff0000"))
-        << "an opaque colour does not write a redundant trailing alpha pair";
+    EXPECT_EQ(Color(255, 0, 0, 255).toString(), String(u8"#ff0000")) << "an opaque colour does not write a redundant trailing alpha pair";
     EXPECT_EQ(Color(255, 0, 0, 254).toString(), String(u8"#ff0000fe"));
     EXPECT_EQ(Color(0x12, 0x34, 0x56, 0x78).toString(), String(u8"#12345678"));
 
@@ -99,8 +98,7 @@ TEST(ColorTest, HexTextAcceptsTheShortFormsAndWritesThemBackInFull)
 
 TEST(ColorTest, HexTextRoundTripsEveryValueItWrites)
 {
-    for (int alpha : { 0, 1, 128, 254, 255 })
-    {
+    for (int alpha : { 0, 1, 128, 254, 255 }) {
         const Color colour(17, 200, 3, static_cast<std::uint8_t>(alpha));
         const auto  parsed = Color::parse(colour.toString());
         ASSERT_TRUE(parsed.has_value()) << colour.toString().as_std_str();
@@ -146,8 +144,7 @@ TEST(ColorTest, BgrIsColorRefOrderAndIgnoresItsHighByte)
     EXPECT_EQ(Color::fromBgr(0x000000FFu), Color(255, 0, 0, 255)) << "red sits in the low byte";
     EXPECT_EQ(Color::fromBgr(0x00FF0000u), Color(0, 0, 255, 255)) << "blue sits in bits 16..23";
     EXPECT_EQ(Color::fromBgr(0x00A1B2C3u), Color(0xC3, 0xB2, 0xA1, 255)) << "COLORREF carries no coverage";
-    EXPECT_EQ(Color::fromBgr(0xFF0000FFu), Color::fromBgr(0x000000FFu))
-        << "the high byte is not part of the value";
+    EXPECT_EQ(Color::fromBgr(0xFF0000FFu), Color::fromBgr(0x000000FFu)) << "the high byte is not part of the value";
 }
 
 TEST(ColorTest, TheOrderedFormsAreUsableInConstantExpressions)

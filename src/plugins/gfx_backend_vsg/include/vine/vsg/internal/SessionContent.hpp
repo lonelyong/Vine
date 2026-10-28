@@ -10,9 +10,11 @@
 
 namespace vsg
 {
+
 class Group;
 class Node;
-}  // namespace vsg
+
+} // namespace vsg
 
 /**
  * @brief The typed view of what a session renders: its content root, its device, and a recompile.
@@ -38,8 +40,7 @@ namespace detail
 {
 
 /** @brief The api-internal view of a session's content (see the file note). */
-class SessionContentAccess
-{
+class SessionContentAccess {
   public:
     /** @brief Gets the node the session renders every frame.
      *
@@ -131,6 +132,6 @@ class SessionContentAccess
     static bool recompile(api::Session& session);
 };
 
-}  // namespace detail
+} // namespace detail
 
 VN_VSG_NS_END

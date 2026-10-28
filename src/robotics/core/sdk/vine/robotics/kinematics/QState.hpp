@@ -23,13 +23,12 @@ VN_ROBOTICS_KINEMATICS_NS_BEGIN
  * @note Not thread-safe; the caller owns any synchronization. Frames are
  *       referenced by pointer, so the frame tree must outlive the state.
  */
-class VN_ROBOTICS_CORE_API QState
-{
+class VN_ROBOTICS_CORE_API QState {
   public:
-    QState() = default;
-    QState(const QState&) = default;
-    QState(QState&&) noexcept = default;
-    QState& operator=(const QState&) = default;
+    QState()                             = default;
+    QState(const QState&)                = default;
+    QState(QState&&) noexcept            = default;
+    QState& operator=(const QState&)     = default;
     QState& operator=(QState&&) noexcept = default;
 
   public:
@@ -92,7 +91,7 @@ class VN_ROBOTICS_CORE_API QState
     }
 
   private:
-    Q                                       q_;
+    Q                                             q_;
     std::unordered_map<const Frame*, std::size_t> offsets_;
 };
 

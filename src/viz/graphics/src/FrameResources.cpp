@@ -20,11 +20,10 @@ namespace
 /// this one: the attachment set cannot change under a built target (see RenderTarget).
 bool sameTransientShape(const TransientShape& left, const TransientShape& right) noexcept
 {
-    return left.colors == right.colors && left.depth == right.depth &&
-           left.depth_promotion == right.depth_promotion;
+    return left.colors == right.colors && left.depth == right.depth && left.depth_promotion == right.depth_promotion;
 }
 
-}  // namespace
+} // namespace
 
 FrameResources::FrameResources() = default;
 
@@ -33,7 +32,7 @@ FrameResources::~FrameResources() = default;
 String FrameResources::publish(const String& name, intrusive_ptr<RenderTarget> target)
 {
     if (name.empty()) {
-        return {};   // no name: nothing to serve, and nothing a consumer could have asked for
+        return {}; // no name: nothing to serve, and nothing a consumer could have asked for
     }
     if (target == nullptr) {
         // A null target means there is nothing to hand out. The episode is the NAME: it ends when a publish()
@@ -134,8 +133,7 @@ void FrameResources::beginTransientCompile()
     }
 }
 
-intrusive_ptr<RenderTarget> FrameResources::resolveTransient(const String& identity, const TransientShape& shape,
-                                                             int width, int height, RenderDevice* device)
+intrusive_ptr<RenderTarget> FrameResources::resolveTransient(const String& identity, const TransientShape& shape, int width, int height, RenderDevice* device)
 {
     if (identity.empty()) {
         return nullptr;
@@ -144,8 +142,7 @@ intrusive_ptr<RenderTarget> FrameResources::resolveTransient(const String& ident
         if (transient.identity != identity) {
             continue;
         }
-        if (!sameTransientShape(transient.shape, shape) || transient.target->width() != width ||
-            transient.target->height() != height) {
+        if (!sameTransientShape(transient.shape, shape) || transient.target->width() != width || transient.target->height() != height) {
             // A different shape is a different TARGET: the attachments of a built one cannot change (see
             // RenderTarget), so the compile replaces it and tells the backend the old one is done with.
             release(transient.target.get(), device);
@@ -197,8 +194,7 @@ raw_ptr<RenderTarget> FrameResources::transient(const String& identity) const no
 
 bool FrameResources::owns(raw_ptr<const RenderTarget> target) const noexcept
 {
-    return std::any_of(transients_.begin(), transients_.end(),
-                       [target](const TransientTarget& transient) { return transient.target.get() == target; });
+    return std::any_of(transients_.begin(), transients_.end(), [target](const TransientTarget& transient) { return transient.target.get() == target; });
 }
 
 void FrameResources::releaseAll(RenderDevice* device)
@@ -209,8 +205,7 @@ void FrameResources::releaseAll(RenderDevice* device)
     transients_.clear();
 }
 
-intrusive_ptr<RenderTarget> FrameResources::makeTransientTarget(const String& identity, int width, int height,
-                                                                const TransientShape& shape)
+intrusive_ptr<RenderTarget> FrameResources::makeTransientTarget(const String& identity, int width, int height, const TransientShape& shape)
 {
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
     target->setName(identity);
@@ -235,6 +230,6 @@ void FrameResources::release(raw_ptr<RenderTarget> target, RenderDevice* device)
     device->releaseRenderTarget(target);
 }
 
-}  // namespace detail
+} // namespace detail
 
 VN_GRAPHICS_NS_END

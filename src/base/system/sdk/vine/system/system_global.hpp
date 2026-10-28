@@ -8,12 +8,12 @@
 #    define VN_SYSTEM_API VN_IMPORT
 #endif
 
-#define VN_SYSTEM_NS_BEGIN                                                                                                                                      \
-    namespace VN_ROOT_NS                                                                                                                                        \
+#define VN_SYSTEM_NS_BEGIN                                                                                                                                     \
+    namespace VN_ROOT_NS                                                                                                                                       \
     {                                                                                                                                                          \
     namespace system                                                                                                                                           \
     {
 
-#define VN_SYSTEM_NS_END                                                                                                                                        \
+#define VN_SYSTEM_NS_END                                                                                                                                       \
     }                                                                                                                                                          \
     }

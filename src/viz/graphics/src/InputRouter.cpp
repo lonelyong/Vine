@@ -8,7 +8,7 @@ VN_GRAPHICS_NS_BEGIN
 void InputRouter::pushEvent(const vn::window::MouseEvent& event)
 {
     if (manipulator_ == nullptr) {
-        return;  // nobody is listening
+        return; // nobody is listening
     }
     if (event.button == vn::window::MouseButton::None) {
         manipulator_->onMouseMove(event);
@@ -31,7 +31,7 @@ void InputRouter::pushEvent(const vn::window::ScrollEvent& event)
 void InputRouter::pushEvent(const vn::window::KeyEvent& event)
 {
     if (manipulator_ == nullptr) {
-        return;  // nobody is listening
+        return; // nobody is listening
     }
     if (event.pressed) {
         manipulator_->onKeyDown(event);

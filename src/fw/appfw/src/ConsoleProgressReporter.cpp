@@ -44,8 +44,7 @@ String lineFor(int percent, const String& label)
 
 } // namespace
 
-struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<ConsoleProgressReporter::Impl>
-{
+struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<ConsoleProgressReporter::Impl> {
     Impl(ConsoleProgressReporter::Sink sink, ConsoleProgressOptions options)
       : sink_(std::move(sink))
       , options_(options)
@@ -61,9 +60,7 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
     /// @param generation Generation the state had when the wakeup was armed; a stale one is a
     ///                   no-op, which is how stop() silences a wakeup that is already in flight.
     /// @param delay How long to sleep before reporting back.
-    static vn::async::DetachedTask wakeupAfter(std::shared_ptr<Impl> impl,
-                                                std::uint64_t       generation,
-                                                WakeupDelay         delay)
+    static vn::async::DetachedTask wakeupAfter(std::shared_ptr<Impl> impl, std::uint64_t generation, WakeupDelay delay)
     {
         co_await vn::async::sleepFor(delay);
 
@@ -135,8 +132,8 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
             last_label_.clear();
         }
 
-        const int      percent = static_cast<int>(current->indicator().position() * 100.0 + 0.5);
-        const String   label   = current->label();
+        const int    percent = static_cast<int>(current->indicator().position() * 100.0 + 0.5);
+        const String label   = current->label();
 
         if (!shown_) {
             const auto due = started_ + options_.show_delay;
@@ -147,16 +144,14 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
             shown_ = true;
         }
         else {
-            const bool worth_a_line =
-                label != last_label_ || percent >= 100 || percent >= last_percent_ + options_.step_percent;
+            const bool worth_a_line = label != last_label_ || percent >= 100 || percent >= last_percent_ + options_.step_percent;
             if (!worth_a_line) {
                 return std::nullopt;
             }
 
             // The first line of a stage is gated by the show delay alone; later ones are also
             // gated by the shortest gap between lines, so a fast loop cannot flood the stream.
-            if (last_written_ != std::chrono::steady_clock::time_point{}
-                && now - last_written_ < options_.interval) {
+            if (last_written_ != std::chrono::steady_clock::time_point{} && now - last_written_ < options_.interval) {
                 return std::chrono::duration_cast<WakeupDelay>(last_written_ + options_.interval - now);
             }
         }
@@ -186,7 +181,7 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
             if (stopped_ || sleeping_) {
                 return;
             }
-            sleeping_   = true;
+            sleeping_  = true;
             generation = generation_;
         }
 
@@ -207,15 +202,15 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
     Sink                   sink_;
     ConsoleProgressOptions options_;
 
-    std::mutex                        mutex_;        ///< Guards everything below; the stop barrier.
-    vn::Connection                  subscription_; ///< Installed by start(), removed by stop().
-    bool                              stopped_{ false };
-    std::uint64_t                     generation_{ 0 }; ///< Bumped by stop(): stale wakeups bail.
-    bool                              sleeping_{ false }; ///< A wakeup is already in flight.
-    ProgressHost*                     host_{ nullptr };  ///< Operation being reported on, if any.
+    std::mutex                            mutex_;        // Guards everything below; the stop barrier.
+    vn::Connection                        subscription_; // Installed by start(), removed by stop().
+    bool                                  stopped_{ false };
+    std::uint64_t                         generation_{ 0 };   // Bumped by stop(): stale wakeups bail.
+    bool                                  sleeping_{ false }; // A wakeup is already in flight.
+    ProgressHost*                         host_{ nullptr };   // Operation being reported on, if any.
     std::chrono::steady_clock::time_point started_{};
     std::chrono::steady_clock::time_point last_written_{};
-    bool                                  shown_{ false }; ///< A line was written for host_.
+    bool                                  shown_{ false }; // A line was written for host_.
     int                                   last_percent_{ -1 };
     String                                last_label_;
 };

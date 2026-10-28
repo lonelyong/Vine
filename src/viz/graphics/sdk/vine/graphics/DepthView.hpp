@@ -29,8 +29,7 @@ class RenderTarget;
  * - A DEFAULT-CONSTRUCTED VIEW NAMES NOTHING, which is not the same statement as "the target's own depth": a pass
  *   declaring an invalid view draws against no depth image at all.
  */
-class VN_GRAPHICS_API DepthView
-{
+class VN_GRAPHICS_API DepthView {
   public:
     /** @brief Names no depth image (see the class note: absence, not "its own"). */
     DepthView() = default;
@@ -41,25 +40,33 @@ class VN_GRAPHICS_API DepthView
      * @param layer  Layer index; 0 is the whole image until layered targets exist (see the class note).
      */
     DepthView(intrusive_ptr<RenderTarget> target, int layer = 0)
-        : target_(std::move(target))
-        , layer_(layer)
-    {
-    }
+      : target_(std::move(target))
+      , layer_(layer)
+    {}
 
     /** @brief Gets whether this view names a depth image.
      *
      * @return true when a target is named.
      */
-    [[nodiscard]] bool isValid() const noexcept { return target_ != nullptr; }
+    [[nodiscard]] bool isValid() const noexcept
+    {
+        return target_ != nullptr;
+    }
 
     /** @brief Gets the target whose depth image this is.
      *
      * @return The target, or null when this view names nothing.
      */
-    [[nodiscard]] raw_ptr<RenderTarget> target() const noexcept { return target_.get(); }
+    [[nodiscard]] raw_ptr<RenderTarget> target() const noexcept
+    {
+        return target_.get();
+    }
 
     /** @brief Gets which layer of the depth image this view names (0 = the whole image). */
-    [[nodiscard]] int layer() const noexcept { return layer_; }
+    [[nodiscard]] int layer() const noexcept
+    {
+        return layer_;
+    }
 
   private:
     intrusive_ptr<RenderTarget> target_;

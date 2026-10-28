@@ -24,12 +24,12 @@
 #include <vsg/core/Data.h>
 
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
 #include <vine/graphics/backend/Streams.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
 
-using vn::vsg::StreamUploads;
 using vn::graphics::backend::StreamKey;
 using vn::graphics::backend::StreamKind;
+using vn::vsg::StreamUploads;
 
 namespace
 {
@@ -80,30 +80,27 @@ StreamKey indexKey(const void* buffer, std::uint64_t revision, std::uint64_t fir
 /// @brief The scalars of @p array, as the upload layer takes them (a view; the bytes are read on a miss).
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
 {
-    return ::vsg::ref_ptr<::vsg::floatArray>(array) == nullptr ? std::span<const float>{}
-                                                              : std::span<const float>(array->data(), array->size());
+    return ::vsg::ref_ptr<::vsg::floatArray>(array) == nullptr ? std::span<const float>{} : std::span<const float>(array->data(), array->size());
 }
 
 /// @brief The indices of @p array, as the upload layer takes them.
 inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const std::uint32_t>{}
-                            : std::span<const std::uint32_t>(array->data(), array->size());
+    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
-}  // namespace
+} // namespace
 
 TEST(StreamUploadsTest, TheSecondDrawableOfOneStreamAliasesTheUpload)
 {
-    StreamUploads store;
+    StreamUploads   store;
     const StreamKey key = vertexKey(&model_buffer_a, 1, 0, 36);
 
     const auto first  = store.acquireVertex(key, scalarsOf(floats(36)));
     const auto second = store.acquireVertex(key, scalarsOf(floats(36)));
 
     EXPECT_EQ(first.action, StreamUploads::Action::Uploaded);
-    EXPECT_EQ(second.action, StreamUploads::Action::Aliased)
-        << "the same stream is one bind, and therefore one device buffer and one upload";
+    EXPECT_EQ(second.action, StreamUploads::Action::Aliased) << "the same stream is one bind, and therefore one device buffer and one upload";
     ASSERT_NE(first.bind, nullptr);
     EXPECT_EQ(first.bind, second.bind) << "the SAME bind object is what makes the bytes exist once";
     EXPECT_EQ(store.uploads(), 1U);
@@ -115,7 +112,7 @@ TEST(StreamUploadsTest, TheSecondDrawableOfOneStreamAliasesTheUpload)
 
 TEST(StreamUploadsTest, ASliceThatMovedIsANewUpload)
 {
-    StreamUploads store;
+    StreamUploads   store;
     const StreamKey first = vertexKey(&model_buffer_a, 1, 0, 12);
     const StreamKey next  = vertexKey(&model_buffer_a, 1, 12, 12);
 
@@ -130,11 +127,10 @@ TEST(StreamUploadsTest, ASliceThatMovedIsANewUpload)
 TEST(StreamUploadsTest, ARefilledBufferIsANewUpload)
 {
     StreamUploads store;
-    const auto first  = store.acquireVertex(vertexKey(&model_buffer_a, 1, 0, 36), scalarsOf(floats(36)));
-    const auto filled = store.acquireVertex(vertexKey(&model_buffer_a, 2, 0, 36), scalarsOf(floats(36)));
+    const auto    first  = store.acquireVertex(vertexKey(&model_buffer_a, 1, 0, 36), scalarsOf(floats(36)));
+    const auto    filled = store.acquireVertex(vertexKey(&model_buffer_a, 2, 0, 36), scalarsOf(floats(36)));
 
-    EXPECT_EQ(filled.action, StreamUploads::Action::Uploaded)
-        << "the revision moved: serving the old bind would draw the previous bytes";
+    EXPECT_EQ(filled.action, StreamUploads::Action::Uploaded) << "the revision moved: serving the old bind would draw the previous bytes";
     EXPECT_NE(first.bind, filled.bind);
 }
 
@@ -149,15 +145,14 @@ TEST(StreamUploadsTest, TheIndexBindAliasesTheWholeBufferSoTwoSpansShareIt)
     const auto b = store.acquireIndex(second, indicesOf(indices(48)));
 
     EXPECT_EQ(a.action, StreamUploads::Action::Uploaded);
-    EXPECT_EQ(b.action, StreamUploads::Action::Aliased)
-        << "the bind covers the whole buffer and the DRAW states the span, so both read one upload";
+    EXPECT_EQ(b.action, StreamUploads::Action::Aliased) << "the bind covers the whole buffer and the DRAW states the span, so both read one upload";
     EXPECT_EQ(a.bind, b.bind);
     EXPECT_EQ(store.uploads(), 1U);
 }
 
 TEST(StreamUploadsTest, TheIndexEntryLeavesUnderTheSameNormalisedKeyTheAcquireUsed)
 {
-    StreamUploads store;
+    StreamUploads   store;
     const StreamKey first  = indexKey(&model_buffer_b, 4, 0, 36);
     const StreamKey second = indexKey(&model_buffer_b, 4, 36, 12);
 
@@ -182,7 +177,7 @@ TEST(StreamUploadsTest, TheIndexEntryLeavesUnderTheSameNormalisedKeyTheAcquireUs
 TEST(StreamUploadsTest, ADerivedChannelIsRefusedAndCounted)
 {
     StreamUploads store;
-    StreamKey     derived = vertexKey(nullptr, 0, 0, 36);  // what the builder makes for a geometry that authors none
+    StreamKey     derived = vertexKey(nullptr, 0, 0, 36); // what the builder makes for a geometry that authors none
 
     const auto refused = store.acquireVertex(derived, scalarsOf(floats(36)));
 
@@ -197,12 +192,11 @@ TEST(StreamUploadsTest, ACustomChannelIsRefusedBecauseItsBindIsTheWholeLayout)
 {
     StreamUploads store;
     StreamKey     custom = vertexKey(&model_buffer_a, 1, 0, 36);
-    custom.location      = 5;  // a forwarded custom channel (>= 3, never the reserved texcoord slot)
+    custom.location      = 5; // a forwarded custom channel (>= 3, never the reserved texcoord slot)
 
     const auto refused = store.acquireVertex(custom, scalarsOf(floats(36)));
 
-    EXPECT_EQ(refused.action, StreamUploads::Action::Refused)
-        << "the custom channels share one command whose identity is the whole layout";
+    EXPECT_EQ(refused.action, StreamUploads::Action::Refused) << "the custom channels share one command whose identity is the whole layout";
     EXPECT_EQ(store.refusals(), 1U);
 }
 
@@ -213,15 +207,14 @@ TEST(StreamUploadsTest, TheCanonicalBindingMappingIsThisStoreSpelling)
 
     EXPECT_EQ(StreamUploads::bindingOfCanonical(attributeLocation(VertexAttribute::Position)), 0U);
     EXPECT_EQ(StreamUploads::bindingOfCanonical(attributeLocation(VertexAttribute::Normal)), 1U);
-    EXPECT_EQ(StreamUploads::bindingOfCanonical(attributeLocation(VertexAttribute::TexCoord0)), 2U)
-        << "texcoords at 2 is vsg's order for its canonical arrays";
+    EXPECT_EQ(StreamUploads::bindingOfCanonical(attributeLocation(VertexAttribute::TexCoord0)), 2U) << "texcoords at 2 is vsg's order for its canonical arrays";
     EXPECT_EQ(StreamUploads::bindingOfCanonical(attributeLocation(VertexAttribute::Color)), 3U);
     EXPECT_EQ(StreamUploads::bindingOfCanonical(5U), StreamUploads::kNoBinding) << "a custom channel has none";
 }
 
 TEST(StreamUploadsTest, AStreamNoFrameNamesAnyMoreDropsItsBindAndTheNextAcquireUploadsAgain)
 {
-    StreamUploads store;
+    StreamUploads   store;
     const StreamKey key = vertexKey(&model_buffer_a, 7, 0, 36);
 
     // Two frames name it (the second one aliases), and then nothing does.
@@ -249,7 +242,7 @@ TEST(StreamUploadsTest, AStreamNoFrameNamesAnyMoreDropsItsBindAndTheNextAcquireU
 
 TEST(StreamUploadsTest, ACapacityEvictionDropsTheBindAndTheTwoMapsStayInStep)
 {
-    StreamUploads store(2);
+    StreamUploads   store(2);
     const StreamKey first  = vertexKey(&model_buffer_a, 1, 0, 12);
     const StreamKey second = vertexKey(&model_buffer_a, 1, 12, 12);
     const StreamKey third  = vertexKey(&model_buffer_a, 1, 24, 12);

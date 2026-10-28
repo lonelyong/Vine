@@ -18,9 +18,9 @@
 #include <vsg/state/ImageView.h>
 #include <vsg/state/Sampler.h>
 
+#include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/vsg/internal/ContentImages.hpp>
 #include <vine/vsg/internal/ProgramAbi.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
 
 using vn::vsg::AbiBinding;
 using vn::vsg::AbiDescriptorKind;
@@ -46,7 +46,7 @@ AbiBinding sampler(const char* name, std::uint32_t set, std::uint32_t binding)
     return declared;
 }
 
-}  // namespace
+} // namespace
 
 TEST(ContentImagesTest, TheNameStatesWhereTheImageComesFrom)
 {
@@ -57,9 +57,7 @@ TEST(ContentImagesTest, TheNameStatesWhereTheImageComesFrom)
     EXPECT_EQ(imageOriginOf("vn_diffuseMap"), ImageOrigin::Material);
     EXPECT_EQ(imageOriginOf("vn_skyMap"), ImageOrigin::Material);
     EXPECT_EQ(imageOriginOf("vn_shadow_map"), ImageOrigin::Shadow);
-    for (const char* name :
-         { "vn_albedo_tex", "vn_normal_tex", "vn_emissive_tex", "vn_pos_tex", "vn_screen_tex", "map_tex", "" })
-    {
+    for (const char* name : { "vn_albedo_tex", "vn_normal_tex", "vn_emissive_tex", "vn_pos_tex", "vn_screen_tex", "map_tex", "" }) {
         EXPECT_EQ(imageOriginOf(name), ImageOrigin::Input) << "the name '" << name << "' is an input texture";
     }
     // A name is not a pattern: a longer or differently spelled one is a different declaration, and the prefix
@@ -95,30 +93,33 @@ TEST(ContentImagesTest, TheMapIsTheInputThePlanResolvedAndNotTheFirstDepthItFind
     // Two inputs: a colour source that ALSO offers a sampleable depth (the trap - a G-buffer has a depth
     // too), and the map itself. The plan says which one is the map by the LIGHT the target states, so the
     // picker must return the map's image whichever order they sit in and whatever is sampleable.
-    const ::vsg::ref_ptr<::vsg::ImageView> source_depth = ::vsg::ImageView::create();
-    const ::vsg::ref_ptr<::vsg::ImageView> map_depth    = ::vsg::ImageView::create();
+    const ::vsg::ref_ptr<::vsg::ImageView> source_depth  = ::vsg::ImageView::create();
+    const ::vsg::ref_ptr<::vsg::ImageView> map_depth     = ::vsg::ImageView::create();
     const ::vsg::ref_ptr<::vsg::Sampler>   depth_sampler = ::vsg::Sampler::create();
     ASSERT_NE(source_depth, nullptr);
     ASSERT_NE(map_depth, nullptr);
     ASSERT_NE(source_depth, map_depth) << "the two views are different images";
 
-    int sun = 0;   // the light's IDENTITY is all the facts carry
+    int sun       = 0; // the light's IDENTITY is all the facts carry
     int other_sun = 0;
 
     vn::graphics::backend::CompiledInput inputs[2];
-    inputs[0].color_attachments = 1U;
-    inputs[0].depth_sampleable  = true;   // the source's depth is sampleable too (see the trap above)
-    inputs[1].depth_sampleable  = true;
-    inputs[1].shadow.light      = &sun;
+    inputs[0].color_attachments          = 1U;
+    inputs[0].depth_sampleable           = true; // the source's depth is sampleable too (see the trap above)
+    inputs[1].depth_sampleable           = true;
+    inputs[1].shadow.light               = &sun;
     inputs[1].shadow.has_view_projection = true;
 
     vn::graphics::backend::CompiledPass pass;
-    pass.inputs = std::span<const vn::graphics::backend::CompiledInput>(inputs, 2U);
-    pass.shadow.light                 = &sun;
-    pass.shadow.has_view_projection   = true;
+    pass.inputs                     = std::span<const vn::graphics::backend::CompiledInput>(inputs, 2U);
+    pass.shadow.light               = &sun;
+    pass.shadow.has_view_projection = true;
 
     const ::vsg::ref_ptr<::vsg::ImageView> offered_colors[]{ ::vsg::ImageView::create() };
-    const InputImages offered[]{ InputImages{ offered_colors, source_depth }, InputImages{ {}, map_depth } };
+    const InputImages                      offered[]{
+        InputImages{ offered_colors, source_depth },
+        InputImages{ {},             map_depth    }
+    };
     const std::span<const InputImages> offer(offered, 2U);
 
     SamplerImage image;
@@ -127,11 +128,14 @@ TEST(ContentImagesTest, TheMapIsTheInputThePlanResolvedAndNotTheFirstDepthItFind
     EXPECT_EQ(image.sampler, depth_sampler) << "a depth is read with the layer's depth sampler (NEAREST)";
 
     // ... and the same offer with the map FIRST must give the same answer (position is not what decides).
-    const InputImages swapped[]{ InputImages{ {}, map_depth }, InputImages{ offered_colors, source_depth } };
+    const InputImages swapped[]{
+        InputImages{ {},             map_depth    },
+        InputImages{ offered_colors, source_depth }
+    };
     vn::graphics::backend::CompiledInput swapped_inputs[2];
-    swapped_inputs[0]                    = inputs[1];
-    swapped_inputs[1]                    = inputs[0];
-    pass.inputs = std::span<const vn::graphics::backend::CompiledInput>(swapped_inputs, 2U);
+    swapped_inputs[0] = inputs[1];
+    swapped_inputs[1] = inputs[0];
+    pass.inputs       = std::span<const vn::graphics::backend::CompiledInput>(swapped_inputs, 2U);
     SamplerImage from_swapped;
     ASSERT_TRUE(shadowImageOf(pass, std::span<const InputImages>(swapped, 2U), depth_sampler, from_swapped));
     EXPECT_EQ(from_swapped.view, map_depth);
@@ -139,7 +143,7 @@ TEST(ContentImagesTest, TheMapIsTheInputThePlanResolvedAndNotTheFirstDepthItFind
     // A pass that resolved no map: the caller binds the white stand-in instead (the engine never reads the
     // map while the shadow block's switch is off, so the stand-in's value is the multiply's identity).
     vn::graphics::backend::CompiledPass no_shadow = pass;
-    no_shadow.shadow = vn::graphics::backend::ShadowFacts{};
+    no_shadow.shadow                              = vn::graphics::backend::ShadowFacts{};
     SamplerImage none;
     EXPECT_FALSE(shadowImageOf(no_shadow, offer, depth_sampler, none));
     EXPECT_EQ(none.view, nullptr);
@@ -148,26 +152,28 @@ TEST(ContentImagesTest, TheMapIsTheInputThePlanResolvedAndNotTheFirstDepthItFind
     // nobody published how to read it.
     vn::graphics::backend::CompiledInput no_light[2];
     no_light[1].depth_sampleable = true;
-    pass.inputs = std::span<const vn::graphics::backend::CompiledInput>(no_light, 2U);
-    pass.shadow.light = &sun;
+    pass.inputs                  = std::span<const vn::graphics::backend::CompiledInput>(no_light, 2U);
+    pass.shadow.light            = &sun;
     EXPECT_FALSE(shadowImageOf(pass, offer, depth_sampler, none));
 
     vn::graphics::backend::CompiledInput another_light[2];
-    another_light[1].depth_sampleable   = true;
-    another_light[1].shadow.light       = &other_sun;
+    another_light[1].depth_sampleable           = true;
+    another_light[1].shadow.light               = &other_sun;
     another_light[1].shadow.has_view_projection = true;
-    pass.inputs = std::span<const vn::graphics::backend::CompiledInput>(another_light, 2U);
-    EXPECT_FALSE(shadowImageOf(pass, offer, depth_sampler, none))
-        << "a map that belongs to another light is not the map this pass resolved";
+    pass.inputs                                 = std::span<const vn::graphics::backend::CompiledInput>(another_light, 2U);
+    EXPECT_FALSE(shadowImageOf(pass, offer, depth_sampler, none)) << "a map that belongs to another light is not the map this pass resolved";
 
     vn::graphics::backend::CompiledInput unreadable[2];
-    unreadable[1].depth_sampleable      = true;
-    unreadable[1].shadow.light          = &sun;   // states the light but no matrix: not a readable map
-    pass.inputs = std::span<const vn::graphics::backend::CompiledInput>(unreadable, 2U);
+    unreadable[1].depth_sampleable = true;
+    unreadable[1].shadow.light     = &sun; // states the light but no matrix: not a readable map
+    pass.inputs                    = std::span<const vn::graphics::backend::CompiledInput>(unreadable, 2U);
     EXPECT_FALSE(shadowImageOf(pass, offer, depth_sampler, none));
 
     // ... and the caller's own hole: the map's input offers no depth view this frame.
-    const InputImages missing[]{ InputImages{ offered_colors, source_depth }, InputImages{ {}, {} } };
+    const InputImages missing[]{
+        InputImages{ offered_colors, source_depth },
+        InputImages{ {},             {}           }
+    };
     pass.inputs = std::span<const vn::graphics::backend::CompiledInput>(inputs, 2U);
     EXPECT_FALSE(shadowImageOf(pass, std::span<const InputImages>(missing, 2U), depth_sampler, none))
         << "the image is the caller's to offer: a hole is not a guess";

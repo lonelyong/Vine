@@ -28,15 +28,13 @@ namespace
 /**
  * @brief Creates a unique temporary directory that is removed on destruction.
  */
-class TempDir
-{
+class TempDir {
   public:
     TempDir()
     {
         static std::atomic<unsigned long long> counter{ 0 };
         std::error_code                        ec;
-        path_ = std::filesystem::temp_directory_path(ec) /
-                ("vn_workcell_io_" + std::to_string(counter.fetch_add(1)));
+        path_ = std::filesystem::temp_directory_path(ec) / ("vn_workcell_io_" + std::to_string(counter.fetch_add(1)));
         std::filesystem::create_directories(path_, ec);
     }
 
@@ -46,7 +44,10 @@ class TempDir
         std::filesystem::remove_all(path_, ec);
     }
 
-    const std::filesystem::path& path() const { return path_; }
+    const std::filesystem::path& path() const
+    {
+        return path_;
+    }
 
   private:
     std::filesystem::path path_;
@@ -131,13 +132,13 @@ const char* const kCellVcell = R"(<workcell name="demo" version="1.0">
  */
 std::unique_ptr<MotionDevice> makeRobot()
 {
-    auto data = std::make_unique<MotionDeviceData>();
+    auto data           = std::make_unique<MotionDeviceData>();
     data->metadata.name = u8"UR";
     data->kind          = DeviceKind::Manipulator;
 
-    auto base_link = std::make_unique<Link>(u8"base_link");
-    auto link1     = std::make_unique<Link>(u8"link1");
-    auto link2     = std::make_unique<Link>(u8"link2");
+    auto        base_link = std::make_unique<Link>(u8"base_link");
+    auto        link1     = std::make_unique<Link>(u8"link1");
+    auto        link2     = std::make_unique<Link>(u8"link2");
     Link* const base_ptr  = base_link.get();
     Link* const link1_ptr = link1.get();
     Link* const link2_ptr = link2.get();
@@ -176,7 +177,7 @@ TEST(WorkcellIOTest, LoadXmlFromFolder)
     writeText(temp.path() / "devices" / "cam.vdev", kScannerVdev);
 
     WorkcellIO io;
-    auto loaded = io.loadXml(file);
+    auto       loaded = io.loadXml(file);
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(loaded->name(), u8"demo");
 
@@ -214,7 +215,7 @@ TEST(WorkcellIOTest, ParentFrameToDeviceEnd)
     writeText(temp.path() / "devices" / "cam.vdev", kScannerVdev);
 
     WorkcellIO io;
-    auto loaded = io.loadXml(file);
+    auto       loaded = io.loadXml(file);
 
     auto* const r = dynamic_cast<MotionDevice*>(loaded->findSceneObject(u8"robot1"));
     ASSERT_NE(r, nullptr);
@@ -241,16 +242,15 @@ TEST(WorkcellIOTest, LoadXmlFromFolderWithDevicePkg)
     DeviceIO device_io;
     device_io.savePkg(*robot, temp.path() / "devices" / "robot2.vdevpkg");
 
-    const std::string cell_xml =
-        "<workcell name=\"pkg\" version=\"1.0\">"
-        "  <obj name=\"robot2\" type=\"device\" file=\"devices/robot2.vdevpkg\">"
-        "    <origin xyz=\"0 0 0\" quat=\"0 0 0 1\"/>"
-        "  </obj>"
-        "</workcell>";
+    const std::string cell_xml = "<workcell name=\"pkg\" version=\"1.0\">"
+                                 "  <obj name=\"robot2\" type=\"device\" file=\"devices/robot2.vdevpkg\">"
+                                 "    <origin xyz=\"0 0 0\" quat=\"0 0 0 1\"/>"
+                                 "  </obj>"
+                                 "</workcell>";
     writeText(file, cell_xml);
 
     WorkcellIO io;
-    auto loaded = io.loadXml(file);
+    auto       loaded = io.loadXml(file);
     ASSERT_NE(loaded, nullptr);
     auto* const r = dynamic_cast<MotionDevice*>(loaded->findSceneObject(u8"robot2"));
     ASSERT_NE(r, nullptr);

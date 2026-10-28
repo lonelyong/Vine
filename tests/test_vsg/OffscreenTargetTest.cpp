@@ -25,9 +25,6 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/OffscreenSession.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
@@ -35,32 +32,35 @@
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/vsg/internal/Device.hpp>
+#include <vine/vsg/internal/OffscreenSession.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
 
 #include "DevicePhases.hpp"
 
+using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::CompiledPass;
-using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameCompiler;
 using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::FrameToken;
 using vn::graphics::backend::Observe;
-using vn::graphics::backend::TargetAction;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetInstance;
-using vn::vsg::DeviceResult;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::api::OffscreenSessionOptions;
-using vn::vsg::createDevice;
-using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::ReadbackKind;
 using vn::graphics::backend::ReadbackRefusal;
 using vn::graphics::backend::ReadbackRequest;
 using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::TargetAction;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetInstance;
+using vn::vsg::createDevice;
+using vn::vsg::DeviceResult;
+using vn::vsg::OffscreenTarget;
+using vn::vsg::api::OffscreenSessionOptions;
 
 namespace
 {
@@ -73,8 +73,7 @@ std::uint8_t quantise(float value)
 
 /// @brief The viewer and command graph of one recorded frame, kept alive so a case can still name what it
 ///        recorded (the reference counts of the replaced objects are part of one case's evidence).
-struct RecordedFrame
-{
+struct RecordedFrame {
     ::vsg::ref_ptr<::vsg::Viewer>       viewer;
     ::vsg::ref_ptr<::vsg::CommandGraph> graph;
 };
@@ -98,17 +97,18 @@ struct RecordedFrame
 /// @param color_captures How many colour attachments the frame records copies of (a target with more than
 ///        one colour attachment needs one per attachment a case reads back).
 /// @return The frame's viewer and graph, both alive.
-RecordedFrame recordOneFrame(const DeviceResult& created, OffscreenTarget& target,
-                             const vn::graphics::backend::ClearValues& policy, bool with_depth_capture = false,
-                             std::uint32_t color_captures = 1U)
+RecordedFrame recordOneFrame(const DeviceResult&                       created,
+                             OffscreenTarget&                          target,
+                             const vn::graphics::backend::ClearValues& policy,
+                             bool                                      with_depth_capture = false,
+                             std::uint32_t                             color_captures     = 1U)
 {
-    const ::vsg::ref_ptr<::vsg::RenderGraph> pass =
-        target.passGraph(policy, /*bootstrap*/ !target.written());
+    const ::vsg::ref_ptr<::vsg::RenderGraph> pass = target.passGraph(policy, /*bootstrap*/ !target.written());
     EXPECT_NE(pass, nullptr) << "the pass graph of a target with attachments is never empty";
 
     RecordedFrame frame;
-    frame.viewer        = ::vsg::Viewer::create();
-    frame.graph         = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    frame.viewer = ::vsg::Viewer::create();
+    frame.graph  = ::vsg::CommandGraph::create(created.device, created.queue_family);
     frame.graph->addChild(pass);
     // A readback the target refuses has no node at all (an unreadable format builds no buffer and no copy),
     // so the frame records what exists and nothing else.
@@ -145,8 +145,7 @@ ReadbackRefusal refusalOf(const OffscreenTarget& target, ReadbackKind kind, std:
 ///                    from the bootstrap rule and not from this flag.
 /// @param depth_value The depth value the pass clears with, when it asks for one (the reverse-Z far plane is
 ///                    the default, so a case that reads the depth back has to say what it expects).
-vn::graphics::backend::ClearValues clearPolicy(const float (&color)[4], bool asked = true,
-                                         std::optional<float> depth_value = std::nullopt)
+vn::graphics::backend::ClearValues clearPolicy(const float (&color)[4], bool asked = true, std::optional<float> depth_value = std::nullopt)
 {
     vn::graphics::backend::ClearValues policy;
     policy.color = asked;
@@ -160,19 +159,23 @@ vn::graphics::backend::ClearValues clearPolicy(const float (&color)[4], bool ask
     return policy;
 }
 
-}  // namespace
+} // namespace
 
 void runOffscreenReadbackPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
-    auto target = OffscreenTarget::create(device.device, OffscreenTarget::Layout{ 8U, 4U,
-                                                                                   { 0.25F, 0.5F, 0.75F, 1.0F } });
+    auto target = OffscreenTarget::create(device.device,
+                                          OffscreenTarget::Layout{
+                                            8U,
+                                            4U,
+                                            { 0.25F, 0.5F, 0.75F, 1.0F }
+    });
     ASSERT_NE(target, nullptr) << "the target (image, pass, framebuffer, copy-back) must be creatable";
     ++counters.targets_built;
 
     auto viewer        = ::vsg::Viewer::create();
     auto command_graph = ::vsg::CommandGraph::create(device.device, device.queue_family);
     command_graph->addChild(target->renderGraph());
-    command_graph->addChild(target->capture());  // recorded AFTER the pass, on the same queue, in order
+    command_graph->addChild(target->capture()); // recorded AFTER the pass, on the same queue, in order
     viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
     ASSERT_TRUE(viewer->compile()) << "the graph must compile";
 
@@ -194,15 +197,18 @@ void runOffscreenReadbackPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     EXPECT_NEAR(sampled.g, expected.g, 1);
     EXPECT_NEAR(sampled.b, expected.b, 1);
     EXPECT_EQ(sampled.a, expected.a);
-    EXPECT_TRUE(probe.wholeImageMatches(sampled))
-        << "the clear is uniform: any pixel that differs is a region the pass did not write";
+    EXPECT_TRUE(probe.wholeImageMatches(sampled)) << "the clear is uniform: any pixel that differs is a region the pass did not write";
     EXPECT_DOUBLE_EQ(probe.nonBlackFraction(), 1.0) << "a clear colour that is not black is still not 'empty'";
 }
 
 void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     auto target = OffscreenTarget::create(device.device,
-                                          OffscreenTarget::Layout{ 8U, 4U, { 0.25F, 0.5F, 0.75F, 1.0F } });
+                                          OffscreenTarget::Layout{
+                                            8U,
+                                            4U,
+                                            { 0.25F, 0.5F, 0.75F, 1.0F }
+    });
     ASSERT_NE(target, nullptr);
     ++counters.targets_built;
 
@@ -229,7 +235,7 @@ void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounte
 
     FrameTimeline timeline;
     const auto    token = timeline.begin();
-    timeline.submitted(token);  // the frame that recorded those attachments: retire point = 1 + 3 + 1
+    timeline.submitted(token); // the frame that recorded those attachments: retire point = 1 + 3 + 1
     RetirementQueue queue(3U);
 
     const OffscreenTarget::Resized resized = target->resize(16U, 12U, timeline, queue);
@@ -245,8 +251,7 @@ void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounte
     EXPECT_EQ(target->width(), 16U);
     EXPECT_EQ(target->height(), 12U);
     EXPECT_FALSE(target->written()) << "the new attachments have never been drawn into: the next pass in clears";
-    EXPECT_NE(target->renderGraph(), replaced_graph)
-        << "the graph built around the old framebuffer cannot serve the new extent";
+    EXPECT_NE(target->renderGraph(), replaced_graph) << "the graph built around the old framebuffer cannot serve the new extent";
     EXPECT_EQ(replaced_graph->referenceCount(), counts_before)
         << "the replaced set is still alive right after the resize: the queue holds it, and a resize that "
            "dropped it would free images a frame in flight may still name";
@@ -269,9 +274,8 @@ void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounte
         EXPECT_NEAR(sampled.r, expected.r, 1);
         EXPECT_NEAR(sampled.g, expected.g, 1);
         EXPECT_NEAR(sampled.b, expected.b, 1);
-        EXPECT_TRUE(probe.wholeImageMatches(sampled))
-            << "the whole new extent holds the clear: a resize that left part of the image (or the old "
-               "framebuffer's extent) behind would show here";
+        EXPECT_TRUE(probe.wholeImageMatches(sampled)) << "the whole new extent holds the clear: a resize that left part of the image (or the old "
+                                                         "framebuffer's extent) behind would show here";
     }
 
     // The release the queue was waiting for: past the retire point, the parked set goes - and it is the
@@ -280,8 +284,7 @@ void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounte
     queue.advance(timeline);
     EXPECT_EQ(queue.released(), 1U);
     EXPECT_EQ(queue.pending(), 0U);
-    EXPECT_EQ(replaced_graph->referenceCount() + 1U, counts_before)
-        << "the queue held the replaced set and let go exactly once";
+    EXPECT_EQ(replaced_graph->referenceCount() + 1U, counts_before) << "the queue held the replaced set and let go exactly once";
     EXPECT_TRUE(target->probe().valid()) << "the release of the old set must not touch the live one";
 }
 
@@ -291,8 +294,11 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
     const float kSecond[4]{ 0.1F, 0.2F, 0.3F, 1.0F };
 
     auto target = OffscreenTarget::create(device.device,
-                                          OffscreenTarget::Layout{ 8U, 4U,
-                                                                   { kFirst[0], kFirst[1], kFirst[2], 1.0F } });
+                                          OffscreenTarget::Layout{
+                                            8U,
+                                            4U,
+                                            { kFirst[0], kFirst[1], kFirst[2], 1.0F }
+    });
     ASSERT_NE(target, nullptr);
     ++counters.targets_built;
 
@@ -313,9 +319,9 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
     // The shape that is about to be replaced: its compatibility half is what a pipeline key was built from,
     // and the graph of its attachments is the observable that tells parking from dropping (this case holds
     // one reference, the frame that recorded it holds another).
-    const vn::graphics::backend::TargetShape        old_shape     = target->shape();
-    const ::vsg::ref_ptr<::vsg::RenderGraph>  replaced      = target->renderGraph();
-    const unsigned int                        counts_before = replaced->referenceCount();
+    const vn::graphics::backend::TargetShape old_shape     = target->shape();
+    const ::vsg::ref_ptr<::vsg::RenderGraph> replaced      = target->renderGraph();
+    const unsigned int                       counts_before = replaced->referenceCount();
 
     // The new shape, in the terms the SDK asks for: TWO colour attachments and a depth, at a new extent -
     // the whole point of the Rebuild arm (the count is even visible to the executor's plan-vs-target check,
@@ -329,7 +335,7 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
 
     FrameTimeline timeline;
     const auto    token = timeline.begin();
-    timeline.submitted(token);  // the frame that recorded the attachments being replaced
+    timeline.submitted(token); // the frame that recorded the attachments being replaced
     RetirementQueue queue(3U);
 
     const OffscreenTarget::Rebuilt rebuilt = target->rebuild(wanted, timeline, queue);
@@ -348,31 +354,28 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
     EXPECT_EQ(target->colorAttachmentCount(), 2U);
     EXPECT_TRUE(target->hasDepth());
     EXPECT_FALSE(target->written()) << "the new attachments have never been drawn into: the next pass in clears";
-    EXPECT_EQ(target->passVariantCount(), 1U)
-        << "the old shape's load-op variants went with the old render pass: their passes were built from the "
-           "old formats, and a pass of the new shape must not be handed one of them";
-    EXPECT_TRUE(target->shape().color_formats == wanted.color_formats)
-        << "the shape the target reports IS the new one: a pipeline key is built from it";
+    EXPECT_EQ(target->passVariantCount(), 1U) << "the old shape's load-op variants went with the old render pass: their passes were built from the "
+                                                 "old formats, and a pass of the new shape must not be handed one of them";
+    EXPECT_TRUE(target->shape().color_formats == wanted.color_formats) << "the shape the target reports IS the new one: a pipeline key is built from it";
     const vn::graphics::backend::TargetShape new_shape = target->shape();
     EXPECT_TRUE(new_shape.depth_format.has_value());
     EXPECT_FALSE(new_shape.compatibility() == old_shape.compatibility())
         << "the compatibility half really moved: every pipeline compiled for the old shape is invalid, and "
            "that is what a caller re-compiles against";
-    EXPECT_TRUE(target->instance().desc.shape == new_shape)
-        << "the facts a frame is compiled with and the shape the target answers with are one fact";
-    EXPECT_NE(target->renderGraph(), replaced)
-        << "the graph built around the old framebuffer cannot serve the new shape";
-    EXPECT_EQ(replaced->referenceCount(), counts_before)
-        << "the replaced set is still alive right after the rebuild: the queue holds it, and a rebuild that "
-           "dropped it would free a pass a frame in flight may still name";
+    EXPECT_TRUE(target->instance().desc.shape == new_shape) << "the facts a frame is compiled with and the shape the target answers with are one fact";
+    EXPECT_NE(target->renderGraph(), replaced) << "the graph built around the old framebuffer cannot serve the new shape";
+    EXPECT_EQ(replaced->referenceCount(), counts_before) << "the replaced set is still alive right after the rebuild: the queue holds it, and a rebuild that "
+                                                            "dropped it would free a pass a frame in flight may still name";
 
     // Frame 2 through the graph the rebuild built: the new shape has to RENDER, not just exist. `written()`
     // being false makes this pass the first writer, so the fresh images are cleared - and the three readbacks
     // (attachment 0, attachment 1, the depth) are the evidence that the NEW pass and the NEW framebuffer
     // really have two colours and a depth.
-    const RecordedFrame second =
-        recordOneFrame(device, *target, clearPolicy(kSecond, /*asked*/ false), /*with_depth_capture*/ true,
-                       /*color_captures*/ 2U);
+    const RecordedFrame second = recordOneFrame(device,
+                                                *target,
+                                                clearPolicy(kSecond, /*asked*/ false),
+                                                /*with_depth_capture*/ true,
+                                                /*color_captures*/ 2U);
     ++counters.frames;
     ++counters.rebuilds_replaced;
     ++counters.parked;
@@ -386,15 +389,13 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
         EXPECT_NEAR(sampled.r, expected.r, 1);
         EXPECT_NEAR(sampled.g, expected.g, 1);
         EXPECT_NEAR(sampled.b, expected.b, 1);
-        EXPECT_TRUE(probe.wholeImageMatches(sampled))
-            << "the whole new extent holds the clear: a rebuild that left part of the image (or the old "
-               "framebuffer's extent) behind would show here";
+        EXPECT_TRUE(probe.wholeImageMatches(sampled)) << "the whole new extent holds the clear: a rebuild that left part of the image (or the old "
+                                                         "framebuffer's extent) behind would show here";
     }
     {
         // The second colour attachment is a new object in every sense: it did not exist before the rebuild,
         // and the pass clears it with the plan's extra-attachment value (transparent black).
-        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color, 1U)),
-                  static_cast<int>(ReadbackRefusal::None))
+        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color, 1U)), static_cast<int>(ReadbackRefusal::None))
             << "the rebuilt target has a SECOND colour attachment, and it is readable";
         const PixelProbe probe = target->probe(1U);
         ASSERT_TRUE(probe.valid());
@@ -424,8 +425,7 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
     queue.advance(timeline);
     EXPECT_EQ(queue.released(), 1U);
     EXPECT_EQ(queue.pending(), 0U);
-    EXPECT_EQ(replaced->referenceCount() + 1U, counts_before)
-        << "the queue held the replaced set and let go exactly once";
+    EXPECT_EQ(replaced->referenceCount() + 1U, counts_before) << "the queue held the replaced set and let go exactly once";
     EXPECT_TRUE(target->probe().valid()) << "the release of the old set must not touch the live one";
 }
 
@@ -435,7 +435,12 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
     const float kGreen[4]{ 0.0F, 1.0F, 0.0F, 1.0F };
     const float kBlue[4]{ 0.0F, 0.0F, 1.0F, 1.0F };
 
-    auto target = OffscreenTarget::create(device.device, OffscreenTarget::Layout{ 8U, 8U, { kRed[0], kRed[1], kRed[2], 1.0F } });
+    auto target = OffscreenTarget::create(device.device,
+                                          OffscreenTarget::Layout{
+                                            8U,
+                                            8U,
+                                            { kRed[0], kRed[1], kRed[2], 1.0F }
+    });
     ASSERT_NE(target, nullptr);
     ++counters.targets_built;
 
@@ -448,8 +453,8 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    vn::intrusive_ptr<RenderTarget> handle(new RenderTarget());
-    const std::vector<RenderCommand>  one_draw{ RenderCommand{} };
+    vn::intrusive_ptr<RenderTarget>  handle(new RenderTarget());
+    const std::vector<RenderCommand> one_draw{ RenderCommand{} };
 
     const auto facts_of = [&]() {
         TargetFacts facts;
@@ -513,10 +518,8 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
     const auto* first_frame = record_frame(1U, fill);
     ASSERT_NE(first_frame, nullptr);
     ASSERT_EQ(first_frame->passes.size(), 1U);
-    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.action),
-              static_cast<int>(vn::graphics::backend::TargetAction::Repair));
-    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.reason),
-              static_cast<int>(vn::graphics::backend::RepairReason::Bootstrap));
+    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.action), static_cast<int>(vn::graphics::backend::TargetAction::Repair));
+    EXPECT_EQ(static_cast<int>(first_frame->targets[0].decision.reason), static_cast<int>(vn::graphics::backend::RepairReason::Bootstrap));
     EXPECT_TRUE(first_frame->passes[0].bootstrap) << "the first writer into an unwritten target clears";
     submit(first_frame->passes[0]);
     ++counters.frames;
@@ -542,13 +545,11 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
     // image whose contents are unknown cannot make them known, so the fact has to survive it.
     const ::vsg::ref_ptr<::vsg::RenderGraph> ignored_plan = target->passGraph(after_loss, /*bootstrap*/ false);
     ASSERT_NE(ignored_plan, nullptr);
-    EXPECT_TRUE(target->instance().attachments_invalidated)
-        << "only a pass that CLEARS repairs a lost submission; a load must not be able to claim it did";
+    EXPECT_TRUE(target->instance().attachments_invalidated) << "only a pass that CLEARS repairs a lost submission; a load must not be able to claim it did";
 
     const auto* second_frame = record_frame(2U, after_loss);
     ASSERT_NE(second_frame, nullptr);
-    EXPECT_EQ(static_cast<int>(second_frame->targets[0].decision.reason),
-              static_cast<int>(vn::graphics::backend::RepairReason::Bootstrap));
+    EXPECT_EQ(static_cast<int>(second_frame->targets[0].decision.reason), static_cast<int>(vn::graphics::backend::RepairReason::Bootstrap));
     EXPECT_TRUE(second_frame->passes[0].bootstrap) << "the frame that repairs the target clears";
     submit(second_frame->passes[0]);
     ++counters.frames;
@@ -556,9 +557,7 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
 
     // ... and ONE frame is enough: the clear repaired the fact, so the next frame loads what it left.
     EXPECT_FALSE(target->instance().attachments_invalidated) << "the bootstrapping frame repaired the fact";
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(target->instance(),
-                                                          vn::graphics::backend::TargetDesc{ 8, 8, target->shape() })
-                                   .action),
+    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(target->instance(), vn::graphics::backend::TargetDesc{ 8, 8, target->shape() }).action),
               static_cast<int>(vn::graphics::backend::TargetAction::None));
 
     vn::graphics::backend::ClearValues steady;
@@ -577,8 +576,8 @@ void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCoun
 
     // And the same fact feeds the other lifecycle arm: a resize replaces the set the invalidation was about.
     target->invalidateAttachments();
-    FrameTimeline   timeline;
-    RetirementQueue queue(3U);
+    FrameTimeline                  timeline;
+    RetirementQueue                queue(3U);
     const OffscreenTarget::Resized resized = target->resize(16U, 8U, timeline, queue);
     EXPECT_TRUE(resized.replaced);
     EXPECT_FALSE(target->instance().attachments_invalidated) << "the images that were lost are gone with the set";
@@ -608,7 +607,12 @@ TEST(OffscreenTargetTest, ABlackClearReadsBackAsNoContent)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    auto target = OffscreenTarget::create(created.device, OffscreenTarget::Layout{ 4U, 4U, { 0.0F, 0.0F, 0.0F, 1.0F } });
+    auto target = OffscreenTarget::create(created.device,
+                                          OffscreenTarget::Layout{
+                                            4U,
+                                            4U,
+                                            { 0.0F, 0.0F, 0.0F, 1.0F }
+    });
     ASSERT_NE(target, nullptr);
 
     auto viewer        = ::vsg::Viewer::create();
@@ -636,7 +640,12 @@ TEST(OffscreenTargetTest, ASecondFrameReadsBackTheSamePicture)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    auto target = OffscreenTarget::create(created.device, OffscreenTarget::Layout{ 16U, 16U, { 1.0F, 0.0F, 0.0F, 1.0F } });
+    auto target = OffscreenTarget::create(created.device,
+                                          OffscreenTarget::Layout{
+                                            16U,
+                                            16U,
+                                            { 1.0F, 0.0F, 0.0F, 1.0F }
+    });
     ASSERT_NE(target, nullptr);
 
     auto viewer        = ::vsg::Viewer::create();
@@ -689,12 +698,16 @@ TEST(OffscreenTargetTest, ARedundantResizeRepairsNothingAndReplacesNothing)
     }
 
     auto target = OffscreenTarget::create(created.device,
-                                          OffscreenTarget::Layout{ 8U, 4U, { 0.0F, 1.0F, 0.0F, 1.0F } });
+                                          OffscreenTarget::Layout{
+                                            8U,
+                                            4U,
+                                            { 0.0F, 1.0F, 0.0F, 1.0F }
+    });
     ASSERT_NE(target, nullptr);
 
     const float kClear[4]{ 0.0F, 1.0F, 0.0F, 1.0F };
 
-    const RecordedFrame frame = recordOneFrame(created, *target, clearPolicy(kClear));
+    const RecordedFrame                      frame = recordOneFrame(created, *target, clearPolicy(kClear));
     const ::vsg::ref_ptr<::vsg::RenderGraph> graph = target->renderGraph();
 
     FrameTimeline   timeline;
@@ -745,7 +758,11 @@ TEST(OffscreenTargetTest, AResizeWithoutAParkingWindowCountsTheDeviceIdle)
     }
 
     auto target = OffscreenTarget::create(created.device,
-                                          OffscreenTarget::Layout{ 8U, 4U, { 1.0F, 1.0F, 0.0F, 1.0F } });
+                                          OffscreenTarget::Layout{
+                                            8U,
+                                            4U,
+                                            { 1.0F, 1.0F, 0.0F, 1.0F }
+    });
     ASSERT_NE(target, nullptr);
 
     // The frame that names the old attachments is submitted and NOT waited for: the work may still be in
@@ -768,7 +785,7 @@ TEST(OffscreenTargetTest, AResizeWithoutAParkingWindowCountsTheDeviceIdle)
     FrameTimeline timeline;
     const auto    token = timeline.begin();
     timeline.submitted(token);
-    RetirementQueue queue(0U);  // a caller that never learned how many frames may be in flight
+    RetirementQueue queue(0U); // a caller that never learned how many frames may be in flight
 
     const OffscreenTarget::Resized resized = target->resize(16U, 8U, timeline, queue);
 
@@ -776,14 +793,13 @@ TEST(OffscreenTargetTest, AResizeWithoutAParkingWindowCountsTheDeviceIdle)
     EXPECT_FALSE(resized.parked) << "no parking window means no parking, and the queue must say so";
     EXPECT_EQ(queue.pending(), 0U);
     EXPECT_EQ(queue.deviceWaits(), 1U) << "the release runs under a COUNTED device idle: that count is the "
-                                         "difference between a safe destroy and a guess";
-    EXPECT_LT(replaced_graph->referenceCount(), counts_before)
-        << "with no safe window the objects really go, and only under the counted idle";
+                                          "difference between a safe destroy and a guess";
+    EXPECT_LT(replaced_graph->referenceCount(), counts_before) << "with no safe window the objects really go, and only under the counted idle";
     EXPECT_EQ(target->width(), 16U);
     EXPECT_EQ(target->height(), 8U);
 
     viewer->deviceWaitIdle();
-    const float kClear[4]{ 1.0F, 1.0F, 0.0F, 1.0F };
+    const float         kClear[4]{ 1.0F, 1.0F, 0.0F, 1.0F };
     const RecordedFrame frame = recordOneFrame(created, *target, clearPolicy(kClear));
     {
         const PixelProbe probe = target->probe();
@@ -805,11 +821,11 @@ TEST(OffscreenTargetTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
     }
 
     OffscreenTarget::TargetLayout layout;
-    layout.width         = 8U;
-    layout.height        = 6U;
-    layout.color_formats = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
-    layout.depth_format  = vn::graphics::RenderTarget::DepthFormat::D32;
-    layout.clear.color   = true;
+    layout.width                = 8U;
+    layout.height               = 6U;
+    layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
+    layout.depth_format         = vn::graphics::RenderTarget::DepthFormat::D32;
+    layout.clear.color          = true;
     layout.clear.color_value[0] = 0.0F;
     layout.clear.color_value[1] = 0.0F;
     layout.clear.color_value[2] = 0.0F;
@@ -840,8 +856,8 @@ TEST(OffscreenTargetTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
     EXPECT_EQ(before.width(), 8);
     EXPECT_EQ(before.height(), 6);
 
-    FrameTimeline   timeline;
-    RetirementQueue queue(3U);
+    FrameTimeline                  timeline;
+    RetirementQueue                queue(3U);
     const OffscreenTarget::Resized resized = target->resize(20U, 10U, timeline, queue);
     EXPECT_TRUE(resized.replaced);
     EXPECT_TRUE(resized.parked);
@@ -878,11 +894,11 @@ TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
     }
 
     OffscreenTarget::TargetLayout layout;
-    layout.width         = 8U;
-    layout.height        = 6U;
-    layout.color_formats = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
-    layout.depth_format  = vn::graphics::RenderTarget::DepthFormat::D32;
-    layout.clear.color   = true;
+    layout.width                = 8U;
+    layout.height               = 6U;
+    layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
+    layout.depth_format         = vn::graphics::RenderTarget::DepthFormat::D32;
+    layout.clear.color          = true;
     layout.clear.color_value[0] = 0.5F;
 
     auto lender = OffscreenTarget::create(created.device, layout);
@@ -972,9 +988,8 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
 
     // A shape a rebuild would really serve (two colours and a depth): it has to differ from the current one,
     // or the plan answers "nothing structural changed" before the lease is ever consulted.
-    OffscreenTarget::TargetLayout wanted  = layout;
-    wanted.color_formats                  = { vn::graphics::RenderTarget::ColorFormat::RGBA8,
-                                              vn::graphics::RenderTarget::ColorFormat::RGBA8 };
+    OffscreenTarget::TargetLayout wanted = layout;
+    wanted.color_formats                 = { vn::graphics::RenderTarget::ColorFormat::RGBA8, vn::graphics::RenderTarget::ColorFormat::RGBA8 };
 
     FrameTimeline   timeline;
     RetirementQueue queue(3U);
@@ -1010,17 +1025,18 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
     EXPECT_EQ(lender->generation(), 1U);
 
     // And the rebuilt lender offers its NEW depth as a source: the half a bookkeeping-only assertion misses.
-    auto next_borrower =
-        OffscreenTarget::create(created.device, OffscreenTarget::TargetLayout{ 8U, 6U,
-                                                                               { vn::graphics::RenderTarget::ColorFormat::RGBA8 },
-                                                                               vn::graphics::RenderTarget::DepthFormat::D32 },
-                                lender.get());
+    auto next_borrower = OffscreenTarget::create(
+        created.device,
+        OffscreenTarget::TargetLayout{ 8U, 6U, { vn::graphics::RenderTarget::ColorFormat::RGBA8 }, vn::graphics::RenderTarget::DepthFormat::D32 },
+        lender.get());
     EXPECT_NE(next_borrower, nullptr) << "a rebuilt lender offers its new depth like the old one";
 
     // The pixels agree with the bookkeeping: the refusals changed nothing, and the rebuilt shape renders.
-    const RecordedFrame frame =
-        recordOneFrame(created, *lender, clearPolicy(layout.clear.color_value), /*with_depth_capture*/ false,
-                       /*color_captures*/ 2U);
+    const RecordedFrame frame = recordOneFrame(created,
+                                               *lender,
+                                               clearPolicy(layout.clear.color_value),
+                                               /*with_depth_capture*/ false,
+                                               /*color_captures*/ 2U);
     {
         const PixelProbe probe = lender->probe();
         ASSERT_TRUE(probe.valid());
@@ -1041,11 +1057,11 @@ TEST(OffscreenTargetTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
     }
 
     OffscreenTarget::TargetLayout layout;
-    layout.width         = 8U;
-    layout.height        = 8U;
-    layout.color_formats = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
-    layout.depth_format  = vn::graphics::RenderTarget::DepthFormat::D32;
-    layout.clear.color   = true;
+    layout.width                = 8U;
+    layout.height               = 8U;
+    layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
+    layout.depth_format         = vn::graphics::RenderTarget::DepthFormat::D32;
+    layout.clear.color          = true;
     layout.clear.color_value[0] = 0.25F;
     layout.clear.color_value[1] = 0.5F;
 
@@ -1057,15 +1073,13 @@ TEST(OffscreenTargetTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
     // work - "run a frame first" is a category, not an empty buffer.
     EXPECT_FALSE(target->probe().valid());
     EXPECT_FALSE(target->depthProbe().valid());
-    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)),
-              static_cast<int>(ReadbackRefusal::NotCaptured));
-    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)),
-              static_cast<int>(ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)), static_cast<int>(ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)), static_cast<int>(ReadbackRefusal::NotCaptured));
     EXPECT_TRUE(target->capture() != nullptr) << "the node exists: it is the RECORDING that has not happened";
 
     // The frame that records both copies: from here on both readbacks are servable, and they carry the pass'
     // clear values.
-    const float kClear[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
+    const float         kClear[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
     const RecordedFrame frame = recordOneFrame(created, *target, clearPolicy(kClear), /*with_depth_capture*/ true);
 
     EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)), static_cast<int>(ReadbackRefusal::None));
@@ -1087,8 +1101,7 @@ TEST(OffscreenTargetTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
 
     // And the refusal a request that can never be served gets is the same for the whole target's life: asking
     // for an attachment that does not exist stays `UnknownAttachment` once everything is captured.
-    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color, 3U)),
-              static_cast<int>(ReadbackRefusal::UnknownAttachment));
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color, 3U)), static_cast<int>(ReadbackRefusal::UnknownAttachment));
 }
 
 TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
@@ -1103,29 +1116,28 @@ TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
     // answers with is the device's own conversion seen from the CPU.
     {
         OffscreenTarget::TargetLayout layout;
-        layout.width         = 4U;
-        layout.height        = 4U;
-        layout.color_formats = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
-        layout.depth_format  = vn::graphics::RenderTarget::DepthFormat::D16;
-        layout.clear.color   = true;
-        layout.clear.depth   = true;
+        layout.width             = 4U;
+        layout.height            = 4U;
+        layout.color_formats     = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
+        layout.depth_format      = vn::graphics::RenderTarget::DepthFormat::D16;
+        layout.clear.color       = true;
+        layout.clear.depth       = true;
         layout.clear.depth_value = 0.5F;
 
         auto target = OffscreenTarget::create(created.device, layout);
         ASSERT_NE(target, nullptr) << "a D16 depth attachment is an ordinary target";
 
-        const float kClear[4]{ 0.0F, 0.0F, 0.0F, 1.0F };
-        const RecordedFrame frame =
-            recordOneFrame(created, *target, clearPolicy(kClear, /*asked*/ true, /*depth_value*/ 0.5F),
-                           /*with_depth_capture*/ true);
+        const float         kClear[4]{ 0.0F, 0.0F, 0.0F, 1.0F };
+        const RecordedFrame frame = recordOneFrame(created,
+                                                   *target,
+                                                   clearPolicy(kClear, /*asked*/ true, /*depth_value*/ 0.5F),
+                                                   /*with_depth_capture*/ true);
 
-        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)),
-                  static_cast<int>(ReadbackRefusal::None));
+        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)), static_cast<int>(ReadbackRefusal::None));
         const vn::graphics::backend::DepthProbe depth = target->depthProbe();
         ASSERT_TRUE(depth.valid());
-        EXPECT_NEAR(depth.depthAt(1, 1), 0.5F, 0.0001F)
-            << "0.5 clears to 32768 of 65535; reading the stored integer raw would answer ~32768, and reading "
-               "it as a float would answer nonsense";
+        EXPECT_NEAR(depth.depthAt(1, 1), 0.5F, 0.0001F) << "0.5 clears to 32768 of 65535; reading the stored integer raw would answer ~32768, and reading "
+                                                           "it as a float would answer nonsense";
         EXPECT_NEAR(depth.depthAt(0, 0), 0.5F, 0.0001F);
     }
 
@@ -1133,28 +1145,26 @@ TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
     // refusal - and the rest of the target is still a picture.
     {
         OffscreenTarget::TargetLayout layout;
-        layout.width         = 4U;
-        layout.height        = 4U;
-        layout.color_formats = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
-        layout.depth_format  = vn::graphics::RenderTarget::DepthFormat::D24;
-        layout.clear.color   = true;
+        layout.width                = 4U;
+        layout.height               = 4U;
+        layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
+        layout.depth_format         = vn::graphics::RenderTarget::DepthFormat::D24;
+        layout.clear.color          = true;
         layout.clear.color_value[0] = 0.0F;
         layout.clear.color_value[1] = 0.5F;
 
         auto target = OffscreenTarget::create(created.device, layout);
         ASSERT_NE(target, nullptr);
 
-        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)),
-                  static_cast<int>(ReadbackRefusal::UnreadableFormat));
-        EXPECT_EQ(target->captureDepth(), nullptr)
-            << "no depth destination and no copy are built for a format that cannot be read";
+        EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)), static_cast<int>(ReadbackRefusal::UnreadableFormat));
+        EXPECT_EQ(target->captureDepth(), nullptr) << "no depth destination and no copy are built for a format that cannot be read";
         EXPECT_FALSE(target->depthProbe().valid());
         EXPECT_TRUE(target->capture() != nullptr) << "the colour half is unaffected";
         EXPECT_TRUE(target->readback() != nullptr);
 
-        const float kClear[4]{ 0.0F, 0.5F, 0.0F, 1.0F };
-        const RecordedFrame frame = recordOneFrame(created, *target, clearPolicy(kClear), /*with_depth_capture*/ true);
-        const PixelProbe pixels = target->probe();
+        const float         kClear[4]{ 0.0F, 0.5F, 0.0F, 1.0F };
+        const RecordedFrame frame  = recordOneFrame(created, *target, clearPolicy(kClear), /*with_depth_capture*/ true);
+        const PixelProbe    pixels = target->probe();
         ASSERT_TRUE(pixels.valid()) << "a target whose depth cannot be read still renders";
         const Rgba8 sampled = pixels.pixel(2, 2);
         EXPECT_NEAR(sampled.g, quantise(0.5F), 1);
@@ -1170,12 +1180,12 @@ TEST(OffscreenTargetTest, AFloatColourAttachmentIsRenderedButNotReadBack)
     }
 
     OffscreenTarget::TargetLayout layout;
-    layout.width         = 4U;
-    layout.height        = 4U;
-    layout.color_formats = { vn::graphics::RenderTarget::ColorFormat::RGBA16F };
-    layout.depth_format  = vn::graphics::RenderTarget::DepthFormat::D32;
-    layout.clear.color   = true;
-    layout.clear.depth   = true;
+    layout.width             = 4U;
+    layout.height            = 4U;
+    layout.color_formats     = { vn::graphics::RenderTarget::ColorFormat::RGBA16F };
+    layout.depth_format      = vn::graphics::RenderTarget::DepthFormat::D32;
+    layout.clear.color       = true;
+    layout.clear.depth       = true;
     layout.clear.depth_value = 0.8F;
 
     auto target = OffscreenTarget::create(created.device, layout);
@@ -1185,27 +1195,24 @@ TEST(OffscreenTargetTest, AFloatColourAttachmentIsRenderedButNotReadBack)
     // 8-bit would make the copy write past its end.
     EXPECT_EQ(target->capture(), nullptr);
     EXPECT_EQ(target->readback(), nullptr) << "the executor appends what a target offers: this one offers nothing";
-    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)),
-              static_cast<int>(ReadbackRefusal::UnreadableFormat));
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)), static_cast<int>(ReadbackRefusal::UnreadableFormat));
     EXPECT_FALSE(target->probe().valid());
 
     // The pass still runs, and the DEPTH attachment (D32, readable) says so: the frame clears it to the policy's
     // value through this target's render pass. The colour half is proven elsewhere (the same pass, the same
     // graph); what this case pins is that refusing a readback never turns into refusing to render.
-    const float kClear[4]{ 1.0F, 0.0F, 0.0F, 1.0F };
-    const RecordedFrame frame =
-        recordOneFrame(created, *target, clearPolicy(kClear, /*asked*/ true, /*depth_value*/ 0.8F),
-                       /*with_depth_capture*/ true);
+    const float         kClear[4]{ 1.0F, 0.0F, 0.0F, 1.0F };
+    const RecordedFrame frame = recordOneFrame(created,
+                                               *target,
+                                               clearPolicy(kClear, /*asked*/ true, /*depth_value*/ 0.8F),
+                                               /*with_depth_capture*/ true);
 
-    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)),
-              static_cast<int>(ReadbackRefusal::None));
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)), static_cast<int>(ReadbackRefusal::None));
     const vn::graphics::backend::DepthProbe depth = target->depthProbe();
     ASSERT_TRUE(depth.valid());
-    EXPECT_NEAR(depth.depthAt(2, 2), 0.8F, 0.0001F)
-        << "the depth attachment of a float-colour target is read back like any other, and it holds this pass' "
-           "clear value";
-    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)),
-              static_cast<int>(ReadbackRefusal::UnreadableFormat))
+    EXPECT_NEAR(depth.depthAt(2, 2), 0.8F, 0.0001F) << "the depth attachment of a float-colour target is read back like any other, and it holds this pass' "
+                                                       "clear value";
+    EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color)), static_cast<int>(ReadbackRefusal::UnreadableFormat))
         << "capturing the depth does not change what the colour half can do";
 }
 
@@ -1258,10 +1265,8 @@ TEST(OffscreenTargetTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
     // framebuffer it is attached to (VUID-VkFramebufferCreateInfo-pAttachments-00861).
     const OffscreenTarget::Resized shrunk = lender->resize(4U, 3U, timeline, queue);
     ASSERT_TRUE(shrunk.replaced) << "the lender's own attachments are its own to replace";
-    EXPECT_FALSE(borrower->repointBorrowedDepth(timeline, queue))
-        << "an image smaller than the framebuffer is not an answer: the refusal is the answer";
-    EXPECT_EQ(borrower->depthView().get(), followed.get())
-        << "and the borrower keeps the image it named (a stale read at worst, never an invalid framebuffer)";
+    EXPECT_FALSE(borrower->repointBorrowedDepth(timeline, queue)) << "an image smaller than the framebuffer is not an answer: the refusal is the answer";
+    EXPECT_EQ(borrower->depthView().get(), followed.get()) << "and the borrower keeps the image it named (a stale read at worst, never an invalid framebuffer)";
     EXPECT_NE(borrower->depthView().get(), lender->depthView().get());
 }
 
@@ -1275,9 +1280,9 @@ TEST(OffscreenSessionTest, TheDestructiveWaitIsCountedOnce)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    Diagnostics diagnostics;
+    Diagnostics                    diagnostics;
     vn::vsg::api::OffscreenSession session;
-    OffscreenSessionOptions options;
+    OffscreenSessionOptions        options;
     options.device       = created.device;
     options.queue_family = created.queue_family;
     ASSERT_TRUE(session.initialize(options, diagnostics));
@@ -1292,6 +1297,5 @@ TEST(OffscreenSessionTest, TheDestructiveWaitIsCountedOnce)
 
     const std::size_t waits_before = session.deviceWaits();
     session.waitDeviceIdle();
-    EXPECT_EQ(session.deviceWaits(), waits_before + 1U)
-        << "the destructive wait is one counted device idle, not a silent assumption";
+    EXPECT_EQ(session.deviceWaits(), waits_before + 1U) << "the destructive wait is one counted device idle, not a silent assumption";
 }

@@ -2,8 +2,8 @@
 
 #include <chrono>
 
-#include <vine/async/Sleep.hpp>
 #include <vine/appfw/ProgressHost.hpp>
+#include <vine/async/Sleep.hpp>
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
 

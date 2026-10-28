@@ -9,8 +9,8 @@
 #include <vsg/state/ImageView.h>
 #include <vsg/state/Sampler.h>
 
-#include <vine/vsg/internal/ProgramAbi.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/vsg/internal/ProgramAbi.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -55,16 +55,15 @@ VN_VSG_NS_BEGIN
  * one. A caller with nothing to offer for an input (it produced nothing this frame) hands over an empty entry
  * rather than skipping it, so the two lists stay indexable against each other.
  */
-struct InputImages
-{
-    std::span<const ::vsg::ref_ptr<::vsg::ImageView>> colors;  ///< Colour attachments the CONTENT path binds.
-    ::vsg::ref_ptr<::vsg::ImageView>                  depth;   ///< The input's DEPTH view, when it offers one.
+struct InputImages {
+    std::span<const ::vsg::ref_ptr<::vsg::ImageView>> colors; // Colour attachments the CONTENT path binds.
+    ::vsg::ref_ptr<::vsg::ImageView>                  depth;  // The input's DEPTH view, when it offers one.
     /// The sampler for each of @ref colors, in the same order; EMPTY means the pipeline layer's input sampler.
     /// An imported input that declared a state carries one entry per colour (the same sampler for all of them);
     /// a produced input carries none.
-    std::span<const ::vsg::ref_ptr<::vsg::Sampler>>   color_samplers;
+    std::span<const ::vsg::ref_ptr<::vsg::Sampler>> color_samplers;
     /// The sampler for @ref depth when the input declared one; null means the layer's depth sampler.
-    ::vsg::ref_ptr<::vsg::Sampler>                    depth_sampler;
+    ::vsg::ref_ptr<::vsg::Sampler> depth_sampler;
     /// The WHOLE source target's colour attachments, when this input is the source of a full-screen call.
     ///
     /// The full-screen ABI reads binding N as the source's attachment N (see BuiltinShaders::screenCopyProgram),
@@ -77,9 +76,9 @@ struct InputImages
 /** @brief Where a declared sampler binding takes its image from (the by-name policy of the file note). */
 enum class ImageOrigin
 {
-    Material,  ///< One of the material's five texture slots (see materialSlotOf).
-    Shadow,    ///< The map the pass' plan resolved (`vn_shadow_map`); a pass without one takes the white stand-in.
-    Input,     ///< Any other name: a texture the pass' declared inputs offer, in declaration order.
+    Material, // One of the material's five texture slots (see materialSlotOf).
+    Shadow,   // The map the pass' plan resolved (`vn_shadow_map`); a pass without one takes the white stand-in.
+    Input,    // Any other name: a texture the pass' declared inputs offer, in declaration order.
 };
 
 /** @brief Gets where a declared sampler's @p name takes its image from.
@@ -105,10 +104,9 @@ enum class ImageOrigin
 [[nodiscard]] std::optional<std::size_t> materialSlotOf(std::string_view name) noexcept;
 
 /** @brief One image, as a caller needs it to fill a declared sampler binding. */
-struct SamplerImage
-{
-    ::vsg::ref_ptr<::vsg::ImageView> view;     ///< The image read there.
-    ::vsg::ref_ptr<::vsg::Sampler>   sampler;  ///< The filter it is read with (NEAREST for depths).
+struct SamplerImage {
+    ::vsg::ref_ptr<::vsg::ImageView> view;    // The image read there.
+    ::vsg::ref_ptr<::vsg::Sampler>   sampler; // The filter it is read with (NEAREST for depths).
 };
 
 /** @brief Gets whether @p abi samples the map its plan resolved: it declares a sampler named `vn_shadow_map`.
@@ -146,8 +144,7 @@ struct SamplerImage
  * @param inputs The images the caller offers, one entry per `pass.inputs` entry and in the same order.
  * @return The index into @p inputs, or `inputs.size()` when the pass samples no map it can read.
  */
-[[nodiscard]] std::size_t shadowInputIndexOf(const core::CompiledPass& pass,
-                                            std::span<const InputImages> inputs) noexcept;
+[[nodiscard]] std::size_t shadowInputIndexOf(const core::CompiledPass& pass, std::span<const InputImages> inputs) noexcept;
 
 /** @brief Picks the map a pass samples, as the layer's depth sampler reads it.
  *
@@ -163,7 +160,9 @@ struct SamplerImage
  * @param out           Receives the map's view and sampler when one is found (untouched otherwise).
  * @return true when the pass samples a map the caller really offered.
  */
-[[nodiscard]] bool shadowImageOf(const core::CompiledPass& pass, std::span<const InputImages> inputs,
-                                 const ::vsg::ref_ptr<::vsg::Sampler>& depth_sampler, SamplerImage& out) noexcept;
+[[nodiscard]] bool shadowImageOf(const core::CompiledPass&             pass,
+                                 std::span<const InputImages>          inputs,
+                                 const ::vsg::ref_ptr<::vsg::Sampler>& depth_sampler,
+                                 SamplerImage&                         out) noexcept;
 
 VN_VSG_NS_END

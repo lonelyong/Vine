@@ -29,7 +29,16 @@ vn::async::Task<void> TestPlugin::load(PluginLoadContext* context)
     co_await Plugin::load(context);
 }
 
-VN_DECLARE_PLUGIN(TestPlugin, u8"8581747e-3f23-4da0-8fea-c0dfdb78e098", u8"test_plugin", u8"测试插件", u8"1.0.0", u8"测试插件：依赖应用外壳", u8"Vine",
-                  u8"dev@vine.example", u8"https://github.com/vine/test_plugin", u8"", { u8"app_shell" })
+VN_DECLARE_PLUGIN(TestPlugin,
+                  u8"8581747e-3f23-4da0-8fea-c0dfdb78e098",
+                  u8"test_plugin",
+                  u8"测试插件",
+                  u8"1.0.0",
+                  u8"测试插件：依赖应用外壳",
+                  u8"Vine",
+                  u8"dev@vine.example",
+                  u8"https://github.com/vine/test_plugin",
+                  u8"",
+                  { u8"app_shell" })
 
 VN_APPFW_NS_END

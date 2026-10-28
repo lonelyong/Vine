@@ -18,8 +18,7 @@ class ProgressRange;
  * empty scope is not attached to any indicator and safely performs no
  * reporting.
  */
-class VN_PROGRESS_API ProgressScope
-{
+class VN_PROGRESS_API ProgressScope {
   public:
     friend class ProgressIndicator;
     friend class ProgressRange;
@@ -113,21 +112,21 @@ class VN_PROGRESS_API ProgressScope
 
     double localToGlobal(double value) const;
 
-    ProgressIndicator*   indicator_{nullptr};
+    ProgressIndicator* indicator_{ nullptr };
 
-    const ProgressScope* parent_{nullptr};
+    const ProgressScope* parent_{ nullptr };
 
     std::string name_;
 
-    double start_{0.0};
+    double start_{ 0.0 };
 
-    double global_length_{1.0};
+    double global_length_{ 1.0 };
 
-    double local_length_{1.0};
+    double local_length_{ 1.0 };
 
-    double local_pos_{0.0};
+    double local_pos_{ 0.0 };
 
-    bool active_{false};
+    bool active_{ false };
 };
 
 VN_PROGRESS_NS_END

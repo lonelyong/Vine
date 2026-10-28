@@ -26,4 +26,3 @@ Mat4d MatrixTransform::localTransformMatrix() const
 }
 
 VN_GRAPHICS_NS_END
-

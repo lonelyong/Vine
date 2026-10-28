@@ -17,8 +17,7 @@ VN_ASYNC_NS_BEGIN
  *
  * Derives from vn::Exception with code Exception::CANCELLED.
  */
-class TaskCancelledException : public vn::Exception
-{
+class TaskCancelledException : public vn::Exception {
   public:
     TaskCancelledException()
       : vn::Exception(vn::Exception::Code::CANCELLED, String(u8"task cancelled"))
@@ -44,8 +43,8 @@ class TaskCancelledException : public vn::Exception
  */
 enum class CancelPolicy
 {
-    Destroy,     ///< Destroy the unfinished children once the composition completes.
-    StopAndWait  ///< Ask the unfinished children to stop, then wait for them to finish.
+    Destroy,    // Destroy the unfinished children once the composition completes.
+    StopAndWait // Ask the unfinished children to stop, then wait for them to finish.
 };
 
 /**
@@ -58,8 +57,7 @@ enum class CancelPolicy
  */
 inline void throwIfCancelled(const CancellationToken& token)
 {
-    if (token.stop_requested())
-    {
+    if (token.stop_requested()) {
         throw TaskCancelledException{};
     }
 }
@@ -78,7 +76,7 @@ inline void throwIfCancelled(const CancellationToken& token)
  * @param task Task to run.
  * @return A task that completes as task does, or throws TaskCancelledException.
  */
-template<typename T>
+template <typename T>
 [[nodiscard]]
 Task<T> withCancellation(CancellationToken token, Task<T> task)
 {

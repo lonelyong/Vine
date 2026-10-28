@@ -6,23 +6,23 @@
 #include <vector>
 
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/DepthRange.hpp>
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateResolution.hpp>
 #include <vine/graphics/Viewport.hpp>
-#include <vine/math/Matrix4x4.hpp>
-#include <vine/math/Vector3.hpp>
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/ClearPlan.hpp>
-#include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/graphics_global.hpp>
+#include <vine/math/Matrix4x4.hpp>
+#include <vine/math/Vector3.hpp>
 
 /**
  * @brief The frame's COLLECTION stage: every API call is turned into a self-contained record here, and
@@ -83,10 +83,9 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 using PassId = std::uint32_t;
 
 /** @brief A program and the revision its content is at: the pair that says whether it changed. */
-struct ProgramRef
-{
-    const void*   program{nullptr};   ///< Program identity, or nullptr for "none".
-    std::uint64_t revision{0};        ///< Upstream content revision (`ShaderProgram::revision()`).
+struct ProgramRef {
+    const void*   program{ nullptr }; // Program identity, or nullptr for "none".
+    std::uint64_t revision{ 0 };      // Upstream content revision (`ShaderProgram::revision()`).
 };
 
 /** @brief One pass input as the frame remembers it: the identity it reads, produced or imported.
@@ -99,9 +98,8 @@ struct ProgramRef
  * - The value is the public ImageSource, so a produced target attachment and an imported texture travel in
  *   one ordered list; the kind says which bookkeeping owns the images.
  */
-struct InputRef
-{
-    vn::graphics::ImageSource source{};   ///< The resolved input (Produced* or ImportedTexture).
+struct InputRef {
+    vn::graphics::ImageSource source{}; // The resolved input (Produced* or ImportedTexture).
 };
 
 /** @brief One light as the frame remembers it: its numbers, never the borrowed pointer.
@@ -112,30 +110,29 @@ struct InputRef
  *   the scene it belongs to, before the frame is recorded. The fields here are what the shading block
  *   is built from (see VsgLights).
  */
-struct LightRef
-{
+struct LightRef {
     /// @brief The light this was copied from (its identity, not a number).
     ///
     /// A shadow map states WHOSE it is (RenderTarget::shadowOf), so the plan has to be able to match that
     /// statement against the lights a drawing call announced - and numbers cannot do that (two lights of the same
     /// colour are the same numbers). The pointer is an identity, never dereferenced after the call returns.
-    const void*                identity{nullptr};
-    bool                       enabled{false};                    ///< Disabled lights are not lit.
-    vn::graphics::LightType  type{vn::graphics::LightType::Ambient};  ///< Ambient / directional / reserved kinds.
-    vn::Colorf               color{};                           ///< Linear colour.
-    float                      intensity{1.0F};                   ///< Intensity multiplier.
-    bool                       has_direction{false};              ///< Whether direction() means anything.
-    vn::math::Vec3d          direction{};                       ///< World-space direction (directional lights).
-    bool                       has_position{false};               ///< Whether position() / range() mean anything.
-    vn::math::Vec3d          position{};                        ///< World-space position (point / spot lights).
-    float                      range{0.0F};                      ///< Distance at which the contribution reaches zero
-                                                                 ///< (0 = no cutoff); see Light::setRange.
-    double                     inner_cone_degrees{0.0};           ///< Spot cone's full-strength angle (degrees).
-    double                     outer_cone_degrees{0.0};           ///< Spot cone's zero-strength angle (degrees).
-    bool                        cast_shadow{false};                ///< Light::isCastingShadow: the switch that makes it a
-                                                                  ///< caster.
-    float                      shadow_bias{0.0F};                 ///< ShadowSettings::bias: the map comparison's
-                                                                  ///< depth bias.
+    const void*             identity{ nullptr };
+    bool                    enabled{ false };                         // Disabled lights are not lit.
+    vn::graphics::LightType type{ vn::graphics::LightType::Ambient }; // Ambient / directional / reserved kinds.
+    vn::Colorf              color{};                                  // Linear colour.
+    float                   intensity{ 1.0F };                        // Intensity multiplier.
+    bool                    has_direction{ false };                   // Whether direction() means anything.
+    vn::math::Vec3d         direction{};                              // World-space direction (directional lights).
+    bool                    has_position{ false };                    // Whether position() / range() mean anything.
+    vn::math::Vec3d         position{};                               // World-space position (point / spot lights).
+    float                   range{ 0.0F };                            // Distance at which the contribution reaches zero
+                                                                      // (0 = no cutoff); see Light::setRange.
+    double                  inner_cone_degrees{ 0.0 };                // Spot cone's full-strength angle (degrees).
+    double                  outer_cone_degrees{ 0.0 };                // Spot cone's zero-strength angle (degrees).
+    bool                    cast_shadow{ false };                     // Light::isCastingShadow: the switch that makes it a
+                                                                      // caster.
+    float                   shadow_bias{ 0.0F };                      // ShadowSettings::bias: the map comparison's
+                                                                      // depth bias.
 };
 
 /** @brief A camera as the frame remembers it: its matrices and eye, not the borrowed pointer.
@@ -145,43 +142,41 @@ struct LightRef
  *   written after the call returns; the engine owns the camera and may retarget or destroy it in
  *   between.
  */
-struct CameraSnapshot
-{
-    bool              present{false};   ///< Whether a camera was announced at all.
-    vn::math::Mat4d view{};           ///< World -> view matrix.
-    vn::math::Mat4d projection{};     ///< Clip-space projection (see Camera).
-    vn::math::Vec3d eye{};            ///< Eye position, for the CPU light transform.
-    vn::math::Vec3d target{};         ///< Look-at target, for the CPU light transform.
-    vn::math::Vec3d up{};             ///< Up vector, for the CPU light transform.
+struct CameraSnapshot {
+    bool            present{ false }; // Whether a camera was announced at all.
+    vn::math::Mat4d view{};           // World -> view matrix.
+    vn::math::Mat4d projection{};     // Clip-space projection (see Camera).
+    vn::math::Vec3d eye{};            // Eye position, for the CPU light transform.
+    vn::math::Vec3d target{};         // Look-at target, for the CPU light transform.
+    vn::math::Vec3d up{};             // Up vector, for the CPU light transform.
 };
 
 /** @brief One instance of one command, as the frame remembers it (the SDK's RenderCommand, copied). */
-struct CollectedCommand
-{
-    const void*   geometry{nullptr};            ///< Leaf geometry identity.
-    std::uint64_t geometry_revision{0};         ///< `Geometry::revision()` at collection time.
+struct CollectedCommand {
+    const void*   geometry{ nullptr };    // Leaf geometry identity.
+    std::uint64_t geometry_revision{ 0 }; // `Geometry::revision()` at collection time.
     /// Which of the geometry's primitives this command draws (see Geometry::primitive). It is the draw's
     /// identity inside the geometry: two commands of one geometry differ here, and the frame's facts answer
     /// per (geometry, primitive).
-    std::uint32_t primitive{0};
+    std::uint32_t primitive{ 0 };
     /// The PRIMITIVE's topology, copied because the plan is what a backend reads: it is the pipeline key's
     /// class and the value every draw delivers, and it is data rather than state (see Primitive.hpp) - which
     /// is why it travels with the command instead of with `authored_state`.
-    vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
-    ProgramRef    program{};                    ///< The command's own program; null = the frame's default.
-    const void*   material{nullptr};            ///< Material identity, or nullptr.
-    vn::math::Mat4d model{};                  ///< World-space model matrix.
-    float             opacity{1.0F};                ///< Effective opacity (the drawable's half of the alpha rule).
+    vn::graphics::Topology topology{ vn::graphics::Topology::Triangles };
+    ProgramRef             program{};           // The command's own program; null = the frame's default.
+    const void*            material{ nullptr }; // Material identity, or nullptr.
+    vn::math::Mat4d        model{};             // World-space model matrix.
+    float                  opacity{ 1.0F };     // Effective opacity (the drawable's half of the alpha rule).
     /// Whether this command belongs in the transparent queue, from `RenderCommand::isTransparent` (the
     /// material's resolved alpha mode plus the opacity). Carried because the plan has only identities, and the
     /// blend enable must be the same answer the collector sorted by (graphics-material.md 2.7).
-    bool              transparent{false};
-    vn::graphics::RenderState authored_state{};  ///< What the CONTENT authored, item by item (see the resolution).
+    bool                      transparent{ false };
+    vn::graphics::RenderState authored_state{}; // What the CONTENT authored, item by item (see the resolution).
     /// The instance stream, BORROWED for the frame (the primitive's slice holds it): null for a plain draw.
-    const vn::Buffer<float>* instance_buffer{nullptr};
-    std::uint64_t            instance_revision{0};  ///< The buffer revision the borrow was made at.
-    std::uint32_t            first_instance{0};     ///< First instance the draw reads.
-    std::uint32_t            instance_count{0};     ///< Instances the draw reads (0 = plain).
+    const vn::Buffer<float>* instance_buffer{ nullptr };
+    std::uint64_t            instance_revision{ 0 }; // The buffer revision the borrow was made at.
+    std::uint32_t            first_instance{ 0 };    // First instance the draw reads.
+    std::uint32_t            instance_count{ 0 };    // Instances the draw reads (0 = plain).
 };
 
 /**
@@ -193,16 +188,15 @@ struct CollectedCommand
  *   depth mode and the viewport are meaningful at. The commands of a content call share the call's
  *   announcements, which is also why the camera is recorded once per call instead of once per command.
  */
-struct CollectedDraw
-{
-    DrawKind         kind{DrawKind::Content};   ///< Content drawing or a full-screen program.
-    CameraSnapshot   camera{};                  ///< The camera announced with the call.
-    bool             has_viewport{false};       ///< Whether this call consumed a viewport announcement.
-    vn::graphics::Viewport viewport{};        ///< The consumed viewport (meaningful when has_viewport).
-    std::span<const LightRef> lights{};         ///< The consumed lights; empty = the backend default.
-    const void*      source{nullptr};           ///< Screen draws: the target whose colour attachments are sampled.
-    ProgramRef       program{};                 ///< Screen draws: the fragment program to draw with.
-    std::span<const CollectedCommand> commands{};  ///< Content draws: the instances to render.
+struct CollectedDraw {
+    DrawKind                          kind{ DrawKind::Content }; // Content drawing or a full-screen program.
+    CameraSnapshot                    camera{};                  // The camera announced with the call.
+    bool                              has_viewport{ false };     // Whether this call consumed a viewport announcement.
+    vn::graphics::Viewport            viewport{};                // The consumed viewport (meaningful when has_viewport).
+    std::span<const LightRef>         lights{};                  // The consumed lights; empty = the backend default.
+    const void*                       source{ nullptr };         // Screen draws: the target whose colour attachments are sampled.
+    ProgramRef                        program{};                 // Screen draws: the fragment program to draw with.
+    std::span<const CollectedCommand> commands{};                // Content draws: the instances to render.
 };
 
 /**
@@ -215,38 +209,35 @@ struct CollectedDraw
  *   recorder must not, because resolving here would hide the difference between "unresolved" and
  *   "explicitly the whole target".
  */
-struct CollectedPass
-{
-    PassId        pass{0};                 ///< Pass identity (the API layer's registry assigns it).
-    int           order{0};                ///< Stacking order announced for this pass.
-    const void*   target{nullptr};         ///< Draw target identity; nullptr = the default framebuffer.
-    std::span<const InputRef> inputs{};    ///< The pass' resolved inputs, in declaration order.
-    bool          has_clear{false};        ///< Whether the host announced a clear policy for this scope.
-    ClearValues   clear{};                 ///< The announced policy (meaningful when has_clear).
-    vn::graphics::PassRenderState state{}; ///< The pass' own state: depth policy + rasterisation override.
+struct CollectedPass {
+    PassId                        pass{ 0 };          // Pass identity (the API layer's registry assigns it).
+    int                           order{ 0 };         // Stacking order announced for this pass.
+    const void*                   target{ nullptr };  // Draw target identity; nullptr = the default framebuffer.
+    std::span<const InputRef>     inputs{};           // The pass' resolved inputs, in declaration order.
+    bool                          has_clear{ false }; // Whether the host announced a clear policy for this scope.
+    ClearValues                   clear{};            // The announced policy (meaningful when has_clear).
+    vn::graphics::PassRenderState state{};            // The pass' own state: depth policy + rasterisation override.
     /// The depth band this pass maps its draws into (the whole buffer when nobody announced one).
     ///
     /// A plain value rather than "announced or not": unlike a clear, where "never announced" and "announced
     /// the default" are different pictures, stating the whole buffer and stating nothing ARE the same picture
     /// (see DepthRange). The compiler resolves the default; the recorder keeps what the scope said.
-    vn::graphics::DepthRange depth_range{};
-    std::span<const CollectedDraw> draws{};///< Drawing calls that arrived in the scope, in call order.
+    vn::graphics::DepthRange       depth_range{};
+    std::span<const CollectedDraw> draws{}; // Drawing calls that arrived in the scope, in call order.
 };
 
 /** @brief One frame's worth of collected intent (see the file note for what is not resolved here). */
-struct CollectedFrame
-{
-    FrameToken  token{};                             ///< The frame this description belongs to.
-    ProgramRef  default_program{};                   ///< What content without a program of its own is drawn with.
-    std::span<const CollectedPass> passes{};         ///< Pass scopes that arrived, in call order.
+struct CollectedFrame {
+    FrameToken                     token{};           // The frame this description belongs to.
+    ProgramRef                     default_program{}; // What content without a program of its own is drawn with.
+    std::span<const CollectedPass> passes{};          // Pass scopes that arrived, in call order.
 };
 
 /**
  * @brief The collection stage (see the file note for the contract rules it enforces and the ones it leaves
  * to the compiler).
  */
-class VN_GRAPHICS_API FrameRecorder
-{
+class VN_GRAPHICS_API FrameRecorder {
   public:
     /** @brief Creates a recorder writing into @p arena and reporting through @p diagnostics.
      *
@@ -385,8 +376,9 @@ class VN_GRAPHICS_API FrameRecorder
      * @param program_override Program every command is drawn with, or null to use each command's own.
      * @return true when the call was collected; false when it was refused (no scope, or a released target).
      */
-    bool render(std::span<const vn::graphics::RenderCommand> commands, const vn::graphics::Camera* camera,
-                const vn::graphics::ShaderProgram* program_override = nullptr);
+    bool render(std::span<const vn::graphics::RenderCommand> commands,
+                const vn::graphics::Camera*                  camera,
+                const vn::graphics::ShaderProgram*           program_override = nullptr);
 
     /** @brief Collects a full-screen program drawing call (the screen kind of a frame's draw).
      *
@@ -395,8 +387,7 @@ class VN_GRAPHICS_API FrameRecorder
      * @param camera  Camera whose lights are forwarded.
      * @return true when the call was collected; false when it was refused.
      */
-    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program,
-                           const vn::graphics::Camera* camera);
+    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::Camera* camera);
 
     /** @brief Selects the program content without one of its own is drawn with.
      *
@@ -438,42 +429,41 @@ class VN_GRAPHICS_API FrameRecorder
      * @param program_override Program every command is drawn with, or null for each command's own.
      * @return The recorded commands (arena storage, valid until the frame's arena is reset).
      */
-    [[nodiscard]] std::span<const CollectedCommand> snapshotCommands(
-        std::span<const vn::graphics::RenderCommand> commands,
-        const vn::graphics::ShaderProgram*           program_override);
+    [[nodiscard]] std::span<const CollectedCommand> snapshotCommands(std::span<const vn::graphics::RenderCommand> commands,
+                                                                     const vn::graphics::ShaderProgram*           program_override);
 
     /** @brief Snapshots a borrowed camera, projected for a picture of the scope's announced shape. */
     [[nodiscard]] CameraSnapshot snapshotCamera(const vn::graphics::Camera* camera) const;
 
 
   private:
-    FrameArena& arena_;         ///< The frame's storage (reset in beginFrame).
-    Diagnostics& diagnostics_;  ///< The one diagnostic route.
-    Observe&    observe_;       ///< The counters a phase gates on.
-    bool        frame_open_{false};            ///< A frame is being collected (see beginFrame / swapBuffers).
-    bool        pass_open_{false};             ///< A pass scope is open (see beginPass / endPass).
-    const void* scope_target_{nullptr};        ///< The target the open scope announced, or nullptr.
-    bool        scope_target_released_{false}; ///< That target was released while the scope was open.
+    FrameArena&  arena_;                          // The frame's storage (reset in beginFrame).
+    Diagnostics& diagnostics_;                    // The one diagnostic route.
+    Observe&     observe_;                        // The counters a phase gates on.
+    bool         frame_open_{ false };            // A frame is being collected (see beginFrame / swapBuffers).
+    bool         pass_open_{ false };             // A pass scope is open (see beginPass / endPass).
+    const void*  scope_target_{ nullptr };        // The target the open scope announced, or nullptr.
+    bool         scope_target_released_{ false }; // That target was released while the scope was open.
 
-    FrameToken  token_{};                        ///< The open frame.
-    ProgramRef  default_program_{};              ///< Frame-level default program (kept across frames).
+    FrameToken token_{};           // The open frame.
+    ProgramRef default_program_{}; // Frame-level default program (kept across frames).
 
-    PassId      pass_id_{0};                     ///< Identity of the open scope's pass.
-    int         order_{0};                       ///< Order announced for the open scope.
-    const void* pass_target_{nullptr};           ///< Target announced for the open scope.
-    bool        pass_has_clear_{false};          ///< Whether the scope announced a clear.
-    ClearValues pass_clear_{};                   ///< The announced clear.
-    vn::graphics::PassRenderState pass_state_{};  ///< The scope's own state (depth policy + rasterisation override).
-    vn::graphics::DepthRange    pass_depth_range_{};  ///< The scope's depth band ({0, 1} = whole buffer).
-    std::span<const InputRef> pass_inputs_{};    ///< The scope's inputs (a property of the pass).
+    PassId                        pass_id_{ 0 };            // Identity of the open scope's pass.
+    int                           order_{ 0 };              // Order announced for the open scope.
+    const void*                   pass_target_{ nullptr };  // Target announced for the open scope.
+    bool                          pass_has_clear_{ false }; // Whether the scope announced a clear.
+    ClearValues                   pass_clear_{};            // The announced clear.
+    vn::graphics::PassRenderState pass_state_{};            // The scope's own state (depth policy + rasterisation override).
+    vn::graphics::DepthRange      pass_depth_range_{};      // The scope's depth band ({0, 1} = whole buffer).
+    std::span<const InputRef>     pass_inputs_{};           // The scope's inputs (a property of the pass).
 
-    bool                       pending_has_viewport_{false};  ///< Whether a viewport is waiting for a draw.
-    vn::graphics::Viewport   pending_viewport_{};           ///< The viewport waiting for a draw.
-    std::span<const LightRef>  pending_lights_{};             ///< The lights waiting for a draw.
+    bool                      pending_has_viewport_{ false }; // Whether a viewport is waiting for a draw.
+    vn::graphics::Viewport    pending_viewport_{};            // The viewport waiting for a draw.
+    std::span<const LightRef> pending_lights_{};              // The lights waiting for a draw.
 
-    std::vector<CollectedDraw> open_draws_;      ///< The open scope's drawing calls (copied to the arena at endPass).
-    std::vector<CollectedPass> passes_;          ///< The frame's pass scopes (copied to the arena at endFrame).
-    CollectedFrame           description_{};   ///< The published description (arena-backed spans).
+    std::vector<CollectedDraw> open_draws_;    // The open scope's drawing calls (copied to the arena at endPass).
+    std::vector<CollectedPass> passes_;        // The frame's pass scopes (copied to the arena at endFrame).
+    CollectedFrame             description_{}; // The published description (arena-backed spans).
 };
 
 VN_GRAPHICSBACKEND_NS_END

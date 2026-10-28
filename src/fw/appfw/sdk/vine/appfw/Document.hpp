@@ -32,7 +32,10 @@ struct VN_APPFW_API DocumentSource {
     /// @brief Reports whether this source names anything.
     ///
     /// @return true when the document is backed by something a save could write to.
-    bool valid() const noexcept { return !scheme.empty(); }
+    bool valid() const noexcept
+    {
+        return !scheme.empty();
+    }
 
     /// Compares sources by both halves (a host uses this to tell "already open" from "open it again").
     bool operator==(const DocumentSource& other) const = default;

@@ -16,7 +16,13 @@
 #include <vsg/vk/Device.h>
 #include <vsg/vk/PhysicalDevice.h>
 
+#include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/backend/AllocationGate.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/Observe.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BackendContent.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentAssembly.hpp>
@@ -30,17 +36,11 @@
 #include <vine/vsg/internal/PassRegistry.hpp>
 #include <vine/vsg/internal/Session.hpp>
 #include <vine/vsg/internal/SessionContent.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
 #include <vine/vsg/internal/ViewBlock.hpp>
+#include <vine/vsg/internal/VsgExecutor.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
 #include <vine/vsg/support/VsgSceneRules.hpp>
 #include <vine/vsg/support/VsgUtils.hpp>
-#include <vine/graphics/backend/AllocationGate.hpp>
-#include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/graphics/backend/Observe.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
 
 VN_VSG_NS_BEGIN
 
@@ -72,13 +72,11 @@ enum ReadbackReport : std::size_t
 /// @brief Names @p target for a diagnostic sentence: its own name, or a stand-in when it has none.
 std::string nameOf(const vn::graphics::RenderTarget* target)
 {
-    if (target == nullptr)
-    {
+    if (target == nullptr) {
         return "an unnamed target";
     }
     const vn::String& name = target->name();
-    if (name.empty())
-    {
+    if (name.empty()) {
         return "an unnamed target";
     }
     return "'" + std::string(reinterpret_cast<const char*>(name.data()), name.size()) + "'";
@@ -87,16 +85,14 @@ std::string nameOf(const vn::graphics::RenderTarget* target)
 /// @brief Tracks @p program into @p store, when both exist (see setDefaultContentProgram).
 void trackProgram(ContentStore* store, const vn::intrusive_ptr<const vn::graphics::ShaderProgram>& program)
 {
-    if (store == nullptr || program == nullptr)
-    {
+    if (store == nullptr || program == nullptr) {
         return;
     }
     // The SDK hands the default program as a CONST handle while the engine keeps the object mutable, and
     // the store's own handle is mutable (it owns a share of what it describes, see its note): the cast is
     // the bridge between the two views - and nothing in the store writes through it, its tables only READ
     // the object they describe.
-    store->track(vn::intrusive_ptr<vn::graphics::ShaderProgram>(
-        const_cast<vn::graphics::ShaderProgram*>(program.get())));
+    store->track(vn::intrusive_ptr<vn::graphics::ShaderProgram>(const_cast<vn::graphics::ShaderProgram*>(program.get())));
 }
 
 /// @brief The spelling of "this frame belongs to no window": see Data::driving.
@@ -115,10 +111,8 @@ constexpr std::size_t kNoWindow = static_cast<std::size_t>(-1);
  */
 int graphicsQueueFamily(const ::vsg::Device& device)
 {
-    for (const auto& queue : device.getQueues())
-    {
-        if ((queue->queueFlags() & VK_QUEUE_GRAPHICS_BIT) == VK_QUEUE_GRAPHICS_BIT)
-        {
+    for (const auto& queue : device.getQueues()) {
+        if ((queue->queueFlags() & VK_QUEUE_GRAPHICS_BIT) == VK_QUEUE_GRAPHICS_BIT) {
             return static_cast<int>(queue->queueFamilyIndex());
         }
     }
@@ -133,14 +127,11 @@ int graphicsQueueFamily(const ::vsg::Device& device)
 /// images while the calls name the source.
 bool isScreenSource(const core::CompiledPass& pass, const void* target) noexcept
 {
-    if (target == nullptr)
-    {
+    if (target == nullptr) {
         return false;
     }
-    for (const core::CompiledDraw& draw : pass.draws)
-    {
-        if (draw.kind == core::DrawKind::Screen && draw.source == target)
-        {
+    for (const core::CompiledDraw& draw : pass.draws) {
+        if (draw.kind == core::DrawKind::Screen && draw.source == target) {
             return true;
         }
     }
@@ -161,46 +152,42 @@ bool isScreenSource(const core::CompiledPass& pass, const void* target) noexcept
 /// that names no target of its own has nowhere to draw - it produces no packet, and the plan has already left it
 /// out (it was compiled against facts with no default-framebuffer row). Passes that name their own targets are
 /// recorded exactly as they are on the windowed path.
-std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarget* window, HostTargets& targets,
-                                           MaterialImages& images, vn::graphics::Diagnostics& diagnostics,
-                                           core::FrameTimeline& timeline, core::RetirementQueue& retirement,
-                                           float frame_seconds, const core::CompiledFrame& frame,
-                                           std::vector<InputImages>& input_scratch,
+std::span<const PassContent> recordContent(ContentAssembly&                                            assembly,
+                                           WindowTarget*                                               window,
+                                           HostTargets&                                                targets,
+                                           MaterialImages&                                             images,
+                                           vn::graphics::Diagnostics&                                  diagnostics,
+                                           core::FrameTimeline&                                        timeline,
+                                           core::RetirementQueue&                                      retirement,
+                                           float                                                       frame_seconds,
+                                           const core::CompiledFrame&                                  frame,
+                                           std::vector<InputImages>&                                   input_scratch,
                                            std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
-                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>&
-                                               input_screen_views,
-                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>&
-                                               input_color_samplers,
-                                           std::vector<PassContent>& packets)
+                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_screen_views,
+                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>&   input_color_samplers,
+                                           std::vector<PassContent>&                                   packets)
 {
     packets.clear();
     (void)assembly.beginFrame(frame, timeline, retirement);
-    for (const core::CompiledPass& pass : frame.passes)
-    {
-        if (pass.draws.empty())
-        {
+    for (const core::CompiledPass& pass : frame.passes) {
+        if (pass.draws.empty()) {
             continue;
         }
 
         core::RenderPassCompatibility compatibility;
-        std::uint32_t                width  = 0;
-        std::uint32_t                height = 0;
-        if (const core::CompiledTarget& compiled_target = frame.targets[pass.target_index];
-            compiled_target.target == nullptr)
-        {
-            if (window == nullptr)
-            {
-                continue;  // no window: a pass that names no target of its own has nowhere to draw
+        std::uint32_t                 width  = 0;
+        std::uint32_t                 height = 0;
+        if (const core::CompiledTarget& compiled_target = frame.targets[pass.target_index]; compiled_target.target == nullptr) {
+            if (window == nullptr) {
+                continue; // no window: a pass that names no target of its own has nowhere to draw
             }
             compatibility = window->shape().compatibility();
             width         = window->width();
             height        = window->height();
         }
-        else
-        {
+        else {
             const HostTargets::Entry* entry = targets.find(compiled_target.target);
-            if (entry == nullptr || entry->target == nullptr)
-            {
+            if (entry == nullptr || entry->target == nullptr) {
                 continue;
             }
             compatibility = entry->target->shape().compatibility();
@@ -217,45 +204,37 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
         input_views.assign(pass.inputs.size(), {});
         input_screen_views.assign(pass.inputs.size(), {});
         input_color_samplers.assign(pass.inputs.size(), {});
-        for (std::size_t index = 0; index < pass.inputs.size(); ++index)
-        {
-            InputImages&                                      offer = input_scratch[index];
-            std::vector<::vsg::ref_ptr<::vsg::ImageView>>&    views = input_views[index];
+        for (std::size_t index = 0; index < pass.inputs.size(); ++index) {
+            InputImages&                                   offer = input_scratch[index];
+            std::vector<::vsg::ref_ptr<::vsg::ImageView>>& views = input_views[index];
             views.clear();
 
-            if (pass.inputs[index].kind == vn::graphics::ImageSource::Kind::ImportedTexture)
-            {
+            if (pass.inputs[index].kind == vn::graphics::ImageSource::Kind::ImportedTexture) {
                 // An imported texture is one sampled image: the pass' program reads it at the input set's
                 // sampler (the input walk's by-name rule), not at the cache's material sampler. The view is
                 // copied into the per-pass vector so the span stays valid until assembly.record returns.
                 const auto* texture = static_cast<const vn::graphics::Texture*>(pass.inputs[index].texture);
-                if (texture == nullptr)
-                {
-                    continue;  // an empty declaration produces nothing to bind
+                if (texture == nullptr) {
+                    continue; // an empty declaration produces nothing to bind
                 }
                 vn::vsg::detail::TextureReject reject = vn::vsg::detail::TextureReject::Ok;
                 // The state belongs to the INPUT: the same texture declared with two states uploads once and
                 // yields two samplers (see MaterialImages). No state = the backend's input sampler, the
                 // behavior every imported input had before state existed.
                 const SamplerImage sampled =
-                    pass.inputs[index].sampler.has_value()
-                        ? images.acquire(texture, *pass.inputs[index].sampler, reject)
-                        : images.acquire(texture, reject);
-                if (reject != vn::vsg::detail::TextureReject::Ok || sampled.view == nullptr)
-                {
-                    diagnostics.report(
-                        vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-                        vn::String(u8"pass input texture could not be sampled; the input binds the white "
-                                   u8"stand-in: ") +
-                            vn::vsg::detail::textureRejectMessage(reject, *texture));
+                    pass.inputs[index].sampler.has_value() ? images.acquire(texture, *pass.inputs[index].sampler, reject) : images.acquire(texture, reject);
+                if (reject != vn::vsg::detail::TextureReject::Ok || sampled.view == nullptr) {
+                    diagnostics.report(vn::graphics::DiagnosticSeverity::Warning,
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       vn::String(u8"pass input texture could not be sampled; the input binds the white "
+                                                  u8"stand-in: ") +
+                                           vn::vsg::detail::textureRejectMessage(reject, *texture));
                 }
-                if (sampled.view != nullptr)
-                {
+                if (sampled.view != nullptr) {
                     views.push_back(sampled.view);
                 }
                 offer.colors = views;
-                if (sampled.sampler != nullptr)
-                {
+                if (sampled.sampler != nullptr) {
                     std::vector<::vsg::ref_ptr<::vsg::Sampler>>& samplers = input_color_samplers[index];
                     samplers.clear();
                     samplers.push_back(sampled.sampler);
@@ -265,44 +244,34 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
             }
 
             const HostTargets::Entry* entry = targets.find(pass.inputs[index].target);
-            if (entry == nullptr || entry->target == nullptr)
-            {
+            if (entry == nullptr || entry->target == nullptr) {
                 continue;
             }
             const core::CompiledInput& input       = pass.inputs[index];
             const std::uint32_t        attachments = entry->target->colorAttachmentCount();
 
-            if (input.kind == vn::graphics::ImageSource::Kind::ProducedImage)
-            {
+            if (input.kind == vn::graphics::ImageSource::Kind::ProducedImage) {
                 // ONE image, the attachment the plan narrowed the input to. Offering the whole target here is
                 // what used to happen, and it made a content program's binding 0 answer with attachment 0 even
                 // when the pass declared attachment 1 (the declaration was a selector nothing read).
-                if (input.depth)
-                {
-                    if (input.depth_sampleable)
-                    {
+                if (input.depth) {
+                    if (input.depth_sampleable) {
                         offer.depth = entry->target->depthView();
                     }
                 }
-                else if (input.attachment >= 0 &&
-                         static_cast<std::uint32_t>(input.attachment) < attachments)
-                {
-                    views.push_back(
-                        entry->target->colorView(static_cast<std::uint32_t>(input.attachment)));
+                else if (input.attachment >= 0 && static_cast<std::uint32_t>(input.attachment) < attachments) {
+                    views.push_back(entry->target->colorView(static_cast<std::uint32_t>(input.attachment)));
                     offer.colors = views;
                 }
             }
-            else
-            {
+            else {
                 // The coarse declaration: every colour attachment, plus the depth while the plan says it is
                 // sampleable.
-                for (std::uint32_t attachment = 0; attachment < attachments; ++attachment)
-                {
+                for (std::uint32_t attachment = 0; attachment < attachments; ++attachment) {
                     views.push_back(entry->target->colorView(attachment));
                 }
                 offer.colors = views;
-                if (input.depth_sampleable)
-                {
+                if (input.depth_sampleable) {
                     offer.depth = entry->target->depthView();
                 }
             }
@@ -311,12 +280,10 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
             // whose source is this input reads the WHOLE target - even when the pass declared the source as one
             // ProducedImage (ScreenPass's addInput(ImageRef) is that shape, and the engine's G-buffer previews
             // are built on it). The content path above keeps the narrowed offer.
-            if (isScreenSource(pass, input.target))
-            {
+            if (isScreenSource(pass, input.target)) {
                 std::vector<::vsg::ref_ptr<::vsg::ImageView>>& screen_views = input_screen_views[index];
                 screen_views.clear();
-                for (std::uint32_t attachment = 0; attachment < attachments; ++attachment)
-                {
+                for (std::uint32_t attachment = 0; attachment < attachments; ++attachment) {
                     screen_views.push_back(entry->target->colorView(attachment));
                 }
                 offer.screen_colors = screen_views;
@@ -325,18 +292,15 @@ std::span<const PassContent> recordContent(ContentAssembly& assembly, WindowTarg
 
         // The view block is the PASS' (the content layer's contract), built from the first drawing call's
         // camera - the engine's passes draw through one camera per scope, so the first is the pass'.
-        const vn::graphics::VineViewBlock view_block =
-            buildViewBlock(pass.draws[0].camera, frame_seconds, width, height);
-        ::vsg::ref_ptr<::vsg::Node> content;
-        (void)assembly.record(pass, compatibility, input_scratch,
-                              std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U)),
-                              content);
+        const vn::graphics::VineViewBlock view_block = buildViewBlock(pass.draws[0].camera, frame_seconds, width, height);
+        ::vsg::ref_ptr<::vsg::Node>       content;
+        (void)assembly.record(pass, compatibility, input_scratch, std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U)), content);
         packets.push_back(PassContent{ pass.pass, std::move(content) });
     }
     return packets;
 }
 
-}  // namespace
+} // namespace
 
 namespace detail
 {
@@ -348,66 +312,82 @@ namespace detail
  * holds no state - the window's session, its swapchain and its size all belong to the device - and what it forwards
  * to is the device's own per-window entry points, so the rule "which window is this" is answered in ONE place.
  */
-class WindowFacade : public vn::graphics::WindowPresentTarget
-{
+class WindowFacade : public vn::graphics::WindowPresentTarget {
   public:
     /** @brief Creates the target of window @p index on @p device. */
-    WindowFacade(VsgBackend& device, std::size_t index) : device_(&device), index_(index) {}
+    WindowFacade(VsgBackend& device, std::size_t index)
+      : device_(&device)
+      , index_(index)
+    {}
 
-    void setWindowHandle(void* native_handle) override { device_->setWindowHandleAt(index_, native_handle); }
-    [[nodiscard]] void* nativeHandle() const override { return device_->windowHandleAt(index_); }
-    void resize(int width, int height) override { device_->resizeWindow(index_, width, height); }
-    void present() override { device_->presentWindow(index_); }
+    void setWindowHandle(void* native_handle) override
+    {
+        device_->setWindowHandleAt(index_, native_handle);
+    }
+
+    [[nodiscard]] void* nativeHandle() const override
+    {
+        return device_->windowHandleAt(index_);
+    }
+
+    void resize(int width, int height) override
+    {
+        device_->resizeWindow(index_, width, height);
+    }
+
+    void present() override
+    {
+        device_->presentWindow(index_);
+    }
 
   private:
     VsgBackend* const device_;
     const std::size_t index_;
 };
 
-}  // namespace detail
+} // namespace detail
 
-struct VsgBackend::Data
-{
+struct VsgBackend::Data {
     /// How this device reaches the display, as the creator stated it (see DeviceDesc): `None` means it was created
     /// WITHOUT a window, and that is what capabilities().presentation and createSurfaceTarget answer from.
     vn::graphics::DeviceDesc desc;
 
     /// The highest number of presented frames this device has ever seen (see frameReport): the host-visible
     /// watermark must not go backwards when a window leaves (its session stops counting).
-    std::uint64_t presented_watermark{0};
+    std::uint64_t presented_watermark{ 0 };
 
     /// This layer's inner route: its sink forwards into the SDK's ACTIVE route (see the constructor), which
     /// is the engine's when an engine drives this backend - that is what makes the host read one number.
     vn::graphics::Diagnostics diagnostics;
-    core::FrameArena  arena{ 64 * 1024 };
-    core::Observe     observe;
-    core::FrameRecorder recorder{ arena, diagnostics, observe };
-    core::FrameCompiler compiler{ arena, diagnostics, observe };
-    VsgExecutor         executor{ diagnostics };
-    PassRegistry        passes;   ///< The SDK's pass objects, as the numbers the plan carries (see the header).
-    HostTargets         targets;  ///< The host's off-screen targets (see the header and api/HostTargets).
+    core::FrameArena          arena{ 64 * 1024 };
+    core::Observe             observe;
+    core::FrameRecorder       recorder{ arena, diagnostics, observe };
+    core::FrameCompiler       compiler{ arena, diagnostics, observe };
+    VsgExecutor               executor{ diagnostics };
+    PassRegistry              passes;  // The SDK's pass objects, as the numbers the plan carries (see the header).
+    HostTargets               targets; // The host's off-screen targets (see the header and api/HostTargets).
 
     // The content world: built with the session because its pieces belong to the session's device (see
     // initialize), torn down before the session because the device goes with it. The store is device-free,
     // but it is what the assembly reads its tables from - so the set lives and dies together.
-    core::VariantPool                pool{};
-    std::shared_ptr<BlockStorage>    storage{};
+    core::VariantPool             pool{};
+    std::shared_ptr<BlockStorage> storage{};
     /// The in-flight count the next beginFrame() justifies the layout against; 0 = ask the session (the
     /// production read). TEST SEAM (see BackendContentAccess::assumeInFlightSlots): the framework these
     /// builds run against reports exactly the assumed count, so the deeper-count re-layout has no natural
     /// way to be observed here.
-    std::uint32_t stated_in_flight{0};
+    std::uint32_t stated_in_flight{ 0 };
     /// Storages a growth could not park yet: KEPT until the session ends, never freed early (the same
     /// fallback ContentAssembly::beginFrame takes when the parking window is not open yet).
     std::vector<std::shared_ptr<BlockStorage>> kept_storage{};
-    std::shared_ptr<MaterialImages>  images{};
-    std::unique_ptr<ContentStore>    store{};
-    std::unique_ptr<ContentAssembly> assembly{};
+    std::shared_ptr<MaterialImages>            images{};
+    std::unique_ptr<ContentStore>              store{};
+    std::unique_ptr<ContentAssembly>           assembly{};
 
-    void* host_handle{nullptr};            ///< The handle the host announced (nullptr = a window of our own).
-    int   announced_width{640};            ///< What the next initialize() creates its windows at.
-    int   announced_height{360};           ///< What the next initialize() creates its windows at.
-    vn::intrusive_ptr<const vn::graphics::ShaderProgram> default_program;  ///< See the header.
+    void*                                                host_handle{ nullptr };  // The handle the host announced (nullptr = a window of our own).
+    int                                                  announced_width{ 640 };  // What the next initialize() creates its windows at.
+    int                                                  announced_height{ 360 }; // What the next initialize() creates its windows at.
+    vn::intrusive_ptr<const vn::graphics::ShaderProgram> default_program;         // See the header.
 
     /**
      * @brief One window this device serves: its own session, and the target object the host holds.
@@ -416,9 +396,8 @@ struct VsgBackend::Data
      * session). What it does NOT own is anything a second window would have to duplicate - the device, its compiled
      * programs and the buffers they read live on the backend (see core::DeviceClock as well).
      */
-    struct WindowSlot
-    {
-        void*      host_handle{nullptr};
+    struct WindowSlot {
+        void*                         host_handle{ nullptr };
         std::unique_ptr<api::Session> session;
         /// The object the SDK sees. Set for EVERY window, the first included: the device hands out what presents and
         /// is not one of them (see the header), and one identity per window is what keeps "which window is this frame
@@ -426,37 +405,38 @@ struct VsgBackend::Data
         std::unique_ptr<vn::graphics::WindowPresentTarget> target;
     };
 
-    std::vector<std::unique_ptr<WindowSlot>> windows;  ///< In the order the host asked (0 = the device's own).    /// The session a frame that names NO window runs through (see executeFrame): built on the first such frame,
+    std::vector<std::unique_ptr<WindowSlot>> windows; // In the order the host asked (0 = the device's own).    /// The session a frame that names NO window
+                                                      // runs through (see executeFrame): built on the first such frame,
     /// torn down with the device. It is a SUBMIT carrier, not a window - it has no surface, acquires nothing and
     /// presents nothing.
     std::unique_ptr<api::OffscreenSession> offscreen;
     /// Which session the OPEN frame belongs to: an index into @ref windows, or kNoWindow when the frame is off-screen
     /// (executeFrame names it; presentWindow and the content seam read it back).
-    std::size_t driving{kNoWindow};
+    std::size_t driving{ kNoWindow };
     /// THE DEVICE'S completion clock and park queue, shared by every window (see core::DeviceClock): whether a buffer
     /// or a pipeline may be destroyed is a question about the whole device, because the windows draw with the same
     /// objects. A session driven on its own keeps its own pair (see api::SessionOptions).
     core::DeviceClock     clock;
-    core::RetirementQueue retirement{0};
+    core::RetirementQueue retirement{ 0 };
     /// The device itself, held here rather than only inside the windows: it outlives every window (the content world
     /// is built on it), and a window that goes away must not take it down. A device created WITHOUT a window (see
     /// DeviceDesc::None) has no window's session to own its instance, so the instance is held beside it.
     ::vsg::ref_ptr<::vsg::Device>   device;
     ::vsg::ref_ptr<::vsg::Instance> instance;
 
-    std::array<vn::graphics::ReportOnce, kUnservedCount> unserved_reports{};  ///< One episode per entry point.
-    std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};  ///< The unresolved-target episodes.
-    vn::graphics::ReportOnce occupied_report{};       ///< The "a window already served was asked again" episode.
-    vn::graphics::ReportOnce foreign_target_report{};  ///< The "a frame named someone else's target" episode.
+    std::array<vn::graphics::ReportOnce, kUnservedCount>       unserved_reports{};      // One episode per entry point.
+    std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};      // The unresolved-target episodes.
+    vn::graphics::ReportOnce                                   occupied_report{};       // The "a window already served was asked again" episode.
+    vn::graphics::ReportOnce                                   foreign_target_report{}; // The "a frame named someone else's target" episode.
     /// What the frame's sweeps have let go (see api/ContentSweep); zero while the host holds everything.
-    std::size_t released_objects{0};
-    std::size_t released_textures{0};
-    std::size_t released_streams{0};
+    std::size_t released_objects{ 0 };
+    std::size_t released_textures{ 0 };
+    std::size_t released_streams{ 0 };
     /// Reused by the sweep: the abandoned material identities whose arena slots the storage returns.
-    std::vector<const void*> abandoned_materials;
-    std::vector<core::TargetFacts>            facts;          ///< This frame's target table (borrowed rows).
-    std::vector<const vn::graphics::Light*> light_scratch;  ///< Reused by announceLights (no per-call allocation).
-    std::vector<InputImages>                  input_scratch;  ///< Reused per content pass (see recordContent).
+    std::vector<const void*>                abandoned_materials;
+    std::vector<core::TargetFacts>          facts;         // This frame's target table (borrowed rows).
+    std::vector<const vn::graphics::Light*> light_scratch; // Reused by announceLights (no per-call allocation).
+    std::vector<InputImages>                input_scratch; // Reused per content pass (see recordContent).
     /// One colour-view list per declared input, reused per pass: the InputImages spans point into these, so
     /// they must outlive the record call and must not be reallocated while it runs (see recordContent).
     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_views;
@@ -464,21 +444,20 @@ struct VsgBackend::Data
     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_screen_views;
     /// One sampler list per declared input (see InputImages::color_samplers); imported inputs fill one entry.
     std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>> input_color_samplers;
-    std::vector<PassContent>                  packets;        ///< Reused per frame (see recordContent).
-    const core::CompiledFrame*                frame{nullptr}; ///< This frame's plan, between end and swap.
-
+    std::vector<PassContent>                                 packets;          // Reused per frame (see recordContent).
+    const core::CompiledFrame*                               frame{ nullptr }; // This frame's plan, between end and swap.
 };
 
-VsgBackend::VsgBackend(const vn::graphics::DeviceDesc& desc) : d(std::make_unique<Data>())
+VsgBackend::VsgBackend(const vn::graphics::DeviceDesc& desc)
+  : d(std::make_unique<Data>())
 {
     d->desc = desc;
     // The session and the pieces report through this layer's route, whose sink forwards them into the SDK's
     // ACTIVE route (RenderBackend::setDiagnosticsRoute - the engine's, when an engine drives this backend).
     // That is what puts those sentences in the host's sink and in the engine's single count, without this
     // layer re-reporting anything.
-    d->diagnostics.setSink([this](const vn::graphics::RenderDiagnostic& diagnostic) {
-        reportDiagnostic(diagnostic.severity, diagnostic.category, diagnostic.message);
-    });
+    d->diagnostics.setSink(
+        [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic.severity, diagnostic.category, diagnostic.message); });
 }
 
 VsgBackend::~VsgBackend()
@@ -496,33 +475,26 @@ bool VsgBackend::initialize()
     // surface last announced, and with the same layers.
     const bool validation = std::getenv("VN_VSG_DEBUG_LAYER") != nullptr;
 
-    if (d->desc.presentation == vn::graphics::DevicePresentation::None)
-    {
+    if (d->desc.presentation == vn::graphics::DevicePresentation::None) {
         // A DEVICE THAT PRESENTS NOTHING IS CREATED WITHOUT A WINDOW: the windowless seam (createDevice) is the one
         // door that needs no surface (see Device.hpp), so nothing on this path can bring a window into existence -
         // which is what makes windowCount() == 0 the answer for the whole lifetime of such a device.
-        if (d->device == nullptr)
-        {
+        if (d->device == nullptr) {
             const DeviceResult created = createDevice(DeviceOptions{ .validation = validation });
-            if (!created.ok || created.device == nullptr)
-            {
-                d->diagnostics.report(vn::graphics::DiagnosticSeverity::Error,
-                                      vn::graphics::DiagnosticCategory::InitFailed, created.error);
+            if (!created.ok || created.device == nullptr) {
+                d->diagnostics.report(vn::graphics::DiagnosticSeverity::Error, vn::graphics::DiagnosticCategory::InitFailed, created.error);
                 return false;
             }
             d->instance = created.instance;
             d->device   = created.device;
         }
     }
-    else
-    {
+    else {
         // A HANDLE IS A CREATION INPUT (see DeviceDesc): the host's window is what the device is made for, so the
         // first window exists before the loop below brings it up. A Handle with nothing to attach to is wiring this
         // layer cannot repair, and it is said instead of silently becoming a window of our own.
-        if (d->desc.presentation == vn::graphics::DevicePresentation::Handle && d->windows.empty())
-        {
-            if (d->desc.native_handle == nullptr)
-            {
+        if (d->desc.presentation == vn::graphics::DevicePresentation::Handle && d->windows.empty()) {
+            if (d->desc.native_handle == nullptr) {
                 d->diagnostics.report(vn::graphics::DiagnosticSeverity::Error,
                                       vn::graphics::DiagnosticCategory::InitFailed,
                                       vn::String::fromUtf8("this device was created with a window handle as its "
@@ -535,13 +507,11 @@ bool VsgBackend::initialize()
 
         // A host that never asked for a window still gets one - the device's own (see createSurfaceTarget): the frame
         // path has to have something to present through when a host drives the aggregate directly.
-        if (d->windows.empty())
-        {
+        if (d->windows.empty()) {
             ensureWindowAt(0);
         }
 
-        for (std::size_t index = 0; index < d->windows.size(); ++index)
-        {
+        for (std::size_t index = 0; index < d->windows.size(); ++index) {
             Data::WindowSlot& window = *d->windows[index];
 
             api::SessionOptions options;
@@ -553,75 +523,64 @@ bool VsgBackend::initialize()
             // window reports its completion evidence into the DEVICE's clock and parks into the DEVICE's queue -
             // because what that evidence decides (may this buffer or pipeline go) is a question about the whole
             // device.
-            options.device     = d->device.get();
-            options.clock      = &d->clock;
-            options.retirement = &d->retirement;
+            options.device        = d->device.get();
+            options.clock         = &d->clock;
+            options.retirement    = &d->retirement;
 
             // A KEEP IS NOT A REPLACEMENT: this window is on the surface it is already on, so its device, its
             // swapchain and every compiled pipeline survive, and the content world below stays with them (the
             // session's own decision table is what answers this, see Session::wouldKeep).
-            if (window.session->wouldKeep(options))
-            {
+            if (window.session->wouldKeep(options)) {
                 continue;
             }
-            if (!window.session->initialize(options, d->diagnostics))
-            {
+            if (!window.session->initialize(options, d->diagnostics)) {
                 // The session reported why (InitFailed), and the sink forwarded it: false plus a reason is the SDK's
                 // contract for a failed initialize(), and a half-built session is this layer's to clean up (the
                 // session does its own, see its note).
                 return false;
             }
-            if (d->device == nullptr)
-            {
+            if (d->device == nullptr) {
                 // The first window created the device; every later one adopted the same one (see the options above).
                 d->device = detail::SessionContentAccess::device(*window.session);
             }
         }
     }
 
-    if (d->device == nullptr)
-    {
-        return false;  // no window came up and none was created, so there is no device to draw with
+    if (d->device == nullptr) {
+        return false; // no window came up and none was created, so there is no device to draw with
     }
 
     // The sample-count limit is the DEVICE's, read once here rather than at every target build: a target's
     // description is refused against it (see HostTargets::State::SamplesUnsupported), and the same number is
     // what capabilities() reports - one fact, one source.
-    if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice(); physical != nullptr)
-    {
+    if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice(); physical != nullptr) {
         const VkPhysicalDeviceLimits& limits = physical->getProperties().limits;
-        d->targets.setMaxSamples(
-            std::min(limits.framebufferColorSampleCounts, limits.framebufferDepthSampleCounts));
+        d->targets.setMaxSamples(std::min(limits.framebufferColorSampleCounts, limits.framebufferDepthSampleCounts));
     }
 
     // THE CONTENT WORLD BELONGS TO THE DEVICE, and is built ONCE: a window that came up, was re-attached or joined
     // later does not invalidate what was uploaded or compiled on the same device.
     d->frame = nullptr;
-    if (d->storage != nullptr)
-    {
+    if (d->storage != nullptr) {
         return true;
     }
 
     d->storage = BlockStorage::create(d->device, BlockStorage::Layout{});
     d->images  = MaterialImages::create();
-    if (d->images != nullptr)
-    {
+    if (d->images != nullptr) {
         // THE CACHE IS TOLD WHAT THE DEVICE OFFERS, once, here - where the device is. The limit is a
         // device property, and a cache that is never told samples with anisotropy enabled at 1x, which is
         // the same picture as not asking (see MaterialImages::makeSampler): the entry point existed and
         // nothing called it, so mip-chained textures were filtered isotropically however good the device
         // was. Read from the physical device the session built, and clamped by anisotropyFor - asking for
         // more than VkPhysicalDeviceLimits::maxSamplerAnisotropy is a validation error.
-        if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice())
-        {
+        if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice()) {
             d->images->setMaxAnisotropy(physical->getProperties().limits.maxSamplerAnisotropy);
         }
     }
-    if (d->storage != nullptr && d->images != nullptr)
-    {
+    if (d->storage != nullptr && d->images != nullptr) {
         d->store    = std::make_unique<ContentStore>();
-        d->assembly = std::make_unique<ContentAssembly>(*d->store, d->device, d->pool, *d->storage, *d->images,
-                                                        d->diagnostics);
+        d->assembly = std::make_unique<ContentAssembly>(*d->store, d->device, d->pool, *d->storage, *d->images, d->diagnostics);
     }
     // The default program was announced before the device came up (the engine's own order), so it is tracked now -
     // the tables must answer for it before any plan names it.
@@ -631,14 +590,13 @@ bool VsgBackend::initialize()
 
 void VsgBackend::ensureWindowAt(std::size_t index)
 {
-    while (d->windows.size() <= index)
-    {
+    while (d->windows.size() <= index) {
         auto window     = std::make_unique<Data::WindowSlot>();
         window->session = std::make_unique<api::Session>();
         // EVERY window gets its own target object, including the first: the device holds and hands out what presents
         // (see the header), and it is not one of them - one shape for N windows, and "which window is this frame
         // for" stays a pointer compare.
-        window->target = std::make_unique<detail::WindowFacade>(*this, d->windows.size());
+        window->target  = std::make_unique<detail::WindowFacade>(*this, d->windows.size());
         d->windows.push_back(std::move(window));
     }
 }
@@ -651,16 +609,13 @@ api::Session& VsgBackend::sessionAt(std::size_t index)
 
 api::OffscreenSession* VsgBackend::ensureOffscreenSession()
 {
-    if (d->device == nullptr)
-    {
-        return nullptr;  // no device came up: there is nothing to submit an off-screen frame on
+    if (d->device == nullptr) {
+        return nullptr; // no device came up: there is nothing to submit an off-screen frame on
     }
-    if (d->offscreen == nullptr)
-    {
+    if (d->offscreen == nullptr) {
         d->offscreen = std::make_unique<api::OffscreenSession>();
     }
-    if (d->offscreen->initialized())
-    {
+    if (d->offscreen->initialized()) {
         return d->offscreen.get();
     }
 
@@ -673,11 +628,10 @@ api::OffscreenSession* VsgBackend::ensureOffscreenSession()
     options.queue_family = graphicsQueueFamily(*d->device);
     // The DEVICE's clock and park queue, like every window: an off-screen frame's GPU work has to count towards the
     // watermark every shared resource is dated against (see core::DeviceClock).
-    options.clock      = &d->clock;
-    options.retirement = &d->retirement;
-    if (!d->offscreen->initialize(options, d->diagnostics))
-    {
-        return nullptr;  // it reported why (InitFailed, forwarded to the SDK's route)
+    options.clock        = &d->clock;
+    options.retirement   = &d->retirement;
+    if (!d->offscreen->initialize(options, d->diagnostics)) {
+        return nullptr; // it reported why (InitFailed, forwarded to the SDK's route)
     }
     return d->offscreen.get();
 }
@@ -692,15 +646,13 @@ void VsgBackend::releaseContentWorld() noexcept
     // VUID-vkDestroyPipeline-pipeline-00765 messages (see the per-frame cost recipe in test_vsg/VsgBackendTest,
     // which is the case that creates a pipeline after frames have started). The waits are COUNTED because "the frame
     // path never idles the device" has to stay checkable - see Session::deviceWaits and RetentionStats::device_waits.
-    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
-    {
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
     }
     // A WINDOWLESS DEVICE HAS NO WINDOW TO IDLE ABOVE: the off-screen session is a frame source too, and its
     // submitted work is device-wide, so the same destructive rule applies to it. On a device with a window the
     // idle above already covers this work; waiting again is harmless and keeps the rule one sentence.
-    if (d->offscreen != nullptr)
-    {
+    if (d->offscreen != nullptr) {
         d->offscreen->waitDeviceIdle();
     }
 
@@ -730,16 +682,15 @@ void VsgBackend::shutdown()
     // borrows the device and reports into the device's clock - so it goes before the clock and the device do.
     releaseContentWorld();
     d->offscreen.reset();
-    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
-    {
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         window->session->shutdown();
     }
-    d->device   = {};
-    d->instance = {};
+    d->device     = {};
+    d->instance   = {};
     // The evidence starts over with the next device: nothing parked survives it, and the windows that come back are
     // registered again by their own initialize().
     d->clock      = core::DeviceClock{};
-    d->retirement = core::RetirementQueue{0};
+    d->retirement = core::RetirementQueue{ 0 };
     d->driving    = kNoWindow;
 }
 
@@ -749,15 +700,12 @@ vn::graphics::RenderFrameExecutor& VsgBackend::executor()
     return *this;
 }
 
-vn::raw_ptr<vn::graphics::WindowPresentTarget>
-VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
+vn::raw_ptr<vn::graphics::WindowPresentTarget> VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
 {
     // A DEVICE CREATED TO PRESENT NOTHING has no window half at all: the machine answer is NoPresentation, and it is
     // SILENT - a display-less device is a first-class state rather than a failure (see RenderDevice::createSurfaceTarget).
-    if (d->desc.presentation == vn::graphics::DevicePresentation::None)
-    {
-        if (why != nullptr)
-        {
+    if (d->desc.presentation == vn::graphics::DevicePresentation::None) {
+        if (why != nullptr) {
             *why = vn::graphics::SurfaceTargetResult::NoPresentation;
         }
         return nullptr;
@@ -766,16 +714,12 @@ VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTarget
     // ONE LIVE SWAPCHAIN PER WINDOW (see the header). The same window again - including a second window of the
     // device's own, which has no other reason to exist - is the "occupied" episode, said once, because a host that
     // asked has to hear it rather than discover a picture that never appears.
-    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
-    {
-        if (window->host_handle == native_handle)
-        {
-            if (why != nullptr)
-            {
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
+        if (window->host_handle == native_handle) {
+            if (why != nullptr) {
                 *why = vn::graphics::SurfaceTargetResult::WindowOccupied;
             }
-            if (d->occupied_report.shouldReport())
-            {
+            if (d->occupied_report.shouldReport()) {
                 reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
                                  vn::graphics::DiagnosticCategory::UnsupportedRequest,
                                  vn::String::fromUtf8("a window this device already serves was asked for again: it was "
@@ -789,8 +733,7 @@ VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTarget
 
     ensureWindowAt(d->windows.size());
     d->windows.back()->host_handle = native_handle;
-    if (why != nullptr)
-    {
+    if (why != nullptr) {
         *why = vn::graphics::SurfaceTargetResult::Ok;
     }
     // THE DEVICE IS NOT A WINDOW (see the header): every ask - the first included - is answered by that window's own
@@ -815,21 +758,19 @@ void VsgBackend::openFrameBooks()
     // token, so the description and the session's frame cannot disagree about which frame it is. A frame with no
     // window is the OFF-SCREEN form: the off-screen session opens it, and acquires nothing (see api::OffscreenSession).
     core::FrameToken token{};
-    if (d->driving < d->windows.size())
-    {
+    if (d->driving < d->windows.size()) {
         token = sessionAt(d->driving).beginFrame();
     }
-    else if (d->offscreen != nullptr)
-    {
+    else if (d->offscreen != nullptr) {
         token = d->offscreen->beginFrame();
     }
-    (void)d->recorder.beginFrame(token);  // it answers whether the frame's books could be opened (see its note)
+    (void)d->recorder.beginFrame(token); // it answers whether the frame's books could be opened (see its note)
 }
 
 void VsgBackend::closeFrameBooks()
 {
     (void)d->recorder.endFrame();
-    (void)d->recorder.swapBuffers();  // closes the frame's books: endFrame() alone only leaves the pass scope
+    (void)d->recorder.swapBuffers(); // closes the frame's books: endFrame() alone only leaves the pass scope
 
     // The facts the plan is compiled against: the window as the default framebuffer, answered by the target
     // itself (see WindowTarget::facts), plus one row per host target this backend holds - built or not,
@@ -840,15 +781,12 @@ void VsgBackend::closeFrameBooks()
     // target resolve to, and compiling without it is how "this pass has nowhere to draw" becomes a reported skip
     // instead of a picture in a window nobody named.
     d->facts.clear();
-    if (d->driving < d->windows.size())
-    {
-        if (WindowTarget* window = detail::SessionContentAccess::windowTarget(sessionAt(d->driving)))
-        {
+    if (d->driving < d->windows.size()) {
+        if (WindowTarget* window = detail::SessionContentAccess::windowTarget(sessionAt(d->driving))) {
             d->facts.push_back(window->facts());
         }
     }
-    for (const std::unique_ptr<HostTargets::Entry>& entry : d->targets.entries())
-    {
+    for (const std::unique_ptr<HostTargets::Entry>& entry : d->targets.entries()) {
         core::TargetFacts row;
         d->targets.facts(*entry, row);
         d->facts.push_back(row);
@@ -856,8 +794,7 @@ void VsgBackend::closeFrameBooks()
     d->frame = &d->compiler.compile(d->recorder.description(), core::FrameFacts{ d->facts });
 }
 
-void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
-                              vn::graphics::PresentTarget* present_to)
+void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
 {
     // THE FRAME'S TARGET NAMES ITS WINDOW - AND NAMING NONE IS ITS OWN ANSWER. A device hands out one target per
     // window (see createSurfaceTarget), so a non-null target must be one this device handed out; anything else is
@@ -866,20 +803,15 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
     // through the device's off-screen session, records into the targets its passes name, submits, and presents
     // nothing (see `.ai/design/graphics-architecture.md` §6).
     std::size_t index = kNoWindow;
-    if (present_to != nullptr)
-    {
-        for (std::size_t candidate = 0; candidate < d->windows.size(); ++candidate)
-        {
-            if (d->windows[candidate]->target.get() == present_to)
-            {
+    if (present_to != nullptr) {
+        for (std::size_t candidate = 0; candidate < d->windows.size(); ++candidate) {
+            if (d->windows[candidate]->target.get() == present_to) {
                 index = candidate;
                 break;
             }
         }
-        if (index >= d->windows.size())
-        {
-            if (d->foreign_target_report.shouldReport())
-            {
+        if (index >= d->windows.size()) {
+            if (d->foreign_target_report.shouldReport()) {
                 reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
                                  vn::graphics::DiagnosticCategory::UnsupportedRequest,
                                  vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
@@ -891,29 +823,25 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
     }
 
     api::OffscreenSession* offscreen = nullptr;
-    if (present_to == nullptr)
-    {
+    if (present_to == nullptr) {
         offscreen = ensureOffscreenSession();
-        if (offscreen == nullptr)
-        {
+        if (offscreen == nullptr) {
             reportUnserved(kUnservedNoSession);
-            return;  // nothing runs: the device the frame would be submitted on is not up
+            return; // nothing runs: the device the frame would be submitted on is not up
         }
         // NO WINDOW IN THE FRAME, SO NONE IN THE EXECUTOR: a pass that names no target has nowhere to draw, and
         // the plan it is compiled against says so (see closeFrameBooks).
         d->driving = kNoWindow;
         d->executor.setWindow(nullptr);
     }
-    else
-    {
+    else {
         // The window this frame belongs to: the executor's default-framebuffer target is ITS, and presentWindow()
         // reads the same index back when the frame's tail arrives.
         d->driving            = index;
         api::Session& session = sessionAt(index);
-        if (!session.initialized())
-        {
+        if (!session.initialized()) {
             reportUnserved(kUnservedNoSession);
-            return;  // nothing runs and nothing presents: the session that would record it is not up
+            return; // nothing runs and nothing presents: the session that would record it is not up
         }
         d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
     }
@@ -923,48 +851,37 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
     // every call below is this backend's own piece of work, which is why the picture (and the plan) come out the
     // same whether the frame came from the engine or from a host driving one pass (RenderPass::execute).
     openFrameBooks();
-    for (const vn::graphics::FrameDescription::Pass& entry : frame.passes)
-    {
-        if (entry.pass == nullptr)
-        {
-            continue;  // a frame's entry always names a pass; a null one is nothing to run
+    for (const vn::graphics::FrameDescription::Pass& entry : frame.passes) {
+        if (entry.pass == nullptr) {
+            continue; // a frame's entry always names a pass; a null one is nothing to run
         }
         openPassScope(entry.pass);
         announcePassOrder(entry.order);
         announcePassInputs(entry.inputs);
-        if (entry.draw.has_value())
-        {
+        if (entry.draw.has_value()) {
             const vn::graphics::PassDraw& description = *entry.draw;
             announceTarget(description.target);
-            if (description.viewport.has_value())
-            {
+            if (description.viewport.has_value()) {
                 announceViewport(*description.viewport);
             }
-            if (description.clear.has_value())
-            {
+            if (description.clear.has_value()) {
                 announceClear(*description.clear);
             }
             announcePassState(description.state);
-            if (description.depth_range.has_value())
-            {
+            if (description.depth_range.has_value()) {
                 announceDepthRange(*description.depth_range);
             }
-            for (const vn::graphics::DrawDescription& draw : description.draws)
-            {
-                if (draw.lights.has_value())
-                {
+            for (const vn::graphics::DrawDescription& draw : description.draws) {
+                if (draw.lights.has_value()) {
                     announceLights(*draw.lights);
                 }
-                if (draw.camera == nullptr)
-                {
-                    continue;  // a drawing call with no view is no call at all (see DrawDescription)
+                if (draw.camera == nullptr) {
+                    continue; // a drawing call with no view is no call at all (see DrawDescription)
                 }
-                if (draw.kind == vn::graphics::DrawDescription::Kind::Screen)
-                {
+                if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
                     collectScreenDraw(draw.source, draw.program.get(), draw.camera);
                 }
-                else if (draw.commands != nullptr)
-                {
+                else if (draw.commands != nullptr) {
                     // The override is a PASS fact (see PassDraw::program_override), so every drawing call of the
                     // pass is drawn with it; the command list itself is never rewritten.
                     collectContentDraw(*draw.commands, draw.camera, description.program_override.get());
@@ -979,8 +896,7 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
     // executor presents through the target the frame named - PresentTarget::present is the mechanism, the executor is
     // the one making the call - and in this backend that call is what commits the frame and shows it. WITHOUT a
     // window there is nothing to present, so the off-screen session commits it inline.
-    if (offscreen != nullptr)
-    {
+    if (offscreen != nullptr) {
         commitFrameThrough(nullptr, offscreen);
         return;
     }
@@ -989,22 +905,19 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
 
 void VsgBackend::presentWindow(std::size_t index)
 {
-    if (index >= d->windows.size())
-    {
+    if (index >= d->windows.size()) {
         return;
     }
     api::Session& session = sessionAt(index);
-    if (d->frame == nullptr || !session.initialized())
-    {
-        return;  // no frame is open (executeFrame closed none, and says why), or the session is down
+    if (d->frame == nullptr || !session.initialized()) {
+        return; // no frame is open (executeFrame closed none, and says why), or the session is down
     }
     commitFrameThrough(&session, nullptr);
 }
 
 void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen)
 {
-    if (d->frame == nullptr || (window == nullptr && offscreen == nullptr))
-    {
+    if (d->frame == nullptr || (window == nullptr && offscreen == nullptr)) {
         return;
     }
 
@@ -1013,11 +926,9 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
     core::FrameTimeline&   timeline      = window != nullptr ? window->timeline() : offscreen->timeline();
     core::RetirementQueue& retirement    = window != nullptr ? window->retirement() : offscreen->retirement();
     const float            frame_seconds = window != nullptr ? window->frameSeconds() : offscreen->frameSeconds();
-    WindowTarget*          window_target =
-        window != nullptr ? detail::SessionContentAccess::windowTarget(*window) : nullptr;
+    WindowTarget*          window_target = window != nullptr ? detail::SessionContentAccess::windowTarget(*window) : nullptr;
 
-    if (d->frame->passes.empty())
-    {
+    if (d->frame->passes.empty()) {
         // NOTHING TO RECORD, and the frame is still submitted - the session's own rule (an acquired image has to be
         // handed back), and the graph it submits is the one the session created with its window's render graph in it.
         // That graph is not decoration: it is what moves the acquired image out of UNDEFINED, and a present of an
@@ -1031,23 +942,18 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
         // The sweep runs on this path too: a frame that draws nothing is still a frame in which the host may have
         // dropped something, and the sweep's place is the frame's - not "the frames that drew".
         sweepAbandonedContent();
-        if (window != nullptr)
-        {
+        if (window != nullptr) {
             (void)d->executor.commit(*d->frame, *window);
         }
-        else
-        {
+        else {
             (void)d->executor.commit(*d->frame, *offscreen);
         }
         d->frame = nullptr;
         return;
     }
 
-    const ::vsg::ref_ptr<::vsg::CommandGraph> graph = window != nullptr
-                                                          ? detail::SessionContentAccess::makeFrameGraph(*window)
-                                                          : offscreen->makeFrameGraph();
-    if (graph == nullptr)
-    {
+    const ::vsg::ref_ptr<::vsg::CommandGraph> graph = window != nullptr ? detail::SessionContentAccess::makeFrameGraph(*window) : offscreen->makeFrameGraph();
+    if (graph == nullptr) {
         d->frame = nullptr;
         return;
     }
@@ -1061,28 +967,34 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
     // slot until the host releases it, so the frame that would have run out is given a bigger one first.
     growMaterialArenaIfNeeded();
     std::span<const PassContent> packets{};
-    if (d->assembly != nullptr && d->images != nullptr && (window_target != nullptr || window == nullptr))
-    {
-        packets = recordContent(*d->assembly, window_target, d->targets, *d->images, d->diagnostics, timeline,
-                                retirement, frame_seconds, *d->frame, d->input_scratch, d->input_views,
-                                d->input_screen_views, d->input_color_samplers, d->packets);
+    if (d->assembly != nullptr && d->images != nullptr && (window_target != nullptr || window == nullptr)) {
+        packets = recordContent(*d->assembly,
+                                window_target,
+                                d->targets,
+                                *d->images,
+                                d->diagnostics,
+                                timeline,
+                                retirement,
+                                frame_seconds,
+                                *d->frame,
+                                d->input_scratch,
+                                d->input_views,
+                                d->input_screen_views,
+                                d->input_color_samplers,
+                                d->packets);
     }
     (void)d->executor.record(*d->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
     // what advances the retirement queue - so this is the last moment a park can be dated against this frame
     // (see api/ContentSweep, and the ordering rule core::RetirementQueue states).
     sweepAbandonedContent();
-    const bool assigned = window != nullptr
-                              ? detail::SessionContentAccess::assignFrameGraphs(*window, ::vsg::CommandGraphs{ graph })
-                              : offscreen->assignFrameGraphs(::vsg::CommandGraphs{ graph });
-    if (assigned)
-    {
-        if (window != nullptr)
-        {
-            (void)d->executor.commit(*d->frame, *window);  // it reports its own failure and marks what it wrote
+    const bool assigned = window != nullptr ? detail::SessionContentAccess::assignFrameGraphs(*window, ::vsg::CommandGraphs{ graph })
+                                            : offscreen->assignFrameGraphs(::vsg::CommandGraphs{ graph });
+    if (assigned) {
+        if (window != nullptr) {
+            (void)d->executor.commit(*d->frame, *window); // it reports its own failure and marks what it wrote
         }
-        else
-        {
+        else {
             (void)d->executor.commit(*d->frame, *offscreen);
         }
     }
@@ -1101,8 +1013,7 @@ void* VsgBackend::windowHandleAt(std::size_t index) const noexcept
 {
     // The SDK's question is "which surface am I on": a host surface was adopted, a window of our own is not
     // the host's to name - and before initialize() there is nothing to name.
-    if (index >= d->windows.size())
-    {
+    if (index >= d->windows.size()) {
         return nullptr;
     }
     return d->windows[index]->session->initialized() ? d->windows[index]->host_handle : nullptr;
@@ -1110,19 +1021,16 @@ void* VsgBackend::windowHandleAt(std::size_t index) const noexcept
 
 void VsgBackend::resizeWindow(std::size_t index, int width, int height)
 {
-    if (width <= 0 || height <= 0)
-    {
-        return;  // not a size a surface can have: nothing to announce, and nothing to follow
+    if (width <= 0 || height <= 0) {
+        return; // not a size a surface can have: nothing to announce, and nothing to follow
     }
     d->announced_width  = width;
     d->announced_height = height;
-    if (index >= d->windows.size())
-    {
-        return;  // a window that does not exist yet: the announced size is what it will be created at
+    if (index >= d->windows.size()) {
+        return; // a window that does not exist yet: the announced size is what it will be created at
     }
     api::Session& session = sessionAt(index);
-    if (session.initialized())
-    {
+    if (session.initialized()) {
         // THE SURFACE OWNS ITS SIZE (PresentTarget::resize's authority order: surface > announcement >
         // default), so a live announcement is served by FOLLOWING the surface: the session re-reads the one
         // it is on and rebuilds its swapchain when that surface changed, and what hangs off the size (the
@@ -1164,33 +1072,27 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
     // from the floor: two of the three are requirements this backend cannot run without (see DeviceRequirements),
     // which is exactly why a live session reporting them is a fact and not a promise, while GPU timings is NOT a
     // floor - a device that cannot write timestamps runs whole frames and reports its pass times as unavailable.
-    if (const ::vsg::PhysicalDevice* physical = d->device != nullptr ? d->device->getPhysicalDevice() : nullptr)
-    {
+    if (const ::vsg::PhysicalDevice* physical = d->device != nullptr ? d->device->getPhysicalDevice() : nullptr) {
         const VkPhysicalDeviceProperties& properties = physical->getProperties();
         // The LIMITS travel beside the feature bits: "anisotropy exists" and "how much of it" are different
         // answers, and the number is clamped the one way the sampler path clamps it (anisotropyFor).
-        answer.max_anisotropy        = vn::vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
-        answer.max_color_attachments = properties.limits.maxColorAttachments;
+        answer.max_anisotropy                        = vn::vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
+        answer.max_color_attachments                 = properties.limits.maxColorAttachments;
         // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the
         // limit reported is what BOTH can do (a device whose depth tops out lower is the binding side).
-        answer.max_samples =
-            std::min(properties.limits.framebufferColorSampleCounts, properties.limits.framebufferDepthSampleCounts);
+        answer.max_samples                           = std::min(properties.limits.framebufferColorSampleCounts, properties.limits.framebufferDepthSampleCounts);
         // How WIDE a rasterised LINE may be is the device's answer, not the feature bit's: `wideLines` says
         // "widths above 1.0 are allowed", and this is how far the implementation goes (some stop at 1.0 even
         // with the feature on). The recorder clamps to it (see ContentPass::Scope::max_line_width).
-        answer.max_line_width = properties.limits.lineWidthRange[1];
-        if (properties.limits.timestampComputeAndGraphics != VK_FALSE)
-        {
+        answer.max_line_width                        = properties.limits.lineWidthRange[1];
+        if (properties.limits.timestampComputeAndGraphics != VK_FALSE) {
             answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::GpuTimings);
         }
-        if (physical->getFeatures().fillModeNonSolid == VK_TRUE)
-        {
+        if (physical->getFeatures().fillModeNonSolid == VK_TRUE) {
             answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::Wireframe);
         }
-        if (physical->getFeatures().samplerAnisotropy == VK_TRUE)
-        {
-            answer.features |=
-                vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::AnisotropicFiltering);
+        if (physical->getFeatures().samplerAnisotropy == VK_TRUE) {
+            answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::AnisotropicFiltering);
         }
     }
     return answer;
@@ -1210,10 +1112,8 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     // sum is kept MONOTONIC: a window that leaves stops being counted, and a host-visible watermark must not go
     // backwards (see FrameProgress).
     std::uint64_t presented = 0;
-    for (const auto& window : d->windows)
-    {
-        if (window->session != nullptr)
-        {
+    for (const auto& window : d->windows) {
+        if (window->session != nullptr) {
             presented += window->session->framesPresented();
         }
     }
@@ -1222,17 +1122,15 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     vn::graphics::FrameReport report;
     report.counters  = d->observe.counters();
     report.retention = d->observe.retention();
-    report.progress  = vn::graphics::FrameProgress{ .submitted = timeline.submittedFrame(),
-                                                   .completed = timeline.completedFrame(),
-                                                   .presented = d->presented_watermark };
+    report.progress =
+        vn::graphics::FrameProgress{ .submitted = timeline.submittedFrame(), .completed = timeline.completedFrame(), .presented = d->presented_watermark };
     return report;
 }
 
 void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 {
-    if (target == nullptr)
-    {
-        return;  // the default framebuffer needs no announcement: a frame that names no target draws into it
+    if (target == nullptr) {
+        return; // the default framebuffer needs no announcement: a frame that names no target draws into it
     }
 
     // The host's own target, configured before any frame draws into it: held, and built as far as its description
@@ -1246,11 +1144,9 @@ void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 
 void VsgBackend::announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 {
-    if (target == nullptr)
-    {
-        if (d->recorder.inPass())
-        {
-            (void)d->recorder.setRenderTarget(nullptr);  // the default framebuffer, spelled as the plan does
+    if (target == nullptr) {
+        if (d->recorder.inPass()) {
+            (void)d->recorder.setRenderTarget(nullptr); // the default framebuffer, spelled as the plan does
         }
         return;
     }
@@ -1259,39 +1155,33 @@ void VsgBackend::announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
     // and is reported once (see adoptHostTarget). The target is held either way, whether or not it could be
     // built yet.
     (void)adoptHostTarget(target, d->recorder.inFrame());
-    if (d->recorder.inPass())
-    {
-        (void)d->recorder.setRenderTarget(target);  // the plan's identity for it: the host's own object
+    if (d->recorder.inPass()) {
+        (void)d->recorder.setRenderTarget(target); // the plan's identity for it: the host's own object
     }
 }
 
 bool VsgBackend::adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool picture_depends)
 {
     const HostTargets::Ensured ensured = d->targets.ensure(*target, d->device);
-    if (ensured.state == HostTargets::State::Ready)
-    {
-        ensured.entry->report.rearm();  // the condition ended: the same breakage reports again
+    if (ensured.state == HostTargets::State::Ready) {
+        ensured.entry->report.rearm(); // the condition ended: the same breakage reports again
     }
-    else if (ensured.state != HostTargets::State::NotBuilt && picture_depends &&
-             ensured.entry->report.shouldReport())
-    {
-        reportUnbuildableTarget(target, ensured.state == HostTargets::State::DepthSourceMissing
-                                            ? UnbuildableReason::DepthSourceMissing
-                                            : (ensured.state == HostTargets::State::SamplesUnsupported
-                                                   ? UnbuildableReason::SamplesUnsupported
-                                                   : UnbuildableReason::BuildFailed),
-                                d->targets.maxSamples());
+    else if (ensured.state != HostTargets::State::NotBuilt && picture_depends && ensured.entry->report.shouldReport()) {
+        reportUnbuildableTarget(
+            target,
+            ensured.state == HostTargets::State::DepthSourceMissing
+                ? UnbuildableReason::DepthSourceMissing
+                : (ensured.state == HostTargets::State::SamplesUnsupported ? UnbuildableReason::SamplesUnsupported : UnbuildableReason::BuildFailed),
+            d->targets.maxSamples());
     }
 
-    if (ensured.entry->target != nullptr)
-    {
+    if (ensured.entry->target != nullptr) {
         d->executor.addTarget(target, ensured.entry->target.get(), target->name().as_std_str().c_str());
     }
     return ensured.entry->target != nullptr;
 }
 
-void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target,
-                                          UnbuildableReason reason, std::uint32_t max_samples)
+void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, UnbuildableReason reason, std::uint32_t max_samples)
 {
     // What is reported is the description that cannot become objects at all - a missing lender, or a build that
     // failed - and never "NotBuilt", which is not a failure: a host configures a target before it draws into it
@@ -1299,80 +1189,68 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
     // SDK's own label, see RenderTarget::setName): "a target could not be built" is a sentence a host cannot act
     // on, and the pipeline builder names everything it creates.
     std::string message;
-    if (reason == UnbuildableReason::SamplesUnsupported)
-    {
+    if (reason == UnbuildableReason::SamplesUnsupported) {
         // The two reasons a sample count is refused, said as the difference they are: a count the device does
         // not have, and a multisampled target asking for what a multisampled depth cannot do (be shared with
         // another pass, or be sampled by a shader). Both are the DESCRIPTION's, so the host can fix it.
-        const std::uint32_t samples = target->samples();
+        const std::uint32_t samples  = target->samples();
         const bool          too_many = samples > max_samples;
-        message = nameOf(target) + " asks for " + std::to_string(samples) + " samples per pixel, ";
-        message += too_many
-            ? "above the device's limit of " + std::to_string(max_samples) +
-                  ": the passes that draw into it are skipped (see Capabilities::max_samples)"
-            : "and borrows its depth from another target: a borrowed depth is that target's resolved "
-              "single-sample picture, and a framebuffer's attachments share one sample count - announce the "
-              "borrower at one sample, or let it own its depth";
+        message                      = nameOf(target) + " asks for " + std::to_string(samples) + " samples per pixel, ";
+        message += too_many ? "above the device's limit of " + std::to_string(max_samples) +
+                                  ": the passes that draw into it are skipped (see Capabilities::max_samples)"
+                            : "and borrows its depth from another target: a borrowed depth is that target's resolved "
+                              "single-sample picture, and a framebuffer's attachments share one sample count - announce the "
+                              "borrower at one sample, or let it own its depth";
     }
-    else if (reason == UnbuildableReason::DepthSourceMissing)
-    {
+    else if (reason == UnbuildableReason::DepthSourceMissing) {
         // The lender is read from the target itself (shareDepth keeps it alive), so this works whether or
         // not it was ever announced - which is exactly the case being reported.
         message = nameOf(target) + " borrows its depth from " + nameOf(target->depthSource()) +
                   ", which this backend does not hold: it is not built, and the passes that draw into it "
                   "are skipped (the lender must be announced first)";
     }
-    else
-    {
-        message = nameOf(target) +
-                  " could not be built (its images, render pass or readback buffer failed to create, or "
-                  "its description is not a target): the passes that draw into it are skipped";
+    else {
+        message = nameOf(target) + " could not be built (its images, render pass or readback buffer failed to create, or "
+                                   "its description is not a target): the passes that draw into it are skipped";
     }
-    reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                     vn::graphics::DiagnosticCategory::TargetBuildFailed, vn::String::fromUtf8(message));
+    reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::TargetBuildFailed, vn::String::fromUtf8(message));
 }
 
 void VsgBackend::openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass)
 {
-    if (pass == nullptr)
-    {
-        return;  // no pass announced: whatever needed a scope is refused and reported by the recorder
+    if (pass == nullptr) {
+        return; // no pass announced: whatever needed a scope is refused and reported by the recorder
     }
     const core::PassId id = d->passes.adopt(pass);
-    if (d->recorder.inFrame())
-    {
+    if (d->recorder.inFrame()) {
         (void)d->recorder.beginPass(id);
     }
 }
 
 void VsgBackend::closePassScope()
 {
-    if (d->recorder.inFrame())
-    {
+    if (d->recorder.inFrame()) {
         (void)d->recorder.endPass();
     }
 }
 
 void VsgBackend::announcePassOrder(int order)
 {
-    if (d->recorder.inPass())
-    {
+    if (d->recorder.inPass()) {
         (void)d->recorder.setPassOrder(order);
     }
 }
 
 void VsgBackend::announceViewport(const vn::graphics::Viewport& viewport)
 {
-    if (d->recorder.inPass())
-    {
+    if (d->recorder.inPass()) {
         (void)d->recorder.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
     }
 }
 
 void VsgBackend::announceLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights)
 {
-    if (!d->recorder.inPass())
-    {
+    if (!d->recorder.inPass()) {
         return;
     }
     // raw_ptr<T> IS T* (see vine/raw_ptr.hpp), so the draw's pointers are the plan's spelling as
@@ -1384,14 +1262,11 @@ void VsgBackend::announceLights(const std::vector<vn::raw_ptr<const vn::graphics
 
 void VsgBackend::announcePassInputs(const std::vector<vn::graphics::ImageSource>& inputs)
 {
-    if (!d->recorder.inPass())
-    {
+    if (!d->recorder.inPass()) {
         return;
     }
-    for (const vn::graphics::ImageSource& input : inputs)
-    {
-        if (input.isProduced() && input.target != nullptr)
-        {
+    for (const vn::graphics::ImageSource& input : inputs) {
+        if (input.isProduced() && input.target != nullptr) {
             // The description of every produced input is kept current here too: its objects were built when a
             // pass drew into it, and what has to be fresh is the facts row the plan resolves the input's shape
             // (its colour count, its depth's sampleability) from (see HostTargets::observe).
@@ -1405,24 +1280,21 @@ void VsgBackend::announcePassInputs(const std::vector<vn::graphics::ImageSource>
 
 void VsgBackend::announcePassState(const vn::graphics::PassRenderState& state)
 {
-    if (d->recorder.inPass())
-    {
+    if (d->recorder.inPass()) {
         (void)d->recorder.setPassState(state);
     }
 }
 
 void VsgBackend::announceDepthRange(const vn::graphics::DepthRange& range)
 {
-    if (d->recorder.inPass())
-    {
+    if (d->recorder.inPass()) {
         (void)d->recorder.setDepthRange(range);
     }
 }
 
 void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
 {
-    if (!d->recorder.inPass())
-    {
+    if (!d->recorder.inPass()) {
         return;
     }
     // The SDK's policy is linear floats plus a depth flag; the plan's is floats plus a depth VALUE. The colour is
@@ -1437,7 +1309,7 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
     // one place the two meet, and since the SDK side became linear the translation is a straight copy - the reason it
     // still exists is that neither half should have to know the other's shape.
     core::ClearValues translated;
-    translated.color          = true;  // the SDK only announces a policy for a pass that clears its colour
+    translated.color          = true; // the SDK only announces a policy for a pass that clears its colour
     translated.color_value[0] = policy.color.r;
     translated.color_value[1] = policy.color.g;
     translated.color_value[2] = policy.color.b;
@@ -1448,20 +1320,18 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
     for (const vn::Colorf& colour : policy.extra_colors) {
         translated.extra_color_values.push_back({ colour.r, colour.g, colour.b, colour.a });
     }
-    translated.depth          = policy.depth;
+    translated.depth = policy.depth;
     (void)d->recorder.setClearPolicy(translated);
 }
 
 void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
-                                    const vn::graphics::Camera*                      camera,
-                                    const vn::graphics::ShaderProgram*               program_override)
+                                    const vn::graphics::Camera*                     camera,
+                                    const vn::graphics::ShaderProgram*              program_override)
 {
-    if (!d->recorder.inFrame())
-    {
-        return;  // nothing is collected outside a frame
+    if (!d->recorder.inFrame()) {
+        return; // nothing is collected outside a frame
     }
-    if (d->store == nullptr)
-    {
+    if (d->store == nullptr) {
         // The content world could not be built on this session (see initialize): collecting the draws would
         // plan a picture nothing can render, which is the silent black frame this backend refuses to be.
         reportUnserved(kUnservedDraw);
@@ -1470,8 +1340,7 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
     // What the commands name becomes the store's live content: the objects are borrowed for the frame, and
     // the tables must answer for them when the plan (which copies their identities) is recorded - including
     // after the host has dropped its own handle (the store owns a share, see its note).
-    for (const vn::graphics::RenderCommand& command : commands)
-    {
+    for (const vn::graphics::RenderCommand& command : commands) {
         d->store->track(command.geometry);
         d->store->track(command.material);
         d->store->track(command.program);
@@ -1484,28 +1353,24 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
     }
     // The picture's shape is the CAMERA's (see Camera), and the recorder reads it from the same camera when it
     // builds the view block - one number, read by culling and projection alike, so they cannot drift.
-    if (program_override != nullptr)
-    {
+    if (program_override != nullptr) {
         // The override's own texts are content like any other: the store must answer for them when the plan
         // records, even though no command names it.
-        trackProgram(d->store.get(), vn::intrusive_ptr<const vn::graphics::ShaderProgram>(
-                                         const_cast<vn::graphics::ShaderProgram*>(program_override)));
+        trackProgram(d->store.get(), vn::intrusive_ptr<const vn::graphics::ShaderProgram>(const_cast<vn::graphics::ShaderProgram*>(program_override)));
     }
     // The pass' override is resolved when the draw is recorded (see FrameRecorder::render): the command list stays the
     // shared one the engine collected, and nothing here rewrites it.
-    (void)d->recorder.render(commands, camera, program_override);  // refusing (a released target) is the recorder's to report
+    (void)d->recorder.render(commands, camera, program_override); // refusing (a released target) is the recorder's to report
 }
 
-void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                     source,
+void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                    source,
                                    vn::raw_ptr<const vn::graphics::ShaderProgram> program,
                                    vn::raw_ptr<const vn::graphics::Camera>        camera)
 {
-    if (!d->recorder.inFrame())
-    {
-        return;  // nothing is collected outside a frame
+    if (!d->recorder.inFrame()) {
+        return; // nothing is collected outside a frame
     }
-    if (d->store != nullptr)
-    {
+    if (d->store != nullptr) {
         // The fragment stage is content like any other: the tables must answer its two texts and their
         // declarations when the plan records (the store's own walk covers full-screen calls' programs).
         trackProgram(d->store.get(), vn::intrusive_ptr<const vn::graphics::ShaderProgram>(program));
@@ -1525,8 +1390,7 @@ void VsgBackend::releasePass(vn::raw_ptr<const vn::graphics::RenderPass> pass)
 
 void VsgBackend::releaseRenderTarget(vn::graphics::RenderTarget* target)
 {
-    if (target == nullptr)
-    {
+    if (target == nullptr) {
         return;
     }
     // The SDK announces that the caller may destroy it now, so everything held for it goes: the registry
@@ -1541,53 +1405,47 @@ void VsgBackend::releaseRenderTarget(vn::graphics::RenderTarget* target)
 
 bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
 {
-    if (content == nullptr || !initialized() || d->store == nullptr || d->images == nullptr)
-    {
+    if (content == nullptr || !initialized() || d->store == nullptr || d->images == nullptr) {
         return false;
     }
 
     // ONE TYPE DISPATCH: the SDK names the entry with Object because the four content types have no common
     // narrower base (see graphics-content-lifecycle.md). The order is exact: no two of these types
     // are related, and a Texture2D / CubeMap answers through Texture::desc().
-    if (const auto* geometry = vn::obj_cast<const vn::graphics::Geometry>(content))
-    {
+    if (const auto* geometry = vn::obj_cast<const vn::graphics::Geometry>(content)) {
         return d->store->releaseGeometry(geometry, d->clock.timeline(), d->retirement);
     }
-    if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content))
-    {
+    if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content)) {
         return d->store->releaseProgram(program, d->clock.timeline(), d->retirement);
     }
-    if (const auto* material = vn::obj_cast<const vn::graphics::Material>(content))
-    {
+    if (const auto* material = vn::obj_cast<const vn::graphics::Material>(content)) {
         const bool released = d->store->releaseMaterial(material, d->clock.timeline(), d->retirement);
-        if (released && d->storage != nullptr)
-        {
+        if (released && d->storage != nullptr) {
             // The row's slot goes with it: a released material must not keep memory the host asked to free.
             (void)d->storage->releaseMaterial(material);
         }
         return released;
     }
-    if (const auto* texture = vn::obj_cast<const vn::graphics::Texture>(content))
-    {
+    if (const auto* texture = vn::obj_cast<const vn::graphics::Texture>(content)) {
         return d->images->releaseTexture(texture);
     }
     return false;
 }
 
-bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int attachment,
-                                 std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why)
+bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
+                                 int                               attachment,
+                                 std::vector<std::uint8_t>&        outPixels,
+                                 vn::graphics::ReadbackResult*     why)
 {
     // A refusal says WHY on both channels: the machine answer in @p why and one sentence on the diagnostics
     // route - once per episode, because this call is synchronous and a caller polling a target that is not
     // ready yet must not be flooded. A target this backend holds keeps its own episode (its entry's); the
     // ones it cannot even resolve share one per entry point.
     const auto refuse = [&](HostReadbackRefusal refusal, vn::graphics::ReportOnce& episode) {
-        if (why != nullptr)
-        {
+        if (why != nullptr) {
             *why = readbackResultOf(refusal);
         }
-        if (episode.shouldReport())
-        {
+        if (episode.shouldReport()) {
             reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
                              vn::graphics::DiagnosticCategory::ContentSkipped,
                              readbackRefusalMessage(refusal, "readColorBuffer()"));
@@ -1595,38 +1453,31 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int a
         return false;
     };
 
-    if (target == nullptr)
-    {
+    if (target == nullptr) {
         return refuse(HostReadbackRefusal::NoTarget, d->readback_reports[kReadbackColour]);
     }
     HostTargets::Entry* entry = d->targets.find(target);
-    if (entry == nullptr)
-    {
+    if (entry == nullptr) {
         // Never announced, or released: the SDK's own answer is NotReady (a later frame or a re-announced
         // handle can make it readable), not Unsupported - which is the answer to "this backend never will".
         return refuse(HostReadbackRefusal::UnknownTarget, d->readback_reports[kReadbackColour]);
     }
-    if (entry->target == nullptr)
-    {
+    if (entry->target == nullptr) {
         return refuse(HostReadbackRefusal::NotBuilt, entry->readback_report);
     }
-    if (attachment < 0)
-    {
+    if (attachment < 0) {
         return refuse(HostReadbackRefusal::UnknownAttachment, entry->readback_report);
     }
     const ::vsg::ref_ptr<::vsg::Device> device = d->device;
-    if (device == nullptr)
-    {
+    if (device == nullptr) {
         return refuse(HostReadbackRefusal::NoDevice, entry->readback_report);
     }
 
     // Everything that cannot be served is answered BEFORE the device is stopped (an attachment the target
     // does not have, a format this backend does not pack, a target no frame has drawn into yet): a request
     // that has no answer costs nothing - not even the wait below.
-    const HostReadbackRefusal pre =
-        classifyReadback(*entry->target, core::ReadbackKind::Color, static_cast<std::uint32_t>(attachment));
-    if (pre != HostReadbackRefusal::None)
-    {
+    const HostReadbackRefusal pre = classifyReadback(*entry->target, core::ReadbackKind::Color, static_cast<std::uint32_t>(attachment));
+    if (pre != HostReadbackRefusal::None) {
         return refuse(pre, entry->readback_report);
     }
 
@@ -1634,35 +1485,28 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target, int a
     // every window is stopped first - and each wait is COUNTED (the counter deviceWaits() answers with): a readback
     // is the one path that may stop the device, and "it did so once per window" stays checkable (see
     // SessionContentAccess::waitDeviceIdle).
-    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
-    {
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
     }
 
-    const HostReadbackRefusal refusal = readColorAttachment(*entry->target, static_cast<std::uint32_t>(attachment),
-                                                            device.get(), outPixels);
-    if (refusal != HostReadbackRefusal::None)
-    {
+    const HostReadbackRefusal refusal = readColorAttachment(*entry->target, static_cast<std::uint32_t>(attachment), device.get(), outPixels);
+    if (refusal != HostReadbackRefusal::None) {
         return refuse(refusal, entry->readback_report);
     }
-    entry->readback_report.rearm();  // a readback that works ends the episode
-    if (why != nullptr)
-    {
+    entry->readback_report.rearm(); // a readback that works ends the episode
+    if (why != nullptr) {
         *why = vn::graphics::ReadbackResult::Ok;
     }
     return true;
 }
 
-bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths,
-                                 vn::graphics::ReadbackResult* why)
+bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why)
 {
     const auto refuse = [&](HostReadbackRefusal refusal, vn::graphics::ReportOnce& episode) {
-        if (why != nullptr)
-        {
+        if (why != nullptr) {
             *why = readbackResultOf(refusal);
         }
-        if (episode.shouldReport())
-        {
+        if (episode.shouldReport()) {
             reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
                              vn::graphics::DiagnosticCategory::ContentSkipped,
                              readbackRefusalMessage(refusal, "readDepthBuffer()"));
@@ -1670,52 +1514,43 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
         return false;
     };
 
-    if (target == nullptr)
-    {
+    if (target == nullptr) {
         return refuse(HostReadbackRefusal::NoTarget, d->readback_reports[kReadbackDepth]);
     }
     HostTargets::Entry* entry = d->targets.find(target);
-    if (entry == nullptr)
-    {
+    if (entry == nullptr) {
         return refuse(HostReadbackRefusal::UnknownTarget, d->readback_reports[kReadbackDepth]);
     }
-    if (entry->target == nullptr)
-    {
+    if (entry->target == nullptr) {
         return refuse(HostReadbackRefusal::NotBuilt, entry->readback_report);
     }
-    if (entry->description.depth_source != nullptr)
-    {
+    if (entry->description.depth_source != nullptr) {
         // The SDK's own rule: a borrowed depth is read through the SOURCE target, and the borrower answers
         // Unsupported - the image belongs to the lender, and this target never promised it.
         return refuse(HostReadbackRefusal::BorrowedDepth, entry->readback_report);
     }
     const ::vsg::ref_ptr<::vsg::Device> device = d->device;
-    if (device == nullptr)
-    {
+    if (device == nullptr) {
         return refuse(HostReadbackRefusal::NoDevice, entry->readback_report);
     }
 
     const HostReadbackRefusal pre = classifyReadback(*entry->target, core::ReadbackKind::Depth, 0U);
-    if (pre != HostReadbackRefusal::None)
-    {
+    if (pre != HostReadbackRefusal::None) {
         return refuse(pre, entry->readback_report);
     }
 
     // Every window is stopped: the depth image is a device object, and the frame that wrote it may be in flight in
     // any of them (see readColorBuffer's note).
-    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
-    {
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
     }
 
     const HostReadbackRefusal refusal = readDepthAttachment(*entry->target, device.get(), outDepths);
-    if (refusal != HostReadbackRefusal::None)
-    {
+    if (refusal != HostReadbackRefusal::None) {
         return refuse(refusal, entry->readback_report);
     }
     entry->readback_report.rearm();
-    if (why != nullptr)
-    {
+    if (why != nullptr) {
         *why = vn::graphics::ReadbackResult::Ok;
     }
     return true;
@@ -1725,16 +1560,13 @@ bool VsgBackend::initialized() const noexcept
 {
     // A device created to present nothing has no session to ask: it is up when its device is (and that is the only
     // thing a window would have told us here).
-    if (d->desc.presentation == vn::graphics::DevicePresentation::None)
-    {
+    if (d->desc.presentation == vn::graphics::DevicePresentation::None) {
         return d->device != nullptr;
     }
     // Up when ANY window is: a device with several windows is up as soon as one of them can draw, and a window that
     // failed to come up does not take the others down with it (its own initialize() said why).
-    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
-    {
-        if (window->session->initialized())
-        {
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
+        if (window->session->initialized()) {
             return true;
         }
     }
@@ -1744,8 +1576,7 @@ bool VsgBackend::initialized() const noexcept
 std::uint64_t VsgBackend::framesPresented() const noexcept
 {
     std::uint64_t presented = 0;
-    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows)
-    {
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         presented += window->session->framesPresented();
     }
     return presented;
@@ -1775,22 +1606,18 @@ std::size_t VsgBackend::releasedStreams() const noexcept
 
 void VsgBackend::sweepAbandonedContent()
 {
-    if (d->store == nullptr || d->images == nullptr)
-    {
+    if (d->store == nullptr || d->images == nullptr) {
         // No content world on this session (see initialize): there is nothing retained to let go of either.
         return;
     }
-    const SweepOutcome outcome = releaseAbandonedContent(*d->store, *d->images, d->clock.timeline(), d->retirement,
-                                                          d->abandoned_materials);
+    const SweepOutcome outcome = releaseAbandonedContent(*d->store, *d->images, d->clock.timeline(), d->retirement, d->abandoned_materials);
     d->released_objects += outcome.objects;
     d->released_textures += outcome.textures;
 
     // THE MATERIAL SLOT FOLLOWS THE ROW: a material nobody holds any more cannot be drawn again, so the arena's
     // slot is nobody's to keep (releaseMaterial is a key lookup, never a dereference - the object may be gone).
-    if (d->storage != nullptr)
-    {
-        for (const void* material : d->abandoned_materials)
-        {
+    if (d->storage != nullptr) {
+        for (const void* material : d->abandoned_materials) {
             (void)d->storage->releaseMaterial(material);
         }
     }
@@ -1803,16 +1630,14 @@ void VsgBackend::sweepAbandonedContent()
     // binds is stamped with it, and this is the frame's last word on streams. It runs beside the sweep above
     // because the two answer the same question about different things - "is anything still holding this?" -
     // and because a stream whose geometry was just released is exactly one of the entries this finds.
-    if (d->assembly != nullptr)
-    {
+    if (d->assembly != nullptr) {
         d->released_streams += d->assembly->releaseUnusedStreams();
     }
 }
 
 void VsgBackend::growMaterialArenaIfNeeded()
 {
-    if (d->storage == nullptr || d->store == nullptr)
-    {
+    if (d->storage == nullptr || d->store == nullptr) {
         return; // no content world on this session: nothing notes materials
     }
 
@@ -1820,35 +1645,34 @@ void VsgBackend::growMaterialArenaIfNeeded()
     const BlockStorage::Growth pending = d->storage->growthNeeded();
     // Every material row the store answers for is a slot the arena keeps, plus whatever a refused note asked
     // for (the fallback path). One number, from the layer that knows the live set.
-    const std::uint32_t live = static_cast<std::uint32_t>(d->store->materialCount());
-    const std::uint32_t need = std::max(live, pending.materials);
-    if (need <= before.materials.capacity)
-    {
+    const std::uint32_t live           = static_cast<std::uint32_t>(d->store->materialCount());
+    const std::uint32_t need           = std::max(live, pending.materials);
+    if (need <= before.materials.capacity) {
         return;
     }
 
     BlockStorage::Growth request{};
-    request.materials = need;
-    const BlockStorage::Layout wanted = BlockStorage::grownLayout(before, request);
+    request.materials                         = need;
+    const BlockStorage::Layout    wanted      = BlockStorage::grownLayout(before, request);
     std::shared_ptr<BlockStorage> replacement = BlockStorage::create(d->device, wanted);
-    if (replacement == nullptr || !adoptBlockStorage(std::move(replacement)))
-    {
+    if (replacement == nullptr || !adoptBlockStorage(std::move(replacement))) {
         return; // the old storage keeps serving and counting; a refusal is reported by the draw that hits it
     }
 
     // The same shape of sentence as the block budgets' growth: Info, because the request was served by a bigger
     // buffer rather than by dropping content.
-    reportDiagnostic(vn::graphics::DiagnosticSeverity::Info, vn::graphics::DiagnosticCategory::ContentSkipped,
+    reportDiagnostic(vn::graphics::DiagnosticSeverity::Info,
+                     vn::graphics::DiagnosticCategory::ContentSkipped,
                      formatDiagnostic(u8"the live material set outgrew the arena, so the block storage was replaced "
                                       u8"(a new buffer; the old one is parked): materials %u -> %u",
-                                      before.materials.capacity, wanted.materials.capacity));
+                                      before.materials.capacity,
+                                      wanted.materials.capacity));
 }
 
 void VsgBackend::growBlockStorageIfNeeded()
 {
-    if (d->storage == nullptr)
-    {
-        return;  // no content world on this session (see initialize): nothing writes blocks
+    if (d->storage == nullptr) {
+        return; // no content world on this session (see initialize): nothing writes blocks
     }
 
     // TWO REQUESTS, ONE REPLACEMENT. A frame that ran out of budget asks for deeper rings (see the growth
@@ -1861,26 +1685,21 @@ void VsgBackend::growBlockStorageIfNeeded()
     const BlockStorage::Growth need    = d->storage->growthNeeded();
 
     const bool slabs_short = learned != 0U && !BlockStorage::hasSlabsForInFlight(before, learned);
-    if (!slabs_short && !need.needed())
-    {
+    if (!slabs_short && !need.needed()) {
         return;
     }
 
     BlockStorage::Layout wanted = before;
-    if (slabs_short)
-    {
+    if (slabs_short) {
         wanted = BlockStorage::layoutForInFlight(wanted, learned);
     }
-    if (need.needed())
-    {
+    if (need.needed()) {
         wanted = BlockStorage::grownLayout(wanted, need);
     }
 
-    std::shared_ptr<BlockStorage> replacement =
-        BlockStorage::create(d->device, wanted);
-    if (replacement == nullptr || !adoptBlockStorage(std::move(replacement)))
-    {
-        return;  // the old storage keeps serving (and counting); its refusals were already reported
+    std::shared_ptr<BlockStorage> replacement = BlockStorage::create(d->device, wanted);
+    if (replacement == nullptr || !adoptBlockStorage(std::move(replacement))) {
+        return; // the old storage keeps serving (and counting); its refusals were already reported
     }
 
     // WHY THE BYTES MOVED IS SAID OUT LOUD: for a grown budget, the per-pass warnings were the frames that
@@ -1888,19 +1707,16 @@ void VsgBackend::growBlockStorageIfNeeded()
     // record - the frames it protects were about to shade with another frame's slab, silently. Info, because
     // BOTH requests were served - by a bigger buffer rather than by dropping less.
     std::string reason;
-    if (slabs_short && need.needed())
-    {
+    if (slabs_short && need.needed()) {
         reason = "the session learned its in-flight count (" + std::to_string(learned) +
                  ") and the frame's block budget was exhausted, so the block storage was replaced (a new "
                  "buffer; the old one is parked):";
     }
-    else if (slabs_short)
-    {
+    else if (slabs_short) {
         reason = "the session learned its in-flight count (" + std::to_string(learned) +
                  "), so the per-frame block storage was re-laid out (a new buffer; the old one is parked):";
     }
-    else
-    {
+    else {
         reason = "the frame's block budget was exhausted, so the block storage grew (a new buffer; the old "
                  "one is parked):";
     }
@@ -1909,42 +1725,36 @@ void VsgBackend::growBlockStorageIfNeeded()
             reason += std::string(" ") + what + " " + std::to_string(from) + " -> " + std::to_string(to) + ";";
         }
     };
-    if (slabs_short)
-    {
+    if (slabs_short) {
         append("slabs", before.views.slabs, wanted.views.slabs);
     }
     append("views", before.views.blocks_per_frame, wanted.views.blocks_per_frame);
     append("draws", before.draws.blocks_per_frame, wanted.draws.blocks_per_frame);
     append("lights", before.lights.blocks_per_frame, wanted.lights.blocks_per_frame);
     append("shadows", before.shadows.blocks_per_frame, wanted.shadows.blocks_per_frame);
-    reportDiagnostic(vn::graphics::DiagnosticSeverity::Info, vn::graphics::DiagnosticCategory::ContentSkipped,
-                     vn::String::fromUtf8(reason));
+    reportDiagnostic(vn::graphics::DiagnosticSeverity::Info, vn::graphics::DiagnosticCategory::ContentSkipped, vn::String::fromUtf8(reason));
 }
 
 bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
 {
-    if (storage == nullptr)
-    {
+    if (storage == nullptr) {
         return false;
     }
     // The assembly first: it is what hands the storage to a record, and its cached sets bind the buffer
     // (the replaced sets are parked through the session's own window - see ContentSets::repoint).
-    if (d->assembly != nullptr)
-    {
+    if (d->assembly != nullptr) {
         d->assembly->repoint(*storage, d->clock.timeline(), d->retirement);
     }
     std::shared_ptr<BlockStorage> previous = std::move(d->storage);
     d->storage                             = std::move(storage);
-    if (previous != nullptr)
-    {
+    if (previous != nullptr) {
         // The old bytes may still be named by a submitted command buffer, so they leave through the window
         // every replaced object gets - and when there is no window to park through yet, they are KEPT
         // (memory spent, never freed early: the same fallback ContentAssembly::beginFrame takes).
         //
         // ONE PARK, ONE DEVICE: the queue is the device's and its watermark is what EVERY window has proven (see
         // core::DeviceClock), so this is the same act whether one window or four draw with the storage.
-        if (!d->retirement.retire(d->clock.timeline(), [previous]() {}))
-        {
+        if (!d->retirement.retire(d->clock.timeline(), [previous]() {})) {
             d->kept_storage.push_back(std::move(previous));
         }
     }
@@ -1953,15 +1763,13 @@ bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
 
 void VsgBackend::reportUnserved(std::size_t slot) noexcept
 {
-    if (slot >= kUnservedCount || !d->unserved_reports[slot].shouldReport())
-    {
+    if (slot >= kUnservedCount || !d->unserved_reports[slot].shouldReport()) {
         return;
     }
     reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
                      vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                     vn::String::fromUtf8(std::string(kUnservedNames[slot]) +
-                              " has nowhere to go: every part of the frame protocol needs a session that is "
-                              "up (see .ai/design/vsg-backend.md)"));
+                     vn::String::fromUtf8(std::string(kUnservedNames[slot]) + " has nowhere to go: every part of the frame protocol needs a session that is "
+                                                                              "up (see .ai/design/vsg-backend.md)"));
 }
 
 namespace detail
@@ -1984,8 +1792,7 @@ BlockStorage* BackendContentAccess::storage(VsgBackend& backend) noexcept
 
 bool BackendContentAccess::useBlockStorage(VsgBackend& backend, const BlockStorage::Layout& layout)
 {
-    if (backend.d->device == nullptr || backend.d->assembly == nullptr)
-    {
+    if (backend.d->device == nullptr || backend.d->assembly == nullptr) {
         return false;
     }
     std::shared_ptr<BlockStorage> replacement = BlockStorage::create(backend.d->device, layout);
@@ -2012,18 +1819,15 @@ WindowTarget* BackendContentAccess::windowTarget(VsgBackend& backend) noexcept
     // The window the last frame was for (the tests that use this seam drive one window, and executeFrame records
     // which one that was - see Data::driving). A frame that named NO window leaves none: the off-screen form has no
     // default framebuffer to answer with.
-    if (backend.d->driving >= backend.d->windows.size())
-    {
+    if (backend.d->driving >= backend.d->windows.size()) {
         return nullptr;
     }
     return SessionContentAccess::windowTarget(*backend.d->windows[backend.d->driving]->session);
 }
 
-vn::raw_ptr<vn::graphics::WindowPresentTarget> BackendContentAccess::surfaceTarget(VsgBackend& backend,
-                                                                                   std::size_t    index) noexcept
+vn::raw_ptr<vn::graphics::WindowPresentTarget> BackendContentAccess::surfaceTarget(VsgBackend& backend, std::size_t index) noexcept
 {
-    if (index >= backend.d->windows.size())
-    {
+    if (index >= backend.d->windows.size()) {
         return nullptr;
     }
     return backend.d->windows[index]->target.get();
@@ -2044,6 +1848,6 @@ core::VariantPool& BackendContentAccess::pool(VsgBackend& backend) noexcept
     return backend.d->pool;
 }
 
-}  // namespace detail
+} // namespace detail
 
 VN_VSG_NS_END

@@ -58,7 +58,7 @@ ShaderStage stage(ShaderStageType type, const char* source, const char* entry = 
 constexpr const char* kVertexSource   = "#version 450\nvoid main() { gl_Position = vec4(0.0); }\n";
 constexpr const char* kFragmentSource = "#version 450\nvoid main() {}\n";
 
-}  // namespace
+} // namespace
 
 TEST(ContentSourcesTest, AProgramBecomesItsTwoStagesAndTheirEntryPoint)
 {
@@ -66,7 +66,7 @@ TEST(ContentSourcesTest, AProgramBecomesItsTwoStagesAndTheirEntryPoint)
     program.addStage(stage(ShaderStageType::Vertex, kVertexSource, "render"));
     program.addStage(stage(ShaderStageType::Fragment, kFragmentSource, "render"));
     const std::uint64_t revision = program.revision();
-    ASSERT_NE(revision, 0U);  // adding stages bumps the revision: the identity the plan will carry
+    ASSERT_NE(revision, 0U); // adding stages bumps the revision: the identity the plan will carry
 
     ProgramFacts facts;
     ASSERT_EQ(buildProgramFacts(program, facts), FactMiss::None);
@@ -135,8 +135,7 @@ TEST(ContentSourcesTest, AScreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgno
     EXPECT_EQ(facts.revision, revision);
     EXPECT_EQ(facts.shaders.fragment, kFragmentSource);
     EXPECT_FALSE(facts.shaders.vertex.empty()) << "the entry carries the engine's full-screen vertex stage";
-    EXPECT_NE(facts.shaders.vertex.find("gl_VertexIndex"), std::string::npos)
-        << "the engine's vertex stage generates its vertices from gl_VertexIndex";
+    EXPECT_NE(facts.shaders.vertex.find("gl_VertexIndex"), std::string::npos) << "the engine's vertex stage generates its vertices from gl_VertexIndex";
     EXPECT_NE(facts.shaders.vertex.find("vn_uv"), std::string::npos)
         << "and it hands the fragment stage the interface the full-screen ABI states (vn_uv at location 0)";
     EXPECT_EQ(facts.shaders.entry, "main");
@@ -149,8 +148,7 @@ TEST(ContentSourcesTest, AScreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgno
     with_vertex.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
     ProgramFacts with_vertex_facts;
     ASSERT_EQ(buildScreenProgramFacts(with_vertex, with_vertex_facts), FactMiss::None);
-    EXPECT_EQ(with_vertex_facts.shaders.vertex, facts.shaders.vertex)
-        << "the engine's vertex stage, not the host's";
+    EXPECT_EQ(with_vertex_facts.shaders.vertex, facts.shaders.vertex) << "the engine's vertex stage, not the host's";
 }
 
 TEST(ContentSourcesTest, AScreenProgramWithoutOneFragmentStageIsNotAScreenProgram)
@@ -196,7 +194,7 @@ TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
     material.setOcclusion(0.5F);
     material.setAlphaMode(AlphaMode::Mask);
     material.setAlphaCutoff(0.125F);
-    const auto normal_map = vn::make_intrusive<vn::graphics::Texture2D>(2, 2, vn::imaging::PixelFormat::Rgba8Unorm);
+    const auto            normal_map = vn::make_intrusive<vn::graphics::Texture2D>(2, 2, vn::imaging::PixelFormat::Rgba8Unorm);
     vn::graphics::Sampler clamp;
     clamp.address_u = vn::graphics::Sampler::AddressMode::ClampToEdge;
     material.setTexture(vn::graphics::TextureSlot::Normal, normal_map, clamp);
@@ -267,13 +265,13 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     // A table that carries the default entry answers for such content...
     const MaterialFacts entries[] = { facts };
     ContentFacts        table;
-    table.materials = entries;
+    table.materials  = entries;
     const auto found = findMaterial(table, nullptr);
     ASSERT_TRUE(found.found());
     EXPECT_EQ(found.entry->material, nullptr);
 
     // ...and a table that does not says Unknown, leaving the decision where it belongs.
-    MaterialFacts  without_default{ &facts, 0U, storage };
+    MaterialFacts       without_default{ &facts, 0U, storage };
     const MaterialFacts other[] = { without_default };
     ContentFacts        table_without;
     table_without.materials = other;

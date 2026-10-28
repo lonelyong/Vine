@@ -14,11 +14,10 @@ RetirementQueue::RetirementQueue(std::uint32_t slots)
 
 bool RetirementQueue::retire(const FrameTimeline& timeline, ReleaseFn release)
 {
-    if (!release || !parkingAvailable())
-    {
+    if (!release || !parkingAvailable()) {
         return false;
     }
-    parked_.push_back(Entry{retirePoint(timeline), std::move(release)});
+    parked_.push_back(Entry{ retirePoint(timeline), std::move(release) });
     return true;
 }
 
@@ -40,22 +39,18 @@ void RetirementQueue::advance(const FrameTimeline& timeline)
     // that while iterating the same vector would invalidate the walk.
     std::vector<Entry> due;
     auto               keep = parked_.begin();
-    for (auto& entry : parked_)
-    {
-        if (entry.retire_at <= completed)
-        {
+    for (auto& entry : parked_) {
+        if (entry.retire_at <= completed) {
             due.push_back(std::move(entry));
         }
-        else
-        {
+        else {
             *keep++ = std::move(entry);
         }
     }
     parked_.erase(keep, parked_.end());
 
     released_ += due.size();
-    for (auto& entry : due)
-    {
+    for (auto& entry : due) {
         entry.release();
     }
 }

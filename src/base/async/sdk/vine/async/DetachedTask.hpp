@@ -8,7 +8,8 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Handler invoked when a detached coroutine throws.
@@ -35,11 +36,9 @@ inline std::atomic<DetachedExceptionHandler> s_detachedExceptionHandler{ nullptr
  * Exceptions invoke the handler set by setDetachedExceptionHandler, or
  * terminate the process when no handler is installed.
  */
-class DetachedTask
-{
+class DetachedTask {
   public:
-    struct promise_type
-    {
+    struct promise_type {
         /// Returns an empty marker: nobody keeps a handle to a detached task.
         [[nodiscard]]
         DetachedTask get_return_object() noexcept
@@ -48,31 +47,36 @@ class DetachedTask
         }
 
         /// Start the body immediately (no explicit resume needed).
-        std::suspend_never initial_suspend() noexcept { return {}; }
+        std::suspend_never initial_suspend() noexcept
+        {
+            return {};
+        }
 
         /// Do not suspend at completion: the frame destroys itself.
-        std::suspend_never final_suspend() noexcept { return {}; }
+        std::suspend_never final_suspend() noexcept
+        {
+            return {};
+        }
 
-        void return_void() noexcept {}
+        void return_void() noexcept
+        {}
 
         void unhandled_exception() noexcept
         {
-            if (auto handler = detail::s_detachedExceptionHandler.load(std::memory_order_acquire))
-            {
+            if (auto handler = detail::s_detachedExceptionHandler.load(std::memory_order_acquire)) {
                 handler(std::current_exception());
             }
-            else
-            {
+            else {
                 std::terminate();
             }
         }
     };
 
-    DetachedTask() = default;
-    DetachedTask(const DetachedTask&) = delete;
+    DetachedTask()                               = default;
+    DetachedTask(const DetachedTask&)            = delete;
     DetachedTask& operator=(const DetachedTask&) = delete;
-    DetachedTask(DetachedTask&&) = default;
-    DetachedTask& operator=(DetachedTask&&) = default;
+    DetachedTask(DetachedTask&&)                 = default;
+    DetachedTask& operator=(DetachedTask&&)      = default;
 };
 
 /**

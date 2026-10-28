@@ -89,8 +89,7 @@ OffscreenTarget::TargetLayout msaaLayout(std::uint32_t samples)
 
 std::vector<std::byte> drawBlock()
 {
-    const std::array<float, 16> matrix{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
-                                        0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F };
+    const std::array<float, 16> matrix{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F };
     std::vector<std::byte>      block(80U, std::byte{ 0 });
     std::memcpy(block.data(), matrix.data(), sizeof(matrix));
     return block;
@@ -111,9 +110,9 @@ std::vector<std::byte> materialBlock()
 ContentPipeline::Shaders greenShaders()
 {
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "void main() { gl_Position = vec4(position.x, position.y, 0.5, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) in vec3 position;\n"
+                       "void main() { gl_Position = vec4(position.x, position.y, 0.5, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 outColor;\n"
                        "void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
@@ -142,23 +141,19 @@ ContentPipeline::Shaders greenShaders()
 
 std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
 {
-    return array == nullptr ? std::span<const float>{}
-                            : std::span<const float>(reinterpret_cast<const float*>(array->data()),
-                                                     array->size() * 3U);
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
 }
 
 std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const std::uint32_t>{}
-                            : std::span<const std::uint32_t>(array->data(), array->size());
+    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
 /// @brief What a case needs: a target of a given sample count and the stack that can draw into it.
-struct Fixture
-{
-    vn::vsg::DeviceResult            created;
-    std::unique_ptr<OffscreenTarget> target;
-    std::unique_ptr<BlockStorage>    storage;
+struct Fixture {
+    vn::vsg::DeviceResult             created;
+    std::unique_ptr<OffscreenTarget>  target;
+    std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> descriptors;
     std::unique_ptr<ContentPipeline>  pipelines;
     std::unique_ptr<StreamUploads>    uploads;
@@ -166,7 +161,7 @@ struct Fixture
     VariantPool                       pool;
     std::unique_ptr<StateRegistry>    registry;
     ::vsg::ref_ptr<::vsg::Viewer>     viewer;
-    std::uint32_t                     samples{1};
+    std::uint32_t                     samples{ 1 };
 
     static int material_identity;
 
@@ -185,7 +180,7 @@ struct Fixture
     {
         samples = sample_count;
         created = device;
-        target = OffscreenTarget::create(created.device, msaaLayout(samples));
+        target  = OffscreenTarget::create(created.device, msaaLayout(samples));
         if (target == nullptr || target->colorAttachmentCount() != 1U || !target->hasDepth()) {
             return false;
         }
@@ -195,8 +190,7 @@ struct Fixture
         }
         const ContentPipeline::Shaders shader_pair = greenShaders();
         vn::vsg::ProgramAbi            abi;
-        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) !=
-            vn::vsg::FactMiss::None) {
+        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -209,17 +203,16 @@ struct Fixture
         ContentPipeline::Settings              settings;
         settings.color_attachments = 1U;
         pipelines                  = ContentPipeline::create(abi,
-                                                              std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
-                                                              std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                                              shader_pair, settings);
+                                                             std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                                             shader_pair,
+                                                             settings);
         if (pipelines == nullptr) {
             return false;
         }
 
         uploads  = std::make_unique<StreamUploads>();
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(
-                                                     created.device->vk(), created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         return viewer != nullptr;
@@ -243,16 +236,15 @@ struct Fixture
         }
 
         ContentDraw::Draw draw;
-        static int       program = 0;
-        draw.key.program                      = &program;
-        draw.key.revision                     = 1U;
-        draw.key.vertex_layout.canonical_mask = 0x1U;
+        static int        program                                    = 0;
+        draw.key.program                                             = &program;
+        draw.key.revision                                            = 1U;
+        draw.key.vertex_layout.canonical_mask                        = 0x1U;
         // The count is part of a pipeline's identity: the pipeline the API accepts for a multisampled pass has
         // to state the same count its attachments do, and the key is how a pass says which one it needs.
-        draw.key.compatibility.samples = samples;
+        draw.key.compatibility.samples                               = samples;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
-            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
-                                                                               material.offset })
+            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
         };
         if (!descriptors->shape().empty()) {
             draw.blocks = block_binds;
@@ -354,7 +346,7 @@ std::size_t mixedPixelCount(const PixelProbe& probe)
     return mixed;
 }
 
-}  // namespace
+} // namespace
 
 TEST(MsaaTargetTest, FourSamplesBlendThePixelsATriangleEdgePassesThrough)
 {
@@ -375,16 +367,14 @@ TEST(MsaaTargetTest, FourSamplesBlendThePixelsATriangleEdgePassesThrough)
 
     const PixelProbe sharp = single.target->probe(0U);
     ASSERT_TRUE(sharp.valid());
-    EXPECT_EQ(mixedPixelCount(sharp), 0U)
-        << "a single-sample pass covers a pixel or it does not: its edges are a stair of pure colours";
+    EXPECT_EQ(mixedPixelCount(sharp), 0U) << "a single-sample pass covers a pixel or it does not: its edges are a stair of pure colours";
 
     const PixelProbe smooth = four.target->probe(0U);
     ASSERT_TRUE(smooth.valid());
     EXPECT_EQ(smooth.width(), static_cast<int>(kSize));
     EXPECT_EQ(smooth.height(), static_cast<int>(kSize));
-    EXPECT_GT(mixedPixelCount(smooth), 0U)
-        << "the pixels the triangle's edges pass through hold a blend of the two colours - which is what "
-           "multisampling is, and the only evidence that the count reached the pipeline AND the images";
+    EXPECT_GT(mixedPixelCount(smooth), 0U) << "the pixels the triangle's edges pass through hold a blend of the two colours - which is what "
+                                              "multisampling is, and the only evidence that the count reached the pipeline AND the images";
 
     // The interior and the exterior are still the colours they were: the resolve averages SAMPLES, it does not
     // wash the whole picture out.
@@ -428,7 +418,7 @@ TEST(MsaaTargetTest, AFourSampleTargetsDepthIsTheResolvedPicture)
         std::size_t other = 0U;
         for (int y = 0; y < probe.height(); ++y) {
             for (int x = 0; x < probe.width(); ++x) {
-                const float value = probe.depthAt(x, y);
+                const float value    = probe.depthAt(x, y);
                 const bool  triangle = std::abs(value - 0.5F) < 0.01F;
                 const bool  cleared  = std::abs(value) < 0.01F;
                 if (!triangle && !cleared) {
@@ -439,8 +429,7 @@ TEST(MsaaTargetTest, AFourSampleTargetsDepthIsTheResolvedPicture)
         return other;
     };
     EXPECT_EQ(is_one_of_the_two(sharp), 0U);
-    EXPECT_EQ(is_one_of_the_two(smooth), 0U)
-        << "a depth resolve is not a colour resolve: sample0 picks a sample's value, it does not average";
+    EXPECT_EQ(is_one_of_the_two(smooth), 0U) << "a depth resolve is not a colour resolve: sample0 picks a sample's value, it does not average";
 
     // ... and the VALUES agree where the picture does: the interior is the triangle's depth in both, the
     // exterior is the clear value in both.
@@ -489,8 +478,7 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
     borrower->shareDepth(lender);
     borrower->setSize(16, 16);
     borrower->setSamples(4U);
-    EXPECT_EQ(targets.ensure(*borrower, created.device).state,
-              vn::vsg::HostTargets::State::SamplesUnsupported)
+    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::vsg::HostTargets::State::SamplesUnsupported)
         << "one depth image cannot be a four-sample attachment for one pass and a single-sample one for "
            "another";
 
@@ -541,7 +529,7 @@ TEST(MsaaTargetTest, RebuildingAtANewCountReplacesTheImages)
 
     OffscreenTarget::TargetLayout four = target->layout();
     EXPECT_EQ(four.samples, 1U) << "the layout is what the target was built for";
-    four.samples = 4U;
+    four.samples                           = 4U;
     const OffscreenTarget::Rebuilt rebuilt = target->rebuild(four, timeline, queue);
     EXPECT_TRUE(rebuilt.replaced) << "a different count is a different shape: it has to be built, not drawn on";
     EXPECT_EQ(target->shape().samples, 4U);

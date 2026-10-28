@@ -8,8 +8,8 @@
 #include <exception>
 #include <optional>
 #include <semaphore>
-#include <stop_token>
 #include <stdexcept>
+#include <stop_token>
 #include <type_traits>
 #include <utility>
 
@@ -30,10 +30,11 @@ VN_ASYNC_NS_BEGIN
  *
  * @tparam T Result type of the asynchronous operation; void for no result.
  */
-template<StorableValue T>
+template <StorableValue T>
 class [[nodiscard]] Task;
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief State shared by every Task promise: continuation and exception.
@@ -44,8 +45,7 @@ namespace detail {
  * This forms the await chain that unwinds control back to the caller on
  * suspension.
  */
-struct TaskPromiseBase
-{
+struct TaskPromiseBase {
     /// Non-owning handle of the coroutine awaiting this task; resumed on completion.
     std::coroutine_handle<> continuation{};
 
@@ -61,9 +61,8 @@ struct TaskPromiseBase
  * read by the Task's awaiter (and by the blocking drive's helper promise) after the body
  * has finished.
  */
-template<typename T>
-struct TaskPromiseReturn
-{
+template <typename T>
+struct TaskPromiseReturn {
     /// Result slot; empty until the body co_returns.
     std::optional<T> value{};
 
@@ -73,10 +72,10 @@ struct TaskPromiseReturn
     }
 };
 
-template<>
-struct TaskPromiseReturn<void>
-{
-    void return_void() noexcept {}
+template <>
+struct TaskPromiseReturn<void> {
+    void return_void() noexcept
+    {}
 };
 
 /**
@@ -87,11 +86,12 @@ struct TaskPromiseReturn<void>
  *
  * @tparam T Value type handed to the body.
  */
-template<typename T>
-class ValueAwaiter
-{
+template <typename T>
+class ValueAwaiter {
   public:
-    explicit ValueAwaiter(T value) noexcept : value_(std::move(value)) {}
+    explicit ValueAwaiter(T value) noexcept
+      : value_(std::move(value))
+    {}
 
     [[nodiscard]]
     bool await_ready() const noexcept
@@ -99,7 +99,8 @@ class ValueAwaiter
         return true; // The value is here: no suspension, nobody to resume.
     }
 
-    void await_suspend(std::coroutine_handle<>) const noexcept {} // never called
+    void await_suspend(std::coroutine_handle<>) const noexcept
+    {} // never called
 
     [[nodiscard]]
     T await_resume() noexcept
@@ -119,13 +120,10 @@ class ValueAwaiter
  * cannot name its own promise without a handle, and threading a handle through every await is
  * what the environment is there to avoid (see currentStopToken()).
  */
-struct StopTokenRequest
-{
-};
+struct StopTokenRequest {};
 
 /// Writes the environment of a task that has not started yet; see withStopToken().
-struct TaskEnvironment
-{
+struct TaskEnvironment {
     /**
      * @brief Stores a stop token in a task's promise, before its body runs.
      *
@@ -136,7 +134,7 @@ struct TaskEnvironment
      * @param task Task to write into; an empty task is ignored.
      * @param token Token its body should see as its environment.
      */
-    template<StorableValue T>
+    template <StorableValue T>
     static void setToken(Task<T>& task, std::stop_token token) noexcept;
 };
 
@@ -155,9 +153,8 @@ struct TaskEnvironment
  * task, continuation is null and it transfers to std::noop_coroutine(); the
  * frame is then freed by handle_.destroy().
  */
-template<typename Promise>
-struct TaskFinalAwaiter
-{
+template <typename Promise>
+struct TaskFinalAwaiter {
     [[nodiscard]]
     bool await_ready() const noexcept
     {
@@ -179,7 +176,8 @@ struct TaskFinalAwaiter
         return continuation ? continuation : std::noop_coroutine();
     }
 
-    void await_resume() const noexcept {}
+    void await_resume() const noexcept
+    {}
 };
 
 /**
@@ -189,13 +187,18 @@ struct TaskFinalAwaiter
  * calling thread; when the body completes, its final awaiter releases the semaphore so the waiter
  * stops blocking and returns the produced result.
  */
-struct WaitEvent
-{
+struct WaitEvent {
     std::binary_semaphore semaphore{ 0 };
 
-    void set() noexcept { semaphore.release(); }
+    void set() noexcept
+    {
+        semaphore.release();
+    }
 
-    void wait() noexcept { semaphore.acquire(); }
+    void wait() noexcept
+    {
+        semaphore.acquire();
+    }
 
     /**
      * @brief Waits for the completion signal, but no longer than timeout.
@@ -207,28 +210,31 @@ struct WaitEvent
      * @param timeout How long to wait at most.
      * @return true when the signal arrived, false when the timeout passed.
      */
-    bool waitFor(std::chrono::microseconds timeout) noexcept { return semaphore.try_acquire_for(timeout); }
+    bool waitFor(std::chrono::microseconds timeout) noexcept
+    {
+        return semaphore.try_acquire_for(timeout);
+    }
 };
 
 /**
  * @brief Helper coroutine that awaits a task and notifies a waiter on completion.
  */
-template<typename T>
-class WaitTask
-{
+template <typename T>
+class WaitTask {
   public:
-    struct promise_type : detail::TaskPromiseReturn<T>
-    {
+    struct promise_type : detail::TaskPromiseReturn<T> {
         [[nodiscard]]
         WaitTask get_return_object() noexcept
         {
             return WaitTask{ std::coroutine_handle<promise_type>::from_promise(*this) };
         }
 
-        std::suspend_always initial_suspend() noexcept { return {}; }
-
-        struct FinalAwaiter
+        std::suspend_always initial_suspend() noexcept
         {
+            return {};
+        }
+
+        struct FinalAwaiter {
             [[nodiscard]]
             bool await_ready() const noexcept
             {
@@ -237,38 +243,49 @@ class WaitTask
 
             void await_suspend(std::coroutine_handle<promise_type> h) noexcept
             {
-                if (h.promise().event)
-                {
+                if (h.promise().event) {
                     h.promise().event->set();
                 }
             }
 
-            void await_resume() const noexcept {}
+            void await_resume() const noexcept
+            {}
         };
 
-        FinalAwaiter final_suspend() noexcept { return {}; }
+        FinalAwaiter final_suspend() noexcept
+        {
+            return {};
+        }
 
-        void unhandled_exception() noexcept { exception = std::current_exception(); }
+        void unhandled_exception() noexcept
+        {
+            exception = std::current_exception();
+        }
 
         std::exception_ptr exception{};
-        WaitEvent*    event{ nullptr };
+        WaitEvent*         event{ nullptr };
     };
 
     using handle_type = std::coroutine_handle<promise_type>;
 
-    explicit WaitTask(handle_type h) noexcept : handle_(h) {}
+    explicit WaitTask(handle_type h) noexcept
+      : handle_(h)
+    {}
 
     ~WaitTask()
     {
-        if (handle_)
-        {
+        if (handle_) {
             handle_.destroy();
         }
     }
 
-    WaitTask(const WaitTask&) = delete;
+    WaitTask(const WaitTask&)            = delete;
     WaitTask& operator=(const WaitTask&) = delete;
-    WaitTask(WaitTask&& other) noexcept : handle_(std::exchange(other.handle_, {})) {}
+
+    WaitTask(WaitTask&& other) noexcept
+      : handle_(std::exchange(other.handle_, {}))
+    {}
+
     WaitTask& operator=(WaitTask&&) = delete;
 
     handle_type handle_;
@@ -281,16 +298,14 @@ class WaitTask
  * produced its result, this coroutine's final awaiter signals the WaitEvent so the waiter
  * unblocks and returns the value.
  */
-template<typename T>
+template <typename T>
 WaitTask<T> makeWaitTask(Task<T>&& task)
 {
-    if constexpr (std::is_void_v<T>)
-    {
+    if constexpr (std::is_void_v<T>) {
         co_await std::move(task);
         co_return;
     }
-    else
-    {
+    else {
         co_return co_await std::move(task);
     }
 }
@@ -319,9 +334,8 @@ WaitTask<T> makeWaitTask(Task<T>&& task)
  *
  * @tparam T Result type of the asynchronous operation; void for no result.
  */
-template<StorableValue T>
-class [[nodiscard]] Task
-{
+template <StorableValue T>
+class [[nodiscard]] Task {
   public:
     /**
      * @brief The coroutine's control room, living inside the frame.
@@ -338,9 +352,7 @@ class [[nodiscard]] Task
      * from TaskPromiseBase and TaskPromiseReturn, so the Task's awaiter and
      * final awaiter can find everything in one place.
      */
-    struct promise_type : detail::TaskPromiseBase,
-                          detail::TaskPromiseReturn<T>
-    {
+    struct promise_type : detail::TaskPromiseBase, detail::TaskPromiseReturn<T> {
         /**
          * @brief Hands back the Task the caller receives.
          *
@@ -373,7 +385,10 @@ class [[nodiscard]] Task
          * @return An awaiter that always suspends first, deferring the body
          * until the task is awaited.
          */
-        std::suspend_always initial_suspend() noexcept { return {}; }
+        std::suspend_always initial_suspend() noexcept
+        {
+            return {};
+        }
 
         /**
          * @brief Suspends at final_suspend and transfers control to the
@@ -417,10 +432,16 @@ class [[nodiscard]] Task
          * @return An awaiter that suspends the completed coroutine and
          * transfers control to its awaiting coroutine.
          */
-        detail::TaskFinalAwaiter<promise_type> final_suspend() noexcept { return {}; }
+        detail::TaskFinalAwaiter<promise_type> final_suspend() noexcept
+        {
+            return {};
+        }
 
         /// If the body throws, stash the exception so await_resume can rethrow it.
-        void unhandled_exception() noexcept { exception = std::current_exception(); }
+        void unhandled_exception() noexcept
+        {
+            exception = std::current_exception();
+        }
 
         /// Environment of this coroutine: the stop token a caller handed over (empty unless
         /// someone did). Read through co_await currentStopToken(); see StopToken.hpp.
@@ -447,8 +468,8 @@ class [[nodiscard]] Task
          * @param awaited Operand of the co_await expression.
          * @return The operand itself, forwarded unchanged.
          */
-        template<typename A>
-            requires (!std::same_as<std::remove_cvref_t<A>, detail::StopTokenRequest>)
+        template <typename A>
+        requires(!std::same_as<std::remove_cvref_t<A>, detail::StopTokenRequest>)
         A&& await_transform(A&& awaited) noexcept
         {
             return std::forward<A>(awaited);
@@ -463,14 +484,17 @@ class [[nodiscard]] Task
   public:
     Task() noexcept = default;
 
-    explicit Task(handle_type h) noexcept : handle_(h) {}
+    explicit Task(handle_type h) noexcept
+      : handle_(h)
+    {}
 
-    Task(Task&& other) noexcept : handle_(std::exchange(other.handle_, {})) {}
+    Task(Task&& other) noexcept
+      : handle_(std::exchange(other.handle_, {}))
+    {}
 
     Task& operator=(Task&& other) noexcept
     {
-        if (this != &other)
-        {
+        if (this != &other) {
             destroy();
             handle_ = std::exchange(other.handle_, {});
         }
@@ -482,7 +506,7 @@ class [[nodiscard]] Task
         destroy();
     }
 
-    Task(const Task&) = delete;
+    Task(const Task&)            = delete;
     Task& operator=(const Task&) = delete;
 
     /**
@@ -518,20 +542,18 @@ class [[nodiscard]] Task
     {
         detail::WaitEvent event;
 
-        auto driver = detail::makeWaitTask(std::move(*this));
+        auto driver                    = detail::makeWaitTask(std::move(*this));
         driver.handle_.promise().event = &event;
 
         driver.handle_.resume();
         event.wait();
 
         auto& promise = driver.handle_.promise();
-        if (promise.exception)
-        {
+        if (promise.exception) {
             std::rethrow_exception(std::move(promise.exception));
         }
 
-        if constexpr (!std::is_void_v<T>)
-        {
+        if constexpr (!std::is_void_v<T>) {
             return std::move(promise.value).value();
         }
     }
@@ -546,17 +568,21 @@ class [[nodiscard]] Task
      * to the waiting coroutine. await_resume yields the stored value or
      * rethrows the exception captured during execution.
      */
-    class Awaiter
-    {
+    class Awaiter {
       public:
         /// Takes ownership of the task's frame handle (moved in by operator co_await).
-        explicit Awaiter(handle_type h) noexcept : handle_(h) {}
+        explicit Awaiter(handle_type h) noexcept
+          : handle_(h)
+        {}
 
-        Awaiter(const Awaiter&) = delete;
+        Awaiter(const Awaiter&)            = delete;
         Awaiter& operator=(const Awaiter&) = delete;
 
         /// Transfers the frame handle, leaving the source awaiter empty.
-        Awaiter(Awaiter&& other) noexcept : handle_(std::exchange(other.handle_, {})) {}
+        Awaiter(Awaiter&& other) noexcept
+          : handle_(std::exchange(other.handle_, {}))
+        {}
+
         Awaiter& operator=(Awaiter&&) = delete;
 
         /**
@@ -625,27 +651,23 @@ class [[nodiscard]] Task
          */
         decltype(auto) await_resume()
         {
-            if (!handle_)
-            {
+            if (!handle_) {
                 throw std::logic_error("async::Task: awaiting an empty task");
             }
 
             auto& promise = handle_.promise();
-            if (promise.exception)
-            {
+            if (promise.exception) {
                 std::exception_ptr ex = std::move(promise.exception);
                 destroy();
                 std::rethrow_exception(ex);
             }
 
-            if constexpr (!std::is_void_v<T>)
-            {
+            if constexpr (!std::is_void_v<T>) {
                 T value = std::move(promise.value).value();
                 destroy();
                 return value;
             }
-            else
-            {
+            else {
                 destroy();
             }
         }
@@ -654,8 +676,7 @@ class [[nodiscard]] Task
         /// Destroys the owned frame, leaving the awaiter empty.
         void destroy() noexcept
         {
-            if (handle_)
-            {
+            if (handle_) {
                 handle_.destroy();
                 handle_ = {};
             }
@@ -688,8 +709,7 @@ class [[nodiscard]] Task
     /// Destroys the owned frame, leaving the task empty.
     void destroy() noexcept
     {
-        if (handle_)
-        {
+        if (handle_) {
             handle_.destroy();
             handle_ = {};
         }
@@ -701,13 +721,13 @@ class [[nodiscard]] Task
     handle_type handle_{};
 };
 
-namespace detail {
+namespace detail
+{
 
-template<StorableValue T>
+template <StorableValue T>
 void TaskEnvironment::setToken(Task<T>& task, std::stop_token token) noexcept
 {
-    if (task.handle_)
-    {
+    if (task.handle_) {
         task.handle_.promise().token = std::move(token);
     }
 }
@@ -733,7 +753,7 @@ using AnyTask = Task<void>;
  * @param task Task to run; its result is ignored.
  * @return A task that completes when task completes.
  */
-template<StorableValue T>
+template <StorableValue T>
 [[nodiscard]]
 Task<void> discard(Task<T> task)
 {

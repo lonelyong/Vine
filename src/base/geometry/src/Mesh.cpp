@@ -31,8 +31,7 @@ namespace
  */
 std::span<const vn::math::Vec3f> asVec3(std::span<const float> scalars)
 {
-    return { reinterpret_cast<const vn::math::Vec3f*>(scalars.data()),
-             scalars.size() / Mesh::kVec3Components };
+    return { reinterpret_cast<const vn::math::Vec3f*>(scalars.data()), scalars.size() / Mesh::kVec3Components };
 }
 
 /**
@@ -43,8 +42,7 @@ std::span<const vn::math::Vec3f> asVec3(std::span<const float> scalars)
  */
 std::span<const vn::math::Vec2f> asVec2(std::span<const float> scalars)
 {
-    return { reinterpret_cast<const vn::math::Vec2f*>(scalars.data()),
-             scalars.size() / Mesh::kVec2Components };
+    return { reinterpret_cast<const vn::math::Vec2f*>(scalars.data()), scalars.size() / Mesh::kVec2Components };
 }
 
 /**
@@ -55,8 +53,7 @@ std::span<const vn::math::Vec2f> asVec2(std::span<const float> scalars)
  */
 std::span<const vn::math::Vec4f> asVec4(std::span<const float> scalars)
 {
-    return { reinterpret_cast<const vn::math::Vec4f*>(scalars.data()),
-             scalars.size() / Mesh::kVec4Components };
+    return { reinterpret_cast<const vn::math::Vec4f*>(scalars.data()), scalars.size() / Mesh::kVec4Components };
 }
 
 /**
@@ -107,15 +104,14 @@ std::vector<float> packVec4(Vec4fArray elements)
     return scalars;
 }
 
-}  // namespace
+} // namespace
 
 Mesh::Mesh()
   : positions_(makeBuffer(std::vector<float>{}))
   , normals_(makeBuffer(std::vector<float>{}))
   , texcoords_(makeBuffer(std::vector<float>{}))
   , colors_(makeBuffer(std::vector<float>{}))
-{
-}
+{}
 
 std::span<const vn::math::Vec3f> Mesh::positions() const
 {

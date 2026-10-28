@@ -21,9 +21,9 @@ class ConfigItem;
  */
 enum class PluginScope
 {
-    BuiltIn,  ///< Ships with the application (builtInPluginDirectory()); cannot be disabled or uninstalled.
-    User,     ///< Registered for the current user only (per-user registration directory).
-    AllUsers, ///< Registered for every user of the machine (system registration directory).
+    BuiltIn,  // Ships with the application (builtInPluginDirectory()); cannot be disabled or uninstalled.
+    User,     // Registered for the current user only (per-user registration directory).
+    AllUsers, // Registered for every user of the machine (system registration directory).
 };
 
 /**
@@ -36,13 +36,13 @@ enum class PluginScope
  * pluginEntries() at query time.
  */
 struct VN_APPFW_API PluginEntry {
-    PluginInfo            info;                             ///< Metadata declared by the plugin.
-    std::filesystem::path path;                             ///< Library file the plugin was found in.
-    PluginScope           scope{ PluginScope::BuiltIn };    ///< Location class the plugin was found in.
-    String                framework_version;                ///< Framework version the library was built with (PluginAbi); may be empty.
-    bool                  enabled{ true };                  ///< Effective preference; disabled plugins are not loaded.
-    bool                  loaded{ false };                  ///< Whether an instance exists right now.
-    bool                  skipped{ false };                 ///< Refused by the host skip list (setSkipList()); implies !enabled.
+    PluginInfo            info;                          // Metadata declared by the plugin.
+    std::filesystem::path path;                          // Library file the plugin was found in.
+    PluginScope           scope{ PluginScope::BuiltIn }; // Location class the plugin was found in.
+    String                framework_version;             // Framework version the library was built with (PluginAbi); may be empty.
+    bool                  enabled{ true };               // Effective preference; disabled plugins are not loaded.
+    bool                  loaded{ false };               // Whether an instance exists right now.
+    bool                  skipped{ false };              // Refused by the host skip list (setSkipList()); implies !enabled.
 };
 
 /**
@@ -54,13 +54,13 @@ struct VN_APPFW_API PluginEntry {
  * a package manager or an administrator installs a plugin.
  */
 struct VN_APPFW_API PluginRegistration {
-    String                id;                  ///< Registration file name without the extension (unique per scope).
-    String                file;                ///< The registration file itself.
-    String                path;                ///< Registered plugin library or directory; required.
-    String                name;                ///< Plugin name recorded in the file; empty when unknown.
-    Uuid                  uuid;                ///< Plugin identity recorded in the file; null when unknown.
-    PluginScope           scope{ PluginScope::User }; ///< Directory the file was read from.
-    bool                  enabled{ true };      ///< false: disabled for everyone (administrator policy).
+    String      id;                         // Registration file name without the extension (unique per scope).
+    String      file;                       // The registration file itself.
+    String      path;                       // Registered plugin library or directory; required.
+    String      name;                       // Plugin name recorded in the file; empty when unknown.
+    Uuid        uuid;                       // Plugin identity recorded in the file; null when unknown.
+    PluginScope scope{ PluginScope::User }; // Directory the file was read from.
+    bool        enabled{ true };            // false: disabled for everyone (administrator policy).
 };
 
 /**

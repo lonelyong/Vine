@@ -2,8 +2,8 @@
 
 #include <vine/appfw/Application.hpp>
 
-#include <vine/raw_ptr.hpp>
 #include <vine/Signal.hpp>
+#include <vine/raw_ptr.hpp>
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -18,8 +18,8 @@ class CentralDocumentHost;
  */
 enum class Theme
 {
-    Light, ///< Light theme.
-    Dark   ///< Dark theme.
+    Light, // Light theme.
+    Dark   // Dark theme.
 };
 
 class VN_APPFW_API GuiApplication : public Application {

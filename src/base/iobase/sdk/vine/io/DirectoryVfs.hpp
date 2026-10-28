@@ -7,9 +7,9 @@
 #include <span>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/io/Vfs.hpp>
 #include <vine/io/io_global.hpp>
-#include <vine/String.hpp>
 
 VN_IO_NS_BEGIN
 
@@ -24,8 +24,7 @@ VN_IO_NS_BEGIN
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API DirectoryVfs : public Vfs
-{
+class VN_IOBASE_API DirectoryVfs : public Vfs {
   public:
     /**
      * @brief Constructs a VFS rooted at an existing directory.
@@ -48,8 +47,8 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
     static std::unique_ptr<DirectoryVfs> openDirectory(const std::filesystem::path& dir);
 
     // Vfs
-    using Vfs::read;   // the override below would otherwise hide the base's sink-push overload
     using Vfs::addFile; // the overrides below would otherwise hide the base's content-source overloads
+    using Vfs::read;    // the override below would otherwise hide the base's sink-push overload
 
     /**
      * @brief An on-disk directory accepts every write, so this is false.
@@ -259,8 +258,7 @@ class VN_IOBASE_API DirectoryVfs : public Vfs
      * @param out Receives the mapped real path; untouched on failure.
      * @return IoError::Ok, or IoError::InvalidPath for an invalid virtual path.
      */
-    [[nodiscard]] IoError resolve(const std::filesystem::path& vfs_path, std::filesystem::path& normalized,
-                                  std::filesystem::path& out) const;
+    [[nodiscard]] IoError resolve(const std::filesystem::path& vfs_path, std::filesystem::path& normalized, std::filesystem::path& out) const;
 
     /**
      * @brief Checks that a whole file may be written at a virtual path, and maps it to a real path.

@@ -11,8 +11,7 @@ void HostTargets::describe(const vn::graphics::RenderTarget& target, Description
 
     const std::int32_t color_count = target.colorCount();
     out.color_formats.resize(static_cast<std::size_t>(color_count > 0 ? color_count : 0));
-    for (std::size_t index = 0; index < out.color_formats.size(); ++index)
-    {
+    for (std::size_t index = 0; index < out.color_formats.size(); ++index) {
         out.color_formats[index] = target.colorFormat(static_cast<int>(index));
     }
 
@@ -22,18 +21,16 @@ void HostTargets::describe(const vn::graphics::RenderTarget& target, Description
     out.samples         = target.samples() == 0U ? 1U : target.samples();
 
     const vn::graphics::RenderTarget* source = target.depthSource();
-    out.depth_source = source;
+    out.depth_source                         = source;
 
-    out.shadow_light = target.shadowOf();
+    out.shadow_light        = target.shadowOf();
     out.has_view_projection = target.hasProducerViewProjection();
-    if (out.has_view_projection)
-    {
+    if (out.has_view_projection) {
         out.view_projection = target.producerViewProjection();
     }
 }
 
-HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device,
-                                      std::uint32_t max_samples)
+HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device, std::uint32_t max_samples)
 {
     const Description& description = entry.description;
 
@@ -41,9 +38,7 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
     // at least one image, and a DEPTH-ONLY one is a target like any other - the engine's shadow map is exactly
     // that (attachDepth with no colour attachment, and the shading samples its depth). The entry keeps the
     // description and the next call retries - a host configures a target before it draws into it.
-    if (description.width <= 0 || description.height <= 0 ||
-        (description.color_formats.empty() && !description.has_depth))
-    {
+    if (description.width <= 0 || description.height <= 0 || (description.color_formats.empty() && !description.has_depth)) {
         return State::NotBuilt;
     }
 
@@ -51,16 +46,14 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
     // description that asks for more than the device supports is refused HERE rather than at image creation:
     // the numbers came from the host, and "the device cannot do that" is a different answer from "the objects
     // failed to build".
-    if (description.samples > max_samples)
-    {
+    if (description.samples > max_samples) {
         return State::SamplesUnsupported;
     }
     // What multisampling still refuses, and no longer refuses: a multisampled target can PROMOTE and LEND its
     // depth (both read the resolved single-sample image - see OffscreenTarget's class note), but it cannot
     // BORROW one: what it would attach is the lender's single-sample picture while its own pass draws at
     // another count, and a framebuffer's attachments share one count. Refused rather than approximated.
-    if (description.samples > 1U && description.has_depth && description.depth_source != nullptr)
-    {
+    if (description.samples > 1U && description.has_depth && description.depth_source != nullptr) {
         return State::SamplesUnsupported;
     }
 
@@ -71,31 +64,26 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
     layout.samples       = description.samples;
 
     const OffscreenTarget* depth_source = nullptr;
-    if (description.has_depth)
-    {
-        if (description.depth_source != nullptr)
-        {
+    if (description.has_depth) {
+        if (description.depth_source != nullptr) {
             // A borrowed depth: the lender's objects must be held (and built) here - the SDK's own shareDepth
             // rule is that the source renders earlier in the frame, which is why this call is the borrower's
             // and not a search for it. The depth's policy is the lender's, so this target never promises it to
             // a shader.
-            if (entry.depth_owner == nullptr)
-            {
+            if (entry.depth_owner == nullptr) {
                 return State::DepthSourceMissing;
             }
             depth_source        = entry.depth_owner.get();
             layout.depth_format = entry.depth_owner->layout().depth_format;
         }
-        else
-        {
-            layout.depth_format    = description.depth_format;
+        else {
+            layout.depth_format     = description.depth_format;
             layout.depth_sampleable = description.depth_promotion;
         }
     }
 
     entry.target = OffscreenTarget::create(std::move(device), layout, depth_source);
-    if (entry.target == nullptr)
-    {
+    if (entry.target == nullptr) {
         return State::BuildFailed;
     }
     return State::Ready;
@@ -104,8 +92,7 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
 HostTargets::Ensured HostTargets::ensure(const vn::graphics::RenderTarget& target, ::vsg::ref_ptr<::vsg::Device> device)
 {
     Entry* entry = find(&target);
-    if (entry == nullptr)
-    {
+    if (entry == nullptr) {
         entries_.push_back(std::make_unique<Entry>());
         entry           = entries_.back().get();
         entry->identity = &target;
@@ -113,23 +100,19 @@ HostTargets::Ensured HostTargets::ensure(const vn::graphics::RenderTarget& targe
 
     describe(target, entry->description);
 
-    if (entry->target != nullptr)
-    {
-        return Ensured{ entry, State::Ready };  // built for a description the plan owns from here on
+    if (entry->target != nullptr) {
+        return Ensured{ entry, State::Ready }; // built for a description the plan owns from here on
     }
-    if (device == nullptr)
-    {
-        return Ensured{ entry, State::NotBuilt };  // nothing is up to build on; the description is kept
+    if (device == nullptr) {
+        return Ensured{ entry, State::NotBuilt }; // nothing is up to build on; the description is kept
     }
 
     // What this target borrows its depth from: the entry of the announcing host object. Resolved HERE, at
     // the moment the host names it, because the SDK's contract makes the lender a call-order fact (the source
     // renders earlier in the frame) rather than something to look for later.
-    if (entry->description.depth_source != nullptr && entry->depth_owner == nullptr)
-    {
+    if (entry->description.depth_source != nullptr && entry->depth_owner == nullptr) {
         const Entry* lender = find(entry->description.depth_source);
-        if (lender != nullptr && lender->target != nullptr)
-        {
+        if (lender != nullptr && lender->target != nullptr) {
             entry->depth_owner = lender->target;
         }
     }
@@ -140,8 +123,7 @@ HostTargets::Ensured HostTargets::ensure(const vn::graphics::RenderTarget& targe
 HostTargets::Entry* HostTargets::observe(const vn::graphics::RenderTarget& target)
 {
     Entry* entry = find(&target);
-    if (entry == nullptr)
-    {
+    if (entry == nullptr) {
         entries_.push_back(std::make_unique<Entry>());
         entry           = entries_.back().get();
         entry->identity = &target;
@@ -152,14 +134,11 @@ HostTargets::Entry* HostTargets::observe(const vn::graphics::RenderTarget& targe
 
 HostTargets::Entry* HostTargets::find(const void* identity) noexcept
 {
-    if (identity == nullptr)
-    {
+    if (identity == nullptr) {
         return nullptr;
     }
-    for (const std::unique_ptr<Entry>& entry : entries_)
-    {
-        if (entry->identity == identity)
-        {
+    for (const std::unique_ptr<Entry>& entry : entries_) {
+        if (entry->identity == identity) {
             return entry.get();
         }
     }
@@ -168,14 +147,11 @@ HostTargets::Entry* HostTargets::find(const void* identity) noexcept
 
 bool HostTargets::release(const void* identity) noexcept
 {
-    if (identity == nullptr)
-    {
+    if (identity == nullptr) {
         return false;
     }
-    for (auto it = entries_.begin(); it != entries_.end(); ++it)
-    {
-        if ((*it)->identity != identity)
-        {
+    for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+        if ((*it)->identity != identity) {
             continue;
         }
         // The lender's objects may still be referenced by a borrower's entry (see the file note): dropping
@@ -203,7 +179,7 @@ const std::vector<std::unique_ptr<HostTargets::Entry>>& HostTargets::entries() c
 
 void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
 {
-    out = core::TargetFacts{};
+    out        = core::TargetFacts{};
     out.target = entry.identity;
 
     out.wanted.width  = entry.description.width;
@@ -214,23 +190,20 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     // "unknown" must not read as "absent" (see CompiledShape) - a fabricated one would be a compatibility the
     // plan could not tell from the old one.
     out.wanted.shape.color_formats = entry.description.color_formats;
-    out.wanted.shape.depth_format  = entry.description.has_depth
-                                         ? std::optional{ entry.description.depth_format }
-                                         : std::optional<vn::graphics::RenderTarget::DepthFormat>{};
+    out.wanted.shape.depth_format =
+        entry.description.has_depth ? std::optional{ entry.description.depth_format } : std::optional<vn::graphics::RenderTarget::DepthFormat>{};
     // The sample count is the host's word like the formats are - NOT the built target's: a host that changes it
     // announces a different shape, which is what makes the plan answer Rebuild instead of quietly drawing into
     // the old images (a target's objects are built for one count, see OffscreenTarget).
     out.wanted.shape.samples = entry.description.samples == 0U ? 1U : entry.description.samples;
 
-    if (entry.target != nullptr)
-    {
-        out.current = entry.target->instance();
+    if (entry.target != nullptr) {
+        out.current                  = entry.target->instance();
         const bool same_engine_shape = out.current.desc.shape.color_formats == out.wanted.shape.color_formats &&
                                        out.current.desc.shape.depth_format == out.wanted.shape.depth_format &&
                                        out.current.desc.shape.samples == out.wanted.shape.samples;
-        if (same_engine_shape)
-        {
-            const core::TargetShape& built = entry.target->shape();
+        if (same_engine_shape) {
+            const core::TargetShape& built        = entry.target->shape();
             out.wanted.shape.device_color_formats = built.device_color_formats;
             out.wanted.shape.device_depth_format  = built.device_depth_format;
             out.wanted.shape.subpass              = built.subpass;
@@ -243,9 +216,7 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     out.depth.has_depth = entry.description.has_depth;
     out.depth.borrowed  = entry.description.depth_source != nullptr;
     out.depth.source    = entry.description.depth_source;
-    out.depth.promotion = !out.depth.borrowed &&
-                          (entry.target != nullptr ? entry.target->layout().depth_sampleable
-                                                   : entry.description.depth_promotion);
+    out.depth.promotion = !out.depth.borrowed && (entry.target != nullptr ? entry.target->layout().depth_sampleable : entry.description.depth_promotion);
     // ... AND whether this target's own passes preserve the depth they write: a borrower always does (its
     // passes read the lender's image, so clearing it would erase the lender's depth) and a lender does while
     // it has borrowers. That fact is the TARGET's (only it counts its borrowers), so it is asked for here
@@ -258,11 +229,10 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
 
     // The shadow statement, copied from the host's own words: a target is a map for as long as it says so,
     // and how to read it is the producer's matrix, never a consumer's guess (see ShadowFacts).
-    if (entry.description.shadow_light != nullptr)
-    {
-        out.shadow.light                = entry.description.shadow_light;
-        out.shadow.has_view_projection  = entry.description.has_view_projection;
-        out.shadow.view_projection      = entry.description.view_projection;
+    if (entry.description.shadow_light != nullptr) {
+        out.shadow.light               = entry.description.shadow_light;
+        out.shadow.has_view_projection = entry.description.has_view_projection;
+        out.shadow.view_projection     = entry.description.view_projection;
     }
 }
 

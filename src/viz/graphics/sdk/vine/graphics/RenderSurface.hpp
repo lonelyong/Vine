@@ -1,14 +1,14 @@
 #pragma once
 #include "graphics_global.hpp"
 
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Lease.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/RefCounted.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "RenderDiagnostic.hpp"
-#include "WindowPresentTarget.hpp"
 #include "ReportOnce.hpp"
+#include "WindowPresentTarget.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -44,7 +44,7 @@ class SceneView;
  */
 class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
   public:
-    friend class RenderEngine;  // the ONE creator (createSurface), which owns the result
+    friend class RenderEngine; // the ONE creator (createSurface), which owns the result
 
     /** @brief Destroys the area: the view stops naming it; the pass stays registered and the view keeps its
      * pipeline (a declaration owns neither).
@@ -211,7 +211,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     [[nodiscard]] bool hasTarget() const noexcept;
 
   private:
-    friend class SceneView;  // reads the size it lays its geometry out with (see resize)
+    friend class SceneView; // reads the size it lays its geometry out with (see resize)
 
     /** @brief Creates the presentation of one surface rendered through @p engine (see RenderEngine::createSurface).
      *
@@ -238,16 +238,16 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
     /// The engine this area is registered on, BORROWED THROUGH A LEASE: the area does not own its engine, and an
     /// area that outlives it (a host that kept one) reads an empty lease instead of a pointer into freed memory -
     /// the same rule the view and the pipeline follow (see Lease and SceneView::engine_).
-    Lease<RenderEngine>           engine_;
-    raw_ptr<SceneView>             view_ = nullptr;
-    intrusive_ptr<RenderPass>      pass_;
-    raw_ptr<WindowPresentTarget>   target_ = nullptr;
-    int                            width_ = 0;
-    int                            height_ = 0;
-    double                         pixel_ratio_ = 1.0;
-    ReportOnce                     refused_{};
-    ReportOnce                     unregistered_{};
-    ReportOnce                     not_the_engines_{};
+    Lease<RenderEngine>          engine_;
+    raw_ptr<SceneView>           view_ = nullptr;
+    intrusive_ptr<RenderPass>    pass_;
+    raw_ptr<WindowPresentTarget> target_      = nullptr;
+    int                          width_       = 0;
+    int                          height_      = 0;
+    double                       pixel_ratio_ = 1.0;
+    ReportOnce                   refused_{};
+    ReportOnce                   unregistered_{};
+    ReportOnce                   not_the_engines_{};
 };
 
 VN_GRAPHICS_NS_END

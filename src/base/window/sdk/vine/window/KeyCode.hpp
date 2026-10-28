@@ -14,18 +14,63 @@ VN_WINDOW_NS_BEGIN
  * intentionally does not cover every physical key of every keyboard layout;
  * unknown keys map to KeyCode::Unknown.
  */
-enum class KeyCode : std::uint32_t {
+enum class KeyCode : std::uint32_t
+{
     Unknown = 0,
 
     // Letters (US layout).
-    A = 1, B, C, D, E, F, G, H, I, J, K, L, M,
-    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    A = 1,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
 
     // Digits (top row).
-    D0, D1, D2, D3, D4, D5, D6, D7, D8, D9,
+    D0,
+    D1,
+    D2,
+    D3,
+    D4,
+    D5,
+    D6,
+    D7,
+    D8,
+    D9,
 
     // Function keys.
-    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
 
     // Whitespace and editing.
     Space,
@@ -49,7 +94,7 @@ enum class KeyCode : std::uint32_t {
     Shift,
     Control,
     Alt,
-    Super,  ///< Windows key / Command key.
+    Super, // Windows key / Command key.
 
     // Punctuation (US layout).
     Minus,
@@ -62,11 +107,19 @@ enum class KeyCode : std::uint32_t {
     Comma,
     Period,
     Slash,
-    Grave,  ///< Backtick `.
+    Grave, // Backtick `.
 
     // Numpad.
-    Numpad0, Numpad1, Numpad2, Numpad3, Numpad4,
-    Numpad5, Numpad6, Numpad7, Numpad8, Numpad9,
+    Numpad0,
+    Numpad1,
+    Numpad2,
+    Numpad3,
+    Numpad4,
+    Numpad5,
+    Numpad6,
+    Numpad7,
+    Numpad8,
+    Numpad9,
     NumpadDecimal,
     NumpadDivide,
     NumpadMultiply,

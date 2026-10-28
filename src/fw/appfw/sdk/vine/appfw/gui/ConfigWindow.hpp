@@ -1,8 +1,8 @@
 ﻿#pragma once
 
-#include <vine/raw_ptr.hpp>
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include <vine/appfw/gui/Window.hpp>
 

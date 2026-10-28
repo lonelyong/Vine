@@ -23,8 +23,7 @@ namespace
  * later - a dock panel, the progress bar that goes into the status bar - are picked up through their parent's
  * ChildAdded notice, so nothing inside a window has to exist before the window is watched.
  */
-class PaintWatcher : public QObject
-{
+class PaintWatcher : public QObject {
   public:
     /**
      * @brief Watches a tree for its first paint and reports it through \a first_paint.
@@ -64,21 +63,20 @@ class PaintWatcher : public QObject
     bool eventFilter(QObject* watched, QEvent* event) override
     {
         switch (event->type()) {
-            case QEvent::Paint:
-                if (!painted_) {
-                    painted_ = true;
-                    first_paint_.trigger();
-                }
-                break;
-            case QEvent::ChildAdded:
-                // Seen from the parent's side, which is why watching a widget is enough to pick up its own children: a
-                // widget that appears while the window is up paints like everything else and has to be counted.
-                if (auto* child = qobject_cast<QWidget*>(static_cast<QChildEvent*>(event)->child())) {
-                    watchObject(*child);
-                }
-                break;
-            default:
-                break;
+        case QEvent::Paint:
+            if (!painted_) {
+                painted_ = true;
+                first_paint_.trigger();
+            }
+            break;
+        case QEvent::ChildAdded:
+            // Seen from the parent's side, which is why watching a widget is enough to pick up its own children: a
+            // widget that appears while the window is up paints like everything else and has to be counted.
+            if (auto* child = qobject_cast<QWidget*>(static_cast<QChildEvent*>(event)->child())) {
+                watchObject(*child);
+            }
+            break;
+        default: break;
         }
         return QObject::eventFilter(watched, event);
     }
@@ -125,7 +123,7 @@ Window::~Window()
     // The watcher is not a QObject child of the widget it watches: it belongs to the window, like the widget itself,
     // and the widget can be destroyed first when the window does not own it - so its lifetime is managed here.
     // d is released by UIElement.
-    auto* data         = static_cast<WindowData*>(d);
+    auto* data = static_cast<WindowData*>(d);
     delete data->paint_watcher;
     data->paint_watcher = nullptr;
 }

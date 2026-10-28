@@ -10,8 +10,8 @@
 #include <vine/Object.hpp>
 #include <vine/SmallVector.hpp>
 #include <vine/String.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/math/Isometry3.hpp>
+#include <vine/raw_ptr.hpp>
 #include <vine/robotics/kinematics/DofInfo.hpp>
 
 VN_ROBOTICS_KINEMATICS_NS_BEGIN
@@ -38,9 +38,7 @@ class State;
  * tree links are non-owning: frames are owned externally (e.g. by the robot
  * model) and must outlive the tree that references them.
  */
-class VN_ROBOTICS_CORE_API Frame : public vn::Object,
-                                  public vn::INameable,
-                                  public vn::IHierarchyNode<Frame> {
+class VN_ROBOTICS_CORE_API Frame : public vn::Object, public vn::INameable, public vn::IHierarchyNode<Frame> {
     VN_OBJECT_META(Frame, vn::Object, vn::INameable);
 
   public:
@@ -220,11 +218,11 @@ class VN_ROBOTICS_CORE_API Frame : public vn::Object,
     static math::Isometry3d frameInFrame(raw_ptr<const Frame> from, raw_ptr<const Frame> to, const State& state);
 
   private:
-    String              name_;
-    FrameType           type_{ FrameType::Fixed };
-    math::Isometry3d    fixed_tf_;
-    std::size_t         dof_{ 0 };
-    raw_ptr<Frame>      parent_{ nullptr };
+    String                      name_;
+    FrameType                   type_{ FrameType::Fixed };
+    math::Isometry3d            fixed_tf_;
+    std::size_t                 dof_{ 0 };
+    raw_ptr<Frame>              parent_{ nullptr };
     std::vector<raw_ptr<Frame>> children_;
 };
 

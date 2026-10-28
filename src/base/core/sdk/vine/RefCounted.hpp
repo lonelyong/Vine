@@ -28,7 +28,7 @@ VN_CORE_NS_BEGIN
 template <typename Derived>
 class RefCounted {
   public:
-    RefCounted() noexcept                     = default;
+    RefCounted() noexcept                    = default;
     RefCounted(const RefCounted&)            = delete;
     RefCounted& operator=(const RefCounted&) = delete;
     RefCounted(RefCounted&&)                 = delete;

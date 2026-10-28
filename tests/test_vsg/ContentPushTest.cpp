@@ -31,22 +31,22 @@
 
 #include <vine/math/Matrix4x4.hpp>
 
+#include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/vsg/internal/ContentPush.hpp>
 #include <vine/vsg/internal/ContentSources.hpp>
 #include <vine/vsg/internal/ProgramAbi.hpp>
 #include <vine/vsg/internal/ViewBlock.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
 
 using vn::graphics::ShaderProgram;
+using vn::graphics::backend::CameraSnapshot;
 using vn::math::Mat4d;
 using vn::vsg::AbiPushMember;
 using vn::vsg::AbiPushRange;
 using vn::vsg::buildProgramFacts;
 using vn::vsg::canFillPushMember;
+using vn::vsg::ContentPushMember;
 using vn::vsg::contentPushMemberName;
 using vn::vsg::contentPushMemberOf;
-using vn::vsg::ContentPushMember;
-using vn::graphics::backend::CameraSnapshot;
 using vn::vsg::FactMiss;
 using vn::vsg::foldToDeviceClip;
 using vn::vsg::packContentPush;
@@ -79,13 +79,13 @@ Mat4d scale(double factor)
 /// @brief A rotation about z.
 Mat4d rotationZ(double radians)
 {
-    Mat4d matrix;
+    Mat4d        matrix;
     const double cosine = std::cos(radians);
     const double sine   = std::sin(radians);
-    matrix(0, 0)       = cosine;
-    matrix(0, 1)       = -sine;
-    matrix(1, 0)       = sine;
-    matrix(1, 1)       = cosine;
+    matrix(0, 0)        = cosine;
+    matrix(0, 1)        = -sine;
+    matrix(1, 0)        = sine;
+    matrix(1, 1)        = cosine;
     return matrix;
 }
 
@@ -124,21 +124,16 @@ Mat4d makeModel()
 double elementOf(const std::vector<std::byte>& bytes, std::size_t matrix_offset, int row, int column)
 {
     float value = 0.0F;
-    std::memcpy(&value, bytes.data() + matrix_offset + (static_cast<std::size_t>(column) * 4U +
-                                                        static_cast<std::size_t>(row)) * sizeof(float),
-                sizeof(float));
+    std::memcpy(&value, bytes.data() + matrix_offset + (static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)) * sizeof(float), sizeof(float));
     return static_cast<double>(value);
 }
 
 /// @brief Asserts the 64 bytes at @p matrix_offset are @p expected, column-major.
 void expectMatrix(const std::vector<std::byte>& bytes, std::size_t matrix_offset, const Mat4d& expected)
 {
-    for (int column = 0; column < 4; ++column)
-    {
-        for (int row = 0; row < 4; ++row)
-        {
-            EXPECT_NEAR(elementOf(bytes, matrix_offset, row, column), expected(row, column), 1e-6)
-                << "element (" << row << ", " << column << ")";
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            EXPECT_NEAR(elementOf(bytes, matrix_offset, row, column), expected(row, column), 1e-6) << "element (" << row << ", " << column << ")";
         }
     }
 }
@@ -154,7 +149,7 @@ AbiPushRange enginePush()
     return abi.pushes.empty() ? AbiPushRange{} : abi.pushes.front();
 }
 
-}  // namespace
+} // namespace
 
 TEST(ContentPushTest, TheDeclaredNamesAreTheOnesTheProgramsWrite)
 {
@@ -178,8 +173,8 @@ TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
     const AbiPushRange range = enginePush();
     ASSERT_EQ(range.members.size(), 2U);
 
-    const CameraSnapshot camera = makeCamera();
-    const Mat4d         model  = makeModel();
+    const CameraSnapshot   camera = makeCamera();
+    const Mat4d            model  = makeModel();
     std::vector<std::byte> bytes;
     std::string_view       unhandled;
     ASSERT_TRUE(packContentPush(range, camera, model, bytes, unhandled));
@@ -189,12 +184,9 @@ TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
     // `pc.projection == VineViewBlock.proj`: the fold is the view block's, spelled once (api/ViewBlock), so a
     // program that reads the push and one that reads the block agree about the clip convention.
     const vn::graphics::VineViewBlock block = vn::vsg::buildViewBlock(camera, 0.0F, 0U, 0U);
-    for (int column = 0; column < 4; ++column)
-    {
-        for (int row = 0; row < 4; ++row)
-        {
-            EXPECT_NEAR(elementOf(bytes, 0U, row, column),
-                        block.proj[static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)], 1e-6)
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            EXPECT_NEAR(elementOf(bytes, 0U, row, column), block.proj[static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)], 1e-6)
                 << "the push' projection must be the block's, element (" << row << ", " << column << ")";
         }
     }
@@ -204,12 +196,10 @@ TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
     expectMatrix(bytes, 64U, camera.view * model);
     // ... and the other order is a different matrix, which is why the order is worth pinning: a packer that
     // composed them backwards would pass a comparison against its own arithmetic but not this one.
-    bool differs = false;
+    bool        differs   = false;
     const Mat4d backwards = model * camera.view;
-    for (int column = 0; column < 4 && !differs; ++column)
-    {
-        for (int row = 0; row < 4 && !differs; ++row)
-        {
+    for (int column = 0; column < 4 && !differs; ++column) {
+        for (int row = 0; row < 4 && !differs; ++row) {
             differs = std::abs(elementOf(bytes, 64U, row, column) - backwards(row, column)) > 1e-3;
         }
     }
@@ -243,22 +233,27 @@ TEST(ContentPushTest, TheModelMatrixIsTheDrawablesAndLandsWhereTheDrawableGoes)
 
 TEST(ContentPushTest, AMemberNobodyCanFillIsRefusedWithItsName)
 {
-    const CameraSnapshot camera = makeCamera();
-    const Mat4d         model  = makeModel();
+    const CameraSnapshot   camera = makeCamera();
+    const Mat4d            model  = makeModel();
     std::vector<std::byte> bytes;
     std::string_view       unhandled;
 
     // A name this backend does not know: the program would shade with zeros, so it is refused - by name.
     AbiPushRange unknown;
     unknown.size    = 64U;
-    unknown.members = { AbiPushMember{ "tint", 0U, 64U } };
+    unknown.members = {
+        AbiPushMember{ "tint", 0U, 64U }
+    };
     EXPECT_FALSE(packContentPush(unknown, camera, model, bytes, unhandled));
     EXPECT_EQ(unhandled, "tint");
 
     // A known name of the wrong size: `vec4 projection` is not a projection matrix.
     AbiPushRange wrong_size;
     wrong_size.size    = 32U;
-    wrong_size.members = { AbiPushMember{ "projection", 0U, 16U }, AbiPushMember{ "modelView", 16U, 16U } };
+    wrong_size.members = {
+        AbiPushMember{ "projection", 0U,  16U },
+        AbiPushMember{ "modelView",  16U, 16U }
+    };
     EXPECT_FALSE(packContentPush(wrong_size, camera, model, bytes, unhandled));
     EXPECT_EQ(unhandled, "projection");
 
@@ -282,8 +277,7 @@ TEST(ContentPushTest, ASnapshotWithNoCameraWritesZerosAndSaysSo)
     std::string_view       unhandled;
     ASSERT_TRUE(packContentPush(range, camera, makeModel(), bytes, unhandled));
     ASSERT_EQ(bytes.size(), 128U);
-    for (const std::byte entry : bytes)
-    {
+    for (const std::byte entry : bytes) {
         EXPECT_EQ(entry, std::byte{ 0 });
     }
 }

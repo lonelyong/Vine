@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <vine/Exception.hpp>
-#include <vine/intrusive_ptr.hpp>
 #include <vine/di/Container.hpp>
 #include <vine/di/Registration.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 using vn::intrusive_ptr;
 using vn::TypeId;

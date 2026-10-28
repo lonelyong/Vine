@@ -33,25 +33,23 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /** @brief What a session should do about an announced window. */
 enum class MoveAction : std::uint8_t
 {
-    Keep,     ///< Already on that window: nothing changes, nothing is rebuilt.
-    Move,     ///< Move onto it: recreate the surface and the swapchain, keep the device and the pipelines.
-    Rebuild,  ///< Start a fresh session (the reason names what made a move impossible).
+    Keep,    // Already on that window: nothing changes, nothing is rebuilt.
+    Move,    // Move onto it: recreate the surface and the swapchain, keep the device and the pipelines.
+    Rebuild, // Start a fresh session (the reason names what made a move impossible).
 };
 
 /** @brief What the caller knows about the announced window before touching anything. */
-struct MoveFacts
-{
-    bool has_live_session{false};  ///< There is a session that could be moved.
-    bool on_host_window{false};    ///< That session adopted a host window (rather than owning its own).
-    bool handle_announced{false};  ///< The host announced a window (a non-null handle).
-    bool handle_differs{false};    ///< It is not the one the session is on.
+struct MoveFacts {
+    bool has_live_session{ false }; // There is a session that could be moved.
+    bool on_host_window{ false };   // That session adopted a host window (rather than owning its own).
+    bool handle_announced{ false }; // The host announced a window (a non-null handle).
+    bool handle_differs{ false };   // It is not the one the session is on.
 };
 
 /** @brief The decision, with the sentence a host can be told when the expensive path is taken. */
-struct MoveDecision
-{
-    MoveAction  action{MoveAction::Rebuild};  ///< What to do.
-    const char* reason{""};                   ///< Why, phrased for a diagnostic.
+struct MoveDecision {
+    MoveAction  action{ MoveAction::Rebuild }; // What to do.
+    const char* reason{ "" };                  // Why, phrased for a diagnostic.
 };
 
 /** @brief Decides what to do about an announced window (see the file note for the costs involved).
@@ -64,9 +62,9 @@ struct MoveDecision
 /** @brief The outcome of TRYING a move: the part only the new surface can answer. */
 enum class MoveAttemptResult : std::uint8_t
 {
-    Moved,                ///< The session is on the new window; the device and the pipelines survived.
-    FormatIncompatible,   ///< The new surface cannot serve the current render pass: a rebuild is required.
-    Refused,              ///< The window refused for another reason (the reason is reported by the caller).
+    Moved,              // The session is on the new window; the device and the pipelines survived.
+    FormatIncompatible, // The new surface cannot serve the current render pass: a rebuild is required.
+    Refused,            // The window refused for another reason (the reason is reported by the caller).
 };
 
 VN_GRAPHICSBACKEND_NS_END

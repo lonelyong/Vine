@@ -12,8 +12,8 @@
 #include <vector>
 
 #include <vine/Events.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/appfw/Command.hpp>
+#include <vine/raw_ptr.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -126,8 +126,7 @@ struct CommandHistoryEntry {
  * Commands must not start other commands as top-level entries; they run children
  * through CommandExecutionContext::executeChild().
  */
-class VN_APPFW_API CommandManager
-{
+class VN_APPFW_API CommandManager {
   public:
     /**
      * @brief Returns the bounded wait for a taken-over chain to unwind before an Exclusive command starts.
@@ -138,7 +137,10 @@ class VN_APPFW_API CommandManager
      *
      * @return The drain bound.
      */
-    static constexpr std::chrono::milliseconds exclusiveDrainTimeout() noexcept { return std::chrono::milliseconds{ 2000 }; }
+    static constexpr std::chrono::milliseconds exclusiveDrainTimeout() noexcept
+    {
+        return std::chrono::milliseconds{ 2000 };
+    }
 
     /**
      * @brief Returns the upper bound of the execution history.
@@ -147,7 +149,10 @@ class VN_APPFW_API CommandManager
      *
      * @return The history capacity.
      */
-    static constexpr std::size_t maxHistoryEntries() noexcept { return 1024; }
+    static constexpr std::size_t maxHistoryEntries() noexcept
+    {
+        return 1024;
+    }
 
     /**
      * @brief Returns the upper bound of the nesting depth of one chain.
@@ -156,7 +161,10 @@ class VN_APPFW_API CommandManager
      *
      * @return The maximum number of commands of a chain.
      */
-    static constexpr int maxChainDepth() noexcept { return 64; }
+    static constexpr int maxChainDepth() noexcept
+    {
+        return 64;
+    }
 
   public:
     explicit CommandManager(Application* app);
@@ -683,8 +691,7 @@ class VN_APPFW_API CommandManager
     /// A top-level scope creates a fresh chain, which becomes the foreground chain and
     /// faces the serialization gate; a nested scope joins the chain the context passes
     /// in, which also skips the gate.
-    vn::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope,
-                                                          const CommandTarget& target);
+    vn::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope, const CommandTarget& target);
 
     /// Runs a registered command by name on a task that owns its own copy of the name.
     ///

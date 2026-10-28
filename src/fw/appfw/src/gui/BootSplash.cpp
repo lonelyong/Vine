@@ -12,8 +12,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
-#include <QScreen>
 #include <QRect>
+#include <QScreen>
 #include <QSvgRenderer>
 #include <QThread>
 #include <QTimer>
@@ -64,8 +64,7 @@ constexpr int kSpinnerSweepDegrees = 100;
 /// It does not close on request: the boot's face is the framework's to take down (startupEnd() destroys it), and a frame
 /// the user dismissed while the load goes on would leave the screen empty until the main window comes up. Nothing to do
 /// with the cancellation machinery - that one is reachable from a host, not from here.
-class SplashWindow : public QWidget
-{
+class SplashWindow : public QWidget {
   public:
     explicit SplashWindow(QWidget* parent = nullptr)
       : QWidget(parent)
@@ -100,8 +99,7 @@ class SplashWindow : public QWidget
 /// It turns on the application thread's timer, so it advances whenever the event loop gets a turn - which the boot now
 /// grants it repeatedly (the session attach, its warm-up frame and the content load all run on the pool). A stretch that
 /// does hold the thread simply leaves the last frame on screen.
-class Spinner : public QWidget
-{
+class Spinner : public QWidget {
   public:
     explicit Spinner(QWidget* parent = nullptr)
       : QWidget(parent)
@@ -118,7 +116,10 @@ class Spinner : public QWidget
     }
 
     /// @brief Reports whether it is turning; a still indicator would be a picture that claims nothing is happening.
-    [[nodiscard]] bool isRunning() const noexcept { return timer_.isActive(); }
+    [[nodiscard]] bool isRunning() const noexcept
+    {
+        return timer_.isActive();
+    }
 
   protected:
     void paintEvent(QPaintEvent*) override
@@ -203,14 +204,14 @@ struct BootSplash::Impl : public WindowData {
     /// Owning frame, repainted from the change handler.
     BootSplash* self = nullptr;
 
-    QLabel*       logo     = nullptr;
-    QLabel*       title    = nullptr;
-    QLabel*       subtitle = nullptr;
-    QLabel*       status_label = nullptr;
-    Spinner*      spinner  = nullptr;
+    QLabel*  logo         = nullptr;
+    QLabel*  title        = nullptr;
+    QLabel*  subtitle     = nullptr;
+    QLabel*  status_label = nullptr;
+    Spinner* spinner      = nullptr;
 
     /// Subscription to ProgressHost::changed(); held so it is cancelled with the frame.
-    vn::Connection  hosts_changed{};
+    vn::Connection hosts_changed{};
 
     /// Status line as last reported, before elision.
     QString status;
@@ -224,8 +225,7 @@ struct BootSplash::Impl : public WindowData {
     /// @param config Appearance of the frame.
     void applyConfig(const SplashConfig& config)
     {
-        const QString title_text = config.title.empty() ? QCoreApplication::applicationName()
-                                                        : Convert::toQString(config.title);
+        const QString title_text = config.title.empty() ? QCoreApplication::applicationName() : Convert::toQString(config.title);
         title->setText(title_text);
         static_cast<QWidget*>(impl)->setWindowTitle(title_text);
 
@@ -254,7 +254,13 @@ struct BootSplash::Impl : public WindowData {
         }
 
         if (QThread::currentThread() != root->thread()) {
-            QMetaObject::invokeMethod(root, [data, root] { data->self->refresh(); root->repaint(); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                root,
+                [data, root] {
+                    data->self->refresh();
+                    root->repaint();
+                },
+                Qt::QueuedConnection);
             return;
         }
 
@@ -299,7 +305,7 @@ BootSplash::BootSplash(const SplashConfig& config)
     auto* identity = new QVBoxLayout();
     identity->setSpacing(2);
 
-    data->title = new QLabel(root);
+    data->title      = new QLabel(root);
     QFont title_font = data->title->font();
     if (title_font.pointSizeF() > 0.0) {
         title_font.setPointSizeF(title_font.pointSizeF() + 5.0);

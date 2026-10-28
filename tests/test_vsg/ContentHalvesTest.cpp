@@ -12,25 +12,33 @@
 #include <vine/graphics/Texture.hpp>
 #include <vine/intrusive_ptr.hpp>
 
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentHalves.hpp>
 #include <vine/vsg/internal/ContentSources.hpp>
 #include <vine/vsg/internal/FactResult.hpp>
 #include <vine/vsg/internal/GeometryFacts.hpp>
 #include <vine/vsg/internal/ProgramVariant.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
 
 #include "TestGeometryBuilders.hpp"
 
 using vn::graphics::Geometry;
-using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
+using vn::graphics::backend::CompiledCommand;
+using vn::graphics::backend::CompiledDraw;
+using vn::graphics::backend::CompiledPass;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::FrameTimeline;
+using vn::graphics::backend::ProgramRef;
+using vn::graphics::backend::RetirementQueue;
+using vn::graphics::backend::VariantPool;
+using vn::test::setPrimitiveIndices;
 using vn::vsg::buildGeometryFacts;
 using vn::vsg::buildMaterialFacts;
 using vn::vsg::buildProgramFacts;
@@ -42,14 +50,6 @@ using vn::vsg::GeometryFacts;
 using vn::vsg::MaterialFacts;
 using vn::vsg::ProgramFacts;
 using vn::vsg::ProgramVariant;
-using vn::graphics::backend::CompiledCommand;
-using vn::graphics::backend::CompiledDraw;
-using vn::graphics::backend::CompiledPass;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::ProgramRef;
-using vn::graphics::backend::RetirementQueue;
-using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -67,31 +67,28 @@ ShaderStage stage(ShaderStageType type, const char* source)
 /// @brief A content program whose fragment stage gates its sampler on `VN_TEXTURED` - one text, two ABIs.
 /// The texts are written the way the engine's own stages are (see builtin_forward.vert) so they COMPILE: this
 /// producer builds real layers.
-constexpr const char* kGatedVertexSource =
-    "#pragma import_defines (VN_TEXTURED, VN_TEXCOORD_UV)\n"
-    "layout(location = 0) in vec3 position;\n"
-    "#ifdef VN_TEXTURED\n"
-    "layout(location = 8) in vec2 texcoord;\n"
-    "#endif\n"
-    "void main() { gl_Position = vec4(position, 1.0); }\n";
+constexpr const char* kGatedVertexSource = "#pragma import_defines (VN_TEXTURED, VN_TEXCOORD_UV)\n"
+                                           "layout(location = 0) in vec3 position;\n"
+                                           "#ifdef VN_TEXTURED\n"
+                                           "layout(location = 8) in vec2 texcoord;\n"
+                                           "#endif\n"
+                                           "void main() { gl_Position = vec4(position, 1.0); }\n";
 
-constexpr const char* kGatedFragmentSource =
-    "#pragma import_defines (VN_TEXTURED)\n"
-    "layout(location = 0) out vec4 outColor;\n"
-    "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
-    "{\n"
-    "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-    "} material;\n"
-    "#ifdef VN_TEXTURED\n"
-    "layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;\n"
-    "#endif\n"
-    "void main() { outColor = material.base_color; }\n";
+constexpr const char* kGatedFragmentSource = "#pragma import_defines (VN_TEXTURED)\n"
+                                             "layout(location = 0) out vec4 outColor;\n"
+                                             "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+                                             "{\n"
+                                             "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                             "} material;\n"
+                                             "#ifdef VN_TEXTURED\n"
+                                             "layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;\n"
+                                             "#endif\n"
+                                             "void main() { outColor = material.base_color; }\n";
 
-constexpr const char* kScreenFragmentSource =
-    "#version 450\n"
-    "layout(location = 0) in vec2 vn_uv;\n"
-    "layout(location = 0) out vec4 outColor;\n"
-    "void main() { outColor = vec4(vn_uv, 0.0, 1.0); }\n";
+constexpr const char* kScreenFragmentSource = "#version 450\n"
+                                              "layout(location = 0) in vec2 vn_uv;\n"
+                                              "layout(location = 0) out vec4 outColor;\n"
+                                              "void main() { outColor = vec4(vn_uv, 0.0, 1.0); }\n";
 
 /// @brief A content program with both stages.
 vn::intrusive_ptr<ShaderProgram> contentProgram()
@@ -114,16 +111,16 @@ vn::intrusive_ptr<ShaderProgram> screenProgram()
 vn::intrusive_ptr<Geometry> quad(bool texcoords = false)
 {
     const auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
-    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
-        std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
-    if (texcoords)
-    {
-        geometry->setTexcoords2(vn::intrusive_ptr<const vn::Buffer<float>>(
-            new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F })));
+    geometry->setPositions(vn::intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F })));
+    if (texcoords) {
+        geometry->setTexcoords2(
+            vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F })));
     }
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-                                           new vn::Buffer<std::uint32_t>(
-                                               std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    setPrimitiveIndices(
+        *geometry,
+        0U,
+        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
     return geometry;
 }
@@ -133,8 +130,7 @@ vn::intrusive_ptr<Material> material(vn::Colorf diffuse, vn::intrusive_ptr<Textu
 {
     const auto out = vn::intrusive_ptr<Material>(new Material());
     out->setBaseColor(diffuse);
-    if (texture != nullptr)
-    {
+    if (texture != nullptr) {
         out->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     }
     return out;
@@ -145,29 +141,27 @@ vn::intrusive_ptr<Material> material(vn::Colorf diffuse, vn::intrusive_ptr<Textu
 /// The storage is ONE VECTOR PER ENTRY: a builder clears the storage it is given, so two entries sharing
 /// one vector would leave the first entry's span reading the second's data (the spans alias the vector's
 /// heap buffer, which a move preserves - so an outer vector is a stable home for them).
-struct Tables
-{
-    std::vector<ProgramFacts>              programs;
-    std::vector<GeometryFacts>             geometries;
-    std::vector<MaterialFacts>             materials;
-    std::vector<std::vector<ChannelFacts>> channel_storage;  ///< One per geometry entry.
-    std::vector<std::vector<vn::vsg::PrimitiveFacts>> primitive_storage;  ///< One per geometry entry: its draws.
-    std::vector<std::vector<std::byte>>    block_storage;    ///< One per material entry.
-    ContentFacts                           facts;
+struct Tables {
+    std::vector<ProgramFacts>                         programs;
+    std::vector<GeometryFacts>                        geometries;
+    std::vector<MaterialFacts>                        materials;
+    std::vector<std::vector<ChannelFacts>>            channel_storage;   // One per geometry entry.
+    std::vector<std::vector<vn::vsg::PrimitiveFacts>> primitive_storage; // One per geometry entry: its draws.
+    std::vector<std::vector<std::byte>>               block_storage;     // One per material entry.
+    ContentFacts                                      facts;
 };
 
 /// @brief A pass with the given draws (the spans are into the caller's vectors).
 CompiledPass passWith(std::span<const CompiledDraw> draws, std::uint32_t color_attachments = 1U)
 {
     CompiledPass pass;
-    pass.draws              = draws;
-    pass.color_attachments  = color_attachments;
+    pass.draws             = draws;
+    pass.color_attachments = color_attachments;
     return pass;
 }
 
 /// @brief A content command over @p geometry, @p program and @p material.
-CompiledCommand commandOf(const void* geometry, std::uint64_t geometry_revision, const void* program,
-                          std::uint64_t program_revision, const void* material)
+CompiledCommand commandOf(const void* geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, const void* material)
 {
     CompiledCommand out;
     out.geometry          = geometry;
@@ -177,7 +171,7 @@ CompiledCommand commandOf(const void* geometry, std::uint64_t geometry_revision,
     return out;
 }
 
-}  // namespace
+} // namespace
 
 TEST(ContentHalvesTest, OneHalfPerTupleThePassNames)
 {
@@ -191,29 +185,27 @@ TEST(ContentHalvesTest, OneHalfPerTupleThePassNames)
     Tables tables;
     tables.programs.push_back(program_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
-    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(material_facts);
     tables.facts.programs   = tables.programs;
     tables.facts.geometries = tables.geometries;
     tables.facts.materials  = tables.materials;
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
     // ONE draw, TWO commands over the same tuple: the pass asks for one half, not two.
-    const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()),
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()),
+                                                 commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
     };
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
-    const CompiledPass              pass = passWith(draws);
+    const CompiledPass pass = passWith(draws);
 
     const auto entries = halves.halvesFor(pass, tables.facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 1U);
@@ -242,35 +234,32 @@ TEST(ContentHalvesTest, ASteadyPassBuildsNothing)
     Tables tables;
     tables.programs.push_back(program_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
-    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(material_facts);
     tables.facts.programs   = tables.programs;
     tables.facts.geometries = tables.geometries;
     tables.facts.materials  = tables.materials;
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
     };
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
-    const CompiledPass              pass = passWith(draws);
+    const CompiledPass pass = passWith(draws);
 
     const auto first = halves.halvesFor(pass, tables.facts, timeline, retirement);
     ASSERT_EQ(first.size(), 1U);
-    const void* const layer = first[0].pipelines;
+    const void* const   layer = first[0].pipelines;
     const std::uint64_t built = halves.builds();
 
-    for (int frame = 0; frame < 3; ++frame)
-    {
+    for (int frame = 0; frame < 3; ++frame) {
         const auto again = halves.halvesFor(pass, tables.facts, timeline, retirement);
         ASSERT_EQ(again.size(), 1U);
         EXPECT_EQ(again[0].pipelines, layer) << "the same half is served, not rebuilt";
@@ -294,35 +283,32 @@ TEST(ContentHalvesTest, TheHalvesEpisodeStateIsTheHalvesOwn)
     Tables tables;
     tables.programs.push_back(program_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
-    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(material_facts);
     tables.facts.programs   = tables.programs;
     tables.facts.geometries = tables.geometries;
     tables.facts.materials  = tables.materials;
 
-    VariantPool    pool;
-    ContentHalves  halves(pool);
-    FrameTimeline  timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
     };
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
-    const CompiledPass              first_pass  = passWith(draws);
-    const CompiledPass              second_pass = passWith(draws);
+    const CompiledPass first_pass  = passWith(draws);
+    const CompiledPass second_pass = passWith(draws);
 
     const auto frame_one = halves.halvesFor(first_pass, tables.facts, timeline, retirement);
     ASSERT_EQ(frame_one.size(), 1U);
     ASSERT_NE(frame_one[0].reported, nullptr) << "the half's own episode state, not the recorder's";
     ASSERT_NE(frame_one[0].shadow_reported, nullptr);
-    EXPECT_NE(frame_one[0].reported, frame_one[0].shadow_reported)
-        << "the two sentences have their own episodes: one must not silence the other";
+    EXPECT_NE(frame_one[0].reported, frame_one[0].shadow_reported) << "the two sentences have their own episodes: one must not silence the other";
 
     // Frame one says it: the episode is open, and the caller can see that much.
     EXPECT_TRUE(frame_one[0].reported->shouldReport());
@@ -371,32 +357,29 @@ TEST(ContentHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
     tables.programs.push_back(textured_facts);
     tables.programs.push_back(plain_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts textured_material_facts;
     MaterialFacts plain_material_facts;
-    ASSERT_EQ(buildMaterialFacts(textured.get(), 1U, textured_material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(textured.get(), 1U, textured_material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(textured_material_facts);
-    ASSERT_EQ(buildMaterialFacts(plain.get(), 1U, plain_material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(plain.get(), 1U, plain_material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(plain_material_facts);
     tables.facts.programs   = tables.programs;
     tables.facts.geometries = tables.geometries;
     tables.facts.materials  = tables.materials;
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), textured.get()),
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), plain.get())
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), textured.get()),
+                                                 commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), plain.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
     };
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
-    const CompiledPass              pass = passWith(draws);
+    const CompiledPass pass = passWith(draws);
 
     const auto entries = halves.halvesFor(pass, tables.facts, timeline, retirement);
     EXPECT_EQ(halves.refused(), 0U) << "both layers compile";
@@ -418,31 +401,29 @@ TEST(ContentHalvesTest, ThePassAttachmentCountIsPartOfTheHalf)
     Tables tables;
     tables.programs.push_back(program_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
-    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(material_facts);
     tables.facts.programs   = tables.programs;
     tables.facts.geometries = tables.geometries;
     tables.facts.materials  = tables.materials;
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
     };
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
 
     // A layer's blend state declares its attachment count, so a one-attachment layer is not the same compiled
     // object as a four-attachment one - the pass' shape is part of the identity.
-    const CompiledPass one   = passWith(draws, 1U);
-    const CompiledPass four  = passWith(draws, 4U);
+    const CompiledPass one  = passWith(draws, 1U);
+    const CompiledPass four = passWith(draws, 4U);
     EXPECT_EQ(halves.halvesFor(one, tables.facts, timeline, retirement).size(), 1U);
     EXPECT_EQ(halves.halvesFor(four, tables.facts, timeline, retirement).size(), 1U);
     EXPECT_EQ(halves.halves(), 2U);
@@ -450,10 +431,10 @@ TEST(ContentHalvesTest, ThePassAttachmentCountIsPartOfTheHalf)
 
 TEST(ContentHalvesTest, ALayoutIsPartOfTheHalf)
 {
-    const auto program = contentProgram();
+    const auto program        = contentProgram();
     const auto plain_geometry = quad(false);
     const auto uv_geometry    = quad(true);
-    const auto shaded = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto shaded         = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
@@ -471,24 +452,25 @@ TEST(ContentHalvesTest, ALayoutIsPartOfTheHalf)
     ASSERT_NE(uv_geometry_facts.layout, plain_geometry_facts.layout);
 
     MaterialFacts material_facts;
-    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(material_facts);
     tables.facts.programs   = tables.programs;
     tables.facts.geometries = tables.geometries;
     tables.facts.materials  = tables.materials;
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
     const std::vector<CompiledCommand> commands{
         commandOf(uv_geometry.get(), uv_geometry->revision(), program.get(), program->revision(), shaded.get()),
         commandOf(plain_geometry.get(), plain_geometry->revision(), program.get(), program->revision(), shaded.get())
     };
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
-    const CompiledPass              pass = passWith(draws);
+    const std::vector<CompiledDraw> draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+    };
+    const CompiledPass pass = passWith(draws);
 
     const auto entries = halves.halvesFor(pass, tables.facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 2U) << "the same program over two vertex layouts is two compiled halves";
@@ -507,9 +489,9 @@ TEST(ContentHalvesTest, AScreenDrawGetsAFullScreenHalf)
     tables.programs.push_back(screen_facts);
     tables.facts.programs = tables.programs;
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
     CompiledDraw screen_draw;
@@ -530,20 +512,19 @@ TEST(ContentHalvesTest, AKeyTheTablesCannotAnswerProducesNoHalf)
     const auto geometry = quad();
     const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const ContentFacts empty{};
-    const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+    const ContentFacts                 empty{};
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
     };
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
-    const CompiledPass              pass = passWith(draws);
+    const CompiledPass pass = passWith(draws);
 
-    EXPECT_TRUE(halves.halvesFor(pass, empty, timeline, retirement).empty())
-        << "a store cannot invent a half for an identity nobody answered for";
+    EXPECT_TRUE(halves.halvesFor(pass, empty, timeline, retirement).empty()) << "a store cannot invent a half for an identity nobody answered for";
     EXPECT_EQ(halves.builds(), 0U);
 }
 
@@ -560,41 +541,38 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     Tables tables;
     tables.programs.push_back(old_facts);
     GeometryFacts geometry_facts;
-    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
     MaterialFacts material_facts;
-    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(material_facts);
     tables.facts.programs   = tables.programs;
     tables.facts.geometries = tables.geometries;
     tables.facts.materials  = tables.materials;
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const std::vector<CompiledCommand> old_commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), old_revision, shaded.get())
+    const std::vector<CompiledCommand> old_commands{ commandOf(geometry.get(), geometry->revision(), program.get(), old_revision, shaded.get()) };
+    const std::vector<CompiledDraw>    old_draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, old_commands }
     };
-    const std::vector<CompiledDraw> old_draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, old_commands } };
-    const CompiledPass              old_pass = passWith(old_draws);
+    const CompiledPass old_pass = passWith(old_draws);
     ASSERT_EQ(halves.halvesFor(old_pass, tables.facts, timeline, retirement).size(), 1U);
     ASSERT_EQ(halves.halves(), 1U);
 
     // The host edits the program (a single stage's source) and the tables are rebuilt for the new revision -
     // the OLD revision's entry is gone, exactly as api/ContentStore leaves it once its own window is past.
     ShaderStage patched = stage(ShaderStageType::Fragment, kGatedFragmentSource);
-    patched.source      = vn::String(reinterpret_cast<const char8_t*>(
-        "#pragma import_defines (VN_TEXTURED)\n"
-        "layout(location = 0) out vec4 outColor;\n"
-        "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
-        "{\n"
-        "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
-        "} material;\n"
-        "void main() { outColor = material.base_color; }\n"));
+    patched.source      = vn::String(reinterpret_cast<const char8_t*>("#pragma import_defines (VN_TEXTURED)\n"
+                                                                      "layout(location = 0) out vec4 outColor;\n"
+                                                                      "layout(set = 0, binding = 0, std140) uniform VineMaterialBlock\n"
+                                                                      "{\n"
+                                                                      "    vec4 base_color; vec4 emissive; vec4 params; uvec4 flags;\n"
+                                                                      "} material;\n"
+                                                                      "void main() { outColor = material.base_color; }\n"));
     ASSERT_TRUE(program->setStage(1U, patched));
     const std::uint64_t new_revision = program->revision();
     ASSERT_GT(new_revision, old_revision);
@@ -608,23 +586,22 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
               FactMiss::None);
     fresh.geometries.push_back(fresh_geometry_facts);
     MaterialFacts fresh_material_facts;
-    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, fresh_material_facts, fresh.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, fresh_material_facts, fresh.block_storage.emplace_back()), FactMiss::None);
     fresh.materials.push_back(fresh_material_facts);
     fresh.facts.programs   = fresh.programs;
     fresh.facts.geometries = fresh.geometries;
     fresh.facts.materials  = fresh.materials;
 
-    const std::vector<CompiledCommand> new_commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), new_revision, shaded.get())
+    const std::vector<CompiledCommand> new_commands{ commandOf(geometry.get(), geometry->revision(), program.get(), new_revision, shaded.get()) };
+    const std::vector<CompiledDraw>    new_draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, new_commands }
     };
-    const std::vector<CompiledDraw> new_draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, new_commands } };
-    const CompiledPass              new_pass = passWith(new_draws);
+    const CompiledPass new_pass = passWith(new_draws);
 
     ASSERT_EQ(halves.halvesFor(new_pass, fresh.facts, timeline, retirement).size(), 1U);
     EXPECT_EQ(halves.halves(), 1U) << "the live list holds the revision the tables answer";
     EXPECT_EQ(retirement.pending(), 1U) << "the half whose key left the tables was PARKED, not dropped: a"
-                                            " recorded frame may still name it";
+                                           " recorded frame may still name it";
     const std::uint64_t builds = halves.builds();
 
     timeline.completeUpTo(FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
@@ -651,37 +628,34 @@ TEST(ContentHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
 
     Tables tables;
     tables.programs.push_back(program_facts);
-    const auto geometry = quad();
+    const auto    geometry = quad();
     GeometryFacts geometry_facts;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
-    const auto shaded = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto    shaded = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
     MaterialFacts material_facts;
-    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()),
-              FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
     tables.materials.push_back(material_facts);
     tables.facts.programs   = tables.programs;
     tables.facts.geometries = tables.geometries;
     tables.facts.materials  = tables.materials;
 
-    VariantPool   pool;
-    ContentHalves halves(pool);
-    FrameTimeline timeline;
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const std::vector<CompiledCommand> commands{
-        commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get())
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
     };
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
-    const CompiledPass              pass = passWith(draws);
+    const CompiledPass pass = passWith(draws);
 
-    EXPECT_TRUE(halves.halvesFor(pass, tables.facts, timeline, retirement).empty())
-        << "the layer was refused, so no half is served";
+    EXPECT_TRUE(halves.halvesFor(pass, tables.facts, timeline, retirement).empty()) << "the layer was refused, so no half is served";
     EXPECT_EQ(halves.refused(), 1U);
     EXPECT_EQ(halves.builds(), 1U);
 
-    for (int frame = 0; frame < 3; ++frame)
-    {
+    for (int frame = 0; frame < 3; ++frame) {
         EXPECT_TRUE(halves.halvesFor(pass, tables.facts, timeline, retirement).empty());
     }
     EXPECT_EQ(halves.builds(), 1U) << "a refused key is remembered, not retried";

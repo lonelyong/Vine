@@ -10,14 +10,14 @@
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/Geometry.hpp>
 
+#include <vine/appfw/ConfigManager.hpp>
+#include <vine/appfw/Plugin.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/appfw/ConfigManager.hpp>
-#include <vine/appfw/Plugin.hpp>
 #include <vine/vsg/internal/DeviceProbe.hpp>
 #include <vine/vsg/internal/VsgBackend.hpp>
 
@@ -47,13 +47,13 @@
 #include "TestGeometryBuilders.hpp"
 
 using vn::graphics::Geometry;
-using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderPass;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
+using vn::test::setPrimitiveIndices;
 
 namespace
 {
@@ -79,15 +79,15 @@ std::unique_ptr<vn::appfw::Application> bootApplication()
     // built, because the paths are read while it is constructed.
     QStandardPaths::setTestModeEnabled(true);
 
-    static char arg0[] = "test_vsg";
+    static char  arg0[] = "test_vsg";
     static char* argv[] = { arg0, nullptr };
 
     vn::appfw::AppConfig config;
-    config.name = u8"Vine";
+    config.name           = u8"Vine";
     // Unit tests must not read or write the user's real configuration: the
     // builder would otherwise apply Application::defaultConfigFile().
     config.persist_config = false;
-    auto app = vn::appfw::createApplication(config, 1, argv);
+    auto app              = vn::appfw::createApplication(config, 1, argv);
     EXPECT_NE(app, nullptr);
     if (app != nullptr) {
         // The tests below assert on the discovered entries, so a failure here shows
@@ -97,8 +97,7 @@ std::unique_ptr<vn::appfw::Application> bootApplication()
     return app;
 }
 
-class VsgBackendPluginTest : public ::testing::Test
-{
+class VsgBackendPluginTest : public ::testing::Test {
   protected:
     static void SetUpTestSuite()
     {
@@ -162,19 +161,17 @@ bool isGreenClear(const std::array<std::uint8_t, 3>& pixel)
 bool isRed(const std::array<std::uint8_t, 3>& pixel)
 {
     return isColourByte(pixel[1], 0.0) &&
-           ((isColourByte(pixel[0], 1.0) && isColourByte(pixel[2], 0.0)) ||
-            (isColourByte(pixel[2], 1.0) && isColourByte(pixel[0], 0.0)));
+           ((isColourByte(pixel[0], 1.0) && isColourByte(pixel[2], 0.0)) || (isColourByte(pixel[2], 1.0) && isColourByte(pixel[0], 0.0)));
 }
 
-}  // namespace
+} // namespace
 
 TEST_F(VsgBackendPluginTest, PluginRegistersVsgBackend)
 {
     ASSERT_NE(s_app, nullptr);
 
     auto& registry = vn::graphics::RenderBackendRegistry::instance();
-    EXPECT_TRUE(registry.has(u8"vsg"))
-        << "gfx_backend_vsg plugin should have registered the 'vsg' backend";
+    EXPECT_TRUE(registry.has(u8"vsg")) << "gfx_backend_vsg plugin should have registered the 'vsg' backend";
 }
 
 TEST_F(VsgBackendPluginTest, CreateBackendByName)
@@ -191,8 +188,7 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
     auto backend = registry.create(u8"vsg");
     ASSERT_NE(backend, nullptr);
     auto* const facade = dynamic_cast<vn::vsg::VsgBackend*>(backend.get());
-    ASSERT_NE(facade, nullptr)
-        << "the registered 'vsg' backend is the rewrite's facade, not the implementation it replaces";
+    ASSERT_NE(facade, nullptr) << "the registered 'vsg' backend is the rewrite's facade, not the implementation it replaces";
     EXPECT_TRUE(backend->capabilities().render_targets);
     EXPECT_TRUE(backend->capabilities().presentation) << "this device HAS a window half: the value says so";
     EXPECT_EQ(facade->windowCount(), 0U) << "no window was asked for on this instance";
@@ -211,23 +207,21 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
  */
 TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraws)
 {
-    if (!deviceCaseAvailable())
-    {
+    if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no window system or no device satisfies the requirements";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     ASSERT_NE(screen, nullptr);
 
-    constexpr int kWidth  = 128;
-    constexpr int kHeight = 96;
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
     TestHostWindow host(connection, screen, kWidth, kHeight);
 
     auto& registry = vn::graphics::RenderBackendRegistry::instance();
@@ -241,26 +235,23 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
         fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
+        fragment.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                                      "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices =
-        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
@@ -276,43 +267,35 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
 
     // The camera looks half a unit to its right, so the triangle lands in the window's LEFT half.
     vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
-                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    const vn::graphics::ClearPolicy      clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+    const vn::graphics::ClearPolicy     clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     // The window half is the DEVICE's to hand out (RenderDevice::createSurfaceTarget): the host's handle is the creation
     // input, and the target that comes back is what the frames below resolve to and present through.
-    vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::NoPresentation;
-    auto target = backend->createSurfaceTarget(host.handle(), &why);
+    vn::graphics::SurfaceTargetResult why    = vn::graphics::SurfaceTargetResult::NoPresentation;
+    auto                              target = backend->createSurfaceTarget(host.handle(), &why);
     ASSERT_NE(target, nullptr) << "the registered device has a window half: it must hand a target out";
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
 
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(target->nativeHandle(), host.handle()) << "the session adopted the host's window";
 
-    backend->executor().executeFrame(TestFrame()
-                                         .pass(pass.get())
-                                         .target(nullptr)
-                                         .clear(clear)
-                                         .depth(vn::graphics::DepthMode::TestAndWrite)
-                                         .content(commands, camera.get())
-                                         .value(),
-                                     target);
+    backend->executor().executeFrame(
+        TestFrame().pass(pass.get()).target(nullptr).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).content(commands, camera.get()).value(),
+        target);
 
     // A presentation reaches the display server asynchronously: two plan-free frames re-present the picture
     // before it is read (the settle the rewrite's own device cases use).
-    for (int index = 0; index < 2; ++index)
-    {
+    for (int index = 0; index < 2; ++index) {
         backend->executor().executeFrame(vn::graphics::FrameDescription{}, target);
     }
 
     const auto left  = host.pixel(kWidth / 4, kHeight / 2);
     const auto right = host.pixel(3 * kWidth / 4, kHeight / 2);
-    EXPECT_TRUE(isRed(left)) << "the registered backend drew through the SDK, got ("
-                             << static_cast<int>(left[0]) << ", " << static_cast<int>(left[1]) << ", "
+    EXPECT_TRUE(isRed(left)) << "the registered backend drew through the SDK, got (" << static_cast<int>(left[0]) << ", " << static_cast<int>(left[1]) << ", "
                              << static_cast<int>(left[2]) << ")";
     EXPECT_TRUE(isGreenClear(right)) << "and the pass' clear covers the rest";
 
@@ -320,7 +303,7 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     EXPECT_TRUE(host.alive()) << "the host's window is not the backend's to destroy";
 }
 
-#endif  // !defined(_WIN32)
+#endif // !defined(_WIN32)
 
 /**
  * @brief Verifies the shutdown sequence that makes a disable take effect on the
@@ -337,7 +320,7 @@ TEST_F(VsgBackendPluginTest, ConfigFileRoundTripPersistsDisabledPlugins)
 {
     ASSERT_NE(s_app, nullptr);
 
-    const auto path = std::filesystem::temp_directory_path() / "vn_config_roundtrip_test.json";
+    const auto      path = std::filesystem::temp_directory_path() / "vn_config_roundtrip_test.json";
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
@@ -385,8 +368,7 @@ TEST_F(VsgBackendPluginTest, ConfigFileRoundTripPersistsDisabledPlugins)
     EXPECT_FALSE(s_app->pluginManager()->isPluginEnabled(u8"user_plugin_x"));
     EXPECT_TRUE(s_app->pluginManager()->plugin(u8"app_shell") == nullptr);
     const auto entries = s_app->pluginManager()->pluginEntries();
-    const auto entry   = std::find_if(entries.begin(), entries.end(),
-        [](const vn::appfw::PluginEntry& e) { return e.info.name == u8"app_shell"; });
+    const auto entry   = std::find_if(entries.begin(), entries.end(), [](const vn::appfw::PluginEntry& e) { return e.info.name == u8"app_shell"; });
     ASSERT_NE(entry, entries.end());
     EXPECT_EQ(entry->scope, vn::appfw::PluginScope::BuiltIn);
     EXPECT_FALSE(entry->loaded);
@@ -411,8 +393,7 @@ TEST_F(VsgBackendPluginTest, BuiltInPluginsCannotBeDisabledOrUninstalled)
     ASSERT_NE(pm, nullptr);
 
     const auto entries = pm->pluginEntries();
-    const auto shell   = std::find_if(entries.begin(), entries.end(),
-        [](const vn::appfw::PluginEntry& entry) { return entry.info.name == u8"app_shell"; });
+    const auto shell   = std::find_if(entries.begin(), entries.end(), [](const vn::appfw::PluginEntry& entry) { return entry.info.name == u8"app_shell"; });
     ASSERT_NE(shell, entries.end()) << "app_shell 来自程序目录";
     EXPECT_EQ(shell->scope, vn::appfw::PluginScope::BuiltIn);
     EXPECT_TRUE(shell->enabled);
@@ -422,6 +403,5 @@ TEST_F(VsgBackendPluginTest, BuiltInPluginsCannotBeDisabledOrUninstalled)
     EXPECT_TRUE(pm->isPluginEnabled(u8"app_shell"));
     EXPECT_FALSE(pm->uninstallPlugin(u8"app_shell", vn::appfw::PluginScope::User));
     EXPECT_FALSE(pm->uninstallPlugin(u8"app_shell", vn::appfw::PluginScope::AllUsers));
-    EXPECT_TRUE(pm->installPlugin(u8"/tmp", vn::appfw::PluginScope::BuiltIn).empty())
-        << "a plugin location cannot be registered as application-provided";
+    EXPECT_TRUE(pm->installPlugin(u8"/tmp", vn::appfw::PluginScope::BuiltIn).empty()) << "a plugin location cannot be registered as application-provided";
 }

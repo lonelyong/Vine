@@ -15,8 +15,8 @@
 
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/vsg/internal/HostTargets.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/vsg/internal/HostTargets.hpp>
 
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::TargetFacts;
@@ -48,8 +48,7 @@ TEST(HostTargetsTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
     EXPECT_EQ(row.wanted.shape.color_formats[0], RenderTarget::ColorFormat::RGBA16F);
     ASSERT_TRUE(row.wanted.shape.depth_format.has_value());
     EXPECT_EQ(*row.wanted.shape.depth_format, RenderTarget::DepthFormat::D32F);
-    EXPECT_TRUE(row.wanted.shape.device_color_formats.empty())
-        << "no objects: the device's own spelling is unknown, and unknown must not read as absent";
+    EXPECT_TRUE(row.wanted.shape.device_color_formats.empty()) << "no objects: the device's own spelling is unknown, and unknown must not read as absent";
     EXPECT_FALSE(row.current.built) << "nothing has been recorded into attachments that do not exist";
     EXPECT_TRUE(row.depth.has_depth);
     EXPECT_TRUE(row.depth.promotion) << "the host asked for a sampleable depth (the default)";
@@ -83,7 +82,7 @@ TEST(HostTargetsTest, ABorrowedDepthAndAShadowStatementAreTheHostsOwnWords)
     const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
     lender->attachColor(RenderTarget::ColorFormat::RGBA8);
     lender->attachDepth(RenderTarget::DepthFormat::D24);
-    lender->setDepthPromotion(false);  // it will be depth-tested against, so it must not become a texture
+    lender->setDepthPromotion(false); // it will be depth-tested against, so it must not become a texture
     lender->setSize(32, 32);
     EXPECT_EQ(targets.ensure(*lender, {}).state, HostTargets::State::NotBuilt);
 
@@ -108,13 +107,13 @@ TEST(HostTargetsTest, ABorrowedDepthAndAShadowStatementAreTheHostsOwnWords)
     // The shadow statement, as the host stated it: whose map it is, and the matrix the producer rendered
     // with. Both travel; neither is derived.
     const vn::intrusive_ptr<vn::graphics::Light> light(new vn::graphics::Light());
-    vn::math::Mat4d                                view_projection;
+    vn::math::Mat4d                              view_projection;
     view_projection.makeIdentity();
     view_projection.data[0] = 0.5;
     lender->setShadowOf(light);
     lender->setProducerViewProjection(view_projection);
 
-    (void)targets.observe(*lender);  // a new announcement: the snapshot is taken again
+    (void)targets.observe(*lender); // a new announcement: the snapshot is taken again
     TargetFacts lender_row;
     targets.facts(*targets.find(lender.get()), lender_row);
     EXPECT_EQ(lender_row.shadow.light, static_cast<const void*>(light.get()));

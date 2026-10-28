@@ -26,8 +26,7 @@ VN_GRAPHICS_NS_BEGIN
  *   two keeps the lifetimes honest - an ImageRef participates in the one-producer wiring rules, a Texture does
  *   not - while the frame carries one ordered list either way.
  */
-class VN_GRAPHICS_API ImageInput
-{
+class VN_GRAPHICS_API ImageInput {
   public:
     /** @brief Declares nothing (an empty entry). */
     ImageInput() = default;
@@ -36,13 +35,17 @@ class VN_GRAPHICS_API ImageInput
      *
      * @param image Image identity, or null for an empty declaration.
      */
-    ImageInput(intrusive_ptr<ImageRef> image) : image_(std::move(image)) {}
+    ImageInput(intrusive_ptr<ImageRef> image)
+      : image_(std::move(image))
+    {}
 
     /** @brief Declares an imported texture.
      *
      * @param texture Texture the host owns, or null for an empty declaration.
      */
-    ImageInput(intrusive_ptr<Texture> texture) : texture_(std::move(texture)) {}
+    ImageInput(intrusive_ptr<Texture> texture)
+      : texture_(std::move(texture))
+    {}
 
     /** @brief Declares an imported texture read with an explicit sampler state.
      *
@@ -50,22 +53,27 @@ class VN_GRAPHICS_API ImageInput
      * @param sampler How the texture is read by this pass (see Sampler).
      */
     ImageInput(intrusive_ptr<Texture> texture, Sampler sampler)
-        : texture_(std::move(texture))
-        , sampler_(std::move(sampler))
-    {
-    }
+      : texture_(std::move(texture))
+      , sampler_(std::move(sampler))
+    {}
 
     /** @brief Gets the produced-image identity, or null when this is an imported texture.
      *
      * @return The ImageRef, or null.
      */
-    [[nodiscard]] raw_ptr<ImageRef> image() const noexcept { return image_.get(); }
+    [[nodiscard]] raw_ptr<ImageRef> image() const noexcept
+    {
+        return image_.get();
+    }
 
     /** @brief Gets the imported texture, or null when this is a produced image.
      *
      * @return The Texture, or null.
      */
-    [[nodiscard]] raw_ptr<Texture> texture() const noexcept { return texture_.get(); }
+    [[nodiscard]] raw_ptr<Texture> texture() const noexcept
+    {
+        return texture_.get();
+    }
 
     /** @brief Gets the sampler state the declaration names, when it names one.
      *
@@ -76,19 +84,28 @@ class VN_GRAPHICS_API ImageInput
      *
      * @return The declared state, or an empty optional.
      */
-    [[nodiscard]] const std::optional<Sampler>& sampler() const noexcept { return sampler_; }
+    [[nodiscard]] const std::optional<Sampler>& sampler() const noexcept
+    {
+        return sampler_;
+    }
 
     /** @brief Gets whether this declaration names an imported texture.
      *
      * @return true for a Texture, false for an ImageRef (or an empty declaration).
      */
-    [[nodiscard]] bool isTexture() const noexcept { return texture_ != nullptr; }
+    [[nodiscard]] bool isTexture() const noexcept
+    {
+        return texture_ != nullptr;
+    }
 
     /** @brief Gets whether the declaration names anything at all.
      *
      * @return true when it holds an ImageRef or a Texture.
      */
-    [[nodiscard]] explicit operator bool() const noexcept { return image_ != nullptr || texture_ != nullptr; }
+    [[nodiscard]] explicit operator bool() const noexcept
+    {
+        return image_ != nullptr || texture_ != nullptr;
+    }
 
   private:
     intrusive_ptr<ImageRef> image_;
@@ -119,25 +136,24 @@ class VN_GRAPHICS_API ImageInput
  * - This is deliberately NOT a base class of `ImageRef` or `Texture`: their lifetimes and failure rules differ, and
  *   inheritance would force one rule on both. The value only states what a consumer needs.
  */
-struct VN_GRAPHICS_API ImageSource
-{
+struct VN_GRAPHICS_API ImageSource {
     /** @brief Which kind of image this input resolves to. */
     enum class Kind : std::uint8_t
     {
-        None,            ///< Nothing produced it this frame (or the declaration was empty).
-        ProducedImage,   ///< One attachment of a produced target.
-        ProducedTarget,  ///< A whole produced target (every colour attachment + sampleable depth).
-        ImportedTexture, ///< A Texture the host owns.
+        None,            // Nothing produced it this frame (or the declaration was empty).
+        ProducedImage,   // One attachment of a produced target.
+        ProducedTarget,  // A whole produced target (every colour attachment + sampleable depth).
+        ImportedTexture, // A Texture the host owns.
     };
 
-    Kind                         kind{ Kind::None };      ///< Which kind this is.
-    raw_ptr<RenderTarget>        target{ nullptr };       ///< Produced target (null for imported/none).
-    int                          attachment{ 0 };         ///< Colour index for ProducedImage (-1 for a whole target).
-    bool                         depth{ false };          ///< Whether the produced image is the target's depth.
-    raw_ptr<const Texture>       texture{ nullptr };      ///< Imported texture (null for produced/none).
-    std::uint64_t                revision{ 0 };           ///< Texture revision the upload is built from.
-    std::optional<Sampler>       sampler{};               ///< Imported texture's sampler state; absent = the
-                                                          ///< backend's input sampler.
+    Kind                   kind{ Kind::None }; // Which kind this is.
+    raw_ptr<RenderTarget>  target{ nullptr };  // Produced target (null for imported/none).
+    int                    attachment{ 0 };    // Colour index for ProducedImage (-1 for a whole target).
+    bool                   depth{ false };     // Whether the produced image is the target's depth.
+    raw_ptr<const Texture> texture{ nullptr }; // Imported texture (null for produced/none).
+    std::uint64_t          revision{ 0 };      // Texture revision the upload is built from.
+    std::optional<Sampler> sampler{};          // Imported texture's sampler state; absent = the
+                                               // backend's input sampler.
 
     /** @brief Builds a resolved one-attachment produced image.
      *
@@ -146,11 +162,10 @@ struct VN_GRAPHICS_API ImageSource
      * @param depth      Whether the image is the target's depth attachment.
      * @return The resolved source.
      */
-    [[nodiscard]] static ImageSource producedImage(raw_ptr<RenderTarget> target, int attachment,
-                                                   bool depth) noexcept
+    [[nodiscard]] static ImageSource producedImage(raw_ptr<RenderTarget> target, int attachment, bool depth) noexcept
     {
         if (target == nullptr) {
-            return {};   // a kind without its target would make isProduced() a lie
+            return {}; // a kind without its target would make isProduced() a lie
         }
         ImageSource source;
         source.kind       = Kind::ProducedImage;
@@ -168,7 +183,7 @@ struct VN_GRAPHICS_API ImageSource
     [[nodiscard]] static ImageSource producedTarget(raw_ptr<RenderTarget> target) noexcept
     {
         if (target == nullptr) {
-            return {};   // a kind without its target would make isProduced() a lie
+            return {}; // a kind without its target would make isProduced() a lie
         }
         ImageSource source;
         source.kind       = Kind::ProducedTarget;
@@ -188,11 +203,10 @@ struct VN_GRAPHICS_API ImageSource
      * @param sampler Declared state, or an empty optional for the backend's input sampler.
      * @return The resolved source (the revision is read from the texture).
      */
-    [[nodiscard]] static ImageSource imported(raw_ptr<const Texture> texture,
-                                              std::optional<Sampler> sampler = {}) noexcept
+    [[nodiscard]] static ImageSource imported(raw_ptr<const Texture> texture, std::optional<Sampler> sampler = {}) noexcept
     {
         if (texture == nullptr) {
-            return {};   // a kind without its texture would make isImported() a lie
+            return {}; // a kind without its texture would make isImported() a lie
         }
         ImageSource source;
         source.kind     = Kind::ImportedTexture;
@@ -215,13 +229,19 @@ struct VN_GRAPHICS_API ImageSource
      *
      * @return true for ImportedTexture.
      */
-    [[nodiscard]] bool isImported() const noexcept { return kind == Kind::ImportedTexture; }
+    [[nodiscard]] bool isImported() const noexcept
+    {
+        return kind == Kind::ImportedTexture;
+    }
 
     /** @brief Gets whether the input resolved to anything.
      *
      * @return true when it is not None.
      */
-    [[nodiscard]] explicit operator bool() const noexcept { return kind != Kind::None; }
+    [[nodiscard]] explicit operator bool() const noexcept
+    {
+        return kind != Kind::None;
+    }
 };
 
 VN_GRAPHICS_NS_END

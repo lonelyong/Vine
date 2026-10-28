@@ -90,9 +90,12 @@ DocumentManagerDialog::DocumentManagerDialog(vn::appfw::DocumentManager* manager
     lay->addWidget(data->types_label);
 
     data->types_table = new QTableWidget(0, 6, root);
-    data->types_table->setHorizontalHeaderLabels({ QStringLiteral("类型"), QStringLiteral("显示名"),
-                                                   QStringLiteral("来源插件"), QStringLiteral("可新建"),
-                                                   QStringLiteral("接受的载荷"), QStringLiteral("来源方案") });
+    data->types_table->setHorizontalHeaderLabels({ QStringLiteral("类型"),
+                                                   QStringLiteral("显示名"),
+                                                   QStringLiteral("来源插件"),
+                                                   QStringLiteral("可新建"),
+                                                   QStringLiteral("接受的载荷"),
+                                                   QStringLiteral("来源方案") });
     data->types_table->horizontalHeader()->setStretchLastSection(true);
     data->types_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     data->types_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -107,8 +110,7 @@ DocumentManagerDialog::DocumentManagerDialog(vn::appfw::DocumentManager* manager
     lay->addWidget(data->documents_label);
 
     data->documents_table = new QTableWidget(0, 4, root);
-    data->documents_table->setHorizontalHeaderLabels({ QStringLiteral("标题"), QStringLiteral("类型"),
-                                                       QStringLiteral("来源"), QStringLiteral("状态") });
+    data->documents_table->setHorizontalHeaderLabels({ QStringLiteral("标题"), QStringLiteral("类型"), QStringLiteral("来源"), QStringLiteral("状态") });
     data->documents_table->horizontalHeader()->setStretchLastSection(true);
     data->documents_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     data->documents_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -163,13 +165,11 @@ void DocumentManagerDialog::refresh()
         data->types_table->insertRow(row);
 
         data->types_table->setItem(row, 0, new QTableWidgetItem(Convert::toQString(info.type_id)));
-        data->types_table->setItem(row, 1, new QTableWidgetItem(info.display_name.empty()
-                                                                    ? Convert::toQString(info.type_id)
-                                                                    : Convert::toQString(info.display_name)));
-        data->types_table->setItem(row, 2, new QTableWidgetItem(info.owner.empty() ? QStringLiteral("主机")
-                                                                                   : Convert::toQString(info.owner)));
-        data->types_table->setItem(row, 3, new QTableWidgetItem(info.can_create ? QStringLiteral("是")
-                                                                               : QStringLiteral("否（只能打开）")));
+        data->types_table->setItem(row,
+                                   1,
+                                   new QTableWidgetItem(info.display_name.empty() ? Convert::toQString(info.type_id) : Convert::toQString(info.display_name)));
+        data->types_table->setItem(row, 2, new QTableWidgetItem(info.owner.empty() ? QStringLiteral("主机") : Convert::toQString(info.owner)));
+        data->types_table->setItem(row, 3, new QTableWidgetItem(info.can_create ? QStringLiteral("是") : QStringLiteral("否（只能打开）")));
         data->types_table->setItem(row, 4, new QTableWidgetItem(joinOrDash(info.payload_types)));
         data->types_table->setItem(row, 5, new QTableWidgetItem(joinOrDash(info.source_schemes)));
 
@@ -196,14 +196,12 @@ void DocumentManagerDialog::refresh()
         data->documents_table->setItem(row, 0, title_item);
         data->documents_table->setItem(row, 1, new QTableWidgetItem(Convert::toQString(document->typeId())));
         data->documents_table->setItem(row, 2, new QTableWidgetItem(sourceText(document->source())));
-        data->documents_table->setItem(row, 3, new QTableWidgetItem(document->isDirty() ? QStringLiteral("未保存")
-                                                                                        : QStringLiteral("已保存")));
+        data->documents_table->setItem(row, 3, new QTableWidgetItem(document->isDirty() ? QStringLiteral("未保存") : QStringLiteral("已保存")));
     }
 
     data->types_label->setText(QStringLiteral("已注册的类型（%1）").arg(types.size()));
     data->documents_label->setText(QStringLiteral("已打开的文档（%1）").arg(documents.size()));
-    data->message_label->setText(
-        QStringLiteral("文档类型由插件注册；能开什么由“接受的载荷”决定。这里只读 —— 谁能用由注册它的插件说了算。"));
+    data->message_label->setText(QStringLiteral("文档类型由插件注册；能开什么由“接受的载荷”决定。这里只读 —— 谁能用由注册它的插件说了算。"));
 
     applyFilter();
 }

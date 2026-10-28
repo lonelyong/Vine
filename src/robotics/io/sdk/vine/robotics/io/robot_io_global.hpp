@@ -13,11 +13,11 @@
 /** @brief Current XML format version (minor). */
 #define VN_ROBOTICS_IO_VERSION_MINOR 0
 
-#define VN_ROBOTICS_IO_NS_BEGIN                                                                                                                          \
-    VN_ROBOTICS_NS_BEGIN                                                                                                                                 \
-    namespace io                                                                                                                                        \
+#define VN_ROBOTICS_IO_NS_BEGIN                                                                                                                                \
+    VN_ROBOTICS_NS_BEGIN                                                                                                                                       \
+    namespace io                                                                                                                                               \
     {
 
-#define VN_ROBOTICS_IO_NS_END                                                                                                                            \
-    }                                                                                                                                                   \
+#define VN_ROBOTICS_IO_NS_END                                                                                                                                  \
+    }                                                                                                                                                          \
     VN_ROBOTICS_NS_END

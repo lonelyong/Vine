@@ -21,9 +21,8 @@ namespace detail
  *   target is a raw_ptr and never touches a reference count.
  */
 template <typename T>
-struct LeaseCell
-{
-    raw_ptr<T> target{ nullptr }; ///< The owner while it lives; cleared by the owner's destructor.
+struct LeaseCell {
+    raw_ptr<T> target{ nullptr }; // The owner while it lives; cleared by the owner's destructor.
 };
 
 } // namespace detail
@@ -56,8 +55,7 @@ struct LeaseCell
  *         with the reference counter; the cell (`detail::LeaseCell`) is what relates the two.
  */
 template <typename T>
-class Lease
-{
+class Lease {
   public:
     /** @brief Constructs an empty lease, which refers to nothing and reports false. */
     Lease() noexcept = default;
@@ -95,10 +93,12 @@ class Lease
      *
      * @param cell Cell the owner keeps for its whole lifetime (must not be null).
      */
-    explicit Lease(std::shared_ptr<detail::LeaseCell<T>> cell) noexcept : cell_(std::move(cell)) {}
+    explicit Lease(std::shared_ptr<detail::LeaseCell<T>> cell) noexcept
+      : cell_(std::move(cell))
+    {}
 
   private:
-    std::shared_ptr<detail::LeaseCell<T>> cell_{}; ///< The validity bit this lease reads (null when empty).
+    std::shared_ptr<detail::LeaseCell<T>> cell_{}; // The validity bit this lease reads (null when empty).
 };
 
 VN_CORE_NS_END

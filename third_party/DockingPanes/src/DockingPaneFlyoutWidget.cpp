@@ -407,8 +407,8 @@ void DockingPaneFlyoutWidget::setPositionAndSize()
 {
     // The flyout is a top-level tool window, so its geometry is in screen
     // coordinates. Start from the dock widget's rect mapped to the screen.
-    const QWidget* host   = parentWidget();
-    QRect          rc     = host ? QRect(host->mapToGlobal(host->rect().topLeft()), host->rect().size()) : QRect();
+    const QWidget* host = parentWidget();
+    QRect          rc   = host ? QRect(host->mapToGlobal(host->rect().topLeft()), host->rect().size()) : QRect();
 
     switch (m_pos) {
     case Right:

@@ -23,12 +23,11 @@ VN_VSG_NS_BEGIN
  * default states of a vsg::GraphicsPipelineConfigurator. Object construction
  * is device-free, so the mapping is unit-testable without a Vulkan device.
  */
-struct RenderStateObjects
-{
-    ::vsg::ref_ptr<::vsg::DepthStencilState> depthStencil;   ///< Depth test/write/compare.
-    ::vsg::ref_ptr<::vsg::RasterizationState> rasterization; ///< Culling + polygon mode.
-    ::vsg::ref_ptr<::vsg::ColorBlendState> colorBlend;       ///< Alpha blending equation.
-    ::vsg::ref_ptr<::vsg::InputAssemblyState> inputAssembly; ///< Primitive topology.
+struct RenderStateObjects {
+    ::vsg::ref_ptr<::vsg::DepthStencilState>  depthStencil;  // Depth test/write/compare.
+    ::vsg::ref_ptr<::vsg::RasterizationState> rasterization; // Culling + polygon mode.
+    ::vsg::ref_ptr<::vsg::ColorBlendState>    colorBlend;    // Alpha blending equation.
+    ::vsg::ref_ptr<::vsg::InputAssemblyState> inputAssembly; // Primitive topology.
 };
 
 namespace detail
@@ -51,14 +50,14 @@ namespace detail
 inline VkCompareOp mapCompareOp(vn::graphics::CompareOp op)
 {
     switch (op) {
-        case vn::graphics::CompareOp::Never: return VK_COMPARE_OP_NEVER;
-        case vn::graphics::CompareOp::Less: return VK_COMPARE_OP_GREATER;
-        case vn::graphics::CompareOp::Equal: return VK_COMPARE_OP_EQUAL;
-        case vn::graphics::CompareOp::LessEqual: return VK_COMPARE_OP_GREATER_OR_EQUAL;
-        case vn::graphics::CompareOp::Greater: return VK_COMPARE_OP_LESS;
-        case vn::graphics::CompareOp::NotEqual: return VK_COMPARE_OP_NOT_EQUAL;
-        case vn::graphics::CompareOp::GreaterEqual: return VK_COMPARE_OP_LESS_OR_EQUAL;
-        case vn::graphics::CompareOp::Always: return VK_COMPARE_OP_ALWAYS;
+    case vn::graphics::CompareOp::Never: return VK_COMPARE_OP_NEVER;
+    case vn::graphics::CompareOp::Less: return VK_COMPARE_OP_GREATER;
+    case vn::graphics::CompareOp::Equal: return VK_COMPARE_OP_EQUAL;
+    case vn::graphics::CompareOp::LessEqual: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+    case vn::graphics::CompareOp::Greater: return VK_COMPARE_OP_LESS;
+    case vn::graphics::CompareOp::NotEqual: return VK_COMPARE_OP_NOT_EQUAL;
+    case vn::graphics::CompareOp::GreaterEqual: return VK_COMPARE_OP_LESS_OR_EQUAL;
+    case vn::graphics::CompareOp::Always: return VK_COMPARE_OP_ALWAYS;
     }
     return VK_COMPARE_OP_GREATER;
 }
@@ -80,9 +79,9 @@ inline VkCompareOp mapCompareOp(vn::graphics::CompareOp op)
 inline VkCullModeFlags mapCullMode(vn::graphics::CullMode mode)
 {
     switch (mode) {
-        case vn::graphics::CullMode::Front: return VK_CULL_MODE_FRONT_BIT;
-        case vn::graphics::CullMode::Back: return VK_CULL_MODE_BACK_BIT;
-        case vn::graphics::CullMode::None: return VK_CULL_MODE_NONE;
+    case vn::graphics::CullMode::Front: return VK_CULL_MODE_FRONT_BIT;
+    case vn::graphics::CullMode::Back: return VK_CULL_MODE_BACK_BIT;
+    case vn::graphics::CullMode::None: return VK_CULL_MODE_NONE;
     }
     return VK_CULL_MODE_NONE;
 }
@@ -96,9 +95,9 @@ inline VkCullModeFlags mapCullMode(vn::graphics::CullMode mode)
 inline VkPolygonMode mapPolygonMode(vn::graphics::PolygonMode mode)
 {
     switch (mode) {
-        case vn::graphics::PolygonMode::Fill: return VK_POLYGON_MODE_FILL;
-        case vn::graphics::PolygonMode::Line: return VK_POLYGON_MODE_LINE;
-        case vn::graphics::PolygonMode::Point: return VK_POLYGON_MODE_POINT;
+    case vn::graphics::PolygonMode::Fill: return VK_POLYGON_MODE_FILL;
+    case vn::graphics::PolygonMode::Line: return VK_POLYGON_MODE_LINE;
+    case vn::graphics::PolygonMode::Point: return VK_POLYGON_MODE_POINT;
     }
     return VK_POLYGON_MODE_FILL;
 }
@@ -112,12 +111,12 @@ inline VkPolygonMode mapPolygonMode(vn::graphics::PolygonMode mode)
 inline VkPrimitiveTopology mapTopology(vn::graphics::Topology topology)
 {
     switch (topology) {
-        case vn::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        case vn::graphics::Topology::TriangleStrip: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-        case vn::graphics::Topology::TriangleFan: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
-        case vn::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-        case vn::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-        case vn::graphics::Topology::LineStrip: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+    case vn::graphics::Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    case vn::graphics::Topology::TriangleStrip: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    case vn::graphics::Topology::TriangleFan: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+    case vn::graphics::Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    case vn::graphics::Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case vn::graphics::Topology::LineStrip: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
     }
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
@@ -131,25 +130,21 @@ inline VkPrimitiveTopology mapTopology(vn::graphics::Topology topology)
 inline VkBlendFactor mapBlendFactor(vn::graphics::BlendFactor factor)
 {
     switch (factor) {
-        case vn::graphics::BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
-        case vn::graphics::BlendFactor::One: return VK_BLEND_FACTOR_ONE;
-        case vn::graphics::BlendFactor::SrcAlpha: return VK_BLEND_FACTOR_SRC_ALPHA;
-        case vn::graphics::BlendFactor::OneMinusSrcAlpha:
-            return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        case vn::graphics::BlendFactor::DstAlpha: return VK_BLEND_FACTOR_DST_ALPHA;
-        case vn::graphics::BlendFactor::OneMinusDstAlpha:
-            return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
-        case vn::graphics::BlendFactor::SrcColor: return VK_BLEND_FACTOR_SRC_COLOR;
-        case vn::graphics::BlendFactor::OneMinusSrcColor:
-            return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-        case vn::graphics::BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
-        case vn::graphics::BlendFactor::OneMinusDstColor:
-            return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    case vn::graphics::BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
+    case vn::graphics::BlendFactor::One: return VK_BLEND_FACTOR_ONE;
+    case vn::graphics::BlendFactor::SrcAlpha: return VK_BLEND_FACTOR_SRC_ALPHA;
+    case vn::graphics::BlendFactor::OneMinusSrcAlpha: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    case vn::graphics::BlendFactor::DstAlpha: return VK_BLEND_FACTOR_DST_ALPHA;
+    case vn::graphics::BlendFactor::OneMinusDstAlpha: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    case vn::graphics::BlendFactor::SrcColor: return VK_BLEND_FACTOR_SRC_COLOR;
+    case vn::graphics::BlendFactor::OneMinusSrcColor: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    case vn::graphics::BlendFactor::DstColor: return VK_BLEND_FACTOR_DST_COLOR;
+    case vn::graphics::BlendFactor::OneMinusDstColor: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
     }
     return VK_BLEND_FACTOR_ONE;
 }
 
-}  // namespace detail
+} // namespace detail
 
 /**
  * @brief Derives the four vsg pipeline-state objects for a resolved state.
@@ -171,21 +166,20 @@ inline VkBlendFactor mapBlendFactor(vn::graphics::BlendFactor factor)
  * @param state Resolved render state to translate.
  * @return The four vsg pipeline-state objects.
  */
-inline RenderStateObjects makeRenderStateObjects(
-    const vn::graphics::ResolvedRenderState& state)
+inline RenderStateObjects makeRenderStateObjects(const vn::graphics::ResolvedRenderState& state)
 {
     RenderStateObjects out;
 
     // Depth: test/write map 1:1; the comparison op is inverted for the
     // backend's reverse-Z convention (see detail::mapCompareOp).
-    out.depthStencil = ::vsg::DepthStencilState::create();
-    out.depthStencil->depthTestEnable = state.depth.test ? VK_TRUE : VK_FALSE;
+    out.depthStencil                   = ::vsg::DepthStencilState::create();
+    out.depthStencil->depthTestEnable  = state.depth.test ? VK_TRUE : VK_FALSE;
     out.depthStencil->depthWriteEnable = state.depth.write ? VK_TRUE : VK_FALSE;
-    out.depthStencil->depthCompareOp = detail::mapCompareOp(state.depth.compare);
+    out.depthStencil->depthCompareOp   = detail::mapCompareOp(state.depth.compare);
 
     // Culling + polygon rasterisation.
-    out.rasterization = ::vsg::RasterizationState::create();
-    out.rasterization->cullMode = detail::mapCullMode(state.cullMode);
+    out.rasterization                          = ::vsg::RasterizationState::create();
+    out.rasterization->cullMode                = detail::mapCullMode(state.cullMode);
     // FRONT FACES ARE DECLARED CLOCKWISE, and the sign is the whole point: the SDK's rule is that a
     // triangle is front-facing when its vertices read counter-clockwise in world space (RenderState.hpp),
     // while Vulkan decides that in FRAMEBUFFER space -- and vsg's projection INVERTS Y (see
@@ -196,8 +190,8 @@ inline RenderStateObjects makeRenderStateObjects(
     // box drew its interior: its outward faces, wound CCW by construction, were the ones culled), with
     // no validation error and nothing to report: exactly the silent failure the SDK's contract warns
     // about. A backend that renders without the Y inversion would declare counter-clockwise here.
-    out.rasterization->frontFace = VK_FRONT_FACE_CLOCKWISE;
-    out.rasterization->polygonMode = detail::mapPolygonMode(state.polygonMode);
+    out.rasterization->frontFace               = VK_FRONT_FACE_CLOCKWISE;
+    out.rasterization->polygonMode             = detail::mapPolygonMode(state.polygonMode);
     // The bias ENABLE is baked TRUE and the factors are dynamic (see SetDynamicState): a zero offset is
     // zero factors, so one pipeline serves both the offset and the plain case.
     out.rasterization->depthBiasEnable         = VK_TRUE;
@@ -212,8 +206,8 @@ inline RenderStateObjects makeRenderStateObjects(
     out.colorBlend->attachments.clear();
     VkPipelineColorBlendAttachmentState attachment{};
     attachment.blendEnable = VK_TRUE;
-    VkBlendFactor src = VK_BLEND_FACTOR_SRC_ALPHA;
-    VkBlendFactor dst = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    VkBlendFactor src      = VK_BLEND_FACTOR_SRC_ALPHA;
+    VkBlendFactor dst      = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     if (state.blend.enabled) {
         src = detail::mapBlendFactor(state.blend.src);
         dst = detail::mapBlendFactor(state.blend.dst);
@@ -222,14 +216,13 @@ inline RenderStateObjects makeRenderStateObjects(
     attachment.dstColorBlendFactor = dst;
     attachment.srcAlphaBlendFactor = src;
     attachment.dstAlphaBlendFactor = dst;
-    attachment.colorBlendOp = VK_BLEND_OP_ADD;
-    attachment.alphaBlendOp = VK_BLEND_OP_ADD;
-    attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+    attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+    attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     out.colorBlend->attachments.push_back(attachment);
 
     // Primitive topology.
-    out.inputAssembly = ::vsg::InputAssemblyState::create();
+    out.inputAssembly           = ::vsg::InputAssemblyState::create();
     out.inputAssembly->topology = detail::mapTopology(state.topology);
 
     return out;
@@ -246,19 +239,16 @@ inline RenderStateObjects makeRenderStateObjects(
  * @param config Configurator being set up for a geometry.
  * @param states Mapped state objects (see makeRenderStateObjects()).
  */
-inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
-                                    const RenderStateObjects& states)
+inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config, const RenderStateObjects& states)
 {
     auto& pipeline_states = config.pipelineStates;
-    pipeline_states.erase(
-        std::remove_if(pipeline_states.begin(), pipeline_states.end(),
-                       [](const ::vsg::ref_ptr<::vsg::GraphicsPipelineState>& s) {
-                           return s->cast<::vsg::DepthStencilState>() != nullptr ||
-                                  s->cast<::vsg::RasterizationState>() != nullptr ||
-                                  s->cast<::vsg::ColorBlendState>() != nullptr ||
-                                  s->cast<::vsg::InputAssemblyState>() != nullptr;
-                       }),
-        pipeline_states.end());
+    pipeline_states.erase(std::remove_if(pipeline_states.begin(),
+                                         pipeline_states.end(),
+                                         [](const ::vsg::ref_ptr<::vsg::GraphicsPipelineState>& s) {
+                                             return s->cast<::vsg::DepthStencilState>() != nullptr || s->cast<::vsg::RasterizationState>() != nullptr ||
+                                                    s->cast<::vsg::ColorBlendState>() != nullptr || s->cast<::vsg::InputAssemblyState>() != nullptr;
+                                         }),
+                          pipeline_states.end());
     pipeline_states.push_back(states.depthStencil);
     pipeline_states.push_back(states.rasterization);
     pipeline_states.push_back(states.colorBlend);
@@ -288,22 +278,22 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
 {
     RenderStateObjects baked = mapped;
 
-    auto depth                     = ::vsg::DepthStencilState::create();
-    depth->depthTestEnable         = detail::kBakedDepthTestEnable;
-    depth->depthWriteEnable        = detail::kBakedDepthWriteEnable;
-    depth->depthCompareOp          = detail::kBakedCompareOp;
+    auto depth              = ::vsg::DepthStencilState::create();
+    depth->depthTestEnable  = detail::kBakedDepthTestEnable;
+    depth->depthWriteEnable = detail::kBakedDepthWriteEnable;
+    depth->depthCompareOp   = detail::kBakedCompareOp;
 
-    auto raster            = ::vsg::RasterizationState::create();
-    raster->cullMode       = detail::kBakedCullMode;
-    raster->frontFace      = detail::kBakedFrontFace;
-    raster->polygonMode    = detail::kBakedPolygonMode;
+    auto raster         = ::vsg::RasterizationState::create();
+    raster->cullMode    = detail::kBakedCullMode;
+    raster->frontFace   = detail::kBakedFrontFace;
+    raster->polygonMode = detail::kBakedPolygonMode;
 
-    auto assembly    = ::vsg::InputAssemblyState::create();
+    auto assembly      = ::vsg::InputAssemblyState::create();
     assembly->topology = detail::kBakedTopology;
 
     // One entry per attachment, all of them the constants: the count is what the pipeline must match, the
     // values are delivered per drawable.
-    const auto            attachment_count = mapped.colorBlend->attachments.size();
+    const auto                                    attachment_count = mapped.colorBlend->attachments.size();
     ::vsg::ColorBlendState::ColorBlendAttachments baked_blend;
     baked_blend.reserve(attachment_count);
     for (std::size_t i = 0; i < attachment_count; ++i) {
@@ -347,9 +337,9 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
     command->depth_write_enable = states.depthStencil->depthWriteEnable;
     command->compare_op         = states.depthStencil->depthCompareOp;
 
-    command->cull_mode    = states.rasterization->cullMode;
-    command->front_face   = states.rasterization->frontFace;
-    command->polygon_mode = states.rasterization->polygonMode;
+    command->cull_mode           = states.rasterization->cullMode;
+    command->front_face          = states.rasterization->frontFace;
+    command->polygon_mode        = states.rasterization->polygonMode;
     command->depth_bias_constant = states.rasterization->depthBiasConstantFactor;
     command->depth_bias_slope    = states.rasterization->depthBiasSlopeFactor;
 
@@ -358,7 +348,7 @@ inline void applyRenderStateObjects(::vsg::GraphicsPipelineConfigurator& config,
     // The blend half is delivered per attachment (the API takes an array): the count is the pipeline's, and
     // the entries past what the command can carry keep the pipeline's constants.
     command->color_attachment_count = static_cast<std::uint32_t>(states.colorBlend->attachments.size());
-    const auto carried = std::min<std::size_t>(states.colorBlend->attachments.size(), detail::kMaxDynamicAttachments);
+    const auto carried              = std::min<std::size_t>(states.colorBlend->attachments.size(), detail::kMaxDynamicAttachments);
     for (std::size_t i = 0; i < carried; ++i) {
         command->blend[i] = states.colorBlend->attachments[i];
     }

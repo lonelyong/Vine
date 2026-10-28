@@ -6,10 +6,10 @@
 #include <vector>
 
 #include <vine/Colorf.hpp>
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/RefCounted.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "DepthMode.hpp"
 #include "DepthRange.hpp"
@@ -52,8 +52,7 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  *   policy), NOT a Vulkan render pass. Several passes targeting one framebuffer are recorded into one backend render
  *   pass; the backend owns that distinction.
  */
-class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
-{
+class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> {
     VN_OBJECT_META_DECL;
 
   public:
@@ -71,7 +70,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @return The declaration (valid until the next setDesc or mutating setter).
      */
-    [[nodiscard]] const PassDesc& declaration() const noexcept { return desc_; }
+    [[nodiscard]] const PassDesc& declaration() const noexcept
+    {
+        return desc_;
+    }
 
     /**
      * @brief Adopts @p desc as this pass' whole declaration.
@@ -94,21 +96,30 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @return The name used by diagnostics and the frame plan (empty when never set).
      */
-    [[nodiscard]] String name() const { return desc_.name; }
+    [[nodiscard]] String name() const
+    {
+        return desc_.name;
+    }
 
     /**
      * @brief Sets the pass name.
      *
      * @param name Name used by diagnostics and the frame plan.
      */
-    void setName(const String& name) { desc_.name = name; }
+    void setName(const String& name)
+    {
+        desc_.name = name;
+    }
 
     /**
      * @brief Gets the content scene this pass draws.
      *
      * @return The scene (null draws nothing, which is how a content-less pass states itself).
      */
-    [[nodiscard]] raw_ptr<Scene> content() const noexcept { return desc_.content.get(); }
+    [[nodiscard]] raw_ptr<Scene> content() const noexcept
+    {
+        return desc_.content.get();
+    }
 
     /**
      * @brief Binds the content scene this pass draws (see RenderEngine::bindPassContent).
@@ -119,14 +130,20 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param scene Scene to draw, or null to draw no content.
      */
-    void setContent(intrusive_ptr<Scene> scene) { desc_.content = std::move(scene); }
+    void setContent(intrusive_ptr<Scene> scene)
+    {
+        desc_.content = std::move(scene);
+    }
 
     /**
      * @brief Gets the target this pass draws into.
      *
      * @return The target, or null for the window / the frame's own presented image.
      */
-    [[nodiscard]] raw_ptr<RenderTarget> renderTarget() const noexcept { return desc_.writes.get(); }
+    [[nodiscard]] raw_ptr<RenderTarget> renderTarget() const noexcept
+    {
+        return desc_.writes.get();
+    }
 
     /**
      * @brief Sets the target this pass draws into.
@@ -147,7 +164,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @return The view stated by setDepthView, or an invalid view when the pass uses its target's own depth.
      */
-    [[nodiscard]] DepthView depthView() const { return desc_.depth_view.value_or(DepthView{}); }
+    [[nodiscard]] DepthView depthView() const
+    {
+        return desc_.depth_view.value_or(DepthView{});
+    }
 
     /**
      * @brief States the depth image this pass draws against, when it is another pass' image (see DepthView).
@@ -172,7 +192,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @return The camera (null draws nothing).
      */
-    [[nodiscard]] raw_ptr<Camera> camera() const noexcept { return desc_.camera.get(); }
+    [[nodiscard]] raw_ptr<Camera> camera() const noexcept
+    {
+        return desc_.camera.get();
+    }
 
     /**
      * @brief Sets the camera this pass draws through.
@@ -185,7 +208,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param camera Camera to draw through and keep alive (may be null).
      */
-    void setCamera(intrusive_ptr<Camera> camera) { desc_.camera = std::move(camera); }
+    void setCamera(intrusive_ptr<Camera> camera)
+    {
+        desc_.camera = std::move(camera);
+    }
 
     /**
      * @brief Gets one attachment's clear colour (attachment 0 unless one is named).
@@ -238,7 +264,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param clear True to clear the depth buffer.
      */
-    void setShouldClearDepth(bool clear) { desc_.clear_depth = clear; }
+    void setShouldClearDepth(bool clear)
+    {
+        desc_.clear_depth = clear;
+    }
 
     /**
      * @brief Returns whether the colour/depth buffer is cleared before this pass.
@@ -253,7 +282,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param enabled True to clear the buffers.
      */
-    void setClearEnabled(bool enabled) { desc_.clear_enabled = enabled; }
+    void setClearEnabled(bool enabled)
+    {
+        desc_.clear_enabled = enabled;
+    }
 
     /**
      * @brief Returns how this pass's content handles depth (the pass' own policy).
@@ -261,7 +293,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      * @return The depth mode (DepthMode::TestAndWrite by default), which is what content that authored no depth state
      *         of its own gets (see resolveRenderState).
      */
-    [[nodiscard]] DepthMode depthMode() const noexcept { return desc_.depth_mode; }
+    [[nodiscard]] DepthMode depthMode() const noexcept
+    {
+        return desc_.depth_mode;
+    }
 
     /**
      * @brief Sets how this pass's content handles depth.
@@ -273,7 +308,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param mode The depth mode.
      */
-    void setDepthMode(DepthMode mode) noexcept { desc_.depth_mode = mode; }
+    void setDepthMode(DepthMode mode) noexcept
+    {
+        desc_.depth_mode = mode;
+    }
 
     /**
      * @brief What this pass says about the state of the content it draws.
@@ -291,7 +329,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @return True when enabled (the default).
      */
-    [[nodiscard]] bool isEnabled() const noexcept { return desc_.enabled; }
+    [[nodiscard]] bool isEnabled() const noexcept
+    {
+        return desc_.enabled;
+    }
 
     /**
      * @brief Sets whether this pass is drawn by the engine.
@@ -302,7 +343,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param enabled True to draw the pass.
      */
-    void setEnabled(bool enabled) noexcept { desc_.enabled = enabled; }
+    void setEnabled(bool enabled) noexcept
+    {
+        desc_.enabled = enabled;
+    }
 
     /**
      * @brief Restricts this pass to a sub-rectangle of its target.
@@ -318,7 +362,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param viewport Draw rectangle in device pixels (top-left origin).
      */
-    void setViewport(const Viewport& viewport) { desc_.viewport = viewport; }
+    void setViewport(const Viewport& viewport)
+    {
+        desc_.viewport = viewport;
+    }
 
     /**
      * @brief Restricts this pass to a sub-rectangle of its target (see setViewport(const Viewport&)).
@@ -328,24 +375,36 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      * @param width  Viewport width in device pixels.
      * @param height Viewport height in device pixels.
      */
-    void setViewport(int x, int y, int width, int height) { setViewport(Viewport{ x, y, width, height }); }
+    void setViewport(int x, int y, int width, int height)
+    {
+        setViewport(Viewport{ x, y, width, height });
+    }
 
     /**
      * @brief Returns whether a sub-viewport is configured for this pass.
      *
      * @return True when the pass draws into a stated rectangle.
      */
-    [[nodiscard]] bool hasViewport() const noexcept { return desc_.viewport.has_value(); }
+    [[nodiscard]] bool hasViewport() const noexcept
+    {
+        return desc_.viewport.has_value();
+    }
 
     /**
      * @brief Gets the configured draw viewport.
      *
      * @return The draw rectangle in device pixels; only meaningful when hasViewport() is true.
      */
-    [[nodiscard]] Viewport viewport() const noexcept { return desc_.viewport.value_or(Viewport{}); }
+    [[nodiscard]] Viewport viewport() const noexcept
+    {
+        return desc_.viewport.value_or(Viewport{});
+    }
 
     /// @brief Clears any configured sub-viewport: the pass draws the whole target again.
-    void clearViewport() noexcept { desc_.viewport.reset(); }
+    void clearViewport() noexcept
+    {
+        desc_.viewport.reset();
+    }
 
     /**
      * @brief Maps this pass' draws into a band of the depth buffer instead of the whole of it.
@@ -361,17 +420,26 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param range Depth-buffer interval the pass' draws are mapped into; {0, 1} is the whole buffer.
      */
-    void setDepthRange(const DepthRange& range) { desc_.depth_range = range; }
+    void setDepthRange(const DepthRange& range)
+    {
+        desc_.depth_range = range;
+    }
 
     /**
      * @brief Gets the depth band this pass maps its draws into.
      *
      * @return The band, or nullopt when the pass maps into the whole depth buffer.
      */
-    [[nodiscard]] std::optional<DepthRange> depthRange() const noexcept { return desc_.depth_range; }
+    [[nodiscard]] std::optional<DepthRange> depthRange() const noexcept
+    {
+        return desc_.depth_range;
+    }
 
     /// @brief Clears any configured depth band: the pass maps into the whole depth buffer again.
-    void clearDepthRange() noexcept { desc_.depth_range.reset(); }
+    void clearDepthRange() noexcept
+    {
+        desc_.depth_range.reset();
+    }
 
     /** @brief States the device-pixel size of the surface this pass draws into when it has no target.
      *
@@ -390,14 +458,20 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
     }
 
     /** @brief Gets the draw size stated by setDrawSize(). */
-    [[nodiscard]] Viewport drawSize() const noexcept { return draw_size_; }
+    [[nodiscard]] Viewport drawSize() const noexcept
+    {
+        return draw_size_;
+    }
 
     /**
      * @brief Returns which layers of the content this pass draws (see Node::setLayers).
      *
      * @return The mask (kAllLayers by default, which draws every layer).
      */
-    [[nodiscard]] std::uint32_t layerMask() const noexcept { return desc_.layer_mask; }
+    [[nodiscard]] std::uint32_t layerMask() const noexcept
+    {
+        return desc_.layer_mask;
+    }
 
     /**
      * @brief Sets which layers of the content this pass draws.
@@ -411,7 +485,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param mask Layer mask (kAllLayers draws every layer; 0 draws no content at all).
      */
-    void setLayerMask(std::uint32_t mask) noexcept { desc_.layer_mask = mask; }
+    void setLayerMask(std::uint32_t mask) noexcept
+    {
+        desc_.layer_mask = mask;
+    }
 
     /**
      * @brief Sets the name this pass publishes its output under.
@@ -422,14 +499,20 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param name Output slot name, or empty to publish nothing.
      */
-    void setOutputName(const String& name) { desc_.output_name = name; }
+    void setOutputName(const String& name)
+    {
+        desc_.output_name = name;
+    }
 
     /**
      * @brief Gets the output slot name this pass publishes under.
      *
      * @return The output name (empty when publishing is disabled).
      */
-    [[nodiscard]] String outputName() const { return desc_.output_name; }
+    [[nodiscard]] String outputName() const
+    {
+        return desc_.output_name;
+    }
 
     /**
      * @brief Declares the image this pass produces (the fine-grained output declaration).
@@ -442,14 +525,20 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param image Image this pass produces (null clears it).
      */
-    void setOutput(intrusive_ptr<ImageRef> image) { desc_.output = std::move(image); }
+    void setOutput(intrusive_ptr<ImageRef> image)
+    {
+        desc_.output = std::move(image);
+    }
 
     /**
      * @brief Gets the output image this pass produces.
      *
      * @return The declared output image, or null when none was declared.
      */
-    [[nodiscard]] raw_ptr<ImageRef> output() const noexcept { return desc_.output.get(); }
+    [[nodiscard]] raw_ptr<ImageRef> output() const noexcept
+    {
+        return desc_.output.get();
+    }
 
     /**
      * @brief Declares a WHOLE target this pass hands to consumers (the coarse counterpart of setOutput).
@@ -462,14 +551,20 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param target Target whose images this pass produces (null clears the declaration).
      */
-    void setOutputTarget(intrusive_ptr<RenderTarget> target) { desc_.output_target = std::move(target); }
+    void setOutputTarget(intrusive_ptr<RenderTarget> target)
+    {
+        desc_.output_target = std::move(target);
+    }
 
     /**
      * @brief Gets the whole target this pass promises to consumers.
      *
      * @return The declared output target, or null when none was declared.
      */
-    [[nodiscard]] raw_ptr<RenderTarget> outputTarget() const noexcept { return desc_.output_target.get(); }
+    [[nodiscard]] raw_ptr<RenderTarget> outputTarget() const noexcept
+    {
+        return desc_.output_target.get();
+    }
 
     /**
      * @brief Adds an input slot this pass consumes BY NAME.
@@ -495,7 +590,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @return The names, in declaration order.
      */
-    [[nodiscard]] const std::vector<String>& inputNames() const noexcept { return desc_.input_names; }
+    [[nodiscard]] const std::vector<String>& inputNames() const noexcept
+    {
+        return desc_.input_names;
+    }
 
     /**
      * @brief Declares one produced image this pass consumes.
@@ -543,7 +641,10 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @return The input declarations (produced images or imported textures), as added.
      */
-    [[nodiscard]] const std::vector<ImageInput>& inputs() const noexcept { return desc_.inputs; }
+    [[nodiscard]] const std::vector<ImageInput>& inputs() const noexcept
+    {
+        return desc_.inputs;
+    }
 
     /**
      * @brief Declares a WHOLE target this pass consumes (the coarse counterpart of addInput).
@@ -592,14 +693,20 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param inputs Resolved input sources, in declaration order (names last).
      */
-    virtual void resolveInputTextures(std::span<const ImageSource> inputs) { (void)inputs; }
+    virtual void resolveInputTextures(std::span<const ImageSource> inputs)
+    {
+        (void)inputs;
+    }
 
     /**
      * @brief Gets the pass-level program override.
      *
      * @return The program every command is rewritten to, or null for per-geometry programs.
      */
-    [[nodiscard]] raw_ptr<ShaderProgram> programOverride() const noexcept { return desc_.program_override.get(); }
+    [[nodiscard]] raw_ptr<ShaderProgram> programOverride() const noexcept
+    {
+        return desc_.program_override.get();
+    }
 
     /**
      * @brief Forces every command this pass renders to use one program.
@@ -615,14 +722,20 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param program Program applied to all content, or null for per-geometry programs (the default).
      */
-    void setProgramOverride(intrusive_ptr<ShaderProgram> program) { desc_.program_override = std::move(program); }
+    void setProgramOverride(intrusive_ptr<ShaderProgram> program)
+    {
+        desc_.program_override = std::move(program);
+    }
 
     /**
      * @brief Gets the pass-level polygon-mode override.
      *
      * @return The mode, or nullopt when each command keeps its own.
      */
-    [[nodiscard]] std::optional<PolygonMode> polygonModeOverride() const noexcept { return desc_.polygon_mode; }
+    [[nodiscard]] std::optional<PolygonMode> polygonModeOverride() const noexcept
+    {
+        return desc_.polygon_mode;
+    }
 
     /**
      * @brief Draws everything this pass renders as filled, outlined or point primitives.
@@ -636,17 +749,26 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param mode Rasterisation mode applied to all content of this pass.
      */
-    void setPolygonModeOverride(PolygonMode mode) noexcept { desc_.polygon_mode = mode; }
+    void setPolygonModeOverride(PolygonMode mode) noexcept
+    {
+        desc_.polygon_mode = mode;
+    }
 
     /// @brief Removes the polygon-mode override, leaving each command's own state in effect.
-    void clearPolygonModeOverride() noexcept { desc_.polygon_mode.reset(); }
+    void clearPolygonModeOverride() noexcept
+    {
+        desc_.polygon_mode.reset();
+    }
 
     /**
      * @brief Gets the pass-level point-size override.
      *
      * @return The size in framebuffer pixels, or nullopt when each command keeps its own.
      */
-    [[nodiscard]] std::optional<float> pointSizeOverride() const noexcept { return desc_.point_size; }
+    [[nodiscard]] std::optional<float> pointSizeOverride() const noexcept
+    {
+        return desc_.point_size;
+    }
 
     /**
      * @brief Draws every point this pass renders at @p size pixels.
@@ -662,17 +784,26 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param size Point size in framebuffer pixels.
      */
-    void setPointSizeOverride(float size) noexcept { desc_.point_size = size; }
+    void setPointSizeOverride(float size) noexcept
+    {
+        desc_.point_size = size;
+    }
 
     /// @brief Removes the point-size override, leaving each command's own size in effect.
-    void clearPointSizeOverride() noexcept { desc_.point_size.reset(); }
+    void clearPointSizeOverride() noexcept
+    {
+        desc_.point_size.reset();
+    }
 
     /**
      * @brief Gets the pass-level line-width override.
      *
      * @return The width in framebuffer pixels, or nullopt when each command keeps its own.
      */
-    [[nodiscard]] std::optional<float> lineWidthOverride() const noexcept { return desc_.line_width; }
+    [[nodiscard]] std::optional<float> lineWidthOverride() const noexcept
+    {
+        return desc_.line_width;
+    }
 
     /**
      * @brief Draws every LINE primitive this pass renders @p width pixels wide.
@@ -688,10 +819,16 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass>
      *
      * @param width Line width in framebuffer pixels.
      */
-    void setLineWidthOverride(float width) noexcept { desc_.line_width = width; }
+    void setLineWidthOverride(float width) noexcept
+    {
+        desc_.line_width = width;
+    }
 
     /// @brief Removes the line-width override, leaving each command's own width in effect.
-    void clearLineWidthOverride() noexcept { desc_.line_width.reset(); }
+    void clearLineWidthOverride() noexcept
+    {
+        desc_.line_width.reset();
+    }
 
     /**
      * @brief Describes what this pass issues this frame: its target, its state and its drawing calls.

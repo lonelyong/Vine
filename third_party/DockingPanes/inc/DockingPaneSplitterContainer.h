@@ -61,7 +61,7 @@ class DockingPaneSplitterContainer : public DockingPaneBase {
     void saveLayout(QDomNode* parentNode, bool includeGeometry = false) override;
 
   private:
-    QSplitter* m_splitterWidget; ///< The actual splitter widget.
+    QSplitter* m_splitterWidget; // The actual splitter widget.
 };
 
 #endif // DOCKINGPANESPLITTERCONTAINER_H

@@ -39,8 +39,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /**
  * @brief The backend's instrumentation (see the file note for what it is and is not).
  */
-class VN_GRAPHICS_API Observe
-{
+class VN_GRAPHICS_API Observe {
   public:
     /** @brief Gets the frame counters for updating. */
     [[nodiscard]] vn::graphics::FrameCounters& counters() noexcept;

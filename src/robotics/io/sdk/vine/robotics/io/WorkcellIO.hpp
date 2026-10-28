@@ -3,19 +3,21 @@
 #include <filesystem>
 #include <memory>
 
+#include <vine/String.hpp>
 #include <vine/io/Vfs.hpp>
-#include <vine/robotics/io/robot_io_global.hpp>
 #include <vine/robotics/io/XmlIOBase.hpp>
+#include <vine/robotics/io/robot_io_global.hpp>
 #include <vine/robotics/workcell/Device.hpp>
 #include <vine/robotics/workcell/RigidObject.hpp>
 #include <vine/robotics/workcell/SceneObject.hpp>
 #include <vine/robotics/workcell/Workcell.hpp>
-#include <vine/String.hpp>
 
 namespace tinyxml2
 {
+
 class XMLDocument;
 class XMLElement;
+
 } // namespace tinyxml2
 
 VN_ROBOTICS_IO_NS_BEGIN
@@ -33,8 +35,7 @@ VN_ROBOTICS_IO_NS_BEGIN
  * reuse, including from multiple threads (each operation carries its own
  * context).
  */
-class VN_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
-{
+class VN_ROBOTICS_IO_API WorkcellIO : public XmlIOBase {
   public:
     /**
      * @brief Destroys the workcell IO.
@@ -44,9 +45,7 @@ class VN_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
     /**
      * @brief Save options.
      */
-    struct SaveOptions
-    {
-    };
+    struct SaveOptions {};
 
   public:
     /**
@@ -99,8 +98,7 @@ class VN_ROBOTICS_IO_API WorkcellIO : public XmlIOBase
      * @param options Save options.
      * @throws std::runtime_error on failure.
      */
-    void savePkg(const workcell::Workcell& cell, const std::filesystem::path& pkg_path,
-                 const SaveOptions& options = {});
+    void savePkg(const workcell::Workcell& cell, const std::filesystem::path& pkg_path, const SaveOptions& options = {});
 
     /**
      * @brief Exports a workcell's resources into a VFS.

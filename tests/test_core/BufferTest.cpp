@@ -22,8 +22,7 @@ namespace
 {
 
 /// @brief A trivially copyable element, standing in for a vertex.
-struct Vec3
-{
+struct Vec3 {
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
@@ -57,15 +56,14 @@ TEST(BufferTest, AdoptsAVectorInsteadOfCopyingIt)
 
 TEST(BufferTest, TheByteViewIsTheTypedElementsThemselves)
 {
-    auto buffer = intrusive_ptr<Buffer<Vec3>>(new Buffer<Vec3>(2));
+    auto buffer  = intrusive_ptr<Buffer<Vec3>>(new Buffer<Vec3>(2));
     (*buffer)[0] = Vec3{ 1.0f, 2.0f, 3.0f };
     (*buffer)[1] = Vec3{ 4.0f, 5.0f, 6.0f };
 
     const auto bytes = buffer->bytes();
 
     EXPECT_EQ(bytes.size(), 2u * sizeof(Vec3));
-    EXPECT_EQ(reinterpret_cast<const std::byte*>(buffer->data()), bytes.data())
-        << "the byte view must alias the elements, not a packed copy of them";
+    EXPECT_EQ(reinterpret_cast<const std::byte*>(buffer->data()), bytes.data()) << "the byte view must alias the elements, not a packed copy of them";
 
     // And the bytes really are the floats, in order — which is why no repacking is needed for a layout the
     // device happens to accept (3 x float32 here).
@@ -78,7 +76,7 @@ TEST(BufferTest, TheByteViewIsTheTypedElementsThemselves)
 
 TEST(BufferTest, IsSharedRatherThanCopied)
 {
-    auto first = intrusive_ptr<Buffer<int>>(new Buffer<int>(2));
+    auto first  = intrusive_ptr<Buffer<int>>(new Buffer<int>(2));
     (*first)[0] = 7;
 
     auto second = first;
@@ -107,7 +105,7 @@ TEST(BufferTest, WriteAccessReachesTheElements)
     auto buffer = intrusive_ptr<Buffer<Vec3>>(new Buffer<Vec3>(1));
 
     auto values = buffer->view();
-    values[0]  = Vec3{ 9.0f, 8.0f, 7.0f };
+    values[0]   = Vec3{ 9.0f, 8.0f, 7.0f };
 
     EXPECT_FLOAT_EQ((*buffer)[0].x, 9.0f);
     EXPECT_FLOAT_EQ(buffer->view()[0].z, 7.0f);
@@ -162,7 +160,7 @@ TEST(BufferTest, SetRevisionIsTheOnlyWayTheRevisionMoves)
     auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>(1));
 
     const std::uint64_t before = buffer->revision();
-    buffer->data()[0] = 5;
+    buffer->data()[0]          = 5;
     EXPECT_EQ(buffer->revision(), before) << "a write through a pointer cannot bump anything by itself";
 
     buffer->setRevision(before + 1);

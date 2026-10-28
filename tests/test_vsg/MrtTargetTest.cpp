@@ -29,7 +29,9 @@
 #include <vsg/core/Array.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
@@ -37,9 +39,7 @@
 #include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/Streams.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 ///
@@ -47,26 +47,28 @@
 /// hand over the same bytes, so the evidence runs through the same door.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
 {
-    return array == nullptr
-               ? std::span<const float>{}
-               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
 }
 
 /// @brief The scalars of a float array, as the upload layer takes them.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const float>{}
-                            : std::span<const float>(array->data(), array->size());
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(array->data(), array->size());
 }
 
 /// @brief The indices of an index array, as the upload layer takes them.
 inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const std::uint32_t>{}
-                            : std::span<const std::uint32_t>(array->data(), array->size());
+    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
 using vn::graphics::RenderTarget;
+using vn::graphics::backend::PixelProbe;
+using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::VariantPool;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::ContentDraw;
@@ -74,12 +76,6 @@ using vn::vsg::ContentPipeline;
 using vn::vsg::OffscreenTarget;
 using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
-using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -108,8 +104,7 @@ OffscreenTarget::TargetLayout mrtLayout()
 /// @brief The block bytes one draw reads: a 4x4 matrix then the parameter vector (the engine's draw ABI).
 std::vector<std::byte> drawBlock()
 {
-    const std::array<float, 16> matrix{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
-                                        0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F };
+    const std::array<float, 16> matrix{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F };
     std::vector<std::byte>      block(80U, std::byte{ 0 });
     std::memcpy(block.data(), matrix.data(), sizeof(matrix));
     return block;
@@ -129,9 +124,9 @@ std::vector<std::byte> materialBlock()
 ContentPipeline::Shaders mrtShaders()
 {
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "void main() { gl_Position = vec4(position.x, position.y, 0.5, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) in vec3 position;\n"
+                       "void main() { gl_Position = vec4(position.x, position.y, 0.5, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 outColor;\n"
                        "layout(location = 1) out vec4 outExtra;\n"
@@ -158,18 +153,17 @@ ContentPipeline::Shaders mrtShaders()
 }
 
 /// @brief What a case needs: an MRT target and the stack that can draw into it.
-struct Fixture
-{
-    vn::vsg::DeviceResult                 created;
-    std::unique_ptr<OffscreenTarget>        target;
-    std::unique_ptr<BlockStorage>           storage;
-    std::unique_ptr<BlockDescriptors>       descriptors;
-    std::unique_ptr<ContentPipeline>        pipelines;
-    std::unique_ptr<StreamUploads>          uploads;
-    std::unique_ptr<ContentDraw>            recorder;
-    VariantPool                             pool;
-    std::unique_ptr<StateRegistry>          registry;
-    ::vsg::ref_ptr<::vsg::Viewer>           viewer;
+struct Fixture {
+    vn::vsg::DeviceResult             created;
+    std::unique_ptr<OffscreenTarget>  target;
+    std::unique_ptr<BlockStorage>     storage;
+    std::unique_ptr<BlockDescriptors> descriptors;
+    std::unique_ptr<ContentPipeline>  pipelines;
+    std::unique_ptr<StreamUploads>    uploads;
+    std::unique_ptr<ContentDraw>      recorder;
+    VariantPool                       pool;
+    std::unique_ptr<StateRegistry>    registry;
+    ::vsg::ref_ptr<::vsg::Viewer>     viewer;
 
     static int material_identity;
 
@@ -200,19 +194,18 @@ struct Fixture
         const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
         ContentPipeline::Settings              settings;
-        settings.color_attachments = 2U;  // the pass has two colour attachments, so the blend state declares two
+        settings.color_attachments = 2U; // the pass has two colour attachments, so the blend state declares two
         pipelines                  = ContentPipeline::create(abi,
-                                                              std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
-                                                              std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                                              shader_pair, settings);
+                                                             std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                                             shader_pair,
+                                                             settings);
         if (pipelines == nullptr) {
             return false;
         }
 
         uploads  = std::make_unique<StreamUploads>();
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(
-                                                     created.device->vk(), created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         return viewer != nullptr;
@@ -236,24 +229,23 @@ struct Fixture
         }
 
         ContentDraw::Draw draw;
-        static int       program = 0;
-        draw.key.program                      = &program;
-        draw.key.revision                     = 1U;
-        draw.key.vertex_layout.canonical_mask = 0x1U;
-        draw.key.compatibility.samples        = 1U;
+        static int        program                                    = 0;
+        draw.key.program                                             = &program;
+        draw.key.revision                                            = 1U;
+        draw.key.vertex_layout.canonical_mask                        = 0x1U;
+        draw.key.compatibility.samples                               = 1U;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
-            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset,
-                                                                               material.offset })
+            descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
         };
         // The program declares no blocks, so its pipeline layout has no sets and this set is not bound (see
         // the same note in ExecutorTest): a bind the layout cannot take is an invalid handle.
         if (!descriptors->shape().empty()) {
             draw.blocks = block_binds;
         }
-        draw.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
-        draw.index        = index_bind.bind;
-        draw.viewport     = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) };
-        draw.index_count  = 3U;
+        draw.vertex_binds      = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
+        draw.index             = index_bind.bind;
+        draw.viewport          = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) };
+        draw.index_count       = 3U;
         // The pass writes TWO colour attachments, and the blend state is dynamic: the command that issues it has
         // to cover every attachment the render pass has (VUID-vkCmdDrawIndexed-firstAttachment-07476), so the
         // count is told to the recorder rather than left at its single-attachment default.
@@ -317,9 +309,7 @@ int Fixture::material_identity = 0;
 /// @brief Whether @p pixel is the pass' clear colour (0.5, 0.25, 0) within a UNORM step.
 bool isClearColor(const Rgba8& pixel)
 {
-    const auto near = [](std::uint8_t value, int expected) {
-        return std::abs(static_cast<int>(value) - expected) <= 2;
-    };
+    const auto near = [](std::uint8_t value, int expected) { return std::abs(static_cast<int>(value) - expected) <= 2; };
     return near(pixel.r, 128) && near(pixel.g, 64) && near(pixel.b, 0) && near(pixel.a, 255);
 }
 
@@ -339,7 +329,7 @@ bool isRed(const Rgba8& pixel)
     return pixel.r > 200U && pixel.g < 60U && pixel.b < 60U;
 }
 
-}  // namespace
+} // namespace
 
 TEST(MrtTargetTest, ExtraAttachmentsClearToTransparentBlackWhileAttachmentZeroTakesThePolicy)
 {
@@ -361,8 +351,7 @@ TEST(MrtTargetTest, ExtraAttachmentsClearToTransparentBlackWhileAttachmentZeroTa
     EXPECT_TRUE(first.wholeImageMatches(center)) << "the bootstrap clear covers the whole attachment";
 
     const Rgba8 extra = second.pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
-    EXPECT_TRUE(isTransparentBlack(extra))
-        << "an extra attachment clears to transparent black, NOT to the pass' colour";
+    EXPECT_TRUE(isTransparentBlack(extra)) << "an extra attachment clears to transparent black, NOT to the pass' colour";
     EXPECT_TRUE(second.wholeImageMatches(extra));
 
     EXPECT_NE(first.pixel(0, 0), second.pixel(0, 0)) << "two attachments, two pictures";
@@ -385,9 +374,8 @@ TEST(MrtTargetTest, EachAttachmentKeepsItsOwnShaderOutput)
 
     const int center = static_cast<int>(kSize) / 2;
     EXPECT_TRUE(isGreen(first.pixel(center, center))) << "attachment 0 holds the first fragment output";
-    EXPECT_TRUE(isRed(second.pixel(center, center)))
-        << "attachment 1 holds the SECOND fragment output - if it were green, the copy-back had aliased the "
-           "two attachments onto one buffer";
+    EXPECT_TRUE(isRed(second.pixel(center, center))) << "attachment 1 holds the SECOND fragment output - if it were green, the copy-back had aliased the "
+                                                        "two attachments onto one buffer";
 
     // The depth attachment is present and cleared to the reverse-Z far plane (0.0), which is in front of nothing:
     // the triangle at z = 0.5 (depth 0.75) must survive it, and the corners must still be the clear values.

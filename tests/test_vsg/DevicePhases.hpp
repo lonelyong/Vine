@@ -24,15 +24,14 @@
  * same. A phase body that skipped on its own would leave a row with nothing to gate on.
  */
 /** @brief What the device phases observed (see the file note for what a row does with them). */
-struct DevicePhaseCounters
-{
-    std::uint64_t frames{0};            ///< Frames the phase submitted.
-    std::uint64_t targets_built{0};     ///< Off-screen targets the phase created.
-    std::uint64_t resizes_replaced{0};  ///< Resizes that replaced a target's attachments.
-    std::uint64_t rebuilds_replaced{0}; ///< Rebuilds that replaced a target's shape (render pass included).
-    std::uint64_t plan_applied{0};      ///< Plan answers (resize / rebuild) a drive turned into a replacement.
-    std::uint64_t parked{0};            ///< Objects the phase handed to the retirement queue.
-    std::uint64_t device_waits{0};      ///< Counted device idles the phase took.
+struct DevicePhaseCounters {
+    std::uint64_t frames{ 0 };            // Frames the phase submitted.
+    std::uint64_t targets_built{ 0 };     // Off-screen targets the phase created.
+    std::uint64_t resizes_replaced{ 0 };  // Resizes that replaced a target's attachments.
+    std::uint64_t rebuilds_replaced{ 0 }; // Rebuilds that replaced a target's shape (render pass included).
+    std::uint64_t plan_applied{ 0 };      // Plan answers (resize / rebuild) a drive turned into a replacement.
+    std::uint64_t parked{ 0 };            // Objects the phase handed to the retirement queue.
+    std::uint64_t device_waits{ 0 };      // Counted device idles the phase took.
 };
 
 /** @brief The off-screen readback phase: a cleared target reads back as its clear colour.
@@ -93,4 +92,3 @@ void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
  * @param counters Receives what the phase drove.
  */
 void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
-

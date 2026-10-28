@@ -8,8 +8,9 @@
 #include <vine/Colorf.hpp>
 #include <vine/String.hpp>
 #include <vine/raw_ptr.hpp>
-#include "Node.hpp"
+
 #include "DepthRange.hpp"
+#include "Node.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -29,12 +30,11 @@ class Scene;
  * - What it deliberately does NOT carry: whether this pass presents a SURFACE - that is the surface's table
  *   (RenderSurface); the engine draws whatever is registered, and "who this is for" is not its to know.
  */
-struct VN_GRAPHICS_API PassPlan
-{
+struct VN_GRAPHICS_API PassPlan {
     /// The registered pass this describes (identity: two plans of the same pass compare equal here).
     raw_ptr<const RenderPass> pass = nullptr;
     /// The order the engine runs it at (see RenderEngine::addPass): what decides where it sits in the frame.
-    int order = 0;
+    int order                      = 0;
     /// The pass' name (empty when it has none - a name is what makes a row greppable, see RenderPass::setName).
     String name;
     /// The label its DECLARATION gave it, or empty (see PassDesc::tag).
@@ -44,20 +44,20 @@ struct VN_GRAPHICS_API PassPlan
     /// (a viewer names passes after its slots, not after what they mean).
     String tag;
     /// The content it draws, or null (a content-agnostic pass: a screen pass, a HUD).
-    raw_ptr<const Scene> content = nullptr;
+    raw_ptr<const Scene> content       = nullptr;
     /// The camera it draws through, or null (a fullscreen / screen-space pass).
-    raw_ptr<const Camera> camera = nullptr;
+    raw_ptr<const Camera> camera       = nullptr;
     /// Which layers of the content it draws (see RenderPass::setLayerMask), kAllLayers by default.
     ///
     /// Per pass rather than per frame, because it is the pass that decides what it draws: a frame with a
     /// shadow pass (casters only) and a main pass (everything) says so here, one row each.
-    std::uint32_t layer_mask = kAllLayers;
+    std::uint32_t layer_mask           = kAllLayers;
     /// The off-screen target it draws into, or null: the WINDOW (the default framebuffer).
     raw_ptr<const RenderTarget> target = nullptr;
     /// Whether it runs this frame. A disabled pass is LISTED (its row is part of the picture) and skipped.
-    bool enabled = true;
+    bool enabled                       = true;
     /// Whether it clears its target before it draws (see ClearPolicy: the pass' own clear, not "a clear happened").
-    bool clears = false;
+    bool clears                        = false;
     /// The colour attachment 0 is cleared to when @ref clears is true (linear, like every authored colour).
     Colorf clear_color{};
     /// Whether that clear includes depth.
@@ -102,8 +102,7 @@ struct VN_GRAPHICS_API PassPlan
  *
  * @see RenderEngine::framePlan
  */
-struct VN_GRAPHICS_API FramePlan
-{
+struct VN_GRAPHICS_API FramePlan {
     /// The passes, in the order the engine announces them (two passes at one order keep registration order).
     std::vector<PassPlan> passes;
 

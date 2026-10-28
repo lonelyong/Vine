@@ -551,8 +551,8 @@ std::filesystem::path pluginExtension()
 struct QueriedLibrary {
     vn::runtime::DynamicLibrary* lib{};
     const PluginInfo*            info{};
-    String                       framework_version; ///< Version the library reported as built with.
-    String                       rejection;         ///< Non-empty: why this host refuses the library.
+    String                       framework_version; // Version the library reported as built with.
+    String                       rejection;         // Non-empty: why this host refuses the library.
 
     /// true when the host may read the plugin's metadata.
     bool isUsable() const noexcept
@@ -990,8 +990,8 @@ namespace
 
 /// What one load pass may load, and whether the plan covers everything it found.
 struct LoadPlan {
-    std::vector<const Candidate*> planned;          ///< In dependency order; points into the pass's candidate list.
-    bool                          complete{ true }; ///< false: something was left out (its reason is already logged).
+    std::vector<const Candidate*> planned;          // In dependency order; points into the pass's candidate list.
+    bool                          complete{ true }; // false: something was left out (its reason is already logged).
 };
 
 /**

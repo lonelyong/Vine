@@ -31,8 +31,7 @@ VN_ROBOTICS_WORKCELL_NS_BEGIN
  *
  * @note Not thread-safe.
  */
-class VN_ROBOTICS_CORE_API Workcell final
-{
+class VN_ROBOTICS_CORE_API Workcell final {
   public:
     /**
      * @brief Constructs an empty workcell with a "world" root frame.
@@ -96,8 +95,7 @@ class VN_ROBOTICS_CORE_API Workcell final
      *         (null object, already owned, duplicate name, or would create a
      *         frame cycle).
      */
-    raw_ptr<SceneObject> addSceneObject(std::unique_ptr<SceneObject> object,
-                                        raw_ptr<kinematics::Frame>   parent_frame = nullptr);
+    raw_ptr<SceneObject> addSceneObject(std::unique_ptr<SceneObject> object, raw_ptr<kinematics::Frame> parent_frame = nullptr);
 
     /**
      * @brief Removes and destroys a scene object by name.
@@ -200,7 +198,7 @@ class VN_ROBOTICS_CORE_API Workcell final
     bool changeObjectName(raw_ptr<SceneObject> object, const String& new_name);
 
   private:
-    String                                   name_;
+    String                                    name_;
     std::vector<std::unique_ptr<SceneObject>> objects_;
     std::unique_ptr<kinematics::Frame>        world_frame_;
 };

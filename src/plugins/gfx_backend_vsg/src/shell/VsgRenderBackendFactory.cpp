@@ -19,7 +19,7 @@ namespace
  */
 const vn::graphics::RenderBackendRegistry::Registrar<VsgRenderBackendFactory> s_vsg_registrar;
 
-}  // namespace
+} // namespace
 
 VsgRenderBackendFactory::VsgRenderBackendFactory() = default;
 
@@ -29,11 +29,11 @@ vn::graphics::RenderBackendInfo VsgRenderBackendFactory::info() const
 {
     return vn::graphics::RenderBackendInfo{
         u8"vsg",                                  // name
-        u8"VSG 渲染后端",                          // display_name
-        u8"基于 VulkanSceneGraph 的渲染后端实现",   // description
-        u8"1.0.0",                               // version
-        u8"Vine",                                // vendor
-        vn::graphics::RenderApi::Vulkan,        // api_flags
+        u8"VSG 渲染后端",                         // display_name
+        u8"基于 VulkanSceneGraph 的渲染后端实现", // description
+        u8"1.0.0",                                // version
+        u8"Vine",                                 // vendor
+        vn::graphics::RenderApi::Vulkan,          // api_flags
     };
 }
 

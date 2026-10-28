@@ -42,7 +42,7 @@ namespace
  */
 LONG WINAPI vineCrashFilter(EXCEPTION_POINTERS* ep)
 {
-    char exe_path[MAX_PATH];
+    char  exe_path[MAX_PATH];
     DWORD n = GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
     if (n > 0) {
         char* slash = strrchr(exe_path, '\\');
@@ -55,8 +55,7 @@ LONG WINAPI vineCrashFilter(EXCEPTION_POINTERS* ep)
     strcpy_s(path, exe_path);
     strcat_s(path, "\\vn_crash.log");
 
-    HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 
     auto out = [&](const char* text) {
         if (file != INVALID_HANDLE_VALUE) {
@@ -66,9 +65,11 @@ LONG WINAPI vineCrashFilter(EXCEPTION_POINTERS* ep)
     };
 
     char line[2048];
-    wsprintfA(line, "crash code=0x%08lX at %p thread=%lu\r\n",
+    wsprintfA(line,
+              "crash code=0x%08lX at %p thread=%lu\r\n",
               static_cast<unsigned long>(ep->ExceptionRecord->ExceptionCode),
-              ep->ExceptionRecord->ExceptionAddress, GetCurrentThreadId());
+              ep->ExceptionRecord->ExceptionAddress,
+              GetCurrentThreadId());
     out(line);
 
     HANDLE process = GetCurrentProcess();
@@ -82,15 +83,13 @@ LONG WINAPI vineCrashFilter(EXCEPTION_POINTERS* ep)
     // to the DLL. Add the directory of the faulting module (and of this exe)
     // to the symbol search path, then refresh.
     {
-        std::string search = exe_path;
+        std::string search       = exe_path;
         HMODULE     fault_module = nullptr;
-        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
-                               | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            reinterpret_cast<LPCSTR>(ep->ExceptionRecord->ExceptionAddress),
                            &fault_module);
         char module_path[MAX_PATH];
-        if (fault_module != nullptr
-            && GetModuleFileNameA(fault_module, module_path, MAX_PATH) > 0) {
+        if (fault_module != nullptr && GetModuleFileNameA(fault_module, module_path, MAX_PATH) > 0) {
             char* slash = strrchr(module_path, '\\');
             if (slash != nullptr) {
                 *slash = '\0';
@@ -118,31 +117,39 @@ LONG WINAPI vineCrashFilter(EXCEPTION_POINTERS* ep)
     frame.AddrStack.Mode   = AddrModeFlat;
 
     for (int i = 0; i < 64; ++i) {
-        if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, GetCurrentThread(), &frame,
-                         ep->ContextRecord, nullptr, SymFunctionTableAccess64,
-                         SymGetModuleBase64, nullptr)) {
+        if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64,
+                         process,
+                         GetCurrentThread(),
+                         &frame,
+                         ep->ContextRecord,
+                         nullptr,
+                         SymFunctionTableAccess64,
+                         SymGetModuleBase64,
+                         nullptr))
+        {
             break;
         }
         if (frame.AddrPC.Offset == 0) {
             break;
         }
 
-        union {
+        union
+        {
             SYMBOL_INFO info;
             char        pad[sizeof(SYMBOL_INFO) + 1024];
         } symbol;
+
         symbol.info.SizeOfStruct = sizeof(SYMBOL_INFO);
         symbol.info.MaxNameLen   = 1024;
 
         DWORD64 displacement = 0;
         if (SymFromAddr(process, frame.AddrPC.Offset, &displacement, &symbol.info)) {
-            wsprintfA(line, "  %2d  0x%p  %s", i,
-                      reinterpret_cast<void*>(frame.AddrPC.Offset), symbol.info.Name);
+            wsprintfA(line, "  %2d  0x%p  %s", i, reinterpret_cast<void*>(frame.AddrPC.Offset), symbol.info.Name);
             out(line);
 
             IMAGEHLP_LINE64 srcline{};
             srcline.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
-            DWORD  line_disp     = 0;
+            DWORD line_disp      = 0;
             if (SymGetLineFromAddr64(process, frame.AddrPC.Offset, &line_disp, &srcline)) {
                 wsprintfA(line, "  [%s:%lu]\r\n", srcline.FileName, srcline.LineNumber);
                 out(line);
@@ -152,8 +159,7 @@ LONG WINAPI vineCrashFilter(EXCEPTION_POINTERS* ep)
             }
         }
         else {
-            wsprintfA(line, "  %2d  0x%p  <no symbol>\r\n", i,
-                      reinterpret_cast<void*>(frame.AddrPC.Offset));
+            wsprintfA(line, "  %2d  0x%p  <no symbol>\r\n", i, reinterpret_cast<void*>(frame.AddrPC.Offset));
             out(line);
         }
     }
@@ -174,12 +180,11 @@ void installCrashLogger()
 #else
 
 void installCrashLogger()
-{
-}
+{}
 
-#endif  // _WIN32
+#endif // _WIN32
 
-}  // namespace
+} // namespace
 
 int main(int argc, char** argv)
 {
@@ -189,7 +194,7 @@ int main(int argc, char** argv)
     // main 只声明应用身份（应用名/可选组织名），数据与配置目录由框架默认推导：
     // <用户数据>/<org>/<app>/{config,logs}，见 Application::dataDirectory()。
     fw::AppConfig config;
-    config.name = u8"Vine";
+    config.name           = u8"Vine";
     // config.organization 留空以使用框架默认组织名。
     // config.built_in_plugin_dir 留空以使用默认的自带插件目录；config.load_plugins 默认开，
     // 插件由框架在启动阶段加载（下面的 run() 里），宿主不用自己调 loadAll()。
@@ -219,7 +224,7 @@ int main(int argc, char** argv)
     // 首次 present / 插件加载），诊断不用再重建。附带的偏差：10 ms 定时器本身会把 0–10 ms 算进空转。
     if (qEnvironmentVariableIsSet("VN_BOOT_TIMING")) {
         static QElapsedTimer since_start;
-        static qint64        last_tick = 0;
+        static qint64        last_tick     = 0;
         static qint64        worst_gap     = 0;
         static qint64        worst_gap_end = 0;
         since_start.start();
@@ -240,8 +245,10 @@ int main(int argc, char** argv)
         QTimer::singleShot(1500, QCoreApplication::instance(), [] {
             // The worst stretch ends at worst_gap_end: the reader lines it up against the boot's own log lines (the
             // session attach, the surface reaching Presenting, a plugin load) instead of guessing which stage it was.
-            std::fprintf(stderr, "[boot-timing] application thread max continuous occupancy: %lld ms ending %lld ms after start\n",
-                         static_cast<long long>(worst_gap), static_cast<long long>(worst_gap_end));
+            std::fprintf(stderr,
+                         "[boot-timing] application thread max continuous occupancy: %lld ms ending %lld ms after start\n",
+                         static_cast<long long>(worst_gap),
+                         static_cast<long long>(worst_gap_end));
         });
     }
 

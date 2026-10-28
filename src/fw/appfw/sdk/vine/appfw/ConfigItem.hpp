@@ -4,9 +4,9 @@
 
 #include <any>
 #include <initializer_list>
+#include <memory>
 #include <utility>
 #include <variant>
-#include <memory>
 #include <vector>
 
 #include <vine/String.hpp>
@@ -29,11 +29,11 @@ struct ConfigChoice {
  */
 enum class ConfigItemType
 {
-    String, ///< Single-line text -> QLineEdit
-    Bool,   ///< Toggle -> QCheckBox
-    Int,    ///< Integer -> QSpinBox
-    Double, ///< Floating point -> QDoubleSpinBox
-    Choice, ///< Enum choice (stored as String) -> QComboBox
+    String, // Single-line text -> QLineEdit
+    Bool,   // Toggle -> QCheckBox
+    Int,    // Integer -> QSpinBox
+    Double, // Floating point -> QDoubleSpinBox
+    Choice, // Enum choice (stored as String) -> QComboBox
 };
 
 /**

@@ -28,8 +28,8 @@
 #include <vsg/state/DescriptorBuffer.h>
 #include <vsg/state/Image.h>
 #include <vsg/state/ImageView.h>
-#include <vsg/state/Sampler.h>
 #include <vsg/state/PipelineLayout.h>
+#include <vsg/state/Sampler.h>
 #include <vsg/vk/Device.h>
 
 #include <vine/vsg/internal/BlockDescriptors.hpp>
@@ -44,8 +44,7 @@ namespace
 {
 
 /// @brief A window (and with it a device) the test owns, plus the storage and descriptors built on it.
-class Fixture
-{
+class Fixture {
   public:
     /** @brief Whether this machine can run the device cases at all.
      *
@@ -90,14 +89,14 @@ class Fixture
         window.reset();
     }
 
-    ::vsg::ref_ptr<::vsg::Window>  window;
-    ::vsg::ref_ptr<::vsg::Device>  device;
-    std::unique_ptr<BlockStorage>  storage;
+    ::vsg::ref_ptr<::vsg::Window>     window;
+    ::vsg::ref_ptr<::vsg::Device>     device;
+    std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> descriptors;
 };
 
 /// @brief Builds the pipeline layout the binds are recorded against (its set 0 is the block set).
-::vsg::ref_ptr<::vsg::PipelineLayout> pipelineLayoutFor(const ::vsg::ref_ptr<::vsg::Device>& device,
+::vsg::ref_ptr<::vsg::PipelineLayout> pipelineLayoutFor(const ::vsg::ref_ptr<::vsg::Device>&              device,
                                                         const ::vsg::ref_ptr<::vsg::DescriptorSetLayout>& set_layout)
 {
     // A pipeline layout is constructed from its set layouts and push ranges and compiled later by a
@@ -106,7 +105,7 @@ class Fixture
     return ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ set_layout }, ::vsg::PushConstantRanges{});
 }
 
-}  // namespace
+} // namespace
 
 TEST(BlockDescriptorsTest, TheLayoutDeclaresOneDynamicBindingPerBlock)
 {
@@ -123,8 +122,7 @@ TEST(BlockDescriptorsTest, TheLayoutDeclaresOneDynamicBindingPerBlock)
     const auto expect_binding = [&layout](std::size_t index, std::uint32_t binding) {
         const auto& declared = layout->bindings[index];
         EXPECT_EQ(declared.binding, binding);
-        EXPECT_EQ(declared.descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
-            << "the block is chosen by a dynamic offset, never by a per-draw set";
+        EXPECT_EQ(declared.descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC) << "the block is chosen by a dynamic offset, never by a per-draw set";
         EXPECT_EQ(declared.descriptorCount, 1U);
         EXPECT_EQ(declared.stageFlags & VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT);
         EXPECT_EQ(declared.stageFlags & VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -148,9 +146,8 @@ TEST(BlockDescriptorsTest, TheSetBindsOneBlockPerRegionAtOffsetZero)
     ASSERT_NE(set, nullptr);
     ASSERT_EQ(set->descriptors.size(), 5U);
 
-    const BlockStorage::Strides strides = fixture.storage->strides();
-    const std::uint64_t         expected_ranges[5] = { strides.view, strides.draw, strides.material, strides.light,
-                                                       strides.shadow };
+    const BlockStorage::Strides strides            = fixture.storage->strides();
+    const std::uint64_t         expected_ranges[5] = { strides.view, strides.draw, strides.material, strides.light, strides.shadow };
 
     for (std::size_t index = 0; index < set->descriptors.size(); ++index) {
         const auto* descriptor = dynamic_cast<const ::vsg::DescriptorBuffer*>(set->descriptors[index].get());
@@ -180,9 +177,8 @@ TEST(BlockDescriptorsTest, TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet
     // device's `minUniformBufferOffsetAlignment` by construction, so they are legal on every device (the offsets
     // this case used to name - 80, 336, 64, 112, 160 - were only legal where that alignment divides 16, and the
     // bind then refused them: see AMisalignedOffsetIsRefusedInsteadOfBound).
-    const BlockStorage::Strides strides = fixture.storage->strides();
-    const BlockDescriptors::Offsets second{ strides.view, strides.draw, strides.material, strides.light,
-                                            strides.shadow };
+    const BlockStorage::Strides     strides = fixture.storage->strides();
+    const BlockDescriptors::Offsets second{ strides.view, strides.draw, strides.material, strides.light, strides.shadow };
 
     const auto first_bind  = fixture.descriptors->bind(pipeline_layout, first);
     const auto second_bind = fixture.descriptors->bind(pipeline_layout, second);
@@ -199,8 +195,7 @@ TEST(BlockDescriptorsTest, TheBindCarriesTheOffsetsInBindingOrderAndReusesOneSet
                                            static_cast<std::uint32_t>(strides.shadow) }))
         << "the same roles one block further, still in binding order";
     EXPECT_EQ(first_bind->firstSet, fixture.descriptors->setIndex());
-    EXPECT_EQ(first_bind->descriptorSet, second_bind->descriptorSet)
-        << "every draw binds the SAME set: the offsets carry the difference";
+    EXPECT_EQ(first_bind->descriptorSet, second_bind->descriptorSet) << "every draw binds the SAME set: the offsets carry the difference";
     EXPECT_EQ(fixture.descriptors->refusals(), 0U);
 }
 
@@ -216,10 +211,11 @@ TEST(BlockDescriptorsTest, TheDeclaredShapeDecidesTheBindingsAndTheOffsets)
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
 
-    const BlockDescriptors::Binding declared[]{ { 0U, vn::vsg::AbiBlockRole::View },
-                                                { 3U, vn::vsg::AbiBlockRole::Material } };
-    std::unique_ptr<BlockDescriptors> descriptors =
-        BlockDescriptors::create(fixture.device, *fixture.storage, declared, 1U);
+    const BlockDescriptors::Binding declared[]{
+        { 0U, vn::vsg::AbiBlockRole::View     },
+        { 3U, vn::vsg::AbiBlockRole::Material }
+    };
+    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(fixture.device, *fixture.storage, declared, 1U);
     ASSERT_NE(descriptors, nullptr);
 
     const std::span<const BlockDescriptors::Binding> shape = descriptors->shape();
@@ -235,11 +231,9 @@ TEST(BlockDescriptorsTest, TheDeclaredShapeDecidesTheBindingsAndTheOffsets)
     EXPECT_EQ(layout->bindings[1].binding, 3U);
     EXPECT_EQ(layout->bindings[1].descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
 
-    const auto bound =
-        descriptors->bind(pipelineLayoutFor(fixture.device, layout), BlockDescriptors::Offsets{ 0, 0, 64, 0, 0 });
+    const auto bound = descriptors->bind(pipelineLayoutFor(fixture.device, layout), BlockDescriptors::Offsets{ 0, 0, 64, 0, 0 });
     ASSERT_NE(bound, nullptr);
-    EXPECT_EQ(bound->dynamicOffsets, (std::vector<std::uint32_t>{ 0, 64 }))
-        << "one offset per DECLARED binding, in the declared order";
+    EXPECT_EQ(bound->dynamicOffsets, (std::vector<std::uint32_t>{ 0, 64 })) << "one offset per DECLARED binding, in the declared order";
     EXPECT_EQ(descriptors->refusals(), 0U);
 }
 
@@ -256,18 +250,21 @@ TEST(BlockDescriptorsTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
 
     // An image and a view for the map: nothing samples it here (the set is never submitted), so it only has to
     // be a real image object - the Context compiles it into a VkImage whenever a frame first needs it.
-    auto image = ::vsg::Image::create();
+    auto image    = ::vsg::Image::create();
     image->format = VK_FORMAT_R8G8B8A8_UNORM;
     image->usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    auto view = ::vsg::ImageView::create(image, VK_IMAGE_VIEW_TYPE_2D);
+    auto view     = ::vsg::ImageView::create(image, VK_IMAGE_VIEW_TYPE_2D);
     ASSERT_NE(view, nullptr);
     const auto sampler = ::vsg::Sampler::create();
     ASSERT_NE(sampler, nullptr);
 
-    const BlockDescriptors::Binding declared[]{ { 0U, vn::vsg::AbiBlockRole::Material } };
-    const BlockDescriptors::SampledBinding maps[]{ { 1U, view, sampler } };
-    std::unique_ptr<BlockDescriptors> descriptors =
-        BlockDescriptors::create(fixture.device, *fixture.storage, declared, 0U, maps);
+    const BlockDescriptors::Binding declared[]{
+        { 0U, vn::vsg::AbiBlockRole::Material }
+    };
+    const BlockDescriptors::SampledBinding maps[]{
+        { 1U, view, sampler }
+    };
+    std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(fixture.device, *fixture.storage, declared, 0U, maps);
     ASSERT_NE(descriptors, nullptr);
 
     const auto layout = descriptors->layout();
@@ -295,8 +292,7 @@ TEST(BlockDescriptorsTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     // The bind still hands over ONE dynamic offset per BLOCK binding: the image is not a dynamic offset.
     const auto bound = descriptors->bind(pipelineLayoutFor(fixture.device, layout), BlockDescriptors::Offsets{});
     ASSERT_NE(bound, nullptr);
-    EXPECT_EQ(bound->dynamicOffsets, (std::vector<std::uint32_t>{ 0U }))
-        << "one offset per declared block, and none for the map";
+    EXPECT_EQ(bound->dynamicOffsets, (std::vector<std::uint32_t>{ 0U })) << "one offset per declared block, and none for the map";
 }
 
 TEST(BlockDescriptorsTest, AMisalignedOffsetIsRefusedInsteadOfBound)
@@ -306,11 +302,11 @@ TEST(BlockDescriptorsTest, AMisalignedOffsetIsRefusedInsteadOfBound)
     }
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
-    const auto pipeline_layout = pipelineLayoutFor(fixture.device, fixture.descriptors->layout());
-    const std::uint64_t alignment = fixture.descriptors->alignment();
+    const auto          pipeline_layout = pipelineLayoutFor(fixture.device, fixture.descriptors->layout());
+    const std::uint64_t alignment       = fixture.descriptors->alignment();
 
     BlockDescriptors::Offsets offsets{ 0, 0, 0 };
-    offsets.draw = 1;  // deliberately off the alignment the device demands
+    offsets.draw = 1; // deliberately off the alignment the device demands
     if (alignment <= 1U) {
         GTEST_SKIP() << "this device accepts any offset alignment";
     }
@@ -343,11 +339,9 @@ TEST(BlockDescriptorsTest, RepointingKeepsTheLayoutAndSwapsTheSetElements)
     EXPECT_EQ(fixture.descriptors->layout(), layout_before) << "the layout survives: only the elements moved";
     EXPECT_NE(fixture.descriptors->set(), set_before) << "the set itself was replaced";
 
-    const auto descriptor = dynamic_cast<const ::vsg::DescriptorBuffer*>(
-        fixture.descriptors->set()->descriptors[BlockDescriptors::kMaterialBinding].get());
+    const auto descriptor = dynamic_cast<const ::vsg::DescriptorBuffer*>(fixture.descriptors->set()->descriptors[BlockDescriptors::kMaterialBinding].get());
     ASSERT_NE(descriptor, nullptr);
-    EXPECT_EQ(descriptor->bufferInfoList.front()->buffer, replacement->buffer())
-        << "the new set binds the NEW storage's buffer";
+    EXPECT_EQ(descriptor->bufferInfoList.front()->buffer, replacement->buffer()) << "the new set binds the NEW storage's buffer";
     EXPECT_EQ(descriptor->bufferInfoList.front()->range, replacement->strides().material);
 
     const auto pipeline_layout = pipelineLayoutFor(fixture.device, layout_before);

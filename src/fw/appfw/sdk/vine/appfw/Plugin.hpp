@@ -66,10 +66,9 @@
  * a view published into a window-wide slot - two visible areas cannot share one slot (see
  * `.ai/decisions/ADR-2026-10-24-command-target.md`). The slot went with it, and so did the window-level query:
  * `MainWindow::setPrimaryRenderControl()` and `primaryRenderControl()` are removed, replaced by the execution target
- * (`gui::resolveCommandTarget()` at dispatch) - no active document, no target. The command side moved too: `CommandFlags` gained `NeedsDocument`/`NeedsView`, and
- * `CommandExecutionContext` gained `target()` returning a `CommandTarget{document, view}` (appended last), so the
- * framework refuses a command whose declared layer is missing instead of every command writing its own empty-chain
- * guard.
+ * (`gui::resolveCommandTarget()` at dispatch) - no active document, no target. The command side moved too: `CommandFlags` gained `NeedsDocument`/`NeedsView`,
+ * and `CommandExecutionContext` gained `target()` returning a `CommandTarget{document, view}` (appended last), so the framework refuses a command whose
+ * declared layer is missing instead of every command writing its own empty-chain guard.
  *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * VN_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
@@ -103,8 +102,8 @@ struct CommandInfo;
  *   metadata" into one clear refusal.
  */
 struct VN_APPFW_API PluginAbi {
-    std::uint32_t abi_version{ 0 };      ///< VN_APPFW_PLUGIN_ABI_VERSION the library was compiled with.
-    const char*   framework_version{};   ///< VN_APPFW_VERSION it was built against; never null, UTF-8.
+    std::uint32_t abi_version{ 0 };    // VN_APPFW_PLUGIN_ABI_VERSION the library was compiled with.
+    const char*   framework_version{}; // VN_APPFW_VERSION it was built against; never null, UTF-8.
 };
 
 static_assert(std::is_standard_layout_v<PluginAbi>, "PluginAbi is read across a module boundary and must stay standard layout");
@@ -122,14 +121,14 @@ struct VN_APPFW_API PluginInfo {
     /// Stable plugin identity, hardcoded by the plugin (VN_DECLARE_PLUGIN) and
     /// independent of its name and of where its library is installed. The null
     /// UUID means "not declared": identity then falls back to name.
-    Uuid                uuid;
-    String              name;         // Unique plugin name (identifier).
-    String              display_name; // Human-friendly name shown in UI; falls back to name when empty.
-    String              version;      // Plugin version, e.g. "1.2.0".
-    String              description;  // Human-readable description.
-    String              vendor;       // Author or vendor.
-    String              email;        // Contact address of the vendor; optional.
-    String              repo;         // Source repository or issue tracker URL; optional.
+    Uuid   uuid;
+    String name;         // Unique plugin name (identifier).
+    String display_name; // Human-friendly name shown in UI; falls back to name when empty.
+    String version;      // Plugin version, e.g. "1.2.0".
+    String description;  // Human-readable description.
+    String vendor;       // Author or vendor.
+    String email;        // Contact address of the vendor; optional.
+    String repo;         // Source repository or issue tracker URL; optional.
     ///
     /// Inline SVG source used as the plugin's icon in the UI. Empty means "no
     /// icon": the plugin manager then draws its own default one. Keep it to plain

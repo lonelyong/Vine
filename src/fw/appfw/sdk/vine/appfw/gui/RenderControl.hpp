@@ -2,9 +2,9 @@
 
 #include <functional>
 
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Signal.hpp>
 #include <vine/String.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 #include <vine/async/Task.hpp>
 
@@ -13,10 +13,12 @@
 
 namespace vn::graphics
 {
+
 class RenderEngine;
 class RenderSurface;
 class SceneView;
-}
+
+} // namespace vn::graphics
 
 VN_APPFWGUI_NS_BEGIN
 

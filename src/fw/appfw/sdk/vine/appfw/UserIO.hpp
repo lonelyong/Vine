@@ -6,16 +6,17 @@
 #include <vector>
 
 #include <vine/Object.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/String.hpp>
 #include <vine/async/Task.hpp>
 #include <vine/math/Point3.hpp>
+#include <vine/raw_ptr.hpp>
 
 VN_APPFW_NS_BEGIN
 
 class CommandManager;
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief What a file read accepts.
@@ -206,8 +207,7 @@ class VN_APPFW_API UserIO : public Object {
      * @note Declared after every other virtual, like cancelPendingInput(): this group only ever grows at the end, so a
      *       plugin compiled against an older header keeps the slots it already used.
      */
-    virtual vn::async::Task<std::optional<std::filesystem::path>> getFileAsync(const String&           prompt = {},
-                                                                              const FileReadOptions& options = {});
+    virtual vn::async::Task<std::optional<std::filesystem::path>> getFileAsync(const String& prompt = {}, const FileReadOptions& options = {});
 
     /**
      * @brief Asynchronously requests one or more files from the user.
@@ -218,8 +218,7 @@ class VN_APPFW_API UserIO : public Object {
      *
      * @note Several paths are typed in one line, separated by ';' - see PathList for why that character.
      */
-    virtual vn::async::Task<std::optional<PathList>> getFilesAsync(const String&           prompt = {},
-                                                                  const FileReadOptions& options = {});
+    virtual vn::async::Task<std::optional<PathList>> getFilesAsync(const String& prompt = {}, const FileReadOptions& options = {});
 
     /**
      * @brief Asynchronously requests one directory from the user.
@@ -228,8 +227,7 @@ class VN_APPFW_API UserIO : public Object {
      * @param options What to accept: existence and the path to start from.
      * @return A task yielding the path, or std::nullopt if cancelled or if the input did not fit the options.
      */
-    virtual vn::async::Task<std::optional<std::filesystem::path>> getDirAsync(const String&          prompt = {},
-                                                                             const DirReadOptions& options = {});
+    virtual vn::async::Task<std::optional<std::filesystem::path>> getDirAsync(const String& prompt = {}, const DirReadOptions& options = {});
 
     /**
      * @brief Asynchronously requests one or more directories from the user.
@@ -257,16 +255,16 @@ class VN_APPFW_API UserIO : public Object {
      *       the re-prompt text on the visual side, so both backends report the same words for the same refusal.
      */
     struct PathCheck {
-        bool                  ok{ false };  ///< True when the text is a path the options accept.
-        std::filesystem::path path;         ///< The path, valid only when ok.
-        String                message;      ///< Why it was refused; empty when ok.
+        bool                  ok{ false }; // True when the text is a path the options accept.
+        std::filesystem::path path;        // The path, valid only when ok.
+        String                message;     // Why it was refused; empty when ok.
     };
 
     /// Outcome of checking one text that may hold several paths (one per ';').
     struct PathLineCheck {
-        bool     ok{ false };  ///< True when every entry passed and at least one was there.
-        PathList paths;        ///< The paths, valid only when ok.
-        String   message;      ///< Why it was refused; empty when ok.
+        bool     ok{ false }; // True when every entry passed and at least one was there.
+        PathList paths;       // The paths, valid only when ok.
+        String   message;     // Why it was refused; empty when ok.
     };
 
     /**

@@ -30,8 +30,7 @@ struct CollisionPair {
      */
     bool operator==(const CollisionPair& other) const
     {
-        return (object1 == other.object1 && object2 == other.object2)
-               || (object1 == other.object2 && object2 == other.object1);
+        return (object1 == other.object1 && object2 == other.object2) || (object1 == other.object2 && object2 == other.object1);
     }
 
     /**

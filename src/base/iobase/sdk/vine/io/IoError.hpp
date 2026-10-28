@@ -18,21 +18,21 @@ VN_IO_NS_BEGIN
  */
 enum class IoError : std::uint8_t
 {
-    Ok,               ///< No error.
-    NotFound,         ///< The path does not exist.
-    AlreadyExists,    ///< The target already exists.
-    PermissionDenied, ///< The storage refused access.
-    NotADirectory,    ///< A directory was needed but the path names a file.
-    IsADirectory,     ///< A file was needed but the path names a directory.
-    NotEmpty,         ///< A directory had to be empty but still holds entries.
-    InvalidPath,      ///< The path is not a valid virtual path.
-    ReadOnly,         ///< The backend or mount refuses every write.
-    IoFailure,        ///< The underlying storage failed.
-    Unsupported,      ///< The backend does not implement the operation.
-    InvalidData,      ///< Stored data is malformed, e.g. a broken ZIP archive.
-    Closed,           ///< The stream or handle is already closed.
-    OutOfRange,       ///< An offset or seek position is out of range.
-    CapacityExceeded, ///< The operation would exceed a capacity limit.
+    Ok,               // No error.
+    NotFound,         // The path does not exist.
+    AlreadyExists,    // The target already exists.
+    PermissionDenied, // The storage refused access.
+    NotADirectory,    // A directory was needed but the path names a file.
+    IsADirectory,     // A file was needed but the path names a directory.
+    NotEmpty,         // A directory had to be empty but still holds entries.
+    InvalidPath,      // The path is not a valid virtual path.
+    ReadOnly,         // The backend or mount refuses every write.
+    IoFailure,        // The underlying storage failed.
+    Unsupported,      // The backend does not implement the operation.
+    InvalidData,      // Stored data is malformed, e.g. a broken ZIP archive.
+    Closed,           // The stream or handle is already closed.
+    OutOfRange,       // An offset or seek position is out of range.
+    CapacityExceeded, // The operation would exceed a capacity limit.
 };
 
 /**
@@ -85,8 +85,7 @@ inline std::ostream& operator<<(std::ostream& out, IoError error)
  * @tparam T The value type; must be movable.
  */
 template <typename T>
-class Result
-{
+class Result {
   public:
     /**
      * @brief Wraps a successful value.
@@ -95,8 +94,7 @@ class Result
      */
     Result(T value)
       : value_(std::move(value))
-    {
-    }
+    {}
 
     /**
      * @brief Carries a failure.

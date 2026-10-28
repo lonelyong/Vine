@@ -18,19 +18,15 @@ namespace
 /// @brief The engine's colour entry for a surface format, by bit depth and kind (see WindowTarget::shape).
 vn::graphics::RenderTarget::ColorFormat toColorFormat(VkFormat format) noexcept
 {
-    switch (format)
-    {
+    switch (format) {
     case VK_FORMAT_R8G8B8A8_UNORM:
     case VK_FORMAT_R8G8B8A8_SRGB:
     case VK_FORMAT_B8G8R8A8_UNORM:
     case VK_FORMAT_B8G8R8A8_SRGB:
     case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
-    case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
-        return vn::graphics::RenderTarget::ColorFormat::RGBA8;
-    case VK_FORMAT_R16G16B16A16_SFLOAT:
-        return vn::graphics::RenderTarget::ColorFormat::RGBA16F;
-    case VK_FORMAT_R32G32B32A32_SFLOAT:
-        return vn::graphics::RenderTarget::ColorFormat::RGBA32F;
+    case VK_FORMAT_A8B8G8R8_SRGB_PACK32: return vn::graphics::RenderTarget::ColorFormat::RGBA8;
+    case VK_FORMAT_R16G16B16A16_SFLOAT: return vn::graphics::RenderTarget::ColorFormat::RGBA16F;
+    case VK_FORMAT_R32G32B32A32_SFLOAT: return vn::graphics::RenderTarget::ColorFormat::RGBA32F;
     default:
         // An unknown surface format falls back to the engine's 8-bit entry rather than failing the session:
         // the engine's spelling decides which variants the window's passes may SHARE with off-screen passes,
@@ -45,8 +41,7 @@ vn::graphics::RenderTarget::ColorFormat toColorFormat(VkFormat format) noexcept
 /// @brief The engine's depth entry for the window's depth format, or nothing when the window has no depth.
 std::optional<vn::graphics::RenderTarget::DepthFormat> toDepthFormat(VkFormat format) noexcept
 {
-    switch (format)
-    {
+    switch (format) {
     case VK_FORMAT_D16_UNORM: return vn::graphics::RenderTarget::DepthFormat::D16;
     case VK_FORMAT_D24_UNORM_S8_UINT: return vn::graphics::RenderTarget::DepthFormat::D24;
     case VK_FORMAT_D32_SFLOAT: return vn::graphics::RenderTarget::DepthFormat::D32F;
@@ -55,37 +50,35 @@ std::optional<vn::graphics::RenderTarget::DepthFormat> toDepthFormat(VkFormat fo
     }
 }
 
-}  // namespace
+} // namespace
 
-struct WindowTarget::Data
-{
+struct WindowTarget::Data {
     ::vsg::ref_ptr<::vsg::Window>      window;
     ::vsg::ref_ptr<::vsg::RenderGraph> graph;
-    ::vsg::ref_ptr<::vsg::View>        content_view;   ///< The window's own view (see the file note).
-    ::vsg::ref_ptr<::vsg::Group>       frame_content;  ///< THIS frame's recorded content (see beginFrame).
+    ::vsg::ref_ptr<::vsg::View>        content_view;  // The window's own view (see the file note).
+    ::vsg::ref_ptr<::vsg::Group>       frame_content; // THIS frame's recorded content (see beginFrame).
     core::TargetShape                  shape;
 };
 
-WindowTarget::WindowTarget() : d(std::make_unique<Data>())
-{
-}
+WindowTarget::WindowTarget()
+  : d(std::make_unique<Data>())
+{}
 
 std::unique_ptr<WindowTarget> WindowTarget::create(::vsg::ref_ptr<::vsg::Window> window)
 {
-    if (window == nullptr)
-    {
+    if (window == nullptr) {
         return nullptr;
     }
 
-    auto target   = std::unique_ptr<WindowTarget>(new WindowTarget());
+    auto target       = std::unique_ptr<WindowTarget>(new WindowTarget());
     target->d->window = window;
 
     // The shape is what the swapchain serves at this moment (see sampledShape): the surface format the window
     // presents and the depth format its traits asked for, plus the DEVICE formats those map from.
     target->d->shape = target->sampledShape();
 
-    auto graph      = ::vsg::RenderGraph::create(window);
-    graph->contents = VK_SUBPASS_CONTENTS_INLINE;
+    auto graph                 = ::vsg::RenderGraph::create(window);
+    graph->contents            = VK_SUBPASS_CONTENTS_INLINE;
     // vsg's own resize handling is OFF (see prepare): this backend writes the render area from the live
     // extent, and two writers for one rectangle is what produced stretched rectangles on a maximize.
     graph->windowResizeHandler = {};
@@ -105,26 +98,27 @@ std::unique_ptr<WindowTarget> WindowTarget::create(::vsg::ref_ptr<::vsg::Window>
     // pipeline states without testing the camera first, so a camera-less view walks into a null pointer.
     // Nothing reads this camera's matrices - the content reads the blocks, and the viewport is a command -
     // so the values below are a neutral placeholder (a 1:1 camera looking down the canonical axis).
-    auto placeholder_camera = ::vsg::Camera::create(
-        ::vsg::Perspective::create(45.0, 1.0, 0.1, 100.0),
-        ::vsg::LookAt::create(::vsg::dvec3(0.0, 0.0, 0.0), ::vsg::dvec3(0.0, 0.0, -1.0), ::vsg::dvec3(0.0, 1.0, 0.0)));
+    auto placeholder_camera =
+        ::vsg::Camera::create(::vsg::Perspective::create(45.0, 1.0, 0.1, 100.0),
+                              ::vsg::LookAt::create(::vsg::dvec3(0.0, 0.0, 0.0), ::vsg::dvec3(0.0, 0.0, -1.0), ::vsg::dvec3(0.0, 1.0, 0.0)));
     target->d->content_view = ::vsg::View::create(placeholder_camera, ::vsg::ref_ptr<::vsg::Node>{});
-    if (target->d->content_view == nullptr)
-    {
+    if (target->d->content_view == nullptr) {
         return nullptr;
     }
     // The frame's content goes into a group of its own, so a frame can REPLACE what the last one recorded
     // without touching the session's root (see beginFrame / addContent).
     target->d->frame_content = ::vsg::Group::create();
-    if (target->d->frame_content == nullptr)
-    {
+    if (target->d->frame_content == nullptr) {
         return nullptr;
     }
     target->d->content_view->addChild(target->d->frame_content);
     graph->addChild(target->d->content_view);
 
     const VkExtent2D extent = window->extent2D();
-    graph->renderArea       = VkRect2D{ { 0, 0 }, extent };
+    graph->renderArea       = VkRect2D{
+        { 0, 0 },
+        extent
+    };
     return target;
 }
 
@@ -133,51 +127,49 @@ WindowTarget::~WindowTarget() = default;
 void WindowTarget::prepare(const core::ClearValues& policy) noexcept
 {
     const VkExtent2D extent = d->window->extent2D();
-    d->graph->renderArea    = VkRect2D{ { 0, 0 }, extent };
+    d->graph->renderArea    = VkRect2D{
+        { 0, 0 },
+        extent
+    };
 
     // The window's load operations are the platform's (the swapchain's render pass clears), so the plan's
     // "bootstrap" rule is the honest reading of it: attachment 0 takes the policy's colour, the depth the
     // policy's value (the reverse-Z far plane by default).
-    const core::PassClearPlan plan = core::planClearValues(d->shape, policy, /*bootstrap*/ true,
-                                                          /*depth_borrowed*/ false);
+    const core::PassClearPlan plan  = core::planClearValues(d->shape,
+                                                            policy,
+                                                            /*bootstrap*/ true,
+                                                            /*depth_borrowed*/ false);
     VkClearColorValue         color = {};
-    if (!plan.colors.empty())
-    {
-        for (std::size_t component = 0; component < 4U; ++component)
-        {
+    if (!plan.colors.empty()) {
+        for (std::size_t component = 0; component < 4U; ++component) {
             color.float32[component] = plan.colors.front().clear[component];
         }
     }
-    if (plan.has_depth)
-    {
+    if (plan.has_depth) {
         d->graph->setClearValues(color, VkClearDepthStencilValue{ plan.depth.clear, 0U });
     }
-    else
-    {
+    else {
         d->graph->setClearValues(color);
     }
 }
 
 void WindowTarget::beginFrame() noexcept
 {
-    if (d->frame_content != nullptr)
-    {
+    if (d->frame_content != nullptr) {
         d->frame_content->children.clear();
     }
 }
 
 void WindowTarget::addFrameContent(::vsg::ref_ptr<::vsg::Node> content) noexcept
 {
-    if (content != nullptr && d->frame_content != nullptr)
-    {
+    if (content != nullptr && d->frame_content != nullptr) {
         d->frame_content->addChild(content);
     }
 }
 
 void WindowTarget::addContent(::vsg::ref_ptr<::vsg::Node> content) noexcept
 {
-    if (content != nullptr)
-    {
+    if (content != nullptr) {
         d->content_view->addChild(content);
     }
 }
@@ -188,7 +180,10 @@ void WindowTarget::prepareWithoutClear() noexcept
     // the graph's defaults when no window pass has ever run - either way a defined VkClearValue, which is
     // all the present needs).
     const VkExtent2D extent = d->window->extent2D();
-    d->graph->renderArea    = VkRect2D{ { 0, 0 }, extent };
+    d->graph->renderArea    = VkRect2D{
+        { 0, 0 },
+        extent
+    };
 }
 
 ::vsg::ref_ptr<::vsg::RenderGraph> WindowTarget::graph() const noexcept
@@ -217,8 +212,7 @@ core::TargetShape WindowTarget::sampledShape() const
 bool WindowTarget::refresh()
 {
     core::TargetShape sampled = sampledShape();
-    if (sampled == d->shape)
-    {
+    if (sampled == d->shape) {
         return false;
     }
     // The platform's answer REPLACES this target's record of it: the next compile keys the window's
@@ -234,9 +228,9 @@ core::TargetFacts WindowTarget::facts() const noexcept
     const VkExtent2D extent = d->window->extent2D();
 
     core::TargetFacts facts;
-    facts.target        = nullptr;  // the default framebuffer's identity
-    facts.wanted.width  = static_cast<int>(extent.width);
-    facts.wanted.height = static_cast<int>(extent.height);
+    facts.target             = nullptr; // the default framebuffer's identity
+    facts.wanted.width       = static_cast<int>(extent.width);
+    facts.wanted.height      = static_cast<int>(extent.height);
     // The swapchain serves this shape NOW (a live read), and the shape this target's records were built
     // against is what the plan compares it with: the pair is what turns "the platform rebuilt the surface"
     // into a REBUILD answer instead of a silent draw through the old compatibility's pipelines (see the
@@ -244,7 +238,7 @@ core::TargetFacts WindowTarget::facts() const noexcept
     facts.wanted.shape       = sampledShape();
     facts.current.desc       = facts.wanted;
     facts.current.desc.shape = d->shape;
-    facts.current.built      = true;  // the window is whatever it is: nothing of the target layer's work applies
+    facts.current.built      = true; // the window is whatever it is: nothing of the target layer's work applies
     facts.depth.has_depth    = facts.wanted.shape.depth_format.has_value();
     facts.depth.promotion    = false;
     facts.depth.borrowed     = false;
@@ -258,7 +252,7 @@ std::uint32_t WindowTarget::colorAttachmentCount() const noexcept
 
 bool WindowTarget::depthSampleable() const noexcept
 {
-    return false;  // the window's depth is an attachment; nothing promotes it to a texture
+    return false; // the window's depth is an attachment; nothing promotes it to a texture
 }
 
 std::uint32_t WindowTarget::width() const noexcept

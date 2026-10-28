@@ -20,8 +20,7 @@ class Color;
  * @note
  * - Alpha is a coverage fraction in both halves of the pair and is never encoded.
  */
-class VN_CORE_API Colorf
-{
+class VN_CORE_API Colorf {
   public:
     Colorf() noexcept = default;
 
@@ -34,12 +33,11 @@ class VN_CORE_API Colorf
      * @param a Alpha channel; defaults to opaque.
      */
     constexpr Colorf(float r, float g, float b, float a = 1.0f) noexcept
-        : r(r)
-        , g(g)
-        , b(b)
-        , a(a)
-    {
-    }
+      : r(r)
+      , g(g)
+      , b(b)
+      , a(a)
+    {}
 
   public:
     /**

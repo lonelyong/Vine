@@ -19,8 +19,7 @@ namespace
  * It is reference counted so a test can show the two halves separately - "the owner is read while it lives" and "the
  * lease did not keep it alive".
  */
-struct Counted : RefCounted<Counted>
-{
+struct Counted : RefCounted<Counted> {
     static inline int live = 0;
 
     Counted()

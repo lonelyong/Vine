@@ -386,7 +386,7 @@ std::vector<double> ConfigManager::getDoubleArray(const String& key) const
 String ConfigManager::toJson() const
 {
     std::shared_lock lock(d->mutex);
-    QJsonObject obj;
+    QJsonObject      obj;
     for (const auto& [key, value] : d->values) {
         QJsonObject entry;
         std::visit(

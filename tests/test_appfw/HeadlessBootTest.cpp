@@ -72,8 +72,7 @@ std::filesystem::path freshPluginDirectory(const std::string& stem)
 {
     static std::atomic<unsigned> dir_counter{ 0 };
 
-    const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(dir_counter.fetch_add(1)));
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(dir_counter.fetch_add(1)));
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
@@ -91,8 +90,7 @@ std::filesystem::path bootPluginDirectory()
     const std::filesystem::path dir     = freshPluginDirectory("vn_test_appfw_plugins");
 
     std::error_code ec;
-    std::filesystem::copy_file(fixture, dir / ("headless_boot" + fixture.extension().string()),
-                               std::filesystem::copy_options::overwrite_existing, ec);
+    std::filesystem::copy_file(fixture, dir / ("headless_boot" + fixture.extension().string()), std::filesystem::copy_options::overwrite_existing, ec);
     EXPECT_FALSE(ec) << "夹具插件没拷进 '" << dir.string() << "': " << ec.message();
     return dir;
 }
@@ -136,12 +134,11 @@ struct WarningCapture {
 [[nodiscard]] WarningCapture captureWarnings()
 {
     WarningCapture capture;
-    vn::logging::defaultLogger().addSink(vn::logging::LogSink::function(
-        [lines = capture.lines](vn::logging::LogLevel level, const std::string& line) {
-            if (level == vn::logging::LogLevel::Warn) {
-                lines->push_back(line);
-            }
-        }));
+    vn::logging::defaultLogger().addSink(vn::logging::LogSink::function([lines = capture.lines](vn::logging::LogLevel level, const std::string& line) {
+        if (level == vn::logging::LogLevel::Warn) {
+            lines->push_back(line);
+        }
+    }));
     return capture;
 }
 
@@ -196,17 +193,17 @@ TEST(HeadlessBootTest, TheBootReportsItsProgressAndLoadsThePluginsWithoutAWindow
     EXPECT_FALSE(app->pluginManager()->isLoaded(u8"headless_boot_plugin"));
     EXPECT_FALSE(app->isBusy()); // 没在启动：命令可以跑
 
-    bool reported      = false; // 启动阶段里上报口在（无头宿主报得出东西）
-    bool busy          = false; // 启动阶段里前台被启动上报占着
-    bool labeled       = false; // 上报口能用：阶段与状态文字都写得进去
-    bool advanced      = false;
-    bool plugins_first = false; // 宿主的活开跑之前，插件已经被框架加载完了
-    bool probe_delivered = false; // 由下面 post 出去的回调写：只有循环派发了它才会为真
-    bool boot_in_loop    = false; // 工作里快照：跑工作的那一刻，那个回调是不是已经到过
-    bool delegated_ran   = false; // 同步委托（invokeOnMainThread）跑完了才返回
-    bool delegated_on_main = false; // 而且是在应用线程上跑的
-    qint64 delegated_ms  = 0; // 委托那一段在被调用方身上花了多久（用来量"同步等待"）
-    bool delegated_when_returned = false; // 返回的那一刻它已经跑过了
+    bool   reported                = false; // 启动阶段里上报口在（无头宿主报得出东西）
+    bool   busy                    = false; // 启动阶段里前台被启动上报占着
+    bool   labeled                 = false; // 上报口能用：阶段与状态文字都写得进去
+    bool   advanced                = false;
+    bool   plugins_first           = false; // 宿主的活开跑之前，插件已经被框架加载完了
+    bool   probe_delivered         = false; // 由下面 post 出去的回调写：只有循环派发了它才会为真
+    bool   boot_in_loop            = false; // 工作里快照：跑工作的那一刻，那个回调是不是已经到过
+    bool   delegated_ran           = false; // 同步委托（invokeOnMainThread）跑完了才返回
+    bool   delegated_on_main       = false; // 而且是在应用线程上跑的
+    qint64 delegated_ms            = 0;     // 委托那一段在被调用方身上花了多久（用来量"同步等待"）
+    bool   delegated_when_returned = false; // 返回的那一刻它已经跑过了
 
     // 主线程身份 + 主线程上的一串定时器：宿主的活跑在别的线程上，而这串定时器在工作期间要一直在跳——
     // 这就是"启动期没把消息循环占住"的直视断言（旧形状里工作同步跑在主线程上，它一跳都不跳）。
@@ -247,17 +244,15 @@ TEST(HeadlessBootTest, TheBootReportsItsProgressAndLoadsThePluginsWithoutAWindow
         // 委托那一段故意睡 60 ms：调用方量到的时长才能证明它真的在等（不等就一定远小于 60 ms）。
         QElapsedTimer delegated_timer;
         delegated_timer.start();
-        delegated_ran = vn::appfw::MainThreadDispatcher::invokeOnMainThread([&] {
+        delegated_ran           = vn::appfw::MainThreadDispatcher::invokeOnMainThread([&] {
             delegated_on_main = std::this_thread::get_id() == main_thread;
             std::this_thread::sleep_for(std::chrono::milliseconds(60));
         });
-        delegated_ms = delegated_timer.elapsed();
+        delegated_ms            = delegated_timer.elapsed();
         delegated_when_returned = delegated_on_main;
 
         // 宿主的活干完了：回主线程收尾——让框架把启动收完（startupEnd() 那一拍），再让循环退出。
-        static_cast<void>(vn::appfw::MainThreadDispatcher::postToMainThread([] {
-            QTimer::singleShot(50, qApp, [] { QCoreApplication::exit(0); });
-        }));
+        static_cast<void>(vn::appfw::MainThreadDispatcher::postToMainThread([] { QTimer::singleShot(50, qApp, [] { QCoreApplication::exit(0); }); }));
     };
 
     const int code = app->run();
@@ -367,8 +362,7 @@ TEST(HeadlessBootTest, ACancelledBootEndsCleanlyWithoutFinishingTheBoot)
     EXPECT_FALSE(app->end_phase_ran) << "取消的启动不走最后一拍，主窗不该上屏";
     EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr) << "上报口要收掉";
     EXPECT_FALSE(app->isBusy());
-    EXPECT_FALSE(app->pluginManager()->isLoaded(u8"headless_boot_plugin"))
-        << "取消时已经装上的插件必须卸掉（插件在 load() 里建的东西不能留在进程里）";
+    EXPECT_FALSE(app->pluginManager()->isLoaded(u8"headless_boot_plugin")) << "取消时已经装上的插件必须卸掉（插件在 load() 里建的东西不能留在进程里）";
     EXPECT_TRUE(app->configManager()->getBool(u8"plugins.headless_boot.saw_token", false))
         << "插件必须能从这个口看到这次启动的 token（PluginLoadContext::stopToken()），而不是去摸全局上报口";
     EXPECT_TRUE(app->configManager()->getBool(u8"plugins.headless_boot.saw_environment", false))
@@ -378,7 +372,8 @@ TEST(HeadlessBootTest, ACancelledBootEndsCleanlyWithoutFinishingTheBoot)
 }
 
 /// 叶子自己的启动拍可以异步：`co_await` 一个定时器，启动照常往前走。
-class AwaitingPhaseApplication : public vn::appfw::Application {  public:
+class AwaitingPhaseApplication : public vn::appfw::Application {
+  public:
     using Application::Application;
 
     /// 第二拍进来时是否已经在应用线程上（由测试读）。
@@ -490,7 +485,7 @@ TEST(HeadlessBootTest, TwoPluginsClaimingOneIdentityAreBothFoundAndReported)
     vn::appfw::AppConfig config;
     config.name           = u8"test_appfw";
     config.persist_config = false;
-    config.load_plugins   = false;  // 同步门由用例自己调，不经过启动阶段
+    config.load_plugins   = false; // 同步门由用例自己调，不经过启动阶段
 
     vn::appfw::PluginManager::setBuiltInPluginDirectory(twinPluginDirectory());
 
@@ -543,9 +538,11 @@ TEST(HeadlessBootTest, ARegistrationThatDisagreesWithItsLibraryIsReportedAndTheL
         stream << "name = not_the_real_name\n";
         stream << "uuid = 11111111-1111-4111-8111-111111111111\n";
     }
+
     // 注册目录是每用户共享的：用例自己收尾，免得后面跑的用例多扫到这份文件。
     struct RemoveRegistration {
         std::filesystem::path path;
+
         ~RemoveRegistration()
         {
             std::error_code ec;
@@ -591,6 +588,7 @@ TEST(HeadlessBootTest, ShutdownFromAnotherThreadIsReportedAndStillRuns)
     // 而且它**真的跑过**：总线已经是停的，第二次调用直接复述同一个结果（不是又等一遍）。
     EXPECT_TRUE(app->eventBus()->shutdownGracefully(std::chrono::milliseconds(10)));
 }
+
 /// 文档类型记下的 owner 来自**宿主的一个标签**（`Application::registrationOwner()`）：插件加载器在插件注册前后设它，
 /// 于是每个注册表不必各留一份相同的事实，管理器面板也能说清“这类文档是谁提供的”。
 TEST(HeadlessBootTest, ARegisteredDocumentTypeRecordsTheRegistrationOwnerTag)
@@ -633,4 +631,5 @@ TEST(HeadlessBootTest, ARegisteredDocumentTypeRecordsTheRegistrationOwnerTag)
     ASSERT_EQ(types[1].type_id, u8"plugin_type");
     EXPECT_EQ(types[1].owner, u8"some_plugin") << "注册时读的是 Application 上的那一个标签";
 }
+
 } // namespace

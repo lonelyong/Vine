@@ -39,7 +39,7 @@ vn::intrusive_ptr<vn::graphics::Texture> cubeMap(vn::imaging::PixelFormat format
     return vn::intrusive_ptr<vn::graphics::Texture>(new vn::graphics::CubeMap(4, format));
 }
 
-}  // namespace
+} // namespace
 
 TEST(MaterialSlotCheckTest, AnAbsentSlotIsNotAViolation)
 {
@@ -56,8 +56,8 @@ TEST(MaterialSlotCheckTest, OnlyTheBaseColourSlotTakesACubeMap)
     // N6 / C2: the other four parameterise a surface with a UV pair, and a direction is not one - the content
     // layer cannot even bind it (a cube view where the text declares sampler2D is an invalid descriptor), so this
     // is the violation a host is most likely to meet.
-    const auto            cube_in_data = cubeMap(vn::imaging::PixelFormat::Rgba8Unorm);
-    const auto            cube_in_base = cubeMap(vn::imaging::PixelFormat::Rgba8Srgb);
+    const auto             cube_in_data = cubeMap(vn::imaging::PixelFormat::Rgba8Unorm);
+    const auto             cube_in_base = cubeMap(vn::imaging::PixelFormat::Rgba8Srgb);
     vn::vsg::MaterialFacts facts{};
     facts.slots[indexOf(vn::graphics::TextureSlot::Normal)].texture = cube_in_data.get();
     EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::Normal)), SlotViolation::CubeInDataSlot);
@@ -72,20 +72,18 @@ TEST(MaterialSlotCheckTest, ColourSlotsWantColourFormats)
 {
     // A byte map that claims to be linear in a colour slot is the silent gamma shift: the hardware does not
     // decode it, so every colour arrives brighter than the file said.
-    const auto            linear_base     = map2d(vn::imaging::PixelFormat::Rgba8Unorm);
-    const auto            linear_emissive = map2d(vn::imaging::PixelFormat::Bgra8Unorm);
+    const auto             linear_base     = map2d(vn::imaging::PixelFormat::Rgba8Unorm);
+    const auto             linear_emissive = map2d(vn::imaging::PixelFormat::Bgra8Unorm);
     vn::vsg::MaterialFacts facts{};
     facts.slots[indexOf(vn::graphics::TextureSlot::BaseColor)].texture = linear_base.get();
     facts.slots[indexOf(vn::graphics::TextureSlot::Emissive)].texture  = linear_emissive.get();
-    EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::BaseColor)),
-              SlotViolation::LinearFormatInColorSlot);
-    EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::Emissive)),
-              SlotViolation::LinearFormatInColorSlot);
+    EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::BaseColor)), SlotViolation::LinearFormatInColorSlot);
+    EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::Emissive)), SlotViolation::LinearFormatInColorSlot);
 
     // The spellings that FIT: an sRGB byte map, and a float map (an HDR emission is linear by definition - it is
     // not a violation, and guessing would make the report noise).
-    const auto srgb_base     = map2d(vn::imaging::PixelFormat::Rgba8Srgb);
-    const auto hdr_emissive  = map2d(vn::imaging::PixelFormat::Rgba16Float);
+    const auto srgb_base                                               = map2d(vn::imaging::PixelFormat::Rgba8Srgb);
+    const auto hdr_emissive                                            = map2d(vn::imaging::PixelFormat::Rgba16Float);
     facts.slots[indexOf(vn::graphics::TextureSlot::BaseColor)].texture = srgb_base.get();
     facts.slots[indexOf(vn::graphics::TextureSlot::Emissive)].texture  = hdr_emissive.get();
     EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::BaseColor)), SlotViolation::None);
@@ -96,18 +94,16 @@ TEST(MaterialSlotCheckTest, DataSlotsWantLinearFormats)
 {
     // The other direction, and the one that costs accuracy rather than brightness: an sRGB roughness map is
     // decoded by the hardware, so an authored 0.5 arrives as 0.21.
-    const auto            srgb_mr   = map2d(vn::imaging::PixelFormat::Rgba8Srgb);
-    const auto            srgb_ao   = map2d(vn::imaging::PixelFormat::R8Srgb);
+    const auto             srgb_mr = map2d(vn::imaging::PixelFormat::Rgba8Srgb);
+    const auto             srgb_ao = map2d(vn::imaging::PixelFormat::R8Srgb);
     vn::vsg::MaterialFacts facts{};
     facts.slots[indexOf(vn::graphics::TextureSlot::MetallicRoughness)].texture = srgb_mr.get();
     facts.slots[indexOf(vn::graphics::TextureSlot::Occlusion)].texture         = srgb_ao.get();
-    EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::MetallicRoughness)),
-              SlotViolation::SrgbFormatInDataSlot);
-    EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::Occlusion)),
-              SlotViolation::SrgbFormatInDataSlot);
+    EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::MetallicRoughness)), SlotViolation::SrgbFormatInDataSlot);
+    EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::Occlusion)), SlotViolation::SrgbFormatInDataSlot);
 
-    const auto linear_mr     = map2d(vn::imaging::PixelFormat::Rgba8Unorm);
-    const auto linear_normal = map2d(vn::imaging::PixelFormat::Rgba8Unorm);
+    const auto linear_mr                                                       = map2d(vn::imaging::PixelFormat::Rgba8Unorm);
+    const auto linear_normal                                                   = map2d(vn::imaging::PixelFormat::Rgba8Unorm);
     facts.slots[indexOf(vn::graphics::TextureSlot::MetallicRoughness)].texture = linear_mr.get();
     facts.slots[indexOf(vn::graphics::TextureSlot::Normal)].texture            = linear_normal.get();
     EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::MetallicRoughness)), SlotViolation::None);

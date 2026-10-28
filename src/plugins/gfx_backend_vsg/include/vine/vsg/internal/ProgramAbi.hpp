@@ -54,70 +54,67 @@ VN_VSG_NS_BEGIN
 /** @brief The stage a binding is read by (this backend's two graphics stages). */
 enum class AbiStage : std::uint32_t
 {
-    Vertex   = 1U,  ///< The vertex stage.
-    Fragment = 2U,  ///< The fragment stage.
+    Vertex   = 1U, // The vertex stage.
+    Fragment = 2U, // The fragment stage.
 };
 
 /** @brief What a declared binding is. */
 enum class AbiDescriptorKind : std::uint8_t
 {
-    UniformBlock,  ///< A `std140` uniform block (`VineMaterialBlock` and friends).
-    Sampler2D,     ///< A `sampler2D`.
-    SamplerCube,   ///< A `samplerCube`.
-    OtherSampler,  ///< Any other sampler type (recorded by name; the serving layer decides).
+    UniformBlock, // A `std140` uniform block (`VineMaterialBlock` and friends).
+    Sampler2D,    // A `sampler2D`.
+    SamplerCube,  // A `samplerCube`.
+    OtherSampler, // Any other sampler type (recorded by name; the serving layer decides).
 };
 
 /** @brief Which of the L1 blocks a uniform block is, by its GLSL TYPE NAME (the L1 name, §11.3). */
 enum class AbiBlockRole : std::uint8_t
 {
-    NotABlock,     ///< A sampler (or a push block, which does not appear in `bindings`).
-    View,          ///< `VineViewBlock` (the per-pass view block).
-    Draw,          ///< `VineDrawBlock` (the per-draw model matrix and opacity).
-    Material,      ///< `VineMaterialBlock` (the shading material).
-    Lights,        ///< `VineLightsBlock` (one ambient plus up to three directional lights, in view space).
-    ShadowBlock,   ///< `VineShadowBlock` (the map's placement and comparison scalars).
-    Foreign,       ///< A uniform block whose type name is none of the L1 names: the backend cannot fill it.
+    NotABlock,   // A sampler (or a push block, which does not appear in `bindings`).
+    View,        // `VineViewBlock` (the per-pass view block).
+    Draw,        // `VineDrawBlock` (the per-draw model matrix and opacity).
+    Material,    // `VineMaterialBlock` (the shading material).
+    Lights,      // `VineLightsBlock` (one ambient plus up to three directional lights, in view space).
+    ShadowBlock, // `VineShadowBlock` (the map's placement and comparison scalars).
+    Foreign,     // A uniform block whose type name is none of the L1 names: the backend cannot fill it.
 };
 
 /** @brief The layout qualifier a block declares (a role block must be `std140` for the bytes to be the ABI's). */
 enum class AbiBlockLayout : std::uint8_t
 {
-    Unspecified,  ///< No layout qualifier: the layout is the compiler's, so the block's size is not known here.
-    Std140,       ///< `layout(std140)`.
-    Std430,       ///< `layout(std430)` (legal on the push-constant blocks; the scan sizes those with it).
+    Unspecified, // No layout qualifier: the layout is the compiler's, so the block's size is not known here.
+    Std140,      // `layout(std140)`.
+    Std430,      // `layout(std430)` (legal on the push-constant blocks; the scan sizes those with it).
 };
 
 /** @brief One binding a stage text declares. */
-struct AbiBinding
-{
-    std::uint32_t    set{0};          ///< Descriptor set.
-    std::uint32_t    binding{0};      ///< Binding index inside that set.
-    std::uint32_t    count{1};        ///< Descriptors at that binding (an array suffix; 1 for a single one).
-    AbiDescriptorKind kind{AbiDescriptorKind::UniformBlock};  ///< What is bound there.
-    AbiBlockRole     role{AbiBlockRole::NotABlock};  ///< The L1 block it is (blocks only; see AbiBlockRole).
-    std::uint32_t    stages{0};       ///< Union of the stages that declare it (AbiStage bits).
-    AbiBlockLayout   layout{AbiBlockLayout::Unspecified};  ///< The block's declared layout qualifier.
-    std::uint32_t    block_size{0};   ///< Its std140 size in bytes; 0 when the layout is Unspecified or the
-                                      ///< members could not be sized (a sampler has no size either).
-    std::string      type_name{};     ///< The declared type (`VineMaterialBlock`, `samplerCube`, ...).
-    std::string      name{};          ///< The declared instance name (`vn_material`, `vn_baseColorMap`, ...).
+struct AbiBinding {
+    std::uint32_t     set{ 0 };                                // Descriptor set.
+    std::uint32_t     binding{ 0 };                            // Binding index inside that set.
+    std::uint32_t     count{ 1 };                              // Descriptors at that binding (an array suffix; 1 for a single one).
+    AbiDescriptorKind kind{ AbiDescriptorKind::UniformBlock }; // What is bound there.
+    AbiBlockRole      role{ AbiBlockRole::NotABlock };         // The L1 block it is (blocks only; see AbiBlockRole).
+    std::uint32_t     stages{ 0 };                             // Union of the stages that declare it (AbiStage bits).
+    AbiBlockLayout    layout{ AbiBlockLayout::Unspecified };   // The block's declared layout qualifier.
+    std::uint32_t     block_size{ 0 };                         // Its std140 size in bytes; 0 when the layout is Unspecified or the
+                                                               // members could not be sized (a sampler has no size either).
+    std::string       type_name{};                             // The declared type (`VineMaterialBlock`, `samplerCube`, ...).
+    std::string       name{};                                  // The declared instance name (`vn_material`, `vn_baseColorMap`, ...).
 };
 
 /** @brief One member of a declared push block: what it is called, and where its bytes sit. */
-struct AbiPushMember
-{
-    std::string   name{};    ///< The declared member name (`projection`, `modelView`, ...).
-    std::uint32_t offset{0}; ///< Its byte offset inside the push range (from the range's start).
-    std::uint32_t size{0};   ///< Its size in bytes (an array counts all its elements).
+struct AbiPushMember {
+    std::string   name{};      // The declared member name (`projection`, `modelView`, ...).
+    std::uint32_t offset{ 0 }; // Its byte offset inside the push range (from the range's start).
+    std::uint32_t size{ 0 };   // Its size in bytes (an array counts all its elements).
 };
 
 /** @brief One push-constant range a stage declares. */
-struct AbiPushRange
-{
-    std::uint32_t offset{0};     ///< Byte offset inside the push range (from `layout(offset = ...)`, else 0).
-    std::uint32_t size{0};       ///< Its size in bytes (std430 rules); 0 when the members could not be sized.
-    std::uint32_t stages{0};     ///< Union of the stages that declare it (AbiStage bits).
-    std::string   type_name{};   ///< The declared block type name (for diagnostics).
+struct AbiPushRange {
+    std::uint32_t offset{ 0 }; // Byte offset inside the push range (from `layout(offset = ...)`, else 0).
+    std::uint32_t size{ 0 };   // Its size in bytes (std430 rules); 0 when the members could not be sized.
+    std::uint32_t stages{ 0 }; // Union of the stages that declare it (AbiStage bits).
+    std::string   type_name{}; // The declared block type name (for diagnostics).
     /// The members, in declaration order, each with its own offset - what the serving layer fills BY NAME.
     /// A push block is the one range whose bytes are ASSEMBLED rather than copied from an L1 struct (the
     /// engine's `pc` is the L2 realization of the `VineViewBlock` / `VineDrawBlock` pair), so the names are
@@ -126,11 +123,10 @@ struct AbiPushRange
 };
 
 /** @brief The bindings and push ranges a program's two stages declare FOR ONE VARIANT. */
-struct ProgramAbi
-{
-    std::vector<AbiBinding>  bindings{};        ///< Sorted by (set, binding); one entry per declared binding.
-    std::vector<AbiPushRange> pushes{};         ///< Sorted by (offset, size); one entry per distinct range.
-    std::vector<std::string> import_defines{};  ///< The names the text allows to be defined, sorted.
+struct ProgramAbi {
+    std::vector<AbiBinding>   bindings{};       // Sorted by (set, binding); one entry per declared binding.
+    std::vector<AbiPushRange> pushes{};         // Sorted by (offset, size); one entry per distinct range.
+    std::vector<std::string>  import_defines{}; // The names the text allows to be defined, sorted.
 };
 
 /**
@@ -148,8 +144,7 @@ struct ProgramAbi
  *         declaration form could not be classified, when the two stages disagree about one binding, or when
  *         an active `#error` says the variant cannot compile.
  */
-[[nodiscard]] FactMiss scanProgramAbi(std::string_view vertex, std::string_view fragment,
-                                      std::span<const std::string_view> defines, ProgramAbi& out);
+[[nodiscard]] FactMiss scanProgramAbi(std::string_view vertex, std::string_view fragment, std::span<const std::string_view> defines, ProgramAbi& out);
 
 /**
  * @brief Gets the L1 block a GLSL block type name names, or Foreign when it names none of them.

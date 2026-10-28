@@ -17,6 +17,7 @@
 #include <vsg/state/PushConstants.h>
 #include <vsg/state/Sampler.h>
 
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/vsg/internal/ContentPush.hpp>
 #include <vine/vsg/internal/ContentSets.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
@@ -24,7 +25,6 @@
 #include <vine/vsg/internal/LightBlock.hpp>
 #include <vine/vsg/internal/MaterialSlotCheck.hpp>
 #include <vine/vsg/internal/ShadowBlock.hpp>
-#include <vine/graphics/ShaderAbi.hpp>
 
 VN_VSG_NS_BEGIN
 
@@ -34,16 +34,11 @@ namespace
 /// @brief Names a table miss the way the message needs it.
 const char* missText(FactMiss miss) noexcept
 {
-    switch (miss)
-    {
-    case FactMiss::None:
-        return "none";
-    case FactMiss::Unknown:
-        return "the content layer was never told about this identity";
-    case FactMiss::Revision:
-        return "the table knows this identity at a different revision";
-    case FactMiss::Malformed:
-        return "the table's entry cannot be drawn (see api/ContentFacts.hpp)";
+    switch (miss) {
+    case FactMiss::None: return "none";
+    case FactMiss::Unknown: return "the content layer was never told about this identity";
+    case FactMiss::Revision: return "the table knows this identity at a different revision";
+    case FactMiss::Malformed: return "the table's entry cannot be drawn (see api/ContentFacts.hpp)";
     }
     return "unknown";
 }
@@ -59,8 +54,7 @@ std::span<const std::byte> bytesOf(const Block& block) noexcept
 std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
 {
     std::uint32_t total = 0;
-    for (const core::CompiledInput& input : pass.inputs)
-    {
+    for (const core::CompiledInput& input : pass.inputs) {
         total += input.color_attachments;
     }
     return total;
@@ -84,10 +78,8 @@ std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
  */
 bool programSamplesInputSet(const ProgramAbi& abi) noexcept
 {
-    for (const AbiBinding& binding : abi.bindings)
-    {
-        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.set == ContentPipeline::kInputSet)
-        {
+    for (const AbiBinding& binding : abi.bindings) {
+        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.set == ContentPipeline::kInputSet) {
             return true;
         }
     }
@@ -98,8 +90,7 @@ bool programSamplesInputSet(const ProgramAbi& abi) noexcept
 std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
 {
     std::uint32_t total = 0;
-    for (const core::CompiledInput& input : pass.inputs)
-    {
+    for (const core::CompiledInput& input : pass.inputs) {
         total += input.depth_sampleable ? 1U : 0U;
     }
     return total;
@@ -108,22 +99,17 @@ std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
 /// @brief How many of the announced lights the block is supposed to carry (a DISABLED light is not a drop).
 std::size_t enabledLightCount(std::span<const core::LightRef> lights) noexcept
 {
-    return static_cast<std::size_t>(std::count_if(
-        lights.begin(), lights.end(), [](const core::LightRef& light) { return light.enabled; }));
+    return static_cast<std::size_t>(std::count_if(lights.begin(), lights.end(), [](const core::LightRef& light) { return light.enabled; }));
 }
 
 /// @brief Whether two block shapes declare the same roles at the same bindings, in the same order.
-bool sameShape(std::span<const BlockDescriptors::Binding> left,
-               std::span<const BlockDescriptors::Binding> right) noexcept
+bool sameShape(std::span<const BlockDescriptors::Binding> left, std::span<const BlockDescriptors::Binding> right) noexcept
 {
-    if (left.size() != right.size())
-    {
+    if (left.size() != right.size()) {
         return false;
     }
-    for (std::size_t index = 0U; index < left.size(); ++index)
-    {
-        if (left[index].binding != right[index].binding || left[index].role != right[index].role)
-        {
+    for (std::size_t index = 0U; index < left.size(); ++index) {
+        if (left[index].binding != right[index].binding || left[index].role != right[index].role) {
             return false;
         }
     }
@@ -131,59 +117,50 @@ bool sameShape(std::span<const BlockDescriptors::Binding> left,
 }
 
 /** @brief Whether two sampled-binding lists name the same bindings, in the same order. */
-bool sameSamplers(std::span<const BlockDescriptors::SampledBinding> left,
-                  std::span<const std::uint32_t> right) noexcept
+bool sameSamplers(std::span<const BlockDescriptors::SampledBinding> left, std::span<const std::uint32_t> right) noexcept
 {
-    if (left.size() != right.size())
-    {
+    if (left.size() != right.size()) {
         return false;
     }
-    for (std::size_t index = 0U; index < left.size(); ++index)
-    {
-        if (left[index].binding != right[index])
-        {
+    for (std::size_t index = 0U; index < left.size(); ++index) {
+        if (left[index].binding != right[index]) {
             return false;
         }
     }
     return true;
 }
 
-}  // namespace
+} // namespace
 
 ContentPass::ContentPass(const Scope& scope, vn::graphics::Diagnostics& diagnostics) noexcept
-    : scope_(scope)
-    , diagnostics_(diagnostics)
+  : scope_(scope)
+  , diagnostics_(diagnostics)
 {
     half_reported_   = std::vector<vn::graphics::ReportOnce>(scope.entries.size());
     shadow_reported_ = std::vector<vn::graphics::ReportOnce>(scope.entries.size());
 }
 
-bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count,
-                             const BlockDescriptors::ImageSource* demanded)
+bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count, const BlockDescriptors::ImageSource* demanded)
 {
     half_block_count_ = 0U;
 
-    if (entry.pipelines == nullptr)
-    {
+    if (entry.pipelines == nullptr) {
         return false;
     }
     const ProgramAbi& abi = entry.pipelines->abi();
-    if (abi.bindings.empty())
-    {
-        return true;   // a full-screen half, or a content program that declares nothing: nothing to fill
+    if (abi.bindings.empty()) {
+        return true; // a full-screen half, or a content program that declares nothing: nothing to fill
     }
 
     const auto refuse = [&](const char* why) {
-        const std::size_t index   = static_cast<std::size_t>(&entry - scope_.entries.data());
+        const std::size_t index           = static_cast<std::size_t>(&entry - scope_.entries.data());
         // The caller's episode when it keeps one (a half's state spans passes and frames - see
         // api/ContentHalves); the recorder's own otherwise, whose episode is this one ContentPass.
         vn::graphics::ReportOnce* episode = entry.reported;
-        if (episode == nullptr && index < half_reported_.size())
-        {
+        if (episode == nullptr && index < half_reported_.size()) {
             episode = &half_reported_[index];
         }
-        if (episode != nullptr && episode->shouldReport())
-        {
+        if (episode != nullptr && episode->shouldReport()) {
             reportRefused("the pass' content half", why);
         }
         return false;
@@ -200,30 +177,23 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
     // set the program declares is a set the CALLER built - its blocks and its sampled images both, because a
     // set the layer compiled a layout for is only bindable when what it carries is what the text declared.
     std::uint32_t input_samplers = 0U;
-    for (const AbiBinding& binding : abi.bindings)
-    {
-        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.set == ContentPipeline::kInputSet)
-        {
-            if (binding.binding >= input_count)
-            {
+    for (const AbiBinding& binding : abi.bindings) {
+        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.set == ContentPipeline::kInputSet) {
+            if (binding.binding >= input_count) {
                 return refuse("its program samples an input texture this pass does not declare");
             }
             ++input_samplers;
         }
     }
-    if (input_samplers > input_count)
-    {
+    if (input_samplers > input_count) {
         return refuse("its program samples more inputs than this pass binds");
     }
-    for (const std::uint32_t set : entry.pipelines->declaredSets())
-    {
-        if (half_block_count_ == half_blocks_.size())
-        {
+    for (const std::uint32_t set : entry.pipelines->declaredSets()) {
+        if (half_block_count_ == half_blocks_.size()) {
             return refuse("its program declares more sets than this pass can bind");
         }
         const auto fits = [&](const BlockDescriptors* candidate) noexcept {
-            return candidate != nullptr && candidate->setIndex() == set &&
-                   sameShape(candidate->shape(), entry.pipelines->blockShape(set)) &&
+            return candidate != nullptr && candidate->setIndex() == set && sameShape(candidate->shape(), entry.pipelines->blockShape(set)) &&
                    sameSamplers(candidate->samplers(), entry.pipelines->samplerBindings(set));
         };
 
@@ -233,41 +203,31 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
         // (every sampler it binds is pass-level) serves any drawable; the exact source is tried first so a
         // caller that built one per drawable always gets its own.
         BlockDescriptors* found = nullptr;
-        if (demanded != nullptr)
-        {
-            for (BlockDescriptors* candidate : scope_.block_sets)
-            {
-                if (fits(candidate) && candidate->source() == *demanded)
-                {
+        if (demanded != nullptr) {
+            for (BlockDescriptors* candidate : scope_.block_sets) {
+                if (fits(candidate) && candidate->source() == *demanded) {
                     found = candidate;
                     break;
                 }
             }
-            if (found == nullptr)
-            {
-                for (BlockDescriptors* candidate : scope_.block_sets)
-                {
-                    if (fits(candidate) && candidate->source().empty())
-                    {
+            if (found == nullptr) {
+                for (BlockDescriptors* candidate : scope_.block_sets) {
+                    if (fits(candidate) && candidate->source().empty()) {
                         found = candidate;
                         break;
                     }
                 }
             }
         }
-        else
-        {
-            for (BlockDescriptors* candidate : scope_.block_sets)
-            {
-                if (fits(candidate))
-                {
+        else {
+            for (BlockDescriptors* candidate : scope_.block_sets) {
+                if (fits(candidate)) {
                     found = candidate;
                     break;
                 }
             }
         }
-        if (found == nullptr)
-        {
+        if (found == nullptr) {
             return refuse("its material samples a texture the caller's sets were not built from "
                           "(see BlockDescriptors::ImageSource)");
         }
@@ -276,63 +236,64 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
     return true;
 }
 
-bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& facts,
+bool ContentPass::record(const core::CompiledPass&            pass,
+                         const ContentFacts&                  facts,
                          const core::RenderPassCompatibility& compatibility,
-                         std::span<const InputImages> inputs, std::span<const std::byte> view_block,
-                         ::vsg::ref_ptr<::vsg::Node>& out)
+                         std::span<const InputImages>         inputs,
+                         std::span<const std::byte>           view_block,
+                         ::vsg::ref_ptr<::vsg::Node>&         out)
 {
     auto group = ::vsg::Group::create();
 
     // The refusal ledger belongs to THIS pass, and its summary has to be said however the pass ends - so it
     // is cleared here and emitted by a guard, not by a call before every `return`.
     refusals_.clear();
-    struct LedgerGuard
-    {
+
+    struct LedgerGuard {
         ContentPass& pass;
-        ~LedgerGuard() { pass.reportRefusedSummary(); }
+
+        ~LedgerGuard()
+        {
+            pass.reportRefusedSummary();
+        }
     } ledger_guard{ *this };
 
     // The plan says what the pass READS; the caller says what those images ARE. The two have to agree before
     // anything is bound - the same discipline the executor applies to a pass' target shape - because a pass
     // that sampled images nobody described would put a picture on screen that no plan explains. A disagreement
     // refuses the WHOLE pass (its inputs are one fact, not a per-draw one), and says which entry moved.
-    if (inputs.size() != pass.inputs.size())
-    {
-        diagnostics_.report(
-            vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-            vn::String::fromUtf8("the pass is not drawn: it declares " + std::to_string(pass.inputs.size()) +
-                     " input(s) and the caller offered " + std::to_string(inputs.size()) +
-                     " (one entry per declared input, in declaration order)"));
+    if (inputs.size() != pass.inputs.size()) {
+        diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                            vn::graphics::DiagnosticCategory::ContentSkipped,
+                            vn::String::fromUtf8("the pass is not drawn: it declares " + std::to_string(pass.inputs.size()) +
+                                                 " input(s) and the caller offered " + std::to_string(inputs.size()) +
+                                                 " (one entry per declared input, in declaration order)"));
         out = group;
         return false;
     }
-    for (std::size_t index = 0; index < inputs.size(); ++index)
-    {
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
         // The DEPTH half of the offer: the plan says whether the input offers a sampleable depth (it is the
         // same fact the shader's binding count comes from), so "the shader declares a depth sampler" and "the
         // caller offered one" cannot disagree silently.
         const bool offers_depth = inputs[index].depth != nullptr;
-        if (offers_depth != pass.inputs[index].depth_sampleable)
-        {
-            diagnostics_.report(
-                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-                vn::String::fromUtf8("the pass is not drawn: input " + std::to_string(index) +
-                         (offers_depth ? " offers a depth texture where the plan says its depth is not "
-                                         "sampleable (a depth a pass preserves, or a lender's, cannot be sampled)"
-                                       : " offers no depth texture where the plan says its depth IS sampleable "
-                                         "(the shader's binding would have nothing to read)")));
+        if (offers_depth != pass.inputs[index].depth_sampleable) {
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
+                                vn::String::fromUtf8("the pass is not drawn: input " + std::to_string(index) +
+                                                     (offers_depth ? " offers a depth texture where the plan says its depth is not "
+                                                                     "sampleable (a depth a pass preserves, or a lender's, cannot be sampled)"
+                                                                   : " offers no depth texture where the plan says its depth IS sampleable "
+                                                                     "(the shader's binding would have nothing to read)")));
             out = group;
             return false;
         }
 
-        if (inputs[index].colors.size() != pass.inputs[index].color_attachments)
-        {
-            diagnostics_.report(
-                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-                vn::String::fromUtf8("the pass is not drawn: input " + std::to_string(index) + " offers " +
-                         std::to_string(inputs[index].colors.size()) +
-                         " colour texture(s) where the plan says " +
-                         std::to_string(pass.inputs[index].color_attachments)));
+        if (inputs[index].colors.size() != pass.inputs[index].color_attachments) {
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
+                                vn::String::fromUtf8("the pass is not drawn: input " + std::to_string(index) + " offers " +
+                                                     std::to_string(inputs[index].colors.size()) + " colour texture(s) where the plan says " +
+                                                     std::to_string(pass.inputs[index].color_attachments)));
             out = group;
             return false;
         }
@@ -345,30 +306,24 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     const std::uint32_t sampled_color_count = sampledColorCount(pass);
     const std::uint32_t sampled_depth_count = sampledDepthCount(pass);
 
-    const Scope::Entry* content_half  = nullptr;
-    const Scope::Entry* screen_half   = nullptr;
-    bool                has_content   = false;
-    for (const Scope::Entry& entry : scope_.entries)
-    {
-        if (entry.kind == core::DrawKind::Screen)
-        {
+    const Scope::Entry* content_half = nullptr;
+    const Scope::Entry* screen_half  = nullptr;
+    bool                has_content  = false;
+    for (const Scope::Entry& entry : scope_.entries) {
+        if (entry.kind == core::DrawKind::Screen) {
             screen_half = screen_half == nullptr ? &entry : screen_half;
         }
-        else
-        {
+        else {
             content_half = content_half == nullptr ? &entry : content_half;
         }
     }
-    for (const core::CompiledDraw& draw : pass.draws)
-    {
+    for (const core::CompiledDraw& draw : pass.draws) {
         has_content = has_content || draw.kind == core::DrawKind::Content;
     }
 
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> input_set;
-    if (has_content)
-    {
-        if (content_half == nullptr || content_half->pipelines == nullptr)
-        {
+    if (has_content) {
+        if (content_half == nullptr || content_half->pipelines == nullptr) {
             reportRefused("the pass' sampled inputs", "no compiled content half was built for this pass");
             out = group;
             return false;
@@ -376,15 +331,13 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         // What the pass cannot fill is refused BEFORE any pipeline is acquired or any set is built (see
         // serveHalf): a program whose blocks live in a set nobody built for it would otherwise be drawn with
         // another set's bytes.
-        if (!serveHalf(*content_half, sampled_color_count + sampled_depth_count, nullptr))
-        {
+        if (!serveHalf(*content_half, sampled_color_count + sampled_depth_count, nullptr)) {
             out = group;
             return false;
         }
         input_set = makeInputSet(pass, inputs, *content_half->pipelines);
-        if ((sampled_color_count != 0U || sampled_depth_count != 0U) && input_set == nullptr)
-        {
-            out = group;  // makeInputSet reported why
+        if ((sampled_color_count != 0U || sampled_depth_count != 0U) && input_set == nullptr) {
+            out = group; // makeInputSet reported why
             return false;
         }
     }
@@ -392,59 +345,48 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     // One view block per pass: it describes the view, and the pass has one camera. A full-screen draw does not
     // read it (the full-screen ABI binds no blocks), so a pass with nothing but those still pays for one row.
     const BlockStorage::Block view = scope_.storage->writeView(view_block);
-    if (!view.valid)
-    {
+    if (!view.valid) {
         reportRefused("the pass' view block", "the frame's block budget is full");
         out = group;
         return false;
     }
 
     bool complete = true;
-    for (const core::CompiledDraw& draw : pass.draws)
-    {
+    for (const core::CompiledDraw& draw : pass.draws) {
         // AN EMPTY RECTANGLE HAS NO PIXELS. Recording the call would issue a viewport with a zero width and a
         // draw no pixel lands in - the VUID (VkViewport-width-01770) the application's first frames were
         // measured to raise, while the window was already mapped and its render area was still 0x0. Nothing is
         // recorded for it, the count says how many were skipped, and the reason is said once (the condition
         // repeats every frame until the host lays the window out, and it is one fact).
-        if (draw.viewport.width <= 0.0F || draw.viewport.height <= 0.0F)
-        {
+        if (draw.viewport.width <= 0.0F || draw.viewport.height <= 0.0F) {
             ++empty_rectangles_;
-            vn::graphics::ReportOnce& empty_episode = scope_.empty_rectangle_episode != nullptr
-                                                  ? *scope_.empty_rectangle_episode
-                                                  : empty_rectangle_reported_;
-            if (empty_episode.shouldReport())
-            {
+            vn::graphics::ReportOnce& empty_episode = scope_.empty_rectangle_episode != nullptr ? *scope_.empty_rectangle_episode : empty_rectangle_reported_;
+            if (empty_episode.shouldReport()) {
                 diagnostics_.report(vn::graphics::DiagnosticSeverity::Info,
                                     vn::graphics::DiagnosticCategory::ContentSkipped,
                                     vn::String::fromUtf8("a drawing call was not recorded: its rectangle is empty (a host "
-                                             "whose render area is not laid out yet reports one)"));
+                                                         "whose render area is not laid out yet reports one)"));
             }
             continue;
         }
 
-        if (draw.kind == core::DrawKind::Screen)
-        {
+        if (draw.kind == core::DrawKind::Screen) {
             // The half is found by the program the PLAN names (identity plus revision): the stages are already
             // compiled in the layer the entry names, so nothing here needs the facts table - the geometry-shaped
             // half of the content lookup has no counterpart in a call that draws no geometry.
-            const Scope::Entry* half = nullptr;
+            const Scope::Entry* half         = nullptr;
             bool                same_program = false;
-            for (const Scope::Entry& entry : scope_.entries)
-            {
-                if (entry.kind != core::DrawKind::Screen || entry.program != draw.program.program)
-                {
+            for (const Scope::Entry& entry : scope_.entries) {
+                if (entry.kind != core::DrawKind::Screen || entry.program != draw.program.program) {
                     continue;
                 }
                 same_program = true;
-                if (entry.revision == draw.program.revision)
-                {
+                if (entry.revision == draw.program.revision) {
                     half = &entry;
                     break;
                 }
             }
-            if (half == nullptr || half->pipelines == nullptr || half->draws == nullptr)
-            {
+            if (half == nullptr || half->pipelines == nullptr || half->draws == nullptr) {
                 reportRefused("a full-screen drawing call",
                               same_program ? "the pass' program is compiled at a different revision"
                                            : "no compiled full-screen half was built for the pass' program");
@@ -455,8 +397,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
             // The set this call binds is the PASS' (the source's attachments, the map, the call's block), so
             // it is built per call: a full-screen call has ONE block and it is the call's own (see
             // makeScreenSet). A pass whose call is refused says why - the rest of the pass still draws.
-            if (!recordScreenDraw(draw, *half, pass, compatibility, inputs, *group))
-            {
+            if (!recordScreenDraw(draw, *half, pass, compatibility, inputs, *group)) {
                 complete = false;
             }
             continue;
@@ -466,12 +407,11 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         // ONE call (every command of the call shares them), so one block serves the whole call and the block
         // bytes are written before the first command is recorded - the same "one announcement, one call" rule
         // the viewport follows.
-        vn::vsg::VineLightsBlock lights_block;
-        const std::size_t          represented = packLightBlock(draw.lights, draw.camera, lights_block);
-        const BlockStorage::Block  lights      = scope_.storage->writeLights(bytesOf(lights_block));
+        vn::vsg::VineLightsBlock  lights_block;
+        const std::size_t         represented = packLightBlock(draw.lights, draw.camera, lights_block);
+        const BlockStorage::Block lights      = scope_.storage->writeLights(bytesOf(lights_block));
         reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
-        if (!lights.valid)
-        {
+        if (!lights.valid) {
             reportRefused("the drawing call's light block", "the frame's block budget is full");
             complete = false;
             continue;
@@ -481,20 +421,28 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         // an unshadowed pass (the ABI's `params.x` is that switch), so the binding must never be left to chance -
         // an unbound block a shader reads is undefined behaviour, not "no shadow".
         vn::graphics::VineShadowBlock shadow_block;
-        const bool                      shadow_on    = packShadowBlock(pass.shadow, draw, shadow_block);
-        const BlockStorage::Block       shadow       = scope_.storage->writeShadows(bytesOf(shadow_block));
+        const bool                    shadow_on = packShadowBlock(pass.shadow, draw, shadow_block);
+        const BlockStorage::Block     shadow    = scope_.storage->writeShadows(bytesOf(shadow_block));
         (void)shadow_on;
-        if (!shadow.valid)
-        {
+        if (!shadow.valid) {
             reportRefused("the drawing call's shadow block", "the frame's block budget is full");
             complete = false;
             continue;
         }
 
-        for (const core::CompiledCommand& command : draw.commands)
-        {
-            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, shadow.offset,
-                               input_set, sampled_color_count, sampled_depth_count, *group))
+        for (const core::CompiledCommand& command : draw.commands) {
+            if (!recordCommand(command,
+                               draw,
+                               pass,
+                               facts,
+                               compatibility,
+                               view.offset,
+                               lights.offset,
+                               shadow.offset,
+                               input_set,
+                               sampled_color_count,
+                               sampled_depth_count,
+                               *group))
             {
                 complete = false;
             }
@@ -505,15 +453,12 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     return complete;
 }
 
-::vsg::ref_ptr<::vsg::BindDescriptorSet> ContentPass::makeInputSet(const core::CompiledPass& pass,
-                                                                  std::span<const InputImages> inputs,
-                                                                  ContentPipeline& layer)
+::vsg::ref_ptr<::vsg::BindDescriptorSet> ContentPass::makeInputSet(const core::CompiledPass& pass, std::span<const InputImages> inputs, ContentPipeline& layer)
 {
-    const std::uint32_t texture_count  = sampledColorCount(pass);
-    const std::uint32_t depth_count    = sampledDepthCount(pass);
-    if (texture_count == 0U && depth_count == 0U)
-    {
-        return {};  // nothing declared (or nothing produced): there is no sampled set to bind
+    const std::uint32_t texture_count = sampledColorCount(pass);
+    const std::uint32_t depth_count   = sampledDepthCount(pass);
+    if (texture_count == 0U && depth_count == 0U) {
+        return {}; // nothing declared (or nothing produced): there is no sampled set to bind
     }
 
     // One set per pass, laid out by the layer that compiles the pipelines the content half's draws bind: the
@@ -522,8 +467,7 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     // as well (a pass may switch halves with this set bound).
     const auto set_layout = layer.sampledSetLayout(texture_count, depth_count);
     const auto sampler    = layer.inputSampler();
-    if (set_layout == nullptr || sampler == nullptr)
-    {
+    if (set_layout == nullptr || sampler == nullptr) {
         reportRefused("the pass' sampled inputs", "the sampled-input set could not be built");
         return {};
     }
@@ -536,10 +480,8 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     // WHICH SAMPLER READS ONE BINDING. An imported input that declared a state carries its samplers aligned
     // with its colours; every other binding (a produced image, or an imported one that stated nothing) uses the
     // layer's input sampler, which is what this path always used.
-    const auto colour_sampler = [&sampler](const InputImages& input,
-                                           std::size_t index) -> ::vsg::ref_ptr<::vsg::Sampler> {
-        if (index < input.color_samplers.size())
-        {
+    const auto colour_sampler = [&sampler](const InputImages& input, std::size_t index) -> ::vsg::ref_ptr<::vsg::Sampler> {
+        if (index < input.color_samplers.size()) {
             return input.color_samplers[index];
         }
         return sampler;
@@ -555,24 +497,19 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
     // with another wrap mode is another set, never a stale one.
     std::vector<InputSetCache::Binding> key;
     key.reserve(texture_count + depth_count);
-    for (const InputImages& input : inputs)
-    {
-        for (std::size_t index = 0U; index < input.colors.size(); ++index)
-        {
-            const ::vsg::ref_ptr<::vsg::ImageView>& view    = input.colors[index];
-            const ::vsg::ref_ptr<::vsg::Sampler>   chosen  = colour_sampler(input, index);
-            if (view == nullptr || chosen == nullptr)
-            {
+    for (const InputImages& input : inputs) {
+        for (std::size_t index = 0U; index < input.colors.size(); ++index) {
+            const ::vsg::ref_ptr<::vsg::ImageView>& view   = input.colors[index];
+            const ::vsg::ref_ptr<::vsg::Sampler>    chosen = colour_sampler(input, index);
+            if (view == nullptr || chosen == nullptr) {
                 reportRefused("the pass' sampled inputs", "an entry offers no image view or sampler");
                 return {};
             }
             key.push_back(InputSetCache::Binding{ view.get(), chosen.get() });
         }
-        if (input.depth != nullptr)
-        {
+        if (input.depth != nullptr) {
             const ::vsg::ref_ptr<::vsg::Sampler> chosen = depth_sampler_for(input);
-            if (chosen == nullptr)
-            {
+            if (chosen == nullptr) {
                 reportRefused("the pass' sampled inputs", "the depth sampler could not be created");
                 return {};
             }
@@ -580,68 +517,62 @@ bool ContentPass::record(const core::CompiledPass& pass, const ContentFacts& fac
         }
     }
 
-    InputSetCache* const cache = scope_.input_sets;
+    InputSetCache* const                 cache = scope_.input_sets;
     ::vsg::ref_ptr<::vsg::DescriptorSet> set;
-    if (cache != nullptr)
-    {
+    if (cache != nullptr) {
         set = cache->find(set_layout.get(), key);
     }
-    if (set == nullptr)
-    {
+    if (set == nullptr) {
         ::vsg::Descriptors descriptors;
         descriptors.reserve(texture_count + depth_count);
         std::uint32_t binding = 0;
-        for (const InputImages& input : inputs)
-        {
-            for (std::size_t index = 0U; index < input.colors.size(); ++index)
-            {
+        for (const InputImages& input : inputs) {
+            for (std::size_t index = 0U; index < input.colors.size(); ++index) {
                 const ::vsg::ref_ptr<::vsg::Sampler> chosen = colour_sampler(input, index);
                 descriptors.push_back(::vsg::DescriptorImage::create(
-                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, input.colors[index],
-                                                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                    binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, input.colors[index], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                    binding,
+                    0U,
+                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
                 ++binding;
             }
-            if (input.depth != nullptr)
-            {
+            if (input.depth != nullptr) {
                 // A DEPTH texture gets the NEAREST sampler unless the input declared one (see
                 // ContentPipeline::depthSampler): the shader compares exact depths, so an interpolated one
                 // would be a depth nobody rasterised.
                 const ::vsg::ref_ptr<::vsg::Sampler> chosen = depth_sampler_for(input);
                 descriptors.push_back(::vsg::DescriptorImage::create(
-                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, input.depth,
-                                                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                    binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+                    ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, input.depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                    binding,
+                    0U,
+                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
                 ++binding;
             }
         }
 
         set = ::vsg::DescriptorSet::create(set_layout, descriptors);
-        if (set == nullptr)
-        {
+        if (set == nullptr) {
             reportRefused("the pass' sampled inputs", "the sampled-input set could not be created");
             return {};
         }
-        if (cache != nullptr)
-        {
+        if (cache != nullptr) {
             cache->store(set_layout.get(), key, set);
         }
     }
     // The pipeline layout this command names is the one built for the same pair of counts, and the set index
     // is the content ABI's: 1, after the declared block sets (see ContentPipeline).
-    return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                            layer.layoutFor(texture_count, depth_count),
-                                            ContentPipeline::kInputSet, set);
+    return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, layer.layoutFor(texture_count, depth_count), ContentPipeline::kInputSet, set);
 }
 
-bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::Entry& entry,
-                                   const core::CompiledPass& pass,
+bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
+                                   const Scope::Entry&                  entry,
+                                   const core::CompiledPass&            pass,
                                    const core::RenderPassCompatibility& compatibility,
-                                   std::span<const InputImages> inputs, ::vsg::Group& into)
+                                   std::span<const InputImages>         inputs,
+                                   ::vsg::Group&                        into)
 {
     ContentPipeline* const layer = entry.pipelines;
-    if (layer == nullptr)
-    {
+    if (layer == nullptr) {
         reportRefused("a full-screen drawing call", "no compiled full-screen half was built for the pass' program");
         return false;
     }
@@ -651,10 +582,8 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // `draw.source`), not by position: the pass' other inputs are its own business, and a call whose source is
     // not among them has nothing to draw from.
     std::size_t source_index = inputs.size();
-    for (std::size_t index = 0; index < inputs.size(); ++index)
-    {
-        if (index < pass.inputs.size() && pass.inputs[index].target == draw.source)
-        {
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+        if (index < pass.inputs.size() && pass.inputs[index].target == draw.source) {
             source_index = index;
             break;
         }
@@ -672,18 +601,14 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // source nor the map is one the ABI has no binding for at all. Both are refused by name: a binding filled
     // with somebody else's picture (or left unread) is a picture nobody asked for.
     const bool declares_source_textures = [&] {
-        for (const AbiBinding& binding : layer->abi().bindings)
-        {
-            if (binding.kind != AbiDescriptorKind::UniformBlock &&
-                vn::vsg::imageOriginOf(binding.name) != ImageOrigin::Shadow)
-            {
+        for (const AbiBinding& binding : layer->abi().bindings) {
+            if (binding.kind != AbiDescriptorKind::UniformBlock && vn::vsg::imageOriginOf(binding.name) != ImageOrigin::Shadow) {
                 return true;
             }
         }
         return false;
     }();
-    if (declares_source_textures && !has_source)
-    {
+    if (declares_source_textures && !has_source) {
         reportRefused("a full-screen drawing call",
                       "its program samples the source's textures and the call named no source among the pass' "
                       "inputs");
@@ -696,8 +621,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // `screen_colors` for a call's source; `colors` is the fallback for a ProducedTarget input, where the two
     // are the same list.
     const std::span<const ::vsg::ref_ptr<::vsg::ImageView>> source_colors =
-        source == nullptr ? std::span<const ::vsg::ref_ptr<::vsg::ImageView>>{}
-                          : (source->screen_colors.empty() ? source->colors : source->screen_colors);
+        source == nullptr ? std::span<const ::vsg::ref_ptr<::vsg::ImageView>>{} : (source->screen_colors.empty() ? source->colors : source->screen_colors);
     const std::uint32_t colours = static_cast<std::uint32_t>(source_colors.size());
     const std::uint32_t depths  = source != nullptr && source->depth != nullptr ? 1U : 0U;
 
@@ -705,16 +629,12 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // ONLY such inputs the full-screen ABI can bind: a produced image other than the source has no slot, and
     // an imported one needs a sampler binding the program actually declares (see below).
     std::vector<std::size_t> imported_indices;
-    for (std::size_t index = 0; index < inputs.size(); ++index)
-    {
-        if (index == source_index)
-        {
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+        if (index == source_index) {
             continue;
         }
-        if (index == map_index)
-        {
-            if (!inputs[index].colors.empty())
-            {
+        if (index == map_index) {
+            if (!inputs[index].colors.empty()) {
                 reportRefused("a full-screen drawing call",
                               "the shadow map's input offers colour textures the full-screen ABI has no binding "
                               "for (the map is its depth)");
@@ -722,9 +642,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
             }
             continue;
         }
-        if (index >= pass.inputs.size() ||
-            pass.inputs[index].kind != vn::graphics::ImageSource::Kind::ImportedTexture)
-        {
+        if (index >= pass.inputs.size() || pass.inputs[index].kind != vn::graphics::ImageSource::Kind::ImportedTexture) {
             reportRefused("a full-screen drawing call",
                           "one of the pass' inputs is neither the call's source nor the shadow map nor an "
                           "imported texture, and the full-screen ABI has no binding for its images");
@@ -741,8 +659,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     std::uint32_t         map_binding  = 0U;
     const bool            declares_map = vn::vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
     vn::vsg::SamplerImage map_image;
-    if (declares_map && !vn::vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image))
-    {
+    if (declares_map && !vn::vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image)) {
         reportRefused("a full-screen drawing call",
                       "its program declares `vn_shadow_map` and this pass resolved no readable map (the depth is "
                       "not sampleable, or the producer published no matrix)");
@@ -755,42 +672,32 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // The rule is deliberately the same one sampledSetLayout uses: the layout must have a slot for every
     // binding the text names, and this pass must be able to fill every one of those slots.
     const std::span<const std::uint32_t> declared_samplers = layer->samplerBindings(0U);
-    std::uint32_t                        depth_binding    = colours;
-    if (depths != 0U)
-    {
-        while (std::find(declared_samplers.begin(), declared_samplers.end(), depth_binding) !=
-               declared_samplers.end())
-        {
+    std::uint32_t                        depth_binding     = colours;
+    if (depths != 0U) {
+        while (std::find(declared_samplers.begin(), declared_samplers.end(), depth_binding) != declared_samplers.end()) {
             ++depth_binding;
         }
     }
     std::vector<std::uint32_t> imported_bindings;
-    for (const std::uint32_t binding : declared_samplers)
-    {
-        if (binding < colours)
-        {
-            continue;   // the source's colour attachment already owns this binding
+    for (const std::uint32_t binding : declared_samplers) {
+        if (binding < colours) {
+            continue; // the source's colour attachment already owns this binding
         }
-        if (declares_map && binding == map_binding)
-        {
-            continue;   // the shadow map owns its own binding
+        if (declares_map && binding == map_binding) {
+            continue; // the shadow map owns its own binding
         }
-        if (depths != 0U && binding == depth_binding)
-        {
-            continue;   // the source's depth owns this binding
+        if (depths != 0U && binding == depth_binding) {
+            continue; // the source's depth owns this binding
         }
         imported_bindings.push_back(binding);
     }
     std::sort(imported_bindings.begin(), imported_bindings.end());
-    imported_bindings.erase(std::unique(imported_bindings.begin(), imported_bindings.end()),
-                            imported_bindings.end());
-    if (imported_bindings.size() != imported_indices.size())
-    {
+    imported_bindings.erase(std::unique(imported_bindings.begin(), imported_bindings.end()), imported_bindings.end());
+    if (imported_bindings.size() != imported_indices.size()) {
         reportRefused("a full-screen drawing call",
-                      imported_bindings.size() < imported_indices.size()
-                          ? "the pass declares imported textures its program has no free sampler binding for"
-                          : "its program samples a texture the pass does not offer at the binding its text "
-                            "declares");
+                      imported_bindings.size() < imported_indices.size() ? "the pass declares imported textures its program has no free sampler binding for"
+                                                                         : "its program samples a texture the pass does not offer at the binding its text "
+                                                                           "declares");
         return false;
     }
 
@@ -805,21 +712,17 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     // By ROLE, never by number: the bindings belong to the program's text (the SDK's screen programs put the
     // lights at 5 and the shadow pair after it), while `BlockDescriptors`' constants are the canonical CONTENT
     // shape's spelling. A lookup by constant would miss every block of a program that spells them elsewhere.
-    const auto hasRole = [shape](AbiBlockRole role) {
-        for (const BlockDescriptors::Binding& entry : shape)
-        {
-            if (entry.role == role)
-            {
+    const auto hasRole                                     = [shape](AbiBlockRole role) {
+        for (const BlockDescriptors::Binding& entry : shape) {
+            if (entry.role == role) {
                 return true;
             }
         }
         return false;
     };
     const auto roleAt = [shape](std::uint32_t binding) {
-        for (const BlockDescriptors::Binding& entry : shape)
-        {
-            if (entry.binding == binding)
-            {
+        for (const BlockDescriptors::Binding& entry : shape) {
+            if (entry.binding == binding) {
                 return entry.role;
             }
         }
@@ -827,14 +730,12 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     };
 
     vn::vsg::VineLightsBlock lights_block;
-    std::uint64_t           lights_offset = 0U;
-    if (hasRole(AbiBlockRole::Lights))
-    {
-        const std::size_t        represented = packLightBlock(draw.lights, draw.camera, lights_block);
-        const BlockStorage::Block written   = scope_.storage->writeLights(bytesOf(lights_block));
+    std::uint64_t            lights_offset = 0U;
+    if (hasRole(AbiBlockRole::Lights)) {
+        const std::size_t         represented = packLightBlock(draw.lights, draw.camera, lights_block);
+        const BlockStorage::Block written     = scope_.storage->writeLights(bytesOf(lights_block));
         reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
-        if (!written.valid)
-        {
+        if (!written.valid) {
             reportRefused("the drawing call's light block", "the frame's block budget is full");
             return false;
         }
@@ -843,13 +744,11 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
 
     vn::graphics::VineShadowBlock shadow_block;
     std::uint64_t                 shadow_offset = 0U;
-    if (hasRole(AbiBlockRole::ShadowBlock))
-    {
+    if (hasRole(AbiBlockRole::ShadowBlock)) {
         const bool                shadow_on = packShadowBlock(pass.shadow, draw, shadow_block);
         const BlockStorage::Block written   = scope_.storage->writeShadows(bytesOf(shadow_block));
         (void)shadow_on;
-        if (!written.valid)
-        {
+        if (!written.valid) {
             reportRefused("the drawing call's shadow block", "the frame's block budget is full");
             return false;
         }
@@ -863,21 +762,18 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     //
     // A text that declares NOTHING and a call with no source need no set at all: the draw's whole interface is
     // its push block (the engine's own screen programs always name a source - theirs shade its picture).
-    const bool          needs_set     = !layer->abi().bindings.empty() || colours != 0U || depths != 0U;
-    const auto          set_layout    = needs_set ? layer->sampledSetLayout(colours, depths) : nullptr;
-    const auto          sampler       = layer->inputSampler();
-    const auto          depth_sampler = layer->depthSampler();
-    if (needs_set &&
-        (set_layout == nullptr || sampler == nullptr || depth_sampler == nullptr || scope_.storage->buffer() == nullptr))
-    {
+    const bool needs_set     = !layer->abi().bindings.empty() || colours != 0U || depths != 0U;
+    const auto set_layout    = needs_set ? layer->sampledSetLayout(colours, depths) : nullptr;
+    const auto sampler       = layer->inputSampler();
+    const auto depth_sampler = layer->depthSampler();
+    if (needs_set && (set_layout == nullptr || sampler == nullptr || depth_sampler == nullptr || scope_.storage->buffer() == nullptr)) {
         reportRefused("a full-screen drawing call", "its sampled set could not be built");
         return false;
     }
-    ::vsg::Descriptors descriptors;
-    std::size_t        imported_slot = 0U;
+    ::vsg::Descriptors                                  descriptors;
+    std::size_t                                         imported_slot = 0U;
     const std::span<const VkDescriptorSetLayoutBinding> declared_bindings =
-        set_layout != nullptr ? std::span<const VkDescriptorSetLayoutBinding>(set_layout->bindings)
-                              : std::span<const VkDescriptorSetLayoutBinding>{};
+        set_layout != nullptr ? std::span<const VkDescriptorSetLayoutBinding>(set_layout->bindings) : std::span<const VkDescriptorSetLayoutBinding>{};
     // The set's KEY is the images AND their samplers, in the order the bindings take them (see InputSetCache):
     // the block is a dynamic uniform, so what the SET names about it is the buffer, which does not move with
     // the frame - which is what lets a steady frame find the set it built last time instead of writing a new
@@ -886,85 +782,75 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     std::vector<InputSetCache::Binding> key;
     // The offsets the BIND carries, one per dynamic binding in binding order (the layout's bindings are in
     // ascending order), each naming this call's block.
-    std::vector<std::uint32_t>           dynamic_offsets;
+    std::vector<std::uint32_t> dynamic_offsets;
     descriptors.reserve(declared_bindings.size());
     key.reserve(declared_bindings.size());
-    for (const VkDescriptorSetLayoutBinding& declared : declared_bindings)
-    {
-        if (declared.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
-        {
+    for (const VkDescriptorSetLayoutBinding& declared : declared_bindings) {
+        if (declared.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC) {
             // Which L1 block lives at this binding is the SHAPE's answer (the text declared it): a full-screen
             // program carries the lights and, when it samples a shadow, the shadow block - at the bindings its
             // own text states.
-            const AbiBlockRole role    = roleAt(declared.binding);
-            const std::size_t  bytes   = role == AbiBlockRole::Lights          ? sizeof(lights_block)
-                                         : role == AbiBlockRole::ShadowBlock ? sizeof(shadow_block)
-                                                                             : 0U;
+            const AbiBlockRole  role   = roleAt(declared.binding);
+            const std::size_t   bytes  = role == AbiBlockRole::Lights ? sizeof(lights_block) : role == AbiBlockRole::ShadowBlock ? sizeof(shadow_block) : 0U;
             const std::uint64_t offset = role == AbiBlockRole::Lights ? lights_offset : shadow_offset;
-            if (bytes == 0U)
-            {
+            if (bytes == 0U) {
                 reportRefused("a full-screen drawing call", "its program declares a block this path cannot fill");
                 return false;
             }
             // The descriptor names the whole buffer at offset 0; the CALL's offset is the bind's. A range that
             // started at the block's own offset would be counted twice (the effective window is the descriptor's
             // offset plus the dynamic one).
-            auto buffer_info = ::vsg::BufferInfo::create(scope_.storage->buffer(), 0U,
-                                                         static_cast<VkDeviceSize>(bytes));
-            descriptors.push_back(::vsg::DescriptorBuffer::create(::vsg::BufferInfoList{ buffer_info },
-                                                                  declared.binding, 0U,
-                                                                  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC));
+            auto buffer_info = ::vsg::BufferInfo::create(scope_.storage->buffer(), 0U, static_cast<VkDeviceSize>(bytes));
+            descriptors.push_back(
+                ::vsg::DescriptorBuffer::create(::vsg::BufferInfoList{ buffer_info }, declared.binding, 0U, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC));
             dynamic_offsets.push_back(static_cast<std::uint32_t>(offset));
             continue;
         }
-        if (declares_map && declared.binding == map_binding)
-        {
+        if (declares_map && declared.binding == map_binding) {
             descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(map_image.sampler, map_image.view,
-                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(map_image.sampler, map_image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                declared.binding,
+                0U,
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
             key.push_back(InputSetCache::Binding{ map_image.view.get(), map_image.sampler.get() });
             continue;
         }
-        if (source != nullptr && declared.binding < colours)
-        {
+        if (source != nullptr && declared.binding < colours) {
             const ::vsg::ref_ptr<::vsg::ImageView>& view = source_colors[declared.binding];
-            if (view == nullptr)
-            {
+            if (view == nullptr) {
                 reportRefused("a full-screen drawing call", "the source offers no attachment at one of its bindings");
                 return false;
             }
-            descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            descriptors.push_back(
+                ::vsg::DescriptorImage::create(::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                                               declared.binding,
+                                               0U,
+                                               VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
             key.push_back(InputSetCache::Binding{ view.get(), sampler.get() });
             continue;
         }
-        if (depths != 0U && declared.binding == depth_binding)
-        {
-            const ::vsg::ref_ptr<::vsg::Sampler> chosen =
-                source->depth_sampler != nullptr ? source->depth_sampler : depth_sampler;
+        if (depths != 0U && declared.binding == depth_binding) {
+            const ::vsg::ref_ptr<::vsg::Sampler> chosen = source->depth_sampler != nullptr ? source->depth_sampler : depth_sampler;
             descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, source->depth,
-                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, source->depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                declared.binding,
+                0U,
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
             key.push_back(InputSetCache::Binding{ source->depth.get(), chosen.get() });
             continue;
         }
-        if (imported_slot < imported_bindings.size() && declared.binding == imported_bindings[imported_slot])
-        {
+        if (imported_slot < imported_bindings.size() && declared.binding == imported_bindings[imported_slot]) {
             const InputImages& imported = inputs[imported_indices[imported_slot]];
-            if (imported.colors.empty() || imported.colors.front() == nullptr)
-            {
+            if (imported.colors.empty() || imported.colors.front() == nullptr) {
                 reportRefused("a full-screen drawing call", "an imported input offers no image view");
                 return false;
             }
-            const ::vsg::ref_ptr<::vsg::Sampler> chosen =
-                imported.color_samplers.empty() ? sampler : imported.color_samplers.front();
+            const ::vsg::ref_ptr<::vsg::Sampler> chosen = imported.color_samplers.empty() ? sampler : imported.color_samplers.front();
             descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, imported.colors.front(),
-                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                declared.binding, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(chosen, imported.colors.front(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                declared.binding,
+                0U,
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
             key.push_back(InputSetCache::Binding{ imported.colors.front().get(), chosen.get() });
             ++imported_slot;
             continue;
@@ -973,48 +859,40 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
         // input fills: the text samples something this pass does not offer, said by NAME rather than left to
         // read undefined data (a material's own map is the name this can be: a full-screen call has no
         // drawable to take one from).
-        reportRefused("a full-screen drawing call", "it samples a texture this pass does not offer at the "
-                                                    "binding its text declares");
+        reportRefused("a full-screen drawing call",
+                      "it samples a texture this pass does not offer at the "
+                      "binding its text declares");
         return false;
     }
-    if (imported_slot != imported_bindings.size())
-    {
-        reportRefused("a full-screen drawing call",
-                      "an imported texture has no declared sampler binding in its program");
+    if (imported_slot != imported_bindings.size()) {
+        reportRefused("a full-screen drawing call", "an imported texture has no declared sampler binding in its program");
         return false;
     }
 
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> samples;
-    if (needs_set)
-    {
+    if (needs_set) {
         // THE SET IS THE FRAME'S TO REUSE (see InputSetCache): the same call of the next frame names the same
         // images, so the set built for them is the set it binds - and building it again would WRITE a
         // VkDescriptorSet the framework's pool may have handed back while a command buffer of the previous
         // frame still reads it (VUID-vkUpdateDescriptorSets-None-03047). What changes per call is only the
         // block's offset, and that travels with the bind.
-        InputSetCache* const cache = scope_.input_sets;
+        InputSetCache* const                 cache = scope_.input_sets;
         ::vsg::ref_ptr<::vsg::DescriptorSet> set;
-        if (cache != nullptr)
-        {
+        if (cache != nullptr) {
             set = cache->find(set_layout.get(), key);
         }
-        if (set == nullptr)
-        {
+        if (set == nullptr) {
             set = ::vsg::DescriptorSet::create(set_layout, descriptors);
-            if (set == nullptr)
-            {
+            if (set == nullptr) {
                 reportRefused("a full-screen drawing call", "its sampled set could not be created");
                 return false;
             }
-            if (cache != nullptr)
-            {
+            if (cache != nullptr) {
                 cache->store(set_layout.get(), key, set);
             }
         }
-        samples = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                   layer->layoutFor(colours, depths), 0U, set);
-        if (samples == nullptr)
-        {
+        samples = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, layer->layoutFor(colours, depths), 0U, set);
+        if (samples == nullptr) {
             reportRefused("a full-screen drawing call", "its sampled set could not be bound");
             return false;
         }
@@ -1022,30 +900,30 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     }
 
     ContentDraw::ScreenDraw full_screen;
-    full_screen.key.kind                  = core::DrawKind::Screen;
-    full_screen.key.program               = draw.program.program;
-    full_screen.key.revision              = draw.program.revision;
-    full_screen.key.compatibility         = compatibility;
+    full_screen.key.kind                = core::DrawKind::Screen;
+    full_screen.key.program             = draw.program.program;
+    full_screen.key.revision            = draw.program.revision;
+    full_screen.key.compatibility       = compatibility;
     // The identity says how many textures the set the draw binds carries: the source's colours and its own
     // depth (the map and the block are the text's own declarations, so they cannot vary with the pass).
-    full_screen.key.sampled_color_count   = colours;
-    full_screen.key.sampled_depth_count   = depths;
-    full_screen.dynamic                   = draw.dynamic;
-    full_screen.samplers                  = samples;
+    full_screen.key.sampled_color_count = colours;
+    full_screen.key.sampled_depth_count = depths;
+    full_screen.dynamic                 = draw.dynamic;
+    full_screen.samplers                = samples;
     // No push: the SDK's full-screen programs read their lights from the light BLOCK (see LightBlock), and a
     // full-screen program of the host's that declares a push block is served by its own caller - the engine has
     // no bytes for it.
-    full_screen.push                      = {};
-    full_screen.viewport = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
-                                         static_cast<float>(draw.viewport.width),
-                                         static_cast<float>(draw.viewport.height) };
-    full_screen.depth_min = pass.depth_range.min;
-    full_screen.depth_max = pass.depth_range.max;
-    full_screen.color_attachments = pass.color_attachments;
+    full_screen.push                    = {};
+    full_screen.viewport                = ViewportRect{ static_cast<float>(draw.viewport.x),
+                                                        static_cast<float>(draw.viewport.y),
+                                                        static_cast<float>(draw.viewport.width),
+                                                        static_cast<float>(draw.viewport.height) };
+    full_screen.depth_min               = pass.depth_range.min;
+    full_screen.depth_max               = pass.depth_range.max;
+    full_screen.color_attachments       = pass.color_attachments;
 
     const auto group = entry.draws->recordScreen(*scope_.registry, full_screen);
-    if (group == nullptr)
-    {
+    if (group == nullptr) {
         reportRefused("a full-screen drawing call", "its pipeline for this target could not be built");
         return false;
     }
@@ -1053,17 +931,21 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw& draw, const Scope::
     return true;
 }
 
-bool ContentPass::recordCommand(const core::CompiledCommand& command, const core::CompiledDraw& draw,
-                                const core::CompiledPass& pass, const ContentFacts& facts,
-                                const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
-                                std::uint64_t lights_offset, std::uint64_t shadow_offset,
+bool ContentPass::recordCommand(const core::CompiledCommand&                    command,
+                                const core::CompiledDraw&                       draw,
+                                const core::CompiledPass&                       pass,
+                                const ContentFacts&                             facts,
+                                const core::RenderPassCompatibility&            compatibility,
+                                std::uint64_t                                   view_offset,
+                                std::uint64_t                                   lights_offset,
+                                std::uint64_t                                   shadow_offset,
                                 const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                                std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
-                                ::vsg::Group& into)
+                                std::uint32_t                                   sampled_color_count,
+                                std::uint32_t                                   sampled_depth_count,
+                                ::vsg::Group&                                   into)
 {
     const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry, command.geometry_revision);
-    if (!geometry.found())
-    {
+    if (!geometry.found()) {
         reportRefused("the command's geometry", geometry.miss);
         return false;
     }
@@ -1072,8 +954,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // VARIANT (see below): a program's text is several programs, and which of them this drawable is drawn
     // with is a fact of the drawable, not of the plan.
     const FactResult<MaterialFacts> material = findMaterial(facts, command.material);
-    if (!material.found())
-    {
+    if (!material.found()) {
         reportRefused("the command's material", material.miss);
         return false;
     }
@@ -1088,25 +969,20 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // and a stream whose visible range does not fit the buffer would read another scope's matrices (or past
     // the buffer). Both are refused here, by name, rather than drawn as a guess.
     const bool instanced = command.instance_buffer != nullptr;
-    if (!instanced && command.instance_count > 1U)
-    {
+    if (!instanced && command.instance_count > 1U) {
         reportRefused("the command's instances", "an instance count without an instance stream");
         return false;
     }
-    if (instanced)
-    {
-        if (command.instance_count == 0U)
-        {
-            return true;  // a visible prefix of zero: nothing to draw, and nothing to report
+    if (instanced) {
+        if (command.instance_count == 0U) {
+            return true; // a visible prefix of zero: nothing to draw, and nothing to report
         }
-        if (command.instance_buffer->size() % vn::graphics::kInstanceMatrixComponents != 0U)
-        {
+        if (command.instance_buffer->size() % vn::graphics::kInstanceMatrixComponents != 0U) {
             reportRefused("the command's instances", "its instance buffer does not hold whole matrices");
             return false;
         }
         const std::size_t capacity = command.instance_buffer->size() / vn::graphics::kInstanceMatrixComponents;
-        if (command.first_instance > capacity || command.instance_count > capacity - command.first_instance)
-        {
+        if (command.first_instance > capacity || command.instance_count > capacity - command.first_instance) {
             reportRefused("the command's instances", "its visible range is outside the instance buffer");
             return false;
         }
@@ -1120,10 +996,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     ProgramVariant variant = variantOf(*material.entry, *geometry.entry);
     variant.instanced      = instanced;
 
-    const FactResult<ProgramFacts> program =
-        findProgram(facts, command.program, variant, core::DrawKind::Content);
-    if (!program.found())
-    {
+    const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant, core::DrawKind::Content);
+    if (!program.found()) {
         reportRefused("the command's program", program.miss);
         return false;
     }
@@ -1138,59 +1012,49 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     bool                program_known  = false;
     bool                layout_known   = false;
     bool                topology_known = false;
-    for (const Scope::Entry& candidate : scope_.entries)
-    {
-        if (candidate.program != command.program.program || candidate.revision != command.program.revision)
-        {
+    for (const Scope::Entry& candidate : scope_.entries) {
+        if (candidate.program != command.program.program || candidate.revision != command.program.revision) {
             continue;
         }
         program_known = true;
-        if (candidate.layout != geometry.entry->layout)
-        {
+        if (candidate.layout != geometry.entry->layout) {
             continue;
         }
         layout_known = true;
         // The half's pipeline BAKES this topology, and the API only accepts a dynamically set topology within
         // the CLASS a pipeline was created with (see core::PipelineKey::topology): a half of another class
         // cannot draw this command, whatever state is set for it.
-        if (candidate.topology != command.dynamic.topology)
-        {
+        if (candidate.topology != command.dynamic.topology) {
             continue;
         }
         topology_known = true;
-        if (candidate.variant == variant)
-        {
+        if (candidate.variant == variant) {
             entry = &candidate;
             break;
         }
     }
-    if (entry == nullptr)
-    {
+    if (entry == nullptr) {
         // Which of the four did not match matters: the fixes are different ones (compile the program, the
         // layout, the topology's class, or the missing variant), and "not built for" alone would send the
         // reader to the wrong half of the pipeline key.
-        if (!program_known)
-        {
+        if (!program_known) {
             reportRefused("the command", "its program is not one this pass was built for (or not at that revision)");
         }
-        else if (!layout_known)
-        {
+        else if (!layout_known) {
             reportRefused("the command's geometry", "its vertex layout is not one this pass was built for");
         }
-        else if (!topology_known)
-        {
+        else if (!topology_known) {
             reportRefused("the command's topology",
                           "the pass has no half that bakes it (points, lines and triangles are compiled for "
                           "separately: a dynamic set may only move within the class its pipeline was built "
                           "with)");
         }
-        else
-        {
-            diagnostics_.report(
-                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-                vn::String::fromUtf8("the command is not drawn: the pass has no half for the variant this drawable is drawn "
-                         "with (" +
-                         variant.describe() + "): its own halves serve other variants of that program"));
+        else {
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
+                                vn::String::fromUtf8("the command is not drawn: the pass has no half for the variant this drawable is drawn "
+                                                     "with (" +
+                                                     variant.describe() + "): its own halves serve other variants of that program"));
         }
         return false;
     }
@@ -1210,8 +1074,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // map the untextured one has no binding for - so the sets a command binds must come from the half
     // that command is drawn through, not from whichever half the pass happened to see first. Serving
     // also refuses (once per half - see half_reported_) a half whose sets the caller built no match for.
-    if (!serveHalf(*entry, sampled_color_count + sampled_depth_count, &demanded))
-    {
+    if (!serveHalf(*entry, sampled_color_count + sampled_depth_count, &demanded)) {
         return false;
     }
 
@@ -1223,16 +1086,13 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // The blocks: this draw's identity and data (the view's bytes came in with the pass).
     vn::graphics::VineDrawBlock draw_block;
     packDrawBlock(command, draw_block);
-    const BlockStorage::Block block = scope_.storage->writeDraw(bytesOf(draw_block));
-    const BlockStorage::MaterialWrite material_write =
-        scope_.storage->writeMaterial(material.entry->material, material.entry->revision, material.entry->block);
-    if (!block.valid)
-    {
+    const BlockStorage::Block         block          = scope_.storage->writeDraw(bytesOf(draw_block));
+    const BlockStorage::MaterialWrite material_write = scope_.storage->writeMaterial(material.entry->material, material.entry->revision, material.entry->block);
+    if (!block.valid) {
         reportRefused("the command's draw block", "the frame's block budget is full");
         return false;
     }
-    if (!material_write.valid)
-    {
+    if (!material_write.valid) {
         // The arena had no slot for this material. The storage grows before the next frame; this draw is
         // skipped rather than bound to another material's bytes (see MaterialArena::note).
         reportRefused("the command's material", "the material arena is full");
@@ -1242,46 +1102,38 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // The streams: one bind per channel, in the entry's order (which is the binding order).
     std::array<::vsg::ref_ptr<::vsg::BindVertexBuffers>, kMaxChannels> binds;
     std::size_t                                                        bound = 0;
-    for (const ChannelFacts& channel : geometry.entry->channels)
-    {
-        if (bound == binds.size())
-        {
+    for (const ChannelFacts& channel : geometry.entry->channels) {
+        if (bound == binds.size()) {
             reportRefused("the command's geometry", "it feeds more channels than this layer binds");
             return false;
         }
         // The key is composed HERE, from the two live announcements (see ChannelFacts::keyFor), and the bytes
         // are handed over as a view: a stream that is already in the sharing table reads neither.
-        const StreamUploads::VertexResult acquired =
-            scope_.uploads->acquireVertex(channel.streamKey(), channel.scalars());
-        if (acquired.bind == nullptr)
-        {
+        const StreamUploads::VertexResult acquired = scope_.uploads->acquireVertex(channel.streamKey(), channel.scalars());
+        if (acquired.bind == nullptr) {
             reportRefused("the command's geometry", "one of its channels could not be uploaded");
             return false;
         }
         binds[bound] = acquired.bind;
         ++bound;
     }
-    if (instanced)
-    {
-        if (bound == binds.size())
-        {
+    if (instanced) {
+        if (bound == binds.size()) {
             reportRefused("the command's instances", "the layer has no vertex binding left for them");
             return false;
         }
         // The key names the WHOLE buffer (offset 0, count 0): the visible range travels in the draw, so a
         // changed prefix does not produce a new upload (see first_instance / instance_count above).
         core::StreamKey key;
-        key.kind       = core::StreamKind::Vertex;
-        key.location   = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
-        key.components = vn::graphics::kInstanceMatrixComponents;
-        key.buffer     = command.instance_buffer;
-        key.revision   = command.instance_revision;
-        key.offset     = 0U;
-        key.count      = 0U;
-        const StreamUploads::VertexResult acquired =
-            scope_.uploads->acquireVertex(key, command.instance_buffer->view());
-        if (acquired.bind == nullptr)
-        {
+        key.kind                                   = core::StreamKind::Vertex;
+        key.location                               = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
+        key.components                             = vn::graphics::kInstanceMatrixComponents;
+        key.buffer                                 = command.instance_buffer;
+        key.revision                               = command.instance_revision;
+        key.offset                                 = 0U;
+        key.count                                  = 0U;
+        const StreamUploads::VertexResult acquired = scope_.uploads->acquireVertex(key, command.instance_buffer->view());
+        if (acquired.bind == nullptr) {
             reportRefused("the command's instances", "its instance stream could not be uploaded");
             return false;
         }
@@ -1292,8 +1144,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // The DRAW's own row: a geometry is a set of channels plus N primitives, and the plan names one by its
     // index (CompiledCommand::primitive). Everything below reads THIS row - the index stream, its span and the
     // vertex count - because two primitives of one geometry may read different buffers, or none at all.
-    if (command.primitive >= geometry.entry->primitives.size())
-    {
+    if (command.primitive >= geometry.entry->primitives.size()) {
         reportRefused("the command's geometry", "it names a primitive this geometry no longer has");
         return false;
     }
@@ -1303,12 +1154,9 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     // the span travels with the draw (the bind aliases the whole buffer, so an index arena is uploaded once),
     // and without one the vertex streams themselves are the geometry (see api/GeometryFacts).
     ::vsg::ref_ptr<::vsg::BindIndexBuffer> index_bind;
-    if (primitive.indices.has_value())
-    {
-        const StreamUploads::IndexResult acquired =
-            scope_.uploads->acquireIndex(primitive.indices->streamKey(), primitive.indices->scalars());
-        if (acquired.bind == nullptr)
-        {
+    if (primitive.indices.has_value()) {
+        const StreamUploads::IndexResult acquired = scope_.uploads->acquireIndex(primitive.indices->streamKey(), primitive.indices->scalars());
+        if (acquired.bind == nullptr) {
             reportRefused("the command's geometry", "its index stream could not be uploaded");
             return false;
         }
@@ -1316,120 +1164,107 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
     }
 
     ContentDraw::Draw record;
-    record.key.program            = program.entry->program;
-    record.key.revision           = program.entry->revision;
-    record.key.vertex_layout      = entry->layout;
+    record.key.program                                       = program.entry->program;
+    record.key.revision                                      = program.entry->revision;
+    record.key.vertex_layout                                 = entry->layout;
     // The variant is identity like the layout is: two variants of one program share the key's other
     // fields and must never share a pipeline or a state group (see core::PipelineKey::variant).
-    record.key.variant            = variant.bits();
+    record.key.variant                                       = variant.bits();
     // ... and so is the topology, because the half was compiled for this one class of primitives (see
     // core::PipelineKey::topology): the key must name it or the pool would hand this draw the pipeline some
     // other topology was baked into.
-    record.key.topology           = command.dynamic.topology;
-    record.key.compatibility      = compatibility;
-    record.key.depth_sampleable   = pass.depth_sampleable;
+    record.key.topology                                      = command.dynamic.topology;
+    record.key.compatibility                                 = compatibility;
+    record.key.depth_sampleable                              = pass.depth_sampleable;
     // How many textures the PIPELINE's input set has: the pass' declared inputs for a program that reads
     // them there, and NONE for one that does not (see programSamplesInputSet) - the count is part of the
     // identity because the pipeline is compiled against the set layout it names.
-    const bool          reads_inputs    = programSamplesInputSet(program.entry->abi);
-    const std::uint32_t pipeline_colors = reads_inputs ? sampled_color_count : 0U;
-    const std::uint32_t pipeline_depths = reads_inputs ? sampled_depth_count : 0U;
-    record.key.sampled_color_count = pipeline_colors;
+    const bool          reads_inputs                         = programSamplesInputSet(program.entry->abi);
+    const std::uint32_t pipeline_colors                      = reads_inputs ? sampled_color_count : 0U;
+    const std::uint32_t pipeline_depths                      = reads_inputs ? sampled_depth_count : 0U;
+    record.key.sampled_color_count                           = pipeline_colors;
     // ... and how many DEPTH textures: the same table's other half (see core::CompiledInput), identity for the
     // same reason - the pipeline's sampled set is compiled against how many of each the pass binds.
-    record.key.sampled_depth_count = pipeline_depths;
-    record.dynamic                = command.dynamic;
+    record.key.sampled_depth_count                           = pipeline_depths;
+    record.dynamic                                           = command.dynamic;
     // The device's lineWidthRange is a LIMIT the API enforces by refusing the call, so the width is clamped here -
     // where the draw is prepared - rather than at the Vulkan boundary, which cannot report why it refused. 1.0 is
     // the floor for the same reason a point is at least one pixel: "0" must not become a way to hide lines.
-    const float widest_line = scope_.max_line_width > 1.0F ? scope_.max_line_width : 1.0F;
-    record.dynamic.line_width =
-        std::clamp(record.dynamic.line_width, 1.0F, widest_line);
+    const float widest_line                                  = scope_.max_line_width > 1.0F ? scope_.max_line_width : 1.0F;
+    record.dynamic.line_width                                = std::clamp(record.dynamic.line_width, 1.0F, widest_line);
     // The blocks: one bind per set the PROGRAM declares (its own `layout(set = ..., binding = ...)` qualifiers,
     // see api/ProgramAbi). Which sets those are came from `serveHalf`, which also refused the half when the
     // caller built no set for one of them.
-    const ::vsg::ref_ptr<::vsg::PipelineLayout> block_layout =
-        entry->pipelines->layoutFor(pipeline_colors, pipeline_depths);
-    const BlockDescriptors::Offsets block_offsets{ view_offset, block.offset, material_write.offset, lights_offset,
-                                                   shadow_offset };
+    const ::vsg::ref_ptr<::vsg::PipelineLayout> block_layout = entry->pipelines->layoutFor(pipeline_colors, pipeline_depths);
+    const BlockDescriptors::Offsets             block_offsets{ view_offset, block.offset, material_write.offset, lights_offset, shadow_offset };
     std::array<::vsg::ref_ptr<::vsg::BindDescriptorSet>, kMaxBlockSets> block_binds;
-    std::size_t                                                        bound_sets = 0U;
-    for (std::size_t index = 0U; index < half_block_count_; ++index)
-    {
+    std::size_t                                                         bound_sets = 0U;
+    for (std::size_t index = 0U; index < half_block_count_; ++index) {
         block_binds[bound_sets] = half_blocks_[index]->bind(block_layout, block_offsets);
-        if (block_binds[bound_sets] == nullptr)
-        {
+        if (block_binds[bound_sets] == nullptr) {
             reportRefused("the command's block set", "one of its dynamic offsets is not one the device accepts");
             return false;
         }
         ++bound_sets;
     }
-    record.blocks       = std::span<const ::vsg::ref_ptr<::vsg::BindDescriptorSet>>(block_binds.data(), bound_sets);
+    record.blocks = std::span<const ::vsg::ref_ptr<::vsg::BindDescriptorSet>>(block_binds.data(), bound_sets);
     // The pushes: one command per range the PROGRAM declares, filled from this pass' camera and THIS drawable's
     // model matrix (api/ContentPush) - a declared push is re-written for every drawable, because `modelView`
     // carries the drawable's model matrix, and an unwritten one would carry the last drawable's. The range's
     // offset, size and stages are the declaration's, so the words and the pipeline layout cannot disagree.
     std::array<::vsg::ref_ptr<::vsg::PushConstants>, kMaxPushRanges> push_commands;
     std::size_t                                                      push_count = 0U;
-    for (const AbiPushRange& range : program.entry->abi.pushes)
-    {
-        if (push_count == push_commands.size())
-        {
+    for (const AbiPushRange& range : program.entry->abi.pushes) {
+        if (push_count == push_commands.size()) {
             reportRefused("the command's push range", "its program declares more push ranges than this pass writes");
             return false;
         }
-        if (!packContentPush(range, draw.camera, command.model, push_bytes_, unhandled_member_))
-        {
+        if (!packContentPush(range, draw.camera, command.model, push_bytes_, unhandled_member_)) {
             // A member the layer accepted but the packer cannot fill cannot happen (ContentPipeline refuses
             // those); it is reported rather than pushed as zeros because the bytes here ARE the shader's input.
-            reportRefused("the command's push range", unhandled_member_.empty()
-                                                            ? "its program declares a push range with no size"
-                                                            : "one of its push members is not one this backend fills");
+            reportRefused("the command's push range",
+                          unhandled_member_.empty() ? "its program declares a push range with no size"
+                                                    : "one of its push members is not one this backend fills");
             return false;
         }
-        ::vsg::ref_ptr<::vsg::ubyteArray> bytes =
-            ::vsg::ubyteArray::create(static_cast<std::uint32_t>(push_bytes_.size()));
+        ::vsg::ref_ptr<::vsg::ubyteArray> bytes = ::vsg::ubyteArray::create(static_cast<std::uint32_t>(push_bytes_.size()));
         std::memcpy(bytes->data(), push_bytes_.data(), push_bytes_.size());
-        push_commands[push_count] = ::vsg::PushConstants::create(
-            static_cast<VkShaderStageFlags>(pushStagesOf(range.stages)), range.offset, bytes);
-        if (push_commands[push_count] == nullptr)
-        {
+        push_commands[push_count] = ::vsg::PushConstants::create(static_cast<VkShaderStageFlags>(pushStagesOf(range.stages)), range.offset, bytes);
+        if (push_commands[push_count] == nullptr) {
             reportRefused("the command's push range", "its bytes could not be prepared");
             return false;
         }
         ++push_count;
     }
-    record.pushes       = std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>(push_commands.data(), push_count);
+    record.pushes         = std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>(push_commands.data(), push_count);
     // The pass' sampled images are bound only by a program that reads them (see programSamplesInputSet):
     // binding a set the pipeline layout has no room for is an API violation, and the engine's own programs
     // have their inputs served by name in their own sets.
-    record.inputs       = reads_inputs ? inputs : nullptr;
+    record.inputs         = reads_inputs ? inputs : nullptr;
     record.vertex_binds   = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
     record.index          = index_bind;
     record.instances      = instanced ? command.instance_count : 1U;
     record.first_instance = instanced ? command.first_instance : 0U;
-    record.viewport       = ViewportRect{ static_cast<float>(draw.viewport.x), static_cast<float>(draw.viewport.y),
-                                        static_cast<float>(draw.viewport.width),
-                                        static_cast<float>(draw.viewport.height) };
+    record.viewport       = ViewportRect{ static_cast<float>(draw.viewport.x),
+                                          static_cast<float>(draw.viewport.y),
+                                          static_cast<float>(draw.viewport.width),
+                                          static_cast<float>(draw.viewport.height) };
     record.depth_min      = pass.depth_range.min;
     record.depth_max      = pass.depth_range.max;
     // Which of the entry's two spans the draw reads: an indexed entry states the slice of its index stream, an
     // unindexed one the vertex count - never both, because the command they lead to is a different one.
-    if (primitive.indices.has_value())
-    {
+    if (primitive.indices.has_value()) {
         record.index_count   = primitive.index_count;
         record.first_index   = primitive.first_index;
         record.vertex_offset = geometry.entry->vertex_offset;
     }
-    else
-    {
+    else {
         record.vertex_count = geometry.entry->vertex_count;
     }
     record.color_attachments = pass.color_attachments;
 
     ::vsg::ref_ptr<::vsg::Node> node = entry->draws->record(*scope_.registry, record);
-    if (node == nullptr)
-    {
+    if (node == nullptr) {
         // The recorder refuses when the identity has no compiled pipeline: a state group without a pipeline bind
         // would draw with whatever was bound last.
         reportRefused("the command", "its pipeline identity has no compiled pipeline");
@@ -1441,10 +1276,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand& command, const core
 
 bool ContentPass::noteRefusal(const char* what, const char* why)
 {
-    for (RefusalRow& row : refusals_)
-    {
-        if (row.what == what)
-        {
+    for (RefusalRow& row : refusals_) {
+        if (row.what == what) {
             ++row.count;
             return false;
         }
@@ -1455,40 +1288,34 @@ bool ContentPass::noteRefusal(const char* what, const char* why)
 
 void ContentPass::reportRefusedSummary()
 {
-    for (const RefusalRow& row : refusals_)
-    {
-        if (row.count < 2U)
-        {
+    for (const RefusalRow& row : refusals_) {
+        if (row.count < 2U) {
             continue;
         }
-        diagnostics_.report(
-            vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped,
-            vn::String::fromUtf8(std::to_string(row.count) + " drawing call(s) were not drawn for one reason - " +
-                     row.what + " is not drawn: " + row.why +
-                     " (the first one is named above; the rest are the same fact about the same pass)"));
+        diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                            vn::graphics::DiagnosticCategory::ContentSkipped,
+                            vn::String::fromUtf8(std::to_string(row.count) + " drawing call(s) were not drawn for one reason - " + row.what +
+                                                 " is not drawn: " + row.why +
+                                                 " (the first one is named above; the rest are the same fact about the same pass)"));
     }
 }
 
 void ContentPass::reportRefused(const char* what, FactMiss miss)
 {
     const std::string message = std::string(what) + " is not drawn: " + missText(miss);
-    if (!noteRefusal(what, missText(miss)))
-    {
-        return;   // the reason was already said; the count goes out when the pass ends
+    if (!noteRefusal(what, missText(miss))) {
+        return; // the reason was already said; the count goes out when the pass ends
     }
-    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::ContentSkipped, vn::String::fromUtf8(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped, vn::String::fromUtf8(message));
 }
 
 void ContentPass::reportRefused(const char* what, const char* why)
 {
     const std::string message = std::string(what) + " is not drawn: " + why;
-    if (!noteRefusal(what, why))
-    {
+    if (!noteRefusal(what, why)) {
         return;
     }
-    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::ContentSkipped, vn::String::fromUtf8(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped, vn::String::fromUtf8(message));
 }
 
 std::uint64_t ContentPass::emptyRectangles() const noexcept
@@ -1498,28 +1325,24 @@ std::uint64_t ContentPass::emptyRectangles() const noexcept
 
 void ContentPass::reportShadowNotSampled(const Scope::Entry& entry, const core::CompiledPass& pass)
 {
-    if (pass.shadow.light == nullptr || entry.pipelines == nullptr)
-    {
-        return;  // the pass samples no shadow (or the half declares nothing): nothing to say
+    if (pass.shadow.light == nullptr || entry.pipelines == nullptr) {
+        return; // the pass samples no shadow (or the half declares nothing): nothing to say
     }
-    if (samplesShadowMap(entry.pipelines->abi()))
-    {
-        return;  // the text names the map: the caller fills that binding (see api/ContentImages)
+    if (samplesShadowMap(entry.pipelines->abi())) {
+        return; // the text names the map: the caller fills that binding (see api/ContentImages)
     }
-    const std::size_t index   = static_cast<std::size_t>(&entry - scope_.entries.data());
+    const std::size_t         index   = static_cast<std::size_t>(&entry - scope_.entries.data());
     vn::graphics::ReportOnce* episode = entry.shadow_reported;
-    if (episode == nullptr && index < shadow_reported_.size())
-    {
+    if (episode == nullptr && index < shadow_reported_.size()) {
         episode = &shadow_reported_[index];
     }
-    if (episode == nullptr || !episode->shouldReport())
-    {
+    if (episode == nullptr || !episode->shouldReport()) {
         return;
     }
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::UnsupportedRequest,
                         vn::String::fromUtf8("the pass declared a shadow, but the program shading it declares no `vn_shadow_map` "
-                                 "sampler, so the map does not reach its drawables: they are shaded unshadowed"));
+                                             "sampler, so the map does not reach its drawables: they are shaded unshadowed"));
 }
 
 vn::graphics::ReportOnce& ContentPass::lightsEpisode() noexcept
@@ -1529,25 +1352,23 @@ vn::graphics::ReportOnce& ContentPass::lightsEpisode() noexcept
 
 void ContentPass::reportMaterialSlots(const MaterialFacts& material)
 {
-    for (std::size_t slot = 0; slot < material.slots.size(); ++slot)
-    {
+    for (std::size_t slot = 0; slot < material.slots.size(); ++slot) {
         const SlotViolation violation = materialSlotViolation(material, slot);
-        if (violation == SlotViolation::None)
-        {
+        if (violation == SlotViolation::None) {
             continue;
         }
         // THE EPISODE IS THE MATERIAL'S, not this pass' (see ContentStore::claimSlotReport): a pass is built per
         // frame, so its own state would repeat the sentence 60 times a second. Without a store (a hand-built
         // scope) there is no memory to claim against and the scope's lifetime is the episode - which is what a
         // unit test wants.
-        if (scope_.store != nullptr && !scope_.store->claimSlotReport(material.material, slot))
-        {
+        if (scope_.store != nullptr && !scope_.store->claimSlotReport(material.material, slot)) {
             continue;
         }
         const char* const name = materialSlotName(slot);
-        diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::MaterialSlot,
-                            vn::String::fromUtf8(std::string("the material's ") + (name != nullptr ? name : "texture") +
-                                                 " slot: " + slotViolationText(violation)));
+        diagnostics_.report(
+            vn::graphics::DiagnosticSeverity::Warning,
+            vn::graphics::DiagnosticCategory::MaterialSlot,
+            vn::String::fromUtf8(std::string("the material's ") + (name != nullptr ? name : "texture") + " slot: " + slotViolationText(violation)));
     }
 }
 
@@ -1556,38 +1377,32 @@ void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represe
     // The episode rule the SDK states for dropped lights: a drawing call whose lights ALL fit (or which announced
     // none) ends the episode, and a call that lost some is reported once - not once per call, because a scene has
     // one light list and would otherwise fill the log with the same sentence per drawable.
-    if (announced == 0U || represented >= announced)
-    {
+    if (announced == 0U || represented >= announced) {
         lightsEpisode().rearm();
         return;
     }
-    if (!lightsEpisode().shouldReport())
-    {
+    if (!lightsEpisode().shouldReport()) {
         return;
     }
 
     // Three branches, and each says what the pass shades with INSTEAD: "dropped" alone would leave the reader
     // guessing whether the pass went dark, lit by a fill, or lit by a partial list.
     std::string message;
-    if (!has_camera)
-    {
+    if (!has_camera) {
         message = std::to_string(announced) + " announced light(s) are not lit: the drawing call announced no";
         message += " camera, so there is no view space to light in (the pass draws unlit)";
     }
-    else if (represented == 0U)
-    {
+    else if (represented == 0U) {
         message = std::to_string(announced) + " announced light(s) are not lit (a positional light nobody";
         message += " placed, or a light beyond the block's slots); the pass falls back to the block's ambient fill";
     }
-    else
-    {
+    else {
         message = std::to_string(announced - represented) + " of " + std::to_string(announced) + " announced";
         message += " light(s) are not lit (a positional light nobody placed, or a light beyond the block's ";
         message += std::to_string(vn::graphics::kMaxLights);
         message += " slots)";
     }
-    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::ChannelIgnored, vn::String::fromUtf8(message));
+    diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ChannelIgnored, vn::String::fromUtf8(message));
 }
 
 VN_VSG_NS_END

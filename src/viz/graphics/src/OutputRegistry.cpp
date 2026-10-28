@@ -5,9 +5,9 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-OutputRegistry::OutputRegistry(Lease<RenderEngine> engine) noexcept : engine_(engine)
-{
-}
+OutputRegistry::OutputRegistry(Lease<RenderEngine> engine) noexcept
+  : engine_(engine)
+{}
 
 bool OutputRegistry::isValid() const noexcept
 {

@@ -8,10 +8,10 @@
 #include <span>
 #include <vector>
 
-#include <vine/io/IoError.hpp>
-#include <vine/io/io_global.hpp>
-#include <vine/io/Stream.hpp>
 #include <vine/String.hpp>
+#include <vine/io/IoError.hpp>
+#include <vine/io/Stream.hpp>
+#include <vine/io/io_global.hpp>
 
 VN_IO_NS_BEGIN
 
@@ -25,9 +25,9 @@ VN_IO_NS_BEGIN
  */
 enum class VfsEntryKind : std::uint8_t
 {
-    Missing,   ///< Nothing is there: the path is absent, or not a valid virtual path.
-    File,      ///< A file: read() works.
-    Directory, ///< A directory, explicit or implied by longer names.
+    Missing,   // Nothing is there: the path is absent, or not a valid virtual path.
+    File,      // A file: read() works.
+    Directory, // A directory, explicit or implied by longer names.
 };
 
 /**
@@ -38,12 +38,11 @@ enum class VfsEntryKind : std::uint8_t
  * always File or Directory. Missing belongs to VfsEntryKind because that is what kindOf()
  * answers with, not because it can appear here.
  */
-struct VN_IOBASE_API VfsEntryInfo
-{
-    std::filesystem::path path;                       ///< Full normalized virtual path; the empty path is the root.
-    VfsEntryKind          kind{ VfsEntryKind::File }; ///< What the path names: File or Directory, never Missing.
-    std::uint64_t         size{ 0 };                  ///< Size in bytes; 0 for a directory, kUnknownSize when the content has not been produced yet (a source nobody measured).
-    std::uint32_t         crc{ 0 };                   ///< Content checksum recorded by the backend (a ZIP records CRC-32); 0 when it has none yet.
+struct VN_IOBASE_API VfsEntryInfo {
+    std::filesystem::path path;                       // Full normalized virtual path; the empty path is the root.
+    VfsEntryKind          kind{ VfsEntryKind::File }; // What the path names: File or Directory, never Missing.
+    std::uint64_t         size{ 0 }; // Size in bytes; 0 for a directory, kUnknownSize when the content has not been produced yet (a source nobody measured).
+    std::uint32_t         crc{ 0 };  // Content checksum recorded by the backend (a ZIP records CRC-32); 0 when it has none yet.
 
     /**
      * @brief The last path segment, i.e. the entry's own name.
@@ -65,8 +64,7 @@ struct VN_IOBASE_API VfsEntryInfo
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API VfsEntrySource : public DataSource
-{
+class VN_IOBASE_API VfsEntrySource : public DataSource {
   public:
     /**
      * @brief Reads the next chunk of the entry.
@@ -103,7 +101,10 @@ class VN_IOBASE_API VfsEntrySource : public DataSource
      * entry again. It is seek(0) - and a check that was turned off by an earlier
      * seek to the middle is turned back on by it.
      */
-    void rewind() override { static_cast<void>(seek(0)); }
+    void rewind() override
+    {
+        static_cast<void>(seek(0));
+    }
 
     /**
      * @brief Reports whether seek() is cheap for this entry.
@@ -151,8 +152,7 @@ class VN_IOBASE_API VfsEntrySource : public DataSource
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API Vfs
-{
+class VN_IOBASE_API Vfs {
   public:
     /**
      * @brief Destroys the virtual file system.
@@ -472,8 +472,7 @@ class VN_IOBASE_API Vfs
      *         (openRead()'s errors for from, addFile()'s for to - IoError::AlreadyExists
      *         when to is taken).
      */
-    [[nodiscard]] IoError copy(const Vfs& source, const std::filesystem::path& from,
-                               const std::filesystem::path& to);
+    [[nodiscard]] IoError copy(const Vfs& source, const std::filesystem::path& from, const std::filesystem::path& to);
 
     /**
      * @brief Checks whether a virtual file or directory exists.

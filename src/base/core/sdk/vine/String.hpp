@@ -582,7 +582,7 @@ class VN_CORE_API String final {
 
     /** Insert a single character at the specified position
      *  @param pos The position to insert at
-     *  @param count 
+     *  @param count
      *  @param ch The character to insert
      *  @return Reference to this string
      *  @note Shifts all characters from pos onwards to the right

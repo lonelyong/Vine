@@ -32,8 +32,7 @@ VN_IO_NS_BEGIN
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API DataSourceStreamBuf final : public std::streambuf
-{
+class VN_IOBASE_API DataSourceStreamBuf final : public std::streambuf {
   public:
     /**
      * @brief Buffers the content of a source, starting at its first byte.
@@ -47,7 +46,7 @@ class VN_IOBASE_API DataSourceStreamBuf final : public std::streambuf
      */
     ~DataSourceStreamBuf() override;
 
-    DataSourceStreamBuf(const DataSourceStreamBuf&) = delete;
+    DataSourceStreamBuf(const DataSourceStreamBuf&)            = delete;
     DataSourceStreamBuf& operator=(const DataSourceStreamBuf&) = delete;
 
     /**
@@ -75,8 +74,8 @@ class VN_IOBASE_API DataSourceStreamBuf final : public std::streambuf
 
   private:
     DataSource*   source_;
-    std::uint64_t position_{ 0 };   ///< Bytes the source produced; the byte in the get area counts as produced.
-    std::byte     current_{};       ///< The one-byte get area underflow() publishes.
+    std::uint64_t position_{ 0 }; // Bytes the source produced; the byte in the get area counts as produced.
+    std::byte     current_{};     // The one-byte get area underflow() publishes.
     IoError       error_{ IoError::Ok };
 };
 
@@ -90,8 +89,7 @@ class VN_IOBASE_API DataSourceStreamBuf final : public std::streambuf
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_IOBASE_API DataSourceStream final : public std::istream
-{
+class VN_IOBASE_API DataSourceStream final : public std::istream {
   public:
     /**
      * @brief Reads a source as a stream, starting at its first byte.
@@ -105,7 +103,7 @@ class VN_IOBASE_API DataSourceStream final : public std::istream
      */
     ~DataSourceStream() override;
 
-    DataSourceStream(const DataSourceStream&) = delete;
+    DataSourceStream(const DataSourceStream&)            = delete;
     DataSourceStream& operator=(const DataSourceStream&) = delete;
 
     /**

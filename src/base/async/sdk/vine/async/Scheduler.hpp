@@ -21,7 +21,7 @@ VN_ASYNC_NS_BEGIN
  * @param s Scheduler deciding the resume context.
  * @return An awaitable that suspends and resumes via the scheduler.
  */
-template<Schedulable S>
+template <Schedulable S>
 auto resumeOn(S& s) -> decltype(s.schedule())
 {
     return s.schedule();
@@ -38,18 +38,16 @@ auto resumeOn(S& s) -> decltype(s.schedule())
  * @param task Task to run.
  * @return A task that runs task after scheduling onto s.
  */
-template<Schedulable S, typename T>
+template <Schedulable S, typename T>
 [[nodiscard]]
 Task<T> scheduleOn(S& s, Task<T> task)
 {
     co_await s.schedule(); // Hop to the scheduler's context before running the task.
-    if constexpr (std::is_void_v<T>)
-    {
+    if constexpr (std::is_void_v<T>) {
         co_await std::move(task);
         co_return;
     }
-    else
-    {
+    else {
         co_return co_await std::move(task);
     }
 }
@@ -61,8 +59,7 @@ Task<T> scheduleOn(S& s, Task<T> task)
  * co_await schedule() never suspends and the coroutine keeps running on the
  * same thread. Useful as the default when no context switch is required.
  */
-class InlineScheduler
-{
+class InlineScheduler {
   public:
     /**
      * @brief Awaiter that never suspends.
@@ -70,8 +67,7 @@ class InlineScheduler
      * await_ready() returning true makes the coroutine skip suspension and
      * continue inline on the calling thread.
      */
-    class ScheduleAwaiter
-    {
+    class ScheduleAwaiter {
       public:
         [[nodiscard]]
         bool await_ready() const noexcept
@@ -79,9 +75,11 @@ class InlineScheduler
             return true; // Never suspends; continue inline.
         }
 
-        void await_suspend(std::coroutine_handle<>) const noexcept {}
+        void await_suspend(std::coroutine_handle<>) const noexcept
+        {}
 
-        void await_resume() const noexcept {}
+        void await_resume() const noexcept
+        {}
     };
 
     /**

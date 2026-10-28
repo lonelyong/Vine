@@ -25,10 +25,8 @@ VN_OBJECT_META_IMPL(Texture, vn::Object);
 const char* Texture::kindName(Kind kind) noexcept
 {
     switch (kind) {
-        case Kind::D2:
-            return "D2";
-        case Kind::Cube:
-            return "Cube";
+    case Kind::D2: return "D2";
+    case Kind::Cube: return "Cube";
     }
 
     return "Unknown"; // Also the answer for an out-of-range cast.
@@ -144,8 +142,7 @@ VN_OBJECT_META_IMPL(Texture2D, Texture);
 
 Texture2D::Texture2D(int width, int height, imaging::PixelFormat format, int mip_count)
   : Texture(Kind::D2, width, height, format, mip_count)
-{
-}
+{}
 
 Texture::Kind Texture2D::kind() const noexcept
 {
@@ -167,18 +164,12 @@ VN_OBJECT_META_IMPL(CubeMap, Texture);
 const char* CubeMap::faceName(Face face) noexcept
 {
     switch (face) {
-        case Face::PosX:
-            return "+X";
-        case Face::NegX:
-            return "-X";
-        case Face::PosY:
-            return "+Y";
-        case Face::NegY:
-            return "-Y";
-        case Face::PosZ:
-            return "+Z";
-        case Face::NegZ:
-            return "-Z";
+    case Face::PosX: return "+X";
+    case Face::NegX: return "-X";
+    case Face::PosY: return "+Y";
+    case Face::NegY: return "-Y";
+    case Face::PosZ: return "+Z";
+    case Face::NegZ: return "-Z";
     }
 
     return "Unknown"; // Also the answer for an out-of-range cast.
@@ -186,8 +177,7 @@ const char* CubeMap::faceName(Face face) noexcept
 
 CubeMap::CubeMap(int size, imaging::PixelFormat format, int mip_count)
   : Texture(Kind::Cube, size, size, format, mip_count)
-{
-}
+{}
 
 Texture::Kind CubeMap::kind() const noexcept
 {

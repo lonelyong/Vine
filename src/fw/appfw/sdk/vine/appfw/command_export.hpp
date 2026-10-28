@@ -22,7 +22,9 @@
 #endif
 
 VN_APPFW_NS_BEGIN
-namespace detail {
+
+namespace detail
+{
 
 /**
  * @brief Registrar callback: registers one command with a CommandManager.
@@ -77,6 +79,7 @@ inline void flushQueuedCommands(std::vector<CommandRegistrar>& registrars, Comma
 }
 
 } // namespace detail
+
 VN_APPFW_NS_END
 
 /**
@@ -91,12 +94,11 @@ VN_APPFW_NS_END
  * the appfw namespace and at global scope, which is where a plugin entry point may
  * live.
  */
-#define VN_DEFINE_MODULE_COMMAND_QUEUE()                                                  \
-    VN_MODULE_LOCAL std::vector<vn::appfw::detail::CommandRegistrar>&                    \
-    vn::appfw::detail::moduleCommandQueue()                                             \
-    {                                                                                    \
-        static std::vector<vn::appfw::detail::CommandRegistrar> registrars;             \
-        return registrars;                                                               \
+#define VN_DEFINE_MODULE_COMMAND_QUEUE()                                                                                                                       \
+    VN_MODULE_LOCAL std::vector<vn::appfw::detail::CommandRegistrar>& vn::appfw::detail::moduleCommandQueue()                                                  \
+    {                                                                                                                                                          \
+        static std::vector<vn::appfw::detail::CommandRegistrar> registrars;                                                                                    \
+        return registrars;                                                                                                                                     \
     }
 
 /**
@@ -126,19 +128,21 @@ VN_APPFW_NS_END
  * @param CommandClass The command class.
  * @param CommandName The command name as a u8"..." literal.
  */
-#define VN_DECLARE_COMMAND(CommandClass, CommandName)                             \
-  public:                                                                        \
-    vn::String name() const override { return CommandName; }                   \
-  private:                                                                       \
-    struct AutoRegistrar {                                                       \
-        AutoRegistrar()                                                          \
-        {                                                                        \
-            vn::appfw::detail::moduleCommandQueue().push_back(                 \
-                [](vn::appfw::CommandManager* manager) {                       \
-                    return manager->registerCommand<CommandClass>(CommandName);  \
-                });                                                              \
-        }                                                                        \
-    };                                                                           \
+#define VN_DECLARE_COMMAND(CommandClass, CommandName)                                                                                                          \
+  public:                                                                                                                                                      \
+    vn::String name() const override                                                                                                                           \
+    {                                                                                                                                                          \
+        return CommandName;                                                                                                                                    \
+    }                                                                                                                                                          \
+                                                                                                                                                               \
+  private:                                                                                                                                                     \
+    struct AutoRegistrar {                                                                                                                                     \
+        AutoRegistrar()                                                                                                                                        \
+        {                                                                                                                                                      \
+            vn::appfw::detail::moduleCommandQueue().push_back(                                                                                                 \
+                [](vn::appfw::CommandManager* manager) { return manager->registerCommand<CommandClass>(CommandName); });                                       \
+        }                                                                                                                                                      \
+    };                                                                                                                                                         \
     inline static AutoRegistrar s_auto_registrar_{};
 
 /**
@@ -161,15 +165,13 @@ VN_APPFW_NS_END
  * @param AliasName The alias as a u8"..." literal.
  * @param TargetName The canonical command name the alias resolves to.
  */
-#define VN_DECLARE_COMMAND_ALIAS(AliasName, TargetName)                            \
-  private:                                                                       \
-    struct AutoAliasRegistrar {                                                  \
-        AutoAliasRegistrar()                                                     \
-        {                                                                        \
-            vn::appfw::detail::moduleCommandQueue().push_back(                 \
-                [](vn::appfw::CommandManager* manager) {                       \
-                    return manager->registerAlias(AliasName, TargetName);        \
-                });                                                              \
-        }                                                                        \
-    };                                                                           \
+#define VN_DECLARE_COMMAND_ALIAS(AliasName, TargetName)                                                                                                        \
+  private:                                                                                                                                                     \
+    struct AutoAliasRegistrar {                                                                                                                                \
+        AutoAliasRegistrar()                                                                                                                                   \
+        {                                                                                                                                                      \
+            vn::appfw::detail::moduleCommandQueue().push_back(                                                                                                 \
+                [](vn::appfw::CommandManager* manager) { return manager->registerAlias(AliasName, TargetName); });                                             \
+        }                                                                                                                                                      \
+    };                                                                                                                                                         \
     inline static AutoAliasRegistrar s_auto_alias_registrar_{};

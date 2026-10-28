@@ -27,10 +27,10 @@ VN_VSG_NS_BEGIN
  */
 enum class SlotViolation
 {
-    None,                    ///< The slot is absent, or its map fits it.
-    CubeInDataSlot,          ///< A cube map where the slot takes a 2-D data map (C2/N6).
-    LinearFormatInColorSlot, ///< A byte map claiming to be linear in a slot sampled as colour.
-    SrgbFormatInDataSlot,    ///< An sRGB map in a slot read as data (roughness would be gamma-decoded).
+    None,                    // The slot is absent, or its map fits it.
+    CubeInDataSlot,          // A cube map where the slot takes a 2-D data map (C2/N6).
+    LinearFormatInColorSlot, // A byte map claiming to be linear in a slot sampled as colour.
+    SrgbFormatInDataSlot,    // An sRGB map in a slot read as data (roughness would be gamma-decoded).
 };
 
 /**

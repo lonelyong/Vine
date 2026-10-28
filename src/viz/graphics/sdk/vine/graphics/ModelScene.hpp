@@ -11,8 +11,10 @@
 /// The geometry module's data model, borrowed here so this header stays a graphics header (see sceneFromModel).
 namespace vn::geometry
 {
+
 class Model;
 class Material;
+
 } // namespace vn::geometry
 
 VN_GRAPHICS_NS_BEGIN
@@ -25,16 +27,15 @@ VN_GRAPHICS_NS_BEGIN
  *   cannot turn into vertex data, is skipped and counted instead of aborting the walk, so one odd part of an
  *   imported file cannot cost the rest of it.
  */
-struct VN_GRAPHICS_API ModelScene
-{
+struct VN_GRAPHICS_API ModelScene {
     /// The model's root as a scene node, or null when the model has no nodes (nothing to draw).
     NodePtr root;
     /// How many `Geometry` leaves the tree holds (one per (node, mesh entry) pair).
-    std::size_t geometries{0};
+    std::size_t geometries{ 0 };
     /// How many mesh entries were skipped because they do not describe vertex data the engine can draw.
-    std::size_t skipped_meshes{0};
+    std::size_t skipped_meshes{ 0 };
     /// How many node references were skipped because they were out of range or closed a cycle.
-    std::size_t skipped_nodes{0};
+    std::size_t skipped_nodes{ 0 };
 };
 
 /**

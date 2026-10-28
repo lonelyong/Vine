@@ -18,8 +18,7 @@ VN_ROBOTICS_WORKCELL_NS_BEGIN
  * knows nothing about motion, scene management or ownership; it is embedded
  * by value wherever geometry lives (Link, RigidObject, ...).
  */
-class RigidBody
-{
+class RigidBody {
   public:
     /**
      * @brief Returns the visual geometries.

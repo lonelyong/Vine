@@ -12,9 +12,9 @@
 
 #include <vine/Signal.hpp>
 
-#include <vine/appfw/ProgressHost.hpp>
-#include "Convert.hpp"
 #include "ControlData.hpp"
+#include "Convert.hpp"
+#include <vine/appfw/ProgressHost.hpp>
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -35,22 +35,22 @@ struct ProgressPresenter::Impl : public ControlData {
     /// Owning presenter, redrawn from the change handler.
     ProgressPresenter* self = nullptr;
 
-    QProgressBar* bar             = nullptr;
-    QLabel*       chain_label     = nullptr;
+    QProgressBar* bar              = nullptr;
+    QLabel*       chain_label      = nullptr;
     QLabel*       background_label = nullptr;
-    QPushButton*  cancel          = nullptr;
-    QTimer*       timer           = nullptr;
+    QPushButton*  cancel           = nullptr;
+    QTimer*       timer            = nullptr;
 
     /// Connection to ProgressHost::changed(); held so it is cancelled with the presenter.
     vn::Connection hosts_changed{};
 
     /// The tracked foreground host (drives the main bar), or nullptr.
-    vn::appfw::ProgressHost* foreground = nullptr;
+    vn::appfw::ProgressHost*              foreground = nullptr;
     std::chrono::steady_clock::time_point host_seen_at{};
     std::chrono::steady_clock::time_point hide_at{};
-    bool bar_visible   = false;
-    bool progress_seen = false;
-    bool hide_pending  = false;
+    bool                                  bar_visible   = false;
+    bool                                  progress_seen = false;
+    bool                                  hide_pending  = false;
 
     /// Redraws on every progress state change, whichever thread reported it.
     ///
@@ -144,11 +144,11 @@ void ProgressPresenter::refresh()
 {
     using namespace std::chrono;
 
-    auto* const data = dptr();
-    const auto  now  = steady_clock::now();
-    auto* const fg    = vn::appfw::ProgressHost::current();
-    const auto  hosts = vn::appfw::ProgressHost::activeHosts();
-    const auto  chain = vn::appfw::ProgressHost::foregroundStack();
+    auto* const data           = dptr();
+    const auto  now            = steady_clock::now();
+    auto* const fg             = vn::appfw::ProgressHost::current();
+    const auto  hosts          = vn::appfw::ProgressHost::activeHosts();
+    const auto  chain          = vn::appfw::ProgressHost::foregroundStack();
     // 后台宿主 = 活跃宿主中不在前台栈里的（真正并行的任务）。
     const std::size_t bg_count = hosts.size() >= chain.size() ? hosts.size() - chain.size() : 0;
 

@@ -24,7 +24,7 @@ namespace guifw = vn::appfw::gui;
 
 TEST(MainWindowTest, TheOpeningSizeIsStatedInsteadOfInheritedFromTheLayout)
 {
-    auto wnd = std::make_unique<guifw::MainWindow>();
+    auto     wnd    = std::make_unique<guifw::MainWindow>();
     QWidget* widget = wnd->impl<QWidget>();
     ASSERT_NE(widget, nullptr);
     // The stated default, checked BEFORE any show(): without the constructor's resize() this is the

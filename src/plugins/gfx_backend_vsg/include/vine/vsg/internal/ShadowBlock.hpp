@@ -40,7 +40,6 @@ VN_VSG_NS_BEGIN
  * @param out    Receives the block; every field is written, and the switch is off when the map cannot be used.
  * @return true when the shading is on (`params.x == 1`), false when the call shades unshadowed.
  */
-bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& draw,
-                     vn::graphics::VineShadowBlock& out) noexcept;
+bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& draw, vn::graphics::VineShadowBlock& out) noexcept;
 
 VN_VSG_NS_END

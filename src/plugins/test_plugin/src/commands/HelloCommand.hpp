@@ -13,9 +13,21 @@ class HelloCommand : public Command {
     VN_DECLARE_COMMAND(HelloCommand, u8"test_hello")
 
   public:
-    String group() const override { return u8"测试"; }
-    String description() const override { return u8"测试命令"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"测试";
+    }
+
+    String description() const override
+    {
+        return u8"测试命令";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

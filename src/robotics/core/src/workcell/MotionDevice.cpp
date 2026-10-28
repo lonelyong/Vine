@@ -20,7 +20,7 @@ std::unique_ptr<DeviceData> MotionDeviceData::clone() const
 std::unique_ptr<MotionDeviceData> MotionDevice::asMotionData(std::unique_ptr<DeviceData> data)
 {
     // 定义数据向下转型为 MotionDeviceData; 若为普通 DeviceData 则包装补全
-    auto* const raw = data.release();
+    auto* const                       raw = data.release();
     std::unique_ptr<MotionDeviceData> motion_data(dynamic_cast<MotionDeviceData*>(raw));
     if (!motion_data) {
         motion_data = std::make_unique<MotionDeviceData>();
@@ -47,10 +47,10 @@ void MotionDevice::initMotion(std::unique_ptr<MotionDeviceData> data)
     // 基础构建失败(如无关节或无末端)则清空运动数据缓存, 使空设备状态一致
     if (!isValid() || !getEnd(0)) {
         kinematics_.reset();
-        home_q_             = kinematics::Q{};
-        lower_bounds_       = kinematics::Q{};
-        upper_bounds_       = kinematics::Q{};
-        velocity_limits_    = kinematics::Q{};
+        home_q_              = kinematics::Q{};
+        lower_bounds_        = kinematics::Q{};
+        upper_bounds_        = kinematics::Q{};
+        velocity_limits_     = kinematics::Q{};
         acceleration_limits_ = kinematics::Q{};
         return;
     }

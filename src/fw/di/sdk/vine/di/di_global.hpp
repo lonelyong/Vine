@@ -8,12 +8,12 @@
 #    define VN_DI_API VN_IMPORT
 #endif
 
-#define VN_DI_NS_BEGIN                                                                                                                                          \
-    namespace VN_ROOT_NS                                                                                                                                        \
+#define VN_DI_NS_BEGIN                                                                                                                                         \
+    namespace VN_ROOT_NS                                                                                                                                       \
     {                                                                                                                                                          \
     namespace di                                                                                                                                               \
     {
 
-#define VN_DI_NS_END                                                                                                                                            \
+#define VN_DI_NS_END                                                                                                                                           \
     }                                                                                                                                                          \
     }

@@ -6,8 +6,7 @@ VN_OBJECT_META_IMPL(MaterialInstance, MaterialBase);
 
 MaterialInstance::MaterialInstance(intrusive_ptr<Material> parent)
   : parent_(std::move(parent))
-{
-}
+{}
 
 raw_ptr<Material> MaterialInstance::parent() const
 {
@@ -90,9 +89,9 @@ void MaterialInstance::setAlphaCutoff(float cutoff)
 
 void MaterialInstance::setTexture(TextureSlot slot, intrusive_ptr<Texture> texture, const Sampler& sampler)
 {
-    const std::size_t        index = static_cast<std::size_t>(slot);
-    TextureSlotBinding&      binding = overrides_.textures[index];
-    const MaterialItem       item    = materialItemOf(slot);
+    const std::size_t   index   = static_cast<std::size_t>(slot);
+    TextureSlotBinding& binding = overrides_.textures[index];
+    const MaterialItem  item    = materialItemOf(slot);
     if (hasOverride(item) && binding.texture.get() == texture.get() && binding.sampler == sampler) {
         return;
     }
@@ -140,7 +139,7 @@ const MaterialParameters& MaterialInstance::resolved() const noexcept
 
 std::uint64_t MaterialInstance::revision() const noexcept
 {
-    (void)resolved();  // the read is what refreshes the cache and, with it, the number
+    (void)resolved(); // the read is what refreshes the cache and, with it, the number
     return resolved_revision_;
 }
 

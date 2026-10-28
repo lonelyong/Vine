@@ -37,9 +37,9 @@
 
 #include <vine/vsg/internal/ContentPass.hpp>
 
+#include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/AllocationGate.hpp>
 #include <vine/graphics/backend/ClearPlan.hpp>
-#include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
@@ -47,14 +47,15 @@
 #include <vine/graphics/backend/PixelProbe.hpp>
 
 using vn::graphics::DiagnosticCategory;
+using vn::graphics::Diagnostics;
 using vn::graphics::DiagnosticSeverity;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
+using vn::graphics::ReportOnce;
 using vn::graphics::Viewport;
 using vn::graphics::backend::AllocationGate;
 using vn::graphics::backend::ClearValues;
-using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameCompiler;
 using vn::graphics::backend::FrameRecorder;
@@ -63,18 +64,17 @@ using vn::graphics::backend::Observe;
 using vn::graphics::backend::Phase;
 using vn::graphics::backend::PhaseTable;
 using vn::graphics::backend::PixelProbe;
-using vn::graphics::ReportOnce;
 using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::TargetShape;
 
 namespace
 {
 
-constexpr Rgba8 kBlack{0, 0, 0, 255};
-constexpr Rgba8 kClear{51, 51, 51, 255};
-constexpr Rgba8 kRed{255, 0, 0, 255};
-constexpr Rgba8 kGreen{0, 255, 0, 255};
-constexpr Rgba8 kBlue{0, 0, 255, 255};
+constexpr Rgba8 kBlack{ 0, 0, 0, 255 };
+constexpr Rgba8 kClear{ 51, 51, 51, 255 };
+constexpr Rgba8 kRed{ 255, 0, 0, 255 };
+constexpr Rgba8 kGreen{ 0, 255, 0, 255 };
+constexpr Rgba8 kBlue{ 0, 0, 255, 255 };
 
 /// @brief Builds a 4x4 black image with three known pixels, laid out ROW-major.
 ///
@@ -83,9 +83,8 @@ constexpr Rgba8 kBlue{0, 0, 255, 255};
 PixelProbe makePatternImage()
 {
     std::vector<std::uint8_t> pixels(4u * 4u * 4u, 0);
-    for (std::size_t i = 0; i < 16u; ++i)
-    {
-        pixels[i * 4u + 3u] = 255;  // opaque
+    for (std::size_t i = 0; i < 16u; ++i) {
+        pixels[i * 4u + 3u] = 255; // opaque
     }
     const auto put = [&pixels](int x, int y, const Rgba8& color) {
         const std::size_t offset = (static_cast<std::size_t>(y) * 4u + static_cast<std::size_t>(x)) * 4u;
@@ -104,17 +103,14 @@ PixelProbe makePatternImage()
 PixelProbe makeCopyIntoRectangleImage()
 {
     std::vector<std::uint8_t> pixels(8u * 8u * 4u, 0);
-    for (std::size_t i = 0; i < 64u; ++i)
-    {
+    for (std::size_t i = 0; i < 64u; ++i) {
         pixels[i * 4u + 0u] = kClear.r;
         pixels[i * 4u + 1u] = kClear.g;
         pixels[i * 4u + 2u] = kClear.b;
         pixels[i * 4u + 3u] = kClear.a;
     }
-    for (int y = 1; y < 3; ++y)
-    {
-        for (int x = 2; x < 5; ++x)
-        {
+    for (int y = 1; y < 3; ++y) {
+        for (int x = 2; x < 5; ++x) {
             const std::size_t offset = (static_cast<std::size_t>(y) * 8u + static_cast<std::size_t>(x)) * 4u;
             pixels[offset]           = kRed.r;
             pixels[offset + 1u]      = kRed.g;
@@ -151,7 +147,7 @@ __declspec(noinline) void keepAllocation(void* block) noexcept
 }
 #endif
 
-}  // namespace
+} // namespace
 
 TEST(CorePixelProbeTest, TheBufferMustMatchTheStatedSize)
 {
@@ -163,7 +159,7 @@ TEST(CorePixelProbeTest, TheBufferMustMatchTheStatedSize)
     EXPECT_EQ(truncated.nonBlackPixels(), 0u);
     EXPECT_DOUBLE_EQ(truncated.nonBlackFraction(), 0.0);
     EXPECT_EQ(truncated.pixel(0, 0), kBlack);
-    EXPECT_EQ(truncated.countMatching(kBlack, Viewport{0, 0, 4, 4}), 0u);
+    EXPECT_EQ(truncated.countMatching(kBlack, Viewport{ 0, 0, 4, 4 }), 0u);
 }
 
 TEST(CorePixelProbeTest, PixelsAreReadRowMajorFromTheTopLeft)
@@ -174,7 +170,7 @@ TEST(CorePixelProbeTest, PixelsAreReadRowMajorFromTheTopLeft)
 
     EXPECT_EQ(image.pixel(0, 0), kRed);
     EXPECT_EQ(image.pixel(3, 0), kGreen);
-    EXPECT_EQ(image.pixel(0, 1), kBlue);  // first pixel of the second row: stride is width * 4
+    EXPECT_EQ(image.pixel(0, 1), kBlue); // first pixel of the second row: stride is width * 4
     EXPECT_EQ(image.pixel(1, 1), kBlack);
 
     // Out of range reads opaque black rather than crashing.
@@ -189,7 +185,7 @@ TEST(CorePixelProbeTest, TheNonBlackFractionIsHowNothingDrawnFails)
 
     const PixelProbe empty(4, 4, std::vector<std::uint8_t>(64, 0));
     EXPECT_EQ(empty.nonBlackPixels(), 0u);
-    EXPECT_DOUBLE_EQ(empty.nonBlackFraction(), 0.0);  // "validation clean and nothing drawn"
+    EXPECT_DOUBLE_EQ(empty.nonBlackFraction(), 0.0); // "validation clean and nothing drawn"
 }
 
 TEST(CorePixelProbeTest, ACopyInsideItsRectangleLeavesTheRestAlone)
@@ -198,12 +194,12 @@ TEST(CorePixelProbeTest, ACopyInsideItsRectangleLeavesTheRestAlone)
     // the copy, and everything outside it still shows the clear colour.
     const PixelProbe image = makeCopyIntoRectangleImage();
 
-    const Viewport copy_rect{2, 1, 3, 2};
+    const Viewport copy_rect{ 2, 1, 3, 2 };
     EXPECT_EQ(image.countMatching(kRed, copy_rect), 6u);
     EXPECT_EQ(image.countDifferingFrom(kRed, copy_rect), 0u);
 
-    const Viewport outside{0, 0, 8, 8};
-    EXPECT_EQ(image.countMatching(kClear, outside), 58u);   // 64 - 6
+    const Viewport outside{ 0, 0, 8, 8 };
+    EXPECT_EQ(image.countMatching(kClear, outside), 58u); // 64 - 6
     EXPECT_FALSE(image.wholeImageMatches(kClear));
 }
 
@@ -212,9 +208,9 @@ TEST(CorePixelProbeTest, ARectangleLargerThanTheImageCountsOnlyTheOverlap)
     // A phase that asks about a rectangle past the surface must get the overlap counted, not an
     // out-of-range read: the clamping is the probe's job, once, for every phase.
     const PixelProbe image = makePatternImage();
-    EXPECT_EQ(image.countMatching(kBlack, Viewport{2, 2, 10, 10}), 4u);  // the 2x2 bottom-right corner
-    EXPECT_EQ(image.countDifferingFrom(kBlack, Viewport{-4, -4, 10, 10}), 3u);
-    EXPECT_EQ(image.countMatching(kBlack, Viewport{9, 9, 2, 2}), 0u);  // entirely outside
+    EXPECT_EQ(image.countMatching(kBlack, Viewport{ 2, 2, 10, 10 }), 4u); // the 2x2 bottom-right corner
+    EXPECT_EQ(image.countDifferingFrom(kBlack, Viewport{ -4, -4, 10, 10 }), 3u);
+    EXPECT_EQ(image.countMatching(kBlack, Viewport{ 9, 9, 2, 2 }), 0u); // entirely outside
 }
 
 TEST(CorePixelProbeTest, APhaseCanGateOnAPicture)
@@ -223,8 +219,8 @@ TEST(CorePixelProbeTest, APhaseCanGateOnAPicture)
     const PixelProbe empty(4, 4, std::vector<std::uint8_t>(64, 0));
 
     PhaseTable table;
-    table.add(Phase{"something was drawn", [&drawn] { return drawn.nonBlackFraction() >= 0.3; }});
-    table.add(Phase{"nothing was drawn", [&empty] { return empty.nonBlackFraction() >= 0.3; }});
+    table.add(Phase{ "something was drawn", [&drawn] { return drawn.nonBlackFraction() >= 0.3; } });
+    table.add(Phase{ "nothing was drawn", [&empty] { return empty.nonBlackFraction() >= 0.3; } });
 
     const auto report = table.runAll();
     ASSERT_EQ(report.lines.size(), 2u);
@@ -235,16 +231,13 @@ TEST(CorePixelProbeTest, APhaseCanGateOnAPicture)
 
 TEST(CoreDiagnosticsTest, ReportsAreCountedPerCategoryAndForwardedToTheSink)
 {
-    Diagnostics                    diagnostics;
+    Diagnostics                   diagnostics;
     std::vector<RenderDiagnostic> forwarded;
     diagnostics.setSink([&forwarded](const RenderDiagnostic& diagnostic) { forwarded.push_back(diagnostic); });
 
-    diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::ContentSkipped,
-                       vn::String(u8"a pass had nothing to draw"));
-    diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected,
-                       vn::String(u8"no positions"));
-    diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected,
-                       vn::String(u8"indices out of range"));
+    diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::ContentSkipped, vn::String(u8"a pass had nothing to draw"));
+    diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected, vn::String(u8"no positions"));
+    diagnostics.report(DiagnosticSeverity::Error, DiagnosticCategory::GeometryRejected, vn::String(u8"indices out of range"));
 
     EXPECT_EQ(diagnostics.total(), 3u);
     EXPECT_EQ(diagnostics.count(DiagnosticCategory::GeometryRejected), 2u);
@@ -265,8 +258,7 @@ TEST(CoreDiagnosticsTest, AReportIsCountedEvenWithNoSinkInstalled)
     Diagnostics diagnostics;
     EXPECT_FALSE(diagnostics.sink());
 
-    diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
-                       vn::String(u8"nothing is listening"));
+    diagnostics.report(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest, vn::String(u8"nothing is listening"));
 
     EXPECT_EQ(diagnostics.total(), 1u);
     EXPECT_EQ(diagnostics.count(DiagnosticCategory::UnsupportedRequest), 1u);
@@ -275,49 +267,49 @@ TEST(CoreDiagnosticsTest, AReportIsCountedEvenWithNoSinkInstalled)
 
 TEST(CoreDiagnosticsTest, AnEpisodeReportsItselfOnceAndReArms)
 {
-    Diagnostics  diagnostics;
-    ReportOnce   episode;
-    const auto   report = [&diagnostics, &episode] {
-        return diagnostics.reportOnce(episode, DiagnosticSeverity::Warning,
+    Diagnostics diagnostics;
+    ReportOnce  episode;
+    const auto  report = [&diagnostics, &episode] {
+        return diagnostics.reportOnce(episode,
+                                      DiagnosticSeverity::Warning,
                                       DiagnosticCategory::PassProtocolViolation,
                                       vn::String(u8"a drawing call with no scope"));
     };
 
     EXPECT_TRUE(report());
-    EXPECT_FALSE(report());  // same episode: silent, and not counted twice
+    EXPECT_FALSE(report()); // same episode: silent, and not counted twice
     EXPECT_TRUE(episode.reported());
     EXPECT_EQ(diagnostics.total(), 1u);
 
     episode.rearm();
-    EXPECT_TRUE(report());  // the condition ended and came back
+    EXPECT_TRUE(report()); // the condition ended and came back
     EXPECT_EQ(diagnostics.total(), 2u);
 }
 
 TEST(CoreAllocationGateTest, ASteadyWindowGrowsTheHeapByNothing)
 {
-    if (!AllocationGate::supported())
-    {
+    if (!AllocationGate::supported()) {
         GTEST_SKIP() << "this platform cannot report heap usage";
     }
 
     // A frame's worth of plan building, with the arena already warm: the second run must reuse the
     // chunks the first one made. Nothing in this lambda touches the heap.
-    FrameArena   arena(4096);
-    const auto   build_frame = [&arena] {
+    FrameArena arena(4096);
+    const auto build_frame = [&arena] {
         arena.reset();
-        std::vector<int> borrowed{1, 2, 3, 4, 5, 6, 7, 8};
+        std::vector<int> borrowed{ 1, 2, 3, 4, 5, 6, 7, 8 };
         const auto       copy = arena.copy<int>(std::span<const int>(borrowed));
         (void)copy;
     };
-    build_frame();  // warm up: this one is allowed to start chunks
+    build_frame(); // warm up: this one is allowed to start chunks
 
     AllocationGate gate;
     gate.begin();
     build_frame();
     const std::ptrdiff_t grew = gate.end();
 
-    EXPECT_EQ(arena.allocations(), 0u);  // the arena did not grow either
-    EXPECT_EQ(grew, 0);                  // and neither did the process
+    EXPECT_EQ(arena.allocations(), 0u); // the arena did not grow either
+    EXPECT_EQ(grew, 0);                 // and neither did the process
     EXPECT_EQ(gate.windows(), 1u);
     EXPECT_EQ(gate.lastGrowth(), 0);
 }
@@ -329,9 +321,8 @@ TEST(CoreAllocationGateTest, TheCountedHalfSeesChurnTheHeapReadingCannot)
     // reading answers "nothing happened". That is what a per-pass vector or a `std::function` parked and
     // released looks like from the outside - the shape almost every per-frame allocation actually has.
     AllocationGate gate;
-    ASSERT_TRUE(AllocationGate::countsAvailable())
-        << "this binary must instrument the allocator: without it, \"counted zero\" and \"nothing counted\" "
-           "are the same number (see AllocationGate's file note)";
+    ASSERT_TRUE(AllocationGate::countsAvailable()) << "this binary must instrument the allocator: without it, \"counted zero\" and \"nothing counted\" "
+                                                      "are the same number (see AllocationGate's file note)";
 
     // The block's address is handed to a `noinline` function, and that is not decoration: C++ allows a call
     // to a replaceable global allocation function to be ELIDED, and an optimizing build does exactly that
@@ -339,9 +330,8 @@ TEST(CoreAllocationGateTest, TheCountedHalfSeesChurnTheHeapReadingCannot)
     // positive control passed only in the Debug tree - the same "the evidence was not running" shape as the
     // aligned-allocation defect next door). See keepAllocation.
     gate.begin();
-    for (int i = 0; i < 64; ++i)
-    {
-        auto* block = new char[64];  // allocated and released inside the window
+    for (int i = 0; i < 64; ++i) {
+        auto* block = new char[64]; // allocated and released inside the window
         keepAllocation(block);
         delete[] block;
     }
@@ -349,8 +339,7 @@ TEST(CoreAllocationGateTest, TheCountedHalfSeesChurnTheHeapReadingCannot)
 
     EXPECT_EQ(gate.allocations(), 64u) << "every allocation in the window is counted, churn included";
     EXPECT_EQ(gate.bytes(), 64u * 64u) << "and the bytes it asked for are reported beside the count";
-    if (AllocationGate::supported())
-    {
+    if (AllocationGate::supported()) {
         EXPECT_EQ(grew, 0) << "while the heap reading alone would have passed this window";
     }
 }
@@ -378,8 +367,7 @@ TEST(CoreAllocationGateTest, EveryAlignmentTheLanguageAllowsIsServed)
     // First the shape, checked case by case: every alignment is served, the block really is aligned for it, and
     // the matching aligned delete releases it. A refusal here is a `std::bad_alloc` thrown out of the test -
     // which is exactly the failure mode that killed the device cases (libLLVM does not catch it).
-    for (const std::size_t alignment : kAlignments)
-    {
+    for (const std::size_t alignment : kAlignments) {
         void* block = ::operator new(kBytes, std::align_val_t(alignment));
         ASSERT_NE(block, nullptr) << "alignment " << alignment << " has to be served";
         EXPECT_EQ(reinterpret_cast<std::uintptr_t>(block) % alignment, 0U) << "alignment " << alignment;
@@ -390,18 +378,15 @@ TEST(CoreAllocationGateTest, EveryAlignmentTheLanguageAllowsIsServed)
     // outside a window that is meant to measure the allocator (see AllocationGate's file note).
     AllocationGate gate;
     gate.begin();
-    for (const std::size_t alignment : kAlignments)
-    {
+    for (const std::size_t alignment : kAlignments) {
         void* block = ::operator new(kBytes, std::align_val_t(alignment));
         ::operator delete(block, std::align_val_t(alignment));
     }
     const std::ptrdiff_t grew = gate.end();
 
-    EXPECT_EQ(gate.allocations(), kCount)
-        << "each alignment asked the allocator for a block (the count is of allocations, not of live blocks - "
-           "see AllocationGate::noteDeallocation)";
-    if (AllocationGate::supported())
-    {
+    EXPECT_EQ(gate.allocations(), kCount) << "each alignment asked the allocator for a block (the count is of allocations, not of live blocks - "
+                                             "see AllocationGate::noteDeallocation)";
+    if (AllocationGate::supported()) {
         EXPECT_EQ(grew, 0) << "and each block was released again by the matching aligned delete";
     }
 }
@@ -423,8 +408,7 @@ TEST(CoreAllocationGateTest, AZeroCountIsOnlyReadWhereSomethingCounts)
 
 TEST(CoreAllocationGateTest, ADeliberateAllocationIsCaught)
 {
-    if (!AllocationGate::supported())
-    {
+    if (!AllocationGate::supported()) {
         GTEST_SKIP() << "this platform cannot report heap usage";
     }
 #if defined(VN_TEST_UNDER_ASAN)
@@ -438,9 +422,8 @@ TEST(CoreAllocationGateTest, ADeliberateAllocationIsCaught)
     AllocationGate gate;
     gate.begin();
     std::vector<int> grows;
-    for (int i = 0; i < 4096; ++i)
-    {
-        grows.push_back(i);  // reallocation after reallocation: this must show up
+    for (int i = 0; i < 4096; ++i) {
+        grows.push_back(i); // reallocation after reallocation: this must show up
     }
     const std::ptrdiff_t grew = gate.end();
 
@@ -474,8 +457,7 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
     //
     // This test is the TRIPWIRE: if either number grows, something started allocating per pass and §0.3 of
     // `docs/guides/vsg-backend.md` has to be re-argued against the new number.
-    ASSERT_TRUE(AllocationGate::countsAvailable())
-        << "this binary must instrument the allocator (see AllocationGate's file note)";
+    ASSERT_TRUE(AllocationGate::countsAvailable()) << "this binary must instrument the allocator (see AllocationGate's file note)";
 
     constexpr int kCalls = 64;
 
@@ -484,52 +466,47 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
         // code really ran (a body that returns a count), and consuming it keeps the bodies free to call
         // `[[nodiscard]]` producers without a cast that this compiler still warns about.
         std::uint64_t sample = 0U;
-        for (int index = 0; index < 8; ++index)
-        {
-            sample += static_cast<std::uint64_t>(body());  // warm-up: the measured code reuses, the first caller may not
+        for (int index = 0; index < 8; ++index) {
+            sample += static_cast<std::uint64_t>(body()); // warm-up: the measured code reuses, the first caller may not
         }
         AllocationGate gate;
         gate.begin();
-        for (int index = 0; index < calls; ++index)
-        {
+        for (int index = 0; index < calls; ++index) {
             sample += static_cast<std::uint64_t>(body());
         }
-        (void)gate.end();  // the byte reading is the second opinion here (see the class it comes from)
+        (void)gate.end(); // the byte reading is the second opinion here (see the class it comes from)
         EXPECT_GT(sample, 0U) << "the measured code has to have run";
         return gate.allocations();
     };
 
     TargetShape shape;
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    ClearValues  policy;
-    policy.color         = true;
+    ClearValues policy;
+    policy.color             = true;
     const std::uint64_t plan = measure(kCalls, [&]() -> std::uint64_t {
-        const vn::graphics::backend::PassClearPlan built =
-            vn::graphics::backend::planClearValues(shape, policy, true, false);
+        const vn::graphics::backend::PassClearPlan built = vn::graphics::backend::planClearValues(shape, policy, true, false);
         return built.colors.size();
     });
     EXPECT_LE(plan, 2u * static_cast<std::uint64_t>(kCalls))
         << "one plan is one small vector (measured: 2 counted allocations per call in this build, which is "
            "this build's cost for a one-element vector)";
 
-    Diagnostics                   diagnostics;
-    vn::vsg::ContentPass::Scope scope;
+    Diagnostics                              diagnostics;
+    vn::vsg::ContentPass::Scope              scope;
     const vn::vsg::ContentPass::Scope::Entry halves[4]{};
-    const auto record_once = [&scope, &halves, &diagnostics]() -> std::uint64_t {
+    const auto                               record_once = [&scope, &halves, &diagnostics]() -> std::uint64_t {
         const vn::vsg::ContentPass recorder(scope, diagnostics);
         return scope.entries.size();
     };
-    scope.entries = std::span<const vn::vsg::ContentPass::Scope::Entry>(halves, 1U);
-    const std::uint64_t one_entry = measure(kCalls, record_once);
-    scope.entries = std::span<const vn::vsg::ContentPass::Scope::Entry>(halves, 4U);
+    scope.entries                    = std::span<const vn::vsg::ContentPass::Scope::Entry>(halves, 1U);
+    const std::uint64_t one_entry    = measure(kCalls, record_once);
+    scope.entries                    = std::span<const vn::vsg::ContentPass::Scope::Entry>(halves, 4U);
     const std::uint64_t four_entries = measure(kCalls, record_once);
-    EXPECT_LE(four_entries, 8u * static_cast<std::uint64_t>(kCalls))
-        << "one recorder is a fixed handful of small vectors (measured: 7 counted allocations per "
-           "construction in this build)";
-    EXPECT_EQ(one_entry, four_entries)
-        << "the episode memory is one row per entry in a vector that is sized ONCE: its cost must not grow "
-           "with the number of entries a pass draws through (a vector per ENTRY would, and that is the shape "
-           "this assertion refuses)";
+    EXPECT_LE(four_entries, 8u * static_cast<std::uint64_t>(kCalls)) << "one recorder is a fixed handful of small vectors (measured: 7 counted allocations per "
+                                                                        "construction in this build)";
+    EXPECT_EQ(one_entry, four_entries) << "the episode memory is one row per entry in a vector that is sized ONCE: its cost must not grow "
+                                          "with the number of entries a pass draws through (a vector per ENTRY would, and that is the shape "
+                                          "this assertion refuses)";
 }
 
 TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
@@ -552,12 +529,12 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     first_facts.wanted.width  = 64;
     first_facts.wanted.height = 64;
     first_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    first_facts.current.desc  = first_facts.wanted;
-    first_facts.current.built = true;
+    first_facts.current.desc                        = first_facts.wanted;
+    first_facts.current.built                       = true;
     vn::graphics::backend::TargetFacts second_facts = first_facts;
-    second_facts.target                       = second.get();
+    second_facts.target                             = second.get();
 
-    const std::vector<RenderCommand> one_draw{ RenderCommand{} };
+    const std::vector<RenderCommand>                      one_draw{ RenderCommand{} };
     const std::vector<vn::graphics::backend::TargetFacts> one_target{ first_facts };
 
     // One frame, recorded the way the API layer records it: one pass, two content draws into the same target.
@@ -567,8 +544,7 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
         EXPECT_TRUE(recorder.beginPass(1U));
         EXPECT_TRUE(recorder.setRenderTarget(target));
-        for (int index = 0; index < draws; ++index)
-        {
+        for (int index = 0; index < draws; ++index) {
             EXPECT_TRUE(recorder.render(one_draw, nullptr));
         }
         EXPECT_TRUE(recorder.endPass());
@@ -583,8 +559,7 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     // allocates 32 bytes, every frame after it nothing), and "steady" is precisely the claim - a frame whose
     // content did not change against an earlier one. Warming up three frames and gating the ones after that
     // is what makes the two windows below a statement about the steady frame and not about glibc.
-    for (std::uint64_t warm_up = 1U; warm_up <= 3U; ++warm_up)
-    {
+    for (std::uint64_t warm_up = 1U; warm_up <= 3U; ++warm_up) {
         record_frame(warm_up, first.get(), 2);
         ASSERT_NE(compile_frame(one_target), nullptr);
     }
@@ -592,33 +567,29 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     // TWO consecutive steady frames, each in its own window: one free frame after a warm-up is a fact about
     // that frame; two in a row is the rule. Both halves of the gate are read: the heap reading (where the
     // platform has one) and the COUNT, which needs no C library and sees the churn the byte reading cannot.
-    ASSERT_TRUE(AllocationGate::countsAvailable())
-        << "the steady-frame rule must be measured by a count: a phase that reads bytes alone asserts nothing "
-           "on a platform whose C library does not report heap usage (see AllocationGate's file note)";
-    const bool          heap_gated = AllocationGate::supported();
-    std::ptrdiff_t      grew_first = 0;
-    std::ptrdiff_t      grew_second = 0;
-    std::uint64_t       counted_first = 0;
-    std::uint64_t       counted_second = 0;
-    std::size_t         arena_first = 0;
-    std::size_t         arena_second = 0;
-    for (std::uint64_t token = 100U; token <= 101U; ++token)
-    {
+    ASSERT_TRUE(AllocationGate::countsAvailable()) << "the steady-frame rule must be measured by a count: a phase that reads bytes alone asserts nothing "
+                                                      "on a platform whose C library does not report heap usage (see AllocationGate's file note)";
+    const bool     heap_gated     = AllocationGate::supported();
+    std::ptrdiff_t grew_first     = 0;
+    std::ptrdiff_t grew_second    = 0;
+    std::uint64_t  counted_first  = 0;
+    std::uint64_t  counted_second = 0;
+    std::size_t    arena_first    = 0;
+    std::size_t    arena_second   = 0;
+    for (std::uint64_t token = 100U; token <= 101U; ++token) {
         AllocationGate gate;
         gate.begin();
         record_frame(token, first.get(), 2);
         compile_frame(one_target);
-        const std::ptrdiff_t grew = gate.end();
-        const std::uint64_t  counted = gate.allocations();
+        const std::ptrdiff_t grew      = gate.end();
+        const std::uint64_t  counted   = gate.allocations();
         const std::size_t    allocated = arena.allocations();
-        if (token == 100U)
-        {
+        if (token == 100U) {
             grew_first    = grew;
             counted_first = counted;
             arena_first   = allocated;
         }
-        else
-        {
+        else {
             grew_second    = grew;
             counted_second = counted;
             arena_second   = allocated;
@@ -643,38 +614,35 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         EXPECT_TRUE(recorder.endFrame());
         EXPECT_TRUE(recorder.swapBuffers());
         const auto* frame = compile_frame({ first_facts, second_facts });
-        return frame != nullptr && frame->passes.size() == 2U && frame->passes[0].pass == 1U &&
-               frame->passes[1].pass == 2U;
+        return frame != nullptr && frame->passes.size() == 2U && frame->passes[0].pass == 1U && frame->passes[1].pass == 2U;
     };
 
     PhaseTable table;
-    table.add(Phase{ "two steady frames allocate nothing",
-                     [&]() {
-                         // The COUNT is the verdict (it is the half that always exists); the byte reading is
-                         // the second opinion where the platform has one.
-                         const bool counted_nothing = counted_first == 0U && counted_second == 0U;
-                         const bool heap_flat = !heap_gated || (grew_first == 0 && grew_second == 0);
-                         return counted_nothing && heap_flat && arena_first == 0U && arena_second == 0U;
-                     } });
+    table.add(Phase{ "two steady frames allocate nothing", [&]() {
+                        // The COUNT is the verdict (it is the half that always exists); the byte reading is
+                        // the second opinion where the platform has one.
+                        const bool counted_nothing = counted_first == 0U && counted_second == 0U;
+                        const bool heap_flat       = !heap_gated || (grew_first == 0 && grew_second == 0);
+                        return counted_nothing && heap_flat && arena_first == 0U && arena_second == 0U;
+                    } });
     table.add(Phase{
-        "counters move by the frame's own shape",
-        [&]() {
-            record_frame(102U, first.get(), 2);
-            const auto* steady = compile_frame(one_target);
-            return steady != nullptr && steady->passes.size() == 1U;
-        },
-        [&]() { return static_cast<std::uint64_t>(observe.counters().draws); },
-        [](std::uint64_t before, std::uint64_t after) { return after == before + 2U; },
+      "counters move by the frame's own shape",
+      [&]() {
+          record_frame(102U, first.get(), 2);
+          const auto* steady = compile_frame(one_target);
+          return steady != nullptr && steady->passes.size() == 1U;
+      },
+      [&]() { return static_cast<std::uint64_t>(observe.counters().draws); },
+      [](std::uint64_t before, std::uint64_t after) { return after == before + 2U; },
     });
     table.add(Phase{
-        "the handed-over order is kept",
-        [&]() { return kept_order(); },
+      "the handed-over order is kept",
+      [&]() { return kept_order(); },
     });
 
     const vn::graphics::backend::PhaseTable::Report report = table.runAll();
-    for (const std::string& line : report.lines)
-    {
-        std::cout << line << '\n';  // the evidence line format, printed so a script can freeze it
+    for (const std::string& line : report.lines) {
+        std::cout << line << '\n'; // the evidence line format, printed so a script can freeze it
     }
 
     EXPECT_TRUE(report.ok()) << "every phase has to pass before this run claims anything";

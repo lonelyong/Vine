@@ -2,14 +2,16 @@
 
 #include <QMetaObject>
 
-namespace vn {
-namespace appfw {
-namespace async {
+namespace vn
+{
+namespace appfw
+{
+namespace async
+{
 
 Scheduler::Scheduler(QObject* parent)
-    : QObject(parent)
-{
-}
+  : QObject(parent)
+{}
 
 Scheduler::~Scheduler() = default;
 
@@ -21,4 +23,4 @@ void Scheduler::postResume(std::coroutine_handle<> h)
 
 } // namespace async
 } // namespace appfw
-} // namespace vine
+} // namespace vn

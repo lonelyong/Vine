@@ -20,13 +20,13 @@
 #include <vine/vsg/internal/DeviceProbe.hpp>
 #include <vine/vsg/internal/DeviceRequirements.hpp>
 
-using vn::vsg::api::probePhysicalDevices;
-using vn::graphics::backend::kDeviceFeatureCount;
 using vn::graphics::backend::kDeviceExtensionCount;
+using vn::graphics::backend::kDeviceFeatureCount;
 using vn::graphics::backend::missingExtensionCount;
 using vn::graphics::backend::missingFeatureCount;
 using vn::graphics::backend::satisfiesRequirements;
 using vn::graphics::backend::supportsRequiredVersion;
+using vn::vsg::api::probePhysicalDevices;
 
 namespace
 {
@@ -37,29 +37,30 @@ std::string as_bytes(const vn::String& text)
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
 
-}  // namespace
+} // namespace
 
 TEST(DeviceProbeTest, EveryOfferedDeviceIsDescribedInTheTermsThePolicyChecks)
 {
     const auto result = probePhysicalDevices();
-    if (!result.ok)
-    {
+    if (!result.ok) {
         GTEST_SKIP() << as_bytes(result.error);
     }
-    if (result.devices.empty())
-    {
+    if (result.devices.empty()) {
         GTEST_SKIP() << "the loader was reachable but offered no physical device";
     }
 
     std::size_t usable = 0;
-    for (const auto& device : result.devices)
-    {
+    for (const auto& device : result.devices) {
         const auto& facts = device.facts;
         std::printf("[device_probe] name=%s api=%u.%u.%u features=%zu/%zu extensions=%zu/%zu usable=%d\n",
-                    as_bytes(device.name).c_str(), (facts.api_version >> 22U) & 0x7FU,
-                    (facts.api_version >> 12U) & 0x3FFU, facts.api_version & 0xFFFU,
-                    kDeviceFeatureCount - missingFeatureCount(facts), kDeviceFeatureCount,
-                    kDeviceExtensionCount - missingExtensionCount(facts), kDeviceExtensionCount,
+                    as_bytes(device.name).c_str(),
+                    (facts.api_version >> 22U) & 0x7FU,
+                    (facts.api_version >> 12U) & 0x3FFU,
+                    facts.api_version & 0xFFFU,
+                    kDeviceFeatureCount - missingFeatureCount(facts),
+                    kDeviceFeatureCount,
+                    kDeviceExtensionCount - missingExtensionCount(facts),
+                    kDeviceExtensionCount,
                     device.usable ? 1 : 0);
         std::fflush(stdout);
 
@@ -68,23 +69,23 @@ TEST(DeviceProbeTest, EveryOfferedDeviceIsDescribedInTheTermsThePolicyChecks)
         // One verdict, not two: the probe copies the policy's answer instead of forming its own.
         EXPECT_EQ(device.usable, satisfiesRequirements(facts));
 
-        if (device.usable)
-        {
+        if (device.usable) {
             ++usable;
             EXPECT_EQ(missingFeatureCount(facts), 0U);
             EXPECT_EQ(missingExtensionCount(facts), 0U) << "the extension half of the floor is checked too";
             EXPECT_TRUE(supportsRequiredVersion(facts.api_version));
         }
-        else
-        {
-            EXPECT_TRUE(!supportsRequiredVersion(facts.api_version) || missingFeatureCount(facts) != 0U ||
-                        missingExtensionCount(facts) != 0U)
+        else {
+            EXPECT_TRUE(!supportsRequiredVersion(facts.api_version) || missingFeatureCount(facts) != 0U || missingExtensionCount(facts) != 0U)
                 << "a refused device must fail the version floor, a feature, or an extension";
         }
     }
 
     EXPECT_EQ(result.usableCount(), usable);
-    std::printf("[device_probe] devices=%zu usable=%zu loader=%u.%u\n", result.devices.size(), usable,
-                (result.loader_version >> 22U) & 0x7FU, (result.loader_version >> 12U) & 0x3FFU);
+    std::printf("[device_probe] devices=%zu usable=%zu loader=%u.%u\n",
+                result.devices.size(),
+                usable,
+                (result.loader_version >> 22U) & 0x7FU,
+                (result.loader_version >> 12U) & 0x3FFU);
     std::fflush(stdout);
 }

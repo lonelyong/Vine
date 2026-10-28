@@ -6,7 +6,7 @@ VN_APPFW_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Document, Object)
 
-Document::Document() = default;
+Document::Document()  = default;
 Document::~Document() = default;
 
 bool Document::canClose() const

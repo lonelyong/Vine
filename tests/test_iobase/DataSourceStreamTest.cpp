@@ -21,12 +21,12 @@
 
 #include "VfsTestSupport.hpp"
 
+using vfstest::bytesOf;
 using vn::io::DataSource;
 using vn::io::DataSourceStream;
 using vn::io::IoError;
 using vn::io::IstreamSource;
 using vn::io::ZipArchive;
-using vfstest::bytesOf;
 
 namespace
 {
@@ -34,15 +34,16 @@ namespace
 /**
  * @brief A stream buffer that offers no seek, the way a pipe or socket does.
  */
-class PipeBuf : public std::streambuf
-{
+class PipeBuf : public std::streambuf {
   public:
     /**
      * @brief Feeds the given text, one read at a time.
      *
      * @param text The bytes this buffer serves.
      */
-    explicit PipeBuf(std::string text) : text_(std::move(text)) {}
+    explicit PipeBuf(std::string text)
+      : text_(std::move(text))
+    {}
 
   protected:
     int_type underflow() override
@@ -70,12 +71,17 @@ class PipeBuf : public std::streambuf
 /**
  * @brief A source that promises ten bytes, delivers four, and says that it failed.
  */
-class FailingSource final : public DataSource
-{
+class FailingSource final : public DataSource {
   public:
-    std::uint64_t size() const override { return 10; }
+    std::uint64_t size() const override
+    {
+        return 10;
+    }
 
-    void rewind() override { produced_ = 0; }
+    void rewind() override
+    {
+        produced_ = 0;
+    }
 
     std::size_t read(std::span<std::byte> out) override
     {
@@ -89,7 +95,10 @@ class FailingSource final : public DataSource
     }
 
     /// Once it has handed over its fourth byte it knows the remaining six will never come.
-    IoError error() const override { return produced_ >= kDelivered ? IoError::IoFailure : IoError::Ok; }
+    IoError error() const override
+    {
+        return produced_ >= kDelivered ? IoError::IoFailure : IoError::Ok;
+    }
 
   private:
     static constexpr std::size_t kDelivered = 4;
@@ -141,7 +150,7 @@ TEST(DataSourceStreamTest, SeeksBackToTheStart)
     auto entry = archive.openRead(u8"text.bin");
     ASSERT_TRUE(entry.ok());
 
-    DataSourceStream in(**entry);
+    DataSourceStream    in(**entry);
     std::array<char, 4> head{};
     in.read(head.data(), 4);
     ASSERT_EQ(std::string(head.data(), 4), "0123");

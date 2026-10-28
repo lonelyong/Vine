@@ -8,11 +8,11 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/vk/Device.h>
 
+#include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -50,60 +50,62 @@
 VN_VSG_NS_BEGIN
 
 /** @brief The host's off-screen targets and the facts the frame is compiled from (see the file note). */
-class VN_VSG_API HostTargets
-{
+class VN_VSG_API HostTargets {
   public:
     /** @brief The SDK's description of one target, copied (see the file note). */
-    struct Description
-    {
-        std::int32_t                                           width{0};         ///< Extent in pixels.
-        std::int32_t                                           height{0};
-        std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats;   ///< One per colour attachment.
-        bool                                                   has_depth{false};   ///< Own or borrowed depth.
-        vn::graphics::RenderTarget::DepthFormat depth_format{vn::graphics::RenderTarget::DepthFormat::D24};
-        bool        depth_promotion{true};      ///< The host asked for a sampleable depth (own depth only).
-        std::uint32_t samples{1};               ///< Samples per pixel the host asked for (see
-                                                ///< RenderTarget::setSamples); the depth follows the colour.
-        const void* depth_source{nullptr};      ///< The lender, when the depth is borrowed (its identity).
-        const void* shadow_light{nullptr};      ///< The light this target is the shadow map of, when stated.
-        bool        has_view_projection{false}; ///< Whether the producer stated how to read the map.
-        vn::math::Mat4d view_projection{};    ///< The producer's projection * view, when stated.
+    struct Description {
+        std::int32_t                                         width{ 0 }; // Extent in pixels.
+        std::int32_t                                         height{ 0 };
+        std::vector<vn::graphics::RenderTarget::ColorFormat> color_formats;      // One per colour attachment.
+        bool                                                 has_depth{ false }; // Own or borrowed depth.
+        vn::graphics::RenderTarget::DepthFormat              depth_format{ vn::graphics::RenderTarget::DepthFormat::D24 };
+        bool                                                 depth_promotion{ true };      // The host asked for a sampleable depth (own depth only).
+        std::uint32_t                                        samples{ 1 };                 // Samples per pixel the host asked for (see
+                                                                                           // RenderTarget::setSamples); the depth follows the colour.
+        const void*                                          depth_source{ nullptr };      // The lender, when the depth is borrowed (its identity).
+        const void*                                          shadow_light{ nullptr };      // The light this target is the shadow map of, when stated.
+        bool                                                 has_view_projection{ false }; // Whether the producer stated how to read the map.
+        vn::math::Mat4d                                      view_projection{};            // The producer's projection * view, when stated.
     };
 
     /** @brief Sets the device's sample-count limit (see Capabilities::max_samples); 0 and 1 mean none. */
-    void setMaxSamples(std::uint32_t samples) noexcept { max_samples_ = samples == 0U ? 1U : samples; }
+    void setMaxSamples(std::uint32_t samples) noexcept
+    {
+        max_samples_ = samples == 0U ? 1U : samples;
+    }
 
     /** @brief Gets the device's sample-count limit (1 when the device cannot multisample). */
-    [[nodiscard]] std::uint32_t maxSamples() const noexcept { return max_samples_; }
+    [[nodiscard]] std::uint32_t maxSamples() const noexcept
+    {
+        return max_samples_;
+    }
 
     /** @brief One host target: the copied description, its objects, and the lender's when its depth is borrowed. */
-    struct Entry
-    {
-        const void*                      identity{nullptr};  ///< The SDK object this entry stands for.
-        Description                      description{};     ///< The snapshot last observed from the host.
-        std::shared_ptr<OffscreenTarget> target{};          ///< The GPU objects, once built.
-        std::shared_ptr<OffscreenTarget> depth_owner{};     ///< The lender's objects, while its depth is reused.
-        vn::graphics::ReportOnce                 report{};          ///< One episode per entry (the caller decides what to say).
-        vn::graphics::ReportOnce                 readback_report{}; ///< A readback refusal's own episode (re-armed by success).
+    struct Entry {
+        const void*                      identity{ nullptr }; // The SDK object this entry stands for.
+        Description                      description{};       // The snapshot last observed from the host.
+        std::shared_ptr<OffscreenTarget> target{};            // The GPU objects, once built.
+        std::shared_ptr<OffscreenTarget> depth_owner{};       // The lender's objects, while its depth is reused.
+        vn::graphics::ReportOnce         report{};            // One episode per entry (the caller decides what to say).
+        vn::graphics::ReportOnce         readback_report{};   // A readback refusal's own episode (re-armed by success).
     };
 
     /** @brief What ensuring an entry did (the caller owns the diagnostic stream and the sentences). */
     enum class State : std::uint8_t
     {
-        Ready,              ///< The entry has objects for its description (or already had them).
-        NotBuilt,           ///< The description cannot make a target yet: no positive extent / no colour.
-        DepthSourceMissing, ///< It borrows a depth from a target this backend does not hold (or has not built).
+        Ready,              // The entry has objects for its description (or already had them).
+        NotBuilt,           // The description cannot make a target yet: no positive extent / no colour.
+        DepthSourceMissing, // It borrows a depth from a target this backend does not hold (or has not built).
         /// The description asks for something this backend cannot build: a sample count above the device's
         /// limit, or a multisampled target that would also have to share/promote/read back its depth.
         SamplesUnsupported,
-        BuildFailed,        ///< The description is complete but the objects could not be created.
+        BuildFailed, // The description is complete but the objects could not be created.
     };
 
     /** @brief The result of @ref ensure. */
-    struct Ensured
-    {
-        Entry* entry{nullptr};      ///< The entry (never null).
-        State  state{State::Ready}; ///< What happened (see State).
+    struct Ensured {
+        Entry* entry{ nullptr };      // The entry (never null).
+        State  state{ State::Ready }; // What happened (see State).
     };
 
   public:
@@ -169,12 +171,11 @@ class VN_VSG_API HostTargets
     static void describe(const vn::graphics::RenderTarget& target, Description& out);
 
     /** @brief Builds @p entry's objects when it has none and its description can make them. */
-    [[nodiscard]] static State build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device,
-                                     std::uint32_t max_samples);
+    [[nodiscard]] static State build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device, std::uint32_t max_samples);
 
   private:
-    std::vector<std::unique_ptr<Entry>> entries_;  ///< The held targets, in first-announced order.
-    std::uint32_t                      max_samples_{1};  ///< The device's limit (see setMaxSamples).
+    std::vector<std::unique_ptr<Entry>> entries_;          // The held targets, in first-announced order.
+    std::uint32_t                       max_samples_{ 1 }; // The device's limit (see setMaxSamples).
 };
 
 VN_VSG_NS_END

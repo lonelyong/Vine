@@ -20,9 +20,9 @@
 
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/DocumentManager.hpp>
+#include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/DocumentView.hpp>
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
-#include <vine/appfw/gui/DockPanelManager.hpp>
 
 #include "ControlData.hpp"
 
@@ -42,7 +42,8 @@ QString qtText(const String& text)
 /// here" is explained rather than shown as an empty area.
 class MessagePage final : public Control {
   public:
-    explicit MessagePage(QWidget* parent = nullptr) : Control(new QWidget(parent), /*owns=*/false)
+    explicit MessagePage(QWidget* parent = nullptr)
+      : Control(new QWidget(parent), /*owns=*/false)
     {
         // owns=false on purpose: the container is the widget's real owner (see the class note of CentralDocumentHost).
         auto* root   = impl<QWidget>();
@@ -87,8 +88,7 @@ class DocumentTabBar final : public QTabBar {
 
         // Both forms count: Qt sends ApplicationPaletteChange to the application/top-levels and PaletteChange to the
         // rest, and which one a widget sees depends on where it sits.
-        const bool palette_changed =
-            event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange;
+        const bool palette_changed = event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange;
         if (!palette_changed || repolishing_) {
             return;
         }
@@ -154,7 +154,7 @@ class FloatingDocumentWindow final : public QWidget {
         // bar, so it needs a title of its own, not just a label inside it.
         setWindowTitle(title);
 
-        auto* root   = new QVBoxLayout(this);
+        auto* root = new QVBoxLayout(this);
         root->setContentsMargins(0, 0, 0, 0);
         root->setSpacing(0);
 
@@ -287,10 +287,9 @@ VN_OBJECT_META_IMPL(CentralDocumentHost, Control)
 
 struct CentralDocumentHost::Impl : public ControlData {
     /// One open document: its tab, its view (built lazily) and, while floated, the window holding its page.
-    struct Entry
-    {
-        vn::appfw::Document*                   document = nullptr;
-        std::unique_ptr<DocumentView>          view;
+    struct Entry {
+        vn::appfw::Document*                    document = nullptr;
+        std::unique_ptr<DocumentView>           view;
         std::unique_ptr<FloatingDocumentWindow> window;
 
         /// @return The page widget of the view, or nullptr when the view has none / was never built.
@@ -379,11 +378,11 @@ struct CentralDocumentHost::Impl : public ControlData {
         // Blocked: QTabBar emits currentChanged for its own bookkeeping, and a tab added to an empty strip becomes
         // selected - which must not silently change the manager's current document (create() does not select).
         const QSignalBlocker blocker(tabs);
-        const int             index = tabs->addTab(qtText(document.title()));
+        const int            index = tabs->addTab(qtText(document.title()));
 
         // The tab bar owns the button and deletes it with the tab, so the callback may name the document by pointer:
         // a closed document takes its button (and this connection) with it.
-        auto* const               close  = new TabCloseButton(tabs);
+        auto* const                close  = new TabCloseButton(tabs);
         vn::appfw::Document* const target = &document;
         QObject::connect(close, &QToolButton::clicked, tabs, [this, target] {
             if (documents != nullptr) {
@@ -538,8 +537,7 @@ struct CentralDocumentHost::Impl : public ControlData {
     }
 };
 
-CentralDocumentHost::CentralDocumentHost(vn::appfw::DocumentManager& documents, DocumentViewRegistry& views,
-                                        DockPanelManager& docks)
+CentralDocumentHost::CentralDocumentHost(vn::appfw::DocumentManager& documents, DocumentViewRegistry& views, DockPanelManager& docks)
   : Control(new Impl(), new QWidget())
 {
     auto* d      = dptr();
@@ -619,8 +617,7 @@ CentralDocumentHost::CentralDocumentHost(vn::appfw::DocumentManager& documents, 
     // Moving a tab reorders the strip only; entries (and therefore the tab <-> document mapping) move with it.
     QObject::connect(d->tabs, &QTabBar::tabMoved, root, [this](int from, int to) {
         auto* d = dptr();
-        if (from < 0 || to < 0 || static_cast<std::size_t>(from) >= d->entries.size()
-            || static_cast<std::size_t>(to) >= d->entries.size()) {
+        if (from < 0 || to < 0 || static_cast<std::size_t>(from) >= d->entries.size() || static_cast<std::size_t>(to) >= d->entries.size()) {
             return;
         }
 
@@ -658,7 +655,7 @@ CentralDocumentHost::CentralDocumentHost(vn::appfw::DocumentManager& documents, 
         }
         const bool floating = d->entries[static_cast<std::size_t>(index)].window != nullptr;
 
-        QMenu menu(d->tabs);
+        QMenu          menu(d->tabs);
         QAction* const toggle = menu.addAction(floating ? QStringLiteral("停靠回中央区") : QStringLiteral("浮动到独立窗口"));
         menu.addSeparator();
         QAction* const close_action = menu.addAction(QStringLiteral("关闭文档"));
@@ -695,26 +692,23 @@ CentralDocumentHost::CentralDocumentHost(vn::appfw::DocumentManager& documents, 
     });
 
     // `opened` adds the tab (it does not select: create() leaves the current document alone).
-    d->connections.push_back(documents.opened.connect(
-        [this](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
-            if (args.document() != nullptr) {
-                dptr()->addTab(*args.document());
-            }
-        }));
+    d->connections.push_back(documents.opened.connect([this](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
+        if (args.document() != nullptr) {
+            dptr()->addTab(*args.document());
+        }
+    }));
 
     // `currentChanged` drives the screen and the strip: selecting a document shows it and selects its tab.
-    d->connections.push_back(documents.currentChanged.connect(
-        [this](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs&) { syncToCurrentDocument(); }));
+    d->connections.push_back(documents.currentChanged.connect([this](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs&) { syncToCurrentDocument(); }));
 
     // `closed` is where the view and the tab of that document go: one view per instance means it dies with it. The
     // replacement selection belongs to removing the tab (see Impl::removeTab): a QTabBar cannot render "nothing is
     // selected", so the tab that takes the closed one's place is REQUESTED as current and the manager decides.
-    d->connections.push_back(documents.closed.connect(
-        [this](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
-            if (args.document() != nullptr) {
-                dptr()->removeTab(*args.document());
-            }
-        }));
+    d->connections.push_back(documents.closed.connect([this](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
+        if (args.document() != nullptr) {
+            dptr()->removeTab(*args.document());
+        }
+    }));
 
     // Documents that were already open when this host was built get their tabs now.
     for (vn::appfw::Document* document : documents.documents()) {

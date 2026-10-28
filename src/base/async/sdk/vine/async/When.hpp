@@ -24,15 +24,16 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Whether a composition waits for every child or the first child.
  */
 enum class WhenMode
 {
-    All,  ///< Wait for every child (whenAll).
-    Any   ///< Wait for the first child (whenAny).
+    All, // Wait for every child (whenAll).
+    Any  // Wait for the first child (whenAny).
 };
 
 /**
@@ -57,8 +58,7 @@ enum class WhenMode
  * policy decides whether being done means "ask them to stop and wait" or "destroy them now". A
  * Destroy composition never calls source.request_stop(), so the token its children see stays inert.
  */
-struct WhenState
-{
+struct WhenState {
     std::atomic<std::size_t> remaining{ 0 };
     std::atomic<bool>        exception_recorded{ false };
     std::atomic<bool>        any_finished{ false };
@@ -83,16 +83,14 @@ struct WhenState
  * @param state Shared state whose remaining counter is drained.
  * @return A task completing once every child has finished.
  */
-template<typename State>
+template <typename State>
 Task<void> drainChildren(std::shared_ptr<State> state)
 {
     state->source.request_stop();
 
-    while (state->remaining.load() != 0)
-    {
+    while (state->remaining.load() != 0) {
         state->done.reset();
-        if (state->remaining.load() == 0)
-        {
+        if (state->remaining.load() == 0) {
             break;
         }
         co_await state->done;
@@ -107,11 +105,9 @@ Task<void> drainChildren(std::shared_ptr<State> state)
  * composition. On completion the child ticks the shared state and stays
  * suspended at final_suspend until the composition destroys it.
  */
-class WhenChild
-{
+class WhenChild {
   public:
-    struct promise_type
-    {
+    struct promise_type {
         std::shared_ptr<WhenState> state;
 
         [[nodiscard]]
@@ -120,10 +116,12 @@ class WhenChild
             return WhenChild{ std::coroutine_handle<promise_type>::from_promise(*this) };
         }
 
-        std::suspend_always initial_suspend() noexcept { return {}; }
-
-        struct FinalAwaiter
+        std::suspend_always initial_suspend() noexcept
         {
+            return {};
+        }
+
+        struct FinalAwaiter {
             [[nodiscard]]
             bool await_ready() const noexcept
             {
@@ -135,16 +133,14 @@ class WhenChild
                 // A thread-stack copy keeps the state alive through done.set(),
                 // which resumes the composition to completion and destroys the
                 // frames (children included) that also hold references.
-                auto  state = h.promise().state;
-                bool  failed = h.promise().exception != nullptr;
-                bool  finish = false;
+                auto state  = h.promise().state;
+                bool failed = h.promise().exception != nullptr;
+                bool finish = false;
 
-                if (state->mode == WhenMode::All)
-                {
+                if (state->mode == WhenMode::All) {
                     // Record the first failure among all children, in any order.
                     const bool first_failure = failed && !state->exception_recorded.exchange(true);
-                    if (first_failure)
-                    {
+                    if (first_failure) {
                         state->first_exception = std::move(h.promise().exception);
                     }
                     const bool last = (--state->remaining == 0);
@@ -152,24 +148,21 @@ class WhenChild
                     // only under StopAndWait, where it is the cue to ask the survivors to stop and
                     // then keep waiting; under Destroy waking early would make the composition
                     // abandon and destroy them, which is the behaviour that policy exists to keep.
-                    finish = last || (first_failure && state->policy == CancelPolicy::StopAndWait);
+                    finish          = last || (first_failure && state->policy == CancelPolicy::StopAndWait);
                 }
-                else
-                {
+                else {
                     // Only the first child to finish publishes its failure.
                     const bool first = !state->any_finished.exchange(true);
-                    if (first && failed)
-                    {
+                    if (first && failed) {
                         state->first_exception = std::move(h.promise().exception);
                     }
                     const bool last = (--state->remaining == 0);
                     // Under StopAndWait the losers are still on their way out after the first one
                     // won, so the composition has to be woken again when the last of them reports.
-                    finish = first || (last && state->policy == CancelPolicy::StopAndWait);
+                    finish          = first || (last && state->policy == CancelPolicy::StopAndWait);
                 }
 
-                if (finish)
-                {
+                if (finish) {
                     state->done.set();
                 }
 
@@ -177,14 +170,22 @@ class WhenChild
                 return std::noop_coroutine();
             }
 
-            void await_resume() const noexcept {}
+            void await_resume() const noexcept
+            {}
         };
 
-        FinalAwaiter final_suspend() noexcept { return {}; }
+        FinalAwaiter final_suspend() noexcept
+        {
+            return {};
+        }
 
-        void return_void() noexcept {}
+        void return_void() noexcept
+        {}
 
-        void unhandled_exception() noexcept { exception = std::current_exception(); }
+        void unhandled_exception() noexcept
+        {
+            exception = std::current_exception();
+        }
 
         std::exception_ptr exception{};
     };
@@ -193,16 +194,18 @@ class WhenChild
 
     WhenChild() noexcept = default;
 
-    explicit WhenChild(handle_type h) noexcept : handle_(h) {}
+    explicit WhenChild(handle_type h) noexcept
+      : handle_(h)
+    {}
 
-    WhenChild(WhenChild&& other) noexcept : handle_(std::exchange(other.handle_, {})) {}
+    WhenChild(WhenChild&& other) noexcept
+      : handle_(std::exchange(other.handle_, {}))
+    {}
 
     WhenChild& operator=(WhenChild&& other) noexcept
     {
-        if (this != &other)
-        {
-            if (handle_)
-            {
+        if (this != &other) {
+            if (handle_) {
                 handle_.destroy();
             }
             handle_ = std::exchange(other.handle_, {});
@@ -212,13 +215,12 @@ class WhenChild
 
     ~WhenChild()
     {
-        if (handle_)
-        {
+        if (handle_) {
             handle_.destroy();
         }
     }
 
-    WhenChild(const WhenChild&) = delete;
+    WhenChild(const WhenChild&)            = delete;
     WhenChild& operator=(const WhenChild&) = delete;
 
     /// Binds the shared state and starts driving the sub-task.
@@ -265,16 +267,12 @@ inline WhenChild composeChild(AnyTask task, std::stop_token token)
  * @return A task completing per mode, rethrowing the first child failure.
  */
 [[nodiscard]]
-Task<void> whenRace(WhenMode mode,
-                    std::vector<AnyTask> tasks,
-                    CancellationToken token,
-                    CancelPolicy policy)
+Task<void> whenRace(WhenMode mode, std::vector<AnyTask> tasks, CancellationToken token, CancelPolicy policy)
 {
     throwIfCancelled(token);
 
     const std::size_t count = tasks.size();
-    if (count == 0)
-    {
+    if (count == 0) {
         co_return;
     }
 
@@ -283,7 +281,7 @@ Task<void> whenRace(WhenMode mode,
     // (which owns the event) while set() runs would be a use-after-free. The
     // shared state stays alive through set() via thread-stack copies held by
     // the stop callback and by the completing child's FinalAwaiter.
-    auto state = std::make_shared<WhenState>();
+    auto state       = std::make_shared<WhenState>();
     state->mode      = mode;
     state->policy    = policy;
     state->remaining = count;
@@ -294,35 +292,30 @@ Task<void> whenRace(WhenMode mode,
     // stop_callback while its own callback is still on the stack - the same-thread destruction
     // the standard leaves undefined (see detail::deferWake).
     std::stop_callback cancellation{ token, [state]() noexcept {
-        state->cancelled = true;
-        detail::deferWake(state);
-    } };
+                                        state->cancelled = true;
+                                        detail::deferWake(state);
+                                    } };
 
     std::vector<WhenChild> children;
     children.reserve(count);
     const std::stop_token environment = state->source.get_token();
-    for (auto& task : tasks)
-    {
+    for (auto& task : tasks) {
         children.push_back(composeChild(std::move(task), environment));
     }
-    for (auto& child : children)
-    {
+    for (auto& child : children) {
         child.start(state);
     }
 
     co_await state->done;
 
-    if (state->policy == CancelPolicy::StopAndWait)
-    {
+    if (state->policy == CancelPolicy::StopAndWait) {
         co_await drainChildren(state);
     }
 
-    if (state->cancelled)
-    {
+    if (state->cancelled) {
         throw TaskCancelledException{};
     }
-    if (state->first_exception)
-    {
+    if (state->first_exception) {
         std::rethrow_exception(state->first_exception);
     }
 }
@@ -337,15 +330,13 @@ Task<void> whenRace(WhenMode mode,
  * overload set of a call it is not even meant to win - whenAll(std::vector<AnyTask>), where AnyTask
  * is Task<void> and the plain non-template overload is the one that should be chosen.
  */
-template<typename T, bool IsVoid = std::is_void_v<T>>
-struct VectorResult
-{
+template <typename T, bool IsVoid = std::is_void_v<T>>
+struct VectorResult {
     using type = std::vector<T>;
 };
 
-template<typename T>
-struct VectorResult<T, true>
-{
+template <typename T>
+struct VectorResult<T, true> {
     using type = void;
 };
 
@@ -356,29 +347,25 @@ struct VectorResult<T, true>
  * same reason as the void case of VectorResult: it keeps their declarations substitutable for
  * Task<void> arguments instead of failing on std::tuple<void> while forming them.
  */
-struct VoidResult
-{
-};
+struct VoidResult {};
 
 /**
  * @brief One slot of that tuple: the task's result type, or the placeholder for a void task.
  */
-template<typename T, bool IsVoid = std::is_void_v<T>>
-struct TupleResult
-{
+template <typename T, bool IsVoid = std::is_void_v<T>>
+struct TupleResult {
     using type = T;
 };
 
-template<typename T>
-struct TupleResult<T, true>
-{
+template <typename T>
+struct TupleResult<T, true> {
     using type = VoidResult;
 };
 
 /**
  * @brief Tuple a variadic whenAll produces, substitutable for void argument types.
  */
-template<typename... Ts>
+template <typename... Ts>
 using TupleResults = std::tuple<typename TupleResult<Ts>::type...>;
 
 } // namespace detail
@@ -402,14 +389,11 @@ using TupleResults = std::tuple<typename TupleResult<Ts>::type...>;
  * @return A task that completes when every input task completes.
  */
 [[nodiscard]]
-Task<void> whenAll(std::vector<AnyTask> tasks,
-                   CancellationToken token = {},
-                   CancelPolicy policy = CancelPolicy::StopAndWait)
+Task<void> whenAll(std::vector<AnyTask> tasks, CancellationToken token = {}, CancelPolicy policy = CancelPolicy::StopAndWait)
 {
     // Forwarded, not wrapped in another coroutine: the driver is already lazy and
     // owns the children, so an extra frame would buy nothing.
-    return detail::whenRace(
-        detail::WhenMode::All, std::move(tasks), std::move(token), policy);
+    return detail::whenRace(detail::WhenMode::All, std::move(tasks), std::move(token), policy);
 }
 
 /**
@@ -429,15 +413,13 @@ Task<void> whenAll(std::vector<AnyTask> tasks,
  * @return A task that completes when the first input task completes.
  */
 [[nodiscard]]
-Task<void> whenAny(std::vector<AnyTask> tasks,
-                   CancellationToken token = {},
-                   CancelPolicy policy = CancelPolicy::Destroy)
+Task<void> whenAny(std::vector<AnyTask> tasks, CancellationToken token = {}, CancelPolicy policy = CancelPolicy::Destroy)
 {
-    return detail::whenRace(
-        detail::WhenMode::Any, std::move(tasks), std::move(token), policy);
+    return detail::whenRace(detail::WhenMode::Any, std::move(tasks), std::move(token), policy);
 }
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Child coroutine that drives one typed task and stores its result.
@@ -452,18 +434,16 @@ namespace detail {
  * @param slot Where to store the result on success.
  * @param token Environment token handed to the task before it starts.
  */
-template<typename T>
+template <typename T>
 WhenChild composeChildResult(Task<T> task, std::optional<T>* slot, std::stop_token token)
 {
     TaskEnvironment::setToken(task, token);
 
-    if constexpr (std::is_void_v<T>)
-    {
+    if constexpr (std::is_void_v<T>) {
         co_await std::move(task);
         co_return;
     }
-    else
-    {
+    else {
         slot->emplace(co_await std::move(task));
         co_return;
     }
@@ -478,47 +458,41 @@ WhenChild composeChildResult(Task<T> task, std::optional<T>* slot, std::stop_tok
  * @param tasks Tasks to await.
  * @return A task producing the tuple of all results.
  */
-template<typename... Ts>
+template <typename... Ts>
 [[nodiscard]]
 Task<std::tuple<Ts...>> whenAllImpl(CancellationToken token, CancelPolicy policy, Task<Ts>... tasks)
 {
     throwIfCancelled(token);
 
-    auto state = std::make_shared<detail::WhenState>();
+    auto state       = std::make_shared<detail::WhenState>();
     state->mode      = detail::WhenMode::All;
     state->policy    = policy;
     state->remaining = sizeof...(Ts);
 
     // Cancellation is handed to the timer thread; see whenRace() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
-        state->cancelled = true;
-        detail::deferWake(state);
-    } };
+                                        state->cancelled = true;
+                                        detail::deferWake(state);
+                                    } };
 
     std::tuple<std::optional<Ts>...> results;
     const std::stop_token            environment = state->source.get_token();
-    auto children = std::apply(
-        [&tasks..., environment](auto&... slot) {
-            return std::make_tuple(
-                detail::composeChildResult(std::move(tasks), &slot, environment)...);
-        },
-        results);
+    auto                             children =
+        std::apply([&tasks..., environment](auto&... slot) { return std::make_tuple(detail::composeChildResult(std::move(tasks), &slot, environment)...); },
+                   results);
 
     std::apply([&state](auto&... child) { (child.start(state), ...); }, children);
 
     co_await state->done;
 
-    if (state->policy == CancelPolicy::StopAndWait)
-    {
+    if (state->policy == CancelPolicy::StopAndWait) {
         co_await drainChildren(state);
     }
 
-    if (state->cancelled)
-    {
+    if (state->cancelled) {
         throw TaskCancelledException{};
     }
-    if (state->first_exception)
-    {
+    if (state->first_exception) {
         std::rethrow_exception(state->first_exception);
     }
 
@@ -533,17 +507,16 @@ Task<std::tuple<Ts...>> whenAllImpl(CancellationToken token, CancelPolicy policy
  * policy decides whether the composition waits for the losers (StopAndWait) or destroys them
  * (Destroy). Only StopAndWait reads remaining, which counts the children that have not reported.
  */
-template<typename T>
-struct WhenAnyState
-{
+template <typename T>
+struct WhenAnyState {
     std::atomic<std::size_t> remaining{ 0 };
-    std::atomic<bool>  first_done{ false };
-    std::atomic<bool>  cancelled{ false };
-    CancelPolicy       policy{ CancelPolicy::Destroy };
-    std::exception_ptr exception{};
-    std::optional<T>   result{};
-    std::stop_source   source{};
-    AsyncEvent         done;
+    std::atomic<bool>        first_done{ false };
+    std::atomic<bool>        cancelled{ false };
+    CancelPolicy             policy{ CancelPolicy::Destroy };
+    std::exception_ptr       exception{};
+    std::optional<T>         result{};
+    std::stop_source         source{};
+    AsyncEvent               done;
 };
 
 /**
@@ -553,15 +526,13 @@ struct WhenAnyState
  * the shared state; later children stay suspended until the composition
  * destroys them. The result is stored in the child's promise by return_value.
  */
-template<typename T>
-class WhenAnyChild
-{
+template <typename T>
+class WhenAnyChild {
   public:
-    struct promise_type
-    {
+    struct promise_type {
         std::shared_ptr<WhenAnyState<T>> state{};
-        std::exception_ptr exception{};
-        std::optional<T> result{};
+        std::exception_ptr               exception{};
+        std::optional<T>                 result{};
 
         [[nodiscard]]
         WhenAnyChild get_return_object() noexcept
@@ -569,10 +540,12 @@ class WhenAnyChild
             return WhenAnyChild{ std::coroutine_handle<promise_type>::from_promise(*this) };
         }
 
-        std::suspend_always initial_suspend() noexcept { return {}; }
-
-        struct FinalAwaiter
+        std::suspend_always initial_suspend() noexcept
         {
+            return {};
+        }
+
+        struct FinalAwaiter {
             [[nodiscard]]
             bool await_ready() const noexcept
             {
@@ -581,31 +554,26 @@ class WhenAnyChild
 
             std::coroutine_handle<> await_suspend(std::coroutine_handle<promise_type> h) noexcept
             {
-                auto& p = h.promise();
+                auto& p    = h.promise();
                 // Thread-stack copy keeps the state alive through done.set().
-                auto  state = p.state;
+                auto state = p.state;
 
                 // Only the first child to finish publishes its outcome.
                 const bool first = !state->first_done.exchange(true);
-                if (first)
-                {
-                    if (p.exception)
-                    {
+                if (first) {
+                    if (p.exception) {
                         state->exception = std::move(p.exception);
                     }
-                    else
-                    {
+                    else {
                         assert(p.result.has_value());
                         // A result whose move constructor throws must not escape this noexcept
                         // await_suspend: nothing here could catch it, so the process would
                         // terminate. It becomes this child's failure instead, and the
                         // composition rethrows it like any other.
-                        try
-                        {
+                        try {
                             state->result.emplace(std::move(p.result).value());
                         }
-                        catch (...)
-                        {
+                        catch (...) {
                             state->exception = std::current_exception();
                         }
                     }
@@ -614,8 +582,7 @@ class WhenAnyChild
                 // StopAndWait keeps waiting after the winner has published, so the composition has
                 // to be woken again when the last of the losers reports.
                 const bool last = (--state->remaining == 0);
-                if (first || (last && state->policy == CancelPolicy::StopAndWait))
-                {
+                if (first || (last && state->policy == CancelPolicy::StopAndWait)) {
                     state->done.set();
                 }
 
@@ -623,41 +590,48 @@ class WhenAnyChild
                 return std::noop_coroutine();
             }
 
-            void await_resume() const noexcept {}
+            void await_resume() const noexcept
+            {}
         };
 
-        FinalAwaiter final_suspend() noexcept { return {}; }
+        FinalAwaiter final_suspend() noexcept
+        {
+            return {};
+        }
 
         /// A value that cannot be moved into the frame is reported as this child's failure.
         void return_value(T value)
         {
-            try
-            {
+            try {
                 result.emplace(std::move(value));
             }
-            catch (...)
-            {
+            catch (...) {
                 exception = std::current_exception();
             }
         }
 
-        void unhandled_exception() noexcept { exception = std::current_exception(); }
+        void unhandled_exception() noexcept
+        {
+            exception = std::current_exception();
+        }
     };
 
     using handle_type = std::coroutine_handle<promise_type>;
 
     WhenAnyChild() noexcept = default;
 
-    explicit WhenAnyChild(handle_type h) noexcept : handle_(h) {}
+    explicit WhenAnyChild(handle_type h) noexcept
+      : handle_(h)
+    {}
 
-    WhenAnyChild(WhenAnyChild&& other) noexcept : handle_(std::exchange(other.handle_, {})) {}
+    WhenAnyChild(WhenAnyChild&& other) noexcept
+      : handle_(std::exchange(other.handle_, {}))
+    {}
 
     WhenAnyChild& operator=(WhenAnyChild&& other) noexcept
     {
-        if (this != &other)
-        {
-            if (handle_)
-            {
+        if (this != &other) {
+            if (handle_) {
                 handle_.destroy();
             }
             handle_ = std::exchange(other.handle_, {});
@@ -667,13 +641,12 @@ class WhenAnyChild
 
     ~WhenAnyChild()
     {
-        if (handle_)
-        {
+        if (handle_) {
             handle_.destroy();
         }
     }
 
-    WhenAnyChild(const WhenAnyChild&) = delete;
+    WhenAnyChild(const WhenAnyChild&)            = delete;
     WhenAnyChild& operator=(const WhenAnyChild&) = delete;
 
     /// Binds the shared state and starts driving the sub-task.
@@ -695,18 +668,16 @@ class WhenAnyChild
  * @param token Environment token handed to the task before it starts.
  * @return The child to start.
  */
-template<typename T>
+template <typename T>
 WhenAnyChild<T> composeAnyChild(Task<T> task, std::stop_token token)
 {
     TaskEnvironment::setToken(task, token);
 
-    if constexpr (std::is_void_v<T>)
-    {
+    if constexpr (std::is_void_v<T>) {
         co_await std::move(task);
         co_return;
     }
-    else
-    {
+    else {
         co_return co_await std::move(task);
     }
 }
@@ -721,8 +692,8 @@ WhenAnyChild<T> composeAnyChild(Task<T> task, std::stop_token token)
  * @param tasks Tasks to move into the container.
  * @return The tasks in argument order.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 std::vector<AnyTask> toAnyTasks(Task<Ts>... tasks)
 {
     std::vector<AnyTask> all;
@@ -751,22 +722,20 @@ std::vector<AnyTask> toAnyTasks(Task<Ts>... tasks)
  *        argument.
  * @return A task producing the tuple of all results.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
 [[nodiscard]]
 Task<detail::TupleResults<Ts...>> whenAll(Task<Ts>... tasks)
 {
-    co_return co_await detail::whenAllImpl(
-        CancellationToken{}, CancelPolicy::StopAndWait, std::move(tasks)...);
+    co_return co_await detail::whenAllImpl(CancellationToken{}, CancelPolicy::StopAndWait, std::move(tasks)...);
 }
 
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
 [[nodiscard]]
 Task<detail::TupleResults<Ts...>> whenAll(CancellationToken token, Task<Ts>... tasks)
 {
-    co_return co_await detail::whenAllImpl(
-        std::move(token), CancelPolicy::StopAndWait, std::move(tasks)...);
+    co_return co_await detail::whenAllImpl(std::move(token), CancelPolicy::StopAndWait, std::move(tasks)...);
 }
 
 /**
@@ -781,8 +750,8 @@ Task<detail::TupleResults<Ts...>> whenAll(CancellationToken token, Task<Ts>... t
  * @param tasks Tasks to await; each must be non-empty.
  * @return A task producing the tuple of all results.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
 [[nodiscard]]
 Task<detail::TupleResults<Ts...>> whenAll(CancelPolicy policy, Task<Ts>... tasks)
 {
@@ -798,8 +767,8 @@ Task<detail::TupleResults<Ts...>> whenAll(CancelPolicy policy, Task<Ts>... tasks
  * @param tasks Tasks to await; each must be non-empty.
  * @return A task producing the tuple of all results.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts>>...>)
 [[nodiscard]]
 Task<detail::TupleResults<Ts...>> whenAll(CancelPolicy policy, CancellationToken token, Task<Ts>... tasks)
 {
@@ -821,26 +790,20 @@ Task<detail::TupleResults<Ts...>> whenAll(CancelPolicy policy, CancellationToken
  *        argument.
  * @return A task completing when every input task completes.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAll(Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::All,
-                              detail::toAnyTasks(std::move(tasks)...),
-                              CancellationToken{},
-                              CancelPolicy::StopAndWait);
+    co_await detail::whenRace(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, CancelPolicy::StopAndWait);
 }
 
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAll(CancellationToken token, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::All,
-                              detail::toAnyTasks(std::move(tasks)...),
-                              std::move(token),
-                              CancelPolicy::StopAndWait);
+    co_await detail::whenRace(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), std::move(token), CancelPolicy::StopAndWait);
 }
 
 /**
@@ -854,15 +817,12 @@ Task<void> whenAll(CancellationToken token, Task<Ts>... tasks)
  * @param tasks Tasks to await; each must be non-empty.
  * @return A task completing when every input task completes.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAll(CancelPolicy policy, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::All,
-                              detail::toAnyTasks(std::move(tasks)...),
-                              CancellationToken{},
-                              policy);
+    co_await detail::whenRace(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, policy);
 }
 
 /**
@@ -874,15 +834,12 @@ Task<void> whenAll(CancelPolicy policy, Task<Ts>... tasks)
  * @param tasks Tasks to await; each must be non-empty.
  * @return A task completing when every input task completes.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAll(CancelPolicy policy, CancellationToken token, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::All,
-                              detail::toAnyTasks(std::move(tasks)...),
-                              std::move(token),
-                              policy);
+    co_await detail::whenRace(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), std::move(token), policy);
 }
 
 /**
@@ -904,65 +861,56 @@ Task<void> whenAll(CancelPolicy policy, CancellationToken token, Task<Ts>... tas
  * @param policy What to do with children the composition is done with; defaults to waiting.
  * @return A task producing the vector of all results.
  */
-template<typename T>
-    requires (!std::is_void_v<T>)
+template <typename T>
+requires(!std::is_void_v<T>)
 [[nodiscard]]
-Task<typename detail::VectorResult<T>::type> whenAll(std::vector<Task<T>> tasks,
-                                                     CancellationToken token = {},
-                                                     CancelPolicy policy = CancelPolicy::StopAndWait)
+Task<typename detail::VectorResult<T>::type> whenAll(std::vector<Task<T>> tasks, CancellationToken token = {}, CancelPolicy policy = CancelPolicy::StopAndWait)
 {
     throwIfCancelled(token);
 
     const std::size_t count = tasks.size();
-    if (count == 0)
-    {
+    if (count == 0) {
         co_return {};
     }
 
-    auto state = std::make_shared<detail::WhenState>();
+    auto state       = std::make_shared<detail::WhenState>();
     state->mode      = detail::WhenMode::All;
     state->policy    = policy;
     state->remaining = count;
 
     // Cancellation is handed to the timer thread; see whenRace() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
-        state->cancelled = true;
-        detail::deferWake(state);
-    } };
+                                        state->cancelled = true;
+                                        detail::deferWake(state);
+                                    } };
 
-    std::vector<std::optional<T>> results(count);
+    std::vector<std::optional<T>>  results(count);
     std::vector<detail::WhenChild> children;
     children.reserve(count);
     const std::stop_token environment = state->source.get_token();
-    for (std::size_t i = 0; i < count; ++i)
-    {
+    for (std::size_t i = 0; i < count; ++i) {
         children.push_back(detail::composeChildResult(std::move(tasks[i]), &results[i], environment));
     }
-    for (auto& child : children)
-    {
+    for (auto& child : children) {
         child.start(state);
     }
 
     co_await state->done;
 
-    if (state->policy == CancelPolicy::StopAndWait)
-    {
+    if (state->policy == CancelPolicy::StopAndWait) {
         co_await detail::drainChildren(state);
     }
 
-    if (state->cancelled)
-    {
+    if (state->cancelled) {
         throw TaskCancelledException{};
     }
-    if (state->first_exception)
-    {
+    if (state->first_exception) {
         std::rethrow_exception(state->first_exception);
     }
 
     std::vector<T> out;
     out.reserve(count);
-    for (auto& slot : results)
-    {
+    for (auto& slot : results) {
         out.push_back(std::move(*slot));
     }
     co_return out;
@@ -985,56 +933,48 @@ Task<typename detail::VectorResult<T>::type> whenAll(std::vector<Task<T>> tasks,
  * @param policy What to do with children the composition is done with; defaults to destroying.
  * @return A task producing the first task's result.
  */
-template<typename T>
-    requires (!std::is_void_v<T>)
+template <typename T>
+requires(!std::is_void_v<T>)
 [[nodiscard]]
-Task<T> whenAny(std::vector<Task<T>> tasks,
-                CancellationToken token = {},
-                CancelPolicy policy = CancelPolicy::Destroy)
+Task<T> whenAny(std::vector<Task<T>> tasks, CancellationToken token = {}, CancelPolicy policy = CancelPolicy::Destroy)
 {
     throwIfCancelled(token);
 
     const std::size_t count = tasks.size();
-    if (count == 0)
-    {
+    if (count == 0) {
         throw std::invalid_argument("async::whenAny: empty task list");
     }
 
-    auto state = std::make_shared<detail::WhenAnyState<T>>();
+    auto state       = std::make_shared<detail::WhenAnyState<T>>();
     state->policy    = policy;
     state->remaining = count;
 
     // Cancellation is handed to the timer thread; see whenRace() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
-        state->cancelled = true;
-        detail::deferWake(state);
-    } };
+                                        state->cancelled = true;
+                                        detail::deferWake(state);
+                                    } };
 
     std::vector<detail::WhenAnyChild<T>> children;
     children.reserve(count);
     const std::stop_token environment = state->source.get_token();
-    for (auto& task : tasks)
-    {
+    for (auto& task : tasks) {
         children.push_back(detail::composeAnyChild(std::move(task), environment));
     }
-    for (auto& child : children)
-    {
+    for (auto& child : children) {
         child.start(state);
     }
 
     co_await state->done;
 
-    if (state->policy == CancelPolicy::StopAndWait)
-    {
+    if (state->policy == CancelPolicy::StopAndWait) {
         co_await detail::drainChildren(state);
     }
 
-    if (state->cancelled)
-    {
+    if (state->cancelled) {
         throw TaskCancelledException{};
     }
-    if (state->exception)
-    {
+    if (state->exception) {
         std::rethrow_exception(state->exception);
     }
 
@@ -1060,8 +1000,8 @@ Task<T> whenAny(std::vector<Task<T>> tasks,
  *        argument.
  * @return A task producing the first task's result.
  */
-template<typename T, typename... Ts>
-    requires (!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
+template <typename T, typename... Ts>
+requires(!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
 [[nodiscard]]
 Task<T> whenAny(Task<T> first, Task<Ts>... rest)
 {
@@ -1072,8 +1012,8 @@ Task<T> whenAny(Task<T> first, Task<Ts>... rest)
     co_return co_await whenAny(std::move(tasks), CancellationToken{}, CancelPolicy::Destroy);
 }
 
-template<typename T, typename... Ts>
-    requires (!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
+template <typename T, typename... Ts>
+requires(!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
 [[nodiscard]]
 Task<T> whenAny(CancellationToken token, Task<T> first, Task<Ts>... rest)
 {
@@ -1099,8 +1039,8 @@ Task<T> whenAny(CancellationToken token, Task<T> first, Task<Ts>... rest)
  * @param rest Remaining tasks.
  * @return A task producing the first task's result.
  */
-template<typename T, typename... Ts>
-    requires (!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
+template <typename T, typename... Ts>
+requires(!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
 [[nodiscard]]
 Task<T> whenAny(CancelPolicy policy, Task<T> first, Task<Ts>... rest)
 {
@@ -1122,8 +1062,8 @@ Task<T> whenAny(CancelPolicy policy, Task<T> first, Task<Ts>... rest)
  * @param rest Remaining tasks.
  * @return A task producing the first task's result.
  */
-template<typename T, typename... Ts>
-    requires (!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
+template <typename T, typename... Ts>
+requires(!std::is_void_v<T>) && (std::is_same_v<T, Ts> && ...)
 [[nodiscard]]
 Task<T> whenAny(CancelPolicy policy, CancellationToken token, Task<T> first, Task<Ts>... rest)
 {
@@ -1152,26 +1092,20 @@ Task<T> whenAny(CancelPolicy policy, CancellationToken token, Task<T> first, Tas
  *        argument.
  * @return A task completing when the first input task completes.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAny(Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::Any,
-                              detail::toAnyTasks(std::move(tasks)...),
-                              CancellationToken{},
-                              CancelPolicy::Destroy);
+    co_await detail::whenRace(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, CancelPolicy::Destroy);
 }
 
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAny(CancellationToken token, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::Any,
-                              detail::toAnyTasks(std::move(tasks)...),
-                              std::move(token),
-                              CancelPolicy::Destroy);
+    co_await detail::whenRace(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), std::move(token), CancelPolicy::Destroy);
 }
 
 /**
@@ -1182,15 +1116,12 @@ Task<void> whenAny(CancellationToken token, Task<Ts>... tasks)
  * @param tasks Tasks to await; each must be non-empty.
  * @return A task completing when the first input task completes.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAny(CancelPolicy policy, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::Any,
-                              detail::toAnyTasks(std::move(tasks)...),
-                              CancellationToken{},
-                              policy);
+    co_await detail::whenRace(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, policy);
 }
 
 /**
@@ -1202,15 +1133,12 @@ Task<void> whenAny(CancelPolicy policy, Task<Ts>... tasks)
  * @param tasks Tasks to await; each must be non-empty.
  * @return A task completing when the first input task completes.
  */
-template<typename... Ts>
-    requires (sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
+template <typename... Ts>
+requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAny(CancelPolicy policy, CancellationToken token, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::Any,
-                              detail::toAnyTasks(std::move(tasks)...),
-                              std::move(token),
-                              policy);
+    co_await detail::whenRace(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), std::move(token), policy);
 }
 
 VN_ASYNC_NS_END

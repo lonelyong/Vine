@@ -2,26 +2,25 @@
 
 VN_GRAPHICSBACKEND_NS_BEGIN
 
-StateRegistry::StateRegistry(VariantPool& pool) noexcept : pool_(&pool)
-{
-}
+StateRegistry::StateRegistry(VariantPool& pool) noexcept
+  : pool_(&pool)
+{}
 
-StateRegistry::Resolution StateRegistry::resolve(const PipelineKey& key, const DynamicState& state,
-                                                 const void* inputs)
+StateRegistry::Resolution StateRegistry::resolve(const PipelineKey& key, const DynamicState& state, const void* inputs)
 {
     const VariantPool::Lookup lookup = pool_->acquire(key);
 
     Resolution resolution;
-    resolution.variant = lookup.id;
+    resolution.variant          = lookup.id;
     // "Nothing is bound yet" counts as a switch: the pass has to bind before it draws, and a caller that
     // skipped that because "the variant did not change" would draw with whatever was bound last.
     resolution.variant_switched = !bound_ || lookup.id != current_variant_;
     // The dynamic values live in the recording, so a fresh recording has none: only a value that is equal to
     // what this pass ALREADY issued can be skipped.
-    resolution.dynamic_issued = !bound_ || !(state == current_state_);
+    resolution.dynamic_issued   = !bound_ || !(state == current_state_);
     // The sampled-input set is the pass' (see the header): a set this pass already bound is still bound, so
     // only a DIFFERENT set costs a command. A pass with no inputs never issues one.
-    resolution.inputs_issued = inputs != nullptr && (!bound_ || inputs != current_inputs_);
+    resolution.inputs_issued    = inputs != nullptr && (!bound_ || inputs != current_inputs_);
 
     ++resolutions_;
     if (resolution.variant_switched) {

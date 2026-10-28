@@ -9,21 +9,21 @@
 #include <string>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/io/DirectoryVfs.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/io/Vfs.hpp>
 #include <vine/io/Zip.hpp>
 #include <vine/io/ZipArchive.hpp>
-#include <vine/String.hpp>
 
 #include "VfsTestSupport.hpp"
 
+using vfstest::bytesOf;
+using vfstest::TempDir;
 using vn::String;
 using vn::io::DirectoryVfs;
 using vn::io::IoError;
 using vn::io::ZipArchive;
-using vfstest::bytesOf;
-using vfstest::TempDir;
 
 namespace
 {
@@ -52,8 +52,7 @@ void writeRealFile(const std::filesystem::path& dir, const std::u8string& name, 
  */
 std::uint16_t readLe16(const std::vector<unsigned char>& bytes, std::size_t offset)
 {
-    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[offset]) |
-                                      static_cast<std::uint16_t>(bytes[offset + 1] << 8));
+    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[offset]) | static_cast<std::uint16_t>(bytes[offset + 1] << 8));
 }
 
 /**
@@ -70,8 +69,7 @@ void writeLe16(std::vector<unsigned char>& bytes, std::size_t offset, std::uint1
  */
 bool matchesAt(const std::vector<unsigned char>& bytes, std::size_t offset, const std::string& text)
 {
-    return offset + text.size() <= bytes.size() &&
-           std::equal(text.begin(), text.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset));
+    return offset + text.size() <= bytes.size() && std::equal(text.begin(), text.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset));
 }
 
 /**
@@ -91,14 +89,14 @@ void rewriteStoredName(std::vector<unsigned char>& bytes, const std::string& fro
 {
     ASSERT_EQ(from.size(), to.size());
 
-    struct Record
-    {
+    struct Record {
         std::array<unsigned char, 4> signature;
-        std::size_t                  flags_offset;  ///< General purpose flags, relative to the signature.
-        std::size_t                  length_offset; ///< Name length, relative to the signature.
-        std::size_t                  extra_offset;  ///< Extra field length, relative to the signature.
-        std::size_t                  name_offset;   ///< Name, relative to the signature.
+        std::size_t                  flags_offset;  // General purpose flags, relative to the signature.
+        std::size_t                  length_offset; // Name length, relative to the signature.
+        std::size_t                  extra_offset;  // Extra field length, relative to the signature.
+        std::size_t                  name_offset;   // Name, relative to the signature.
     };
+
     const Record records[] = {
         { { 0x50, 0x4B, 0x03, 0x04 }, 6, 26, 28, 30 }, // Local file header.
         { { 0x50, 0x4B, 0x01, 0x02 }, 8, 28, 30, 46 }, // Central directory header.
@@ -107,24 +105,20 @@ void rewriteStoredName(std::vector<unsigned char>& bytes, const std::string& fro
     int rewritten = 0;
     for (const Record& record : records) {
         for (std::size_t offset = 0; offset + record.length_offset + 2 <= bytes.size(); ++offset) {
-            if (!std::equal(record.signature.begin(), record.signature.end(),
-                            bytes.begin() + static_cast<std::ptrdiff_t>(offset))) {
+            if (!std::equal(record.signature.begin(), record.signature.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset))) {
                 continue;
             }
-            if (readLe16(bytes, offset + record.length_offset) != from.size() ||
-                !matchesAt(bytes, offset + record.name_offset, from)) {
+            if (readLe16(bytes, offset + record.length_offset) != from.size() || !matchesAt(bytes, offset + record.name_offset, from)) {
                 continue;
             }
             // An extra field would carry the real name and win over the bytes replaced
             // here, so the fixture only means anything while there is none.
-            ASSERT_EQ(readLe16(bytes, offset + record.extra_offset), 0u)
-                << "the writer added an extra field; the name is not in the header any more";
+            ASSERT_EQ(readLe16(bytes, offset + record.extra_offset), 0u) << "the writer added an extra field; the name is not in the header any more";
 
             std::copy(to.begin(), to.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset + record.name_offset));
             // Bit 11 says "this name is UTF-8"; a legacy entry does not set it, and libzip
             // believes the flag before it looks at the bytes.
-            writeLe16(bytes, offset + record.flags_offset,
-                      static_cast<std::uint16_t>(readLe16(bytes, offset + record.flags_offset) & ~0x0800u));
+            writeLe16(bytes, offset + record.flags_offset, static_cast<std::uint16_t>(readLe16(bytes, offset + record.flags_offset) & ~0x0800u));
             ++rewritten;
         }
     }

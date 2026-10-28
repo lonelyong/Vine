@@ -81,23 +81,38 @@ class Rect2 {
 
     /** @brief Minimum corner (left, bottom in math Y-up). */
     [[nodiscard]]
-    constexpr Point2<T> min() const { return Point2<T>(xmin, ymin); }
+    constexpr Point2<T> min() const
+    {
+        return Point2<T>(xmin, ymin);
+    }
 
     /** @brief Maximum corner (right, top in math Y-up). */
     [[nodiscard]]
-    constexpr Point2<T> max() const { return Point2<T>(xmax, ymax); }
+    constexpr Point2<T> max() const
+    {
+        return Point2<T>(xmax, ymax);
+    }
 
     /** @brief Width (xmax - xmin), negative if inverted. */
     [[nodiscard]]
-    constexpr T width() const { return xmax - xmin; }
+    constexpr T width() const
+    {
+        return xmax - xmin;
+    }
 
     /** @brief Height (ymax - ymin), negative if inverted. */
     [[nodiscard]]
-    constexpr T height() const { return ymax - ymin; }
+    constexpr T height() const
+    {
+        return ymax - ymin;
+    }
 
     /** @brief Size vector, components may be negative if inverted. */
     [[nodiscard]]
-    constexpr Vector2<T> size() const { return Vector2<T>(width(), height()); }
+    constexpr Vector2<T> size() const
+    {
+        return Vector2<T>(width(), height());
+    }
 
     /** @brief Center point. */
     [[nodiscard]]
@@ -112,15 +127,26 @@ class Rect2 {
      * @brief Check whether the rectangle has negative extent (max < min in any axis).
      */
     [[nodiscard]]
-    constexpr bool isNeg() const { return xmax < xmin || ymax < ymin; }
+    constexpr bool isNeg() const
+    {
+        return xmax < xmin || ymax < ymin;
+    }
 
     /**
      * @brief Fix inverted axes in-place so that min ≤ max on every axis.
      */
     constexpr void normalize()
     {
-        if (xmax < xmin) { auto t = xmin; xmin = xmax; xmax = t; }
-        if (ymax < ymin) { auto t = ymin; ymin = ymax; ymax = t; }
+        if (xmax < xmin) {
+            auto t = xmin;
+            xmin   = xmax;
+            xmax   = t;
+        }
+        if (ymax < ymin) {
+            auto t = ymin;
+            ymin   = ymax;
+            ymax   = t;
+        }
     }
 
     /**
@@ -129,15 +155,17 @@ class Rect2 {
     [[nodiscard]]
     constexpr Rect2<T> normalized() const
     {
-        return Rect2<T>(std::min(xmin, xmax), std::min(ymin, ymax),
-                        std::max(xmin, xmax), std::max(ymin, ymax));
+        return Rect2<T>(std::min(xmin, xmax), std::min(ymin, ymax), std::max(xmin, xmax), std::max(ymin, ymax));
     }
 
     /**
      * @brief Check whether the rectangle has exactly zero area.
      */
     [[nodiscard]]
-    constexpr bool isZero() const { return xmax == xmin && ymax == ymin; }
+    constexpr bool isZero() const
+    {
+        return xmax == xmin && ymax == ymin;
+    }
 
     /**
      * @brief Check whether the rectangle has near-zero area.
@@ -197,13 +225,18 @@ class Rect2 {
     }
 
     [[nodiscard]]
-    constexpr bool operator!=(const Rect2<T>& r) const { return !(*this == r); }
+    constexpr bool operator!=(const Rect2<T>& r) const
+    {
+        return !(*this == r);
+    }
 
   public:
-    union {
+    union
+    {
         struct {
             T xmin, ymin, xmax, ymax;
         };
+
         T data[4];
     };
 };

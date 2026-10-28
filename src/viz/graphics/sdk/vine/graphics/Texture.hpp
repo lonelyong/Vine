@@ -6,12 +6,12 @@
 #include <cstdint>
 #include <vector>
 
+#include <vine/Object.hpp>
+#include <vine/RefCounted.hpp>
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 #include <vine/intrusive_ptr.hpp>
-#include <vine/Object.hpp>
 #include <vine/raw_ptr.hpp>
-#include <vine/RefCounted.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -42,9 +42,10 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
 
   public:
     /** @brief How many images of which arrangement a texture is made of. */
-    enum class Kind {
-        D2,   ///< One 2D image.
-        Cube, ///< Six 2D images, one per cube face.
+    enum class Kind
+    {
+        D2,   // One 2D image.
+        Cube, // Six 2D images, one per cube face.
     };
 
   protected:
@@ -192,12 +193,12 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
 
   private:
     std::vector<intrusive_ptr<const imaging::Image>> sources_;
-    int                       width_ = 0;
-    int                       height_ = 0;
-    imaging::PixelFormat      format_ = imaging::PixelFormat::Unknown;
-    int                       mip_count_ = 1;
-    Kind                     kind_ = Kind::D2;
-    std::uint64_t             revision_ = 0;
+    int                                              width_     = 0;
+    int                                              height_    = 0;
+    imaging::PixelFormat                             format_    = imaging::PixelFormat::Unknown;
+    int                                              mip_count_ = 1;
+    Kind                                             kind_      = Kind::D2;
+    std::uint64_t                                    revision_  = 0;
 };
 
 /**
@@ -263,13 +264,14 @@ class VN_GRAPHICS_API CubeMap : public Texture {
 
   public:
     /** @brief One face of the cube, in Vulkan's layer order. */
-    enum class Face {
-        PosX, ///< Layer 0, +X.
-        NegX, ///< Layer 1, -X.
-        PosY, ///< Layer 2, +Y.
-        NegY, ///< Layer 3, -Y.
-        PosZ, ///< Layer 4, +Z.
-        NegZ, ///< Layer 5, -Z.
+    enum class Face
+    {
+        PosX, // Layer 0, +X.
+        NegX, // Layer 1, -X.
+        PosY, // Layer 2, +Y.
+        NegY, // Layer 3, -Y.
+        PosZ, // Layer 4, +Z.
+        NegZ, // Layer 5, -Z.
     };
 
   public:

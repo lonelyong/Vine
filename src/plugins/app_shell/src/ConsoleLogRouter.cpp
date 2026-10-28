@@ -57,10 +57,10 @@ vn::Connection& installedConfigHandler()
 gui::ConsoleMessageType toConsoleType(logging::LogLevel level)
 {
     switch (level) {
-    case logging::LogLevel::Warn:     return gui::ConsoleMessageType::Warning;
+    case logging::LogLevel::Warn: return gui::ConsoleMessageType::Warning;
     case logging::LogLevel::Error:
     case logging::LogLevel::Critical: return gui::ConsoleMessageType::Error;
-    default:                          return gui::ConsoleMessageType::Normal;
+    default: return gui::ConsoleMessageType::Normal;
     }
 }
 
@@ -96,46 +96,43 @@ void installConsoleLogSink(gui::ConsolePanel* panel, PluginLoadContext* context)
     // it from config and keep it in sync on every change.
     auto* app = Application::current();
     if (app != nullptr && app->configManager() != nullptr) {
-        auto*       cfg = app->configManager();
+        auto*        cfg = app->configManager();
         const String key = consoleLogConfigKey();
         if (!cfg->contains(key)) {
             cfg->setBool(key, true);
         }
         consoleLogEnabledState()->store(cfg->getBool(key, true), std::memory_order_relaxed);
-        installedConfigHandler() = cfg->changed.connect(
-            [alive = consoleLogEnabledState(), key](ConfigManager& mgr, ConfigChangedEventArgs& args) {
-                if (args.key() == key) {
-                    alive->store(mgr.getBool(key, true), std::memory_order_relaxed);
-                }
-            });
+        installedConfigHandler() = cfg->changed.connect([alive = consoleLogEnabledState(), key](ConfigManager& mgr, ConfigChangedEventArgs& args) {
+            if (args.key() == key) {
+                alive->store(mgr.getBool(key, true), std::memory_order_relaxed);
+            }
+        });
     }
 
     // Records may arrive from any thread; the callback only touches the lock-free
     // toggle and marshals the actual UI update to the main thread.
     auto* sink = installedConsoleSink();
     if (sink == nullptr) {
-        sink = new logging::LogSink(logging::LogSink::function(
-            [panel, alive = consoleLogEnabledState()](logging::LogLevel level, const std::string& message) {
-                if (!alive->load(std::memory_order_relaxed)) {
-                    return;
-                }
-                String text(message.begin(), message.end());
-                const auto type = toConsoleType(level);
-                if (Application::current() == nullptr) {
-                    return;  // the panel belongs to the application: without one there is nothing to append to
-                }
-                if (MainThreadDispatcher::isMainThread() || !MainThreadDispatcher::hasEventLoop()) {
-                    // Main-thread record, or no event loop to marshal onto:
-                    // append synchronously so it stays in order relative to
-                    // command output (e.g. "Executing ..." appears before the
-                    // command prints its result).
-                    panel->append(type, text);
-                }
-                else {
-                    static_cast<void>(MainThreadDispatcher::postToMainThread(
-                        [panel, type, text = std::move(text)]() mutable { panel->append(type, text); }));
-                }
-            }));
+        sink = new logging::LogSink(logging::LogSink::function([panel, alive = consoleLogEnabledState()](logging::LogLevel level, const std::string& message) {
+            if (!alive->load(std::memory_order_relaxed)) {
+                return;
+            }
+            String     text(message.begin(), message.end());
+            const auto type = toConsoleType(level);
+            if (Application::current() == nullptr) {
+                return; // the panel belongs to the application: without one there is nothing to append to
+            }
+            if (MainThreadDispatcher::isMainThread() || !MainThreadDispatcher::hasEventLoop()) {
+                // Main-thread record, or no event loop to marshal onto:
+                // append synchronously so it stays in order relative to
+                // command output (e.g. "Executing ..." appears before the
+                // command prints its result).
+                panel->append(type, text);
+            }
+            else {
+                static_cast<void>(MainThreadDispatcher::postToMainThread([panel, type, text = std::move(text)]() mutable { panel->append(type, text); }));
+            }
+        }));
         installedConsoleSink() = sink;
     }
     logging::defaultLogger().addSink(*sink);

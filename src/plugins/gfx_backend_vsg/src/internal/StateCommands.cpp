@@ -83,7 +83,7 @@ VkBlendFactor mapBlendFactor(vn::graphics::BlendFactor factor) noexcept
     return VK_BLEND_FACTOR_ONE;
 }
 
-}  // namespace
+} // namespace
 
 VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
 {
@@ -98,10 +98,10 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
 
-::vsg::ref_ptr<detail::SetDynamicState> makeDynamicStateCommand(const core::DynamicState& state,
-                                                                std::uint32_t color_attachments,
+::vsg::ref_ptr<detail::SetDynamicState> makeDynamicStateCommand(const core::DynamicState&              state,
+                                                                std::uint32_t                          color_attachments,
                                                                 const detail::DynamicStateEntryPoints& entry_points,
-                                                                bool draws_content)
+                                                                bool                                   draws_content)
 {
     auto command = detail::SetDynamicState::create();
 
@@ -110,18 +110,18 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     // the default (Less) maps to GREATER, which is the engine convention.
     command->compare_op = detail::mapCompareOp(state.compare);
 
-    command->cull_mode = mapCull(state.cull_mode);
+    command->cull_mode           = mapCull(state.cull_mode);
     // Clockwise, because vsg's projection inverts Y (see the file note).
-    command->front_face   = VK_FRONT_FACE_CLOCKWISE;
-    command->polygon_mode = mapPolygon(state.polygon_mode);
+    command->front_face          = VK_FRONT_FACE_CLOCKWISE;
+    command->polygon_mode        = mapPolygon(state.polygon_mode);
     // The polygon offset travels as the two factors: `units` is the constant depth term and `factor` the
     // slope-scaled one (see PolygonOffset).
     command->depth_bias_constant = state.polygon_offset.units;
     command->depth_bias_slope    = state.polygon_offset.factor;
-    command->topology     = mapTopology(state.topology);
+    command->topology            = mapTopology(state.topology);
     // The width the caller already clamped to the device's lineWidthRange (see ContentPass): the API rejects a
     // value above it, so this layer never has to guard.
-    command->line_width   = state.line_width;
+    command->line_width          = state.line_width;
 
     // The ENABLE is the resolved state's, and the compiler is what makes it true for a translucent command
     // (opacity < 1, see FrameCompiler::resolveCommands): "blend disabled" therefore really means no blending,
@@ -134,28 +134,27 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     // surface (blending one made a copy of a transparent attachment disappear). The rule is re-applied at THIS
     // end because the enable and the factors are delivered by this command, so the pipeline's baked state no
     // longer decides for either path.
-    const bool can_blend = color_attachments <= 1U && draws_content;
-    const bool blending  = can_blend && state.blend.enabled;
-    VkBlendFactor src    = VK_BLEND_FACTOR_ONE;
-    VkBlendFactor dst    = VK_BLEND_FACTOR_ZERO;
+    const bool    can_blend = color_attachments <= 1U && draws_content;
+    const bool    blending  = can_blend && state.blend.enabled;
+    VkBlendFactor src       = VK_BLEND_FACTOR_ONE;
+    VkBlendFactor dst       = VK_BLEND_FACTOR_ZERO;
     if (blending) {
         src = mapBlendFactor(state.blend.src);
         dst = mapBlendFactor(state.blend.dst);
     }
 
     command->color_attachment_count = color_attachments;
-    const std::uint32_t carried = std::min(color_attachments, detail::kMaxDynamicAttachments);
+    const std::uint32_t carried     = std::min(color_attachments, detail::kMaxDynamicAttachments);
     for (std::uint32_t index = 0; index < carried; ++index) {
         VkPipelineColorBlendAttachmentState& attachment = command->blend[index];
-        attachment.blendEnable         = blending ? VK_TRUE : VK_FALSE;
-        attachment.srcColorBlendFactor = src;
-        attachment.dstColorBlendFactor = dst;
-        attachment.srcAlphaBlendFactor = src;
-        attachment.dstAlphaBlendFactor = dst;
-        attachment.colorBlendOp        = VK_BLEND_OP_ADD;
-        attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
-        attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        attachment.blendEnable                          = blending ? VK_TRUE : VK_FALSE;
+        attachment.srcColorBlendFactor                  = src;
+        attachment.dstColorBlendFactor                  = dst;
+        attachment.srcAlphaBlendFactor                  = src;
+        attachment.dstAlphaBlendFactor                  = dst;
+        attachment.colorBlendOp                         = VK_BLEND_OP_ADD;
+        attachment.alphaBlendOp                         = VK_BLEND_OP_ADD;
+        attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     }
 
     command->entry_points = entry_points;
@@ -171,8 +170,8 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
     viewport.height     = std::max(rect.height, 0.0F);
     // The band the PASS stated, in buffer values: reverse-Z lives in the projection, so the default {0, 1} is
     // the whole buffer and a narrower pair forces the pass' content into that layer (see DepthRange).
-    viewport.minDepth = depth_min;
-    viewport.maxDepth = depth_max;
+    viewport.minDepth   = depth_min;
+    viewport.maxDepth   = depth_max;
     return ::vsg::SetViewport::create(0U, ::vsg::Viewports{ viewport });
 }
 
@@ -180,9 +179,9 @@ VkPrimitiveTopology mapTopology(vn::graphics::Topology topology) noexcept
 {
     // An integer rectangle inside the framebuffer: the API rejects a negative origin and a zero extent is a
     // silently empty draw, so both are clamped here rather than handed over.
-    VkRect2D scissor = {};
-    scissor.offset.x = static_cast<std::int32_t>(std::lround(std::max(rect.x, 0.0F)));
-    scissor.offset.y = static_cast<std::int32_t>(std::lround(std::max(rect.y, 0.0F)));
+    VkRect2D scissor      = {};
+    scissor.offset.x      = static_cast<std::int32_t>(std::lround(std::max(rect.x, 0.0F)));
+    scissor.offset.y      = static_cast<std::int32_t>(std::lround(std::max(rect.y, 0.0F)));
     scissor.extent.width  = static_cast<std::uint32_t>(std::lround(std::max(rect.width, 1.0F)));
     scissor.extent.height = static_cast<std::uint32_t>(std::lround(std::max(rect.height, 1.0F)));
     return ::vsg::SetScissor::create(0U, ::vsg::Scissors{ scissor });

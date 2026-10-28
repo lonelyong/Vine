@@ -27,8 +27,7 @@ VN_GRAPHICS_NS_BEGIN
  * - A step is a plain `std::function`: the participant does not own what a step touches, exactly like the callbacks it
  *   replaces. Registering the same step twice runs it twice (the list is a sequence, not a set).
  */
-class VN_GRAPHICS_API LayoutParticipant
-{
+class VN_GRAPHICS_API LayoutParticipant {
   public:
     /** @brief A layout step in logical pixels (see SceneView::addSurfaceLayout). */
     using Step = std::function<void(int width, int height)>;
@@ -50,16 +49,28 @@ class VN_GRAPHICS_API LayoutParticipant
     void resize(int width, int height, double pixel_ratio);
 
     /** @brief Gets the recorded width in logical pixels (0 before anything was announced). */
-    [[nodiscard]] int width() const noexcept { return width_; }
+    [[nodiscard]] int width() const noexcept
+    {
+        return width_;
+    }
 
     /** @brief Gets the recorded height in logical pixels (0 before anything was announced). */
-    [[nodiscard]] int height() const noexcept { return height_; }
+    [[nodiscard]] int height() const noexcept
+    {
+        return height_;
+    }
 
     /** @brief Gets the recorded device pixel ratio (1.0 before anything was announced). */
-    [[nodiscard]] double pixelRatio() const noexcept { return pixel_ratio_; }
+    [[nodiscard]] double pixelRatio() const noexcept
+    {
+        return pixel_ratio_;
+    }
 
     /** @brief Gets whether a usable size has been announced. */
-    [[nodiscard]] bool hasSize() const noexcept { return width_ > 0 && height_ > 0; }
+    [[nodiscard]] bool hasSize() const noexcept
+    {
+        return width_ > 0 && height_ > 0;
+    }
 
     /** @brief Registers a layout step in logical pixels.
      *

@@ -53,19 +53,17 @@ inline detail::StopTokenRequest currentStopToken() noexcept
  * @param task Task to run; handed over, so it must not be awaited anywhere else.
  * @return A task that completes as task does.
  */
-template<StorableValue T>
+template <StorableValue T>
 [[nodiscard]]
 Task<T> withStopToken(std::stop_token token, Task<T> task)
 {
     detail::TaskEnvironment::setToken(task, std::move(token));
 
-    if constexpr (std::is_void_v<T>)
-    {
+    if constexpr (std::is_void_v<T>) {
         co_await std::move(task);
         co_return;
     }
-    else
-    {
+    else {
         co_return co_await std::move(task);
     }
 }

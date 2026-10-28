@@ -227,9 +227,9 @@ class VN_GRAPHICS_API StateNode : public Group {
     void clearState();
 
   private:
-    RenderState state_;
+    RenderState                  state_;
     intrusive_ptr<ShaderProgram> program_;
-    MaterialBasePtr   material_;
+    MaterialBasePtr              material_;
 };
 
 using StateNodePtr = intrusive_ptr<StateNode>;

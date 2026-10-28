@@ -21,8 +21,7 @@ namespace
  * offered to a file picker in one edit - the alternative was one switch per question, which is how a
  * format ends up readable but not writable by accident.
  */
-struct Entry
-{
+struct Entry {
     ImageFileFormat format;
     const char*     name;
     ImageFormatInfo info;
@@ -36,12 +35,12 @@ constexpr const char* const kBmpExtensions[]  = { ".bmp" };
 constexpr const char* const kTgaExtensions[]  = { ".tga" };
 
 constexpr Entry kEntries[] = {
-    { ImageFileFormat::Png, "PNG", { kPngExtensions, true, true } },
+    { ImageFileFormat::Png,  "PNG",  { kPngExtensions, true, true }   },
     // JPEG writing is lossy and needs a quality parameter this API deliberately has no place for, so the
     // table says "readable, not writable" instead of leaving the asymmetry to the encoder.
     { ImageFileFormat::Jpeg, "JPEG", { kJpegExtensions, true, false } },
-    { ImageFileFormat::Bmp, "BMP", { kBmpExtensions, true, true } },
-    { ImageFileFormat::Tga, "TGA", { kTgaExtensions, true, true } },
+    { ImageFileFormat::Bmp,  "BMP",  { kBmpExtensions, true, true }   },
+    { ImageFileFormat::Tga,  "TGA",  { kTgaExtensions, true, true }   },
 };
 
 constexpr ImageFormatInfo kUnknownInfo{ {}, false, false };
@@ -80,7 +79,7 @@ bool equalsIgnoreCaseAscii(std::u8string_view text, std::string_view literal) no
     }
 
     for (std::size_t i = 0; i < text.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
+        const unsigned char c     = static_cast<unsigned char>(text[i]);
         const char          lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
         if (lower != literal[i]) {
             return false;

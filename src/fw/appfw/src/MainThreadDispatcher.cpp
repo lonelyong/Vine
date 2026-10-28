@@ -44,6 +44,7 @@ bool MainThreadDispatcher::invokeOnMainThread(std::function<void()> task, std::c
         std::condition_variable done;
         bool                    ran = false;
     };
+
     auto handoff = std::make_shared<Handoff>();
 
     const bool queued = postToMainThread([handoff, task = std::move(task)] {
@@ -76,7 +77,7 @@ bool MainThreadDispatcher::postToMainThread(std::function<void()> task)
 {
     auto* app = QCoreApplication::instance();
     if (app == nullptr) {
-        return false;  // Nothing to queue onto: the caller decides the fallback.
+        return false; // Nothing to queue onto: the caller decides the fallback.
     }
     return QMetaObject::invokeMethod(app, std::move(task), Qt::QueuedConnection);
 }
@@ -96,7 +97,7 @@ void MainThreadDispatcher::deliverQueuedApplicationCalls()
 {
     Application* app = Application::current();
     if (app == nullptr) {
-        return;  // No application: no dispatcher, no queue, nothing to deliver.
+        return; // No application: no dispatcher, no queue, nothing to deliver.
     }
     // The dispatcher is created with the application and destroyed with it, so a caller that drives a coroutine while
     // the application is going down may find none - and then there is no queue left to deliver either.

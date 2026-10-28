@@ -19,16 +19,15 @@ namespace
  * A STEP file is named .stp or .step and an IGES file .igs or .iges, so a row carries both spellings of its own
  * extension; formatFromPath() matches any of them and supportedExtensions() lists them all.
  */
-struct Entry
-{
+struct Entry {
     BrepFormat  format;
     const char* name;
     const char* extensions[2];
 };
 
 constexpr Entry kEntries[] = {
-    { BrepFormat::Step, "step", { ".stp", ".step" } },
-    { BrepFormat::Iges, "iges", { ".igs", ".iges" } },
+    { BrepFormat::Step, "step", { ".stp", ".step" }  },
+    { BrepFormat::Iges, "iges", { ".igs", ".iges" }  },
     { BrepFormat::Brep, "brep", { ".brep", nullptr } },
 };
 
@@ -96,7 +95,8 @@ BrepFormat formatFromPath(const std::filesystem::path& file_path) noexcept
                 }
             }
         }
-    } catch (...) {
+    }
+    catch (...) {
         return BrepFormat::Unknown;
     }
     return BrepFormat::Unknown;

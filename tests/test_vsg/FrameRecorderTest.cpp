@@ -34,14 +34,14 @@
 
 using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
+using vn::graphics::Diagnostics;
 using vn::graphics::Light;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::backend::ClearValues;
-using vn::graphics::Diagnostics;
-using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::CollectedFrame;
+using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameRecorder;
 using vn::graphics::backend::FrameToken;
 using vn::graphics::backend::Observe;
@@ -50,8 +50,7 @@ namespace
 {
 
 /// @brief One recorder with everything it needs (the arena is large enough for every case here).
-struct Rig
-{
+struct Rig {
     FrameArena    arena{ 64 * 1024 };
     Diagnostics   diagnostics;
     Observe       observe;
@@ -77,14 +76,14 @@ std::vector<RenderCommand> oneCommand()
     return std::vector<RenderCommand>{ RenderCommand{} };
 }
 
-}  // namespace
+} // namespace
 
 TEST(FrameRecorderTest, TheScopeAttributesOfEachPassAreCollectedWithItsDrawingCalls)
 {
     Rig r;
     r.open();
 
-    int                              target = 0;
+    int                              target   = 0;
     const std::vector<RenderCommand> commands = oneCommand();
 
     EXPECT_TRUE(r.recorder.beginPass(7));
@@ -110,7 +109,7 @@ TEST(FrameRecorderTest, TheScopeAttributesOfEachPassAreCollectedWithItsDrawingCa
 
     EXPECT_EQ(description.passes[1].pass, 9u);
     EXPECT_EQ(description.passes[1].order, 0);
-    EXPECT_EQ(description.passes[1].target, nullptr);  // the default framebuffer, recorded as a fact
+    EXPECT_EQ(description.passes[1].target, nullptr); // the default framebuffer, recorded as a fact
     EXPECT_EQ(description.passes[1].state.depth, DepthMode::TestAndWrite);
     EXPECT_FALSE(description.passes[1].has_clear);
 
@@ -160,12 +159,12 @@ TEST(FrameRecorderTest, ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded)
     Rig r;
     r.open();
 
-    auto own_program      = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
-    auto override_program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
-    std::vector<RenderCommand> commands = oneCommand();
-    commands[0].program = own_program;
+    auto                       own_program      = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    auto                       override_program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    std::vector<RenderCommand> commands         = oneCommand();
+    commands[0].program                         = own_program;
 
-    const auto list_before = commands[0].program;   // 借用同一个 identity，事后核对没有被改写
+    const auto list_before = commands[0].program; // 借用同一个 identity，事后核对没有被改写
 
     EXPECT_TRUE(r.recorder.beginPass(1));
     EXPECT_TRUE(r.recorder.render(commands, nullptr, override_program.get()));
@@ -175,8 +174,7 @@ TEST(FrameRecorderTest, ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded)
     ASSERT_EQ(description.passes.size(), 1u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
     ASSERT_EQ(description.passes[0].draws[0].commands.size(), 1u);
-    EXPECT_EQ(description.passes[0].draws[0].commands[0].program.program, override_program.get())
-        << "the recorded identity is the EFFECTIVE program";
+    EXPECT_EQ(description.passes[0].draws[0].commands[0].program.program, override_program.get()) << "the recorded identity is the EFFECTIVE program";
     EXPECT_EQ(commands[0].program, list_before) << "the host's list is never rewritten";
 }
 
@@ -185,8 +183,8 @@ TEST(FrameRecorderTest, TheAnnouncedLightsAreCopiedNumbersNotBorrowedPointers)
     Rig r;
     r.open();
 
-    auto                          sun = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
-    std::vector<const Light*>     lights{ sun.get() };
+    auto                             sun = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    std::vector<const Light*>        lights{ sun.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
     EXPECT_TRUE(r.recorder.beginPass(1));
@@ -205,7 +203,7 @@ TEST(FrameRecorderTest, TheAnnouncedLightsAreCopiedNumbersNotBorrowedPointers)
     const std::span<const vn::graphics::backend::LightRef> collected = description.passes[0].draws[0].lights;
     ASSERT_EQ(collected.size(), 1u);
     EXPECT_TRUE(collected[0].enabled);
-    EXPECT_FLOAT_EQ(collected[0].intensity, 1.0F);  // the value at the call, not the later edit
+    EXPECT_FLOAT_EQ(collected[0].intensity, 1.0F); // the value at the call, not the later edit
     EXPECT_TRUE(collected[0].has_direction);
 }
 
@@ -214,7 +212,7 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     Rig r;
     r.open();
 
-    auto                             sun      = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    auto                             sun = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
     std::vector<const Light*>        lights{ sun.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
@@ -222,12 +220,12 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     {
         EXPECT_TRUE(r.recorder.setViewport(1, 2, 3, 4));
         EXPECT_TRUE(r.recorder.setLights(lights));
-        EXPECT_TRUE(r.recorder.render(commands, nullptr));  // consumes both announcements
+        EXPECT_TRUE(r.recorder.render(commands, nullptr)); // consumes both announcements
     }
-    EXPECT_TRUE(r.recorder.render(commands, nullptr));  // nothing announced: the whole target, default lights
+    EXPECT_TRUE(r.recorder.render(commands, nullptr)); // nothing announced: the whole target, default lights
     {
         EXPECT_TRUE(r.recorder.setLights(lights));
-        EXPECT_TRUE(r.recorder.render(commands, nullptr));  // announced again
+        EXPECT_TRUE(r.recorder.render(commands, nullptr)); // announced again
     }
     EXPECT_TRUE(r.recorder.endPass());
 
@@ -242,9 +240,9 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     EXPECT_EQ(draws[0].lights.size(), 1u);
 
     EXPECT_FALSE(draws[1].has_viewport);  // the compiler resolves this to the whole target
-    EXPECT_TRUE(draws[1].lights.empty());// empty = the backend default
+    EXPECT_TRUE(draws[1].lights.empty()); // empty = the backend default
     EXPECT_TRUE(draws[2].lights.size() == 1u);
-    EXPECT_FALSE(draws[2].has_viewport);  // a viewport announcement is not replayed either
+    EXPECT_FALSE(draws[2].has_viewport); // a viewport announcement is not replayed either
 
     EXPECT_EQ(r.observe.counters().draws, 3u);
 }
@@ -260,11 +258,10 @@ TEST(FrameRecorderTest, TheViewBlockIsProjectedForTheCamerasOwnShape)
     r.open();
 
     vn::graphics::Camera camera;
-    camera.lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0),
-                                 vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera.lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera.setPerspective(60.0, 0.1, 100.0);
     camera.setAspect(2.0);
-    const vn::math::Mat4d wide = camera.projectionMatrix();
+    const vn::math::Mat4d            wide     = camera.projectionMatrix();
     const std::vector<RenderCommand> commands = oneCommand();
 
     EXPECT_TRUE(r.recorder.beginPass(1));
@@ -308,7 +305,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
     Rig r;
     r.open();
 
-    auto                             sun      = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    auto                             sun = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
     std::vector<const Light*>        lights{ sun.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
@@ -320,9 +317,9 @@ TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
     {
         EXPECT_TRUE(r.recorder.setViewport(1, 2, 3, 4));
         EXPECT_TRUE(r.recorder.setLights(lights));
-        EXPECT_TRUE(r.recorder.render(std::span<const RenderCommand>{}, nullptr));  // nothing to draw
+        EXPECT_TRUE(r.recorder.render(std::span<const RenderCommand>{}, nullptr)); // nothing to draw
     }
-    EXPECT_TRUE(r.recorder.render(commands, nullptr));  // nothing announced: the whole target, default lights
+    EXPECT_TRUE(r.recorder.render(commands, nullptr)); // nothing announced: the whole target, default lights
     EXPECT_TRUE(r.recorder.endPass());
 
     const CollectedFrame& description = r.seal();
@@ -355,7 +352,7 @@ TEST(FrameRecorderTest, ThePassInputsAreCopiedAndBelongToThePass)
     vn::intrusive_ptr<RenderTarget> first(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> second(new RenderTarget());
 
-    std::vector<RenderTarget*> inputs{ first.get(), nullptr, second.get() };
+    std::vector<RenderTarget*>       inputs{ first.get(), nullptr, second.get() };
     const std::vector<RenderCommand> commands = oneCommand();
 
     EXPECT_TRUE(r.recorder.beginPass(1));
@@ -395,7 +392,7 @@ TEST(FrameRecorderTest, AScopeThatDrewNothingIsDroppedUnlessItAnnouncedAClear)
     // A pass that announced a CLEAR and drew nothing is a real pass: the clear happens through the pass'
     // own load-op, so dropping the scope would erase the picture's background.
     ClearValues policy;
-    policy.color       = true;
+    policy.color          = true;
     policy.color_value[0] = 0.5F;
     EXPECT_TRUE(r.recorder.beginPass(2));
     EXPECT_TRUE(r.recorder.setClearPolicy(policy));
@@ -452,7 +449,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNoScopeRecordsNothingAtAll)
 
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
-    EXPECT_EQ(r.observe.counters().draws, 0u);  // a draw with no scope is not a draw
+    EXPECT_EQ(r.observe.counters().draws, 0u); // a draw with no scope is not a draw
     EXPECT_TRUE(r.diagnostics.clean());
 
     // A new frame is not a new answer either: what has no scope to belong to takes no effect, however often it
@@ -474,7 +471,7 @@ TEST(FrameRecorderTest, ANestedBeginPassLeavesTheOuterScopeInCharge)
 
     EXPECT_TRUE(r.recorder.beginPass(1));
     EXPECT_TRUE(r.recorder.setPassOrder(2));
-    EXPECT_FALSE(r.recorder.beginPass(2));  // the inner pass does not open
+    EXPECT_FALSE(r.recorder.beginPass(2)); // the inner pass does not open
     EXPECT_TRUE(r.recorder.inPass());
 
     // The caller's bookkeeping is off by one scope, so what it says now belongs to the OUTER scope - and
@@ -505,8 +502,8 @@ TEST(FrameRecorderTest, AReleasedAnnouncedTargetKillsTheScopeAndNothingIsRedirec
     Rig r;
     r.open();
 
-    int                              target = 0;
-    int                              other  = 0;
+    int                              target   = 0;
+    int                              other    = 0;
     const std::vector<RenderCommand> commands = oneCommand();
 
     EXPECT_TRUE(r.recorder.beginPass(1));
@@ -516,7 +513,7 @@ TEST(FrameRecorderTest, AReleasedAnnouncedTargetKillsTheScopeAndNothingIsRedirec
     EXPECT_TRUE(r.recorder.releaseRenderTarget(&other));
     EXPECT_TRUE(r.recorder.render(commands, nullptr));
 
-    EXPECT_TRUE(r.recorder.releaseRenderTarget(&target));  // the announcement is dropped here
+    EXPECT_TRUE(r.recorder.releaseRenderTarget(&target)); // the announcement is dropped here
 
     // The contract: a call that would still have used the released target is SKIPPED, never redirected to
     // the default framebuffer (the content is missing rather than drawn where nobody asked for it).
@@ -561,7 +558,7 @@ TEST(FrameRecorderTest, SwapBuffersInsideAnOpenScopeTakesNoEffect)
 
     EXPECT_TRUE(r.recorder.beginPass(1));
     EXPECT_FALSE(r.recorder.swapBuffers());
-    EXPECT_TRUE(r.recorder.inFrame());  // the frame is still open, and the scope still needs its endPass
+    EXPECT_TRUE(r.recorder.inFrame()); // the frame is still open, and the scope still needs its endPass
     EXPECT_TRUE(r.diagnostics.clean());
 }
 

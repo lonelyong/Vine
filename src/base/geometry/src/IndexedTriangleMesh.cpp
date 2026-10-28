@@ -47,7 +47,7 @@ void IndexedTriangleMesh::addTriangle(std::uint32_t i0, std::uint32_t i1, std::u
 
 void IndexedTriangleMesh::clear()
 {
-    clearAttributes();  // announces the attribute buffers it empties
+    clearAttributes(); // announces the attribute buffers it empties
     indices_->clear();
     announceChange(indices_);
 }

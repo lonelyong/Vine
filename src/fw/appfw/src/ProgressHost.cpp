@@ -11,7 +11,7 @@ namespace
 {
 
 /// Guards the active-host registry (hosts register/deregister on any thread).
-std::mutex                 s_mutex;
+std::mutex s_mutex;
 /// All active hosts (foreground stack + background), registration order.
 std::vector<ProgressHost*> s_active;
 /// The foreground stack: nested LongRunning hosts, outermost first.
@@ -73,7 +73,7 @@ ProgressHost::~ProgressHost()
 {
     {
         std::lock_guard lock(s_mutex);
-        auto it = std::find(s_active.begin(), s_active.end(), this);
+        auto            it = std::find(s_active.begin(), s_active.end(), this);
         if (it != s_active.end()) {
             s_active.erase(it);
         }

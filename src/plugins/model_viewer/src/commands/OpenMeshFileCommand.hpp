@@ -26,9 +26,21 @@ class OpenMeshFileCommand : public vn::appfw::Command {
     VN_DECLARE_COMMAND(OpenMeshFileCommand, u8"open_mesh_file")
 
   public:
-    vn::String                group() const override { return u8"模型"; }
-    vn::String                description() const override { return u8"选一个网格文件打开（文件载荷）"; }
-    vn::appfw::CommandFlags   flags() const override { return vn::appfw::CommandFlags::None; }
+    vn::String group() const override
+    {
+        return u8"模型";
+    }
+
+    vn::String description() const override
+    {
+        return u8"选一个网格文件打开（文件载荷）";
+    }
+
+    vn::appfw::CommandFlags flags() const override
+    {
+        return vn::appfw::CommandFlags::None;
+    }
+
     vn::async::Task<vn::appfw::CommandResult> execute(vn::appfw::CommandExecutionContext* context) override;
 };
 

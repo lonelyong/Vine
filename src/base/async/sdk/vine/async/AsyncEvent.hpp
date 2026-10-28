@@ -35,14 +35,15 @@ VN_ASYNC_NS_BEGIN
  * frame itself; frame lifetime is the caller's responsibility under the
  * contract above.
  */
-class AsyncEvent
-{
+class AsyncEvent {
   public:
     AsyncEvent() noexcept = default;
 
-    explicit AsyncEvent(bool initiallySet) noexcept : set_(initiallySet) {}
+    explicit AsyncEvent(bool initiallySet) noexcept
+      : set_(initiallySet)
+    {}
 
-    AsyncEvent(const AsyncEvent&) = delete;
+    AsyncEvent(const AsyncEvent&)            = delete;
     AsyncEvent& operator=(const AsyncEvent&) = delete;
 
     ~AsyncEvent()
@@ -86,15 +87,16 @@ class AsyncEvent
      * and is never reused. On destruction it unregisters itself from the
      * waiter list, so abandoning the await is safe.
      */
-    class Awaiter
-    {
+    class Awaiter {
       public:
-        explicit Awaiter(AsyncEvent& event) noexcept : event_(event) {}
+        explicit Awaiter(AsyncEvent& event) noexcept
+          : event_(event)
+        {}
 
-        Awaiter(const Awaiter&) = delete;
+        Awaiter(const Awaiter&)            = delete;
         Awaiter& operator=(const Awaiter&) = delete;
-        Awaiter(Awaiter&&) = delete;
-        Awaiter& operator=(Awaiter&&) = delete;
+        Awaiter(Awaiter&&)                 = delete;
+        Awaiter& operator=(Awaiter&&)      = delete;
 
         ~Awaiter() noexcept;
 
@@ -118,7 +120,8 @@ class AsyncEvent
          */
         bool await_suspend(std::coroutine_handle<> h) noexcept;
 
-        void await_resume() const noexcept {}
+        void await_resume() const noexcept
+        {}
 
       private:
         friend class AsyncEvent;
@@ -160,7 +163,7 @@ class AsyncEvent
     void dequeue(Awaiter& a) noexcept;
 
     mutable std::mutex mutex_;
-    bool set_{ false };
+    bool               set_{ false };
 
     /// Incremented at the start of every set(); each queued waiter is stamped
     /// with the value current at that moment. See set() for the generation rule.
@@ -179,7 +182,7 @@ inline void AsyncEvent::set() noexcept
         // resumed. Arming it inside the resume loop below would overwrite a
         // reset() issued by a resumed waiter (e.g. an edge-triggered event
         // clearing itself for the next batch), so it must happen here.
-        set_ = true;
+        set_  = true;
         // 代际边界：先把世代号推进一格，再按排号释放——本次 set() 只释放调用时已
         // 经入队的 waiter（代际号 < epoch）。恢复期间（仍在本 set() 栈上）新入队的
         // waiter 打的是 epoch，属于下一代，留给下一次 set()，否则顺序复用一个事件
@@ -190,30 +193,25 @@ inline void AsyncEvent::set() noexcept
         // 边界，循环会把下一代 waiter 也唤醒（虚假唤醒）。排号天然不受谁被销毁影响。
         epoch = ++set_epoch_;
     }
-    for (;;)
-    {
+    for (;;) {
         Awaiter* a = nullptr;
         {
             std::lock_guard lock(mutex_);
-            if (head_ && head_->epoch_ < epoch)
-            {
-                a = head_;
+            if (head_ && head_->epoch_ < epoch) {
+                a     = head_;
                 head_ = a->next_;
-                if (!head_)
-                {
+                if (!head_) {
                     tail_ = nullptr;
                 }
-                else
-                {
+                else {
                     head_->prev_ = nullptr;
                 }
-                a->next_ = nullptr;
-                a->prev_ = nullptr;
+                a->next_   = nullptr;
+                a->prev_   = nullptr;
                 a->queued_ = false;
             }
         }
-        if (!a)
-        {
+        if (!a) {
             break;
         }
         assert(a->handle_);
@@ -238,8 +236,7 @@ inline bool AsyncEvent::Awaiter::await_suspend(std::coroutine_handle<> h) noexce
     assert(h);
     handle_ = h;
     std::lock_guard lock(event_.mutex_);
-    if (event_.set_)
-    {
+    if (event_.set_) {
         return false; // Already set: resume inline without suspending.
     }
     event_.enqueue(*this); // Park in the waiter list until set().
@@ -249,8 +246,7 @@ inline bool AsyncEvent::Awaiter::await_suspend(std::coroutine_handle<> h) noexce
 inline AsyncEvent::Awaiter::~Awaiter() noexcept
 {
     std::lock_guard lock(event_.mutex_);
-    if (queued_)
-    {
+    if (queued_) {
         event_.dequeue(*this);
     }
 }
@@ -259,15 +255,13 @@ inline void AsyncEvent::enqueue(Awaiter& a) noexcept
 {
     assert(!a.queued_);
     a.queued_ = true;
-    a.epoch_ = set_epoch_; // Stamp under mutex_: set() compares it under mutex_ too.
-    a.prev_ = tail_;
-    a.next_ = nullptr;
-    if (tail_)
-    {
+    a.epoch_  = set_epoch_; // Stamp under mutex_: set() compares it under mutex_ too.
+    a.prev_   = tail_;
+    a.next_   = nullptr;
+    if (tail_) {
         tail_->next_ = &a;
     }
-    else
-    {
+    else {
         head_ = &a;
     }
     tail_ = &a;
@@ -276,28 +270,24 @@ inline void AsyncEvent::enqueue(Awaiter& a) noexcept
 inline void AsyncEvent::dequeue(Awaiter& a) noexcept
 {
     assert(a.queued_);
-    if (a.prev_)
-    {
+    if (a.prev_) {
         a.prev_->next_ = a.next_;
     }
-    else
-    {
+    else {
         assert(head_ == &a);
         head_ = a.next_;
     }
 
-    if (a.next_)
-    {
+    if (a.next_) {
         a.next_->prev_ = a.prev_;
     }
-    else
-    {
+    else {
         assert(tail_ == &a);
         tail_ = a.prev_;
     }
 
-    a.prev_ = nullptr;
-    a.next_ = nullptr;
+    a.prev_   = nullptr;
+    a.next_   = nullptr;
     a.queued_ = false;
 }
 

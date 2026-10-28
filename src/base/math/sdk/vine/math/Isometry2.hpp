@@ -85,8 +85,8 @@ class Isometry2 {
     Isometry2<T>& operator*=(const Isometry2<T>& right);
 
   public:
-    Point2<T> translation; ///< Translation offset.
-    T         angle;       ///< Rotation angle in radians (CCW).
+    Point2<T> translation; // Translation offset.
+    T         angle;       // Rotation angle in radians (CCW).
 };
 
 template <typename T>

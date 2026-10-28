@@ -8,11 +8,11 @@
 #    define VN_IMAGEIO_API VN_IMPORT
 #endif
 
-#define VN_IMAGEIO_NS_BEGIN                                                                                                                                     \
-    VN_ROOT_NS_BEGIN                                                                                                                                             \
+#define VN_IMAGEIO_NS_BEGIN                                                                                                                                    \
+    VN_ROOT_NS_BEGIN                                                                                                                                           \
     namespace imageio                                                                                                                                          \
     {
 
-#define VN_IMAGEIO_NS_END                                                                                                                                       \
-    VN_ROOT_NS_END                                                                                                                                               \
+#define VN_IMAGEIO_NS_END                                                                                                                                      \
+    VN_ROOT_NS_END                                                                                                                                             \
     }

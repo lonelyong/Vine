@@ -35,8 +35,7 @@ VN_RUNTIME_NS_BEGIN
  * @tparam TVal Value type; must be copy-constructible.
  */
 template <typename TKey, typename TVal>
-class InMemoryCache
-{
+class InMemoryCache {
   public:
     /**
      * @brief Monotonic clock used for expiry timestamps.
@@ -172,14 +171,13 @@ class InMemoryCache
     bool isCleanupRunning() const;
 
   private:
-    struct Entry
-    {
-        TVal                    value;
+    struct Entry {
+        TVal value;
         // NOT "forever": Qt's qforeach.h defines that as a macro (`forever` -> `for (;;)`), so a
         // translation unit that includes both a Qt header and this cache (MeshLoader pulls it in,
         // for one) would not compile at all.
-        bool                    never_expires{ false };
-        Clock::time_point       expires_at{};
+        bool              never_expires{ false };
+        Clock::time_point expires_at{};
     };
 
     /**
@@ -211,16 +209,16 @@ class InMemoryCache
      */
     static void cleanupLoop();
 
-    mutable std::mutex mutex_;
+    mutable std::mutex    mutex_;
     std::map<TKey, Entry> entries_;
 
     // ---- Shared background-thread state (one per <TKey, TVal> instantiation) ----
-    inline static std::mutex s_mutex_;
-    inline static std::condition_variable s_cv_;
-    inline static std::thread s_thread_;
+    inline static std::mutex                         s_mutex_;
+    inline static std::condition_variable            s_cv_;
+    inline static std::thread                        s_thread_;
     inline static std::unordered_set<InMemoryCache*> s_instances_;
-    inline static std::chrono::milliseconds s_period_{ std::chrono::seconds(1) };
-    inline static bool s_stopping_{ false };
+    inline static std::chrono::milliseconds          s_period_{ std::chrono::seconds(1) };
+    inline static bool                               s_stopping_{ false };
 };
 
 template <typename TKey, typename TVal>
@@ -232,7 +230,7 @@ InMemoryCache<TKey, TVal>::~InMemoryCache()
 template <typename TKey, typename TVal>
 void InMemoryCache<TKey, TVal>::set(const TKey& key, const TVal& value, int ttl)
 {
-    Entry entry{ value, (ttl <= 0), makeExpireAt(ttl) };
+    Entry                       entry{ value, (ttl <= 0), makeExpireAt(ttl) };
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.insert_or_assign(key, entry);
 }
@@ -240,15 +238,13 @@ void InMemoryCache<TKey, TVal>::set(const TKey& key, const TVal& value, int ttl)
 template <typename TKey, typename TVal>
 std::optional<TVal> InMemoryCache<TKey, TVal>::get(const TKey& key)
 {
-    const auto now = Clock::now();
+    const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entries_.find(key);
-    if (it == entries_.end())
-    {
+    const auto                  it = entries_.find(key);
+    if (it == entries_.end()) {
         return std::nullopt;
     }
-    if (isExpired(it->second, now))
-    {
+    if (isExpired(it->second, now)) {
         entries_.erase(it);
         return std::nullopt;
     }
@@ -258,15 +254,13 @@ std::optional<TVal> InMemoryCache<TKey, TVal>::get(const TKey& key)
 template <typename TKey, typename TVal>
 bool InMemoryCache<TKey, TVal>::get(const TKey& key, TVal& out)
 {
-    const auto now = Clock::now();
+    const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entries_.find(key);
-    if (it == entries_.end())
-    {
+    const auto                  it = entries_.find(key);
+    if (it == entries_.end()) {
         return false;
     }
-    if (isExpired(it->second, now))
-    {
+    if (isExpired(it->second, now)) {
         entries_.erase(it);
         return false;
     }
@@ -277,15 +271,13 @@ bool InMemoryCache<TKey, TVal>::get(const TKey& key, TVal& out)
 template <typename TKey, typename TVal>
 bool InMemoryCache<TKey, TVal>::contains(const TKey& key)
 {
-    const auto now = Clock::now();
+    const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entries_.find(key);
-    if (it == entries_.end())
-    {
+    const auto                  it = entries_.find(key);
+    if (it == entries_.end()) {
         return false;
     }
-    if (isExpired(it->second, now))
-    {
+    if (isExpired(it->second, now)) {
         entries_.erase(it);
         return false;
     }
@@ -302,18 +294,15 @@ bool InMemoryCache<TKey, TVal>::remove(const TKey& key)
 template <typename TKey, typename TVal>
 size_t InMemoryCache<TKey, TVal>::removeExpired()
 {
-    const auto now = Clock::now();
+    const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
-    size_t removed = 0;
-    for (auto it = entries_.begin(); it != entries_.end();)
-    {
-        if (isExpired(it->second, now))
-        {
+    size_t                      removed = 0;
+    for (auto it = entries_.begin(); it != entries_.end();) {
+        if (isExpired(it->second, now)) {
             it = entries_.erase(it);
             ++removed;
         }
-        else
-        {
+        else {
             ++it;
         }
     }
@@ -330,16 +319,13 @@ void InMemoryCache<TKey, TVal>::clear()
 template <typename TKey, typename TVal>
 size_t InMemoryCache<TKey, TVal>::count()
 {
-    const auto now = Clock::now();
+    const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
-    for (auto it = entries_.begin(); it != entries_.end();)
-    {
-        if (isExpired(it->second, now))
-        {
+    for (auto it = entries_.begin(); it != entries_.end();) {
+        if (isExpired(it->second, now)) {
             it = entries_.erase(it);
         }
-        else
-        {
+        else {
             ++it;
         }
     }
@@ -355,17 +341,14 @@ bool InMemoryCache<TKey, TVal>::isEmpty()
 template <typename TKey, typename TVal>
 std::vector<TKey> InMemoryCache<TKey, TVal>::keys()
 {
-    const auto now = Clock::now();
+    const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<TKey> result;
-    for (auto it = entries_.begin(); it != entries_.end();)
-    {
-        if (isExpired(it->second, now))
-        {
+    std::vector<TKey>           result;
+    for (auto it = entries_.begin(); it != entries_.end();) {
+        if (isExpired(it->second, now)) {
             it = entries_.erase(it);
         }
-        else
-        {
+        else {
             result.push_back(it->first);
             ++it;
         }
@@ -379,10 +362,9 @@ void InMemoryCache<TKey, TVal>::start(std::chrono::milliseconds period)
     std::lock_guard<std::mutex> lock(s_mutex_);
     s_period_ = period;
     s_instances_.insert(this);
-    if (!s_thread_.joinable())
-    {
+    if (!s_thread_.joinable()) {
         s_stopping_ = false;
-        s_thread_ = std::thread(&InMemoryCache<TKey, TVal>::cleanupLoop);
+        s_thread_   = std::thread(&InMemoryCache<TKey, TVal>::cleanupLoop);
     }
 }
 
@@ -400,11 +382,9 @@ bool InMemoryCache<TKey, TVal>::isCleanupRunning() const
 }
 
 template <typename TKey, typename TVal>
-typename InMemoryCache<TKey, TVal>::Clock::time_point
-InMemoryCache<TKey, TVal>::makeExpireAt(int ttl)
+typename InMemoryCache<TKey, TVal>::Clock::time_point InMemoryCache<TKey, TVal>::makeExpireAt(int ttl)
 {
-    if (ttl > 0)
-    {
+    if (ttl > 0) {
         return Clock::now() + std::chrono::seconds(ttl);
     }
     return {};
@@ -420,22 +400,20 @@ template <typename TKey, typename TVal>
 void InMemoryCache<TKey, TVal>::shutdown()
 {
     std::thread to_join;
-    bool is_last = false;
+    bool        is_last = false;
     {
         std::lock_guard<std::mutex> lock(s_mutex_);
         s_instances_.erase(this);
-        if (s_instances_.empty() && s_thread_.joinable())
-        {
+        if (s_instances_.empty() && s_thread_.joinable()) {
             s_stopping_ = true;
             // Move the thread object out so a concurrent start() can spawn a
             // fresh thread without racing this join.
-            to_join = std::move(s_thread_);
-            is_last = true;
+            to_join     = std::move(s_thread_);
+            is_last     = true;
         }
     }
 
-    if (!is_last)
-    {
+    if (!is_last) {
         return;
     }
 
@@ -445,10 +423,9 @@ void InMemoryCache<TKey, TVal>::shutdown()
 
     // If new instances registered while joining, start a fresh thread.
     std::lock_guard<std::mutex> lock(s_mutex_);
-    if (!s_instances_.empty() && !s_thread_.joinable())
-    {
+    if (!s_instances_.empty() && !s_thread_.joinable()) {
         s_stopping_ = false;
-        s_thread_ = std::thread(&InMemoryCache<TKey, TVal>::cleanupLoop);
+        s_thread_   = std::thread(&InMemoryCache<TKey, TVal>::cleanupLoop);
     }
 }
 
@@ -456,15 +433,12 @@ template <typename TKey, typename TVal>
 void InMemoryCache<TKey, TVal>::cleanupLoop()
 {
     std::unique_lock<std::mutex> lock(s_mutex_);
-    while (true)
-    {
+    while (true) {
         s_cv_.wait_for(lock, s_period_, [] { return s_stopping_; });
-        if (s_stopping_)
-        {
+        if (s_stopping_) {
             return;
         }
-        for (auto* instance : s_instances_)
-        {
+        for (auto* instance : s_instances_) {
             instance->removeExpired();
         }
     }

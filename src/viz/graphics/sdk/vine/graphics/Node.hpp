@@ -4,20 +4,20 @@
 #include <cstdint>
 #include <optional>
 
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
-#include <vine/raw_ptr.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Rect3.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "CollectView.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
-using vn::math::Mat4d;
 using vn::math::Aabbd;
+using vn::math::Mat4d;
 
 class Group;
 
@@ -45,9 +45,9 @@ inline constexpr std::uint32_t kDefaultLayer = 1u << 0;
  */
 enum class ViewDependence
 {
-    None,             ///< View-independent placement.
-    View,             ///< Depends on the camera, but not on the device-pixel viewport.
-    ViewAndViewport,  ///< Depends on the camera and on the device-pixel viewport.
+    None,            // View-independent placement.
+    View,            // Depends on the camera, but not on the device-pixel viewport.
+    ViewAndViewport, // Depends on the camera and on the device-pixel viewport.
 };
 
 /**
@@ -268,8 +268,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      * @return None when the placement is view-independent; View when @p world was filled and the viewport does
      *         not matter; ViewAndViewport when @p world was filled and the viewport is one of its inputs.
      */
-    virtual ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view,
-                                               Mat4d& world) const;
+    virtual ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const;
 
     /** @brief Announces that this subtree's bound may have changed.
      *
@@ -380,38 +379,37 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
   private:
     String name_;
-    bool visible_ = true;
+    bool   visible_ = true;
     /// This node's own layer declaration, or nullopt when it says nothing and inherits (see setLayers).
     std::optional<std::uint32_t> layers_;
     /// This node's own draw order, or nullopt when it says nothing and inherits (see setDrawOrder).
     std::optional<int> draw_order_;
-    float opacity_ = 1.0f;
-    raw_ptr<Node> parent_ = nullptr;
+    float              opacity_ = 1.0f;
+    raw_ptr<Node>      parent_  = nullptr;
 
     // The content announcement count of THIS SUBTREE (see announceContentChange): every edit below increments this
     // node and every ancestor up to the root, so a Scene reads its root's value to learn that its content changed.
     // NOT atomic: graph edits and collection are single-threaded by contract, exactly like the bounds cache.
-    std::uint64_t content_epoch_{0};
+    std::uint64_t content_epoch_{ 0 };
 
     // The bounds cache (see invalidateBounds / subtreeBounds). Mutable for the same reason
     // Geometry::local_bounds_ is (see its note): collection is single-threaded by contract, and the
     // cache is a pure function of the stamps.
-    std::uint64_t         bounds_stamp_{0};      ///< Bumped by invalidateBounds() on this node and every ancestor.
-    mutable Aabbd         cached_bounds_;        ///< Subtree box in this node's frame, valid at cached_stamp_.
-    mutable std::uint64_t cached_stamp_{0};      ///< bounds_stamp_ when the box was computed.
-    mutable bool          cached_known_{false};  ///< False until a recompute succeeded (or after one failed).
-    mutable std::uint64_t bounds_recomputes_{0}; ///< Recomputation witness (see boundsRecomputeCount).
+    std::uint64_t         bounds_stamp_{ 0 };      // Bumped by invalidateBounds() on this node and every ancestor.
+    mutable Aabbd         cached_bounds_;          // Subtree box in this node's frame, valid at cached_stamp_.
+    mutable std::uint64_t cached_stamp_{ 0 };      // bounds_stamp_ when the box was computed.
+    mutable bool          cached_known_{ false };  // False until a recompute succeeded (or after one failed).
+    mutable std::uint64_t bounds_recomputes_{ 0 }; // Recomputation witness (see boundsRecomputeCount).
 
     // The subtree layer union cache (see subtreeLayerUnion). It is a pure function of the layer declarations
     // and the tree shape, not of geometry bytes, so it has its own epoch rather than sharing bounds_stamp_.
-    mutable std::uint32_t cached_subtree_layers_{0};     ///< OR of resolved layers in this subtree.
-    mutable std::uint32_t cached_inherited_layers_{0};   ///< Inherited value the union was computed with.
-    mutable std::uint64_t cached_layer_epoch_{0};        ///< layerEpoch() when the union was computed.
-    mutable bool          cached_layer_known_{false};    ///< False until the first recompute.
-    mutable std::uint64_t layer_union_recomputes_{0};    ///< Recomputation witness (see subtreeLayerRecomputeCount).
+    mutable std::uint32_t cached_subtree_layers_{ 0 };   // OR of resolved layers in this subtree.
+    mutable std::uint32_t cached_inherited_layers_{ 0 }; // Inherited value the union was computed with.
+    mutable std::uint64_t cached_layer_epoch_{ 0 };      // layerEpoch() when the union was computed.
+    mutable bool          cached_layer_known_{ false };  // False until the first recompute.
+    mutable std::uint64_t layer_union_recomputes_{ 0 };  // Recomputation witness (see subtreeLayerRecomputeCount).
 
     friend class Group;
-
 };
 
 using NodePtr = intrusive_ptr<Node>;

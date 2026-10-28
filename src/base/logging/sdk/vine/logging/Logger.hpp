@@ -22,8 +22,7 @@ VN_LOGGING_NS_BEGIN
  * header leaks into this interface. A logger is a cheap shared value: copies
  * refer to the same underlying spdlog logger.
  */
-class VN_LOGGING_API Logger
-{
+class VN_LOGGING_API Logger {
   public:
     /**
      * @brief Creates an empty logger that produces no output.

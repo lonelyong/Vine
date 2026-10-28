@@ -1,14 +1,29 @@
 ﻿#include <gtest/gtest.h>
 
-namespace {
+namespace
+{
+
 class Book {
 
   public:
-    Book() {}
-    Book(const Book& other) {}
-    Book(Book&& other) {}
-    Book& operator=(const Book& other) { return *this; }
-    Book& operator=(Book&& other) { return *this; }
+    Book()
+    {}
+
+    Book(const Book& other)
+    {}
+
+    Book(Book&& other)
+    {}
+
+    Book& operator=(const Book& other)
+    {
+        return *this;
+    }
+
+    Book& operator=(Book&& other)
+    {
+        return *this;
+    }
 
   public:
     std::string name = "Book1";
@@ -60,14 +75,17 @@ class A {
 class B : public A {
   public:
     B()
-      : A(1) {}
+      : A(1)
+    {}
 
   public:
     int x = 3;
 };
+
 } // namespace
 
-TEST(TestCppStd, DefaultConstructorsAndOperators) {
+TEST(TestCppStd, DefaultConstructorsAndOperators)
+{
     A a1(1), a2(2);
     a1.book.name = "A1.book";
     a2.book.name = "A2.book";

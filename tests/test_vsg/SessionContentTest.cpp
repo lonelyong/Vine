@@ -37,7 +37,12 @@
 #include <vsg/commands/Command.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
@@ -54,12 +59,7 @@
 #include <vine/vsg/internal/ViewBlock.hpp>
 #include <vine/vsg/internal/VsgExecutor.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
-#include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/Streams.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -75,32 +75,40 @@
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
 {
-    return array == nullptr
-               ? std::span<const float>{}
-               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
 }
 
 /// @brief The scalars of a float array, as the upload layer takes them.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const float>{}
-                            : std::span<const float>(array->data(), array->size());
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(array->data(), array->size());
 }
 
 /// @brief The indices of an index array, as the upload layer takes them.
 inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const std::uint32_t>{}
-                            : std::span<const std::uint32_t>(array->data(), array->size());
+    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
 using vn::graphics::Geometry;
-using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
+using vn::graphics::backend::ClearValues;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetShape;
+using vn::graphics::backend::VariantPool;
+using vn::test::setPrimitiveIndices;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::buildGeometryFacts;
@@ -121,21 +129,9 @@ using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
 using vn::vsg::VsgExecutor;
 using vn::vsg::WindowTarget;
+using vn::vsg::api::probePhysicalDevices;
 using vn::vsg::api::Session;
 using vn::vsg::api::SessionOptions;
-using vn::vsg::api::probePhysicalDevices;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
-using vn::graphics::backend::VariantPool;
 
 #if !defined(_WIN32)
 
@@ -177,10 +173,10 @@ bool isPlanClear(const std::array<std::uint8_t, 3>& pixel)
 ContentPipeline::Shaders shaders()
 {
     ContentPipeline::Shaders pair;
-    pair.vertex = "#version 450\n"
-                  "layout(location = 0) in vec3 position;\n"
-                  "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
-                  "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
+    pair.vertex   = "#version 450\n"
+                    "layout(location = 0) in vec3 position;\n"
+                    "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
+                    "void main() { gl_Position = draw.model * vec4(position, 1.0); }\n";
     pair.fragment = "#version 450\n"
                     "layout(location = 0) out vec4 outColor;\n"
                     "layout(set = 0, binding = 1, std140) uniform VineDrawBlock { mat4 model; vec4 params; } draw;\n"
@@ -188,16 +184,15 @@ ContentPipeline::Shaders shaders()
     return pair;
 }
 
-int   program_identity = 0;
-int   model_vertices   = 0;
-int   model_indices    = 0;
-int   material_identity = 0;
+int program_identity  = 0;
+int model_vertices    = 0;
+int model_indices     = 0;
+int material_identity = 0;
 
 /// @brief A draw block whose matrix is the identity (the triangle stays where its positions put it).
 std::vector<std::byte> drawBlock()
 {
-    const std::array<float, 16> identity{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
-                                          0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F };
+    const std::array<float, 16> identity{ 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F };
     std::vector<std::byte>      block(80U, std::byte{ 0 });
     std::memcpy(block.data(), identity.data(), sizeof(identity));
     const std::array<float, 4> params{ 1.0F, 0.0F, 0.0F, 0.0F };
@@ -205,7 +200,7 @@ std::vector<std::byte> drawBlock()
     return block;
 }
 
-}  // namespace
+} // namespace
 
 TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
 {
@@ -214,9 +209,9 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
@@ -228,12 +223,12 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     vn::graphics::Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-content] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
-                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()),
-                                diagnostic.message.size()).c_str());
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
+                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()), diagnostic.message.size()).c_str());
     });
-    Session                       session;
-    SessionOptions                options;
+    Session        session;
+    SessionOptions options;
     options.width         = kWidth;
     options.height        = kHeight;
     options.native_handle = window.handle();
@@ -255,17 +250,16 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     ASSERT_NE(storage, nullptr);
     const ContentPipeline::Shaders program_shaders = shaders();
     vn::vsg::ProgramAbi            program_abi;
-    ASSERT_EQ(vn::vsg::scanProgramAbi(program_shaders.vertex, program_shaders.fragment, {}, program_abi),
-              FactMiss::None);
+    ASSERT_EQ(vn::vsg::scanProgramAbi(program_shaders.vertex, program_shaders.fragment, {}, program_abi), FactMiss::None);
     auto descriptors = BlockDescriptors::forAbi(program_abi, 0U, device, *storage);
     ASSERT_NE(descriptors, nullptr);
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-    auto pipelines = ContentPipeline::create(program_abi,
-                                             std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
-                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                             program_shaders);
+    auto                                   pipelines = ContentPipeline::create(program_abi,
+                                                                               std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                                                               std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                                                               program_shaders);
     ASSERT_NE(pipelines, nullptr) << "the shader pair must compile";
 
     auto positions  = ::vsg::vec3Array::create(3U);
@@ -276,34 +270,33 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     (*positions)[0] = ::vsg::vec3(-0.4F, -0.4F, 0.5F);
     (*positions)[1] = ::vsg::vec3(0.4F, -0.4F, 0.5F);
     (*positions)[2] = ::vsg::vec3(0.0F, 0.4F, 0.5F);
-    auto indices  = ::vsg::uintArray::create(3U);
-    (*indices)[0] = 0U;
-    (*indices)[1] = 1U;
-    (*indices)[2] = 2U;
+    auto indices    = ::vsg::uintArray::create(3U);
+    (*indices)[0]   = 0U;
+    (*indices)[1]   = 1U;
+    (*indices)[2]   = 2U;
 
     StreamUploads uploads;
     StreamKey     vertex_key;
-    vertex_key.kind       = StreamKind::Vertex;
-    vertex_key.location   = 0U;
-    vertex_key.components = 3U;
-    vertex_key.buffer     = &model_vertices;
-    vertex_key.revision   = 1U;
-    vertex_key.count      = 9U;
+    vertex_key.kind        = StreamKind::Vertex;
+    vertex_key.location    = 0U;
+    vertex_key.components  = 3U;
+    vertex_key.buffer      = &model_vertices;
+    vertex_key.revision    = 1U;
+    vertex_key.count       = 9U;
     const auto vertex_bind = uploads.acquireVertex(vertex_key, scalarsOf(positions));
     StreamKey  index_key;
-    index_key.kind       = StreamKind::Index;
-    index_key.components = 1U;
-    index_key.buffer     = &model_indices;
-    index_key.revision   = 1U;
-    index_key.count      = 3U;
+    index_key.kind        = StreamKind::Index;
+    index_key.components  = 1U;
+    index_key.buffer      = &model_indices;
+    index_key.revision    = 1U;
+    index_key.count       = 3U;
     const auto index_bind = uploads.acquireIndex(index_key, indicesOf(indices));
     ASSERT_NE(vertex_bind.bind, nullptr);
     ASSERT_NE(index_bind.bind, nullptr);
 
     VariantPool   pool;
     StateRegistry registry(pool);
-    ContentDraw   recorder(*pipelines, pool,
-                           vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
+    ContentDraw   recorder(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
 
     storage->beginFrame();
     const auto view     = storage->writeView(std::vector<std::byte>(288U, std::byte{ 0 }));
@@ -313,13 +306,12 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     ASSERT_TRUE(block.valid);
 
     ContentDraw::Draw draw;
-    draw.key.program                      = &program_identity;
-    draw.key.revision                     = 1U;
-    draw.key.vertex_layout.canonical_mask = 0x1U;
-    draw.key.compatibility.samples        = 1U;
+    draw.key.program                                             = &program_identity;
+    draw.key.revision                                            = 1U;
+    draw.key.vertex_layout.canonical_mask                        = 0x1U;
+    draw.key.compatibility.samples                               = 1U;
     const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
-        descriptors->bind(pipelines->layout(),
-                          BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
+        descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
     };
     draw.blocks       = block_binds;
     draw.vertex_binds = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind.bind, 1U);
@@ -331,8 +323,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     ASSERT_NE(content, nullptr) << "the draw must record";
 
     root->addChild(content);
-    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::recompile(session))
-        << "content attached after the session came up has to be compiled";
+    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::recompile(session)) << "content attached after the session came up has to be compiled";
 
     for (int frame = 0; frame < 3; ++frame) {
         ASSERT_TRUE(session.beginFrame());
@@ -351,9 +342,8 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     EXPECT_EQ(recorder.pipeline_binds(), 1U);
     EXPECT_EQ(recorder.dynamic_commands(), 1U);
 
-    EXPECT_TRUE(isGreen(centre)) << "the window's centre must hold the content, got (" << static_cast<int>(centre[0])
-                                 << ", " << static_cast<int>(centre[1]) << ", " << static_cast<int>(centre[2])
-                                 << ") read-error " << static_cast<int>(window.readError())
+    EXPECT_TRUE(isGreen(centre)) << "the window's centre must hold the content, got (" << static_cast<int>(centre[0]) << ", " << static_cast<int>(centre[1])
+                                 << ", " << static_cast<int>(centre[2]) << ") read-error " << static_cast<int>(window.readError())
                                  << " (0 = the read was served and the display path had not delivered the "
                                     "picture yet; non-zero = the server refused it, see HostWindowReadTest)";
     EXPECT_FALSE(isGreen(corner)) << "a window that is green everywhere would pass a sloppier check";
@@ -379,9 +369,9 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
@@ -393,9 +383,9 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     vn::graphics::Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[session-plan] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
-                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()),
-                                diagnostic.message.size()).c_str());
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
+                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()), diagnostic.message.size()).c_str());
     });
     Session        session;
     SessionOptions options;
@@ -418,18 +408,17 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
-        fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { outColor = vec4(vb.frame.y / 128.0, vb.cam_pos.x, vb.frame.z / 96.0, 1.0); }\n"));
+        fragment.type = ShaderStageType::Fragment;
+        fragment.source =
+            vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                        "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                        "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                        "void main() { outColor = vec4(vb.frame.y / 128.0, vb.cam_pos.x, vb.frame.z / 96.0, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -444,18 +433,17 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-    auto pipelines = ContentPipeline::create(program_facts.abi,
-                                             std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
-                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                             program_facts.shaders);
+    auto                                   pipelines = ContentPipeline::create(program_facts.abi,
+                                                                               std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                                                               std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                                                               program_facts.shaders);
     ASSERT_NE(pipelines, nullptr) << "the view-block shader pair must compile";
 
-    const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    const vn::intrusive_ptr<vn::Buffer<float>> positions_buffer = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
+    const vn::intrusive_ptr<Geometry>          geometry(new Geometry());
+    const vn::intrusive_ptr<vn::Buffer<float>> positions_buffer =
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F }));
     const vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices_buffer =
-        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
     geometry->setPositions(positions_buffer);
     setPrimitiveIndices(*geometry, 0U, indices_buffer);
     geometry->setRevision(1U);
@@ -464,7 +452,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
     std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     MaterialFacts          material_facts;
@@ -482,15 +470,13 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool,
-                        vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
 
     // The camera: looking at (0.5, 0, 0) from (0.5, 0, 1.5), with an orthographic window of [-1, 1] squared.
     // The look-at puts the triangle 0.5 to the LEFT of the window's centre; the fragment stage reports the
     // camera's x (0.5) in a colour byte.
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
-                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
     RenderCommand command;
@@ -502,29 +488,28 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     ClearValues clear;
     clear.color          = true;
     clear.color_value[0] = 0.0F;
-    clear.color_value[1] = 0.25F;  // the plan's clear: a green the shader's colour cannot be
+    clear.color_value[1] = 0.25F; // the plan's clear: a green the shader's colour cannot be
     clear.color_value[2] = 0.0F;
     clear.color_value[3] = 1.0F;
 
     // The plan: one pass into the default framebuffer, whose frame token is the SESSION's.
-    FrameArena             arena{ 64 * 1024 };
+    FrameArena                     arena{ 64 * 1024 };
     vn::graphics::backend::Observe observe;
-    FrameRecorder          recorder{ arena, diagnostics, observe };
-    FrameCompiler          compiler{ arena, diagnostics, observe };
+    FrameRecorder                  recorder{ arena, diagnostics, observe };
+    FrameCompiler                  compiler{ arena, diagnostics, observe };
 
     const vn::graphics::backend::FrameToken token = session.beginFrame();
     ASSERT_TRUE(token) << "the session opens the frame the plan belongs to";
     recorder.beginFrame(token);
     recorder.beginPass(7U);
-    recorder.setRenderTarget(nullptr);  // the default framebuffer
+    recorder.setRenderTarget(nullptr); // the default framebuffer
     recorder.setClearPolicy(clear);
     recorder.render(commands, camera.get());
     recorder.endPass();
     recorder.endFrame();
 
-    const TargetFacts window_facts = window_target->facts();
-    const CompiledFrame& frame =
-        compiler.compile(recorder.description(), FrameFacts{ std::span<const TargetFacts>(&window_facts, 1U) });
+    const TargetFacts    window_facts = window_target->facts();
+    const CompiledFrame& frame        = compiler.compile(recorder.description(), FrameFacts{ std::span<const TargetFacts>(&window_facts, 1U) });
     ASSERT_EQ(frame.passes.size(), 1U);
     ASSERT_EQ(frame.passes[0].color_attachments, 1U) << "the plan resolved the window's shape from its facts";
     ASSERT_EQ(frame.passes[0].draws.size(), 1U);
@@ -533,9 +518,14 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // The content layer, with the view block built for THIS pass from the plan's camera and the session's
     // frame clock - the extent is the window's, which is the picture the shading reconstructs from.
     storage->beginFrame();
-    const ContentPass::Scope::Entry halves[]{ ContentPass::Scope::Entry{
-        vn::graphics::backend::DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
-        pipelines.get(), &draws } };
+    const ContentPass::Scope::Entry halves[]{
+        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+                                  program.get(),
+                                  program_facts.revision,
+                                  geometry_facts.layout,
+                                  pipelines.get(),
+                                  &draws }
+    };
     ContentPass::Scope scope;
     scope.entries    = halves;
     scope.registry   = &registry;
@@ -544,16 +534,13 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     scope.uploads    = &uploads;
     ContentPass content(scope, diagnostics);
 
-    const std::uint32_t target_width  = window_target->width();
-    const std::uint32_t target_height = window_target->height();
-    const vn::graphics::VineViewBlock view_block =
-        buildViewBlock(frame.passes[0].draws[0].camera, session.frameSeconds(), target_width, target_height);
-    const std::span<const std::byte> view_bytes =
-        std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U));
+    const std::uint32_t               target_width  = window_target->width();
+    const std::uint32_t               target_height = window_target->height();
+    const vn::graphics::VineViewBlock view_block    = buildViewBlock(frame.passes[0].draws[0].camera, session.frameSeconds(), target_width, target_height);
+    const std::span<const std::byte>  view_bytes    = std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U));
 
     ::vsg::ref_ptr<::vsg::Node> content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, window_target->shape().compatibility(), {}, view_bytes,
-                               content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, window_target->shape().compatibility(), {}, view_bytes, content_node));
     EXPECT_TRUE(diagnostics.clean()) << "every identity is in the tables and the inputs match the plan";
 
     // The executor: the window is its default-framebuffer target, and the plan's single pass is recorded into
@@ -584,11 +571,9 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // window with the session's own graph (measured: the read then answers the window's own background with
     // `read-error 0`; see TestHostWindow::waitForPixel). Moving `assignFrameGraphs` inside the loop is what
     // keeps the picture: the assignment is consumed by the commit that follows it.
-    for (int settle = 0; settle < 2; ++settle)
-    {
+    for (int settle = 0; settle < 2; ++settle) {
         ASSERT_TRUE(session.beginFrame());
-        ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(
-            session, ::vsg::CommandGraphs{ command_graph }));
+        ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
         ASSERT_TRUE(session.commitFrame());
     }
 
@@ -603,33 +588,29 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // is inside it and row 72 is not - while an unfolded (or y-mirrored) block would cover ~29 to ~77 there,
     // which turns both probes around. A picture whose clip space did not match the window's reverse-Z depth
     // (cleared to 0.0 under GREATER) would show the plan's clear everywhere instead.
-    const auto drawn       = window.pixel(kWidth / 4, kHeight / 2);      // inside the triangle
-    const auto apex_side   = window.pixel(kWidth / 4, 22);               // inside, above the middle
-    const auto below_base  = window.pixel(kWidth / 4, 72);               // outside, below the base
-    const auto clear_pixel = window.pixel(3 * kWidth / 4, kHeight / 2);  // the triangle never reaches here
+    const auto drawn       = window.pixel(kWidth / 4, kHeight / 2);     // inside the triangle
+    const auto apex_side   = window.pixel(kWidth / 4, 22);              // inside, above the middle
+    const auto below_base  = window.pixel(kWidth / 4, 72);              // outside, below the base
+    const auto clear_pixel = window.pixel(3 * kWidth / 4, kHeight / 2); // the triangle never reaches here
     const auto corner      = window.pixel(2, 2);
 
-    EXPECT_TRUE(isColourByte(drawn[1], 0.5))
-        << "cam_pos.x (0.5) reached the fragment stage, got (" << static_cast<int>(drawn[0]) << ", "
-        << static_cast<int>(drawn[1]) << ", " << static_cast<int>(drawn[2]) << ")";
+    EXPECT_TRUE(isColourByte(drawn[1], 0.5)) << "cam_pos.x (0.5) reached the fragment stage, got (" << static_cast<int>(drawn[0]) << ", "
+                                             << static_cast<int>(drawn[1]) << ", " << static_cast<int>(drawn[2]) << ")";
     EXPECT_TRUE(isColourByte(drawn[0], 1.0)) << "the picture's width (frame.y = 128, the window's own) reached "
                                                 "the fragment stage";
     EXPECT_TRUE(isColourByte(drawn[2], 1.0)) << "and so did its height (frame.z = 96)";
 
     EXPECT_TRUE(isColourByte(apex_side[1], 0.5)) << "the triangle's apex points UP in the window: a pixel "
                                                     "above the middle, inside the triangle, is shaded";
-    EXPECT_TRUE(isPlanClear(below_base)) << "and one below its base is not: got ("
-                                         << static_cast<int>(below_base[0]) << ", "
-                                         << static_cast<int>(below_base[1]) << ", "
-                                         << static_cast<int>(below_base[2]) << ")";
+    EXPECT_TRUE(isPlanClear(below_base)) << "and one below its base is not: got (" << static_cast<int>(below_base[0]) << ", " << static_cast<int>(below_base[1])
+                                         << ", " << static_cast<int>(below_base[2]) << ")";
 
-    EXPECT_TRUE(isPlanClear(clear_pixel))
-        << "the right quarter is the plan's clear, so the view really moved the triangle: got ("
-        << static_cast<int>(clear_pixel[0]) << ", " << static_cast<int>(clear_pixel[1]) << ", "
-        << static_cast<int>(clear_pixel[2]) << ") read-error " << static_cast<int>(window.readError());
+    EXPECT_TRUE(isPlanClear(clear_pixel)) << "the right quarter is the plan's clear, so the view really moved the triangle: got ("
+                                          << static_cast<int>(clear_pixel[0]) << ", " << static_cast<int>(clear_pixel[1]) << ", "
+                                          << static_cast<int>(clear_pixel[2]) << ") read-error " << static_cast<int>(window.readError());
     EXPECT_TRUE(isPlanClear(corner)) << "the swapchain image was cleared to the plan's colour";
 
     session.shutdown();
 }
 
-#endif  // !defined(_WIN32)
+#endif // !defined(_WIN32)

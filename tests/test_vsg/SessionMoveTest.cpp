@@ -23,33 +23,29 @@
 
 #include "TestHostWindow.hpp"
 
+#include <vine/graphics/Diagnostics.hpp>
 #include <vine/vsg/internal/DeviceProbe.hpp>
 #include <vine/vsg/internal/Session.hpp>
-#include <vine/graphics/Diagnostics.hpp>
 
+using vn::vsg::api::probePhysicalDevices;
 using vn::vsg::api::Session;
 using vn::vsg::api::SessionOptions;
-using vn::vsg::api::probePhysicalDevices;
 
 #if !defined(_WIN32)
 
 namespace
-{
-
-}  // namespace
+{} // namespace
 
 TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
 {
     const auto probed_devices = probePhysicalDevices();
-    if (!probed_devices.ok || probed_devices.usableCount() == 0)
-    {
+    if (!probed_devices.ok || probed_devices.usableCount() == 0) {
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    xcb_connection_t* connection = xcb_connect(nullptr, nullptr);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-    {
+    xcb_connection_t*     connection = xcb_connect(nullptr, nullptr);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create host windows on";
     }
     xcb_screen_iterator_t screens = xcb_setup_roots_iterator(xcb_get_setup(connection));
@@ -63,7 +59,7 @@ TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
     // A session that NEVER pumps the host's events (the host owns the message loop) and reports nothing.
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic&) {});
 
-    Session session;
+    Session        session;
     SessionOptions options;
     options.native_handle = first.handle();
 
@@ -115,4 +111,4 @@ TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
     // to the process rather than closed here, because those destructors still need it.
 }
 
-#endif  // !_WIN32
+#endif // !_WIN32

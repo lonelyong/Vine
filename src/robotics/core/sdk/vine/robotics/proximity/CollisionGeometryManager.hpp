@@ -121,8 +121,7 @@ class CollisionGeometryManager {
      * @param shape The shape; must already be registered.
      * @return The new collision object, or null when the shape is unregistered.
      */
-    virtual vn::intrusive_ptr<CollisionObject>
-        createCollisionObject(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const = 0;
+    virtual vn::intrusive_ptr<CollisionObject> createCollisionObject(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const = 0;
 
   protected:
     /**
@@ -131,8 +130,7 @@ class CollisionGeometryManager {
      * @param shape The source shape.
      * @return The new geometry, or null when the shape is unsupported.
      */
-    virtual vn::intrusive_ptr<CollisionGeometry>
-        createCollisionGeometry(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const = 0;
+    virtual vn::intrusive_ptr<CollisionGeometry> createCollisionGeometry(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) const = 0;
 
   protected:
     /// Registered shapes to their cached geometries.

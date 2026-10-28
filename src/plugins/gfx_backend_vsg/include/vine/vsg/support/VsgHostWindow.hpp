@@ -34,11 +34,11 @@
 #include <vsg/app/Window.h>
 
 #if defined(_WIN32)
-#include <vsg/platform/win32/Win32_Window.h>
+#    include <vsg/platform/win32/Win32_Window.h>
 #elif defined(__APPLE__)
-#error "VsgHostWindow has no window-system back end for this platform (the X11 one needs XCB, which the build links under UNIX AND NOT APPLE)."
+#    error "VsgHostWindow has no window-system back end for this platform (the X11 one needs XCB, which the build links under UNIX AND NOT APPLE)."
 #else
-#include <vsg/platform/xcb/Xcb_Window.h>
+#    include <vsg/platform/xcb/Xcb_Window.h>
 #endif
 
 VN_VSG_NS_BEGIN
@@ -50,7 +50,7 @@ namespace detail
 /** @brief The vsg platform window this class derives from, for the window system being built for. */
 using VsgHostWindowBase = ::vsgWin32::Win32_Window;
 /** @brief The native window handle that platform's `WindowTraits::nativeWindow` carries. */
-using VsgHostHandle = HWND;
+using VsgHostHandle     = HWND;
 #else
 /** @brief The vsg platform window this class derives from, for the window system being built for. */
 using VsgHostWindowBase = ::vsgXcb::Xcb_Window;
@@ -61,7 +61,7 @@ using VsgHostWindowBase = ::vsgXcb::Xcb_Window;
  * backend passes around (see VsgRenderer::makeWindowTraits). It is also what lets the window class be
  * written ONCE: the two platforms differ in this type and in nothing else about this class.
  */
-using VsgHostHandle = xcb_window_t;
+using VsgHostHandle     = xcb_window_t;
 #endif
 
 /** @brief Reads the numeric value of a native handle, the form every other conversion goes through.
@@ -117,8 +117,7 @@ using VsgHostHandle = xcb_window_t;
 }
 
 /** @brief A vsg platform window that adopts the host's window and never destroys it. */
-class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>
-{
+class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow> {
   public:
     /** @brief Adopts the host window the traits name.
      *
@@ -167,7 +166,10 @@ class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>
      *
      * @param device Device to render on (never null; the caller owns it and outlives this window).
      */
-    void adoptDevice(::vsg::ref_ptr<::vsg::Device> device) { share(std::move(device)); }
+    void adoptDevice(::vsg::ref_ptr<::vsg::Device> device)
+    {
+        share(std::move(device));
+    }
 
   protected:
     /** @brief Releases this window without destroying the host's window.
@@ -218,17 +220,18 @@ class VsgHostWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgHostWindow>
  * the same platform window vsg would have created (so the swapchain, the frames and the depth image stay vsg's own
  * machinery), and unlike VsgHostWindow it DOES own the window it made, so the destructor destroys it.
  */
-class VsgOwnedWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgOwnedWindow>
-{
+class VsgOwnedWindow : public ::vsg::Inherit<VsgHostWindowBase, VsgOwnedWindow> {
   public:
     /** @brief Creates this backend's own platform window from @p traits. */
-    explicit VsgOwnedWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits) :
-        Inherit(traits)
-    {
-    }
+    explicit VsgOwnedWindow(::vsg::ref_ptr<::vsg::WindowTraits> traits)
+      : Inherit(traits)
+    {}
 
     /** @brief Renders on @p device instead of one of its own (see VsgHostWindow::adoptDevice). */
-    void adoptDevice(::vsg::ref_ptr<::vsg::Device> device) { share(std::move(device)); }
+    void adoptDevice(::vsg::ref_ptr<::vsg::Device> device)
+    {
+        share(std::move(device));
+    }
 };
 
 /**

@@ -43,7 +43,7 @@ struct DocumentType {
     String                     description;
     String                     icon;
     String                     owner;
-    std::function<Document*()> create; ///< May be empty: a type that can only be opened.
+    std::function<Document*()> create; // May be empty: a type that can only be opened.
 };
 
 /// How specific a registered payload type is: its depth in its own chain (Object::desc() is 0).
@@ -61,21 +61,21 @@ std::size_t payloadDepth(TypeId payload_type) noexcept
 /// One registered opener: the payload type it takes, how it is ordered, and how it builds a document.
 struct Opener {
     String                                          type_id;
-    TypeId                                          payload_type; ///< The key: the payload's own type metadata.
-    std::size_t                                     payload_depth = 0; ///< How specific that key is (see addOpener()).
-    int                                             priority = 0;
+    TypeId                                          payload_type;      // The key: the payload's own type metadata.
+    std::size_t                                     payload_depth = 0; // How specific that key is (see addOpener()).
+    int                                             priority      = 0;
     String                                          source_scheme;
     std::function<Document*(raw_ptr<const Object>)> open;
-    std::function<int(raw_ptr<const Object>)>       refine; ///< May be empty: accept with score 1.
+    std::function<int(raw_ptr<const Object>)>       refine; // May be empty: accept with score 1.
 };
 
 } // namespace
 
 VN_OBJECT_META_IMPL(DocumentEventArgs, EventArgs)
 
-DocumentEventArgs::DocumentEventArgs(Document* document) : document_(document)
-{
-}
+DocumentEventArgs::DocumentEventArgs(Document* document)
+  : document_(document)
+{}
 
 Document* DocumentEventArgs::document() const
 {
@@ -100,9 +100,7 @@ struct DocumentManager::Impl {
 
     auto find(Document* document)
     {
-        return std::find_if(documents.begin(), documents.end(), [document](const std::unique_ptr<Document>& held) {
-            return held.get() == document;
-        });
+        return std::find_if(documents.begin(), documents.end(), [document](const std::unique_ptr<Document>& held) { return held.get() == document; });
     }
 
     /// 一个文档进集合的唯一入口：create() 与 openPayload() 都把校验过的实例交给它（保证两者的行为一致）。
@@ -117,8 +115,7 @@ Document* DocumentManager::Impl::adopt(std::unique_ptr<Document> created, const 
     }
     if (created->typeId() != type_id) {
         // 注册与实例必须一致：管理器里的一切都以 id 为键，报另一个 id 的文档会被列在它并不应答的类型下。
-        VN_LOGW("{} registered as '{}' created a '{}' document; refused", toUtf8View(origin), toUtf8View(type_id),
-                toUtf8View(created->typeId()));
+        VN_LOGW("{} registered as '{}' created a '{}' document; refused", toUtf8View(origin), toUtf8View(type_id), toUtf8View(created->typeId()));
         return nullptr;
     }
 
@@ -127,7 +124,8 @@ Document* DocumentManager::Impl::adopt(std::unique_ptr<Document> created, const 
     return document;
 }
 
-DocumentManager::DocumentManager(Application* owner) : d(std::make_unique<Impl>())
+DocumentManager::DocumentManager(Application* owner)
+  : d(std::make_unique<Impl>())
 {
     d->app = owner;
 }
@@ -142,8 +140,7 @@ bool DocumentManager::registerType(const DocumentTypeRegistration& registration)
     if (d->types.find(registration.type_id) != d->types.end()) {
         // One id is one type. Replacing the factory would leave documents the previous one built answering to an id
         // that no longer means what they are.
-        VN_LOGW("document type '{}' is already registered; the second registration is ignored",
-                toUtf8View(registration.type_id));
+        VN_LOGW("document type '{}' is already registered; the second registration is ignored", toUtf8View(registration.type_id));
         return false;
     }
 
@@ -151,15 +148,16 @@ bool DocumentManager::registerType(const DocumentTypeRegistration& registration)
     // panel can say which plugin contributed this type.
     const String owner = d->app != nullptr ? d->app->registrationOwner() : String();
 
-    d->types.emplace(registration.type_id,
-                     DocumentType{ registration.display_name, registration.description, registration.icon, owner,
-                                   registration.create });
+    d->types.emplace(registration.type_id, DocumentType{ registration.display_name, registration.description, registration.icon, owner, registration.create });
     return true;
 }
 
-bool DocumentManager::addOpener(TypeId payload_type, const String& type_id, int priority, String source_scheme,
+bool DocumentManager::addOpener(TypeId                                          payload_type,
+                                const String&                                   type_id,
+                                int                                             priority,
+                                String                                          source_scheme,
                                 std::function<Document*(raw_ptr<const Object>)> open,
-                                std::function<int(raw_ptr<const Object>)> refine)
+                                std::function<int(raw_ptr<const Object>)>       refine)
 {
     if (type_id.empty() || !open || payload_type == nullptr) {
         return false;
@@ -170,13 +168,7 @@ bool DocumentManager::addOpener(TypeId payload_type, const String& type_id, int 
         return false;
     }
 
-    d->openers.push_back(Opener{ type_id,
-                                 payload_type,
-                                 payloadDepth(payload_type),
-                                 priority,
-                                 std::move(source_scheme),
-                                 std::move(open),
-                                 std::move(refine) });
+    d->openers.push_back(Opener{ type_id, payload_type, payloadDepth(payload_type), priority, std::move(source_scheme), std::move(open), std::move(refine) });
     return true;
 }
 
@@ -206,9 +198,9 @@ std::vector<DocumentTypeInfo> DocumentManager::types() const
                 continue;
             }
             info.payload_types.push_back(opener.payload_type->fullName());
-            if (!opener.source_scheme.empty()
-                && std::find(info.source_schemes.begin(), info.source_schemes.end(), opener.source_scheme)
-                       == info.source_schemes.end()) {
+            if (!opener.source_scheme.empty() &&
+                std::find(info.source_schemes.begin(), info.source_schemes.end(), opener.source_scheme) == info.source_schemes.end())
+            {
                 info.source_schemes.push_back(opener.source_scheme);
             }
         }

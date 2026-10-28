@@ -17,8 +17,7 @@ VN_GRAPHICS_NS_BEGIN
 PassChain::PassChain(PassRegistry registry, DiagnosticsRoute diagnostics)
   : registry_(std::move(registry))
   , diagnostics_(std::move(diagnostics))
-{
-}
+{}
 
 PassChain::~PassChain()
 {
@@ -42,9 +41,7 @@ bool PassChain::draws(raw_ptr<const Scene> scene) const noexcept
     // Every pass of the chain, not just the presenting one: on a deferred chain the scene is drawn into the G-buffer
     // and the window pass presents a target (see the declaration).
     const std::vector<intrusive_ptr<RenderPass>> passes = registry_.passesOwnedBy(this);
-    return std::any_of(passes.begin(), passes.end(), [scene](const intrusive_ptr<RenderPass>& pass) {
-        return pass != nullptr && pass->content() == scene;
-    });
+    return std::any_of(passes.begin(), passes.end(), [scene](const intrusive_ptr<RenderPass>& pass) { return pass != nullptr && pass->content() == scene; });
 }
 
 raw_ptr<RenderPass> PassChain::presentingPass() const
@@ -100,19 +97,19 @@ bool PassChain::setShadingMode(ShadingMode mode)
         // picture mean it. Reported once per episode, because the alternative is a host that believes it
         // switched something.
         if (mode_refused_.shouldReport()) {
-            diagnostics_.report(
-                vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                String(u8"this chain's Deferred picture has no geometry pass to shade, so the shading mode was "
-                       u8"not changed: build with ChainDesc::mode (a non-Lit mode is built on the forward "
-                       u8"chain, see PassChain::effectivePath)"));
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                String(u8"this chain's Deferred picture has no geometry pass to shade, so the shading mode was "
+                                       u8"not changed: build with ChainDesc::mode (a non-Lit mode is built on the forward "
+                                       u8"chain, see PassChain::effectivePath)"));
         }
         return false;
     }
-    mode_refused_.rearm();  // the condition is over: the next refusal is a new episode
+    mode_refused_.rearm(); // the condition is over: the next refusal is a new episode
 
     RenderPass* const picture = presentingPass();
     if (picture == nullptr) {
-        return false;  // nothing draws: there is no picture pass to override
+        return false; // nothing draws: there is no picture pass to override
     }
     // Every mode is the same built-in program text with one define, applied to the WHOLE picture pass, and
     // Lit is the per-geometry program the content came with - which is exactly what a null override means.
@@ -120,26 +117,26 @@ bool PassChain::setShadingMode(ShadingMode mode)
     // the structure reads instead of the shading), and clearing that override is how every other mode goes
     // back to surfaces. Both are pass properties: nothing here rebuilds anything.
     switch (mode) {
-        case ShadingMode::Lit:
-            picture->setProgramOverride(nullptr);
-            picture->clearPolygonModeOverride();
-            break;
-        case ShadingMode::Flat:
-            picture->setProgramOverride(vn::graphics::flatForwardProgram());
-            picture->clearPolygonModeOverride();
-            break;
-        case ShadingMode::Unlit:
-            picture->setProgramOverride(vn::graphics::unlitForwardProgram());
-            picture->clearPolygonModeOverride();
-            break;
-        case ShadingMode::Normals:
-            picture->setProgramOverride(vn::graphics::normalsForwardProgram());
-            picture->clearPolygonModeOverride();
-            break;
-        case ShadingMode::Wireframe:
-            picture->setProgramOverride(vn::graphics::unlitForwardProgram());
-            picture->setPolygonModeOverride(PolygonMode::Line);
-            break;
+    case ShadingMode::Lit:
+        picture->setProgramOverride(nullptr);
+        picture->clearPolygonModeOverride();
+        break;
+    case ShadingMode::Flat:
+        picture->setProgramOverride(vn::graphics::flatForwardProgram());
+        picture->clearPolygonModeOverride();
+        break;
+    case ShadingMode::Unlit:
+        picture->setProgramOverride(vn::graphics::unlitForwardProgram());
+        picture->clearPolygonModeOverride();
+        break;
+    case ShadingMode::Normals:
+        picture->setProgramOverride(vn::graphics::normalsForwardProgram());
+        picture->clearPolygonModeOverride();
+        break;
+    case ShadingMode::Wireframe:
+        picture->setProgramOverride(vn::graphics::unlitForwardProgram());
+        picture->setPolygonModeOverride(PolygonMode::Line);
+        break;
     }
     mode_ = mode;
     return true;
@@ -165,16 +162,13 @@ bool PassChain::isStatsVisible() const noexcept
     return isOverlayVisible(kStatsRole);
 }
 
-raw_ptr<RenderPass> PassChain::addOverlay(const String&   role,
-                                              raw_ptr<Object> content,
-                                              const PassDesc& desc,
-                                              OverlayLayout   layout)
+raw_ptr<RenderPass> PassChain::addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayLayout layout)
 {
     // The registration and the value are one step: a pass registered under a role nobody recorded, or a value pointing
     // at a pass nothing draws, are both states this method makes unreachable.
     intrusive_ptr<RenderPass> pass = addPass(desc, role);
     if (pass == nullptr) {
-        return nullptr;  // the engine is gone, or that pass was already registered
+        return nullptr; // the engine is gone, or that pass was already registered
     }
     overlays_.push_back(Overlay{ role, content, std::move(layout) });
     return pass.get();
@@ -187,8 +181,7 @@ raw_ptr<RenderPass> PassChain::overlayPass(const String& role) const noexcept
 
 raw_ptr<Object> PassChain::overlayContent(const String& role) const noexcept
 {
-    const auto found = std::find_if(overlays_.begin(), overlays_.end(),
-                                    [&role](const Overlay& overlay) { return overlay.role == role; });
+    const auto found = std::find_if(overlays_.begin(), overlays_.end(), [&role](const Overlay& overlay) { return overlay.role == role; });
     return found != overlays_.end() ? found->content : nullptr;
 }
 
@@ -203,8 +196,7 @@ bool PassChain::setOverlayVisible(const String& role, bool on)
             const String message = String(u8"this chain has no overlay registered as '") + role +
                                    u8"', so there was nothing to show or hide: register it with "
                                    u8"PassChain::addOverlay (or build with the recipe option that does)";
-            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::UnsupportedRequest, message);
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest, message);
         }
         return false;
     }
@@ -228,8 +220,7 @@ void PassChain::resize(int width, int height, double pixel_ratio)
     // off-screen targets are the consumer that wants device pixels, and the HUD overlays are laid out on
     // the logical surface they were written against (they apply their own ratio).
     const detail::PixelRatio ratio{ pixel_ratio };
-    const detail::DeviceSize device =
-        detail::toDeviceSize(detail::LogicalSize{ width, height }, ratio);
+    const detail::DeviceSize device = detail::toDeviceSize(detail::LogicalSize{ width, height }, ratio);
     // A window pass has no target to read a size from; state the device-pixel size here so collection can
     // compute screen-space scaling (AutoTransform). It does not change the backend's viewport.
     if (window_pass_ != nullptr) {

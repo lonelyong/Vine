@@ -33,8 +33,7 @@
  * THE FRAME IS WHOLE WHEN THAT CALL RETURNS: the executor's tail presents through the target the frame named (see
  * RenderFrameExecutor::executeFrame), so a case never calls present() itself - there is no tail call left to forget.
  */
-class TestFrame
-{
+class TestFrame {
   public:
     /** @brief Starts a new pass entry under @p pass' identity (the backend's per-pass state key).
      *
@@ -71,10 +70,8 @@ class TestFrame
     {
         std::vector<vn::graphics::ImageSource> sources;
         sources.reserve(targets.size());
-        for (const vn::raw_ptr<vn::graphics::RenderTarget>& target : targets)
-        {
-            sources.push_back(target != nullptr ? vn::graphics::ImageSource::producedTarget(target)
-                                                : vn::graphics::ImageSource{});
+        for (const vn::raw_ptr<vn::graphics::RenderTarget>& target : targets) {
+            sources.push_back(target != nullptr ? vn::graphics::ImageSource::producedTarget(target) : vn::graphics::ImageSource{});
         }
         current().inputs = std::move(sources);
         return *this;
@@ -144,8 +141,7 @@ class TestFrame
      * @param camera   The view the draw is projected and lit with.
      * @return This builder, for chaining.
      */
-    TestFrame& content(const std::vector<vn::graphics::RenderCommand>& commands,
-                       const vn::graphics::Camera*                      camera)
+    TestFrame& content(const std::vector<vn::graphics::RenderCommand>& commands, const vn::graphics::Camera* camera)
     {
         vn::graphics::DrawDescription draw;
         draw.kind     = vn::graphics::DrawDescription::Kind::Scene;
@@ -162,9 +158,7 @@ class TestFrame
      * @param camera  The view that transforms the pushed lights.
      * @return This builder, for chaining.
      */
-    TestFrame& screen(vn::graphics::RenderTarget*                     source,
-                      vn::raw_ptr<const vn::graphics::ShaderProgram> program,
-                      const vn::graphics::Camera*                    camera)
+    TestFrame& screen(vn::graphics::RenderTarget* source, vn::raw_ptr<const vn::graphics::ShaderProgram> program, const vn::graphics::Camera* camera)
     {
         vn::graphics::DrawDescription draw;
         draw.kind    = vn::graphics::DrawDescription::Kind::Screen;
@@ -179,7 +173,10 @@ class TestFrame
      *
      * @return The value a backend is handed.
      */
-    [[nodiscard]] const vn::graphics::FrameDescription& value() const noexcept { return frame_; }
+    [[nodiscard]] const vn::graphics::FrameDescription& value() const noexcept
+    {
+        return frame_;
+    }
 
   private:
     /** @brief Gets the entry a setter fills: the last `pass()`, starting one when none was opened.

@@ -13,8 +13,7 @@ VN_APPFWGUI_NS_BEGIN
  *
  * Matches a candidate when its name or any alias starts with the prefix.
  */
-class CommandCompleter
-{
+class CommandCompleter {
   public:
     /**
      * @brief Replaces the candidate set and sorts it by name for stable order.
@@ -24,13 +23,12 @@ class CommandCompleter
     void setEntries(std::vector<ConsoleCommandEntry> entries)
     {
         entries_ = std::move(entries);
-        std::sort(entries_.begin(), entries_.end(),
-            [](const ConsoleCommandEntry& a, const ConsoleCommandEntry& b) {
-                if (a.source != b.source) {
-                    return a.source < b.source;
-                }
-                return a.name < b.name;
-            });
+        std::sort(entries_.begin(), entries_.end(), [](const ConsoleCommandEntry& a, const ConsoleCommandEntry& b) {
+            if (a.source != b.source) {
+                return a.source < b.source;
+            }
+            return a.name < b.name;
+        });
     }
 
     /**
@@ -42,17 +40,13 @@ class CommandCompleter
     std::vector<ConsoleCommandEntry> complete(const String& prefix) const
     {
         std::vector<ConsoleCommandEntry> result;
-        for (const auto& entry : entries_)
-        {
-            if (entry.name.startsWith(prefix, true))
-            {
+        for (const auto& entry : entries_) {
+            if (entry.name.startsWith(prefix, true)) {
                 result.push_back(entry);
                 continue;
             }
-            for (const auto& alias : entry.aliases)
-            {
-                if (alias.startsWith(prefix, true))
-                {
+            for (const auto& alias : entry.aliases) {
+                if (alias.startsWith(prefix, true)) {
                     result.push_back(entry);
                     break;
                 }

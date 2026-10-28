@@ -20,8 +20,8 @@ Aabbd transformBox(const Aabbd& local, const Mat4d& world)
     if (!local.isValid()) {
         return result;
     }
-    const auto mn = local.min();
-    const auto mx = local.max();
+    const auto              mn         = local.min();
+    const auto              mx         = local.max();
     const vn::math::Point3d corners[8] = {
         mn,
         vn::math::Point3d(mx.x, mn.y, mn.z),
@@ -123,7 +123,7 @@ std::uint32_t Node::subtreeLayerUnion(std::uint32_t inherited_layers) const
     }
 
     ++layer_union_recomputes_;
-    const std::uint32_t layers = layers_.value_or(inherited_layers);
+    const std::uint32_t layers       = layers_.value_or(inherited_layers);
     std::uint32_t       union_layers = layers;
     if (const auto* group = dynamic_cast<const Group*>(this)) {
         for (const auto& child : group->children()) {
@@ -175,7 +175,7 @@ std::optional<std::uint32_t> Node::layers() const
 void Node::setLayers(std::uint32_t layers)
 {
     if (layers_.has_value() && *layers_ == layers) {
-        return;  // same declaration: resolved layers below are unchanged
+        return; // same declaration: resolved layers below are unchanged
     }
     announceContentChange();
     detail::announceLayerChange();
@@ -185,7 +185,7 @@ void Node::setLayers(std::uint32_t layers)
 void Node::clearLayers()
 {
     if (!layers_.has_value()) {
-        return;  // already inheriting: nothing to withdraw
+        return; // already inheriting: nothing to withdraw
     }
     announceContentChange();
     detail::announceLayerChange();

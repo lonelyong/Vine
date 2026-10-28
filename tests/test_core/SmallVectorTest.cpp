@@ -4,14 +4,16 @@
 
 using namespace vn;
 
-TEST(SmallVector, defaultConstructEmpty) {
+TEST(SmallVector, defaultConstructEmpty)
+{
     SmallVector<int, 8> v;
     EXPECT_TRUE(v.empty());
     EXPECT_EQ(v.size(), 0u);
     EXPECT_GE(v.capacity(), 8u);
 }
 
-TEST(SmallVector, pushBackAndAccess) {
+TEST(SmallVector, pushBackAndAccess)
+{
     SmallVector<int, 4> v;
     v.push_back(1);
     v.push_back(2);
@@ -25,7 +27,8 @@ TEST(SmallVector, pushBackAndAccess) {
     EXPECT_EQ(v.back(), 3);
 }
 
-TEST(SmallVector, pushBackBeyondInline) {
+TEST(SmallVector, pushBackBeyondInline)
+{
     SmallVector<int, 2> v;
     v.push_back(1);
     v.push_back(2);
@@ -38,7 +41,8 @@ TEST(SmallVector, pushBackBeyondInline) {
     EXPECT_GT(v.capacity(), 2u);
 }
 
-TEST(SmallVector, popBack) {
+TEST(SmallVector, popBack)
+{
     SmallVector<int, 8> v;
     v.push_back(1);
     v.push_back(2);
@@ -48,7 +52,8 @@ TEST(SmallVector, popBack) {
     EXPECT_EQ(v.back(), 1);
 }
 
-TEST(SmallVector, clear) {
+TEST(SmallVector, clear)
+{
     SmallVector<int, 8> v;
     v.push_back(1);
     v.push_back(2);
@@ -58,16 +63,17 @@ TEST(SmallVector, clear) {
     EXPECT_EQ(v.size(), 0u);
 }
 
-TEST(SmallVector, resizeGrow) {
+TEST(SmallVector, resizeGrow)
+{
     SmallVector<int, 8> v;
     v.resize(5);
 
     EXPECT_EQ(v.size(), 5u);
-    for (size_t i = 0; i < 5; ++i)
-        EXPECT_EQ(v[i], 0); // default-constructed ints
+    for (size_t i = 0; i < 5; ++i) EXPECT_EQ(v[i], 0); // default-constructed ints
 }
 
-TEST(SmallVector, resizeShrink) {
+TEST(SmallVector, resizeShrink)
+{
     SmallVector<int, 8> v;
     v.push_back(1);
     v.push_back(2);
@@ -78,7 +84,8 @@ TEST(SmallVector, resizeShrink) {
     EXPECT_EQ(v[0], 1);
 }
 
-TEST(SmallVector, copyConstructor) {
+TEST(SmallVector, copyConstructor)
+{
     SmallVector<int, 4> a;
     a.push_back(10);
     a.push_back(20);
@@ -89,7 +96,8 @@ TEST(SmallVector, copyConstructor) {
     EXPECT_EQ(b[1], 20);
 }
 
-TEST(SmallVector, copyAssignment) {
+TEST(SmallVector, copyAssignment)
+{
     SmallVector<int, 4> a;
     a.push_back(1);
     a.push_back(2);
@@ -103,7 +111,8 @@ TEST(SmallVector, copyAssignment) {
     EXPECT_EQ(b[1], 2);
 }
 
-TEST(SmallVector, moveConstructor) {
+TEST(SmallVector, moveConstructor)
+{
     SmallVector<int, 4> a;
     a.push_back(5);
     a.push_back(6);
@@ -115,7 +124,8 @@ TEST(SmallVector, moveConstructor) {
     EXPECT_TRUE(a.empty()); // moved-from
 }
 
-TEST(SmallVector, moveAssignment) {
+TEST(SmallVector, moveAssignment)
+{
     SmallVector<int, 4> a;
     a.push_back(7);
     a.push_back(8);
@@ -129,7 +139,8 @@ TEST(SmallVector, moveAssignment) {
     EXPECT_EQ(b[1], 8);
 }
 
-TEST(SmallVector, emplaceBack) {
+TEST(SmallVector, emplaceBack)
+{
     SmallVector<std::string, 4> v;
     v.emplace_back(3, 'x');
 
@@ -137,7 +148,8 @@ TEST(SmallVector, emplaceBack) {
     EXPECT_EQ(v[0], "xxx");
 }
 
-TEST(SmallVector, atBoundsCheck) {
+TEST(SmallVector, atBoundsCheck)
+{
     SmallVector<int, 4> v;
     v.push_back(1);
     v.push_back(2);
@@ -147,38 +159,39 @@ TEST(SmallVector, atBoundsCheck) {
     EXPECT_THROW(v.at(2), std::out_of_range);
 }
 
-TEST(SmallVector, iteratorLoop) {
+TEST(SmallVector, iteratorLoop)
+{
     SmallVector<int, 4> v;
     v.push_back(1);
     v.push_back(2);
     v.push_back(3);
 
     int sum = 0;
-    for (auto x : v)
-        sum += x;
+    for (auto x : v) sum += x;
     EXPECT_EQ(sum, 6);
 }
 
-TEST(SmallVector, constIterator) {
+TEST(SmallVector, constIterator)
+{
     SmallVector<int, 4> v;
     v.push_back(10);
     v.push_back(20);
 
-    const auto& cv = v;
-    int sum = 0;
-    for (auto it = cv.cbegin(); it != cv.cend(); ++it)
-        sum += *it;
+    const auto& cv  = v;
+    int         sum = 0;
+    for (auto it = cv.cbegin(); it != cv.cend(); ++it) sum += *it;
     EXPECT_EQ(sum, 30);
 }
 
-TEST(SmallVector, initializerList) {
-    SmallVector<int, 8> v = {1, 2, 3, 4, 5};
+TEST(SmallVector, initializerList)
+{
+    SmallVector<int, 8> v = { 1, 2, 3, 4, 5 };
     EXPECT_EQ(v.size(), 5u);
-    for (int i = 0; i < 5; ++i)
-        EXPECT_EQ(v[i], i + 1);
+    for (int i = 0; i < 5; ++i) EXPECT_EQ(v[i], i + 1);
 }
 
-TEST(SmallVector, nonTrivialType) {
+TEST(SmallVector, nonTrivialType)
+{
     SmallVector<std::string, 3> v;
     v.push_back("hello");
     v.push_back("world");
@@ -188,7 +201,8 @@ TEST(SmallVector, nonTrivialType) {
     EXPECT_EQ(v[1], "world");
 }
 
-TEST(SmallVector, dataAccess) {
+TEST(SmallVector, dataAccess)
+{
     SmallVector<int, 4> v;
     v.push_back(1);
     v.push_back(2);
@@ -200,14 +214,16 @@ TEST(SmallVector, dataAccess) {
     EXPECT_EQ(p[2], 3);
 }
 
-TEST(SmallVector, reserve) {
+TEST(SmallVector, reserve)
+{
     SmallVector<int, 2> v;
     v.reserve(10);
     EXPECT_GE(v.capacity(), 10u);
     EXPECT_TRUE(v.empty());
 }
 
-TEST(SmallVector, explicitCountConstructor) {
+TEST(SmallVector, explicitCountConstructor)
+{
     SmallVector<int, 4> v(3);
     EXPECT_EQ(v.size(), 3u);
     EXPECT_EQ(v[0], 0);
@@ -215,14 +231,16 @@ TEST(SmallVector, explicitCountConstructor) {
     EXPECT_EQ(v[2], 0);
 }
 
-TEST(SmallVector, popBackOnEmpty) {
+TEST(SmallVector, popBackOnEmpty)
+{
     SmallVector<int, 4> v;
     v.pop_back(); // should be a no-op
     EXPECT_TRUE(v.empty());
     EXPECT_EQ(v.size(), 0u);
 }
 
-TEST(SmallVector, selfAssignment) {
+TEST(SmallVector, selfAssignment)
+{
     SmallVector<int, 4> v;
     v.push_back(1);
     v.push_back(2);
@@ -232,7 +250,8 @@ TEST(SmallVector, selfAssignment) {
     EXPECT_EQ(v[1], 2);
 }
 
-TEST(SmallVector, copyConstructorHeapSource) {
+TEST(SmallVector, copyConstructorHeapSource)
+{
     SmallVector<int, 2> a;
     a.push_back(1);
     a.push_back(2);
@@ -247,7 +266,8 @@ TEST(SmallVector, copyConstructorHeapSource) {
     EXPECT_GE(b.capacity(), 3u);
 }
 
-TEST(SmallVector, moveConstructorStealHeap) {
+TEST(SmallVector, moveConstructorStealHeap)
+{
     SmallVector<int, 2> a;
     a.push_back(1);
     a.push_back(2);
@@ -264,7 +284,8 @@ TEST(SmallVector, moveConstructorStealHeap) {
     EXPECT_GE(a.capacity(), 2u); // back to inline capacity
 }
 
-TEST(SmallVector, moveAssignmentHeapToInline) {
+TEST(SmallVector, moveAssignmentHeapToInline)
+{
     SmallVector<int, 2> a;
     a.push_back(1);
     a.push_back(2);
@@ -282,7 +303,8 @@ TEST(SmallVector, moveAssignmentHeapToInline) {
     EXPECT_LE(b.capacity(), 2u); // moved inline
 }
 
-TEST(SmallVector, shrinkToFitBackToInline) {
+TEST(SmallVector, shrinkToFitBackToInline)
+{
     SmallVector<int, 4> v;
     v.push_back(1);
     v.push_back(2);
@@ -302,16 +324,15 @@ TEST(SmallVector, shrinkToFitBackToInline) {
     EXPECT_EQ(v[2], 3);
 }
 
-TEST(SmallVector, shrinkToFitHeapReduce) {
+TEST(SmallVector, shrinkToFitHeapReduce)
+{
     SmallVector<int, 3> v;
-    for (int i = 0; i < 10; ++i)
-        v.push_back(i); // heap, capacity = 12
+    for (int i = 0; i < 10; ++i) v.push_back(i); // heap, capacity = 12
 
-    v.resize(6);       // size = 6, capacity = 12
+    v.resize(6); // size = 6, capacity = 12
     v.shrink_to_fit();
 
     EXPECT_EQ(v.size(), 6u);
     EXPECT_EQ(v.capacity(), 6u); // heap shrunk to size
-    for (int i = 0; i < 6; ++i)
-        EXPECT_EQ(v[i], i);
+    for (int i = 0; i < 6; ++i) EXPECT_EQ(v[i], i);
 }

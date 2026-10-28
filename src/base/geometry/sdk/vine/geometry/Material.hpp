@@ -11,7 +11,8 @@ VN_GEOMETRY_NS_BEGIN
 /**
  * @brief Concrete material category.
  */
-enum class MaterialType {
+enum class MaterialType
+{
     /// Not a concrete material yet.
     Unknown = 0,
     /// Single base color (ColorMaterial).

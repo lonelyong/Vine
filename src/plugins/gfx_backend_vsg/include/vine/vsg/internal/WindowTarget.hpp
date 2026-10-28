@@ -15,7 +15,9 @@
 
 namespace vsg
 {
+
 class Window;
+
 }
 
 /**
@@ -60,8 +62,7 @@ class Window;
 VN_VSG_NS_BEGIN
 
 /** @brief The window as the default-framebuffer target (see the file note). */
-class VN_VSG_API WindowTarget
-{
+class VN_VSG_API WindowTarget {
   public:
     /** @brief Wraps @p window as this session's default-framebuffer target.
      *

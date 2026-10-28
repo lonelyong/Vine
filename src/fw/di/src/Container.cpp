@@ -1,8 +1,8 @@
 ﻿#include <vine/di/Container.hpp>
 
 #include <vine/Exception.hpp>
-#include <vine/intrusive_ptr.hpp>
 #include <vine/di/Registration.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 VN_DI_NS_BEGIN
 
@@ -25,7 +25,7 @@ bool isValidRegistration(const Registration& reg)
 VN_OBJECT_META_IMPL(Container, ServiceBase)
 
 struct Container::Impl {
-    std::unordered_map<TypeId, Registration>      regs;       // Keyed by service type.
+    std::unordered_map<TypeId, Registration>               regs;       // Keyed by service type.
     std::unordered_map<TypeId, intrusive_ptr<ServiceBase>> singletons; // Lazily created singleton cache.
 };
 

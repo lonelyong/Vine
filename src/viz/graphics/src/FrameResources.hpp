@@ -28,10 +28,9 @@ namespace detail
  *   is alive, and a steady frame must not allocate for a question it already answered. The engine owns the pass
  *   for at least as long as the frame, so the pointer is valid for the compile's lifetime.
  */
-struct FramePublication
-{
-    raw_ptr<const RenderPass> pass{ nullptr };   ///< The pass that published (borrowed; its `outputName()` is the key).
-    raw_ptr<RenderTarget>     target{ nullptr }; ///< The target the name serves this frame.
+struct FramePublication {
+    raw_ptr<const RenderPass> pass{ nullptr };   // The pass that published (borrowed; its `outputName()` is the key).
+    raw_ptr<RenderTarget>     target{ nullptr }; // The target the name serves this frame.
 };
 
 /**
@@ -48,13 +47,12 @@ struct FramePublication
  * - All methods are called from the engine's single frame thread (see `RenderFrameExecutor`'s threading contract),
  *   so no synchronisation is needed.
  */
-class FrameResources
-{
+class FrameResources {
   public:
     FrameResources();
     ~FrameResources();
 
-    FrameResources(const FrameResources&) = delete;
+    FrameResources(const FrameResources&)            = delete;
     FrameResources& operator=(const FrameResources&) = delete;
 
   public:
@@ -151,8 +149,8 @@ class FrameResources
      * @param device   Device to tell about a replaced target, or null before a device is set.
      * @return The target the declaration now owns.
      */
-    [[nodiscard]] intrusive_ptr<RenderTarget> resolveTransient(const String& identity, const TransientShape& shape,
-                                                               int width, int height, RenderDevice* device);
+    [[nodiscard]] intrusive_ptr<RenderTarget>
+    resolveTransient(const String& identity, const TransientShape& shape, int width, int height, RenderDevice* device);
 
     /** @brief Releases every transient no declaration named this compile, then forgets it.
      *
@@ -187,12 +185,11 @@ class FrameResources
     void releaseAll(RenderDevice* device);
 
   private:
-    struct TransientTarget
-    {
-        String                      identity;          ///< The declared identity (`PassDesc::writes_image`).
-        TransientShape              shape;             ///< The shape it was built at.
-        intrusive_ptr<RenderTarget> target;            ///< The target itself.
-        bool                        declared_now{false}; ///< Whether this compile saw the declaration.
+    struct TransientTarget {
+        String                      identity;              // The declared identity (`PassDesc::writes_image`).
+        TransientShape              shape;                 // The shape it was built at.
+        intrusive_ptr<RenderTarget> target;                // The target itself.
+        bool                        declared_now{ false }; // Whether this compile saw the declaration.
     };
 
     /** @brief Builds the target a transient declaration asks for.
@@ -203,8 +200,7 @@ class FrameResources
      * @param shape    Attachment set the declaration asked for.
      * @return The target, configured but not yet built.
      */
-    [[nodiscard]] intrusive_ptr<RenderTarget> makeTransientTarget(const String& identity, int width, int height,
-                                                                  const TransientShape& shape);
+    [[nodiscard]] intrusive_ptr<RenderTarget> makeTransientTarget(const String& identity, int width, int height, const TransientShape& shape);
 
     /** @brief Tells @p device a target is done with, when there is a device to tell.
      *
@@ -221,6 +217,6 @@ class FrameResources
     std::vector<TransientTarget>                  transients_;
 };
 
-}  // namespace detail
+} // namespace detail
 
 VN_GRAPHICS_NS_END

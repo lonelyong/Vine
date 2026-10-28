@@ -34,7 +34,7 @@ inline ::vsg::dmat4 toVsg(const vn::math::Mat4d& m)
     return ::vsg::dmat4(v);
 }
 
-}  // namespace detail
+} // namespace detail
 
 /**
  * @brief Formats an ASCII diagnostic message.
@@ -61,14 +61,12 @@ inline vn::String formatDiagnostic(const char8_t* format, ...)
     char    buffer[512];
     va_list args;
     va_start(args, format);
-    const int written =
-        std::vsnprintf(buffer, sizeof(buffer), reinterpret_cast<const char*>(format), args);
+    const int written = std::vsnprintf(buffer, sizeof(buffer), reinterpret_cast<const char*>(format), args);
     va_end(args);
     if (written <= 0) {
         return vn::String();
     }
-    const std::size_t length =
-        std::min<std::size_t>(static_cast<std::size_t>(written), sizeof(buffer) - 1u);
+    const std::size_t length = std::min<std::size_t>(static_cast<std::size_t>(written), sizeof(buffer) - 1u);
     return vn::String::fromLocal8Bit(buffer, length);
 }
 

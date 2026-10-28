@@ -1,16 +1,16 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/Material.hpp>
+#include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderDevice.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderSurface.hpp>
-#include <vine/graphics/PresentTarget.hpp>
-#include <vine/graphics/WindowPresentTarget.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
+#include <vine/graphics/WindowPresentTarget.hpp>
 #include <vine/raw_ptr.hpp>
 
 #include <gtest/gtest.h>
@@ -35,21 +35,32 @@ namespace
  * half is the DEVICE's to hand out, so a device that has none overrides nothing instead of spelling out four
  * methods it has nothing to say about.
  */
-class HeadlessBackend : public RenderBackend
-{
+class HeadlessBackend : public RenderBackend {
   public:
-    bool initialize() override { return ok = up = true; }
-    void shutdown() override { ok = up = false; }
+    bool initialize() override
+    {
+        return ok = up = true;
+    }
+
+    void shutdown() override
+    {
+        ok = up = false;
+    }
 
     /// A BORROWED device is up unless a case says otherwise (see RenderDevice::initialized): an engine attaches
     /// to a device its creator brought up, and never brings one up itself.
-    [[nodiscard]] bool initialized() const noexcept override { return up; }
+    [[nodiscard]] bool initialized() const noexcept override
+    {
+        return up;
+    }
 
-    [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
+    [[nodiscard]] RenderFrameExecutor& executor() override
+    {
+        return *this;
+    }
 
     /// The answer that makes this device windowless, counted: it presents nothing, through anything.
-    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
-                                                                 SurfaceTargetResult* why = nullptr) override
+    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle, SurfaceTargetResult* why = nullptr) override
     {
         ++targets_asked;
         return RenderDevice::createSurfaceTarget(native_handle, why);
@@ -61,7 +72,7 @@ class HeadlessBackend : public RenderBackend
         present_targets.push_back(present_to);
         for (const FrameDescription::Pass& entry : frame.passes) {
             if (!entry.draw.has_value()) {
-                continue;  // a pass that ran and issued nothing
+                continue; // a pass that ran and issued nothing
             }
             targets.push_back(entry.draw->target);
             draws += entry.draw->draws.size();
@@ -73,7 +84,8 @@ class HeadlessBackend : public RenderBackend
         }
     }
 
-    void setRenderTarget(RenderTarget*) override {}
+    void setRenderTarget(RenderTarget*) override
+    {}
 
     /// A content release is a device announcement: this double records it like the real backend dispatches it.
     bool releaseContent(raw_ptr<const vn::Object> content) override
@@ -87,20 +99,23 @@ class HeadlessBackend : public RenderBackend
     }
 
     /// Answers the capability the frame path is driven by: this double honours every target it is handed.
-    [[nodiscard]] Capabilities capabilities() const noexcept override { return Capabilities{ .render_targets = true }; }
+    [[nodiscard]] Capabilities capabilities() const noexcept override
+    {
+        return Capabilities{ .render_targets = true };
+    }
 
-    bool ok = false;
+    bool ok                                          = false;
     /// Whether this double answers initialized() with true (see RenderDevice::initialized).
-    bool up = true;
-    int  frames = 0;
+    bool up                                          = true;
+    int  frames                                      = 0;
     /// How many times the device was asked for a window half (see createSurfaceTarget).
-    int targets_asked = 0;
+    int                                targets_asked = 0;
     std::vector<raw_ptr<RenderTarget>> targets;
-    std::vector<PresentTarget*>        present_targets;  ///< What each frame named (see executeFrame).
+    std::vector<PresentTarget*>        present_targets; // What each frame named (see executeFrame).
     std::size_t                        draws = 0;
     /// What releaseContent() was asked to drop (see RenderDevice::releaseContent).
-    std::size_t                        released = 0;
-    raw_ptr<const vn::Object>          last_released = nullptr;
+    std::size_t               released       = 0;
+    raw_ptr<const vn::Object> last_released  = nullptr;
 };
 
 /**
@@ -110,23 +125,31 @@ class HeadlessBackend : public RenderBackend
  * episode - which is what the real backend answers too, and what a host has to hear rather than discover as a
  * picture that never appears. A refusal is reported ONCE per episode; the first ask is answered silently.
  */
-class WindowedBackend : public RenderBackend, public WindowPresentTarget
-{
+class WindowedBackend : public RenderBackend, public WindowPresentTarget {
   public:
     bool initialize() override
     {
         ++initializes;
         return up = true;
     }
-    void shutdown() override { up = false; }
+
+    void shutdown() override
+    {
+        up = false;
+    }
 
     /// Whether this device is up (see RenderDevice::initialized): its creator brings it up, the engine borrows it.
-    [[nodiscard]] bool initialized() const noexcept override { return up; }
+    [[nodiscard]] bool initialized() const noexcept override
+    {
+        return up;
+    }
 
-    [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
+    [[nodiscard]] RenderFrameExecutor& executor() override
+    {
+        return *this;
+    }
 
-    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
-                                                                 SurfaceTargetResult* why = nullptr) override
+    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle, SurfaceTargetResult* why = nullptr) override
     {
         ++target_creations;
         if (target_taken) {
@@ -134,7 +157,8 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget
                 *why = SurfaceTargetResult::WindowOccupied;
             }
             if (occupied_reports.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
                                  u8"a second window was asked of a device that serves one");
             }
             return nullptr;
@@ -157,7 +181,8 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget
         }
     }
 
-    void setRenderTarget(RenderTarget*) override {}
+    void setRenderTarget(RenderTarget*) override
+    {}
 
     /// This device presents (it has a window half) and honours the targets a pass names.
     [[nodiscard]] Capabilities capabilities() const noexcept override
@@ -165,27 +190,39 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget
         return Capabilities{ .render_targets = true, .presentation = true };
     }
 
-    void setWindowHandle(void* handle) override { adopted_handle = handle; }
-    [[nodiscard]] void* nativeHandle() const override { return adopted_handle; }
+    void setWindowHandle(void* handle) override
+    {
+        adopted_handle = handle;
+    }
+
+    [[nodiscard]] void* nativeHandle() const override
+    {
+        return adopted_handle;
+    }
+
     void resize(int width, int height) override
     {
         ++resize_calls;
         last_width  = width;
         last_height = height;
     }
-    void present() override { ++presents; }
 
-    int   frames           = 0;
-    int   presents         = 0;
-    int   target_creations = 0;
-    int   initializes      = 0;
-    int   resize_calls     = 0;
-    int   last_width       = 0;
-    int   last_height      = 0;
-    void* adopted_handle   = nullptr;
-    bool  target_taken     = false;
-    bool  up               = true;  ///< The device is up (see RenderDevice::initialized).
-    std::vector<PresentTarget*>       present_targets;  ///< What each frame named (see executeFrame).
+    void present() override
+    {
+        ++presents;
+    }
+
+    int                         frames           = 0;
+    int                         presents         = 0;
+    int                         target_creations = 0;
+    int                         initializes      = 0;
+    int                         resize_calls     = 0;
+    int                         last_width       = 0;
+    int                         last_height      = 0;
+    void*                       adopted_handle   = nullptr;
+    bool                        target_taken     = false;
+    bool                        up               = true; // The device is up (see RenderDevice::initialized).
+    std::vector<PresentTarget*> present_targets;         // What each frame named (see executeFrame).
 
   private:
     ReportOnce occupied_reports;
@@ -199,22 +236,34 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget
  * and the presents are counted per target - which is what makes "two areas, one device, one frame each, each
  * presented through ITS own window" checkable without a GPU.
  */
-class FleetBackend : public RenderBackend
-{
+class FleetBackend : public RenderBackend {
   public:
-    class FleetTarget : public WindowPresentTarget
-    {
+    class FleetTarget : public WindowPresentTarget {
       public:
-        explicit FleetTarget(void* handle) : handle_(handle) {}
+        explicit FleetTarget(void* handle)
+          : handle_(handle)
+        {}
 
-        void setWindowHandle(void* handle) override { handle_ = handle; }
-        [[nodiscard]] void* nativeHandle() const override { return handle_; }
+        void setWindowHandle(void* handle) override
+        {
+            handle_ = handle;
+        }
+
+        [[nodiscard]] void* nativeHandle() const override
+        {
+            return handle_;
+        }
+
         void resize(int width, int height) override
         {
             width_  = width;
             height_ = height;
         }
-        void present() override { ++presents; }
+
+        void present() override
+        {
+            ++presents;
+        }
 
         int presents = 0;
         int width_   = 0;
@@ -229,14 +278,25 @@ class FleetBackend : public RenderBackend
         ++initializes;
         return up = true;
     }
-    void shutdown() override { up = false; }
+
+    void shutdown() override
+    {
+        up = false;
+    }
+
     /// Whether this device is up (see RenderDevice::initialized): one device, several engines - none of them drives
     /// this.
-    [[nodiscard]] bool initialized() const noexcept override { return up; }
-    [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
+    [[nodiscard]] bool initialized() const noexcept override
+    {
+        return up;
+    }
 
-    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
-                                                                 SurfaceTargetResult* why = nullptr) override
+    [[nodiscard]] RenderFrameExecutor& executor() override
+    {
+        return *this;
+    }
+
+    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle, SurfaceTargetResult* why = nullptr) override
     {
         targets.push_back(std::make_unique<FleetTarget>(native_handle));
         if (why != nullptr) {
@@ -255,7 +315,9 @@ class FleetBackend : public RenderBackend
         }
     }
 
-    void setRenderTarget(RenderTarget*) override {}
+    void setRenderTarget(RenderTarget*) override
+    {}
+
     [[nodiscard]] Capabilities capabilities() const noexcept override
     {
         return Capabilities{ .render_targets = true, .presentation = true };
@@ -263,12 +325,12 @@ class FleetBackend : public RenderBackend
 
     int                                       frames      = 0;
     int                                       initializes = 0;
-    bool                                      up          = true;  ///< See RenderDevice::initialized.
-    std::vector<std::unique_ptr<FleetTarget>> targets;  ///< What this device made (it owns them).
+    bool                                      up          = true; // See RenderDevice::initialized.
+    std::vector<std::unique_ptr<FleetTarget>> targets;            // What this device made (it owns them).
     std::vector<PresentTarget*>               present_targets;
 };
 
-}  // namespace
+} // namespace
 
 /**
  * @brief A frame is complete without a target: a device that presents nothing is driven for whole frames.
@@ -285,14 +347,12 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
     engine->setDevice(backend);
     auto area = engine->createSurface();
 
-    area->resize(320, 240);  // a size the passes lay themselves out on - not a surface to follow
+    area->resize(320, 240); // a size the passes lay themselves out on - not a surface to follow
     const int asks_before_attach = backend->targets_asked;
     ASSERT_TRUE(engine->initialize());
-    EXPECT_EQ(backend->targets_asked, asks_before_attach + 1)
-        << "the engine asked the device for a target of its own (the area held none)";
+    EXPECT_EQ(backend->targets_asked, asks_before_attach + 1) << "the engine asked the device for a target of its own (the area held none)";
     EXPECT_FALSE(area->hasTarget()) << "this device makes none, so the area has nothing to present through";
-    EXPECT_EQ(engine->surfaceWidth(), 320)
-        << "the size stays in the frame context: there is no window half to take it";
+    EXPECT_EQ(engine->surfaceWidth(), 320) << "the size stays in the frame context: there is no window half to take it";
 
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
@@ -300,7 +360,7 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
 
     auto scene  = intrusive_ptr<Scene>(new Scene());
     auto camera = intrusive_ptr<Camera>(new Camera());
-    camera->setAspect(320.0 / 240.0);  // shaped for the rectangle it draws into: nothing to report about the picture
+    camera->setAspect(320.0 / 240.0); // shaped for the rectangle it draws into: nothing to report about the picture
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
     pass->setRenderTarget(target);
@@ -313,8 +373,7 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
     EXPECT_EQ(backend->targets.front(), target.get()) << "the frame reached the target the pass names";
     EXPECT_EQ(backend->draws, 1u);
     ASSERT_EQ(backend->present_targets.size(), 1u);
-    EXPECT_EQ(backend->present_targets.front(), nullptr)
-        << "the frame named no target: there was nothing to resolve, acquire or present";
+    EXPECT_EQ(backend->present_targets.front(), nullptr) << "the frame named no target: there was nothing to resolve, acquire or present";
     EXPECT_EQ(engine->diagnosticCount(), 0u) << "a windowless device is not a problem";
     EXPECT_FALSE(engine->capabilities().presentation) << "the DEVICE answers it: nothing to present through";
 }
@@ -332,8 +391,7 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
  */
 TEST(HeadlessBackendTest, APresenterThatIsNotAWindowIsNamedByTheFrameItsHostDrives)
 {
-    class RecordingSink : public PresentTarget
-    {
+    class RecordingSink : public PresentTarget {
       public:
         void resize(int width, int height) override
         {
@@ -341,7 +399,11 @@ TEST(HeadlessBackendTest, APresenterThatIsNotAWindowIsNamedByTheFrameItsHostDriv
             (void)height;
             ++resizes;
         }
-        void present() override { ++presents; }
+
+        void present() override
+        {
+            ++presents;
+        }
 
         int resizes  = 0;
         int presents = 0;
@@ -359,8 +421,7 @@ TEST(HeadlessBackendTest, APresenterThatIsNotAWindowIsNamedByTheFrameItsHostDriv
 
     EXPECT_EQ(backend->frames, 1) << "the pass handed the device the frame its host built";
     ASSERT_EQ(backend->present_targets.size(), 1u);
-    EXPECT_EQ(backend->present_targets.front(), static_cast<PresentTarget*>(&sink))
-        << "the frame named the presenter it was given";
+    EXPECT_EQ(backend->present_targets.front(), static_cast<PresentTarget*>(&sink)) << "the frame named the presenter it was given";
     EXPECT_EQ(sink.presents, 1) << "the driver's tail presented through it - there is no window in this path";
     EXPECT_EQ(sink.resizes, 0) << "a size comes from whoever owns the surface, not from the frame's tail";
 }
@@ -429,8 +490,7 @@ TEST(HeadlessBackendTest, AWindowAlreadyServedIsRefusedWithItsReasonOnce)
     EXPECT_EQ(backend->adopted_handle, static_cast<void*>(&first)) << "the window it already serves was left alone";
 
     EXPECT_EQ(backend->createSurfaceTarget(&second, &why), nullptr);
-    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u)
-        << "one report per episode, however often the same ask comes";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u) << "one report per episode, however often the same ask comes";
 }
 
 /**
@@ -461,8 +521,7 @@ TEST(HeadlessBackendTest, ATargetTheHostMadeReachesTheFrameUnreported)
     const int creations_before_attach = backend->target_creations;
     ASSERT_TRUE(engine->initialize());
 
-    EXPECT_EQ(backend->target_creations, creations_before_attach)
-        << "the area held a target: the device was not asked for a second one";
+    EXPECT_EQ(backend->target_creations, creations_before_attach) << "the area held a target: the device was not asked for a second one";
     EXPECT_EQ(backend->adopted_handle, handle) << "the window was a creation input, not a later announcement";
     EXPECT_EQ(target->nativeHandle(), handle);
     EXPECT_EQ(backend->last_width, 640);
@@ -506,8 +565,7 @@ TEST(HeadlessBackendTest, AStoppedEngineUnbindsTheAreasTargetFirst)
     EXPECT_FALSE(area->hasTarget()) << "the area does not name an object the device may destroy";
     area->resize(640, 480);
     EXPECT_EQ(backend->resize_calls, resize_calls_before) << "and a later resize does not reach the target";
-    EXPECT_EQ(engine->surfaceWidth(), 640)
-        << "the frame size is still the area's to announce: the device was never this engine's to take down";
+    EXPECT_EQ(engine->surfaceWidth(), 640) << "the frame size is still the area's to announce: the device was never this engine's to take down";
 
     // Coming back is the documented path: a host that lost its device initializes again, and the engine asks its
     // device for a target again rather than resurrecting the object the area let go of. This double hands one window
@@ -539,7 +597,7 @@ TEST(HeadlessBackendTest, AReAnnouncedWindowMovesTheTargetAndTheDeviceStays)
     int first  = 0;
     int second = 0;
     area->bindTarget(backend->createSurfaceTarget(&first));
-    ASSERT_TRUE(backend->initialize());  // the creator brings the device up (RenderDevice::initialize)
+    ASSERT_TRUE(backend->initialize()); // the creator brings the device up (RenderDevice::initialize)
     ASSERT_TRUE(engine->initialize());
     engine->frame();
     EXPECT_EQ(backend->presents, 1);
@@ -644,12 +702,11 @@ TEST(HeadlessBackendTest, TheDeviceIsAskedForItsOwnTargetOnlyWhenTheAreaHoldsNon
     int second = 0;
     area->bindTarget(backend->createSurfaceTarget(&first));
     ASSERT_NE(area->target(), nullptr);
-    area->target()->setWindowHandle(&second);  // the host follows a window the platform recreated before the attach
+    area->target()->setWindowHandle(&second); // the host follows a window the platform recreated before the attach
 
     ASSERT_TRUE(engine->initialize());
     EXPECT_EQ(backend->target_creations, 1) << "the area held a target: the device was not asked for another";
-    EXPECT_EQ(backend->nativeHandle(), static_cast<void*>(&second))
-        << "the attach hands over what the TARGET says now, never a copy of the engine's";
+    EXPECT_EQ(backend->nativeHandle(), static_cast<void*>(&second)) << "the attach hands over what the TARGET says now, never a copy of the engine's";
     EXPECT_EQ(backend->last_width, 800);
     EXPECT_EQ(backend->last_height, 600);
 }

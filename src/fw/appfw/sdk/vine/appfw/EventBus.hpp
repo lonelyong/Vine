@@ -24,9 +24,9 @@ class MainThreadDispatcher;
  */
 enum class SubscriptionThreadMode
 {
-    Current, ///< Call synchronously on the publishing thread (POSTING / DirectConnection).
-    Main,    ///< Post to the main event loop so it runs on the main thread (MAIN / QueuedConnection).
-    Auto,    ///< Current when publishing on the main thread, else Main (AutoConnection).
+    Current, // Call synchronously on the publishing thread (POSTING / DirectConnection).
+    Main,    // Post to the main event loop so it runs on the main thread (MAIN / QueuedConnection).
+    Auto,    // Current when publishing on the main thread, else Main (AutoConnection).
 };
 
 /**
@@ -37,12 +37,12 @@ enum class SubscriptionThreadMode
  * assertions instead of losing it in a log line.
  */
 struct EventBusError {
-    const vn::Type*      event_type    = nullptr;                          ///< Runtime type of the event being delivered.
-    std::size_t            subscriber_id = 0;                                ///< Id of the subscription that threw; unique per event type.
-    String                 tag;                                              ///< Label the subscriber passed to subscribe(), empty when it passed none.
-    std::exception_ptr     error;                                            ///< Rethrowable exception; null for non-standard ones.
-    SubscriptionThreadMode mode          = SubscriptionThreadMode::Current;  ///< Thread mode of that subscription.
-    bool                   deferred      = false;                            ///< true when it ran from the event loop, on the main thread.
+    const vn::Type*        event_type    = nullptr;                    // Runtime type of the event being delivered.
+    std::size_t            subscriber_id = 0;                          // Id of the subscription that threw; unique per event type.
+    String                 tag;                                        // Label the subscriber passed to subscribe(), empty when it passed none.
+    std::exception_ptr     error;                                      // Rethrowable exception; null for non-standard ones.
+    SubscriptionThreadMode mode     = SubscriptionThreadMode::Current; // Thread mode of that subscription.
+    bool                   deferred = false;                           // true when it ran from the event loop, on the main thread.
 };
 
 /**
@@ -208,9 +208,7 @@ class VN_APPFW_API EventBus {
      *         nobody could unsubscribe.
      */
     template <TypeDescribed TEvent>
-    Subscription subscribe(std::function<void(const TEvent&)> handler,
-                           SubscriptionThreadMode             mode = SubscriptionThreadMode::Current,
-                           const String&                      tag  = {});
+    Subscription subscribe(std::function<void(const TEvent&)> handler, SubscriptionThreadMode mode = SubscriptionThreadMode::Current, const String& tag = {});
 
     /**
      * @brief Publishes an event to all matching subscribers.
@@ -317,11 +315,15 @@ class VN_APPFW_API EventBus {
      *
      * @return The default graceful-shutdown timeout.
      */
-    static constexpr std::chrono::milliseconds gracefulShutdownTimeout() noexcept { return std::chrono::milliseconds{ 200 }; }
+    static constexpr std::chrono::milliseconds gracefulShutdownTimeout() noexcept
+    {
+        return std::chrono::milliseconds{ 200 };
+    }
 
   private:
     /// Type-erased registration used by subscribe<TEvent>.
-    Subscription subscribeErased(vn::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag);
+    Subscription
+    subscribeErased(vn::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag);
 
     /// Cancels every subscription and drops the deliveries that are still parked.
     void cancelSubscriptions();

@@ -34,11 +34,11 @@
  *   each site's decision.
  */
 VN_GRAPHICS_NS_BEGIN
+
 /**
  * @brief The diagnostic route: counting, and forwarding to the host's sink (see the file note).
  */
-class VN_GRAPHICS_API Diagnostics
-{
+class VN_GRAPHICS_API Diagnostics {
   public:
     /** @brief Installs the host's sink, or clears it with an empty one.
      *
@@ -55,8 +55,7 @@ class VN_GRAPHICS_API Diagnostics
      * @param category Machine-matchable category the host can switch on.
      * @param message Human-readable sentence; the category carries the meaning.
      */
-    void report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category,
-                const vn::String& message);
+    void report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const vn::String& message);
 
     /** @brief Reports @p message for @p episode, unless that episode was already reported.
      *
@@ -66,8 +65,7 @@ class VN_GRAPHICS_API Diagnostics
      * @param message Human-readable sentence.
      * @return true when this call was the one that reported it.
      */
-    bool reportOnce(ReportOnce& episode, vn::graphics::DiagnosticSeverity severity,
-                    vn::graphics::DiagnosticCategory category, const vn::String& message);
+    bool reportOnce(ReportOnce& episode, vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const vn::String& message);
 
     /** @brief Gets how many diagnostics were reported in total. */
     [[nodiscard]] std::uint64_t total() const noexcept;
@@ -90,8 +88,8 @@ class VN_GRAPHICS_API Diagnostics
   private:
     /// One counter per category; the SDK's `Count` enumerator is the table's size.
     std::array<std::uint64_t, static_cast<std::size_t>(vn::graphics::DiagnosticCategory::Count)> per_category_{};
-    std::uint64_t                       total_{0};
-    vn::graphics::DiagnosticSink      sink_;
+    std::uint64_t                                                                                total_{ 0 };
+    vn::graphics::DiagnosticSink                                                                 sink_;
 };
 
 VN_GRAPHICS_NS_END

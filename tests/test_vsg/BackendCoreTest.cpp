@@ -27,15 +27,15 @@
 
 #include <vine/graphics/backend/DepthProbe.hpp>
 #include <vine/graphics/backend/DeviceClock.hpp>
-#include <vine/graphics/backend/Readback.hpp>
-#include <vine/vsg/internal/DeviceRequirements.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/PhaseTable.hpp>
+#include <vine/graphics/backend/Readback.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/vsg/internal/DeviceRequirements.hpp>
 
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::DeviceClock;
@@ -46,10 +46,10 @@ using vn::graphics::backend::Observe;
 using vn::graphics::backend::Phase;
 using vn::graphics::backend::PhaseTable;
 using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::RepairReason;
-using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::ReadbackRequest;
 using vn::graphics::backend::ReadbackState;
+using vn::graphics::backend::RepairReason;
+using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::TargetAction;
 using vn::graphics::backend::TargetDecision;
 using vn::graphics::backend::TargetDesc;
@@ -59,8 +59,7 @@ namespace
 {
 
 /// @brief One line of the target-plan table.
-struct TargetCase
-{
+struct TargetCase {
     const char*  what;
     TargetDesc   current;
     bool         built;
@@ -82,47 +81,42 @@ vn::graphics::backend::TargetShape singleColorShape()
 vn::graphics::backend::TargetShape colorAndDepthShape()
 {
     vn::graphics::backend::TargetShape shape = singleColorShape();
-    shape.depth_format                 = vn::graphics::RenderTarget::DepthFormat::D32;
+    shape.depth_format                       = vn::graphics::RenderTarget::DepthFormat::D32;
     return shape;
 }
 
-}  // namespace
+} // namespace
 
 TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
 {
-    const vn::graphics::backend::TargetShape single  = singleColorShape();
-    const vn::graphics::backend::TargetShape with_d  = colorAndDepthShape();
+    const vn::graphics::backend::TargetShape single = singleColorShape();
+    const vn::graphics::backend::TargetShape with_d = colorAndDepthShape();
 
-    TargetDesc built_at_512{512, 256, single};
-    TargetDesc built_at_1024{1024, 256, single};
+    TargetDesc built_at_512{ 512, 256, single };
+    TargetDesc built_at_1024{ 1024, 256, single };
 
     const std::vector<TargetCase> cases{
-        {"same size, same shape", built_at_512, true, false, built_at_512, TargetAction::None, RepairReason::None},
-        {"new extent, same shape", built_at_512, true, false, built_at_1024, TargetAction::ResizeInPlace,
-         RepairReason::None},
-        {"new shape at the same size", built_at_512, true, false, TargetDesc{512, 256, with_d},
-         TargetAction::Rebuild, RepairReason::None},
-        {"new shape AND new extent: compatibility wins", built_at_512, true, false, TargetDesc{1024, 256, with_d},
-         TargetAction::Rebuild, RepairReason::None},
-        {"never built", built_at_512, false, false, built_at_512, TargetAction::Repair, RepairReason::Bootstrap},
-        {"attachments invalidated", built_at_512, true, true, built_at_512, TargetAction::Repair,
-         RepairReason::Bootstrap},
+        { "same size, same shape",                        built_at_512, true,  false, built_at_512,                    TargetAction::None,          RepairReason::None        },
+        { "new extent, same shape",                       built_at_512, true,  false, built_at_1024,                   TargetAction::ResizeInPlace, RepairReason::None        },
+        { "new shape at the same size",                   built_at_512, true,  false, TargetDesc{ 512, 256, with_d },  TargetAction::Rebuild,       RepairReason::None        },
+        { "new shape AND new extent: compatibility wins",
+         built_at_512,                                                  true,
+         false,                                                                       TargetDesc{ 1024, 256, with_d },
+         TargetAction::Rebuild,
+         RepairReason::None                                                                                                                                                   },
+        { "never built",                                  built_at_512, false, false, built_at_512,                    TargetAction::Repair,        RepairReason::Bootstrap   },
+        { "attachments invalidated",                      built_at_512, true,  true,  built_at_512,                    TargetAction::Repair,        RepairReason::Bootstrap   },
         // A shape change outranks the load-op repairs: "the first pass in clears" is an instruction about
         // attachment CONTENTS, and a rebuild replaces the pass those attachments belong to - the caller
         // has to hear about the compatibility change even when nobody has written into the target yet
         // (the rebuilt target's fresh attachments answer Repair(Bootstrap) on the next plan).
-        {"never built, new shape", built_at_512, false, false, TargetDesc{512, 256, with_d},
-         TargetAction::Rebuild, RepairReason::None},
-        {"invalidated, new shape", built_at_512, true, true, TargetDesc{512, 256, with_d},
-         TargetAction::Rebuild, RepairReason::None},
-        {"resized to nothing", built_at_512, true, false, TargetDesc{0, 256, single}, TargetAction::Repair,
-         RepairReason::SizeUnknown},
-        {"laid out at zero", built_at_512, true, false, TargetDesc{512, 0, single}, TargetAction::Repair,
-         RepairReason::SizeUnknown},
+        { "never built, new shape",                       built_at_512, false, false, TargetDesc{ 512, 256, with_d },  TargetAction::Rebuild,       RepairReason::None        },
+        { "invalidated, new shape",                       built_at_512, true,  true,  TargetDesc{ 512, 256, with_d },  TargetAction::Rebuild,       RepairReason::None        },
+        { "resized to nothing",                           built_at_512, true,  false, TargetDesc{ 0, 256, single },    TargetAction::Repair,        RepairReason::SizeUnknown },
+        { "laid out at zero",                             built_at_512, true,  false, TargetDesc{ 512, 0, single },    TargetAction::Repair,        RepairReason::SizeUnknown },
     };
 
-    for (const TargetCase& test_case : cases)
-    {
+    for (const TargetCase& test_case : cases) {
         TargetInstance instance;
         instance.desc                    = test_case.current;
         instance.built                   = test_case.built;
@@ -139,15 +133,13 @@ TEST(CoreTargetPlanTest, AnUnusableExtentIsDistinguishableFromInvalidatedAttachm
     // "Resized to nothing" and "attachments invalidated" are both repairs, and they have different
     // reasons precisely so a phase (and a log line) can tell them apart.
     TargetInstance instance;
-    instance.desc  = TargetDesc{8, 8, singleColorShape()};
+    instance.desc  = TargetDesc{ 8, 8, singleColorShape() };
     instance.built = true;
 
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, TargetDesc{0, 0, {}}).reason),
-              static_cast<int>(RepairReason::SizeUnknown));
+    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, TargetDesc{ 0, 0, {} }).reason), static_cast<int>(RepairReason::SizeUnknown));
 
     instance.attachments_invalidated = true;
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, instance.desc).reason),
-              static_cast<int>(RepairReason::Bootstrap));
+    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, instance.desc).reason), static_cast<int>(RepairReason::Bootstrap));
 }
 
 TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
@@ -160,7 +152,7 @@ TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
 
     // No depth at all: nothing to plan.
     {
-        DepthFacts facts;
+        DepthFacts      facts;
         const DepthPlan plan = depthPlan(facts);
         EXPECT_FALSE(plan.has_depth);
         EXPECT_FALSE(plan.sampleable);
@@ -169,8 +161,8 @@ TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
     // Promotion with nothing preserving it: sampleable.
     {
         DepthFacts facts;
-        facts.has_depth   = true;
-        facts.promotion   = true;
+        facts.has_depth      = true;
+        facts.promotion      = true;
         const DepthPlan plan = depthPlan(facts);
         EXPECT_TRUE(plan.sampleable);
         EXPECT_FALSE(plan.preserve);
@@ -179,10 +171,10 @@ TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
     // A depth-preserving pass revokes the promotion for the whole target.
     {
         DepthFacts facts;
-        facts.has_depth                  = true;
-        facts.promotion                  = true;
-        facts.any_pass_preserves_depth   = true;
-        const DepthPlan plan             = depthPlan(facts);
+        facts.has_depth                = true;
+        facts.promotion                = true;
+        facts.any_pass_preserves_depth = true;
+        const DepthPlan plan           = depthPlan(facts);
         EXPECT_FALSE(plan.sampleable);
         EXPECT_TRUE(plan.preserve);
     }
@@ -192,10 +184,10 @@ TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
     // bootstrap clears) would erase the lender's depth for every reader after it (see depthPlan).
     {
         DepthFacts facts;
-        facts.has_depth = true;
-        facts.promotion = true;
-        facts.borrowed  = true;
-        facts.source    = &lender;
+        facts.has_depth      = true;
+        facts.promotion      = true;
+        facts.borrowed       = true;
+        facts.source         = &lender;
         const DepthPlan plan = depthPlan(facts);
         EXPECT_TRUE(plan.borrowed);
         EXPECT_EQ(plan.source, &lender);
@@ -216,7 +208,7 @@ TEST(CoreTimelineTest, SubmittedAndCompletedAreDifferentClocks)
     timeline.submitted(token);
     EXPECT_FALSE(timeline.hasOpenFrame());
     EXPECT_EQ(timeline.submittedFrame(), 1u);
-    EXPECT_EQ(timeline.completedFrame(), 0u);  // submitted is not completed
+    EXPECT_EQ(timeline.completedFrame(), 0u); // submitted is not completed
 
     timeline.completeUpTo(1);
     EXPECT_EQ(timeline.completedFrame(), 1u);
@@ -283,12 +275,12 @@ TEST(CoreTimelineTest, TheRetirePointIsOneMoreThanTheSlotCount)
 
 TEST(CoreRetirementQueueTest, NothingIsReleasedBeforeTheEvidenceArrives)
 {
-    FrameTimeline    timeline;
-    RetirementQueue  queue(3);
-    int              releases = 0;
+    FrameTimeline   timeline;
+    RetirementQueue queue(3);
+    int             releases = 0;
 
     const auto token = timeline.begin();
-    timeline.submitted(token);  // submitted frame 1 -> retire at 1 + 3 + 1 = 5
+    timeline.submitted(token); // submitted frame 1 -> retire at 1 + 3 + 1 = 5
     ASSERT_TRUE(queue.retire(timeline, [&releases] { ++releases; }));
 
     EXPECT_EQ(queue.retirePoint(timeline), 5u);
@@ -296,7 +288,7 @@ TEST(CoreRetirementQueueTest, NothingIsReleasedBeforeTheEvidenceArrives)
 
     timeline.completeUpTo(4);
     queue.advance(timeline);
-    EXPECT_EQ(releases, 0);  // not yet: the slot that recorded it may still be in flight
+    EXPECT_EQ(releases, 0); // not yet: the slot that recorded it may still be in flight
     EXPECT_EQ(queue.pending(), 1u);
 
     timeline.completeUpTo(5);
@@ -327,15 +319,15 @@ TEST(CoreRetirementQueueTest, AReleaseCallbackMayParkSomethingNew)
     queue.advance(timeline);
 
     EXPECT_EQ(releases, 1);
-    EXPECT_EQ(queue.pending(), 1u);  // the new park is dated against the same submitted frame
+    EXPECT_EQ(queue.pending(), 1u); // the new park is dated against the same submitted frame
     EXPECT_EQ(queue.deviceWaits(), 0u);
 }
 
 TEST(CoreArenaTest, GrowthPreservesWhatWasAlreadyHandedOut)
 {
-    FrameArena              arena(64);  // deliberately tiny, so the copy below must grow it
-    std::vector<int>        borrowed(64, 7);  // 256 bytes: more than the arena reserved
-    const std::vector<int>  source{101, 102, 103};
+    FrameArena             arena(64);       // deliberately tiny, so the copy below must grow it
+    std::vector<int>       borrowed(64, 7); // 256 bytes: more than the arena reserved
+    const std::vector<int> source{ 101, 102, 103 };
 
     const auto first_copy = arena.copy<int>(std::span<const int>(source));
     ASSERT_EQ(first_copy.size(), 3u);
@@ -359,20 +351,18 @@ TEST(CoreArenaTest, GrowthPreservesWhatWasAlreadyHandedOut)
 
 TEST(CoreArenaTest, ASteadyFrameDoesNotGrowTheArena)
 {
-    FrameArena         arena(1024);
-    const std::vector  sizes{16, 64, 256};
+    FrameArena        arena(1024);
+    const std::vector sizes{ 16, 64, 256 };
 
     arena.reset();
-    for (const int size : sizes)
-    {
+    for (const int size : sizes) {
         auto values = arena.makeArray<int>(static_cast<std::size_t>(size));
         values[0]   = size;
     }
     const std::size_t after_first_frame = arena.allocations();
 
     arena.reset();
-    for (const int size : sizes)
-    {
+    for (const int size : sizes) {
         auto values = arena.makeArray<int>(static_cast<std::size_t>(size));
         values[0]   = size;
     }
@@ -386,8 +376,8 @@ TEST(CoreKeysTest, AnExtentIsNotPartOfAPipelineKey)
 
     // Two descriptions whose EXTENT differs: a resize. building the identity from the shape alone - and
     // not from the description - is what makes "a resize must not recompile" structural.
-    const TargetDesc small{256, 256, shape};
-    const TargetDesc large{2048, 1024, shape};
+    const TargetDesc small{ 256, 256, shape };
+    const TargetDesc large{ 2048, 1024, shape };
 
     PipelineKey a;
     a.compatibility.color_formats = small.shape.color_formats;
@@ -398,7 +388,7 @@ TEST(CoreKeysTest, AnExtentIsNotPartOfAPipelineKey)
     b.compatibility.samples       = large.shape.samples;
 
     EXPECT_TRUE(a == b);
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(TargetInstance{small, 1, true, false}, large).action),
+    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(TargetInstance{ small, 1, true, false }, large).action),
               static_cast<int>(TargetAction::ResizeInPlace));
 }
 
@@ -428,19 +418,17 @@ TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
     ASSERT_EQ(audit.size(), 8u);
 
     const std::vector<std::string> expected_keys{
-        "DataKey",           "VertexLayoutKey",   "RenderPassCompatibility", "LoadOpVariantKey",
-        "PipelineKey",       "DynamicState",      "InstanceSlot",            "TargetDesc.shape",
+        "DataKey", "VertexLayoutKey", "RenderPassCompatibility", "LoadOpVariantKey", "PipelineKey", "DynamicState", "InstanceSlot", "TargetDesc.shape",
     };
-    for (std::size_t i = 0; i < expected_keys.size(); ++i)
-    {
+    for (std::size_t i = 0; i < expected_keys.size(); ++i) {
         EXPECT_EQ(std::string(audit[i].key), expected_keys[i]) << "audit line " << i;
     }
 
     // The rule the table exists for: no identity key may be described as taking an extent, and the one
     // line that mentions it must be the one that forbids it.
     for (const auto& entry : audit) {
-        const std::string allowed{entry.allowed};
-        const bool mentions_extent = allowed.find("extent") != std::string::npos;
+        const std::string allowed{ entry.allowed };
+        const bool        mentions_extent = allowed.find("extent") != std::string::npos;
         EXPECT_EQ(mentions_extent, std::string(entry.key) == "TargetDesc.shape") << entry.key;
     }
 }
@@ -474,21 +462,20 @@ TEST(CorePhaseTableTest, PhasesPrintTheEvidenceFormatAndOnlyCloseWhenEverythingP
     int counter = 0;
 
     PhaseTable table;
-    table.add(Phase{"a passing phase", [] { return true; }});
-    table.add(Phase{"a failing phase", [] { return false; }});
-    table.add(Phase{
-        "a counter that stays put", [] { return true; },
-        [&counter] { return static_cast<std::uint64_t>(counter); },
-        [](std::uint64_t before, std::uint64_t after) { return before == after; }});
-    table.add(Phase{
-        "a phase that moved a counter it promised not to",
-        [&counter] {
-            ++counter;
-            return true;
-        },
-        [&counter] { return static_cast<std::uint64_t>(counter); },
-        [](std::uint64_t before, std::uint64_t after) { return before == after; }});
-    table.add(Phase{"a nameless phase is ignored", {}});
+    table.add(Phase{ "a passing phase", [] { return true; } });
+    table.add(Phase{ "a failing phase", [] { return false; } });
+    table.add(Phase{ "a counter that stays put",
+                     [] { return true; },
+                     [&counter] { return static_cast<std::uint64_t>(counter); },
+                     [](std::uint64_t before, std::uint64_t after) { return before == after; } });
+    table.add(Phase{ "a phase that moved a counter it promised not to",
+                     [&counter] {
+                         ++counter;
+                         return true;
+                     },
+                     [&counter] { return static_cast<std::uint64_t>(counter); },
+                     [](std::uint64_t before, std::uint64_t after) { return before == after; } });
+    table.add(Phase{ "a nameless phase is ignored", {} });
 
     ASSERT_EQ(table.size(), 4u);
 
@@ -499,15 +486,14 @@ TEST(CorePhaseTableTest, PhasesPrintTheEvidenceFormatAndOnlyCloseWhenEverythingP
     EXPECT_EQ(report.lines[2], "[selftest] a counter that stays put");
     // Asserting correctly is not enough: a phase that rebuilt everything while claiming it would not is
     // exactly the regression the counter expectation exists to catch.
-    EXPECT_EQ(report.lines[3],
-              "[selftest] a phase that moved a counter it promised not to FAILED: counter expectation not met");
+    EXPECT_EQ(report.lines[3], "[selftest] a phase that moved a counter it promised not to FAILED: counter expectation not met");
     EXPECT_FALSE(report.ok());
     EXPECT_EQ(report.passed, 2u);
     EXPECT_EQ(report.failed, 2u);
 
     // A table that passed entirely ends with the line the evidence script expects.
     PhaseTable passing;
-    passing.add(Phase{"only phase", [] { return true; }});
+    passing.add(Phase{ "only phase", [] { return true; } });
     const auto clean = passing.runAll();
     ASSERT_EQ(clean.lines.size(), 2u);
     EXPECT_EQ(clean.lines[1], "[selftest] done");
@@ -540,8 +526,7 @@ TEST(CoreDeviceRequirementsTest, EveryRequiredFeatureIsNamedAndCounted)
     EXPECT_EQ(missingFeatureCount(bare), kDeviceFeatureCount);
     EXPECT_FALSE(satisfiesRequirements(bare));
 
-    for (std::size_t i = 0; i < kDeviceFeatureCount; ++i)
-    {
+    for (std::size_t i = 0; i < kDeviceFeatureCount; ++i) {
         const auto feature = static_cast<DeviceFeature>(i);
         EXPECT_STRNE(featureName(feature), "") << "feature " << i << " has no name to report";
         bare.note(feature);
@@ -553,8 +538,7 @@ TEST(CoreDeviceRequirementsTest, EveryRequiredFeatureIsNamedAndCounted)
     EXPECT_EQ(missingExtensionCount(bare), kDeviceExtensionCount);
     EXPECT_FALSE(satisfiesRequirements(bare));
 
-    for (std::size_t i = 0; i < kDeviceExtensionCount; ++i)
-    {
+    for (std::size_t i = 0; i < kDeviceExtensionCount; ++i) {
         const auto extension = static_cast<DeviceExtension>(i);
         EXPECT_STRNE(extensionName(extension), "") << "extension " << i << " has no name to report";
         bare.note(extension);
@@ -575,12 +559,10 @@ TEST(CoreDeviceRequirementsTest, AFeatureOffMeansTheDeviceIsRefused)
 
     DeviceFacts facts;
     facts.api_version = makeApiVersion(1, 4);
-    for (std::size_t i = 0; i < kDeviceFeatureCount; ++i)
-    {
+    for (std::size_t i = 0; i < kDeviceFeatureCount; ++i) {
         facts.note(static_cast<DeviceFeature>(i));
     }
-    for (std::size_t i = 0; i < kDeviceExtensionCount; ++i)
-    {
+    for (std::size_t i = 0; i < kDeviceExtensionCount; ++i) {
         facts.note(static_cast<DeviceExtension>(i));
     }
     ASSERT_TRUE(satisfiesRequirements(facts));
@@ -633,7 +615,7 @@ TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
     using namespace vn::graphics::backend;
 
     std::vector<float> values(4U * 3U, 0.0F);
-    values[1U * 4U + 2U] = 0.75F;  // row 1, column 2
+    values[1U * 4U + 2U] = 0.75F; // row 1, column 2
     const DepthProbe probe(4, 3, std::move(values));
 
     ASSERT_TRUE(probe.valid());
@@ -644,16 +626,15 @@ TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
     EXPECT_FLOAT_EQ(probe.depthAt(-1, 0), 0.0F) << "outside the image answers 0, and valid() says so first";
     EXPECT_FLOAT_EQ(probe.depthAt(4, 0), 0.0F);
     EXPECT_EQ(probe.countNear(0.0F, 0.01F), 11U);
-    EXPECT_EQ(probe.countNear(0.75F, 0.001F), 1U)
-        << "the tolerance is absolute: a clear value and a written depth do not arrive by the same path";
+    EXPECT_EQ(probe.countNear(0.75F, 0.001F), 1U) << "the tolerance is absolute: a clear value and a written depth do not arrive by the same path";
     EXPECT_EQ(probe.countNear(0.75F, 0.0F), 1U);
 }
 
 TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 {
     using vn::graphics::backend::ReadbackKind;
-    using vn::graphics::backend::ReadbackRefusal;
     using vn::graphics::backend::readbackOf;
+    using vn::graphics::backend::ReadbackRefusal;
 
     ReadbackState state;
     state.color_attachments = 2U;
@@ -662,10 +643,8 @@ TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 
     // Nothing has recorded a copy yet: the answer is "not yet" - a frame can fix it, and a caller that gets
     // this one may retry instead of hunting for a format bug.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::NotCaptured));
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::NotCaptured));
     EXPECT_FALSE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok);
 
     state.color_captured = true;
@@ -673,14 +652,12 @@ TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
     EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok) << "a captured RGBA8 attachment";
     EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 1U }).ok) << "and the second one too";
     EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).ok);
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::None))
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::None))
         << "ok and a category are two views of one answer, never contradictory";
 
     // The request's own existence comes first: index 2 does not exist, and a target without a depth cannot
     // answer a depth readback - whatever has been captured.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 2U }).refusal),
-              static_cast<int>(ReadbackRefusal::UnknownAttachment));
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 2U }).refusal), static_cast<int>(ReadbackRefusal::UnknownAttachment));
     ReadbackState colorless = state;
     colorless.depth_format.reset();
     EXPECT_EQ(static_cast<int>(readbackOf(colorless, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
@@ -690,8 +667,8 @@ TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
 {
     using vn::graphics::backend::ReadbackKind;
-    using vn::graphics::backend::ReadbackRefusal;
     using vn::graphics::backend::readbackOf;
+    using vn::graphics::backend::ReadbackRefusal;
 
     ReadbackState state;
     state.color_attachments = 1U;
@@ -700,18 +677,14 @@ TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
 
     // NOTHING captured: the format is still the answer, because a frame cannot fix it. Reporting "not captured"
     // here would send a caller off to run another frame that cannot change anything.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::UnreadableFormat));
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::UnreadableFormat));
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
 
     state.color_captured = true;
     state.depth_captured = true;
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::UnreadableFormat))
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat))
         << "capturing more changes nothing: the format table is what says so";
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::UnreadableFormat));
+    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
 
     EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
     EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
@@ -747,7 +720,7 @@ TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
     // D32 / D32F: the stored bits are the value.
     {
         const std::array<float, 3> values{ 0.0F, 0.5F, 1.25F };
-        const auto                 bytes = std::as_bytes(std::span(values));
+        const auto                 bytes   = std::as_bytes(std::span(values));
         const auto                 decoded = decodeDepth(RenderTarget::DepthFormat::D32, bytes);
         ASSERT_EQ(decoded.size(), 3U);
         EXPECT_FLOAT_EQ(decoded[0], 0.0F);
@@ -758,8 +731,8 @@ TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
     // D16_UNORM: the stored integer divided by its full scale (65535) - the conversion the format defines.
     {
         const std::array<std::uint16_t, 4> stored{ 0U, 32768U, 65535U, 1U };
-        const auto bytes = std::as_bytes(std::span(stored));
-        const auto decoded = decodeDepth(RenderTarget::DepthFormat::D16, bytes);
+        const auto                         bytes   = std::as_bytes(std::span(stored));
+        const auto                         decoded = decodeDepth(RenderTarget::DepthFormat::D16, bytes);
         ASSERT_EQ(decoded.size(), 4U);
         EXPECT_FLOAT_EQ(decoded[0], 0.0F);
         EXPECT_NEAR(decoded[1], 0.5000076F, 1.0e-6F) << "0.5 is not exactly representable in 16 bits, and the "
@@ -790,8 +763,8 @@ TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
 TEST(CoreDeviceClockTest, TheWatermarkIsWhatEveryWindowProved)
 {
     DeviceClock clock;
-    const auto a = clock.addWindow();
-    const auto b = clock.addWindow();
+    const auto  a = clock.addWindow();
+    const auto  b = clock.addWindow();
     EXPECT_EQ(clock.windows(), 2U);
     EXPECT_EQ(clock.completedFrame(), 0U);
 

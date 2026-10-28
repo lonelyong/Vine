@@ -23,16 +23,16 @@
 
 #include <tinyxml2.h>
 
+#include <vine/String.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
 #include <vine/math/Isometry3.hpp>
 #include <vine/meshio/MeshLoader.hpp>
+#include <vine/robotics/io/DeviceIO.hpp>
 #include <vine/robotics/kinematics/DofInfo.hpp>
 #include <vine/robotics/kinematics/Frame.hpp>
 #include <vine/robotics/kinematics/KinematicsBase.hpp>
-#include <vine/robotics/io/DeviceIO.hpp>
 #include <vine/robotics/workcell/Device.hpp>
 #include <vine/robotics/workcell/MotionDevice.hpp>
-#include <vine/String.hpp>
 
 using namespace vn;
 using namespace vn::math;
@@ -82,7 +82,7 @@ double attrDouble(const tinyxml2::XMLElement* xe, const char* name, double def)
  */
 bool parseVec3(const String& str, Vec3d& out)
 {
-    double x = 0.0, y = 0.0, z = 0.0;
+    double             x = 0.0, y = 0.0, z = 0.0;
     std::istringstream stream(str.as_std_str());
     if (!(stream >> x >> y >> z)) {
         return false;
@@ -137,7 +137,7 @@ Isometry3d parseOrigin(const tinyxml2::XMLElement* xe_origin)
     }
     const String rpy = attr(xe_origin, "rpy");
     if (!rpy.empty()) {
-        double r = 0.0, p = 0.0, y = 0.0;
+        double             r = 0.0, p = 0.0, y = 0.0;
         std::istringstream stream(rpy.as_std_str());
         if (stream >> r >> p >> y) {
             tf.rotation = rpyToQuat(r, p, y);
@@ -153,13 +153,11 @@ Isometry3d parseOrigin(const tinyxml2::XMLElement* xe_origin)
  * @param path The mesh file path.
  * @return The shape, or null on failure.
  */
-vn::intrusive_ptr<vn::geometry::Shape> loadShape(vn::meshio::MeshLoader& loader,
-                                                     const std::filesystem::path& path)
+vn::intrusive_ptr<vn::geometry::Shape> loadShape(vn::meshio::MeshLoader& loader, const std::filesystem::path& path)
 {
     auto loaded = loader.loadMerged(path);
     if (!loaded) {
-        throw std::runtime_error("failed to load mesh: " + path.string() + " ("
-                                 + vn::io::ioErrorName(loaded.error()) + ")");
+        throw std::runtime_error("failed to load mesh: " + path.string() + " (" + vn::io::ioErrorName(loaded.error()) + ")");
     }
     return loaded.take();
 }
@@ -178,15 +176,16 @@ vn::intrusive_ptr<vn::geometry::Shape> loadShape(vn::meshio::MeshLoader& loader,
  * @param base_dir Directory for resolving mesh filenames.
  * @param out The visual to fill.
  */
-void parseVisual(vn::meshio::MeshLoader&                                       loader,
+void parseVisual(vn::meshio::MeshLoader&                                      loader,
                  std::map<String, vn::intrusive_ptr<vn::geometry::Material>>& material_lib,
-                 std::size_t&                                                    next_material_id,
-                 const tinyxml2::XMLElement* xe_visual, const std::filesystem::path& base_dir,
-                 workcell::Visual& out)
+                 std::size_t&                                                 next_material_id,
+                 const tinyxml2::XMLElement*                                  xe_visual,
+                 const std::filesystem::path&                                 base_dir,
+                 workcell::Visual&                                            out)
 {
     out.setTf(parseOrigin(xe_visual->FirstChildElement("origin")));
-    const auto* const xe_geom  = xe_visual->FirstChildElement("geometry");
-    const auto* const xe_mesh  = xe_geom ? xe_geom->FirstChildElement("mesh") : nullptr;
+    const auto* const xe_geom = xe_visual->FirstChildElement("geometry");
+    const auto* const xe_mesh = xe_geom ? xe_geom->FirstChildElement("mesh") : nullptr;
     if (xe_mesh) {
         const String filename = attr(xe_mesh, "filename");
         if (!filename.empty()) {
@@ -199,17 +198,15 @@ void parseVisual(vn::meshio::MeshLoader&                                       l
         String       mat_name = attr(xe_material, "name");
         const String rgba     = attr(xe_material->FirstChildElement("color"), "rgba");
         if (!rgba.empty()) {
-            double r = 0.0, g = 0.0, b = 0.0, a = 1.0;
+            double             r = 0.0, g = 0.0, b = 0.0, a = 1.0;
             std::istringstream stream(rgba.as_std_str());
             if (stream >> r >> g >> b >> a) {
                 auto material = vn::intrusive_ptr<vn::geometry::Material>(
-                    new vn::geometry::ColorMaterial(vn::Colorf(static_cast<float>(r), static_cast<float>(g),
-                                                                   static_cast<float>(b), static_cast<float>(a))));
+                    new vn::geometry::ColorMaterial(vn::Colorf(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), static_cast<float>(a))));
                 if (mat_name.empty()) {
                     // Materials must be named; generate one for unnamed ones.
                     const std::string id_str = std::to_string(next_material_id++);
-                    mat_name = String(u8"material_")
-                             + String(reinterpret_cast<const char8_t*>(id_str.data()), id_str.size());
+                    mat_name                 = String(u8"material_") + String(reinterpret_cast<const char8_t*>(id_str.data()), id_str.size());
                 }
                 const auto it = material_lib.find(mat_name);
                 if (it == material_lib.end()) {
@@ -233,8 +230,7 @@ void parseVisual(vn::meshio::MeshLoader&                                       l
  * @param base_dir Directory for resolving mesh filenames.
  * @param out The collision to fill.
  */
-void parseCollision(vn::meshio::MeshLoader& loader, const tinyxml2::XMLElement* xe_collision,
-                    const std::filesystem::path& base_dir, workcell::Collision& out)
+void parseCollision(vn::meshio::MeshLoader& loader, const tinyxml2::XMLElement* xe_collision, const std::filesystem::path& base_dir, workcell::Collision& out)
 {
     out.setTf(parseOrigin(xe_collision->FirstChildElement("origin")));
     const auto* const xe_geom = xe_collision->FirstChildElement("geometry");
@@ -270,9 +266,9 @@ int main(int argc, char** argv)
     }
     const String robot_name = attr(xe_robot, "name");
 
-    auto data = std::make_unique<MotionDeviceData>();
-    data->kind = DeviceKind::Manipulator;
-    data->metadata.length_unit = LengthUnit::Millimeter;
+    auto data                     = std::make_unique<MotionDeviceData>();
+    data->kind                    = DeviceKind::Manipulator;
+    data->metadata.length_unit    = LengthUnit::Millimeter;
     data->metadata.ik_solver_type = kinematics::IKSolverType::Pieper;
     if (const auto* const xe_meta = xe_robot->FirstChildElement("metadata")) {
         data->metadata.id            = attr(xe_meta, "id");
@@ -295,26 +291,23 @@ int main(int argc, char** argv)
     // mm, so both meter-based and mm-based URDF mesh packages convert
     // correctly (URDF joint origins are meters and scaled separately).
     vn::meshio::MeshLoader mesh_loader(vn::meshio::MeshLoader::Options{
-        .scale_mode             = vn::meshio::MeshLoader::ScaleMode::Auto,
-        .auto_scale_output_unit = vn::meshio::MeshLoader::LengthUnit::Millimeter,
+      .scale_mode             = vn::meshio::MeshLoader::ScaleMode::Auto,
+      .auto_scale_output_unit = vn::meshio::MeshLoader::LengthUnit::Millimeter,
     });
 
     // Named materials are collected per device and referenced by name.
     std::map<String, vn::intrusive_ptr<vn::geometry::Material>> material_lib;
-    std::size_t next_material_id = 0;
+    std::size_t                                                 next_material_id = 0;
 
     std::map<String, Link*> link_by_name;
-    for (const auto* xe_link = xe_robot->FirstChildElement("link"); xe_link;
-         xe_link = xe_link->NextSiblingElement("link")) {
+    for (const auto* xe_link = xe_robot->FirstChildElement("link"); xe_link; xe_link = xe_link->NextSiblingElement("link")) {
         auto link = std::make_unique<Link>(attr(xe_link, "name"));
-        for (const auto* xe_visual = xe_link->FirstChildElement("visual"); xe_visual;
-             xe_visual = xe_visual->NextSiblingElement("visual")) {
+        for (const auto* xe_visual = xe_link->FirstChildElement("visual"); xe_visual; xe_visual = xe_visual->NextSiblingElement("visual")) {
             workcell::Visual visual;
             parseVisual(mesh_loader, material_lib, next_material_id, xe_visual, base_dir, visual);
             link->body().visuals().push_back(std::move(visual));
         }
-        for (const auto* xe_collision = xe_link->FirstChildElement("collision"); xe_collision;
-             xe_collision = xe_collision->NextSiblingElement("collision")) {
+        for (const auto* xe_collision = xe_link->FirstChildElement("collision"); xe_collision; xe_collision = xe_collision->NextSiblingElement("collision")) {
             workcell::Collision collision;
             parseCollision(mesh_loader, xe_collision, base_dir, collision);
             link->body().collisions().push_back(std::move(collision));
@@ -323,9 +316,8 @@ int main(int argc, char** argv)
         data->links.push_back(std::move(link));
     }
 
-    for (const auto* xe_joint = xe_robot->FirstChildElement("joint"); xe_joint;
-         xe_joint = xe_joint->NextSiblingElement("joint")) {
-        const String type       = attr(xe_joint, "type");
+    for (const auto* xe_joint = xe_robot->FirstChildElement("joint"); xe_joint; xe_joint = xe_joint->NextSiblingElement("joint")) {
+        const String type        = attr(xe_joint, "type");
         const String parent_name = attr(xe_joint->FirstChildElement("parent"), "link");
         const String child_name  = attr(xe_joint->FirstChildElement("child"), "link");
 
@@ -348,18 +340,16 @@ int main(int argc, char** argv)
 
         if (ftype != kinematics::FrameType::Fixed) {
             DofInfo dof;
-            dof.type = ftype == kinematics::FrameType::PrismaticJoint
-                           ? kinematics::DofType::PrismaticJoint
-                           : kinematics::DofType::RevoluteJoint;
+            dof.type = ftype == kinematics::FrameType::PrismaticJoint ? kinematics::DofType::PrismaticJoint : kinematics::DofType::RevoluteJoint;
             Vec3d axis;
             if (parseVec3(attr(xe_joint->FirstChildElement("axis"), "xyz"), axis)) {
                 dof.axis = axis;
             }
             const auto* const xe_limit = xe_joint->FirstChildElement("limit");
-            dof.lower                = attrDouble(xe_limit, "lower", 0.0);
-            dof.upper                = attrDouble(xe_limit, "upper", 0.0);
-            dof.velocity_limit       = attrDouble(xe_limit, "velocity", 0.0);
-            dof.acceleration_limit   = attrDouble(xe_limit, "acceleration", 0.0);
+            dof.lower                  = attrDouble(xe_limit, "lower", 0.0);
+            dof.upper                  = attrDouble(xe_limit, "upper", 0.0);
+            dof.velocity_limit         = attrDouble(xe_limit, "velocity", 0.0);
+            dof.acceleration_limit     = attrDouble(xe_limit, "acceleration", 0.0);
             joint->setDofInfos({ dof });
         }
         data->joints.push_back(std::move(joint));
@@ -384,8 +374,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const std::filesystem::path out_path = argc >= 3 ? std::filesystem::path(argv[2])
-                                                     : base_dir / (robot_name.as_std_str() + ".vdevpkg");
+    const std::filesystem::path out_path = argc >= 3 ? std::filesystem::path(argv[2]) : base_dir / (robot_name.as_std_str() + ".vdevpkg");
 
     vn::robotics::io::DeviceIO io;
     io.savePkg(*device, out_path);
@@ -397,7 +386,7 @@ int main(int argc, char** argv)
         std::cerr << "loadPkg verification failed\n";
         return 1;
     }
-    const auto* const motion = dynamic_cast<const MotionDevice*>(loaded.get());
+    const auto* const motion       = dynamic_cast<const MotionDevice*>(loaded.get());
     const std::size_t mesh_visuals = [&motion]() {
         std::size_t n = 0;
         if (motion) {
@@ -407,8 +396,7 @@ int main(int argc, char** argv)
         }
         return n;
     }();
-    std::cout << "loadPkg OK: kind=" << (loaded->deviceKind() == DeviceKind::Manipulator ? "Manipulator" : "Other")
-              << " links=" << loaded->links().size() << " joints=" << loaded->joints().size()
-              << " visual_meshes=" << mesh_visuals << "\n";
+    std::cout << "loadPkg OK: kind=" << (loaded->deviceKind() == DeviceKind::Manipulator ? "Manipulator" : "Other") << " links=" << loaded->links().size()
+              << " joints=" << loaded->joints().size() << " visual_meshes=" << mesh_visuals << "\n";
     return 0;
 }

@@ -44,11 +44,12 @@ void RenderSurface::reportSecondPresentation()
     if (const raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr && refused_.shouldReport()) {
         // ONE condition, not a per-call event: a host that tries every frame must not be flooded, and the moment
         // it stops trying (or takes the first presentation away) is what arms the next report.
-        engine->reportEngineProblem(DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
-                                     u8"RenderSurface::present: this area already draws a picture, and one area "
-                                     u8"draws one picture - dismiss the presentation that is there first (a second "
-                                     u8"one is a second pass writing the same window, which is neither an overlay "
-                                     u8"nor a split)");
+        engine->reportEngineProblem(DiagnosticSeverity::Warning,
+                                    DiagnosticCategory::PassProtocolViolation,
+                                    u8"RenderSurface::present: this area already draws a picture, and one area "
+                                    u8"draws one picture - dismiss the presentation that is there first (a second "
+                                    u8"one is a second pass writing the same window, which is neither an overlay "
+                                    u8"nor a split)");
     }
 }
 
@@ -70,11 +71,11 @@ bool RenderSurface::present(SceneView& view)
     // loud, once - a host that built two areas on one engine has to hear which one is dead.
     if (engine->area_ != this) {
         if (not_the_engines_.shouldReport()) {
-            engine->reportEngineProblem(
-                DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest,
-                u8"RenderSurface::present: this area is not the one its engine drives (an engine drives one area, "
-                u8"see RenderEngine::createSurface), so nothing it declares would reach the frame: give this window its "
-                u8"own engine");
+            engine->reportEngineProblem(DiagnosticSeverity::Warning,
+                                        DiagnosticCategory::UnsupportedRequest,
+                                        u8"RenderSurface::present: this area is not the one its engine drives (an engine drives one area, "
+                                        u8"see RenderEngine::createSurface), so nothing it declares would reach the frame: give this window its "
+                                        u8"own engine");
         }
         return false;
     }
@@ -82,12 +83,11 @@ bool RenderSurface::present(SceneView& view)
     // from there. A view bound to another engine (or to none) could present this surface never, and "declared, but
     // nothing is drawn" is exactly the silence this area exists to end - so it is refused out loud.
     if (view.engine() != engine) {
-        engine->reportEngineProblem(
-            DiagnosticSeverity::Warning,
-            DiagnosticCategory::PassProtocolViolation,
-            u8"RenderSurface::present: this view is not bound to the engine of this surface, so its window pass "
-            u8"is registered on another frame and will never present this surface; bind the view to the same "
-            u8"engine first (SceneView::setEngine)");
+        engine->reportEngineProblem(DiagnosticSeverity::Warning,
+                                    DiagnosticCategory::PassProtocolViolation,
+                                    u8"RenderSurface::present: this view is not bound to the engine of this surface, so its window pass "
+                                    u8"is registered on another frame and will never present this surface; bind the view to the same "
+                                    u8"engine first (SceneView::setEngine)");
         return false;
     }
     if (view_ != nullptr || pass_ != nullptr) {
@@ -111,14 +111,14 @@ bool RenderSurface::present(SceneView& view)
         view_ = nullptr;
         view.setSurface(nullptr);
         if (refused_.shouldReport()) {
-            engine->reportEngineProblem(
-                DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
-                u8"RenderSurface::present: this view has no pipeline to draw with, so nothing could declare this "
-                u8"surface: build one (PassChain::build) and adopt it (SceneView::setChain) first");
+            engine->reportEngineProblem(DiagnosticSeverity::Warning,
+                                        DiagnosticCategory::PassProtocolViolation,
+                                        u8"RenderSurface::present: this view has no pipeline to draw with, so nothing could declare this "
+                                        u8"surface: build one (PassChain::build) and adopt it (SceneView::setChain) first");
         }
         return false;
     }
-    refused_.rearm();  // the condition is over: the next refusal is a new episode
+    refused_.rearm(); // the condition is over: the next refusal is a new episode
     // The size this surface last saw reaches the new presentation AT ONCE (the view reads it from here): a view
     // added to a running surface is sized without the host feeding it (that is what makes the surface the ONE owner
     // of the size), and its geometry follows from it - its window pass keeps no viewport of its own, so a full-area
@@ -134,7 +134,7 @@ bool RenderSurface::present(raw_ptr<RenderPass> pass)
     }
     const raw_ptr<RenderEngine> engine = engine_.get();
     if (engine == nullptr) {
-        return false;   // see present(SceneView&): no frame, no picture
+        return false; // see present(SceneView&): no frame, no picture
     }
     if (pass_ == pass) {
         return false;
@@ -150,11 +150,11 @@ bool RenderSurface::present(raw_ptr<RenderPass> pass)
     // main pass has already done this; a pass that is not in the frame is refused and reported once.
     if (!engine->passOrder(pass).has_value()) {
         if (unregistered_.shouldReport()) {
-            engine->reportEngineProblem(
-                DiagnosticSeverity::Warning, DiagnosticCategory::PassProtocolViolation,
-                u8"RenderSurface::present: this pass is not registered on the engine of this surface, so it draws "
-                u8"nothing here; register it first (RenderEngine::addPass - a pipeline registers its own when it is "
-                u8"built) and declare it again");
+            engine->reportEngineProblem(DiagnosticSeverity::Warning,
+                                        DiagnosticCategory::PassProtocolViolation,
+                                        u8"RenderSurface::present: this pass is not registered on the engine of this surface, so it draws "
+                                        u8"nothing here; register it first (RenderEngine::addPass - a pipeline registers its own when it is "
+                                        u8"built) and declare it again");
         }
         return false;
     }

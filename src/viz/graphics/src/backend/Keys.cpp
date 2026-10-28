@@ -6,8 +6,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 
 bool DataKey::operator==(const DataKey& other) const noexcept
 {
-    return buffer == other.buffer && revision == other.revision && components == other.components &&
-           offset == other.offset && count == other.count;
+    return buffer == other.buffer && revision == other.revision && components == other.components && offset == other.offset && count == other.count;
 }
 
 bool VertexLayoutKey::operator==(const VertexLayoutKey& other) const noexcept
@@ -17,50 +16,42 @@ bool VertexLayoutKey::operator==(const VertexLayoutKey& other) const noexcept
 
 bool RenderPassCompatibility::operator==(const RenderPassCompatibility& other) const noexcept
 {
-    return color_formats == other.color_formats && depth_format == other.depth_format &&
-           device_color_formats == other.device_color_formats &&
-           device_depth_format == other.device_depth_format && samples == other.samples &&
-           subpass == other.subpass;
+    return color_formats == other.color_formats && depth_format == other.depth_format && device_color_formats == other.device_color_formats &&
+           device_depth_format == other.device_depth_format && samples == other.samples && subpass == other.subpass;
 }
 
 bool LoadOpVariantKey::operator==(const LoadOpVariantKey& other) const noexcept
 {
-    return color_load == other.color_load && color_store == other.color_store &&
-           color_initial == other.color_initial && color_final == other.color_final &&
-           has_depth == other.has_depth && depth_load == other.depth_load &&
-           depth_store == other.depth_store && depth_initial == other.depth_initial &&
+    return color_load == other.color_load && color_store == other.color_store && color_initial == other.color_initial && color_final == other.color_final &&
+           has_depth == other.has_depth && depth_load == other.depth_load && depth_store == other.depth_store && depth_initial == other.depth_initial &&
            depth_final == other.depth_final;
 }
 
 bool PipelineKey::operator==(const PipelineKey& other) const noexcept
 {
-    return kind == other.kind && program == other.program && revision == other.revision &&
-           vertex_layout == other.vertex_layout && compatibility == other.compatibility &&
-           depth_sampleable == other.depth_sampleable &&
-           sampled_color_count == other.sampled_color_count && sampled_depth_count == other.sampled_depth_count &&
-           variant == other.variant && topology == other.topology;
+    return kind == other.kind && program == other.program && revision == other.revision && vertex_layout == other.vertex_layout &&
+           compatibility == other.compatibility && depth_sampleable == other.depth_sampleable && sampled_color_count == other.sampled_color_count &&
+           sampled_depth_count == other.sampled_depth_count && variant == other.variant && topology == other.topology;
 }
 
 bool DynamicState::operator==(const DynamicState& other) const noexcept
 {
-    return depth == other.depth && compare == other.compare && cull_mode == other.cull_mode &&
-           polygon_mode == other.polygon_mode && polygon_offset == other.polygon_offset &&
-           topology == other.topology && line_width == other.line_width && blend == other.blend;
+    return depth == other.depth && compare == other.compare && cull_mode == other.cull_mode && polygon_mode == other.polygon_mode &&
+           polygon_offset == other.polygon_offset && topology == other.topology && line_width == other.line_width && blend == other.blend;
 }
 
 DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state) noexcept
 {
     DynamicState resolved;
-    resolved.depth        = state.depth.test ? (state.depth.write ? vn::graphics::DepthMode::TestAndWrite
-                                                                 : vn::graphics::DepthMode::TestOnly)
-                                            : vn::graphics::DepthMode::Disabled;
-    resolved.compare      = state.depth.compare;
-    resolved.cull_mode    = state.cullMode;
-    resolved.polygon_mode = state.polygonMode;
+    resolved.depth =
+        state.depth.test ? (state.depth.write ? vn::graphics::DepthMode::TestAndWrite : vn::graphics::DepthMode::TestOnly) : vn::graphics::DepthMode::Disabled;
+    resolved.compare        = state.depth.compare;
+    resolved.cull_mode      = state.cullMode;
+    resolved.polygon_mode   = state.polygonMode;
     resolved.polygon_offset = state.polygonOffset;
-    resolved.topology     = state.topology;
-    resolved.line_width   = state.lineWidth;
-    resolved.blend        = state.blend;
+    resolved.topology       = state.topology;
+    resolved.line_width     = state.lineWidth;
+    resolved.blend          = state.blend;
     return resolved;
 }
 
@@ -68,9 +59,7 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
 {
     // The same combine the stream registry uses, over exactly the fields PipelineKey::operator== reads.
     std::size_t hash = 0;
-    const auto  mix  = [&hash](std::uint64_t value) noexcept {
-        hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
-    };
+    const auto  mix  = [&hash](std::uint64_t value) noexcept { hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2); };
     mix(reinterpret_cast<std::uintptr_t>(key.program));
     mix(key.revision);
     mix(static_cast<std::uint64_t>(key.kind));
@@ -100,28 +89,30 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
 {
     // The audit, as data. Each line answers "what may enter this key?" - and the answer for anything
     // that can be delivered with a set command, or written into a buffer, is "nothing".
-    static constexpr std::array<KeyAuditEntry, 8> kAudit{ {
-        { "DataKey", "buffer identity + upstream revision + channel slice (components/offset/count)" },
-        { "VertexLayoutKey", "canonical channel mask + custom channel locations" },
-        { "RenderPassCompatibility",
-          "colour formats + depth format (or none) + the same attachments as the DEVICE spells them + samples "
-          "+ subpass" },
-        { "LoadOpVariantKey",
-          "load/store ops + initial/final layouts - one entry for the colour set and one for the depth - NOT "
-          "pipeline identity: compatibility excludes them" },
-        { "PipelineKey",
-          "program + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
-          "sampleability + sampled colour attachment count + sampled DEPTH count + the program VARIANT (the "
-          "defines that change what its text means - see api/ProgramVariant) + the topology CLASS (a static "
-          "topology may only be changed dynamically within its own class, so it is compiled in)" },
-        { "DynamicState",
-          "depth policy + compare + cull + polygon + topology + blend - delivered per draw with set commands (the "
-          "topology within the class its pipeline was compiled for, see PipelineKey)" },
-        { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },
-        { "TargetDesc.shape",
-          "attachment formats (the engine's spelling AND the device's) + depth format + samples + subpass - "
-          "NEVER an extent" },
-    } };
+    static constexpr std::array<KeyAuditEntry, 8> kAudit{
+        {
+         { "DataKey", "buffer identity + upstream revision + channel slice (components/offset/count)" },
+         { "VertexLayoutKey", "canonical channel mask + custom channel locations" },
+         { "RenderPassCompatibility",
+            "colour formats + depth format (or none) + the same attachments as the DEVICE spells them + samples "
+            "+ subpass" },
+         { "LoadOpVariantKey",
+            "load/store ops + initial/final layouts - one entry for the colour set and one for the depth - NOT "
+            "pipeline identity: compatibility excludes them" },
+         { "PipelineKey",
+            "program + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
+            "sampleability + sampled colour attachment count + sampled DEPTH count + the program VARIANT (the "
+            "defines that change what its text means - see api/ProgramVariant) + the topology CLASS (a static "
+            "topology may only be changed dynamically within its own class, so it is compiled in)" },
+         { "DynamicState",
+            "depth policy + compare + cull + polygon + topology + blend - delivered per draw with set commands (the "
+            "topology within the class its pipeline was compiled for, see PipelineKey)" },
+         { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },
+         { "TargetDesc.shape",
+            "attachment formats (the engine's spelling AND the device's) + depth format + samples + subpass - "
+            "NEVER an extent" },
+         }
+    };
     return kAudit;
 }
 

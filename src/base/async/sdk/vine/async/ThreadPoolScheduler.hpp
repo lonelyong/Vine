@@ -19,21 +19,23 @@ VN_ASYNC_NS_BEGIN
  * onto a worker thread of the bound pool. The pool must outlive every
  * coroutine scheduled on it.
  */
-class ThreadPoolScheduler
-{
+class ThreadPoolScheduler {
   public:
-    explicit ThreadPoolScheduler(vn::ThreadPool& pool) noexcept : pool_(&pool) {}
+    explicit ThreadPoolScheduler(vn::ThreadPool& pool) noexcept
+      : pool_(&pool)
+    {}
 
-    ThreadPoolScheduler(const ThreadPoolScheduler&) = delete;
+    ThreadPoolScheduler(const ThreadPoolScheduler&)            = delete;
     ThreadPoolScheduler& operator=(const ThreadPoolScheduler&) = delete;
 
     /**
      * @brief Awaiter that schedules the continuation onto a pool worker.
      */
-    class ScheduleAwaiter
-    {
+    class ScheduleAwaiter {
       public:
-        explicit ScheduleAwaiter(vn::ThreadPool& pool) noexcept : pool_(pool) {}
+        explicit ScheduleAwaiter(vn::ThreadPool& pool) noexcept
+          : pool_(pool)
+        {}
 
         [[nodiscard]]
         bool await_ready() const noexcept
@@ -46,7 +48,8 @@ class ThreadPoolScheduler
             pool_.enqueue([h]() mutable { h.resume(); });
         }
 
-        void await_resume() const noexcept {}
+        void await_resume() const noexcept
+        {}
 
       private:
         vn::ThreadPool& pool_;
@@ -82,20 +85,18 @@ class ThreadPoolScheduler
  * @param args Arguments passed to f (by value).
  * @return A task that completes with the callable's result.
  */
-template<typename F, typename... Args>
+template <typename F, typename... Args>
 [[nodiscard]]
 Task<std::invoke_result_t<F, Args...>> runOn(vn::ThreadPool& pool, F f, Args... args)
 {
     // Hop to a pool worker before invoking the callable.
     co_await ThreadPoolScheduler{ pool }.schedule();
 
-    if constexpr (std::is_void_v<std::invoke_result_t<F, Args...>>)
-    {
+    if constexpr (std::is_void_v<std::invoke_result_t<F, Args...>>) {
         std::invoke(f, args...);
         co_return;
     }
-    else
-    {
+    else {
         co_return std::invoke(f, args...);
     }
 }
@@ -114,7 +115,7 @@ Task<std::invoke_result_t<F, Args...>> runOn(vn::ThreadPool& pool, F f, Args... 
  * @param args Arguments passed to f (by value).
  * @return A task that completes with the callable's result.
  */
-template<typename F, typename... Args>
+template <typename F, typename... Args>
 [[nodiscard]]
 Task<std::invoke_result_t<F, Args...>> run(F f, Args... args)
 {

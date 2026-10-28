@@ -14,9 +14,16 @@ class TwinIdentityPlugin : public Plugin {
 
 VN_OBJECT_META_IMPL(TwinIdentityPlugin, Plugin)
 
-VN_DECLARE_PLUGIN(TwinIdentityPlugin, u8"6a1b6d0e-0000-4000-8000-0000000000f1", u8"headless_boot_twin",
-                  u8"Headless boot twin", u8"0.1.0",
-                  u8"Test fixture sharing headless_boot_plugin's uuid to pin the identity-collision warning", u8"Vine",
-                  u8"", u8"", u8"", {})
+VN_DECLARE_PLUGIN(TwinIdentityPlugin,
+                  u8"6a1b6d0e-0000-4000-8000-0000000000f1",
+                  u8"headless_boot_twin",
+                  u8"Headless boot twin",
+                  u8"0.1.0",
+                  u8"Test fixture sharing headless_boot_plugin's uuid to pin the identity-collision warning",
+                  u8"Vine",
+                  u8"",
+                  u8"",
+                  u8"",
+                  {})
 
 VN_APPFW_NS_END

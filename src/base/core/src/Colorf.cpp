@@ -12,12 +12,10 @@ namespace
 /// @brief Quantizes one channel, clamping outside 0..1 and rounding.
 std::uint8_t toChannel(float v) noexcept
 {
-    if (v <= 0.0f)
-    {
+    if (v <= 0.0f) {
         return 0;
     }
-    if (v >= 1.0f)
-    {
+    if (v >= 1.0f) {
         return 255;
     }
     return static_cast<std::uint8_t>(v * 255.0f + 0.5f);
@@ -29,8 +27,7 @@ Color Colorf::toColor() const noexcept
 {
     // r, g and b are ENCODED - this is where linear light becomes the display's sRGB samples (the inverse of
     // Color::toLinear). Alpha is only quantized: it is coverage, not light.
-    return Color{ toChannel(detail::linearToSrgb(r)), toChannel(detail::linearToSrgb(g)),
-                  toChannel(detail::linearToSrgb(b)), toChannel(a) };
+    return Color{ toChannel(detail::linearToSrgb(r)), toChannel(detail::linearToSrgb(g)), toChannel(detail::linearToSrgb(b)), toChannel(a) };
 }
 
 Colorf Colorf::inverted() const noexcept
@@ -55,8 +52,7 @@ Colorf Colorf::lerp(const Colorf& from, const Colorf& to, float t) noexcept
 {
     // No clamping and no special cases: this is the blend a shader's mix() performs, applied to the values the caller
     // holds. Alpha takes part because coverage fades linearly alongside the colour.
-    return { from.r + (to.r - from.r) * t, from.g + (to.g - from.g) * t, from.b + (to.b - from.b) * t,
-             from.a + (to.a - from.a) * t };
+    return { from.r + (to.r - from.r) * t, from.g + (to.g - from.g) * t, from.b + (to.b - from.b) * t, from.a + (to.a - from.a) * t };
 }
 
 const Colorf Colorf::kTransparent{ 0.0f, 0.0f, 0.0f, 0.0f };

@@ -48,6 +48,7 @@ TEST(StartupProgressTest, NoSinkByDefault)
     EXPECT_EQ(StartupProgress::current(), nullptr);
     EXPECT_EQ(ProgressHost::current(), nullptr);
 }
+
 TEST(StartupProgressTest, SinkIsForegroundAndProcessWide)
 {
     {
@@ -126,7 +127,7 @@ TEST(BootSplashTest, ShowsReportedStageAndKeepsItsIndicatorTurning)
     config.title    = u8"Vine";
     config.subtitle = u8"test";
 
-    BootSplash splash(config);
+    BootSplash  splash(config);
     auto* const frame = splash.impl<QWidget>();
     ASSERT_NE(frame, nullptr);
 
@@ -148,7 +149,7 @@ TEST(BootSplashTest, ShowsReportedStageAndKeepsItsIndicatorTurning)
     EXPECT_TRUE(splash.isBusyIndicatorRunning());
 
     // 指示器真的在动：两次抓图在事件循环跑过之后必须不一样（定时器停了就是静止的图）。
-    const QPixmap before = frame->grab();
+    const QPixmap before   = frame->grab();
     const auto    deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     while (std::chrono::steady_clock::now() < deadline) {
         QCoreApplication::processEvents();

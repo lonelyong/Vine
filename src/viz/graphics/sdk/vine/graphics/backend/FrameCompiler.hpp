@@ -60,56 +60,52 @@ VN_GRAPHICSBACKEND_NS_BEGIN
  *   cannot invent it, and a map without one is not readable - shading nothing is the honest answer
  *   for a map nobody stated how to read.
  */
-struct ShadowFacts
-{
-    const void*       light{nullptr};              ///< The light this map belongs to (its identity); nullptr = not a
-                                                   ///< map.
-    bool              has_view_projection{false};  ///< Whether the producer published how to read the map.
-    vn::math::Mat4d view_projection{};           ///< Light clip <- world, in the producer's clip convention.
+struct ShadowFacts {
+    const void*     light{ nullptr };             // The light this map belongs to (its identity); nullptr = not a
+                                                  // map.
+    bool            has_view_projection{ false }; // Whether the producer published how to read the map.
+    vn::math::Mat4d view_projection{};            // Light clip <- world, in the producer's clip convention.
 };
 
 /** @brief What the compiler knows about one target: the API layer's own account of it. */
-struct TargetFacts
-{
-    const void*    target{nullptr};  ///< Identity; nullptr is the default framebuffer.
-    TargetDesc     wanted{};         ///< The extent and shape THIS frame asks for.
-    TargetInstance current{};        ///< What the backend currently has for it.
-    DepthFacts     depth{};          ///< Promotion / borrowing / preservation facts.
-    ShadowFacts    shadow{};         ///< "This target is a shadow map, and here is how to read it".
+struct TargetFacts {
+    const void*    target{ nullptr }; // Identity; nullptr is the default framebuffer.
+    TargetDesc     wanted{};          // The extent and shape THIS frame asks for.
+    TargetInstance current{};         // What the backend currently has for it.
+    DepthFacts     depth{};           // Promotion / borrowing / preservation facts.
+    ShadowFacts    shadow{};          // "This target is a shadow map, and here is how to read it".
 };
 
 /** @brief Everything the description cannot carry: the facts about what the frame draws into. */
-struct FrameFacts
-{
-    std::span<const TargetFacts> targets{};  ///< One entry per target the frame draws into, window included.
+struct FrameFacts {
+    std::span<const TargetFacts> targets{}; // One entry per target the frame draws into, window included.
 };
 
 /** @brief One instance of one command, resolved: identity, plus the state to deliver with it. */
-struct CompiledCommand
-{
-    const void*   geometry{nullptr};      ///< Leaf geometry identity.
-    std::uint64_t geometry_revision{0};   ///< `Geometry::revision()` at collection time.
+struct CompiledCommand {
+    const void*   geometry{ nullptr };    // Leaf geometry identity.
+    std::uint64_t geometry_revision{ 0 }; // `Geometry::revision()` at collection time.
     /// Which of the geometry's primitives this command draws. The plan names ONE DRAW, so the pair
     /// (geometry, primitive) is this command's data identity - the backend's facts answer index spans and
     /// uploads per primitive, and nothing downstream has to walk a primitive list to find it.
-    std::uint32_t primitive{0};
-    ProgramRef    program{};              ///< The command's own program, or the frame's default (resolved).
-    const void*   material{nullptr};      ///< Material identity, or nullptr.
-    vn::math::Mat4d model{};            ///< World-space model matrix.
-    float         opacity{1.0F};          ///< Effective opacity (the drawable's half of the alpha rule).
+    std::uint32_t   primitive{ 0 };
+    ProgramRef      program{};           // The command's own program, or the frame's default (resolved).
+    const void*     material{ nullptr }; // Material identity, or nullptr.
+    vn::math::Mat4d model{};             // World-space model matrix.
+    float           opacity{ 1.0F };     // Effective opacity (the drawable's half of the alpha rule).
     /// Whether this drawable blends, carried from the collected command (see CollectedCommand::transparent):
     /// the material's mode decided it, and the blend enable must not re-derive it from a different input.
-    bool          transparent{false};
+    bool transparent{ false };
     /// Point size in framebuffer pixels: the resolved state's one item whose consumer is the DRAW BLOCK rather
     /// than the pipeline (`VineDrawBlock::params.y`). The content's word and the pass override are already
     /// weighed by resolveRenderState, so this is the answer, not a claim.
-    float         point_size{1.0F};
-    DynamicState  dynamic{};              ///< The dynamic layer, resolved (see resolveDynamicState).
+    float        point_size{ 1.0F };
+    DynamicState dynamic{}; // The dynamic layer, resolved (see resolveDynamicState).
     /// The instance stream, BORROWED from the collected frame: null for a plain draw.
-    const vn::Buffer<float>* instance_buffer{nullptr};
-    std::uint64_t            instance_revision{0};  ///< The buffer revision the borrow was made at.
-    std::uint32_t            first_instance{0};     ///< First instance the draw reads.
-    std::uint32_t            instance_count{0};     ///< Instances the draw reads (0 = plain).
+    const vn::Buffer<float>* instance_buffer{ nullptr };
+    std::uint64_t            instance_revision{ 0 }; // The buffer revision the borrow was made at.
+    std::uint32_t            first_instance{ 0 };    // First instance the draw reads.
+    std::uint32_t            instance_count{ 0 };    // Instances the draw reads (0 = plain).
 };
 
 /** @brief One of a pass' declared inputs, as the plan carries it: what it reads, and what it offers.
@@ -128,23 +124,22 @@ struct CompiledCommand
  *   offers nothing: its count is zero, and a binding layer has nothing to bind for it - which is why the
  *   compiler REPORTS the second case (see compile()).
  */
-struct CompiledInput
-{
-    vn::graphics::ImageSource::Kind kind{vn::graphics::ImageSource::Kind::None};  ///< Produced or imported.
-    const void*   target{nullptr};        ///< The target this input reads; nullptr = nothing produced it.
-    const void*   texture{nullptr};       ///< The imported texture this input reads; nullptr for produced inputs.
-    std::uint64_t texture_revision{0};    ///< The texture content revision; 0 for produced inputs.
-    std::optional<vn::graphics::Sampler> sampler{};  ///< Imported texture's declared sampler state; absent = the
-                                                     ///< backend's input sampler. Always absent for produced inputs.
-    int           attachment{-1};         ///< Colour attachment a ProducedImage names; -1 = whole target / imported.
-    bool          depth{false};           ///< Whether a ProducedImage names the target's depth attachment.
-    std::uint32_t color_attachments{0};   ///< Colour textures it offers (0 = nothing to bind for it).
+struct CompiledInput {
+    vn::graphics::ImageSource::Kind      kind{ vn::graphics::ImageSource::Kind::None }; // Produced or imported.
+    const void*                          target{ nullptr };                             // The target this input reads; nullptr = nothing produced it.
+    const void*                          texture{ nullptr };                            // The imported texture this input reads; nullptr for produced inputs.
+    std::uint64_t                        texture_revision{ 0 };                         // The texture content revision; 0 for produced inputs.
+    std::optional<vn::graphics::Sampler> sampler{};                                     // Imported texture's declared sampler state; absent = the
+                                                                                        // backend's input sampler. Always absent for produced inputs.
+    int                                  attachment{ -1 };       // Colour attachment a ProducedImage names; -1 = whole target / imported.
+    bool                                 depth{ false };         // Whether a ProducedImage names the target's depth attachment.
+    std::uint32_t                        color_attachments{ 0 }; // Colour textures it offers (0 = nothing to bind for it).
     /// Whether the input's DEPTH is sampleable and therefore bound too (the engine's contract for a
     /// whole-target input: "every colour attachment of its source, plus its depth while that one is
     /// sampleable"). Resolved from the same facts the target's own depth plan is made of, so "may a
     /// shader sample it" has one answer per frame. A ProducedImage of a COLOUR attachment never sets it:
     /// the depth is not part of the image that input names.
-    bool depth_sampleable{false};
+    bool depth_sampleable{ false };
 
     /// The map this input IS, when it is one (the target's own statement, copied here): a pass samples
     /// a shadow by declaring the target the map was rendered into, and what it reads only becomes a
@@ -153,16 +148,15 @@ struct CompiledInput
 };
 
 /** @brief One drawing call, resolved. */
-struct CompiledDraw
-{
-    DrawKind         kind{DrawKind::Content};  ///< Content drawing or a full-screen program.
-    CameraSnapshot   camera{};                 ///< The camera announced with the call.
-    vn::graphics::Viewport viewport{};       ///< Resolved: the announced rectangle, or the whole target.
-    std::span<const LightRef> lights{};        ///< The consumed lights; empty = the backend default.
-    const void*      source{nullptr};          ///< Screen draws: the target whose attachments are sampled.
-    ProgramRef       program{};                ///< Screen draws: the fragment program to draw with.
-    DynamicState     dynamic{};                ///< Screen draws: the state the PASS gives them (see below).
-    std::span<const CompiledCommand> commands{};  ///< Content draws: the instances to render.
+struct CompiledDraw {
+    DrawKind                         kind{ DrawKind::Content }; // Content drawing or a full-screen program.
+    CameraSnapshot                   camera{};                  // The camera announced with the call.
+    vn::graphics::Viewport           viewport{};                // Resolved: the announced rectangle, or the whole target.
+    std::span<const LightRef>        lights{};                  // The consumed lights; empty = the backend default.
+    const void*                      source{ nullptr };         // Screen draws: the target whose attachments are sampled.
+    ProgramRef                       program{};                 // Screen draws: the fragment program to draw with.
+    DynamicState                     dynamic{};                 // Screen draws: the state the PASS gives them (see below).
+    std::span<const CompiledCommand> commands{};                // Content draws: the instances to render.
 
     // Why a screen draw has its own `dynamic` field rather than resolving per command: a full-screen call has
     // no commands (there is no geometry to instance, so there is nothing to resolve), and the state it draws
@@ -174,28 +168,27 @@ struct CompiledDraw
 };
 
 /** @brief One pass scope, resolved: its scope attributes are final and every default is explicit. */
-struct CompiledPass
-{
-    PassId        pass{0};                    ///< Pass identity.
-    std::uint32_t schedule_index{0};          ///< Position in the execution order (0 = first).
-    std::uint32_t target_index{0};            ///< Index into CompiledFrame::targets (the pass' target).
-    vn::graphics::Viewport viewport{};      ///< Whole-target rectangle, for the draw calls that announced none.
-    vn::graphics::PassRenderState state{};  ///< The pass' own state (depth policy + rasterisation override).
+struct CompiledPass {
+    PassId                        pass{ 0 };           // Pass identity.
+    std::uint32_t                 schedule_index{ 0 }; // Position in the execution order (0 = first).
+    std::uint32_t                 target_index{ 0 };   // Index into CompiledFrame::targets (the pass' target).
+    vn::graphics::Viewport        viewport{};          // Whole-target rectangle, for the draw calls that announced none.
+    vn::graphics::PassRenderState state{};             // The pass' own state (depth policy + rasterisation override).
     /// The depth band the pass' draws are mapped into ({0, 1} = the whole buffer, see DepthRange).
-    vn::graphics::DepthRange depth_range{};
-    ClearValues   clear{};                    ///< The effective clear policy (announced, or the default).
-    bool          bootstrap{false};           ///< First writer of freshly built attachments: it must clear.
-    bool          depth_preserved{false};     ///< A later pass reads the depth this one writes: never clear it.
-    std::uint32_t color_attachments{0};       ///< Colour attachments of the pass' target (part of a pipeline's
-                                              ///< identity).
-    bool          depth_sampleable{false};    ///< The pass' target offers a sampleable depth (part of the identity).
-    std::span<const CompiledInput> inputs{};  ///< The pass' declared inputs, in declaration order.
+    vn::graphics::DepthRange       depth_range{};
+    ClearValues                    clear{};                   // The effective clear policy (announced, or the default).
+    bool                           bootstrap{ false };        // First writer of freshly built attachments: it must clear.
+    bool                           depth_preserved{ false };  // A later pass reads the depth this one writes: never clear it.
+    std::uint32_t                  color_attachments{ 0 };    // Colour attachments of the pass' target (part of a pipeline's
+                                                              // identity).
+    bool                           depth_sampleable{ false }; // The pass' target offers a sampleable depth (part of the identity).
+    std::span<const CompiledInput> inputs{};                  // The pass' declared inputs, in declaration order.
     /// The shadow map this pass samples, resolved: the FIRST input that is one (a target that states its light),
     /// whose depth is sampleable (a map whose texture is not bound is not a map a shader can read) and whose
     /// producer published a matrix (a map nobody stated how to read is not readable). `light == nullptr` when the
     /// pass samples none, and the shading's switch stays off rather than reading a map that cannot be placed.
-    ShadowFacts shadow{};
-    std::span<const CompiledDraw> draws{};    ///< Drawing calls, in the order they were collected.
+    ShadowFacts                   shadow{};
+    std::span<const CompiledDraw> draws{}; // Drawing calls, in the order they were collected.
 };
 
 /**
@@ -221,17 +214,16 @@ struct CompiledPass
  *   the target has no such attachment - the engine's own fields answer that (an empty color_formats
  *   IS a target with no colour attachments, which is what a depth-only shadow map states).
  */
-struct CompiledShape
-{
-    std::span<const vn::graphics::RenderTarget::ColorFormat> color_formats{};  ///< The engine's spelling, one per
-                                                                               ///< colour attachment.
-    std::optional<vn::graphics::RenderTarget::DepthFormat>   depth_format{};   ///< The engine's spelling; absent = no
-                                                                               ///< depth attachment.
-    std::span<const std::uint32_t> device_color_formats{};   ///< The device's spelling; empty = never learned.
-    std::uint32_t                  device_depth_format{0};   ///< The device's depth format; 0 = no depth, or never
-                                                             ///< learned.
-    std::uint32_t                  samples{1};               ///< Sample count.
-    std::uint32_t                  subpass{0};               ///< Subpass the pipeline targets.
+struct CompiledShape {
+    std::span<const vn::graphics::RenderTarget::ColorFormat> color_formats{};          // The engine's spelling, one per
+                                                                                       // colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat>   depth_format{};           // The engine's spelling; absent = no
+                                                                                       // depth attachment.
+    std::span<const std::uint32_t>                           device_color_formats{};   // The device's spelling; empty = never learned.
+    std::uint32_t                                            device_depth_format{ 0 }; // The device's depth format; 0 = no depth, or never
+                                                                                       // learned.
+    std::uint32_t                                            samples{ 1 };             // Sample count.
+    std::uint32_t                                            subpass{ 0 };             // Subpass the pipeline targets.
 };
 
 /** @brief Whether what a plan was told about a target's shape agrees with what the target really has.
@@ -250,29 +242,26 @@ struct CompiledShape
 [[nodiscard]] VN_GRAPHICS_API bool statedShapeAgrees(const CompiledShape& stated, const TargetShape& actual) noexcept;
 
 /** @brief One target the frame draws into, with what has to happen to it (see planTarget / depthPlan). */
-struct CompiledTarget
-{
-    const void*    target{nullptr};      ///< Identity; nullptr is the default framebuffer.
-    TargetDecision decision{};           ///< None / Repair / ResizeInPlace / Rebuild, and why.
-    DepthPlan      depth{};              ///< Whether the depth is sampleable, borrowed or preserved.
-    CompiledShape  shape{};              ///< What its facts SAID its shape is (the record step checks it).
+struct CompiledTarget {
+    const void*    target{ nullptr }; // Identity; nullptr is the default framebuffer.
+    TargetDecision decision{};        // None / Repair / ResizeInPlace / Rebuild, and why.
+    DepthPlan      depth{};           // Whether the depth is sampleable, borrowed or preserved.
+    CompiledShape  shape{};           // What its facts SAID its shape is (the record step checks it).
 };
 
 /** @brief One frame, compiled: what the executor walks, in the order it walks it. */
-struct CompiledFrame
-{
-    FrameToken  token{};                          ///< The frame this plan belongs to.
-    ProgramRef  default_program{};                ///< What content without a program of its own draws with.
-    std::span<const CompiledPass>   passes{};     ///< In EXECUTION order, not call order.
-    std::span<const CompiledTarget> targets{};    ///< Every target the frame draws into, in first-use order.
-    std::uint32_t cycles{0};                      ///< Cyclic components skipped this frame (0 = a valid schedule).
+struct CompiledFrame {
+    FrameToken                      token{};           // The frame this plan belongs to.
+    ProgramRef                      default_program{}; // What content without a program of its own draws with.
+    std::span<const CompiledPass>   passes{};          // In EXECUTION order, not call order.
+    std::span<const CompiledTarget> targets{};         // Every target the frame draws into, in first-use order.
+    std::uint32_t                   cycles{ 0 };       // Cyclic components skipped this frame (0 = a valid schedule).
 };
 
 /**
  * @brief The compilation stage (see the file note for what it decides and what it refuses to).
  */
-class VN_GRAPHICS_API FrameCompiler
-{
+class VN_GRAPHICS_API FrameCompiler {
   public:
     /** @brief Creates a compiler writing into @p arena and reporting through @p diagnostics.
      *
@@ -305,14 +294,11 @@ class VN_GRAPHICS_API FrameCompiler
     [[nodiscard]] static const TargetFacts* findTarget(const FrameFacts& facts, const void* target) noexcept;
 
     /** @brief Resolves one pass' drawing calls into the arena (viewports and programs made explicit). */
-    [[nodiscard]] std::span<const CompiledDraw> resolveDraws(const CollectedPass& pass,
-                                                             const vn::graphics::Viewport& whole,
-                                                             const ProgramRef& default_program);
+    [[nodiscard]] std::span<const CompiledDraw> resolveDraws(const CollectedPass& pass, const vn::graphics::Viewport& whole, const ProgramRef& default_program);
 
     /** @brief Resolves one drawing call's instances (program and dynamic state made explicit). */
-    [[nodiscard]] std::span<const CompiledCommand> resolveCommands(const CollectedDraw& draw,
-                                                                   const ProgramRef& default_program,
-                                                                   const vn::graphics::PassRenderState& pass_state);
+    [[nodiscard]] std::span<const CompiledCommand>
+    resolveCommands(const CollectedDraw& draw, const ProgramRef& default_program, const vn::graphics::PassRenderState& pass_state);
 
     /** @brief Resolves one pass' declared inputs into the facts a binding layer needs.
      *
@@ -325,8 +311,7 @@ class VN_GRAPHICS_API FrameCompiler
      * @param token The frame being compiled, for the report.
      * @return The entries, in declaration order, in the frame's arena.
      */
-    [[nodiscard]] std::span<const CompiledInput> resolveInputs(const CollectedPass& pass, const FrameFacts& facts,
-                                                               const FrameToken& token);
+    [[nodiscard]] std::span<const CompiledInput> resolveInputs(const CollectedPass& pass, const FrameFacts& facts, const FrameToken& token);
 
     /** @brief Picks the shadow map a pass samples out of its resolved inputs.
      *
@@ -345,29 +330,28 @@ class VN_GRAPHICS_API FrameCompiler
 
   private:
     /** @brief One target the frame draws into, as the compiler works it out (first use owns the slot). */
-    struct TargetSlot
-    {
-        CompiledTarget compiled{};  ///< What the executor will read.
-        int            width{0};    ///< Extent the frame asked for (0 = not usable).
-        int            height{0};   ///< Extent the frame asked for (0 = not usable).
-        std::uint32_t  color_attachments{0};  ///< Colour attachments the frame asked for.
+    struct TargetSlot {
+        CompiledTarget compiled{};             // What the executor will read.
+        int            width{ 0 };             // Extent the frame asked for (0 = not usable).
+        int            height{ 0 };            // Extent the frame asked for (0 = not usable).
+        std::uint32_t  color_attachments{ 0 }; // Colour attachments the frame asked for.
     };
 
     /// Sentinel for "no target slot" in the per-pass table.
     static constexpr std::uint32_t kNoTarget = 0xFFFFFFFFU;
 
-    FrameArena&  arena_;        ///< The frame's storage (shared with the recorder).
-    Diagnostics& diagnostics_;  ///< The one diagnostic route.
-    Observe&     observe_;      ///< The counters a phase gates on.
+    FrameArena&  arena_;       // The frame's storage (shared with the recorder).
+    Diagnostics& diagnostics_; // The one diagnostic route.
+    Observe&     observe_;     // The counters a phase gates on.
 
-    CompiledFrame frame_;       ///< The plan last published.
+    CompiledFrame frame_; // The plan last published.
 
     // Working memory, one frame at a time, capacity kept across frames (see the file note: the PLAN is
     // arena-backed, these are the tables it is built from).
-    std::vector<std::uint8_t> servable_;      ///< Per pass: whether it can be served this frame.
-    std::vector<std::uint32_t> target_index_; ///< Per pass: its TargetSlot, or kNoTarget.
-    std::vector<std::uint8_t>  bootstrapped_; ///< Per slot: whether its first writer has run.
-    std::vector<TargetSlot>    targets_;      ///< The target table of the frame being compiled.
+    std::vector<std::uint8_t>  servable_;     // Per pass: whether it can be served this frame.
+    std::vector<std::uint32_t> target_index_; // Per pass: its TargetSlot, or kNoTarget.
+    std::vector<std::uint8_t>  bootstrapped_; // Per slot: whether its first writer has run.
+    std::vector<TargetSlot>    targets_;      // The target table of the frame being compiled.
 };
 
 VN_GRAPHICSBACKEND_NS_END

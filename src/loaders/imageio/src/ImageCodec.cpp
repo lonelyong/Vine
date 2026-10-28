@@ -38,37 +38,33 @@ using imaging::PixelFormat;
 int channelsForContainer(PixelFormat format) noexcept
 {
     switch (format) {
-        case PixelFormat::R8Unorm:
-        case PixelFormat::R8Srgb:
-            return 1;
+    case PixelFormat::R8Unorm:
+    case PixelFormat::R8Srgb: return 1;
 
-        case PixelFormat::Rgb8Unorm:
-        case PixelFormat::Rgb8Srgb:
-            return 3;
+    case PixelFormat::Rgb8Unorm:
+    case PixelFormat::Rgb8Srgb: return 3;
 
-        case PixelFormat::Rgba8Unorm:
-        case PixelFormat::Rgba8Srgb:
-        case PixelFormat::Bgra8Unorm:
-        case PixelFormat::Bgra8Srgb:
-            return 4;
+    case PixelFormat::Rgba8Unorm:
+    case PixelFormat::Rgba8Srgb:
+    case PixelFormat::Bgra8Unorm:
+    case PixelFormat::Bgra8Srgb: return 4;
 
-        // Two channels: a container's two channels are grey + alpha, which `Rg8Unorm` (red + green) does
-        // not describe. Refusing keeps the caller from being handed luma in the channel it called red.
-        case PixelFormat::Rg8Unorm:
+    // Two channels: a container's two channels are grey + alpha, which `Rg8Unorm` (red + green) does
+    // not describe. Refusing keeps the caller from being handed luma in the channel it called red.
+    case PixelFormat::Rg8Unorm:
 
-        // Float layouts store a channel in 2, 4 or 8 bytes and depth has no meaning outside a render
-        // target; a container can hold neither.
-        case PixelFormat::Unknown:
-        case PixelFormat::R16Float:
-        case PixelFormat::Rg16Float:
-        case PixelFormat::Rgba16Float:
-        case PixelFormat::R32Float:
-        case PixelFormat::Rg32Float:
-        case PixelFormat::Rgba32Float:
-        case PixelFormat::D16Unorm:
-        case PixelFormat::D24UnormS8Uint:
-        case PixelFormat::D32Float:
-            return 0;
+    // Float layouts store a channel in 2, 4 or 8 bytes and depth has no meaning outside a render
+    // target; a container can hold neither.
+    case PixelFormat::Unknown:
+    case PixelFormat::R16Float:
+    case PixelFormat::Rg16Float:
+    case PixelFormat::Rgba16Float:
+    case PixelFormat::R32Float:
+    case PixelFormat::Rg32Float:
+    case PixelFormat::Rgba32Float:
+    case PixelFormat::D16Unorm:
+    case PixelFormat::D24UnormS8Uint:
+    case PixelFormat::D32Float: return 0;
     }
 
     return 0; // Unreachable for every enumerator; defends against an out-of-range cast.
@@ -117,7 +113,7 @@ void appendEncodedBytes(void* context, void* data, int size)
         return;
     }
 
-    auto* out = static_cast<std::vector<std::byte>*>(context);
+    auto*       out   = static_cast<std::vector<std::byte>*>(context);
     const auto* first = static_cast<const std::byte*>(data);
     out->insert(out->end(), first, first + size);
 }
@@ -141,11 +137,11 @@ vn::io::Result<intrusive_ptr<imaging::Image>> decodeImage(std::span<const std::b
         return vn::io::IoError::CapacityExceeded;
     }
 
-    int width           = 0;
-    int height          = 0;
-    int source_channels = 0;
-    stbi_uc* const decoded = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()),
-                                                   static_cast<int>(bytes.size()), &width, &height, &source_channels, channels);
+    int            width           = 0;
+    int            height          = 0;
+    int            source_channels = 0;
+    stbi_uc* const decoded =
+        stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()), static_cast<int>(bytes.size()), &width, &height, &source_channels, channels);
 
     if (decoded == nullptr) {
         return vn::io::IoError::InvalidData; // the bytes are not an image this build can decode
@@ -236,24 +232,20 @@ vn::io::Result<std::vector<std::byte>> encodeImage(const imaging::Image& image, 
     int                    written = 0;
 
     switch (format) {
-        case ImageFileFormat::Png:
-            // PNG is the only one of the three that takes a row stride; rows here are packed, so it is
-            // exactly one row.
-            written = stbi_write_png_to_func(appendEncodedBytes, &encoded, width, height, channels, pixels, width * channels);
-            break;
+    case ImageFileFormat::Png:
+        // PNG is the only one of the three that takes a row stride; rows here are packed, so it is
+        // exactly one row.
+        written = stbi_write_png_to_func(appendEncodedBytes, &encoded, width, height, channels, pixels, width * channels);
+        break;
 
-        case ImageFileFormat::Bmp:
-            written = stbi_write_bmp_to_func(appendEncodedBytes, &encoded, width, height, channels, pixels);
-            break;
+    case ImageFileFormat::Bmp: written = stbi_write_bmp_to_func(appendEncodedBytes, &encoded, width, height, channels, pixels); break;
 
-        case ImageFileFormat::Tga:
-            written = stbi_write_tga_to_func(appendEncodedBytes, &encoded, width, height, channels, pixels);
-            break;
+    case ImageFileFormat::Tga: written = stbi_write_tga_to_func(appendEncodedBytes, &encoded, width, height, channels, pixels); break;
 
-        case ImageFileFormat::Jpeg:
-        case ImageFileFormat::Unknown:
-            // Unreachable: canWrite() refused them above.
-            break;
+    case ImageFileFormat::Jpeg:
+    case ImageFileFormat::Unknown:
+        // Unreachable: canWrite() refused them above.
+        break;
     }
 
     if (written == 0 || encoded.empty()) {

@@ -24,16 +24,13 @@ namespace
  */
 constexpr int hexDigit(char8_t ch) noexcept
 {
-    if (ch >= u8'0' && ch <= u8'9')
-    {
+    if (ch >= u8'0' && ch <= u8'9') {
         return static_cast<int>(ch - u8'0');
     }
-    if (ch >= u8'a' && ch <= u8'f')
-    {
+    if (ch >= u8'a' && ch <= u8'f') {
         return static_cast<int>(ch - u8'a') + 10;
     }
-    if (ch >= u8'A' && ch <= u8'F')
-    {
+    if (ch >= u8'A' && ch <= u8'F') {
         return static_cast<int>(ch - u8'A') + 10;
     }
     return -1;
@@ -43,8 +40,7 @@ constexpr int hexDigit(char8_t ch) noexcept
 
 std::uint32_t Color::toRgba32() const noexcept
 {
-    return (static_cast<std::uint32_t>(r) << 24) | (static_cast<std::uint32_t>(g) << 16) |
-           (static_cast<std::uint32_t>(b) << 8) | static_cast<std::uint32_t>(a);
+    return (static_cast<std::uint32_t>(r) << 24) | (static_cast<std::uint32_t>(g) << 16) | (static_cast<std::uint32_t>(b) << 8) | static_cast<std::uint32_t>(a);
 }
 
 void Color::invert() noexcept
@@ -66,7 +62,8 @@ Colorf Color::toLinear() const noexcept
 {
     return { detail::srgbToLinear(static_cast<float>(r) / 255.0f),
              detail::srgbToLinear(static_cast<float>(g) / 255.0f),
-             detail::srgbToLinear(static_cast<float>(b) / 255.0f), static_cast<float>(a) / 255.0f };
+             detail::srgbToLinear(static_cast<float>(b) / 255.0f),
+             static_cast<float>(a) / 255.0f };
 }
 
 String Color::toString() const
@@ -85,26 +82,22 @@ std::optional<Color> Color::parse(const String& text)
     // One grammar: '#' then 3, 4, 6 or 8 hex digits - the CSS hex family, where a short form duplicates each digit
     // (#CCC is #CCCCCC, #C0F8 is #CC00FF88). Refusing the neighbours (0xRRGGBB, bare digits, rgba(...)) is the point of
     // a format contract; accepting only 3 of the four lengths would be an arbitrary hole in it.
-    if (text.empty() || text[0] != u8'#')
-    {
+    if (text.empty() || text[0] != u8'#') {
         return std::nullopt;
     }
 
     const std::size_t digits = text.size() - 1;
-    if (digits != 3 && digits != 4 && digits != 6 && digits != 8)
-    {
+    if (digits != 3 && digits != 4 && digits != 6 && digits != 8) {
         return std::nullopt;
     }
 
-    const bool        shorthand = digits < 6;
-    const std::size_t count     = shorthand ? digits : digits / 2;
+    const bool        shorthand  = digits < 6;
+    const std::size_t count      = shorthand ? digits : digits / 2;
     std::uint8_t      channels[] = { 0, 0, 0, 255 };
-    for (std::size_t i = 0; i < count; ++i)
-    {
+    for (std::size_t i = 0; i < count; ++i) {
         const int high = hexDigit(text[1 + (shorthand ? i : 2 * i)]);
         const int low  = shorthand ? high : hexDigit(text[1 + 2 * i + 1]);
-        if (high < 0 || low < 0)
-        {
+        if (high < 0 || low < 0) {
             return std::nullopt;
         }
         channels[i] = static_cast<std::uint8_t>(high * 16 + low);

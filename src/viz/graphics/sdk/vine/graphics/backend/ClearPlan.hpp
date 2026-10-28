@@ -43,46 +43,42 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 inline constexpr float kReverseZFarDepth = 0.0F;
 
 /** @brief What the pass asked for, before the rules above are applied. */
-struct ClearValues
-{
-    bool  color{false};                     ///< The pass asked to clear its colour attachments.
-    float color_value[4]{ 0.0F, 0.0F, 0.0F, 1.0F };  ///< The value attachment 0 receives when it clears.
-    bool  depth{false};                     ///< The pass asked to clear depth (bootstrap clears it regardless).
-    float depth_value{kReverseZFarDepth};   ///< Value the depth clear uses (the reverse-Z far plane by default).
+struct ClearValues {
+    bool  color{ false };                           // The pass asked to clear its colour attachments.
+    float color_value[4]{ 0.0F, 0.0F, 0.0F, 1.0F }; // The value attachment 0 receives when it clears.
+    bool  depth{ false };                           // The pass asked to clear depth (bootstrap clears it regardless).
+    float depth_value{ kReverseZFarDepth };         // Value the depth clear uses (the reverse-Z far plane by default).
     /// Values for attachments 1..N-1, in attachment order; a missing entry is TRANSPARENT BLACK.
     std::vector<std::array<float, 4>> extra_color_values;
 };
 
 /** @brief What one colour attachment does at the start of the pass. */
-struct VN_GRAPHICS_API AttachmentClear
-{
-    LoadOp        load{LoadOp::Load};   ///< Keep what is there, or clear it.
-    StoreOp       store{StoreOp::Store};///< Whether the result survives the pass.
-    float         clear[4]{ 0.0F, 0.0F, 0.0F, 0.0F };  ///< Value for a clearing attachment (transparent black by
-                                                       ///< default).
+struct VN_GRAPHICS_API AttachmentClear {
+    LoadOp  load{ LoadOp::Load };               // Keep what is there, or clear it.
+    StoreOp store{ StoreOp::Store };            // Whether the result survives the pass.
+    float   clear[4]{ 0.0F, 0.0F, 0.0F, 0.0F }; // Value for a clearing attachment (transparent black by
+                                                // default).
 
     /** @brief Compares the whole decision. */
     [[nodiscard]] bool operator==(const AttachmentClear& other) const noexcept;
 };
 
 /** @brief What one depth attachment does at the start of the pass. */
-struct VN_GRAPHICS_API DepthClear
-{
-    LoadOp  load{LoadOp::Load};    ///< Keep what is there, or clear it.
-    StoreOp store{StoreOp::Store}; ///< Whether the result survives the pass.
-    float   clear{kReverseZFarDepth};  ///< Value for a clearing depth attachment.
+struct VN_GRAPHICS_API DepthClear {
+    LoadOp  load{ LoadOp::Load };       // Keep what is there, or clear it.
+    StoreOp store{ StoreOp::Store };    // Whether the result survives the pass.
+    float   clear{ kReverseZFarDepth }; // Value for a clearing depth attachment.
 
     /** @brief Compares the whole decision. */
     [[nodiscard]] bool operator==(const DepthClear& other) const noexcept;
 };
 
 /** @brief What every attachment of one pass does, and why the pass clears at all. */
-struct VN_GRAPHICS_API PassClearPlan
-{
-    std::vector<AttachmentClear> colors;      ///< One per colour attachment (empty for a depth-only target).
-    bool                         has_depth{false};  ///< Whether the target has a depth attachment.
-    DepthClear                   depth;       ///< The depth decision (read only when has_depth).
-    bool                         bootstrap{false};  ///< Whether the clear was forced by the bootstrap rule.
+struct VN_GRAPHICS_API PassClearPlan {
+    std::vector<AttachmentClear> colors;             // One per colour attachment (empty for a depth-only target).
+    bool                         has_depth{ false }; // Whether the target has a depth attachment.
+    DepthClear                   depth;              // The depth decision (read only when has_depth).
+    bool                         bootstrap{ false }; // Whether the clear was forced by the bootstrap rule.
 
     /** @brief Compares the whole plan. */
     [[nodiscard]] bool operator==(const PassClearPlan& other) const noexcept;
@@ -112,8 +108,7 @@ struct VN_GRAPHICS_API PassClearPlan
  * @param depth_borrowed Whether the depth attachment is ANOTHER target's image (see rule 3).
  * @return The per-attachment plan.
  */
-[[nodiscard]] VN_GRAPHICS_API PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& policy, bool bootstrap,
-                                            bool depth_borrowed) noexcept;
+[[nodiscard]] VN_GRAPHICS_API PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& policy, bool bootstrap, bool depth_borrowed) noexcept;
 
 /** @brief Gets the layout a target leaves its depth attachment in.
  *
@@ -151,7 +146,9 @@ struct VN_GRAPHICS_API PassClearPlan
  * @param depth_final  The layout this pass leaves the depth in.
  * @return The variant key: two passes that may share one render pass object compare equal on it.
  */
-[[nodiscard]] VN_GRAPHICS_API LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_final,
-                                               ImageLayout depth_steady, ImageLayout depth_final) noexcept;
+[[nodiscard]] VN_GRAPHICS_API LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan,
+                                                               ImageLayout          color_final,
+                                                               ImageLayout          depth_steady,
+                                                               ImageLayout          depth_final) noexcept;
 
 VN_GRAPHICSBACKEND_NS_END

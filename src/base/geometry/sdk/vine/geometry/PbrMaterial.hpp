@@ -110,11 +110,11 @@ class VN_GEOMETRY_API PbrMaterial : public Material {
     /// Emissive color.
     vn::Colorf emissive_{ 0.0f, 0.0f, 0.0f, 1.0f };
     /// Metallic factor in [0, 1].
-    float metallic_ = 0.0f;
+    float metallic_  = 0.0f;
     /// Roughness factor in [0, 1].
     float roughness_ = 0.5f;
     /// Opacity factor in [0, 1].
-    float opacity_ = 1.0f;
+    float opacity_   = 1.0f;
 };
 
 VN_GEOMETRY_NS_END

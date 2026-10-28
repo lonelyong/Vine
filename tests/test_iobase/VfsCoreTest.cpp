@@ -7,23 +7,23 @@
 #include <sstream>
 #include <vector>
 
+#include <vine/String.hpp>
 #include <vine/io/DirectoryVfs.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/io/Vfs.hpp>
 #include <vine/io/ZipArchive.hpp>
-#include <vine/String.hpp>
 
 #include "VfsTestSupport.hpp"
 
-using vn::String;
-using vn::io::DirectoryVfs;
-using vn::io::VfsEntryInfo;
-using vn::io::VfsEntryKind;
-using vn::io::IoError;
-using vn::io::ZipArchive;
 using vfstest::bytesOf;
 using vfstest::findInfo;
 using vfstest::TempDir;
+using vn::String;
+using vn::io::DirectoryVfs;
+using vn::io::IoError;
+using vn::io::VfsEntryInfo;
+using vn::io::VfsEntryKind;
+using vn::io::ZipArchive;
 
 namespace
 {
@@ -31,12 +31,14 @@ namespace
 /**
  * @brief A backend that claims to be read-only, to test the write guard.
  */
-class ReadOnlyProbe : public DirectoryVfs
-{
+class ReadOnlyProbe : public DirectoryVfs {
   public:
     using DirectoryVfs::DirectoryVfs;
 
-    [[nodiscard]] bool isReadOnly() const noexcept override { return true; }
+    [[nodiscard]] bool isReadOnly() const noexcept override
+    {
+        return true;
+    }
 };
 
 /**
@@ -95,7 +97,9 @@ TEST(VfsCoreTest, ResultCarriesValueOrError)
     vn::io::Result<int> taken{ 9 };
     EXPECT_EQ(taken.take(), 9);
 
-    vn::io::Result<VfsEntryInfo> info{ VfsEntryInfo{ std::filesystem::path(u8"a/b.txt"), VfsEntryKind::File, 3 } };
+    vn::io::Result<VfsEntryInfo> info{
+        VfsEntryInfo{ std::filesystem::path(u8"a/b.txt"), VfsEntryKind::File, 3 }
+    };
     EXPECT_EQ(info->path, std::filesystem::path(u8"a/b.txt"));
     EXPECT_EQ(info->size, 3u);
 
@@ -158,8 +162,8 @@ TEST(VfsCoreTest, KindOfAnswersFileDirectoryAndMissing)
     EXPECT_EQ(vfs.kindOf(u8"geoms/../empty"), VfsEntryKind::Directory);
 
     // The directory backend answers the same way.
-    const TempDir temp;
-    const auto    root = temp.path() / "kind";
+    const TempDir   temp;
+    const auto      root = temp.path() / "kind";
     std::error_code ec;
     std::filesystem::create_directories(root / "sub", ec);
     ASSERT_FALSE(ec);
@@ -231,13 +235,10 @@ TEST(VfsCoreTest, InvalidPathsAreRejected)
 
     // A leading '/' is refused too: a virtual path has no working directory, so
     // there is nothing an absolute spelling could name.
-    const std::vector<std::filesystem::path> invalid{ std::filesystem::path(u8".."),
-                                       std::filesystem::path(u8"a/../.."),
-                                       std::filesystem::path(u8"../../x"),
-                                       std::filesystem::path(u8"C:/escape.txt"),
-                                       std::filesystem::path(u8"a\\b"),
-                                       std::filesystem::path(u8"/a.txt"),
-                                       std::filesystem::path(u8"/") };
+    const std::vector<std::filesystem::path> invalid{ std::filesystem::path(u8".."),      std::filesystem::path(u8"a/../.."),
+                                                      std::filesystem::path(u8"../../x"), std::filesystem::path(u8"C:/escape.txt"),
+                                                      std::filesystem::path(u8"a\\b"),    std::filesystem::path(u8"/a.txt"),
+                                                      std::filesystem::path(u8"/") };
     for (std::size_t i = 0; i < invalid.size(); ++i) {
         const std::filesystem::path& path = invalid[i];
         EXPECT_EQ(vfs.stat(path).error(), IoError::InvalidPath) << "bad path #" << i;

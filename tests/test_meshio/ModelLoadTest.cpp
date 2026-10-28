@@ -29,8 +29,7 @@ namespace
 {
 
 /** @brief A unique temporary directory that is removed when it goes out of scope. */
-class TempDir
-{
+class TempDir {
   public:
     TempDir()
     {
@@ -49,7 +48,10 @@ class TempDir
     TempDir(const TempDir&)            = delete;
     TempDir& operator=(const TempDir&) = delete;
 
-    const std::filesystem::path& path() const { return path_; }
+    const std::filesystem::path& path() const
+    {
+        return path_;
+    }
 
   private:
     std::filesystem::path path_;
@@ -266,7 +268,7 @@ TEST(ModelLoadTest, KeepsTheTransformOfANodeInsteadOfBakingIt)
     std::istringstream again{ kShiftedCollada };
     auto               loaded_merged = loader.loadMerged(again, vn::meshio::MeshFormat::Collada);
     ASSERT_TRUE(loaded_merged);
-    auto        merged = loaded_merged.take();
+    auto        merged           = loaded_merged.take();
     const auto& merged_positions = obj_cast<IndexedTriangleMesh>(*merged).positions();
     ASSERT_EQ(merged_positions.size(), 3u);
     EXPECT_FLOAT_EQ(merged_positions[0].x, 10.0f);
@@ -278,11 +280,11 @@ TEST(ModelLoadTest, ExportsTheModelAndKeepsItsPartsAndMaterials)
     writeFile(dir.path() / "parts.obj", kTwoObjectObj);
     writeFile(dir.path() / "parts.mtl", kTwoMaterialMtl);
 
-    const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
-    MeshLoader  loader(options);
-    auto        loaded_parts = loader.load(dir.path() / "parts.obj");
+    const auto options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
+    MeshLoader loader(options);
+    auto       loaded_parts = loader.load(dir.path() / "parts.obj");
     ASSERT_TRUE(loaded_parts);
-    const auto  model = loaded_parts.take();
+    const auto model = loaded_parts.take();
 
     const auto   exported = dir.path() / "roundtrip.obj";
     MeshExporter exporter;
@@ -307,11 +309,11 @@ TEST(ModelLoadTest, ExportsNodeTransformsInsteadOfBakingThem)
 {
     std::istringstream in{ kShiftedCollada };
 
-    const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
-    MeshLoader  loader(options);
-    auto        loaded = loader.load(in, vn::meshio::MeshFormat::Collada);
+    const auto options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
+    MeshLoader loader(options);
+    auto       loaded = loader.load(in, vn::meshio::MeshFormat::Collada);
     ASSERT_TRUE(loaded);
-    const auto  model = loaded.take();
+    const auto model = loaded.take();
 
     const TempDir dir;
     const auto    exported = dir.path() / "roundtrip.dae";
@@ -340,11 +342,11 @@ TEST(ModelLoadTest, ACreateSourceExportsTheModelWhenPulled)
 {
     std::istringstream in{ kShiftedCollada };
 
-    const auto  options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
-    MeshLoader  loader(options);
-    auto        loaded = loader.load(in, vn::meshio::MeshFormat::Collada);
+    const auto options = MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled };
+    MeshLoader loader(options);
+    auto       loaded = loader.load(in, vn::meshio::MeshFormat::Collada);
     ASSERT_TRUE(loaded);
-    const auto  model = loaded.take();
+    const auto model = loaded.take();
 
     MeshExporter exporter;
     const auto   source = exporter.createSource(model, vn::meshio::MeshFormat::Collada);
@@ -355,8 +357,7 @@ TEST(ModelLoadTest, ACreateSourceExportsTheModelWhenPulled)
 
     std::size_t offset = 0;
     while (offset < bytes.size()) {
-        const std::size_t read = source->read(
-            std::span<std::byte>(reinterpret_cast<std::byte*>(bytes.data()) + offset, bytes.size() - offset));
+        const std::size_t read = source->read(std::span<std::byte>(reinterpret_cast<std::byte*>(bytes.data()) + offset, bytes.size() - offset));
         if (read == 0) {
             break;
         }

@@ -30,15 +30,13 @@ namespace
 /**
  * @brief Creates a unique temporary directory that is removed on destruction.
  */
-class TempDir
-{
+class TempDir {
   public:
     TempDir()
     {
         static std::atomic<unsigned long long> counter{ 0 };
         std::error_code                        ec;
-        path_ = std::filesystem::temp_directory_path(ec) /
-                ("vn_robotics_io_" + std::to_string(counter.fetch_add(1)));
+        path_ = std::filesystem::temp_directory_path(ec) / ("vn_robotics_io_" + std::to_string(counter.fetch_add(1)));
         std::filesystem::create_directories(path_, ec);
     }
 
@@ -48,7 +46,10 @@ class TempDir
         std::filesystem::remove_all(path_, ec);
     }
 
-    const std::filesystem::path& path() const { return path_; }
+    const std::filesystem::path& path() const
+    {
+        return path_;
+    }
 
   private:
     std::filesystem::path path_;
@@ -79,11 +80,14 @@ void writeText(const std::filesystem::path& path, const std::string& text)
  * @param b Second vertex.
  * @param c Third vertex.
  */
-void writeBinaryStl(const std::filesystem::path& path, const std::array<float, 3>& normal, const std::array<float, 3>& a,
-                    const std::array<float, 3>& b, const std::array<float, 3>& c)
+void writeBinaryStl(const std::filesystem::path& path,
+                    const std::array<float, 3>&  normal,
+                    const std::array<float, 3>&  a,
+                    const std::array<float, 3>&  b,
+                    const std::array<float, 3>&  c)
 {
     static constexpr char kHeader[] = "binary STL written by the test";
-    std::array<char, 84>    prefix{};
+    std::array<char, 84>  prefix{};
     std::memcpy(prefix.data(), kHeader, sizeof(kHeader) - 1);
     const std::uint32_t count = 1;
     std::memcpy(prefix.data() + 80, &count, sizeof(count));
@@ -190,7 +194,7 @@ TEST(DeviceIOTest, LoadXmlFromFolder)
     writeText(file, kRobotVdev);
 
     DeviceIO io;
-    auto loaded = io.loadXml(file);
+    auto     loaded = io.loadXml(file);
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(loaded->filePath(), file);
 
@@ -223,17 +227,15 @@ TEST(DeviceIOTest, LoadXmlFromFolderWithMesh)
     const auto    file = temp.path() / "robot.vdev";
     writeText(file, kRobotVdevMesh);
     std::filesystem::create_directories(temp.path() / "geoms");
-    writeBinaryStl(temp.path() / "geoms" / "mesh0.stl", { 0.0f, 0.0f, -1.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f },
-                   { 0.0f, 1.0f, 0.0f });
+    writeBinaryStl(temp.path() / "geoms" / "mesh0.stl", { 0.0f, 0.0f, -1.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
 
     DeviceIO io;
-    auto loaded = io.loadXml(file);
+    auto     loaded = io.loadXml(file);
     ASSERT_NE(loaded, nullptr);
     auto* const r = dynamic_cast<MotionDevice*>(loaded.get());
     ASSERT_NE(r, nullptr);
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
-    const auto* const m = dynamic_cast<const vn::geometry::TriangleMesh*>(
-        r->baseLink()->body().visuals()[0].shape().get());
+    const auto* const m = dynamic_cast<const vn::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(m, nullptr);
     EXPECT_EQ(m->vertexCount(), 3u);
     EXPECT_EQ(m->triangleCount(), 1u);
@@ -250,7 +252,7 @@ TEST(DeviceIOTest, MaterialLibraryRoundTrip)
     writeText(file, kRobotVdevMaterials);
 
     DeviceIO io;
-    auto loaded = io.loadXml(file);
+    auto     loaded = io.loadXml(file);
     ASSERT_NE(loaded, nullptr);
     auto* const r = dynamic_cast<MotionDevice*>(loaded.get());
     ASSERT_NE(r, nullptr);
@@ -258,16 +260,14 @@ TEST(DeviceIOTest, MaterialLibraryRoundTrip)
     // The named library lands on the device data.
     ASSERT_EQ(r->data()->materials.size(), 1u);
     EXPECT_EQ(r->data()->materials[0].name, u8"orange");
-    const auto* const lib_color =
-        dynamic_cast<const vn::geometry::ColorMaterial*>(r->data()->materials[0].material.get());
+    const auto* const lib_color = dynamic_cast<const vn::geometry::ColorMaterial*>(r->data()->materials[0].material.get());
     ASSERT_NE(lib_color, nullptr);
     EXPECT_FLOAT_EQ(lib_color->color().r, 1.0f);
 
     // The base-link visual references the library material by name.
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
     EXPECT_EQ(r->baseLink()->body().visuals()[0].materialName(), u8"orange");
-    const auto* const vis_color = dynamic_cast<const vn::geometry::ColorMaterial*>(
-        r->baseLink()->body().visuals()[0].material().get());
+    const auto* const vis_color = dynamic_cast<const vn::geometry::ColorMaterial*>(r->baseLink()->body().visuals()[0].material().get());
     ASSERT_NE(vis_color, nullptr);
     EXPECT_FLOAT_EQ(vis_color->color().r, 1.0f);
     EXPECT_FLOAT_EQ(vis_color->color().b, 0.0f);
@@ -344,7 +344,7 @@ TEST(DeviceIOTest, ResavingTheCommittedPackageMatchesItByteForByte)
 {
     // The asset is what this writer produces: load it, write it out again, and each mesh file comes back identical. That
     // holds only because the facet normals of the file are kept rather than worked out from the winding.
-    const auto path = assetPath("robots/irb_1600_10_145.vdev");
+    const auto path   = assetPath("robots/irb_1600_10_145.vdev");
     auto       opened = vn::io::ZipArchive::open(path, vn::io::ZipArchive::OpenMode::ReadOnly);
     ASSERT_TRUE(opened.ok());
     auto&      source = opened.value();

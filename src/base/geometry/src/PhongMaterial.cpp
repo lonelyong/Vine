@@ -9,8 +9,7 @@ PhongMaterial::PhongMaterial()
     material_type_ = MaterialType::Phong;
 }
 
-PhongMaterial::PhongMaterial(const vn::Colorf& ambient, const vn::Colorf& diffuse,
-    const vn::Colorf& specular, float shininess)
+PhongMaterial::PhongMaterial(const vn::Colorf& ambient, const vn::Colorf& diffuse, const vn::Colorf& specular, float shininess)
   : ambient_(ambient)
   , diffuse_(diffuse)
   , specular_(specular)

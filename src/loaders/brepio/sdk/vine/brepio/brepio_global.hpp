@@ -9,10 +9,10 @@
 #endif
 
 #define VN_BREPIO_NS_BEGIN                                                                                                                                     \
-    VN_ROOT_NS_BEGIN                                                                                                                                             \
-    namespace brepio                                                                                                                                          \
+    VN_ROOT_NS_BEGIN                                                                                                                                           \
+    namespace brepio                                                                                                                                           \
     {
 
 #define VN_BREPIO_NS_END                                                                                                                                       \
-    VN_ROOT_NS_END                                                                                                                                               \
+    VN_ROOT_NS_END                                                                                                                                             \
     }

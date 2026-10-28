@@ -32,18 +32,29 @@ namespace
  * The scheduler is the ENGINE's, so these cases need a frame to compile and no pixels: this double counts frames and
  * honours every target it is handed.
  */
-class HeadlessBackend : public RenderBackend
-{
+class HeadlessBackend : public RenderBackend {
   public:
-    bool initialize() override { return up = true; }
-    void shutdown() override { up = false; }
+    bool initialize() override
+    {
+        return up = true;
+    }
 
-    [[nodiscard]] bool initialized() const noexcept override { return up; }
+    void shutdown() override
+    {
+        up = false;
+    }
 
-    [[nodiscard]] RenderFrameExecutor& executor() override { return *this; }
+    [[nodiscard]] bool initialized() const noexcept override
+    {
+        return up;
+    }
 
-    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle,
-                                                                  SurfaceTargetResult* why = nullptr) override
+    [[nodiscard]] RenderFrameExecutor& executor() override
+    {
+        return *this;
+    }
+
+    [[nodiscard]] raw_ptr<WindowPresentTarget> createSurfaceTarget(void* native_handle, SurfaceTargetResult* why = nullptr) override
     {
         return RenderDevice::createSurfaceTarget(native_handle, why);
     }
@@ -57,13 +68,17 @@ class HeadlessBackend : public RenderBackend
         }
     }
 
-    void setRenderTarget(RenderTarget*) override {}
+    void setRenderTarget(RenderTarget*) override
+    {}
 
-    [[nodiscard]] Capabilities capabilities() const noexcept override { return Capabilities{ .render_targets = true }; }
+    [[nodiscard]] Capabilities capabilities() const noexcept override
+    {
+        return Capabilities{ .render_targets = true };
+    }
 
-    bool                       up = true;
-    int                        frames = 0;
-    raw_ptr<const FrameDescription> last = nullptr;
+    bool                            up     = true;
+    int                             frames = 0;
+    raw_ptr<const FrameDescription> last   = nullptr;
 };
 
 /** @brief A scene declaration that draws into @p target at an explicit order. */
@@ -90,7 +105,7 @@ intrusive_ptr<RenderTarget> colourTarget()
     return target;
 }
 
-}  // namespace
+} // namespace
 
 /*
  * @brief Without a dependency, the frame keeps the announced order (the engine's own stacking rule).
@@ -130,9 +145,9 @@ TEST(FrameScheduleTest, AProducerRunsBeforeAConsumerAnnouncedEarlier)
     auto camera = vn::make_intrusive<Camera>();
     auto source = colourTarget();
 
-    PassDesc consumer = writingPass(u8"consumer", colourTarget(), -100, camera);
+    PassDesc consumer      = writingPass(u8"consumer", colourTarget(), -100, camera);
     consumer.input_targets = { source };
-    engine->addPass(consumer);  // announced first, stacked first
+    engine->addPass(consumer); // announced first, stacked first
     engine->addPass(writingPass(u8"producer", source, 100, camera));
 
     engine->frame();
@@ -142,8 +157,7 @@ TEST(FrameScheduleTest, AProducerRunsBeforeAConsumerAnnouncedEarlier)
     EXPECT_EQ(frame.passes[0].pass->name(), u8"producer") << "the edge beats the announced order";
     EXPECT_EQ(frame.passes[1].pass->name(), u8"consumer");
     ASSERT_EQ(frame.passes[1].inputs.size(), 1u);
-    EXPECT_EQ(frame.passes[1].inputs[0].target, source.get())
-        << "the consumer resolves the producer's target, not an unproduced input";
+    EXPECT_EQ(frame.passes[1].inputs[0].target, source.get()) << "the consumer resolves the producer's target, not an unproduced input";
 }
 
 /*
@@ -160,9 +174,9 @@ TEST(FrameScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
     auto first  = colourTarget();
     auto second = colourTarget();
 
-    PassDesc a     = writingPass(u8"a", first, -10, camera);
-    PassDesc b     = writingPass(u8"b", second, 0, camera);
-    PassDesc alone = writingPass(u8"alone", colourTarget(), 20, camera);
+    PassDesc a      = writingPass(u8"a", first, -10, camera);
+    PassDesc b      = writingPass(u8"b", second, 0, camera);
+    PassDesc alone  = writingPass(u8"alone", colourTarget(), 20, camera);
     a.input_targets = { second };
     b.input_targets = { first };
     engine->addPass(a);
@@ -174,8 +188,7 @@ TEST(FrameScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
     const FrameDescription& frame = engine->frameDescription();
     ASSERT_EQ(frame.passes.size(), 1u) << "only the pass outside the cycle runs";
     EXPECT_EQ(frame.passes[0].pass->name(), u8"alone");
-    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u)
-        << "the skipped component is reported once per episode";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u) << "the skipped component is reported once per episode";
 }
 
 /*
@@ -198,7 +211,7 @@ TEST(FrameScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOr
 
     // Declared: the consumer at -10, the producer it reads at 50 - so the declaration order puts the reader
     // first, and only the edge can move the writer ahead of it.
-    PassDesc consumer = writingPass(u8"consumer", colourTarget(), -10, camera);
+    PassDesc consumer      = writingPass(u8"consumer", colourTarget(), -10, camera);
     consumer.input_targets = { source };
     engine->addPass(consumer);
     engine->addPass(writingPass(u8"producer", source, 50, camera));

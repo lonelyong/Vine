@@ -19,22 +19,21 @@ namespace
  * The table is the only place a format is stated. MeshLoader::supportedExtensions(), formatFromPath() and formatInfo()
  * read it, so a format added here is readable, writable, offered by a file picker and reported by name in one edit.
  */
-struct Entry
-{
+struct Entry {
     MeshFormat     format;
     const char*    name;
     MeshFormatInfo info;
 };
 
 constexpr Entry kEntries[] = {
-    { MeshFormat::Stl, "stl", { ".stl", true, true } },
-    { MeshFormat::Obj, "obj", { ".obj", false, true } },
-    { MeshFormat::Ply, "ply", { ".ply", true, true } },
-    { MeshFormat::Gltf, "gltf", { ".gltf", false, false } },
-    { MeshFormat::Glb, "glb", { ".glb", false, true } },
-    { MeshFormat::Fbx, "fbx", { ".fbx", true, true } },
-    { MeshFormat::Collada, "collada", { ".dae", false, true } },
-    { MeshFormat::ThreeMf, "3mf", { ".3mf", false, false } },
+    { MeshFormat::Stl,     "stl",     { ".stl", true, true }    },
+    { MeshFormat::Obj,     "obj",     { ".obj", false, true }   },
+    { MeshFormat::Ply,     "ply",     { ".ply", true, true }    },
+    { MeshFormat::Gltf,    "gltf",    { ".gltf", false, false } },
+    { MeshFormat::Glb,     "glb",     { ".glb", false, true }   },
+    { MeshFormat::Fbx,     "fbx",     { ".fbx", true, true }    },
+    { MeshFormat::Collada, "collada", { ".dae", false, true }   },
+    { MeshFormat::ThreeMf, "3mf",     { ".3mf", false, false }  },
 };
 
 constexpr MeshFormatInfo kUnknownInfo{ "", false, false };
@@ -94,7 +93,8 @@ MeshFormat formatFromPath(const std::filesystem::path& file_path) noexcept
                 return entry.format;
             }
         }
-    } catch (...) {
+    }
+    catch (...) {
         return MeshFormat::Unknown;
     }
     return MeshFormat::Unknown;

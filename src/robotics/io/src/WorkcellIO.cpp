@@ -83,8 +83,7 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadVfs(vn::io::Vfs& vfs, const 
     uint16_t major = 0, minor = 0;
     parseVersion(ctx, major, minor, xe_cell);
     if (major != VN_ROBOTICS_IO_VERSION_MAJOR || minor != VN_ROBOTICS_IO_VERSION_MINOR) {
-        throw std::runtime_error("WorkcellIO::loadXml, unsupported version: " + std::to_string(major) + "."
-                                 + std::to_string(minor));
+        throw std::runtime_error("WorkcellIO::loadXml, unsupported version: " + std::to_string(major) + "." + std::to_string(minor));
     }
 
     ctx.vfs_dir = detail::vfsParentDir(vfs_path);
@@ -106,7 +105,7 @@ void WorkcellIO::exportToVfs(const workcell::Workcell& cell, vn::io::Vfs& vfs, c
     ctx.vfs     = &vfs;
     ctx.vfs_dir = detail::vfsParentDir(vfs_path);
     // Export only reads the workcell (frame lookups), so the cell stays const.
-    ctx.cell = &cell;
+    ctx.cell    = &cell;
 
     auto        doc     = std::make_unique<tinyxml2::XMLDocument>();
     auto* const xe_cell = doc->NewElement("workcell");
@@ -150,8 +149,7 @@ std::unique_ptr<workcell::Workcell> WorkcellIO::loadPkg(vn::io::Vfs& vfs)
     return loadVfs(vfs, std::filesystem::path(u8"workcell.xml"));
 }
 
-void WorkcellIO::savePkg(const workcell::Workcell& cell, const std::filesystem::path& pkg_path,
-                         const SaveOptions& options)
+void WorkcellIO::savePkg(const workcell::Workcell& cell, const std::filesystem::path& pkg_path, const SaveOptions& options)
 {
     vn::io::ZipArchive vfs;
     savePkg(cell, vfs, options);
@@ -197,20 +195,18 @@ void WorkcellIO::exportObject(ExportContext& ctx, const workcell::SceneObject& o
 
 void WorkcellIO::exportDevice(ExportContext& ctx, const workcell::Device& dev, tinyxml2::XMLElement* xe)
 {
-    const String                 rel      = String(u8"devices/") + dev.name() + String(u8".vdevpkg");
-    const std::filesystem::path  dev_path = ctx.vfs_dir.empty() ? detail::vfsPath(rel) : ctx.vfs_dir / detail::vfsPath(rel);
-    DeviceIO     device_io;
+    const String                rel      = String(u8"devices/") + dev.name() + String(u8".vdevpkg");
+    const std::filesystem::path dev_path = ctx.vfs_dir.empty() ? detail::vfsPath(rel) : ctx.vfs_dir / detail::vfsPath(rel);
+    DeviceIO                    device_io;
     // Build the device package in an inner VFS, then store it as one entry.
     vn::io::ZipArchive inner;
     device_io.savePkg(dev, inner);
     const auto zip_bytes = inner.toBytes();
     if (!zip_bytes) {
-        throw std::runtime_error("WorkcellIO::exportDevice, failed to build device package: "
-                                 + dev.name().as_std_str());
+        throw std::runtime_error("WorkcellIO::exportDevice, failed to build device package: " + dev.name().as_std_str());
     }
     if (ctx.vfs->addFile(dev_path, zip_bytes.value()) != vn::io::IoError::Ok) {
-        throw std::runtime_error("WorkcellIO::exportDevice, failed to write device package: "
-                                 + dev_path.generic_string());
+        throw std::runtime_error("WorkcellIO::exportDevice, failed to write device package: " + dev_path.generic_string());
     }
     xe->SetAttribute("file", toCStr(rel));
 
@@ -262,7 +258,7 @@ void WorkcellIO::parseObject(ParseContext& ctx, raw_ptr<workcell::SceneObject> p
     parseObjectCommon(ctx, *object, xe);
 
     // Resolve the parent frame: explicit parent_frame attribute or the parent's base frame.
-    raw_ptr<kinematics::Frame> parent_frame = parent ? parent->baseFrame() : nullptr;
+    raw_ptr<kinematics::Frame> parent_frame      = parent ? parent->baseFrame() : nullptr;
     const String               parent_frame_name = attr(xe, "parent_frame");
     if (!parent_frame_name.empty() && parent) {
         raw_ptr<kinematics::Frame> found = nullptr;
@@ -284,8 +280,7 @@ void WorkcellIO::parseObject(ParseContext& ctx, raw_ptr<workcell::SceneObject> p
 
     if (auto* const xe_children = xe->FirstChildElement("children")) {
         const auto added = ctx.cell->findSceneObject(name);
-        for (auto* xe_child = xe_children->FirstChildElement("obj"); xe_child;
-             xe_child       = xe_child->NextSiblingElement("obj")) {
+        for (auto* xe_child = xe_children->FirstChildElement("obj"); xe_child; xe_child = xe_child->NextSiblingElement("obj")) {
             parseObject(ctx, added, xe_child);
         }
     }
@@ -306,14 +301,13 @@ std::unique_ptr<workcell::SceneObject> WorkcellIO::parseDevice(ParseContext& ctx
     if (file.empty()) {
         throw std::runtime_error("WorkcellIO::parseDevice, device <obj> requires a file attribute.");
     }
-    const std::filesystem::path  dev_path = ctx.vfs_dir.empty() ? detail::vfsPath(file) : ctx.vfs_dir / detail::vfsPath(file);
-    DeviceIO     device_io;
+    const std::filesystem::path       dev_path = ctx.vfs_dir.empty() ? detail::vfsPath(file) : ctx.vfs_dir / detail::vfsPath(file);
+    DeviceIO                          device_io;
     std::unique_ptr<workcell::Device> dev;
     if (detail::endsWith(file, ".vdevpkg")) {
         auto bytes = ctx.vfs->read(dev_path);
         if (!bytes) {
-            throw std::runtime_error("WorkcellIO::parseDevice, failed to read device package: "
-                                     + dev_path.generic_string());
+            throw std::runtime_error("WorkcellIO::parseDevice, failed to read device package: " + dev_path.generic_string());
         }
         // The nested package is already in memory, so it is indexed rather than
         // expanded: only the entries the device actually needs get decompressed.
@@ -349,14 +343,12 @@ std::unique_ptr<workcell::SceneObject> WorkcellIO::parseDevice(ParseContext& ctx
 void WorkcellIO::parseRigidObject(ParseContext& ctx, workcell::RigidObject& obj, tinyxml2::XMLElement* xe)
 {
     auto& body = obj.body();
-    for (const auto* xe_visual = xe->FirstChildElement("visual"); xe_visual;
-         xe_visual              = xe_visual->NextSiblingElement("visual")) {
+    for (const auto* xe_visual = xe->FirstChildElement("visual"); xe_visual; xe_visual = xe_visual->NextSiblingElement("visual")) {
         workcell::Visual visual;
         parseVisual(ctx, visual, xe_visual);
         body.visuals().push_back(std::move(visual));
     }
-    for (const auto* xe_collision = xe->FirstChildElement("collision"); xe_collision;
-         xe_collision             = xe_collision->NextSiblingElement("collision")) {
+    for (const auto* xe_collision = xe->FirstChildElement("collision"); xe_collision; xe_collision = xe_collision->NextSiblingElement("collision")) {
         workcell::Collision collision;
         parseCollision(ctx, collision, xe_collision);
         body.collisions().push_back(std::move(collision));

@@ -30,8 +30,7 @@ VN_APPFWGUI_NS_BEGIN
  * visibility of an overlay it has: those are PassChain::setShadingMode / setGizmoVisible / setStatsVisible, calls
  * on the live chain.
  */
-struct VN_APPFW_API ViewerOptions
-{
+struct VN_APPFW_API ViewerOptions {
     /// How the opaque content is shaded (the structural choice; see ShadingPath).
     vn::graphics::ShadingPath path{ vn::graphics::ShadingPath::Forward };
 
@@ -41,14 +40,14 @@ struct VN_APPFW_API ViewerOptions
     vn::graphics::ShadingMode mode{ vn::graphics::ShadingMode::Lit };
 
     /// Whether the area HAS an axis-gizmo overlay (its visibility is a switch on the built chain).
-    bool gizmo{false};
+    bool gizmo{ false };
 
     /// Whether the area HAS a frame-rate readout (its visibility is a switch on the built chain).
-    bool stats{false};
+    bool stats{ false };
 
     /// Deferred G-buffer size in pixels; 0 (the default) is the current surface size.
-    int offscreen_width{0};
-    int offscreen_height{0};
+    int offscreen_width{ 0 };
+    int offscreen_height{ 0 };
 
     /// Which layers of the content the area draws (see Node::setLayers / ChainDesc::layer_mask).
     ///

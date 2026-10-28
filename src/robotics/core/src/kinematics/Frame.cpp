@@ -32,10 +32,10 @@ Frame::Frame(FrameType type)
 std::size_t Frame::dofOfType(FrameType type) noexcept
 {
     switch (type) {
-        case FrameType::PlanarJoint: return 3;
-        case FrameType::Fixed: return 0;
-        case FrameType::RevoluteJoint:
-        case FrameType::PrismaticJoint: return 1;
+    case FrameType::PlanarJoint: return 3;
+    case FrameType::Fixed: return 0;
+    case FrameType::RevoluteJoint:
+    case FrameType::PrismaticJoint: return 1;
     }
     return 0;
 }

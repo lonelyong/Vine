@@ -4,12 +4,12 @@
 #include <array>
 #include <cstdint>
 
-#include <vine/intrusive_ptr.hpp>
-#include <vine/Object.hpp>
-#include <vine/raw_ptr.hpp>
-#include <vine/RefCounted.hpp>
 #include <vine/Colorf.hpp>
+#include <vine/Object.hpp>
+#include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "MaterialBase.hpp"
 #include "Sampler.hpp"
@@ -43,8 +43,7 @@ VN_GRAPHICS_NS_BEGIN
  *   (`Colorf`'s fourth component is a scalar slot here, not an opacity, exactly as the block's `emissive.a`
  *   states).
  */
-class VN_GRAPHICS_API Material : public MaterialBase
-{
+class VN_GRAPHICS_API Material : public MaterialBase {
     VN_OBJECT_META_DECL;
 
   public:

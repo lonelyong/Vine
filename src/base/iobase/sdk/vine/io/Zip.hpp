@@ -5,8 +5,8 @@
 #include <span>
 #include <vector>
 
-#include <vine/io/Vfs.hpp>
 #include <vine/String.hpp>
+#include <vine/io/Vfs.hpp>
 
 VN_IO_NS_BEGIN
 
@@ -22,10 +22,10 @@ VN_IO_NS_BEGIN
  * Every call reports through IoError / Result, like the rest of the library: the
  * bytes go in as a span, and what comes back is either bytes or the failure.
  *
- * Threading: the class holds no state - a call works on its arguments alone and owns the handles and buffers it needs, so calls that share no argument are independent.
+ * Threading: the class holds no state - a call works on its arguments alone and owns the handles and buffers it needs, so calls that share no argument are
+ * independent.
  */
-class VN_IOBASE_API Zip
-{
+class VN_IOBASE_API Zip {
   public:
     Zip() = delete;
 
@@ -59,8 +59,7 @@ class VN_IOBASE_API Zip
      * @return IoError::Ok on success, IoError::NotFound when dir_path is not a
      *         directory, or the failure the write reports.
      */
-    [[nodiscard]] static IoError compressDirectory(const std::filesystem::path& dir_path,
-                                                   const std::filesystem::path& zip_path);
+    [[nodiscard]] static IoError compressDirectory(const std::filesystem::path& dir_path, const std::filesystem::path& zip_path);
 
     /**
      * @brief Decompresses a ZIP file into a directory.
@@ -74,8 +73,7 @@ class VN_IOBASE_API Zip
      *         IoError::InvalidPath when an entry name would escape dir_path,
      *         IoError::IoFailure when reading or writing fails.
      */
-    [[nodiscard]] static IoError decompressFile(const std::filesystem::path& zip_path,
-                                                const std::filesystem::path& dir_path);
+    [[nodiscard]] static IoError decompressFile(const std::filesystem::path& zip_path, const std::filesystem::path& dir_path);
 
     /**
      * @brief Lists the entries of a ZIP file in the tree vocabulary.
@@ -113,8 +111,7 @@ class VN_IOBASE_API Zip
      *         name marks a directory, IoError::IoFailure when the entry cannot be
      *         read or its content does not match the recorded checksum.
      */
-    [[nodiscard]] static Result<std::vector<unsigned char>> readEntry(const std::filesystem::path& path,
-                                                                     const std::filesystem::path& name);
+    [[nodiscard]] static Result<std::vector<unsigned char>> readEntry(const std::filesystem::path& path, const std::filesystem::path& name);
 
     /**
      * @brief Reads one entry of an in-memory ZIP.
@@ -130,8 +127,7 @@ class VN_IOBASE_API Zip
      *         name marks a directory, IoError::IoFailure when the entry cannot be
      *         read or its content does not match the recorded checksum.
      */
-    [[nodiscard]] static Result<std::vector<unsigned char>> readEntry(std::span<const unsigned char> bytes,
-                                                                     const std::filesystem::path& name);
+    [[nodiscard]] static Result<std::vector<unsigned char>> readEntry(std::span<const unsigned char> bytes, const std::filesystem::path& name);
 };
 
 VN_IO_NS_END

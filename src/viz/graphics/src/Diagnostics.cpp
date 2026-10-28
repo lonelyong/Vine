@@ -14,20 +14,17 @@ const vn::graphics::DiagnosticSink& Diagnostics::sink() const noexcept
     return sink_;
 }
 
-void Diagnostics::report(vn::graphics::DiagnosticSeverity severity,
-                         vn::graphics::DiagnosticCategory category, const vn::String& message)
+void Diagnostics::report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const vn::String& message)
 {
     // Counted first, and counted whether or not a sink is installed: the count is what a phase gates
     // on, and a host that never installed a sink must still be able to see that something happened.
     ++total_;
     const auto index = static_cast<std::size_t>(category);
-    if (index < per_category_.size())
-    {
+    if (index < per_category_.size()) {
         ++per_category_[index];
     }
 
-    if (sink_)
-    {
+    if (sink_) {
         vn::graphics::RenderDiagnostic diagnostic;
         diagnostic.severity = severity;
         diagnostic.category = category;
@@ -36,11 +33,12 @@ void Diagnostics::report(vn::graphics::DiagnosticSeverity severity,
     }
 }
 
-bool Diagnostics::reportOnce(ReportOnce& episode, vn::graphics::DiagnosticSeverity severity,
-                             vn::graphics::DiagnosticCategory category, const vn::String& message)
+bool Diagnostics::reportOnce(ReportOnce&                      episode,
+                             vn::graphics::DiagnosticSeverity severity,
+                             vn::graphics::DiagnosticCategory category,
+                             const vn::String&                message)
 {
-    if (!episode.shouldReport())
-    {
+    if (!episode.shouldReport()) {
         return false;
     }
     report(severity, category, message);

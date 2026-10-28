@@ -20,9 +20,9 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Ray.hpp>
 #include <vine/graphics/RayIntersection.hpp>
-#include <vine/math/Vector3.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Rect3.hpp>
+#include <vine/math/Vector3.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -66,15 +66,14 @@ intrusive_ptr<vn::Buffer<float>> arenaBuffer(std::size_t segments)
  * @param first_vertex First vertex of the segment.
  * @return Geometry reading that segment.
  */
-intrusive_ptr<Geometry> segmentGeometry(const intrusive_ptr<const vn::Buffer<float>>& arena,
-                                       std::size_t                                     first_vertex)
+intrusive_ptr<Geometry> segmentGeometry(const intrusive_ptr<const vn::Buffer<float>>& arena, std::size_t first_vertex)
 {
     auto geom = intrusive_ptr<Geometry>(new Geometry());
     geom->addBuffer(0u, AttributeChannel::slice(arena, 3u, first_vertex, 3u));
     return geom;
 }
 
-}  // namespace
+} // namespace
 
 TEST(AttributeChannelTest, AChannelReadsOnlyItsOwnSlice)
 {
@@ -187,8 +186,7 @@ TEST(AttributeChannelTest, TheWholeBufferAndTheSegmentSpellingsAgree)
     // and it is the same rule the index stream and BufferSlice follow.
     auto rest = intrusive_ptr<Geometry>(new Geometry());
     rest->setPositions(arena, 3u, 0u);
-    EXPECT_EQ(rest->positionCount(), 4u)
-        << "from vertex 3 to the end of the buffer as it is now (seven vertices after the growth)";
+    EXPECT_EQ(rest->positionCount(), 4u) << "from vertex 3 to the end of the buffer as it is now (seven vertices after the growth)";
 
     // Each role keeps ITS OWN stride: a texcoord segment of three vertices is six scalars, not nine. A
     // copy-pasted overload that reused the position stride would pass the test above and fail here.
@@ -240,8 +238,7 @@ TEST(GeometryTest, TheIndexStreamIsTheSameKindOfSegment)
     // buffer" and "an offset past the end" mean the same for both, resolved by the same function, so a
     // consumer that walks a geometry's streams has no per-stream arithmetic to get wrong. IndexSliceExposes
     // ItsSpan pins the numbers; this pins that the numbers come from the shared rule and the shared type.
-    const auto indices = intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
+    const auto indices = intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
     const Primitive::IndexSpan rest = Primitive::IndexSpan::slice(indices, 4u, 0u); // "the rest of the arena"
     EXPECT_EQ(rest.size(), 2u);
     EXPECT_EQ(rest.begin(), 4u);
@@ -254,15 +251,14 @@ TEST(GeometryTest, TheIndexStreamIsTheSameKindOfSegment)
     const auto arena = arenaBuffer(2u); // two segments of three vertices = eighteen scalars
     EXPECT_EQ(Geometry::IndexStream::resolvedLength(indices->size(), 4u, 0u), 2u) << "six indices from 4";
     EXPECT_EQ(vn::BufferSlice<float>::resolvedLength(arena->size(), 8u, 0u), 10u) << "eighteen from 8";
-    EXPECT_EQ(AttributeChannel::shared(arena, 3u, 8u, 0u).floatCount(), 10u)
-        << "a channel with the same offset and no count reads the same rest of its buffer";
+    EXPECT_EQ(AttributeChannel::shared(arena, 3u, 8u, 0u).floatCount(), 10u) << "a channel with the same offset and no count reads the same rest of its buffer";
     EXPECT_EQ(AttributeChannel::shared(arena, 3u, 18u, 0u).floatCount(), 0u) << "starting past the end is empty";
 }
 
 TEST(GeometryTest, BoundingBoxCoversOnlyTheGeometrysSegment)
 {
     const auto arena = arenaBuffer(3u);
-    const auto geom  = segmentGeometry(arena, 6u);  // the third segment: y in [20, 21]
+    const auto geom  = segmentGeometry(arena, 6u); // the third segment: y in [20, 21]
 
     const Aabbd box = geom->boundingBox();
     ASSERT_TRUE(box.isValid());
@@ -277,8 +273,8 @@ TEST(GeometryTest, TheTexcoordSlotSpellsTwoWidthsAtOneLocation)
     // by direction with), two in the other spelling (a UV pair). Same location, same binding, ONE shader set
     // — the width is what a consumer reads to know which sampler the data is shaped for, which is why the
     // channel's components are queryable without reaching into the channel itself.
-    const auto directions = intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1 }));
+    const auto directions =
+        intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1 }));
 
     auto whole = intrusive_ptr<Geometry>(new Geometry());
     whole->setTexcoords3(directions);
@@ -295,9 +291,8 @@ TEST(GeometryTest, TheTexcoordSlotSpellsTwoWidthsAtOneLocation)
 
     // The OTHER width of the same slot — which is what keeps a mesh's UVs a UV pair, and what the renderer
     // reads to pick the sampler2D variant instead.
-    const auto uv = intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }));
-    auto uv_geometry = intrusive_ptr<Geometry>(new Geometry());
+    const auto uv          = intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }));
+    auto       uv_geometry = intrusive_ptr<Geometry>(new Geometry());
     uv_geometry->setTexcoords2(uv);
     ASSERT_NE(uv_geometry->buffer(Geometry::kTexCoordLocation), nullptr);
     EXPECT_EQ(uv_geometry->buffer(Geometry::kTexCoordLocation)->components, 2u);
@@ -314,8 +309,7 @@ TEST(GeometryTest, TheIndexStreamsTwoSpellingsShareOneSegment)
 {
     // The index stream states the same two cases as the vertex roles (a whole buffer, or a segment), and
     // the views the draw uses read that ONE segment: nothing here can disagree with anything else.
-    const auto arena = intrusive_ptr<vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 1u, 0u }));
+    const auto arena = intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 1u, 0u }));
 
     Primitive whole;
     whole.indices = Primitive::IndexSpan::whole(arena);
@@ -346,9 +340,8 @@ TEST(GeometryTest, TheIndexStreamsTwoSpellingsShareOneSegment)
 
 TEST(GeometryTest, IndexSliceExposesItsSpan)
 {
-    const auto indices = intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
-    Primitive draw;
+    const auto indices = intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 0u, 1u, 2u }));
+    Primitive  draw;
 
     draw.indices = Primitive::IndexSpan::slice(indices, 3u, 3u);
     EXPECT_TRUE(draw.isIndexed());

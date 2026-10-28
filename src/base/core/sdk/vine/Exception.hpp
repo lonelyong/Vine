@@ -61,9 +61,9 @@ class VN_CORE_API Exception : public std::exception {
 
 VN_CORE_NS_END
 
-#define VN_CHECK_NULL_THROW(var)                                                                                                                                \
+#define VN_CHECK_NULL_THROW(var)                                                                                                                               \
     if (!var)                                                                                                                                                  \
         throw vn::Exception(vn::Exception::ARGUMENT_NULL, u8## #var);
-#define VN_CHECK_NULL_RETURN(var)                                                                                                                               \
+#define VN_CHECK_NULL_RETURN(var)                                                                                                                              \
     if (!var)                                                                                                                                                  \
         return {};

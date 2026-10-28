@@ -7,6 +7,11 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/vk/Device.h>
 
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentHalves.hpp>
@@ -16,11 +21,6 @@
 #include <vine/vsg/internal/ContentStore.hpp>
 #include <vine/vsg/internal/MaterialImages.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -52,8 +52,7 @@
 VN_VSG_NS_BEGIN
 
 /** @brief Assembles and records one frame's content (see the file note). */
-class ContentAssembly
-{
+class ContentAssembly {
   public:
     /**
      * @brief Creates the assembly over the pieces that outlive it.
@@ -65,8 +64,12 @@ class ContentAssembly
      * @param images      The material images the declared sets resolve their maps from.
      * @param diagnostics The backend's one diagnostic route (the recorder reports through it).
      */
-    ContentAssembly(ContentStore& store, ::vsg::ref_ptr<::vsg::Device> device, core::VariantPool& pool,
-                    BlockStorage& storage, MaterialImages& images, vn::graphics::Diagnostics& diagnostics);
+    ContentAssembly(ContentStore&                 store,
+                    ::vsg::ref_ptr<::vsg::Device> device,
+                    core::VariantPool&            pool,
+                    BlockStorage&                 storage,
+                    MaterialImages&               images,
+                    vn::graphics::Diagnostics&    diagnostics);
 
     /**
      * @brief Opens @p frame: the tables are built for the identities it names, and the block budget opens.
@@ -79,8 +82,7 @@ class ContentAssembly
      * @param retirement Where replaced halves and sets are parked (kept for this frame's record calls).
      * @return The tables (the same reference `facts()` answers with).
      */
-    [[nodiscard]] const ContentFacts& beginFrame(const core::CompiledFrame& frame, core::FrameTimeline& timeline,
-                                                 core::RetirementQueue& retirement);
+    [[nodiscard]] const ContentFacts& beginFrame(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Points the assembly (and every set it has cached) at a replacement block storage.
      *
@@ -107,9 +109,11 @@ class ContentAssembly
      * @param out           Receives the recorded node (never null).
      * @return true when every command was recorded; false when at least one was refused (reported).
      */
-    [[nodiscard]] bool record(const core::CompiledPass& pass, const core::RenderPassCompatibility& compatibility,
-                              std::span<const InputImages> inputs, std::span<const std::byte> view_block,
-                              ::vsg::ref_ptr<::vsg::Node>& out);
+    [[nodiscard]] bool record(const core::CompiledPass&            pass,
+                              const core::RenderPassCompatibility& compatibility,
+                              std::span<const InputImages>         inputs,
+                              std::span<const std::byte>           view_block,
+                              ::vsg::ref_ptr<::vsg::Node>&         out);
 
     /** @brief Gets the tables the last beginFrame() answered with (empty before one). */
     [[nodiscard]] const ContentFacts& facts() const noexcept;

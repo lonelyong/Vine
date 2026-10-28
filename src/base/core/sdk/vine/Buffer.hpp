@@ -8,8 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "intrusive_ptr.hpp"
 #include "RefCounted.hpp"
+#include "intrusive_ptr.hpp"
 
 VN_CORE_NS_BEGIN
 
@@ -69,8 +69,7 @@ class Buffer : public RefCounted<Buffer<T>> {
      */
     explicit Buffer(size_type count)
       : data_(count)
-    {
-    }
+    {}
 
     /**
      * @brief Adopts an existing vector.
@@ -82,8 +81,7 @@ class Buffer : public RefCounted<Buffer<T>> {
      */
     explicit Buffer(std::vector<T> values)
       : data_(std::move(values))
-    {
-    }
+    {}
 
   public:
     /**
@@ -189,8 +187,7 @@ class Buffer : public RefCounted<Buffer<T>> {
      */
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept
     {
-        static_assert(std::is_trivially_copyable_v<T>,
-                      "Buffer::bytes() reinterprets the elements; a non-trivial type has no byte view");
+        static_assert(std::is_trivially_copyable_v<T>, "Buffer::bytes() reinterprets the elements; a non-trivial type has no byte view");
 
         return std::as_bytes(view());
     }
@@ -323,8 +320,7 @@ class Buffer : public RefCounted<Buffer<T>> {
  * @tparam Element Element type of the buffer's run.
  */
 template <typename Element>
-struct BufferSlice
-{
+struct BufferSlice {
     /// The buffer, or null when the segment holds nothing. Not snapshotted: every accessor reads through it.
     intrusive_ptr<const Buffer<Element>> values;
     /// First element of the segment (0 = the buffer's start). Past the end clamps to the end.
@@ -340,8 +336,7 @@ struct BufferSlice
      * @param count       Elements the segment states, or 0 for the rest.
      * @return Elements readable from @p first (0 when @p first is at or past the end).
      */
-    [[nodiscard]] static std::size_t resolvedLength(std::size_t buffer_size, std::size_t first,
-                                                    std::size_t count) noexcept
+    [[nodiscard]] static std::size_t resolvedLength(std::size_t buffer_size, std::size_t first, std::size_t count) noexcept
     {
         const std::size_t begin     = first > buffer_size ? buffer_size : first;
         const std::size_t available = buffer_size - begin;
@@ -372,8 +367,7 @@ struct BufferSlice
      * @param count  Elements the segment covers, or 0 for the rest of @p buffer from @p first.
      * @return The segment.
      */
-    [[nodiscard]] static BufferSlice slice(intrusive_ptr<const Buffer<Element>> buffer, std::size_t first,
-                                           std::size_t count)
+    [[nodiscard]] static BufferSlice slice(intrusive_ptr<const Buffer<Element>> buffer, std::size_t first, std::size_t count)
     {
         BufferSlice out;
         out.values = std::move(buffer);
@@ -383,7 +377,10 @@ struct BufferSlice
     }
 
     /** @brief Returns the buffer's element count (0 when the segment holds nothing). */
-    [[nodiscard]] std::size_t bufferSize() const noexcept { return values != nullptr ? values->size() : 0u; }
+    [[nodiscard]] std::size_t bufferSize() const noexcept
+    {
+        return values != nullptr ? values->size() : 0u;
+    }
 
     /** @brief Returns the first element this segment reads, clamped to the buffer's current end. */
     [[nodiscard]] std::size_t begin() const noexcept
@@ -399,7 +396,10 @@ struct BufferSlice
     }
 
     /** @brief Returns whether the segment covers no elements (a null buffer counts as empty). */
-    [[nodiscard]] bool empty() const noexcept { return size() == 0u; }
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return size() == 0u;
+    }
 
     /**
      * @brief Returns the segment as a view over the buffer.

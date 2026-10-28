@@ -1,7 +1,7 @@
 ﻿#include <vine/appfw/gui/StatusBar.hpp>
 
-#include <QStatusBar>
 #include "ControlData.hpp"
+#include <QStatusBar>
 
 VN_APPFWGUI_NS_BEGIN
 

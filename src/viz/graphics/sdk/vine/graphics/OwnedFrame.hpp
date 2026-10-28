@@ -34,8 +34,7 @@ class RenderPass;
  * - Like ClearPolicy, this is a header-only value: every member is defined here, so there is no symbol to export and
  *   the type deliberately carries no VN_GRAPHICS_API (the DLL never instantiates it).
  */
-struct OwnedDraw
-{
+struct OwnedDraw {
     /// Which drawing call this is (see DrawDescription::Kind).
     DrawDescription::Kind kind{ DrawDescription::Kind::Scene };
     /// The view this draw is projected and lit with (held; null means the draw issues nothing).
@@ -57,8 +56,7 @@ struct OwnedDraw
  * - Same shape, different ownership: `target` is held rather than borrowed, and the draws are @ref OwnedDraw. The
  *   fields that are plain values (viewport, clear, state) are copied verbatim, because a value cannot dangle.
  */
-struct OwnedPassDraw
-{
+struct OwnedPassDraw {
     /// The off-screen target this pass draws into (held; null = the presenting surface).
     intrusive_ptr<RenderTarget> target;
     /// The sub-rectangle it draws into, or nullopt for the whole of it.
@@ -84,8 +82,7 @@ struct OwnedPassDraw
  *   frame it is about to run, and an owned frame states what the host declared. @ref OwnedFrame::borrowed resolves
  *   them the same way a compiled frame carries them.
  */
-struct OwnedPass
-{
+struct OwnedPass {
     /// The pass (its identity; held).
     intrusive_ptr<const RenderPass> pass;
     /// Where the pass stacks in its target (see FrameDescription::Pass::order).
@@ -123,8 +120,7 @@ struct OwnedPass
  * - SERIALISATION is likewise not here: a format needs a consumer (a file, a wire, a replay), and none exists -
  *   the value is what such a consumer would serialise.
  */
-class OwnedFrame
-{
+class OwnedFrame {
   public:
     /** @brief The passes of this frame, in the order they were announced (see FrameDescription::Pass). */
     std::vector<OwnedPass> passes;
@@ -147,30 +143,23 @@ class OwnedFrame
     {
         FrameDescription frame;
         frame.passes.reserve(passes.size());
-        for (const OwnedPass& owned : passes)
-        {
+        for (const OwnedPass& owned : passes) {
             FrameDescription::Pass entry;
             entry.pass  = owned.pass.get();
             entry.order = owned.order;
             entry.inputs.reserve(owned.inputs.size());
-            for (const ImageInput& input : owned.inputs)
-            {
-                if (const ImageRef* image = input.image())
-                {
-                    entry.inputs.push_back(ImageSource::producedImage(
-                        image->target(), image->attachment(), image->kind() == ImageRef::Kind::Depth));
+            for (const ImageInput& input : owned.inputs) {
+                if (const ImageRef* image = input.image()) {
+                    entry.inputs.push_back(ImageSource::producedImage(image->target(), image->attachment(), image->kind() == ImageRef::Kind::Depth));
                 }
-                else if (const Texture* texture = input.texture())
-                {
+                else if (const Texture* texture = input.texture()) {
                     entry.inputs.push_back(ImageSource::imported(texture, input.sampler()));
                 }
-                else
-                {
+                else {
                     entry.inputs.emplace_back();
                 }
             }
-            if (owned.draw.has_value())
-            {
+            if (owned.draw.has_value()) {
                 entry.draw = borrow(*owned.draw);
             }
             frame.passes.push_back(std::move(entry));
@@ -189,20 +178,17 @@ class OwnedFrame
         out.state            = owned.state;
         out.program_override = owned.program_override;
         out.draws.reserve(owned.draws.size());
-        for (const OwnedDraw& draw : owned.draws)
-        {
+        for (const OwnedDraw& draw : owned.draws) {
             DrawDescription borrowed_draw;
             borrowed_draw.kind     = draw.kind;
             borrowed_draw.camera   = draw.camera.get();
             borrowed_draw.commands = draw.commands;
             borrowed_draw.source   = draw.source.get();
             borrowed_draw.program  = draw.program;
-            if (draw.lights.has_value())
-            {
+            if (draw.lights.has_value()) {
                 std::vector<raw_ptr<const Light>> lights;
                 lights.reserve(draw.lights->size());
-                for (const intrusive_ptr<const Light>& light : *draw.lights)
-                {
+                for (const intrusive_ptr<const Light>& light : *draw.lights) {
                     lights.push_back(light.get());
                 }
                 borrowed_draw.lights = std::move(lights);

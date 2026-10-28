@@ -12,7 +12,9 @@
 
 namespace vn::appfw::gui
 {
+
 class RenderControl;
+
 }
 
 namespace vn::demo
@@ -107,8 +109,7 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene> demo);
  * So a single Scene OBJECT cannot serve both paths, while the vocabulary can and does: what differs is
  * which slices a path may draw, and buildScene decides that in one place.
  */
-class DemoScene
-{
+class DemoScene {
   public:
     /**
      * @brief Binds the demo to the render control whose view it populates.
@@ -179,4 +180,4 @@ class DemoScene
     vn::intrusive_ptr<vn::graphics::Group> sky_group_;
 };
 
-}  // namespace vn::demo
+} // namespace vn::demo

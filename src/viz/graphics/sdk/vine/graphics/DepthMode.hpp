@@ -20,9 +20,9 @@ VN_GRAPHICS_NS_BEGIN
  */
 enum class DepthMode
 {
-    Disabled,     ///< No depth test / write (drawn on top - HUD overlays).
-    TestOnly,     ///< Depth test on, depth write off (translucent content).
-    TestAndWrite, ///< Depth test + write on (opaque scene content).
+    Disabled,     // No depth test / write (drawn on top - HUD overlays).
+    TestOnly,     // Depth test on, depth write off (translucent content).
+    TestAndWrite, // Depth test + write on (opaque scene content).
 };
 
 VN_GRAPHICS_NS_END

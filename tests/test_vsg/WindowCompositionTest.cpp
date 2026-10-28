@@ -63,7 +63,13 @@
 
 #include <vsg/state/ImageView.h>
 
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/graphics/backend/Observe.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/graphics/backend/Streams.hpp>
+#include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
@@ -80,27 +86,30 @@
 #include <vine/vsg/internal/ViewBlock.hpp>
 #include <vine/vsg/internal/VsgExecutor.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
-#include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/Observe.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/Streams.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "TestGeometryBuilders.hpp"
 
+using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
-using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::vsg::api::probePhysicalDevices;
-using vn::vsg::api::Session;
-using vn::vsg::api::SessionOptions;
+using vn::graphics::backend::ClearValues;
+using vn::graphics::backend::CompiledFrame;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::FrameArena;
+using vn::graphics::backend::FrameCompiler;
+using vn::graphics::backend::FrameFacts;
+using vn::graphics::backend::FrameRecorder;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::TargetFacts;
+using vn::graphics::backend::TargetShape;
+using vn::graphics::backend::VariantPool;
+using vn::test::setPrimitiveIndices;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::buildGeometryFacts;
@@ -122,25 +131,16 @@ using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::VsgExecutor;
 using vn::vsg::WindowTarget;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::Diagnostics;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
-using vn::graphics::backend::VariantPool;
+using vn::vsg::api::probePhysicalDevices;
+using vn::vsg::api::Session;
+using vn::vsg::api::SessionOptions;
 
 namespace
 {
 
-constexpr int           kWidth  = 128;
-constexpr int           kHeight = 96;
-constexpr std::uint32_t kSourceSize = 64U;  // the off-screen targets' extent
+constexpr int           kWidth      = 128;
+constexpr int           kHeight     = 96;
+constexpr std::uint32_t kSourceSize = 64U; // the off-screen targets' extent
 
 /// @brief The scene's clear (linear (0, 0, 0.25)): the colour the FIRST window pass owns.
 constexpr float kSceneClear[4]{ 0.0F, 0.0F, 0.25F, 1.0F };
@@ -170,7 +170,7 @@ bool isColour(const std::array<std::uint8_t, 3>& pixel, double red, double green
     return isColourByte(pixel[0], red) && isColourByte(pixel[1], green) && isColourByte(pixel[2], blue);
 }
 
-}  // namespace
+} // namespace
 
 #if !defined(_WIN32)
 
@@ -181,9 +181,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);  // closed at scope end (see TestXConnection)
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
     if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
@@ -195,9 +195,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
         std::printf("[window-composition] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
-                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()),
-                                diagnostic.message.size()).c_str());
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
+                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()), diagnostic.message.size()).c_str());
     });
     Session        session;
     SessionOptions options;
@@ -225,16 +225,15 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     ASSERT_NE(picture, nullptr);
 
     OffscreenTarget::TargetLayout shared_layout;
-    shared_layout.width         = kSourceSize;
-    shared_layout.height        = kSourceSize;
-    shared_layout.color_formats = { RenderTarget::ColorFormat::RGBA8 };
+    shared_layout.width            = kSourceSize;
+    shared_layout.height           = kSourceSize;
+    shared_layout.color_formats    = { RenderTarget::ColorFormat::RGBA8 };
     // The depth format the WINDOW's traits asked for, taken from the window itself: this is what makes B's
     // engine-side shape the window's equal, so the case is about the two render passes that the engine's
     // vocabulary calls the same thing and the DEVICE formats tell apart.
     const TargetShape window_shape = window_target->shape();
     ASSERT_EQ(window_shape.color_formats.size(), 1U);
-    EXPECT_EQ(window_shape.color_formats.front(), RenderTarget::ColorFormat::RGBA8)
-        << "the case's pixel expectations are written for an 8-bit surface";
+    EXPECT_EQ(window_shape.color_formats.front(), RenderTarget::ColorFormat::RGBA8) << "the case's pixel expectations are written for an 8-bit surface";
     ASSERT_TRUE(window_shape.depth_format.has_value()) << "a window with a depth attachment is what the case is for";
     shared_layout.depth_format = window_shape.depth_format;
     shared_layout.clear.color  = true;
@@ -246,7 +245,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     ASSERT_TRUE(shared_target->hasDepth());
 
     // The content stack the scene uses (one layer, one recorder, one registry per PASS).
-    auto storage     = BlockStorage::create(device, BlockStorage::Layout{});
+    auto storage = BlockStorage::create(device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
 
 
@@ -254,18 +253,17 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     {
         ShaderStage vertex;
         vertex.type   = ShaderStageType::Vertex;
-        vertex.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) in vec3 position;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
         ShaderStage fragment;
-        fragment.type   = ShaderStageType::Fragment;
-        fragment.source = vn::String(reinterpret_cast<const char8_t*>(
-            "layout(location = 0) out vec4 outColor;\n"
-            "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
-            "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
-            "void main() { outColor = vec4(vb.frame.y / 128.0, vb.cam_pos.x, vb.frame.z / 96.0, 1.0); }\n"));
+        fragment.type = ShaderStageType::Fragment;
+        fragment.source =
+            vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) out vec4 outColor;\n"
+                                                        "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                        "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                        "void main() { outColor = vec4(vb.frame.y / 128.0, vb.cam_pos.x, vb.frame.z / 96.0, 1.0); }\n"));
         program->addStage(vertex);
         program->addStage(fragment);
     }
@@ -275,10 +273,10 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
-    auto content_layer = ContentPipeline::create(program_facts.abi,
-                                                 std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
-                                                 std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                                 program_facts.shaders);
+    auto                                   content_layer = ContentPipeline::create(program_facts.abi,
+                                                                                   std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                                                                   std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                                                                   program_facts.shaders);
     ASSERT_NE(content_layer, nullptr);
 
     // The block set the content programs' own declarations need: they declare the view block at set 0 /
@@ -305,14 +303,13 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // The scene: a triangle whose fragment stage encodes the view block, at the same camera the earlier
     // session case uses - the view pushes it into the LEFT quarter of the picture.
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    geometry->setPositions(vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F })));
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+    geometry->setPositions(
+        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ -0.4F, -0.4F, 0.5F, 0.4F, -0.4F, 0.5F, 0.0F, 0.6F, 0.5F })));
+    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts> channel_storage;
+    std::vector<vn::vsg::ChannelFacts>   channel_storage;
     std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
@@ -331,8 +328,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     facts.materials  = materials;
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
-    camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0),
-                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
     const std::vector<RenderCommand> commands = [&] {
         RenderCommand command;
@@ -357,20 +353,20 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     picture_facts.current       = picture->instance();
 
     TargetFacts shared_facts;
-    shared_facts.target                = shared_handle.get();
-    shared_facts.wanted.width          = static_cast<int>(kSourceSize);
-    shared_facts.wanted.height         = static_cast<int>(kSourceSize);
-    shared_facts.wanted.shape          = shared_target->shape();
-    shared_facts.current               = shared_target->instance();
+    shared_facts.target        = shared_handle.get();
+    shared_facts.wanted.width  = static_cast<int>(kSourceSize);
+    shared_facts.wanted.height = static_cast<int>(kSourceSize);
+    shared_facts.wanted.shape  = shared_target->shape();
+    shared_facts.current       = shared_target->instance();
 
     const std::vector<TargetFacts> target_table = { picture_facts, shared_facts, window_target->facts() };
 
     // FOUR passes: the picture (cleared), the off-screen scene pass whose ENGINE shape equals the window's, the
     // window's scene pass (the FIRST window pass - it owns the clear) and the window's overlay pass.
-    FrameArena    arena{ 64 * 1024 };
+    FrameArena                     arena{ 64 * 1024 };
     vn::graphics::backend::Observe observe;
-    FrameRecorder recorder{ arena, diagnostics, observe };
-    FrameCompiler compiler{ arena, diagnostics, observe };
+    FrameRecorder                  recorder{ arena, diagnostics, observe };
+    FrameCompiler                  compiler{ arena, diagnostics, observe };
 
     ClearValues scene_clear;
     scene_clear.color          = true;
@@ -396,29 +392,28 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     std::vector<RenderTarget*> picture_inputs{ picture_handle.get() };
 
     ASSERT_TRUE(recorder.beginFrame(session.beginFrame()));
-    ASSERT_TRUE(recorder.beginPass(1U));  // the picture
+    ASSERT_TRUE(recorder.beginPass(1U)); // the picture
     ASSERT_TRUE(recorder.setRenderTarget(picture_handle.get()));
     ASSERT_TRUE(recorder.setClearPolicy(picture_clear));
     ASSERT_TRUE(recorder.endPass());
 
-    ASSERT_TRUE(recorder.beginPass(2U));  // the off-screen pass that shares the window's variant
+    ASSERT_TRUE(recorder.beginPass(2U)); // the off-screen pass that shares the window's variant
     ASSERT_TRUE(recorder.setRenderTarget(shared_handle.get()));
     ASSERT_TRUE(recorder.setClearPolicy(scene_clear));
     ASSERT_TRUE(recorder.render(commands, camera.get()));
     ASSERT_TRUE(recorder.endPass());
 
-    ASSERT_TRUE(recorder.beginPass(3U));  // the window's scene pass
+    ASSERT_TRUE(recorder.beginPass(3U)); // the window's scene pass
     ASSERT_TRUE(recorder.setRenderTarget(nullptr));
     ASSERT_TRUE(recorder.setClearPolicy(scene_clear));
     ASSERT_TRUE(recorder.render(commands, camera.get()));
     ASSERT_TRUE(recorder.endPass());
 
-    ASSERT_TRUE(recorder.beginPass(4U));  // the window's overlay pass
+    ASSERT_TRUE(recorder.beginPass(4U)); // the window's overlay pass
     ASSERT_TRUE(recorder.setRenderTarget(nullptr));
-    ASSERT_TRUE(recorder.setClearPolicy(overlay_clear));  // announced, and NOT applied: the window clears once
+    ASSERT_TRUE(recorder.setClearPolicy(overlay_clear)); // announced, and NOT applied: the window clears once
     ASSERT_TRUE(recorder.setPassInputs(picture_inputs));
-    ASSERT_TRUE(recorder.setViewport(kPictureInPicture.x, kPictureInPicture.y, kPictureInPicture.width,
-                                     kPictureInPicture.height));
+    ASSERT_TRUE(recorder.setViewport(kPictureInPicture.x, kPictureInPicture.y, kPictureInPicture.width, kPictureInPicture.height));
     ASSERT_TRUE(recorder.drawScreenProgram(picture_handle.get(), screen_program.get(), camera.get()));
     ASSERT_TRUE(recorder.endPass());
     ASSERT_TRUE(recorder.endFrame());
@@ -445,75 +440,68 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     storage->beginFrame();
 
     const auto state_pass = [&](std::uint32_t id) -> const vn::graphics::backend::CompiledPass& {
-        const auto* found = pass_of(id);
+        const auto*                                      found = pass_of(id);
         static const vn::graphics::backend::CompiledPass empty{};
         return found != nullptr ? *found : empty;
     };
     const auto view_block_for = [&](std::uint32_t pass_id, std::uint32_t width, std::uint32_t height) {
-        const auto  block = buildViewBlock(state_pass(pass_id).draws[0].camera, session.frameSeconds(), width, height);
-        return std::vector<std::byte>(reinterpret_cast<const std::byte*>(&block),
-                                      reinterpret_cast<const std::byte*>(&block) + sizeof(block));
+        const auto block = buildViewBlock(state_pass(pass_id).draws[0].camera, session.frameSeconds(), width, height);
+        return std::vector<std::byte>(reinterpret_cast<const std::byte*>(&block), reinterpret_cast<const std::byte*>(&block) + sizeof(block));
     };
 
     StateRegistry scene_registry(content_pool);
     StateRegistry window_registry(content_pool);
     const auto    shared_view = view_block_for(2U, kSourceSize, kSourceSize);
-    const auto    window_view =
-        view_block_for(3U, static_cast<std::uint32_t>(kWidth), static_cast<std::uint32_t>(kHeight));
+    const auto    window_view = view_block_for(3U, static_cast<std::uint32_t>(kWidth), static_cast<std::uint32_t>(kHeight));
 
     const ContentPass::Scope::Entry content_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout,
-                                   content_layer.get(), &content_draws } };
+        ContentPass::Scope::Entry{ DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout, content_layer.get(), &content_draws }
+    };
 
     const auto* shared_pass = pass_of(2U);
     ASSERT_NE(shared_pass, nullptr);
     ContentPass::Scope shared_scope;
-    shared_scope.entries     = content_halves;
-    shared_scope.registry    = &scene_registry;
-    shared_scope.storage     = storage.get();
-    shared_scope.block_sets  = content_blocks;
-    shared_scope.uploads     = &uploads;
-    ContentPass shared_content(shared_scope, diagnostics);
+    shared_scope.entries    = content_halves;
+    shared_scope.registry   = &scene_registry;
+    shared_scope.storage    = storage.get();
+    shared_scope.block_sets = content_blocks;
+    shared_scope.uploads    = &uploads;
+    ContentPass                 shared_content(shared_scope, diagnostics);
     ::vsg::ref_ptr<::vsg::Node> shared_node;
-    ASSERT_TRUE(shared_content.record(*shared_pass, facts, shared_target->shape().compatibility(),
-                                      std::span<const InputImages>{}, shared_view, shared_node));
+    ASSERT_TRUE(shared_content.record(*shared_pass, facts, shared_target->shape().compatibility(), std::span<const InputImages>{}, shared_view, shared_node));
 
     const auto* window_pass = pass_of(3U);
     ASSERT_NE(window_pass, nullptr);
     ContentPass::Scope window_scope;
-    window_scope.entries     = content_halves;
-    window_scope.registry    = &window_registry;
-    window_scope.storage     = storage.get();
-    window_scope.block_sets  = content_blocks;
-    window_scope.uploads     = &uploads;
-    ContentPass window_content(window_scope, diagnostics);
+    window_scope.entries    = content_halves;
+    window_scope.registry   = &window_registry;
+    window_scope.storage    = storage.get();
+    window_scope.block_sets = content_blocks;
+    window_scope.uploads    = &uploads;
+    ContentPass                 window_content(window_scope, diagnostics);
     ::vsg::ref_ptr<::vsg::Node> window_node;
-    ASSERT_TRUE(window_content.record(*window_pass, facts, window_target->shape().compatibility(),
-                                      std::span<const InputImages>{}, window_view, window_node));
+    ASSERT_TRUE(window_content.record(*window_pass, facts, window_target->shape().compatibility(), std::span<const InputImages>{}, window_view, window_node));
 
-    StateRegistry          screen_registry(screen_pool);
+    StateRegistry                   screen_registry(screen_pool);
     const ContentPass::Scope::Entry screen_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Screen, screen_program.get(), screen_facts.revision, {},
-                                   screen_layer.get(), &overlay_draws } };
+        ContentPass::Scope::Entry{ DrawKind::Screen, screen_program.get(), screen_facts.revision, {}, screen_layer.get(), &overlay_draws }
+    };
     ContentPass::Scope screen_scope;
-    screen_scope.entries     = screen_halves;
-    screen_scope.registry    = &screen_registry;
-    screen_scope.storage     = storage.get();
-    screen_scope.uploads     = &uploads;
+    screen_scope.entries  = screen_halves;
+    screen_scope.registry = &screen_registry;
+    screen_scope.storage  = storage.get();
+    screen_scope.uploads  = &uploads;
     ContentPass overlay_content(screen_scope, diagnostics);
 
     const ::vsg::ref_ptr<::vsg::ImageView> picture_colors[] = { picture->colorView(0) };
     ASSERT_NE(picture_colors[0], nullptr);
-    const InputImages overlay_images[] = {
-        InputImages{ std::span<const ::vsg::ref_ptr<::vsg::ImageView>>(picture_colors, 1U) } };
+    const InputImages           overlay_images[] = { InputImages{ std::span<const ::vsg::ref_ptr<::vsg::ImageView>>(picture_colors, 1U) } };
     ::vsg::ref_ptr<::vsg::Node> overlay_node;
-    ASSERT_TRUE(overlay_content.record(*overlay, facts, window_target->shape().compatibility(), overlay_images,
-                                       window_view, overlay_node));
+    ASSERT_TRUE(overlay_content.record(*overlay, facts, window_target->shape().compatibility(), overlay_images, window_view, overlay_node));
 
     // One variant per render-pass family: the pool would have said "one" if the key had stayed with the
     // engine's vocabulary, and that is exactly the variant that got bound in the wrong render pass.
-    EXPECT_EQ(content_layer->pipelines(), 2U)
-        << "an sRGB surface and a linear RGBA8 target are one engine shape and two render passes";
+    EXPECT_EQ(content_layer->pipelines(), 2U) << "an sRGB surface and a linear RGBA8 target are one engine shape and two render passes";
     EXPECT_EQ(content_draws.draws(), 2U);
     EXPECT_EQ(content_draws.pipeline_binds(), 2U) << "one bind per PASS: each pass has its own registry";
     EXPECT_EQ(overlay_draws.screen_draws(), 1U);
@@ -527,13 +515,16 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     const auto command_graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(command_graph, nullptr);
-    const PassContent packets[] = { PassContent{ 1U, nullptr },   PassContent{ 2U, shared_node },
-                                    PassContent{ 3U, window_node }, PassContent{ 4U, overlay_node } };
+    const PassContent packets[] = {
+        PassContent{ 1U, nullptr      },
+        PassContent{ 2U, shared_node  },
+        PassContent{ 3U, window_node  },
+        PassContent{ 4U, overlay_node }
+    };
     ASSERT_TRUE(executor.record(frame, command_graph, packets));
     EXPECT_EQ(executor.skipped(), 0U);
     const std::span<const vn::graphics::backend::PassId> placed = executor.recorded();
-    EXPECT_EQ(std::vector<vn::graphics::backend::PassId>(placed.begin(), placed.end()),
-              std::vector<vn::graphics::backend::PassId>({ 1U, 2U, 3U, 4U }))
+    EXPECT_EQ(std::vector<vn::graphics::backend::PassId>(placed.begin(), placed.end()), std::vector<vn::graphics::backend::PassId>({ 1U, 2U, 3U, 4U }))
         << "the executor places the passes in the plan's order, not in the order they were announced";
 
     ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
@@ -558,10 +549,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // reader puts a pixel into (red, green, blue) once, here. A check written in the wrong order would compare
     // red against blue, and the colours are chosen so that the mistake cannot hide - which is not a stylistic
     // choice: the triangle is symmetric in red and blue, so a swapped read of IT looks perfectly fine.
-    const bool blue_first = window_shape.device_color_formats.size() == 1U &&
-                            (window_shape.device_color_formats.front() == VK_FORMAT_B8G8R8A8_UNORM ||
-                             window_shape.device_color_formats.front() == VK_FORMAT_B8G8R8A8_SRGB);
-    const auto pixel_at = [&](int x, int y) {
+    const bool blue_first = window_shape.device_color_formats.size() == 1U && (window_shape.device_color_formats.front() == VK_FORMAT_B8G8R8A8_UNORM ||
+                                                                               window_shape.device_color_formats.front() == VK_FORMAT_B8G8R8A8_SRGB);
+    const auto pixel_at   = [&](int x, int y) {
         const std::array<std::uint8_t, 3> bytes = window.pixel(x, y);
         return blue_first ? std::array<std::uint8_t, 3>{ bytes[2], bytes[1], bytes[0] } : bytes;
     };
@@ -569,26 +559,22 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // The scene's triangle: the shader's own encoding (frame.y/128, cam_pos.x, frame.z/96) = (1, 0.5, 1), in the
     // left quarter - the window pass' content.
     const auto triangle = pixel_at(kWidth / 4, kHeight / 2);
-    EXPECT_TRUE(isColour(triangle, 1.0, 0.5, 1.0))
-        << "the window's scene pass drew through its own variant, got (" << static_cast<int>(triangle[0])
-        << ", " << static_cast<int>(triangle[1]) << ", " << static_cast<int>(triangle[2]) << ")";
+    EXPECT_TRUE(isColour(triangle, 1.0, 0.5, 1.0)) << "the window's scene pass drew through its own variant, got (" << static_cast<int>(triangle[0]) << ", "
+                                                   << static_cast<int>(triangle[1]) << ", " << static_cast<int>(triangle[2]) << ")";
 
     // Outside everything: the first window pass' clear. The green of the OVERLAY pass must not appear - that is
     // what "the window is cleared once" means for the picture.
     const auto background = pixel_at(2, 2);
-    EXPECT_TRUE(isColour(background, 0.0, 0.0, 0.25))
-        << "the window keeps its FIRST pass' clear, got (" << static_cast<int>(background[0]) << ", "
-        << static_cast<int>(background[1]) << ", " << static_cast<int>(background[2]) << ")";
+    EXPECT_TRUE(isColour(background, 0.0, 0.0, 0.25)) << "the window keeps its FIRST pass' clear, got (" << static_cast<int>(background[0]) << ", "
+                                                      << static_cast<int>(background[1]) << ", " << static_cast<int>(background[2]) << ")";
     EXPECT_FALSE(isColourByte(background[1], 0.25)) << "the overlay pass' clear would be green here";
 
     // Inside the overlay's rectangle: the picture the overlay sampled, opaque (the copy's alpha is 1).
-    const auto overlay_pixel = pixel_at(kPictureInPicture.x + kPictureInPicture.width / 2,
-                                        kPictureInPicture.y + kPictureInPicture.height / 2);
-    EXPECT_TRUE(isColour(overlay_pixel, 0.25, 0.0, 0.0))
-        << "the overlay copied the picture into its rectangle, got (" << static_cast<int>(overlay_pixel[0])
-        << ", " << static_cast<int>(overlay_pixel[1]) << ", " << static_cast<int>(overlay_pixel[2]) << ")";
+    const auto overlay_pixel = pixel_at(kPictureInPicture.x + kPictureInPicture.width / 2, kPictureInPicture.y + kPictureInPicture.height / 2);
+    EXPECT_TRUE(isColour(overlay_pixel, 0.25, 0.0, 0.0)) << "the overlay copied the picture into its rectangle, got (" << static_cast<int>(overlay_pixel[0])
+                                                         << ", " << static_cast<int>(overlay_pixel[1]) << ", " << static_cast<int>(overlay_pixel[2]) << ")";
 
     session.shutdown();
 }
 
-#endif  // !defined(_WIN32)
+#endif // !defined(_WIN32)

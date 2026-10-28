@@ -14,8 +14,7 @@ class ProgressScope;
  * can be copied; copying transfers the responsibility to the copy and disarms
  * the source, so the portion is reported only once.
  */
-class VN_PROGRESS_API ProgressRange
-{
+class VN_PROGRESS_API ProgressRange {
   public:
     friend class ProgressScope;
 
@@ -52,13 +51,13 @@ class VN_PROGRESS_API ProgressRange
     void complete();
 
   private:
-    const ProgressScope* parent_scope_{nullptr};
+    const ProgressScope* parent_scope_{ nullptr };
 
-    double start_{0.0};
+    double start_{ 0.0 };
 
-    double delta_{0.0};
+    double delta_{ 0.0 };
 
-    mutable bool used_{false};
+    mutable bool used_{ false };
 };
 
 VN_PROGRESS_NS_END

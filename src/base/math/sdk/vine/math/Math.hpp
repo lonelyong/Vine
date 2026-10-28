@@ -255,7 +255,7 @@ template <FP T>
 [[nodiscard]]
 constexpr T normalizeAngle(T angle)
 {
-    constexpr T pi    = static_cast<T>(PI);
+    constexpr T pi     = static_cast<T>(PI);
     constexpr T two_pi = static_cast<T>(PI_TWO);
 
     while (angle > pi) angle -= two_pi;

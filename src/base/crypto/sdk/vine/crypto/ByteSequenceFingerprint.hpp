@@ -32,8 +32,7 @@ VN_CRYPTO_NS_BEGIN
  * @note The input stream must support seek; a non-seekable stream throws
  *       std::runtime_error.
  */
-class VN_CRYPTO_API ByteSequenceFingerprint
-{
+class VN_CRYPTO_API ByteSequenceFingerprint {
     // 类型声明区块
   public:
     /** @brief Fixed size of the fingerprint storage array (bytes). Also the
@@ -112,12 +111,10 @@ class VN_CRYPTO_API ByteSequenceFingerprint
      */
     bool operator<(const ByteSequenceFingerprint& rhs) const noexcept
     {
-        if (mode_ != rhs.mode_)
-        {
+        if (mode_ != rhs.mode_) {
             return mode_ < rhs.mode_;
         }
-        if (size_ != rhs.size_)
-        {
+        if (size_ != rhs.size_) {
             return size_ < rhs.size_;
         }
         return std::memcmp(fingerprint_.data(), rhs.fingerprint_.data(), kFingerprintSize) < 0;
@@ -155,16 +152,15 @@ class VN_CRYPTO_API ByteSequenceFingerprint
 
     // 字段区块
   private:
-    std::uint64_t size_{ 0 };
-    FingerprintMode mode_{ FingerprintMode::RAW };
+    std::uint64_t                           size_{ 0 };
+    FingerprintMode                         mode_{ FingerprintMode::RAW };
     std::array<std::byte, kFingerprintSize> fingerprint_{};
 };
 
 VN_CRYPTO_NS_END
 
 template <>
-struct std::hash<VN_ROOT_NS::crypto::ByteSequenceFingerprint>
-{
+struct std::hash<VN_ROOT_NS::crypto::ByteSequenceFingerprint> {
     /**
      * @brief Computes a hash of the fingerprint.
      *
@@ -178,16 +174,11 @@ struct std::hash<VN_ROOT_NS::crypto::ByteSequenceFingerprint>
     {
         std::size_t h = fp.size_;
 
-        auto combine = [&h](std::size_t v) noexcept
-        {
-            h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-        };
+        auto combine = [&h](std::size_t v) noexcept { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); };
 
         combine(static_cast<std::size_t>(fp.mode_));
 
-        const std::size_t bytes_to_hash = (fp.mode_ == VN_ROOT_NS::crypto::ByteSequenceFingerprint::FingerprintMode::RAW)
-                                              ? fp.fingerprint_.size()
-                                              : 32;
+        const std::size_t bytes_to_hash = (fp.mode_ == VN_ROOT_NS::crypto::ByteSequenceFingerprint::FingerprintMode::RAW) ? fp.fingerprint_.size() : 32;
 
         for (std::size_t i = 0; i < bytes_to_hash; ++i) {
             combine(std::to_integer<std::uint8_t>(fp.fingerprint_[i]));

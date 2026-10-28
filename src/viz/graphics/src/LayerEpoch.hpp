@@ -37,6 +37,6 @@ inline void announceLayerChange() noexcept
     return g_layer_epoch.load(std::memory_order_relaxed);
 }
 
-}  // namespace detail
+} // namespace detail
 
 VN_GRAPHICS_NS_END

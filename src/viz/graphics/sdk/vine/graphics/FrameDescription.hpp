@@ -53,8 +53,7 @@ class ShaderProgram;
  *   zero-initialised @ref color would be. The initialiser exists so the type can be stored and assigned, not to
  *   describe a clearing frame.
  */
-struct ClearPolicy
-{
+struct ClearPolicy {
     /// Colour attachment 0 is cleared to (the only colour a single-attachment target reads).
     ///
     /// LINEAR light, and the only spelling this module takes: an encoded colour is decoded by whoever holds it
@@ -85,17 +84,16 @@ struct ClearPolicy
  *   fields belong to the pass, DrawDescription's to this draw), so the rules cannot be broken by calling
  *   something at the wrong moment.
  */
-struct VN_GRAPHICS_API DrawDescription
-{
+struct VN_GRAPHICS_API DrawDescription {
     /// Which drawing call this is (the two the contract has; they take different arguments).
     enum class Kind : std::uint8_t
     {
-        Scene,  ///< Draw collected geometry through a camera (a content drawing call).
-        Screen, ///< Draw a full-screen program over a source target (a screen drawing call).
+        Scene,  // Draw collected geometry through a camera (a content drawing call).
+        Screen, // Draw a full-screen program over a source target (a screen drawing call).
     };
 
     /// Which of the two calls this describes.
-    Kind kind = Kind::Scene;
+    Kind kind                    = Kind::Scene;
     /// The view this draw is projected and lit with; null means the pass issues NO draw at all (there is no view
     /// to build), which is what a pass with no camera or no program says by leaving it null.
     raw_ptr<const Camera> camera = nullptr;
@@ -131,8 +129,7 @@ struct VN_GRAPHICS_API DrawDescription
  * @note The frame-level container is @ref FrameDescription, which carries one of these per pass next to the three
  *       facts the engine owns (identity, order, resolved inputs).
  */
-struct VN_GRAPHICS_API PassDraw
-{
+struct VN_GRAPHICS_API PassDraw {
     /// The off-screen target this pass draws into; null = the presenting surface (the default framebuffer).
     raw_ptr<RenderTarget> target = nullptr;
     /// The sub-rectangle of the target it draws into, or nullopt for the whole of it.
@@ -189,16 +186,14 @@ struct VN_GRAPHICS_API PassDraw
  * describes itself (RenderPass::describe) and the engine adds the three facts it owns (identity, order, resolved
  * inputs). A steady frame reuses this object's storage.
  */
-struct VN_GRAPHICS_API FrameDescription
-{
+struct VN_GRAPHICS_API FrameDescription {
     /** @brief One pass of a frame: what the ENGINE knows about it, and what the pass says about itself. */
-    struct Pass
-    {
+    struct Pass {
         /// The pass (its identity: what a backend keys retained per-pass state by - the one object two passes never
         /// share, whatever else they have in common).
         raw_ptr<const RenderPass> pass = nullptr;
         /// Where this pass stacks in its target (the explicit pipeline order its declaration gave).
-        int order = 0;
+        int order                      = 0;
         /// What its declared inputs resolved to this frame, in declaration order (ImageSource::Kind::None where
         /// nothing produced it) - exactly what the pass and the backend are handed, and the shape the backend binds
         /// the pass' sampled inputs from.
@@ -227,8 +222,9 @@ struct VN_GRAPHICS_API FrameDescription
  * @param description What the pass issues, or nullopt when it issues nothing at all (see Pass).
  * @return The frame to hand to RenderFrameExecutor::executeFrame.
  */
-FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass, int order,
-                                                 std::vector<ImageSource> inputs,
-                                                 std::optional<PassDraw> description);
+FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
+                                                 int                       order,
+                                                 std::vector<ImageSource>  inputs,
+                                                 std::optional<PassDraw>   description);
 
 VN_GRAPHICS_NS_END

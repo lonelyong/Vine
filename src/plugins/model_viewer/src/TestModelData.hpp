@@ -77,7 +77,7 @@ inline vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> makeGridMesh(std::si
         for (std::size_t x = 0; x <= side; ++x) {
             const auto fx = static_cast<float>(x) / static_cast<float>(side) * 2.0f - 1.0f;
             const auto fz = static_cast<float>(z) / static_cast<float>(side) * 2.0f - 1.0f;
-            current[x]  = mesh->addVertex(vn::math::Vec3f(fx, 0.0f, fz));
+            current[x]    = mesh->addVertex(vn::math::Vec3f(fx, 0.0f, fz));
         }
 
         if (z > 0) {

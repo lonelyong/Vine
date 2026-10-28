@@ -9,14 +9,12 @@ VN_OBJECT_META_IMPL(DocumentView, UIElement)
 DocumentView::DocumentView(Document& document)
   : UIElement(nullptr)
   , document_(&document)
-{
-}
+{}
 
 DocumentView::DocumentView(Document& document, UIObject* impl)
   : UIElement(impl)
   , document_(&document)
-{
-}
+{}
 
 DocumentView::~DocumentView() = default;
 

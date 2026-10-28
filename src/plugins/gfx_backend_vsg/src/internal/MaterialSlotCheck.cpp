@@ -13,8 +13,7 @@ namespace
 /// @return true for the two colour slots.
 [[nodiscard]] bool isColorSlot(std::size_t slot) noexcept
 {
-    return slot == static_cast<std::size_t>(vn::graphics::TextureSlot::BaseColor) ||
-           slot == static_cast<std::size_t>(vn::graphics::TextureSlot::Emissive);
+    return slot == static_cast<std::size_t>(vn::graphics::TextureSlot::BaseColor) || slot == static_cast<std::size_t>(vn::graphics::TextureSlot::Emissive);
 }
 
 /// @brief The slots that take a cube map: the base colour only (the other four parameterise a surface).
@@ -36,8 +35,7 @@ namespace
 /// @return true when the map holds linear bytes that a colour slot reads as colour.
 [[nodiscard]] bool isLinearByteColor(vn::imaging::PixelFormat format) noexcept
 {
-    switch (format)
-    {
+    switch (format) {
     case vn::imaging::PixelFormat::R8Unorm:
     case vn::imaging::PixelFormat::Rg8Unorm:
     case vn::imaging::PixelFormat::Rgb8Unorm:
@@ -47,32 +45,27 @@ namespace
     }
 }
 
-}  // namespace
+} // namespace
 
 SlotViolation materialSlotViolation(const MaterialFacts& material, std::size_t slot) noexcept
 {
-    if (slot >= material.slots.size())
-    {
+    if (slot >= material.slots.size()) {
         return SlotViolation::None;
     }
     const vn::graphics::Texture* map = material.slots[slot].texture;
-    if (map == nullptr)
-    {
-        return SlotViolation::None;  // an absent slot is the flags' business, not a contract violation
+    if (map == nullptr) {
+        return SlotViolation::None; // an absent slot is the flags' business, not a contract violation
     }
     // The KIND first: it is the one violation the content layer cannot bind at all (a cube view where the text
     // declares sampler2D is an invalid descriptor), so it is also the one a host is most likely to see.
-    if (!takesCubeMap(slot) && map->kind() == vn::graphics::Texture::Kind::Cube)
-    {
+    if (!takesCubeMap(slot) && map->kind() == vn::graphics::Texture::Kind::Cube) {
         return SlotViolation::CubeInDataSlot;
     }
     const vn::imaging::PixelFormat format = map->format();
-    if (isColorSlot(slot) && isLinearByteColor(format))
-    {
+    if (isColorSlot(slot) && isLinearByteColor(format)) {
         return SlotViolation::LinearFormatInColorSlot;
     }
-    if (!isColorSlot(slot) && vn::imaging::isSrgbFormat(format))
-    {
+    if (!isColorSlot(slot) && vn::imaging::isSrgbFormat(format)) {
         return SlotViolation::SrgbFormatInDataSlot;
     }
     return SlotViolation::None;
@@ -80,8 +73,7 @@ SlotViolation materialSlotViolation(const MaterialFacts& material, std::size_t s
 
 const char* materialSlotName(std::size_t slot) noexcept
 {
-    switch (slot)
-    {
+    switch (slot) {
     case static_cast<std::size_t>(vn::graphics::TextureSlot::BaseColor): return "vn_baseColorMap";
     case static_cast<std::size_t>(vn::graphics::TextureSlot::MetallicRoughness): return "vn_metallicRoughnessMap";
     case static_cast<std::size_t>(vn::graphics::TextureSlot::Normal): return "vn_normalMap";
@@ -93,8 +85,7 @@ const char* materialSlotName(std::size_t slot) noexcept
 
 const char* slotViolationText(SlotViolation violation) noexcept
 {
-    switch (violation)
-    {
+    switch (violation) {
     case SlotViolation::None: return "";
     case SlotViolation::CubeInDataSlot:
         return "a cube map belongs in the base-colour slot only: the other four parameterise a surface with a UV "

@@ -42,17 +42,15 @@ constexpr int kWidth  = 64;
 constexpr int kHeight = 48;
 
 /// @brief One connection, one mapped 64x48 window on the root, and the screen it was created on.
-struct Fixture
-{
-    xcb_connection_t* connection{nullptr};
-    xcb_screen_t*     screen{nullptr};
+struct Fixture {
+    xcb_connection_t* connection{ nullptr };
+    xcb_screen_t*     screen{ nullptr };
 
     bool open()
     {
         int screen_index = 0;
         connection       = xcb_connect(nullptr, &screen_index);
-        if (connection == nullptr || xcb_connection_has_error(connection) != 0)
-        {
+        if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
             return false;
         }
         screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
@@ -61,20 +59,18 @@ struct Fixture
 
     ~Fixture()
     {
-        if (connection != nullptr)
-        {
+        if (connection != nullptr) {
             xcb_disconnect(connection);
         }
     }
 };
 
-}  // namespace
+} // namespace
 
 TEST(HostWindowReadTest, AReadOfWhatTheWindowShowsComesBackAndReportsNoError)
 {
     Fixture fixture;
-    if (!fixture.open())
-    {
+    if (!fixture.open()) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     TestHostWindow host(fixture.connection, fixture.screen, kWidth, kHeight);
@@ -82,11 +78,9 @@ TEST(HostWindowReadTest, AReadOfWhatTheWindowShowsComesBackAndReportsNoError)
     // The constructor's own wait is the sync point, and it is reported: a window that was just created is
     // mapped by the server at its own pace, and the frames presented before it is viewable are lost (see the
     // file note). This assertion is what makes the wait a contract instead of a hope.
-    EXPECT_TRUE(host.wasViewableAtCreation())
-        << "the constructor waits for the server's own viewable report before a case presents anything "
-        << "(waited " << host.viewWait().count() << " ms)";
-    if (host.viewWait() > std::chrono::milliseconds{ 50 })
-    {
+    EXPECT_TRUE(host.wasViewableAtCreation()) << "the constructor waits for the server's own viewable report before a case presents anything "
+                                              << "(waited " << host.viewWait().count() << " ms)";
+    if (host.viewWait() > std::chrono::milliseconds{ 50 }) {
         // Not a failure: the wait exists for exactly this, and the cost is what it is. It is PRINTED because
         // a server that is late on a map is the environment fact behind the window suites' old flakes.
         std::printf("[host-window] the server reported the window viewable after %lld ms (usually it is "
@@ -95,13 +89,12 @@ TEST(HostWindowReadTest, AReadOfWhatTheWindowShowsComesBackAndReportsNoError)
     }
 
     // Paint the window with plain X - no device, no backend: this case is about the INSTRUMENT.
-    const auto          window = static_cast<xcb_window_t>(reinterpret_cast<std::uintptr_t>(host.handle()));
-    const xcb_gcontext_t gc    = xcb_generate_id(fixture.connection);
-    const std::uint32_t  mask  = XCB_GC_FOREGROUND;
+    const auto           window   = static_cast<xcb_window_t>(reinterpret_cast<std::uintptr_t>(host.handle()));
+    const xcb_gcontext_t gc       = xcb_generate_id(fixture.connection);
+    const std::uint32_t  mask     = XCB_GC_FOREGROUND;
     const std::uint32_t  values[] = { fixture.screen->white_pixel };
     xcb_create_gc(fixture.connection, gc, window, mask, values);
-    const xcb_rectangle_t rectangle{ 0, 0, static_cast<std::uint16_t>(kWidth),
-                                     static_cast<std::uint16_t>(kHeight) };
+    const xcb_rectangle_t rectangle{ 0, 0, static_cast<std::uint16_t>(kWidth), static_cast<std::uint16_t>(kHeight) };
     xcb_poly_fill_rectangle(fixture.connection, window, gc, 1, &rectangle);
     xcb_flush(fixture.connection);
 
@@ -118,8 +111,7 @@ TEST(HostWindowReadTest, AReadOfWhatTheWindowShowsComesBackAndReportsNoError)
 TEST(HostWindowReadTest, AReadTheServerCannotServeIsRefusedAndSaysSoInsteadOfLookingBlack)
 {
     Fixture fixture;
-    if (!fixture.open())
-    {
+    if (!fixture.open()) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     TestHostWindow host(fixture.connection, fixture.screen, kWidth, kHeight);
@@ -128,9 +120,8 @@ TEST(HostWindowReadTest, AReadTheServerCannotServeIsRefusedAndSaysSoInsteadOfLoo
     // A rectangle far outside the drawable: the server refuses it with BadMatch, deterministically - which is
     // what makes this the guard for the two facts a caller must not conflate.
     const std::array<std::uint8_t, 3> refused = host.pixel(10000, 5);
-    EXPECT_NE(static_cast<int>(host.readError()), 0)
-        << "a refused read reports the X error it was refused with (0 would make it indistinguishable from a "
-           "black pixel)";
+    EXPECT_NE(static_cast<int>(host.readError()), 0) << "a refused read reports the X error it was refused with (0 would make it indistinguishable from a "
+                                                        "black pixel)";
     EXPECT_EQ(static_cast<int>(refused[0]) + static_cast<int>(refused[1]) + static_cast<int>(refused[2]), 0)
         << "and the answer is still black - the point is that the caller can tell WHICH of the two it was";
 
@@ -143,8 +134,7 @@ TEST(HostWindowReadTest, AReadTheServerCannotServeIsRefusedAndSaysSoInsteadOfLoo
 TEST(HostWindowReadTest, TheWaitReturnsWhenThePictureArrivesAndGivesUpAtItsDeadline)
 {
     Fixture fixture;
-    if (!fixture.open())
-    {
+    if (!fixture.open()) {
         GTEST_SKIP() << "no X display to create a host window on";
     }
     TestHostWindow host(fixture.connection, fixture.screen, kWidth, kHeight);
@@ -153,16 +143,14 @@ TEST(HostWindowReadTest, TheWaitReturnsWhenThePictureArrivesAndGivesUpAtItsDeadl
     // A predicate the window already satisfies answers at once: the wait must not cost a deadline where there
     // is nothing to wait for (every window case's first read goes through it).
     const auto began = std::chrono::steady_clock::now();
-    (void)host.waitForPixel(5, 5, [](const std::array<std::uint8_t, 3>&) { return true; },
-                            std::chrono::milliseconds{ 200 });
+    (void)host.waitForPixel(5, 5, [](const std::array<std::uint8_t, 3>&) { return true; }, std::chrono::milliseconds{ 200 });
     const auto immediate = std::chrono::steady_clock::now() - began;
     EXPECT_LT(immediate, std::chrono::milliseconds{ 100 }) << "an already-satisfied predicate does not wait";
 
     // A predicate nothing satisfies uses the deadline and ANSWERS ANYWAY (the caller's own assertion is what
     // fails then - the wait never turns "never arrived" into "passed").
     const auto nothing = std::chrono::steady_clock::now();
-    const auto pixel   = host.waitForPixel(5, 5, [](const std::array<std::uint8_t, 3>&) { return false; },
-                                           std::chrono::milliseconds{ 60 });
+    const auto pixel   = host.waitForPixel(5, 5, [](const std::array<std::uint8_t, 3>&) { return false; }, std::chrono::milliseconds{ 60 });
     const auto spent   = std::chrono::steady_clock::now() - nothing;
     EXPECT_GE(spent, std::chrono::milliseconds{ 60 }) << "the wait is bounded, not infinite";
     EXPECT_LT(spent, std::chrono::milliseconds{ 600 }) << "and it gives up at its deadline";
@@ -170,11 +158,11 @@ TEST(HostWindowReadTest, TheWaitReturnsWhenThePictureArrivesAndGivesUpAtItsDeadl
         << "the last read is what comes back (the window never painted anything here)";
 }
 
-#else  // _WIN32
+#else // _WIN32
 
 TEST(HostWindowReadTest, TheHostWindowInstrumentIsX11Only)
 {
     GTEST_SKIP() << "TestHostWindow is an XCB window; the Windows path has no equivalent readback yet";
 }
 
-#endif  // _WIN32
+#endif // _WIN32

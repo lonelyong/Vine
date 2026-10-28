@@ -45,10 +45,7 @@ class RenderTarget;
  * - RenderBackend is reference-counted: factories return an intrusive_ptr and RenderEngine keeps its own reference,
  *   so ownership and lifetime are explicit.
  */
-class VN_GRAPHICS_API RenderBackend : public Object,
-                                      public RefCounted<RenderBackend>,
-                                      public RenderDevice,
-                                      public RenderFrameExecutor {
+class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBackend>, public RenderDevice, public RenderFrameExecutor {
     VN_OBJECT_META_DECL;
 
   public:

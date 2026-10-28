@@ -1,11 +1,11 @@
 #pragma once
 #include "graphics_global.hpp"
 
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Object.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "RenderTarget.hpp"
 
@@ -56,9 +56,10 @@ class VN_GRAPHICS_API ImageRef : public Object, public RefCounted<ImageRef> {
      * sampled, while a depth attachment may not be — that depends on the target's promotion state,
      * which is the backend's business.
      */
-    enum class Kind {
-        Color, ///< A colour attachment (written by fragment output location i).
-        Depth, ///< A depth attachment (a program reconstructing positions samples this).
+    enum class Kind
+    {
+        Color, // A colour attachment (written by fragment output location i).
+        Depth, // A depth attachment (a program reconstructing positions samples this).
     };
 
   public:

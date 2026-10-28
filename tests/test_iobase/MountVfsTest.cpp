@@ -192,7 +192,10 @@ TEST(MountVfsTest, MountMergesListsAndSynthesizesIntermediateDirectories)
 
 TEST(MountVfsTest, MountRoutesWritesToTheOwningOrFirstWritableBackend)
 {
-    const auto package = readOnlyZip({ { u8"pkg.txt", "original" }, { u8"readme.txt", "ro" } });
+    const auto package = readOnlyZip({
+      { u8"pkg.txt",    "original" },
+      { u8"readme.txt", "ro"       }
+    });
     const auto overlay = writableZip();
     ASSERT_NE(package, nullptr);
 
@@ -227,7 +230,10 @@ TEST(MountVfsTest, MountRoutesWritesToTheOwningOrFirstWritableBackend)
 
 TEST(MountVfsTest, MountRefusesAnOccupiedPathBeforeRouting)
 {
-    const auto package = readOnlyZip({ { u8"pkg.txt", "original" }, { u8"data/x.txt", "x" } });
+    const auto package = readOnlyZip({
+      { u8"pkg.txt",    "original" },
+      { u8"data/x.txt", "x"        }
+    });
     const auto overlay = writableZip();
     ASSERT_NE(package, nullptr);
 
@@ -291,7 +297,9 @@ TEST(MountVfsTest, MountRenamesWithinAndAcrossBackends)
 
 TEST(MountVfsTest, MountRefusesWritesWhenNoTargetIsWritable)
 {
-    const auto package = readOnlyZip({ { u8"p.txt", "p" } });
+    const auto package = readOnlyZip({
+      { u8"p.txt", "p" }
+    });
     const auto scratch = writableZip();
     ASSERT_NE(package, nullptr);
 
@@ -317,7 +325,7 @@ TEST(MountVfsTest, MountRefusesWritesWhenNoTargetIsWritable)
 
     // A rename into a read-only mount keeps the source in place.
     const auto source = writableZip();
-    MountVfs mixed;
+    MountVfs   mixed;
     ASSERT_EQ(mixed.mount(u8"src", source), IoError::Ok);
     ASSERT_EQ(mixed.mount(u8"dst", writableZip(), /*priority=*/0, /*read_only=*/true), IoError::Ok);
     ASSERT_EQ(mixed.addFile(u8"src/f.txt", asBytes("f")), IoError::Ok);

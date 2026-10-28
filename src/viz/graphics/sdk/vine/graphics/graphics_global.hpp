@@ -8,13 +8,13 @@
 #    define VN_GRAPHICS_API VN_IMPORT
 #endif
 
-#define VN_GRAPHICS_NS_BEGIN                                                                                                                                    \
-    namespace VN_ROOT_NS                                                                                                                                        \
+#define VN_GRAPHICS_NS_BEGIN                                                                                                                                   \
+    namespace VN_ROOT_NS                                                                                                                                       \
     {                                                                                                                                                          \
     namespace graphics                                                                                                                                         \
     {
 
-#define VN_GRAPHICS_NS_END                                                                                                                                      \
+#define VN_GRAPHICS_NS_END                                                                                                                                     \
     }                                                                                                                                                          \
     }
 
@@ -29,11 +29,11 @@
  * - A host must not include it, and this half never includes a particular backend:
  *   scripts/check_include_hygiene.py enforces both directions (see .ai/design/graphics-architecture.md).
  */
-#define VN_GRAPHICSBACKEND_NS_BEGIN \
-    VN_GRAPHICS_NS_BEGIN          \
-    namespace backend               \
+#define VN_GRAPHICSBACKEND_NS_BEGIN                                                                                                                            \
+    VN_GRAPHICS_NS_BEGIN                                                                                                                                       \
+    namespace backend                                                                                                                                          \
     {
 
-#define VN_GRAPHICSBACKEND_NS_END \
-    VN_GRAPHICS_NS_END          \
+#define VN_GRAPHICSBACKEND_NS_END                                                                                                                              \
+    VN_GRAPHICS_NS_END                                                                                                                                         \
     }

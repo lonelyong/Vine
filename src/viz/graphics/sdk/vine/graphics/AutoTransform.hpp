@@ -57,10 +57,10 @@ class VN_GRAPHICS_API AutoTransform : public Group {
     /** @brief How the automatic rotation is derived from the current camera. */
     enum class AutoRotateMode
     {
-        NoRotation,      ///< No automatic rotation: the plain TRS placement (the view-independent matrix).
-        RotateToScreen,  ///< Cancel the camera's rotation, so the subtree stays parallel to the screen plane.
-        RotateToCamera,  ///< Point the subtree's local +Z at the eye (spherical billboard).
-        RotateToAxis,    ///< Turn around `axis` only (cylindrical billboard), keeping that axis fixed.
+        NoRotation,     // No automatic rotation: the plain TRS placement (the view-independent matrix).
+        RotateToScreen, // Cancel the camera's rotation, so the subtree stays parallel to the screen plane.
+        RotateToCamera, // Point the subtree's local +Z at the eye (spherical billboard).
+        RotateToAxis,   // Turn around `axis` only (cylindrical billboard), keeping that axis fixed.
     };
 
   public:
@@ -235,8 +235,7 @@ class VN_GRAPHICS_API AutoTransform : public Group {
      * @return None when neither automatic mode nor screen-space scaling is on; View for an auto-rotating
      *         billboard without a viewport; ViewAndViewport when screen-space scaling uses the viewport.
      */
-    ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view,
-                                       Mat4d& world) const override;
+    ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const override;
 
     /** @brief Computes a conservative world-space box (the sphere around position covering every orientation).
      *

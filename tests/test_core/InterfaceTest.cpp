@@ -4,8 +4,8 @@
 #include <vine/IComparable.hpp>
 #include <vine/IStringable.hpp>
 
-using vn::IComparable;
 using vn::ICloneable;
+using vn::IComparable;
 using vn::IStringable;
 
 namespace
@@ -38,7 +38,7 @@ class Widget : public vn::Object, public IStringable, public IComparable, public
 
 TEST(InterfaceTest, KindOfCommonInterface)
 {
-    Widget w;
+    Widget      w;
     vn::Object* obj = &w;
     EXPECT_TRUE(obj->isKindOf<IStringable>());
     EXPECT_TRUE(obj->isKindOf<IComparable>());
@@ -50,7 +50,7 @@ TEST(InterfaceTest, KindOfCommonInterface)
 TEST(InterfaceTest, ObjCastToCommonInterface)
 {
     Widget w;
-    w.value = 7;
+    w.value         = 7;
     vn::Object* obj = &w;
 
     auto* s = obj_cast<IStringable>(obj);

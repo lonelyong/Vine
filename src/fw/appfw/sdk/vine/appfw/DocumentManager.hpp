@@ -250,20 +250,21 @@ class VN_APPFW_API DocumentManager {
         }
 
         return addOpener(
-            Payload::desc(), registration.type_id, registration.priority, registration.source_scheme,
+            Payload::desc(),
+            registration.type_id,
+            registration.priority,
+            registration.source_scheme,
             [open = registration.open](raw_ptr<const Object> payload) -> Document* {
                 // The key is Payload::desc() and open() matched the runtime type against it first, so this cast cannot
                 // fail - it is the checked way of giving the opener back the type it registered for.
                 const Payload* typed = obj_cast<Payload>(payload);
                 return typed != nullptr ? open(*typed) : nullptr;
             },
-            registration.refine
-                ? std::function<int(raw_ptr<const Object>)>(
-                      [refine = registration.refine](raw_ptr<const Object> payload) {
-                          const Payload* typed = obj_cast<Payload>(payload);
-                          return typed != nullptr ? refine(*typed) : 0;
-                      })
-                : std::function<int(raw_ptr<const Object>)>());
+            registration.refine ? std::function<int(raw_ptr<const Object>)>([refine = registration.refine](raw_ptr<const Object> payload) {
+                const Payload* typed = obj_cast<Payload>(payload);
+                return typed != nullptr ? refine(*typed) : 0;
+            })
+                                : std::function<int(raw_ptr<const Object>)>());
     }
 
     /**
@@ -384,9 +385,12 @@ class VN_APPFW_API DocumentManager {
 
   private:
     /// Non-template tail of registerOpener<Payload>(): the template restores the payload type inside both callbacks.
-    bool addOpener(TypeId payload_type, const String& type_id, int priority, String source_scheme,
+    bool addOpener(TypeId                                          payload_type,
+                   const String&                                   type_id,
+                   int                                             priority,
+                   String                                          source_scheme,
                    std::function<Document*(raw_ptr<const Object>)> open,
-                   std::function<int(raw_ptr<const Object>)> refine);
+                   std::function<int(raw_ptr<const Object>)>       refine);
 
     struct Impl;
     std::unique_ptr<Impl> d;

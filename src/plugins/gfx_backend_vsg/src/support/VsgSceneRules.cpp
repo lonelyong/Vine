@@ -39,32 +39,35 @@ ChannelShape channelShape(const vn::graphics::AttributeChannel& attr, std::size_
     return ChannelShape::Ok;
 }
 
-vn::String ignoredChannelMessage(std::uint32_t location, const vn::graphics::AttributeChannel& attr,
-                                   std::size_t vertex_count, ChannelShape shape)
+vn::String ignoredChannelMessage(std::uint32_t location, const vn::graphics::AttributeChannel& attr, std::size_t vertex_count, ChannelShape shape)
 {
     switch (shape) {
     case ChannelShape::Components:
         return formatDiagnostic(u8"loc%u custom channel has components=%u (1..4 "
                                 u8"required); channel ignored",
-                                location, attr.components);
+                                location,
+                                attr.components);
     case ChannelShape::NotDivisible:
         return formatDiagnostic(u8"loc%u custom channel holds %zu floats, not divisible "
                                 u8"by components=%u; channel ignored",
-                                location, attr.floatCount(), attr.components);
+                                location,
+                                attr.floatCount(),
+                                attr.components);
     case ChannelShape::VertexCount:
         return formatDiagnostic(u8"loc%u custom channel has %zu vertices, expected %zu; "
                                 u8"channel ignored",
-                                location, attr.vertexCount(), vertex_count);
-    case ChannelShape::Ok:
-        break;
+                                location,
+                                attr.vertexCount(),
+                                vertex_count);
+    case ChannelShape::Ok: break;
     }
     return vn::String();
 }
 
 XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::geometry::Vec3fArray& out)
 {
-    const auto             comps = attr.components;
-    const std::span<const float> data = attr.scalars();
+    const auto                   comps = attr.components;
+    const std::span<const float> data  = attr.scalars();
     if (comps < 3u || comps > 4u) {
         return XyzUnpack::NotXyzStride;
     }
@@ -90,7 +93,8 @@ vn::String ignoredNormalChannelMessage(const vn::graphics::AttributeChannel& att
     }
     return formatDiagnostic(u8"loc1 normal holds %zu floats, not divisible by its "
                             u8"components=%u stride; normals will be derived",
-                            attr.floatCount(), attr.components);
+                            attr.floatCount(),
+                            attr.components);
 }
 
 vn::math::Vec3f faceNormal(const vn::math::Vec3f& a, const vn::math::Vec3f& b, const vn::math::Vec3f& c)
@@ -123,13 +127,13 @@ vn::math::Vec3f faceNormal(const vn::math::Vec3f& a, const vn::math::Vec3f& b, c
         return {};
     }
     if (comps == 3u) {
-        auto directions                = aliasArray<::vsg::vec3Array, float>(attr.values, vertex_count, attr.offset);
-        directions->properties.format  = VK_FORMAT_R32G32B32_SFLOAT;
+        auto directions               = aliasArray<::vsg::vec3Array, float>(attr.values, vertex_count, attr.offset);
+        directions->properties.format = VK_FORMAT_R32G32B32_SFLOAT;
         return directions;
     }
     if (comps == 2u) {
-        auto uv                = aliasArray<::vsg::vec2Array, float>(attr.values, vertex_count, attr.offset);
-        uv->properties.format  = VK_FORMAT_R32G32_SFLOAT;
+        auto uv               = aliasArray<::vsg::vec2Array, float>(attr.values, vertex_count, attr.offset);
+        uv->properties.format = VK_FORMAT_R32G32_SFLOAT;
         return uv;
     }
     return {};
@@ -145,48 +149,31 @@ VkFormat vkFormatFor(vn::imaging::PixelFormat format) noexcept
     using vn::imaging::PixelFormat;
 
     switch (format) {
-        case PixelFormat::R8Unorm:
-            return VK_FORMAT_R8_UNORM;
-        case PixelFormat::R8Srgb:
-            return VK_FORMAT_R8_SRGB;
-        case PixelFormat::Rg8Unorm:
-            return VK_FORMAT_R8G8_UNORM;
-        case PixelFormat::Rgba8Unorm:
-            return VK_FORMAT_R8G8B8A8_UNORM;
-        case PixelFormat::Rgba8Srgb:
-            return VK_FORMAT_R8G8B8A8_SRGB;
-        case PixelFormat::Bgra8Unorm:
-            return VK_FORMAT_B8G8R8A8_UNORM;
-        case PixelFormat::Bgra8Srgb:
-            return VK_FORMAT_B8G8R8A8_SRGB;
+    case PixelFormat::R8Unorm: return VK_FORMAT_R8_UNORM;
+    case PixelFormat::R8Srgb: return VK_FORMAT_R8_SRGB;
+    case PixelFormat::Rg8Unorm: return VK_FORMAT_R8G8_UNORM;
+    case PixelFormat::Rgba8Unorm: return VK_FORMAT_R8G8B8A8_UNORM;
+    case PixelFormat::Rgba8Srgb: return VK_FORMAT_R8G8B8A8_SRGB;
+    case PixelFormat::Bgra8Unorm: return VK_FORMAT_B8G8R8A8_UNORM;
+    case PixelFormat::Bgra8Srgb: return VK_FORMAT_B8G8R8A8_SRGB;
 
-        case PixelFormat::R16Float:
-            return VK_FORMAT_R16_SFLOAT;
-        case PixelFormat::Rg16Float:
-            return VK_FORMAT_R16G16_SFLOAT;
-        case PixelFormat::Rgba16Float:
-            return VK_FORMAT_R16G16B16A16_SFLOAT;
-        case PixelFormat::R32Float:
-            return VK_FORMAT_R32_SFLOAT;
-        case PixelFormat::Rg32Float:
-            return VK_FORMAT_R32G32_SFLOAT;
-        case PixelFormat::Rgba32Float:
-            return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case PixelFormat::R16Float: return VK_FORMAT_R16_SFLOAT;
+    case PixelFormat::Rg16Float: return VK_FORMAT_R16G16_SFLOAT;
+    case PixelFormat::Rgba16Float: return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case PixelFormat::R32Float: return VK_FORMAT_R32_SFLOAT;
+    case PixelFormat::Rg32Float: return VK_FORMAT_R32G32_SFLOAT;
+    case PixelFormat::Rgba32Float: return VK_FORMAT_R32G32B32A32_SFLOAT;
 
-        // Depth has a sampleable format, so a depth image is a legal texture (a program that
-        // reconstructs positions from it is why ImageRef has a Depth kind).
-        case PixelFormat::D16Unorm:
-            return VK_FORMAT_D16_UNORM;
-        case PixelFormat::D24UnormS8Uint:
-            return VK_FORMAT_D24_UNORM_S8_UINT;
-        case PixelFormat::D32Float:
-            return VK_FORMAT_D32_SFLOAT;
+    // Depth has a sampleable format, so a depth image is a legal texture (a program that
+    // reconstructs positions from it is why ImageRef has a Depth kind).
+    case PixelFormat::D16Unorm: return VK_FORMAT_D16_UNORM;
+    case PixelFormat::D24UnormS8Uint: return VK_FORMAT_D24_UNORM_S8_UINT;
+    case PixelFormat::D32Float: return VK_FORMAT_D32_SFLOAT;
 
-        // No 24-bit format exists, and Unknown is not a layout.
-        case PixelFormat::Rgb8Unorm:
-        case PixelFormat::Rgb8Srgb:
-        case PixelFormat::Unknown:
-            return VK_FORMAT_UNDEFINED;
+    // No 24-bit format exists, and Unknown is not a layout.
+    case PixelFormat::Rgb8Unorm:
+    case PixelFormat::Rgb8Srgb:
+    case PixelFormat::Unknown: return VK_FORMAT_UNDEFINED;
     }
 
     return VK_FORMAT_UNDEFINED; // Out-of-range cast.
@@ -227,9 +214,8 @@ TextureReject classifyTexture(const vn::graphics::Texture* texture) noexcept
     // layer. The reject value and its diagnostic come back with the first shape that needs them, together
     // with the test that exercises them.
     switch (texture->kind()) {
-        case Texture::Kind::D2:
-        case Texture::Kind::Cube:
-            break;
+    case Texture::Kind::D2:
+    case Texture::Kind::Cube: break;
     }
     if (!texture->isComplete()) {
         return TextureReject::Incomplete;
@@ -303,35 +289,37 @@ float anisotropyFor(float device_limit) noexcept
 vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Texture& texture)
 {
     switch (reason) {
-        case TextureReject::Incomplete:
-            return formatDiagnostic(u8"texture is incomplete (%d of %d face(s) filled); "
-                                    u8"the material renders untextured",
-                                    filledLayerCount(texture), texture.layerCount());
+    case TextureReject::Incomplete:
+        return formatDiagnostic(u8"texture is incomplete (%d of %d face(s) filled); "
+                                u8"the material renders untextured",
+                                filledLayerCount(texture),
+                                texture.layerCount());
 
-        case TextureReject::UnsupportedFormat:
-            return formatDiagnostic(u8"texture pixel layout '%s' has no Vulkan format; "
-                                    u8"the material renders untextured",
-                                    vn::imaging::formatName(texture.format()));
+    case TextureReject::UnsupportedFormat:
+        return formatDiagnostic(u8"texture pixel layout '%s' has no Vulkan format; "
+                                u8"the material renders untextured",
+                                vn::imaging::formatName(texture.format()));
 
-        case TextureReject::Inconsistent:
-            return formatDiagnostic(u8"texture pixel data does not account for its description "
-                                    u8"(%dx%d, %d level(s), %d layer(s), layout '%s'); "
-                                    u8"the material renders untextured",
-                                    texture.width(), texture.height(), texture.mipCount(), texture.layerCount(),
-                                    vn::imaging::formatName(texture.format()));
+    case TextureReject::Inconsistent:
+        return formatDiagnostic(u8"texture pixel data does not account for its description "
+                                u8"(%dx%d, %d level(s), %d layer(s), layout '%s'); "
+                                u8"the material renders untextured",
+                                texture.width(),
+                                texture.height(),
+                                texture.mipCount(),
+                                texture.layerCount(),
+                                vn::imaging::formatName(texture.format()));
 
-        // Absent is the normal "this material has no texture" case and is not a diagnostic; Ok is never
-        // reported.
-        case TextureReject::Ok:
-        case TextureReject::Absent:
-            break;
+    // Absent is the normal "this material has no texture" case and is not a diagnostic; Ok is never
+    // reported.
+    case TextureReject::Ok:
+    case TextureReject::Absent: break;
     }
 
     return vn::String();
 }
 
-::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vn::math::Vec3f> positions,
-                                            std::span<const vn::math::Vec3f> meshNormals)
+::vsg::ref_ptr<::vsg::vec3Array> makeNormals(std::span<const vn::math::Vec3f> positions, std::span<const vn::math::Vec3f> meshNormals)
 {
     auto normals = ::vsg::vec3Array::create(static_cast<uint32_t>(positions.size()));
     if (meshNormals.size() == positions.size()) {
@@ -353,7 +341,7 @@ vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Textur
             // the self-test's evidence lines, so they are deliberately NOT unified (§39 tried and kept
             // them apart); only the DECISION (normalIsUsable) and the cross product (faceNormal) are shared.
             const float inv_len = 1.0f / std::sqrt(len_sq);
-            n = ::vsg::vec3(n0.x * inv_len, n0.y * inv_len, n0.z * inv_len);
+            n                   = ::vsg::vec3(n0.x * inv_len, n0.y * inv_len, n0.z * inv_len);
         }
         for (std::size_t k = 0; k < 3; ++k) {
             (*normals)[i + k] = n;
@@ -362,9 +350,8 @@ vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Textur
     return normals;
 }
 
-::vsg::ref_ptr<::vsg::vec3Array> makeIndexedNormals(std::span<const vn::math::Vec3f> positions,
-                                                   std::span<const vn::math::Vec3f> meshNormals,
-                                                   const ::vsg::uintArray& indices)
+::vsg::ref_ptr<::vsg::vec3Array>
+makeIndexedNormals(std::span<const vn::math::Vec3f> positions, std::span<const vn::math::Vec3f> meshNormals, const ::vsg::uintArray& indices)
 {
     auto normals = ::vsg::vec3Array::create(static_cast<uint32_t>(positions.size()));
     if (meshNormals.size() == positions.size()) {
@@ -400,19 +387,14 @@ vn::String textureRejectMessage(TextureReject reason, const vn::graphics::Textur
     return normals;
 }
 
-::vsg::ref_ptr<::vsg::Data> aliasTypedVertexData(std::uint32_t components,
-                                                intrusive_ptr<const vn::Buffer<float>> values,
-                                                std::size_t vertex_count, std::size_t offset_scalars)
+::vsg::ref_ptr<::vsg::Data>
+aliasTypedVertexData(std::uint32_t components, intrusive_ptr<const vn::Buffer<float>> values, std::size_t vertex_count, std::size_t offset_scalars)
 {
     switch (components) {
-    case 1u:
-        return aliasArray<::vsg::floatArray, float>(std::move(values), vertex_count, offset_scalars);
-    case 2u:
-        return aliasArray<::vsg::vec2Array, float>(std::move(values), vertex_count, offset_scalars);
-    case 3u:
-        return aliasArray<::vsg::vec3Array, float>(std::move(values), vertex_count, offset_scalars);
-    default:
-        return aliasArray<::vsg::vec4Array, float>(std::move(values), vertex_count, offset_scalars);
+    case 1u: return aliasArray<::vsg::floatArray, float>(std::move(values), vertex_count, offset_scalars);
+    case 2u: return aliasArray<::vsg::vec2Array, float>(std::move(values), vertex_count, offset_scalars);
+    case 3u: return aliasArray<::vsg::vec3Array, float>(std::move(values), vertex_count, offset_scalars);
+    default: return aliasArray<::vsg::vec4Array, float>(std::move(values), vertex_count, offset_scalars);
     }
 }
 
@@ -451,14 +433,14 @@ VkShaderStageFlagBits stageFlag(vn::graphics::ShaderStageType type)
     return VK_SHADER_STAGE_VERTEX_BIT;
 }
 
-std::uint64_t hashStateVariant(const vn::graphics::ShaderProgram* program, const vn::graphics::Material* material,
-                               const void* texture_resource, const vn::graphics::ResolvedRenderState& state,
-                               std::uint64_t layout)
+std::uint64_t hashStateVariant(const vn::graphics::ShaderProgram*       program,
+                               const vn::graphics::Material*            material,
+                               const void*                              texture_resource,
+                               const vn::graphics::ResolvedRenderState& state,
+                               std::uint64_t                            layout)
 {
-    std::uint64_t h = kHashSeed;
-    const auto    mix_ptr = [&](const void* p) {
-        h = hashCombine(h, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(p)));
-    };
+    std::uint64_t h       = kHashSeed;
+    const auto    mix_ptr = [&](const void* p) { h = hashCombine(h, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(p))); };
     mix_ptr(program);
     if (program != nullptr) {
         // Program content is part of the variant identity: editing a retained
@@ -502,8 +484,7 @@ void applyOpaqueBlendForAttachments(RenderStateObjects& states, int colour_count
     opaque.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     opaque.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     opaque.alphaBlendOp        = VK_BLEND_OP_ADD;
-    opaque.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                            VK_COLOR_COMPONENT_A_BIT;
+    opaque.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     states.colorBlend->attachments.clear();
     for (int i = 0; i < colour_count; ++i) {
         states.colorBlend->attachments.push_back(opaque);

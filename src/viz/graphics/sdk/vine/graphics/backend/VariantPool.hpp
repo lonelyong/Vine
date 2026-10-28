@@ -36,8 +36,7 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief Variants indexed by pipeline identity, with a bounded number of them. */
-class VN_GRAPHICS_API VariantPool
-{
+class VN_GRAPHICS_API VariantPool {
   public:
     /** @brief Upper bound on the pool, matching the program cache the existing implementation retains. */
     static constexpr std::size_t kDefaultCapacity = 65;
@@ -45,15 +44,14 @@ class VN_GRAPHICS_API VariantPool
     /** @brief What a lookup did. */
     enum class Action : std::uint8_t
     {
-        Created,  ///< No variant had this identity: a compile is needed.
-        Reused,   ///< A variant with this identity exists: bind it.
+        Created, // No variant had this identity: a compile is needed.
+        Reused,  // A variant with this identity exists: bind it.
     };
 
     /** @brief The answer of @ref acquire. */
-    struct Lookup
-    {
-        Action        action{Action::Created};  ///< Whether to compile or to reuse.
-        std::uint64_t id{0};                    ///< The variant's id (see @ref contains / @ref keyOf).
+    struct Lookup {
+        Action        action{ Action::Created }; // Whether to compile or to reuse.
+        std::uint64_t id{ 0 };                   // The variant's id (see @ref contains / @ref keyOf).
     };
 
   public:
@@ -63,7 +61,7 @@ class VN_GRAPHICS_API VariantPool
      */
     explicit VariantPool(std::size_t capacity = kDefaultCapacity);
 
-    VariantPool(const VariantPool&) = delete;
+    VariantPool(const VariantPool&)            = delete;
     VariantPool& operator=(const VariantPool&) = delete;
 
   public:
@@ -109,20 +107,19 @@ class VN_GRAPHICS_API VariantPool
     void clear() noexcept;
 
   private:
-    struct Entry
-    {
-        PipelineKey   key;  ///< The identity this variant was compiled for.
-        std::uint64_t id;   ///< The id handed out (monotonic, never reused, so stale ids cannot alias).
+    struct Entry {
+        PipelineKey   key; // The identity this variant was compiled for.
+        std::uint64_t id;  // The id handed out (monotonic, never reused, so stale ids cannot alias).
     };
 
-    std::size_t                                                  capacity_;
-    std::uint64_t                                                next_id_{1};
-    std::list<Entry>                                             order_;  ///< FIFO order (insertion).
+    std::size_t                                                                  capacity_;
+    std::uint64_t                                                                next_id_{ 1 };
+    std::list<Entry>                                                             order_; // FIFO order (insertion).
     std::unordered_map<PipelineKey, std::list<Entry>::iterator, PipelineKeyHash> index_;
     std::unordered_map<std::uint64_t, std::list<Entry>::iterator>                by_id_;
-    std::uint64_t                                                created_{0};
-    std::uint64_t                                                reused_{0};
-    std::uint64_t                                                evictions_{0};
+    std::uint64_t                                                                created_{ 0 };
+    std::uint64_t                                                                reused_{ 0 };
+    std::uint64_t                                                                evictions_{ 0 };
 };
 
 VN_GRAPHICSBACKEND_NS_END

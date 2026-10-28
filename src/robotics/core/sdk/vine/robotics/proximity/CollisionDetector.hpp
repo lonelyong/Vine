@@ -79,8 +79,7 @@ class CollisionDetector {
      * @param state The scene state.
      * @return The query result.
      */
-    CollisionResult checkCollision(const CollisionDetector& other, const CollisionRequest& request,
-                                   const kinematics::State& state) const
+    CollisionResult checkCollision(const CollisionDetector& other, const CollisionRequest& request, const kinematics::State& state) const
     {
         return doCheckCollision(other, request, state);
     }
@@ -242,8 +241,7 @@ class CollisionDetector {
      * @param state The scene state.
      * @return The query result.
      */
-    virtual CollisionResult doCheckCollision(const CollisionRequest& request,
-                                             const kinematics::State& state) const = 0;
+    virtual CollisionResult doCheckCollision(const CollisionRequest& request, const kinematics::State& state) const = 0;
 
     /**
      * @brief Runs the engine-side query against another detector's bodies.
@@ -253,8 +251,7 @@ class CollisionDetector {
      * @param state The scene state.
      * @return The query result.
      */
-    virtual CollisionResult doCheckCollision(const CollisionDetector& other, const CollisionRequest& request,
-                                             const kinematics::State& state) const = 0;
+    virtual CollisionResult doCheckCollision(const CollisionDetector& other, const CollisionRequest& request, const kinematics::State& state) const = 0;
 
   protected:
     /// beginUpdate() nesting depth; structures are rebuilt when it reaches zero.

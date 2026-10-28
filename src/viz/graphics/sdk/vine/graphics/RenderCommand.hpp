@@ -2,8 +2,8 @@
 #include "graphics_global.hpp"
 
 #include <vine/intrusive_ptr.hpp>
-#include <vine/raw_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "Geometry.hpp"
 #include "Material.hpp"
@@ -29,7 +29,7 @@ struct VN_GRAPHICS_API RenderCommand {
     GeometryPtr geometry;
 
     /** Which of the geometry's primitives this command draws (its index, see Geometry::primitive). */
-    std::uint32_t primitive_index{0};
+    std::uint32_t primitive_index{ 0 };
 
     /** Material to use (an asset, or an instance over one - see MaterialBase). */
     MaterialBasePtr material;
@@ -113,10 +113,10 @@ struct VN_GRAPHICS_API RenderCommand {
     BufferSlice<float> instance_transforms;
 
     /** The first instance drawn from @ref instance_transforms (the primitive slice's start). */
-    std::uint32_t first_instance{0};
+    std::uint32_t first_instance{ 0 };
 
     /** How many instances this command draws (0 = a plain draw; an instanced primitive uses 1..N). */
-    std::uint32_t instance_count{0};
+    std::uint32_t instance_count{ 0 };
 
     /** @brief Default constructor. */
     RenderCommand() = default;
@@ -128,8 +128,7 @@ struct VN_GRAPHICS_API RenderCommand {
      * @param model         World-space model matrix.
      * @param primitive_index Which of @p g's primitives this command draws.
      */
-    RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model,
-                  std::uint32_t primitive_index = 0);
+    RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model, std::uint32_t primitive_index = 0);
 
     /** @brief Gets the primitive this command draws (null when the geometry no longer has it).
      *

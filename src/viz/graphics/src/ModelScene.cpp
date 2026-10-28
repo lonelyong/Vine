@@ -47,10 +47,9 @@ namespace
  *   and the scene graph it is building forbids cycles anyway (see Group::addChild) - so the loop is cut at the
  *   second visit and counted.
  */
-struct Conversion
-{
-    const vn::geometry::Model& model;
-    ModelScene&                scene;
+struct Conversion {
+    const vn::geometry::Model&                                     model;
+    ModelScene&                                                    scene;
     std::unordered_map<const vn::geometry::Material*, MaterialPtr> materials;
     std::vector<bool>                                              on_path;
 
@@ -62,7 +61,7 @@ struct Conversion
             return NodePtr();
         }
         const vn::geometry::Model::Node& source = model.nodes()[index];
-        on_path[index] = true;
+        on_path[index]                          = true;
 
         intrusive_ptr<Group> group;
         if (source.transform.isIdentity()) {
@@ -157,7 +156,8 @@ intrusive_ptr<Material> materialFrom(const vn::geometry::Material& material)
     converted->setName(material.name());
 
     switch (material.materialType()) {
-    case vn::geometry::MaterialType::Color: {
+    case vn::geometry::MaterialType::Color:
+    {
         // A colour-only source has no highlight of its own: the colour IS the material, and fully rough means the
         // engine adds no gloss nobody authored (graphics-material.md §3.6).
         const Colorf base = static_cast<const vn::geometry::ColorMaterial&>(material).color();
@@ -166,7 +166,8 @@ intrusive_ptr<Material> materialFrom(const vn::geometry::Material& material)
         converted->setRoughness(1.0F);
         break;
     }
-    case vn::geometry::MaterialType::Phong: {
+    case vn::geometry::MaterialType::Phong:
+    {
         // THE FIXED TABLE (graphics-material.md §3.6) - the one place Phong exists at all:
         // - the diffuse reflectance is the base colour;
         // - the exponent becomes the roughness through the standard mapping, so the highlight keeps its width;
@@ -182,7 +183,8 @@ intrusive_ptr<Material> materialFrom(const vn::geometry::Material& material)
         converted->setMetallic(std::clamp(peak * std::clamp(specular.a, 0.0F, 1.0F), 0.0F, 1.0F));
         break;
     }
-    case vn::geometry::MaterialType::Pbr: {
+    case vn::geometry::MaterialType::Pbr:
+    {
         // Field for field, with no approximation: the source already speaks the engine's vocabulary. Opacity stays
         // the LEAF's (a shared material's alpha would make every drawable that uses it translucent), which the
         // caller applies.

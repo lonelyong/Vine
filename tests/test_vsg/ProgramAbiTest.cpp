@@ -78,10 +78,8 @@ ProgramAbi scanScreen(const ShaderProgram& program, std::vector<std::string_view
 /// @brief Gets the binding at (set, binding), or null when the text declares none there.
 const AbiBinding* at(const ProgramAbi& abi, std::uint32_t set, std::uint32_t binding)
 {
-    for (const AbiBinding& entry : abi.bindings)
-    {
-        if (entry.set == set && entry.binding == binding)
-        {
+    for (const AbiBinding& entry : abi.bindings) {
+        if (entry.set == set && entry.binding == binding) {
             return &entry;
         }
     }
@@ -89,8 +87,7 @@ const AbiBinding* at(const ProgramAbi& abi, std::uint32_t set, std::uint32_t bin
 }
 
 /// @brief Asserts a uniform block at (set, binding): its role, its stage, its std140 size and its layout.
-void expectBlock(const ProgramAbi& abi, std::uint32_t set, std::uint32_t binding, AbiBlockRole role,
-                 std::uint32_t stages, std::uint32_t size)
+void expectBlock(const ProgramAbi& abi, std::uint32_t set, std::uint32_t binding, AbiBlockRole role, std::uint32_t stages, std::uint32_t size)
 {
     const AbiBinding* entry = at(abi, set, binding);
     ASSERT_NE(entry, nullptr) << "set " << set << " binding " << binding;
@@ -102,8 +99,7 @@ void expectBlock(const ProgramAbi& abi, std::uint32_t set, std::uint32_t binding
 }
 
 /// @brief Asserts a sampler at (set, binding): its kind, its stage and its declared name.
-void expectSampler(const ProgramAbi& abi, std::uint32_t set, std::uint32_t binding, AbiDescriptorKind kind,
-                   std::uint32_t stages, const char* name)
+void expectSampler(const ProgramAbi& abi, std::uint32_t set, std::uint32_t binding, AbiDescriptorKind kind, std::uint32_t stages, const char* name)
 {
     const AbiBinding* entry = at(abi, set, binding);
     ASSERT_NE(entry, nullptr) << "set " << set << " binding " << binding;
@@ -113,7 +109,7 @@ void expectSampler(const ProgramAbi& abi, std::uint32_t set, std::uint32_t bindi
     EXPECT_EQ(entry->name, name);
 }
 
-}  // namespace
+} // namespace
 
 TEST(ProgramAbiTest, TheForwardProgramDeclaresTheContentAbiTheExistingBackendServes)
 {
@@ -183,14 +179,13 @@ TEST(ProgramAbiTest, TheDiffuseSamplerIsTheVariantsFactAndAVariantThatCannotComp
 
 TEST(ProgramAbiTest, TheFlatForwardProgramIsTheSameAbiAndItsDefineComesFromTheText)
 {
-    const ProgramAbi flat = scan(*vn::graphics::flatForwardProgram());
+    const ProgramAbi flat   = scan(*vn::graphics::flatForwardProgram());
     const ProgramAbi smooth = scan(*vn::graphics::forwardProgram());
     EXPECT_EQ(flat.bindings.size(), smooth.bindings.size());
 
     // `VN_FLAT` is a define the TEXT carries (`#define VN_FLAT 1`), not one the source imports: the
     // compiler drops a define the source never asks for, so the two must not be conflated.
-    const std::vector<std::string> expected = { "VN_INSTANCED", "VN_TEXCOORD_CUBE", "VN_TEXCOORD_UV",
-                                                "VN_TEXTURED", "VN_VERTEX_COLOR" };
+    const std::vector<std::string> expected = { "VN_INSTANCED", "VN_TEXCOORD_CUBE", "VN_TEXCOORD_UV", "VN_TEXTURED", "VN_VERTEX_COLOR" };
     EXPECT_EQ(flat.import_defines, expected);
     EXPECT_EQ(std::find(expected.begin(), expected.end(), "VN_FLAT"), expected.end());
 }
@@ -215,7 +210,7 @@ TEST(ProgramAbiTest, EveryModeOfTheForwardProgramDeclaresTheSameAbi)
 
 TEST(ProgramAbiTest, ATextsOwnDefineIsInEffectAndAForeignDeclarationsPositionSaysNothing)
 {
-    constexpr const char* kOwnVertex = R"(#version 450
+    constexpr const char* kOwnVertex   = R"(#version 450
 layout(location = 0) in vec3 position;
 void main() { gl_Position = vec4(position, 1.0); }
 )";
@@ -260,7 +255,7 @@ TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndT
     // The lights are a BLOCK, not a push: the full-screen program declares no push range at all (a host's own
     // screen program may declare one - see ContentPipeline::Settings).
     EXPECT_TRUE(plain.pushes.empty());
-    EXPECT_EQ(at(plain, 0U, 7U), nullptr);   // the unshadowed variant declares no map and no block
+    EXPECT_EQ(at(plain, 0U, 7U), nullptr); // the unshadowed variant declares no map and no block
 
     const auto shadowed_program = vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(shadowed_program, nullptr) << "the shadow markers must still be in the shipped source";
@@ -289,8 +284,7 @@ TEST(ProgramAbiTest, TheScreenProgramsBindTheAttachmentTheirFactoryNamed)
     ASSERT_NE(triangle_program, nullptr);
     ASSERT_NE(triangle_program->stage(0), nullptr);
     ProgramAbi triangle;
-    ASSERT_EQ(scanProgramAbi(triangle_program->stage(0)->source.as_std_str(), std::string_view{}, {}, triangle),
-              FactMiss::None);
+    ASSERT_EQ(scanProgramAbi(triangle_program->stage(0)->source.as_std_str(), std::string_view{}, {}, triangle), FactMiss::None);
     EXPECT_TRUE(triangle.bindings.empty());
     EXPECT_TRUE(triangle.pushes.empty());
 }
@@ -317,10 +311,10 @@ TEST(ProgramAbiTest, TheGbufferAndSkyboxProgramsDeclareTheSlotsTheirShadingReads
 
     // The sky: its map sits in the same slot the content stages keep for the material's texture, and the
     // sampler KIND follows the texcoord width - including "no kind at all", which is the pair branch.
-    const auto skybox = vn::graphics::skyboxProgram();
-    const ProgramAbi cube = scan(*skybox, { "VN_TEXCOORD_CUBE" });
+    const auto       skybox = vn::graphics::skyboxProgram();
+    const ProgramAbi cube   = scan(*skybox, { "VN_TEXCOORD_CUBE" });
     expectSampler(cube, 0U, 1U, AbiDescriptorKind::SamplerCube, kFragment, "vn_skyMap");
-    EXPECT_EQ(cube.bindings.size(), 1U);   // no material, no lights: nothing is lit
+    EXPECT_EQ(cube.bindings.size(), 1U); // no material, no lights: nothing is lit
 
     const ProgramAbi pair = scan(*skybox);
     expectSampler(pair, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "vn_skyMap");
@@ -332,7 +326,7 @@ TEST(ProgramAbiTest, TheRewriteShapeIsServedByNameNotByPosition)
 {
     // The rewrite's own arrangement: the five L1 blocks in set 0 at bindings 0..4 and the pass' samples in
     // set 1. Nothing about it is special to the scan - the roles come from the type names.
-    constexpr const char* kOwnVertex = R"(#version 450
+    constexpr const char* kOwnVertex   = R"(#version 450
 layout(location = 0) in vec3 position;
 layout(set = 0, binding = 0, std140) uniform VineViewBlock
 {
@@ -383,16 +377,16 @@ TEST(ProgramAbiTest, ContradictionsAndUnreadableConditionalsAreRefused)
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock { vec4 ambient; } material;
 void main() {}
 )";
-        constexpr const char* kVertex = R"(#version 450
+        constexpr const char* kVertex   = R"(#version 450
 layout(set = 0, binding = 0) uniform sampler2D not_a_block;
 void main() {}
 )";
-        ProgramAbi abi;
+        ProgramAbi            abi;
         EXPECT_EQ(scanProgramAbi(kVertex, kFragment, {}, abi), FactMiss::Malformed);
     }
     {
         // One (set, binding) cannot be two differently sized blocks either.
-        constexpr const char* kVertex = R"(#version 450
+        constexpr const char* kVertex   = R"(#version 450
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock { vec4 ambient; } material;
 void main() {}
 )";
@@ -400,25 +394,25 @@ void main() {}
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock { vec4 ambient; vec4 diffuse; } material;
 void main() {}
 )";
-        ProgramAbi abi;
+        ProgramAbi            abi;
         EXPECT_EQ(scanProgramAbi(kVertex, kFragment, {}, abi), FactMiss::Malformed);
     }
     {
         // A binding value this scan cannot read is not a binding to guess at.
         constexpr const char* kFragment = "#version 450\nlayout(set = 0, binding = nope) uniform sampler2D a;\nvoid main() {}\n";
-        ProgramAbi abi;
+        ProgramAbi            abi;
         EXPECT_EQ(scanProgramAbi(kEmpty, kFragment, {}, abi), FactMiss::Malformed);
     }
     {
         // A conditional expression outside the scan's grammar (no `defined`) is reported, not evaluated.
         constexpr const char* kFragment = "#version 450\n#if VN_SOMETHING\nvoid main() {}\n#endif\n";
-        ProgramAbi abi;
+        ProgramAbi            abi;
         EXPECT_EQ(scanProgramAbi(kEmpty, kFragment, {}, abi), FactMiss::Malformed);
     }
     {
         // An unterminated conditional leaves the text's shape unknown.
         constexpr const char* kFragment = "#version 450\n#ifdef VN_X\nvoid main() {}\n";
-        ProgramAbi abi;
+        ProgramAbi            abi;
         EXPECT_EQ(scanProgramAbi(kEmpty, kFragment, {}, abi), FactMiss::Malformed);
     }
 }
@@ -429,7 +423,7 @@ TEST(ProgramAbiTest, ASamplerWithoutABindingIsNotAFactBecauseTheTextStatesNone)
     // it is not a declared binding - the serving layer must not invent a slot for it either.
     constexpr const char* kEmpty    = "#version 450\nvoid main() {}\n";
     constexpr const char* kFragment = "#version 450\nuniform sampler2D unnamed;\nvoid main() {}\n";
-    ProgramAbi             abi;
+    ProgramAbi            abi;
     ASSERT_EQ(scanProgramAbi(kEmpty, kFragment, {}, abi), FactMiss::None);
     EXPECT_TRUE(abi.bindings.empty());
 }
@@ -438,7 +432,7 @@ TEST(ProgramAbiTest, ADriftedBlockSizeIsVisibleAsAFact)
 {
     // The same block the L1 header pins at 64 bytes, in a text that grew a member: the scan reports what the
     // TEXT says (80), so the layer that binds the L1 bytes can see the mismatch instead of assuming it away.
-    constexpr const char* kEmpty = "#version 450\nvoid main() {}\n";
+    constexpr const char* kEmpty    = "#version 450\nvoid main() {}\n";
     constexpr const char* kFragment = R"(#version 450
 layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 {
@@ -446,7 +440,7 @@ layout(set = 0, binding = 0, std140) uniform VineMaterialBlock
 } material;
 void main() {}
 )";
-    ProgramAbi abi;
+    ProgramAbi            abi;
     ASSERT_EQ(scanProgramAbi(kEmpty, kFragment, {}, abi), FactMiss::None);
     const AbiBinding* material = at(abi, 0U, 0U);
     ASSERT_NE(material, nullptr);

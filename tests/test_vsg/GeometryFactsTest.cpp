@@ -34,30 +34,28 @@
 #include "TestGeometryBuilders.hpp"
 
 using vn::graphics::Geometry;
+using vn::graphics::backend::StreamKind;
 using vn::test::setPrimitiveIndices;
 using vn::vsg::buildGeometryFacts;
-using vn::vsg::channelsMatchLayout;
 using vn::vsg::ChannelFacts;
+using vn::vsg::channelsMatchLayout;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
-using vn::graphics::backend::StreamKind;
 
 namespace
 {
 
 /// @brief Three vertices of three scalars each, plus the triangle's indices.
-struct Content
-{
-    vn::intrusive_ptr<const vn::Buffer<float>>     positions = vn::intrusive_ptr<const vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
-    vn::intrusive_ptr<const vn::Buffer<float>>     normals = vn::intrusive_ptr<const vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
+struct Content {
+    vn::intrusive_ptr<const vn::Buffer<float>> positions =
+        vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
+    vn::intrusive_ptr<const vn::Buffer<float>> normals =
+        vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }));
     vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices =
-        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-            new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
+        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U }));
 };
 
-}  // namespace
+} // namespace
 
 TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
 {
@@ -68,10 +66,10 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     setPrimitiveIndices(geometry, 0U, content.indices);
     geometry.setRevision(4U);
 
-    GeometryFacts                facts;
-    std::vector<ChannelFacts>   storage;
+    GeometryFacts                        facts;
+    std::vector<ChannelFacts>            storage;
     std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
-    std::vector<vn::vsg::PrimitiveFacts>  primitives;
+    std::vector<vn::vsg::PrimitiveFacts> primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, primitives), FactMiss::None);
 
     EXPECT_EQ(facts.geometry, &geometry);
@@ -107,22 +105,20 @@ TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
 
     // A texcoord (the reserved location 8) and a custom channel at 4: the entry's order is fixed by the ABI,
     // not by the map's iteration order, because the entry's order IS the binding order.
-    const vn::graphics::AttributeChannel texcoords = vn::graphics::AttributeChannel::packed(
-        std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }, 2U);
+    const vn::graphics::AttributeChannel texcoords = vn::graphics::AttributeChannel::packed(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F }, 2U);
     geometry.addBuffer(8U, texcoords);
-    const vn::graphics::AttributeChannel custom = vn::graphics::AttributeChannel::packed(
-        std::vector<float>{ 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F }, 2U);
+    const vn::graphics::AttributeChannel custom = vn::graphics::AttributeChannel::packed(std::vector<float>{ 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F }, 2U);
     geometry.addBuffer(4U, custom);
 
-    GeometryFacts             facts;
-    std::vector<ChannelFacts>   storage;
+    GeometryFacts                        facts;
+    std::vector<ChannelFacts>            storage;
     std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.channels.size(), 3U);
-    EXPECT_EQ(facts.channels[0].key.location, 0U);  // positions
-    EXPECT_EQ(facts.channels[1].key.location, 8U);  // the reserved texcoord slot
-    EXPECT_EQ(facts.channels[2].key.location, 4U);  // then the customer
+    EXPECT_EQ(facts.channels[0].key.location, 0U); // positions
+    EXPECT_EQ(facts.channels[1].key.location, 8U); // the reserved texcoord slot
+    EXPECT_EQ(facts.channels[2].key.location, 4U); // then the customer
     EXPECT_EQ(facts.layout.canonical_mask, 0x1U | 0x8U);
     ASSERT_EQ(facts.layout.custom_locations.size(), 1U);
     EXPECT_EQ(facts.layout.custom_locations[0], 4U);
@@ -136,8 +132,8 @@ TEST(GeometryFactsTest, AGeometryWithoutPositionsCannotBeDescribed)
     without_positions.setNormals(content.normals);
     setPrimitiveIndices(without_positions, 0U, content.indices);
 
-    GeometryFacts             facts;
-    std::vector<ChannelFacts>   storage;
+    GeometryFacts                        facts;
+    std::vector<ChannelFacts>            storage;
     std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
     EXPECT_EQ(buildGeometryFacts(without_positions, facts, storage, storage_primitives), FactMiss::Malformed);
 
@@ -160,14 +156,13 @@ TEST(GeometryFactsTest, AGeometryWithoutIndicesIsDrawnFromItsVertexStreams)
     geometry.setNormals(content.normals);
     geometry.setRevision(2U);
 
-    GeometryFacts             facts;
-    std::vector<ChannelFacts>   storage;
+    GeometryFacts                        facts;
+    std::vector<ChannelFacts>            storage;
     std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.primitives.size(), 1U);
-    EXPECT_FALSE(facts.primitives[0].indices.has_value())
-        << "there is no index stream, and that is a fact about the DRAW";
+    EXPECT_FALSE(facts.primitives[0].indices.has_value()) << "there is no index stream, and that is a fact about the DRAW";
     EXPECT_EQ(facts.primitives[0].index_count, 0U);
     EXPECT_EQ(facts.primitives[0].first_index, 0U);
     // The count the draw carries is the position stream's own vertex count (three scalars per vertex here).
@@ -180,14 +175,13 @@ TEST(GeometryFactsTest, ANonIndexedSliceCountsItsOwnVertices)
     // Six vertices in the buffer, the geometry reading the last three: the draw must assemble three vertices,
     // not six - the slice IS the stream (see the file note).
     vn::intrusive_ptr<const vn::Buffer<float>> shared(new vn::Buffer<float>(
-        std::vector<float>{ 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F,
-                            0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
+        std::vector<float>{ 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
 
     Geometry geometry;
     geometry.setPositions(shared, /*first_vertex*/ 3U, /*vertex_count*/ 3U);
 
-    GeometryFacts             facts;
-    std::vector<ChannelFacts>   storage;
+    GeometryFacts                        facts;
+    std::vector<ChannelFacts>            storage;
     std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
@@ -201,16 +195,15 @@ TEST(GeometryFactsTest, ASlicedChannelUploadsItsOwnSegment)
 {
     // A shared vertex buffer of six vertices; the channel reads the LAST three of them.
     vn::intrusive_ptr<const vn::Buffer<float>> shared(new vn::Buffer<float>(
-        std::vector<float>{ 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F,
-                            0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
-    Content content;
+        std::vector<float>{ 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 9.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F }));
+    Content                                    content;
 
     Geometry geometry;
     geometry.setPositions(shared, /*first_vertex*/ 3U, /*vertex_count*/ 3U);
     setPrimitiveIndices(geometry, 0U, content.indices);
 
-    GeometryFacts             facts;
-    std::vector<ChannelFacts>   storage;
+    GeometryFacts                        facts;
+    std::vector<ChannelFacts>            storage;
     std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
@@ -241,11 +234,11 @@ TEST(GeometryFactsTest, TwoGeometriesOverOneIndexArenaShareOneStreamIdentity)
     second.setPositions(content.positions);
     setPrimitiveIndices(second, 0U, content.indices, /*first_index*/ 0U, /*index_count*/ 3U);
 
-    GeometryFacts             first_facts;
-    GeometryFacts             second_facts;
-    std::vector<ChannelFacts>   storage_a;
+    GeometryFacts                        first_facts;
+    GeometryFacts                        second_facts;
+    std::vector<ChannelFacts>            storage_a;
     std::vector<vn::vsg::PrimitiveFacts> storage_a_primitives;
-    std::vector<ChannelFacts>   storage_b;
+    std::vector<ChannelFacts>            storage_b;
     std::vector<vn::vsg::PrimitiveFacts> storage_b_primitives;
     ASSERT_EQ(buildGeometryFacts(first, first_facts, storage_a, storage_a_primitives), FactMiss::None);
     ASSERT_EQ(buildGeometryFacts(second, second_facts, storage_b, storage_b_primitives), FactMiss::None);
@@ -280,7 +273,7 @@ TEST(GeometryFactsTest, AMultiPrimitiveGeometryDescribesOneRowPerDraw)
 
     // One index arena sliced three ways: triangles (all three indices), edges (the last two), points
     // (non-indexed).
-    const auto arena = content.indices;   // six indices; the third slice reuses it with a short count
+    const auto              arena = content.indices; // six indices; the third slice reuses it with a short count
     vn::graphics::Primitive triangles;
     triangles.topology = vn::graphics::Topology::Triangles;
     triangles.indices  = vn::graphics::Primitive::IndexSpan::slice(arena, 0U, 3U);
@@ -288,8 +281,8 @@ TEST(GeometryFactsTest, AMultiPrimitiveGeometryDescribesOneRowPerDraw)
     edges.topology = vn::graphics::Topology::Lines;
     edges.indices  = vn::graphics::Primitive::IndexSpan::slice(arena, 1U, 2U);
     vn::graphics::Primitive points;
-    points.topology = vn::graphics::Topology::Points;   // non-indexed: draws the vertex streams themselves
-    geometry.setPrimitive(0U, std::move(triangles));   // the one 'setPositions' created
+    points.topology = vn::graphics::Topology::Points; // non-indexed: draws the vertex streams themselves
+    geometry.setPrimitive(0U, std::move(triangles));  // the one 'setPositions' created
     geometry.addPrimitive(std::move(edges));
     geometry.addPrimitive(std::move(points));
 

@@ -5,8 +5,8 @@
 #include <sstream>
 #include <string>
 
-#include <vine/intrusive_ptr.hpp>
 #include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/io/Stream.hpp>
 #include <vine/math/Vector3.hpp>
@@ -47,7 +47,7 @@ vn::intrusive_ptr<IndexedTriangleMesh> makeTriangle()
  */
 std::string pull(DataSource& source)
 {
-    std::string             bytes;
+    std::string              bytes;
     std::array<std::byte, 7> chunk{};
     for (;;) {
         const std::size_t got = source.read(chunk);

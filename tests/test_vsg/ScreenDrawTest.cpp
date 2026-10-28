@@ -47,7 +47,8 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/graphics/backend/PixelProbe.hpp>
+#include <vine/graphics/backend/Streams.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
@@ -56,8 +57,7 @@
 #include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/graphics/backend/PixelProbe.hpp>
-#include <vine/graphics/backend/Streams.hpp>
+#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 ///
@@ -65,26 +65,29 @@
 /// hand over the same bytes, so the evidence runs through the same door.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
 {
-    return array == nullptr
-               ? std::span<const float>{}
-               : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(reinterpret_cast<const float*>(array->data()), array->size() * 3U);
 }
 
 /// @brief The scalars of a float array, as the upload layer takes them.
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const float>{}
-                            : std::span<const float>(array->data(), array->size());
+    return array == nullptr ? std::span<const float>{} : std::span<const float>(array->data(), array->size());
 }
 
 /// @brief The indices of an index array, as the upload layer takes them.
 inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
 {
-    return array == nullptr ? std::span<const std::uint32_t>{}
-                            : std::span<const std::uint32_t>(array->data(), array->size());
+    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
 using vn::graphics::RenderTarget;
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::PixelProbe;
+using vn::graphics::backend::Rgba8;
+using vn::graphics::backend::StateRegistry;
+using vn::graphics::backend::StreamKey;
+using vn::graphics::backend::StreamKind;
+using vn::graphics::backend::VariantPool;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::buildScreenProgramFacts;
@@ -95,13 +98,6 @@ using vn::vsg::OffscreenTarget;
 using vn::vsg::ProgramFacts;
 using vn::vsg::StreamUploads;
 using vn::vsg::ViewportRect;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
-using vn::graphics::backend::VariantPool;
 
 namespace
 {
@@ -136,9 +132,9 @@ bool isContentGreen(const Rgba8& pixel)
 ContentPipeline::Shaders mrtShaders()
 {
     ContentPipeline::Shaders shaders;
-    shaders.vertex = "#version 450\n"
-                     "layout(location = 0) in vec3 position;\n"
-                     "void main() { gl_Position = vec4(position.x, position.y, 0.5, 1.0); }\n";
+    shaders.vertex   = "#version 450\n"
+                       "layout(location = 0) in vec3 position;\n"
+                       "void main() { gl_Position = vec4(position.x, position.y, 0.5, 1.0); }\n";
     shaders.fragment = "#version 450\n"
                        "layout(location = 0) out vec4 first;\n"
                        "layout(location = 1) out vec4 second;\n"
@@ -153,8 +149,7 @@ std::vector<std::byte> zeroedBlock(std::size_t bytes)
 }
 
 /// @brief The device, both targets and one full-screen layer, all built from one real device.
-class Fixture
-{
+class Fixture {
   public:
     /// @param source_attachments Colour attachments the source offers (1 = cleared, 2 = painted by content).
     /// @param sampled_attachment  The attachment the screen program samples: it names the BINDING, which the
@@ -167,8 +162,8 @@ class Fixture
         }
 
         OffscreenTarget::TargetLayout source_layout;
-        source_layout.width   = kSize;
-        source_layout.height  = kSize;
+        source_layout.width       = kSize;
+        source_layout.height      = kSize;
         source_layout.clear.color = true;
         for (std::size_t index = 0; index < 4U; ++index) {
             source_layout.clear.color_value[index] = kSourceClear[index];
@@ -179,9 +174,11 @@ class Fixture
             return false;
         }
 
-        OffscreenTarget::Layout destination_layout{ kSize, kSize,
-                                                    { kDestinationClear[0], kDestinationClear[1],
-                                                      kDestinationClear[2], kDestinationClear[3] } };
+        OffscreenTarget::Layout destination_layout{
+            kSize,
+            kSize,
+            { kDestinationClear[0], kDestinationClear[1], kDestinationClear[2], kDestinationClear[3] }
+        };
         destination = OffscreenTarget::create(created.device, destination_layout);
         if (destination == nullptr) {
             return false;
@@ -204,9 +201,7 @@ class Fixture
         program_identity = facts.program;
         program_revision = facts.revision;
 
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool,
-                                                 vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(),
-                                                                                                 created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         if (viewer == nullptr) {
@@ -234,16 +229,17 @@ class Fixture
             if (view == nullptr) {
                 return {};
             }
-            descriptors.push_back(::vsg::DescriptorImage::create(
-                ::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
-                attachment, 0U, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            descriptors.push_back(
+                ::vsg::DescriptorImage::create(::vsg::ImageInfoList{ ::vsg::ImageInfo::create(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) },
+                                               attachment,
+                                               0U,
+                                               VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
         }
         auto set = ::vsg::DescriptorSet::create(set_layout, descriptors);
         if (set == nullptr) {
             return {};
         }
-        return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                               pipelines->layoutFor(source->colorAttachmentCount(), 0U), 0U, set);
+        return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines->layoutFor(source->colorAttachmentCount(), 0U), 0U, set);
     }
 
     /// @brief Records the full-screen draw of the source into the destination, inside @p viewport.
@@ -260,7 +256,7 @@ class Fixture
         full_screen.key.revision              = program_revision;
         full_screen.key.compatibility.samples = 1U;
         full_screen.key.sampled_color_count   = source->colorAttachmentCount();
-        full_screen.dynamic.depth             = vn::graphics::DepthMode::Disabled;  // a composite on top
+        full_screen.dynamic.depth             = vn::graphics::DepthMode::Disabled; // a composite on top
         full_screen.samplers                  = samplers;
         full_screen.viewport                  = viewport;
         full_screen.color_attachments         = destination->colorAttachmentCount();
@@ -308,13 +304,12 @@ class Fixture
         }
 
         ContentDraw::Draw draw;
-        draw.key.program                      = &content_program;
-        draw.key.revision                     = 1U;
-        draw.key.vertex_layout.canonical_mask = 0x1U;
-        draw.key.compatibility.samples        = 1U;
+        draw.key.program                                             = &content_program;
+        draw.key.revision                                            = 1U;
+        draw.key.vertex_layout.canonical_mask                        = 0x1U;
+        draw.key.compatibility.samples                               = 1U;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
-            content_descriptors->bind(content_pipelines->layout(),
-                                      BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
+            content_descriptors->bind(content_pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
         };
         // The content program declares no blocks, so its pipeline layout declares no sets: there is no block
         // set to bind (a set the layout does not have is an invalid handle, not an empty bind).
@@ -325,7 +320,7 @@ class Fixture
         draw.index             = index_bind.bind;
         draw.viewport          = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) };
         draw.index_count       = 3U;
-        draw.color_attachments = 2U;  // the source's pass writes two attachments; the blend command covers both
+        draw.color_attachments = 2U; // the source's pass writes two attachments; the blend command covers both
 
         const auto content = content_recorder->record(*content_registry, draw);
         if (content == nullptr) {
@@ -365,8 +360,8 @@ class Fixture
         if (storage == nullptr) {
             return false;
         }
-        const ContentPipeline::Shaders        shader_pair = mrtShaders();
-        vn::vsg::ProgramAbi                 abi;
+        const ContentPipeline::Shaders shader_pair = mrtShaders();
+        vn::vsg::ProgramAbi            abi;
         if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
             return false;
         }
@@ -378,35 +373,36 @@ class Fixture
         const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
         ContentPipeline::Settings              settings;
-        settings.color_attachments = 2U;  // the source's pass writes two colour attachments
+        settings.color_attachments = 2U; // the source's pass writes two colour attachments
         content_pipelines          = ContentPipeline::create(abi,
-                                                            std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
-                                                            std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
-                                                            shader_pair, settings);
+                                                             std::span<const ContentPipeline::VertexBinding>(&binding, 1U),
+                                                             std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
+                                                             shader_pair,
+                                                             settings);
         if (content_pipelines == nullptr) {
             return false;
         }
 
         uploads          = std::make_unique<StreamUploads>();
-        content_recorder = std::make_unique<ContentDraw>(*content_pipelines, content_pool,
-                                                         vn::vsg::detail::fetchDynamicStateEntryPoints(
-                                                             created.device->vk(), created.instance->vk()));
+        content_recorder = std::make_unique<ContentDraw>(*content_pipelines,
+                                                         content_pool,
+                                                         vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         content_registry = std::make_unique<StateRegistry>(content_pool);
         return true;
     }
 
   public:
-    vn::vsg::DeviceResult             created;
-    std::unique_ptr<OffscreenTarget>    source;
-    std::unique_ptr<OffscreenTarget>    destination;
+    vn::vsg::DeviceResult                          created;
+    std::unique_ptr<OffscreenTarget>               source;
+    std::unique_ptr<OffscreenTarget>               destination;
     vn::intrusive_ptr<vn::graphics::ShaderProgram> program;
-    const void*                         program_identity{nullptr};
-    std::uint64_t                       program_revision{0};
-    std::unique_ptr<ContentPipeline>    pipelines;
-    VariantPool                         pool;
-    std::unique_ptr<ContentDraw>        recorder;
-    std::unique_ptr<StateRegistry>      registry;
-    ::vsg::ref_ptr<::vsg::Viewer>       viewer;
+    const void*                                    program_identity{ nullptr };
+    std::uint64_t                                  program_revision{ 0 };
+    std::unique_ptr<ContentPipeline>               pipelines;
+    VariantPool                                    pool;
+    std::unique_ptr<ContentDraw>                   recorder;
+    std::unique_ptr<StateRegistry>                 registry;
+    ::vsg::ref_ptr<::vsg::Viewer>                  viewer;
 
     std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> content_descriptors;
@@ -427,7 +423,7 @@ int Fixture::vertex_identity   = 0;
 int Fixture::index_identity    = 0;
 int Fixture::content_program   = 0;
 
-}  // namespace
+} // namespace
 
 TEST(ScreenDrawTest, TheShippedScreenCopyProgramLandsInsideTheViewportAndNowhereElse)
 {
@@ -451,19 +447,15 @@ TEST(ScreenDrawTest, TheShippedScreenCopyProgramLandsInsideTheViewportAndNowhere
 
     // Inside the rectangle: the source's picture, 1:1. Outside: the destination's clear, because a full-screen
     // draw covers its rectangle and nothing else.
-    const Rgba8 inside  = pixels.pixel(static_cast<int>(kPictureInPicture.x) + 8, static_cast<int>(kPictureInPicture.y) + 8);
-    const Rgba8 outside = pixels.pixel(2, 2);
-    const Rgba8 right_of_rectangle =
-        pixels.pixel(static_cast<int>(kPictureInPicture.x + kPictureInPicture.width) + 4, 12);
+    const Rgba8 inside             = pixels.pixel(static_cast<int>(kPictureInPicture.x) + 8, static_cast<int>(kPictureInPicture.y) + 8);
+    const Rgba8 outside            = pixels.pixel(2, 2);
+    const Rgba8 right_of_rectangle = pixels.pixel(static_cast<int>(kPictureInPicture.x + kPictureInPicture.width) + 4, 12);
 
-    EXPECT_TRUE(isSourceRed(inside))
-        << "the copy must land inside the viewport, got (" << static_cast<int>(inside.r) << ", "
-        << static_cast<int>(inside.g) << ", " << static_cast<int>(inside.b) << ")";
-    EXPECT_TRUE(isDestinationBlue(outside))
-        << "and the rest of the target keeps its own colour, got (" << static_cast<int>(outside.r) << ", "
-        << static_cast<int>(outside.g) << ", " << static_cast<int>(outside.b) << ")";
-    EXPECT_TRUE(isDestinationBlue(right_of_rectangle))
-        << "a full-screen triangle that ignored the rectangle would paint here too";
+    EXPECT_TRUE(isSourceRed(inside)) << "the copy must land inside the viewport, got (" << static_cast<int>(inside.r) << ", " << static_cast<int>(inside.g)
+                                     << ", " << static_cast<int>(inside.b) << ")";
+    EXPECT_TRUE(isDestinationBlue(outside)) << "and the rest of the target keeps its own colour, got (" << static_cast<int>(outside.r) << ", "
+                                            << static_cast<int>(outside.g) << ", " << static_cast<int>(outside.b) << ")";
+    EXPECT_TRUE(isDestinationBlue(right_of_rectangle)) << "a full-screen triangle that ignored the rectangle would paint here too";
 }
 
 TEST(ScreenDrawTest, TheBindingNamesTheAttachmentAndNotTheProgramsFirstOne)
@@ -478,8 +470,7 @@ TEST(ScreenDrawTest, TheBindingNamesTheAttachmentAndNotTheProgramsFirstOne)
     }
     ASSERT_TRUE(fixture.paintMrtSource()) << "the source's content pass must record";
 
-    const auto content =
-        fixture.draw(ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) });
+    const auto content = fixture.draw(ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) });
     ASSERT_NE(content, nullptr);
 
     const PixelProbe pixels = fixture.frame(content);
@@ -487,8 +478,7 @@ TEST(ScreenDrawTest, TheBindingNamesTheAttachmentAndNotTheProgramsFirstOne)
     ASSERT_EQ(fixture.source->colorAttachmentCount(), 2U);
 
     const Rgba8 centre = pixels.pixel(static_cast<int>(kSize / 2U), static_cast<int>(kSize / 2U));
-    EXPECT_TRUE(isContentGreen(centre))
-        << "binding 1 is attachment 1 (green), got (" << static_cast<int>(centre.r) << ", "
-        << static_cast<int>(centre.g) << ", " << static_cast<int>(centre.b) << ")";
+    EXPECT_TRUE(isContentGreen(centre)) << "binding 1 is attachment 1 (green), got (" << static_cast<int>(centre.r) << ", " << static_cast<int>(centre.g)
+                                        << ", " << static_cast<int>(centre.b) << ")";
     EXPECT_FALSE(isSourceRed(centre)) << "attachment 0's red here would mean the binding was ignored";
 }

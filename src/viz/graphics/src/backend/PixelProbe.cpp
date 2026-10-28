@@ -14,13 +14,11 @@ PixelProbe::PixelProbe(int width, int height, std::vector<std::uint8_t> pixels)
   : width_(width)
   , height_(height)
   , pixels_(std::move(pixels))
-{
-}
+{}
 
 bool PixelProbe::valid() const noexcept
 {
-    if (width_ <= 0 || height_ <= 0)
-    {
+    if (width_ <= 0 || height_ <= 0) {
         return false;
     }
     const auto expected = static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_) * 4u;
@@ -44,24 +42,20 @@ std::size_t PixelProbe::pixelCount() const noexcept
 
 Rgba8 PixelProbe::pixel(int x, int y) const noexcept
 {
-    if (!valid() || x < 0 || y < 0 || x >= width_ || y >= height_)
-    {
+    if (!valid() || x < 0 || y < 0 || x >= width_ || y >= height_) {
         return Rgba8{};
     }
-    const std::size_t offset =
-        (static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)) * 4u;
-    return Rgba8{pixels_[offset], pixels_[offset + 1], pixels_[offset + 2], pixels_[offset + 3]};
+    const std::size_t offset = (static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)) * 4u;
+    return Rgba8{ pixels_[offset], pixels_[offset + 1], pixels_[offset + 2], pixels_[offset + 3] };
 }
 
 std::size_t PixelProbe::nonBlackPixels() const noexcept
 {
-    std::size_t count = 0;
+    std::size_t       count  = 0;
     const std::size_t pixels = pixelCount();
-    for (std::size_t i = 0; i < pixels; ++i)
-    {
+    for (std::size_t i = 0; i < pixels; ++i) {
         const std::size_t offset = i * 4u;
-        if (pixels_[offset] != 0 || pixels_[offset + 1] != 0 || pixels_[offset + 2] != 0)
-        {
+        if (pixels_[offset] != 0 || pixels_[offset + 1] != 0 || pixels_[offset + 2] != 0) {
             ++count;
         }
     }
@@ -80,18 +74,14 @@ std::size_t PixelProbe::countMatching(const Rgba8& color, const vn::graphics::Vi
     int y0 = 0;
     int x1 = 0;
     int y1 = 0;
-    if (!clamped(rect, x0, y0, x1, y1))
-    {
+    if (!clamped(rect, x0, y0, x1, y1)) {
         return 0;
     }
 
     std::size_t count = 0;
-    for (int y = y0; y < y1; ++y)
-    {
-        for (int x = x0; x < x1; ++x)
-        {
-            if (pixel(x, y) == color)
-            {
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            if (pixel(x, y) == color) {
                 ++count;
             }
         }
@@ -105,18 +95,14 @@ std::size_t PixelProbe::countDifferingFrom(const Rgba8& color, const vn::graphic
     int y0 = 0;
     int x1 = 0;
     int y1 = 0;
-    if (!clamped(rect, x0, y0, x1, y1))
-    {
+    if (!clamped(rect, x0, y0, x1, y1)) {
         return 0;
     }
 
     std::size_t count = 0;
-    for (int y = y0; y < y1; ++y)
-    {
-        for (int x = x0; x < x1; ++x)
-        {
-            if (!(pixel(x, y) == color))
-            {
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            if (!(pixel(x, y) == color)) {
                 ++count;
             }
         }
@@ -127,12 +113,9 @@ std::size_t PixelProbe::countDifferingFrom(const Rgba8& color, const vn::graphic
 bool PixelProbe::wholeImageMatches(const Rgba8& color) const noexcept
 {
     const std::size_t pixels = pixelCount();
-    for (std::size_t i = 0; i < pixels; ++i)
-    {
+    for (std::size_t i = 0; i < pixels; ++i) {
         const std::size_t offset = i * 4u;
-        if (pixels_[offset] != color.r || pixels_[offset + 1] != color.g || pixels_[offset + 2] != color.b ||
-            pixels_[offset + 3] != color.a)
-        {
+        if (pixels_[offset] != color.r || pixels_[offset + 1] != color.g || pixels_[offset + 2] != color.b || pixels_[offset + 3] != color.a) {
             return false;
         }
     }
@@ -141,8 +124,7 @@ bool PixelProbe::wholeImageMatches(const Rgba8& color) const noexcept
 
 bool PixelProbe::clamped(const vn::graphics::Viewport& rect, int& x0, int& y0, int& x1, int& y1) const noexcept
 {
-    if (!valid() || !rect.isValid())
-    {
+    if (!valid() || !rect.isValid()) {
         return false;
     }
     x0 = std::max(0, rect.x);

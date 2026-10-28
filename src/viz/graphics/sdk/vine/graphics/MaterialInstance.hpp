@@ -32,8 +32,7 @@ VN_GRAPHICS_NS_BEGIN
  * - Transparency follows the resolved value: an instance that overrides the alpha mode to `Blend` is sorted as
  *   blended even when its asset is opaque (`MaterialBase::alphaMode()`).
  */
-class VN_GRAPHICS_API MaterialInstance : public MaterialBase
-{
+class VN_GRAPHICS_API MaterialInstance : public MaterialBase {
     VN_OBJECT_META_DECL;
 
   public:
@@ -188,7 +187,7 @@ class VN_GRAPHICS_API MaterialInstance : public MaterialBase
     MaterialParameters overrides_{};
     std::uint32_t      overrides_mask_ = 0;
     /// Moves on every edit of this instance's own overrides or of the parent asset it points at.
-    std::uint64_t own_revision_ = 0;
+    std::uint64_t own_revision_        = 0;
 
     /// The resolution cache and the two keys it was computed with (R1).
     mutable MaterialParameters resolved_{};

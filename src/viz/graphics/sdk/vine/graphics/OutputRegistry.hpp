@@ -25,8 +25,7 @@ class RenderTarget;
  * - The engine may be destroyed first and the handle knows it (a `Lease`): once it is gone every call answers the
  *   empty value instead of reaching into freed memory.
  */
-class VN_GRAPHICS_API OutputRegistry
-{
+class VN_GRAPHICS_API OutputRegistry {
   public:
     /** @brief Constructs an empty handle that refers to no engine (see isValid). */
     OutputRegistry() noexcept = default;

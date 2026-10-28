@@ -19,8 +19,7 @@ Workcell::~Workcell()
     }
 }
 
-raw_ptr<SceneObject> Workcell::addSceneObject(std::unique_ptr<SceneObject> object,
-                                              raw_ptr<kinematics::Frame>   parent_frame)
+raw_ptr<SceneObject> Workcell::addSceneObject(std::unique_ptr<SceneObject> object, raw_ptr<kinematics::Frame> parent_frame)
 {
     if (!object) {
         return nullptr;
@@ -50,10 +49,7 @@ raw_ptr<SceneObject> Workcell::addSceneObject(std::unique_ptr<SceneObject> objec
 
 bool Workcell::removeSceneObject(const String& name)
 {
-    const auto it = std::find_if(objects_.begin(), objects_.end(), [&name](const auto& object)
-    {
-        return object->name() == name;
-    });
+    const auto it = std::find_if(objects_.begin(), objects_.end(), [&name](const auto& object) { return object->name() == name; });
     if (it == objects_.end()) {
         return false;
     }
@@ -61,9 +57,7 @@ bool Workcell::removeSceneObject(const String& name)
     const auto removed = it->get();
 
     // 将挂载在 removed 子树上的对象重新挂到 removed 的父坐标系(或 world)
-    const auto reparent_frame = removed->baseFrame()->parent()
-                                    ? removed->baseFrame()->parent()
-                                    : world_frame_.get();
+    const auto reparent_frame = removed->baseFrame()->parent() ? removed->baseFrame()->parent() : world_frame_.get();
     for (const auto& object : objects_) {
         if (object.get() == removed) {
             continue;
@@ -87,10 +81,7 @@ bool Workcell::removeSceneObject(const String& name)
 
 raw_ptr<SceneObject> Workcell::findSceneObject(const String& name) const
 {
-    const auto it = std::find_if(objects_.begin(), objects_.end(), [&name](const auto& object)
-    {
-        return object->name() == name;
-    });
+    const auto it = std::find_if(objects_.begin(), objects_.end(), [&name](const auto& object) { return object->name() == name; });
     return it == objects_.end() ? nullptr : it->get();
 }
 
@@ -147,8 +138,7 @@ std::vector<raw_ptr<SceneObject>> Workcell::descendantsOf(raw_ptr<const SceneObj
         return descendants;
     }
     for (const auto& candidate : objects_) {
-        if (candidate.get() != object
-            && object->baseFrame()->isAncestorOf(candidate->baseFrame())) {
+        if (candidate.get() != object && object->baseFrame()->isAncestorOf(candidate->baseFrame())) {
             descendants.push_back(candidate.get());
         }
     }
@@ -157,14 +147,13 @@ std::vector<raw_ptr<SceneObject>> Workcell::descendantsOf(raw_ptr<const SceneObj
 
 bool Workcell::isAncestorOf(raw_ptr<const SceneObject> ancestor, raw_ptr<const SceneObject> object) const
 {
-    return ancestor && object && ancestor != object
-           && ancestor->baseFrame()->isAncestorOf(object->baseFrame());
+    return ancestor && object && ancestor != object && ancestor->baseFrame()->isAncestorOf(object->baseFrame());
 }
 
 std::vector<raw_ptr<kinematics::Frame>> Workcell::allFrames() const
 {
     std::vector<raw_ptr<kinematics::Frame>> frames;
-    std::queue<raw_ptr<kinematics::Frame>> queue;
+    std::queue<raw_ptr<kinematics::Frame>>  queue;
     queue.push(world_frame_.get());
 
     while (!queue.empty()) {
@@ -196,8 +185,7 @@ bool Workcell::changeObjectParent(raw_ptr<SceneObject> object, raw_ptr<kinematic
         return true;
     }
     // 不能挂到自身或其子树中的坐标系(防止环)
-    if (new_parent_frame == object->baseFrame()
-        || object->baseFrame()->isAncestorOf(new_parent_frame)) {
+    if (new_parent_frame == object->baseFrame() || object->baseFrame()->isAncestorOf(new_parent_frame)) {
         return false;
     }
 

@@ -44,14 +44,14 @@ class VN_RUNTIME_API InMemoryManager final : public CacheManager {
     InMemoryManager& operator=(const InMemoryManager&) = delete;
 
   public:
-    void set(const String& key, std::any value, size_t timeout_seconds) override;
-    std::any get(const String& key) override;
-    bool contains(const String& key) override;
-    bool remove(const String& key) override;
-    size_t removeExpired() override;
-    void clear() override;
-    size_t count() override;
-    bool isEmpty() override;
+    void                set(const String& key, std::any value, size_t timeout_seconds) override;
+    std::any            get(const String& key) override;
+    bool                contains(const String& key) override;
+    bool                remove(const String& key) override;
+    size_t              removeExpired() override;
+    void                clear() override;
+    size_t              count() override;
+    bool                isEmpty() override;
     std::vector<String> keys() override;
 
   private:

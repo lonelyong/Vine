@@ -116,15 +116,19 @@ void WindowContext::postEvent(const TEvent& event)
 {
     if constexpr (std::is_same_v<TEvent, KeyEvent>) {
         key.trigger(event);
-    } else if constexpr (std::is_same_v<TEvent, MouseEvent>) {
+    }
+    else if constexpr (std::is_same_v<TEvent, MouseEvent>) {
         mouse.trigger(event);
-    } else if constexpr (std::is_same_v<TEvent, ScrollEvent>) {
+    }
+    else if constexpr (std::is_same_v<TEvent, ScrollEvent>) {
         scroll.trigger(event);
-    } else if constexpr (std::is_same_v<TEvent, WindowEvent>) {
+    }
+    else if constexpr (std::is_same_v<TEvent, WindowEvent>) {
         windowEvent.trigger(event);
-    } else {
-        static_assert(std::is_same_v<TEvent, KeyEvent> || std::is_same_v<TEvent, MouseEvent> ||
-                          std::is_same_v<TEvent, ScrollEvent> || std::is_same_v<TEvent, WindowEvent>,
+    }
+    else {
+        static_assert(std::is_same_v<TEvent, KeyEvent> || std::is_same_v<TEvent, MouseEvent> || std::is_same_v<TEvent, ScrollEvent> ||
+                          std::is_same_v<TEvent, WindowEvent>,
                       "postEvent() supports KeyEvent, MouseEvent, ScrollEvent and WindowEvent");
     }
 }

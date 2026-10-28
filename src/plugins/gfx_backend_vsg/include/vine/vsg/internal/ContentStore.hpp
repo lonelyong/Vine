@@ -9,12 +9,12 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/intrusive_ptr.hpp>
-#include <vine/raw_ptr.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/raw_ptr.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -64,8 +64,7 @@
 VN_VSG_NS_BEGIN
 
 /** @brief The live content a host tracks, and the tables the frame's recording reads (see the file note). */
-class ContentStore
-{
+class ContentStore {
   public:
     ContentStore();
 
@@ -151,8 +150,7 @@ class ContentStore
      * @param retirement Where replaced entries are parked.
      * @return The tables, valid until the next call - they borrow this store's own storage.
      */
-    [[nodiscard]] const ContentFacts& tablesFor(const core::CompiledFrame& frame, core::FrameTimeline& timeline,
-                                                core::RetirementQueue& retirement);
+    [[nodiscard]] const ContentFacts& tablesFor(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /**
      * @brief Drops the tracked objects nobody else holds any more, and parks their entries' removal.
@@ -168,8 +166,7 @@ class ContentStore
      *                           key, never dereferenced, so it may already name freed memory.
      * @return Number of abandoned objects released.
      */
-    std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement,
-                                 std::vector<const void*>& released_materials);
+    std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement, std::vector<const void*>& released_materials);
 
     /**
      * @brief Marks a geometry the host still owns as releasable and parks the removal of its rows.
@@ -190,8 +187,7 @@ class ContentStore
      * @return true when the request was accepted (or the object was not resident); false when it could not be
      *         parked safely.
      */
-    bool releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry, core::FrameTimeline& timeline,
-                         core::RetirementQueue& retirement);
+    bool releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Marks a program the host still owns as releasable and parks the removal of its rows.
      *
@@ -205,8 +201,7 @@ class ContentStore
      * @return true when the request was accepted (or the object was not resident); false when it could not be
      *         parked safely.
      */
-    bool releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program, core::FrameTimeline& timeline,
-                        core::RetirementQueue& retirement);
+    bool releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Marks a material the host still owns as releasable and parks the removal of its row.
      *
@@ -220,8 +215,7 @@ class ContentStore
      * @return true when the request was accepted (or the object was not resident); false when it could not be
      *         parked safely.
      */
-    bool releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material, core::FrameTimeline& timeline,
-                         core::RetirementQueue& retirement);
+    bool releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Forgets every tracked object and every entry. The session-teardown path: nothing is parked. */
     void clear();
@@ -261,16 +255,17 @@ class ContentStore
 
   private:
     /** @brief Ensures the tables answer for one named geometry (see tablesFor). */
-    void ensureGeometry(const vn::graphics::Geometry* geometry, core::FrameTimeline& timeline,
-                        core::RetirementQueue& retirement);
+    void ensureGeometry(const vn::graphics::Geometry* geometry, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named material (see tablesFor). */
-    void ensureMaterial(const vn::graphics::MaterialBase* material, core::FrameTimeline& timeline,
-                        core::RetirementQueue& retirement);
+    void ensureMaterial(const vn::graphics::MaterialBase* material, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named program IN ONE GEOMETRY-FREE KIND (see tablesFor). */
-    void ensureProgram(const vn::graphics::ShaderProgram* program, const ProgramVariant& variant, bool screen,
-                       core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    void ensureProgram(const vn::graphics::ShaderProgram* program,
+                       const ProgramVariant&              variant,
+                       bool                               screen,
+                       core::FrameTimeline&               timeline,
+                       core::RetirementQueue&             retirement);
 
     struct Data;
     // A shared Data rather than a unique one: a parked removal holds a WEAK reference to it, so a store

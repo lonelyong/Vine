@@ -55,20 +55,20 @@ PipelineKey contentKey(const void* program, std::uint64_t revision)
     key.program                        = program;
     key.revision                       = revision;
     key.vertex_layout.canonical_mask   = 0xFU;
-    key.vertex_layout.custom_locations = {3U};
-    key.compatibility.color_formats    = {RenderTarget::ColorFormat::RGBA8};
+    key.vertex_layout.custom_locations = { 3U };
+    key.compatibility.color_formats    = { RenderTarget::ColorFormat::RGBA8 };
     key.compatibility.depth_format     = RenderTarget::DepthFormat::D24;
     key.compatibility.samples          = 1U;
     return key;
 }
 
-}  // namespace
+} // namespace
 
 // --- the pool -------------------------------------------------------------------------------------------
 
 TEST(CoreVariantPoolTest, TheSameIdentityIsCompiledOnce)
 {
-    VariantPool pool;
+    VariantPool       pool;
     const PipelineKey key = contentKey(&program_a, 1);
 
     const VariantPool::Lookup first  = pool.acquire(key);
@@ -84,7 +84,7 @@ TEST(CoreVariantPoolTest, TheSameIdentityIsCompiledOnce)
 
 TEST(CoreVariantPoolTest, ARevisionChangeIsANewVariantAndTheScopeEndsWithClear)
 {
-    VariantPool pool;
+    VariantPool               pool;
     const VariantPool::Lookup first  = pool.acquire(contentKey(&program_a, 1));
     const VariantPool::Lookup second = pool.acquire(contentKey(&program_a, 2));
 
@@ -103,16 +103,16 @@ TEST(CoreVariantPoolTest, TheCompatibilityHalfOfTheKeyMatters)
     VariantPool       pool;
     const PipelineKey base = contentKey(&program_a, 1);
 
-    PipelineKey other_format = base;
-    other_format.compatibility.color_formats = {RenderTarget::ColorFormat::RGBA16F};
-    PipelineKey other_depth = base;
-    other_depth.compatibility.depth_format = RenderTarget::DepthFormat::D32F;
-    PipelineKey sampled_depth = base;
-    sampled_depth.depth_sampleable = true;
-    PipelineKey sampled_depth_count = base;
-    sampled_depth_count.sampled_depth_count = 1U;
-    PipelineKey layout = base;
-    layout.vertex_layout.canonical_mask = 0x7U;
+    PipelineKey other_format                 = base;
+    other_format.compatibility.color_formats = { RenderTarget::ColorFormat::RGBA16F };
+    PipelineKey other_depth                  = base;
+    other_depth.compatibility.depth_format   = RenderTarget::DepthFormat::D32F;
+    PipelineKey sampled_depth                = base;
+    sampled_depth.depth_sampleable           = true;
+    PipelineKey sampled_depth_count          = base;
+    sampled_depth_count.sampled_depth_count  = 1U;
+    PipelineKey layout                       = base;
+    layout.vertex_layout.canonical_mask      = 0x7U;
 
     EXPECT_EQ(pool.acquire(base).action, VariantPool::Action::Created);
     EXPECT_EQ(pool.acquire(other_format).action, VariantPool::Action::Created);
@@ -122,21 +122,19 @@ TEST(CoreVariantPoolTest, TheCompatibilityHalfOfTheKeyMatters)
     EXPECT_EQ(pool.acquire(layout).action, VariantPool::Action::Created);
     EXPECT_EQ(pool.variants(), 6U) << "every compatibility change is a different pipeline";
 
-    EXPECT_EQ(pool.acquire(other_format).action, VariantPool::Action::Reused)
-        << "and each of them is still one variant";
+    EXPECT_EQ(pool.acquire(other_format).action, VariantPool::Action::Reused) << "and each of them is still one variant";
 }
 
 TEST(CoreVariantPoolTest, TheCapacityBoundEvictsTheOldestLookupAndStaleIdsStayStale)
 {
-    VariantPool pool(2);
+    VariantPool               pool(2);
     const VariantPool::Lookup first  = pool.acquire(contentKey(&program_a, 1));
     const VariantPool::Lookup second = pool.acquire(contentKey(&program_b, 1));
     const VariantPool::Lookup third  = pool.acquire(contentKey(&program_c, 1));
 
     EXPECT_EQ(pool.evictions(), 1U) << "the bound was reached and the oldest lookup left";
     EXPECT_EQ(pool.variants(), 2U);
-    EXPECT_FALSE(pool.contains(first.id))
-        << "the lookup left the map; whether the holder's object may die is the retirement queue's question";
+    EXPECT_FALSE(pool.contains(first.id)) << "the lookup left the map; whether the holder's object may die is the retirement queue's question";
     EXPECT_TRUE(pool.contains(second.id));
     EXPECT_TRUE(pool.contains(third.id));
 
@@ -147,12 +145,12 @@ TEST(CoreVariantPoolTest, TheCapacityBoundEvictsTheOldestLookupAndStaleIdsStaySt
 
 TEST(CoreVariantPoolTest, AnEntryKeepsItsKeyAfterTheCallersKeyIsGone)
 {
-    VariantPool pool;
+    VariantPool   pool;
     std::uint64_t id = 0;
     {
-        PipelineKey key = contentKey(&program_a, 9);
-        key.vertex_layout.custom_locations = {3U, 7U};
-        id = pool.acquire(key).id;
+        PipelineKey key                    = contentKey(&program_a, 9);
+        key.vertex_layout.custom_locations = { 3U, 7U };
+        id                                 = pool.acquire(key).id;
     }
 
     const PipelineKey* kept = pool.keyOf(id);
@@ -184,17 +182,17 @@ TEST(CoreStateRegistryTest, TheFirstResolutionCompilesAndIssuesEverything)
 
 TEST(CoreStateRegistryTest, DynamicStateChurnNeverCompilesAgain)
 {
-    VariantPool   pool;
-    StateRegistry registry(pool);
+    VariantPool       pool;
+    StateRegistry     registry(pool);
     const PipelineKey key = contentKey(&program_a, 1);
 
     (void)registry.resolve(key, DynamicState{});
     for (int step = 0; step < 20; ++step) {
         DynamicState state;
-        state.cull_mode    = (step % 2 == 0) ? CullMode::Back : CullMode::Front;
-        state.polygon_mode = (step % 3 == 0) ? PolygonMode::Line : PolygonMode::Fill;
-        state.topology     = (step % 5 == 0) ? Topology::Points : Topology::Triangles;
-        state.depth        = (step % 2 == 0) ? DepthMode::TestOnly : DepthMode::TestAndWrite;
+        state.cull_mode     = (step % 2 == 0) ? CullMode::Back : CullMode::Front;
+        state.polygon_mode  = (step % 3 == 0) ? PolygonMode::Line : PolygonMode::Fill;
+        state.topology      = (step % 5 == 0) ? Topology::Points : Topology::Triangles;
+        state.depth         = (step % 2 == 0) ? DepthMode::TestOnly : DepthMode::TestAndWrite;
         state.blend.enabled = (step % 2) == 0;
 
         const StateRegistry::Resolution resolution = registry.resolve(key, state);
@@ -229,8 +227,8 @@ TEST(CoreStateRegistryTest, AValueEqualToWhatWasIssuedIsNotReissued)
 
 TEST(CoreStateRegistryTest, AVariantSwitchDoesNotReissueAnUnchangedDynamicBlock)
 {
-    VariantPool   pool;
-    StateRegistry registry(pool);
+    VariantPool        pool;
+    StateRegistry      registry(pool);
     const DynamicState state;
 
     (void)registry.resolve(contentKey(&program_a, 1), state);
@@ -243,9 +241,9 @@ TEST(CoreStateRegistryTest, AVariantSwitchDoesNotReissueAnUnchangedDynamicBlock)
 
 TEST(CoreStateRegistryTest, TwoPassesShareVariantsAndKeepTheirOwnBindings)
 {
-    VariantPool   pool;
-    StateRegistry first_pass(pool);
-    StateRegistry second_pass(pool);
+    VariantPool       pool;
+    StateRegistry     first_pass(pool);
+    StateRegistry     second_pass(pool);
     const PipelineKey key = contentKey(&program_a, 3);
 
     const StateRegistry::Resolution first  = first_pass.resolve(key, DynamicState{});
@@ -262,8 +260,8 @@ TEST(CoreStateRegistryTest, TheSampledInputSetIsBoundOncePerPass)
 {
     // The pass' inputs are a property of the PASS, so the set that carries them costs one bind however many
     // draws read it - while a different set (a new pass, a rebuilt frame) has to be bound again.
-    VariantPool   pool;
-    StateRegistry registry(pool);
+    VariantPool       pool;
+    StateRegistry     registry(pool);
     const PipelineKey key = contentKey(&program_a, 1);
 
     int first_set  = 0;
@@ -294,8 +292,8 @@ TEST(CoreStateRegistryTest, TheSampledInputSetIsBoundOncePerPass)
 
 TEST(CoreStateRegistryTest, ANewRecordingIssuesEverythingAgain)
 {
-    VariantPool   pool;
-    StateRegistry registry(pool);
+    VariantPool       pool;
+    StateRegistry     registry(pool);
     const PipelineKey key = contentKey(&program_a, 1);
 
     (void)registry.resolve(key, DynamicState{});

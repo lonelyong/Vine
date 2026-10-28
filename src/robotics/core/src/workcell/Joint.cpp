@@ -27,13 +27,14 @@ math::Isometry3d Joint::transform(const kinematics::Q& q) const
 
     math::Isometry3d tf = fixedTransform();
     for (std::size_t i = 0; i < dof_infos_.size(); ++i) {
-        const auto& dof = dof_infos_[i];
+        const auto&      dof    = dof_infos_[i];
         math::Isometry3d motion = dof.origin;
         if (dof.type == kinematics::DofType::RevoluteJoint) {
             math::Isometry3d rot;
             rot.preRotate(dof.axis, q[i]);
             motion = motion * rot;
-        } else if (dof.type == kinematics::DofType::PrismaticJoint) {
+        }
+        else if (dof.type == kinematics::DofType::PrismaticJoint) {
             math::Isometry3d trans;
             trans.postTranslate(dof.axis * q[i]);
             motion = motion * trans;

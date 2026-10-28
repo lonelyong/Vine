@@ -14,17 +14,22 @@ namespace detail
 {
 
 /** @brief The order a frame's passes execute in, and the components that could not be ordered. */
-struct FrameSchedule
-{
-    std::vector<std::uint32_t>              order{};    ///< Indices, in execution order.
-    std::vector<std::vector<std::uint32_t>> cycles{};   ///< One entry per cyclic component: its members.
-    std::vector<std::uint32_t>              skipped{};  ///< Every member of every cycle, flattened.
+struct FrameSchedule {
+    std::vector<std::uint32_t>              order{};   // Indices, in execution order.
+    std::vector<std::vector<std::uint32_t>> cycles{};  // One entry per cyclic component: its members.
+    std::vector<std::uint32_t>              skipped{}; // Every member of every cycle, flattened.
 
     /** @brief Gets whether the whole frame could be ordered. */
-    [[nodiscard]] bool valid() const noexcept { return cycles.empty(); }
+    [[nodiscard]] bool valid() const noexcept
+    {
+        return cycles.empty();
+    }
 
     /** @brief Gets how many cyclic components were found (two independent cycles are two problems). */
-    [[nodiscard]] std::size_t cycleCount() const noexcept { return cycles.size(); }
+    [[nodiscard]] std::size_t cycleCount() const noexcept
+    {
+        return cycles.size();
+    }
 };
 
 /**
@@ -44,8 +49,7 @@ struct FrameSchedule
  *   a steady frame asks the allocator for nothing (the finding that put this note here is ~27 allocations for
  *   a one-pass pipeline when the tables were locals; see AllocationGate's counting half).
  */
-class FrameScheduler
-{
+class FrameScheduler {
   public:
     /** @brief Rebuilds the graph: one node per pass, in announcement order.
      *
@@ -95,24 +99,24 @@ class FrameScheduler
     void orderAcyclic();
 
   private:
-    std::vector<std::vector<std::uint32_t>> successors_;  ///< Adjacency: node -> the nodes it must precede.
-    std::vector<int>                        order_key_;   ///< Announced stacking order per node.
-    std::vector<std::uint8_t>               excluded_;    ///< Non-zero = takes no part in this frame.
-    FrameSchedule                           schedule_;    ///< The last computed answer.
+    std::vector<std::vector<std::uint32_t>> successors_; // Adjacency: node -> the nodes it must precede.
+    std::vector<int>                        order_key_;  // Announced stacking order per node.
+    std::vector<std::uint8_t>               excluded_;   // Non-zero = takes no part in this frame.
+    FrameSchedule                           schedule_;   // The last computed answer.
 
     // The per-frame working memory (see the class note): the Tarjan tables, the component stack and the
     // ready-queue backing store. Members, because a solver that builds them per frame allocates per frame.
-    std::vector<std::uint32_t>                 tarjan_index_;     ///< Discovery index per node (kUnvisited = unseen).
-    std::vector<std::uint32_t>                 tarjan_low_;       ///< Lowest reachable index per node.
-    std::vector<std::uint32_t>                 tarjan_cursor_;    ///< Next successor to visit per node.
-    std::vector<std::uint8_t>                  on_stack_;         ///< Whether a node is on the component stack.
-    std::vector<std::uint32_t>                 component_stack_;  ///< Tarjan's component stack.
-    std::vector<std::uint32_t>                 dfs_stack_;        ///< The iterative DFS' own stack.
-    std::vector<std::uint32_t>                 in_degree_;        ///< Unordered predecessors per node.
-    std::vector<std::pair<int, std::uint32_t>> ready_;            ///< The ready set, kept as a heap.
-    std::vector<std::uint32_t>                 component_scratch_;  ///< One component, before it is known cyclic.
+    std::vector<std::uint32_t>                 tarjan_index_;      // Discovery index per node (kUnvisited = unseen).
+    std::vector<std::uint32_t>                 tarjan_low_;        // Lowest reachable index per node.
+    std::vector<std::uint32_t>                 tarjan_cursor_;     // Next successor to visit per node.
+    std::vector<std::uint8_t>                  on_stack_;          // Whether a node is on the component stack.
+    std::vector<std::uint32_t>                 component_stack_;   // Tarjan's component stack.
+    std::vector<std::uint32_t>                 dfs_stack_;         // The iterative DFS' own stack.
+    std::vector<std::uint32_t>                 in_degree_;         // Unordered predecessors per node.
+    std::vector<std::pair<int, std::uint32_t>> ready_;             // The ready set, kept as a heap.
+    std::vector<std::uint32_t>                 component_scratch_; // One component, before it is known cyclic.
 };
 
-}  // namespace detail
+} // namespace detail
 
 VN_GRAPHICS_NS_END

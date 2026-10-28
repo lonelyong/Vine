@@ -194,14 +194,12 @@ TEST(InMemoryCacheTest, BackgroundSweepAutoRemovesExpired)
 TEST(InMemoryCacheTest, ConcurrentAccessIsSafe)
 {
     InMemoryCache<int, std::string> cache;
-    const int shared = 100;
+    const int                       shared = 100;
 
     std::vector<std::thread> threads;
-    for (int t = 0; t < 4; ++t)
-    {
+    for (int t = 0; t < 4; ++t) {
         threads.emplace_back([&cache, shared] {
-            for (int i = 0; i < 500; ++i)
-            {
+            for (int i = 0; i < 500; ++i) {
                 cache.set(shared, "x", 0);
                 (void)cache.get(shared);
                 (void)cache.contains(shared);
@@ -209,8 +207,7 @@ TEST(InMemoryCacheTest, ConcurrentAccessIsSafe)
             }
         });
     }
-    for (auto& thread : threads)
-    {
+    for (auto& thread : threads) {
         thread.join();
     }
 

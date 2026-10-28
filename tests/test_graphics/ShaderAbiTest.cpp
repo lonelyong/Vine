@@ -14,8 +14,8 @@
 #include <vine/graphics/ShaderAbi.hpp>
 
 #include <cstddef>
-#include <vector>
 #include <string>
+#include <vector>
 
 using namespace vn::graphics;
 
@@ -54,8 +54,9 @@ TEST(ShaderAbiTest, TheCanonicalPredicateMatchesTheLocations)
     // "Is this one of the engine's own channels, or a forwarded custom one?" is asked by every
     // consumer that walks a geometry's channels, so it is answered by the ABI (and not by a range
     // test: the reserved texcoord slot is exactly the value a range test gets wrong).
-    for (const auto attribute : { VertexAttribute::Position, VertexAttribute::Normal, VertexAttribute::Color,
-                                  VertexAttribute::TexCoord0, VertexAttribute::InstanceModel }) {
+    for (const auto attribute :
+         { VertexAttribute::Position, VertexAttribute::Normal, VertexAttribute::Color, VertexAttribute::TexCoord0, VertexAttribute::InstanceModel })
+    {
         EXPECT_TRUE(isCanonicalAttributeLocation(attributeLocation(attribute)));
     }
     EXPECT_FALSE(isCanonicalAttributeLocation(3u)) << "3 upward is the custom-channel range";
@@ -73,9 +74,15 @@ TEST(ShaderAbiTest, GeometryAttachesCanonicalChannelsWhereTheAbiSays)
     // it fails the moment the ABI moves that role — and it fails HERE rather than as a geometry that
     // silently loses its normals in a backend.
     auto geometry = GeometryPtr(new Geometry());
-    geometry->setPositions(packAttribute(std::vector<vn::math::Vec3f>{ { 0.0f, 0.0f, 0.0f } }));
-    geometry->setNormals(packAttribute(std::vector<vn::math::Vec3f>{ { 0.0f, 0.0f, 1.0f } }));
-    geometry->setTexcoords2(packAttribute(std::vector<vn::math::Vec2f>{ { 0.0f, 0.0f } }));
+    geometry->setPositions(packAttribute(std::vector<vn::math::Vec3f>{
+      { 0.0f, 0.0f, 0.0f }
+    }));
+    geometry->setNormals(packAttribute(std::vector<vn::math::Vec3f>{
+      { 0.0f, 0.0f, 1.0f }
+    }));
+    geometry->setTexcoords2(packAttribute(std::vector<vn::math::Vec2f>{
+      { 0.0f, 0.0f }
+    }));
 
     EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::Position)));
     EXPECT_TRUE(geometry->hasBuffer(attributeLocation(VertexAttribute::Normal)));
@@ -208,8 +215,7 @@ TEST(ShaderAbiTest, TheAlphaModeDecidesWhatTheMaterialsAlphaMeans)
 
     // The G-buffer records opaque and masked content only (N4): a blended surface has no single value to store.
     const std::string gbuffer_fs = asByteString(shaders::kBuiltinGbufferFrag);
-    EXPECT_NE(gbuffer_fs.find("(vn_material.flags.x >> VN_MATERIAL_ALPHA_MODE_SHIFT) & 3u"), std::string::npos)
-        << "the writer reads the same mode bits";
+    EXPECT_NE(gbuffer_fs.find("(vn_material.flags.x >> VN_MATERIAL_ALPHA_MODE_SHIFT) & 3u"), std::string::npos) << "the writer reads the same mode bits";
     EXPECT_NE(gbuffer_fs.find("if (vn_alpha_mode == 2u)"), std::string::npos) << "Blend is not recorded";
     EXPECT_NE(gbuffer_fs.find("vn_draw.params.x * vn_surface.alpha < vn_material.params.w"), std::string::npos)
         << "and Mask cuts the same holes the forward stage does - the same two inputs, not a copy of one";
@@ -217,4 +223,4 @@ TEST(ShaderAbiTest, TheAlphaModeDecidesWhatTheMaterialsAlphaMeans)
     EXPECT_EQ(gbuffer_fs.find("alphaMask"), std::string::npos);
 }
 
-}  // namespace
+} // namespace

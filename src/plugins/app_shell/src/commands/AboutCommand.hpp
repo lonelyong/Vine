@@ -13,9 +13,21 @@ class AboutCommand : public Command {
     VN_DECLARE_COMMAND(AboutCommand, u8"about")
 
   public:
-    String group() const override { return u8"帮助"; }
-    String description() const override { return u8"显示关于信息"; }
-    CommandFlags flags() const override { return CommandFlags::None; }
+    String group() const override
+    {
+        return u8"帮助";
+    }
+
+    String description() const override
+    {
+        return u8"显示关于信息";
+    }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::None;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

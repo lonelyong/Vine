@@ -36,12 +36,12 @@ VN_GRAPHICS_NS_BEGIN
  */
 enum class Topology
 {
-    Triangles,     ///< Triangle list (the default).
-    TriangleStrip, ///< Triangle strip: every vertex after the second closes one triangle.
-    TriangleFan,   ///< Triangle fan: every vertex after the second closes a triangle with the first one.
-    Points,        ///< Unconnected points (e.g. point clouds).
-    Lines,         ///< Line list.
-    LineStrip,     ///< Line strip: consecutive pairs form segments, sharing their joints.
+    Triangles,     // Triangle list (the default).
+    TriangleStrip, // Triangle strip: every vertex after the second closes one triangle.
+    TriangleFan,   // Triangle fan: every vertex after the second closes a triangle with the first one.
+    Points,        // Unconnected points (e.g. point clouds).
+    Lines,         // Line list.
+    LineStrip,     // Line strip: consecutive pairs form segments, sharing their joints.
 };
 
 /**
@@ -57,8 +57,7 @@ enum class Topology
  */
 [[nodiscard]] constexpr bool isTriangleTopology(Topology topology) noexcept
 {
-    return topology == Topology::Triangles || topology == Topology::TriangleStrip ||
-           topology == Topology::TriangleFan;
+    return topology == Topology::Triangles || topology == Topology::TriangleStrip || topology == Topology::TriangleFan;
 }
 
 VN_GRAPHICS_NS_END

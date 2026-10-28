@@ -25,15 +25,13 @@ VN_ASYNC_NS_BEGIN
  *
  * @tparam T Produced value type. Must be storable (see StorableValue).
  */
-template<StorableValue T>
-class Generator
-{
+template <StorableValue T>
+class Generator {
   public:
     /**
      * @brief The coroutine's control room, living inside the frame.
      */
-    struct promise_type
-    {
+    struct promise_type {
         [[nodiscard]]
         Generator<T> get_return_object() noexcept
         {
@@ -41,14 +39,24 @@ class Generator
         }
 
         /// Do not run the body until iteration starts.
-        std::suspend_always initial_suspend() noexcept { return {}; }
+        std::suspend_always initial_suspend() noexcept
+        {
+            return {};
+        }
 
         /// Keep the frame alive until the generator is destroyed.
-        std::suspend_always final_suspend() noexcept { return {}; }
+        std::suspend_always final_suspend() noexcept
+        {
+            return {};
+        }
 
-        void return_void() noexcept {}
+        void return_void() noexcept
+        {}
 
-        void unhandled_exception() noexcept { exception_ = std::current_exception(); }
+        void unhandled_exception() noexcept
+        {
+            exception_ = std::current_exception();
+        }
 
         /// Stores a value and suspends until the consumer pulls the next one.
         std::suspend_always yield_value(T value)
@@ -64,10 +72,13 @@ class Generator
             return *current_;
         }
 
-        std::exception_ptr exception() const noexcept { return exception_; }
+        std::exception_ptr exception() const noexcept
+        {
+            return exception_;
+        }
 
       private:
-        std::optional<T> current_{};
+        std::optional<T>   current_{};
         std::exception_ptr exception_{};
     };
 
@@ -80,8 +91,7 @@ class Generator
      * protocol requires (a missing postfix increment alone was enough to keep
      * std::ranges algorithms and views from accepting a Generator).
      */
-    class iterator
-    {
+    class iterator {
       public:
         using iterator_category = std::input_iterator_tag;
         using iterator_concept  = std::input_iterator_tag;
@@ -92,7 +102,9 @@ class Generator
 
         iterator() noexcept = default;
 
-        explicit iterator(std::coroutine_handle<promise_type> coro) noexcept : coro_(coro) {}
+        explicit iterator(std::coroutine_handle<promise_type> coro) noexcept
+          : coro_(coro)
+        {}
 
         bool operator==(const iterator& other) const noexcept
         {
@@ -107,16 +119,14 @@ class Generator
         iterator& operator++()
         {
             coro_.resume();
-            if (coro_.done())
-            {
+            if (coro_.done()) {
                 // Read the outcome and invalidate before rethrowing: a throwing
                 // increment must leave `it == end()`. Leaving the handle set
                 // would make the caller's next increment resume a coroutine
                 // parked at final_suspend, which is undefined behaviour.
                 std::exception_ptr ex = coro_.promise().exception();
-                coro_ = nullptr;
-                if (ex)
-                {
+                coro_                 = nullptr;
+                if (ex) {
                     std::rethrow_exception(ex);
                 }
             }
@@ -124,7 +134,10 @@ class Generator
         }
 
         /// Postfix increment; the protocol requires it even for single-pass use.
-        void operator++(int) { ++*this; }
+        void operator++(int)
+        {
+            ++*this;
+        }
 
         [[nodiscard]]
         reference operator*() const noexcept
@@ -145,16 +158,18 @@ class Generator
   public:
     Generator() noexcept = default;
 
-    explicit Generator(std::coroutine_handle<promise_type> coro) noexcept : coro_(coro) {}
+    explicit Generator(std::coroutine_handle<promise_type> coro) noexcept
+      : coro_(coro)
+    {}
 
-    Generator(Generator&& other) noexcept : coro_(std::exchange(other.coro_, {})) {}
+    Generator(Generator&& other) noexcept
+      : coro_(std::exchange(other.coro_, {}))
+    {}
 
     Generator& operator=(Generator&& other) noexcept
     {
-        if (this != &other)
-        {
-            if (coro_)
-            {
+        if (this != &other) {
+            if (coro_) {
                 coro_.destroy();
             }
             coro_ = std::exchange(other.coro_, {});
@@ -164,13 +179,12 @@ class Generator
 
     ~Generator()
     {
-        if (coro_)
-        {
+        if (coro_) {
             coro_.destroy();
         }
     }
 
-    Generator(const Generator&) = delete;
+    Generator(const Generator&)            = delete;
     Generator& operator=(const Generator&) = delete;
 
     /**
@@ -178,14 +192,12 @@ class Generator
      *
      * @return Iterator to the first value, or end() for an empty generator.
      */
-[[nodiscard]]
+    [[nodiscard]]
     iterator begin()
     {
-        if (coro_)
-        {
+        if (coro_) {
             coro_.resume();
-            if (coro_.done())
-            {
+            if (coro_.done()) {
                 // The generator finished before (or without) its first co_yield.
                 // This frame is done, so free it here: dropping the handle instead
                 // would leak it, and rethrowing before dropping it would leave a
@@ -193,8 +205,7 @@ class Generator
                 std::exception_ptr ex = coro_.promise().exception();
                 coro_.destroy();
                 coro_ = nullptr;
-                if (ex)
-                {
+                if (ex) {
                     std::rethrow_exception(ex);
                 }
             }

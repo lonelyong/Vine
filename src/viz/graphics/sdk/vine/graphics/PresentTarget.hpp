@@ -24,8 +24,7 @@ VN_GRAPHICS_NS_BEGIN
  * - THREADING and lifetime follow the DEVICE's own rules (see RenderDevice): one thread, serialised calls, and a
  *   presenter outlives neither the surface it presents through nor the device that made it.
  */
-class VN_GRAPHICS_API PresentTarget
-{
+class VN_GRAPHICS_API PresentTarget {
   public:
     virtual ~PresentTarget() = default;
 

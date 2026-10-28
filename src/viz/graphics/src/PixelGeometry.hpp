@@ -14,13 +14,15 @@ namespace detail
  * - A host reports logical sizes; a pass viewport and a render target are stated in DEVICE pixels. Keeping the two
  *   in named types is what makes a conversion visible at the boundary instead of hiding it in an `int`.
  */
-struct LogicalSize
-{
-    int width{0};   ///< Width in logical pixels.
-    int height{0};  ///< Height in logical pixels.
+struct LogicalSize {
+    int width{ 0 };  // Width in logical pixels.
+    int height{ 0 }; // Height in logical pixels.
 
     /** @brief Returns whether the size describes a positive area. */
-    [[nodiscard]] constexpr bool isValid() const noexcept { return width > 0 && height > 0; }
+    [[nodiscard]] constexpr bool isValid() const noexcept
+    {
+        return width > 0 && height > 0;
+    }
 };
 
 /**
@@ -30,13 +32,15 @@ struct LogicalSize
  * - The unit is the one `Viewport` and `RenderTarget::setSize` state; a host that reported a logical size converts
  *   through `toDeviceSize` before it reaches one of them.
  */
-struct DeviceSize
-{
-    int width{0};   ///< Width in device pixels.
-    int height{0};  ///< Height in device pixels.
+struct DeviceSize {
+    int width{ 0 };  // Width in device pixels.
+    int height{ 0 }; // Height in device pixels.
 
     /** @brief Returns whether the size describes a positive area. */
-    [[nodiscard]] constexpr bool isValid() const noexcept { return width > 0 && height > 0; }
+    [[nodiscard]] constexpr bool isValid() const noexcept
+    {
+        return width > 0 && height > 0;
+    }
 };
 
 /**
@@ -46,15 +50,16 @@ struct DeviceSize
  * - A non-positive value is clamped to 1.0 where it is constructed: "unset" and "1:1" are the same rendering
  *   decision, and letting a zero through would make every converted size zero.
  */
-struct PixelRatio
-{
-    double value{1.0};   ///< Device pixels per logical pixel (> 0).
+struct PixelRatio {
+    double value{ 1.0 }; // Device pixels per logical pixel (> 0).
 
     /** @brief Constructs a ratio, clamping a non-positive value to 1.0.
      *
      * @param ratio Device pixels per logical pixel.
      */
-    explicit constexpr PixelRatio(double ratio = 1.0) noexcept : value(ratio > 0.0 ? ratio : 1.0) {}
+    explicit constexpr PixelRatio(double ratio = 1.0) noexcept
+      : value(ratio > 0.0 ? ratio : 1.0)
+    {}
 };
 
 /**
@@ -77,6 +82,6 @@ struct PixelRatio
                        static_cast<int>(static_cast<double>(logical.height) * ratio.value) };
 }
 
-}  // namespace detail
+} // namespace detail
 
 VN_GRAPHICS_NS_END

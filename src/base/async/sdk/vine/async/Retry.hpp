@@ -25,41 +25,31 @@ VN_ASYNC_NS_BEGIN
  * @param delay Optional delay between attempts.
  * @return A task yielding the first successful result.
  */
-template<typename F>
+template <typename F>
 [[nodiscard]]
-Task<typename std::invoke_result_t<F>::value_type> retry(F factory,
-                                                         std::size_t attempts,
-                                                         std::chrono::milliseconds delay = {})
+Task<typename std::invoke_result_t<F>::value_type> retry(F factory, std::size_t attempts, std::chrono::milliseconds delay = {})
 {
     using T = typename std::invoke_result_t<F>::value_type;
 
-    if (attempts == 0)
-    {
+    if (attempts == 0) {
         attempts = 1;
     }
 
-    for (std::size_t attempt = 1;; ++attempt)
-    {
-        if (attempt > 1)
-        {
+    for (std::size_t attempt = 1;; ++attempt) {
+        if (attempt > 1) {
             co_await sleepFor(delay); // Delay before each retry (not inside a handler).
         }
-        try
-        {
-            if constexpr (std::is_void_v<T>)
-            {
+        try {
+            if constexpr (std::is_void_v<T>) {
                 co_await factory();
                 co_return;
             }
-            else
-            {
+            else {
                 co_return co_await factory();
             }
         }
-        catch (...)
-        {
-            if (attempt >= attempts)
-            {
+        catch (...) {
+            if (attempt >= attempts) {
                 throw; // Exhausted: propagate.
             }
         }

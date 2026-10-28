@@ -12,7 +12,16 @@ class ChainPlugin : public Plugin {
 
 VN_OBJECT_META_IMPL(ChainPlugin, Plugin)
 
-VN_DECLARE_PLUGIN(ChainPlugin, u8"6a1b6d0e-0000-4000-8000-000000000003", u8"chain_plugin", u8"Chain plugin", u8"0.1.0",
-                  u8"Test fixture that depends on test_plugin", u8"Vine", u8"", u8"", u8"", { u8"test_plugin" })
+VN_DECLARE_PLUGIN(ChainPlugin,
+                  u8"6a1b6d0e-0000-4000-8000-000000000003",
+                  u8"chain_plugin",
+                  u8"Chain plugin",
+                  u8"0.1.0",
+                  u8"Test fixture that depends on test_plugin",
+                  u8"Vine",
+                  u8"",
+                  u8"",
+                  u8"",
+                  { u8"test_plugin" })
 
 VN_APPFW_NS_END

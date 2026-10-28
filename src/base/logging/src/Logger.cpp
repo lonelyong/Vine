@@ -12,8 +12,7 @@
 
 VN_LOGGING_NS_BEGIN
 
-struct Logger::Impl
-{
+struct Logger::Impl {
     std::string                     name;
     std::string                     pattern;
     std::shared_ptr<spdlog::logger> logger;
@@ -111,7 +110,7 @@ void Logger::log(LogLevel level, std::string message, const std::source_location
     // whatever formatting throws: logging is a diagnostic and must never decide
     // what the caller does next.
     try {
-        d->logger->log(spdlog::source_loc{loc.file_name(), static_cast<int>(loc.line()), loc.function_name()}, toSpdlogLevel(level), message);
+        d->logger->log(spdlog::source_loc{ loc.file_name(), static_cast<int>(loc.line()), loc.function_name() }, toSpdlogLevel(level), message);
     }
     catch (...) {
         reportLoggingFailure();

@@ -11,6 +11,7 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
+using vn::intrusive_ptr;
 using vn::imaging::bytesPerPixel;
 using vn::imaging::channelCount;
 using vn::imaging::formatName;
@@ -18,7 +19,6 @@ using vn::imaging::Image;
 using vn::imaging::isDepthFormat;
 using vn::imaging::isSrgbFormat;
 using vn::imaging::PixelFormat;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -39,24 +39,24 @@ struct FormatFact {
 };
 
 const FormatFact kFacts[] = {
-    { PixelFormat::R8Unorm, 1, 1, false, false, "R8Unorm" },
-    { PixelFormat::R8Srgb, 1, 1, false, true, "R8Srgb" },
-    { PixelFormat::Rg8Unorm, 2, 2, false, false, "Rg8Unorm" },
-    { PixelFormat::Rgb8Unorm, 3, 3, false, false, "Rgb8Unorm" },
-    { PixelFormat::Rgb8Srgb, 3, 3, false, true, "Rgb8Srgb" },
-    { PixelFormat::Rgba8Unorm, 4, 4, false, false, "Rgba8Unorm" },
-    { PixelFormat::Rgba8Srgb, 4, 4, false, true, "Rgba8Srgb" },
-    { PixelFormat::Bgra8Unorm, 4, 4, false, false, "Bgra8Unorm" },
-    { PixelFormat::Bgra8Srgb, 4, 4, false, true, "Bgra8Srgb" },
-    { PixelFormat::R16Float, 1, 2, false, false, "R16Float" },
-    { PixelFormat::Rg16Float, 2, 4, false, false, "Rg16Float" },
-    { PixelFormat::Rgba16Float, 4, 8, false, false, "Rgba16Float" },
-    { PixelFormat::R32Float, 1, 4, false, false, "R32Float" },
-    { PixelFormat::Rg32Float, 2, 8, false, false, "Rg32Float" },
-    { PixelFormat::Rgba32Float, 4, 16, false, false, "Rgba32Float" },
-    { PixelFormat::D16Unorm, 1, 2, true, false, "D16Unorm" },
-    { PixelFormat::D24UnormS8Uint, 2, 4, true, false, "D24UnormS8Uint" },
-    { PixelFormat::D32Float, 1, 4, true, false, "D32Float" },
+    { PixelFormat::R8Unorm,        1, 1,  false, false, "R8Unorm"        },
+    { PixelFormat::R8Srgb,         1, 1,  false, true,  "R8Srgb"         },
+    { PixelFormat::Rg8Unorm,       2, 2,  false, false, "Rg8Unorm"       },
+    { PixelFormat::Rgb8Unorm,      3, 3,  false, false, "Rgb8Unorm"      },
+    { PixelFormat::Rgb8Srgb,       3, 3,  false, true,  "Rgb8Srgb"       },
+    { PixelFormat::Rgba8Unorm,     4, 4,  false, false, "Rgba8Unorm"     },
+    { PixelFormat::Rgba8Srgb,      4, 4,  false, true,  "Rgba8Srgb"      },
+    { PixelFormat::Bgra8Unorm,     4, 4,  false, false, "Bgra8Unorm"     },
+    { PixelFormat::Bgra8Srgb,      4, 4,  false, true,  "Bgra8Srgb"      },
+    { PixelFormat::R16Float,       1, 2,  false, false, "R16Float"       },
+    { PixelFormat::Rg16Float,      2, 4,  false, false, "Rg16Float"      },
+    { PixelFormat::Rgba16Float,    4, 8,  false, false, "Rgba16Float"    },
+    { PixelFormat::R32Float,       1, 4,  false, false, "R32Float"       },
+    { PixelFormat::Rg32Float,      2, 8,  false, false, "Rg32Float"      },
+    { PixelFormat::Rgba32Float,    4, 16, false, false, "Rgba32Float"    },
+    { PixelFormat::D16Unorm,       1, 2,  true,  false, "D16Unorm"       },
+    { PixelFormat::D24UnormS8Uint, 2, 4,  true,  false, "D24UnormS8Uint" },
+    { PixelFormat::D32Float,       1, 4,  true,  false, "D32Float"       },
 };
 
 /// A value that cannot be any enumerator, used to probe the out-of-range path.
@@ -229,8 +229,8 @@ TEST(ImageTest, WritingOneMipDoesNotTouchItsNeighbours)
     std::span<std::byte> level = image.mipData(1);
     ASSERT_EQ(level.size(), std::size_t{ 32 });
 
-    level[0]                 = std::byte{ 0x5A };
-    level[level.size() - 1]  = std::byte{ 0x5A };
+    level[0]                = std::byte{ 0x5A };
+    level[level.size() - 1] = std::byte{ 0x5A };
 
     const Image& view = image;
     EXPECT_EQ(std::to_integer<unsigned>(view.mipData(1)[0]), 0x5Au);

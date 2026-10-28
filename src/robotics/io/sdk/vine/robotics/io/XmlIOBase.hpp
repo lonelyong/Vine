@@ -8,11 +8,11 @@
 #include <string>
 #include <vector>
 
-#include <vine/intrusive_ptr.hpp>
-#include <vine/raw_ptr.hpp>
-#include <vine/math/Isometry3.hpp>
-#include <vine/robotics/io/robot_io_global.hpp>
 #include <vine/String.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/math/Isometry3.hpp>
+#include <vine/raw_ptr.hpp>
+#include <vine/robotics/io/robot_io_global.hpp>
 #include <vine/robotics/workcell/Collision.hpp>
 #include <vine/robotics/workcell/Device.hpp>
 #include <vine/robotics/workcell/Joint.hpp>
@@ -21,13 +21,17 @@
 
 namespace tinyxml2
 {
+
 class XMLDocument;
 class XMLElement;
+
 } // namespace tinyxml2
 
 namespace vn::io
 {
+
 class Vfs;
+
 } // namespace vn::io
 
 VN_ROBOTICS_IO_NS_BEGIN
@@ -43,14 +47,12 @@ VN_ROBOTICS_IO_NS_BEGIN
  * The base class is stateless: every per-operation value lives in the
  * parse/export context, so IO instances are reentrant and safe to reuse.
  */
-class VN_ROBOTICS_IO_API XmlIOBase
-{
+class VN_ROBOTICS_IO_API XmlIOBase {
   protected:
     /**
      * @brief Export options.
      */
-    struct ExportOptions
-    {
+    struct ExportOptions {
         /// Length-unit scale applied to exported lengths.
         double len_unit_scaling = 1.0;
     };
@@ -58,8 +60,7 @@ class VN_ROBOTICS_IO_API XmlIOBase
     /**
      * @brief Export context carried through an export pass.
      */
-    struct ExportContext
-    {
+    struct ExportContext {
         ExportOptions& options;
         /// Workcell being exported (read-only frame lookups); null otherwise.
         const workcell::Workcell* cell{ nullptr };
@@ -82,8 +83,7 @@ class VN_ROBOTICS_IO_API XmlIOBase
     /**
      * @brief Parse options.
      */
-    struct ParseOptions
-    {
+    struct ParseOptions {
         /// Length-unit scale applied to parsed lengths.
         double len_unit_scaling = 1.0;
     };
@@ -91,8 +91,7 @@ class VN_ROBOTICS_IO_API XmlIOBase
     /**
      * @brief Parse context carried through a parse pass.
      */
-    struct ParseContext
-    {
+    struct ParseContext {
         ParseOptions& options;
         /// Workcell being filled; null outside a workcell parse.
         workcell::Workcell* cell{ nullptr };
@@ -251,9 +250,7 @@ class VN_ROBOTICS_IO_API XmlIOBase
      * @param link_by_name Name to link lookup.
      * @return The joint, or null when the element is invalid.
      */
-    std::unique_ptr<workcell::Joint> parseJoint(ParseContext& ctx,
-                                                tinyxml2::XMLElement*      xe,
-                                                const std::map<String, raw_ptr<workcell::Link>>& link_by_name);
+    std::unique_ptr<workcell::Joint> parseJoint(ParseContext& ctx, tinyxml2::XMLElement* xe, const std::map<String, raw_ptr<workcell::Link>>& link_by_name);
 
     /**
      * @brief Writes a joint as a <joint> element.

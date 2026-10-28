@@ -11,17 +11,17 @@
 #include <vsg/state/BindDescriptorSet.h>
 #include <vsg/state/ImageView.h>
 
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/vsg/internal/BlockDescriptors.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
 #include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ProgramVariant.hpp>
 #include <vine/vsg/internal/ContentImages.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/ProgramVariant.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -105,30 +105,27 @@ class ContentStore;
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-struct InputSetCache
-{
+struct InputSetCache {
     /// @brief One binding the key names: its image and the sampler it is read through.
-    struct Binding
-    {
-        const ::vsg::ImageView* view{nullptr};     ///< The sampled image.
-        const ::vsg::Sampler*   sampler{nullptr};  ///< The state it is read with.
+    struct Binding {
+        const ::vsg::ImageView* view{ nullptr };    // The sampled image.
+        const ::vsg::Sampler*   sampler{ nullptr }; // The state it is read with.
 
         friend bool operator==(const Binding&, const Binding&) = default;
     };
 
     /// @brief One built set and the key it was built for.
-    struct Entry
-    {
+    struct Entry {
         /// @brief The layout the set was built against.
         ///
         /// It is part of the key because two CALL KINDS sample the same images: a content pass' input set lives
         /// in set 1 of its pipeline layout and a full-screen call's set in set 0 of its own, and both are built
         /// from the pass' inputs - so the views alone would let one kind answer for the other, with a layout
         /// mismatch the driver refuses.
-        const ::vsg::DescriptorSetLayout*    layout{nullptr};
-        std::vector<Binding>                 bindings;   ///< The bindings, in the order the set names them.
-        ::vsg::ref_ptr<::vsg::DescriptorSet> set;        ///< What was built for that key.
-        std::uint64_t                        frame{0};   ///< The frame last asked for it (see `frame`).
+        const ::vsg::DescriptorSetLayout*    layout{ nullptr };
+        std::vector<Binding>                 bindings;   // The bindings, in the order the set names them.
+        ::vsg::ref_ptr<::vsg::DescriptorSet> set;        // What was built for that key.
+        std::uint64_t                        frame{ 0 }; // The frame last asked for it (see `frame`).
     };
 
     /** @brief Finds the set already built for @p key, marking it as used by the current frame.
@@ -137,14 +134,10 @@ struct InputSetCache
      * @param key    The images and samplers, in the order the set binds them.
      * @return The set, or null when this key has not been built yet.
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSet> find(const ::vsg::DescriptorSetLayout* layout,
-                                                            std::span<const Binding> key)
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::DescriptorSet> find(const ::vsg::DescriptorSetLayout* layout, std::span<const Binding> key)
     {
-        for (Entry& entry : entries)
-        {
-            if (entry.layout == layout && entry.bindings.size() == key.size() &&
-                std::equal(key.begin(), key.end(), entry.bindings.begin()))
-            {
+        for (Entry& entry : entries) {
+            if (entry.layout == layout && entry.bindings.size() == key.size() && std::equal(key.begin(), key.end(), entry.bindings.begin())) {
                 entry.frame = frame;
                 return entry.set;
             }
@@ -158,8 +151,7 @@ struct InputSetCache
      * @param key    The images and samplers, in the order the set binds them.
      * @param set    The set built for them.
      */
-    void store(const ::vsg::DescriptorSetLayout* layout, std::span<const Binding> key,
-               const ::vsg::ref_ptr<::vsg::DescriptorSet>& set)
+    void store(const ::vsg::DescriptorSetLayout* layout, std::span<const Binding> key, const ::vsg::ref_ptr<::vsg::DescriptorSet>& set)
     {
         Entry entry;
         entry.layout = layout;
@@ -170,27 +162,24 @@ struct InputSetCache
         ++builds;
     }
 
-    std::vector<Entry> entries;   ///< One per distinct set of images the session has sampled.
-    std::uint64_t      frame{0};  ///< The frame being recorded (the assembly bumps it in beginFrame).
-    std::uint64_t      builds{0}; ///< How many sets have been built in total (a steady frame adds none).
+    std::vector<Entry> entries;     // One per distinct set of images the session has sampled.
+    std::uint64_t      frame{ 0 };  // The frame being recorded (the assembly bumps it in beginFrame).
+    std::uint64_t      builds{ 0 }; // How many sets have been built in total (a steady frame adds none).
 };
 
 /** @brief The content recorder of one pass scope (see the file note for what it refuses and why). */
-class VN_VSG_API ContentPass
-{
+class VN_VSG_API ContentPass {
   public:
     /** @brief The pieces this layer drives; the caller owns them and keeps them alive. */
-    struct Scope
-    {
+    struct Scope {
         /** @brief One compiled half: one program's stages against one vertex layout, for ONE variant. */
-        struct Entry
-        {
-            core::DrawKind        kind{core::DrawKind::Content};  ///< Which drawing call this half serves.
-            const void*           program{nullptr};    ///< The program identity the plan names.
-            std::uint64_t         revision{0};         ///< The revision the stages were taken at.
-            core::VertexLayoutKey layout{};            ///< The vertex layout its pipeline declares (content).
-            ContentPipeline*      pipelines{nullptr};  ///< The pipeline layer over that stage text.
-            ContentDraw*          draws{nullptr};      ///< The recorder over those pipelines.
+        struct Entry {
+            core::DrawKind        kind{ core::DrawKind::Content }; // Which drawing call this half serves.
+            const void*           program{ nullptr };              // The program identity the plan names.
+            std::uint64_t         revision{ 0 };                   // The revision the stages were taken at.
+            core::VertexLayoutKey layout{};                        // The vertex layout its pipeline declares (content).
+            ContentPipeline*      pipelines{ nullptr };            // The pipeline layer over that stage text.
+            ContentDraw*          draws{ nullptr };                // The recorder over those pipelines.
             /// The VARIANT this half was compiled for (see api/ProgramVariant). One program has several,
             /// and they share everything above - the same identity, revision and layout - so without this
             /// field a pass would hand every drawable of that program the FIRST half it finds and compile
@@ -199,7 +188,7 @@ class VN_VSG_API ContentPass
             /// It is written after the fields that existed before it, so an entry that names no variant is
             /// the variant the untagged facts describe (the empty define list), not one with a pointer in
             /// its switches.
-            ProgramVariant        variant{};
+            ProgramVariant variant{};
 
             /// The topology this half's pipeline BAKES (see core::PipelineKey::topology). The API restricts
             /// a dynamically set topology to the CLASS its pipeline was created with, so a half compiled for
@@ -209,7 +198,7 @@ class VN_VSG_API ContentPass
             /// APPENDED after @ref variant, for the same reason variant was: an entry that names none is
             /// the engine's own default (triangles), which is what every entry written before this field
             /// meant.
-            vn::graphics::Topology topology{vn::graphics::Topology::Triangles};
+            vn::graphics::Topology topology{ vn::graphics::Topology::Triangles };
 
             /// Episode state of this half's two reports, when the CALLER keeps them: one for the refusal
             /// @ref serveHalf writes ("the pass' content half" could not be served) and one for
@@ -218,13 +207,13 @@ class VN_VSG_API ContentPass
             /// api/ContentHalves hands the HALF's own state in, so a half that cannot be served (or whose
             /// pass declared a shadow its text cannot read) says so once per session instead of once per
             /// frame (registered 2026-09-25, M11m).
-            vn::graphics::ReportOnce* reported{nullptr};
-            vn::graphics::ReportOnce* shadow_reported{nullptr};
+            vn::graphics::ReportOnce* reported{ nullptr };
+            vn::graphics::ReportOnce* shadow_reported{ nullptr };
         };
 
-        std::span<const Entry> entries;               ///< One per (program, revision, layout, VARIANT) it draws with.
-        core::StateRegistry*   registry{nullptr};     ///< This pass' state memory, shared by every half.
-        BlockStorage*          storage{nullptr};      ///< The frame's block storage.
+        std::span<const Entry> entries;             // One per (program, revision, layout, VARIANT) it draws with.
+        core::StateRegistry*   registry{ nullptr }; // This pass' state memory, shared by every half.
+        BlockStorage*          storage{ nullptr };  // The frame's block storage.
         /// The block sets this pass may bind: one per SET INDEX a program declares blocks in - and, when a
         /// program's samplers read a texture, one per TEXTURE REVISION those images were resolved from (see
         /// BlockDescriptors::ImageSource): two drawables of one variant with different materials have sets
@@ -232,33 +221,33 @@ class VN_VSG_API ContentPass
         /// declared shape no entry here covers is refused by name - the alternative is binding a set whose
         /// layout the pipeline was not compiled against.
         std::span<BlockDescriptors* const> block_sets{};
-        StreamUploads*         uploads{nullptr};      ///< The stream sharing (geometry).
+        StreamUploads*                     uploads{ nullptr }; // The stream sharing (geometry).
         /// The device's widest LINE width (VkPhysicalDeviceLimits::lineWidthRange[1]); the recorder clamps the
         /// resolved width to it. 1.0 - the default - is the one width every device accepts, so a caller that does
         /// not state the limit gets a legal draw rather than an invalid call.
-        float                  max_line_width{1.0F};
+        float max_line_width{ 1.0F };
         /// Episode state of the light-drop report: a drawing call whose announced lights all fit the block
         /// re-arms it, so "the host announced lights the block cannot carry" is said once per episode rather
         /// than once per drawing call (see `record`). The episode's END is the caller's decision - a scope
         /// that lives for one frame reports once per frame, and one that lives for the session reports once.
-        vn::graphics::ReportOnce       lights_dropped;
+        vn::graphics::ReportOnce lights_dropped;
         /// The CALLER's episode state for the same report as @ref lights_dropped, when it keeps one: null
         /// means the scope's own. The sentence is about a PASS ("the announced lights do not fit the
         /// block"), and the frame path builds a scope per pass per frame, so the caller that wants it once
         /// per session owns the state and hands it in (api/ContentAssembly does).
-        vn::graphics::ReportOnce*      lights_dropped_episode{nullptr};
+        vn::graphics::ReportOnce* lights_dropped_episode{ nullptr };
         /// The CALLER's episode state for "a drawing call was not recorded: its rectangle is empty": one
         /// FACT about the session (a host whose render area is not laid out yet repeats it in every frame
         /// and every pass), so the caller that lives longer owns the state. Null means the recorder's own.
-        vn::graphics::ReportOnce*      empty_rectangle_episode{nullptr};
+        vn::graphics::ReportOnce* empty_rectangle_episode{ nullptr };
         /// The sampled-input sets this pass may REUSE (see InputSetCache). Null when the caller keeps none,
         /// in which case every pass builds its own set - which is correct and writes a descriptor per pass.
-        InputSetCache*         input_sets{nullptr};
+        InputSetCache* input_sets{ nullptr };
         /// Where the MATERIAL SLOT reports' episodes live (a per-material, per-slot memory - see
         /// api/ContentStore::claimSlotReport). Null - the default, and what a hand-built scope means - reports
         /// every pass, which is one sentence per frame in the frame path; the content world hands its store in
         /// so a wrong slot says so once per material edit (graphics-material.md F11).
-        ContentStore*          store{nullptr};
+        ContentStore* store{ nullptr };
     };
 
   public:
@@ -290,9 +279,12 @@ class VN_VSG_API ContentPass
      *                      refused (never null).
      * @return true when every command was recorded; false when at least one was refused (it was reported).
      */
-    bool record(const core::CompiledPass& pass, const ContentFacts& facts,
-                const core::RenderPassCompatibility& compatibility, std::span<const InputImages> inputs,
-                std::span<const std::byte> view_block, ::vsg::ref_ptr<::vsg::Node>& out);
+    bool record(const core::CompiledPass&            pass,
+                const ContentFacts&                  facts,
+                const core::RenderPassCompatibility& compatibility,
+                std::span<const InputImages>         inputs,
+                std::span<const std::byte>           view_block,
+                ::vsg::ref_ptr<::vsg::Node>&         out);
 
 
   private:
@@ -300,13 +292,18 @@ class VN_VSG_API ContentPass
     static constexpr std::size_t kMaxChannels = 8;
 
     /** @brief Records one command; false when it was refused (and reported). */
-    bool recordCommand(const core::CompiledCommand& command, const core::CompiledDraw& draw,
-                       const core::CompiledPass& pass, const ContentFacts& facts,
-                       const core::RenderPassCompatibility& compatibility, std::uint64_t view_offset,
-                       std::uint64_t lights_offset, std::uint64_t shadow_offset,
+    bool recordCommand(const core::CompiledCommand&                    command,
+                       const core::CompiledDraw&                       draw,
+                       const core::CompiledPass&                       pass,
+                       const ContentFacts&                             facts,
+                       const core::RenderPassCompatibility&            compatibility,
+                       std::uint64_t                                   view_offset,
+                       std::uint64_t                                   lights_offset,
+                       std::uint64_t                                   shadow_offset,
                        const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                       std::uint32_t sampled_color_count, std::uint32_t sampled_depth_count,
-                       ::vsg::Group& into);
+                       std::uint32_t                                   sampled_color_count,
+                       std::uint32_t                                   sampled_depth_count,
+                       ::vsg::Group&                                   into);
 
     /** @brief Reports the lights of @p announced that the block could not carry, once per episode. */
     void reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera);
@@ -353,9 +350,7 @@ class VN_VSG_API ContentPass
      * @return The bind command, or null for a pass with no colour textures to sample (a build failure is
      *         reported here).
      */
-    ::vsg::ref_ptr<::vsg::BindDescriptorSet> makeInputSet(const core::CompiledPass& pass,
-                                                         std::span<const InputImages> inputs,
-                                                         ContentPipeline& layer);
+    ::vsg::ref_ptr<::vsg::BindDescriptorSet> makeInputSet(const core::CompiledPass& pass, std::span<const InputImages> inputs, ContentPipeline& layer);
 
     /** @brief Records one FULL-SCREEN drawing call; false when it was refused (and reported).
      *
@@ -391,9 +386,12 @@ class VN_VSG_API ContentPass
      * @param into          The group the recorded commands are added to.
      * @return true when recorded; false when the half could not record it (already reported).
      */
-    bool recordScreenDraw(const core::CompiledDraw& draw, const Scope::Entry& entry,
-                          const core::CompiledPass& pass, const core::RenderPassCompatibility& compatibility,
-                          std::span<const InputImages> inputs, ::vsg::Group& into);
+    bool recordScreenDraw(const core::CompiledDraw&            draw,
+                          const Scope::Entry&                  entry,
+                          const core::CompiledPass&            pass,
+                          const core::RenderPassCompatibility& compatibility,
+                          std::span<const InputImages>         inputs,
+                          ::vsg::Group&                        into);
 
     /** @brief Reports one refused command, naming the identity and the reason the lookup gave. */
     void reportRefused(const char* what, FactMiss miss);
@@ -432,8 +430,7 @@ class VN_VSG_API ContentPass
      * @param demanded    The images the DRAWABLE asks for (see BlockDescriptors::ImageSource), or null when
      *                    no drawable is known yet (the pass-level validation: any matching set is accepted).
      */
-    [[nodiscard]] bool serveHalf(const Scope::Entry& entry, std::uint32_t input_count,
-                                 const BlockDescriptors::ImageSource* demanded);
+    [[nodiscard]] bool serveHalf(const Scope::Entry& entry, std::uint32_t input_count, const BlockDescriptors::ImageSource* demanded);
 
   private:
     /** @brief The most block sets one program can declare and still be served (the five roles' bound). */
@@ -455,11 +452,10 @@ class VN_VSG_API ContentPass
      * in full (it names the command), and the rest are COUNTED here and said in one line when the pass ends
      * (see reportRefusedSummary).
      */
-    struct RefusalRow
-    {
-        const char*   what{nullptr};   ///< The thing that was refused (a static string from the call site).
-        const char*   why{nullptr};    ///< The reason, in the first refusal's own words.
-        std::uint64_t count{0};        ///< How many drawing calls this reason refused.
+    struct RefusalRow {
+        const char*   what{ nullptr }; // The thing that was refused (a static string from the call site).
+        const char*   why{ nullptr };  // The reason, in the first refusal's own words.
+        std::uint64_t count{ 0 };      // How many drawing calls this reason refused.
     };
 
     /** @brief Adds @p what / @p why to the refusal ledger and says whether this is the FIRST of them.
@@ -477,8 +473,8 @@ class VN_VSG_API ContentPass
      */
     void reportRefusedSummary();
 
-    Scope               scope_;        ///< The pieces this layer drives (borrowed).
-    vn::graphics::Diagnostics&  diagnostics_;  ///< The one diagnostic route.
+    Scope                      scope_;       // The pieces this layer drives (borrowed).
+    vn::graphics::Diagnostics& diagnostics_; // The one diagnostic route.
     /// One report-once per entry: a half that cannot be served must say so once, not once per command.
     std::vector<vn::graphics::ReportOnce> half_reported_;
     /// One report-once per entry for the shadow the pass declared and the program cannot read (see
@@ -491,11 +487,11 @@ class VN_VSG_API ContentPass
     /// start of `record`, summarised at its end.
     std::vector<RefusalRow> refusals_;
     /// How many calls were skipped for an empty rectangle (see `emptyRectangles`).
-    std::uint64_t empty_rectangles_{0};
+    std::uint64_t empty_rectangles_{ 0 };
     /// The block sets `serveHalf` resolved for the half the command being recorded draws
     /// through (in the declared set order).
     std::array<BlockDescriptors*, kMaxBlockSets> half_blocks_{};
-    std::size_t                                  half_block_count_{0};
+    std::size_t                                  half_block_count_{ 0 };
     /// The push commands one command's declared ranges recorded (reused per command: the record is consumed
     /// by the recorder within the call, so no per-draw container is allocated).
     std::array<::vsg::ref_ptr<::vsg::PushConstants>, kMaxPushRanges> push_commands_{};

@@ -50,14 +50,13 @@ VN_GRAPHICS_NS_BEGIN
  * @note A `Geometry` with no primitives draws nothing; the single-primitive case (the overwhelming
  *       majority) is a geometry with one entry.
  */
-struct VN_GRAPHICS_API Primitive
-{
+struct VN_GRAPHICS_API Primitive {
     /// The index span's type: a segment of an index buffer, described the same way an attribute channel is
     /// (see BufferSlice). Kept as a name here because it is THIS struct's field, and a caller that spells
     /// "the whole buffer" once should not have to write the template out.
     using IndexSpan = BufferSlice<std::uint32_t>;
 
-    Topology topology{Topology::Triangles};  ///< How the vertices assemble (a pipeline's identity).
+    Topology topology{ Topology::Triangles }; // How the vertices assemble (a pipeline's identity).
 
     /// The index span this draw reads, or an empty buffer for a NON-indexed draw (the vertex count then
     /// comes from the geometry's position channel). A slice of a shared arena works exactly as it does for
@@ -79,7 +78,10 @@ struct VN_GRAPHICS_API Primitive
     /** @brief Gets whether this draw has an instance stream.
      * @return true when the slice holds at least one whole instance matrix.
      */
-    [[nodiscard]] bool hasInstances() const noexcept { return instanceCount() != 0u; }
+    [[nodiscard]] bool hasInstances() const noexcept
+    {
+        return instanceCount() != 0u;
+    }
 
     /** @brief Gets how many instances the slice holds (its capacity).
      * @return Number of whole 16-scalar matrices.
@@ -123,8 +125,7 @@ struct VN_GRAPHICS_API Primitive
             visible_instances.reset();
             return true;
         }
-        if (transforms.first % kInstanceMatrixScalars != 0u ||
-            transforms.size() % kInstanceMatrixScalars != 0u) {
+        if (transforms.first % kInstanceMatrixScalars != 0u || transforms.size() % kInstanceMatrixScalars != 0u) {
             return false;
         }
         instance_transforms = std::move(transforms);
@@ -142,10 +143,16 @@ struct VN_GRAPHICS_API Primitive
      *
      * @param count Instances to draw; clamped by visibleInstanceCount().
      */
-    void setVisibleInstanceCount(std::size_t count) noexcept { visible_instances = count; }
+    void setVisibleInstanceCount(std::size_t count) noexcept
+    {
+        visible_instances = count;
+    }
 
     /** @brief Reads every instance again. */
-    void clearVisibleInstanceCount() noexcept { visible_instances.reset(); }
+    void clearVisibleInstanceCount() noexcept
+    {
+        visible_instances.reset();
+    }
 
     /** @brief Gets one instance's matrix, relative to the slice.
      *
@@ -170,18 +177,23 @@ struct VN_GRAPHICS_API Primitive
     }
 
     /** @brief The scalars one instance matrix occupies. */
-    static constexpr std::size_t kInstanceMatrixScalars =
-        static_cast<std::size_t>(vn::graphics::kInstanceMatrixComponents);
+    static constexpr std::size_t kInstanceMatrixScalars = static_cast<std::size_t>(vn::graphics::kInstanceMatrixComponents);
 
     /** @brief Gets whether this draw is indexed.
      * @return true when it reads indices (a non-empty index buffer).
      */
-    [[nodiscard]] bool isIndexed() const noexcept { return !indices.empty(); }
+    [[nodiscard]] bool isIndexed() const noexcept
+    {
+        return !indices.empty();
+    }
 
     /** @brief Gets how many indices this draw reads (0 for a non-indexed draw).
      * @return The resolved span length, following a growing buffer when `count` is 0.
      */
-    [[nodiscard]] std::size_t indexCount() const noexcept { return indices.size(); }
+    [[nodiscard]] std::size_t indexCount() const noexcept
+    {
+        return indices.size();
+    }
 };
 
 VN_GRAPHICS_NS_END

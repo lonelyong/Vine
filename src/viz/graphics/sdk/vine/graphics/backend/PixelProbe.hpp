@@ -31,12 +31,11 @@
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /** @brief One pixel, in the packing the readback API produces. */
-struct VN_GRAPHICS_API Rgba8
-{
-    std::uint8_t r{0};    ///< Red.
-    std::uint8_t g{0};    ///< Green.
-    std::uint8_t b{0};    ///< Blue.
-    std::uint8_t a{255};  ///< Alpha.
+struct VN_GRAPHICS_API Rgba8 {
+    std::uint8_t r{ 0 };   // Red.
+    std::uint8_t g{ 0 };   // Green.
+    std::uint8_t b{ 0 };   // Blue.
+    std::uint8_t a{ 255 }; // Alpha.
 
     /** @brief Compares all four channels. */
     [[nodiscard]] bool operator==(const Rgba8& other) const noexcept;
@@ -45,8 +44,7 @@ struct VN_GRAPHICS_API Rgba8
 /**
  * @brief A read-back image and the assertions a phase makes about it (see the file note).
  */
-class VN_GRAPHICS_API PixelProbe
-{
+class VN_GRAPHICS_API PixelProbe {
   public:
     /** @brief Wraps @p pixels as a @p width x @p height RGBA8 image.
      *
@@ -129,8 +127,8 @@ class VN_GRAPHICS_API PixelProbe
     /** @brief Clamps @p rect to the image, returning false when nothing of it is inside. */
     [[nodiscard]] bool clamped(const vn::graphics::Viewport& rect, int& x0, int& y0, int& x1, int& y1) const noexcept;
 
-    int                      width_{0};
-    int                      height_{0};
+    int                       width_{ 0 };
+    int                       height_{ 0 };
     std::vector<std::uint8_t> pixels_;
 };
 

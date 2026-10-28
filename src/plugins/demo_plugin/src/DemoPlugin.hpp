@@ -4,7 +4,9 @@
 
 namespace vn::appfw
 {
+
 class Application;
+
 }
 
 namespace vn::demo
@@ -56,4 +58,4 @@ class DemoPlugin : public vn::appfw::Plugin {
     static void registerDemoView(vn::appfw::Application& app);
 };
 
-}  // namespace vn::demo
+} // namespace vn::demo

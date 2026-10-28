@@ -12,16 +12,16 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Shared state of an AsyncLatch.
  */
-struct LatchState
-{
-    std::mutex mutex;
+struct LatchState {
+    std::mutex  mutex;
     std::size_t count{ 0 };
-    AsyncEvent done;
+    AsyncEvent  done;
 };
 
 } // namespace detail
@@ -33,24 +33,23 @@ struct LatchState
  * released it returns immediately forever (manual-reset semantics). A latch
  * constructed with a count of zero is already released: wait() completes
  * without suspending and isReady() reports true from the start. Thread-safe.
-  *
+ *
  * Threading: countDown() may be called from any thread, and the waiters it releases are
  * resumed on the thread that called it. The latch must outlive every coroutine waiting on it
  * (a destroyed waiter unregisters itself, see AsyncEvent).
  */
-class AsyncLatch
-{
+class AsyncLatch {
   public:
     /**
      * @brief Constructs a latch.
      *
      * @param count Number of countDown() calls required to release waiters.
      */
-    explicit AsyncLatch(std::size_t count) : state_(std::make_shared<detail::LatchState>())
+    explicit AsyncLatch(std::size_t count)
+      : state_(std::make_shared<detail::LatchState>())
     {
         state_->count = count;
-        if (count == 0)
-        {
+        if (count == 0) {
             // A latch that starts at zero is already released: wait() must not
             // suspend, otherwise it would hang forever (isReady() already
             // reports true for it, and no countDown() is pending).
@@ -58,7 +57,7 @@ class AsyncLatch
         }
     }
 
-    AsyncLatch(const AsyncLatch&) = delete;
+    AsyncLatch(const AsyncLatch&)            = delete;
     AsyncLatch& operator=(const AsyncLatch&) = delete;
 
     /**
@@ -71,15 +70,13 @@ class AsyncLatch
         bool ready = false;
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            if (n > state_->count)
-            {
+            if (n > state_->count) {
                 n = state_->count;
             }
             state_->count -= n;
             ready = (state_->count == 0);
         }
-        if (ready)
-        {
+        if (ready) {
             state_->done.set();
         }
     }

@@ -17,12 +17,21 @@ class TestRenderLiveCommand : public Command {
     VN_DECLARE_COMMAND(TestRenderLiveCommand, u8"test_render_live")
 
   public:
-    String group() const override { return u8"测试"; }
+    String group() const override
+    {
+        return u8"测试";
+    }
+
     String description() const override
     {
         return u8"实时渲染演示：循环透明度/可见性/颜色/位移";
     }
-    CommandFlags flags() const override { return CommandFlags::NeedsView; }
+
+    CommandFlags flags() const override
+    {
+        return CommandFlags::NeedsView;
+    }
+
     vn::async::Task<CommandResult> execute(CommandExecutionContext* context) override;
 };
 

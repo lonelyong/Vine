@@ -11,15 +11,14 @@ void RenderDevice::setDiagnosticsRoute(Diagnostics& route)
     // the first one's count away. The device's own route stays the one its accessors answer from, and it receives
     // every report too.
     if (std::find(borrowed_routes_.begin(), borrowed_routes_.end(), &route) != borrowed_routes_.end()) {
-        return;  // the same engine re-installing its own route is not a second installation
+        return; // the same engine re-installing its own route is not a second installation
     }
     borrowed_routes_.push_back(&route);
 }
 
 void RenderDevice::removeDiagnosticsRoute(Diagnostics& route)
 {
-    borrowed_routes_.erase(std::remove(borrowed_routes_.begin(), borrowed_routes_.end(), &route),
-                           borrowed_routes_.end());
+    borrowed_routes_.erase(std::remove(borrowed_routes_.begin(), borrowed_routes_.end(), &route), borrowed_routes_.end());
 }
 
 void RenderDevice::setDiagnosticSink(DiagnosticSink sink)
@@ -50,8 +49,7 @@ std::size_t RenderDevice::diagnosticCount(DiagnosticCategory category) const
     return static_cast<std::size_t>(route_->count(category));
 }
 
-void RenderDevice::reportDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category,
-                                    const String& message)
+void RenderDevice::reportDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category, const String& message)
 {
     // Counting and forwarding are the route's business (see Diagnostics.hpp): the count is what a phase
     // gates on, and a host that never installed a sink must still be able to see that something

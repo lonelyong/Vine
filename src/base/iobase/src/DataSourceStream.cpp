@@ -64,8 +64,7 @@ std::streamsize DataSourceStreamBuf::xsgetn(char* out, std::streamsize count)
         }
     }
 
-    const std::size_t got = source_->read(
-        std::span<std::byte>(reinterpret_cast<std::byte*>(out + done), static_cast<std::size_t>(count - done)));
+    const std::size_t got = source_->read(std::span<std::byte>(reinterpret_cast<std::byte*>(out + done), static_cast<std::size_t>(count - done)));
     if (got == 0 && source_->error() != IoError::Ok) {
         error_ = source_->error();
     }

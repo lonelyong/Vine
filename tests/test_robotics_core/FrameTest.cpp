@@ -12,8 +12,7 @@ namespace
 /**
  * @brief Exposes the protected Frame(FrameType) constructor for tests.
  */
-class TestFrame : public Frame
-{
+class TestFrame : public Frame {
   public:
     explicit TestFrame(FrameType type)
       : Frame(type)
@@ -31,7 +30,7 @@ TEST(FrameTest, DefaultFrameIsFixed)
 
 TEST(FrameTest, DofFromType)
 {
-    Frame fixed;
+    Frame     fixed;
     TestFrame revolute(FrameType::RevoluteJoint);
     TestFrame prismatic(FrameType::PrismaticJoint);
     TestFrame planar(FrameType::PlanarJoint);

@@ -41,8 +41,7 @@ enum class SceneObjectKind
  * relationships through the frame tree (see parentObject(), childObjects(),
  * Workcell::parentOf(), ...).
  */
-class VN_ROBOTICS_CORE_API SceneObject : public vn::Object, public vn::INameable
-{
+class VN_ROBOTICS_CORE_API SceneObject : public vn::Object, public vn::INameable {
     VN_OBJECT_META(SceneObject, vn::Object, vn::INameable);
 
   public:
@@ -197,10 +196,10 @@ class VN_ROBOTICS_CORE_API SceneObject : public vn::Object, public vn::INameable
     }
 
   protected:
-    String                              name_;
-    std::unique_ptr<kinematics::Frame>  base_frame_;
+    String                                  name_;
+    std::unique_ptr<kinematics::Frame>      base_frame_;
     std::vector<raw_ptr<kinematics::Frame>> frames_;
-    raw_ptr<Workcell>                   workcell_{ nullptr };
+    raw_ptr<Workcell>                       workcell_{ nullptr };
 
     friend class Workcell;
 };

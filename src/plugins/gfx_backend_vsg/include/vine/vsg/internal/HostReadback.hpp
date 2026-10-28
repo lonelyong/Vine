@@ -4,13 +4,15 @@
 #include <vector>
 
 #include <vine/graphics/RenderBackend.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/graphics/backend/Readback.hpp>
+#include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 namespace vsg
 {
+
 class Device;
+
 }
 
 /**
@@ -41,16 +43,16 @@ VN_VSG_NS_BEGIN
 /** @brief Why a synchronous readback did not happen (the caller reports the sentence and maps the answer). */
 enum class HostReadbackRefusal : std::uint8_t
 {
-    None,              ///< The values were read.
-    NoTarget,          ///< The caller gave no target at all (a request that cannot be made).
-    UnknownTarget,     ///< This backend does not hold the target (never announced, or released).
-    NotBuilt,          ///< It is held but has no built attachments yet.
-    NotRecorded,       ///< No frame has drawn into it (yet): there is nothing to read back.
-    UnknownAttachment, ///< The target has no such attachment.
-    UnreadableFormat,  ///< This backend cannot read that attachment's format (see core::colorReadbackOf).
-    BorrowedDepth,     ///< The depth is the LENDER's image: the source target is the one to read (SDK's rule).
-    NoDevice,          ///< There is no device to copy with or whose work produced the values.
-    TransferFailed,    ///< The copy was submitted/fenced and did not produce a readable picture.
+    None,              // The values were read.
+    NoTarget,          // The caller gave no target at all (a request that cannot be made).
+    UnknownTarget,     // This backend does not hold the target (never announced, or released).
+    NotBuilt,          // It is held but has no built attachments yet.
+    NotRecorded,       // No frame has drawn into it (yet): there is nothing to read back.
+    UnknownAttachment, // The target has no such attachment.
+    UnreadableFormat,  // This backend cannot read that attachment's format (see core::colorReadbackOf).
+    BorrowedDepth,     // The depth is the LENDER's image: the source target is the one to read (SDK's rule).
+    NoDevice,          // There is no device to copy with or whose work produced the values.
+    TransferFailed,    // The copy was submitted/fenced and did not produce a readable picture.
 };
 
 /** @brief Classifies a request WITHOUT reading anything (and without stopping the device).
@@ -64,8 +66,7 @@ enum class HostReadbackRefusal : std::uint8_t
  * @param attachment Colour attachment index (ignored for Depth).
  * @return `None` when a readback can be served, the refusal otherwise.
  */
-[[nodiscard]] HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind kind,
-                                                   std::uint32_t attachment) noexcept;
+[[nodiscard]] HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind kind, std::uint32_t attachment) noexcept;
 
 /** @brief Reads colour attachment @p attachment of @p target back as tightly packed RGBA8 rows.
  *
@@ -77,9 +78,8 @@ enum class HostReadbackRefusal : std::uint8_t
  * @param outPixels  Receives `width * height * 4` bytes on success; untouched otherwise.
  * @return `None` when the pixels were read, the refusal otherwise.
  */
-[[nodiscard]] HostReadbackRefusal readColorAttachment(OffscreenTarget& target, std::uint32_t attachment,
-                                                      ::vsg::Device* device,
-                                                      std::vector<std::uint8_t>& outPixels);
+[[nodiscard]] HostReadbackRefusal
+readColorAttachment(OffscreenTarget& target, std::uint32_t attachment, ::vsg::Device* device, std::vector<std::uint8_t>& outPixels);
 
 /** @brief Reads @p target's depth attachment back as normalised values in [0, 1], row-major.
  *
@@ -89,8 +89,7 @@ enum class HostReadbackRefusal : std::uint8_t
  * @param outDepths Receives `width * height` values on success; untouched otherwise.
  * @return `None` when the values were read, the refusal otherwise.
  */
-[[nodiscard]] HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, ::vsg::Device* device,
-                                                      std::vector<float>& outDepths);
+[[nodiscard]] HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, ::vsg::Device* device, std::vector<float>& outDepths);
 
 /** @brief Translates a refusal into the SDK's machine-readable result.
  *

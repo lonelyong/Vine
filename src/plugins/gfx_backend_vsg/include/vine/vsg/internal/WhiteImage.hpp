@@ -43,8 +43,7 @@
 VN_VSG_NS_BEGIN
 
 /** @brief The white texel a material without a texture samples, as an image a declared set can bind. */
-class WhiteImage
-{
+class WhiteImage {
   public:
     /** @brief Builds the image, its view and its sampler (no device; see the file note).
      *
@@ -61,7 +60,7 @@ class WhiteImage
 
     ~WhiteImage();
 
-    WhiteImage(const WhiteImage&) = delete;
+    WhiteImage(const WhiteImage&)            = delete;
     WhiteImage& operator=(const WhiteImage&) = delete;
 
   private:

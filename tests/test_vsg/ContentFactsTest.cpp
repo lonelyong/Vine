@@ -18,9 +18,12 @@
 
 #include <vine/vsg/internal/ContentFacts.hpp>
 
+using vn::graphics::backend::DrawKind;
+using vn::graphics::backend::ProgramRef;
+using vn::graphics::backend::StreamKind;
 using vn::vsg::blockFitsAbi;
-using vn::vsg::channelsMatchLayout;
 using vn::vsg::ChannelFacts;
+using vn::vsg::channelsMatchLayout;
 using vn::vsg::ContentFacts;
 using vn::vsg::FactMiss;
 using vn::vsg::findGeometry;
@@ -31,9 +34,6 @@ using vn::vsg::IndexFacts;
 using vn::vsg::MaterialFacts;
 using vn::vsg::ProgramFacts;
 using vn::vsg::ProgramVariant;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::ProgramRef;
-using vn::graphics::backend::StreamKind;
 
 namespace
 {
@@ -61,15 +61,13 @@ IndexFacts indexStream()
 }
 
 /// @brief Owns the storage a GeometryFacts points at: the tables BORROW, so a test must keep them alive.
-struct GeometryHolder
-{
-    std::vector<ChannelFacts>   channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitive_rows;  ///< What `facts.primitives` points at.
-    GeometryFacts               facts;
+struct GeometryHolder {
+    std::vector<ChannelFacts>            channels;
+    std::vector<vn::vsg::PrimitiveFacts> primitive_rows; // What `facts.primitives` points at.
+    GeometryFacts                        facts;
 
-    GeometryHolder(const void* identity, std::uint64_t revision, std::uint32_t canonical_mask,
-                   std::size_t channel_count, std::uint32_t custom_locations = 0U)
-        : channels(channel_count, channel(0U))
+    GeometryHolder(const void* identity, std::uint64_t revision, std::uint32_t canonical_mask, std::size_t channel_count, std::uint32_t custom_locations = 0U)
+      : channels(channel_count, channel(0U))
     {
         facts.geometry              = identity;
         facts.revision              = revision;
@@ -78,22 +76,20 @@ struct GeometryHolder
         primitive_rows.emplace_back();
         primitive_rows.back().indices.emplace(indexStream());
         primitive_rows.back().index_count = 3U;
-        facts.primitives            = primitive_rows;
-        for (std::uint32_t extra = 0; extra < custom_locations; ++extra)
-        {
+        facts.primitives                  = primitive_rows;
+        for (std::uint32_t extra = 0; extra < custom_locations; ++extra) {
             facts.layout.custom_locations.push_back(3U + extra);
         }
     }
 };
 
 /// @brief Owns the bytes a MaterialFacts points at.
-struct MaterialHolder
-{
+struct MaterialHolder {
     std::vector<std::byte> block;
     MaterialFacts          facts;
 
     MaterialHolder(const void* identity, std::uint64_t revision, std::size_t bytes)
-        : block(bytes, std::byte{ 0 })
+      : block(bytes, std::byte{ 0 })
     {
         facts.material = identity;
         facts.revision = revision;
@@ -102,8 +98,7 @@ struct MaterialHolder
 };
 
 /// @brief The three tables, built from entries the case owns.
-struct Tables
-{
+struct Tables {
     std::vector<ProgramFacts>  programs;
     std::vector<GeometryFacts> geometries;
     std::vector<MaterialFacts> materials;
@@ -118,7 +113,7 @@ struct Tables
     }
 };
 
-}  // namespace
+} // namespace
 
 TEST(ContentFactsTest, AProgramIsFoundByItsIdentityAndRevisionAndNothingElse)
 {
@@ -148,8 +143,8 @@ TEST(ContentFactsTest, AProgramIsFoundByItsIdentityAndRevisionAndNothingElse)
 
 TEST(ContentFactsTest, AGeometryIsFoundByItsIdentityAndRevision)
 {
-    static int   identity  = 0;
-    int          unrelated = 0;
+    static int identity  = 0;
+    int        unrelated = 0;
 
     GeometryHolder holder(&identity, 3U, /*canonical_mask*/ 0x3U, /*channels*/ 2U);
     Tables         tables;
@@ -200,9 +195,9 @@ TEST(ContentFactsTest, AGeometryWhoseChannelsDoNotMatchItsLayoutCannotBeDrawn)
     EXPECT_TRUE(channelsMatchLayout(unindexed.facts));
 
     // ...and a short geometry is reported as Malformed rather than "found but useless".
-    static int       identity = 0;
-    GeometryHolder   broken(&identity, 1U, /*canonical_mask*/ 0x3U, /*channels*/ 1U);
-    Tables           tables;
+    static int     identity = 0;
+    GeometryHolder broken(&identity, 1U, /*canonical_mask*/ 0x3U, /*channels*/ 1U);
+    Tables         tables;
     tables.geometries.push_back(broken.facts);
     const ContentFacts facts = tables.view();
     EXPECT_EQ(findGeometry(facts, &identity, 1U).miss, FactMiss::Malformed);

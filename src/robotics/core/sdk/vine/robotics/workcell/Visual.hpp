@@ -2,9 +2,9 @@
 
 #include <vine/robotics/robot_core_global.hpp>
 
+#include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Isometry3.hpp>
-#include <vine/String.hpp>
 
 #include <vine/geometry/Material.hpp>
 #include <vine/geometry/Shape.hpp>
@@ -18,8 +18,7 @@ VN_ROBOTICS_WORKCELL_NS_BEGIN
  * material; the owning scene/model keeps them alive, so a visual only borrows
  * them. A value type owned by the rigid body it belongs to.
  */
-class Visual
-{
+class Visual {
   public:
     /**
      * @brief Returns the shape to render.
@@ -103,9 +102,9 @@ class Visual
 
   private:
     vn::intrusive_ptr<vn::geometry::Shape>    shape_;
-    math::Isometry3d                             tf_;
+    math::Isometry3d                          tf_;
     vn::intrusive_ptr<vn::geometry::Material> material_;
-    String                                       material_name_;
+    String                                    material_name_;
 };
 
 VN_ROBOTICS_WORKCELL_NS_END

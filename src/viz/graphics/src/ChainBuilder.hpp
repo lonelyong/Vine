@@ -28,8 +28,7 @@ namespace detail
  * - Everything here is behaviour, not state a host can observe: the request lives in ChainDesc, the result in
  *   PassChain, and the engine's registry is the only registration.
  */
-class ChainBuilder
-{
+class ChainBuilder {
   public:
     /** @brief Constructs a builder targeting @p engine (borrowed; may be null, then nothing builds). */
     explicit ChainBuilder(raw_ptr<RenderEngine> engine);
@@ -64,15 +63,15 @@ class ChainBuilder
   private:
     raw_ptr<RenderEngine> engine_;
     /// This build's request, copied once at the start of build() (the public request is the ChainDesc value).
-    raw_ptr<Camera>       camera_;
-    intrusive_ptr<Scene>  content_;
-    intrusive_ptr<Scene>  transparent_;
+    raw_ptr<Camera>      camera_;
+    intrusive_ptr<Scene> content_;
+    intrusive_ptr<Scene> transparent_;
     /// Shadow passes THIS build created: a requested shadow that WAS built is not a gap to report.
-    std::size_t shadows_built_ = 0;
+    std::size_t shadows_built_    = 0;
     /// This build's content selection, taken from ChainDesc::layer_mask.
     std::uint32_t content_layers_ = kAllLayers;
 };
 
-}  // namespace detail
+} // namespace detail
 
 VN_GRAPHICS_NS_END

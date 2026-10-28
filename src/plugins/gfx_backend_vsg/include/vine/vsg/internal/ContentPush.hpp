@@ -5,9 +5,9 @@
 #include <string_view>
 #include <vector>
 
+#include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/vsg/internal/ProgramAbi.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -55,9 +55,9 @@ VN_VSG_NS_BEGIN
 /** @brief Which L1 value a declared push member names. */
 enum class ContentPushMember : std::uint8_t
 {
-    Unknown,     ///< Not part of the L2 realization of the camera pair: refused by name, never zero-filled.
-    Projection,  ///< `projection`: the pass' projection, folded into the device's clip convention.
-    ModelView,   ///< `modelView`: the pass' view matrix times the DRAWABLE's model matrix.
+    Unknown,    // Not part of the L2 realization of the camera pair: refused by name, never zero-filled.
+    Projection, // `projection`: the pass' projection, folded into the device's clip convention.
+    ModelView,  // `modelView`: the pass' view matrix times the DRAWABLE's model matrix.
 };
 
 /**
@@ -114,8 +114,10 @@ enum class ContentPushMember : std::uint8_t
  * @return true when the range was filled; false when it must be refused (an unfillable member, or a range
  *         with no size at all).
  */
-[[nodiscard]] bool packContentPush(const AbiPushRange& range, const core::CameraSnapshot& camera,
-                                   const vn::math::Mat4d& model, std::vector<std::byte>& out,
-                                   std::string_view& unhandled);
+[[nodiscard]] bool packContentPush(const AbiPushRange&         range,
+                                   const core::CameraSnapshot& camera,
+                                   const vn::math::Mat4d&      model,
+                                   std::vector<std::byte>&     out,
+                                   std::string_view&           unhandled);
 
 VN_VSG_NS_END

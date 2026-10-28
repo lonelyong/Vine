@@ -15,8 +15,9 @@ VN_CORE_NS_BEGIN
 /**
  * @brief A stream buffer over one contiguous, growing block of memory.
  *
- * Reads and writes share a single `std::vector<std::byte>`: the put area spans the whole physical capacity, so appending never disturbs the get area, while the get area ends at the logical size, so a reader never sees unwritten bytes.
- * Random access is supported in both directions, and seeking past the logical end of an output stream zero-fills the gap.
+ * Reads and writes share a single `std::vector<std::byte>`: the put area spans the whole physical capacity, so appending never disturbs the get area, while the
+ * get area ends at the logical size, so a reader never sees unwritten bytes. Random access is supported in both directions, and seeking past the logical end of
+ * an output stream zero-fills the gap.
  *
  * Three invariants keep the buffer consistent:
  *  - `buffer_.size()` is the physical capacity, `size_` the logical data size.
@@ -30,8 +31,7 @@ VN_CORE_NS_BEGIN
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API MemoryStreamBuf : public std::streambuf
-{
+class VN_CORE_API MemoryStreamBuf : public std::streambuf {
   public:
     /**
      * @brief Constructs an empty buffer.
@@ -67,7 +67,7 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
      */
     MemoryStreamBuf& operator=(MemoryStreamBuf&& other) noexcept;
 
-    MemoryStreamBuf(const MemoryStreamBuf&) = delete;
+    MemoryStreamBuf(const MemoryStreamBuf&)            = delete;
     MemoryStreamBuf& operator=(const MemoryStreamBuf&) = delete;
 
     /**
@@ -85,8 +85,8 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
     /**
      * @brief Returns the logical data size.
      *
-     * Single-character inserters write straight into the put area, which advances the put pointer without touching `size_`, so the put position is folded in here.
-     * Writing in the middle of the data never shrinks the result.
+     * Single-character inserters write straight into the put area, which advances the put pointer without touching `size_`, so the put position is folded in
+     * here. Writing in the middle of the data never shrinks the result.
      *
      * @return Number of bytes written so far.
      */
@@ -122,7 +122,8 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
      * Reads, writes and every position keep working; the call only changes how much can be written before the storage has to grow again.
      *
      * @param bytes Bytes of capacity to hold from the start of the data.
-     * @return true when the capacity covers @p bytes; false when the capacity limit refuses the request or the allocation fails, which leaves the buffer unchanged.
+     * @return true when the capacity covers @p bytes; false when the capacity limit refuses the request or the allocation fails, which leaves the buffer
+     * unchanged.
      */
     bool reserve(std::size_t bytes) noexcept;
 
@@ -185,8 +186,7 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
      * @param which Direction to move, read and/or write.
      * @return The new position, or pos_type(-1) when it is out of range.
      */
-    std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir,
-                                     std::ios_base::openmode which) override;
+    std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override;
 
     /**
      * @brief Moves the read and/or write position to an absolute offset.
@@ -201,15 +201,15 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
     [[nodiscard]] std::size_t readPosition() const noexcept;
     [[nodiscard]] std::size_t writePosition() const noexcept;
     [[nodiscard]] std::size_t clampToLimit(std::size_t pos, std::size_t count) const noexcept;
-    void syncGetArea() noexcept;
-    void grow(std::size_t needed);
-    void setPointers(std::size_t read_off, std::size_t write_off) noexcept;
-    void advancePut(std::size_t offset) noexcept;
-    void advanceGet(std::size_t count) noexcept;
-    void resetState() noexcept;
+    void                      syncGetArea() noexcept;
+    void                      grow(std::size_t needed);
+    void                      setPointers(std::size_t read_off, std::size_t write_off) noexcept;
+    void                      advancePut(std::size_t offset) noexcept;
+    void                      advanceGet(std::size_t count) noexcept;
+    void                      resetState() noexcept;
 
     static constexpr std::size_t s_minCapacity = 256;
-    static constexpr int         s_maxBump = std::numeric_limits<int>::max();
+    static constexpr int         s_maxBump     = std::numeric_limits<int>::max();
 
     std::vector<std::byte> buffer_;
     std::size_t            size_           = 0;
@@ -222,8 +222,7 @@ class VN_CORE_API MemoryStreamBuf : public std::streambuf
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API InputMemoryStream : public std::istream
-{
+class VN_CORE_API InputMemoryStream : public std::istream {
   public:
     /**
      * @brief Constructs an empty input stream.
@@ -259,7 +258,7 @@ class VN_CORE_API InputMemoryStream : public std::istream
      */
     InputMemoryStream& operator=(InputMemoryStream&& other) noexcept;
 
-    InputMemoryStream(const InputMemoryStream&) = delete;
+    InputMemoryStream(const InputMemoryStream&)            = delete;
     InputMemoryStream& operator=(const InputMemoryStream&) = delete;
 
     /**
@@ -293,8 +292,7 @@ class VN_CORE_API InputMemoryStream : public std::istream
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API OutputMemoryStream : public std::ostream
-{
+class VN_CORE_API OutputMemoryStream : public std::ostream {
   public:
     /**
      * @brief Constructs an empty output stream.
@@ -316,7 +314,7 @@ class VN_CORE_API OutputMemoryStream : public std::ostream
      */
     OutputMemoryStream& operator=(OutputMemoryStream&& other) noexcept;
 
-    OutputMemoryStream(const OutputMemoryStream&) = delete;
+    OutputMemoryStream(const OutputMemoryStream&)            = delete;
     OutputMemoryStream& operator=(const OutputMemoryStream&) = delete;
 
     /**
@@ -355,8 +353,7 @@ class VN_CORE_API OutputMemoryStream : public std::ostream
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API MemoryStream : public std::iostream
-{
+class VN_CORE_API MemoryStream : public std::iostream {
   public:
     /**
      * @brief Constructs an empty stream.
@@ -392,7 +389,7 @@ class VN_CORE_API MemoryStream : public std::iostream
      */
     MemoryStream& operator=(MemoryStream&& other) noexcept;
 
-    MemoryStream(const MemoryStream&) = delete;
+    MemoryStream(const MemoryStream&)            = delete;
     MemoryStream& operator=(const MemoryStream&) = delete;
 
     /**
@@ -440,21 +437,19 @@ class VN_CORE_API MemoryStream : public std::iostream
  * Writes are append-only and land in `chunk_size_`-byte chunks, so a large stream never needs one contiguous allocation.
  * Reads are random access: a seek only records an offset, and the chunk holding it is located on the next read.
  *
- * Unlike `MemoryStreamBuf`, the get area is a cache rather than the source of truth: `read_pos_` stays authoritative whenever no get area is published, which is what allows seeking to the end and appending afterwards to both behave.
- * A capacity limit caps growth - appends and reserve() fail past it - while content that is already there is kept.
- * A moved-from buffer is left valid and empty.
+ * Unlike `MemoryStreamBuf`, the get area is a cache rather than the source of truth: `read_pos_` stays authoritative whenever no get area is published, which
+ * is what allows seeking to the end and appending afterwards to both behave. A capacity limit caps growth - appends and reserve() fail past it - while content
+ * that is already there is kept. A moved-from buffer is left valid and empty.
  *
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
-{
+class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf {
   public:
     /**
      * @brief A non-owning view over one chunk.
      */
-    struct BufferPart
-    {
+    struct BufferPart {
         const std::byte* data;
         std::size_t      size;
     };
@@ -489,7 +484,7 @@ class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
      */
     ChunkedMemoryStreamBuf& operator=(ChunkedMemoryStreamBuf&& other) noexcept;
 
-    ChunkedMemoryStreamBuf(const ChunkedMemoryStreamBuf&) = delete;
+    ChunkedMemoryStreamBuf(const ChunkedMemoryStreamBuf&)            = delete;
     ChunkedMemoryStreamBuf& operator=(const ChunkedMemoryStreamBuf&) = delete;
 
     /**
@@ -541,7 +536,8 @@ class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
      * Reserved chunks hold no content, so size(), chunks(), data() and release() see exactly what was written.
      *
      * @param bytes Bytes of capacity to hold from the start of the data.
-     * @return true when the chain covers @p bytes; false when the capacity limit refuses the request or the allocation fails, which leaves the buffer unchanged.
+     * @return true when the chain covers @p bytes; false when the capacity limit refuses the request or the allocation fails, which leaves the buffer
+     * unchanged.
      */
     bool reserve(std::size_t bytes) noexcept;
 
@@ -615,8 +611,7 @@ class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
      * @param which Direction to move, read and/or write.
      * @return The new position, or pos_type(-1) when it is out of range.
      */
-    std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir,
-                                     std::ios_base::openmode which) override;
+    std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override;
 
     /**
      * @brief Moves the read position to an absolute offset.
@@ -628,24 +623,24 @@ class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
     std::streambuf::pos_type seekpos(std::streambuf::pos_type pos, std::ios_base::openmode which) override;
 
   private:
-    void appendRaw(const std::byte* src, std::size_t len);
+    void                      appendRaw(const std::byte* src, std::size_t len);
     [[nodiscard]] std::size_t readPosition() const noexcept;
     [[nodiscard]] std::size_t clampToLimit(std::size_t pos, std::size_t count) const noexcept;
-    bool activateGetArea() noexcept;
-    void republishGetArea() noexcept;
-    void detachGetArea() noexcept;
-    void publishGetArea(const std::vector<char>& chunk, std::size_t in_chunk_off) noexcept;
-    void advanceGet(std::size_t count) noexcept;
-    void ensureCoalesced() const;
-    void resetState() noexcept;
+    bool                      activateGetArea() noexcept;
+    void                      republishGetArea() noexcept;
+    void                      detachGetArea() noexcept;
+    void                      publishGetArea(const std::vector<char>& chunk, std::size_t in_chunk_off) noexcept;
+    void                      advanceGet(std::size_t count) noexcept;
+    void                      ensureCoalesced() const;
+    void                      resetState() noexcept;
 
     static constexpr int s_maxBump = std::numeric_limits<int>::max();
 
     std::size_t                    chunk_size_;
     std::vector<std::vector<char>> chunks_;
-    std::size_t                    read_chunk_idx_ = 0;
+    std::size_t                    read_chunk_idx_     = 0;
     std::size_t                    active_chunk_start_ = 0;
-    std::size_t                    read_pos_ = 0;
+    std::size_t                    read_pos_           = 0;
 
     mutable std::vector<std::byte> coalesced_;
     mutable bool                   coalesced_valid_ = false;
@@ -660,8 +655,7 @@ class VN_CORE_API ChunkedMemoryStreamBuf : public std::streambuf
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API InputChunkedMemoryStream : public std::istream
-{
+class VN_CORE_API InputChunkedMemoryStream : public std::istream {
   public:
     /**
      * @brief Constructs an input stream holding a copy of the given bytes.
@@ -669,8 +663,7 @@ class VN_CORE_API InputChunkedMemoryStream : public std::istream
      * @param data Bytes to copy.
      * @param chunk_size Bytes per chunk, or 0 to select the default.
      */
-    explicit InputChunkedMemoryStream(std::span<const std::byte> data,
-                                      std::size_t chunk_size = ChunkedMemoryStreamBuf::s_defaultChunkSize);
+    explicit InputChunkedMemoryStream(std::span<const std::byte> data, std::size_t chunk_size = ChunkedMemoryStreamBuf::s_defaultChunkSize);
 
     /**
      * @brief Constructs an input stream by taking over another one.
@@ -687,7 +680,7 @@ class VN_CORE_API InputChunkedMemoryStream : public std::istream
      */
     InputChunkedMemoryStream& operator=(InputChunkedMemoryStream&& other) noexcept;
 
-    InputChunkedMemoryStream(const InputChunkedMemoryStream&) = delete;
+    InputChunkedMemoryStream(const InputChunkedMemoryStream&)            = delete;
     InputChunkedMemoryStream& operator=(const InputChunkedMemoryStream&) = delete;
 
     /**
@@ -728,8 +721,7 @@ class VN_CORE_API InputChunkedMemoryStream : public std::istream
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API OutputChunkedMemoryStream : public std::ostream
-{
+class VN_CORE_API OutputChunkedMemoryStream : public std::ostream {
   public:
     /**
      * @brief Constructs an empty output stream.
@@ -753,7 +745,7 @@ class VN_CORE_API OutputChunkedMemoryStream : public std::ostream
      */
     OutputChunkedMemoryStream& operator=(OutputChunkedMemoryStream&& other) noexcept;
 
-    OutputChunkedMemoryStream(const OutputChunkedMemoryStream&) = delete;
+    OutputChunkedMemoryStream(const OutputChunkedMemoryStream&)            = delete;
     OutputChunkedMemoryStream& operator=(const OutputChunkedMemoryStream&) = delete;
 
     /**
@@ -799,8 +791,7 @@ class VN_CORE_API OutputChunkedMemoryStream : public std::ostream
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API ChunkedMemoryStream : public std::iostream
-{
+class VN_CORE_API ChunkedMemoryStream : public std::iostream {
   public:
     /**
      * @brief Constructs an empty stream.
@@ -815,8 +806,7 @@ class VN_CORE_API ChunkedMemoryStream : public std::iostream
      * @param data Bytes to copy.
      * @param chunk_size Bytes per chunk, or 0 to select the default.
      */
-    explicit ChunkedMemoryStream(std::span<const std::byte> data,
-                                 std::size_t chunk_size = ChunkedMemoryStreamBuf::s_defaultChunkSize);
+    explicit ChunkedMemoryStream(std::span<const std::byte> data, std::size_t chunk_size = ChunkedMemoryStreamBuf::s_defaultChunkSize);
 
     /**
      * @brief Constructs a stream by taking over another one.
@@ -833,7 +823,7 @@ class VN_CORE_API ChunkedMemoryStream : public std::iostream
      */
     ChunkedMemoryStream& operator=(ChunkedMemoryStream&& other) noexcept;
 
-    ChunkedMemoryStream(const ChunkedMemoryStream&) = delete;
+    ChunkedMemoryStream(const ChunkedMemoryStream&)            = delete;
     ChunkedMemoryStream& operator=(const ChunkedMemoryStream&) = delete;
 
     /**
@@ -877,14 +867,16 @@ class VN_CORE_API ChunkedMemoryStream : public std::iostream
  * @brief A stream buffer over a byte window the caller owns.
  *
  * Nothing is ever allocated: the buffer reads and writes the span it was constructed with and refuses to write past its writable room.
- * That is what a fixed-size destination needs, such as a mapped block, a protocol header or a stack buffer, where a growing stream would either overshoot or turn an overflow into a silent allocation.
- * Since the window never moves, `data()` stays valid for the buffer's whole lifetime, unlike `MemoryStreamBuf`.
+ * That is what a fixed-size destination needs, such as a mapped block, a protocol header or a stack buffer, where a growing stream would either overshoot or
+ * turn an overflow into a silent allocation. Since the window never moves, `data()` stays valid for the buffer's whole lifetime, unlike `MemoryStreamBuf`.
  *
- * A buffer built from a writable window fills it and exposes the written prefix, while one built by readOnly() is a zero-copy view that exposes the whole window and rejects every write.
+ * A buffer built from a writable window fills it and exposes the written prefix, while one built by readOnly() is a zero-copy view that exposes the whole
+ * window and rejects every write.
  *
  * Three contract points differ from `MemoryStreamBuf`:
  *  - The write position starts at offset 0, so writing overwrites the window from the start instead of appending.
- *  - Running out of room fails: `overflow()` reports eof and `xsputn()` returns only the bytes it could write, so `std::ostream::write()` sets `badbit` while `size()` says how much landed.
+ *  - Running out of room fails: `overflow()` reports eof and `xsputn()` returns only the bytes it could write, so `std::ostream::write()` sets `badbit` while
+ * `size()` says how much landed.
  *  - `seekp()` only moves the write position: it writes no byte and leaves `size()` alone, so the bytes of a gap stay whatever the caller left there.
  *
  * No put area is published, so every single byte goes through `overflow()`; bulk writes still reach the window through `xsputn()` in one copy.
@@ -893,8 +885,7 @@ class VN_CORE_API ChunkedMemoryStream : public std::iostream
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API SpanStreamBuf : public std::streambuf
-{
+class VN_CORE_API SpanStreamBuf : public std::streambuf {
   public:
     /**
      * @brief Constructs a buffer with no window.
@@ -923,7 +914,7 @@ class VN_CORE_API SpanStreamBuf : public std::streambuf
      */
     SpanStreamBuf& operator=(SpanStreamBuf&& other) noexcept;
 
-    SpanStreamBuf(const SpanStreamBuf&) = delete;
+    SpanStreamBuf(const SpanStreamBuf&)            = delete;
     SpanStreamBuf& operator=(const SpanStreamBuf&) = delete;
 
     /**
@@ -1015,8 +1006,7 @@ class VN_CORE_API SpanStreamBuf : public std::streambuf
      * @param which Direction to move, read and/or write.
      * @return The new position, or pos_type(-1) when it falls outside the window.
      */
-    std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir,
-                                     std::ios_base::openmode which) override;
+    std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override;
 
     /**
      * @brief Moves the read and/or write position to an absolute offset.
@@ -1030,18 +1020,18 @@ class VN_CORE_API SpanStreamBuf : public std::streambuf
   private:
     [[nodiscard]] std::size_t readPosition() const noexcept;
     [[nodiscard]] std::size_t writePosition() const noexcept;
-    void setPointers(std::size_t read_off, std::size_t write_off) noexcept;
-    void advanceGet(std::size_t count) noexcept;
-    void resetState() noexcept;
+    void                      setPointers(std::size_t read_off, std::size_t write_off) noexcept;
+    void                      advanceGet(std::size_t count) noexcept;
+    void                      resetState() noexcept;
 
     static constexpr int s_maxBump = std::numeric_limits<int>::max();
 
     // Borrowed window: never freed, must outlive the buffer.
-    const std::byte* begin_ = nullptr;
-    std::size_t      capacity_ = 0;
-    std::size_t      size_ = 0;
+    const std::byte* begin_     = nullptr;
+    std::size_t      capacity_  = 0;
+    std::size_t      size_      = 0;
     std::size_t      put_limit_ = 0;
-    std::size_t      put_off_ = 0;
+    std::size_t      put_off_   = 0;
 };
 
 /**
@@ -1053,8 +1043,7 @@ class VN_CORE_API SpanStreamBuf : public std::streambuf
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API InputSpanStream : public std::istream
-{
+class VN_CORE_API InputSpanStream : public std::istream {
   public:
     /**
      * @brief Constructs an input stream over existing content.
@@ -1078,7 +1067,7 @@ class VN_CORE_API InputSpanStream : public std::istream
      */
     InputSpanStream& operator=(InputSpanStream&& other) noexcept;
 
-    InputSpanStream(const InputSpanStream&) = delete;
+    InputSpanStream(const InputSpanStream&)            = delete;
     InputSpanStream& operator=(const InputSpanStream&) = delete;
 
     /**
@@ -1108,8 +1097,7 @@ class VN_CORE_API InputSpanStream : public std::istream
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API OutputSpanStream : public std::ostream
-{
+class VN_CORE_API OutputSpanStream : public std::ostream {
   public:
     /**
      * @brief Constructs an output stream over a writable window.
@@ -1133,7 +1121,7 @@ class VN_CORE_API OutputSpanStream : public std::ostream
      */
     OutputSpanStream& operator=(OutputSpanStream&& other) noexcept;
 
-    OutputSpanStream(const OutputSpanStream&) = delete;
+    OutputSpanStream(const OutputSpanStream&)            = delete;
     OutputSpanStream& operator=(const OutputSpanStream&) = delete;
 
     /**
@@ -1175,8 +1163,7 @@ class VN_CORE_API OutputSpanStream : public std::ostream
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
-class VN_CORE_API SpanStream : public std::iostream
-{
+class VN_CORE_API SpanStream : public std::iostream {
   public:
     /**
      * @brief Constructs a stream over a writable window.
@@ -1200,7 +1187,7 @@ class VN_CORE_API SpanStream : public std::iostream
      */
     SpanStream& operator=(SpanStream&& other) noexcept;
 
-    SpanStream(const SpanStream&) = delete;
+    SpanStream(const SpanStream&)            = delete;
     SpanStream& operator=(const SpanStream&) = delete;
 
     /**

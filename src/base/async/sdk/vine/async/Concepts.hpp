@@ -9,7 +9,8 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Resolves the awaiter of an awaitable, exactly as co_await does.
@@ -24,19 +25,16 @@ namespace detail {
  * @param value Expression to resolve; not consumed.
  * @return The awaiter to drive, or value itself when it has no operator co_await.
  */
-template<typename T>
+template <typename T>
 decltype(auto) getAwaiter(T&& value)
 {
-    if constexpr (requires { std::forward<T>(value).operator co_await(); })
-    {
+    if constexpr (requires { std::forward<T>(value).operator co_await(); }) {
         return std::forward<T>(value).operator co_await();
     }
-    else if constexpr (requires { operator co_await(std::forward<T>(value)); })
-    {
+    else if constexpr (requires { operator co_await(std::forward<T>(value)); }) {
         return operator co_await(std::forward<T>(value));
     }
-    else
-    {
+    else {
         return std::forward<T>(value);
     }
 }
@@ -44,7 +42,7 @@ decltype(auto) getAwaiter(T&& value)
 /**
  * @brief Type of the expression co_await would drive for T.
  */
-template<typename T>
+template <typename T>
 using AwaiterType = decltype(detail::getAwaiter(std::declval<T>()));
 
 /**
@@ -54,16 +52,16 @@ using AwaiterType = decltype(detail::getAwaiter(std::declval<T>()));
  * accepts an explicit conversion (e.g. an explicit operator bool), so this is
  * checked as a direct-initialisation rather than as implicit convertibility.
  */
-template<typename T>
+template <typename T>
 concept ContextuallyConvertibleToBool = requires(T&& value) { static_cast<bool>(std::forward<T>(value)); };
 
 /**
  * @brief Whether R is the type of a std::coroutine_handle specialization.
  */
-template<typename R>
+template <typename R>
 inline constexpr bool kIsCoroutineHandle = false;
 
-template<typename Promise>
+template <typename Promise>
 inline constexpr bool kIsCoroutineHandle<std::coroutine_handle<Promise>> = true;
 
 /**
@@ -75,10 +73,8 @@ inline constexpr bool kIsCoroutineHandle<std::coroutine_handle<Promise>> = true;
  * rejected here too: the point of the check is that a constrained API says no
  * for the same reasons co_await does.
  */
-template<typename R>
-concept SuspendResult = std::is_void_v<R>
-    || std::is_same_v<std::remove_cv_t<R>, bool>
-    || kIsCoroutineHandle<std::remove_cv_t<R>>;
+template <typename R>
+concept SuspendResult = std::is_void_v<R> || std::is_same_v<std::remove_cv_t<R>, bool> || kIsCoroutineHandle<std::remove_cv_t<R>>;
 
 /**
  * @brief Whether A fulfils the awaiter protocol co_await relies on.
@@ -89,7 +85,7 @@ concept SuspendResult = std::is_void_v<R>
  * illegal form only fails once a coroutine is compiled, not when the awaiter is
  * handed to a constrained generic API.
  */
-template<typename A>
+template <typename A>
 concept Awaiter = requires(A& a, std::coroutine_handle<> h) {
     { a.await_ready() } -> ContextuallyConvertibleToBool;
     a.await_suspend(h);
@@ -119,7 +115,7 @@ concept Awaiter = requires(A& a, std::coroutine_handle<> h) {
  *
  * Use it to constrain custom awaitables or types accepted by generic APIs.
  */
-template<typename T>
+template <typename T>
 concept Awaitable = detail::Awaiter<detail::AwaiterType<T&&>>;
 
 /**
@@ -133,10 +129,8 @@ concept Awaitable = detail::Awaiter<detail::AwaiterType<T&&>>;
  * can read. Use a pointer or a std::reference_wrapper to return a reference
  * target.
  */
-template<typename T>
-concept StorableValue = std::is_void_v<T>
-    || (std::destructible<T> && !std::is_reference_v<T> && !std::is_array_v<T>
-        && !std::is_function_v<T>);
+template <typename T>
+concept StorableValue = std::is_void_v<T> || (std::destructible<T> && !std::is_reference_v<T> && !std::is_array_v<T> && !std::is_function_v<T>);
 
 /**
  * @brief Constrains a type that can decide where a coroutine resumes.
@@ -146,7 +140,7 @@ concept StorableValue = std::is_void_v<T>
  * object suspends the coroutine and later resumes it in the execution context
  * chosen by the type.
  */
-template<typename T>
+template <typename T>
 concept Schedulable = requires(T& s) {
     { s.schedule() } -> Awaitable;
 };

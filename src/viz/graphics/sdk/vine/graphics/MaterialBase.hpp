@@ -4,12 +4,12 @@
 #include <array>
 #include <cstdint>
 
-#include <vine/intrusive_ptr.hpp>
-#include <vine/Object.hpp>
-#include <vine/raw_ptr.hpp>
-#include <vine/RefCounted.hpp>
 #include <vine/Colorf.hpp>
+#include <vine/Object.hpp>
+#include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
+#include <vine/intrusive_ptr.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include "Sampler.hpp"
 #include "Texture.hpp"
@@ -30,9 +30,9 @@ VN_GRAPHICS_NS_BEGIN
  */
 enum class AlphaMode
 {
-    Opaque, ///< Alpha is ignored: drawn in the opaque queue.
-    Mask,   ///< Alpha below the cutoff is discarded; the surviving fragment is opaque to the sort.
-    Blend,  ///< Alpha is blended: the drawable belongs in the transparent queue (forward overlay).
+    Opaque, // Alpha is ignored: drawn in the opaque queue.
+    Mask,   // Alpha below the cutoff is discarded; the surviving fragment is opaque to the sort.
+    Blend,  // Alpha is blended: the drawable belongs in the transparent queue (forward overlay).
 };
 
 /**
@@ -50,21 +50,20 @@ enum class AlphaMode
  */
 enum class TextureSlot
 {
-    BaseColor,         ///< Albedo / reflectance tint (RGB; alpha drives AlphaMode).
-    MetallicRoughness, ///< G = roughness, B = metallic (linear data).
-    Normal,            ///< Tangent-space normal (linear data).
-    Occlusion,         ///< Ambient occlusion in R (linear data).
-    Emissive,          ///< Emission colour (sRGB colour).
+    BaseColor,         // Albedo / reflectance tint (RGB; alpha drives AlphaMode).
+    MetallicRoughness, // G = roughness, B = metallic (linear data).
+    Normal,            // Tangent-space normal (linear data).
+    Occlusion,         // Ambient occlusion in R (linear data).
+    Emissive,          // Emission colour (sRGB colour).
 };
 
 /** @brief The number of texture slots a material carries (see TextureSlot). */
 constexpr std::uint32_t kTextureSlotCount = 5U;
 
 /** @brief One texture slot: the texture (when the slot exists) and how it is READ. */
-struct VN_GRAPHICS_API TextureSlotBinding
-{
-    intrusive_ptr<Texture> texture;  ///< The map, or null when the slot is absent.
-    Sampler                sampler{}; ///< Filter / wrap / mip state (a value: equal state = one sampler).
+struct VN_GRAPHICS_API TextureSlotBinding {
+    intrusive_ptr<Texture> texture;   // The map, or null when the slot is absent.
+    Sampler                sampler{}; // Filter / wrap / mip state (a value: equal state = one sampler).
 
     /** @brief Compares two bindings (the identity is the map and the read state). */
     [[nodiscard]] friend bool operator==(const TextureSlotBinding&, const TextureSlotBinding&) noexcept = default;
@@ -88,16 +87,15 @@ struct VN_GRAPHICS_API TextureSlotBinding
  * - Emission is HDR: `emissive`'s colour is linear and unbounded, and its ALPHA is the strength the colour is
  *   scaled by (a scalar slot, not an opacity - exactly as the block's `emissive.a` states).
  */
-struct VN_GRAPHICS_API MaterialParameters
-{
-    Colorf            base_color{ 0.8f, 0.8f, 0.8f, 1.0f }; ///< Linear RGB + the material's own alpha.
-    Colorf            emissive{ 0.0f, 0.0f, 0.0f, 1.0f };   ///< Linear RGB + the emission strength in A.
-    float             metallic{ 0.0f };                     ///< 0 = dielectric, 1 = metal.
-    float             roughness{ 0.5f };                    ///< Perceptual roughness, 0 = mirror, 1 = diffuse.
-    float             occlusion{ 1.0f };                    ///< Ambient-occlusion factor (scales ambient only).
-    AlphaMode         alpha_mode{ AlphaMode::Opaque };      ///< How alpha is used where the surface is shaded.
-    float             alpha_cutoff{ 0.5f };                 ///< Mask threshold (ignored by the other modes).
-    std::array<TextureSlotBinding, kTextureSlotCount> textures{}; ///< One entry per TextureSlot, in that order.
+struct VN_GRAPHICS_API MaterialParameters {
+    Colorf                                            base_color{ 0.8f, 0.8f, 0.8f, 1.0f }; // Linear RGB + the material's own alpha.
+    Colorf                                            emissive{ 0.0f, 0.0f, 0.0f, 1.0f };   // Linear RGB + the emission strength in A.
+    float                                             metallic{ 0.0f };                     // 0 = dielectric, 1 = metal.
+    float                                             roughness{ 0.5f };                    // Perceptual roughness, 0 = mirror, 1 = diffuse.
+    float                                             occlusion{ 1.0f };                    // Ambient-occlusion factor (scales ambient only).
+    AlphaMode                                         alpha_mode{ AlphaMode::Opaque };      // How alpha is used where the surface is shaded.
+    float                                             alpha_cutoff{ 0.5f };                 // Mask threshold (ignored by the other modes).
+    std::array<TextureSlotBinding, kTextureSlotCount> textures{};                           // One entry per TextureSlot, in that order.
 };
 
 /**
@@ -113,18 +111,18 @@ struct VN_GRAPHICS_API MaterialParameters
  */
 enum class MaterialItem : std::uint32_t
 {
-    BaseColor              = 1U << 0,  ///< `base_color`.
-    Emissive               = 1U << 1,  ///< `emissive`.
-    Metallic               = 1U << 2,  ///< `metallic`.
-    Roughness              = 1U << 3,  ///< `roughness`.
-    Occlusion              = 1U << 4,  ///< `occlusion`.
-    AlphaMode              = 1U << 5,  ///< `alpha_mode`.
-    AlphaCutoff            = 1U << 6,  ///< `alpha_cutoff`.
-    BaseColorTexture       = 1U << 7,  ///< `textures[TextureSlot::BaseColor]`.
-    MetallicRoughnessTexture = 1U << 8, ///< `textures[TextureSlot::MetallicRoughness]`.
-    NormalTexture          = 1U << 9,  ///< `textures[TextureSlot::Normal]`.
-    OcclusionTexture       = 1U << 10, ///< `textures[TextureSlot::Occlusion]`.
-    EmissiveTexture        = 1U << 11, ///< `textures[TextureSlot::Emissive]`.
+    BaseColor                = 1U << 0,  // `base_color`.
+    Emissive                 = 1U << 1,  // `emissive`.
+    Metallic                 = 1U << 2,  // `metallic`.
+    Roughness                = 1U << 3,  // `roughness`.
+    Occlusion                = 1U << 4,  // `occlusion`.
+    AlphaMode                = 1U << 5,  // `alpha_mode`.
+    AlphaCutoff              = 1U << 6,  // `alpha_cutoff`.
+    BaseColorTexture         = 1U << 7,  // `textures[TextureSlot::BaseColor]`.
+    MetallicRoughnessTexture = 1U << 8,  // `textures[TextureSlot::MetallicRoughness]`.
+    NormalTexture            = 1U << 9,  // `textures[TextureSlot::Normal]`.
+    OcclusionTexture         = 1U << 10, // `textures[TextureSlot::Occlusion]`.
+    EmissiveTexture          = 1U << 11, // `textures[TextureSlot::Emissive]`.
 };
 
 /** @brief Gets the bit of one item (the value `overrideMask()` reports). */
@@ -141,8 +139,7 @@ enum class MaterialItem : std::uint32_t
  */
 [[nodiscard]] constexpr MaterialItem materialItemOf(TextureSlot slot) noexcept
 {
-    switch (slot)
-    {
+    switch (slot) {
     case TextureSlot::BaseColor: return MaterialItem::BaseColorTexture;
     case TextureSlot::MetallicRoughness: return MaterialItem::MetallicRoughnessTexture;
     case TextureSlot::Normal: return MaterialItem::NormalTexture;
@@ -165,8 +162,7 @@ enum class MaterialItem : std::uint32_t
  * - `revision()` is the identity of those values for a cache: an asset counts its own edits, an instance counts
  *   every resolution in which its parent's values changed too (2.11 / R1).
  */
-class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBase>
-{
+class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBase> {
     VN_OBJECT_META_DECL;
 
   public:
@@ -216,7 +212,10 @@ class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBa
      *
      * @return The resolved mode (Opaque when nothing overrode it).
      */
-    [[nodiscard]] AlphaMode alphaMode() const noexcept { return resolved().alpha_mode; }
+    [[nodiscard]] AlphaMode alphaMode() const noexcept
+    {
+        return resolved().alpha_mode;
+    }
 
     /**
      * @brief Gets the resolved base (albedo) colour.

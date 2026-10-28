@@ -5,6 +5,7 @@
 #include <vine/brepio/BrepFormat.hpp>
 
 VN_BREPIO_NS_BEGIN
+
 namespace detail
 {
 
@@ -30,4 +31,5 @@ std::span<const BrepFormat> allFormats() noexcept;
 std::span<const char* const> extensionsOf(BrepFormat format) noexcept;
 
 } // namespace detail
+
 VN_BREPIO_NS_END

@@ -2,8 +2,8 @@
 
 #include <functional>
 
-#include <vine/intrusive_ptr.hpp>
 #include <vine/Type.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 #include <vine/di/ServiceBase.hpp>
 
@@ -169,11 +169,11 @@ class VN_DI_API Registration final {
     static Registration create();
 
   private:
-    TypeId            service_type_{};
-    TypeId            service_impl_type_{};
+    TypeId                     service_type_{};
+    TypeId                     service_impl_type_{};
     intrusive_ptr<ServiceBase> inst_;
-    InstanceFactory   inst_fac_;
-    Lifetime          lifetime_ = Lifetime::Transient;
+    InstanceFactory            inst_fac_;
+    Lifetime                   lifetime_ = Lifetime::Transient;
 };
 
 template <ObjectBased T>

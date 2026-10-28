@@ -9,8 +9,8 @@
 #include <vine/graphics/Ray.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/math/Point3.hpp>
 #include <vine/math/Math.hpp>
+#include <vine/math/Point3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -18,7 +18,7 @@ namespace
 {
 
 constexpr double kDegToRad = vn::math::DEG_TO_RAD;
-constexpr double kTiny = 1e-6;
+constexpr double kTiny     = 1e-6;
 
 // Elevation policy for the spherical (programmatic / keyboard / pan-zoom)
 // path: pitch is clamped to a full +/-90 deg (a true top-down / bottom-up
@@ -88,21 +88,21 @@ Vec3d viewUp(double yaw, double pitch)
 void sphericalFromDirection(const Vec3d& dir, double& yaw, double& pitch)
 {
     pitch = std::asin(std::clamp(dir.z, -1.0, 1.0));
-    yaw = std::atan2(dir.x, dir.y);
+    yaw   = std::atan2(dir.x, dir.y);
 }
 
-}  // namespace
+} // namespace
 
 OrbitCameraManipulator::OrbitCameraManipulator(raw_ptr<Camera> camera, raw_ptr<Scene> scene)
   : CameraManipulator(camera)
   , scene_(scene)
 {
     syncFromCamera();
-    home_center_ = center_;
+    home_center_   = center_;
     home_distance_ = distance_;
-    home_yaw_ = yaw_;
-    home_pitch_ = pitch_;
-    home_roll_ = roll_;
+    home_yaw_      = yaw_;
+    home_pitch_    = pitch_;
+    home_roll_     = roll_;
 }
 
 OrbitCameraManipulator::~OrbitCameraManipulator() = default;
@@ -143,24 +143,23 @@ void OrbitCameraManipulator::pan(double screenDx, double screenDy)
     if (cam == nullptr) {
         return;
     }
-    const double vh = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 600.0;
-    const Vec3d eye = cam->eye();
-    const Vec3d forward = (center_ - eye).normalized();
+    const double vh      = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 600.0;
+    const Vec3d  eye     = cam->eye();
+    const Vec3d  forward = (center_ - eye).normalized();
     if (forward.length() < kTiny) {
         return;
     }
     const Vec3d right = forward.cross(cam->up()).normalized();
-    const Vec3d up = right.cross(forward).normalized();
+    const Vec3d up    = right.cross(forward).normalized();
 
-    const double tan_half = std::tan(cam->fieldOfView() * kDegToRad * 0.5);
-    double world_per_pixel = 0.0;
+    const double tan_half        = std::tan(cam->fieldOfView() * kDegToRad * 0.5);
+    double       world_per_pixel = 0.0;
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
         world_per_pixel = 2.0 * distance_ * tan_half / vh;
-    } else {
-        const double depth = anchor_on_ray_
-            ? std::max((anchor_ - eye).dot(forward), kTiny)
-            : std::max(distance_, kTiny);
-        world_per_pixel = 2.0 * depth * tan_half / vh;
+    }
+    else {
+        const double depth = anchor_on_ray_ ? std::max((anchor_ - eye).dot(forward), kTiny) : std::max(distance_, kTiny);
+        world_per_pixel    = 2.0 * depth * tan_half / vh;
     }
 
     const Vec3d delta = (-right * screenDx + up * screenDy) * world_per_pixel;
@@ -183,21 +182,22 @@ void OrbitCameraManipulator::zoom(double factor)
     // while zooming: slide the orbit centre laterally so the anchor's screen
     // offset is unchanged after the distance change.
     if (zoom_to_cursor_ && anchor_on_ray_) {
-        const Vec3d eye = camera_->eye();
+        const Vec3d eye     = camera_->eye();
         const Vec3d forward = (center_ - eye).normalized();
         if (forward.length() >= kTiny) {
-            double pz = 0.0;
+            double pz  = 0.0;
             double pz1 = 0.0;
             if (camera_->projectionType() == Camera::ProjectionType::Orthographic) {
                 // In orthographic, the screen offset of a point scales with 1 / distance.
-                pz = d0;
+                pz  = d0;
                 pz1 = d1;
-            } else {
-                pz = std::max((anchor_ - eye).dot(forward), kTiny);
+            }
+            else {
+                pz  = std::max((anchor_ - eye).dot(forward), kTiny);
                 pz1 = pz + (d1 - d0);
             }
             if (pz > kTiny) {
-                const Vec3d base = eye + forward * pz;
+                const Vec3d base    = eye + forward * pz;
                 const Vec3d lateral = anchor_ - base;
                 center_ += lateral * (1.0 - pz1 / pz);
             }
@@ -214,8 +214,7 @@ void OrbitCameraManipulator::moveForward(double distance)
         return;
     }
     const Vec3d forward = (cam->target() - cam->eye()).normalized();
-    cam->lookAt(cam->eye() + forward * distance,
-                               cam->target() + forward * distance, cam->up());
+    cam->lookAt(cam->eye() + forward * distance, cam->target() + forward * distance, cam->up());
     syncFromCamera();
 }
 
@@ -226,9 +225,8 @@ void OrbitCameraManipulator::moveRight(double distance)
         return;
     }
     const Vec3d forward = (cam->target() - cam->eye()).normalized();
-    const Vec3d right = forward.cross(cam->up()).normalized();
-    cam->lookAt(cam->eye() + right * distance,
-                               cam->target() + right * distance, cam->up());
+    const Vec3d right   = forward.cross(cam->up()).normalized();
+    cam->lookAt(cam->eye() + right * distance, cam->target() + right * distance, cam->up());
     syncFromCamera();
 }
 
@@ -238,8 +236,7 @@ void OrbitCameraManipulator::moveUp(double distance)
     if (cam == nullptr) {
         return;
     }
-    cam->lookAt(cam->eye() + cam->up() * distance,
-                               cam->target() + cam->up() * distance, cam->up());
+    cam->lookAt(cam->eye() + cam->up() * distance, cam->target() + cam->up() * distance, cam->up());
     syncFromCamera();
 }
 
@@ -254,31 +251,32 @@ bool OrbitCameraManipulator::fitToScreen()
         return false;
     }
     const vn::math::Point3d centre_p = bounds.center();
-    const Vec3d centre(centre_p.x, centre_p.y, centre_p.z);
-    const Vec3d size = bounds.size();
+    const Vec3d             centre(centre_p.x, centre_p.y, centre_p.z);
+    const Vec3d             size = bounds.size();
     // Bounding-sphere radius around the box centre.
-    const double radius = (size * 0.5).length();
+    const double radius          = (size * 0.5).length();
 
-    center_ = centre;
+    center_              = centre;
     const double fov_rad = cam->fieldOfView() * kDegToRad;
-    const double aspect = viewportAspect();
-    const double margin = 1.15;
+    const double aspect  = viewportAspect();
+    const double margin  = 1.15;
 
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
         // Frustum half-height needed to frame the sphere in both dimensions.
-        const double half_w = radius * margin * aspect;
+        const double half_w        = radius * margin * aspect;
         const double needed_half_h = std::max(radius * margin, half_w / aspect);
-        const double tan_half = std::tan(fov_rad * 0.5);
-        distance_ = std::max(needed_half_h / tan_half, radius * 1.05);
-    } else {
-        const double tan_half = std::tan(fov_rad * 0.5);
-        const double vertical_half = fov_rad * 0.5;
-        const double horizontal_half = std::atan(tan_half * aspect);
-        const double half_angle = std::min(vertical_half, horizontal_half);
-        const double sin_half = std::sin(half_angle);
-        distance_ = std::max(radius * margin / std::max(sin_half, 1e-6), radius * 1.05);
+        const double tan_half      = std::tan(fov_rad * 0.5);
+        distance_                  = std::max(needed_half_h / tan_half, radius * 1.05);
     }
-    distance_ = clampDistance(distance_);
+    else {
+        const double tan_half        = std::tan(fov_rad * 0.5);
+        const double vertical_half   = fov_rad * 0.5;
+        const double horizontal_half = std::atan(tan_half * aspect);
+        const double half_angle      = std::min(vertical_half, horizontal_half);
+        const double sin_half        = std::sin(half_angle);
+        distance_                    = std::max(radius * margin / std::max(sin_half, 1e-6), radius * 1.05);
+    }
+    distance_               = clampDistance(distance_);
     // The camera's clip planes belong to the content as much as the distance does: the default 0.1..1000 frustum
     // stops at the unit scale, so a millimetre-scale model - and the distance a fit gives it - would sit entirely
     // behind the far plane. Scale both with the fitted distance, keeping the 1:10000 depth ratio the defaults use.
@@ -289,7 +287,8 @@ bool OrbitCameraManipulator::fitToScreen()
         const double half_h    = distance_ * tan_ortho;
         const double half_w    = half_h * viewportAspect();
         cam->setOrthographic(-half_w, half_w, -half_h, half_h, near_plane, far_plane);
-    } else {
+    }
+    else {
         cam->setPerspective(cam->fieldOfView(), near_plane, far_plane);
     }
     // Frame the model level: drop any accumulated roll.
@@ -300,11 +299,11 @@ bool OrbitCameraManipulator::fitToScreen()
 
 void OrbitCameraManipulator::home()
 {
-    center_ = home_center_;
+    center_   = home_center_;
     distance_ = home_distance_;
-    yaw_ = home_yaw_;
-    pitch_ = home_pitch_;
-    roll_ = home_roll_;
+    yaw_      = home_yaw_;
+    pitch_    = home_pitch_;
+    roll_     = home_roll_;
     apply();
 }
 
@@ -346,8 +345,7 @@ bool OrbitCameraManipulator::pickAt(double screenX, double screenY, Vec3d& outPo
     Vec3d origin;
     Vec3d direction;
     makeScreenRay(screenX, screenY, origin, direction);
-    RayIntersectionResult result =
-        RayIntersection::intersectScene(Ray(origin, direction), scene_);
+    RayIntersectionResult result = RayIntersection::intersectScene(Ray(origin, direction), scene_);
     if (!result.hit) {
         return false;
     }
@@ -357,7 +355,7 @@ bool OrbitCameraManipulator::pickAt(double screenX, double screenY, Vec3d& outPo
 
 bool OrbitCameraManipulator::setCenterFromScreen(double screenX, double screenY)
 {
-    bool on_ray = false;
+    bool        on_ray = false;
     const Vec3d anchor = resolveAnchor(screenX, screenY, on_ray);
     aimCenterAt(anchor);
     return on_ray;
@@ -384,7 +382,7 @@ void OrbitCameraManipulator::apply()
     Vec3d up = viewUp(yaw_, pitch_);
     if (std::abs(roll_) > 1e-9) {
         const Vec3d view_fwd = (center_ - eye).normalized();
-        up = rotateAround(up, view_fwd, roll_);
+        up                   = rotateAround(up, view_fwd, roll_);
     }
     cam->lookAt(eye, center_, up);
 
@@ -395,21 +393,15 @@ void OrbitCameraManipulator::apply()
 
 void OrbitCameraManipulator::onMousePress(const vn::window::MouseEvent& event)
 {
-    last_x_ = event.x;
-    last_y_ = event.y;
+    last_x_        = event.x;
+    last_y_        = event.y;
     pointer_known_ = true;
 
     switch (event.button) {
-        case vn::window::MouseButton::Left:
-            drag_ = CameraManipulator::DragAction::Rotate;
-            break;
-        case vn::window::MouseButton::Middle:
-        case vn::window::MouseButton::Right:
-            drag_ = CameraManipulator::DragAction::Pan;
-            break;
-        default:
-            drag_ = CameraManipulator::DragAction::None;
-            break;
+    case vn::window::MouseButton::Left: drag_ = CameraManipulator::DragAction::Rotate; break;
+    case vn::window::MouseButton::Middle:
+    case vn::window::MouseButton::Right: drag_ = CameraManipulator::DragAction::Pan; break;
+    default: drag_ = CameraManipulator::DragAction::None; break;
     }
 
     // Resolve the interaction anchor: the picked model point under the cursor,
@@ -425,29 +417,27 @@ void OrbitCameraManipulator::onMouseMove(const vn::window::MouseEvent& event)
 {
     const double dx = event.x - last_x_;
     const double dy = event.y - last_y_;
-    last_x_ = event.x;
-    last_y_ = event.y;
-    pointer_known_ = true;
+    last_x_         = event.x;
+    last_y_         = event.y;
+    pointer_known_  = true;
 
     switch (drag_) {
-        case CameraManipulator::DragAction::Rotate:
-            if (mode_ == Mode::FirstPerson) {
-                orbit(dx * drag_sensitivity_, -dy * drag_sensitivity_);
-            } else {
-                // Rotate the whole rig rigidly about the press anchor (the
-                // grabbed model point, or the scene centre on empty space), so
-                // that point stays pinned under the cursor. The up is carried
-                // with the rig, which lets the view roll over the top to a
-                // true 90 deg elevation (and beyond) without gimbal shake or a
-                // sudden 180 deg flip.
-                pivotRotate(dx, dy);
-            }
-            break;
-        case CameraManipulator::DragAction::Pan:
-            pan(dx, dy);
-            break;
-        default:
-            break;
+    case CameraManipulator::DragAction::Rotate:
+        if (mode_ == Mode::FirstPerson) {
+            orbit(dx * drag_sensitivity_, -dy * drag_sensitivity_);
+        }
+        else {
+            // Rotate the whole rig rigidly about the press anchor (the
+            // grabbed model point, or the scene centre on empty space), so
+            // that point stays pinned under the cursor. The up is carried
+            // with the rig, which lets the view roll over the top to a
+            // true 90 deg elevation (and beyond) without gimbal shake or a
+            // sudden 180 deg flip.
+            pivotRotate(dx, dy);
+        }
+        break;
+    case CameraManipulator::DragAction::Pan: pan(dx, dy); break;
+    default: break;
     }
 }
 
@@ -466,7 +456,7 @@ void OrbitCameraManipulator::onScroll(const vn::window::ScrollEvent& event)
     // Anchor at the current pointer position (falls back to the view centre).
     const double sx = pointer_known_ ? last_x_ : viewport_w_ * 0.5;
     const double sy = pointer_known_ ? last_y_ : viewport_h_ * 0.5;
-    anchor_ = resolveAnchor(sx, sy, anchor_on_ray_);
+    anchor_         = resolveAnchor(sx, sy, anchor_on_ray_);
 
     // The wheel performs a dolly (translate the camera along a direction)
     // rather than shrinking a radius about a fixed point, so in perspective
@@ -478,15 +468,15 @@ void OrbitCameraManipulator::onScroll(const vn::window::ScrollEvent& event)
     // (it falls behind the near plane) the dive direction is released and the
     // camera keeps moving straight along the view axis, so it travels through
     // the model instead of stopping at its surface.
-    const Vec3d eye = cam->eye();
+    const Vec3d eye     = cam->eye();
     const Vec3d forward = (cam->target() - eye).normalized();
     if (forward.length() < kTiny) {
         return;
     }
     Vec3d dir = forward;
     if (anchor_on_ray_) {
-        const Vec3d to_anchor = anchor_ - eye;
-        const double d = to_anchor.length();
+        const Vec3d  to_anchor    = anchor_ - eye;
+        const double d            = to_anchor.length();
         // Keep the dive aimed at the anchor while it is clearly in front (it
         // then stays pinned under the cursor). Once the eye is essentially at
         // the surface (the anchor is within a few near planes), release the
@@ -501,7 +491,7 @@ void OrbitCameraManipulator::onScroll(const vn::window::ScrollEvent& event)
     // Move by a fraction of the current eye-to-centre distance per notch so
     // the dolly speed tracks the zoom level.
     const double ratio = 1.0 - 1.0 / wheel_factor_;
-    const double step = (event.deltaY > 0.0 ? distance_ * ratio : -distance_ * ratio);
+    const double step  = (event.deltaY > 0.0 ? distance_ * ratio : -distance_ * ratio);
     center_ += dir * step;
     apply();
 }
@@ -518,38 +508,17 @@ void OrbitCameraManipulator::onKeyDown(const vn::window::KeyEvent& event)
         return;
     }
     switch (event.code) {
-        case vn::window::KeyCode::W:
-            moveForward(move_step_);
-            break;
-        case vn::window::KeyCode::S:
-            moveForward(-move_step_);
-            break;
-        case vn::window::KeyCode::A:
-            moveRight(-move_step_);
-            break;
-        case vn::window::KeyCode::D:
-            moveRight(move_step_);
-            break;
-        case vn::window::KeyCode::E:
-            moveUp(move_step_);
-            break;
-        case vn::window::KeyCode::Q:
-            moveUp(-move_step_);
-            break;
-        case vn::window::KeyCode::Left:
-            orbit(-rotate_step_, 0.0);
-            break;
-        case vn::window::KeyCode::Right:
-            orbit(rotate_step_, 0.0);
-            break;
-        case vn::window::KeyCode::Up:
-            orbit(0.0, -rotate_step_);
-            break;
-        case vn::window::KeyCode::Down:
-            orbit(0.0, rotate_step_);
-            break;
-        default:
-            break;
+    case vn::window::KeyCode::W: moveForward(move_step_); break;
+    case vn::window::KeyCode::S: moveForward(-move_step_); break;
+    case vn::window::KeyCode::A: moveRight(-move_step_); break;
+    case vn::window::KeyCode::D: moveRight(move_step_); break;
+    case vn::window::KeyCode::E: moveUp(move_step_); break;
+    case vn::window::KeyCode::Q: moveUp(-move_step_); break;
+    case vn::window::KeyCode::Left: orbit(-rotate_step_, 0.0); break;
+    case vn::window::KeyCode::Right: orbit(rotate_step_, 0.0); break;
+    case vn::window::KeyCode::Up: orbit(0.0, -rotate_step_); break;
+    case vn::window::KeyCode::Down: orbit(0.0, rotate_step_); break;
+    default: break;
     }
 }
 
@@ -578,24 +547,22 @@ void OrbitCameraManipulator::onResize(const vn::window::ResizeEvent& event)
     }
 }
 
-void OrbitCameraManipulator::makeScreenRay(double screenX, double screenY,
-                                           Vec3d& origin, Vec3d& direction) const
+void OrbitCameraManipulator::makeScreenRay(double screenX, double screenY, Vec3d& origin, Vec3d& direction) const
 {
     Camera* cam = camera_;
-    origin = cam != nullptr ? cam->eye() : Vec3d();
-    direction = Vec3d(0.0, 0.0, -1.0);
+    origin      = cam != nullptr ? cam->eye() : Vec3d();
+    direction   = Vec3d(0.0, 0.0, -1.0);
     if (cam == nullptr) {
         return;
     }
-    const double w = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
-    const double h = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
-    const Ray ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
-    origin = ray.origin;
-    direction = ray.direction;
+    const double w   = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
+    const double h   = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
+    const Ray    ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
+    origin           = ray.origin;
+    direction        = ray.direction;
 }
 
-Vec3d OrbitCameraManipulator::resolveAnchor(double screenX, double screenY,
-                                            bool& onRay) const
+Vec3d OrbitCameraManipulator::resolveAnchor(double screenX, double screenY, bool& onRay) const
 {
     onRay = false;
     Vec3d hit;
@@ -619,13 +586,13 @@ void OrbitCameraManipulator::aimCenterAt(const Vec3d& point)
     if (cam == nullptr) {
         return;
     }
-    const Vec3d eye = cam->eye();
-    const Vec3d offset = eye - point;
-    const double d = offset.length();
+    const Vec3d  eye    = cam->eye();
+    const Vec3d  offset = eye - point;
+    const double d      = offset.length();
     if (d < 1e-9) {
         return;
     }
-    center_ = point;
+    center_   = point;
     distance_ = clampDistance(d);
     sphericalFromDirection(offset / d, yaw_, pitch_);
     apply();
@@ -637,21 +604,21 @@ void OrbitCameraManipulator::pivotRotate(double screenDx, double screenDy)
     if (cam == nullptr) {
         return;
     }
-    const double ayaw = -screenDx * drag_sensitivity_;
+    const double ayaw   = -screenDx * drag_sensitivity_;
     const double apitch = -screenDy * drag_sensitivity_;
     if (std::abs(ayaw) < 1e-12 && std::abs(apitch) < 1e-12) {
         return;
     }
 
-    const Vec3d eye = cam->eye();
-    const Vec3d target = cam->target();
-    const Vec3d pivot = anchor_;
+    const Vec3d eye        = cam->eye();
+    const Vec3d target     = cam->target();
+    const Vec3d pivot      = anchor_;
     const Vec3d eye_offset = eye - pivot;
     if (eye_offset.length() < kTiny) {
-        return;  // Eye on the pivot: no meaningful rotation.
+        return; // Eye on the pivot: no meaningful rotation.
     }
     const Vec3d fwd0 = (target - eye).normalized();
-    const Vec3d up0 = cam->up().normalized();
+    const Vec3d up0  = cam->up().normalized();
     if (fwd0.length() < kTiny || up0.length() < kTiny) {
         return;
     }
@@ -661,16 +628,16 @@ void OrbitCameraManipulator::pivotRotate(double screenDx, double screenDy)
     // screen-right axis. Eye, forward and up are carried together, so the
     // pivot stays pinned at its screen position and the view may roll as it
     // sweeps over the top (no gimbal shake, no sudden 180 deg flip).
-    const Vec3d eye1 = pivot + rotateAround(eye_offset, kWorldUp, ayaw);
-    const Vec3d fwd1 = rotateAround(fwd0, kWorldUp, ayaw);
-    const Vec3d up1 = rotateAround(up0, kWorldUp, ayaw);
+    const Vec3d eye1   = pivot + rotateAround(eye_offset, kWorldUp, ayaw);
+    const Vec3d fwd1   = rotateAround(fwd0, kWorldUp, ayaw);
+    const Vec3d up1    = rotateAround(up0, kWorldUp, ayaw);
     const Vec3d right1 = fwd1.cross(up1).normalized();
     if (right1.length() < kTiny) {
         return;
     }
     const Vec3d eye2 = pivot + rotateAround(eye1 - pivot, right1, apitch);
     const Vec3d fwd2 = rotateAround(fwd1, right1, apitch).normalized();
-    const Vec3d up2 = rotateAround(up1, right1, apitch).normalized();
+    const Vec3d up2  = rotateAround(up1, right1, apitch).normalized();
 
     // Keep the eye-to-target distance so the frame scale is unchanged.
     const Vec3d target2 = eye2 + fwd2 * (target - eye).length();
@@ -684,14 +651,14 @@ void OrbitCameraManipulator::syncFromCamera()
     if (cam == nullptr) {
         return;
     }
-    const Vec3d eye = cam->eye();
-    center_ = cam->target();
-    const Vec3d offset = eye - center_;
-    const double d = offset.length();
+    const Vec3d eye     = cam->eye();
+    center_             = cam->target();
+    const Vec3d  offset = eye - center_;
+    const double d      = offset.length();
     if (d > 1e-9) {
-        distance_ = d;
+        distance_       = d;
         const Vec3d dir = offset / d;
-        pitch_ = std::asin(std::clamp(dir.z, -1.0, 1.0));
+        pitch_          = std::asin(std::clamp(dir.z, -1.0, 1.0));
         // Near a pole the azimuth is ill defined; keep the previous yaw so the
         // reconstructed up (viewUp) stays continuous through a 90 deg orbit.
         if (std::hypot(dir.x, dir.y) > 1e-4) {
@@ -701,8 +668,8 @@ void OrbitCameraManipulator::syncFromCamera()
         // that takes the level no-roll up (viewUp) to the camera's actual up.
         const Vec3d view_fwd = -dir;
         const Vec3d level_up = viewUp(yaw_, pitch_);
-        const Vec3d cam_up = cam->up().normalized();
-        roll_ = std::atan2(level_up.cross(cam_up).dot(view_fwd), level_up.dot(cam_up));
+        const Vec3d cam_up   = cam->up().normalized();
+        roll_                = std::atan2(level_up.cross(cam_up).dot(view_fwd), level_up.dot(cam_up));
     }
 }
 
@@ -723,17 +690,16 @@ void OrbitCameraManipulator::clampEyeOutsideBounds()
     double t_min = -std::numeric_limits<double>::max();
     double t_max = std::numeric_limits<double>::max();
     for (int axis = 0; axis < 3; ++axis) {
-        const double d = axis == 0 ? dir.x : (axis == 1 ? dir.y : dir.z);
-        const double o = axis == 0 ? center_.x : (axis == 1 ? center_.y : center_.z);
-        const double lo = axis == 0 ? bounds.min().x
-                          : (axis == 1 ? bounds.min().y : bounds.min().z);
-        const double hi = axis == 0 ? bounds.max().x
-                          : (axis == 1 ? bounds.max().y : bounds.max().z);
+        const double d  = axis == 0 ? dir.x : (axis == 1 ? dir.y : dir.z);
+        const double o  = axis == 0 ? center_.x : (axis == 1 ? center_.y : center_.z);
+        const double lo = axis == 0 ? bounds.min().x : (axis == 1 ? bounds.min().y : bounds.min().z);
+        const double hi = axis == 0 ? bounds.max().x : (axis == 1 ? bounds.max().y : bounds.max().z);
         if (std::abs(d) < 1e-12) {
             if (o < lo || o > hi) {
-                return;  // Parallel to the slab and outside: the ray misses the box.
+                return; // Parallel to the slab and outside: the ray misses the box.
             }
-        } else {
+        }
+        else {
             double t1 = (lo - o) / d;
             double t2 = (hi - o) / d;
             if (t1 > t2) {
@@ -744,8 +710,7 @@ void OrbitCameraManipulator::clampEyeOutsideBounds()
         }
     }
     // Clamp only when the current distance would place the eye inside the box.
-    if (distance_ >= t_min && distance_ <= t_max
-        && t_max < std::numeric_limits<double>::max()) {
+    if (distance_ >= t_min && distance_ <= t_max && t_max < std::numeric_limits<double>::max()) {
         distance_ = t_max * 1.02 + 1e-6;
     }
 }
@@ -766,10 +731,9 @@ void OrbitCameraManipulator::updateOrthoProjection()
         return;
     }
     const double tan_half = std::tan(cam->fieldOfView() * kDegToRad * 0.5);
-    const double half_h = distance_ * tan_half;
-    const double half_w = half_h * viewportAspect();
-    cam->setOrthographic(-half_w, half_w, -half_h, half_h,
-                                    cam->nearPlane(), cam->farPlane());
+    const double half_h   = distance_ * tan_half;
+    const double half_w   = half_h * viewportAspect();
+    cam->setOrthographic(-half_w, half_w, -half_h, half_h, cam->nearPlane(), cam->farPlane());
 }
 
 double OrbitCameraManipulator::viewportAspect() const

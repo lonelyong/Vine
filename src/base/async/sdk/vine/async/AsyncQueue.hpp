@@ -17,7 +17,8 @@
 
 VN_ASYNC_NS_BEGIN
 
-namespace detail {
+namespace detail
+{
 
 /**
  * @brief Shared state of an AsyncQueue.
@@ -26,15 +27,14 @@ namespace detail {
  * hold the coroutines waiting for a value or room; handles are resumed outside
  * the mutex to avoid lock-held-resume deadlocks.
  */
-template<typename T>
-struct AsyncQueueState
-{
-    std::mutex mutex;
-    std::size_t capacity{ 0 };
-    std::deque<T> items;
+template <typename T>
+struct AsyncQueueState {
+    std::mutex                           mutex;
+    std::size_t                          capacity{ 0 };
+    std::deque<T>                        items;
     std::vector<std::coroutine_handle<>> poppers;
     std::vector<std::coroutine_handle<>> pushers;
-    bool closed{ false };
+    bool                                 closed{ false };
 };
 
 /**
@@ -43,31 +43,27 @@ struct AsyncQueueState
  * Throws when the queue is empty; on a closed-and-empty queue the throw
  * carries a "closed" message so poppers of a drained queue can stop.
  */
-template<typename T>
+template <typename T>
 T popOne(const std::shared_ptr<AsyncQueueState<T>>& state)
 {
     std::vector<std::coroutine_handle<>> to_resume;
-    T value;
+    T                                    value;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        if (state->items.empty())
-        {
-            if (state->closed)
-            {
+        if (state->items.empty()) {
+            if (state->closed) {
                 throw std::runtime_error("async::AsyncQueue: closed");
             }
             throw std::logic_error("async::AsyncQueue: pop on empty queue");
         }
         value = std::move(state->items.front());
         state->items.pop_front();
-        if (!state->pushers.empty())
-        {
+        if (!state->pushers.empty()) {
             to_resume.push_back(state->pushers.front());
             state->pushers.erase(state->pushers.begin());
         }
     }
-    for (auto h : to_resume)
-    {
+    for (auto h : to_resume) {
         h.resume();
     }
     return value;
@@ -83,12 +79,11 @@ T popOne(const std::shared_ptr<AsyncQueueState<T>>& state)
  * @param value Value to enqueue; moved into the queue.
  * @return The popper to resume, or an empty handle when none is waiting.
  */
-template<typename T>
+template <typename T>
 std::coroutine_handle<> enqueueLocked(const std::shared_ptr<AsyncQueueState<T>>& state, T value)
 {
     state->items.push_back(std::move(value));
-    if (state->poppers.empty())
-    {
+    if (state->poppers.empty()) {
         return {};
     }
     const std::coroutine_handle<> next = state->poppers.front();
@@ -99,21 +94,19 @@ std::coroutine_handle<> enqueueLocked(const std::shared_ptr<AsyncQueueState<T>>&
 /**
  * @brief Awaiter for AsyncQueue::pop(); unregisters on destruction.
  */
-template<typename T>
-class QueuePopAwaiter
-{
+template <typename T>
+class QueuePopAwaiter {
   public:
     explicit QueuePopAwaiter(std::shared_ptr<AsyncQueueState<T>> state) noexcept
       : state_(std::move(state))
     {}
 
-    QueuePopAwaiter(const QueuePopAwaiter&) = delete;
+    QueuePopAwaiter(const QueuePopAwaiter&)            = delete;
     QueuePopAwaiter& operator=(const QueuePopAwaiter&) = delete;
 
     ~QueuePopAwaiter() noexcept
     {
-        if (handle_)
-        {
+        if (handle_) {
             std::lock_guard<std::mutex> lock(state_->mutex);
             std::erase(state_->poppers, handle_);
         }
@@ -135,8 +128,7 @@ class QueuePopAwaiter
     {
         handle_ = h;
         std::lock_guard<std::mutex> lock(state_->mutex);
-        if (!state_->items.empty() || state_->closed)
-        {
+        if (!state_->items.empty() || state_->closed) {
             return false;
         }
         return detail::tryRegisterWaiter(state_->poppers, h, failure_);
@@ -149,8 +141,7 @@ class QueuePopAwaiter
      */
     T await_resume()
     {
-        if (failure_)
-        {
+        if (failure_) {
             std::rethrow_exception(std::exchange(failure_, nullptr));
         }
         return detail::popOne(state_);
@@ -158,7 +149,7 @@ class QueuePopAwaiter
 
   private:
     std::shared_ptr<AsyncQueueState<T>> state_;
-    std::coroutine_handle<> handle_{};
+    std::coroutine_handle<>             handle_{};
 
     /// Why the waiter could not be registered; rethrown by await_resume().
     std::exception_ptr failure_{};
@@ -167,21 +158,20 @@ class QueuePopAwaiter
 /**
  * @brief Awaiter for AsyncQueue::push(); suspends only when bounded and full.
  */
-template<typename T>
-class QueuePushAwaiter
-{
+template <typename T>
+class QueuePushAwaiter {
   public:
     explicit QueuePushAwaiter(std::shared_ptr<AsyncQueueState<T>> state, T value) noexcept
-      : state_(std::move(state)), value_(std::move(value))
+      : state_(std::move(state))
+      , value_(std::move(value))
     {}
 
-    QueuePushAwaiter(const QueuePushAwaiter&) = delete;
+    QueuePushAwaiter(const QueuePushAwaiter&)            = delete;
     QueuePushAwaiter& operator=(const QueuePushAwaiter&) = delete;
 
     ~QueuePushAwaiter() noexcept
     {
-        if (handle_)
-        {
+        if (handle_) {
             std::lock_guard<std::mutex> lock(state_->mutex);
             std::erase(state_->pushers, handle_);
         }
@@ -210,22 +200,18 @@ class QueuePushAwaiter
         std::coroutine_handle<> wake{};
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->closed)
-            {
+            if (state_->closed) {
                 return false; // await_resume() reports the closed queue.
             }
-            if (state_->capacity == 0 || state_->items.size() < state_->capacity)
-            {
+            if (state_->capacity == 0 || state_->items.size() < state_->capacity) {
                 wake      = detail::enqueueLocked(state_, std::move(value_));
                 enqueued_ = true;
             }
-            else
-            {
+            else {
                 return detail::tryRegisterWaiter(state_->pushers, h, failure_);
             }
         }
-        if (wake)
-        {
+        if (wake) {
             wake.resume();
         }
         return false; // Enqueued under the lock; nothing left to wait for.
@@ -236,34 +222,30 @@ class QueuePushAwaiter
      */
     void await_resume()
     {
-        if (failure_)
-        {
+        if (failure_) {
             std::rethrow_exception(std::exchange(failure_, nullptr));
         }
-        if (enqueued_)
-        {
+        if (enqueued_) {
             return; // Already enqueued under the lock in await_suspend().
         }
 
         std::coroutine_handle<> wake{};
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->closed)
-            {
+            if (state_->closed) {
                 throw std::logic_error("async::AsyncQueue: push on closed queue");
             }
             wake = detail::enqueueLocked(state_, std::move(value_));
         }
-        if (wake)
-        {
+        if (wake) {
             wake.resume();
         }
     }
 
   private:
     std::shared_ptr<AsyncQueueState<T>> state_;
-    T value_;
-    std::coroutine_handle<> handle_{};
+    T                                   value_;
+    std::coroutine_handle<>             handle_{};
 
     /// Why the waiter could not be registered; rethrown by await_resume().
     std::exception_ptr failure_{};
@@ -289,9 +271,8 @@ class QueuePushAwaiter
  *
  * @tparam T Element type.
  */
-template<typename T>
-class AsyncQueue
-{
+template <typename T>
+class AsyncQueue {
   public:
     /**
      * @brief Constructs a queue.
@@ -304,7 +285,7 @@ class AsyncQueue
         state_->capacity = capacity;
     }
 
-    AsyncQueue(const AsyncQueue&) = delete;
+    AsyncQueue(const AsyncQueue&)            = delete;
     AsyncQueue& operator=(const AsyncQueue&) = delete;
 
     /**
@@ -325,29 +306,25 @@ class AsyncQueue
      * @param value Value to enqueue; moved into the queue.
      * @return true if enqueued, false if the queue is full or closed.
      */
-[[nodiscard]]
+    [[nodiscard]]
     bool tryPush(T value)
     {
         std::vector<std::coroutine_handle<>> to_resume;
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->closed)
-            {
+            if (state_->closed) {
                 return false;
             }
-            if (state_->capacity != 0 && state_->items.size() >= state_->capacity)
-            {
+            if (state_->capacity != 0 && state_->items.size() >= state_->capacity) {
                 return false;
             }
             state_->items.push_back(std::move(value));
-            if (!state_->poppers.empty())
-            {
+            if (!state_->poppers.empty()) {
                 to_resume.push_back(state_->poppers.front());
                 state_->poppers.erase(state_->poppers.begin());
             }
         }
-        for (auto h : to_resume)
-        {
+        for (auto h : to_resume) {
             h.resume();
         }
         return true;
@@ -370,16 +347,14 @@ class AsyncQueue
      * @param out Receives the value on success.
      * @return true if a value was removed.
      */
-[[nodiscard]]
+    [[nodiscard]]
     bool tryPop(T& out)
     {
-        try
-        {
+        try {
             out = detail::popOne(state_);
             return true;
         }
-        catch (const std::exception&)
-        {
+        catch (const std::exception&) {
             return false;
         }
     }
@@ -394,24 +369,20 @@ class AsyncQueue
      */
     void close() noexcept
     {
-        for (;;)
-        {
+        for (;;) {
             std::coroutine_handle<> h;
             {
                 std::lock_guard<std::mutex> lock(state_->mutex);
                 state_->closed = true; // No new waiters register once closed.
-                if (!state_->poppers.empty())
-                {
+                if (!state_->poppers.empty()) {
                     h = state_->poppers.back();
                     state_->poppers.pop_back();
                 }
-                else if (!state_->pushers.empty())
-                {
+                else if (!state_->pushers.empty()) {
                     h = state_->pushers.back();
                     state_->pushers.pop_back();
                 }
-                else
-                {
+                else {
                     break;
                 }
             }

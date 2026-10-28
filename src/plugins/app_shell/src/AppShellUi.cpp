@@ -113,7 +113,8 @@ void openDocumentFromCommandLine(gui::MainWindow* wnd)
 {
     (void)wnd; // 打开走文档管理器，不经过窗口；参数留着是因为调用点就在外壳里（将来要把它显示出来时就有地方）。
 
-    const char* const* argv = Application::current() != nullptr ? Application::current()->argv() : nullptr;    if (argv == nullptr) {
+    const char* const* argv = Application::current() != nullptr ? Application::current()->argv() : nullptr;
+    if (argv == nullptr) {
         return;
     }
 

@@ -53,8 +53,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /**
  * @brief The heap-growth gate (see the file note for what it measures and what it deliberately is not).
  */
-class VN_GRAPHICS_API AllocationGate
-{
+class VN_GRAPHICS_API AllocationGate {
   public:
     /** @brief Gets whether this platform can report heap usage at all.
      *
@@ -136,14 +135,14 @@ class VN_GRAPHICS_API AllocationGate
 
 
   private:
-    std::size_t    opened_at_{0};    ///< Bytes in use when the window was opened.
-    bool           open_{false};     ///< Whether a window is currently open.
-    std::size_t    windows_{0};      ///< Windows closed so far.
-    std::ptrdiff_t last_growth_{0};  ///< Growth the last closed window measured.
-    std::uint64_t  opened_count_{0}; ///< Counter when the window was opened.
-    std::size_t    opened_bytes_{0}; ///< Bytes counted when the window was opened.
-    std::uint64_t  allocations_{0};  ///< Allocations the last closed window counted.
-    std::size_t    bytes_{0};        ///< Bytes the last closed window's allocations asked for.
+    std::size_t    opened_at_{ 0 };    // Bytes in use when the window was opened.
+    bool           open_{ false };     // Whether a window is currently open.
+    std::size_t    windows_{ 0 };      // Windows closed so far.
+    std::ptrdiff_t last_growth_{ 0 };  // Growth the last closed window measured.
+    std::uint64_t  opened_count_{ 0 }; // Counter when the window was opened.
+    std::size_t    opened_bytes_{ 0 }; // Bytes counted when the window was opened.
+    std::uint64_t  allocations_{ 0 };  // Allocations the last closed window counted.
+    std::size_t    bytes_{ 0 };        // Bytes the last closed window's allocations asked for.
 };
 
 VN_GRAPHICSBACKEND_NS_END

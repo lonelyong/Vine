@@ -11,8 +11,11 @@ VN_APPFW_NS_BEGIN
 
 class PluginLoadContext;
 
-namespace gui {
+namespace gui
+{
+
 class ConsolePanel;
+
 }
 
 /**

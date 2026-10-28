@@ -47,8 +47,7 @@ inline vn::meshio::MeshLoader::Options viewerLoadOptions()
  * @param indices   三角索引（三个一组）。
  * @return 与 positions 同长的法线。
  */
-inline std::vector<vn::math::Vec3f> smoothNormals(std::span<const vn::math::Vec3f> positions,
-                                                  std::span<const std::uint32_t>  indices)
+inline std::vector<vn::math::Vec3f> smoothNormals(std::span<const vn::math::Vec3f> positions, std::span<const std::uint32_t> indices)
 {
     std::vector<vn::math::Vec3f> normals(positions.size(), vn::math::Vec3f(0.0f, 0.0f, 0.0f));
 
@@ -68,8 +67,7 @@ inline std::vector<vn::math::Vec3f> smoothNormals(std::span<const vn::math::Vec3
     }
 
     for (auto& normal : normals) {
-        const float length =
-            std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+        const float length = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
         if (length > 1.0e-12f) {
             normal = normal * (1.0f / length);
         }
@@ -130,8 +128,7 @@ inline vn::appfw::Document* openMeshFilePayload(const MeshFilePayload& payload)
     // 结构要留下来（节点变换、多部件、每部件材质）：`load` 而不是摊平的 `loadMerged`。
     auto loaded = loader.load(payload.file_path);
     if (!loaded) {
-        VN_LOGW("model_viewer: could not read '{}' ({})", payload.file_path.string(),
-                vn::io::ioErrorName(loaded.error()));
+        VN_LOGW("model_viewer: could not read '{}' ({})", payload.file_path.string(), vn::io::ioErrorName(loaded.error()));
         return nullptr;
     }
     auto model = loaded.take();
@@ -139,8 +136,7 @@ inline vn::appfw::Document* openMeshFilePayload(const MeshFilePayload& payload)
     // 查看器只画三角网格：一个都没有的模型（点云、纯 b-rep）不接受 —— 与以前"不是三角网格就拒"同一条规矩。
     std::size_t triangle_entries = 0;
     for (const vn::geometry::Model::Entry& entry : model->meshes()) {
-        if (entry.mesh != nullptr &&
-            dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(entry.mesh.get()) != nullptr) {
+        if (entry.mesh != nullptr && dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(entry.mesh.get()) != nullptr) {
             ++triangle_entries;
         }
     }
@@ -152,8 +148,7 @@ inline vn::appfw::Document* openMeshFilePayload(const MeshFilePayload& payload)
     ensureSmoothNormals(*model);
 
     // 名字取文件名：位置是载荷给的，怎么显示是文档的事（路径本身不进文档 —— 要重读就自己拷一份，见 §5.8）。
-    return new ModelDocument(vn::String::fromLocal8Bit(payload.file_path.filename().string().c_str()),
-                             std::move(model));
+    return new ModelDocument(vn::String::fromLocal8Bit(payload.file_path.filename().string().c_str()), std::move(model));
 }
 
 } // namespace vn::model_viewer

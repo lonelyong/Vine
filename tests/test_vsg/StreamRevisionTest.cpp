@@ -28,8 +28,7 @@ namespace
 ///
 /// Positions at location 0 and texcoords at the ABI's reserved slot, no indices: the smallest geometry that
 /// can tell "this channel moved" from "the geometry changed".
-struct TwoChannel
-{
+struct TwoChannel {
     vn::intrusive_ptr<Geometry>          geometry;
     vn::intrusive_ptr<vn::Buffer<float>> positions;
     vn::intrusive_ptr<vn::Buffer<float>> texcoords;
@@ -49,19 +48,17 @@ struct TwoChannel
 TwoChannel twoChannels()
 {
     TwoChannel out;
-    out.geometry = vn::intrusive_ptr<Geometry>(new Geometry());
-    out.positions =
-        vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(
-            std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F }));
-    out.texcoords = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F }));
+    out.geometry  = vn::intrusive_ptr<Geometry>(new Geometry());
+    out.positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F }));
+    out.texcoords = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F }));
     out.geometry->setPositions(out.positions);
     out.geometry->setTexcoords2(out.texcoords);
     out.geometry->setRevision(1U);
     return out;
 }
 
-}  // namespace
+} // namespace
 
 /*
  * @brief The ONLY way an edit re-uploads a stream: the host announced it on the buffer that holds the bytes.
@@ -113,8 +110,8 @@ TEST(StreamRevisionTest, AGeometryAnnouncementDoesNotRekeyTheStreams)
 
     // What it DOES move is the description's revision: the number a table is rebuilt on (layout and counts).
     std::vector<ChannelFacts>            again;
-        std::vector<vn::vsg::PrimitiveFacts> again_primitives;
-    const GeometryFacts       rebuilt = two.describe(again);
+    std::vector<vn::vsg::PrimitiveFacts> again_primitives;
+    const GeometryFacts                  rebuilt = two.describe(again);
     EXPECT_NE(rebuilt.revision, facts.revision) << "the geometry announced, so its description is a new one";
 }
 
@@ -128,21 +125,20 @@ TEST(StreamRevisionTest, AStructuralChangeIsANewStreamByIdentity)
 
     std::vector<ChannelFacts>            storage;
     std::vector<vn::vsg::PrimitiveFacts> primitives;
-    const GeometryFacts                  facts = two.describe(storage);
-    const StreamKey           before = facts.channels[0].streamKey();
+    const GeometryFacts                  facts  = two.describe(storage);
+    const StreamKey                      before = facts.channels[0].streamKey();
 
     // The same bytes in a DIFFERENT buffer (a replacement is how a host swaps a channel's source).
     auto replacement = vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F,
-                                                  -1.0F, 1.0F, 0.0F }));
+        new vn::Buffer<float>(std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F }));
     two.geometry->setPositions(replacement);
     two.geometry->bumpRevision();
     ASSERT_EQ(replacement->revision(), 0U) << "a fresh buffer starts at 0: the identity, not a revision, is what moved";
 
     std::vector<ChannelFacts>            replaced_storage;
-        std::vector<vn::vsg::PrimitiveFacts> replaced_storage_primitives;
-    const GeometryFacts       replaced = two.describe(replaced_storage);
-    const StreamKey           after    = replaced.channels[0].streamKey();
+    std::vector<vn::vsg::PrimitiveFacts> replaced_storage_primitives;
+    const GeometryFacts                  replaced = two.describe(replaced_storage);
+    const StreamKey                      after    = replaced.channels[0].streamKey();
     EXPECT_NE(after.buffer, before.buffer) << "a different buffer is a different stream";
     EXPECT_NE(after, before);
 
@@ -150,8 +146,8 @@ TEST(StreamRevisionTest, AStructuralChangeIsANewStreamByIdentity)
     two.geometry->setPositions(replacement, 0U, 2U);
     two.geometry->bumpRevision();
     std::vector<ChannelFacts>            sliced_storage;
-        std::vector<vn::vsg::PrimitiveFacts> sliced_storage_primitives;
-    const GeometryFacts       sliced = two.describe(sliced_storage);
+    std::vector<vn::vsg::PrimitiveFacts> sliced_storage_primitives;
+    const GeometryFacts                  sliced = two.describe(sliced_storage);
     EXPECT_NE(sliced.channels[0].streamKey(), after) << "the slice's own fields are the identity";
 }
 
@@ -196,9 +192,7 @@ TEST(StreamRevisionTest, TheSharingTableUploadsOnlyTheStreamWhoseAnnouncementMov
     const GeometryFacts                  facts = two.describe(storage);
 
     SharedStreams table(8U);
-    const auto    acquire = [&table](const StreamKey& key, std::uint64_t frame) {
-        return table.acquire(key, frame).action;
-    };
+    const auto    acquire = [&table](const StreamKey& key, std::uint64_t frame) { return table.acquire(key, frame).action; };
 
     EXPECT_EQ(acquire(facts.channels[0].streamKey(), 1U), SharedStreams::Action::Upload);
     EXPECT_EQ(acquire(facts.channels[1].streamKey(), 1U), SharedStreams::Action::Upload);
@@ -206,10 +200,8 @@ TEST(StreamRevisionTest, TheSharingTableUploadsOnlyTheStreamWhoseAnnouncementMov
 
     // The editor touched positions only.
     two.positions->setRevision(two.positions->revision() + 1U);
-    EXPECT_EQ(acquire(facts.channels[0].streamKey(), 2U), SharedStreams::Action::Upload)
-        << "the edited channel is uploaded again";
-    EXPECT_EQ(acquire(facts.channels[1].streamKey(), 2U), SharedStreams::Action::Alias)
-        << "and the untouched one is not";
+    EXPECT_EQ(acquire(facts.channels[0].streamKey(), 2U), SharedStreams::Action::Upload) << "the edited channel is uploaded again";
+    EXPECT_EQ(acquire(facts.channels[1].streamKey(), 2U), SharedStreams::Action::Alias) << "and the untouched one is not";
 
     // A geometry announcement is about shape: it re-uploads nothing, because no buffer spoke.
     two.geometry->bumpRevision();

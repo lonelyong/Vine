@@ -54,25 +54,23 @@
 VN_VSG_NS_BEGIN
 
 /** @brief The block set: one dynamic uniform binding per block the shape declares. */
-class BlockDescriptors
-{
+class BlockDescriptors {
   public:
     /** @brief Binding of the per-pass view block (the canonical shape's spelling). */
-    static constexpr std::uint32_t kViewBinding = 0U;
+    static constexpr std::uint32_t kViewBinding     = 0U;
     /** @brief Binding of the per-draw block (the canonical shape's spelling). */
-    static constexpr std::uint32_t kDrawBinding = 1U;
+    static constexpr std::uint32_t kDrawBinding     = 1U;
     /** @brief Binding of the material block (the canonical shape's spelling). */
     static constexpr std::uint32_t kMaterialBinding = 2U;
     /** @brief Binding of the forward light block (the canonical shape's spelling; see api/LightBlock.hpp). */
-    static constexpr std::uint32_t kLightsBinding = 3U;
+    static constexpr std::uint32_t kLightsBinding   = 3U;
     /** @brief Binding of the shadow block (the canonical shape's spelling; see api/ShadowBlock.hpp). */
-    static constexpr std::uint32_t kShadowBinding = 4U;
+    static constexpr std::uint32_t kShadowBinding   = 4U;
 
     /** @brief One binding a block set declares: which L1 block is read there. */
-    struct Binding
-    {
-        std::uint32_t binding{0};                     ///< Binding index inside the set.
-        AbiBlockRole  role{AbiBlockRole::NotABlock};  ///< The block role read at that binding.
+    struct Binding {
+        std::uint32_t binding{ 0 };                    // Binding index inside the set.
+        AbiBlockRole  role{ AbiBlockRole::NotABlock }; // The block role read at that binding.
     };
 
     /** @brief The texture revision a set's sampled images were resolved from.
@@ -85,15 +83,13 @@ class BlockDescriptors
      * and a pass that knows a drawable's material asks for the set built from ITS texture (and takes a set
      * whose source is empty - one whose samplers are all pass-level - when there is no exact one).
      */
-    struct ImageSource
-    {
+    struct ImageSource {
         // No default member initialisers on purpose: a default argument of the enclosing class cannot use
         // them (`ImageSource source = {}` would be diagnosed), so `{}` value-initialises these instead.
-        struct Slot
-        {
-            const void*            texture;   ///< The slot's texture; null = the slot is absent.
-            std::uint64_t          revision;  ///< That texture's revision when the set was built.
-            vn::graphics::Sampler  sampler;   ///< How the slot is read (equal state = the same sampler object).
+        struct Slot {
+            const void*           texture;  // The slot's texture; null = the slot is absent.
+            std::uint64_t         revision; // That texture's revision when the set was built.
+            vn::graphics::Sampler sampler;  // How the slot is read (equal state = the same sampler object).
 
             /** @brief Compares two slots (the identity is map, revision and read state). */
             [[nodiscard]] friend bool operator==(const Slot&, const Slot&) noexcept = default;
@@ -119,21 +115,19 @@ class BlockDescriptors
 
     /** @brief One sampled image a declared set binds (the ENGINE's set 0 carries the material block AND the
      *         diffuse map, so the two kinds share a set - `layoutOfShape` declares both). */
-    struct SampledBinding
-    {
-        std::uint32_t                    binding{0};  ///< The binding the program declares the sampler at.
-        ::vsg::ref_ptr<::vsg::ImageView> view;        ///< The image read there.
-        ::vsg::ref_ptr<::vsg::Sampler>   sampler;     ///< Its sampler (a content layer's input sampler).
+    struct SampledBinding {
+        std::uint32_t                    binding{ 0 }; // The binding the program declares the sampler at.
+        ::vsg::ref_ptr<::vsg::ImageView> view;         // The image read there.
+        ::vsg::ref_ptr<::vsg::Sampler>   sampler;      // Its sampler (a content layer's input sampler).
     };
 
     /** @brief Where this draw's blocks are (the dynamic offsets, named by role - NOT by binding index). */
-    struct Offsets
-    {
-        std::uint64_t view{0};      ///< Offset of the view block (see `BlockStorage::writeView`).
-        std::uint64_t draw{0};      ///< Offset of the draw block (see `BlockStorage::writeDraw`).
-        std::uint64_t material{0};  ///< Offset of the material block (see `BlockStorage::writeMaterial`).
-        std::uint64_t lights{0};    ///< Offset of the light block (see `BlockStorage::writeLights`).
-        std::uint64_t shadow{0};    ///< Offset of the shadow block (see `BlockStorage::writeShadows`).
+    struct Offsets {
+        std::uint64_t view{ 0 };     // Offset of the view block (see `BlockStorage::writeView`).
+        std::uint64_t draw{ 0 };     // Offset of the draw block (see `BlockStorage::writeDraw`).
+        std::uint64_t material{ 0 }; // Offset of the material block (see `BlockStorage::writeMaterial`).
+        std::uint64_t lights{ 0 };   // Offset of the light block (see `BlockStorage::writeLights`).
+        std::uint64_t shadow{ 0 };   // Offset of the shadow block (see `BlockStorage::writeShadows`).
     };
 
   public:
@@ -159,8 +153,8 @@ class BlockDescriptors
      *                         the diffuse map, so one layout declares both kinds).
      * @return The layout, or null when it could not be created.
      */
-    [[nodiscard]] static ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layoutOfShape(
-        std::span<const Binding> shape, std::span<const std::uint32_t> sampler_bindings = {});
+    [[nodiscard]] static ::vsg::ref_ptr<::vsg::DescriptorSetLayout> layoutOfShape(std::span<const Binding>       shape,
+                                                                                  std::span<const std::uint32_t> sampler_bindings = {});
 
     /** @brief Creates the layout and its canonical set over a storage.
      *
@@ -169,8 +163,7 @@ class BlockDescriptors
      * @param set_index Index of the block set in the pipeline layouts that use it.
      * @return The descriptors, or null when the layout or the set could not be created.
      */
-    static std::unique_ptr<BlockDescriptors> create(::vsg::ref_ptr<::vsg::Device> device,
-                                                    const BlockStorage& storage, std::uint32_t set_index = 0U);
+    static std::unique_ptr<BlockDescriptors> create(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage, std::uint32_t set_index = 0U);
 
     /** @brief Creates the layout and its set over a storage, for the shape @p shape declares.
      *
@@ -182,11 +175,12 @@ class BlockDescriptors
      * @param source    Which texture revision those images were resolved from (see @ref ImageSource).
      * @return The descriptors, or null when the layout or the set could not be created.
      */
-    static std::unique_ptr<BlockDescriptors> create(::vsg::ref_ptr<::vsg::Device> device,
-                                                    const BlockStorage& storage, std::span<const Binding> shape,
-                                                    std::uint32_t set_index,
+    static std::unique_ptr<BlockDescriptors> create(::vsg::ref_ptr<::vsg::Device>   device,
+                                                    const BlockStorage&             storage,
+                                                    std::span<const Binding>        shape,
+                                                    std::uint32_t                   set_index,
                                                     std::span<const SampledBinding> samplers = {},
-                                                    ImageSource source = {});
+                                                    ImageSource                     source   = {});
 
     /** @brief Creates the set @p abi's declared blocks are bound through, for one set index.
      *
@@ -203,15 +197,16 @@ class BlockDescriptors
      * @param source    Which texture revision those images were resolved from (see @ref ImageSource).
      * @return The descriptors, or null when the set could not be created.
      */
-    static std::unique_ptr<BlockDescriptors> forAbi(const ProgramAbi& abi, std::uint32_t set,
-                                                    ::vsg::ref_ptr<::vsg::Device> device,
-                                                    const BlockStorage& storage,
+    static std::unique_ptr<BlockDescriptors> forAbi(const ProgramAbi&               abi,
+                                                    std::uint32_t                   set,
+                                                    ::vsg::ref_ptr<::vsg::Device>   device,
+                                                    const BlockStorage&             storage,
                                                     std::span<const SampledBinding> samplers = {},
-                                                    ImageSource source = {});
+                                                    ImageSource                     source   = {});
 
     ~BlockDescriptors();
 
-    BlockDescriptors(const BlockDescriptors&) = delete;
+    BlockDescriptors(const BlockDescriptors&)            = delete;
     BlockDescriptors& operator=(const BlockDescriptors&) = delete;
 
   public:
@@ -228,8 +223,7 @@ class BlockDescriptors
      * @param offsets         Where this draw's blocks are (picked BY ROLE, handed over in binding order).
      * @return The command, or null when an offset is misaligned or does not fit the API's 32-bit field.
      */
-    [[nodiscard]] ::vsg::ref_ptr<::vsg::BindDescriptorSet> bind(
-        const ::vsg::ref_ptr<::vsg::PipelineLayout>& pipeline_layout, const Offsets& offsets);
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::BindDescriptorSet> bind(const ::vsg::ref_ptr<::vsg::PipelineLayout>& pipeline_layout, const Offsets& offsets);
 
   public:
     /** @brief Gets the shape this set was built for (in binding order). */
@@ -261,9 +255,12 @@ class BlockDescriptors
     // Lexically after Data so the out-of-line destructor is the only place that needs the complete type.
     std::unique_ptr<Data> d;
 
-    BlockDescriptors(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage,
-                     std::span<const Binding> shape, std::uint32_t set_index,
-                     std::span<const SampledBinding> samplers, ImageSource source);
+    BlockDescriptors(::vsg::ref_ptr<::vsg::Device>   device,
+                     const BlockStorage&             storage,
+                     std::span<const Binding>        shape,
+                     std::uint32_t                   set_index,
+                     std::span<const SampledBinding> samplers,
+                     ImageSource                     source);
 };
 
 /** @brief Gets the block shape @p abi declares in @p set, in binding order.

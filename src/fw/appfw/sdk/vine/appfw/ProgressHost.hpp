@@ -47,8 +47,7 @@ VN_APPFW_NS_BEGIN
  *         for (...) { scope.next(1); ... }
  *     }
  */
-class VN_APPFW_API ProgressHost
-{
+class VN_APPFW_API ProgressHost {
   public:
     /**
      * @brief Constructs a background host owning its own cancellation source.
@@ -238,7 +237,7 @@ class VN_APPFW_API ProgressHost
 
   private:
     // stop_source_ is declared first so the indicator can bind to its token.
-    std::stop_source          stop_source_;
+    std::stop_source            stop_source_;
     progress::ProgressIndicator indicator_;
 
     /// Guards label_, which the operation writes and observers read.

@@ -19,34 +19,31 @@ VN_GRAPHICS_NS_BEGIN
  * the defaults below (which match the backend's current default pipeline
  * state, so a scene without StateNodes resolves to today's behaviour).
  */
-struct VN_GRAPHICS_API ResolvedRenderState
-{
-    DepthState   depth;                        ///< Depth state (defaults: test/write on, Less).
-    CullMode     cullMode = CullMode::None;    ///< Face culling (default: none).
-    BlendState   blend;                        ///< Blending (default: disabled).
-    PolygonMode  polygonMode = PolygonMode::Fill;  ///< Polygon mode (default: fill).
-    PolygonOffset polygonOffset{};                 ///< Depth bias (default: none).
+struct VN_GRAPHICS_API ResolvedRenderState {
+    DepthState    depth;                           // Depth state (defaults: test/write on, Less).
+    CullMode      cullMode = CullMode::None;       // Face culling (default: none).
+    BlendState    blend;                           // Blending (default: disabled).
+    PolygonMode   polygonMode = PolygonMode::Fill; // Polygon mode (default: fill).
+    PolygonOffset polygonOffset{};                 // Depth bias (default: none).
     /// Point size in framebuffer pixels (default: 1). It is the ONE resolved item whose destination is the
     /// DRAW BLOCK (`VineDrawBlock::params.y`), because a point's size is a vertex-shader output rather than
     /// API state: it never enters a pipeline key, so two point sizes share one pipeline.
-    float        pointSize = 1.0F;
+    float pointSize   = 1.0F;
     /// Width of rasterised LINE primitives in framebuffer pixels (default: 1). Its destination is the
     /// backend's DYNAMIC STATE (it never enters a pipeline key either), capped by the device's lineWidthRange
     /// (see Capabilities::max_line_width). It does not widen `PolygonMode::Line`.
-    float        lineWidth = 1.0F;
+    float lineWidth   = 1.0F;
     /// The EFFECTIVE primitive topology of the draw: the PRIMITIVE's own value (see Primitive.hpp), or the
     /// pass' override of it for the whole view. It has no "content" layer and no default here - a command
     /// without a primitive draws nothing - so this is filled by the caller that knows the data.
-    Topology     topology = Topology::Triangles;
+    Topology topology = Topology::Triangles;
 };
 
 /** @brief Returns whether two resolved states are equal. */
 inline bool operator==(const ResolvedRenderState& lhs, const ResolvedRenderState& rhs)
 {
-    return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode &&
-           lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.polygonOffset == rhs.polygonOffset && lhs.topology == rhs.topology &&
-           lhs.pointSize == rhs.pointSize && lhs.lineWidth == rhs.lineWidth;
+    return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode && lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
+           lhs.polygonOffset == rhs.polygonOffset && lhs.topology == rhs.topology && lhs.pointSize == rhs.pointSize && lhs.lineWidth == rhs.lineWidth;
 }
 
 /** @brief Returns whether two resolved states differ. */
@@ -63,23 +60,22 @@ inline bool operator!=(const ResolvedRenderState& lhs, const ResolvedRenderState
  */
 enum class StateOrigin
 {
-    Default,   ///< Nobody said: the engine's default for that item.
-    Content,   ///< A StateNode on the command's path authored it (the content's own word).
-    Pass,      ///< The pass that draws it (see PassRenderState).
-    Data,      ///< The DATA said it (a primitive's topology): not a state anybody authored.
+    Default, // Nobody said: the engine's default for that item.
+    Content, // A StateNode on the command's path authored it (the content's own word).
+    Pass,    // The pass that draws it (see PassRenderState).
+    Data,    // The DATA said it (a primitive's topology): not a state anybody authored.
 };
 
 /** @brief The origin of every item of a resolved state (one per item, in the same order as ResolvedRenderState). */
-struct VN_GRAPHICS_API RenderStateOrigin
-{
-    StateOrigin depth{StateOrigin::Default};        ///< Where the depth state came from.
-    StateOrigin cullMode{StateOrigin::Default};     ///< Where the cull mode came from.
-    StateOrigin blend{StateOrigin::Default};        ///< Where the blend state came from.
-    StateOrigin polygonMode{StateOrigin::Default};  ///< Where the rasterisation mode came from.
-    StateOrigin polygonOffset{StateOrigin::Default};  ///< Where the depth bias came from.
-    StateOrigin pointSize{StateOrigin::Default};    ///< Where the point size came from.
-    StateOrigin lineWidth{StateOrigin::Default};    ///< Where the line width came from.
-    StateOrigin topology{StateOrigin::Default};     ///< Where the topology came from (Data or Pass).
+struct VN_GRAPHICS_API RenderStateOrigin {
+    StateOrigin depth{ StateOrigin::Default };         // Where the depth state came from.
+    StateOrigin cullMode{ StateOrigin::Default };      // Where the cull mode came from.
+    StateOrigin blend{ StateOrigin::Default };         // Where the blend state came from.
+    StateOrigin polygonMode{ StateOrigin::Default };   // Where the rasterisation mode came from.
+    StateOrigin polygonOffset{ StateOrigin::Default }; // Where the depth bias came from.
+    StateOrigin pointSize{ StateOrigin::Default };     // Where the point size came from.
+    StateOrigin lineWidth{ StateOrigin::Default };     // Where the line width came from.
+    StateOrigin topology{ StateOrigin::Default };      // Where the topology came from (Data or Pass).
 };
 
 /**
@@ -98,28 +94,26 @@ struct VN_GRAPHICS_API RenderStateOrigin
  *   field of the pass draw (PassDraw::program_override) and the backend resolves it per command exactly the way it
  *   resolves `state` - the command list itself is never rewritten (RenderPass::setProgramOverride).
  */
-struct VN_GRAPHICS_API PassRenderState
-{
-    DepthMode                  depth{DepthMode::TestAndWrite};  ///< Depth policy for content that authored none.
-    std::optional<PolygonMode> polygonMode{};                   ///< Rasterisation override for every command.
+struct VN_GRAPHICS_API PassRenderState {
+    DepthMode                  depth{ DepthMode::TestAndWrite }; // Depth policy for content that authored none.
+    std::optional<PolygonMode> polygonMode{};                    // Rasterisation override for every command.
     /// Point-size override for every command, in framebuffer pixels. Like the two below it, it is a viewing
     /// switch: the pass that turns a scene into points has to be able to size them, and what the content
     /// authored stays the content's own word for the passes that draw it as geometry.
-    std::optional<float>       pointSize{};
+    std::optional<float> pointSize{};
     /// Line-width override for every command, in framebuffer pixels (the "draw me the structure, thicker"
     /// switch of a CAD view). It shares the point size's viewing-switch rule and, like it, recompiles nothing.
-    std::optional<float>       lineWidth{};
+    std::optional<float> lineWidth{};
     /// Primitive-topology override for every command ("show me this scene as points"). It overrides what the
     /// DATA states, because how a view looks at a scene is the pass' decision - the same rule the rasterisation
     /// mode already follows. The data keeps saying what it is; a pipeline is compiled per effective topology.
-    std::optional<Topology>    topology{};
+    std::optional<Topology> topology{};
 };
 
 /** @brief One command's FINAL state in one pass, and the layer each item came from. */
-struct VN_GRAPHICS_API ResolvedCommandState
-{
-    ResolvedRenderState state;   ///< The final state (defaults filled in).
-    RenderStateOrigin   origin;  ///< Which layer decided each item of it.
+struct VN_GRAPHICS_API ResolvedCommandState {
+    ResolvedRenderState state;  // The final state (defaults filled in).
+    RenderStateOrigin   origin; // Which layer decided each item of it.
 };
 
 /**
@@ -140,8 +134,7 @@ struct VN_GRAPHICS_API ResolvedCommandState
  *                 vertex/index data).
  * @return The final state and the origin of each item.
  */
-VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass,
-                                                       Topology data_topology);
+VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass, Topology data_topology);
 
 /**
  * @brief Applies default values to a folded optional state block.

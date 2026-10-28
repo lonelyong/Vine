@@ -28,6 +28,8 @@ using vn::graphics::CullMode;
 using vn::graphics::PolygonMode;
 using vn::graphics::ResolvedRenderState;
 using vn::graphics::Topology;
+using vn::vsg::makeRenderStateObjects;
+using vn::vsg::RenderStateObjects;
 using vn::vsg::detail::aliasArray;
 using vn::vsg::detail::aliasTypedVertexData;
 using vn::vsg::detail::applyOpaqueBlendForAttachments;
@@ -52,15 +54,12 @@ using vn::vsg::detail::stageFlag;
 using vn::vsg::detail::unpackXyz;
 using vn::vsg::detail::vertexLayoutHash;
 using vn::vsg::detail::XyzUnpack;
-using vn::vsg::makeRenderStateObjects;
-using vn::vsg::RenderStateObjects;
 
 namespace
 {
 
 /** @brief One forwarded custom channel, as vertexLayoutHash sees it. */
-struct TestChannel
-{
+struct TestChannel {
     std::uint32_t location   = 0;
     std::uint32_t components = 0;
 };
@@ -105,8 +104,8 @@ TEST(SceneRulesTest, TheTexcoordSlotCarriesOneOfTwoWidths)
     // which one it is: vsg takes the pipeline's vertex format from the array when the array states one, and
     // falls back to the declared binding (a UV pair) only otherwise. A cube direction read as a pair draws —
     // with the wrong coordinates, and no error from any layer.
-    const auto uv        = AttributeChannel::packed({ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }, 2u);
-    auto       uv_array  = vn::vsg::detail::texCoordArray(uv, 3u);
+    const auto uv       = AttributeChannel::packed({ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }, 2u);
+    auto       uv_array = vn::vsg::detail::texCoordArray(uv, 3u);
     ASSERT_NE(uv_array, nullptr);
     EXPECT_EQ(uv_array->valueCount(), 3u);
     EXPECT_EQ(uv_array->properties.stride, 8u);
@@ -125,8 +124,7 @@ TEST(SceneRulesTest, TheTexcoordSlotCarriesOneOfTwoWidths)
     // them and binds zero UVs, which is what keeps a bad optional channel from rejecting a drawable.
     EXPECT_FALSE(vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f }, 4u), 1u));
     EXPECT_FALSE(vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f }, 1u), 3u));
-    EXPECT_FALSE(
-        vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }, 2u), 2u));
+    EXPECT_FALSE(vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }, 2u), 2u));
 }
 
 TEST(SceneRulesTest, ChannelShapeAcceptsExactlyOneValuePerVertex)
@@ -165,8 +163,7 @@ TEST(SceneRulesTest, IgnoredChannelMessageNamesTheReasonAndTheLocation)
     EXPECT_NE(components.find("components=5"), std::string::npos);
     EXPECT_NE(components.find("ignored"), std::string::npos);
 
-    const std::string not_divisible =
-        ignoredChannelMessage(2u, channel(3u, 8u), 2u, ChannelShape::NotDivisible).as_std_str();
+    const std::string not_divisible = ignoredChannelMessage(2u, channel(3u, 8u), 2u, ChannelShape::NotDivisible).as_std_str();
     EXPECT_NE(not_divisible.find("loc2"), std::string::npos);
     EXPECT_NE(not_divisible.find("8 floats"), std::string::npos);
 
@@ -193,11 +190,23 @@ TEST(SceneRulesTest, VertexLayoutHashOfTheBuiltInLayoutIsItsOwnSeed)
 
 TEST(SceneRulesTest, VertexLayoutHashDependsOnLocationComponentsAndOrder)
 {
-    const std::vector<TestChannel> one{ { 3u, 4u } };
-    const std::vector<TestChannel> other_location{ { 4u, 4u } };
-    const std::vector<TestChannel> other_width{ { 3u, 2u } };
-    const std::vector<TestChannel> two{ { 3u, 4u }, { 4u, 3u } };
-    const std::vector<TestChannel> two_swapped{ { 4u, 3u }, { 3u, 4u } };
+    const std::vector<TestChannel> one{
+        { 3u, 4u }
+    };
+    const std::vector<TestChannel> other_location{
+        { 4u, 4u }
+    };
+    const std::vector<TestChannel> other_width{
+        { 3u, 2u }
+    };
+    const std::vector<TestChannel> two{
+        { 3u, 4u },
+        { 4u, 3u }
+    };
+    const std::vector<TestChannel> two_swapped{
+        { 4u, 3u },
+        { 3u, 4u }
+    };
 
     EXPECT_NE(vertexLayoutHash(one), kLayoutSeed);
     EXPECT_NE(vertexLayoutHash(one), vertexLayoutHash(other_location));
@@ -225,7 +234,7 @@ TEST(SceneRulesTest, VertexLayoutHashDependsOnLocationComponentsAndOrder)
 TEST(SceneRulesTest, VariantHashHoldsOnlyWhatAPipelineIsAFunctionOf)
 {
     const ResolvedRenderState base;
-    const std::uint64_t      base_hash = variantHash(base);
+    const std::uint64_t       base_hash = variantHash(base);
     // A state equal to the base hashes the same: the key must be a function of the state.
     EXPECT_EQ(variantHash(ResolvedRenderState()), base_hash);
 
@@ -329,9 +338,7 @@ TEST(SceneRulesTest, OpaqueBlendDisablesBlendingOnEveryAttachment)
         EXPECT_EQ(attachment.srcAlphaBlendFactor, VK_BLEND_FACTOR_ONE);
         EXPECT_EQ(attachment.dstAlphaBlendFactor, VK_BLEND_FACTOR_ZERO);
         EXPECT_EQ(attachment.alphaBlendOp, VK_BLEND_OP_ADD);
-        EXPECT_EQ(attachment.colorWriteMask,
-                  VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                      VK_COLOR_COMPONENT_A_BIT);
+        EXPECT_EQ(attachment.colorWriteMask, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
     }
 
     // Re-applied with another count: the entries are replaced, never appended to.
@@ -461,16 +468,14 @@ TEST(SceneRulesTest, IgnoredNormalChannelMessageCarriesEachBranchesOwnNumbers)
     // The two branches once shared one format string whose arguments were ordered for a single one
     // of them, printing the component count where the float count belongs: pin each branch's own
     // numbers so a merged format string cannot come back.
-    const std::string stride =
-        ignoredNormalChannelMessage(packed(2u, { 1.f, 2.f }), XyzUnpack::NotXyzStride).as_std_str();
+    const std::string stride = ignoredNormalChannelMessage(packed(2u, { 1.f, 2.f }), XyzUnpack::NotXyzStride).as_std_str();
     EXPECT_NE(stride.find("loc1"), std::string::npos);
     EXPECT_NE(stride.find("components=2"), std::string::npos);
     EXPECT_NE(stride.find("3 or 4"), std::string::npos);
     EXPECT_NE(stride.find("derived"), std::string::npos);
     EXPECT_EQ(stride.find("floats"), std::string::npos);
 
-    const std::string partial =
-        ignoredNormalChannelMessage(packed(3u, { 1.f, 2.f, 3.f, 4.f }), XyzUnpack::NotDivisible).as_std_str();
+    const std::string partial = ignoredNormalChannelMessage(packed(3u, { 1.f, 2.f, 3.f, 4.f }), XyzUnpack::NotDivisible).as_std_str();
     EXPECT_NE(partial.find("loc1"), std::string::npos);
     EXPECT_NE(partial.find("4 floats"), std::string::npos);
     EXPECT_NE(partial.find("components=3"), std::string::npos);
@@ -517,9 +522,8 @@ TEST(SceneRulesTest, NormalIsUsableRejectsOnlyAZeroLength)
 
 TEST(SceneRulesTest, MakeNormalsDerivesUnitFaceNormalsForANonIndexedMesh)
 {
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
-                                                vn::math::Vec3f(0.f, 1.f, 0.f) };
-    const auto normals = makeNormals(positions, {});
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
+    const auto                     normals = makeNormals(positions, {});
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
     for (std::size_t i = 0; i < positions.size(); ++i) {
@@ -533,9 +537,8 @@ TEST(SceneRulesTest, MakeNormalsKeepsADegenerateTriangleZeroInsteadOfNaN)
 {
     // Three collinear vertices: the face normal is zero-length, and normalising it would write NaN
     // into every vertex of the triangle (nothing reports a NaN attribute).
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 1.f, 1.f),
-                                                vn::math::Vec3f(2.f, 2.f, 2.f) };
-    const auto normals = makeNormals(positions, {});
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 1.f, 1.f), vn::math::Vec3f(2.f, 2.f, 2.f) };
+    const auto                     normals = makeNormals(positions, {});
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
     for (const auto& n : *normals) {
@@ -550,12 +553,10 @@ TEST(SceneRulesTest, MakeNormalsKeepsADegenerateTriangleZeroInsteadOfNaN)
 
 TEST(SceneRulesTest, MakeNormalsCopiesProvidedMeshNormalsVerbatim)
 {
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
-                                                vn::math::Vec3f(0.f, 1.f, 0.f) };
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
     // Deliberately not unit length: provided normals are copied, not re-derived or re-normalised.
-    const vn::geometry::Vec3fArray provided{ vn::math::Vec3f(0.1f, 0.2f, 0.3f), vn::math::Vec3f(0.4f, 0.5f, 0.6f),
-                                               vn::math::Vec3f(0.7f, 0.8f, 0.9f) };
-    const auto normals = makeNormals(positions, provided);
+    const vn::geometry::Vec3fArray provided{ vn::math::Vec3f(0.1f, 0.2f, 0.3f), vn::math::Vec3f(0.4f, 0.5f, 0.6f), vn::math::Vec3f(0.7f, 0.8f, 0.9f) };
+    const auto                     normals = makeNormals(positions, provided);
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
     for (std::size_t i = 0; i < provided.size(); ++i) {
@@ -568,16 +569,18 @@ TEST(SceneRulesTest, MakeNormalsCopiesProvidedMeshNormalsVerbatim)
 TEST(SceneRulesTest, MakeIndexedNormalsAccumulatesEveryReferencedVertex)
 {
     // A CCW unit quad (two triangles sharing the 0-2 diagonal): every vertex ends up +z.
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
-                                                vn::math::Vec3f(1.f, 1.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
-    auto indices = ::vsg::uintArray::create(6u);
-    (*indices)[0] = 0u;
-    (*indices)[1] = 1u;
-    (*indices)[2] = 2u;
-    (*indices)[3] = 0u;
-    (*indices)[4] = 2u;
-    (*indices)[5] = 3u;
-    const auto normals = makeIndexedNormals(positions, {}, *indices);
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f),
+                                              vn::math::Vec3f(1.f, 0.f, 0.f),
+                                              vn::math::Vec3f(1.f, 1.f, 0.f),
+                                              vn::math::Vec3f(0.f, 1.f, 0.f) };
+    auto                           indices = ::vsg::uintArray::create(6u);
+    (*indices)[0]                          = 0u;
+    (*indices)[1]                          = 1u;
+    (*indices)[2]                          = 2u;
+    (*indices)[3]                          = 0u;
+    (*indices)[4]                          = 2u;
+    (*indices)[5]                          = 3u;
+    const auto normals                     = makeIndexedNormals(positions, {}, *indices);
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 4u);
     for (const auto& n : *normals) {
@@ -591,16 +594,15 @@ TEST(SceneRulesTest, MakeIndexedNormalsSkipsOutOfRangeIndices)
 {
     // The second triangle names vertex 99: it is skipped, not read, and does not disturb the normals
     // the first triangle accumulated (the data path rejects such geometry; this must stay safe).
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
-                                                vn::math::Vec3f(0.f, 1.f, 0.f) };
-    auto indices = ::vsg::uintArray::create(6u);
-    (*indices)[0] = 0u;
-    (*indices)[1] = 1u;
-    (*indices)[2] = 2u;
-    (*indices)[3] = 0u;
-    (*indices)[4] = 1u;
-    (*indices)[5] = 99u;
-    const auto normals = makeIndexedNormals(positions, {}, *indices);
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
+    auto                           indices = ::vsg::uintArray::create(6u);
+    (*indices)[0]                          = 0u;
+    (*indices)[1]                          = 1u;
+    (*indices)[2]                          = 2u;
+    (*indices)[3]                          = 0u;
+    (*indices)[4]                          = 1u;
+    (*indices)[5]                          = 99u;
+    const auto normals                     = makeIndexedNormals(positions, {}, *indices);
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
     for (const auto& n : *normals) {
@@ -612,14 +614,15 @@ TEST(SceneRulesTest, MakeIndexedNormalsLeavesAnUnreferencedVertexZero)
 {
     // A vertex no triangle references accumulates nothing: it must stay zero (a zero normal, not
     // NaN), which is what the unusable-length guard is for.
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f),
-                                                vn::math::Vec3f(0.f, 1.f, 0.f),
-                                                vn::math::Vec3f(5.f, 5.f, 5.f) };
-    auto indices = ::vsg::uintArray::create(3u);
-    (*indices)[0] = 0u;
-    (*indices)[1] = 1u;
-    (*indices)[2] = 2u;
-    const auto normals = makeIndexedNormals(positions, {}, *indices);
+    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f),
+                                              vn::math::Vec3f(1.f, 0.f, 0.f),
+                                              vn::math::Vec3f(0.f, 1.f, 0.f),
+                                              vn::math::Vec3f(5.f, 5.f, 5.f) };
+    auto                           indices = ::vsg::uintArray::create(3u);
+    (*indices)[0]                          = 0u;
+    (*indices)[1]                          = 1u;
+    (*indices)[2]                          = 2u;
+    const auto normals                     = makeIndexedNormals(positions, {}, *indices);
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 4u);
     EXPECT_FLOAT_EQ((*normals)[3].x, 0.f);
@@ -652,8 +655,7 @@ TEST(SceneRulesTest, MakeWhiteColorsIsOpaqueWhiteForEveryVertex)
 
 TEST(SceneRulesTest, AliasTypedVertexDataPicksTheArrayTypeFromTheComponentCount)
 {
-    const auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f }));
+    const auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f }));
     EXPECT_NE(aliasTypedVertexData(1u, buffer, 8u).cast<::vsg::floatArray>(), nullptr);
     EXPECT_NE(aliasTypedVertexData(2u, buffer, 4u).cast<::vsg::vec2Array>(), nullptr);
     EXPECT_NE(aliasTypedVertexData(3u, buffer, 2u).cast<::vsg::vec3Array>(), nullptr);
@@ -669,8 +671,7 @@ TEST(SceneRulesTest, AliasTypedVertexDataTypeAgreesWithTheBindingFormat)
     // if the two disagreed on the component count the configurator would accept it and the shader would
     // misread the attribute at draw time, with nothing to report. Aliasing keeps them in step by
     // construction — the array's element type IS the format's counterpart.
-    const auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f }));
+    const auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f }));
     for (std::uint32_t components : { 1u, 2u, 3u, 4u }) {
         const auto built  = aliasTypedVertexData(components, buffer, 1u);
         const auto sample = sampleVertexData(components);
@@ -684,15 +685,13 @@ TEST(SceneRulesTest, AliasTypedVertexDataReadsTheBuffersOwnMemory)
 {
     // The point of aliasing: vsg reads the address the model owns, so the same scalars are not stored
     // twice. Byte-identical rendering cannot tell the two apart — only the address can.
-    const auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f }));
+    const auto   buffer  = vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 1.f, 2.f, 3.f, 4.f, 5.f, 6.f }));
     const float* scalars = buffer->data();
 
     const auto arr = aliasTypedVertexData(3u, buffer, 2u).cast<::vsg::vec3Array>();
     ASSERT_NE(arr, nullptr);
     EXPECT_EQ(arr->size(), 2u);
-    EXPECT_EQ(arr->dataPointer(), static_cast<const void*>(scalars))
-        << "a 3-component channel must be read in place, at each vertex's own stride";
+    EXPECT_EQ(arr->dataPointer(), static_cast<const void*>(scalars)) << "a 3-component channel must be read in place, at each vertex's own stride";
     // The stride is the ARRAY's element size: that is the number vsg indexes by AND the number the GPU
     // binding reads at. Taking the buffer's element size (4) instead interleaves every attribute on the
     // GPU — and it is the kind of mistake the CPU-side values alone can happen to survive.
@@ -714,16 +713,14 @@ TEST(SceneRulesTest, AliasTypedVertexDataKeepsTheBufferAliveItself)
     // The renderer must keep exactly the memory it reads alive — the model may be destroyed first, and
     // nothing in the scene graph holds it. The array holds the storage, and the storage holds the
     // buffer, so dropping every outside handle must leave the values readable.
-    auto buffer = vn::intrusive_ptr<const vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 7.f, 8.f, 9.f }));
+    auto       buffer       = vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 7.f, 8.f, 9.f }));
     const auto alive_before = buffer->useCount();
     const auto arr          = aliasTypedVertexData(3u, buffer, 1u).cast<::vsg::vec3Array>();
     ASSERT_NE(arr, nullptr);
     EXPECT_GT(buffer->useCount(), alive_before) << "the built array must reference the buffer";
 
     buffer = vn::intrusive_ptr<const vn::Buffer<float>>(); // the model's handle goes away
-    EXPECT_FLOAT_EQ(static_cast<const float*>(arr->dataPointer())[0], 7.f)
-        << "the renderer must still read the model's values after the model died";
+    EXPECT_FLOAT_EQ(static_cast<const float*>(arr->dataPointer())[0], 7.f) << "the renderer must still read the model's values after the model died";
     EXPECT_FLOAT_EQ((*arr)[0].z, 9.f);
 }
 
@@ -731,8 +728,7 @@ TEST(SceneRulesTest, AliasArrayWrapsAnIndexBufferAsRealUnsignedIntArrays)
 {
     // Indices go through the same mechanism: a real uintArray over the model's uint32 buffer, which is
     // the element type DrawIndexed reads.
-    const auto buffer = vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 3u, 0u }));
+    const auto buffer = vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0u, 1u, 2u, 2u, 3u, 0u }));
     const auto indices = aliasArray<::vsg::uintArray, std::uint32_t>(buffer, 6u);
     ASSERT_NE(indices, nullptr);
     EXPECT_EQ(indices->size(), 6u);
@@ -792,20 +788,16 @@ TEST(VsgSceneRulesTest, EveryMappedLayoutGetsItsOwnVulkanFormat)
     // A duplicated mapping is the copy-paste mistake this table is prone to, and it would sample a
     // texture as the wrong layout with no validation error at all.
     const PixelFormat layouts[] = {
-        PixelFormat::R8Unorm,     PixelFormat::R8Srgb,        PixelFormat::Rg8Unorm,
-        PixelFormat::Rgba8Unorm,  PixelFormat::Rgba8Srgb,     PixelFormat::Bgra8Unorm,
-        PixelFormat::Bgra8Srgb,   PixelFormat::R16Float,      PixelFormat::Rg16Float,
-        PixelFormat::Rgba16Float, PixelFormat::R32Float,      PixelFormat::Rg32Float,
-        PixelFormat::Rgba32Float, PixelFormat::D16Unorm,      PixelFormat::D24UnormS8Uint,
-        PixelFormat::D32Float,
+        PixelFormat::R8Unorm,     PixelFormat::R8Srgb,   PixelFormat::Rg8Unorm,       PixelFormat::Rgba8Unorm,  PixelFormat::Rgba8Srgb, PixelFormat::Bgra8Unorm,
+        PixelFormat::Bgra8Srgb,   PixelFormat::R16Float, PixelFormat::Rg16Float,      PixelFormat::Rgba16Float, PixelFormat::R32Float,  PixelFormat::Rg32Float,
+        PixelFormat::Rgba32Float, PixelFormat::D16Unorm, PixelFormat::D24UnormS8Uint, PixelFormat::D32Float,
     };
 
     std::vector<VkFormat> seen;
     for (const PixelFormat layout : layouts) {
         const VkFormat format = vkFormatFor(layout);
         ASSERT_NE(format, VK_FORMAT_UNDEFINED) << vn::imaging::formatName(layout);
-        EXPECT_EQ(std::find(seen.begin(), seen.end(), format), seen.end())
-            << vn::imaging::formatName(layout) << " reuses another layout's Vulkan format";
+        EXPECT_EQ(std::find(seen.begin(), seen.end(), format), seen.end()) << vn::imaging::formatName(layout) << " reuses another layout's Vulkan format";
         seen.push_back(format);
     }
 }
@@ -814,19 +806,15 @@ namespace
 {
 
 /// Builds a texture of the given description with `faces` of its faces filled.
-vn::intrusive_ptr<vn::graphics::Texture> filledTexture(vn::graphics::Texture::Kind shape,
-                                                           vn::imaging::PixelFormat format,
-                                                           int faces)
+vn::intrusive_ptr<vn::graphics::Texture> filledTexture(vn::graphics::Texture::Kind shape, vn::imaging::PixelFormat format, int faces)
 {
     // Built through the named types rather than by handing a shape to a texture constructor: which object a
     // shape is, and therefore which invariants it carries, is now the type's business.
     const bool is_cube = (shape == vn::graphics::Texture::Kind::Cube);
-    auto texture = vn::intrusive_ptr<vn::graphics::Texture>(
-        is_cube ? static_cast<vn::graphics::Texture*>(new vn::graphics::CubeMap(4, format))
-                : static_cast<vn::graphics::Texture*>(new vn::graphics::Texture2D(4, 4, format)));
+    auto       texture = vn::intrusive_ptr<vn::graphics::Texture>(is_cube ? static_cast<vn::graphics::Texture*>(new vn::graphics::CubeMap(4, format))
+                                                                          : static_cast<vn::graphics::Texture*>(new vn::graphics::Texture2D(4, 4, format)));
     for (int face = 0; face < faces; ++face) {
-        texture->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(
-                                     new vn::imaging::Image(4, 4, format)));
+        texture->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(new vn::imaging::Image(4, 4, format)));
     }
     return texture;
 }
@@ -872,21 +860,17 @@ TEST(VsgSceneRulesTest, TheExtentRuleAccountsForEveryLevelAndLayer)
 
     // A chain, not a single level: the rule sizes each level from ITS extent, so a texture whose image
     // carries three levels has to be measured level by level (level 1 is 4x4 of an 8x8 base, level 2 is 2x2).
-    auto texture = vn::intrusive_ptr<vn::graphics::Texture2D>(
-        new vn::graphics::Texture2D(8, 8, vn::imaging::PixelFormat::Rgba8Unorm, 3));
-    texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(
-        new vn::imaging::Image(8, 8, vn::imaging::PixelFormat::Rgba8Unorm, 3)));
+    auto texture = vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(8, 8, vn::imaging::PixelFormat::Rgba8Unorm, 3));
+    texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(new vn::imaging::Image(8, 8, vn::imaging::PixelFormat::Rgba8Unorm, 3)));
 
     EXPECT_TRUE(textureDataMatchesExtent(*texture));
     EXPECT_EQ(classifyTexture(texture.get()), TextureReject::Ok);
 
     // Six layers, each level of each face: the same rule has to walk the layers too, which is what a cube
     // map with mips exercises.
-    auto cube = vn::intrusive_ptr<vn::graphics::CubeMap>(
-        new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm, 2));
+    auto cube = vn::intrusive_ptr<vn::graphics::CubeMap>(new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm, 2));
     for (int face = 0; face < cube->layerCount(); ++face) {
-        cube->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(
-                                   new vn::imaging::Image(4, 4, vn::imaging::PixelFormat::Rgba8Unorm, 2)));
+        cube->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(new vn::imaging::Image(4, 4, vn::imaging::PixelFormat::Rgba8Unorm, 2)));
     }
     EXPECT_TRUE(textureDataMatchesExtent(*cube));
     EXPECT_EQ(classifyTexture(cube.get()), TextureReject::Ok);
@@ -901,18 +885,15 @@ TEST(VsgSceneRulesTest, AnUnfilledLayerIsRefusedInsteadOfBeingDereferenced)
     // An empty face is the ordinary "still being filled" state, and the two rules have to agree about it:
     // classification says Incomplete (what the caller can act on), and the extent rule says "no" WITHOUT
     // reading a null layer — the guard the uploader relies on before it copies bytes by the extent.
-    auto unfilled = vn::intrusive_ptr<vn::graphics::Texture2D>(
-        new vn::graphics::Texture2D(4, 4, vn::imaging::PixelFormat::Rgba8Unorm));
+    auto unfilled = vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(4, 4, vn::imaging::PixelFormat::Rgba8Unorm));
 
     EXPECT_FALSE(textureDataMatchesExtent(*unfilled));
     EXPECT_EQ(classifyTexture(unfilled.get()), TextureReject::Incomplete);
 
     // A cube with one face missing is the same answer: the rule walks every layer, so a single empty one is
     // enough to refuse (and the uploader never stages a partly filled cube).
-    auto half_cube = vn::intrusive_ptr<vn::graphics::CubeMap>(
-        new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm));
-    half_cube->setLayer(0, vn::intrusive_ptr<const vn::imaging::Image>(
-                                new vn::imaging::Image(4, 4, vn::imaging::PixelFormat::Rgba8Unorm)));
+    auto half_cube = vn::intrusive_ptr<vn::graphics::CubeMap>(new vn::graphics::CubeMap(4, vn::imaging::PixelFormat::Rgba8Unorm));
+    half_cube->setLayer(0, vn::intrusive_ptr<const vn::imaging::Image>(new vn::imaging::Image(4, 4, vn::imaging::PixelFormat::Rgba8Unorm)));
 
     EXPECT_FALSE(textureDataMatchesExtent(*half_cube));
     EXPECT_EQ(classifyTexture(half_cube.get()), TextureReject::Incomplete);
@@ -947,14 +928,14 @@ TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
 
 TEST(VsgSceneRulesTest, EachRefusalSaysWhichCaseFired)
 {
-    using vn::vsg::detail::textureRejectMessage;
     using vn::vsg::detail::TextureReject;
+    using vn::vsg::detail::textureRejectMessage;
 
-    auto unfilled = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgba8Unorm, 0);
+    auto unfilled      = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgba8Unorm, 0);
     auto three_channel = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgb8Unorm, 1);
 
-    const auto incomplete = textureRejectMessage(TextureReject::Incomplete, *unfilled);
-    const auto format = textureRejectMessage(TextureReject::UnsupportedFormat, *three_channel);
+    const auto incomplete   = textureRejectMessage(TextureReject::Incomplete, *unfilled);
+    const auto format       = textureRejectMessage(TextureReject::UnsupportedFormat, *three_channel);
     const auto inconsistent = textureRejectMessage(TextureReject::Inconsistent, *three_channel);
 
     EXPECT_FALSE(incomplete.empty());

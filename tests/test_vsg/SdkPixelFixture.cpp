@@ -22,16 +22,17 @@
 
 using vn::graphics::Camera;
 using vn::graphics::Geometry;
-using vn::test::setPrimitiveIndices;
 using vn::graphics::Material;
 using vn::graphics::MatrixTransform;
 using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
 using vn::graphics::Scene;
 using vn::graphics::StateNode;
+using vn::test::setPrimitiveIndices;
 
 namespace
 {
+
 /// @brief Half-extent of the quad the fixture draws, in world units.
 constexpr double kQuadHalf = 0.9;
 
@@ -54,18 +55,23 @@ constexpr double kQuadZ = 0.5;
 vn::intrusive_ptr<Scene> makeQuadScene()
 {
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
-    geometry->setPositions(vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(
-        std::vector<float>{ static_cast<float>(-kQuadHalf), static_cast<float>(-kQuadHalf),
-                            static_cast<float>(kQuadZ),  static_cast<float>(kQuadHalf),
-                            static_cast<float>(-kQuadHalf), static_cast<float>(kQuadZ),
-                            static_cast<float>(kQuadHalf),  static_cast<float>(kQuadHalf),
-                            static_cast<float>(kQuadZ),  static_cast<float>(-kQuadHalf),
-                            static_cast<float>(kQuadHalf),  static_cast<float>(kQuadZ) })));
+    geometry->setPositions(vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ static_cast<float>(-kQuadHalf),
+                                                                                                          static_cast<float>(-kQuadHalf),
+                                                                                                          static_cast<float>(kQuadZ),
+                                                                                                          static_cast<float>(kQuadHalf),
+                                                                                                          static_cast<float>(-kQuadHalf),
+                                                                                                          static_cast<float>(kQuadZ),
+                                                                                                          static_cast<float>(kQuadHalf),
+                                                                                                          static_cast<float>(kQuadHalf),
+                                                                                                          static_cast<float>(kQuadZ),
+                                                                                                          static_cast<float>(-kQuadHalf),
+                                                                                                          static_cast<float>(kQuadHalf),
+                                                                                                          static_cast<float>(kQuadZ) })));
     geometry->setNormals(vn::intrusive_ptr<vn::Buffer<float>>(
-        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F,
-                                                  0.0F, 1.0F })));
-    setPrimitiveIndices(*geometry, 0U, vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(
-        new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F })));
+    setPrimitiveIndices(*geometry,
+                        0U,
+                        vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
     geometry->setRevision(1U);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -83,7 +89,8 @@ vn::intrusive_ptr<Scene> makeQuadScene()
     scene->setRoot(transform);
     return scene;
 }
-}  // namespace
+
+} // namespace
 
 bool SdkPixelFixture::available()
 {
@@ -134,10 +141,9 @@ bool SdkPixelFixture::up()
     engine->setDevice(backend);
     engine->setDiagnosticSink([](const RenderDiagnostic& diagnostic) {
         std::printf("[sdk-pixels] diagnostic: severity=%d category=%d message=%s\n",
-                    static_cast<int>(diagnostic.severity), static_cast<int>(diagnostic.category),
-                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()),
-                                diagnostic.message.size())
-                        .c_str());
+                    static_cast<int>(diagnostic.severity),
+                    static_cast<int>(diagnostic.category),
+                    std::string(reinterpret_cast<const char*>(diagnostic.message.data()), diagnostic.message.size()).c_str());
     });
 
     // No window handle is announced: this backend then owns the window it brings the session up on. That
@@ -166,8 +172,7 @@ bool SdkPixelFixture::up()
     // covers 81% of whatever is drawn through it. Cases that hand the camera to a pass use this one; a case
     // that draws through a SceneView uses the view's own camera and its manipulator instead.
     camera = vn::intrusive_ptr<Camera>(new Camera());
-    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0),
-                                  vn::math::Vec3d(0.0, 1.0, 0.0));
+    camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
     return true;
 }

@@ -11,18 +11,18 @@
 
 #include <vine/graphics/RenderTarget.hpp>
 
+#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
 #include <vine/vsg/internal/VsgExecutor.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
 
 #include "FailingStepNode.hpp"
 
+using vn::graphics::Diagnostics;
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledFrame;
-using vn::graphics::Diagnostics;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameCompiler;
 using vn::graphics::backend::FrameFacts;
@@ -49,7 +49,7 @@ TargetFacts factsOf(std::unique_ptr<vn::vsg::OffscreenTarget>& target)
     return entry;
 }
 
-}  // namespace
+} // namespace
 
 TEST(ExecutorSubmissionTest, ALostSubmissionIsRepairedByTheNextFrameExactlyOnce)
 {
@@ -60,25 +60,24 @@ TEST(ExecutorSubmissionTest, ALostSubmissionIsRepairedByTheNextFrameExactlyOnce)
     // `attachments_invalidated` fact (which the tests could only set by hand until now) into something a
     // frame drive produces.
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
-    if (!created.ok)
-    {
+    if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
     vn::vsg::OffscreenTarget::Layout layout;
-    layout.width  = kSize;
-    layout.height = kSize;
+    layout.width                                      = kSize;
+    layout.height                                     = kSize;
     std::unique_ptr<vn::vsg::OffscreenTarget> written = vn::vsg::OffscreenTarget::create(created.device, layout);
     std::unique_ptr<vn::vsg::OffscreenTarget> other   = vn::vsg::OffscreenTarget::create(created.device, layout);
     ASSERT_NE(written, nullptr);
     ASSERT_NE(other, nullptr);
 
-    FrameArena              arena{ 64 * 1024 };
-    Diagnostics             diagnostics;
-    Observe                 observe;
-    FrameRecorder           recorder{ arena, diagnostics, observe };
-    FrameCompiler           compiler{ arena, diagnostics, observe };
-    vn::vsg::VsgExecutor  executor(diagnostics);
+    FrameArena           arena{ 64 * 1024 };
+    Diagnostics          diagnostics;
+    Observe              observe;
+    FrameRecorder        recorder{ arena, diagnostics, observe };
+    FrameCompiler        compiler{ arena, diagnostics, observe };
+    vn::vsg::VsgExecutor executor(diagnostics);
     executor.addTarget(written.get(), written.get());
     executor.addTarget(other.get(), other.get());
 
@@ -86,33 +85,29 @@ TEST(ExecutorSubmissionTest, ALostSubmissionIsRepairedByTheNextFrameExactlyOnce)
     clear.color          = true;
     clear.color_value[3] = 1.0F;
 
-    const auto record_frame = [&](std::uint64_t number, std::uint32_t pass_id,
-                                  const std::unique_ptr<vn::vsg::OffscreenTarget>& into) {
+    const auto record_frame = [&](std::uint64_t number, std::uint32_t pass_id, const std::unique_ptr<vn::vsg::OffscreenTarget>& into) {
         recorder.beginFrame(FrameToken{ number });
         recorder.beginPass(pass_id);
         recorder.setRenderTarget(into.get());
         recorder.setClearPolicy(clear);
         recorder.endPass();
         recorder.endFrame();
-        recorder.swapBuffers();  // endFrame() leaves the pass; THIS closes the frame (see the protocol)
+        recorder.swapBuffers(); // endFrame() leaves the pass; THIS closes the frame (see the protocol)
         const std::vector<TargetFacts> table{ factsOf(written), factsOf(other) };
         return &compiler.compile(recorder.description(), FrameFacts{ table });
     };
 
     // Frame 1: recorded (so the target counts as WRITTEN), then its submission is lost.
-    const CompiledFrame* first = record_frame(1U, 1U, written);
+    const CompiledFrame*                first = record_frame(1U, 1U, written);
     ::vsg::ref_ptr<::vsg::CommandGraph> graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
     ASSERT_TRUE(executor.record(*first, graph));
     EXPECT_FALSE(written->instance().attachments_invalidated);
 
     ASSERT_EQ(first->passes.size(), 1U) << "one pass was announced";
     ASSERT_EQ(first->targets.size(), 1U);
-    EXPECT_EQ(executor.noteLostSubmission(*first), 1U)
-        << "only the target the frame actually wrote is marked";
-    EXPECT_TRUE(written->instance().attachments_invalidated)
-        << "what the lost submission recorded was never performed";
-    EXPECT_FALSE(other->instance().attachments_invalidated)
-        << "a registered target the frame did not write is untouched";
+    EXPECT_EQ(executor.noteLostSubmission(*first), 1U) << "only the target the frame actually wrote is marked";
+    EXPECT_TRUE(written->instance().attachments_invalidated) << "what the lost submission recorded was never performed";
+    EXPECT_FALSE(other->instance().attachments_invalidated) << "a registered target the frame did not write is untouched";
 
     // Frame 2: the plan answers "repair", and the bootstrapping pass clears the flag.
     const CompiledFrame* second = record_frame(2U, 2U, written);
@@ -120,8 +115,7 @@ TEST(ExecutorSubmissionTest, ALostSubmissionIsRepairedByTheNextFrameExactlyOnce)
     EXPECT_TRUE(second->passes[0].bootstrap) << "the plan says the repair: the pass clears what nobody can trust";
     ::vsg::ref_ptr<::vsg::CommandGraph> second_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
     ASSERT_TRUE(executor.record(*second, second_graph));
-    EXPECT_FALSE(written->instance().attachments_invalidated)
-        << "the bootstrapping pass repaired it: contents are known again";
+    EXPECT_FALSE(written->instance().attachments_invalidated) << "the bootstrapping pass repaired it: contents are known again";
 
     // (The "exactly once" half of the flag is OffscreenTargetTest.ALostSubmissionIsRepairedByTheNextFrame
     // AndOnlyOnce's claim, and it holds: a second plan is an ordinary one.)
@@ -138,24 +132,23 @@ TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
     // The picture half is here too, because "the step happened" must mean the frame HAPPENED: the first
     // submission's clear is in the target's pixels, and nothing needed repair.
     const vn::vsg::DeviceResult created = vn::vsg::createDevice();
-    if (!created.ok)
-    {
+    if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
     vn::vsg::OffscreenTarget::Layout layout;
-    layout.width  = kSize;
-    layout.height = kSize;
+    layout.width                                      = kSize;
+    layout.height                                     = kSize;
     std::unique_ptr<vn::vsg::OffscreenTarget> written = vn::vsg::OffscreenTarget::create(created.device, layout);
     std::unique_ptr<vn::vsg::OffscreenTarget> other   = vn::vsg::OffscreenTarget::create(created.device, layout);
     ASSERT_NE(written, nullptr);
     ASSERT_NE(other, nullptr);
 
-    FrameArena             arena{ 64 * 1024 };
-    Diagnostics            diagnostics;
-    Observe                observe;
-    FrameRecorder          recorder{ arena, diagnostics, observe };
-    FrameCompiler          compiler{ arena, diagnostics, observe };
+    FrameArena           arena{ 64 * 1024 };
+    Diagnostics          diagnostics;
+    Observe              observe;
+    FrameRecorder        recorder{ arena, diagnostics, observe };
+    FrameCompiler        compiler{ arena, diagnostics, observe };
     vn::vsg::VsgExecutor executor(diagnostics);
     executor.addTarget(written.get(), written.get());
     executor.addTarget(other.get(), other.get());
@@ -164,22 +157,21 @@ TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
     clear.color          = true;
     clear.color_value[3] = 1.0F;
 
-    const auto record_frame = [&](std::uint64_t number, std::uint32_t pass_id,
-                                  const std::unique_ptr<vn::vsg::OffscreenTarget>& into) {
+    const auto record_frame = [&](std::uint64_t number, std::uint32_t pass_id, const std::unique_ptr<vn::vsg::OffscreenTarget>& into) {
         recorder.beginFrame(FrameToken{ number });
         recorder.beginPass(pass_id);
         recorder.setRenderTarget(into.get());
         recorder.setClearPolicy(clear);
         recorder.endPass();
         recorder.endFrame();
-        recorder.swapBuffers();  // endFrame() leaves the pass; THIS closes the frame (see the protocol)
+        recorder.swapBuffers(); // endFrame() leaves the pass; THIS closes the frame (see the protocol)
         const std::vector<TargetFacts> table{ factsOf(written), factsOf(other) };
         return &compiler.compile(recorder.description(), FrameFacts{ table });
     };
 
     // Frame 1: recorded and SUBMITTED through the executor. The step happened, the target is ordinary, and
     // the frame is on the GPU - the clear it recorded is what the target's pixels hold.
-    const CompiledFrame* first = record_frame(1U, 1U, written);
+    const CompiledFrame*                first = record_frame(1U, 1U, written);
     ::vsg::ref_ptr<::vsg::CommandGraph> graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
     ASSERT_TRUE(executor.record(*first, graph));
 
@@ -192,8 +184,7 @@ TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
     EXPECT_TRUE(executor.submit(*first, *viewer)) << "the submission of a frame that can be submitted happens";
     viewer->deviceWaitIdle();
 
-    EXPECT_FALSE(written->instance().attachments_invalidated)
-        << "a submission that happened leaves nothing to repair";
+    EXPECT_FALSE(written->instance().attachments_invalidated) << "a submission that happened leaves nothing to repair";
     const Rgba8 centre = written->probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
     EXPECT_EQ(centre.r, 0U) << "the frame was submitted, so the clear it recorded is in the target";
     EXPECT_EQ(centre.g, 0U);
@@ -202,9 +193,8 @@ TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
 
     // Frame 2: the same step, made to fail INSIDE the submission. The executor marks the target THIS frame
     // wrote (not the one an earlier frame wrote), reports once, and says the submission did not happen.
-    const CompiledFrame* second = record_frame(2U, 2U, other);
-    ::vsg::ref_ptr<::vsg::CommandGraph> failing_graph =
-        ::vsg::CommandGraph::create(created.device, created.queue_family);
+    const CompiledFrame*                second        = record_frame(2U, 2U, other);
+    ::vsg::ref_ptr<::vsg::CommandGraph> failing_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
     ASSERT_TRUE(executor.record(*second, failing_graph));
     ::vsg::ref_ptr<FailingStepNode> failing(new FailingStepNode());
     failing_graph->addChild(failing);
@@ -217,15 +207,12 @@ TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
     failing_viewer->handleEvents();
     failing->armed = true;
 
-    const std::uint64_t failures_before =
-        diagnostics.count(vn::graphics::DiagnosticCategory::SubmissionFailed);
+    const std::uint64_t failures_before = diagnostics.count(vn::graphics::DiagnosticCategory::SubmissionFailed);
     EXPECT_FALSE(executor.submit(*second, *failing_viewer)) << "the step says the submission did not happen";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::SubmissionFailed), failures_before + 1U)
         << "a lost frame is reported, with the category a host can switch on";
-    EXPECT_TRUE(other->instance().attachments_invalidated)
-        << "what this frame recorded was never performed, so its target's contents are unknown";
-    EXPECT_FALSE(written->instance().attachments_invalidated)
-        << "the target this frame did NOT write is not implicated";
+    EXPECT_TRUE(other->instance().attachments_invalidated) << "what this frame recorded was never performed, so its target's contents are unknown";
+    EXPECT_FALSE(written->instance().attachments_invalidated) << "the target this frame did NOT write is not implicated";
 
     // And the mark is the fact the plan repairs (the case above proves that half end to end): the next plan
     // for that target says the pass bootstraps - it clears what nobody can vouch for.

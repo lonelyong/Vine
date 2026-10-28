@@ -36,19 +36,20 @@ core::StreamKey bindKeyOf(const core::StreamKey& key) noexcept
     return whole;
 }
 
-}  // namespace
+} // namespace
 
-struct StreamUploads::Data
-{
-    explicit Data(std::size_t capacity) : registry(capacity) {}
+struct StreamUploads::Data {
+    explicit Data(std::size_t capacity)
+      : registry(capacity)
+    {}
 
-    core::SharedStreams registry;
+    core::SharedStreams                                                                                registry;
     std::unordered_map<core::StreamKey, ::vsg::ref_ptr<::vsg::BindVertexBuffers>, core::StreamKeyHash> vertex;
-    std::unordered_map<core::StreamKey, ::vsg::ref_ptr<::vsg::BindIndexBuffer>, core::StreamKeyHash>  index;
-    std::uint64_t                                                                                     refusals{0};
+    std::unordered_map<core::StreamKey, ::vsg::ref_ptr<::vsg::BindIndexBuffer>, core::StreamKeyHash>   index;
+    std::uint64_t                                                                                      refusals{ 0 };
     /// The frame the acquires are stamped with, and the window an unnamed entry survives (see beginFrame).
-    std::uint64_t frame{0};
-    std::uint32_t grace{0};
+    std::uint64_t frame{ 0 };
+    std::uint32_t grace{ 0 };
     /// The keys a sweep dropped, so the two maps can follow without allocating per sweep.
     std::vector<core::StreamKey> dropped;
 
@@ -60,9 +61,9 @@ struct StreamUploads::Data
     }
 };
 
-StreamUploads::StreamUploads(std::size_t capacity) : d(std::make_unique<Data>(capacity))
-{
-}
+StreamUploads::StreamUploads(std::size_t capacity)
+  : d(std::make_unique<Data>(capacity))
+{}
 
 StreamUploads::~StreamUploads() = default;
 
@@ -76,7 +77,8 @@ std::uint32_t StreamUploads::bindingOfCanonical(std::uint32_t location) noexcept
     using vn::graphics::attributeLocation;
     using vn::graphics::VertexAttribute;
     if (location >= attributeLocation(VertexAttribute::InstanceModel) &&
-        location < attributeLocation(VertexAttribute::InstanceModel) + vn::graphics::kInstanceMatrixColumns) {
+        location < attributeLocation(VertexAttribute::InstanceModel) + vn::graphics::kInstanceMatrixColumns)
+    {
         return kInstanceBinding;
     }
     switch (location) {
@@ -88,14 +90,12 @@ std::uint32_t StreamUploads::bindingOfCanonical(std::uint32_t location) noexcept
     }
 }
 
-StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& key,
-                                                         std::span<const float> scalars)
+StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& key, std::span<const float> scalars)
 {
     // A derived channel is built per geometry, and a custom channel's bind identity is the whole custom
     // layout: sharing either draws every peer with the first drawable's data. Refusing here - loudly, and
     // counted - is what stops the rule from depending on a caller remembering it.
-    if (key.kind != core::StreamKind::Vertex || key.derived() ||
-        !vn::graphics::isCanonicalAttributeLocation(key.location) || scalars.empty()) {
+    if (key.kind != core::StreamKind::Vertex || key.derived() || !vn::graphics::isCanonicalAttributeLocation(key.location) || scalars.empty()) {
         ++d->refusals;
         return {};
     }
@@ -108,7 +108,7 @@ StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& 
     }
     if (decision.action == core::SharedStreams::Action::Alias) {
         const auto found = d->vertex.find(key);
-        return {Action::Aliased, found == d->vertex.end() ? nullptr : found->second};
+        return { Action::Aliased, found == d->vertex.end() ? nullptr : found->second };
     }
 
     // The bytes are read HERE and nowhere earlier: a sharing hit returned above without touching them.
@@ -118,11 +118,10 @@ StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& 
     const auto binding = bindingOfCanonical(key.location);
     auto       bind    = ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
     d->vertex.insert_or_assign(key, bind);
-    return {Action::Uploaded, bind};
+    return { Action::Uploaded, bind };
 }
 
-StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& key,
-                                                       std::span<const std::uint32_t> indices)
+StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& key, std::span<const std::uint32_t> indices)
 {
     if (key.kind != core::StreamKind::Index || key.derived() || indices.empty()) {
         ++d->refusals;
@@ -140,14 +139,14 @@ StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& ke
     }
     if (decision.action == core::SharedStreams::Action::Alias) {
         const auto found = d->index.find(normalised);
-        return {Action::Aliased, found == d->index.end() ? nullptr : found->second};
+        return { Action::Aliased, found == d->index.end() ? nullptr : found->second };
     }
 
     auto array = ::vsg::uintArray::create(indices.size());
     std::copy(indices.begin(), indices.end(), array->begin());
     auto bind = ::vsg::BindIndexBuffer::create(array);
     d->index.insert_or_assign(normalised, bind);
-    return {Action::Uploaded, bind};
+    return { Action::Uploaded, bind };
 }
 
 void StreamUploads::beginFrame(std::uint64_t frame, std::uint32_t grace) noexcept
@@ -164,7 +163,6 @@ std::uint64_t StreamUploads::releaseUnseen()
     }
     return released;
 }
-
 
 std::size_t StreamUploads::live() const noexcept
 {

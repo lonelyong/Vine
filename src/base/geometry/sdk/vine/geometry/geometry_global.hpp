@@ -8,11 +8,11 @@
 #    define VN_GEOMETRY_API VN_IMPORT
 #endif
 
-#define VN_GEOMETRY_NS_BEGIN                                                                                                                                    \
-    VN_ROOT_NS_BEGIN                                                                                                                                            \
+#define VN_GEOMETRY_NS_BEGIN                                                                                                                                   \
+    VN_ROOT_NS_BEGIN                                                                                                                                           \
     namespace geometry                                                                                                                                         \
     {
 
-#define VN_GEOMETRY_NS_END                                                                                                                                      \
-    VN_ROOT_NS_END                                                                                                                                              \
+#define VN_GEOMETRY_NS_END                                                                                                                                     \
+    VN_ROOT_NS_END                                                                                                                                             \
     }

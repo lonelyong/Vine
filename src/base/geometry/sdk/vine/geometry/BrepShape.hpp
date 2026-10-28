@@ -20,8 +20,7 @@ VN_GEOMETRY_NS_BEGIN
  * - `shape()` lends the pointer out; it stays valid as long as this BrepShape (or another holder of the same shape)
  *   lives.
  */
-class VN_GEOMETRY_API BrepShape : public Shape
-{
+class VN_GEOMETRY_API BrepShape : public Shape {
     VN_OBJECT_META_DECL;
 
   public:
