@@ -3,8 +3,6 @@
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
-#include <vine/graphics/PassChain.hpp>
-#include <vine/graphics/SceneView.hpp>
 
 #include "../ModelDocument.hpp"
 
@@ -16,6 +14,16 @@ VN_OBJECT_META_IMPL(SetShadingFlatCommand, vn::appfw::Command)
 VN_OBJECT_META_IMPL(SetShadingUnlitCommand, vn::appfw::Command)
 VN_OBJECT_META_IMPL(SetShadingNormalsCommand, vn::appfw::Command)
 VN_OBJECT_META_IMPL(SetShadingWireframeCommand, vn::appfw::Command)
+
+bool isCurrentShadingMode(vn::graphics::ShadingMode mode)
+{
+    auto* window  = vn::appfw::gui::MainWindow::current();
+    auto* view    = vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(window));
+    auto* control = view != nullptr ? view->renderControl() : nullptr;
+    // The REQUEST, not the built chain: it is the area's own record of what it was asked to show, it survives a
+    // surface that has not attached yet, and Viewer::setShadingMode() only changes it when the request succeeded.
+    return control != nullptr && control->viewerOptions().mode == mode;
+}
 
 vn::async::Task<vn::appfw::CommandResult> ShadingModeCommand::execute(vn::appfw::CommandExecutionContext* context)
 {

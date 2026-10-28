@@ -2,12 +2,16 @@
 
 #include <QAction>
 #include <QIcon>
+#include <optional>
+#include <utility>
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 
 #include <vine/appfw/gui/UIElementData.hpp>
+
+#include "CommandBinding.hpp"
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -16,7 +20,9 @@ VN_OBJECT_META_IMPL(RibbonAction, UIElement)
 struct RibbonAction::Impl : public UIElementData {
     void*     user = nullptr;
     EventArgs triggeredArgs;
-    String    command;
+
+    /// Keeps the action in step with the command setCommand() names (enabled/tooltip/checked).
+    detail::CommandBinding binding;
 };
 
 RibbonAction::RibbonAction()
@@ -45,6 +51,27 @@ RibbonAction::RibbonAction()
             }
         })
         .detach();
+
+    // A command action is a view of its command (menu entries and Backstage items included): derive its state here.
+    dptr()->binding.attach(
+        [this](bool enabled, const String& tip, std::optional<bool> checked) {
+            auto* act = impl<QAction>();
+            if (!act) {
+                return;
+            }
+            act->setEnabled(enabled);
+
+            const QString desired = QString::fromStdU16String(tip.toUtf16());
+            if (act->toolTip() != desired) {
+                act->setToolTip(desired);
+            }
+
+            if (checked.has_value()) {
+                act->setCheckable(true);
+                act->setChecked(*checked);
+            }
+        },
+        [this] { return tooltip(); });
 }
 
 RibbonAction::~RibbonAction()
@@ -158,12 +185,17 @@ void* RibbonAction::data() const
 
 void RibbonAction::setCommand(const String& command)
 {
-    dptr()->command = command;
+    dptr()->binding.setCommand(command);
 }
 
 String RibbonAction::command() const
 {
-    return dptr()->command;
+    return dptr()->binding.command();
+}
+
+void RibbonAction::setCheckedProvider(std::function<bool()> provider)
+{
+    dptr()->binding.setCheckedProvider(std::move(provider));
 }
 
 inline auto RibbonAction::dptr() -> Impl*

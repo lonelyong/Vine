@@ -58,13 +58,18 @@
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/UserIO.hpp>
 #include <vine/appfw/gui/Backstage.hpp>
+#include <vine/appfw/gui/CentralDocumentHost.hpp>
+#include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/ConfigWindow.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/Control.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/DocumentManagerDialog.hpp>
+#include <vine/appfw/gui/DocumentView.hpp>
+#include <vine/appfw/gui/DocumentViewRegistry.hpp>
 #include <vine/appfw/gui/PluginManagerDialog.hpp>
+#include <vine/appfw/gui/RenderControl.hpp>
 
 #include <DockingPaneGeometry.h>
 #include <vine/appfw/ConsoleProgressReporter.hpp>
@@ -115,6 +120,7 @@
 #include <QAction>
 #include <QFileDialog>
 #include <QListWidget>
+#include <QMenu>
 #include <QMetaObject>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -517,6 +523,63 @@ class NestedProgressCommand : public vn::appfw::Command {
 };
 
 VN_OBJECT_META_IMPL(NestedProgressCommand, vn::appfw::Command)
+
+// ---- 功能区"命令状态"用例的夹具：两种文档（一个有视图、一个没有）----
+constexpr const char8_t* kRibbonStateTypeWithView = u8"ribbon_state_with_view";
+constexpr const char8_t* kRibbonStateTypeBlind    = u8"ribbon_state_blind";
+
+/// 只报类型 id 的最小文档：绑定用例只关心"当前目标有没有文档/视图"。
+class RibbonStateDocument final : public vn::appfw::Document {
+  public:
+    explicit RibbonStateDocument(vn::String type_id)
+      : type_id_(std::move(type_id))
+    {}
+
+    vn::String typeId() const override
+    {
+        return type_id_;
+    }
+
+    vn::String title() const override
+    {
+        return u8"功能区状态文档";
+    }
+
+    bool isDirty() const override
+    {
+        return false;
+    }
+
+  private:
+    vn::String type_id_;
+};
+
+/// 带一块 3D 区的用例视图：绑定用例只问 renderControl() 是不是空，控件本身没有挂进任何控件树。
+class RibbonProbeView final : public guifw::DocumentView {
+  public:
+    explicit RibbonProbeView(vn::appfw::Document& document)
+      : DocumentView(document, new QWidget())
+      , control_(new guifw::RenderControl())
+    {}
+
+    ~RibbonProbeView() override
+    {
+        delete control_;
+    }
+
+    guifw::UIElement* content() override
+    {
+        return this;
+    }
+
+    guifw::RenderControl* renderControl() const override
+    {
+        return control_;
+    }
+
+  private:
+    guifw::RenderControl* control_ = nullptr;
+};
 
 } // namespace
 
@@ -999,6 +1062,205 @@ TEST_F(GuiTest, RibbonTab_GroupPlacementAndContribution)
     EXPECT_EQ(help->groupAt(help->numGroups() - 1), tail);
 }
 
+// 命令条目是命令的视图：启用态、tooltip 与勾选态都从 CommandManager 派生，而不是条目自己记一份。
+TEST_F(GuiTest, RibbonItemsFollowTheCommandState)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const vn::String name(u8"ribbon_state_probe");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
+
+    auto* button = new guifw::RibbonButton();
+    button->setText(u8"State");
+    groupClip->addButton(button);
+    button->setCommand(name);
+
+    EXPECT_TRUE(button->isEnabled());
+    EXPECT_EQ(button->tooltip(), vn::String(u8"dummy command")) << "描述就是命令条目的 tooltip";
+
+    // 持久化偏好翻转 ⇒ 条目跟着灰显/恢复（条目不写偏好，只是显示它）。
+    cm->setCommandEnabled(name, false);
+    EXPECT_FALSE(button->isEnabled());
+    cm->setCommandEnabled(name, true);
+    EXPECT_TRUE(button->isEnabled());
+
+    // 调用方自己设的 tooltip 不被描述覆盖。
+    auto* action = new guifw::RibbonAction();
+    action->setTooltip(u8"mine");
+    action->setCommand(name);
+    EXPECT_EQ(action->tooltip(), vn::String(u8"mine"));
+
+    // 菜单项/Backstage 条目也是 RibbonAction：同一条规则，启用态同样跟命令走。
+    EXPECT_TRUE(action->isEnabled());
+    cm->setCommandEnabled(name, false);
+    EXPECT_FALSE(action->isEnabled());
+    cm->setCommandEnabled(name, true);
+    EXPECT_TRUE(action->isEnabled());
+
+    // 勾选态由 provider 回答，并在"命令执行完"这一拍重新求值。
+    auto on = std::make_shared<bool>(false);
+    button->setCheckedProvider([on] { return *on; });
+    EXPECT_TRUE(button->isCheckable());
+    EXPECT_FALSE(button->isChecked());
+
+    *on = true;
+    ASSERT_EQ(cm->executeCommandAndWait(name).status(), vn::appfw::CommandStatus::Success);
+    EXPECT_TRUE(button->isChecked());
+
+    // 命令注销 ⇒ 不能执行 ⇒ 灰显；provider 的回答不会被条目自己改成 false。
+    cm->unregisterCommand(name);
+    EXPECT_FALSE(button->isEnabled());
+    EXPECT_TRUE(button->isChecked()) << "勾选态只由 provider 回答";
+}
+
+// NeedsDocument / NeedsView 是对**派发目标**的要求：目标没了，条目就灰显（但那不是持久化禁用）。
+TEST_F(GuiTest, RibbonItemsFollowTheResolvedTarget)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm        = app->commandManager();
+    auto* documents = app->documentManager();
+    auto* views     = app->viewRegistry();
+    ASSERT_NE(cm, nullptr);
+    ASSERT_NE(documents, nullptr);
+    ASSERT_NE(views, nullptr);
+
+    auto* docks = wnd->dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    // 共享的应用文档管理器里可能留着别的用例打开的文档。关掉当前文档时宿主要求"接替的 tab"成为当前，
+    // 所以本用例先让管理器回到"没有打开文档"，后面的断言才说得清"目标有没有"。
+    for (auto* open : documents->documents()) {
+        documents->close(open);
+    }
+    ASSERT_TRUE(documents->documents().empty()) << "别的用例留下的文档拒绝了关闭，本用例无法控制目标";
+    ASSERT_EQ(documents->current(), nullptr);
+
+    guifw::CentralDocumentHost host(*documents, *views, *docks);
+
+    // 共享的管理器不会注销文档类型：重复登记返回 false 不是错误，用例只要求"这个 id 可用"。
+    vn::appfw::DocumentTypeRegistration with_view;
+    with_view.type_id = kRibbonStateTypeWithView;
+    with_view.create  = [] { return new RibbonStateDocument(kRibbonStateTypeWithView); };
+    documents->registerType(with_view);
+
+    vn::appfw::DocumentTypeRegistration blind;
+    blind.type_id = kRibbonStateTypeBlind;
+    blind.create  = [] { return new RibbonStateDocument(kRibbonStateTypeBlind); };
+    documents->registerType(blind);
+
+    views->registerView(kRibbonStateTypeWithView, [](vn::appfw::Document& document) { return new RibbonProbeView(document); });
+
+    const vn::String needs_document(u8"needs_document");
+    const vn::String needs_view(u8"needs_view");
+    cm->unregisterCommand(needs_document);
+    cm->unregisterCommand(needs_view);
+    ASSERT_TRUE(cm->registerCommand<NeedsDocumentCommand>(needs_document));
+    ASSERT_TRUE(cm->registerCommand<NeedsViewCommand>(needs_view));
+
+    const auto document_flags = cm->commandFlags(needs_document);
+    ASSERT_TRUE(document_flags.has_value());
+    EXPECT_TRUE(vn::testFlag(*document_flags, vn::appfw::CommandFlags::NeedsDocument));
+
+    auto* document_item = new guifw::RibbonButton();
+    document_item->setText(u8"Doc");
+    groupView->addButton(document_item);
+    document_item->setCommand(needs_document);
+
+    auto* view_item = new guifw::RibbonButton();
+    view_item->setText(u8"View");
+    groupView->addButton(view_item);
+    view_item->setCommand(needs_view);
+
+    // 有一份带 3D 区的当前文档：两份要求都满足。
+    auto* shown = documents->create(kRibbonStateTypeWithView);
+    ASSERT_NE(shown, nullptr);
+    ASSERT_TRUE(documents->setCurrent(shown));
+    EXPECT_TRUE(document_item->isEnabled());
+    EXPECT_TRUE(view_item->isEnabled());
+
+    // 当前文档没有视图 ⇒ 派发目标为空（resolveCommandTarget 从视图取文档）⇒ 两份要求都不满足。
+    auto* no_view = documents->create(kRibbonStateTypeBlind);
+    ASSERT_NE(no_view, nullptr);
+    ASSERT_TRUE(documents->setCurrent(no_view));
+    EXPECT_TRUE(vn::appfw::gui::resolveCommandTarget(wnd.get()).isEmpty()) << "没有视图的当前文档解析出空目标";
+    EXPECT_FALSE(document_item->isEnabled());
+    EXPECT_FALSE(view_item->isEnabled());
+
+    // 关掉当前文档：宿主要求剩下的那个 tab 接替 ⇒ 当前文档变回 shown，要求再次满足。
+    ASSERT_TRUE(documents->close(no_view));
+    EXPECT_EQ(documents->current(), shown) << "中央区宿主把接替的 tab 请求为当前文档";
+    EXPECT_TRUE(document_item->isEnabled());
+    EXPECT_TRUE(view_item->isEnabled());
+
+    // 最后一份也关掉：没有当前文档，也没有目标。
+    ASSERT_TRUE(documents->close(shown));
+    EXPECT_EQ(documents->current(), nullptr);
+    EXPECT_FALSE(document_item->isEnabled());
+    EXPECT_FALSE(view_item->isEnabled());
+
+    cm->unregisterCommand(needs_document);
+    cm->unregisterCommand(needs_view);
+}
+
+// 命令在工作线程结束时，刷新必须先编组回应用线程：工作线程不许碰控件。
+TEST_F(GuiTest, RibbonItemStateFromAWorkerThreadIsMarshalled)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const vn::String name(u8"ribbon_thread_probe");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
+
+    auto* button = new guifw::RibbonButton();
+    button->setText(u8"Thread");
+    groupClip->addButton(button);
+    button->setCommand(name);
+
+    auto on = std::make_shared<bool>(false);
+    button->setCheckedProvider([on] { return *on; });
+    EXPECT_FALSE(button->isChecked());
+
+    // provider 的答案在命令跑之前就变了；命令在工作线程上结束 ⇒ executed 也在那个线程发火。
+    *on = true;
+    std::thread worker([&] { (void)cm->executeCommandAndWait(name); });
+    worker.join();
+
+    EXPECT_FALSE(button->isChecked()) << "工作线程不直接改控件，刷新要投递回应用线程";
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(button->isChecked()) << "投递的刷新在应用线程上执行";
+
+    cm->unregisterCommand(name);
+}
+
+// 描述作为 tooltip 要真的能看见：QMenu 默认不显示条目 tooltip，框架创建的两处菜单都必须打开它。
+TEST_F(GuiTest, RibbonMenusShowCommandTooltips)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* item = new guifw::RibbonAction();
+    item->setText(u8"About");
+    bar->appendApplicationMenu(item);
+
+    auto* app_btn = qobject_cast<QToolButton*>(bar->impl<SARibbonBar>()->applicationButton());
+    ASSERT_NE(app_btn, nullptr);
+    ASSERT_NE(app_btn->menu(), nullptr) << "应用按钮的菜单";
+    EXPECT_TRUE(app_btn->menu()->toolTipsVisible());
+
+    // 按钮下拉菜单（btnInsert 在夹具里已经有三个条目 ⇒ 菜单已建好）。
+    auto* tool_btn = btnInsert->impl<SARibbonToolButton>();
+    ASSERT_NE(tool_btn, nullptr);
+    ASSERT_NE(tool_btn->menu(), nullptr) << "下拉菜单";
+    EXPECT_TRUE(tool_btn->menu()->toolTipsVisible());
+}
+
 TEST_F(GuiTest, Backstage_PagesAndNavigation)
 {
     guifw::Backstage backstage(wnd.get());
@@ -1088,6 +1350,110 @@ TEST_F(GuiTest, Backstage_PageItemsAreCommandBound)
     const auto buttons = page_widget->findChildren<QToolButton*>();
     ASSERT_EQ(buttons.size(), 1);
     EXPECT_EQ(buttons.first()->defaultAction(), item->impl<QAction>());
+}
+
+// 页面可以被宿主隐藏/恢复：隐藏只是从导航里拿掉，页面对象与条目都还在。
+TEST_F(GuiTest, Backstage_PagesCanBeHidden)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* first = new guifw::BackstagePage();
+    first->setId(u8"test.backstage.hidden.first");
+    first->setTitle(u8"First");
+    auto* second = new guifw::BackstagePage();
+    second->setId(u8"test.backstage.hidden.second");
+    second->setTitle(u8"Second");
+    auto* third = new guifw::BackstagePage();
+    third->setId(u8"test.backstage.hidden.third");
+    third->setTitle(u8"Third");
+
+    ASSERT_TRUE(backstage.addPage(first));
+    ASSERT_TRUE(backstage.addPage(second));
+    ASSERT_TRUE(backstage.addPage(third));
+    EXPECT_EQ(backstage.currentPage(), first);
+
+    auto* nav = backstage.impl<QWidget>()->findChild<QListWidget*>();
+    ASSERT_NE(nav, nullptr) << "导航列表";
+    ASSERT_EQ(nav->count(), 3);
+
+    // 隐藏非当前页：导航行消失，但页面仍可查找，页码/顺序不变。
+    backstage.setPageVisible(second, false);
+    EXPECT_FALSE(backstage.isPageVisible(second));
+    EXPECT_TRUE(nav->item(1)->isHidden());
+    EXPECT_EQ(backstage.currentPage(), first);
+    EXPECT_EQ(backstage.numPages(), 3);
+    EXPECT_EQ(backstage.findPage(u8"test.backstage.hidden.second"), second);
+    EXPECT_EQ(backstage.pageAt(1), second) << "隐藏不改变逻辑顺序";
+
+    // 隐藏当前页：交给下一个可见页（循环）。
+    backstage.setPageVisible(first, false);
+    EXPECT_TRUE(nav->item(0)->isHidden());
+    EXPECT_EQ(backstage.currentPage(), third);
+
+    // 隐藏的页面不能被选中。
+    backstage.setCurrentPage(second);
+    EXPECT_EQ(backstage.currentPage(), third);
+
+    // 全部隐藏：没有当前页，打开被拒绝（空 Backstage 不上屏）。
+    backstage.setPageVisible(third, false);
+    EXPECT_EQ(backstage.currentPage(), nullptr);
+    backstage.open();
+    EXPECT_FALSE(backstage.isOpen());
+
+    // 恢复一页：它成为当前页，Backstage 又能打开。
+    backstage.setPageVisible(second, true);
+    EXPECT_FALSE(nav->item(1)->isHidden());
+    EXPECT_EQ(backstage.currentPage(), second);
+    backstage.open();
+    EXPECT_TRUE(backstage.isOpen());
+    backstage.close();
+}
+
+// 条目可以按动作隐藏/恢复：序号稳定，动作与命令都还在。
+TEST_F(GuiTest, BackstagePage_ItemsCanBeHidden)
+{
+    guifw::BackstagePage page;
+
+    auto* first = new guifw::RibbonAction();
+    first->setText(u8"First");
+    auto* second = new guifw::RibbonAction();
+    second->setText(u8"Second");
+    auto* unknown = new guifw::RibbonAction();
+    unknown->setText(u8"Unknown");
+
+    page.addItem(first);
+    page.addItem(second);
+    ASSERT_EQ(page.numItems(), 2);
+    page.addItem(first); // 一个动作一个条目：重复添加被忽略
+    EXPECT_EQ(page.numItems(), 2) << "动作是条目的身份";
+    EXPECT_TRUE(page.isItemVisible(first));
+
+    auto* page_widget = page.impl<QWidget>();
+    ASSERT_NE(page_widget, nullptr);
+    QToolButton* first_button = nullptr;
+    for (QToolButton* button : page_widget->findChildren<QToolButton*>()) {
+        if (button->defaultAction() == first->impl<QAction>()) {
+            first_button = button;
+        }
+    }
+    ASSERT_NE(first_button, nullptr) << "第一条目的按钮";
+
+    page.setItemVisible(first, false);
+    EXPECT_FALSE(page.isItemVisible(first));
+    EXPECT_TRUE(page.isItemVisible(second));
+    EXPECT_EQ(page.numItems(), 2) << "隐藏不删除条目";
+    EXPECT_EQ(page.itemAt(0), first) << "序号保持稳定";
+    EXPECT_TRUE(first_button->isHidden()) << "隐藏 = 按钮不参与布局";
+
+    // 页面没有的动作、null 都是空操作。
+    page.setItemVisible(unknown, false);
+    EXPECT_FALSE(page.isItemVisible(unknown));
+    page.setItemVisible(nullptr, false);
+    EXPECT_EQ(page.numItems(), 2);
+
+    page.setItemVisible(first, true);
+    EXPECT_TRUE(page.isItemVisible(first));
+    EXPECT_FALSE(first_button->isHidden());
 }
 
 TEST_F(GuiTest, Backstage_FollowsMainWindowSize)
@@ -4522,8 +4888,44 @@ TEST_F(GuiTest, CommandManager_RegisterValidatesAndCachesMetadata)
     // 旧实现每次 commandInfos() 都会实例化一次 ⇒ 这里会变成 4。
     EXPECT_EQ(instantiations.load(), 1);
 
+    // 单条读取（UI 的"这个条目能不能点/写什么 tooltip"）走同一份缓存，不重新实例化。
+    const auto flags = cm->commandFlags(name);
+    ASSERT_TRUE(flags.has_value());
+    EXPECT_EQ(*flags, vn::appfw::CommandFlags::None);
+    EXPECT_EQ(cm->commandDescription(name).value_or(vn::String{}), vn::String(u8"dummy command"));
+    EXPECT_EQ(instantiations.load(), 1);
+
+    EXPECT_FALSE(cm->commandFlags(vn::String(u8"notRegisteredCmd")).has_value());
+    EXPECT_FALSE(cm->commandDescription(vn::String(u8"notRegisteredCmd")).has_value());
+
     cm->unregisterCommand(name);
     EXPECT_FALSE(cm->isRegistered(name));
+}
+
+// 界面用命令名找状态：别名与执行入口同一条解析规则，读到的是命令自己的 flags/description。
+TEST_F(GuiTest, CommandManager_FlagsAndDescriptionResolveThroughAliases)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const vn::String name(u8"flags_probe");
+    const vn::String alias(u8"flags_probe_alias");
+    cm->unregisterCommand(name);
+    cm->unregisterAlias(alias);
+
+    ASSERT_TRUE(cm->registerCommand<NeedsDocumentCommand>(name));
+    ASSERT_TRUE(cm->registerAlias(alias, name));
+
+    const auto flags = cm->commandFlags(alias);
+    ASSERT_TRUE(flags.has_value()) << "别名解析到它指向的命令";
+    EXPECT_TRUE(vn::testFlag(*flags, vn::appfw::CommandFlags::NeedsDocument));
+    EXPECT_FALSE(vn::testFlag(*flags, vn::appfw::CommandFlags::NeedsView));
+    EXPECT_EQ(cm->commandDescription(alias).value_or(vn::String{}), vn::String(u8"needs a document"));
+
+    cm->unregisterAlias(alias);
+    cm->unregisterCommand(name);
 }
 
 // 禁用是注册表里的一个标记，不是移除：命令仍在列表里、别名仍指向它，只是不能执行；

@@ -4,11 +4,7 @@
 
 ## 1. 现在可做（无触发条件）
 
-- **Ribbon 命令状态绑定**：按钮/菜单项/Backstage 条目跟随 `CommandManager` 的 `enabled`、
-  `NeedsDocument`/`NeedsView`（当前目标不满足时灰显）与 `CommandInfo::description`（tooltip）；
-  勾选态用可选 provider。真实消费者：model_viewer 的五档着色按钮没有勾选态。
-  约束：`NotApplicable` 不表达成禁用（禁用是持久化偏好）；新增 `CommandManager::commandFlags(name)`
-  而不是给 `CommandInfo` 加字段（ABI）。见 `../design/appfw-ribbon.md` §9.2。
+（无）
 
 ## 2. 触发条件型
 

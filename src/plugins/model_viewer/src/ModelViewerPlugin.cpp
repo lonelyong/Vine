@@ -1,7 +1,5 @@
 #include "ModelViewerPlugin.hpp"
 
-#include <utility>
-
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/DocumentManager.hpp>
@@ -173,19 +171,25 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
     group->setTitle(u8"显示");
     tab->addGroup(group);
 
-    // 五档各一个按钮：照片上的东西一眼能看出在哪一档，所以不做"勾选态"（框架今天也没有单选组的概念）。
-    const std::pair<const char8_t*, const char8_t*> entries[] = {
-        { u8"实面",   kShadingModeLitCommand       },
-        { u8"平面",   kShadingModeFlatCommand      },
-        { u8"无光照", kShadingModeUnlitCommand     },
-        { u8"法线",   kShadingModeNormalsCommand   },
-        { u8"线框",   kShadingModeWireframeCommand },
+    // 五档各一个按钮，勾选态由"这块 3D 区现在画的是哪一档"回答（provider 读派发目标，见 isCurrentShadingMode）：
+    // 于是切文档、命令执行之后按钮都会自己跟上，而不是按钮自己记一个可能过期的档位。
+    const struct {
+        const char8_t*            label;
+        const char8_t*            command;
+        vn::graphics::ShadingMode mode;
+    } entries[] = {
+        { u8"实面",   kShadingModeLitCommand,       vn::graphics::ShadingMode::Lit       },
+        { u8"平面",   kShadingModeFlatCommand,      vn::graphics::ShadingMode::Flat      },
+        { u8"无光照", kShadingModeUnlitCommand,     vn::graphics::ShadingMode::Unlit     },
+        { u8"法线",   kShadingModeNormalsCommand,   vn::graphics::ShadingMode::Normals   },
+        { u8"线框",   kShadingModeWireframeCommand, vn::graphics::ShadingMode::Wireframe },
     };
-    for (const auto& [label, command] : entries) {
+    for (const auto& item : entries) {
         auto* button = new vn::appfw::gui::RibbonButton();
-        button->setText(vn::String(label));
+        button->setText(vn::String(item.label));
         button->setButtonSize(vn::appfw::gui::RibbonItemSize::Large);
-        button->setCommand(vn::String(command));
+        button->setCommand(vn::String(item.command));
+        button->setCheckedProvider([mode = item.mode] { return isCurrentShadingMode(mode); });
         group->addButton(button);
     }
 

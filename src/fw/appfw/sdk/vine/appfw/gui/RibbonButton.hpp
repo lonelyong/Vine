@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <functional>
 #include <vector>
 
 #include "Control.hpp"
@@ -126,10 +127,34 @@ class VN_APPFW_API RibbonButton : public Control {
     void  setData(void* dptr);
     void* data() const;
 
-    /// Sets the command name executed when the button is clicked (empty = none).
+    /**
+     * @brief Sets the command name executed when the button is clicked (empty = unbinds the button).
+     *
+     * @details
+     * - A bound button is a view of the command: its enabled state follows the command manager (registration, the
+     *   user's enabled flag, and whether the command's NeedsDocument/NeedsView prerequisite is met right now), and
+     *   its tooltip follows the command description.
+     * - The enabled state is DERIVED, so setEnabled() on a bound button lasts only until the next refresh. Disabling
+     *   a command for good is CommandManager::setCommandEnabled().
+     *
+     * @param command Registered command (or alias) name, or empty for "not a command button".
+     */
     void setCommand(const String& command);
     /// Gets the configured command name.
     String command() const;
+
+    /**
+     * @brief Lets the caller answer the toggle state of a command button.
+     *
+     * @details
+     * - Once a provider is set the button becomes checkable, and the provider is asked again whenever the button
+     *   refreshes (the command state changed, a command finished, the current document changed).
+     * - The provider belongs to the bound command: with no command set there is nothing to refresh, so it takes
+     *   effect once setCommand() names one. Without a provider the binding leaves the toggle to the caller.
+     *
+     * @param provider "is this mode on now"; an empty function gives the toggle back to the caller.
+     */
+    void setCheckedProvider(std::function<bool()> provider);
 
   public:
     /// Triggered when the button is clicked.

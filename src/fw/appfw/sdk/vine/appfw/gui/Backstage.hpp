@@ -82,13 +82,15 @@ class VN_APPFW_API BackstagePage : public Control {
      * - The item is shown as a flat button; clicking it triggers the item's QAction, so a
      *   configured command runs exactly like a ribbon button.
      * - The item is not owned by the page: it must outlive the page's widget.
+     * - One entry per action: adding the same action again is ignored, which keeps the action a
+     *   usable key for setItemVisible()/isItemVisible().
      *
      * @param item Item to append; null is ignored.
      */
     void addItem(RibbonAction* item);
 
     /**
-     * @brief Returns the number of command items.
+     * @brief Returns the number of command items, hidden ones included.
      *
      * @return The item count.
      */
@@ -101,6 +103,29 @@ class VN_APPFW_API BackstagePage : public Control {
      * @return The item, or nullptr.
      */
     RibbonAction* itemAt(int index) const;
+
+    /**
+     * @brief Shows or hides one command item.
+     *
+     * @details
+     * - Hiding is how a Backstage entry is turned off: the item keeps its position, its action and the command behind
+     *   it, but its button no longer takes part in the layout. This is different from a disabled command, which stays
+     *   listed and greyed out (CommandManager::setCommandEnabled()).
+     * - The item must already be on this page (addItem()); an action the page does not hold is ignored.
+     * - Indices stay stable: numItems()/itemAt() keep reporting hidden items, so the same action can show it again.
+     *
+     * @param item    Item to show or hide; null is ignored.
+     * @param visible true to show it, false to hide it.
+     */
+    void setItemVisible(RibbonAction* item, bool visible);
+
+    /**
+     * @brief Reports whether an item is currently shown.
+     *
+     * @param item Item to query.
+     * @return true when the item is on this page and visible; false when it is hidden or unknown.
+     */
+    bool isItemVisible(const RibbonAction* item) const;
 
   private:
     struct Impl;
@@ -179,14 +204,39 @@ class VN_APPFW_API Backstage : public Control {
     /**
      * @brief Returns the selected page.
      *
-     * @return The current page, or nullptr when no page is selected.
+     * @return The current page, or nullptr when no page is selected (none added, or every page is hidden).
      */
     BackstagePage* currentPage() const;
 
     /**
+     * @brief Shows or hides a page in the navigation and the content stack.
+     *
+     * @details
+     * - Hiding takes the page out of the navigation and makes it unselectable; the page object and its items stay, so
+     *   findPage()/pageAt()/numPages() keep reporting it. This is how a host turns a Backstage entry off without
+     *   destroying the page it may need again.
+     * - Hiding the current page selects the next visible page (wrapping around); when none is left the Backstage has
+     *   no current page and open() refuses to show an empty Backstage.
+     * - Showing a page again puts it back in the navigation; it becomes current when nothing is.
+     * - A page that was not added to this Backstage is ignored.
+     *
+     * @param page    Page to show or hide; null is ignored.
+     * @param visible true to show it, false to hide it.
+     */
+    void setPageVisible(BackstagePage* page, bool visible);
+
+    /**
+     * @brief Reports whether a page is currently shown.
+     *
+     * @param page Page to query.
+     * @return true when the page belongs to this Backstage and is visible; false when it is hidden or unknown.
+     */
+    bool isPageVisible(const BackstagePage* page) const;
+
+    /**
      * @brief Shows the Backstage over the main window and activates it.
      *
-     * @note Does nothing when no page was added: an empty Backstage is not shown.
+     * @note Does nothing when no page was added, or when every page is hidden: an empty Backstage is not shown.
      */
     void open();
 

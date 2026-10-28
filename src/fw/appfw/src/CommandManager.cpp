@@ -75,6 +75,9 @@ struct RegisteredCommand {
     String                    group;
     String                    description;
 
+    /// Execution characteristics cached from the same probe as the listing metadata.
+    CommandFlags flags{ CommandFlags::None };
+
     /// false while the user disabled the command: registered and listed, but not
     /// executable until it is enabled again.
     bool enabled{ true };
@@ -1408,11 +1411,13 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
     // the command registered, just without cached metadata.
     String group;
     String description;
+    CommandFlags flags{ CommandFlags::None };
     try {
         std::unique_ptr<Command> probe(factory());
         if (probe) {
             group       = probe->group();
             description = probe->description();
+            flags       = probe->flags();
         }
         else {
             VN_LOGW("Command factory returned no instance; listing metadata stays empty: {}", toUtf8View(name));
@@ -1432,6 +1437,7 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
     {
         std::lock_guard<std::mutex> lock(d->registry_mutex);
         RegisteredCommand           entry{ command_class, std::move(factory), d->registration_owner, std::move(group), std::move(description) };
+        entry.flags   = flags;
         entry.enabled = enabled;
         if (!d->registry.emplace(std::move(name), std::move(entry)).second) {
             return false;
@@ -1508,6 +1514,26 @@ bool CommandManager::isCommandEnabled(const String& name) const
     std::lock_guard<std::mutex> lock(d->registry_mutex);
     const auto                  it = d->registry.find(d->resolveName(name));
     return it != d->registry.end() && it->second.enabled;
+}
+
+std::optional<CommandFlags> CommandManager::commandFlags(const String& name) const
+{
+    std::lock_guard<std::mutex> lock(d->registry_mutex);
+    const auto                  it = d->registry.find(d->resolveName(name));
+    if (it == d->registry.end()) {
+        return std::nullopt;
+    }
+    return it->second.flags;
+}
+
+std::optional<String> CommandManager::commandDescription(const String& name) const
+{
+    std::lock_guard<std::mutex> lock(d->registry_mutex);
+    const auto                  it = d->registry.find(d->resolveName(name));
+    if (it == d->registry.end()) {
+        return std::nullopt;
+    }
+    return it->second.description;
 }
 
 bool CommandManager::setCommandEnabled(const String& name, bool enabled)

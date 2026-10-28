@@ -1,6 +1,6 @@
 # appfw 模块要点（`src/fw/appfw`）
 
-> **最后核对**：2026-10-23。
+> **最后核对**：2026-10-28。
 > 现役设计按模块拆在 `.ai/design/` 下的 appfw 文档里；本文件只放跨模块、干活时必须立刻想起的规则。
 > 历史、已否决的方案与逐轮审查记录看 git；开放项看 `.ai/backlog/appfw-startup.md`。
 
@@ -71,6 +71,14 @@
   `isActive()` / `takeArea()`。一块区只画一幅画，多格已删。
 - 宿主在区上声明自己的主 pass ⇒ `isActive()` 为 false，`takeArea()` 不动；要接管就先声明或先 `release(view)`。
 - 中央区 `setCentralWidget()` 重父化会重建原生窗口 ⇒ `RenderControl` 走一遍 `Pending -> Presenting`。
+
+## 功能区
+
+- tab/group 的身份、角色与顺序见 `.ai/design/appfw-ribbon.md`；标准目录在 app_shell，插件 tab 用 role 锚点。
+- `setCommand()` 的条目（按钮、菜单项、Backstage）状态是**派生**的：enabled 跟 `isCommandEnabled()` 加
+  `NeedsDocument`/`NeedsView` 对派发目标的要求，tooltip 跟描述，勾选态用 `setCheckedProvider()`；
+  实现只有一处 `src/gui/CommandBinding.hpp`。`setEnabled()` 对绑定条目只是暂时效果。
+- `CommandManager::commandFlags()` / `commandDescription()` 读注册时缓存，别名照执行入口解析。
 
 ## 公共面
 

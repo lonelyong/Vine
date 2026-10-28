@@ -509,6 +509,7 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
         const auto result = commands->executeCommandAndWait(vn::String(item.command), vn::appfw::gui::resolveCommandTarget(&window));
         EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success) << "命令该成功（说清了什么就不算失败：" << result.message().as_std_str() << "）";
         EXPECT_EQ(scene_view->chain()->shadingMode(), item.mode);
+        EXPECT_TRUE(vn::model_viewer::isCurrentShadingMode(item.mode)) << "按钮的勾选 provider 读的是同一块 3D 区";
         EXPECT_TRUE(scene_view->chain()->isStatsVisible()) << "命令不该把帧率读数顺手关掉";
         // 线框是"程序 + 光栅化"两个覆盖；其余档不许留下光栅化覆盖。
         const auto polygon = scene_view->chain()->presentingPass() != nullptr ? scene_view->chain()->presentingPass()->polygonModeOverride()

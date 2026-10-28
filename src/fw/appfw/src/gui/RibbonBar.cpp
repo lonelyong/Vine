@@ -222,6 +222,8 @@ RibbonBar::RibbonBar(MainWindow* wnd)
 {
     dptr()->wnd              = wnd;
     dptr()->application_menu = new QMenu();
+    // Command items carry their description as the action tooltip; a QMenu hides tooltips unless asked.
+    dptr()->application_menu->setToolTipsVisible(true);
 
     auto* bar     = impl<itype>();
     auto* app_btn = bar != nullptr ? qobject_cast<QToolButton*>(bar->applicationButton()) : nullptr;

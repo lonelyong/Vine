@@ -11,7 +11,7 @@
 （ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
 一 bug 一文件。历史归 git，不放进 `design/`。
 
-## design/ —— 现行设计文档（30）
+## design/ —— 现行设计文档（31）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -27,7 +27,7 @@
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 - `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
 
-**appfw（13）**
+**appfw（14）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
 - `appfw-startup-splash.md` —— 启动框与启动进度。
 - `appfw-render-surface.md` —— 渲染表面生命周期与平台回退。
@@ -40,6 +40,7 @@
 - `appfw-userio.md` —— UserIO。
 - `appfw-document-model.md` —— 文档模型（身份 + 生命周期 + 类型注册）。
 - `appfw-ribbon.md` —— Ribbon 身份/角色/放置：id、role、placement、终止区与顺序解析。
+- `appfw-command-binding.md` —— 命令条目的显示状态：enabled/目标要求/描述 tooltip/勾选 provider。
 - `appfw-backstage.md` —— 应用按钮事件、菜单/Backstage 二选一、顶层覆盖窗口与页面导航。
 
 **base 与其他（8）**

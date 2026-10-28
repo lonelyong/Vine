@@ -2,7 +2,8 @@
 
 > **状态**：现行
 > **最后核对**：2026-10-28
-> **范围**：Ribbon 的 tab/group 身份（id）、语义角色（role）、放置（placement）、终止区与顺序解析；不含用户自定义布局与上下文 tab。
+> **范围**：Ribbon 的 tab/group 身份（id）、语义角色（role）、放置（placement）、终止区与顺序解析；命令条目的
+> 显示状态见 `appfw-command-binding.md`；不含用户自定义布局与上下文 tab。
 > **权威来源**：`src/fw/appfw/sdk/vine/appfw/gui/RibbonPlacement.hpp`、`RibbonBar.hpp`、`RibbonTab.hpp`、`RibbonGroup.hpp`；用例 `tests/test_gui/test_gui.cpp`。
 > **待办**：`../backlog/appfw-ribbon.md`
 
@@ -76,7 +77,8 @@ app_shell 在 `load()` 里建“插件/帮助”，model_viewer 在 `postLoad()`
 
 - 是什么：v1 只做 tab 级 role + tab/group 级 id/placement；`order`、item id、用户自定义、上下文 tab 都不进代码。
 - 为什么：没有消费者的字段会变成要维护的契约；顺序的并列项今天用注册序就够（插件加载序是确定的）。
-- 边界：新需求出现时按 §9.2 的触发条件重开，不预先占位。
+- 边界：新需求出现时按 §9.2 的触发条件重开，不预先占位。命令条目的显示状态是另一个话题，见
+  `appfw-command-binding.md`。
 
 ## 3. 功能点
 
@@ -261,8 +263,8 @@ app_shell 在 `load()` 里建“插件/帮助”，model_viewer 在 `postLoad()`
 
 ### 9.1 当前状态
 
-F1–F6 落地；`test_gui` 286 例全绿（285 通过 + 1 既有 skip），`test_appfw` 33 例全绿；SARibbon 顺序镜像由
-`RibbonBar` 负责。
+F1–F6 落地；`test_gui` 用例覆盖放置与终止区；SARibbon 顺序镜像由 `RibbonBar` 负责。命令条目的显示状态见
+`appfw-command-binding.md`。
 
 ### 9.2 已知缺口 / 待办
 
@@ -271,6 +273,7 @@ F1–F6 落地；`test_gui` 286 例全绿（285 通过 + 1 既有 skip），`tes
 ### 9.3 兼容性 / 迁移
 
 - `addTab(tab)` / `addGroup(g)` 保持原行为；新能力全部是重载/新方法。
+- `setCommand()` 的点击语义不变（条目状态见 `appfw-command-binding.md`）。
 - 无虚函数变化，`RibbonTab`/`RibbonGroup`/`RibbonBar` 的新状态都在 `Impl` 里，不改变类布局。
 - 迁移建议：标准 tab 设 id/role/policy；插件 tab 用 `before(RibbonTabRole::Help)` 或 `append()`。
 
@@ -282,10 +285,11 @@ F1–F6 落地；`test_gui` 286 例全绿（285 通过 + 1 既有 skip），`tes
 - `src/fw/appfw/sdk/vine/appfw/gui/Gui.hpp`（`RibbonTabRole`、`RibbonTabPolicy`）
 - `src/fw/appfw/src/gui/RibbonBar.cpp`（解析器与物理镜像）
 - `src/plugins/app_shell/src/AppShellUi.cpp`（标准目录）
-- `src/plugins/model_viewer/src/ModelViewerPlugin.cpp`（`before(Help)`）
+- `src/plugins/model_viewer/src/ModelViewerPlugin.cpp`（`before(Help)`、五档着色按钮的勾选 provider）
 
 ### 10.2 文档与 ADR
 
+- `appfw-command-binding.md`（命令条目的显示状态）
 - `../decisions/ADR-2026-10-28-ribbon-roles-and-placement.md`
 
 ### 10.3 外部资料

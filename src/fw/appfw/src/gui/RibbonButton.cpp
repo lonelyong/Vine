@@ -6,12 +6,15 @@
 #include <QToolButton>
 #include <SARibbon.h>
 #include <algorithm>
+#include <optional>
+#include <utility>
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/RibbonAction.hpp>
 
+#include "CommandBinding.hpp"
 #include "ControlData.hpp"
 
 VN_APPFWGUI_NS_BEGIN
@@ -50,7 +53,9 @@ VN_OBJECT_META_IMPL(RibbonButton, Control)
 struct RibbonButton::Impl : public ControlData {
     void*          user       = nullptr;
     RibbonItemSize buttonSize = RibbonItemSize::Small;
-    String         command;
+
+    /// Keeps the button in step with the command setCommand() names (enabled/tooltip/checked).
+    detail::CommandBinding binding;
 
     /// Drop-down menu entry (ordered): item == nullptr means a separator.
     struct Entry {
@@ -87,6 +92,27 @@ RibbonButton::RibbonButton()
             }
         })
         .detach();
+
+    // A command button is a view of its command: one place derives enabled/tooltip/checked, shared with RibbonAction.
+    dptr()->binding.attach(
+        [this](bool enabled, const String& tip, std::optional<bool> checked) {
+            auto* btn = impl<SARibbonToolButton>();
+            if (!btn) {
+                return;
+            }
+            btn->setEnabled(enabled);
+
+            const QString desired = QString::fromStdU16String(tip.toUtf16());
+            if (btn->toolTip() != desired) {
+                btn->setToolTip(desired);
+            }
+
+            if (checked.has_value()) {
+                btn->setCheckable(true);
+                btn->setChecked(*checked);
+            }
+        },
+        [this] { return tooltip(); });
 }
 
 RibbonButton::~RibbonButton()
@@ -388,12 +414,17 @@ void* RibbonButton::data() const
 
 void RibbonButton::setCommand(const String& command)
 {
-    dptr()->command = command;
+    dptr()->binding.setCommand(command);
 }
 
 String RibbonButton::command() const
 {
-    return dptr()->command;
+    return dptr()->binding.command();
+}
+
+void RibbonButton::setCheckedProvider(std::function<bool()> provider)
+{
+    dptr()->binding.setCheckedProvider(std::move(provider));
 }
 
 void RibbonButton::rebuildMenu()
@@ -424,6 +455,8 @@ void RibbonButton::rebuildMenu()
 
     if (!dptr()->menu) {
         dptr()->menu = new SARibbonMenu(btn);
+        // Drop-down items are command actions whose tooltip is the command description; menus hide it by default.
+        dptr()->menu->setToolTipsVisible(true);
     }
 
     // Detach all current actions, then rebuild in entry order. Never use

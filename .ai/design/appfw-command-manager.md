@@ -1,7 +1,7 @@
 # appfw CommandManager 设计
 
 > **状态**：现行
-> **最后核对**：2026-10-23
+> **最后核对**：2026-10-28
 > **范围**：命令注册/执行链/历史/禁用/结果状态；对话框与输入输出见 `appfw-userio.md`。
 > **权威来源**：`CommandManager.hpp`、`Command.hpp`、`tests/test_gui`。
 > **待办**：无（开放项见 `../backlog/`）
@@ -172,6 +172,7 @@ Chain ── vector<Command*> commands (栈, innermost 在尾)
 | `registerCommand<T>()` / `unregisterCommand()` | 注册 | 工厂探测一次 |
 | `setCommandEnabled()` / `isCommandEnabled()` / `disabledCommands()` | 禁用 | 持久化 |
 | `names()` / `commandInfos()` / `isRegistered()` | 列举/存在性 | 禁用项仍列出 |
+| `commandFlags()` / `commandDescription()` | 单条 flags/描述（注册时缓存，别名解析） | 命令 UI 见 `appfw-command-binding.md` |
 | `historySize()` / `historyAt()` / `clearHistory()` | 历史 | 值快照 |
 
 ### 4.2 `Command` / `CommandExecutionContext`
@@ -271,8 +272,7 @@ Chain ── vector<Command*> commands (栈, innermost 在尾)
 ### 9.2 已知缺口 / 待办
 
 - 排他不是入场锁；运行期普通顶层命令仍可能与排他并存。
-- 禁用偏好的读-改-写不是原子的；只有 UI 线程调，未加互斥。
-- 命令禁用/卸载不改变注册表布局；插件重注册会带着偏好回来。
+- 禁用偏好的读-改-写不是原子的（只有 UI 线程调，未加互斥）；命令禁用/卸载不改变注册表布局，插件重注册会带着偏好回来。
 
 ### 9.3 兼容性 / 迁移
 

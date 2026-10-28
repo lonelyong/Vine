@@ -170,10 +170,17 @@ class BackstageWindow final : public QWidget {
 } // namespace
 
 struct BackstagePage::Impl : public ControlData {
-    String                    id;
-    String                    title;
-    Icon                      icon;
-    std::vector<RibbonAction*> items;
+    /// One added item: its action (identity) and the button the page built for it.
+    struct ItemEntry {
+        RibbonAction* action  = nullptr;
+        QToolButton*  button  = nullptr;
+        bool          visible = true;
+    };
+
+    String                 id;
+    String                 title;
+    Icon                   icon;
+    std::vector<ItemEntry> items;
 };
 
 BackstagePage::BackstagePage()
@@ -228,6 +235,13 @@ void BackstagePage::addItem(RibbonAction* item)
         return;
     }
 
+    // The action is the item's identity (and setItemVisible()'s key): one entry per action.
+    for (const auto& entry : dptr()->items) {
+        if (entry.action == item) {
+            return;
+        }
+    }
+
     auto* page   = impl<QWidget>();
     auto* layout = page != nullptr ? qobject_cast<QVBoxLayout*>(page->layout()) : nullptr;
     auto* action = item->impl<QAction>();
@@ -246,7 +260,7 @@ void BackstagePage::addItem(RibbonAction* item)
     // The stretch stays last, so appended items keep their order.
     layout->insertWidget(layout->count() - 1, button);
 
-    dptr()->items.push_back(item);
+    dptr()->items.push_back({ item, button, true });
 }
 
 int BackstagePage::numItems() const
@@ -256,7 +270,39 @@ int BackstagePage::numItems() const
 
 RibbonAction* BackstagePage::itemAt(int index) const
 {
-    return (index >= 0 && index < (int)dptr()->items.size()) ? dptr()->items[(size_t)index] : nullptr;
+    return (index >= 0 && index < (int)dptr()->items.size()) ? dptr()->items[(size_t)index].action : nullptr;
+}
+
+void BackstagePage::setItemVisible(RibbonAction* item, bool visible)
+{
+    if (item == nullptr) {
+        return;
+    }
+
+    for (auto& entry : dptr()->items) {
+        if (entry.action != item) {
+            continue;
+        }
+        entry.visible = visible;
+        if (entry.button != nullptr) {
+            entry.button->setVisible(visible);
+        }
+        return;
+    }
+}
+
+bool BackstagePage::isItemVisible(const RibbonAction* item) const
+{
+    if (item == nullptr) {
+        return false;
+    }
+
+    for (const auto& entry : dptr()->items) {
+        if (entry.action == item) {
+            return entry.visible;
+        }
+    }
+    return false;
 }
 
 inline auto BackstagePage::dptr() -> Impl*
@@ -270,13 +316,49 @@ inline auto BackstagePage::dptr() const -> const Impl*
 }
 
 struct Backstage::Impl : public ControlData {
-    std::vector<BackstagePage*> pages;
-    BackstageWindow*            window   = nullptr;
-    QWidget*                    main     = nullptr;
-    QListWidget*                nav      = nullptr;
-    QStackedWidget*             stack    = nullptr;
-    QLabel*                     title    = nullptr;
-    EventArgs                   args;
+    /// One added page: the wrapper, its navigation row, and whether the host shows it.
+    struct PageEntry {
+        BackstagePage*   page     = nullptr;
+        QListWidgetItem* nav_item = nullptr;
+        bool             visible  = true;
+    };
+
+    std::vector<PageEntry> pages;
+    BackstageWindow*       window = nullptr;
+    QWidget*               main   = nullptr;
+    QListWidget*           nav    = nullptr;
+    QStackedWidget*        stack  = nullptr;
+    QLabel*                title  = nullptr;
+    EventArgs              args;
+
+    /// @return The index of @p page in the stable page order, or -1.
+    int indexOf(const BackstagePage* page) const
+    {
+        for (size_t i = 0; i < pages.size(); ++i) {
+            if (pages[i].page == page) {
+                return (int)i;
+            }
+        }
+        return -1;
+    }
+
+    /// @brief Picks the next visible page after @p from (wrapping), or clears the selection.
+    void selectNextVisible(int from)
+    {
+        const int count = (int)pages.size();
+        for (int step = 1; step < count; ++step) {
+            const int candidate = (from + step) % count;
+            if (pages[(size_t)candidate].visible) {
+                nav->setCurrentRow(candidate);
+                return;
+            }
+        }
+
+        // Nothing is left to show: no current page, no page content (QStackedWidget allows -1).
+        nav->setCurrentRow(-1);
+        stack->setCurrentIndex(-1);
+        title->clear();
+    }
 };
 
 Backstage::Backstage(MainWindow* window)
@@ -358,7 +440,7 @@ Backstage::Backstage(MainWindow* window)
         }
 
         data->stack->setCurrentIndex(row);
-        data->title->setText(toQString(data->pages[(size_t)row]->title()));
+        data->title->setText(toQString(data->pages[(size_t)row].page->title()));
     });
 
     auto* escape = new QShortcut(QKeySequence(QKeySequence::Cancel), native);
@@ -408,7 +490,7 @@ bool Backstage::addPage(BackstagePage* page)
     }
 
     // Adding the same object twice would put two navigation rows on one widget.
-    if (std::find(data->pages.begin(), data->pages.end(), page) != data->pages.end()) {
+    if (data->indexOf(page) >= 0) {
         return false;
     }
 
@@ -430,9 +512,9 @@ bool Backstage::addPage(BackstagePage* page)
     }
 
     data->stack->addWidget(page_widget);
-    data->pages.push_back(page);
+    data->pages.push_back({ page, item, true });
 
-    if (data->pages.size() == 1) {
+    if (data->nav->currentRow() < 0) {
         setCurrentPage(page);
     }
 
@@ -445,9 +527,9 @@ BackstagePage* Backstage::findPage(const String& id) const
         return nullptr;
     }
 
-    for (BackstagePage* page : dptr()->pages) {
-        if (page->id() == id) {
-            return page;
+    for (const auto& entry : dptr()->pages) {
+        if (entry.page->id() == id) {
+            return entry.page;
         }
     }
 
@@ -461,7 +543,7 @@ int Backstage::numPages() const
 
 BackstagePage* Backstage::pageAt(int index) const
 {
-    return (index >= 0 && index < (int)dptr()->pages.size()) ? dptr()->pages[(size_t)index] : nullptr;
+    return (index >= 0 && index < (int)dptr()->pages.size()) ? dptr()->pages[(size_t)index].page : nullptr;
 }
 
 void Backstage::setCurrentPage(BackstagePage* page)
@@ -470,16 +552,8 @@ void Backstage::setCurrentPage(BackstagePage* page)
         return;
     }
 
-    int index = -1;
-
-    for (int i = 0; i < (int)dptr()->pages.size(); ++i) {
-        if (dptr()->pages[(size_t)i] == page) {
-            index = i;
-            break;
-        }
-    }
-
-    if (index < 0) {
+    const int index = dptr()->indexOf(page);
+    if (index < 0 || !dptr()->pages[(size_t)index].visible) {
         return;
     }
 
@@ -492,7 +566,47 @@ BackstagePage* Backstage::currentPage() const
 {
     const int row = dptr()->nav != nullptr ? dptr()->nav->currentRow() : -1;
 
-    return (row >= 0 && row < (int)dptr()->pages.size()) ? dptr()->pages[(size_t)row] : nullptr;
+    return (row >= 0 && row < (int)dptr()->pages.size()) ? dptr()->pages[(size_t)row].page : nullptr;
+}
+
+void Backstage::setPageVisible(BackstagePage* page, bool visible)
+{
+    auto* data = dptr();
+
+    if (page == nullptr) {
+        return;
+    }
+
+    const int index = data->indexOf(page);
+    if (index < 0) {
+        return;
+    }
+
+    auto& entry = data->pages[(size_t)index];
+    if (entry.visible == visible) {
+        return;
+    }
+
+    entry.visible = visible;
+    entry.nav_item->setHidden(!visible);
+
+    if (!visible) {
+        if (data->nav->currentRow() == index) {
+            data->selectNextVisible(index);
+        }
+        return;
+    }
+
+    // Nothing is current (every page was hidden): the page that comes back becomes the current one.
+    if (data->nav->currentRow() < 0) {
+        setCurrentPage(page);
+    }
+}
+
+bool Backstage::isPageVisible(const BackstagePage* page) const
+{
+    const int index = dptr()->indexOf(page);
+    return index >= 0 && dptr()->pages[(size_t)index].visible;
 }
 
 void Backstage::open()
@@ -503,9 +617,15 @@ void Backstage::open()
         return;
     }
 
-    if (data->pages.empty()) {
-        VN_LOGW("Backstage::open: no page was added, the page is not shown");
+    const bool any_visible = std::any_of(data->pages.begin(), data->pages.end(), [](const Impl::PageEntry& entry) { return entry.visible; });
+
+    if (!any_visible) {
+        VN_LOGW("Backstage::open: no visible page, the page is not shown");
         return;
+    }
+
+    if (data->nav->currentRow() < 0) {
+        data->selectNextVisible(-1); // rows are 0-based: the first step lands on row 0
     }
 
     data->window->syncToMainWindow();

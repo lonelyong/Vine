@@ -18,6 +18,25 @@ inline constexpr const char8_t* kShadingModeNormalsCommand   = u8"set_shading_no
 inline constexpr const char8_t* kShadingModeWireframeCommand = u8"set_shading_wireframe";
 
 /**
+ * @brief Answers whether the current command target's 3D area draws in this shading mode.
+ *
+ * @details
+ * - This is the toggle a ribbon button reports (RibbonButton::setCheckedProvider): "is this one of the five modes the
+ *   picture is in right now". It reads the same target a command dispatch would resolve, so the highlight and the
+ *   command always talk about the same view.
+ * - It reads the mode the target's VIEWER was asked to show (RenderControl::viewerOptions().mode), not the chain that
+ *   happens to be built: the request survives a surface that has not attached yet, and a rejected request leaves it
+ *   unchanged.
+ * - false when there is no target (no document/window) or when the target view has no 3D area - in both cases no mode
+ *   is "on".
+ * - The five buttons are views of one state, not five independent flags: exactly one of them is checked at a time.
+ *
+ * @param mode Mode to test.
+ * @return true when the target area's chain is in @p mode.
+ */
+bool isCurrentShadingMode(vn::graphics::ShadingMode mode);
+
+/**
  * @brief "显示模式"命令的共同部分：把**当前视图**的着色模式设成某一种。
  *
  * 一条命令一个模式（而不是一条"循环切换"）：菜单里每条都有说得清的名字，用户不必先点两下才知道现在在哪一档。

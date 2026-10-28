@@ -542,6 +542,36 @@ class VN_APPFW_API CommandManager {
     bool isCommandEnabled(const String& name) const;
 
     /**
+     * @brief Returns the execution flags of a command, read from the registry.
+     *
+     * @details
+     * - The flags are cached at registration time (the same probe that caches group/description), so a UI that
+     *   decides "does this item need a document / a view right now" does not instantiate the command per refresh.
+     * - Aliases resolve exactly like the execution entry points do; an alias of an alias answers for the command it
+     *   finally reaches.
+     * - A command whose factory threw or returned nothing has no metadata to read and reports CommandFlags::None;
+     *   it is still registered and can still run.
+     *
+     * @param name Command or alias name.
+     * @return The flags, or std::nullopt when the name does not resolve to a registered command.
+     */
+    std::optional<CommandFlags> commandFlags(const String& name) const;
+
+    /**
+     * @brief Returns the description of a command, read from the registry.
+     *
+     * @details
+     * - This is the text CommandInfo::description carries, read for one name instead of walking commandInfos(); a
+     *   command UI uses it as the tooltip of the item that runs the command.
+     * - Aliases resolve like the execution entry points do. An empty description is a real answer (the command
+     *   registered none), not "unregistered" - that is what std::nullopt reports.
+     *
+     * @param name Command or alias name.
+     * @return The description, or std::nullopt when the name does not resolve to a registered command.
+     */
+    std::optional<String> commandDescription(const String& name) const;
+
+    /**
      * @brief Returns the command names the user disabled.
      *
      * This is the persisted preference, so it may also contain names that are not

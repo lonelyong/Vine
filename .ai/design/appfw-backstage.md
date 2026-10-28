@@ -84,6 +84,8 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 | F6 | 生命周期 | `MainWindow::setBackstage()` 接管所有权 | 已落地 |
 | F7 | 页面自定义内容 | 任意 Control 作为页面主体 | 未做，见 backlog |
 | F8 | 最近文件 / MRU | 最近文件页 | 未做，见 backlog |
+| F9 | 页面显隐 | `setPageVisible/isPageVisible`；导航行隐藏、序号不变 | 已落地 |
+| F10 | 条目显隐 | `setItemVisible/isItemVisible`；按钮不参与布局 | 已落地 |
 
 ### 3.1.1 F1 应用按钮点击事件
 
@@ -101,7 +103,7 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 
 ### 3.1.3 F3 页面与导航
 
-- **行为**：页面按添加顺序进入左侧导航与右侧 `QStackedWidget`；页面 id 在非空时唯一；第一页成为当前页。
+- **行为**：页面按添加顺序进入左侧导航与右侧 `QStackedWidget`；页面 id 在非空时唯一；第一张可见页成为当前页。
 - **约束**（C3）：id/标题/图标在 `addPage` 前设置。
 - **验收**（T2）：`Backstage_PagesAndNavigation`。
 - **注意**（P3）：空 id 页面可用，但 `findPage("")` 返回 nullptr。
@@ -126,6 +128,22 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 - **约束**（C6）：一个 MainWindow 只有一个 Backstage。
 - **验收**（T5）：`Backstage_IsOwnedByMainWindow`（析构不崩溃、指针清空）。
 
+### 3.1.7 F9 页面显隐
+
+- **行为**：`setPageVisible(page,bool)` 隐藏/恢复导航行；隐藏当前页时选下一个可见页（循环）；全部隐藏时没有当前页、
+  `open()` 拒绝打开。
+- **约束**（C7）：隐藏不删除页面、不改变 `pages` 顺序；隐藏页不可被 `setCurrentPage()` 选中。
+- **要求**（R7）：`findPage/pageAt/numPages` 仍包含隐藏页；恢复后无当前页时该页成为当前页。
+- **验收**（T6）：`Backstage_PagesCanBeHidden`。
+
+### 3.1.8 F10 条目显隐
+
+- **行为**：`setItemVisible(action,bool)` 隐藏/恢复条目的按钮；条目、动作与命令都还在，序号不变。
+- **约束**（C9）：动作是条目身份；页面没持有的动作忽略；隐藏不等于禁用命令（后者灰显，见
+  `appfw-command-binding.md`）。
+- **要求**（R7）：`numItems/itemAt` 继续报告隐藏条目，可用同一动作恢复。
+- **验收**（T7）：`BackstagePage_ItemsCanBeHidden`。
+
 ## 4. 公开接口
 
 ### 4.1 RibbonBar
@@ -145,7 +163,8 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 | `addPage(BackstagePage*)` | 追加页面 | 重复非空 id 返回 false |
 | `findPage/pageAt/numPages` | 页面查找 | 逻辑顺序 |
 | `setCurrentPage/currentPage` | 切换页面 | 同步导航与内容栈 |
-| `open/close/isOpen` | 显隐 | Esc/返回按钮关闭 |
+| `setPageVisible/isPageVisible` | 页面显隐 | 隐藏不删除，序号不变 |
+| `open/close/isOpen` | 显隐 | Esc/返回按钮关闭；无可见页时 open 拒绝 |
 
 ### 4.3 BackstagePage
 
@@ -154,8 +173,9 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 | `setId/id` | 页面身份 | add 前设置 |
 | `setTitle/title` | 导航标题 | add 前设置 |
 | `setIcon/icon` | 导航图标 | add 前设置 |
-| `addItem(RibbonAction*)` | 命令条目 | 调用方持有动作 |
-| `numItems/itemAt` | 条目查询 | 逻辑顺序 |
+| `addItem(RibbonAction*)` | 命令条目；一个动作一个条目 | 调用方持有动作 |
+| `numItems/itemAt` | 条目查询 | 逻辑顺序；含隐藏条目 |
+| `setItemVisible/isItemVisible` | 条目显隐 | 动作作身份，序号不变 |
 
 ## 5. 约束、要求与不变量
 
@@ -167,6 +187,8 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 - C4：Backstage 不删除页面条目（`RibbonAction`）。
 - C5：覆盖主窗口客户区，不覆盖系统标题栏。
 - C6：一个 MainWindow 只有一个 Backstage。
+- C7：隐藏页面/条目不删除、不改序号；隐藏当前页时必须有可见页接替，一个都没有则没有当前页并拒绝 open。
+- C9：条目的隐藏以动作为键（一个动作一个条目）；隐藏不是禁用命令。
 
 ### 5.2 要求（R#）
 
@@ -176,6 +198,7 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 - R4：页面 id 非空时唯一；重复添加被拒绝并记日志。
 - R5：关闭/隐藏后主窗口恢复可用。
 - R6：替换/销毁 MainWindow 时不得留下悬空订阅。
+- R7：隐藏页仍可查找，恢复后能重新成为当前页；隐藏条目的序号与动作不变，可用同一动作恢复。
 
 ### 5.3 不变量（N#）
 
@@ -183,6 +206,7 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 - N2：导航行与内容栈索引始终一致。
 - N3：页面包装对象在 add 后不拥有其 widget（栈拥有）。
 - N4：菜单项清空后 `RibbonAction` 仍归调用方。
+- N5：导航行索引与页面索引一致（隐藏行仍占位）；隐藏页不可被 `setCurrentPage()` 选中。
 
 ## 6. 注意事项与陷阱
 
@@ -211,6 +235,11 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 - 怎么判：最大化后覆盖不全。
 - 怎么防：主窗口事件过滤器同步 `Move/Resize/WindowStateChange/Show/Hide`。
 
+### 6.6 隐藏后的计数
+- 会怎么错：宿主把 `numPages()`/`numItems()` 当“可见数量”，把隐藏项也算进布局。
+- 怎么判：用例断言隐藏后计数不变、`itemAt/pageAt` 仍返回原对象。
+- 怎么防：需要可见数量时自己数 `isPageVisible()/isItemVisible()`。
+
 ## 7. 已否决选项
 
 | # | 选项 | 理由 | ADR |
@@ -230,17 +259,19 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 | T3 | 条目是命令绑定的动作 | `GuiTest.Backstage_PageItemsAreCommandBound` |
 | T4 | 跟随主窗口尺寸、关闭 | `GuiTest.Backstage_FollowsMainWindowSize`、`GuiTest.Backstage_ClosesOnEscapeOrClose` |
 | T5 | MainWindow 所有权替换不崩溃 | `GuiTest.Backstage_IsOwnedByMainWindow` |
+| T6 | 页面隐藏/恢复/无可见页 | `GuiTest.Backstage_PagesCanBeHidden` |
+| T7 | 条目隐藏/恢复 | `GuiTest.BackstagePage_ItemsCanBeHidden` |
 
 ## 9. 状态与演进
 
 ### 9.1 当前状态
 
-F1–F6 落地；app_shell 用两个页面（插件、帮助）演示命令条目；`test_gui` 292 例全绿（291 通过 + 1 既有 skip），
-`test_appfw` 33 例全绿。
+F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell 用两个页面（插件、帮助）演示命令条目；条目是
+`RibbonAction`，所以启用态/tooltip/勾选态跟着命令走（见 `appfw-command-binding.md`），页面本身不再写一份。
 
 ### 9.2 已知缺口 / 待办
 
-见 `../backlog/appfw-ribbon.md`：最近文件/MRU、页面自定义内容、Backstage 项的角色/放置、与命令状态绑定联动。
+见 `../backlog/appfw-ribbon.md`：最近文件/MRU、页面自定义内容、Backstage 项的角色/放置。
 
 ### 9.3 兼容性 / 迁移
 
