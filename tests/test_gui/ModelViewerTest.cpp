@@ -606,10 +606,12 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     EXPECT_EQ(vn::appfw::gui::targetView(vn::appfw::gui::resolveCommandTarget(&window)), second)
         << "切到第二份文档，派发的目标跟着换（派生，不是谁最后发布）";
 
-    // 关掉一份：只有它那份资源跟着消失，另一份还在（视图按实例缓存）。
+    // 关掉当前那份：它的视图和它那套资源跟着消失，另一份接替成为当前文档（tab 条表达不了“什么都没选中”，
+    // 所以宿主在 close 之后请求接替的那一格）。另一份的视图和资源原样还在 —— 视图仍按实例缓存。
     ASSERT_NE(documents.current(), nullptr);
     ASSERT_TRUE(documents.close(documents.current()));
-    EXPECT_EQ(host.currentView(), nullptr) << "没有当前文档了";
+    ASSERT_NE(host.currentView(), nullptr) << "另一份接替成为当前文档";
+    EXPECT_EQ(host.currentView(), first);
     EXPECT_EQ(host.viewFor(*box_document), first) << "另一份的视图还带着自己的资源在";
 }
 

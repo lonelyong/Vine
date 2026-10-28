@@ -17,15 +17,29 @@ class DocumentViewRegistry;
 class DockPanelManager;
 
 /**
- * @brief The central client area as "where the current document is shown" - the GUI host's default behaviour.
+ * @brief The central client area as "the current document is what the middle of the window shows" - the GUI host's
+ *        default behaviour.
  *
  * The framework owns this, not every application: seeing the current document is what a document GUI does, and each
- * host writing its own version means each host getting the same four things subtly wrong (which view, when to build it,
+ * host writing its own version means each host getting the same things subtly wrong (which view, when to build it,
  * when to drop it, and what to say when there is nothing to show). What stays with the application is POLICY: whether
  * opening a document also selects it, whether tabs are shown, how many documents may be open - all of which it does
  * with `DocumentManager` and `opened`/`currentChanged`.
  *
- * THE FIVE CONTRACTS, and each one is a bug somebody writes by hand otherwise:
+ * ONE TRUTH, DERIVED ONCE: `DocumentManager::current()` decides which document is current; this host never keeps a
+ * second answer. Everything it shows is derived from it in one place (syncToCurrentDocument()):
+ *   - the tab strip selects the current document's tab;
+ *   - the central area shows the current document's page, or a message page that says why it cannot (no current
+ *     document, the current document is floating in its own window, or its type has no view);
+ *   - the current document's view is the one whose activate() is in effect (see DocumentView).
+ * Because the central area never shows a document that is not current, the tab highlight, the visible page and the
+ * command target (`resolveCommandTarget()`) always agree.
+ *
+ * EVERY GESTURE IS A REQUEST, NEVER A SECOND OWNER: clicking a tab calls DocumentManager::setCurrent(), activating a
+ * floating document window calls the same, and the API call coming the other way (`setCurrent`) moves the tab and the
+ * page. That is the whole loop (R7): the manager decides, the host follows.
+ *
+ * THE CONTRACTS, and each one is a bug somebody writes by hand otherwise:
  *   1. the central slot is filled ONCE. DockPanelManager::setCentralWidget() replaces what is there and the docking
  *      library reparents the widget, which recreates its native window - doing that per document switch is exactly the
  *      `Pending -> Presenting` dance a render control must not be dragged through. The host installs its container the
@@ -39,21 +53,26 @@ class DockPanelManager;
  *   6. OWNERSHIP is split on purpose: the host owns the view OBJECTS (destroyed when their document closes) and the
  *      container owns the page WIDGETS. A view handed to the host is therefore taken over with owns=false - a widget
  *      that dies with the container would otherwise run UIElement's self-destruct and delete a view object the host is
- *      still holding.
+ *      still holding;
+ *   7. a document that is in its own window is STILL a tab, and while it is current the central area says so instead
+ *      of showing another document - "which document" has one answer even when there are several windows.
  *
  * A 3D view presents through the shared render control (see DocumentView), so switching between two 3D documents does
  * not reparent anything either.
  *
  * MULTI-DOCUMENT: every open document gets one tab, in the order it was opened (moving a tab reorders the strip and
  * nothing else). The strip appears only when a second document is open, so a single-document application sees no tab
- * bar at all. Selecting a tab calls DocumentManager::setCurrent(), and a `currentChanged` coming the other way selects
- * the matching tab - the manager stays the single owner of "which document".
+ * bar at all. The strip's context menu offers float/dock and close - each one a REQUEST through the same manager API.
+ * Closing the current document REQUESTS the tab that takes its place (same position, else the one before): a QTabBar
+ * cannot render "nothing selected" while tabs exist, and this request is what keeps the highlighted tab and the page
+ * under it showing the same document.
  *
  * FLOATING IS NOT DOCKING: setFloating() moves the view's page into a small top-level window this host owns. That
  * window is deliberately NOT a DockingPane, so it has no docking targets at all - it cannot be dropped on an edge, an
- * auto-hide strip or another pane, and its only ways back are the dock button, the API, or closing the document. That
- * is the whole rule: a document is shown either as a tab in the central area or as its own window, never as a dock
- * panel (see .ai/design/appfw-document-model.md and ADR-2026-10-28-document-tabs-and-floating.md).
+ * auto-hide strip or another pane, and its only ways back are the dock button, the tab's context menu, the API, or
+ * closing the document. That is the whole rule: a document is shown either as a tab in the central area or as its own
+ * window, never as a dock panel (see .ai/design/appfw-document-model.md and
+ * ADR-2026-10-28-document-tabs-and-floating.md).
  *
  * THREAD AFFINITY: application (GUI) thread only.
  */
@@ -64,8 +83,8 @@ class VN_APPFW_API CentralDocumentHost : public Control {
     /**
      * @brief Builds the host and starts following the document manager.
      *
-     * The host connects to `currentChanged` and `closed` here, so a document that is already current is presented
-     * immediately.
+     * The host subscribes to `opened`/`closed`/`currentChanged` here and syncs once, so documents that were already
+     * open when it was built get their tabs and the current one is presented immediately.
      *
      * @param documents Document manager to follow; borrowed, must outlive the host.
      * @param views     View registry to look document types up in; borrowed, must outlive the host.
@@ -76,25 +95,33 @@ class VN_APPFW_API CentralDocumentHost : public Control {
 
   public:
     /**
-     * @brief Brings the screen in step with the current document (the host does this itself on `currentChanged`).
+     * @brief Brings the screen in step with the manager's current document: tab selection, central page, active view.
      *
-     * A host may call it after changing the view registration behind the manager's back (a plugin was loaded or
-     * unloaded, a view was replaced) - it is otherwise the event handler.
+     * @details
+     * - The host runs this itself on `currentChanged`, after a page moves to or from a floating window, and when the
+     *   open set changes; a host calls it after changing the view registration behind the manager's back (a plugin was
+     *   loaded or unloaded, a view was replaced).
+     * - It is the ONE place that derives the display from `DocumentManager::current()`, so the three visible answers
+     *   (selected tab, central content, active view) cannot drift apart.
      */
     void syncToCurrentDocument();
 
     /**
-     * @brief Returns the view being shown, or nullptr when a message page (or nothing) is up instead.
+     * @brief Returns the current document's view - in the central area or in its own window.
      *
-     * @return The presented view (borrowed; it lives as long as its document).
+     * @return The view (borrowed; it lives as long as its document), or nullptr when there is no current document or
+     *         its type has no view.
      */
     raw_ptr<DocumentView> currentView() const;
 
     /**
-     * @brief Returns what is on screen right now.
+     * @brief Returns what the central area is showing right now.
      *
-     * @return The element the host put up last (a view's content(), or a message page), or nullptr when it has not
-     *         taken the central area yet.
+     * @details
+     * - That is the current view's content(), or a message page while there is nothing to put there: no current
+     *   document, the current document is floating in its own window, or its type has no view.
+     *
+     * @return The element in the central area, or nullptr before the host has taken the area over.
      */
     raw_ptr<UIElement> shownContent() const;
 
@@ -113,9 +140,10 @@ class VN_APPFW_API CentralDocumentHost : public Control {
      * - Floating builds the document's view on demand (the first one it needs), takes its page out of the central
      *   stack and puts it in a top-level window this host owns.
      * - The window is not a docking pane on purpose: it has no drop targets, so the document can only come back here
-     *   (the window's dock button, this call, or closing the document).
-     * - Docking back puts the page into the central stack again, at the document's tab position; it becomes the
-     *   visible page only when the document is current.
+     *   (the window's dock button, the tab's context menu, this call, or closing the document).
+     * - While the floated document is current, the central area shows a message page naming it instead of another
+     *   document's page: the central area only ever shows the current document.
+     * - Docking back returns the page to the central stack; it becomes the visible page when the document is current.
      * - A document whose type has no view cannot float: there is no page to move, so the call does nothing.
      *
      * @param document Document to move; must be open in this host's manager.
@@ -154,10 +182,6 @@ class VN_APPFW_API CentralDocumentHost : public Control {
     bool ownsCentralArea() const;
 
   private:
-    void present(vn::appfw::Document* document);
-    void setShown(DocumentView* view);
-    void showView(DocumentView& view);
-    void showMessage(const String& text, bool take_over);
     void installIntoCentralArea();
     DocumentView* obtainView(vn::appfw::Document& document);
   private:

@@ -57,6 +57,7 @@
 
 - `ADR-2026-10-24-command-target.md` —— 命令的目标是视图（`DocumentView`），层可空、需求按命令声明；`RenderControl` 不做目标。
 - `ADR-2026-10-28-document-tabs-and-floating.md` —— 文档的 tab 在中央区，浮动是自已的顶层窗口（不进停靠树）。
+- `ADR-2026-10-28-central-area-shows-current-document.md` —— 中央区只显示当前文档，浮动的当前文档用说明页占位（一个 current、三处一致）。
 - `ADR-2026-10-24-command-target-no-window-query.md` —— 目标只走一条路：不留窗口级的"当前 3D 区"查询，视图的访问器叫 `renderControl()`（部分取代上一条的决定 4）。
 - `ADR-2026-10-24-tabs-not-mdi.md` —— 一个窗口同一时刻只显示一个视图（tab）；并排看几块 3D 区由视图自己的窗格表达，不做 MDI/分屏。
 - `ADR-2026-10-24-material-model.md` —— 材质改为单一 metallic-roughness PBR + 稀疏实例；alpha 模式进材质，G-buffer 重排。

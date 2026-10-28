@@ -91,7 +91,9 @@ MainWindow::MainWindow()
     // scripts/vsg_rewrite_gate.sh, "the app's own start-up size is NOT deterministic"); a resize the user
     // makes afterwards is left alone.
     impl<itype>()->resize(QSize(800, 600));
-    impl<itype>()->setCentralWidget(static_cast<QWidget*>(dptr()->dock_panel_mgr->root()->impl()));
+    // qobject_cast, not static_cast: the wrapper is built around a QWidget here, but unwrapping a UIElement is the one
+    // place the checked cast is required (see the same rule in DockPanelManager.cpp and DockPanel.cpp).
+    impl<itype>()->setCentralWidget(qobject_cast<QWidget*>(dptr()->dock_panel_mgr->root()->impl()));
     impl<itype>()->setStatusBar(dptr()->status_bar->impl<QStatusBar>());
     //impl<itype>()->setFrameBorderEnabled(true);
     //impl<itype>()->setFrameShadowEnabled(true);

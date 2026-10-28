@@ -98,7 +98,7 @@ class VN_APPFW_API GuiApplication : public Application {
      * @brief Returns the host that shows the current document in the central client area.
      *
      * The framework's default document GUI behaviour, not an application's: it follows currentChanged/closed and
-     * keeps one view per document instance (see CentralDocumentHost for the five contracts). What stays with the
+     * keeps one view per document instance (see CentralDocumentHost for the contracts). What stays with the
      * application is policy - whether opening also selects, whether there are tabs, how many documents may be open.
      *
      * @return The host, owned by this application and following its lifetime; nullptr when there is no main window

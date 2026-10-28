@@ -1,6 +1,6 @@
 // 视图层：注册表（DocumentViewRegistry）+ 中央区宿主（CentralDocumentHost）。
 //
-// 这条用例钉住宿主那五条契约里最容易被写坏的四条：
+// 这条用例钉住宿主契约里最容易被写坏的四条：
 //   ① 没东西要显示之前**不接管**中央区（外壳自己放在那里的东西还在）；
 //   ② 视图**按文档实例**懒建：没显示过的文档没有视图；同一份切回来复用同一个实例，它的状态还在；
 //   ③ 文档关闭 ⇒ 它的视图被销毁（不攒着）；
@@ -12,6 +12,7 @@
 
 #include <QCoreApplication>
 #include <QLabel>
+#include <QPointer>
 #include <QTabBar>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -471,6 +472,15 @@ TEST(DocumentViewTest, EveryOpenDocumentGetsATabAndATabSelectionSelectsTheDocume
 
     vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
 
+    // 管理器 → 界面这条路的观察点：用户换文档必须真的产生一次 currentChanged，而不是 UI 自己改了个选中项。
+    int                  changes      = 0;
+    vn::appfw::Document* last_changed = nullptr;
+    const vn::Connection recording    = documents.currentChanged.connect(
+        [&changes, &last_changed](vn::appfw::DocumentManager&, vn::appfw::DocumentEventArgs& args) {
+            ++changes;
+            last_changed = args.document();
+        });
+
     vn::appfw::Document* first  = openDocument(documents, kShownType);
     vn::appfw::Document* second = openDocument(documents, kShownType);
     vn::appfw::Document* third  = openDocument(documents, kShownType);
@@ -493,11 +503,15 @@ TEST(DocumentViewTest, EveryOpenDocumentGetsATabAndATabSelectionSelectsTheDocume
     // 管理器 → tab 条：选中哪份，格子就选哪个。
     ASSERT_TRUE(documents.setCurrent(second));
     EXPECT_EQ(strip->currentIndex(), 1);
+    EXPECT_EQ(changes, 1) << "API 选中文档 ⇒ 正好一次 currentChanged";
+    EXPECT_EQ(last_changed, second);
 
-    // tab 条 → 管理器：用户点格子就是“选中这份文档”（管理器仍是唯一的所有者）。
+    // tab 条 → 管理器：用户点格子就是“选中这份文档”（管理器仍是唯一的所有者），而且真的发事件。
     strip->setCurrentIndex(2);
     EXPECT_EQ(documents.current(), third);
     EXPECT_EQ(host.documentAt(strip->currentIndex()), third);
+    EXPECT_EQ(changes, 2) << "鼠标点 tab 也必须产生 currentChanged";
+    EXPECT_EQ(last_changed, third);
 
     // 关一份 ⇒ 它那一格消失，其余顺序不变。
     ASSERT_TRUE(documents.close(second));
@@ -505,6 +519,64 @@ TEST(DocumentViewTest, EveryOpenDocumentGetsATabAndATabSelectionSelectsTheDocume
     EXPECT_EQ(host.documentAt(0), first);
     EXPECT_EQ(host.documentAt(1), third);
     EXPECT_EQ(strip->count(), 2);
+    EXPECT_EQ(documents.current(), third) << "关掉的不是当前那份：当前文档不动";
+    EXPECT_EQ(strip->currentIndex(), 1) << "格子前移后，选中项仍指向当前那份";
+}
+
+TEST(DocumentViewTest, ClosingTheCurrentDocumentSelectsTheTabThatTakesItsPlaceAndTheStripDisappearsAtOne)
+{
+    // 关掉当前文档时管理器先发 currentChanged(nullptr)、再发 closed（§3.1.1 N1），这次关闭本身没有留下当前文档。
+    // 但 tab 条表达不了“什么都没选中”（Qt 6.10 实测：有 tab 时 setCurrentIndex(-1) 是空操作），所以宿主在关闭后向
+    // 管理器**请求**选中接替那一格：仍是请求，管理器仍是唯一所有者（R7），否则就会出现“条上选着某一份，中央区却说
+    // 没有当前文档”（N8）。另外只剩一份时条要收起来——和“打开第一份时不显示”必须是同一条规则，否则打开与关闭不对称。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* first  = openDocument(documents, kShownType);
+    vn::appfw::Document* second = openDocument(documents, kShownType);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    auto* strip = tabStrip(host);
+    ASSERT_NE(strip, nullptr);
+    EXPECT_EQ(strip->count(), 2);
+    EXPECT_FALSE(strip->isHidden()) << "两份文档时 tab 条显示";
+
+    ASSERT_TRUE(documents.setCurrent(second));
+    EXPECT_EQ(strip->currentIndex(), 1);
+
+    // 关掉当前那份：接替它的那一格成为当前文档，并且真的被显示出来。
+    ASSERT_TRUE(documents.close(second));
+    EXPECT_EQ(documents.current(), first) << "关掉当前那份之后要有一份接替，否则条会指着一份没有显示的文档";
+    EXPECT_EQ(strip->currentIndex(), 0) << "条上选中的就是当前文档";
+    ASSERT_NE(host.currentView(), nullptr);
+    EXPECT_EQ(&host.currentView()->document(), first) << "中央区显示的就是条上选中的那份";
+    EXPECT_EQ(host.shownContent(), host.currentView()->content());
+    EXPECT_EQ(book.destroyed, 1) << "关掉的那份视图销毁了，接替的那份还在";
+
+    // 只剩一份：条跟着消失，和“打开第一份时不显示”对称。
+    EXPECT_EQ(strip->count(), 1);
+    EXPECT_TRUE(strip->isHidden()) << "只剩一份文档时 tab 条必须像打开第一份时那样不显示";
+
+    // 再来一份：条回来，选中项仍指向当前那份（新开的不自动成为当前）。
+    vn::appfw::Document* third = openDocument(documents, kShownType);
+    ASSERT_NE(third, nullptr);
+    EXPECT_FALSE(strip->isHidden()) << "第二份打开后条回来";
+    EXPECT_EQ(documents.current(), first) << "新开一份不改变当前文档";
+    EXPECT_EQ(strip->currentIndex(), 0);
+    EXPECT_EQ(host.documentAt(strip->currentIndex()), first);
 }
 
 TEST(DocumentViewTest, SwitchingTabsReusesEachViewAndNeverReinstallsTheCentralArea)
@@ -587,10 +659,12 @@ TEST(DocumentViewTest, ADocumentFloatsIntoItsOwnWindowAndDocksBackIntoItsTab)
     EXPECT_TRUE(host.isFloating(*document));
     EXPECT_EQ(host.documentCount(), 1) << "浮动不改变 tab 集合";
     EXPECT_EQ(book.created, 1) << "浮动不换视图";
-    EXPECT_EQ(host.currentView(), view);
-    EXPECT_EQ(host.shownContent(), view->content());
+    EXPECT_EQ(host.currentView(), view) << "当前文档还是它，视图还是同一个";
     ASSERT_NE(page->window(), nullptr);
     EXPECT_NE(page->window(), central_window) << "页控件搬到了自己的顶层窗口";
+    EXPECT_NE(host.shownContent(), view->content()) << "页搬走了，中央区不再显示它";
+    EXPECT_TRUE(messageOnPage(host.shownContent()).contains(QStringLiteral("独立窗口")))
+        << "中央区说明当前文档在自己的窗口里，而不是显示别的文档";
 
     // 停回来：页控件回到中央区那个窗口，视图还是同一个。
     host.setFloating(*document, false);
@@ -598,7 +672,116 @@ TEST(DocumentViewTest, ADocumentFloatsIntoItsOwnWindowAndDocksBackIntoItsTab)
     EXPECT_FALSE(host.isFloating(*document));
     EXPECT_EQ(page->window(), central_window);
     EXPECT_EQ(host.currentView(), view);
+    EXPECT_EQ(host.shownContent(), view->content()) << "停回来，中央区重新显示它的页";
     EXPECT_EQ(book.destroyed, 0) << "浮动/停回都不是销毁";
+}
+
+TEST(DocumentViewTest, TheCentralAreaOnlyEverShowsTheCurrentDocument)
+{
+    // 一个不变量：中央区显示的**永远**是当前文档的页，或说明页；绝不显示另一份文档的页。
+    // 这正是 tab 选中、current 与中央内容在任意操作后都一致的原因。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* first  = openDocument(documents, kShownType);
+    vn::appfw::Document* second = openDocument(documents, kShownType);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    ASSERT_TRUE(documents.setCurrent(first));
+    auto* first_view = shownView(host);
+    ASSERT_NE(first_view, nullptr);
+    auto* first_page = first_view->content()->impl<QWidget>();
+    ASSERT_NE(first_page, nullptr);
+    EXPECT_EQ(host.shownContent(), first_view->content());
+
+    // 非当前那份浮出去：中央区不动，还是当前那份的页。
+    host.setFloating(*second, true);
+    ASSERT_TRUE(host.isFloating(*second));
+    EXPECT_EQ(host.shownContent(), first_view->content()) << "浮一个非当前文档不改变中央区";
+    EXPECT_EQ(shownView(host), first_view);
+
+    // 当前那份浮出去：页搬走了，中央区不能再声称它还在。
+    host.setFloating(*first, true);
+    ASSERT_TRUE(host.isFloating(*first));
+    EXPECT_EQ(host.currentView(), first_view) << "当前视图没变：它只是换了窗口";
+    EXPECT_NE(host.shownContent(), first_view->content());
+    EXPECT_TRUE(messageOnPage(host.shownContent()).contains(QStringLiteral("独立窗口")));
+
+    // 停回第一份、把当前切到仍在浮动的第二份：中央区说“在独立窗口”，不是第一份的页。
+    host.setFloating(*first, false);
+    ASSERT_TRUE(documents.setCurrent(second));
+    EXPECT_NE(host.shownContent(), first_view->content()) << "当前文档是浮动的第二份，不是第一份";
+    EXPECT_TRUE(messageOnPage(host.shownContent()).contains(QStringLiteral("独立窗口")));
+
+    // 第二份停回来：中央区是它的页。
+    auto* second_view = host.viewFor(*second);
+    ASSERT_NE(second_view, nullptr);
+    host.setFloating(*second, false);
+    EXPECT_EQ(host.shownContent(), second_view->content());
+}
+
+TEST(DocumentViewTest, ActivatingAFloatingDocumentsWindowSelectsIt)
+{
+    // 焦点跟随文档：几个文档各有窗口时，被激活的那个就是当前文档，tab 也跟着选它。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* first  = openDocument(documents, kShownType);
+    vn::appfw::Document* second = openDocument(documents, kShownType);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    ASSERT_TRUE(documents.setCurrent(first));
+    auto* first_view = shownView(host);
+    ASSERT_NE(first_view, nullptr);
+
+    host.setFloating(*first, true);
+    ASSERT_TRUE(host.isFloating(*first));
+
+    // 当前换成另一份（标签条选第二个格子）。
+    ASSERT_TRUE(documents.setCurrent(second));
+    auto* strip = tabStrip(host);
+    ASSERT_NE(strip, nullptr);
+    EXPECT_EQ(strip->currentIndex(), 1);
+
+    // 用户去点第一个文档的窗口：激活即“我在做这一份”。
+    QWidget* const page = first_view->content()->impl<QWidget>();
+    ASSERT_NE(page, nullptr);
+    ASSERT_NE(page->window(), nullptr);
+    page->window()->activateWindow();
+    QCoreApplication::processEvents();
+
+    if (!page->window()->isActiveWindow()) {
+        GTEST_SKIP() << "this platform does not activate widget windows (offscreen)";
+    }
+
+    EXPECT_EQ(documents.current(), first) << "哪个文档窗口被激活，哪个就是当前文档";
+    EXPECT_EQ(strip->currentIndex(), 0) << "tab 自动跟到当前文档";
 }
 
 TEST(DocumentViewTest, ClosingAFloatedDocumentsWindowGoesThroughTheManagerSoAVetoKeepsIt)
@@ -663,4 +846,59 @@ TEST(DocumentViewTest, ClosingAFloatedDocumentsWindowGoesThroughTheManagerSoAVet
     EXPECT_FALSE(host.isFloating(*normal)) << "关掉的文档不该还有浮动窗口";
     EXPECT_EQ(host.documentCount(), 1);
     EXPECT_EQ(book.destroyed, 1);
+}
+
+TEST(DocumentViewTest, ClosingADocumentThroughTheApiAlsoClosesItsTabAndFloatingWindow)
+{
+    // 关闭不只发生在“点 tab / 点窗口的 X”上：DocumentManager::close() 是 API，界面必须同样收干净 —— tab、页控件、
+    // 浮动窗口都不留。否则 API 关闭之后，屏幕上还挂着一份已经不存在的文档。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* first  = openDocument(documents, kShownType);
+    vn::appfw::Document* second = openDocument(documents, kShownType);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    ASSERT_TRUE(documents.setCurrent(first));
+    host.setFloating(*first, true);
+    ASSERT_TRUE(host.isFloating(*first));
+
+    auto* first_page = shownView(host)->content()->impl<QWidget>();
+    ASSERT_NE(first_page, nullptr);
+    QPointer<QWidget> floating_window = first_page->window();
+    ASSERT_FALSE(floating_window.isNull());
+
+    // API 关闭当前（浮动）文档：窗口销毁、tab 消失、邻格接替。
+    ASSERT_TRUE(documents.close(first));
+    EXPECT_TRUE(floating_window.isNull()) << "API 关闭后浮动窗口必须被销毁";
+    EXPECT_EQ(host.documentCount(), 1);
+    EXPECT_EQ(documents.current(), second) << "接替的是另一份";
+    ASSERT_NE(host.shownContent(), nullptr);
+
+    auto* strip = tabStrip(host);
+    ASSERT_NE(strip, nullptr);
+    EXPECT_EQ(strip->count(), 1);
+    EXPECT_TRUE(strip->isHidden()) << "只剩一份时条隐藏";
+
+    // 再 API 关闭最后一份：条清空、中央区是说明页（已经接管过，不再交还）。
+    ASSERT_TRUE(documents.close(second));
+    EXPECT_EQ(host.documentCount(), 0);
+    EXPECT_EQ(strip->count(), 0);
+    EXPECT_EQ(host.currentView(), nullptr);
+    ASSERT_NE(host.shownContent(), nullptr);
+    EXPECT_TRUE(messageOnPage(host.shownContent()).contains(QStringLiteral("没有当前文档")));
+    EXPECT_EQ(book.destroyed, 2) << "两份视图都随文档销毁";
 }

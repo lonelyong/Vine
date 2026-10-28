@@ -337,6 +337,23 @@ class VN_APPFW_API DocumentManager {
      */
     Document* current() const;
 
+    /**
+     * @brief Finds the open documents a user-facing name refers to: exact title first, else exact type id.
+     *
+     * @details
+     * - A surface that lets the user name a document ("switch to X") must not walk the open set itself: the set belongs
+     *   to this manager, and a second walk is a second answer that can drift from what documents() reports.
+     * - ALL documents that answer to the name are returned, in open order. Titles win over type ids; within the winning
+     *   kind the caller gets every match and decides what to say (a switch command reports the ambiguity, a picker
+     *   lists them). Picking one here would turn "which document" into a lottery.
+     * - The comparison is exact (UTF-8, case-sensitive): this answers "the name it was given", not "a name that
+     *   resembles it".
+     *
+     * @param title_or_type_id Text to look up; an empty text matches nothing.
+     * @return The matching documents; empty when none. Borrowed - each is valid until that document closes.
+     */
+    std::vector<Document*> findByTitleOrTypeId(const String& title_or_type_id) const;
+
   public:
     /**
      * @brief Selects the current document.

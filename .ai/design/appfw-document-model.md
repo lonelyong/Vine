@@ -78,7 +78,7 @@
 ### 3.1.1 F1 文档语义
 
 - **行为**：`Document` 有 `typeId/title/isDirty/canClose` + `source()`/`save()`；`DocumentManager` 有
-  `create`/`open`/`close`/`current` 与 `opened`/`closed`/`currentChanged`。
+  `create`/`open`/`close`/`current`、`findByTitleOrTypeId()`（标题优先，返回全部匹配）与三个事件。
 - **约束**（C1）：`create` 不动 `current`；`setCurrent` 只接受本管理器拥有的文档；值没变不发事件。
 - **要求**（R1）：`close(doc)` 先问 `canClose()`；被拒返回 false，集合与 current 不动。
 - **验收**（T1）：`tests/test_appfw/DocumentTest.cpp`。
@@ -114,17 +114,23 @@
   `DocumentViewRegistry`（type_id → 工厂，一类型一个）；`gui::CentralDocumentHost`。
   宿主给每个打开的文档一格 tab（顺序 = 打开/拖动的顺序，只有一份时隐藏条）；`setFloating()` 把页控件搬进
   一个自己的顶层窗口，`setFloating(..., false)` 把它收回来。
+  **三处显示只有一个来源**：`DocumentManager::current()` ⇒ tab 选中 / 中央区内容 / `activate()` 的视图，全部在
+  `syncToCurrentDocument()` 一处派生。中央区要么是当前文档的页，要么是说明页（没有当前文档 / 当前文档在独立
+  窗口 / 类型没有视图），绝不显示非当前文档的页。tab 右键菜单提供浮动/停靠/关闭，三者都只是对管理器的请求。
+  关掉当前文档后，宿主在 `closed` 里请求选中接替的那一格（QTabBar 非空时表达不了“无选中”，只能这样保持一致）。
 - **约束**（C5、C7）：视图按文档实例；`content()` 是放进中央区的东西；2D/3D 都返回自己；文档从不进入
   DockingPanes 的停靠树。
 - **要求**（R5、R7）：宿主拥有视图对象与浮动窗口、容器拥有页控件；tab 选中与 `DocumentManager` 的 current 只由
   管理器决定（两边都是“请求”，由它反选）。
-- **验收**（T5）：`tests/test_gui/DocumentViewTest.cpp`（11 条，含 tab/浮动/关闭否决）。
-- **注意**（N5、N6、N7）：中央区单槽、`setCentralWidget()` 重父化；放容器、只装一次、内部切页。
+- **验收**（T5）：`tests/test_gui/DocumentViewTest.cpp`（14 条，含 tab/浮动/激活/不变量/关闭否决/关闭后接替）。
+- **注意**（N5、N6、N7、N8）：中央区单槽、`setCentralWidget()` 重父化；放容器、只装一次、内部切页；
+  中央区永不显示非当前文档。
 
 ### 3.1.6 F6 类型元数据/面板
 
 - **行为**：`DocumentTypeInfo`（owner/icon/can_create/payload_types/source_schemes）+
-  `gui::DocumentManagerDialog` + `app_shell` 的 `show_document_types` 命令（只读）。
+  `gui::DocumentManagerDialog` + `app_shell` 命令：`show_document_types`（只读面板）、`switch_document`
+  （按标题/类型 id 切换，歧义拒绝）、`close_document`（关闭派发目标，走 `close()`，否决报 NotApplicable）。
 - **约束**（C6）：类型没有启用/禁用开关；owner 来自 `Application::registrationOwner()`。
 - **要求**（R6）：面板如实显示“只能打开/可创建”，不假装。
 - **验收**（T6）：`DocumentManagerDialogTest`。
@@ -139,6 +145,7 @@
 | `Document` | `typeId/title/isDirty/canClose` + `source()`/`save()` | 纯数据 + 生命周期 |
 | `DocumentManager::registerType` | 一 id 一类型 | 重名/空 id/空工厂拒绝 |
 | `DocumentManager::create/open/close/current` | 集合与当前 | 事件见 §5 |
+| `DocumentManager::findByTitleOrTypeId` | 按标题（优先）或类型 id 查打开集合 | 返回全部匹配；空文本/无人匹配为空 |
 | `DocumentManager::registerOpener<Payload>` | 按载荷类型登记 | `DocumentOpenerRegistration` |
 | `opened/closed/currentChanged` | 事件 | 应用线程 |
 
@@ -148,7 +155,7 @@
 | --- | --- | --- |
 | `DocumentView` | `document()` / `content()` / `activate()` / `deactivate()` | 按文档实例 |
 | `DocumentViewRegistry` | type_id → 工厂 | 重复/空 id/空工厂拒绝 |
-| `CentralDocumentHost` | 中央区页容器 + tab 条 | 六条契约见头文件 |
+| `CentralDocumentHost` | 中央区页容器 + tab 条 | 一个 current、三处一致；契约见头文件 |
 | `documentCount()` / `documentAt(i)` | 打开集合的文法投影（一格 tab 一份） | 顺序 = 打开/拖动后的顺序 |
 | `isFloating(doc)` / `setFloating(doc, bool)` | 浮动到自己的顶层窗口 / 停回中央区 | 不是停靠：窗口没有 dock 目标 |
 
@@ -189,6 +196,7 @@
 | N5 | 中央区单槽、重父化；容器只装一次。 |
 | N6 | 浮动窗口不是停靠窗格：它没有 dock 目标，也不能被拖到边缘/自动隐藏条；回来的路只有“停靠”按钮/API/关文档。 |
 | N7 | 页面在 tab（`QStackedWidget`）与浮动窗口之间搬一次家：建两个父窗口而不同时挂，靠 `takePage()` 先脱离。 |
+| N8 | 中央区显示的永远是当前文档的页或说明页；tab 选中、`current()`、中央内容三者不得分歧。浮动窗口激活只是 `setCurrent()` 请求。关掉当前文档后由宿主请求接替的 tab 成为当前（非当前文档被关掉时不动 current）。 |
 
 ## 6. 注意事项与陷阱
 
@@ -202,7 +210,8 @@
 
 - 会怎么错：`closed` 里挑下一个当前文档，被随后的 `currentChanged` 覆盖。
 - 怎么判：`currentChanged(null)` 必须早于 `closed`。
-- 怎么防：按 §3.1.1 的次序实现；`close()` 返回时才销毁。
+- 怎么防：按 §3.1.1 的次序实现；`close()` 返回时才销毁。宿主正是靠这个次序在 `closed` 里请求“接替那一格”成为
+  当前文档，这样 tab 条与中央区不会各说各话（§3.1.5、N8）。
 
 ### 6.3 `Vfs` 寿命与线程
 
@@ -222,6 +231,13 @@
 - 怎么判：`documentAt(strip->currentIndex()) == documents.current()` 必须在任何操作后成立。
 - 怎么防：tab 选中只调 `setCurrent()`，`currentChanged` 反选 tab（`R7`）；装/删 tab 时用 `QSignalBlocker`，不让 Qt 的“自动选中第一个”变成一次选中。
 
+### 6.6 浮动的文档不是“还在中央区”
+
+- 会怎么错：以为浮动只是多开一个窗口，中央区继续显示它的页 —— 于是 tab 选中说的是 A、中央区显示的是 B、
+  命令目标又可能是第三个（`resolveCommandTarget()` 取的是当前视图）。
+- 怎么判：当前文档浮动时 `shownContent()` 是说明页，`currentView()` 仍是它；停靠回来后 `shownContent()` 又是它的页。
+- 怎么防：判断“屏幕上是什么”只走 `shownContent()` / `currentView()`，不要从 tab 索引或“上一次显示的页”反推。
+
 ## 7. 已否决选项
 
 | # | 选项 | 理由 | ADR |
@@ -232,6 +248,7 @@
 | D4 | 按插件记 owner | 等真实需求再加。 | — |
 | D5 | `dirtyChanged` 事件 | 文档类型自己发变化事件，宿主订阅即可。 | — |
 | D6 | `closeAll()` | 宿主三行循环；“部分失败”策略归宿主。 | — |
+| D7 | 浮动时中央区保留最后一块停靠页 | 出现两套“现在是什么”：tab 选中、中央区内容、命令目标各说各话；改为说明页后三处只有一个答案（N8）。 | `../decisions/ADR-2026-10-28-central-area-shows-current-document.md` |
 
 ## 8. 测试与验收
 
@@ -241,7 +258,7 @@
 | T2 | 类型注册/重复/空 | 同上 |
 | T3 | 打开器选择/不拷贝 | `AnOpenerBuildsADocumentFromAPayload…`、`TheFrameworkDoesNotCopyAPayload` |
 | T4 | 保存/来源 | `DocumentTest` |
-| T5 | 视图层/中央宿主 | `tests/test_gui/DocumentViewTest.cpp`（5 条） |
+| T5 | 视图层/中央宿主 | `tests/test_gui/DocumentViewTest.cpp`（14 条） |
 | T6 | 类型元数据面板 | `DocumentManagerDialogTest` |
 
 ## 9. 状态与演进

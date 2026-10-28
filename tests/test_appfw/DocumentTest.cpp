@@ -166,6 +166,32 @@ bool registerTestType(vn::appfw::DocumentManager& manager, bool dirty, int* dest
     return manager.registerType(testTypeRegistration(dirty, destroyed));
 }
 
+/// 一个标题可设的文档：查找用例需要“同名 / 标题恰好是另一个类型 id”这类情形。
+class NamedDocument final : public vn::appfw::Document {
+  public:
+    NamedDocument(vn::String type_id, vn::String title)
+      : type_id_(std::move(type_id))
+      , title_(std::move(title))
+    {}
+
+    vn::String typeId() const override { return type_id_; }
+    vn::String title() const override { return title_; }
+    bool       isDirty() const override { return false; }
+
+  private:
+    vn::String type_id_;
+    vn::String title_;
+};
+
+/// 登记一个工厂只建 NamedDocument（标题固定）的类型。
+bool registerNamedType(vn::appfw::DocumentManager& manager, const vn::String& type_id, const vn::String& title)
+{
+    vn::appfw::DocumentTypeRegistration registration;
+    registration.type_id = type_id;
+    registration.create  = [type_id, title] { return new NamedDocument(type_id, title); };
+    return manager.registerType(registration);
+}
+
 } // namespace
 
 TEST(DocumentTest, RegisteringATypeLetsTheManagerCreateIt)
@@ -260,6 +286,44 @@ TEST(DocumentTest, TheCurrentDocumentMustBeOneTheManagerOwns)
     EXPECT_TRUE(manager.setCurrent(second));
     EXPECT_FALSE(manager.setCurrent(&stranger));
     EXPECT_EQ(manager.current(), second);
+}
+
+TEST(DocumentTest, TheOpenSetIsLookedUpByTitleOrTypeId)
+{
+    vn::appfw::DocumentManager manager;
+    ASSERT_TRUE(registerNamedType(manager, u8"cube", u8"立方体"));
+    ASSERT_TRUE(registerNamedType(manager, u8"mesh", u8"网格"));
+    ASSERT_TRUE(registerNamedType(manager, u8"alias", u8"mesh")); // 标题恰好是另一个类型的 id
+
+    vn::appfw::Document* first  = manager.create(u8"cube");
+    vn::appfw::Document* second = manager.create(u8"cube");
+    vn::appfw::Document* grid   = manager.create(u8"mesh");
+    vn::appfw::Document* titled = manager.create(u8"alias");
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(grid, nullptr);
+    ASSERT_NE(titled, nullptr);
+
+    // 同名文档全部返回：歧义归调用者（切换命令会说清楚，选择器会列出来），这里不替它挑一份。
+    EXPECT_EQ(manager.findByTitleOrTypeId(u8"立方体"), (std::vector<vn::appfw::Document*>{ first, second }));
+
+    // 标题压过类型 id：“mesh”既是那份文档的标题，又是另一个类型的 id。
+    EXPECT_EQ(manager.findByTitleOrTypeId(u8"mesh"), (std::vector<vn::appfw::Document*>{ titled }));
+
+    // 没有同名文档时按类型 id 找，顺序 = 打开顺序。
+    EXPECT_EQ(manager.findByTitleOrTypeId(u8"cube"), (std::vector<vn::appfw::Document*>{ first, second }));
+
+    // 空文本与没人用的名字都匹配不到东西。
+    EXPECT_TRUE(manager.findByTitleOrTypeId(vn::String()).empty());
+    EXPECT_TRUE(manager.findByTitleOrTypeId(u8"不存在").empty());
+
+    // 关掉的那份不再出现。
+    ASSERT_TRUE(manager.close(second));
+    EXPECT_EQ(manager.findByTitleOrTypeId(u8"立方体"), (std::vector<vn::appfw::Document*>{ first }));
+    EXPECT_EQ(manager.findByTitleOrTypeId(u8"cube"), (std::vector<vn::appfw::Document*>{ first }));
+    EXPECT_EQ(manager.findByTitleOrTypeId(u8"mesh"), (std::vector<vn::appfw::Document*>{ titled }));
+    EXPECT_EQ(manager.documents(), (std::vector<vn::appfw::Document*>{ first, grid, titled }))
+        << "查找不改变集合本身";
 }
 
 TEST(DocumentTest, ClosingADirtyDocumentIsRefusedAndChangesNothing)

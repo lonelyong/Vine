@@ -353,6 +353,30 @@ Document* DocumentManager::current() const
     return d->current;
 }
 
+std::vector<Document*> DocumentManager::findByTitleOrTypeId(const String& title_or_type_id) const
+{
+    std::vector<Document*> matches;
+    if (title_or_type_id.empty()) {
+        return matches;
+    }
+
+    for (const auto& held : d->documents) {
+        if (held->title() == title_or_type_id) {
+            matches.push_back(held.get());
+        }
+    }
+    if (!matches.empty()) {
+        return matches;
+    }
+
+    for (const auto& held : d->documents) {
+        if (held->typeId() == title_or_type_id) {
+            matches.push_back(held.get());
+        }
+    }
+    return matches;
+}
+
 bool DocumentManager::setCurrent(Document* document)
 {
     if (document != nullptr && d->find(document) == d->documents.end()) {

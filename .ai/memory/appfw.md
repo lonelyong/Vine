@@ -47,6 +47,11 @@
   ⇒ 宿主只有“一实例一页”一条规则。
 - 中央区是单槽，`setCentralWidget()` 会重父化（Qt 重建原生窗口）⇒ 放一个容器、只装一次、内部用
   `QStackedWidget` 切页。
+- 三处显示只有一个来源（2026-10-28）：`DocumentManager::current()` ⇒ tab 选中 / 中央区内容 / `activate()` 的视图，
+  全在 `CentralDocumentHost::syncToCurrentDocument()` 一处派生。浮动窗口激活只是 `setCurrent()` 请求。
+- 当前文档浮动时中央区显示说明页（`shownContent()`），`currentView()` 仍是它；tab 右键菜单提供浮动/停靠/关闭。
+- 关掉当前文档：管理器先发 `currentChanged(nullptr)` 再发 `closed`；宿主在 `closed` 里请求“接替那一格”成为当前，
+  因为 tab 条表达不了“无选中”（Qt 6.10 实测：有 tab 时 `setCurrentIndex(-1)` 是空操作）。只剩一份/零份时条隐藏。
 - 3D 文档各自一块 `RenderControl`（自己的面/会话/设备/管线）；应用级共享的只有 DockPanel/Ribbon 外壳。
 - `VSG_MAX_DEVICES` = **4**（`gfx_backend_vsg/CMakeLists.txt` 显式设）。第 5 块由后端拒：
   `vsg::Device` 构造抛异常，`deviceFailureMessage()` 转成带“at most 4 simultaneous render devices”的理由，

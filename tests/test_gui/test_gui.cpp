@@ -4965,6 +4965,15 @@ TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
     EXPECT_TRUE(std::none_of(shell_commands.begin(), shell_commands.end(), [](const vn::appfw::CommandInfo& info) {
         return info.name.rfind(u8"test_", 0) == 0;
     })) << "app_shell 名下不得出现 test_plugin 的命令";
+
+    // 外壳自带的文档命令登记在本插件名下（VN_DECLARE_COMMAND 的模块队列在插件注册时冲刷）。
+    const auto shell_has_command = [&shell_commands](const vn::String& name) {
+        return std::any_of(shell_commands.begin(), shell_commands.end(),
+                           [&name](const vn::appfw::CommandInfo& info) { return info.name == name; });
+    };
+    EXPECT_TRUE(shell_has_command(u8"switch_document"));
+    EXPECT_TRUE(shell_has_command(u8"close_document"));
+
     EXPECT_TRUE(pm->commandInfosForPlugin(u8"test_plugin").empty()) << "未加载的插件名下不得有任何命令";
 
     // 启用后重新加载等价于 "重启后" 的状态：命令才出现在注册表里。
