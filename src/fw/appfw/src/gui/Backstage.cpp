@@ -5,14 +5,15 @@
 #include <utility>
 #include <vector>
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QEvent>
 #include <QFont>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
-#include <QPushButton>
 #include <QShortcut>
 #include <QSize>
 #include <QStackedWidget>
@@ -40,6 +41,72 @@ QString toQString(const String& text)
     return QString::fromStdU16String(text.toUtf16());
 }
 
+/// @brief Width of the navigation rail (the Office Backstage's left column).
+constexpr int kRailWidth = 240;
+
+/// @brief Row height of one navigation entry; fixed so the rail keeps its rhythm across fonts.
+constexpr int kNavRowHeight = 40;
+
+/// @brief Cap of the item column inside a page.
+///
+/// A row that is stretched across a maximized 4K window stops reading as one entry and starts reading as a
+/// gap between two labels, which is why every Backstage-like surface caps its content column.
+constexpr int kPageColumnWidth = 760;
+
+/**
+ * @brief The navigation rail's stylesheet: one flat row per page, accent-filled selection.
+ *
+ * Every colour is a palette lookup resolved while painting, so the rail follows a light/dark theme change
+ * instead of pinning one theme's colours (same rule as detail::blendIntoSurface()).
+ *
+ * @return The stylesheet to apply to the rail's QListWidget.
+ */
+QString navStyles()
+{
+    return QStringLiteral("QListWidget {"
+                          " background: transparent;"
+                          " border: none;"
+                          " outline: none;"
+                          " }"
+                          "QListWidget::item {"
+                          " padding: 8px 10px;"
+                          " border-radius: 6px;"
+                          " color: palette(window-text);"
+                          " }"
+                          "QListWidget::item:hover {"
+                          " background-color: palette(midlight);"
+                          " }"
+                          "QListWidget::item:selected {"
+                          " background-color: palette(highlight);"
+                          " color: palette(highlighted-text);"
+                          " }");
+}
+
+/**
+ * @brief The item column's stylesheet: command entries are flat rows with a hover fill.
+ *
+ * @return The stylesheet to apply to the column that holds a page's item buttons.
+ */
+QString itemStyles()
+{
+    return QStringLiteral("QToolButton {"
+                          " text-align: left;"
+                          " padding: 9px 12px;"
+                          " border: none;"
+                          " border-radius: 6px;"
+                          " color: palette(text);"
+                          " }"
+                          "QToolButton:hover {"
+                          " background-color: palette(midlight);"
+                          " }"
+                          "QToolButton:pressed {"
+                          " background-color: palette(mid);"
+                          " }"
+                          "QToolButton:disabled {"
+                          " color: palette(mid);"
+                          " }");
+}
+
 /**
  * @brief The Backstage's native window: a top-level tool window that follows the main window.
  *
@@ -54,6 +121,15 @@ class BackstageWindow final : public QWidget {
     {
         setAutoFillBackground(true);
         setFocusPolicy(Qt::StrongFocus);
+
+        // Frameless, so the window has no system edge: a hairline is what tells the user where the
+        // overlay ends and the main window behind it begins.
+        setObjectName(QStringLiteral("vnBackstageWindow"));
+        setAttribute(Qt::WA_StyledBackground, true);
+        setStyleSheet(QStringLiteral("#vnBackstageWindow {"
+                                     " border: 1px solid palette(mid);"
+                                     " background-color: palette(window);"
+                                     " }"));
 
         if (main_window_ != nullptr) {
             main_window_->installEventFilter(this);
@@ -181,6 +257,8 @@ struct BackstagePage::Impl : public ControlData {
     String                 title;
     Icon                   icon;
     std::vector<ItemEntry> items;
+    /// The capped column the item buttons are appended to; null while the page has no widget.
+    QVBoxLayout* items_layout = nullptr;
 };
 
 BackstagePage::BackstagePage()
@@ -189,9 +267,22 @@ BackstagePage::BackstagePage()
     auto* page   = impl<QWidget>();
     auto* layout = new QVBoxLayout(page);
 
-    layout->setContentsMargins(24, 24, 24, 24);
-    layout->setSpacing(8);
-    layout->addStretch(1); // item buttons are inserted before the stretch
+    layout->setContentsMargins(20, 8, 32, 32);
+    layout->setSpacing(0);
+
+    auto* column        = new QWidget(page);
+    auto* column_layout = new QVBoxLayout(column);
+
+    column->setMaximumWidth(kPageColumnWidth);
+    column->setStyleSheet(itemStyles());
+    column_layout->setContentsMargins(0, 0, 0, 0);
+    column_layout->setSpacing(2);
+    column_layout->addStretch(1); // item buttons are inserted before the stretch
+
+    layout->addWidget(column, 0, Qt::AlignTop);
+    layout->addStretch(1);
+
+    dptr()->items_layout = column_layout;
 }
 
 BackstagePage::~BackstagePage()
@@ -242,20 +333,21 @@ void BackstagePage::addItem(RibbonAction* item)
         }
     }
 
-    auto* page   = impl<QWidget>();
-    auto* layout = page != nullptr ? qobject_cast<QVBoxLayout*>(page->layout()) : nullptr;
+    auto* layout = dptr()->items_layout;
     auto* action = item->impl<QAction>();
 
     if (layout == nullptr || action == nullptr) {
         return;
     }
 
-    auto* button = new QToolButton(page);
+    auto* button = new QToolButton(layout->parentWidget());
 
     button->setDefaultAction(action);
     button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     button->setAutoRaise(true);
-    button->setIconSize(QSize(24, 24));
+    button->setIconSize(QSize(20, 20));
+    button->setMinimumHeight(36);
+    button->setCursor(Qt::PointingHandCursor);
 
     // The stretch stays last, so appended items keep their order.
     layout->insertWidget(layout->count() - 1, button);
@@ -388,51 +480,93 @@ Backstage::Backstage(MainWindow* window)
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    auto* nav = new QListWidget(native);
-    nav->setFixedWidth(220);
-    nav->setIconSize(QSize(24, 24));
+    // LEFT: the navigation rail. The back arrow sits at its top-left, like the Office Backstage's: the way out
+    // belongs next to the way in, not in the content header where it competes with the page title.
+    auto* rail = new QWidget(native);
+    rail->setObjectName(QStringLiteral("vnBackstageRail"));
+    rail->setAttribute(Qt::WA_StyledBackground, true);
+    rail->setFixedWidth(kRailWidth);
+    rail->setStyleSheet(QStringLiteral("#vnBackstageRail {"
+                                       " background-color: palette(window);"
+                                       " border-right: 1px solid palette(mid);"
+                                       " }"));
+
+    auto* rail_layout = new QVBoxLayout(rail);
+    rail_layout->setContentsMargins(8, 8, 8, 8);
+    rail_layout->setSpacing(6);
+
+    auto* back = new QToolButton(rail);
+    back->setText(QStringLiteral("\u2190"));
+    back->setAutoRaise(true);
+    back->setFixedSize(36, 36);
+    back->setCursor(Qt::PointingHandCursor);
+    back->setToolTip(QStringLiteral("返回 (Esc)"));
+
+    auto* nav = new QListWidget(rail);
+    nav->setIconSize(QSize(20, 20));
     nav->setSpacing(2);
     nav->setFrameShape(QFrame::NoFrame);
     nav->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    nav->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    nav->setStyleSheet(navStyles());
 
-    auto* right        = new QWidget(native);
-    auto* right_layout = new QVBoxLayout(right);
-    right_layout->setContentsMargins(0, 0, 0, 0);
-    right_layout->setSpacing(0);
+    // One point larger than the content text: in a Backstage the rail is a signpost, not a list of details.
+    auto nav_font = nav->font();
+    nav_font.setPointSizeF(nav_font.pointSizeF() + 1.0);
+    nav->setFont(nav_font);
 
-    auto* header        = new QWidget(right);
+    rail_layout->addWidget(back, 0, Qt::AlignLeft);
+    rail_layout->addWidget(nav, 1);
+
+    // RIGHT: the page surface. It paints the window's base colour, so the rail (window colour) reads as a
+    // separate column instead of the whole window being one flat grey.
+    auto* content = new QWidget(native);
+    content->setObjectName(QStringLiteral("vnBackstageContent"));
+    content->setAttribute(Qt::WA_StyledBackground, true);
+    content->setStyleSheet(QStringLiteral("#vnBackstageContent { background-color: palette(base); }"));
+
+    auto* content_layout = new QVBoxLayout(content);
+    content_layout->setContentsMargins(0, 0, 0, 0);
+    content_layout->setSpacing(0);
+
+    auto* header        = new QWidget(content);
     auto* header_layout = new QHBoxLayout(header);
-    header_layout->setContentsMargins(16, 12, 16, 12);
+    header_layout->setContentsMargins(32, 22, 32, 16);
     header_layout->setSpacing(8);
-
-    auto* back = new QPushButton(QStringLiteral("\u2190"), header);
-    back->setFlat(true);
-    back->setFixedWidth(32);
-    back->setToolTip(QStringLiteral("返回 (Esc)"));
 
     auto* title = new QLabel(header);
     auto  font  = title->font();
-    font.setBold(true);
-    font.setPointSize(font.pointSize() + 6);
+    font.setPointSizeF(font.pointSizeF() + 9.0);
+    font.setWeight(QFont::DemiBold);
     title->setFont(font);
 
-    header_layout->addWidget(back);
     header_layout->addWidget(title);
     header_layout->addStretch(1);
 
-    auto* stack = new QStackedWidget(right);
+    auto* rule = new QFrame(content);
+    rule->setFixedHeight(1);
+    rule->setFrameShape(QFrame::NoFrame);
+    rule->setAttribute(Qt::WA_StyledBackground, true);
+    rule->setStyleSheet(QStringLiteral("background-color: palette(mid);"));
 
-    right_layout->addWidget(header);
-    right_layout->addWidget(stack, 1);
+    auto* stack = new QStackedWidget(content);
 
-    root->addWidget(nav);
-    root->addWidget(right, 1);
+    // The stack's own margins would push every page in by a style-dependent amount, so the page's item column
+    // would no longer line up with the page title above it.
+    stack->setContentsMargins(0, 0, 0, 0);
+
+    content_layout->addWidget(header);
+    content_layout->addWidget(rule);
+    content_layout->addWidget(stack, 1);
+
+    root->addWidget(rail);
+    root->addWidget(content, 1);
 
     data->nav   = nav;
     data->stack = stack;
     data->title = title;
 
-    QObject::connect(back, &QPushButton::clicked, native, [native] { native->hide(); });
+    QObject::connect(back, &QAbstractButton::clicked, native, [native] { native->hide(); });
 
     QObject::connect(nav, &QListWidget::currentRowChanged, native, [data](int row) {
         if (row < 0 || row >= (int)data->pages.size()) {
@@ -506,6 +640,7 @@ bool Backstage::addPage(BackstagePage* page)
 
     auto* item = new QListWidgetItem(data->nav);
     item->setText(toQString(page->title()));
+    item->setSizeHint(QSize(0, kNavRowHeight));
 
     if (!page->icon().isNull()) {
         item->setIcon(page->icon().value());

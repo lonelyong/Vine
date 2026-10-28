@@ -1,7 +1,7 @@
 # Backstage 与 ApplicationButton
 
 > **状态**：现行
-> **最后核对**：2026-10-28
+> **最后核对**：2026-10-29
 > **范围**：应用按钮的点击事件、菜单/Backstage 二选一、Backstage 顶层覆盖窗口与页面导航；不含最近文件、导入导出等具体页面内容。
 > **权威来源**：`src/fw/appfw/sdk/vine/appfw/gui/Backstage.hpp`、`RibbonBar.hpp`、`MainWindow.hpp`；用例 `tests/test_gui/test_gui.cpp`。
 > **待办**：`../backlog/appfw-ribbon.md`
@@ -11,8 +11,7 @@
 ### 1.1 问题与背景
 
 Ribbon 左上角的应用按钮（“File”）现在只挂一个扁平 `QMenu`：没有点击事件、没有页面模型，也没有类似 Office Backstage 的整窗入口。
-SARibbon 自带 `SARibbonApplicationButton` 和 `applicationButtonClicked` 信号，但 `SARibbonApplicationWidget` 只是一个跟随父窗口大小、
-Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子控件**会被中央 3D 的原生渲染窗口盖住（`.ai/bugs/docking-flyout-under-render.md`）。
+SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏的 `QFrame` 壳——没有页面/导航/内容，且作为**子控件**会被中央 3D 原生窗口盖住（`.ai/bugs/docking-flyout-under-render.md`）。
 
 ### 1.2 目标
 
@@ -69,6 +68,11 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 - 是什么：`RibbonBar::setBackstage(bs)` 时把应用按钮的 `QMenu` 摘掉；`setBackstage(nullptr)` 恢复菜单。
 - 为什么：按钮同时弹菜单和打开页面是两种相互矛盾的行为；模式必须显式。
 - 边界：`clearApplicationMenu()` 只清空菜单项，不删除 `RibbonAction`。
+
+### 2.7 外观：导航轨 + 内容面（G4、G12、G6）
+
+- 是什么：240 px 导航轨（顶部返回箭头 + 页面行）与 `palette(base)` 内容面（大号标题、1 px 分隔线、封顶 760 px 的条目列）；颜色一律用 `palette(...)` 角色，跟随明/暗主题（同 `detail::blendIntoSurface()`）。
+- 为什么：默认控件平铺读起来像一个空的安全对话框，而 Office Backstage / VS Code 设置页都靠“一列导航 + 一块内容面”和两级字号建立层次；返回箭头属于“退出这一层”而非“这一页”，所以放导航轨顶部；条目列封顶是因为一行拉满 4K 后不再是一条条目。
 
 ## 3. 功能点
 
@@ -132,15 +136,13 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 
 - **行为**：`setPageVisible(page,bool)` 隐藏/恢复导航行；隐藏当前页时选下一个可见页（循环）；全部隐藏时没有当前页、
   `open()` 拒绝打开。
-- **约束**（C7）：隐藏不删除页面、不改变 `pages` 顺序；隐藏页不可被 `setCurrentPage()` 选中。
-- **要求**（R7）：`findPage/pageAt/numPages` 仍包含隐藏页；恢复后无当前页时该页成为当前页。
+- **约束**（C7）：隐藏不删除页面、不改 `pages` 顺序，隐藏页不可被 `setCurrentPage()` 选中；`findPage/pageAt/numPages` 仍包含它，恢复后无当前页时它成为当前页。
 - **验收**（T6）：`Backstage_PagesCanBeHidden`。
 
 ### 3.1.8 F10 条目显隐
 
 - **行为**：`setItemVisible(action,bool)` 隐藏/恢复条目的按钮；条目、动作与命令都还在，序号不变。
-- **约束**（C9）：动作是条目身份；页面没持有的动作忽略；隐藏不等于禁用命令（后者灰显，见
-  `appfw-command-binding.md`）。
+- **约束**（C9）：动作是条目身份；页面没持有的动作忽略；隐藏不等于禁用命令（后者灰显，见 `appfw-command-binding.md`）。
 - **要求**（R7）：`numItems/itemAt` 继续报告隐藏条目，可用同一动作恢复。
 - **验收**（T7）：`BackstagePage_ItemsCanBeHidden`。
 
@@ -171,8 +173,7 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 | 接口 | 契约 | 备注 |
 |---|---|---|
 | `setId/id` | 页面身份 | add 前设置 |
-| `setTitle/title` | 导航标题 | add 前设置 |
-| `setIcon/icon` | 导航图标 | add 前设置 |
+| `setTitle/title`、`setIcon/icon` | 导航标题与图标 | add 前设置 |
 | `addItem(RibbonAction*)` | 命令条目；一个动作一个条目 | 调用方持有动作 |
 | `numItems/itemAt` | 条目查询 | 逻辑顺序；含隐藏条目 |
 | `setItemVisible/isItemVisible` | 条目显隐 | 动作作身份，序号不变 |
@@ -189,6 +190,7 @@ Esc 隐藏的 `QFrame` 壳——没有页面、导航、内容，且作为**子�
 - C6：一个 MainWindow 只有一个 Backstage。
 - C7：隐藏页面/条目不删除、不改序号；隐藏当前页时必须有可见页接替，一个都没有则没有当前页并拒绝 open。
 - C9：条目的隐藏以动作为键（一个动作一个条目）；隐藏不是禁用命令。
+- C10：页面里只有 `addItem()` 建的条目按钮，不添加装饰性按钮（用例按 `findChildren<QToolButton*>()` 断言条目，多一个即失败）。
 
 ### 5.2 要求（R#）
 
@@ -283,10 +285,8 @@ F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell �
 
 ### 10.1 代码
 
-- `src/fw/appfw/sdk/vine/appfw/gui/Backstage.hpp`
-- `src/fw/appfw/src/gui/Backstage.cpp`
-- `src/fw/appfw/src/gui/RibbonBar.cpp`（事件与模式切换）
-- `src/fw/appfw/src/gui/MainWindow.cpp`（所有权）
+- `src/fw/appfw/sdk/vine/appfw/gui/Backstage.hpp`、`src/fw/appfw/src/gui/Backstage.cpp`（组件本体）
+- `src/fw/appfw/src/gui/RibbonBar.cpp`（事件与模式切换）、`src/fw/appfw/src/gui/MainWindow.cpp`（所有权）
 - `src/plugins/app_shell/src/AppShellUi.cpp`（页面装配）
 
 ### 10.2 文档与 ADR
