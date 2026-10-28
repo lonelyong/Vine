@@ -12,7 +12,7 @@ set_target_properties(${MODEL_VIEWER_TARGET} PROPERTIES
 # vn::Appfw: the plugin base, the document surface (Document / DocumentManager) and the dock panel API (Control).
 # vn::Geometry: the mesh a model document holds. IndexedTriangleMesh is where the two numbers the info panel shows
 #               come from (vertexCount / triangleCount) - not a re-count of something we built ourselves.
-# vn::Graphics: the view IS the renderer (ModelRenderView): its own SceneView on the shell's shared render control,
+# vn::Graphics: the view IS the renderer (ModelRenderView): its own render control and its own SceneView on it,
 #               and the Geometry/Scene/Material a mesh becomes. Not a second render session - see the class note.
 # vn::MeshIO: MeshLoader, for the opener that reads a mesh file (the "parsed from disk" half of the payload story).
 # vn::Logging: VN_LOGW for the "opener refused" paths.

@@ -122,7 +122,7 @@
   DockingPanes 的停靠树。
 - **要求**（R5、R7）：宿主拥有视图对象与浮动窗口、容器拥有页控件；tab 选中与 `DocumentManager` 的 current 只由
   管理器决定（两边都是“请求”，由它反选）。
-- **验收**（T5）：`tests/test_gui/DocumentViewTest.cpp`（14 条，含 tab/浮动/激活/不变量/关闭否决/关闭后接替）。
+- **验收**（T5）：`tests/test_gui/DocumentViewTest.cpp`（16 条，含 tab/浮动/激活/不变量/关闭否决/关闭后接替/主题跟随）。
 - **注意**（N5、N6、N7、N8）：中央区单槽、`setCentralWidget()` 重父化；放容器、只装一次、内部切页；
   中央区永不显示非当前文档。
 
@@ -258,7 +258,7 @@
 | T2 | 类型注册/重复/空 | 同上 |
 | T3 | 打开器选择/不拷贝 | `AnOpenerBuildsADocumentFromAPayload…`、`TheFrameworkDoesNotCopyAPayload` |
 | T4 | 保存/来源 | `DocumentTest` |
-| T5 | 视图层/中央宿主 | `tests/test_gui/DocumentViewTest.cpp`（14 条） |
+| T5 | 视图层/中央宿主 | `tests/test_gui/DocumentViewTest.cpp`（16 条） |
 | T6 | 类型元数据面板 | `DocumentManagerDialogTest` |
 
 ## 9. 状态与演进

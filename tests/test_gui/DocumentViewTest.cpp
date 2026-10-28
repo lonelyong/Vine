@@ -10,8 +10,12 @@
 
 #include <gtest/gtest.h>
 
+#include <QApplication>
 #include <QCoreApplication>
+#include <QEvent>
+#include <QImage>
 #include <QLabel>
+#include <QPalette>
 #include <QPointer>
 #include <QTabBar>
 #include <QVBoxLayout>
@@ -170,6 +174,17 @@ QString messageOnPage(vn::appfw::gui::UIElement* page)
     return text;
 }
 
+/// 恢复进程共享的应用 palette：主题用例改了它，就算断言中途退出也不能留给后面的用例。
+struct PaletteRestorer
+{
+    QPalette original = qApp->palette();
+    ~PaletteRestorer()
+    {
+        qApp->setPalette(original);
+        QCoreApplication::processEvents();
+    }
+};
+
 /// 两窗格的用例视图：一块区里两块 3D 区，**哪一块算数由视图自己回答**（用户最后在那块里干活）。
 ///
 /// 框架不建窗格注册表、不做焦点路由（appfw-render-view.md §6.4）：视图想切哪块就改自己这个指针，命令每次派发
@@ -274,9 +289,13 @@ TEST(DocumentViewTest, TheHostLeavesTheCentralContentAloneUntilADocumentIsShown)
     EXPECT_EQ(docks->centralWidget(), &shell_content) << "外壳的内容还在";
     EXPECT_EQ(host.shownContent(), nullptr);
 
-    // 没有当前文档：同样不动外壳的东西。
-    host.syncToCurrentDocument();
-    EXPECT_FALSE(host.ownsCentralArea());
+    // 有文档但没有当前文档：`opened` 只加了一格 tab（一份时条还隐藏），中央区依旧归外壳。
+    // （同步本身不是公开动词：它由 manager 事件、构造和 setFloating 触发。）
+    ASSERT_TRUE(registerType(documents, kShownType));
+    vn::appfw::Document* opened = openDocument(documents, kShownType);
+    ASSERT_NE(opened, nullptr);
+    EXPECT_EQ(host.documentCount(), 1);
+    EXPECT_FALSE(host.ownsCentralArea()) << "打开但不选中：中央区不动";
     EXPECT_EQ(docks->centralWidget(), &shell_content);
     EXPECT_EQ(host.shownContent(), nullptr);
 }
@@ -579,6 +598,60 @@ TEST(DocumentViewTest, ClosingTheCurrentDocumentSelectsTheTabThatTakesItsPlaceAn
     EXPECT_EQ(host.documentAt(strip->currentIndex()), first);
 }
 
+TEST(DocumentViewTest, TheStripReResolvesItsPaletteWhenTheThemeChanges)
+{
+    // QSS 里的 palette(role) 在 polish 时解析一次；主题切换只换 QApplication 的 palette。宿主必须让 strip 重新解析，
+    // 否则切到深色后 tab 条还停在浅色，直到下次启动（实测：不重设样式表时 grab 出来的像素不变）。
+    vn::appfw::DocumentManager          documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow          window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+
+    ViewBook book;
+    ASSERT_TRUE(registerType(documents, kShownType));
+    ASSERT_TRUE(views.registerView(kShownType, [&book](vn::appfw::Document& document) {
+        return new TestView(document, book);
+    }));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    vn::appfw::Document* first  = openDocument(documents, kShownType);
+    vn::appfw::Document* second = openDocument(documents, kShownType);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_TRUE(documents.setCurrent(first));
+
+    auto* strip = tabStrip(host);
+    ASSERT_NE(strip, nullptr);
+
+    window.show();
+    QCoreApplication::processEvents();
+
+    const PaletteRestorer restorer;
+
+    QPalette changed = qApp->palette();
+    changed.setColor(QPalette::Window, QColor(1, 2, 3));
+    changed.setColor(QPalette::Base, QColor(9, 8, 7));
+    qApp->setPalette(changed);
+
+    // 测试进程没有跑 QApplication::exec()，Qt 不会把 palette 变化分发给已有控件；这里补发运行中的应用会收到的那
+    // 一条事件（子控件是 PaletteChange），验证宿主自己的“重新解析”这一段。
+    QEvent palette_event(QEvent::PaletteChange);
+    QCoreApplication::sendEvent(strip, &palette_event);
+    QCoreApplication::processEvents();
+
+    const QRect  tab_rect = strip->tabRect(strip->currentIndex());
+    const QImage image    = strip->grab().toImage();
+    ASSERT_TRUE(tab_rect.isValid());
+
+    EXPECT_EQ(image.pixelColor(tab_rect.left() + 4, tab_rect.top() + 4), QColor(9, 8, 7))
+        << "主题变色后 strip 必须重新解析 palette 角色，而不是停在旧颜色（选中格 = palette(base)）";
+    EXPECT_EQ(image.pixelColor(image.width() - 4, image.height() - 4), QColor(1, 2, 3))
+        << "条本身的背景 = palette(window)";
+}
+
 TEST(DocumentViewTest, SwitchingTabsReusesEachViewAndNeverReinstallsTheCentralArea)
 {
     // 契约 1 与契约 3 在多文档下仍然成立：切 tab 只切页，不重建视图、不重父化宿主。
@@ -727,7 +800,7 @@ TEST(DocumentViewTest, TheCentralAreaOnlyEverShowsTheCurrentDocument)
     EXPECT_TRUE(messageOnPage(host.shownContent()).contains(QStringLiteral("独立窗口")));
 
     // 第二份停回来：中央区是它的页。
-    auto* second_view = host.viewFor(*second);
+    auto* second_view = host.findView(*second);
     ASSERT_NE(second_view, nullptr);
     host.setFloating(*second, false);
     EXPECT_EQ(host.shownContent(), second_view->content());

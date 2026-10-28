@@ -612,7 +612,7 @@ TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
     ASSERT_TRUE(documents.close(documents.current()));
     ASSERT_NE(host.currentView(), nullptr) << "另一份接替成为当前文档";
     EXPECT_EQ(host.currentView(), first);
-    EXPECT_EQ(host.viewFor(*box_document), first) << "另一份的视图还带着自己的资源在";
+    EXPECT_EQ(host.findView(*box_document), first) << "另一份的视图还带着自己的资源在";
 }
 
 TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)

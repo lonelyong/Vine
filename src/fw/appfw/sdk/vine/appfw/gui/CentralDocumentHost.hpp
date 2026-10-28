@@ -57,8 +57,8 @@ class DockPanelManager;
  *   7. a document that is in its own window is STILL a tab, and while it is current the central area says so instead
  *      of showing another document - "which document" has one answer even when there are several windows.
  *
- * A 3D view presents through the shared render control (see DocumentView), so switching between two 3D documents does
- * not reparent anything either.
+ * A 3D view brings its own render control (see DocumentView), so switching between two 3D documents moves nothing but
+ * the page: the control, its surface and its session stay where they were.
  *
  * MULTI-DOCUMENT: every open document gets one tab, in the order it was opened (moving a tab reorders the strip and
  * nothing else). The strip appears only when a second document is open, so a single-document application sees no tab
@@ -95,18 +95,6 @@ class VN_APPFW_API CentralDocumentHost : public Control {
 
   public:
     /**
-     * @brief Brings the screen in step with the manager's current document: tab selection, central page, active view.
-     *
-     * @details
-     * - The host runs this itself on `currentChanged`, after a page moves to or from a floating window, and when the
-     *   open set changes; a host calls it after changing the view registration behind the manager's back (a plugin was
-     *   loaded or unloaded, a view was replaced).
-     * - It is the ONE place that derives the display from `DocumentManager::current()`, so the three visible answers
-     *   (selected tab, central content, active view) cannot drift apart.
-     */
-    void syncToCurrentDocument();
-
-    /**
      * @brief Returns the current document's view - in the central area or in its own window.
      *
      * @return The view (borrowed; it lives as long as its document), or nullptr when there is no current document or
@@ -126,12 +114,12 @@ class VN_APPFW_API CentralDocumentHost : public Control {
     raw_ptr<UIElement> shownContent() const;
 
     /**
-     * @brief Returns the view built for a document, if it has one by now.
+     * @brief Finds the view built for a document, if it has one by now.
      *
      * @param document Document to look up.
      * @return The cached view, or nullptr when that document was never shown (views are built lazily).
      */
-    raw_ptr<DocumentView> viewFor(const vn::appfw::Document& document) const;
+    raw_ptr<DocumentView> findView(const vn::appfw::Document& document) const;
 
     /**
      * @brief Floats a document's view into its own window, or docks it back into the tab strip.
@@ -182,6 +170,19 @@ class VN_APPFW_API CentralDocumentHost : public Control {
     bool ownsCentralArea() const;
 
   private:
+    /**
+     * @brief Derives the screen from the manager's current document: tab selection, central page, active view.
+     *
+     * @details
+     * - Private on purpose: it is the ONE place the display is derived, and its triggers are events plus the host's own
+     *   actions, never a caller. It runs on `currentChanged`, once at construction (no event replays a document that is
+     *   already current), and after setFloating() moves a page - the manager's state does not change there, but what the
+     *   central area shows does.
+     * - Deriving from `DocumentManager::current()` every time is what keeps the three visible answers (selected tab,
+     *   central content, active view) from drifting apart.
+     */
+    void syncToCurrentDocument();
+
     void installIntoCentralArea();
     DocumentView* obtainView(vn::appfw::Document& document);
   private:

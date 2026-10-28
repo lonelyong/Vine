@@ -57,15 +57,15 @@ class VN_APPFW_API DocumentView : public UIElement {
     /**
      * @brief Returns what to show in the central area.
      *
-     * @return The element the host puts on screen: this view for a 2D view, the shared render control for a 3D one.
-     *         Never null.
+     * @return The view itself in both kinds - a 3D view is the widget that holds its own render control (see the class
+     *         note), so the host has one page rule and never asks who is rendering. Never null.
      */
     virtual UIElement* content() = 0;
 
     /**
      * @brief Called when this view becomes the one on screen.
      *
-     * A 3D view binds the SceneView it holds into the shared render control here; a 2D view normally does nothing.
+     * A 3D view builds the SceneView it holds on its own render control here; a 2D view normally does nothing.
      */
     virtual void activate() {}
 

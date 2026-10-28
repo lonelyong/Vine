@@ -65,6 +65,44 @@ class MessagePage final : public Control {
 };
 
 /**
+ * @brief The strip itself: a QTabBar whose sheet uses palette roles, which Qt resolves when the sheet is polished.
+ *
+ * A theme switch changes the application palette (GuiApplication::applyTheme() calls QApplication::setPalette()), and
+ * that does NOT re-resolve an already-polished sheet: a dark switch would leave the strip light until the next start.
+ * The change arrives as a PaletteChange event, so the strip re-applies its own sheet there - which also refreshes the
+ * close buttons, because QWidget::setStyleSheet repolishes the whole subtree. The re-apply emits PaletteChange itself,
+ * hence the guard; the widget's own palette is NOT used to decide (a styled widget keeps the one polish gave it - it is
+ * the application palette that moved).
+ */
+class DocumentTabBar final : public QTabBar {
+  public:
+    explicit DocumentTabBar(QWidget* parent = nullptr)
+      : QTabBar(parent)
+    {}
+
+  protected:
+    void changeEvent(QEvent* event) override
+    {
+        QTabBar::changeEvent(event);
+
+        // Both forms count: Qt sends ApplicationPaletteChange to the application/top-levels and PaletteChange to the
+        // rest, and which one a widget sees depends on where it sits.
+        const bool palette_changed =
+            event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange;
+        if (!palette_changed || repolishing_) {
+            return;
+        }
+
+        repolishing_ = true;
+        setStyleSheet(styleSheet());
+        repolishing_ = false;
+    }
+
+  private:
+    bool repolishing_ = false;
+};
+
+/**
  * @brief The close button on a tab: a flat "×" instead of the platform style's boxed indicator.
  *
  * Fusion (the style the app runs on) draws the stock close indicator as a second little widget next to the title, and
@@ -516,7 +554,7 @@ CentralDocumentHost::CentralDocumentHost(vn::appfw::DocumentManager& documents, 
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    d->tabs = new QTabBar(root);
+    d->tabs = new DocumentTabBar(root);
     d->tabs->setDocumentMode(true);
     d->tabs->setExpanding(false);
     d->tabs->setMovable(true);
@@ -806,7 +844,7 @@ raw_ptr<UIElement> CentralDocumentHost::shownContent() const
     return dptr()->central_page;
 }
 
-raw_ptr<DocumentView> CentralDocumentHost::viewFor(const vn::appfw::Document& document) const
+raw_ptr<DocumentView> CentralDocumentHost::findView(const vn::appfw::Document& document) const
 {
     for (const auto& entry : dptr()->entries) {
         if (entry.document == &document) {
@@ -923,7 +961,7 @@ void CentralDocumentHost::setFloating(vn::appfw::Document& document, bool floati
 
 DocumentView* CentralDocumentHost::obtainView(vn::appfw::Document& document)
 {
-    if (DocumentView* existing = viewFor(document); existing != nullptr) {
+    if (DocumentView* existing = findView(document); existing != nullptr) {
         return existing;
     }
 
