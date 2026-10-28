@@ -11,7 +11,7 @@
 （ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
 一 bug 一文件。历史归 git，不放进 `design/`。
 
-## design/ —— 现行设计文档（28）
+## design/ —— 现行设计文档（30）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -27,7 +27,7 @@
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 - `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
 
-**appfw（11）**
+**appfw（13）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
 - `appfw-startup-splash.md` —— 启动框与启动进度。
 - `appfw-render-surface.md` —— 渲染表面生命周期与平台回退。
@@ -39,6 +39,8 @@
 - `appfw-progress.md` —— 环境进度（`ProgressHost`）。
 - `appfw-userio.md` —— UserIO。
 - `appfw-document-model.md` —— 文档模型（身份 + 生命周期 + 类型注册）。
+- `appfw-ribbon.md` —— Ribbon 身份/角色/放置：id、role、placement、终止区与顺序解析。
+- `appfw-backstage.md` —— 应用按钮事件、菜单/Backstage 二选一、顶层覆盖窗口与页面导航。
 
 **base 与其他（8）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
@@ -50,12 +52,14 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（15）
+## decisions/ —— 决策记录（ADR）（17）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
 - `ADR-2026-10-24-command-target.md` —— 命令的目标是视图（`DocumentView`），层可空、需求按命令声明；`RenderControl` 不做目标。
+- `ADR-2026-10-28-ribbon-roles-and-placement.md` —— Ribbon 用 role + id + 锚点放置，终止区是解析器不变量；不做全局序号与 item id。
+- `ADR-2026-10-28-backstage-overlay-window.md` —— Backstage 用顶层 Tool 窗口，不用 SARibbon 的子控件覆盖层（原生表面遮挡）。
 - `ADR-2026-10-28-document-tabs-and-floating.md` —— 文档的 tab 在中央区，浮动是自已的顶层窗口（不进停靠树）。
 - `ADR-2026-10-28-central-area-shows-current-document.md` —— 中央区只显示当前文档，浮动的当前文档用说明页占位（一个 current、三处一致）。
 - `ADR-2026-10-24-command-target-no-window-query.md` —— 目标只走一条路：不留窗口级的"当前 3D 区"查询，视图的访问器叫 `renderControl()`（部分取代上一条的决定 4）。
@@ -72,12 +76,13 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## backlog/ —— 开放待办（3）
+## backlog/ —— 开放待办（4）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
 
 - `graphics.md` —— graphics / vsg 的开放待办（内容、后端资源、平台、对象模型）。
 - `appfw-startup.md` —— 启动流程剩余项（Windows 半边）。
+- `appfw-ribbon.md` —— Ribbon 的开放项（order、item id、自定义布局、上下文 tab、manifest）。
 - `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
 
 ## memory/ —— 模块要点（8）
@@ -91,7 +96,7 @@
 - `robotics-kinematics.md` —— Robotics kinematics 要点。
 - `robotics-proximity.md` —— Robotics proximity 要点。
 
-## bugs/ —— 已修复 Bug 记录（9）
+## bugs/ —— 已修复 Bug 记录（10）
 
 现象 / 根因 / 修复 / 涉及文件 / 验证，一 bug 一文件；标题带历史标记，内容按当时名字保留。
 
@@ -103,6 +108,7 @@
 - `docking-flyout-under-render.md`
 - `docking-layout-transitions.md`
 - `docking-tab-dangling-client.md`
+- `docking-title-click-hides-pane.md`
 - `model-viewer-fit-not-framing.md`
 
 约定：`memory/` 保持简短要点式；详细设计放 `design/`；bug 一条一文件。

@@ -14,6 +14,7 @@
 #include <SARibbon.h>
 
 #include <vine/appfw/Application.hpp>
+#include <vine/appfw/gui/Backstage.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/Gui.hpp>
@@ -32,11 +33,18 @@ struct MainWindow::Impl : public WindowData {
     std::unique_ptr<RibbonBar>        ribbon_bar;
     std::unique_ptr<StatusBar>        status_bar;
     std::unique_ptr<DockPanelManager> dock_panel_mgr;
+    std::unique_ptr<Backstage>        backstage;
 
     ~Impl();
 };
 
-MainWindow::Impl::~Impl() = default;
+MainWindow::Impl::~Impl()
+{
+    // The ribbon borrows the Backstage; clear the subscription before the owned object dies.
+    if (ribbon_bar) {
+        ribbon_bar->setBackstage(nullptr);
+    }
+}
 
 namespace
 {
@@ -134,6 +142,28 @@ raw_ptr<StatusBar> MainWindow::statusBar() const
 raw_ptr<DockPanelManager> MainWindow::dockPanelManager() const
 {
     return dptr()->dock_panel_mgr.get();
+}
+
+void MainWindow::setBackstage(Backstage* backstage)
+{
+    if (dptr()->backstage.get() == backstage) {
+        return;
+    }
+
+    if (dptr()->ribbon_bar) {
+        dptr()->ribbon_bar->setBackstage(nullptr);
+    }
+
+    dptr()->backstage.reset(backstage);
+
+    if (dptr()->ribbon_bar && backstage != nullptr) {
+        dptr()->ribbon_bar->setBackstage(backstage);
+    }
+}
+
+Backstage* MainWindow::backstage() const
+{
+    return dptr()->backstage.get();
 }
 
 inline auto MainWindow::dptr() -> Impl*

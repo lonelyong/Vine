@@ -36,6 +36,8 @@ class QPoint;
  *    grab is lost; call reacquireGrab() after the rebuild to re-grab.
  *  - When a flyout drag turns floating, hiding the flyout releases the grab; use takeGrab() to take it over.
  *  - Mouse release is only handled for the left button, and m_grabbing records the grab state to avoid a duplicate releaseMouse().
+ *  - A click (press + release without a single move) is not a drag: it reports the start but not the
+ *    end, so the container's docking-target scan does not run for it.
  */
 class DockingPaneTitleWidget : public QWidget {
     Q_OBJECT
@@ -93,6 +95,7 @@ class DockingPaneTitleWidget : public QWidget {
     QString m_text;
     bool    m_active;
     bool    m_grabbing = false; // Whether the mouse grab is currently held.
+    bool    m_moved    = false; // Whether the pointer moved since the press (a click is not a drag).
 };
 
 #endif // DOCKINGPANETITLEWIDGET_H

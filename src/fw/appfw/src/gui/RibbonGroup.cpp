@@ -51,6 +51,7 @@ RibbonPanelLayoutMode fromSarPanelLayoutMode(SARibbonPanel::PanelLayoutMode m)
 
 struct RibbonGroup::Impl : public ControlData {
     String                  title;
+    String                  id;
     bool                    word_wrap   = false;
     RibbonAction*           option_item = nullptr;
     QMetaObject::Connection option_conn; // option-button QAction destruction callback
@@ -81,6 +82,16 @@ void RibbonGroup::setTitle(const String& t)
 String RibbonGroup::title() const
 {
     return dptr()->title;
+}
+
+void RibbonGroup::setId(const String& id)
+{
+    dptr()->id = id;
+}
+
+String RibbonGroup::id() const
+{
+    return dptr()->id;
 }
 
 void RibbonGroup::addButton(RibbonButton* b)

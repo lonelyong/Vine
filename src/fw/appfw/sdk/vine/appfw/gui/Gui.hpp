@@ -2,6 +2,8 @@
 
 #include <vine/appfw/appfw_global.hpp>
 
+#include <cstdint>
+
 #include <vine/math/Point2.hpp>
 #include <vine/math/Rect2.hpp>
 #include <vine/math/Vector2.hpp>
@@ -42,6 +44,43 @@ enum class WindowState
     Minimized,
     Maximized,
 };
+
+/**
+ * @brief Well-known ribbon tab roles: what a tab is for, not which tab it is.
+ *
+ * @details
+ * - A role is a host-independent anchor for plugins; the tab id stays the identity.
+ * - Values are part of the plugin ABI: they are never renumbered; new roles take a new value
+ *   between the existing ones or above UserRole.
+ * - Custom host roles start at UserRole + n and are placed in the custom zone (before the
+ *   terminal block), unless a placement says otherwise.
+ * - None means "no semantic role": such a tab is only reachable by id.
+ */
+enum class RibbonTabRole : std::uint16_t
+{
+    None     = 0,
+    Home     = 100,
+    View     = 110,
+    Tools    = 120,
+    Plugins  = 200,
+    Help     = 1000,
+    UserRole = 0x8000,
+};
+
+/**
+ * @brief Placement policy flags of a ribbon tab.
+ *
+ * @details
+ * - Terminal keeps the tab at the end of the bar: no other tab may be placed after it.
+ *   The standard catalog marks the Help tab this way.
+ * - The flag is explicit on purpose: a role does not imply a policy.
+ */
+enum class RibbonTabPolicy
+{
+    None     = 0,
+    Terminal = 1,
+};
+VN_ENABLE_ENUM_FLAGS(RibbonTabPolicy);
 
 /**
  * @brief Ribbon button display style (arrangement of icon and text).

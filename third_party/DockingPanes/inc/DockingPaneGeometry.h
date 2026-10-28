@@ -49,12 +49,21 @@ inline void clearFloatingMinimum(QWidget* pane)
  * grabbed any more (and the pane is then unrecoverable). This pulls it back so at
  * least titleBarMargin pixels of the title bar remain inside the available area.
  *
- * @param pane        Pane to constrain.
+ * @param pane        Floating pane to constrain.
+ *                    A docked pane is a child widget, not a window: its frameGeometry() is
+ *                    parent-relative while the screen rect is global, so moving it here would
+ *                    push it out of its splitter cell (the pane disappears while its cell keeps
+ *                    its space, until the next layout pass puts it back). Such a pane is left
+ *                    untouched and false is returned.
  * @param titleHeight Height of the pane's title bar.
  * @return true when the pane had to be moved.
  */
 inline bool keepTitleBarReachable(QWidget* pane, int titleHeight)
 {
+    if (pane == nullptr || !pane->isWindow()) {
+        return false;
+    }
+
     QScreen* screen = pane->screen();
     if (screen == nullptr) {
         return false;

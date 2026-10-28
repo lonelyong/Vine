@@ -67,11 +67,14 @@ void DockingPaneTitleWidget::reacquireGrab()
 void DockingPaneTitleWidget::takeGrab()
 {
     // When a flyout drag turns floating the flyout is hidden and the grab is released;
-    // this title takes over the mouse to continue the drag.
+    // this title takes over the mouse to continue the drag. The drag is already under
+    // way, so the release has to report the end of a move, not of a click.
     if (!m_grabbing) {
         grabMouse();
         m_grabbing = true;
     }
+
+    m_moved = true;
 }
 
 void DockingPaneTitleWidget::paintEvent(QPaintEvent*)
@@ -122,6 +125,7 @@ void DockingPaneTitleWidget::mousePressEvent(QMouseEvent* event)
         // cursor moves over the top-level docking indicator overlays.
         grabMouse();
         m_grabbing = true;
+        m_moved    = false;
 
         event->accept();
         Q_EMIT titleBarStartMove(this->mapToGlobal(event->pos()));
@@ -130,6 +134,8 @@ void DockingPaneTitleWidget::mousePressEvent(QMouseEvent* event)
 
 void DockingPaneTitleWidget::mouseMoveEvent(QMouseEvent* event)
 {
+    m_moved = true;
+
     Q_EMIT titleBarMoved(this->mapToGlobal(event->pos()));
 }
 
@@ -141,7 +147,14 @@ void DockingPaneTitleWidget::mouseReleaseEvent(QMouseEvent* event)
             m_grabbing = false;
         }
 
-        Q_EMIT titleBarEndMove(this->mapToGlobal(event->pos()));
+        // A plain click is not a drag. Reporting an end anyway made the container scan every
+        // docking target at the click position: the indicators flashed, and a click that landed
+        // on a sticker could re-dock the pane. Only a real drag reports its drop.
+        if (m_moved) {
+            Q_EMIT titleBarEndMove(this->mapToGlobal(event->pos()));
+        }
+
+        m_moved = false;
         event->accept();
     }
 }

@@ -151,20 +151,25 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
         return;
     }
 
-    // 幂等：插件重载会再走一遍 postLoad()，那时候不该多出一个同名 tab（标题就是它的身份）。
-    const vn::String tab_title(u8"模型");
-    for (int i = 0; i < bar->numTabs(); ++i) {
-        if (auto* existing = bar->tabAt(i); existing != nullptr && existing->title() == tab_title) {
-            return;
-        }
+    // 幂等：插件重载会再走一遍 postLoad()；tab 的 id 是它的身份（标题只用于显示）。
+    const vn::String tab_id(u8"model_viewer.tab.model");
+    if (bar->findTab(tab_id) != nullptr) {
+        return;
     }
 
     // 自己的 tab（外壳那几个 tab 是它自己的事）：插件给自家功能挂 UI，与"面板自己建自己挂"同一条规矩。
     auto* tab = new vn::appfw::gui::RibbonTab();
-    tab->setTitle(tab_title);
-    bar->addTab(tab);
+    tab->setId(tab_id);
+    tab->setTitle(u8"模型");
+
+    // 帮助是终止 tab：本 tab 放到它前面，而不是追加到它后面。
+    const auto placed = bar->addTab(tab, vn::appfw::gui::RibbonPlacement::before(vn::appfw::gui::RibbonTabRole::Help));
+    if (placed.status != vn::appfw::gui::RibbonPlaceStatus::Placed) {
+        VN_LOGW("model_viewer: the '模型' tab was placed at a fallback position");
+    }
 
     auto* group = new vn::appfw::gui::RibbonGroup();
+    group->setId(u8"model_viewer.group.shading");
     group->setTitle(u8"显示");
     tab->addGroup(group);
 

@@ -1361,9 +1361,13 @@ void DockingPaneManager::floatingPaneEndMove(DockingPaneBase* pane, QPoint curso
         }
     }
     else if (auto* floatingContainer = qobject_cast<DockingPaneContainer*>(pane)) {
-        // Released over free desktop: keep the title bar reachable, otherwise a fast
-        // drag can park the pane outside the screen where it cannot be grabbed again.
-        DockingPaneGeometry::keepTitleBarReachable(floatingContainer, floatingContainer->titleHeight());
+        // Released over free desktop while floating: keep the title bar reachable, otherwise a
+        // fast drag can park the pane outside the screen where it cannot be grabbed again. A
+        // docked pane is not floating (the release was a click or a below-threshold drag) and
+        // must not be moved at all: it is a child widget in a splitter cell.
+        if (floatingContainer->state() == DockingPaneBase::Floating) {
+            DockingPaneGeometry::keepTitleBarReachable(floatingContainer, floatingContainer->titleHeight());
+        }
     }
 
     d->m_targetPosition = -1;

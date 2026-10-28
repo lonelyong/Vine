@@ -26,8 +26,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QScreen>
 #include <QSpinBox>
@@ -55,6 +57,7 @@
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/UserIO.hpp>
+#include <vine/appfw/gui/Backstage.hpp>
 #include <vine/appfw/gui/ConfigWindow.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/Control.hpp>
@@ -72,6 +75,7 @@
 #include <vine/appfw/gui/RibbonBar.hpp>
 #include <vine/appfw/gui/RibbonButton.hpp>
 #include <vine/appfw/gui/RibbonGroup.hpp>
+#include <vine/appfw/gui/RibbonPlacement.hpp>
 #include <vine/appfw/gui/RibbonTab.hpp>
 #include <vine/appfw/gui/VisualUserIO.hpp>
 
@@ -770,6 +774,388 @@ TEST_F(GuiTest, RibbonBar_QuickAccess)
     EXPECT_TRUE(bar->quickAccessVisible());
 }
 
+namespace
+{
+
+/// 逻辑顺序里的下标（找不到 = -1），用于断言放置结果。
+int ribbonTabIndex(guifw::RibbonBar* bar, guifw::RibbonTab* tab)
+{
+    for (int i = 0; i < bar->numTabs(); ++i) {
+        if (bar->tabAt(i) == tab) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+} // namespace
+
+TEST_F(GuiTest, RibbonBar_RolesAndPlacement)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* plugins = new guifw::RibbonTab();
+    plugins->setId(u8"test.tab.plugins");
+    plugins->setRole(guifw::RibbonTabRole::Plugins);
+    plugins->setTitle(u8"Plugins2");
+    EXPECT_EQ(bar->addTab(plugins, guifw::RibbonPlacement::append()).status, guifw::RibbonPlaceStatus::Placed);
+
+    auto* help = new guifw::RibbonTab();
+    help->setId(u8"test.tab.help");
+    help->setRole(guifw::RibbonTabRole::Help);
+    help->setPolicy(guifw::RibbonTabPolicy::Terminal);
+    help->setTitle(u8"Help2");
+    EXPECT_EQ(bar->addTab(help, guifw::RibbonPlacement::append()).status, guifw::RibbonPlaceStatus::Placed);
+    ASSERT_EQ(ribbonTabIndex(bar, help), bar->numTabs() - 1);
+
+    // 选一个“当前 tab”，插入别的 tab 后选择必须还在它身上。
+    ASSERT_GE(ribbonTabIndex(bar, plugins), 0);
+    bar->setCurrentIndex(ribbonTabIndex(bar, plugins));
+
+    auto* model = new guifw::RibbonTab();
+    model->setId(u8"test.tab.model");
+    model->setTitle(u8"Model2");
+    EXPECT_EQ(bar->addTab(model, guifw::RibbonPlacement::before(u8"test.tab.help")).status, guifw::RibbonPlaceStatus::Placed);
+
+    EXPECT_LT(ribbonTabIndex(bar, model), ribbonTabIndex(bar, help));
+    EXPECT_EQ(ribbonTabIndex(bar, model) + 1, ribbonTabIndex(bar, help));
+    EXPECT_EQ(bar->tabAt(bar->currentIndex()), plugins) << "重排后当前 tab 不能变";
+
+    // 角色参与默认顺序：后追加的 View 排在 Plugins 之前。
+    auto* view = new guifw::RibbonTab();
+    view->setId(u8"test.tab.view");
+    view->setRole(guifw::RibbonTabRole::View);
+    view->setTitle(u8"View2");
+    EXPECT_EQ(bar->addTab(view, guifw::RibbonPlacement::append()).status, guifw::RibbonPlaceStatus::Placed);
+    EXPECT_LT(ribbonTabIndex(bar, view), ribbonTabIndex(bar, plugins));
+    EXPECT_EQ(bar->tabAt(bar->numTabs() - 1), help);
+}
+
+TEST_F(GuiTest, RibbonBar_TerminalTabStaysLast)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* help = new guifw::RibbonTab();
+    help->setId(u8"test.tab.help");
+    help->setRole(guifw::RibbonTabRole::Help);
+    help->setPolicy(guifw::RibbonTabPolicy::Terminal);
+    help->setTitle(u8"Help2");
+    bar->addTab(help);
+
+    auto* legacy = new guifw::RibbonTab();
+    legacy->setId(u8"test.tab.legacy");
+    legacy->setTitle(u8"Legacy");
+    bar->addTab(legacy); // 旧接口：追加
+
+    EXPECT_EQ(bar->tabAt(bar->numTabs() - 1), help);
+    EXPECT_EQ(ribbonTabIndex(bar, legacy), bar->numTabs() - 2);
+}
+
+TEST_F(GuiTest, RibbonBar_UnknownAnchorFallsBack)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* help = new guifw::RibbonTab();
+    help->setId(u8"test.tab.help");
+    help->setRole(guifw::RibbonTabRole::Help);
+    help->setPolicy(guifw::RibbonTabPolicy::Terminal);
+    help->setTitle(u8"Help2");
+    bar->addTab(help);
+
+    auto* lost = new guifw::RibbonTab();
+    lost->setId(u8"test.tab.lost");
+    lost->setTitle(u8"Lost");
+    const auto result = bar->addTab(lost, guifw::RibbonPlacement::before(u8"test.tab.missing"));
+    EXPECT_EQ(result.status, guifw::RibbonPlaceStatus::PlacedByFallback);
+    EXPECT_EQ(result.index, ribbonTabIndex(bar, lost));
+    EXPECT_EQ(ribbonTabIndex(bar, lost) + 1, ribbonTabIndex(bar, help)) << "回退也不能跑到终止 tab 后面";
+
+    // 锚点既没有 id 也没有 role：请求无效，tab 不加入。
+    const int before = bar->numTabs();
+    auto*     bad    = new guifw::RibbonTab();
+    bad->setId(u8"test.tab.bad");
+    guifw::RibbonPlacement invalid;
+    invalid.where = guifw::RibbonPlacement::Where::Before;
+    EXPECT_EQ(bar->addTab(bad, invalid).status, guifw::RibbonPlaceStatus::InvalidAnchor);
+    EXPECT_EQ(bar->numTabs(), before);
+}
+
+TEST_F(GuiTest, RibbonBar_AfterHelpIsClamped)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* help = new guifw::RibbonTab();
+    help->setId(u8"test.tab.help");
+    help->setRole(guifw::RibbonTabRole::Help);
+    help->setPolicy(guifw::RibbonTabPolicy::Terminal);
+    help->setTitle(u8"Help2");
+    bar->addTab(help);
+
+    auto* late = new guifw::RibbonTab();
+    late->setId(u8"test.tab.late");
+    late->setTitle(u8"Late");
+    const auto result = bar->addTab(late, guifw::RibbonPlacement::after(guifw::RibbonTabRole::Help));
+    EXPECT_EQ(result.status, guifw::RibbonPlaceStatus::ClampedBeforeTerminal);
+    EXPECT_EQ(ribbonTabIndex(bar, late) + 1, ribbonTabIndex(bar, help));
+    EXPECT_EQ(bar->tabAt(bar->numTabs() - 1), help);
+}
+
+TEST_F(GuiTest, RibbonBar_FindByRoleAndId)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* help = new guifw::RibbonTab();
+    help->setId(u8"test.tab.help");
+    help->setRole(guifw::RibbonTabRole::Help);
+    help->setPolicy(guifw::RibbonTabPolicy::Terminal);
+    help->setTitle(u8"Help2");
+    bar->addTab(help);
+
+    EXPECT_EQ(bar->findTab(u8"test.tab.help"), help);
+    EXPECT_EQ(bar->findTab(guifw::RibbonTabRole::Help), help);
+    EXPECT_EQ(bar->findTab(u8"test.tab.missing"), nullptr);
+    EXPECT_EQ(bar->findTab(guifw::RibbonTabRole::None), nullptr);
+
+    auto* found = bar->findTab(u8"test.tab.help");
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->role(), guifw::RibbonTabRole::Help);
+}
+
+TEST_F(GuiTest, RibbonBar_DuplicateIdRejected)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* first = new guifw::RibbonTab();
+    first->setId(u8"test.tab.dup");
+    bar->addTab(first);
+
+    const int before = bar->numTabs();
+    auto*     second = new guifw::RibbonTab();
+    second->setId(u8"test.tab.dup");
+    EXPECT_EQ(bar->addTab(second, guifw::RibbonPlacement::append()).status, guifw::RibbonPlaceStatus::DuplicateId);
+    EXPECT_EQ(bar->numTabs(), before);
+    EXPECT_EQ(bar->findTab(u8"test.tab.dup"), first);
+}
+
+TEST_F(GuiTest, RibbonBar_LegacyAddStillAppends)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* legacy = new guifw::RibbonTab();
+    legacy->setTitle(u8"Legacy");
+    bar->addTab(legacy);
+    EXPECT_EQ(bar->tabAt(bar->numTabs() - 1), legacy);
+
+    // 同一个对象再 add 一次：不重复登记（旧行为）。
+    const int before = bar->numTabs();
+    bar->addTab(legacy);
+    EXPECT_EQ(bar->numTabs(), before);
+}
+
+TEST_F(GuiTest, RibbonTab_GroupPlacementAndContribution)
+{
+    auto* bar = wnd->ribbonBar();
+
+    auto* help = new guifw::RibbonTab();
+    help->setId(u8"test.tab.help");
+    help->setRole(guifw::RibbonTabRole::Help);
+    help->setPolicy(guifw::RibbonTabPolicy::Terminal);
+    help->setTitle(u8"Help2");
+    bar->addTab(help);
+
+    auto* about = new guifw::RibbonGroup();
+    about->setId(u8"help.about");
+    about->setTitle(u8"About2");
+    EXPECT_EQ(help->addGroup(about, guifw::RibbonPlacement::append()).status, guifw::RibbonPlaceStatus::Placed);
+
+    // 往标准 tab 里插一个组：放在 about 之前。
+    auto* extra = new guifw::RibbonGroup();
+    extra->setId(u8"help.extra");
+    extra->setTitle(u8"Extra2");
+    EXPECT_EQ(help->addGroup(extra, guifw::RibbonPlacement::before(u8"help.about")).status, guifw::RibbonPlaceStatus::Placed);
+
+    ASSERT_EQ(help->numGroups(), 2);
+    EXPECT_EQ(help->groupAt(0), extra);
+    EXPECT_EQ(help->groupAt(1), about);
+    EXPECT_EQ(help->findGroup(u8"help.about"), about);
+    EXPECT_EQ(help->findGroup(u8"help.missing"), nullptr);
+
+    // 组 id 在 tab 内唯一。
+    auto* dup = new guifw::RibbonGroup();
+    dup->setId(u8"help.about");
+    EXPECT_EQ(help->addGroup(dup, guifw::RibbonPlacement::append()).status, guifw::RibbonPlaceStatus::DuplicateId);
+    EXPECT_EQ(help->numGroups(), 2);
+
+    // 组级不支持 role 锚点。
+    auto* role_anchor = new guifw::RibbonGroup();
+    role_anchor->setId(u8"help.role");
+    EXPECT_EQ(help->addGroup(role_anchor, guifw::RibbonPlacement::before(guifw::RibbonTabRole::Help)).status, guifw::RibbonPlaceStatus::InvalidAnchor);
+    EXPECT_EQ(help->numGroups(), 2);
+
+    // 旧接口仍然是追加。
+    auto* tail = new guifw::RibbonGroup();
+    tail->setId(u8"help.tail");
+    help->addGroup(tail);
+    EXPECT_EQ(help->groupAt(help->numGroups() - 1), tail);
+}
+
+TEST_F(GuiTest, Backstage_PagesAndNavigation)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* first = new guifw::BackstagePage();
+    first->setId(u8"test.backstage.first");
+    first->setTitle(u8"First");
+    EXPECT_TRUE(backstage.addPage(first));
+    EXPECT_EQ(backstage.numPages(), 1);
+    EXPECT_EQ(backstage.currentPage(), first);
+    EXPECT_EQ(backstage.findPage(u8"test.backstage.first"), first);
+
+    auto* second = new guifw::BackstagePage();
+    second->setId(u8"test.backstage.second");
+    second->setTitle(u8"Second");
+    EXPECT_TRUE(backstage.addPage(second));
+    EXPECT_EQ(backstage.numPages(), 2);
+    EXPECT_EQ(backstage.currentPage(), first) << "第一页应保持当前页";
+
+    backstage.setCurrentPage(second);
+    EXPECT_EQ(backstage.currentPage(), second);
+
+    // 非空 id 唯一：重复页面被拒绝，且不进入导航。
+    auto* duplicate = new guifw::BackstagePage();
+    duplicate->setId(u8"test.backstage.first");
+    duplicate->setTitle(u8"Dup");
+    EXPECT_FALSE(backstage.addPage(duplicate));
+    EXPECT_EQ(backstage.numPages(), 2);
+
+    // 空 id 允许存在，但不能被查找。
+    auto* anonymous_page = new guifw::BackstagePage();
+    anonymous_page->setTitle(u8"Anon");
+    EXPECT_TRUE(backstage.addPage(anonymous_page));
+    EXPECT_EQ(backstage.pageAt(2), anonymous_page);
+    EXPECT_EQ(backstage.findPage(u8""), nullptr);
+}
+
+TEST_F(GuiTest, Backstage_ApplicationButtonOpensThePage)
+{
+    auto* bar      = wnd->ribbonBar();
+    auto* backstage = new guifw::Backstage(wnd.get());
+    auto* page      = new guifw::BackstagePage();
+    page->setId(u8"test.backstage.home");
+    page->setTitle(u8"Home");
+    ASSERT_TRUE(backstage->addPage(page));
+
+    wnd->setBackstage(backstage);
+    EXPECT_EQ(wnd->backstage(), backstage);
+    EXPECT_EQ(bar->backstage(), backstage);
+    EXPECT_FALSE(backstage->isOpen());
+
+    vn::EventArgs args;
+    bar->applicationButtonClicked().trigger(*bar, args);
+    EXPECT_TRUE(backstage->isOpen());
+
+    backstage->close();
+    EXPECT_FALSE(backstage->isOpen());
+
+    wnd->setBackstage(nullptr);
+    EXPECT_EQ(wnd->backstage(), nullptr);
+    EXPECT_EQ(bar->backstage(), nullptr);
+}
+
+TEST_F(GuiTest, Backstage_PageItemsAreCommandBound)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* page = new guifw::BackstagePage();
+    page->setId(u8"test.backstage.items");
+    page->setTitle(u8"Items");
+    ASSERT_TRUE(backstage.addPage(page));
+
+    auto* item = new guifw::RibbonAction();
+    item->setText(u8"About2");
+    item->setIcon(guifw::Icon(u8":/icons/about.svg"));
+    item->setCommand(u8"about");
+    page->addItem(item);
+
+    EXPECT_EQ(page->numItems(), 1);
+    EXPECT_EQ(page->itemAt(0), item);
+    EXPECT_EQ(page->itemAt(1), nullptr);
+    EXPECT_TRUE(item->command() == u8"about");
+
+    // 条目就是一个绑定到动作的按钮：点击会走动作的 triggered → 命令。
+    auto* page_widget = page->impl<QWidget>();
+    ASSERT_NE(page_widget, nullptr);
+    const auto buttons = page_widget->findChildren<QToolButton*>();
+    ASSERT_EQ(buttons.size(), 1);
+    EXPECT_EQ(buttons.first()->defaultAction(), item->impl<QAction>());
+}
+
+TEST_F(GuiTest, Backstage_FollowsMainWindowSize)
+{
+    auto* backstage = new guifw::Backstage(wnd.get());
+    auto* page      = new guifw::BackstagePage();
+    page->setTitle(u8"Size");
+    ASSERT_TRUE(backstage->addPage(page));
+
+    wnd->setBackstage(backstage);
+    backstage->open();
+    ASSERT_TRUE(backstage->isOpen());
+
+    auto* main_window = wnd->impl<QWidget>();
+    auto* window      = backstage->impl<QWidget>();
+    ASSERT_NE(main_window, nullptr);
+    ASSERT_NE(window, nullptr);
+    EXPECT_EQ(window->size(), main_window->size());
+
+    main_window->resize(main_window->width() + 160, main_window->height() + 120);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(window->size(), main_window->size()) << "主窗口改大小后 Backstage 必须跟随";
+
+    backstage->close();
+    EXPECT_FALSE(backstage->isOpen());
+}
+
+TEST_F(GuiTest, Backstage_ClosesOnEscapeOrClose)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* page = new guifw::BackstagePage();
+    page->setTitle(u8"Close");
+    ASSERT_TRUE(backstage.addPage(page));
+
+    backstage.open();
+    ASSERT_TRUE(backstage.isOpen());
+
+    auto* window = backstage.impl<QWidget>();
+    ASSERT_NE(window, nullptr);
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(window, &escape);
+    QCoreApplication::processEvents();
+    EXPECT_FALSE(backstage.isOpen()) << "Esc 必须关闭 Backstage";
+
+    backstage.open();
+    ASSERT_TRUE(backstage.isOpen());
+    backstage.close();
+    EXPECT_FALSE(backstage.isOpen());
+}
+
+TEST_F(GuiTest, Backstage_IsOwnedByMainWindow)
+{
+    auto* first = new guifw::Backstage(wnd.get());
+    wnd->setBackstage(first);
+    EXPECT_EQ(wnd->backstage(), first);
+
+    // 替换必须清掉 Ribbon 的订阅再删除旧对象（不崩溃、指针更新）。
+    auto* second = new guifw::Backstage(wnd.get());
+    wnd->setBackstage(second);
+    EXPECT_EQ(wnd->backstage(), second);
+    EXPECT_EQ(wnd->ribbonBar()->backstage(), second);
+
+    wnd->setBackstage(nullptr);
+    EXPECT_EQ(wnd->backstage(), nullptr);
+    EXPECT_EQ(wnd->ribbonBar()->backstage(), nullptr);
+}
+
 TEST_F(GuiTest, RibbonGroups_InCategory)
 {
     // 注意：这里不直接链接 tp::SARibbon，因此不能用 SARibbonCategory::panelCount()
@@ -948,8 +1334,7 @@ TEST_F(GuiTest, RibbonButton_ClickedEvent)
 }
 
 TEST_F(GuiTest, RibbonGroup_Methods)
-{
-    // ---- 布局模式（默认值取决于 SARibbon 全局风格，显式设置后再读回）----
+{    // ---- 布局模式（默认值取决于 SARibbon 全局风格，显式设置后再读回）----
     groupClip->setLayoutMode(guifw::RibbonPanelLayoutMode::TwoRow);
     EXPECT_EQ(groupClip->layoutMode(), guifw::RibbonPanelLayoutMode::TwoRow);
     groupClip->setLayoutMode(guifw::RibbonPanelLayoutMode::ThreeRow);
@@ -1989,6 +2374,10 @@ TEST_F(GuiTest, DockPanel_FloatRoundTripKeepsArea)
         EXPECT_GE(w->minimumWidth(), DockingPaneGeometry::minimumWidth);
         EXPECT_GE(w->minimumHeight(), DockingPaneGeometry::minimumHeight);
 
+        // “标题栏留在屏幕内”只对窗口成立：浮动面板必须是独立窗口，
+        // 否则 keepTitleBarReachable() 会把它当成停靠中的子控件跳过。
+        EXPECT_TRUE(w->isWindow()) << "浮窗必须是独立窗口";
+
         c.panel->setFloating(false);
         QCoreApplication::processEvents();
         EXPECT_FALSE(c.panel->isFloating());
@@ -2053,6 +2442,74 @@ TEST_F(GuiTest, DockPanelManager_RemoveDockPanel)
     panelRight->setFloating(false);
     QCoreApplication::processEvents();
     EXPECT_EQ(panelRight->dockArea(), guifw::DockAreas::Right);
+}
+
+TEST_F(GuiTest, DockPanel_TitleBarClickDoesNotChangeLayout)
+{
+    // 单击标题栏只是“激活/聚焦”，不是一次拖放：库在按下时就开始拖动态，松手时只要
+    // 命中某个停靠指示器就会真的重新停靠；标题栏恰好压在指示器上时，一次普通点击
+    // 就会把面板从原位置挪走（分割条尺寸错乱 → 面板看不见，但空间还在）。
+    struct Case {
+        guifw::DockPanel* panel;
+        guifw::DockAreas  area;
+        const char*       name;
+    };
+
+    // 让窗口比屏幕还大（等价于窗口落在副屏/负坐标屏幕上）：停靠面板的父级局部坐标
+    // 会落在“可用屏幕矩形”之外。单击标题栏只是激活面板，绝不能用浮动窗的
+    // “标题栏留在屏幕内”规则去移动一个停靠中的子控件 —— 那会把它挪出分割格，
+    // 表现为面板看不见、但空间还在，直到下一次布局（改窗口大小）才回来。
+    auto*    native_window = wnd->impl<QWidget>();
+    QScreen* screen        = QGuiApplication::primaryScreen();
+    ASSERT_NE(native_window, nullptr);
+    ASSERT_NE(screen, nullptr);
+    const QRect available = screen->availableGeometry();
+    native_window->resize(qMax(available.width() + 600, 1400), qMax(available.height() + 400, 1000));
+    QCoreApplication::processEvents();
+
+    const Case cases[] = {
+        { panelLeft,  guifw::DockAreas::Left,  "left"  },
+        { panelRight, guifw::DockAreas::Right, "right" },
+        { panelTop,   guifw::DockAreas::Top,   "top"   }
+    };
+
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+
+        auto* pane = c.panel->impl<QWidget>();
+        ASSERT_NE(pane, nullptr);
+
+        QWidget* title = nullptr;
+        for (QWidget* w : pane->findChildren<QWidget*>()) {
+            if (QString::fromLatin1(w->metaObject()->className()) == QLatin1String("DockingPaneTitleWidget")) {
+                title = w;
+                break;
+            }
+        }
+        ASSERT_NE(title, nullptr);
+
+        const QWidget* parent_before   = pane->parentWidget();
+        const QRect    geometry_before = pane->geometry();
+
+        EXPECT_FALSE(pane->isWindow()) << "停靠状态的面板必须是子控件，不是独立窗口";
+
+        const QPoint local  = title->rect().center();
+        const QPoint global = title->mapToGlobal(local);
+
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(local), QPointF(global), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(title, &press);
+
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(local), QPointF(global), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(title, &release);
+
+        QCoreApplication::processEvents();
+
+        EXPECT_FALSE(c.panel->isFloating());
+        EXPECT_EQ(c.panel->dockArea(), c.area);
+        EXPECT_EQ(pane->parentWidget(), parent_before) << "单击标题栏不能把面板挪出原来的父级";
+        EXPECT_EQ(pane->geometry(), geometry_before) << "单击标题栏不能改变面板几何";
+        EXPECT_TRUE(pane->isVisible()) << "单击标题栏后面板必须仍然可见";
+    }
 }
 
 TEST_F(GuiTest, DockPanel_PinnedFlyoutIsAnchoredToDockArea)
@@ -2244,6 +2701,22 @@ TEST(DockGeometryTest, TitleBarStaysReachable)
     pane.move(available.right() - 1, available.top() + 10);
     EXPECT_TRUE(DockingPaneGeometry::keepTitleBarReachable(&pane, titleHeight));
     EXPECT_TRUE(available.intersects(titleBarRect()));
+}
+
+TEST(DockGeometryTest, KeepTitleBarReachableDoesNotMoveChildWidgets)
+{
+    // 停靠中的面板是子控件：它的坐标是父级局部坐标，而屏幕矩形是全局坐标。
+    // 若把浮动窗的“标题栏留在屏幕内”规则用在它身上，就会把面板移出分割格
+    // （看不见、但空间还在，直到下一次布局）。
+    QWidget host;
+    host.resize(400, 300);
+
+    QWidget child(&host);
+    child.setGeometry(2000, 2000, 150, 100);
+    EXPECT_FALSE(child.isWindow());
+
+    EXPECT_FALSE(DockingPaneGeometry::keepTitleBarReachable(&child, 24));
+    EXPECT_EQ(child.pos(), QPoint(2000, 2000));
 }
 
 // ============================ 进度与串联 ============================

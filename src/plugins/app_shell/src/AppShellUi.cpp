@@ -6,12 +6,14 @@
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/DocumentManager.hpp>
+#include <vine/appfw/gui/Backstage.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/Icon.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
+#include <vine/appfw/gui/RibbonAction.hpp>
 #include <vine/appfw/gui/RibbonBar.hpp>
 #include <vine/appfw/gui/RibbonButton.hpp>
 #include <vine/appfw/gui/RibbonGroup.hpp>
@@ -47,6 +49,23 @@ gui::RibbonButton* addCommandButton(gui::RibbonGroup* group, const String& text,
     return button;
 }
 
+/**
+ * @brief Adds a command entry to a Backstage page.
+ *
+ * @param page Target page.
+ * @param text Entry label.
+ * @param icon Entry icon resource path.
+ * @param command Registered command name.
+ */
+void addBackstageCommand(gui::BackstagePage* page, const String& text, const String& icon, const String& command)
+{
+    auto* item = new gui::RibbonAction();
+    item->setText(text);
+    item->setIcon(gui::Icon(icon));
+    item->setCommand(command);
+    page->addItem(item);
+}
+
 } // namespace
 
 void buildAppShellRibbon(gui::MainWindow* wnd)
@@ -54,16 +73,24 @@ void buildAppShellRibbon(gui::MainWindow* wnd)
     auto* bar = wnd->ribbonBar();
 
     auto* plugin_tab = new gui::RibbonTab();
+    plugin_tab->setId(u8"vine.tab.plugins");
+    plugin_tab->setRole(gui::RibbonTabRole::Plugins);
     plugin_tab->setTitle(u8"插件");
     bar->addTab(plugin_tab);
     auto* plugin_group = new gui::RibbonGroup();
+    plugin_group->setId(u8"plugins.manage");
     plugin_group->setTitle(u8"插件管理");
     plugin_tab->addGroup(plugin_group);
 
     auto* help_tab = new gui::RibbonTab();
+    help_tab->setId(u8"vine.tab.help");
+    help_tab->setRole(gui::RibbonTabRole::Help);
+    // 帮助是终止 tab：任何插件 tab 都不能排到它后面（解析器会把越界请求夹回前面）。
+    help_tab->setPolicy(gui::RibbonTabPolicy::Terminal);
     help_tab->setTitle(u8"帮助");
     bar->addTab(help_tab);
     auto* help_group = new gui::RibbonGroup();
+    help_group->setId(u8"help.commands");
     help_group->setTitle(u8"帮助");
     help_tab->addGroup(help_group);
 
@@ -74,6 +101,30 @@ void buildAppShellRibbon(gui::MainWindow* wnd)
     addCommandButton(help_group, u8"文档管理器", u8":/icons/show_documents.svg", u8"show_document_types");
     addCommandButton(help_group, u8"帮助", u8":/icons/show_help.svg", u8"show_help");
     addCommandButton(help_group, u8"关于", u8":/icons/about.svg", u8"about");
+
+    // 应用按钮打开 Backstage：页面只是导航，条目仍是命令（命令名就是身份）。
+    auto* backstage = new gui::Backstage(wnd);
+
+    auto* plugins_page = new gui::BackstagePage();
+    plugins_page->setId(u8"vine.backstage.plugins");
+    plugins_page->setTitle(u8"插件");
+    plugins_page->setIcon(gui::Icon(u8":/icons/show_plugins.svg"));
+    addBackstageCommand(plugins_page, u8"插件信息", u8":/icons/show_plugins.svg", u8"show_plugins");
+    addBackstageCommand(plugins_page, u8"渲染后端", u8":/icons/show_plugins.svg", u8"show_render_backends");
+    addBackstageCommand(plugins_page, u8"配置管理", u8":/icons/show_config.svg", u8"show_config");
+    backstage->addPage(plugins_page);
+
+    auto* help_page = new gui::BackstagePage();
+    help_page->setId(u8"vine.backstage.help");
+    help_page->setTitle(u8"帮助");
+    help_page->setIcon(gui::Icon(u8":/icons/show_help.svg"));
+    addBackstageCommand(help_page, u8"帮助", u8":/icons/show_help.svg", u8"show_help");
+    addBackstageCommand(help_page, u8"命令管理器", u8":/icons/show_commands.svg", u8"show_commands");
+    addBackstageCommand(help_page, u8"文档管理器", u8":/icons/show_documents.svg", u8"show_document_types");
+    addBackstageCommand(help_page, u8"关于", u8":/icons/about.svg", u8"about");
+    backstage->addPage(help_page);
+
+    wnd->setBackstage(backstage);
 }
 
 AppShellDock buildAppShellDock(gui::MainWindow* wnd)

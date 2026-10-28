@@ -36,6 +36,24 @@ class VN_APPFW_API RibbonGroup : public Control {
     /// Gets the group title.
     String title() const;
 
+    /**
+     * @brief Sets the stable id used for lookups and placement anchors.
+     *
+     * @details
+     * - The id is unique within the owning tab; set it before adding the group to a tab.
+     * - An empty id means the group cannot be anchored to and is excluded from duplicate checks.
+     *
+     * @param id Group id, or empty for none.
+     */
+    void setId(const String& id);
+
+    /**
+     * @brief Returns the stable id of the group.
+     *
+     * @return The id, or an empty string when none was set.
+     */
+    String id() const;
+
   public:
     /// Adds a button (row proportion chosen automatically by button size:
     /// large occupies a full row / medium two rows / small one row).

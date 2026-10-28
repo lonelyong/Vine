@@ -301,3 +301,26 @@
 `DockedPaneTakesKeyboardFocus` 是“停靠后焦点进入面板内容”的守护用例：本环境的 SARibbon 主窗口内控件拿不到键盘焦点，该例只能整例 `GTEST_SKIP`（无判定力），已删除；对应条目仍留在遗留表（`dockPane` 尾部 `setFocus()` 对默认 `NoFocus` 面板是空操作）。
 
 用例：`tests/test_gui/TestDockingPanesRestore.cpp`（21 例），`test_gui` 160/160、`test_scene` 47/47 通过。
+
+## 十三、第十一轮：单击标题栏把停靠面板移出分割格（BUG-21）（2026-10-28）
+
+### BUG-21 单击（不拖动）停靠面板标题栏后，面板看不见，但占用的空间还在
+
+- 现象（用户报告）：单击任意停靠面板的标题栏，面板内容（整块面板）看不见了，停靠区却仍然给它留着空间；把主窗口拉大/拉小一次，面板又出现在原处。
+- 触发条件：主窗口位于**副屏**、或窗口比屏幕大时**必现**；窗口完全落在主屏 (0,0) 内时不显现（因此此前测试未覆盖到）。
+- 根因（两层）：
+  1. `DockingPaneManager::floatingPaneEndMove()` 的“自由桌面”分支只按类型判断（`qobject_cast<DockingPaneContainer*>`），不按状态：单击标题栏时面板仍是 `Docked`，也会调用 `DockingPaneGeometry::keepTitleBarReachable()`。停靠面板是 `QSplitter` 里的**子控件**，`frameGeometry()` 是父级局部坐标，而该函数用 **屏幕全局矩形** 去夹取并 `pane->move()`。当 `screen()->availableGeometry()` 的 `left/top` 不是 0（副屏）时，局部坐标被夹到屏幕坐标，面板被 `move()` 到分割格之外 → 看不见，格子空间还在；下一次布局（改窗口大小）把它放回原处。
+     实测（用例把窗口放大到超过屏幕，等价于副屏/负坐标）：右面板几何从 `x=1186` 被改成 `x=775`（= `available.right() - 24`）。
+  2. 纯点击也走完了整个拖放流程：按下时已 `floatingPaneStartMove()`；松手时 `updateFloatingPane()` 会把指示器簇 `show()` 后再 `hide()`（闪烁），落点恰好压在 sticker 上时还会把面板重新停靠。
+- 修复：
+  - `DockingPaneGeometry::keepTitleBarReachable()`：只对**窗口**（浮动面板）生效，`!pane->isWindow()` 直接 `return false`；文档写明子控件为什么不能移（局部坐标 vs 屏幕坐标）。
+  - `DockingPaneManager::floatingPaneEndMove()`：只有 `state() == DockingPaneBase::Floating` 时才应用该规则。
+  - `DockingPaneTitleWidget`：记录按下后是否发生过移动；**纯点击不再发 `titleBarEndMove`**，即不触发落点扫描。拖出交接 `takeGrab()`（Tab 拖出 / Flyout 拖出改浮动）会置位，真实拖动路径不变。
+- 用例：
+  - `GuiTest.DockPanel_TitleBarClickDoesNotChangeLayout`：把主窗口放大到超过屏幕后，依次点击左/右/上三个面板的标题栏，断言父级、几何、可见性、停靠区域都不变（修复前右面板几何断言失败）。
+  - `DockGeometryTest.KeepTitleBarReachableDoesNotMoveChildWidgets`：子控件即使坐标在屏幕外也不得被移动。
+- 验证：`test_gui` 278 例（277 通过 + 1 既有 skip）。
+
+### 教训（坐标系）
+
+屏幕矩形只能和**窗口**坐标比较；任何“能作用于任意 pane”的几何约束都要先问“它现在是窗口还是布局里的子控件”。同样的坑在 `move()`、`mapToGlobal`、`frameGeometry()` 组合里都能重现。
