@@ -1249,7 +1249,10 @@ TEST_F(GuiTest, RibbonMenusShowCommandTooltips)
     item->setText(u8"About");
     bar->appendApplicationMenu(item);
 
-    auto* app_btn = qobject_cast<QToolButton*>(bar->impl<SARibbonBar>()->applicationButton());
+    // 不直接链接 tp::SARibbon（见 CMakeLists：它在 vnAppfwd.dll 里另有一份静态副本），所以这里不调用
+    // SARibbonBar::applicationButton() —— 那需要该库的符号。改成按 SARibbon 给默认应用按钮设的对象名，
+    // 用纯 Qt 的查找取到按钮：只依赖 QObject/QToolButton 的符号。
+    auto* app_btn = bar->impl<SARibbonBar>()->findChild<QToolButton*>(QStringLiteral("SARibbonApplicationButton"));
     ASSERT_NE(app_btn, nullptr);
     ASSERT_NE(app_btn->menu(), nullptr) << "应用按钮的菜单";
     EXPECT_TRUE(app_btn->menu()->toolTipsVisible());
