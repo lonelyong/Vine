@@ -726,9 +726,7 @@ src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::data
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::icon
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::setCheckable
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::setChecked
-src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::setCommand
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::setData
-src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::setEnabled
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::setIcon
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::setText
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::setTooltip
@@ -736,9 +734,7 @@ src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::text
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	brief|RibbonAction::tooltip
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	param|RibbonAction::setCheckable/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	param|RibbonAction::setChecked/1
-src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	param|RibbonAction::setCommand/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	param|RibbonAction::setData/1
-src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	param|RibbonAction::setEnabled/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	param|RibbonAction::setIcon/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	param|RibbonAction::setText/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonAction.hpp	param|RibbonAction::setTooltip/1
@@ -752,7 +748,6 @@ src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::addQuickAccessIte
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::addQuickAccessSeparator
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::addTab
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::appendApplicationMenu
-src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::applicationButtonVisible
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::applicationIcon
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::applicationText
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::currentIndex
@@ -762,7 +757,6 @@ src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::panelTitleVisible
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::quickAccessVisible
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::removeTab
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::ribbonStyle
-src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::setApplicationButtonVisible
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::setApplicationIcon
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::setApplicationText
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	brief|RibbonBar::setCurrentIndex
@@ -776,7 +770,6 @@ src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::addQuickAccessIte
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::addTab/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::appendApplicationMenu/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::removeTab/1
-src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::setApplicationButtonVisible/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::setApplicationIcon/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::setApplicationText/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::setCurrentIndex/1
@@ -787,7 +780,6 @@ src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::setQuickAccessVis
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::setRibbonStyle/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::setWordWrap/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	param|RibbonBar::tabAt/1
-src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	return|RibbonBar::applicationButtonVisible
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	return|RibbonBar::applicationIcon
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	return|RibbonBar::applicationText
 src/fw/appfw/sdk/vine/appfw/gui/RibbonBar.hpp	return|RibbonBar::currentIndex
@@ -814,7 +806,6 @@ src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	brief|RibbonButton::removeDropD
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	brief|RibbonButton::removeDropDownItem
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	brief|RibbonButton::setCheckable
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	brief|RibbonButton::setChecked
-src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	brief|RibbonButton::setCommand
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	brief|RibbonButton::setData
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	brief|RibbonButton::setIcon
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	brief|RibbonButton::setLargeIconSize
@@ -829,7 +820,6 @@ src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	param|RibbonButton::removeDropD
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	param|RibbonButton::setButtonSize/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	param|RibbonButton::setCheckable/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	param|RibbonButton::setChecked/1
-src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	param|RibbonButton::setCommand/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	param|RibbonButton::setData/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	param|RibbonButton::setIcon/1
 src/fw/appfw/sdk/vine/appfw/gui/RibbonButton.hpp	param|RibbonButton::setIconRightText/1

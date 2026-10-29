@@ -804,6 +804,22 @@ TEST_F(GuiTest, RibbonBar_ApplicationButton)
     EXPECT_TRUE(bar->applicationText() == u8"File");
 }
 
+// 入口就是 SARibbon 的应用按钮：隐藏必须落到控件上，而不只是记住一个开关。
+TEST_F(GuiTest, RibbonBar_ApplicationButtonHidesTheEntry)
+{
+    auto* bar = wnd->ribbonBar();
+
+    // 不直接链接 tp::SARibbon（见 RibbonMenusShowCommandTooltips），按对象名用纯 Qt 的查找取应用按钮。
+    auto* entry = bar->impl<SARibbonBar>()->findChild<QToolButton*>(QStringLiteral("SARibbonApplicationButton"));
+    ASSERT_NE(entry, nullptr) << "File 应用按钮";
+
+    EXPECT_TRUE(entry->isVisible());
+    bar->setApplicationButtonVisible(false);
+    EXPECT_FALSE(entry->isVisible()) << "隐藏 = File 入口从 Ribbon 上消失";
+    bar->setApplicationButtonVisible(true);
+    EXPECT_TRUE(entry->isVisible());
+}
+
 TEST_F(GuiTest, RibbonBar_QuickAccess)
 {
     auto* bar = wnd->ribbonBar();

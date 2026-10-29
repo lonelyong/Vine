@@ -116,8 +116,27 @@ class VN_APPFW_API RibbonBar : public Control {
      * @return The event to connect to.
      */
     Event<RibbonBar, EventArgs>& applicationButtonClicked();
-    /// Whether the application button is visible.
+
+    /**
+     * @brief Sets whether the bar shows the application button (the top-left File entry to the menu/Backstage).
+     *
+     * @details
+     * - The button is the only way into the application menu, so hiding it hides that menu as well.
+     * - This is a presentation choice, not a security boundary: a host that also opens the menu or the
+     *   Backstage from a command or a shortcut has to refuse those paths itself.
+     *
+     * @param on true to show the button, false to hide it.
+     */
     void setApplicationButtonVisible(bool on);
+
+    /**
+     * @brief Reports whether the application button is currently shown.
+     *
+     * @note This is the widget's state: a window that is not shown reports false as well, like the other
+     *   visibility queries of the bar.
+     *
+     * @return true when the application button is visible.
+     */
     bool applicationButtonVisible() const;
     /// Application button icon.
     void setApplicationIcon(const Icon& ic);

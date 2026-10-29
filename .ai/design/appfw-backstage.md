@@ -74,6 +74,12 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 - 是什么：240 px 导航轨（顶部返回箭头 + 页面行）与 `palette(base)` 内容面（大号标题、1 px 分隔线、封顶 760 px 的条目列）；颜色一律用 `palette(...)` 角色，跟随明/暗主题（同 `detail::blendIntoSurface()`）。
 - 为什么：默认控件平铺读起来像一个空的安全对话框，而 Office Backstage / VS Code 设置页都靠“一列导航 + 一块内容面”和两级字号建立层次；返回箭头属于“退出这一层”而非“这一页”，所以放导航轨顶部；条目列封顶是因为一行拉满 4K 后不再是一条条目。
 
+### 2.8 入口只有一个开关：应用按钮的可见性（G1、G8）
+
+- 是什么：`RibbonBar::setApplicationButtonVisible(bool)` 是“提不提供 Backstage/应用菜单入口”的唯一控制；`Backstage` 本身没有 enabled 状态，`open()` 对任何持有者都有效。
+- 为什么：应用按钮是进入菜单与 Backstage 的唯一入口，再给 Backstage 一个“禁用”就是同一件事的第二个表示：宿主得配对维护两处状态，而 `applicationButtonVisible()` 会同时被两种原因置假，读的人分不清是“宿主不要”还是“功能被禁用”（`G1` 一个事实一个所有者）。
+- 边界：隐藏入口是呈现层选择，不是权限边界——命令/快捷键仍可调 `open()`，是否拒绝由宿主自己决定；想彻底拿掉 Backstage 用 `MainWindow::setBackstage(nullptr)`（见 D6）。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -91,59 +97,27 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 | F9 | 页面显隐 | `setPageVisible/isPageVisible`；导航行隐藏、序号不变 | 已落地 |
 | F10 | 条目显隐 | `setItemVisible/isItemVisible`；按钮不参与布局 | 已落地 |
 
-### 3.1.1 F1 应用按钮点击事件
+### 3.1.1 F1–F6 基础能力（行为细节以头文件为准，约束见 §5.1 的 C1–C6）
 
-- **行为**：按钮 `clicked` 转发为 `Event<RibbonBar, EventArgs>`。
-- **约束**（C1）：事件在 `RibbonBar` 线程（UI 线程）触发。
-- **验收**（T1）：`Backstage_ApplicationButtonOpensThePage`。
-- **注意**（P1）：事件与菜单是并行的；用 Backstage 时先 `setBackstage()` 摘掉菜单。
+| # | 行为 | 验收 |
+|---|---|---|
+| F1 | 按钮 `clicked` 转发为 `Event<RibbonBar, EventArgs>`（P1：事件与菜单并行，用 Backstage 时先 `setBackstage()` 摘菜单） | T1 `Backstage_ApplicationButtonOpensThePage` |
+| F2 | `setBackstage(bs)` 摘掉按钮菜单并订阅事件打开 `bs`；`nullptr` 断开订阅并恢复菜单（P2：`clearApplicationMenu()` 不删动作） | T1、T2 |
+| F3 | 页面按添加顺序进入左侧导航与 `QStackedWidget`；非空 id 唯一；第一张可见页成为当前页（P3：空 id 页可存在，但 `findPage("")` 找不到） | T2 `Backstage_PagesAndNavigation` |
+| F4 | `addItem(RibbonAction*)` 建一个 `QToolButton` 并 `setDefaultAction()`，点击走命令执行（P4：条目先于页面销毁会让按钮的 action 悬空） | T3 `Backstage_PageItemsAreCommandBound` |
+| F5 | `open()` 同步几何、显示、置顶、激活；Esc 或返回按钮 `close()`；主窗口 move/resize/minimize 时跟随/隐藏（P5：多屏/分数缩放的 1 px 偏差属平台取整） | T4 `Backstage_FollowsMainWindowSize`、`Backstage_ClosesOnEscapeOrClose` |
+| F6 | `MainWindow::setBackstage()` 接管所有权，替换时先解除 Ribbon 的订阅再删除旧对象（析构不崩溃、指针清空） | T5 `Backstage_IsOwnedByMainWindow` |
 
-### 3.1.2 F2 菜单/Backstage 模式
+### 3.1.2 F9 页面显隐
 
-- **行为**：`setBackstage(bs)` 把按钮菜单置空并订阅事件打开 `bs`；`setBackstage(nullptr)` 断开订阅并恢复菜单。
-- **约束**（C2）：`RibbonBar` 不拥有 Backstage。
-- **验收**（T1、T2）。
-- **注意**（P2）：`clearApplicationMenu()` 不删除动作对象。
-
-### 3.1.3 F3 页面与导航
-
-- **行为**：页面按添加顺序进入左侧导航与右侧 `QStackedWidget`；页面 id 在非空时唯一；第一张可见页成为当前页。
-- **约束**（C3）：id/标题/图标在 `addPage` 前设置。
-- **验收**（T2）：`Backstage_PagesAndNavigation`。
-- **注意**（P3）：空 id 页面可用，但 `findPage("")` 返回 nullptr。
-
-### 3.1.4 F4 命令条目
-
-- **行为**：`addItem(RibbonAction*)` 建一个 `QToolButton`，`setDefaultAction(action->impl<QAction>())`；点击走命令执行。
-- **约束**（C4）：条目对象由调用方持有，页面不删除。
-- **验收**（T3）：`Backstage_PageItemsAreCommandBound`。
-- **注意**（P4）：条目先于页面销毁会让按钮的 action 悬空。
-
-### 3.1.5 F5 打开/关闭/几何
-
-- **行为**：`open()` 同步几何、显示、置顶、激活；Esc 或返回按钮 `close()`；主窗口 move/resize/minimize 时跟随/隐藏。
-- **约束**（C5）：窗口覆盖主窗口**客户区**，不覆盖系统标题栏。
-- **验收**（T4）：`Backstage_FollowsMainWindowSize`、`Backstage_ClosesOnEscapeOrClose`。
-- **注意**（P5）：多屏/分数缩放下的 1px 偏差属于平台取整。
-
-### 3.1.6 F6 生命周期
-
-- **行为**：`MainWindow::setBackstage(bs)` 接管所有权，替换时先解除 Ribbon 的订阅再删除旧对象。
-- **约束**（C6）：一个 MainWindow 只有一个 Backstage。
-- **验收**（T5）：`Backstage_IsOwnedByMainWindow`（析构不崩溃、指针清空）。
-
-### 3.1.7 F9 页面显隐
-
-- **行为**：`setPageVisible(page,bool)` 隐藏/恢复导航行；隐藏当前页时选下一个可见页（循环）；全部隐藏时没有当前页、
-  `open()` 拒绝打开。
+- **行为**：`setPageVisible(page,bool)` 隐藏/恢复导航行；隐藏当前页时选下一个可见页（循环）；全部隐藏时没有当前页、`open()` 拒绝打开。
 - **约束**（C7）：隐藏不删除页面、不改 `pages` 顺序，隐藏页不可被 `setCurrentPage()` 选中；`findPage/pageAt/numPages` 仍包含它，恢复后无当前页时它成为当前页。
 - **验收**（T6）：`Backstage_PagesCanBeHidden`。
 
-### 3.1.8 F10 条目显隐
+### 3.1.3 F10 条目显隐
 
 - **行为**：`setItemVisible(action,bool)` 隐藏/恢复条目的按钮；条目、动作与命令都还在，序号不变。
-- **约束**（C9）：动作是条目身份；页面没持有的动作忽略；隐藏不等于禁用命令（后者灰显，见 `appfw-command-binding.md`）。
-- **要求**（R7）：`numItems/itemAt` 继续报告隐藏条目，可用同一动作恢复。
+- **约束**（C9）：动作是条目身份；页面没持有的动作忽略；隐藏不等于禁用命令（后者灰显，见 `appfw-command-binding.md`）；`numItems/itemAt` 继续报告隐藏条目（R7）。
 - **验收**（T7）：`BackstagePage_ItemsCanBeHidden`。
 
 ## 4. 公开接口
@@ -156,6 +130,8 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 | `clearApplicationMenu()` | 清空菜单项 | 不删除动作 |
 | `setBackstage(Backstage*)` | 菜单/Backstage 二选一 | 借用指针 |
 | `backstage()` | 当前 Backstage | 可为 nullptr |
+| `setApplicationButtonVisible(bool)` | File 入口显隐（也决定应用菜单入口） | 呈现层选择，不是权限 |
+| `applicationButtonVisible()` | 入口当前是否显示 | 报告控件状态 |
 
 ### 4.2 Backstage
 
@@ -251,6 +227,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 | D3 | `WA_NativeWindow` 子窗口 + raise | 飞窗已证明会扰乱渲染表面（G10） | 同上 |
 | D4 | Backstage 拥有页面包装对象 | 与 Qt 父对象双重所有权，双删风险（G10） | 同上 |
 | D5 | 页面支持任意内容布局（v1） | 没有消费者；条目已覆盖当前需求（G8） | — |
+| D6 | 给 `Backstage` 加 `enabled`（禁用而不删除，入口自动隐藏） | 入口就是应用按钮，`setApplicationButtonVisible(false)` 已经表达同一事实；两个开关要配对维护，且 `applicationButtonVisible()` 会被两种原因置假（G8）。要“留着页面但不要入口”：隐藏按钮；要彻底拿掉：`setBackstage(nullptr)` | — |
 
 ## 8. 测试与验收
 
@@ -263,6 +240,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 | T5 | MainWindow 所有权替换不崩溃 | `GuiTest.Backstage_IsOwnedByMainWindow` |
 | T6 | 页面隐藏/恢复/无可见页 | `GuiTest.Backstage_PagesCanBeHidden` |
 | T7 | 条目隐藏/恢复 | `GuiTest.BackstagePage_ItemsCanBeHidden` |
+| T8 | File 入口隐藏/恢复落到控件上 | `GuiTest.RibbonBar_ApplicationButtonHidesTheEntry` |
 
 ## 9. 状态与演进
 
@@ -278,6 +256,7 @@ F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell �
 ### 9.3 兼容性 / 迁移
 
 - 新类 `Backstage`/`BackstagePage`；`RibbonBar` 只加方法与 `Impl` 事件，无类布局变化。
+- F11 已否决（D6）：提不提供入口只用 `RibbonBar::setApplicationButtonVisible()`；`Backstage` 与 `MainWindow` 的公开签名未变。
 - 旧 `appendApplicationMenu()` 保持；不使用 `setBackstage()` 的宿主行为不变。
 - 迁移：把 `appendApplicationMenu` 的条目改成 `BackstagePage::addItem`，调用 `MainWindow::setBackstage()`。
 
