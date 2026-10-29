@@ -5,11 +5,14 @@ file(GLOB_RECURSE SRC_FILE_LIST *.cpp)
 file(GLOB_RECURSE RC_FILE_LIST *.qrc)
 file(GLOB_RECURSE IMG_FILE_LIST *.png)
 
-add_library(DockingPanes STATIC
+add_library(DockingPanes STATIC "")
+add_library(tp::DockingPanes ALIAS DockingPanes)
+
+target_sources(DockingPanes
+    PRIVATE
     ${HEADER_FILE_LIST}
     ${SRC_FILE_LIST}
-    ${RC_FILE_LIST}
-)
+    ${RC_FILE_LIST})
 
 set_target_properties(DockingPanes PROPERTIES
     AUTOMOC ON
@@ -22,7 +25,6 @@ set_target_properties(DockingPanes PROPERTIES
 target_include_directories(DockingPanes
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/inc>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/src>
 )
 
 target_link_libraries(DockingPanes
@@ -32,6 +34,3 @@ target_link_libraries(DockingPanes
     Qt6::Widgets
     Qt6::Xml
 )
-
-add_library(tp::DockingPanes ALIAS DockingPanes)
-

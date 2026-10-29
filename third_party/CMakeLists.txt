@@ -1,7 +1,12 @@
 if(MSVC)
     add_compile_options(/utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus)
 endif()
+
+add_subdirectory(argparse)
+add_subdirectory(boolinq)
 add_subdirectory(DockingPanes)
 add_subdirectory(SARibbon)
 add_subdirectory(stb)
 add_subdirectory(volk)
+add_subdirectory(tinyxml2)
+add_subdirectory(nlohmann)

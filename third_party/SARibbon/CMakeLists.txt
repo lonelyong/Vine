@@ -1,6 +1,7 @@
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
-add_library(SARibbon STATIC)
+add_library(SARibbon STATIC "")
+add_library(tp::SARibbon ALIAS SARibbon)
 
 target_sources(SARibbon
     PRIVATE
@@ -27,5 +28,3 @@ target_link_libraries(SARibbon
         Qt6::Gui
         Qt6::Widgets
 )
-
-add_library(tp::SARibbon ALIAS SARibbon)
