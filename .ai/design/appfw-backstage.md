@@ -73,6 +73,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 
 - 是什么：240 px 导航轨（顶部返回箭头 + 页面行）与 `palette(base)` 内容面（大号标题、1 px 分隔线、封顶 760 px 的条目列）；颜色一律用 `palette(...)` 角色，跟随明/暗主题（同 `detail::blendIntoSurface()`）。
 - 为什么：默认控件平铺读起来像一个空的安全对话框，而 Office Backstage / VS Code 设置页都靠“一列导航 + 一块内容面”和两级字号建立层次；返回箭头属于“退出这一层”而非“这一页”，所以放导航轨顶部；条目列封顶是因为一行拉满 4K 后不再是一条条目。
+- 边界：图标位属于行布局而非页面——没有图标的页也用透明图标占住同样大小的位置，否则该行标题会比相邻页左移（`QListWidgetItem` 只对有非空图标的行保留图标列）。
 
 ### 2.8 入口只有一个开关：应用按钮的可见性（G1、G8）
 
@@ -256,6 +257,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 | T10 | 按 provider 整组撤除、当前页接替、撤掉的页可重新加入 | `GuiTest.Backstage_PagesAreRemovedByProvider` |
 | T11 | 标准目录：插件页按 role 锚定到终止的帮助页之前 | `GuiTest.Backstage_StandardRoleCatalog` |
 | T12 | 页面主体：与条目互斥、换 body 交回旧的、null 不算 | `GuiTest.BackstagePage_BodyReplacesTheCommandColumn` |
+| T13 | 导航行一律留出图标位（无图标页标题不移位） | `GuiTest.Backstage_NavRowsReserveTheIconColumn` |
 
 ## 9. 状态与演进
 

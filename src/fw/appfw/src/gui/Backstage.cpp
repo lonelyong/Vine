@@ -12,10 +12,12 @@
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLayoutItem>
 #include <QListWidget>
+#include <QPixmap>
 #include <QShortcut>
 #include <QSize>
 #include <QStackedWidget>
@@ -84,6 +86,26 @@ QString navStyles()
                           " background-color: palette(highlight);"
                           " color: palette(highlighted-text);"
                           " }");
+}
+
+/**
+ * @brief A transparent icon that occupies the navigation row's icon slot.
+ *
+ * @details
+ * - A QListWidgetItem reserves the icon column only when it carries a non-null icon, so a page added without
+ *   one would start its title further left than its neighbours.
+ * - The blank icon keeps every title on the same column without inventing a decoration the page did not ask for.
+ *
+ * @param size Icon slot to match, normally the navigation list's iconSize().
+ * @return An icon that paints nothing but takes up the slot.
+ */
+QIcon blankNavIcon(const QSize& size)
+{
+    QPixmap pixmap(size);
+
+    pixmap.fill(Qt::transparent);
+
+    return QIcon(pixmap);
 }
 
 /**
@@ -914,8 +936,15 @@ BackstagePlaceResult Backstage::addPage(BackstagePage* page, const BackstagePlac
     item->setText(toQString(page->title()));
     item->setSizeHint(QSize(0, kNavRowHeight));
 
-    if (!page->icon().isNull()) {
-        item->setIcon(page->icon().value());
+    // The icon slot belongs to the row layout, not to the page: a page without an icon still gets the slot
+    // (blank), otherwise its title would start further left than the titles of the pages that have one.
+    const Icon icon = page->icon();
+
+    if (!icon.isNull()) {
+        item->setIcon(icon.value());
+    }
+    else {
+        item->setIcon(blankNavIcon(data->nav->iconSize()));
     }
 
     data->stack->addWidget(page_widget);

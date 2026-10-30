@@ -1319,6 +1319,34 @@ TEST_F(GuiTest, Backstage_PagesAndNavigation)
     EXPECT_EQ(backstage.findPage(u8""), nullptr);
 }
 
+// 没有图标的页面也要和带图标的页面对齐：每行都由导航列表留出同样的图标位。
+TEST_F(GuiTest, Backstage_NavRowsReserveTheIconColumn)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* with_icon = new guifw::BackstagePage();
+    with_icon->setId(u8"test.backstage.align.with-icon");
+    with_icon->setTitle(u8"WithIcon");
+    with_icon->setIcon(guifw::Icon(u8":/icons/about.svg"));
+
+    auto* without_icon = new guifw::BackstagePage();
+    without_icon->setId(u8"test.backstage.align.without-icon");
+    without_icon->setTitle(u8"NoIcon");
+
+    ASSERT_TRUE(backstage.addPage(with_icon));
+    ASSERT_TRUE(backstage.addPage(without_icon));
+
+    auto* nav = backstage.impl<QWidget>()->findChild<QListWidget*>();
+    ASSERT_NE(nav, nullptr) << "导航列表";
+    ASSERT_EQ(nav->count(), 2);
+
+    // QListWidget 只在行有非空图标时才留图标列；无图标行用透明图标占位，否则标题会左移。
+    for (int row = 0; row < nav->count(); ++row) {
+        EXPECT_FALSE(nav->item(row)->icon().isNull()) << "导航行缺少图标位: row " << row;
+    }
+    EXPECT_EQ(nav->item(1)->icon().availableSizes().first(), nav->iconSize());
+}
+
 TEST_F(GuiTest, Backstage_ApplicationButtonOpensThePage)
 {
     auto* bar      = wnd->ribbonBar();
