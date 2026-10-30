@@ -9,6 +9,7 @@
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
+#include <vine/appfw/gui/Icon.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RibbonBar.hpp>
 #include <vine/appfw/gui/RibbonButton.hpp>
@@ -173,20 +174,28 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
 
     // 五档各一个按钮，勾选态由"这块 3D 区现在画的是哪一档"回答（provider 读派发目标，见 isCurrentShadingMode）：
     // 于是切文档、命令执行之后按钮都会自己跟上，而不是按钮自己记一个可能过期的档位。
+    // 图标是插件自己的资源（res/res.qrc，前缀 /model_viewer/icons）：每个档位一个可辨认的形状，按钮才不是五列纯文字。
     const struct {
         const char8_t*            label;
+        const char8_t*            icon;
         const char8_t*            command;
         vn::graphics::ShadingMode mode;
     } entries[] = {
-        { u8"实面",   kShadingModeLitCommand,       vn::graphics::ShadingMode::Lit       },
-        { u8"平面",   kShadingModeFlatCommand,      vn::graphics::ShadingMode::Flat      },
-        { u8"无光照", kShadingModeUnlitCommand,     vn::graphics::ShadingMode::Unlit     },
-        { u8"法线",   kShadingModeNormalsCommand,   vn::graphics::ShadingMode::Normals   },
-        { u8"线框",   kShadingModeWireframeCommand, vn::graphics::ShadingMode::Wireframe },
+        { u8"实面",   u8":/model_viewer/icons/shading_lit.svg",       kShadingModeLitCommand,
+          vn::graphics::ShadingMode::Lit       },
+        { u8"平面",   u8":/model_viewer/icons/shading_flat.svg",      kShadingModeFlatCommand,
+          vn::graphics::ShadingMode::Flat      },
+        { u8"无光照", u8":/model_viewer/icons/shading_unlit.svg",     kShadingModeUnlitCommand,
+          vn::graphics::ShadingMode::Unlit     },
+        { u8"法线",   u8":/model_viewer/icons/shading_normals.svg",   kShadingModeNormalsCommand,
+          vn::graphics::ShadingMode::Normals   },
+        { u8"线框",   u8":/model_viewer/icons/shading_wireframe.svg", kShadingModeWireframeCommand,
+          vn::graphics::ShadingMode::Wireframe },
     };
     for (const auto& item : entries) {
         auto* button = new vn::appfw::gui::RibbonButton();
         button->setText(vn::String(item.label));
+        button->setIcon(vn::appfw::gui::Icon(vn::String(item.icon)));
         button->setButtonSize(vn::appfw::gui::RibbonItemSize::Large);
         button->setCommand(vn::String(item.command));
         button->setCheckedProvider([mode = item.mode] { return isCurrentShadingMode(mode); });

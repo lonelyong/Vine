@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/model_viewer/icons">
+        <file alias="shading_lit.svg">icons/shading_lit.svg</file>
+        <file alias="shading_flat.svg">icons/shading_flat.svg</file>
+        <file alias="shading_unlit.svg">icons/shading_unlit.svg</file>
+        <file alias="shading_normals.svg">icons/shading_normals.svg</file>
+        <file alias="shading_wireframe.svg">icons/shading_wireframe.svg</file>
+    </qresource>
+</RCC>

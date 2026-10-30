@@ -9,6 +9,10 @@ set_target_properties(${MODEL_VIEWER_TARGET} PROPERTIES
     AUTORCC ON
 )
 
+# The shading-mode icons are plugin-local resources, compiled into this module. The prefix is scoped to
+# model_viewer so a host that ships its own :/icons cannot collide with them.
+target_sources(${MODEL_VIEWER_TARGET} PRIVATE res/res.qrc)
+
 # vn::Appfw: the plugin base, the document surface (Document / DocumentManager) and the dock panel API (Control).
 # vn::Geometry: the mesh a model document holds. IndexedTriangleMesh is where the two numbers the info panel shows
 #               come from (vertexCount / triangleCount) - not a re-count of something we built ourselves.
