@@ -97,9 +97,10 @@ std::wstring replaceExtension(const std::wstring& path, const wchar_t* extension
     return path.substr(0, dot) + extension;
 }
 
-std::wstring replaceExtension(const std::string& path, const char* extension)
+std::string replaceExtension(const std::string& path, const char* extension)
 {
-    return replaceExtension(toWidePath(path), toWidePath(extension).c_str());
+    // The narrow overload keeps the header's contract (UTF-8 in, UTF-8 out); only the work happens in UTF-16.
+    return toUtf8(replaceExtension(toWidePath(path), toWidePath(extension).c_str()));
 }
 
 bool fileExists(const std::wstring& path)

@@ -4279,6 +4279,11 @@ class ThrowingCommand : public vn::appfw::Command {
     {
         co_await vn::async::sleepFor(std::chrono::milliseconds(1));
         throw std::runtime_error(s_empty_message.load() ? "" : "boom");
+
+        // Unreachable, and written on purpose: MSVC reports C4716 ("must return a value") for a non-void
+        // coroutine body whose closing brace it considers reachable, and it does not count the throw above as
+        // ending the flow. The throw is the behaviour under test, so this value is never produced.
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed);
     }
 
     /// 为 true 时抛出的异常 what() 为空，用于验证结果消息的兜底。
