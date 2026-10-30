@@ -17,7 +17,9 @@
 #include <QLabel>
 #include <QLayoutItem>
 #include <QListWidget>
+#include <QPainter>
 #include <QPixmap>
+#include <QScrollArea>
 #include <QShortcut>
 #include <QSize>
 #include <QStackedWidget>
@@ -50,14 +52,31 @@ QString toQString(const String& text)
 /// @brief Width of the navigation rail (the Office Backstage's left column).
 constexpr int kRailWidth = 240;
 
-/// @brief Row height of one navigation entry; fixed so the rail keeps its rhythm across fonts.
+/// @brief Row height of one navigation entry or one command row; fixed so both columns share a rhythm.
 constexpr int kNavRowHeight = 40;
+
+/// @brief Icon slot of one navigation row, one command row and the rail's back button.
+const QSize kRailIconSize(20, 20);
 
 /// @brief Cap of the item column inside a page.
 ///
 /// A row that is stretched across a maximized 4K window stops reading as one entry and starts reading as a
 /// gap between two labels, which is why every Backstage-like surface caps its content column.
 constexpr int kPageColumnWidth = 760;
+
+/// @brief Horizontal inset shared by the page title and the page content column.
+///
+/// One inset for both is what puts the first item row's left edge under the title's: a page that starts a few
+/// pixels off the header reads as a misaligned window, not as a layout.
+constexpr int kPageInset = 32;
+
+/// @brief Hover / pressed fill of a row or of the rail's back button.
+///
+/// A neutral translucent grey rather than palette(midlight): that role is white in the default light palette -
+/// the same colour as the content surface - so a palette-role hover would be invisible there. The grey reads on
+/// a light and on a dark surface alike.
+constexpr const char kRowHoverTint[]   = "rgba(127, 127, 127, 40)";
+constexpr const char kRowPressedTint[] = "rgba(127, 127, 127, 70)";
 
 /**
  * @brief The navigation rail's stylesheet: one flat row per page, accent-filled selection.
@@ -75,31 +94,67 @@ QString navStyles()
                           " outline: none;"
                           " }"
                           "QListWidget::item {"
-                          " padding: 8px 10px;"
-                          " border-radius: 6px;"
+                          " padding: 0px 10px;"
+                          " border-radius: 4px;"
                           " color: palette(window-text);"
                           " }"
                           "QListWidget::item:hover {"
-                          " background-color: palette(midlight);"
+                          " background-color: %1;"
                           " }"
                           "QListWidget::item:selected {"
                           " background-color: palette(highlight);"
                           " color: palette(highlighted-text);"
+                          " }")
+      .arg(QLatin1String(kRowHoverTint));
+}
+
+/**
+ * @brief The slim scrollbar shared by the rail and a page's command column.
+ *
+ * @details
+ * - The platform scrollbar is a thick bar with arrow buttons: on a surface whose content is a list of text it
+ *   becomes the heaviest thing on screen.
+ * - A 10 px track with a translucent handle says "there is more" without competing with the rows, and the
+ *   translucent grey reads on both a light and a dark surface.
+ *
+ * @return The `QScrollBar` rules to append to a widget's stylesheet.
+ */
+QString scrollBarStyles()
+{
+    return QStringLiteral("QScrollBar:vertical {"
+                          " background: transparent;"
+                          " width: 10px;"
+                          " margin: 0px;"
+                          " }"
+                          "QScrollBar::handle:vertical {"
+                          " background: rgba(127, 127, 127, 90);"
+                          " min-height: 32px;"
+                          " border-radius: 5px;"
+                          " }"
+                          "QScrollBar::handle:vertical:hover {"
+                          " background: rgba(127, 127, 127, 140);"
+                          " }"
+                          "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+                          " height: 0px;"
+                          " }"
+                          "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+                          " background: transparent;"
                           " }");
 }
 
 /**
- * @brief A transparent icon that occupies the navigation row's icon slot.
+ * @brief A transparent icon that occupies a row's icon slot.
  *
  * @details
- * - A QListWidgetItem reserves the icon column only when it carries a non-null icon, so a page added without
- *   one would start its title further left than its neighbours.
- * - The blank icon keeps every title on the same column without inventing a decoration the page did not ask for.
+ * - A QListWidgetItem reserves the icon column only when it carries a non-null icon, and a QToolButton
+ *   with text-beside-icon shifts its label by the icon's width, so a row without an icon would start its
+ *   text further left than its neighbours.
+ * - The blank icon keeps every title on the same column without inventing a decoration the row did not ask for.
  *
- * @param size Icon slot to match, normally the navigation list's iconSize().
+ * @param size Icon slot to match, normally the row's iconSize().
  * @return An icon that paints nothing but takes up the slot.
  */
-QIcon blankNavIcon(const QSize& size)
+QIcon blankIconSlot(const QSize& size)
 {
     QPixmap pixmap(size);
 
@@ -109,7 +164,7 @@ QIcon blankNavIcon(const QSize& size)
 }
 
 /**
- * @brief The item column's stylesheet: command entries are flat rows with a hover fill.
+ * @brief The item column's stylesheet: one command entry per row, hairline-separated like a list.
  *
  * @return The stylesheet to apply to the column that holds a page's item buttons.
  */
@@ -117,21 +172,96 @@ QString itemStyles()
 {
     return QStringLiteral("QToolButton {"
                           " text-align: left;"
-                          " padding: 9px 12px;"
+                          " padding: 0px 12px;"
                           " border: none;"
-                          " border-radius: 6px;"
+                          " border-bottom-width: 1px;"
+                          " border-bottom-style: solid;"
+                          " border-bottom-color: rgba(127, 127, 127, 90);"
                           " color: palette(text);"
                           " }"
                           "QToolButton:hover {"
-                          " background-color: palette(midlight);"
+                          " background-color: %1;"
                           " }"
                           "QToolButton:pressed {"
-                          " background-color: palette(mid);"
+                          " background-color: %2;"
                           " }"
                           "QToolButton:disabled {"
                           " color: palette(mid);"
-                          " }");
+                          " }")
+      .arg(QLatin1String(kRowHoverTint), QLatin1String(kRowPressedTint));
 }
+
+/**
+ * @brief The way out of the Backstage: an icon-only button whose arrow is painted from the palette.
+ *
+ * @details
+ * - The arrow is drawn here instead of using a style icon (the platform's SP_ArrowBack is a skeuomorphic
+ *   bitmap that does not belong on a flat rail) or a text glyph (QToolButton does not centre a glyph once a
+ *   stylesheet gives the button a frame).
+ * - The pixmap is re-drawn on a palette change, so the arrow follows a light/dark theme switch like every
+ *   other colour on this surface.
+ */
+class BackstageBackButton final : public QToolButton {
+  public:
+    explicit BackstageBackButton(QWidget* parent)
+      : QToolButton(parent)
+    {
+        setObjectName(QStringLiteral("vnBackstageBack"));
+        setToolButtonStyle(Qt::ToolButtonIconOnly);
+        setIconSize(kRailIconSize);
+        setFixedSize(40, 40);
+        setCursor(Qt::PointingHandCursor);
+        setToolTip(QStringLiteral("返回 (Esc)"));
+        setStyleSheet(QStringLiteral("#vnBackstageBack {"
+                                     " border: none;"
+                                     " border-radius: 4px;"
+                                     " }"
+                                     "#vnBackstageBack:hover {"
+                                     " background-color: %1;"
+                                     " }"
+                                     "#vnBackstageBack:pressed {"
+                                     " background-color: %2;"
+                                     " }")
+                        .arg(QLatin1String(kRowHoverTint), QLatin1String(kRowPressedTint)));
+        refreshIcon();
+    }
+
+  protected:
+    void changeEvent(QEvent* event) override
+    {
+        if (event != nullptr
+            && (event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange)) {
+            refreshIcon();
+        }
+
+        QToolButton::changeEvent(event);
+    }
+
+  private:
+    void refreshIcon()
+    {
+        const qreal dpr = devicePixelRatioF();
+        QPixmap     pixmap(kRailIconSize * dpr);
+
+        pixmap.setDevicePixelRatio(dpr);
+        pixmap.fill(Qt::transparent);
+
+        QPainter painter(&pixmap);
+        QPen     pen(palette().color(QPalette::WindowText), 1.8);
+
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        // A shaft with a two-stroke head, drawn in the icon's logical 20x20 box.
+        painter.drawLine(QPointF(16.0, 10.0), QPointF(4.5, 10.0));
+        painter.drawLine(QPointF(9.5, 5.0), QPointF(4.5, 10.0));
+        painter.drawLine(QPointF(4.5, 10.0), QPointF(9.5, 15.0));
+
+        setIcon(QIcon(pixmap));
+    }
+};
 
 /**
  * @brief The Backstage's native window: a top-level tool window that follows the main window.
@@ -286,10 +416,10 @@ struct BackstagePage::Impl : public ControlData {
     BackstagePageRole     role   = BackstagePageRole::None;
     BackstagePagePolicy   policy = BackstagePagePolicy::None;
     std::vector<ItemEntry> items;
-    /// The page widget's root layout and the command column inside it; both are the page's own widgets.
+    /// The page widget's root layout and the scroll area around the command column; both are the page's own widgets.
     QVBoxLayout* page_layout  = nullptr;
-    QWidget*     items_column = nullptr;
-    /// The capped column the item buttons are appended to; null while the page has no command column.
+    QScrollArea* items_scroll = nullptr;
+    /// The command column's layout; null while the page has no command column.
     QVBoxLayout* items_layout = nullptr;
     /// The installed page body (a control the page shows instead of the command column), or null.
     Control* body = nullptr;
@@ -301,23 +431,46 @@ BackstagePage::BackstagePage()
     auto* page   = impl<QWidget>();
     auto* layout = new QVBoxLayout(page);
 
-    layout->setContentsMargins(20, 8, 32, 32);
+    // Same inset as the header: the first row's left edge sits under the page title.
+    layout->setContentsMargins(kPageInset, 24, kPageInset, 32);
     layout->setSpacing(0);
 
-    auto* column        = new QWidget(page);
+    // The command column scrolls: a host may contribute more entries than fit, and a clipped row is worse than a
+    // scrollbar. The viewport is transparent so the page keeps showing the content surface behind it.
+    auto* scroll = new QScrollArea(page);
+
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // The cap belongs to the scroll area, not to the column: that puts a scrollbar at the end of the list
+    // instead of at the far edge of a maximized window, where it no longer reads as belonging to the entries.
+    scroll->setMaximumWidth(kPageColumnWidth);
+    scroll->viewport()->setAutoFillBackground(false);
+    scroll->setStyleSheet(scrollBarStyles());
+
+    auto* canvas        = new QWidget();
+    auto* canvas_layout = new QVBoxLayout(canvas);
+    auto* column        = new QWidget(canvas);
     auto* column_layout = new QVBoxLayout(column);
 
-    column->setMaximumWidth(kPageColumnWidth);
+    canvas_layout->setContentsMargins(0, 0, 0, 0);
+    canvas_layout->setSpacing(0);
+    canvas_layout->addWidget(column, 0, Qt::AlignTop);
+    canvas_layout->addStretch(1);
+
     column->setStyleSheet(itemStyles());
     column_layout->setContentsMargins(0, 0, 0, 0);
     column_layout->setSpacing(2);
     column_layout->addStretch(1); // item buttons are inserted before the stretch
 
-    layout->addWidget(column, 0, Qt::AlignTop);
-    layout->addStretch(1);
+    scroll->setWidget(canvas);
+    // QScrollArea gives the widget it scrolls its own background: clear it again so the page keeps showing the
+    // content surface instead of a grey block under the entries.
+    canvas->setAutoFillBackground(false);
+    layout->addWidget(scroll, 1);
 
     dptr()->page_layout  = layout;
-    dptr()->items_column = column;
+    dptr()->items_scroll = scroll;
     dptr()->items_layout = column_layout;
 }
 
@@ -417,8 +570,15 @@ void BackstagePage::addItem(RibbonAction* item)
     button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     button->setAutoRaise(true);
     button->setIconSize(QSize(20, 20));
-    button->setMinimumHeight(36);
+    button->setFixedHeight(kNavRowHeight);
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     button->setCursor(Qt::PointingHandCursor);
+
+    // The icon slot belongs to the row, not to the action: an entry without an icon keeps the text column
+    // of the entries that have one (the same rule the navigation rows follow).
+    if (item->icon().isNull()) {
+        button->setIcon(blankIconSlot(kRailIconSize));
+    }
 
     // The stretch stays last, so appended items keep their order.
     layout->insertWidget(layout->count() - 1, button);
@@ -500,17 +660,17 @@ bool BackstagePage::setBody(Control* body)
         data->body = nullptr;
     }
 
-    // The command column and its trailing stretch step aside: a body is the whole page area. Anything else in the
-    // layout would be a previous body, and that was handed back above.
+    // The command column (with its scroll area) and the trailing stretch step aside: a body is the whole page
+    // area. Anything else in the layout would be a previous body, and that was handed back above.
     while (QLayoutItem* item = data->page_layout->takeAt(0)) {
         QWidget* child = item->widget();
         delete item;
-        if (child != nullptr && child == data->items_column) {
-            delete child; // the page built it; nothing outside refers to it
+        if (child != nullptr && child == data->items_scroll) {
+            delete child; // the scroll area owns the column; nothing outside refers to either
         }
     }
 
-    data->items_column = nullptr;
+    data->items_scroll = nullptr;
     data->items_layout = nullptr;
 
     data->page_layout->addWidget(widget, 1);
@@ -756,23 +916,18 @@ Backstage::Backstage(MainWindow* window)
                                        " }"));
 
     auto* rail_layout = new QVBoxLayout(rail);
-    rail_layout->setContentsMargins(8, 8, 8, 8);
-    rail_layout->setSpacing(6);
+    rail_layout->setContentsMargins(8, 12, 8, 12);
+    rail_layout->setSpacing(10);
 
-    auto* back = new QToolButton(rail);
-    back->setText(QStringLiteral("\u2190"));
-    back->setAutoRaise(true);
-    back->setFixedSize(36, 36);
-    back->setCursor(Qt::PointingHandCursor);
-    back->setToolTip(QStringLiteral("返回 (Esc)"));
+    auto* back = new BackstageBackButton(rail);
 
     auto* nav = new QListWidget(rail);
-    nav->setIconSize(QSize(20, 20));
+    nav->setIconSize(kRailIconSize);
     nav->setSpacing(2);
     nav->setFrameShape(QFrame::NoFrame);
     nav->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    nav->setStyleSheet(navStyles());
+    nav->setStyleSheet(navStyles() + scrollBarStyles());
 
     // One point larger than the content text: in a Backstage the rail is a signpost, not a list of details.
     auto nav_font = nav->font();
@@ -795,11 +950,14 @@ Backstage::Backstage(MainWindow* window)
 
     auto* header        = new QWidget(content);
     auto* header_layout = new QHBoxLayout(header);
-    header_layout->setContentsMargins(32, 22, 32, 16);
+    header_layout->setContentsMargins(kPageInset, 24, kPageInset, 16);
     header_layout->setSpacing(8);
 
     auto* title = new QLabel(header);
-    auto  font  = title->font();
+
+    title->setObjectName(QStringLiteral("vnBackstageTitle"));
+
+    auto  font = title->font();
     font.setPointSizeF(font.pointSizeF() + 9.0);
     font.setWeight(QFont::DemiBold);
     title->setFont(font);
@@ -944,7 +1102,7 @@ BackstagePlaceResult Backstage::addPage(BackstagePage* page, const BackstagePlac
         item->setIcon(icon.value());
     }
     else {
-        item->setIcon(blankNavIcon(data->nav->iconSize()));
+        item->setIcon(blankIconSlot(data->nav->iconSize()));
     }
 
     data->stack->addWidget(page_widget);

@@ -79,6 +79,14 @@
   `NeedsDocument`/`NeedsView` 对派发目标的要求，tooltip 跟描述，勾选态用 `setCheckedProvider()`；
   实现只有一处 `src/gui/CommandBinding.hpp`。`setEnabled()` 对绑定条目只是暂时效果。
 - `CommandManager::commandFlags()` / `commandDescription()` 读注册时缓存，别名照执行入口解析。
+- 行高别交给样式表：`min-height` 只约束内容盒，加 1 px 下边线会把行变高（Backstage 条目行 44 px ≠
+  导航行 40 px）；尺寸用 `setFixedHeight()`，样式表只管颜色与内边距。
+- `border-*-color: palette(...)` 不一定解析成想要的灰度（`palette(midlight)` 在本机是白色，线画了看不见）；
+  分隔线用中性半透明灰 `rgba(127,127,127,90)`，明/暗底都成立。
+- `palette(midlight)` 在默认浅色调色板里就是 `#ffffff`（与 `Base` 同色），拿它当 hover 底色等于没有反馈；
+  hover/按下用 `rgba(127,127,127,40)` / `rgba(127,127,127,70)`。
+- `QScrollArea::setWidget()` 会给被滚动的控件打开 `autoFillBackground`（画成 `Window` 色的一块）；要在
+  setWidget 之后再 `setAutoFillBackground(false)`，否则透明页面上会出现一块灰底。
 
 ## 公共面
 

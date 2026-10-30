@@ -71,9 +71,9 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 
 ### 2.7 外观：导航轨 + 内容面（G4、G12、G6）
 
-- 是什么：240 px 导航轨（顶部返回箭头 + 页面行）与 `palette(base)` 内容面（大号标题、1 px 分隔线、封顶 760 px 的条目列）；颜色一律用 `palette(...)` 角色，跟随明/暗主题（同 `detail::blendIntoSurface()`）。
+- 是什么：240 px 导航轨（顶部返回按钮 + 页面行）与 `palette(base)` 内容面（大号标题、1 px 分隔线、封顶 760 px 的条目列）；颜色一律用 `palette(...)` 角色，跟随明/暗主题（同 `detail::blendIntoSurface()`）。返回箭头按 `palette(window-text)` 现画：平台 `SP_ArrowBack` 是拟物位图，文本字形在带边框的样式表按钮里不居中。
 - 为什么：默认控件平铺读起来像一个空的安全对话框，而 Office Backstage / VS Code 设置页都靠“一列导航 + 一块内容面”和两级字号建立层次；返回箭头属于“退出这一层”而非“这一页”，所以放导航轨顶部；条目列封顶是因为一行拉满 4K 后不再是一条条目。
-- 边界：图标位属于行布局而非页面——没有图标的页也用透明图标占住同样大小的位置，否则该行标题会比相邻页左移（`QListWidgetItem` 只对有非空图标的行保留图标列）。
+- 边界（C15）：版式按 8 px 网格——导航行与条目行同为 40 px、2 px 间距、12 px 内边距、20 px 图标位，标题与条目列共用 32 px 左缩进，页眉上下 24 / 16 px，条目列距分隔线 24 px，行间一条 1 px 半透明细线；悬停/按下用中性半透明灰，不依赖某个调色板角色恰好不是白色；图标位属于行布局，无图标的行也用透明图标占位，否则该行文字比相邻行左移。条目列放在封顶 760 px 的滚动区里（细滚动条，纵向），滚动条就落在列表末尾而不是窗口边缘；body 页不套滚动区，滚动归 body 自己。
 
 ### 2.8 入口只有一个开关：应用按钮的可见性（G1、G8）
 
@@ -105,6 +105,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 | F10 | 条目显隐 | `setItemVisible/isItemVisible`；按钮不参与布局 | 已落地 |
 | F12 | 页面放置 | `BackstagePlacement` / `addPage(page, placement)` / `findPage(role)`；终止区与角色序 | 已落地 |
 | F13 | 贡献者身份与成组撤销 | `setProvider` / `removePages(provider)`；插件卸载/重载时撤自己的页 | 已落地 |
+| F14 | 条目列滚动 | 条目超过一页时页面列可滚动（细滚动条）；body 页不套滚动区 | 已落地 |
 
 ### 3.1.1 F1–F6 基础能力（行为细节以头文件为准，约束见 §5.1 的 C1–C6）
 
@@ -183,6 +184,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 - C12：页面顺序由 placement 解析，不等于添加/加载顺序；终止页始终在末尾，导航行与内容栈索引随逻辑顺序同步。
 - C13：`removePages(provider)` 只撤匹配的页；被撤页的 widget 从栈里摘下并交回页面（可重新加入），空 provider 不匹配。
 - C14：一页只有一块主体——命令列或 `setBody()` 装的控件；两者不共存，换 body 时旧 body 交回它的主人。
+- C15：版式是网格——导航行与条目行同为 40 px 高、2 px 间距、20 px 图标位；页面标题与条目列共用 32 px 左缩进。改任何一个尺寸都要同时看另一列，否则两列节奏对不上。
 
 ### 5.2 要求（R#）
 
@@ -257,14 +259,14 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 | T10 | 按 provider 整组撤除、当前页接替、撤掉的页可重新加入 | `GuiTest.Backstage_PagesAreRemovedByProvider` |
 | T11 | 标准目录：插件页按 role 锚定到终止的帮助页之前 | `GuiTest.Backstage_StandardRoleCatalog` |
 | T12 | 页面主体：与条目互斥、换 body 交回旧的、null 不算 | `GuiTest.BackstagePage_BodyReplacesTheCommandColumn` |
-| T13 | 导航行一律留出图标位（无图标页标题不移位） | `GuiTest.Backstage_NavRowsReserveTheIconColumn` |
+| T13 | 版式：导航行留图标位、条目列与标题同左缩进、条目行 40 px | `GuiTest.Backstage_NavRowsReserveTheIconColumn`、`GuiTest.Backstage_PageRowsAlignWithTheTitle` |
+| T15 | 条目超过一屏时可滚动；body 页不套滚动区 | `GuiTest.Backstage_ManyItemsScroll` |
 
 ## 9. 状态与演进
 
 ### 9.1 当前状态
 
-F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell 用两个页面（插件、帮助）演示命令条目，两页标了 role（Plugins/Help，帮助页 `Terminal`）与 provider（`app_shell`），插件可按 role 锚定到它们前面；F7 第一个真实消费者是同一外壳的「关于」页（`setBody(AboutPanel)`，见 `appfw-app-info.md`）；条目是
-`RibbonAction`，所以启用态/tooltip/勾选态跟着命令走（见 `appfw-command-binding.md`），页面本身不再写一份。
+F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell 用两个页面（插件、帮助）演示命令条目，两页标了 role（Plugins/Help，帮助页 `Terminal`）与 provider（`app_shell`），插件可按 role 锚定到它们前面；F7 第一个真实消费者是同一外壳的「关于」页（`setBody(AboutPanel)`，见 `appfw-app-info.md`）；条目是 `RibbonAction`，所以启用态/tooltip/勾选态跟着命令走（见 `appfw-command-binding.md`），页面本身不再写一份。
 
 ### 9.2 已知缺口 / 待办
 
@@ -276,7 +278,6 @@ F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell �
 - F12 只加新类型 `BackstagePlacement`/`BackstagePlaceResult` 与页面上的 `setRole/setPolicy`、`Backstage::addPage(page, placement)`/`findPage(role)`；`addPage(page)` 保留为 append，null 页仍返回 false（放置重载才抛，同 `RibbonTab::addGroup`）。
 - F13 加 `setProvider/provider` 与 `removePages(provider)`；`app_shell` 的两页标了 `u8"app_shell"` 并在 `unload()` 里撤除。
 - `RibbonPlacement::Where` 变为 `PlacementWhere` 的别名（源兼容，枚举值不变）；两套放置共用这个枚举。
-- F11 已否决（D6）：提不提供入口只用 `RibbonBar::setApplicationButtonVisible()`；`Backstage` 与 `MainWindow` 的公开签名未变。
 - 旧 `appendApplicationMenu()` 保持；不使用 `setBackstage()` 的宿主行为不变。
 - 迁移：把 `appendApplicationMenu` 的条目改成 `BackstagePage::addItem`，调用 `MainWindow::setBackstage()`。
 

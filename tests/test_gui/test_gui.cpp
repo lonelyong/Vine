@@ -33,6 +33,8 @@
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QScreen>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -1347,6 +1349,76 @@ TEST_F(GuiTest, Backstage_NavRowsReserveTheIconColumn)
         EXPECT_FALSE(nav->item(row)->icon().isNull()) << "导航行缺少图标位: row " << row;
     }
     EXPECT_EQ(nav->item(1)->icon().availableSizes().first(), nav->iconSize());
+}
+
+// 版式：页面条目列与标题共用同一条左边线，条目行与导航行同一节奏（40 px）。
+TEST_F(GuiTest, Backstage_PageRowsAlignWithTheTitle)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* page = new guifw::BackstagePage();
+    page->setId(u8"test.backstage.layout");
+    page->setTitle(u8"Layout");
+
+    auto* item = new guifw::RibbonAction();
+    item->setText(u8"An item");
+    page->addItem(item);
+
+    ASSERT_TRUE(backstage.addPage(page));
+    backstage.open();
+    QCoreApplication::processEvents();
+
+    auto* window = backstage.impl<QWidget>();
+    ASSERT_NE(window, nullptr);
+
+    auto* title = window->findChild<QLabel*>(QStringLiteral("vnBackstageTitle"));
+    auto* row   = page->impl<QWidget>()->findChild<QToolButton*>();
+
+    ASSERT_NE(title, nullptr) << "页面标题";
+    ASSERT_NE(row, nullptr) << "条目行";
+
+    // 标题与条目列各在自己的父控件里，所以用窗口坐标比较它们真正画在哪一列。
+    EXPECT_EQ(row->mapTo(window, QPoint(0, 0)).x(), title->mapTo(window, QPoint(0, 0)).x())
+      << "条目列的左边缘要落在标题下面";
+    EXPECT_EQ(row->height(), 40) << "条目行与导航行同一行高";
+
+    backstage.close();
+}
+
+// 条目超过一屏时页面列可滚动；body 页不套滚动区（body 自己决定要不要滚）。
+TEST_F(GuiTest, Backstage_ManyItemsScroll)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* page = new guifw::BackstagePage();
+    page->setId(u8"test.backstage.scroll");
+    page->setTitle(u8"Scroll");
+
+    for (int i = 0; i < 40; ++i) {
+        auto* item = new guifw::RibbonAction();
+        item->setText(u8"An item");
+        page->addItem(item);
+    }
+
+    ASSERT_TRUE(backstage.addPage(page));
+    backstage.open();
+    QCoreApplication::processEvents();
+
+    auto* scroll = page->impl<QWidget>()->findChild<QScrollArea*>();
+    ASSERT_NE(scroll, nullptr) << "条目列的滚动区";
+    ASSERT_NE(scroll->verticalScrollBar(), nullptr);
+    EXPECT_GT(scroll->verticalScrollBar()->maximum(), 0) << "条目超过一屏时应可滚动";
+    EXPECT_EQ(scroll->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff) << "条目行只在纵向滚动";
+
+    // body 页不套滚动区：body 是一整块控件，滚动与否归它自己。
+    auto* body_page = new guifw::BackstagePage();
+    body_page->setTitle(u8"Body");
+
+    auto* body = new guifw::Control(new QLabel(QStringLiteral("body")));
+    ASSERT_TRUE(body_page->setBody(body));
+    EXPECT_EQ(body_page->impl<QWidget>()->findChild<QScrollArea*>(), nullptr) << "body 页不套滚动区";
+
+    backstage.close();
 }
 
 TEST_F(GuiTest, Backstage_ApplicationButtonOpensThePage)
