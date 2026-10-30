@@ -11,7 +11,11 @@
 （ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
 一 bug 一文件。历史归 git，不放进 `design/`。
 
-## design/ —— 现行设计文档（31）
+**目录分工**：`src/<层>` 放**库**；`src/apps/<产品>` 放**要安装的应用**（`src/apps/vine` → `Vine.exe`）；
+`tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
+一个模块自己的进程半边（如 `src/base/crash/handler` 的 `vnCrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
+
+## design/ —— 现行设计文档（32）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -27,7 +31,7 @@
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 - `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
 
-**appfw（14）**
+**appfw（15）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
 - `appfw-startup-splash.md` —— 启动框与启动进度。
 - `appfw-render-surface.md` —— 渲染表面生命周期与平台回退。
@@ -42,9 +46,11 @@
 - `appfw-ribbon.md` —— Ribbon 身份/角色/放置：id、role、placement、终止区与顺序解析。
 - `appfw-command-binding.md` —— 命令条目的显示状态：enabled/目标要求/描述 tooltip/勾选 provider。
 - `appfw-backstage.md` —— 应用按钮事件、菜单/Backstage 二选一、顶层覆盖窗口与页面导航。
+- `appfw-app-info.md` —— 应用身份与应用信息：`AppInfo`/`AppConfig::info`、`Application::appInfo()`、关于面板与对话框。
 
-**base 与其他（8）**
+**base 与其他（9）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
+- `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
 - `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。
@@ -77,14 +83,22 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## backlog/ —— 开放待办（4）
+## research/ —— 调研与提案（0）
+
+非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
+
+空。
+
+## backlog/ —— 开放待办（6）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
 
 - `graphics.md` —— graphics / vsg 的开放待办（内容、后端资源、平台、对象模型）。
 - `appfw-startup.md` —— 启动流程剩余项（Windows 半边）。
 - `appfw-ribbon.md` —— Ribbon 的开放项（order、item id、自定义布局、上下文 tab、manifest）。
+- `appfw-app-info.md` —— 应用信息的开放项（构建期版本、清单与第三方致谢）。
 - `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
+- `base-crash.md` —— 崩溃报告的开放项（上次崩溃提示、terminate、栈保证、只读目录、Linux、上报触发条件）。
 
 ## memory/ —— 模块要点（8）
 

@@ -6,6 +6,8 @@
 
 #include <vine/String.hpp>
 
+#include "AppInfo.hpp"
+
 VN_APPFW_NS_BEGIN
 
 /**
@@ -83,6 +85,11 @@ struct AppConfig {
 
     /// Startup frame shown while the application boots; see SplashConfig.
     SplashConfig splash;
+
+    ///
+    /// What the application is: name/version/description/copyright/licence/links/credits. Read back through
+    /// Application::appInfo() by every "about" surface; an empty name falls back to name above.
+    AppInfo info;
 };
 
 VN_APPFW_NS_END

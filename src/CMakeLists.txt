@@ -26,8 +26,9 @@ add_subdirectory(loaders)
 add_subdirectory(viz)
 add_subdirectory(fw)
 add_subdirectory(robotics)
-add_subdirectory(app)
 add_subdirectory(plugins)
+# Products come last: every app links the libraries above (Vine.exe links Appfw, Di, Logging, Crash).
+add_subdirectory(apps)
 
 file(GLOB VN_GLOBAL_HEADER_FILES LIST_DIRECTORIES false ${CMAKE_SOURCE_DIR}/include/vine/*.h)
 

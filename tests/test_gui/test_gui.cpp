@@ -58,6 +58,8 @@
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/appfw/UserIO.hpp>
 #include <vine/appfw/gui/Backstage.hpp>
+#include <vine/appfw/gui/AboutDialog.hpp>
+#include <vine/appfw/gui/AboutPanel.hpp>
 #include <vine/appfw/gui/CentralDocumentHost.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/ConfigWindow.hpp>
@@ -1702,6 +1704,79 @@ TEST_F(GuiTest, Backstage_PagesAreRemovedByProvider)
     EXPECT_EQ(backstage.numPages(), 3);
     EXPECT_EQ(backstage.pageAt(2), first);
     EXPECT_EQ(backstage.findPage(u8"test.backstage.a1"), first);
+}
+
+// “关于”面板是渲染器：内容来自 AppInfo，身份/构建事实/链接/致谢都由它排出来。
+TEST_F(GuiTest, AboutPanel_ShowsTheApplicationInfo)
+{
+    vn::appfw::AppInfo info;
+    info.name        = u8"Vine";
+    info.version     = u8"1.0.0";
+    info.description = u8"模块化应用框架";
+    info.copyright   = u8"© 2026 Vine";
+    info.license     = u8"MIT";
+    info.build_facts = { { u8"Qt", u8"6.7.2" } };
+    info.links       = { { u8"主页", u8"https://example.invalid/home" } };
+    info.credits     = u8"spdlog\ngtest";
+
+    guifw::AboutPanel panel;
+    panel.setAppInfo(info);
+
+    EXPECT_TRUE(panel.appInfo().name == u8"Vine");
+
+    auto* widget = panel.impl<QWidget>();
+    ASSERT_NE(widget, nullptr);
+
+    auto labelTexts = [widget] {
+        QStringList texts;
+        for (auto* label : widget->findChildren<QLabel*>()) {
+            texts << label->text();
+        }
+        return texts;
+    };
+
+    const QStringList shown = labelTexts();
+    EXPECT_TRUE(shown.contains(QStringLiteral("Vine")));
+    EXPECT_TRUE(shown.contains(QStringLiteral("1.0.0")));
+    EXPECT_TRUE(shown.contains(QStringLiteral("6.7.2"))) << "构建事实行";
+    EXPECT_TRUE(shown.contains(QStringLiteral("spdlog\ngtest"))) << "致谢块";
+    EXPECT_TRUE(shown.contains(QStringLiteral("© 2026 Vine · MIT"))) << "版权行带许可证";
+    EXPECT_TRUE(shown.join(QLatin1Char('\n')).contains(QStringLiteral("example.invalid"))) << "链接行";
+
+    // 换一份 info：上一份的细节不能留在屏幕上。
+    vn::appfw::AppInfo other;
+    other.name = u8"Other";
+    panel.setAppInfo(other);
+
+    const QStringList after = labelTexts();
+    EXPECT_TRUE(after.contains(QStringLiteral("Other")));
+    EXPECT_FALSE(after.join(QLatin1Char('\n')).contains(QStringLiteral("example.invalid")));
+    EXPECT_FALSE(after.contains(QStringLiteral("6.7.2")));
+}
+
+// 对话框只是面板的薄壳：默认显示进程的应用信息（名字回落到 AppConfig::name）。
+TEST_F(GuiTest, AboutDialog_ShowsTheApplicationInfo)
+{
+    guifw::AboutDialog dialog;
+    EXPECT_TRUE(dialog.appInfo().name == u8"test_gui") << "默认读 Application::appInfo()";
+
+    vn::appfw::AppInfo info;
+    info.name    = u8"Demo";
+    info.version = u8"2.1";
+    dialog.setAppInfo(info);
+    EXPECT_TRUE(dialog.appInfo().name == u8"Demo");
+
+    auto* widget = dialog.impl<QWidget>();
+    ASSERT_NE(widget, nullptr);
+
+    bool name_shown    = false;
+    bool version_shown = false;
+    for (auto* label : widget->findChildren<QLabel*>()) {
+        name_shown    = name_shown || label->text() == QStringLiteral("Demo");
+        version_shown = version_shown || label->text() == QStringLiteral("2.1");
+    }
+    EXPECT_TRUE(name_shown);
+    EXPECT_TRUE(version_shown);
 }
 
 // 条目可以按动作隐藏/恢复：序号稳定，动作与命令都还在。

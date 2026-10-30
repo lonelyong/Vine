@@ -13,9 +13,9 @@ if(MSVC)
     target_compile_options(${APP_TARGET_NAME} PRIVATE /utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus)
 endif()
 
-set_target_properties(${APP_TARGET_NAME} PROPERTIES WIN32_EXECUTABLE TRUE MACOSX_BUNDLE TRUE FOLDER vine/app)
+set_target_properties(${APP_TARGET_NAME} PROPERTIES WIN32_EXECUTABLE TRUE MACOSX_BUNDLE TRUE FOLDER vine/apps)
 
-target_link_libraries(${APP_TARGET_NAME} PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets vn::Appfw vn::Di vn::Global vn::Logging)
+target_link_libraries(${APP_TARGET_NAME} PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets vn::Appfw vn::Di vn::Global vn::Logging vn::Crash)
 
 install(TARGETS ${APP_TARGET_NAME}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

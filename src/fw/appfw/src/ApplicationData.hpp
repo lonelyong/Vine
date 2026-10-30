@@ -5,6 +5,7 @@
 
 #include <QElapsedTimer>
 
+#include <vine/appfw/AppInfo.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
@@ -65,6 +66,9 @@ struct ApplicationData {
 
     /// Whether the framework loads the plugins during the startup phase (AppConfig::load_plugins).
     bool load_plugins = true;
+
+    /// What the application is (AppConfig::info), with an empty name resolved to AppConfig::name.
+    AppInfo app_info;
 
     /// True while run() is inside the main loop. The teardown belongs after the loop has
     /// stopped, and shutdown() reports a call that arrives before that instead of trusting

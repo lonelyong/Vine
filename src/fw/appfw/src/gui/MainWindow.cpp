@@ -90,7 +90,15 @@ MainWindow::MainWindow()
     dptr()->dock_panel_mgr = std::make_unique<DockPanelManager>();
     dptr()->dock_panel_mgr->setWindow(this);
 
-    impl<itype>()->setWindowTitle("Vine");
+    // The title is the application's, not the framework's: it is the name the host declared in AppConfig, which
+    // Application::appInfo() carries, so the title bar and the about content cannot disagree. A window built without
+    // an application keeps the framework name.
+    if (const auto* application = Application::current(); application != nullptr && !application->appInfo().name.empty()) {
+        impl<itype>()->setWindowTitle(QString::fromStdU16String(application->appInfo().name.toUtf16()));
+    }
+    else {
+        impl<itype>()->setWindowTitle(QStringLiteral("Vine"));
+    }
     impl<itype>()->setMinimumSize(QSize(800, 600));
     // The opening size is STATED, not inherited from the dock layout. Without an explicit size Qt sizes
     // the first show from the layout's size hint, which follows the dock contents: a start whose console

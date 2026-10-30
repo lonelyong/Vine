@@ -261,7 +261,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 
 ### 9.1 当前状态
 
-F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell 用两个页面（插件、帮助）演示命令条目，两页标了 role（Plugins/Help，帮助页 `Terminal`）与 provider（`app_shell`），插件可按 role 锚定到它们前面；条目是
+F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell 用两个页面（插件、帮助）演示命令条目，两页标了 role（Plugins/Help，帮助页 `Terminal`）与 provider（`app_shell`），插件可按 role 锚定到它们前面；F7 第一个真实消费者是同一外壳的「关于」页（`setBody(AboutPanel)`，见 `appfw-app-info.md`）；条目是
 `RibbonAction`，所以启用态/tooltip/勾选态跟着命令走（见 `appfw-command-binding.md`），页面本身不再写一份。
 
 ### 9.2 已知缺口 / 待办

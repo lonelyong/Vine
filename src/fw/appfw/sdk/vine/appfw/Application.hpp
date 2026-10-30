@@ -15,6 +15,8 @@
 
 #include <vine/appfw/AppConfig.hpp>
 
+#include "AppInfo.hpp"
+
 VN_APPFW_NS_BEGIN
 
 class CommandManager;
@@ -221,6 +223,18 @@ class VN_APPFW_API Application : public Object {
      * @return The plugin manager.
      */
     raw_ptr<PluginManager> pluginManager() const;
+
+    /**
+     * @brief Returns what the application is: name, version, description, copyright, links, credits.
+     *
+     * @details
+     * - The value comes from AppConfig::info; an empty name there is resolved to AppConfig::name, so the about text and
+     *   the process identity cannot disagree.
+     * - Every "about" surface reads this one copy: AboutPanel/AboutDialog, and whatever the host shows as its title.
+     *
+     * @return The application info; it lives as long as the Application.
+     */
+    const AppInfo& appInfo() const;
 
     /**
      * @brief Returns the application's service manager.

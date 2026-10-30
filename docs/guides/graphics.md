@@ -14,7 +14,7 @@ VulkanSceneGraph 落到 Vulkan）。
 
 ```mermaid
 graph TB
-    Host["宿主 / 应用<br/>（src/app/main.cpp、app_shell 插件）"]
+    Host["宿主 / 应用<br/>（src/apps/vine/src/main.cpp、app_shell 插件）"]
     UI["应用框架<br/>（appfw RenderControl、graphics SceneView）"]
     Engine["RenderEngine<br/>pass · target · 接线校验 · 诊断"]
     Scene["场景模型<br/>Node / Group / MatrixTransform / PositionAttitudeTransform / AutoTransform / StateNode / Geometry"]

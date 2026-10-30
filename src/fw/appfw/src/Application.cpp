@@ -152,6 +152,12 @@ Application::Application(ApplicationData* data, const AppConfig& config, int arg
 
     dptr()->load_plugins = config.load_plugins;
 
+    // The about text and the process identity are one fact: an unnamed AppInfo takes the application name.
+    dptr()->app_info = config.info;
+    if (dptr()->app_info.name.empty()) {
+        dptr()->app_info.name = config.name.empty() ? String::fromUtf8(kFallbackAppName) : config.name;
+    }
+
     dptr()->plugin_manager   = std::make_unique<PluginManager>();
     dptr()->service_manager  = std::make_unique<ServiceManager>();
     dptr()->command_manager  = std::make_unique<CommandManager>(this);
@@ -537,6 +543,11 @@ raw_ptr<CommandManager> Application::commandManager() const
 raw_ptr<PluginManager> Application::pluginManager() const
 {
     return dptr()->plugin_manager.get();
+}
+
+const AppInfo& Application::appInfo() const
+{
+    return dptr()->app_info;
 }
 
 raw_ptr<ServiceManager> Application::serviceManager() const

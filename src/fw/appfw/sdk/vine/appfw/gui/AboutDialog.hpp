@@ -1,39 +1,50 @@
 ﻿#pragma once
 
-#include <vine/appfw/gui/Window.hpp>
+#include <vine/appfw/AppInfo.hpp>
+
+#include "Gui.hpp"
+#include "Window.hpp"
 
 VN_APPFWGUI_NS_BEGIN
 
 /**
- * @brief About dialog skeleton.
+ * @brief Non-modal-capable dialog that shows the application's about content.
  *
- * Shows an application name, version, description and copyright notice. The
- * framework only provides the frame and placeholder text; each application (or
- * plugin) sets its own content through the setters before showing it.
+ * @details
+ * - The dialog is a shell around AboutPanel: name, version, description, copyright, build facts, links and credits all
+ *   come from one AppInfo, so the dialog and a Backstage page showing the same panel cannot disagree.
+ * - By default it shows Application::appInfo(), which is what the host filled while building the process; a host that
+ *   wants a second identity calls setAppInfo() before exec()/show().
+ *
+ * @note The dialog owns the panel it builds; there is no per-field setter, because the content belongs to the
+ *   application (AppConfig::info), not to the dialog.
  */
 class VN_APPFW_API AboutDialog : public Window {
     VN_OBJECT_META_DECL;
 
   public:
+    /**
+     * @brief Creates the dialog showing Application::appInfo().
+     */
     AboutDialog();
     ~AboutDialog() override;
 
   public:
-    void   setAppName(const String& name);
-    String appName() const;
+    /**
+     * @brief Shows this application info instead of the process-wide one.
+     *
+     * @param info Info to render; it is copied into the dialog's panel.
+     */
+    void setAppInfo(const AppInfo& info);
 
-    void   setVersion(const String& version);
-    String version() const;
-
-    void   setDescription(const String& description);
-    String description() const;
-
-    void   setCopyright(const String& copyright);
-    String copyright() const;
+    /**
+     * @brief Returns the info the dialog currently shows.
+     *
+     * @return The rendered info, including the resolved name.
+     */
+    const AppInfo& appInfo() const;
 
   private:
-    void applyContent();
-
     struct Impl;
     Impl*       dptr();
     const Impl* dptr() const;

@@ -2,10 +2,15 @@
 
 #include <cstring>
 #include <memory>
+#include <string>
+
+#include <QtGlobal>
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/DocumentManager.hpp>
+#include <vine/appfw/PluginManager.hpp>
+#include <vine/appfw/gui/AboutPanel.hpp>
 #include <vine/appfw/gui/Backstage.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
@@ -129,6 +134,17 @@ void buildAppShellRibbon(gui::MainWindow* wnd)
     addBackstageCommand(help_page, u8"文档管理器", u8":/icons/show_documents.svg", u8"show_document_types");
     addBackstageCommand(help_page, u8"关于", u8":/icons/about.svg", u8"about");
     backstage->addPage(help_page);
+
+    // “关于”是一块内容页（body）：内容属于应用（AppConfig::info），面板只负责排版。
+    auto* about_page = new gui::BackstagePage();
+    about_page->setId(u8"vine.backstage.about");
+    about_page->setTitle(u8"关于");
+    about_page->setRole(gui::BackstagePageRole::About);
+    about_page->setProvider(u8"app_shell");
+    backstage->addPage(about_page);
+
+    // 面板由页的 widget 持有，包装对象要活得比它久：外壳把它的生命期交给进程（与上面那些 RibbonAction 一致）。
+    about_page->setBody(new gui::AboutPanel());
 
     wnd->setBackstage(backstage);
 }

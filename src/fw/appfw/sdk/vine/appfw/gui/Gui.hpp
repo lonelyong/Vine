@@ -121,6 +121,7 @@ enum class BackstagePageRole : std::uint16_t
     Help     = 500,
     Account  = 800,
     Options  = 900,
+    About    = 950,
     Close    = 1000,
     UserRole = 0x8000,
 };
