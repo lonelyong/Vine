@@ -371,6 +371,12 @@ void DockingPaneTabbedContainer::paintEvent(QPaintEvent*)
 
     QPainter p(this);
 
+    // Header background: this override owns the whole paint (border + tab strip), so the fill that
+    // DockingPaneContainer::paintEvent does for a single pane never runs here. Without it a tab group
+    // keeps the inactive header colour while it holds the focus - the one cue that says which pane is active.
+    p.fillRect(m_headerWidget->geometry(),
+               m_isActive ? DockingPaneTheme::activeHeaderColor() : DockingPaneTheme::inactiveHeaderColor());
+
     QPen pen(DockingPaneTheme::borderColor());
 
     calculateButtonsRectangles();

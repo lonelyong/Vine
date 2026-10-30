@@ -199,6 +199,17 @@
 - 修复：在 `deletePane(this)` 前补 `m_flyoutWidget->endDrag(); m_flyoutWidget = nullptr;`，与 `isEmpty` 分支一致（管理器经 `flyoutFocusLost` 清理自己的指针）。
 - 用例：`ClosingATabFromPinnedFlyoutLeavesThePaneRestorable` 中断言 `Flyout(manager) == nullptr`。
 
+## 十、第六轮：Tab 组标题栏不随激活变色（2026-10-30）
+
+### BUG-16 Tabbed 组的标题栏没有激活/未激活两种背景
+- 现象：面板单独停靠时，获得焦点后标题栏背景由 `Window` 变为 `Base`（能看出“这块被激活了”）；把两个面板并成 Tab 组后，组内标题栏始终是未激活色。
+- 根因：标题栏背景只在 `DockingPaneContainer::paintEvent()` 里画（`fillRect(m_headerWidget->geometry(), m_isActive ? activeHeaderColor() : inactiveHeaderColor())`）。
+  `DockingPaneTabbedContainer::paintEvent()` 整体重写了绘制（边框 + 底部 Tab 条），没有执行那一行；
+  于是 `m_isActive` 虽由 `onFocusChanged()` → `setActivePane()` 正确维护，却没有任何绘制路径用它上色。
+- 修复：`DockingPaneTabbedContainer::paintEvent()` 开头按同一规则填充 `m_headerWidget` 的矩形，与单窗格保持一致。
+- 用例：`GuiTest.DockPanel_TabGroupHeaderShowsTheActiveState`（把真实的 Tab 组渲染进 `QImage`，分别断言激活/未激活时标题栏底色等于
+  `DockingPaneTheme::activeHeaderColor()` / `inactiveHeaderColor()`；用 `QApplication::focusChanged` 驱动激活态，不依赖平台窗口激活；调色板里两色相同时跳过）。
+
 ### BUG-16 dockTab 的邻居不是面板容器时空指针崩溃
 
 - 现象：`dockPane(pane, dockTab, neighbour)` 的 neighbour 若是客户端面板/分隔器/浮动面板（都不是 `DockingPaneContainer`），会走到 `newContainer->addPane(nullptr)` ⇒ `child->clientWidget()` 解引用空指针。

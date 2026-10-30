@@ -23,6 +23,7 @@
 #include <QDoubleSpinBox>
 #include <QFile>
 #include <QIcon>
+#include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -74,6 +75,7 @@
 #include <vine/appfw/gui/RenderControl.hpp>
 
 #include <DockingPaneGeometry.h>
+#include <DockingPaneTheme.h>
 #include <vine/appfw/ConsoleProgressReporter.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
@@ -3410,6 +3412,75 @@ TEST_F(GuiTest, DockPanel_PinnedFlyoutIsAnchoredToDockArea)
     panelBottom->unpin();
     QCoreApplication::processEvents();
     EXPECT_FALSE(panelBottom->isPinned());
+}
+
+// ============================ 标题栏配色 ============================
+
+namespace
+{
+
+/// 把“焦点落到了谁身上”直接告诉库：Tab 组与标题栏都订阅 `QApplication::focusChanged`，
+/// 而用例不能依赖测试平台真的把窗口激活（offscreen / 远程桌面下这不可靠）。
+void sendFocusChange(QWidget* from, QWidget* to)
+{
+    QMetaObject::invokeMethod(qApp, "focusChanged", Qt::DirectConnection, Q_ARG(QWidget*, from), Q_ARG(QWidget*, to));
+}
+
+/// 按类名找库内部的 Tab 组容器（它的头文件不进测试目标，只认 QWidget）。
+QWidget* findTabbedGroup(QWidget* root)
+{
+    for (QWidget* w : root->findChildren<QWidget*>()) {
+        if (QString::fromLatin1(w->metaObject()->className()) == QLatin1String("DockingPaneTabbedContainer")) {
+            return w;
+        }
+    }
+
+    return nullptr;
+}
+
+} // namespace
+
+// Tab 组的标题栏也要随激活变色：组的 paintEvent 自己画边框与底部 Tab 条，
+// 基类画标题栏背景那一步不会替它执行 —— 漏掉这一步时，组内标题栏永远是“未激活”色。
+TEST_F(GuiTest, DockPanel_TabGroupHeaderShowsTheActiveState)
+{
+    if (DockingPaneTheme::activeHeaderColor() == DockingPaneTheme::inactiveHeaderColor()) {
+        GTEST_SKIP() << "当前调色板的 Base 与 Window 同色，无法区分激活态";
+    }
+
+    ASSERT_TRUE(panelBottom->isTabbed());
+    ASSERT_TRUE(panelBottom2->isTabbed());
+
+    QWidget* group = findTabbedGroup(wnd->impl<QWidget>());
+    ASSERT_NE(group, nullptr) << "Tab 组容器";
+
+    QWidget* header = group->findChild<QWidget*>(QStringLiteral("headerWidget"));
+    ASSERT_NE(header, nullptr) << "标题栏";
+
+    // 标题文字从 x=5 开始，边框在 x=0..1：x=3 一定是纯背景。
+    const QPoint probe(3, header->geometry().center().y());
+
+    const auto headerColour = [group, probe] {
+        QImage image(group->size(), QImage::Format_ARGB32);
+
+        image.fill(Qt::transparent);
+        group->render(&image);
+
+        return image.pixelColor(probe);
+    };
+
+    // 组内任意子控件拿到焦点 = 这一组是活动组（库自己的判定就是 isAncestorOf()）。
+    sendFocusChange(nullptr, header);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(headerColour(), DockingPaneTheme::activeHeaderColor());
+
+    // 焦点交给组外（主窗口）= 未激活。
+    sendFocusChange(header, wnd->impl<QWidget>());
+    QCoreApplication::processEvents();
+    EXPECT_EQ(headerColour(), DockingPaneTheme::inactiveHeaderColor());
+
+    // 把焦点状态还原成真实值，后面的用例不受影响。
+    sendFocusChange(wnd->impl<QWidget>(), QApplication::focusWidget());
 }
 
 // ============================ 浮窗几何 ============================
