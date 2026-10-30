@@ -399,7 +399,7 @@ bool installPlatform(const Config& config)
 
     const std::wstring log_path     = config.log_file.empty() ? exe_dir + app + L"_crash.log" : config.log_file.native();
     const std::wstring dump_path    = config.dump_file.empty() ? exe_dir + app + L"_crash.dmp" : config.dump_file.native();
-    const std::wstring handler_path = config.handler_exe.empty() ? exe_dir + L"vnCrashHandler.exe" : config.handler_exe.native();
+    const std::wstring handler_path = config.handler_exe.empty() ? exe_dir + L"CrashHandler.exe" : config.handler_exe.native();
 
     if (!copyWide(s_resolved.log_path, std::size(s_resolved.log_path), log_path)
         || !copyWide(s_resolved.dump_path, std::size(s_resolved.dump_path), dump_path)

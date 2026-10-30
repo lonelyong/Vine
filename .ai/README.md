@@ -13,7 +13,7 @@
 
 **目录分工**：`src/<层>` 放**库**；`src/apps/<产品>` 放**要安装的应用**（`src/apps/vine` → `Vine.exe`）；
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
-一个模块自己的进程半边（如 `src/base/crash/handler` 的 `vnCrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
+一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
 ## design/ —— 现行设计文档（32）
 
@@ -59,7 +59,7 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（17）
+## decisions/ —— 决策记录（ADR）（19）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
@@ -67,6 +67,8 @@
 - `ADR-2026-10-24-command-target.md` —— 命令的目标是视图（`DocumentView`），层可空、需求按命令声明；`RenderControl` 不做目标。
 - `ADR-2026-10-28-ribbon-roles-and-placement.md` —— Ribbon 用 role + id + 锚点放置，终止区是解析器不变量；不做全局序号与 item id。
 - `ADR-2026-10-28-backstage-overlay-window.md` —— Backstage 用顶层 Tool 窗口，不用 SARibbon 的子控件覆盖层（原生表面遮挡）。
+- `ADR-2026-10-30-crash-handler-x11-on-linux.md` —— Linux 的崩溃窗口用 Xlib + Xft 手画（系统库，不链 UI 工具包；取代同日的 Qt 版本）。
+- `ADR-2026-10-30-crash-handler-qt-on-linux.md` ——（已取代）Linux 的崩溃窗口用 Qt Widgets。
 - `ADR-2026-10-28-document-tabs-and-floating.md` —— 文档的 tab 在中央区，浮动是自已的顶层窗口（不进停靠树）。
 - `ADR-2026-10-28-central-area-shows-current-document.md` —— 中央区只显示当前文档，浮动的当前文档用说明页占位（一个 current、三处一致）。
 - `ADR-2026-10-24-command-target-no-window-query.md` —— 目标只走一条路：不留窗口级的"当前 3D 区"查询，视图的访问器叫 `renderControl()`（部分取代上一条的决定 4）。

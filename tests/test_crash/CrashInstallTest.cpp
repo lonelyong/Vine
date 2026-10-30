@@ -23,8 +23,8 @@ vn::crash::Config sampleConfig()
 TEST(CrashInstallTest, InstallArmsWhereThePlatformSupportsIt)
 {
     const bool installed = vn::crash::install(sampleConfig());
-#ifdef _WIN32
-    // Windows is the one platform with a hook today; the report model and its renderer are portable, the hook is not.
+#if defined(_WIN32) || defined(__linux__)
+    // Windows (SEH) and Linux (sigaction) both arm a hook; the report model and its renderer stay portable, the hook is not.
     EXPECT_TRUE(installed);
 #else
     EXPECT_FALSE(installed);

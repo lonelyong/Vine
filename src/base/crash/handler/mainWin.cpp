@@ -9,7 +9,7 @@
 
 #include <vine/crash/CrashHandler.hpp>
 
-#include "CrashWindow.hpp"
+#include "CrashWindowWin.hpp"
 #include "Symbolize.hpp"
 #include "Text.hpp"
 

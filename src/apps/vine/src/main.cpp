@@ -113,7 +113,7 @@ int main(int argc, char** argv)
 
     // 崩溃报告属于进程，不属于界面，所以它在 createGuiApplication() 之前装好：此后无论崩在 Qt 初始化、插件加载、
     // 启动阶段还是渲染循环里，留下的都是同一份报告。
-    // 路径全留空 = 都放在 exe 旁边（<app>_crash.log / <app>_crash.dmp / 同目录的 vnCrashHandler.exe），因此这里没有
+    // 路径全留空 = 都放在 exe 旁边（<app>_crash.log / <app>_crash.dmp / 同目录的 CrashHandler.exe），因此这里没有
     // 一行文件系统代码；报告头那一行只带应用身份，因为崩溃模块不认识本应用。
     {
         vn::crash::Config crash_config;

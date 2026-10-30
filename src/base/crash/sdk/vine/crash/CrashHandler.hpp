@@ -95,7 +95,7 @@ struct Report
  * @details
  * - Every empty path means "the module's default next to the executing file", so an application that wants the standard
  *   layout passes only @ref app_name and @ref context and touches no filesystem API of its own.
- * - The defaults are `<exe dir>/<app_name>_crash.log`, `<exe dir>/<app_name>_crash.dmp` and `<exe dir>/vnCrashHandler.exe`.
+ * - The defaults are `<exe dir>/<app_name>_crash.log`, `<exe dir>/<app_name>_crash.dmp` and `<exe dir>/CrashHandler.exe`.
  *
  * @note
  * - A cross-process child is only launched when the handler file exists at install time; the check is done there so the
@@ -108,7 +108,7 @@ struct Config
     std::vector<String>   context; ///< header lines written before the stack, e.g. "Vine 1.0.0 (Debug)"
     int                   max_frames{ static_cast<int>(Report::kMaxFrames) }; ///< truncated to [1, Report::kMaxFrames]
     std::filesystem::path dump_file; ///< empty = `<exe dir>/<app_name>_crash.dmp`
-    std::filesystem::path handler_exe; ///< empty = `<exe dir>/vnCrashHandler.exe`
+    std::filesystem::path handler_exe; ///< empty = `<exe dir>/CrashHandler.exe`
     String                mailto; ///< Recipient for the handler window's mail action; empty hides that button.
 };
 

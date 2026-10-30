@@ -12,6 +12,7 @@
 
 #pragma comment(lib, "dbghelp.lib")
 
+#include "ReportText.hpp"
 #include "Text.hpp"
 
 namespace handler {
@@ -28,19 +29,6 @@ constexpr std::uint16_t kPEMagic64{ 0x20B };
 
 /// @brief Distance added to a preferred base that another image already occupies, so two images never share a slot.
 constexpr std::uint64_t kRelocationStride{ 0x10000000000ULL };
-
-/**
- * @brief Formats an address the way the report file does.
- *
- * @param value Address to format.
- * @return `"0x"` followed by sixteen hex digits.
- */
-std::string hex(std::uintptr_t value)
-{
-    char buffer[32]{};
-    std::snprintf(buffer, sizeof buffer, "0x%016llx", static_cast<unsigned long long>(value));
-    return buffer;
-}
 
 /**
  * @brief Builds the directories DbgHelp should search for PDBs.
@@ -171,115 +159,54 @@ bool readImageHeader(const std::wstring& path, std::uint64_t& base, std::uint32_
 
 
 /**
- * @brief Formats one frame, symbolized when its image's symbols could be loaded.
+ * @brief Resolves one frame's function name and source line, symbolized when its image's symbols could be loaded.
+ *
+ * @details
+ * - Only resolution happens here: the line the user reads is composed from the result, so both platforms produce the same
+ *   text (see @ref composeText).
  *
  * @param process Handle DbgHelp was initialized with.
- * @param report Report the frame came from; supplies the image name and offset fallback.
- * @param index Position of the frame in the report, shown in front of it.
  * @param lookup Address to ask DbgHelp about; this is the image's preferred base plus the offset, not the address the dead
  *        process ran at.
  * @param symbolized Whether symbol loading succeeded at all.
  * @param symbol Scratch symbol buffer reused across frames.
- * @return The frame's line, without a line ending.
+ * @return The resolved symbol; both fields empty when DbgHelp could not answer for this frame.
  */
-std::string frameLine(HANDLE                                     process,
-                      const vn::crash::Report&                   report,
-                      std::size_t                                index,
-                      DWORD64                                    lookup,
-                      bool                                       symbolized,
-                      SYMBOL_INFOW*                              symbol)
+FrameSymbol resolveFrame(HANDLE process, DWORD64 lookup, bool symbolized, SYMBOL_INFOW* symbol)
 {
-    const vn::crash::ReportFrame& frame = report.frames[index];
-
-    std::string name;
-    std::string source;
-    if (symbolized) {
-        symbol->SizeOfStruct = sizeof(SYMBOL_INFOW);
-        symbol->MaxNameLen   = static_cast<ULONG>(kMaxSymbolNameChars);
-
-        DWORD64 displacement = 0;
-        if (SymFromAddrW(process, lookup, &displacement, symbol) != FALSE) {
-            name = toUtf8(std::wstring{ symbol->Name });
-            if (displacement != 0) {
-                char buffer[32]{};
-                std::snprintf(buffer, sizeof buffer, "+0x%llx", static_cast<unsigned long long>(displacement));
-                name += buffer;
-            }
-
-            IMAGEHLP_LINEW64 line{};
-            line.SizeOfStruct = sizeof line;
-            DWORD line_displacement = 0;
-            if (SymGetLineFromAddrW64(process, lookup, &line_displacement, &line) != FALSE) {
-                char buffer[32]{};
-                std::snprintf(buffer, sizeof buffer, ":%lu", line.LineNumber);
-                source = toUtf8(std::wstring{ line.FileName }) + buffer;
-            }
-        }
+    FrameSymbol resolved;
+    if (!symbolized) {
+        return resolved;
     }
 
-    if (name.empty()) {
-        // No symbols: the image and the offset are still exact, and the offset is what a match with a rebuilt binary needs.
-        if (frame.image >= 0 && static_cast<std::size_t>(frame.image) < report.image_count) {
-            const vn::crash::ReportImage& image = report.images[frame.image];
-            char                          offset[32]{};
-            std::snprintf(offset, sizeof offset, "+0x%llx", static_cast<unsigned long long>(frame.offset));
-            name = std::string{ image.name[0] != '\0' ? image.name : "?" } + offset;
-        }
-        else {
-            name = "<未知模块>";
-        }
-    }
+    symbol->SizeOfStruct = sizeof(SYMBOL_INFOW);
+    symbol->MaxNameLen   = static_cast<ULONG>(kMaxSymbolNameChars);
 
-    std::string text = "  " + std::to_string(index) + "  " + hex(frame.address) + "  " + name;
-    if (!source.empty()) {
-        text += "  [" + source + "]";
+    DWORD64 displacement = 0;
+    if (SymFromAddrW(process, lookup, &displacement, symbol) != FALSE) {
+        resolved.name = toUtf8(std::wstring{ symbol->Name });
+        if (displacement != 0) {
+            char buffer[32]{};
+            std::snprintf(buffer, sizeof buffer, "+0x%llx", static_cast<unsigned long long>(displacement));
+            resolved.name += buffer;
+        }
+
+        IMAGEHLP_LINEW64 line{};
+        line.SizeOfStruct       = sizeof line;
+        DWORD line_displacement = 0;
+        if (SymGetLineFromAddrW64(process, lookup, &line_displacement, &line) != FALSE) {
+            char buffer[32]{};
+            std::snprintf(buffer, sizeof buffer, ":%lu", line.LineNumber);
+            resolved.source = toUtf8(std::wstring{ line.FileName }) + buffer;
+        }
     }
-    return text;
+    return resolved;
 }
 
 } // namespace
 
 std::string symbolize(const vn::crash::Report& report)
 {
-    std::string text;
-    text += "崩溃报告\r\n";
-    text += "========\r\n\r\n";
-
-    if (report.app[0] != '\0') {
-        text += "应用: ";
-        text += report.app;
-        text += "\r\n";
-    }
-    if (report.time[0] != '\0') {
-        text += "时间: ";
-        text += report.time;
-        text += "\r\n";
-    }
-    {
-        char buffer[160]{};
-        std::snprintf(buffer,
-                      sizeof buffer,
-                      "异常: 0x%08lx 于 %s 线程 %lu\r\n",
-                      report.code,
-                      hex(report.address).c_str(),
-                      report.thread_id);
-        text += buffer;
-    }
-    if (report.dump[0] != '\0') {
-        text += "转储: ";
-        text += report.dump;
-        text += "\r\n";
-    }
-
-    if (report.context_count > 0) {
-        text += "\r\n上下文:\r\n";
-        for (std::size_t i = 0; i < report.context_count && i < vn::crash::Report::kMaxContext; ++i) {
-            text += "  ";
-            text += report.context[i];
-            text += "\r\n";
-        }
-    }
-
     const HANDLE process = GetCurrentProcess();
     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES | SYMOPT_FAIL_CRITICAL_ERRORS);
 
@@ -345,15 +272,14 @@ std::string symbolize(const vn::crash::Report& report)
     std::vector<char> storage(sizeof(SYMBOL_INFOW) + kMaxSymbolNameChars * sizeof(wchar_t), '\0');
     auto*             symbol = reinterpret_cast<SYMBOL_INFOW*>(storage.data());
 
-    text += "\r\n调用栈:\r\n";
+    std::vector<FrameSymbol> symbols(report.frame_count);
     for (std::size_t i = 0; i < report.frame_count && i < vn::crash::Report::kMaxFrames; ++i) {
         const vn::crash::ReportFrame& frame  = report.frames[i];
         DWORD64                       lookup = static_cast<DWORD64>(frame.address);
         if (frame.image >= 0 && static_cast<std::size_t>(frame.image) < bases.size() && bases[frame.image] != 0) {
             lookup = bases[frame.image] + static_cast<DWORD64>(frame.offset);
         }
-        text += frameLine(process, report, i, lookup, symbolized, symbol);
-        text += "\r\n";
+        symbols[i] = resolveFrame(process, lookup, symbolized, symbol);
     }
 
     if (symbolized) {
@@ -379,12 +305,7 @@ std::string symbolize(const vn::crash::Report& report)
         }
         SymCleanup(process);
     }
-    if (!diagnostics.empty()) {
-        text += "\r\n符号:\r\n";
-        text += "（本段说明为什么有些帧只有模块+偏移而没有函数名）\r\n";
-        text += diagnostics;
-    }
-    return text;
+    return composeText(report, symbols, diagnostics);
 }
 
 } // namespace handler

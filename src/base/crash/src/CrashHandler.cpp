@@ -16,10 +16,10 @@ void uninstall()
     detail::uninstallPlatform();
 }
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__linux__)
 
-// No platform hook yet. The report model and its renderer are portable, so only this pair is missing; see the phase table in
-// .ai/research/base-crash-2026-10-30-crash-handler-module.md (Linux sigaction is P3).
+// No platform hook yet. The report model and its renderer are portable, so only this pair is missing; Windows reports
+// through SEH (CrashCaptureWindows.cpp) and Linux through sigaction (CrashCaptureLinux.cpp).
 namespace detail {
 
 bool installPlatform(const Config& config)
@@ -34,6 +34,6 @@ void uninstallPlatform()
 
 } // namespace detail
 
-#endif // _WIN32
+#endif // !_WIN32 && !__linux__
 
 VN_CRASH_NS_END
