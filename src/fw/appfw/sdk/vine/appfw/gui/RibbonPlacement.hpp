@@ -20,13 +20,8 @@ VN_APPFWGUI_NS_BEGIN
  */
 struct RibbonPlacement
 {
-    /// @brief The kind of placement.
-    enum class Where
-    {
-        Append, ///< Add at the end of the non-terminal block.
-        Before, ///< Add before the anchor.
-        After,  ///< Add after the anchor.
-    };
+    /// @brief The kind of placement (shared with the Backstage pages).
+    using Where = PlacementWhere;
 
     Where         where       = Where::Append;      ///< Placement kind.
     String        anchor_id;                        ///< Sibling id to anchor on, or empty.

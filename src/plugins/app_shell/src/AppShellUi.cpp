@@ -108,6 +108,8 @@ void buildAppShellRibbon(gui::MainWindow* wnd)
     auto* plugins_page = new gui::BackstagePage();
     plugins_page->setId(u8"vine.backstage.plugins");
     plugins_page->setTitle(u8"插件");
+    plugins_page->setRole(gui::BackstagePageRole::Plugins);
+    plugins_page->setProvider(u8"app_shell");
     plugins_page->setIcon(gui::Icon(u8":/icons/show_plugins.svg"));
     addBackstageCommand(plugins_page, u8"插件信息", u8":/icons/show_plugins.svg", u8"show_plugins");
     addBackstageCommand(plugins_page, u8"渲染后端", u8":/icons/show_plugins.svg", u8"show_render_backends");
@@ -117,6 +119,10 @@ void buildAppShellRibbon(gui::MainWindow* wnd)
     auto* help_page = new gui::BackstagePage();
     help_page->setId(u8"vine.backstage.help");
     help_page->setTitle(u8"帮助");
+    help_page->setRole(gui::BackstagePageRole::Help);
+    // 帮助页是终止页：插件页可以按 role 排在它前面，但排不到它后面（与 Ribbon 的帮助 tab 同一条规则）。
+    help_page->setPolicy(gui::BackstagePagePolicy::Terminal);
+    help_page->setProvider(u8"app_shell");
     help_page->setIcon(gui::Icon(u8":/icons/show_help.svg"));
     addBackstageCommand(help_page, u8"帮助", u8":/icons/show_help.svg", u8"show_help");
     addBackstageCommand(help_page, u8"命令管理器", u8":/icons/show_commands.svg", u8"show_commands");

@@ -2,6 +2,7 @@
 
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/StartupProgress.hpp>
+#include <vine/appfw/gui/Backstage.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/plugin_export.hpp>
 
@@ -67,6 +68,14 @@ void AppShellPlugin::unload(PluginLoadContext* context)
 {
     (void)context;
     uninstallConsoleLogSink();
+
+    // The Backstage pages hold this plugin's ribbon actions: withdraw them with the plugin, so a reload adds
+    // its own instead of finding pages that point at actions it no longer owns.
+    if (auto* wnd = gui::MainWindow::current(); wnd != nullptr) {
+        if (auto* backstage = wnd->backstage(); backstage != nullptr) {
+            backstage->removePages(u8"app_shell");
+        }
+    }
 }
 
 /// 插件图标（内联 SVG）。含逗号的 SVG 要放在命名常量里：VN_DECLARE_PLUGIN 是宏，

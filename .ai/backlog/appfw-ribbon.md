@@ -16,5 +16,4 @@
 | T4 | 上下文 tab | 按条件显示/隐藏 tab | 出现“选中某类对象才显示”的真实功能 | `../design/appfw-ribbon.md` F8 |
 | T5 | 声明式贡献（manifest） | 插件在清单里声明 tab/group，宿主解析 | 出现进程外/第三方二进制之外的插件分发方式 | `../design/appfw-ribbon.md` D5 |
 | T6 | group 级 role | 组也能按语义锚定 | 标准 tab 内出现多个可扩展的语义组，且 id 不足以表达 | `../design/appfw-ribbon.md` §2.7 |
-| T7 | Backstage 自定义页面内容 | 页面主体可嵌任意 `Control`（选项页/最近文件页） | 需要一个页面承载非命令内容（例如配置窗口、最近文件列表） | `../design/appfw-backstage.md` F7 |
 | T8 | 最近文件 / MRU | Backstage 的“最近”页与文件入口 | 产品要求最近打开列表，且已有持久化位置 | `../design/appfw-backstage.md` F8 |

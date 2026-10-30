@@ -1428,6 +1428,282 @@ TEST_F(GuiTest, Backstage_PagesCanBeHidden)
     backstage.close();
 }
 
+// 页面与 tab 共用一套放置词汇：id 是身份、role 是语义锚、placement 是意图；顺序不再跟着加载顺序走。
+TEST_F(GuiTest, Backstage_PageRolesAndPlacement)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* home = new guifw::BackstagePage();
+    home->setId(u8"test.backstage.home");
+    home->setTitle(u8"Home");
+    home->setRole(guifw::BackstagePageRole::Home);
+    EXPECT_EQ(backstage.addPage(home, guifw::BackstagePlacement::append()).status, guifw::BackstagePlaceStatus::Placed);
+
+    // Close 是终止页：它自己进后缀，别的页排不到它后面。
+    auto* close = new guifw::BackstagePage();
+    close->setId(u8"test.backstage.close");
+    close->setTitle(u8"Close");
+    close->setRole(guifw::BackstagePageRole::Close);
+    close->setPolicy(guifw::BackstagePagePolicy::Terminal);
+    ASSERT_EQ(backstage.addPage(close, guifw::BackstagePlacement::append()).status, guifw::BackstagePlaceStatus::Placed);
+    ASSERT_EQ(backstage.numPages(), 2);
+    EXPECT_EQ(backstage.pageAt(1), close);
+
+    // 按 id 锚定：模型页插到 Close 前面。
+    auto* model = new guifw::BackstagePage();
+    model->setId(u8"test.backstage.model");
+    model->setTitle(u8"Model");
+    const auto by_id = backstage.addPage(model, guifw::BackstagePlacement::before(u8"test.backstage.close"));
+    EXPECT_EQ(by_id.status, guifw::BackstagePlaceStatus::Placed);
+    EXPECT_EQ(by_id.index, 1);
+    EXPECT_EQ(backstage.pageAt(1), model);
+
+    // 角色参与默认顺序：Info 的 role 值比 Home 大，后追加也排在 Home 之后。
+    auto* info = new guifw::BackstagePage();
+    info->setId(u8"test.backstage.info");
+    info->setTitle(u8"Info");
+    info->setRole(guifw::BackstagePageRole::Info);
+    EXPECT_EQ(backstage.addPage(info, guifw::BackstagePlacement::append()).status, guifw::BackstagePlaceStatus::Placed);
+    EXPECT_EQ(backstage.pageAt(0), home);
+    EXPECT_EQ(backstage.pageAt(2), info);
+    EXPECT_EQ(backstage.pageAt(3), close);
+
+    // 插到当前页前面：当前页跟着对象走，而不是跟着行号。
+    backstage.setCurrentPage(model);
+    auto* extra = new guifw::BackstagePage();
+    extra->setId(u8"test.backstage.extra");
+    extra->setTitle(u8"Extra");
+    EXPECT_EQ(backstage.addPage(extra, guifw::BackstagePlacement::before(u8"test.backstage.model")).status,
+              guifw::BackstagePlaceStatus::Placed);
+    EXPECT_EQ(backstage.pageAt(1), extra);
+    EXPECT_EQ(backstage.pageAt(2), model);
+    EXPECT_EQ(backstage.currentPage(), model) << "重排后当前页不能变";
+
+    // 导航行就是逻辑顺序（不是添加顺序）。
+    auto* nav = backstage.impl<QWidget>()->findChild<QListWidget*>();
+    ASSERT_NE(nav, nullptr) << "导航列表";
+    ASSERT_EQ(nav->count(), 5);
+    EXPECT_EQ(nav->item(0)->text(), QStringLiteral("Home"));
+    EXPECT_EQ(nav->item(1)->text(), QStringLiteral("Extra"));
+    EXPECT_EQ(nav->item(2)->text(), QStringLiteral("Model"));
+    EXPECT_EQ(nav->item(3)->text(), QStringLiteral("Info"));
+    EXPECT_EQ(nav->item(4)->text(), QStringLiteral("Close"));
+}
+
+// 放置的判定与 tab 同一张表：未知锚点降级、越界夹回、无效锚点与重复 id 不加。
+TEST_F(GuiTest, Backstage_PagePlacementEdgeCases)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* close = new guifw::BackstagePage();
+    close->setId(u8"test.backstage.close");
+    close->setTitle(u8"Close");
+    close->setRole(guifw::BackstagePageRole::Close);
+    close->setPolicy(guifw::BackstagePagePolicy::Terminal);
+    ASSERT_TRUE(backstage.addPage(close));
+
+    // 旧接口 = append。
+    auto* legacy = new guifw::BackstagePage();
+    legacy->setId(u8"test.backstage.legacy");
+    legacy->setTitle(u8"Legacy");
+    EXPECT_TRUE(backstage.addPage(legacy));
+    EXPECT_EQ(backstage.pageAt(0), legacy);
+    EXPECT_EQ(backstage.pageAt(1), close);
+
+    // 未知锚点：降级到非终止区末尾，页面仍然加入。
+    auto* lost = new guifw::BackstagePage();
+    lost->setId(u8"test.backstage.lost");
+    lost->setTitle(u8"Lost");
+    const auto fallback = backstage.addPage(lost, guifw::BackstagePlacement::before(u8"test.backstage.missing"));
+    EXPECT_EQ(fallback.status, guifw::BackstagePlaceStatus::PlacedByFallback);
+    EXPECT_EQ(fallback.index, 1);
+    EXPECT_EQ(backstage.pageAt(2), close) << "回退也不能跑到终止页后面";
+
+    // 请求放到终止页之后：夹回终止区之前。
+    auto* late = new guifw::BackstagePage();
+    late->setId(u8"test.backstage.late");
+    late->setTitle(u8"Late");
+    const auto clamped = backstage.addPage(late, guifw::BackstagePlacement::after(guifw::BackstagePageRole::Close));
+    EXPECT_EQ(clamped.status, guifw::BackstagePlaceStatus::ClampedBeforeTerminal);
+    EXPECT_EQ(backstage.pageAt(backstage.numPages() - 1), close);
+
+    // 锚点既没有 id 也没有 role：请求无效，页面不加入。
+    const int before = backstage.numPages();
+    auto*     bad    = new guifw::BackstagePage();
+    bad->setId(u8"test.backstage.bad");
+    guifw::BackstagePlacement invalid;
+    invalid.where = guifw::BackstagePlacement::Where::Before;
+    EXPECT_EQ(backstage.addPage(bad, invalid).status, guifw::BackstagePlaceStatus::InvalidAnchor);
+    EXPECT_EQ(backstage.numPages(), before);
+
+    // 重复 id 被拒；同一个对象再 add 一次是 AlreadyAdded。
+    auto* dup = new guifw::BackstagePage();
+    dup->setId(u8"test.backstage.close");
+    EXPECT_FALSE(backstage.addPage(dup));
+    EXPECT_EQ(backstage.numPages(), before);
+
+    const auto again = backstage.addPage(close, guifw::BackstagePlacement::append());
+    EXPECT_EQ(again.status, guifw::BackstagePlaceStatus::AlreadyAdded);
+    EXPECT_EQ(again.index, backstage.numPages() - 1);
+
+    // 按角色查找；None 不参与。
+    EXPECT_EQ(backstage.findPage(guifw::BackstagePageRole::Close), close);
+    EXPECT_EQ(backstage.findPage(u8"test.backstage.close"), close);
+    EXPECT_EQ(backstage.findPage(guifw::BackstagePageRole::Info), nullptr);
+    EXPECT_EQ(backstage.findPage(guifw::BackstagePageRole::None), nullptr);
+}
+
+// 页面主体唯一：默认是命令列，setBody 之后换成一块控件；两者不能在同一个页上并存。
+TEST_F(GuiTest, BackstagePage_BodyReplacesTheCommandColumn)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* page = new guifw::BackstagePage();
+    page->setId(u8"test.backstage.body");
+    page->setTitle(u8"Body");
+    ASSERT_TRUE(backstage.addPage(page));
+
+    auto* page_widget = page->impl<QWidget>();
+    ASSERT_NE(page_widget, nullptr);
+
+    // 已经有命令条目：body 不能插进来（一页只做一件事）。
+    auto* item = new guifw::RibbonAction();
+    item->setText(u8"Open");
+    page->addItem(item);
+    ASSERT_EQ(page->numItems(), 1);
+
+    guifw::Control command_body(new QLabel(QStringLiteral("commands")));
+    EXPECT_FALSE(page->setBody(&command_body)) << "命令列与 body 互斥";
+    EXPECT_EQ(page->body(), nullptr);
+    EXPECT_EQ(page->numItems(), 1);
+
+    // 干净的页：body 装得上，装完之后不再接受条目，并且真的进了页面。
+    auto* text_page = new guifw::BackstagePage();
+    text_page->setId(u8"test.backstage.body.text");
+    text_page->setTitle(u8"Text");
+    ASSERT_TRUE(backstage.addPage(text_page));
+
+    guifw::Control text_body(new QLabel(QStringLiteral("content")));
+    EXPECT_TRUE(text_page->setBody(&text_body));
+    EXPECT_EQ(text_page->body(), &text_body);
+    EXPECT_EQ(text_body.impl<QWidget>()->parent(), text_page->impl<QWidget>()) << "body 由页面持有";
+    EXPECT_TRUE(text_page->setBody(&text_body)) << "同一个 body 重复安装是幂等的";
+
+    auto* rejected = new guifw::RibbonAction();
+    rejected->setText(u8"Late");
+    text_page->addItem(rejected);
+    EXPECT_EQ(text_page->numItems(), 0) << "有 body 的页不再接受命令条目";
+
+    // 换一个 body：前一个交回给它的主人（不是被删掉）。
+    guifw::Control second(new QLabel(QStringLiteral("second")));
+    EXPECT_TRUE(text_page->setBody(&second));
+    EXPECT_EQ(text_page->body(), &second);
+    EXPECT_EQ(text_body.impl<QWidget>()->parent(), nullptr) << "旧 body 回到调用方手里";
+    EXPECT_EQ(second.impl<QWidget>()->parent(), text_page->impl<QWidget>());
+
+    // null 不算 body。
+    EXPECT_FALSE(text_page->setBody(nullptr));
+    EXPECT_EQ(text_page->body(), &second);
+}
+
+// 标准目录可用：宿主页用 Plugins/Help，插件页用 UserRole + n 并按 role 锚定，终止页不会被越过。
+TEST_F(GuiTest, Backstage_StandardRoleCatalog)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* plugins = new guifw::BackstagePage();
+    plugins->setId(u8"test.backstage.catalog.plugins");
+    plugins->setTitle(u8"Plugins");
+    plugins->setRole(guifw::BackstagePageRole::Plugins);
+    ASSERT_TRUE(backstage.addPage(plugins));
+
+    auto* help = new guifw::BackstagePage();
+    help->setId(u8"test.backstage.catalog.help");
+    help->setTitle(u8"Help");
+    help->setRole(guifw::BackstagePageRole::Help);
+    help->setPolicy(guifw::BackstagePagePolicy::Terminal);
+    ASSERT_TRUE(backstage.addPage(help));
+    EXPECT_EQ(backstage.pageAt(1), help);
+    EXPECT_EQ(backstage.findPage(guifw::BackstagePageRole::Help), help);
+
+    // 插件不知道宿主页的 id，只按 role 锚定。
+    auto* contributed = new guifw::BackstagePage();
+    contributed->setId(u8"test.backstage.catalog.contributed");
+    contributed->setTitle(u8"Contributed");
+    contributed->setRole(static_cast<guifw::BackstagePageRole>(static_cast<std::uint16_t>(guifw::BackstagePageRole::UserRole) + 1));
+    const auto placed = backstage.addPage(contributed, guifw::BackstagePlacement::before(guifw::BackstagePageRole::Help));
+    EXPECT_EQ(placed.status, guifw::BackstagePlaceStatus::Placed);
+    EXPECT_EQ(backstage.pageAt(1), contributed);
+    EXPECT_EQ(backstage.pageAt(2), help);
+
+    // 追加也不会跑到终止页后面。
+    auto* appended = new guifw::BackstagePage();
+    appended->setId(u8"test.backstage.catalog.appended");
+    appended->setTitle(u8"Appended");
+    EXPECT_EQ(backstage.addPage(appended, guifw::BackstagePlacement::append()).status, guifw::BackstagePlaceStatus::Placed);
+    EXPECT_EQ(backstage.pageAt(backstage.numPages() - 1), help);
+    EXPECT_EQ(backstage.pageAt(backstage.numPages() - 2), appended);
+}
+
+// provider 是贡献的身份：插件卸载/重载时整组撤除自己的页，别人的页不受影响。
+TEST_F(GuiTest, Backstage_PagesAreRemovedByProvider)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* host = new guifw::BackstagePage();
+    host->setId(u8"test.backstage.host");
+    host->setTitle(u8"Host");
+    ASSERT_TRUE(backstage.addPage(host));
+
+    auto* first = new guifw::BackstagePage();
+    first->setId(u8"test.backstage.a1");
+    first->setTitle(u8"A1");
+    first->setProvider(u8"plugin.a");
+    ASSERT_TRUE(backstage.addPage(first));
+
+    auto* second = new guifw::BackstagePage();
+    second->setId(u8"test.backstage.a2");
+    second->setTitle(u8"A2");
+    second->setProvider(u8"plugin.a");
+    ASSERT_TRUE(backstage.addPage(second));
+
+    auto* other = new guifw::BackstagePage();
+    other->setId(u8"test.backstage.b1");
+    other->setTitle(u8"B1");
+    other->setProvider(u8"plugin.b");
+    ASSERT_TRUE(backstage.addPage(other));
+
+    EXPECT_TRUE(first->provider() == u8"plugin.a");
+    EXPECT_TRUE(host->provider().empty());
+
+    // 当前页在被撤除的那一组里：交给它后面的那一张。
+    backstage.setCurrentPage(second);
+    EXPECT_EQ(backstage.currentPage(), second);
+
+    EXPECT_EQ(backstage.removePages(u8"plugin.a"), 2);
+    EXPECT_EQ(backstage.numPages(), 2);
+    EXPECT_EQ(backstage.pageAt(0), host);
+    EXPECT_EQ(backstage.pageAt(1), other);
+    EXPECT_EQ(backstage.currentPage(), other) << "被撤除的当前页由后一张接替";
+    EXPECT_EQ(backstage.findPage(u8"test.backstage.a1"), nullptr);
+
+    auto* nav = backstage.impl<QWidget>()->findChild<QListWidget*>();
+    ASSERT_NE(nav, nullptr) << "导航列表";
+    EXPECT_EQ(nav->count(), 2) << "导航行随页面一起撤除";
+
+    // 空 provider 与不存在的 provider 都不动别人的页。
+    EXPECT_EQ(backstage.removePages(u8""), 0);
+    EXPECT_EQ(backstage.removePages(u8"plugin.missing"), 0);
+    EXPECT_EQ(backstage.numPages(), 2);
+    EXPECT_EQ(backstage.pageAt(0), host);
+
+    // 撤掉的页可以重新加入：widget 已归还给页面（不是被删掉）。
+    EXPECT_TRUE(backstage.addPage(first));
+    EXPECT_EQ(backstage.numPages(), 3);
+    EXPECT_EQ(backstage.pageAt(2), first);
+    EXPECT_EQ(backstage.findPage(u8"test.backstage.a1"), first);
+}
+
 // 条目可以按动作隐藏/恢复：序号稳定，动作与命令都还在。
 TEST_F(GuiTest, BackstagePage_ItemsCanBeHidden)
 {

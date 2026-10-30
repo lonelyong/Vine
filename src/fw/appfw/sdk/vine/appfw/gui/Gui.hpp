@@ -83,6 +83,64 @@ enum class RibbonTabPolicy
 VN_ENABLE_ENUM_FLAGS(RibbonTabPolicy);
 
 /**
+ * @brief Where a contribution is placed relative to its siblings.
+ *
+ * @details
+ * - One vocabulary for both hierarchies: ribbon tabs (and groups, which only use Before/After) and Backstage pages.
+ * - The anchor is deliberately not part of this type: a tab anchors on a RibbonTabRole, a page on a BackstagePageRole,
+ *   so each placement type carries its own anchor field and cannot be given the wrong kind of role.
+ */
+enum class PlacementWhere
+{
+    Append, ///< Add at the end of the non-terminal block.
+    Before, ///< Add before the anchor.
+    After,  ///< Add after the anchor.
+};
+
+/**
+ * @brief Well-known Backstage page roles: what a page is for, not which page it is.
+ *
+ * @details
+ * - A role is a host-independent anchor for plugins; the page id stays the identity.
+ * - Values follow the ribbon's rule: they are never renumbered, and custom host roles start at UserRole.
+ * - None means "no semantic role": such a page is reachable by id only.
+ * - The page order is still decided by placement; a role only orders role-bearing pages among themselves.
+ * - Plugins and Help mirror the ribbon's tab roles: the shell's own pages use them, so a plugin can anchor
+ *   next to "before the help page" without knowing its id.
+ */
+enum class BackstagePageRole : std::uint16_t
+{
+    None     = 0,
+    Home     = 100,
+    New      = 110,
+    Open     = 120,
+    Info     = 200,
+    Print    = 300,
+    Export   = 310,
+    Plugins  = 400,
+    Help     = 500,
+    Account  = 800,
+    Options  = 900,
+    Close    = 1000,
+    UserRole = 0x8000,
+};
+
+/**
+ * @brief Placement policy flags of a Backstage page.
+ *
+ * @details
+ * - Terminal keeps the page at the end of the navigation: no other page may be placed after it.
+ *   The standard catalog marks the Close page this way.
+ * - Explicit on purpose, like RibbonTabPolicy: a role does not imply a policy.
+ */
+enum class BackstagePagePolicy
+{
+    None     = 0,
+    Terminal = 1,
+};
+VN_ENABLE_ENUM_FLAGS(BackstagePagePolicy);
+
+/**
  * @brief Ribbon button display style (arrangement of icon and text).
  */
 enum class RibbonButtonStyle
