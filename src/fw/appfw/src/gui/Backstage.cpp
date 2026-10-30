@@ -29,11 +29,12 @@
 #include <vine/logging/Log.hpp>
 
 #include "ControlData.hpp"
+#include "WindowData.hpp"
 
 VN_APPFWGUI_NS_BEGIN
 
 VN_OBJECT_META_IMPL(BackstagePage, Control)
-VN_OBJECT_META_IMPL(Backstage, Control)
+VN_OBJECT_META_IMPL(Backstage, Window)
 
 namespace
 {
@@ -650,7 +651,7 @@ Resolved resolvePage(const std::vector<PageEntry>& placed, const BackstagePage* 
 
 } // namespace
 
-struct Backstage::Impl : public ControlData {
+struct Backstage::Impl : public WindowData {
     std::vector<PageEntry> pages; // logical order, kept in sync with the navigation rows and the stack
     std::uint64_t          next_seq   = 0;
     /// True while the rows are being re-ordered: the selection signals must not drive the stack then.
@@ -695,9 +696,9 @@ struct Backstage::Impl : public ControlData {
 };
 
 Backstage::Backstage(MainWindow* window)
-  : Control(new Impl(),
-            new BackstageWindow(window != nullptr ? qobject_cast<QWidget*>(window->impl()) : nullptr),
-            /*owns=*/false)
+  : Window(new Impl(),
+           new BackstageWindow(window != nullptr ? qobject_cast<QWidget*>(window->impl()) : nullptr),
+           /*owns=*/false)
 {
     auto* native = static_cast<BackstageWindow*>(impl<QWidget>());
     auto* data   = dptr();

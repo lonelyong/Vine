@@ -6,6 +6,7 @@
 #include "Control.hpp"
 #include "Gui.hpp"
 #include "Icon.hpp"
+#include "Window.hpp"
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -225,14 +226,22 @@ class VN_APPFW_API BackstagePage : public Control {
  * @details
  * - The native widget is a top-level tool window that follows the main window's client area:
  *   a child overlay would be covered by the native 3D surface (see the docking flyout bug).
+ * - It derives from Window because that is what it is: the component *is* the wrapper of that top-level
+ *   window, so window-level facts (title, size, activation, hasPainted()) live on the component instead of
+ *   being reached through its Impl. It is not a control that can be put inside another window.
  * - Pages are a flat list in insertion order; the first page becomes the current one.
  * - The Backstage is owned by MainWindow::setBackstage(); the window itself owns the page
  *   widgets after addPage().
  *
+ * @note open()/close()/isOpen() are the only way to show and hide it: they sync the geometry to the main window
+ *   and hand activation back. Control::setVisible() does neither, so it is not part of this class' contract.
+ *
+ * @note Window::exec() does not apply: the native widget is not a QDialog.
+ *
  * @note The application button opens either this page or the application menu, never both
  *   (RibbonBar::setBackstage() detaches the menu).
  */
-class VN_APPFW_API Backstage : public Control {
+class VN_APPFW_API Backstage : public Window {
     VN_OBJECT_META_DECL
 
   public:
