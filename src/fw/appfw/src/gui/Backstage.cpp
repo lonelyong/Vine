@@ -35,6 +35,7 @@
 #include <vine/logging/Log.hpp>
 
 #include "ControlData.hpp"
+#include "GuiText.hpp"
 #include "WindowData.hpp"
 
 VN_APPFWGUI_NS_BEGIN
@@ -213,7 +214,7 @@ class BackstageBackButton final : public QToolButton {
         setIconSize(kRailIconSize);
         setFixedSize(40, 40);
         setCursor(Qt::PointingHandCursor);
-        setToolTip(QStringLiteral("返回 (Esc)"));
+        setToolTip(translate("appfw", "返回 (Esc)"));
         setStyleSheet(QStringLiteral("#vnBackstageBack {"
                                      " border: none;"
                                      " border-radius: 4px;"

@@ -31,7 +31,9 @@
 #include "CommandHistory.hpp"
 #include "ControlData.hpp"
 #include "Convert.hpp"
+#include "GuiText.hpp"
 #include <vine/appfw/Application.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/gui/GuiApplication.hpp>
 
 VN_APPFWGUI_NS_BEGIN
@@ -383,10 +385,10 @@ void ConsolePanel::Impl::openPicker()
 
     const QString  filter = Convert::toQString(action.filter);
     QWidget* const parent = input->window();
-    const QString  title  = opened_for == ConsoleInputKind::File        ? QStringLiteral("选择文件")
-                            : opened_for == ConsoleInputKind::Files     ? QStringLiteral("选择文件（可多选）")
-                            : opened_for == ConsoleInputKind::Directory ? QStringLiteral("选择目录")
-                                                                        : QStringLiteral("选择目录（可多选）");
+    const QString  title  = opened_for == ConsoleInputKind::File        ? translate("appfw", "选择文件")
+                            : opened_for == ConsoleInputKind::Files     ? translate("appfw", "选择文件（可多选）")
+                            : opened_for == ConsoleInputKind::Directory ? translate("appfw", "选择目录")
+                                                                        : translate("appfw", "选择目录（可多选）");
     QStringList    picked;
 
     switch (opened_for) {
@@ -430,7 +432,7 @@ void ConsolePanel::Impl::openPicker()
         if (text.find(u8';') != String::npos) {
             // ';' separates the answers of a multiple read, so a path containing it cannot be expressed in that line:
             // say so instead of quietly writing a path that would be cut in half.
-            appendFormatted(ConsoleMessageType::Warning, String(u8"路径含 ';'，无法在这一行里表达: ") + text);
+            appendFormatted(ConsoleMessageType::Warning, vn::appfw::translate("appfw", "路径含 ';'，无法在这一行里表达: ") + text);
             continue;
         }
         paths.push_back(text);

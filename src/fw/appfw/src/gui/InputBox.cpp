@@ -17,6 +17,7 @@
 #include <limits>
 
 #include "Convert.hpp"
+#include "GuiText.hpp"
 #include "WindowData.hpp"
 #include <vine/appfw/gui/MessageBox.hpp>
 
@@ -112,7 +113,7 @@ bool readField(InputBox::Field& field, QWidget* editor, QString& error)
 {
     error.clear();
     const auto fail = [&](const QString& message) {
-        error = field.label.empty() ? message : Convert::toQString(field.label) + QStringLiteral("：") + message;
+        error = field.label.empty() ? message : Convert::toQString(field.label) + translate("appfw", "：") + message;
         return false;
     };
 
@@ -123,13 +124,13 @@ bool readField(InputBox::Field& field, QWidget* editor, QString& error)
         const auto& text = static_cast<QLineEdit*>(editor)->text();
         if (text.isEmpty()) {
             if (f.required) {
-                return fail(QStringLiteral("不能为空"));
+                return fail(translate("appfw", "不能为空"));
             }
             f.value = String();
             return true;
         }
         if (text.size() < f.min_len || text.size() > f.max_len) {
-            return fail(QStringLiteral("长度需在 %1 ~ %2 之间").arg(f.min_len).arg(f.max_len));
+            return fail(translate("appfw", "长度需在 %1 ~ %2 之间").arg(f.min_len).arg(f.max_len));
         }
         f.value = Convert::fromQString(text);
         return true;
@@ -152,7 +153,7 @@ bool readField(InputBox::Field& field, QWidget* editor, QString& error)
         const int index = static_cast<QComboBox*>(editor)->currentIndex();
         if (index < 0) {
             if (f.required) {
-                return fail(QStringLiteral("必须选择一项"));
+                return fail(translate("appfw", "必须选择一项"));
             }
             f.value.reset();
             return true;
@@ -188,7 +189,7 @@ InputBox::InputBox(QWidget* parent, const String& title, const String& prompt, c
     data->fields = fields;
 
     auto* root = impl<QDialog>();
-    root->setWindowTitle(title.empty() ? QStringLiteral("请输入") : Convert::toQString(title));
+    root->setWindowTitle(title.empty() ? translate("appfw", "请输入") : Convert::toQString(title));
     root->setMinimumWidth(360);
 
     buildUi();
@@ -222,8 +223,8 @@ void InputBox::buildUi()
         data->rows.push_back({ field, editor });
     }
 
-    auto* ok_btn     = new QPushButton(QStringLiteral("确定"), root);
-    auto* cancel_btn = new QPushButton(QStringLiteral("取消"), root);
+    auto* ok_btn     = new QPushButton(translate("appfw", "确定"), root);
+    auto* cancel_btn = new QPushButton(translate("appfw", "取消"), root);
     ok_btn->setDefault(true);
     cancel_btn->setAutoDefault(false);
 

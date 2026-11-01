@@ -30,6 +30,7 @@
 #include <QVBoxLayout>
 
 #include "Convert.hpp"
+#include "GuiText.hpp"
 #include "TableStyle.hpp"
 #include "WindowData.hpp"
 #include <vine/appfw/CommandManager.hpp>
@@ -91,11 +92,11 @@ const vn::appfw::PluginRegistration* findRegistration(const std::vector<vn::appf
 QString scopeLabel(vn::appfw::PluginScope scope)
 {
     switch (scope) {
-    case vn::appfw::PluginScope::BuiltIn: return QStringLiteral("程序自带");
-    case vn::appfw::PluginScope::AllUsers: return QStringLiteral("所有用户");
-    case vn::appfw::PluginScope::User: return QStringLiteral("仅当前用户");
+    case vn::appfw::PluginScope::BuiltIn: return translate("appfw", "程序自带");
+    case vn::appfw::PluginScope::AllUsers: return translate("appfw", "所有用户");
+    case vn::appfw::PluginScope::User: return translate("appfw", "仅当前用户");
     }
-    return QStringLiteral("未知");
+    return translate("appfw", "未知");
 }
 
 /// Renders a list row as inactive, for a plugin that will not run.
@@ -147,15 +148,15 @@ QPixmap renderSvgIcon(const QString& svg, int size)
 QString stateLabel(const vn::appfw::PluginEntry* entry)
 {
     if (entry == nullptr) {
-        return QStringLiteral("元数据缺失");
+        return translate("appfw", "元数据缺失");
     }
     if (entry->skipped) {
-        return QStringLiteral("由程序跳过");
+        return translate("appfw", "由程序跳过");
     }
     if (!entry->enabled) {
-        return entry->loaded ? QStringLiteral("已禁用（运行中）") : QStringLiteral("已禁用");
+        return entry->loaded ? translate("appfw", "已禁用（运行中）") : translate("appfw", "已禁用");
     }
-    return entry->loaded ? QStringLiteral("已加载") : QStringLiteral("未加载");
+    return entry->loaded ? translate("appfw", "已加载") : translate("appfw", "未加载");
 }
 
 /**
@@ -170,23 +171,23 @@ QString stateLabel(const vn::appfw::PluginEntry* entry)
 QString stateExplanation(const vn::appfw::PluginEntry* entry)
 {
     if (entry == nullptr) {
-        return QStringLiteral("未发现该插件的元数据：库已不在注册位置，或注册文件指向的文件不可读。");
+        return translate("appfw", "未发现该插件的元数据：库已不在注册位置，或注册文件指向的文件不可读。");
     }
     if (entry->skipped) {
         return QStringLiteral("由程序跳过：宿主程序把该插件列入了跳过列表，本次未加载，"
                               "只能由程序解除（启动参数或程序逻辑）。");
     }
     if (!entry->enabled && entry->loaded) {
-        return QStringLiteral("已禁用：本次运行中仍在运行（命令与配置仍然有效），重启后不再加载。");
+        return translate("appfw", "已禁用：本次运行中仍在运行（命令与配置仍然有效），重启后不再加载。");
     }
     if (!entry->enabled) {
         return QStringLiteral("已禁用：本次未加载，因此没有命令与配置信息；重启后仍然不加载。"
                               "在右侧按钮或右键菜单中启用。");
     }
     if (entry->loaded) {
-        return QStringLiteral("已加载：命令与配置已生效；程序退出时按依赖反序卸载。");
+        return translate("appfw", "已加载：命令与配置已生效；程序退出时按依赖反序卸载。");
     }
-    return QStringLiteral("已启用但未加载：依赖未满足或加载失败，详见日志。");
+    return translate("appfw", "已启用但未加载：依赖未满足或加载失败，详见日志。");
 }
 
 /// Returns the stylesheet of the state badge for a plugin.
@@ -285,7 +286,7 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     data->manager = manager;
 
     auto* root = impl<QDialog>();
-    root->setWindowTitle(QStringLiteral("插件管理器"));
+    root->setWindowTitle(translate("appfw", "插件管理器"));
 
     auto* outer = new QVBoxLayout(root);
     outer->setContentsMargins(10, 10, 10, 8);
@@ -302,7 +303,7 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     left_lay->setSpacing(6);
 
     data->filter = new QLineEdit(left);
-    data->filter->setPlaceholderText(QStringLiteral("筛选（名称 / 显示名 / 厂商 / 描述）"));
+    data->filter->setPlaceholderText(translate("appfw", "筛选（名称 / 显示名 / 厂商 / 描述）"));
     data->filter->setClearButtonEnabled(true);
     left_lay->addWidget(data->filter);
 
@@ -313,17 +314,17 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     data->list->setUniformItemSizes(true);
     left_lay->addWidget(data->list, 1);
 
-    data->load_btn = new QPushButton(QStringLiteral("加载插件…"), left);
-    data->load_btn->setToolTip(QStringLiteral("立即加载并运行，不写注册表（重启后不保留）。"));
+    data->load_btn = new QPushButton(translate("appfw", "加载插件…"), left);
+    data->load_btn->setToolTip(translate("appfw", "立即加载并运行，不写注册表（重启后不保留）。"));
 
     data->install_btn = new QToolButton(left);
-    data->install_btn->setText(QStringLiteral("安装插件"));
+    data->install_btn->setText(translate("appfw", "安装插件"));
     data->install_btn->setPopupMode(QToolButton::InstantPopup);
     data->install_btn->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    data->install_btn->setToolTip(QStringLiteral("注册一个插件位置（库文件或目录，可在程序目录之外）；重启后加载。"));
+    data->install_btn->setToolTip(translate("appfw", "注册一个插件位置（库文件或目录，可在程序目录之外）；重启后加载。"));
     auto*    install_menu      = new QMenu(data->install_btn);
-    QAction* install_for_user  = install_menu->addAction(QStringLiteral("仅当前用户…"));
-    QAction* install_for_users = install_menu->addAction(QStringLiteral("所有用户…"));
+    QAction* install_for_user  = install_menu->addAction(translate("appfw", "仅当前用户…"));
+    QAction* install_for_users = install_menu->addAction(translate("appfw", "所有用户…"));
     data->install_btn->setMenu(install_menu);
 
     auto* list_actions = new QHBoxLayout();
@@ -347,13 +348,13 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     placeholder_icon->setPixmap(renderSvgIcon(QString::fromUtf8(kDefaultPluginIconSvg), 64));
     placeholder_icon->setAlignment(Qt::AlignCenter);
 
-    auto* placeholder_text = new QLabel(QStringLiteral("选择一个插件查看详情"), placeholder);
+    auto* placeholder_text = new QLabel(translate("appfw", "选择一个插件查看详情"), placeholder);
     placeholder_text->setAlignment(Qt::AlignCenter);
     QFont placeholder_font = placeholder_text->font();
     placeholder_font.setPointSizeF(placeholder_font.pointSizeF() + 1.0);
     placeholder_text->setFont(placeholder_font);
 
-    auto* placeholder_hint = new QLabel(QStringLiteral("详情页显示来源、依赖、命令与配置，并给出可执行的操作。"), placeholder);
+    auto* placeholder_hint = new QLabel(translate("appfw", "详情页显示来源、依赖、命令与配置，并给出可执行的操作。"), placeholder);
     placeholder_hint->setAlignment(Qt::AlignCenter);
     placeholder_hint->setStyleSheet(QStringLiteral("color: gray;"));
 
@@ -428,10 +429,10 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     detail_lay->addWidget(data->status_label);
 
     // Actions: showDetail() shows only the ones that can take effect.
-    data->toggle_btn    = new QPushButton(QStringLiteral("禁用插件"), detail);
-    data->uninstall_btn = new QPushButton(QStringLiteral("卸载插件"), detail);
-    data->toggle_btn->setToolTip(QStringLiteral("只写偏好，不动本次运行；下次启动生效。"));
-    data->uninstall_btn->setToolTip(QStringLiteral("移除注册文件，重启后不再加载。"));
+    data->toggle_btn    = new QPushButton(translate("appfw", "禁用插件"), detail);
+    data->uninstall_btn = new QPushButton(translate("appfw", "卸载插件"), detail);
+    data->toggle_btn->setToolTip(translate("appfw", "只写偏好，不动本次运行；下次启动生效。"));
+    data->uninstall_btn->setToolTip(translate("appfw", "移除注册文件，重启后不再加载。"));
 
     auto* action_row = new QHBoxLayout();
     action_row->setSpacing(6);
@@ -486,30 +487,30 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     data->uuid_label->setFont(mono);
     data->path_label->setFont(mono);
 
-    form->addRow(QStringLiteral("描述"), data->desc_label);
-    form->addRow(QStringLiteral("标识"), data->id_label);
-    form->addRow(QStringLiteral("版本"), data->version_label);
-    form->addRow(QStringLiteral("来源"), data->scope_label);
-    form->addRow(QStringLiteral("依赖"), data->dep_label);
+    form->addRow(translate("appfw", "描述"), data->desc_label);
+    form->addRow(translate("appfw", "标识"), data->id_label);
+    form->addRow(translate("appfw", "版本"), data->version_label);
+    form->addRow(translate("appfw", "来源"), data->scope_label);
+    form->addRow(translate("appfw", "依赖"), data->dep_label);
     form->addRow(QStringLiteral("UUID"), data->uuid_label);
-    form->addRow(QStringLiteral("库路径"), data->path_label);
-    form->addRow(QStringLiteral("构建框架"), data->built_label);
-    form->addRow(QStringLiteral("邮箱"), data->email_label);
-    form->addRow(QStringLiteral("仓库"), data->repo_label);
+    form->addRow(translate("appfw", "库路径"), data->path_label);
+    form->addRow(translate("appfw", "构建框架"), data->built_label);
+    form->addRow(translate("appfw", "邮箱"), data->email_label);
+    form->addRow(translate("appfw", "仓库"), data->repo_label);
 
     // The row carries the URL, so a click opens the browser just like the former
     // "open repository" button did.
     data->repo_label->setOpenExternalLinks(true);
     info_lay->addLayout(form);
     info_lay->addStretch();
-    tabs->addTab(info_page, QStringLiteral("信息"));
+    tabs->addTab(info_page, translate("appfw", "信息"));
 
     // Commands tab: what the plugin adds to the command registry.
     auto* cmd_page = new QWidget(tabs);
     auto* cmd_lay  = new QVBoxLayout(cmd_page);
     cmd_lay->setContentsMargins(6, 6, 6, 6);
     data->cmd_table = new QTableWidget(0, 3, cmd_page);
-    data->cmd_table->setHorizontalHeaderLabels({ QStringLiteral("命令"), QStringLiteral("分组"), QStringLiteral("描述") });
+    data->cmd_table->setHorizontalHeaderLabels({ translate("appfw", "命令"), translate("appfw", "分组"), translate("appfw", "描述") });
     data->cmd_table->horizontalHeader()->setStretchLastSection(true);
     data->cmd_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     data->cmd_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -517,14 +518,14 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     data->cmd_table->setMinimumHeight(120);
     detail::blendIntoSurface(data->cmd_table);
     cmd_lay->addWidget(data->cmd_table, 1);
-    tabs->addTab(cmd_page, QStringLiteral("命令"));
+    tabs->addTab(cmd_page, translate("appfw", "命令"));
 
     // Config tab: the items the plugin registered with the host.
     auto* cfg_page = new QWidget(tabs);
     auto* cfg_lay  = new QVBoxLayout(cfg_page);
     cfg_lay->setContentsMargins(6, 6, 6, 6);
     data->cfg_table = new QTableWidget(0, 3, cfg_page);
-    data->cfg_table->setHorizontalHeaderLabels({ QStringLiteral("键"), QStringLiteral("标签"), QStringLiteral("描述") });
+    data->cfg_table->setHorizontalHeaderLabels({ translate("appfw", "键"), translate("appfw", "标签"), translate("appfw", "描述") });
     data->cfg_table->horizontalHeader()->setStretchLastSection(true);
     data->cfg_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     data->cfg_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -532,7 +533,7 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     data->cfg_table->setMinimumHeight(120);
     detail::blendIntoSurface(data->cfg_table);
     cfg_lay->addWidget(data->cfg_table, 1);
-    tabs->addTab(cfg_page, QStringLiteral("配置"));
+    tabs->addTab(cfg_page, translate("appfw", "配置"));
 
     detail_lay->addWidget(tabs, 1);
 
@@ -549,9 +550,9 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     data->message_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     bottom_lay->addWidget(data->message_label, 1);
 
-    auto* refresh_btn = new QPushButton(QStringLiteral("刷新"), root);
-    auto* close_btn   = new QPushButton(QStringLiteral("关闭"), root);
-    refresh_btn->setToolTip(QStringLiteral("重新扫描自带插件目录与已注册的位置。"));
+    auto* refresh_btn = new QPushButton(translate("appfw", "刷新"), root);
+    auto* close_btn   = new QPushButton(translate("appfw", "关闭"), root);
+    refresh_btn->setToolTip(translate("appfw", "重新扫描自带插件目录与已注册的位置。"));
     bottom_lay->addWidget(refresh_btn);
     bottom_lay->addWidget(close_btn);
     outer->addLayout(bottom_lay);
@@ -587,20 +588,20 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
         const auto* registration = entry != nullptr ? findRegistration(registrations, entry->path) : nullptr;
 
         QMenu    menu(data->list);
-        QAction* view_action = menu.addAction(QStringLiteral("查看详情"));
+        QAction* view_action = menu.addAction(translate("appfw", "查看详情"));
         view_action->setEnabled(entry != nullptr);
         QAction* toggle_action =
-            menu.addAction(entry != nullptr && entry->enabled ? QStringLiteral("禁用插件（重启后生效）") : QStringLiteral("启用插件（重启后生效）"));
+            menu.addAction(entry != nullptr && entry->enabled ? translate("appfw", "禁用插件（重启后生效）") : translate("appfw", "启用插件（重启后生效）"));
         toggle_action->setVisible(toggleable);
-        QAction* uninstall_action = menu.addAction(QStringLiteral("卸载插件（移除注册，重启生效）"));
+        QAction* uninstall_action = menu.addAction(translate("appfw", "卸载插件（移除注册，重启生效）"));
         uninstall_action->setVisible(registration != nullptr);
-        QAction* copy_path_action = menu.addAction(QStringLiteral("复制库路径"));
+        QAction* copy_path_action = menu.addAction(translate("appfw", "复制库路径"));
         copy_path_action->setVisible(entry != nullptr && !entry->path.empty());
         menu.addSeparator();
-        QAction* load_action              = menu.addAction(QStringLiteral("加载插件…"));
-        QAction* install_action           = menu.addAction(QStringLiteral("安装插件（仅当前用户）…"));
-        QAction* install_all_users_action = menu.addAction(QStringLiteral("安装插件（所有用户）…"));
-        QAction* refresh_action           = menu.addAction(QStringLiteral("刷新"));
+        QAction* load_action              = menu.addAction(translate("appfw", "加载插件…"));
+        QAction* install_action           = menu.addAction(translate("appfw", "安装插件（仅当前用户）…"));
+        QAction* install_all_users_action = menu.addAction(translate("appfw", "安装插件（所有用户）…"));
+        QAction* refresh_action           = menu.addAction(translate("appfw", "刷新"));
         QAction* chosen                   = menu.exec(data->list->viewport()->mapToGlobal(pos));
 
         if (chosen == view_action) {
@@ -620,7 +621,7 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
         }
         else if (chosen == copy_path_action && entry != nullptr) {
             QGuiApplication::clipboard()->setText(QString::fromUtf8(entry->path.u8string().c_str()));
-            data->message_label->setText(QStringLiteral("已复制库路径。"));
+            data->message_label->setText(translate("appfw", "已复制库路径。"));
         }
         else if (chosen == load_action) {
             loadPlugin();
@@ -650,7 +651,7 @@ void PluginManagerDialog::loadPlugin()
     if (!data->manager) {
         return;
     }
-    const QString file = QFileDialog::getOpenFileName(nullptr, QStringLiteral("选择插件库"), QString(), QStringLiteral("插件库 (*.dll *.so *.dylib)"));
+    const QString file = QFileDialog::getOpenFileName(nullptr, translate("appfw", "选择插件库"), QString(), translate("appfw", "插件库 (*.dll *.so *.dylib)"));
     if (file.isEmpty()) {
         return;
     }
@@ -658,10 +659,10 @@ void PluginManagerDialog::loadPlugin()
     // Report the outcome: the list only shows the state, and a plugin can be
     // refused (disabled, skipped, not a Vine plugin).
     if (data->manager->load(Convert::fromQString(file)) != nullptr) {
-        data->message_label->setText(QStringLiteral("已加载并运行。"));
+        data->message_label->setText(translate("appfw", "已加载并运行。"));
     }
     else {
-        data->message_label->setText(QStringLiteral("加载失败：不是有效的 Vine 插件，或它已被禁用/被程序跳过（详见日志）。"));
+        data->message_label->setText(translate("appfw", "加载失败：不是有效的 Vine 插件，或它已被禁用/被程序跳过（详见日志）。"));
     }
     refresh();
 }
@@ -703,12 +704,12 @@ void PluginManagerDialog::refresh()
             text += QStringLiteral("  ·  ") + stateLabel(&entry);
             item->setText(text);
 
-            QString tooltip = display + QStringLiteral("（") + name + QStringLiteral("）");
+            QString tooltip = display + translate("appfw", "（") + name + translate("appfw", "）");
             if (!entry.info.vendor.empty()) {
-                tooltip += QStringLiteral("\n厂商：") + Convert::toQString(entry.info.vendor);
+                tooltip += QLatin1Char('\n') + translate("appfw", "厂商：") + Convert::toQString(entry.info.vendor);
             }
-            tooltip += QStringLiteral("\n来源：") + scopeLabel(entry.scope);
-            tooltip += QStringLiteral("\n状态：") + stateExplanation(&entry);
+            tooltip += QLatin1Char('\n') + translate("appfw", "来源：") + scopeLabel(entry.scope);
+            tooltip += QLatin1Char('\n') + translate("appfw", "状态：") + stateExplanation(&entry);
             item->setToolTip(tooltip);
 
             // Not running for a reason that is not the user's choice: say so dimly.
@@ -754,7 +755,7 @@ void PluginManagerDialog::installPlugin(vn::appfw::PluginScope scope)
     // disk: that is how a plugin installed outside the program directory is
     // registered. It takes effect at the next start, so nothing is loaded here.
     const QString file =
-        QFileDialog::getOpenFileName(nullptr, QStringLiteral("选择插件库或插件目录"), QString(), QStringLiteral("插件库 (*.dll *.so *.dylib)"));
+        QFileDialog::getOpenFileName(nullptr, translate("appfw", "选择插件库或插件目录"), QString(), translate("appfw", "插件库 (*.dll *.so *.dylib)"));
     if (file.isEmpty()) {
         return;
     }
@@ -762,14 +763,14 @@ void PluginManagerDialog::installPlugin(vn::appfw::PluginScope scope)
     const String path = Convert::fromQString(file);
     const String id   = data->manager->installPlugin(path, scope);
     if (!id.empty()) {
-        data->message_label->setText(QStringLiteral("已注册（") + scopeLabel(scope) + QStringLiteral("）：") + file + QStringLiteral("，重启后加载。"));
+        data->message_label->setText(translate("appfw", "已注册（") + scopeLabel(scope) + translate("appfw", "）：") + file + translate("appfw", "，重启后加载。"));
     }
     else if (scope == vn::appfw::PluginScope::AllUsers) {
-        data->message_label->setText(QStringLiteral("为所有用户注册失败（需要管理员权限，或文件不存在）：") + file +
-                                     QStringLiteral("；可改用“仅当前用户”安装。"));
+        data->message_label->setText(translate("appfw", "为所有用户注册失败（需要管理员权限，或文件不存在）：") + file +
+                                     translate("appfw", "；可改用“仅当前用户”安装。"));
     }
     else {
-        data->message_label->setText(QStringLiteral("注册失败（文件不存在或无法写入注册目录）：") + file);
+        data->message_label->setText(translate("appfw", "注册失败（文件不存在或无法写入注册目录）：") + file);
     }
     refresh();
 }
@@ -794,15 +795,15 @@ void PluginManagerDialog::uninstallSelectedPlugin()
     const auto  registrations = data->manager->pluginRegistrations();
     const auto* registration  = findRegistration(registrations, entry->path);
     if (registration == nullptr) {
-        data->message_label->setText(QStringLiteral("该插件由程序自带，不能卸载。"));
+        data->message_label->setText(translate("appfw", "该插件由程序自带，不能卸载。"));
         return;
     }
 
     // Removing the registration takes effect at the next start; a running plugin
     // keeps running until then (see PluginManager::uninstallPlugin).
     const bool removed = data->manager->uninstallPlugin(registration->id, registration->scope);
-    data->message_label->setText(removed ? QStringLiteral("已移除注册（") + scopeLabel(registration->scope) + QStringLiteral("）：重启后不再加载。")
-                                         : QStringLiteral("移除注册失败：注册文件不存在或不可写。"));
+    data->message_label->setText(removed ? translate("appfw", "已移除注册（") + scopeLabel(registration->scope) + translate("appfw", "）：重启后不再加载。")
+                                         : translate("appfw", "移除注册失败：注册文件不存在或不可写。"));
     refresh();
 }
 
@@ -824,10 +825,10 @@ void PluginManagerDialog::togglePluginEnabled()
     // running state is untouched and the change applies at the next start. An
     // application-provided plugin is refused (see PluginManager::setPluginEnabled).
     if (data->manager->setPluginEnabled(name, !entry->enabled)) {
-        data->message_label->setText(entry->enabled ? QStringLiteral("已禁用，重启后生效。") : QStringLiteral("已启用，重启后生效。"));
+        data->message_label->setText(entry->enabled ? translate("appfw", "已禁用，重启后生效。") : translate("appfw", "已启用，重启后生效。"));
     }
     else {
-        data->message_label->setText(QStringLiteral("程序自带的插件不能禁用；它由程序决定是否随包发布。"));
+        data->message_label->setText(translate("appfw", "程序自带的插件不能禁用；它由程序决定是否随包发布。"));
     }
     refresh();
     showDetail(name);
@@ -894,12 +895,12 @@ void PluginManagerDialog::showDetail(const vn::String& name)
     const bool toggleable = entry != nullptr && entry->scope != vn::appfw::PluginScope::BuiltIn && !entry->skipped;
     data->toggle_btn->setVisible(toggleable);
     if (toggleable) {
-        data->toggle_btn->setText(entry->enabled ? QStringLiteral("禁用插件（重启后生效）") : QStringLiteral("启用插件（重启后生效）"));
+        data->toggle_btn->setText(entry->enabled ? translate("appfw", "禁用插件（重启后生效）") : translate("appfw", "启用插件（重启后生效）"));
     }
 
     data->uninstall_btn->setVisible(registration != nullptr);
     if (registration != nullptr) {
-        data->uninstall_btn->setText(QStringLiteral("卸载插件（") + scopeLabel(registration->scope) + QStringLiteral("）"));
+        data->uninstall_btn->setText(translate("appfw", "卸载插件（") + scopeLabel(registration->scope) + translate("appfw", "）"));
     }
 
     data->current_repo = entry != nullptr && !entry->info.repo.empty() ? Convert::toQString(entry->info.repo) : QString();
@@ -908,10 +909,10 @@ void PluginManagerDialog::showDetail(const vn::String& name)
     data->desc_label->setText(entry != nullptr && !entry->info.description.empty() ? Convert::toQString(entry->info.description) : QStringLiteral("—"));
     const auto value = [](const vn::String& text) { return text.empty() ? QStringLiteral("—") : Convert::toQString(text); };
 
-    data->id_label->setText(display == id ? id : display + QStringLiteral("（") + id + QStringLiteral("）"));
+    data->id_label->setText(display == id ? id : display + translate("appfw", "（") + id + translate("appfw", "）"));
     data->version_label->setText(entry != nullptr ? value(entry->info.version) : QStringLiteral("—"));
     data->scope_label->setText(entry != nullptr ? scopeLabel(entry->scope) +
-                                                      (registration != nullptr ? QStringLiteral("  ·  可卸载") : QStringLiteral("  ·  不可禁用或卸载"))
+                                                      (registration != nullptr ? translate("appfw", "  ·  可卸载") : translate("appfw", "  ·  不可禁用或卸载"))
                                                 : QStringLiteral("—"));
     data->dep_label->setText(entry != nullptr ? joinStrings(entry->info.dependencies) : QStringLiteral("—"));
     data->uuid_label->setText(entry != nullptr && !entry->info.uuid.isNull() ? Convert::toQString(entry->info.uuid.toString()) : QStringLiteral("—"));
@@ -920,7 +921,7 @@ void PluginManagerDialog::showDetail(const vn::String& name)
     // The version the library was built with (PluginAbi): a plugin compiled against
     // another framework build is usually the first thing to check when it misbehaves.
     data->built_label->setText(entry != nullptr ? value(entry->framework_version) : QStringLiteral("—"));
-    data->built_label->setToolTip(QStringLiteral("本程序内置的框架版本：%1").arg(QStringLiteral(VN_APPFW_VERSION)));
+    data->built_label->setToolTip(translate("appfw", "本程序内置的框架版本：%1").arg(QStringLiteral(VN_APPFW_VERSION)));
     data->email_label->setText(entry != nullptr && !entry->info.email.empty()
                                    ? QStringLiteral("<a href=\"mailto:%1\">%1</a>").arg(Convert::toQString(entry->info.email).toHtmlEscaped())
                                    : QStringLiteral("—"));

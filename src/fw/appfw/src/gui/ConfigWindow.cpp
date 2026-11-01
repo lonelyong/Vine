@@ -19,8 +19,10 @@
 
 #include <vine/appfw/ConfigCategory.hpp>
 #include <vine/appfw/ConfigGroup.hpp>
+#include <vine/appfw/Translation.hpp>
 
 #include "Convert.hpp"
+#include "GuiText.hpp"
 #include "WindowData.hpp"
 
 VN_APPFWGUI_NS_BEGIN
@@ -40,7 +42,7 @@ String categoryTitle(const ConfigCategory* cat)
         return cat->label();
     if (!cat->name().empty())
         return cat->name();
-    return String(u8"通用");
+    return vn::appfw::translate("appfw", "通用");
 }
 
 // Group title: label > name.
@@ -225,7 +227,7 @@ ConfigWindow::ConfigWindow(ConfigRegistry* registry, ConfigManager* config)
             }
         }
         if (!has_item) {
-            auto* tip = new QLabel(QStringLiteral("(空)"));
+            auto* tip = new QLabel(translate("appfw", "(空)"));
             vlay->addWidget(tip);
         }
         scroll->setWidget(container);
@@ -235,8 +237,8 @@ ConfigWindow::ConfigWindow(ConfigRegistry* registry, ConfigManager* config)
     }
 
     if (registry->categories().empty()) {
-        auto* tip = new QLabel(QStringLiteral("(未注册配置项)"));
-        tabs->addTab(tip, QStringLiteral("通用"));
+        auto* tip = new QLabel(translate("appfw", "(未注册配置项)"));
+        tabs->addTab(tip, translate("appfw", "通用"));
     }
     auto* lay = new QVBoxLayout(root);
     lay->setContentsMargins(0, 0, 0, 0);

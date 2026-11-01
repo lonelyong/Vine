@@ -8,6 +8,7 @@
 
 #include <vine/appfw/gui/AboutPanel.hpp>
 
+#include "GuiText.hpp"
 #include "WindowData.hpp"
 
 VN_APPFWGUI_NS_BEGIN
@@ -23,7 +24,7 @@ AboutDialog::AboutDialog()
   : Window(new Impl(), new QDialog())
 {
     auto* root = impl<QDialog>();
-    root->setWindowTitle(QStringLiteral("关于"));
+    root->setWindowTitle(translate("appfw", "关于"));
 
     auto* layout = new QVBoxLayout(root);
     layout->setContentsMargins(24, 20, 24, 20);

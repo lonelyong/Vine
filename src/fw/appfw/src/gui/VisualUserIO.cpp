@@ -16,6 +16,7 @@
 #include <vine/appfw/MainThreadDispatcher.hpp>
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginManager.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
 
@@ -466,7 +467,7 @@ String pickerFilter(const std::vector<String>& patterns)
     }
 
     // 标题由框架定：读请求说的是"要什么格式"（extensions），给它起名字是选择器的事（与提示文案同源）。
-    return String(u8"支持的格式 (") + joined + u8");;所有文件 (*)";
+    return vn::appfw::translate("appfw", "支持的格式 (") + joined + vn::appfw::translate("appfw", ");;所有文件 (*)");
 }
 
 } // namespace
@@ -476,7 +477,7 @@ vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getFileAsync
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::File;
     ui.action.filter  = pickerFilter(filterPatterns(options));
-    ui.action.tooltip = String(u8"选择文件…") + requirementSummary(options.extensions, /*multiple=*/false);
+    ui.action.tooltip = vn::appfw::translate("appfw", "选择文件…") + requirementSummary(options.extensions, /*multiple=*/false);
     ui.prompt         = promptWithRequirements(prompt, requirementSummary(options.extensions, /*multiple=*/false));
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.file_options   = options;
@@ -492,7 +493,7 @@ vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getFilesAsync(con
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::Files;
     ui.action.filter  = pickerFilter(filterPatterns(options));
-    ui.action.tooltip = String(u8"选择文件…") + requirementSummary(options.extensions, /*multiple=*/true);
+    ui.action.tooltip = vn::appfw::translate("appfw", "选择文件…") + requirementSummary(options.extensions, /*multiple=*/true);
     ui.prompt         = promptWithRequirements(prompt, requirementSummary(options.extensions, /*multiple=*/true));
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.file_options   = options;
@@ -507,7 +508,7 @@ vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getDirAsync(
 {
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::Directory;
-    ui.action.tooltip = String(u8"选择目录…") + requirementSummary({}, /*multiple=*/false);
+    ui.action.tooltip = vn::appfw::translate("appfw", "选择目录…") + requirementSummary({}, /*multiple=*/false);
     ui.prompt         = promptWithRequirements(prompt, requirementSummary({}, /*multiple=*/false));
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.dir_options    = options;
@@ -522,7 +523,7 @@ vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getDirsAsync(cons
 {
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::Directories;
-    ui.action.tooltip = String(u8"选择目录…") + requirementSummary({}, /*multiple=*/true);
+    ui.action.tooltip = vn::appfw::translate("appfw", "选择目录…") + requirementSummary({}, /*multiple=*/true);
     ui.prompt         = promptWithRequirements(prompt, requirementSummary({}, /*multiple=*/true));
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.dir_options    = options;
@@ -542,7 +543,7 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
 
     if (owner->commandManager() && owner->commandManager()->runningCount() > 0) {
         if (console) {
-            console->append(ConsoleMessageType::Warning, String(u8"命令正在执行，请稍候"));
+            console->append(ConsoleMessageType::Warning, vn::appfw::translate("appfw", "命令正在执行，请稍候"));
         }
         return;
     }
@@ -574,7 +575,7 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
             }
 
             const auto& message = result.message();
-            self->appendOnApplicationThread(message.empty() ? String(u8"命令执行失败") : message, ConsoleMessageType::Error);
+            self->appendOnApplicationThread(message.empty() ? vn::appfw::translate("appfw", "命令执行失败") : message, ConsoleMessageType::Error);
         }(this, owner->commandManager()->executeCommandAsync(text, resolveCommandTarget(MainWindow::current())));
     }
 }
@@ -617,7 +618,7 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
             completeInt(value);
         }
         else {
-            repromptError(String(u8"请输入整数"));
+            repromptError(vn::appfw::translate("appfw", "请输入整数"));
         }
         break;
     }
@@ -630,7 +631,7 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
             completeDouble(value);
         }
         else {
-            repromptError(String(u8"请输入数字"));
+            repromptError(vn::appfw::translate("appfw", "请输入数字"));
         }
         break;
     }
@@ -654,7 +655,7 @@ void VisualUserIO::Impl::parseAndComplete(const String& text)
                 break;
             }
         }
-        repromptError(String(u8"请输入 x,y,z 格式的点"));
+        repromptError(vn::appfw::translate("appfw", "请输入 x,y,z 格式的点"));
         break;
     }
 

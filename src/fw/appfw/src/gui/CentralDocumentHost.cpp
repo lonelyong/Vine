@@ -1,3 +1,4 @@
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/gui/CentralDocumentHost.hpp>
 
 #include <algorithm>
@@ -25,6 +26,7 @@
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
 
 #include "ControlData.hpp"
+#include "GuiText.hpp"
 
 VN_APPFWGUI_NS_BEGIN
 
@@ -118,7 +120,7 @@ class TabCloseButton final : public QToolButton {
         setAutoRaise(true);
         setCursor(Qt::ArrowCursor);
         setFocusPolicy(Qt::NoFocus);
-        setToolTip(QStringLiteral("关闭这个文档"));
+        setToolTip(translate("appfw", "关闭这个文档"));
         setFixedSize(16, 16);
     }
 };
@@ -166,13 +168,13 @@ class FloatingDocumentWindow final : public QWidget {
         bar_layout->addWidget(title_, 1);
 
         auto* dock = new QToolButton(bar);
-        dock->setText(QStringLiteral("停靠"));
-        dock->setToolTip(QStringLiteral("把这个文档停靠回中央区"));
+        dock->setText(translate("appfw", "停靠"));
+        dock->setToolTip(translate("appfw", "把这个文档停靠回中央区"));
         bar_layout->addWidget(dock);
 
         auto* close_button = new QToolButton(bar);
-        close_button->setText(QStringLiteral("关闭"));
-        close_button->setToolTip(QStringLiteral("关闭这个文档"));
+        close_button->setText(translate("appfw", "关闭"));
+        close_button->setToolTip(translate("appfw", "关闭这个文档"));
         bar_layout->addWidget(close_button);
 
         root->addWidget(bar);
@@ -656,9 +658,9 @@ CentralDocumentHost::CentralDocumentHost(vn::appfw::DocumentManager& documents, 
         const bool floating = d->entries[static_cast<std::size_t>(index)].window != nullptr;
 
         QMenu          menu(d->tabs);
-        QAction* const toggle = menu.addAction(floating ? QStringLiteral("停靠回中央区") : QStringLiteral("浮动到独立窗口"));
+        QAction* const toggle = menu.addAction(floating ? translate("appfw", "停靠回中央区") : translate("appfw", "浮动到独立窗口"));
         menu.addSeparator();
-        QAction* const close_action = menu.addAction(QStringLiteral("关闭文档"));
+        QAction* const close_action = menu.addAction(translate("appfw", "关闭文档"));
 
         QAction* const chosen = menu.exec(d->tabs->mapToGlobal(pos));
         if (chosen == nullptr) {
@@ -779,7 +781,7 @@ void CentralDocumentHost::syncToCurrentDocument()
     if (document == nullptr) {
         // Contract 2: with nothing to show, the host leaves the central area to the shell.
         if (d->installed) {
-            d->showMessage(u8"没有当前文档");
+            d->showMessage(vn::appfw::translate("appfw", "没有当前文档"));
         }
         else {
             d->central_page = nullptr;
@@ -800,7 +802,7 @@ void CentralDocumentHost::syncToCurrentDocument()
 
             String text = u8"“";
             text.append(document->title());
-            text.append(u8"” 在独立窗口中");
+            text.append(vn::appfw::translate("appfw", "” 在独立窗口中"));
             d->showMessage(text);
         }
         else if (view == nullptr) {
@@ -810,7 +812,7 @@ void CentralDocumentHost::syncToCurrentDocument()
 
             String text = u8"“";
             text.append(document->typeId());
-            text.append(registered ? u8"” 类型的视图工厂拒绝了这份文档" : u8"” 类型没有注册视图");
+            text.append(registered ? vn::appfw::translate("appfw", "” 类型的视图工厂拒绝了这份文档") : vn::appfw::translate("appfw", "” 类型没有注册视图"));
             d->showMessage(text);
         }
         else if (QWidget* const page = entry != nullptr ? entry->page() : nullptr; page != nullptr) {
@@ -818,7 +820,7 @@ void CentralDocumentHost::syncToCurrentDocument()
             d->central_page = view->content();
         }
         else {
-            d->showMessage(u8"当前文档没有可显示的页");
+            d->showMessage(vn::appfw::translate("appfw", "当前文档没有可显示的页"));
         }
 
         if (switched && view != nullptr) {

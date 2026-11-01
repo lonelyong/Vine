@@ -14,6 +14,7 @@
 #include <QVBoxLayout>
 
 #include "Convert.hpp"
+#include "GuiText.hpp"
 #include "TableStyle.hpp"
 #include "WindowData.hpp"
 
@@ -54,20 +55,20 @@ CommandManagerDialog::CommandManagerDialog(vn::appfw::CommandManager* manager)
     data->manager = manager;
 
     auto* root = impl<QDialog>();
-    root->setWindowTitle(QStringLiteral("命令管理器"));
+    root->setWindowTitle(translate("appfw", "命令管理器"));
 
     auto* lay = new QVBoxLayout(root);
     lay->setContentsMargins(10, 10, 10, 8);
     lay->setSpacing(8);
 
     data->filter = new QLineEdit(root);
-    data->filter->setPlaceholderText(QStringLiteral("筛选名称 / 别名 / 来源插件 / 分组 / 描述…"));
+    data->filter->setPlaceholderText(translate("appfw", "筛选名称 / 别名 / 来源插件 / 分组 / 描述…"));
     data->filter->setClearButtonEnabled(true);
     lay->addWidget(data->filter);
 
     data->table = new QTableWidget(0, 6, root);
     data->table->setHorizontalHeaderLabels(
-        { QStringLiteral("名称"), QStringLiteral("状态"), QStringLiteral("别名"), QStringLiteral("来源插件"), QStringLiteral("分组"), QStringLiteral("描述") });
+        { translate("appfw", "名称"), translate("appfw", "状态"), translate("appfw", "别名"), translate("appfw", "来源插件"), translate("appfw", "分组"), translate("appfw", "描述") });
     data->table->horizontalHeader()->setStretchLastSection(true);
     data->table->setSelectionBehavior(QAbstractItemView::SelectRows);
     data->table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -86,11 +87,11 @@ CommandManagerDialog::CommandManagerDialog(vn::appfw::CommandManager* manager)
     data->message_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     bottom_lay->addWidget(data->message_label, 1);
 
-    auto* refresh_btn = new QPushButton(QStringLiteral("刷新"), root);
-    data->toggle_btn  = new QPushButton(QStringLiteral("禁用命令"), root);
-    auto* close_btn   = new QPushButton(QStringLiteral("关闭"), root);
-    refresh_btn->setToolTip(QStringLiteral("重新列出已注册的命令。"));
-    data->toggle_btn->setToolTip(QStringLiteral("禁用的命令仍留在管理器里（只是不能执行），随时可以再启用；该选择重启后依然有效。"));
+    auto* refresh_btn = new QPushButton(translate("appfw", "刷新"), root);
+    data->toggle_btn  = new QPushButton(translate("appfw", "禁用命令"), root);
+    auto* close_btn   = new QPushButton(translate("appfw", "关闭"), root);
+    refresh_btn->setToolTip(translate("appfw", "重新列出已注册的命令。"));
+    data->toggle_btn->setToolTip(translate("appfw", "禁用的命令仍留在管理器里（只是不能执行），随时可以再启用；该选择重启后依然有效。"));
     bottom_lay->addWidget(refresh_btn);
     bottom_lay->addWidget(data->toggle_btn);
     bottom_lay->addWidget(close_btn);
@@ -127,7 +128,7 @@ void CommandManagerDialog::refresh()
         data->table->insertRow(row);
 
         data->table->setItem(row, 0, new QTableWidgetItem(Convert::toQString(info.name)));
-        data->table->setItem(row, 1, new QTableWidgetItem(info.enabled ? QStringLiteral("启用") : QStringLiteral("已禁用")));
+        data->table->setItem(row, 1, new QTableWidgetItem(info.enabled ? translate("appfw", "启用") : translate("appfw", "已禁用")));
 
         QString aliases;
         bool    first = true;
@@ -140,7 +141,7 @@ void CommandManagerDialog::refresh()
         }
         data->table->setItem(row, 2, new QTableWidgetItem(aliases));
 
-        const QString owner = info.owner.empty() ? QStringLiteral("主机") : Convert::toQString(info.owner);
+        const QString owner = info.owner.empty() ? translate("appfw", "主机") : Convert::toQString(info.owner);
         data->table->setItem(row, 3, new QTableWidgetItem(owner));
         data->table->setItem(row, 4, new QTableWidgetItem(Convert::toQString(info.group)));
         data->table->setItem(row, 5, new QTableWidgetItem(Convert::toQString(info.description)));
@@ -197,8 +198,8 @@ void CommandManagerDialog::toggleSelectedEnabled()
     const bool enable = !data->manager->isCommandEnabled(name);
     data->manager->setCommandEnabled(name, enable);
 
-    data->message_label->setText(enable ? QStringLiteral("已启用命令“%1”。").arg(name_item->text())
-                                        : QStringLiteral("已禁用命令“%1”（重启后仍保持禁用）。").arg(name_item->text()));
+    data->message_label->setText(enable ? translate("appfw", "已启用命令“%1”。").arg(name_item->text())
+                                        : translate("appfw", "已禁用命令“%1”（重启后仍保持禁用）。").arg(name_item->text()));
     refresh();
 }
 
@@ -210,7 +211,7 @@ void CommandManagerDialog::updateActions()
 
     data->toggle_btn->setEnabled(item != nullptr);
     if (item == nullptr) {
-        data->toggle_btn->setText(QStringLiteral("禁用命令"));
+        data->toggle_btn->setText(translate("appfw", "禁用命令"));
         return;
     }
 
@@ -218,7 +219,7 @@ void CommandManagerDialog::updateActions()
     const String name    = String::fromUtf16(reinterpret_cast<const char16_t*>(u16), item->text().size());
     const bool   enabled = data->manager != nullptr && data->manager->isCommandEnabled(name);
 
-    data->toggle_btn->setText(enabled ? QStringLiteral("禁用命令") : QStringLiteral("启用命令"));
+    data->toggle_btn->setText(enabled ? translate("appfw", "禁用命令") : translate("appfw", "启用命令"));
 }
 
 inline auto CommandManagerDialog::dptr() -> Impl*
