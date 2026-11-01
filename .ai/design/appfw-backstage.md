@@ -43,7 +43,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 
 - 是什么：`Backstage` 的 native widget 是 `Qt::Tool | FramelessWindowHint` 的顶层窗口，**父窗口设为主窗口**（保证叠在主窗口与其原生子窗口之上，但不是全局 topmost），几何跟随主窗口客户区。
 - 为什么：中央 3D 是 `createWindowContainer` 的原生子窗口，Windows 上永远画在 Qt 子控件之上；子控件覆盖层在文档区会缺失一块。飞窗的修复已经证明“顶层 Tool 窗口”是可行方向。
-- 代价：需要自己同步 move/resize/minimize/restore、激活与 Esc；不如子控件省事。
+- 代价与手势：需要自己同步 move/resize/minimize/restore、激活与 Esc；覆盖层没有自己的标题栏，所以按住它的空白处（页眉、标题文字、导航轨边缘）拖动的是**主窗口**——单独移动覆盖层只会让“等于客户区”失真，下一次同步又跳回去。拖动时覆盖层在**同一次事件**里跟上（不等主窗口的 `Move` 事件），否则快速拖动会看到两个窗口错开一帧。
 
 ### 2.3 页面是 id 平铺列表，条目复用命令（G1、G8）
 
@@ -77,7 +77,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 
 ### 2.8 入口只有一个开关：应用按钮的可见性（G1、G8）
 
-- 是什么：`RibbonBar::setApplicationButtonVisible(bool)` 是“提不提供 Backstage/应用菜单入口”的唯一控制；`Backstage` 本身没有 enabled 状态，`open()` 对任何持有者都有效。
+- 是什么：`RibbonBar::setApplicationButtonVisible(bool)` 是“提不提供 Backstage/应用菜单入口”的唯一控制；`Backstage` 本身没有 enabled 状态，`open()` 对任何持有者都有效。入口的默认文字是“文件”（`setApplicationText()` / `applicationText()` 可改，语言归宿主）。
 - 为什么：应用按钮是进入菜单与 Backstage 的唯一入口，再给 Backstage 一个“禁用”就是同一件事的第二个表示：宿主得配对维护两处状态，而 `applicationButtonVisible()` 会同时被两种原因置假，读的人分不清是“宿主不要”还是“功能被禁用”（`G1` 一个事实一个所有者）。
 - 边界：隐藏入口是呈现层选择，不是权限边界——命令/快捷键仍可调 `open()`，是否拒绝由宿主自己决定；想彻底拿掉 Backstage 用 `MainWindow::setBackstage(nullptr)`（见 D6）。
 
@@ -261,6 +261,7 @@ SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏�
 | T12 | 页面主体：与条目互斥、换 body 交回旧的、null 不算 | `GuiTest.BackstagePage_BodyReplacesTheCommandColumn` |
 | T13 | 版式：导航行留图标位、条目列与标题同左缩进、条目行 40 px | `GuiTest.Backstage_NavRowsReserveTheIconColumn`、`GuiTest.Backstage_PageRowsAlignWithTheTitle` |
 | T15 | 条目超过一屏时可滚动；body 页不套滚动区 | `GuiTest.Backstage_ManyItemsScroll` |
+| T16 | 拖覆盖层空白处带动主窗口（松开即停） | `GuiTest.Backstage_DraggingItsBackgroundMovesTheMainWindow` |
 
 ## 9. 状态与演进
 
@@ -296,5 +297,4 @@ F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell �
 
 ### 10.3 外部资料
 
-- SARibbon：`SARibbonApplicationButton`、`SARibbonBar::applicationButtonClicked`、`SARibbonApplicationWidget`。
-- Office Backstage：整窗文件页 + 左侧导航。
+- SARibbon：`SARibbonApplicationButton`、`SARibbonBar::applicationButtonClicked`、`SARibbonApplicationWidget`；Office Backstage：整窗文件页 + 左侧导航。

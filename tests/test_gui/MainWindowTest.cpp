@@ -18,7 +18,10 @@
 #include <QSize>
 #include <QWidget>
 
+#include <memory>
+
 #include <vine/appfw/gui/MainWindow.hpp>
+#include <vine/appfw/gui/RibbonBar.hpp>
 
 namespace guifw = vn::appfw::gui;
 
@@ -36,4 +39,16 @@ TEST(MainWindowTest, TheOpeningSizeIsStatedInsteadOfInheritedFromTheLayout)
     EXPECT_EQ(widget->minimumSize(), QSize(800, 600));
     EXPECT_EQ(widget->size(), QSize(800, 600));
     EXPECT_TRUE(widget->testAttribute(Qt::WA_Resized));
+}
+
+// The application button is the entry into the Backstage, and its label is UI text like everything else in this
+// layer. It used to be the one English label left ("File"), written straight into the SARibbon button.
+TEST(MainWindowTest, TheApplicationButtonSpeaksTheUiLanguage)
+{
+    auto wnd = std::make_unique<guifw::MainWindow>();
+
+    auto* bar = wnd->ribbonBar();
+    ASSERT_NE(bar, nullptr);
+
+    EXPECT_TRUE(bar->applicationText() == u8"文件") << "应用按钮的默认文字属于界面文案";
 }

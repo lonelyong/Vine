@@ -87,6 +87,8 @@
   hover/按下用 `rgba(127,127,127,40)` / `rgba(127,127,127,70)`。
 - `QScrollArea::setWidget()` 会给被滚动的控件打开 `autoFillBackground`（画成 `Window` 色的一块）；要在
   setWidget 之后再 `setAutoFillBackground(false)`，否则透明页面上会出现一块灰底。
+- 顶层覆盖窗（Backstage）跟随主窗口：拖动时要在**同一调用里**同步覆盖层几何；只靠主窗口的 `Move`
+  事件会依赖平台是否同步派发，排队时两窗口会差一帧。
 
 ## 公共面
 

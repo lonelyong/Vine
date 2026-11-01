@@ -121,7 +121,11 @@ MainWindow::MainWindow()
 
     auto ribbon = impl<itype>()->ribbonBar();
     ribbon->setContentsMargins(5, 0, 5, 0);
-    ribbon->applicationButton()->setText("File");
+
+    // The application button is the way into the Backstage / application menu, so its label is UI text like the rest
+    // of this layer. It goes through RibbonBar's setter instead of writing into the SARibbon button directly: a host
+    // that speaks another language then has one documented place to change, and the default stays in one place.
+    dptr()->ribbon_bar->setApplicationText(String(u8"文件"));
 }
 
 MainWindow::~MainWindow()

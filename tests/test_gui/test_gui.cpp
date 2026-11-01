@@ -1421,6 +1421,56 @@ TEST_F(GuiTest, Backstage_ManyItemsScroll)
     backstage.close();
 }
 
+// 覆盖层是主窗口的客户区：拖它的空白处要带动主窗口，而不是把覆盖层单独挪走。
+TEST_F(GuiTest, Backstage_DraggingItsBackgroundMovesTheMainWindow)
+{
+    guifw::Backstage backstage(wnd.get());
+
+    auto* page = new guifw::BackstagePage();
+    page->setId(u8"test.backstage.drag");
+    page->setTitle(u8"Drag");
+    ASSERT_TRUE(backstage.addPage(page));
+    backstage.open();
+    QCoreApplication::processEvents();
+
+    auto* window = backstage.impl<QWidget>();
+    auto* main   = wnd->impl<QWidget>();
+    ASSERT_NE(window, nullptr);
+    ASSERT_NE(main, nullptr);
+
+    const QPoint before = main->pos();
+    const QPoint local(400, 30);
+    const QPoint global = window->mapToGlobal(local);
+
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(local), QPointF(global), Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &press);
+
+    const QPoint delta(60, 40);
+    QMouseEvent move(QEvent::MouseMove, QPointF(local + delta), QPointF(global + delta), Qt::NoButton, Qt::LeftButton,
+                     Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &move);
+    // The overlay is the main window's client area: it has to be there when the drag handler returns, not one
+    // event-loop turn later (otherwise a fast drag shows the two windows apart for a frame).
+    EXPECT_EQ(window->pos(), main->mapToGlobal(QPoint(0, 0))) << "覆盖层应在拖动的同时跟上主窗口";
+    QCoreApplication::processEvents();
+
+    EXPECT_EQ(main->pos(), before + delta) << "拖动覆盖层空白处应带动主窗口";
+
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(local + delta), QPointF(global + delta), Qt::LeftButton,
+                        Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &release);
+
+    // 松开之后鼠标再动，窗口不再跟着走。
+    const QPoint settled = main->pos();
+    QMouseEvent after(QEvent::MouseMove, QPointF(local + delta + QPoint(50, 50)),
+                      QPointF(global + delta + QPoint(50, 50)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &after);
+    EXPECT_EQ(main->pos(), settled);
+
+    backstage.close();
+}
+
 TEST_F(GuiTest, Backstage_ApplicationButtonOpensThePage)
 {
     auto* bar      = wnd->ribbonBar();

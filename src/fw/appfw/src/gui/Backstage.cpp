@@ -8,6 +8,7 @@
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QApplication>
 #include <QEvent>
 #include <QFont>
 #include <QFrame>
@@ -17,6 +18,7 @@
 #include <QLabel>
 #include <QLayoutItem>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
 #include <QScrollArea>
@@ -395,8 +397,81 @@ class BackstageWindow final : public QWidget {
         QWidget::keyPressEvent(event);
     }
 
+    /**
+     * @brief Starts a window drag when the press lands on the overlay's own background.
+     *
+     * @details
+     * - The window is frameless, so it has no system title bar of its own; the press only gets here when no child
+     *   widget consumed it (the header, the title label and the rail's margins all ignore it).
+     * - The drag moves the *main* window, not the overlay: the overlay is defined as "the main window's client
+     *   area", so moving it on its own would only break that geometry until the next sync.
+     */
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event != nullptr && event->button() == Qt::LeftButton && main_window_ != nullptr) {
+            press_global_ = event->globalPosition().toPoint();
+            tracking_     = true;
+            dragging_     = false;
+            event->accept();
+            return;
+        }
+
+        QWidget::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override
+    {
+        if (event == nullptr || !tracking_ || main_window_ == nullptr) {
+            QWidget::mouseMoveEvent(event);
+            return;
+        }
+
+        const QPoint now = event->globalPosition().toPoint();
+
+        if (!dragging_) {
+            // A plain click stays a click: the window only starts moving after the pointer passes the drag
+            // distance, which is also what keeps a click from restoring a maximized window.
+            if ((now - press_global_).manhattanLength() < QApplication::startDragDistance()) {
+                event->accept();
+                return;
+            }
+
+            dragging_ = true;
+
+            if (main_window_->isMaximized()) {
+                // Same gesture the platform gives a title bar: pull the window out of maximized and keep dragging.
+                main_window_->showNormal();
+            }
+
+            // Measured after the restore, so the cursor keeps the spot it grabbed.
+            drag_offset_ = press_global_ - main_window_->pos();
+        }
+
+        main_window_->move(now - drag_offset_);
+
+        // Follow in the same call, not only through the main window's Move event: the overlay is defined as the
+        // client area, and a platform that queues that event would leave the two windows a turn apart on screen.
+        syncToMainWindow();
+
+        event->accept();
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        tracking_ = false;
+        dragging_ = false;
+
+        QWidget::mouseReleaseEvent(event);
+    }
+
   private:
     QWidget* main_window_ = nullptr;
+    /// True between a press on the background and its release.
+    bool tracking_ = false;
+    /// True once that press turned into a drag (past QApplication::startDragDistance()).
+    bool dragging_ = false;
+    QPoint press_global_;
+    QPoint drag_offset_;
 };
 
 } // namespace
