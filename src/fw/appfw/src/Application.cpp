@@ -26,9 +26,11 @@
 #include <vine/appfw/ProgressHost.hpp>
 #include <vine/appfw/ServiceManager.hpp>
 #include <vine/appfw/StartupProgress.hpp>
+#include <vine/appfw/Translation.hpp>
 
 #include "ApplicationData.hpp"
 #include "ConsoleUserIO.hpp"
+#include "TranslatorRegistry.hpp"
 
 VN_APPFW_NS_BEGIN
 
@@ -183,11 +185,17 @@ void Application::initialize(const AppConfig& config)
     // host opted out (tests, tools). A file that cannot be read is logged by setConfigFile() and the defaults apply.
     if (!config.config_file.empty()) {
         static_cast<void>(setConfigFile(config.config_file));
-        return;
     }
-    if (config.persist_config) {
+    else if (config.persist_config) {
         static_cast<void>(setConfigFile(defaultConfigFile()));
     }
+
+    // The language comes before anything that builds a window, and before the items are registered: an item's label is
+    // translated text itself, so registering it earlier would freeze it in the wrong language. The setting is the
+    // configuration item - readable only now, after the file above was loaded - and an absent value follows the system.
+    installApplicationCatalogs(resolveLanguageTag(dptr()->config_manager->getString(languageConfigKey())));
+    static_cast<void>(dptr()->config_registry->addItem(StandardCategory::General, StandardGroup::Language,
+                                                       languageConfigItem()));
 }
 
 void Application::setupUserIO()

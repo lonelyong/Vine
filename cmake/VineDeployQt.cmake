@@ -26,6 +26,38 @@ if (WIN32)
             POST_BUILD
             COMMAND ${WINDEPLOYQT_EXE} --verbose 0 $<TARGET_FILE:vn::Appfw>
             COMMENT "--------Run:windeployqt")
+
+    # windeployqt deploys Qt's meta catalogs (translations/qt_<locale>.qm) but not the module catalogs they point at,
+    # so a deployed build would keep Qt's own text - QMessageBox buttons, QFileDialog, the line-edit context menu - in
+    # English while our UI is in another language. Copy the module catalog for the UI languages the framework ships
+    # (see .ai/design/appfw-translation.md §2.3); English is Qt's source language and needs no file.
+    set(VN_UI_LANGUAGES "zh_CN" CACHE STRING "UI languages whose Qt module catalogs are deployed with the build tree")
+
+    set(_qt_translations_dir "")
+    if (Qt6_DIR)
+        # Qt6_DIR is <qt>/lib/cmake/Qt6, so three levels up is the Qt installation; the catalogs sit in its
+        # translations directory (QT6_INSTALL_TRANSLATIONS is not always exported, so the layout is derived instead).
+        get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+        if (EXISTS "${_qt_prefix}/translations")
+            set(_qt_translations_dir "${_qt_prefix}/translations")
+        endif()
+    endif()
+
+    if (_qt_translations_dir)
+        foreach (_language IN LISTS VN_UI_LANGUAGES)
+            if (EXISTS "${_qt_translations_dir}/qtbase_${_language}.qm")
+                add_custom_command(
+                        TARGET DeployQt
+                        POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                "${_qt_translations_dir}/qtbase_${_language}.qm"
+                                "$<TARGET_FILE_DIR:vn::Appfw>/translations/"
+                        COMMENT "--------Run:deploy qtbase_${_language}.qm")
+            endif()
+        endforeach()
+    else ()
+        message(STATUS "DeployQt: Qt's translations directory is unknown; Qt's own dialog text stays in English")
+    endif()
 else ()
     message(STATUS "DeployQt: no Qt deployment needed on ${CMAKE_SYSTEM_NAME} (windeployqt is Windows-only)")
 endif ()

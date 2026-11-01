@@ -83,6 +83,10 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # header (see cmake/VineShaders.cmake).
 include(VineShaders)
 
+# vn_add_translations(): a module's own .ts files, compiled with lrelease and embedded into that module's binary
+# (see cmake/VineTranslate.cmake). Function definitions only, so the top level is the right place for it.
+include(VineTranslate)
+
 add_subdirectory(third_party)
 add_subdirectory(src)
 add_subdirectory(tools/urdf2vine)

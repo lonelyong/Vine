@@ -44,7 +44,8 @@ struct SplashConfig {
  * The application constructors apply the settings to the process-wide application: name becomes the Qt application name,
  * organization the Qt organization name, built_in_plugin_dir the application's plugin directory (through the builders),
  * and config_file the persisted configuration (defaulting to Application::defaultConfigFile() under the user's data
- * directory). language is a placeholder reserved for locale selection.
+ * directory). The UI language is not here: it is a configuration item (`general.language`), so the user can change it the
+ * same way as every other setting, and a host that ships a default language ships a configuration file.
  */
 struct AppConfig {
     /// Application name (UTF-8), applied as QCoreApplication::applicationName().
@@ -79,9 +80,6 @@ struct AppConfig {
     /// the plugins register. Set to false for a host that manages the plugin list itself: a test
     /// that loads specific plugins, a tool that loads none.
     bool load_plugins = true;
-
-    /// Locale placeholder reserved for i18n (not wired yet).
-    String language;
 
     /// Startup frame shown while the application boots; see SplashConfig.
     SplashConfig splash;

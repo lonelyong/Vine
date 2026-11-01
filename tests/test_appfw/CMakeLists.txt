@@ -2,6 +2,8 @@ set(TEST_NAME test_appfw)
 file(GLOB SRC_FILE_LIST CONFIGURE_DEPENDS *.cpp)
 
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Core)
+# lrelease only (never lupdate): optional, so a Qt install without LinguistTools still builds the tests.
+find_package(Qt6 CONFIG QUIET COMPONENTS LinguistTools)
 
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
@@ -21,7 +23,8 @@ set_target_properties(vn_plugin_fixture_headless_boot PROPERTIES PREFIX "" FOLDE
 target_link_libraries(vn_plugin_fixture_headless_boot PRIVATE vn::Appfw)
 target_compile_definitions(${TEST_NAME} PRIVATE
     VN_HEADLESS_BOOT_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_headless_boot>"
-    VN_TWIN_IDENTITY_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_twin_identity>")
+    VN_TWIN_IDENTITY_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_twin_identity>"
+    VN_I18N_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_i18n>")
 add_dependencies(${TEST_NAME} vn_plugin_fixture_headless_boot)
 
 # 第二份夹具：与上一份**同一个 uuid**、名字不同（见文件头说明）——用来钉"两个插件声明同一个身份"
@@ -30,5 +33,15 @@ add_library(vn_plugin_fixture_twin_identity MODULE fixtures/TwinIdentityPlugin.c
 set_target_properties(vn_plugin_fixture_twin_identity PROPERTIES PREFIX "" FOLDER test)
 target_link_libraries(vn_plugin_fixture_twin_identity PRIVATE vn::Appfw)
 add_dependencies(${TEST_NAME} vn_plugin_fixture_twin_identity)
+
+# Third fixture: a plugin that carries its own catalog, embedded into its own DLL as :/i18n/i18n_fixture_en.qm.
+# It pins where a plugin's translations come from: the loader installs it before the plugin's code runs, and no
+# directory is scanned (the plugin id is the file-name prefix).
+add_library(vn_plugin_fixture_i18n MODULE fixtures/TranslationPlugin.cpp)
+set_target_properties(vn_plugin_fixture_i18n PROPERTIES PREFIX "" FOLDER test)
+# Qt6::Core is required by the generated resource code (qRegisterResourceData); vn::Appfw links Qt privately.
+target_link_libraries(vn_plugin_fixture_i18n PRIVATE vn::Appfw Qt6::Core)
+vn_add_translations(vn_plugin_fixture_i18n CONTEXT i18n_fixture TS_FILES fixtures/res/translations/i18n_fixture_en.ts)
+add_dependencies(${TEST_NAME} vn_plugin_fixture_i18n)
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})

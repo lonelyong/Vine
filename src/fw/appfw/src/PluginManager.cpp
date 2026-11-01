@@ -29,6 +29,8 @@
 #include <vine/logging/Log.hpp>
 #include <vine/runtime/DynamicLibraryLoader.hpp>
 
+#include "TranslatorRegistry.hpp"
+
 VN_APPFW_NS_BEGIN
 
 namespace
@@ -750,6 +752,10 @@ struct Candidate {
 /// @return true if unload() completed without throwing.
 bool unloadOnePlugin(Plugin* plugin, const String& name)
 {
+    // The plugin's translations go away with it: a catalog left installed would keep translating strings of a module
+    // that is no longer running, and R3 says one plugin's catalog must not outlive it.
+    removePluginCatalog(name);
+
     if (plugin == nullptr) {
         return true;
     }
@@ -929,6 +935,11 @@ Plugin* PluginManager::load(const String& name_or_path)
     if (!create) {
         return nullptr;
     }
+
+    // The catalog is installed before any of the plugin's own code runs (create(), the command table, the lifecycle):
+    // this is the point where the module is in memory - so its embedded resources are registered - and where we
+    // already know its id. No directory is scanned: the id is the file-name prefix.
+    static_cast<void>(installPluginCatalog(info->name, path));
 
     Plugin* plugin = nullptr;
     try {
@@ -1293,6 +1304,9 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
             VN_LOGE("Plugin '{}' has no create entry point", toUtf8(name));
             return false;
         }
+        // Installed before create(): the plugin's own strings are translated from its very first line (see load()).
+        static_cast<void>(installPluginCatalog(name, candidate->path));
+
         Plugin* plugin = create();
         if (!plugin) {
             VN_LOGE("Plugin '{}' failed to create its instance", toUtf8(name));

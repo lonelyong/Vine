@@ -98,11 +98,15 @@ class VN_APPFW_API Application : public Object {
     Application(ApplicationData* data, const AppConfig& config, int argc, char** argv);
 
     /**
-     * @brief Completes construction: creates the user IO and applies the configuration file.
+     * @brief Completes construction: creates the user IO, applies the configuration file, then the UI language.
      *
      * The configuration file is loaded here (immediately, not at the start of run()) and saved by shutdown(); an
      * explicit AppConfig::config_file wins over AppConfig::persist_config, which only decides whether the framework
      * layout under the user's data directory is used at all.
+     *
+     * The UI language follows the configuration, so it can only be applied here: the catalogs are installed before any
+     * window exists (a constructor sets its text right away), and the language item is registered afterwards, because an
+     * item's own label is translated text too.
      *
      * The Qt application object has to be in place before this is called (see the protected constructor).
      *

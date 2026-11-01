@@ -153,16 +153,32 @@ class GuiEnv : public ::testing::Environment {
         static char  arg0[] = "test_gui";
         static char* argv[] = { arg0, nullptr };
 
+        // 从干净状态开始：上一次运行（或中途失败）可能留下插件注册与配置。路径按
+        // Application::dataDirectory()/defaultConfigFile() 的布局算出来（Qt 测试模式下在临时区里）。
+        const std::filesystem::path data_root =
+            std::filesystem::path(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation).toStdWString()) /
+            "Vine" / "test_gui";
+        const std::filesystem::path config_file = data_root / "config" / "test_gui.json";
+
+        std::error_code ec;
+        std::filesystem::remove_all(data_root, ec);
+
+        // 界面文案是翻译过的，而用例断言的是中文原文：把语言钉死为 zh_CN（配置项 general.language），否则同一份
+        // 用例在英文系统上会看到英文界面。语言必须在构造时就位，所以这里先写进**默认**配置路径；构造完立刻删掉——
+        // 进程从不 run()，也就不该留下配置文件，其它用例正是这么断言的（configFile() 仍然指向默认路径）。
+        std::filesystem::create_directories(config_file.parent_path(), ec);
+        {
+            std::ofstream out(config_file, std::ios::binary | std::ios::trunc);
+            out << R"({"general":{"language":{"type":"string","value":"zh_CN"}}})";
+        }
+
         // 与真实应用一样把 AppConfig 交给构造函数（builder 也只有这一步：本进程不设 built_in_plugin_dir）。
         // 用测试子类是为了拿到受保护的启动收尾钩子（见 fixtures/TestGuiApplication.hpp）。
         vn::appfw::AppConfig config;
         config.name = u8"test_gui";
         app         = std::make_unique<TestGuiApplication>(config, 1, argv);
 
-        // 从干净状态开始：上一次运行（或中途失败）可能留下插件注册文件。
-        // Qt 测试模式已经把数据目录重定向到临时区，删掉它是安全的。
-        std::error_code ec;
-        std::filesystem::remove_all(app->dataDirectory(), ec);
+        std::filesystem::remove(config_file, ec);
     }
 
     void TearDown() override
