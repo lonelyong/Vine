@@ -15,7 +15,7 @@
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
 一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
-## design/ —— 现行设计文档（32）
+## design/ —— 现行设计文档（33）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -31,7 +31,7 @@
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 - `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
 
-**appfw（15）**
+**appfw（16）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
 - `appfw-startup-splash.md` —— 启动框与启动进度。
 - `appfw-render-surface.md` —— 渲染表面生命周期与平台回退。
@@ -47,6 +47,7 @@
 - `appfw-command-binding.md` —— 命令条目的显示状态：enabled/目标要求/描述 tooltip/勾选 provider。
 - `appfw-backstage.md` —— 应用按钮事件、菜单/Backstage 二选一、顶层覆盖窗口与页面导航。
 - `appfw-app-info.md` —— 应用身份与应用信息：`AppInfo`/`AppConfig::info`、`Application::appInfo()`、关于面板与对话框。
+- `appfw-translation.md` —— 文案翻译：只翻 appfw 及以上层的界面文案，源语言中文、译文只有英文，Qt 目录随模块走并内嵌（可被文件覆盖），启动时装载、缺译文回退。
 
 **base 与其他（9）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
@@ -59,12 +60,14 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（19）
+## decisions/ —— 决策记录（ADR）（21）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
 - `ADR-2026-10-24-command-target.md` —— 命令的目标是视图（`DocumentView`），层可空、需求按命令声明；`RenderControl` 不做目标。
+- `ADR-2026-11-01-translation-scope.md` —— 只有界面层（appfw 及以上）可翻译，源语言中文，目录用 Qt Linguist，v1 不做运行期切换。
+- `ADR-2026-11-01-translation-catalog-embedding.md` —— 翻译目录随模块走、内嵌进模块，模块旁的同名 `.qm` 可覆盖；语言集合只有中文与英文，因此只有一本英文目录。
 - `ADR-2026-10-28-ribbon-roles-and-placement.md` —— Ribbon 用 role + id + 锚点放置，终止区是解析器不变量；不做全局序号与 item id。
 - `ADR-2026-10-28-backstage-overlay-window.md` —— Backstage 用顶层 Tool 窗口，不用 SARibbon 的子控件覆盖层（原生表面遮挡）。
 - `ADR-2026-10-30-crash-handler-x11-on-linux.md` —— Linux 的崩溃窗口用 Xlib + Xft 手画（系统库，不链 UI 工具包；取代同日的 Qt 版本）。
@@ -91,7 +94,7 @@
 
 空。
 
-## backlog/ —— 开放待办（6）
+## backlog/ —— 开放待办（7）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
 
@@ -99,6 +102,7 @@
 - `appfw-startup.md` —— 启动流程剩余项（Windows 半边）。
 - `appfw-ribbon.md` —— Ribbon 的开放项（order、item id、自定义布局、上下文 tab、manifest）。
 - `appfw-app-info.md` —— 应用信息的开放项（构建期版本、清单与第三方致谢）。
+- `appfw-translation.md` —— 翻译的开放项（运行期切换、第一本英文目录、插件元数据、lupdate 门禁、覆盖位部署规则）。
 - `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
 - `base-crash.md` —— 崩溃报告的开放项（上次崩溃提示、terminate、栈保证、只读目录、Linux、上报触发条件）。
 
