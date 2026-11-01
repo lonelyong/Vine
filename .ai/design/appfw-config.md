@@ -45,6 +45,8 @@
 
 - **key 全树唯一**：`ConfigGroup::addItem` 通过 `ConfigRegistry::item()` 查重。
 - **owner 是缓存**：`addItem` 记录；空 owner 清除；删除路径清理；`itemsForPlugin` 跳过已不在树上的项。
+- **框架自己也注册项**：`Application::initialize()` 用空 owner 注册框架自有的项（今天只有 `general.language`，
+  界面语言），所以它们不属于任何插件，也不会被 `removeItemsForPlugin()` 带走。
 - `itemsForPlugin` 的顺序是 key 升序。
 - **生命周期/线程**：查询返回树内节点裸指针，节点被删即失效；注册在启动/插件装载期完成，之后只读。
 

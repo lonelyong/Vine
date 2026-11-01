@@ -10,14 +10,14 @@
 
 ### 1.1 问题与背景
 
-界面文案全部硬编码在源码里：appfw GUI 约 140 处 `QStringLiteral("…")`，app_shell 与插件同样，而且只有中文；`AppConfig::language` 至今是“留给 i18n 的占位、还没接线”。要支持另一种语言，今天只能改源码。
+界面文案全部硬编码在源码里：appfw GUI 约 140 处 `QStringLiteral("…")`，app_shell 与插件同样，而且只有中文；界面也没有可用的语言设置。要支持另一种语言，今天只能改源码。
 
 同时，底层库（base / viz / robotics / loaders）的日志与异常本来就是英文——那是给开发者的诊断，不是界面文案。两者被混在同一个问题里讨论，是这套机制要先划清的第一条线。
 
 ### 1.2 目标
 
 - 只翻译**界面文案**：appfw 与它以上的层（宿主、插件）。
-- 语言由宿主声明（`AppConfig::language`），空则跟随系统；没有对应译文时显示源串。
+- 语言是配置项 `general.language`（跟随系统 / 中文 / English），未设置则跟随系统；没有对应译文时显示源串。
 - 语言集合只有中文与英文两种：源串是中文，所以只有一本**英文**目录（C7）。
 - 目录（`.ts`）是源码：可 diff、可评审；编译产物（`.qm`）随构建生成、嵌进它所属的模块，并可被同名文件覆盖（§2.10）。
 - 不给任何下层库增加“知道翻译存在”的依赖。
@@ -33,7 +33,7 @@
 
 ### 1.4 一句话结论
 
-**只有 appfw 及以上层的界面文案可翻译；机制是 Qt 的 `tr`/`.ts`/`.qm`，源语言是中文、唯一译文语言是英文，语言由 `AppConfig::language` 在启动时选定，目录随模块走并嵌进模块（可被文件覆盖），缺译文回退源串。**
+**只有 appfw 及以上层的界面文案可翻译；机制是 Qt 的 `tr`/`.ts`/`.qm`，源语言是中文、唯一译文语言是英文，语言由配置项 `general.language` 在启动时选定，目录随模块走并嵌进模块（可被文件覆盖），缺译文回退源串。**
 
 ## 2. 设计要点
 
@@ -63,17 +63,18 @@
 - 代价：只用英语的贡献者读到的源码字符串不是英文；`lupdate` 抽取与翻译不受影响。
 - ADR：`../decisions/ADR-2026-11-01-translation-scope.md`（含“英文源”的否决理由）。
 
-### 2.5 一个公共概念：`tr(context, source)`（G1、G4）
+### 2.5 一个公共概念：`translate(context, source)`（G1、G4）
 
-- 是什么：`vn::appfw::tr(context, source)`；context 是文案的归属（`"appfw"`、`"app_shell"`、插件 id），`tr(source)` 是 `"appfw"` 的简写。
-- 为什么：Qt 的 `translate()` 需要 context 才能区分同形不同义的文案；把 context 变成显式参数，插件的调用点自己说明“这句是谁的”，不必给每个类加 `Q_DECLARE_TR_FUNCTIONS`（G7：不加宏、不加基类）。
-- 返回 `vn::String`：SDK 头文件不暴露 Qt 类型（同 `Icon.hpp` 的约定）。appfw GUI 内部另有一个直接给 `QString` 的 `guiTr()`；宿主与插件的大多数文案交给本来就收 `vn::String` 的 setter（`RibbonAction::setText` 等），不需要额外转换。
+- 是什么：`vn::appfw::translate(context, source)` 返回 `vn::String`；GUI 内部则用 `Q_DECLARE_TR_FUNCTIONS(appfw)` + `tr(…)`（原生形状，直接给 `QString`）。
+- 为什么参数顺序照抄 `QCoreApplication::translate`：**翻译工具按函数名抽取**，`translate(context, source)` 它认得，自己发明一个短名（`guiTr`）或者反过来传参就抽不到（P9）。名字和签名跟 Qt 一致，工具链才不需要改。
+- 为什么不给每个类 `Q_DECLARE_TR_FUNCTIONS` 以外的写法：界面文案的调用点几乎全在 `QWidget` 子类里，裸写 `tr(…)` 会先命中 `QObject::tr`（P7）；`Q_DECLARE_TR_FUNCTIONS(appfw)` 一行同时解决了“上下文叫什么”和“谁能被抽取”。
+- 宿主与插件的大多数文案交给本来就收 `vn::String` 的 setter（`RibbonAction::setText` 等），不需要转换；路径与命令名不是文案，不进目录（G1）。
 - 不自造 key 体系：**源串就是键**（Qt 的做法）。key 体系（`backstage.back` 之类）要同时维护 key 表与源串表两份事实，还让 `.ts` 评审看不出上下文（G1）。
-- 边界：`tr()` 只查已装载的目录，不读文件、不抛异常、失败即返回源串。
+- 边界：`translate()` 只查已装载的目录，不读文件、不抛异常、失败即返回源串。
 
 ### 2.6 装载一次，早于任何窗口（G3、G7）
 
-- 是什么：`Application::initialize()` 里、配置文件读完之后、`GuiApplication::createWindows()` 建主窗之前，装载框架目录与宿主目录。语言取 `AppConfig::language`，空或 `"system"` 取 `QLocale::system()`。
+- 是什么：`Application::initialize()` 里、配置文件读完之后、`GuiApplication::createWindows()` 建主窗之前，装载框架目录与宿主目录。语言取配置项 `general.language`，缺省或 `"system"` 取 `QLocale::system()`。
 - 目录从哪来：与插件同一套顺序（§2.10）——模块旁的文件优先，其次是模块内嵌资源；框架与宿主的目录因此默认不落盘。
 - 为什么：窗口在构造函数里就 `setText`；装载晚于它就只能靠 `LanguageChange` 事后补，那正是 v1 不想做的复杂部分。
 - 边界：`Application` 只负责“按语言装载目录”，不认识任何窗口；这一层不含 Qt Widgets。
@@ -87,7 +88,7 @@
 
 ### 2.8 v1 不做运行期切换（G8、G10）
 
-- 是什么：语言只在启动时确定；改语言 = 写 `AppConfig::language` 后重启。
+- 是什么：语言只在启动时确定；改语言 = 改配置项 `general.language` 后重启。
 - 为什么：运行期切换要求每个控件在 `QEvent::LanguageChange` 里重设文本（appfw 有几十个构造时写死文字的控件，还有 SARibbon/DockingPanes 的上游控件），成本与风险远高于收益。
 - 边界：将来加 `setLanguage()` 的接缝已经存在（目录装在应用级），见 backlog。
 
@@ -100,7 +101,7 @@
 
 ### 2.10 目录的归属与形态（G5、G9、G7）
 
-- 是什么：翻译文件随模块走。框架（`appfw`）、宿主、每个插件各有一本 `<id>.ts`，编译成 `<id>_<locale>.qm`，在**自己的构建里**用 `qt_add_translations()` 嵌进自己的二进制（资源前缀 `/i18n`）。
+- 是什么：翻译文件随模块走。框架（`appfw`）、宿主、每个插件各有一本 `<id>.ts`，放在**模块自己的 `res/translations/`** 下（与 `res/res.qrc` 同一层习惯），编译成 `<id>_<locale>.qm`，在**自己的构建里**用 `vn_add_translations()` 嵌进自己的二进制（资源前缀 `/i18n`，内部是 `lrelease` + `qt_add_resources`）。
 - 为什么归属在模块：文案、`.ts` 与代码同目录，改字符串与更目录落在同一个提交（P1 的预防）；新插件不修改 appfw 里的任何清单，加载器只按约定查找（G9）——appfw 不知道插件集合（G2）。
 - 为什么内嵌：安装树里不出现散落的 `.qm`，也不会被误删或换成坏文件；路径只剩一条约定，不再乘上“构建树 / 安装树 × Windows / Linux”（`vn_add_plugin` 已经在处理这些路径）。
 - 查找顺序：先 `<模块旁>/<id>_<locale>.qm`，再模块内嵌的 `:/i18n/<id>_<locale>.qm`，都没有则回退源串（C3）。前者让翻译可热修（D4 当初的顾虑由此消解），后者保证开箱可用。
@@ -112,11 +113,11 @@
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | 框架文案 | `tr(u8"…")` 查 `appfw` 目录 | 未实现 |
-| F2 | 宿主 / 插件文案 | `tr(u8"<id>", u8"…")` 查各自目录 | 未实现 |
-| F3 | 语言选择 | `AppConfig::language`；空 = 系统语言 | 未实现 |
-| F4 | 缺译文回退 | 返回源串；不抛、不记日志 | 未实现 |
-| F5 | 目录的构建与形态 | `.ts` 进 git；`lrelease` 产出 `.qm` 并嵌进所属模块；模块旁的 `translations/` 可覆盖 | 未实现 |
+| F1 | 框架文案 | `tr(u8"…")` 查 `appfw` 目录 | 机制已实现 |
+| F2 | 宿主 / 插件文案 | `tr(u8"<id>", u8"…")` 查各自目录 | 机制已实现 |
+| F3 | 语言选择 | 配置项 `general.language`（通用/语言）：跟随系统 / 中文 / English | 已实现 |
+| F4 | 缺译文回退 | 返回源串；不抛、不记日志 | 已实现 |
+| F5 | 目录的构建与形态 | `.ts` 进 git；`lrelease` 产出 `.qm` 并嵌进所属模块；模块旁的同名文件可覆盖 | 已实现 |
 | F6 | 不翻译清单 | 日志、异常、ID 不进目录（约定，靠评审与 grep 守） | 约定 |
 
 ### 3.2 F1–F4 的行为
@@ -134,26 +135,28 @@
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `String tr(const String& context, const char8_t* source)` | 在 context 里查 source；无译文返回 source | 不抛、不读文件 |
-| `String tr(const char8_t* source)` | 等价于 `tr(u8"appfw", source)` | 框架与宿主的简写 |
+| `String translate(const String& context, const char8_t* source)` | 在 context 里查 source；无译文返回 source | 不抛、不读文件；名字与参数顺序跟 `QCoreApplication::translate` 一致（P9） |
+| `Q_DECLARE_TR_FUNCTIONS(appfw)` + `tr(const char8_t*)` | GUI 类内用：同样的查找，直接返回 `QString` | 不是我们的接口，是 Qt 的宏；一行在类里，调用点最短（P7） |
 
 ### 4.2 配置
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `AppConfig::language` | 语言标签（UTF-8）：`"en"`、`"zh_CN"`、`"system"` 或空 | 启动时读一次；持久化留给宿主 |
+| `languageConfigKey()` | 返回键 `general.language` | 元数据由框架自己注册到 `General / Language`，owner 为空 |
+| `languageConfigItem()` | Choice 三项（`system` / `zh_CN` / `en`），默认 `system` | 标签走 `tr()`，所以必须在语言生效之后注册 |
+| `ConfigManager` 里的值 | 类型 String；缺省即“跟随系统” | 启动时读一次；用户在配置窗口改，下次启动生效 |
 
 ### 4.3 内部
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `guiTr(const char8_t* source)` | `tr(source)` 的 `QString` 版本 | appfw GUI 私有头文件，不进 SDK |
+| `TranslatorRegistry`（`src/` 下） | 装/卸目录的唯一持有者 | 不导出、不安装；`Application` 与 `PluginManager` 只调它（C8） |
 
 ### 4.4 构建接口（新 CMake 函数）
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `vn_add_translations(<target> CONTEXT <id> TS_FILES <files…>)` | 对目标自己的 `.ts` 跑 `lrelease`，把 `.qm` 嵌进目标的 `/i18n` 资源 | `CONTEXT` 必须等于 `tr()` 的 context 与文件名前缀；缺 `LinguistTools` 时只警告、不嵌（P6） |
+| `vn_add_translations(<target> CONTEXT <id> TS_FILES <files…>)` | 对目标自己的 `.ts` 跑 `lrelease`，把 `.qm` 嵌进目标的 `/i18n` 资源 | `CONTEXT` 必须等于 `tr()` 的 context 与文件名前缀（不匹配直接报错）；缺 `LinguistTools` 时只警告、不嵌（P6）；目标必须自己链 `Qt6::Core`；只跑 `lrelease`，不跑 `lupdate`（改 `.ts` 是人的动作） |
 
 ## 5. 约束、要求与不变量
 
@@ -166,6 +169,7 @@
 - C5：底层的用户可见表面（今天只有崩溃窗口）只接收宿主注入的文案；base 不得引入 Qt、不得装载目录（§2.9）。
 - C6：翻译文件随模块走（`<id>.ts` → `<id>_<locale>.qm`）；`PluginManager` 不持有插件翻译清单，只按约定查找（§2.10）。
 - C7：语言集合只有 `zh_CN` 与 `en`。源串本身是中文，所以**只有一本英文目录**，`zh_CN` 不产生 `.qm`；Qt 自带控件的文案仍由 Qt 的 `qtbase_zh_CN.qm` / `qtbase_en.qm` 提供（§2.3）。
+- C8：“私有”由构建保证，不靠约定：`TranslatorRegistry` 这类实现放在 `src/`（PRIVATE include 目录、不安装、不导出），SDK 只暴露 `translate()` 与配置项；GUI 用同一个 `translate("appfw", …)`（返回 `QString` 的内部重载），不自造包装函数名（P9）。
 
 ### 5.2 要求（R#）
 
@@ -175,9 +179,10 @@
 
 ### 5.3 不变量（N#）
 
-- N1：`tr()` 的返回值永远非空，且在没有目录时逐字等于源串。
+- N1：`translate()` 的返回值永远非空，且在没有目录时逐字等于源串。
 - N2：context 与目录文件名、插件 id 三者一致。
-- N3：日志与异常文本不经过 `tr()`。
+- N3：日志与异常文本不经过 `translate()`。
+- N4：可翻译的是**整句**。拼接片段（`“已注册（” + x + “）：”`）能翻，但逐段翻译的语序不一定对；新文案一律写成带 `%1` / `%2` 的整句，现有片段属于待偿债务（§9.1）。
 
 ## 6. 注意事项与陷阱
 
@@ -207,9 +212,24 @@
 - 怎么防：内嵌的目的是安装树干净、不会被误删或换坏；真要保密就不写进文案。
 
 ### 6.6 机器上没有 `LinguistTools`（P6）
-- 会怎么错：`qt_add_translations()` 依赖 `lrelease`；缺组件时配置阶段就失败，或产出一个没有目录的二进制而无人发现。
+- 会怎么错：`vn_add_translations()` 依赖 `lrelease`；缺组件时配置阶段就失败，或产出一个没有目录的二进制而无人发现。
 - 怎么判：构建日志里没有 `lrelease` 行；跑到英文界面发现全是中文。
 - 怎么防：`vn_add_translations()` 在缺工具时打 `WARNING` 并跳过嵌入（源码与一次构建仍能用），CI 用 `--strict` 等价检查要求工具存在。
+
+### 6.7 裸写 `tr` 被 `QObject::tr` 遮蔽（P7）
+- 会怎么错：在 `QObject` 派生类（几乎所有窗口、面板、Ribbon 子类）的成员函数里写 `tr(u8"…")`，非限定查找在类作用域就停住了：`QObject::tr` 的签名是 `(const char*, const char*, int)`，于是要么直接编译失败，要么用上 Qt 那个“拿类名当 context”的版本——目录里没有 `BackstageWindow` 这种 context，译文静默失效。
+- 怎么判：编译失败是显式的；静默失效则表现为“译文本该在这却没出现”，而 `lupdate` 报的 context 是类名。
+- 怎么防：GUI 类里写一行 `Q_DECLARE_TR_FUNCTIONS(appfw)`——它把 `tr` 变成 context 为 `appfw` 的静态成员，遮蔽问题消失、`lupdate` 也认得（已验证）；非类的自由函数用 `translate(u8"appfw", …)`。`.ts` 里出现类名 context 就是踩上了这条。
+
+### 6.8 自定义包装函数，lupdate 抽不到（P9）
+- 会怎么错：把调用点写成自己的短名（`guiTr(u8"…")`），或者把参数顺序改成 `tr(context, source)`——运行没问题，但 `lupdate` 只认已知函数名（`tr`、`translate`、`QT_TRANSLATE_NOOP` 等），产物要么漏条目，要么把 context 当成源串。
+- 怎么判：`lupdate` 的 “Found N source text(s)” 远小于实际调用点数；或 `.ts` 里 `<source>` 是一个 id。
+- 怎么防：名字和签名直接用 Qt 的（`translate(context, source)`；GUI 用 `Q_DECLARE_TR_FUNCTIONS`）。改名字或改签名之后立刻跑一次 `lupdate` 核对计数。
+
+### 6.9 部署只带了 `qt_*.qm`（P8）
+- 会怎么错：`windeployqt` 复制的是 Qt 的 **meta** 目录 `qt_<locale>.qm`（几十字节，里面只有依赖名），真正的 `qtbase_<locale>.qm`（一百多 KB）没有。于是我们自己的文案翻译了，`QMessageBox` 按钮、`QFileDialog`、输入框右键菜单还是英文。
+- 怎么判：`ls <exe>/translations` 只有 `qt_*.qm`；启动日志里 `UI language 'zh_CN': 1 catalog(s)` 而 `qtbase_zh_CN.qm` 不在。
+- 怎么防：装载顺序把 `qtbase_<locale>.qm` 放在 `qt_<locale>.qm` 之前（meta 缺依赖时它什么也不改）；部署由 `cmake/VineDeployQt.cmake` 把 `qtbase_<locale>.qm` 拷到 `<exe>/translations`（`VN_UI_LANGUAGES`，默认 `zh_CN`）。
 
 ## 7. 已否决选项
 
@@ -222,6 +242,7 @@
 | D5 | v1 就做运行期切换 | 每个控件都要实现重译，SARibbon/DockingPanes 也要（G10）；今天没有消费者（G8） | 同上 |
 | D6 | 插件元数据也翻译 | v1 没有消费者；名字是插件自报的标识，翻译后同一插件在不同语言下叫不同名字（G1） | — |
 | D7 | 让 base（含崩溃 handler）自己装载目录 | base 零 Qt 依赖、崩溃进程不能依赖应用框架、诊断文案要可 grep（G2、G10）；改由宿主注入文案（§2.9） | 同上 |
+| D8 | 在 SDK 暴露 `Application::uiLanguage()` / 可重入的 `applyLanguage()` | 今天唯一的消费者是测试，而“语言生效了没有”用 `tr()` 的行为就能量（见 T7）；暴露它等于允许子类在窗口建好之后第二次装目录（§2.6 的时机变成靠约定守着）。真出现“要显示当前语言”这类消费者时再加（G8） | — |
 
 ## 8. 测试与验收
 
@@ -233,12 +254,15 @@
 | T4 | 下层库不含翻译依赖 | `grep -rn "Translation.hpp" src/base src/viz src/robotics src/loaders` 为空 |
 | T5 | 一个松散文件都没有时，内嵌目录仍能命中 | `TranslationTest.EmbeddedCatalogLoadsWithoutFiles` |
 | T6 | 模块旁的同名 `.qm` 覆盖内嵌版本 | `TranslationTest.FileOverridesTheEmbeddedCatalog` |
+| T7 | 插件目录在它自己的代码之前装好，卸载后移除 | `TranslationTest.APluginCatalogComesFromThePluginItself`（夹具插件内嵌 `:/i18n/i18n_fixture_en.qm`） |
 
 ## 9. 状态与演进
 
 ### 9.1 当前状态
 
-草案。代码尚未落地：翻译入口、`Application` 里的装载、插件加载器的目录管理、`.ts`/CMake 都与本文对齐后再实现；现有硬编码文案按层逐步替换（appfw GUI 先做）。
+机制已落地，框架 GUI 的文案已全部替换。已有：`Translation.hpp`（`translate` / `languageConfigKey` / `languageConfigItem` / `resolveLanguageTag`）、`Application::initialize()` 里按配置项选定语言并装 Qt 与框架目录、`PluginManager` 在插件代码跑之前装插件目录并在卸载时移除、`vn_add_translations()` 与夹具插件的端到端用例；`src/fw/appfw/src/gui` 已无硬编码中文（`QStringLiteral` 与 `u8"…"` 两类共约 190 处都换成了 `translate("appfw", …)`），`res/translations/appfw_en.ts` 由 `lupdate` 抽出 164 条、全部译成英文，`test_gui` 在全局夹具里把语言钉成 `zh_CN`。
+
+还差：宿主（`src/apps/vine`）与真实插件（`app_shell`、`model_viewer`）各自建 `.ts`；以及把拼接式文案（`“已注册（” + x + “）：”` 这类）改成带 `%1` 的整句（N4）——它们现在能翻译，但逐段翻译的语序不一定对。
 
 ### 9.2 已知缺口 / 待办
 
@@ -246,8 +270,8 @@
 
 ### 9.3 兼容性 / 迁移
 
-- 新增头文件与 `Application` 内部行为；`AppConfig::language` 从占位变成生效字段（默认空 = 系统语言，中文环境的默认显示不变）。
-- 宿主无需改动：不设 `language` 就是今天的行为。
+- 新增头文件 `Translation.hpp`；配置体系新增一项 `general.language`（默认 `system`）。`AppConfig` **不**增加字段：语言只有这一个家（C1、G1）。
+- 宿主无需改动：不设该配置项就是今天的行为（跟随系统）。宿主想预设语言，就带一份配置文件（同 `AppConfig::config_file`）。
 
 ## 10. 参考
 

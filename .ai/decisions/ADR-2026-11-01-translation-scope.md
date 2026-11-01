@@ -27,7 +27,8 @@
 - **源语言**：中文。目录的键是现有中文源串，译文是其它语言；缺译文回退源串。
 - **机制**：`QCoreApplication::translate()` + `.ts`（进 git）+ `lrelease` 产出的 `.qm`（构建产物）。目录归属与形态（随模块走、内嵌、可被文件覆盖）由 `ADR-2026-11-01-translation-catalog-embedding.md` 决定。
 - **装载**：启动时在 `Application::initialize()` 里装框架与宿主目录（早于任何窗口），插件目录由加载器在 `load()` 前代装、卸载时移除。
-- **v1 不做运行期切换**：语言在启动时确定，改语言=写 `AppConfig::language` 后重启。
+- **语言的归属**：语言是配置项 `general.language`（`ConfigManager` 的值 + `ConfigRegistry` 里的元数据，显示在“通用 / 语言”），不是 `AppConfig` 的字段——它要和其它设置同一个家：用户能在配置窗口改、能写进配置文件、能持久化。
+- **v1 不做运行期切换**：语言在启动时确定，改语言 = 改配置项 `general.language` 后重启。
 
 ## 后果
 
@@ -48,6 +49,7 @@
 ## 证据
 
 - 现有文案分布：`src/fw/appfw/src/gui` 下约 140 处中文字面量；`app_shell` 与 `model_viewer` 同样。
+- 语言设置的现状：没有可用的语言字段——`AppConfig` 里的 `language` 一直只是“留给 i18n 的占位、还没接线”，本轮连同它一起撤掉，改由配置项 `general.language` 承担。
 - 占位字段：`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp` 的 `language`（注释即“not wired yet”）。
 - 装载时机：`src/fw/appfw/src/gui/GuiApplication.cpp`（`initialize()` 之后才 `createWindows()`，主窗在构造时就 `setText`）。
 - 设计：`../design/appfw-translation.md`。
