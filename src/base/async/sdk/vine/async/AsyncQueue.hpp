@@ -28,12 +28,12 @@ namespace detail
  * capacity == 0 means unbounded (push never suspends). poppers/pushers hold the
  * coroutines waiting for a value or for room.
  *
- * Wakes are deferred: an operation that changes the queue posts a wake-up to the process-wide
- * timer service (wakeOnePopper/wakeOnePusher/wakeAll) instead of resuming a waiter on its own
- * stack. The resumed coroutine may synchronously destroy the one that woke it - a whenAny winner
- * destroys the losers, and a loser can be the push() or pop() that is still returning - so the
- * wake-up has to run after that stack has unwound. The timer thread resumes one waiter at a time,
- * so a waiter destroyed by a resume unregisters itself before the next iteration reads the list.
+ * Hand-off rule: an operation that gives a peer its chance (a pop freeing a slot, a push handing
+ * over an item) first suspends at WakePeerAndContinue; only then does a timer-thread action wake
+ * the peer and resume the operation. Posting the wake alone is not enough - the operation would
+ * still be running on its own thread when the peer completes a whenAny and its Destroy policy
+ * destroys that operation (or a frame above it). Suspended first, this coroutine is destroyed at
+ * a legal point instead.
  */
 template <typename T>
 struct AsyncQueueState {
@@ -46,12 +46,137 @@ struct AsyncQueueState {
 };
 
 /**
- * @brief Posts a wake-up that resumes one waiting popper, on the timer thread.
+ * @brief Which waiter list a handing-off operation wakes.
+ */
+enum class PeerKind
+{
+    Poppers, // push() handed an item over: a waiting consumer can run.
+    Pushers  // pop() freed a slot: a waiting producer can run.
+};
+
+/**
+ * @brief Wakes one waiting peer, but only after this operation has suspended.
  *
  * @details
- * - The handle is taken under the lock at wake-up time, not at post time: a popper destroyed in
- *   between has unregistered itself, so the wake-up simply finds nobody.
- * - Runs on the timer thread, never on the caller's stack (see AsyncQueueState).
+ * - The operation suspends here first. One posted action then wakes one peer on the timer thread
+ *   and resumes this coroutine only if the peer did not destroy it.
+ * - Why not wake from the operation itself: a resumed peer can complete a whenAny whose Destroy
+ *   policy destroys this operation, or a frame above it. By the time the peer runs, this coroutine
+ *   must be suspended; the peer's destruction then hits a coroutine frame that is at a suspension
+ *   point, which is exactly the state Destroy requires. Posting the wake to the timer is not
+ *   enough on its own - the operation would still be running on its own thread.
+ * - The destructor unregisters the handle, so a destroyed operation is never resumed. The posted
+ *   action still wakes the peer: the slot or item it handed over must not be lost with it.
+ *
+ * @tparam T Element type of the queue.
+ */
+template <typename T>
+class WakePeerAndContinue {
+  public:
+    /**
+     * @brief Prepares the hand-off; nothing is posted until the coroutine suspends.
+     *
+     * @param state Queue state whose waiter list is woken.
+     * @param kind Which waiter list to wake when the action runs.
+     */
+    WakePeerAndContinue(std::shared_ptr<AsyncQueueState<T>> state, PeerKind kind)
+      : work_(std::make_shared<Work>(std::move(state), kind))
+    {}
+
+    WakePeerAndContinue(const WakePeerAndContinue&)            = delete;
+    WakePeerAndContinue& operator=(const WakePeerAndContinue&) = delete;
+
+    ~WakePeerAndContinue() noexcept
+    {
+        std::lock_guard<std::mutex> lock(work_->mutex);
+        work_->waiter = {};
+    }
+
+    [[nodiscard]]
+    bool await_ready() const noexcept
+    {
+        return false;
+    }
+
+    /**
+     * @brief Registers this coroutine and posts the hand-off, then suspends.
+     *
+     * @param h Coroutine to resume after the peer has had its turn.
+     * @return true; the peer action always runs before this coroutine resumes.
+     */
+    bool await_suspend(std::coroutine_handle<> h) noexcept
+    {
+        {
+            std::lock_guard<std::mutex> lock(work_->mutex);
+            work_->waiter = h;
+        }
+        TimerService::instance().postWake(work_, &WakePeerAndContinue<T>::run);
+        return true;
+    }
+
+    void await_resume() const noexcept
+    {}
+
+  private:
+    /// Hand-off shared with the posted action: the queue state plus this coroutine's registration.
+    struct Work {
+        /**
+         * @brief Binds one hand-off to its queue state and waiter list.
+         *
+         * @param state_ Queue state whose waiter list is woken.
+         * @param kind_ Which waiter list to wake when the action runs.
+         */
+        Work(std::shared_ptr<AsyncQueueState<T>> state_, PeerKind kind_) noexcept
+          : state(std::move(state_))
+          , kind(kind_)
+        {}
+
+        Work(const Work&)            = delete;
+        Work& operator=(const Work&) = delete;
+
+        std::shared_ptr<AsyncQueueState<T>> state;
+        PeerKind                            kind;
+        std::mutex                          mutex;
+        std::coroutine_handle<>             waiter{};
+    };
+
+    /// Runs on the timer thread: wake one peer, then resume this operation if it is still alive.
+    static void run(void* p) noexcept
+    {
+        auto& work = *static_cast<Work*>(p);
+
+        std::coroutine_handle<> peer{};
+        {
+            std::lock_guard<std::mutex> lock(work.state->mutex);
+            auto&                       list = (work.kind == PeerKind::Poppers) ? work.state->poppers : work.state->pushers;
+            if (!list.empty()) {
+                peer = list.front();
+                list.erase(list.begin());
+            }
+        }
+        if (peer) {
+            peer.resume(); // May destroy the suspended operation; it unregisters itself.
+        }
+
+        std::coroutine_handle<> self{};
+        {
+            std::lock_guard<std::mutex> lock(work.mutex);
+            self = std::exchange(work.waiter, {});
+        }
+        if (self) {
+            self.resume();
+        }
+    }
+
+    std::shared_ptr<Work> work_;
+};
+
+/**
+ * @brief Posts a wake-up that resumes one waiting popper, on the timer thread.
+ *
+ * For the non-suspending operations (tryPush/tryPop/close), which cannot put themselves at a
+ * suspension point first. A coroutine that may be a Destroy composition's loser should use the
+ * suspending form instead, so the destruction it triggers hits a suspended frame.
  *
  * @param state Queue state; kept alive until the wake-up has run.
  */
@@ -221,9 +346,9 @@ class QueuePopAwaiter {
      * @details
      * - Wakes are spurious by construction: an item can be claimed by another consumer (pop() or
      *   tryPop()) between this waiter's wake-up and this call, which is what nullopt reports.
-     * - A successful take frees a slot for a bounded queue, so a parked pusher is woken. It is
-     *   woken on the timer thread, never from here: the pusher may complete a composition that
-     *   destroys this very coroutine while it is still returning.
+     * - Taking an item frees a slot for a bounded queue; whether a pusher was waiting is reported
+     *   through wokePeer(), and pop() hands the slot over by suspending at WakePeerAndContinue -
+     *   not from here, where the peer's completion could destroy this still-running coroutine.
      *
      * @return The value, or nullopt when there was nothing to take and the caller must re-await.
      */
@@ -234,14 +359,13 @@ class QueuePopAwaiter {
         }
 
         std::optional<T> value;
-        bool             closed     = false;
-        bool             has_pusher = false;
+        bool             closed = false;
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             if (!state_->items.empty()) {
                 value.emplace(std::move(state_->items.front()));
                 state_->items.pop_front();
-                has_pusher = !state_->pushers.empty();
+                woke_peer_ = !state_->pushers.empty();
             }
             else {
                 closed = state_->closed;
@@ -249,9 +373,6 @@ class QueuePopAwaiter {
         }
 
         if (value) {
-            if (has_pusher) {
-                detail::wakeOnePusher(state_);
-            }
             return value;
         }
         if (closed) {
@@ -260,12 +381,26 @@ class QueuePopAwaiter {
         return std::nullopt;
     }
 
+    /**
+     * @brief Reports whether taking the value freed a slot a bounded pusher was waiting for.
+     *
+     * @return true when the caller must wake a pusher before it finishes.
+     */
+    [[nodiscard]]
+    bool wokePeer() const noexcept
+    {
+        return woke_peer_;
+    }
+
   private:
     std::shared_ptr<AsyncQueueState<T>> state_;
     std::coroutine_handle<>             handle_{};
 
     /// Why the waiter could not be registered; rethrown by await_resume().
     std::exception_ptr failure_{};
+
+    /// true when await_resume() took an item while a bounded pusher was parked.
+    bool woke_peer_{ false };
 };
 
 /**
@@ -320,8 +455,8 @@ class QueuePushAwaiter {
      * - noexcept is required at a suspension point, so a failing enqueue (T's move constructor
      *   or the deque's allocation) is captured in failure_ and rethrown from await_resume(), on
      *   the coroutine's own stack. Letting it escape would terminate the process.
-     * - A waiting popper is woken on the timer thread, never from here: it may complete a
-     *   composition that destroys this very coroutine while it is still returning.
+     * - A waiting popper is only recorded here; push() hands the item over by suspending at
+     *   WakePeerAndContinue, never from this still-running frame.
      *
      * @param h Coroutine to park when the queue is full.
      * @return false to resume inline, either because the value was enqueued or to report a failure.
@@ -329,7 +464,6 @@ class QueuePushAwaiter {
     bool await_suspend(std::coroutine_handle<> h) noexcept
     {
         handle_ = h;
-        bool has_popper = false;
         try {
             std::lock_guard<std::mutex> lock(state_->mutex);
             if (state_->closed) {
@@ -338,7 +472,7 @@ class QueuePushAwaiter {
             if (state_->capacity == 0 || state_->items.size() < state_->capacity) {
                 detail::enqueueLocked(state_, std::move(value_));
                 enqueued_  = true;
-                has_popper = !state_->poppers.empty();
+                woke_peer_ = !state_->poppers.empty();
             }
             else {
                 return detail::tryRegisterWaiter(state_->pushers, h, failure_);
@@ -347,9 +481,6 @@ class QueuePushAwaiter {
         catch (...) {
             failure_ = std::current_exception();
             return false; // await_resume() rethrows the enqueue failure.
-        }
-        if (has_popper) {
-            detail::wakeOnePopper(state_);
         }
         return false; // Enqueued under the lock; nothing left to wait for.
     }
@@ -376,7 +507,6 @@ class QueuePushAwaiter {
 
         if (state_->capacity == 0) {
             // An unbounded queue never suspends, so the value is enqueued here.
-            bool has_popper = false;
             {
                 std::lock_guard<std::mutex> lock(state_->mutex);
                 if (state_->closed) {
@@ -384,10 +514,7 @@ class QueuePushAwaiter {
                 }
                 detail::enqueueLocked(state_, std::move(value_));
                 enqueued_  = true;
-                has_popper = !state_->poppers.empty();
-            }
-            if (has_popper) {
-                detail::wakeOnePopper(state_);
+                woke_peer_ = !state_->poppers.empty();
             }
             return true;
         }
@@ -403,6 +530,17 @@ class QueuePushAwaiter {
         return false;
     }
 
+    /**
+     * @brief Reports whether this push enqueued the value while a popper was waiting.
+     *
+     * @return true when the caller must wake a popper before it finishes.
+     */
+    [[nodiscard]]
+    bool wokePeer() const noexcept
+    {
+        return woke_peer_;
+    }
+
   private:
     std::shared_ptr<AsyncQueueState<T>> state_;
     T                                   value_;
@@ -413,6 +551,9 @@ class QueuePushAwaiter {
 
     /// true once await_suspend() enqueued the value itself, so await_resume() has nothing left to do.
     bool enqueued_{ false };
+
+    /// true when the value was enqueued while a popper was parked.
+    bool woke_peer_{ false };
 };
 
 } // namespace detail
@@ -430,11 +571,14 @@ class QueuePushAwaiter {
  * A non-zero capacity is an exact bound: the room is claimed under the same lock
  * that enqueues, so concurrent pushers cannot overfill the queue.
  *
- * Wake-up timing: a push or pop that hands a peer its chance does not resume that peer on its own
- * stack - it posts the wake-up to the process-wide timer service. A resumed peer can complete a
- * whenAny whose Destroy policy then destroys the push()/pop() that was still returning, so the
- * wake-up has to happen after that stack has unwound. A consequence worth knowing: when pop()
- * returns, the producer it freed is woken shortly afterwards on the timer thread, not before.
+ * Wake-up timing: a push or pop that hands a peer its chance suspends first, then lets a
+ * timer-thread action wake the peer and resume it. A resumed peer can complete a whenAny whose
+ * Destroy policy destroys the push()/pop() that handed it the slot, and a coroutine can only be
+ * destroyed safely while it is suspended. A consequence worth knowing: pop() and push() complete
+ * only after the peer they freed has had its turn, and a Destroy loser may be destroyed at that
+ * point instead - its value (pop) is then discarded with it. The non-suspending forms
+ * (tryPush/tryPop/close) cannot put themselves at a suspension point; they only post the wake, so a
+ * caller that can itself be a Destroy loser should use the suspending form.
  *
  * Failure contract: construction allocates the shared state, so it can throw
  * std::bad_alloc; push() and pop() report a throwing element move as the task's error instead of
@@ -478,6 +622,12 @@ class AsyncQueue {
         detail::QueuePushAwaiter<T> awaiter{ state_, std::move(value) };
         while (!co_await awaiter) {
         }
+        if (awaiter.wokePeer()) {
+            // Hand the item to a waiting consumer and stay suspended until it has had its turn:
+            // a consumer that wins a whenAny destroys its losers, and this coroutine has to be
+            // suspended - a legal destruction point - when that happens.
+            co_await detail::WakePeerAndContinue<T>{ state_, detail::PeerKind::Poppers };
+        }
     }
 
     /**
@@ -520,6 +670,13 @@ class AsyncQueue {
         for (;;) {
             std::optional<T> value = co_await awaiter;
             if (value) {
+                if (awaiter.wokePeer()) {
+                    // Free a bounded producer's slot and stay suspended until it has had its turn:
+                    // a producer that wins a whenAny destroys its losers, and this coroutine has to
+                    // be suspended - a legal destruction point - when that happens. A destroyed
+                    // pop has already taken its value; Destroy discards it with the task.
+                    co_await detail::WakePeerAndContinue<T>{ state_, detail::PeerKind::Pushers };
+                }
                 co_return std::move(*value);
             }
         }

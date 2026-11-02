@@ -3648,18 +3648,17 @@ struct MoveOnlyValue {
 };
 
 /// Parks on a full bounded queue until a popper frees room.
-async::Task<void> blockedProducer(async::AsyncQueue<int>& queue, int value)
+async::Task<void> blockedProducer(async::AsyncQueue<int>& queue, int value, std::atomic<bool>& pushed)
 {
     co_await queue.push(value);
+    pushed.store(true, std::memory_order_release);
 }
 
 /// Sleeps briefly, then pops - which is what frees a slot for the parked producer.
-async::Task<int> delayedPop(async::AsyncQueue<int>& queue, std::atomic<bool>& returned)
+async::Task<int> delayedPop(async::AsyncQueue<int>& queue)
 {
     co_await async::sleepFor(std::chrono::milliseconds(5));
-    const int value = co_await queue.pop();
-    returned.store(true, std::memory_order_release);
-    co_return value;
+    co_return co_await queue.pop();
 }
 
 } // namespace
@@ -3743,26 +3742,50 @@ TEST(AsyncQueueTest, AThrowingMoveFailsThePushInsteadOfTerminating)
 TEST(AsyncQueueTest, PopWakingAProducerDoesNotDestroyTheExecutingPop)
 {
     // Regression (heap-use-after-free): pop() resumed the parked producer before returning its own
-    // value. When that producer won a whenAny, the Destroy composition destroyed the pop task - its
-    // frame was freed while the co_await that woke the producer was still executing. The queue now
-    // hands every wake-up to the timer thread, so the pop has finished by the time it runs.
+    // value, and the producer's whenAny win destroyed the still-executing pop task. pop() now
+    // suspends at the hand-off, so the producer runs - and may destroy the pop as a Destroy
+    // loser - while the popper is suspended, which is a legal destruction point. ASan is what this
+    // test guards; a build without it only sees a completed composition.
     for (int iter = 0; iter < 50; ++iter) {
         async::AsyncQueue<int> queue(1);
         ASSERT_TRUE(queue.tryPush(1));
 
-        std::atomic<bool>           popped{ false };
+        std::atomic<bool>           pushed{ false };
         std::vector<async::AnyTask> race;
-        race.push_back(blockedProducer(queue, 2));
-        race.push_back(async::discard(delayedPop(queue, popped)));
+        race.push_back(blockedProducer(queue, 2, pushed));
+        race.push_back(async::discard(delayedPop(queue)));
 
         async::whenAny(std::move(race)).result();
 
-        // Both outcomes are legal now: the pop may finish (and win the composition) before the
-        // producer it woke gets to run on the timer thread, or the producer may win and destroy
-        // the already-finished pop child. What must never happen is the pop task being freed
-        // while it is still returning its value, which is what "popped" observes.
-        EXPECT_TRUE(popped.load()) << "pop() was destroyed before it could return its value";
+        EXPECT_TRUE(pushed.load()) << "the pop never handed the freed slot to the producer";
     }
+}
+
+TEST(AsyncQueueTest, PopHandsAFreedSlotOverBeforeItReturns)
+{
+    // The hand-off is ordered, not merely deferred: pop() suspends, a timer action wakes the
+    // producer, and only then does pop() resume. Once pop() returns, the producer has run.
+    async::AsyncQueue<int> queue(1);
+    ASSERT_TRUE(queue.tryPush(1));
+
+    std::atomic<bool> pushed{ false };
+    queuePushDetached(queue, 2, pushed);
+    ASSERT_FALSE(pushed.load());
+
+    EXPECT_EQ(queue.pop().result(), 1);
+    EXPECT_TRUE(pushed.load()) << "pop() resumed its caller before the producer it freed had run";
+    EXPECT_EQ(queue.pop().result(), 2);
+}
+
+TEST(AsyncQueueTest, PushHandsTheItemOverBeforeItReturns)
+{
+    // The symmetric hand-off: push() suspends so that the consumer it feeds runs first.
+    async::AsyncQueue<int> queue;
+    std::atomic<int>       got{ 0 };
+    queuePopDetached(queue, got);
+
+    queue.push(42).result();
+    EXPECT_EQ(got.load(std::memory_order_acquire), 42) << "push() resumed its caller before the popper it fed had run";
 }
 
 TEST(ThreadPoolSchedulerTest, RunOnMovesMoveOnlyArgumentsIntoTheCallable)

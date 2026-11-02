@@ -30,16 +30,22 @@
 
 ## 修复
 
-- 队列不再在调用者的栈上 resume 等待者：`push` / `pop` / `tryPush` / `tryPop` / `close` 改变队列后，
-  把唤醒交给 `TimerService::postWake()`（`detail::wakeOnePopper` / `wakeOnePusher` / `wakeAll`）。
-- 唤醒动作在 timer 线程上锁内取一个 handle、锁外 resume；等待者若已销毁，其 awaiter 已从表中注销。
-- 唤醒成为“可能虚假”的：`pop()` / `push()` 醒来后重新检查条件，不满足就重新登记
-  （`QueuePopAwaiter` / `QueuePushAwaiter` 可重复 await）。
-- `close()` 只投递一个 `wakeAll` 动作；该动作在 timer 线程内逐个 resume，赢家销毁落败者时列表已经更新。
+- 交接规则：交出一个槽位/一个元素的操作**先挂起自己**（`detail::WakePeerAndContinue`），再由 timer 线程上的
+  一个动作先唤醒同伴、后恢复自己。同伴赢得 `whenAny` 时，`Destroy` 销毁的是一个**已挂起**的协程帧
+  （以及同样挂起的祖先帧），这是合法销毁点。
+- 只把唤醒投递给 timer 线程不够：操作自己仍在它的线程上执行，同伴的 `Destroy` 会销毁一个正在运行的帧
+  （2026-11-02 复验：worker 线程执行 `pop()`、生产者由 timer 唤醒，ASan 报 `heap-use-after-free`）。
+- 等待者醒来后重新检查条件，不满足就重新登记（`QueuePopAwaiter` / `QueuePushAwaiter` 可重复 await）。
+- `WakePeerAndContinue` 的析构会注销自己的 handle：操作先被销毁时，动作只唤醒同伴、不恢复已亡的帧。
+  剩下无法自我挂起的 `tryPush` / `tryPop` / `close` 只能投递唤醒，头文件写明了这一点。
 
 ## 验证
 
 - `AsyncQueueTest.PopWakingAProducerDoesNotDestroyTheExecutingPop`：容量 1、满队列的 `push` 与延迟 `pop`
-  在 `whenAny` 中竞争，50 轮都要求 `pop()` 返回（修复前会释放仍在返回的 pop 协程帧）。
-- `test_async` 在 ASan 下全量通过；修复前同场景 ASan 报 `heap-use-after-free`。
-- 语义变化（已写进头文件）：`pop()` 返回表示“值已取走”，不再表示“生产者已经运行”。
+  在 `whenAny` 中竞争（50 轮）；ASan 下不再报错，修复前同场景（worker 线程 + `AsyncEvent` 唤醒 popper）
+  报 `heap-use-after-free`，读发生在 popper 的 resume 上。
+- `AsyncQueueTest.PopHandsAFreedSlotOverBeforeItReturns` / `PushHandsTheItemOverBeforeItReturns`：交接是
+  有顺序的——`pop()` / `push()` 返回时，被唤醒的同伴已经运行过。
+- `test_async` 在 Debug 与 ASan 下全量通过。
+- 语义变化（已写进头文件）：`pop()` / `push()` 要等同伴先跑完才返回；若它在 `Destroy` 组合里是落败者，
+  会在这个挂起点被销毁（`pop()` 已取走的值随之丢弃）。

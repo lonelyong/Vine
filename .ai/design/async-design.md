@@ -59,9 +59,12 @@
 `TimerService::run`、`SharedTask::runShared`。
 
 `AsyncQueue` 更进一步：它的唤醒者自己可能就是被销毁的对象（`pop()` 唤醒的生产者可以赢得 `whenAny`，
-随后的 `Destroy` 会销毁仍在返回的 `pop()` 协程帧）。因此队列不在调用者栈上 resume，而是把唤醒交给 timer 线程
-（`AsyncQueueState` 的 `wakeOnePopper` / `wakeOnePusher` / `wakeAll`）；被唤醒者醒来后重新检查条件，
-不满足就重新登记，所以唤醒允许是“虚假”的。代价是 `pop()` 返回不再等于“生产者已经运行”。
+随后的 `Destroy` 会销毁队列协程）。只把唤醒投递给 timer 线程不够——唤醒者仍在自己的线程上执行，
+`Destroy` 会销毁一个正在运行的帧。因此队列的交接是**先挂起自己**（`detail::WakePeerAndContinue`）：
+timer 线程上的一个动作先唤醒同伴、后恢复自己；同伴赢得组合时，被销毁的是已挂起的队列帧。
+被唤醒者醒来后重新检查条件，不满足就重新登记，所以唤醒允许是“虚假”的。
+代价是 `pop()` / `push()` 要等同伴先跑完才返回；`tryPush` / `tryPop` / `close` 无法自我挂起，
+只能投递唤醒。
 
 ### 2.3 对称转移
 
@@ -124,7 +127,8 @@
 - **行为**：event/latch/mutex/cv/semaphore/rwlock/queue/TCS/sleep/yield。
 - **约束**（C3）：一次完成唤醒多个等待者必须按 §2.2；析构里自我注销且 `noexcept`。
 - **要求**（R3）：不在锁内 resume；不在取消者的栈上 resume；跨线程唤醒走 `detail::deferWake()`；
-  `AsyncQueue` 的所有唤醒走 `TimerService::postWake()`，因此唤醒是可能虚假的、等待者必须重新检查条件。
+  `AsyncQueue` 的 `push`/`pop` 交接时先挂起自己（`WakePeerAndContinue`），`tryPush`/`tryPop`/`close`
+  只投递唤醒，因此唤醒是可能虚假的、等待者必须重新检查条件。
 - **验收**（T3）：`test_async` 的各个原语用例 + ASan/TSan。
 - **注意**（N3）：`AsyncConditionVariable` 的粘性标记是刻意偏离，不要“修”回丢失唤醒。
 
