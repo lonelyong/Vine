@@ -24,8 +24,10 @@ namespace detail
  * @brief Shared completion state of a TaskCompletionSource.
  *
  * Lives behind a shared_ptr so a task obtained from task() keeps the state
- * alive even after the source itself is destroyed. The value is moved out by
- * the first awaiter; with a move-only T await the returned task only once.
+ * alive even after the source itself is destroyed. The value is copied out for
+ * a copy-constructible T, so every awaiting task receives it; a move-only T is
+ * moved out by the first awaiter, which is why such a source supports one
+ * consumer (see TaskCompletionSource for the contract).
  */
 template <typename T>
 struct TcsState {
@@ -102,9 +104,15 @@ class TcsAwaiter {
     /**
      * @brief Yields the completed value or rethrows the recorded exception.
      *
+     * @details
+     * - A copy-constructible T is copied out, so several tasks from one source each get the whole
+     *   value and concurrent awaits read the shared state without mutating it.
+     * - A move-only T is moved out; the source then supports one consumer, because the value can
+     *   only leave the state once.
+     *
      * @return The value of co_await (or void for a void source).
      */
-    decltype(auto) await_resume()
+    T await_resume()
     {
         if (failure_) {
             std::rethrow_exception(std::exchange(failure_, nullptr));
@@ -113,7 +121,12 @@ class TcsAwaiter {
             std::rethrow_exception(state_->exception);
         }
         if constexpr (!std::is_void_v<T>) {
-            return std::move(*state_->value);
+            if constexpr (std::is_copy_constructible_v<T>) {
+                return *state_->value;
+            }
+            else {
+                return std::move(*state_->value);
+            }
         }
     }
 
@@ -161,6 +174,11 @@ inline void resumeWaitersOneByOne(const std::shared_ptr<TcsState<T>>& state) noe
  * The source may complete before the task is awaited, in which case awaiting
  * it yields the value immediately. Multiple tasks can be obtained from one
  * source and all complete together.
+ *
+ * Result delivery: a copy-constructible T is delivered to every task as its own copy, so several
+ * tasks (and concurrent awaits of them) all observe the whole value. A move-only T can only be
+ * moved out once, so such a source supports a single consumer - await one task, or wrap the value
+ * in a shared handle. Awaiting a second task then yields the moved-from value.
  *
  * setResult()/setException() throw std::logic_error on double completion;
  * trySetResult()/trySetException() return false instead. setException() takes
@@ -306,7 +324,8 @@ class TaskCompletionSource {
      * @brief Returns a task that completes when the source completes.
      *
      * Multiple calls return independent tasks; all of them complete when the
-     * source is completed.
+     * source is completed, and each copy-constructible value is delivered as its
+     * own copy. A move-only value can be consumed by one task only.
      *
      * @return A task yielding the source's value or rethrowing its exception.
      */

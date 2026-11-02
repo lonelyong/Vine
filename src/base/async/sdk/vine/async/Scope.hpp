@@ -83,7 +83,8 @@ DetachedTask runScopeChild(std::shared_ptr<ScopeState> state, Task<T> task)
  * Scope must not be destroyed while a join() task is still waiting; await
  * join() before the Scope goes out of scope to guarantee all children have
  * finished. A child may be added after a previous join(); this starts a fresh
- * batch whose failures are collected by the next join().
+ * batch whose failures are collected by the next join(), and whose stop source
+ * is new: a requestStop() aimed at the previous batch does not reach it.
  *
  * Environment: the scope owns a std::stop_source and hands its token to every child it adds, so
  * a child that reads co_await currentStopToken() - or sleeps with an inherited token - can be
@@ -118,7 +119,8 @@ class Scope {
      *
      * A request, not a cancellation: it is recorded in the scope's stop_source, and only a child
      * that reads the token reacts to it. Calling this is harmless when there are no children, or
-     * when they have all finished.
+     * when they have all finished. The request is scoped to the current batch; the next add()
+     * after the batch has finished starts with a fresh, unrequested source.
      */
     void requestStop() noexcept
     {
@@ -177,10 +179,12 @@ class Scope {
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             if (state_->pending == 0) {
-                // A fresh batch starts: clear the previous completion state, and track this batch
-                // again - detach() applied to the batch before it.
+                // A fresh batch starts: clear the previous completion state, give the batch its own
+                // stop source - a requestStop() belongs to the batch it was made in - and track
+                // this batch again (detach() applied to the batch before it).
                 state_->done.reset();
                 state_->first_exception = nullptr;
+                source_                 = std::stop_source{};
                 detached_               = false;
             }
             ++state_->pending;

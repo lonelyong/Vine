@@ -2,6 +2,7 @@
 
 #include "async_global.hpp"
 
+#include <type_traits>
 #include <utility>
 
 #include <vine/CancellationToken.hpp>
@@ -63,17 +64,20 @@ inline void throwIfCancelled(const CancellationToken& token)
 }
 
 /**
- * @brief Runs a task under a cancellation token.
+ * @brief Runs a task under a cancellation token, which becomes the task's environment.
  *
  * If the token is already cancelled when the returned task is awaited, it
  * throws TaskCancelledException immediately without running the task;
  * otherwise the task runs and its result or exception propagates unchanged.
- * Cancelling a running task is cooperative: the task may call
- * throwIfCancelled(token) at safe points.
+ *
+ * The token is written into the task's promise before its body starts, so the body reads it with
+ * co_await currentStopToken() and can hand it to the operations it awaits (a sleep, a nested
+ * withCancellation). Cancelling a running task is cooperative: nothing is interrupted, and only
+ * code that reads the token - the environment, throwIfCancelled(token) at a safe point - reacts.
  *
  * @tparam T Result type of the task.
- * @param token Cancellation token passed down to the task.
- * @param task Task to run.
+ * @param token Cancellation token handed to the task as its environment.
+ * @param task Task to run; handed over, so it must not be awaited anywhere else.
  * @return A task that completes as task does, or throws TaskCancelledException.
  */
 template <typename T>
@@ -81,7 +85,19 @@ template <typename T>
 Task<T> withCancellation(CancellationToken token, Task<T> task)
 {
     throwIfCancelled(token);
-    co_return co_await std::move(task);
+
+    // Before the body starts: a lazy Task has not run a line yet, which is the last moment at
+    // which its environment can still be set (the same injection withStopToken() and the
+    // compositions use).
+    detail::TaskEnvironment::setToken(task, token);
+
+    if constexpr (std::is_void_v<T>) {
+        co_await std::move(task);
+        co_return;
+    }
+    else {
+        co_return co_await std::move(task);
+    }
 }
 
 VN_ASYNC_NS_END

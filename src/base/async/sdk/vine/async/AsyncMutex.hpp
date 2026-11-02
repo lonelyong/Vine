@@ -171,6 +171,22 @@ class AsyncLockGuard {
         return mutex_ != nullptr;
     }
 
+    /**
+     * @brief Returns the mutex this guard unlocks, or null when it holds none.
+     *
+     * @details
+     * - Exists for operations that have to release and re-acquire the lock around a wait
+     *   (AsyncConditionVariable::wait(AsyncLockGuard&)): the guard is emptied while the wait
+     *   runs, then re-armed with the same mutex when it resumes.
+     *
+     * @return The guarded mutex, or null when the guard is empty.
+     */
+    [[nodiscard]]
+    AsyncMutex* mutex() const noexcept
+    {
+        return mutex_;
+    }
+
   private:
     AsyncMutex* mutex_{ nullptr };
 };

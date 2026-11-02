@@ -154,6 +154,10 @@ inline CvWaiter::~CvWaiter() noexcept
  * the mutex before returning; the caller must hold the mutex and re-check its
  * predicate in a loop, as with std::condition_variable.
  *
+ * A caller that holds the lock through an AsyncLockGuard must use the guard
+ * overload: the mutex overload releases the lock behind the guard's back, so a
+ * guard that outlives an abandoned wait would unlock a mutex it no longer owns.
+ *
  * Notification semantics: unlike std::condition_variable, a notify issued
  * while no waiter is registered is NOT a no-op — it is preserved by a sticky
  * flag and consumed by the next waiter. This deviation is structurally
@@ -189,6 +193,12 @@ class AsyncConditionVariable {
     /**
      * @brief Releases the mutex and suspends until notified, then re-acquires.
      *
+     * @warning
+     * - A caller that holds the mutex through an AsyncLockGuard must call wait(AsyncLockGuard&)
+     *   instead. This overload unlocks the mutex without telling the guard, so a wait that is
+     *   abandoned (its coroutine destroyed by a whenAny loser, for example) leaves a guard that
+     *   still believes it owns the lock and unlocks it a second time.
+     *
      * @param mutex Mutex the caller holds; re-acquired before returning.
      * @return A task completing when notified and the mutex is re-held.
      */
@@ -198,6 +208,32 @@ class AsyncConditionVariable {
         mutex.unlock();
         co_await detail::CvWaiter{ state_ };
         co_await mutex.lock();
+    }
+
+    /**
+     * @brief Releases the guard's mutex, suspends until notified, then re-acquires and re-arms it.
+     *
+     * @details
+     * - The guard is empty while the wait runs, so destroying an abandoned wait (a whenAny
+     *   sibling, for example) does not leave behind a guard that still claims the lock.
+     * - On return the guard owns the mutex again; use it as any guard obtained from lockAsync().
+     * - Prefer this overload whenever the caller holds the lock through AsyncLockGuard.
+     *
+     * @warning
+     * - The guard must hold a mutex when the wait starts; an empty guard is a programming error.
+     *
+     * @param guard Guard holding the mutex this wait releases and re-acquires.
+     * @return A task completing when notified and the mutex is re-held by the guard.
+     */
+    [[nodiscard]]
+    Task<void> wait(AsyncLockGuard& guard)
+    {
+        AsyncMutex* mutex = guard.mutex();
+        assert(mutex); // The caller must hold the lock through this guard.
+        guard.unlock();
+        co_await detail::CvWaiter{ state_ };
+        co_await mutex->lock();
+        guard = AsyncLockGuard{ mutex };
     }
 
     /**

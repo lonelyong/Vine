@@ -36,8 +36,10 @@
 #include <coroutine>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -215,6 +217,16 @@ bool waitForFlag(const std::atomic<bool>& flag, std::chrono::milliseconds budget
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return flag.load(std::memory_order_acquire);
+}
+
+/// Waits (bounded) for an atomic value another thread stores.
+bool waitForValue(const std::atomic<int>& value, int expected, std::chrono::milliseconds budget)
+{
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    while (value.load(std::memory_order_acquire) != expected && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return value.load(std::memory_order_acquire) == expected;
 }
 
 async::Task<void> eventWaitCount(async::AsyncEvent& event, std::atomic<int>& registered, std::atomic<int>& woken)
@@ -436,15 +448,15 @@ async::Task<void> sleepCancel(CancellationToken token, bool& cancelled)
     }
 }
 
-async::DetachedTask queuePopDetached(async::AsyncQueue<int>& queue, int& got)
+async::DetachedTask queuePopDetached(async::AsyncQueue<int>& queue, std::atomic<int>& got)
 {
-    got = co_await queue.pop();
+    got.store(co_await queue.pop(), std::memory_order_release);
 }
 
-async::DetachedTask queuePushDetached(async::AsyncQueue<int>& queue, int value, bool& pushed)
+async::DetachedTask queuePushDetached(async::AsyncQueue<int>& queue, int value, std::atomic<bool>& pushed)
 {
     co_await queue.push(value);
-    pushed = true;
+    pushed.store(true, std::memory_order_release);
 }
 
 async::Task<void> latchWaitFlag(async::AsyncLatch& latch, bool& released)
@@ -1920,11 +1932,14 @@ TEST(AsyncQueueTest, PushPop)
 
 TEST(AsyncQueueTest, PopWaitsForPush)
 {
+    // A queued waiter is woken on the timer thread (never on the caller's stack), so push()
+    // returning means "the value is enqueued", not "the popper has already run".
     async::AsyncQueue<int> queue;
-    int                    got = 0;
+    std::atomic<int>       got{ 0 };
     queuePopDetached(queue, got);
     queue.push(42).result();
-    EXPECT_EQ(got, 42);
+    ASSERT_TRUE(waitForValue(got, 42, std::chrono::milliseconds(1000)));
+    EXPECT_EQ(got.load(std::memory_order_acquire), 42);
 }
 
 TEST(AsyncQueueTest, BoundedPushSuspendsWhenFull)
@@ -1932,12 +1947,12 @@ TEST(AsyncQueueTest, BoundedPushSuspendsWhenFull)
     async::AsyncQueue<int> queue(1);
     queue.push(1).result(); // Fills the bounded queue.
 
-    bool pushed = false;
+    std::atomic<bool> pushed{ false };
     queuePushDetached(queue, 2, pushed);
-    EXPECT_FALSE(pushed);
+    EXPECT_FALSE(pushed.load());
 
-    EXPECT_EQ(queue.pop().result(), 1); // Frees room.
-    EXPECT_TRUE(pushed);
+    EXPECT_EQ(queue.pop().result(), 1); // Frees room; the parked pusher is woken on the timer thread.
+    ASSERT_TRUE(waitForFlag(pushed, std::chrono::milliseconds(1000)));
 }
 
 TEST(AsyncQueueTest, CloseThrowsOnDrainedPop)
@@ -3601,4 +3616,222 @@ TEST(ScopeTest, ADetachedScopeLeavesItsChildrenAlone)
 
     EXPECT_TRUE(waitForFlag(finished, std::chrono::milliseconds(1000)));
     EXPECT_FALSE(cancelled.load());
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests for the defects recorded in .ai/bugs/ (2026-11-02).
+// Each test pins the contract the fix established, not only the symptom.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+/// Holds the lock through a guard across cv.wait; the guard overload keeps ownership honest.
+async::Task<void> guardWaiter(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<bool>& woken)
+{
+    auto guard = co_await async::lockAsync(mutex);
+    co_await cv.wait(guard);
+    woken.store(true, std::memory_order_release);
+}
+
+/// Move-constructible, but neither default-constructible nor move-assignable.
+struct MoveOnlyValue {
+    explicit MoveOnlyValue(int v)
+      : value(v)
+    {}
+    MoveOnlyValue(const MoveOnlyValue&)            = delete;
+    MoveOnlyValue& operator=(const MoveOnlyValue&) = delete;
+    MoveOnlyValue(MoveOnlyValue&&)                 = default;
+    MoveOnlyValue& operator=(MoveOnlyValue&&)      = delete;
+
+    int value;
+};
+
+/// Parks on a full bounded queue until a popper frees room.
+async::Task<void> blockedProducer(async::AsyncQueue<int>& queue, int value)
+{
+    co_await queue.push(value);
+}
+
+/// Sleeps briefly, then pops - which is what frees a slot for the parked producer.
+async::Task<int> delayedPop(async::AsyncQueue<int>& queue, std::atomic<bool>& returned)
+{
+    co_await async::sleepFor(std::chrono::milliseconds(5));
+    const int value = co_await queue.pop();
+    returned.store(true, std::memory_order_release);
+    co_return value;
+}
+
+} // namespace
+
+TEST(AsyncConditionVariableTest, GuardWaitReacquiresAndReleasesOnce)
+{
+    // The guard overload empties the guard while the wait runs and re-arms it when the wait
+    // resumes, so the guard's destructor releases exactly the lock it holds.
+    async::AsyncMutex             mutex;
+    async::AsyncConditionVariable cv;
+    std::atomic<bool>             woken{ false };
+
+    auto task = guardWaiter(mutex, cv, woken);
+
+    std::thread notifier([&cv] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        cv.notify_one();
+    });
+    std::move(task).result();
+    notifier.join();
+
+    EXPECT_TRUE(woken.load());
+    EXPECT_TRUE(mutex.try_lock()) << "the guard did not release the mutex after the wait";
+    mutex.unlock();
+}
+
+TEST(AsyncConditionVariableTest, AbandonedGuardWaitDoesNotUnlockTwice)
+{
+    // Regression: wait(mutex) unlocked behind a live guard, so destroying the parked waiter (a
+    // whenAny loser) left that guard unlocking a mutex it no longer owned; Debug builds asserted in
+    // AsyncMutex::unlock(). The guard overload leaves the guard empty while it waits.
+    async::AsyncMutex             mutex;
+    async::AsyncConditionVariable cv;
+    std::atomic<bool>             woken{ false };
+
+    std::vector<async::AnyTask> race;
+    race.push_back(async::discard(guardWaiter(mutex, cv, woken)));
+    race.push_back(async::sleepFor(std::chrono::milliseconds(2)));
+    async::whenAny(std::move(race)).result(); // destroys the parked guard waiter
+
+    EXPECT_FALSE(woken.load());
+    EXPECT_TRUE(mutex.try_lock()) << "the abandoned wait left the mutex in an inconsistent state";
+    mutex.unlock();
+    cv.notify_all();
+}
+
+TEST(AsyncQueueTest, PopSupportsAMoveOnlyTypeWithoutDefaultConstruction)
+{
+    // pop() used to build `T value;` and move-assign into it, demanding a default constructor and
+    // a move assignment the API never stated. It now move-constructs the result.
+    async::AsyncQueue<MoveOnlyValue> queue;
+    ASSERT_TRUE(queue.tryPush(MoveOnlyValue{ 7 }));
+    EXPECT_EQ(queue.pop().result().value, 7);
+}
+
+TEST(AsyncQueueTest, AThrowingMoveFailsThePushInsteadOfTerminating)
+{
+    // The enqueue moves T into the frame, into the awaiter and into the deque; starting with the
+    // awaiter's constructor those moves sat in noexcept code, so a throwing move called
+    // std::terminate. Every one of them has to reach the caller as this task's error. Move #1 is
+    // the compiler's copy of the argument into the coroutine frame, before any queue code runs, and
+    // is therefore not part of this sweep.
+    bool any_threw = false;
+    for (int move = 2; move <= 8; ++move) {
+        ThrowingMove::s_moves    = 0;
+        ThrowingMove::s_throw_on = move;
+
+        async::AsyncQueue<ThrowingMove> queue(1); // bounded: exercises the await_suspend enqueue
+        try {
+            queue.push(ThrowingMove{}).result();
+        }
+        catch (const std::runtime_error&) {
+            any_threw = true; // the move failure came out as the task's error
+        }
+    }
+    ThrowingMove::s_throw_on = 0;
+
+    EXPECT_TRUE(any_threw);
+}
+
+TEST(AsyncQueueTest, PopWakingAProducerDoesNotDestroyTheExecutingPop)
+{
+    // Regression (heap-use-after-free): pop() resumed the parked producer before returning its own
+    // value. When that producer won a whenAny, the Destroy composition destroyed the pop task - its
+    // frame was freed while the co_await that woke the producer was still executing. The queue now
+    // hands every wake-up to the timer thread, so the pop has finished by the time it runs.
+    for (int iter = 0; iter < 50; ++iter) {
+        async::AsyncQueue<int> queue(1);
+        ASSERT_TRUE(queue.tryPush(1));
+
+        std::atomic<bool>           popped{ false };
+        std::vector<async::AnyTask> race;
+        race.push_back(blockedProducer(queue, 2));
+        race.push_back(async::discard(delayedPop(queue, popped)));
+
+        async::whenAny(std::move(race)).result();
+
+        // Both outcomes are legal now: the pop may finish (and win the composition) before the
+        // producer it woke gets to run on the timer thread, or the producer may win and destroy
+        // the already-finished pop child. What must never happen is the pop task being freed
+        // while it is still returning its value, which is what "popped" observes.
+        EXPECT_TRUE(popped.load()) << "pop() was destroyed before it could return its value";
+    }
+}
+
+TEST(ThreadPoolSchedulerTest, RunOnMovesMoveOnlyArgumentsIntoTheCallable)
+{
+    vn::ThreadPool pool(2);
+    auto           value = std::make_unique<int>(41);
+    auto           task  = async::runOn(pool, [](std::unique_ptr<int> p) { return *p + 1; }, std::move(value));
+    EXPECT_EQ(std::move(task).result(), 42);
+}
+
+TEST(TaskCompletionSourceTest, EveryValueTaskReceivesItsOwnCopy)
+{
+    // A value source used to move the single stored optional out for the first awaiter, so the
+    // second task read a moved-from value ("payload" then ""). A copy-constructible value is now
+    // copied to every task.
+    async::TaskCompletionSource<std::string> tcs;
+    auto                                     t1 = tcs.task();
+    auto                                     t2 = tcs.task();
+    tcs.setResult("payload");
+
+    EXPECT_EQ(std::move(t1).result(), "payload");
+    EXPECT_EQ(std::move(t2).result(), "payload") << "the second task read a moved-from value";
+}
+
+TEST(TaskTest, WithCancellationHandsItsTokenToTheTaskEnvironment)
+{
+    // The wrapper used to check the token once before starting the task; a body reading
+    // currentStopToken() saw an empty environment instead of the wrapper's token.
+    vn::CancellationSource         source;
+    std::optional<std::stop_token> seen;
+    async::withCancellation(source.get_token(), readEnvironment(seen)).result();
+
+    ASSERT_TRUE(seen.has_value());
+    EXPECT_TRUE(seen->stop_possible()) << "the wrapper's token never entered the task's environment";
+    EXPECT_FALSE(seen->stop_requested());
+}
+
+TEST(TaskTest, WithCancellationCancelsTheTaskWhileItRuns)
+{
+    vn::CancellationSource source;
+    std::atomic<bool>      cancelled{ false };
+    std::atomic<bool>      finished{ false };
+
+    std::thread runner([&] {
+        async::withCancellation(source.get_token(), sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished)).result();
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    source.request_stop();
+    const bool woken = waitForFlag(finished, std::chrono::milliseconds(1000));
+    runner.join();
+
+    EXPECT_TRUE(woken) << "the running task never saw the stop request: the token did not reach its environment";
+    EXPECT_TRUE(cancelled.load());
+}
+
+TEST(ScopeTest, ABatchAfterRequestStopGetsAFreshUnrequestedToken)
+{
+    // requestStop() applies to the batch it was made in. A later add() starts a new batch, so it
+    // must be handed a fresh source instead of inheriting the stopped one.
+    async::Scope scope;
+    scope.add(noop());
+    scope.join().result();
+    scope.requestStop(); // the finished batch's request
+
+    std::optional<std::stop_token> seen;
+    scope.add(readEnvironment(seen));
+    scope.join().result();
+
+    ASSERT_TRUE(seen.has_value());
+    EXPECT_TRUE(seen->stop_possible()) << "the fresh batch must still be handed the scope's token";
+    EXPECT_FALSE(seen->stop_requested()) << "the fresh batch inherited the previous batch's stop request";
 }

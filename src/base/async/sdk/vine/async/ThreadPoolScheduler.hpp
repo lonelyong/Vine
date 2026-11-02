@@ -75,8 +75,10 @@ class ThreadPoolScheduler {
  *
  * The returned task, when awaited, hops to a pool worker thread, invokes the
  * callable there, and yields its result (or void). Arguments are captured by
- * value into the task frame. Exceptions thrown by the callable propagate out
- * of the returned task.
+ * value into the task frame and moved into the callable, so a move-only
+ * argument (std::unique_ptr, for example) works as long as the callable takes
+ * it by value. Exceptions thrown by the callable propagate out of the returned
+ * task.
  *
  * @tparam F Callable type.
  * @tparam Args Argument types.
@@ -92,12 +94,16 @@ Task<std::invoke_result_t<F, Args...>> runOn(vn::ThreadPool& pool, F f, Args... 
     // Hop to a pool worker before invoking the callable.
     co_await ThreadPoolScheduler{ pool }.schedule();
 
+    // The stored callable and arguments are our own copies, so they are moved into the call: a
+    // by-value parameter that can only be moved (std::unique_ptr, a move-only payload struct)
+    // would not bind to an lvalue, and std::invoke_result_t<F, Args...> already describes the
+    // by-value call this performs.
     if constexpr (std::is_void_v<std::invoke_result_t<F, Args...>>) {
-        std::invoke(f, args...);
+        std::invoke(std::move(f), std::move(args)...);
         co_return;
     }
     else {
-        co_return std::invoke(f, args...);
+        co_return std::invoke(std::move(f), std::move(args)...);
     }
 }
 

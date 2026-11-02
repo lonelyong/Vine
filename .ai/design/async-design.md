@@ -55,8 +55,13 @@
 - 边界判定用**世代号**（`AsyncEvent::set_epoch_`），不用“队尾指针”——被销毁的 waiter 可能是边界节点。
 
 遵守这条的：`AsyncEvent::set`、`AsyncConditionVariable::notify_one/notify_all`、`AsyncSemaphore::release`、
-`AsyncReaderWriterLock::resume`、`AsyncQueue::close`、`TaskCompletionSource::resumeWaitersOneByOne`、
+`AsyncReaderWriterLock::resume`、`TaskCompletionSource::resumeWaitersOneByOne`、
 `TimerService::run`、`SharedTask::runShared`。
+
+`AsyncQueue` 更进一步：它的唤醒者自己可能就是被销毁的对象（`pop()` 唤醒的生产者可以赢得 `whenAny`，
+随后的 `Destroy` 会销毁仍在返回的 `pop()` 协程帧）。因此队列不在调用者栈上 resume，而是把唤醒交给 timer 线程
+（`AsyncQueueState` 的 `wakeOnePopper` / `wakeOnePusher` / `wakeAll`）；被唤醒者醒来后重新检查条件，
+不满足就重新登记，所以唤醒允许是“虚假”的。代价是 `pop()` 返回不再等于“生产者已经运行”。
 
 ### 2.3 对称转移
 
@@ -103,7 +108,7 @@
 - **约束**（C1）：`Task` 必须被 `co_await` 或 `result()` 驱动；`SharedTask` 的结果只能缓存一次。
 - **要求**（R1）：`Task<T&>` 不支持；需要引用时返回指针/`std::reference_wrapper`。
 - **验收**（T1）：`test_async` 的 Task/SharedTask/Scope 用例。
-- **注意**（N1）：`Scope` 析构不等待/不取消孩子，离开作用域前必须 `co_await join()`。
+- **注意**（N1）：`Scope` 析构不等待；未 `detach()` 时只请求孩子停止，仍需 `co_await join()` 才能确认孩子已完成。
 
 ### 3.1.2 F2 组合子
 
@@ -118,7 +123,8 @@
 
 - **行为**：event/latch/mutex/cv/semaphore/rwlock/queue/TCS/sleep/yield。
 - **约束**（C3）：一次完成唤醒多个等待者必须按 §2.2；析构里自我注销且 `noexcept`。
-- **要求**（R3）：不在锁内 resume；不在取消者的栈上 resume；跨线程唤醒走 `detail::deferWake()`。
+- **要求**（R3）：不在锁内 resume；不在取消者的栈上 resume；跨线程唤醒走 `detail::deferWake()`；
+  `AsyncQueue` 的所有唤醒走 `TimerService::postWake()`，因此唤醒是可能虚假的、等待者必须重新检查条件。
 - **验收**（T3）：`test_async` 的各个原语用例 + ASan/TSan。
 - **注意**（N3）：`AsyncConditionVariable` 的粘性标记是刻意偏离，不要“修”回丢失唤醒。
 
@@ -180,7 +186,7 @@
 | R2 | 能对称转移就 return handle，不内联 resume。 |
 | R3 | 应用的阻塞门用 `runToCompletion` + `deliverPostedCalls()`。 |
 | R4 | 注入的取消令牌只对被组合的那一层可见。 |
-| R5 | `Scope` 析构不等待/不取消孩子；离开作用域前显式 `join()`。 |
+| R5 | `Scope` 析构不等待；未 `detach()` 时请求孩子停止，显式 `join()` 才等待孩子完成。 |
 | R6 | 不给 `Task` 加隐式派发，不装全局泵。 |
 
 ### 5.3 不变量（N#）
@@ -209,9 +215,9 @@
 
 ### 6.3 `Scope` 析构不等待
 
-- 会怎么错：离开作用域时孩子还在跑，`~ScopeState` 的 `AsyncEvent` 断言炸。
-- 怎么判：没有 `co_await join()` 的 `Scope`。
-- 怎么防：离开作用域前显式 `join()`；析构只 `request_stop()` + 断言。
+- 会怎么错：不响应停止令牌的孩子可在 `Scope` 析构后继续运行；析构不会等待它们完成。
+- 怎么判：检查 `pendingChildren()`，或在所有需要完成保证的路径上显式 `co_await join()`。
+- 怎么防：在离开作用域前显式 `join()`；`detach()` 明确表示析构时不请求停止。
 
 ## 7. 已否决选项
 
@@ -238,13 +244,15 @@
 
 ### 9.1 当前状态
 
-任务/组合子/同步原语/调度器均已落地；取消策略按 `StopAndWait`/`Destroy` 收口；P2 的三项见 backlog。
+任务/组合子/同步原语/调度器均已落地；取消策略按 `StopAndWait`/`Destroy` 收口；任务环境令牌与
+`Scope` 的停止请求已落地。
 
 ### 9.2 已知缺口 / 待办
 
-- 取消的环境令牌（stop token 随任务走）建议排期；详见 `../backlog/async.md`。
-- 结构化作用域小改（析构断言 + 显式 `join()` + `detach()`）。
 - 帧分配不做，挂账；判据在 backlog §3。
+- 2026-11-02 修复的 8 个缺陷（CV guard 等待、队列 noexcept 与默认构造约束、队列唤醒重入 UAF、
+  `runOn` move-only 参数、`Scope` 批次 stop source、TCS 多消费者值语义、`withCancellation` token 传播）
+  各自的结论与验证记录在 `../bugs/`，已全部关闭。
 
 ### 9.3 兼容性 / 迁移
 
