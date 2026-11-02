@@ -262,7 +262,7 @@
 
 机制已落地，框架 GUI 的文案已全部替换。已有：`Translation.hpp`（`translate` / `languageConfigKey` / `languageConfigItem` / `resolveLanguageTag`）、`Application::initialize()` 里按配置项选定语言并装 Qt 与框架目录、`PluginManager` 在插件代码跑之前装插件目录并在卸载时移除、`vn_add_translations()` 与夹具插件的端到端用例；`src/fw/appfw/src/gui` 已无硬编码中文（`QStringLiteral` 与 `u8"…"` 两类共约 190 处都换成了 `translate("appfw", …)`），`res/translations/appfw_en.ts` 由 `lupdate` 抽出 164 条、全部译成英文，`test_gui` 在全局夹具里把语言钉成 `zh_CN`。
 
-还差：`app_shell`（约 86 处）、`demo_plugin` / `test_plugin` / `gfx_backend_vsg` 以及宿主（`src/apps/vine`）各自建 `.ts`（`model_viewer` 已做完，35 条）；以及把拼接式文案（`“已注册（” + x + “）：”` 这类）改成带 `%1` 的整句（N4）——它们现在能翻译，但逐段翻译的语序不一定对。
+还差：`demo_plugin` / `test_plugin` / `gfx_backend_vsg` 与宿主（`src/apps/vine`）各自建 `.ts`（`model_viewer` 35 条、`app_shell` 57 条已完成）；以及把拼接式文案（`“已注册（” + x + “）：”` 这类）改成带 `%1` 的整句（N4）——它们现在能翻译，但逐段翻译的语序不一定对。
 
 ### 9.2 已知缺口 / 待办
 
