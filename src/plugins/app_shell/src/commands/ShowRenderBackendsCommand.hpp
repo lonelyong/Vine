@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/command_export.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -20,12 +21,12 @@ class ShowRenderBackendsCommand : public Command {
   public:
     String group() const override
     {
-        return u8"插件";
+        return vn::appfw::translate("app_shell", "插件");
     }
 
     String description() const override
     {
-        return u8"显示已注册渲染后端";
+        return vn::appfw::translate("app_shell", "显示已注册渲染后端");
     }
 
     CommandFlags flags() const override

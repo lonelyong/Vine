@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/command_export.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -15,12 +16,12 @@ class ShowConfigWindowCommand : public Command {
   public:
     String group() const override
     {
-        return u8"插件";
+        return vn::appfw::translate("app_shell", "插件");
     }
 
     String description() const override
     {
-        return u8"打开配置窗口";
+        return vn::appfw::translate("app_shell", "打开配置窗口");
     }
 
     CommandFlags flags() const override

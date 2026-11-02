@@ -1,6 +1,7 @@
 ﻿#include "ClearCommand.hpp"
 
 #include <vine/appfw/Application.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/UserIO.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -12,7 +13,7 @@ vn::async::Task<CommandResult> ClearCommand::execute(CommandExecutionContext* co
     auto* app = context ? context->application() : nullptr;
     auto* io  = app ? app->userIO() : nullptr;
     if (!io) {
-        co_return CommandResult(CommandStatus::Failed, String(u8"用户 I/O 未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "用户 I/O 未就绪"));
     }
 
     io->clear();

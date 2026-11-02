@@ -1,5 +1,6 @@
 ﻿#include "ShowConfigWindowCommand.hpp"
 
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/gui/ConfigWindow.hpp>
 
 #include <vine/appfw/Application.hpp>
@@ -12,10 +13,10 @@ vn::async::Task<CommandResult> ShowConfigWindowCommand::execute(CommandExecution
 {
     auto* app = context ? context->application() : nullptr;
     if (!app) {
-        co_return CommandResult(CommandStatus::Failed, String(u8"应用未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "应用未就绪"));
     }
     auto* win = new gui::ConfigWindow(app->configRegistry(), app->configManager());
-    win->setWindowTitle(u8"设置");
+    win->setWindowTitle(vn::appfw::translate("app_shell", "设置"));
     win->resize(480, 360);
     win->exec();
     delete win;

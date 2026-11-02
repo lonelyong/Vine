@@ -2,6 +2,7 @@
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/UserIO.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -14,7 +15,7 @@ vn::async::Task<CommandResult> ListCommandsCommand::execute(CommandExecutionCont
     auto* cm  = app ? app->commandManager() : nullptr;
     auto* io  = app ? app->userIO() : nullptr;
     if (!cm) {
-        co_return CommandResult(CommandStatus::Failed, String(u8"命令管理器未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "命令管理器未就绪"));
     }
 
     if (io) {
@@ -42,7 +43,7 @@ vn::async::Task<CommandResult> ListCommandsCommand::execute(CommandExecutionCont
             // Disabled commands stay registered and listed; the marker explains why
             // they cannot be started.
             if (!info.enabled) {
-                line += String(u8"  [已禁用]");
+                line += vn::appfw::translate("app_shell", "  [已禁用]");
             }
 
             io->putString(line);

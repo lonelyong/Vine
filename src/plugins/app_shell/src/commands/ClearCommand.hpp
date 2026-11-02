@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/command_export.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -15,12 +16,12 @@ class ClearCommand : public Command {
   public:
     String group() const override
     {
-        return u8"控制台";
+        return vn::appfw::translate("app_shell", "控制台");
     }
 
     String description() const override
     {
-        return u8"清空控制台";
+        return vn::appfw::translate("app_shell", "清空控制台");
     }
 
     CommandFlags flags() const override

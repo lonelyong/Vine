@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/command_export.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -23,12 +24,12 @@ class SwitchDocumentCommand : public Command {
   public:
     String group() const override
     {
-        return u8"文档";
+        return vn::appfw::translate("app_shell", "文档");
     }
 
     String description() const override
     {
-        return u8"按标题或类型 id 切换当前文档";
+        return vn::appfw::translate("app_shell", "按标题或类型 id 切换当前文档");
     }
 
     CommandFlags flags() const override

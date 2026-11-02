@@ -1,5 +1,6 @@
 ﻿#include "ShowCommandsCommand.hpp"
 
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/gui/CommandManagerDialog.hpp>
 
 #include <vine/appfw/Application.hpp>
@@ -14,7 +15,7 @@ vn::async::Task<CommandResult> ShowCommandsCommand::execute(CommandExecutionCont
     auto* app = context ? context->application() : nullptr;
     auto* cm  = app ? app->commandManager() : nullptr;
     if (!cm) {
-        co_return CommandResult(CommandStatus::Failed, String(u8"命令管理器未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "命令管理器未就绪"));
     }
 
     auto* dlg = new gui::CommandManagerDialog(cm);

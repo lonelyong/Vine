@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/command_export.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -15,12 +16,12 @@ class ShowDocumentTypesCommand : public Command {
   public:
     String group() const override
     {
-        return u8"文档";
+        return vn::appfw::translate("app_shell", "文档");
     }
 
     String description() const override
     {
-        return u8"显示文档类型注册与已打开的文档";
+        return vn::appfw::translate("app_shell", "显示文档类型注册与已打开的文档");
     }
 
     CommandFlags flags() const override

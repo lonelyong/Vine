@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/command_export.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -15,12 +16,12 @@ class ShowCommandsCommand : public Command {
   public:
     String group() const override
     {
-        return u8"帮助";
+        return vn::appfw::translate("app_shell", "帮助");
     }
 
     String description() const override
     {
-        return u8"查看与管理已注册命令";
+        return vn::appfw::translate("app_shell", "查看与管理已注册命令");
     }
 
     CommandFlags flags() const override
