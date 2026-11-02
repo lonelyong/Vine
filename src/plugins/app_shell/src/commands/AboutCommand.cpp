@@ -15,7 +15,7 @@ vn::async::Task<CommandResult> AboutCommand::execute(CommandExecutionContext* co
 {
     auto* app = context ? context->application() : nullptr;
     if (!app) {
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "应用未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "The application is not ready"));
     }
 
     // “关于”是 Backstage 的一页：命令只是把它打开，内容由外壳在装配时填进 AboutPanel。

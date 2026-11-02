@@ -16,12 +16,12 @@ class ClearCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "控制台");
+        return vn::appfw::translate("app_shell", "Console");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "清空控制台");
+        return vn::appfw::translate("app_shell", "Clear the console");
     }
 
     CommandFlags flags() const override

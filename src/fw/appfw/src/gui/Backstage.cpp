@@ -29,9 +29,9 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <vine/Exception.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RibbonAction.hpp>
-#include <vine/Exception.hpp>
 #include <vine/logging/Log.hpp>
 
 #include "ControlData.hpp"
@@ -108,7 +108,7 @@ QString navStyles()
                           " background-color: palette(highlight);"
                           " color: palette(highlighted-text);"
                           " }")
-      .arg(QLatin1String(kRowHoverTint));
+        .arg(QLatin1String(kRowHoverTint));
 }
 
 /**
@@ -191,7 +191,7 @@ QString itemStyles()
                           "QToolButton:disabled {"
                           " color: palette(mid);"
                           " }")
-      .arg(QLatin1String(kRowHoverTint), QLatin1String(kRowPressedTint));
+        .arg(QLatin1String(kRowHoverTint), QLatin1String(kRowPressedTint));
 }
 
 /**
@@ -214,7 +214,7 @@ class BackstageBackButton final : public QToolButton {
         setIconSize(kRailIconSize);
         setFixedSize(40, 40);
         setCursor(Qt::PointingHandCursor);
-        setToolTip(translate("appfw", "返回 (Esc)"));
+        setToolTip(translate("appfw", "Back (Esc)"));
         setStyleSheet(QStringLiteral("#vnBackstageBack {"
                                      " border: none;"
                                      " border-radius: 4px;"
@@ -225,15 +225,14 @@ class BackstageBackButton final : public QToolButton {
                                      "#vnBackstageBack:pressed {"
                                      " background-color: %2;"
                                      " }")
-                        .arg(QLatin1String(kRowHoverTint), QLatin1String(kRowPressedTint)));
+                          .arg(QLatin1String(kRowHoverTint), QLatin1String(kRowPressedTint)));
         refreshIcon();
     }
 
   protected:
     void changeEvent(QEvent* event) override
     {
-        if (event != nullptr
-            && (event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange)) {
+        if (event != nullptr && (event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange)) {
             refreshIcon();
         }
 
@@ -468,9 +467,9 @@ class BackstageWindow final : public QWidget {
   private:
     QWidget* main_window_ = nullptr;
     /// True between a press on the background and its release.
-    bool tracking_ = false;
+    bool tracking_        = false;
     /// True once that press turned into a drag (past QApplication::startDragDistance()).
-    bool dragging_ = false;
+    bool   dragging_      = false;
     QPoint press_global_;
     QPoint drag_offset_;
 };
@@ -485,12 +484,12 @@ struct BackstagePage::Impl : public ControlData {
         bool          visible = true;
     };
 
-    String                id;
-    String                title;
-    Icon                  icon;
-    String                provider;
-    BackstagePageRole     role   = BackstagePageRole::None;
-    BackstagePagePolicy   policy = BackstagePagePolicy::None;
+    String                 id;
+    String                 title;
+    Icon                   icon;
+    String                 provider;
+    BackstagePageRole      role   = BackstagePageRole::None;
+    BackstagePagePolicy    policy = BackstagePagePolicy::None;
     std::vector<ItemEntry> items;
     /// The page widget's root layout and the scroll area around the command column; both are the page's own widgets.
     QVBoxLayout* page_layout  = nullptr;
@@ -498,7 +497,7 @@ struct BackstagePage::Impl : public ControlData {
     /// The command column's layout; null while the page has no command column.
     QVBoxLayout* items_layout = nullptr;
     /// The installed page body (a control the page shows instead of the command column), or null.
-    Control* body = nullptr;
+    Control* body             = nullptr;
 };
 
 BackstagePage::BackstagePage()
@@ -776,14 +775,13 @@ namespace
 {
 
 /// One registered page: the logical model the navigation and the content stack are derived from.
-struct PageEntry
-{
-    BackstagePage*       page      = nullptr;
-    QListWidgetItem*     nav_item  = nullptr;
+struct PageEntry {
+    BackstagePage*       page     = nullptr;
+    QListWidgetItem*     nav_item = nullptr;
     BackstagePlacement   placement;
-    std::uint64_t        seq       = 0; ///< Registration order: the deterministic tie-break.
-    BackstagePlaceStatus status    = BackstagePlaceStatus::Placed;
-    bool                 visible   = true;
+    std::uint64_t        seq     = 0; ///< Registration order: the deterministic tie-break.
+    BackstagePlaceStatus status  = BackstagePlaceStatus::Placed;
+    bool                 visible = true;
 };
 
 /// @brief Whether the page must stay in the terminal suffix.
@@ -830,8 +828,7 @@ int appendIndexForRole(const std::vector<PageEntry>& placed, BackstagePageRole r
 }
 
 /// @brief Where a page goes in the current logical order, and why.
-struct Resolved
-{
+struct Resolved {
     int                  index  = -1;
     BackstagePlaceStatus status = BackstagePlaceStatus::Placed;
 };
@@ -859,9 +856,11 @@ Resolved resolvePage(const std::vector<PageEntry>& placed, const BackstagePage* 
 
     if (placement.where == BackstagePlacement::Where::Append) {
         index = appendIndexForRole(placed, page->role(), terminal_begin);
-    } else if (!placement.anchor_id.empty() && placement.anchor_role != BackstagePageRole::None) {
+    }
+    else if (!placement.anchor_id.empty() && placement.anchor_role != BackstagePageRole::None) {
         return { -1, BackstagePlaceStatus::InvalidAnchor };
-    } else if (!placement.anchor_id.empty()) {
+    }
+    else if (!placement.anchor_id.empty()) {
         int anchor = -1;
 
         for (int i = 0; i < (int)placed.size(); ++i) {
@@ -878,7 +877,8 @@ Resolved resolvePage(const std::vector<PageEntry>& placed, const BackstagePage* 
         else {
             index = (placement.where == BackstagePlacement::Where::Before) ? anchor : anchor + 1;
         }
-    } else if (placement.anchor_role != BackstagePageRole::None) {
+    }
+    else if (placement.anchor_role != BackstagePageRole::None) {
         int anchor = -1;
 
         for (int i = 0; i < (int)placed.size(); ++i) {
@@ -895,7 +895,8 @@ Resolved resolvePage(const std::vector<PageEntry>& placed, const BackstagePage* 
         else {
             index = (placement.where == BackstagePlacement::Where::Before) ? anchor : anchor + 1;
         }
-    } else {
+    }
+    else {
         return { -1, BackstagePlaceStatus::InvalidAnchor };
     }
 
@@ -911,15 +912,15 @@ Resolved resolvePage(const std::vector<PageEntry>& placed, const BackstagePage* 
 
 struct Backstage::Impl : public WindowData {
     std::vector<PageEntry> pages; // logical order, kept in sync with the navigation rows and the stack
-    std::uint64_t          next_seq   = 0;
+    std::uint64_t          next_seq = 0;
     /// True while the rows are being re-ordered: the selection signals must not drive the stack then.
-    bool                   reordering = false;
-    BackstageWindow*       window     = nullptr;
-    QWidget*               main       = nullptr;
-    QListWidget*           nav        = nullptr;
-    QStackedWidget*        stack      = nullptr;
-    QLabel*                title      = nullptr;
-    EventArgs              args;
+    bool             reordering     = false;
+    BackstageWindow* window         = nullptr;
+    QWidget*         main           = nullptr;
+    QListWidget*     nav            = nullptr;
+    QStackedWidget*  stack          = nullptr;
+    QLabel*          title          = nullptr;
+    EventArgs        args;
 
     /// @return The index of @p page in the stable page order, or -1.
     int indexOf(const BackstagePage* page) const
@@ -1033,7 +1034,7 @@ Backstage::Backstage(MainWindow* window)
 
     title->setObjectName(QStringLiteral("vnBackstageTitle"));
 
-    auto  font = title->font();
+    auto font = title->font();
     font.setPointSizeF(font.pointSizeF() + 9.0);
     font.setWeight(QFont::DemiBold);
     title->setFont(font);
@@ -1386,8 +1387,8 @@ int Backstage::removePages(const String& provider)
         return 0;
     }
 
-    BackstagePage* keep     = currentPage();
-    const int      old_row  = data->nav->currentRow();
+    BackstagePage* keep      = currentPage();
+    const int      old_row   = data->nav->currentRow();
     bool           keep_gone = false;
 
     for (BackstagePage* page : doomed) {
@@ -1427,7 +1428,8 @@ int Backstage::removePages(const String& provider)
 
     if (keep != nullptr && data->indexOf(keep) >= 0) {
         setCurrentPage(keep);
-    } else if (keep_gone && old_row >= 0) {
+    }
+    else if (keep_gone && old_row >= 0) {
         // The page that followed the removed one slid into its slot (clamped to the new last page); selectNextVisible()
         // starts one past its argument and wraps, so pass that slot - 1 and hidden pages are skipped from there.
         data->selectNextVisible(std::min(old_row, (int)data->pages.size() - 1) - 1);

@@ -87,8 +87,8 @@ void installConsoleLogSink(gui::ConsolePanel* panel, PluginLoadContext* context)
     // Register the routing toggle so it appears in the configuration window
     // (standard "logging" category -> "console" group).
     if (context != nullptr) {
-        ConfigItem item(consoleLogConfigKey(), vn::appfw::translate("app_shell", "日志输出到控制台"), ConfigItemType::Bool);
-        item.description(vn::appfw::translate("app_shell", "开启后，默认日志输出到控制台面板")).defaultValue(true);
+        ConfigItem item(consoleLogConfigKey(), vn::appfw::translate("app_shell", "Logging to the console"), ConfigItemType::Bool);
+        item.description(vn::appfw::translate("app_shell", "When on, the default log output goes to the console panel")).defaultValue(true);
         context->registerConfigItem(StandardCategory::Logging, StandardGroup::Console, item);
     }
 

@@ -16,12 +16,12 @@ class ShowCommandsCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "帮助");
+        return vn::appfw::translate("app_shell", "Help");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "查看与管理已注册命令");
+        return vn::appfw::translate("app_shell", "Inspect and manage the registered commands");
     }
 
     CommandFlags flags() const override

@@ -2,7 +2,11 @@
 
 #include <system_error>
 
+#include <vine/appfw/Translation.hpp>
+
 #include <vine/logging/Log.hpp>
+
+#include "Format.hpp"
 
 VN_APPFW_NS_BEGIN
 
@@ -106,15 +110,13 @@ UserIO::PathCheck UserIO::checkPath(const String& text, const DirReadOptions& op
 
 UserIO::PathCheck UserIO::checkPath(const String& text, bool directory, const FileReadOptions& options)
 {
-    const auto* noun = directory ? u8"目录" : u8"文件";
-
     // 路径从前端复制过来常带一层成对的引号；空白无所谓，不剥就是"不存在"。
     String path_text = text.trimmed();
     if (path_text.size() >= 2 && path_text.startsWith(u8'"') && path_text.endsWith(u8'"')) {
         path_text = path_text.substr(1, path_text.size() - 2).trimmed();
     }
     if (path_text.empty()) {
-        return PathCheck{ false, {}, String(u8"请输入路径") };
+        return PathCheck{ false, {}, translate("appfw", "Enter a path") };
     }
 
     const std::filesystem::path path(path_text.as_std_u8str());
@@ -122,12 +124,16 @@ UserIO::PathCheck UserIO::checkPath(const String& text, bool directory, const Fi
     const bool                  exists = std::filesystem::exists(path, error);
 
     if (options.require_existing && !exists) {
-        return PathCheck{ false, {}, String(noun) + u8"不存在: " + path_text };
+        if (directory)
+            return PathCheck{ false, {}, formatQt(translate("appfw", "Directory does not exist: %1"), path_text) };
+        return PathCheck{ false, {}, formatQt(translate("appfw", "File does not exist: %1"), path_text) };
     }
 
     // 存在就核对类型："另存为"给了一个已存在的目录同样算错，而尚不存在的路径只看名字（后缀那一步）。
     if (exists && directory != std::filesystem::is_directory(path, error)) {
-        return PathCheck{ false, {}, path_text + u8"不是" + noun };
+        if (directory)
+            return PathCheck{ false, {}, formatQt(translate("appfw", "%1 is not a directory"), path_text) };
+        return PathCheck{ false, {}, formatQt(translate("appfw", "%1 is not a file"), path_text) };
     }
 
     if (!directory && !options.extensions.empty()) {
@@ -145,7 +151,7 @@ UserIO::PathCheck UserIO::checkPath(const String& text, bool directory, const Fi
             }
         }
         if (!matched) {
-            return PathCheck{ false, {}, String(u8"后缀不支持（仅 ") + extensionBody(options.extensions) + u8"）: " + path_text };
+            return PathCheck{ false, {}, formatQt(translate("appfw", "Unsupported extension (only %1): %2"), extensionBody(options.extensions), path_text) };
         }
     }
 
@@ -172,7 +178,7 @@ UserIO::PathLineCheck UserIO::checkPathLine(const String& text, const FileReadOp
     }
 
     if (result.paths.empty()) {
-        result.message = String(u8"请输入路径");
+        result.message = translate("appfw", "Enter a path");
         return result;
     }
 
@@ -209,7 +215,7 @@ String UserIO::requirementSummary(const std::vector<String>& extensions, bool mu
         if (!body.empty()) {
             body += u8"，";
         }
-        body += u8"多个用 ; 分隔";
+        body += translate("appfw", "Separate several with ;");
     }
     if (body.empty()) {
         return {};

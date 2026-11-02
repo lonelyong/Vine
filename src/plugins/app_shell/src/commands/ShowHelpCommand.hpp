@@ -16,12 +16,12 @@ class ShowHelpCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "帮助");
+        return vn::appfw::translate("app_shell", "Help");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "显示帮助信息");
+        return vn::appfw::translate("app_shell", "Show this help");
     }
 
     CommandFlags flags() const override

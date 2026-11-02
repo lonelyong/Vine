@@ -44,7 +44,7 @@ vn::async::Task<void> ModelViewerPlugin::load(vn::appfw::PluginLoadContext* cont
     registerView(*app);
 
     if (vn::appfw::StartupProgress* progress = vn::appfw::StartupProgress::current(); progress != nullptr) {
-        progress->setLabel(vn::appfw::translate("model_viewer", "正在准备模型查看器"));
+        progress->setLabel(vn::appfw::translate("model_viewer", "Preparing the model viewer"));
     }
     installInfoPanel(*app);
 
@@ -80,8 +80,8 @@ void ModelViewerPlugin::registerDocumentSurface(vn::appfw::Application& app)
 
     vn::appfw::DocumentTypeRegistration registration;
     registration.type_id      = ModelDocument::kTypeId;
-    registration.display_name = vn::appfw::translate("model_viewer", "模型");
-    registration.description  = vn::appfw::translate("model_viewer", "模型查看器文档：一份解析好的网格（只读）");
+    registration.display_name = vn::appfw::translate("model_viewer", "Model");
+    registration.description  = vn::appfw::translate("model_viewer", "Model viewer document: a parsed mesh (read-only)");
     // 没有 create 工厂是**合法**的：模型只能从载荷打开（can_create == false，面板会如实说"否（只能打开）"）。
     documents->registerType(registration);
 
@@ -160,17 +160,17 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
     // 自己的 tab（外壳那几个 tab 是它自己的事）：插件给自家功能挂 UI，与"面板自己建自己挂"同一条规矩。
     auto* tab = new vn::appfw::gui::RibbonTab();
     tab->setId(tab_id);
-    tab->setTitle(vn::appfw::translate("model_viewer", "模型"));
+    tab->setTitle(vn::appfw::translate("model_viewer", "Model"));
 
     // 帮助是终止 tab：本 tab 放到它前面，而不是追加到它后面。
     const auto placed = bar->addTab(tab, vn::appfw::gui::RibbonPlacement::before(vn::appfw::gui::RibbonTabRole::Help));
     if (placed.status != vn::appfw::gui::RibbonPlaceStatus::Placed) {
-        VN_LOGW("model_viewer: the '模型' tab was placed at a fallback position");
+        VN_LOGW("model_viewer: the document tab was placed at a fallback position");
     }
 
     auto* group = new vn::appfw::gui::RibbonGroup();
     group->setId(u8"model_viewer.group.shading");
-    group->setTitle(vn::appfw::translate("model_viewer", "显示"));
+    group->setTitle(vn::appfw::translate("model_viewer", "Display"));
     tab->addGroup(group);
 
     // 五档各一个按钮，勾选态由"这块 3D 区现在画的是哪一档"回答（provider 读派发目标，见 isCurrentShadingMode）：
@@ -182,17 +182,19 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
         const char8_t*            command;
         vn::graphics::ShadingMode mode;
     } entries[] = {
-        { vn::appfw::translate("model_viewer", "实面"),   u8":/model_viewer/icons/shading_lit.svg",       kShadingModeLitCommand,
-          vn::graphics::ShadingMode::Lit       },
-        { vn::appfw::translate("model_viewer", "平面"),   u8":/model_viewer/icons/shading_flat.svg",      kShadingModeFlatCommand,
-          vn::graphics::ShadingMode::Flat      },
-        { vn::appfw::translate("model_viewer", "无光照"), u8":/model_viewer/icons/shading_unlit.svg",     kShadingModeUnlitCommand,
-          vn::graphics::ShadingMode::Unlit     },
-        { vn::appfw::translate("model_viewer", "法线"),   u8":/model_viewer/icons/shading_normals.svg",   kShadingModeNormalsCommand,
-          vn::graphics::ShadingMode::Normals   },
-        { vn::appfw::translate("model_viewer", "线框"),   u8":/model_viewer/icons/shading_wireframe.svg", kShadingModeWireframeCommand,
-          vn::graphics::ShadingMode::Wireframe },
+        { vn::appfw::translate("model_viewer", "Lit"),       u8":/model_viewer/icons/shading_lit.svg",  kShadingModeLitCommand,       vn::graphics::ShadingMode::Lit  },
+        { vn::appfw::translate("model_viewer", "Flat"),      u8":/model_viewer/icons/shading_flat.svg", kShadingModeFlatCommand,      vn::graphics::ShadingMode::Flat },
+        { vn::appfw::translate("model_viewer", "Unlit"),
+         u8":/model_viewer/icons/shading_unlit.svg",                                                    kShadingModeUnlitCommand,
+         vn::graphics::ShadingMode::Unlit                                                                                                                             },
+        { vn::appfw::translate("model_viewer", "Normals"),
+         u8":/model_viewer/icons/shading_normals.svg",                                                  kShadingModeNormalsCommand,
+         vn::graphics::ShadingMode::Normals                                                                                                                           },
+        { vn::appfw::translate("model_viewer", "Wireframe"),
+         u8":/model_viewer/icons/shading_wireframe.svg",                                                kShadingModeWireframeCommand,
+         vn::graphics::ShadingMode::Wireframe                                                                                                                         },
     };
+
     for (const auto& item : entries) {
         auto* button = new vn::appfw::gui::RibbonButton();
         button->setText(item.label);
@@ -203,7 +205,7 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
         group->addButton(button);
     }
 
-    VN_LOGI("model_viewer: the '显示' ribbon group is up (5 shading-mode buttons)");
+    VN_LOGI("model_viewer: the shading ribbon group is up (5 shading-mode buttons)");
 }
 
 void ModelViewerPlugin::installInfoPanel(vn::appfw::Application& app)
@@ -221,7 +223,7 @@ void ModelViewerPlugin::installInfoPanel(vn::appfw::Application& app)
     }
 
     auto* panel = new ModelInfoPanel();
-    auto* dock  = docks->createDockPanel(vn::appfw::translate("model_viewer", "模型信息"), panel, vn::appfw::gui::DockAreas::Right);
+    auto* dock  = docks->createDockPanel(vn::appfw::translate("model_viewer", "Model information"), panel, vn::appfw::gui::DockAreas::Right);
     if (dock == nullptr) {
         // 没挂上就自己删：dock 面板接管内容所有权（DockPanel::setContent），没接管就不能留一个没人拥有的控件。
         delete panel;

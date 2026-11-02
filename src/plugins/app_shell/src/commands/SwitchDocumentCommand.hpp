@@ -24,12 +24,12 @@ class SwitchDocumentCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "文档");
+        return vn::appfw::translate("app_shell", "Document");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "按标题或类型 id 切换当前文档");
+        return vn::appfw::translate("app_shell", "Switch the current document by title or type id");
     }
 
     CommandFlags flags() const override

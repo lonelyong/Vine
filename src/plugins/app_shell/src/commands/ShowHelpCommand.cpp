@@ -14,10 +14,10 @@ vn::async::Task<CommandResult> ShowHelpCommand::execute(CommandExecutionContext*
     auto* io  = app ? app->userIO() : nullptr;
 
     if (io) {
-        io->putString(vn::appfw::translate("app_shell", "Vine 帮助"));
-        io->putString(vn::appfw::translate("app_shell", "  输入 list_commands 查看所有命令"));
-        io->putString(vn::appfw::translate("app_shell", "  输入 clear 清空控制台"));
-        io->putString(vn::appfw::translate("app_shell", "  在控制台输入命令名并按回车即可执行"));
+        io->putString(vn::appfw::translate("app_shell", "Vine help"));
+        io->putString(vn::appfw::translate("app_shell", "  Type list_commands to list every command"));
+        io->putString(vn::appfw::translate("app_shell", "  Type clear to clear the console"));
+        io->putString(vn::appfw::translate("app_shell", "  Type a command name in the console and press Enter to run it"));
     }
     co_return CommandResult(CommandStatus::Success);
 }

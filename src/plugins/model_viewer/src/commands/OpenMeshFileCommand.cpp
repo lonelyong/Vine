@@ -44,14 +44,14 @@ vn::async::Task<vn::appfw::CommandResult> OpenMeshFileCommand::execute(vn::appfw
     auto* documents = app != nullptr ? app->documentManager() : nullptr;
     auto* io        = app != nullptr ? app->userIO() : nullptr;
     if (documents == nullptr) {
-        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::appfw::translate("model_viewer", "应用未就绪"));
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::appfw::translate("model_viewer", "The application is not ready"));
     }
     if (io == nullptr) {
-        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::appfw::translate("model_viewer", "用户 I/O 未就绪"));
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::appfw::translate("model_viewer", "User I/O is not ready"));
     }
 
     // 框架负责问：提示里带上接受的后缀，选的路径要真的在（GUI 还可以直接点按钮挑）。
-    const auto file_path = co_await io->getFileAsync(vn::appfw::translate("model_viewer", "网格文件: "), meshFileReadOptions());
+    const auto file_path = co_await io->getFileAsync(vn::appfw::translate("model_viewer", "Mesh file: "), meshFileReadOptions());
     if (!file_path.has_value()) {
         co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Cancelled);
     }
@@ -61,7 +61,7 @@ vn::async::Task<vn::appfw::CommandResult> OpenMeshFileCommand::execute(vn::appfw
 
     vn::appfw::Document* document = documents->open(&payload);
     if (document == nullptr) {
-        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::appfw::translate("model_viewer", "打开器没能读回这个文件"));
+        co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Failed, vn::appfw::translate("model_viewer", "The opener could not read this file back"));
     }
 
     documents->setCurrent(document);

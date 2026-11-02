@@ -237,15 +237,15 @@ TEST(ModelViewerTest, TheInfoPanelIsEmptyWhileThereIsNoCurrentDocument)
     vn::model_viewer::ModelInfoPanel panel;
     panel.followDocumentManager(documents);
 
-    EXPECT_EQ(panel.typeText(), QStringLiteral("—（没有当前文档）"));
-    EXPECT_EQ(panel.titleText(), QStringLiteral("—（没有当前文档）"));
-    EXPECT_EQ(panel.verticesText(), QStringLiteral("—（没有当前文档）"));
-    EXPECT_EQ(panel.trianglesText(), QStringLiteral("—（没有当前文档）"));
+    EXPECT_EQ(panel.typeText(), QStringLiteral("— (no current document)"));
+    EXPECT_EQ(panel.titleText(), QStringLiteral("— (no current document)"));
+    EXPECT_EQ(panel.verticesText(), QStringLiteral("— (no current document)"));
+    EXPECT_EQ(panel.trianglesText(), QStringLiteral("— (no current document)"));
 
     // 打开一份但**不设为当前**：面板不动（它跟的是"当前"，不是"有哪些"）。
     ASSERT_NE(openModel(documents, u8"立方体", vn::model_viewer::makeBoxMesh()), nullptr);
     documents.setCurrent(nullptr);
-    EXPECT_EQ(panel.verticesText(), QStringLiteral("—（没有当前文档）")) << "打开不等于当前";
+    EXPECT_EQ(panel.verticesText(), QStringLiteral("— (no current document)")) << "打开不等于当前";
 }
 
 TEST(ModelViewerTest, TheInfoPanelShowsTheVertexAndTriangleCountsOfTheCurrentDocument)
@@ -283,7 +283,7 @@ TEST(ModelViewerTest, TheInfoPanelShowsTheVertexAndTriangleCountsOfTheCurrentDoc
 
     // 关掉当前文档 ⇒ 管理器先发 currentChanged(nullptr)，面板回到空状态。
     ASSERT_TRUE(documents.close(box));
-    EXPECT_EQ(panel.verticesText(), QStringLiteral("—（没有当前文档）"));
+    EXPECT_EQ(panel.verticesText(), QStringLiteral("— (no current document)"));
     EXPECT_EQ(documents.current(), nullptr);
 }
 
@@ -307,9 +307,9 @@ TEST(ModelViewerTest, TheInfoPanelSaysSoWhenTheCurrentDocumentIsNotAModel)
     // 类型与标题照样显示；三个数说清楚"不是模型文档"，而不是假装 0。
     EXPECT_EQ(panel.typeText(), QStringLiteral("other"));
     EXPECT_EQ(panel.titleText(), QStringLiteral("别的文档"));
-    EXPECT_EQ(panel.verticesText(), QStringLiteral("—（不是模型文档）"));
-    EXPECT_EQ(panel.trianglesText(), QStringLiteral("—（不是模型文档）"));
-    EXPECT_EQ(panel.partsText(), QStringLiteral("—（不是模型文档）"));
+    EXPECT_EQ(panel.verticesText(), QStringLiteral("— (not a model document)"));
+    EXPECT_EQ(panel.trianglesText(), QStringLiteral("— (not a model document)"));
+    EXPECT_EQ(panel.partsText(), QStringLiteral("— (not a model document)"));
 }
 
 TEST(ModelViewerTest, TheSceneCarriesItsOwnLights)

@@ -22,9 +22,9 @@ set_target_properties(${APPFW_TARGET_NAME} PROPERTIES
     AUTORCC ON
 )
 
-# The framework's own UI text: res/translations/appfw_<locale>.ts (sources of truth, in git) compiled into
-# :/i18n/appfw_<locale>.qm. Only English is translated - Chinese is the source language.
-vn_add_translations(${APPFW_TARGET_NAME} CONTEXT appfw TS_FILES res/translations/appfw_en.ts)
+# The framework's own UI text: res/translations/appfw_zh_CN.ts (sources of truth, in git) compiled into
+# :/i18n/appfw_zh_CN.qm. English is the source language now, so it needs no catalog; Chinese is the translation.
+vn_add_translations(${APPFW_TARGET_NAME} CONTEXT appfw TS_FILES res/translations/appfw_zh_CN.ts)
 
 target_link_libraries(${APPFW_TARGET_NAME}
     PUBLIC vn::Async vn::Core vn::Di vn::Math vn::Global vn::Graphics vn::Window vn::Progress

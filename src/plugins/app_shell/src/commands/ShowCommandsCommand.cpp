@@ -15,7 +15,7 @@ vn::async::Task<CommandResult> ShowCommandsCommand::execute(CommandExecutionCont
     auto* app = context ? context->application() : nullptr;
     auto* cm  = app ? app->commandManager() : nullptr;
     if (!cm) {
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "命令管理器未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "The command manager is not ready"));
     }
 
     auto* dlg = new gui::CommandManagerDialog(cm);

@@ -29,4 +29,4 @@ target_link_libraries(${MODEL_VIEWER_TARGET} PRIVATE vn::Appfw vn::Geometry vn::
 # The plugin's own UI text: res/translations/model_viewer_<locale>.ts, compiled into :/i18n/model_viewer_<locale>.qm.
 # The loader installs it before load() runs and removes it on unload; the id here is the tr() context and the
 # file-name prefix (see .ai/design/appfw-translation.md §2.10).
-vn_add_translations(${MODEL_VIEWER_TARGET} CONTEXT model_viewer TS_FILES res/translations/model_viewer_en.ts)
+vn_add_translations(${MODEL_VIEWER_TARGET} CONTEXT model_viewer TS_FILES res/translations/model_viewer_zh_CN.ts)

@@ -16,12 +16,12 @@ class ShowPluginsCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "插件");
+        return vn::appfw::translate("app_shell", "Plugins");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "显示已加载插件");
+        return vn::appfw::translate("app_shell", "Show the loaded plugins");
     }
 
     CommandFlags flags() const override

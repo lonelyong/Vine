@@ -22,4 +22,4 @@ target_link_libraries(${APP_SHELL_TARGET} PRIVATE vn::Appfw vn::Graphics vn::Log
 
 # The shell's own UI text: res/translations/app_shell_<locale>.ts, compiled into :/i18n/app_shell_<locale>.qm. The id is
 # the tr() context and the file-name prefix (see .ai/design/appfw-translation.md §2.10).
-vn_add_translations(${APP_SHELL_TARGET} CONTEXT app_shell TS_FILES res/translations/app_shell_en.ts)
+vn_add_translations(${APP_SHELL_TARGET} CONTEXT app_shell TS_FILES res/translations/app_shell_zh_CN.ts)

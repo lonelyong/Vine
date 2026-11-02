@@ -21,12 +21,12 @@ class ShowRenderBackendsCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "插件");
+        return vn::appfw::translate("app_shell", "Plugins");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "显示已注册渲染后端");
+        return vn::appfw::translate("app_shell", "Show the registered render backends");
     }
 
     CommandFlags flags() const override

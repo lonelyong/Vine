@@ -42,6 +42,10 @@ struct ApplicationData {
     /// catalog in this language, so the fact is read from its owner instead of being repeated in a process-wide registry.
     String language_tag;
 
+    /// The raw `general.language` value the tag was resolved from ("system", "en", "zh_CN"). Kept next to the tag so
+    /// the startup log can tell "the user chose English" apart from "the system language resolved to English".
+    String language_setting;
+
     /// Catalogs of the application itself: Qt's own text, then the framework's. Declared next to `app` so they are
     /// destroyed after every other member - the windows included - and while the Qt application object is still alive,
     /// which is what makes their removal safe.

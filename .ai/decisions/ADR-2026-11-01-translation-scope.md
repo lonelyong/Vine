@@ -1,6 +1,6 @@
 # ADR-2026-11-01：只有界面层可翻译，源语言是中文，目录用 Qt Linguist
 
-- 状态：已采纳
+- 状态：已采纳（“源语言是中文”一条已由 `ADR-2026-11-02-english-source-language.md` 取代；范围、机制、目录归属、装载时机、不做运行期切换继续有效）
 - 日期：2026-11-01
 - 相关：`../design/appfw-translation.md`、`../backlog/appfw-translation.md`、`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`
 

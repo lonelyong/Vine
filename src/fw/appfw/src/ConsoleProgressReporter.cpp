@@ -11,6 +11,7 @@
 #include <vine/async/Sleep.hpp>
 
 #include <vine/appfw/ProgressHost.hpp>
+#include <vine/appfw/Translation.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -23,8 +24,8 @@ using WakeupDelay = std::chrono::milliseconds;
 /**
  * @brief Builds the UTF-8 line a progress report is printed as.
  *
- * The label arrives as an SDK String (UTF-8) while the line is assembled in std::string, because the percentage is
- * formatted with std::to_string; one conversion at the end is cheaper than one per piece.
+ * The label arrives as an SDK String (UTF-8), and so does the translated prefix; the percentage is the one piece
+ * formatted with std::to_string. Concatenating Strings keeps the same allocation count as the std::string version.
  *
  * @param percent Overall progress in percent, already rounded.
  * @param label Stage label, may be empty.
@@ -32,14 +33,15 @@ using WakeupDelay = std::chrono::milliseconds;
  */
 String lineFor(int percent, const String& label)
 {
-    std::string text = "[进度] ";
-    text += std::to_string(percent);
-    text += '%';
+    String text = translate("appfw", "[Progress]");
+    text += String(u8" ");
+    text += String::fromUtf8(std::to_string(percent));
+    text += String(u8"%");
     if (!label.empty()) {
-        text += ' ';
-        text += label.as_std_str();
+        text += String(u8" ");
+        text += label;
     }
-    return String::fromUtf8(text);
+    return text;
 }
 
 } // namespace
@@ -117,7 +119,7 @@ struct ConsoleProgressReporter::Impl : public std::enable_shared_from_this<Conso
                 // The operation ended (or was cancelled): close its reporting with one line.
                 shown_ = false;
                 host_  = nullptr;
-                write(String(u8"[进度] 已结束"));
+                write(translate("appfw", "[Progress] finished"));
             }
             return std::nullopt;
         }

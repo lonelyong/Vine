@@ -53,11 +53,11 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
         parts_label_     = new QLabel(root);
 
         int row = 0;
-        addRow(root, layout, row, vn::appfw::translate("model_viewer", "类型"), type_label_);
-        addRow(root, layout, row, vn::appfw::translate("model_viewer", "标题"), title_label_);
-        addRow(root, layout, row, vn::appfw::translate("model_viewer", "顶点数"), vertices_label_);
-        addRow(root, layout, row, vn::appfw::translate("model_viewer", "三角形数"), triangles_label_);
-        addRow(root, layout, row, vn::appfw::translate("model_viewer", "部件数"), parts_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "Type"), type_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "Title"), title_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "Vertices"), vertices_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "Triangles"), triangles_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "Parts"), parts_label_);
         layout->setRowStretch(row, 1);
 
         clear();
@@ -161,12 +161,12 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
 
     static QString noneText()
     {
-        return QCoreApplication::translate("model_viewer", "—（没有当前文档）");
+        return QCoreApplication::translate("model_viewer", "— (no current document)");
     }
 
     static QString notAModelText()
     {
-        return QCoreApplication::translate("model_viewer", "—（不是模型文档）");
+        return QCoreApplication::translate("model_viewer", "— (not a model document)");
     }
 
   private:

@@ -18,7 +18,7 @@ vn::async::Task<CommandResult> ShowRenderBackendsCommand::execute(CommandExecuti
     const auto entries = vn::graphics::RenderBackendRegistry::instance().entries();
     if (io) {
         if (entries.empty()) {
-            io->putString(vn::appfw::translate("app_shell", "没有已注册的渲染后端"));
+            io->putString(vn::appfw::translate("app_shell", "No render backend is registered"));
         }
         // 每行输出：名称 (显示名) [技术] 描述 [版本, 厂商]；entries() 已按名字母序排列。
         for (const auto& entry : entries) {

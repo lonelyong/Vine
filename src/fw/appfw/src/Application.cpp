@@ -199,14 +199,16 @@ void Application::initialize(const AppConfig& config)
     // translated text itself, so registering it earlier would freeze it in the wrong language. The setting is the
     // configuration item - readable only now, after the file above was loaded - and an absent value follows the system.
     // The two catalogs live in the data block, so the process gets a clean slate when the application goes away.
-    dptr()->language_tag      = resolveLanguageTag(dptr()->config_manager->getString(languageConfigKey(), kLanguageSystem));
+    dptr()->language_setting  = dptr()->config_manager->getString(languageConfigKey(), kLanguageSystem);
+    dptr()->language_tag      = resolveLanguageTag(dptr()->language_setting);
     dptr()->qt_catalog        = TranslationCatalog::forQt(dptr()->language_tag);
     dptr()->framework_catalog = TranslationCatalog::forFramework(dptr()->language_tag);
-    VN_LOGI("UI language '{}': Qt catalogs {}, framework catalog {}", dptr()->language_tag.as_std_str(),
+    VN_LOGI("UI language '{}' (setting '{}'): Qt catalogs {}, framework catalog {}",
+            dptr()->language_tag.as_std_str(),
+            dptr()->language_setting.as_std_str(),
             dptr()->qt_catalog.isInstalled() ? "loaded" : "absent",
             dptr()->framework_catalog.isInstalled() ? "loaded" : "absent");
-    static_cast<void>(dptr()->config_registry->addItem(StandardCategory::General, StandardGroup::Language,
-                                                       languageConfigItem()));
+    static_cast<void>(dptr()->config_registry->addItem(StandardCategory::General, StandardGroup::Language, languageConfigItem()));
 }
 
 void Application::setupUserIO()
@@ -320,6 +322,10 @@ int Application::run()
     // 计时从“被要求运行”算起，给启动期的诊断一个统一起点（无头宿主没有读者，但多算一次也不花钱）。
     d->startup_requested_at.start();
 
+    // 语言是在 initialize() 里定的，那时宿主的日志接收器还没装（它们一般在构造之后才接上），所以再报一次：
+    // 启动日志要能回答“界面为什么是这种语言”——`system` 只有在旁边给出解析出的标签时才有意义。
+    VN_LOGI("UI language '{}' for setting '{}'", d->language_tag.as_std_str(), d->language_setting.as_std_str());
+
     // 先让循环跑起来，启动阶段再从队列里推：窗口系统那一半（X11 的 expose、Windows 的 WM_PAINT）本来就靠循环派发，
     // 循环起来之前 show() 出来的窗口一个像素都没有；而启动阶段的第一道门就是“启动画面真的在屏上”。
     // 两个好处：无头与有窗口的启动阶段走同一条时间轴（同一个事件队列），差别只剩“上不上屏”；
@@ -344,7 +350,7 @@ vn::async::DetachedTask Application::startupSequence()
     //
     // 每拍之后垫一次 `resumeOnMainThread()`：一拍可能在别的线程上结束（定时器、IO、宿主自己丢到池上的活），
     // 而下一拍与这次启动的收尾都必须在应用线程上。已经在主线程时它是空操作。
-    beginStartupProgress()->stage(u8"正在启动");
+    beginStartupProgress()->stage(translate("appfw", "Starting"));
 
     bool ok = true;
     try {

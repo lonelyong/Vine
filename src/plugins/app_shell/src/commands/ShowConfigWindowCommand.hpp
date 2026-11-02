@@ -16,12 +16,12 @@ class ShowConfigWindowCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "插件");
+        return vn::appfw::translate("app_shell", "Plugins");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "打开配置窗口");
+        return vn::appfw::translate("app_shell", "Open the configuration window");
     }
 
     CommandFlags flags() const override

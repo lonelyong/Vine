@@ -48,7 +48,7 @@ QString joinOrDash(const std::vector<String>& names)
 QString sourceText(const vn::appfw::DocumentSource& source)
 {
     if (!source.valid()) {
-        return translate("appfw", "—（没有来源）");
+        return translate("appfw", "— (no source)");
     }
     return QStringLiteral("%1:%2").arg(Convert::toQString(source.scheme), Convert::toQString(source.address));
 }
@@ -74,29 +74,29 @@ DocumentManagerDialog::DocumentManagerDialog(vn::appfw::DocumentManager* manager
     data->manager = manager;
 
     auto* root = impl<QDialog>();
-    root->setWindowTitle(translate("appfw", "文档管理器"));
+    root->setWindowTitle(translate("appfw", "Document manager"));
 
     auto* lay = new QVBoxLayout(root);
     lay->setContentsMargins(10, 10, 10, 8);
     lay->setSpacing(8);
 
     data->filter = new QLineEdit(root);
-    data->filter->setPlaceholderText(translate("appfw", "筛选类型 / 来源插件 / 载荷 / 标题 / 来源…"));
+    data->filter->setPlaceholderText(translate("appfw", "Filter by type / plugin / payload / title / source…"));
     data->filter->setClearButtonEnabled(true);
     lay->addWidget(data->filter);
 
     // Registered types: what exists, who contributed it, and what it can be built from. The payload column is the one
     // that answers "why does this file not open" - it lists what an opener registered for the type accepts.
-    data->types_label = new QLabel(translate("appfw", "已注册的类型"), root);
+    data->types_label = new QLabel(translate("appfw", "Registered types"), root);
     lay->addWidget(data->types_label);
 
     data->types_table = new QTableWidget(0, 6, root);
-    data->types_table->setHorizontalHeaderLabels({ translate("appfw", "类型"),
-                                                   translate("appfw", "显示名"),
-                                                   translate("appfw", "来源插件"),
-                                                   translate("appfw", "可新建"),
-                                                   translate("appfw", "接受的载荷"),
-                                                   translate("appfw", "来源方案") });
+    data->types_table->setHorizontalHeaderLabels({ translate("appfw", "Type"),
+                                                   translate("appfw", "Display name"),
+                                                   translate("appfw", "Plugin"),
+                                                   translate("appfw", "Can create"),
+                                                   translate("appfw", "Accepts payloads"),
+                                                   translate("appfw", "Source scheme") });
     data->types_table->horizontalHeader()->setStretchLastSection(true);
     data->types_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     data->types_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -107,11 +107,12 @@ DocumentManagerDialog::DocumentManagerDialog(vn::appfw::DocumentManager* manager
 
     // Open documents: the same list a host shows as tabs, plus the two things a tab cannot show - the source it is
     // backed by and whether it holds unsaved changes.
-    data->documents_label = new QLabel(translate("appfw", "已打开的文档"), root);
+    data->documents_label = new QLabel(translate("appfw", "Open documents"), root);
     lay->addWidget(data->documents_label);
 
     data->documents_table = new QTableWidget(0, 4, root);
-    data->documents_table->setHorizontalHeaderLabels({ translate("appfw", "标题"), translate("appfw", "类型"), translate("appfw", "来源"), translate("appfw", "状态") });
+    data->documents_table->setHorizontalHeaderLabels(
+        { translate("appfw", "Title"), translate("appfw", "Type"), translate("appfw", "Source"), translate("appfw", "State") });
     data->documents_table->horizontalHeader()->setStretchLastSection(true);
     data->documents_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     data->documents_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -128,10 +129,12 @@ DocumentManagerDialog::DocumentManagerDialog(vn::appfw::DocumentManager* manager
     data->message_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     bottom_lay->addWidget(data->message_label, 1);
 
-    auto* refresh_btn = new QPushButton(translate("appfw", "刷新"), root);
-    auto* close_btn   = new QPushButton(translate("appfw", "关闭"), root);
-    refresh_btn->setToolTip(translate("appfw", "重新列出已注册的类型与已打开的文档。"));
-    close_btn->setToolTip(translate("appfw", "文档类型不能在这里开关：谁能用由注册它的插件决定（禁用或跳过插件）。"));
+    auto* refresh_btn = new QPushButton(translate("appfw", "Refresh"), root);
+    auto* close_btn   = new QPushButton(translate("appfw", "Close"), root);
+    refresh_btn->setToolTip(translate("appfw", "List the registered types and the open documents again."));
+    close_btn->setToolTip(
+        translate("appfw",
+                  "Document types cannot be switched here: who can use one is decided by the plugin that registers it (disable or skip that plugin)."));
     bottom_lay->addWidget(refresh_btn);
     bottom_lay->addWidget(close_btn);
     lay->addLayout(bottom_lay);
@@ -154,9 +157,9 @@ void DocumentManagerDialog::refresh()
     data->types_table->setRowCount(0);
     data->documents_table->setRowCount(0);
     if (!data->manager) {
-        data->types_label->setText(translate("appfw", "已注册的类型（0）"));
-        data->documents_label->setText(translate("appfw", "已打开的文档（0）"));
-        data->message_label->setText(translate("appfw", "没有文档管理器。"));
+        data->types_label->setText(translate("appfw", "Registered types (0)"));
+        data->documents_label->setText(translate("appfw", "Open documents (0)"));
+        data->message_label->setText(translate("appfw", "There is no document manager."));
         return;
     }
 
@@ -169,8 +172,8 @@ void DocumentManagerDialog::refresh()
         data->types_table->setItem(row,
                                    1,
                                    new QTableWidgetItem(info.display_name.empty() ? Convert::toQString(info.type_id) : Convert::toQString(info.display_name)));
-        data->types_table->setItem(row, 2, new QTableWidgetItem(info.owner.empty() ? translate("appfw", "主机") : Convert::toQString(info.owner)));
-        data->types_table->setItem(row, 3, new QTableWidgetItem(info.can_create ? translate("appfw", "是") : translate("appfw", "否（只能打开）")));
+        data->types_table->setItem(row, 2, new QTableWidgetItem(info.owner.empty() ? translate("appfw", "Host") : Convert::toQString(info.owner)));
+        data->types_table->setItem(row, 3, new QTableWidgetItem(info.can_create ? translate("appfw", "Yes") : translate("appfw", "No (open only)")));
         data->types_table->setItem(row, 4, new QTableWidgetItem(joinOrDash(info.payload_types)));
         data->types_table->setItem(row, 5, new QTableWidgetItem(joinOrDash(info.source_schemes)));
 
@@ -192,17 +195,19 @@ void DocumentManagerDialog::refresh()
         if (is_current) {
             // "Current" is a manager fact, not a view fact: the dialog says which one it is.
             title_item->setText(QStringLiteral("● %1").arg(title_item->text()));
-            title_item->setToolTip(translate("appfw", "当前文档"));
+            title_item->setToolTip(translate("appfw", "Current document"));
         }
         data->documents_table->setItem(row, 0, title_item);
         data->documents_table->setItem(row, 1, new QTableWidgetItem(Convert::toQString(document->typeId())));
         data->documents_table->setItem(row, 2, new QTableWidgetItem(sourceText(document->source())));
-        data->documents_table->setItem(row, 3, new QTableWidgetItem(document->isDirty() ? translate("appfw", "未保存") : translate("appfw", "已保存")));
+        data->documents_table->setItem(row, 3, new QTableWidgetItem(document->isDirty() ? translate("appfw", "Unsaved") : translate("appfw", "Saved")));
     }
 
-    data->types_label->setText(translate("appfw", "已注册的类型（%1）").arg(types.size()));
-    data->documents_label->setText(translate("appfw", "已打开的文档（%1）").arg(documents.size()));
-    data->message_label->setText(translate("appfw", "文档类型由插件注册；能开什么由“接受的载荷”决定。这里只读 —— 谁能用由注册它的插件说了算。"));
+    data->types_label->setText(translate("appfw", "Registered types (%1)").arg(types.size()));
+    data->documents_label->setText(translate("appfw", "Open documents (%1)").arg(documents.size()));
+    data->message_label->setText(translate("appfw",
+                                           "Document types are registered by plugins; what can be opened follows from the accepted payloads. This view is "
+                                           "read-only - who can use a type is up to the plugin that registers it."));
 
     applyFilter();
 }

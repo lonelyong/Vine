@@ -243,22 +243,34 @@ void MessageBox::apply()
 
 MessageBoxButton MessageBox::information(Window* owner, const String& title, const String& text, MessageBoxButton buttons)
 {
-    return runBox(owner, title.empty() ? vn::appfw::translate("appfw", "提示") : title, text, MessageBoxIcon::Information, buttons, MessageBoxButton::No, false);
+    return runBox(owner,
+                  title.empty() ? vn::appfw::translate("appfw", "Information") : title,
+                  text,
+                  MessageBoxIcon::Information,
+                  buttons,
+                  MessageBoxButton::No,
+                  false);
 }
 
 MessageBoxButton MessageBox::warning(Window* owner, const String& title, const String& text, MessageBoxButton buttons)
 {
-    return runBox(owner, title.empty() ? vn::appfw::translate("appfw", "警告") : title, text, MessageBoxIcon::Warning, buttons, MessageBoxButton::No, false);
+    return runBox(owner, title.empty() ? vn::appfw::translate("appfw", "Warning") : title, text, MessageBoxIcon::Warning, buttons, MessageBoxButton::No, false);
 }
 
 MessageBoxButton MessageBox::critical(Window* owner, const String& title, const String& text, MessageBoxButton buttons)
 {
-    return runBox(owner, title.empty() ? vn::appfw::translate("appfw", "错误") : title, text, MessageBoxIcon::Critical, buttons, MessageBoxButton::No, false);
+    return runBox(owner, title.empty() ? vn::appfw::translate("appfw", "Error") : title, text, MessageBoxIcon::Critical, buttons, MessageBoxButton::No, false);
 }
 
 MessageBoxButton MessageBox::question(Window* owner, const String& title, const String& text, MessageBoxButton buttons, MessageBoxButton default_button)
 {
-    return runBox(owner, title.empty() ? vn::appfw::translate("appfw", "请确认") : title, text, MessageBoxIcon::Question, buttons, default_button, true);
+    return runBox(owner,
+                  title.empty() ? vn::appfw::translate("appfw", "Please confirm") : title,
+                  text,
+                  MessageBoxIcon::Question,
+                  buttons,
+                  default_button,
+                  true);
 }
 
 inline auto MessageBox::dptr() -> Impl*

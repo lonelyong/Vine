@@ -16,12 +16,12 @@ class ShowDocumentTypesCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "文档");
+        return vn::appfw::translate("app_shell", "Document");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "显示文档类型注册与已打开的文档");
+        return vn::appfw::translate("app_shell", "Show the registered document types and the open documents");
     }
 
     CommandFlags flags() const override

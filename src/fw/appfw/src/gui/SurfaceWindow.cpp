@@ -34,6 +34,8 @@
 #include <vine/window/KeyCode.hpp>
 #include <vine/window/MouseButton.hpp>
 
+#include "GuiText.hpp"
+
 VN_APPFWGUI_NS_BEGIN
 
 namespace
@@ -814,7 +816,7 @@ void SurfaceWindow::showContextMenu()
         return;
     }
     QMenu    menu(d->host);
-    QAction* fit = menu.addAction(QString::fromUtf8("适应屏幕"));
+    QAction* fit = menu.addAction(translate("appfw", "Fit to window"));
     QObject::connect(fit, &QAction::triggered, [this] { fitToScreen(); });
     menu.exec(QCursor::pos());
 }

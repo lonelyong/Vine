@@ -81,11 +81,11 @@ void buildAppShellRibbon(gui::MainWindow* wnd)
     auto* plugin_tab = new gui::RibbonTab();
     plugin_tab->setId(u8"vine.tab.plugins");
     plugin_tab->setRole(gui::RibbonTabRole::Plugins);
-    plugin_tab->setTitle(vn::appfw::translate("app_shell", "插件"));
+    plugin_tab->setTitle(vn::appfw::translate("app_shell", "Plugins"));
     bar->addTab(plugin_tab);
     auto* plugin_group = new gui::RibbonGroup();
     plugin_group->setId(u8"plugins.manage");
-    plugin_group->setTitle(vn::appfw::translate("app_shell", "插件管理"));
+    plugin_group->setTitle(vn::appfw::translate("app_shell", "Plugin management"));
     plugin_tab->addGroup(plugin_group);
 
     auto* help_tab = new gui::RibbonTab();
@@ -93,53 +93,53 @@ void buildAppShellRibbon(gui::MainWindow* wnd)
     help_tab->setRole(gui::RibbonTabRole::Help);
     // 帮助是终止 tab：任何插件 tab 都不能排到它后面（解析器会把越界请求夹回前面）。
     help_tab->setPolicy(gui::RibbonTabPolicy::Terminal);
-    help_tab->setTitle(vn::appfw::translate("app_shell", "帮助"));
+    help_tab->setTitle(vn::appfw::translate("app_shell", "Help"));
     bar->addTab(help_tab);
     auto* help_group = new gui::RibbonGroup();
     help_group->setId(u8"help.commands");
-    help_group->setTitle(vn::appfw::translate("app_shell", "帮助"));
+    help_group->setTitle(vn::appfw::translate("app_shell", "Help"));
     help_tab->addGroup(help_group);
 
-    addCommandButton(plugin_group, vn::appfw::translate("app_shell", "插件信息"), u8":/icons/show_plugins.svg", u8"show_plugins");
-    addCommandButton(plugin_group, vn::appfw::translate("app_shell", "渲染后端"), u8":/icons/show_plugins.svg", u8"show_render_backends");
-    addCommandButton(plugin_group, vn::appfw::translate("app_shell", "配置管理"), u8":/icons/show_config.svg", u8"show_config");
-    addCommandButton(help_group, vn::appfw::translate("app_shell", "命令管理器"), u8":/icons/show_commands.svg", u8"show_commands");
-    addCommandButton(help_group, vn::appfw::translate("app_shell", "文档管理器"), u8":/icons/show_documents.svg", u8"show_document_types");
-    addCommandButton(help_group, vn::appfw::translate("app_shell", "帮助"), u8":/icons/show_help.svg", u8"show_help");
-    addCommandButton(help_group, vn::appfw::translate("app_shell", "关于"), u8":/icons/about.svg", u8"about");
+    addCommandButton(plugin_group, vn::appfw::translate("app_shell", "Plugin information"), u8":/icons/show_plugins.svg", u8"show_plugins");
+    addCommandButton(plugin_group, vn::appfw::translate("app_shell", "Render backends"), u8":/icons/show_plugins.svg", u8"show_render_backends");
+    addCommandButton(plugin_group, vn::appfw::translate("app_shell", "Configuration"), u8":/icons/show_config.svg", u8"show_config");
+    addCommandButton(help_group, vn::appfw::translate("app_shell", "Command manager"), u8":/icons/show_commands.svg", u8"show_commands");
+    addCommandButton(help_group, vn::appfw::translate("app_shell", "Document manager"), u8":/icons/show_documents.svg", u8"show_document_types");
+    addCommandButton(help_group, vn::appfw::translate("app_shell", "Help"), u8":/icons/show_help.svg", u8"show_help");
+    addCommandButton(help_group, vn::appfw::translate("app_shell", "About"), u8":/icons/about.svg", u8"about");
 
     // 应用按钮打开 Backstage：页面只是导航，条目仍是命令（命令名就是身份）。
     auto* backstage = new gui::Backstage(wnd);
 
     auto* plugins_page = new gui::BackstagePage();
     plugins_page->setId(u8"vine.backstage.plugins");
-    plugins_page->setTitle(vn::appfw::translate("app_shell", "插件"));
+    plugins_page->setTitle(vn::appfw::translate("app_shell", "Plugins"));
     plugins_page->setRole(gui::BackstagePageRole::Plugins);
     plugins_page->setProvider(u8"app_shell");
     plugins_page->setIcon(gui::Icon(u8":/icons/show_plugins.svg"));
-    addBackstageCommand(plugins_page, vn::appfw::translate("app_shell", "插件信息"), u8":/icons/show_plugins.svg", u8"show_plugins");
-    addBackstageCommand(plugins_page, vn::appfw::translate("app_shell", "渲染后端"), u8":/icons/show_plugins.svg", u8"show_render_backends");
-    addBackstageCommand(plugins_page, vn::appfw::translate("app_shell", "配置管理"), u8":/icons/show_config.svg", u8"show_config");
+    addBackstageCommand(plugins_page, vn::appfw::translate("app_shell", "Plugin information"), u8":/icons/show_plugins.svg", u8"show_plugins");
+    addBackstageCommand(plugins_page, vn::appfw::translate("app_shell", "Render backends"), u8":/icons/show_plugins.svg", u8"show_render_backends");
+    addBackstageCommand(plugins_page, vn::appfw::translate("app_shell", "Configuration"), u8":/icons/show_config.svg", u8"show_config");
     backstage->addPage(plugins_page);
 
     auto* help_page = new gui::BackstagePage();
     help_page->setId(u8"vine.backstage.help");
-    help_page->setTitle(vn::appfw::translate("app_shell", "帮助"));
+    help_page->setTitle(vn::appfw::translate("app_shell", "Help"));
     help_page->setRole(gui::BackstagePageRole::Help);
     // 帮助页是终止页：插件页可以按 role 排在它前面，但排不到它后面（与 Ribbon 的帮助 tab 同一条规则）。
     help_page->setPolicy(gui::BackstagePagePolicy::Terminal);
     help_page->setProvider(u8"app_shell");
     help_page->setIcon(gui::Icon(u8":/icons/show_help.svg"));
-    addBackstageCommand(help_page, vn::appfw::translate("app_shell", "帮助"), u8":/icons/show_help.svg", u8"show_help");
-    addBackstageCommand(help_page, vn::appfw::translate("app_shell", "命令管理器"), u8":/icons/show_commands.svg", u8"show_commands");
-    addBackstageCommand(help_page, vn::appfw::translate("app_shell", "文档管理器"), u8":/icons/show_documents.svg", u8"show_document_types");
-    addBackstageCommand(help_page, vn::appfw::translate("app_shell", "关于"), u8":/icons/about.svg", u8"about");
+    addBackstageCommand(help_page, vn::appfw::translate("app_shell", "Help"), u8":/icons/show_help.svg", u8"show_help");
+    addBackstageCommand(help_page, vn::appfw::translate("app_shell", "Command manager"), u8":/icons/show_commands.svg", u8"show_commands");
+    addBackstageCommand(help_page, vn::appfw::translate("app_shell", "Document manager"), u8":/icons/show_documents.svg", u8"show_document_types");
+    addBackstageCommand(help_page, vn::appfw::translate("app_shell", "About"), u8":/icons/about.svg", u8"about");
     backstage->addPage(help_page);
 
     // “关于”是一块内容页（body）：内容属于应用（AppConfig::info），面板只负责排版。
     auto* about_page = new gui::BackstagePage();
     about_page->setId(u8"vine.backstage.about");
-    about_page->setTitle(vn::appfw::translate("app_shell", "关于"));
+    about_page->setTitle(vn::appfw::translate("app_shell", "About"));
     about_page->setRole(gui::BackstagePageRole::About);
     about_page->setProvider(u8"app_shell");
     backstage->addPage(about_page);
@@ -156,18 +156,18 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
 
     auto* manager = wnd->dockPanelManager();
 
-    auto* left_panel = manager->createDockPanel(vn::appfw::translate("app_shell", "项目"), gui::DockAreas::Left);
+    auto* left_panel = manager->createDockPanel(vn::appfw::translate("app_shell", "Project"), gui::DockAreas::Left);
     left_panel->setId(u8"dock_project");
 
     // 中央客户区**空着**：3D 内容现在是文档（一份文档一个视图、一块自己的渲染面），宿主的文档容器会在有当前文档时
     // 接管这一格，没文档时它就是窗口自己的背景。外壳不再在这里建 RenderControl / 发布它 —— 那是视图自己的事
     // （见 DemoView / appfw-document-model.md §7/§9）。
 
-    auto* right_panel = manager->createDockPanel(vn::appfw::translate("app_shell", "属性"), gui::DockAreas::Right);
+    auto* right_panel = manager->createDockPanel(vn::appfw::translate("app_shell", "Properties"), gui::DockAreas::Right);
     right_panel->setId(u8"dock_properties");
 
     auto* console_panel = new gui::ConsolePanel();
-    auto* console_dock  = manager->createDockPanel(vn::appfw::translate("app_shell", "控制台"), console_panel, gui::DockAreas::Bottom);
+    auto* console_dock  = manager->createDockPanel(vn::appfw::translate("app_shell", "Console"), console_panel, gui::DockAreas::Bottom);
     console_dock->setId(u8"dock_console");
 
     // The panel is bound on the visual user I/O itself: that is where the output and the prompts go, and it is the panel

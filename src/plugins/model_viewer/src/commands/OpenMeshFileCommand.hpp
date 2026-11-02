@@ -29,12 +29,12 @@ class OpenMeshFileCommand : public vn::appfw::Command {
   public:
     vn::String group() const override
     {
-        return vn::appfw::translate("model_viewer", "模型");
+        return vn::appfw::translate("model_viewer", "Model");
     }
 
     vn::String description() const override
     {
-        return vn::appfw::translate("model_viewer", "选一个网格文件打开（文件载荷）");
+        return vn::appfw::translate("model_viewer", "Open a mesh file (file payload)");
     }
 
     vn::appfw::CommandFlags flags() const override

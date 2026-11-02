@@ -25,12 +25,12 @@ class CloseDocumentCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "文档");
+        return vn::appfw::translate("app_shell", "Document");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "关闭当前文档");
+        return vn::appfw::translate("app_shell", "Close the current document");
     }
 
     CommandFlags flags() const override

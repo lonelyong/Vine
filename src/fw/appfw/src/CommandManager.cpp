@@ -29,6 +29,9 @@
 #include <vine/logging/Log.hpp>
 
 #include <vine/appfw/ProgressHost.hpp>
+#include <vine/appfw/Translation.hpp>
+
+#include "Format.hpp"
 
 VN_APPFW_NS_BEGIN
 
@@ -107,15 +110,15 @@ std::string_view toUtf8View(const String& s) noexcept
 String refusalMessage(const String& name, bool disabled)
 {
     if (disabled) {
-        return String(u8"命令“") + name + String(u8"”已被禁用；可在「命令管理器」中启用。");
+        return formatQt(translate("appfw", "The command \"%1\" is disabled; enable it in the Command Manager."), name);
     }
-    return String(u8"命令“") + name + String(u8"”未注册。");
+    return formatQt(translate("appfw", "The command \"%1\" is not registered."), name);
 }
 
 /// The Cancelled result reported for a cancellation.
 CommandResult cancelledResult()
 {
-    return CommandResult(CommandStatus::Cancelled, String(u8"命令已取消"));
+    return CommandResult(CommandStatus::Cancelled, translate("appfw", "Command cancelled"));
 }
 
 /// The Failed result carrying a message.
@@ -1110,17 +1113,17 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
     // explanation, not a failure - a console or headless run is a legal host, not a broken one.
     if (testFlag(flags, CommandFlags::NeedsDocument) && target.document == nullptr) {
         VN_LOGI("Command needs a document and this execution has none: {}", toUtf8View(command->name()));
-        co_return CommandResult(CommandStatus::NotApplicable, String(u8"该命令需要一份打开的文档。"));
+        co_return CommandResult(CommandStatus::NotApplicable, translate("appfw", "This command needs an open document."));
     }
     if (testFlag(flags, CommandFlags::NeedsView) && target.view == nullptr) {
         VN_LOGI("Command needs a view and this execution has none: {}", toUtf8View(command->name()));
-        co_return CommandResult(CommandStatus::NotApplicable, String(u8"该命令需要一块 3D 视图。"));
+        co_return CommandResult(CommandStatus::NotApplicable, translate("appfw", "This command needs a 3D view."));
     }
 
     if (exclusive && top_level) {
         switch (co_await d->takeOverForeground(*command)) {
         case Impl::TakeOverOutcome::TakenOver: break;
-        case Impl::TakeOverOutcome::StillStopping: co_return failedResult(String(u8"另一个操作仍在收尾，请稍后再试。"));
+        case Impl::TakeOverOutcome::StillStopping: co_return failedResult(translate("appfw", "Another operation is still finishing; try again in a moment."));
         case Impl::TakeOverOutcome::Cancelled: co_return cancelledResult();
         }
     }
@@ -1129,7 +1132,7 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
         // Visible for the callers that cannot read the result: a detached command
         // that is refused would otherwise fail silently.
         VN_LOGW("Command refused by the serialization gate: {}", toUtf8View(command->name()));
-        co_return failedResult(String(u8"另一个操作正在进行中，请稍候。"));
+        co_return failedResult(translate("appfw", "Another operation is in progress; please wait."));
     }
 
     // Whether this run took the serialization gate (a top-level LongRunning
@@ -1308,7 +1311,7 @@ void CommandManager::executeDetached(const String& name, const CommandTarget& ta
             // The command most likely ran to its end on another thread (a timer or an
             // asynchronous read completes it), so this must not touch userIO() directly:
             // the GUI one writes to a QWidget.
-            reportToUser(*app, result.message().empty() ? String(u8"命令执行失败") : result.message());
+            reportToUser(*app, result.message().empty() ? translate("appfw", "The command failed") : result.message());
         }(owner, executeCommandAsync(name, target));
     }
     catch (const std::exception& e) {
@@ -1409,8 +1412,8 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
     // and only logs on failure: a factory that returns nullptr or throws (its
     // constructor may need services that are not up yet at load time) still gets
     // the command registered, just without cached metadata.
-    String group;
-    String description;
+    String       group;
+    String       description;
     CommandFlags flags{ CommandFlags::None };
     try {
         std::unique_ptr<Command> probe(factory());

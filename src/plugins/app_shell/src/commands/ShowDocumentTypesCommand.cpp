@@ -15,11 +15,11 @@ vn::async::Task<CommandResult> ShowDocumentTypesCommand::execute(CommandExecutio
     auto* app = context ? context->application() : nullptr;
     auto* dm  = app ? app->documentManager() : nullptr;
     if (!dm) {
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "应用未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "The application is not ready"));
     }
 
     auto* dlg = new gui::DocumentManagerDialog(dm);
-    dlg->setWindowTitle(vn::appfw::translate("app_shell", "文档管理器"));
+    dlg->setWindowTitle(vn::appfw::translate("app_shell", "Document manager"));
     dlg->resize(820, 520);
     dlg->exec();
     delete dlg;

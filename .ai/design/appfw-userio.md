@@ -71,7 +71,8 @@ GUI 用 `ConsolePanel`，无头用后台读线程 + 行缓冲。
 ### 2.6 无头进度
 
 `ConsoleUserIO` 自带 `ConsoleProgressReporter`（构造时 `start()`）：一行一条 `[进度] 42% 阶段名`，
-结束后补 `[进度] 已结束`；`stop()` 后不再输出。节流：`show_delay{500ms}` / `interval{200ms}`（最小行距）/
+结束后补 `[进度] 已结束`；前缀与固定行是 `appfw` 目录里的界面文案，其余照旧。`stop()` 后不再输出。节流：
+`show_delay{500ms}` / `interval{200ms}`（最小行距）/
 `step_percent{5}`；订阅 `ProgressHost::changed()`，空闲零唤醒；`poll()` 给自驱循环与测试。
 
 ## 3. 功能点

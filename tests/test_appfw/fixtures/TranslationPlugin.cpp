@@ -1,4 +1,4 @@
-// 测试夹具：一个带自己翻译目录的插件（目录内嵌在它的 DLL 里：:/i18n/i18n_fixture_en.qm）。
+// 测试夹具：一个带自己翻译目录的插件（目录内嵌在它的 DLL 里：:/i18n/i18n_fixture_zh_CN.qm）。
 //
 // 它只做一件事：在 load() 里用 translate(u8"i18n_fixture", …) 取一句自己的文案，把结果记进配置，供用例取值。于是这条
 // 链上的三件事都被钉住：加载器在插件代码跑之前装目录、context 与目录文件名一致、内嵌资源在模块加载后可查。
@@ -32,7 +32,7 @@ vn::async::Task<void> TranslationPlugin::load(PluginLoadContext* context)
     ConfigManager*       config = app != nullptr ? app->configManager() : nullptr;
     if (config != nullptr) {
         // 键是夹具自己的探针，正常运行时不会有人读它。
-        config->setString(u8"plugins.i18n.probe", translate("i18n_fixture", "插件文案"));
+        config->setString(u8"plugins.i18n.probe", translate("i18n_fixture", "Plugin text"));
     }
     co_return;
 }

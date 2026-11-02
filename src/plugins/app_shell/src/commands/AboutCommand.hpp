@@ -16,12 +16,12 @@ class AboutCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "帮助");
+        return vn::appfw::translate("app_shell", "Help");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "显示关于信息");
+        return vn::appfw::translate("app_shell", "Show the about information");
     }
 
     CommandFlags flags() const override

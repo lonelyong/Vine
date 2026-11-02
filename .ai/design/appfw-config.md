@@ -101,7 +101,7 @@
 
 ### 3.1.4 F4 描述树
 
-- **行为**：`ConfigRegistry` 管 `ConfigCategory → ConfigGroup → ConfigItem`；key 全树唯一。
+- **行为**：`ConfigRegistry` 管 `ConfigCategory → ConfigGroup → ConfigItem`；key 全树唯一；标准节点创建时把当前语言的标签写进 `label()`。
 - **约束**（C4）：owner 是缓存；空 owner 清除；删除路径清理。
 - **要求**（R4）：`itemsForPlugin(p)` 的每一项都真实存在且 owner 是 p；顺序 key 升序。
 - **验收**（T4）：`ConfigRegistry_Register` / `MetaAndOrder` / `StandardCategories` / `Ownership`。
@@ -253,7 +253,7 @@
 | T3 | 通知只在真变化时发 | `ConfigManager_NotifiesOnlyOnRealChanges` |
 | T4 | 类型无损/旧格式/超范围夹取 | `ConfigManager_JsonRoundTripKeepsTypes` |
 | T5 | 坏条目忽略 | `ConfigManager_BadEntriesAreIgnoredNotFatal` |
-| T6 | 描述树/owner/排序 | `ConfigRegistry_*` |
+| T6 | 描述树/owner/排序/标准标签随语言 | `ConfigRegistry_*`、`TranslationTest.StandardConfigLabelsFollowTheInstalledLanguage` |
 | T7 | 编辑器按下标配对/Choice/无 range | `ConfigWindowTest.*` |
 | T8 | 待重启只在策略项上、基于本次运行、可回退 | `ConfigTest.OnlyRestartRequiredItemsCanBePending`、`ConfigTest.TheBaselineIsThisRunNotTheProcess` |
 | T9 | 窗口逐行提示 + 顶部条随值出现/消失 | `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange` |

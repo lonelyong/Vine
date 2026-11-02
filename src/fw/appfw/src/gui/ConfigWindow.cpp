@@ -22,8 +22,8 @@
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTabWidget>
-#include <QValidator>
 #include <QVBoxLayout>
+#include <QValidator>
 
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/ConfigCategory.hpp>
@@ -58,7 +58,7 @@ class OptionalSpinBox : public QSpinBox {
         const QString text = lineEdit()->text();
         if (text.isEmpty() || !lineEdit()->hasAcceptableInput())
             return std::nullopt;
-        bool ok = false;
+        bool      ok    = false;
         const int value = QLocale().toInt(text, &ok);
         return ok ? std::optional<int>(value) : std::nullopt;
     }
@@ -86,7 +86,7 @@ class OptionalDoubleSpinBox : public QDoubleSpinBox {
         const QString text = lineEdit()->text();
         if (text.isEmpty() || !lineEdit()->hasAcceptableInput())
             return std::nullopt;
-        bool ok = false;
+        bool         ok    = false;
         const double value = QLocale().toDouble(text, &ok);
         return ok ? std::optional<double>(value) : std::nullopt;
     }
@@ -105,16 +105,16 @@ class OptionalNumericValueEditor : public QStackedWidget {
     OptionalNumericValueEditor(QAbstractSpinBox* value_editor, QLineEdit* input, bool required)
       : value_editor_(value_editor)
       , input_(input)
-      , unset_button_(new QPushButton(translate("appfw", required ? "必填，点击设置" : "(未设置)"), this))
+      , unset_button_(new QPushButton(required ? translate("appfw", "Required, click to set") : translate("appfw", "(Not set)"), this))
       , clear_button_(new QPushButton(QStringLiteral("×"), this))
     {
         setObjectName(QStringLiteral("optionalNumericValueEditor"));
         unset_button_->setObjectName(QStringLiteral("configValueUnset"));
         clear_button_->setObjectName(QStringLiteral("configValueClear"));
-        clear_button_->setToolTip(translate("appfw", "清除设置"));
+        clear_button_->setToolTip(translate("appfw", "Clear setting"));
         clear_button_->setVisible(!required);
 
-        auto* value_page = new QWidget(this);
+        auto* value_page   = new QWidget(this);
         auto* value_layout = new QHBoxLayout(value_page);
         value_layout->setContentsMargins(0, 0, 0, 0);
         value_layout->addWidget(value_editor);
@@ -153,9 +153,9 @@ class OptionalNumericValueEditor : public QStackedWidget {
 
   private:
     QAbstractSpinBox* value_editor_;
-    QLineEdit*      input_;
-    QPushButton*    unset_button_;
-    QPushButton*    clear_button_;
+    QLineEdit*        input_;
+    QPushButton*      unset_button_;
+    QPushButton*      clear_button_;
 };
 
 /// The visible hint on a row whose new value only takes effect after a restart; empty for every other row.
@@ -163,7 +163,7 @@ QString restartMarker(const ConfigItem& item)
 {
     if (!item.restartRequired())
         return QString();
-    return QStringLiteral(" (") + translate("appfw", "重启后生效") + QLatin1Char(')');
+    return QStringLiteral(" (") + translate("appfw", "takes effect after restart") + QLatin1Char(')');
 }
 
 /// Shows or hides the restart notice. It asks the application, not this window: the fact belongs to the run, so two
@@ -181,7 +181,7 @@ String categoryTitle(const ConfigCategory* cat)
         return cat->label();
     if (!cat->name().empty())
         return cat->name();
-    return vn::appfw::translate("appfw", "通用");
+    return vn::appfw::translate("appfw", "General");
 }
 
 // Group title: label > name.
@@ -200,7 +200,7 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
     case ConfigItemType::String:
     {
         auto* e = new QLineEdit();
-        e->setPlaceholderText(item.isRequired() ? translate("appfw", "必填") : translate("appfw", "(未设置)"));
+        e->setPlaceholderText(item.isRequired() ? translate("appfw", "Required") : translate("appfw", "(Not set)"));
         QObject::connect(e, &QLineEdit::textChanged, [config, key, item](const QString& t) {
             const String value = Convert::fromQString(t);
             if (value.empty()) {
@@ -222,7 +222,7 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
             if (state == Qt::PartiallyChecked) {
                 if (!item.isRequired()) {
                     config->remove(key);
-                    e->setText(translate("appfw", "(未设置)"));
+                    e->setText(translate("appfw", "(Not set)"));
                 }
                 else if (config->contains(key)) {
                     const QSignalBlocker blocker(e);
@@ -244,9 +244,7 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
             e->setRange(std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
         e->setSingleStep(item.step() >= 1.0 ? static_cast<int>(item.step()) : 1);
         auto* editor = new OptionalNumericValueEditor(e, e->input(), item.isRequired());
-        QObject::connect(editor->unsetButton(), &QPushButton::clicked, [editor] {
-            editor->beginEditing();
-        });
+        QObject::connect(editor->unsetButton(), &QPushButton::clicked, [editor] { editor->beginEditing(); });
         QObject::connect(editor->clearButton(), &QPushButton::clicked, [config, key, editor] {
             config->remove(key);
             editor->setConfigured(false);
@@ -273,9 +271,7 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
         e->setSingleStep(item.step());
         e->setDecimals(6);
         auto* editor = new OptionalNumericValueEditor(e, e->input(), item.isRequired());
-        QObject::connect(editor->unsetButton(), &QPushButton::clicked, [editor] {
-            editor->beginEditing();
-        });
+        QObject::connect(editor->unsetButton(), &QPushButton::clicked, [editor] { editor->beginEditing(); });
         QObject::connect(editor->clearButton(), &QPushButton::clicked, [config, key, editor] {
             config->remove(key);
             editor->setConfigured(false);
@@ -298,9 +294,9 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
         const auto choices = item.choices();
         const int  offset  = item.isRequired() ? 0 : 1;
         if (offset != 0)
-            e->addItem(translate("appfw", "(未设置)"));
+            e->addItem(translate("appfw", "(Not set)"));
         else
-            e->setPlaceholderText(translate("appfw", "请选择"));
+            e->setPlaceholderText(translate("appfw", "Select an option"));
         for (const auto& c : choices) e->addItem(Convert::toQString(c.description));
         QObject::connect(e, QOverload<int>::of(&QComboBox::currentIndexChanged), [config, key, choices, offset](int idx) {
             if (offset != 0 && idx == 0) {
@@ -329,11 +325,11 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
 // Index of the matching stored choice, or -1 when the panel must not claim a selection.
 int choiceIndex(const ConfigManager& config, const ConfigItem& item)
 {
-    const String& key          = item.key();
-    const bool    stored       = config.contains(key);
+    const String& key    = item.key();
+    const bool    stored = config.contains(key);
     if (!stored && !item.isRequired())
         return 0;
-    const auto&   cs           = item.choices();
+    const auto& cs = item.choices();
 
     for (size_t i = 0; i < cs.size(); ++i) {
         const auto& v = cs[i].value;
@@ -361,15 +357,17 @@ void writeEditorValue(QWidget* widget, const ConfigManager& config, const Config
 {
     const String key = item.key();
     switch (item.type()) {
-    case ConfigItemType::String: {
-        auto* line_edit = static_cast<QLineEdit*>(widget);
+    case ConfigItemType::String:
+    {
+        auto*                line_edit = static_cast<QLineEdit*>(widget);
         const QSignalBlocker blocker(line_edit);
-        const String value = config.contains(key) ? config.getString(key, String()) : String();
+        const String         value = config.contains(key) ? config.getString(key, String()) : String();
         line_edit->setText(Convert::toQString(value));
         break;
     }
-    case ConfigItemType::Bool: {
-        auto* checkbox = static_cast<QCheckBox*>(widget);
+    case ConfigItemType::Bool:
+    {
+        auto*                checkbox = static_cast<QCheckBox*>(widget);
         const QSignalBlocker blocker(checkbox);
         if (config.contains(key)) {
             checkbox->setCheckState(config.getBool(key, false) ? Qt::Checked : Qt::Unchecked);
@@ -377,15 +375,16 @@ void writeEditorValue(QWidget* widget, const ConfigManager& config, const Config
         }
         else {
             checkbox->setCheckState(Qt::PartiallyChecked);
-            checkbox->setText(translate("appfw", item.isRequired() ? "必填" : "(未设置)"));
+            checkbox->setText(translate("appfw", item.isRequired() ? "Required" : "(Not set)"));
         }
         break;
     }
-    case ConfigItemType::Int: {
-        auto* editor = static_cast<OptionalNumericValueEditor*>(widget);
-        auto* spin   = static_cast<OptionalSpinBox*>(editor->valueEditor());
+    case ConfigItemType::Int:
+    {
+        auto*                editor = static_cast<OptionalNumericValueEditor*>(widget);
+        auto*                spin   = static_cast<OptionalSpinBox*>(editor->valueEditor());
         const QSignalBlocker blocker(spin);
-        const bool configured = config.contains(key);
+        const bool           configured = config.contains(key);
         if (configured)
             spin->setValue(config.getInt(key, spin->value()));
         else
@@ -393,11 +392,12 @@ void writeEditorValue(QWidget* widget, const ConfigManager& config, const Config
         editor->setConfigured(configured);
         break;
     }
-    case ConfigItemType::Double: {
-        auto* editor = static_cast<OptionalNumericValueEditor*>(widget);
-        auto* spin   = static_cast<OptionalDoubleSpinBox*>(editor->valueEditor());
+    case ConfigItemType::Double:
+    {
+        auto*                editor = static_cast<OptionalNumericValueEditor*>(widget);
+        auto*                spin   = static_cast<OptionalDoubleSpinBox*>(editor->valueEditor());
         const QSignalBlocker blocker(spin);
-        const bool configured = config.contains(key);
+        const bool           configured = config.contains(key);
         if (configured)
             spin->setValue(config.getDouble(key, spin->value()));
         else
@@ -405,8 +405,9 @@ void writeEditorValue(QWidget* widget, const ConfigManager& config, const Config
         editor->setConfigured(configured);
         break;
     }
-    case ConfigItemType::Choice: {
-        auto* combo = static_cast<QComboBox*>(widget);
+    case ConfigItemType::Choice:
+    {
+        auto*                combo = static_cast<QComboBox*>(widget);
         const QSignalBlocker blocker(combo);
         combo->setCurrentIndex(choiceIndex(config, item));
         break;
@@ -472,7 +473,7 @@ ConfigWindow::ConfigWindow(ConfigRegistry* registry, ConfigManager* config)
             }
         }
         if (!has_item) {
-            auto* tip = new QLabel(translate("appfw", "(空)"));
+            auto* tip = new QLabel(translate("appfw", "(empty)"));
             vlay->addWidget(tip);
         }
         scroll->setWidget(container);
@@ -482,11 +483,11 @@ ConfigWindow::ConfigWindow(ConfigRegistry* registry, ConfigManager* config)
     }
 
     if (registry->categories().empty()) {
-        auto* tip = new QLabel(translate("appfw", "(未注册配置项)"));
-        tabs->addTab(tip, translate("appfw", "通用"));
+        auto* tip = new QLabel(translate("appfw", "(no config item registered)"));
+        tabs->addTab(tip, translate("appfw", "General"));
     }
 
-    auto* banner = new QLabel(translate("appfw", "有改动需要重启才能生效"));
+    auto* banner = new QLabel(translate("appfw", "Some changes take effect only after a restart"));
     banner->setWordWrap(true);
     banner->setVisible(false);
     data->banner = banner;

@@ -15,7 +15,7 @@ vn::async::Task<CommandResult> ListCommandsCommand::execute(CommandExecutionCont
     auto* cm  = app ? app->commandManager() : nullptr;
     auto* io  = app ? app->userIO() : nullptr;
     if (!cm) {
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "命令管理器未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "The command manager is not ready"));
     }
 
     if (io) {
@@ -43,7 +43,7 @@ vn::async::Task<CommandResult> ListCommandsCommand::execute(CommandExecutionCont
             // Disabled commands stay registered and listed; the marker explains why
             // they cannot be started.
             if (!info.enabled) {
-                line += vn::appfw::translate("app_shell", "  [已禁用]");
+                line += vn::appfw::translate("app_shell", "  [disabled]");
             }
 
             io->putString(line);

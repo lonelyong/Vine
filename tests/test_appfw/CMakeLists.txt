@@ -8,6 +8,10 @@ find_package(Qt6 CONFIG QUIET COMPONENTS LinguistTools)
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 
+# 格式化器（src/Format.hpp）是 appfw 的内部头：它要用 Qt 的文本处理，所以不进已安装的 SDK。
+# 用例直接包含源码目录里的那一份，才能对拍 QString::arg 与 std::format。
+target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src/fw/appfw/src)
+
 # 无头宿主的用例：整条启动路径都不碰窗口系统，所以只链 Qt6::Core（appfw 自己带
 # Qt6::Gui/Widgets，那是它的实现细节，不是这个宿主要求的）。
 # vn::Logging 是为了用 LogSink 抓告警行（身份冲突/注册文件不符都是诊断，只能从日志断言）。
@@ -36,14 +40,14 @@ set_target_properties(vn_plugin_fixture_twin_identity PROPERTIES PREFIX "" FOLDE
 target_link_libraries(vn_plugin_fixture_twin_identity PRIVATE vn::Appfw)
 add_dependencies(${TEST_NAME} vn_plugin_fixture_twin_identity)
 
-# Third fixture: a plugin that carries its own catalog, embedded into its own DLL as :/i18n/i18n_fixture_en.qm.
+# Third fixture: a plugin that carries its own catalog, embedded into its own DLL as :/i18n/i18n_fixture_zh_CN.qm.
 # It pins where a plugin's translations come from: the loader installs it before the plugin's code runs, and no
 # directory is scanned (the plugin id is the file-name prefix).
 add_library(vn_plugin_fixture_i18n MODULE fixtures/TranslationPlugin.cpp)
 set_target_properties(vn_plugin_fixture_i18n PROPERTIES PREFIX "" FOLDER test)
 # Qt6::Core is required by the generated resource code (qRegisterResourceData); vn::Appfw links Qt privately.
 target_link_libraries(vn_plugin_fixture_i18n PRIVATE vn::Appfw Qt6::Core)
-vn_add_translations(vn_plugin_fixture_i18n CONTEXT i18n_fixture TS_FILES fixtures/res/translations/i18n_fixture_en.ts)
+vn_add_translations(vn_plugin_fixture_i18n CONTEXT i18n_fixture TS_FILES fixtures/res/translations/i18n_fixture_zh_CN.ts)
 add_dependencies(${TEST_NAME} vn_plugin_fixture_i18n)
 
 # Fourth fixture: a plugin whose construction throws, carrying its own catalog. It pins the rollback of a failed batch
@@ -51,7 +55,7 @@ add_dependencies(${TEST_NAME} vn_plugin_fixture_i18n)
 add_library(vn_plugin_fixture_throwing MODULE fixtures/ThrowingPlugin.cpp)
 set_target_properties(vn_plugin_fixture_throwing PROPERTIES PREFIX "" FOLDER test)
 target_link_libraries(vn_plugin_fixture_throwing PRIVATE vn::Appfw Qt6::Core)
-vn_add_translations(vn_plugin_fixture_throwing CONTEXT i18n_throwing TS_FILES fixtures/res/translations/i18n_throwing_en.ts)
+vn_add_translations(vn_plugin_fixture_throwing CONTEXT i18n_throwing TS_FILES fixtures/res/translations/i18n_throwing_zh_CN.ts)
 add_dependencies(${TEST_NAME} vn_plugin_fixture_throwing)
 
 # The framework owns the appfw translation context; plugin metadata must not claim it.
@@ -63,7 +67,7 @@ add_dependencies(${TEST_NAME} vn_plugin_fixture_reserved_context)
 # Fifth fixture: the same context and locale as i18n_fixture, translated differently, kept as a LOOSE .qm (never
 # embedded). The test copies it beside a copy of the plugin library, which is how "a file beside the module wins over the
 # copy inside it" is pinned. Without LinguistTools the file is not produced and the case skips itself.
-set(VN_OVERRIDE_QM "${CMAKE_CURRENT_BINARY_DIR}/override/i18n_fixture_en.qm")
+set(VN_OVERRIDE_QM "${CMAKE_CURRENT_BINARY_DIR}/override/i18n_fixture_zh_CN.qm")
 if(TARGET Qt6::lrelease)
     add_custom_command(
         OUTPUT "${VN_OVERRIDE_QM}"

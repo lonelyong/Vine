@@ -218,7 +218,7 @@ void ProgressPresenter::refresh()
     const bool has_bg = bg_count > 0;
     data->background_label->setVisible(has_bg);
     if (has_bg) {
-        data->background_label->setText(translate("appfw", "后台 %1").arg(static_cast<int>(bg_count)));
+        data->background_label->setText(translate("appfw", "Background %1").arg(static_cast<int>(bg_count)));
     }
 
     // Overall visibility: foreground bar past the threshold, or background

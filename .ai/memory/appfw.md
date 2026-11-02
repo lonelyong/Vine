@@ -105,3 +105,11 @@
   “`Vfs` + 虚拟路径”今天读不进模型文件。
 - 面板注册表不存在 ⇒ 面板只能插件自己建、自己挂；视图那一半已经落地。
 - 同时最多 4 份 3D 文档；要更多得给 vsg 打补丁（本树保持 vsg 原版 + 门禁）。
+
+## 翻译
+
+- 源码里的源串是**英文**，中文在 `<module>/res/translations/<id>_zh_CN.ts`；`en` 没有目录，缺译文回退英文。
+- 带参数的整句用 `formatQt(translate("appfw", "… %1 …"), 值…)`（`src/Format.hpp`，与 `QString::arg` 同语义），不要拼片段；标准方言是 core 的 `vn::format`（`vine/Format.hpp`，`{}`，另有 String 列表重载）。
+- `system` = 系统语言：Windows 取 OS UI 语言（不信 `LANG`，MSYS/Git Bash/VS Code 终端会带一个），Unix 取 `QLocale::system()`。
+- 改文案 ⇒ 同一个提交里跑 `lupdate -locations none -no-obsolete <module>/src <module>/sdk -ts <file>` 并补中文。
+

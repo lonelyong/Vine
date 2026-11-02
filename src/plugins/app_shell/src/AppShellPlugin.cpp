@@ -37,14 +37,14 @@ vn::async::Task<void> AppShellPlugin::load(PluginLoadContext* context)
     }
 
     // 这一拍的三段各自报一次相位：进度按相位跳（每个相位内不再动），所以每一段开始前把“在干什么”说清楚。
-    reportPhase(vn::appfw::translate("app_shell", "正在准备功能栏"));
+    reportPhase(vn::appfw::translate("app_shell", "Preparing the ribbon"));
     buildAppShellRibbon(wnd);
 
-    reportPhase(vn::appfw::translate("app_shell", "正在准备面板"));
+    reportPhase(vn::appfw::translate("app_shell", "Preparing the panels"));
     dock_ = buildAppShellDock(wnd);
 
     // 控制台日志路由：配置项注册、配置同步与 sink 安装（见 ConsoleLogRouter）。
-    reportPhase(vn::appfw::translate("app_shell", "正在接通控制台"));
+    reportPhase(vn::appfw::translate("app_shell", "Connecting the console"));
     installConsoleLogSink(dock_.console_panel, context);
     co_return;
 }

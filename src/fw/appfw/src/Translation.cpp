@@ -1,5 +1,9 @@
 #include <vine/appfw/Translation.hpp>
 
+#if defined(_WIN32)
+#    include <Windows.h>
+#endif // _WIN32
+
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -28,10 +32,19 @@ String languagePart(const String& tag)
     return part.toLower();
 }
 
-/// The tag the system locale maps to. Chinese is one catalog, so every other language takes the English one.
+/// The tag the system language maps to. Chinese gets the catalog; every other language takes the English source text
+/// (a system we do not translate must not be shown a third language's catalog).
 String systemLanguageTag()
 {
-    return QLocale::system().language() == QLocale::English ? String(u8"en") : String(u8"zh_CN");
+#if defined(_WIN32)
+    // Ask Windows, not the environment: LANG is inherited from whatever shell launched the process (MSYS, Git Bash, a
+    // VS Code terminal) and is not the language Windows itself uses. Following it makes "follow the system" disagree
+    // with every native dialog on the same desktop. A user who wants the English text can still choose it explicitly.
+    return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE ? String(u8"zh_CN") : String(u8"en");
+#else
+    // On Unix the locale environment *is* the system setting, so Qt's answer is the one to follow.
+    return QLocale::system().language() == QLocale::Chinese ? String(u8"zh_CN") : String(u8"en");
+#endif
 }
 
 /// Converts a QString (already in UTF-8) to a framework String.
@@ -69,11 +82,13 @@ ConfigItem languageConfigItem()
 
     // The context is a literal here on purpose: lupdate extracts a translate() call only when it can read the context,
     // so a constant (kFrameworkContext) would leave these texts out of the catalog while the call still compiled.
-    ConfigItem item(languageConfigKey(), translate("appfw", "界面语言"), ConfigItemType::Choice);
-    item.description(translate("appfw", "选择界面语言；启动时装载一次"))
-        .choices({ { Value(String(kLanguageSystem)), translate("appfw", "跟随系统") },
-                   { Value(String(u8"zh_CN")), translate("appfw", "中文") },
-                   { Value(String(u8"en")), translate("appfw", "English") } })
+    ConfigItem item(languageConfigKey(), translate("appfw", "UI language"), ConfigItemType::Choice);
+    item.description(translate("appfw", "Choose the UI language; it is loaded once at startup"))
+        .choices({
+          { Value(String(kLanguageSystem)), translate("appfw", "Follow the system") },
+          { Value(String(u8"zh_CN")),       translate("appfw", "Chinese")           },
+          { Value(String(u8"en")),          translate("appfw", "English")           }
+    })
         .defaultValue(kLanguageSystem)
         .restartRequired(true);
     return item;

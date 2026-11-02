@@ -19,9 +19,9 @@ vn::async::Task<CommandResult> ToggleConsoleLogCommand::execute(CommandExecution
 
     if (!cfg) {
         if (io) {
-            io->putString(vn::appfw::translate("app_shell", "配置管理器不可用"));
+            io->putString(vn::appfw::translate("app_shell", "The configuration manager is unavailable"));
         }
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "配置管理器不可用"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "The configuration manager is unavailable"));
     }
 
     const String key     = consoleLogConfigKey();
@@ -29,7 +29,8 @@ vn::async::Task<CommandResult> ToggleConsoleLogCommand::execute(CommandExecution
     cfg->setBool(key, enabled); // 触发 changed，AppShellPlugin 同步 sink 的原子开关
 
     if (io) {
-        io->putString(enabled ? vn::appfw::translate("app_shell", "日志输出到控制台：已开启") : vn::appfw::translate("app_shell", "日志输出到控制台：已关闭"));
+        io->putString(enabled ? vn::appfw::translate("app_shell", "Logging to the console: on")
+                              : vn::appfw::translate("app_shell", "Logging to the console: off"));
     }
 
     co_return CommandResult(CommandStatus::Success);

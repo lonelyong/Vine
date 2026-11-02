@@ -20,12 +20,12 @@ class ListCommandsCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "帮助");
+        return vn::appfw::translate("app_shell", "Help");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "列出所有命令及其别名");
+        return vn::appfw::translate("app_shell", "List every command and its alias");
     }
 
     CommandFlags flags() const override

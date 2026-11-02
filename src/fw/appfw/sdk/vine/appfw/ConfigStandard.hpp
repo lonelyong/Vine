@@ -53,8 +53,16 @@ VN_APPFW_API String standardCategoryName(StandardCategory id);
 /**
  * @brief Localized display label of a standard category.
  *
+ * @details
+ * - The label is UI text, not an identifier: it is looked up in the `appfw` catalog at call time and returned in the
+ *   language installed when the function runs. Use standardCategoryName() wherever a stable key is needed.
+ * - The Chinese source text is returned verbatim when no catalog is installed, so a non-GUI tool or a unit test that
+ *   never boots an Application sees the Chinese label rather than an empty string.
+ * - ConfigRegistry::standardCategory() writes this label into the node it creates, which is why a config tree must be
+ *   built after the language catalogs are installed (Application::initialize() does that before it registers anything).
+ *
  * @param id Standard category.
- * @return The display label.
+ * @return The display label in the installed UI language.
  */
 VN_APPFW_API String standardCategoryLabel(StandardCategory id);
 
@@ -77,8 +85,12 @@ VN_APPFW_API String standardGroupName(StandardGroup id);
 /**
  * @brief Localized display label of a standard group.
  *
+ * @details
+ * - Same rule as standardCategoryLabel(): UI text resolved in the `appfw` catalog at call time, Chinese source text
+ *   when no catalog is installed. standardGroupName() is the identity that never changes with the language.
+ *
  * @param id Standard group.
- * @return The display label.
+ * @return The display label in the installed UI language.
  */
 VN_APPFW_API String standardGroupLabel(StandardGroup id);
 

@@ -40,18 +40,18 @@ String trimmed(const String& text)
 String availableDocuments(const std::vector<Document*>& open)
 {
     if (open.empty()) {
-        return vn::appfw::translate("app_shell", "当前没有打开的文档");
+        return vn::appfw::translate("app_shell", "No document is open");
     }
 
-    String text(vn::appfw::translate("app_shell", "已打开的文档："));
+    String text(vn::appfw::translate("app_shell", "Open documents: "));
     for (std::size_t i = 0; i < open.size(); ++i) {
         if (i != 0) {
-            text.append(vn::appfw::translate("app_shell", "、"));
+            text.append(vn::appfw::translate("app_shell", ", "));
         }
         text.append(open[i]->title());
-        text.append(vn::appfw::translate("app_shell", "（"));
+        text.append(vn::appfw::translate("app_shell", " ("));
         text.append(open[i]->typeId());
-        text.append(vn::appfw::translate("app_shell", "）"));
+        text.append(vn::appfw::translate("app_shell", ")"));
     }
     return text;
 }
@@ -62,17 +62,17 @@ String availableDocuments(const std::vector<Document*>& open)
 /// @return One sentence naming the candidates.
 String ambiguousDocuments(const std::vector<Document*>& matches)
 {
-    String text(vn::appfw::translate("app_shell", "这个名字对应多份文档："));
+    String text(vn::appfw::translate("app_shell", "More than one document has this name: "));
     for (std::size_t i = 0; i < matches.size(); ++i) {
         if (i != 0) {
-            text.append(vn::appfw::translate("app_shell", "、"));
+            text.append(vn::appfw::translate("app_shell", ", "));
         }
         text.append(matches[i]->title());
-        text.append(vn::appfw::translate("app_shell", "（"));
+        text.append(vn::appfw::translate("app_shell", " ("));
         text.append(matches[i]->typeId());
-        text.append(vn::appfw::translate("app_shell", "）"));
+        text.append(vn::appfw::translate("app_shell", ")"));
     }
-    text.append(vn::appfw::translate("app_shell", "。请改用唯一的名字。"));
+    text.append(vn::appfw::translate("app_shell", ". Use a unique name instead."));
     return text;
 }
 
@@ -84,13 +84,13 @@ vn::async::Task<CommandResult> SwitchDocumentCommand::execute(CommandExecutionCo
     auto* documents = app != nullptr ? app->documentManager() : nullptr;
     auto* io        = app != nullptr ? app->userIO() : nullptr;
     if (documents == nullptr) {
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "应用未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "The application is not ready"));
     }
     if (io == nullptr) {
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "用户 I/O 未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "User I/O is not ready"));
     }
 
-    const auto answer = co_await io->getStringAsync(vn::appfw::translate("app_shell", "文档标题或类型 id（留空取消）："));
+    const auto answer = co_await io->getStringAsync(vn::appfw::translate("app_shell", "Document title or type id (leave empty to cancel): "));
     if (!answer.has_value()) {
         co_return CommandResult(CommandStatus::Cancelled);
     }
@@ -102,9 +102,9 @@ vn::async::Task<CommandResult> SwitchDocumentCommand::execute(CommandExecutionCo
 
     const std::vector<Document*> matches = documents->findByTitleOrTypeId(query);
     if (matches.empty()) {
-        String message(vn::appfw::translate("app_shell", "没有标题或类型 id 为“"));
+        String message(vn::appfw::translate("app_shell", "No document has the title or type id “"));
         message.append(query);
-        message.append(vn::appfw::translate("app_shell", "”的文档。"));
+        message.append(vn::appfw::translate("app_shell", "”."));
         message.append(availableDocuments(documents->documents()));
         co_return CommandResult(CommandStatus::NotApplicable, message);
     }
@@ -118,7 +118,7 @@ vn::async::Task<CommandResult> SwitchDocumentCommand::execute(CommandExecutionCo
     }
     if (!documents->setCurrent(target)) {
         // The lookup only returns documents of this manager, so this cannot happen - refuse rather than pretend.
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "切换失败：文档已不在打开集合中"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "Switch failed: the document is no longer open"));
     }
     co_return CommandResult(CommandStatus::Success);
 }

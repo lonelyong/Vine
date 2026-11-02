@@ -13,7 +13,7 @@ vn::async::Task<CommandResult> ClearCommand::execute(CommandExecutionContext* co
     auto* app = context ? context->application() : nullptr;
     auto* io  = app ? app->userIO() : nullptr;
     if (!io) {
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "用户 I/O 未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "User I/O is not ready"));
     }
 
     io->clear();

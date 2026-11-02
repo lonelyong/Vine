@@ -385,10 +385,10 @@ void ConsolePanel::Impl::openPicker()
 
     const QString  filter = Convert::toQString(action.filter);
     QWidget* const parent = input->window();
-    const QString  title  = opened_for == ConsoleInputKind::File        ? translate("appfw", "选择文件")
-                            : opened_for == ConsoleInputKind::Files     ? translate("appfw", "选择文件（可多选）")
-                            : opened_for == ConsoleInputKind::Directory ? translate("appfw", "选择目录")
-                                                                        : translate("appfw", "选择目录（可多选）");
+    const QString  title  = opened_for == ConsoleInputKind::File        ? translate("appfw", "Choose a file")
+                            : opened_for == ConsoleInputKind::Files     ? translate("appfw", "Choose files")
+                            : opened_for == ConsoleInputKind::Directory ? translate("appfw", "Choose a directory")
+                                                                        : translate("appfw", "Choose directories");
     QStringList    picked;
 
     switch (opened_for) {
@@ -432,7 +432,8 @@ void ConsolePanel::Impl::openPicker()
         if (text.find(u8';') != String::npos) {
             // ';' separates the answers of a multiple read, so a path containing it cannot be expressed in that line:
             // say so instead of quietly writing a path that would be cut in half.
-            appendFormatted(ConsoleMessageType::Warning, vn::appfw::translate("appfw", "路径含 ';'，无法在这一行里表达: ") + text);
+            appendFormatted(ConsoleMessageType::Warning,
+                            vn::appfw::translate("appfw", "The path contains ';', which cannot be expressed on this line: ") + text);
             continue;
         }
         paths.push_back(text);

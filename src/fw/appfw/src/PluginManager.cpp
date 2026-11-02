@@ -25,11 +25,13 @@
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/StartupProgress.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/async/StopToken.hpp>
 #include <vine/logging/Log.hpp>
 #include <vine/runtime/DynamicLibraryLoader.hpp>
 
 #include "ApplicationData.hpp"
+#include "Format.hpp"
 #include "TranslationCatalog.hpp"
 
 VN_APPFW_NS_BEGIN
@@ -613,8 +615,8 @@ QueriedLibrary queryLibrary(const std::filesystem::path& library)
     }
     result.info = query();
     if (result.info != nullptr && result.info->name == String::fromUtf8(kFrameworkContext)) {
-        result.rejection = String::fromUtf8("Plugin library '" + toUtf8(library) +
-                                            "' uses the reserved translation context 'appfw'. Choose a unique plugin id.");
+        result.rejection =
+            String::fromUtf8("Plugin library '" + toUtf8(library) + "' uses the reserved translation context 'appfw'. Choose a unique plugin id.");
         result.info = nullptr;
     }
     return result;
@@ -1298,7 +1300,7 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
         // One unit per plugin, reported while the heaviest pass (the load() phase below) runs; the
         // phases around it only update the label, so the bar does not reach its end before the
         // plugins are really up.
-        startup->stage(u8"正在加载插件", static_cast<double>(plan.planned.size()));
+        startup->stage(translate("appfw", "Loading plugins"), static_cast<double>(plan.planned.size()));
     }
 
     for (const Candidate* candidate : plan.planned) {
@@ -1311,7 +1313,7 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
         }
 
         if (startup != nullptr) {
-            startup->setLabel(String::fromUtf8("正在创建插件 " + toUtf8(name)));
+            startup->setLabel(formatQt(translate("appfw", "Creating plugin %1"), name));
         }
         using CreateFn    = Plugin*();
         const auto create = candidate->lib->resolveSymbol<CreateFn*>(u8"vinePluginCreate");
@@ -1387,8 +1389,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
         PluginLoadContext      context(Application::current(), lp.name);
         if (startup != nullptr) {
-            startup->setLabel(
-                String::fromUtf8("正在加载插件 " + toUtf8(lp.name) + " (" + std::to_string(loaded_units + 1) + "/" + std::to_string(created.size()) + ")"));
+            startup->setLabel(formatQt(translate("appfw", "Loading plugin %1 (%2/%3)"), lp.name, loaded_units + 1, created.size()));
         }
         if (startup != nullptr && startup->stopToken().stop_requested()) {
             VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(lp.name));
@@ -1405,7 +1406,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
         RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
         PluginLoadContext      context(Application::current(), lp.name);
         if (startup != nullptr) {
-            startup->setLabel(String::fromUtf8("正在收尾插件 " + toUtf8(lp.name)));
+            startup->setLabel(formatQt(translate("appfw", "Finishing plugin %1"), lp.name));
         }
         co_await async::withStopToken(context.stopToken(), lp.plugin->postLoad(&context));
     }
@@ -1452,7 +1453,7 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
     // there is no sink and every report below is a no-op.
     StartupProgress* const startup = StartupProgress::current();
     if (startup != nullptr) {
-        startup->stage(u8"正在查找插件");
+        startup->stage(translate("appfw", "Looking for plugins"));
     }
 
     const std::vector<Candidate> candidates = collectCandidates(*this, d->discovered, d->policy_disabled, d->plugins);

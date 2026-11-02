@@ -16,12 +16,12 @@ class ToggleConsoleLogCommand : public Command {
   public:
     String group() const override
     {
-        return vn::appfw::translate("app_shell", "控制台");
+        return vn::appfw::translate("app_shell", "Console");
     }
 
     String description() const override
     {
-        return vn::appfw::translate("app_shell", "开启/关闭日志输出到控制台");
+        return vn::appfw::translate("app_shell", "Turn logging to the console on or off");
     }
 
     CommandFlags flags() const override

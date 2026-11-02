@@ -126,7 +126,7 @@ MainWindow::MainWindow()
     // The application button is the way into the Backstage / application menu, so its label is UI text like the rest
     // of this layer. It goes through RibbonBar's setter instead of writing into the SARibbon button directly: a host
     // that speaks another language then has one documented place to change, and the default stays in one place.
-    dptr()->ribbon_bar->setApplicationText(vn::appfw::translate("appfw", "文件"));
+    dptr()->ribbon_bar->setApplicationText(vn::appfw::translate("appfw", "File"));
 }
 
 MainWindow::~MainWindow()

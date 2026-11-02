@@ -24,7 +24,7 @@ AboutDialog::AboutDialog()
   : Window(new Impl(), new QDialog())
 {
     auto* root = impl<QDialog>();
-    root->setWindowTitle(translate("appfw", "关于"));
+    root->setWindowTitle(translate("appfw", "About"));
 
     auto* layout = new QVBoxLayout(root);
     layout->setContentsMargins(24, 20, 24, 20);

@@ -1,6 +1,6 @@
 # ADR-2026-11-01：翻译目录随模块走，内嵌进模块并可被文件覆盖
 
-- 状态：已采纳
+- 状态：已采纳（嵌入/归属的决定继续有效；文中“源串是中文、只交付英文目录”的措辞已过时——2026-11-02 起源语言是英文，见 `ADR-2026-11-02-english-source-language.md`）
 - 日期：2026-11-01
 - 相关：`../design/appfw-translation.md` §2.10、`ADR-2026-11-01-translation-scope.md`（选项 F 由本 ADR 取代）、`cmake/VinePluginHelper.cmake`、`cmake/VineEmbedShaders.cmake`
 

@@ -13,10 +13,10 @@ vn::async::Task<CommandResult> ShowConfigWindowCommand::execute(CommandExecution
 {
     auto* app = context ? context->application() : nullptr;
     if (!app) {
-        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "应用未就绪"));
+        co_return CommandResult(CommandStatus::Failed, vn::appfw::translate("app_shell", "The application is not ready"));
     }
     auto* win = new gui::ConfigWindow(app->configRegistry(), app->configManager());
-    win->setWindowTitle(vn::appfw::translate("app_shell", "设置"));
+    win->setWindowTitle(vn::appfw::translate("app_shell", "Settings"));
     win->resize(480, 360);
     win->exec();
     delete win;
