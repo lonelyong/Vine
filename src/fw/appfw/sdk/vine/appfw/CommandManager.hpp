@@ -13,6 +13,7 @@
 
 #include <vine/Events.hpp>
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/CommandArguments.hpp>
 #include <vine/raw_ptr.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -28,14 +29,34 @@ class VN_APPFW_API CommandExecutingEventArgs : public EventArgs {
     VN_OBJECT_META_DECL
 
   public:
-    explicit CommandExecutingEventArgs(Command* command);
+    /**
+     * @brief Constructs the notification for a command that is about to run.
+     *
+     * @param command   Command that is about to execute; must outlive the notification.
+     * @param arguments Arguments the execution carries; copied into the notification.
+     */
+    explicit CommandExecutingEventArgs(Command* command, const CommandArguments& arguments);
 
   public:
-    /// The command that is about to execute.
+    /**
+     * @brief Returns the command that is about to execute.
+     *
+     * @return The command; valid only during the notification.
+     */
     raw_ptr<Command> command() const;
+
+    /**
+     * @brief Returns the arguments the execution carries.
+     *
+     * @return The argument snapshot owned by the notification.
+     */
+    const CommandArguments& arguments() const;
 
   private:
     Command* command_;
+
+    /// Copied, not referenced: a handler may keep it after the notification returns.
+    CommandArguments arguments_;
 };
 
 /**
@@ -52,20 +73,45 @@ class VN_APPFW_API CommandExecutedEventArgs : public EventArgs {
     VN_OBJECT_META_DECL
 
   public:
-    explicit CommandExecutedEventArgs(Command* command, const CommandResult& result);
+    /**
+     * @brief Constructs the notification for a finished execution.
+     *
+     * @param command   Command that ran; must outlive the notification.
+     * @param result    Execution outcome; referenced, not copied, and valid for the notification only.
+     * @param arguments Arguments the execution carried; copied into the notification.
+     */
+    explicit CommandExecutedEventArgs(Command* command, const CommandResult& result, const CommandArguments& arguments);
 
   public:
-    /// The command that finished executing; valid only during the notification.
+    /**
+     * @brief Returns the command that finished executing.
+     *
+     * @return The command; valid only during the notification.
+     */
     raw_ptr<Command> command() const;
 
-    /// The execution result; valid only during the notification.
+    /**
+     * @brief Returns the execution result.
+     *
+     * @return The result; valid only during the notification.
+     */
     const CommandResult& result() const;
+
+    /**
+     * @brief Returns the arguments the execution carried.
+     *
+     * @return The argument snapshot owned by the notification.
+     */
+    const CommandArguments& arguments() const;
 
   private:
     Command* command_;
 
     /// Result owned by the manager for the duration of the notification.
     const CommandResult* result_;
+
+    /// Copied, so a handler pairing executing/executed sees the same arguments both times.
+    CommandArguments arguments_;
 };
 
 /**
@@ -103,6 +149,12 @@ struct CommandInfo {
 struct CommandHistoryEntry {
     /// Name reported by the command that ran.
     String name;
+
+    /// Arguments the execution carried, in canonical form (CommandArguments::toString()).
+    ///
+    /// Empty for an execution that ran without arguments. Together with the name this is the
+    /// replayable invocation: tokenizeCommandLine(args_record) reproduces the tokens the command saw.
+    String args_record;
 
     /// Meta class of the command that ran.
     TypeId command_class = nullptr;
@@ -277,6 +329,24 @@ class VN_APPFW_API CommandManager {
     CommandResult executeCommandAndWait(const String& name, const CommandTarget& target = {});
 
     /**
+     * @brief Starts a registered command by name with arguments, blocking until it finishes.
+     *
+     * @details
+     * - Same execution path as executeCommandAndWait(const String&, CommandTarget): own chain, subject to the
+     *   serialization gate, caller blocked.
+     * - The manager only carries the arguments; see CommandExecutionContext::arguments() for what a command does
+     *   with them.
+     * - The arguments are copied into the execution before it starts, so the caller may destroy them as soon as
+     *   this returns.
+     *
+     * @param name Registered command name, or an alias resolving to one.
+     * @param args Tokens the command receives; empty for a command that takes none.
+     * @param target What the dispatch resolved for this execution; everything null when it resolved nothing.
+     * @return The execution outcome; Failed when the name is not registered or disabled.
+     */
+    CommandResult executeCommandAndWait(const String& name, const CommandArguments& args, const CommandTarget& target = {});
+
+    /**
      * @brief Executes a command asynchronously.
      *
      * The returned task is lazy: the command starts when the task is awaited (or
@@ -308,6 +378,40 @@ class VN_APPFW_API CommandManager {
     vn::async::Task<CommandResult> executeCommandAsync(const String& name, const CommandTarget& target = {});
 
     /**
+     * @brief Executes a registered command by name with arguments, asynchronously.
+     *
+     * @details
+     * - Same execution path as executeCommandAsync(const String&, CommandTarget); the returned task owns copies of
+     *   both the name and the arguments, so they may be temporaries at the call site.
+     * - Arguments are carried, not interpreted: a command that needs typed values, defaults or validation owns
+     *   that logic (see CommandExecutionContext::arguments()).
+     *
+     * @param name Registered command name, or an alias resolving to one.
+     * @param args Tokens the command receives; empty for a command that takes none.
+     * @param target What the dispatch resolved for this execution; everything null when it resolved nothing.
+     * @return A lazy task yielding the execution outcome; Failed when not registered or disabled.
+     */
+    vn::async::Task<CommandResult> executeCommandAsync(const String& name, const CommandArguments& args, const CommandTarget& target = {});
+
+    /**
+     * @brief Executes one typed command line: splits it into tokens and dispatches the first one.
+     *
+     * @details
+     * - This is the text entry point, and the only place that calls tokenizeCommandLine(): the console, the startup
+     *   arguments, a macro replay and a test therefore share one dialect.
+     * - The first token is the command name (or an alias); the rest become the execution's arguments, uninterpreted.
+     * - A line that holds no token is refused with a Failed result saying so. A host that treats Enter on an empty
+     *   prompt as "nothing to do" filters the line before calling, which is what the console does.
+     * - What the arguments mean - positions, `--name`, missing or extra values - is the command's answer, not a
+     *   framework error, so this entry point never parses beyond splitting the line.
+     *
+     * @param line Text to split and dispatch.
+     * @param target What the dispatch resolved for this execution; everything null when it resolved nothing.
+     * @return A lazy task yielding the execution outcome; Failed when the line is empty or the name is not registered.
+     */
+    vn::async::Task<CommandResult> executeCommandLineAsync(const String& line, const CommandTarget& target = {});
+
+    /**
      * @brief Executes a registered command by name in the background.
      *
      * Fire-and-forget: a top-level entry point, so the command gets its own chain
@@ -330,6 +434,19 @@ class VN_APPFW_API CommandManager {
      *        clicked in, or the current document's view); everything null when it resolved nothing.
      */
     void executeDetached(const String& name, const CommandTarget& target = {});
+
+    /**
+     * @brief Executes a registered command by name with arguments in the background.
+     *
+     * @details
+     * - The fire-and-forget shape of executeDetached(const String&, CommandTarget): the arguments are copied before
+     *   this returns, and a refusal or failure is reported through Application::userIO() as well as logged.
+     *
+     * @param name Registered command name, or an alias resolving to one.
+     * @param args Tokens the command receives; empty for a command that takes none.
+     * @param target What the dispatch resolved for this execution; everything null when it resolved nothing.
+     */
+    void executeDetached(const String& name, const CommandArguments& args, const CommandTarget& target = {});
 
     /**
      * @brief Returns the command at the top of the foreground execution chain.
@@ -721,17 +838,20 @@ class VN_APPFW_API CommandManager {
     /// A top-level scope creates a fresh chain, which becomes the foreground chain and
     /// faces the serialization gate; a nested scope joins the chain the context passes
     /// in, which also skips the gate.
-    vn::async::Task<CommandResult> executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope, const CommandTarget& target);
+    vn::async::Task<CommandResult>
+    executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope, const CommandTarget& target, CommandArguments args);
 
-    /// Runs a registered command by name on a task that owns its own copy of the name.
+    /// Runs a registered command by name on a task that owns its own copy of the name and the arguments.
     ///
     /// A coroutine parameter is copied into the frame when the coroutine is called, so
     /// this is what makes the lazy task of executeCommandAsync(const String&) safe to
-    /// await after the caller's argument is gone.
+    /// await after the caller's arguments are gone.
     ///
     /// @param name Command or alias name, owned by the returned task.
+    /// @param args Arguments to carry, owned by the returned task.
+    /// @param target What the dispatch resolved for this execution.
     /// @return A lazy task yielding the execution outcome.
-    vn::async::Task<CommandResult> executeNamedCommand(String name, const CommandTarget& target);
+    vn::async::Task<CommandResult> executeNamedCommand(String name, CommandArguments args, const CommandTarget& target);
 
     /// Returns a strong reference to the foreground chain, or an empty pointer when
     /// nothing ran yet. Taken under the manager mutex and handed out by value, so the

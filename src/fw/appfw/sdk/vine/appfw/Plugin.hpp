@@ -70,11 +70,18 @@
  * and `CommandExecutionContext` gained `target()` returning a `CommandTarget{document, view}` (appended last), so the framework refuses a command whose
  * declared layer is missing instead of every command writing its own empty-chain guard.
  *
+ * 10u: command executions carry their arguments. `CommandExecutionContext` gained `arguments()` (appended last) -
+ * the tokens typed after the command name, split once by the framework so the quoting dialect is shared, and
+ * interpreted by the command itself. `CommandExecutingEventArgs`/`CommandExecutedEventArgs` carry the same tokens
+ * (their constructors and layout changed, hence the bump), and `CommandHistoryEntry` records them so an execution can
+ * be replayed. The manager carries arguments only: it does not type, validate or store them, and it never writes them
+ * into a command instance - see `.ai/design/appfw-command-manager.md`.
+ *
  * The name says *plugin* ABI on purpose: it is not the release version (that is
  * VN_APPFW_VERSION in appfw_global.hpp, diagnostic only), and it says nothing about
  * the host's own binaries, which are built and rebuilt together with the framework.
  */
-#define VN_APPFW_PLUGIN_ABI_VERSION 9u
+#define VN_APPFW_PLUGIN_ABI_VERSION 10u
 
 VN_APPFW_NS_BEGIN
 

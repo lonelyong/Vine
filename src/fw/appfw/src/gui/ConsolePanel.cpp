@@ -500,6 +500,18 @@ void ConsolePanel::Impl::onTextChanged()
         suggest->hide();
         return;
     }
+
+    // Completion covers the command name only: once the line holds a separator the popup has
+    // nothing to offer, because what follows is an argument the command itself interprets.
+    for (std::size_t i = 0; i < current.size(); ++i) {
+        const char8_t ch = current.data()[i];
+        if (ch == u8' ' || ch == u8'\t') {
+            matches.clear();
+            suggest->hide();
+            return;
+        }
+    }
+
     matches = completer.complete(current);
     updateSuggest();
 }

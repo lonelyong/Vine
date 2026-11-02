@@ -261,7 +261,7 @@
 
 ### 9.3 兼容性 / 迁移
 
-`VN_APPFW_PLUGIN_ABI_VERSION` 当前 **8u**；`VN_DECLARE_PLUGIN` 参数个数变更后所有插件必须重编。
+`VN_APPFW_PLUGIN_ABI_VERSION` 当前 **10u**；`VN_DECLARE_PLUGIN` 参数个数变更后所有插件必须重编。
 
 ## 10. 参考
 

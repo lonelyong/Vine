@@ -9,6 +9,7 @@
 
 #include <vine/Object.hpp>
 #include <vine/String.hpp>
+#include <vine/appfw/CommandArguments.hpp>
 #include <vine/async/Task.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -352,6 +353,23 @@ class VN_APPFW_API CommandExecutionContext {
      * @return The target of this execution (never null itself; its layers may be).
      */
     virtual const CommandTarget& target() const = 0;
+
+    /**
+     * @brief Returns the tokens that followed the command name.
+     *
+     * @details
+     * - The framework carries the tokens only: splitting the line is shared (one quoting dialect),
+     *   interpreting it - positions, `--name`, a private grammar - is the command's own business.
+     * - An execution without arguments returns an empty instance, never a null one, so a command reads
+     *   it without guarding for absence.
+     * - The arguments are copied into the execution frame at dispatch, so they are immutable here and
+     *   may be read from whatever thread the command resumes on.
+     * - The returned reference is valid for the whole execution; a command that keeps it beyond its
+     *   execute() call reads a dead frame.
+     *
+     * @return The arguments of this execution.
+     */
+    virtual const CommandArguments& arguments() const = 0;
 };
 
 /**

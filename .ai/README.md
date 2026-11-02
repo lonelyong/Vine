@@ -31,12 +31,13 @@
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 - `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
 
-**appfw（16）**
+**appfw（17）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
 - `appfw-startup-splash.md` —— 启动框与启动进度。
 - `appfw-render-surface.md` —— 渲染表面生命周期与平台回退。
 - `appfw-render-view.md` —— 渲染视图设计（四层 API、配方归链、输入路由、着色模式）。
 - `appfw-command-manager.md` —— CommandManager。
+- `appfw-command-arguments.md` —— 命令参数：一份分词、随执行携带、命令自解、历史/事件可回放。
 - `appfw-eventbus.md` —— EventBus。
 - `appfw-plugin-system.md` —— 插件系统（含禁用与反初始化）。
 - `appfw-config.md` —— 配置子系统。
@@ -93,13 +94,14 @@
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
-## backlog/ —— 开放待办（7）
+## backlog/ —— 开放待办（8）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
 
 - `graphics.md` —— graphics / vsg 的开放待办（内容、后端资源、平台、对象模型）。
 - `appfw-startup.md` —— 启动流程剩余项（Windows 半边）。
 - `appfw-ribbon.md` —— Ribbon 的开放项（order、item id、自定义布局、上下文 tab、manifest）。
+- `appfw-command-arguments.md` —— 命令参数的剩余项（声明式参数、帮助/补全、缺参提问、对象参数、长度上界）。
 - `appfw-app-info.md` —— 应用信息的开放项（构建期版本、清单与第三方致谢）。
 - `appfw-translation.md` —— 翻译的开放项（运行期切换、第一本英文目录、插件元数据、lupdate 门禁、覆盖位部署规则）。
 - `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。

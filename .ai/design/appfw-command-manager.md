@@ -1,9 +1,9 @@
 # appfw CommandManager 设计
 
 > **状态**：现行
-> **最后核对**：2026-10-28
-> **范围**：命令注册/执行链/历史/禁用/结果状态；对话框与输入输出见 `appfw-userio.md`。
-> **权威来源**：`CommandManager.hpp`、`Command.hpp`、`tests/test_gui`。
+> **最后核对**：2026-11-03
+> **范围**：命令注册/执行链/历史/禁用/结果状态/参数携带；对话框与输入输出见 `appfw-userio.md`。
+> **权威来源**：`CommandManager.hpp`、`Command.hpp`、`CommandArguments.hpp`、`tests/test_appfw/CommandArgumentsTest.cpp`。
 > **待办**：无（开放项见 `../backlog/`）
 
 ## 1. 概要设计
@@ -87,6 +87,10 @@ Chain ── vector<Command*> commands (栈, innermost 在尾)
 - `Signal` 本体是线程安全快照（不可变表 + 原子发布）；订阅/发火可并发。
 - 禁用偏好的读-改-写不是原子的（只有 UI 线程调；`ConfigManager` 自身加锁），有意不加互斥。
 
+### 2.5 参数随执行走
+
+名字入口不携带调用者数据、实例入口靠字段携带，两者的差别是**来源**而不是两套机制：token 由框架切一次、随执行帧送到 `context.arguments()`，含义归命令（见 `appfw-command-arguments.md`）。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -166,6 +170,8 @@ Chain ── vector<Command*> commands (栈, innermost 在尾)
 | 接口 | 契约 | 备注 |
 | --- | --- | --- |
 | `executeCommandAsync(Command*)` / `(name)` | 顶层异步 | 异常转 `Failed` |
+| `executeCommandAsync(name, args, target)` / `executeCommandAndWait(name, args, target)` / `executeDetached(name, args, target)` | 带参数的名字入口 | 参数只被携带 |
+| `executeCommandLineAsync(line, target)` | 文本入口 | 唯一调用 `tokenizeCommandLine` 的地方 |
 | `executeCommandAndWait(...)` | 阻塞 | 工具/测试 |
 | `executeDetached(...)` | fire-and-forget | 失败写 `UserIO` |
 | `cancelCurrent()` / `cancelAll()` / `cancelAllAndWait(timeout)` | 取消 | 链独立 |
@@ -181,6 +187,7 @@ Chain ── vector<Command*> commands (栈, innermost 在尾)
 | --- | --- | --- |
 | `execute(CommandExecutionContext&)` | 命令体 | 协程 |
 | `flags()` / `name()` / `group()` | 元数据 | 锁外调用 |
+| `arguments()` | 本次执行的 token | 不可变、随帧存活 |
 | `executeChild(name)` / `executeChild(unique_ptr<Command>)` | 嵌套 | 入父链 |
 | `stopToken()` / `isCancelled()` | 取消 | 只停不换 |
 
@@ -267,10 +274,11 @@ Chain ── vector<Command*> commands (栈, innermost 在尾)
 
 ### 9.1 当前状态
 
-四个入口、链模型、排他、取消/排空、历史、禁用、`NotApplicable`、对话框均已落地。
+四个入口、链模型、排他、取消/排空、历史、禁用、`NotApplicable`、对话框均已落地；参数携带见 `appfw-command-arguments.md`。
 
 ### 9.2 已知缺口 / 待办
 
+- 参数只有 token：没有声明、类型、默认值与必选，未知/重复参数由命令自行报告；见 `.ai/backlog/appfw-command-arguments.md`。
 - 排他不是入场锁；运行期普通顶层命令仍可能与排他并存。
 - 禁用偏好的读-改-写不是原子的（只有 UI 线程调，未加互斥）；命令禁用/卸载不改变注册表布局，插件重注册会带着偏好回来。
 
@@ -282,19 +290,11 @@ Chain ── vector<Command*> commands (栈, innermost 在尾)
 
 ### 10.1 代码
 
-- `src/fw/appfw/sdk/vine/appfw/CommandManager.hpp`
-- `src/fw/appfw/sdk/vine/appfw/Command.hpp`
-- `src/fw/appfw/src/CommandManager.cpp`
-- `src/fw/appfw/src/gui/CommandManagerDialog.cpp`
+- `src/fw/appfw/sdk/vine/appfw/`：`CommandManager.hpp`、`Command.hpp`
+- `src/fw/appfw/src/`：`CommandManager.cpp`、`gui/CommandManagerDialog.cpp`
 - `tests/test_gui/test_gui.cpp`
 
 ### 10.2 文档与 ADR
 
-- `appfw-userio.md`
-- `appfw-eventbus.md`
-- `../backlog/`
-
-### 10.3 外部资料
-
-- `Signal` 的线程安全快照语义。
-- `ProgressHost` 的前台宿主语义。
+- `appfw-userio.md`、`appfw-eventbus.md`、`appfw-command-arguments.md`、`../backlog/`
+- 外部资料：`Signal` 的线程安全快照语义；`ProgressHost` 的前台宿主语义。

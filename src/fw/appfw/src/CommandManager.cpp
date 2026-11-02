@@ -37,8 +37,9 @@ VN_APPFW_NS_BEGIN
 
 VN_OBJECT_META_IMPL(CommandExecutingEventArgs, EventArgs)
 
-CommandExecutingEventArgs::CommandExecutingEventArgs(Command* command)
+CommandExecutingEventArgs::CommandExecutingEventArgs(Command* command, const CommandArguments& arguments)
   : command_(command)
+  , arguments_(arguments)
 {}
 
 raw_ptr<Command> CommandExecutingEventArgs::command() const
@@ -46,11 +47,17 @@ raw_ptr<Command> CommandExecutingEventArgs::command() const
     return command_;
 }
 
+const CommandArguments& CommandExecutingEventArgs::arguments() const
+{
+    return arguments_;
+}
+
 VN_OBJECT_META_IMPL(CommandExecutedEventArgs, EventArgs)
 
-CommandExecutedEventArgs::CommandExecutedEventArgs(Command* command, const CommandResult& result)
+CommandExecutedEventArgs::CommandExecutedEventArgs(Command* command, const CommandResult& result, const CommandArguments& arguments)
   : command_(command)
   , result_(&result)
+  , arguments_(arguments)
 {}
 
 raw_ptr<Command> CommandExecutedEventArgs::command() const
@@ -61,6 +68,11 @@ raw_ptr<Command> CommandExecutedEventArgs::command() const
 const CommandResult& CommandExecutedEventArgs::result() const
 {
     return *result_;
+}
+
+const CommandArguments& CommandExecutedEventArgs::arguments() const
+{
+    return arguments_;
 }
 
 namespace
@@ -574,12 +586,13 @@ struct CommandManager::Impl {
      *
      * @param owner   Manager firing the event.
      * @param command Command that ran; must outlive the call.
+     * @param args    Arguments the execution carried.
      * @param result  Outcome to report.
      */
-    void report(CommandManager& owner, Command& command, const CommandResult& result);
+    void report(CommandManager& owner, Command& command, const CommandArguments& args, const CommandResult& result);
 
     /// Appends the execution to the bounded history; best effort.
-    void recordHistory(const Command& command, const CommandResult& result);
+    void recordHistory(const Command& command, const CommandArguments& args, const CommandResult& result);
 
     /// Application that owns this manager (non-owning).
     Application* app;
@@ -783,29 +796,29 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, ChainScope 
     return true;
 }
 
-void CommandManager::Impl::report(CommandManager& owner, Command& command, const CommandResult& result)
+void CommandManager::Impl::report(CommandManager& owner, Command& command, const CommandArguments& args, const CommandResult& result)
 {
     logOutcome(command, result);
 
-    CommandExecutedEventArgs args(&command, result);
-    fireEvent(owner.executed, owner, args);
+    CommandExecutedEventArgs event_args(&command, result, args);
+    fireEvent(owner.executed, owner, event_args);
 
-    recordHistory(command, result);
+    recordHistory(command, args, result);
 }
 
-void CommandManager::Impl::recordHistory(const Command& command, const CommandResult& result)
+void CommandManager::Impl::recordHistory(const Command& command, const CommandArguments& args, const CommandResult& result)
 {
     // The execution is recorded by value: the command instance is owned by the caller
     // and is destroyed as soon as the execution finishes, so keeping a pointer to it
     // would leave the history dangling. The snapshot is built before the lock is
-    // taken - name() and getType() are command code, and no user callback runs while
+    // taken - name(), toString() and getType() are command/argument code, and no user callback runs while
     // this manager's lock is held - and a record that cannot be built or appended is
     // only logged, never reported.
     try {
         // The payload is deliberately not retained: the history answers "what ran and how did it
         // end", and keeping the std::any would hold up to maxHistoryEntries() command results -
         // possibly large buffers - alive for the lifetime of the manager.
-        const CommandHistoryEntry   entry{ command.name(), command.getType(), CommandResult(result.status(), result.message()) };
+        const CommandHistoryEntry   entry{ command.name(), args.toString(), command.getType(), CommandResult(result.status(), result.message()) };
         std::lock_guard<std::mutex> lock(mutex);
         if (history.size() >= CommandManager::maxHistoryEntries()) {
             history.pop_front();
@@ -896,10 +909,11 @@ void CommandManager::Impl::setDisabledPreference(const String& name, bool disabl
  */
 class CommandManager::Context : public CommandExecutionContext {
   public:
-    Context(CommandManager* manager, std::shared_ptr<Chain> chain, const CommandTarget& target)
+    Context(CommandManager* manager, std::shared_ptr<Chain> chain, const CommandTarget& target, const CommandArguments& args)
       : manager_(manager)
       , chain_(std::move(chain))
       , target_(target)
+      , arguments_(args)
     {}
 
     Application* application() const override
@@ -945,7 +959,7 @@ class CommandManager::Context : public CommandExecutionContext {
         if (!command) {
             co_return failedResult(refusalMessage(name, disabled));
         }
-        co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested, target_);
+        co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested, target_, CommandArguments{});
     }
 
     vn::async::Task<CommandResult> executeChild(std::unique_ptr<Command> command) override
@@ -971,12 +985,17 @@ class CommandManager::Context : public CommandExecutionContext {
 
         // The parameter lives in this frame, so the child stays alive for its whole execution and
         // is destroyed when this coroutine returns.
-        co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested, target_);
+        co_return co_await manager_->executeCommandAsyncImpl(command.get(), chain_, ChainScope::Nested, target_, CommandArguments{});
     }
 
     const CommandTarget& target() const override
     {
         return target_;
+    }
+
+    const CommandArguments& arguments() const override
+    {
+        return arguments_;
     }
 
   private:
@@ -985,6 +1004,10 @@ class CommandManager::Context : public CommandExecutionContext {
 
     // What the dispatch resolved for this execution, or empty (see CommandTarget).
     CommandTarget target_;
+
+    // Tokens the dispatch carried. Aliases the execution frame's copy, which outlives this
+    // context and the command's execute() call; the context never owns or modifies them.
+    const CommandArguments& arguments_;
 };
 
 CommandManager::CommandManager(Application* app)
@@ -1033,6 +1056,11 @@ CommandResult CommandManager::executeCommandAndWait(const String& name, const Co
     return executeCommandAsync(name, target).result();
 }
 
+CommandResult CommandManager::executeCommandAndWait(const String& name, const CommandArguments& args, const CommandTarget& target)
+{
+    return executeCommandAsync(name, args, target).result();
+}
+
 vn::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* command, const CommandTarget& target)
 {
     // The disabled-instance check is inside the funnel on purpose: it calls
@@ -1048,7 +1076,7 @@ vn::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* comm
             co_return failedResult(refusalMessage(command_name, /*disabled=*/true));
         }
 
-        co_return co_await executeCommandAsyncImpl(command, /*chain=*/{}, ChainScope::TopLevel, target);
+        co_return co_await executeCommandAsyncImpl(command, /*chain=*/{}, ChainScope::TopLevel, target, CommandArguments{});
     });
 }
 
@@ -1057,12 +1085,34 @@ vn::async::Task<CommandResult> CommandManager::executeCommandAsync(const String&
     // The copy happens here, while the caller's argument is still alive: the task is
     // lazy, so a coroutine that held a reference to name would read a destroyed
     // temporary when the caller awaits it later.
-    return executeNamedCommand(String(name), target);
+    return executeNamedCommand(String(name), CommandArguments{}, target);
 }
 
-vn::async::Task<CommandResult> CommandManager::executeNamedCommand(String name, const CommandTarget& target)
+vn::async::Task<CommandResult> CommandManager::executeCommandAsync(const String& name, const CommandArguments& args, const CommandTarget& target)
 {
-    return runGuarded([this, name = std::move(name), target]() -> vn::async::Task<CommandResult> {
+    // Same reason as the overload above: both the name and the arguments are copied into
+    // the task before this returns, so temporaries at the call site stay safe.
+    return executeNamedCommand(String(name), args, target);
+}
+
+vn::async::Task<CommandResult> CommandManager::executeCommandLineAsync(const String& line, const CommandTarget& target)
+{
+    // Splitting happens here, in the one text entry point; the command name is the first
+    // token and everything after it is carried uninterpreted. This function is not a
+    // coroutine on purpose: it hands the copies to executeNamedCommand(), which owns them.
+    std::vector<String> tokens = tokenizeCommandLine(line);
+    if (tokens.empty()) {
+        return runGuarded([]() -> vn::async::Task<CommandResult> { co_return failedResult(translate("appfw", "No command was given.")); });
+    }
+
+    String name = std::move(tokens.front());
+    tokens.erase(tokens.begin());
+    return executeNamedCommand(std::move(name), CommandArguments(std::move(tokens)), target);
+}
+
+vn::async::Task<CommandResult> CommandManager::executeNamedCommand(String name, CommandArguments args, const CommandTarget& target)
+{
+    return runGuarded([this, name = std::move(name), args = std::move(args), target]() -> vn::async::Task<CommandResult> {
         bool                     disabled = false;
         std::unique_ptr<Command> command  = createCommandByName(name, &disabled);
         if (!command) {
@@ -1070,7 +1120,7 @@ vn::async::Task<CommandResult> CommandManager::executeNamedCommand(String name, 
             // was never registered: it can be re-enabled in the command manager.
             co_return failedResult(refusalMessage(name, disabled));
         }
-        co_return co_await executeCommandAsyncImpl(command.get(), /*chain=*/{}, ChainScope::TopLevel, target);
+        co_return co_await executeCommandAsyncImpl(command.get(), /*chain=*/{}, ChainScope::TopLevel, target, std::move(args));
     });
 }
 
@@ -1098,7 +1148,7 @@ std::unique_ptr<Command> CommandManager::createCommandByName(const String& name,
 }
 
 vn::async::Task<CommandResult>
-CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope, const CommandTarget& target)
+CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain> chain, ChainScope scope, const CommandTarget& target, CommandArguments args)
 {
     if (!command) {
         co_return failedResult(String(u8"Command is null"));
@@ -1198,7 +1248,7 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
     } guard{ chain.get(), command };
 
     // The chain exists from here on (admit() above created it), so the context can hold it.
-    Context context(this, chain, target);
+    Context context(this, chain, target, args);
 
     // Undoable commands notify the document to snapshot its state first. The
     // handler is taken under the lock and called outside it: it is user code from
@@ -1225,8 +1275,8 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
         }
     }
 
-    CommandExecutingEventArgs args(command);
-    fireEvent(executing, *this, args);
+    CommandExecutingEventArgs event_args(command, args);
+    fireEvent(executing, *this, event_args);
 
     CommandResult result;
     try {
@@ -1243,7 +1293,7 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
             // It ran (the executing event was fired), so it owes its own executed
             // event and history entry before the exception travels to the parent:
             // a consumer pairing the two events must see a pair for every run.
-            d->report(*this, *command, cancelledResult());
+            d->report(*this, *command, args, cancelledResult());
             throw;
         }
         result = cancelledResult();
@@ -1260,12 +1310,17 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
         result = failedResult(String(u8"command threw an exception"));
     }
 
-    d->report(*this, *command, result);
+    d->report(*this, *command, args, result);
 
     co_return result;
 }
 
 void CommandManager::executeDetached(const String& name, const CommandTarget& target)
+{
+    executeDetached(name, CommandArguments{}, target);
+}
+
+void CommandManager::executeDetached(const String& name, const CommandArguments& args, const CommandTarget& target)
 {
     // Backstop for the fire-and-forget path: DetachedTask terminates the process
     // on an uncaught exception, and this wrapper has no caller to report to.
@@ -1312,7 +1367,7 @@ void CommandManager::executeDetached(const String& name, const CommandTarget& ta
             // asynchronous read completes it), so this must not touch userIO() directly:
             // the GUI one writes to a QWidget.
             reportToUser(*app, result.message().empty() ? translate("appfw", "The command failed") : result.message());
-        }(owner, executeCommandAsync(name, target));
+        }(owner, executeCommandAsync(name, args, target));
     }
     catch (const std::exception& e) {
         VN_LOGE("Detached command could not be started: {}", e.what());

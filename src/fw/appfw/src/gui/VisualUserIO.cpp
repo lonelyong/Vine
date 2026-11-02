@@ -541,6 +541,12 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
         return;
     }
 
+    // Enter on an empty prompt is not a command: the panel has already cleared the line, and
+    // dispatching a blank line would report "the command \"\" is not registered".
+    if (text.trimmed().empty()) {
+        return;
+    }
+
     if (owner->commandManager() && owner->commandManager()->runningCount() > 0) {
         if (console) {
             console->append(ConsoleMessageType::Warning, vn::appfw::translate("appfw", "A command is running, please wait"));
@@ -576,7 +582,7 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
 
             const auto& message = result.message();
             self->appendOnApplicationThread(message.empty() ? vn::appfw::translate("appfw", "The command failed") : message, ConsoleMessageType::Error);
-        }(this, owner->commandManager()->executeCommandAsync(text, resolveCommandTarget(MainWindow::current())));
+        }(this, owner->commandManager()->executeCommandLineAsync(text, resolveCommandTarget(MainWindow::current())));
     }
 }
 

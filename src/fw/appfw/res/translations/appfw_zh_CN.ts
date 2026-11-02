@@ -855,5 +855,9 @@
         <source>Required, click to set</source>
         <translation>必填，点击设置</translation>
     </message>
+    <message>
+        <source>No command was given.</source>
+        <translation>没有输入命令。</translation>
+    </message>
 </context>
 </TS>

@@ -41,7 +41,7 @@ base 的 `ProgressIndicator`/Range/Scope 继续做零依赖的进度算术。
 - **呈现层**：`gui::ProgressPresenter`、`ConsoleProgressReporter`。
 
 依赖方向：appfw → `vn::Progress`；`ProgressHost.hpp` 按值返回 range/scope，所以 appfw 里
-`vn::Progress` 是 **PUBLIC** 链接。`VN_APPFW_PLUGIN_ABI_VERSION` 当前 **8u**。
+`vn::Progress` 是 **PUBLIC** 链接。`VN_APPFW_PLUGIN_ABI_VERSION` 当前 **10u**。
 
 ### 2.2 推送模型
 

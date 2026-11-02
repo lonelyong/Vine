@@ -28,7 +28,7 @@
 - 同步门 = `MainThreadDispatcher::runToCompletion()`（pump 只派发 `deliverPostedCalls()`）；
   **不能用 `Task::result()`**，它只阻塞不派发，钩子“回到应用线程”那一步会死锁。
 - 钩子返回 `Task<void>`，**每条出口都要 `co_return;`**；缺了它函数不是协程，返回空 `Task`，`co_await` 必 `ud2`。
-- `VN_APPFW_PLUGIN_ABI_VERSION` = **8u**。
+- `VN_APPFW_PLUGIN_ABI_VERSION` = **10u**。
 - `uuid` 是身份：同名不同 uuid（第一个位置胜）、不同名同 uuid（都留下）、注册文件与库不符（库为准）都只 warning。
 - `Application::shutdown()` 是 protected：只有 `run()` 的收尾路径调它；宿主/命令/插件停进程用 `exit()`。
   循环还在跑或从非应用线程调 `shutdown()`，只警告不拒绝。
@@ -89,6 +89,14 @@
   setWidget 之后再 `setAutoFillBackground(false)`，否则透明页面上会出现一块灰底。
 - 顶层覆盖窗（Backstage）跟随主窗口：拖动时要在**同一调用里**同步覆盖层几何；只靠主窗口的 `Move`
   事件会依赖平台是否同步派发，排队时两窗口会差一帧。
+
+## 命令
+
+- 参数只被**携带**：`executeCommandLineAsync(line)` 切词（`tokenizeCommandLine`，Windows C 运行库引号规则），
+  其余 token 进 `CommandArguments`，命令从 `context.arguments()` 读；含义（位置、`--name`、缺参、类型）归命令。
+- 参数**不写进命令对象**：实例由工厂默认构造、跑完即销毁；例外写法是在 `execute()` 开头绑成局部结构。
+- 历史与 `executing`/`executed` 记 `args_record = toString()`，与 `tokenizeCommandLine` 往返恒等 ⇒ 可回放。
+- 实例入口 `executeCommandAsync(Command*, target)` 不接参数（字段就是参数）；空行在派发前被拒。
 
 ## 公共面
 
