@@ -199,8 +199,8 @@
 
 ### 6.1 改了源串却没跑 `lupdate`（P1）
 - 会怎么错：目录里旧源串失效，新文案回退成中文（在英文界面里露出中文）。
-- 怎么判：`lupdate` 输出里的 obsoleted/missing 计数；CI 跑一次 lupdate 并检查 `.ts` 有 diff。
-- 怎么防：改文案的提交与 `.ts` 更新放同一个提交。
+- 怎么判：`python3 scripts/check_translations.py`——它对每个 `vn_add_translations()` 的模块在自己的源码上跑一次 `lupdate`（比对的是 `(context, source)` 集合与译文是否完成，不是文件字节）。
+- 怎么防：改文案的提交与 `.ts` 更新放同一个提交；门禁报 `missing source` / `obsolete source` / `no English translation` 时，按它给出的 `lupdate` 命令重生成那一本 `.ts`。
 
 ### 6.2 装载顺序（P2）
 - 会怎么错：`QTranslator` 是**后装先查**；插件 translator 若早于框架装，会把框架的同形文案抢走。
@@ -268,6 +268,7 @@
 | T6 | 模块旁的同名 `.qm` 覆盖内嵌版本 | `TranslationTest.ALooseFileOverridesTheEmbeddedCatalog`（构建期 `lrelease` 产出 `override/i18n_fixture_en.qm`） |
 | T7 | 插件目录在它自己的代码之前装好，卸载后移除 | `TranslationTest.APluginCatalogComesFromThePluginItself`（夹具插件内嵌 `:/i18n/i18n_fixture_en.qm`） |
 | T8 | 批量装载失败不留下目录 | `TranslationTest.AFailedBatchLoadLeavesNoCatalogInstalled`（夹具插件构造即抛，内嵌 `:/i18n/i18n_throwing_en.qm`） |
+| T9 | 目录与源码一致（不缺、不陈旧、都译完） | `python3 scripts/check_translations.py` |
 
 ## 9. 状态与演进
 
@@ -279,7 +280,7 @@
 
 ### 9.2 已知缺口 / 待办
 
-见 `../backlog/appfw-translation.md`：运行期切换、英文目录、插件元数据、`.ts` 与 lupdate 的 CI 检查、崩溃窗口的文案注入（T7）与报告字段名（T8）。本轮不碰崩溃窗口：它的界面文案与报告字段名仍是硬编码中文。
+见 `../backlog/appfw-translation.md`：运行期切换、英文目录、插件元数据、崩溃窗口的文案注入（T7）与报告字段名（T8）。本轮不碰崩溃窗口：它的界面文案与报告字段名仍是硬编码中文。
 
 ### 9.3 兼容性 / 迁移
 
@@ -290,5 +291,6 @@
 
 - 代码：`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`、`src/fw/appfw/sdk/vine/appfw/Translation.hpp`、`src/fw/appfw/src/TranslationCatalog.hpp`、`src/fw/appfw/src/Application.cpp`、`src/fw/appfw/src/gui/GuiApplication.cpp`、`src/fw/appfw/src/PluginManager.cpp`。
 - 构建：`cmake/VinePluginHelper.cmake`（插件目录与安装路径）、`cmake/VineEmbedShaders.cmake`（“真实文件、装进二进制”的同类先例）、`cmake/VineLibraryHelper.cmake`（薄封装的写法参照）。
+- 脚本：`scripts/check_translations.py`（目录与源码的一致性门禁，P1、T9）。
 - 文档：`appfw-backstage.md`（界面文案的现有排布与文案长度约束）、`appfw-plugin-system.md`（插件加载顺序）。
 - 外部：Qt Linguist 手册（`lupdate` / `lrelease` / `QTranslator` / `QCoreApplication::translate`）。
