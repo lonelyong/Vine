@@ -18,12 +18,14 @@
 - 值层 `ConfigManager`：key → 值，线程安全，变化通知。
 - 描述层 `ConfigRegistry`：`ConfigCategory → ConfigGroup → ConfigItem`，key 全树唯一。
 - 视图层 `gui::ConfigWindow`：由描述树生成编辑器，值来自 `ConfigManager`。
+- 需要重启的策略随 `ConfigItem` 走（`restartRequired()`），“现在是否有改动待生效”随本次运行走（`Application::pendingRestartKeys()`）。
 
 ### 1.3 非目标
 
 - 不给 `ConfigManager` 加“存储类型查询”API；不为一个 GUI 细节扩公共面。
 - 不做 fsync；只保证“要么旧内容要么新内容”。
 - 不在 `ConfigWindow` 里监听注册表变化自动重建；窗口是快照。
+- 不在配置层重启应用：框架只回答“是否待重启”，重启得走宿主自己的关停流程（未保存的文档、插件卸载顺序都归宿主）。
 
 ### 1.4 一句话结论
 
@@ -58,6 +60,15 @@
 - **数值项未声明 range 时不夹取**：int 用整个 `int` 范围，double 用 ±1e15。
 - 编辑立即写回 `ConfigManager`；`refresh()` 期间屏蔽编辑器信号。
 
+### 2.4 需要重启的配置：策略在描述层，状态在运行层（G1、G4、G11）
+
+- **策略**：`ConfigItem::restartRequired()` 声明“这个 key 只在启动时被读一次”。它是描述，不是请求——登记它的模块必须保证承诺成立：运行期再读它的人会拿到新值，而其它人还跑在旧值上。
+- **状态**：`Application::pendingRestartKeys()` 回答“现在有没有改动待生效”。基准是 `initialize()` 刚载入配置时的 `ConfigSnapshot`；读值从不移动基准，改回启动值就不再待生效。
+- **为什么必须分两层**：只有策略能挂在 `ConfigItem` 上；把策略当状态用（“此项目前待重启”）会在没有任何改动时就报警（G1）。
+- **存储不是策略**：编辑立即写回（§2.3），所以**存的是新值、窗口显示的是新值、运行行为是旧值**；`ConfigWindow` 因此用“行标签提示 + 顶部提示条”表达后果，而不是延迟写入。
+- **比较的是存储值**：key 缺失与“存着默认值”算不同。`general.language` 的 `system` 与“key 缺失”是同一意图的两种写法，所以改选“跟随系统”可能报一次待重启——宁可多报，不可漏报（N6）。
+- **谁提醒**：`ConfigWindow` 是今天的唯一消费者（逐行提示 + 顶部条）；宿主可以用 `pendingRestartKeys()` 自己做状态栏或退出提示。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -69,6 +80,7 @@
 | F3 | 保存/加载 | `QSaveFile` 原子写；JSON 装载整体替换 | 已落地 |
 | F4 | 描述树 | `ConfigRegistry` 树、key 唯一、owner 缓存 | 已落地 |
 | F5 | 配置窗口 | 快照 + key 配对 + 未声明 range 不夹取 | 已落地 |
+| F6 | 需要重启的配置 | `restartRequired()` 声明策略；`pendingRestartKeys()` 给状态；窗口逐行提示 + 顶部条 | 已落地 |
 
 ### 3.1.1 F1 值存储
 
@@ -112,6 +124,15 @@
   `UnboundedNumbersAreNotClamped`。
 - **注意**（N5）：窗口是快照，构造后注册的项要重建窗口才出现。
 
+### 3.1.6 F6 需要重启的配置
+
+- **行为**：带 `restartRequired()` 的项在行标签后加“（重启后生效）”；当 `pendingRestartKeys()` 非空时，窗口顶部显示一条“有改动需要重启才能生效”。
+- **约束**（C6）：状态只在 `Application` 上，窗口每次问它——两个窗口给同一个答案，后开的窗口也知道先前改过什么。
+- **要求**（R6）：改回启动值后不再待生效；不需要重启的 key 永远不进列表；列表为空时提示条隐藏。
+- **验收**（T8）：`ConfigTest.OnlyRestartRequiredItemsCanBePending`、`ConfigTest.TheBaselineIsThisRunNotTheProcess`、
+  `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange`。
+- **注意**（N6）：比较的是存储值，不是效果；`system` 与 key 缺失算不同。
+
 ## 4. 公开接口
 
 ### 4.1 `ConfigManager`
@@ -123,6 +144,7 @@
 | `clear()` / `remove(key)` | 整体/单键删除 | 空配置 clear 不发 |
 | `save()` / `loadJson()` / `load()` | 原子写/整体替换 | 父目录由宿主创建 |
 | `changed` | `Signal<ConfigChangedEventArgs>` | 空 key = 整体变化 |
+| `snapshot()` | 拷贝当前值，与后续写入无关 | 值层；`ConfigSnapshot` 自己不知道 item |
 
 ### 4.2 `ConfigRegistry`
 
@@ -130,6 +152,7 @@
 | --- | --- | --- |
 | `addCategory/addGroup/addItem` | 建树；key 全树唯一 | owner 缓存 |
 | `item(key)` / `itemsForPlugin(p)` | 查询 | 裸指针；key 升序 |
+| `restartRequiredKeys()` | 带重启策略的 key，按名排序 | 只答策略，不答状态 |
 | `removeItem/removeCategory/clear` | 删除并清理 owner | 节点失效 |
 
 ### 4.3 `ConfigItem` / `ConfigWindow`
@@ -137,7 +160,10 @@
 | 接口 | 契约 | 备注 |
 | --- | --- | --- |
 | fluent builder（`description` / `range` / `choices` …） | 描述项 | 见 `ConfigItem.hpp` |
+| `restartRequired()` / `restartRequired(bool)` | 声明/读取重启策略 | 与 `readOnly()` 同形 |
 | `gui::ConfigWindow` | 由描述树生成编辑器 | 快照 + key 配对 |
+| `Application::pendingRestartKeys()` | 与启动快照不同的、带策略的 key | 状态随本次运行 |
+| `ConfigSnapshot::divergedKeys()` | 两组值在给定 key 上的差异 | 比较两个快照 |
 
 ## 5. 约束、要求与不变量
 
@@ -150,6 +176,7 @@
 | C3 | `save()` 每步检查；失败时旧文件不变。 |
 | C4 | key 全树唯一；owner 是缓存，删除路径清理。 |
 | C5 | Choice 不匹配显示未选中；未声明 range 不夹取。 |
+| C6 | 重启策略在描述层（`ConfigItem`），待重启状态在运行层（`Application`）；任一单方不能代替另一方。 |
 
 ### 5.2 要求（R#）
 
@@ -160,6 +187,7 @@
 | R3 | 父目录由宿主创建；非 JSON 对象才返回 false。 |
 | R4 | `itemsForPlugin(p)` 每项真实存在且 owner 是 p。 |
 | R5 | 编辑立即写回；`refresh()` 屏蔽编辑器信号。 |
+| R6 | 改回启动值就不待重启；无策略的 key 永不出现在 `pendingRestartKeys()`；无待生效项时窗口不显示提示条。 |
 
 ### 5.3 不变量（N#）
 
@@ -169,6 +197,8 @@
 | N2 | `save()` true ⇒ 文件完整；false ⇒ 旧文件没被破坏。 |
 | N3 | `loadJson()` true ⇒ 存储已整体替换（内容相同则不通知）。 |
 | N4 | 编辑器只显示“该 key 的存储值”或“该 item 的默认值”。 |
+| N5 | 窗口是快照：构造后注册的项不会凭空出现。 |
+| N6 | 待重启比较的是存储值而非效果：同一意图的两种写法（`system` / key 缺失）算不同。 |
 
 ## 6. 注意事项与陷阱
 
@@ -184,6 +214,12 @@
 - 怎么判：`ConfigWindowTest.UnboundedNumbersAreNotClamped`。
 - 怎么防：int 用整个 `int` 范围，double 用 ±1e15；声明了 range 才夹取。
 
+### 6.3 把存储值当运行值（P3）
+
+- 会怎么错：以为改了存储值就等于行为变了。实际是**存的是新值、跑的是旧值**，直到下次启动；反过来，用“运行值”去刷编辑器又会让用户以为自己没改成。
+- 怎么判：同一 key 在窗口里显示的值与行为不一致；或 `pendingRestartKeys()` 为空但用户刚改过一项。
+- 怎么防：编辑器永远显示存储值（N4）；后果只用提示表达（F6）；“运行值”只在 `Application` 内部存在，不对外显示。
+
 ## 7. 已否决选项
 
 | # | 选项 | 理由 | ADR |
@@ -194,6 +230,9 @@
 | D4 | 超范围整数报错 | 会让整份配置装载失败；夹取 + warning 更可控。 | — |
 | D5 | `ConfigItem` 的 `std::any` 换 `optional` | 会改掉已公开的 `bad_any_cast` 契约。 | — |
 | D6 | `ConfigWindow` 监听注册表自动重建 | 窗口是快照，重建由宿主决定。 | — |
+| D7 | 把“需重启”写进每个 item 的 `description()` | 每个当事人各写一遍，漏一个就静默失效；tooltip 要悬停才看得到（G7）。 | — |
+| D8 | 延迟写入（重启前一直存旧值） | 窗口会显示旧值，用户以为没改成；需要草稿层与崩溃时的取舍（G7）。 | — |
+| D9 | 框架自己重启进程 | 未保存的文档与插件卸载顺序是宿主的责任（G10）。 | — |
 
 ## 8. 测试与验收
 
@@ -206,6 +245,8 @@
 | T5 | 坏条目忽略 | `ConfigManager_BadEntriesAreIgnoredNotFatal` |
 | T6 | 描述树/owner/排序 | `ConfigRegistry_*` |
 | T7 | 编辑器按下标配对/Choice/无 range | `ConfigWindowTest.*` |
+| T8 | 待重启只在策略项上、基于本次运行、可回退 | `ConfigTest.OnlyRestartRequiredItemsCanBePending`、`ConfigTest.TheBaselineIsThisRunNotTheProcess` |
+| T9 | 窗口逐行提示 + 顶部条随值出现/消失 | `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange` |
 
 ## 9. 状态与演进
 
@@ -229,8 +270,10 @@
 - `src/fw/appfw/sdk/vine/appfw/ConfigManager.hpp`
 - `src/fw/appfw/sdk/vine/appfw/ConfigRegistry.hpp`
 - `src/fw/appfw/sdk/vine/appfw/ConfigItem.hpp`
+- `src/fw/appfw/sdk/vine/appfw/ConfigSnapshot.hpp`
 - `src/fw/appfw/sdk/vine/appfw/gui/ConfigWindow.hpp`
 - `tests/test_gui/test_gui.cpp`
+- `tests/test_appfw/ConfigTest.cpp`
 
 ### 10.2 文档与 ADR
 

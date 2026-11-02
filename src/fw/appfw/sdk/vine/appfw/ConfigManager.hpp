@@ -10,6 +10,8 @@
 
 VN_APPFW_NS_BEGIN
 
+class ConfigSnapshot;
+
 /**
  * @brief Config change event arguments: carry the key (dotted path) that changed.
  *
@@ -98,6 +100,18 @@ class VN_APPFW_API ConfigManager {
   public:
     /// Exports to a JSON string (typed-marker format, lossless round-trip).
     String toJson() const;
+
+    /**
+     * @brief Copies the current values.
+     *
+     * @details
+     * - The copy is independent of this manager: later writes do not change it. That is what lets a caller keep "the
+     *   values this run started with" and compare against them later (see ConfigSnapshot).
+     * - Cheap: the stored values are scalars, strings and arrays; no file or JSON is involved.
+     *
+     * @return The values as they are now.
+     */
+    ConfigSnapshot snapshot() const;
     /// Replaces the whole configuration from a JSON string; fires changed with
     /// an empty key when the values differ. Returns false when the text is not
     /// a JSON object; entries of another shape are ignored and logged.

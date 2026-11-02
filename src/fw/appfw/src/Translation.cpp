@@ -9,8 +9,6 @@
 #include <QLocale>
 #include <QString>
 
-#include "TranslationCatalog.hpp"
-
 VN_APPFW_NS_BEGIN
 
 namespace
@@ -64,12 +62,15 @@ ConfigItem languageConfigItem()
 {
     using Value = std::variant<int, double, String>;
 
-    ConfigItem item(languageConfigKey(), translate(kFrameworkContext, "界面语言"), ConfigItemType::Choice);
-    item.description(translate(kFrameworkContext, "选择界面语言；改动在下次启动时生效"))
-        .choices({ { Value(String(kLanguageSystem)), translate(kFrameworkContext, "跟随系统") },
-                   { Value(String(u8"zh_CN")), translate(kFrameworkContext, "中文") },
-                   { Value(String(u8"en")), translate(kFrameworkContext, "English") } })
-        .defaultValue(kLanguageSystem);
+    // The context is a literal here on purpose: lupdate extracts a translate() call only when it can read the context,
+    // so a constant (kFrameworkContext) would leave these texts out of the catalog while the call still compiled.
+    ConfigItem item(languageConfigKey(), translate("appfw", "界面语言"), ConfigItemType::Choice);
+    item.description(translate("appfw", "选择界面语言；启动时装载一次"))
+        .choices({ { Value(String(kLanguageSystem)), translate("appfw", "跟随系统") },
+                   { Value(String(u8"zh_CN")), translate("appfw", "中文") },
+                   { Value(String(u8"en")), translate("appfw", "English") } })
+        .defaultValue(kLanguageSystem)
+        .restartRequired(true);
     return item;
 }
 

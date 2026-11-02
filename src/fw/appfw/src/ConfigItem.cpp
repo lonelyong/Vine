@@ -20,7 +20,8 @@ struct ConfigItem::Impl {
     std::any step_value;
 
     std::vector<ConfigChoice> choices;
-    bool                      read_only = false;
+    bool                      read_only        = false;
+    bool                      restart_required = false;
 };
 
 ConfigItem::ConfigItem(String key, String label, ConfigItemType type)
@@ -153,6 +154,11 @@ bool ConfigItem::readOnly() const
     return d->read_only;
 }
 
+bool ConfigItem::restartRequired() const
+{
+    return d->restart_required;
+}
+
 ConfigItem& ConfigItem::description(const String& v)
 {
     d->description = v;
@@ -252,6 +258,12 @@ ConfigItem& ConfigItem::choices(std::initializer_list<std::pair<std::variant<int
 ConfigItem& ConfigItem::readOnly(bool on)
 {
     d->read_only = on;
+    return *this;
+}
+
+ConfigItem& ConfigItem::restartRequired(bool on)
+{
+    d->restart_required = on;
     return *this;
 }
 

@@ -17,6 +17,7 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 
+#include <vine/appfw/Application.hpp>
 #include <vine/appfw/ConfigCategory.hpp>
 #include <vine/appfw/ConfigGroup.hpp>
 #include <vine/appfw/Translation.hpp>
@@ -35,9 +36,24 @@ namespace
 // double extremes that QDoubleSpinBox cannot round sanely.
 constexpr double kUnboundedDouble = 1.0e15;
 
-// Tab title: label > name > "General".
-String categoryTitle(const ConfigCategory* cat)
+/// The visible hint on a row whose new value only takes effect after a restart; empty for every other row.
+QString restartMarker(const ConfigItem& item)
 {
+    if (!item.restartRequired())
+        return QString();
+    return QStringLiteral(" (") + translate("appfw", "重启后生效") + QLatin1Char(')');
+}
+
+/// Shows or hides the restart notice. It asks the application, not this window: the fact belongs to the run, so two
+/// windows agree and a window opened later still reports a change made earlier.
+void updateRestartNotice(QLabel* banner)
+{
+    const Application* app = Application::current();
+    banner->setVisible(app != nullptr && !app->pendingRestartKeys().empty());
+}
+
+// Tab title: label > name > "General".
+String categoryTitle(const ConfigCategory* cat){
     if (!cat->label().empty())
         return cat->label();
     if (!cat->name().empty())
@@ -184,6 +200,8 @@ struct ConfigWindow::Impl : public WindowData {
 
     ConfigRegistry*     registry = nullptr;
     ConfigManager*      config   = nullptr;
+    QLabel*             banner   = nullptr;
+    vn::Connection      config_changed{};
     std::vector<Editor> editors; // Window traversal order, always addressed by key
 };
 
@@ -219,7 +237,7 @@ ConfigWindow::ConfigWindow(ConfigRegistry* registry, ConfigManager* config)
                 data->editors.push_back(Impl::Editor{ editor, item->key() });
                 if (item->readOnly())
                     editor->setEnabled(false);
-                auto* label = new QLabel(Convert::toQString(item->label()));
+                auto* label = new QLabel(Convert::toQString(item->label()) + restartMarker(*item));
                 if (!item->description().empty())
                     label->setToolTip(Convert::toQString(item->description()));
                 form->addRow(label, editor);
@@ -240,16 +258,27 @@ ConfigWindow::ConfigWindow(ConfigRegistry* registry, ConfigManager* config)
         auto* tip = new QLabel(translate("appfw", "(未注册配置项)"));
         tabs->addTab(tip, translate("appfw", "通用"));
     }
+
+    auto* banner = new QLabel(translate("appfw", "有改动需要重启才能生效"));
+    banner->setWordWrap(true);
+    banner->setVisible(false);
+    data->banner = banner;
+
     auto* lay = new QVBoxLayout(root);
     lay->setContentsMargins(0, 0, 0, 0);
+    lay->addWidget(banner);
     lay->addWidget(tabs);
+
+    data->config_changed = config->changed.connect([banner](ConfigManager&, ConfigChangedEventArgs&) { updateRestartNotice(banner); });
+    updateRestartNotice(banner);
 
     refresh();
 }
 
 ConfigWindow::~ConfigWindow()
 {
-    // d is released by UIElement
+    // The handler runs from ConfigManager::changed, so it must go before the banner (a child widget) is destroyed.
+    dptr()->config_changed.disconnect();
 }
 
 void ConfigWindow::refresh()

@@ -16,6 +16,8 @@
 #include <vine/appfw/ServiceManager.hpp>
 #include <vine/appfw/UserIO.hpp>
 
+#include <vine/appfw/ConfigSnapshot.hpp>
+
 #include "TranslationCatalog.hpp"
 
 class QCoreApplication;
@@ -70,6 +72,11 @@ struct ApplicationData {
 
     /// JSON file used to persist the ConfigManager; empty disables persistence.
     std::filesystem::path config_file;
+
+    /// The values this run started with, captured once in initialize(): what "needs a restart" is measured against
+    /// (see Application::pendingRestartKeys()). Taken before anything applies the configuration, so it is the stored
+    /// state, not the resolved one.
+    ConfigSnapshot startup_config;
 
     /// Tag registries record as the owner of what is being registered right now (Application::setRegistrationOwner()):
     /// the plugin loader sets it around a plugin's registration, and every registry reads it instead of keeping its own

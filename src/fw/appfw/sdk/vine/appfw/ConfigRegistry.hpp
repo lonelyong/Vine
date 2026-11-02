@@ -92,6 +92,17 @@ class VN_APPFW_API ConfigRegistry {
     std::vector<const ConfigItem*> itemsForPlugin(const String& plugin_name) const;
 
     /**
+     * @brief Returns the keys of the items whose value is read once at startup (ConfigItem::restartRequired()).
+     *
+     * @details
+     * - Registry-only: it answers which keys carry the policy, not whether any of them actually needs a restart -
+     *   that comparison needs the values (`Application::pendingRestartKeys()`).
+     *
+     * @return Keys ordered by name.
+     */
+    std::vector<String> restartRequiredKeys() const;
+
+    /**
      * @brief Removes all items owned by the given plugin.
      *
      * @param plugin_name Plugin name.

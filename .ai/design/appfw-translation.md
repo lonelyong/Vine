@@ -91,7 +91,7 @@
 
 - 是什么：语言只在启动时确定；改语言 = 改配置项 `general.language` 后重启。
 - 为什么：运行期切换要求每个控件在 `QEvent::LanguageChange` 里重设文本（appfw 有几十个构造时写死文字的控件，还有 SARibbon/DockingPanes 的上游控件），成本与风险远高于收益。
-- 边界：将来加 `setLanguage()` 的接缝已经存在（目录装在应用级），见 backlog。
+- 边界：不做运行期切换**是产品决定**，不是缺口。所以语言项声明 `restartRequired()`，配置窗口据此提示“重启后生效”，`Application::pendingRestartKeys()` 则回答“现在是否有一项待重启”（`appfw-config.md` F6）。
 
 ### 2.9 底层的用户表面：本轮维持现状，将来注入文案（G8、G2、G10）
 
@@ -234,7 +234,7 @@
 ### 6.8 自定义包装函数，lupdate 抽不到（P9）
 - 会怎么错：把调用点写成自己的短名（`guiTr(u8"…")`），或者把参数顺序改成 `tr(context, source)`——运行没问题，但 `lupdate` 只认已知函数名（`tr`、`translate`、`QT_TRANSLATE_NOOP` 等），产物要么漏条目，要么把 context 当成源串。
 - 怎么判：`lupdate` 的 “Found N source text(s)” 远小于实际调用点数；或 `.ts` 里 `<source>` 是一个 id。
-- 怎么防：名字和签名直接用 Qt 的（`translate(context, source)`；GUI 用 `Q_DECLARE_TR_FUNCTIONS`）。改名字或改签名之后立刻跑一次 `lupdate` 核对计数。
+- 怎么防：名字和签名直接用 Qt 的（`translate(context, source)`；GUI 用 `Q_DECLARE_TR_FUNCTIONS`）。改名字或改签名之后立刻跑一次 `lupdate` 核对计数；**context 也必须是字面量**——写成常量（`kFrameworkContext`）时那条抽不到，编译却毫无提示（`languageConfigItem()` 的五条文案就这样漏了一整轮）。
 
 ### 6.9 部署只带了 `qt_*.qm`（P8）
 - 会怎么错：`windeployqt` 复制的是 Qt 的 **meta** 目录 `qt_<locale>.qm`（几十字节，里面只有依赖名），真正的 `qtbase_<locale>.qm`（一百多 KB）没有。于是我们自己的文案翻译了，`QMessageBox` 按钮、`QFileDialog`、输入框右键菜单还是英文。
@@ -277,7 +277,7 @@
 
 ### 9.1 当前状态
 
-机制已落地，框架 GUI 的文案已全部替换。已有：`Translation.hpp`（`translate` / `languageConfigKey` / `languageConfigItem` / `resolveLanguageTag`）、`Application::initialize()` 里按配置项选定语言并装 Qt 与框架目录、`PluginManager` 在插件代码跑之前装插件目录并在卸载时移除（自己装、自己持有：`TranslationCatalog`，§2.11）、`vn_add_translations()` 与夹具插件的端到端用例；`src/fw/appfw/src/gui` 已无硬编码中文（`QStringLiteral` 与 `u8"…"` 两类共约 190 处都换成了 `translate("appfw", …)`），`res/translations/appfw_en.ts` 由 `lupdate` 抽出 164 条、全部译成英文，`test_gui` 在全局夹具里把语言钉成 `zh_CN`。
+机制已落地，框架 GUI 的文案已全部替换。已有：`Translation.hpp`（`translate` / `languageConfigKey` / `languageConfigItem` / `resolveLanguageTag`）、`Application::initialize()` 里按配置项选定语言并装 Qt 与框架目录、`PluginManager` 在插件代码跑之前装插件目录并在卸载时移除（自己装、自己持有：`TranslationCatalog`，§2.11）、`vn_add_translations()` 与夹具插件的端到端用例；`src/fw/appfw/src/gui` 已无硬编码中文（`QStringLiteral` 与 `u8"…"` 两类共约 190 处都换成了 `translate("appfw", …)`），`res/translations/appfw_en.ts` 由 `lupdate` 抽出 164 条、全部译成英文，`test_gui` 在全局夹具里把语言钉成 `zh_CN`；语言项自身的五条文案曾因 context 是常量而没被抽取，现随 §6.8 修正；改成需要重启的项后，配置窗口会逐行提示并在顶部给出“有改动需要重启才能生效”。
 
 还差：把拼接式文案（`“已注册（” + x + “）：”` 这类）改成带 `%1` 的整句（N4）——它们现在能翻译，但逐段翻译的语序不一定对。整棵树的界面文案只有三本目录（`appfw` 164 条、`app_shell` 57 条、`model_viewer` 35 条）；其余模块（`demo_plugin` / `test_plugin` / `gfx_backend_vsg`、宿主 `src/apps/vine`、全部底层库）用 `lupdate` 抽出 **0 条**，所以不欠目录——空目录没有东西可装（C3）。
 

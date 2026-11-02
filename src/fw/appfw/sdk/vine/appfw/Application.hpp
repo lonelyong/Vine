@@ -275,6 +275,24 @@ class VN_APPFW_API Application : public Object {
     raw_ptr<ConfigRegistry> configRegistry() const;
 
     /**
+     * @brief Returns the restart-required settings whose stored value differs from the one this run started with.
+     *
+     * @details
+     * - A `ConfigItem` marked `restartRequired()` declares that its value is read once, at startup; this is the query
+     *   that says whether that has happened. The language setting is the one item today: it is read in initialize().
+     * - The baseline is the configuration as it was loaded there. Reading a value never moves it, and a setting changed
+     *   back to its startup value stops being pending - so the answer is about the current state, not about history.
+     * - The comparison is on stored values: a key that is absent and one holding its default count as different, so a
+     *   value with two spellings for one meaning (`general.language`'s "follow the system", stored or omitted) can be
+     *   reported although nothing would behave differently.
+     * - A host decides what to do with the answer (a hint in a settings page, a status-bar note, a dialog on close);
+     *   the framework does not restart itself, because a restart has to go through the host's own shutdown.    
+     *
+     * @return Pending keys, in registry order; empty when nothing needs a restart.
+     */
+    std::vector<String> pendingRestartKeys() const;
+
+    /**
      * @brief Returns the application's document manager.
      *
      * The document manager is a singleton that lives with the application and owns the open documents: which

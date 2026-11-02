@@ -112,12 +112,20 @@
         <translation>Enable command</translation>
     </message>
     <message>
+        <source>重启后生效</source>
+        <translation>takes effect after restart</translation>
+    </message>
+    <message>
         <source>(空)</source>
         <translation>(empty)</translation>
     </message>
     <message>
         <source>(未注册配置项)</source>
         <translation>(no config item registered)</translation>
+    </message>
+    <message>
+        <source>有改动需要重启才能生效</source>
+        <translation>Some changes take effect only after a restart</translation>
     </message>
     <message>
         <source>通用</source>
@@ -593,7 +601,7 @@
     </message>
     <message>
         <source>路径含 &apos;;&apos;，无法在这一行里表达: </source>
-        <translation>The path contains ';', which cannot be expressed on this line: </translation>
+        <translation>The path contains &apos;;&apos;, which cannot be expressed on this line: </translation>
     </message>
     <message>
         <source>正在显示启动画面</source>
@@ -658,6 +666,26 @@
     <message>
         <source>请输入 x,y,z 格式的点</source>
         <translation>Enter a point as x,y,z</translation>
+    </message>
+    <message>
+        <source>界面语言</source>
+        <translation>Language</translation>
+    </message>
+    <message>
+        <source>选择界面语言；启动时装载一次</source>
+        <translation>Choose the UI language; it is loaded once at startup</translation>
+    </message>
+    <message>
+        <source>跟随系统</source>
+        <translation>Follow the system</translation>
+    </message>
+    <message>
+        <source>中文</source>
+        <translation>Chinese</translation>
+    </message>
+    <message>
+        <source>English</source>
+        <translation>English</translation>
     </message>
 </context>
 </TS>

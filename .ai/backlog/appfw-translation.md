@@ -10,7 +10,6 @@
 
 | # | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|---|
-| T1 | 运行期切换语言 | `GuiApplication::setLanguage()` + 每个控件在 `QEvent::LanguageChange` 里重设文本（含 SARibbon / DockingPanes 上游控件） | 产品提供“语言”设置项，且要求不重启生效 | `../design/appfw-translation.md` §2.8 |
 | T3 | 插件元数据翻译 | `PluginInfo` 的 name/description 走插件目录，显示点按插件上下文查 | 插件中心需要在英文界面下显示英文名 | 同上 D6 |
 | T5 | 文案长度的版式检查 | 用最长的一种译文跑一遍界面截图门禁 | 出现第一次因为译文变长而截断 | 同上 P3 |
 | T6 | 翻译文件的部署规则 | 默认内嵌、无散文件；只在需要热修时把 `<id>_<locale>.qm` 放到模块旁的 `translations/`（部署手册写清这个覆盖位与查找顺序） | 出现第一个“不改程序就要修一个错译”的需求 | 同上 §2.10、`../decisions/ADR-2026-11-01-translation-catalog-embedding.md` |

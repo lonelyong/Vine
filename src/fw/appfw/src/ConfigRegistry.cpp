@@ -92,6 +92,21 @@ std::vector<const ConfigItem*> ConfigRegistry::itemsForPlugin(const String& plug
     return out;
 }
 
+std::vector<String> ConfigRegistry::restartRequiredKeys() const
+{
+    std::vector<String> out;
+    for (const auto& c : d->categories) {
+        for (ConfigGroup* g : c->groups()) {
+            for (const ConfigItem* it : g->items()) {
+                if (it->restartRequired())
+                    out.push_back(it->key());
+            }
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 bool ConfigRegistry::removeItemsForPlugin(const String& plugin_name)
 {
     std::vector<String> keys;

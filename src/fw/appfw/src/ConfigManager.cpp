@@ -4,6 +4,7 @@
 #include <map>
 #include <mutex>
 #include <shared_mutex>
+#include <span>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -21,6 +22,8 @@
 #include <QStringList>
 
 #include <vine/logging/Log.hpp>
+
+#include <vine/appfw/ConfigSnapshot.hpp>
 
 VN_APPFW_NS_BEGIN
 
@@ -211,6 +214,55 @@ struct ConfigManager::Impl {
     std::map<String, ConfigValue> values;
     std::shared_mutex             mutex;
 };
+
+struct ConfigSnapshot::Impl {
+    std::map<String, ConfigValue> values;
+};
+
+ConfigSnapshot::ConfigSnapshot()
+  : d(new Impl)
+{}
+
+ConfigSnapshot::ConfigSnapshot(const ConfigSnapshot& other)
+  : d(new Impl(*other.d))
+{}
+
+ConfigSnapshot& ConfigSnapshot::operator=(const ConfigSnapshot& other)
+{
+    if (this != &other) {
+        *d = *other.d;
+    }
+    return *this;
+}
+
+ConfigSnapshot::ConfigSnapshot(ConfigSnapshot&& other) noexcept
+  : d(std::move(other.d))
+{}
+
+ConfigSnapshot& ConfigSnapshot::operator=(ConfigSnapshot&& other) noexcept
+{
+    if (this != &other) {
+        d = std::move(other.d);
+    }
+    return *this;
+}
+
+ConfigSnapshot::~ConfigSnapshot() = default;
+
+std::vector<String> ConfigSnapshot::divergedKeys(const ConfigSnapshot& other, std::span<const String> keys) const
+{
+    std::vector<String> out;
+    for (const String& key : keys) {
+        const auto mine   = d->values.find(key);
+        const auto theirs = other.d->values.find(key);
+        const bool both_absent = mine == d->values.end() && theirs == other.d->values.end();
+        const bool same = !both_absent && mine != d->values.end() && theirs != other.d->values.end() && mine->second == theirs->second;
+        if (!both_absent && !same) {
+            out.push_back(key);
+        }
+    }
+    return out;
+}
 
 ConfigManager::ConfigManager()
   : d(new Impl)
@@ -496,6 +548,14 @@ bool ConfigManager::load(const String& path)
     if (!read_ok)
         return false;
     return loadJson(fromQString(QString::fromUtf8(data)));
+}
+
+ConfigSnapshot ConfigManager::snapshot() const
+{
+    std::shared_lock lock(d->mutex);
+    ConfigSnapshot   copy;
+    copy.d->values = d->values; // ConfigSnapshot is a value-layer type: the map is exactly what it keeps
+    return copy;
 }
 
 VN_APPFW_NS_END

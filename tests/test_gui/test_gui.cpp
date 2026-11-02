@@ -59,6 +59,7 @@
 #include <vine/appfw/Plugin.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/PluginManager.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/UserIO.hpp>
 #include <vine/appfw/gui/Backstage.hpp>
 #include <vine/appfw/gui/AboutDialog.hpp>
@@ -2745,6 +2746,56 @@ TEST(ConfigWindowTest, UnboundedNumbersAreNotClamped)
 
     delete win;
     delete cfg;
+}
+
+// 需要重启才能生效的项：行标签带提示，改了之后窗口顶部的横幅出现，改回就消失。
+// 横幅问的是 Application（那是本次运行的事实），所以窗口开在哪个注册表上都给同一个答案。
+TEST_F(GuiTest, ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange)
+{
+    using vn::appfw::Application;
+    using vn::appfw::gui::ConfigWindow;
+    using vn::appfw::languageConfigKey;
+
+    Application* app = Application::current();
+    ASSERT_NE(app, nullptr);
+    ASSERT_NE(app->configRegistry()->item(languageConfigKey()), nullptr) << "框架必须注册语言项";
+
+    // 夹具把语言钉成了 zh_CN，所以本次运行的存储值就是它 —— 开始时没有待生效的改动。
+    const bool   had_language = app->configManager()->contains(languageConfigKey());
+    const vn::String original = app->configManager()->getString(languageConfigKey());
+
+    auto* win  = new ConfigWindow(app->configRegistry(), app->configManager());
+    auto* root = win->impl<QDialog>();
+
+    // 行标签上的提示来自 item 的策略，而不是这个 key 的名字：换一个 key 也能拿到。
+    bool marked = false;
+    for (const QLabel* label : root->findChildren<QLabel*>()) {
+        if (label->text().contains(QStringLiteral("重启后生效")))
+            marked = true;
+    }
+    EXPECT_TRUE(marked) << "需要重启的项必须在标签上说出来";
+
+    QLabel* notice = nullptr;
+    for (QLabel* label : root->findChildren<QLabel*>()) {
+        if (label->text() == QStringLiteral("有改动需要重启才能生效"))
+            notice = label;
+    }
+    ASSERT_NE(notice, nullptr);
+    EXPECT_TRUE(notice->isHidden()) << "没有改动时不该提示重启";
+
+    // 改一个需要重启的项：横幅出现（窗口没显示，用 isHidden 而不是 isVisible）。
+    const vn::String other = original == vn::String(u8"en") ? vn::String(u8"zh_CN") : vn::String(u8"en");
+    app->configManager()->setString(languageConfigKey(), other);
+    EXPECT_FALSE(notice->isHidden()) << "改了需要重启的项，横幅必须出现";
+
+    // 改回启动值：横幅消失（这是状态，不是历史）。
+    if (had_language)
+        app->configManager()->setString(languageConfigKey(), original);
+    else
+        app->configManager()->remove(languageConfigKey());
+    EXPECT_TRUE(notice->isHidden()) << "改回启动值后不该再提示";
+
+    delete win;
 }
 
 TEST_F(GuiTest, ConfigItem_Descriptor)

@@ -162,6 +162,20 @@ class VN_APPFW_API ConfigItem {
      */
     bool readOnly() const;
 
+    /**
+     * @brief Whether the value is read once at startup, so a change only takes effect after a restart.
+     *
+     * @details
+     * - This is a claim about how the key is *read*, not a wish: the module registering the item must keep the promise
+     *   that nothing reads the key after startup. A runtime reader would see the new value while the rest of the process
+     *   still runs on the old one.
+     * - It says nothing about where the value is stored: the edit is written immediately, like every other setting, and
+     *   only its effect waits for the next run (`Application::pendingRestartKeys()` answers whether it is still pending).
+     *
+     * @return true when the item is read once at startup.
+     */
+    bool restartRequired() const;
+
   public:
     /**
      * @brief Sets the description.
@@ -236,6 +250,14 @@ class VN_APPFW_API ConfigItem {
      * @brief Sets the read-only flag.
      */
     ConfigItem& readOnly(bool on);
+
+    /**
+     * @brief Marks the item as read once at startup, so a change only takes effect after a restart.
+     *
+     * @param on true when the item needs a restart to apply.
+     * @return The item itself, for chaining.
+     */
+    ConfigItem& restartRequired(bool on);
 
   private:
     struct Impl;

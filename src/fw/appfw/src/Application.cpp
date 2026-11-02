@@ -19,6 +19,7 @@
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
+#include <vine/appfw/ConfigSnapshot.hpp>
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/EventBus.hpp>
 #include <vine/appfw/MainThreadDispatcher.hpp>
@@ -189,6 +190,10 @@ void Application::initialize(const AppConfig& config)
     else if (config.persist_config) {
         static_cast<void>(setConfigFile(defaultConfigFile()));
     }
+
+    // The values this run starts with, taken before anything applies them: that is the baseline pendingRestartKeys()
+    // measures against, and it has to be the stored state rather than a resolved result.
+    dptr()->startup_config = dptr()->config_manager->snapshot();
 
     // The language comes before anything that builds a window, and before the items are registered: an item's label is
     // translated text itself, so registering it earlier would freeze it in the wrong language. The setting is the
@@ -577,6 +582,15 @@ raw_ptr<ConfigManager> Application::configManager() const
 raw_ptr<ConfigRegistry> Application::configRegistry() const
 {
     return dptr()->config_registry.get();
+}
+
+std::vector<String> Application::pendingRestartKeys() const
+{
+    const std::vector<String> keys = dptr()->config_registry->restartRequiredKeys();
+    if (keys.empty()) {
+        return {};
+    }
+    return dptr()->startup_config.divergedKeys(dptr()->config_manager->snapshot(), keys);
 }
 
 raw_ptr<DocumentManager> Application::documentManager() const
