@@ -1,4 +1,6 @@
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+# lrelease only (never lupdate at build time): optional, so a Qt install without LinguistTools still builds.
+find_package(Qt6 CONFIG QUIET COMPONENTS LinguistTools)
 qt_standard_project_setup()
 
 vn_add_plugin(MODEL_VIEWER_TARGET model_viewer)
@@ -23,3 +25,8 @@ target_sources(${MODEL_VIEWER_TARGET} PRIVATE res/res.qrc)
 # No ImageIO/System here, so the RPATH note in VinePluginHelper.cmake has nothing to catch.
 target_link_libraries(${MODEL_VIEWER_TARGET} PRIVATE vn::Appfw vn::Geometry vn::Graphics vn::Logging vn::MeshIO
     Qt6::Core Qt6::Gui Qt6::Widgets)
+
+# The plugin's own UI text: res/translations/model_viewer_<locale>.ts, compiled into :/i18n/model_viewer_<locale>.qm.
+# The loader installs it before load() runs and removes it on unload; the id here is the tr() context and the
+# file-name prefix (see .ai/design/appfw-translation.md §2.10).
+vn_add_translations(${MODEL_VIEWER_TARGET} CONTEXT model_viewer TS_FILES res/translations/model_viewer_en.ts)

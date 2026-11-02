@@ -5,6 +5,7 @@
 #include <vine/appfw/DocumentManager.hpp>
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/StartupProgress.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/gui/DockPanel.hpp>
 #include <vine/appfw/gui/DockPanelManager.hpp>
 #include <vine/appfw/gui/DocumentViewRegistry.hpp>
@@ -43,7 +44,7 @@ vn::async::Task<void> ModelViewerPlugin::load(vn::appfw::PluginLoadContext* cont
     registerView(*app);
 
     if (vn::appfw::StartupProgress* progress = vn::appfw::StartupProgress::current(); progress != nullptr) {
-        progress->setLabel(u8"正在准备模型查看器");
+        progress->setLabel(vn::appfw::translate("model_viewer", "正在准备模型查看器"));
     }
     installInfoPanel(*app);
 
@@ -79,8 +80,8 @@ void ModelViewerPlugin::registerDocumentSurface(vn::appfw::Application& app)
 
     vn::appfw::DocumentTypeRegistration registration;
     registration.type_id      = ModelDocument::kTypeId;
-    registration.display_name = u8"模型";
-    registration.description  = u8"模型查看器文档：一份解析好的网格（只读）";
+    registration.display_name = vn::appfw::translate("model_viewer", "模型");
+    registration.description  = vn::appfw::translate("model_viewer", "模型查看器文档：一份解析好的网格（只读）");
     // 没有 create 工厂是**合法**的：模型只能从载荷打开（can_create == false，面板会如实说"否（只能打开）"）。
     documents->registerType(registration);
 
@@ -159,7 +160,7 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
     // 自己的 tab（外壳那几个 tab 是它自己的事）：插件给自家功能挂 UI，与"面板自己建自己挂"同一条规矩。
     auto* tab = new vn::appfw::gui::RibbonTab();
     tab->setId(tab_id);
-    tab->setTitle(u8"模型");
+    tab->setTitle(vn::appfw::translate("model_viewer", "模型"));
 
     // 帮助是终止 tab：本 tab 放到它前面，而不是追加到它后面。
     const auto placed = bar->addTab(tab, vn::appfw::gui::RibbonPlacement::before(vn::appfw::gui::RibbonTabRole::Help));
@@ -169,32 +170,32 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
 
     auto* group = new vn::appfw::gui::RibbonGroup();
     group->setId(u8"model_viewer.group.shading");
-    group->setTitle(u8"显示");
+    group->setTitle(vn::appfw::translate("model_viewer", "显示"));
     tab->addGroup(group);
 
     // 五档各一个按钮，勾选态由"这块 3D 区现在画的是哪一档"回答（provider 读派发目标，见 isCurrentShadingMode）：
     // 于是切文档、命令执行之后按钮都会自己跟上，而不是按钮自己记一个可能过期的档位。
     // 图标是插件自己的资源（res/res.qrc，前缀 /model_viewer/icons）：每个档位一个可辨认的形状，按钮才不是五列纯文字。
     const struct {
-        const char8_t*            label;
+        vn::String                label;
         const char8_t*            icon;
         const char8_t*            command;
         vn::graphics::ShadingMode mode;
     } entries[] = {
-        { u8"实面",   u8":/model_viewer/icons/shading_lit.svg",       kShadingModeLitCommand,
+        { vn::appfw::translate("model_viewer", "实面"),   u8":/model_viewer/icons/shading_lit.svg",       kShadingModeLitCommand,
           vn::graphics::ShadingMode::Lit       },
-        { u8"平面",   u8":/model_viewer/icons/shading_flat.svg",      kShadingModeFlatCommand,
+        { vn::appfw::translate("model_viewer", "平面"),   u8":/model_viewer/icons/shading_flat.svg",      kShadingModeFlatCommand,
           vn::graphics::ShadingMode::Flat      },
-        { u8"无光照", u8":/model_viewer/icons/shading_unlit.svg",     kShadingModeUnlitCommand,
+        { vn::appfw::translate("model_viewer", "无光照"), u8":/model_viewer/icons/shading_unlit.svg",     kShadingModeUnlitCommand,
           vn::graphics::ShadingMode::Unlit     },
-        { u8"法线",   u8":/model_viewer/icons/shading_normals.svg",   kShadingModeNormalsCommand,
+        { vn::appfw::translate("model_viewer", "法线"),   u8":/model_viewer/icons/shading_normals.svg",   kShadingModeNormalsCommand,
           vn::graphics::ShadingMode::Normals   },
-        { u8"线框",   u8":/model_viewer/icons/shading_wireframe.svg", kShadingModeWireframeCommand,
+        { vn::appfw::translate("model_viewer", "线框"),   u8":/model_viewer/icons/shading_wireframe.svg", kShadingModeWireframeCommand,
           vn::graphics::ShadingMode::Wireframe },
     };
     for (const auto& item : entries) {
         auto* button = new vn::appfw::gui::RibbonButton();
-        button->setText(vn::String(item.label));
+        button->setText(item.label);
         button->setIcon(vn::appfw::gui::Icon(vn::String(item.icon)));
         button->setButtonSize(vn::appfw::gui::RibbonItemSize::Large);
         button->setCommand(vn::String(item.command));
@@ -220,7 +221,7 @@ void ModelViewerPlugin::installInfoPanel(vn::appfw::Application& app)
     }
 
     auto* panel = new ModelInfoPanel();
-    auto* dock  = docks->createDockPanel(u8"模型信息", panel, vn::appfw::gui::DockAreas::Right);
+    auto* dock  = docks->createDockPanel(vn::appfw::translate("model_viewer", "模型信息"), panel, vn::appfw::gui::DockAreas::Right);
     if (dock == nullptr) {
         // 没挂上就自己删：dock 面板接管内容所有权（DockPanel::setContent），没接管就不能留一个没人拥有的控件。
         delete panel;

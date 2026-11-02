@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include <QCoreApplication>
 #include <QGridLayout>
 #include <QLabel>
 #include <QString>
@@ -11,6 +12,7 @@
 #include <vine/String.hpp>
 #include <vine/appfw/Document.hpp>
 #include <vine/appfw/DocumentManager.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/gui/Control.hpp>
 
 #include "ModelDocument.hpp"
@@ -51,11 +53,11 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
         parts_label_     = new QLabel(root);
 
         int row = 0;
-        addRow(root, layout, row, u8"类型", type_label_);
-        addRow(root, layout, row, u8"标题", title_label_);
-        addRow(root, layout, row, u8"顶点数", vertices_label_);
-        addRow(root, layout, row, u8"三角形数", triangles_label_);
-        addRow(root, layout, row, u8"部件数", parts_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "类型"), type_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "标题"), title_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "顶点数"), vertices_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "三角形数"), triangles_label_);
+        addRow(root, layout, row, vn::appfw::translate("model_viewer", "部件数"), parts_label_);
         layout->setRowStretch(row, 1);
 
         clear();
@@ -142,9 +144,9 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
 
   private:
     /// 加一行"名字 + 值"：名字是静态文本，值是面板要显示的东西。
-    static void addRow(QWidget* root, QGridLayout* layout, int& row, const char8_t* name, QLabel* value)
+    static void addRow(QWidget* root, QGridLayout* layout, int& row, const vn::String& name, QLabel* value)
     {
-        auto* caption = new QLabel(QString::fromUtf8(reinterpret_cast<const char*>(name)), root);
+        auto* caption = new QLabel(textOf(name), root);
         value->setTextInteractionFlags(Qt::TextSelectableByMouse);
         layout->addWidget(caption, row, 0, Qt::AlignRight | Qt::AlignVCenter);
         layout->addWidget(value, row, 1);
@@ -159,12 +161,12 @@ class ModelInfoPanel : public vn::appfw::gui::Control {
 
     static QString noneText()
     {
-        return QStringLiteral("—（没有当前文档）");
+        return QCoreApplication::translate("model_viewer", "—（没有当前文档）");
     }
 
     static QString notAModelText()
     {
-        return QStringLiteral("—（不是模型文档）");
+        return QCoreApplication::translate("model_viewer", "—（不是模型文档）");
     }
 
   private:

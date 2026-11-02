@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/appfw/command_export.hpp>
 
 namespace vn::model_viewer
@@ -28,12 +29,12 @@ class OpenMeshFileCommand : public vn::appfw::Command {
   public:
     vn::String group() const override
     {
-        return u8"模型";
+        return vn::appfw::translate("model_viewer", "模型");
     }
 
     vn::String description() const override
     {
-        return u8"选一个网格文件打开（文件载荷）";
+        return vn::appfw::translate("model_viewer", "选一个网格文件打开（文件载荷）");
     }
 
     vn::appfw::CommandFlags flags() const override

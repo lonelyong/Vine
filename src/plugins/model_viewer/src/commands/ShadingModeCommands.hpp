@@ -2,6 +2,7 @@
 
 #include <vine/String.hpp>
 #include <vine/appfw/Command.hpp>
+#include <vine/appfw/Translation.hpp>
 #include <vine/graphics/ShadingMode.hpp>
 
 namespace vn::model_viewer
@@ -68,7 +69,7 @@ class ShadingModeCommand : public vn::appfw::Command {
   public:
     vn::String group() const override
     {
-        return u8"显示";
+        return vn::appfw::translate("model_viewer", "显示");
     }
 
     vn::appfw::CommandFlags flags() const override
@@ -96,7 +97,7 @@ class SetShadingLitCommand : public ShadingModeCommand {
 
     vn::String description() const override
     {
-        return u8"实面：环境光 + 主光 + 补光（默认）";
+        return vn::appfw::translate("model_viewer", "实面：环境光 + 主光 + 补光（默认）");
     }
 
   protected:
@@ -118,7 +119,7 @@ class SetShadingFlatCommand : public ShadingModeCommand {
 
     vn::String description() const override
     {
-        return u8"平面：逐面法线（同一个三角形的每个像素一个朝向）";
+        return vn::appfw::translate("model_viewer", "平面：逐面法线（同一个三角形的每个像素一个朝向）");
     }
 
   protected:
@@ -140,7 +141,7 @@ class SetShadingUnlitCommand : public ShadingModeCommand {
 
     vn::String description() const override
     {
-        return u8"无光照：只画表面色 —— 分清是形状不对还是光照不对";
+        return vn::appfw::translate("model_viewer", "无光照：只画表面色 —— 分清是形状不对还是光照不对");
     }
 
   protected:
@@ -162,7 +163,7 @@ class SetShadingNormalsCommand : public ShadingModeCommand {
 
     vn::String description() const override
     {
-        return u8"法线：视图空间法线当颜色（看朝向、缺失或内外翻的法线）";
+        return vn::appfw::translate("model_viewer", "法线：视图空间法线当颜色（看朝向、缺失或内外翻的法线）");
     }
 
   protected:
@@ -184,7 +185,7 @@ class SetShadingWireframeCommand : public ShadingModeCommand {
 
     vn::String description() const override
     {
-        return u8"线框：只画三角面的边（看网格怎么连的）";
+        return vn::appfw::translate("model_viewer", "线框：只画三角面的边（看网格怎么连的）");
     }
 
   protected:
