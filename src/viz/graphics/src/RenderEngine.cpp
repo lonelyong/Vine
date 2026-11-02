@@ -237,10 +237,16 @@ raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
     return nullptr;
 }
 
-void RenderEngine::frame()
+FrameOutcome RenderEngine::frame()
 {
-    if (!initialized_ || device_ == nullptr) {
-        return;
+    // The two reasons a frame cannot be driven are different answers, and both used to look like a frame that ran
+    // and drew nothing: no device to hand anything to, or a device the engine is not attached to. The caller gets
+    // the reason as a value (see FrameOutcome); "ran but issued no draw" stays a FrameReport fact.
+    if (device_ == nullptr) {
+        return FrameOutcome::NoDevice;
+    }
+    if (!initialized_) {
+        return FrameOutcome::NotInitialized;
     }
 
     // Announce the content frame BEFORE the passes run: every scene this frame
@@ -305,6 +311,7 @@ void RenderEngine::frame()
     // presentable image, the record submits, and the frame's tail presents it through the target it names. The engine
     // does not present afterwards - presenting twice would be presenting somebody else's frame (or nothing at all).
     device_->executor().executeFrame(frame_value_, present_to);
+    return FrameOutcome::Ran;
 }
 
 int RenderEngine::surfaceWidth() const noexcept
@@ -378,14 +385,21 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, 
     Slot slot;
     slot.pass  = std::move(pass);
     slot.order = order;
-    // The content is a field of the declaration (PassDesc::content), so passing one BINDS it and passing none leaves
-    // what the pass already states alone - a pass built with its own scene (an overlay) keeps it on registration.
+    // THE ADD HAPPENS FIRST, THE CONTENT SECOND. Content is a field of the pass' declaration (PassDesc::content),
+    // so writing it before insertSlot() would edit a pass that this call then refuses to register - a duplicate
+    // add would rebind the content of a pass it did not add. Registering first makes "ignored" mean ignored.
+    intrusive_ptr<RenderPass> registered = insertSlot(std::move(slot));
+    if (registered == nullptr) {
+        return nullptr;
+    }
+    // Passing none leaves what the pass already states alone - a pass built with its own scene (an overlay) keeps
+    // it on registration. Clearing is bindPassContent(pass, nullptr).
     if (content != nullptr) {
-        slot.pass->setContent(std::move(content));
+        registered->setContent(std::move(content));
     }
     // What comes back is the node the engine registered - the same instance, or null when it was already there
     // (see addPass(PassDesc), which explains why a caller wants a handle at all).
-    return insertSlot(std::move(slot));
+    return registered;
 }
 
 void RenderEngine::removePass(raw_ptr<RenderPass> pass)
@@ -454,16 +468,19 @@ std::size_t RenderEngine::passCount() const
     return slots_.size();
 }
 
-void RenderEngine::bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content)
+bool RenderEngine::bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content)
 {
     for (auto& slot : slots_) {
         if (slot.pass.get() == pass) {
             // The declaration owns it (PassDesc::content), so there is one storage and the compile reads the same
             // scene this call bound.
             slot.pass->setContent(std::move(content));
-            return;
+            return true;
         }
     }
+    // An unregistered pass (or null) is not a binding: say so instead of reporting success for a change that did
+    // not happen. The caller can still register it and bind again.
+    return false;
 }
 
 raw_ptr<Scene> RenderEngine::contentOf(raw_ptr<RenderPass> pass) const
@@ -910,7 +927,7 @@ void RenderEngine::collectPlanProblems()
     // they are checked in the order a host has to fix them — each check `continue`s, because the next one is
     // moot until this one is answered and one mistake should read as one message.
     for (const auto& slot : slots_) {
-        auto* pass = dynamic_cast<ScreenPass*>(slot.pass.get());
+        auto* pass = obj_cast<ScreenPass>(slot.pass.get());
         if (pass == nullptr || !pass->isEnabled()) {
             continue;
         }

@@ -98,7 +98,7 @@ struct Conversion {
                 leaf->setMaterial(sharedMaterial(*entry.material));
                 // PBR carries a per-material opacity; the engine's transparency is the NODE's (a shared material's
                 // alpha would make every drawable translucent), so it is put on the leaf here.
-                if (const auto* pbr = dynamic_cast<const vn::geometry::PbrMaterial*>(entry.material.get())) {
+                if (const auto* pbr = obj_cast<vn::geometry::PbrMaterial>(entry.material.get())) {
                     const float opacity = std::clamp(pbr->opacity(), 0.0F, 1.0F);
                     if (opacity < 1.0F) {
                         leaf->setOpacity(opacity);

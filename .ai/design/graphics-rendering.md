@@ -1,7 +1,7 @@
 # graphics 渲染：目标、MSAA、图源、颜色、着色、阴影
 
 > **状态**：现行
-> **最后核对**：2026-10-23
+> **最后核对**：2026-11-02
 > **范围**：目标、MSAA、图源、颜色空间、着色与阴影。
 > **权威来源**：`RenderTarget.hpp` / `ImageSource.hpp` / `Sampler.hpp` / `ShaderProgram.hpp` /
 > `ShaderAbi.hpp` / `Light.hpp`。
@@ -42,6 +42,11 @@
   - **两种光相机**：方向光走正交拟合（`directionalShadowMatrix`），聚光走透视拟合（眼在灯位、锥角=外锥角×1.02，`spotShadowMatrix`）；两者出口都是同一份 `VineShadowBlock`（一张矩阵），着色不分流。
   - **点光不支持**：点光的阴影是同一张图的六个面，今天的 ABI 没有多矩阵 / cube，所以点光 `setCastShadow` 在这条管线里一定不建 pass（backlog S6）。
   - **三种不建的理由分开报**（每 build 一次，`UnsupportedRequest`）：第二个投射灯 / 点光不可表示 / 这条路本身不产生光照（宿主自己的 lighting program、或不需要着色的 mode）。分着数是为了让“N 盏灯没投影”能被定位，而不是靠猜。
+
+2.8 **动态状态只有一份清单**：管线**声明**的动态状态（`DynamicState`）与命令**写入**的动态状态（`SetDynamicState`）
+必须是同一份清单的两面，由一条测试钉住“命令写到的每一项都已在管线里声明、反之亦然”。声明漏一项，驱动就取 create-info
+的烘焙值——命令写的那一半被静默丢弃，画面错而不报错。这一条也管 create-info 里的**开关**：动态状态只能改值，不能改
+`depthBiasEnable` 这类 enable，所以 enable 必须随清单一起定。已知违背：`../bugs/vsg-depth-bias-not-declared-dynamic.md`。
 
 ## 3. 功能点
 
@@ -161,6 +166,8 @@
 | N6 | 材质不贡献 alpha；透明度只来自 `Node::opacity`。 |
 | N7 | `ShaderAbi` 的块布局 / location 改一个必须同时改 C++ 与 GLSL。 |
 | N8 | 阴影投射灯是方向光与聚光（正交 / 透视光相机，同一张 2D 深度图、同一份 `VineShadowBlock`）；**每链只有一张图** —— 第二个投射灯没有图；点光需要六面 cube，`setCastShadow` 在点光上不建 pass。三种不建的理由（第二个投射灯 / 点光 / 这条路不产生光照）由 `ChainBuilder::reportRequestedShadows` 分别报出，见 2.7 与 backlog S6。CSM / PCSS 不做。 |
+| N9 | 管线声明的动态状态必须覆盖命令写入的每一项；写了却没声明的项，驱动一律取 create-info 的烘焙值（静默）。 |
+| N10 | 动态状态改不了 enable：`depthBiasEnable` 之类的开关留在管线里，必须与状态清单一起定，不能只靠命令。 |
 
 ## 6. 注意事项与陷阱
 
@@ -203,6 +210,7 @@
 | T3 | 4 样本深度可读且无中间值；解析后与 1 样本逐点一致。 |
 | T4 | `ScreenDrawTest` / `ImageSourceTest` / `SamplerTest` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`。 |
 | T5 | 阴影：有投影光时地面变暗；无投影光时证据逐字节不变。 |
+| T6 | 动态状态清单：命令 `record()` 写入的每一项都在管线声明里（当前缺口见 `../bugs/vsg-depth-bias-not-declared-dynamic.md`）。 |
 
 ## 9. 状态与演进
 

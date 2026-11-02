@@ -59,11 +59,12 @@ std::optional<int> PassRegistry::orderOf(raw_ptr<RenderPass> pass) const
     return engine != nullptr ? engine->passOrder(pass) : std::nullopt;
 }
 
-void PassRegistry::bindContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content)
+bool PassRegistry::bindContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content)
 {
     if (raw_ptr<RenderEngine> engine = engine_.get()) {
-        engine->bindPassContent(pass, std::move(content));
+        return engine->bindPassContent(pass, std::move(content));
     }
+    return false;
 }
 
 raw_ptr<Scene> PassRegistry::contentOf(raw_ptr<RenderPass> pass) const

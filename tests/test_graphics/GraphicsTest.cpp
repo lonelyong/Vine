@@ -2267,6 +2267,26 @@ TEST(NodeTest, ChildHierarchy)
     EXPECT_EQ(child->parent(), nullptr);
 }
 
+TEST(NodeTest, DestroyingParentDetachesSurvivingChild)
+{
+    auto child = intrusive_ptr<Node>(new Node());
+    {
+        auto parent = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+        parent->setMatrix(vn::math::translate(Vec3d(3, 0, 0)));
+        parent->addChild(child);
+
+        ASSERT_EQ(child->parent(), parent.get());
+        const Point3d world_origin = child->worldMatrix() * Point3d(0, 0, 0);
+        EXPECT_NEAR(world_origin.x, 3.0, 1e-9);
+    }
+
+    EXPECT_EQ(child->parent(), nullptr);
+    const Point3d world_origin = child->worldMatrix() * Point3d(0, 0, 0);
+    EXPECT_NEAR(world_origin.x, 0.0, 1e-9);
+    EXPECT_NEAR(world_origin.y, 0.0, 1e-9);
+    EXPECT_NEAR(world_origin.z, 0.0, 1e-9);
+}
+
 TEST(NodeTest, ChildHierarchyReparentsInsteadOfAdoptingTwice)
 {
     auto first  = intrusive_ptr<Group>(new Group());
@@ -4046,12 +4066,19 @@ TEST(RenderEngineTest, PassOrderAnswersWhereARegisteredPassRuns)
 
 TEST(RenderEngineTest, AddSamePassTwiceKeepsSingleSlot)
 {
-    // Registering the same extra pass twice must not run it twice per frame.
+    // Registering the same extra pass twice must not run it twice per frame - and must not edit the pass it did
+    // not register: content lives in the pass' declaration, so an ignored add that bound content would be a
+    // mutation the caller holds no handle for.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto pass   = intrusive_ptr<RenderPass>(new RenderPass());
-    engine->addPass(pass, 1);
-    engine->addPass(pass, 2); // duplicate add is ignored
+    auto first  = intrusive_ptr<Scene>(new Scene());
+    auto second = intrusive_ptr<Scene>(new Scene());
+
+    EXPECT_NE(engine->addPass(pass, first, 1), nullptr);
+    EXPECT_EQ(engine->addPass(pass, second, 2), nullptr); // duplicate add is a no-op
     EXPECT_EQ(engine->passCount(), 1u);
+    EXPECT_EQ(engine->passOrder(pass.get()), 1);
+    EXPECT_EQ(engine->contentOf(pass.get()), first.get()) << "the ignored add must not rebind the declaration";
 }
 
 TEST(RenderEngineTest, InitializeAttachesToTheDeviceItsCreatorBroughtUp)
@@ -4079,8 +4106,30 @@ TEST(RenderEngineTest, AnAttachToADeviceThatIsNotUpIsRefusedOnce)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u);
     EXPECT_FALSE(engine->initialize()) << "the same condition is one report, not one per call";
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u);
-    engine->frame();
+    EXPECT_EQ(engine->frame(), FrameOutcome::NotInitialized);
     EXPECT_EQ(backend->frames_executed, 0) << "and nothing runs until the creator brings the device up";
+}
+
+TEST(RenderEngineTest, FrameSaysWhetherItRan)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+
+    // No device: nothing to hand a frame to, and that is a different answer from "ran and drew nothing".
+    EXPECT_EQ(engine->frame(), FrameOutcome::NoDevice);
+
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setDevice(backend);
+    EXPECT_EQ(engine->frame(), FrameOutcome::NotInitialized)
+        << "a frame through an engine that never attached is a frame nobody drove";
+    EXPECT_EQ(backend->frames_executed, 0);
+
+    ASSERT_TRUE(engine->initialize());
+    EXPECT_EQ(engine->frame(), FrameOutcome::Ran) << "no registered pass still means the frame ran";
+    EXPECT_EQ(backend->frames_executed, 1);
+
+    engine->shutdown();
+    EXPECT_EQ(engine->frame(), FrameOutcome::NotInitialized);
+    EXPECT_EQ(backend->frames_executed, 1) << "a detached engine drives nothing";
 }
 
 TEST(RenderEngineTest, FrameRunsPipeline)
@@ -5462,10 +5511,10 @@ TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)
     EXPECT_EQ(engine->passCount(), 0u);
 }
 
-TEST(RenderEngineTest, PassContentBindingManagedByEngine)
+TEST(RenderEngineTest, PassContentLivesInThePassDeclaration)
 {
-    // Content is bound per pass; the engine has no default content, so an
-    // unbound pass has none and draws nothing.
+    // Content is one field of the pass' declaration (PassDesc::content): addPass states it, bindPassContent rewrites
+    // it, and the engine keeps no second copy. An unregistered pass is refused rather than silently "bound".
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
@@ -5491,19 +5540,29 @@ TEST(RenderEngineTest, PassContentBindingManagedByEngine)
     EXPECT_EQ(engine->contentOf(nullptr), nullptr);
 
     // Runtime rebind of the registered pass.
-    engine->bindPassContent(passA.get(), sceneB);
+    EXPECT_TRUE(engine->bindPassContent(passA.get(), sceneB));
     EXPECT_EQ(engine->contentOf(passA.get()), sceneB.get());
 
     // Bind the previously content-less pass.
     auto sceneC = intrusive_ptr<Scene>(new Scene());
-    engine->bindPassContent(passB.get(), sceneC);
+    EXPECT_TRUE(engine->bindPassContent(passB.get(), sceneC));
     EXPECT_EQ(engine->contentOf(passB.get()), sceneC.get());
     EXPECT_EQ(engine->contentOf(passA.get()), sceneB.get());
 
     // Clearing a binding leaves the pass content-less (draws nothing).
-    engine->bindPassContent(passB.get(), nullptr);
+    EXPECT_TRUE(engine->bindPassContent(passB.get(), nullptr));
     EXPECT_EQ(engine->contentOf(passB.get()), nullptr);
     EXPECT_EQ(engine->contentOf(passA.get()), sceneB.get());
+
+    // A pass the engine does not know is a binding that did not happen, and it says so.
+    auto unregistered = intrusive_ptr<RenderPass>(new RenderPass());
+    EXPECT_FALSE(engine->bindPassContent(unregistered.get(), sceneC));
+    EXPECT_FALSE(engine->bindPassContent(nullptr, sceneC));
+    EXPECT_EQ(unregistered->content(), nullptr) << "a refused bind must not edit the pass either";
+
+    // The registry handle is the same call, so it answers the same thing.
+    EXPECT_TRUE(engine->passes().bindContent(passB.get(), sceneC));
+    EXPECT_FALSE(engine->passes().bindContent(unregistered.get(), sceneC));
 }
 
 TEST(RenderPassTest, NamedOutputAndInputSlots)

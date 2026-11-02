@@ -22,9 +22,10 @@ struct PassDesc;
  * @brief The engine's pass registry - the ONE table a frame runs from - as a narrow handle.
  *
  * @details
- * - ONE STORAGE, ONE CONTRACT: the engine owns the ordered slot table (order, content binding, transient, timing),
- *   and this handle is a view of it. There is no second list here - `count()` and `orderOf()` walk the engine's
- *   table, and `add()` files a pass into it.
+ * - ONE STORAGE, ONE CONTRACT: the engine owns the ordered slot table (order, owner, role, transient, timing),
+ *   and this handle is a view of it. Content is not in that table: it is a field of the pass' own declaration
+ *   (`PassDesc::content`), which is what `bindContent()` writes. There is no second list here - `count()` and
+ *   `orderOf()` walk the engine's table, and `add()` files a pass into it.
  * - WHO DEPENDS ON IT: a `PassChain` registers its passes through this handle and takes them back through it, so a
  *   recipe depends on the registry instead of the whole engine. Hosts that spell it out use `engine.passes()`.
  * - THE ENGINE MAY OUTLIVE OR PRECEDE THE HANDLE, and the handle knows it (a `Lease`): once the engine is destroyed
@@ -96,10 +97,15 @@ class VN_GRAPHICS_API PassRegistry {
 
     /** @brief Rebinds which scene a registered pass renders.
      *
+     * @details
+     * - The binding is written into the pass' declaration (`PassDesc::content`); the registry keeps no copy.
+     *
      * @param pass    Pass registered through this handle (by pointer).
      * @param content New content scene; null clears the binding.
+     * @return true when @p pass is registered and its declaration now states @p content; false when there is no such
+     *         pass (or the engine this handle refers to is gone), so nothing changed.
      */
-    void bindContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content);
+    bool bindContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content);
 
     /** @brief Gets the content scene a registered pass renders.
      *

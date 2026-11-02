@@ -441,7 +441,7 @@ void intersectNode(const Ray& ray, const Node* node, std::uint32_t inherited_lay
         return; // no resolved layer in this subtree can match: skip it whole (see Node::subtreeLayerUnion)
     }
     const std::uint32_t layers = node->layers().value_or(inherited_layers);
-    if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+    if (const auto* geometry = obj_cast<Geometry>(node)) {
         // The content selection, taken at the drawn node like the collection walk (see
         // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
         if ((layers & layer_mask) == 0) {
@@ -457,7 +457,7 @@ void intersectNode(const Ray& ray, const Node* node, std::uint32_t inherited_lay
         });
         return;
     }
-    if (const auto* group = dynamic_cast<const Group*>(node)) {
+    if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
             intersectNode(ray, child.get(), layers, layer_mask, best);
         }
@@ -482,7 +482,7 @@ void collectNodeNearest(const Ray& ray, const Node* node, std::uint32_t inherite
         return;
     }
     const std::uint32_t layers = node->layers().value_or(inherited_layers);
-    if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+    if (const auto* geometry = obj_cast<Geometry>(node)) {
         // The content selection, taken at the drawn node like the collection walk (see
         // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
         if ((layers & layer_mask) == 0) {
@@ -500,7 +500,7 @@ void collectNodeNearest(const Ray& ray, const Node* node, std::uint32_t inherite
         }
         return;
     }
-    if (const auto* group = dynamic_cast<const Group*>(node)) {
+    if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
             collectNodeNearest(ray, child.get(), layers, layer_mask, out);
         }
@@ -525,7 +525,7 @@ void collectNodeHits(const Ray& ray, const Node* node, std::uint32_t inherited_l
         return;
     }
     const std::uint32_t layers = node->layers().value_or(inherited_layers);
-    if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+    if (const auto* geometry = obj_cast<Geometry>(node)) {
         // The content selection, taken at the drawn node like the collection walk (see
         // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
         if ((layers & layer_mask) == 0) {
@@ -538,7 +538,7 @@ void collectNodeHits(const Ray& ray, const Node* node, std::uint32_t inherited_l
         });
         return;
     }
-    if (const auto* group = dynamic_cast<const Group*>(node)) {
+    if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
             collectNodeHits(ray, child.get(), layers, layer_mask, out);
         }

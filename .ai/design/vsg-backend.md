@@ -1,7 +1,7 @@
 # vsg 后端：架构、契约、坑
 
 > **状态**：现行
-> **最后核对**：2026-10-23
+> **最后核对**：2026-11-02
 > **范围**：vsg 后端如何把编译好的帧值物化成 Vulkan 命令；平台事实与已踩过的坑。
 > **权威来源**：`RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/backend/**` /
 > `src/plugins/gfx_backend_vsg/include/vine/vsg/**`。
@@ -230,6 +230,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | C3 | 调度只在引擎；后端按 `FrameDescription.passes` 物化。 |
 | C4 | `TargetShape` 决定图像/通道/管线兼容性；bootstrap 清所有附件。 |
 | C5 | `StreamKey` = buffer + buffer revision + 段；稳态零重传。 |
+| C6 | T15 触发前，不再向 SDK `graphics/backend/` 新增 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）：新的设备无关表述先在插件 `internal/` 落地，等第二个后端把这条边界推上去。 |
 
 ### 5.2 要求（R#）
 

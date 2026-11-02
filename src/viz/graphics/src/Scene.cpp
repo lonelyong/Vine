@@ -145,7 +145,7 @@ NodePtr findNodeRecursive(const Node* node, const String& name)
     if (node->name() == name) {
         return NodePtr(const_cast<Node*>(node));
     }
-    if (const auto* group = dynamic_cast<const Group*>(node)) {
+    if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
             NodePtr found = findNodeRecursive(child.get(), name);
             if (found != nullptr) {
@@ -195,7 +195,7 @@ class BoundsCache {
             // stale it is a change INSIDE the subtree, announced through Node::invalidateBounds().
             box = transformBox(local, world);
         }
-        else if (const auto* group = dynamic_cast<const Group*>(node)) {
+        else if (const auto* group = obj_cast<Group>(node)) {
             // The subtree could not answer in its own frame (a node below answers only in world space,
             // e.g. a custom leaf): compute from scratch, exactly as collection always did. Children
             // that CAN answer still use their caches through this same entry point — including the
@@ -223,7 +223,7 @@ class BoundsCache {
 void invalidateBoundsUnder(Node& node)
 {
     node.invalidateBounds();
-    if (const auto* group = dynamic_cast<const Group*>(&node)) {
+    if (const auto* group = obj_cast<Group>(&node)) {
         for (const auto& child : group->children()) {
             invalidateBoundsUnder(*child);
         }
@@ -257,13 +257,13 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
         return Aabbd::empty();
     }
     const std::uint32_t layers = node.layers().value_or(inherited_layers);
-    if (const auto* billboard = dynamic_cast<const AutoTransform*>(&node)) {
+    if (const auto* billboard = obj_cast<AutoTransform>(&node)) {
         // A billboard's world box depends on the camera that draws it. Its own answer is the conservative
         // sphere-box, which is a superset of every orientation (and of every layer selection) - a scene
         // bound may be too large, never too small.
         return billboard->boundingBox();
     }
-    if (const auto* group = dynamic_cast<const Group*>(&node)) {
+    if (const auto* group = obj_cast<Group>(&node)) {
         Aabbd box = Aabbd::empty();
         for (const auto& child : group->children()) {
             const Aabbd child_box = visibleWorldBox(*child, layers, layer_mask);
@@ -388,7 +388,7 @@ void collectNodeCommands(const Node*                 node,
     InheritedState subtree = inherited;
     subtree.layers         = layers;
     subtree.draw_order     = node->drawOrder().value_or(inherited.draw_order);
-    if (const auto* state_node = dynamic_cast<const StateNode*>(node)) {
+    if (const auto* state_node = obj_cast<StateNode>(node)) {
         subtree.state.merge(state_node->renderState());
         if (raw_ptr<MaterialBase> material = state_node->material()) {
             subtree.material = material;
@@ -401,7 +401,7 @@ void collectNodeCommands(const Node*                 node,
     // with that draw (see Primitive.hpp). Nothing above has to be consulted, so the collector stays the
     // same top-down walk it has always been.
 
-    if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+    if (const auto* geometry = obj_cast<Geometry>(node)) {
         // The content selection, tested on the DRAWN node (see Node::setLayers): one AND per command, and no
         // early exit above, because what a mask excludes is content - never the structure it sits in.
         if ((layers & layer_mask) == 0) {
@@ -451,7 +451,7 @@ void collectNodeCommands(const Node*                 node,
         }
         return;
     }
-    if (const auto* group = dynamic_cast<const Group*>(node)) {
+    if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
             collectNodeCommands(child.get(),
                                 node_world * child->localTransformMatrix(),
@@ -571,7 +571,7 @@ void Scene::setRoot(intrusive_ptr<Node> root)
     // silently render the subtree at another tree's transform. Only Groups own children, so the cast is the
     // same one Group::addChild uses to reach an old parent.
     if (root != nullptr && root->parent() != nullptr) {
-        if (auto* old_parent = dynamic_cast<Group*>(root->parent())) {
+        if (auto* old_parent = obj_cast<Group>(root->parent())) {
             old_parent->removeChild(root.get());
         }
     }

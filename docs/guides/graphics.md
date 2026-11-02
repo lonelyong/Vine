@@ -123,10 +123,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 
 ### 2.4 渲染对象
 
-- `RenderEngine` —— 帧泵 + 账本：`initialize()`、`addPass(pass, content, order)`、`frame(dt)`、
-  `resize(w, h)`、`publish/resolve`（命名输出）、`validateWiring()`（结构性校验，走诊断通道，
-  **只在声明变化时跑**：`RenderPass::wiringRevision()` 或 `publish/unpublish` 推动，见证量 `wiringValidationCount()`）、
-  `shutdown()`。
+- `RenderEngine` —— 帧泵 + 账本：`initialize()` / `shutdown()`、`setDevice()`、`addPass(pass, content, order)` / `removePass()`、
+  `frame()`（返回 `FrameOutcome`：Ran / NotInitialized / NoDevice）、`createSurface()`（尺寸走 `RenderSurface::resize()`）、
+  `publish/resolve`（命名输出）、`framePlan()` / `frameDescription()` / `frameReport()` / `diagnostics()` / `releaseContent()`。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。
   - **扩展点只有一个：`describe(scene, out)`**（另加声明侧的 `before_draw` 钩子）。这一条 pass 要"发什么"
@@ -173,7 +172,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 
 ### 2.5 每帧数据流
 
-1. 宿主调 `RenderEngine::frame(dt)`。
+1. 宿主调 `RenderEngine::frame()`。
 2. **先编译这一帧**（`compileFrame`）：按声明算出"谁先谁后、每条 pass 声明的输入解析到什么、这一组声明有什么问题"，
    并**顺手产出这一帧的值**（`FrameDescription`：每条启用的 pass 的身份 / order / 解析后的输入 + 它自己描述出来的
    绘制），`RenderEngine::frameDescription()` 可以读它。**帧跑的是这个值**，不是"逐条 pass 再问一遍"。
@@ -1096,7 +1095,7 @@ if (converted.root != nullptr) {
 
 ### 3.18 注册归链自己
 
-`RenderEngine::addPass(...)` 是**唯一的注册表**（顺序、内容绑定、资源都在它那儿），
+`RenderEngine::addPass(...)` 是**唯一的注册表**（顺序、owner 与资源都在它那儿；内容属于 pass 的声明 `PassDesc::content`），
 而"这些 pass 是我的、我走的时候要撤掉"不需要第二份列表：**链自己就是注册范围** ——
 引擎的槽位表把链记为它注册的 pass 的 owner（`RenderEngine::addPassOwnedBy`），
 链的析构调用 `removePassesOwnedBy(this)`，一次交还它注册过的全部 pass。

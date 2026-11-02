@@ -92,8 +92,6 @@
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
-空。
-
 ## backlog/ —— 开放待办（7）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
@@ -117,7 +115,7 @@
 - `robotics-kinematics.md` —— Robotics kinematics 要点。
 - `robotics-proximity.md` —— Robotics proximity 要点。
 
-## bugs/ —— Bug 记录（18）
+## bugs/ —— Bug 记录（22）
 
 现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
 
@@ -139,5 +137,9 @@
 - `async-queue-nondefault-values.md`
 - `async-withcancellation-token-propagation.md`
 - `async-queue-noexcept-failures.md`
+- `vsg-depth-bias-not-declared-dynamic.md`
+- `graphics-renderengine-addpass-null-pass-crash.md`
+- `graphics-scene-memo-key-missing-view-basis.md`
+- `graphics-transparent-sort-uses-origin.md`
 
 约定：`memory/` 保持简短要点式；详细设计放 `design/`；bug 一条一文件。

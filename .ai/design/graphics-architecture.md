@@ -1,7 +1,7 @@
 # graphics 架构：设备、引擎、链、一帧
 
 > **状态**：现行
-> **最后核对**：2026-10-23
+> **最后核对**：2026-11-02
 > **范围**：设备/窗口/区/视图/引擎的分层，一帧的编译与调度。
 > **权威来源**：`RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsRoute.hpp` / `SceneView.hpp` / `RenderSurface.hpp` / `RenderBackend.hpp`。
@@ -36,6 +36,17 @@
 2.4 **设备不是窗口**：`RenderDevice` 拥有 GPU 设备与队列，可服务多个窗口；窗口目标由设备发放。
 2.5 **调度只有一个实现**：引擎的 `detail::FrameScheduler` 排序；后端不再按依赖重排、不再报环。
 
+2.6 **内容属于 pass 的声明**：`PassDesc::content` 是唯一存储；引擎的 slot 只存 order / owner / role / transient / 计时。
+为什么：一个 pass 就是一条声明（`RenderPass.hpp` 的 “ONE FACT, ONE STORAGE”），内容由声明者写、编译者读；引擎另存一份
+会立刻变成两份可写的值。边界：同一个 pass 实例被两个引擎注册时共享内容——这是“一条声明”的直接后果，要两幅画就用两个 pass。
+`addPass(pass, content, order)` 只是写声明；null 不动已声明的内容，清空用 `bindPassContent(pass, nullptr)`。
+满足 `G1` / `G4`；为 `G1` 放弃“同实例多内容”。
+
+2.7 **可失败的变更从返回值看得出**：`addPass` 返回注册的 pass 或 null，`bindPassContent` / `PassRegistry::bindContent`
+返回是否命中已注册的 pass，`frame()` 返回 `FrameOutcome`（Ran / NotInitialized / NoDevice）。
+为什么：静默 no-op 让宿主把“没生效”当成“生效”；返回值是调用点唯一能判断的答案。边界：`removePass` 保持幂等、不返回——
+移除未注册的 pass 与移除已移除的 pass 是同一个结果。满足 `G4` / `G6`；代价是每个调用点多一个可忽略的返回值。
+
 ## 3. 功能点
 
 ### 3.1 设备、窗口、区、视图、引擎
@@ -45,14 +56,14 @@
 | F1 | 设备 | `RenderDevice`（`RenderBackend`）：设备 + 队列；不拥有窗口。 |
 | F2 | 窗口目标 | `WindowPresentTarget`：窗口句柄 + 交换链；一个窗口一个目标。 |
 | F3 | 区 | `RenderSurface`：尺寸 + 呈现表；由 `RenderEngine::createSurface()` 创建；一区一幅画。 |
-| F4 | 视图 | `SceneView`：相机 + 场景 + 操纵器 + 采纳的 `PassChain`；回答“哪条 pass 画我”。 |
-| F5 | 引擎 | `RenderEngine`：`initialize` / `shutdown` / `frame`、设备借用、尺寸、能力、报告。 |
+| F4 | 视图 | `SceneView`：相机 + 场景 + 操纵器 + 输入 + 采纳的 `PassChain`；回答“哪条 pass 画我”（输入的归属见 `appfw-render-view.md` §2.1 / §2.4）。 |
+| F5 | 引擎 | `RenderEngine`：`initialize` / `shutdown` / `frame() → FrameOutcome`、设备借用、尺寸、能力、报告。 |
 
 ### 3.2 引擎的三个门面
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F6 | `PassRegistry` | 唯一的 pass 登记表；`add` / `remove` / `count` / `orderOf` / `contentOf` / `bindContent`。 |
+| F6 | `PassRegistry` | 唯一的 pass 登记表；`add` / `remove` / `count` / `orderOf` / `contentOf` / `bindContent(...) → bool`。 |
 | F7 | `OutputRegistry` | 命名产出与 transient：`publish` / `resolve` / `unpublish` / `transientTarget`。 |
 | F8 | `DiagnosticsRoute` | 诊断：`setSink` / 计数 / `isClean`；引擎先死 ⇒ `isValid()` false。 |
 
@@ -90,7 +101,7 @@
 | 接口 | 作用 |
 |---|---|
 | `initialize()` / `shutdown()` | 生命周期 |
-| `frame()` | 编译并执行一帧 |
+| `frame()` | 编译并执行一帧；返回 `FrameOutcome`（Ran / NotInitialized / NoDevice） |
 | `passes()` / `outputs()` / `diagnostics()` | 三个门面 |
 | `device()` / `setDevice()` | 借用/安装设备 |
 | `createSurface()` | 创建唯一的区 |
@@ -106,7 +117,7 @@
 | 接口 | 作用 |
 |---|---|
 | `PassRegistry::add(PassDesc)` / `remove()` / `count()` | pass 登记 |
-| `PassRegistry::orderOf()` / `contentOf()` / `bindContent()` | pass 的 order / 内容 |
+| `PassRegistry::orderOf()` / `contentOf()` / `bindContent()` | pass 的 order / 内容；`bindContent` 返回是否命中已注册的 pass |
 | `OutputRegistry::publish()` / `resolve()` / `unpublish()` | 命名产出 |
 | `OutputRegistry::transientTarget()` / `transientCount()` | transient |
 | `DiagnosticsRoute::setSink()` / `count()` / `isClean()` | 诊断 |
@@ -164,6 +175,7 @@
 | N4 | 一区一幅画；多格布局归应用层，不要往引擎加第二个区。 |
 | N5 | 相机自带 aspect；pass 矩形与相机形状不一致会在编译期报出来。 |
 | N6 | 后端只物化 `FrameDescription.passes`；不要在记录路径重排或自建依赖图。 |
+| N7 | `frame()` 的 `FrameOutcome` 只说跑没跑；跑了但没画东西读 `frameReport()`，不要从返回值推断绘制结果。 |
 
 ## 6. 注意事项与陷阱
 
@@ -188,6 +200,7 @@
 | D3 | `PassPipeline` / `ScenePicture` 命名 | 重开 K1 的 PSO 歧义 / 读成“场景图片”；现行名 `PassChain`。 |
 | D4 | 引擎同时做 pass 表、产出表、诊断与 UI 门面 | 一个类型多职；拆成三个窄门面。 |
 | D5 | 后端自己再排一次 pass | 两套排序、两套帧词汇；调度上移引擎。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |
+| D6 | 给 `FrameDescription` 加 `FrameBorrowed<T>` 标记类型 | 借用的答案已经是“要留下就拥有”（`OwnedFrame`）；借用窗口只有一个 `executeFrame` 调用宽，标记类型会穿透 `FrameDescription` / `PassDraw` / `ImageSource`，且能被 `auto` 绕过（`G8` / `G10`）。 |
 
 ## 8. 测试与验收
 

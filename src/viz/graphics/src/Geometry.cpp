@@ -485,7 +485,7 @@ intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> 
 
 GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
 {
-    const auto* mesh = dynamic_cast<const vn::geometry::Mesh*>(&shape);
+    const auto* mesh = obj_cast<vn::geometry::Mesh>(&shape);
     if (mesh == nullptr) {
         return GeometryPtr();
     }
@@ -514,7 +514,7 @@ GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
     // both belong now (see Primitive.hpp). An unindexed mesh states no indices and draws its vertex streams.
     Primitive primitive;
     primitive.topology = Topology::Triangles;
-    if (const auto* indexed = dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(&shape)) {
+    if (const auto* indexed = obj_cast<vn::geometry::IndexedTriangleMesh>(&shape)) {
         primitive.indices = Primitive::IndexSpan::whole(indexed->indicesBuffer());
     }
     geometry->setPrimitive(0U, std::move(primitive));

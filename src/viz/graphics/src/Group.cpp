@@ -10,7 +10,19 @@ VN_OBJECT_META_IMPL(Group, Node);
 
 Group::Group() = default;
 
-Group::~Group() = default;
+Group::~Group()
+{
+    bool detached_child = false;
+    for (const NodePtr& child : children_) {
+        if (child != nullptr && child->parent_ == this) {
+            child->parent_ = nullptr;
+            detached_child = true;
+        }
+    }
+    if (detached_child) {
+        detail::announceLayerChange();
+    }
+}
 
 void Group::addChild(intrusive_ptr<Node> child)
 {
@@ -31,7 +43,7 @@ void Group::addChild(intrusive_ptr<Node> child)
     // Detach from an existing parent (only Groups own children) before
     // re-parenting.
     if (child->parent_ != nullptr) {
-        if (auto* old_parent = dynamic_cast<Group*>(child->parent_)) {
+        if (auto* old_parent = obj_cast<Group>(child->parent_)) {
             old_parent->removeChild(child.get());
         }
     }

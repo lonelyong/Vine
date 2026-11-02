@@ -46,6 +46,25 @@ class RenderBackend;
 class PresentTarget;
 
 /**
+ * @brief What one RenderEngine::frame() call did.
+ *
+ * @details
+ * - Ran: the frame was compiled and handed to the device (a frame with no passes still ran).
+ * - NotInitialized: initialize() has not succeeded - never called, refused, or shutdown() ran since.
+ * - NoDevice: setDevice() was never called, so there is nothing to hand a frame to.
+ *
+ * @note
+ * - This answers "did the frame run", not "did it draw anything": a ran frame that issued no draw is a
+ *   different fact, and RenderEngine::frameReport() is where its counters are.
+ */
+enum class FrameOutcome : std::uint8_t
+{
+    Ran,            // The frame was compiled and handed to the device.
+    NotInitialized, // The engine is not attached to a device it can drive.
+    NoDevice,       // No backend is set.
+};
+
+/**
  * @brief High-level render engine managing the frame loop and render state.
  *
  * @details
@@ -53,8 +72,8 @@ class PresentTarget;
  *   frame() runs the registered passes in ascending order, then ends and swaps; a top / HUD pass is just a
  *   pass registered with a higher order - there is no separate overlay concept.
  * - A pure scheduler: it carries no content scene, no camera and no input forwarding. Every pass draws the
- *   content bound to it (addPass(pass, content, order)) or nothing; the primary interactive view lives in a
- *   SceneView that borrows this engine. Which pass draws into which SURFACE is the surface's own
+ *   content its own declaration states (addPass(pass, content, order)) or nothing; the primary interactive view
+ *   lives in a SceneView that borrows this engine. Which pass draws into which SURFACE is the surface's own
  *   declaration (see RenderSurface), never something the engine infers.
  * - THE ENGINE KNOWS NO WINDOW: the window belongs to the AREA - the area holds the TARGET its device made
  *   (RenderSurface::bindTarget) and the size a host reports (resize), and the engine holds neither. It
@@ -97,7 +116,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Gets the pass registry: the ONE table a frame runs from (see PassRegistry).
      *
      * @details
-     * - The narrow contract a recipe (PassChain) depends on: registration, order, content binding, and the owner
+     * - The narrow contract a recipe (PassChain) depends on: registration, order, content access, and the owner
      *   relation that makes "the chain takes back what it registered" one call. The flat methods below
      *   (`addPass`, `removePass`, `passCount`, ...) are shorthands for this handle.
      * - The handle carries a lease, so it may outlive the engine: `isValid()` then answers false and every call is
@@ -257,8 +276,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - The frame is what the declarations ARE: there is no clock and no per-frame context to pass in. Content that
      *   animates measures its own time (a pass' `before_draw` hook, an overlay's own wall clock), which is what the
      *   one `dt` a host had to hand over used to be - a number nothing in the frame read.
+     *
+     * @return Whether the frame ran; NotInitialized / NoDevice say nothing was compiled or handed over.
      */
-    void frame();
+    FrameOutcome frame();
 
     /** @brief Gets the width the frame is laid out on, as the host announced it (see RenderSurface::resize).
      *
@@ -400,16 +421,16 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     intrusive_ptr<const ShaderProgram> defaultContentProgram() const;
 
-    /** @brief Registers a scene render pass executed every frame (no content bound).
+    /** @brief Registers a scene render pass without touching the content its declaration states.
      *
      * @details
      * - Passes run in ascending @p order (equal orders keep insertion order): negative orders first (a
      *   shadow-map or depth pre-pass); the pass presenting the primary view to the window conventionally at
      *   0; positive orders after it (post / compositing); top / HUD passes at the highest orders.
-     * - This overload registers @p pass WITHOUT bound content: a base scene pass then draws nothing, while
-     *   content-agnostic passes (a ScreenPass compositing inputs, an AxisGizmo) still execute. Bind a scene
-     *   with the addPass(pass, content, order) overload. Nothing is auto-registered; registering the same
-     *   pass instance twice is ignored.
+     * - This overload binds NO content: the pass draws whatever its declaration already states - nothing for a
+     *   fresh pass, while content-agnostic passes (a ScreenPass compositing inputs, an AxisGizmo) still execute.
+     *   State a scene with the addPass(pass, content, order) overload, or bind one with bindPassContent().
+     *   Nothing is auto-registered; registering the same pass instance twice is a no-op.
      * - Two DIFFERENT passes may share a camera and an order: the backend keys retained state by the pass,
      *   so they stay separate content (the order only decides their stacking). Give distinct orders (and a
      *   sub-viewport / clear policy) when they must layer.
@@ -420,17 +441,21 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     intrusive_ptr<RenderPass> addPass(intrusive_ptr<RenderPass> pass, int order);
 
-    /** @brief Registers a scene render pass bound to explicit content.
+    /** @brief Registers a scene render pass, stating the content its declaration draws.
      *
      * @details
-     * - The pass renders @p content each frame. The association is stored by the ENGINE, not on the pass, so
-     *   a RenderPass stays a reusable stage; registering the same instance twice is ignored (use
-     *   bindPassContent() to change its content).
+     * - THE CONTENT IS PART OF THE PASS' DECLARATION (`PassDesc::content`), not a fact the engine keeps beside it:
+     *   this overload writes @p content into that one declaration, which is what the compile reads. A pass is
+     *   therefore one declaration - two engines registering the same instance share its content.
+     * - A null @p content leaves what the pass already declares alone (an overlay keeps the scene it was built
+     *   with). Use bindPassContent(pass, nullptr) to clear a binding.
+     * - Registering the same instance twice is a no-op: the call returns null and changes NEITHER the order NOR the
+     *   content (use bindPassContent() to rebind a registered pass).
      *
      * @param pass    Pass to add (the engine keeps a reference).
-     * @param content Scene the pass renders (a reference is kept); null leaves it contentless (draws nothing).
+     * @param content Scene the pass' declaration draws (null leaves the declared content unchanged).
      * @param order   Execution order (ascending; any integer allowed).
-     * @return The pass the engine registered, or null when it was already registered.
+     * @return The pass the engine registered, or null when it was already registered (or null).
      */
     intrusive_ptr<RenderPass> addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
 
@@ -492,12 +517,15 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Rebinds which scene a registered pass renders.
      *
      * @details
-     * - The binding is managed by the engine, not stored on the pass object.
+     * - The binding is written into the pass' declaration (`PassDesc::content`) - the same one storage addPass()
+     *   writes and the compile reads.
      *
      * @param pass    Pass registered via addPass() (by pointer).
      * @param content New content scene; null clears the binding (a base scene pass then draws nothing).
+     * @return true when @p pass is registered and its declaration now states @p content; false when no such pass is
+     *         registered, so nothing changed.
      */
-    void bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content);
+    bool bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content);
 
     /** @brief Gets the content scene a registered pass renders.
      *

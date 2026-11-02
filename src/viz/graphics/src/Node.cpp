@@ -71,7 +71,7 @@ bool Node::subtreeBounds(Aabbd& box) const
     // The leaf types (Geometry) override this with their own frame's box. What is left here
     // is the container's union and the plain node's empty answer; any other class is unknown and the walk
     // falls back to its world-space boundingBox().
-    if (const auto* group = dynamic_cast<const Group*>(this)) {
+    if (const auto* group = obj_cast<Group>(this)) {
         if (cached_known_ && cached_stamp_ == bounds_stamp_) {
             box = cached_bounds_;
             return true;
@@ -125,7 +125,7 @@ std::uint32_t Node::subtreeLayerUnion(std::uint32_t inherited_layers) const
     ++layer_union_recomputes_;
     const std::uint32_t layers       = layers_.value_or(inherited_layers);
     std::uint32_t       union_layers = layers;
-    if (const auto* group = dynamic_cast<const Group*>(this)) {
+    if (const auto* group = obj_cast<Group>(this)) {
         for (const auto& child : group->children()) {
             union_layers |= child->subtreeLayerUnion(layers);
         }

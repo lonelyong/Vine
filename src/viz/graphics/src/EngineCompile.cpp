@@ -170,7 +170,7 @@ void RenderEngine::scheduleRows()
     // that merely names a target (no camera, no program) writes nothing and orders nothing - a clear is part of a
     // draw, not a substitute for one.
     const auto writes = [](const RenderPass& pass) -> bool {
-        if (const auto* screen = dynamic_cast<const ScreenPass*>(&pass)) {
+        if (const auto* screen = obj_cast<ScreenPass>(&pass)) {
             return screen->program() != nullptr && (!pass.inputs().empty() || !pass.inputTargets().empty() || !pass.inputNames().empty());
         }
         return pass.camera() != nullptr && (pass.content() != nullptr || pass.isClearEnabled());
@@ -336,7 +336,7 @@ void RenderEngine::collectPictureShapeMismatches()
         if (pass == nullptr || !pass->isEnabled() || pass->content() == nullptr || pass->camera() == nullptr) {
             continue;
         }
-        if (dynamic_cast<const ScreenPass*>(pass) != nullptr) {
+        if (obj_cast<ScreenPass>(pass) != nullptr) {
             continue;
         }
 

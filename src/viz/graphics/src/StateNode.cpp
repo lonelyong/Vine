@@ -193,7 +193,7 @@ RenderState collectRenderState(raw_ptr<const Node> node)
         chain.push_back(current);
     }
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        if (const auto* state_node = dynamic_cast<const StateNode*>(*it)) {
+        if (const auto* state_node = obj_cast<StateNode>(*it)) {
             result.merge(state_node->renderState());
         }
     }
@@ -217,7 +217,7 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
     // helper answers "what would this node's single draw use", which is the question a host asks about a leaf
     // it built itself. A geometry whose draws state different programs has no single answer - a caller that
     // means a specific draw reads `RenderCommand::program`, which the collection already resolved per primitive.
-    if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+    if (const auto* geometry = obj_cast<Geometry>(node)) {
         if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->program != nullptr) {
             return ShaderProgramPtr(draw->program);
         }
@@ -226,7 +226,7 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
         }
     }
     for (const Node* current = node->parent(); current != nullptr; current = current->parent()) {
-        if (const auto* state_node = dynamic_cast<const StateNode*>(current)) {
+        if (const auto* state_node = obj_cast<StateNode>(current)) {
             if (raw_ptr<ShaderProgram> ancestor = state_node->program()) {
                 return ShaderProgramPtr(ancestor);
             }
@@ -245,7 +245,7 @@ MaterialBasePtr effectiveMaterial(raw_ptr<const Node> node)
         return MaterialBasePtr();
     }
     // Same rule as effectiveProgram: the first primitive's own material, then the geometry's default.
-    if (const auto* geometry = dynamic_cast<const Geometry*>(node)) {
+    if (const auto* geometry = obj_cast<Geometry>(node)) {
         if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->material != nullptr) {
             return MaterialBasePtr(draw->material);
         }
@@ -254,7 +254,7 @@ MaterialBasePtr effectiveMaterial(raw_ptr<const Node> node)
         }
     }
     for (const Node* current = node->parent(); current != nullptr; current = current->parent()) {
-        if (const auto* state_node = dynamic_cast<const StateNode*>(current)) {
+        if (const auto* state_node = obj_cast<StateNode>(current)) {
             if (raw_ptr<MaterialBase> ancestor = state_node->material()) {
                 return MaterialBasePtr(ancestor);
             }

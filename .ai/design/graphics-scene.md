@@ -1,7 +1,7 @@
 # graphics 场景图：节点、状态、收集、层、拾取
 
 > **状态**：现行
-> **最后核对**：2026-10-24
+> **最后核对**：2026-11-02
 > **范围**：严格树、状态折叠、收集 memo、层与拾取。
 > **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
 > `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`。
@@ -45,6 +45,17 @@
 **场景不设灯数上限**：`addLight` / `setLighting` 有多少收多少，因为容量是光照程序的属性而不是内容的语义 —— 同一个 Scene 今天被 forward 与 deferred 两条路径画，将来可能被容量不同的宿主程序画。上限在 `kMaxLights`（`ShaderAbi.hpp`），超出的灯在打包时不被表示，按 episode 报一次 `ChannelIgnored` 警告（见 `graphics-shader-params.md` §2.2）。要限制灯数的是选灯策略（backlog S7），不是 `Scene` 的一道上限。
 2.8 **根必须是根**：场景从一个无父节点进入。`setRoot` 先把已在别的 Group 下的节点摘下来（与 `Group::addChild` 自动脱离旧父同一条规则）；根在之后被别的树收养，就不再是这个场景的根——收集与包围盒一律为空，且检查在 memo 查询之前，所以不会返回移动前的列表。两个场景可以共用同一棵仍是根的子树（各自的场景级状态、memo 独立），接缝只在“它还是不是根”。
 
+2.9 **透明顺序是对象级近似**：同一 `drawOrder` 内不透明前→后、透明后→前，顺序键是**一个代表点**到眼睛的距离平方
+（今日取命令世界矩阵原点），不是几何范围，也不是逐片元顺序。它保证“看着分得开的两个物体”顺序正确，不保证自相交、
+非凸、同中心多层的顺序。需要更强顺序的内容走 `Node::setDrawOrder`（已支持）、拆分几何，或另开一个排序独立透明的 pass
+（触发条件见 backlog）。代表点的选取口径见 `../bugs/graphics-transparent-sort-uses-origin.md`。
+
+2.10 **节点类型分派走元类型**：场景走查对 `Node` 派生类型的判断用 `obj_cast<T>`（`vine/Object.hpp` 的元类型父链 + `static_cast`），
+不用 `dynamic_cast`。为什么：每节点有若干次判断，实测 `obj_cast` 在命中 / 未命中都约为 `dynamic_cast` 的 2–2.6 倍（Debug / MSVC，
+20k 节点）；它也统一了项目已有的写法（`PassChain` / vsg 后端）。边界：这是**契约**——`T` 必须有正确的 `VN_OBJECT_META_DECL/IMPL`，
+且 meta 父链必须与 C++ 继承一致；错链会让 `static_cast` 静默落到错误地址。不是 `Object` 派生的类型（`CameraManipulator`、第三方 vsg 类型）
+继续用 `dynamic_cast`。满足 `G6` / `G10`，代价是元类型链必须维护正确。
+
 ## 3. 功能点
 
 ### 3.1 节点与树
@@ -85,7 +96,7 @@
 | # | 功能 | 说明 |
 |---|---|---|
 | F18 | L1 内容掩码 | `Node::setLayers` + `PassDesc::layer_mask`；判定在可绘制节点上。 |
-| F19 | 子树层并集 | `subtreeLayerUnion` 懒缓存；`(union & mask) == 0` 整棵跳过。 |
+| F19 | 子树层并集 | `subtreeLayerUnion` 懒缓存；`(union & mask) == 0` 整棵跳过（缓存按进程级层 epoch 失效，见 N11）。 |
 | F20 | `CollectView` | projection / view / eye / up / 设备像素 viewport。 |
 | F21 | ViewDependence | `None` / `View` / `ViewAndViewport`；只有后者把 viewport 进 memo 键。 |
 | F22 | AutoTransform | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`；`setAutoScaleToScreen` 恒像素。 |
@@ -179,6 +190,8 @@
 | N7 | 拾取只打三角形图元；线/点不是表面。 |
 | N8 | `Camera` 自带 aspect；pass 矩形与相机形状不一致会在编译期报出来。 |
 | N9 | 根必须仍是根：`setRoot` 会摘下已在别的 Group 下的节点；根被 `Group::addChild` 收养后，该场景的收集与包围盒为空，且不复用收养前的 memo。 |
+| N10 | 透明顺序是对象级近似：顺序键取代表点距离，不处理逐片元 / 自相交 / 同中心多层；依赖它之前先确认内容不重叠，否则用 `drawOrder` 或拆分几何。 |
+| N11 | 层并集缓存用**进程级** epoch（`detail::g_layer_epoch`）：任一场景的层 / 结构编辑，会让所有场景下一次走查各自重算一次层并集。层编辑是作者期操作，重算只发生在下一次走查，陈旧缓存不会被用来误剪；若多文档同时编辑时走查耗时可见，改为每根子树 epoch（先记录测量再动，`G10`）。 |
 
 ## 6. 注意事项与陷阱
 
@@ -213,6 +226,7 @@
 | T3 | `SceneLayersTest` / `AutoTransformTest` / `PositionAttitudeTransformTest`。 |
 | T4 | 移动子树移入视锥不被陈旧盒藏掉；层冲突只报一次。 |
 | T5 | `SceneTest.SettingAParentedNodeAsRootDetachesIt` / `SceneTest.ARootAttachedElsewhereTakesTheSceneOutOfThePicture`。 |
+| T6 | 透明顺序：局部坐标远离原点的两个透明物体，命令顺序与其包围盒远近一致（当前缺口见 `../bugs/graphics-transparent-sort-uses-origin.md`）。 |
 
 ## 9. 状态与演进
 
