@@ -25,7 +25,15 @@ What it reports:
   * obsolete     — a catalog entry no source string produces any more;
   * unfinished   — an entry with no English translation (an empty or
                    `type="unfinished"` element), which silently falls back to
-                   Chinese in an English UI.
+                   Chinese in an English UI;
+  * no catalog   — a module with translatable strings but no vn_add_translations()
+                   call, whose text therefore never reaches a catalog at all. That
+                   case is why the check looks at every module, not only at the
+                   ones that already have a `.ts`.
+
+What it does not decide: whether a string *should* be translated. Diagnostics
+(logs, exception text) must stay English and must not go through tr() (N3), and
+that is review's call, not a script's.
 
 Only catalogs under `src/` are checked: those are the ones that ship. The test
 fixture catalogs in `tests/` are pinned by the tests that read them, and scanning
@@ -96,6 +104,20 @@ def catalogs() -> list[tuple[pathlib.Path, str, pathlib.Path]]:
     return found
 
 
+def module_dirs() -> list[pathlib.Path]:
+    """Finds the modules under src/: a CMakeLists.txt that has no child of its own.
+
+    The aggregators (src/, src/fw/, src/plugins/, ...) also carry a CMakeLists.txt; they describe their children and
+    have no code of their own, so scanning them would report every string twice.
+
+    @return Module directories, deepest first.
+    """
+    cmake_files = sorted(SCAN_ROOT.rglob("CMakeLists.txt"))
+    dirs = [path.parent for path in cmake_files]
+    aggregates = {parent for parent in dirs if any(other != parent and parent in other.parents for other in dirs)}
+    return [path for path in dirs if path not in aggregates]
+
+
 def source_dirs(module: pathlib.Path) -> list[pathlib.Path]:
     """Directories to hand to lupdate: a module's own code, never its generated or vendored parts."""
     dirs = [module / name for name in ("src", "sdk") if (module / name).is_dir()]
@@ -152,6 +174,25 @@ def compare(module: pathlib.Path, context: str, ts_file: pathlib.Path, lupdate: 
     return findings
 
 
+def orphaned_text(module: pathlib.Path, lupdate: str) -> str | None:
+    """Reports a module that has translatable strings but no catalog to put them in."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        probe = pathlib.Path(temp_dir) / f"{module.name}.ts"
+        command = [lupdate, "-locations", "none", *map(str, source_dirs(module)), "-ts", str(probe)]
+        result = subprocess.run(command, capture_output=True, text=True, cwd=str(ROOT))
+        if not probe.exists() or result.returncode != 0:
+            output = (result.stderr or result.stdout).strip()
+            return f"{module.relative_to(ROOT)}: lupdate failed: {output.splitlines()[-1] if output else 'no output'}"
+        produced = parse(probe)
+
+    count = sum(len(entries) for entries in produced.values())
+    if count == 0:
+        return None
+    contexts = ", ".join(sorted(produced))
+    return (f"{module.relative_to(ROOT)}: {count} translatable string(s) in context(s) {contexts} but no "
+            f"vn_add_translations() call - they are never translated")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--lupdate", help="lupdate executable to use (default: search PATH and the Qt bin directory)")
@@ -170,9 +211,19 @@ def main() -> int:
             continue
         findings.extend(compare(module, context, ts_file, lupdate))
 
+    catalogued = {module for module, _context, _ts in modules}
+    checked = 0
+    for module in module_dirs():
+        if module in catalogued:
+            continue
+        checked += 1
+        orphan = orphaned_text(module, lupdate)
+        if orphan:
+            findings.append(orphan)
+
     for finding in findings:
         print(finding)
-    print(f"--- {len(findings)} translation finding(s) in {len(modules)} catalog(s)")
+    print(f"--- {len(findings)} translation finding(s) in {len(modules)} catalog(s), {checked} module(s) without one")
     return 1 if findings else 0
 
 

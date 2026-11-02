@@ -111,10 +111,9 @@
 ### 2.11 目录的所有权跟随安装者（G1、G10、G11）
 
 - 是什么：没有“目录注册表”。一本目录就是一个 `TranslationCatalog` 值（`src/TranslationCatalog.hpp`）：构造即装载并安装到 `QCoreApplication`，析构即移除。`ApplicationData` 持有应用级两本（Qt 的与框架自己的），每条 `LoadedPlugin` 持有一本插件目录。
-- 为什么：`QCoreApplication` 只保存 translator 的指针、不拥有它，所以“谁装谁持有”是唯一不会漏的写法——没有 `remove` 调用要记得写；装载失败（`create()` 返回空或抛异常）时局部值随栈展开释放，目录不会留在进程里（C9、R4）。
-- 为什么不是进程级静态：语言是 `ApplicationData` 的字段，静态注册表既拿不到它（宏注册发生在读配置之前），也让同一个进程里的第二个 `Application` 继承前一个的目录——测试与工具都要能干净地重来。
+- 为什么：`QCoreApplication` 只保存 translator 的指针、不拥有它，所以“谁装谁持有”是唯一不会漏的写法——没有 `remove` 调用要记得写；装载失败（`create()` 返回空或抛异常）时局部值随栈展开释放（C9、R4）。进程级静态更做不到：它拿不到语言（宏注册早于读配置），还会让同一进程里的第二个 `Application` 继承前一个的目录（D9）。
 - 边界：查找顺序由三个命名构造固化（`forQt` / `forFramework` / `forModule`），没有对外的候选路径参数；“没有目录”不是一个错误码，而是一个空值（C3）。
-- 代价：`QTranslator` 析构会向 `QCoreApplication` 发 `LanguageChange`。所以应用级两本声明在 `ApplicationData::app` 之后、`user_io` 之前：窗口先销毁、Qt 应用对象最后销毁，移除发生在两者之间。
+- 代价：`QTranslator` 析构会向 `QCoreApplication` 发 `LanguageChange`，所以应用级两本声明在 `ApplicationData::app` 之后、`user_io` 之前——窗口先销毁、Qt 应用对象最后销毁，移除发生在两者之间。
 
 ## 3. 功能点
 
@@ -242,6 +241,10 @@
 - 怎么判：`ls <exe>/translations` 只有 `qt_*.qm`；启动日志里 `UI language 'zh_CN': Qt catalogs loaded, framework catalog absent` 而 `qtbase_zh_CN.qm` 不在。
 - 怎么防：装载顺序把 `qtbase_<locale>.qm` 放在 `qt_<locale>.qm` 之前（meta 缺依赖时它什么也不改）；部署由 `cmake/VineDeployQt.cmake` 把 `qtbase_<locale>.qm` 拷到 `<exe>/translations`（`VN_UI_LANGUAGES`，默认 `zh_CN`）。
 
+### 6.10 用 grep 数 `translate(`，把 `vn::math::translate` 当文案（P10）
+- 会怎么错：`grep -c 'translate('` 会把 `vn::math::translate(Vec3d…)` 这类矩阵/向量函数也算进去，于是“这个模块有 N 处文案”是假的——照这个数字去建目录，得到的是一本空目录，或者把一个本来不欠目录的模块记成待办。
+- 怎么判 / 防：只认 `lupdate` 的 `Found N source text(s)` 与 `python3 scripts/check_translations.py` 结尾的 `N module(s) without one`，不认 grep（§9.1 曾经欠的清单就是因为这条记错的）。
+
 ## 7. 已否决选项
 
 | # | 选项 | 理由 | ADR |
@@ -268,7 +271,7 @@
 | T6 | 模块旁的同名 `.qm` 覆盖内嵌版本 | `TranslationTest.ALooseFileOverridesTheEmbeddedCatalog`（构建期 `lrelease` 产出 `override/i18n_fixture_en.qm`） |
 | T7 | 插件目录在它自己的代码之前装好，卸载后移除 | `TranslationTest.APluginCatalogComesFromThePluginItself`（夹具插件内嵌 `:/i18n/i18n_fixture_en.qm`） |
 | T8 | 批量装载失败不留下目录 | `TranslationTest.AFailedBatchLoadLeavesNoCatalogInstalled`（夹具插件构造即抛，内嵌 `:/i18n/i18n_throwing_en.qm`） |
-| T9 | 目录与源码一致（不缺、不陈旧、都译完） | `python3 scripts/check_translations.py` |
+| T9 | 目录与源码一致（不缺、不陈旧、都译完），且没有“有文案却没有目录”的模块 | `python3 scripts/check_translations.py` |
 
 ## 9. 状态与演进
 
@@ -276,11 +279,11 @@
 
 机制已落地，框架 GUI 的文案已全部替换。已有：`Translation.hpp`（`translate` / `languageConfigKey` / `languageConfigItem` / `resolveLanguageTag`）、`Application::initialize()` 里按配置项选定语言并装 Qt 与框架目录、`PluginManager` 在插件代码跑之前装插件目录并在卸载时移除（自己装、自己持有：`TranslationCatalog`，§2.11）、`vn_add_translations()` 与夹具插件的端到端用例；`src/fw/appfw/src/gui` 已无硬编码中文（`QStringLiteral` 与 `u8"…"` 两类共约 190 处都换成了 `translate("appfw", …)`），`res/translations/appfw_en.ts` 由 `lupdate` 抽出 164 条、全部译成英文，`test_gui` 在全局夹具里把语言钉成 `zh_CN`。
 
-还差：`demo_plugin` / `test_plugin` / `gfx_backend_vsg` 与宿主（`src/apps/vine`）各自建 `.ts`（`model_viewer` 35 条、`app_shell` 57 条已完成）；以及把拼接式文案（`“已注册（” + x + “）：”` 这类）改成带 `%1` 的整句（N4）——它们现在能翻译，但逐段翻译的语序不一定对。
+还差：把拼接式文案（`“已注册（” + x + “）：”` 这类）改成带 `%1` 的整句（N4）——它们现在能翻译，但逐段翻译的语序不一定对。整棵树的界面文案只有三本目录（`appfw` 164 条、`app_shell` 57 条、`model_viewer` 35 条）；其余模块（`demo_plugin` / `test_plugin` / `gfx_backend_vsg`、宿主 `src/apps/vine`、全部底层库）用 `lupdate` 抽出 **0 条**，所以不欠目录——空目录没有东西可装（C3）。
 
 ### 9.2 已知缺口 / 待办
 
-见 `../backlog/appfw-translation.md`：运行期切换、英文目录、插件元数据、崩溃窗口的文案注入（T7）与报告字段名（T8）。本轮不碰崩溃窗口：它的界面文案与报告字段名仍是硬编码中文。
+见 `../backlog/appfw-translation.md`：运行期切换、插件元数据、崩溃窗口的文案注入（T7）与报告字段名（T8）。本轮不碰崩溃窗口：它的界面文案与报告字段名仍是硬编码中文。
 
 ### 9.3 兼容性 / 迁移
 
@@ -291,6 +294,6 @@
 
 - 代码：`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`、`src/fw/appfw/sdk/vine/appfw/Translation.hpp`、`src/fw/appfw/src/TranslationCatalog.hpp`、`src/fw/appfw/src/Application.cpp`、`src/fw/appfw/src/gui/GuiApplication.cpp`、`src/fw/appfw/src/PluginManager.cpp`。
 - 构建：`cmake/VinePluginHelper.cmake`（插件目录与安装路径）、`cmake/VineEmbedShaders.cmake`（“真实文件、装进二进制”的同类先例）、`cmake/VineLibraryHelper.cmake`（薄封装的写法参照）。
-- 脚本：`scripts/check_translations.py`（目录与源码的一致性门禁，P1、T9）。
+- 脚本：`scripts/check_translations.py`（目录与源码的一致性门禁：缺、陈旧、未译、无目录，P1、P10、T9）。
 - 文档：`appfw-backstage.md`（界面文案的现有排布与文案长度约束）、`appfw-plugin-system.md`（插件加载顺序）。
 - 外部：Qt Linguist 手册（`lupdate` / `lrelease` / `QTranslator` / `QCoreApplication::translate`）。
