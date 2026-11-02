@@ -16,6 +16,8 @@
 #include <vine/appfw/ServiceManager.hpp>
 #include <vine/appfw/UserIO.hpp>
 
+#include "TranslationCatalog.hpp"
+
 class QCoreApplication;
 
 VN_APPFW_NS_BEGIN
@@ -33,6 +35,16 @@ struct ApplicationData {
     /// Application (Qt asserts that only one exists at a time), and every Qt-using member below - UserIO's
     /// widgets above all - has to be gone before that happens.
     std::unique_ptr<QCoreApplication> app;
+
+    /// UI language this process resolved in initialize(); empty before it. The plugin loader installs each plugin's
+    /// catalog in this language, so the fact is read from its owner instead of being repeated in a process-wide registry.
+    String language_tag;
+
+    /// Catalogs of the application itself: Qt's own text, then the framework's. Declared next to `app` so they are
+    /// destroyed after every other member - the windows included - and while the Qt application object is still alive,
+    /// which is what makes their removal safe.
+    TranslationCatalog qt_catalog;
+    TranslationCatalog framework_catalog;
 
     std::unique_ptr<MainThreadDispatcher> main_dispatcher;
     std::unique_ptr<EventBus>             event_bus;

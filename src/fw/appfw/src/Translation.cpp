@@ -9,13 +9,12 @@
 #include <QLocale>
 #include <QString>
 
+#include "TranslationCatalog.hpp"
+
 VN_APPFW_NS_BEGIN
 
 namespace
 {
-
-/// Context of the framework's own UI text; it is also the file-name prefix of the framework catalog.
-constexpr char kFrameworkContext[] = "appfw";
 
 /// Language part of a tag, lower-cased: "zh_CN" -> "zh", "en-US" -> "en".
 String languagePart(const String& tag)

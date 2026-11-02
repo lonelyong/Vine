@@ -41,6 +41,10 @@ class VN_APPFW_API Application : public Object {
     const ApplicationData* dptr() const;
 
   private:
+    /// The plugin loader installs each plugin's catalog in the language resolved by initialize(), so it reads that one
+    /// fact from the data block instead of keeping a copy of it.
+    friend class PluginManager;
+
     /// The data block. Private on purpose: a leaf reaches it through dptr() and never replaces it.
     std::unique_ptr<ApplicationData> d;
 

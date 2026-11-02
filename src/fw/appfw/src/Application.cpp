@@ -30,7 +30,7 @@
 
 #include "ApplicationData.hpp"
 #include "ConsoleUserIO.hpp"
-#include "TranslatorRegistry.hpp"
+#include "TranslationCatalog.hpp"
 
 VN_APPFW_NS_BEGIN
 
@@ -193,7 +193,13 @@ void Application::initialize(const AppConfig& config)
     // The language comes before anything that builds a window, and before the items are registered: an item's label is
     // translated text itself, so registering it earlier would freeze it in the wrong language. The setting is the
     // configuration item - readable only now, after the file above was loaded - and an absent value follows the system.
-    installApplicationCatalogs(resolveLanguageTag(dptr()->config_manager->getString(languageConfigKey())));
+    // The two catalogs live in the data block, so the process gets a clean slate when the application goes away.
+    dptr()->language_tag      = resolveLanguageTag(dptr()->config_manager->getString(languageConfigKey()));
+    dptr()->qt_catalog        = TranslationCatalog::forQt(dptr()->language_tag);
+    dptr()->framework_catalog = TranslationCatalog::forFramework(dptr()->language_tag);
+    VN_LOGI("UI language '{}': Qt catalogs {}, framework catalog {}", dptr()->language_tag.as_std_str(),
+            dptr()->qt_catalog.isInstalled() ? "loaded" : "absent",
+            dptr()->framework_catalog.isInstalled() ? "loaded" : "absent");
     static_cast<void>(dptr()->config_registry->addItem(StandardCategory::General, StandardGroup::Language,
                                                        languageConfigItem()));
 }

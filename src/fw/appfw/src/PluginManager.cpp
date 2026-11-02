@@ -29,7 +29,8 @@
 #include <vine/logging/Log.hpp>
 #include <vine/runtime/DynamicLibraryLoader.hpp>
 
-#include "TranslatorRegistry.hpp"
+#include "ApplicationData.hpp"
+#include "TranslationCatalog.hpp"
 
 VN_APPFW_NS_BEGIN
 
@@ -725,12 +726,13 @@ class ScopedFlag {
 };
 
 /**
- * @brief A loaded plugin, its instance and the library it came from.
+ * @brief A loaded plugin, its instance, the library it came from and the catalog installed for it.
  */
 struct LoadedPlugin {
     String                name;
     Plugin*               plugin;
-    std::filesystem::path path; // Library file the plugin was loaded from.
+    std::filesystem::path path;    // Library file the plugin was loaded from.
+    TranslationCatalog    catalog; // Released before unload() runs, and with the entry when a load fails (R3).
 };
 
 /**
@@ -747,31 +749,31 @@ struct Candidate {
 
 /// Runs the unload lifecycle of one plugin, swallowing and logging exceptions.
 ///
-/// @param plugin Plugin instance; ignored when nullptr.
-/// @param name   Plugin name, for logging.
+/// @param loaded Plugin entry; its catalog is released first and its instance is ignored when nullptr.
 /// @return true if unload() completed without throwing.
-bool unloadOnePlugin(Plugin* plugin, const String& name)
+bool unloadOnePlugin(LoadedPlugin& loaded)
 {
     // The plugin's translations go away with it: a catalog left installed would keep translating strings of a module
-    // that is no longer running, and R3 says one plugin's catalog must not outlive it.
-    removePluginCatalog(name);
+    // that is no longer running, and R3 says one plugin's catalog must not outlive its code.
+    loaded.catalog = {};
 
+    Plugin* plugin = loaded.plugin;
     if (plugin == nullptr) {
         return true;
     }
 
     Application*           app = Application::current();
-    RegistrationOwnerScope owner_scope(app ? app->commandManager() : nullptr, name);
-    PluginLoadContext      context(app, name);
+    RegistrationOwnerScope owner_scope(app ? app->commandManager() : nullptr, loaded.name);
+    PluginLoadContext      context(app, loaded.name);
     try {
         plugin->unload(&context);
         return true;
     }
     catch (const std::exception& e) {
-        VN_LOGE("Plugin '{}' threw while unloading: {}", toUtf8(name), e.what());
+        VN_LOGE("Plugin '{}' threw while unloading: {}", toUtf8(loaded.name), e.what());
     }
     catch (...) {
-        VN_LOGE("Plugin '{}' threw an unknown exception while unloading", toUtf8(name));
+        VN_LOGE("Plugin '{}' threw an unknown exception while unloading", toUtf8(loaded.name));
     }
     return false;
 }
@@ -786,7 +788,7 @@ bool unloadLoadedPlugins(std::vector<LoadedPlugin>& loaded)
     while (!loaded.empty()) {
         LoadedPlugin plugin = std::move(loaded.back());
         loaded.pop_back();
-        if (unloadOnePlugin(plugin.plugin, plugin.name)) {
+        if (unloadOnePlugin(plugin)) {
             VN_LOGI("Plugin '{}' unloaded after a failed load", toUtf8(plugin.name));
         }
         else {
@@ -938,12 +940,19 @@ Plugin* PluginManager::load(const String& name_or_path)
 
     // The catalog is installed before any of the plugin's own code runs (create(), the command table, the lifecycle):
     // this is the point where the module is in memory - so its embedded resources are registered - and where we
-    // already know its id. No directory is scanned: the id is the file-name prefix.
-    static_cast<void>(installPluginCatalog(info->name, path));
+    // already know its id. No directory is scanned: the id is the file-name prefix. The entry below owns it, so a load
+    // that stops before the entry exists installs nothing that survives.
+    const Application* const application  = Application::current();
+    const String             language_tag = application != nullptr ? application->dptr()->language_tag : String();
+    TranslationCatalog       catalog      = TranslationCatalog::forModule(info->name, language_tag, path);
 
-    Plugin* plugin = nullptr;
+    LoadedPlugin loaded{ info->name, nullptr, path, std::move(catalog) };
+    Plugin*      plugin = nullptr;
     try {
-        plugin = create();
+        // A plugin whose construction throws is a failed load, not an exception escaping load(): the catalog goes away
+        // with the entry, and the caller sees the same nullptr an unusable library produces.
+        plugin        = create();
+        loaded.plugin = plugin;
         if (plugin == nullptr) {
             return nullptr;
         }
@@ -982,16 +991,16 @@ Plugin* PluginManager::load(const String& name_or_path)
     }
     catch (const std::exception& e) {
         VN_LOGE("Plugin '{}' threw while loading: {}", toUtf8(info->name), e.what());
-        unloadOnePlugin(plugin, info->name);
+        unloadOnePlugin(loaded);
         return nullptr;
     }
     catch (...) {
         VN_LOGE("Plugin '{}' threw an unknown exception while loading", toUtf8(info->name));
-        unloadOnePlugin(plugin, info->name);
+        unloadOnePlugin(loaded);
         return nullptr;
     }
 
-    d->plugins.push_back(LoadedPlugin{ info->name, plugin, path });
+    d->plugins.push_back(std::move(loaded));
     VN_LOGI("Plugin '{}' loaded from '{}'", toUtf8(info->name), toUtf8(path));
     return plugin;
 }
@@ -1269,15 +1278,16 @@ LoadPlan resolveLoadPlan(const PluginManager&             manager,
  * a plugin library can be created only once per process and a retry would reuse the same,
  * half-initialized instance.
  *
- * @param plan    What to create, in dependency order.
- * @param startup Progress sink; may be null.
- * @param created Filled with the instances created here, in order (also when this returns false, so
- *                the caller can release them and tag them - Plugin::setInfo() is private to the
- *                manager, so handing the metadata over is the caller's step).
+ * @param plan         What to create, in dependency order.
+ * @param startup      Progress sink; may be null.
+ * @param created      Filled with the instances created here, in order (also when this returns false, so
+ *                     the caller can release them and tag them - Plugin::setInfo() is private to the
+ *                     manager, so handing the metadata over is the caller's step).
+ * @param language_tag UI language the plugins' catalogs are installed in; empty installs none.
  * @return true when every planned plugin was instantiated; false when one could not be, or when a
  *         stop request arrived.
  */
-bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vector<LoadedPlugin>& created)
+bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vector<LoadedPlugin>& created, const String& language_tag)
 {
     if (startup != nullptr) {
         // One unit per plugin, reported while the heaviest pass (the load() phase below) runs; the
@@ -1304,14 +1314,17 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
             VN_LOGE("Plugin '{}' has no create entry point", toUtf8(name));
             return false;
         }
-        // Installed before create(): the plugin's own strings are translated from its very first line (see load()).
-        static_cast<void>(installPluginCatalog(name, candidate->path));
+        // Installed before create(): the plugin's own strings are translated from its very first line (see load()). The
+        // entry owns the catalog, so a plugin that fails to be created leaves nothing installed.
+        TranslationCatalog catalog = TranslationCatalog::forModule(name, language_tag, candidate->path);
 
-        Plugin* plugin = create();
+        Plugin* const plugin = create();
         if (!plugin) {
             VN_LOGE("Plugin '{}' failed to create its instance", toUtf8(name));
             return false;
         }
+
+        LoadedPlugin loaded{ name, plugin, candidate->path, std::move(catalog) };
 
         // Register the plugin's commands (VN_DECLARE_COMMAND) inside its own module. The owner scope
         // tags these module commands with the plugin name.
@@ -1327,7 +1340,7 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
         }
 
         VN_LOGI("Plugin '{}' loaded", toUtf8(name));
-        created.push_back(LoadedPlugin{ name, plugin, candidate->path });
+        created.push_back(std::move(loaded));
     }
     return true;
 }
@@ -1440,6 +1453,11 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
     const std::vector<Candidate> candidates = collectCandidates(*this, d->discovered, d->policy_disabled, d->plugins);
     const LoadPlan               plan       = resolveLoadPlan(*this, candidates, d->plugins, d->discovered);
 
+    // The language every catalog of this batch is installed in: one fact, read from the application that resolved it
+    // instead of being kept a second time here.
+    const Application* const application  = Application::current();
+    const String             language_tag = application != nullptr ? application->dptr()->language_tag : String();
+
     // Created here, registered only at the end: until the whole batch has run its lifecycle it belongs
     // to this call, so a pass that does not finish can release it (a plugin library can be created only
     // once per process, and a retry would reuse the same, half-initialized instance).
@@ -1448,7 +1466,7 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
 
     bool loaded = false;
     try {
-        bool batch_ready = instantiatePlugins(plan, startup, created);
+        bool batch_ready = instantiatePlugins(plan, startup, created, language_tag);
         if (batch_ready) {
             // The query entry (from VN_DECLARE_PLUGIN) is the single metadata source, and handing it to
             // the instance is the manager's own step (Plugin::setInfo() is private; the file-local
@@ -1514,7 +1532,7 @@ bool PluginManager::unloadAll()
         LoadedPlugin loaded = std::move(*it);
         d->plugins.erase(it);
 
-        if (unloadOnePlugin(loaded.plugin, loaded.name)) {
+        if (unloadOnePlugin(loaded)) {
             VN_LOGI("Plugin '{}' unloaded", toUtf8(loaded.name));
         }
         else {
