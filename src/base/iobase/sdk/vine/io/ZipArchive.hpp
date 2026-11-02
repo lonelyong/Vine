@@ -29,6 +29,8 @@ VN_IO_NS_BEGIN
  * Entries are addressed with '/' separators, so a directory tree becomes
  * entries such as "subdir/file.txt". Entries added for writing are buffered
  * in memory until saveAs() writes them to the output file.
+ * When opening an existing archive, legacy '\\' separators are exposed as '/'
+ * paths; unchanged entries keep their original stored names when repacked.
  *
  * It comes up in one of three ways:
  *   * ZipArchive() starts an empty, writable archive with nothing behind it;

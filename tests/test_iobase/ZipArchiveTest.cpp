@@ -80,7 +80,11 @@ void rewriteNameInDirectory(std::vector<unsigned char>& bytes, const std::string
             continue;
         }
         const std::uint16_t length = static_cast<std::uint16_t>(bytes[offset + 28] | static_cast<std::uint16_t>(bytes[offset + 29] << 8));
-        if (length != from.size() || !std::equal(from.begin(), from.end(), bytes.begin() + offset + 46)) {
+        if (length != from.size() ||
+            !std::equal(from.begin(), from.end(), bytes.begin() + offset + 46, [](char left, unsigned char right) {
+                return static_cast<unsigned char>(left) == right;
+            }))
+        {
             continue;
         }
         std::copy(to.begin(), to.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset + 46));
@@ -228,6 +232,59 @@ TEST(ZipArchiveTest, RefusesAnArchiveThatHoldsOneNameTwice)
 
     const auto opened = ZipArchive::open(bytes.value(), ZipArchive::OpenMode::ReadOnly);
     EXPECT_FALSE(opened.ok());
+    EXPECT_EQ(opened.error(), IoError::InvalidData);
+}
+
+TEST(ZipArchiveTest, ReadsWindowsSeparatorsAsArchivePathSeparators)
+{
+    ZipArchive writer;
+    ASSERT_EQ(writer.addFile(u8"devices/导轨.vdevpkg", bytesOf("rail")), IoError::Ok);
+    auto bytes = writer.toBytes();
+    ASSERT_TRUE(bytes.ok());
+
+    // Some Windows ZIP writers store their native separator in the entry name.
+    rewriteNameInDirectory(bytes.value(), "devices/导轨.vdevpkg", "devices\\导轨.vdevpkg");
+
+    auto archive = ZipArchive::open(bytes.take(), ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(archive.ok()) << vn::io::ioErrorName(archive.error());
+    EXPECT_TRUE(archive->isDirectory(u8"devices"));
+
+    const auto listed = archive->list(u8"devices");
+    ASSERT_TRUE(listed.ok()) << vn::io::ioErrorName(listed.error());
+    ASSERT_EQ(listed->size(), 1u);
+    EXPECT_EQ(listed->front().path, std::filesystem::path(u8"devices/导轨.vdevpkg"));
+
+    const auto contents = archive->read(u8"devices/导轨.vdevpkg");
+    ASSERT_TRUE(contents.ok()) << vn::io::ioErrorName(contents.error());
+    EXPECT_EQ(std::string(contents->begin(), contents->end()), "rail");
+}
+
+TEST(ZipArchiveTest, RejectsArchiveNamesThatCollideAfterSeparatorNormalization)
+{
+    ZipArchive writer;
+    ASSERT_EQ(writer.addFile(u8"a/b.txt", bytesOf("nested")), IoError::Ok);
+    ASSERT_EQ(writer.addFile(u8"a_b.txt", bytesOf("root")), IoError::Ok);
+    auto bytes = writer.toBytes();
+    ASSERT_TRUE(bytes.ok());
+
+    rewriteNameInDirectory(bytes.value(), "a_b.txt", "a\\b.txt");
+
+    const auto opened = ZipArchive::open(bytes.value(), ZipArchive::OpenMode::ReadOnly);
+    ASSERT_FALSE(opened.ok());
+    EXPECT_EQ(opened.error(), IoError::InvalidData);
+}
+
+TEST(ZipArchiveTest, RejectsWindowsSeparatorPathTraversalInArchiveNames)
+{
+    ZipArchive writer;
+    ASSERT_EQ(writer.addFile(u8"ab/cd", bytesOf("payload")), IoError::Ok);
+    auto bytes = writer.toBytes();
+    ASSERT_TRUE(bytes.ok());
+
+    rewriteNameInDirectory(bytes.value(), "ab/cd", "..\\cd");
+
+    const auto opened = ZipArchive::open(bytes.value(), ZipArchive::OpenMode::ReadOnly);
+    ASSERT_FALSE(opened.ok());
     EXPECT_EQ(opened.error(), IoError::InvalidData);
 }
 

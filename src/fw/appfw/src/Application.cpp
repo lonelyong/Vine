@@ -199,7 +199,7 @@ void Application::initialize(const AppConfig& config)
     // translated text itself, so registering it earlier would freeze it in the wrong language. The setting is the
     // configuration item - readable only now, after the file above was loaded - and an absent value follows the system.
     // The two catalogs live in the data block, so the process gets a clean slate when the application goes away.
-    dptr()->language_tag      = resolveLanguageTag(dptr()->config_manager->getString(languageConfigKey()));
+    dptr()->language_tag      = resolveLanguageTag(dptr()->config_manager->getString(languageConfigKey(), kLanguageSystem));
     dptr()->qt_catalog        = TranslationCatalog::forQt(dptr()->language_tag);
     dptr()->framework_catalog = TranslationCatalog::forFramework(dptr()->language_tag);
     VN_LOGI("UI language '{}': Qt catalogs {}, framework catalog {}", dptr()->language_tag.as_std_str(),

@@ -18,14 +18,6 @@ VN_IO_NS_BEGIN
 namespace
 {
 
-/**
- * @brief Returns true when an entry name cannot escape the extraction root.
- */
-bool isSafeEntry(const std::string& name)
-{
-    return !name.empty() && name.front() != '/' && name.find("..") == std::string::npos;
-}
-
 /// The largest decompressed size one call will produce.
 constexpr std::size_t kMaxDecompressedBytes = 1u << 30;
 
@@ -130,10 +122,6 @@ IoError Zip::decompressFile(const std::filesystem::path& zip_path, const std::fi
             break;
         }
         const std::string name = st.name;
-        if (!isSafeEntry(name)) {
-            result = IoError::InvalidPath; // an entry name that would escape the destination
-            break;
-        }
 
         // Decoded the way the tree decodes it, so an entry the VFS can read can also be
         // written out; a name that is text in no encoding this host knows is reported
@@ -142,7 +130,7 @@ IoError Zip::decompressFile(const std::filesystem::path& zip_path, const std::fi
         std::filesystem::path entry_name;
         const IoError         decoded = detail::fromStoredName(st.name, name.size(), entry_name, is_directory);
         if (decoded != IoError::Ok) {
-            result = decoded;
+            result = decoded == IoError::InvalidData ? IoError::InvalidPath : decoded;
             break;
         }
 

@@ -1,6 +1,8 @@
 ﻿include(GoogleTest)
 include(FetchContent)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
 if(VN_USE_FETCHCONTENT)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
@@ -61,3 +63,7 @@ add_subdirectory(test_gui)
 add_subdirectory(test_appfw)
 add_subdirectory(test_asyncqt)
 add_subdirectory(test_logging)
+
+add_test(
+    NAME check_translations
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_translations.py --require-lupdate)

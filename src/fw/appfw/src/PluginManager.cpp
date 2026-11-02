@@ -612,6 +612,11 @@ QueriedLibrary queryLibrary(const std::filesystem::path& library)
         return result;
     }
     result.info = query();
+    if (result.info != nullptr && result.info->name == String::fromUtf8(kFrameworkContext)) {
+        result.rejection = String::fromUtf8("Plugin library '" + toUtf8(library) +
+                                            "' uses the reserved translation context 'appfw'. Choose a unique plugin id.");
+        result.info = nullptr;
+    }
     return result;
 }
 

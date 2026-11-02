@@ -25,7 +25,7 @@ struct ConfigChoice {
 };
 
 /**
- * @brief Configurable item type; the panel picks the editor widget from it.
+ * @brief Configurable item type; the panel picks its editor from it.
  */
 enum class ConfigItemType
 {
@@ -33,7 +33,7 @@ enum class ConfigItemType
     Bool,   // Toggle -> QCheckBox
     Int,    // Integer -> QSpinBox
     Double, // Floating point -> QDoubleSpinBox
-    Choice, // Enum choice (stored as String) -> QComboBox
+    Choice, // Enum choice (String/int/double value) -> QComboBox
 };
 
 /**
@@ -88,17 +88,61 @@ class VN_APPFW_API ConfigItem {
      */
     bool hasDefault() const;
     /**
-     * @brief Default value; valid when hasDefault() is true.
+     * @brief The stored type of the default value (Int/Double/String; String when unset).
+     */
+    ConfigItemType defaultType() const;
+
+    /**
+     * @brief Default String value; valid when hasDefault() is true.
      *
      * @throws std::bad_any_cast if no default is set or the stored type differs.
      */
     const String& defaultString() const;
+    /**
+     * @brief Whether a string length range is configured.
+     *
+     * @return true when both string length bounds are set.
+     */
+    bool hasLengthRange() const;
+    /**
+     * @brief Minimum user-perceived character count.
+     *
+     * @throws std::bad_any_cast if no string length range is set.
+     * @return The inclusive minimum.
+     */
+    int minLength() const;
+    /**
+     * @brief Maximum user-perceived character count.
+     *
+     * @throws std::bad_any_cast if no string length range is set.
+     * @return The inclusive maximum.
+     */
+    int maxLength() const;
+    /**
+     * @brief The regular expression constraint, or an empty string when unconstrained.
+     *
+     * @return The configured Qt regular expression.
+     */
+    const String& regularExpression() const;
+    /**
+     * @brief Whether a String value satisfies this item's required and text constraints.
+     *
+     * @details
+     * - Empty values are valid only when the item is not required.
+     * - The constraints describe editor behavior; ConfigManager does not apply them.
+     *
+     * @param value Candidate string.
+     * @return true when the item is String and the value satisfies its constraints.
+     */
+    bool isValidString(const String& value) const;
+
     /**
      * @brief Default bool value.
      *
      * @throws std::bad_any_cast if no default is set or the stored type differs.
      */
     bool defaultBool() const;
+
     /**
      * @brief Default int value.
      *
@@ -106,18 +150,9 @@ class VN_APPFW_API ConfigItem {
      */
     int defaultInt() const;
     /**
-     * @brief Default double value.
-     *
-     * @throws std::bad_any_cast if no default is set or the stored type differs.
-     */
-    double defaultDouble() const;
-    /**
-     * @brief The stored type of the default value (Int/Double/String; String when unset).
-     */
-    ConfigItemType defaultType() const;
-
-    /**
      * @brief Whether a numeric range is configured.
+     *
+     * @return true when both numeric bounds are set.
      */
     bool hasRange() const;
     /**
@@ -133,6 +168,20 @@ class VN_APPFW_API ConfigItem {
      */
     int maxInt() const;
     /**
+     * @brief Whether an int value satisfies this Int item's configured range.
+     *
+     * @param value Candidate int.
+     * @return true when the item is Int and the value is within range, or no range is configured.
+     */
+    bool isValidInt(int value) const;
+
+    /**
+     * @brief Default double value.
+     *
+     * @throws std::bad_any_cast if no default is set or the stored type differs.
+     */
+    double defaultDouble() const;
+    /**
      * @brief Minimum double value.
      *
      * @throws std::bad_any_cast if no range is set.
@@ -145,7 +194,14 @@ class VN_APPFW_API ConfigItem {
      */
     double maxDouble() const;
     /**
-     * @brief Step (Int/Double).
+     * @brief Whether a double value satisfies this Double item's finite-value and range constraints.
+     *
+     * @param value Candidate double.
+     * @return true when the item is Double, the value is finite, and it is within range or no range is configured.
+     */
+    bool isValidDouble(double value) const;
+    /**
+     * @brief Numeric editor step.
      *
      * @note Returns 1.0 when no step has been set, whether or not a range is
      * configured; an editor started from that step moves by 1.0 across the whole
@@ -161,7 +217,14 @@ class VN_APPFW_API ConfigItem {
      * @brief Whether read-only (display only, not editable).
      */
     bool readOnly() const;
-
+    /**
+     * @brief Whether this item cannot be left unset in the configuration editor.
+     *
+     * @note This is editor metadata; `ConfigManager` remains schema-independent.
+     *
+     * @return true when the editor requires a value before the item is considered configured.
+     */
+    bool isRequired() const;
     /**
      * @brief Whether the value is read once at startup, so a change only takes effect after a restart.
      *
@@ -179,75 +242,136 @@ class VN_APPFW_API ConfigItem {
   public:
     /**
      * @brief Sets the description.
+     *
+     * @param d Tooltip text.
      */
     ConfigItem& description(const String& d);
     /**
-     * @brief Sets the default string value (valid for String and Choice).
+     * @brief Sets whether this item cannot be left unset in the configuration editor.
      *
-     * @throws std::invalid_argument if the item type does not match.
+     * @param on true to disallow an unset value; false to allow it.
+     * @note Required applies to every item type; only String defaults can be invalidated by an empty value.
+     * @throws std::invalid_argument if a required String item has an empty configured default.
+     * @return The item itself, for chaining.
+     */
+    ConfigItem& required(bool on = true);
+    /**
+     * @brief Sets the default String value.
+     *
+     * @param v Default value.
+     * @throws std::invalid_argument if the item type does not match or the String constraints reject the value.
      */
     ConfigItem& defaultValue(const String& v);
     /**
-     * @brief Sets the default string value from a u8 literal.
+     * @brief Sets the default String value from a u8 literal.
+     *
+     * @param v Null-terminated UTF-8 default value.
      */
     ConfigItem& defaultValue(const char8_t* v);
     /**
+     * @brief Sets the regular expression constraint for a String item.
+     *
+     * @details
+     * - An empty expression removes the regular expression constraint.
+     * - Non-empty expressions use Qt regular-expression syntax and must match the entire value.
+     *
+     * @param expression Regular expression, or empty to disable the constraint.
+     * @throws std::invalid_argument if the item is not String, the expression is invalid, or the configured default
+     *         does not satisfy the resulting constraints.
+     * @return The item itself, for chaining.
+     */
+    ConfigItem& regularExpression(const String& expression);
+    /**
+     * @brief Sets the inclusive range of user-perceived characters for a String item.
+     *
+     * @details
+     * - A user-perceived character is one Unicode grapheme cluster; combining sequences and joined emoji count as one.
+     * - Use zero as @p min when only an upper bound is needed.
+     *
+     * @param min Inclusive minimum character count.
+     * @param max Inclusive maximum character count.
+     * @throws std::invalid_argument if the item is not String, either bound is negative, min > max, or the configured
+     *         default does not satisfy the resulting constraints.
+     * @return The item itself, for chaining.
+     */
+    ConfigItem& lengthRange(int min, int max);
+    /**
      * @brief Sets the default bool value.
      *
+     * @param v Default value.
      * @throws std::invalid_argument if the item type does not match.
      */
     ConfigItem& defaultValue(bool v);
+
     /**
      * @brief Sets the default int value (Int, or Choice with int-valued options).
      *
-     * @throws std::invalid_argument if the item type does not match.
+     * @param v Default value.
+     * @throws std::invalid_argument if the item type does not match or the value lies outside a configured range.
      */
     ConfigItem& defaultValue(int v);
-    /**
-     * @brief Sets the default double value (Double, or Choice with double-valued options).
-     *
-     * @throws std::invalid_argument if the item type does not match.
-     */
-    ConfigItem& defaultValue(double v);
     /**
      * @brief Sets an int range.
      *
      * @note Resets the step to its default 1.0, so call step() last.
      *
-     * @throws std::invalid_argument if the item type is not Int/Double.
+     * @param min Inclusive lower bound.
+     * @param max Inclusive upper bound.
+     * @throws std::invalid_argument if the item type is not numeric, bounds are invalid, or the default is outside them.
      */
     ConfigItem& range(int min, int max);
+    /**
+     * @brief Sets an int editor step.
+     *
+     * @param s Positive step.
+     * @throws std::invalid_argument if the item type is not numeric, no range is set, or the step is invalid.
+     */
+    ConfigItem& step(int s);
+
+    /**
+     * @brief Sets the default double value (Double, or Choice with double-valued options).
+     *
+     * @param v Default value.
+     * @throws std::invalid_argument if the item type does not match, the value is non-finite, or it lies outside a
+     *         configured range.
+     */
+    ConfigItem& defaultValue(double v);
     /**
      * @brief Sets a double range.
      *
      * @note Resets the step to its default 1.0, so call step() last.
      *
-     * @throws std::invalid_argument if the item type is not Int/Double.
+     * @param min Inclusive lower bound; must be finite.
+     * @param max Inclusive upper bound; must be finite and no smaller than @p min.
+     * @note Int items require integral bounds representable as int.
+     * @throws std::invalid_argument if the item type is not numeric, bounds are invalid, or the default is outside them.
      */
     ConfigItem& range(double min, double max);
     /**
-     * @brief Sets an int step.
+     * @brief Sets a double editor step.
      *
-     * @throws std::invalid_argument if the item type is not Int/Double or no range has been set.
-     */
-    ConfigItem& step(int s);
-    /**
-     * @brief Sets a double step.
-     *
-     * @throws std::invalid_argument if the item type is not Int/Double or no range has been set.
+     * @param s Positive finite step; for Int items it must be an integer representable as int.
+     * @throws std::invalid_argument if the item type is not numeric, no range is set, or the step is invalid.
      */
     ConfigItem& step(double s);
+
     /**
      * @brief Sets the choice options (value equals description for each entry).
+     *
+     * @param cs UTF-8 values, also used as their display descriptions.
      */
     ConfigItem& choices(std::initializer_list<const char8_t*> cs);
     /**
      * @brief Sets choice options as value-description pairs; the value type
      * (int/double/String) is inferred from each literal.
+     *
+     * @param cs Option values and their display descriptions.
      */
     ConfigItem& choices(std::initializer_list<std::pair<std::variant<int, double, String>, String>> cs);
     /**
      * @brief Sets the read-only flag.
+     *
+     * @param on true to disable editing.
      */
     ConfigItem& readOnly(bool on);
 

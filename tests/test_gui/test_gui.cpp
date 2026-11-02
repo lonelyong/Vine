@@ -113,6 +113,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -2341,11 +2342,11 @@ TEST_F(GuiTest, ConfigManager_Basic)
     cfg->setBool(u8"flag", true);
     cfg->setDouble(u8"ratio", 1.5);
     EXPECT_TRUE(cfg->contains(u8"name"));
-    EXPECT_TRUE(cfg->getString(u8"name") == u8"Vine");
-    EXPECT_EQ(cfg->getInt(u8"max"), 100);
-    EXPECT_TRUE(cfg->getBool(u8"flag"));
-    EXPECT_DOUBLE_EQ(cfg->getDouble(u8"ratio"), 1.5);
-    EXPECT_EQ(cfg->getInt(u8"missing"), 0); // 缺省返回默认值
+    EXPECT_TRUE(cfg->getString(u8"name").value() == u8"Vine");
+    EXPECT_EQ(cfg->getInt(u8"max").value(), 100);
+    EXPECT_TRUE(cfg->getBool(u8"flag").value());
+    EXPECT_DOUBLE_EQ(cfg->getDouble(u8"ratio").value(), 1.5);
+    EXPECT_EQ(cfg->getInt(u8"missing", 0), 0);
     EXPECT_FALSE(cfg->contains(u8"missing"));
 
     // 数组
@@ -2362,14 +2363,14 @@ TEST_F(GuiTest, ConfigManager_Basic)
     // JSON 往返（类型无损）
     auto* cfg2 = new vn::appfw::ConfigManager();
     EXPECT_TRUE(cfg2->loadJson(cfg->toJson()));
-    EXPECT_TRUE(cfg2->getString(u8"name") == u8"Vine");
-    EXPECT_EQ(cfg2->getInt(u8"max"), 100);
-    EXPECT_TRUE(cfg2->getBool(u8"flag"));
-    EXPECT_DOUBLE_EQ(cfg2->getDouble(u8"ratio"), 1.5);
+    EXPECT_TRUE(cfg2->getString(u8"name").value() == u8"Vine");
+    EXPECT_EQ(cfg2->getInt(u8"max").value(), 100);
+    EXPECT_TRUE(cfg2->getBool(u8"flag").value());
+    EXPECT_DOUBLE_EQ(cfg2->getDouble(u8"ratio").value(), 1.5);
     auto nums2 = cfg2->getIntArray(u8"nums");
     ASSERT_EQ(nums2.size(), 3u);
     EXPECT_EQ(nums2[2], 3);
-    EXPECT_EQ(cfg2->getInt(u8"max"), 100);
+    EXPECT_EQ(cfg2->getInt(u8"max").value(), 100);
 
     // 层级 key（A.B.C）
     cfg->setInt(u8"window.x", 100);
@@ -2377,9 +2378,9 @@ TEST_F(GuiTest, ConfigManager_Basic)
     cfg->setBool(u8"window.state.maximized", true);
     cfg->setString(u8"editor.font.name", u8"Consolas");
     EXPECT_TRUE(cfg->contains(u8"window.x"));
-    EXPECT_EQ(cfg->getInt(u8"window.x"), 100);
-    EXPECT_TRUE(cfg->getBool(u8"window.state.maximized"));
-    EXPECT_TRUE(cfg->getString(u8"editor.font.name") == u8"Consolas");
+    EXPECT_EQ(cfg->getInt(u8"window.x").value(), 100);
+    EXPECT_TRUE(cfg->getBool(u8"window.state.maximized").value());
+    EXPECT_TRUE(cfg->getString(u8"editor.font.name").value() == u8"Consolas");
 
     // 序列化为嵌套 JSON 对象（非点分扁平 key）
     const auto          json = cfg->toJson();
@@ -2395,10 +2396,10 @@ TEST_F(GuiTest, ConfigManager_Basic)
     // 层级 JSON 往返
     auto* cfg3 = new vn::appfw::ConfigManager();
     EXPECT_TRUE(cfg3->loadJson(json));
-    EXPECT_EQ(cfg3->getInt(u8"window.x"), 100);
-    EXPECT_EQ(cfg3->getInt(u8"window.y"), 200);
-    EXPECT_TRUE(cfg3->getBool(u8"window.state.maximized"));
-    EXPECT_TRUE(cfg3->getString(u8"editor.font.name") == u8"Consolas");
+    EXPECT_EQ(cfg3->getInt(u8"window.x").value(), 100);
+    EXPECT_EQ(cfg3->getInt(u8"window.y").value(), 200);
+    EXPECT_TRUE(cfg3->getBool(u8"window.state.maximized").value());
+    EXPECT_TRUE(cfg3->getString(u8"editor.font.name").value() == u8"Consolas");
     delete cfg3;
 
     // 非法 JSON
@@ -2412,7 +2413,71 @@ TEST_F(GuiTest, ConfigManager_Basic)
     ASSERT_NE(app, nullptr);
     ASSERT_NE(app->configManager(), nullptr);
     app->configManager()->setInt(u8"appmax", 42);
-    EXPECT_EQ(app->configManager()->getInt(u8"appmax"), 42);
+    EXPECT_EQ(app->configManager()->getInt(u8"appmax").value(), 42);
+}
+
+TEST_F(GuiTest, ConfigManager_UsesRegisteredItemDefaultsWithoutStoringThem)
+{
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigManager;
+
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* registry = app->configRegistry();
+    auto* group = registry->getOrAddCategory(u8"ConfigManagerDefaultsTest")->getOrAddGroup(u8"Values");
+    ASSERT_NE(group, nullptr);
+
+    ConfigItem text(u8"tests.config.defaults.text", u8"文本", ConfigItemType::String);
+    text.defaultValue(u8"default text");
+    ConfigItem flag(u8"tests.config.defaults.flag", u8"开关", ConfigItemType::Bool);
+    flag.defaultValue(true);
+    ConfigItem count(u8"tests.config.defaults.count", u8"计数", ConfigItemType::Int);
+    count.defaultValue(7);
+    ConfigItem ratio(u8"tests.config.defaults.ratio", u8"比例", ConfigItemType::Double);
+    ratio.defaultValue(1.5);
+    ConfigItem choice(u8"tests.config.defaults.choice", u8"选项", ConfigItemType::Choice);
+    choice.choices({ { 10, u8"Ten" } }).defaultValue(10);
+    ASSERT_TRUE(group->addItem(text));
+    ASSERT_TRUE(group->addItem(flag));
+    ASSERT_TRUE(group->addItem(count));
+    ASSERT_TRUE(group->addItem(ratio));
+    ASSERT_TRUE(group->addItem(choice));
+
+    auto* config = app->configManager();
+    EXPECT_EQ(config->getString(text.key()).value(), u8"default text");
+    EXPECT_TRUE(config->getBool(flag.key()).value());
+    EXPECT_EQ(config->getInt(count.key()).value(), 7);
+    EXPECT_DOUBLE_EQ(config->getDouble(ratio.key()).value(), 1.5);
+    EXPECT_EQ(config->getInt(choice.key()).value(), 10);
+    EXPECT_EQ(config->getString(count.key(), u8"fallback"), u8"fallback");
+    EXPECT_EQ(config->getInt(count.key(), 99), 7);
+    EXPECT_FALSE(config->contains(text.key()));
+    EXPECT_FALSE(config->contains(flag.key()));
+    EXPECT_FALSE(config->contains(count.key()));
+    EXPECT_FALSE(config->contains(ratio.key()));
+    EXPECT_FALSE(config->contains(choice.key()));
+    EXPECT_FALSE(config->getInt(u8"tests.config.defaults.unregistered").has_value());
+
+    ConfigManager round_trip;
+    ASSERT_TRUE(round_trip.loadJson(config->toJson()));
+    EXPECT_FALSE(round_trip.contains(count.key()));
+
+    config->setInt(count.key(), 12);
+    EXPECT_EQ(config->getInt(count.key()).value(), 12);
+    config->remove(count.key());
+    EXPECT_EQ(config->getInt(count.key()).value(), 7);
+    EXPECT_FALSE(config->contains(count.key()));
+
+    ConfigManager independent;
+    EXPECT_FALSE(independent.getInt(count.key()).has_value());
+    EXPECT_EQ(independent.getInt(count.key(), 99), 99);
+
+    EXPECT_TRUE(registry->removeItem(text.key()));
+    EXPECT_TRUE(registry->removeItem(flag.key()));
+    EXPECT_TRUE(registry->removeItem(count.key()));
+    EXPECT_TRUE(registry->removeItem(ratio.key()));
+    EXPECT_TRUE(registry->removeItem(choice.key()));
 }
 
 // ============================ 可显示配置 ============================
@@ -2445,8 +2510,8 @@ TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
 
     auto* loaded = new ConfigManager();
     ASSERT_TRUE(loaded->load(file_path));
-    EXPECT_TRUE(loaded->getString(u8"name") == u8"Vine");
-    EXPECT_EQ(loaded->getInt(u8"max"), 100);
+    EXPECT_TRUE(loaded->getString(u8"name").value() == u8"Vine");
+    EXPECT_EQ(loaded->getInt(u8"max").value(), 100);
     delete loaded;
 
     // 父目录不存在 / 目标是目录：报失败，而不是无声成功
@@ -2466,7 +2531,7 @@ TEST_F(GuiTest, ConfigManager_SaveReportsFailureAndKeepsTheOldFile)
         EXPECT_FALSE(cfg->save(file_path));
         auto* kept = new ConfigManager();
         ASSERT_TRUE(kept->load(file_path));
-        EXPECT_EQ(kept->getInt(u8"max"), 100) << "保存失败时磁盘上的旧配置不能被破坏";
+        EXPECT_EQ(kept->getInt(u8"max").value(), 100) << "保存失败时磁盘上的旧配置不能被破坏";
         delete kept;
     }
     std::filesystem::permissions(dir, std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
@@ -2508,6 +2573,12 @@ TEST_F(GuiTest, ConfigManager_NotifiesOnlyOnRealChanges)
     EXPECT_EQ(events, 3);
     cfg->setString(u8"name", u8"Vine");
     cfg->setString(u8"name", u8"Vine");
+    EXPECT_EQ(events, 4);
+
+    // 空 key 保留给整份配置变化，不能作为普通 key 写入或删除。
+    cfg->setString(vn::String(), u8"invalid");
+    cfg->remove(vn::String());
+    EXPECT_FALSE(cfg->contains(vn::String()));
     EXPECT_EQ(events, 4);
 
     // 删除不存在的键不算变化
@@ -2556,10 +2627,10 @@ TEST_F(GuiTest, ConfigManager_JsonRoundTripKeepsTypes)
 
     auto* b = new ConfigManager();
     ASSERT_TRUE(b->loadJson(a->toJson()));
-    EXPECT_TRUE(b->getString(u8"name") == u8"Vine");
-    EXPECT_TRUE(b->getBool(u8"flag"));
-    EXPECT_EQ(b->getInt(u8"max"), 2147483647);
-    EXPECT_DOUBLE_EQ(b->getDouble(u8"ratio"), 1.5);
+    EXPECT_TRUE(b->getString(u8"name").value() == u8"Vine");
+    EXPECT_TRUE(b->getBool(u8"flag").value());
+    EXPECT_EQ(b->getInt(u8"max").value(), 2147483647);
+    EXPECT_DOUBLE_EQ(b->getDouble(u8"ratio").value(), 1.5);
     const auto nums = b->getIntArray(u8"nums");
     ASSERT_EQ(nums.size(), 3u);
     EXPECT_EQ(nums[1], -2);
@@ -2567,11 +2638,11 @@ TEST_F(GuiTest, ConfigManager_JsonRoundTripKeepsTypes)
 
     // 旧格式（整数写成 double）仍读得回来
     ASSERT_TRUE(b->loadJson(u8R"({"legacy":{"type":"int","value":100.0}})"));
-    EXPECT_EQ(b->getInt(u8"legacy"), 100);
+    EXPECT_EQ(b->getInt(u8"legacy").value(), 100);
 
     // 超出 int 范围：夹取（并记日志），而不是静默改成一个别的值
     ASSERT_TRUE(b->loadJson(u8R"({"big":{"type":"int","value":9999999999}})"));
-    EXPECT_EQ(b->getInt(u8"big"), 2147483647);
+    EXPECT_EQ(b->getInt(u8"big").value(), 2147483647);
 
     delete a;
     delete b;
@@ -2587,15 +2658,39 @@ TEST_F(GuiTest, ConfigManager_BadEntriesAreIgnoredNotFatal)
         "plain": 42,
         "text": "hello",
         "unknown": { "type": "text", "value": "x" },
+        "bad_bool": { "type": "bool", "value": "false" },
+        "bad_double": { "type": "double", "value": "1.5" },
+        "bad_array": { "type": "int[]", "value": [1, "2"] },
+        "malformed": { "type": "int", "other": 1 },
         "good": { "type": "int", "value": 7 }
     })"));
-    EXPECT_EQ(cfg->getInt(u8"good"), 7);
+    EXPECT_EQ(cfg->getInt(u8"good").value(), 7);
     EXPECT_FALSE(cfg->contains(u8"plain"));
     EXPECT_FALSE(cfg->contains(u8"text"));
     EXPECT_FALSE(cfg->contains(u8"unknown"));
+    EXPECT_FALSE(cfg->contains(u8"bad_bool"));
+    EXPECT_FALSE(cfg->contains(u8"bad_double"));
+    EXPECT_FALSE(cfg->contains(u8"bad_array"));
+    EXPECT_FALSE(cfg->contains(u8"malformed"));
+    ASSERT_TRUE(cfg->loadJson(u8R"({"":{"type":"string","value":"invalid"},"valid":{"type":"bool","value":true}})"));
+    EXPECT_FALSE(cfg->contains(vn::String()));
+    EXPECT_TRUE(cfg->getBool(u8"valid").value());
 
     EXPECT_FALSE(cfg->loadJson(u8"not json"));
     delete cfg;
+}
+
+TEST_F(GuiTest, ConfigManager_RejectsEmptyKeysAndNonFiniteDoubles)
+{
+    using vn::appfw::ConfigManager;
+
+    ConfigManager cfg;
+    cfg.setInt(vn::String(), 1);
+    cfg.setDouble(u8"not_finite", std::numeric_limits<double>::infinity());
+    cfg.setDoubleArray(u8"not_finite_array", { 1.0, std::numeric_limits<double>::quiet_NaN() });
+    EXPECT_FALSE(cfg.contains(vn::String()));
+    EXPECT_FALSE(cfg.contains(u8"not_finite"));
+    EXPECT_FALSE(cfg.contains(u8"not_finite_array"));
 }
 
 // 所有权跟着树走：项被删掉（无论走哪条删除路径）之后，它的 owner 不能残留，
@@ -2666,8 +2761,7 @@ TEST(ConfigWindowTest, RefreshKeepsEachValueWithItsKey)
     delete cfg;
 }
 
-// Choice 编辑器：显示存储值（键没写过时显示 item 默认值）；不在选项里就显示为
-// 未选中，而不是谎报第一个选项。
+// Choice 编辑器：可选项提供“未设置”；未登记的存储值显示未选中。
 TEST(ConfigWindowTest, ChoiceWithoutMatchShowsNoSelection)
 {
     using vn::appfw::ConfigItem;
@@ -2692,17 +2786,24 @@ TEST(ConfigWindowTest, ChoiceWithoutMatchShowsNoSelection)
     auto* combo = win->impl<QDialog>()->findChildren<QComboBox*>().value(0);
     ASSERT_NE(combo, nullptr);
 
-    // 键从未写过：显示 item 默认值对应的选项（reset() 会恢复的那个）
-    EXPECT_EQ(combo->currentIndex(), 1);
+    // 键从未写过：默认值与未设置不同，默认值只由 reset() 显式写入。
+    EXPECT_EQ(combo->currentIndex(), 0);
 
     cfg->setInt(u8"theme", 1);
     win->refresh();
-    EXPECT_EQ(combo->currentIndex(), 0);
+    EXPECT_EQ(combo->currentIndex(), 1);
 
     // 存储值不在选项里：未选中
     cfg->setInt(u8"theme", 9);
     win->refresh();
     EXPECT_EQ(combo->currentIndex(), -1);
+
+    combo->setCurrentIndex(0);
+    EXPECT_FALSE(cfg->contains(u8"theme"));
+    combo->setCurrentIndex(1);
+    EXPECT_EQ(cfg->getInt(u8"theme").value(), 1);
+    win->reset();
+    EXPECT_EQ(cfg->getInt(u8"theme").value(), 2);
 
     delete win;
     delete cfg;
@@ -2748,6 +2849,274 @@ TEST(ConfigWindowTest, UnboundedNumbersAreNotClamped)
     delete cfg;
 }
 
+TEST(ConfigWindowTest, StringConstraintsPreventInvalidValuesFromBeingWritten)
+{
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigManager;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::gui::ConfigWindow;
+
+    ConfigRegistry reg;
+    auto*          cat = reg.addCategory(u8"C1");
+    auto*          grp = cat->addGroup(u8"G");
+    ConfigItem     item(u8"name", u8"名称", ConfigItemType::String);
+    item.regularExpression(u8"[a-z]+").lengthRange(2, 4).defaultValue(u8"ab");
+    ASSERT_TRUE(grp->addItem(item));
+
+    auto* cfg = new ConfigManager();
+    cfg->setString(u8"name", u8"ab");
+    auto* win   = new ConfigWindow(&reg, cfg);
+    auto* input = win->impl<QDialog>()->findChild<QLineEdit*>();
+    ASSERT_NE(input, nullptr);
+
+    input->clear();
+    EXPECT_FALSE(cfg->contains(u8"name")) << "可选空字符串表示未设置";
+    input->setText(QStringLiteral("A"));
+    EXPECT_FALSE(cfg->contains(u8"name")) << "无效的中间输入不能覆盖未设置状态";
+    input->setText(QStringLiteral("abc"));
+    EXPECT_TRUE(cfg->getString(u8"name").value() == u8"abc");
+    input->setText(QStringLiteral("abcde"));
+    EXPECT_TRUE(cfg->getString(u8"name").value() == u8"abc") << "超过用户感知长度上限不能写入";
+
+    delete win;
+    delete cfg;
+}
+
+TEST(ConfigWindowTest, RequiredStringCannotBeCleared)
+{
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigManager;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::gui::ConfigWindow;
+
+    ConfigRegistry reg;
+    auto*          cat = reg.addCategory(u8"C1");
+    auto*          grp = cat->addGroup(u8"G");
+    ConfigItem     item(u8"name", u8"名称", ConfigItemType::String);
+    item.required().defaultValue(u8"alice");
+    ASSERT_TRUE(grp->addItem(item));
+
+    auto* cfg = new ConfigManager();
+    cfg->setString(u8"name", u8"alice");
+    auto* win   = new ConfigWindow(&reg, cfg);
+    auto* input = win->impl<QDialog>()->findChild<QLineEdit*>();
+    ASSERT_NE(input, nullptr);
+
+    input->clear();
+    EXPECT_TRUE(cfg->getString(u8"name").value() == u8"alice") << "必填项清空时不能覆盖有效值";
+
+    input->setText(QStringLiteral("bob"));
+    EXPECT_TRUE(cfg->getString(u8"name").value() == u8"bob");
+
+    delete win;
+    delete cfg;
+}
+
+TEST(ConfigWindowTest, OptionalValuesCanBeUnsetAcrossTypes)
+{
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigManager;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::gui::ConfigWindow;
+
+    ConfigRegistry reg;
+    auto*          cat = reg.addCategory(u8"C1");
+    auto*          grp = cat->addGroup(u8"G");
+    ASSERT_TRUE(grp->addItem(ConfigItem(u8"text", u8"文本", ConfigItemType::String).defaultValue(u8"default")));
+    ASSERT_TRUE(grp->addItem(ConfigItem(u8"flag", u8"开关", ConfigItemType::Bool).defaultValue(false)));
+    ASSERT_TRUE(grp->addItem(ConfigItem(u8"count", u8"数量", ConfigItemType::Int).range(1, 10).defaultValue(3)));
+    ASSERT_TRUE(grp->addItem(ConfigItem(u8"ratio", u8"比例", ConfigItemType::Double).range(0.0, 2.0).defaultValue(1.5)));
+    ConfigItem choice(u8"mode", u8"模式", ConfigItemType::Choice);
+    choice.choices({ { 10, u8"第一" }, { 20, u8"第二" } }).defaultValue(20);
+    ASSERT_TRUE(grp->addItem(choice));
+
+    auto* cfg           = new ConfigManager();
+    auto* win           = new ConfigWindow(&reg, cfg);
+    auto* root          = win->impl<QDialog>();
+    auto* text          = root->findChild<QLineEdit*>();
+    auto* flag          = root->findChild<QCheckBox*>(QStringLiteral("configBoolEditor"));
+    auto* combo         = root->findChild<QComboBox*>();
+    auto  ints          = root->findChildren<QSpinBox*>();
+    auto  doubles       = root->findChildren<QDoubleSpinBox*>();
+    auto  unset_buttons = root->findChildren<QPushButton*>(QStringLiteral("configValueUnset"));
+    auto  clear_buttons = root->findChildren<QPushButton*>(QStringLiteral("configValueClear"));
+    ASSERT_NE(text, nullptr);
+    ASSERT_NE(flag, nullptr);
+    ASSERT_NE(combo, nullptr);
+    ASSERT_EQ(ints.size(), 1);
+    ASSERT_EQ(doubles.size(), 1);
+    ASSERT_EQ(unset_buttons.size(), 2);
+    ASSERT_EQ(clear_buttons.size(), 2);
+
+    EXPECT_TRUE(text->text().isEmpty()) << "未设置项不应伪装成默认值";
+    EXPECT_EQ(flag->checkState(), Qt::PartiallyChecked);
+    EXPECT_EQ(combo->currentIndex(), 0);
+
+    text->setText(QStringLiteral("value"));
+    EXPECT_EQ(cfg->getString(u8"text").value(), u8"value");
+    text->clear();
+    EXPECT_FALSE(cfg->contains(u8"text"));
+
+    flag->setCheckState(Qt::Checked);
+    EXPECT_TRUE(cfg->getBool(u8"flag").value());
+    flag->setCheckState(Qt::PartiallyChecked);
+    EXPECT_FALSE(cfg->contains(u8"flag"));
+
+    unset_buttons[0]->click();
+    auto* count_input = ints[0]->findChild<QLineEdit*>();
+    ASSERT_NE(count_input, nullptr);
+    EXPECT_TRUE(count_input->text().isEmpty());
+    EXPECT_FALSE(cfg->contains(u8"count"));
+    ASSERT_TRUE(QMetaObject::invokeMethod(ints[0], "editingFinished", Qt::DirectConnection));
+    EXPECT_TRUE(count_input->text().isEmpty());
+    EXPECT_FALSE(cfg->contains(u8"count"));
+    QKeyEvent key_press(QEvent::KeyPress, Qt::Key_3, Qt::NoModifier, QStringLiteral("3"));
+    QApplication::sendEvent(count_input, &key_press);
+    EXPECT_EQ(cfg->getInt(u8"count").value(), 3) << "输入值即使等于控件的内部起始值，也要保存";
+    clear_buttons[0]->click();
+    unset_buttons[0]->click();
+    EXPECT_TRUE(count_input->text().isEmpty());
+    count_input->setText(QStringLiteral("4"));
+    EXPECT_EQ(cfg->getInt(u8"count").value(), 4);
+    clear_buttons[0]->click();
+    EXPECT_FALSE(cfg->contains(u8"count"));
+
+    unset_buttons[1]->click();
+    auto* ratio_input = doubles[0]->findChild<QLineEdit*>();
+    ASSERT_NE(ratio_input, nullptr);
+    EXPECT_TRUE(ratio_input->text().isEmpty());
+    EXPECT_FALSE(cfg->contains(u8"ratio"));
+    ASSERT_TRUE(QMetaObject::invokeMethod(doubles[0], "editingFinished", Qt::DirectConnection));
+    EXPECT_TRUE(ratio_input->text().isEmpty());
+    EXPECT_FALSE(cfg->contains(u8"ratio"));
+    ratio_input->setText(QStringLiteral("0.5"));
+    EXPECT_DOUBLE_EQ(cfg->getDouble(u8"ratio").value(), 0.5);
+    clear_buttons[1]->click();
+    EXPECT_FALSE(cfg->contains(u8"ratio"));
+
+    combo->setCurrentIndex(1);
+    EXPECT_EQ(cfg->getInt(u8"mode").value(), 10);
+    combo->setCurrentIndex(0);
+    EXPECT_FALSE(cfg->contains(u8"mode"));
+
+    win->reset();
+    EXPECT_EQ(cfg->getString(u8"text").value(), u8"default");
+    EXPECT_FALSE(cfg->getBool(u8"flag").value());
+    EXPECT_EQ(cfg->getInt(u8"count").value(), 3);
+    EXPECT_DOUBLE_EQ(cfg->getDouble(u8"ratio").value(), 1.5);
+    EXPECT_EQ(cfg->getInt(u8"mode").value(), 20);
+
+    delete win;
+    delete cfg;
+}
+
+TEST(ConfigWindowTest, RequiredValuesAreNotUnsetByTheEditor)
+{
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+    using vn::appfw::ConfigManager;
+    using vn::appfw::ConfigRegistry;
+    using vn::appfw::gui::ConfigWindow;
+
+    ConfigRegistry reg;
+    auto*          cat = reg.addCategory(u8"C1");
+    auto*          grp = cat->addGroup(u8"G");
+    ConfigItem     text(u8"text", u8"文本", ConfigItemType::String);
+    text.required().defaultValue(u8"default");
+    ASSERT_TRUE(grp->addItem(text));
+    ConfigItem flag(u8"flag", u8"开关", ConfigItemType::Bool);
+    flag.required().defaultValue(false);
+    ASSERT_TRUE(grp->addItem(flag));
+    ConfigItem count(u8"count", u8"数量", ConfigItemType::Int);
+    count.required().range(1, 10).defaultValue(3);
+    ASSERT_TRUE(grp->addItem(count));
+    ConfigItem ratio(u8"ratio", u8"比例", ConfigItemType::Double);
+    ratio.required().range(0.0, 2.0).defaultValue(1.5);
+    ASSERT_TRUE(grp->addItem(ratio));
+    ConfigItem count_without_default(u8"countWithoutDefault", u8"无默认计数", ConfigItemType::Int);
+    count_without_default.required().range(1, 10);
+    ASSERT_TRUE(grp->addItem(count_without_default));
+    ConfigItem choice(u8"mode", u8"模式", ConfigItemType::Choice);
+    choice.required().choices({ { 10, u8"第一" }, { 20, u8"第二" } }).defaultValue(20);
+    ASSERT_TRUE(grp->addItem(choice));
+
+    auto* cfg = new ConfigManager();
+    auto* win           = new ConfigWindow(&reg, cfg);
+    auto* root          = win->impl<QDialog>();
+    auto* input         = root->findChild<QLineEdit*>();
+    auto* checkbox      = root->findChild<QCheckBox*>(QStringLiteral("configBoolEditor"));
+    auto* combo         = root->findChild<QComboBox*>();
+    auto  unset_buttons = root->findChildren<QPushButton*>(QStringLiteral("configValueUnset"));
+    auto  clear_buttons = root->findChildren<QPushButton*>(QStringLiteral("configValueClear"));
+    ASSERT_NE(input, nullptr);
+    ASSERT_NE(checkbox, nullptr);
+    ASSERT_NE(combo, nullptr);
+    ASSERT_EQ(unset_buttons.size(), 3);
+    ASSERT_EQ(clear_buttons.size(), 3);
+
+    EXPECT_TRUE(input->text().isEmpty());
+    EXPECT_EQ(checkbox->checkState(), Qt::PartiallyChecked);
+    EXPECT_EQ(combo->currentIndex(), -1);
+    EXPECT_FALSE(cfg->contains(u8"text"));
+    EXPECT_FALSE(cfg->contains(u8"flag"));
+    EXPECT_FALSE(cfg->contains(u8"count"));
+    EXPECT_FALSE(cfg->contains(u8"ratio"));
+    EXPECT_FALSE(cfg->contains(u8"mode"));
+
+    auto ints = root->findChildren<QSpinBox*>();
+    auto doubles = root->findChildren<QDoubleSpinBox*>();
+    ASSERT_EQ(ints.size(), 2);
+    ASSERT_EQ(doubles.size(), 1);
+
+    input->setText(QStringLiteral("value"));
+    checkbox->setCheckState(Qt::Checked);
+    combo->setCurrentIndex(0);
+    EXPECT_EQ(cfg->getString(u8"text").value(), u8"value");
+    EXPECT_TRUE(cfg->getBool(u8"flag").value());
+    EXPECT_EQ(cfg->getInt(u8"mode").value(), 10);
+
+    input->clear();
+    checkbox->setCheckState(Qt::PartiallyChecked);
+    combo->setCurrentIndex(-1);
+    EXPECT_EQ(cfg->getString(u8"text").value(), u8"value");
+    EXPECT_TRUE(cfg->getBool(u8"flag").value());
+    EXPECT_EQ(cfg->getInt(u8"mode").value(), 10);
+    EXPECT_TRUE(clear_buttons[0]->isHidden());
+    EXPECT_TRUE(clear_buttons[1]->isHidden());
+
+    unset_buttons[0]->click();
+    auto* count_input = ints[0]->findChild<QLineEdit*>();
+    ASSERT_NE(count_input, nullptr);
+    EXPECT_TRUE(count_input->text().isEmpty());
+    EXPECT_FALSE(cfg->contains(u8"count"));
+    count_input->setText(QStringLiteral("4"));
+
+    unset_buttons[1]->click();
+    auto* ratio_input = doubles[0]->findChild<QLineEdit*>();
+    ASSERT_NE(ratio_input, nullptr);
+    EXPECT_TRUE(ratio_input->text().isEmpty());
+    EXPECT_FALSE(cfg->contains(u8"ratio"));
+    ratio_input->setText(QStringLiteral("0.5"));
+
+    EXPECT_EQ(cfg->getInt(u8"count").value(), 4);
+    EXPECT_DOUBLE_EQ(cfg->getDouble(u8"ratio").value(), 0.5);
+
+    unset_buttons[2]->click();
+    auto* count_without_default_input = ints[1]->findChild<QLineEdit*>();
+    ASSERT_NE(count_without_default_input, nullptr);
+    EXPECT_TRUE(count_without_default_input->text().isEmpty());
+    EXPECT_FALSE(cfg->contains(u8"countWithoutDefault"));
+    count_without_default_input->setText(QStringLiteral("7"));
+    win->reset();
+    EXPECT_EQ(cfg->getInt(u8"countWithoutDefault").value(), 7);
+
+    delete win;
+    delete cfg;
+}
+
 // 需要重启才能生效的项：行标签带提示，改了之后窗口顶部的横幅出现，改回就消失。
 // 横幅问的是 Application（那是本次运行的事实），所以窗口开在哪个注册表上都给同一个答案。
 TEST_F(GuiTest, ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange)
@@ -2762,7 +3131,7 @@ TEST_F(GuiTest, ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange)
 
     // 夹具把语言钉成了 zh_CN，所以本次运行的存储值就是它 —— 开始时没有待生效的改动。
     const bool   had_language = app->configManager()->contains(languageConfigKey());
-    const vn::String original = app->configManager()->getString(languageConfigKey());
+    const vn::String original = app->configManager()->getString(languageConfigKey()).value();
 
     auto* win  = new ConfigWindow(app->configRegistry(), app->configManager());
     auto* root = win->impl<QDialog>();
@@ -2785,8 +3154,11 @@ TEST_F(GuiTest, ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange)
 
     // 改一个需要重启的项：横幅出现（窗口没显示，用 isHidden 而不是 isVisible）。
     const vn::String other = original == vn::String(u8"en") ? vn::String(u8"zh_CN") : vn::String(u8"en");
-    app->configManager()->setString(languageConfigKey(), other);
-    EXPECT_FALSE(notice->isHidden()) << "改了需要重启的项，横幅必须出现";
+    std::thread worker([&] { app->configManager()->setString(languageConfigKey(), other); });
+    worker.join();
+    EXPECT_TRUE(notice->isHidden()) << "后台线程回调不能直接更新 Qt 控件";
+    QCoreApplication::processEvents();
+    EXPECT_FALSE(notice->isHidden()) << "后台线程修改后，横幅必须在 GUI 线程更新";
 
     // 改回启动值：横幅消失（这是状态，不是历史）。
     if (had_language)
@@ -2865,6 +3237,8 @@ TEST_F(GuiTest, ConfigItem_RangeAny)
     // No range -> hasRange() false; min/max getters throw; step() falls back to 1.0.
     ConfigItem none(u8"k", u8"K", ConfigItemType::Int);
     EXPECT_FALSE(none.hasRange());
+    EXPECT_TRUE(none.isValidInt(-100));
+    EXPECT_FALSE(none.isValidDouble(1.0));
     EXPECT_THROW(none.minInt(), std::bad_any_cast);
     EXPECT_EQ(none.step(), 1.0);
 
@@ -2874,20 +3248,117 @@ TEST_F(GuiTest, ConfigItem_RangeAny)
     EXPECT_TRUE(i.hasRange());
     EXPECT_EQ(i.minInt(), 8);
     EXPECT_EQ(i.maxInt(), 72);
+    EXPECT_FALSE(i.isValidInt(7));
+    EXPECT_TRUE(i.isValidInt(8));
+    EXPECT_TRUE(i.isValidInt(72));
+    EXPECT_FALSE(i.isValidInt(73));
     EXPECT_EQ(i.step(), 1.0);
     i.step(2);
     EXPECT_EQ(i.step(), 2.0);
 
     // Double range.
     ConfigItem d(u8"ratio", u8"比例", ConfigItemType::Double);
+    EXPECT_TRUE(d.isValidDouble(-1.5)) << "未配置范围时，任何有限值都有效";
+    EXPECT_FALSE(d.isValidDouble(std::numeric_limits<double>::infinity()));
     d.range(0.0, 10.0);
     EXPECT_DOUBLE_EQ(d.minDouble(), 0.0);
     EXPECT_DOUBLE_EQ(d.maxDouble(), 10.0);
+    EXPECT_TRUE(d.isValidDouble(0.0));
+    EXPECT_TRUE(d.isValidDouble(10.0));
+    EXPECT_FALSE(d.isValidDouble(-0.1));
+    EXPECT_FALSE(d.isValidDouble(std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_FALSE(d.isValidDouble(std::numeric_limits<double>::infinity()));
 
     // Wrong usage throws.
     ConfigItem s(u8"name", u8"名称", ConfigItemType::String);
     EXPECT_THROW(s.range(1, 2), std::invalid_argument);
     EXPECT_THROW(ConfigItem(u8"x", u8"X", ConfigItemType::Int).step(0.5), std::invalid_argument);
+}
+
+TEST_F(GuiTest, ConfigItem_RejectsInvalidNumericConstraints)
+{
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+
+    EXPECT_THROW(ConfigItem(u8"x", u8"X", ConfigItemType::Int).range(5, 1), std::invalid_argument);
+    EXPECT_THROW(ConfigItem(u8"x", u8"X", ConfigItemType::Double).range(0.0, std::numeric_limits<double>::infinity()),
+                 std::invalid_argument);
+    EXPECT_THROW(ConfigItem(u8"x", u8"X", ConfigItemType::Int).range(0.5, 5.0), std::invalid_argument);
+
+    ConfigItem default_first(u8"x", u8"X", ConfigItemType::Int);
+    default_first.defaultValue(10);
+    EXPECT_THROW(default_first.range(0, 5), std::invalid_argument);
+
+    ConfigItem range_first(u8"x", u8"X", ConfigItemType::Double);
+    range_first.range(0.0, 5.0);
+    EXPECT_THROW(range_first.defaultValue(6.0), std::invalid_argument);
+    EXPECT_THROW(range_first.defaultValue(std::numeric_limits<double>::quiet_NaN()), std::invalid_argument);
+
+    ConfigItem step(u8"x", u8"X", ConfigItemType::Int);
+    step.range(0, 10);
+    EXPECT_THROW(step.step(0), std::invalid_argument);
+    EXPECT_THROW(step.step(0.5), std::invalid_argument);
+    EXPECT_THROW(step.step(std::numeric_limits<double>::infinity()), std::invalid_argument);
+}
+
+TEST_F(GuiTest, ConfigItem_ValidatesStringPatternAndGraphemeLength)
+{
+    using vn::appfw::ConfigItem;
+    using vn::appfw::ConfigItemType;
+
+    ConfigItem unconstrained(u8"free", u8"自由文本", ConfigItemType::String);
+    EXPECT_TRUE(unconstrained.isValidString(u8""));
+    EXPECT_TRUE(unconstrained.isValidString(u8"任何内容"));
+
+    ConfigItem item(u8"name", u8"名称", ConfigItemType::String);
+    item.regularExpression(u8"[a-z]+").lengthRange(1, 1).defaultValue(u8"a");
+    EXPECT_TRUE(item.hasLengthRange());
+    EXPECT_EQ(item.minLength(), 1);
+    EXPECT_EQ(item.maxLength(), 1);
+    EXPECT_TRUE(item.regularExpression() == u8"[a-z]+");
+    EXPECT_TRUE(item.isValidString(u8""));
+    EXPECT_TRUE(item.isValidString(u8"a"));
+    EXPECT_FALSE(item.isValidString(u8"ab"));
+    EXPECT_FALSE(item.isValidString(u8"A"));
+
+    ConfigItem unicode(u8"title", u8"标题", ConfigItemType::String);
+    unicode.lengthRange(1, 1);
+    EXPECT_TRUE(unicode.isValidString(u8"é"));
+    EXPECT_TRUE(unicode.isValidString(u8"👨‍👩‍👧‍👦"));
+    EXPECT_FALSE(unicode.isValidString(u8"ab"));
+
+    EXPECT_THROW(ConfigItem(u8"x", u8"X", ConfigItemType::String).regularExpression(u8"["), std::invalid_argument);
+    EXPECT_THROW(ConfigItem(u8"x", u8"X", ConfigItemType::String).lengthRange(-1, 2), std::invalid_argument);
+    EXPECT_THROW(ConfigItem(u8"x", u8"X", ConfigItemType::String).lengthRange(3, 2), std::invalid_argument);
+    EXPECT_THROW(ConfigItem(u8"x", u8"X", ConfigItemType::Int).lengthRange(0, 2), std::invalid_argument);
+
+    ConfigItem constrained_default(u8"x", u8"X", ConfigItemType::String);
+    constrained_default.defaultValue(u8"ok");
+    EXPECT_THROW(constrained_default.lengthRange(1, 1), std::invalid_argument);
+    EXPECT_THROW(constrained_default.regularExpression(u8"[a-z]"), std::invalid_argument);
+
+    ConfigItem empty_default(u8"empty", u8"空默认值", ConfigItemType::String);
+    empty_default.lengthRange(1, 2).regularExpression(u8"[a-z]+").defaultValue(u8"");
+    EXPECT_TRUE(empty_default.hasDefault());
+    EXPECT_TRUE(empty_default.isValidString(empty_default.defaultString()));
+    EXPECT_FALSE(empty_default.isRequired());
+    EXPECT_THROW(empty_default.required(), std::invalid_argument);
+
+    ConfigItem required(u8"required", u8"必填", ConfigItemType::String);
+    EXPECT_FALSE(required.isRequired());
+    required.defaultValue(u8"name").required();
+    EXPECT_TRUE(required.isRequired());
+    EXPECT_TRUE(required.isValidString(u8"name"));
+    EXPECT_FALSE(required.isValidString(u8""));
+    EXPECT_THROW(required.defaultValue(u8""), std::invalid_argument);
+    EXPECT_TRUE(required.required(false).required().isRequired());
+
+    ConfigItem empty_required(u8"empty", u8"空必填", ConfigItemType::String);
+    empty_required.defaultValue(u8"");
+    EXPECT_THROW(empty_required.required(), std::invalid_argument);
+    EXPECT_FALSE(empty_required.isRequired()) << "失败的约束设置不能改变现有状态";
+    ConfigItem required_int(u8"count", u8"计数", ConfigItemType::Int);
+    EXPECT_TRUE(required_int.required().isRequired());
 }
 
 TEST_F(GuiTest, ConfigItem_TypedChoices)

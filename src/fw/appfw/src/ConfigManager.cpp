@@ -1,8 +1,11 @@
 ﻿#include <vine/appfw/ConfigManager.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <span>
 #include <string_view>
@@ -23,6 +26,9 @@
 
 #include <vine/logging/Log.hpp>
 
+#include <vine/appfw/Application.hpp>
+#include <vine/appfw/ConfigItem.hpp>
+#include <vine/appfw/ConfigRegistry.hpp>
 #include <vine/appfw/ConfigSnapshot.hpp>
 
 VN_APPFW_NS_BEGIN
@@ -58,15 +64,64 @@ std::string_view toUtf8View(const String& s) noexcept
 //
 // A hand-edited file may carry a number that does not fit the stored type;
 // storing a silently different one would be worse than saying so.
-int jsonToInt(qint64 value, const String& key)
+int jsonToInt(double value, const String& key)
 {
-    constexpr qint64 lo = std::numeric_limits<int>::min();
-    constexpr qint64 hi = std::numeric_limits<int>::max();
+    constexpr double lo = std::numeric_limits<int>::min();
+    constexpr double hi = std::numeric_limits<int>::max();
     if (value >= lo && value <= hi)
         return static_cast<int>(value);
     const int clamped = value > hi ? static_cast<int>(hi) : static_cast<int>(lo);
     VN_LOGW("Config entry '{}' holds the out-of-range integer {}; using {}", toUtf8View(key), value, clamped);
     return clamped;
+}
+
+std::optional<double> jsonFiniteNumber(const QJsonValue& value)
+{
+    if (!value.isDouble())
+        return std::nullopt;
+    const double number = value.toDouble();
+    if (!std::isfinite(number))
+        return std::nullopt;
+    return number;
+}
+
+std::optional<double> jsonInteger(const QJsonValue& value)
+{
+    const std::optional<double> number = jsonFiniteNumber(value);
+    if (!number || std::trunc(*number) != *number)
+        return std::nullopt;
+    return number;
+}
+
+template <typename T, typename ParseElement>
+std::optional<std::vector<T>> jsonArray(const QJsonValue& value, ParseElement parse_element)
+{
+    if (!value.isArray())
+        return std::nullopt;
+
+    const QJsonArray array = value.toArray();
+    std::vector<T> result;
+    result.reserve(static_cast<size_t>(array.size()));
+    for (const QJsonValue& element : array) {
+        std::optional<T> parsed = parse_element(element);
+        if (!parsed)
+            return std::nullopt;
+        result.push_back(std::move(*parsed));
+    }
+    return result;
+}
+
+bool hasConfigKey(const String& key)
+{
+    if (!key.empty())
+        return true;
+    VN_LOGW("Config key is empty; mutation ignored");
+    return false;
+}
+
+void warnInvalidJsonEntry(const String& key, const QString& type)
+{
+    VN_LOGW("Config entry '{}' has an invalid value for type '{}'; ignored", toUtf8View(key), toUtf8View(fromQString(type)));
 }
 
 // Stores a value and reports whether it differs from the one stored before.
@@ -99,6 +154,54 @@ T readValue(const std::map<String, ConfigValue>& values, const String& key, cons
         return def;
     const auto* stored = std::get_if<T>(&it->second);
     return stored != nullptr ? *stored : def;
+}
+
+template <typename T>
+std::optional<T> readOptionalValue(const std::map<String, ConfigValue>& values, const String& key)
+{
+    const auto it = values.find(key);
+    if (it == values.end())
+        return std::nullopt;
+    const auto* stored = std::get_if<T>(&it->second);
+    return stored != nullptr ? std::optional<T>(*stored) : std::nullopt;
+}
+
+const ConfigItem* registeredConfigItem(const ConfigManager& manager, const String& key)
+{
+    Application* app = Application::current();
+    if (app == nullptr || app->configManager() != &manager)
+        return nullptr;
+    ConfigRegistry* registry = app->configRegistry();
+    return registry != nullptr ? registry->item(key) : nullptr;
+}
+
+template <typename T>
+std::optional<T> configItemDefault(const ConfigManager& manager, const String& key)
+{
+    const ConfigItem* item = registeredConfigItem(manager, key);
+    if (item == nullptr || !item->hasDefault())
+        return std::nullopt;
+
+    if constexpr (std::is_same_v<T, String>) {
+        if ((item->type() == ConfigItemType::String || item->type() == ConfigItemType::Choice)
+            && item->defaultType() == ConfigItemType::String)
+            return item->defaultString();
+    }
+    else if constexpr (std::is_same_v<T, bool>) {
+        if (item->type() == ConfigItemType::Bool)
+            return item->defaultBool();
+    }
+    else if constexpr (std::is_same_v<T, int>) {
+        if ((item->type() == ConfigItemType::Int || item->type() == ConfigItemType::Choice)
+            && item->defaultType() == ConfigItemType::Int)
+            return item->defaultInt();
+    }
+    else if constexpr (std::is_same_v<T, double>) {
+        if ((item->type() == ConfigItemType::Double || item->type() == ConfigItemType::Choice)
+            && item->defaultType() == ConfigItemType::Double)
+            return item->defaultDouble();
+    }
+    return std::nullopt;
 }
 
 // Notifies subscribers that a key changed.
@@ -138,53 +241,101 @@ void flattenJson(const QJsonObject& obj, const QString& prefix, std::map<String,
         const QString    full = prefix.isEmpty() ? name : prefix + QStringLiteral(".") + name;
         const String     key  = fromQString(full);
         const QJsonValue val  = it.value();
+        if (key.empty()) {
+            VN_LOGW("Config entry has an empty key; ignored");
+            continue;
+        }
         if (!val.isObject()) {
             VN_LOGW("Config entry '{}' is a plain value, not of the type/value form; ignored", toUtf8View(key));
             continue;
         }
         const QJsonObject o = val.toObject();
-        if (o.contains(QStringLiteral("type")) && o.size() == 2) {
+        const bool has_type_marker = o.contains(QStringLiteral("type")) || o.contains(QStringLiteral("value"));
+        if (has_type_marker) {
+            if (o.size() != 2 || !o.value(QStringLiteral("type")).isString() || !o.contains(QStringLiteral("value"))) {
+                VN_LOGW("Config entry '{}' is not a valid type/value entry; ignored", toUtf8View(key));
+                continue;
+            }
             // leaf entry: parse the type
             const QString    type  = o.value(QStringLiteral("type")).toString();
             const QJsonValue value = o.value(QStringLiteral("value"));
             if (type == QStringLiteral("string")) {
+                if (!value.isString()) {
+                    warnInvalidJsonEntry(key, type);
+                    continue;
+                }
                 out[key] = fromQString(value.toString());
             }
             else if (type == QStringLiteral("bool")) {
+                if (!value.isBool()) {
+                    warnInvalidJsonEntry(key, type);
+                    continue;
+                }
                 out[key] = value.toBool();
             }
             else if (type == QStringLiteral("int")) {
-                out[key] = jsonToInt(value.toInteger(static_cast<qint64>(value.toDouble())), key);
+                const std::optional<double> number = jsonInteger(value);
+                if (!number) {
+                    warnInvalidJsonEntry(key, type);
+                    continue;
+                }
+                out[key] = jsonToInt(*number, key);
             }
             else if (type == QStringLiteral("double")) {
-                out[key] = value.toDouble();
+                const std::optional<double> number = jsonFiniteNumber(value);
+                if (!number) {
+                    warnInvalidJsonEntry(key, type);
+                    continue;
+                }
+                out[key] = *number;
             }
             else if (type == QStringLiteral("string[]")) {
-                std::vector<String> arr;
-                const QJsonArray    a = value.toArray();
-                arr.reserve(static_cast<size_t>(a.size()));
-                for (const QJsonValue& v : a) arr.push_back(fromQString(v.toString()));
-                out[key] = std::move(arr);
+                auto array = jsonArray<String>(value, [](const QJsonValue& element) -> std::optional<String> {
+                    if (!element.isString())
+                        return std::nullopt;
+                    return fromQString(element.toString());
+                });
+                if (!array) {
+                    warnInvalidJsonEntry(key, type);
+                    continue;
+                }
+                out[key] = std::move(*array);
             }
             else if (type == QStringLiteral("bool[]")) {
-                std::vector<bool> arr;
-                const QJsonArray  a = value.toArray();
-                for (const QJsonValue& v : a) arr.push_back(v.toBool());
-                out[key] = std::move(arr);
+                auto array = jsonArray<bool>(value, [](const QJsonValue& element) -> std::optional<bool> {
+                    if (!element.isBool())
+                        return std::nullopt;
+                    return element.toBool();
+                });
+                if (!array) {
+                    warnInvalidJsonEntry(key, type);
+                    continue;
+                }
+                out[key] = std::move(*array);
             }
             else if (type == QStringLiteral("int[]")) {
+                const auto numbers = jsonArray<double>(value, [](const QJsonValue& element) {
+                    return jsonInteger(element);
+                });
+                if (!numbers) {
+                    warnInvalidJsonEntry(key, type);
+                    continue;
+                }
                 std::vector<int> arr;
-                const QJsonArray a = value.toArray();
-                arr.reserve(static_cast<size_t>(a.size()));
-                for (const QJsonValue& v : a) arr.push_back(jsonToInt(v.toInteger(static_cast<qint64>(v.toDouble())), key));
+                arr.reserve(numbers->size());
+                for (double number : *numbers)
+                    arr.push_back(jsonToInt(number, key));
                 out[key] = std::move(arr);
             }
             else if (type == QStringLiteral("double[]")) {
-                std::vector<double> arr;
-                const QJsonArray    a = value.toArray();
-                arr.reserve(static_cast<size_t>(a.size()));
-                for (const QJsonValue& v : a) arr.push_back(v.toDouble());
-                out[key] = std::move(arr);
+                auto array = jsonArray<double>(value, [](const QJsonValue& element) {
+                    return jsonFiniteNumber(element);
+                });
+                if (!array) {
+                    warnInvalidJsonEntry(key, type);
+                    continue;
+                }
+                out[key] = std::move(*array);
             }
             else {
                 VN_LOGW("Config entry '{}' has the unknown type '{}'; ignored", toUtf8View(key), toUtf8View(fromQString(type)));
@@ -278,6 +429,8 @@ bool ConfigManager::contains(const String& key) const
 
 void ConfigManager::remove(const String& key)
 {
+    if (!hasConfigKey(key))
+        return;
     bool erased = false;
     {
         std::lock_guard lock(d->mutex);
@@ -301,6 +454,8 @@ void ConfigManager::clear()
 
 void ConfigManager::setString(const String& key, const String& value)
 {
+    if (!hasConfigKey(key))
+        return;
     bool assigned = false;
     {
         std::lock_guard lock(d->mutex);
@@ -310,14 +465,26 @@ void ConfigManager::setString(const String& key, const String& value)
         notifyChanged(*this, key);
 }
 
-String ConfigManager::getString(const String& key, const String& def) const
+std::optional<String> ConfigManager::getString(const String& key) const
 {
-    std::shared_lock lock(d->mutex);
-    return readValue<String>(d->values, key, def);
+    {
+        std::shared_lock lock(d->mutex);
+        std::optional<String> value = readOptionalValue<String>(d->values, key);
+        if (value)
+            return value;
+    }
+    return configItemDefault<String>(*this, key);
+}
+
+String ConfigManager::getString(const String& key, const String& fallback) const
+{
+    return getString(key).value_or(fallback);
 }
 
 void ConfigManager::setBool(const String& key, bool value)
 {
+    if (!hasConfigKey(key))
+        return;
     bool assigned = false;
     {
         std::lock_guard lock(d->mutex);
@@ -327,14 +494,26 @@ void ConfigManager::setBool(const String& key, bool value)
         notifyChanged(*this, key);
 }
 
-bool ConfigManager::getBool(const String& key, bool def) const
+std::optional<bool> ConfigManager::getBool(const String& key) const
 {
-    std::shared_lock lock(d->mutex);
-    return readValue<bool>(d->values, key, def);
+    {
+        std::shared_lock lock(d->mutex);
+        std::optional<bool> value = readOptionalValue<bool>(d->values, key);
+        if (value)
+            return value;
+    }
+    return configItemDefault<bool>(*this, key);
+}
+
+bool ConfigManager::getBool(const String& key, bool fallback) const
+{
+    return getBool(key).value_or(fallback);
 }
 
 void ConfigManager::setInt(const String& key, int value)
 {
+    if (!hasConfigKey(key))
+        return;
     bool assigned = false;
     {
         std::lock_guard lock(d->mutex);
@@ -344,14 +523,30 @@ void ConfigManager::setInt(const String& key, int value)
         notifyChanged(*this, key);
 }
 
-int ConfigManager::getInt(const String& key, int def) const
+std::optional<int> ConfigManager::getInt(const String& key) const
 {
-    std::shared_lock lock(d->mutex);
-    return readValue<int>(d->values, key, def);
+    {
+        std::shared_lock lock(d->mutex);
+        std::optional<int> value = readOptionalValue<int>(d->values, key);
+        if (value)
+            return value;
+    }
+    return configItemDefault<int>(*this, key);
+}
+
+int ConfigManager::getInt(const String& key, int fallback) const
+{
+    return getInt(key).value_or(fallback);
 }
 
 void ConfigManager::setDouble(const String& key, double value)
 {
+    if (!hasConfigKey(key))
+        return;
+    if (!std::isfinite(value)) {
+        VN_LOGW("Config value for '{}' is not finite; mutation ignored", toUtf8View(key));
+        return;
+    }
     bool assigned = false;
     {
         std::lock_guard lock(d->mutex);
@@ -361,14 +556,26 @@ void ConfigManager::setDouble(const String& key, double value)
         notifyChanged(*this, key);
 }
 
-double ConfigManager::getDouble(const String& key, double def) const
+std::optional<double> ConfigManager::getDouble(const String& key) const
 {
-    std::shared_lock lock(d->mutex);
-    return readValue<double>(d->values, key, def);
+    {
+        std::shared_lock lock(d->mutex);
+        std::optional<double> value = readOptionalValue<double>(d->values, key);
+        if (value)
+            return value;
+    }
+    return configItemDefault<double>(*this, key);
+}
+
+double ConfigManager::getDouble(const String& key, double fallback) const
+{
+    return getDouble(key).value_or(fallback);
 }
 
 void ConfigManager::setStringArray(const String& key, const std::vector<String>& values)
 {
+    if (!hasConfigKey(key))
+        return;
     bool assigned = false;
     {
         std::lock_guard lock(d->mutex);
@@ -386,6 +593,8 @@ std::vector<String> ConfigManager::getStringArray(const String& key) const
 
 void ConfigManager::setBoolArray(const String& key, const std::vector<bool>& values)
 {
+    if (!hasConfigKey(key))
+        return;
     bool assigned = false;
     {
         std::lock_guard lock(d->mutex);
@@ -403,6 +612,8 @@ std::vector<bool> ConfigManager::getBoolArray(const String& key) const
 
 void ConfigManager::setIntArray(const String& key, const std::vector<int>& values)
 {
+    if (!hasConfigKey(key))
+        return;
     bool assigned = false;
     {
         std::lock_guard lock(d->mutex);
@@ -420,6 +631,12 @@ std::vector<int> ConfigManager::getIntArray(const String& key) const
 
 void ConfigManager::setDoubleArray(const String& key, const std::vector<double>& values)
 {
+    if (!hasConfigKey(key))
+        return;
+    if (std::any_of(values.begin(), values.end(), [](double value) { return !std::isfinite(value); })) {
+        VN_LOGW("Config array for '{}' contains a non-finite value; mutation ignored", toUtf8View(key));
+        return;
+    }
     bool assigned = false;
     {
         std::lock_guard lock(d->mutex);

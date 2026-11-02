@@ -52,6 +52,11 @@ String translate(const char* context, const char* source)
     return fromUtf8(text.toUtf8());
 }
 
+String translate(const char8_t* context, const char8_t* source)
+{
+    return translate(reinterpret_cast<const char*>(context), reinterpret_cast<const char*>(source));
+}
+
 const String& languageConfigKey()
 {
     static const String s_key(u8"general.language");

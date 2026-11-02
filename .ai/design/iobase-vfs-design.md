@@ -52,6 +52,7 @@
 - 前导 `/` 拒绝（虚路径无工作目录）。
 - `\`、嵌入 `\0`、`:` 段拒绝（盘符/UNC/URI）。
 - `..` 按段抵消；抵消到根之外 → `InvalidPath`。
+- ZIP 归档入口兼容将 `\` 写作目录分隔符的旧包；映射为 `/` 虚路径，根外路径拒绝，同名冲突使归档无效，未修改条目重打包时保留原始名称。
 - 非文本条目名按“合法 UTF-8 → 本机代码页 → 逐字节同值码点”解码，归档原字节重打包原样写回。
 
 ### 2.3 后端家族
@@ -192,6 +193,7 @@ Zip                 一次性 compress/decompress/entries/readEntry
 | C7 | 借用数据活到落介质；`DataSource::size()` 必须准确。 |
 | C8 | zip 惰性索引 + overlay；落介质只在 `commit`/`saveAs`。 |
 | C9 | 内存流上限只约束增长；`reserve` 失败不改缓冲。 |
+| C10 | ZIP 条目名的反斜杠在归档边界按分隔符解释；外部 VFS 路径仍只接受 `/`。 |
 
 ### 5.2 要求（R#）
 
@@ -215,6 +217,7 @@ Zip                 一次性 compress/decompress/entries/readEntry
 | N2 | 非文本条目名可按 UTF-8 → 本机代码页 → 字节码点解码；重打包原字节写回。 |
 | N3 | zip 读路径自己算 CRC；不符 → `IoFailure`。 |
 | N4 | 方法级不线程安全；共享对象由调用方同步。 |
+| N5 | 归档名分隔符归一化后的重名或根外路径拒绝打开；原始存储名仅用于未修改条目的无损重打包。 |
 
 ## 6. 注意事项与陷阱
 
@@ -254,6 +257,7 @@ Zip                 一次性 compress/decompress/entries/readEntry
 | T7 | `addFile`/`copy`/`kUnknownSize` | `test_iobase` |
 | T8 | MountVfs 合并/跨后端 rename | `MountVfsTest` |
 | T9 | 内存流上限/reserve | `MemoryStreamTest` |
+| T10 | ZIP 反斜杠兼容、路径逃逸与归一化冲突 | `ZipArchiveTest.ReadsWindowsSeparatorsAsArchivePathSeparators`、`RejectsArchiveNamesThatCollideAfterSeparatorNormalization`、`RejectsWindowsSeparatorPathTraversalInArchiveNames` |
 
 ## 9. 状态与演进
 

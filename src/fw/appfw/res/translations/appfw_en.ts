@@ -112,8 +112,24 @@
         <translation>Enable command</translation>
     </message>
     <message>
+        <source>清除设置</source>
+        <translation>Clear setting</translation>
+    </message>
+    <message>
         <source>重启后生效</source>
         <translation>takes effect after restart</translation>
+    </message>
+    <message>
+        <source>必填</source>
+        <translation>Required</translation>
+    </message>
+    <message>
+        <source>(未设置)</source>
+        <translation>(Not set)</translation>
+    </message>
+    <message>
+        <source>请选择</source>
+        <translation>Select an option</translation>
     </message>
     <message>
         <source>(空)</source>

@@ -117,9 +117,9 @@
 - `robotics-kinematics.md` —— Robotics kinematics 要点。
 - `robotics-proximity.md` —— Robotics proximity 要点。
 
-## bugs/ —— 已修复 Bug 记录（10）
+## bugs/ —— Bug 记录（18）
 
-现象 / 根因 / 修复 / 涉及文件 / 验证，一 bug 一文件；标题带历史标记，内容按当时名字保留。
+现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
 
 - `vsg-embedded-init-crash.md`
 - `vsg-embedded-blank-render.md`
@@ -131,5 +131,13 @@
 - `docking-tab-dangling-client.md`
 - `docking-title-click-hides-pane.md`
 - `model-viewer-fit-not-framing.md`
+- `async-scope-reuse-after-stop.md`
+- `async-runon-move-only-arguments.md`
+- `async-queue-reentrant-pop-uaf.md`
+- `async-cv-wait-cancel-lock.md`
+- `async-tcs-multiple-value-consumers.md`
+- `async-queue-nondefault-values.md`
+- `async-withcancellation-token-propagation.md`
+- `async-queue-noexcept-failures.md`
 
 约定：`memory/` 保持简短要点式；详细设计放 `design/`；bug 一条一文件。

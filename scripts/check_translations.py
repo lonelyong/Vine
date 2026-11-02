@@ -40,10 +40,10 @@ fixture catalogs in `tests/` are pinned by the tests that read them, and scannin
 a test directory would pick up every fixture's strings as if they belonged to one
 catalog.
 
-Usage: python3 scripts/check_translations.py [--lupdate PATH]
+Usage: python3 scripts/check_translations.py [--lupdate PATH] [--require-lupdate]
 Exit status: 1 when a catalog disagrees with its sources, 0 when they agree.
-Without `lupdate` on this machine the check prints a warning and passes — the same
-trade-off vn_add_translations() makes for lrelease (P6).
+Without `lupdate`, the check warns and skips unless `--require-lupdate` is set;
+CTest uses that flag so a missing tool fails the translation gate.
 """
 from __future__ import annotations
 
@@ -196,10 +196,14 @@ def orphaned_text(module: pathlib.Path, lupdate: str) -> str | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--lupdate", help="lupdate executable to use (default: search PATH and the Qt bin directory)")
+    parser.add_argument("--require-lupdate", action="store_true", help="fail instead of skipping when lupdate is unavailable")
     arguments = parser.parse_args()
 
     lupdate = find_lupdate(arguments.lupdate)
     if lupdate is None:
+        if arguments.require_lupdate:
+            print("--- error: lupdate is required for the translation check")
+            return 1
         print("--- warning: lupdate not found, the catalogs were not checked (see scripts/check_translations.py)")
         return 0
 

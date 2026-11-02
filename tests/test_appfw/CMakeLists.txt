@@ -25,7 +25,8 @@ target_compile_definitions(${TEST_NAME} PRIVATE
     VN_HEADLESS_BOOT_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_headless_boot>"
     VN_TWIN_IDENTITY_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_twin_identity>"
     VN_I18N_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_i18n>"
-    VN_THROWING_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_throwing>")
+    VN_THROWING_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_throwing>"
+    VN_RESERVED_CONTEXT_PLUGIN="$<TARGET_FILE:vn_plugin_fixture_reserved_context>")
 add_dependencies(${TEST_NAME} vn_plugin_fixture_headless_boot)
 
 # 第二份夹具：与上一份**同一个 uuid**、名字不同（见文件头说明）——用来钉"两个插件声明同一个身份"
@@ -52,6 +53,12 @@ set_target_properties(vn_plugin_fixture_throwing PROPERTIES PREFIX "" FOLDER tes
 target_link_libraries(vn_plugin_fixture_throwing PRIVATE vn::Appfw Qt6::Core)
 vn_add_translations(vn_plugin_fixture_throwing CONTEXT i18n_throwing TS_FILES fixtures/res/translations/i18n_throwing_en.ts)
 add_dependencies(${TEST_NAME} vn_plugin_fixture_throwing)
+
+# The framework owns the appfw translation context; plugin metadata must not claim it.
+add_library(vn_plugin_fixture_reserved_context MODULE fixtures/ReservedTranslationContextPlugin.cpp)
+set_target_properties(vn_plugin_fixture_reserved_context PROPERTIES PREFIX "" FOLDER test)
+target_link_libraries(vn_plugin_fixture_reserved_context PRIVATE vn::Appfw)
+add_dependencies(${TEST_NAME} vn_plugin_fixture_reserved_context)
 
 # Fifth fixture: the same context and locale as i18n_fixture, translated differently, kept as a LOOSE .qm (never
 # embedded). The test copies it beside a copy of the plugin library, which is how "a file beside the module wins over the

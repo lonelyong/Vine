@@ -100,6 +100,12 @@ TEST(TranslationTest, NoCatalogKeepsTheSourceText)
     EXPECT_EQ(vn::appfw::translate("model_viewer", "着色"), vn::String(u8"着色"));
 }
 
+TEST(TranslationTest, Char8LiteralsAreAccepted)
+{
+    EXPECT_EQ(vn::appfw::translate(u8"missing_context", u8"未翻译文案"), vn::String(u8"未翻译文案"));
+    EXPECT_TRUE(vn::appfw::translate(u8"appfw", static_cast<const char8_t*>(nullptr)).empty());
+}
+
 TEST(TranslationTest, AnUnknownContextDoesNotChangeTheText)
 {
     // context 只是查找的位置，不是文案的一部分：没有目录时它不改变返回值。
@@ -174,8 +180,8 @@ TEST(TranslationTest, TheApplicationRegistersTheLanguageItem)
     EXPECT_EQ(item->type(), vn::appfw::ConfigItemType::Choice);
 
     // 条目在注册表里，也就意味着它在配置窗口里可见、可改、可持久化。
-    EXPECT_EQ(app->configManager()->getString(vn::appfw::languageConfigKey(), vn::String(u8"<unset>")),
-              vn::String(u8"<unset>"));
+    EXPECT_EQ(app->configManager()->getString(vn::appfw::languageConfigKey()).value(),
+              vn::String(vn::appfw::kLanguageSystem));
 }
 
 TEST(TranslationTest, TheLanguageComesFromTheConfigurationFile)
@@ -199,7 +205,7 @@ TEST(TranslationTest, TheLanguageComesFromTheConfigurationFile)
         auto app = std::make_unique<vn::appfw::Application>(config, 1, argv);
         EXPECT_NE(app, nullptr);
         EXPECT_NE(app->pluginManager()->load(vn::String::fromUtf8(VN_I18N_PLUGIN)), nullptr);
-        return app->configManager()->getString(u8"plugins.i18n.probe");
+        return app->configManager()->getString(u8"plugins.i18n.probe").value();
     };
 
     EXPECT_EQ(probeUnder("en"), vn::String(u8"Plugin text"));
@@ -229,18 +235,32 @@ TEST(TranslationTest, APluginCatalogComesFromThePluginItself)
     // 所以插件代码的第一行就已经是目标语言。
     const vn::String plugin = vn::String::fromUtf8(VN_I18N_PLUGIN);
     ASSERT_NE(app->pluginManager()->load(plugin), nullptr);
-    EXPECT_EQ(app->configManager()->getString(u8"plugins.i18n.probe"), vn::String(u8"Plugin text"));
+    EXPECT_EQ(app->configManager()->getString(u8"plugins.i18n.probe").value(), vn::String(u8"Plugin text"));
 
     // v1 不做运行期切换：事后改配置项不会重译已经装上的目录（下一次启动才生效）。
     app->configManager()->setString(vn::appfw::languageConfigKey(), u8"zh_CN");
     EXPECT_EQ(vn::appfw::translate("i18n_fixture", "插件文案"), vn::String(u8"Plugin text"));
+    EXPECT_EQ(vn::appfw::translate(u8"i18n_fixture", u8"插件文案"), vn::String(u8"Plugin text"));
 
     // 卸掉后它的目录不再留在进程里（R3）：同一个 context 只剩源串。
     ASSERT_TRUE(app->pluginManager()->unloadAll());
     EXPECT_EQ(vn::appfw::translate("i18n_fixture", "插件文案"), vn::String(u8"插件文案"));
+    EXPECT_EQ(vn::appfw::translate(u8"i18n_fixture", u8"插件文案"), vn::String(u8"插件文案"));
 
     std::error_code ec;
     std::filesystem::remove(file, ec);
+}
+
+TEST(TranslationTest, PluginsCannotClaimTheFrameworkTranslationContext)
+{
+    QStandardPaths::setTestModeEnabled(true);
+
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    auto app = std::make_unique<vn::appfw::Application>(testConfig(), 1, argv);
+    ASSERT_NE(app, nullptr);
+    EXPECT_EQ(app->pluginManager()->load(vn::String::fromUtf8(VN_RESERVED_CONTEXT_PLUGIN)), nullptr);
 }
 
 TEST(TranslationTest, AFailedBatchLoadLeavesNoCatalogInstalled)
@@ -300,7 +320,7 @@ TEST(TranslationTest, ALooseFileOverridesTheEmbeddedCatalog)
     ASSERT_NE(app->pluginManager()->load(vn::String::fromUtf8(library.string())), nullptr);
 
     // 内嵌的那本是 "Plugin text"；模块旁的文件赢了，所以插件读到的是覆盖后的译文。
-    EXPECT_EQ(app->configManager()->getString(u8"plugins.i18n.probe"), vn::String(u8"Overridden text"));
+    EXPECT_EQ(app->configManager()->getString(u8"plugins.i18n.probe").value(), vn::String(u8"Overridden text"));
 
     std::error_code ec;
     std::filesystem::remove(file, ec);

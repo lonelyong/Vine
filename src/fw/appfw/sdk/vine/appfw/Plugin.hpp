@@ -122,7 +122,7 @@ struct VN_APPFW_API PluginInfo {
     /// independent of its name and of where its library is installed. The null
     /// UUID means "not declared": identity then falls back to name.
     Uuid   uuid;
-    String name;         // Unique plugin name (identifier).
+    String name;         // Unique plugin name and translation context; "appfw" is reserved for the framework.
     String display_name; // Human-friendly name shown in UI; falls back to name when empty.
     String version;      // Plugin version, e.g. "1.2.0".
     String description;  // Human-readable description.

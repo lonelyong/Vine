@@ -2,6 +2,7 @@
 
 #include <any>
 #include <limits>
+#include <optional>
 #include <vector>
 
 #include <QCheckBox>
@@ -10,11 +11,18 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
+#include <QMetaObject>
+#include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QTabWidget>
+#include <QValidator>
 #include <QVBoxLayout>
 
 #include <vine/appfw/Application.hpp>
@@ -36,6 +44,120 @@ namespace
 // double extremes that QDoubleSpinBox cannot round sanely.
 constexpr double kUnboundedDouble = 1.0e15;
 
+class OptionalSpinBox : public QSpinBox {
+  public:
+    using QSpinBox::QSpinBox;
+
+    QLineEdit* input() const
+    {
+        return lineEdit();
+    }
+
+    std::optional<int> optionalValue() const
+    {
+        const QString text = lineEdit()->text();
+        if (text.isEmpty() || !lineEdit()->hasAcceptableInput())
+            return std::nullopt;
+        bool ok = false;
+        const int value = QLocale().toInt(text, &ok);
+        return ok ? std::optional<int>(value) : std::nullopt;
+    }
+
+  protected:
+    QValidator::State validate(QString& text, int& position) const override
+    {
+        if (text.isEmpty())
+            return QValidator::Acceptable;
+        return QSpinBox::validate(text, position);
+    }
+};
+
+class OptionalDoubleSpinBox : public QDoubleSpinBox {
+  public:
+    using QDoubleSpinBox::QDoubleSpinBox;
+
+    QLineEdit* input() const
+    {
+        return lineEdit();
+    }
+
+    std::optional<double> optionalValue() const
+    {
+        const QString text = lineEdit()->text();
+        if (text.isEmpty() || !lineEdit()->hasAcceptableInput())
+            return std::nullopt;
+        bool ok = false;
+        const double value = QLocale().toDouble(text, &ok);
+        return ok ? std::optional<double>(value) : std::nullopt;
+    }
+
+  protected:
+    QValidator::State validate(QString& text, int& position) const override
+    {
+        if (text.isEmpty())
+            return QValidator::Acceptable;
+        return QDoubleSpinBox::validate(text, position);
+    }
+};
+
+class OptionalNumericValueEditor : public QStackedWidget {
+  public:
+    OptionalNumericValueEditor(QAbstractSpinBox* value_editor, QLineEdit* input, bool required)
+      : value_editor_(value_editor)
+      , input_(input)
+      , unset_button_(new QPushButton(translate("appfw", required ? "必填，点击设置" : "(未设置)"), this))
+      , clear_button_(new QPushButton(QStringLiteral("×"), this))
+    {
+        setObjectName(QStringLiteral("optionalNumericValueEditor"));
+        unset_button_->setObjectName(QStringLiteral("configValueUnset"));
+        clear_button_->setObjectName(QStringLiteral("configValueClear"));
+        clear_button_->setToolTip(translate("appfw", "清除设置"));
+        clear_button_->setVisible(!required);
+
+        auto* value_page = new QWidget(this);
+        auto* value_layout = new QHBoxLayout(value_page);
+        value_layout->setContentsMargins(0, 0, 0, 0);
+        value_layout->addWidget(value_editor);
+        value_layout->addWidget(clear_button_);
+        addWidget(unset_button_);
+        addWidget(value_page);
+    }
+
+    QAbstractSpinBox* valueEditor() const
+    {
+        return value_editor_;
+    }
+
+    QPushButton* unsetButton() const
+    {
+        return unset_button_;
+    }
+
+    QPushButton* clearButton() const
+    {
+        return clear_button_;
+    }
+
+    void beginEditing()
+    {
+        const QSignalBlocker blocker(input_);
+        input_->clear();
+        setCurrentIndex(1);
+        input_->setFocus();
+    }
+
+    void setConfigured(bool configured)
+    {
+        setCurrentIndex(configured ? 1 : 0);
+    }
+
+  private:
+    QAbstractSpinBox* value_editor_;
+    QLineEdit*      input_;
+    QPushButton*    unset_button_;
+    QPushButton*    clear_button_;
+};
+
 /// The visible hint on a row whose new value only takes effect after a restart; empty for every other row.
 QString restartMarker(const ConfigItem& item)
 {
@@ -53,7 +175,8 @@ void updateRestartNotice(QLabel* banner)
 }
 
 // Tab title: label > name > "General".
-String categoryTitle(const ConfigCategory* cat){
+String categoryTitle(const ConfigCategory* cat)
+{
     if (!cat->label().empty())
         return cat->label();
     if (!cat->name().empty())
@@ -77,44 +200,114 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
     case ConfigItemType::String:
     {
         auto* e = new QLineEdit();
-        QObject::connect(e, &QLineEdit::textChanged, [config, key](const QString& t) { config->setString(key, Convert::fromQString(t)); });
+        e->setPlaceholderText(item.isRequired() ? translate("appfw", "必填") : translate("appfw", "(未设置)"));
+        QObject::connect(e, &QLineEdit::textChanged, [config, key, item](const QString& t) {
+            const String value = Convert::fromQString(t);
+            if (value.empty()) {
+                if (!item.isRequired())
+                    config->remove(key);
+                return;
+            }
+            if (item.isValidString(value))
+                config->setString(key, value);
+        });
         return e;
     }
     case ConfigItemType::Bool:
     {
         auto* e = new QCheckBox();
-        QObject::connect(e, &QCheckBox::toggled, [config, key](bool on) { config->setBool(key, on); });
+        e->setTristate(true);
+        e->setObjectName(QStringLiteral("configBoolEditor"));
+        QObject::connect(e, &QCheckBox::checkStateChanged, [config, key, item, e](Qt::CheckState state) {
+            if (state == Qt::PartiallyChecked) {
+                if (!item.isRequired()) {
+                    config->remove(key);
+                    e->setText(translate("appfw", "(未设置)"));
+                }
+                else if (config->contains(key)) {
+                    const QSignalBlocker blocker(e);
+                    e->setCheckState(config->getBool(key, false) ? Qt::Checked : Qt::Unchecked);
+                }
+                return;
+            }
+            e->setText(QString());
+            config->setBool(key, state == Qt::Checked);
+        });
         return e;
     }
     case ConfigItemType::Int:
     {
-        auto* e = new QSpinBox();
+        auto* e = new OptionalSpinBox();
         if (item.hasRange())
             e->setRange(item.minInt(), item.maxInt());
         else
             e->setRange(std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
         e->setSingleStep(item.step() >= 1.0 ? static_cast<int>(item.step()) : 1);
-        QObject::connect(e, QOverload<int>::of(&QSpinBox::valueChanged), [config, key](int v) { config->setInt(key, v); });
-        return e;
+        auto* editor = new OptionalNumericValueEditor(e, e->input(), item.isRequired());
+        QObject::connect(editor->unsetButton(), &QPushButton::clicked, [editor] {
+            editor->beginEditing();
+        });
+        QObject::connect(editor->clearButton(), &QPushButton::clicked, [config, key, editor] {
+            config->remove(key);
+            editor->setConfigured(false);
+        });
+        QObject::connect(e, QOverload<int>::of(&QSpinBox::valueChanged), [config, key, item, e](int) {
+            const auto value = e->optionalValue();
+            if (value && item.isValidInt(*value))
+                config->setInt(key, *value);
+        });
+        QObject::connect(e->input(), &QLineEdit::textEdited, [config, key, item, e](const QString&) {
+            const auto value = e->optionalValue();
+            if (value && item.isValidInt(*value))
+                config->setInt(key, *value);
+        });
+        return editor;
     }
     case ConfigItemType::Double:
     {
-        auto* e = new QDoubleSpinBox();
+        auto* e = new OptionalDoubleSpinBox();
         if (item.hasRange())
             e->setRange(item.minDouble(), item.maxDouble());
         else
             e->setRange(-kUnboundedDouble, kUnboundedDouble);
         e->setSingleStep(item.step());
         e->setDecimals(6);
-        QObject::connect(e, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [config, key](double v) { config->setDouble(key, v); });
-        return e;
+        auto* editor = new OptionalNumericValueEditor(e, e->input(), item.isRequired());
+        QObject::connect(editor->unsetButton(), &QPushButton::clicked, [editor] {
+            editor->beginEditing();
+        });
+        QObject::connect(editor->clearButton(), &QPushButton::clicked, [config, key, editor] {
+            config->remove(key);
+            editor->setConfigured(false);
+        });
+        QObject::connect(e, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [config, key, item, e](double) {
+            const auto value = e->optionalValue();
+            if (value && item.isValidDouble(*value))
+                config->setDouble(key, *value);
+        });
+        QObject::connect(e->input(), &QLineEdit::textEdited, [config, key, item, e](const QString&) {
+            const auto value = e->optionalValue();
+            if (value && item.isValidDouble(*value))
+                config->setDouble(key, *value);
+        });
+        return editor;
     }
     case ConfigItemType::Choice:
     {
         auto*      e       = new QComboBox();
         const auto choices = item.choices();
+        const int  offset  = item.isRequired() ? 0 : 1;
+        if (offset != 0)
+            e->addItem(translate("appfw", "(未设置)"));
+        else
+            e->setPlaceholderText(translate("appfw", "请选择"));
         for (const auto& c : choices) e->addItem(Convert::toQString(c.description));
-        QObject::connect(e, QOverload<int>::of(&QComboBox::currentIndexChanged), [config, key, choices](int idx) {
+        QObject::connect(e, QOverload<int>::of(&QComboBox::currentIndexChanged), [config, key, choices, offset](int idx) {
+            if (offset != 0 && idx == 0) {
+                config->remove(key);
+                return;
+            }
+            idx -= offset;
             if (idx < 0 || static_cast<size_t>(idx) >= choices.size())
                 return;
             const auto& v = choices[static_cast<size_t>(idx)].value;
@@ -133,35 +326,28 @@ QWidget* makeEditorWidget(ConfigManager* config, const ConfigItem& item)
     return nullptr;
 }
 
-// Index of the choice a Choice item should display: the one equal to the stored
-// value, or to the item default when the key was never written (that is what
-// reset() would store).
-//
-// Returns -1 when the value is not among the choices, so the panel never claims
-// a selection the configuration does not hold.
+// Index of the matching stored choice, or -1 when the panel must not claim a selection.
 int choiceIndex(const ConfigManager& config, const ConfigItem& item)
 {
     const String& key          = item.key();
     const bool    stored       = config.contains(key);
-    const bool    has_default  = item.hasDefault();
-    const auto    default_type = item.defaultType();
+    if (!stored && !item.isRequired())
+        return 0;
     const auto&   cs           = item.choices();
 
     for (size_t i = 0; i < cs.size(); ++i) {
         const auto& v = cs[i].value;
         if (const auto* as_int = std::any_cast<int>(&v)) {
-            if (stored ? config.getInt(key, *as_int) == *as_int : has_default && default_type == ConfigItemType::Int && item.defaultInt() == *as_int)
-                return static_cast<int>(i);
+            if (stored && config.getInt(key, *as_int) == *as_int)
+                return static_cast<int>(i) + (item.isRequired() ? 0 : 1);
         }
         else if (const auto* as_double = std::any_cast<double>(&v)) {
-            if (stored ? config.getDouble(key, *as_double) == *as_double
-                       : has_default && default_type == ConfigItemType::Double && item.defaultDouble() == *as_double)
-                return static_cast<int>(i);
+            if (stored && config.getDouble(key, *as_double) == *as_double)
+                return static_cast<int>(i) + (item.isRequired() ? 0 : 1);
         }
         else if (const auto* as_string = std::any_cast<String>(&v)) {
-            if (stored ? config.getString(key, *as_string) == *as_string
-                       : has_default && default_type == ConfigItemType::String && item.defaultString() == *as_string)
-                return static_cast<int>(i);
+            if (stored && config.getString(key, *as_string) == *as_string)
+                return static_cast<int>(i) + (item.isRequired() ? 0 : 1);
         }
     }
     return -1;
@@ -174,17 +360,58 @@ int choiceIndex(const ConfigManager& config, const ConfigItem& item)
 void writeEditorValue(QWidget* widget, const ConfigManager& config, const ConfigItem& item)
 {
     const String key = item.key();
-    widget->blockSignals(true);
     switch (item.type()) {
-    case ConfigItemType::String:
-        static_cast<QLineEdit*>(widget)->setText(Convert::toQString(config.getString(key, item.hasDefault() ? item.defaultString() : String())));
+    case ConfigItemType::String: {
+        auto* line_edit = static_cast<QLineEdit*>(widget);
+        const QSignalBlocker blocker(line_edit);
+        const String value = config.contains(key) ? config.getString(key, String()) : String();
+        line_edit->setText(Convert::toQString(value));
         break;
-    case ConfigItemType::Bool: static_cast<QCheckBox*>(widget)->setChecked(config.getBool(key, item.hasDefault() && item.defaultBool())); break;
-    case ConfigItemType::Int: static_cast<QSpinBox*>(widget)->setValue(config.getInt(key, item.hasDefault() ? item.defaultInt() : 0)); break;
-    case ConfigItemType::Double: static_cast<QDoubleSpinBox*>(widget)->setValue(config.getDouble(key, item.hasDefault() ? item.defaultDouble() : 0.0)); break;
-    case ConfigItemType::Choice: static_cast<QComboBox*>(widget)->setCurrentIndex(choiceIndex(config, item)); break;
     }
-    widget->blockSignals(false);
+    case ConfigItemType::Bool: {
+        auto* checkbox = static_cast<QCheckBox*>(widget);
+        const QSignalBlocker blocker(checkbox);
+        if (config.contains(key)) {
+            checkbox->setCheckState(config.getBool(key, false) ? Qt::Checked : Qt::Unchecked);
+            checkbox->setText(QString());
+        }
+        else {
+            checkbox->setCheckState(Qt::PartiallyChecked);
+            checkbox->setText(translate("appfw", item.isRequired() ? "必填" : "(未设置)"));
+        }
+        break;
+    }
+    case ConfigItemType::Int: {
+        auto* editor = static_cast<OptionalNumericValueEditor*>(widget);
+        auto* spin   = static_cast<OptionalSpinBox*>(editor->valueEditor());
+        const QSignalBlocker blocker(spin);
+        const bool configured = config.contains(key);
+        if (configured)
+            spin->setValue(config.getInt(key, spin->value()));
+        else
+            spin->input()->clear();
+        editor->setConfigured(configured);
+        break;
+    }
+    case ConfigItemType::Double: {
+        auto* editor = static_cast<OptionalNumericValueEditor*>(widget);
+        auto* spin   = static_cast<OptionalDoubleSpinBox*>(editor->valueEditor());
+        const QSignalBlocker blocker(spin);
+        const bool configured = config.contains(key);
+        if (configured)
+            spin->setValue(config.getDouble(key, spin->value()));
+        else
+            spin->input()->clear();
+        editor->setConfigured(configured);
+        break;
+    }
+    case ConfigItemType::Choice: {
+        auto* combo = static_cast<QComboBox*>(widget);
+        const QSignalBlocker blocker(combo);
+        combo->setCurrentIndex(choiceIndex(config, item));
+        break;
+    }
+    }
 }
 
 } // namespace
@@ -269,7 +496,9 @@ ConfigWindow::ConfigWindow(ConfigRegistry* registry, ConfigManager* config)
     lay->addWidget(banner);
     lay->addWidget(tabs);
 
-    data->config_changed = config->changed.connect([banner](ConfigManager&, ConfigChangedEventArgs&) { updateRestartNotice(banner); });
+    data->config_changed = config->changed.connect([banner](ConfigManager&, ConfigChangedEventArgs&) {
+        QMetaObject::invokeMethod(banner, [banner] { updateRestartNotice(banner); }, Qt::AutoConnection);
+    });
     updateRestartNotice(banner);
 
     refresh();
@@ -300,11 +529,17 @@ void ConfigWindow::reset()
         if (item == nullptr)
             continue; // the registry changed after the window was built
         if (!item->hasDefault()) {
-            data->config->remove(item->key());
+            if (!item->isRequired())
+                data->config->remove(item->key());
             continue;
         }
         switch (item->type()) {
-        case ConfigItemType::String: data->config->setString(item->key(), item->defaultString()); break;
+        case ConfigItemType::String:
+            if (item->defaultString().empty() && !item->isRequired())
+                data->config->remove(item->key());
+            else
+                data->config->setString(item->key(), item->defaultString());
+            break;
         case ConfigItemType::Bool: data->config->setBool(item->key(), item->defaultBool()); break;
         case ConfigItemType::Int: data->config->setInt(item->key(), item->defaultInt()); break;
         case ConfigItemType::Double: data->config->setDouble(item->key(), item->defaultDouble()); break;

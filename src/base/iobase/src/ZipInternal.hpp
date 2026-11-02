@@ -87,7 +87,8 @@ inline std::u8string promoteBytesToText(const char* bytes, std::size_t length)
  * @param length Number of bytes to take.
  * @param out Receives the virtual path; untouched on failure.
  * @param is_directory Receives whether the stored name marked a directory.
- * @return IoError::Ok, or IoError::InvalidData when the name cannot be decoded.
+ * @return IoError::Ok, IoError::InvalidData for an empty name, or IoError::InvalidPath when the
+ *         name escapes or resolves to the virtual root.
  */
 inline IoError fromStoredName(const char* bytes, std::size_t length, std::filesystem::path& out, bool& is_directory);
 
@@ -125,7 +126,7 @@ inline Result<std::vector<StoredEntry>> readEntries(zip_t* archive)
         const std::size_t length = std::strlen(st.name);
         const IoError     named  = fromStoredName(st.name, length, entry.name, entry.is_directory);
         if (named != IoError::Ok) {
-            return named; // a name that cannot be read back cannot be handed out
+            return IoError::InvalidData; // malformed or unsafe names make the archive unusable
         }
         entry.stored = std::string(st.name, length);
         if (!entry.is_directory && (st.valid & ZIP_STAT_SIZE) != 0) {
@@ -179,11 +180,13 @@ inline std::string toStoredName(const std::filesystem::path& name, bool is_direc
  */
 inline IoError fromStoredName(const char* bytes, std::size_t length, std::filesystem::path& out, bool& is_directory)
 {
-    is_directory           = length != 0 && bytes[length - 1] == '/';
+    is_directory           = length != 0 && (bytes[length - 1] == '/' || bytes[length - 1] == '\\');
     const std::size_t kept = is_directory ? length - 1 : length;
     if (kept == 0) {
         return IoError::InvalidData; // an entry naming the root says nothing a tree can use
     }
+
+    std::filesystem::path decoded;
 
     // These bytes are candidate UTF-8, not known UTF-8: the whole point of this function is that they may be text in a
     // legacy code page instead. So the question is put to vn::isValidUtf8() (core), which is fed the raw bytes rather
@@ -192,20 +195,39 @@ inline IoError fromStoredName(const char* bytes, std::size_t length, std::filesy
     // answered. Only once it has does the same byte range become the UTF-8 text a path is built from.
     if (isValidUtf8(std::string_view(bytes, kept))) {
         const std::u8string raw(reinterpret_cast<const char8_t*>(bytes), kept);
-        out = std::filesystem::path(raw);
-        return IoError::Ok;
+        decoded = std::filesystem::path(raw);
+    }
+    else {
+        // A legacy name: the bytes are text in whatever code page the writer used, and the only
+        // one this machine can stand behind is its own. The conversion reports bytes it cannot
+        // spell by throwing, and the last resort keeps every byte as its own code point.
+        try {
+            decoded = std::filesystem::path(std::string(bytes, kept));
+        }
+        catch (const std::exception&) {
+            decoded = std::filesystem::path(promoteBytesToText(bytes, kept));
+        }
     }
 
-    // A legacy name: the bytes are text in whatever code page the writer used, and the only
-    // one this machine can stand behind is its own. The conversion reports bytes it cannot
-    // spell by throwing, and a name still has to come out - so the last resort keeps every
-    // byte as its own code point instead of failing.
-    try {
-        out = std::filesystem::path(std::string(bytes, kept));
+    // ZIP specifies '/' as the directory separator, but archives produced on Windows sometimes
+    // store the host spelling with '\\'. Normalize only at this archive boundary; VFS callers
+    // still have to use canonical '/' paths, and dot-segment aliases are rejected.
+    std::u8string normalized_text = decoded.generic_u8string();
+    for (char8_t& ch : normalized_text) {
+        if (ch == u8'\\') {
+            ch = u8'/';
+        }
     }
-    catch (const std::exception&) {
-        out = std::filesystem::path(promoteBytesToText(bytes, kept));
+
+    std::filesystem::path normalized;
+    const IoError         path_error = normalizeVfsPath(std::filesystem::path(normalized_text), normalized);
+    if (path_error != IoError::Ok) {
+        return path_error;
     }
+    if (normalized.empty() || normalized.generic_u8string() != normalized_text) {
+        return IoError::InvalidPath;
+    }
+    out = std::move(normalized);
     return IoError::Ok;
 }
 

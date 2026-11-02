@@ -1,7 +1,7 @@
 # appfw 配置子系统设计
 
 > **状态**：现行
-> **最后核对**：2026-10-23
+> **最后核对**：2026-11-02
 > **范围**：`ConfigManager` / `ConfigRegistry` / `gui::ConfigWindow` 的三层分工与契约。
 > **权威来源**：`ConfigManager.hpp`、`ConfigRegistry.hpp`、`gui/ConfigWindow.hpp`、`tests/test_gui`。
 > **待办**：无（开放项见 `../backlog/`）
@@ -36,38 +36,29 @@
 
 ### 2.1 值层：`ConfigManager`
 
-- **存储类型**就是 API 能表达的类型：`String`/`bool`/`int`/`double` 及 vector 版本。int 就是 `int`
-  （早先内部 `int64_t` 是死容量；JSON 超范围整数装载时夹取 + warning）。
-- **`changed` 只在值真的变化时发**：同值写入、remove 不存在的键、clear 空配置、loadJson 内容相同都不发。
-- **空 key = “整个配置变了”**：`clear()`，以及真的替换了内容的 `loadJson()`/`load()`；单键事件始终带 key。
-- **读取永不抛异常**：键不存在或类型不符，返回调用方给的默认值。
-- **线程安全**：内部 `shared_mutex`；写独占、读共享；`changed` 在释放锁之后触发；订阅/退订无锁。
+- **存储与事件**：类型就是 API 能表达的类型（String/bool/int/double 及数组）；无变化的写入不发 `changed`，空 key 只表示整份配置变化。
+- **读取与默认值边界**（G4、G7；接受 G2 的实现层反向依赖）：标量 getter 依次取存储值、当前应用 Registry 的同类型默认值、显式 fallback；无参无值返回 `optional`。仅当前应用自己的 manager 查 Registry，独立 manager 不受影响；依赖藏在 `.cpp`，头文件不依赖描述/UI 类型。内部 `shared_mutex`，事件在锁外触发。
+- **输入边界**：JSON 项值必须符合声明类型，不匹配项 warning 后跳过；`ConfigItem` 校验数值约束和 String 编辑约束，值层不校验这些约束。
 
 ### 2.2 描述层：`ConfigRegistry`
 
 - **key 全树唯一**：`ConfigGroup::addItem` 通过 `ConfigRegistry::item()` 查重。
-- **owner 是缓存**：`addItem` 记录；空 owner 清除；删除路径清理；`itemsForPlugin` 跳过已不在树上的项。
-- **框架自己也注册项**：`Application::initialize()` 用空 owner 注册框架自有的项（今天只有 `general.language`，
-  界面语言），所以它们不属于任何插件，也不会被 `removeItemsForPlugin()` 带走。
-- `itemsForPlugin` 的顺序是 key 升序。
+- **owner 是缓存**：`addItem` 记录；空 owner 清除；删除路径清理；查询跳过已不在树上的项，结果按 key 升序。
+- **框架自己也注册项**：`Application::initialize()` 用空 owner 注册 `general.language`，因此不会被插件卸载带走。
 - **生命周期/线程**：查询返回树内节点裸指针，节点被删即失效；注册在启动/插件装载期完成，之后只读。
 
 ### 2.3 视图层：`gui::ConfigWindow`
 
-- **构造时对描述树取快照**；编辑器与 key 成对保存，`refresh()`/`reset()` 按 key 查树，
-  不按下标配对。
-- **Choice**：显示存储值；从未写过时显示 `ConfigItem` 默认值；都匹配不到时显示未选中。
-- **数值项未声明 range 时不夹取**：int 用整个 `int` 范围，double 用 ±1e15。
-- 编辑立即写回 `ConfigManager`；`refresh()` 期间屏蔽编辑器信号。
+- **值是否设置**（G1、G3、G4）：以 `ConfigManager::contains/remove` 表示；读取可返回描述默认值，但不写存储。编辑器仍显示未设置状态，只有显式设置或 `reset()` 才写入。
+- **编辑行为**：`required` 适用于所有编辑器；数值未设置时进入空白编辑，首个有效输入才写入，清除操作回到未设置。显式 `reset()` 才应用默认值。
+- **生命周期**：构造时对描述树取快照；编辑器与 key 成对保存，`refresh()`/`reset()` 按 key 查找。
+- **数值与线程**：未声明 range 不夹取；配置变更回调切回 GUI 线程后再更新控件。
 
-### 2.4 需要重启的配置：策略在描述层，状态在运行层（G1、G4、G11）
+### 2.4 需要重启的配置：策略在描述层，状态在运行层（G1、G4、G7、G11）
 
-- **策略**：`ConfigItem::restartRequired()` 声明“这个 key 只在启动时被读一次”。它是描述，不是请求——登记它的模块必须保证承诺成立：运行期再读它的人会拿到新值，而其它人还跑在旧值上。
-- **状态**：`Application::pendingRestartKeys()` 回答“现在有没有改动待生效”。基准是 `initialize()` 刚载入配置时的 `ConfigSnapshot`；读值从不移动基准，改回启动值就不再待生效。
-- **为什么必须分两层**：只有策略能挂在 `ConfigItem` 上；把策略当状态用（“此项目前待重启”）会在没有任何改动时就报警（G1）。
-- **存储不是策略**：编辑立即写回（§2.3），所以**存的是新值、窗口显示的是新值、运行行为是旧值**；`ConfigWindow` 因此用“行标签提示 + 顶部提示条”表达后果，而不是延迟写入。
-- **比较的是存储值**：key 缺失与“存着默认值”算不同。`general.language` 的 `system` 与“key 缺失”是同一意图的两种写法，所以改选“跟随系统”可能报一次待重启——宁可多报，不可漏报（N6）。
-- **谁提醒**：`ConfigWindow` 是今天的唯一消费者（逐行提示 + 顶部条）；宿主可以用 `pendingRestartKeys()` 自己做状态栏或退出提示。
+- **策略与状态**：`restartRequired()` 声明 key 只在启动时读取，登记模块必须兑现；`pendingRestartKeys()` 比较启动快照与当前存储值。
+- **边界与取舍**（G1、G4、G7）：策略不是运行状态；编辑立即写新值，效果仍是旧值直到重启，窗口用提示表达，不引入草稿层。
+- **比较与提醒**：缺键与存默认值视为不同（N6）；窗口显示状态，宿主也可查询并自行提示。
 
 ## 3. 功能点
 
@@ -79,14 +70,15 @@
 | F2 | 变化通知 | `changed` 只在值变化/整体替换时发 | 已落地 |
 | F3 | 保存/加载 | `QSaveFile` 原子写；JSON 装载整体替换 | 已落地 |
 | F4 | 描述树 | `ConfigRegistry` 树、key 唯一、owner 缓存 | 已落地 |
-| F5 | 配置窗口 | 快照 + key 配对 + 未声明 range 不夹取 | 已落地 |
+| F5 | 配置窗口 | 快照 + key 配对 + 通用未设置/必填 + 未声明 range 不夹取 | 已落地 |
 | F6 | 需要重启的配置 | `restartRequired()` 声明策略；`pendingRestartKeys()` 给状态；窗口逐行提示 + 顶部条 | 已落地 |
+| F7 | 字符串约束 | String 项可声明整串正则与 grapheme 长度范围；配置窗口仅写入有效编辑值 | 已落地 |
 
 ### 3.1.1 F1 值存储
 
-- **行为**：`ConfigManager` 存 String/bool/int/double 及 vector 版本；`get*` 读取，`set*` 写入。
+- **行为**：`ConfigManager` 存 String/bool/int/double 及 vector 版本；标量 `get*` 返回存储值、注册默认值或调用方 fallback，`set*` 写入。
 - **约束**（C1）：存储类型就是 API 能表达的类型；int 就是 `int`。
-- **要求**（R1）：读取永不抛异常；类型不符返回默认值。
+- **要求**（R1）：无参标量读取返回 `optional`；显式 fallback 重载必传 fallback；数组读取保持空数组 fallback。
 - **验收**（T1）：`ConfigManager_Basic`、`ConfigManager_JsonRoundTripKeepsTypes`。
 - **注意**（N1）：JSON 超范围整数夹取 + warning，不失败整份配置。
 
@@ -117,11 +109,12 @@
 
 ### 3.1.5 F5 配置窗口
 
-- **行为**：构造时对描述树取快照；编辑器与 key 成对；`refresh()`/`reset()` 按 key 驱动。
-- **约束**（C5）：Choice 存储值/默认值都匹配不到时显示未选中；数值项未声明 range 不夹取。
-- **要求**（R5）：编辑立即写回；`refresh()` 期间屏蔽编辑器信号。
+- **行为**：构造时对描述树取快照；编辑器按 key 显示存储值。数值未设置时，点击“设置”只打开空白 spinbox；有效数字才写入，`reset()` 显式写默认值。
+- **约束**（C5）：未设置与默认值不同；所有类型按 `required` 展示可设置/不可取消状态；Choice 无匹配时不伪造选择。
+- **要求**（R5）：编辑按类型写入或移除 key；`refresh()` 屏蔽信号；未声明数值 range 不夹取。
 - **验收**（T5）：`RefreshKeepsEachValueWithItsKey`、`ChoiceWithoutMatchShowsNoSelection`、
-  `UnboundedNumbersAreNotClamped`。
+  `UnboundedNumbersAreNotClamped`、`OptionalValuesCanBeUnsetAcrossTypes`、
+  `RequiredValuesAreNotUnsetByTheEditor`。
 - **注意**（N5）：窗口是快照，构造后注册的项要重建窗口才出现。
 
 ### 3.1.6 F6 需要重启的配置
@@ -129,9 +122,16 @@
 - **行为**：带 `restartRequired()` 的项在行标签后加“（重启后生效）”；当 `pendingRestartKeys()` 非空时，窗口顶部显示一条“有改动需要重启才能生效”。
 - **约束**（C6）：状态只在 `Application` 上，窗口每次问它——两个窗口给同一个答案，后开的窗口也知道先前改过什么。
 - **要求**（R6）：改回启动值后不再待生效；不需要重启的 key 永远不进列表；列表为空时提示条隐藏。
-- **验收**（T8）：`ConfigTest.OnlyRestartRequiredItemsCanBePending`、`ConfigTest.TheBaselineIsThisRunNotTheProcess`、
-  `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange`。
+- **验收**（T8）：`ConfigTest.OnlyRestartRequiredItemsCanBePending`、`ConfigTest.TheBaselineIsThisRunNotTheProcess`、`GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange`。
 - **注意**（N6）：比较的是存储值，不是效果；`system` 与 key 缺失算不同。
+
+### 3.1.7 F7 字符串约束
+
+- **行为**：String 项可配置整串正则与 Unicode grapheme 长度范围；非必填空值有效。
+- **约束**（C9）：正则整串匹配；只由 `ConfigWindow` 执行，直接值层写入不校验。
+- **要求**（R9）：空值仅在非必填时有效；非法约束或不满足约束的默认值抛 `std::invalid_argument`。
+- **验收**（T13）：`ConfigItem_ValidatesStringPatternAndGraphemeLength`、`ConfigWindowTest.StringConstraintsPreventInvalidValuesFromBeingWritten`、`ConfigWindowTest.RequiredStringCannotBeCleared`。
+- **注意**（N7）：`required` 适用于所有类型；非必填 String 的空输入表示未设置并绕过文本约束，空格仍是非空输入。
 
 ## 4. 公开接口
 
@@ -159,7 +159,8 @@
 
 | 接口 | 契约 | 备注 |
 | --- | --- | --- |
-| fluent builder（`description` / `range` / `choices` …） | 描述项 | 见 `ConfigItem.hpp` |
+| fluent builder / `required()` / `isRequired()` / typed validators | 配置项描述与约束；required 对所有类型有效 | 完整契约见 `ConfigItem.hpp` |
+| `regularExpression()` / `lengthRange()` / `isValidString()` | 声明与校验 String 编辑约束 | 长度按 Unicode grapheme cluster；不扩展到值层 |
 | `restartRequired()` / `restartRequired(bool)` | 声明/读取重启策略 | 与 `readOnly()` 同形 |
 | `gui::ConfigWindow` | 由描述树生成编辑器 | 快照 + key 配对 |
 | `Application::pendingRestartKeys()` | 与启动快照不同的、带策略的 key | 状态随本次运行 |
@@ -177,17 +178,26 @@
 | C4 | key 全树唯一；owner 是缓存，删除路径清理。 |
 | C5 | Choice 不匹配显示未选中；未声明 range 不夹取。 |
 | C6 | 重启策略在描述层（`ConfigItem`），待重启状态在运行层（`Application`）；任一单方不能代替另一方。 |
+| C7 | 空 key 保留给整份配置变化事件，不能存成普通配置项。 |
+| C8 | JSON 声明类型与值类型必须匹配；数值描述的范围、默认值、步长必须有效；double 值必须有限。 |
+| C9 | String 正则整串匹配；长度按 Unicode grapheme cluster；校验仅约束 `ConfigWindow` 编辑器。 |
+| C10 | `required` 是所有类型的编辑器元数据；键缺失表示未设置，可选 String 空输入与数值空白编辑均保持未设置。 |
+| C11 | 只有当前应用持有的 Manager 读取其 Registry 默认值；独立 Manager 不关联描述树。默认读取不改变 `contains()`、快照或序列化结果。 |
 
 ### 5.2 要求（R#）
 
 | # | 要求 |
 | --- | --- |
-| R1 | 读取永不抛异常；类型不符返回默认值。 |
+| R1 | 无参标量读取返回存储值或匹配的 Registry 默认值，均不存在/类型不符时返回空；带 fallback 的标量读取最后返回调用方 fallback。 |
 | R2 | 同值/删除不存在键/clear 空配置/loadJson 内容相同都不发通知。 |
 | R3 | 父目录由宿主创建；非 JSON 对象才返回 false。 |
 | R4 | `itemsForPlugin(p)` 每项真实存在且 owner 是 p。 |
 | R5 | 编辑立即写回；`refresh()` 屏蔽编辑器信号。 |
 | R6 | 改回启动值就不待重启；无策略的 key 永不出现在 `pendingRestartKeys()`；无待生效项时窗口不显示提示条。 |
+| R7 | `changed` 在触发写入的线程同步调用；Qt 控件更新通过 GUI 对象的线程亲和性调度。 |
+| R8 | 无效 JSON 项按项 warning 并跳过；空 key 与非有限 double 写入 warning 后拒绝；无效 `ConfigItem` 数值约束抛 `std::invalid_argument`。 |
+| R9 | 不满足 String 约束的编辑值不写入；非法表达式、长度范围或不匹配默认值抛 `std::invalid_argument`。 |
+| R10 | `required` 默认 false；必填项不能清除；无默认值必填项 reset 不改动。数值未设置态不显示/写入范围下限、0 或默认值。 |
 
 ### 5.3 不变量（N#）
 
@@ -196,7 +206,7 @@
 | N1 | 事件触发时值已经落定；处理函数回调管理器不会死锁。 |
 | N2 | `save()` true ⇒ 文件完整；false ⇒ 旧文件没被破坏。 |
 | N3 | `loadJson()` true ⇒ 存储已整体替换（内容相同则不通知）。 |
-| N4 | 编辑器只显示“该 key 的存储值”或“该 item 的默认值”。 |
+| N4 | 编辑器根据显式存储状态显示值；未设置时显示未设置状态，不把可读默认值或范围下限伪装成已设置值。 |
 | N5 | 窗口是快照：构造后注册的项不会凭空出现。 |
 | N6 | 待重启比较的是存储值而非效果：同一意图的两种写法（`system` / key 缺失）算不同。 |
 
@@ -216,9 +226,9 @@
 
 ### 6.3 把存储值当运行值（P3）
 
-- 会怎么错：以为改了存储值就等于行为变了。实际是**存的是新值、跑的是旧值**，直到下次启动；反过来，用“运行值”去刷编辑器又会让用户以为自己没改成。
-- 怎么判：同一 key 在窗口里显示的值与行为不一致；或 `pendingRestartKeys()` 为空但用户刚改过一项。
-- 怎么防：编辑器永远显示存储值（N4）；后果只用提示表达（F6）；“运行值”只在 `Application` 内部存在，不对外显示。
+- 会怎么错：误以为改存储值立即改变行为，或用运行值刷新编辑器。
+- 怎么判：窗口显示新存储值而行为仍旧；或刚修改策略项但无待重启状态。
+- 怎么防：编辑器显示存储值（N4），后果只用提示表达（F6）；运行值留在 `Application` 内部。
 
 ## 7. 已否决选项
 
@@ -238,7 +248,7 @@
 
 | # | 判据 | 用例 / 命令 |
 | --- | --- | --- |
-| T1 | 值/数组/层级 key/JSON 往返 | `ConfigManager_Basic` |
+| T1 | 值/数组/层级 key/JSON 往返/注册默认值读取 | `ConfigManager_Basic`、`ConfigManager_UsesRegisteredItemDefaultsWithoutStoringThem` |
 | T2 | 保存失败保留旧文件 | `ConfigManager_SaveReportsFailureAndKeepsTheOldFile` |
 | T3 | 通知只在真变化时发 | `ConfigManager_NotifiesOnlyOnRealChanges` |
 | T4 | 类型无损/旧格式/超范围夹取 | `ConfigManager_JsonRoundTripKeepsTypes` |
@@ -247,6 +257,11 @@
 | T7 | 编辑器按下标配对/Choice/无 range | `ConfigWindowTest.*` |
 | T8 | 待重启只在策略项上、基于本次运行、可回退 | `ConfigTest.OnlyRestartRequiredItemsCanBePending`、`ConfigTest.TheBaselineIsThisRunNotTheProcess` |
 | T9 | 窗口逐行提示 + 顶部条随值出现/消失 | `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange` |
+| T10 | 空 key 不成为配置项；类型错误 JSON 项跳过；正确格式仍装载；非有限 double 写入被拒绝 | `GuiTest.ConfigManager_NotifiesOnlyOnRealChanges`、`GuiTest.ConfigManager_BadEntriesAreIgnoredNotFatal`、`GuiTest.ConfigManager_RejectsEmptyKeysAndNonFiniteDoubles` |
+| T11 | 数值范围、默认值、步长拒绝无效组合；typed validator 检查类型、有限性和范围 | `GuiTest.ConfigItem_RejectsInvalidNumericConstraints`、`GuiTest.ConfigItem_RangeAny` |
+| T12 | 后台线程变更配置时，重启提示在 GUI 线程更新 | `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange` |
+| T13 | 字符串正则全匹配、grapheme 长度、非法约束及编辑器拒写 | `ConfigItem_ValidatesStringPatternAndGraphemeLength`、`ConfigWindowTest.StringConstraintsPreventInvalidValuesFromBeingWritten` |
+| T14 | 所有类型的 unset、必填保护与显式默认值重置 | `ConfigWindowTest.OptionalValuesCanBeUnsetAcrossTypes`、`ConfigWindowTest.RequiredValuesAreNotUnsetByTheEditor` |
 
 ## 9. 状态与演进
 
@@ -260,8 +275,7 @@
 
 ### 9.3 兼容性 / 迁移
 
-`ConfigItem` 的 `std::any` 与 `bad_any_cast` 契约保留；`ConsoleProgressOptions::interval` 等
-其它模块的迁移不在本文范围。
+`ConfigItem` 的 `std::any` 与 `bad_any_cast` 契约保留；其它模块迁移不在本文范围。
 
 ## 10. 参考
 

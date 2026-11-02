@@ -38,6 +38,20 @@ inline constexpr const char8_t kLanguageSystem[] = u8"system";
 VN_APPFW_API String translate(const char* context, const char* source);
 
 /**
+ * @brief Translates UI text supplied as UTF-8 string literals.
+ *
+ * @details
+ * - This overload accepts C++20 UTF-8 literals directly and forwards their UTF-8 bytes to the same Qt translation
+ *   lookup as the `char` overload.
+ * - Keep the function name and argument order unchanged so `lupdate` can extract calls written with literals.
+ *
+ * @param context UTF-8 context name, normally a literal such as `u8"appfw"` or a plugin id.
+ * @param source  UTF-8 source text; a null pointer returns an empty string.
+ * @return The translation, or @p source when none is loaded.
+ */
+VN_APPFW_API String translate(const char8_t* context, const char8_t* source);
+
+/**
  * @brief Returns the key of the configuration item that holds the UI language.
  *
  * @details
