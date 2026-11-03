@@ -42,7 +42,7 @@ B-rep 需要三件互不相同的东西：
 ## 后果
 
 - 新增一个模块与一个 CMake helper；`brepio` 的探测代码从它的 CMakeLists 移到 helper，行为不变。
-- 本期 `tessellate` 是无后端桩：接口、失败表示与测试先落地，OpenCASCADE 函数体在 `.ai/backlog/brep.md`。
+- `tessellate` 的 OpenCASCADE 分支随模块落地（`VN_BREP_HAS_OCCT`）；本机无后端时走空实现，该分支待在带后端的构建里验证。
 - `vn::Brep` 不依赖 `IOBase`：模块的依赖只有 `vn::Geometry`。
 - 渲染路径尚未接入：三角化实现后，再把"加载 B-rep → 三角化 → 显示"接起来。
 - 现行设计记录在 `.ai/design/brep-operations.md`。

@@ -46,8 +46,9 @@ struct TessellationOptions {
  *   when the reason matters) or the solid holds no shape.
  *
  * @note
- * - The OpenCASCADE body is backlog work (see `.ai/backlog/brep.md`); this module carries the contract, the
- *   backend branch is added behind `VN_BREP_HAS_OCCT` when a build with the backend exists.
+ * - The OpenCASCADE body is compiled only when the backend is found (`VN_BREP_HAS_OCCT`); a build without it
+ *   returns a null mesh and reports false from tessellationSupported(). That branch still needs a build with the
+ *   backend to be verified (see `.ai/backlog/brep.md`).
  *
  * @param shape   The solid to triangulate.
  * @param options Deflection, angular tolerance and normal production.

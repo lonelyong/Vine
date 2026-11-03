@@ -63,7 +63,7 @@ PRIVATE 是关键：`vn::Brep` 的消费者不会继承 OpenCASCADE（`G10` 关�
 
 ### 2.4 没有后端时契约仍然成立
 
-`Tessellation.cpp` 是一个桩：`tessellationSupported()` 回答 false、`tessellate()` 回答空网格。这不是权宜之计——调用方只写一条分支，`test_brep` 在没有 OpenCASCADE 的构建里也能编译、运行。后端函数体落地时只在 `VN_BREP_HAS_OCCT` 分支内生长，两个入口的名字与签名都不变（`G9`）。
+无后端时走 `#else` 分支：`tessellationSupported()` 回答 false、`tessellate()` 回答空网格；有后端时同一文件里 `VN_BREP_HAS_OCCT` 分支做真正的三角化。两个入口的名字与签名不随后端存在与否改变（`G9`）：调用方只写一条失败分支，`test_brep` 在没有 OpenCASCADE 的构建里也能编译、运行。
 
 ### 2.5 输出是 `TriangleMesh`，不带包围盒
 
@@ -133,11 +133,12 @@ PRIVATE 是关键：`vn::Brep` 的消费者不会继承 OpenCASCADE（`G10` 关�
 
 ### 9.1 现状
 
-模块、头文件契约、CMake 探测与无后端桩已落地；`test_brep` 覆盖“无后端 → 能力为假 + 空网格”。仓库当前构建没有 OpenCASCADE，因此后端函数体尚未编写。
+模块、头文件契约、CMake 探测、OpenCASCADE 分支与无后端分支都已落地；`test_brep` 覆盖“无后端 → 能力为假 + 空网格”。仓库当前构建没有 OpenCASCADE，因此后端分支尚未在本机编译与验证。
 
 ### 9.2 已知缺口
 
-- OpenCASCADE 三角化函数体、`makeBrep(primitive)`、布尔/缝合：见 `../backlog/brep.md`，均有触发条件。
+- 在带 OpenCASCADE 的构建里验证三角化：盒体用例、法线、面缝顶点数（见 backlog）。
+- `makeBrep(primitive)`、布尔/缝合：见 `../backlog/brep.md`，均有触发条件。
 - 渲染路径尚未接入：`graphics::geometryFromShape()` 仍只接受网格；三角化落地后再把"加载 B-rep → 三角化 → 显示"接起来。
 
 ## 10. 参考

@@ -3,11 +3,11 @@
 > 只写**还没做、有触发条件**的条目；做完删除，决定不做也删除（理由进 ADR）。
 > 现行设计见 `../design/brep-operations.md`。
 
-## 1. OpenCASCADE 三角化函数体
+## 1. 在带 OpenCASCADE 的构建里验证三角化
 
 - **触发**：有 OpenCASCADE 的构建（`VN_HAS_OCCT`），或需要显示 STEP/BREP 文件。
-- **内容**：`Tessellation.cpp` 在 `VN_BREP_HAS_OCCT` 下实现——逐面 `BRepMesh_IncrementalMesh`，`deflection` / `angle` 直接映射，`compute_normals` 时逐顶点法线；面缝不焊接、索引按面朝向。
-- **前置**：`include(VineOpenCASCADE)` + `vn_link_opencascade(${BREP_TARGET_NAME} VN_BREP_HAS_OCCT)`。
+- **内容**：`Tessellation.cpp` 的 `VN_BREP_HAS_OCCT` 分支已实现（逐面 `BRepMesh_IncrementalMesh`、法线、面缝不焊接）；需要在真实后端下编译并跑用例，按实际 OCCT 版本修正 API 差异（`Poly_Triangulation` 访问器、`IMeshTools_Parameters` 字段）。
+- **前置**：无需改动，`vn_link_opencascade(${BREP_TARGET_NAME} VN_BREP_HAS_OCCT)` 已接。
 - **验收**：`tests/test_brep` 增加盒体用例（12 个三角形、法线单位长度、顶点在盒面上）；无后端的构建仍返回空网格且 `tessellationSupported()` 为假。
 
 ## 2. `makeBrep(primitive)`
