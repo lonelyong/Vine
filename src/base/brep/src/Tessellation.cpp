@@ -31,15 +31,6 @@
 
 VN_BREP_NS_BEGIN
 
-bool tessellationSupported() noexcept
-{
-#if defined(VN_BREP_HAS_OCCT)
-    return true;
-#else
-    return false;
-#endif
-}
-
 #if defined(VN_BREP_HAS_OCCT)
 
 namespace {
@@ -223,7 +214,7 @@ tessellate(const vn::geometry::BrepShape& shape, const TessellationOptions& opti
     (void)options;
 
     // Nothing is produced without the backend. The contract in the header names the two causes of a null mesh;
-    // tessellationSupported() tells a build-level cause from an input-level one.
+    // hasBackend() tells a build-level cause from an input-level one.
     return {};
 #endif
 }

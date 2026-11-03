@@ -1,10 +1,10 @@
 # Brep — runtime B-rep operations.
 #
 # These are the operations a caller runs on a solid it already holds (tessellate
-# it, later build one from a primitive), as opposed to BrepIO, which reads and
-# writes the files a solid comes from. The backend (OpenCASCADE) is optional and
-# is linked PRIVATE when found, so the module builds and links without it:
-# tessellationSupported() answers false and tessellate() returns a null mesh.
+# it, build one from a primitive), as opposed to BrepIO, which reads and writes
+# the files a solid comes from. The backend (OpenCASCADE) is optional and is
+# linked PRIVATE when found, so the module builds and links without it:
+# hasBackend() answers false and each operation returns a null result.
 include(VineOpenCASCADE)
 
 vn_add_library(BREP_TARGET_NAME Brep)

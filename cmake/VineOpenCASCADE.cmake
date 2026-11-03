@@ -34,8 +34,12 @@ function(vn_link_opencascade target module_macro)
     endif()
 
     target_compile_definitions(${target} PRIVATE ${module_macro})
+    # TKPrim builds the parametric solids (BRepPrimAPI_*), which a caller that turns a geometry primitive into a
+    # B-rep needs. TKG3d / TKGeomBase carry the geometry these operations touch (Geom_Surface, GeomLib::NormEstim in
+    # tessellation, the GeomConvert approximation BRepBuilderAPI_GTransform produces); the boolean modules stay
+    # behind BOOLEANS because they are the heaviest part.
     target_link_libraries(${target} PRIVATE
-        TKDESTEP TKDEIGES TKXSBase TKBRep TKTopAlgo TKernel TKMath)
+        TKDESTEP TKDEIGES TKXSBase TKBRep TKTopAlgo TKPrim TKG3d TKGeomBase TKernel TKMath)
 
     if("BOOLEANS" IN_LIST ARGN)
         target_link_libraries(${target} PRIVATE TKBO TKBool)

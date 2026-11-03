@@ -1,5 +1,6 @@
 set(TEST_NAME test_brep)
 set(SRC_FILE_LIST
+	ConstructionTest.cpp
 	TessellationTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
