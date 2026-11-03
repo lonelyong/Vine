@@ -73,6 +73,13 @@
 - **为什么**：`G1`、`G5`、`G8` —— 它表达的是布局/命中矩形，不是空间形状；`geometry` 今天全是 3D 实体，把它拉进来只为对称会引入一个无关职责。
 - **边界**：将来出现真正的 2D 几何消费者（投影包围、2D 碰撞）再单独评估，不预先搬。
 
+### 2.7 拟合在 `Obb`，分解在 `math`
+
+- **是什么**：`Obb::computePca` / `Obb::computeFixedOrientation` 只做“求轴向 → 投影取 min/max → 组装四元数”；它们依赖 `math::symmetricEigen`（3×3 对称矩阵 Jacobi 分解）与 `math::toQuaternion`（旋转矩阵 → 四元数）。
+- **为什么**：`G1`、`G2` —— 特征分解是对矩阵的数值运算，不是空间实体；放进 `geometry` 会让 `math` 反向依赖它才能复用。拟合本身是形状操作，留在 `Obb`。
+- **边界**：`symmetricEigen` 只承诺对称矩阵、升序谱、列正交、每列最大分量取正；handedness 不保证，需要旋转矩阵的调用方自己用叉积补第三轴（`Obb` 就是这么做的）。
+- **不做**：最小体积 OBB（依赖第三方凸包旋转卡壳实现，今天没有消费者，`G8`）；`merge` 因同原因暂不提供。
+
 ## 3. 功能点
 
 | # | 功能 | 说明 |
@@ -83,6 +90,8 @@
 | F4 | 平面 | `Plane<T>`：点 + 法向；与 `Line` 交于一点、与 `Plane` 交于 `Line`。 |
 | F5 | 单一名字 | `Rect3` 与 `math::Aabb*` 不存在；`geometry::Aabbf/Aabbd/Aabbi` 可用。 |
 | F6 | 2D 不迁 | `math::Rect2` 与 `Rect2i` 保持原位。 |
+| F7 | PCA 拟合 | `Obb::computePca(span)`：协方差特征轴，最大方差方向为局部 X。 |
+| F8 | 固定轴向拟合 | `Obb::computeFixedOrientation(span, x_dir, y_dir)`：调用方给 X/Y，Y 先对 X 正交化。 |
 
 ### 3.1 F1 轴对齐盒
 
@@ -98,6 +107,14 @@
 - **约束**（C2）：输出线由调用方提供——`Line` 没有默认构造函数（`P1`）。
 - **要求**（R2）：求交的中间解在最大分量轴上做 2×2 主元选择，避免病态子矩阵。
 - **验收**（T3）：`LinePlaneTest.cpp` 覆盖点交、平行无交、面面交线的方向与位置。
+
+### 3.3 F7/F8 拟合
+
+- **行为**：两者都返回“包围全部输入点”的盒子；轴向只决定紧致度，不决定是否包围（`C4`）。
+- **PCA**：质心 → 协方差 → `symmetricEigen` → 升序谱的最大特征向量为局部 X、次大的为局部 Y，第三轴取叉积。
+- **固定轴向**：`x_dir` 归一化；`y_dir` 减去其在 X 上的投影后再归一化；Z 取叉积。
+- **退化**（`N3`）：`x_dir` 为零 → 世界 X；`y` 与 `x` 平行 → 取与 X 最不平行的世界轴（保留调用方的 X）；空输入 → 默认盒（`R4`）。
+- **验收**（T6/T7）：`ObbFitTest.cpp` 覆盖旋转盒的谱/轴向恢复、共线点集、单点、空输入、非法方向对与“全点被包围”不变量。
 
 ## 4. 公开接口
 
@@ -115,17 +132,21 @@
 - **C1**：`Aabb` 的字段方向不变式——min 只减、max 只增；`intersectWith` 的输出归一化。
 - **C2**：输出参数由调用方构造，函数不分配、不返回引用。
 - **C3**：这四个类型不参与 `Shape` 的类型判定（`obj_cast` / `ShapeType`）。
+- **C4**：拟合结果永远是包围盒：轴向只影响紧致度，任何输入下 `contains()` 对每个输入点都为真（在容差内）。
 - **R1**：`Aabb::compute()` 对空 span 返回默认零盒，不抛异常。
 - **R2**：`Plane` 求交在退化输入上返回 `false`，不产生 NaN。
 - **R3**：`math` 不 include `geometry`；`geometry` 可以 include `math`。
+- **R4**：两个拟合入口对空 span 返回默认 `Obb`（原点、零尺寸、单位朝向）。
 - **N1**：`empty()` 不是“空集合”，是一个反向 min/max 哨兵，只能作为累加起点。
 - **N2**：`Line` 的方向不必单位化，参数 `t` 的尺度和 `|direction|` 绑定。
+- **N3**：PCA 在共线点集上次轴任意但确定；重复特征值只保证正交，不保证唯一。
 
 ## 6. 注意事项与陷阱
 
 - **P1**：`Line` 没有默认构造函数——`Plane::intersectWith(Plane, Line&)` 的输出参数必须是一个已构造的线（用任意合法值占位，函数内部整体覆写）。失败方式是编译错误，不是运行期错误。
 - **P2**：`Aabb` 默认构造是**零盒**而非空盒；把它当累加器起点会把原点算进包围盒。要累加请用 `Aabb::empty()`（`N1`）。
 - **P3**：`Aabb::compute()` 与 `expandBy()` 不 normalize；`intersectWith()` 的输出则总是归一化。混用两种状态会让 `isNeg()` 读数与预期相反。
+- **P4**：`math::toQuaternion()` 要求输入是纯旋转（正交、det = +1）；它不检查、不修复，缩放或退化矩阵会得到任意四元数。`rotate3x3()` 是它的逆，两者用同一分支约定。
 
 ## 7. 已否决选项
 
@@ -142,20 +163,25 @@
 | T3 | 线–线最近点与平行/共线标志 | `LinePlaneTest.cpp`（`Line.*`） |
 | T4 | 面–线、面–面求交与退化分支 | `LinePlaneTest.cpp`（`Plane.*`） |
 | T5 | 2D 矩形不受影响 | `tests/test_math/Rect2Test.cpp` |
+| T6 | 谱、正交基、重构与升序 | `tests/test_math/EigenDecompositionTest.cpp`（`EigenDecomposition.*`） |
+| T7 | 轴角 → 矩阵 → 四元数往返 | `tests/test_math/Transform3Test.cpp`（`Transform3.*`） |
 
 ## 9. 状态与演进
 
 ### 9.1 现状
 
 四个类型已在 `vn::geometry` 落地，`math` 下不再有对应头文件与源文件；`Mesh`、`graphics::Node`、`ChainPresets`、`ChainBuilder` 与测试已改到新名字。
+`Obb` 的 PCA 与固定轴向拟合已落地；特征分解与矩阵→四元数在 `math`（`Matrix3x3.hpp` / `Transform3.cpp`），两个头文件只声明契约。
 
 ### 9.2 已知缺口
 
 - `transformBox()` 仍是 `graphics/Node` 的自由函数：类型已经归位，变换算子还在消费者一侧，后续可评估搬入 `geometry`。
 - `Line` / `Plane` 只有基础分支的用例；退化容差、近共线情形未覆盖。
+- 最小体积 OBB 与 `merge` 未提供（2.7）。
 
 ## 10. 参考
 
 - 代码：`src/base/geometry/sdk/vine/geometry/{Aabb,Obb,Line,Plane}.hpp`、`src/base/geometry/src/{Aabb,Obb,Line,Plane}.cpp`。
+- 数学设施：`src/base/math/sdk/vine/math/Matrix3x3.hpp`（`symmetricEigen`）、`Transform3.hpp`（`toQuaternion`）、`src/base/math/src/Transform3.cpp`。
 - 设计：`graphics-geometry.md`（`Shape` / `Mesh` / revision 的现行设计）、`../decisions/ADR-2026-11-03-geometry-primitives-ownership.md`。
-- 测试：`tests/test_geometry/AabbTest.cpp`、`ObbTest.cpp`、`LinePlaneTest.cpp`；`tests/test_math/Rect2Test.cpp`。
+- 测试：`tests/test_geometry/AabbTest.cpp`、`ObbTest.cpp`、`ObbFitTest.cpp`、`LinePlaneTest.cpp`；`tests/test_math/Rect2Test.cpp`、`EigenDecompositionTest.cpp`、`Transform3Test.cpp`。

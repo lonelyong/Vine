@@ -166,6 +166,48 @@ TMPL_PREFIX Matrix4x4<T, Order> reflect(const Vector3<T>& plane_normal, T plane_
     return m;
 }
 
+TMPL_PREFIX Quaternion<T> toQuaternion(const Matrix3x3<T, Order>& m)
+{
+    const T m00   = m(0, 0);
+    const T m11   = m(1, 1);
+    const T m22   = m(2, 2);
+    const T trace = m00 + m11 + m22;
+
+    Quaternion<T> q;
+
+    // Branch on the largest diagonal term, so the divisor is the largest of the four candidates.
+    if (trace > T(0)) {
+        const T s = std::sqrt(trace + T(1)) * T(2);
+        q.w       = T(0.25) * s;
+        q.x       = (m(2, 1) - m(1, 2)) / s;
+        q.y       = (m(0, 2) - m(2, 0)) / s;
+        q.z       = (m(1, 0) - m(0, 1)) / s;
+    }
+    else if (m00 > m11 && m00 > m22) {
+        const T s = std::sqrt(T(1) + m00 - m11 - m22) * T(2);
+        q.w       = (m(2, 1) - m(1, 2)) / s;
+        q.x       = T(0.25) * s;
+        q.y       = (m(0, 1) + m(1, 0)) / s;
+        q.z       = (m(0, 2) + m(2, 0)) / s;
+    }
+    else if (m11 > m22) {
+        const T s = std::sqrt(T(1) + m11 - m00 - m22) * T(2);
+        q.w       = (m(0, 2) - m(2, 0)) / s;
+        q.x       = (m(0, 1) + m(1, 0)) / s;
+        q.y       = T(0.25) * s;
+        q.z       = (m(1, 2) + m(2, 1)) / s;
+    }
+    else {
+        const T s = std::sqrt(T(1) + m22 - m00 - m11) * T(2);
+        q.w       = (m(1, 0) - m(0, 1)) / s;
+        q.x       = (m(0, 2) + m(2, 0)) / s;
+        q.y       = (m(1, 2) + m(2, 1)) / s;
+        q.z       = T(0.25) * s;
+    }
+
+    return q.normalized();
+}
+
 TMPL_PREFIX bool decompose(const Matrix4x4<T, Order>& m, Vector3<T>& t, Quaternion<T>& r, Vector3<T>& s)
 {
     using namespace math;
@@ -308,6 +350,11 @@ template VN_MATH_API bool decompose(const Matrix4x4<float, ColMajor>&, Vector3<f
 template VN_MATH_API bool decompose(const Matrix4x4<double, ColMajor>&, Vector3<double>&, Quaternion<double>&, Vector3<double>&);
 template VN_MATH_API bool decompose(const Matrix4x4<float, RowMajor>&, Vector3<float>&, Quaternion<float>&, Vector3<float>&);
 template VN_MATH_API bool decompose(const Matrix4x4<double, RowMajor>&, Vector3<double>&, Quaternion<double>&, Vector3<double>&);
+
+template VN_MATH_API Quaternion<float> toQuaternion(const Matrix3x3<float, ColMajor>&);
+template VN_MATH_API Quaternion<double> toQuaternion(const Matrix3x3<double, ColMajor>&);
+template VN_MATH_API Quaternion<float> toQuaternion(const Matrix3x3<float, RowMajor>&);
+template VN_MATH_API Quaternion<double> toQuaternion(const Matrix3x3<double, RowMajor>&);
 
 template VN_MATH_API Matrix4x4<float, ColMajor> rotate(const Vector3<float>&, float);
 template VN_MATH_API Matrix4x4<double, ColMajor> rotate(const Vector3<double>&, double);

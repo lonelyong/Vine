@@ -2,6 +2,7 @@ set(TEST_NAME test_geometry)
 set(SRC_FILE_LIST
 	AabbTest.cpp
 	LinePlaneTest.cpp
+	ObbFitTest.cpp
 	ObbTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})

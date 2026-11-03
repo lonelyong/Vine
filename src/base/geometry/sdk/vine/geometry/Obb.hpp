@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cmath>
+#include <span>
 
 #include <vine/math/Point3.hpp>
 #include <vine/math/Quaternion.hpp>
@@ -166,6 +167,43 @@ class Obb {
      */
     [[nodiscard]]
     Aabb<T> toAabb() const;
+
+    /**
+     * @brief Fits an oriented box whose local X and Y axes follow the given directions.
+     *
+     * @details
+     * - @p y_dir is orthogonalized against @p x_dir before use; z completes a right-handed frame.
+     * - Every returned box encloses all vertices: the axes only decide how tightly.
+     * - A zero-length @p x_dir falls back to world X.
+     * - A @p y_dir parallel to @p x_dir falls back to the world axis least aligned with @p x_dir, so the caller's X
+     *   direction is kept.
+     * - An empty vertex set returns the default box.
+     *
+     * @param vertices Vertex positions in the box's parent space.
+     * @param x_dir    Local X direction; need not be unit length, but must not be degenerate unless a fallback is intended.
+     * @param y_dir    Local Y direction; need not be unit length and need not be perpendicular to @p x_dir.
+     * @return Box enclosing every vertex.
+     */
+    [[nodiscard]]
+    static Obb<T> computeFixedOrientation(std::span<const math::Vector3<T>> vertices,
+                                          const math::Vector3<T>& x_dir,
+                                          const math::Vector3<T>& y_dir);
+
+    /**
+     * @brief Fits an oriented box along the principal axes of the vertex set (PCA).
+     *
+     * @details
+     * - The axes are the eigenvectors of the vertex covariance, largest variance first.
+     * - Every returned box encloses all vertices; a degenerate point set only decides how arbitrary the axes are:
+     *   a single point or a collinear set keeps the major axis and the remaining directions are an arbitrary but
+     *   deterministic orthonormal pair.
+     * - An empty vertex set returns the default box.
+     *
+     * @param vertices Vertex positions in the box's parent space.
+     * @return Box enclosing every vertex, with the axes of largest spread.
+     */
+    [[nodiscard]]
+    static Obb<T> computePca(std::span<const math::Vector3<T>> vertices);
 
   private:
     Point center_{};

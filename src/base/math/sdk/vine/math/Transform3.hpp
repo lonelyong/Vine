@@ -93,6 +93,24 @@ Matrix3x3<T, Order> rotate3x3(const Quaternion<T>& quat)
 }
 
 /**
+ * @brief Recover the rotation quaternion from a 3×3 rotation matrix.
+ *
+ * @details
+ * - The inverse of rotate3x3(); the branch on the largest diagonal term keeps the divisor away from zero for
+ *   rotations near 180°.
+ * - The result is normalized; q and -q describe the same rotation.
+ *
+ * @warning
+ * - The matrix must be a rotation (orthonormal columns, determinant +1); this function neither checks nor repairs
+ *   a non-rotation input, so a scaled or degenerate matrix yields an arbitrary quaternion.
+ *
+ * @param m Rotation matrix.
+ * @return Unit quaternion describing the same rotation.
+ */
+template <typename T, typename Order>
+Quaternion<T> toQuaternion(const Matrix3x3<T, Order>& m);
+
+/**
  * @brief Create a rotation matrix from a unit quaternion.
  * @param quat Rotation quaternion.
  * @return Rotation matrix.

@@ -1,9 +1,11 @@
 set(TEST_NAME test_math)
 set(SRC_FILE_LIST
+	EigenDecompositionTest.cpp
 	Matrix3x3Test.cpp
 	Matrix4x4Test.cpp
 	QuaternionTest.cpp
 	Rect2Test.cpp
+	Transform3Test.cpp
 	VectorTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
