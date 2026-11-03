@@ -24,6 +24,8 @@ VN_GEOMETRY_NS_BEGIN
  * @warning
  * - Normalizing converts a zero direction to zero instead of throwing; check `direction` when the input may be
  *   degenerate and the difference matters.
+ * - `direction` is a plain field: assigning a vector that is not unit length to it breaks what `t` means. Construct
+ *   the ray from an origin and a direction instead of writing the field.
  *
  * @tparam T Floating-point scalar type.
  */
@@ -94,11 +96,12 @@ using Rayd = Ray<double>;
  * @param b   Second triangle corner.
  * @param c   Third triangle corner.
  * @param hit Receives the hit when the call returns true; untouched otherwise.
- * @param eps Tolerance for the direction/edge determinant.
+ * @param eps Relative tolerance for the ray running parallel to the triangle's plane (a sine of that angle, not an
+ *            area, so a small triangle is still hit).
  * @return True when the ray crosses the triangle at t >= 0.
  */
 template <vn::math::FP T>
-[[nodiscard]] bool
-intersectTriangle(const Ray<T>& ray, const vn::math::Point3<T>& a, const vn::math::Point3<T>& b, const vn::math::Point3<T>& c, RayHit<T>& hit, T eps = math::EPS<T>());
+[[nodiscard]] bool intersectTriangle(const Ray<T>& ray, const vn::math::Point3<T>& a, const vn::math::Point3<T>& b,
+                                     const vn::math::Point3<T>& c, RayHit<T>& hit, T eps = math::EPS<T>());
 
 VN_GEOMETRY_NS_END

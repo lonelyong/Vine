@@ -3,6 +3,7 @@
 #include "geometry_global.hpp"
 
 #include <vine/math/Point3.hpp>
+#include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
 
 VN_GEOMETRY_NS_BEGIN

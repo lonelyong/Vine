@@ -87,9 +87,8 @@ TMPL_PREFIX Aabb<T> Aabb<T>::compute(std::span<const math::Vector3<T>> points)
 #undef TMPL_PREFIX
 
 template <typename T>
-template <math::FP U>
+template <math::FP U> requires std::is_same_v<T, U>
 bool Aabb<T>::intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps) const
-    requires(std::is_same_v<T, U>)
 {
     if (ray.direction.length() <= eps) {
         return false; // an aimless ray crosses nothing
@@ -108,9 +107,9 @@ bool Aabb<T>::intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps) const
     T   exit_sign  = T(0);
 
     for (int axis = 0; axis < 3; ++axis) {
-        if (std::abs(dir[axis]) <= eps) {
+        if (dir[axis] == T(0)) {
             if (origin[axis] < lower[axis] || origin[axis] > upper[axis]) {
-                return false; // parallel to this slab and outside it
+                return false; // exactly parallel to this slab and outside it
             }
             continue;
         }
@@ -140,15 +139,15 @@ bool Aabb<T>::intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps) const
         return false; // disjoint, or the box lies entirely behind the origin
     }
 
-    // A ray that starts inside leaves through the exit face. Reporting t = 0 keeps every hit ahead of the origin and
-    // names the face the ray actually meets going forward.
+    // A ray that starts inside meets the far wall from within: t = 0 keeps every hit ahead of the origin, and the
+    // normal is the exit face turned around, so it still faces back towards the ray (C2 holds for every hit).
     const bool inside = t_enter < T(0) || enter_axis < 0;
     hit.t             = inside ? T(0) : t_enter;
     hit.point         = ray.pointAt(hit.t);
     hit.normal        = math::Vector3<T>(T(0), T(0), T(0));
 
     const int axis = inside ? exit_axis : enter_axis;
-    const T   sign = inside ? exit_sign : enter_sign;
+    const T   sign = inside ? -exit_sign : enter_sign;
     if (axis == 0) {
         hit.normal.x = sign;
     } else if (axis == 1) {

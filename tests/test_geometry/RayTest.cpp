@@ -85,13 +85,23 @@ TEST(RayTest, aRayLeavingTheBoxOrPointingAwayIsAMiss)
     EXPECT_FALSE(unitBox().intersectWith(rayFrom(5.0, 0.0, 0.0, 0.0, 1.0, 0.0), hit)) << "parallel to a slab and outside it";
 }
 
-TEST(RayTest, aRayThatStartsInsideReportsTheFaceItLeavesThrough)
+TEST(RayTest, aRayThatStartsInsideReportsTheWallItSees)
 {
     RayHitd hit;
     ASSERT_TRUE(unitBox().intersectWith(rayFrom(0.0, 0.0, 0.0, 0.0, 0.0, 1.0), hit));
 
     EXPECT_DOUBLE_EQ(hit.t, 0.0);
-    EXPECT_DOUBLE_EQ(hit.normal.z, 1.0);
+    // The far wall is met from within, so the normal faces BACK towards the ray: every hit keeps that invariant.
+    EXPECT_DOUBLE_EQ(hit.normal.z, -1.0);
+}
+
+TEST(RayTest, aTinyButRealComponentStillEntersTheBox)
+{
+    // The x component is small yet non-zero, and the origin sits just outside the x slab: treating it as "parallel"
+    // would reject a ray that does cross the box.
+    RayHitd hit;
+    ASSERT_TRUE(unitBox().intersectWith(rayFrom(1.0 + 1e-10, 0.0, 5.0, -1e-9, 0.0, -1.0), hit));
+    EXPECT_NEAR(hit.point.x, 1.0, 1e-6);
 }
 
 TEST(RayTest, anUnrotatedObbAgreesWithTheAxisAlignedBox)
@@ -169,4 +179,18 @@ TEST(RayTest, aTriangleMissIsOutsideOrDegenerate)
     RayHitd hit;
     EXPECT_FALSE(vn::geometry::intersectTriangle(rayFrom(0.8, 0.8, 5.0, 0.0, 0.0, -1.0), a, b, c, hit)) << "outside the triangle";
     EXPECT_FALSE(vn::geometry::intersectTriangle(rayFrom(0.2, 0.2, 5.0, 0.0, 0.0, -1.0), a, a, a, hit)) << "degenerate triangle";
+}
+
+TEST(RayTest, aSmallTriangleIsStillHit)
+{
+    // The determinant shrinks with the triangle's area, so an absolute tolerance would call a small face unfavourable
+    // to a ray that hits it squarely.
+    constexpr double kSize = 1e-5;
+    const Point3d    a(0.0, 0.0, 0.0);
+    const Point3d    b(kSize, 0.0, 0.0);
+    const Point3d    c(0.0, kSize, 0.0);
+
+    RayHitd hit;
+    ASSERT_TRUE(vn::geometry::intersectTriangle(rayFrom(kSize * 0.25, kSize * 0.25, 1.0, 0.0, 0.0, -1.0), a, b, c, hit));
+    EXPECT_NEAR(hit.point.z, 0.0, 1e-12);
 }

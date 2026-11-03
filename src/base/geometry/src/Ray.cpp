@@ -42,7 +42,9 @@ TMPL_PREFIX bool intersectTriangle(
     const vn::math::Vector3<T> pvec   = ray.direction.cross(edge_b);
     const T                    det    = edge_a.dot(pvec);
 
-    if (std::abs(det) <= eps) {
+    // Compared against the two edge lengths, so the tolerance is an ANGLE rather than an area: a small triangle is
+    // still hit, while a triangle the ray runs into edge-on is not.
+    if (std::abs(det) <= eps * edge_a.length() * edge_b.length()) {
         return false;
     }
 

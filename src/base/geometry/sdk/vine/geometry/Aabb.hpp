@@ -367,18 +367,16 @@ class Aabb
      *
      * @details
      * - The ray must be in the box's own space; nothing is transformed here.
-     * - A ray that starts inside the box reports `t = 0` and the normal of the face it would leave through, so a hit
-     *   always describes the surface the ray meets going forward.
+     * - A ray that starts inside the box reports `t = 0` and the far wall it meets, turned to face back at the ray, so
+     *   `normal` faces towards the ray for every hit - the same rule the plane and triangle entry points follow.
      *
      * @param ray The ray, whose direction is unit length (see Ray).
      * @param hit Receives the nearest hit when the call returns true; untouched otherwise.
-     * @param eps Tolerance for "the direction runs parallel to this slab".
+     * @param eps Tolerance that makes a ray aimless: a direction this short crosses nothing.
      * @return True when the box lies in front of the ray's origin or around it.
      */
-    template <math::FP U>
-    [[nodiscard]]
-    bool intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps = math::EPS<U>()) const
-        requires(std::is_same_v<T, U>);
+    template <math::FP U> requires std::is_same_v<T, U>
+    [[nodiscard]] bool intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps = math::EPS<U>()) const;
 
     /* ---- operators ---- */
 

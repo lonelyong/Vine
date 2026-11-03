@@ -48,6 +48,9 @@ class VN_GEOMETRY_API PointCloud : public Shape {
     using Aabb = Aabbf;
 
   public:
+    /**
+     * @brief Creates an empty cloud: no position, so nothing is drawn.
+     */
     PointCloud();
     ~PointCloud() override;
 
@@ -156,6 +159,15 @@ class VN_GEOMETRY_API PointCloud : public Shape {
     [[nodiscard]]
     Aabb computeAabb();
 
+    /**
+     * @brief Reports whether the cloud holds at least one position.
+     *
+     * @details
+     * - The optional channels are not part of the answer: a cloud whose normal or colour count disagrees with its
+     *   positions is still valid, the mismatch only drops that channel.
+     *
+     * @return true when at least one point is stored.
+     */
     [[nodiscard]]
     bool isValid() const override;
 
