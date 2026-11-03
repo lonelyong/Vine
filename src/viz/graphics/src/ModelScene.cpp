@@ -86,8 +86,8 @@ struct Conversion {
                 ++scene.skipped_meshes;
                 continue;
             }
-            // A shape that is not a vertex mesh (a Brep, a primitive) is not drawable here; one odd part must not
-            // cost the rest of the model.
+            // A mesh the converter cannot triangulate yields no geometry; one bad part must not cost the rest of
+            // the model.
             intrusive_ptr<Geometry> leaf = geometryFromShape(*entry.mesh);
             if (leaf == nullptr) {
                 ++scene.skipped_meshes;

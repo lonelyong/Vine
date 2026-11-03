@@ -457,7 +457,7 @@ class ModelBuilder final : private MeshBuilderBase {
      * @param mesh The mesh to measure.
      * @param world The transform the vertices are placed by; the box is therefore in model space.
      */
-    void growBounds(const vn::geometry::Shape& mesh, const vn::math::Mat4d& world);
+    void growBounds(const vn::geometry::Mesh& mesh, const vn::math::Mat4d& world);
 
     /// Folds the load options' scale into @p root's transform, once for the whole model.
     void applyScale(std::uint32_t root);
@@ -551,10 +551,9 @@ void ModelBuilder::collectEntries()
     }
 }
 
-void ModelBuilder::growBounds(const vn::geometry::Shape& mesh, const vn::math::Mat4d& world)
+void ModelBuilder::growBounds(const vn::geometry::Mesh& mesh, const vn::math::Mat4d& world)
 {
-    const auto grow = [this, &world](const vn::geometry::Mesh& typed_mesh) {
-      for (const vn::math::Vec3f& point : typed_mesh.positions()) {
+    for (const vn::math::Vec3f& point : mesh.positions()) {
         const auto x = static_cast<float>(world.element(0, 0) * point.x + world.element(0, 1) * point.y + world.element(0, 2) * point.z + world.element(0, 3));
         const auto y = static_cast<float>(world.element(1, 0) * point.x + world.element(1, 1) * point.y + world.element(1, 2) * point.z + world.element(1, 3));
         const auto z = static_cast<float>(world.element(2, 0) * point.x + world.element(2, 1) * point.y + world.element(2, 2) * point.z + world.element(2, 3));
@@ -570,11 +569,6 @@ void ModelBuilder::growBounds(const vn::geometry::Shape& mesh, const vn::math::M
         max_.x = std::max(max_.x, x);
         max_.y = std::max(max_.y, y);
         max_.z = std::max(max_.z, z);
-      }
-    };
-
-    if (const auto* typed_mesh = obj_cast<vn::geometry::Mesh>(&mesh)) {
-        grow(*typed_mesh);
     }
 }
 

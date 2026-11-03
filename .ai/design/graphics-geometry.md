@@ -179,7 +179,7 @@
 | `TriangleMesh::triangleCount()` / `isValid()` | 顺序或索引三角网格及其三角计数 |
 | `QuadMesh::quadCount()` / `toTriangleMesh()` | 四边形面与显式三角网格转换 |
 | `MixedMesh::faceOffsets()` / `faceOffsetsBuffer()` / `setFaceOffsets()` / `toTriangleMesh()` | 可共享的多边形边界与显式三角网格转换 |
-| `Model::Entry::mesh` | `Shape` 句柄；模型导入写入 `TriangleMesh`，读取端按具体类型识别 |
+| `Model::Entry::mesh` | `Mesh` 句柄；模型导入写入 `TriangleMesh`，绘制前在 `geometryFromShape()` 三角化；同一份网格可被多个节点引用 |
 | `geometryFromShape()` | `Shape` → `Geometry`，共享 buffer |
 | `packAttribute()` / `packIndices()` | 类型化输入打包 |
 
