@@ -66,7 +66,7 @@ TEST(ObbFit, pcaRecoversARotatedBox)
     expectEncloses(box, points);
 }
 
-TEST(ObbFit, pcaPutsTheLargestSpreadOnLocalX)
+TEST(ObbFit, pcaPutsTheLargestVarianceOnLocalX)
 {
     const Vec3d              half_extents(5.0, 1.0, 1.0);
     const std::vector<Vec3d> points = cornersOfBox(half_extents, Quatd(), Vec3d());
@@ -106,6 +106,22 @@ TEST(ObbFit, pcaSinglePointIsAZeroBoxAtThatPoint)
     EXPECT_NEAR(box.halfExtents().x, 0.0, 1e-9);
     EXPECT_NEAR(box.halfExtents().y, 0.0, 1e-9);
     EXPECT_NEAR(box.halfExtents().z, 0.0, 1e-9);
+    EXPECT_TRUE(box.orientation().isIdentity()) << "a point carries no direction: the axes fall back to world";
+    expectEncloses(box, points);
+}
+
+TEST(ObbFit, pcaCoincidentVerticesKeepIdentityOrientation)
+{
+    // One coordinate repeated is the same degenerate case as a single vertex, not a different one.
+    const std::vector<Vec3d> points{ Vec3d(2.0, -3.0, 4.0), Vec3d(2.0, -3.0, 4.0), Vec3d(2.0, -3.0, 4.0) };
+
+    const Obbd box = Obbd::computePca(points);
+
+    EXPECT_NEAR(box.center().x, 2.0, 1e-9);
+    EXPECT_NEAR(box.center().y, -3.0, 1e-9);
+    EXPECT_NEAR(box.center().z, 4.0, 1e-9);
+    EXPECT_NEAR(box.halfExtents().x, 0.0, 1e-9);
+    EXPECT_TRUE(box.orientation().isIdentity());
     expectEncloses(box, points);
 }
 

@@ -205,6 +205,16 @@ TMPL_PREFIX Obb<T> Obb<T>::computePca(std::span<const math::Vector3<T>> vertices
         return Obb<T>();
     }
 
+    // One coordinate repeated carries no direction: the box has no size, so the axes are meaningless.
+    const math::Vector3<T>& first = vertices.front();
+    const bool              all_same =
+      std::all_of(vertices.begin(), vertices.end(), [&first](const math::Vector3<T>& vertex) {
+          return vertex.x == first.x && vertex.y == first.y && vertex.z == first.z;
+      });
+    if (all_same) {
+        return Obb<T>(math::Point3<T>(first.x, first.y, first.z), math::Vector3<T>(T(0), T(0), T(0)), math::Quaternion<T>());
+    }
+
     math::Vector3<T> centroid;
     for (const auto& vertex : vertices) {
         centroid = centroid + vertex;

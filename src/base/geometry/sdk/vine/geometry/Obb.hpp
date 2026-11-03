@@ -193,11 +193,13 @@ class Obb {
      * @brief Fits an oriented box along the principal axes of the vertex set (PCA).
      *
      * @details
-     * - The axes are the eigenvectors of the vertex covariance, largest variance first.
+     * - The axes are the eigenvectors of the vertex covariance, ordered by decreasing variance: local X holds the
+     *   largest spread, local Z the smallest. Extents are measured after that ordering, so they are not sorted.
      * - Every returned box encloses all vertices; a degenerate point set only decides how arbitrary the axes are:
-     *   a single point or a collinear set keeps the major axis and the remaining directions are an arbitrary but
-     *   deterministic orthonormal pair.
-     * - An empty vertex set returns the default box.
+     *   a collinear set keeps the major axis and the remaining directions are an arbitrary but deterministic
+     *   orthonormal pair.
+     * - An empty vertex set returns the default box; vertices that all share one coordinate return a zero-size box
+     *   at that coordinate with identity orientation, because no direction can be inferred.
      *
      * @param vertices Vertex positions in the box's parent space.
      * @return Box enclosing every vertex, with the axes of largest spread.
