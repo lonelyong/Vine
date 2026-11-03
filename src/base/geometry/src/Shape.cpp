@@ -40,6 +40,7 @@ ShapeKind Shape::shapeKind() const
     case ShapeType::QuadMesh:
     case ShapeType::MixedMesh: return ShapeKind::Mesh;
     case ShapeType::Brep: return ShapeKind::Brep;
+    case ShapeType::PointCloud: return ShapeKind::PointCloud;
     default: return ShapeKind::Unknown;
     }
 }

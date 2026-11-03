@@ -24,6 +24,8 @@ enum class ShapeKind
     Mesh,
     /// Boundary-representation solid (BrepShape).
     Brep,
+    /// Unconnected points (PointCloud).
+    PointCloud,
 };
 
 /**
@@ -51,6 +53,8 @@ enum class ShapeType
     MixedMesh,
     /// Boundary-representation solid (BrepShape).
     Brep,
+    /// Unconnected points (PointCloud).
+    PointCloud,
 };
 
 /**

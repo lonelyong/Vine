@@ -104,6 +104,7 @@
 | F28 | 统一三角网格 | `TriangleMesh` 由 `hasIndices()` 区分索引面与顺序三角形。 | 已落地 |
 | F29 | 四边形网格 | `QuadMesh` 按固定对角线显式转换为 `TriangleMesh`。 | 已落地 |
 | F30 | 混合多边形网格 | `MixedMesh` 以 offsets 分面，索引与 offsets 一起整体给出，并通过显式转换生成 `TriangleMesh`。 | 已落地 |
+| F31 | 点云 | `PointCloud`：`setPositions()` 整体替换点集，`normals()` / `colors()` 可选，`computeAabb()` 缓存盒；约束 C8、R7，验收 T10。 | 已落地 |
 
 #### 3.6.1 F28 统一三角网格
 
@@ -189,6 +190,7 @@
 |---|---|
 | `Box` / `Sphere` / `Cone` / `Cylinder` / `Ellipsoid` | 参数化基本体，尺寸均为 `float`，局部坐标系下描述；机器人 IO 直接读写它们 |
 | `Mesh` / `TriangleMesh` / `QuadMesh` / `MixedMesh` | 网格类型层次；graphics 与 meshio 只接收这一套 float 网格 |
+| `PointCloud` | 点云：位置 + 可选法线/颜色，无面拓扑；与网格共用 `Buffer<float>` 通道 |
 | `Primitive` / `BrepShape` / `Shape` | 基本体与 B-rep 的共同基类；`revision` 三件套住在 `Shape` |
 
 ## 5. 约束、要求与不变量
@@ -204,6 +206,7 @@
 | C5 | 三角网格索引为空表示顺序顶点；非空索引必须按三项分组且全部有效。 |
 | C6 | Quad face corner 数须为 4 的倍数，索引不得越界。 |
 | C7 | Mixed offsets 从 0 开始、单调不减、末项等于 corner 数，且每面至少 3 个 corner。 |
+| C8 | 点云通道布局：位置与法线每点 3 个 float、颜色每点 4 个 float，均存在 `Buffer<float>` 里。 |
 
 ### 5.2 要求（R#）
 
@@ -215,6 +218,7 @@
 | R4 | 机器人 IO 只接受 `TriangleMesh` 与 float 基本体，不留 double 变体。 |
 | R5 | graphics 与 meshio 消费前验证网格，并复用 `toTriangleMesh()` 转换接口。 |
 | R6 | 模型查看器统计与导出复用显式转换；offsets 不合法时转换不得访问其面数据。 |
+| R7 | 点云的法线/颜色通道只在长度等于 `pointCount()` 时被消费，否则丢弃而不重新索引（与 N11 同一规则）。 |
 
 ### 5.3 不变量（N#）
 
@@ -233,22 +237,11 @@
 | N11 | 通道只在“每顶点一项”时被消费：法线/UV/颜色长度与位置不一致时消费端丢弃该通道，`isValid()` 不因此为假。 |
 | N12 | `Mesh::aabb()` 是缓存：位置变化（`setPositions()`）清空它，未计算前为空盒。 |
 | N13 | geometry 不自行推进任何 revision：`set*` 换的是 buffer 对象（地址变即缓存 key 变），原地写字节的写者用 `Buffer::setRevision()`，形状整体变化由持有者 `Shape::bumpRevision()` 报告；三者不可互替（N2）。 |
+| N14 | `PointCloud::isValid()` 只问“有没有点”，`hasVolume()` 恒为 false；`geometryFromShape()` 还不接点云，不要用没有索引的 `Mesh` 冒充它。 |
 
 ## 6. 注意事项与陷阱
 
-### 6.1 一事实一家
-
-- 会怎么错：同一份状态被两处保存，改一处另一处过期。
-- 怎么判：出现两份可写的值/两个可写的注册表。
-- 怎么防：回到 §5 的 N#；只留一个 owner，其余只读。
-
-### 6.2 后端/平台的边界
-
-- 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
-- 怎么判：出现“如果 Windows/X11 就……”的分支。
-- 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
-
-### 6.3 多边形转换
+### 6.1 多边形转换
 
 - 会怎么错：直接按 offsets 或索引读 faces，非法输入可能访问越界。
 - 怎么判：`isValid()` 为 false，或 offsets 末项与 corner 数不符。
@@ -263,6 +256,7 @@
 | D3 | 多父 / DAG | 渲染路径可 DAG，但公开世界查询与拾取身份不成立；复制节点即可。详见 [ADR](../decisions/ADR-2026-10-23-no-multi-parent-dag.md)。 |
 | D4 | 逐实例材质 / 颜色 / 层 / 排序 / 剔除 | 一条 draw 的实例共享这些；等真实需求再加。 |
 | D5 | GPU indirect / 自动合批 | 没有消费者；实例化只解决“同一几何 N 份”。 |
+| D6 | 把点云做成 `Mesh` 的子类 | `geometryFromShape()` 与导出器会看到一个没有面的网格，名字与行为都对不上（`G1`、`G4`）；点云是独立的 `Shape`（F31）。 |
 
 ## 8. 测试与验收
 
@@ -277,6 +271,7 @@
 | T7 | Quad 按固定对角线拆为两个三角形；`MeshShapeTest.QuadMeshUsesFourCornersAndTriangulates`。 |
 | T8 | Mixed offsets 验证及三角扇输出；`MeshShapeTest.MixedMeshValidatesOffsetsAndConvertsToTriangleMesh`、`MeshShapeTest.MixedMeshWithSeveralFacesConvertsEveryFace`。 |
 | T9 | 盒缓存与 revision 契约；`MeshShapeTest.TheCachedBoxFollowsTheVertices`、`MeshShapeTest.TheRevisionIsReportedByTheHolderNotByASetter`、`PkgIOTest.EditedMeshIsRefusedWhenThePackageIsFinallyWritten`。 |
+| T10 | 点云：空云不可用、三标量打包与 buffer 同一性、通道独立、位置变化清空盒缓存；`PointCloudTest`。 |
 
 ## 9. 状态与演进
 
@@ -296,5 +291,5 @@
 
 ## 10. 参考
 
-`Mesh.hpp` · `TriangleMesh.hpp` · `QuadMesh.hpp` · `MixedMesh.hpp` · `MeshShapeTest.cpp` ·
+`Mesh.hpp` · `TriangleMesh.hpp` · `QuadMesh.hpp` · `MixedMesh.hpp` · `PointCloud.hpp` · `MeshShapeTest.cpp` · `PointCloudTest.cpp` ·
 `graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `../backlog/graphics.md`
