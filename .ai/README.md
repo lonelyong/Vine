@@ -53,7 +53,7 @@
 **base 与其他（11）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
-- `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化契约与失败表示。
+- `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化与由基本体造实体的契约、失败表示。
 - `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`Line`/`Plane` 的归属、命名与契约。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
@@ -98,7 +98,7 @@
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
-## backlog/ —— 开放待办（9）
+## backlog/ —— 开放待办（10）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
 
@@ -110,11 +110,13 @@
 - `appfw-translation.md` —— 翻译的开放项（运行期切换、第一本英文目录、插件元数据、lupdate 门禁、覆盖位部署规则）。
 - `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
 - `base-crash.md` —— 崩溃报告的开放项（上次崩溃提示、terminate、栈保证、只读目录、Linux、上报触发条件）。
-- `brep.md` —— 运行时 B-rep 运算的开放项（OCCT 三角化函数体、`makeBrep`、布尔与缝合）。
+- `brep.md` —— 运行时 B-rep 运算的开放项（OCCT 后端验证、布尔与缝合）。
+- `loaders.md` —— loaders 层的开放项（点云 I/O 的归属与入口）。
 
-## memory/ —— 模块要点（8）
+## memory/ —— 模块要点（9）
 
 - `graphics.md` —— graphics / vsg 现役要点：机制、判据、坑与“当时为什么这么定”。
+- `geometry.md` —— geometry 要点：纯内联 SDK 类的导出约定、五个基本体的局部空间。
 - `appfw.md` —— appfw 横切规则（线程 / 锁内不跑用户代码 / 生命周期）。
 - `async.md` —— `src/base/async` 要点。
 - `imaging.md` —— imaging 要点。

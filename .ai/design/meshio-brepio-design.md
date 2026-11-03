@@ -251,6 +251,7 @@ BrepFormat  formatFromPath(const std::filesystem::path&) noexcept;
 | D6 | 对 `Model` 关闭 stream / source（只写 path） | `G4`：能写成一个文件的模型不该被迫先落盘；代价只是一次烘平 | — |
 | D7 | `BrepShape` 用 `shared_ptr<const void>` 类型擦除 | `G4`：每次取用都要 `static_cast`，类型安全交给约定 | — |
 | D8 | 继续用 assimp 注册表当读契约 | `G1`：读表与写表两份，回到 1.1 的第 1 条 | — |
+| D9 | 跨模块的格式读取器注册表（`registerLoader()` + 插件） | 没有消费者（`G8`）；全局可变注册表回来了，注册顺序与生命周期无人负责（`G11`）；各模块的 options 与返回形状本就不同（`Model` / `Mesh` / `BrepShape` / `PointCloud` / `Image`），统一入口只能退化成 `any` 并把类型判断推给每个调用方（`G4`、`G7`）。真要“随便读一个文件”时，做法是调用方层的**静态调度表**（一个函数里显式列出“扩展名 → 具体 loader”与优先级），不是注册表。 | — |
 
 ## 8. 测试与验收
 
