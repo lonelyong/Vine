@@ -6,15 +6,18 @@
 VN_APPFW_NS_BEGIN
 
 /**
- * @brief Coroutine test command: takes length/width/height from the command line, asking UserIO only for the missing ones, and prints them.
+ * @brief Coroutine test command with two parameter variants: box by dimensions, or box by two opposite corners.
  *
  * @details
- * - `test_createbox 10 20 30` runs without a single prompt: a command line that carries every
- *   parameter is executed as typed.
- * - `test_createbox` asks for all three, and a partial line lets the command ask for the rest, so
- *   the same command works from a macro and from a person typing.
- * - A token that is not a number is a caller error and fails the command; it is never replaced by
- *   a prompt, because asking again would hide the typo.
+ * - The variant is an explicit discriminator token, never inferred from how many values there are:
+ *   `test_createbox size <l> <w> <h>` or `test_createbox corners <x,y,z> <x,y,z>`, plus the one
+ *   unambiguous shorthand `test_createbox <l> <w> <h>`.
+ * - Everything the command line carried is used as typed and only the missing values are asked
+ *   for, so `test_createbox corners 0,0,0 10,20,30` runs without a single prompt while a bare
+ *   `test_createbox` first asks which variant and then for that variant's values.
+ * - A token that does not fit the chosen variant is a caller error and fails the command; it is
+ *   never replaced by a prompt, because asking again would hide the mistake.
+ * - Both variants converge on the same box: nothing downstream can tell which one was used.
  */
 class TestCreateBoxCommand : public Command {
     VN_OBJECT_META_DECL;
@@ -28,7 +31,7 @@ class TestCreateBoxCommand : public Command {
 
     String description() const override
     {
-        return u8"测试协程命令：命令行给长宽高，缺的再询问，然后打印";
+        return u8"测试协程命令：按长宽高或两个对角点建盒子，缺的再询问";
     }
 
     CommandFlags flags() const override

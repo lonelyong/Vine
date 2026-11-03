@@ -18,3 +18,4 @@
 | T3 | 缺参提问 | 框架在必选参数缺失时按 `description` 提问；编程入口直接 `Failed` + 用法。今天由命令自己用 `UserIO` 问（`test_createbox` 已是“给全就直跑、缺的才问”） | T1 落地后 | `../design/appfw-command-arguments.md` F5 |
 | T4 | 对象参数 | 声明 `object_kind` 的参数以稳定 id 传递，派发时解析、命令按需再解析；`document`/`view` 折叠进 `CommandTarget` | 出现“按名字/编号指定文档、视图、插件”的真实命令 | `.ai/decisions/ADR-2026-10-24-command-target.md` |
 | T5 | 参数长度上界 | 单条 `args_record` 与单次 token 总量的上界，防止超长输入占住历史 | 历史条目数上限之外需要守内存时（N6 从“条数有界”扩到“字节有界”） | `../design/appfw-command-manager.md` F5 |
+| T6 | 参数集（变体） | 声明里支持 `parameter set`：判别符 + 每个集合的参数表；派发按集合校验与提问，帮助/补全按集合分组 | 第二条命令也需要多写法，或 `test_createbox` 的模式解析要被复制 | `../design/appfw-command-arguments.md` F6 |

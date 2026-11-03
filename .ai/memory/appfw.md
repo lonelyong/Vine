@@ -97,6 +97,7 @@
 - 参数**不写进命令对象**：实例由工厂默认构造、跑完即销毁；例外写法是在 `execute()` 开头绑成局部结构。
 - 历史与 `executing`/`executed` 记 `args_record = toString()`，与 `tokenizeCommandLine` 往返恒等 ⇒ 可回放。
 - 实例入口 `executeCommandAsync(Command*, target)` 不接参数（字段就是参数）；空行在派发前被拒。
+- 参数变体用**显式模式 token**（`size` / `corners`，加唯一无歧义简写），不按参数个数推断；模式先进 `args_record`，回放不漂。
 
 ## 公共面
 
