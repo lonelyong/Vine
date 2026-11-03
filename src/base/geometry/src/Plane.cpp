@@ -143,6 +143,27 @@ bool Plane<T>::intersectWith(const Plane<T>& other, Line<T>& intersection_line, 
     return true;
 }
 
+TMPL_PREFIX bool Plane<T>::intersectWith(const Ray<T>& ray, RayHit<T>& hit, T eps) const
+{
+    const T denominator = normal.dot(ray.direction);
+    if (std::abs(denominator) <= eps) {
+        return false; // the ray runs parallel to the plane, or carries no direction
+    }
+
+    const math::Vector3<T> to_origin(origin.x - ray.origin.x, origin.y - ray.origin.y, origin.z - ray.origin.z);
+    const T                t = normal.dot(to_origin) / denominator;
+    if (t < T(0)) {
+        return false; // the plane is behind the ray's origin
+    }
+
+    const math::Vector3<T> unit_normal = normal.normalized();
+
+    hit.t      = t;
+    hit.point  = ray.pointAt(t);
+    hit.normal = denominator > T(0) ? math::Vector3<T>(-unit_normal.x, -unit_normal.y, -unit_normal.z) : unit_normal;
+    return true;
+}
+
 template class VN_GEOMETRY_API Plane<float>;
 template class VN_GEOMETRY_API Plane<double>;
 

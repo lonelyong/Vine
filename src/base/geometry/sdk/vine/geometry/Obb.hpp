@@ -12,6 +12,7 @@
 #include <vine/math/Vector3.hpp>
 
 #include "Aabb.hpp"
+#include "Ray.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
@@ -159,6 +160,21 @@ class Obb {
      */
     [[nodiscard]]
     bool intersects(const Obb<T>& other) const;
+
+    /**
+     * @brief Intersects the box with a ray.
+     *
+     * @details
+     * - The ray is moved into the box's local space, where the test is the axis-aligned slab test; the orientation is a
+     *   rotation, so the returned `t` is a distance in the space the ray was given in.
+     *
+     * @param ray The ray, whose direction is unit length (see Ray).
+     * @param hit Receives the nearest hit when the call returns true; untouched otherwise.
+     * @param eps Tolerance for "the direction runs parallel to this slab".
+     * @return True when the box lies in front of the ray's origin or around it.
+     */
+    [[nodiscard]]
+    bool intersectWith(const Ray<T>& ray, RayHit<T>& hit, T eps = math::EPS<T>()) const;
 
     /**
      * @brief Returns the smallest axis-aligned box enclosing this oriented box.

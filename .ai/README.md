@@ -50,11 +50,12 @@
 - `appfw-app-info.md` —— 应用身份与应用信息：`AppInfo`/`AppConfig::info`、`Application::appInfo()`、关于面板与对话框。
 - `appfw-translation.md` —— 文案翻译：只翻 appfw 及以上层的界面文案，源语言英文、译文只有中文，Qt 目录随模块走并内嵌（可被文件覆盖），启动时装载、缺译文回退英文。
 
-**base 与其他（11）**
+**base 与其他（12）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
 - `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化与由基本体造实体的契约、失败表示。
 - `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`Line`/`Plane` 的归属、命名与契约。
+- `geometry-ray.md` —— 射线与图元相交：`Ray` 归 `geometry`、相交挂在被交对象上、场景走查留 `graphics`。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
 - `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。

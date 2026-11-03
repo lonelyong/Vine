@@ -6,11 +6,14 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <type_traits>
 
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
+
+#include "Ray.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
@@ -358,6 +361,24 @@ class Aabb
      * @return true if intersecting, false if disjoint.
      */
     bool intersectWith(const Aabb<T>& rect, Aabb<T>& out) const;
+
+    /**
+     * @brief Intersects the box with a ray.
+     *
+     * @details
+     * - The ray must be in the box's own space; nothing is transformed here.
+     * - A ray that starts inside the box reports `t = 0` and the normal of the face it would leave through, so a hit
+     *   always describes the surface the ray meets going forward.
+     *
+     * @param ray The ray, whose direction is unit length (see Ray).
+     * @param hit Receives the nearest hit when the call returns true; untouched otherwise.
+     * @param eps Tolerance for "the direction runs parallel to this slab".
+     * @return True when the box lies in front of the ray's origin or around it.
+     */
+    template <math::FP U>
+    [[nodiscard]]
+    bool intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps = math::EPS<U>()) const
+        requires(std::is_same_v<T, U>);
 
     /* ---- operators ---- */
 

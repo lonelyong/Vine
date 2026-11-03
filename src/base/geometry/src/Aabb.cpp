@@ -1,7 +1,11 @@
 #include <vine/geometry/Aabb.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
+#include <type_traits>
+#include <utility>
 
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
@@ -81,6 +85,84 @@ TMPL_PREFIX Aabb<T> Aabb<T>::compute(std::span<const math::Vector3<T>> points)
 }
 
 #undef TMPL_PREFIX
+
+template <typename T>
+template <math::FP U>
+bool Aabb<T>::intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps) const
+    requires(std::is_same_v<T, U>)
+{
+    if (ray.direction.length() <= eps) {
+        return false; // an aimless ray crosses nothing
+    }
+
+    const T origin[3] = { ray.origin.x, ray.origin.y, ray.origin.z };
+    const T dir[3]    = { ray.direction.x, ray.direction.y, ray.direction.z };
+    const T lower[3]  = { xmin, ymin, zmin };
+    const T upper[3]  = { xmax, ymax, zmax };
+
+    T   t_enter    = -std::numeric_limits<T>::max();
+    T   t_exit     = std::numeric_limits<T>::max();
+    int enter_axis = -1;
+    int exit_axis  = -1;
+    T   enter_sign = T(0);
+    T   exit_sign  = T(0);
+
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(dir[axis]) <= eps) {
+            if (origin[axis] < lower[axis] || origin[axis] > upper[axis]) {
+                return false; // parallel to this slab and outside it
+            }
+            continue;
+        }
+
+        T    near_t    = (lower[axis] - origin[axis]) / dir[axis];
+        T    far_t     = (upper[axis] - origin[axis]) / dir[axis];
+        T    near_sign = T(-1); // the min plane faces -axis
+        T    far_sign  = T(1);  // the max plane faces +axis
+        if (near_t > far_t) {
+            std::swap(near_t, far_t);
+            std::swap(near_sign, far_sign);
+        }
+
+        if (near_t > t_enter) {
+            t_enter    = near_t;
+            enter_axis = axis;
+            enter_sign = near_sign;
+        }
+        if (far_t < t_exit) {
+            t_exit    = far_t;
+            exit_axis = axis;
+            exit_sign = far_sign;
+        }
+    }
+
+    if (t_enter > t_exit || t_exit < T(0)) {
+        return false; // disjoint, or the box lies entirely behind the origin
+    }
+
+    // A ray that starts inside leaves through the exit face. Reporting t = 0 keeps every hit ahead of the origin and
+    // names the face the ray actually meets going forward.
+    const bool inside = t_enter < T(0) || enter_axis < 0;
+    hit.t             = inside ? T(0) : t_enter;
+    hit.point         = ray.pointAt(hit.t);
+    hit.normal        = math::Vector3<T>(T(0), T(0), T(0));
+
+    const int axis = inside ? exit_axis : enter_axis;
+    const T   sign = inside ? exit_sign : enter_sign;
+    if (axis == 0) {
+        hit.normal.x = sign;
+    } else if (axis == 1) {
+        hit.normal.y = sign;
+    } else if (axis == 2) {
+        hit.normal.z = sign;
+    }
+
+    return true;
+}
+
+// A member TEMPLATE is not covered by the class instantiations below, so the two real scalars are named here.
+template bool VN_GEOMETRY_API Aabb<float>::intersectWith<float>(const Ray<float>&, RayHit<float>&, float) const;
+template bool VN_GEOMETRY_API Aabb<double>::intersectWith<double>(const Ray<double>&, RayHit<double>&, double) const;
 
 template class VN_GEOMETRY_API Aabb<float>;
 template class VN_GEOMETRY_API Aabb<double>;

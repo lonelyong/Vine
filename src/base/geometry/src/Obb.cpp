@@ -263,6 +263,36 @@ TMPL_PREFIX Obb<T> Obb<T>::computePca(std::span<const math::Vector3<T>> vertices
     return boxAlongFrame(vertices, x_axis, y_axis, z_axis);
 }
 
+TMPL_PREFIX bool Obb<T>::intersectWith(const Ray<T>& ray, RayHit<T>& hit, T eps) const
+{
+    if (ray.direction.length() <= eps) {
+        return false; // an aimless ray crosses nothing
+    }
+
+    // Into the box's local space, where the test is the axis-aligned one. The orientation is a rotation, so a unit
+    // direction stays unit and the distance along it survives the round trip unchanged.
+    const Quaternion inverse = orientation_.conj();
+    const Vector     to_origin(ray.origin.x - center_.x, ray.origin.y - center_.y, ray.origin.z - center_.z);
+    const Vector     local_origin    = inverse * to_origin;
+    const Vector     local_direction = inverse * ray.direction;
+
+    const Ray<T>  local_ray(math::Point3<T>(local_origin.x, local_origin.y, local_origin.z), local_direction);
+    const Aabb<T> local_box(math::Point3<T>(-half_extents_.x, -half_extents_.y, -half_extents_.z),
+                            math::Point3<T>(half_extents_.x, half_extents_.y, half_extents_.z));
+
+    RayHit<T> local_hit;
+    if (!local_box.intersectWith(local_ray, local_hit, eps)) {
+        return false;
+    }
+
+    const math::Point3<T> world_point = orientation_ * local_hit.point;
+
+    hit.t      = local_hit.t;
+    hit.point  = math::Point3<T>(center_.x + world_point.x, center_.y + world_point.y, center_.z + world_point.z);
+    hit.normal = orientation_ * local_hit.normal;
+    return true;
+}
+
 #undef TMPL_PREFIX
 
 template class VN_GEOMETRY_API Obb<float>;

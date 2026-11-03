@@ -7,6 +7,7 @@
 #include <vine/math/Vector3.hpp>
 
 #include "Line.hpp"
+#include "Ray.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
@@ -50,6 +51,21 @@ class Plane
      */
     [[nodiscard]]
     bool intersectWith(const Plane<T>& plane, Line<T>& intersection_line, T eps = math::EPS<T>()) const;
+
+    /**
+     * @brief Intersect this plane with a ray.
+     *
+     * @details
+     * - A ray running parallel to the plane (or an aimless ray) is a miss, as is a plane behind the ray's origin.
+     * - The reported normal is the plane's, turned to face back towards the ray.
+     *
+     * @param ray The ray to intersect.
+     * @param hit Receives the hit when the call returns true; untouched otherwise.
+     * @param eps Tolerance for the direction being parallel to the plane.
+     * @return True when the ray crosses the plane at t >= 0.
+     */
+    [[nodiscard]]
+    bool intersectWith(const Ray<T>& ray, RayHit<T>& hit, T eps = math::EPS<T>()) const;
 
   public:
     math::Point3<T>  origin;

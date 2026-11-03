@@ -1045,7 +1045,7 @@ outline->setDrawOrder(1);   // 高 = 后画 = 压在上面（子树继承；clea
 `intersectSceneAll` 要全部命中、每条带 `geometry` / `distance` / `normal`）：
 
 ```cpp
-const vn::graphics::Ray ray = camera->screenToWorldRay(vn::math::Vec2d(nx, ny));  // nx / ny ∈ [0, 1]
+const vn::geometry::Rayd ray = camera->screenToWorldRay(vn::math::Vec2d(nx, ny));  // nx / ny ∈ [0, 1]
 const vn::graphics::RayIntersectionResult hit = vn::graphics::RayIntersection::intersectScene(ray, scene.get());
 if (hit.hit) { /* hit.geometry / hit.distance / hit.normal */ }
 ```

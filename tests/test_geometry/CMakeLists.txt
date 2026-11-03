@@ -5,6 +5,7 @@ set(SRC_FILE_LIST
 	ObbFitTest.cpp
 	ObbTest.cpp
 	PointCloudTest.cpp
+	RayTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
