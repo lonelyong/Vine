@@ -8,7 +8,7 @@
 - **触发**：有 OpenCASCADE 的构建（`VN_HAS_OCCT`），或需要显示 STEP/BREP 文件。
 - **内容**：`Tessellation.cpp` 在 `VN_BREP_HAS_OCCT` 下实现——逐面 `BRepMesh_IncrementalMesh`，`deflection` / `angle` 直接映射，`compute_normals` 时逐顶点法线；面缝不焊接、索引按面朝向。
 - **前置**：`include(VineOpenCASCADE)` + `vn_link_opencascade(${BREP_TARGET_NAME} VN_BREP_HAS_OCCT)`。
-- **验收**：`tests/test_brep` 增加盒体用例（12 个三角形、法线单位长度、顶点在盒面上）；无后端的构建仍报 `Unsupported`。
+- **验收**：`tests/test_brep` 增加盒体用例（12 个三角形、法线单位长度、顶点在盒面上）；无后端的构建仍返回空网格且 `tessellationSupported()` 为假。
 
 ## 2. `makeBrep(primitive)`
 

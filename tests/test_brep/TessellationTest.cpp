@@ -2,19 +2,17 @@
 
 #include <vine/brep/Tessellation.hpp>
 #include <vine/geometry/BrepShape.hpp>
-#include <vine/io/IoError.hpp>
 
 using vn::brep::tessellate;
-using vn::io::IoError;
+using vn::brep::tessellationSupported;
 
-TEST(Tessellation, aSolidWithoutAShapeIsInvalidData)
+TEST(Tessellation, aBuildWithoutABackendProducesNoMesh)
 {
-    // A default BrepShape holds no backend shape. The contract names that InvalidData, and the answer does not
-    // depend on whether the backend is built in.
+    // The module carries the contract without a backend: the capability query says so, and a call produces nothing.
+    EXPECT_FALSE(tessellationSupported());
+
     const vn::geometry::BrepShape shape;
+    const auto                   mesh = tessellate(shape);
 
-    const auto result = tessellate(shape);
-
-    EXPECT_FALSE(result.ok());
-    EXPECT_EQ(result.error(), IoError::InvalidData);
+    EXPECT_FALSE(mesh);
 }

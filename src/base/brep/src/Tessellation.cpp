@@ -2,18 +2,22 @@
 
 VN_BREP_NS_BEGIN
 
-vn::io::Result<vn::intrusive_ptr<vn::geometry::TriangleMesh>>
+bool tessellationSupported() noexcept
+{
+    // No backend is built into this module yet; the OpenCASCADE branch lands behind VN_BREP_HAS_OCCT and this
+    // becomes true in builds that carry it.
+    return false;
+}
+
+vn::intrusive_ptr<vn::geometry::TriangleMesh>
 tessellate(const vn::geometry::BrepShape& shape, const TessellationOptions& options)
 {
+    (void)shape;
     (void)options;
 
-    if (!shape.isValid()) {
-        return vn::io::IoError::InvalidData;
-    }
-
-    // No backend is built into this module yet: the contract is fixed, the OpenCASCADE body lands behind
-    // VN_BREP_HAS_OCCT (see .ai/backlog/brep.md). A caller writes one branch against the failure class either way.
-    return vn::io::IoError::Unsupported;
+    // Nothing is produced until the backend branch exists. The contract in the header names the two causes of a
+    // null mesh; tessellationSupported() tells a build-level cause from an input-level one.
+    return {};
 }
 
 VN_BREP_NS_END

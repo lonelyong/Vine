@@ -5,7 +5,6 @@
 #include <vine/geometry/BrepShape.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
-#include <vine/io/IoError.hpp>
 
 VN_BREP_NS_BEGIN
 
@@ -24,6 +23,17 @@ struct TessellationOptions {
 };
 
 /**
+ * @brief Reports whether this build can triangulate a B-rep solid.
+ *
+ * @details
+ * - This is a build property, not a per-call outcome: it answers the same thing every time, and it is what tells
+ *   "this build has no backend" apart from "this solid produced nothing" when both would return a null mesh.
+ *
+ * @return True when a backend is built into this module.
+ */
+[[nodiscard]] VN_BREP_API bool tessellationSupported() noexcept;
+
+/**
  * @brief Triangulates a B-rep solid into a triangle mesh.
  *
  * @details
@@ -32,8 +42,8 @@ struct TessellationOptions {
  * - Vertices are per face, not welded across a seam: two faces meeting at an edge keep one vertex each, because
  *   their normals differ there. The index stream is wound counter-clockwise as the owning face sees it.
  * - The result carries no bounds: a caller that needs them measures the returned positions with `Aabb::compute()`.
- * - Without the backend this answers `IoError::Unsupported` — the same failure a build without the backend
- *   reports elsewhere — and a solid that holds no shape answers `IoError::InvalidData`.
+ * - Failure is a null mesh, and it has exactly two causes: this build has no backend (ask tessellationSupported()
+ *   when the reason matters) or the solid holds no shape.
  *
  * @note
  * - The OpenCASCADE body is backlog work (see `.ai/backlog/brep.md`); this module carries the contract, the
@@ -41,9 +51,9 @@ struct TessellationOptions {
  *
  * @param shape   The solid to triangulate.
  * @param options Deflection, angular tolerance and normal production.
- * @return The triangle mesh, or the failure class.
+ * @return The triangle mesh, or null when nothing was produced.
  */
-[[nodiscard]] VN_BREP_API vn::io::Result<vn::intrusive_ptr<vn::geometry::TriangleMesh>>
+[[nodiscard]] VN_BREP_API vn::intrusive_ptr<vn::geometry::TriangleMesh>
 tessellate(const vn::geometry::BrepShape& shape, const TessellationOptions& options = {});
 
 VN_BREP_NS_END
