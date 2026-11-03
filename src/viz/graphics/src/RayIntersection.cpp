@@ -236,9 +236,8 @@ RayIntersectionResult makeTriangleHit(const Vec3d&             a,
  * slab test). Surviving meshes are tested in LOCAL space: the ray is
  * transformed once instead of transforming every vertex into world space,
  * which removes a 4x4 multiply per vertex and naturally honours non-uniform
- * scaling. The Möller–Trumbore t is measured along the un-normalised local
- * direction, so the local hit is recovered with the same vector that was
- * tested.
+ * scaling. The ray is normalized on the way in - geometry's Ray keeps its direction unit
+ * length - so the t it reports can be replayed with pointAt().
  *
  * A SINGULAR world matrix is rejected here, before the local space is built.
  * Matrix4x4::inverted() cannot report failure — it returns the original matrix
