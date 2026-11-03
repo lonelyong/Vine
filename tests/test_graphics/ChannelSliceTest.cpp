@@ -19,9 +19,9 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Ray.hpp>
+#include <vine/geometry/Aabb.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/math/Point3.hpp>
-#include <vine/math/Rect3.hpp>
 #include <vine/math/Vector3.hpp>
 
 #include <cstddef>

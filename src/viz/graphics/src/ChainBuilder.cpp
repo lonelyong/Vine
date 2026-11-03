@@ -1,5 +1,6 @@
 ﻿#include "ChainBuilder.hpp"
 
+#include <vine/geometry/Aabb.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -13,7 +14,6 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/math/Point3.hpp>
-#include <vine/math/Rect3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -249,7 +249,7 @@ intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline, c
     // targets whose shadow they are (RenderTarget::setShadowOf), so nothing is inferred from declaration
     // order and RenderPass stays a generic stage.
     shadow_map->setShadowOf(shadow_light_owner);
-    const vn::math::Aabbd shadow_bounds = content_->boundingBox();
+    const vn::geometry::Aabbd shadow_bounds = content_->boundingBox();
     shadow_map->setProducerViewProjection(shadow_light.type() == LightType::Spot ? spotShadowMatrix(shadow_light, shadow_bounds, *light_camera)
                                                                                  : directionalShadowMatrix(shadow_light, shadow_bounds, *light_camera));
 

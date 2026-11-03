@@ -1,10 +1,14 @@
-﻿#include <vine/math/Plane.hpp>
+#include <vine/geometry/Plane.hpp>
 
-VN_MATH_NS_BEGIN
+#include <cmath>
+
+#include <vine/math/Math.hpp>
+
+VN_GEOMETRY_NS_BEGIN
 
 #define TMPL_PREFIX template <typename T>
 
-TMPL_PREFIX bool Plane<T>::intersectWith(const Line<T>& line, Point3<T>& intersection_pt, T eps) const
+TMPL_PREFIX bool Plane<T>::intersectWith(const Line<T>& line, math::Point3<T>& intersection_pt, T eps) const
 {
     // Plane–Line intersection.
     //
@@ -25,11 +29,11 @@ TMPL_PREFIX bool Plane<T>::intersectWith(const Line<T>& line, Point3<T>& interse
     //
     //   |n·d| ≤ eps  →  line ∥ plane, no unique intersection.
 
-    Vector3<T> diff  = line.origin - origin;
+    math::Vector3<T> diff  = line.origin - origin;
     T          denom = normal.dot(line.direction);
 
     // Check if line is parallel to plane
-    if (isZero(denom, eps)) {
+    if (math::isZero(denom, eps)) {
         return false;
     }
 
@@ -53,10 +57,10 @@ bool Plane<T>::intersectWith(const Plane<T>& other, Line<T>& intersection_line, 
     //   point:     solve the 2×2 subsystem on the plane where the axis with
     //              the largest |dir| component is fixed to zero.
 
-    Vector3<T> dir = normal.cross(other.normal);
+    math::Vector3<T> dir = normal.cross(other.normal);
 
     // Parallel or coincident?  n₁ × n₂ = 0
-    if (isZero(dir.length(), eps)) {
+    if (math::isZero(dir.length(), eps)) {
         return false;
     }
 
@@ -95,7 +99,7 @@ bool Plane<T>::intersectWith(const Plane<T>& other, Line<T>& intersection_line, 
     //           det        det
     auto solve2x2 = [eps](T a, T b, T c, T d, T e, T f, T& u, T& v) -> bool {
         T det = a * d - b * c;
-        if (isZero(det, eps)) {
+        if (math::isZero(det, eps)) {
             return false;
         }
         u = (e * d - b * f) / det;
@@ -103,7 +107,7 @@ bool Plane<T>::intersectWith(const Plane<T>& other, Line<T>& intersection_line, 
         return true;
     };
 
-    Point3<T> pt;
+    math::Point3<T> pt;
 
     if (fix_axis == 0) {
         // Fix x = 0, solve for (y, z)
@@ -139,6 +143,7 @@ bool Plane<T>::intersectWith(const Plane<T>& other, Line<T>& intersection_line, 
     return true;
 }
 
-template class VN_MATH_API Plane<float>;
-template class VN_MATH_API Plane<double>;
-VN_MATH_NS_END
+template class VN_GEOMETRY_API Plane<float>;
+template class VN_GEOMETRY_API Plane<double>;
+
+VN_GEOMETRY_NS_END

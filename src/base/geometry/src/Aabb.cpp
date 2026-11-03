@@ -1,4 +1,4 @@
-﻿#include <vine/math/Rect3.hpp>
+#include <vine/geometry/Aabb.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -7,22 +7,21 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
-
-VN_MATH_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 #define TMPL_PREFIX template <typename T>
 
-TMPL_PREFIX bool Rect3<T>::contains(T x, T y, T z) const
+TMPL_PREFIX bool Aabb<T>::contains(T x, T y, T z) const
 {
     return x >= xmin && x <= xmax && y >= ymin && y <= ymax && z >= zmin && z <= zmax;
 }
 
-TMPL_PREFIX bool Rect3<T>::contains(const Point3<T>& pt) const
+TMPL_PREFIX bool Aabb<T>::contains(const math::Point3<T>& pt) const
 {
     return pt.x >= xmin && pt.x <= xmax && pt.y >= ymin && pt.y <= ymax && pt.z >= zmin && pt.z <= zmax;
 }
 
-TMPL_PREFIX void Rect3<T>::expandBy(const Point3<T>& pt)
+TMPL_PREFIX void Aabb<T>::expandBy(const math::Point3<T>& pt)
 {
     xmin = std::min<T>(xmin, pt.x);
     ymin = std::min<T>(ymin, pt.y);
@@ -32,7 +31,7 @@ TMPL_PREFIX void Rect3<T>::expandBy(const Point3<T>& pt)
     zmax = std::max<T>(zmax, pt.z);
 }
 
-TMPL_PREFIX void Rect3<T>::expandBy(const Rect3<T>& rect)
+TMPL_PREFIX void Aabb<T>::expandBy(const Aabb<T>& rect)
 {
     xmin = std::min<T>(xmin, rect.xmin);
     ymin = std::min<T>(ymin, rect.ymin);
@@ -42,7 +41,7 @@ TMPL_PREFIX void Rect3<T>::expandBy(const Rect3<T>& rect)
     zmax = std::max<T>(zmax, rect.zmax);
 }
 
-TMPL_PREFIX bool Rect3<T>::intersectWith(const Rect3<T>& rect, Rect3<T>& out) const
+TMPL_PREFIX bool Aabb<T>::intersectWith(const Aabb<T>& rect, Aabb<T>& out) const
 {
     auto ix0 = std::max<T>(xmin, rect.xmin);
     auto iy0 = std::max<T>(ymin, rect.ymin);
@@ -61,12 +60,12 @@ TMPL_PREFIX bool Rect3<T>::intersectWith(const Rect3<T>& rect, Rect3<T>& out) co
     return ix0 <= ix1 && iy0 <= iy1 && iz0 <= iz1;
 }
 
-TMPL_PREFIX Rect3<T> Rect3<T>::compute(std::span<const Vector3<T>> points)
+TMPL_PREFIX Aabb<T> Aabb<T>::compute(std::span<const math::Vector3<T>> points)
 {
     if (points.empty()) {
-        return Rect3<T>();
+        return Aabb<T>();
     }
-    Rect3<T> box;
+    Aabb<T> box;
     box.xmin = box.xmax = points.front().x;
     box.ymin = box.ymax = points.front().y;
     box.zmin = box.zmax = points.front().z;
@@ -83,15 +82,15 @@ TMPL_PREFIX Rect3<T> Rect3<T>::compute(std::span<const Vector3<T>> points)
 
 #undef TMPL_PREFIX
 
-template class VN_MATH_API Rect3<float>;
-template class VN_MATH_API Rect3<double>;
-template class VN_MATH_API Rect3<int8_t>;
-template class VN_MATH_API Rect3<uint8_t>;
-template class VN_MATH_API Rect3<int16_t>;
-template class VN_MATH_API Rect3<uint16_t>;
-template class VN_MATH_API Rect3<int32_t>;
-template class VN_MATH_API Rect3<uint32_t>;
-template class VN_MATH_API Rect3<int64_t>;
-template class VN_MATH_API Rect3<uint64_t>;
+template class VN_GEOMETRY_API Aabb<float>;
+template class VN_GEOMETRY_API Aabb<double>;
+template class VN_GEOMETRY_API Aabb<int8_t>;
+template class VN_GEOMETRY_API Aabb<uint8_t>;
+template class VN_GEOMETRY_API Aabb<int16_t>;
+template class VN_GEOMETRY_API Aabb<uint16_t>;
+template class VN_GEOMETRY_API Aabb<int32_t>;
+template class VN_GEOMETRY_API Aabb<uint32_t>;
+template class VN_GEOMETRY_API Aabb<int64_t>;
+template class VN_GEOMETRY_API Aabb<uint64_t>;
 
-VN_MATH_NS_END
+VN_GEOMETRY_NS_END

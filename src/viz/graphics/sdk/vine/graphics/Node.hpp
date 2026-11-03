@@ -7,16 +7,16 @@
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
+#include <vine/geometry/Aabb.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
-#include <vine/math/Rect3.hpp>
 #include <vine/raw_ptr.hpp>
 
 #include "CollectView.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
-using vn::math::Aabbd;
+using vn::geometry::Aabbd;
 using vn::math::Mat4d;
 
 class Group;

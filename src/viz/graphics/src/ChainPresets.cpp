@@ -59,7 +59,7 @@ intrusive_ptr<RenderTarget> defaultGbufferTarget(int width, int height)
     return gbuffer;
 }
 
-Mat4d directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds, Camera& camera)
+Mat4d directionalShadowMatrix(const Light& light, const vn::geometry::Aabbd& bounds, Camera& camera)
 {
     using vn::math::Vec3d;
 
@@ -83,7 +83,7 @@ Mat4d directionalShadowMatrix(const Light& light, const vn::math::Aabbd& bounds,
     return camera.projectionMatrix() * camera.viewMatrix();
 }
 
-Mat4d spotShadowMatrix(const Light& light, const vn::math::Aabbd& bounds, Camera& camera)
+Mat4d spotShadowMatrix(const Light& light, const vn::geometry::Aabbd& bounds, Camera& camera)
 {
     using vn::math::Vec3d;
 

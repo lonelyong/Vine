@@ -1,11 +1,10 @@
-﻿#include <vine/math/Line.hpp>
+#include <vine/geometry/Line.hpp>
 
 #include <cmath>
 
 #include <vine/math/Math.hpp>
 
-
-VN_MATH_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 #define TMPL_PREFIX template <typename T>
 
@@ -13,15 +12,15 @@ TMPL_PREFIX Line<T>::Intersection Line<T>::intersectWith(const Line<T>& other, T
 {
     Intersection is;
 
-    const Point3<T>&  o1 = origin;
-    const Vector3<T>& d1 = direction;
-    const Point3<T>&  o2 = other.origin;
-    const Vector3<T>& d2 = other.direction;
+    const math::Point3<T>&  o1 = origin;
+    const math::Vector3<T>& d1 = direction;
+    const math::Point3<T>&  o2 = other.origin;
+    const math::Vector3<T>& d2 = other.direction;
 
     // Vector connecting the two origins.
-    const Vector3<T> r = o2 - o1;
+    const math::Vector3<T> r = o2 - o1;
     // Direction cross product — zero when d1 ∥ d2.
-    const Vector3<T> c = d1.cross(d2);
+    const math::Vector3<T> c = d1.cross(d2);
 
     // Parallel?
     if (c.length2() < tol * tol) {
@@ -99,23 +98,23 @@ TMPL_PREFIX Line<T>::Intersection Line<T>::intersectWith(const Line<T>& other, T
     return is;
 }
 
-TMPL_PREFIX Point3<T> Line<T>::closestPoint(const Point3<T>& pt) const
+TMPL_PREFIX math::Point3<T> Line<T>::closestPoint(const math::Point3<T>& pt) const
 {
     // P(t) = origin + t·direction
     // (pt − P(t))·direction = 0  →  t = (pt−origin)·direction / |direction|²
     const auto denom = direction.dot(direction);
     // Zero direction
-    if (denom < EPS<T>()) {
+    if (denom < math::EPS<T>()) {
         return origin;
     }
 
-    const Vector3<T> v = pt - origin;
+    const math::Vector3<T> v = pt - origin;
     const double     t = v.dot(direction) / denom;
 
     return origin + direction * t;
 }
 
-template class VN_MATH_API Line<float>;
-template class VN_MATH_API Line<double>;
+template class VN_GEOMETRY_API Line<float>;
+template class VN_GEOMETRY_API Line<double>;
 
-VN_MATH_NS_END
+VN_GEOMETRY_NS_END

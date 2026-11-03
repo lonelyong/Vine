@@ -15,7 +15,7 @@
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
 一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
-## design/ —— 现行设计文档（33）
+## design/ —— 现行设计文档（34）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -50,9 +50,10 @@
 - `appfw-app-info.md` —— 应用身份与应用信息：`AppInfo`/`AppConfig::info`、`Application::appInfo()`、关于面板与对话框。
 - `appfw-translation.md` —— 文案翻译：只翻 appfw 及以上层的界面文案，源语言英文、译文只有中文，Qt 目录随模块走并内嵌（可被文件覆盖），启动时装载、缺译文回退英文。
 
-**base 与其他（9）**
+**base 与其他（10）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
+- `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`Line`/`Plane` 的归属、命名与契约。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
 - `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。
@@ -61,11 +62,12 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（22）
+## decisions/ —— 决策记录（ADR）（23）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-11-03-geometry-primitives-ownership.md` —— 空间值类型归 `geometry`，轴对齐盒改名为 `Aabb`；`Rect2` 留在 `math`，不留兼容别名。
 - `ADR-2026-10-24-command-target.md` —— 命令的目标是视图（`DocumentView`），层可空、需求按命令声明；`RenderControl` 不做目标。
 - `ADR-2026-11-01-translation-scope.md` —— 只有界面层（appfw 及以上）可翻译，源语言中文，目录用 Qt Linguist，v1 不做运行期切换（源语言一条已被下一条取代）。
 - `ADR-2026-11-02-english-source-language.md` —— 源语言改为英文、中文进目录；缺译文回退英文，非中文系统落到 `en`。

@@ -1,15 +1,22 @@
-﻿#pragma once
+#pragma once
+
+#include "geometry_global.hpp"
+
+#include <vine/math/Math.hpp>
+#include <vine/math/Point3.hpp>
+#include <vine/math/Vector3.hpp>
 
 #include "Line.hpp"
 
-VN_MATH_NS_BEGIN
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A 3D plane represented by an origin point and a normal vector.
  * @tparam T Only accepts float and double.
  */
 template <typename T>
-class Plane {
+class Plane
+{
   public:
     using value_type = T;
 
@@ -19,7 +26,7 @@ class Plane {
      * @param origin A point on the plane.
      * @param normal Plane normal vector.
      */
-    constexpr Plane(const Point3<T>& origin, const Vector3<T>& normal)
+    constexpr Plane(const math::Point3<T>& origin, const math::Vector3<T>& normal)
       : origin(origin)
       , normal(normal)
     {}
@@ -33,7 +40,7 @@ class Plane {
      * @return True when intersection exists.
      */
     [[nodiscard]]
-    bool intersectWith(const Line<T>& line, Point3<T>& intersection_pt, T eps = EPS<T>()) const;
+    bool intersectWith(const Line<T>& line, math::Point3<T>& intersection_pt, T eps = math::EPS<T>()) const;
     /**
      * @brief Intersect this plane with another plane.
      * @param plane Other plane.
@@ -42,13 +49,14 @@ class Plane {
      * @return True when intersection line exists.
      */
     [[nodiscard]]
-    bool intersectWith(const Plane<T>& plane, Line<T>& intersection_line, T eps = EPS<T>()) const;
+    bool intersectWith(const Plane<T>& plane, Line<T>& intersection_line, T eps = math::EPS<T>()) const;
 
   public:
-    Point3<T>  origin;
-    Vector3<T> normal;
+    math::Point3<T>  origin;
+    math::Vector3<T> normal;
 };
 
 using Planef = Plane<float>;
 using Planed = Plane<double>;
-VN_MATH_NS_END
+
+VN_GEOMETRY_NS_END

@@ -8,6 +8,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/Color.hpp>
 #include <vine/Colorf.hpp>
+#include <vine/geometry/Aabb.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/geometry/MixedMesh.hpp>
 #include <vine/geometry/QuadMesh.hpp>
@@ -70,8 +71,8 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::imaging::Image;
 using vn::imaging::PixelFormat;
-using vn::math::Aabbd;
-using vn::math::Aabbf;
+using vn::geometry::Aabbd;
+using vn::geometry::Aabbf;
 using vn::math::Isometry3d;
 using vn::math::Mat4d;
 using vn::math::Point3d;
@@ -6841,7 +6842,7 @@ TEST(PassChainTest, TheDirectionalShadowCameraFramesTheContentFromTheLightSide)
     sun->setName(u8"sun");
 
     // A box that is not at the origin: the window has to follow the content, not the world.
-    const vn::math::Rect3<double> bounds(vn::math::Point3<double>(4.0, 2.0, 0.0), vn::math::Point3<double>(6.0, 4.0, 2.0));
+    const vn::geometry::Aabb<double> bounds(vn::math::Point3<double>(4.0, 2.0, 0.0), vn::math::Point3<double>(6.0, 4.0, 2.0));
 
     auto                  camera          = intrusive_ptr<Camera>(new Camera());
     const vn::math::Mat4d view_projection = directionalShadowMatrix(*sun, bounds, *camera);
@@ -6874,7 +6875,7 @@ TEST(PassChainTest, TheSpotShadowCameraFramesTheConeFromTheLightsPosition)
     // units in front of it) must land inside, and a point well off the cone's axis must land OUTSIDE - the map
     // covers the cone, not the world (outside the cone the light is already at zero strength).
     auto                          spot = LightPtr(Light::createSpot(vn::math::Vec3d(0.0, 0.0, 10.0), vn::math::Vec3d(0.0, 0.0, -1.0), 10.0, 20.0, 50.0F));
-    const vn::math::Rect3<double> bounds(vn::math::Point3<double>(-1.0, -1.0, -1.0), vn::math::Point3<double>(1.0, 1.0, 1.0));
+    const vn::geometry::Aabb<double> bounds(vn::math::Point3<double>(-1.0, -1.0, -1.0), vn::math::Point3<double>(1.0, 1.0, 1.0));
 
     auto                  camera          = intrusive_ptr<Camera>(new Camera());
     const vn::math::Mat4d view_projection = spotShadowMatrix(*spot, bounds, *camera);

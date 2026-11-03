@@ -3,7 +3,7 @@ set(SRC_FILE_LIST
 	Matrix3x3Test.cpp
 	Matrix4x4Test.cpp
 	QuaternionTest.cpp
-	RectTest.cpp
+	Rect2Test.cpp
 	VectorTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})

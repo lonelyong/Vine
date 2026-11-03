@@ -1,8 +1,12 @@
-﻿#pragma once
-#include "Point3.hpp"
-#include "Vector3.hpp"
+#pragma once
 
-VN_MATH_NS_BEGIN
+#include "geometry_global.hpp"
+
+#include <vine/math/Math.hpp>
+#include <vine/math/Point3.hpp>
+#include <vine/math/Vector3.hpp>
+
+VN_GEOMETRY_NS_BEGIN
 
 /**
  * @brief A 3D line in point–direction parametric form.
@@ -16,7 +20,8 @@ VN_MATH_NS_BEGIN
  * @tparam T Floating-point type (float or double).
  */
 template <typename T>
-class Line {
+class Line
+{
   public:
     using value_type = T;
 
@@ -66,11 +71,11 @@ class Line {
 
             /// Closest point on this line (L1).
             /// Equals L1's origin when the lines are parallel.
-            Point3<T> pt1;
+            math::Point3<T> pt1;
 
             /// Closest point on the other line (L2).
             /// When parallel: the projection of L1's origin onto L2.
-            Point3<T> pt2;
+            math::Point3<T> pt2;
 
             /// Euclidean distance between the two closest points.
             T distance{ 0 };
@@ -86,7 +91,7 @@ class Line {
      * @param origin    Any point on the line (typically the "starting" point).
      * @param direction Direction vector; does not need to be unit-length.
      */
-    constexpr Line(const Point3<T>& origin, const Vector3<T>& direction)
+    constexpr Line(const math::Point3<T>& origin, const math::Vector3<T>& direction)
       : origin(origin)
       , direction(direction)
     {}
@@ -120,7 +125,7 @@ class Line {
      * @return Intersection containing flags and the closest-point pair.
      */
     [[nodiscard]]
-    Intersection intersectWith(const Line& other, T eps = EPS<T>()) const;
+    Intersection intersectWith(const Line& other, T eps = math::EPS<T>()) const;
 
     /**
      * @brief Projects a point onto this line (orthogonal projection).
@@ -137,14 +142,14 @@ class Line {
      * @return Closest point on this line.
      */
     [[nodiscard]]
-    Point3<T> closestPoint(const Point3<T>& pt) const;
+    math::Point3<T> closestPoint(const math::Point3<T>& pt) const;
 
   public:
-    Point3<T>  origin;
-    Vector3<T> direction;
+    math::Point3<T>  origin;
+    math::Vector3<T> direction;
 };
 
 using Linef = Line<float>;
 using Lined = Line<double>;
 
-VN_MATH_NS_END
+VN_GEOMETRY_NS_END
