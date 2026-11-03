@@ -28,7 +28,7 @@ String Object::toString() const
 
 const Type* Object::desc()
 {
-    static Type* t = new Type(typeid(Object), nullptr);
+    static const Type* t = Type::obtain(typeid(Object), nullptr);
     return t;
 }
 

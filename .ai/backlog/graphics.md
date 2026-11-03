@@ -22,7 +22,6 @@
 | T6 | update traversal | 无逐帧节点更新入口（`FrameContext` / `UpdateContext` 没有消费者） | 动画 / 关节回放等需要每帧更新节点状态 | `../design/graphics-scene.md` §2.4 |
 | T7 | 节点灯 / 逐 draw 选灯 | `Light` 在 `Scene` 上且是世界坐标：灯不能跟着子树动，也没有“这几盏灯照这个 draw”（灯块按声明顺序取前 8 盏）。两者是同一个模型的缺口 | 出现挂在会动物体上的灯，或一场景灯数远超槽数且掉落影响画面 | `../design/graphics-scene.md` §2.7、`../design/graphics-shader-params.md`、本文件 S7 |
 | T23 | 点云渲染桥 | `PointCloud` 已在 geometry，但 `geometryFromShape()` 只接网格：点云要变成 `Topology::Points` 的 `Geometry`（位置/法线/颜色三个通道原样共享，点大小由程序写）才会被画出来 | 出现要显示点云文件（PLY 等）或点云节点的消费者 | `../design/graphics-geometry.md` §3.6.4 |
-| T25 | `tests/test_graphics` 多处崩溃 | `GeometryTest.MeshCounts`、`RayIntersectionTest.HitsTriangle` / `MissesTriangle`、`SceneTest.BoundingBoxAggregates` 在本机 Debug 构建下进程直接退出，gtest 不给失败信息。在 `7e8c41c3`（射线迁移之前）也同样崩溃，说明与 `Ray` 类型迁移无关；共同点是经由 `geometryFromShape()` / 盒统计。其余用例（`CameraTest` 全部、段与拓扑的拾取用例）通过 | 下一次动 `geometryFromShape()` / `AttributeChannel` / `Node::boundingBox()`，或 CI 上复现 | `../design/geometry-ray.md` §9.2 |
 
 ### 2.2 后端与资源
 

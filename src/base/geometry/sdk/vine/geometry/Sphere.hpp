@@ -12,7 +12,7 @@ VN_GEOMETRY_NS_BEGIN
  * @brief A sphere primitive centered at the origin, sized in the shape's local space.
  */
 class VN_GEOMETRY_API Sphere : public Primitive {
-    VN_OBJECT_META(Sphere, Primitive);
+    VN_OBJECT_META_DECL;
 
   public:
     /**

@@ -38,7 +38,7 @@ class ITagged {
 };
 
 class ITaggedEx : public ITagged {
-    VN_DECLARE_INTERFACE(ITaggedEx, ITagged)
+    VN_DECLARE_INTERFACE(ITaggedEx)
 
   public:
     virtual int extra() const = 0;
@@ -88,25 +88,35 @@ VN_OBJECT_META_IMPL(TaggedDerivedEvent, TaggedEvent, ITagged)
 
 /// 多接口（共享父接口 ITagged）：验证访问顺序与去重。
 class ILeft : public ITagged {
-    VN_DECLARE_INTERFACE(ILeft, ITagged)
+    VN_DECLARE_INTERFACE(ILeft)
 
   public:
     virtual int left() const = 0;
 };
 
 class IRight : public ITagged {
-    VN_DECLARE_INTERFACE(IRight, ITagged)
+    VN_DECLARE_INTERFACE(IRight)
 
   public:
     virtual int right() const = 0;
 };
 
 class IBoth : public ILeft, public IRight {
-    VN_DECLARE_INTERFACE(IBoth, ILeft, IRight)
+    VN_DECLARE_INTERFACE(IBoth)
 
   public:
     virtual int both() const = 0;
 };
+
+VN_DEFINE_INTERFACE(ITagged)
+
+VN_DEFINE_INTERFACE(ITaggedEx, ITagged)
+
+VN_DEFINE_INTERFACE(ILeft, ITagged)
+
+VN_DEFINE_INTERFACE(IRight, ITagged)
+
+VN_DEFINE_INTERFACE(IBoth, ILeft, IRight)
 
 class BothEvent : public vn::EventArgs, public IBoth {
   public:

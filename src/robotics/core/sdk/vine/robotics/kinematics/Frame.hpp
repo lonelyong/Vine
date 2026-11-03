@@ -39,7 +39,7 @@ class State;
  * model) and must outlive the tree that references them.
  */
 class VN_ROBOTICS_CORE_API Frame : public vn::Object, public vn::INameable, public vn::IHierarchyNode<Frame> {
-    VN_OBJECT_META(Frame, vn::Object, vn::INameable);
+    VN_OBJECT_META_DECL;
 
   public:
     Frame();

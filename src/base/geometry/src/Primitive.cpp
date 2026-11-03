@@ -14,6 +14,16 @@ VN_GEOMETRY_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Primitive, Shape)
 
+VN_OBJECT_META_IMPL(Box, Primitive)
+
+VN_OBJECT_META_IMPL(Cone, Primitive)
+
+VN_OBJECT_META_IMPL(Cylinder, Primitive)
+
+VN_OBJECT_META_IMPL(Ellipsoid, Primitive)
+
+VN_OBJECT_META_IMPL(Sphere, Primitive)
+
 Primitive::Primitive()
 {}
 

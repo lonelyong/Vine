@@ -42,7 +42,7 @@ enum class SceneObjectKind
  * Workcell::parentOf(), ...).
  */
 class VN_ROBOTICS_CORE_API SceneObject : public vn::Object, public vn::INameable {
-    VN_OBJECT_META(SceneObject, vn::Object, vn::INameable);
+    VN_OBJECT_META_DECL;
 
   public:
     /**

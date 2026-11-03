@@ -23,7 +23,7 @@ class Inherit : public Parent {
 
     static const Type* desc()
     {
-        static const Type* t = new Type(typeid(Sub), Parent::desc());
+        static const Type* t = Type::obtain(typeid(Sub), Parent::desc());
         return t;
     }
 

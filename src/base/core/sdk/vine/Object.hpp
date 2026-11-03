@@ -113,6 +113,21 @@ const T& obj_cast(const Object& obj)
 
 VN_CORE_NS_END
 
+/**
+ * @brief Declares and defines the metatype descriptor of a class from its definition alone.
+ *
+ * @details
+ * - Use it for a class whose whole definition lives in a header (a value-like shape, a test double): no exported
+ *   definition and no extra translation unit are needed.
+ * - The definition is inline, so every image that includes the header gets its own copy - harmless because
+ *   Type::obtain() answers every copy after the first with the one descriptor already registered.
+ * - A class the module owns and exports (`class VN_X_API Name`) uses VN_OBJECT_META_DECL + VN_OBJECT_META_IMPL instead,
+ *   so the descriptor stays one definition in that module.
+ *
+ * @param Sub The class being defined.
+ * @param Parent Its single class parent.
+ * @param ... Interfaces it implements (optional).
+ */
 #define VN_OBJECT_META(Sub, Parent, ...)                                                                                                                       \
   public:                                                                                                                                                      \
     virtual const vn::Type* getType() const noexcept override                                                                                                  \
@@ -121,15 +136,32 @@ VN_CORE_NS_END
     }                                                                                                                                                          \
     static const vn::Type* desc()                                                                                                                              \
     {                                                                                                                                                          \
-        static const vn::Type* t = new vn::Type(typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));       \
+        static const vn::Type* t = vn::Type::obtain(                                                                                                           \
+            typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));                                           \
         return t;                                                                                                                                              \
     }
 
+/**
+ * @brief Declares the metatype descriptor of a class the module exports.
+ *
+ * @details
+ * - Declare here and define in the module's own translation unit with VN_OBJECT_META_IMPL, so the class has ONE
+ *   definition of getType()/desc() rather than one per image. The class must be exported (`class VN_X_API Name`),
+ *   because that single definition is what consumers link against.
+ * - A class that lives entirely in a header uses VN_OBJECT_META instead: nothing to export, nothing to define elsewhere.
+ */
 #define VN_OBJECT_META_DECL                                                                                                                                    \
   public:                                                                                                                                                      \
     virtual const vn::Type* getType() const noexcept override;                                                                                                 \
     static const vn::Type*  desc();
 
+/**
+ * @brief Defines the metatype descriptor declared by VN_OBJECT_META_DECL.
+ *
+ * @param Sub The class being defined.
+ * @param Parent Its single class parent.
+ * @param ... Interfaces it implements (optional).
+ */
 #define VN_OBJECT_META_IMPL(Sub, Parent, ...)                                                                                                                  \
     const vn::Type* Sub::getType() const noexcept                                                                                                              \
     {                                                                                                                                                          \
@@ -138,7 +170,8 @@ VN_CORE_NS_END
                                                                                                                                                                \
     const vn::Type* Sub::desc()                                                                                                                                \
     {                                                                                                                                                          \
-        static const vn::Type* t = new vn::Type(typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));       \
+        static const vn::Type* t = vn::Type::obtain(                                                                                                           \
+            typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));                                           \
         return t;                                                                                                                                              \
     }
 
@@ -150,7 +183,8 @@ VN_CORE_NS_END
                                                                                                                                                                \
     TmplPrefix const vn::Type* Sub::desc()                                                                                                                     \
     {                                                                                                                                                          \
-        static const vn::Type* t = new vn::Type(typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));       \
+        static const vn::Type* t = vn::Type::obtain(                                                                                                           \
+            typeid(Sub), Parent::desc(), vn::TypeKind::Class __VA_OPT__(, vn::detail::interfacesOf<__VA_ARGS__>()));                                           \
         return t;                                                                                                                                              \
     }
 

@@ -28,7 +28,7 @@ class Device;
  * collisions, auxiliary frames) is expressed relative to that frame.
  */
 class VN_ROBOTICS_CORE_API Link : public vn::Object, public vn::INameable {
-    VN_OBJECT_META(Link, vn::Object, vn::INameable);
+    VN_OBJECT_META_DECL;
 
   public:
     /**

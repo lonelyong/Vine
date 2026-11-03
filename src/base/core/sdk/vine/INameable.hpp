@@ -12,7 +12,7 @@ VN_CORE_NS_BEGIN
 /**
  * @brief Interface for objects that have a readable name.
  */
-class INamed {
+class VN_CORE_API INamed {
     VN_DECLARE_INTERFACE(INamed)
 
   public:
@@ -31,8 +31,8 @@ class INamed {
  *
  * Extends INamed with a name setter.
  */
-class INameable : public INamed {
-    VN_DECLARE_INTERFACE(INameable, INamed)
+class VN_CORE_API INameable : public INamed {
+    VN_DECLARE_INTERFACE(INameable)
 
   public:
     /**

@@ -12,7 +12,7 @@ VN_GEOMETRY_NS_BEGIN
  * @brief A cone primitive on the Z axis, base at -height/2 and apex at +height/2 in the shape's local space.
  */
 class VN_GEOMETRY_API Cone : public Primitive {
-    VN_OBJECT_META(Cone, Primitive);
+    VN_OBJECT_META_DECL;
 
   public:
     /**

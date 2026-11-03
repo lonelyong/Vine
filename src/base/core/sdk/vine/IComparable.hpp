@@ -11,7 +11,7 @@ VN_CORE_NS_BEGIN
 /**
  * @brief Interface for objects that can be ordered against another Object.
  */
-class IComparable {
+class VN_CORE_API IComparable {
     VN_DECLARE_INTERFACE(IComparable)
 
   public:

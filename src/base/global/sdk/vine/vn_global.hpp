@@ -22,6 +22,18 @@
 #    define VN_IMPORT
 #endif
 
+// Inline control. These say HOW A CALL SITE IS COMPILED; they say nothing about where a definition lives, so they
+// cannot make a function exist once per process - an inline definition is still copied into every image that includes
+// it, and an out-of-line one is still unique because it has a single home. Uniqueness comes from the definition's
+// home (an exported out-of-line definition, or Type::obtain() for a type descriptor), never from an attribute.
+#if defined(VN_CC_MSVC)
+#    define VN_FORCE_INLINE __forceinline
+#    define VN_NOINLINE     __declspec(noinline)
+#else
+#    define VN_FORCE_INLINE inline __attribute__((always_inline))
+#    define VN_NOINLINE     __attribute__((noinline))
+#endif
+
 #if defined(__LP64__) || defined(_LP64) || defined(_WIN64) || defined(__x86_64__)
 #    define VN_ARCH_64
 #endif

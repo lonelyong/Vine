@@ -2,6 +2,8 @@
 
 VN_ROBOTICS_WORKCELL_NS_BEGIN
 
+VN_OBJECT_META_IMPL(Link, vn::Object, vn::INameable)
+
 Link::Link(const String& name)
   : name_(name)
 {}

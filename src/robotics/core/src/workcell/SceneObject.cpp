@@ -4,6 +4,8 @@
 
 VN_ROBOTICS_WORKCELL_NS_BEGIN
 
+VN_OBJECT_META_IMPL(SceneObject, vn::Object, vn::INameable)
+
 raw_ptr<SceneObject> SceneObject::parentObject() const
 {
     if (!workcell_) {

@@ -12,7 +12,7 @@ VN_GEOMETRY_NS_BEGIN
  * @brief A cylinder primitive centered on the Z axis, spanning -height/2 to +height/2 in the shape's local space.
  */
 class VN_GEOMETRY_API Cylinder : public Primitive {
-    VN_OBJECT_META(Cylinder, Primitive);
+    VN_OBJECT_META_DECL;
 
   public:
     /**

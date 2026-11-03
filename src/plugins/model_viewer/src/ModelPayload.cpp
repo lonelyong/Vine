@@ -3,7 +3,7 @@
 namespace vn::model_viewer
 {
 
-// 载荷的元数据必须恰好一处定义：同一个 C++ 类型的第二个 Type 会让 Type 的构造函数抛 ITEM_ALREADY_EXISTS。
+// 载荷的元数据只在这里定义一次：Type::obtain 会返回已注册的那一个，所以重复定义不会再抛，但多一份代码没有必要。
 VN_OBJECT_META_IMPL(MeshPayload, vn::Object)
 VN_OBJECT_META_IMPL(MeshFilePayload, vn::Object)
 

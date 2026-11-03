@@ -12,7 +12,7 @@ VN_GEOMETRY_NS_BEGIN
  * @brief An axis-aligned ellipsoid primitive centered at the origin, sized in the shape's local space.
  */
 class VN_GEOMETRY_API Ellipsoid : public Primitive {
-    VN_OBJECT_META(Ellipsoid, Primitive);
+    VN_OBJECT_META_DECL;
 
   public:
     /**

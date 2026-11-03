@@ -10,8 +10,6 @@
 #    include <cxxabi.h>
 #endif
 
-#include <vine/Exception.hpp>
-
 VN_CORE_NS_BEGIN
 
 namespace
@@ -62,15 +60,12 @@ bool parse_type_info_gnuc(const std::type_info& c_type, String& name, String& ns
 
 } // namespace
 
-Type::Type(const std::type_info& c_type, const Type* parent, TypeKind kind, std::vector<const Type*> interfaces)
+Type::Type(const std::type_info& c_type, const Type* parent, TypeKind kind, std::vector<const Type*> interfaces, RegisteredTag)
   : c_type_(c_type)
   , parent_(parent)
   , kind_(kind)
   , interfaces_(std::move(interfaces))
 {
-    if (get(c_type))
-        throw Exception(Exception::ITEM_ALREADY_EXISTS);
-
     auto is_ok = false;
 
 #if defined(_MSC_VER)
@@ -84,11 +79,21 @@ Type::Type(const std::type_info& c_type, const Type* parent, TypeKind kind, std:
     if (!is_ok) {
         throw std::runtime_error("Runtime error.");
     }
+}
 
-    {
-        std::lock_guard<std::mutex> lock(s_types_mutex);
-        s_types.insert(this);
+const Type* Type::obtain(const std::type_info& c_type, const Type* parent, TypeKind kind, std::vector<const Type*> interfaces)
+{
+    // One lock spans the lookup, the construction and the insert: two images reaching their first desc() at the same
+    // moment register once, and the loser answers with the winner's descriptor instead of discovering a duplicate.
+    std::lock_guard<std::mutex> lock(s_types_mutex);
+
+    if (Type* existing = findRegistered(c_type)) {
+        return existing;
     }
+
+    auto* created = new Type(c_type, parent, kind, std::move(interfaces), RegisteredTag{});
+    s_types.insert(created);
+    return created;
 }
 
 Type::~Type()
@@ -153,13 +158,16 @@ bool Type::operator!=(const Type& right) const noexcept
     return !(*this == right);
 }
 
+Type* Type::findRegistered(const std::type_info& c_type) noexcept
+{
+    auto it = std::find_if(s_types.begin(), s_types.end(), [&c_type](Type* c) { return c->c_type_ == c_type; });
+    return it == s_types.end() ? nullptr : *it;
+}
+
 Type* Type::get(const std::type_info& c_type)
 {
     std::lock_guard<std::mutex> lock(s_types_mutex);
-    auto                        it = std::find_if(s_types.begin(), s_types.end(), [&c_type](Type* c) { return c->c_type_ == c_type; });
-    if (it == s_types.end())
-        return nullptr;
-    return *it;
+    return findRegistered(c_type);
 }
 
 Type* Type::get(const String& full_name)

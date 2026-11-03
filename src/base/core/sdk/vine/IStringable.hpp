@@ -12,7 +12,7 @@ VN_CORE_NS_BEGIN
 /**
  * @brief Interface for objects that can render themselves as a String.
  */
-class IStringable {
+class VN_CORE_API IStringable {
     VN_DECLARE_INTERFACE(IStringable)
 
   public:

@@ -12,7 +12,7 @@ VN_GEOMETRY_NS_BEGIN
  * @brief An axis-aligned box primitive centered at the origin, sized in the shape's local space.
  */
 class VN_GEOMETRY_API Box : public Primitive {
-    VN_OBJECT_META(Box, Primitive);
+    VN_OBJECT_META_DECL;
 
   public:
     /**

@@ -13,7 +13,7 @@ VN_CORE_NS_BEGIN
  *
  * The returned clone is owned by the caller.
  */
-class ICloneable {
+class VN_CORE_API ICloneable {
     VN_DECLARE_INTERFACE(ICloneable)
 
   public:

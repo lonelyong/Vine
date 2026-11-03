@@ -114,10 +114,11 @@
 - `brep.md` —— 运行时 B-rep 运算的开放项（OCCT 后端验证、布尔与缝合）。
 - `loaders.md` —— loaders 层的开放项（点云 I/O 的归属与入口）。
 
-## memory/ —— 模块要点（9）
+## memory/ —— 模块要点（10）
 
 - `graphics.md` —— graphics / vsg 现役要点：机制、判据、坑与“当时为什么这么定”。
-- `geometry.md` —— geometry 要点：纯内联 SDK 类的导出约定、五个基本体的局部空间。
+- `core.md` —— core 要点：类型描述符只经 `Type::obtain()` 注册、内联与出实参两种声明形式、接口的导出约定。
+- `geometry.md` —— geometry 要点：SDK 类导出约定、五个基本体的局部空间。
 - `appfw.md` —— appfw 横切规则（线程 / 锁内不跑用户代码 / 生命周期）。
 - `async.md` —— `src/base/async` 要点。
 - `imaging.md` —— imaging 要点。

@@ -28,7 +28,7 @@ class IGreetableNameable : public IGreeter {
   public:
     virtual ~IGreetableNameable() = default;
 
-    VN_DECLARE_INTERFACE(IGreetableNameable, IGreeter)
+    VN_DECLARE_INTERFACE(IGreetableNameable)
 };
 
 class Person : public Object, public IGreetableNameable, public INameable {
@@ -45,6 +45,12 @@ class Person : public Object, public IGreetableNameable, public INameable {
         return "person";
     }
 };
+
+VN_DEFINE_INTERFACE(IGreeter)
+
+VN_DEFINE_INTERFACE(INameable)
+
+VN_DEFINE_INTERFACE(IGreetableNameable, IGreeter)
 
 } // namespace
 
@@ -94,4 +100,22 @@ TEST(TypeTest, ObjCastToInterface)
     EXPECT_STREQ(nameable->name(), "person");
 
     EXPECT_EQ(obj_cast<IGreeter>(static_cast<Object*>(nullptr)), nullptr);
+}
+
+TEST(TypeTest, RegisteringTheSameTypeAgainAnswersWithTheRegisteredOne)
+{
+    // A class whose definition is copied into several images asks for its descriptor once per image; every ask after
+    // the first must answer with THAT descriptor, because TypeId is compared by address (isKindOf, obj_cast, EventBus,
+    // the DI container all key on it).
+    const TypeId registered = Person::desc();
+
+    const TypeId again = vn::Type::obtain(typeid(Person), Object::desc(), vn::TypeKind::Class, { IGreetableNameable::desc(), INameable::desc() });
+
+    EXPECT_EQ(again, registered) << "a second registration answers with the descriptor already registered";
+    EXPECT_EQ(vn::Type::get(typeid(Person)), registered);
+
+    // The first registration wins, so the answer is the same whatever the loser's arguments were.
+    const TypeId without_parent = vn::Type::obtain(typeid(Person), nullptr);
+    EXPECT_EQ(without_parent, registered);
+    EXPECT_EQ(without_parent->parent(), Object::desc());
 }

@@ -111,7 +111,7 @@ struct DerivedPayload : public BasePayload {
     int derived = 0;
 };
 
-// 载荷的元数据：必须恰好一处定义（两处会让第二个 Type 构造抛 ITEM_ALREADY_EXISTS）。
+// 载荷的元数据写在一处：Type::obtain 遇到已注册的类型会返回旧的，重复定义不再是错误。
 VN_OBJECT_META_IMPL(TestPayload, vn::Object)
 VN_OBJECT_META_IMPL(OtherPayload, vn::Object)
 VN_OBJECT_META_IMPL(BasePayload, vn::Object)

@@ -22,6 +22,8 @@ raw_ptr<const Frame> rootOf(raw_ptr<const Frame> frame)
 
 } // namespace
 
+VN_OBJECT_META_IMPL(Frame, vn::Object, vn::INameable)
+
 Frame::Frame() = default;
 
 Frame::Frame(FrameType type)
