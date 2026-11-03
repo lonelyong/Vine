@@ -16,7 +16,7 @@ set_target_properties(${MODEL_VIEWER_TARGET} PROPERTIES
 target_sources(${MODEL_VIEWER_TARGET} PRIVATE res/res.qrc)
 
 # vn::Appfw: the plugin base, the document surface (Document / DocumentManager) and the dock panel API (Control).
-# vn::Geometry: the mesh a model document holds. IndexedTriangleMesh is where the two numbers the info panel shows
+# vn::Geometry: the mesh a model document holds. TriangleMesh is where the two numbers the info panel shows
 #               come from (vertexCount / triangleCount) - not a re-count of something we built ourselves.
 # vn::Graphics: the view IS the renderer (ModelRenderView): its own render control and its own SceneView on it,
 #               and the Geometry/Scene/Material a mesh becomes. Not a second render session - see the class note.

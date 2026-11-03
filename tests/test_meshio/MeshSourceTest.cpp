@@ -5,7 +5,7 @@
 #include <sstream>
 #include <string>
 
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/io/Stream.hpp>
@@ -13,7 +13,7 @@
 #include <vine/meshio/MeshExporter.hpp>
 #include <vine/meshio/MeshFormat.hpp>
 
-using vn::geometry::IndexedTriangleMesh;
+using vn::geometry::TriangleMesh;
 using vn::io::DataSource;
 using vn::io::IoError;
 using vn::math::Vec3f;
@@ -28,14 +28,12 @@ namespace
  *
  * @return The mesh.
  */
-vn::intrusive_ptr<IndexedTriangleMesh> makeTriangle()
+vn::intrusive_ptr<TriangleMesh> makeTriangle()
 {
-    auto mesh = vn::intrusive_ptr<IndexedTriangleMesh>(new IndexedTriangleMesh());
+    auto mesh = vn::intrusive_ptr<TriangleMesh>(new TriangleMesh());
 
-    const auto a = mesh->addVertex(Vec3f(0, 0, 0));
-    const auto b = mesh->addVertex(Vec3f(1, 0, 0));
-    const auto c = mesh->addVertex(Vec3f(0, 1, 0));
-    mesh->addTriangle(a, b, c);
+    mesh->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(0, 1, 0) });
+    mesh->setIndices({ 0u, 1u, 2u });
     return mesh;
 }
 

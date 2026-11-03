@@ -15,7 +15,9 @@ bool Shape::isValid() const
 
 bool Shape::hasVolume(double eps) const
 {
-    (void)eps; // reserved for mesh volume significance checks.
+    // Fallback for a primitive that does not restate its own dimensions: the family is closed by construction. Meshes
+    // and B-reps fall through to false because neither tracks its surface closure, so the tolerance is not used here.
+    (void)eps;
     switch (shape_type_) {
     case ShapeType::Box:
     case ShapeType::Cylinder:
@@ -35,7 +37,8 @@ ShapeKind Shape::shapeKind() const
     case ShapeType::Sphere:
     case ShapeType::Ellipsoid: return ShapeKind::Primitive;
     case ShapeType::TriangleMesh:
-    case ShapeType::IndexedTriangleMesh: return ShapeKind::Mesh;
+    case ShapeType::QuadMesh:
+    case ShapeType::MixedMesh: return ShapeKind::Mesh;
     case ShapeType::Brep: return ShapeKind::Brep;
     default: return ShapeKind::Unknown;
     }

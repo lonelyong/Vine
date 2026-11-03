@@ -216,7 +216,7 @@ TEST(DeviceIOTest, LoadXmlFromFolder)
     ASSERT_EQ(body.visuals().size(), 1u);
     ASSERT_NE(body.visuals()[0].shape(), nullptr);
     EXPECT_EQ(body.visuals()[0].shape()->shapeType(), vn::geometry::ShapeType::Box);
-    EXPECT_DOUBLE_EQ(static_cast<vn::geometry::Box*>(body.visuals()[0].shape().get())->width(), 0.2);
+    EXPECT_FLOAT_EQ(static_cast<vn::geometry::Box*>(body.visuals()[0].shape().get())->width(), 0.2f);
     ASSERT_EQ(body.collisions().size(), 1u);
     EXPECT_EQ(body.collisions()[0].shape()->shapeType(), vn::geometry::ShapeType::Sphere);
 }

@@ -124,6 +124,27 @@ inline String doubleToStr(double value)
 }
 
 /**
+ * @brief Converts a float to its shortest round-trip string.
+ *
+ * @details
+ * - A float widened to double does not print as the decimal the author wrote (0.2f becomes 0.20000000298023224), so the
+ *   float writers format the float itself instead of borrowing the double one.
+ *
+ * @param value The value to convert.
+ * @return The decimal string.
+ */
+inline String floatToStr(float value)
+{
+    std::array<char, 32> buffer;
+    const auto           result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+    if (result.ec != std::errc()) {
+        return String(u8"0");
+    }
+    const std::size_t length = static_cast<std::size_t>(result.ptr - buffer.data());
+    return String::fromUtf8(std::string_view(buffer.data(), length));
+}
+
+/**
  * @brief Parses a double from a string.
  *
  * @param str The decimal string.
@@ -134,6 +155,29 @@ inline bool strToDouble(const String& str, double& out)
 {
     std::string text   = str.as_std_str();
     double      value  = 0.0;
+    const auto  result = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (result.ec == std::errc() && result.ptr == text.data() + text.size()) {
+        out = value;
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief Parses a float from a string.
+ *
+ * @details
+ * - The parse is correctly rounded at float precision, so it matches what reading the text as a double and narrowing it
+ *   would give, without the widening/narrowing pair in between.
+ *
+ * @param str The decimal string.
+ * @param out Receives the value.
+ * @return true when the whole string was a valid float.
+ */
+inline bool strToFloat(const String& str, float& out)
+{
+    std::string text   = str.as_std_str();
+    float       value  = 0.0f;
     const auto  result = std::from_chars(text.data(), text.data() + text.size(), value);
     if (result.ec == std::errc() && result.ptr == text.data() + text.size()) {
         out = value;
@@ -208,6 +252,24 @@ inline bool strToVec3(const String& str, math::Vec3d& out)
         return false;
     }
     out = math::Vec3d(x, y, z);
+    return true;
+}
+
+/**
+ * @brief Parses a space-separated string into a float 3-vector.
+ *
+ * @param str The space-separated numbers.
+ * @param out Receives the vector.
+ * @return true on success.
+ */
+inline bool strToVec3(const String& str, math::Vec3f& out)
+{
+    float              x = 0.0f, y = 0.0f, z = 0.0f;
+    std::istringstream stream(str.as_std_str());
+    if (!(stream >> x >> y >> z)) {
+        return false;
+    }
+    out = math::Vec3f(x, y, z);
     return true;
 }
 

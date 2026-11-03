@@ -197,7 +197,7 @@ class VN_MESHIO_API MeshLoader {
      *   the meshes that author none carry opaque white - the multiplicative identity the shading applies - so each part
      *   looks the way it would on its own. Normals the source only partly provides are dropped whole and derived from
      *   the geometry instead, because a zero normal is not "no normal". Texture coordinates are not kept by this entry.
-     * - The result is an IndexedTriangleMesh: every format this loader reads is triangulated on the way in, so there is
+     * - The result is an TriangleMesh: every format this loader reads is triangulated on the way in, so there is
      *   one concrete type behind the Mesh handle.
      *
      * @param file_path The model file path; its extension selects the format.
@@ -209,7 +209,7 @@ class VN_MESHIO_API MeshLoader {
      * @brief Loads a mesh model from a stream as one flattened mesh.
      *
      * The stream entry of loadMerged(): the stream is drained, the bytes are cached, and the result is one
-     * IndexedTriangleMesh with the node transforms applied.
+     * TriangleMesh with the node transforms applied.
      *
      * @param in   The stream to read; it is read to its end.
      * @param hint The format to parse as (see the model entry); required for a format the parser cannot guess.
@@ -247,7 +247,7 @@ class VN_MESHIO_API MeshLoader {
 
     /** @brief What the cache holds for one file: whichever of the two results has been built from it. */
     struct Cached {
-        vn::intrusive_ptr<vn::geometry::Mesh>  merged; // The flattened result, once loadMerged() built it.
+        vn::intrusive_ptr<vn::geometry::Mesh> merged; // The flattened result, once loadMerged() built it.
         vn::intrusive_ptr<vn::geometry::Model> model;  // The structured result, once load() built it.
     };
 

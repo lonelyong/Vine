@@ -1727,10 +1727,11 @@ class VN_CORE_API String final {
     /// below make a future divergence a compile error instead of silent memory corruption.
     /// They are a tripwire, not a proof: the reinterpretation in as_std_str() stays a reliance
     /// on the implementation, verified by the layout-fingerprint test in StringTest.
-    static_assert(sizeof(impl_type) == sizeof(std::string), "as_std_str() assumes std::u8string and std::string lay out alike");
-    static_assert(alignof(impl_type) == alignof(std::string), "as_std_str() assumes the two aliases have the same alignment");
-    static_assert(sizeof(value_type) == sizeof(char), "as_std_str() assumes one-byte character types");
-    static_assert(std::is_same_v<typename impl_type::traits_type::char_type, value_type>, "traits must belong to the storage type");
+    static_assert(sizeof(char) == sizeof(char8_t), "as_std_str() requires char and char8_t to have the same size");
+    static_assert(sizeof(std::u8string) == sizeof(std::string), "as_std_str() requires equal string object sizes");
+    static_assert(alignof(std::u8string) == alignof(std::string), "as_std_str() requires equal string object alignments");
+    static_assert(std::is_same_v<std::u8string::traits_type::char_type, char8_t>);
+    static_assert(std::is_same_v<std::string::traits_type::char_type, char>);
 
     std::u8string stdstr_; // Internal storage for string data
 };

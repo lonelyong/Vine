@@ -102,7 +102,7 @@ class VN_MESHIO_API MeshExporter {
      * @return IoError::Ok on success; InvalidData when the mesh is invalid or of an unsupported type, Unsupported when
      *         the format cannot be written by this build, IoFailure when the file cannot be written.
      */
-    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::Mesh& mesh, MeshFormat format, const std::filesystem::path& file_path) const;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::Shape& mesh, MeshFormat format, const std::filesystem::path& file_path) const;
 
     /**
      * @brief Writes a whole model to a file, keeping its structure.
@@ -135,7 +135,7 @@ class VN_MESHIO_API MeshExporter {
      * @return IoError::Ok on success; InvalidData for invalid geometry, Unsupported when the format cannot be streamed
      *         or is not available in this build, IoFailure when the stream refuses the bytes.
      */
-    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::Mesh& mesh, MeshFormat format, std::ostream& out) const;
+    [[nodiscard]] vn::io::IoError exportAs(const vn::geometry::Shape& mesh, MeshFormat format, std::ostream& out) const;
 
     /**
      * @brief Writes a whole model into one stream.
@@ -169,7 +169,7 @@ class VN_MESHIO_API MeshExporter {
      * @param format The target format.
      * @return The source; never null. A refusal surfaces through the source's error(), not here.
      */
-    std::shared_ptr<vn::io::DataSource> createSource(vn::intrusive_ptr<const vn::geometry::Mesh> mesh, MeshFormat format) const;
+    std::shared_ptr<vn::io::DataSource> createSource(vn::intrusive_ptr<const vn::geometry::Shape> mesh, MeshFormat format) const;
 
     /**
      * @brief Creates a source that exports a whole model on demand.

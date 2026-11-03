@@ -886,7 +886,7 @@ VN_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const
  *   the draw's topology and index span, which leave custom attribute channels alone.
  *
  * @param shape Mesh shape to convert.
- * @return Filled geometry, or null for unsupported shapes.
+ * @return Filled geometry, or null for unsupported shapes or invalid meshes.
  */
 VN_GRAPHICS_API GeometryPtr geometryFromShape(const vn::geometry::Shape& shape);
 

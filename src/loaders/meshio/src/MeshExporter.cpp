@@ -24,12 +24,13 @@
 #include <vine/Object.hpp>
 #include <vine/String.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/MixedMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/geometry/Material.hpp>
 #include <vine/geometry/Model.hpp>
 #include <vine/geometry/PbrMaterial.hpp>
 #include <vine/geometry/PhongMaterial.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/geometry/QuadMesh.hpp>
 #include <vine/io/IoError.hpp>
 
 VN_MESHIO_NS_BEGIN
@@ -37,12 +38,10 @@ VN_MESHIO_NS_BEGIN
 namespace
 {
 
-using IndexedTriangleMesh = vn::geometry::IndexedTriangleMesh;
-using Material            = vn::geometry::Material;
-using Mesh                = vn::geometry::Mesh;
-using Model               = vn::geometry::Model;
-using TriangleMesh        = vn::geometry::TriangleMesh;
-using Vec3f               = vn::math::Vec3f;
+using Material    = vn::geometry::Material;
+using Model       = vn::geometry::Model;
+using Shape       = vn::geometry::Shape;
+using UInt32Array = vn::geometry::UInt32Array;
 
 /**
  * @brief Copies one per-vertex channel into the bare array an aiMesh holds, converting each element on the way.
@@ -65,23 +64,54 @@ Target* copyChannel(std::span<const Source> channel, Convert convert)
 }
 
 /**
- * @brief View over the geometry of a triangle mesh, independent of whether it is stored as indexed or non-indexed.
+ * @brief View over a valid mesh represented as triangle faces.
  *
- * An empty `indices` view means "non-indexed": a scene is only built for a mesh that passed `isValid()`, and a valid
- * indexed mesh always holds at least one triangle.
+ * Quad and mixed polygon faces are triangulated before this view is made. An empty `indices` array means the source is
+ * a sequential TriangleMesh; every other supported mesh is represented by explicit triangle indices.
  */
 struct MeshView {
-    /// Vertex positions; never empty for a valid triangle mesh.
-    std::span<const Vec3f> positions;
+    /// Vertex positions; never empty for a valid mesh.
+    std::span<const vn::math::Vec3f> positions;
     /// Optional per-vertex normals (empty when absent).
-    std::span<const Vec3f> normals;
+    std::span<const vn::math::Vec3f> normals;
     /// Optional per-vertex texture coordinates (empty when absent).
     std::span<const vn::math::Vec2f> texcoords;
     /// Optional per-vertex colours, linear RGBA (empty when absent).
     std::span<const vn::math::Vec4f> colors;
-    /// Triangle indices; empty for a non-indexed mesh.
-    std::span<const std::uint32_t> indices;
+    /// Triangle indices; empty only for a sequential TriangleMesh.
+    UInt32Array indices;
 };
+
+MeshView viewOf(const vn::geometry::Mesh& mesh)
+{
+    if (!mesh.isValid()) {
+        throw std::invalid_argument("MeshExporter: mesh is invalid");
+    }
+
+    MeshView view{ mesh.positions(), mesh.normals(), mesh.texcoords(), mesh.colors(), {} };
+    switch (mesh.shapeType()) {
+    case vn::geometry::ShapeType::TriangleMesh:
+    {
+        const auto& triangle_mesh = obj_cast<vn::geometry::TriangleMesh>(mesh);
+        view.indices.assign(triangle_mesh.indices().begin(), triangle_mesh.indices().end());
+        break;
+    }
+    case vn::geometry::ShapeType::QuadMesh:
+    {
+        const auto triangle_mesh = obj_cast<vn::geometry::QuadMesh>(mesh).toTriangleMesh();
+        view.indices.assign(triangle_mesh->indices().begin(), triangle_mesh->indices().end());
+        break;
+    }
+    case vn::geometry::ShapeType::MixedMesh:
+    {
+        const auto triangle_mesh = obj_cast<vn::geometry::MixedMesh>(mesh).toTriangleMesh();
+        view.indices.assign(triangle_mesh->indices().begin(), triangle_mesh->indices().end());
+        break;
+    }
+    default: throw std::runtime_error("MeshExporter: unsupported mesh type");
+    }
+    return view;
+}
 
 /**
  * @brief What both scene writers share: the options a mesh's vertices are scaled by, and the ONE translation from a
@@ -117,86 +147,67 @@ class SceneWriterBase {
      * @throws std::invalid_argument when the mesh is invalid.
      * @throws std::runtime_error when the mesh type is unsupported.
      */
-    void fillMesh(aiMesh& io_mesh, const Mesh& mesh) const;
+    void fillMesh(aiMesh& io_mesh, const Shape& mesh) const;
 
   private:
-    /**
-     * @brief Reads the geometry of a mesh through either triangle representation.
-     *
-     * @param mesh The source mesh.
-     * @return The geometry views.
-     * @throws std::invalid_argument when the mesh is invalid.
-     * @throws std::runtime_error when the mesh type is unsupported.
-     */
-    static MeshView viewOf(const Mesh& mesh);
-
     const MeshExporter::Options& options_; // The export options the scale factor comes from.
 };
 
-MeshView SceneWriterBase::viewOf(const Mesh& mesh)
+void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Shape& mesh) const
 {
-    if (!mesh.isValid()) {
-        throw std::invalid_argument("MeshExporter: mesh is invalid");
-    }
+    const auto write = [this, &io_mesh, &mesh](const vn::geometry::Mesh& typed_mesh) {
+        const MeshView view = viewOf(typed_mesh);
 
-    switch (mesh.shapeType()) {
-    case vn::geometry::ShapeType::IndexedTriangleMesh:
-    {
-        const auto& itm = obj_cast<IndexedTriangleMesh>(mesh);
-        return { itm.positions(), itm.normals(), itm.texcoords(), itm.colors(), itm.indices() };
-    }
-    case vn::geometry::ShapeType::TriangleMesh:
-    {
-        const auto& tm = obj_cast<TriangleMesh>(mesh);
-        return { tm.positions(), tm.normals(), tm.texcoords(), tm.colors(), {} };
-    }
-    default: throw std::runtime_error("MeshExporter: unsupported mesh type");
-    }
-}
+        const vn::String& name = mesh.name();
+        if (!name.empty()) {
+            io_mesh.mName.Set(reinterpret_cast<const char*>(name.c_str()));
+        }
+        io_mesh.mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
 
-void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Mesh& mesh) const
-{
-    const MeshView view = viewOf(mesh);
+        if (!view.positions.empty()) {
+            io_mesh.mNumVertices = static_cast<unsigned int>(view.positions.size());
 
-    const vn::String& name = mesh.name();
-    if (!name.empty()) {
-        io_mesh.mName.Set(reinterpret_cast<const char*>(name.c_str()));
-    }
-    io_mesh.mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
+            const auto factor = static_cast<ai_real>(options_.scale_factor);
+            io_mesh.mVertices = copyChannel<aiVector3D>(view.positions, [factor](const auto& v) {
+                return aiVector3D(static_cast<ai_real>(v.x) * factor, static_cast<ai_real>(v.y) * factor, static_cast<ai_real>(v.z) * factor);
+            });
 
-    if (!view.positions.empty()) {
-        io_mesh.mNumVertices = static_cast<unsigned int>(view.positions.size());
+            if (view.normals.size() == view.positions.size()) {
+                io_mesh.mNormals = copyChannel<aiVector3D>(view.normals, [](const auto& n) {
+                    return aiVector3D(static_cast<ai_real>(n.x), static_cast<ai_real>(n.y), static_cast<ai_real>(n.z));
+                });
+            }
 
-        const auto factor = static_cast<ai_real>(options_.scale_factor);
-        io_mesh.mVertices = copyChannel<aiVector3D>(view.positions, [factor](const Vec3f& v) { return aiVector3D(v.x * factor, v.y * factor, v.z * factor); });
+            if (view.texcoords.size() == view.positions.size()) {
+                io_mesh.mNumUVComponents[0] = 2;
+                io_mesh.mTextureCoords[0]   = copyChannel<aiVector3D>(view.texcoords, [](const auto& t) {
+                    return aiVector3D(static_cast<ai_real>(t.x), static_cast<ai_real>(t.y), 0.0f);
+                });
+            }
 
-        // An attribute is written only when its array covers every vertex, so a partial one is absent rather than read
-        // past; an attribute the mesh does not hold is simply not there.
-        if (view.normals.size() == view.positions.size()) {
-            io_mesh.mNormals = copyChannel<aiVector3D>(view.normals, [](const Vec3f& n) { return aiVector3D(n.x, n.y, n.z); });
+            if (view.colors.size() == view.positions.size()) {
+                io_mesh.mColors[0] = copyChannel<aiColor4D>(view.colors, [](const auto& c) {
+                    return aiColor4D(static_cast<ai_real>(c.x), static_cast<ai_real>(c.y), static_cast<ai_real>(c.z), static_cast<ai_real>(c.w));
+                });
+            }
         }
 
-        if (view.texcoords.size() == view.positions.size()) {
-            io_mesh.mNumUVComponents[0] = 2;
-            io_mesh.mTextureCoords[0]   = copyChannel<aiVector3D>(view.texcoords, [](const vn::math::Vec2f& t) { return aiVector3D(t.x, t.y, 0.0f); });
+        const std::size_t triangle_count = view.indices.empty() ? view.positions.size() / 3 : view.indices.size() / 3;
+        io_mesh.mNumFaces                = static_cast<unsigned int>(triangle_count);
+        io_mesh.mFaces                   = new aiFace[io_mesh.mNumFaces];
+        for (unsigned int i = 0; i < io_mesh.mNumFaces; ++i) {
+            const unsigned int base       = i * 3;
+            io_mesh.mFaces[i].mNumIndices = 3;
+            io_mesh.mFaces[i].mIndices    = view.indices.empty() ? new unsigned int[3]{ base, base + 1, base + 2 }
+                                                                 : new unsigned int[3]{ view.indices[base], view.indices[base + 1], view.indices[base + 2] };
         }
+    };
 
-        // The colour set a material multiplies into its base colour: four channels per vertex.
-        if (view.colors.size() == view.positions.size()) {
-            io_mesh.mColors[0] = copyChannel<aiColor4D>(view.colors, [](const vn::math::Vec4f& c) { return aiColor4D(c.x, c.y, c.z, c.w); });
-        }
+    const auto* typed_mesh = obj_cast<vn::geometry::Mesh>(&mesh);
+    if (typed_mesh == nullptr) {
+        throw std::runtime_error("MeshExporter: unsupported shape type");
     }
-
-    const std::size_t triangle_count = view.indices.empty() ? view.positions.size() / 3 : view.indices.size() / 3;
-    io_mesh.mNumFaces                = static_cast<unsigned int>(triangle_count);
-    io_mesh.mFaces                   = new aiFace[io_mesh.mNumFaces];
-    for (unsigned int i = 0; i < io_mesh.mNumFaces; ++i) {
-        const unsigned int base       = i * 3;
-        io_mesh.mFaces[i].mNumIndices = 3;
-        // A non-indexed mesh names its corners by position, so triangle i is the vertices 3i, 3i+1 and 3i+2.
-        io_mesh.mFaces[i].mIndices    = view.indices.empty() ? new unsigned int[3]{ base, base + 1, base + 2 }
-                                                             : new unsigned int[3]{ view.indices[base], view.indices[base + 1], view.indices[base + 2] };
-    }
+    write(*typed_mesh);
 }
 
 /**
@@ -215,7 +226,7 @@ class MeshSceneWriter final : private SceneWriterBase {
      * @throws std::invalid_argument when the mesh is invalid.
      * @throws std::runtime_error when the mesh type is unsupported.
      */
-    MeshSceneWriter(const MeshExporter::Options& options, const Mesh& mesh);
+    MeshSceneWriter(const MeshExporter::Options& options, const Shape& mesh);
 
     /**
      * @brief Returns the scene that was built.
@@ -232,7 +243,7 @@ class MeshSceneWriter final : private SceneWriterBase {
     std::unique_ptr<aiScene> scene_{ std::make_unique<aiScene>() };
 };
 
-MeshSceneWriter::MeshSceneWriter(const MeshExporter::Options& options, const Mesh& mesh)
+MeshSceneWriter::MeshSceneWriter(const MeshExporter::Options& options, const Shape& mesh)
   : SceneWriterBase(options)
 {
     aiScene& ai_scene = *scene_;
@@ -797,7 +808,7 @@ const MeshExporter::Options& MeshExporter::options() const noexcept
     return options_;
 }
 
-vn::io::IoError MeshExporter::exportAs(const Mesh& mesh, MeshFormat format, const std::filesystem::path& file_path) const
+vn::io::IoError MeshExporter::exportAs(const Shape& mesh, MeshFormat format, const std::filesystem::path& file_path) const
 {
     const char* const format_id = writerId(format, options_.encoding, /*keeps_side_files=*/true);
     if (format_id == nullptr) {
@@ -829,7 +840,7 @@ vn::io::IoError MeshExporter::exportAs(const Model& model, MeshFormat format, co
     }
 }
 
-vn::io::IoError MeshExporter::exportAs(const Mesh& mesh, MeshFormat format, std::ostream& out) const
+vn::io::IoError MeshExporter::exportAs(const Shape& mesh, MeshFormat format, std::ostream& out) const
 {
     if (!formatInfo(format).streamable) {
         return vn::io::IoError::Unsupported; // one stream holds one file, and this format's normal form is two
@@ -870,7 +881,7 @@ vn::io::IoError MeshExporter::exportAs(const Model& model, MeshFormat format, st
     }
 }
 
-std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr<const Mesh> mesh, MeshFormat format) const
+std::shared_ptr<vn::io::DataSource> MeshExporter::createSource(vn::intrusive_ptr<const Shape> mesh, MeshFormat format) const
 {
     if (!formatInfo(format).streamable) {
         return std::make_shared<RefusedSource>(vn::io::IoError::Unsupported);

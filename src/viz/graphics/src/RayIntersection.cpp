@@ -4,7 +4,6 @@
 #include <optional>
 #include <utility>
 
-#include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
@@ -149,7 +148,7 @@ Aabbd transformBounds(const Aabbd& local, const Mat4d& m)
  * @param positions Position array.
  * @return The bounding box (empty for an empty array).
  */
-Aabbd boundsOfPositions(const vn::geometry::Vec3fArray& positions)
+Aabbd boundsOfPositions(const vn::geometry::Vec3Array& positions)
 {
     Aabbd box = Aabbd::empty();
     for (const auto& p : positions) {
@@ -184,7 +183,7 @@ Vec3d toWorld(const Mat4d& m, double x, double y, double z)
  * geometry's index buffer. Lifetime spans the caller's picking call only.
  */
 struct GeometryMesh {
-    vn::geometry::Vec3fArray       positions;
+    vn::geometry::Vec3Array        positions;
     std::span<const std::uint32_t> indices;
 
     /** @brief Returns whether position data is available. */
@@ -344,7 +343,7 @@ RayIntersectionResult makeTriangleHit(const Vec3d& a,
  * @return true when at least one triangle was hit.
  */
 template <typename OnHit>
-bool traverseMesh(const vn::geometry::Vec3fArray& positions,
+bool traverseMesh(const vn::geometry::Vec3Array& positions,
                   std::span<const std::uint32_t>  indices,
                   Topology                        topology,
                   const Ray&                      ray,

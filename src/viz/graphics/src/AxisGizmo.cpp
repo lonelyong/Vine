@@ -34,8 +34,8 @@ namespace
  * @param mn        Minimum corner.
  * @param mx        Maximum corner.
  */
-void appendBox(vn::geometry::Vec3fArray&  positions,
-               vn::geometry::Vec3fArray&  normals,
+void appendBox(vn::geometry::Vec3Array& positions,
+               vn::geometry::Vec3Array& normals,
                vn::geometry::UInt32Array& indices,
                const vn::math::Vec3f&     mn,
                const vn::math::Vec3f&     mx)
@@ -222,8 +222,8 @@ void AxisGizmo::rebuild()
     // Single root: one identity Group owns the three axis sticks.
     auto root  = make_intrusive<Group>();
     for (const auto& stick : sticks) {
-        vn::geometry::Vec3fArray  positions;
-        vn::geometry::Vec3fArray  normals;
+        vn::geometry::Vec3Array  positions;
+        vn::geometry::Vec3Array  normals;
         vn::geometry::UInt32Array indices;
         appendBox(positions, normals, indices, stick.mn, stick.mx);
 

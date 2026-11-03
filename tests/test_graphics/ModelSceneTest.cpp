@@ -14,7 +14,7 @@
 #include <vector>
 
 #include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/geometry/Material.hpp>
 #include <vine/geometry/Model.hpp>
 #include <vine/geometry/PbrMaterial.hpp>
@@ -28,7 +28,7 @@
 #include <vine/graphics/ModelScene.hpp>
 
 using vn::geometry::ColorMaterial;
-using vn::geometry::IndexedTriangleMesh;
+using vn::geometry::TriangleMesh;
 using vn::geometry::Model;
 using vn::geometry::PbrMaterial;
 using vn::geometry::PhongMaterial;
@@ -42,13 +42,11 @@ namespace
 {
 
 /// @brief One triangle, named, ready to be put in a model entry.
-vn::intrusive_ptr<IndexedTriangleMesh> makeTriangle(const char8_t* name)
+vn::intrusive_ptr<TriangleMesh> makeTriangle(const char8_t* name)
 {
-    auto                mesh = vn::make_intrusive<IndexedTriangleMesh>();
-    const std::uint32_t a    = mesh->addVertex(vn::math::Vec3f{ 0.0F, 0.0F, 0.0F });
-    const std::uint32_t b    = mesh->addVertex(vn::math::Vec3f{ 1.0F, 0.0F, 0.0F });
-    const std::uint32_t c    = mesh->addVertex(vn::math::Vec3f{ 0.0F, 1.0F, 0.0F });
-    mesh->addTriangle(a, b, c);
+    auto mesh = vn::make_intrusive<TriangleMesh>();
+    mesh->setPositions({ vn::math::Vec3f{ 0.0F, 0.0F, 0.0F }, vn::math::Vec3f{ 1.0F, 0.0F, 0.0F }, vn::math::Vec3f{ 0.0F, 1.0F, 0.0F } });
+    mesh->setIndices({ 0u, 1u, 2u });
     mesh->setName(name);
     return mesh;
 }

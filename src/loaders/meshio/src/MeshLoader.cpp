@@ -16,7 +16,7 @@
 #include <assimp/scene.h>
 
 #include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/geometry/PbrMaterial.hpp>
 #include <vine/geometry/PhongMaterial.hpp>
 #include <vine/math/Matrix4x4.hpp>
@@ -30,14 +30,14 @@ VN_MESHIO_NS_BEGIN
 namespace
 {
 
-using Mesh                = vn::geometry::Mesh;
-using IndexedTriangleMesh = vn::geometry::IndexedTriangleMesh;
-using Material            = vn::geometry::Material;
-using Model               = vn::geometry::Model;
-using UInt32Array         = vn::geometry::UInt32Array;
-using Vec2fArray          = vn::geometry::Vec2fArray;
-using Vec3fArray          = vn::geometry::Vec3fArray;
-using Vec4fArray          = vn::geometry::Vec4fArray;
+using Mesh         = vn::geometry::Mesh;
+using TriangleMesh = vn::geometry::TriangleMesh;
+using Material     = vn::geometry::Material;
+using Model        = vn::geometry::Model;
+using UInt32Array  = vn::geometry::UInt32Array;
+using Vec2Array    = vn::geometry::Vec2Array;
+using Vec3Array    = vn::geometry::Vec3Array;
+using Vec4Array    = vn::geometry::Vec4Array;
 
 /** @brief AABB diagonal, in source units, above which the source is read as millimetres rather than metres. */
 constexpr float kMillimetreThreshold = 10.0f;
@@ -104,10 +104,10 @@ bool drainStream(std::istream& in, std::vector<unsigned char>& out)
  *   file held.
  */
 struct MeshSink {
-    Vec3fArray  positions; // Vertices appended so far, in scene order.
-    Vec3fArray  normals;   // Per-vertex normals, in the same order as @ref positions.
-    Vec4fArray  colors;    // Per-vertex colours (linear RGBA), in the same order as @ref positions.
-    Vec2fArray  texcoords; // Per-vertex texture coordinates, when @ref keep_texcoords is on.
+    Vec3Array   positions; // Vertices appended so far, in scene order.
+    Vec3Array   normals;   // Per-vertex normals, in the same order as @ref positions.
+    Vec4Array   colors;    // Per-vertex colours (linear RGBA), in the same order as @ref positions.
+    Vec2Array   texcoords; // Per-vertex texture coordinates, when @ref keep_texcoords is on.
     UInt32Array indices;   // Triangle corners, rebased onto @ref positions.
 
     bool pad_missing_colors{ false };    // White for a mesh that authors none (see the note above).
@@ -312,7 +312,7 @@ class MergedMeshBuilder final : private MeshBuilderBase {
     {
         appendSceneGeometry(*scene().mRootNode);
 
-        auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
+        auto mesh = vn::make_intrusive<TriangleMesh>();
         mesh->setPositions(std::move(sink_.positions));
         mesh->setIndices(std::move(sink_.indices));
         // A colour array exists only when some mesh AUTHORED one; the other vertices already carry the white that
@@ -352,12 +352,12 @@ class MergedMeshBuilder final : private MeshBuilderBase {
      *
      * @param mesh The mesh to scale in place; a mesh without vertices is left as it is.
      */
-    void applyScale(IndexedTriangleMesh& mesh) const;
+    void applyScale(TriangleMesh& mesh) const;
 
     MeshSink sink_; // The arrays being merged.
 };
 
-void MergedMeshBuilder::applyScale(IndexedTriangleMesh& mesh) const
+void MergedMeshBuilder::applyScale(TriangleMesh& mesh) const
 {
     // A borrowed view is enough here: the loop below reads it before setPositions() replaces the storage.
     const auto positions = mesh.positions();
@@ -378,7 +378,7 @@ void MergedMeshBuilder::applyScale(IndexedTriangleMesh& mesh) const
 
     const double scale_factor = unitScaleFor((max - min).length());
     if (scale_factor != 1.0) {
-        Vec3fArray scaled;
+        Vec3Array scaled;
         scaled.reserve(positions.size());
         for (const auto& v : positions) {
             scaled.emplace_back(static_cast<float>(v.x * scale_factor), static_cast<float>(v.y * scale_factor), static_cast<float>(v.z * scale_factor));
@@ -457,7 +457,7 @@ class ModelBuilder final : private MeshBuilderBase {
      * @param mesh The mesh to measure.
      * @param world The transform the vertices are placed by; the box is therefore in model space.
      */
-    void growBounds(const Mesh& mesh, const vn::math::Mat4d& world);
+    void growBounds(const vn::geometry::Shape& mesh, const vn::math::Mat4d& world);
 
     /// Folds the load options' scale into @p root's transform, once for the whole model.
     void applyScale(std::uint32_t root);
@@ -511,7 +511,7 @@ vn::intrusive_ptr<Mesh> ModelBuilder::makeMesh(const aiMesh& source) const
     sink.keep_texcoords = true; // the structured entry keeps what the file held
     appendMeshAttributes(source, sink);
 
-    auto mesh = vn::make_intrusive<IndexedTriangleMesh>();
+    auto mesh = vn::make_intrusive<TriangleMesh>();
     mesh->setPositions(std::move(sink.positions));
     mesh->setIndices(std::move(sink.indices));
     mesh->setTexcoords(std::move(sink.texcoords));
@@ -551,15 +551,13 @@ void ModelBuilder::collectEntries()
     }
 }
 
-void ModelBuilder::growBounds(const Mesh& mesh, const vn::math::Mat4d& world)
+void ModelBuilder::growBounds(const vn::geometry::Shape& mesh, const vn::math::Mat4d& world)
 {
-    // Written out instead of a matrix-times-point call: the vertices are float and the transform is double, so the
-    // helper would widen every vertex into a Point3d first - a copy per vertex in the one place a model is measured.
-    for (const vn::math::Vec3f& point : mesh.positions()) {
+    const auto grow = [this, &world](const vn::geometry::Mesh& typed_mesh) {
+      for (const vn::math::Vec3f& point : typed_mesh.positions()) {
         const auto x = static_cast<float>(world.element(0, 0) * point.x + world.element(0, 1) * point.y + world.element(0, 2) * point.z + world.element(0, 3));
         const auto y = static_cast<float>(world.element(1, 0) * point.x + world.element(1, 1) * point.y + world.element(1, 2) * point.z + world.element(1, 3));
         const auto z = static_cast<float>(world.element(2, 0) * point.x + world.element(2, 1) * point.y + world.element(2, 2) * point.z + world.element(2, 3));
-
         if (!has_bounds_) {
             min_        = vn::math::Vec3f(x, y, z);
             max_        = min_;
@@ -572,6 +570,11 @@ void ModelBuilder::growBounds(const Mesh& mesh, const vn::math::Mat4d& world)
         max_.x = std::max(max_.x, x);
         max_.y = std::max(max_.y, y);
         max_.z = std::max(max_.z, z);
+      }
+    };
+
+    if (const auto* typed_mesh = obj_cast<vn::geometry::Mesh>(&mesh)) {
+        grow(*typed_mesh);
     }
 }
 

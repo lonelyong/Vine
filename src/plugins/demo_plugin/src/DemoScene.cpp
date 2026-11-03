@@ -278,9 +278,9 @@ vn::intrusive_ptr<vn::graphics::Geometry> makeDirectionBox(const vn::String& nam
 {
     using vn::math::Vec3f;
 
-    vn::geometry::Vec3fArray  positions;
-    vn::geometry::Vec3fArray  normals;
-    vn::geometry::Vec3fArray  directions;
+    vn::geometry::Vec3Array  positions;
+    vn::geometry::Vec3Array  normals;
+    vn::geometry::Vec3Array  directions;
     vn::geometry::UInt32Array indices;
 
     const int face_table[6][3] = {
@@ -482,8 +482,8 @@ addBox(vn::graphics::Group* root, const vn::Colorf& diffuse, const vn::String& n
 {
     using vn::math::Vec3f;
 
-    vn::geometry::Vec3fArray  positions;
-    vn::geometry::Vec3fArray  normals;
+    vn::geometry::Vec3Array  positions;
+    vn::geometry::Vec3Array  normals;
     vn::geometry::UInt32Array indices;
 
     // Build each face with a consistent outward (counter-clockwise, seen from
@@ -762,7 +762,7 @@ void addForwardShowcase(vn::graphics::Group* root)
 
         auto cloud = make_intrusive<Geometry>();
         cloud->setName(u8"point_cloud");
-        vn::geometry::Vec3fArray points;
+        vn::geometry::Vec3Array  points;
         // Four stacked rings in the Z-up world: horizontal rings at rising
         // heights, centred on the footprint (-2.3, -1.2).
         for (int ring = 0; ring < 4; ++ring) {
@@ -877,7 +877,7 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
 
         auto stars = make_intrusive<Geometry>();
         stars->setName(u8"star_cloud");
-        vn::geometry::Vec3fArray points;
+        vn::geometry::Vec3Array  points;
         // Three stacked rings (radius and height growing per ring) in the Z-up world: horizontal rings
         // at rising heights, centred on the placement.
         for (int ring = 0; ring < 3; ++ring) {

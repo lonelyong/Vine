@@ -3,12 +3,15 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <typeinfo>
 #include <utility>
 #include <vector>
 
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/geometry/MixedMesh.hpp>
 #include <vine/geometry/Mesh.hpp>
+#include <vine/geometry/QuadMesh.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -33,6 +36,64 @@ namespace
 constexpr std::uint32_t kVec3Components = vn::geometry::Mesh::kVec3Components;
 constexpr std::uint32_t kVec2Components = vn::geometry::Mesh::kVec2Components;
 constexpr std::uint32_t kVec4Components = vn::geometry::Mesh::kVec4Components;
+
+/**
+ * @brief Converts a triangle mesh into a geometry, sharing its attribute buffers.
+ *
+ * @param mesh Triangle mesh to convert; a mesh that is not valid yields no geometry.
+ * @return New geometry holding the mesh's streams, or null when nothing is drawable.
+ */
+GeometryPtr geometryFromMesh(const vn::geometry::TriangleMesh& mesh)
+{
+    if (!mesh.isValid()) {
+        return {};
+    }
+
+    // The mesh already holds float in the upload layout, so every channel is SHARED with the mesh, not copied.
+    auto       geometry  = make_intrusive<Geometry>();
+    const auto positions = mesh.positions();
+    geometry->setPositions(mesh.positionsBuffer());
+
+    if (mesh.normals().size() == positions.size()) {
+        geometry->setNormals(mesh.normalsBuffer());
+    }
+    if (mesh.texcoords().size() == positions.size()) {
+        geometry->setTexcoords2(mesh.texcoordsBuffer());
+    }
+    if (!mesh.colors().empty() && mesh.colors().size() == positions.size()) {
+        geometry->setColors(mesh.colorsBuffer());
+    }
+
+    Primitive primitive;
+    primitive.topology = Topology::Triangles;
+    if (mesh.hasIndices()) {
+        primitive.indices = Primitive::IndexSpan::whole(mesh.indicesBuffer());
+    }
+    geometry->setPrimitive(0U, std::move(primitive));
+    return geometry;
+}
+
+/**
+ * @brief Converts a mesh, triangulating the polygon kinds at this boundary.
+ *
+ * @param mesh Mesh to convert.
+ * @return New geometry, or null when the mesh holds nothing drawable.
+ */
+GeometryPtr geometryFromShapeMesh(const vn::geometry::Mesh& mesh)
+{
+    if (const auto* triangle_mesh = obj_cast<vn::geometry::TriangleMesh>(&mesh)) {
+        return geometryFromMesh(*triangle_mesh);
+    }
+    // A polygon mesh is triangulated HERE, at the one boundary that hands data to the renderer, so every geometry a
+    // draw can see is a triangle mesh; an invalid mesh yields no geometry instead of throwing from the converter.
+    if (const auto* quad_mesh = obj_cast<vn::geometry::QuadMesh>(&mesh)) {
+        return quad_mesh->isValid() ? geometryFromMesh(*quad_mesh->toTriangleMesh()) : GeometryPtr();
+    }
+    if (const auto* mixed_mesh = obj_cast<vn::geometry::MixedMesh>(&mesh)) {
+        return mixed_mesh->isValid() ? geometryFromMesh(*mixed_mesh->toTriangleMesh()) : GeometryPtr();
+    }
+    return {};
+}
 
 } // namespace
 
@@ -485,40 +546,12 @@ intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> 
 
 GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
 {
-    const auto* mesh = obj_cast<vn::geometry::Mesh>(&shape);
-    if (mesh == nullptr) {
-        return GeometryPtr();
+    // A shape that is not a mesh has no vertex data to hand the renderer; the mesh helper triangulates the polygon
+    // kinds at this one boundary.
+    if (const auto* mesh = obj_cast<vn::geometry::Mesh>(&shape)) {
+        return geometryFromShapeMesh(*mesh);
     }
-    auto       geometry  = make_intrusive<Geometry>();
-    const auto positions = mesh->positions();
-    const auto normals   = mesh->normals();
-    const auto texcoords = mesh->texcoords();
-    const auto colors    = mesh->colors();
-
-    // The mesh OWNS the vertex data and the geometry BORROWS it, so both sides read ONE allocation. The
-    // mesh already stores the scalars, so there is no conversion to do and nothing to repack.
-    geometry->setPositions(mesh->positionsBuffer());
-    if (normals.size() == positions.size()) {
-        geometry->setNormals(mesh->normalsBuffer());
-    }
-    if (texcoords.size() == positions.size()) {
-        geometry->setTexcoords2(mesh->texcoordsBuffer());
-    }
-    // A colour channel is forwarded only when it is AUTHORED and indexed per vertex: an empty array is "no
-    // colours" (not a white channel), and a length that disagrees with the vertices would be read with the
-    // wrong colour.
-    if (!colors.empty() && colors.size() == positions.size()) {
-        geometry->setColors(mesh->colorsBuffer());
-    }
-    // A mesh shape is ONE triangle draw: the primitive states the topology and the index span, which is where
-    // both belong now (see Primitive.hpp). An unindexed mesh states no indices and draws its vertex streams.
-    Primitive primitive;
-    primitive.topology = Topology::Triangles;
-    if (const auto* indexed = obj_cast<vn::geometry::IndexedTriangleMesh>(&shape)) {
-        primitive.indices = Primitive::IndexSpan::whole(indexed->indicesBuffer());
-    }
-    geometry->setPrimitive(0U, std::move(primitive));
-    return geometry;
+    return GeometryPtr();
 }
 
 VN_GRAPHICS_NS_END

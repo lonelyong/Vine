@@ -268,9 +268,6 @@ src/base/geometry/sdk/vine/geometry/Cylinder.hpp	brief|Cylinder::isValid
 src/base/geometry/sdk/vine/geometry/Cylinder.hpp	return|Cylinder::isValid
 src/base/geometry/sdk/vine/geometry/Ellipsoid.hpp	brief|Ellipsoid::isValid
 src/base/geometry/sdk/vine/geometry/Ellipsoid.hpp	return|Ellipsoid::isValid
-src/base/geometry/sdk/vine/geometry/IndexedTriangleMesh.hpp	brief|IndexedTriangleMesh::IndexedTriangleMesh
-src/base/geometry/sdk/vine/geometry/IndexedTriangleMesh.hpp	brief|IndexedTriangleMesh::isValid
-src/base/geometry/sdk/vine/geometry/IndexedTriangleMesh.hpp	return|IndexedTriangleMesh::isValid
 src/base/geometry/sdk/vine/geometry/Material.hpp	brief|Material::Material
 src/base/geometry/sdk/vine/geometry/PbrMaterial.hpp	brief|PbrMaterial::typeName
 src/base/geometry/sdk/vine/geometry/PbrMaterial.hpp	return|PbrMaterial::typeName

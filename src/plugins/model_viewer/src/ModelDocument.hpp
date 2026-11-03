@@ -5,8 +5,10 @@
 
 #include <vine/String.hpp>
 #include <vine/appfw/Document.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/Model.hpp>
+#include <vine/geometry/MixedMesh.hpp>
+#include <vine/geometry/QuadMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
@@ -54,7 +56,7 @@ class ModelDocument : public vn::appfw::Document {
      * @param name 显示名。
      * @param mesh 解析好的网格；可以为空（空模型）。
      */
-    ModelDocument(vn::String name, vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh)
+    ModelDocument(vn::String name, vn::intrusive_ptr<vn::geometry::TriangleMesh> mesh)
       : name_(std::move(name))
     {
         if (mesh != nullptr) {
@@ -133,9 +135,17 @@ class ModelDocument : public vn::appfw::Document {
                 continue;
             }
             ++parts;
-            vertices += entry.mesh->vertexCount();
-            if (const auto* indexed = dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(entry.mesh.get())) {
-                triangles += indexed->triangleCount();
+            if (const auto* mesh = vn::obj_cast<vn::geometry::Mesh>(entry.mesh.get())) {
+                vertices += mesh->vertexCount();
+            }
+            if (const auto* mesh = vn::obj_cast<vn::geometry::TriangleMesh>(entry.mesh.get())) {
+                triangles += mesh->triangleCount();
+            }
+            else if (const auto* mesh = vn::obj_cast<vn::geometry::QuadMesh>(entry.mesh.get())) {
+                triangles += mesh->toTriangleMesh()->triangleCount();
+            }
+            else if (const auto* mesh = vn::obj_cast<vn::geometry::MixedMesh>(entry.mesh.get())) {
+                triangles += mesh->toTriangleMesh()->triangleCount();
             }
         }
     }

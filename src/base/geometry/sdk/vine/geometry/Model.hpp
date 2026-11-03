@@ -59,7 +59,7 @@ class VN_GEOMETRY_API Model : public vn::Object, public vn::RefCounted<Model> {
      * @brief One mesh of the model, together with the material it uses.
      */
     struct Entry {
-        intrusive_ptr<Mesh>     mesh;     // The mesh; never null in a filled entry.
+        intrusive_ptr<Shape> mesh;        // A mesh shape; never null in a filled entry.
         intrusive_ptr<Material> material; // The material the mesh uses; null when the source declared none.
     };
 

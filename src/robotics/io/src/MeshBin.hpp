@@ -11,9 +11,8 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/geometry/Array.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
-#include <vine/geometry/Mesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
+#include <vine/geometry/Mesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/Stream.hpp>
 #include <vine/io/Vfs.hpp>
@@ -305,6 +304,8 @@ struct MeshArrays {
     vn::intrusive_ptr<const vn::Buffer<float>>         texcoords;
     vn::intrusive_ptr<const vn::Buffer<float>>         colors;
     vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices;
+    vn::intrusive_ptr<const vn::geometry::Shape>       shape;      ///< The mesh itself; a source compares its revision.
+    std::uint64_t                                      revision{ 0 }; ///< Shape revision when the arrays were taken.
     std::uint64_t                                      vertex_count{ 0 };
     std::uint64_t                                      triangle_count{ 0 };
 
@@ -326,34 +327,19 @@ struct MeshArrays {
     [[nodiscard]] static MeshArrays take(const vn::geometry::Mesh& mesh) noexcept
     {
         MeshArrays arrays;
-        if (!mesh.isValid()) {
+        if (mesh.shapeType() != vn::geometry::ShapeType::TriangleMesh || !mesh.isValid()) {
             return arrays;
         }
 
-        switch (mesh.shapeType()) {
-        case vn::geometry::ShapeType::IndexedTriangleMesh:
-        {
-            const auto& indexed   = obj_cast<vn::geometry::IndexedTriangleMesh>(mesh);
-            arrays.positions      = indexed.positionsBuffer();
-            arrays.normals        = indexed.normalsBuffer();
-            arrays.texcoords      = indexed.texcoordsBuffer();
-            arrays.colors         = indexed.colorsBuffer();
-            arrays.indices        = indexed.indicesBuffer();
-            arrays.triangle_count = indexed.triangleCount();
-            break;
-        }
-        case vn::geometry::ShapeType::TriangleMesh:
-        {
-            const auto& soup      = obj_cast<vn::geometry::TriangleMesh>(mesh);
-            arrays.positions      = soup.positionsBuffer();
-            arrays.normals        = soup.normalsBuffer();
-            arrays.texcoords      = soup.texcoordsBuffer();
-            arrays.colors         = soup.colorsBuffer();
-            arrays.triangle_count = soup.triangleCount();
-            break;
-        }
-        default: return arrays; // B-rep shapes and the like are not triangle meshes
-        }
+        const auto& triangle_mesh = obj_cast<vn::geometry::TriangleMesh>(mesh);
+        arrays.positions          = triangle_mesh.positionsBuffer();
+        arrays.normals            = triangle_mesh.normalsBuffer();
+        arrays.texcoords          = triangle_mesh.texcoordsBuffer();
+        arrays.colors             = triangle_mesh.colorsBuffer();
+        arrays.indices            = triangle_mesh.indicesBuffer();
+        arrays.triangle_count     = triangle_mesh.triangleCount();
+        arrays.shape              = &mesh;
+        arrays.revision           = mesh.revision();
 
         if (arrays.positions == nullptr) {
             return arrays;
@@ -440,6 +426,8 @@ class MeshBinSource final : public vn::io::DataSource {
         indices_               = arrays.indices;
         header_.vertex_count   = arrays.vertex_count;
         header_.triangle_count = arrays.triangle_count;
+        shape_                 = arrays.shape;
+        shape_revision_        = arrays.revision;
 
         // Every array bit is set by the block that is actually written, so the header and the blocks cannot disagree.
         header_.flags = kMeshHostIsBigEndian ? static_cast<std::uint16_t>(MeshFlag::BigEndian) : 0;
@@ -578,11 +566,18 @@ class MeshBinSource final : public vn::io::DataSource {
      */
     [[nodiscard]] bool intact() const noexcept
     {
+        // Replacing an array installs a new buffer, which this source does not see through the handles it holds, so the
+        // shape's own revision is what says "this mesh was handed over and then changed".
+        if (shape_ == nullptr || shape_->revision() != shape_revision_) {
+            return false;
+        }
         return (positions_ == nullptr || positions_->revision() == revisions_[0]) && (normals_ == nullptr || normals_->revision() == revisions_[1]) &&
                (texcoords_ == nullptr || texcoords_->revision() == revisions_[2]) && (colors_ == nullptr || colors_->revision() == revisions_[3]) &&
                (indices_ == nullptr || indices_->revision() == revisions_[4]);
     }
 
+    vn::intrusive_ptr<const vn::geometry::Shape>       shape_;
+    std::uint64_t                                      shape_revision_{ 0 };
     vn::intrusive_ptr<const vn::Buffer<float>>         positions_;
     vn::intrusive_ptr<const vn::Buffer<float>>         normals_;
     vn::intrusive_ptr<const vn::Buffer<float>>         texcoords_;
@@ -741,6 +736,10 @@ class StlMeshSource final : public vn::io::DataSource {
      */
     [[nodiscard]] bool intact() const noexcept
     {
+        // See MeshBinSource::intact(): the shape revision covers a replaced array, the buffer revisions an in-place edit.
+        if (arrays_.shape == nullptr || arrays_.shape->revision() != arrays_.revision) {
+            return false;
+        }
         return (arrays_.positions == nullptr || arrays_.positions->revision() == revisions_[0]) &&
                (arrays_.indices == nullptr || arrays_.indices->revision() == revisions_[1]);
     }
@@ -860,10 +859,10 @@ class StlMeshSource final : public vn::io::DataSource {
  * @brief The arrays one mesh file holds.
  */
 struct MeshBinData {
-    vn::geometry::Vec3fArray  positions; // Vertex positions.
-    vn::geometry::Vec3fArray  normals;   // Per-vertex normals, empty when the file has none.
-    vn::geometry::Vec2fArray  texcoords; // Per-vertex texture coordinates, empty when the file has none.
-    vn::geometry::Vec4fArray  colors;    // Per-vertex colours (linear RGBA), empty when the file has none.
+    vn::geometry::Vec3Array  positions; // Vertex positions.
+    vn::geometry::Vec3Array  normals;   // Per-vertex normals, empty when the file has none.
+    vn::geometry::Vec2Array  texcoords; // Per-vertex texture coordinates, empty when the file has none.
+    vn::geometry::Vec4Array  colors;    // Per-vertex colours (linear RGBA), empty when the file has none.
     vn::geometry::UInt32Array indices;   // Triangle indices, empty for a triangle soup.
 };
 
@@ -974,7 +973,7 @@ inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromBin(vn::io::Vfs& vfs, const
         return mesh;
     }
 
-    auto mesh = vn::make_intrusive<vn::geometry::IndexedTriangleMesh>();
+    auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
     mesh->setPositions(std::move(data.positions));
     if (!data.normals.empty()) {
         mesh->setNormals(std::move(data.normals));

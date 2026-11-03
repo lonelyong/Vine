@@ -8,8 +8,9 @@
 #include <vine/Buffer.hpp>
 #include <vine/Color.hpp>
 #include <vine/Colorf.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
+#include <vine/geometry/MixedMesh.hpp>
+#include <vine/geometry/QuadMesh.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/ChainPresets.hpp>
@@ -77,6 +78,7 @@ using vn::math::Point3d;
 using vn::math::Quatd;
 using vn::math::Vec2d;
 using vn::math::Vec3d;
+using vn::math::Vec3f;
 using vn::test::setPrimitiveIndices;
 
 namespace
@@ -155,7 +157,8 @@ intrusive_ptr<const Image> sourceImage(const Texture& texture, int mip_count)
 intrusive_ptr<vn::geometry::TriangleMesh> makeUnitTriangle()
 {
     auto mesh = intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
-    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f));
+    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
+    mesh->bumpRevision();
     return mesh;
 }
 
@@ -1583,8 +1586,8 @@ TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)
     auto scene = intrusive_ptr<Scene>(new Scene());
     auto node  = intrusive_ptr<Group>(new Group());
     auto mesh  = intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
-    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f));
-    mesh->addTriangle(vn::math::Vec3f(0.0f, 0.0f, -2.0f), vn::math::Vec3f(1.0f, 0.0f, -2.0f), vn::math::Vec3f(0.0f, 1.0f, -2.0f));
+    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f),
+                         vn::math::Vec3f(0.0f, 0.0f, -2.0f), vn::math::Vec3f(1.0f, 0.0f, -2.0f), vn::math::Vec3f(0.0f, 1.0f, -2.0f) });
     auto geom = geometryOf(*mesh);
     node->addChild(geom);
     scene->setRoot(node);
@@ -3090,9 +3093,11 @@ TEST(MeshTest, AabbCacheManualSet)
     mesh->setAabb(custom);
     EXPECT_TRUE(mesh->aabb() == custom);
 
-    // Geometry edits do not touch the manually cached box.
+    // A manual box describes the vertices it was given; once the vertices move it is no longer evidence, so the cache
+    // is cleared instead of reporting a box that does not match the storage.
     mesh->setPositions({ vn::math::Vec3f(9.0f, 9.0f, 9.0f) });
-    EXPECT_TRUE(mesh->aabb() == custom);
+    EXPECT_FALSE(mesh->aabb().isValid());
+    EXPECT_FLOAT_EQ(mesh->computeAabb().max().x, 9.0f);
 }
 
 TEST(MeshTest, AttributesSharedOnBase)
@@ -3143,9 +3148,8 @@ TEST(MeshTest, ColorsAreOptionalAndSharedLikeTheOtherAttributes)
 
 TEST(MeshTest, AttributeStorageIsSharedNotCopied)
 {
-    intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh(new vn::geometry::IndexedTriangleMesh());
-    mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
-    mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
+    intrusive_ptr<vn::geometry::TriangleMesh> mesh(new vn::geometry::TriangleMesh());
+    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f) });
 
     // A second consumer (the renderer, here just a holder) takes the shareable handle rather than a copy.
     const auto shared = mesh->positionsBuffer();
@@ -3154,49 +3158,40 @@ TEST(MeshTest, AttributeStorageIsSharedNotCopied)
     EXPECT_EQ(shared->data(), reinterpret_cast<const float*>(mesh->positions().data()));
     EXPECT_EQ(shared->bytes().size(), 2u * sizeof(vn::math::Vec3f));
 
-    // The model keeps building. The holder sees it because it IS the same storage, and the growth is
-    // announced so a cache knows its copy of the bytes is stale.
-    const auto before = shared->revision();
-    mesh->addVertex(vn::math::Vec3f(2.0f, 0.0f, 0.0f));
-    EXPECT_EQ(shared->size(), 3u * vn::geometry::Mesh::kVec3Components);
-    EXPECT_EQ(shared->data(), reinterpret_cast<const float*>(mesh->positions().data()));
-    EXPECT_GT(shared->revision(), before);
-
-    // The scalars really are the vertices, in order.
+    // Replacing the positions installs NEW storage; the holder keeps reading the bytes it took.
+    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(2.0f, 0.0f, 0.0f) });
+    EXPECT_EQ(shared->size(), 2u * vn::geometry::Mesh::kVec3Components) << "the old handle still describes the old storage";
+    EXPECT_NE(shared.get(), mesh->positionsBuffer().get());
     EXPECT_FLOAT_EQ(mesh->positions()[2].x, 2.0f);
 
-    // The index buffer is shared the same way, and appending a triangle announces itself too.
-    mesh->addTriangle(0u, 1u, 2u);
+    // The index buffer is shared the same way.
+    mesh->setIndices({ 0u, 1u, 2u });
     const auto indices = mesh->indicesBuffer();
+    ASSERT_NE(indices, nullptr);
     EXPECT_EQ(indices->size(), 3u);
     EXPECT_EQ(indices->data(), mesh->indices().data());
 }
 
-TEST(MeshTest, EveryEditAnnouncesItselfOncePerEdit)
+TEST(MeshTest, ASetterInstallsNewStorageInsteadOfEdittingIt)
 {
-    // The announcement is per EDIT, not per element — which is exactly what only the writer can know, and the
-    // reason `Buffer` does not move its own revision (an append used to bump once per scalar pushed). A holder
-    // wants to hear "I am done", so the count says that: one per appended vertex, one per appended triangle,
-    // one per cleared array.
-    intrusive_ptr<vn::geometry::IndexedTriangleMesh> mesh(new vn::geometry::IndexedTriangleMesh());
-    const auto                                       positions = mesh->positionsBuffer();
-    const auto                                       indices   = mesh->indicesBuffer();
-    ASSERT_NE(positions, nullptr);
+    // One edit is one SET. Nothing in the mesh mutates a buffer it already handed out, so a setter needs no
+    // announcement: the buffer it installs is a new object, and a cache keyed on (buffer, revision) sees a new key.
+    intrusive_ptr<vn::geometry::TriangleMesh> mesh(new vn::geometry::TriangleMesh());
+    const auto                                 first_positions = mesh->positionsBuffer();
+    ASSERT_NE(first_positions, nullptr);
+    EXPECT_EQ(mesh->indicesBuffer(), nullptr) << "sequential triangles expose no index buffer";
+
+    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f) });
+    EXPECT_NE(mesh->positionsBuffer().get(), first_positions.get()) << "a setter installs a new buffer";
+    EXPECT_EQ(mesh->positionsBuffer()->revision(), 0u);
+
+    mesh->setIndices({ 0u, 1u, 1u });
+    const auto indices = mesh->indicesBuffer();
     ASSERT_NE(indices, nullptr);
-    EXPECT_EQ(positions->revision(), 0u);
     EXPECT_EQ(indices->revision(), 0u);
 
-    mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
-    EXPECT_EQ(positions->revision(), 1u) << "one vertex appended = one announcement";
-    mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
-    EXPECT_EQ(positions->revision(), 2u);
-
-    mesh->addTriangle(0u, 1u, 1u);
-    EXPECT_EQ(indices->revision(), 1u) << "one triangle appended = one announcement";
-
-    mesh->clear();
-    EXPECT_EQ(positions->revision(), 3u) << "emptying the attribute storage is an edit too";
-    EXPECT_EQ(indices->revision(), 2u);
+    mesh->setIndices({});
+    EXPECT_EQ(mesh->indicesBuffer(), nullptr) << "an empty index array is the sequential form again";
 }
 
 TEST(GeometryTest, BoundingBoxComputedFromBuffers)
@@ -8800,7 +8795,7 @@ TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
     EXPECT_EQ(geom.vertexCount(), 0u);
     EXPECT_TRUE(geom.boundingBox().isEmpty());
 
-    vn::geometry::Vec3fArray points = {
+    vn::geometry::Vec3Array points = {
         vn::math::Vec3f(0.0f, 0.0f, 0.0f),
         vn::math::Vec3f(2.0f, 0.0f, 0.0f),
         vn::math::Vec3f(0.0f, 3.0f, 0.0f),
@@ -8832,11 +8827,11 @@ TEST(GeometryTest, NormalsChannelAndRevision)
     EXPECT_FALSE(geom.hasNormals());
     EXPECT_EQ(geom.revision(), 0u);
 
-    vn::geometry::Vec3fArray points = { vn::math::Vec3f(0, 0, 0), vn::math::Vec3f(1, 0, 0), vn::math::Vec3f(0, 1, 0) };
+    vn::geometry::Vec3Array points = { vn::math::Vec3f(0, 0, 0), vn::math::Vec3f(1, 0, 0), vn::math::Vec3f(0, 1, 0) };
     geom.setPositions(packAttribute(points));
     EXPECT_EQ(geom.revision(), 0u) << "setting a channel is not an announcement";
 
-    vn::geometry::Vec3fArray normals = { vn::math::Vec3f(0, 0, 1), vn::math::Vec3f(0, 0, 1), vn::math::Vec3f(0, 0, 1) };
+    vn::geometry::Vec3Array normals = { vn::math::Vec3f(0, 0, 1), vn::math::Vec3f(0, 0, 1), vn::math::Vec3f(0, 0, 1) };
     geom.setNormals(packAttribute(normals));
     EXPECT_TRUE(geom.hasNormals());
     EXPECT_EQ(geom.normalCount(), 3u);
@@ -8856,7 +8851,7 @@ TEST(GeometryTest, RevisionCanBeReportedByHand)
     // geometry reads without calling any setter here. Reporting that is the ONLY way a retained render
     // node can hear about it — and it is a value, not a bump, so it can mirror the model's version.
     Geometry                 geom;
-    vn::geometry::Vec3fArray points = { vn::math::Vec3f(0, 0, 0) };
+    vn::geometry::Vec3Array points = { vn::math::Vec3f(0, 0, 0) };
     geom.setPositions(packAttribute(points));
 
     geom.setRevision(41u);
@@ -8884,7 +8879,7 @@ TEST(GeometryTest, MaterialAndProgramAreGeometryDefaultsNotBatchWrites)
     EXPECT_EQ(geom.program(), default_program.get());
     EXPECT_EQ(geom.primitiveCount(), 0u) << "a default is not a primitive";
 
-    vn::geometry::Vec3fArray points = { vn::math::Vec3f(0, 0, 0), vn::math::Vec3f(1, 0, 0), vn::math::Vec3f(0, 1, 0) };
+    vn::geometry::Vec3Array points = { vn::math::Vec3f(0, 0, 0), vn::math::Vec3f(1, 0, 0), vn::math::Vec3f(0, 1, 0) };
     geom.setPositions(packAttribute(points));
     ASSERT_EQ(geom.primitiveCount(), 1u);
     EXPECT_EQ(geom.primitive(0)->material, nullptr) << "the installed draw states no override yet";
@@ -8941,6 +8936,31 @@ TEST(GeometryTest, ConverterFillsBuffersFromTriangleMesh)
     EXPECT_EQ(via_setters.hasNormals(), geom->hasNormals());
 }
 
+TEST(GeometryTest, ConverterTriangulatesQuadAndMixedMeshes)
+{
+    auto quad = vn::make_intrusive<vn::geometry::QuadMesh>();
+    quad->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(1, 1, 0), Vec3f(0, 1, 0) });
+    const auto quad_geometry = geometryFromShape(*quad);
+    ASSERT_NE(quad_geometry.get(), nullptr);
+    ASSERT_EQ(quad_geometry->primitiveCount(), 1u);
+    EXPECT_EQ(quad_geometry->primitive(0)->indices.span().size(), 6u);
+    EXPECT_EQ(quad_geometry->primitive(0)->indices.span()[0], 0u);
+    EXPECT_EQ(quad_geometry->primitive(0)->indices.span()[5], 3u);
+    const auto quad_triangles = vn::obj_cast<vn::geometry::QuadMesh>(*quad).toTriangleMesh();
+    EXPECT_EQ(quad_triangles->triangleCount(), 2u);
+
+    auto mixed = vn::make_intrusive<vn::geometry::MixedMesh>();
+    mixed->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(1, 1, 0), Vec3f(0, 1, 0), Vec3f(-1, 0, 0) });
+    mixed->setFaceOffsets({ 0u, 5u });
+    const auto mixed_geometry = geometryFromShape(*mixed);
+    ASSERT_NE(mixed_geometry.get(), nullptr);
+    ASSERT_EQ(mixed_geometry->primitiveCount(), 1u);
+    EXPECT_EQ(mixed_geometry->primitive(0)->indices.span().size(), 9u);
+
+    mixed->setFaceOffsets({ 0u, 3u });
+    EXPECT_EQ(geometryFromShape(*mixed).get(), nullptr) << "invalid mesh topology is rejected before conversion";
+}
+
 TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
 {
     auto mesh = intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
@@ -8982,11 +9002,9 @@ TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)
 
 TEST(GeometryTest, ConverterSharesTheMeshIndexStorage)
 {
-    auto mesh = intrusive_ptr<vn::geometry::IndexedTriangleMesh>(new vn::geometry::IndexedTriangleMesh());
-    mesh->addVertex(vn::math::Vec3f(0.0f, 0.0f, 0.0f));
-    mesh->addVertex(vn::math::Vec3f(1.0f, 0.0f, 0.0f));
-    mesh->addVertex(vn::math::Vec3f(0.0f, 1.0f, 0.0f));
-    mesh->addTriangle(0u, 1u, 2u);
+    auto mesh = intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
+    mesh->setIndices({ 0u, 1u, 2u });
 
     const auto geom = geometryFromShape(*mesh);
     ASSERT_NE(geom.get(), nullptr);
@@ -8998,11 +9016,12 @@ TEST(GeometryTest, ConverterSharesTheMeshIndexStorage)
     EXPECT_EQ(geom->primitive(0)->indices.span().size(), 3u);
     EXPECT_EQ(geom->primitive(0)->indices.span()[2], 2u);
 
-    // ...and because the geometry holds the buffer rather than a snapshot, the mesh appending another
-    // triangle is followed instead of dangled.
-    mesh->addTriangle(2u, 1u, 0u);
-    EXPECT_EQ(geom->primitive(0)->indices.span().size(), 6u);
-    EXPECT_EQ(geom->primitive(0)->indices.span().data(), mesh->indicesBuffer()->data());
+    // ...and because the geometry holds the buffer rather than a snapshot, the stream it reads is the one the mesh
+    // installed. Replacing the index array is a GEOMETRY-level change: the mesh points at a new buffer, and the
+    // geometry keeps reading the one it was given until it is rebuilt or its revision is bumped.
+    mesh->setIndices({ 0u, 2u, 1u, 0u, 1u, 2u });
+    EXPECT_NE(geom->primitive(0)->indices.span().data(), mesh->indicesBuffer()->data());
+    EXPECT_EQ(geom->primitive(0)->indices.span().size(), 3u) << "the geometry still reads the buffer it was given";
 }
 
 TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
@@ -9017,7 +9036,7 @@ TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)
     EXPECT_EQ(geom.texcoordCount(), 0u);
     const std::uint64_t before = geom.revision();
 
-    geom.setTexcoords2(packAttribute(vn::geometry::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) }));
+    geom.setTexcoords2(packAttribute(vn::geometry::Vec2Array{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) }));
 
     EXPECT_TRUE(geom.hasTexcoords());
     EXPECT_EQ(geom.texcoordCount(), 3u);

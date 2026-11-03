@@ -1,9 +1,9 @@
 # graphics 几何：通道、图元、实例、revision
 
 > **状态**：现行
-> **最后核对**：2026-10-26
+> **最后核对**：2026-11-03
 > **范围**：`Geometry` 通道集、`Primitive` 一次 draw、实例流、revision 与存储共享。
-> **权威来源**：`Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp`。
+> **权威来源**：`Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp` / `Mesh.hpp`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计
@@ -34,6 +34,14 @@
 2.4 **实例是 draw 的参数**：挂在 `Primitive` 上，不是场景图作用域；没有 `InstanceScope`。
 2.5 **两级 revision**：`Geometry::revision()` 描述形状，`Buffer::revision()` 描述字节。
 2.6 **包围盒按数据缓存**：局部盒键 = positions buffer + 其 revision + 段 + 几何 revision。
+2.7 **几何数据统一 float**：网格与参数化 primitive 只有一套 float 实现，不设精度模板、不设 `Meshf` / `Meshd` 之类别名；
+    索引为 `uint32_t`。几何数据都是局部坐标系下的形状描述，float 覆盖全部现有消费者（机器人 IO、渲染、碰撞），
+    double 没有下游需求，而模板会把精度选择推给每个调用点。`Shape` 是运行时多态边界，一个 `Mesh` 就是全部网格的基类。
+    满足 `G1` / `G4` / `G8`，并以 double 场景下须在调用方自行转换支付 `G10` 成本（今天无此消费者）。
+2.8 **面拓扑由网格类型表达**：`Mesh` 只持有顶点属性与索引存储，不承诺面拓扑；`TriangleMesh` 同时支持有索引与顺序顶点，
+    并独自提供三角形计数。`QuadMesh` 和 `MixedMesh` 直接继承 `Mesh`，渲染与导出在边界处三角化。
+    `MixedMesh` 以 `face_offsets` 描述各面的 corner 范围。满足 `G1` / `G4` / `G6`，并以 Quad/Mixed 转换时生成索引支付
+    `G10` 成本。
 
 ## 3. 功能点
 
@@ -83,13 +91,45 @@
 | # | 功能 | 说明 |
 |---|---|---|
 | F22 | `core::Buffer<T>` | `RefCounted`，内部组合 `std::vector<T>`；不是 `Object`，没有 vptr。 |
-| F23 | 元素类型钉死 | 属性 = `float`，索引 = `uint32_t`；`Mesh` 存 `Buffer<float>` / `Buffer<uint32_t>`。 |
-| F24 | 共享存储 | `geometryFromShape()` 传 `mesh->positionsBuffer()` 等，两侧读同一块分配；`packAttribute()` 给类型化输入。 |
-| F25 | 手动公告 | `Buffer` 自己不 bump；写者改完 `setRevision(revision()+1)`；`Mesh::announceChange()`；`Geometry::setRevision()`。 |
+| F23 | 统一 float | `Mesh` 属性存 `Buffer<float>`，索引为 `Buffer<std::uint32_t>`；没有精度模板，也没有 `Meshf` / `Meshd` 别名。 |
+| F24 | 渲染边界 | `geometryFromShape()` 只把 `TriangleMesh` 交给转换器，属性 buffer 原样共享；`QuadMesh` / `MixedMesh` 在这个边界先转成 `TriangleMesh`，非法网格返回空几何而不抛异常。 |
+| F25 | 手动公告 | 没人自动 bump：写者完成一次编辑后自己推进 `Shape::revision()`；持有 `Buffer` 并原地写的写者用 `Buffer::setRevision()`；draw 布局由 `Geometry::setRevision()` 负责。 |
 | F26 | vsg 别名 | 后端用真 `vsg::vec3Array` 别名持有 Vine buffer 的 `Data`；stride = 数组元素大小，不是 buffer 元素大小。 |
 | F27 | 指针身份判据 | 渲染证据对“拷贝 vs 共享”无感；只有 `dataPointer()` 同一性断言能区分。 |
 
+### 3.6 网格面拓扑
+
+| # | 功能 | 行为 | 状态 |
+|---|---|---|---|
+| F28 | 统一三角网格 | `TriangleMesh` 由 `hasIndices()` 区分索引面与顺序三角形。 | 已落地 |
+| F29 | 四边形网格 | `QuadMesh` 按固定对角线显式转换为 `TriangleMesh`。 | 已落地 |
+| F30 | 混合多边形网格 | `MixedMesh` 以 offsets 分面，索引与 offsets 一起整体给出，并通过显式转换生成 `TriangleMesh`。 | 已落地 |
+
+#### 3.6.1 F28 统一三角网格
+
+- **行为**：带索引时按三项一面；无索引时每三个顺序顶点一面；`triangleCount()` 仅在此类型上定义。
+- **约束**（C5）：索引数量与顶点数量均须组成完整三角形，索引必须落在顶点范围内。
+- **要求**（R4）：机器人 IO 只接受 `TriangleMesh`；基本体也是 float。
+- **验收**（T6）：`MeshShapeTest` 覆盖两种存储形式及完整三角面约束。
+- **注意**（N8）：indexed/soup 是同一类型的存储状态，不由 `ShapeType` 区分。
+
+#### 3.6.2 F29 四边形网格
+
+- **行为**：`QuadMesh` 直接继承 `Mesh`；索引或顺序 corner 每四项构成一面；`toTriangleMesh()` 返回带转换索引及顶点属性副本的三角网格。
+- **约束**（C6）：corner 数必须为四的倍数；索引不得越界。
+- **要求**（R5）：graphics 与 meshio 消费前验证网格，并复用该转换接口。
+- **验收**（T7）：`MeshShapeTest.QuadMeshUsesFourCornersAndTriangulates` 验证转换结果。
+- **注意**（N9）：转换结果是独立的 `TriangleMesh`，修改结果不回写来源 QuadMesh。
+
+#### 3.6.3 F30 混合多边形网格
+
+- **行为**：`face_offsets` 以 0 起始、以 corner 数结束，逐面给出边界；索引与 offsets 一起由 `setIndices()` / `setFaceOffsets()` 整体给出；`toTriangleMesh()` 按三角扇生成独立三角网格并复制顶点属性及名称。
+- **约束**（C7）：offsets 单调不减且每面至少三个 corner；indexed corner 必须落在顶点范围内。
+- **要求**（R6）：graphics、meshio 和模型查看器统计复用显式转换；offsets 不合法时转换不得访问其面数据。
+- **验收**（T8）：`MeshShapeTest.MixedMeshValidatesOffsetsAndConvertsToTriangleMesh` 与 `MeshShapeTest.MixedMeshWithSeveralFacesConvertsEveryFace`。
+
 **契约**：
+- 网格只有一个填充入口：整组 `setPositions()` / `setNormals()` / `setTexcoords()` / `setColors()` / `setIndices()`（Mixed 再加 `setFaceOffsets()`），没有增量追加。
 - `Mesh` 的 `span` 是借用；任何增长都会使既有 view 失效。
 - 通道持的是 buffer 而不是快照：源 buffer 增长后通道不悬空，长度与地址现取。
 - 段的身份进两层缓存 key：共享绑定缓存 = 缓冲地址 + revision + offset + 长度；派生法线缓存另加索引 first/count。
@@ -132,9 +172,24 @@
 | 接口 | 作用 |
 |---|---|
 | `Buffer<T>::view()` / `size()` / `setRevision()` / `revision()` | 字节存储与公告 |
-| `Mesh::positions()` / `normals()` / `texcoords()` / `positionsBuffer()` 等 | 类型化视图与共享句柄 |
+| `Shape::revision()` / `setRevision()` / `bumpRevision()` | 形状内容代际：持有者建完或改完后自己推进 |
+| `Mesh::vertexCount()` / `hasIndices()` | 顶点数与索引状态，不定义面拓扑 |
+| `Mesh::setPositions()` / `setIndices()` / `indices()` | 共用顶点与 corner 索引存储（整体设置） |
+| `Mesh::positions()` / `normals()` / `texcoords()` / `positionsBuffer()` 等 | float 视图与存储句柄；数组别名在 `Array.hpp` |
+| `TriangleMesh::triangleCount()` / `isValid()` | 顺序或索引三角网格及其三角计数 |
+| `QuadMesh::quadCount()` / `toTriangleMesh()` | 四边形面与显式三角网格转换 |
+| `MixedMesh::faceOffsets()` / `faceOffsetsBuffer()` / `setFaceOffsets()` / `toTriangleMesh()` | 可共享的多边形边界与显式三角网格转换 |
+| `Model::Entry::mesh` | `Shape` 句柄；模型导入写入 `TriangleMesh`，读取端按具体类型识别 |
 | `geometryFromShape()` | `Shape` → `Geometry`，共享 buffer |
 | `packAttribute()` / `packIndices()` | 类型化输入打包 |
+
+### 4.5 形状类型与模块边界
+
+| 接口 | 作用 |
+|---|---|
+| `Box` / `Sphere` / `Cone` / `Cylinder` / `Ellipsoid` | 参数化基本体，尺寸均为 `float`，局部坐标系下描述；机器人 IO 直接读写它们 |
+| `Mesh` / `TriangleMesh` / `QuadMesh` / `MixedMesh` | 网格类型层次；graphics 与 meshio 只接收这一套 float 网格 |
+| `Primitive` / `BrepShape` / `Shape` | 基本体与 B-rep 的共同基类；`revision` 三件套住在 `Shape` |
 
 ## 5. 约束、要求与不变量
 
@@ -145,6 +200,10 @@
 | C1 | 形状归 `Geometry`，字节归 `Buffer`；一个通道一种布局。 |
 | C2 | 实例流是 `Primitive` 的参数，不是 `Geometry` 的通道。 |
 | C3 | revision 只在内容真正变化时推进；可见实例数是前缀。 |
+| C4 | 几何数值只用 `float`：网格顶点属性、基本体尺寸、索引（`std::uint32_t`）均无精度变体。 |
+| C5 | 三角网格索引为空表示顺序顶点；非空索引必须按三项分组且全部有效。 |
+| C6 | Quad face corner 数须为 4 的倍数，索引不得越界。 |
+| C7 | Mixed offsets 从 0 开始、单调不减、末项等于 corner 数，且每面至少 3 个 corner。 |
 
 ### 5.2 要求（R#）
 
@@ -153,6 +212,9 @@
 | R1 | 实例共享材质/层/排序；逐实例属性等真实需求再加。 |
 | R2 | 多个放置 = 多个 `Geometry` 节点（可共享 buffer）。 |
 | R3 | 包围盒/拾取身份 = `geometry + primitiveIndex + instanceIndex`。 |
+| R4 | 机器人 IO 只接受 `TriangleMesh` 与 float 基本体，不留 double 变体。 |
+| R5 | graphics 与 meshio 消费前验证网格，并复用 `toTriangleMesh()` 转换接口。 |
+| R6 | 模型查看器统计与导出复用显式转换；offsets 不合法时转换不得访问其面数据。 |
 
 ### 5.3 不变量（N#）
 
@@ -165,6 +227,12 @@
 | N5 | 一个 Geometry 只能有一个父；多个放置用多个 Geometry 节点（可共享 buffer）。 |
 | N6 | 自定义通道不能占用规范 location。 |
 | N7 | `POINT_LIST` 要求顶点阶段静态写 `gl_PointSize`。 |
+| N8 | `TriangleMesh` 的 `ShapeType` 不表达 indexed/soup；使用 `hasIndices()` 判断。 |
+| N9 | Quad 与 Mixed 的三角化结果只用于消费端，不改写原网格数据。 |
+| N10 | 三角扇不适合凹多边形；需要凹面正确剖分时应先采用能保留正确三角化结果的输入。 |
+| N11 | 通道只在“每顶点一项”时被消费：法线/UV/颜色长度与位置不一致时消费端丢弃该通道，`isValid()` 不因此为假。 |
+| N12 | `Mesh::aabb()` 是缓存：位置变化（`setPositions()`）清空它，未计算前为空盒。 |
+| N13 | geometry 不自行推进任何 revision：`set*` 换的是 buffer 对象（地址变即缓存 key 变），原地写字节的写者用 `Buffer::setRevision()`，形状整体变化由持有者 `Shape::bumpRevision()` 报告；三者不可互替（N2）。 |
 
 ## 6. 注意事项与陷阱
 
@@ -179,6 +247,12 @@
 - 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
 - 怎么判：出现“如果 Windows/X11 就……”的分支。
 - 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
+
+### 6.3 多边形转换
+
+- 会怎么错：直接按 offsets 或索引读 faces，非法输入可能访问越界。
+- 怎么判：`isValid()` 为 false，或 offsets 末项与 corner 数不符。
+- 怎么防：转换入口先检查有效性；凹多边形不能假定三角扇保持其形状。
 
 ## 7. 已否决选项
 
@@ -198,6 +272,11 @@
 | T2 | `StreamRevisionTest`：单通道编辑只重传该流；几何编辑重建事实行。 |
 | T3 | `GeometryFactsTest` / `PrimitiveDrawTest`。 |
 | T4 | 设备级 `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`。 |
+| T5 | `MeshShapeTest` 验证网格存储与运行时类型，包括一份 positions buffer 被两个 `Geometry` 共享。 |
+| T6 | 三角网格索引与顺序顶点均验证完整三角面；`MeshShapeTest`。 |
+| T7 | Quad 按固定对角线拆为两个三角形；`MeshShapeTest.QuadMeshUsesFourCornersAndTriangulates`。 |
+| T8 | Mixed offsets 验证及三角扇输出；`MeshShapeTest.MixedMeshValidatesOffsetsAndConvertsToTriangleMesh`、`MeshShapeTest.MixedMeshWithSeveralFacesConvertsEveryFace`。 |
+| T9 | 盒缓存与 revision 契约；`MeshShapeTest.TheCachedBoxFollowsTheVertices`、`MeshShapeTest.TheRevisionIsReportedByTheHolderNotByASetter`、`PkgIOTest.EditedMeshIsRefusedWhenThePackageIsFinallyWritten`。 |
 
 ## 9. 状态与演进
 
@@ -211,8 +290,11 @@
 
 ### 9.3 兼容性 / 迁移
 
-旧名/旧路径只在 §7 已否决选项或 git 历史里出现；新代码按 §4 的接口写。
+索引与顺序三角形统一为 `TriangleMesh`，不再提供 `IndexedTriangleMesh` 类型；
+网格与基本体不再提供精度模板，`Meshf` / `Boxd` 这类别名已删除，
+新代码按 §4 的接口写。旧名只在 git 历史里出现。
 
 ## 10. 参考
 
+`Mesh.hpp` · `TriangleMesh.hpp` · `QuadMesh.hpp` · `MixedMesh.hpp` · `MeshShapeTest.cpp` ·
 `graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `../backlog/graphics.md`

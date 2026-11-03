@@ -14,9 +14,8 @@
 #include <vine/geometry/Cone.hpp>
 #include <vine/geometry/Cylinder.hpp>
 #include <vine/geometry/Ellipsoid.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
-#include <vine/geometry/Sphere.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
+#include <vine/geometry/Sphere.hpp>
 #include <vine/io/Adapters.hpp>
 #include <vine/io/Vfs.hpp>
 
@@ -65,6 +64,24 @@ bool getAttrDouble(const tinyxml2::XMLElement* xe, const char* name, double& out
 }
 
 /**
+ * @brief Reads a float attribute.
+ *
+ * @details
+ * - Geometry and colour values are floats in the pipeline, so they are parsed at float precision instead of widening a
+ *   double and narrowing it again; getAttrDouble stays for the joint values, which are double end to end.
+ *
+ * @param xe The element.
+ * @param name The attribute name.
+ * @param out Receives the value.
+ * @return true when the attribute exists and parsed.
+ */
+bool getAttrFloat(const tinyxml2::XMLElement* xe, const char* name, float& out)
+{
+    const char* const value = xe->Attribute(name);
+    return value != nullptr && detail::strToFloat(fromCStr(value), out);
+}
+
+/**
  * @brief Writes a double attribute.
  *
  * @param xe The element.
@@ -74,6 +91,18 @@ bool getAttrDouble(const tinyxml2::XMLElement* xe, const char* name, double& out
 void setAttrDouble(tinyxml2::XMLElement* xe, const char* name, double value)
 {
     xe->SetAttribute(name, toCStr(detail::doubleToStr(value)));
+}
+
+/**
+ * @brief Writes a float attribute in its shortest float form.
+ *
+ * @param xe The element.
+ * @param name The attribute name.
+ * @param value The value.
+ */
+void setAttrFloat(tinyxml2::XMLElement* xe, const char* name, float value)
+{
+    xe->SetAttribute(name, toCStr(detail::floatToStr(value)));
 }
 
 /**
@@ -98,6 +127,16 @@ String attr(const tinyxml2::XMLElement* xe, const char* name)
 void setAttr(tinyxml2::XMLElement* xe, const char* name, const String& value)
 {
     xe->SetAttribute(name, toCStr(value));
+}
+
+template <typename Type, typename Write>
+bool writeShape(const vn::geometry::Shape& shape, Write&& write)
+{
+    if (const auto* value = vn::obj_cast<Type>(&shape)) {
+        write(*value);
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -214,11 +253,10 @@ vn::intrusive_ptr<vn::geometry::Material> XmlIOBase::parseMaterial(ParseContext&
     (void)ctx;
     const String color_str = attr(xe, "color");
     if (!color_str.empty()) {
-        double             r = 0.0, g = 0.0, b = 0.0, a = 1.0;
+        float              r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f;
         std::istringstream stream(color_str.as_std_str());
         if (stream >> r >> g >> b >> a) {
-            return vn::make_intrusive<vn::geometry::ColorMaterial>(
-                vn::Colorf(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), static_cast<float>(a)));
+            return vn::make_intrusive<vn::geometry::ColorMaterial>(vn::Colorf(r, g, b, a));
         }
     }
     return {};
@@ -232,40 +270,43 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
     }
     const std::string tag = child->Name();
     const double      s   = ctx.options.len_unit_scaling;
+    // A robot description is read into the float shapes the rest of the pipeline carries (mesh, render, collision):
+    // the file's decimal text does not buy double precision once it has crossed this boundary.
     if (tag == "box") {
-        double w = 0.0, h = 0.0, d = 0.0;
+        float w = 0.0f, h = 0.0f, d = 0.0f;
         // size is space-separated "w h d"
         const String       size_str = attr(child, "size");
         std::istringstream stream(size_str.as_std_str());
         if (!(stream >> w >> h >> d)) {
             return {};
         }
-        return vn::make_intrusive<vn::geometry::Box>(w * s, h * s, d * s);
+        return vn::make_intrusive<vn::geometry::Box>(static_cast<float>(w * s), static_cast<float>(h * s), static_cast<float>(d * s));
     }
     if (tag == "sphere") {
-        double r = 0.0;
-        if (!getAttrDouble(child, "radius", r)) {
+        float r = 0.0f;
+        if (!getAttrFloat(child, "radius", r)) {
             return {};
         }
-        return vn::make_intrusive<vn::geometry::Sphere>(r * s);
+        return vn::make_intrusive<vn::geometry::Sphere>(static_cast<float>(r * s));
     }
     if (tag == "cylinder" || tag == "cone") {
-        double r = 0.0, h = 0.0;
-        if (!getAttrDouble(child, "radius", r) || !getAttrDouble(child, "height", h)) {
+        float r = 0.0f, h = 0.0f;
+        if (!getAttrFloat(child, "radius", r) || !getAttrFloat(child, "height", h)) {
             return {};
         }
         if (tag == "cylinder") {
-            return vn::make_intrusive<vn::geometry::Cylinder>(r * s, h * s);
+            return vn::make_intrusive<vn::geometry::Cylinder>(static_cast<float>(r * s), static_cast<float>(h * s));
         }
-        return vn::make_intrusive<vn::geometry::Cone>(r * s, h * s);
+        return vn::make_intrusive<vn::geometry::Cone>(static_cast<float>(r * s), static_cast<float>(h * s));
     }
     if (tag == "ellipsoid") {
         const String radii_str = attr(child, "radii");
-        math::Vec3d  radii;
+        math::Vec3f  radii;
         if (radii_str.empty() || !detail::strToVec3(radii_str, radii)) {
             return {};
         }
-        return vn::intrusive_ptr<vn::geometry::Ellipsoid>(new vn::geometry::Ellipsoid(radii.x * s, radii.y * s, radii.z * s));
+        return vn::make_intrusive<vn::geometry::Ellipsoid>(
+            static_cast<float>(radii.x * s), static_cast<float>(radii.y * s), static_cast<float>(radii.z * s));
     }
     if (tag == "triangle_mesh" || tag == "indexed_triangle_mesh") {
         if (ctx.vfs == nullptr) {
@@ -288,76 +329,87 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
 
 void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& shape, tinyxml2::XMLElement* xe)
 {
-    (void)ctx;
     auto xe_geom = xe->GetDocument()->NewElement("geometry");
     switch (shape.shapeType()) {
     case vn::geometry::ShapeType::Box:
     {
-        const auto* const box = dynamic_cast<const vn::geometry::Box*>(&shape);
-        if (box == nullptr) {
+        const bool written = writeShape<vn::geometry::Box>(shape, [&](const auto& box) {
+            auto        xe_box = xe->GetDocument()->NewElement("box");
+            std::string size   = std::string(detail::floatToStr(box.width()).as_std_str()) + " " +
+                               std::string(detail::floatToStr(box.height()).as_std_str()) + " " +
+                               std::string(detail::floatToStr(box.depth()).as_std_str());
+            xe_box->SetAttribute("size", size.c_str());
+            xe_geom->LinkEndChild(xe_box);
+        });
+        if (!written) {
+            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Box, skipped.");
             return;
         }
-        auto        xe_box = xe->GetDocument()->NewElement("box");
-        std::string size   = std::string(detail::doubleToStr(box->width()).as_std_str()) + " " + std::string(detail::doubleToStr(box->height()).as_std_str()) +
-                             " " + std::string(detail::doubleToStr(box->depth()).as_std_str());
-        xe_box->SetAttribute("size", size.c_str());
-        xe_geom->LinkEndChild(xe_box);
         break;
     }
     case vn::geometry::ShapeType::Cylinder:
     {
-        const auto* const cyli = dynamic_cast<const vn::geometry::Cylinder*>(&shape);
-        if (cyli == nullptr) {
+        const bool written = writeShape<vn::geometry::Cylinder>(shape, [&](const auto& cylinder) {
+            auto xe_cylinder = xe->GetDocument()->NewElement("cylinder");
+            setAttrFloat(xe_cylinder, "radius", cylinder.radius());
+            setAttrFloat(xe_cylinder, "height", cylinder.height());
+            xe_geom->LinkEndChild(xe_cylinder);
+        });
+        if (!written) {
+            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Cylinder, skipped.");
             return;
         }
-        auto xe_cyli = xe->GetDocument()->NewElement("cylinder");
-        setAttrDouble(xe_cyli, "radius", cyli->radius());
-        setAttrDouble(xe_cyli, "height", cyli->height());
-        xe_geom->LinkEndChild(xe_cyli);
         break;
     }
     case vn::geometry::ShapeType::Cone:
     {
-        const auto* const cone = dynamic_cast<const vn::geometry::Cone*>(&shape);
-        if (cone == nullptr) {
+        const bool written = writeShape<vn::geometry::Cone>(shape, [&](const auto& cone) {
+            auto xe_cone = xe->GetDocument()->NewElement("cone");
+            setAttrFloat(xe_cone, "radius", cone.radius());
+            setAttrFloat(xe_cone, "height", cone.height());
+            xe_geom->LinkEndChild(xe_cone);
+        });
+        if (!written) {
+            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Cone, skipped.");
             return;
         }
-        auto xe_cone = xe->GetDocument()->NewElement("cone");
-        setAttrDouble(xe_cone, "radius", cone->radius());
-        setAttrDouble(xe_cone, "height", cone->height());
-        xe_geom->LinkEndChild(xe_cone);
         break;
     }
     case vn::geometry::ShapeType::Sphere:
     {
-        const auto* const sphere = dynamic_cast<const vn::geometry::Sphere*>(&shape);
-        if (sphere == nullptr) {
+        const bool written = writeShape<vn::geometry::Sphere>(shape, [&](const auto& sphere) {
+            auto xe_sphere = xe->GetDocument()->NewElement("sphere");
+            setAttrFloat(xe_sphere, "radius", sphere.radius());
+            xe_geom->LinkEndChild(xe_sphere);
+        });
+        if (!written) {
+            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Sphere, skipped.");
             return;
         }
-        auto xe_sphere = xe->GetDocument()->NewElement("sphere");
-        setAttrDouble(xe_sphere, "radius", sphere->radius());
-        xe_geom->LinkEndChild(xe_sphere);
         break;
     }
     case vn::geometry::ShapeType::Ellipsoid:
     {
-        const auto* const ellipsoid = dynamic_cast<const vn::geometry::Ellipsoid*>(&shape);
-        if (ellipsoid == nullptr) {
+        const bool written = writeShape<vn::geometry::Ellipsoid>(shape, [&](const auto& ellipsoid) {
+            auto        xe_ell = xe->GetDocument()->NewElement("ellipsoid");
+            std::string radii  = std::string(detail::floatToStr(ellipsoid.radiusX()).as_std_str()) + " " +
+                                 std::string(detail::floatToStr(ellipsoid.radiusY()).as_std_str()) + " " +
+                                 std::string(detail::floatToStr(ellipsoid.radiusZ()).as_std_str());
+            xe_ell->SetAttribute("radii", radii.c_str());
+            xe_geom->LinkEndChild(xe_ell);
+        });
+        if (!written) {
+            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Ellipsoid, skipped.");
             return;
         }
-        auto        xe_ell = xe->GetDocument()->NewElement("ellipsoid");
-        std::string radii  = std::string(detail::doubleToStr(ellipsoid->radiusX()).as_std_str()) + " " +
-                             std::string(detail::doubleToStr(ellipsoid->radiusY()).as_std_str()) + " " +
-                             std::string(detail::doubleToStr(ellipsoid->radiusZ()).as_std_str());
-        xe_ell->SetAttribute("radii", radii.c_str());
-        xe_geom->LinkEndChild(xe_ell);
         break;
     }
     case vn::geometry::ShapeType::TriangleMesh:
-    case vn::geometry::ShapeType::IndexedTriangleMesh:
     {
-        const auto* const mesh = dynamic_cast<const vn::geometry::Mesh*>(&shape);
-        if (mesh == nullptr) {
+        const vn::geometry::Mesh* mesh = vn::obj_cast<vn::geometry::Mesh>(&shape);
+        const auto* triangle_mesh = mesh != nullptr ? vn::obj_cast<vn::geometry::TriangleMesh>(mesh) : nullptr;
+        if (triangle_mesh == nullptr) {
+            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package mesh export requires TriangleMesh, skipped.");
             return;
         }
         if (ctx.vfs == nullptr) {
@@ -371,15 +423,15 @@ void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& sh
             path = it->second; // a mesh several visuals or collisions share is written once
         }
         else {
-            path                   = writeMeshFile(*ctx.vfs, ctx.geom_seq, *mesh);
+            path                   = writeMeshFile(*ctx.vfs, ctx.geom_seq, *triangle_mesh);
             ctx.mesh_paths[&shape] = path;
         }
 
         // The element describes the FILE, not the shape in memory: a binary STL file is a soup whatever the mesh is, and
         // it holds no per-vertex arrays, so only the triangle count is worth stating.
-        const detail::MeshArrays counts             = detail::MeshArrays::take(*mesh);
+        const detail::MeshArrays counts             = detail::MeshArrays::take(*triangle_mesh);
         const bool               soup_file          = detail::isStlPath(detail::vfsPath(path));
-        const bool               indexed_file       = !soup_file && mesh->shapeType() == vn::geometry::ShapeType::IndexedTriangleMesh;
+        const bool               indexed_file       = !soup_file && triangle_mesh->hasIndices();
         auto                     xe_mesh            = xe->GetDocument()->NewElement(indexed_file ? "indexed_triangle_mesh" : "triangle_mesh");
         const auto               triangle_count_str = std::to_string(counts.triangle_count);
         xe_mesh->SetAttribute("triangle_count", triangle_count_str.c_str());

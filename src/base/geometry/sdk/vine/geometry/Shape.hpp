@@ -2,6 +2,8 @@
 
 #include "geometry_global.hpp"
 
+#include <cstdint>
+
 #include <vine/INameable.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
@@ -41,10 +43,12 @@ enum class ShapeType
     Sphere,
     /// Ellipsoid (Ellipsoid).
     Ellipsoid,
-    /// Non-indexed triangle mesh (TriangleMesh).
+    /// Triangle mesh; whether it is indexed depends on whether it has indices.
     TriangleMesh,
-    /// Indexed triangle mesh (IndexedTriangleMesh).
-    IndexedTriangleMesh,
+    /// Quad mesh; each face has four corners.
+    QuadMesh,
+    /// Mixed polygon mesh; face offsets delimit faces of three or more corners.
+    MixedMesh,
     /// Boundary-representation solid (BrepShape).
     Brep,
 };
@@ -93,10 +97,14 @@ class VN_GEOMETRY_API Shape : public vn::Object, public vn::RefCounted<Shape>, p
     virtual bool isValid() const;
 
     /**
-     * @brief Returns whether the shape encloses a volume.
+     * @brief Returns whether the shape reports the volume it encloses.
+     *
+     * @details
+     * - Parametric primitives answer from their dimensions; meshes answer false because their closure is not tracked,
+     *   and a BrepShape answers false because the backend's closure is not queried here.
      *
      * @param eps Numerical tolerance for volume significance checks.
-     * @return true for closed solids, false for surfaces or wireframes.
+     * @return true when the shape reports a volume, false for surfaces and for a solid whose closure is unknown.
      */
     [[nodiscard]]
     virtual bool hasVolume(double eps = vn::math::EPS<double>()) const;
@@ -123,12 +131,52 @@ class VN_GEOMETRY_API Shape : public vn::Object, public vn::RefCounted<Shape>, p
     [[nodiscard]]
     ShapeKind shapeKind() const;
 
+    /**
+     * @brief Returns the content revision of this shape.
+     *
+     * @details
+     * - Nothing in the geometry module advances it: a setter replaces storage and an append edits it, and neither knows
+     *   where an edit begins and ends. The holder reports the change once the change is complete.
+     * - It is the counterpart of Buffer::revision() (one byte stream) and Geometry::revision() (one draw's layout).
+     *
+     * @return Monotonic counter (starts at 0).
+     */
+    [[nodiscard]]
+    std::uint64_t revision() const noexcept
+    {
+        return revision_;
+    }
+
+    /**
+     * @brief Reports a content revision.
+     *
+     * @warning Lowering it is a hazard: a consumer holding a cached revision would treat old content as current. Prefer
+     *          bumpRevision(), which cannot move the counter backwards.
+     *
+     * @param revision Revision to report.
+     */
+    void setRevision(std::uint64_t revision) noexcept
+    {
+        revision_ = revision;
+    }
+
+    /**
+     * @brief Advances the content revision by one.
+     */
+    void bumpRevision() noexcept
+    {
+        ++revision_;
+    }
+
   protected:
     /// Name of the shape; empty when unnamed.
     String name_;
 
     /// Concrete shape type; assigned by derived class constructors.
     ShapeType shape_type_ = ShapeType::Unknown;
+
+    /// Content revision; advanced only by the holder, once a change is complete.
+    std::uint64_t revision_ = 0;
 };
 
 VN_GEOMETRY_NS_END

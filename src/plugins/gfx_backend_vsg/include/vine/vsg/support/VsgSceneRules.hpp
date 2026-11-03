@@ -120,7 +120,7 @@ enum class XyzUnpack
  *             rejected, because the rejection happens before anything is written).
  * @return Ok when unpacked, otherwise why the channel was rejected.
  */
-XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::geometry::Vec3fArray& out);
+XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::geometry::Vec3Array& out);
 
 /**
  * @brief The diagnostic for an unusable loc1 normal channel.

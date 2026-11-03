@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Vector3.hpp>
 
@@ -27,33 +27,32 @@ namespace vn::model_viewer
  *
  * @return 网格（永不为空）。
  */
-inline vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> makeBoxMesh()
+inline vn::intrusive_ptr<vn::geometry::TriangleMesh> makeBoxMesh()
 {
-    auto mesh = vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh>(new vn::geometry::IndexedTriangleMesh());
+    const vn::geometry::Vec3Array positions{
+        vn::math::Vec3f(-1.0f, -1.0f, -1.0f),
+        vn::math::Vec3f(1.0f, -1.0f, -1.0f),
+        vn::math::Vec3f(1.0f, 1.0f, -1.0f),
+        vn::math::Vec3f(-1.0f, 1.0f, -1.0f),
+        vn::math::Vec3f(-1.0f, -1.0f, 1.0f),
+        vn::math::Vec3f(1.0f, -1.0f, 1.0f),
+        vn::math::Vec3f(1.0f, 1.0f, 1.0f),
+        vn::math::Vec3f(-1.0f, 1.0f, 1.0f),
+    };
+    const vn::geometry::UInt32Array indices{
+        0u, 1u, 2u, 0u, 2u, 3u, // 前
+        5u, 4u, 7u, 5u, 7u, 6u, // 后
+        4u, 0u, 3u, 4u, 3u, 7u, // 左
+        1u, 5u, 6u, 1u, 6u, 2u, // 右
+        4u, 5u, 1u, 4u, 1u, 0u, // 下
+        3u, 2u, 6u, 3u, 6u, 7u, // 上
+    };
 
-    const auto v0 = mesh->addVertex(vn::math::Vec3f(-1.0f, -1.0f, -1.0f));
-    const auto v1 = mesh->addVertex(vn::math::Vec3f(1.0f, -1.0f, -1.0f));
-    const auto v2 = mesh->addVertex(vn::math::Vec3f(1.0f, 1.0f, -1.0f));
-    const auto v3 = mesh->addVertex(vn::math::Vec3f(-1.0f, 1.0f, -1.0f));
-    const auto v4 = mesh->addVertex(vn::math::Vec3f(-1.0f, -1.0f, 1.0f));
-    const auto v5 = mesh->addVertex(vn::math::Vec3f(1.0f, -1.0f, 1.0f));
-    const auto v6 = mesh->addVertex(vn::math::Vec3f(1.0f, 1.0f, 1.0f));
-    const auto v7 = mesh->addVertex(vn::math::Vec3f(-1.0f, 1.0f, 1.0f));
-
-    mesh->addTriangle(v0, v1, v2); // 前
-    mesh->addTriangle(v0, v2, v3);
-    mesh->addTriangle(v5, v4, v7); // 后
-    mesh->addTriangle(v5, v7, v6);
-    mesh->addTriangle(v4, v0, v3); // 左
-    mesh->addTriangle(v4, v3, v7);
-    mesh->addTriangle(v1, v5, v6); // 右
-    mesh->addTriangle(v1, v6, v2);
-    mesh->addTriangle(v4, v5, v1); // 下
-    mesh->addTriangle(v4, v1, v0);
-    mesh->addTriangle(v3, v2, v6); // 上
-    mesh->addTriangle(v3, v6, v7);
-
-    mesh->computeAabb();
+    auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+    mesh->setPositions(positions);
+    mesh->setIndices(indices);
+    mesh->bumpRevision();
+    (void)mesh->computeAabb();
     return mesh;
 }
 
@@ -65,11 +64,14 @@ inline vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> makeBoxMesh()
  * @param segments 每边的格子数；0 当作 1。
  * @return 网格（永不为空）。
  */
-inline vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> makeGridMesh(std::size_t segments)
+inline vn::intrusive_ptr<vn::geometry::TriangleMesh> makeGridMesh(std::size_t segments)
 {
     const std::size_t side = segments == 0 ? 1 : segments;
 
-    auto mesh = vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh>(new vn::geometry::IndexedTriangleMesh());
+    vn::geometry::Vec3Array  positions;
+    vn::geometry::UInt32Array indices;
+    positions.reserve((side + 1) * (side + 1));
+    indices.reserve(side * side * 6u);
 
     std::vector<std::uint32_t> previous(side + 1, 0);
     std::vector<std::uint32_t> current(side + 1, 0);
@@ -77,7 +79,8 @@ inline vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> makeGridMesh(std::si
         for (std::size_t x = 0; x <= side; ++x) {
             const auto fx = static_cast<float>(x) / static_cast<float>(side) * 2.0f - 1.0f;
             const auto fz = static_cast<float>(z) / static_cast<float>(side) * 2.0f - 1.0f;
-            current[x]    = mesh->addVertex(vn::math::Vec3f(fx, 0.0f, fz));
+            current[x]    = static_cast<std::uint32_t>(positions.size());
+            positions.push_back(vn::math::Vec3f(fx, 0.0f, fz));
         }
 
         if (z > 0) {
@@ -86,15 +89,18 @@ inline vn::intrusive_ptr<vn::geometry::IndexedTriangleMesh> makeGridMesh(std::si
                 const std::uint32_t b = previous[x + 1];
                 const std::uint32_t c = current[x + 1];
                 const std::uint32_t d = current[x];
-                mesh->addTriangle(a, b, c);
-                mesh->addTriangle(a, c, d);
+                indices.insert(indices.end(), { a, b, c, a, c, d });
             }
         }
 
         std::swap(previous, current);
     }
 
-    mesh->computeAabb();
+    auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+    mesh->setPositions(std::move(positions));
+    mesh->setIndices(std::move(indices));
+    mesh->bumpRevision();
+    (void)mesh->computeAabb();
     return mesh;
 }
 

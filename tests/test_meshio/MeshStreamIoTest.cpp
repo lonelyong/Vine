@@ -8,7 +8,7 @@
 #include <string>
 
 #include <vine/Object.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/DataSourceStream.hpp>
 #include <vine/io/IoError.hpp>
@@ -18,7 +18,7 @@
 #include <vine/meshio/MeshFormat.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
-using vn::geometry::IndexedTriangleMesh;
+using vn::geometry::TriangleMesh;
 using vn::io::DataSourceStream;
 using vn::io::IoError;
 using vn::io::ZipArchive;
@@ -35,14 +35,12 @@ namespace
  *
  * @return A mesh holding a single triangle.
  */
-vn::intrusive_ptr<IndexedTriangleMesh> makeTriangle()
+vn::intrusive_ptr<TriangleMesh> makeTriangle()
 {
-    auto mesh = vn::intrusive_ptr<IndexedTriangleMesh>(new IndexedTriangleMesh());
+    auto mesh = vn::intrusive_ptr<TriangleMesh>(new TriangleMesh());
 
-    const auto a = mesh->addVertex(Vec3f(0, 0, 0));
-    const auto b = mesh->addVertex(Vec3f(1, 0, 0));
-    const auto c = mesh->addVertex(Vec3f(0, 1, 0));
-    mesh->addTriangle(a, b, c);
+    mesh->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(0, 1, 0) });
+    mesh->setIndices({ 0u, 1u, 2u });
     return mesh;
 }
 
@@ -65,7 +63,7 @@ TEST(MeshStreamIoTest, ExportsToAStreamAndLoadsBackFromOne)
     MeshLoader         loader(noScaling());
     auto               loaded = loader.loadMerged(in, MeshFormat::Stl);
     ASSERT_TRUE(loaded);
-    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded.value()).triangleCount(), 1u);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*loaded.value()).triangleCount(), 1u);
 }
 
 TEST(MeshStreamIoTest, ExportsObjToAStreamAndLoadsBackFromOne)
@@ -83,7 +81,7 @@ TEST(MeshStreamIoTest, ExportsObjToAStreamAndLoadsBackFromOne)
     MeshLoader         loader(noScaling());
     auto               loaded = loader.loadMerged(in, MeshFormat::Obj);
     ASSERT_TRUE(loaded);
-    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded.value()).triangleCount(), 1u);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*loaded.value()).triangleCount(), 1u);
 }
 
 TEST(MeshStreamIoTest, ModelToStreamIsFlattened)
@@ -109,7 +107,7 @@ TEST(MeshStreamIoTest, ModelToStreamIsFlattened)
     MeshLoader         loader(noScaling());
     auto               loaded = loader.loadMerged(in, MeshFormat::Stl);
     ASSERT_TRUE(loaded);
-    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded.value()).triangleCount(), 1u);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*loaded.value()).triangleCount(), 1u);
 }
 
 TEST(MeshStreamIoTest, RefusesANonStreamableFormat)
@@ -142,7 +140,7 @@ TEST(MeshStreamIoTest, LoadsAnEntryOfAPackageWithoutTouchingTheFileSystem)
     MeshLoader loader(noScaling());
     auto       loaded = loader.loadMerged(stream, MeshFormat::Stl);
     ASSERT_TRUE(loaded);
-    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*loaded.value()).triangleCount(), 1u);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*loaded.value()).triangleCount(), 1u);
     EXPECT_EQ(stream.error(), IoError::Ok) << "the entry read cleanly";
 }
 

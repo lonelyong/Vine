@@ -19,6 +19,8 @@ VN_GEOMETRY_NS_BEGIN
  *   needs no OpenCASCADE header and no link to it.
  * - `shape()` lends the pointer out; it stays valid as long as this BrepShape (or another holder of the same shape)
  *   lives.
+ * - `hasVolume()` answers false: whether the backend shape is closed is not queried here, so a solid reports itself
+ *   as a surface rather than as a volume.
  */
 class VN_GEOMETRY_API BrepShape : public Shape {
     VN_OBJECT_META_DECL;

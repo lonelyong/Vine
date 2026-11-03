@@ -10,7 +10,7 @@
 #include <vector>
 
 #include <vine/Object.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/geometry/Model.hpp>
 #include <vine/geometry/PhongMaterial.hpp>
 #include <vine/io/IoError.hpp>
@@ -19,7 +19,7 @@
 #include <vine/meshio/MeshLoader.hpp>
 
 using vn::obj_cast;
-using vn::geometry::IndexedTriangleMesh;
+using vn::geometry::TriangleMesh;
 using vn::geometry::MaterialType;
 using vn::geometry::Model;
 using vn::meshio::MeshExporter;
@@ -163,16 +163,16 @@ TEST(ModelLoadTest, KeepsEveryPartAndItsMaterial)
 
     // Two objects are two parts, and each part is one triangle of its own.
     ASSERT_EQ(model->meshes().size(), 2u);
-    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*model->meshes()[0].mesh).triangleCount(), 1u);
-    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*model->meshes()[1].mesh).triangleCount(), 1u);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*model->meshes()[0].mesh).triangleCount(), 1u);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*model->meshes()[1].mesh).triangleCount(), 1u);
 
     // A part is in its own space: the second object keeps the coordinates the file gave it.
-    const auto& second_positions = obj_cast<IndexedTriangleMesh>(*model->meshes()[1].mesh).positions();
+    const auto& second_positions = obj_cast<TriangleMesh>(*model->meshes()[1].mesh).positions();
     ASSERT_EQ(second_positions.size(), 3u);
     EXPECT_FLOAT_EQ(second_positions[0].x, 10.0f);
 
     // Texture coordinates survive here, unlike in the flattened entry.
-    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*model->meshes()[0].mesh).texcoords().size(), 3u);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*model->meshes()[0].mesh).texcoords().size(), 3u);
 
     // The material came out of the library, with the name the file declared and the shading model an MTL describes.
     const auto& red = model->meshes()[0].material;
@@ -193,7 +193,7 @@ TEST(ModelLoadTest, KeepsEveryPartAndItsMaterial)
     auto loaded_merged = loader.loadMerged(obj_path);
     ASSERT_TRUE(loaded_merged);
     auto merged = loaded_merged.take();
-    EXPECT_EQ(obj_cast<IndexedTriangleMesh>(*merged).triangleCount(), 2u);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*merged).triangleCount(), 2u);
 
     // The same path loads once: the cache hands back the very model it built.
     auto again = loader.load(obj_path);
@@ -260,7 +260,7 @@ TEST(ModelLoadTest, KeepsTheTransformOfANodeInsteadOfBakingIt)
 
     // ...and the part's vertices are still where the file put them, so nothing was baked twice.
     ASSERT_EQ(model->meshes().size(), 1u);
-    const auto& positions = obj_cast<IndexedTriangleMesh>(*model->meshes()[0].mesh).positions();
+    const auto& positions = obj_cast<TriangleMesh>(*model->meshes()[0].mesh).positions();
     ASSERT_EQ(positions.size(), 3u);
     EXPECT_FLOAT_EQ(positions[0].x, 0.0f);
 
@@ -269,7 +269,7 @@ TEST(ModelLoadTest, KeepsTheTransformOfANodeInsteadOfBakingIt)
     auto               loaded_merged = loader.loadMerged(again, vn::meshio::MeshFormat::Collada);
     ASSERT_TRUE(loaded_merged);
     auto        merged           = loaded_merged.take();
-    const auto& merged_positions = obj_cast<IndexedTriangleMesh>(*merged).positions();
+    const auto& merged_positions = obj_cast<TriangleMesh>(*merged).positions();
     ASSERT_EQ(merged_positions.size(), 3u);
     EXPECT_FLOAT_EQ(merged_positions[0].x, 10.0f);
 }
@@ -333,7 +333,7 @@ TEST(ModelLoadTest, ExportsNodeTransformsInsteadOfBakingThem)
 
     // ...and the part's vertices are still where the file put them.
     ASSERT_EQ(reloaded->meshes().size(), 1u);
-    const auto& positions = obj_cast<IndexedTriangleMesh>(*reloaded->meshes()[0].mesh).positions();
+    const auto& positions = obj_cast<TriangleMesh>(*reloaded->meshes()[0].mesh).positions();
     ASSERT_EQ(positions.size(), 3u);
     EXPECT_FLOAT_EQ(positions[0].x, 0.0f) << "the transform was not baked into the vertices";
 }

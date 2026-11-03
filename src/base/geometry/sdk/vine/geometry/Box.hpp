@@ -2,21 +2,26 @@
 
 #include "geometry_global.hpp"
 
+#include <vine/math/Types.hpp>
+
 #include "Primitive.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
 /**
- * @brief An axis-aligned box primitive centered at the origin.
+ * @brief An axis-aligned box primitive centered at the origin, sized in the shape's local space.
  */
 class VN_GEOMETRY_API Box : public Primitive {
-    VN_OBJECT_META_DECL;
+    VN_OBJECT_META(Box, Primitive);
 
   public:
     /**
      * @brief Constructs a unit box (1 x 1 x 1).
      */
-    Box();
+    Box()
+    {
+        shape_type_ = ShapeType::Box;
+    }
 
     /**
      * @brief Constructs a box from edge lengths.
@@ -25,53 +30,79 @@ class VN_GEOMETRY_API Box : public Primitive {
      * @param height Size along the Y axis.
      * @param depth  Size along the Z axis.
      */
-    Box(double width, double height, double depth);
+    Box(float width, float height, float depth)
+      : width_(width)
+      , height_(height)
+      , depth_(depth)
+    {
+        shape_type_ = ShapeType::Box;
+    }
 
-  public:
     /**
      * @brief Returns the size along the X axis.
      *
      * @return Width.
      */
-    double width() const;
+    float width() const
+    {
+        return width_;
+    }
 
     /**
      * @brief Sets the size along the X axis.
      *
      * @param width New width.
      */
-    void setWidth(double width);
+    void setWidth(float width)
+    {
+        width_ = width;
+    }
 
     /**
      * @brief Returns the size along the Y axis.
      *
      * @return Height.
      */
-    double height() const;
+    float height() const
+    {
+        return height_;
+    }
 
     /**
      * @brief Sets the size along the Y axis.
      *
      * @param height New height.
      */
-    void setHeight(double height);
+    void setHeight(float height)
+    {
+        height_ = height;
+    }
 
     /**
      * @brief Returns the size along the Z axis.
      *
      * @return Depth.
      */
-    double depth() const;
+    float depth() const
+    {
+        return depth_;
+    }
 
     /**
      * @brief Sets the size along the Z axis.
      *
      * @param depth New depth.
      */
-    void setDepth(double depth);
+    void setDepth(float depth)
+    {
+        depth_ = depth;
+    }
 
     [[nodiscard]]
-    bool isValid() const override;
+    bool isValid() const override
+    {
+        return width_ > 0.0f && height_ > 0.0f && depth_ > 0.0f;
+    }
 
     /**
      * @brief Returns whether the box encloses a volume.
@@ -80,15 +111,19 @@ class VN_GEOMETRY_API Box : public Primitive {
      * @return true when all three edge lengths are larger than eps.
      */
     [[nodiscard]]
-    bool hasVolume(double eps = vn::math::EPS<double>()) const override;
+    bool hasVolume(double eps = static_cast<double>(vn::math::EPS<float>())) const override
+    {
+        const float tolerance = static_cast<float>(eps);
+        return width_ > tolerance && height_ > tolerance && depth_ > tolerance;
+    }
 
   private:
     /// Size along the X axis.
-    double width_  = 1.0;
+    float width_ = 1.0f;
     /// Size along the Y axis.
-    double height_ = 1.0;
+    float height_ = 1.0f;
     /// Size along the Z axis.
-    double depth_  = 1.0;
+    float depth_ = 1.0f;
 };
 
 VN_GEOMETRY_NS_END

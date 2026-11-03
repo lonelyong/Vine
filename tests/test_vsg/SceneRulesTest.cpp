@@ -412,7 +412,7 @@ TEST(SceneRulesTest, StageFlagMapsEveryStageToItsOwnVulkanBit)
 
 TEST(SceneRulesTest, UnpackXyzTakesTheFirstThreeOfEveryStride)
 {
-    vn::geometry::Vec3fArray out;
+    vn::geometry::Vec3Array out;
     // vec3: one vertex per three floats.
     EXPECT_EQ(unpackXyz(packed(3u, { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f }), out), XyzUnpack::Ok);
     ASSERT_EQ(out.size(), 2u);
@@ -435,7 +435,7 @@ TEST(SceneRulesTest, UnpackXyzTakesTheFirstThreeOfEveryStride)
 
 TEST(SceneRulesTest, UnpackXyzRejectsAComponentCountThatIsNotAnXyzStride)
 {
-    vn::geometry::Vec3fArray out;
+    vn::geometry::Vec3Array out;
     EXPECT_EQ(unpackXyz(packed(1u, { 1.f, 2.f, 3.f }), out), XyzUnpack::NotXyzStride);
     EXPECT_EQ(unpackXyz(packed(2u, { 1.f, 2.f, 3.f, 4.f }), out), XyzUnpack::NotXyzStride);
     EXPECT_EQ(unpackXyz(packed(0u, {}), out), XyzUnpack::NotXyzStride);
@@ -444,14 +444,14 @@ TEST(SceneRulesTest, UnpackXyzRejectsAComponentCountThatIsNotAnXyzStride)
 
 TEST(SceneRulesTest, UnpackXyzRejectsAPartialVertex)
 {
-    vn::geometry::Vec3fArray out;
+    vn::geometry::Vec3Array out;
     EXPECT_EQ(unpackXyz(packed(3u, { 1.f, 2.f, 3.f, 4.f }), out), XyzUnpack::NotDivisible);
     EXPECT_EQ(unpackXyz(packed(4u, { 1.f, 2.f, 3.f, 4.f, 5.f }), out), XyzUnpack::NotDivisible);
 }
 
 TEST(SceneRulesTest, UnpackXyzReplacesTheOutputAndNeverTouchesItWhenRejected)
 {
-    vn::geometry::Vec3fArray out{ vn::math::Vec3f(9.f, 9.f, 9.f) };
+    vn::geometry::Vec3Array out{ vn::math::Vec3f(9.f, 9.f, 9.f) };
     // Rejected before anything is written: the caller's array is left exactly as it was.
     EXPECT_EQ(unpackXyz(packed(2u, { 1.f, 2.f }), out), XyzUnpack::NotXyzStride);
     ASSERT_EQ(out.size(), 1u);
@@ -522,7 +522,7 @@ TEST(SceneRulesTest, NormalIsUsableRejectsOnlyAZeroLength)
 
 TEST(SceneRulesTest, MakeNormalsDerivesUnitFaceNormalsForANonIndexedMesh)
 {
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
+    const vn::geometry::Vec3Array positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
     const auto                     normals = makeNormals(positions, {});
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
@@ -537,7 +537,7 @@ TEST(SceneRulesTest, MakeNormalsKeepsADegenerateTriangleZeroInsteadOfNaN)
 {
     // Three collinear vertices: the face normal is zero-length, and normalising it would write NaN
     // into every vertex of the triangle (nothing reports a NaN attribute).
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 1.f, 1.f), vn::math::Vec3f(2.f, 2.f, 2.f) };
+    const vn::geometry::Vec3Array positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 1.f, 1.f), vn::math::Vec3f(2.f, 2.f, 2.f) };
     const auto                     normals = makeNormals(positions, {});
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
@@ -553,9 +553,9 @@ TEST(SceneRulesTest, MakeNormalsKeepsADegenerateTriangleZeroInsteadOfNaN)
 
 TEST(SceneRulesTest, MakeNormalsCopiesProvidedMeshNormalsVerbatim)
 {
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
+    const vn::geometry::Vec3Array positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
     // Deliberately not unit length: provided normals are copied, not re-derived or re-normalised.
-    const vn::geometry::Vec3fArray provided{ vn::math::Vec3f(0.1f, 0.2f, 0.3f), vn::math::Vec3f(0.4f, 0.5f, 0.6f), vn::math::Vec3f(0.7f, 0.8f, 0.9f) };
+    const vn::geometry::Vec3Array provided{ vn::math::Vec3f(0.1f, 0.2f, 0.3f), vn::math::Vec3f(0.4f, 0.5f, 0.6f), vn::math::Vec3f(0.7f, 0.8f, 0.9f) };
     const auto                     normals = makeNormals(positions, provided);
     ASSERT_NE(normals, nullptr);
     ASSERT_EQ(normals->size(), 3u);
@@ -569,7 +569,7 @@ TEST(SceneRulesTest, MakeNormalsCopiesProvidedMeshNormalsVerbatim)
 TEST(SceneRulesTest, MakeIndexedNormalsAccumulatesEveryReferencedVertex)
 {
     // A CCW unit quad (two triangles sharing the 0-2 diagonal): every vertex ends up +z.
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f),
+    const vn::geometry::Vec3Array positions{ vn::math::Vec3f(0.f, 0.f, 0.f),
                                               vn::math::Vec3f(1.f, 0.f, 0.f),
                                               vn::math::Vec3f(1.f, 1.f, 0.f),
                                               vn::math::Vec3f(0.f, 1.f, 0.f) };
@@ -594,7 +594,7 @@ TEST(SceneRulesTest, MakeIndexedNormalsSkipsOutOfRangeIndices)
 {
     // The second triangle names vertex 99: it is skipped, not read, and does not disturb the normals
     // the first triangle accumulated (the data path rejects such geometry; this must stay safe).
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
+    const vn::geometry::Vec3Array positions{ vn::math::Vec3f(0.f, 0.f, 0.f), vn::math::Vec3f(1.f, 0.f, 0.f), vn::math::Vec3f(0.f, 1.f, 0.f) };
     auto                           indices = ::vsg::uintArray::create(6u);
     (*indices)[0]                          = 0u;
     (*indices)[1]                          = 1u;
@@ -614,7 +614,7 @@ TEST(SceneRulesTest, MakeIndexedNormalsLeavesAnUnreferencedVertexZero)
 {
     // A vertex no triangle references accumulates nothing: it must stay zero (a zero normal, not
     // NaN), which is what the unusable-length guard is for.
-    const vn::geometry::Vec3fArray positions{ vn::math::Vec3f(0.f, 0.f, 0.f),
+    const vn::geometry::Vec3Array positions{ vn::math::Vec3f(0.f, 0.f, 0.f),
                                               vn::math::Vec3f(1.f, 0.f, 0.f),
                                               vn::math::Vec3f(0.f, 1.f, 0.f),
                                               vn::math::Vec3f(5.f, 5.f, 5.f) };

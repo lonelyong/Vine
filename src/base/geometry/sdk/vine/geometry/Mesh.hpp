@@ -4,13 +4,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include <vine/Buffer.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/math/Point3.hpp>
 #include <vine/math/Rect3.hpp>
+#include <vine/math/Types.hpp>
+#include <vine/math/Vector2.hpp>
+#include <vine/math/Vector3.hpp>
 #include <vine/math/Vector4.hpp>
 
 #include "Array.hpp"
@@ -18,260 +24,363 @@
 
 VN_GEOMETRY_NS_BEGIN
 
-using vn::math::Aabbf;
-
 /**
- * @brief Base class for polygonal mesh shapes.
+ * @brief Polygonal mesh attributes, stored as float in the mesh's own local space.
  *
- * Vertex storage (positions, normals, texture coordinates and vertex colours) is shared by all meshes here;
- * derived classes add their own topology (e.g. an index array).
+ * @details
+ * - A mesh owns its vertex attributes and its optional corner indices; it deliberately states no face topology (that
+ *   belongs to TriangleMesh, QuadMesh and MixedMesh).
+ * - Every attribute is optional and independent. A channel is USED only when it holds exactly one entry per vertex: a
+ *   normal, texture-coordinate or colour array whose length disagrees with the positions is dropped by the consumers
+ *   instead of being re-indexed, and isValid() does not treat it as an error.
+ * - A mesh is built one way only: fill arrays, then set them once
+ *   (setPositions(), setNormals(), setTexcoords(), setColors(), setIndices()). There is no incremental append that could
+ *   grow one channel and leave the others behind.
+ * - Geometry never advances a revision by itself: a holder that changes content reports it once the change is complete
+ *   (Shape::bumpRevision() for the shape as a whole, Buffer::setRevision() for bytes it wrote in place).
  *
- * STORAGE IS PACKED SCALARS. Attributes live in `Buffer<float>` — three floats per position or normal, two
- * per texcoord, four per colour — and indices in `Buffer<uint32_t>`. Those are exactly the shapes a device
- * uploads, so a renderer-side holder takes the SAME buffer handle instead of repacking a copy: one allocation,
- * read by both sides. Pinning the element type to float is what makes that possible — a channel can hold the
- * handle directly, with no type erasure and no cached pointer that a later edit could leave dangling. (When the
- * mesh held a bare `std::vector`, a second holder could only read it through a reference, so it had to COPY,
- * which put every vertex in memory twice.)
- *
- * TYPED ACCESS. The accessors still hand out `Vec3f` / `Vec2f` / `Vec4f` views — the SAME bytes, reinterpreted.
- * `Vector3` and `Vector4` are unions of `{T x, y, z(, w)}` and `T data[3|4]`, so a run of three (four) floats IS
- * a `Vec3f` (`Vec4f`); that union is what makes the reinterpretation sound, and the layout it relies on is
- * static_asserted in Mesh.cpp. Modelling, collision, picking and IO therefore keep the typed access they had.
- *
- * BORROWED ACCESS. The accessors return `std::span`, which is `pointer` + `count`. Borrowed means borrowed,
- * though — a view must not outlive the mesh, and an edit that GROWS the storage invalidates it.
- *
- * MUTATION IS ANNOUNCED. A builder appends vertices one at a time, so mutation is normal and the length is
- * not fixed. The buffers themselves never move their revision (see Buffer: only the writer knows where an
- * edit ends), and the mesh IS that writer: every mutation of live storage announces itself through
- * announceChange(), one call per edit. A consumer that cached the bytes then tells "same buffer, new
- * contents" from "same buffer, still current".
+ * @warning
+ * - The spans returned by positions(), normals(), texcoords(), colors() and indices() borrow the storage: any setter
+ *   invalidates them.
+ * - A mesh that names corners with indices keeps the vertices it already holds; the ones the indices do not name stay
+ *   stored and are no longer drawn.
  */
-class VN_GEOMETRY_API Mesh : public Shape {
-    VN_OBJECT_META_DECL;
+class Mesh : public Shape {
+    VN_OBJECT_META(Mesh, Shape);
 
   public:
-    /// Scalar floats per position / normal element (xyz).
+    using Scalar = float;
+    using Vec2   = vn::math::Vec2f;
+    using Vec3   = vn::math::Vec3f;
+    using Vec4   = vn::math::Vec4f;
+    using Aabb   = vn::math::Rect3<float>;
+
     static constexpr std::uint32_t kVec3Components = 3u;
-    /// Scalar floats per texcoord element (uv).
     static constexpr std::uint32_t kVec2Components = 2u;
-    /// Scalar floats per colour element (linear rgba).
     static constexpr std::uint32_t kVec4Components = 4u;
 
   protected:
-    /// Protected so Mesh cannot be instantiated directly; allocates the empty attribute buffers every
-    /// accessor hands out (so no accessor has to check for a missing storage object).
-    Mesh();
+    Mesh()
+      : positions_(makeBuffer(std::vector<float>{}))
+      , normals_(makeBuffer(std::vector<float>{}))
+      , texcoords_(makeBuffer(std::vector<float>{}))
+      , colors_(makeBuffer(std::vector<float>{}))
+      , indices_(makeBuffer(std::vector<std::uint32_t>{}))
+    {}
 
   public:
     /**
-     * @brief Returns the vertex positions.
+     * @brief Returns the borrowed vertex positions.
      *
-     * The result is a borrowed view, not a copy: it must not outlive the mesh, and a later edit that grows
-     * the storage invalidates it.
-     *
-     * @return Read-only view over the positions.
+     * @return View over positions; invalidated if the mesh storage grows or is replaced.
      */
     [[nodiscard]]
-    std::span<const vn::math::Vec3f> positions() const;
+    std::span<const Vec3> positions() const
+    {
+        return asVec3(positions_->view());
+    }
 
     /**
-     * @brief Returns the per-vertex normals.
+     * @brief Returns the borrowed per-vertex normals.
      *
-     * @return Read-only view over the normals, empty when none were set.
+     * @return View over normals, empty when unset.
      */
     [[nodiscard]]
-    std::span<const vn::math::Vec3f> normals() const;
+    std::span<const Vec3> normals() const
+    {
+        return asVec3(normals_->view());
+    }
 
     /**
-     * @brief Returns the per-vertex texture coordinates.
+     * @brief Returns the borrowed per-vertex texture coordinates.
      *
-     * @return Read-only view over the texcoords, empty when none were set.
+     * @return View over texture coordinates, empty when unset.
      */
     [[nodiscard]]
-    std::span<const vn::math::Vec2f> texcoords() const;
+    std::span<const Vec2> texcoords() const
+    {
+        return asVec2(texcoords_->view());
+    }
 
     /**
-     * @brief Returns the per-vertex colours.
+     * @brief Returns the borrowed per-vertex linear RGBA colours.
      *
-     * @details
-     * - Four scalars per vertex — LINEAR RGBA, alpha being the per-vertex opacity — which is the shape the
-     *   canonical colour channel at shader location 2 reads (see the graphics ShaderAbi). Linear is the
-     *   graphics module's contract for every colour it is handed, so a value decoded from a file or a palette
-     *   is converted once, on the way in.
-     * - OPTIONAL: a mesh that authors no colours answers an empty view. An absent colour channel is not a
-     *   white one — the renderer then draws without the attribute instead of fetching a constant.
-     *
-     * @return Read-only view over the colours, empty when none were set.
+     * @return View over colours, empty when unset.
      */
     [[nodiscard]]
-    std::span<const vn::math::Vec4f> colors() const;
+    std::span<const Vec4> colors() const
+    {
+        return asVec4(colors_->view());
+    }
 
     /**
-     * @brief Returns the shareable handle to the vertex positions.
+     * @brief Returns the shared position storage.
      *
-     * This is what makes the mesh and a renderer-side holder read ONE allocation instead of two: the handle
-     * keeps the storage alive and is the scalar run a device uploads — no conversion step exists to take,
-     * because the elements ARE the scalars.
-     *
-     * The buffer is the mesh's LIVE storage, not a snapshot: a later edit through the mesh is visible here.
-     * That is the contract a shared handle carries — every such edit announces itself by moving the buffer's
-     * `revision()`, so a holder tells "new contents" from "still current", and a writer that bypasses the
-     * announcement leaves the holder stale. REPLACING the storage (setPositions) is not an edit of this
-     * buffer: a holder of the old handle has to take the mesh's current one again.
-     *
-     * @return Handle to the positions buffer (never null; `kVec3Components` floats per vertex).
+     * @return Buffer containing three float scalars per vertex.
      */
     [[nodiscard]]
-    intrusive_ptr<const Buffer<float>> positionsBuffer() const;
+    intrusive_ptr<const Buffer<float>> positionsBuffer() const
+    {
+        return positions_;
+    }
 
     /**
-     * @brief Returns the shareable handle to the per-vertex normals.
+     * @brief Returns the shared normal storage.
      *
-     * See positionsBuffer() for the lifetime and revision contract.
-     *
-     * @return Handle to the normal buffer (never null; empty when unset).
+     * @return Buffer containing three T scalars per vertex, empty when unset.
      */
     [[nodiscard]]
-    intrusive_ptr<const Buffer<float>> normalsBuffer() const;
+    intrusive_ptr<const Buffer<float>> normalsBuffer() const
+    {
+        return normals_;
+    }
 
     /**
-     * @brief Returns the shareable handle to the per-vertex texture coordinates.
+     * @brief Returns the shared texture-coordinate storage.
      *
-     * See positionsBuffer() for the lifetime and revision contract.
-     *
-     * @return Handle to the texcoord buffer (never null; empty when unset).
+     * @return Buffer containing two T scalars per vertex, empty when unset.
      */
     [[nodiscard]]
-    intrusive_ptr<const Buffer<float>> texcoordsBuffer() const;
+    intrusive_ptr<const Buffer<float>> texcoordsBuffer() const
+    {
+        return texcoords_;
+    }
 
     /**
-     * @brief Returns the shareable handle to the per-vertex colours.
+     * @brief Returns the shared colour storage.
      *
-     * See positionsBuffer() for the lifetime and revision contract.
-     *
-     * @return Handle to the colour buffer (never null; empty when unset; `kVec4Components` floats per vertex).
+     * @return Buffer containing four linear RGBA T scalars per vertex, empty when unset.
      */
     [[nodiscard]]
-    intrusive_ptr<const Buffer<float>> colorsBuffer() const;
+    intrusive_ptr<const Buffer<float>> colorsBuffer() const
+    {
+        return colors_;
+    }
 
     /**
-     * @brief Replaces the vertex positions.
+     * @brief Returns the borrowed vertex indices.
      *
-     * @param positions New position array.
+     * @return Index view; empty when the mesh uses sequential vertices.
      */
-    void setPositions(Vec3fArray positions);
+    [[nodiscard]]
+    std::span<const std::uint32_t> indices() const
+    {
+        return indices_->view();
+    }
+
+    /**
+     * @brief Returns the shareable vertex-index buffer.
+     *
+     * @return Index buffer, or null when the mesh uses sequential vertices.
+     */
+    [[nodiscard]]
+    intrusive_ptr<const Buffer<std::uint32_t>> indicesBuffer() const
+    {
+        return hasIndices() ? indices_ : nullptr;
+    }
+
+    /**
+     * @brief Reports whether the mesh uses indexed vertices.
+     *
+     * @return true when the index buffer is non-empty.
+     */
+    [[nodiscard]]
+    bool hasIndices() const noexcept
+    {
+        return !indices_->empty();
+    }
+
+    /**
+     * @brief Replaces the vertex indices; an empty array selects sequential vertices.
+     *
+     * @note
+     * - Switching to indices does not remove the vertices already stored: those the new indices do not name stay in
+     *   the position storage and are no longer drawn.
+     *
+     * @param indices Vertex indices in face-corner order.
+     */
+    void setIndices(UInt32Array indices)
+    {
+        indices_ = makeBuffer<std::uint32_t>(std::move(indices));
+    }
+
+    /**
+     * @brief Replaces the vertex positions and clears the cached box.
+     *
+     * @param positions New positions.
+     */
+    void setPositions(Vec3Array positions)
+    {
+        positions_ = makeBuffer(packVec3(std::move(positions)));
+        aabb_ = Aabb::empty();
+    }
 
     /**
      * @brief Replaces the per-vertex normals.
      *
-     * @param normals New normal array.
+     * @param normals New normals.
      */
-    void setNormals(Vec3fArray normals);
+    void setNormals(Vec3Array normals)
+    {
+        normals_ = makeBuffer(packVec3(std::move(normals)));
+    }
 
     /**
      * @brief Replaces the per-vertex texture coordinates.
      *
-     * @param texcoords New texcoord array.
+     * @param texcoords New texture coordinates.
      */
-    void setTexcoords(Vec2fArray texcoords);
+    void setTexcoords(Vec2Array texcoords)
+    {
+        texcoords_ = makeBuffer(packVec2(std::move(texcoords)));
+    }
 
     /**
-     * @brief Replaces the per-vertex colours.
+     * @brief Replaces the per-vertex linear RGBA colours.
      *
-     * @details
-     * - Four linear RGBA scalars per vertex (see colors()).
-     * - LIKE the other optional attributes, an EMPTY array removes the colours: "no colours" and "an empty
-     *   colour array" are one state, so a consumer's test is one question (`colors().empty()`).
-     *
-     * @param colors New colour array (empty to remove the attribute).
+     * @param colors New colours; an empty array removes the channel.
      */
-    void setColors(Vec4fArray colors);
+    void setColors(Vec4Array colors)
+    {
+        colors_ = makeBuffer(packVec4(std::move(colors)));
+    }
 
     /**
-     * @brief Returns the number of stored vertices.
+     * @brief Returns the number of vertices.
      *
      * @return Vertex count.
      */
     [[nodiscard]]
-    std::size_t vertexCount() const;
+    std::size_t vertexCount() const
+    {
+        return positions_->size() / kVec3Components;
+    }
 
     /**
      * @brief Returns the cached axis-aligned bounding box.
      *
-     * Holds whatever was last stored via setAabb() or computed by computeAabb();
-     * geometry edits do not update it automatically.
+     * @details
+     * - The cache is EMPTY until setAabb() or computeAabb() fills it, and is cleared by setPositions(), so a non-empty
+     *   box always describes the stored vertices.
      *
-     * @return Cached AABB (empty when none was set or computed yet).
+     * @return Cached box, empty until set or computed.
      */
     [[nodiscard]]
-    const Aabbf& aabb() const;
+    const Aabb& aabb() const
+    {
+        return aabb_;
+    }
 
     /**
-     * @brief Stores an axis-aligned bounding box into the cache.
+     * @brief Stores an axis-aligned bounding box in the cache.
      *
-     * @param aabb Axis-aligned bounding box to cache.
+     * @param aabb Box to cache.
      */
-    void setAabb(const Aabbf& aabb);
+    void setAabb(const Aabb& aabb)
+    {
+        aabb_ = aabb;
+    }
 
     /**
-     * @brief Computes the AABB enclosing all vertex positions and caches it.
+     * @brief Computes and caches the axis-aligned box of all positions.
      *
-     * An empty position array yields a zero box at the origin.
-     *
-     * @return The computed AABB (also stored by the cache).
+     * @return Computed box; an empty position set yields the zero box.
      */
-    Aabbf computeAabb();
+    [[nodiscard]]
+    Aabb computeAabb()
+    {
+        aabb_ = Aabb::compute(positions());
+        return aabb_;
+    }
 
   protected:
     /**
-     * @brief Removes all vertex attribute arrays and resets the AABB cache.
+     * @brief Creates a buffer by adopting its vector storage.
      *
-     * Called by derived clear() implementations.
+     * @param values Values to move into the buffer.
+     * @return New buffer owning the values.
      */
-    void clearAttributes();
-
-    /**
-     * @brief Builds an attribute buffer that ADOPTS @p values instead of copying it.
-     *
-     * @param values Storage to adopt (moved in, so the caller must not use it afterwards).
-     * @return Buffer owning that storage.
-     */
-    template <typename T>
-    [[nodiscard]] static intrusive_ptr<Buffer<T>> makeBuffer(std::vector<T> values)
+    template <typename U>
+    [[nodiscard]]
+    static intrusive_ptr<Buffer<U>> makeBuffer(std::vector<U> values)
     {
-        return intrusive_ptr<Buffer<T>>(new Buffer<T>(std::move(values)));
+        return intrusive_ptr<Buffer<U>>(new Buffer<U>(std::move(values)));
     }
 
-    /**
-     * @brief Announces a content change on @p buffer (the mesh's mutation contract).
-     *
-     * The ONE place the mesh reports an edit: a buffer never moves its own revision, so a writer that changed
-     * LIVE storage has to say so (see Buffer::setRevision) — and the mesh is a writer every derived builder
-     * delegates to. Called once per EDIT, not once per element, which is the granularity a holder wants:
-     * "re-read, I am done".
-     *
-     * @param buffer Storage whose contents changed (never null).
-     */
-    template <typename T>
-    void announceChange(const intrusive_ptr<Buffer<T>>& buffer) noexcept
-    {
-        buffer->bumpRevision();
-    }
-
-    /// Vertex positions as packed scalars; never null, empty when the mesh has no vertices.
-    intrusive_ptr<Buffer<float>> positions_;
-    /// Optional per-vertex normals (empty when unset; same length as positions when set).
-    intrusive_ptr<Buffer<float>> normals_;
-    /// Optional per-vertex texture coordinates (empty when unset; `kVec2Components` floats per vertex).
-    intrusive_ptr<Buffer<float>> texcoords_;
-    /// Optional per-vertex colours (empty when unset; `kVec4Components` floats per vertex, linear RGBA).
-    intrusive_ptr<Buffer<float>> colors_;
+  protected:
+    intrusive_ptr<Buffer<float>> positions_; ///< Packed positions; three scalars per vertex.
+    intrusive_ptr<Buffer<float>> normals_; ///< Optional packed normals; three scalars per vertex.
+    intrusive_ptr<Buffer<float>> texcoords_; ///< Optional packed texture coordinates; two scalars per vertex.
+    intrusive_ptr<Buffer<float>> colors_; ///< Optional packed linear RGBA colours; four scalars per vertex.
+    intrusive_ptr<Buffer<std::uint32_t>> indices_; ///< Optional face-corner indices; empty selects sequential vertices.
 
   private:
-    /// Cached axis-aligned bounding box (empty until set or computed).
-    Aabbf aabb_{ Aabbf::empty() };
+    [[nodiscard]]
+    static std::span<const Vec3> asVec3(std::span<const float> scalars)
+    {
+        static_assert(sizeof(Vec3) == kVec3Components * sizeof(float));
+        static_assert(alignof(Vec3) == alignof(float));
+        return { reinterpret_cast<const Vec3*>(scalars.data()), scalars.size() / kVec3Components };
+    }
+
+    [[nodiscard]]
+    static std::span<const Vec2> asVec2(std::span<const float> scalars)
+    {
+        static_assert(sizeof(Vec2) == kVec2Components * sizeof(float));
+        static_assert(alignof(Vec2) == alignof(float));
+        return { reinterpret_cast<const Vec2*>(scalars.data()), scalars.size() / kVec2Components };
+    }
+
+    [[nodiscard]]
+    static std::span<const Vec4> asVec4(std::span<const float> scalars)
+    {
+        static_assert(sizeof(Vec4) == kVec4Components * sizeof(float));
+        static_assert(alignof(Vec4) == alignof(float));
+        return { reinterpret_cast<const Vec4*>(scalars.data()), scalars.size() / kVec4Components };
+    }
+
+    [[nodiscard]]
+    static std::vector<float> packVec3(Vec3Array values)
+    {
+        return packScalars<kVec3Components>(std::move(values));
+    }
+
+    [[nodiscard]]
+    static std::vector<float> packVec2(Vec2Array values)
+    {
+        return packScalars<kVec2Components>(std::move(values));
+    }
+
+    [[nodiscard]]
+    static std::vector<float> packVec4(Vec4Array values)
+    {
+        return packScalars<kVec4Components>(std::move(values));
+    }
+
+    /**
+     * @brief Packs vertex elements into their scalar run by copying the elements' bytes.
+     *
+     * @tparam Components Scalars per element; asserted to match the element's size.
+     * @tparam V          Element type; must be trivially copyable.
+     *
+     * @param values Elements to pack.
+     * @return The packed scalars, Components per element.
+     */
+    template <std::size_t Components, typename V>
+    [[nodiscard]]
+    static std::vector<float> packScalars(std::vector<V> values)
+    {
+        static_assert(std::is_trivially_copyable_v<V>, "packScalars copies the elements' bytes, so V must be trivially copyable");
+        static_assert(sizeof(V) == Components * sizeof(float), "a vertex element must pack into exactly Components scalars");
+
+        std::vector<float> scalars(values.size() * Components);
+        if (!scalars.empty()) {
+            std::memcpy(scalars.data(), values.data(), scalars.size() * sizeof(float));
+        }
+        return scalars;
+    }
+
+    Aabb aabb_{ Aabb::empty() };
 };
 
 VN_GEOMETRY_NS_END

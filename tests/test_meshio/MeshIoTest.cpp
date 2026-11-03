@@ -6,12 +6,15 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include <vine/Colorf.hpp>
 #include <vine/Object.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
 #include <vine/geometry/Model.hpp>
+#include <vine/geometry/MixedMesh.hpp>
+#include <vine/geometry/QuadMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/math/Matrix4x4.hpp>
@@ -21,9 +24,10 @@
 #include <vine/meshio/MeshFormat.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
-using vn::geometry::IndexedTriangleMesh;
+using vn::geometry::TriangleMesh;
 using vn::geometry::ShapeType;
 using vn::math::Vec3f;
+using vn::math::Vec3d;
 using vn::math::Vec4f;
 using vn::meshio::formatFromPath;
 using vn::meshio::formatInfo;
@@ -40,38 +44,20 @@ namespace
  *
  * @return The cube mesh (12 triangles).
  */
-vn::intrusive_ptr<IndexedTriangleMesh> makeCube()
+vn::intrusive_ptr<TriangleMesh> makeCube()
 {
-    auto mesh = vn::intrusive_ptr<IndexedTriangleMesh>(new IndexedTriangleMesh());
+    auto mesh = vn::intrusive_ptr<TriangleMesh>(new TriangleMesh());
 
     // 8 corners of a cube spanning [-1, 1]^3.
-    const auto v0 = mesh->addVertex(Vec3f(-1, -1, -1));
-    const auto v1 = mesh->addVertex(Vec3f(1, -1, -1));
-    const auto v2 = mesh->addVertex(Vec3f(1, 1, -1));
-    const auto v3 = mesh->addVertex(Vec3f(-1, 1, -1));
-    const auto v4 = mesh->addVertex(Vec3f(-1, -1, 1));
-    const auto v5 = mesh->addVertex(Vec3f(1, -1, 1));
-    const auto v6 = mesh->addVertex(Vec3f(1, 1, 1));
-    const auto v7 = mesh->addVertex(Vec3f(-1, 1, 1));
-
-    // front (z = -1)
-    mesh->addTriangle(v0, v1, v2);
-    mesh->addTriangle(v0, v2, v3);
-    // back (z = 1)
-    mesh->addTriangle(v5, v4, v7);
-    mesh->addTriangle(v5, v7, v6);
-    // left (x = -1)
-    mesh->addTriangle(v4, v0, v3);
-    mesh->addTriangle(v4, v3, v7);
-    // right (x = 1)
-    mesh->addTriangle(v1, v5, v6);
-    mesh->addTriangle(v1, v6, v2);
-    // bottom (y = -1)
-    mesh->addTriangle(v4, v5, v1);
-    mesh->addTriangle(v4, v1, v0);
-    // top (y = 1)
-    mesh->addTriangle(v3, v2, v6);
-    mesh->addTriangle(v3, v6, v7);
+    mesh->setPositions({ Vec3f(-1, -1, -1), Vec3f(1, -1, -1), Vec3f(1, 1, -1), Vec3f(-1, 1, -1),
+                         Vec3f(-1, -1, 1),  Vec3f(1, -1, 1),  Vec3f(1, 1, 1),  Vec3f(-1, 1, 1) });
+    // front (z = -1), back (z = 1), left (x = -1), right (x = 1), bottom (y = -1), top (y = 1)
+    mesh->setIndices({ 0u, 1u, 2u, 0u, 2u, 3u,
+                       5u, 4u, 7u, 5u, 7u, 6u,
+                       4u, 0u, 3u, 4u, 3u, 7u,
+                       1u, 5u, 6u, 1u, 6u, 2u,
+                       4u, 5u, 1u, 4u, 1u, 0u,
+                       3u, 2u, 6u, 3u, 6u, 7u });
 
     return mesh;
 }
@@ -214,9 +200,36 @@ TEST(MeshIoTest, LoadAndExportObjRoundTrip)
     auto       loaded = loader.loadMerged(path);
     ASSERT_TRUE(loaded);
 
-    const auto& itm = vn::obj_cast<IndexedTriangleMesh>(*loaded.value());
+    const auto& itm = vn::obj_cast<TriangleMesh>(*loaded.value());
     EXPECT_EQ(itm.triangleCount(), cube->triangleCount());
-    EXPECT_EQ(itm.shapeType(), ShapeType::IndexedTriangleMesh);
+    EXPECT_EQ(itm.shapeType(), ShapeType::TriangleMesh);
+
+    std::filesystem::remove(path);
+}
+
+TEST(MeshIoTest, QuadAndMixedMeshesExportAsTriangleMeshes)
+{
+    MeshExporter exporter;
+    MeshLoader loader(noScaling());
+    const auto path = std::filesystem::temp_directory_path() / "vn_meshio_polygons.obj";
+
+    auto quad = vn::make_intrusive<vn::geometry::QuadMesh>();
+    quad->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(1, 1, 0), Vec3f(0, 1, 0) });
+    ASSERT_TRUE(quad->isValid());
+    EXPECT_EQ(quad->toTriangleMesh()->triangleCount(), 2u);
+    ASSERT_EQ(exporter.exportAs(*quad, MeshFormat::Obj, path), vn::io::IoError::Ok);
+    auto quad_result = loader.loadMerged(path);
+    ASSERT_TRUE(quad_result);
+    EXPECT_EQ(vn::obj_cast<TriangleMesh>(*quad_result.value()).triangleCount(), 2u);
+
+    auto mixed = vn::make_intrusive<vn::geometry::MixedMesh>();
+    mixed->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(1, 1, 0), Vec3f(0, 1, 0), Vec3f(-1, 0, 0) });
+    mixed->setFaceOffsets({ 0u, 5u });
+    ASSERT_TRUE(mixed->isValid());
+    ASSERT_EQ(exporter.exportAs(*mixed, MeshFormat::Obj, path), vn::io::IoError::Ok);
+    auto mixed_result = loader.loadMerged(path);
+    ASSERT_TRUE(mixed_result);
+    EXPECT_EQ(vn::obj_cast<TriangleMesh>(*mixed_result.value()).triangleCount(), 3u);
 
     std::filesystem::remove(path);
 }
@@ -258,10 +271,11 @@ TEST(MeshIoTest, VertexColorsSurviveAPlyRoundTrip)
     auto model = loader.load(path);
     ASSERT_TRUE(model);
     ASSERT_EQ(model.value()->meshes().size(), 1u);
-    const auto& entry_mesh = model.value()->meshes().front().mesh;
-    ASSERT_NE(entry_mesh.get(), nullptr);
-    ASSERT_FALSE(entry_mesh->colors().empty());
-    EXPECT_EQ(entry_mesh->colors().size(), entry_mesh->positions().size());
+    const auto& entry = model.value()->meshes().front();
+    ASSERT_NE(entry.mesh.get(), nullptr);
+    const auto& entry_mesh = vn::obj_cast<vn::geometry::Mesh>(*entry.mesh);
+    ASSERT_FALSE(entry_mesh.colors().empty());
+    EXPECT_EQ(entry_mesh.colors().size(), entry_mesh.positions().size());
 
     std::filesystem::remove(path);
 }
@@ -318,7 +332,7 @@ TEST(MeshIoTest, MergedEntryPadsMeshesThatAuthorNoColourWithWhite)
     EXPECT_LT(white, mixed_mesh.colors().size()) << "the colours the other mesh authored survived the merge";
 
     // Both coloured: nothing is padded, so no vertex is white.
-    plain_cube->setColors(vn::geometry::Vec4fArray(coloured_cube->colors().begin(), coloured_cube->colors().end()));
+    plain_cube->setColors(vn::geometry::Vec4Array(coloured_cube->colors().begin(), coloured_cube->colors().end()));
     auto both = load_merged("vn_meshio_all_colors.glb");
     ASSERT_TRUE(both);
     EXPECT_TRUE(std::none_of(both.value()->colors().begin(), both.value()->colors().end(), is_white))
@@ -354,7 +368,7 @@ TEST(MeshIoTest, ExportAsciiStl)
 
 TEST(MeshIoTest, ExportInvalidMeshIsInvalidData)
 {
-    IndexedTriangleMesh empty;
+    TriangleMesh empty;
     MeshExporter        exporter;
     EXPECT_EQ(exporter.exportAs(empty, MeshFormat::Obj, "invalid.obj"), vn::io::IoError::InvalidData);
 }
@@ -413,7 +427,7 @@ TEST(MeshIoTest, CustomScaleMultipliesVertices)
     auto       mesh = loader.loadMerged(path);
     ASSERT_TRUE(mesh);
 
-    const auto& itm       = vn::obj_cast<IndexedTriangleMesh>(*mesh.value());
+    const auto& itm       = vn::obj_cast<TriangleMesh>(*mesh.value());
     const auto& positions = itm.positions();
     ASSERT_EQ(positions.size(), 3u);
 

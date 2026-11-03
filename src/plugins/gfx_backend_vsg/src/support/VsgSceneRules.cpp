@@ -64,7 +64,7 @@ vn::String ignoredChannelMessage(std::uint32_t location, const vn::graphics::Att
     return vn::String();
 }
 
-XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::geometry::Vec3fArray& out)
+XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::geometry::Vec3Array& out)
 {
     const auto                   comps = attr.components;
     const std::span<const float> data  = attr.scalars();

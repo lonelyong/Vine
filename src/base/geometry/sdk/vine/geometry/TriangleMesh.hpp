@@ -3,36 +3,32 @@
 #include "geometry_global.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <vine/math/Vector3.hpp>
 
+#include "Array.hpp"
 #include "Mesh.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
 /**
- * @brief A non-indexed triangle mesh (triangle soup).
+ * @brief A triangle mesh whose optional index buffer determines whether it is indexed.
  *
- * Positions are stored as three consecutive vertices per triangle. Normals
- * and texture coordinates, when present, match the position array 1:1.
+ * @details
+ * - Without indices the vertices are a triangle soup: every three consecutive vertices form one face.
+ * - With indices every three entries name one triangle; the position storage may hold more vertices than the indices
+ *   name, and those extra vertices are stored but not drawn.
+ * - The mesh is filled through the setters inherited from Mesh (setPositions() + setIndices()); choosing whether it is
+ *   indexed is a matter of passing indices or an empty array.
  */
-class VN_GEOMETRY_API TriangleMesh : public Mesh {
-    VN_OBJECT_META_DECL;
+class TriangleMesh : public Mesh {
+    VN_OBJECT_META(TriangleMesh, Mesh);
 
   public:
-    TriangleMesh();
-
-    /**
-     * @brief Appends one triangle.
-     *
-     * @param a First vertex.
-     * @param b Second vertex.
-     * @param c Third vertex.
-     */
-    void addTriangle(const vn::math::Vec3f& a, const vn::math::Vec3f& b, const vn::math::Vec3f& c);
-
-    /**
-     * @brief Removes all vertices and attributes.
-     */
-    void clear();
+    TriangleMesh()
+    {
+        this->shape_type_ = ShapeType::TriangleMesh;
+    }
 
     /**
      * @brief Returns the number of triangles.
@@ -40,10 +36,30 @@ class VN_GEOMETRY_API TriangleMesh : public Mesh {
      * @return Triangle count.
      */
     [[nodiscard]]
-    std::size_t triangleCount() const;
+    std::size_t triangleCount() const
+    {
+        return this->hasIndices() ? this->indices_->size() / 3u : this->vertexCount() / 3u;
+    }
 
     [[nodiscard]]
-    bool isValid() const override;
+    bool isValid() const override
+    {
+        if (this->positions_->empty()) {
+            return false;
+        }
+        if (!this->hasIndices()) {
+            return this->vertexCount() % 3u == 0u;
+        }
+        if (this->indices_->size() < 3u || this->indices_->size() % 3u != 0u) {
+            return false;
+        }
+        for (const std::uint32_t index : this->indices()) {
+            if (index >= this->vertexCount()) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 VN_GEOMETRY_NS_END

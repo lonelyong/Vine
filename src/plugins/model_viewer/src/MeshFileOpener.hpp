@@ -4,13 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <numeric>
 #include <span>
 #include <vector>
 
 #include <vine/Object.hpp>
 #include <vine/String.hpp>
 #include <vine/appfw/Document.hpp>
-#include <vine/geometry/IndexedTriangleMesh.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/geometry/Mesh.hpp>
 #include <vine/geometry/Model.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -89,7 +90,7 @@ inline std::vector<vn::math::Vec3f> smoothNormals(std::span<const vn::math::Vec3
 inline void ensureSmoothNormals(vn::geometry::Model& model)
 {
     for (const vn::geometry::Model::Entry& entry : model.meshes()) {
-        vn::geometry::Mesh* mesh = entry.mesh.get();
+        vn::geometry::Mesh* mesh = vn::obj_cast<vn::geometry::Mesh>(entry.mesh.get());
         if (mesh == nullptr) {
             continue;
         }
@@ -97,11 +98,18 @@ inline void ensureSmoothNormals(vn::geometry::Model& model)
         if (positions.empty() || mesh->normals().size() == positions.size()) {
             continue; // 没有顶点，或来源已经带了（长度对得上才算带了）
         }
-        const auto* indexed = dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(mesh);
-        if (indexed == nullptr || indexed->indices().size() < 3) {
+        const auto* triangle_mesh = vn::obj_cast<vn::geometry::TriangleMesh>(mesh);
+        if (triangle_mesh == nullptr || triangle_mesh->triangleCount() == 0u) {
             continue; // 非三角网格没有面可算
         }
-        mesh->setNormals(smoothNormals(positions, indexed->indices()));
+        std::vector<std::uint32_t> sequential_indices;
+        std::span<const std::uint32_t> indices = triangle_mesh->indices();
+        if (!triangle_mesh->hasIndices()) {
+            sequential_indices.resize(positions.size());
+            std::iota(sequential_indices.begin(), sequential_indices.end(), std::uint32_t{ 0 });
+            indices = sequential_indices;
+        }
+        mesh->setNormals(smoothNormals(positions, indices));
     }
 }
 
@@ -136,7 +144,7 @@ inline vn::appfw::Document* openMeshFilePayload(const MeshFilePayload& payload)
     // 查看器只画三角网格：一个都没有的模型（点云、纯 b-rep）不接受 —— 与以前"不是三角网格就拒"同一条规矩。
     std::size_t triangle_entries = 0;
     for (const vn::geometry::Model::Entry& entry : model->meshes()) {
-        if (entry.mesh != nullptr && dynamic_cast<const vn::geometry::IndexedTriangleMesh*>(entry.mesh.get()) != nullptr) {
+        if (entry.mesh != nullptr && entry.mesh->shapeType() == vn::geometry::ShapeType::TriangleMesh) {
             ++triangle_entries;
         }
     }
