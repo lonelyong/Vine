@@ -208,6 +208,12 @@ vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(cons
         return vn::io::IoError::Unsupported; // names no format this module handles
     }
 
+#if !defined(VN_BREPIO_HAS_OCCT)
+    // No reader is linked into this build, so the answer does not depend on the path: it is the same for a file that
+    // exists and one that does not, and it is stated before the file is touched (or its bytes fingerprinted).
+    return vn::io::IoError::Unsupported;
+#endif
+
     std::error_code ec;
     if (file_path.empty() || !std::filesystem::is_regular_file(file_path, ec) || ec) {
         return vn::io::IoError::NotFound;
@@ -233,8 +239,6 @@ vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(cons
     }
     cache_.set(fingerprint, *loaded);
     return loaded;
-#else
-    return vn::io::IoError::Unsupported; // no reader is linked into this build
 #endif
 }
 
