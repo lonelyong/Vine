@@ -7,6 +7,7 @@
 #include <limits>
 #include <span>
 
+#include <vine/math/EigenDecomposition.hpp>
 #include <vine/math/Matrix3x3.hpp>
 #include <vine/math/Transform3.hpp>
 

@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 
+#include <vine/math/EigenDecomposition.hpp>
 #include <vine/math/Matrix3x3.hpp>
 
 using namespace vn::math;

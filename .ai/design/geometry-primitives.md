@@ -75,9 +75,10 @@
 
 ### 2.7 拟合在 `Obb`，分解在 `math`
 
-- **是什么**：`Obb::computePca` / `Obb::computeFixedOrientation` 只做“求轴向 → 投影取 min/max → 组装四元数”；它们依赖 `math::symmetricEigen`（3×3 对称矩阵 Jacobi 分解）与 `math::toQuaternion`（旋转矩阵 → 四元数）。
+- **是什么**：`Obb::computePca` / `Obb::computeFixedOrientation` 只做“求轴向 → 投影取 min/max → 组装四元数”；它们依赖 `math::symmetricEigen`（3×3 对称矩阵 Jacobi 分解，见 `EigenDecomposition.hpp`）与 `math::toQuaternion`（旋转矩阵 → 四元数）。
 - **为什么**：`G1`、`G2` —— 特征分解是对矩阵的数值运算，不是空间实体；放进 `geometry` 会让 `math` 反向依赖它才能复用。拟合本身是形状操作，留在 `Obb`。
 - **边界**：`symmetricEigen` 只承诺对称矩阵、升序谱、列正交、每列最大分量取正；handedness 不保证，需要旋转矩阵的调用方自己用叉积补第三轴（`Obb` 就是这么做的）。
+- **为什么单独一个头文件**：`Matrix3x3.hpp` 只留矩阵本身，算法在 `EigenDecomposition.hpp`；只用到矩阵的翻译单元不付算法与 `<cmath>` 的编译成本，矩阵类型和求解器也各自演进（`G5`、`G10`）。
 - **不做**：最小体积 OBB（依赖第三方凸包旋转卡壳实现，今天没有消费者，`G8`）；`merge` 因同原因暂不提供。
 
 ## 3. 功能点
@@ -182,6 +183,6 @@
 ## 10. 参考
 
 - 代码：`src/base/geometry/sdk/vine/geometry/{Aabb,Obb,Line,Plane}.hpp`、`src/base/geometry/src/{Aabb,Obb,Line,Plane}.cpp`。
-- 数学设施：`src/base/math/sdk/vine/math/Matrix3x3.hpp`（`symmetricEigen`）、`Transform3.hpp`（`toQuaternion`）、`src/base/math/src/Transform3.cpp`。
+- 数学设施：`src/base/math/sdk/vine/math/EigenDecomposition.hpp`（`symmetricEigen`）、`Transform3.hpp`（`toQuaternion`）、`src/base/math/src/Transform3.cpp`。
 - 设计：`graphics-geometry.md`（`Shape` / `Mesh` / revision 的现行设计）、`../decisions/ADR-2026-11-03-geometry-primitives-ownership.md`。
 - 测试：`tests/test_geometry/AabbTest.cpp`、`ObbTest.cpp`、`ObbFitTest.cpp`、`LinePlaneTest.cpp`；`tests/test_math/Rect2Test.cpp`、`EigenDecompositionTest.cpp`、`Transform3Test.cpp`。
