@@ -4,12 +4,11 @@
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
+#include <vine/geometry/Ray.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector2.hpp>
 #include <vine/math/Vector3.hpp>
-
-#include "Ray.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -240,7 +239,7 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      *                  (pixel / viewport dimension).
      * @return Ray in world space.
      */
-    Ray screenToWorldRay(const Vec2d& screenPos) const;
+    vn::geometry::Rayd screenToWorldRay(const Vec2d& screenPos) const;
 
   private:
     String         name_;

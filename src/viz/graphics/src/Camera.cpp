@@ -141,7 +141,7 @@ Mat4d Camera::projectionMatrix() const
     return vn::math::perspective<double>(fov_ * vn::math::DEG_TO_RAD, aspect_, near_plane_, far_plane_);
 }
 
-Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
+vn::geometry::Rayd Camera::screenToWorldRay(const Vec2d& screenPos) const
 {
     const double ndc_x = (2.0 * screenPos.x) - 1.0;
     const double ndc_y = 1.0 - (2.0 * screenPos.y);
@@ -163,7 +163,7 @@ Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
         const double x      = ortho_left_ + ((ndc_x + 1.0) * 0.5) * (ortho_right_ - ortho_left_);
         const double y      = ortho_bottom_ + ((ndc_y + 1.0) * 0.5) * (ortho_top_ - ortho_bottom_);
         const Vec3d  origin = eye_ + right * x + up * y;
-        return Ray(origin, forward);
+        return vn::geometry::Rayd(vn::math::Point3d(origin.x, origin.y, origin.z), forward);
     }
     // Perspective: unproject through the near plane.
     const double fov_rad  = fov_ * vn::math::DEG_TO_RAD;
@@ -171,7 +171,7 @@ Ray Camera::screenToWorldRay(const Vec2d& screenPos) const
     const double x        = ndc_x * tan_half * aspect_;
     const double y        = ndc_y * tan_half;
     const Vec3d  dir      = (forward + right * x + up * y).normalized();
-    return Ray(eye_, dir);
+    return vn::geometry::Rayd(vn::math::Point3d(eye_.x, eye_.y, eye_.z), dir);
 }
 
 VN_GRAPHICS_NS_END

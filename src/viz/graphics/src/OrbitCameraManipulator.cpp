@@ -6,7 +6,6 @@
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
-#include <vine/graphics/Ray.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/math/Math.hpp>
@@ -345,7 +344,7 @@ bool OrbitCameraManipulator::pickAt(double screenX, double screenY, Vec3d& outPo
     Vec3d origin;
     Vec3d direction;
     makeScreenRay(screenX, screenY, origin, direction);
-    RayIntersectionResult result = RayIntersection::intersectScene(Ray(origin, direction), scene_);
+    RayIntersectionResult result = RayIntersection::intersectScene(vn::geometry::Rayd(vn::math::Point3d(origin.x, origin.y, origin.z), direction), scene_);
     if (!result.hit) {
         return false;
     }
@@ -557,9 +556,9 @@ void OrbitCameraManipulator::makeScreenRay(double screenX, double screenY, Vec3d
     }
     const double w   = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
     const double h   = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
-    const Ray    ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
-    origin           = ray.origin;
-    direction        = ray.direction;
+    const vn::geometry::Rayd ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
+    origin                       = Vec3d(ray.origin.x, ray.origin.y, ray.origin.z);
+    direction                    = ray.direction;
 }
 
 Vec3d OrbitCameraManipulator::resolveAnchor(double screenX, double screenY, bool& onRay) const

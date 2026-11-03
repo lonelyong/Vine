@@ -18,7 +18,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Geometry.hpp>
-#include <vine/graphics/Ray.hpp>
+#include <vine/geometry/Ray.hpp>
 #include <vine/geometry/Aabb.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/math/Point3.hpp>
@@ -371,7 +371,7 @@ TEST(RayIntersectionTest, HitsTheSegmentNotTheArena)
     const auto arena = arenaBuffer(3u);
     // Straight down onto the second segment's plane. The segments lie in parallel planes ten units apart, so
     // the point decides which one is hit: (0.25, 10.5) is inside segment 1 and far outside segment 2.
-    const Ray ray(Vec3d(0.25, 10.5, 40.0), Vec3d(0.0, 0.0, -1.0));
+    const vn::geometry::Rayd ray(vn::math::Point3d(0.25, 10.5, 40.0), Vec3d(0.0, 0.0, -1.0));
 
     const auto hit = RayIntersection::intersect(ray, segmentGeometry(arena, 3u).get(), Mat4d());
     ASSERT_TRUE(hit.hit);

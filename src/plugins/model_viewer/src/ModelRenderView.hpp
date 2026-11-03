@@ -29,7 +29,6 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ModelScene.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
-#include <vine/graphics/Ray.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -359,7 +358,7 @@ inline void ModelRenderView::selectAt(double nx, double ny)
         return;
     }
 
-    const vn::graphics::Ray                   ray = view_->camera()->screenToWorldRay(vn::math::Vec2d(nx, ny));
+        const vn::geometry::Rayd                   ray = view_->camera()->screenToWorldRay(vn::math::Vec2d(nx, ny));
     const vn::graphics::RayIntersectionResult hit = vn::graphics::RayIntersection::intersectScene(ray, view_->scene().get());
 
     if (!hit.hit || hit.geometry == nullptr) {

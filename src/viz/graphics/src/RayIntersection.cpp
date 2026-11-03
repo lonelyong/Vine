@@ -18,49 +18,6 @@ namespace
 {
 
 /**
- * @brief Ray-triangle intersection using the Möller–Trumbore algorithm.
- *
- * The ray is given by origin + dir * t; dir does not need to be unit length
- * (t is measured along dir). All inputs must live in the same space.
- *
- * @param origin Ray origin.
- * @param dir    Ray direction (not normalised).
- * @param a      Triangle vertex A.
- * @param b      Triangle vertex B.
- * @param c      Triangle vertex C.
- * @param out_t  Receives the hit distance when intersecting.
- * @return true when the ray hits the triangle.
- */
-bool intersectTriangle(const Vec3d& origin, const Vec3d& dir, const Vec3d& a, const Vec3d& b, const Vec3d& c, double& out_t)
-{
-    constexpr double eps   = 1e-9;
-    const Vec3d      edge1 = b - a;
-    const Vec3d      edge2 = c - a;
-    const Vec3d      h     = dir.cross(edge2);
-    const double     det   = edge1.dot(h);
-    if (std::abs(det) < eps) {
-        return false;
-    }
-    const double inv_det = 1.0 / det;
-    const Vec3d  s       = origin - a;
-    const double u       = s.dot(h) * inv_det;
-    if (u < 0.0 || u > 1.0) {
-        return false;
-    }
-    const Vec3d  q = s.cross(edge1);
-    const double v = dir.dot(q) * inv_det;
-    if (v < 0.0 || u + v > 1.0) {
-        return false;
-    }
-    const double t = edge2.dot(q) * inv_det;
-    if (t > eps) {
-        out_t = t;
-        return true;
-    }
-    return false;
-}
-
-/**
  * @brief Computes the normal of a triangle.
  *
  * @param a Triangle vertex A.
@@ -75,44 +32,6 @@ Vec3d faceNormal(const Vec3d& a, const Vec3d& b, const Vec3d& c)
 
 // Forward declaration: defined below but used by transformBounds().
 Vec3d toWorld(const Mat4d& m, double x, double y, double z);
-
-/**
- * @brief Slab test: whether a ray (origin + dir * t, t >= 0) hits an AABB.
- *
- * @param origin Ray origin.
- * @param dir    Ray direction (need not be unit length).
- * @param box    Axis-aligned box in the same space.
- * @return true when the ray intersects the box.
- */
-bool rayIntersectsBox(const Vec3d& origin, const Vec3d& dir, const Aabbd& box)
-{
-    constexpr double eps    = 1e-12;
-    double           t_near = 0.0;
-    double           t_far  = std::numeric_limits<double>::max();
-    const double     o[3]   = { origin.x, origin.y, origin.z };
-    const double     d[3]   = { dir.x, dir.y, dir.z };
-    const double     lo[3]  = { box.min().x, box.min().y, box.min().z };
-    const double     hi[3]  = { box.max().x, box.max().y, box.max().z };
-    for (int i = 0; i < 3; ++i) {
-        if (std::abs(d[i]) < eps) {
-            if (o[i] < lo[i] || o[i] > hi[i]) {
-                return false;
-            }
-            continue;
-        }
-        double t1 = (lo[i] - o[i]) / d[i];
-        double t2 = (hi[i] - o[i]) / d[i];
-        if (t1 > t2) {
-            std::swap(t1, t2);
-        }
-        t_near = std::max(t_near, t1);
-        t_far  = std::min(t_far, t2);
-        if (t_near > t_far) {
-            return false;
-        }
-    }
-    return true;
-}
 
 /**
  * @brief Transforms a local-space AABB by an affine matrix.
@@ -235,7 +154,7 @@ GeometryMesh meshOfGeometry(const Geometry* geometry, const Primitive* primitive
  * @param visit     Called for every hit (receives it by value, already tagged).
  */
 template <typename Visit>
-void forEachTriangleHit(const Geometry* geometry, const Ray& ray, const Mat4d& world, Visit&& visit)
+void forEachTriangleHit(const Geometry* geometry, const vn::geometry::Rayd& ray, const Mat4d& world, Visit&& visit)
 {
     if (geometry == nullptr) {
         return;
@@ -283,31 +202,29 @@ void forEachTriangleHit(const Geometry* geometry, const Ray& ray, const Mat4d& w
  * @param a               Triangle vertex A (local).
  * @param b               Triangle vertex B (local).
  * @param c               Triangle vertex C (local).
- * @param local_origin    Ray origin in local space.
- * @param local_dir       Ray direction in local space (un-normalised).
- * @param t               Hit distance along the local direction.
+ * @param local_ray       The ray in the mesh's local space (unit direction).
+ * @param t               Hit distance along the local ray.
  * @param triangle_index  Triangle index within the mesh.
  * @param ray             The world-space ray.
  * @param world           World matrix of the geometry.
  * @return The populated hit result (hit == true).
  */
-RayIntersectionResult makeTriangleHit(const Vec3d& a,
-                                      const Vec3d& b,
-                                      const Vec3d& c,
-                                      const Vec3d& local_origin,
-                                      const Vec3d& local_dir,
-                                      double       t,
-                                      std::size_t  triangle_index,
-                                      const Ray&   ray,
-                                      const Mat4d& world)
+RayIntersectionResult makeTriangleHit(const Vec3d&             a,
+                                      const Vec3d&             b,
+                                      const Vec3d&             c,
+                                      const vn::geometry::Rayd& local_ray,
+                                      double                   t,
+                                      std::size_t              triangle_index,
+                                      const vn::geometry::Rayd& ray,
+                                      const Mat4d&             world)
 {
-    RayIntersectionResult r;
-    const Vec3d           local_hit = local_origin + local_dir * t;
-    const Vec3d           world_hit = toWorld(world, local_hit.x, local_hit.y, local_hit.z);
-    r.hit                           = true;
-    r.point                         = world_hit;
-    r.normal                        = faceNormal(toWorld(world, a.x, a.y, a.z), toWorld(world, b.x, b.y, b.z), toWorld(world, c.x, c.y, c.z));
-    r.distance                      = (world_hit - ray.origin).length();
+    RayIntersectionResult   r;
+    const vn::math::Point3d local_hit = local_ray.pointAt(t);
+    const Vec3d             world_hit = toWorld(world, local_hit.x, local_hit.y, local_hit.z);
+    r.hit                             = true;
+    r.point                           = world_hit;
+    r.normal                          = faceNormal(toWorld(world, a.x, a.y, a.z), toWorld(world, b.x, b.y, b.z), toWorld(world, c.x, c.y, c.z));
+    r.distance                        = (world_hit - Vec3d(ray.origin.x, ray.origin.y, ray.origin.z)).length();
     r.triangleIndex                 = triangle_index;
     return r;
 }
@@ -346,7 +263,7 @@ template <typename OnHit>
 bool traverseMesh(const vn::geometry::Vec3Array& positions,
                   std::span<const std::uint32_t>  indices,
                   Topology                        topology,
-                  const Ray&                      ray,
+                  const vn::geometry::Rayd&       ray,
                   const Mat4d&                    world,
                   OnHit&&                         on_hit)
 {
@@ -354,8 +271,11 @@ bool traverseMesh(const vn::geometry::Vec3Array& positions,
         return false;
     }
     const Aabbd local_bounds = boundsOfPositions(positions);
-    if (local_bounds.isValid() && !rayIntersectsBox(ray.origin, ray.direction, transformBounds(local_bounds, world))) {
-        return false;
+    if (local_bounds.isValid()) {
+        vn::geometry::RayHitd world_hit;
+        if (!transformBounds(local_bounds, world).intersectWith(ray, world_hit)) {
+            return false; // the world-space box is the cheap rejection; the mesh itself is tested in local space
+        }
     }
 
     // Copy first: invert() reports failure by returning false and leaving the matrix as it was
@@ -366,6 +286,9 @@ bool traverseMesh(const vn::geometry::Vec3Array& positions,
     }
     const Vec3d local_origin = toWorld(inv, ray.origin.x, ray.origin.y, ray.origin.z);
     const Vec3d local_dir    = toWorld(inv, ray.origin.x + ray.direction.x, ray.origin.y + ray.direction.y, ray.origin.z + ray.direction.z) - local_origin;
+
+    // geometry's ray keeps its direction unit length, so a hit parameter is a distance in this local space.
+    const vn::geometry::Rayd local_ray(vn::math::Point3d(local_origin.x, local_origin.y, local_origin.z), local_dir);
 
     const std::size_t n      = !indices.empty() ? indices.size() : positions.size();
     bool              any    = false;
@@ -390,12 +313,16 @@ bool traverseMesh(const vn::geometry::Vec3Array& positions,
         if (flip) {
             std::swap(b, c); // a strip reverses its winding on every other triangle
         }
-        double t = 0.0;
-        if (!intersectTriangle(local_origin, local_dir, a, b, c, t)) {
+        vn::geometry::RayHitd local_hit;
+        if (!vn::geometry::intersectTriangle(local_ray,
+                                             vn::math::Point3d(a.x, a.y, a.z),
+                                             vn::math::Point3d(b.x, b.y, b.z),
+                                             vn::math::Point3d(c.x, c.y, c.z),
+                                             local_hit)) {
             return;
         }
         any = true;
-        on_hit(makeTriangleHit(a, b, c, local_origin, local_dir, t, ordinal, ray, world));
+        on_hit(makeTriangleHit(a, b, c, local_ray, local_hit.t, ordinal, ray, world));
     };
 
     switch (topology) {
@@ -431,7 +358,7 @@ bool traverseMesh(const vn::geometry::Vec3Array& positions,
  * @param layer_mask       Layers this query picks (see Node::setLayers).
  * @param best             Closest intersection found so far (in/out).
  */
-void intersectNode(const Ray& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, RayIntersectionResult& best)
+void intersectNode(const vn::geometry::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, RayIntersectionResult& best)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
@@ -472,7 +399,7 @@ void intersectNode(const Ray& ray, const Node* node, std::uint32_t inherited_lay
  * @param layer_mask       Layers this query picks (see Node::setLayers).
  * @param out              Output result list (one entry per geometry that was hit).
  */
-void collectNodeNearest(const Ray& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
+void collectNodeNearest(const vn::geometry::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
@@ -515,7 +442,7 @@ void collectNodeNearest(const Ray& ray, const Node* node, std::uint32_t inherite
  * @param layer_mask       Layers this query picks (see Node::setLayers).
  * @param out              Output result list (multiple entries per geometry possible).
  */
-void collectNodeHits(const Ray& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
+void collectNodeHits(const vn::geometry::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
@@ -546,7 +473,7 @@ void collectNodeHits(const Ray& ray, const Node* node, std::uint32_t inherited_l
 
 } // namespace
 
-RayIntersectionResult RayIntersection::intersect(const Ray& ray, raw_ptr<Geometry> geometry, const Mat4d& world)
+RayIntersectionResult RayIntersection::intersect(const vn::geometry::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world)
 {
     RayIntersectionResult result;
     if (geometry == nullptr) {
@@ -563,7 +490,7 @@ RayIntersectionResult RayIntersection::intersect(const Ray& ray, raw_ptr<Geometr
     return result;
 }
 
-std::vector<RayIntersectionResult> RayIntersection::intersect(const Ray& ray, raw_ptr<Geometry> geometry, const Mat4d& world, Mode mode)
+std::vector<RayIntersectionResult> RayIntersection::intersect(const vn::geometry::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world, Mode mode)
 {
     std::vector<RayIntersectionResult> results;
     if (geometry == nullptr) {
@@ -584,7 +511,7 @@ std::vector<RayIntersectionResult> RayIntersection::intersect(const Ray& ray, ra
     return results;
 }
 
-RayIntersectionResult RayIntersection::intersectScene(const Ray& ray, raw_ptr<Scene> scene, std::uint32_t layer_mask)
+RayIntersectionResult RayIntersection::intersectScene(const vn::geometry::Rayd& ray, raw_ptr<Scene> scene, std::uint32_t layer_mask)
 {
     RayIntersectionResult best;
     if (scene == nullptr) {
@@ -596,7 +523,7 @@ RayIntersectionResult RayIntersection::intersectScene(const Ray& ray, raw_ptr<Sc
     return best;
 }
 
-std::vector<RayIntersectionResult> RayIntersection::intersectSceneAll(const Ray& ray, raw_ptr<Scene> scene, Mode mode, std::uint32_t layer_mask)
+std::vector<RayIntersectionResult> RayIntersection::intersectSceneAll(const vn::geometry::Rayd& ray, raw_ptr<Scene> scene, Mode mode, std::uint32_t layer_mask)
 {
     std::vector<RayIntersectionResult> results;
     if (scene == nullptr) {

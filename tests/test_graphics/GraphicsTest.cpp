@@ -30,7 +30,7 @@
 #include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/PositionAttitudeTransform.hpp>
 #include <vine/graphics/Primitive.hpp>
-#include <vine/graphics/Ray.hpp>
+#include <vine/geometry/Ray.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -793,7 +793,7 @@ TEST(CameraTest, ScreenToWorldRayCenter)
     cam.setAspect(800.0 / 600.0);
 
     // Screen center maps to a ray through the target.
-    Ray ray = cam.screenToWorldRay(Vec2d(0.5, 0.5));
+    vn::geometry::Rayd ray = cam.screenToWorldRay(Vec2d(0.5, 0.5));
     EXPECT_NEAR(ray.origin.x, 0.0, 1e-6);
     EXPECT_NEAR(ray.origin.y, 0.0, 1e-6);
     EXPECT_NEAR(ray.origin.z, 5.0, 1e-6);
@@ -841,7 +841,7 @@ TEST(CameraTest, TheOrthographicPickingRayTravelsAcrossTheWindow)
     cam.lookAt(Vec3d(0, 0, 10), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
     cam.setOrthographic(-2.0, 6.0, -1.0, 3.0, 0.5, 100.0);
 
-    const Ray centre = cam.screenToWorldRay(Vec2d(0.5, 0.5));
+    const vn::geometry::Rayd centre = cam.screenToWorldRay(Vec2d(0.5, 0.5));
     EXPECT_NEAR(centre.origin.x, 2.0, 1e-6) << "the window's horizontal centre is x = (+2 + 6)/2";
     EXPECT_NEAR(centre.origin.y, 1.0, 1e-6) << "its vertical centre is y = (-1 + 3)/2";
     EXPECT_NEAR(centre.origin.z, 10.0, 1e-6);
@@ -849,12 +849,12 @@ TEST(CameraTest, TheOrthographicPickingRayTravelsAcrossTheWindow)
 
     // Bottom-left of the screen: the window's bottom-left corner, and every ray parallel to the view
     // direction (that is what makes an orthographic projection orthographic).
-    const Ray bottom_left = cam.screenToWorldRay(Vec2d(0.0, 1.0));
+    const vn::geometry::Rayd bottom_left = cam.screenToWorldRay(Vec2d(0.0, 1.0));
     EXPECT_NEAR(bottom_left.origin.x, -2.0, 1e-6);
     EXPECT_NEAR(bottom_left.origin.y, -1.0, 1e-6);
     EXPECT_NEAR(bottom_left.direction.z, -1.0, 1e-6);
 
-    const Ray top_right = cam.screenToWorldRay(Vec2d(1.0, 0.0));
+    const vn::geometry::Rayd top_right = cam.screenToWorldRay(Vec2d(1.0, 0.0));
     EXPECT_NEAR(top_right.origin.x, 6.0, 1e-6);
     EXPECT_NEAR(top_right.origin.y, 3.0, 1e-6);
 }
@@ -870,7 +870,7 @@ TEST(CameraTest, ThePickingRayIsBuiltFromTheViewMatrixBasis)
     cam.lookAt(Vec3d(0, 10, 0), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
     cam.setPerspective(60.0, 0.1, 1000.0);
 
-    const Ray ray = cam.screenToWorldRay(Vec2d(0.5, 0.5));
+    const vn::geometry::Rayd ray = cam.screenToWorldRay(Vec2d(0.5, 0.5));
     EXPECT_TRUE(std::isfinite(ray.direction.x));
     EXPECT_TRUE(std::isfinite(ray.direction.y));
     EXPECT_TRUE(std::isfinite(ray.direction.z));
@@ -884,7 +884,7 @@ TEST(CameraTest, ThePickingRayIsBuiltFromTheViewMatrixBasis)
     const Mat4d view = cam.viewMatrix();
     const Vec3d right(view.element(0, 0), view.element(0, 1), view.element(0, 2));
     const Vec3d up(view.element(1, 0), view.element(1, 1), view.element(1, 2));
-    const Ray   off_centre = cam.screenToWorldRay(Vec2d(0.9, 0.1));
+    const vn::geometry::Rayd   off_centre = cam.screenToWorldRay(Vec2d(0.9, 0.1));
     EXPECT_TRUE(std::isfinite(off_centre.direction.x));
     EXPECT_TRUE(std::isfinite(off_centre.direction.y));
     EXPECT_TRUE(std::isfinite(off_centre.direction.z));
@@ -1273,32 +1273,13 @@ TEST(CameraManipulatorTest, HomeRestoresInitialView)
     EXPECT_NEAR(cam->eye().z, 10.0, 1e-6);
 }
 
-// ============ Ray ============
-
-TEST(RayTest, PointAt)
-{
-    Ray   ray(Vec3d(1, 2, 3), Vec3d(1, 0, 0));
-    Vec3d p = ray.pointAt(4.0);
-    EXPECT_NEAR(p.x, 5.0, 1e-9);
-    EXPECT_NEAR(p.y, 2.0, 1e-9);
-    EXPECT_NEAR(p.z, 3.0, 1e-9);
-}
-
-TEST(RayTest, DistanceToPoint)
-{
-    Ray ray(Vec3d(0, 0, 0), Vec3d(1, 0, 0));
-    EXPECT_NEAR(ray.distanceToPoint(Vec3d(5, 3, 0)), 3.0, 1e-9);
-    // Point behind the ray origin: distance to origin.
-    EXPECT_NEAR(ray.distanceToPoint(Vec3d(-5, 0, 0)), 5.0, 1e-9);
-}
-
 // ============ RayIntersection ============
 
 TEST(RayIntersectionTest, HitsTriangle)
 {
     auto geom = geometryOf(*makeUnitTriangle());
 
-    Ray                   ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    vn::geometry::Rayd    ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
     RayIntersectionResult result = RayIntersection::intersect(ray, geom.get(), Mat4d());
     EXPECT_TRUE(result.hit);
     EXPECT_NEAR(result.distance, 1.0, 1e-6);
@@ -1312,8 +1293,8 @@ TEST(RayIntersectionTest, MissesTriangle)
 {
     auto geom = geometryOf(*makeUnitTriangle());
 
-    // Ray aimed outside the triangle.
-    Ray                   ray(Vec3d(5, 5, 1), Vec3d(0, 0, -1));
+    // vn::geometry::Rayd aimed outside the triangle.
+    vn::geometry::Rayd    ray(vn::math::Point3d(5, 5, 1), Vec3d(0, 0, -1));
     RayIntersectionResult result = RayIntersection::intersect(ray, geom.get(), Mat4d());
     EXPECT_FALSE(result.hit);
 }
@@ -1338,7 +1319,7 @@ TEST(RayIntersectionTest, AStripAndAFanAreSurfacesToo)
 
     // A strip covers the same quad as a list, with four vertices instead of six.
     const auto strip = make_mesh(Topology::TriangleStrip, { -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, -1.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F }, { 0U, 1U, 2U, 3U });
-    const Ray  ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
+    const vn::geometry::Rayd  ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
     const RayIntersectionResult strip_hit = RayIntersection::intersect(ray, strip.get(), Mat4d());
     EXPECT_TRUE(strip_hit.hit) << "两条三角形都应该被走到";
     EXPECT_NEAR(strip_hit.normal.z, 1.0, 1e-6) << "strip 的奇偶翻转必须体现在法线上";
@@ -1370,7 +1351,7 @@ TEST(RayIntersectionTest, SceneQuery)
     node->addChild(geom);
     scene->setRoot(node);
 
-    Ray                   ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    vn::geometry::Rayd                   ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
     RayIntersectionResult result = RayIntersection::intersectScene(ray, scene.get());
     EXPECT_TRUE(result.hit);
     EXPECT_EQ(result.geometry.get(), geom.get());
@@ -1564,7 +1545,7 @@ TEST(PrimitiveInstancingTest, PickingReportsThePrimitiveAndTheInstanceThatWasHit
     storage->bumpRevision();
     ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
 
-    const Ray                   ray(Vec3d(2.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    const vn::geometry::Rayd                   ray(vn::math::Point3d(2.25, 0.25, 1.0), Vec3d(0, 0, -1));
     const RayIntersectionResult result = RayIntersection::intersectScene(ray, &scene);
     ASSERT_TRUE(result.hit);
     EXPECT_EQ(result.geometry.get(), geom.get());
@@ -1576,7 +1557,7 @@ TEST(PrimitiveInstancingTest, PickingReportsThePrimitiveAndTheInstanceThatWasHit
     // Picking follows the drawn prefix: the second instance is not there once the primitive hides it.
     ASSERT_TRUE(geom->setVisibleInstanceCount(0U, 1u));
     EXPECT_FALSE(RayIntersection::intersectScene(ray, &scene).hit);
-    EXPECT_TRUE(RayIntersection::intersectScene(Ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1)), &scene).hit);
+    EXPECT_TRUE(RayIntersection::intersectScene(vn::geometry::Rayd(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1)), &scene).hit);
 }
 
 TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)
@@ -1593,7 +1574,7 @@ TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)
     node->addChild(geom);
     scene->setRoot(node);
 
-    Ray ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    vn::geometry::Rayd ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
 
     // Default AllHits: every triangle hit, sorted by depth.
     const auto all = RayIntersection::intersectSceneAll(ray, scene.get());
@@ -1632,7 +1613,7 @@ TEST(RayIntersectionTest, ASingularWorldTransformIsSkipped)
 
     // The ray crosses the triangle's plane exactly on the collapsed axis, i.e. the AABB slab test
     // alone cannot reject it — the invertibility check is what has to.
-    Ray ray(Vec3d(0.0, 0.25, 1.0), Vec3d(0, 0, -1));
+    vn::geometry::Rayd ray(vn::math::Point3d(0.0, 0.25, 1.0), Vec3d(0, 0, -1));
     EXPECT_FALSE(RayIntersection::intersect(ray, geom.get(), transform->matrix()).hit);
     EXPECT_FALSE(RayIntersection::intersectScene(ray, scene.get()).hit);
 
@@ -1663,7 +1644,7 @@ TEST(RayIntersectionTest, TheLayerMaskSelectsWhatIsPicked)
     root->addChild(far_place);
     scene->setRoot(root);
 
-    Ray ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    vn::geometry::Rayd ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
 
     // Default: everything visible is picked - the near triangle wins the nearest query.
     EXPECT_EQ(RayIntersection::intersectScene(ray, scene.get()).geometry->name(), u8"near");
@@ -9295,7 +9276,7 @@ TEST(RayIntersectionTest, PicksVec4PositionGeometry)
     root->addChild(geom);
     scene->setRoot(root);
 
-    Ray                   ray(Vec3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    vn::geometry::Rayd                   ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
     RayIntersectionResult hit = RayIntersection::intersectScene(ray, scene.get());
     EXPECT_TRUE(hit.hit);
     EXPECT_EQ(hit.geometry.get(), geom.get());
@@ -9304,7 +9285,7 @@ TEST(RayIntersectionTest, PicksVec4PositionGeometry)
     EXPECT_NEAR(hit.point.y, 0.25, 1e-6);
 
     // A ray outside the (correctly read) triangle still misses.
-    Ray off_ray(Vec3d(5.0, 5.0, 1.0), Vec3d(0, 0, -1));
+    vn::geometry::Rayd off_ray(vn::math::Point3d(5.0, 5.0, 1.0), Vec3d(0, 0, -1));
     EXPECT_FALSE(RayIntersection::intersectScene(off_ray, scene.get()).hit);
 }
 
