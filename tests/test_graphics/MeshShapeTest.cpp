@@ -5,7 +5,7 @@
 #include <stdexcept>
 
 #include <vine/Object.hpp>
-#include <vine/geometry/Box.hpp>
+#include <vine/geometry/Primitive.hpp>
 #include <vine/geometry/MixedMesh.hpp>
 #include <vine/geometry/QuadMesh.hpp>
 #include <vine/geometry/TriangleMesh.hpp>

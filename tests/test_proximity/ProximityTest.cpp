@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include <vine/geometry/Sphere.hpp>
+#include <vine/geometry/Primitive.hpp>
 #include <vine/robotics/kinematics/Frame.hpp>
 #include <vine/robotics/kinematics/State.hpp>
 #include <vine/robotics/proximity/CollisionContact.hpp>

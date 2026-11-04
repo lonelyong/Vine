@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include <vine/geometry/Box.hpp>
+#include <vine/geometry/Primitive.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/io/ZipArchive.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
@@ -186,7 +186,8 @@ TEST(PkgIOTest, DevicePkgPrimitiveRoundTrip)
 
     auto robot = makeRobot();
     robot->baseLink()->body().visuals().resize(1);
-    robot->baseLink()->body().visuals()[0].setShape(vn::intrusive_ptr<vn::geometry::Box>(new vn::geometry::Box(0.25f, 0.5f, 0.75f)));
+    robot->baseLink()->body().visuals()[0].setShape(
+      vn::intrusive_ptr<vn::geometry::Box>(new vn::geometry::Box(0.25f, 0.5f, 0.75f)));
 
     DeviceIO io;
     io.savePkg(*robot, file);

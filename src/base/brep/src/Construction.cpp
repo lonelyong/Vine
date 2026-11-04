@@ -19,11 +19,7 @@
 #    include <utility>
 
 #    include <vine/Object.hpp>
-#    include <vine/geometry/Box.hpp>
-#    include <vine/geometry/Cone.hpp>
-#    include <vine/geometry/Cylinder.hpp>
-#    include <vine/geometry/Ellipsoid.hpp>
-#    include <vine/geometry/Sphere.hpp>
+#    include <vine/geometry/Primitive.hpp>
 #endif
 
 VN_BREP_NS_BEGIN
@@ -42,7 +38,7 @@ gp_Ax2 centeredZAxis(double half_height)
 }
 
 /// Builds a box spanning [-w/2, w/2] x [-h/2, h/2] x [-d/2, d/2], the space Box describes.
-TopoDS_Shape buildBox(const vn::geometry::Box& box)
+TopoDS_Shape solidOf(const vn::geometry::Box& box)
 {
     const auto width  = static_cast<double>(box.width());
     const auto height = static_cast<double>(box.height());
@@ -53,13 +49,13 @@ TopoDS_Shape buildBox(const vn::geometry::Box& box)
 }
 
 /// Builds a sphere of the given radius, already centered on the origin.
-TopoDS_Shape buildSphere(const vn::geometry::Sphere& sphere)
+TopoDS_Shape solidOf(const vn::geometry::Sphere& sphere)
 {
     return BRepPrimAPI_MakeSphere(static_cast<double>(sphere.radius())).Shape();
 }
 
 /// Builds a cylinder spanning [-h/2, h/2] on +Z, the space Cylinder describes.
-TopoDS_Shape buildCylinder(const vn::geometry::Cylinder& cylinder)
+TopoDS_Shape solidOf(const vn::geometry::Cylinder& cylinder)
 {
     const auto radius = static_cast<double>(cylinder.radius());
     const auto height = static_cast<double>(cylinder.height());
@@ -68,7 +64,7 @@ TopoDS_Shape buildCylinder(const vn::geometry::Cylinder& cylinder)
 }
 
 /// Builds a cone with its base at -h/2 and its apex at +h/2 on +Z, the space Cone describes.
-TopoDS_Shape buildCone(const vn::geometry::Cone& cone)
+TopoDS_Shape solidOf(const vn::geometry::Cone& cone)
 {
     const auto radius = static_cast<double>(cone.radius());
     const auto height = static_cast<double>(cone.height());
@@ -80,7 +76,7 @@ TopoDS_Shape buildCone(const vn::geometry::Cone& cone)
 ///
 /// The backend has no tri-axial ellipsoid: a unit sphere is scaled onto the three semi-axes, which turns its face into
 /// a B-spline, so the solid matches the ellipsoid only within the transform's tolerance.
-TopoDS_Shape buildEllipsoid(const vn::geometry::Ellipsoid& ellipsoid)
+TopoDS_Shape solidOf(const vn::geometry::Ellipsoid& ellipsoid)
 {
     const auto radius_x = static_cast<double>(ellipsoid.radiusX());
     const auto radius_y = static_cast<double>(ellipsoid.radiusY());
@@ -101,27 +97,27 @@ TopoDS_Shape buildSolid(const vn::geometry::Primitive& primitive)
     switch (primitive.shapeType()) {
     case vn::geometry::ShapeType::Box:
         if (const auto* box = vn::obj_cast<vn::geometry::Box>(&primitive)) {
-            return buildBox(*box);
+            return solidOf(*box);
         }
         break;
     case vn::geometry::ShapeType::Sphere:
         if (const auto* sphere = vn::obj_cast<vn::geometry::Sphere>(&primitive)) {
-            return buildSphere(*sphere);
+            return solidOf(*sphere);
         }
         break;
     case vn::geometry::ShapeType::Cylinder:
         if (const auto* cylinder = vn::obj_cast<vn::geometry::Cylinder>(&primitive)) {
-            return buildCylinder(*cylinder);
+            return solidOf(*cylinder);
         }
         break;
     case vn::geometry::ShapeType::Cone:
         if (const auto* cone = vn::obj_cast<vn::geometry::Cone>(&primitive)) {
-            return buildCone(*cone);
+            return solidOf(*cone);
         }
         break;
     case vn::geometry::ShapeType::Ellipsoid:
         if (const auto* ellipsoid = vn::obj_cast<vn::geometry::Ellipsoid>(&primitive)) {
-            return buildEllipsoid(*ellipsoid);
+            return solidOf(*ellipsoid);
         }
         break;
     default: break;

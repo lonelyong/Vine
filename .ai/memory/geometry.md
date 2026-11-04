@@ -2,8 +2,10 @@
 
 - **纯内联的 SDK 类必须由本模块某个 TU include**：`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 的成员全部定义在头文件里，
   DLL 只有在带 `VN_GEOMETRY_LIB` 的 TU 里看到这个类时才会实例化并导出它们。现在由 `Primitive.cpp` 显式列出这五个头。
-- 缺了这一步的表现是 **Debug 消费者链接失败**：`LNK2019 __declspec(dllimport) ... Box::Box(...)`；Release（内联）会“碰巧通过”，
-  所以只在 Debug 才暴露。`test_proximity` 与 `test_robotics_io` 都曾被它挡住。
+- **参数化几何是建模类型**：`Primitive : Shape` + `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` **全部在 `Primitive.hpp` 一个文件**里
+  （原来五个分开的头已删）。子类把 `ShapeType` 传给受保护构造，不再手写 `shape_type_`。
+  消费点：`obj_cast<vn::geometry::Box>`、`switch (shapeType())`；它们**不提供**几何算法（射线–盒用 `Aabb::intersectWith`，
+  射线–球面属于 `SphericalSurface`）。理由见 `design/geometry-parametric.md`、`decisions/ADR-2026-11-04-primitive-is-a-shape.md`。
 - **值类型（`Aabb` / `Obb` / `Line` / `Plane` / `Ray`）相反：类上没有 `VN_GEOMETRY_API`，短查询定义在头文件，不导出也不再显式实例化**，
   消费者各自编译。只有长算法留在 `src/`（`Line::intersectWith(Line)`、`Plane::intersectWith(Plane, Line&)`、`Obb::compute*`），
   这些 `.cpp` 保留 `template class VN_GEOMETRY_API`。改完不需要“某个 TU include 它”这一步。理由与实测见 `design/geometry-primitives.md` 2.8。

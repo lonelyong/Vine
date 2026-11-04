@@ -8,6 +8,7 @@
 #include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include "Curve.hpp"
 #include "RayHit.hpp"
 
 VN_GEOMETRY_NS_BEGIN
@@ -34,7 +35,7 @@ VN_GEOMETRY_NS_BEGIN
  * @tparam T Floating-point scalar type.
  */
 template <vn::math::FP T>
-class Ray {
+class Ray : public Curve {
   public:
     using value_type = T;
     using Point      = vn::math::Point3<T>;

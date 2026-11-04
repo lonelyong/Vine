@@ -6,6 +6,8 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include "Curve.hpp"
+
 VN_GEOMETRY_NS_BEGIN
 
 /**
@@ -20,7 +22,7 @@ VN_GEOMETRY_NS_BEGIN
  * @tparam T Floating-point type (float or double).
  */
 template <typename T>
-class Line
+class Line : public Curve
 {
   public:
     using value_type = T;
@@ -97,6 +99,21 @@ class Line
     {}
 
   public:
+    /**
+     * @brief Returns the point at parameter @p t.
+     *
+     * @details
+     * - `t` is a multiple of `direction`, so it is a distance only when `direction` is unit length — the same rule
+     *   this class states for its parameter.
+     *
+     * @param t Multiple of `direction` from `origin`; negative values go backwards.
+     * @return `origin + direction * t`.
+     */
+    [[nodiscard]] constexpr math::Point3<T> pointAt(T t) const
+    {
+        return origin + direction * t;
+    }
+
     /**
      * @brief Computes the closest-point pair between this line and another.
      *

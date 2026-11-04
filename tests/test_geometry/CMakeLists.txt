@@ -1,6 +1,7 @@
 set(TEST_NAME test_geometry)
 set(SRC_FILE_LIST
 	AabbTest.cpp
+	GeometryKindsTest.cpp
 	LinePlaneTest.cpp
 	ObbFitTest.cpp
 	ObbTest.cpp

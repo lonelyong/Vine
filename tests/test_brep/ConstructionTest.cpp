@@ -6,11 +6,7 @@
 #include <vine/brep/Construction.hpp>
 #include <vine/brep/Tessellation.hpp>
 #include <vine/geometry/Aabb.hpp>
-#include <vine/geometry/Box.hpp>
-#include <vine/geometry/Cone.hpp>
-#include <vine/geometry/Cylinder.hpp>
-#include <vine/geometry/Ellipsoid.hpp>
-#include <vine/geometry/Sphere.hpp>
+#include <vine/geometry/Primitive.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 
 namespace {

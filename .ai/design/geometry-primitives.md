@@ -53,7 +53,7 @@
 
 - **是什么**：`Line`、`Plane`、`Aabb`、`Obb` 都在 `vine/geometry`；`Plane::intersectWith(Plane, Line&)` 的返回值同模块。
 - **为什么**：`G1`、`G6` —— 同一层的形状不跨模块分裂；`Line` 的唯一使用者就是 `Plane`，同批移动不留中间态。
-- **边界**：它们是**值类型**，不进入 `Shape` 层级（2.4）；这不表示 `geometry` 的语义变成“纯数学”，`Shape` / `Mesh` 仍是主内容。射线同样是空间实体：`Ray` 与图元相交已在 `geometry`，契约见 `geometry-ray.md`。
+- **边界**：它们是**值类型**，不进入 `Shape` 层级（2.4）；这不表示 `geometry` 的语义变成“纯数学”，`Shape` / `Mesh` 仍是主内容。射线同样是空间实体：`Ray` 与图元相交已在 `geometry`，契约见 `geometry-ray.md`；参数化几何（`Box` / `Sphere` / …）与模型持有者 `Primitive` 的分工见 `geometry-parametric.md`。
 
 ### 2.4 值类型不进 Shape 层级
 

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include <vine/geometry/Box.hpp>
+#include <vine/geometry/Primitive.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
 #include <vine/robotics/io/WorkcellIO.hpp>
 #include <vine/robotics/workcell/Device.hpp>

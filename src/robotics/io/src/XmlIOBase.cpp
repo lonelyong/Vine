@@ -9,13 +9,9 @@
 
 #include <tinyxml2.h>
 
-#include <vine/geometry/Box.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/Cone.hpp>
-#include <vine/geometry/Cylinder.hpp>
-#include <vine/geometry/Ellipsoid.hpp>
+#include <vine/geometry/Primitive.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/Sphere.hpp>
 #include <vine/io/Adapters.hpp>
 #include <vine/io/Vfs.hpp>
 

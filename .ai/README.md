@@ -15,7 +15,7 @@
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
 一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
-## design/ —— 现行设计文档（37）
+## design/ —— 现行设计文档（39）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -50,10 +50,12 @@
 - `appfw-app-info.md` —— 应用身份与应用信息：`AppInfo`/`AppConfig::info`、`Application::appInfo()`、关于面板与对话框。
 - `appfw-translation.md` —— 文案翻译：只翻 appfw 及以上层的界面文案，源语言英文、译文只有中文，Qt 目录随模块走并内嵌（可被文件覆盖），启动时装载、缺译文回退英文。
 
-**base 与其他（12）**
+**base 与其他（14）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
 - `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化与由基本体造实体的契约、失败表示。
+- `geometry-kinds.md` —— 几何族：`Curve` / `Surface` 是空标签分类而非虚基类；曲面分 `ElementarySurface` / `BoundedSurface`，未实现者只占位。
+- `geometry-parametric.md` —— 参数化几何是建模类型（`Primitive` 的五个子类同居 `Primitive.hpp`）；canonical 局部空间与 OCCT 的职责收缩。
 - `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`Line`/`Plane` 的归属、命名与契约。
 - `geometry-ray.md` —— 射线与图元相交：`Ray` 归 `geometry`、相交挂在被交对象上、场景走查留 `graphics`。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
@@ -64,11 +66,13 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（25）
+## decisions/ —— 决策记录（ADR）（27）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-11-04-geometry-kinds.md` —— 几何族用空标签分类（无虚函数、零布局开销），不用虚基类。
+- `ADR-2026-11-04-primitive-is-a-shape.md` —— 参数化几何是建模类型（`Primitive` 子类），算法属于曲面；OCCT 收缩为 STEP 解析与三角化。
 - `ADR-2026-11-03-geometry-primitives-ownership.md` —— 空间值类型归 `geometry`，轴对齐盒改名为 `Aabb`；`Rect2` 留在 `math`，不留兼容别名。
 - `ADR-2026-11-03-brep-operations-module.md` —— 运行时 B-rep 运算独立成 `brep` 模块；`geometry` 不碰 OpenCASCADE，探测集中在 `VineOpenCASCADE.cmake`。
 - `ADR-2026-10-24-command-target.md` —— 命令的目标是视图（`DocumentView`），层可空、需求按命令声明；`RenderControl` 不做目标。

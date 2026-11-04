@@ -10,6 +10,7 @@
 
 #include "Line.hpp"
 #include "Ray.hpp"
+#include "Surface.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
@@ -18,7 +19,7 @@ VN_GEOMETRY_NS_BEGIN
  * @tparam T Only accepts float and double.
  */
 template <typename T>
-class Plane
+class Plane : public ElementarySurface
 {
   public:
     using value_type = T;

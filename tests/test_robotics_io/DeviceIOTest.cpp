@@ -9,9 +9,9 @@
 #include <string>
 #include <vector>
 
-#include <vine/geometry/Box.hpp>
 #include <vine/geometry/ColorMaterial.hpp>
 #include <vine/geometry/Mesh.hpp>
+#include <vine/geometry/Primitive.hpp>
 #include <vine/geometry/TriangleMesh.hpp>
 #include <vine/io/ZipArchive.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
@@ -216,7 +216,9 @@ TEST(DeviceIOTest, LoadXmlFromFolder)
     ASSERT_EQ(body.visuals().size(), 1u);
     ASSERT_NE(body.visuals()[0].shape(), nullptr);
     EXPECT_EQ(body.visuals()[0].shape()->shapeType(), vn::geometry::ShapeType::Box);
-    EXPECT_FLOAT_EQ(static_cast<vn::geometry::Box*>(body.visuals()[0].shape().get())->width(), 0.2f);
+    const auto* const box = vn::obj_cast<vn::geometry::Box>(body.visuals()[0].shape().get());
+    ASSERT_NE(box, nullptr);
+    EXPECT_FLOAT_EQ(box->width(), 0.2f);
     ASSERT_EQ(body.collisions().size(), 1u);
     EXPECT_EQ(body.collisions()[0].shape()->shapeType(), vn::geometry::ShapeType::Sphere);
 }
