@@ -92,3 +92,18 @@ TEST(Plane, twoPlanesMeetAlongALineCurve)
     const Planed parallel(Point3d(0.0, 0.0, 3.0), Vec3d(0.0, 0.0, 1.0));
     EXPECT_FALSE(plane_z.intersectWith(parallel, intersection));
 }
+
+TEST(Plane, coincidentPlanesReportNoIntersectionLineCurve)
+{
+    // Two descriptions of the same plane intersect in a whole plane, and a plane has no result type here: the entry
+    // answers `false` instead of inventing a line to stand for it (geometry-intersection.md N1).
+    const Planed plane_z(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
+    const Planed same_plane(Point3d(4.0, -1.0, 0.0), Vec3d(0.0, 0.0, 5.0));
+
+    LineCurved leftover(Point3d(7.0, 7.0, 7.0), Vec3d(0.0, 1.0, 0.0));
+    EXPECT_FALSE(plane_z.intersectWith(same_plane, leftover));
+
+    // The output was not touched, so its previous contents are still there - that is the contract of a `false` result.
+    EXPECT_DOUBLE_EQ(leftover.origin.x, 7.0);
+    EXPECT_DOUBLE_EQ(leftover.direction.y, 1.0);
+}

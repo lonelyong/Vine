@@ -23,7 +23,7 @@ VN_GEOMETRY_NS_BEGIN
  *
  * @tparam T Floating-point type (float or double).
  */
-template <typename T>
+template <vn::math::FP T>
 class LineCurve : public Curve<T>
 {
   public:
@@ -227,6 +227,20 @@ class LineCurve : public Curve<T>
     }
 
     /**
+     * @brief Returns whether the direction is usable.
+     *
+     * @details
+     * - A zero direction leaves a single point instead of a line: `closestPoint()` answers that point and
+     *   `intersectWith()` reports no closest-point pair, so a caller checks here instead of discovering a NaN.
+     *
+     * @return True when `direction` is longer than the floating-point epsilon.
+     */
+    [[nodiscard]] bool isValid() const override
+    {
+        return direction.length() > math::EPS<T>();
+    }
+
+    /**
      * @brief Computes the closest-point pair between this line and another.
      *
      * Non-parallel (skew or intersecting):
@@ -248,6 +262,9 @@ class LineCurve : public Curve<T>
      * If additionally |r × d1|² < eps², the lines are collinear.
      * The closest-point pair is anchored at L1's origin projected onto L2
      * (see Intersection::params for details).
+     *
+     * Degenerate input: a line with a zero direction has no closest-point pair, and nothing is divided by its
+     * length, so the result carries no flag and no number.
      *
      * @param other The other line.
      * @param eps   Numerical tolerance for zero checks.
@@ -278,19 +295,21 @@ class LineCurve : public Curve<T>
     math::Vector3<T> direction;
 };
 
-template <typename T>
+template <vn::math::FP T>
 math::Point3<T> LineCurve<T>::closestPoint(const math::Point3<T>& pt) const
 {
     // P(t) = origin + t·direction
     // (pt − P(t))·direction = 0  →  t = (pt−origin)·direction / |direction|²
-    const auto denom = direction.dot(direction);
-    // Zero direction
-    if (denom < math::EPS<T>()) {
+
+    // One threshold for "the direction is unusable": the same one `isValid()` reports, so a line whose direction is
+    // merely short is still projected instead of silently collapsing to its origin.
+    if (!isValid()) {
         return origin;
     }
 
-    const math::Vector3<T> v = pt - origin;
-    const double           t = v.dot(direction) / denom;
+    const auto             denom = direction.dot(direction);
+    const math::Vector3<T> v     = pt - origin;
+    const double           t     = v.dot(direction) / denom;
 
     return origin + direction * t;
 }

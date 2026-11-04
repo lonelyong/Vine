@@ -75,7 +75,8 @@ class HyperbolaCurve : public ConicCurve<T> {
      * - `P(u) = centre + major_radius * cosh(u) * X + minor_radius * sinh(u) * Y`.
      *
      * @param u Hyperbolic angle; `0` is the vertex closest to the centre.
-     * @return The point on the branch; the centre when the frame is degenerate.
+     * @return The point on the branch; with a degenerate frame the branch collapses onto the two rays along
+     *         `x_direction` (see `ConicCurve`).
      */
     [[nodiscard]] Point pointAt(T u) const
     {
@@ -191,7 +192,7 @@ class HyperbolaCurve : public ConicCurve<T> {
      *
      * @return True when both semi-axes are positive and the normal is non-zero.
      */
-    [[nodiscard]] bool isValid() const
+    [[nodiscard]] bool isValid() const override
     {
         return major_radius > vn::math::EPS<T>() && minor_radius > vn::math::EPS<T>()
             && normal.length() > vn::math::EPS<T>();

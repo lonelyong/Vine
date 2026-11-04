@@ -21,9 +21,12 @@ VN_GEOMETRY_NS_BEGIN
  * - This is the *surface*, not the solid: it has no inside, so it exists for the questions a sheet answers — a
  *   trimmed B-rep face, a ray that must hit one side, a point projected onto the sheet. The closed, placeable
  *   version a model holds is `Sphere` (see `Primitive.hpp`).
- * - `pointAt(azimuth, polar)` uses the same parameterisation OCCT's spherical surface does: azimuth around +Z,
- *   polar measured from +Z, both in radians. `polar = 0` is the +Z pole, `polar = pi / 2` the equator. As a
- *   `Surface<T>` the two parameters are `u = azimuth` in `[0, 2 * pi]` and `v = polar` in `[0, pi]`.
+ * - `pointAt(azimuth, polar)` uses standard spherical coordinates: azimuth around +Z, polar measured **from +Z**, both
+ *   in radians. `polar = 0` is the +Z pole, `polar = pi / 2` the equator. As a `Surface<T>` the two parameters are
+ *   `u = azimuth` in `[0, 2 * pi]` and `v = polar` in `[0, pi]`.
+ * - **This deliberately differs from OCCT**: `Geom_SphericalSurface` measures `v` from the **equator** and uses the
+ *   domain `[-pi / 2, pi / 2]`. A non-negative domain whose ends are the two poles makes `v` readable without a sign,
+ *   so the conversion from OCCT data is one shift: `v_occt = pi / 2 - v`.
  * - `u` closes and repeats with `2 * pi`; `v` does not, because its ends are two points (the poles), not a seam.
  * - It carries the vptr of `Surface<T>`: the two tangents and the domain are answered through the interface and the
  *   azimuth / polar answers stay non-virtual for callers that know the type.
@@ -251,7 +254,7 @@ class SphericalSurface : public ElementarySurface<T> {
      *
      * @return True when the radius is positive.
      */
-    [[nodiscard]] bool isValid() const
+    [[nodiscard]] bool isValid() const override
     {
         return radius > vn::math::EPS<T>();
     }
@@ -277,5 +280,22 @@ class SphericalSurface : public ElementarySurface<T> {
 
 using SphericalSurfacef = SphericalSurface<float>;
 using SphericalSurfaced = SphericalSurface<double>;
+
+/**
+ * @brief Returns the signed distance from @p point to the sphere: positive outside it.
+ *
+ * @details
+ * - `|p - centre| - radius`, a true distance: its gradient is the unit radial direction.
+ * - A zero radius answers `|p - centre|`, which never changes sign, so a search over it finds no crossing.
+ *
+ * @param surface Sphere to measure against.
+ * @param point   Point to measure.
+ * @return Signed distance to the sphere.
+ */
+template <vn::math::FP T>
+[[nodiscard]] T signedValue(const SphericalSurface<T>& surface, const vn::math::Point3<T>& point)
+{
+    return (point - surface.centre).length() - surface.radius;
+}
 
 VN_GEOMETRY_NS_END

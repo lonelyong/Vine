@@ -186,6 +186,23 @@ class Surface {
         const Continuity rungs[4] = { Continuity::C0, Continuity::C1, Continuity::C2, Continuity::C3 };
         return continuity() >= rungs[order];
     }
+
+    /**
+     * @brief Returns whether the state this surface was built from describes a surface at all.
+     *
+     * @details
+     * - Every surface refuses its degenerate inputs in one place: a degenerate axis, a radius that collapses the sheet,
+     *   a null basis, a reversed rectangle, a net that disagrees with its knots. The answer is a property of the state,
+     *   not of a parameter pair, so it does not depend on @p u or @p v.
+     * - A surface `isValid()` refuses answers instead of failing: the numeric queries return the degenerate value its
+     *   type documents (the origin, a zero vector, the first pole). Those answers keep a mistake a wrong answer rather
+     *   than undefined behaviour - they are not geometry, so a caller checks here first.
+     * - The question belongs to the interface because a caller holding a `const Surface<T>&` cannot otherwise ask it,
+     *   and the four surfaces that have no invalid state answer `true`.
+     *
+     * @return True when the surface's stored state can be evaluated.
+     */
+    [[nodiscard]] virtual bool isValid() const = 0;
 };
 
 VN_GEOMETRY_NS_END

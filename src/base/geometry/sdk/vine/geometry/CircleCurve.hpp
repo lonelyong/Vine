@@ -67,7 +67,8 @@ class CircleCurve : public ConicCurve<T> {
      * @brief Returns the point at angle @p angle.
      *
      * @param angle Angle in radians, measured from the local X axis towards the local Y axis.
-     * @return The point on the circle; the centre when the normal is degenerate.
+     * @return The point on the circle; with a degenerate normal the parameterisation collapses onto `x_direction`
+     *         (see `ConicCurve`).
      */
     [[nodiscard]] Point pointAt(T angle) const
     {
@@ -195,7 +196,7 @@ class CircleCurve : public ConicCurve<T> {
      *
      * @return True when the radius is positive and the normal is non-zero.
      */
-    [[nodiscard]] bool isValid() const
+    [[nodiscard]] bool isValid() const override
     {
         return radius > vn::math::EPS<T>() && normal.length() > vn::math::EPS<T>();
     }
@@ -204,16 +205,18 @@ class CircleCurve : public ConicCurve<T> {
      * @brief Returns the axis-aligned bounds of the circle.
      *
      * @details
-     * - The bound along a world axis is the radius times the sine of the angle between the normal and that axis,
-     *   which is exact for a circle rather than the looser cube the radius alone would give.
+     * - The half width along a world axis is `radius * sqrt(X_i^2 + Y_i^2)`, the exact support function of the circle
+     *   along that axis. With an orthonormal frame it equals `radius * sqrt(1 - n_i^2)`; with a degenerate normal it
+     *   still answers the segment the parameterisation actually traces instead of a full cube.
      *
-     * @return Bounds spanning the circle; the centre when the normal is degenerate.
+     * @return Bounds spanning the circle; the segment along `x_direction` when the normal is degenerate.
      */
     [[nodiscard]] Aabb<T> bounds() const
     {
-        const T half_x = radius * std::sqrt(std::max(T(0), T(1) - normal.x * normal.x));
-        const T half_y = radius * std::sqrt(std::max(T(0), T(1) - normal.y * normal.y));
-        const T half_z = radius * std::sqrt(std::max(T(0), T(1) - normal.z * normal.z));
+        const Vector y_axis = yAxis();
+        const T      half_x = radius * std::sqrt(x_direction.x * x_direction.x + y_axis.x * y_axis.x);
+        const T      half_y = radius * std::sqrt(x_direction.y * x_direction.y + y_axis.y * y_axis.y);
+        const T      half_z = radius * std::sqrt(x_direction.z * x_direction.z + y_axis.z * y_axis.z);
         return Aabb<T>(Point(center.x - half_x, center.y - half_y, center.z - half_z),
                        Point(center.x + half_x, center.y + half_y, center.z + half_z));
     }

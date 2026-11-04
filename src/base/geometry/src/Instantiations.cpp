@@ -34,6 +34,7 @@
 #include <vine/geometry/HyperbolaCurve.hpp>
 #include <vine/geometry/OffsetCurve.hpp>
 #include <vine/geometry/ParabolaCurve.hpp>
+#include <vine/geometry/Placement.hpp>
 #include <vine/geometry/Ray.hpp>
 #include <vine/geometry/RayHit.hpp>
 #include <vine/geometry/RectangularTrimmedSurface.hpp>
@@ -49,6 +50,8 @@ template class VN_GEOMETRY_API Ray<float>;
 template class VN_GEOMETRY_API Ray<double>;
 template class VN_GEOMETRY_API RayHit<float>;
 template class VN_GEOMETRY_API RayHit<double>;
+template class VN_GEOMETRY_API Placement<float>;
+template class VN_GEOMETRY_API Placement<double>;
 
 template class VN_GEOMETRY_API Curve<float>;
 template class VN_GEOMETRY_API Curve<double>;
@@ -77,14 +80,8 @@ template class VN_GEOMETRY_API ConicalSurface<float>;
 template class VN_GEOMETRY_API ConicalSurface<double>;
 template class VN_GEOMETRY_API ToroidalSurface<float>;
 template class VN_GEOMETRY_API ToroidalSurface<double>;
-template class VN_GEOMETRY_API BezierSurface<float>;
-template class VN_GEOMETRY_API BezierSurface<double>;
-template class VN_GEOMETRY_API BSplineSurface<float>;
-template class VN_GEOMETRY_API BSplineSurface<double>;
-template class VN_GEOMETRY_API RectangularTrimmedSurface<float>;
-template class VN_GEOMETRY_API RectangularTrimmedSurface<double>;
 
-// These four hold standard containers and handles, whose types have no dll-interface. That is expected: the members
+// These hold standard containers and handles, whose types have no dll-interface. That is expected: the members
 // are read through the inline accessors in the header, and the export exists for the vtable and the out-of-line
 // answers, not to let a consumer link against `std::vector`.
 #if defined(_MSC_VER)
@@ -92,6 +89,12 @@ template class VN_GEOMETRY_API RectangularTrimmedSurface<double>;
 #    pragma warning(disable : 4251)
 #endif
 
+template class VN_GEOMETRY_API RectangularTrimmedSurface<float>;
+template class VN_GEOMETRY_API RectangularTrimmedSurface<double>;
+template class VN_GEOMETRY_API BezierSurface<float>;
+template class VN_GEOMETRY_API BezierSurface<double>;
+template class VN_GEOMETRY_API BSplineSurface<float>;
+template class VN_GEOMETRY_API BSplineSurface<double>;
 template class VN_GEOMETRY_API TrimmedCurve<float>;
 template class VN_GEOMETRY_API TrimmedCurve<double>;
 template class VN_GEOMETRY_API OffsetCurve<float>;

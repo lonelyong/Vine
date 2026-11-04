@@ -72,7 +72,8 @@ class ParabolaCurve : public ConicCurve<T> {
      * - `P(u) = vertex + (u * u / (4 * focal_length)) * X + u * Y`; `u = 0` is the vertex.
      *
      * @param u Offset along the perpendicular axis, in the same units as `focal_length`.
-     * @return The point on the parabola; the vertex when the frame is degenerate.
+     * @return The point on the parabola; with a degenerate frame it collapses onto the ray along `x_direction`
+     *         (see `ConicCurve`).
      */
     [[nodiscard]] Point pointAt(T u) const
     {
@@ -188,7 +189,7 @@ class ParabolaCurve : public ConicCurve<T> {
      *
      * @return True when the focal length is positive and the normal is non-zero.
      */
-    [[nodiscard]] bool isValid() const
+    [[nodiscard]] bool isValid() const override
     {
         return focal_length > vn::math::EPS<T>() && normal.length() > vn::math::EPS<T>();
     }

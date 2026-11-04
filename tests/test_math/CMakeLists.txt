@@ -5,6 +5,7 @@ set(SRC_FILE_LIST
 	Matrix4x4Test.cpp
 	QuaternionTest.cpp
 	Rect2Test.cpp
+	RootFindingTest.cpp
 	Transform3Test.cpp
 	VectorTest.cpp
 )

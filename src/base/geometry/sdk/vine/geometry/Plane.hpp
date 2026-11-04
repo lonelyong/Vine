@@ -7,9 +7,11 @@
 
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
+#include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
 
 #include "ElementarySurface.hpp"
+#include "Frame.hpp"
 #include "LineCurve.hpp"
 #include "Ray.hpp"
 
@@ -29,12 +31,12 @@ VN_GEOMETRY_NS_BEGIN
  * - Both parameters are unbounded and neither closes, which is what makes the plane the one surface with no seam.
  *
  * @warning
- * - `normal` is not normalised on storage: a zero normal leaves the plane undefined (`intersectWith` fails and the
- *   parameterisation falls back to the XY plane's axes).
+ * - `normal` is not normalised on storage: its length is only used as a validity test (see `isValid()`), so a zero
+ *   normal is the one input that leaves the plane unusable.
  *
  * @tparam T Only accepts float and double.
  */
-template <typename T>
+template <vn::math::FP T>
 class Plane : public ElementarySurface<T>
 {
   public:
@@ -202,6 +204,23 @@ class Plane : public ElementarySurface<T>
         return Continuity::CN;
     }
 
+    /**
+     * @brief Returns whether the stored normal describes a plane.
+     *
+     * @details
+     * - A zero normal has no perpendicular direction and no in-plane axes: the parameterisation falls back to the world
+     *   axes, which looks like a usable plane while describing nothing the caller asked for. Requiring a non-zero
+     *   normal here makes that state visible instead of silent.
+     * - This is the same rule the conics apply to a degenerate frame; `normal` is not normalised on storage, so the
+     *   test is "not zero" rather than "unit".
+     *
+     * @return True when `normal` has a non-zero length.
+     */
+    [[nodiscard]] bool isValid() const override
+    {
+        return normal.length() > math::EPS<T>();
+    }
+
   public:
     /**
      * @brief Intersect this plane with a line.
@@ -249,24 +268,7 @@ class Plane : public ElementarySurface<T>
      */
     [[nodiscard]] math::Vector3<T> xAxis() const
     {
-        const math::Vector3<T> zero(T(0), T(0), T(0));
-        if (normal.length() <= math::EPS<T>()) {
-            return math::Vector3<T>(T(1), T(0), T(0));
-        }
-
-        const math::Vector3<T> unit_normal = normal.normalized();
-        const math::Vector3<T> candidates[3]
-            = { math::Vector3<T>(T(1), T(0), T(0)), math::Vector3<T>(T(0), T(1), T(0)), math::Vector3<T>(T(0), T(0), T(1)) };
-
-        const math::Vector3<T>* least_aligned = &candidates[0];
-        for (const auto& candidate : candidates) {
-            if (std::abs(unit_normal.dot(candidate)) < std::abs(unit_normal.dot(*least_aligned))) {
-                least_aligned = &candidate;
-            }
-        }
-
-        const math::Vector3<T> in_plane = *least_aligned - unit_normal * unit_normal.dot(*least_aligned);
-        return in_plane.length() > math::EPS<T>() ? in_plane.normalized() : zero;
+        return inPlaneAxis(math::Vector3<T>(T(0), T(0), T(0)), normal);
     }
 
     /**
@@ -288,7 +290,7 @@ class Plane : public ElementarySurface<T>
     math::Vector3<T> normal;
 };
 
-template <typename T>
+template <vn::math::FP T>
 bool Plane<T>::intersectWith(const LineCurve<T>& line, math::Point3<T>& intersection_pt, T eps) const
 {
     // Plane–LineCurve intersection.
@@ -325,7 +327,7 @@ bool Plane<T>::intersectWith(const LineCurve<T>& line, math::Point3<T>& intersec
     return true;
 }
 
-template <typename T>
+template <vn::math::FP T>
 bool Plane<T>::intersectWith(const Ray<T>& ray, RayHit<T>& hit, T eps) const
 {
     const T denominator = normal.dot(ray.direction);
@@ -349,5 +351,30 @@ bool Plane<T>::intersectWith(const Ray<T>& ray, RayHit<T>& hit, T eps) const
 
 using Planef = Plane<float>;
 using Planed = Plane<double>;
+
+/**
+ * @brief Returns the signed distance from @p point to @p plane: positive on the side `normal` points to.
+ *
+ * @details
+ * - `n.(p - origin) / |n|`: `normal` is not normalised on storage, so the division is what makes the answer a
+ *   distance instead of a scaled one.
+ * - The zero set is the plane itself and the sign is the side of it, which is what a curve-surface search looks at
+ *   (`CurveSurfaceIntersection.hpp`).
+ * - A plane `isValid()` refuses answers 0, so a search over it finds nothing instead of dividing by zero.
+ *
+ * @param plane Plane to measure against.
+ * @param point Point to measure.
+ * @return Signed distance; 0 for a degenerate plane.
+ */
+template <vn::math::FP T>
+[[nodiscard]] T signedValue(const Plane<T>& plane, const vn::math::Point3<T>& point)
+{
+    const T length = plane.normal.length();
+    if (length <= vn::math::EPS<T>()) {
+        return T(0);
+    }
+
+    return plane.normal.dot(point - plane.origin) / length;
+}
 
 VN_GEOMETRY_NS_END

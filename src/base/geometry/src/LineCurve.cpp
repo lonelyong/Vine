@@ -6,11 +6,17 @@
 
 VN_GEOMETRY_NS_BEGIN
 
-#define TMPL_PREFIX template <typename T>
+#define TMPL_PREFIX template <vn::math::FP T>
 
 TMPL_PREFIX LineCurve<T>::Intersection LineCurve<T>::intersectWith(const LineCurve<T>& other, T tol) const
 {
     Intersection is;
+
+    // A zero direction leaves a point, not a line: there is no closest-point pair to solve for, and dividing by its
+    // length would only produce a NaN.
+    if (!isValid() || !other.isValid()) {
+        return is;
+    }
 
     const math::Point3<T>&  o1 = origin;
     const math::Vector3<T>& d1 = direction;

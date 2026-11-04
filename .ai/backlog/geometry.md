@@ -9,10 +9,12 @@
 | G2 | 参数化几何的射线求交与距离 | 参数化几何需要被直接拾取或做距离查询（今天拾取走网格） | `../design/geometry-ray.md` 2.2 |
 | G3 | 族级统一算法（射线–曲面、点到曲面距离、实体求交） | `Curve` / `Surface` 都是求值接口了（`../design/geometry-kinds.md` 2.7 / 2.10），但族级算法还没有消费者；出现时按自由函数 + concept 约束写，不要再给接口加虚函数 | `../design/geometry-kinds.md` 1.3、9 |
 | G5 | 让参数化几何的 B-rep 桥退休 | 参数化几何能自己三角化（G1）且没有消费者再要解析实体 | `../design/geometry-parametric.md` 2.5 |
-| G6 | 无界 / 裁剪曲面的**实现**（`CylindricalSurface`、`ConicalSurface`、`ToroidalSurface`、`BezierSurface`、`BSplineSurface`、`RectangularTrimmedSurface`） | 类型与归属已在 `Surface.hpp` 固定（占位、不可构造）；参数与算法等不依赖 OCCT 的裁剪面消费者 | `../design/geometry-kinds.md` 2.3、`../design/geometry-parametric.md` 2.5 |
 | G7 | `TriangleSurface` / `QuadSurface`（名字已保留） | 单个三角/四边形需要自己的查询（射线–面求交、点到面距离）时；今天用自由函数 `intersectTriangle(ray, a, b, c, hit)`。引入时**必须带 `Surface` 后缀**（仓库已有 `TriangleMesh` / `QuadMesh`） | `../design/geometry-kinds.md` 2.5 |
-| G8 | `BezierCurve` / `BSplineCurve` / `OffsetCurve` 的**求值** | 数据模型与类型事实已定义（`geometry-kinds.md` 2.8），只剩三步数值工作：贝塞尔的 de Casteljau、B 样条的 de Boor、偏置的叉乘保护。消费者出现（B-rep 边求值、样条插值、偏置曲线加工）时补上 | `../design/geometry-kinds.md` 2.8、`../decisions/ADR-2026-11-04-curve-evaluation-interface.md` |
-
+| G8 | `OffsetCurve::secondDerivative()`（点与一阶导数已实现） | 出现需要偏置曲线二阶导数的消费者（偏置曲率、G2 拼接）；届时给 `Curve<T>` 加 `thirdDerivative()` 并让八种具体曲线实现它 | `../design/geometry-kinds.md` 2.8、D9、`../decisions/ADR-2026-11-04-curve-third-derivative.md` |
+| G9 | `BSplineCurve` 求值的 O(p²) 表算法 | 次数 ≥ 8 的样条被放进批量采样循环（现在是无分配的递归基函数，代价随次数增长） | `../design/geometry-kinds.md` 2.8 |
+| G10 | 样条曲面求值的临时分配 | 大批量采样或求值进热路径（现在每次调用按控制点数分配临时数组：`deCasteljau` 按值取数组、`differences` 返回新数组） | `../design/geometry-axis-surfaces.md` 2.5、R2 |
+| G11 | 相交配对表里缺的组合（射线–直线、直线–`Aabb`/`Obb`、平面–`Aabb`/`Obb`、`Obb`–`Aabb`） | 出现需要其中某个组合的消费者（布尔运算、截面裁剪、新拾取图元）；届时按 `../design/geometry-intersection.md` 的 C1–C4 加，不加统一接口 | `../design/geometry-intersection.md` §3.1、D1 / D2 |
+| G12 | 曲线 × **非解析**曲面（样条面、裁剪面）：需要 `Surface::inverse()` 参数反演 + 参数格细分；解析曲面那一半已落地（`intersectCurveWithSurface`） | 样条面或裁剪面需要参与求交，或需要交点对应的曲面参数 `(u, v)` | `../design/geometry-intersection.md` 2.7、F9、P4 |
 ## 判据提醒
 
 - 每一项都只写触发条件：没有消费者的能力不进代码（`G8`）。

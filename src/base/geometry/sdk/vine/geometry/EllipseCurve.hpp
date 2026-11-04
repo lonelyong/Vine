@@ -78,7 +78,8 @@ class EllipseCurve : public ConicCurve<T> {
      *   is the derived minor axis.
      *
      * @param angle Eccentric angle in radians, measured from the major axis towards the minor axis.
-     * @return The point on the ellipse; the centre when the frame is degenerate.
+     * @return The point on the ellipse; with a degenerate frame the parameterisation collapses onto `x_direction`
+     *         (see `ConicCurve`).
      */
     [[nodiscard]] Point pointAt(T angle) const
     {
@@ -194,7 +195,7 @@ class EllipseCurve : public ConicCurve<T> {
      *
      * @return True when both semi-axes are positive and the normal is non-zero.
      */
-    [[nodiscard]] bool isValid() const
+    [[nodiscard]] bool isValid() const override
     {
         return major_radius > vn::math::EPS<T>() && minor_radius > vn::math::EPS<T>()
             && normal.length() > vn::math::EPS<T>();
@@ -207,7 +208,7 @@ class EllipseCurve : public ConicCurve<T> {
      * - The half width along a world axis is `sqrt((major_radius * X_i)^2 + (minor_radius * Y_i)^2)`, which is the
      *   exact support function of the ellipse along that axis, not the looser box the major radius alone gives.
      *
-     * @return Bounds spanning the ellipse; the centre when the frame is degenerate.
+     * @return Bounds spanning the ellipse; the segment along `x_direction` when the frame is degenerate.
      */
     [[nodiscard]] Aabb<T> bounds() const
     {

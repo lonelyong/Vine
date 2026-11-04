@@ -22,7 +22,8 @@ VN_GEOMETRY_NS_BEGIN
  *   parameter, a parameter range with its periodicity, a smoothness class, and the map that turns a parameter into
  *   the one measuring from the other end.
  * - A curve answers for parameters outside its range too: the domain is a property of the curve, not a precondition
- *   of `evaluate`.
+ *   of `evaluate`. What an outside parameter means is the type's own answer - a polynomial extrapolation for a Bezier
+ *   curve, the clamped end point for a B-spline, a periodic wrap for a circle - and each type documents it.
  * - `period()` is only meaningful when `isPeriodic()` is true; a non-periodic curve answers 0.
  * - `Ray` is deliberately **not** a `Curve`: it is copied per intersection query inside the picker, and a vptr there
  *   costs the inlined slab/triangle tests (`geometry-ray.md` 2.7). It stays a plain value with `pointAt`.
@@ -152,6 +153,23 @@ class Curve {
         const Continuity rungs[4] = { Continuity::C0, Continuity::C1, Continuity::C2, Continuity::C3 };
         return continuity() >= rungs[order];
     }
+
+    /**
+     * @brief Returns whether the state this curve was built from describes a curve at all.
+     *
+     * @details
+     * - Every curve refuses its degenerate inputs in one place: a zero direction, a degenerate frame, a non-positive
+     *   weight, a reversed trim, a net that disagrees with its knots. The answer is a property of the state, not of a
+     *   parameter, so it does not depend on @p u.
+     * - A curve `isValid()` refuses answers instead of failing: the numeric queries return the degenerate value its
+     *   type documents (a zero vector, the first pole, the origin). Those answers are for keeping a mistake a wrong
+     *   answer rather than undefined behaviour - they are not geometry, so a caller checks here first.
+     * - The question belongs to the interface because a caller holding a `const Curve<T>&` cannot otherwise ask it,
+     *   and `Shape` / `Primitive` already answer the same question the same way.
+     *
+     * @return True when the curve's stored state can be evaluated.
+     */
+    [[nodiscard]] virtual bool isValid() const = 0;
 
     /**
      * @brief Returns the parameter that maps to the same point when the curve is walked the other way.

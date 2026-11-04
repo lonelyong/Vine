@@ -3,7 +3,7 @@
 > **状态**：现行
 > **最后核对**：2026-11-04
 > **范围**：`src/base/geometry` 中参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）作为**建模类型**的归属与契约，以及 `Primitive` 与几何算法的边界。
-> 不含网格 / B-rep / 点云的存储与 revision（见 `graphics-geometry.md`），不含曲面族的分类与占位类型（见 `geometry-kinds.md`），不含射线–图元契约（见 `geometry-ray.md`）。
+> 不含网格 / B-rep / 点云的存储与 revision（见 `graphics-geometry.md`），不含曲线与曲面族的分类（见 `geometry-kinds.md`，轴对称曲面与样条曲面见 `geometry-axis-surfaces.md`），不含射线–图元契约（见 `geometry-ray.md`）。
 > **权威来源**：`src/base/geometry/sdk/vine/geometry/Primitive.hpp`、`src/base/geometry/src/Primitive.cpp`；`tests/test_geometry`、`tests/test_brep`、`tests/test_robotics_io`。
 > **待办**：`../backlog/geometry.md`
 
@@ -16,7 +16,7 @@
 - **建模**需要一种能放进场景、有身份、能被序列化的对象，回答"我是什么形状、多大、放在哪"。
 - **算法**需要一种便宜的值，回答"这条射线打到哪里""这个盒的包围盒是什么"。
 
-若把两者压成一个类型，建模对象会带进算法；若拆成两套类型，参数就有两个家。本仓库的取舍是：**参数化几何留在建模侧（`Primitive` 子类），算法留在几何值侧**，因为这类形状本身几乎没有算法：射线–盒就是 `Aabb::intersectWith(Ray)`，射线–球面属于曲面（`SphericalSurface`，见 `geometry-kinds.md` 2.6）。
+若把两者压成一个类型，建模对象会带进算法；若拆成两套类型，参数就有两个家。本仓库的取舍是：**参数化几何留在建模侧（`Primitive` 子类），算法留在几何值侧**，因为这类形状本身几乎没有算法：射线–盒就是 `Aabb::intersectWith(Ray)`，射线–球面属于曲面（`SphericalSurface`，见 `geometry-kinds.md` 2.10）。
 
 ### 1.2 目标
 
@@ -75,7 +75,7 @@
 |---|---|---|---|
 | F1 | 建模类型 | `Primitive : Shape` + 五个子类（同一头文件），`shapeType()` 由构造链确定 | 已落地 |
 | F2 | 形状契约 | `isValid()` / `hasVolume(eps)` / `bounds()`（canonical 局部空间） | 已落地 |
-| F3 | B-rep 桥 | `brep::makeBrep(Primitive)` 按类型分派，无后端返回空 | 已落地（后端待验证） |
+| F3 | B-rep 桥 | `brep::makeBrep(Primitive)` 按类型分派，无后端返回空 | 已落地（本机构建含 OCCT 后端） |
 | F4 | 序列化 | `robotics::io` 按 `ShapeType` 读写五种几何元素 | 已落地 |
 
 ### 3.1 F1 建模类型
@@ -89,7 +89,13 @@
 - **约束**（C2）：`Cone::bounds()` 取底面的外接圆柱盒。
 - **验收**（T2）：`everyPrimitiveFillsItsAnalyticBounds` 用三角化后的包围盒核对五种形状的 canonical 空间。
 
-### 3.3 F4 序列化
+### 3.3 F3 B-rep 桥
+
+- **行为**：`brep::makeBrep(Primitive)` 按 `shapeType()` 分派到 `BRepPrimAPI` 构造解析实体；无后端时 `hasBackend()` 为假、返回空句柄；非法尺寸的实体不构造实体。
+- **约束**（C4）：`geometry` 不认识 OCCT——桥住在 `brep`，`R2` 的方向不变。
+- **验收**（T3）：`tests/test_brep/ConstructionTest.cpp` 的 `aBuildWithoutABackendProducesNoSolid`、`anInvalidPrimitiveProducesNoSolid`、`theSolidCarriesThePrimitiveName`（后两个在无后端构建里提前返回）。
+
+### 3.4 F4 序列化
 
 - **行为**：`robotics::io` 读 URDF / 自定义 XML 时按标签构造子类，写回时按 `ShapeType` 分派，并校验 `obj_cast` 成功。
 - **验收**（T4）：`tests/test_robotics_io/DeviceIOTest.cpp`、`PkgIOTest.cpp`。
@@ -128,13 +134,14 @@
 |---|---|
 | T1 非五种形状不产生实体 | `tests/test_brep/ConstructionTest.cpp` `aPrimitiveOutsideTheFiveProducesNoSolid` |
 | T2 canonical 包围盒 | 同文件 `everyPrimitiveFillsItsAnalyticBounds` |
+| T3 B-rep 桥 | 同文件 `aBuildWithoutABackendProducesNoSolid`、`anInvalidPrimitiveProducesNoSolid`、`theSolidCarriesThePrimitiveName` |
 | T4 序列化往返 | `tests/test_robotics_io/DeviceIOTest.cpp`、`PkgIOTest.cpp` |
 
 ## 9. 状态与演进
 
 - 五个子类、受保护构造与单头文件组织已落地；`brep` 与 `robotics::io` 按任务书分派。
-- 已知缺口：本机没有 OCCT 头文件，`test_brep` 无法构建，F3 的实体构造分支只编译到既有报错处。
-- 下一步：曲面族（`SphericalSurface` 已按契约落地，其余为占位）见 `geometry-kinds.md`；参数化几何的三角化与求交见 `../backlog/geometry.md`。
+- 本机构建含 OCCT 后端（`VN_HAS_OCCT=TRUE`，vcpkg 的 `opencascade`），`test_brep` 可构建并通过，F3 的实体构造分支因此是真跑过的；无后端的构建仍走 `hasBackend()` 为假的路径。
+- 下一步：曲线 / 曲面族已无占位类型，见 `geometry-kinds.md` 2.10 与 `geometry-axis-surfaces.md`；参数化几何的三角化与求交仍是触发条件型待办，见 `../backlog/geometry.md` G1 / G2。
 
 ## 10. 参考
 

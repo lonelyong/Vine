@@ -25,7 +25,7 @@
 ### 1.2 目标
 
 - `Ray` 只有一个定义，放在 `base` 一侧，与 `Aabb` / `Obb` / `LineCurve` / `Plane` 同层。
-- 四个图元相交与被交类型同模块，命名沿用 `Plane::intersectWith(Line, Point3&)` 的既有约定。
+- 四个图元相交与被交类型同模块，命名沿用 `Plane::intersectWith(LineCurve, Point3&)` 的既有约定。
 - `graphics` 只留场景语义：屏幕→世界、世界→局部、最近命中与拾取身份。
 
 ### 1.3 非目标
@@ -42,14 +42,14 @@
 
 ### 2.1 `Ray` 与 `LineCurve` 是两种语义，不合并
 
-- **是什么**：`Ray<T>{ origin, direction }`，方向**单位化**，`t` 是模型单位的距离；`Line<T>` 是无限直线，方向不必单位，`t` 与 `|direction|` 绑定。
+- **是什么**：`Ray<T>{ origin, direction }`，方向**单位化**，`t` 是模型单位的距离；`LineCurve<T>` 是无限直线，方向不必单位，`t` 与 `|direction|` 绑定。
 - **为什么**：`G4`、`G12` —— 用一个 `bool is_half_line` 或“约定方向长度”把两者合成一个类型，会让每个读代码的人重新推一遍 `t` 的量纲。
 - **边界**：`Ray` 不进入 `Shape` 层级（与 2.4 的四值类型同一立场）；`LineCurve` 原有契约不动。
 
 ### 2.2 相交挂在被交对象上
 
 - **是什么**：`Aabb<T>::intersectWith(const Ray<T>&, RayHit<T>&)`、`Obb<T>` 同签名、`Plane<T>` 同签名；三角形因为没有值类型，做成自由函数 `intersectTriangle(ray, a, b, c, hit)`。
-- **为什么**：`G1`、`G6` —— 与 `Plane::intersectWith(Line, Point3&)` 同一形状：被交的东西拥有算法，调用方不必知道 slab 或 Möller–Trumbore。
+- **为什么**：`G1`、`G6` —— 与 `Plane::intersectWith(LineCurve, Point3&)` 同一形状：被交的东西拥有算法，调用方不必知道 slab 或 Möller–Trumbore。
 - **边界**：`Obb` 的实现把射线逆变换到局部空间再复用 `Aabb`，不写第二套 slab（`G1`、`G10`）。
 
 ### 2.3 结果是 `RayHit`，不是 `optional`
@@ -195,6 +195,6 @@
 ## 10. 参考
 
 - 代码：`src/base/geometry/sdk/vine/geometry/Ray.hpp`、`RayHit.hpp`、`Aabb.hpp`、`Obb.hpp`、`Plane.hpp`；`src/viz/graphics/sdk/vine/graphics/Camera.hpp`、`RayIntersection.hpp`。
-- 设计：`geometry-primitives.md`（空间值类型的边界判据）、`graphics-scene.md`（拾取是机制）。
+- 设计：`geometry-primitives.md`（空间值类型的边界判据）、`graphics-scene.md`（拾取是机制）、`geometry-intersection.md`（所有配对与结果形态的总表）。
 - 测试：`tests/test_geometry/RayTest.cpp`、`tests/test_graphics`（相机与拾取）。
 - 外部资料：Möller–Trumbore 射线–三角形求交；Kay–Kajiya slab 法。

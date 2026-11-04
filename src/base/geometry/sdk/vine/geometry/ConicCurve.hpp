@@ -10,6 +10,7 @@
 #include <vine/math/Vector3.hpp>
 
 #include "Curve.hpp"
+#include "Frame.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
@@ -28,6 +29,12 @@ VN_GEOMETRY_NS_BEGIN
  * - The class adds no evaluation: each conic answers `evaluate()` and its own parameter range on its own, because the
  *   parameter is an eccentric angle for a circle or an ellipse, a hyperbolic angle for a hyperbola and an offset for
  *   a parabola.
+ *
+ * @note
+ * - A degenerate frame keeps the fallback `x_direction = +X` and leaves `yAxis() == 0`, so the parameterisation
+ *   collapses onto the world X axis through the centre: a segment for the circle and the ellipse, a ray for the
+ *   parabola and two opposite rays for the hyperbola. That is the answer the four conics document at `pointAt()`, it
+ *   never contains a NaN, and each conic's `isValid()` is the one place that reports the frame as unusable.
  *
  * @tparam T Floating-point scalar type.
  */
@@ -96,44 +103,6 @@ class ConicCurve : public Curve<T> {
     [[nodiscard]] Continuity continuity() const override
     {
         return Continuity::CN;
-    }
-
-  protected:
-    /**
-     * @brief Projects @p candidate into the plane with normal @p plane_normal and returns it as a unit vector.
-     *
-     * @details
-     * - An ellipse or a parabola is only defined once its own axis is known, so the axis is caller input; projecting
-     *   it here keeps every conic from repeating the same orthonormalisation and the same degeneracy rules.
-     * - When @p candidate is parallel to the normal there is no preferred in-plane direction, so the world axis least
-     *   aligned with the normal is used instead - the same rule `CircleCurve` applies, which is why a degenerate
-     *   frame still yields a usable curve rather than NaN.
-     *
-     * @param candidate     Preferred in-plane direction; need not be unit length or exactly in the plane.
-     * @param plane_normal  Normal of the plane the conic lies in; a zero vector means the plane is undefined.
-     * @return A unit vector in the plane; `(1, 0, 0)` when the normal is degenerate.
-     */
-    [[nodiscard]] static Vector inPlaneAxis(const Vector& candidate, const Vector& plane_normal)
-    {
-        if (plane_normal.length() <= vn::math::EPS<T>()) {
-            return Vector(T(1), T(0), T(0));
-        }
-
-        const Vector unit_normal = plane_normal.normalized();
-        const Vector projected   = candidate - unit_normal * unit_normal.dot(candidate);
-        if (projected.length() > vn::math::EPS<T>()) {
-            return projected.normalized();
-        }
-
-        const Vector  candidates[3] = { Vector(T(1), T(0), T(0)), Vector(T(0), T(1), T(0)), Vector(T(0), T(0), T(1)) };
-        const Vector* least_aligned  = &candidates[0];
-        for (const auto& axis : candidates) {
-            if (std::abs(unit_normal.dot(axis)) < std::abs(unit_normal.dot(*least_aligned))) {
-                least_aligned = &axis;
-            }
-        }
-
-        return (*least_aligned - unit_normal * unit_normal.dot(*least_aligned)).normalized();
     }
 
   public:

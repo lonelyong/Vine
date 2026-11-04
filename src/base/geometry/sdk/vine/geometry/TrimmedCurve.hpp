@@ -22,10 +22,14 @@ VN_GEOMETRY_NS_BEGIN
  *   natural range of a closed basis; it is periodic only when the basis is periodic and the range spans a full
  *   period. Anything shorter is a piece with two ends.
  * - The range is stored as given: nothing checks that `first_parameter <= last_parameter`. A reversed range is a
- *   caller error that `evaluate()` reports honestly rather than a silently reordered interval.
+ *   caller error that `isValid()` reports, and `evaluate()` answers it honestly rather than reordering the interval.
+ * - `evaluate()` forwards at any parameter, including one outside the trim: asking past an end answers the basis, not a
+ *   clamped end point, because a trim removes a range rather than cutting the curve short.
  *
  * @warning
- * - @p basis_curve must not be null: `evaluate()` dereferences it. A null basis is refused at construction.
+ * - A null @p basis_curve is a caller error that `isValid()` reports; a query asked anyway answers the degenerate
+ *   value of its family (the origin point, a zero vector, `C0`, false) rather than dereferencing the handle, so the
+ *   mistake stays a wrong answer instead of undefined behaviour.
  *
  * @tparam T Floating-point scalar type.
  */
@@ -55,11 +59,11 @@ class TrimmedCurve : public BoundedCurve<T> {
      * @brief Returns the point at parameter @p u by evaluating the basis curve.
      *
      * @param u Parameter in the basis curve's units.
-     * @return The point on the basis curve.
+     * @return The point on the basis curve; the origin when the trim has no basis.
      */
     [[nodiscard]] Point evaluate(T u) const override
     {
-        return basis_curve->evaluate(u);
+        return basis_curve != nullptr ? basis_curve->evaluate(u) : Point();
     }
 
     /**
@@ -89,27 +93,34 @@ class TrimmedCurve : public BoundedCurve<T> {
      */
     [[nodiscard]] bool isClosed() const override
     {
-        return basis_curve->isClosed() && spansWholeRange();
+        return basis_curve != nullptr && basis_curve->isClosed() && spansWholeRange();
     }
 
     /**
      * @brief Returns whether the trim spans a full period of a periodic basis.
      *
-     * @return True when the basis is periodic and the trim covers one period.
+     * @return True when the basis is periodic and the trim covers one period; false without a basis.
      */
     [[nodiscard]] bool isPeriodic() const override
     {
-        return basis_curve->isPeriodic() && spansWholePeriod();
+        return basis_curve != nullptr && basis_curve->isPeriodic() && spansWholePeriod();
     }
 
     /**
-     * @brief Returns the basis period, meaningful only when `isPeriodic()` is true.
+     * @brief Returns the period of this piece, or 0 when the piece itself does not repeat.
      *
-     * @return The basis period, or 0 when the basis is not periodic.
+     * @details
+     * - The contract belongs to the interface, not to the basis: a trim shorter than a period is a piece with two
+     *   ends, so it answers 0 even though its basis repeats. A caller that wants the basis' period asks the basis,
+     *   which this type keeps public as `basis_curve`.
+     * - The basis' period is still what decides `isPeriodic()`, because spanning one period is exactly what makes the
+     *   piece repeat.
+     *
+     * @return The basis period when `isPeriodic()`, otherwise 0.
      */
     [[nodiscard]] T period() const override
     {
-        return basis_curve->isPeriodic() ? basis_curve->period() : T(0);
+        return isPeriodic() ? basis_curve->period() : T(0);
     }
 
     /**
@@ -120,32 +131,32 @@ class TrimmedCurve : public BoundedCurve<T> {
      *   basis' derivative at the same parameter, not a rescaled one.
      *
      * @param u Parameter in the basis curve's units.
-     * @return The basis curve's velocity vector at @p u.
+     * @return The basis curve's velocity vector at @p u; the zero vector when the trim has no basis.
      */
     [[nodiscard]] Vector derivative(T u) const override
     {
-        return basis_curve->derivative(u);
+        return basis_curve != nullptr ? basis_curve->derivative(u) : Vector(T(0), T(0), T(0));
     }
 
     /**
      * @brief Returns the second derivative at parameter @p u by asking the basis curve.
      *
      * @param u Parameter in the basis curve's units.
-     * @return The basis curve's acceleration vector at @p u.
+     * @return The basis curve's acceleration vector at @p u; the zero vector when the trim has no basis.
      */
     [[nodiscard]] Vector secondDerivative(T u) const override
     {
-        return basis_curve->secondDerivative(u);
+        return basis_curve != nullptr ? basis_curve->secondDerivative(u) : Vector(T(0), T(0), T(0));
     }
 
     /**
      * @brief Returns the basis continuity: a trim removes a range, it does not smooth a corner.
      *
-     * @return The basis curve's continuity.
+     * @return The basis curve's continuity; `C0` when the trim has no basis, since nothing is known to be smoother.
      */
     [[nodiscard]] Continuity continuity() const override
     {
-        return basis_curve->continuity();
+        return basis_curve != nullptr ? basis_curve->continuity() : Continuity::C0;
     }
 
     /**
@@ -161,6 +172,20 @@ class TrimmedCurve : public BoundedCurve<T> {
     [[nodiscard]] T reversedParameter(T u) const override
     {
         return first_parameter + last_parameter - u;
+    }
+
+    /**
+     * @brief Returns whether the trim has a basis and a range that is not reversed.
+     *
+     * @details
+     * - Both things that can go wrong are caller input: a null basis leaves nothing to evaluate, and a reversed range
+     *   (`first_parameter > last_parameter`) describes a different piece than the caller asked for.
+     *
+     * @return True when the basis is present and `first_parameter <= last_parameter`.
+     */
+    [[nodiscard]] bool isValid() const override
+    {
+        return basis_curve != nullptr && first_parameter <= last_parameter;
     }
 
   private:
