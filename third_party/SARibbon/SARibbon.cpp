@@ -34219,9 +34219,10 @@ typedef HRESULT(WINAPI* DwmExtendFrameIntoClientAreaPtr)(HWND, const MARGINS*);
 typedef HRESULT(WINAPI* DwmIsCompositionEnabledPtr)(BOOL*);
 typedef HRESULT(WINAPI* DwmSetWindowAttributePtr)(HWND, DWORD, LPCVOID, DWORD);
 
-// DWMWA_BORDER_COLOR（Windows 11 21H2 起）：自定义窗口边框色；默认值表示交回系统主题色
+// DWMWA_BORDER_COLOR（Windows 11 21H2 起）：窗口边框色。默认值交回系统主题色，NONE 表示不画边框
 constexpr DWORD kDwmwaBorderColor = 34;
 constexpr DWORD kDwmColorDefault  = 0xFFFFFFFF;
+constexpr DWORD kDwmColorNone     = 0xFFFFFFFE;
 
 DwmExtendFrameIntoClientAreaPtr dwmExtendFrameIntoClientArea()
 {
@@ -34294,16 +34295,20 @@ void applyDwmFrame(HWND hwnd, bool shadowOn, bool borderOn)
 	fn(hwnd, &margins);
 }
 
-// 自定义边框色：无效色交回系统主题色。老系统没有这个属性，调用会失败并被忽略
-void applyDwmBorderColor(HWND hwnd, const QColor& color)
+// 边框颜色：COLORREF 由 QColor 得到；无效色交回系统主题色
+DWORD frameBorderColorRef(const QColor& color)
+{
+	return color.isValid() ? static_cast< DWORD >(RGB(color.red(), color.green(), color.blue())) : kDwmColorDefault;
+}
+
+// 写入边框色；老系统没有这个属性，调用会失败并被忽略
+void applyDwmBorderColor(HWND hwnd, DWORD color)
 {
 	auto fn = dwmSetWindowAttribute();
 	if (!fn) {
 		return;
 	}
-	const DWORD value = color.isValid() ? static_cast< DWORD >(RGB(color.red(), color.green(), color.blue()))
-										: kDwmColorDefault;
-	fn(hwnd, kDwmwaBorderColor, &value, sizeof(value));
+	fn(hwnd, kDwmwaBorderColor, &color, sizeof(color));
 }
 }  // namespace
 #endif
@@ -34396,6 +34401,8 @@ void SARibbonMainWindow::PrivateData::checkMainWindowFlag()
  *          - 阴影需要窗口有 DWM frame：加 WS_THICKFRAME 并把 frame 扩入客户区；
  *          - 边框搭同一个 frame：frame 一旦存在，扩入客户区的 1px 就是现成的原生边框，
  *            所以阴影开着时边框直接由 DWM 画，颜色取系统强调色（可用自定义色覆盖）；
+ *          - frame 自带一条系统默认色的边框，边框关掉时要显式写成 DWMWA_COLOR_NONE 把它抹掉，
+ *            否则"只开阴影"会多出一条深灰线；
  *          - 阴影关着时窗口没有 frame，边框退回自绘（叠加层），两个开关各种组合都成立。
  *          其他路径（非 Windows、QWK）：阴影为空操作，边框恒为自绘。
  */
@@ -34408,10 +34415,11 @@ void SARibbonMainWindow::PrivateData::applyFrameAppearance()
 			const HWND hwnd = reinterpret_cast< HWND >(wid);
 			applyFrameStyle(hwnd, mFrameShadowEnabled);
 			applyDwmFrame(hwnd, mFrameShadowEnabled, mFrameShadowEnabled && mFrameBorderEnabled);
-			// 自定义色优先，否则用系统强调色——Windows 的“主题色”；两者都没有就交回系统的默认边框色
+			// 自定义色优先，否则用系统强调色——Windows 的“主题色”；边框关掉时让 DWM 不画这条线
 			applyDwmBorderColor(hwnd,
-								mFrameBorderEnabled ? resolveFrameBorderColor(q_ptr, mFrameBorderColor, mCurrentRibbonTheme)
-													: QColor());
+								mFrameBorderEnabled ? frameBorderColorRef(
+														  resolveFrameBorderColor(q_ptr, mFrameBorderColor, mCurrentRibbonTheme))
+													: kDwmColorNone);
 			drawnByDwm = mFrameShadowEnabled && mFrameBorderEnabled;
 		}
 	}
