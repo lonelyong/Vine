@@ -16,6 +16,12 @@ class StrayPrimitive : public vn::geometry::Primitive {
     VN_OBJECT_META(StrayPrimitive, Primitive);
 
   public:
+    /// Reports `ShapeType::Unknown`, so no branch of the backend dispatch matches it.
+    StrayPrimitive()
+      : Primitive(vn::geometry::ShapeType::Unknown)
+    {}
+
+  public:
     [[nodiscard]]
     bool isValid() const override
     {

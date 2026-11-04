@@ -32,7 +32,12 @@ loaders/*     ← 用三方库把数据从文件里读出来/写回去
 - brepio：`find_package(OpenCASCADE CONFIG QUIET)` 可选链接（PRIVATE：`TKDESTEP` `TKDEIGES` `TKXSBase` `TKBRep`
   `TKTopAlgo` `TKernel` `TKMath`），找到才定义 `VN_BREPIO_HAS_OCCT`；找不到的构建里 `supportedExtensions()` 为空、
   读写回 `Unsupported`，`formatFromPath()` 照常回答。OCCT 8 的流读取是 `ReadStream(fileName, stream)`（没有单参数版），
-  path 入口走 `ReadFile`；`BRepTools` 的 Read/Write 返回 `void`。
+  path 入口走 `ReadFile`；`BRepTools` 的 Read/Write 返回 `void`；`BRepBuilderAPI_*::Shape()` 是**非 const**，构造器不能声明成 const。
+- **`vn_link_opencascade` 的两个坑（2026-11-04 修）**：vcpkg 的 `OpenCASCADEConfig.cmake` 只设变量（`OpenCASCADE_INCLUDE_DIR` /
+  `OpenCASCADE_LIBRARY_DIR` / `OpenCASCADE_BINARY_DIR`），目录范围的效果与 imported targets 只属于**跑过 find_package 的那个目录**，
+  而 `VineOpenCASCADE.cmake` 有 `include_guard(GLOBAL)` 只跑一次 ⇒ 第二个 module（`brepio`）拿不到头文件路径，报 `BRepTools.hxx` 找不到。
+  现在三个目录都提升成 cache 变量并由 `vn_link_opencascade` 挂到 target 上；同时把 `TK*.dll` POST_BUILD 拷到输出目录
+  （vcpkg 的 applocal 只在用它的 toolchain 配置时才跑）。`check_translations` 失败只是本机没有 `lupdate`，与代码无关。
 - `BrepShape` 持有 `std::shared_ptr<const TopoDS_Shape>`：`setShape()` 接管所有权，`shape()` 借用。
 - imageio（`src/loaders/imageio`）：**无状态自由函数**（`decodeImage` / `loadImage` / `encodeImage` / `saveImage`），
   读 `Result`、写 `IoError`，与上面两个模块同一套词汇；能力来自一张 `ImageFormatInfo` 表（`formatInfo()` /

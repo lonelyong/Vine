@@ -86,7 +86,8 @@ TopoDS_Shape solidOf(const vn::geometry::Ellipsoid& ellipsoid)
     scale.SetVectorialPart(gp_Mat(radius_x, 0.0, 0.0, 0.0, radius_y, 0.0, 0.0, 0.0, radius_z));
 
     const TopoDS_Shape unit_sphere = BRepPrimAPI_MakeSphere(1.0).Shape();
-    const BRepBuilderAPI_GTransform scaled(unit_sphere, scale, Standard_True);
+    // `Shape()` is a non-const member in OpenCASCADE 8, so the builder cannot be const-qualified here.
+    BRepBuilderAPI_GTransform scaled(unit_sphere, scale, Standard_True);
     return scaled.Shape();
 }
 

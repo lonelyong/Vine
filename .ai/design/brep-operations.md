@@ -228,15 +228,15 @@ flowchart LR
 
 ### 9.1 现状
 
-模块、头文件契约、CMake 探测、OpenCASCADE 分支与无后端分支都已落地；`test_brep` 覆盖“无后端 → 能力为假 + 空网格”。仓库当前构建没有 OpenCASCADE，因此后端分支尚未在本机编译与验证。
+模块、头文件契约、CMake 探测、OpenCASCADE 分支与无后端分支都已落地。**后端分支已在带 OpenCASCADE 8.0.0（vcpkg `x64-windows`）的构建里编译并验证**：`test_brep` 与 `test_brepio` 全部通过（含五个基本体的往返与包围盒、网格往返）。
 
-由基本体造实体（F2）已落地（`2.7`–`2.11`、`3.2`），与三角化共用同一条探测与 PRIVATE 链接；本机构建没有 OpenCASCADE，所以两个后端分支都只有无后端那一侧在本机验证过。
+由基本体造实体（F2）已落地（`2.7`–`2.11`、`3.2`），与三角化共用同一条探测与 PRIVATE 链接，两侧都已在同一台机器上跑通。
 
 ### 9.2 已知缺口
 
-- 在带 OpenCASCADE 的构建里验证三角化与构造：盒体用例、法线、面缝顶点数、五个基本体的往返；`TKPrim` 的模块归属与 `BRepBuilderAPI_GTransform` 的签名要按实际 OCCT 版本确认（`N4`、`../backlog/brep.md` 第 1 条）。
 - 布尔/缝合：见 `../backlog/brep.md`，有触发条件。
 - 渲染路径尚未接入：`graphics::geometryFromShape()` 仍只接受网格；三角化落地后再把"加载 B-rep → 三角化 → 显示"接起来。
+- 部署：OCCT 的运行时 DLL 由 `vn_link_opencascade` 拷到构建输出目录（见 `cmake/VineOpenCASCADE.cmake`）；发布包的部署（与 `VineDeployQt.cmake` 同级）还没写。
 
 ## 10. 参考
 
