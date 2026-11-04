@@ -112,6 +112,10 @@ MainWindow::MainWindow()
     // place the checked cast is required (see the same rule in DockPanelManager.cpp and DockPanel.cpp).
     impl<itype>()->setCentralWidget(qobject_cast<QWidget*>(dptr()->dock_panel_mgr->root()->impl()));
     impl<itype>()->setStatusBar(dptr()->status_bar->impl<QStatusBar>());
+    // The window is frameless (SARibbon's ribbon frame), so on a background of the same colour it has no
+    // visible boundary and no system shadow. These two switch that back on: a 1px border in the Windows theme
+    // (accent) colour, and the DWM drop shadow. Both keep the client area covering the whole window -- the
+    // system buttons stay flush in the corner and nothing of the window frame shows at the edges.
     impl<itype>()->setFrameBorderEnabled(true);
     impl<itype>()->setFrameShadowEnabled(true);
 

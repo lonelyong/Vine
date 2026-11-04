@@ -6367,11 +6367,11 @@ public:
 	SARibbonApplicationWidget* applicationWidget() const;
 	// Check whether the 1px window frame border is drawn (default off, keeping current appearance)
 	bool isFrameBorderEnabled() const;
-	// Enable/disable drawing of the 1px window frame border
+	// Enable/disable the 1px window frame border (Windows: drawn by DWM in the system border colour)
 	void setFrameBorderEnabled(bool on);
-	// Get the custom frame border color; an invalid color means "follow current theme"
+	// Get the custom frame border color; an invalid color means "follow the system (Windows) or theme colour"
 	QColor frameBorderColor() const;
-	// Set a custom frame border color; pass an invalid QColor to follow the current theme
+	// Set a custom frame border color; pass an invalid QColor to follow the system/theme colour
 	void setFrameBorderColor(const QColor& color);
 	// Check whether the system window shadow is enabled on the frameless window (default off; Windows only, non-QWK path)
 	bool isFrameShadowEnabled() const;
@@ -6384,8 +6384,6 @@ public:
 protected:
 	// Factory function to create ribbonbar
 	SARibbonBar* createRibbonBar();
-	// Draw the optional 1px frame border when frameBorderEnabled is on
-	virtual void paintEvent(QPaintEvent* e) Q_DECL_OVERRIDE;
 #if defined(Q_OS_WIN) && !SARIBBON_USE_3RDPARTY_FRAMELESSHELPER
 	// Windows non-QWK path: return HTCAPTION for the title bar draggable area so that the
 	// system takes over title bar dragging and provides Aero Snap (half-screen/maximize)
