@@ -6367,7 +6367,8 @@ public:
 	SARibbonApplicationWidget* applicationWidget() const;
 	// Check whether the 1px window frame border is drawn (default off, keeping current appearance)
 	bool isFrameBorderEnabled() const;
-	// Enable/disable the 1px window frame border (Windows: drawn by DWM in the system border colour)
+	// Enable/disable the 1px window frame border (independent of the shadow: native DWM border when the
+	// shadow is on, painted overlay otherwise)
 	void setFrameBorderEnabled(bool on);
 	// Get the custom frame border color; an invalid color means "follow the system (Windows) or theme colour"
 	QColor frameBorderColor() const;
@@ -6376,6 +6377,7 @@ public:
 	// Check whether the system window shadow is enabled on the frameless window (default off; Windows only, non-QWK path)
 	bool isFrameShadowEnabled() const;
 	// Enable the DWM system shadow for the frameless window (Windows only, non-QWK path; no-op elsewhere)
+	// This is what builds the native frame; the 1px border uses it when it exists
 	void setFrameShadowEnabled(bool on);
 
 	// Pass ribbonbar events to frameless

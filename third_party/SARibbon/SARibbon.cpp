@@ -34085,8 +34085,7 @@ QColor resolveAccentColor()
 	return QColor();
 }
 
-#if !defined(Q_OS_WIN) || SARIBBON_USE_3RDPARTY_FRAMELESSHELPER
-// 边框取色：自定义色有效优先，其次系统强调色，再其次主题调色板的 border-color 色板，最后退回 palette 窗口色加深
+// 边框取色（供自绘边框使用）：自定义色有效优先，其次系统强调色，再其次主题调色板的 border-color，最后退回窗口色加深
 QColor resolveFrameBorderColor(const QWidget* window, const QColor& custom, SARibbonTheme theme)
 {
 	if (custom.isValid()) {
@@ -34174,7 +34173,6 @@ private:
 	QWidget* m_frame { nullptr };
 	QColor m_borderColor;
 };
-#endif  // !Windows || QWK：没有 DWM frame 时边框才需要自绘
 }  // namespace
 
 namespace SA {
@@ -34321,10 +34319,10 @@ public:
 	bool isUseNativeFrame() const;
 	void checkMainWindowFlag();
 	void applyFrameAppearance();
-	/// 1px 边框与系统阴影共用同一个 DWM frame（WS_THICKFRAME + WM_NCCALCSIZE 配套处理）
-	bool needsNativeFrame() const
+	/// 阴影需要 DWM 的 frame（WS_THICKFRAME + WM_NCCALCSIZE 配套处理）；边框只在 frame 已存在时才借它画
+	bool usesDwmFrame() const
 	{
-		return mFrameShadowEnabled || mFrameBorderEnabled;
+		return mFrameShadowEnabled;
 	}
 
 public:
@@ -34333,9 +34331,7 @@ public:
 	SARibbonSystemButtonBar* mWindowButtonGroup { nullptr };
 	bool mFrameBorderEnabled { false };  ///< 是否绘制 1px 窗口边框（默认关闭保持现行为）
 	QColor mFrameBorderColor;            ///< 自定义边框颜色，无效色表示用系统主题色
-#if !defined(Q_OS_WIN) || SARIBBON_USE_3RDPARTY_FRAMELESSHELPER
-	SaribbonFrameBorderOverlay* mFrameBorderOverlay { nullptr };  ///< 自绘边框的叠加层（首次开启时创建）
-#endif
+	SaribbonFrameBorderOverlay* mFrameBorderOverlay { nullptr };  ///< 自绘边框的叠加层（帧不在、需要自绘时创建）
 	bool mFrameShadowEnabled { false };  ///< 是否启用 DWM 系统阴影（仅 Windows 非 QWK 路径）
 #if SARIBBON_USE_3RDPARTY_FRAMELESSHELPER
 	QWK::WidgetWindowAgent* mFramelessHelper { nullptr };
@@ -34395,31 +34391,33 @@ void SARibbonMainWindow::PrivateData::checkMainWindowFlag()
 }
 
 /**
- * @brief 按当前边框/阴影开关重新应用窗口外观
- * @details Windows 非 QWK 路径：走 DWM——WS_THICKFRAME 给窗口造出 frame，再把 frame 扩入客户区，
- *          1px 边框由 DWM 用系统主题色绘制（系统设置里的强调色/边框色），阴影同时出现；
- *          自定义边框色用 DWMWA_BORDER_COLOR 覆盖（Windows 11 起支持，更早的系统忽略）。
- *          其他路径（非 Windows、QWK）：阴影为空操作，边框由鼠标穿透的叠加控件自绘。
+ * @brief 按当前边框/阴影开关重新应用窗口外观（两个开关互不影响）
+ * @details Windows 非 QWK 路径：
+ *          - 阴影需要窗口有 DWM frame：加 WS_THICKFRAME 并把 frame 扩入客户区；
+ *          - 边框搭同一个 frame：frame 一旦存在，扩入客户区的 1px 就是现成的原生边框，
+ *            所以阴影开着时边框直接由 DWM 画，颜色取系统强调色（可用自定义色覆盖）；
+ *          - 阴影关着时窗口没有 frame，边框退回自绘（叠加层），两个开关各种组合都成立。
+ *          其他路径（非 Windows、QWK）：阴影为空操作，边框恒为自绘。
  */
 void SARibbonMainWindow::PrivateData::applyFrameAppearance()
 {
+	bool drawnByDwm = false;
 #if defined(Q_OS_WIN) && !SARIBBON_USE_3RDPARTY_FRAMELESSHELPER
-	if (!q_ptr->testAttribute(Qt::WA_WState_Created) || !q_ptr->testAttribute(Qt::WA_WState_Visible)) {
-		return;  // 窗口未创建/未显示，showEvent 会在显示后按状态应用
+	if (q_ptr->testAttribute(Qt::WA_WState_Created) && q_ptr->testAttribute(Qt::WA_WState_Visible)) {
+		if (const WId wid = q_ptr->winId(); wid != 0) {
+			const HWND hwnd = reinterpret_cast< HWND >(wid);
+			applyFrameStyle(hwnd, mFrameShadowEnabled);
+			applyDwmFrame(hwnd, mFrameShadowEnabled, mFrameShadowEnabled && mFrameBorderEnabled);
+			// 自定义色优先，否则用系统强调色——Windows 的“主题色”；两者都没有就交回系统的默认边框色
+			applyDwmBorderColor(hwnd,
+								mFrameBorderEnabled ? resolveFrameBorderColor(q_ptr, mFrameBorderColor, mCurrentRibbonTheme)
+													: QColor());
+			drawnByDwm = mFrameShadowEnabled && mFrameBorderEnabled;
+		}
 	}
-	const WId wid = q_ptr->winId();
-	if (wid == 0) {
-		return;
-	}
-	const HWND hwnd = reinterpret_cast< HWND >(wid);
-	applyFrameStyle(hwnd, needsNativeFrame());
-	applyDwmFrame(hwnd, mFrameShadowEnabled, mFrameBorderEnabled);
-	if (mFrameBorderEnabled) {
-		// 自定义色优先，否则用系统强调色——Windows 的“主题色”；两者都没有就交回系统的默认边框色
-		applyDwmBorderColor(hwnd, mFrameBorderColor.isValid() ? mFrameBorderColor : resolveAccentColor());
-	}
-#else
-	if (!mFrameBorderEnabled) {
+#endif
+	// frame 已经把边框画出来了，就不该再叠一层自绘
+	if (!mFrameBorderEnabled || drawnByDwm) {
 		if (mFrameBorderOverlay) {
 			mFrameBorderOverlay->hide();
 		}
@@ -34432,7 +34430,6 @@ void SARibbonMainWindow::PrivateData::applyFrameAppearance()
 	mFrameBorderOverlay->setBorderColor(resolveFrameBorderColor(q_ptr, mFrameBorderColor, mCurrentRibbonTheme));
 	mFrameBorderOverlay->show();
 	mFrameBorderOverlay->raise();
-#endif
 }
 
 //===================================================
@@ -34974,24 +34971,22 @@ bool SARibbonMainWindow::isFrameBorderEnabled() const
  * @param on true to draw the border, false to keep the default appearance
  * @details Useful for frameless windows placed over same-colored backgrounds where the
  *          window boundary is otherwise invisible. Default is off.
- *          Windows non-QWK path: the border is the DWM frame itself (WS_THICKFRAME + the frame
- *          extended 1px into the client area), painted in the system accent colour -- the Windows
- *          theme colour; setFrameBorderColor() overrides it. Because the frame is shared, enabling
- *          the border also brings the system shadow.
- *          Other paths: a mouse-transparent overlay child paints the border (accent colour when the
- *          platform reports one, else the theme's border-color), above the ribbon bar, the dock area
- *          and the status bar.
+ *          Independent of setFrameShadowEnabled():
+ *          - with the shadow on, the border is drawn by the DWM frame the shadow needs (native 1px,
+ *            system accent colour, override with setFrameBorderColor());
+ *          - with the shadow off there is no frame, and a mouse-transparent overlay child paints the
+ *            border in the accent colour above the ribbon bar, the dock area and the status bar.
  * \endif
  *
  * \if CHINESE
  * @brief 开启/关闭 1px 窗口边框
  * @param on true 绘制边框，false 保持默认外观
  * @details 适用于无边框窗口落在同色背景（如同为白色的文档区或桌面）上边界不可辨的场景。默认关闭。
- *          Windows 非 QWK 路径：边框就是 DWM 的 frame 本身（WS_THICKFRAME + 把 frame 扩入客户区 1px），
- *          颜色取系统强调色（Windows 的“主题色”），可用 setFrameBorderColor() 覆盖。
- *          两侧共用同一个 frame，所以开边框也会带来系统阴影。
- *          其他路径：由一层鼠标穿透的叠加控件绘制（平台给出强调色时用强调色，否则用主题 border-color），
- *          盖在 ribbon 栏、dock 区和状态栏之上。
+ *          与 setFrameShadowEnabled() 互不影响：
+ *          - 阴影开着时，边框由阴影所需的 DWM frame 直接画出（原生 1px，系统强调色，
+ *            可用 setFrameBorderColor() 覆盖）；
+ *          - 阴影关着时窗口没有 frame，边框由盖在 ribbon 栏、dock 区和状态栏之上的
+ *            鼠标穿透叠加控件用强调色自绘。
  * \endif
  */
 void SARibbonMainWindow::setFrameBorderEnabled(bool on)
@@ -35075,8 +35070,9 @@ bool SARibbonMainWindow::isFrameShadowEnabled() const
  *          edges (no system title bar/border appears, and the system buttons sit flush in the
  *          corner); a maximized window's client area is clamped to the monitor's work area.
  *          No-op on non-Windows platforms and the QWK path (QWK has its own shadow handling).
- *          The 1px frame border (setFrameBorderEnabled) is drawn by the same frame, so either
- *          switch turns the frame on.
+ *          Independent of setFrameBorderEnabled(): the shadow owns the DWM frame, and a border that
+ *          is switched on rides on that frame (so it is drawn natively); with the shadow off the
+ *          border is painted instead and no frame is built.
  *          Note: the system shadow is not drawn when the window is maximized — that is a
  *          Windows behavior, not a bug.
  * \endif
@@ -35088,7 +35084,8 @@ bool SARibbonMainWindow::isFrameShadowEnabled() const
  *          系统阴影。WM_NCCALCSIZE/WM_NCACTIVATE 在 nativeEvent() 中配套处理，客户区四边都
  *          铺满窗口（不会出现系统标题栏/边框，系统按钮贴住窗口角），最大化时客户区收在
  *          显示器工作区内。非 Windows 平台与 QWK 路径为空操作（QWK 有自己的阴影处理）。
- *          1px 窗口边框（setFrameBorderEnabled）与阴影共用这个 frame，两个开关任一开启都会造出它。
+ *          与 setFrameBorderEnabled() 互不影响：frame 由阴影负责，边框开着时只是搭这个 frame 画；
+ *          阴影关着时边框改为自绘，不再造 frame。
  *          注意：窗口最大化时系统不绘制阴影——这是 Windows 的行为，不是 bug。
  * \endif
  */
@@ -35144,8 +35141,8 @@ bool SARibbonMainWindow::nativeEvent(const QByteArray& eventType, void* message,
 {
 	if (eventType == "windows_generic_MSG" && message) {
 		MSG* msg = static_cast< MSG* >(message);
-		if (d_ptr->needsNativeFrame()) {
-			// ---- DWM frame 配套处理（issue #129）：1px 边框与系统阴影共用 ----
+		if (d_ptr->usesDwmFrame()) {
+			// ---- DWM frame 配套处理（issue #129）：阴影的 frame，1px 边框借它绘制 ----
 			if (msg->message == WM_NCCALCSIZE && msg->wParam) {
 				// 补上 WS_THICKFRAME 后系统会为可缩放边框预留一条非客户区（每边 SM_CXSIZEFRAME + SM_CXPADDEDBORDER）。
 				// 无边框窗口不能让这条区域留在客户区之外：否则 Qt 的控件树比窗口小一圈，系统按钮右侧、
@@ -35224,9 +35221,7 @@ bool SARibbonMainWindow::nativeEvent(const QByteArray& eventType, void* message,
 void SARibbonMainWindow::showEvent(QShowEvent* e)
 {
 	QMainWindow::showEvent(e);
-	if (d_ptr->needsNativeFrame()) {
-		d_ptr->applyFrameAppearance();
-	}
+	d_ptr->applyFrameAppearance();
 }
 #endif
 
