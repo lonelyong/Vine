@@ -2,6 +2,8 @@
 
 #include "geometry_global.hpp"
 
+#include <cmath>
+
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -71,6 +73,65 @@ class Plane
     math::Point3<T>  origin;
     math::Vector3<T> normal;
 };
+
+template <typename T>
+bool Plane<T>::intersectWith(const Line<T>& line, math::Point3<T>& intersection_pt, T eps) const
+{
+    // Plane–Line intersection.
+    //
+    //   Plane:  n·(P − o) = 0
+    //   Line:   P = P₀ + t·d
+    //
+    // Substitute line into plane:
+    //   n·(P₀ + t·d − o) = 0
+    //   n·(P₀ − o) + n·(t·d) = 0
+    //   n·(P₀ − o) + t·(n·d) = 0
+    //
+    // Solve for t:
+    //   t·(n·d) = −n·(P₀ − o)
+    //
+    //         −n·(P₀ − o)
+    //   t = --------------
+    //            n·d
+    //
+    //   |n·d| ≤ eps  →  line ∥ plane, no unique intersection.
+
+    math::Vector3<T> diff  = line.origin - origin;
+    T                denom = normal.dot(line.direction);
+
+    // Check if line is parallel to plane
+    if (math::isZero(denom, eps)) {
+        return false;
+    }
+
+    T numer         = -normal.dot(diff);
+    T t             = numer / denom;
+    intersection_pt = line.origin + line.direction * t;
+
+    return true;
+}
+
+template <typename T>
+bool Plane<T>::intersectWith(const Ray<T>& ray, RayHit<T>& hit, T eps) const
+{
+    const T denominator = normal.dot(ray.direction);
+    if (std::abs(denominator) <= eps) {
+        return false; // the ray runs parallel to the plane, or carries no direction
+    }
+
+    const math::Vector3<T> to_origin(origin.x - ray.origin.x, origin.y - ray.origin.y, origin.z - ray.origin.z);
+    const T                t = normal.dot(to_origin) / denominator;
+    if (t < T(0)) {
+        return false; // the plane is behind the ray's origin
+    }
+
+    const math::Vector3<T> unit_normal = normal.normalized();
+
+    hit.t      = t;
+    hit.point  = ray.pointAt(t);
+    hit.normal = denominator > T(0) ? math::Vector3<T>(-unit_normal.x, -unit_normal.y, -unit_normal.z) : unit_normal;
+    return true;
+}
 
 using Planef = Plane<float>;
 using Planed = Plane<double>;

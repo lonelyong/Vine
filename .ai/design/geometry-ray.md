@@ -1,7 +1,7 @@
 # geometry 射线与图元相交
 
 > **状态**：现行（值类型与四个图元相交已落地；`graphics` 已改用它）
-> **最后核对**：2026-11-03
+> **最后核对**：2026-11-04
 > **范围**：`src/base/geometry` 的射线值类型与射线–AABB / OBB / 平面 / 三角形查询的归属与契约。
 > 不含场景走查、拾取身份与选择态（见 `graphics-scene.md`），不含射线–网格遍历与加速结构（见 §9.2）。
 > **权威来源**：`src/base/geometry/sdk/vine/geometry/Ray.hpp`、`RayHit.hpp`、`Aabb.hpp` / `Obb.hpp` / `Plane.hpp` 的 `intersectWith(Ray, RayHit&)`、`tests/test_geometry`。
@@ -75,6 +75,13 @@
 - **是什么**：射线与四个相交入口都放进 `geometry`。
 - **为什么**：`G8` —— 一个值类型加四个查询不成一层；`math` 只放数值与变换，把空间实体放进去正是 `geometry-primitives.md` 2.1 那条判据要消灭的事。
 - **边界**：`math` 只提供它已有的点/向量/变换；射线不引入任何 `math` 新类型。
+
+### 2.7 射线与三角形求交定义在头文件
+
+- **是什么**：`Ray<T>` 的成员与 `intersectTriangle` 全部在 `Ray.hpp` 中定义，该类不再有独立实现文件，`VN_GEOMETRY_API` 显式实例化一并去掉。
+- **为什么**：`G7`、`G10` —— `graphics` 的 `RayIntersection::traverseMesh` 逐三角形调用，跨 DLL 调用不可能内联；实测命中断 7.09 → 5.99 ns、平行剔除 3.96 → 2.71 ns。
+- **整类搬而不是单函数**：只把 `intersectTriangle` 放进头文件、而把 `pointAt()` 留在 `.cpp`，收益从 1.10 降到 0.39 ns/tri —— 函数体里的 `hit.point = ray.pointAt(t)` 仍是一次外部调用。
+- **边界**：与其它值类型同一规则（`geometry-primitives.md` 2.8）；调用点仍只有 `graphics` 一处，`C1`–`C3` 与 §4 的签名不变。
 
 ## 3. 功能点
 

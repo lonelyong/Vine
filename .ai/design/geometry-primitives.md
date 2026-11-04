@@ -1,7 +1,7 @@
 # geometry 值类型：Aabb、Obb、Line、Plane
 
 > **状态**：现行
-> **最后核对**：2026-11-03
+> **最后核对**：2026-11-04
 > **范围**：`src/base/geometry` 的空间值类型（`Aabb` / `Obb` / `Line` / `Plane`）：归属、命名与契约。
 > 不含 `Shape` / `Mesh` / `Material` / `Model` 的存储与 revision（见 `graphics-geometry.md` §3.5），也不含 2D 区间 `Rect2`（仍在 `math`）。
 > **权威来源**：`src/base/geometry/sdk/vine/geometry/Aabb.hpp`、`Obb.hpp`、`Line.hpp`、`Plane.hpp`；`tests/test_geometry`。
@@ -82,6 +82,15 @@
 - **轴序**：PCA 按方差**降序**排列（局部 X 最大、Z 最小）。理由：主轴的惯例读法是从大到小，消费方读 `halfExtents()` 时 X 即最长边（`G4`、`G12`）；旧实现取升序的前两列（X = 最小方差）既没有声明支撑，也与“主轴”直觉相反。
 - **不做**：最小体积 OBB（依赖第三方凸包旋转卡壳实现，今天没有消费者，`G8`）；`merge` 因同原因暂不提供。
 
+### 2.8 值类型的短查询定义在头文件
+
+- **是什么**：`Aabb` / `Obb` / `Line` / `Plane` / `Ray` 的短查询与访问器（`contains`、`expandBy`、`intersectWith`、`closestPoint`、`pointAt`、`distanceToPoint`、`corners`、`toAabb`、`intersects`、`intersectTriangle`）定义在 `sdk` 头文件里；只有长算法留在 `src/`，并保留 `template class VN_GEOMETRY_API` 显式实例化。
+- **布局**：每个类型的类体内只留声明与平凡访问器，定义集中在该类之后、别名之前。一个类型的公开形状因此可以一次读完（`G4`、`G12`）。
+- **为什么**：`G7`、`G10` —— `geometry` 是 DLL，跨模块调用不可能内联；`graphics` 的逐三角形拾取实测命中断 7.09 → 5.99 ns、平行剔除 3.96 → 2.71 ns（独立基准，约 15–30%）。把调用点留在调用方模块里，比让调用方为一次点测试过一道库边界便宜。
+- **边界**：判据是“短且纯算术”——不依赖 `EigenDecomposition.hpp`、OCCT 或匿名命名空间辅助。不是“凡是能内联的都内联”：拟合（`Obb::computePca` / `computeFixedOrientation`）、`Line::intersectWith(Line)`、`Plane::intersectWith(Plane, Line&)` 留在 `src/`，否则公共头要拖进特征分解与 60 行推导注释，成本付给每一个 consumer（`G11`、`G10`）。
+- **代价**：这五个类型不再导出符号（类上本来就没有 `VN_GEOMETRY_API`，导出只来自 `.cpp` 的显式实例化）；`Aabb` 的 10 个标量实例化随之消失，只编译实际用到的实例。ABI 影响仅限仓库外消费者，今天没有。
+- **不做**：不把平行判定的 `eps * length(a) * length(b)` 改成平方比较——实测 2.71 → 2.68 ns 在噪声内（`G8`）；不为“更彻底的 header-only”引入 BVH 或批处理入口，那是 `../backlog/graphics.md` 的射线–网格遍历项，按证据另议。
+
 ## 3. 功能点
 
 | # | 功能 | 说明 |
@@ -127,7 +136,7 @@
 | `src/base/geometry/sdk/vine/geometry/Line.hpp` | `Line<T>`、`Linef` / `Lined` |
 | `src/base/geometry/sdk/vine/geometry/Plane.hpp` | `Plane<T>`、`Planef` / `Planed` |
 
-模板的显式实例化在 `src/base/geometry/src/`，使用 `VN_GEOMETRY_API` 导出；调用方只需包含头文件。
+短查询定义在头文件（2.8）；只有长算法留在 `src/` 并保留 `VN_GEOMETRY_API` 显式实例化：`Line::intersectWith(const Line&)`、`Plane::intersectWith(const Plane&, Line&)`、`Obb::computeFixedOrientation` / `computePca`。
 
 ## 5. 约束、要求与不变量
 

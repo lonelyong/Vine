@@ -98,22 +98,6 @@ TMPL_PREFIX Line<T>::Intersection Line<T>::intersectWith(const Line<T>& other, T
     return is;
 }
 
-TMPL_PREFIX math::Point3<T> Line<T>::closestPoint(const math::Point3<T>& pt) const
-{
-    // P(t) = origin + t·direction
-    // (pt − P(t))·direction = 0  →  t = (pt−origin)·direction / |direction|²
-    const auto denom = direction.dot(direction);
-    // Zero direction
-    if (denom < math::EPS<T>()) {
-        return origin;
-    }
-
-    const math::Vector3<T> v = pt - origin;
-    const double     t = v.dot(direction) / denom;
-
-    return origin + direction * t;
-}
-
 template class VN_GEOMETRY_API Line<float>;
 template class VN_GEOMETRY_API Line<double>;
 

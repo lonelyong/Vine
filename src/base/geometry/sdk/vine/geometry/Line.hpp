@@ -149,6 +149,23 @@ class Line
     math::Vector3<T> direction;
 };
 
+template <typename T>
+math::Point3<T> Line<T>::closestPoint(const math::Point3<T>& pt) const
+{
+    // P(t) = origin + t·direction
+    // (pt − P(t))·direction = 0  →  t = (pt−origin)·direction / |direction|²
+    const auto denom = direction.dot(direction);
+    // Zero direction
+    if (denom < math::EPS<T>()) {
+        return origin;
+    }
+
+    const math::Vector3<T> v = pt - origin;
+    const double           t = v.dot(direction) / denom;
+
+    return origin + direction * t;
+}
+
 using Linef = Line<float>;
 using Lined = Line<double>;
 
