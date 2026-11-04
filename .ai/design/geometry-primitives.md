@@ -2,20 +2,20 @@
 
 > **状态**：现行
 > **最后核对**：2026-11-04
-> **范围**：`src/base/geometry` 的空间值类型（`Aabb` / `Obb` / `Line` / `Plane`）：归属、命名与契约。
+> **范围**：`src/base/geometry` 的空间值类型（`Aabb` / `Obb` / `LineCurve` / `Plane`）：归属、命名与契约。
 > 不含 `Shape` / `Mesh` / `Material` / `Model` 的存储与 revision（见 `graphics-geometry.md` §3.5），也不含 2D 区间 `Rect2`（仍在 `math`）。
-> **权威来源**：`src/base/geometry/sdk/vine/geometry/Aabb.hpp`、`Obb.hpp`、`Line.hpp`、`Plane.hpp`；`tests/test_geometry`。
+> **权威来源**：`src/base/geometry/sdk/vine/geometry/Aabb.hpp`、`Obb.hpp`、`LineCurve.hpp`、`Plane.hpp`；`tests/test_geometry`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计
 
 ### 1.1 问题与背景
 
-四个空间形状原先住在 `src/base/math`：`Rect3`（轴对齐盒）、`Line`、`Plane`；同期引入 geometry 的 `Obb` 却是 geometry 的。同一概念族被模块边界切开。
+四个空间形状原先住在 `src/base/math`：`Rect3`（轴对齐盒）、`Line`（今 `LineCurve`）、`Plane`；同期引入 geometry 的 `Obb` 却是 geometry 的。同一概念族被模块边界切开。
 
 `Rect3` 更乱：`math::Aabb` / `Aabbf` / `Aabbd` 是它的别名，`geometry/Aabb.hpp` 是转发 shim，`Mesh::Aabb` 是第三个拼写。一个轴对齐盒有四个名字、三个家。
 
-消费者全部在 geometry 之上：`Mesh`、`graphics::Node`、`ChainBuilder`、`ChainPresets`、`Obb::toAabb()`。`math` 内部没有任何一处使用 `Rect3` / `Line` / `Plane`（`Plane` 用 `Line`，两者一起走）。
+消费者全部在 geometry 之上：`Mesh`、`graphics::Node`、`ChainBuilder`、`ChainPresets`、`Obb::toAabb()`。`math` 内部没有任何一处使用 `Rect3` / `Line` / `Plane`（`Plane` 用 `Line`，两者一起走；`Line` 现名 `LineCurve`，见 `geometry-kinds.md`）。
 
 ### 1.2 目标
 
@@ -51,13 +51,13 @@
 
 ### 2.3 解析原语同住一个模块
 
-- **是什么**：`Line`、`Plane`、`Aabb`、`Obb` 都在 `vine/geometry`；`Plane::intersectWith(Plane, Line&)` 的返回值同模块。
-- **为什么**：`G1`、`G6` —— 同一层的形状不跨模块分裂；`Line` 的唯一使用者就是 `Plane`，同批移动不留中间态。
+- **是什么**：`LineCurve`、`Plane`、`Aabb`、`Obb` 都在 `vine/geometry`；`Plane::intersectWith(Plane, LineCurve&)` 的返回值同模块。
+- **为什么**：`G1`、`G6` —— 同一层的形状不跨模块分裂；`LineCurve` 的唯一使用者就是 `Plane`，同批移动不留中间态。
 - **边界**：它们是**值类型**，不进入 `Shape` 层级（2.4）；这不表示 `geometry` 的语义变成“纯数学”，`Shape` / `Mesh` 仍是主内容。射线同样是空间实体：`Ray` 与图元相交已在 `geometry`，契约见 `geometry-ray.md`；参数化几何（`Box` / `Sphere` / …）与模型持有者 `Primitive` 的分工见 `geometry-parametric.md`。
 
 ### 2.4 值类型不进 Shape 层级
 
-- **是什么**：`Aabb` / `Obb` / `Line` / `Plane` 是模板值类型：无 vptr、无 `Object` 元类型、无 revision。
+- **是什么**：`Aabb` / `Obb` / `LineCurve` / `Plane` 是模板值类型：无 vptr、无 `Object` 元类型、无 revision。
 - **为什么**：`G1`、`G10` —— 包围盒按值拷贝、按值返回；`Shape` 的运行时多态与 revision 是给可编辑内容用的，不是给几何量用的。
 - **边界**：需要多态分发的形状走 `Shape`；需要便宜拷贝的空间量走这四个值类型。
 
@@ -84,11 +84,11 @@
 
 ### 2.8 值类型的短查询定义在头文件
 
-- **是什么**：`Aabb` / `Obb` / `Line` / `Plane` / `Ray` 的短查询与访问器（`contains`、`expandBy`、`intersectWith`、`closestPoint`、`pointAt`、`distanceToPoint`、`corners`、`toAabb`、`intersects`、`intersectTriangle`）定义在 `sdk` 头文件里；只有长算法留在 `src/`，并保留 `template class VN_GEOMETRY_API` 显式实例化。
+- **是什么**：`Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` 的短查询与访问器（`contains`、`expandBy`、`intersectWith`、`closestPoint`、`pointAt`、`distanceToPoint`、`corners`、`toAabb`、`intersects`、`intersectTriangle`）定义在 `sdk` 头文件里；只有长算法留在 `src/`，并保留 `template class VN_GEOMETRY_API` 显式实例化。
 - **布局**：每个类型的类体内只留声明与平凡访问器，定义集中在该类之后、别名之前。一个类型的公开形状因此可以一次读完（`G4`、`G12`）。
 - **为什么**：`G7`、`G10` —— `geometry` 是 DLL，跨模块调用不可能内联；`graphics` 的逐三角形拾取实测命中断 7.09 → 5.99 ns、平行剔除 3.96 → 2.71 ns（独立基准，约 15–30%）。把调用点留在调用方模块里，比让调用方为一次点测试过一道库边界便宜。
 - **边界**：判据是“短且纯算术”——不依赖 `EigenDecomposition.hpp`、OCCT 或匿名命名空间辅助。不是“凡是能内联的都内联”：拟合（`Obb::computePca` / `computeFixedOrientation`）、`Line::intersectWith(Line)`、`Plane::intersectWith(Plane, Line&)` 留在 `src/`，否则公共头要拖进特征分解与 60 行推导注释，成本付给每一个 consumer（`G11`、`G10`）。
-- **代价**：这五个类型不再导出符号（类上本来就没有 `VN_GEOMETRY_API`，导出只来自 `.cpp` 的显式实例化）；`Aabb` 的 10 个标量实例化随之消失，只编译实际用到的实例。ABI 影响仅限仓库外消费者，今天没有。
+- **代价**：类上没有 `VN_GEOMETRY_API`，导出只来自显式实例化；而**库为每一个几何类型、两种精度都提供显式实例化**：有 `src/` 实现的类型在自己的 `.cpp` 里（`LineCurve` / `Obb` / `Plane`——那些 `.cpp` 是唯一能看见其非内联成员的地方），纯头文件的类型集中在 `src/Instantiations.cpp`（一份可审查的清单，同时是“每个类型都能实例化”的编译期检查）。不写 `extern template`：内联仍然在调用方发生，导出的符号是“不能内联时的兵底”，不是唯一实现。精度与实例化的策略见 `../decisions/ADR-2026-11-04-geometry-precision-and-instantiation.md`。
 - **不做**：不把平行判定的 `eps * length(a) * length(b)` 改成平方比较——实测 2.71 → 2.68 ns 在噪声内（`G8`）；不为“更彻底的 header-only”引入 BVH 或批处理入口，那是 `../backlog/graphics.md` 的射线–网格遍历项，按证据另议。
 
 ## 3. 功能点
@@ -98,7 +98,7 @@
 | F1 | 轴对齐盒 | `Aabb<T>`：min/max 角点、`empty()` 哨兵、`expandBy` / `intersectWith` / `compute(span)`。 |
 | F2 | 有向盒 | `Obb<T>`：center + half-extents + 四元数朝向；`toAabb()` 返回 `Aabb<T>`。 |
 | F3 | 直线 | `Line<T>`：点–方向参数式；`intersectWith` 给最近点对与平行/共线标志；`closestPoint` 投影。 |
-| F4 | 平面 | `Plane<T>`：点 + 法向；与 `Line` 交于一点、与 `Plane` 交于 `Line`。 |
+| F4 | 平面 | `Plane<T>`：点 + 法向；与 `LineCurve` 交于一点、与 `Plane` 交于 `LineCurve`。 |
 | F5 | 单一名字 | `Rect3` 与 `math::Aabb*` 不存在；`geometry::Aabbf/Aabbd/Aabbi` 可用。 |
 | F6 | 2D 不迁 | `math::Rect2` 与 `Rect2i` 保持原位。 |
 | F7 | PCA 拟合 | `Obb::computePca(span)`：协方差特征轴，最大方差方向为局部 X。 |
@@ -115,7 +115,7 @@
 ### 3.2 F4 平面
 
 - **行为**：`intersectWith(Line, Point3&)` 在 `|n·d| <= eps` 时返回 false（线平行于面）；`intersectWith(Plane, Line&)` 在法向共线时返回 false。
-- **约束**（C2）：输出线由调用方提供——`Line` 没有默认构造函数（`P1`）。
+- **约束**（C2）：输出线由调用方提供——`LineCurve` 没有默认构造函数（`P1`）。
 - **要求**（R2）：求交的中间解在最大分量轴上做 2×2 主元选择，避免病态子矩阵。
 - **验收**（T3）：`LinePlaneTest.cpp` 覆盖点交、平行无交、面面交线的方向与位置。
 
@@ -133,8 +133,9 @@
 |---|---|
 | `src/base/geometry/sdk/vine/geometry/Aabb.hpp` | `Aabb<T>`、`Aabbf` / `Aabbd` / `Aabbi` |
 | `src/base/geometry/sdk/vine/geometry/Obb.hpp` | `Obb<T>`、`Obbf` / `Obbd` |
-| `src/base/geometry/sdk/vine/geometry/Line.hpp` | `Line<T>`、`Linef` / `Lined` |
+| `src/base/geometry/sdk/vine/geometry/LineCurve.hpp` | `LineCurve<T>`、`LineCurvef` / `LineCurved` |
 | `src/base/geometry/sdk/vine/geometry/Plane.hpp` | `Plane<T>`、`Planef` / `Planed` |
+| `src/base/geometry/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
 
 短查询定义在头文件（2.8）；只有长算法留在 `src/` 并保留 `VN_GEOMETRY_API` 显式实例化：`Line::intersectWith(const Line&)`、`Plane::intersectWith(const Plane&, Line&)`、`Obb::computeFixedOrientation` / `computePca`。
 
@@ -149,13 +150,13 @@
 - **R3**：`math` 不 include `geometry`；`geometry` 可以 include `math`。
 - **R4**：两个拟合入口对空 span 返回默认 `Obb`（原点、零尺寸、单位朝向）。
 - **N1**：`empty()` 不是“空集合”，是一个反向 min/max 哨兵，只能作为累加起点。
-- **N2**：`Line` 的方向不必单位化，参数 `t` 的尺度和 `|direction|` 绑定。
+- **N2**：`LineCurve` 的方向不必单位化，参数 `t` 的尺度和 `|direction|` 绑定。
 - **N3**：PCA 在共线点集上次轴任意但确定；重复特征值只保证正交，不保证唯一；所有点重合时返回单位朝向的零尺寸盒。
 - **N4**：PCA 的轴序是**方差序**而非**尺寸序**：`halfExtents()` 不保证 X ≥ Y ≥ Z（盒状点云两者一致，非均匀点云可能不一致）；要按长度选择，请调用方自行排序。旧 VObb 取 col(0)/col(1)（X = 最小方差），本仓库反过来，理由写在 2.7。
 
 ## 6. 注意事项与陷阱
 
-- **P1**：`Line` 没有默认构造函数——`Plane::intersectWith(Plane, Line&)` 的输出参数必须是一个已构造的线（用任意合法值占位，函数内部整体覆写）。失败方式是编译错误，不是运行期错误。
+- **P1**：`LineCurve` 没有默认构造函数——`Plane::intersectWith(Plane, LineCurve&)` 的输出参数必须是一个已构造的线（用任意合法值占位，函数内部整体覆写）。失败方式是编译错误，不是运行期错误。
 - **P2**：`Aabb` 默认构造是**零盒**而非空盒；把它当累加器起点会把原点算进包围盒。要累加请用 `Aabb::empty()`（`N1`）。
 - **P3**：`Aabb::compute()` 与 `expandBy()` 不 normalize；`intersectWith()` 的输出则总是归一化。混用两种状态会让 `isNeg()` 读数与预期相反。
 - **P4**：`math::toQuaternion()` 要求输入是纯旋转（正交、det = +1）；它不检查、不修复，缩放或退化矩阵会得到任意四元数。`rotate3x3()` 是它的逆，两者用同一分支约定。
@@ -188,7 +189,7 @@
 ### 9.2 已知缺口
 
 - `transformBox()` 仍是 `graphics/Node` 的自由函数：类型已经归位，变换算子还在消费者一侧，后续可评估搬入 `geometry`。
-- `Line` / `Plane` 只有基础分支的用例；退化容差、近共线情形未覆盖。
+- `LineCurve` / `Plane` 只有基础分支的用例；退化容差、近共线情形未覆盖。
 - 最小体积 OBB 与 `merge` 未提供（2.7）。
 
 ## 10. 参考

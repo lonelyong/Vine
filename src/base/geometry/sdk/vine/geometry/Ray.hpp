@@ -35,7 +35,7 @@ VN_GEOMETRY_NS_BEGIN
  * @tparam T Floating-point scalar type.
  */
 template <vn::math::FP T>
-class Ray : public Curve {
+class Ray {
   public:
     using value_type = T;
     using Point      = vn::math::Point3<T>;

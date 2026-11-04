@@ -2,6 +2,8 @@
 
 #include "geometry_global.hpp"
 
+#include <limits>
+
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -22,7 +24,7 @@ VN_GEOMETRY_NS_BEGIN
  * @tparam T Floating-point type (float or double).
  */
 template <typename T>
-class Line : public Curve
+class LineCurve : public Curve<T>
 {
   public:
     using value_type = T;
@@ -93,7 +95,7 @@ class Line : public Curve
      * @param origin    Any point on the line (typically the "starting" point).
      * @param direction Direction vector; does not need to be unit-length.
      */
-    constexpr Line(const math::Point3<T>& origin, const math::Vector3<T>& direction)
+    constexpr LineCurve(const math::Point3<T>& origin, const math::Vector3<T>& direction)
       : origin(origin)
       , direction(direction)
     {}
@@ -112,6 +114,116 @@ class Line : public Curve
     [[nodiscard]] constexpr math::Point3<T> pointAt(T t) const
     {
         return origin + direction * t;
+    }
+
+    /**
+     * @brief Returns the point at parameter @p u; the same value as `pointAt()`.
+     *
+     * @param u Multiple of `direction` from `origin`.
+     * @return `origin + direction * u`.
+     */
+    [[nodiscard]] math::Point3<T> evaluate(T u) const override
+    {
+        return pointAt(u);
+    }
+
+    /**
+     * @brief Returns the lower end of the range: a line is unbounded.
+     *
+     * @return Negative infinity.
+     */
+    [[nodiscard]] T firstParameter() const override
+    {
+        return -std::numeric_limits<T>::infinity();
+    }
+
+    /**
+     * @brief Returns the upper end of the range: a line is unbounded.
+     *
+     * @return Positive infinity.
+     */
+    [[nodiscard]] T lastParameter() const override
+    {
+        return std::numeric_limits<T>::infinity();
+    }
+
+    /**
+     * @brief Returns false: an infinite line does not close.
+     *
+     * @return Always false.
+     */
+    [[nodiscard]] bool isClosed() const override
+    {
+        return false;
+    }
+
+    /**
+     * @brief Returns false: a line does not repeat.
+     *
+     * @return Always false.
+     */
+    [[nodiscard]] bool isPeriodic() const override
+    {
+        return false;
+    }
+
+    /**
+     * @brief Returns 0: a line is not periodic.
+     *
+     * @return Always 0.
+     */
+    [[nodiscard]] T period() const override
+    {
+        return T(0);
+    }
+
+    /**
+     * @brief Returns the constant first derivative: the direction vector itself.
+     *
+     * @details
+     * - `origin + u * direction` differentiates to `direction` for every @p u, so this is the speed vector and its
+     *   length is `|direction|`; it is a unit tangent only when `direction` is unit length.
+     *
+     * @param u Parameter; ignored, the derivative of a line is constant.
+     * @return `direction`, unnormalised.
+     */
+    [[nodiscard]] math::Vector3<T> derivative(T u) const override
+    {
+        (void)u;
+        return direction;
+    }
+
+    /**
+     * @brief Returns the zero vector: a line does not bend.
+     *
+     * @param u Parameter; ignored, the second derivative of a line is zero everywhere.
+     * @return `Vector3(0, 0, 0)`.
+     */
+    [[nodiscard]] math::Vector3<T> secondDerivative(T u) const override
+    {
+        (void)u;
+        return math::Vector3<T>(T(0), T(0), T(0));
+    }
+
+    /**
+     * @brief Returns `CN`: a line is infinitely differentiable inside its range.
+     *
+     * @return `Continuity::CN`.
+     */
+    [[nodiscard]] Continuity continuity() const override
+    {
+        return Continuity::CN;
+    }
+
+    /**
+     * @brief Returns `-u`: the point reached from `origin` in the opposite direction.
+     *
+     * @param u Parameter in this line's units.
+     * @return `-u`.
+     */
+    [[nodiscard]] T reversedParameter(T u) const override
+    {
+        return -u;
     }
 
     /**
@@ -142,7 +254,7 @@ class Line : public Curve
      * @return Intersection containing flags and the closest-point pair.
      */
     [[nodiscard]]
-    Intersection intersectWith(const Line& other, T eps = math::EPS<T>()) const;
+    Intersection intersectWith(const LineCurve& other, T eps = math::EPS<T>()) const;
 
     /**
      * @brief Projects a point onto this line (orthogonal projection).
@@ -167,7 +279,7 @@ class Line : public Curve
 };
 
 template <typename T>
-math::Point3<T> Line<T>::closestPoint(const math::Point3<T>& pt) const
+math::Point3<T> LineCurve<T>::closestPoint(const math::Point3<T>& pt) const
 {
     // P(t) = origin + t·direction
     // (pt − P(t))·direction = 0  →  t = (pt−origin)·direction / |direction|²
@@ -183,7 +295,7 @@ math::Point3<T> Line<T>::closestPoint(const math::Point3<T>& pt) const
     return origin + direction * t;
 }
 
-using Linef = Line<float>;
-using Lined = Line<double>;
+using LineCurvef = LineCurve<float>;
+using LineCurved = LineCurve<double>;
 
 VN_GEOMETRY_NS_END

@@ -9,7 +9,7 @@ VN_GEOMETRY_NS_BEGIN
 #define TMPL_PREFIX template <typename T>
 
 TMPL_PREFIX
-bool Plane<T>::intersectWith(const Plane<T>& other, Line<T>& intersection_line, T eps) const
+bool Plane<T>::intersectWith(const Plane<T>& other, LineCurve<T>& intersection_line, T eps) const
 {
     // Plane–Plane intersection.
     //

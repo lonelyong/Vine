@@ -54,9 +54,9 @@
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
 - `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化与由基本体造实体的契约、失败表示。
-- `geometry-kinds.md` —— 几何族：`Curve` / `Surface` 是空标签分类而非虚基类；曲面分 `ElementarySurface` / `BoundedSurface`，未实现者只占位。
+- `geometry-kinds.md` —— 几何族：`Curve` / `Surface` 都是求值接口（`Curve<T>` 十项、`Surface<T>` 十三项），曲面多一层 `ElementarySurface` / `BoundedSurface` 分类标签；未实现者只占位。
 - `geometry-parametric.md` —— 参数化几何是建模类型（`Primitive` 的五个子类同居 `Primitive.hpp`）；canonical 局部空间与 OCCT 的职责收缩。
-- `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`Line`/`Plane` 的归属、命名与契约。
+- `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`LineCurve`/`Plane` 的归属、命名与契约。
 - `geometry-ray.md` —— 射线与图元相交：`Ray` 归 `geometry`、相交挂在被交对象上、场景走查留 `graphics`。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
@@ -71,7 +71,10 @@
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
-- `ADR-2026-11-04-geometry-kinds.md` —— 几何族用空标签分类（无虚函数、零布局开销），不用虚基类。
+- `ADR-2026-11-04-curve-evaluation-interface.md` —— 曲线族改为求值接口（`Curve<T>` 虚函数 + `TrimmedCurve`），`Ray` 退出曲线族。
+- `ADR-2026-11-04-surface-evaluation-interface.md` —— 曲面族改为求值接口（`Surface<T>` 十三项虚函数 + 两个分类标签），取代曲线 ADR 的第 6 条。
+- `ADR-2026-11-04-geometry-precision-and-instantiation.md` —— 几何类型保留精度模板，`float` / `double` 两种精度都显式实例化并导出。
+- `ADR-2026-11-04-geometry-kinds.md` —— 几何族用空标签分类，不用虚基类。
 - `ADR-2026-11-04-primitive-is-a-shape.md` —— 参数化几何是建模类型（`Primitive` 子类），算法属于曲面；OCCT 收缩为 STEP 解析与三角化。
 - `ADR-2026-11-03-geometry-primitives-ownership.md` —— 空间值类型归 `geometry`，轴对齐盒改名为 `Aabb`；`Rect2` 留在 `math`，不留兼容别名。
 - `ADR-2026-11-03-brep-operations-module.md` —— 运行时 B-rep 运算独立成 `brep` 模块；`geometry` 不碰 OpenCASCADE，探测集中在 `VineOpenCASCADE.cmake`。

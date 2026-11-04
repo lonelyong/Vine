@@ -10,7 +10,7 @@
 #include <vine/math/Vector3.hpp>
 
 #include "Aabb.hpp"
-#include "Surface.hpp"
+#include "ElementarySurface.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
@@ -22,8 +22,11 @@ VN_GEOMETRY_NS_BEGIN
  *   trimmed B-rep face, a ray that must hit one side, a point projected onto the sheet. The closed, placeable
  *   version a model holds is `Sphere` (see `Primitive.hpp`).
  * - `pointAt(azimuth, polar)` uses the same parameterisation OCCT's spherical surface does: azimuth around +Z,
- *   polar measured from +Z, both in radians. `polar = 0` is the +Z pole, `polar = pi / 2` the equator.
- * - This is a surface (`Surface::kDimension == 2`); `Surface` adds nothing to its size.
+ *   polar measured from +Z, both in radians. `polar = 0` is the +Z pole, `polar = pi / 2` the equator. As a
+ *   `Surface<T>` the two parameters are `u = azimuth` in `[0, 2 * pi]` and `v = polar` in `[0, pi]`.
+ * - `u` closes and repeats with `2 * pi`; `v` does not, because its ends are two points (the poles), not a seam.
+ * - It carries the vptr of `Surface<T>`: the two tangents and the domain are answered through the interface and the
+ *   azimuth / polar answers stay non-virtual for callers that know the type.
  * - No ray query yet: it arrives when a consumer needs one (`../backlog/geometry.md` G2), and as a member here when
  *   it does (`geometry-kinds.md` 2.6).
  *
@@ -33,7 +36,7 @@ VN_GEOMETRY_NS_BEGIN
  * @tparam T Floating-point scalar type.
  */
 template <vn::math::FP T>
-class SphericalSurface : public ElementarySurface {
+class SphericalSurface : public ElementarySurface<T> {
   public:
     using value_type = T;
     using Point      = vn::math::Point3<T>;
@@ -84,6 +87,163 @@ class SphericalSurface : public ElementarySurface {
         }
         const T sin_polar = std::sin(polar);
         return Vector(sin_polar * std::cos(azimuth), sin_polar * std::sin(azimuth), std::cos(polar));
+    }
+
+    /**
+     * @brief Returns the point at parameters @p u (azimuth) and @p v (polar); the same value as `pointAt()`.
+     *
+     * @param u Azimuth in radians, measured from +X towards +Y.
+     * @param v Polar angle in radians, measured from +Z.
+     * @return The point on the sheet.
+     */
+    [[nodiscard]] Point evaluate(T u, T v) const override
+    {
+        return pointAt(u, v);
+    }
+
+    /**
+     * @brief Returns the first derivative with respect to the azimuth.
+     *
+     * @details
+     * - `dP/du = radius * sin(polar) * (-sin(azimuth), cos(azimuth), 0)`: the velocity of a parallel, so it vanishes at
+     *   both poles - the singular points of this parameterisation.
+     *
+     * @param u Azimuth in radians.
+     * @param v Polar angle in radians.
+     * @return The velocity vector along @p u.
+     */
+    [[nodiscard]] Vector derivativeU(T u, T v) const override
+    {
+        const T speed = radius * std::sin(v);
+        return Vector(-speed * std::sin(u), speed * std::cos(u), T(0));
+    }
+
+    /**
+     * @brief Returns the first derivative with respect to the polar angle.
+     *
+     * @details
+     * - `dP/dv = radius * (cos(polar) * cos(azimuth), cos(polar) * sin(azimuth), -sin(polar))`: the velocity of a
+     *   meridian, of constant length `radius`.
+     *
+     * @param u Azimuth in radians.
+     * @param v Polar angle in radians.
+     * @return The velocity vector along @p v.
+     */
+    [[nodiscard]] Vector derivativeV(T u, T v) const override
+    {
+        const T cos_polar = std::cos(v);
+        return Vector(radius * cos_polar * std::cos(u), radius * cos_polar * std::sin(u), -radius * std::sin(v));
+    }
+
+    /**
+     * @brief Returns the start of the azimuth domain.
+     *
+     * @return 0 radians.
+     */
+    [[nodiscard]] T firstUParameter() const override
+    {
+        return T(0);
+    }
+
+    /**
+     * @brief Returns the end of the azimuth domain.
+     *
+     * @return One full turn, `2 * pi` radians.
+     */
+    [[nodiscard]] T lastUParameter() const override
+    {
+        return T(2) * static_cast<T>(vn::math::PI);
+    }
+
+    /**
+     * @brief Returns the start of the polar domain.
+     *
+     * @return 0 radians, the +Z pole.
+     */
+    [[nodiscard]] T firstVParameter() const override
+    {
+        return T(0);
+    }
+
+    /**
+     * @brief Returns the end of the polar domain.
+     *
+     * @return `pi` radians, the -Z pole.
+     */
+    [[nodiscard]] T lastVParameter() const override
+    {
+        return static_cast<T>(vn::math::PI);
+    }
+
+    /**
+     * @brief Returns true: the azimuth wraps around the axis.
+     *
+     * @return Always true.
+     */
+    [[nodiscard]] bool isUClosed() const override
+    {
+        return true;
+    }
+
+    /**
+     * @brief Returns false: the polar range ends at two points, not at a seam.
+     *
+     * @return Always false.
+     */
+    [[nodiscard]] bool isVClosed() const override
+    {
+        return false;
+    }
+
+    /**
+     * @brief Returns true: the azimuth repeats with its period.
+     *
+     * @return Always true.
+     */
+    [[nodiscard]] bool isUPeriodic() const override
+    {
+        return true;
+    }
+
+    /**
+     * @brief Returns false: the polar angle does not repeat.
+     *
+     * @return Always false.
+     */
+    [[nodiscard]] bool isVPeriodic() const override
+    {
+        return false;
+    }
+
+    /**
+     * @brief Returns the azimuth period in radians.
+     *
+     * @return `2 * pi`.
+     */
+    [[nodiscard]] T uPeriod() const override
+    {
+        return lastUParameter() - firstUParameter();
+    }
+
+    /**
+     * @brief Returns 0: the polar direction is not periodic.
+     *
+     * @return Always 0.
+     */
+    [[nodiscard]] T vPeriod() const override
+    {
+        return T(0);
+    }
+
+    /**
+     * @brief Returns `CN`: a sphere is analytic, and its poles are singularities of the parameterisation, not of the
+     * surface.
+     *
+     * @return `Continuity::CN`.
+     */
+    [[nodiscard]] Continuity continuity() const override
+    {
+        return Continuity::CN;
     }
 
     /**
