@@ -1,6 +1,6 @@
 #pragma once
 
-#include "geometry_global.hpp"
+#include "math_global.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -11,7 +11,7 @@
 
 #include "Continuity.hpp"
 
-VN_GEOMETRY_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief Returns how many knots a distinct-knots + multiplicities pair expands to.
@@ -272,4 +272,4 @@ template <vn::math::FP T>
     return Continuity::C3;
 }
 
-VN_GEOMETRY_NS_END
+VN_MATH_NS_END

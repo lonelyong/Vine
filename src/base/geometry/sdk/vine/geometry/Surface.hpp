@@ -2,11 +2,10 @@
 
 #include "geometry_global.hpp"
 
+#include <vine/math/Continuity.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
-
-#include "Continuity.hpp"
 
 VN_GEOMETRY_NS_BEGIN
 
@@ -23,7 +22,7 @@ VN_GEOMETRY_NS_BEGIN
  *   locus" turns into when it has to be callable through a base.
  * - A surface answers outside its declared rectangle too: the domain is a property of the surface, not a precondition
  *   of `evaluate`.
- * - `kDimension` stays as the one compile-time fact: a point here needs two parameters.
+ * - `kParameterCount` stays as the one compile-time fact: a point here needs two parameters.
  *
  * @warning
  * - A destructor here means `Plane` and `SphericalSurface` each carry a vptr and are no longer trivially copyable;
@@ -39,7 +38,7 @@ class Surface {
     using Vector     = vn::math::Vector3<T>;
 
     /// Number of parameters a point on the geometry needs.
-    static constexpr int kDimension = 2;
+    static constexpr int kParameterCount = 2;
 
   public:
     virtual ~Surface() = default;

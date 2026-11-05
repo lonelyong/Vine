@@ -2,7 +2,7 @@
 
 > **状态**：已采纳
 > **日期**：2026-11-04
-> **相关**：`../design/geometry-kinds.md` 2.8 / C13 / P10；`src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`（`isClampedKnotVector`、`knotContinuity`）、`BSplineCurve.hpp`、`BSplineSurface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp`
+> **相关**：`../design/geometry-kinds.md` 2.8 / C13 / P10；`src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`（`isClampedKnotVector`、`knotContinuity`）、`BSplineCurve.hpp`、`BSplineSurface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
 ## 背景
 
@@ -49,6 +49,6 @@
 
 ## 证据
 
-- `src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`：`isClampedKnotVector()` 的新逐项上限与 `knotContinuity()` 的说明。
+- `src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`：`isClampedKnotVector()` 的新逐项上限与 `knotContinuity()` 的说明。 <!-- drift-ok -->
 - `tests/test_geometry/GeometryKindsTest.cpp`：`aKnotVectorThatBreaksTheCurveIsNotACurve`——`{3, 3, 3}`（度 2）的曲线与
   曲面 `isValid()` 均为假；重数恰好等于度数的 `{3, 2, 3}` 仍为真且 `continuity() == C0`、`isCN(0)` 为真、`isCN(1)` 为假。

@@ -17,7 +17,7 @@
 ### 1.2 目标
 
 - 两个族各有一个名字，归属写在类型定义处（`class CircleCurve : public ConicCurve`）。
-- 分类可以在编译期查询（`std::is_base_of_v<Curve<double>, CircleCurved>`）与枚举（`Surface::kDimension`）。
+- 分类可以在编译期查询（`std::is_base_of_v<Curve<double>, CircleCurved>`）与枚举（`Surface::kParameterCount`）。
 - 几何可被当作“未知类型的参数化对象”使用：曲线是求值、导数、参数域、光滑度、反向映射（2.7），曲面是求值、两个一阶导、两个方向的参数域与闭合周期（2.10）。
 
 ### 1.3 非目标
@@ -144,7 +144,7 @@
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | 族分类 | 两个求值接口 + 曲面的两个分类标签，`Surface::kDimension` = 2 | 已落地 |
+| F1 | 族分类 | 两个求值接口 + 曲面的两个分类标签，`Surface::kParameterCount` = 2 | 已落地 |
 | F2 | 曲线参数化 | `LineCurve` / `CircleCurve` 的 `pointAt`（`Ray::pointAt` 同形，但 `Ray` 不在族内，见 2.1） | 已落地 |
 | F3 | 球面参数化 | `SphericalSurface` 的方位角 / 极角与法向 | 已落地 |
 | F4 | 解析包围盒 | 每个新类型的 `bounds()` 返回精确或紧致的 `Aabb<T>` | 已落地 |
@@ -205,7 +205,7 @@
 
 | 头文件 | 内容 |
 |---|---|
-| `Curve.hpp` / `Surface.hpp` | `Curve` 与 `Surface` 两个接口；`Surface::kDimension` |
+| `Curve.hpp` / `Surface.hpp` | `Curve` 与 `Surface` 两个接口；`Surface::kParameterCount` |
 | `Continuity.hpp` | 光滑度阶梯枚举，曲线与曲面共用 |
 | `Curve.hpp` / `ConicCurve.hpp` / `BoundedCurve.hpp` | 曲线族与两个中间层；具体曲线各自一个头 |
 | `LineCurve.hpp` / `CircleCurve.hpp` / `Ray.hpp` / `SphericalSurface.hpp` | 已实现的值类型与 `*f` / `*d` 别名；`Ray` 不在族内（2.1） |

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "geometry_global.hpp"
+#include "math_global.hpp"
 
 #include <cstdint>
 
-VN_GEOMETRY_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief How smooth a curve or surface is inside its domain: the highest derivative that stays continuous.
@@ -34,4 +34,4 @@ enum class Continuity : std::uint8_t {
     CN, ///< Infinitely differentiable: an analytic curve or surface.
 };
 
-VN_GEOMETRY_NS_END
+VN_MATH_NS_END

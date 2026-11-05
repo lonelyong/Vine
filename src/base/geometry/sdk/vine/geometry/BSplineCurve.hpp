@@ -8,12 +8,12 @@
 #include <utility>
 #include <vector>
 
+#include <vine/math/BSplineBasis.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
 
-#include "BSplineBasis.hpp"
 #include "BoundedCurve.hpp"
 
 VN_GEOMETRY_NS_BEGIN
@@ -109,7 +109,7 @@ class BSplineCurve : public BoundedCurve<T> {
      */
     [[nodiscard]] bool isValid() const override
     {
-        if (!isClampedKnotVector(std::span<const T>(knots), std::span<const int>(multiplicities), degree,
+        if (!math::isClampedKnotVector(std::span<const T>(knots), std::span<const int>(multiplicities), degree,
                                  poles.size())) {
             return false;
         }
@@ -135,7 +135,7 @@ class BSplineCurve : public BoundedCurve<T> {
      * @brief Returns the smoothness at the worst join, derived from the internal multiplicities.
      *
      * @details
-     * - The answer is the knot vector's own fact, so it comes from `knotContinuity()` in `BSplineBasis.hpp`: the worst
+     * - The answer is the knot vector's own fact, so it comes from `math::knotContinuity()` in `BSplineBasis.hpp`: the worst
      *   internal join is `C(degree - largest internal multiplicity)`, one polynomial span is `CN`, and the ladder tops
      *   out at `C3`. The end multiplicities are the clamp and are not joins.
      *
@@ -143,7 +143,7 @@ class BSplineCurve : public BoundedCurve<T> {
      */
     [[nodiscard]] Continuity continuity() const override
     {
-        return knotContinuity(degree, std::span<const int>(multiplicities));
+        return math::knotContinuity(degree, std::span<const int>(multiplicities));
     }
 
     /**
@@ -244,7 +244,7 @@ class BSplineCurve : public BoundedCurve<T> {
         const std::size_t first = span - static_cast<std::size_t>(degree);
         for (std::size_t step = 0; step <= static_cast<std::size_t>(degree); ++step) {
             const std::size_t index = first + step;
-            const T basis = basisValue<T>(knots, multiplicities, index, degree, derivative_order, parameter);
+            const T basis = math::basisValue<T>(knots, multiplicities, index, degree, derivative_order, parameter);
             const T factor = isRational() ? basis * weights[index] : basis;
             numerator += poles[index].toVector() * factor;
             weight += factor;
@@ -271,7 +271,7 @@ class BSplineCurve : public BoundedCurve<T> {
         }
 
         const T parameter      = clampedParameter(u);
-        const std::size_t span = knotSpan<T>(knots, multiplicities, degree, parameter);
+        const std::size_t span = math::knotSpan<T>(knots, multiplicities, degree, parameter);
 
         Vector numerator(T(0), T(0), T(0));
         T weight_sum = T(0);
@@ -301,7 +301,7 @@ class BSplineCurve : public BoundedCurve<T> {
         }
 
         const T parameter      = clampedParameter(u);
-        const std::size_t span = knotSpan<T>(knots, multiplicities, degree, parameter);
+        const std::size_t span = math::knotSpan<T>(knots, multiplicities, degree, parameter);
 
         Vector velocity(T(0), T(0), T(0));
         T weight_velocity = T(0);
@@ -338,7 +338,7 @@ class BSplineCurve : public BoundedCurve<T> {
         }
 
         const T parameter      = clampedParameter(u);
-        const std::size_t span = knotSpan<T>(knots, multiplicities, degree, parameter);
+        const std::size_t span = math::knotSpan<T>(knots, multiplicities, degree, parameter);
 
         Vector acceleration(T(0), T(0), T(0));
         T weight_acceleration = T(0);

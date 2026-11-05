@@ -1,6 +1,6 @@
 #pragma once
 
-#include "geometry_global.hpp"
+#include "math_global.hpp"
 
 #include <cstddef>
 #include <type_traits>
@@ -9,7 +9,7 @@
 
 #include <vine/math/Types.hpp>
 
-VN_GEOMETRY_NS_BEGIN
+VN_MATH_NS_BEGIN
 
 /**
  * @brief The type a difference of @p Value produces: `Point - Point` is a vector, everything else stays what it is.
@@ -77,4 +77,4 @@ template <typename Value>
     return result;
 }
 
-VN_GEOMETRY_NS_END
+VN_MATH_NS_END

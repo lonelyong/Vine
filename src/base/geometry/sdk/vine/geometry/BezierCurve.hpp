@@ -7,12 +7,12 @@
 #include <utility>
 #include <vector>
 
+#include <vine/math/BezierBlend.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
 
-#include "BezierBlend.hpp"
 #include "BoundedCurve.hpp"
 
 VN_GEOMETRY_NS_BEGIN
@@ -220,10 +220,10 @@ class BezierCurve : public BoundedCurve<T> {
         }
 
         if (!isRational()) {
-            return deCasteljau(poles, u);
+            return math::deCasteljau(poles, u);
         }
 
-        return homogeneousToPoint(deCasteljau(homogeneousPoles(), u));
+        return homogeneousToPoint(math::deCasteljau(homogeneousPoles(), u));
     }
 
     /**
@@ -245,12 +245,12 @@ class BezierCurve : public BoundedCurve<T> {
 
         const int order = degree();
         if (!isRational()) {
-            return deCasteljau(differences(poles), u) * T(order);
+            return math::deCasteljau(math::differences(poles), u) * T(order);
         }
 
         const auto homogeneous = homogeneousPoles();
-        const auto first        = differences(homogeneous);
-        return quotientDerivative(deCasteljau(homogeneous, u), deCasteljau(first, u) * T(order));
+        const auto first        = math::differences(homogeneous);
+        return quotientDerivative(math::deCasteljau(homogeneous, u), math::deCasteljau(first, u) * T(order));
     }
 
     /**
@@ -272,19 +272,19 @@ class BezierCurve : public BoundedCurve<T> {
 
         const int order = degree();
         if (!isRational()) {
-            const auto second = differences(differences(poles));
+            const auto second = math::differences(math::differences(poles));
             if (second.empty()) {
                 return Vector(T(0), T(0), T(0));
             }
-            return deCasteljau(second, u) * T(order * (order - 1));
+            return math::deCasteljau(second, u) * T(order * (order - 1));
         }
 
         const auto homogeneous  = homogeneousPoles();
-        const auto first        = differences(homogeneous);
-        const auto second       = differences(first);
+        const auto first        = math::differences(homogeneous);
+        const auto second       = math::differences(first);
         const auto acceleration = second.empty() ? Homogeneous{}
-                                                : deCasteljau(second, u) * T(order * (order - 1));
-        return quotientSecondDerivative(deCasteljau(homogeneous, u), deCasteljau(first, u) * T(order),
+                                                : math::deCasteljau(second, u) * T(order * (order - 1));
+        return quotientSecondDerivative(math::deCasteljau(homogeneous, u), math::deCasteljau(first, u) * T(order),
                                         acceleration);
     }
 
