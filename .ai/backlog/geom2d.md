@@ -12,7 +12,7 @@
 | # | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|---|
 | P1 | 平面偏置曲线 | `OffsetCurve`：与 3D 同一阻塞——偏置的二阶导需要基曲线的三阶导，而 `Curve<T>` 只到二阶（`../decisions/ADR-2026-11-04-curve-third-derivative.md`） | 有消费者需要等距偏置（2D 轮廓、刀补），且愿意接受加三阶导或偏置只到一阶导 | `../design/geometry-planar.md` 1.3、2.12 |
-| P2 | 通用平面 `TrimmedCurve` | 任意基曲线 + 参数区间的视图；`ArcCurve` 只是“圆 + 区间”的值类型版本 | 出现非圆基曲线需要裁剪（椭圆弧、样条修剪） | `../design/geometry-planar.md` 2.8 |
+| P2 | 通用平面 `TrimmedCurve` | 任意基曲线 + 参数区间的视图（`shared_ptr` 基曲线）；落地时**删除** `ArcCurve`，不与之并存（`../decisions/ADR-2026-11-05-planar-arc-is-a-value-type.md`） | 出现第一个要裁剪非圆基曲线的消费者（椭圆弧、样条修剪、导入轮廓截断） | `../design/geometry-planar.md` 2.8、D6 |
 
 ## 判据提醒
 

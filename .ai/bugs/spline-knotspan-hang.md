@@ -27,5 +27,7 @@
 
 - `BSplineBasisTest.TheSpanSearchTerminatesOnAOneApartBracket`（度 1、`u = 1.75`）与两个跨搜索用例：
   修前挂死，修后返回正确的跨号。
+- 同文件的属性测试把邻接逻辑一起钉住：基函数求和为 1 且非负（单位分解）、跨包含参数、解析导数与中心差分一致、
+  连续度由内部重数决定。这些用例在修前会因为第一项扫描就挂死。
 - `geom2d::BSplineCurve` 的 11 个用例把同一条路径当作正常行为覆盖（`FollowsItsKnots`、`ContinuityComesFromTheMultiplicities`）。
 - 全量 ctest 29/29。
