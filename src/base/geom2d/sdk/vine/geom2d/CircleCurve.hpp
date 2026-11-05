@@ -103,6 +103,20 @@ class CircleCurve : public Curve<T> {
     }
 
     /**
+     * @brief Returns the derivative of the acceleration: `radius * (sin u, -cos u)`.
+     *
+     * @details
+     * - It exists as a member, not on `Curve<T>`, because the offset curve asks its basis for it (2.13).
+     *
+     * @param u Angle in radians.
+     * @return `radius * (sin u, -cos u)`.
+     */
+    [[nodiscard]] Vector thirdDerivative(T u) const
+    {
+        return Vector{ std::sin(u), -std::cos(u) } * radius;
+    }
+
+    /**
      * @brief Returns zero: the natural range starts at the positive X axis.
      *
      * @return 0.

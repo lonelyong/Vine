@@ -208,6 +208,45 @@ class BezierCurve : public Curve<T> {
     }
 
     /**
+     * @brief Returns the third derivative at @p u.
+     *
+     * @details
+     * - The polynomial form is `n * (n - 1) * (n - 2)` times the Bezier curve of the third differences; a degree below
+     *   three answers the zero vector.
+     * - A rational curve answers `P''' = (A''' - 3 * P'' * w' - 3 * P' * w'' - P * w''') / w` on the homogeneous
+     *   derivatives, which is Leibniz' rule applied to `A / w`.
+     *
+     * @param u Parameter in `[0, 1]`.
+     * @return The jerk vector at @p u; the zero vector for an unusable curve.
+     */
+    [[nodiscard]] Vector thirdDerivative(T u) const
+    {
+        if (!isValid()) {
+            return Vector::zero();
+        }
+
+        const int order = degree();
+        const T   scale = T(order * (order - 1) * (order - 2));
+
+        if (!isRational()) {
+            const auto third = math::spline::differences(math::spline::differences(math::spline::differences(poles)));
+            if (third.empty()) {
+                return Vector::zero();
+            }
+            return math::spline::deCasteljau(third, u) * scale;
+        }
+
+        const auto homogeneous = homogeneousPoles();
+        const auto first       = math::spline::differences(homogeneous);
+        const auto second      = math::spline::differences(first);
+        const auto third       = math::spline::differences(second);
+        const auto jerk        = third.empty() ? Homogeneous{} : math::spline::deCasteljau(third, u) * scale;
+        return quotientThirdDerivative(
+            math::spline::deCasteljau(homogeneous, u), math::spline::deCasteljau(first, u) * T(order),
+            second.empty() ? Homogeneous{} : math::spline::deCasteljau(second, u) * T(order * (order - 1)), jerk);
+    }
+
+    /**
      * @brief Returns the start of the parameter range.
      *
      * @return 0.
@@ -416,6 +455,30 @@ class BezierCurve : public Curve<T> {
         const Vector first     = quotientDerivative(value, velocity);
         const Vector numerator = Vector(acceleration.x, acceleration.y) - first * (T(2) * velocity.w)
                                - point.toVector() * acceleration.w;
+        return numerator / value.w;
+    }
+
+    /**
+     * @brief Returns `(A''' - 3 * P'' * w' - 3 * P' * w'' - P * w''') / w`, the third derivative of a rational curve.
+     *
+     * @param value        Homogeneous value `(A, w)` at the parameter.
+     * @param velocity     Its first derivative `(A', w')` at the same parameter.
+     * @param acceleration Its second derivative `(A'', w'')` at the same parameter.
+     * @param jerk         Its third derivative `(A''', w''')` at the same parameter.
+     * @return The jerk vector; the zero vector when the weight vanished.
+     */
+    [[nodiscard]] static Vector quotientThirdDerivative(const Homogeneous& value, const Homogeneous& velocity,
+                                                        const Homogeneous& acceleration, const Homogeneous& jerk)
+    {
+        if (std::abs(value.w) <= vn::math::EPS<T>()) {
+            return Vector::zero();
+        }
+
+        const Vector first     = quotientDerivative(value, velocity);
+        const Vector second    = quotientSecondDerivative(value, velocity, acceleration);
+        const Vector numerator = Vector(jerk.x, jerk.y) - second * (T(3) * velocity.w)
+                               - first * (T(3) * acceleration.w)
+                               - homogeneousToPoint(value).toVector() * jerk.w;
         return numerator / value.w;
     }
 

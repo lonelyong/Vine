@@ -92,6 +92,17 @@ class ArcCurve : public Curve<T> {
     }
 
     /**
+     * @brief Returns the circle's third derivative at angle @p u.
+     *
+     * @param u Angle in radians.
+     * @return The jerk vector of the circle.
+     */
+    [[nodiscard]] Vector thirdDerivative(T u) const
+    {
+        return circle.thirdDerivative(u);
+    }
+
+    /**
      * @brief Returns the first parameter of the arc.
      *
      * @return The stored first angle.

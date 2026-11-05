@@ -122,3 +122,6 @@
 - **平面 `BSplineCurve`**：相异节点 + 重数（不展开）、极点、可选权重；域是 `[first knot, last knot]`，**域外参数夹到端点**（不像 Bezier 外推）；`continuity()` 来自 `knotContinuity(degree, multiplicities)`（内部重数决定 `C(度-重数)`）；求值是所在跨的 `p+1` 个 `basisValue` 加权和。
   `bounds()` 同 Bezier 为极点盒。`isValid()` = `isClampedKnotVector`（首末重数 = 度+1、内部重数 ≤ 度、极点计数对得上）+ 权重全正。
 - **`math::spline::knotSpan()` 曾有死循环**（2026-11-05 修）：`high` 初始化成 `last_span` 而不是 `last_span+1`，当括号只剩一格时 `mid` 不再前进——带内部节点的样条在第二个跨里求值会挂死。回归用例 `tests/test_math/BSplineBasisTest.cpp`，复盘 `.ai/bugs/spline-knotspan-hang.md`。
+- **平面偏置 `OffsetCurve<C>`**：**模板参数是具体基曲线类型**（按值持有 + 有符号距离），不是 `shared_ptr<Curve<T>>`。原因：二阶导需要基曲线的三阶导，而三阶导只在具体类型上是非虚成员（`Curve<T>` 仍十一项，见 `decisions/ADR-2026-11-05-planar-offset-curve.md`）。
+  符号约定：正距离在**行进方向左侧**（`-C'.y, C'.x` 归一化），逆时针圆的偏移半径是 `r - d`。反向基曲线要追同一条几何曲线必须用**取反**的距离。
+  尖点（速度为零）处法向为零向量，查询退回基曲线自身值；`continuity()` 转发基曲线并不保证尖点处可导；没有 `bounds()`。

@@ -15,6 +15,7 @@
 #include <vine/geom2d/EllipseCurve.hpp>
 #include <vine/geom2d/HyperbolaCurve.hpp>
 #include <vine/geom2d/LineCurve.hpp>
+#include <vine/geom2d/OffsetCurve.hpp>
 #include <vine/geom2d/ParabolaCurve.hpp>
 
 namespace
@@ -29,6 +30,7 @@ using vn::geom2d::Curve;
 using vn::geom2d::EllipseCurve;
 using vn::geom2d::HyperbolaCurve;
 using vn::geom2d::LineCurve;
+using vn::geom2d::OffsetCurve;
 using vn::geom2d::ParabolaCurve;
 
 template <vn::math::FP T>
@@ -107,6 +109,7 @@ void expectEveryPlanarCurveKeepsItsPromises()
                                      vn::math::Point2<T>(T(2), T(0)) });
     const BSplineCurve<T>   spline(2, { vn::math::Point2<T>(T(0), T(0)), vn::math::Point2<T>(T(1), T(2)),
                                         vn::math::Point2<T>(T(2), T(0)) }, { T(0), T(1) }, { 3, 3 });
+    const OffsetCurve<CircleCurve<T>> offset_circle(circle, T(0.5));
 
     expectInterfacePromises<T>(line);
     expectInterfacePromises<T>(circle);
@@ -117,6 +120,7 @@ void expectEveryPlanarCurveKeepsItsPromises()
     expectInterfacePromises<T>(full_turn);
     expectInterfacePromises<T>(bezier);
     expectInterfacePromises<T>(spline);
+    expectInterfacePromises<T>(offset_circle);
 }
 
 TEST(CurveContractTest, EveryPlanarCurveKeepsItsPromisesInDouble)

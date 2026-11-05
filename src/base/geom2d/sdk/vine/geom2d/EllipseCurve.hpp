@@ -121,6 +121,21 @@ class EllipseCurve : public ConicCurve<T> {
     }
 
     /**
+     * @brief Returns the derivative of the acceleration: `a * sin(u) * X - b * cos(u) * Y`.
+     *
+     * @details
+     * - It exists as a member, not on `Curve<T>`, because the offset curve asks its basis for it (2.13).
+     *
+     * @param u Eccentric angle in radians.
+     * @return The jerk vector at @p u.
+     */
+    [[nodiscard]] Vector thirdDerivative(T u) const
+    {
+        const Vector y_axis = yAxis();
+        return x_direction * (major_radius * std::sin(u)) + y_axis * (-minor_radius * std::cos(u));
+    }
+
+    /**
      * @brief Returns the start of the natural range.
      *
      * @return 0 radians, at the major axis.

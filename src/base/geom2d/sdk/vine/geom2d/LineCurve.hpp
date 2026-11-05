@@ -95,6 +95,22 @@ class LineCurve : public Curve<T> {
     }
 
     /**
+     * @brief Returns the zero vector: the parameterisation is linear, so nothing above the first derivative survives.
+     *
+     * @details
+     * - The member is not part of `Curve<T>`: it exists because `OffsetCurve` asks its basis for a third derivative, and
+     *   a curve type that cannot answer it does not have to (2.13).
+     *
+     * @param u Unused; the derivative does not depend on the parameter.
+     * @return The zero vector.
+     */
+    [[nodiscard]] Vector thirdDerivative(T u) const
+    {
+        (void)u;
+        return Vector::zero();
+    }
+
+    /**
      * @brief Returns negative infinity: the line has no first parameter.
      *
      * @return `-infinity`.

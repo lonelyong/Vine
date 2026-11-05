@@ -130,6 +130,21 @@ class ParabolaCurve : public ConicCurve<T> {
     }
 
     /**
+     * @brief Returns the zero vector: a parabola's acceleration is constant, so nothing above it survives.
+     *
+     * @details
+     * - It exists as a member, not on `Curve<T>`, because the offset curve asks its basis for it (2.13).
+     *
+     * @param u Unused; the derivative does not depend on the parameter.
+     * @return The zero vector.
+     */
+    [[nodiscard]] Vector thirdDerivative(T u) const
+    {
+        (void)u;
+        return Vector::zero();
+    }
+
+    /**
      * @brief Returns the lower end of the range: a parabola is unbounded.
      *
      * @return Negative infinity.

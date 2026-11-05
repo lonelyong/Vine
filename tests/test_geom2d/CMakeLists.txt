@@ -10,6 +10,7 @@ set(SRC_FILE_LIST
         CurveIntersectionTest.cpp
         CurveProjectionTest.cpp
         EllipseCurveTest.cpp
+        OffsetCurveTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)

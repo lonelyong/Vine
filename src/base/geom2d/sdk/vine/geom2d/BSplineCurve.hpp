@@ -357,6 +357,54 @@ class BSplineCurve : public Curve<T> {
     }
 
     /**
+     * @brief Returns the third derivative at @p u.
+     *
+     * @details
+     * - The polynomial form sums the third derivative of the basis functions against the poles.
+     * - The rational form answers `P''' = (A''' - 3 * P'' * w' - 3 * P' * w'' - P * w''') / w` on the homogeneous sums,
+     *   which is Leibniz' rule applied to `A / w`.
+     *
+     * @param u Parameter in the knot domain; clamped to it when outside.
+     * @return The jerk vector at @p u; the zero vector for a curve `isValid()` refuses.
+     */
+    [[nodiscard]] Vector thirdDerivative(T u) const
+    {
+        if (!isValid()) {
+            return Vector::zero();
+        }
+
+        const T           parameter = clampedParameter(u);
+        const std::size_t span      = math::spline::knotSpan<T>(knots, multiplicities, degree, parameter);
+
+        Vector jerk        = Vector::zero();
+        T      weight_jerk = T(0);
+        accumulate(span, parameter, 3, jerk, weight_jerk);
+
+        if (!isRational()) {
+            return jerk;
+        }
+
+        Vector value             = Vector::zero();
+        T      weight            = T(0);
+        accumulate(span, parameter, 0, value, weight);
+        Vector velocity          = Vector::zero();
+        T      weight_velocity   = T(0);
+        accumulate(span, parameter, 1, velocity, weight_velocity);
+        Vector acceleration      = Vector::zero();
+        T      weight_acceleration = T(0);
+        accumulate(span, parameter, 2, acceleration, weight_acceleration);
+        if (std::abs(weight) <= vn::math::EPS<T>()) {
+            return Vector::zero();
+        }
+
+        const Vector point  = value / weight;
+        const Vector first  = (velocity - point * weight_velocity) / weight;
+        const Vector second = (acceleration - first * (T(2) * weight_velocity) - point * weight_acceleration) / weight;
+        return (jerk - second * (T(3) * weight_velocity) - first * (T(3) * weight_acceleration) - point * weight_jerk)
+             / weight;
+    }
+
+    /**
      * @brief Returns whether the two end points of the clamped domain coincide.
      *
      * @details

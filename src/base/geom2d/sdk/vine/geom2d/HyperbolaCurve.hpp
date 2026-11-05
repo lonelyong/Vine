@@ -118,6 +118,20 @@ class HyperbolaCurve : public ConicCurve<T> {
     }
 
     /**
+     * @brief Returns the jerk vector, which is `derivative(u)` again: a hyperbolic angle differentiates into itself.
+     *
+     * @details
+     * - It exists as a member, not on `Curve<T>`, because the offset curve asks its basis for it (2.13).
+     *
+     * @param u Hyperbolic angle.
+     * @return `major_radius * sinh(u) * X + minor_radius * cosh(u) * Y`.
+     */
+    [[nodiscard]] Vector thirdDerivative(T u) const
+    {
+        return derivative(u);
+    }
+
+    /**
      * @brief Returns the lower end of the range: a hyperbola is unbounded.
      *
      * @return Negative infinity.
