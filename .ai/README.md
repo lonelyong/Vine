@@ -151,11 +151,12 @@
 - `robotics-kinematics.md` —— Robotics kinematics 要点。
 - `robotics-proximity.md` —— Robotics proximity 要点。
 
-## bugs/ —— Bug 记录（28）
+## bugs/ —— Bug 记录（29）
 
 现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
 
 - `vsg-embedded-init-crash.md`
+- `spline-knotspan-hang.md` —— `math::spline::knotSpan()` 在“最后两跨”括号上不前进，带内部节点的 B 样条求值挂死。
 - `vsg-embedded-blank-render.md`
 - `vsg-resize-distortion.md`
 - `vsg-maximize-black-band.md`

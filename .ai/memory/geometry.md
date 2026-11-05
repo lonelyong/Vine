@@ -119,3 +119,6 @@
 - **平面 `BezierCurve`**：数据模型即接口——`poles` + 可空 `weights`，`degree() = poles.size()-1`，`isRational()` 就是“权重非空”。求值/一二阶导都是 `math::spline::deCasteljau` 同一遍（极点、一阶差商、二阶差商 → 缩放 1 / n / n(n-1)）；有理形式在齐次坐标上算再除以权重。
   这是模块里**第一个持有内存**的曲线（R2 的书面例外：深拷贝、非 trivially copyable、每次求值分配一份临时数组）。`bounds()` 是**极点盒**（凸包性质，保包含但不紧），紧盒要解导数的根，今天不做。
   族级算法（最近点、求交、契约扫查）不需要任何修改就能接受它 —— 这正是十一项契约要证明的事。
+- **平面 `BSplineCurve`**：相异节点 + 重数（不展开）、极点、可选权重；域是 `[first knot, last knot]`，**域外参数夹到端点**（不像 Bezier 外推）；`continuity()` 来自 `knotContinuity(degree, multiplicities)`（内部重数决定 `C(度-重数)`）；求值是所在跨的 `p+1` 个 `basisValue` 加权和。
+  `bounds()` 同 Bezier 为极点盒。`isValid()` = `isClampedKnotVector`（首末重数 = 度+1、内部重数 ≤ 度、极点计数对得上）+ 权重全正。
+- **`math::spline::knotSpan()` 曾有死循环**（2026-11-05 修）：`high` 初始化成 `last_span` 而不是 `last_span+1`，当括号只剩一格时 `mid` 不再前进——带内部节点的样条在第二个跨里求值会挂死。回归用例 `tests/test_math/BSplineBasisTest.cpp`，复盘 `.ai/bugs/spline-knotspan-hang.md`。

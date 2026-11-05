@@ -93,7 +93,9 @@ template <vn::math::FP T>
     }
 
     std::size_t low  = first_span;
-    std::size_t high = last_span;
+    // One past the last span, so the invariant `U[low] <= u < U[high]` holds throughout the search. With `high` at the
+    // last span instead, a one-apart bracket (`high == low + 1`) makes `mid == low`, and `low = mid` never advances.
+    std::size_t high = last_span + 1;
     std::size_t mid  = (low + high) / 2;
     while (u < knotAt(knots, multiplicities, mid) || u >= knotAt(knots, multiplicities, mid + 1)) {
         if (u < knotAt(knots, multiplicities, mid)) {

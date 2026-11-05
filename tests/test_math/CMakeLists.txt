@@ -1,5 +1,6 @@
 set(TEST_NAME test_math)
 set(SRC_FILE_LIST
+	BSplineBasisTest.cpp
 	EigenDecompositionTest.cpp
 	Matrix3x3Test.cpp
 	Matrix4x4Test.cpp
