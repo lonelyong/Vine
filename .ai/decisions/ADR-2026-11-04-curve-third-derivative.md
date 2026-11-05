@@ -2,7 +2,7 @@
 
 > **状态**：已采纳
 > **日期**：2026-11-04
-> **相关**：`../design/geometry-kinds.md` 2.7 / 2.8 / D9；`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`OffsetCurve.hpp`；`tests/test_geometry/GeometryKindsTest.cpp`
+> **相关**：`../design/geometry-kinds.md` 2.7 / 2.8 / D9；`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`OffsetCurve.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
 ## 背景
 
@@ -41,8 +41,8 @@
 
 ## 证据
 
-- `src/base/geometry/sdk/vine/geometry/OffsetCurve.hpp`：`evaluate()` / `derivative()` 的实现与 `secondDerivative()`
+- `src/base/geometry/sdk/vine/geometry/OffsetCurve.hpp`：`evaluate()` / `derivative()` 的实现与 `secondDerivative()` <!-- drift-ok -->
   上的 `= 0` 及说明。
-- `tests/test_geometry/GeometryKindsTest.cpp`：`static_assert(std::is_abstract_v<OffsetCurved>)`、
+- `tests/test_geometry/GeometryKindsTest.cpp`：`static_assert(std::is_abstract_v<OffsetCurved>)`、 <!-- drift-ok -->
   `OffsetStub` 只补 `secondDerivative()`、`anOffsetCurveInheritsTheBasisDomain` 覆盖域转发与位移几何。
 - OCCT `Geom_OffsetCurveUtils.pxx` 的 `CalculateD2` 用到了基曲线的 `D3`，即同一阻塞在参考实现里的形态。

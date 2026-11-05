@@ -44,6 +44,6 @@
 
 ## 证据
 
-- 测试：`tests/test_geometry/SolidTest.cpp`（接口抽象、两个视图一致、标签派生、体积判据）、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`、`SolidTessellationTest.cpp`；`test_geometry` 165 项全绿，`ctest` 28 项中除环境性的 `check_translations`（缺 `lupdate`）外全部通过。
+- 测试：`tests/test_geometry/SolidTest.cpp`（接口抽象、两个视图一致、标签派生、体积判据）、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`、`SolidTessellationTest.cpp`；`test_geometry` 165 项全绿，`ctest` 28 项中除环境性的 `check_translations`（缺 `lupdate`）外全部通过。 <!-- drift-ok -->
 - 门禁：`check_public_docs.py` 0 new、`check_include_hygiene.py` 0、`check_export_annotations.py` 0、`check_diagnostic_formats.py` 0、`check_ai_docs.py --strict` 0、`check_design_docs.py` 0。
 - 外部对照：Box2D v3 用 tag + union（选项 B 的 C 风格等价物）；PhysX 的几何族有基类但**没有虚函数**，行为由 `PxGeometryQuery` 按 tag 分派；Bullet / Jolt 用虚函数，代价是形状必须指针持有——它们买的是第三方扩展，本仓库不卖。

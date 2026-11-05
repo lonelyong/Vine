@@ -2,7 +2,7 @@
 
 > **状态**：已采纳（曲线族部分已被 `ADR-2026-11-04-curve-evaluation-interface.md` 取代：`Curve<T>` 现为虚接口）
 > **日期**：2026-11-04
-> **影响范围**：`src/base/geometry/sdk/vine/geometry`（曲线与曲面族按“一个类型一个头”补齐并改名：`Curve` / `LineCurve` / `CircleCurve` / `ConicCurve` / `BoundedCurve` / `OffsetCurve` / `Surface` / `ElementarySurface` / `BoundedSurface` 及各占位类型；既有类型声明归属）、`tests/test_geometry`
+> **影响范围**：`src/base/geometry/sdk/vine/geometry`（曲线与曲面族按“一个类型一个头”补齐并改名：`Curve` / `LineCurve` / `CircleCurve` / `ConicCurve` / `BoundedCurve` / `OffsetCurve` / `Surface` / `ElementarySurface` / `BoundedSurface` 及各占位类型；既有类型声明归属）、`tests/test_geometry` <!-- drift-ok -->
 
 ## 背景
 

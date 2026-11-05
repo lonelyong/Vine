@@ -235,7 +235,7 @@
 - **N1**：`LineCurve::pointAt(t)` 的 `t` 乘的是 `direction` 的长度，只有单位方向时它才是距离；`Ray` 的方向恒为单位，所以两者同名不同量纲。
 - **N2**：默认构造的准入规则与 2.3 一致：要么默认值是有意义的几何，要么是可被 `isValid()` 认出的空状态；旋转面与平面两者都不是，所以不声明默认构造。`Plane` 是唯一不带 `Surface` 后缀的曲面（平面没有第二个含义，OCCT 同样如此）。
 - **R1**：零分配、不抛异常的范围是 `LineCurve` / 圆锥曲线 / `Aabb` 的 `pointAt` / `bounds` / `derivative`；`BSplineCurve` 的求值也做到零分配（只用局部标量），而 `BezierCurve` 每次求值拷贝一份极点数组的临时缓冲（de Casteljau 需要 `n` 个暂存值，不为此引入可变成员）。
-- **R2**：族分类不新增外部依赖；标签只 include `geometry_global.hpp`，曲线接口额外只 include `vine/math` 的 `Point3` / `Vector3` 与本目录的 `Continuity.hpp`。
+- **R2**：族分类不新增外部依赖；标签只 include `geom3d_global.hpp`，曲线接口额外只 include `vine/math` 的 `Point3` / `Vector3` 与本目录的 `Continuity.hpp`。
 
 ## 6. 注意事项与陷阱
 

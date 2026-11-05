@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include <vine/math/BezierBlend.hpp>
+#include <vine/math/spline/BezierBlend.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Types.hpp>
@@ -435,7 +435,7 @@ class BezierSurface : public BoundedSurface<T> {
         for (int iv = 0; iv < v_pole_count; ++iv) {
             const auto first = values.begin() + static_cast<std::ptrdiff_t>(offset(0, iv));
             std::vector<Value> row(first, first + u_pole_count);
-            blended.push_back(math::deCasteljau(std::move(row), u));
+            blended.push_back(math::spline::deCasteljau(std::move(row), u));
         }
 
         return blended;
@@ -449,15 +449,15 @@ class BezierSurface : public BoundedSurface<T> {
      * @return One `u`-derivative value per row, in `v` order.
      */
     template <typename Value>
-    [[nodiscard]] std::vector<math::DifferenceOf<Value>> blendRowDifferences(const std::vector<Value>& values, T u) const
+    [[nodiscard]] std::vector<math::spline::DifferenceOf<Value>> blendRowDifferences(const std::vector<Value>& values, T u) const
     {
-        std::vector<math::DifferenceOf<Value>> blended;
+        std::vector<math::spline::DifferenceOf<Value>> blended;
         blended.reserve(static_cast<std::size_t>(v_pole_count));
 
         for (int iv = 0; iv < v_pole_count; ++iv) {
             const auto first = values.begin() + static_cast<std::ptrdiff_t>(offset(0, iv));
             std::vector<Value> row(first, first + u_pole_count);
-            blended.push_back(math::deCasteljau(math::differences(row), u) * T(degreeU()));
+            blended.push_back(math::spline::deCasteljau(math::spline::differences(row), u) * T(degreeU()));
         }
 
         return blended;
@@ -499,8 +499,8 @@ class BezierSurface : public BoundedSurface<T> {
         std::vector<T>     weight_net;
         weightedNets(weighted, weight_net);
 
-        numerator = math::deCasteljau(blendRows(weighted, u), v);
-        weight    = math::deCasteljau(blendRows(weight_net, u), v);
+        numerator = math::spline::deCasteljau(blendRows(weighted, u), v);
+        weight    = math::spline::deCasteljau(blendRows(weight_net, u), v);
     }
 
     /**
@@ -519,13 +519,13 @@ class BezierSurface : public BoundedSurface<T> {
         weightedNets(weighted, weight_net);
 
         if (along_u) {
-            numerator_derivative = math::deCasteljau(blendRowDifferences(weighted, u), v);
-            weight_derivative    = math::deCasteljau(blendRowDifferences(weight_net, u), v);
+            numerator_derivative = math::spline::deCasteljau(blendRowDifferences(weighted, u), v);
+            weight_derivative    = math::spline::deCasteljau(blendRowDifferences(weight_net, u), v);
             return;
         }
 
-        numerator_derivative = math::deCasteljau(math::differences(blendRows(weighted, u)), v) * T(degreeV());
-        weight_derivative = math::deCasteljau(math::differences(blendRows(weight_net, u)), v) * T(degreeV());
+        numerator_derivative = math::spline::deCasteljau(math::spline::differences(blendRows(weighted, u)), v) * T(degreeV());
+        weight_derivative = math::spline::deCasteljau(math::spline::differences(blendRows(weight_net, u)), v) * T(degreeV());
     }
 
     /**

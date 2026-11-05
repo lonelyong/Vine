@@ -2,7 +2,7 @@
 
 > **状态**：已采纳
 > **日期**：2026-11-04
-> **影响范围**：`src/base/geometry`、`src/base/brep`、`src/robotics/io`、`tests/test_brep`、`tests/test_robotics_io`、`tests/test_proximity`、`tests/test_graphics`
+> **影响范围**：`src/base/geometry`、`src/base/brep`、`src/robotics/io`、`tests/test_brep`、`tests/test_robotics_io`、`tests/test_proximity`、`tests/test_graphics` <!-- drift-ok -->
 
 ## 背景
 

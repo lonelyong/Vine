@@ -2,7 +2,7 @@
 
 > **状态**：已采纳
 > **日期**：2026-11-04
-> **影响范围**：`src/base/geometry/sdk/vine/geometry/Surface.hpp`、`ElementarySurface.hpp`、`BoundedSurface.hpp`、`Plane.hpp`、`SphericalSurface.hpp`、六个占位曲面头、`tests/test_geometry`
+> **影响范围**：`src/base/geometry/sdk/vine/geometry/Surface.hpp`、`ElementarySurface.hpp`、`BoundedSurface.hpp`、`Plane.hpp`、`SphericalSurface.hpp`、六个占位曲面头、`tests/test_geometry` <!-- drift-ok -->
 
 ## 背景
 
@@ -36,6 +36,6 @@
 
 ## 后果
 
-- **破坏性**：`Surface` / `ElementarySurface` / `BoundedSurface` 都是模板了，必须写 `<T>`；仓库内唯一消费点是 `tests/test_geometry`。
+- **破坏性**：`Surface` / `ElementarySurface` / `BoundedSurface` 都是模板了，必须写 `<T>`；仓库内唯一消费点是 `tests/test_geometry`。 <!-- drift-ok -->
 - `Plane` / `SphericalSurface` 各多一个 vptr，不再是 trivially copyable；`sizeof` 断言补上 `sizeof(void*)`。
 - 曲面与曲线从此同一个形状，现行设计记录在 `.ai/design/geometry-kinds.md` 2.1 / 2.2 / 2.10。

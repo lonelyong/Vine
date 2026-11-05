@@ -41,5 +41,5 @@ OCCT 的答案是前者：`Geom_ElementarySurface` 持有一个 `gp_Ax3 pos`，�
 
 - `AxisSurface.hpp`：框架、`yAxis()`、`continuity()`、`hasUsableAxis()`。 <!-- drift-ok -->
 - `Frame.hpp`：`inPlaneAxis` 的唯一实现；`ConicCurve.hpp` / `Plane.hpp` 改为调用它。
-- `tests/test_geometry/GeometryKindsTest.cpp`：`aCylindricalSurfaceWrapsItsAxis`、`aConicalSurfaceWalksItsGeneratrix`、`aToroidalSurfaceClosesInBothDirections`，以及静态断言 `is_base_of_v<AxisSurface<double>, …>`、`sizeof(CylindricalSurfaced)` 等三项大小断言。
+- `tests/test_geometry/GeometryKindsTest.cpp`：`aCylindricalSurfaceWrapsItsAxis`、`aConicalSurfaceWalksItsGeneratrix`、`aToroidalSurfaceClosesInBothDirections`，以及静态断言 `is_base_of_v<AxisSurface<double>, …>`、`sizeof(CylindricalSurfaced)` 等三项大小断言。 <!-- drift-ok -->
 - OCCT `Geom_CylindricalSurface` / `Geom_ConicalSurface` / `Geom_ToroidalSurface` 与 `ElSLib::CylinderValue` / `ConeValue` / `TorusValue`：参数化约定的来源（圆锥的 `v` 是母线弧长，圆环的 `v` 从赤道面量起）。

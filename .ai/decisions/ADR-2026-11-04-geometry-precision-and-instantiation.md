@@ -2,7 +2,7 @@
 
 > **状态**：已采纳
 > **日期**：2026-11-04
-> **影响范围**：`src/base/geometry/sdk/vine/geometry`（全部值类型与曲线曲面族的 `T`）、`src/base/geometry/src/Instantiations.cpp`（新增）、`LineCurve.cpp` / `Obb.cpp` / `Plane.cpp` 的显式实例化、`.ai/design/geometry-primitives.md` 2.8
+> **影响范围**：`src/base/geometry/sdk/vine/geometry`（全部值类型与曲线曲面族的 `T`）、`src/base/geometry/src/Instantiations.cpp`（新增）、`LineCurve.cpp` / `Obb.cpp` / `Plane.cpp` 的显式实例化、`.ai/design/geometry-primitives.md` 2.8 <!-- drift-ok -->
 
 ## 背景
 
@@ -15,7 +15,7 @@
 
 1. **保留 `T`**。几何值类型继续以精度参数化。
 2. **两种精度都随库发布**：`float` 与 `double` 各显式实例化一次并导出，`*f` / `*d` 别名都保留。
-3. **实例化集中且完整**：纯头文件类型的实例化清单放在 `src/base/geometry/src/Instantiations.cpp`（每个类型两行）；有 `src/` 实现的 `LineCurve` / `Obb` / `Plane` 继续在自己的 `.cpp` 里实例化，因为显式实例化只能实例化该翻译单元看得见的成员定义。
+3. **实例化集中且完整**：纯头文件类型的实例化清单放在 `src/base/geometry/src/Instantiations.cpp`（每个类型两行）；有 `src/` 实现的 `LineCurve` / `Obb` / `Plane` 继续在自己的 `.cpp` 里实例化，因为显式实例化只能实例化该翻译单元看得见的成员定义。 <!-- drift-ok -->
 4. **不加 `extern template`**：内联仍发生在调用方，导出符号只是"不能内联时的兜底"。
 
 ## 理由

@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include <vine/math/BSplineBasis.hpp>
+#include <vine/math/spline/BSplineBasis.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Types.hpp>
@@ -119,7 +119,7 @@ class BSplineSurface : public BoundedSurface<T> {
      * @brief Returns whether the net, the knots and the weights form a usable patch.
      *
      * @details
-     * - Both directions must be in clamped form (`math::isClampedKnotVector()`), the net length must match the counts, and the
+     * - Both directions must be in clamped form (`math::spline::isClampedKnotVector()`), the net length must match the counts, and the
      *   weights must be absent or one strictly positive value per pole.
      *
      * @return True when every count agrees and both ends are clamped.
@@ -135,12 +135,12 @@ class BSplineSurface : public BoundedSurface<T> {
             return false;
         }
 
-        if (!math::isClampedKnotVector(std::span<const T>(u_knots), std::span<const int>(u_multiplicities), degree_u,
+        if (!math::spline::isClampedKnotVector(std::span<const T>(u_knots), std::span<const int>(u_multiplicities), degree_u,
                                  static_cast<std::size_t>(u_pole_count))) {
             return false;
         }
 
-        if (!math::isClampedKnotVector(std::span<const T>(v_knots), std::span<const int>(v_multiplicities), degree_v,
+        if (!math::spline::isClampedKnotVector(std::span<const T>(v_knots), std::span<const int>(v_multiplicities), degree_v,
                                  static_cast<std::size_t>(v_pole_count))) {
             return false;
         }
@@ -166,15 +166,15 @@ class BSplineSurface : public BoundedSurface<T> {
      * @brief Returns the smoothness at the worst join of either direction.
      *
      * @details
-     * - Each direction answers its own knot vector's fact through `math::knotContinuity()` in `BSplineBasis.hpp`, and the
+     * - Each direction answers its own knot vector's fact through `math::spline::knotContinuity()` in `BSplineBasis.hpp`, and the
      *   patch is as smooth as its worse direction.
      *
      * @return The continuity at the least smooth join of either direction.
      */
     [[nodiscard]] Continuity continuity() const override
     {
-        const Continuity along_u = math::knotContinuity(degree_u, std::span<const int>(u_multiplicities));
-        const Continuity along_v = math::knotContinuity(degree_v, std::span<const int>(v_multiplicities));
+        const Continuity along_u = math::spline::knotContinuity(degree_u, std::span<const int>(u_multiplicities));
+        const Continuity along_v = math::spline::knotContinuity(degree_v, std::span<const int>(v_multiplicities));
         return along_u < along_v ? along_u : along_v;
     }
 
@@ -423,20 +423,20 @@ class BSplineSurface : public BoundedSurface<T> {
         numerator = Vector(T(0), T(0), T(0));
         weight    = T(0);
 
-        const std::size_t u_span  = math::knotSpan<T>(u_knots, u_multiplicities, degree_u, u);
-        const std::size_t v_span  = math::knotSpan<T>(v_knots, v_multiplicities, degree_v, v);
+        const std::size_t u_span  = math::spline::knotSpan<T>(u_knots, u_multiplicities, degree_u, u);
+        const std::size_t v_span  = math::spline::knotSpan<T>(v_knots, v_multiplicities, degree_v, v);
         const std::size_t u_first = u_span - static_cast<std::size_t>(degree_u);
         const std::size_t v_first = v_span - static_cast<std::size_t>(degree_v);
 
         for (std::size_t step_v = 0; step_v <= static_cast<std::size_t>(degree_v); ++step_v) {
             const std::size_t j = v_first + step_v;
-            const T basis_v = math::basisValue<T>(v_knots, v_multiplicities, j, degree_v, v_derivative, v);
+            const T basis_v = math::spline::basisValue<T>(v_knots, v_multiplicities, j, degree_v, v_derivative, v);
 
             Vector row(T(0), T(0), T(0));
             T      row_weight = T(0);
             for (std::size_t step_u = 0; step_u <= static_cast<std::size_t>(degree_u); ++step_u) {
                 const std::size_t i      = u_first + step_u;
-                const T           basis_u = math::basisValue<T>(u_knots, u_multiplicities, i, degree_u, u_derivative, u);
+                const T           basis_u = math::spline::basisValue<T>(u_knots, u_multiplicities, i, degree_u, u_derivative, u);
                 const T           factor  = isRational() ? basis_u * weights[offset(static_cast<int>(i),
                                                                                    static_cast<int>(j))]
                                                          : basis_u;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "math_global.hpp"
+#include <vine/math/math_global.hpp>
 
 #include <cstddef>
 #include <type_traits>
@@ -10,6 +10,8 @@
 #include <vine/math/Types.hpp>
 
 VN_MATH_NS_BEGIN
+namespace spline
+{
 
 /**
  * @brief The type a difference of @p Value produces: `Point - Point` is a vector, everything else stays what it is.
@@ -77,4 +79,5 @@ template <typename Value>
     return result;
 }
 
+} // namespace spline
 VN_MATH_NS_END

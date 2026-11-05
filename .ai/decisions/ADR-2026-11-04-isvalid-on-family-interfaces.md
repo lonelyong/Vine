@@ -2,7 +2,7 @@
 
 > **状态**：已采纳
 > **日期**：2026-11-04
-> **相关**：`../design/geometry-kinds.md` 2.7 / 2.10 / C12 / §9；`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Surface.hpp`、`Plane.hpp`；`tests/test_geometry/GeometryKindsTest.cpp`
+> **相关**：`../design/geometry-kinds.md` 2.7 / 2.10 / C12 / §9；`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Surface.hpp`、`Plane.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
 ## 背景
 
@@ -47,8 +47,8 @@
 
 ## 证据
 
-- `src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Surface.hpp`：新增的纯虚函数与 `@details`。
-- `src/base/geometry/sdk/vine/geometry/Plane.hpp`：唯一新写的实现，`normal.length() > EPS`。
-- `tests/test_geometry/GeometryKindsTest.cpp`：两行 `static_assert`（接口上可问、返回 `bool`）、
+- `src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Surface.hpp`：新增的纯虚函数与 `@details`。 <!-- drift-ok -->
+- `src/base/geometry/sdk/vine/geometry/Plane.hpp`：唯一新写的实现，`normal.length() > EPS`。 <!-- drift-ok -->
+- `tests/test_geometry/GeometryKindsTest.cpp`：两行 `static_assert`（接口上可问、返回 `bool`）、 <!-- drift-ok -->
   `validityIsAskableThroughTheInterface`（五次经接口提问）、族级扫查里的 `EXPECT_TRUE(curve.isValid())`。
 - `src/base/models/sdk/vine/models/Shape.hpp`：`virtual bool isValid() const;`——同一问法的先例。

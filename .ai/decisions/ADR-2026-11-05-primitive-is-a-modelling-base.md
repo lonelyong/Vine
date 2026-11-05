@@ -50,5 +50,5 @@
 
 ## 证据
 
-- 测试：`tests/test_geometry/SolidTest.cpp` 覆盖"基类不持几何"（`Profile`）、"子类按需构造实体"、"五个子类各报自己的标签"、`solidShapeOf` 只认五个、`visitPrimitive` 交出具体类型；`SolidDistanceTest` / `SolidIntersectionTest` / `SolidTessellationTest` 走子类到实体；`test_brep`、`test_robotics_io`、`test_proximity`、`test_graphics`、`test_meshio`、`test_brepio`、`test_gui` 全绿。
+- 测试：`tests/test_geometry/SolidTest.cpp` 覆盖"基类不持几何"（`Profile`）、"子类按需构造实体"、"五个子类各报自己的标签"、`solidShapeOf` 只认五个、`visitPrimitive` 交出具体类型；`SolidDistanceTest` / `SolidIntersectionTest` / `SolidTessellationTest` 走子类到实体；`test_brep`、`test_robotics_io`、`test_proximity`、`test_graphics`、`test_meshio`、`test_brepio`、`test_gui` 全绿。 <!-- drift-ok -->
 - 门禁：`check_ai_docs.py --strict`、`check_design_docs.py`、`check_public_docs.py`、`check_include_hygiene.py`、`check_export_annotations.py` 见提交说明。

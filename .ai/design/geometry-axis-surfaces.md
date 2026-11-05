@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-04
 > **范围**：旋转面（圆柱 / 圆锥 / 圆环）的框架与参数化、矩形裁剪曲面，以及双参数样条曲面（贝塞尔 / B 样条）的数据模型与求值。
 > 不含 `Surface<T>` 接口本身（见 `geometry-kinds.md` 2.10），不含族的归属（见同文档 2.3），不含求交 / 距离 / 三角化算法。
-> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`、`RectangularTrimmedSurface.hpp`、`BezierSurface.hpp`、`BSplineSurface.hpp`、`BezierBlend.hpp`、`BSplineBasis.hpp`；`tests/test_geom3d/GeometryKindsTest.cpp`
+> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`、`RectangularTrimmedSurface.hpp`、`BezierSurface.hpp`、`BSplineSurface.hpp`；`src/base/math/sdk/vine/math/spline/BezierBlend.hpp`、`BSplineBasis.hpp`；`tests/test_geom3d/GeometryKindsTest.cpp`
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -55,7 +55,7 @@
 ### 2.5 样条曲面复用曲线侧的混合与基函数，不写第二份
 
 - **是什么**：`BezierSurface` / `BSplineSurface` 都是 `BoundedSurface<T>` 的值类型：行优先扁平的极点数组 + `u_pole_count` / `v_pole_count`（索引 `iu + u_pole_count * iv`，`u` 连续）、可选的等长权重数组（空 = 多项式）。求值是两次一维过程的外积：先沿 `u` 把每一行混合成一点，再沿 `v` 混合这些点；有理形式在四维齐次坐标上做同样的双重混合，最后除权重。
-- **共享的两件基础设施**：`BezierBlend.hpp`（de Casteljau 与有限差分，贝塞尔曲线与贝塞尔曲面共用）、`BSplineBasis.hpp`（相异节点 + 重数 → 扁平索引、`knotSpan`、`basisValue`、`isClampedKnotVector`，以及“重数 → `Continuity` 阶梯”的 `knotContinuity`）。曲面侧没有第二份节点扫描、基函数递推或连续性阶梯（`G1`，C3）。
+- **共享的两件基础设施**（在 `vn::math::spline`，两个几何模块共用一份）：`BezierBlend.hpp`（de Casteljau 与有限差分，贝塞尔曲线与贝塞尔曲面共用）、`BSplineBasis.hpp`（相异节点 + 重数 → 扁平索引、`knotSpan`、`basisValue`、`isClampedKnotVector`，以及“重数 → `Continuity` 阶梯”的 `knotContinuity`）。曲面侧没有第二份节点扫描、基函数递推或连续性阶梯（`G1`，C3）。
 - **度数与计数只有一个家**：`BezierSurface` 的度数是计数减一，因此不存；`BSplineSurface` 存两个度数，因为节点向量不蕴含它。
 - **闭合是数据事实**：两个方向首末行 / 列的**齐次**极点逐点相等即闭合。`BSplineSurface` 也用数据判定——夹持形式下 `v = v_min` 的边界曲线就是首行极点的曲线，而夹持基线性无关，所以曲线相等当且仅当极点相等，不必求值比较（`G10`）。
 - **`continuity()`**：贝塞尔恒为 `CN`（段内多项式）；B 样条取两个方向 `C(度 − 最大内部重数)` 的**更差者**，无内部节点的一侧视为 `CN`——这正是把 B 样条曲面做成一个类型的理由（`G1`）。

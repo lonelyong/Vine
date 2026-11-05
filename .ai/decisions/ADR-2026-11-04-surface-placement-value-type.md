@@ -2,7 +2,7 @@
 
 > **状态**：已采纳（取代 `ADR-2026-11-04-axis-surface-frame.md` 的 C 选项）
 > **日期**：2026-11-04
-> **相关**：`../design/geometry-axis-surfaces.md` 2.1 / 2.5 / C1 / D1；`src/base/geometry/sdk/vine/geometry/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp`
+> **相关**：`../design/geometry-axis-surfaces.md` 2.1 / 2.5 / C1 / D1；`src/base/geometry/sdk/vine/geometry/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
 ## 背景
 
@@ -32,6 +32,6 @@
 
 ## 证据
 
-- `src/base/geometry/sdk/vine/geometry/Placement.hpp`；三个曲面各持 `Placement<T> placement;`。
-- `src/base/geometry/src/Instantiations.cpp`：`Placement<float>` / `Placement<double>` 两行实例化；`AxisSurface` 两行已删除。
-- `tests/test_geometry/GeometryKindsTest.cpp`：`aPlacementCompletesAndNormalisesItsFrame`（默认框架、非单位首选方向的投影、退化轴回退）、`static_assert(sizeof(Placement<double>) == 3 * sizeof(Point3d))`、`is_trivially_copyable_v<Placement<double>>`。
+- `src/base/geometry/sdk/vine/geometry/Placement.hpp`；三个曲面各持 `Placement<T> placement;`。 <!-- drift-ok -->
+- `src/base/geometry/src/Instantiations.cpp`：`Placement<float>` / `Placement<double>` 两行实例化；`AxisSurface` 两行已删除。 <!-- drift-ok -->
+- `tests/test_geometry/GeometryKindsTest.cpp`：`aPlacementCompletesAndNormalisesItsFrame`（默认框架、非单位首选方向的投影、退化轴回退）、`static_assert(sizeof(Placement<double>) == 3 * sizeof(Point3d))`、`is_trivially_copyable_v<Placement<double>>`。 <!-- drift-ok -->

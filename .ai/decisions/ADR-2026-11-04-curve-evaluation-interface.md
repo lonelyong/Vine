@@ -2,7 +2,7 @@
 
 > **状态**：已采纳（第 6 条已被 `ADR-2026-11-04-surface-evaluation-interface.md` 取代）
 > **日期**：2026-11-04
-> **影响范围**：`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Continuity.hpp`、`BoundedCurve.hpp`、`TrimmedCurve.hpp`、`LineCurve.hpp`、`CircleCurve.hpp`、`Ray.hpp`、`tests/test_geometry`
+> **影响范围**：`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Continuity.hpp`、`BoundedCurve.hpp`、`TrimmedCurve.hpp`、`LineCurve.hpp`、`CircleCurve.hpp`、`Ray.hpp`、`tests/test_geometry` <!-- drift-ok -->
 
 ## 背景
 

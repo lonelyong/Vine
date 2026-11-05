@@ -1,17 +1,18 @@
 #pragma once
 
-#include "math_global.hpp"
+#include <vine/math/math_global.hpp>
 
 #include <algorithm>
 #include <cstddef>
 #include <span>
 
+#include <vine/math/Continuity.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Types.hpp>
 
-#include "Continuity.hpp"
-
 VN_MATH_NS_BEGIN
+namespace spline
+{
 
 /**
  * @brief Returns how many knots a distinct-knots + multiplicities pair expands to.
@@ -272,4 +273,5 @@ template <vn::math::FP T>
     return Continuity::C3;
 }
 
+} // namespace spline
 VN_MATH_NS_END

@@ -2,7 +2,7 @@
 
 - 状态：已采纳
 - 日期：2026-11-04
-- 相关：`../design/geometry-surface-queries.md`、`../design/geometry-kinds.md` 2.10、`../design/geometry-intersection.md` C5；`src/base/geometry/sdk/vine/geometry/SurfaceProjection.hpp`、`RaySurfaceIntersection.hpp`、`SurfaceParameterWindow.hpp`；`tests/test_geometry/SurfaceQueryTest.cpp`
+- 相关：`../design/geometry-surface-queries.md`、`../design/geometry-kinds.md` 2.10、`../design/geometry-intersection.md` C5；`src/base/geometry/sdk/vine/geometry/SurfaceProjection.hpp`、`RaySurfaceIntersection.hpp`、`SurfaceParameterWindow.hpp`；`tests/test_geometry/SurfaceQueryTest.cpp` <!-- drift-ok -->
 
 ## 背景
 
@@ -35,6 +35,6 @@
 
 ## 证据
 
-- `tests/test_geometry/SurfaceQueryTest.cpp`：19 个用例，覆盖平面 / 球 / 圆柱 / 圆环 / 双线性样条面、两种精度、窗口约束与无限端规则、背后命中、重合分类与不可用输入。
-- `tests/test_geometry/CurveSurfaceTest.cpp` 的 `CurveSurfaceProjection.*`：7 个用例，覆盖曲线 × 样条面、与解析入口的同一交点、裁剪窗口、曲线在面上、奇异参数线、不可用输入与两种精度。
+- `tests/test_geometry/SurfaceQueryTest.cpp`：19 个用例，覆盖平面 / 球 / 圆柱 / 圆环 / 双线性样条面、两种精度、窗口约束与无限端规则、背后命中、重合分类与不可用输入。 <!-- drift-ok -->
+- `tests/test_geometry/CurveSurfaceTest.cpp` 的 `CurveSurfaceProjection.*`：7 个用例，覆盖曲线 × 样条面、与解析入口的同一交点、裁剪窗口、曲线在面上、奇异参数线、不可用输入与两种精度。 <!-- drift-ok -->
 - `GeometryKindsTest` 的族级扫查未改动：接口没有新增虚函数。

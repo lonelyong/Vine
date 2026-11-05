@@ -50,5 +50,5 @@
 ## 证据
 
 - `src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`：`isClampedKnotVector()` 的新逐项上限与 `knotContinuity()` 的说明。 <!-- drift-ok -->
-- `tests/test_geometry/GeometryKindsTest.cpp`：`aKnotVectorThatBreaksTheCurveIsNotACurve`——`{3, 3, 3}`（度 2）的曲线与
+- `tests/test_geometry/GeometryKindsTest.cpp`：`aKnotVectorThatBreaksTheCurveIsNotACurve`——`{3, 3, 3}`（度 2）的曲线与 <!-- drift-ok -->
   曲面 `isValid()` 均为假；重数恰好等于度数的 `{3, 2, 3}` 仍为真且 `continuity() == C0`、`isCN(0)` 为真、`isCN(1)` 为假。
