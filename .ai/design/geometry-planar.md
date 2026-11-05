@@ -65,7 +65,7 @@
 
 ### 2.6 退化状态给答案，不失败
 
-- **是什么**：`isValid()` 是唯一判据，且只看**状态**、不看参数。零方向直线答 `evaluate(u) == origin`，非正半径圆答 `evaluate(u) == center`，零主轴的圆锥曲线（椭圆 / 双曲线 / 抛物线）答 `center`；三条都写在类型文档里，都不产生 NaN / 无穷；反向区间的圆弧答无效，查询仍转发给圆的退化答案。
+- **是什么**：`isValid()` 是唯一判据，且只看**状态**、不看参数。无效状态下查询**必须有限**，具体答什么由类型文档写明：零方向直线答 `origin`；半径为零的圆答 `center`，负半径仍描出同一个圆；零主轴的圆锥曲线答 `center`，半轴或焦距为零时塌成线段 / 直线 / 顶点；焦距为零的抛物线答顶点（它本来会除零）。反向区间的圆弧答无效，查询仍转发给圆。
 - **为什么**：`G4`、`G11` —— 与 3D 侧的规则一字不差（`geometry-kinds.md` C12）：错误变成**可检查的错误答案**，而不是未定义行为或异常；调用方在入口检查一次 `isValid()`，内部循环就不必逐个参数判空。
 
 ### 2.7 值类型保留比接口更便宜的路径
@@ -87,6 +87,12 @@
 - **窗口规则**：无界曲线（直线、双曲线、抛物线）**必须**给窗口；有界曲线（圆、椭圆、圆弧）省略时用自己的域；没有有限窗口就返回 `std::nullopt`，函数从不自选范围。
 - **边界**：这是模块里唯一的算法，`G8` 的张力写在这里——它今天没有生产消费者，它的价值是**验证契约**：如果十一项不够，这个函数就写不出来。第二个族级算法仍按 backlog 的触发条件进入。
 
+### 2.10 包围盒是有界类型自己的查询，不在接口上
+
+- **是什么**：`CircleCurve` / `EllipseCurve` / `ArcCurve` 各有一个 `bounds()`，返回 `math::Rect2<T>`；`LineCurve` / `HyperbolaCurve` / `ParabolaCurve` 没有。
+- **为什么**：`G4`、`G13` —— 无界曲线只能返回无穷盒或一个假盒，把“无界”伪装成矩形，所以接口不声明它（与 `geometry-kinds.md` 2.7 同一条判据）。平面盒直接复用 `math::Rect2`，模块不为一个盒子再建一个类型。
+- **边界**：盒是 `evaluate()` 描出的**点集**的盒：圆是 `center ± |r|`；椭圆用支撑函数 `sqrt((a·X_i)² + (b·Y_i)²)`，不是 `±a` 的松盒；圆弧取两个端点加区间内的四个轴向极值。区间的方向不改变点集，所以反向区间答同一个盒。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -100,8 +106,9 @@
 | F5 | 平面圆弧 | `ArcCurve`：圆按值 + 角度区间，闭合 / 周期只看区间是否跨满圆的域 | 已落地（T1–T6） |
 | F6 | 平面双曲线与抛物线 | `HyperbolaCurve` / `ParabolaCurve`：双曲角与垂直轴偏移、无界非周期、共享 `ConicCurve` 的起始轴 | 已落地（T1–T6） |
 | F7 | 点到曲线的最近点 | `closestPointOnCurve()`：平方距离驻点求根 + 窗口端点比较，返回点 / 参数 / 距离 | 已落地（T7） |
-| F8 | 平面曲线求交与包围盒 | 曲线 × 曲线求交、平面包围盒（`Rect2` 形态） | 未做（`../backlog/geom2d.md` P1） |
-| F9 | 样条、偏置与通用裁剪 | `BezierCurve` / `BSplineCurve` / `OffsetCurve`、任意基曲线的 `TrimmedCurve` | 未做（`../backlog/geom2d.md` P2、P3） |
+| F8 | 平面包围盒 | 圆 / 椭圆 / 圆弧的 `bounds()`，返回 `math::Rect2`；无界类型没有这个入口 | 已落地（T8） |
+| F9 | 平面曲线求交 | 两段平面曲线之间的交点 / 重叠段，结果带两个参数与进入/离开分类 | 未做（`../backlog/geom2d.md` P1） |
+| F10 | 样条、偏置与通用裁剪 | `BezierCurve` / `BSplineCurve` / `OffsetCurve`、任意基曲线的 `TrimmedCurve` | 未做（`../backlog/geom2d.md` P2、P3） |
 
 ### 3.1.1 F1 平面曲线契约
 
@@ -159,6 +166,14 @@
 - **验收**（T7）：
 - **注意**（N5、P7）：
 
+### 3.1.8 F8 平面包围盒
+
+- **行为**：`bounds()` 返回 `evaluate()` 在域内描出的点集的轴对齐盒（`math::Rect2<T>`）：圆是 `center ± |r|`，椭圆沿两个世界轴用支撑函数，圆弧是两端点加区间内的轴向极值。
+- **约束**（C6）：只对有界类型存在；无界类型没有这个入口，接口也不声明它（2.10）。
+- **要求**（R1、R2）：闭式计算，不采样；盒必须包住曲线上的每一点，无效状态下仍然有限。
+- **验收**（T8）：
+- **注意**（N6、P8）：
+
 ## 4. 公开接口
 
 | 头文件 | 内容 |
@@ -183,6 +198,7 @@
 - **C3**：`isValid()` 只看状态，与参数无关；无效状态下的每条查询返回类型文档写明的退化值，不得产生 NaN 或无穷。
 - **C4**：`evaluate` / `derivative` / `secondDerivative` 是常数时间的闭式求值，不分配、不抛异常。
 - **C5**：族级查询的搜索区间必须有限：无界曲线必须由调用方给窗口，没给、反向或零宽都返回 `std::nullopt`，函数不自选范围（与 `geometry-curve-queries.md` C1 同一条规则）。
+- **C6**：包围盒只在有界类型上提供，且只由 `bounds()` 回答；接口不声明 `bounds()`，无界类型没有这个入口。
 - **R1**：平面曲线只依赖 `Point2`、`Vector2`、标量与 `math` 的现有设施；不得引入 3D 概念（法向、框架、z 分量）。
 - **R2**：值类型不持有动态内存。需要缓冲的曲线（样条类）引入时必须在这条上写明例外并重新评估。
 - **N1**：提供 `pointAt()` 的类型（直线、圆、椭圆、双曲线、抛物线）上它与 `evaluate(u)` 同值。
@@ -190,6 +206,7 @@
 - **N3**：`derivative` 是速度向量而非单位切向（圆的长度 = 半径，双曲线在顶点最小、向两端增长）；`secondDerivative` 只在弧长参数化时等于曲率向量（抛物线则是常量）。
 - **N4**：圆与椭圆的 `period() == lastParameter() - firstParameter() == 2π`，域外参数按周期性回绕；圆弧只在区间跨满圆的域时回答 `2π`，更短的一段回答 0（C2）。
 - **N5**：`CurveProjection::point == curve.evaluate(parameter)`，`distance == |point - query|`；等距多解时报告其中一个（圆心到圆上每一点等距，答案取决于扫描与求根落在哪里）。
+- **N6**：`bounds()` 包含 `evaluate(u)` 在曲线域内的每一个点（含端点与区间内的轴向极值）；椭圆的盒是支撑函数给出的紧盒，不是半轴造的松盒。
 
 ## 6. 注意事项与陷阱
 
@@ -200,6 +217,7 @@
 - **P5 经 `Curve<T>&` 的虚调用**。会怎么错：批量采样挂在基类引用上，每次都过虚表，且编译器无法内联。怎么判：反汇编或计时代码在具体类型上明显更快。怎么防：热循环持有具体类型（2.7）。
 - **P6 把反向映射当成“同一个点”**。会怎么错：以为 `evaluate(reversedParameter(u)) == evaluate(u)`，实际拿到的是关于域中点轴（圆与椭圆是起始轴）的镜像点，两条曲线被当成一条用。怎么判：反向后的点与原点在 `u = 域中点` 两侧对称，端点互换而中间点不重合。怎么防：只把 `reversedParameter` 用于“反向曲线上的同一点”（N2）；需要同一点时直接 `evaluate(u)`。
 - **P7 最近点是局部最小**。会怎么错：曲线来回靠近查询点，采样只找到其中一个极小值，距离偏大；`f` 相切于零的平坦极小值没有可收窄的区间。怎么判：`sample_count` 加倍后距离变小。怎么防：按曲线起伏尺度提高 `sample_count`；同一分析的完整版本（开区间、相切、采样别名）在 `geometry-curve-queries.md` §6。
+- **P8 用半轴当包围盒**。会怎么错：旋转过的椭圆按 `±major_radius` 造盒，盒大一圈，裁剪与拾取多测无用区域。怎么判：盒角点不在曲线上，且盒宽等于半轴的一半。怎么防：用 `bounds()`（支撑函数），不自己按半轴造盒（2.10）。
 
 ## 7. 已否决选项
 
@@ -220,17 +238,18 @@
 | T5 | 反向映射是 involution、交换域两端，且经 `Curve<T>&` 与 `unique_ptr<const Curve<T>>` 可用 | `CurveBasicsTest.cpp` 的 `ReversesByNegatingItsParameter`、`ReversesByReflectingInsideThePeriod`、`AnswersThroughTheBaseInterface`；`EllipseCurveTest.cpp`、`ArcCurveTest.cpp` 各自的反向与多态用例 |
 | T6 | 契约扫查：域有序、反向 involution、闭合曲线两端同点、周期曲线按 `period()` 重复、非周期曲线 `period() == 0`，六个类型 × float / double | `tests/test_geom2d/CurveContractTest.cpp` 的 `EveryPlanarCurveKeepsItsPromisesInDouble` / `…InFloat` |
 | T7 | 最近点：直线精确足点、无界曲线必须给窗口、足点落在窗口外落到端点、圆 / 椭圆 / 圆弧的足点、圆心的等距多解、无效曲线、两种精度 | `tests/test_geom2d/CurveProjectionTest.cpp` |
+| T8 | 包围盒：圆的负半径 / 零半径、旋转与 45° 椭圆的支撑函数、圆弧区间内极值、反向区间、盒包含全部采样点、两种精度 | `tests/test_geom2d/BoundsTest.cpp` |
 
 ## 9. 状态与演进
 
 ### 9.1 当前状态
 
-九个头文件（`Curve` / `ConicCurve` / `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `CurveProjection`）+ `test_geom2d`（49 个用例，含六个类型 × float / double 的契约扫查）；`vn::Geom2D` 是 INTERFACE 目标，不导出任何符号；模块内没有生产代码消费者——今天唯一的使用者是测试。
+九个头文件（`Curve` / `ConicCurve` / `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `CurveProjection`）+ `test_geom2d`（60 个用例，含六个类型 × float / double 的契约扫查）；`vn::Geom2D` 是 INTERFACE 目标，不导出任何符号；模块内没有生产代码消费者——今天唯一的使用者是测试。
 
 ### 9.2 已知缺口
 
-- 族里没有样条、偏置曲线，也没有任意基曲线的裁剪视图（`../backlog/geom2d.md` P2、P3）。
-- 族级查询只有一个：曲线 × 曲线求交与平面包围盒未做，所有曲线都还没有 `bounds()`（P1）。
+- 族级查询只有最近点：两段曲线之间的求交未做（`../backlog/geom2d.md` P1）。
+- 族里没有样条、偏置曲线，也没有任意基曲线的裁剪视图（P2、P3）。
 
 ### 9.3 兼容性 / 迁移
 
@@ -241,6 +260,7 @@
 ### 10.1 代码
 
 - `src/base/geom2d/sdk/vine/geom2d/Curve.hpp`、`ConicCurve.hpp`、`LineCurve.hpp`、`CircleCurve.hpp`、`EllipseCurve.hpp`、`HyperbolaCurve.hpp`、`ParabolaCurve.hpp`、`ArcCurve.hpp`、`CurveProjection.hpp`、`geom2d_global.hpp`
+- 平面盒类型：`src/base/math/sdk/vine/math/Rect2.hpp`（本模块不自建盒子）
 - `tests/test_geom2d/CurveBasicsTest.cpp`、`EllipseCurveTest.cpp`、`ConicCurvesTest.cpp`、`ArcCurveTest.cpp`、`CurveContractTest.cpp`、`CurveProjectionTest.cpp`
 - 3D 对应物：`src/base/geom3d/sdk/vine/geom3d/Curve.hpp`、`ConicCurve.hpp`、`EllipseCurve.hpp`、`HyperbolaCurve.hpp`、`ParabolaCurve.hpp`、`TrimmedCurve.hpp`、`CurveProjection.hpp`
 

@@ -11,7 +11,7 @@
 
 | # | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|---|
-| P1 | 平面曲线求交、平面包围盒 | 求交结果形态沿用 3D 的配对表判据（交点多解 / 重叠段两种形态）；包围盒用 `math::Rect2`，只给有界类型 | 有消费者需要其中任一项（截面、布尔、视图裁剪框） | `../design/geometry-planar.md` F8、9.2 |
+| P1 | 平面曲线求交 | 两段平面曲线之间的交点与重叠段：结果形态照 OCCT `IntRes2d_IntersectionPoint` / `IntersectionSegment` 规划（点带两个参数 + 进入/离开分类，重叠段单独一种） | 有消费者需要两段平面轮廓的交点（截面、布尔、视图裁剪框） | `../design/geometry-planar.md` F9 |
 | P2 | 平面样条 / 偏置曲线 | `BezierCurve` / `BSplineCurve` 与偏置：引入时在 R2（值类型不持有动态内存）上写明例外 | 有消费者需要自由曲线（2D 草图、导入的平面轮廓） | `../design/geometry-planar.md` 1.3、R2 |
 | P3 | 通用平面 `TrimmedCurve` | 任意基曲线 + 参数区间的视图；`ArcCurve` 只是“圆 + 区间”的值类型版本 | 出现非圆基曲线需要裁剪（椭圆弧、样条修剪） | `../design/geometry-planar.md` 2.8 |
 

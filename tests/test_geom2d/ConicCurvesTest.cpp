@@ -146,6 +146,22 @@ TEST(ParabolaCurveTest, ReversesByNegatingItsParameter)
     EXPECT_DOUBLE_EQ(parabola.reversedParameter(parabola.reversedParameter(0.75)), 0.75);
 }
 
+TEST(ParabolaCurveTest, AZeroFocalLengthAnswersTheVertexInsteadOfANaN)
+{
+    const ParabolaCurved degenerate({ 1.0, 2.0 }, { 1.0, 0.0 }, 0.0);
+
+    EXPECT_FALSE(degenerate.isValid());
+
+    // u = 0 would divide zero by zero; every parameter answers the vertex instead.
+    for (const double u : { -2.0, 0.0, 3.0 }) {
+        const auto point = degenerate.evaluate(u);
+        EXPECT_DOUBLE_EQ(point.x, 1.0);
+        EXPECT_DOUBLE_EQ(point.y, 2.0);
+        EXPECT_DOUBLE_EQ(degenerate.derivative(u).x, 0.0);
+        EXPECT_DOUBLE_EQ(degenerate.secondDerivative(u).y, 0.0);
+    }
+}
+
 TEST(ConicCurveTest, EveryConicSharesTheSameFrameConventions)
 {
     const EllipseCurved   ellipse({ 1.0, 2.0 }, { 0.0, 4.0 }, 3.0, 2.0);

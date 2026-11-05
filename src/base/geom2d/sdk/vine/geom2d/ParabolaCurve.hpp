@@ -2,6 +2,7 @@
 
 #include "geom2d_global.hpp"
 
+#include <cmath>
 #include <limits>
 
 #include <vine/math/Math.hpp>
@@ -62,12 +63,18 @@ class ParabolaCurve : public ConicCurve<T> {
      *
      * @details
      * - `P(u) = vertex + (u * u / (4 * focal_length)) * X + u * Y`; `u = 0` is the vertex.
+     * - A zero focal length has no parabola to trace and divides by zero, so the answer is the vertex instead of a
+     *   NaN; a negative one traces the mirrored parabola and stays finite.
      *
      * @param u Offset along the perpendicular axis, in the same units as `focal_length`.
-     * @return The point on the parabola; `center` when the frame has no usable direction.
+     * @return The point on the parabola; `center` when the frame has no usable direction or no focal length.
      */
     [[nodiscard]] Point pointAt(T u) const
     {
+        if (!hasFocalLength()) {
+            return center;
+        }
+
         const Vector y_axis = yAxis();
         return center + x_direction * (u * u / (T(4) * focal_length)) + y_axis * u;
     }
@@ -91,10 +98,14 @@ class ParabolaCurve : public ConicCurve<T> {
      *   its length grows symmetrically towards both ends.
      *
      * @param u Offset along the perpendicular axis.
-     * @return The velocity vector at @p u.
+     * @return The velocity vector at @p u; the zero vector when the focal length is unusable.
      */
     [[nodiscard]] Vector derivative(T u) const override
     {
+        if (!hasFocalLength()) {
+            return Vector::zero();
+        }
+
         return x_direction * (u / (T(2) * focal_length)) + yAxis();
     }
 
@@ -106,11 +117,15 @@ class ParabolaCurve : public ConicCurve<T> {
      *   form of "equal distance to focus and directrix".
      *
      * @param u Unused; the second derivative of a parabola is constant.
-     * @return `x_direction / (2 * focal_length)`.
+     * @return `x_direction / (2 * focal_length)`; the zero vector when the focal length is unusable.
      */
     [[nodiscard]] Vector secondDerivative(T u) const override
     {
         (void)u;
+        if (!hasFocalLength()) {
+            return Vector::zero();
+        }
+
         return x_direction * (T(1) / (T(2) * focal_length));
     }
 
@@ -192,6 +207,21 @@ class ParabolaCurve : public ConicCurve<T> {
   public:
     /// Distance from the vertex to the focus.
     T focal_length{ T(1) };
+
+  private:
+    /**
+     * @brief Returns whether the focal length can size a parabola.
+     *
+     * @details
+     * - Zero would divide by zero and a value inside the epsilon would pay the same answer, so the numeric queries
+     *   answer their degenerate value instead: the vertex and the zero vector.
+     *
+     * @return True when the magnitude of `focal_length` is greater than the floating-point epsilon.
+     */
+    [[nodiscard]] bool hasFocalLength() const
+    {
+        return std::abs(focal_length) > vn::math::EPS<T>();
+    }
 };
 
 using ParabolaCurvef = ParabolaCurve<float>;

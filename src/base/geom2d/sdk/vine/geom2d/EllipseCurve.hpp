@@ -6,6 +6,7 @@
 
 #include <vine/math/Math.hpp>
 #include <vine/math/Point2.hpp>
+#include <vine/math/Rect2.hpp>
 #include <vine/math/Vector2.hpp>
 
 #include "ConicCurve.hpp"
@@ -173,8 +174,9 @@ class EllipseCurve : public ConicCurve<T> {
      * @brief Returns whether the two semi-axes and the major direction are usable.
      *
      * @details
-     * - A non-positive semi-axis or a zero major direction names no ellipse; the numeric queries then answer the
-     *   centre rather than producing a NaN, so a caller checks here first.
+     * - A non-positive semi-axis or a zero major direction names no ellipse. The queries then collapse onto whatever
+     *   survives - a segment along the remaining axis, or the centre when no direction is stored - and never produce a
+     *   NaN, so a caller checks here first.
      *
      * @return True when both semi-axes and the stored direction are longer than the floating-point epsilon.
      */
@@ -199,6 +201,30 @@ class EllipseCurve : public ConicCurve<T> {
     [[nodiscard]] T reversedParameter(T u) const override
     {
         return period() - u;
+    }
+
+    /**
+     * @brief Returns the axis-aligned box around the ellipse.
+     *
+     * @details
+     * - The half width along a world axis is `sqrt((a * X_i)^2 + (b * Y_i)^2)`, which is the exact support function of
+     *   the ellipse along that axis, not the looser box the major radius alone gives.
+     * - The semi-axes enter by magnitude, so the box is the point set `evaluate()` traces; with no stored direction
+     *   every half width is zero and the box degenerates to `center`.
+     *
+     * @return Bounds of the ellipse.
+     */
+    [[nodiscard]] vn::math::Rect2<T> bounds() const
+    {
+        const Vector y_axis = yAxis();
+        const T      major  = std::abs(major_radius);
+        const T      minor  = std::abs(minor_radius);
+        const T      half_x = std::sqrt(major * x_direction.x * major * x_direction.x
+                                 + minor * y_axis.x * minor * y_axis.x);
+        const T      half_y = std::sqrt(major * x_direction.y * major * x_direction.y
+                                 + minor * y_axis.y * minor * y_axis.y);
+        return vn::math::Rect2<T>(Point(center.x - half_x, center.y - half_y),
+                                  Point(center.x + half_x, center.y + half_y));
     }
 
   public:

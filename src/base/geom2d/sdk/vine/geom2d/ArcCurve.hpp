@@ -2,7 +2,12 @@
 
 #include "geom2d_global.hpp"
 
+#include <algorithm>
+#include <cmath>
+
+#include <vine/math/Math.hpp>
 #include <vine/math/Point2.hpp>
+#include <vine/math/Rect2.hpp>
 #include <vine/math/Vector2.hpp>
 
 #include "CircleCurve.hpp"
@@ -183,6 +188,50 @@ class ArcCurve : public Curve<T> {
     [[nodiscard]] T reversedParameter(T u) const override
     {
         return first_angle + last_angle - u;
+    }
+
+    /**
+     * @brief Returns the axis-aligned box around the arc.
+     *
+     * @details
+     * - The candidates are the two ends and the four angles where the circle is extremal in a world axis (`0`,
+     *   `pi/2`, `pi`, `3*pi/2`), each taken modulo one turn and kept only when it falls inside the interval.
+     * - The interval's direction does not change its point set, so a reversed interval answers the same box as its
+     *   two ends would in order.
+     *
+     * @return Bounds of the arc.
+     */
+    [[nodiscard]] vn::math::Rect2<T> bounds() const
+    {
+        const T first = std::min(first_angle, last_angle);
+        const T last  = std::max(first_angle, last_angle);
+
+        const Point first_point = circle.pointAt(first);
+        T           xmin        = first_point.x;
+        T           xmax        = first_point.x;
+        T           ymin        = first_point.y;
+        T           ymax        = first_point.y;
+
+        const auto include = [&](T angle) {
+            const Point point = circle.pointAt(angle);
+            xmin              = std::min(xmin, point.x);
+            xmax              = std::max(xmax, point.x);
+            ymin              = std::min(ymin, point.y);
+            ymax              = std::max(ymax, point.y);
+        };
+
+        include(last);
+
+        const T turn         = T(2) * static_cast<T>(vn::math::PI);
+        const T quarter_turn = static_cast<T>(vn::math::PI_HALF);
+        for (const T base : { T(0), quarter_turn, T(2) * quarter_turn, T(3) * quarter_turn }) {
+            const T candidate = base + turn * std::ceil((first - base) / turn);
+            if (candidate <= last) {
+                include(candidate);
+            }
+        }
+
+        return vn::math::Rect2<T>(Point(xmin, ymin), Point(xmax, ymax));
     }
 
   public:

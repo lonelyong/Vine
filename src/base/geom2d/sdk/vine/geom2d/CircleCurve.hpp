@@ -6,6 +6,7 @@
 
 #include <vine/math/Math.hpp>
 #include <vine/math/Point2.hpp>
+#include <vine/math/Rect2.hpp>
 #include <vine/math/Vector2.hpp>
 
 #include "Curve.hpp"
@@ -165,8 +166,9 @@ class CircleCurve : public Curve<T> {
      * @brief Returns whether the radius describes a circle.
      *
      * @details
-     * - A zero or negative radius names no circle; the numeric queries then answer as if the radius were zero rather
-     *   than producing a NaN, so a caller checks here first.
+     * - A non-positive radius names no circle. The queries still answer finite values - the sign only mirrors the same
+     *   circle, and a radius of zero collapses every parameter onto the centre - never a NaN, so a caller checks here
+     *   first.
      *
      * @return True when `radius` is greater than the floating-point epsilon.
      */
@@ -197,6 +199,22 @@ class CircleCurve : public Curve<T> {
     [[nodiscard]] T circumference() const
     {
         return T(2) * static_cast<T>(vn::math::PI) * radius;
+    }
+
+    /**
+     * @brief Returns the axis-aligned box around the circle.
+     *
+     * @details
+     * - The box is the point set `evaluate()` traces: `center` grown by `|radius|`, so a negative radius answers the
+     *   same box as its positive value.
+     *
+     * @return Bounds of the circle; the degenerate box at `center` when the radius is zero.
+     */
+    [[nodiscard]] vn::math::Rect2<T> bounds() const
+    {
+        const T extent = std::abs(radius);
+        return vn::math::Rect2<T>(Point(center.x - extent, center.y - extent),
+                                  Point(center.x + extent, center.y + extent));
     }
 
   public:
