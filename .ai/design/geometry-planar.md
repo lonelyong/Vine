@@ -3,7 +3,7 @@
 > **状态**：现行
 > **最后核对**：2026-11-05
 > **范围**：`src/base/geom2d`——平面曲线求值契约 `Curve<T>`、圆锥曲线层 `ConicCurve<T>` 与 `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` 六个值类型，以及模块的物理形态与命名规则。不含空间曲线与曲面（见 `geometry-kinds.md`），不含点到曲线的最近点、求交、包围盒与多边形（无消费者，见 `../backlog/geom2d.md`）。
-> **权威来源**：`src/base/geom2d/sdk/vine/geom2d/Curve.hpp`、`ConicCurve.hpp`、`LineCurve.hpp`、`CircleCurve.hpp`、`EllipseCurve.hpp`、`HyperbolaCurve.hpp`、`ParabolaCurve.hpp`、`ArcCurve.hpp`、`CurveProjection.hpp`、`CurveCurveIntersection.hpp`；`tests/test_geom2d/` 下的全部用例文件。
+> **权威来源**：`src/base/geom2d/sdk/vine/geom2d/Curve.hpp`、`ConicCurve.hpp`、`LineCurve.hpp`、`CircleCurve.hpp`、`EllipseCurve.hpp`、`HyperbolaCurve.hpp`、`ParabolaCurve.hpp`、`ArcCurve.hpp`、`BezierCurve.hpp`、`CurveProjection.hpp`、`CurveCurveIntersection.hpp`；`tests/test_geom2d/` 下的全部用例文件。
 > **待办**：`../backlog/geom2d.md`
 
 ## 1. 概要设计
@@ -15,20 +15,20 @@
 ### 1.2 目标
 
 - 一份**独立**的平面曲线契约：与 `geom3d::Curve<T>` 逐项同义（求值、一二阶导数、参数域、闭合与周期、光滑度、有效性、反向映射），只是点是 `Point2`、向量是 `Vector2`。
-- 六个能被执行验证的值类型（直线、圆、椭圆、双曲线、抛物线、圆弧），让契约从“声明”变成“可测的行为”。
+- 七个能被执行验证的值类型（直线、圆、椭圆、双曲线、抛物线、圆弧、Bezier），让契约从“声明”变成“可测的行为”。
 - 两个**族级算法**（点到曲线的最近点、两段曲线的求交），证明十一项契约足够回答曲线上的几何问题，而不需要知道具体类型。
 - 一次说清模块的物理形态与命名规则：header-only / INTERFACE 目标、名字不带维度标记、精度别名仍是 `d` / `f`。
 
 ### 1.3 非目标
 
-- 不把 3D 曲线族整族搬过来：样条与偏置曲线都要等消费者（`G8`，见 `../backlog/geom2d.md`）。
+- 不把 3D 曲线族整族搬过来：BSpline 与偏置曲线都要等消费者（`G8`，见 `../backlog/geom2d.md`）。
 - 算法只做“族级查询”这一类，今天有最近点与两段曲线的求交：弧长参数化、两曲线之间的最近距离、曲率仍不做（同 backlog）。
 - 不借用 3D 的 `ConicCurve` 框架：平面里的圆锥曲线没有法向可存（2.4）。
 - 不做屏幕 / 像素几何：`Point2`、`Vector2`、`Rect2` 属于 `math`，这个模块只有曲线。
 
 ### 1.4 一句话结论
 
-**平面曲线是第二份契约、不是 3D 契约的特化：同样的十一项事实、`Point2` / `Vector2`、同一个 `math::Continuity`；今天有直线、圆、椭圆、双曲线、抛物线与圆弧，其余等真实消费者。**
+**平面曲线是第二份契约、不是 3D 契约的特化：同样的十一项事实、`Point2` / `Vector2`、同一个 `math::Continuity`；今天有直线、圆、椭圆、双曲线、抛物线、圆弧与 Bezier，其余等真实消费者。**
 
 ## 2. 设计要点
 
@@ -40,7 +40,7 @@
 
 ### 2.2 名字不带维度标记
 
-- **是什么**：`LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `Curve`，不是 `LineCurve2d` / `Curve2D`；精度别名仍是 `LineCurved` / `CircleCurvef` / `EllipseCurved` / `HyperbolaCurvef` / `ParabolaCurved` / `ArcCurvef`，与 `geom3d` 的 `d` / `f` 规则一字不差。
+- **是什么**：`LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `BezierCurve` / `Curve`，不是 `LineCurve2d` / `Curve2D`；精度别名仍是 `LineCurved` / `CircleCurvef` / `EllipseCurved` / `HyperbolaCurvef` / `ParabolaCurved` / `ArcCurvef` / `BezierCurved`，与 `geom3d` 的 `d` / `f` 规则一字不差。
 - **为什么**：`G4`、`G6` —— 命名空间已经是限定词，“2d”写在类型名里就成了一句重复的说明；精度后缀表达的是“哪种标量”，与维度无关，所以它必须保留原样，否则同一个概念在两层里读法不同。
 - **边界**：同名的 `geom2d::LineCurve` 与 `geom3d::LineCurve` 是两个类型。同时使用两侧的代码 `using` 其中一个、限定另一个；不得再造 `Line2d` 这类别名（D3）。
 
@@ -59,7 +59,7 @@
 
 ### 2.5 header-only，`vn::Geom2D` 是 INTERFACE 目标
 
-- **是什么**：十个头文件都是 `template <vn::math::FP T>` 的完整定义，模块没有 `src/` 目录；`vn_add_library` 因此生成 INTERFACE 目标，只声明 `target_link_libraries(... INTERFACE vn::Math vn::Core)`。
+- **是什么**：十一个头文件都是 `template <vn::math::FP T>` 的完整定义，模块没有 `src/` 目录；`vn_add_library` 因此生成 INTERFACE 目标，只声明 `target_link_libraries(... INTERFACE vn::Math vn::Core)`。
 - **为什么**：`G10`、`G6` —— 精度模板决定了实现必须在调用方编译；有 `src/` 的模块要维护“每个类型 × 两种精度”的显式实例化表（`geometry-primitives.md` 2.8），而这里一个符号都不导出，那张表也就不存在。目标名、include 目录与安装规则仍走同一个 helper，所以它和 `vn::Geom3D` 的用法没有区别。
 - **代价**：没有 ABI 边界，曲线代码在每个消费方各编译一次；也没有 `VN_GEOM2D_API` 可加。等到出现第一个非模板实现（需要缓冲的曲线、或某个查询的 `.cpp`），这条要重新评估，届时 `src/` 一出现目标就自动变成 SHARED 库。
 
@@ -85,7 +85,7 @@
 - **是什么**：`closestPointOnCurve(curve, query, window, tolerance, sample_count)` 是头文件模板，`C` 由 `requires std::is_base_of_v<Curve<T>, C>` 约束；结果 `CurveProjection<T>{ point, parameter, distance }`，一个极值同时回答“最近点在哪、参数多少、距离多少”。
 - **为什么**：`G1`、`G9` —— 查询只依赖 `evaluate` / `derivative` / 域端点 / `isValid`，写成自由函数而不是接口虚函数，“两个对象的关系”才装得下，六个实现也不必各写一遍。形态与规则照搬 3D 的 `closestPointOnCurve()`（`geometry-curve-queries.md` 2.1–2.4），调用方不必记两套约定。
 - **窗口规则**：无界曲线（直线、双曲线、抛物线）**必须**给窗口；有界曲线（圆、椭圆、圆弧）省略时用自己的域；没有有限窗口就返回 `std::nullopt`，函数从不自选范围。
-- **边界**：这是模块里唯一的算法，`G8` 的张力写在这里——它今天没有生产消费者，它的价值是**验证契约**：如果十一项不够，这个函数就写不出来。第二个族级算法仍按 backlog 的触发条件进入。
+- **边界**：这两个查询是模块里仅有的算法，`G8` 的张力写在这里——它们今天没有生产消费者，价值是**验证契约**：如果十一项不够，这两个函数就写不出来。第三个算法仍按 backlog 的触发条件进入。
 
 ### 2.10 包围盒是有界类型自己的查询，不在接口上
 
@@ -99,6 +99,13 @@
 - **为什么**：`G12`、`G4` —— 两个对象的关系不属于其中任何一个，所以是自由函数；结果必须是三值的，因为“交于一点”“整段重合”“没有交点”是三种不同的答案，把重合段拆成一串点既错又不收敛（与 3D 的 `CurveSurfaceContact` 同一个理由）。
 - **怎么算**：沿第一条曲线采样，每点用 `closestPointOnCurve()` 取到第二条曲线的垂距——一个量同时给出候选（垂距在一步长度内）与重合判定（连续至少三个样本垂距在容差内）；候选再用二维 Newton 收敛 `C1(u) = C2(v)`，括号取自两个窗口。
 - **边界**：局部方法——相切默认漏检（P9）；两交点间距小于三个采样步长会被读成重合；窗口规则同 C5。
+
+### 2.12 样条是第一个持有内存的曲线
+
+- **是什么**：`BezierCurve` 存 `std::vector<Point2>` 极点与一个可空权重数组；`degree()` 由极点数减一得出，`isRational()` 就是“权重非空”；求值、一阶与二阶导数都是 `math::spline::deCasteljau` 的同一遍：极点、一阶差商、二阶差商，分别乘 `1`、`n`、`n(n-1)`。
+- **为什么**：`G1`、`G10` —— 数据模型就是接口：不另存度数（两份会矛盾），用空数组而不是 `isRational` 布尔（布尔与数据可以互相矛盾）；blending 核在 `math`，与维度无关，所以这一层只负责数据与缩放，不复写求值。
+- **代价**：深拷贝、不再 trivially copyable，`evaluate` 每次分配一份临时数组（`deCasteljau` 按值取数组）——R2 因此改写为“默认不持有内存，例外要写明”；这是有意的取舍，与 3D 同名类型一致，而字面量采样时它仍然比虚调用便宜。
+- **边界**：`bounds()` 是**极点盒**（曲线在极点凸包内），不是紧盒；紧盒要解每个坐标导数的根，今天没有消费者（P10）。有理形式的分母在 `[0, 1]` 内不会归零（权重必须为正），外推时才可能，那时按权重 1 处理，不产生 inf。
 
 ## 3. 功能点
 
@@ -115,7 +122,8 @@
 | F7 | 点到曲线的最近点 | `closestPointOnCurve()`：平方距离驻点求根 + 窗口端点比较，返回点 / 参数 / 距离 | 已落地（T7） |
 | F8 | 平面包围盒 | 圆 / 椭圆 / 圆弧的 `bounds()`，返回 `math::Rect2`；无界类型没有这个入口 | 已落地（T8） |
 | F9 | 平面曲线求交 | `intersectCurveWithCurve()`：采样 + 垂距候选 + 二维 Newton，结果三值（无交点 / 有限交点 / 重合段） | 已落地（T9） |
-| F10 | 样条、偏置与通用裁剪 | `BezierCurve` / `BSplineCurve` / `OffsetCurve`、任意基曲线的 `TrimmedCurve` | 未做（`../backlog/geom2d.md` P1、P2） |
+| F10 | 平面 Bezier | `BezierCurve`：极点 + 可选权重，de Casteljau 求值与差商导数，域 `[0, 1]` | 已落地（T10） |
+| F11 | BSpline、偏置与通用裁剪 | `BSplineCurve` / `OffsetCurve`、任意基曲线的 `TrimmedCurve` | 未做（`../backlog/geom2d.md` P1、P2） |
 
 ### 3.1.1 F1 平面曲线契约
 
@@ -125,45 +133,13 @@
 - **验收**（T1–T6）：
 - **注意**（N2、N3、P4）：
 
-### 3.1.2 F2 平面直线
+### 3.1.2 F2–F6 解析曲线族（直线、圆、椭圆、双曲线、抛物线）
 
-- **行为**：`P(t) = origin + direction * t`；域是整个实轴（`±infinity`），永不闭合、永无周期，`continuity()` 为 `CN`，二阶及以上导数为零向量。
-- **约束**（C1、C3）：零方向（`|direction| <= EPS`）不描述直线，`isValid()` 为假，`evaluate` 答 `origin`。
-- **要求**（R1、R2）：字段只有 `Point2` / `Vector2`，无分配。
-- **验收**（T1、T2、T3、T4、T6）：
-- **注意**（N1、N3、P1、P2）：
-
-### 3.1.3 F3 平面圆
-
-- **行为**：`P(u) = center + radius * (cos u, sin u)`；域 `[0, 2π]`，闭合、周期 `2π`，`derivative` 长度等于半径，`secondDerivative` 指向圆心；`circumference()` 是接口外的便利查询。
-- **约束**（C2、C3、C4）：`radius <= EPS` 不描述圆，`isValid()` 为假，`evaluate` 答 `center`，`period()` 仍答 `2π`（它是参数化的事实，不是几何的事实）。
-- **要求**（R1、R2）：一次 `sin` / `cos`，无分配、无异常。
-- **验收**（T1、T2、T3、T4、T5、T6）：
-- **注意**（N2、N3、N4、P3、P5）：
-
-### 3.1.4 F4 平面椭圆
-
-- **行为**：`EllipseCurve` 存 `center` / `x_direction` / `major_radius` / `minor_radius`，`P(u) = center + a·cos(u)·X + b·sin(u)·Y`，`Y` 由 `X` 旋转 +90° 导出；参数是偏心角，域 `[0, 2π]`、闭合、周期 `2π`、`CN`。
-- **约束**（C1–C3）：主轴方向与半轴必须可用——方向按长度归一化，零方向退化为零向量，`pointAt()` 因此答 `center`；`major_radius` / `minor_radius` 都得大于 `EPS`。
-- **要求**（R1、R2）：只存 `Point2` / `Vector2` / 标量，无分配；二阶导等于 `center - P(u)`，与圆的形状一致。
-- **验收**（T1、T2、T3、T4、T5、T6）：
-- **注意**（N2、N3、P2、P3、P6）：
-
-### 3.1.5 F5 平面圆弧
-
-- **行为**：`ArcCurve` 在 `[first_angle, last_angle]` 上转发一个 `CircleCurve`；`isClosed()` 要求区间覆盖圆的整个域，`isPeriodic()` 要求区间至少一个周期，两者都成立时 `period()` 为 `2π`，否则为 0；区间外仍按圆求值。
-- **约束**（C2、C3）：`isValid()` 同时要求基圆可用且 `first_angle <= last_angle`；反向区间不改写、不重排，只报告无效。
-- **要求**（R1、R2）：基圆按值持有，不分配；裁剪不重参数化，导数就是圆在同一个角度上的速度。
-- **验收**（T3、T4、T5、T6）：
-- **注意**（N2、N4、P1、P6）：
-
-### 3.1.6 F6 平面双曲线与抛物线
-
-- **行为**：`HyperbolaCurve` 走 `major_radius > 0` 的一支，`P(u) = center + a·cosh(u)·X + b·sinh(u)·Y`；另一支是 `-x_direction`，不是负参数。`ParabolaCurve` 走 `P(u) = vertex + (u² / (4f))·X + u·Y`，`X` 指向焦点。两者都无界、非周期、`CN`，`reversedParameter` 都是 `-u`。
-- **约束**（C1–C3）：双曲线要求两个半轴可用，抛物线要求焦距可用；两者都要求起始轴可用，否则点查询答 `center`。
-- **要求**（R1、R2）：双曲线的加速度是 `P(u) - center`（双曲角不经符号变化）；抛物线的加速度常量 `X / (2f)`。
+- **行为**：直线 `origin + direction·t`（全实轴、永不闭合）；圆 `center + r·(cos u, sin u)` 与椭圆 `center + a·cos u·X + b·sin u·Y`（域 `[0, 2π]`、闭合、周期 `2π`）；双曲线 `center + a·cosh u·X + b·sinh u·Y` 只走 `+X` 一支，抛物线 `vertex + u²/(4f)·X + u·Y`（两者无界非周期，`reversedParameter` 为 `-u`）。全部 `CN`。
+- **约束**（C1–C3）：每种类型只接受自己可用的尺寸（方向、半径、半轴、焦距），否则 `isValid()` 为假，点查询塌到该类型文档写明的有限退化值。
+- **要求**（R1、R2）：闭式求值、不分配；圆的 `derivative` 长度等于半径，椭圆二阶导是 `center - P(u)`，双曲线加速度是 `P(u) - center`，抛物线加速度是常量 `X/(2f)`。
 - **验收**（T1–T6）：
-- **注意**（N2、N3、P2、P3）：
+- **注意**（N1–N4、P1–P3）：
 
 ### 3.1.7 F7 点到曲线的最近点
 
@@ -189,6 +165,14 @@
 - **验收**（T9）：
 - **注意**（N7、P9）：
 
+### 3.1.10 F10 平面 Bezier
+
+- **行为**：`BezierCurve` 用极点的 de Casteljau 混合求值，差商给出两阶导，域 `[0, 1]`；`isClosed()` 只看首末极点是否重合，`reversedParameter` 是 `1 - u`；可选权重使其成为有理曲线（四分之一圆是标准例子）。
+- **约束**（C1、C3）：至少两个极点；权重要么为空、要么每极点一个且严格为正；不可用时答首极点（无极点则答原点）。
+- **要求**（R1、R2）：复用 `math::spline` 的核；参数在 `[0, 1]` 外是多项式外推，不是错误。
+- **验收**（T10）：
+- **注意**（N8、P10）：
+
 ## 4. 公开接口
 
 | 头文件 | 内容 |
@@ -202,6 +186,7 @@
 | `HyperbolaCurve.hpp` | `HyperbolaCurve<T>`、`HyperbolaCurvef` / `HyperbolaCurved` |
 | `ParabolaCurve.hpp` | `ParabolaCurve<T>`、`ParabolaCurvef` / `ParabolaCurved` |
 | `ArcCurve.hpp` | `ArcCurve<T>`、`ArcCurvef` / `ArcCurved` |
+| `BezierCurve.hpp` | `BezierCurve<T>`、`BezierCurvef` / `BezierCurved` |
 | `CurveProjection.hpp` | `CurveProjection<T>` 与 `closestPointOnCurve()` |
 | `CurveCurveIntersection.hpp` | `CurveCurveContact`、`CurveCurveHit<T>`、`CurveCurveIntersection<T>` 与 `intersectCurveWithCurve()` |
 
@@ -217,7 +202,7 @@
 - **C6**：包围盒只在有界类型上提供，且只由 `bounds()` 回答；接口不声明 `bounds()`，无界类型没有这个入口。
 - **C7**：求交结果是三值的：`Coincident` 表示“一段重合”，此时不列点；`Isolated` 才给 `hits`，每个 hit 的点同时在两条曲线上。
 - **R1**：平面曲线只依赖 `Point2`、`Vector2`、标量与 `math` 的现有设施；不得引入 3D 概念（法向、框架、z 分量）。
-- **R2**：值类型不持有动态内存。需要缓冲的曲线（样条类）引入时必须在这条上写明例外并重新评估。
+- **R2**：值类型**默认**不持有动态内存。`BezierCurve` 是已经写明的例外：`std::vector` 极点与可选权重意味着深拷贝、不再 trivially copyable（与 3D 同名类型同一取舍）；任何新引入的持有内存的类型必须在这条上写下同样的例外与代价。
 - **N1**：提供 `pointAt()` 的类型（直线、圆、椭圆、双曲线、抛物线）上它与 `evaluate(u)` 同值。
 - **N2**：`reversedParameter` 是 involution，并把参数域两端互换（`reversedParameter(firstParameter()) == lastParameter()`）。它给出的是**反向曲线**上同一个点的参数——反向曲线是原曲线关于域中点轴（周期曲线是起始轴）的镜像，`evaluate(reversedParameter(u))` 不等于 `evaluate(u)`。
 - **N3**：`derivative` 是速度向量而非单位切向（圆的长度 = 半径，双曲线在顶点最小、向两端增长）；`secondDerivative` 只在弧长参数化时等于曲率向量（抛物线则是常量）。
@@ -225,6 +210,7 @@
 - **N5**：`CurveProjection::point == curve.evaluate(parameter)`，`distance == |point - query|`；等距多解时报告其中一个（圆心到圆上每一点等距，答案取决于扫描与求根落在哪里）。
 - **N6**：`bounds()` 包含 `evaluate(u)` 在曲线域内的每一个点（含端点与区间内的轴向极值）；椭圆的盒是支撑函数给出的紧盒，不是半轴造的松盒。
 - **N7**：`CurveCurveHit::point` 同时等于 `first.evaluate(first_parameter)` 与 `second.evaluate(second_parameter)`；`hits` 按 `first_parameter` 升序，同一交点只报一次。
+- **N8**：`BezierCurve::degree() == poles.size() - 1`；`isRational() == !weights.empty()`；有理曲线的每个 `evaluate` 都在极点凸包内。
 
 ## 6. 注意事项与陷阱
 
@@ -237,6 +223,7 @@
 - **P7 最近点是局部最小**。会怎么错：曲线来回靠近查询点，采样只找到其中一个极小值，距离偏大；`f` 相切于零的平坦极小值没有可收窄的区间。怎么判：`sample_count` 加倍后距离变小。怎么防：按曲线起伏尺度提高 `sample_count`；同一分析的完整版本（开区间、相切、采样别名）在 `geometry-curve-queries.md` §6。
 - **P8 用半轴当包围盒**。会怎么错：旋转过的椭圆按 `±major_radius` 造盒，盒大一圈，裁剪与拾取多测无用区域。怎么判：盒角点不在曲线上，且盒宽等于半轴的一半。怎么防：用 `bounds()`（支撑函数），不自己按半轴造盒（2.10）。
 - **P9 相切与重合只差一个采样步长**。会怎么错：两条曲线相切时没有横向根，默认漏检；两个交点挨得比三个采样步长还近时被读成 `Coincident`。怎么判：加密 `sample_count` 后相交关系变了，或把容差调小后重合消失。怎么防：知道这是“交集形状”的判定而不是逐点判定；需要区分时加密采样并把容差调到远小于曲率半径。
+- **P10 把极点盒当紧盒**。会怎么错：用 `BezierCurve::bounds()` 裁剪或估算尺寸，得到的是极点凸包的盒，比曲线大。怎么判：盒角点远离曲线，且盒尺寸只由极点数决定。怎么防：需要紧盒时采样后再收紧；极点盒只用作拒绝测试的粗包。
 
 ## 7. 已否决选项
 
@@ -259,16 +246,17 @@
 | T7 | 最近点：直线精确足点、无界曲线必须给窗口、足点落在窗口外落到端点、圆 / 椭圆 / 圆弧的足点、圆心的等距多解、无效曲线、两种精度 | `tests/test_geom2d/CurveProjectionTest.cpp` |
 | T8 | 包围盒：圆的负半径 / 零半径、旋转与 45° 椭圆的支撑函数、圆弧区间内极值、反向区间、盒包含全部采样点、两种精度 | `tests/test_geom2d/BoundsTest.cpp` |
 | T9 | 求交：直线 × 直线、平行线、直线 × 圆（两点且按第一条曲线参数升序）、两圆、圆弧被窗口裁剪、重合弧与重合圆、无界曲线缺窗口、无效曲线、两种精度 | `tests/test_geom2d/CurveIntersectionTest.cpp` |
+| T10 | Bezier：极点行进、差商导数、有理四分之一圆、无效极点 / 权重、闭合与反向、极点盒、族级算法（最近点与求交）无需改动即可用、两种精度 | `tests/test_geom2d/BezierCurveTest.cpp` |
 
 ## 9. 状态与演进
 
 ### 9.1 当前状态
 
-十个头文件（`Curve` / `ConicCurve` / `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `CurveProjection` / `CurveCurveIntersection`）+ `test_geom2d`（69 个用例，含六个类型 × float / double 的契约扫查与两个族级算法的双精度对照）；`vn::Geom2D` 是 INTERFACE 目标，不导出任何符号；模块内没有生产代码消费者——今天唯一的使用者是测试。
+十一个头文件（`Curve` / `ConicCurve` / `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `BezierCurve` / `CurveProjection` / `CurveCurveIntersection`）+ `test_geom2d`（78 个用例，含七个类型 × float / double 的契约扫查与两个族级算法的双精度对照）；`vn::Geom2D` 是 INTERFACE 目标，不导出任何符号；模块内没有生产代码消费者——今天唯一的使用者是测试。
 
 ### 9.2 已知缺口
 
-- 族里没有样条、偏置曲线，也没有任意基曲线的裁剪视图（`../backlog/geom2d.md` P1、P2）。
+- 族里没有 BSpline 与偏置曲线，也没有任意基曲线的裁剪视图（`../backlog/geom2d.md` P1、P2）。
 - 族级算法只有两个：两曲线之间的最近距离、弧长参数化、曲率都未做。
 
 ### 9.3 兼容性 / 迁移
@@ -279,10 +267,11 @@
 
 ### 10.1 代码
 
-- `src/base/geom2d/sdk/vine/geom2d/Curve.hpp`、`ConicCurve.hpp`、`LineCurve.hpp`、`CircleCurve.hpp`、`EllipseCurve.hpp`、`HyperbolaCurve.hpp`、`ParabolaCurve.hpp`、`ArcCurve.hpp`、`CurveProjection.hpp`、`geom2d_global.hpp`
+- `src/base/geom2d/sdk/vine/geom2d/Curve.hpp`、`ConicCurve.hpp`、`LineCurve.hpp`、`CircleCurve.hpp`、`EllipseCurve.hpp`、`HyperbolaCurve.hpp`、`ParabolaCurve.hpp`、`ArcCurve.hpp`、`BezierCurve.hpp`、`CurveProjection.hpp`、`CurveCurveIntersection.hpp`、`geom2d_global.hpp`
 - 平面盒类型：`src/base/math/sdk/vine/math/Rect2.hpp`（本模块不自建盒子）
-- `tests/test_geom2d/CurveBasicsTest.cpp`、`EllipseCurveTest.cpp`、`ConicCurvesTest.cpp`、`ArcCurveTest.cpp`、`CurveContractTest.cpp`、`CurveProjectionTest.cpp`
-- 3D 对应物：`src/base/geom3d/sdk/vine/geom3d/Curve.hpp`、`ConicCurve.hpp`、`EllipseCurve.hpp`、`HyperbolaCurve.hpp`、`ParabolaCurve.hpp`、`TrimmedCurve.hpp`、`CurveProjection.hpp`
+- 样条核：`src/base/math/sdk/vine/math/spline/BezierBlend.hpp`（`deCasteljau` / `differences`，与维度无关）
+- `tests/test_geom2d/CurveBasicsTest.cpp`、`EllipseCurveTest.cpp`、`ConicCurvesTest.cpp`、`ArcCurveTest.cpp`、`BezierCurveTest.cpp`、`CurveContractTest.cpp`、`CurveProjectionTest.cpp`、`BoundsTest.cpp`、`CurveIntersectionTest.cpp`
+- 3D 对应物：`src/base/geom3d/sdk/vine/geom3d/Curve.hpp`、`ConicCurve.hpp`、`EllipseCurve.hpp`、`HyperbolaCurve.hpp`、`ParabolaCurve.hpp`、`BezierCurve.hpp`、`TrimmedCurve.hpp`、`CurveProjection.hpp`、`CurveSurfaceIntersection.hpp`
 
 ### 10.2 文档与 ADR
 

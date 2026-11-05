@@ -116,3 +116,6 @@
   第一版把“样本垂距 ≤ 容差”当成候选，结果几乎所有交叉都漏了（采样点几乎不会正好落在另一条曲线上）。
   已知边界：相切默认漏检（雅可比奇异时只有当残差已在容差内才接受）；两交点间距小于三步会被读成重合。
 - **几何模板里的 T 推导**：`intersectCurveWithCurve` 的 T 只出现在默认参数里，`template <FP T, ...>` 推不出来——改成 `template <typename C1, typename C2>` + `detail::CurveScalar<C>`（= `C::value_type`）。
+- **平面 `BezierCurve`**：数据模型即接口——`poles` + 可空 `weights`，`degree() = poles.size()-1`，`isRational()` 就是“权重非空”。求值/一二阶导都是 `math::spline::deCasteljau` 同一遍（极点、一阶差商、二阶差商 → 缩放 1 / n / n(n-1)）；有理形式在齐次坐标上算再除以权重。
+  这是模块里**第一个持有内存**的曲线（R2 的书面例外：深拷贝、非 trivially copyable、每次求值分配一份临时数组）。`bounds()` 是**极点盒**（凸包性质，保包含但不紧），紧盒要解导数的根，今天不做。
+  族级算法（最近点、求交、契约扫查）不需要任何修改就能接受它 —— 这正是十一项契约要证明的事。

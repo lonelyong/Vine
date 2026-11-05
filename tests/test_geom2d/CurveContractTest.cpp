@@ -8,6 +8,7 @@
 #include <vine/math/Vector2.hpp>
 
 #include <vine/geom2d/ArcCurve.hpp>
+#include <vine/geom2d/BezierCurve.hpp>
 #include <vine/geom2d/CircleCurve.hpp>
 #include <vine/geom2d/Curve.hpp>
 #include <vine/geom2d/EllipseCurve.hpp>
@@ -19,6 +20,7 @@ namespace
 {
 
 using vn::geom2d::ArcCurve;
+using vn::geom2d::BezierCurve;
 using vn::geom2d::CircleCurve;
 using vn::geom2d::Continuity;
 using vn::geom2d::Curve;
@@ -99,6 +101,8 @@ void expectEveryPlanarCurveKeepsItsPromises()
     const ParabolaCurve<T>  parabola(vn::math::Point2<T>(T(0), T(1)), vn::math::Vector2<T>(T(1), T(1)), T(1));
     const ArcCurve<T>       quarter(circle, T(0.3), T(2.1));
     const ArcCurve<T>       full_turn(circle, T(0), T(2) * static_cast<T>(vn::math::PI));
+    const BezierCurve<T>    bezier({ vn::math::Point2<T>(T(0), T(0)), vn::math::Point2<T>(T(1), T(2)),
+                                     vn::math::Point2<T>(T(2), T(0)) });
 
     expectInterfacePromises<T>(line);
     expectInterfacePromises<T>(circle);
@@ -107,6 +111,7 @@ void expectEveryPlanarCurveKeepsItsPromises()
     expectInterfacePromises<T>(parabola);
     expectInterfacePromises<T>(quarter);
     expectInterfacePromises<T>(full_turn);
+    expectInterfacePromises<T>(bezier);
 }
 
 TEST(CurveContractTest, EveryPlanarCurveKeepsItsPromisesInDouble)

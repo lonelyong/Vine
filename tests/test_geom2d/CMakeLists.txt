@@ -1,6 +1,7 @@
 set(TEST_NAME test_geom2d)
 set(SRC_FILE_LIST
         ArcCurveTest.cpp
+        BezierCurveTest.cpp
         BoundsTest.cpp
         ConicCurvesTest.cpp
         CurveBasicsTest.cpp
