@@ -99,3 +99,7 @@
   `ArcCurve` 是“圆按值 + 角度区间”：闭合要区间盖满圆的域、周期要至少一个周期，否则 `period() == 0`；裁剪不重参数化，导数就是圆在同一个角度上的速度。
   **`reversedParameter` 不返回同一个点**：它给的是反向曲线（原曲线关于域中点轴 / 起始轴的镜像）上的同一点，只保证 involution 与两端互换；
   `evaluate(reversedParameter(u)) != evaluate(u)`（圆是 y 反号、弧是 x↔y 交换）。契约由 `tests/test_geom2d/CurveContractTest.cpp` 的 float / double 扫查盯着。
+- **平面圆锥曲线共享 `ConicCurve<T>`**（`geom2d`）：层里只有 `center` + `x_direction`（构造时归一化）+ `yAxis()`（+90° 旋转）+ `continuity() == CN`，不放求值与参数域。
+  `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` 派生自它；**圆不派生**（它的起点由平面定死，存一根永远 (1,0) 的轴是死字段）。
+  参数含义各不相同：椭圆是偏心角、双曲线是双曲角（只走 `+x_direction` 一支，另一支是取反方向）、抛物线是垂直轴上的偏移（`P = vertex + u²/(4f)·X + u·Y`）。
+  零方向存零向量 ⇒ 点查询答 `center`，`isValid()` 是唯一判据；三条曲线都无界非周期，`reversedParameter` 都是 `-u`。

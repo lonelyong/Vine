@@ -11,7 +11,9 @@
 #include <vine/geom2d/CircleCurve.hpp>
 #include <vine/geom2d/Curve.hpp>
 #include <vine/geom2d/EllipseCurve.hpp>
+#include <vine/geom2d/HyperbolaCurve.hpp>
 #include <vine/geom2d/LineCurve.hpp>
+#include <vine/geom2d/ParabolaCurve.hpp>
 
 namespace
 {
@@ -21,7 +23,9 @@ using vn::geom2d::CircleCurve;
 using vn::geom2d::Continuity;
 using vn::geom2d::Curve;
 using vn::geom2d::EllipseCurve;
+using vn::geom2d::HyperbolaCurve;
 using vn::geom2d::LineCurve;
+using vn::geom2d::ParabolaCurve;
 
 template <vn::math::FP T>
 void expectNearPoint(const vn::math::Point2<T>& left, const vn::math::Point2<T>& right, T tolerance)
@@ -88,15 +92,19 @@ void expectInterfacePromises(const Curve<T>& curve)
 template <vn::math::FP T>
 void expectEveryPlanarCurveKeepsItsPromises()
 {
-    const LineCurve<T>    line(vn::math::Point2<T>(T(1), T(2)), vn::math::Vector2<T>(T(2), T(3)));
-    const CircleCurve<T>  circle(vn::math::Point2<T>(T(1), T(-2)), T(2));
-    const EllipseCurve<T> ellipse(vn::math::Point2<T>(T(-1), T(1)), vn::math::Vector2<T>(T(0), T(3)), T(3), T(2));
-    const ArcCurve<T>     quarter(circle, T(0.3), T(2.1));
-    const ArcCurve<T>     full_turn(circle, T(0), T(2) * static_cast<T>(vn::math::PI));
+    const LineCurve<T>      line(vn::math::Point2<T>(T(1), T(2)), vn::math::Vector2<T>(T(2), T(3)));
+    const CircleCurve<T>    circle(vn::math::Point2<T>(T(1), T(-2)), T(2));
+    const EllipseCurve<T>   ellipse(vn::math::Point2<T>(T(-1), T(1)), vn::math::Vector2<T>(T(0), T(3)), T(3), T(2));
+    const HyperbolaCurve<T> hyperbola(vn::math::Point2<T>(T(1), T(2)), vn::math::Vector2<T>(T(2), T(0)), T(2), T(1));
+    const ParabolaCurve<T>  parabola(vn::math::Point2<T>(T(0), T(1)), vn::math::Vector2<T>(T(1), T(1)), T(1));
+    const ArcCurve<T>       quarter(circle, T(0.3), T(2.1));
+    const ArcCurve<T>       full_turn(circle, T(0), T(2) * static_cast<T>(vn::math::PI));
 
     expectInterfacePromises<T>(line);
     expectInterfacePromises<T>(circle);
     expectInterfacePromises<T>(ellipse);
+    expectInterfacePromises<T>(hyperbola);
+    expectInterfacePromises<T>(parabola);
     expectInterfacePromises<T>(quarter);
     expectInterfacePromises<T>(full_turn);
 }

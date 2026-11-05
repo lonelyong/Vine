@@ -56,7 +56,7 @@
 - `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化与由基本体造实体的契约、失败表示。
 - `geometry-axis-surfaces.md` —— 轴对称解析曲面（圆柱 / 圆锥 / 圆环）的坐标系值 `Placement`、共用的“平面内轴”规则（`Frame.hpp`）、矩形裁剪曲面与样条曲面的现状。
 - `geometry-kinds.md` —— 几何族：`Curve` / `Surface` 都是求值接口（`Curve<T>` 十一项、`Surface<T>` 十四项，含 `isValid()`），曲面多一层 `ElementarySurface` / `BoundedSurface` 分类标签；曲线 / 曲面族已无占位类型。
-- `geometry-planar.md` —— 平面几何：`geom2d::Curve<T>` 是与 3D 契约同义的第二份契约（不是泛型特化、不继承），今天有直线、圆、椭圆与圆弧；平面圆是中心 + 半径、无框架，圆弧是“圆按值 + 角度区间”；模块 header-only / INTERFACE，名字不带维度标记。
+- `geometry-planar.md` —— 平面几何：`geom2d::Curve<T>` 是与 3D 契约同义的第二份契约（不是泛型特化、不继承），今天有直线、圆、椭圆、双曲线、抛物线、圆弧；三条非圆圆锥曲线共享 `ConicCurve`（中心 + 起始轴 + `CN`），圆不进这层；圆弧是“圆按值 + 角度区间”；模块 header-only / INTERFACE，名字不带维度标记。
 - `geometry-parametric.md` —— 参数化几何是建模类型（`Primitive` 的五个子类同居 `Primitive.hpp`）；canonical 局部空间与 OCCT 的职责收缩。
 - `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`LineCurve`/`Plane` 的归属、命名与契约。
 - `geometry-ray.md` —— 射线与图元相交：`Ray` 归 `geometry`、相交挂在被交对象上、场景走查留 `graphics`。

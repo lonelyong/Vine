@@ -8,7 +8,7 @@
 #include <vine/math/Point2.hpp>
 #include <vine/math/Vector2.hpp>
 
-#include "Curve.hpp"
+#include "ConicCurve.hpp"
 
 VN_GEOM2D_NS_BEGIN
 
@@ -23,21 +23,26 @@ VN_GEOM2D_NS_BEGIN
  *   axis. That is what CAD kernels mean by an ellipse parameter.
  * - There is no `circumference()`: an ellipse's perimeter is a complete elliptic integral, that is an algorithm, not
  *   an attribute. `CircleCurve` can answer it because its integral is closed-form.
- * - The class does not derive from a planar conic layer: a circle's parameterisation is fixed by the plane and has no
- *   axis of its own, so the two conics share nothing but the `CN` answer.
+ * - The frame (`center`, `x_direction`, `yAxis()`) and the `CN` answer are inherited from `ConicCurve`; a circle does
+ *   not share that layer because its start direction is fixed by the plane.
  *
  * @warning
- * - `x_direction` is normalised at construction: assigning it afterwards leaves a frame that no longer agrees with the
- *   parameterisation, so build a new ellipse instead of editing this one.
+ * - The frame is normalised at construction: assigning `center` or `x_direction` afterwards leaves a frame that no
+ *   longer agrees with the parameterisation, so build a new ellipse instead of editing this one.
  *
  * @tparam T Floating-point scalar type.
  */
 template <vn::math::FP T>
-class EllipseCurve : public Curve<T> {
+class EllipseCurve : public ConicCurve<T> {
   public:
     using value_type = T;
     using Point      = vn::math::Point2<T>;
     using Vector     = vn::math::Vector2<T>;
+
+    /// The frame is inherited from `ConicCurve`; these keep the member bodies readable.
+    using ConicCurve<T>::center;
+    using ConicCurve<T>::x_direction;
+    using ConicCurve<T>::yAxis;
 
   public:
     /**
@@ -50,28 +55,12 @@ class EllipseCurve : public Curve<T> {
      * @param minor_length    Semi-axis along the derived minor axis; must be positive for `isValid()`.
      */
     constexpr EllipseCurve(const Point& center_point, const Vector& major_direction, T major_length, T minor_length)
-      : center(center_point)
-      , x_direction(major_direction.length() > vn::math::EPS<T>() ? major_direction.normalized() : Vector::zero())
+      : ConicCurve<T>(center_point, major_direction)
       , major_radius(major_length)
       , minor_radius(minor_length)
     {}
 
   public:
-    /**
-     * @brief Returns the minor axis: `x_direction` rotated by +90 degrees.
-     *
-     * @details
-     * - Derived rather than stored: a second vector would be a second thing to keep orthogonal to the first.
-     * - It is the zero vector when the ellipse was built without a usable direction, which is what makes `pointAt()`
-     *   collapse onto the centre instead of producing a NaN.
-     *
-     * @return The unit minor-axis direction when `x_direction` is unit, otherwise the zero vector.
-     */
-    [[nodiscard]] constexpr Vector yAxis() const
-    {
-        return Vector{ -x_direction.y, x_direction.x };
-    }
-
     /**
      * @brief Returns the point at eccentric angle @p angle; the same value as `evaluate()`.
      *
@@ -181,16 +170,6 @@ class EllipseCurve : public Curve<T> {
     }
 
     /**
-     * @brief Returns `CN`: every derivative exists inside the domain.
-     *
-     * @return `Continuity::CN`.
-     */
-    [[nodiscard]] Continuity continuity() const override
-    {
-        return Continuity::CN;
-    }
-
-    /**
      * @brief Returns whether the two semi-axes and the major direction are usable.
      *
      * @details
@@ -223,12 +202,6 @@ class EllipseCurve : public Curve<T> {
     }
 
   public:
-    /// Centre of the ellipse.
-    Point center;
-
-    /// Unit direction the parameterisation starts from; zero when the ellipse was built without a usable direction.
-    Vector x_direction{ T(1), T(0) };
-
     /// Semi-axis along `x_direction`.
     T major_radius{ T(1) };
 
