@@ -170,6 +170,7 @@ class Obb {
      * @details
      * - The ray is moved into the box's local space, where the test is the axis-aligned slab test; the orientation is a
      *   rotation, so the returned `t` is a distance in the space the ray was given in.
+     * - Only the NEAREST hit is reported, the same contract as `Aabb`: an oriented box is a bound, not a solid.
      *
      * @param ray The ray, whose direction is unit length (see Ray).
      * @param hit Receives the nearest hit when the call returns true; untouched otherwise.
@@ -321,10 +322,6 @@ bool Obb<T>::intersects(const Obb<T>& other) const
 template <vn::math::FP T>
 bool Obb<T>::intersectWith(const Ray<T>& ray, RayHit<T>& hit, T eps) const
 {
-    if (ray.direction.length() <= eps) {
-        return false; // an aimless ray crosses nothing
-    }
-
     // Into the box's local space, where the test is the axis-aligned one. The orientation is a rotation, so a unit
     // direction stays unit and the distance along it survives the round trip unchanged.
     const Quaternion inverse = orientation_.conj();

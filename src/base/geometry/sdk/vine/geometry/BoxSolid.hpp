@@ -98,7 +98,7 @@ template <vn::math::FP T>
 std::vector<RayHit<T>> BoxSolid<T>::intersectWith(const Ray<T>& ray, T eps) const
 {
     std::vector<RayHit<T>> hits;
-    if (!isValid() || !(ray.direction.length2() > T(0))) {
+    if (!isValid()) {
         return hits;
     }
 

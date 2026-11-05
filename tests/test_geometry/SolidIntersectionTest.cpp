@@ -6,6 +6,7 @@
 #include <vine/models/Primitive.hpp>
 #include <vine/models/Cylinder.hpp>
 #include <vine/models/Sphere.hpp>
+#include <vine/geometry/Aabb.hpp>
 #include <vine/geometry/Ray.hpp>
 #include <vine/geometry/RayHit.hpp>
 #include <vine/geometry/SolidShape.hpp>
@@ -66,6 +67,23 @@ TEST(SolidIntersection, aRayCrossesABoxTwice)
     EXPECT_LT((hits[0].normal - Vec3d(-1.0, 0.0, 0.0)).length(), 1e-6);
     EXPECT_LT((hits[1].normal - Vec3d(-1.0, 0.0, 0.0)).length(), 1e-6);
     expectNormalsFaceTheRay(hits, ray);
+}
+
+TEST(SolidIntersection, theAabbAndTheBoxSolidShareTheSameEnteringCrossing)
+{
+    // The two queries differ in how many crossings they report, not in where the first one is: one slab implementation
+    // answers both.
+    const BoxSolidd box{ 1.0, 2.0, 3.0 };
+    const Rayd      ray(Point3d(10.0, 0.0, 0.0), Vec3d(-1.0, 0.0, 0.0));
+    const auto      hits = box.intersectWith(ray);
+
+    ASSERT_EQ(hits.size(), 2U);
+
+    vn::geometry::Aabbd bounds(Point3d(-1.0, -2.0, -3.0), Point3d(1.0, 2.0, 3.0));
+    vn::geometry::RayHitd nearest;
+    ASSERT_TRUE(bounds.intersectWith(ray, nearest));
+    EXPECT_DOUBLE_EQ(nearest.t, hits[0].t);
+    EXPECT_NEAR(hits[1].t, 11.0, 1e-12);
 }
 
 TEST(SolidIntersection, aRayFromInsideASolidReportsOnlyTheExit)

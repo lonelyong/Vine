@@ -70,17 +70,6 @@ bool visitPrimitive(const Primitive& primitive, Visitor&& visitor)
  * @param primitive The primitive to convert.
  * @return The analytic solid, or nothing when the primitive is not one of the five solids.
  */
-/**
- * @brief Returns the analytic solid @p primitive describes, for the consumers that take one.
- *
- * @details
- * - This is the one conversion a primitive that is a solid needs; the geometry algorithms take the value and know
- *   nothing about `Shape`. A primitive that is not one of the five answers nothing, which is why the result is optional
- *   rather than an empty solid.
- *
- * @param primitive The primitive to convert.
- * @return The analytic solid, or nothing when the primitive is not one of the five solids.
- */
 [[nodiscard]] inline std::optional<vn::geometry::SolidShapef> solidShapeOf(const Primitive& primitive) noexcept
 {
     if (const auto* box = vn::obj_cast<Box>(&primitive)) {

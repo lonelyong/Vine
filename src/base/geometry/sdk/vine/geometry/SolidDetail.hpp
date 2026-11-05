@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <utility>
 #include <vector>
 
@@ -12,6 +11,7 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include "Aabb.hpp"
 #include "Ray.hpp"
 #include "RayHit.hpp"
 
@@ -171,51 +171,16 @@ int solidSolveQuadratic(T a, T b, T c, T& low, T& high, T eps)
 template <vn::math::FP T>
 void solidAppendBoxHits(std::vector<RayHit<T>>& hits, const Ray<T>& ray, T half_x, T half_y, T half_z, T eps)
 {
-    T                    near_distance = -std::numeric_limits<T>::infinity();
-    T                    far_distance  = std::numeric_limits<T>::infinity();
-    vn::math::Vector3<T> near_normal(T(0), T(0), T(0));
-    vn::math::Vector3<T> far_normal(T(0), T(0), T(0));
-
-    const T origin[3]    = { ray.origin.x, ray.origin.y, ray.origin.z };
-    const T direction[3] = { ray.direction.x, ray.direction.y, ray.direction.z };
-    const T half[3]      = { half_x, half_y, half_z };
+    detail::RayBoxInterval<T> interval;
+    if (!detail::rayBoxInterval(ray, -half_x, -half_y, -half_z, half_x, half_y, half_z, eps, eps, interval)) {
+        return;
+    }
 
     // One face normal per axis; `sign` picks which of the pair.
     const auto axis_normal = [](int axis, T sign) { return vn::math::Vector3<T>(axis == 0 ? sign : T(0), axis == 1 ? sign : T(0), axis == 2 ? sign : T(0)); };
 
-    for (int axis = 0; axis < 3; ++axis) {
-        if (!(std::abs(direction[axis]) > eps)) {
-            // Parallel to this pair of faces: inside the slab it never leaves it, outside it never enters.
-            if (std::abs(origin[axis]) > half[axis] + eps) {
-                return;
-            }
-            continue;
-        }
-
-        T    low         = (-half[axis] - origin[axis]) / direction[axis];
-        T    high        = (half[axis] - origin[axis]) / direction[axis];
-        auto low_normal  = axis_normal(axis, T(-1));
-        auto high_normal = axis_normal(axis, T(1));
-        if (low > high) {
-            std::swap(low, high);
-            std::swap(low_normal, high_normal);
-        }
-
-        if (low > near_distance) {
-            near_distance = low;
-            near_normal   = low_normal;
-        }
-        if (high < far_distance) {
-            far_distance = high;
-            far_normal   = high_normal;
-        }
-        if (near_distance > far_distance) {
-            return;
-        }
-    }
-
-    solidAppendHit(hits, ray, near_distance, near_normal, eps);
-    solidAppendHit(hits, ray, far_distance, far_normal, eps);
+    solidAppendHit(hits, ray, interval.enter_t, axis_normal(interval.enter_axis, interval.enter_sign), eps);
+    solidAppendHit(hits, ray, interval.exit_t, axis_normal(interval.exit_axis, interval.exit_sign), eps);
 }
 
 } // namespace detail
