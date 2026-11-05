@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-04
 > **范围**：`src/base/geometry` 中参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）作为**建模类型**的归属与契约，以及 `Primitive` 与几何算法的边界。
 > 不含网格 / B-rep / 点云的存储与 revision（见 `graphics-geometry.md`），不含曲线与曲面族的分类（见 `geometry-kinds.md`，轴对称曲面与样条曲面见 `geometry-axis-surfaces.md`），不含射线–图元契约（见 `geometry-ray.md`）。
-> **权威来源**：`src/base/geometry/sdk/vine/geometry/Primitive.hpp`、`src/base/geometry/src/Primitive.cpp`；`tests/test_geometry`、`tests/test_brep`、`tests/test_robotics_io`。
+> **权威来源**：`src/base/models/sdk/vine/models/Primitive.hpp`、`src/base/models/sdk/vine/models/PrimitiveDispatch.hpp`、`src/base/models/src/Primitive.cpp`；`tests/test_geometry`、`tests/test_brep`、`tests/test_robotics_io`。
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -21,7 +21,7 @@
 ### 1.2 目标
 
 - `Primitive` 是参数化几何的唯一基类：五个子类各带自己的尺寸，`ShapeType` 由子类在构造时交给基类，标签不可能与类不符。
-- 五个子类与基类**同住一个头文件**：它们是同一个基类上的五个参数记录，分开成五个文件只会增加 include 负担。
+- 每个子类一个头文件：`models/Box.hpp` … `models/Ellipsoid.hpp`，且各有一个 `.cpp`；`PrimitiveDispatch.hpp` 只放 closed set 的分派。
 - 几何算法不进 `Primitive`：实体只回答 `bounds()`、`isValid()`、`hasVolume()`。
 
 ### 1.3 非目标
@@ -32,7 +32,7 @@
 
 ### 1.4 一句话结论
 
-**参数化几何是建模类型（`Primitive` 的五个子类，同居 `Primitive.hpp`）；基类不持有几何，实体由子类按需构造；几何算法属于值类型与曲面；`geometry` 不碰 OCCT。**
+**参数化几何是建模类型（`Primitive` 的五个子类，各自一个头文件）；基类不持有几何，实体由子类按需构造；几何算法属于值类型与曲面；`models` 依赖 `geometry`，反向不依赖。**
 
 ## 2. 设计要点
 
@@ -42,10 +42,11 @@
 - **撤回的原因**：`Box` / `Cone` 这类形状不提供自己的算法（射线–盒是 `Aabb` 的 slab，射线–球面属于曲面），把它们放进"算法值"的一侧会让 `Solid` 含义落空、让半径/边长在实体与曲面之间出现两个家；而建模侧需要的是身份、名字与 revision。
 - **代价（已接受）**：`Box` 等带 vptr 与引用计数，复制不是 memcpy；加一种形状要动 `ShapeType`、`Shape.cpp` 的两个 switch、`brep` 的构造与 `robotics::io` 的读写。记录在此，避免重复论证。
 
-### 2.1 `Primitive` 是抽象基类，五个子类同住一个头
+### 2.1 `Primitive` 是抽象基类，每个子类一个头文件
 
-- **是什么**：`class Primitive : public Shape` 只有受保护构造 `Primitive(ShapeType)` 与一个纯虚 `bounds()`，**不持有任何几何值**；`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 全部定义在 `Primitive.hpp`，各自存尺寸（全量纲）并各自给出 `solid()`。
-- **为什么**：`G5`、`G7` —— 五个子类是同一个基类上的参数记录，分成五个头会让"构造一个盒子"同时绑定 `Shape.hpp`、`Object.hpp`、元类型；同居一个头也让 DLL 的导出规则变隐式：`Primitive.cpp` 已包含该头，五个子类的导出成员随它一起生成，不需要"记得在某个 TU 里 include"。
+- **是什么**：`class Primitive : public Shape` 只有受保护构造 `Primitive(ShapeType)` 与一个纯虚 `bounds()`，**不持有任何几何值**；`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 各在一个头文件（`models/Box.hpp` … `models/Ellipsoid.hpp`），各自存尺寸（全量纲）并各自给出 `solid()`。
+- **目录边界**：带身份的类型（`Shape` / `Primitive` / `Model` / 网格 / `BrepShape` / `PointCloud` / `Material`）住在 `src/base/models`（`sdk/vine/models/`），几何值类型（曲线、曲面、`Solid`、`Aabb` / `Obb` / `Ray`）住在 `src/base/geometry`。`models` 单向依赖 `geometry`。
+- **为什么**：`G1`、`G12` —— 一个类型一个文件，消费者只 include 它写到的那个形状；`PrimitiveDispatch.hpp` 单独承担 closed set 的两个入口（`visitPrimitive()` / `solidShapeOf()`）。每个子类的 `.cpp` include 自己的头，DLL 导出由该 TU 生成，不再依赖“某个 TU 记得 include 全部类型”。
 - **边界**：`Primitive` 自身不声明任何几何查询（没有 `pointAt`、没有 `intersectWith`、没有 `solid()`）。"是不是实体"是子类的属性：将来出现轮廓、扫掠面这类图元，直接派生而不用改基类（`SolidTest.cpp` 的 `Profile` 就是这条判据的验收）。
 
 ### 2.2 标签由子类交给基类
@@ -108,11 +109,13 @@
 
 | 头文件 | 内容 |
 |---|---|
-| `Primitive.hpp` | `Primitive`（受保护构造，接受 `ShapeType`）与 `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` |
-| `SolidTessellation.hpp` | `TessellationQuality` 与 `tessellateSolid()`（三角化见 `geometry-tessellation.md`） |
-| `Solid.hpp` | `Solid<T>` 接口、五个 kind、`SolidShape<T>` 与 `solidOf()`（见 `geometry-solid.md`） |
-| `Solid.hpp` | `Solid<T>` 与五个 kind、`closestPoint()` / `intersectWith()`（见 `geometry-solid.md`） |
-| `Shape.hpp` | `ShapeType`、`isValid()`、`hasVolume()`、`revision()` |
+| `models/Primitive.hpp` | `Primitive`（受保护构造，接受 `ShapeType`） |
+| `models/Box.hpp` … `models/Ellipsoid.hpp` | 五个子类，每个类型一个头文件与一个源文件 |
+| `models/PrimitiveDispatch.hpp` | `visitPrimitive()` 与 `solidShapeOf()` |
+| `models/SolidTessellation.hpp` | `TessellationQuality` 与 `tessellateSolid()`（三角化见 `geometry-tessellation.md`） |
+| `geometry/Solid.hpp` | `Solid<T>` 接口与 `Solidf` / `Solidd`（见 `geometry-solid.md`） |
+| `geometry/SolidShape.hpp` | `SolidShape<T>`、`solidOf()` 与 `SolidShapef` / `SolidShaped` |
+| `models/Shape.hpp` | `ShapeType`、`isValid()`、`hasVolume()`、`revision()` |
 
 ## 5. 约束、要求与不变量
 

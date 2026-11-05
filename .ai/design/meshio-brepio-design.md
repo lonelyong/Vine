@@ -194,7 +194,7 @@ BrepFormat  formatFromPath(const std::filesystem::path&) noexcept;
 | `IoError BrepExporter::exportAs(shape, BrepFormat, path \| ostream&)` | 两个目标都是一份实现 | 无 options |
 | `shared_ptr<DataSource> BrepExporter::createSource(shape, BrepFormat)` | 与 meshio 同一懒契约；无后端时 `error()` 为 `Unsupported` | 框架能力（`G7`） |
 
-### 4.3 `vn::geometry::BrepShape`（只改所有权）
+### 4.3 `vn::models::BrepShape`（只改所有权）
 
 | 接口 | 契约 |
 |---|---|

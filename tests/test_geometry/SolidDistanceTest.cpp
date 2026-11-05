@@ -2,8 +2,9 @@
 
 #include <cmath>
 
-#include <vine/geometry/Primitive.hpp>
-#include <vine/geometry/Solid.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/Box.hpp>
+#include <vine/geometry/SolidShape.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -15,7 +16,7 @@ using vn::geometry::BoxSolidd;
 using vn::geometry::ConeSolidd;
 using vn::geometry::CylinderSolidd;
 using vn::geometry::EllipsoidSolidd;
-using vn::geometry::Primitive;
+using vn::models::Primitive;
 using vn::geometry::SphereSolidd;
 using vn::math::Point3d;
 using vn::math::Point3f;
@@ -170,7 +171,7 @@ TEST(SolidDistance, anUnusableSolidAnswersNothing)
 TEST(SolidDistance, aModelReachesTheSameAnswerThroughItsSolid)
 {
     // The modeling type has no distance query of its own: its analytic solid answers.
-    const vn::geometry::Box box(2.0f, 2.0f, 2.0f);
+    const vn::models::Box box(2.0f, 2.0f, 2.0f);
 
     const auto face = box.solid().closestPoint(Point3f(3.0f, 0.0f, 0.0f));
     ASSERT_TRUE(face.has_value());

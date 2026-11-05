@@ -53,5 +53,5 @@ endif()
 
 # IOBase is PUBLIC because MeshExporter::createSource hands a vn::io::DataSource to the caller: the content-source
 # vocabulary is part of this module's public interface. Layering allows it (both are base modules; loaders sit above base).
-target_link_libraries(${MESHIO_TARGET_NAME} PUBLIC vn::Runtime vn::Geometry vn::Crypto vn::IOBase)
+target_link_libraries(${MESHIO_TARGET_NAME} PUBLIC vn::Runtime vn::Geometry vn::Models vn::Crypto vn::IOBase)
 target_link_libraries(${MESHIO_TARGET_NAME} PRIVATE assimp::assimp zlibstatic)

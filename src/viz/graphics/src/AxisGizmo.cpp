@@ -4,7 +4,7 @@
 #include <utility>
 
 #include <vine/Colorf.hpp>
-#include <vine/geometry/Array.hpp>
+#include <vine/models/Array.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -34,9 +34,9 @@ namespace
  * @param mn        Minimum corner.
  * @param mx        Maximum corner.
  */
-void appendBox(vn::geometry::Vec3Array& positions,
-               vn::geometry::Vec3Array& normals,
-               vn::geometry::UInt32Array& indices,
+void appendBox(vn::models::Vec3fArray& positions,
+               vn::models::Vec3fArray& normals,
+               vn::models::UInt32Array& indices,
                const vn::math::Vec3f&     mn,
                const vn::math::Vec3f&     mx)
 {
@@ -222,9 +222,9 @@ void AxisGizmo::rebuild()
     // Single root: one identity Group owns the three axis sticks.
     auto root  = make_intrusive<Group>();
     for (const auto& stick : sticks) {
-        vn::geometry::Vec3Array  positions;
-        vn::geometry::Vec3Array  normals;
-        vn::geometry::UInt32Array indices;
+        vn::models::Vec3fArray  positions;
+        vn::models::Vec3fArray  normals;
+        vn::models::UInt32Array indices;
         appendBox(positions, normals, indices, stick.mn, stick.mx);
 
         auto geometry = make_intrusive<Geometry>();

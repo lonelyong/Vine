@@ -39,7 +39,7 @@
 #include <vsg/utils/ShaderSet.h>
 
 #include <vine/String.hpp>
-#include <vine/geometry/Array.hpp>
+#include <vine/models/Array.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -120,7 +120,7 @@ enum class XyzUnpack
  *             rejected, because the rejection happens before anything is written).
  * @return Ok when unpacked, otherwise why the channel was rejected.
  */
-XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::geometry::Vec3Array& out);
+XyzUnpack unpackXyz(const vn::graphics::AttributeChannel& attr, vn::models::Vec3fArray& out);
 
 /**
  * @brief The diagnostic for an unusable loc1 normal channel.

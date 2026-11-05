@@ -3,7 +3,7 @@
 #include <vine/robotics/robot_core_global.hpp>
 
 #include <vine/RefCounted.hpp>
-#include <vine/geometry/Shape.hpp>
+#include <vine/models/Shape.hpp>
 #include <vine/intrusive_ptr.hpp>
 
 VN_ROBOTICS_PROXIMITY_NS_BEGIN
@@ -38,7 +38,7 @@ class CollisionGeometry : public vn::RefCounted<CollisionGeometry> {
      * @param shape The source geometry shape.
      * @return true when the shape was accepted, false otherwise.
      */
-    virtual bool buildFromShape(const vn::intrusive_ptr<const vn::geometry::Shape>& shape) = 0;
+    virtual bool buildFromShape(const vn::intrusive_ptr<const vn::models::Shape>& shape) = 0;
 
     /**
      * @brief Checks whether the geometry holds valid, queryable data.

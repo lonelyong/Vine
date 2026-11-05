@@ -15,11 +15,11 @@
 
 #include <vine/Colorf.hpp>
 #include <vine/Object.hpp>
-#include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/Model.hpp>
-#include <vine/geometry/PbrMaterial.hpp>
-#include <vine/geometry/PhongMaterial.hpp>
+#include <vine/models/ColorMaterial.hpp>
+#include <vine/models/TriangleMesh.hpp>
+#include <vine/models/Model.hpp>
+#include <vine/models/PbrMaterial.hpp>
+#include <vine/models/PhongMaterial.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector2.hpp>
@@ -29,11 +29,11 @@
 #include <vine/meshio/MeshFormat.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
-using vn::geometry::ColorMaterial;
-using vn::geometry::TriangleMesh;
-using vn::geometry::Model;
-using vn::geometry::PhongMaterial;
-using vn::geometry::ShapeType;
+using vn::models::ColorMaterial;
+using vn::models::TriangleMesh;
+using vn::models::Model;
+using vn::models::PhongMaterial;
+using vn::models::ShapeType;
 using vn::math::Vec2f;
 using vn::math::Vec3f;
 using vn::math::Vec4f;
@@ -156,7 +156,7 @@ std::string describe(const Triangle& triangle)
  * @param mesh The mesh to read.
  * @return One entry per triangle, in the mesh's own order.
  */
-std::vector<Triangle> trianglesOf(const vn::geometry::Mesh& mesh)
+std::vector<Triangle> trianglesOf(const vn::models::Mesh& mesh)
 {
     const std::span<const Vec3f> positions = mesh.positions();
     const std::span<const Vec3f> normals   = mesh.normals();
@@ -265,7 +265,7 @@ vn::intrusive_ptr<TriangleMesh> makeRichCube()
     // Corners of a cube spanning [-1, 1]^3, ordered so the winding below can be checked by hand.
     const std::array<Vec3f, 8> corners{ Vec3f(-1, -1, -1), Vec3f(1, -1, -1), Vec3f(1, 1, -1), Vec3f(-1, 1, -1),
                                         Vec3f(-1, -1, 1),  Vec3f(1, -1, 1),  Vec3f(1, 1, 1),  Vec3f(-1, 1, 1) };
-    cube->setPositions(vn::geometry::Vec3Array(corners.begin(), corners.end()));
+    cube->setPositions(vn::models::Vec3fArray(corners.begin(), corners.end()));
 
     // Outward-facing, counter-clockwise seen from outside.
     const std::array<std::array<std::size_t, 3>, 12> faces{
@@ -282,16 +282,16 @@ vn::intrusive_ptr<TriangleMesh> makeRichCube()
           { 1, 2, 6 },
          { 1, 6, 5 } }
     }; // x = 1
-    vn::geometry::UInt32Array indices;
+    vn::models::UInt32Array indices;
     indices.reserve(faces.size() * 3u);
     for (const auto& face : faces) {
         indices.insert(indices.end(), { static_cast<std::uint32_t>(face[0]), static_cast<std::uint32_t>(face[1]), static_cast<std::uint32_t>(face[2]) });
     }
     cube->setIndices(std::move(indices));
 
-    vn::geometry::Vec3Array normals;
-    vn::geometry::Vec2Array texcoords;
-    vn::geometry::Vec4Array colors;
+    vn::models::Vec3fArray normals;
+    vn::models::Vec2fArray texcoords;
+    vn::models::Vec4fArray colors;
     normals.reserve(corners.size());
     texcoords.reserve(corners.size());
     colors.reserve(corners.size());
@@ -325,10 +325,10 @@ vn::intrusive_ptr<TriangleMesh> makeRichTriangleSoup()
     const std::span<const Vec2f> texcoords = cube->texcoords();
     const std::span<const Vec4f> colors    = cube->colors();
 
-    vn::geometry::Vec3Array             positions;
-    vn::geometry::Vec3Array             soup_normals;
-    vn::geometry::Vec2Array             soup_texcoords;
-    vn::geometry::Vec4Array             soup_colors;
+    vn::models::Vec3fArray             positions;
+    vn::models::Vec3fArray             soup_normals;
+    vn::models::Vec2fArray             soup_texcoords;
+    vn::models::Vec4fArray             soup_colors;
     const std::span<const std::uint32_t> indices = cube->indices();
     positions.reserve(indices.size());
     soup_normals.reserve(indices.size());
@@ -379,11 +379,11 @@ const Model::Node* findNode(const Model& model, const std::string& name)
  * @param material The material to read.
  * @return The base colour of the material.
  */
-const vn::Colorf& baseColorOf(const vn::geometry::Material& material)
+const vn::Colorf& baseColorOf(const vn::models::Material& material)
 {
     switch (material.materialType()) {
-    case vn::geometry::MaterialType::Phong: return static_cast<const PhongMaterial&>(material).diffuse();
-    case vn::geometry::MaterialType::Pbr: return static_cast<const vn::geometry::PbrMaterial&>(material).baseColor();
+    case vn::models::MaterialType::Phong: return static_cast<const PhongMaterial&>(material).diffuse();
+    case vn::models::MaterialType::Pbr: return static_cast<const vn::models::PbrMaterial&>(material).baseColor();
     default: return static_cast<const ColorMaterial&>(material).color();
     }
 }
@@ -414,7 +414,7 @@ TEST(MeshFidelityTest, EveryVertexAttributeSurvivesARoundTrip)
     ASSERT_TRUE(loaded_model);
     const auto model = loaded_model.take();
     ASSERT_EQ(model->meshes().size(), 1u);
-    const vn::geometry::Mesh& loaded = vn::obj_cast<vn::geometry::Mesh>(*model->meshes()[0].mesh);
+    const vn::models::Mesh& loaded = vn::obj_cast<vn::models::Mesh>(*model->meshes()[0].mesh);
 
     ASSERT_EQ(loaded.normals().size(), loaded.positions().size()) << "the normals were dropped";
     ASSERT_EQ(loaded.texcoords().size(), loaded.positions().size()) << "the texture coordinates were dropped";
@@ -467,7 +467,7 @@ TEST(MeshFidelityTest, ANonIndexedMeshSurvivesTheSameTrip)
     ASSERT_EQ(model->meshes().size(), 1u);
 
     // The importer rebuilds the topology, so the shape may come back indexed - the triangles are what must match.
-    expectSameGeometry(trianglesOf(vn::obj_cast<vn::geometry::Mesh>(*model->meshes()[0].mesh)), expected, 1e-6f, kColorByteTolerance);
+    expectSameGeometry(trianglesOf(vn::obj_cast<vn::models::Mesh>(*model->meshes()[0].mesh)), expected, 1e-6f, kColorByteTolerance);
 }
 
 TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
@@ -538,7 +538,7 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
     const Model::Entry* reloaded_triangle = nullptr;
     for (const Model::Entry& entry : reloaded->meshes()) {
         ASSERT_TRUE(entry.mesh);
-        const std::size_t triangle_count = trianglesOf(vn::obj_cast<vn::geometry::Mesh>(*entry.mesh)).size();
+        const std::size_t triangle_count = trianglesOf(vn::obj_cast<vn::models::Mesh>(*entry.mesh)).size();
         if (triangle_count == cube_expected.size()) {
             reloaded_cube = &entry;
         }
@@ -568,8 +568,8 @@ TEST(MeshFidelityTest, TheModelEntryKeepsNodesMaterialsAndGeometry)
     EXPECT_NEAR(flat_color.b, 0.75f, 1e-4f);
 
     // The geometry travels with its entry: nothing is baked into the vertices, and nothing is lost.
-    expectSameGeometry(trianglesOf(vn::obj_cast<vn::geometry::Mesh>(*reloaded_cube->mesh)), cube_expected, 1e-4f, kColorByteTolerance);
-    expectSameGeometry(trianglesOf(vn::obj_cast<vn::geometry::Mesh>(*reloaded_triangle->mesh)), flat_expected, 1e-4f, kColorByteTolerance);
+    expectSameGeometry(trianglesOf(vn::obj_cast<vn::models::Mesh>(*reloaded_cube->mesh)), cube_expected, 1e-4f, kColorByteTolerance);
+    expectSameGeometry(trianglesOf(vn::obj_cast<vn::models::Mesh>(*reloaded_triangle->mesh)), flat_expected, 1e-4f, kColorByteTolerance);
 }
 
 TEST(MeshFidelityTest, AFileWithoutNormalsArrivesWithDerivedOnes)
@@ -593,7 +593,7 @@ TEST(MeshFidelityTest, AFileWithoutNormalsArrivesWithDerivedOnes)
     ASSERT_TRUE(loaded_model);
     const auto model = loaded_model.take();
     ASSERT_EQ(model->meshes().size(), 1u);
-    const vn::geometry::Mesh& entry_mesh = vn::obj_cast<vn::geometry::Mesh>(*model->meshes()[0].mesh);
+    const vn::models::Mesh& entry_mesh = vn::obj_cast<vn::models::Mesh>(*model->meshes()[0].mesh);
     EXPECT_EQ(entry_mesh.normals().size(), entry_mesh.positions().size());
     EXPECT_TRUE(entry_mesh.colors().empty()) << "a file with no colour must not invent one";
 }
@@ -660,7 +660,7 @@ TEST(MeshFidelityTest, TheLoadScaleRuleIsTheSameForBothEntries)
     EXPECT_NEAR(static_cast<float>(root.transform.element(1, 1)), 2.5f, 1e-4f);
 
     ASSERT_EQ(model->meshes().size(), 1u);
-    const std::span<const Vec3f> positions = vn::obj_cast<vn::geometry::Mesh>(*model->meshes()[0].mesh).positions();
+    const std::span<const Vec3f> positions = vn::obj_cast<vn::models::Mesh>(*model->meshes()[0].mesh).positions();
     ASSERT_EQ(positions.size(), 3u);
     EXPECT_FLOAT_EQ(positions[1].x, 2.0f) << "the model entry must not bake the factor as well";
 }

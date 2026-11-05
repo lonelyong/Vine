@@ -23,7 +23,7 @@ target_sources(${MODEL_VIEWER_TARGET} PRIVATE res/res.qrc)
 # vn::MeshIO: MeshLoader, for the opener that reads a mesh file (the "parsed from disk" half of the payload story).
 # vn::Logging: VN_LOGW for the "opener refused" paths.
 # No ImageIO/System here, so the RPATH note in VinePluginHelper.cmake has nothing to catch.
-target_link_libraries(${MODEL_VIEWER_TARGET} PRIVATE vn::Appfw vn::Geometry vn::Graphics vn::Logging vn::MeshIO
+target_link_libraries(${MODEL_VIEWER_TARGET} PRIVATE vn::Appfw vn::Geometry vn::Models vn::Graphics vn::Logging vn::MeshIO
     Qt6::Core Qt6::Gui Qt6::Widgets)
 
 # The plugin's own UI text: res/translations/model_viewer_<locale>.ts, compiled into :/i18n/model_viewer_<locale>.qm.

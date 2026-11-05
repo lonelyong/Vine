@@ -19,7 +19,7 @@
 #    include <utility>
 
 #    include <vine/Object.hpp>
-#    include <vine/geometry/Primitive.hpp>
+#    include <vine/models/Primitive.hpp>
 #endif
 
 VN_BREP_NS_BEGIN
@@ -93,12 +93,12 @@ TopoDS_Shape solidOf(const vn::geometry::EllipsoidSolidf& ellipsoid)
 }
 
 /// Builds the solid the primitive describes.
-TopoDS_Shape buildSolid(const vn::geometry::Primitive& primitive)
+TopoDS_Shape buildSolid(const vn::models::Primitive& primitive)
 {
     // The dispatch visits the closed set of modelling primitives: each subclass hands over its own analytic solid, and a
     // primitive the bridge does not know answers an empty shape rather than being silently skipped.
     TopoDS_Shape built;
-    vn::geometry::visitPrimitive(primitive, [&](const auto& shaped) { built = solidOf(shaped.solid()); });
+    vn::models::visitPrimitive(primitive, [&](const auto& shaped) { built = solidOf(shaped.solid()); });
     return built;
 }
 
@@ -106,7 +106,7 @@ TopoDS_Shape buildSolid(const vn::geometry::Primitive& primitive)
 
 #endif
 
-vn::intrusive_ptr<vn::geometry::BrepShape> makeBrep(const vn::geometry::Primitive& primitive)
+vn::intrusive_ptr<vn::models::BrepShape> makeBrep(const vn::models::Primitive& primitive)
 {
     if (!primitive.isValid()) {
         return {}; // an invalid primitive is an input-level cause, not a build-level one
@@ -119,7 +119,7 @@ vn::intrusive_ptr<vn::geometry::BrepShape> makeBrep(const vn::geometry::Primitiv
             return {};
         }
 
-        auto result = vn::make_intrusive<vn::geometry::BrepShape>();
+        auto result = vn::make_intrusive<vn::models::BrepShape>();
         result->setShape(std::make_shared<const TopoDS_Shape>(std::move(solid)));
         result->setName(primitive.name());
         return result;

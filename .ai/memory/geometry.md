@@ -1,11 +1,17 @@
 # geometry 要点
 
-- **纯内联的 SDK 类必须由本模块某个 TU include**：建模子类（`Box` / `Sphere` / …）与几何 kind（`BoxSolid` / `SphereSolid` / …）的成员全部定义在头文件里，
-  DLL 只有在带 `VN_GEOMETRY_LIB` 的 TU 里看到这个类时才会实例化并导出它们。现在由 `Primitive.cpp` include 这个头。
+- **数组别名必须带元素类型**（`models/Array.hpp`）：`Vec2fArray` / `Vec3dArray` / `Vec3ui32Array`，没有默认 float 的
+  `Vec2Array`；标量侧 `Int8Array` … `UInt64Array` 与 `FloatArray` / `DoubleArray`；命名照抄 math 的 `Vec2f` / `Vec2i8` / `Vec2ui32`。
+
+- **纯内联的 SDK 类必须由本模块某个 TU include**：建模子类（`Box` / `Sphere` / …）与几何 kind（`BoxSolid` / `SphereSolid` / …）的成员定义都在头文件里，
+  DLL 只有在带对应 `_LIB` 宏的 TU 里看到这个类时才会实例化并导出它们。现在每个建模类型都有自己的 `.cpp`（如 `models/src/Box.cpp`）。
+- **建模类型是一个独立模块 `src/base/models`**（`sdk/vine/models/`，namespace `vn::models`，库 `vn::Models`）：`Shape` / `Primitive` / `Model` / `Mesh` 族 /
+  `BrepShape` / `PointCloud` / `Material` 族都在这里，单向依赖 `vn::Geometry`；include 写 `<vine/models/Xxx.hpp>`。
+  几何值类型（曲线 / 曲面 / `Solid` / `Aabb` / `Obb` / `Ray`）留在 `src/base/geometry`。
 - **参数化几何是建模类型，基类不持几何**：`Primitive : Shape` 只有受保护构造 `Primitive(ShapeType)` 与纯虚 `bounds()`，**不认识 `Solid`**；
-  `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`（`final`，全部在 `Primitive.hpp`）各存**全量纲**字段，并用 `solid()` 按当前尺寸
+  `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`（`final`，各自 `models/Box.hpp` … `models/Ellipsoid.hpp`）各存**全量纲**字段，并用 `solid()` 按当前尺寸
   构造自己的具体 kind（`BoxSolidf` …，返回**值**，不存不缓存）。`isValid()` / `hasVolume()` / `bounds()` 由子类转发给 `solid()`。
-  两个入口：`visitPrimitive(primitive, visitor)`（closed set，不属五个时 `false`）与 `solidShapeOf(primitive)`（`optional<SolidShapef>`）。
+  两个入口在 `models/PrimitiveDispatch.hpp`：`visitPrimitive(primitive, visitor)`（closed set，不属五个时 `false`）与 `solidShapeOf(primitive)`（`optional<SolidShapef>`）。
   **没有** `Primitive::shape()` / `setSolid()`；`ShapeType` 仍由子类构造传给基类。理由见 `decisions/ADR-2026-11-05-primitive-is-a-modelling-base.md`。
 - **值类型（`Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` 及全部曲线曲面）上有 `math::FP T`，但类上没有 `VN_GEOMETRY_API`**：
   短查询定义在头文件（内联发生在调用方，**不要**加 `extern template`，会打死拾取循环的实测收益）。
@@ -26,8 +32,8 @@
   设计见 `design/geometry-surface-queries.md`，测试在 `tests/test_geometry/SurfaceQueryTest.cpp`。
 - **点到曲线的最近点 / 距离**：`closestPointOnCurve()`（`CurveProjection.hpp`）把平方距离的驻点 `f(u) = (C(u) - P)·C'(u)` 当零点扫，`refineRoot()` 收窄，**窗口端点也是候选**（足点在窗口外时最小值在边界上）。只调 `evaluate` / `derivative`。
   窗口是 `optional<pair>`：有界曲线可省，无界曲线（直线 / 双曲线 / 抛物线）必须给。局部最小与“平坦极小值（f 不变号）”靠 `sample_count`，见 `design/geometry-curve-queries.md`。
-- **解析实体 `Solid<T>` 是族接口，不是 variant**：`Solid.hpp` 里 `Solid<T>` 是抽象基类（`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith` 五个纯虚），五个 kind（`BoxSolidf` / `SphereSolidf` / `CylinderSolidf` / `ConeSolidf` / `EllipsoidSolidf`，**半**量纲）是 `final` 值；`SolidShape<T> = std::variant<五个 kind>`，`solidOf(shape)` 取族引用（一个 `std::visit`，零拷贝）。建模子类用 `solid()` 构造这份值，`solidShapeOf(primitive)` 把模型转成它。**默认容差要同时写在基类与每个 kind 上**（派生声明会遮蔽基类默认参数）。设计见 `design/geometry-solid.md`，测试在 `tests/test_geometry/SolidTest.cpp`。
-- **解析实体的三角化**：`tessellateSolid(const Solid<float>&, quality)`（`SolidTessellation.hpp` + `src/SolidTessellation.cpp`）用 `std::visit` 按 kind 解析铺网格，返回 `intrusive_ptr<TriangleMesh>`；三角形数：盒 12，球 / 椭球 `2·around·(along−1)`，圆柱 `4·around`（侧 2·around + 两盖各 around），圆锥 `2·around`（侧扇 + 底盖）。
+- **解析实体 `Solid<T>` 是族接口，不是 variant**：`Solid.hpp` 里 `Solid<T>` 是抽象基类（`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith` 五个纯虚），五种实体各一个头文件（`BoxSolid.hpp` … `EllipsoidSolid.hpp`），`SolidShape.hpp` 给 `SolidShape<T> = std::variant<五个 kind>` 与 `solidOf(shape)`（一个 `std::visit`，零拷贝）。建模子类用 `solid()` 构造这份值，`solidShapeOf(primitive)` 把模型转成它。**默认容差要同时写在基类与每个 kind 上**（派生声明会遮蔽基类默认参数）。设计见 `design/geometry-solid.md`，测试在 `tests/test_geometry/SolidTest.cpp`。
+- **解析实体的三角化**：`tessellateSolid(const SolidShapef&, quality)`（`src/base/models/sdk/vine/models/SolidTessellation.hpp` + `src/base/models/src/SolidTessellation.cpp`）用 `std::visit` 按 kind 解析铺网格，返回 `intrusive_ptr<TriangleMesh>`；三角形数：盒 12，球 / 椭球 `2·around·(along−1)`，圆柱 `4·around`（侧 2·around + 两盖各 around），圆锥 `2·around`（侧扇 + 底盖）。
   **只对 `Solid<float>` 成立**（`TriangleMesh` 是 float），所以它是自由函数而不是 `Solid<T>` 的成员。
   **顶点在法向不连续处复制**（盒棱、柱盖、锥顶按段），所以顶点数不是最小集；闭合性要按**位置**数边，不能按索引。结果只写位置 / 法向 / 索引，不写 UV。
   设计见 `design/geometry-tessellation.md`，测试在 `tests/test_geometry/SolidTessellationTest.cpp`。

@@ -6,12 +6,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/Material.hpp>
-#include <vine/geometry/Mesh.hpp>
-#include <vine/geometry/Model.hpp>
-#include <vine/geometry/PbrMaterial.hpp>
-#include <vine/geometry/PhongMaterial.hpp>
+#include <vine/models/ColorMaterial.hpp>
+#include <vine/models/Material.hpp>
+#include <vine/models/Mesh.hpp>
+#include <vine/models/Model.hpp>
+#include <vine/models/PbrMaterial.hpp>
+#include <vine/models/PhongMaterial.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
 #include <vine/graphics/Geometry.hpp>
@@ -48,9 +48,9 @@ namespace
  *   second visit and counted.
  */
 struct Conversion {
-    const vn::geometry::Model&                                     model;
+    const vn::models::Model&                                     model;
     ModelScene&                                                    scene;
-    std::unordered_map<const vn::geometry::Material*, MaterialPtr> materials;
+    std::unordered_map<const vn::models::Material*, MaterialPtr> materials;
     std::vector<bool>                                              on_path;
 
     /// @brief Builds one node and its subtree, or returns null for a reference that cannot be built.
@@ -60,7 +60,7 @@ struct Conversion {
             ++scene.skipped_nodes;
             return NodePtr();
         }
-        const vn::geometry::Model::Node& source = model.nodes()[index];
+        const vn::models::Model::Node& source = model.nodes()[index];
         on_path[index]                          = true;
 
         intrusive_ptr<Group> group;
@@ -81,7 +81,7 @@ struct Conversion {
                 ++scene.skipped_meshes;
                 continue;
             }
-            const vn::geometry::Model::Entry& entry = model.meshes()[entry_index];
+            const vn::models::Model::Entry& entry = model.meshes()[entry_index];
             if (entry.mesh == nullptr) {
                 ++scene.skipped_meshes;
                 continue;
@@ -98,7 +98,7 @@ struct Conversion {
                 leaf->setMaterial(sharedMaterial(*entry.material));
                 // PBR carries a per-material opacity; the engine's transparency is the NODE's (a shared material's
                 // alpha would make every drawable translucent), so it is put on the leaf here.
-                if (const auto* pbr = obj_cast<vn::geometry::PbrMaterial>(entry.material.get())) {
+                if (const auto* pbr = obj_cast<vn::models::PbrMaterial>(entry.material.get())) {
                     const float opacity = std::clamp(pbr->opacity(), 0.0F, 1.0F);
                     if (opacity < 1.0F) {
                         leaf->setOpacity(opacity);
@@ -120,7 +120,7 @@ struct Conversion {
     }
 
     /// @brief Answers the graphics material for one source material, converting it once.
-    MaterialPtr sharedMaterial(const vn::geometry::Material& source)
+    MaterialPtr sharedMaterial(const vn::models::Material& source)
     {
         const auto found = materials.find(&source);
         if (found != materials.end()) {
@@ -134,7 +134,7 @@ struct Conversion {
 
 } // namespace
 
-ModelScene sceneFromModel(const vn::geometry::Model& model)
+ModelScene sceneFromModel(const vn::models::Model& model)
 {
     ModelScene scene;
     if (model.nodes().empty()) {
@@ -150,23 +150,23 @@ ModelScene sceneFromModel(const vn::geometry::Model& model)
     return scene;
 }
 
-intrusive_ptr<Material> materialFrom(const vn::geometry::Material& material)
+intrusive_ptr<Material> materialFrom(const vn::models::Material& material)
 {
     auto converted = make_intrusive<Material>();
     converted->setName(material.name());
 
     switch (material.materialType()) {
-    case vn::geometry::MaterialType::Color:
+    case vn::models::MaterialType::Color:
     {
         // A colour-only source has no highlight of its own: the colour IS the material, and fully rough means the
         // engine adds no gloss nobody authored (graphics-material.md §3.6).
-        const Colorf base = static_cast<const vn::geometry::ColorMaterial&>(material).color();
+        const Colorf base = static_cast<const vn::models::ColorMaterial&>(material).color();
         converted->setBaseColor(base);
         converted->setMetallic(0.0F);
         converted->setRoughness(1.0F);
         break;
     }
-    case vn::geometry::MaterialType::Phong:
+    case vn::models::MaterialType::Phong:
     {
         // THE FIXED TABLE (graphics-material.md §3.6) - the one place Phong exists at all:
         // - the diffuse reflectance is the base colour;
@@ -175,7 +175,7 @@ intrusive_ptr<Material> materialFrom(const vn::geometry::Material& material)
         //   strong or tinted specular is exactly what "metal" means in it: the strongest channel is the
         //   reflection's peak and the alpha scales it. A dielectric's Ks (0.04-0.08) therefore lands near 0, a
         //   mirror's 1 lands on 1.
-        const auto&  phong    = static_cast<const vn::geometry::PhongMaterial&>(material);
+        const auto&  phong    = static_cast<const vn::models::PhongMaterial&>(material);
         const Colorf specular = phong.specular();
         const float  peak     = std::max({ specular.r, specular.g, specular.b });
         converted->setBaseColor(phong.diffuse());
@@ -183,12 +183,12 @@ intrusive_ptr<Material> materialFrom(const vn::geometry::Material& material)
         converted->setMetallic(std::clamp(peak * std::clamp(specular.a, 0.0F, 1.0F), 0.0F, 1.0F));
         break;
     }
-    case vn::geometry::MaterialType::Pbr:
+    case vn::models::MaterialType::Pbr:
     {
         // Field for field, with no approximation: the source already speaks the engine's vocabulary. Opacity stays
         // the LEAF's (a shared material's alpha would make every drawable that uses it translucent), which the
         // caller applies.
-        const auto&  pbr      = static_cast<const vn::geometry::PbrMaterial&>(material);
+        const auto&  pbr      = static_cast<const vn::models::PbrMaterial&>(material);
         const Colorf emissive = pbr.emissive();
         converted->setBaseColor(pbr.baseColor());
         converted->setMetallic(std::clamp(pbr.metallic(), 0.0F, 1.0F));

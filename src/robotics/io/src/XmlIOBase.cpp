@@ -10,9 +10,10 @@
 
 #include <tinyxml2.h>
 
-#include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/Primitive.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/ColorMaterial.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/PrimitiveDispatch.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/io/Adapters.hpp>
 #include <vine/io/Vfs.hpp>
 
@@ -138,7 +139,7 @@ struct PrimitiveWriter {
     /// The `<geometry>` element the shape's element is appended to.
     tinyxml2::XMLElement* geometry;
 
-    void operator()(const vn::geometry::Box& box) const
+    void operator()(const vn::models::Box& box) const
     {
         auto        element = geometry->GetDocument()->NewElement("box");
         std::string size    = std::string(detail::floatToStr(box.width()).as_std_str()) + " " +
@@ -148,14 +149,14 @@ struct PrimitiveWriter {
         geometry->LinkEndChild(element);
     }
 
-    void operator()(const vn::geometry::Sphere& sphere) const
+    void operator()(const vn::models::Sphere& sphere) const
     {
         auto element = geometry->GetDocument()->NewElement("sphere");
         setAttrFloat(element, "radius", sphere.radius());
         geometry->LinkEndChild(element);
     }
 
-    void operator()(const vn::geometry::Cylinder& cylinder) const
+    void operator()(const vn::models::Cylinder& cylinder) const
     {
         auto element = geometry->GetDocument()->NewElement("cylinder");
         setAttrFloat(element, "radius", cylinder.radius());
@@ -163,7 +164,7 @@ struct PrimitiveWriter {
         geometry->LinkEndChild(element);
     }
 
-    void operator()(const vn::geometry::Cone& cone) const
+    void operator()(const vn::models::Cone& cone) const
     {
         auto element = geometry->GetDocument()->NewElement("cone");
         setAttrFloat(element, "radius", cone.radius());
@@ -171,7 +172,7 @@ struct PrimitiveWriter {
         geometry->LinkEndChild(element);
     }
 
-    void operator()(const vn::geometry::Ellipsoid& ellipsoid) const
+    void operator()(const vn::models::Ellipsoid& ellipsoid) const
     {
         auto        element = geometry->GetDocument()->NewElement("ellipsoid");
         std::string radii   = std::string(detail::floatToStr(ellipsoid.radiusX()).as_std_str()) + " " +
@@ -196,7 +197,7 @@ struct PrimitiveWriter {
  * @param mesh The mesh to write.
  * @return The virtual path of the file ("geoms/meshN.stl" or "geoms/meshN.vmesh"), which the description points at.
  */
-String writeMeshFile(vn::io::Vfs& vfs, std::size_t& geom_seq, const vn::geometry::Mesh& mesh)
+String writeMeshFile(vn::io::Vfs& vfs, std::size_t& geom_seq, const vn::models::Mesh& mesh)
 {
     const std::string seq_str = std::to_string(geom_seq++);
     const String      prefix  = String(u8"geoms/mesh") + String::fromUtf8(seq_str);
@@ -291,7 +292,7 @@ void XmlIOBase::exportPose(ExportContext& ctx, const math::Isometry3d& pose, tin
     xe->LinkEndChild(origin);
 }
 
-vn::intrusive_ptr<vn::geometry::Material> XmlIOBase::parseMaterial(ParseContext& ctx, const tinyxml2::XMLElement* xe)
+vn::intrusive_ptr<vn::models::Material> XmlIOBase::parseMaterial(ParseContext& ctx, const tinyxml2::XMLElement* xe)
 {
     (void)ctx;
     const String color_str = attr(xe, "color");
@@ -299,13 +300,13 @@ vn::intrusive_ptr<vn::geometry::Material> XmlIOBase::parseMaterial(ParseContext&
         float              r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f;
         std::istringstream stream(color_str.as_std_str());
         if (stream >> r >> g >> b >> a) {
-            return vn::make_intrusive<vn::geometry::ColorMaterial>(vn::Colorf(r, g, b, a));
+            return vn::make_intrusive<vn::models::ColorMaterial>(vn::Colorf(r, g, b, a));
         }
     }
     return {};
 }
 
-vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe)
+vn::intrusive_ptr<vn::models::Shape> XmlIOBase::parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe)
 {
     const tinyxml2::XMLElement* const child = xe->FirstChildElement();
     if (child == nullptr) {
@@ -323,7 +324,7 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
         if (!(stream >> w >> h >> d)) {
             return {};
         }
-        return vn::make_intrusive<vn::geometry::Box>(
+        return vn::make_intrusive<vn::models::Box>(
             static_cast<float>(w * s), static_cast<float>(h * s), static_cast<float>(d * s));
     }
     if (tag == "sphere") {
@@ -331,7 +332,7 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
         if (!getAttrFloat(child, "radius", r)) {
             return {};
         }
-        return vn::make_intrusive<vn::geometry::Sphere>(static_cast<float>(r * s));
+        return vn::make_intrusive<vn::models::Sphere>(static_cast<float>(r * s));
     }
     if (tag == "cylinder" || tag == "cone") {
         float r = 0.0f, h = 0.0f;
@@ -339,9 +340,9 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
             return {};
         }
         if (tag == "cylinder") {
-            return vn::make_intrusive<vn::geometry::Cylinder>(static_cast<float>(r * s), static_cast<float>(h * s));
+            return vn::make_intrusive<vn::models::Cylinder>(static_cast<float>(r * s), static_cast<float>(h * s));
         }
-        return vn::make_intrusive<vn::geometry::Cone>(static_cast<float>(r * s), static_cast<float>(h * s));
+        return vn::make_intrusive<vn::models::Cone>(static_cast<float>(r * s), static_cast<float>(h * s));
     }
     if (tag == "ellipsoid") {
         const String radii_str = attr(child, "radii");
@@ -349,7 +350,7 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
         if (radii_str.empty() || !detail::strToVec3(radii_str, radii)) {
             return {};
         }
-        return vn::make_intrusive<vn::geometry::Ellipsoid>(
+        return vn::make_intrusive<vn::models::Ellipsoid>(
             static_cast<float>(radii.x * s), static_cast<float>(radii.y * s), static_cast<float>(radii.z * s));
     }
     if (tag == "triangle_mesh" || tag == "indexed_triangle_mesh") {
@@ -371,23 +372,23 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
     return {};
 }
 
-void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& shape, tinyxml2::XMLElement* xe)
+void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::models::Shape& shape, tinyxml2::XMLElement* xe)
 {
     auto xe_geom = xe->GetDocument()->NewElement("geometry");
 
     // A primitive is one class holding an analytic solid: the kind belongs to the geometry, so the writer visits it
     // instead of asking for a tag and casting back to the class that tag was supposed to describe.
-    if (const auto* primitive = vn::obj_cast<vn::geometry::Primitive>(&shape)) {
-        vn::geometry::visitPrimitive(*primitive, PrimitiveWriter{ xe_geom });
+    if (const auto* primitive = vn::obj_cast<vn::models::Primitive>(&shape)) {
+        vn::models::visitPrimitive(*primitive, PrimitiveWriter{ xe_geom });
         xe->LinkEndChild(xe_geom);
         return;
     }
 
     switch (shape.shapeType()) {
-    case vn::geometry::ShapeType::TriangleMesh:
+    case vn::models::ShapeType::TriangleMesh:
     {
-        const vn::geometry::Mesh* mesh          = vn::obj_cast<vn::geometry::Mesh>(&shape);
-        const auto*               triangle_mesh = mesh != nullptr ? vn::obj_cast<vn::geometry::TriangleMesh>(mesh) : nullptr;
+        const vn::models::Mesh* mesh          = vn::obj_cast<vn::models::Mesh>(&shape);
+        const auto*               triangle_mesh = mesh != nullptr ? vn::obj_cast<vn::models::TriangleMesh>(mesh) : nullptr;
         if (triangle_mesh == nullptr) {
             detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package mesh export requires TriangleMesh, skipped.");
             return;

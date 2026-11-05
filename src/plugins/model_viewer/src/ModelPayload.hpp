@@ -4,7 +4,7 @@
 
 #include <vine/Object.hpp>
 #include <vine/String.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 
 namespace vn::model_viewer
@@ -24,7 +24,7 @@ struct MeshPayload : public vn::Object {
     vn::String name;
 
     /// 解析好的网格；空表示"这份载荷里没有模型"，打开器会拒绝它。
-    vn::intrusive_ptr<vn::geometry::TriangleMesh> mesh;
+    vn::intrusive_ptr<vn::models::TriangleMesh> mesh;
 };
 
 /**

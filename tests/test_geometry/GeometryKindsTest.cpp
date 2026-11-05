@@ -23,7 +23,8 @@
 #include <vine/geometry/ParabolaCurve.hpp>
 #include <vine/geometry/Placement.hpp>
 #include <vine/geometry/Plane.hpp>
-#include <vine/geometry/Primitive.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/geometry/SolidShape.hpp>
 #include <vine/geometry/Ray.hpp>
 #include <vine/geometry/RectangularTrimmedSurface.hpp>
 #include <vine/geometry/SphericalSurface.hpp>
@@ -48,7 +49,7 @@ using vn::geometry::LineCurved;
 using vn::geometry::ParabolaCurved;
 using vn::geometry::Plane;
 using vn::geometry::Planed;
-using vn::geometry::Primitive;
+using vn::models::Primitive;
 using vn::geometry::Ray;
 using vn::geometry::Rayd;
 using vn::geometry::RectangularTrimmedSurfaced;
@@ -126,7 +127,7 @@ static_assert(!std::is_abstract_v<BSplineSurfaced>);
 
 /// A parametric shape is one modeling class holding an analytic solid: the five bodies are kinds of `Solid`, not five
 /// modeling classes, and the shape is a `Shape` rather than a surface or a curve.
-static_assert(std::is_base_of_v<vn::geometry::Shape, Primitive>);
+static_assert(std::is_base_of_v<vn::models::Shape, Primitive>);
 static_assert(!std::is_base_of_v<vn::geometry::Surface<double>, Primitive>);
 static_assert(!std::is_base_of_v<vn::geometry::Curve<double>, Primitive>);
 
@@ -140,7 +141,7 @@ static_assert(!std::is_same_v<vn::geometry::SolidShapef, vn::geometry::SolidShap
 
 /// The unbounded spherical sheet is the surface counterpart: it is a surface, not a modeling primitive.
 static_assert(std::is_base_of_v<vn::geometry::Surface<double>, SphericalSurfaced>);
-static_assert(!std::is_base_of_v<vn::geometry::Primitive, SphericalSurfaced>);
+static_assert(!std::is_base_of_v<vn::models::Primitive, SphericalSurfaced>);
 
 /// A curve is not a surface: the two families do not overlap.
 static_assert(!std::is_base_of_v<vn::geometry::Surface<double>, LineCurved>);

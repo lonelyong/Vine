@@ -19,5 +19,5 @@ set_target_properties(${DEMO_PLUGIN_TARGET} PROPERTIES
 # demoAssetDirectory: the assets sit beside the executable, wherever it was launched from).
 # This is the plugin the RPATH note in VinePluginHelper.cmake was written for: it links two
 # libraries the application itself does not need.
-target_link_libraries(${DEMO_PLUGIN_TARGET} PRIVATE vn::Appfw vn::Graphics vn::ImageIO vn::Logging vn::System
+target_link_libraries(${DEMO_PLUGIN_TARGET} PRIVATE vn::Appfw vn::Models vn::Graphics vn::ImageIO vn::Logging vn::System
     Qt6::Core Qt6::Gui Qt6::Widgets)

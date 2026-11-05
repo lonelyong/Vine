@@ -8,14 +8,14 @@
 #include "Material.hpp"
 #include "Node.hpp"
 
-/// The geometry module's data model, borrowed here so this header stays a graphics header (see sceneFromModel).
-namespace vn::geometry
+/// The models module's data model, borrowed here so this header stays a graphics header (see sceneFromModel).
+namespace vn::models
 {
 
 class Model;
 class Material;
 
-} // namespace vn::geometry
+} // namespace vn::models
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -48,7 +48,7 @@ struct VN_GRAPHICS_API ModelScene {
  * - VERTEX DATA IS SHARED, NODES ARE NOT: every `Geometry` is a separate leaf (the scene graph is a strict tree,
  *   see Group::addChild), but the buffers come from `geometryFromShape`, so a mesh used by two nodes is uploaded
  *   once. A model that reuses one mesh in ten places therefore costs ten leaves and one mesh's worth of memory.
- * - MATERIALS ARE SHARED BY SOURCE IDENTITY: one `geometry::Material` referenced by several entries becomes ONE
+ * - MATERIALS ARE SHARED BY SOURCE IDENTITY: one `models::Material` referenced by several entries becomes ONE
  *   `graphics::Material` (the shading values are the material's, and a shared material is what lets the backend
  *   batch the draws that use it).
  * - NAMES TRAVEL: the node name, the mesh name and the material name are copied, which is what makes a converted
@@ -69,7 +69,7 @@ struct VN_GRAPHICS_API ModelScene {
  * @param model Model to convert; an empty model yields a null root.
  * @return The built tree and the conversion's counts.
  */
-VN_GRAPHICS_API ModelScene sceneFromModel(const vn::geometry::Model& model);
+VN_GRAPHICS_API ModelScene sceneFromModel(const vn::models::Model& model);
 
 /**
  * @brief Converts one geometry material into the material a draw uses.
@@ -92,6 +92,6 @@ VN_GRAPHICS_API ModelScene sceneFromModel(const vn::geometry::Model& model);
  * @param material Material to convert.
  * @return The graphics material for that source material.
  */
-VN_GRAPHICS_API intrusive_ptr<Material> materialFrom(const vn::geometry::Material& material);
+VN_GRAPHICS_API intrusive_ptr<Material> materialFrom(const vn::models::Material& material);
 
 VN_GRAPHICS_NS_END

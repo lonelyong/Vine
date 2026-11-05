@@ -10,8 +10,8 @@
 #include <vector>
 
 #include <vine/Buffer.hpp>
-#include <vine/geometry/Array.hpp>
-#include <vine/geometry/Shape.hpp>
+#include <vine/models/Array.hpp>
+#include <vine/models/Shape.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
@@ -87,7 +87,7 @@ struct VN_GRAPHICS_API AttributeChannel {
      * @brief Builds a channel that reads @p values, which the caller (or another holder) keeps owning.
      *
      * @details
-     * - The counterpart of packed() for a source that already owns packed scalars - a geometry::Mesh
+     * - The counterpart of packed() for a source that already owns packed scalars - a models::Mesh
      *   hands its attribute buffer straight over, so no second allocation exists and nothing is converted.
      *
      * @param values       Buffer to read, or null for an empty channel.
@@ -254,7 +254,7 @@ struct VN_GRAPHICS_API AttributeChannel {
      *
      * @details
      * - The scalars of an xyz channel ARE Vec3 elements (Vector3 unions `{T x, y, z}` and `T data[3]`),
-     *   the same reinterpretation geometry::Mesh makes for its own storage - a consumer reads an xyz
+     *   the same reinterpretation models::Mesh makes for its own storage - a consumer reads an xyz
      *   channel without copying it.
      * - Any other stride yields an empty span, so a caller need not check before calling. The view starts
      *   at this channel's first scalar (see @ref offset), so a slice's vertex 0 is its own first vertex.
@@ -875,7 +875,7 @@ VN_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const
  * @details
  * - A MESH shares its positions, normals, texture coordinates AND indices with the geometry - the geometry
  *   reads the mesh's own buffers, so the vertex data exists once in memory.
- * - An analytic primitive (`vn::geometry::Primitive`) owns no vertices, so it is triangulated at this boundary
+ * - An analytic primitive (`vn::models::Primitive`) owns no vertices, so it is triangulated at this boundary
  *   (`tessellateSolid`) and the resulting mesh is shared exactly like a mesh shape's would be; the consumer therefore
  *   keeps the geometry, not the temporary mesh. An unusable primitive yields null.
  * - Shapes that are neither (BRep, point cloud, ...) are not convertible and yield null. This is the bridge that lets
@@ -891,6 +891,6 @@ VN_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const
  * @param shape Shape to convert.
  * @return Filled geometry, or null for unsupported shapes or invalid input.
  */
-VN_GRAPHICS_API GeometryPtr geometryFromShape(const vn::geometry::Shape& shape);
+VN_GRAPHICS_API GeometryPtr geometryFromShape(const vn::models::Shape& shape);
 
 VN_GRAPHICS_NS_END

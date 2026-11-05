@@ -27,7 +27,7 @@
 #include <vine/logging/Log.hpp>
 
 #include <vine/Colorf.hpp>
-#include <vine/geometry/Array.hpp>
+#include <vine/models/Array.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -278,10 +278,10 @@ vn::intrusive_ptr<vn::graphics::Geometry> makeDirectionBox(const vn::String& nam
 {
     using vn::math::Vec3f;
 
-    vn::geometry::Vec3Array  positions;
-    vn::geometry::Vec3Array  normals;
-    vn::geometry::Vec3Array  directions;
-    vn::geometry::UInt32Array indices;
+    vn::models::Vec3fArray  positions;
+    vn::models::Vec3fArray  normals;
+    vn::models::Vec3fArray  directions;
+    vn::models::UInt32Array indices;
 
     const int face_table[6][3] = {
         { 0, 1, 2 },
@@ -482,9 +482,9 @@ addBox(vn::graphics::Group* root, const vn::Colorf& diffuse, const vn::String& n
 {
     using vn::math::Vec3f;
 
-    vn::geometry::Vec3Array  positions;
-    vn::geometry::Vec3Array  normals;
-    vn::geometry::UInt32Array indices;
+    vn::models::Vec3fArray  positions;
+    vn::models::Vec3fArray  normals;
+    vn::models::UInt32Array indices;
 
     // Build each face with a consistent outward (counter-clockwise, seen from
     // the outside) winding. For a face normal n, pick in-plane unit vectors
@@ -762,7 +762,7 @@ void addForwardShowcase(vn::graphics::Group* root)
 
         auto cloud = make_intrusive<Geometry>();
         cloud->setName(u8"point_cloud");
-        vn::geometry::Vec3Array  points;
+        vn::models::Vec3fArray  points;
         // Four stacked rings in the Z-up world: horizontal rings at rising
         // heights, centred on the footprint (-2.3, -1.2).
         for (int ring = 0; ring < 4; ++ring) {
@@ -877,7 +877,7 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
 
         auto stars = make_intrusive<Geometry>();
         stars->setName(u8"star_cloud");
-        vn::geometry::Vec3Array  points;
+        vn::models::Vec3fArray  points;
         // Three stacked rings (radius and height growing per ring) in the Z-up world: horizontal rings
         // at rising heights, centred on the placement.
         for (int ring = 0; ring < 3; ++ring) {

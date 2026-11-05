@@ -11,9 +11,9 @@
 #include <vine/Object.hpp>
 #include <vine/String.hpp>
 #include <vine/appfw/Document.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/Mesh.hpp>
-#include <vine/geometry/Model.hpp>
+#include <vine/models/TriangleMesh.hpp>
+#include <vine/models/Mesh.hpp>
+#include <vine/models/Model.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/logging/Log.hpp>
 #include <vine/math/Vector3.hpp>
@@ -87,10 +87,10 @@ inline std::vector<vn::math::Vec3f> smoothNormals(std::span<const vn::math::Vec3
  *
  * @param model 就地补齐的模型（来源带了法线的网格不动）。
  */
-inline void ensureSmoothNormals(vn::geometry::Model& model)
+inline void ensureSmoothNormals(vn::models::Model& model)
 {
-    for (const vn::geometry::Model::Entry& entry : model.meshes()) {
-        vn::geometry::Mesh* mesh = vn::obj_cast<vn::geometry::Mesh>(entry.mesh.get());
+    for (const vn::models::Model::Entry& entry : model.meshes()) {
+        vn::models::Mesh* mesh = vn::obj_cast<vn::models::Mesh>(entry.mesh.get());
         if (mesh == nullptr) {
             continue;
         }
@@ -98,7 +98,7 @@ inline void ensureSmoothNormals(vn::geometry::Model& model)
         if (positions.empty() || mesh->normals().size() == positions.size()) {
             continue; // 没有顶点，或来源已经带了（长度对得上才算带了）
         }
-        const auto* triangle_mesh = vn::obj_cast<vn::geometry::TriangleMesh>(mesh);
+        const auto* triangle_mesh = vn::obj_cast<vn::models::TriangleMesh>(mesh);
         if (triangle_mesh == nullptr || triangle_mesh->triangleCount() == 0u) {
             continue; // 非三角网格没有面可算
         }
@@ -143,8 +143,8 @@ inline vn::appfw::Document* openMeshFilePayload(const MeshFilePayload& payload)
 
     // 查看器只画三角网格：一个都没有的模型（点云、纯 b-rep）不接受 —— 与以前"不是三角网格就拒"同一条规矩。
     std::size_t triangle_entries = 0;
-    for (const vn::geometry::Model::Entry& entry : model->meshes()) {
-        if (entry.mesh != nullptr && entry.mesh->shapeType() == vn::geometry::ShapeType::TriangleMesh) {
+    for (const vn::models::Model::Entry& entry : model->meshes()) {
+        if (entry.mesh != nullptr && entry.mesh->shapeType() == vn::models::ShapeType::TriangleMesh) {
             ++triangle_entries;
         }
     }

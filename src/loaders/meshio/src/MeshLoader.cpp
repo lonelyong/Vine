@@ -15,10 +15,10 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
-#include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/PbrMaterial.hpp>
-#include <vine/geometry/PhongMaterial.hpp>
+#include <vine/models/ColorMaterial.hpp>
+#include <vine/models/TriangleMesh.hpp>
+#include <vine/models/PbrMaterial.hpp>
+#include <vine/models/PhongMaterial.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -30,14 +30,14 @@ VN_MESHIO_NS_BEGIN
 namespace
 {
 
-using Mesh         = vn::geometry::Mesh;
-using TriangleMesh = vn::geometry::TriangleMesh;
-using Material     = vn::geometry::Material;
-using Model        = vn::geometry::Model;
-using UInt32Array  = vn::geometry::UInt32Array;
-using Vec2Array    = vn::geometry::Vec2Array;
-using Vec3Array    = vn::geometry::Vec3Array;
-using Vec4Array    = vn::geometry::Vec4Array;
+using Mesh         = vn::models::Mesh;
+using TriangleMesh = vn::models::TriangleMesh;
+using Material     = vn::models::Material;
+using Model        = vn::models::Model;
+using UInt32Array  = vn::models::UInt32Array;
+using Vec2fArray    = vn::models::Vec2fArray;
+using Vec3fArray    = vn::models::Vec3fArray;
+using Vec4fArray    = vn::models::Vec4fArray;
 
 /** @brief AABB diagonal, in source units, above which the source is read as millimetres rather than metres. */
 constexpr float kMillimetreThreshold = 10.0f;
@@ -104,10 +104,10 @@ bool drainStream(std::istream& in, std::vector<unsigned char>& out)
  *   file held.
  */
 struct MeshSink {
-    Vec3Array   positions; // Vertices appended so far, in scene order.
-    Vec3Array   normals;   // Per-vertex normals, in the same order as @ref positions.
-    Vec4Array   colors;    // Per-vertex colours (linear RGBA), in the same order as @ref positions.
-    Vec2Array   texcoords; // Per-vertex texture coordinates, when @ref keep_texcoords is on.
+    Vec3fArray   positions; // Vertices appended so far, in scene order.
+    Vec3fArray   normals;   // Per-vertex normals, in the same order as @ref positions.
+    Vec4fArray   colors;    // Per-vertex colours (linear RGBA), in the same order as @ref positions.
+    Vec2fArray   texcoords; // Per-vertex texture coordinates, when @ref keep_texcoords is on.
     UInt32Array indices;   // Triangle corners, rebased onto @ref positions.
 
     bool pad_missing_colors{ false };    // White for a mesh that authors none (see the note above).
@@ -378,7 +378,7 @@ void MergedMeshBuilder::applyScale(TriangleMesh& mesh) const
 
     const double scale_factor = unitScaleFor((max - min).length());
     if (scale_factor != 1.0) {
-        Vec3Array scaled;
+        Vec3fArray scaled;
         scaled.reserve(positions.size());
         for (const auto& v : positions) {
             scaled.emplace_back(static_cast<float>(v.x * scale_factor), static_cast<float>(v.y * scale_factor), static_cast<float>(v.z * scale_factor));
@@ -457,7 +457,7 @@ class ModelBuilder final : private MeshBuilderBase {
      * @param mesh The mesh to measure.
      * @param world The transform the vertices are placed by; the box is therefore in model space.
      */
-    void growBounds(const vn::geometry::Mesh& mesh, const vn::math::Mat4d& world);
+    void growBounds(const vn::models::Mesh& mesh, const vn::math::Mat4d& world);
 
     /// Folds the load options' scale into @p root's transform, once for the whole model.
     void applyScale(std::uint32_t root);
@@ -489,13 +489,13 @@ vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
 
     vn::intrusive_ptr<Material> material;
     if (has_metallic || has_roughness || (has_opacity && opacity < 1.0f)) {
-        material = vn::make_intrusive<vn::geometry::PbrMaterial>(toVnColor(diffuse), metallic, roughness, opacity);
+        material = vn::make_intrusive<vn::models::PbrMaterial>(toVnColor(diffuse), metallic, roughness, opacity);
     }
     else if (has_specular || has_shininess) {
-        material = vn::make_intrusive<vn::geometry::PhongMaterial>(toVnColor(ambient), toVnColor(diffuse), toVnColor(specular), shininess);
+        material = vn::make_intrusive<vn::models::PhongMaterial>(toVnColor(ambient), toVnColor(diffuse), toVnColor(specular), shininess);
     }
     else {
-        material = vn::make_intrusive<vn::geometry::ColorMaterial>(toVnColor(diffuse));
+        material = vn::make_intrusive<vn::models::ColorMaterial>(toVnColor(diffuse));
     }
 
     aiString name;
@@ -551,7 +551,7 @@ void ModelBuilder::collectEntries()
     }
 }
 
-void ModelBuilder::growBounds(const vn::geometry::Mesh& mesh, const vn::math::Mat4d& world)
+void ModelBuilder::growBounds(const vn::models::Mesh& mesh, const vn::math::Mat4d& world)
 {
     for (const vn::math::Vec3f& point : mesh.positions()) {
         const auto x = static_cast<float>(world.element(0, 0) * point.x + world.element(0, 1) * point.y + world.element(0, 2) * point.z + world.element(0, 3));

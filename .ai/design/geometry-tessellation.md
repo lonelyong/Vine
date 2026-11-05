@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-05
 > **范围**：把 `Solid<float>`（五个解析体）变成 `TriangleMesh` 的入口、质量参数与结果契约。
 > 不含值类型本身与它的解析查询（见 `geometry-solid.md`）、模型的建模契约（见 `geometry-parametric.md`）、B-rep 的三角化（见 `brep-operations.md`）、网格存储与渲染（见 `graphics-geometry.md`）。
-> **权威来源**：`src/base/geometry/sdk/vine/geometry/SolidTessellation.hpp`、`src/base/geometry/src/SolidTessellation.cpp`；`tests/test_geometry/SolidTessellationTest.cpp`。
+> **权威来源**：`src/base/models/sdk/vine/models/SolidTessellation.hpp`、`src/base/models/src/SolidTessellation.cpp`；`tests/test_geometry/SolidTessellationTest.cpp`。
 > **待办**：`../backlog/geometry.md` G5
 
 ## 1. 概要设计
@@ -95,7 +95,7 @@
 
 | 头文件 | 内容 |
 |---|---|
-| `SolidTessellation.hpp` | `TessellationQuality` 与 `tessellateSolid(const Solid<float>&, const TessellationQuality&)` |
+| `models/SolidTessellation.hpp` | `TessellationQuality` 与 `tessellateSolid(const Solid<float>&, const TessellationQuality&)` |
 
 完整签名与每个参数的语义见头文件；网格通道的存储与共享见 `graphics-geometry.md`。
 
@@ -143,7 +143,7 @@
 ### 9.1 当前状态
 
 - 五个解析体的三角化已落地，`geometry` 仍不依赖 OCCT；`brep` 的 B-rep 三角化没有变化。
-- 入口以 `SolidShapef`（五个 kind 的 variant）为参数；模型侧传 `Primitive::shape()`（`geometry-solid.md` 3.5）。
+- 入口以 `SolidShapef`（五个 kind 的 variant）为参数；模型侧用 `solidShapeOf(primitive)` 把 `Primitive` 转成它（`geometry-parametric.md` 4）。
 
 ### 9.2 已知缺口 / 待办
 

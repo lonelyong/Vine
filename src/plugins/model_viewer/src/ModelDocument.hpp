@@ -5,10 +5,10 @@
 
 #include <vine/String.hpp>
 #include <vine/appfw/Document.hpp>
-#include <vine/geometry/Model.hpp>
-#include <vine/geometry/MixedMesh.hpp>
-#include <vine/geometry/QuadMesh.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/Model.hpp>
+#include <vine/models/MixedMesh.hpp>
+#include <vine/models/QuadMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
@@ -21,7 +21,7 @@ namespace vn::model_viewer
  * 文档只拿**数据**，不碰渲染：视图（把文档变成屏幕上的东西）是文档的消费者，由宿主在窗口就绪之后建 —— 见
  * appfw-document-model.md §5.8 的分工。把载荷变成这个对象的活儿在打开器里（ModelViewerPlugin 登记的那两个）。
  *
- * 文档持的是 `geometry::Model` 而不是一个摊平的网格：**结构是模型的一部分**（节点变换、多部件、每部件材质），
+ * 文档持的是 `models::Model` 而不是一个摊平的网格：**结构是模型的一部分**（节点变换、多部件、每部件材质），
  * 摊平发生在视图那一侧（`sceneFromModel` 把节点树变成场景节点），文档不该先把信息丢掉再让视图去猜。内存载荷
  * （一个网格）由第二个构造函数**包成单节点模型**，于是两种载荷在文档里只有一种形状。
  *
@@ -40,7 +40,7 @@ class ModelDocument : public vn::appfw::Document {
      * @param name 显示名（面板与将来的标签页用它；真实场景是文件名或包内路径）。
      * @param model 解析好的模型；可以为空（"空模型"，三个数都会是 0）。
      */
-    ModelDocument(vn::String name, vn::intrusive_ptr<vn::geometry::Model> model)
+    ModelDocument(vn::String name, vn::intrusive_ptr<vn::models::Model> model)
       : name_(std::move(name))
       , model_(std::move(model))
     {
@@ -50,21 +50,21 @@ class ModelDocument : public vn::appfw::Document {
     /**
      * @brief 造一份只有**一个网格**的模型文档（内存载荷那条路）。
      *
-     * 网格被包成一个单节点、单位变换、单个 entry 的 `geometry::Model`：文档对外只有"一个模型"这一种形状，
+     * 网格被包成一个单节点、单位变换、单个 entry 的 `models::Model`：文档对外只有"一个模型"这一种形状，
      * 视图因此不需要为两种载荷写两套。
      *
      * @param name 显示名。
      * @param mesh 解析好的网格；可以为空（空模型）。
      */
-    ModelDocument(vn::String name, vn::intrusive_ptr<vn::geometry::TriangleMesh> mesh)
+    ModelDocument(vn::String name, vn::intrusive_ptr<vn::models::TriangleMesh> mesh)
       : name_(std::move(name))
     {
         if (mesh != nullptr) {
-            auto                      model = vn::make_intrusive<vn::geometry::Model>();
-            vn::geometry::Model::Node node;
+            auto                      model = vn::make_intrusive<vn::models::Model>();
+            vn::models::Model::Node node;
             node.name   = name_;
             node.meshes = { 0U };
-            vn::geometry::Model::Entry entry;
+            vn::models::Model::Entry entry;
             entry.mesh = std::move(mesh);
             model->setNodes({ std::move(node) });
             model->setMeshes({ std::move(entry) });
@@ -115,14 +115,14 @@ class ModelDocument : public vn::appfw::Document {
      *
      * @return 借用的模型，随文档一起消失；没有模型时是空指针。
      */
-    vn::raw_ptr<const vn::geometry::Model> model() const
+    vn::raw_ptr<const vn::models::Model> model() const
     {
         return model_.get();
     }
 
   private:
     /// 数一遍模型的规模（按 entry 算，不按节点引用算：同一网格挂两个节点仍是一份数据）。
-    static void count(const vn::geometry::Model* model, std::size_t& vertices, std::size_t& triangles, std::size_t& parts)
+    static void count(const vn::models::Model* model, std::size_t& vertices, std::size_t& triangles, std::size_t& parts)
     {
         vertices  = 0;
         triangles = 0;
@@ -130,21 +130,21 @@ class ModelDocument : public vn::appfw::Document {
         if (model == nullptr) {
             return;
         }
-        for (const vn::geometry::Model::Entry& entry : model->meshes()) {
+        for (const vn::models::Model::Entry& entry : model->meshes()) {
             if (entry.mesh == nullptr) {
                 continue;
             }
             ++parts;
-            if (const auto* mesh = vn::obj_cast<vn::geometry::Mesh>(entry.mesh.get())) {
+            if (const auto* mesh = vn::obj_cast<vn::models::Mesh>(entry.mesh.get())) {
                 vertices += mesh->vertexCount();
             }
-            if (const auto* mesh = vn::obj_cast<vn::geometry::TriangleMesh>(entry.mesh.get())) {
+            if (const auto* mesh = vn::obj_cast<vn::models::TriangleMesh>(entry.mesh.get())) {
                 triangles += mesh->triangleCount();
             }
-            else if (const auto* mesh = vn::obj_cast<vn::geometry::QuadMesh>(entry.mesh.get())) {
+            else if (const auto* mesh = vn::obj_cast<vn::models::QuadMesh>(entry.mesh.get())) {
                 triangles += mesh->toTriangleMesh()->triangleCount();
             }
-            else if (const auto* mesh = vn::obj_cast<vn::geometry::MixedMesh>(entry.mesh.get())) {
+            else if (const auto* mesh = vn::obj_cast<vn::models::MixedMesh>(entry.mesh.get())) {
                 triangles += mesh->toTriangleMesh()->triangleCount();
             }
         }
@@ -152,7 +152,7 @@ class ModelDocument : public vn::appfw::Document {
 
   private:
     vn::String                             name_;
-    vn::intrusive_ptr<vn::geometry::Model> model_;
+    vn::intrusive_ptr<vn::models::Model> model_;
     std::size_t                            vertices_{ 0 };
     std::size_t                            triangles_{ 0 };
     std::size_t                            parts_{ 0 };

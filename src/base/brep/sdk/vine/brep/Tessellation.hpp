@@ -2,8 +2,8 @@
 
 #include "brep_global.hpp"
 
-#include <vine/geometry/BrepShape.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/BrepShape.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 
 #include "Backend.hpp"
@@ -45,7 +45,7 @@ struct TessellationOptions {
  * @param options Deflection, angular tolerance and normal production.
  * @return The triangle mesh, or null when nothing was produced.
  */
-[[nodiscard]] VN_BREP_API vn::intrusive_ptr<vn::geometry::TriangleMesh>
-tessellate(const vn::geometry::BrepShape& shape, const TessellationOptions& options = {});
+[[nodiscard]] VN_BREP_API vn::intrusive_ptr<vn::models::TriangleMesh>
+tessellate(const vn::models::BrepShape& shape, const TessellationOptions& options = {});
 
 VN_BREP_NS_END

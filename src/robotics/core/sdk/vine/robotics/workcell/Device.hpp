@@ -8,7 +8,7 @@
 #include <vector>
 
 #include <vine/String.hpp>
-#include <vine/geometry/Material.hpp>
+#include <vine/models/Material.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/robotics/kinematics/Frame.hpp>
@@ -92,7 +92,7 @@ struct VN_ROBOTICS_CORE_API DeviceMaterial {
     /// Material name (unique within a device).
     String name;
     /// The material object.
-    vn::intrusive_ptr<vn::geometry::Material> material;
+    vn::intrusive_ptr<vn::models::Material> material;
 };
 
 /**

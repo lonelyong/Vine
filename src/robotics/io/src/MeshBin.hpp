@@ -10,9 +10,9 @@
 #include <vector>
 
 #include <vine/Buffer.hpp>
-#include <vine/geometry/Array.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/Mesh.hpp>
+#include <vine/models/Array.hpp>
+#include <vine/models/TriangleMesh.hpp>
+#include <vine/models/Mesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/Stream.hpp>
 #include <vine/io/Vfs.hpp>
@@ -124,7 +124,7 @@ inline void facetNormal(const float (&a)[3], const float (&b)[3], const float (&
  * @param mesh The mesh about to be written.
  * @return true when binary STL would lose part of it, false when it holds all of it.
  */
-[[nodiscard]] inline bool stlWouldLose(const vn::geometry::Mesh& mesh) noexcept
+[[nodiscard]] inline bool stlWouldLose(const vn::models::Mesh& mesh) noexcept
 {
     const auto texcoords       = mesh.texcoordsBuffer();
     const auto colors          = mesh.colorsBuffer();
@@ -304,7 +304,7 @@ struct MeshArrays {
     vn::intrusive_ptr<const vn::Buffer<float>>         texcoords;
     vn::intrusive_ptr<const vn::Buffer<float>>         colors;
     vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices;
-    vn::intrusive_ptr<const vn::geometry::Shape>       shape;      ///< The mesh itself; a source compares its revision.
+    vn::intrusive_ptr<const vn::models::Shape>       shape;      ///< The mesh itself; a source compares its revision.
     std::uint64_t                                      revision{ 0 }; ///< Shape revision when the arrays were taken.
     std::uint64_t                                      vertex_count{ 0 };
     std::uint64_t                                      triangle_count{ 0 };
@@ -324,14 +324,14 @@ struct MeshArrays {
      * @param mesh The mesh to take the arrays of.
      * @return The arrays; empty when the mesh is not one this module writes.
      */
-    [[nodiscard]] static MeshArrays take(const vn::geometry::Mesh& mesh) noexcept
+    [[nodiscard]] static MeshArrays take(const vn::models::Mesh& mesh) noexcept
     {
         MeshArrays arrays;
-        if (mesh.shapeType() != vn::geometry::ShapeType::TriangleMesh || !mesh.isValid()) {
+        if (mesh.shapeType() != vn::models::ShapeType::TriangleMesh || !mesh.isValid()) {
             return arrays;
         }
 
-        const auto& triangle_mesh = obj_cast<vn::geometry::TriangleMesh>(mesh);
+        const auto& triangle_mesh = obj_cast<vn::models::TriangleMesh>(mesh);
         arrays.positions          = triangle_mesh.positionsBuffer();
         arrays.normals            = triangle_mesh.normalsBuffer();
         arrays.texcoords          = triangle_mesh.texcoordsBuffer();
@@ -412,7 +412,7 @@ class MeshBinSource final : public vn::io::DataSource {
      *
      * @param mesh The mesh to write; this reads its arrays and holds those.
      */
-    explicit MeshBinSource(const vn::geometry::Mesh& mesh)
+    explicit MeshBinSource(const vn::models::Mesh& mesh)
     {
         const MeshArrays arrays = MeshArrays::take(mesh);
         if (!arrays.valid()) {
@@ -576,7 +576,7 @@ class MeshBinSource final : public vn::io::DataSource {
                (indices_ == nullptr || indices_->revision() == revisions_[4]);
     }
 
-    vn::intrusive_ptr<const vn::geometry::Shape>       shape_;
+    vn::intrusive_ptr<const vn::models::Shape>       shape_;
     std::uint64_t                                      shape_revision_{ 0 };
     vn::intrusive_ptr<const vn::Buffer<float>>         positions_;
     vn::intrusive_ptr<const vn::Buffer<float>>         normals_;
@@ -629,7 +629,7 @@ class StlMeshSource final : public vn::io::DataSource {
      *
      * @param mesh The mesh to write; this reads its arrays and holds those.
      */
-    explicit StlMeshSource(const vn::geometry::Mesh& mesh)
+    explicit StlMeshSource(const vn::models::Mesh& mesh)
     {
         arrays_ = MeshArrays::take(mesh);
         if (!arrays_.valid()) {
@@ -859,11 +859,11 @@ class StlMeshSource final : public vn::io::DataSource {
  * @brief The arrays one mesh file holds.
  */
 struct MeshBinData {
-    vn::geometry::Vec3Array  positions; // Vertex positions.
-    vn::geometry::Vec3Array  normals;   // Per-vertex normals, empty when the file has none.
-    vn::geometry::Vec2Array  texcoords; // Per-vertex texture coordinates, empty when the file has none.
-    vn::geometry::Vec4Array  colors;    // Per-vertex colours (linear RGBA), empty when the file has none.
-    vn::geometry::UInt32Array indices;   // Triangle indices, empty for a triangle soup.
+    vn::models::Vec3fArray  positions; // Vertex positions.
+    vn::models::Vec3fArray  normals;   // Per-vertex normals, empty when the file has none.
+    vn::models::Vec2fArray  texcoords; // Per-vertex texture coordinates, empty when the file has none.
+    vn::models::Vec4fArray  colors;    // Per-vertex colours (linear RGBA), empty when the file has none.
+    vn::models::UInt32Array indices;   // Triangle indices, empty for a triangle soup.
 };
 
 /**
@@ -948,7 +948,7 @@ inline bool readMeshBin(vn::io::Vfs& vfs, const std::filesystem::path& path, Mes
  * @param indexed Whether the description says the mesh is an indexed one.
  * @return The mesh, or null when the file cannot be read.
  */
-inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromBin(vn::io::Vfs& vfs, const std::filesystem::path& path, bool indexed)
+inline vn::intrusive_ptr<vn::models::Mesh> meshFromBin(vn::io::Vfs& vfs, const std::filesystem::path& path, bool indexed)
 {
     MeshBinData data;
     if (!readMeshBin(vfs, path, data)) {
@@ -959,7 +959,7 @@ inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromBin(vn::io::Vfs& vfs, const
     }
 
     if (!indexed) {
-        auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+        auto mesh = vn::make_intrusive<vn::models::TriangleMesh>();
         mesh->setPositions(std::move(data.positions));
         if (!data.normals.empty()) {
             mesh->setNormals(std::move(data.normals));
@@ -973,7 +973,7 @@ inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromBin(vn::io::Vfs& vfs, const
         return mesh;
     }
 
-    auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+    auto mesh = vn::make_intrusive<vn::models::TriangleMesh>();
     mesh->setPositions(std::move(data.positions));
     if (!data.normals.empty()) {
         mesh->setNormals(std::move(data.normals));
@@ -1081,13 +1081,13 @@ inline bool readStl(vn::io::Vfs& vfs, const std::filesystem::path& path, MeshBin
  * @param path The virtual path of the STL file.
  * @return The mesh, or null when the file cannot be read.
  */
-inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromStl(vn::io::Vfs& vfs, const std::filesystem::path& path)
+inline vn::intrusive_ptr<vn::models::Mesh> meshFromStl(vn::io::Vfs& vfs, const std::filesystem::path& path)
 {
     MeshBinData data;
     if (!readStl(vfs, path, data)) {
         return {};
     }
-    auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+    auto mesh = vn::make_intrusive<vn::models::TriangleMesh>();
     mesh->setPositions(std::move(data.positions));
     mesh->setNormals(std::move(data.normals));
     return mesh;
@@ -1104,7 +1104,7 @@ inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromStl(vn::io::Vfs& vfs, const
  * @param indexed Whether the description says the mesh is an indexed one.
  * @return The mesh, or null when the file cannot be read or is not what the description promised.
  */
-inline vn::intrusive_ptr<vn::geometry::Mesh> meshFromFile(vn::io::Vfs& vfs, const std::filesystem::path& path, bool indexed)
+inline vn::intrusive_ptr<vn::models::Mesh> meshFromFile(vn::io::Vfs& vfs, const std::filesystem::path& path, bool indexed)
 {
     if (!isStlPath(path)) {
         return meshFromBin(vfs, path, indexed);

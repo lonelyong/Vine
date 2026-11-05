@@ -15,7 +15,7 @@
 #include <vector>
 
 #include <vine/String.hpp>
-#include <vine/geometry/Array.hpp>
+#include <vine/models/Array.hpp>
 #include <vine/io/Vfs.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/robotics/io/robot_io_global.hpp>

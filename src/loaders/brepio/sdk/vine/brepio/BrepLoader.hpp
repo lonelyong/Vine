@@ -8,7 +8,7 @@
 
 #include <vine/String.hpp>
 #include <vine/crypto/ByteSequenceFingerprint.hpp>
-#include <vine/geometry/BrepShape.hpp>
+#include <vine/models/BrepShape.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/runtime/InMemoryCache.hpp>
@@ -62,7 +62,7 @@ class VN_BREPIO_API BrepLoader {
      *         backend, NotFound when the file is not there, IoFailure when it cannot be read, InvalidData when it cannot
      *         be parsed.
      */
-    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> load(const std::filesystem::path& file_path);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> load(const std::filesystem::path& file_path);
 
     /**
      * @brief Loads a B-rep solid from a stream.
@@ -74,11 +74,11 @@ class VN_BREPIO_API BrepLoader {
      * @param format The format to parse as; BrepFormat::Unknown is refused with IoError::Unsupported.
      * @return The solid, or the failure class (see the path entry).
      */
-    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> load(std::istream& in, BrepFormat format);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> load(std::istream& in, BrepFormat format);
 
   private:
     /// Solids already built, keyed by the content fingerprint of the file they came from.
-    vn::runtime::InMemoryCache<vn::crypto::ByteSequenceFingerprint, vn::intrusive_ptr<vn::geometry::BrepShape>> cache_;
+    vn::runtime::InMemoryCache<vn::crypto::ByteSequenceFingerprint, vn::intrusive_ptr<vn::models::BrepShape>> cache_;
 };
 
 VN_BREPIO_NS_END

@@ -24,7 +24,7 @@
 #include <tinyxml2.h>
 
 #include <vine/String.hpp>
-#include <vine/geometry/ColorMaterial.hpp>
+#include <vine/models/ColorMaterial.hpp>
 #include <vine/math/Isometry3.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
@@ -153,7 +153,7 @@ Isometry3d parseOrigin(const tinyxml2::XMLElement* xe_origin)
  * @param path The mesh file path.
  * @return The shape, or null on failure.
  */
-vn::intrusive_ptr<vn::geometry::Shape> loadShape(vn::meshio::MeshLoader& loader, const std::filesystem::path& path)
+vn::intrusive_ptr<vn::models::Shape> loadShape(vn::meshio::MeshLoader& loader, const std::filesystem::path& path)
 {
     auto loaded = loader.loadMerged(path);
     if (!loaded) {
@@ -177,7 +177,7 @@ vn::intrusive_ptr<vn::geometry::Shape> loadShape(vn::meshio::MeshLoader& loader,
  * @param out The visual to fill.
  */
 void parseVisual(vn::meshio::MeshLoader&                                      loader,
-                 std::map<String, vn::intrusive_ptr<vn::geometry::Material>>& material_lib,
+                 std::map<String, vn::intrusive_ptr<vn::models::Material>>& material_lib,
                  std::size_t&                                                 next_material_id,
                  const tinyxml2::XMLElement*                                  xe_visual,
                  const std::filesystem::path&                                 base_dir,
@@ -201,8 +201,8 @@ void parseVisual(vn::meshio::MeshLoader&                                      lo
             double             r = 0.0, g = 0.0, b = 0.0, a = 1.0;
             std::istringstream stream(rgba.as_std_str());
             if (stream >> r >> g >> b >> a) {
-                auto material = vn::intrusive_ptr<vn::geometry::Material>(
-                    new vn::geometry::ColorMaterial(vn::Colorf(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), static_cast<float>(a))));
+                auto material = vn::intrusive_ptr<vn::models::Material>(
+                    new vn::models::ColorMaterial(vn::Colorf(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), static_cast<float>(a))));
                 if (mat_name.empty()) {
                     // Materials must be named; generate one for unnamed ones.
                     const std::string id_str = std::to_string(next_material_id++);
@@ -296,7 +296,7 @@ int main(int argc, char** argv)
     });
 
     // Named materials are collected per device and referenced by name.
-    std::map<String, vn::intrusive_ptr<vn::geometry::Material>> material_lib;
+    std::map<String, vn::intrusive_ptr<vn::models::Material>> material_lib;
     std::size_t                                                 next_material_id = 0;
 
     std::map<String, Link*> link_by_name;

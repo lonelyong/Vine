@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-05
 > **范围**：`Solid<T>` 族（五个解析体：`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid`）、它的两个查询（最近点、射线求交），以及模型侧如何给出这份实体（每个建模子类的 `solid()`、`solidShapeOf()`、`visitPrimitive()`）。
 > 不含三角化（见 `geometry-tessellation.md`），不含实体间运算（布尔、实体间距离，见 `../backlog/geometry.md` G3），不含曲面族查询（见 `geometry-surface-queries.md`）。
-> **权威来源**：`src/base/geometry/sdk/vine/geometry/Solid.hpp`、`Primitive.hpp`；`tests/test_geometry/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`。
+> **权威来源**：`src/base/geometry/sdk/vine/geometry/Solid.hpp`、`SolidShape.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`；`tests/test_geometry/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`。
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -218,7 +218,7 @@
 ### 9.2 已知缺口 / 待办
 
 - 实体间运算（布尔、实体间最近距离）没有消费者，见 `../backlog/geometry.md` G3。
-- 新 kind（torus / capsule / 棱柱）：`Solid.hpp` 一处 + 每个 visit 点（编译器会列出来）+ 一个 `ShapeType`；有表示的实体不进这里，走 `BrepShape`。
+- 新 kind（torus / capsule / 棱柱）：新增一个 `XxxSolid` 头文件，在 `SolidShape.hpp` 的 variant 里加一项，并逐个处理 `visit` 点（编译器会列出来）+ 一个 `ShapeType`；有表示的实体不进这里，走 `BrepShape`。
 - 三角化只有 `SolidShapef` 入口：要画 `BoxSolidd` 的调用方自己构造对应 `BoxSolidf`（`geometry-tessellation.md` 9.2）。
 
 ### 9.3 兼容性 / 迁移
@@ -230,8 +230,8 @@
 
 ### 10.1 代码
 
-- `src/base/geometry/sdk/vine/geometry/Solid.hpp`
-- `src/base/geometry/sdk/vine/geometry/Primitive.hpp`、`src/base/geometry/src/Primitive.cpp`
+- `src/base/geometry/sdk/vine/geometry/Solid.hpp`、`SolidShape.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`
+- `src/base/models/sdk/vine/models/Primitive.hpp`、`Box.hpp` … `Ellipsoid.hpp`、`PrimitiveDispatch.hpp`
 - `tests/test_geometry/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`
 
 ### 10.2 文档与 ADR

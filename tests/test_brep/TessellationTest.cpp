@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <vine/brep/Tessellation.hpp>
-#include <vine/geometry/BrepShape.hpp>
+#include <vine/models/BrepShape.hpp>
 
 using vn::brep::hasBackend;
 using vn::brep::tessellate;
@@ -13,7 +13,7 @@ TEST(Tessellation, aBuildWithoutABackendProducesNoMesh)
     }
 
     // The module carries the contract without a backend: the capability query says so, and a call produces nothing.
-    const vn::geometry::BrepShape shape;
+    const vn::models::BrepShape shape;
 
     EXPECT_FALSE(tessellate(shape));
 }
@@ -21,7 +21,7 @@ TEST(Tessellation, aBuildWithoutABackendProducesNoMesh)
 TEST(Tessellation, aSolidWithoutAShapeProducesNoMesh)
 {
     // Holds in every build: an empty BrepShape has nothing to triangulate, backend or not.
-    const vn::geometry::BrepShape shape;
+    const vn::models::BrepShape shape;
 
     EXPECT_FALSE(tessellate(shape));
 }

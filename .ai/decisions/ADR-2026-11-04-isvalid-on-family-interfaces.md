@@ -51,4 +51,4 @@
 - `src/base/geometry/sdk/vine/geometry/Plane.hpp`：唯一新写的实现，`normal.length() > EPS`。
 - `tests/test_geometry/GeometryKindsTest.cpp`：两行 `static_assert`（接口上可问、返回 `bool`）、
   `validityIsAskableThroughTheInterface`（五次经接口提问）、族级扫查里的 `EXPECT_TRUE(curve.isValid())`。
-- `src/base/geometry/sdk/vine/geometry/Shape.hpp`：`virtual bool isValid() const;`——同一问法的先例。
+- `src/base/models/sdk/vine/models/Shape.hpp`：`virtual bool isValid() const;`——同一问法的先例。

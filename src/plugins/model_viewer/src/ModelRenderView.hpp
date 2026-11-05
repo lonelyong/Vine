@@ -396,7 +396,7 @@ inline void ModelRenderView::addLighting(vn::graphics::Scene& scene)
 
 inline void ModelRenderView::buildScene()
 {
-    const vn::geometry::Model* source = model_ != nullptr ? model_->model() : nullptr;
+    const vn::models::Model* source = model_ != nullptr ? model_->model() : nullptr;
     if (source == nullptr) {
         return; // 空文档：让 activate() 什么都不呈现，而不是建个空场景。
     }

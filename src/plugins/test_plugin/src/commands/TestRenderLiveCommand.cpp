@@ -8,7 +8,7 @@
 #include <vine/Colorf.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
-#include <vine/geometry/Array.hpp>
+#include <vine/models/Array.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
@@ -43,7 +43,7 @@ using vn::math::Vec3f;
 intrusive_ptr<vn::graphics::MatrixTransform> addDemoTriangle(vn::graphics::Scene* scene, const vn::Colorf& diffuse, const vn::String& name, const Vec3d& at)
 {
     // One triangle in the XY plane, authored directly as positions.
-    const vn::geometry::Vec3Array positions = { Vec3f(-1.0f, -1.0f, 0.0f), Vec3f(1.0f, -1.0f, 0.0f), Vec3f(0.0f, 1.0f, 0.0f) };
+    const vn::models::Vec3fArray positions = { Vec3f(-1.0f, -1.0f, 0.0f), Vec3f(1.0f, -1.0f, 0.0f), Vec3f(0.0f, 1.0f, 0.0f) };
 
     auto geometry = make_intrusive<vn::graphics::Geometry>();
     geometry->setName(name);

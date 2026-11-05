@@ -23,14 +23,14 @@
 #include <vine/Colorf.hpp>
 #include <vine/Object.hpp>
 #include <vine/String.hpp>
-#include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/MixedMesh.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/Material.hpp>
-#include <vine/geometry/Model.hpp>
-#include <vine/geometry/PbrMaterial.hpp>
-#include <vine/geometry/PhongMaterial.hpp>
-#include <vine/geometry/QuadMesh.hpp>
+#include <vine/models/ColorMaterial.hpp>
+#include <vine/models/MixedMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
+#include <vine/models/Material.hpp>
+#include <vine/models/Model.hpp>
+#include <vine/models/PbrMaterial.hpp>
+#include <vine/models/PhongMaterial.hpp>
+#include <vine/models/QuadMesh.hpp>
 #include <vine/io/IoError.hpp>
 
 VN_MESHIO_NS_BEGIN
@@ -38,10 +38,10 @@ VN_MESHIO_NS_BEGIN
 namespace
 {
 
-using Material    = vn::geometry::Material;
-using Model       = vn::geometry::Model;
-using Shape       = vn::geometry::Shape;
-using UInt32Array = vn::geometry::UInt32Array;
+using Material    = vn::models::Material;
+using Model       = vn::models::Model;
+using Shape       = vn::models::Shape;
+using UInt32Array = vn::models::UInt32Array;
 
 /**
  * @brief Copies one per-vertex channel into the bare array an aiMesh holds, converting each element on the way.
@@ -82,7 +82,7 @@ struct MeshView {
     UInt32Array indices;
 };
 
-MeshView viewOf(const vn::geometry::Mesh& mesh)
+MeshView viewOf(const vn::models::Mesh& mesh)
 {
     if (!mesh.isValid()) {
         throw std::invalid_argument("MeshExporter: mesh is invalid");
@@ -90,21 +90,21 @@ MeshView viewOf(const vn::geometry::Mesh& mesh)
 
     MeshView view{ mesh.positions(), mesh.normals(), mesh.texcoords(), mesh.colors(), {} };
     switch (mesh.shapeType()) {
-    case vn::geometry::ShapeType::TriangleMesh:
+    case vn::models::ShapeType::TriangleMesh:
     {
-        const auto& triangle_mesh = obj_cast<vn::geometry::TriangleMesh>(mesh);
+        const auto& triangle_mesh = obj_cast<vn::models::TriangleMesh>(mesh);
         view.indices.assign(triangle_mesh.indices().begin(), triangle_mesh.indices().end());
         break;
     }
-    case vn::geometry::ShapeType::QuadMesh:
+    case vn::models::ShapeType::QuadMesh:
     {
-        const auto triangle_mesh = obj_cast<vn::geometry::QuadMesh>(mesh).toTriangleMesh();
+        const auto triangle_mesh = obj_cast<vn::models::QuadMesh>(mesh).toTriangleMesh();
         view.indices.assign(triangle_mesh->indices().begin(), triangle_mesh->indices().end());
         break;
     }
-    case vn::geometry::ShapeType::MixedMesh:
+    case vn::models::ShapeType::MixedMesh:
     {
-        const auto triangle_mesh = obj_cast<vn::geometry::MixedMesh>(mesh).toTriangleMesh();
+        const auto triangle_mesh = obj_cast<vn::models::MixedMesh>(mesh).toTriangleMesh();
         view.indices.assign(triangle_mesh->indices().begin(), triangle_mesh->indices().end());
         break;
     }
@@ -155,7 +155,7 @@ class SceneWriterBase {
 
 void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Shape& mesh) const
 {
-    const auto write = [this, &io_mesh, &mesh](const vn::geometry::Mesh& typed_mesh) {
+    const auto write = [this, &io_mesh, &mesh](const vn::models::Mesh& typed_mesh) {
         const MeshView view = viewOf(typed_mesh);
 
         const vn::String& name = mesh.name();
@@ -203,7 +203,7 @@ void SceneWriterBase::fillMesh(aiMesh& io_mesh, const Shape& mesh) const
         }
     };
 
-    const auto* typed_mesh = obj_cast<vn::geometry::Mesh>(&mesh);
+    const auto* typed_mesh = obj_cast<vn::models::Mesh>(&mesh);
     if (typed_mesh == nullptr) {
         throw std::runtime_error("MeshExporter: unsupported shape type");
     }
@@ -406,18 +406,18 @@ void ModelSceneWriter::fillMaterial(aiMaterial& io_material, const Material& mat
     }
 
     switch (material.materialType()) {
-    case vn::geometry::MaterialType::Color:
+    case vn::models::MaterialType::Color:
     {
-        const auto& color = static_cast<const vn::geometry::ColorMaterial&>(material).color();
+        const auto& color = static_cast<const vn::models::ColorMaterial&>(material).color();
         addColor(io_material, color, AI_MATKEY_COLOR_DIFFUSE);
         addColor(io_material, color, AI_MATKEY_BASE_COLOR);
         const float opacity = color.a;
         io_material.AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
         break;
     }
-    case vn::geometry::MaterialType::Phong:
+    case vn::models::MaterialType::Phong:
     {
-        const auto& phong = static_cast<const vn::geometry::PhongMaterial&>(material);
+        const auto& phong = static_cast<const vn::models::PhongMaterial&>(material);
         addColor(io_material, phong.ambient(), AI_MATKEY_COLOR_AMBIENT);
         addColor(io_material, phong.diffuse(), AI_MATKEY_COLOR_DIFFUSE);
         addColor(io_material, phong.diffuse(), AI_MATKEY_BASE_COLOR);
@@ -428,9 +428,9 @@ void ModelSceneWriter::fillMaterial(aiMaterial& io_material, const Material& mat
         io_material.AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
         break;
     }
-    case vn::geometry::MaterialType::Pbr:
+    case vn::models::MaterialType::Pbr:
     {
-        const auto& pbr = static_cast<const vn::geometry::PbrMaterial&>(material);
+        const auto& pbr = static_cast<const vn::models::PbrMaterial&>(material);
         addColor(io_material, pbr.baseColor(), AI_MATKEY_COLOR_DIFFUSE);
         addColor(io_material, pbr.baseColor(), AI_MATKEY_BASE_COLOR);
         addColor(io_material, pbr.emissive(), AI_MATKEY_COLOR_EMISSIVE);

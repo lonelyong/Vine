@@ -2,8 +2,8 @@
 
 #include "brep_global.hpp"
 
-#include <vine/geometry/BrepShape.hpp>
-#include <vine/geometry/Primitive.hpp>
+#include <vine/models/BrepShape.hpp>
+#include <vine/models/Primitive.hpp>
 #include <vine/intrusive_ptr.hpp>
 
 #include "Backend.hpp"
@@ -39,6 +39,6 @@ VN_BREP_NS_BEGIN
  *         the five the geometry module defines. Ask hasBackend() to tell a build-level cause from an input-level
  *         one.
  */
-[[nodiscard]] VN_BREP_API vn::intrusive_ptr<vn::geometry::BrepShape> makeBrep(const vn::geometry::Primitive& primitive);
+[[nodiscard]] VN_BREP_API vn::intrusive_ptr<vn::models::BrepShape> makeBrep(const vn::models::Primitive& primitive);
 
 VN_BREP_NS_END

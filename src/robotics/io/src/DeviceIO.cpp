@@ -7,7 +7,7 @@
 
 #include <tinyxml2.h>
 
-#include <vine/geometry/ColorMaterial.hpp>
+#include <vine/models/ColorMaterial.hpp>
 #include <vine/io/DirectoryVfs.hpp>
 #include <vine/io/Vfs.hpp>
 #include <vine/io/ZipArchive.hpp>
@@ -359,7 +359,7 @@ void DeviceIO::exportDeviceInternal(ExportContext& ctx, const workcell::Device& 
         if (!data->materials.empty()) {
             auto xe_materials = xe_device->GetDocument()->NewElement("materials");
             for (const auto& entry : data->materials) {
-                const auto* const color = dynamic_cast<const vn::geometry::ColorMaterial*>(entry.material.get());
+                const auto* const color = dynamic_cast<const vn::models::ColorMaterial*>(entry.material.get());
                 if (color == nullptr) {
                     detail::appendWarning(ctx.msgs, "DeviceIO::exportDeviceInternal, unsupported material type in library, skipped.");
                     continue;

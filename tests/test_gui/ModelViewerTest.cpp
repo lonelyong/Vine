@@ -32,10 +32,10 @@
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
 #include <vine/appfw/gui/RenderControl.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/MixedMesh.hpp>
-#include <vine/geometry/Model.hpp>
-#include <vine/geometry/QuadMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
+#include <vine/models/MixedMesh.hpp>
+#include <vine/models/Model.hpp>
+#include <vine/models/QuadMesh.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
@@ -61,7 +61,7 @@ struct TestMeshPayload : public vn::Object {
     VN_OBJECT_META_DECL;
 
     vn::String                                           name;
-    vn::intrusive_ptr<vn::geometry::TriangleMesh> mesh;
+    vn::intrusive_ptr<vn::models::TriangleMesh> mesh;
 };
 
 VN_OBJECT_META_IMPL(TestMeshPayload, vn::Object)
@@ -119,7 +119,7 @@ struct TestModelTreePayload : public vn::Object {
     VN_OBJECT_META_DECL;
 
     vn::String                             name;
-    vn::intrusive_ptr<vn::geometry::Model> model;
+    vn::intrusive_ptr<vn::models::Model> model;
 };
 
 VN_OBJECT_META_IMPL(TestModelTreePayload, vn::Object)
@@ -129,13 +129,13 @@ bool registerModelTreeOpener(vn::appfw::DocumentManager& documents)
     return documents.registerOpener<TestModelTreePayload>({
       .type_id = kModelType,
       .open    = [](const TestModelTreePayload& payload) -> vn::appfw::Document* {
-          return new vn::model_viewer::ModelDocument(payload.name, vn::intrusive_ptr<vn::geometry::Model>(payload.model));
+          return new vn::model_viewer::ModelDocument(payload.name, vn::intrusive_ptr<vn::models::Model>(payload.model));
       },
     });
 }
 
 /// 开一份模型文档并把它设为当前（"打开就显示这一份"是宿主的策略，用例里这样模拟）。
-vn::appfw::Document* openModel(vn::appfw::DocumentManager& documents, vn::String name, vn::intrusive_ptr<vn::geometry::TriangleMesh> mesh)
+vn::appfw::Document* openModel(vn::appfw::DocumentManager& documents, vn::String name, vn::intrusive_ptr<vn::models::TriangleMesh> mesh)
 {
     TestMeshPayload payload;
     payload.name = std::move(name);
@@ -199,9 +199,9 @@ void collectGeometries(const vn::graphics::Node& node, std::vector<const vn::gra
 }
 
 /// 一个三角形，平移到 @p cx（两个部件并排，拾取能分清谁是谁）。
-vn::intrusive_ptr<vn::geometry::TriangleMesh> makePartMesh(const char8_t* name, float cx)
+vn::intrusive_ptr<vn::models::TriangleMesh> makePartMesh(const char8_t* name, float cx)
 {
-    auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+    auto mesh = vn::make_intrusive<vn::models::TriangleMesh>();
     mesh->setPositions({ vn::math::Vec3f{ cx - 0.5F, -0.5F, 0.0F }, vn::math::Vec3f{ cx + 0.5F, -0.5F, 0.0F }, vn::math::Vec3f{ cx, 0.5F, 0.0F } });
     mesh->setIndices({ 0u, 1u, 2u });
     mesh->setName(name);
@@ -209,17 +209,17 @@ vn::intrusive_ptr<vn::geometry::TriangleMesh> makePartMesh(const char8_t* name, 
 }
 
 /// 两个部件的模型：同一个节点下两个 entry（数据上是两份网格）。
-vn::intrusive_ptr<vn::geometry::Model> makeTwoPartModel()
+vn::intrusive_ptr<vn::models::Model> makeTwoPartModel()
 {
-    auto model = vn::make_intrusive<vn::geometry::Model>();
+    auto model = vn::make_intrusive<vn::models::Model>();
 
-    vn::geometry::Model::Node node;
+    vn::models::Model::Node node;
     node.name   = u8"parts";
     node.meshes = { 0U, 1U };
 
-    vn::geometry::Model::Entry left;
+    vn::models::Model::Entry left;
     left.mesh = makePartMesh(u8"left", -1.0F);
-    vn::geometry::Model::Entry right;
+    vn::models::Model::Entry right;
     right.mesh = makePartMesh(u8"right", 1.0F);
 
     model->setNodes({ node });
@@ -291,16 +291,16 @@ TEST(ModelViewerTest, TheInfoPanelShowsTheVertexAndTriangleCountsOfTheCurrentDoc
 
 TEST(ModelViewerTest, DocumentCountsQuadAndMixedMeshesAsTriangles)
 {
-    auto model = vn::make_intrusive<vn::geometry::Model>();
+    auto model = vn::make_intrusive<vn::models::Model>();
 
-    auto quad = vn::make_intrusive<vn::geometry::QuadMesh>();
+    auto quad = vn::make_intrusive<vn::models::QuadMesh>();
     quad->setPositions({ { 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 } });
 
-    auto mixed = vn::make_intrusive<vn::geometry::MixedMesh>();
+    auto mixed = vn::make_intrusive<vn::models::MixedMesh>();
     mixed->setPositions({ { 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 }, { -1, 0, 0 } });
     mixed->setFaceOffsets({ 0u, 5u });
 
-    std::vector<vn::geometry::Model::Entry> entries(2);
+    std::vector<vn::models::Model::Entry> entries(2);
     entries[0].mesh = quad;
     entries[1].mesh = mixed;
     model->setMeshes(std::move(entries));
@@ -912,7 +912,7 @@ TEST(ModelViewerTest, ThePickManipulatorFramesTheSceneItDraws)
 
     // 毫米级的立方体：边长 2000，半对角线约 1732 —— 正是报告里那个工作台的量级。
     auto                     box = vn::model_viewer::makeBoxMesh();
-    vn::geometry::Vec3Array scaled;
+    vn::models::Vec3fArray scaled;
     scaled.reserve(box->positions().size());
     for (const auto& position : box->positions()) {
         scaled.emplace_back(position.x * 1000.0f, position.y * 1000.0f, position.z * 1000.0f);

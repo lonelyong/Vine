@@ -3,10 +3,12 @@
 #include <cmath>
 #include <vector>
 
-#include <vine/geometry/Primitive.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/Cylinder.hpp>
+#include <vine/models/Sphere.hpp>
 #include <vine/geometry/Ray.hpp>
 #include <vine/geometry/RayHit.hpp>
-#include <vine/geometry/Solid.hpp>
+#include <vine/geometry/SolidShape.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -18,7 +20,7 @@ using vn::geometry::BoxSolidd;
 using vn::geometry::ConeSolidd;
 using vn::geometry::CylinderSolidd;
 using vn::geometry::EllipsoidSolidd;
-using vn::geometry::Primitive;
+using vn::models::Primitive;
 using vn::geometry::Rayd;
 using vn::geometry::SphereSolidd;
 using vn::math::Point3d;
@@ -189,7 +191,7 @@ TEST(SolidIntersection, unusableInputsAnswerNothing)
 TEST(SolidIntersection, aModelReachesTheSameHitsThroughItsSolid)
 {
     // The modeling type has no ray query of its own: its analytic solid answers.
-    const vn::geometry::Sphere sphere(1.0f);
+    const vn::models::Sphere sphere(1.0f);
 
     const auto hits = sphere.solid().intersectWith(vn::geometry::Rayf(vn::math::Point3f(-5.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f)));
     ASSERT_EQ(hits.size(), 2U);
@@ -197,7 +199,7 @@ TEST(SolidIntersection, aModelReachesTheSameHitsThroughItsSolid)
     EXPECT_NEAR(hits[1].t, 6.0f, 1e-5f);
 
     // A degenerate model still carries its kind; it is the geometry that refuses the query.
-    const vn::geometry::Cylinder collapsed(0.0f, 2.0f);
+    const vn::models::Cylinder collapsed(0.0f, 2.0f);
     EXPECT_FALSE(collapsed.isValid());
     const auto refused = collapsed.solid().intersectWith(vn::geometry::Rayf(vn::math::Point3f(-5.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f)));
     EXPECT_TRUE(refused.empty());

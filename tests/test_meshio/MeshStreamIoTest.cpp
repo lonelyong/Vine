@@ -8,7 +8,7 @@
 #include <string>
 
 #include <vine/Object.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/DataSourceStream.hpp>
 #include <vine/io/IoError.hpp>
@@ -18,7 +18,7 @@
 #include <vine/meshio/MeshFormat.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
-using vn::geometry::TriangleMesh;
+using vn::models::TriangleMesh;
 using vn::io::DataSourceStream;
 using vn::io::IoError;
 using vn::io::ZipArchive;
@@ -90,11 +90,11 @@ TEST(MeshStreamIoTest, ModelToStreamIsFlattened)
     // path entry would write.
     auto triangle = makeTriangle();
 
-    vn::geometry::Model::Entry entry;
+    vn::models::Model::Entry entry;
     entry.mesh = triangle;
-    vn::geometry::Model::Node root;
+    vn::models::Model::Node root;
     root.meshes = { 0u };
-    auto model  = vn::make_intrusive<vn::geometry::Model>();
+    auto model  = vn::make_intrusive<vn::models::Model>();
     model->setMeshes({ entry });
     model->setNodes({ root });
     model->setRoot(0u);

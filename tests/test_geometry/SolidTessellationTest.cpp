@@ -7,10 +7,11 @@
 #include <utility>
 #include <vector>
 
-#include <vine/geometry/Primitive.hpp>
-#include <vine/geometry/Solid.hpp>
-#include <vine/geometry/SolidTessellation.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/PrimitiveDispatch.hpp>
+#include <vine/geometry/SolidShape.hpp>
+#include <vine/models/SolidTessellation.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Vector3.hpp>
 
@@ -21,11 +22,11 @@ using vn::geometry::BoxSolidf;
 using vn::geometry::ConeSolidf;
 using vn::geometry::CylinderSolidf;
 using vn::geometry::EllipsoidSolidf;
-using vn::geometry::Primitive;
+using vn::models::Primitive;
 using vn::geometry::SphereSolidf;
-using vn::geometry::tessellateSolid;
-using vn::geometry::TessellationQuality;
-using vn::geometry::TriangleMesh;
+using vn::models::tessellateSolid;
+using vn::models::TessellationQuality;
+using vn::models::TriangleMesh;
 using vn::math::Vec3f;
 
 /// One vertex position rounded to a tenth of a millimetre, so duplicated vertices at one place collapse to one key.
@@ -226,9 +227,9 @@ TEST(SolidTessellation, anUnusableSolidAnswersNull)
 TEST(SolidTessellation, aModelReachesTheMeshThroughItsSolid)
 {
     // The modeling type has no triangulation of its own: it holds the float solid, which is what a mesh is built from.
-    const vn::geometry::Box box(2.0f, 4.0f, 6.0f);
+    const vn::models::Box box(2.0f, 4.0f, 6.0f);
 
-    const auto solid = vn::geometry::solidShapeOf(box);
+    const auto solid = vn::models::solidShapeOf(box);
     ASSERT_TRUE(solid.has_value());
     const auto mesh = tessellateSolid(*solid);
     ASSERT_TRUE(mesh);
@@ -236,9 +237,9 @@ TEST(SolidTessellation, aModelReachesTheMeshThroughItsSolid)
     EXPECT_NEAR(mesh->aabb().max().y, 2.0f, 1e-6f);
 
     // A degenerate model still hands out its solid; the tessellator is what refuses it.
-    const vn::geometry::Cylinder collapsed(0.0f, 2.0f);
+    const vn::models::Cylinder collapsed(0.0f, 2.0f);
     EXPECT_FALSE(collapsed.isValid());
-    const auto collapsed_solid = vn::geometry::solidShapeOf(collapsed);
+    const auto collapsed_solid = vn::models::solidShapeOf(collapsed);
     ASSERT_TRUE(collapsed_solid.has_value());
     EXPECT_EQ(tessellateSolid(*collapsed_solid).get(), nullptr);
 }

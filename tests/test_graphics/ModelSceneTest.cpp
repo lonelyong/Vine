@@ -1,7 +1,7 @@
 /**
  * @brief The model -> scene bridge (see `.ai/backlog/graphics.md` §2 G1).
  *
- * `geometry::Model` keeps what a flat mesh loses (the node tree, per-node transforms, per-entry materials), but
+ * `models::Model` keeps what a flat mesh loses (the node tree, per-node transforms, per-entry materials), but
  * nothing in the renderer consumed it: the only product path flattened the file into one mesh with one grey
  * material. These cases pin the conversion the renderer needs - the tree shape, the ONE-allocation rule for a mesh
  * reused in two places, and the three source material kinds.
@@ -13,12 +13,12 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/Material.hpp>
-#include <vine/geometry/Model.hpp>
-#include <vine/geometry/PbrMaterial.hpp>
-#include <vine/geometry/PhongMaterial.hpp>
+#include <vine/models/ColorMaterial.hpp>
+#include <vine/models/TriangleMesh.hpp>
+#include <vine/models/Material.hpp>
+#include <vine/models/Model.hpp>
+#include <vine/models/PbrMaterial.hpp>
+#include <vine/models/PhongMaterial.hpp>
 #include <vine/math/Transform3.hpp>
 
 #include <vine/graphics/Geometry.hpp>
@@ -27,11 +27,11 @@
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/ModelScene.hpp>
 
-using vn::geometry::ColorMaterial;
-using vn::geometry::TriangleMesh;
-using vn::geometry::Model;
-using vn::geometry::PbrMaterial;
-using vn::geometry::PhongMaterial;
+using vn::models::ColorMaterial;
+using vn::models::TriangleMesh;
+using vn::models::Model;
+using vn::models::PbrMaterial;
+using vn::models::PhongMaterial;
 using vn::graphics::Geometry;
 using vn::graphics::Group;
 using vn::graphics::Material;

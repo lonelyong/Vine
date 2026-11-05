@@ -4,7 +4,7 @@
 #include <utility>
 
 #include <vine/Colorf.hpp>
-#include <vine/geometry/Array.hpp>
+#include <vine/models/Array.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
@@ -34,9 +34,9 @@ namespace
  * @param mn        Minimum corner.
  * @param mx        Maximum corner.
  */
-void appendBox(vn::geometry::Vec3Array& positions,
-               vn::geometry::Vec3Array& normals,
-               vn::geometry::UInt32Array& indices,
+void appendBox(vn::models::Vec3fArray& positions,
+               vn::models::Vec3fArray& normals,
+               vn::models::UInt32Array& indices,
                const vn::math::Vec3f&     mn,
                const vn::math::Vec3f&     mx)
 {
@@ -329,9 +329,9 @@ void FpsOverlay::rebuild()
     // The row is built with EVERY segment lit: this is the template writePattern() copies its lit bars
     // from, and it is what fixes the geometry's vertex and index count for the rest of its life -- what a
     // change edits is which of those bars carry area, never how many vertices exist.
-    vn::geometry::Vec3Array  positions;
-    vn::geometry::Vec3Array  normals;
-    vn::geometry::UInt32Array indices;
+    vn::models::Vec3fArray  positions;
+    vn::models::Vec3fArray  normals;
+    vn::models::UInt32Array indices;
     positions.reserve(kSegmentCount * kVerticesPerBar);
     normals.reserve(kSegmentCount * kVerticesPerBar);
     indices.reserve(kSegmentCount * kIndicesPerBar);

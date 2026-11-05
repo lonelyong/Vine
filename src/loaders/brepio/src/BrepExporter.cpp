@@ -194,7 +194,7 @@ vn::io::IoError writeStream(const TopoDS_Shape& shape, BrepFormat format, std::o
 
 BrepExporter::BrepExporter() = default;
 
-vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, BrepFormat format, const std::filesystem::path& file_path) const
+vn::io::IoError BrepExporter::exportAs(const vn::models::BrepShape& shape, BrepFormat format, const std::filesystem::path& file_path) const
 {
     if (format == BrepFormat::Unknown) {
         return vn::io::IoError::Unsupported;
@@ -239,7 +239,7 @@ vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, Bre
 #endif
 }
 
-vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, BrepFormat format, std::ostream& out) const
+vn::io::IoError BrepExporter::exportAs(const vn::models::BrepShape& shape, BrepFormat format, std::ostream& out) const
 {
     if (format == BrepFormat::Unknown) {
         return vn::io::IoError::Unsupported;
@@ -264,7 +264,7 @@ vn::io::IoError BrepExporter::exportAs(const vn::geometry::BrepShape& shape, Bre
 #endif
 }
 
-std::shared_ptr<vn::io::DataSource> BrepExporter::createSource(vn::intrusive_ptr<const vn::geometry::BrepShape> shape, BrepFormat format) const
+std::shared_ptr<vn::io::DataSource> BrepExporter::createSource(vn::intrusive_ptr<const vn::models::BrepShape> shape, BrepFormat format) const
 {
     if (!shape) {
         return std::make_shared<RefusedSource>(vn::io::IoError::InvalidData); // nothing to write, in any build

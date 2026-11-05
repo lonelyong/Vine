@@ -240,7 +240,7 @@ flowchart LR
 
 ## 10. 参考
 
-- 代码：`cmake/VineOpenCASCADE.cmake`、`src/base/brep/`、`src/loaders/brepio/CMakeLists.txt`、`src/base/geometry/sdk/vine/geometry/BrepShape.hpp`。
+- 代码：`cmake/VineOpenCASCADE.cmake`、`src/base/brep/`、`src/loaders/brepio/CMakeLists.txt`、`src/base/models/sdk/vine/models/BrepShape.hpp`。
 - 设计：`graphics-geometry.md`（形状与网格的存储）、`meshio-brepio-design.md`（B-rep 文件读写）、`geometry-primitives.md`（包围盒与 OBB）。
 - 决策：`../decisions/ADR-2026-11-03-brep-operations-module.md`。
 - 测试：`tests/test_brep/TessellationTest.cpp`。

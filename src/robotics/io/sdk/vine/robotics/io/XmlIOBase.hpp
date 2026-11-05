@@ -73,7 +73,7 @@ class VN_ROBOTICS_IO_API XmlIOBase {
         /// Sequence number used to generate unique geoms bin names.
         std::size_t geom_seq{ 0 };
         /// Shape -> geoms prefix, so a shared mesh is stored only once.
-        std::map<const vn::geometry::Shape*, String> mesh_paths;
+        std::map<const vn::models::Shape*, String> mesh_paths;
 
         explicit ExportContext(ExportOptions& opts)
           : options(opts)
@@ -102,7 +102,7 @@ class VN_ROBOTICS_IO_API XmlIOBase {
         /// Collected non-fatal warnings.
         std::string msgs;
         /// Device material library by name, for resolving visual references.
-        std::map<String, vn::intrusive_ptr<vn::geometry::Material>> materials_by_name;
+        std::map<String, vn::intrusive_ptr<vn::models::Material>> materials_by_name;
 
         explicit ParseContext(ParseOptions& opts)
           : options(opts)
@@ -164,7 +164,7 @@ class VN_ROBOTICS_IO_API XmlIOBase {
      * @param xe The material element.
      * @return The material, or null when unset.
      */
-    vn::intrusive_ptr<vn::geometry::Material> parseMaterial(ParseContext& ctx, const tinyxml2::XMLElement* xe);
+    vn::intrusive_ptr<vn::models::Material> parseMaterial(ParseContext& ctx, const tinyxml2::XMLElement* xe);
 
     /**
      * @brief Parses a <geometry> element.
@@ -173,7 +173,7 @@ class VN_ROBOTICS_IO_API XmlIOBase {
      * @param xe The geometry element.
      * @return The shape, or null when empty or unsupported.
      */
-    vn::intrusive_ptr<vn::geometry::Shape> parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe);
+    vn::intrusive_ptr<vn::models::Shape> parseGeometry(ParseContext& ctx, const tinyxml2::XMLElement* xe);
 
     /**
      * @brief Writes a <geometry> element.
@@ -182,7 +182,7 @@ class VN_ROBOTICS_IO_API XmlIOBase {
      * @param shape The shape.
      * @param xe The element to append the geometry to.
      */
-    void exportGeometry(ExportContext& ctx, const vn::geometry::Shape& shape, tinyxml2::XMLElement* xe);
+    void exportGeometry(ExportContext& ctx, const vn::models::Shape& shape, tinyxml2::XMLElement* xe);
 
     // ---- visual / collision ----
     /**

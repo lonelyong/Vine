@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Vector3.hpp>
 
@@ -27,9 +27,9 @@ namespace vn::model_viewer
  *
  * @return 网格（永不为空）。
  */
-inline vn::intrusive_ptr<vn::geometry::TriangleMesh> makeBoxMesh()
+inline vn::intrusive_ptr<vn::models::TriangleMesh> makeBoxMesh()
 {
-    const vn::geometry::Vec3Array positions{
+    const vn::models::Vec3fArray positions{
         vn::math::Vec3f(-1.0f, -1.0f, -1.0f),
         vn::math::Vec3f(1.0f, -1.0f, -1.0f),
         vn::math::Vec3f(1.0f, 1.0f, -1.0f),
@@ -39,7 +39,7 @@ inline vn::intrusive_ptr<vn::geometry::TriangleMesh> makeBoxMesh()
         vn::math::Vec3f(1.0f, 1.0f, 1.0f),
         vn::math::Vec3f(-1.0f, 1.0f, 1.0f),
     };
-    const vn::geometry::UInt32Array indices{
+    const vn::models::UInt32Array indices{
         0u, 1u, 2u, 0u, 2u, 3u, // 前
         5u, 4u, 7u, 5u, 7u, 6u, // 后
         4u, 0u, 3u, 4u, 3u, 7u, // 左
@@ -48,7 +48,7 @@ inline vn::intrusive_ptr<vn::geometry::TriangleMesh> makeBoxMesh()
         3u, 2u, 6u, 3u, 6u, 7u, // 上
     };
 
-    auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+    auto mesh = vn::make_intrusive<vn::models::TriangleMesh>();
     mesh->setPositions(positions);
     mesh->setIndices(indices);
     mesh->bumpRevision();
@@ -64,12 +64,12 @@ inline vn::intrusive_ptr<vn::geometry::TriangleMesh> makeBoxMesh()
  * @param segments 每边的格子数；0 当作 1。
  * @return 网格（永不为空）。
  */
-inline vn::intrusive_ptr<vn::geometry::TriangleMesh> makeGridMesh(std::size_t segments)
+inline vn::intrusive_ptr<vn::models::TriangleMesh> makeGridMesh(std::size_t segments)
 {
     const std::size_t side = segments == 0 ? 1 : segments;
 
-    vn::geometry::Vec3Array  positions;
-    vn::geometry::UInt32Array indices;
+    vn::models::Vec3fArray  positions;
+    vn::models::UInt32Array indices;
     positions.reserve((side + 1) * (side + 1));
     indices.reserve(side * side * 6u);
 
@@ -96,7 +96,7 @@ inline vn::intrusive_ptr<vn::geometry::TriangleMesh> makeGridMesh(std::size_t se
         std::swap(previous, current);
     }
 
-    auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+    auto mesh = vn::make_intrusive<vn::models::TriangleMesh>();
     mesh->setPositions(std::move(positions));
     mesh->setIndices(std::move(indices));
     mesh->bumpRevision();

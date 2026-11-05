@@ -5,18 +5,18 @@
 #include <stdexcept>
 
 #include <vine/Object.hpp>
-#include <vine/geometry/Primitive.hpp>
-#include <vine/geometry/MixedMesh.hpp>
-#include <vine/geometry/QuadMesh.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/MixedMesh.hpp>
+#include <vine/models/QuadMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Vector2.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/math/Vector4.hpp>
 
-using vn::geometry::MixedMesh;
-using vn::geometry::QuadMesh;
-using vn::geometry::TriangleMesh;
+using vn::models::MixedMesh;
+using vn::models::QuadMesh;
+using vn::models::TriangleMesh;
 using vn::math::Vec2f;
 using vn::math::Vec3f;
 using vn::math::Vec4f;
@@ -81,8 +81,8 @@ TEST(MeshShapeTest, QuadMeshUsesFourCornersAndTriangulates)
     const auto triangle_mesh = mesh->toTriangleMesh();
     ASSERT_TRUE(triangle_mesh->isValid());
     EXPECT_EQ(triangle_mesh->triangleCount(), 2u);
-    EXPECT_EQ(vn::geometry::UInt32Array(triangle_mesh->indices().begin(), triangle_mesh->indices().end()),
-              (vn::geometry::UInt32Array{ 0u, 1u, 2u, 0u, 2u, 3u }));
+    EXPECT_EQ(vn::models::UInt32Array(triangle_mesh->indices().begin(), triangle_mesh->indices().end()),
+              (vn::models::UInt32Array{ 0u, 1u, 2u, 0u, 2u, 3u }));
     ASSERT_EQ(triangle_mesh->vertexCount(), mesh->vertexCount());
     EXPECT_EQ(triangle_mesh->positions()[2], mesh->positions()[2]);
 }
@@ -100,8 +100,8 @@ TEST(MeshShapeTest, QuadMeshConvertsSequentialCorners)
 
     const auto triangle_mesh = mesh->toTriangleMesh();
     ASSERT_TRUE(triangle_mesh->isValid());
-    EXPECT_EQ(vn::geometry::UInt32Array(triangle_mesh->indices().begin(), triangle_mesh->indices().end()),
-              (vn::geometry::UInt32Array{ 0u, 1u, 2u, 0u, 2u, 3u }));
+    EXPECT_EQ(vn::models::UInt32Array(triangle_mesh->indices().begin(), triangle_mesh->indices().end()),
+              (vn::models::UInt32Array{ 0u, 1u, 2u, 0u, 2u, 3u }));
 
     mesh->setPositions({});
     EXPECT_EQ(mesh->vertexCount(), 0u);
@@ -137,15 +137,15 @@ TEST(MeshShapeTest, MixedMeshValidatesOffsetsAndConvertsToTriangleMesh)
     const auto triangle_mesh = mesh->toTriangleMesh();
     ASSERT_TRUE(triangle_mesh->isValid());
     EXPECT_EQ(triangle_mesh->triangleCount(), 3u);
-    EXPECT_EQ(vn::geometry::UInt32Array(triangle_mesh->indices().begin(), triangle_mesh->indices().end()),
-              (vn::geometry::UInt32Array{ 0u, 1u, 2u, 0u, 2u, 3u, 0u, 3u, 4u }));
+    EXPECT_EQ(vn::models::UInt32Array(triangle_mesh->indices().begin(), triangle_mesh->indices().end()),
+              (vn::models::UInt32Array{ 0u, 1u, 2u, 0u, 2u, 3u, 0u, 3u, 4u }));
 
     vn::intrusive_ptr<vn::Buffer<std::uint32_t>> shared_offsets(
-        new vn::Buffer<std::uint32_t>(vn::geometry::UInt32Array{ 0u, 5u }));
+        new vn::Buffer<std::uint32_t>(vn::models::UInt32Array{ 0u, 5u }));
     mesh->setFaceOffsets(shared_offsets);
     EXPECT_EQ(mesh->faceOffsetsBuffer().get(), shared_offsets.get());
-    EXPECT_EQ(vn::geometry::UInt32Array(mesh->faceOffsets().begin(), mesh->faceOffsets().end()),
-              (vn::geometry::UInt32Array{ 0u, 5u }));
+    EXPECT_EQ(vn::models::UInt32Array(mesh->faceOffsets().begin(), mesh->faceOffsets().end()),
+              (vn::models::UInt32Array{ 0u, 5u }));
 }
 
 TEST(MeshShapeTest, MixedMeshWithSeveralFacesConvertsEveryFace)
@@ -170,7 +170,7 @@ TEST(MeshShapeTest, AnAttributeHangsOffTheSharedStorageNotTheCaller)
 
     // A setter takes the array by value and moves it into a buffer, so the caller's copy going out of scope leaves the
     // mesh reading its own storage.
-    vn::geometry::Vec4Array colors{ Vec4f(1, 0, 0, 1), Vec4f(0, 1, 0, 1), Vec4f(0, 0, 1, 1) };
+    vn::models::Vec4fArray colors{ Vec4f(1, 0, 0, 1), Vec4f(0, 1, 0, 1), Vec4f(0, 0, 1, 1) };
     mesh->setColors(colors);
     colors.clear();
     EXPECT_EQ(mesh->colors().size(), 3u);

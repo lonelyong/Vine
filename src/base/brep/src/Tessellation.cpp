@@ -52,7 +52,7 @@ namespace {
 void appendFaceNormals(const TopoDS_Face&                     face,
                        const Handle(Poly_Triangulation) &      triangulation,
                        const TopLoc_Location&                 location,
-                       vn::geometry::Vec3Array&               normals)
+                       vn::models::Vec3fArray&               normals)
 {
     const std::size_t block_begin = normals.size();
     const int         node_count  = triangulation->NbNodes();
@@ -126,8 +126,8 @@ void appendFaceNormals(const TopoDS_Face&                     face,
 
 #endif // defined(VN_BREP_HAS_OCCT)
 
-vn::intrusive_ptr<vn::geometry::TriangleMesh>
-tessellate(const vn::geometry::BrepShape& shape, const TessellationOptions& options)
+vn::intrusive_ptr<vn::models::TriangleMesh>
+tessellate(const vn::models::BrepShape& shape, const TessellationOptions& options)
 {
 #if defined(VN_BREP_HAS_OCCT)
     const TopoDS_Shape* const solid = shape.shape();
@@ -150,9 +150,9 @@ tessellate(const vn::geometry::BrepShape& shape, const TessellationOptions& opti
         NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> faces;
         TopExp::MapShapes(*solid, TopAbs_FACE, faces);
 
-        vn::geometry::Vec3Array   positions;
-        vn::geometry::UInt32Array indices;
-        vn::geometry::Vec3Array   normals;
+        vn::models::Vec3fArray   positions;
+        vn::models::UInt32Array indices;
+        vn::models::Vec3fArray   normals;
 
         for (int face_index = 1; face_index <= faces.Extent(); ++face_index) {
             const TopoDS_Face face = TopoDS::Face(faces.FindKey(face_index));
@@ -195,7 +195,7 @@ tessellate(const vn::geometry::BrepShape& shape, const TessellationOptions& opti
             return {};
         }
 
-        auto mesh = vn::make_intrusive<vn::geometry::TriangleMesh>();
+        auto mesh = vn::make_intrusive<vn::models::TriangleMesh>();
         mesh->setPositions(std::move(positions));
         mesh->setIndices(std::move(indices));
         if (options.compute_normals) {

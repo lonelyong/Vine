@@ -9,8 +9,9 @@
 #include <string>
 #include <vector>
 
-#include <vine/geometry/Primitive.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/Box.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/io/ZipArchive.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
 #include <vine/robotics/io/WorkcellIO.hpp>
@@ -103,7 +104,7 @@ std::unique_ptr<MotionDevice> makeRobot()
 std::unique_ptr<MotionDevice> makeRobotWithMesh()
 {
     auto robot = makeRobot();
-    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh  = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
     auto* const base = robot->baseLink();
     base->body().visuals().resize(1);
@@ -149,7 +150,7 @@ std::unique_ptr<Scanner> makeScanner()
 std::unique_ptr<RigidObject> makeTableWithMesh()
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh  = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(2.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 2.0f, 0.0f) });
     table->body().visuals().resize(1);
     table->body().visuals()[0].setShape(mesh);
@@ -187,7 +188,7 @@ TEST(PkgIOTest, DevicePkgPrimitiveRoundTrip)
     auto robot = makeRobot();
     robot->baseLink()->body().visuals().resize(1);
     robot->baseLink()->body().visuals()[0].setShape(
-        vn::intrusive_ptr<vn::geometry::Primitive>(new vn::geometry::Box(0.25f, 0.5f, 0.75f)));
+        vn::intrusive_ptr<vn::models::Primitive>(new vn::models::Box(0.25f, 0.5f, 0.75f)));
 
     DeviceIO io;
     io.savePkg(*robot, file);
@@ -196,7 +197,7 @@ TEST(PkgIOTest, DevicePkgPrimitiveRoundTrip)
     ASSERT_NE(loaded, nullptr);
     const auto& visuals = loaded->baseLink()->body().visuals();
     ASSERT_EQ(visuals.size(), 1u);
-    const auto* const box = vn::obj_cast<vn::geometry::Box>(visuals[0].shape().get());
+    const auto* const box = vn::obj_cast<vn::models::Box>(visuals[0].shape().get());
     ASSERT_NE(box, nullptr);
     EXPECT_FLOAT_EQ(box->width(), 0.25f);
     EXPECT_FLOAT_EQ(box->height(), 0.5f);
@@ -217,7 +218,7 @@ TEST(PkgIOTest, DevicePkgWithMeshRoundTrip)
     auto* const r = dynamic_cast<MotionDevice*>(loaded.get());
     ASSERT_NE(r, nullptr);
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
-    const auto* const m = dynamic_cast<const vn::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+    const auto* const m = dynamic_cast<const vn::models::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(m, nullptr);
     EXPECT_EQ(m->vertexCount(), 3u);
     EXPECT_EQ(m->triangleCount(), 1u);
@@ -298,7 +299,7 @@ TEST(PkgIOTest, WorkcellPkgRoundTrip)
     EXPECT_EQ(r->joints().size(), 2u);
     // The robot's mesh visual round-trips through the package geoms.
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
-    const auto* const rm = dynamic_cast<const vn::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+    const auto* const rm = dynamic_cast<const vn::models::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(rm, nullptr);
     EXPECT_EQ(rm->vertexCount(), 3u);
 
@@ -308,7 +309,7 @@ TEST(PkgIOTest, WorkcellPkgRoundTrip)
 
     auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
     ASSERT_NE(t, nullptr);
-    const auto* const tm = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    const auto* const tm = dynamic_cast<const vn::models::TriangleMesh*>(t->body().visuals()[0].shape().get());
     ASSERT_NE(tm, nullptr);
     EXPECT_EQ(tm->vertexCount(), 3u);
     EXPECT_FLOAT_EQ(tm->positions()[1].x, 2.0f);
@@ -382,7 +383,7 @@ TEST(PkgIOTest, NestedDevicePackage)
     auto* const r = dynamic_cast<MotionDevice*>(loaded->findSceneObject(u8"robot1"));
     ASSERT_NE(r, nullptr);
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
-    const auto* const rm = dynamic_cast<const vn::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+    const auto* const rm = dynamic_cast<const vn::models::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(rm, nullptr);
     EXPECT_EQ(rm->vertexCount(), 3u);
 }
@@ -390,12 +391,12 @@ TEST(PkgIOTest, NestedDevicePackage)
 TEST(PkgIOTest, IndexedMeshRoundTrip)
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh  = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
     mesh->setIndices({ 0u, 1u, 2u });
     // Texture coordinates are what a mesh has to have for the self-describing form: binary STL has nowhere to put them.
-    mesh->setTexcoords(vn::geometry::Vec2Array{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
-    mesh->setNormals(vn::geometry::Vec3Array{ vn::math::Vec3f(0.0f, 0.0f, 1.0f), vn::math::Vec3f(0.0f, 0.0f, 1.0f), vn::math::Vec3f(0.0f, 0.0f, 1.0f) });
+    mesh->setTexcoords(vn::models::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
+    mesh->setNormals(vn::models::Vec3fArray{ vn::math::Vec3f(0.0f, 0.0f, 1.0f), vn::math::Vec3f(0.0f, 0.0f, 1.0f), vn::math::Vec3f(0.0f, 0.0f, 1.0f) });
     table->body().visuals().resize(1);
     table->body().visuals()[0].setShape(mesh);
 
@@ -417,7 +418,7 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
     ASSERT_NE(loaded, nullptr);
     auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
     ASSERT_NE(t, nullptr);
-    const auto* const m = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    const auto* const m = dynamic_cast<const vn::models::TriangleMesh*>(t->body().visuals()[0].shape().get());
     ASSERT_NE(m, nullptr);
     EXPECT_EQ(m->vertexCount(), 3u);
     EXPECT_EQ(m->triangleCount(), 1u);
@@ -432,11 +433,11 @@ TEST(PkgIOTest, IndexedMeshRoundTrip)
 TEST(PkgIOTest, VertexColorsRoundTripThroughTheSelfDescribingForm)
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh  = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
     // Binary STL has nowhere to put a per-vertex colour, so a coloured mesh takes the self-describing form.
     mesh->setColors(
-        vn::geometry::Vec4Array{ vn::math::Vec4f(1.0f, 0.0f, 0.0f, 1.0f), vn::math::Vec4f(0.0f, 1.0f, 0.0f, 0.5f), vn::math::Vec4f(0.0f, 0.0f, 1.0f, 0.25f) });
+        vn::models::Vec4fArray{ vn::math::Vec4f(1.0f, 0.0f, 0.0f, 1.0f), vn::math::Vec4f(0.0f, 1.0f, 0.0f, 0.5f), vn::math::Vec4f(0.0f, 0.0f, 1.0f, 0.25f) });
     table->body().visuals().resize(1);
     table->body().visuals()[0].setShape(mesh);
 
@@ -458,7 +459,7 @@ TEST(PkgIOTest, VertexColorsRoundTripThroughTheSelfDescribingForm)
     ASSERT_NE(loaded, nullptr);
     auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
     ASSERT_NE(t, nullptr);
-    const auto* const m = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    const auto* const m = dynamic_cast<const vn::models::TriangleMesh*>(t->body().visuals()[0].shape().get());
     ASSERT_NE(m, nullptr);
     ASSERT_EQ(m->colors().size(), 3u);
     EXPECT_FLOAT_EQ(m->colors()[1].y, 1.0f);
@@ -468,7 +469,7 @@ TEST(PkgIOTest, VertexColorsRoundTripThroughTheSelfDescribingForm)
 TEST(PkgIOTest, SharedMeshStoredOnce)
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh  = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
     // Two visuals share the exact same shape object.
     table->body().visuals().resize(2);
@@ -494,8 +495,8 @@ TEST(PkgIOTest, SharedMeshStoredOnce)
     auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
     ASSERT_NE(t, nullptr);
     ASSERT_EQ(t->body().visuals().size(), 2u);
-    const auto* const m0 = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
-    const auto* const m1 = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[1].shape().get());
+    const auto* const m0 = dynamic_cast<const vn::models::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    const auto* const m1 = dynamic_cast<const vn::models::TriangleMesh*>(t->body().visuals()[1].shape().get());
     ASSERT_NE(m0, nullptr);
     ASSERT_NE(m1, nullptr);
     EXPECT_EQ(m0->vertexCount(), 3u);
@@ -506,11 +507,11 @@ TEST(PkgIOTest, SharedMeshStoredOnce)
 TEST(PkgIOTest, DamagedMeshFileIsRefused)
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh  = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
     mesh->setIndices({ 0u, 1u, 2u });
     // Texture coordinates put the mesh in the self-describing form, which is the form this test damages.
-    mesh->setTexcoords(vn::geometry::Vec2Array{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
+    mesh->setTexcoords(vn::models::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
     table->body().visuals().resize(1);
     table->body().visuals()[0].setShape(mesh);
 
@@ -604,7 +605,7 @@ TEST(PkgIOTest, IndexedMeshWithoutTexcoordsIsStoredAsASoup)
 {
     // Binary STL has no indices, so a mesh that has no texture coordinates is written as one - which means shared vertices
     // become one copy per triangle. That is the trade: a standard file in exchange for a soup.
-    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions(
         { vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 1.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
     mesh->setIndices({ 0u, 1u, 2u, 0u, 2u, 3u });
@@ -631,7 +632,7 @@ TEST(PkgIOTest, IndexedMeshWithoutTexcoordsIsStoredAsASoup)
     ASSERT_NE(loaded, nullptr);
     auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
     ASSERT_NE(t, nullptr);
-    const auto* const soup = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    const auto* const soup = dynamic_cast<const vn::models::TriangleMesh*>(t->body().visuals()[0].shape().get());
     ASSERT_NE(soup, nullptr);           // a soup, not an indexed mesh, whatever went in
     EXPECT_EQ(soup->vertexCount(), 6u); // four vertices became six, because two of them are shared by both triangles
     EXPECT_EQ(soup->triangleCount(), 2u);
@@ -644,7 +645,7 @@ TEST(PkgIOTest, IndexedMeshWithoutTexcoordsIsStoredAsASoup)
 TEST(PkgIOTest, DamagedStlFileIsRefused)
 {
     auto table = std::make_unique<RigidObject>(u8"table");
-    auto mesh  = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh  = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f),
                          vn::math::Vec3f(1.0f, 0.0f, 0.0f),
                          vn::math::Vec3f(0.0f, 1.0f, 0.0f),
@@ -723,9 +724,9 @@ TEST(PkgIOTest, TriangleSoupWithTexcoordsUsesTheSelfDescribingForm)
 {
     // A soup has to take the self-describing form when it carries texture coordinates, and it has to come back as a soup:
     // this is the non-indexed half of that form, which nothing else in this file covers.
-    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
-    mesh->setTexcoords(vn::geometry::Vec2Array{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
+    mesh->setTexcoords(vn::models::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
 
     auto table = std::make_unique<RigidObject>(u8"table");
     table->body().visuals().resize(1);
@@ -748,7 +749,7 @@ TEST(PkgIOTest, TriangleSoupWithTexcoordsUsesTheSelfDescribingForm)
     ASSERT_NE(loaded, nullptr);
     auto* const t = dynamic_cast<RigidObject*>(loaded->findSceneObject(u8"table"));
     ASSERT_NE(t, nullptr);
-    const auto* const soup = dynamic_cast<const vn::geometry::TriangleMesh*>(t->body().visuals()[0].shape().get());
+    const auto* const soup = dynamic_cast<const vn::models::TriangleMesh*>(t->body().visuals()[0].shape().get());
     ASSERT_NE(soup, nullptr);
     EXPECT_EQ(soup->vertexCount(), 3u);
     EXPECT_EQ(soup->triangleCount(), 1u);
@@ -788,7 +789,7 @@ TEST(PkgIOTest, IndexedDescriptionOfAnStlFileIsRefused)
 {
     // The element describes the file, and binary STL has no index block: an element that promises indices the file cannot
     // hold is refused rather than read as a soup behind the description's back.
-    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
 
     auto table = std::make_unique<RigidObject>(u8"table");
@@ -814,9 +815,9 @@ TEST(PkgIOTest, IndexedDescriptionOfAnStlFileIsRefused)
 TEST(PkgIOTest, IndexedDescriptionOfASoupVmeshIsRefused)
 {
     // The same rule inside one form: the description says indexed, the file has no index block, so the two do not agree.
-    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
-    mesh->setTexcoords(vn::geometry::Vec2Array{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
+    mesh->setTexcoords(vn::models::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
 
     auto table = std::make_unique<RigidObject>(u8"table");
     table->body().visuals().resize(1);
@@ -843,10 +844,10 @@ TEST(PkgIOTest, EditedMeshIsRefusedWhenThePackageIsFinallyWritten)
     // A ZIP records a content source and pulls it while the package is written, so a mesh edited between savePkg() and
     // the write is a mesh whose promised bytes are gone. Both forms have to refuse it instead of writing the old arrays.
     const auto refusedAfterEdit = [](const bool with_texcoords) {
-        auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+        auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
         mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
         if (with_texcoords) {
-            mesh->setTexcoords(vn::geometry::Vec2Array{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
+            mesh->setTexcoords(vn::models::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
         }
 
         auto table = std::make_unique<RigidObject>(u8"table");
@@ -881,7 +882,7 @@ TEST(PkgIOTest, InconsistentMeshesAreRefused)
 {
     // Two meshes the model lets you build but a file cannot hold: a normal array shorter than the positions, and an index
     // that names a vertex the mesh does not have. Both are refused rather than written without the offending array.
-    const auto saveFails = [](const vn::intrusive_ptr<vn::geometry::Mesh>& mesh) {
+    const auto saveFails = [](const vn::intrusive_ptr<vn::models::Mesh>& mesh) {
         auto table = std::make_unique<RigidObject>(u8"table");
         table->body().visuals().resize(1);
         table->body().visuals()[0].setShape(mesh);
@@ -901,17 +902,17 @@ TEST(PkgIOTest, InconsistentMeshesAreRefused)
     };
 
     {
-        auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+        auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
         mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
-        mesh->setTexcoords(vn::geometry::Vec2Array{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
+        mesh->setTexcoords(vn::models::Vec2fArray{ vn::math::Vec2f(0.0f, 0.0f), vn::math::Vec2f(1.0f, 0.0f), vn::math::Vec2f(0.0f, 1.0f) });
         // One normal too few for three vertices: the file would hold a normal array that says something else.
-        mesh->setNormals(vn::geometry::Vec3Array{ vn::math::Vec3f(0.0f, 0.0f, 1.0f), vn::math::Vec3f(0.0f, 0.0f, 1.0f) });
+        mesh->setNormals(vn::models::Vec3fArray{ vn::math::Vec3f(0.0f, 0.0f, 1.0f), vn::math::Vec3f(0.0f, 0.0f, 1.0f) });
         EXPECT_TRUE(saveFails(mesh));
     }
     {
-        auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+        auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
         mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
-        mesh->setIndices(vn::geometry::UInt32Array{ 0u, 1u, 99u }); // 99 names no vertex
+        mesh->setIndices(vn::models::UInt32Array{ 0u, 1u, 99u }); // 99 names no vertex
         EXPECT_TRUE(saveFails(mesh));
     }
 }
@@ -920,7 +921,7 @@ TEST(PkgIOTest, StlEntryNamedInCapitalsIsReadAsStl)
 {
     // The form is what the path says, and the case of an extension is not what anybody means by that: a file named
     // .STL is the same form as one named .stl.
-    auto mesh = vn::intrusive_ptr<vn::geometry::TriangleMesh>(new vn::geometry::TriangleMesh());
+    auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
     mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
 
     auto table = std::make_unique<RigidObject>(u8"table");

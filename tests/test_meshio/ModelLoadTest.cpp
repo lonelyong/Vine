@@ -10,18 +10,18 @@
 #include <vector>
 
 #include <vine/Object.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/Model.hpp>
-#include <vine/geometry/PhongMaterial.hpp>
+#include <vine/models/TriangleMesh.hpp>
+#include <vine/models/Model.hpp>
+#include <vine/models/PhongMaterial.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/meshio/MeshExporter.hpp>
 #include <vine/meshio/MeshFormat.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
 using vn::obj_cast;
-using vn::geometry::TriangleMesh;
-using vn::geometry::MaterialType;
-using vn::geometry::Model;
+using vn::models::TriangleMesh;
+using vn::models::MaterialType;
+using vn::models::Model;
 using vn::meshio::MeshExporter;
 using vn::meshio::MeshLoader;
 
@@ -179,7 +179,7 @@ TEST(ModelLoadTest, KeepsEveryPartAndItsMaterial)
     ASSERT_TRUE(red);
     EXPECT_EQ(red->name().as_std_str(), "red");
     EXPECT_EQ(red->materialType(), MaterialType::Phong);
-    EXPECT_FLOAT_EQ(obj_cast<vn::geometry::PhongMaterial>(*red).diffuse().r, 1.0f);
+    EXPECT_FLOAT_EQ(obj_cast<vn::models::PhongMaterial>(*red).diffuse().r, 1.0f);
     const auto& green = model->meshes()[1].material;
     ASSERT_TRUE(green);
     EXPECT_EQ(green->name().as_std_str(), "green");
@@ -221,7 +221,7 @@ TEST(ModelLoadTest, ReadsPartsFromAStreamButNotTheMaterialLibrary)
     ASSERT_TRUE(model->meshes()[1].material);
     EXPECT_EQ(model->meshes()[1].material->name().as_std_str(), "green");
 
-    const auto& without_library = obj_cast<vn::geometry::PhongMaterial>(*model->meshes()[0].material);
+    const auto& without_library = obj_cast<vn::models::PhongMaterial>(*model->meshes()[0].material);
     EXPECT_FALSE(without_library.diffuse().r == 1.0f && without_library.diffuse().g == 0.0f)
         << "the library was not reachable, so its red cannot have been applied";
 
@@ -235,7 +235,7 @@ TEST(ModelLoadTest, ReadsPartsFromAStreamButNotTheMaterialLibrary)
     ASSERT_TRUE(loaded_library);
     const auto with_library = loaded_library.take();
     ASSERT_TRUE(with_library->meshes()[0].material);
-    const auto& from_library = obj_cast<vn::geometry::PhongMaterial>(*with_library->meshes()[0].material);
+    const auto& from_library = obj_cast<vn::models::PhongMaterial>(*with_library->meshes()[0].material);
     EXPECT_FLOAT_EQ(from_library.diffuse().r, 1.0f);
     EXPECT_FLOAT_EQ(from_library.diffuse().g, 0.0f);
     EXPECT_FLOAT_EQ(from_library.shininess(), 64.0f);

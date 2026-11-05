@@ -6,8 +6,9 @@
 #include <vine/brep/Construction.hpp>
 #include <vine/brep/Tessellation.hpp>
 #include <vine/geometry/Aabb.hpp>
-#include <vine/geometry/Primitive.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/PrimitiveDispatch.hpp>
+#include <vine/models/TriangleMesh.hpp>
 
 namespace
 {
@@ -31,7 +32,7 @@ constexpr float kBoundsTolerance = 0.03f;
  * @param primitive The primitive to build.
  * @param expected  The box the primitive describes in its local space.
  */
-void expectRoundTrip(const vn::geometry::Primitive& primitive, const vn::geometry::Aabbf& expected)
+void expectRoundTrip(const vn::models::Primitive& primitive, const vn::geometry::Aabbf& expected)
 {
     const auto solid = vn::brep::makeBrep(primitive);
     ASSERT_TRUE(solid);
@@ -61,14 +62,14 @@ TEST(Construction, aBuildWithoutABackendProducesNoSolid)
     }
 
     // The module carries the contract without a backend: the capability query says so, and a call produces nothing.
-    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Box{}));
+    EXPECT_FALSE(vn::brep::makeBrep(vn::models::Box{}));
 }
 
 TEST(Construction, anInvalidPrimitiveProducesNoSolid)
 {
     // Holds in every build: a dimension of zero or less describes no solid, backend or not.
-    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Box(0.0f, 1.0f, 1.0f)));
-    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Sphere(-1.0f)));
+    EXPECT_FALSE(vn::brep::makeBrep(vn::models::Box(0.0f, 1.0f, 1.0f)));
+    EXPECT_FALSE(vn::brep::makeBrep(vn::models::Sphere(-1.0f)));
 }
 
 TEST(Construction, everyPrimitiveFillsItsAnalyticBounds)
@@ -77,11 +78,11 @@ TEST(Construction, everyPrimitiveFillsItsAnalyticBounds)
         GTEST_SKIP() << "the bounds of a built solid are a backend property";
     }
 
-    expectRoundTrip(vn::geometry::Box(2.0f, 4.0f, 6.0f), vn::geometry::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
-    expectRoundTrip(vn::geometry::Sphere(2.0f), vn::geometry::Aabbf(-2.0f, -2.0f, -2.0f, 2.0f, 2.0f, 2.0f));
-    expectRoundTrip(vn::geometry::Cylinder(1.0f, 4.0f), vn::geometry::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
-    expectRoundTrip(vn::geometry::Cone(1.0f, 4.0f), vn::geometry::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
-    expectRoundTrip(vn::geometry::Ellipsoid(1.0f, 2.0f, 3.0f), vn::geometry::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
+    expectRoundTrip(vn::models::Box(2.0f, 4.0f, 6.0f), vn::geometry::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
+    expectRoundTrip(vn::models::Sphere(2.0f), vn::geometry::Aabbf(-2.0f, -2.0f, -2.0f, 2.0f, 2.0f, 2.0f));
+    expectRoundTrip(vn::models::Cylinder(1.0f, 4.0f), vn::geometry::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
+    expectRoundTrip(vn::models::Cone(1.0f, 4.0f), vn::geometry::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
+    expectRoundTrip(vn::models::Ellipsoid(1.0f, 2.0f, 3.0f), vn::geometry::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
 }
 
 TEST(Construction, theSolidCarriesThePrimitiveName)
@@ -90,7 +91,7 @@ TEST(Construction, theSolidCarriesThePrimitiveName)
         GTEST_SKIP() << "there is no solid to name without the backend";
     }
 
-    vn::geometry::Cylinder cylinder(1.0f, 2.0f);
+    vn::models::Cylinder cylinder(1.0f, 2.0f);
     cylinder.setName(vn::String::fromUtf8("link"));
 
     const auto solid = vn::brep::makeBrep(cylinder);

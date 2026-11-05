@@ -3,9 +3,10 @@
 #include <type_traits>
 #include <variant>
 
-#include <vine/geometry/Primitive.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/PrimitiveDispatch.hpp>
 #include <vine/geometry/Ray.hpp>
-#include <vine/geometry/Solid.hpp>
+#include <vine/geometry/SolidShape.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -18,7 +19,7 @@ using vn::geometry::BoxSolidf;
 using vn::geometry::ConeSolidf;
 using vn::geometry::EllipsoidSolidd;
 using vn::geometry::EllipsoidSolidf;
-using vn::geometry::ShapeType;
+using vn::models::ShapeType;
 using vn::geometry::Solidd;
 using vn::geometry::Solidf;
 using vn::geometry::SolidShaped;
@@ -33,7 +34,7 @@ using vn::geometry::SphereSolidf;
  * - The base holds no geometry, so this class compiles and behaves without touching `Solid`: that is the property the
  *   modelling side relies on, and the two dispatchers below must say so instead of guessing a solid.
  */
-class Profile final : public vn::geometry::Primitive {
+class Profile final : public vn::models::Primitive {
   public:
     Profile()
       : Primitive(ShapeType::Unknown)
@@ -78,22 +79,22 @@ TEST(Solid, thePrimitiveBaseHoldsNoGeometry)
 {
     // A primitive is identity plus whatever its subclass states: being a solid is a property of the five subclasses, not
     // of the concept. The base is abstract because `bounds()` is the only thing every primitive can answer.
-    static_assert(std::is_abstract_v<vn::geometry::Primitive>);
-    static_assert(std::is_base_of_v<vn::geometry::Primitive, vn::geometry::Box>);
-    static_assert(std::is_base_of_v<vn::geometry::Shape, vn::geometry::Ellipsoid>);
-    static_assert(std::is_base_of_v<vn::geometry::Shape, Profile>);
+    static_assert(std::is_abstract_v<vn::models::Primitive>);
+    static_assert(std::is_base_of_v<vn::models::Primitive, vn::models::Box>);
+    static_assert(std::is_base_of_v<vn::models::Shape, vn::models::Ellipsoid>);
+    static_assert(std::is_base_of_v<vn::models::Shape, Profile>);
 
     // A primitive that is not a solid is a complete class: no `Solid` value, no solid query, no cast that pretends
     // otherwise.
     Profile profile;
     EXPECT_EQ(profile.shapeType(), ShapeType::Unknown);
-    EXPECT_FALSE(vn::geometry::solidShapeOf(profile).has_value());
-    EXPECT_FALSE(vn::geometry::visitPrimitive(profile, [](const auto&) {}));
+    EXPECT_FALSE(vn::models::solidShapeOf(profile).has_value());
+    EXPECT_FALSE(vn::models::visitPrimitive(profile, [](const auto&) {}));
 }
 
 TEST(Solid, aSubclassStatesFullExtentsAndBuildsItsSolidOnDemand)
 {
-    vn::geometry::Box box(2.0f, 4.0f, 6.0f);
+    vn::models::Box box(2.0f, 4.0f, 6.0f);
     EXPECT_EQ(box.shapeType(), ShapeType::Box);
     EXPECT_FLOAT_EQ(box.width(), 2.0f);
     EXPECT_FLOAT_EQ(box.height(), 4.0f);
@@ -109,18 +110,18 @@ TEST(Solid, aSubclassStatesFullExtentsAndBuildsItsSolidOnDemand)
     EXPECT_FLOAT_EQ(box.solid().half_x, 5.0f);
     EXPECT_FLOAT_EQ(box.bounds().max().x, 5.0f) << "a setter is visible on the next call";
 
-    const vn::geometry::Shape& shape = box;
-    const auto* const          cast  = vn::obj_cast<vn::geometry::Box>(&shape);
+    const vn::models::Shape& shape = box;
+    const auto* const          cast  = vn::obj_cast<vn::models::Box>(&shape);
     ASSERT_NE(cast, nullptr);
     EXPECT_FLOAT_EQ(cast->depth(), 6.0f);
 }
 
 TEST(Solid, everySubclassReportsItsOwnTag)
 {
-    const vn::geometry::Sphere    sphere(2.0f);
-    const vn::geometry::Cylinder  cylinder(1.0f, 3.0f);
-    const vn::geometry::Cone      cone(1.0f, 3.0f);
-    const vn::geometry::Ellipsoid ellipsoid(1.0f, 2.0f, 3.0f);
+    const vn::models::Sphere    sphere(2.0f);
+    const vn::models::Cylinder  cylinder(1.0f, 3.0f);
+    const vn::models::Cone      cone(1.0f, 3.0f);
+    const vn::models::Ellipsoid ellipsoid(1.0f, 2.0f, 3.0f);
 
     EXPECT_EQ(sphere.shapeType(), ShapeType::Sphere);
     EXPECT_EQ(cylinder.shapeType(), ShapeType::Cylinder);
@@ -135,22 +136,22 @@ TEST(Solid, everySubclassReportsItsOwnTag)
 
 TEST(Solid, theDefaultSubclassIsTheUnitShape)
 {
-    const vn::geometry::Box box;
+    const vn::models::Box box;
     EXPECT_FLOAT_EQ(box.width(), 1.0f);
     EXPECT_FLOAT_EQ(box.bounds().min().x, -0.5f);
     EXPECT_TRUE(box.hasVolume(vn::math::EPS<double>()));
 
-    EXPECT_FLOAT_EQ(vn::geometry::Sphere{}.radius(), 1.0f);
-    EXPECT_FLOAT_EQ(vn::geometry::Cylinder{}.height(), 1.0f);
-    EXPECT_FLOAT_EQ(vn::geometry::Cone{}.radius(), 1.0f);
-    EXPECT_FLOAT_EQ(vn::geometry::Ellipsoid{}.radiusZ(), 1.0f);
+    EXPECT_FLOAT_EQ(vn::models::Sphere{}.radius(), 1.0f);
+    EXPECT_FLOAT_EQ(vn::models::Cylinder{}.height(), 1.0f);
+    EXPECT_FLOAT_EQ(vn::models::Cone{}.radius(), 1.0f);
+    EXPECT_FLOAT_EQ(vn::models::Ellipsoid{}.radiusZ(), 1.0f);
 }
 
 TEST(Solid, anUnusablePrimitiveStillAnswersItsBounds)
 {
     // A dimension at or below 0 is reported instead of being refused at construction: the shape still exists, its
     // queries refuse it, and the bounds stay a well formed box.
-    const vn::geometry::Sphere collapsed(0.0f);
+    const vn::models::Sphere collapsed(0.0f);
     EXPECT_FALSE(collapsed.isValid());
     EXPECT_EQ(collapsed.shapeType(), ShapeType::Sphere);
     EXPECT_FALSE(collapsed.hasVolume(vn::math::EPS<double>()));
@@ -158,27 +159,27 @@ TEST(Solid, anUnusablePrimitiveStillAnswersItsBounds)
     EXPECT_FALSE(collapsed.solid().closestPoint(vn::math::Point3f(1.0f, 1.0f, 1.0f)).has_value());
     EXPECT_TRUE(collapsed.solid().intersectWith(vn::geometry::Rayf(vn::math::Point3f(-2.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f))).empty());
 
-    const vn::geometry::Cylinder degenerate_cylinder(1.0f, 0.0f);
+    const vn::models::Cylinder degenerate_cylinder(1.0f, 0.0f);
     EXPECT_FALSE(degenerate_cylinder.isValid());
     EXPECT_EQ(degenerate_cylinder.shapeType(), ShapeType::Cylinder);
 }
 
 TEST(Solid, solidShapeOfConvertsOnlyTheFiveSolids)
 {
-    const vn::geometry::Cone cone(1.0f, 2.0f);
-    const auto               solid = vn::geometry::solidShapeOf(cone);
+    const vn::models::Cone cone(1.0f, 2.0f);
+    const auto               solid = vn::models::solidShapeOf(cone);
     ASSERT_TRUE(solid.has_value());
     EXPECT_TRUE(std::holds_alternative<ConeSolidf>(*solid));
     EXPECT_FLOAT_EQ(std::get<ConeSolidf>(*solid).half_height, 1.0f);
 
-    EXPECT_FALSE(vn::geometry::solidShapeOf(Profile{}).has_value());
+    EXPECT_FALSE(vn::models::solidShapeOf(Profile{}).has_value());
 }
 
 TEST(Solid, visitPrimitiveReachesTheConcreteSubclass)
 {
-    const vn::geometry::Ellipsoid ellipsoid(1.0f, 2.0f, 3.0f);
+    const vn::models::Ellipsoid ellipsoid(1.0f, 2.0f, 3.0f);
     float                        seen = 0.0f;
-    EXPECT_TRUE(vn::geometry::visitPrimitive(ellipsoid, [&seen](const auto& shaped) { seen = shaped.bounds().max().z; }));
+    EXPECT_TRUE(vn::models::visitPrimitive(ellipsoid, [&seen](const auto& shaped) { seen = shaped.bounds().max().z; }));
     EXPECT_FLOAT_EQ(seen, 3.0f) << "the visitor is handed the concrete subclass, not the base";
 }
 

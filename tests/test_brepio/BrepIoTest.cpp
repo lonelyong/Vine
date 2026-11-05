@@ -8,7 +8,7 @@
 #include <vine/brepio/BrepExporter.hpp>
 #include <vine/brepio/BrepFormat.hpp>
 #include <vine/brepio/BrepLoader.hpp>
-#include <vine/geometry/BrepShape.hpp>
+#include <vine/models/BrepShape.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 
@@ -102,13 +102,13 @@ TEST(BrepIoTest, AnUnknownStreamFormatIsUnsupported)
 
 TEST(BrepIoTest, ExportWithoutAShapeIsInvalidData)
 {
-    vn::geometry::BrepShape shape; // no shape: there is nothing to write, backend or not
+    vn::models::BrepShape shape; // no shape: there is nothing to write, backend or not
 
     BrepExporter       exporter;
     std::ostringstream out;
     EXPECT_EQ(exporter.exportAs(shape, BrepFormat::Step, out), IoError::InvalidData);
 
-    auto source = exporter.createSource(vn::intrusive_ptr<const vn::geometry::BrepShape>{}, BrepFormat::Step);
+    auto source = exporter.createSource(vn::intrusive_ptr<const vn::models::BrepShape>{}, BrepFormat::Step);
     ASSERT_NE(source, nullptr) << "the source contract is never-null; the refusal travels in error()";
     EXPECT_EQ(source->size(), 0u);
     EXPECT_EQ(source->error(), IoError::InvalidData);
@@ -116,11 +116,11 @@ TEST(BrepIoTest, ExportWithoutAShapeIsInvalidData)
 
 TEST(BrepIoTest, AnEmptyShapeIsNotValid)
 {
-    vn::geometry::BrepShape shape;
+    vn::models::BrepShape shape;
     EXPECT_EQ(shape.shape(), nullptr);
     EXPECT_FALSE(shape.isValid());
 
-    auto owned = vn::make_intrusive<vn::geometry::BrepShape>();
+    auto owned = vn::make_intrusive<vn::models::BrepShape>();
     owned->setShape({}); // clearing is allowed and leaves it invalid
     EXPECT_FALSE(owned->isValid());
 }
@@ -129,7 +129,7 @@ TEST(BrepIoTest, AnEmptyShapeIsNotValid)
 TEST(BrepIoTest, ExportsABoxAndReadsItBack)
 {
     // A real solid through every declared format: writer, reader, and the fingerprint cache that links them.
-    auto solid = vn::make_intrusive<vn::geometry::BrepShape>();
+    auto solid = vn::make_intrusive<vn::models::BrepShape>();
     solid->setShape(std::make_shared<const TopoDS_Shape>(BRepPrimAPI_MakeBox(10.0, 20.0, 30.0).Shape()));
     ASSERT_TRUE(solid->isValid());
 

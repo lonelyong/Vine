@@ -9,10 +9,12 @@
 #include <string>
 #include <vector>
 
-#include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/Mesh.hpp>
-#include <vine/geometry/Primitive.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/ColorMaterial.hpp>
+#include <vine/models/Mesh.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/Box.hpp>
+#include <vine/models/Sphere.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/io/ZipArchive.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
 #include <vine/robotics/workcell/Device.hpp>
@@ -215,12 +217,12 @@ TEST(DeviceIOTest, LoadXmlFromFolder)
     const auto& body = r->links().front()->body();
     ASSERT_EQ(body.visuals().size(), 1u);
     ASSERT_NE(body.visuals()[0].shape(), nullptr);
-    EXPECT_EQ(body.visuals()[0].shape()->shapeType(), vn::geometry::ShapeType::Box);
-    const auto* const box = vn::obj_cast<vn::geometry::Box>(body.visuals()[0].shape().get());
+    EXPECT_EQ(body.visuals()[0].shape()->shapeType(), vn::models::ShapeType::Box);
+    const auto* const box = vn::obj_cast<vn::models::Box>(body.visuals()[0].shape().get());
     ASSERT_NE(box, nullptr);
     EXPECT_FLOAT_EQ(box->width(), 0.2f);
     ASSERT_EQ(body.collisions().size(), 1u);
-    EXPECT_EQ(body.collisions()[0].shape()->shapeType(), vn::geometry::ShapeType::Sphere);
+    EXPECT_EQ(body.collisions()[0].shape()->shapeType(), vn::models::ShapeType::Sphere);
 }
 
 TEST(DeviceIOTest, LoadXmlFromFolderWithMesh)
@@ -237,7 +239,7 @@ TEST(DeviceIOTest, LoadXmlFromFolderWithMesh)
     auto* const r = dynamic_cast<MotionDevice*>(loaded.get());
     ASSERT_NE(r, nullptr);
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
-    const auto* const m = dynamic_cast<const vn::geometry::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+    const auto* const m = dynamic_cast<const vn::models::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
     ASSERT_NE(m, nullptr);
     EXPECT_EQ(m->vertexCount(), 3u);
     EXPECT_EQ(m->triangleCount(), 1u);
@@ -262,14 +264,14 @@ TEST(DeviceIOTest, MaterialLibraryRoundTrip)
     // The named library lands on the device data.
     ASSERT_EQ(r->data()->materials.size(), 1u);
     EXPECT_EQ(r->data()->materials[0].name, u8"orange");
-    const auto* const lib_color = dynamic_cast<const vn::geometry::ColorMaterial*>(r->data()->materials[0].material.get());
+    const auto* const lib_color = dynamic_cast<const vn::models::ColorMaterial*>(r->data()->materials[0].material.get());
     ASSERT_NE(lib_color, nullptr);
     EXPECT_FLOAT_EQ(lib_color->color().r, 1.0f);
 
     // The base-link visual references the library material by name.
     ASSERT_EQ(r->baseLink()->body().visuals().size(), 1u);
     EXPECT_EQ(r->baseLink()->body().visuals()[0].materialName(), u8"orange");
-    const auto* const vis_color = dynamic_cast<const vn::geometry::ColorMaterial*>(r->baseLink()->body().visuals()[0].material().get());
+    const auto* const vis_color = dynamic_cast<const vn::models::ColorMaterial*>(r->baseLink()->body().visuals()[0].material().get());
     ASSERT_NE(vis_color, nullptr);
     EXPECT_FLOAT_EQ(vis_color->color().r, 1.0f);
     EXPECT_FLOAT_EQ(vis_color->color().b, 0.0f);
@@ -318,19 +320,19 @@ TEST(DeviceIOTest, LoadsCommittedPackage)
     std::size_t triangles = 0;
     for (auto* const link : dev->links()) {
         for (const auto& visual : link->body().visuals()) {
-            const auto* const mesh = dynamic_cast<const vn::geometry::Mesh*>(visual.shape().get());
+            const auto* const mesh = dynamic_cast<const vn::models::Mesh*>(visual.shape().get());
             if (mesh != nullptr) {
                 ++meshes;
                 vertices += mesh->vertexCount();
-                triangles += static_cast<const vn::geometry::TriangleMesh*>(mesh)->triangleCount();
+                triangles += static_cast<const vn::models::TriangleMesh*>(mesh)->triangleCount();
             }
         }
         for (const auto& collision : link->body().collisions()) {
-            const auto* const mesh = dynamic_cast<const vn::geometry::Mesh*>(collision.shape().get());
+            const auto* const mesh = dynamic_cast<const vn::models::Mesh*>(collision.shape().get());
             if (mesh != nullptr) {
                 ++meshes;
                 vertices += mesh->vertexCount();
-                triangles += static_cast<const vn::geometry::TriangleMesh*>(mesh)->triangleCount();
+                triangles += static_cast<const vn::models::TriangleMesh*>(mesh)->triangleCount();
             }
         }
     }

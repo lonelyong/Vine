@@ -8,12 +8,13 @@
 #include <utility>
 #include <vector>
 
-#include <vine/geometry/Mesh.hpp>
-#include <vine/geometry/MixedMesh.hpp>
-#include <vine/geometry/Primitive.hpp>
-#include <vine/geometry/QuadMesh.hpp>
-#include <vine/geometry/SolidTessellation.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/Mesh.hpp>
+#include <vine/models/MixedMesh.hpp>
+#include <vine/models/Primitive.hpp>
+#include <vine/models/PrimitiveDispatch.hpp>
+#include <vine/models/QuadMesh.hpp>
+#include <vine/models/SolidTessellation.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -35,9 +36,9 @@ namespace
 {
 
 /// Scalars per vertex of an attribute channel — the mesh's own element layout, which sharing reads directly.
-constexpr std::uint32_t kVec3Components = vn::geometry::Mesh::kVec3Components;
-constexpr std::uint32_t kVec2Components = vn::geometry::Mesh::kVec2Components;
-constexpr std::uint32_t kVec4Components = vn::geometry::Mesh::kVec4Components;
+constexpr std::uint32_t kVec3Components = vn::models::Mesh::kVec3Components;
+constexpr std::uint32_t kVec2Components = vn::models::Mesh::kVec2Components;
+constexpr std::uint32_t kVec4Components = vn::models::Mesh::kVec4Components;
 
 /**
  * @brief Converts a triangle mesh into a geometry, sharing its attribute buffers.
@@ -45,7 +46,7 @@ constexpr std::uint32_t kVec4Components = vn::geometry::Mesh::kVec4Components;
  * @param mesh Triangle mesh to convert; a mesh that is not valid yields no geometry.
  * @return New geometry holding the mesh's streams, or null when nothing is drawable.
  */
-GeometryPtr geometryFromMesh(const vn::geometry::TriangleMesh& mesh)
+GeometryPtr geometryFromMesh(const vn::models::TriangleMesh& mesh)
 {
     if (!mesh.isValid()) {
         return {};
@@ -81,17 +82,17 @@ GeometryPtr geometryFromMesh(const vn::geometry::TriangleMesh& mesh)
  * @param mesh Mesh to convert.
  * @return New geometry, or null when the mesh holds nothing drawable.
  */
-GeometryPtr geometryFromShapeMesh(const vn::geometry::Mesh& mesh)
+GeometryPtr geometryFromShapeMesh(const vn::models::Mesh& mesh)
 {
-    if (const auto* triangle_mesh = obj_cast<vn::geometry::TriangleMesh>(&mesh)) {
+    if (const auto* triangle_mesh = obj_cast<vn::models::TriangleMesh>(&mesh)) {
         return geometryFromMesh(*triangle_mesh);
     }
     // A polygon mesh is triangulated HERE, at the one boundary that hands data to the renderer, so every geometry a
     // draw can see is a triangle mesh; an invalid mesh yields no geometry instead of throwing from the converter.
-    if (const auto* quad_mesh = obj_cast<vn::geometry::QuadMesh>(&mesh)) {
+    if (const auto* quad_mesh = obj_cast<vn::models::QuadMesh>(&mesh)) {
         return quad_mesh->isValid() ? geometryFromMesh(*quad_mesh->toTriangleMesh()) : GeometryPtr();
     }
-    if (const auto* mixed_mesh = obj_cast<vn::geometry::MixedMesh>(&mesh)) {
+    if (const auto* mixed_mesh = obj_cast<vn::models::MixedMesh>(&mesh)) {
         return mixed_mesh->isValid() ? geometryFromMesh(*mixed_mesh->toTriangleMesh()) : GeometryPtr();
     }
     return {};
@@ -546,19 +547,19 @@ intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> 
     return intrusive_ptr<Buffer<std::uint32_t>>(new Buffer<std::uint32_t>(std::vector<std::uint32_t>(indices.begin(), indices.end())));
 }
 
-GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
+GeometryPtr geometryFromShape(const vn::models::Shape& shape)
 {
     // A shape that is not a mesh has no vertex data to hand the renderer: an analytic primitive becomes one here through
     // `tessellateSolid`, and the mesh helper triangulates the polygon kinds at this same boundary.
-    if (const auto* mesh = obj_cast<vn::geometry::Mesh>(&shape)) {
+    if (const auto* mesh = obj_cast<vn::models::Mesh>(&shape)) {
         return geometryFromShapeMesh(*mesh);
     }
-    if (const auto* primitive = obj_cast<vn::geometry::Primitive>(&shape)) {
-        const auto solid = vn::geometry::solidShapeOf(*primitive);
+    if (const auto* primitive = obj_cast<vn::models::Primitive>(&shape)) {
+        const auto solid = vn::models::solidShapeOf(*primitive);
         if (!solid) {
             return GeometryPtr(); // a primitive that is not one of the five analytic solids draws nothing here
         }
-        const auto triangles = vn::geometry::tessellateSolid(*solid);
+        const auto triangles = vn::models::tessellateSolid(*solid);
         return triangles ? geometryFromShapeMesh(*triangles) : GeometryPtr();
     }
     return GeometryPtr();

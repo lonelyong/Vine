@@ -252,8 +252,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 ```cpp
 using namespace vn::graphics;
 
-// ① 模型：一个三角形。packAttribute 把 Vec3f 打成 Buffer<float>，geometry 借它（不拷贝）。
-vn::geometry::Vec3Array positions = {
+// ① 模型：一个三角形。packAttribute 把 Vec3f 打成 Buffer<float>，models 借它（不拷贝）。
+vn::models::Vec3fArray positions = {
     vn::math::Vec3f(0.0f, 0.0f, 0.0f),
     vn::math::Vec3f(1.0f, 0.0f, 0.0f),
     vn::math::Vec3f(0.0f, 1.0f, 0.0f),

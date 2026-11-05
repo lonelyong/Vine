@@ -10,11 +10,11 @@
 
 #include <vine/Colorf.hpp>
 #include <vine/Object.hpp>
-#include <vine/geometry/ColorMaterial.hpp>
-#include <vine/geometry/Model.hpp>
-#include <vine/geometry/MixedMesh.hpp>
-#include <vine/geometry/QuadMesh.hpp>
-#include <vine/geometry/TriangleMesh.hpp>
+#include <vine/models/ColorMaterial.hpp>
+#include <vine/models/Model.hpp>
+#include <vine/models/MixedMesh.hpp>
+#include <vine/models/QuadMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/math/Matrix4x4.hpp>
@@ -24,8 +24,8 @@
 #include <vine/meshio/MeshFormat.hpp>
 #include <vine/meshio/MeshLoader.hpp>
 
-using vn::geometry::TriangleMesh;
-using vn::geometry::ShapeType;
+using vn::models::TriangleMesh;
+using vn::models::ShapeType;
 using vn::math::Vec3f;
 using vn::math::Vec3d;
 using vn::math::Vec4f;
@@ -213,7 +213,7 @@ TEST(MeshIoTest, QuadAndMixedMeshesExportAsTriangleMeshes)
     MeshLoader loader(noScaling());
     const auto path = std::filesystem::temp_directory_path() / "vn_meshio_polygons.obj";
 
-    auto quad = vn::make_intrusive<vn::geometry::QuadMesh>();
+    auto quad = vn::make_intrusive<vn::models::QuadMesh>();
     quad->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(1, 1, 0), Vec3f(0, 1, 0) });
     ASSERT_TRUE(quad->isValid());
     EXPECT_EQ(quad->toTriangleMesh()->triangleCount(), 2u);
@@ -222,7 +222,7 @@ TEST(MeshIoTest, QuadAndMixedMeshesExportAsTriangleMeshes)
     ASSERT_TRUE(quad_result);
     EXPECT_EQ(vn::obj_cast<TriangleMesh>(*quad_result.value()).triangleCount(), 2u);
 
-    auto mixed = vn::make_intrusive<vn::geometry::MixedMesh>();
+    auto mixed = vn::make_intrusive<vn::models::MixedMesh>();
     mixed->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(1, 1, 0), Vec3f(0, 1, 0), Vec3f(-1, 0, 0) });
     mixed->setFaceOffsets({ 0u, 5u });
     ASSERT_TRUE(mixed->isValid());
@@ -273,7 +273,7 @@ TEST(MeshIoTest, VertexColorsSurviveAPlyRoundTrip)
     ASSERT_EQ(model.value()->meshes().size(), 1u);
     const auto& entry = model.value()->meshes().front();
     ASSERT_NE(entry.mesh.get(), nullptr);
-    const auto& entry_mesh = vn::obj_cast<vn::geometry::Mesh>(*entry.mesh);
+    const auto& entry_mesh = vn::obj_cast<vn::models::Mesh>(*entry.mesh);
     ASSERT_FALSE(entry_mesh.colors().empty());
     EXPECT_EQ(entry_mesh.colors().size(), entry_mesh.positions().size());
 
@@ -295,17 +295,17 @@ TEST(MeshIoTest, MergedEntryPadsMeshesThatAuthorNoColourWithWhite)
                                Vec4f(0.5f, 0.5f, 0.5f, 1.0f) });
     auto plain_cube = makeCube();
 
-    auto model = vn::make_intrusive<vn::geometry::Model>();
+    auto model = vn::make_intrusive<vn::models::Model>();
 
-    vn::geometry::Model::Entry first;
+    vn::models::Model::Entry first;
     first.mesh     = coloured_cube;
-    first.material = vn::make_intrusive<vn::geometry::ColorMaterial>(vn::Colorf(1.0f, 0.0f, 0.0f));
-    vn::geometry::Model::Entry second;
+    first.material = vn::make_intrusive<vn::models::ColorMaterial>(vn::Colorf(1.0f, 0.0f, 0.0f));
+    vn::models::Model::Entry second;
     second.mesh     = plain_cube;
-    second.material = vn::make_intrusive<vn::geometry::ColorMaterial>(vn::Colorf(0.0f, 1.0f, 0.0f));
+    second.material = vn::make_intrusive<vn::models::ColorMaterial>(vn::Colorf(0.0f, 1.0f, 0.0f));
     model->setMeshes({ first, second });
 
-    vn::geometry::Model::Node root;
+    vn::models::Model::Node root;
     root.meshes = { 0u, 1u };
     model->setNodes({ root });
     model->setRoot(0u);
@@ -332,7 +332,7 @@ TEST(MeshIoTest, MergedEntryPadsMeshesThatAuthorNoColourWithWhite)
     EXPECT_LT(white, mixed_mesh.colors().size()) << "the colours the other mesh authored survived the merge";
 
     // Both coloured: nothing is padded, so no vertex is white.
-    plain_cube->setColors(vn::geometry::Vec4Array(coloured_cube->colors().begin(), coloured_cube->colors().end()));
+    plain_cube->setColors(vn::models::Vec4fArray(coloured_cube->colors().begin(), coloured_cube->colors().end()));
     auto both = load_merged("vn_meshio_all_colors.glb");
     ASSERT_TRUE(both);
     EXPECT_TRUE(std::none_of(both.value()->colors().begin(), both.value()->colors().end(), is_white))
@@ -449,16 +449,16 @@ TEST(MeshIoTest, ModelToStlAppliesTransformsOnce)
     // a writer that bakes it and then lets the flattening pass run again would move the part by twice the offset.
     auto triangle = makeCube();
 
-    vn::geometry::Model::Entry entry;
+    vn::models::Model::Entry entry;
     entry.mesh = triangle;
-    vn::geometry::Model::Node root;
+    vn::models::Model::Node root;
     root.children = { 1u }; // the root itself draws nothing
-    vn::geometry::Model::Node shifted;
+    vn::models::Model::Node shifted;
     shifted.name                    = vn::String(u8"shifted");
     shifted.transform.element(0, 3) = 5.0; // +5 on x
     shifted.meshes                  = { 0u };
 
-    auto model = vn::make_intrusive<vn::geometry::Model>();
+    auto model = vn::make_intrusive<vn::models::Model>();
     model->setMeshes({ entry });
     model->setNodes({ root, shifted });
     model->setRoot(0u);

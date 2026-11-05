@@ -5,8 +5,8 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Isometry3.hpp>
 
-#include <vine/geometry/Material.hpp>
-#include <vine/geometry/Shape.hpp>
+#include <vine/models/Material.hpp>
+#include <vine/models/Shape.hpp>
 
 VN_ROBOTICS_WORKCELL_NS_BEGIN
 
@@ -24,7 +24,7 @@ class Collision {
      *
      * @return The shape, or null when unset.
      */
-    const vn::intrusive_ptr<vn::geometry::Shape>& shape() const
+    const vn::intrusive_ptr<vn::models::Shape>& shape() const
     {
         return shape_;
     }
@@ -34,7 +34,7 @@ class Collision {
      *
      * @param shape New shape.
      */
-    void setShape(const vn::intrusive_ptr<vn::geometry::Shape>& shape)
+    void setShape(const vn::intrusive_ptr<vn::models::Shape>& shape)
     {
         shape_ = shape;
     }
@@ -60,7 +60,7 @@ class Collision {
     }
 
   private:
-    vn::intrusive_ptr<vn::geometry::Shape> shape_;
+    vn::intrusive_ptr<vn::models::Shape> shape_;
     math::Isometry3d                       tf_;
 };
 

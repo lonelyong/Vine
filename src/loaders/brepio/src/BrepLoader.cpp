@@ -161,12 +161,12 @@ TopoDS_Shape readStream(std::istream& in, BrepFormat format)
  * @param shape The shape; ownership moves into the returned solid.
  * @return The solid, or InvalidData when the reader produced nothing.
  */
-vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> wrap(TopoDS_Shape shape)
+vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> wrap(TopoDS_Shape shape)
 {
     if (shape.IsNull()) {
         return vn::io::IoError::InvalidData;
     }
-    auto brep = vn::make_intrusive<vn::geometry::BrepShape>();
+    auto brep = vn::make_intrusive<vn::models::BrepShape>();
     brep->setShape(std::make_shared<const TopoDS_Shape>(std::move(shape)));
     return brep;
 }
@@ -201,7 +201,7 @@ void BrepLoader::clearCache()
     cache_.clear();
 }
 
-vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(const std::filesystem::path& file_path)
+vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> BrepLoader::load(const std::filesystem::path& file_path)
 {
     const BrepFormat format = formatFromPath(file_path);
     if (format == BrepFormat::Unknown) {
@@ -242,7 +242,7 @@ vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(cons
 #endif
 }
 
-vn::io::Result<vn::intrusive_ptr<vn::geometry::BrepShape>> BrepLoader::load(std::istream& in, BrepFormat format)
+vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> BrepLoader::load(std::istream& in, BrepFormat format)
 {
     if (format == BrepFormat::Unknown) {
         return vn::io::IoError::Unsupported; // a stream has no extension, so the caller must state the format

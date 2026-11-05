@@ -10,8 +10,8 @@
 
 #include <vine/String.hpp>
 #include <vine/crypto/ByteSequenceFingerprint.hpp>
-#include <vine/geometry/Mesh.hpp>
-#include <vine/geometry/Model.hpp>
+#include <vine/models/Mesh.hpp>
+#include <vine/models/Model.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/io/IoError.hpp>
 #include <vine/runtime/InMemoryCache.hpp>
@@ -165,7 +165,7 @@ class VN_MESHIO_API MeshLoader {
      * @return The model, or the failure class: Unsupported when the extension names no format, NotFound when the file
      *         is not there, IoFailure when it cannot be read, InvalidData when it cannot be parsed.
      */
-    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::Model>> load(const std::filesystem::path& file_path);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::models::Model>> load(const std::filesystem::path& file_path);
 
     /**
      * @brief Loads a whole model from a stream, keeping its structure.
@@ -184,7 +184,7 @@ class VN_MESHIO_API MeshLoader {
      * @return The model, or the failure class: IoFailure when the stream breaks, InvalidData when the bytes cannot be
      *         parsed.
      */
-    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::Model>> load(std::istream& in, MeshFormat hint = MeshFormat::Unknown);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::models::Model>> load(std::istream& in, MeshFormat hint = MeshFormat::Unknown);
 
     /**
      * @brief Loads a mesh model from a file as one flattened mesh.
@@ -203,7 +203,7 @@ class VN_MESHIO_API MeshLoader {
      * @param file_path The model file path; its extension selects the format.
      * @return The loaded mesh, or the failure class (see the model entry).
      */
-    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::Mesh>> loadMerged(const std::filesystem::path& file_path);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::models::Mesh>> loadMerged(const std::filesystem::path& file_path);
 
     /**
      * @brief Loads a mesh model from a stream as one flattened mesh.
@@ -215,7 +215,7 @@ class VN_MESHIO_API MeshLoader {
      * @param hint The format to parse as (see the model entry); required for a format the parser cannot guess.
      * @return The loaded mesh, or the failure class (see the model entry).
      */
-    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::geometry::Mesh>> loadMerged(std::istream& in, MeshFormat hint = MeshFormat::Unknown);
+    [[nodiscard]] vn::io::Result<vn::intrusive_ptr<vn::models::Mesh>> loadMerged(std::istream& in, MeshFormat hint = MeshFormat::Unknown);
 
   private:
     /**
@@ -225,7 +225,7 @@ class VN_MESHIO_API MeshLoader {
      * @param hint The format to parse as; Unknown lets the parser guess.
      * @return The model, or the failure class.
      */
-    vn::io::Result<vn::intrusive_ptr<vn::geometry::Model>> loadBytes(std::vector<unsigned char>& bytes, MeshFormat hint);
+    vn::io::Result<vn::intrusive_ptr<vn::models::Model>> loadBytes(std::vector<unsigned char>& bytes, MeshFormat hint);
 
     /**
      * @brief Parses a flattened mesh out of bytes already in memory, sharing the cache with the path entry.
@@ -234,7 +234,7 @@ class VN_MESHIO_API MeshLoader {
      * @param hint The format to parse as; Unknown lets the parser guess.
      * @return The loaded mesh, or the failure class.
      */
-    vn::io::Result<vn::intrusive_ptr<vn::geometry::Mesh>> loadMergedBytes(std::vector<unsigned char>& bytes, MeshFormat hint);
+    vn::io::Result<vn::intrusive_ptr<vn::models::Mesh>> loadMergedBytes(std::vector<unsigned char>& bytes, MeshFormat hint);
 
     /**
      * @brief Caches a built model under its content fingerprint and hands it to the caller.
@@ -243,12 +243,12 @@ class VN_MESHIO_API MeshLoader {
      * @param model The model to cache; it is returned unchanged.
      * @return The model the caller receives.
      */
-    vn::intrusive_ptr<vn::geometry::Model> cacheModel(const vn::crypto::ByteSequenceFingerprint& fingerprint, vn::intrusive_ptr<vn::geometry::Model> model);
+    vn::intrusive_ptr<vn::models::Model> cacheModel(const vn::crypto::ByteSequenceFingerprint& fingerprint, vn::intrusive_ptr<vn::models::Model> model);
 
     /** @brief What the cache holds for one file: whichever of the two results has been built from it. */
     struct Cached {
-        vn::intrusive_ptr<vn::geometry::Mesh> merged; // The flattened result, once loadMerged() built it.
-        vn::intrusive_ptr<vn::geometry::Model> model;  // The structured result, once load() built it.
+        vn::intrusive_ptr<vn::models::Mesh> merged; // The flattened result, once loadMerged() built it.
+        vn::intrusive_ptr<vn::models::Model> model;  // The structured result, once load() built it.
     };
 
     Options                                                                 options_;

@@ -1,23 +1,23 @@
 #include <gtest/gtest.h>
 
-#include <vine/geometry/PointCloud.hpp>
+#include <vine/models/PointCloud.hpp>
 
 TEST(PointCloudTest, anEmptyCloudIsNotUsable)
 {
-    const vn::geometry::PointCloud cloud;
+    const vn::models::PointCloud cloud;
 
     EXPECT_FALSE(cloud.isValid());
     EXPECT_EQ(cloud.pointCount(), 0u);
     EXPECT_TRUE(cloud.positions().empty());
     EXPECT_FALSE(cloud.hasVolume());
     EXPECT_TRUE(cloud.aabb().isEmpty());
-    EXPECT_EQ(cloud.shapeType(), vn::geometry::ShapeType::PointCloud);
-    EXPECT_EQ(cloud.shapeKind(), vn::geometry::ShapeKind::PointCloud);
+    EXPECT_EQ(cloud.shapeType(), vn::models::ShapeType::PointCloud);
+    EXPECT_EQ(cloud.shapeKind(), vn::models::ShapeKind::PointCloud);
 }
 
 TEST(PointCloudTest, positionsAreSharedAsThreeScalarsPerPoint)
 {
-    vn::geometry::PointCloud cloud;
+    vn::models::PointCloud cloud;
     cloud.setPositions({ { 1.0f, 2.0f, 3.0f }, { -1.0f, 0.0f, 0.5f } });
 
     ASSERT_TRUE(cloud.isValid());
@@ -28,12 +28,12 @@ TEST(PointCloudTest, positionsAreSharedAsThreeScalarsPerPoint)
     const auto storage = cloud.positionsBuffer();
     ASSERT_TRUE(storage);
     EXPECT_EQ(storage->size(), 6u);
-    EXPECT_EQ(cloud.positions().data(), reinterpret_cast<const vn::geometry::PointCloud::Vec3*>(storage->view().data()));
+    EXPECT_EQ(cloud.positions().data(), reinterpret_cast<const vn::models::PointCloud::Vec3*>(storage->view().data()));
 }
 
 TEST(PointCloudTest, normalsAndColorsAreOptionalAndIndependent)
 {
-    vn::geometry::PointCloud cloud;
+    vn::models::PointCloud cloud;
     cloud.setPositions({ { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } });
 
     EXPECT_TRUE(cloud.normals().empty());
@@ -59,7 +59,7 @@ TEST(PointCloudTest, normalsAndColorsAreOptionalAndIndependent)
 
 TEST(PointCloudTest, theCachedBoxIsClearedWhenThePositionsChange)
 {
-    vn::geometry::PointCloud cloud;
+    vn::models::PointCloud cloud;
     cloud.setPositions({ { -1.0f, -2.0f, -3.0f }, { 1.0f, 2.0f, 3.0f } });
 
     const auto computed = cloud.computeAabb();
@@ -77,7 +77,7 @@ TEST(PointCloudTest, theCachedBoxIsClearedWhenThePositionsChange)
 
 TEST(PointCloudTest, anEmptyCloudComputesTheZeroBox)
 {
-    vn::geometry::PointCloud cloud;
+    vn::models::PointCloud cloud;
 
     const auto box = cloud.computeAabb();
 
