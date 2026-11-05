@@ -288,7 +288,7 @@ TEST(ProximityTest, CollisionObjectWorldTransform)
     state.setup(&root);
 
     vn::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
-    geometry->buildFromShape(vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Sphere(0.5f)));
+    geometry->buildFromShape(vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Primitive(vn::geometry::Spheref{ 0.5f })));
 
     vn::intrusive_ptr<CollisionObject> object(new MockCollisionObject(geometry));
     object->setFrame(&joint);
@@ -309,13 +309,13 @@ TEST(ProximityTest, CollisionObjectWorldTransform)
 TEST(ProximityTest, CollisionGeometryManager)
 {
     MockGeometryManager manager;
-    const auto          shape = vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Sphere(1.0f));
+    const auto          shape = vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Primitive(vn::geometry::Spheref{ 1.0f }));
 
     EXPECT_TRUE(manager.add(shape));
     EXPECT_TRUE(manager.add(shape)); // cached
     EXPECT_NE(manager.get(shape), nullptr);
 
-    const auto missing = vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Sphere(2.0f));
+    const auto missing = vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Primitive(vn::geometry::Spheref{ 2.0f }));
     EXPECT_EQ(manager.get(missing), nullptr);
 
     EXPECT_TRUE(manager.update(shape));
@@ -337,7 +337,7 @@ TEST(ProximityTest, DetectorBookkeeping)
     state.setup(&owner);
 
     vn::intrusive_ptr<CollisionGeometry> geometry(new MockGeometry());
-    geometry->buildFromShape(vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Sphere(0.5f)));
+    geometry->buildFromShape(vn::intrusive_ptr<const vn::geometry::Shape>(new vn::geometry::Primitive(vn::geometry::Spheref{ 0.5f })));
     vn::intrusive_ptr<CollisionObject> object(new MockCollisionObject(geometry));
     object->setFrame(&owner);
 

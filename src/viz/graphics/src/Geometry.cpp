@@ -8,10 +8,12 @@
 #include <utility>
 #include <vector>
 
-#include <vine/geometry/TriangleMesh.hpp>
-#include <vine/geometry/MixedMesh.hpp>
 #include <vine/geometry/Mesh.hpp>
+#include <vine/geometry/MixedMesh.hpp>
+#include <vine/geometry/Primitive.hpp>
 #include <vine/geometry/QuadMesh.hpp>
+#include <vine/geometry/SolidTessellation.hpp>
+#include <vine/geometry/TriangleMesh.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -546,10 +548,14 @@ intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> 
 
 GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
 {
-    // A shape that is not a mesh has no vertex data to hand the renderer; the mesh helper triangulates the polygon
-    // kinds at this one boundary.
+    // A shape that is not a mesh has no vertex data to hand the renderer: an analytic primitive becomes one here through
+    // `tessellateSolid`, and the mesh helper triangulates the polygon kinds at this same boundary.
     if (const auto* mesh = obj_cast<vn::geometry::Mesh>(&shape)) {
         return geometryFromShapeMesh(*mesh);
+    }
+    if (const auto* primitive = obj_cast<vn::geometry::Primitive>(&shape)) {
+        const auto triangles = vn::geometry::tessellateSolid(primitive->shape());
+        return triangles ? geometryFromShapeMesh(*triangles) : GeometryPtr();
     }
     return GeometryPtr();
 }

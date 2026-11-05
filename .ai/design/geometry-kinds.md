@@ -3,7 +3,7 @@
 > **状态**：现行
 > **最后核对**：2026-11-04
 > **范围**：`Curve` / `Surface` 两个求值接口，以及具体值类型的归属与新增类型的最小契约。
-> 参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）**不构成族**：它们只被建模使用，集合就是 `Primitive::Parameters`（见 `geometry-parametric.md`）。
+> 参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）**不构成族**：模型侧是一个建模类 `Primitive`，几何侧是族 `Solid<T>` 的五个 kind（见 `geometry-parametric.md`、`geometry-solid.md`）。
 > 不含具体类型的完整契约（见 `geometry-primitives.md`、`geometry-parametric.md`、`geometry-ray.md` 与各自头文件），不含求交与距离算法。
 > **权威来源**：`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Continuity.hpp`、`Surface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp`。
 > **待办**：`../backlog/geometry.md`
@@ -24,8 +24,8 @@
 
 - 接口里只放“参数化对象必然能回答的事”：曲面的法向、包围盒、二阶导数与反向/变换都不进接口（2.10），曲线的同理（2.7）。
 - 不做异构容器：需要“一列混合曲线”时用 `std::variant` + `std::visit`；接口只回答“一条”曲线 / “一张”曲面（2.4）。
-- 不给参数化几何（`Box` / `Sphere` / …）设族标签：它们不提供自己的算法（射线–盒就是 `Aabb` 的 slab），"哪些几何能组成模型"由 `Primitive::Parameters` 的变体回答。
-- 不做族级统一算法（射线–曲面、点到曲线的距离）：今天没有消费者（`G8`），见 `../backlog/geometry.md`。
+- 不给参数化几何设族标签：它们不属于 `Curve` / `Surface` 树；几何侧是 `Solid<T>` 族（射线–盒仍是 `Aabb` 的 slab，实体语义归 `Solid<T>::intersectWith()`）；哪些形状能组成模型由 `ShapeType` 回答。
+- 族级曲面算法（最近点、射线 × 曲面）已在 `geometry-surface-queries.md`，点到曲线的最近点 / 距离已在 `geometry-curve-queries.md`；实体求交仍没有消费者（`G8`），见 `../backlog/geometry.md` G3。
 
 ### 1.4 一句话结论
 
@@ -58,11 +58,11 @@
 
 - **为什么**：`G1`、`G12` —— 维度只决定"取一个点要几个参数"，具体含义留在类型上；把参数含义统一进基类会造出一个每种类型都要重新解释的约定。
 - **默认构造只在两种情况下存在**：① 默认值本身就是有意义的几何（`Placement` 是单位框架，`CircleCurve` 是半径 1 的 XY 圆，`SphericalSurface` 是半径 1 的球）；② 默认值是**能被 `isValid()` 认出的空状态**（`BezierCurve` / `BSplineCurve` / `BezierSurface` / `BSplineSurface` 没有数据，`isValid()` 恒假）。旋转面与平面两者都不是——“单位圆柱看起来完全合法”，所以它们根本不声明默认构造，`static_assert(!std::is_default_constructible_v<CylindricalSurfaced>)` 盯着这件事。
-- **参数化几何不在表里**：`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 是**建模类型**（`Primitive` 的子类，见 `geometry-parametric.md`），不是几何族成员。需要列"哪些几何能组成模型"时看 `Primitive` 的五个子类；需要算几何时用值类型或曲面。
+- **参数化几何不在表里**：`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 是**建模类型**（`Primitive` 的子类，见 `geometry-parametric.md`），不是几何族成员。需要列“哪些几何能组成模型”时看 `Primitive` 的五个子类；需要算几何时用值类型（实体的值类型是 `Solid<T>`，见 `geometry-solid.md`）或曲面。
 
 ### 2.4 运行期多态用 variant
 
-- **是什么**：`Primitive::Parameters`（`std::variant<Box, Sphere, Cylinder, Cone, Ellipsoid>`）是第一个用例；`brep` 与 `robotics::io` 用 `std::visit` 分派。
+- **是什么**：`Solid<T>::Shape`（`std::variant<Box, Sphere, Cylinder, Cone, Ellipsoid>`，五个解析体）是现行用例；`Solid<T>` 的成员与三角化都用 `std::visit` 分派，新增 kind 是编译错误。模型侧没有变体：`Primitive` 是带身份的基类，`brep` 与 `robotics::io` 按 `shapeType()` + `obj_cast` 分派。
 - **为什么**：`G4`、`G9` —— 变体是封闭集合，标签与内容不可能不一致；新增成员是编译错误提示所有消费点，而不是运行期静默落到 `default`。
 - **边界**：变体放的是**值**，所以它能和值语义共存；放指针加虚函数等于绕回被否决的方案。
 
@@ -70,18 +70,18 @@
 
 - **是什么**：`CircleCurve` 提供 `isValid()`、`pointAt(angle)`、`circumference()`、`bounds()`；椭圆/双曲线/抛物线提供 `isValid()`、`pointAt(u)`、`bounds()`（仅椭圆，闭合且有界）；`SphericalSurface` 提供 `pointAt(azimuth, polar)` / `normalAt` / `bounds()`；`LineCurve` 提供 `pointAt(t)` / `closestPoint` / `intersectWith`。
 - **单个三角形、四边形不做类型**：`intersectTriangle(ray, a, b, c, hit)` 直接吃三个角点，不需要类型；名字 `TriangleSurface` / `QuadSurface` 作为保留名登记在 backlog（`../backlog/geometry.md` G7），等它们长出自己的查询（射线–面求交、点到面距离）时再引入，且届时带 `Surface` 后缀——仓库里已有 `TriangleMesh` / `QuadMesh`，裸名会被读成网格元素（`G4`）。
-- **为什么**：`G8` —— 没有消费者的能力不写：射线求交、点到曲线的距离、曲面求交都在 backlog，等触发条件。
-- **边界**：`PointCloud` 仍是 `Shape`，不是曲线也不是曲面：它是离散点集，没有参数化取点；`Box` 等参数化几何是建模类型（`Primitive` 子类），也不在任何一族里。
+- **为什么**：`G8` —— 没有消费者的能力不写：射线求交、点到曲线的距离、曲面求交都在 backlog，等触发条件。今天已落地的那些（族级曲面查询、点到曲线、解析实体）都已按本条判据补上了消费者侧的证据。
+- **边界**：`PointCloud` 仍是 `Shape`，不是曲线也不是曲面：它是离散点集，没有参数化取点；`Box` 等解析体是建模类型（`Primitive` 子类）或值类型（`Solid<T>`），也不在任何一族里。
 
 ### 2.6 算法放在值类型上，不另设算法类
 
-- **是什么**：查询是**被交对象自己的成员**——`Sphere::intersectWith(const Rayf&, RayHitf&)`、`Cylinder::intersectWith(...)`、`Box::intersectWith(...)`、`Plane::intersectWith(...)`；没有值类型的三角形用自由函数 `intersectTriangle`。没有一个 `SphericalSurface` / `CylindricalSurface` 之类的算法类。
-- **为什么**：`G1`、`G6`、`G12` —— 名字与数据各只有一份（半径在 `Sphere` 里，算法类不再存一遍）；调用方不必查“球面求交住在哪个类”；与 `geometry-ray.md` 2.2 的既有形状一致。
+- **是什么**：查询是**被交对象自己的成员**——`Aabb::intersectWith(const Ray&, RayHit&)`、`Obb::intersectWith(...)`、`Plane::intersectWith(const LineCurve&, ...)`、`Solid<T>::closestPoint()` / `intersectWith(Ray)`；没有值类型的三角形用自由函数 `intersectTriangle`。没有一个 `SphericalSurface` / `CylindricalSurface` 之类的算法类。
+- **为什么**：`G1`、`G6`、`G12`、`G13` —— 名字与数据各只有一份（半径在 `Solid<T>::Sphere` 里，算法类不再存一遍）；调用方不必查“球面求交住在哪个类”；与 `geometry-ray.md` 2.2 的既有形状一致；算法只能住在几何一侧（`G13`）。
 - **边界**：
   - 两个对象之间的运算（布尔、实体间最近距离、实体–实体求交）不属于任何单一对象 → **自由函数**，放在两者共同的模块。
-  - 需要后端或 IO 的运算（STEP 解析、三角化）→ `brep`，不进 `geometry`（`geometry-parametric.md` 2.5）。
+  - 族级查询（点到曲面、射线 × 曲面、曲线 × 曲面）没有“一个能回答它的具体对象”，所以是自由函数 + 参数窗口（`geometry-surface-queries.md`、`geometry-intersection.md` 2.9）。
+  - 需要后端的运算（STEP 解析、B-rep 三角化）→ `brep`；纯数学的解析实体三角化留在 `geometry`，且因为是 float 而写成自由函数（`geometry-tessellation.md` 2.1）。
   - 曲面族的解析面与裁剪面已全部在 `geometry` 里（轴对称曲面见 `geometry-axis-surfaces.md`），不依赖 OCCT；`brep` 一侧的 `Geom_*` 是另一套表示（引用计数 + 可变），不在这里重复实现（`G1`）。
-- **不因“类名更数学”而拆**：`Sphere` 既是实体，也是球面族的解析描述；拆成 `Sphere` + `SphericalSurface` 会让半径出现两个家。
 
 ### 2.7 曲线接口的核心属性
 
@@ -282,7 +282,7 @@
 - 曲面接口的十四项已落地（F8，2.10），`Plane` 与 `SphericalSurface` 实现；两个分类标签仍无状态、无虚函数，但**曲面现在与曲线一样付 vptr**。
 - 四种圆锥曲线已全部实现（F6）；`BezierCurve` / `BSplineCurve` 的求值与导数已实现（F7，2.8）。`OffsetCurve` 只差 `secondDerivative`，被 `Curve<T>` 缺少三阶导数阻塞（D9，backlog）。
 - 三个轴对称解析曲面、矩形裁剪曲面与两个样条曲面已实现，见 `geometry-axis-surfaces.md`；曲面族至此没有占位类型。
-- 已知缺口：族级算法（射线–曲面、点到曲线距离、实体求交）尚不存在；`Curve` / `Surface` 也还没有 concept 形式的约束，等出现第一个泛型算法时再加。
+- 族级算法已存在两侧：曲面（最近点 / 距离、射线 × 曲面，见 `geometry-surface-queries.md`）与曲线（最近点 / 距离，见 `geometry-curve-queries.md`）；都用自由函数 + `requires std::is_base_of_v<…>` 约束，不给接口加虚函数。已知缺口：实体求交（backlog G3）、曲线 × 曲线的最近距离。
 - 兼容性：曲面接口是从非模板的 `Surface` 标签改为模板接口，是**破坏性变更**（`Surface` / `ElementarySurface` / `BoundedSurface` 现在都要带 `<T>`）；仓库内唯一消费点是 `tests`。
 - 兼容性（本轮的语义修正）：`TrimmedCurve::period()` 与 `RectangularTrimmedSurface::uPeriod()` / `vPeriod()` 以前转发基曲线 / 基曲面的周期，现在按接口契约在 `isPeriodic()` 为假时返回 0——行为变化，签名不变（仓库内无调用者）；两种裁剪视图的空基查询也不再解引用空句柄（C12、P9）。两类事实由族级契约扫查 `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` 盯住（T9）。
 - 兼容性（接口扩充）：`isValid()` 现在是 `Curve<T>` / `Surface<T>` 的纯虚函数（十项→十一项、十三项→十四项），所有实现原本就有这个方法，只是加上了 `override`；`Plane` 因此第一次有了真正的有效性判据（零法向为假，以前一律可用）。自定义实现者必须实现它——仓库内没有其他实现者。见 `../decisions/ADR-2026-11-04-isvalid-on-family-interfaces.md`。

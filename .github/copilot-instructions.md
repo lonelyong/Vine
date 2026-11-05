@@ -2,7 +2,7 @@
 
 ## Framework Design Constraints
 
-These twelve principles define what "well designed" means in this repository. They are
+These thirteen principles define what "well designed" means in this repository. They are
 **constraints, not aspirations**: a change that violates one must say so, and say why, at the
 point of violation — in its design doc or in an ADR. Cite them as `G#` from `.ai/design/` and
 from review comments instead of restating the principle.
@@ -21,6 +21,12 @@ from review comments instead of restating the principle.
 | G10 | 关注真实成本 | Are lifetime, ownership, allocation, layout, exception safety, concurrency and ABI costed — not only drawn? |
 | G11 | 易于理解、调试、维护 | Can a failure be located, state observed and the module tested alone, without guessing an implicit mechanism? |
 | G12 | 设计意图体现在代码中 | Do class boundaries show responsibility, interface shape show constraints, dependencies show architecture, names show the domain? |
+| G13 | 建模归建模，几何归几何 | Does a modeling type carry only identity (name, revision, schema attributes) while every geometric fact, algorithm and query lives on the geometry side — reached by one directional conversion, with no shared ownership between the two? |
+
+`G8` asks whether a capability should exist; `G13` asks where it goes once it does. So `G13`
+is **not** subject to the "no consumer today" test: a misplaced capability is moved to the
+side that owns it wherever it is found, even when nothing new is being built. `G13` never
+adds a capability, and `G8` never justifies leaving one in the wrong place.
 
 How a design point, a rejected option or a review cites a `G#` — and when a violation is
 acceptable — is in `.github/instructions/framework-design.instructions.md`.
@@ -301,4 +307,4 @@ When reviewing code, check:
 * Thread safety.
 * API consistency.
 * Naming and style compliance.
-* Design against `G1`–`G12`; name the violated principle instead of arguing taste.
+* Design against `G1`–`G13`; name the violated principle instead of arguing taste.

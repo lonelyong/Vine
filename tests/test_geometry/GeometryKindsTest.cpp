@@ -9,10 +9,10 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
-#include <vine/geometry/BezierCurve.hpp>
-#include <vine/geometry/BezierSurface.hpp>
 #include <vine/geometry/BSplineCurve.hpp>
 #include <vine/geometry/BSplineSurface.hpp>
+#include <vine/geometry/BezierCurve.hpp>
+#include <vine/geometry/BezierSurface.hpp>
 #include <vine/geometry/CircleCurve.hpp>
 #include <vine/geometry/ConicalSurface.hpp>
 #include <vine/geometry/CylindricalSurface.hpp>
@@ -21,8 +21,8 @@
 #include <vine/geometry/LineCurve.hpp>
 #include <vine/geometry/OffsetCurve.hpp>
 #include <vine/geometry/ParabolaCurve.hpp>
-#include <vine/geometry/Plane.hpp>
 #include <vine/geometry/Placement.hpp>
+#include <vine/geometry/Plane.hpp>
 #include <vine/geometry/Primitive.hpp>
 #include <vine/geometry/Ray.hpp>
 #include <vine/geometry/RectangularTrimmedSurface.hpp>
@@ -30,31 +30,28 @@
 #include <vine/geometry/ToroidalSurface.hpp>
 #include <vine/geometry/TrimmedCurve.hpp>
 
-namespace {
+namespace
+{
 
 using vn::geometry::BezierCurved;
 using vn::geometry::BezierSurfaced;
-using vn::geometry::Box;
 using vn::geometry::BSplineCurved;
 using vn::geometry::BSplineSurfaced;
 using vn::geometry::CircleCurve;
 using vn::geometry::CircleCurved;
-using vn::geometry::Cone;
 using vn::geometry::ConicalSurfaced;
-using vn::geometry::Cylinder;
 using vn::geometry::CylindricalSurfaced;
 using vn::geometry::EllipseCurved;
-using vn::geometry::Ellipsoid;
 using vn::geometry::HyperbolaCurved;
 using vn::geometry::LineCurve;
 using vn::geometry::LineCurved;
 using vn::geometry::ParabolaCurved;
 using vn::geometry::Plane;
 using vn::geometry::Planed;
+using vn::geometry::Primitive;
 using vn::geometry::Ray;
 using vn::geometry::Rayd;
 using vn::geometry::RectangularTrimmedSurfaced;
-using vn::geometry::Sphere;
 using vn::geometry::SphericalSurface;
 using vn::geometry::SphericalSurfaced;
 using vn::geometry::ToroidalSurfaced;
@@ -127,16 +124,21 @@ static_assert(std::is_base_of_v<vn::geometry::BoundedSurface<double>, BSplineSur
 static_assert(!std::is_abstract_v<BezierSurfaced>);
 static_assert(!std::is_abstract_v<BSplineSurfaced>);
 
-/// The parametric geometries are modeling types, not algorithm families: they are `Primitive` subclasses whose only
-/// geometry answers are their own bounds and validity.
-static_assert(std::is_base_of_v<vn::geometry::Primitive, Box>);
-static_assert(std::is_base_of_v<vn::geometry::Primitive, Sphere>);
-static_assert(std::is_base_of_v<vn::geometry::Primitive, Cylinder>);
-static_assert(std::is_base_of_v<vn::geometry::Primitive, Cone>);
-static_assert(std::is_base_of_v<vn::geometry::Primitive, Ellipsoid>);
-static_assert(!std::is_base_of_v<vn::geometry::Surface<double>, Box>);
+/// A parametric shape is one modeling class holding an analytic solid: the five bodies are kinds of `Solid`, not five
+/// modeling classes, and the shape is a `Shape` rather than a surface or a curve.
+static_assert(std::is_base_of_v<vn::geometry::Shape, Primitive>);
+static_assert(!std::is_base_of_v<vn::geometry::Surface<double>, Primitive>);
+static_assert(!std::is_base_of_v<vn::geometry::Curve<double>, Primitive>);
 
-/// The unbounded spherical sheet is the surface counterpart: it is a surface, not a `Primitive`.
+/// The analytic solid is a family plus a closed value set: `Solid<T>` is the interface (abstract, no state), the five
+/// kinds are its values, and a model stores the variant of them.
+static_assert(std::is_abstract_v<vn::geometry::Solidf>);
+static_assert(std::is_base_of_v<vn::geometry::Solidf, vn::geometry::Boxf>);
+static_assert(!std::is_abstract_v<vn::geometry::Boxf>);
+static_assert(std::is_same_v<decltype(vn::geometry::Boxf{}.half_x), float>);
+static_assert(!std::is_same_v<vn::geometry::SolidShapef, vn::geometry::SolidShaped>);
+
+/// The unbounded spherical sheet is the surface counterpart: it is a surface, not a modeling primitive.
 static_assert(std::is_base_of_v<vn::geometry::Surface<double>, SphericalSurfaced>);
 static_assert(!std::is_base_of_v<vn::geometry::Primitive, SphericalSurfaced>);
 
@@ -271,7 +273,7 @@ TEST(GeometryKinds, aCurveAnswersItsDomainAndPeriod)
 
 TEST(GeometryKinds, aTrimmedCurveForwardsToItsBasis)
 {
-    const auto basis = std::make_shared<LineCurved>(Point3d(0.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
+    const auto                        basis = std::make_shared<LineCurved>(Point3d(0.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     const vn::geometry::TrimmedCurved trimmed(basis, 1.0, 3.0);
 
     EXPECT_DOUBLE_EQ(trimmed.firstParameter(), 1.0);
@@ -333,7 +335,7 @@ TEST(GeometryKinds, aCircleCurveTurnsTowardsItsCentre)
 
 TEST(GeometryKinds, aTrimmedCurveMirrorsInsideItsOwnRange)
 {
-    const auto basis = std::make_shared<CircleCurved>(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0), 1.0);
+    const auto                        basis = std::make_shared<CircleCurved>(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0), 1.0);
     const vn::geometry::TrimmedCurved quarter(basis, 0.0, vn::math::PI / 2.0);
 
     // The reflection belongs to the piece, not to the basis: reflecting on the basis would answer 2*pi - u.
@@ -464,10 +466,11 @@ TEST(GeometryKinds, continuityAnswersTheDerivativeOrderQuestion)
 
     // A cubic with an internal knot of multiplicity 2 is C1: one continuous derivative, no more. The end
     // multiplicities are the clamp, so they are `degree + 1` and not joins.
-    const BSplineCurved kinked(3,
-                               { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(2.0, 0.0, 0.0),
-                                 Point3d(2.0, 2.0, 0.0), Point3d(3.0, 1.0, 0.0), Point3d(3.0, 0.0, 0.0) },
-                               { 0.0, 0.5, 1.0 }, { 4, 2, 4 });
+    const BSplineCurved kinked(
+        3,
+        { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(2.0, 0.0, 0.0), Point3d(2.0, 2.0, 0.0), Point3d(3.0, 1.0, 0.0), Point3d(3.0, 0.0, 0.0) },
+        { 0.0, 0.5, 1.0 },
+        { 4, 2, 4 });
     EXPECT_TRUE(kinked.isCN(0));
     EXPECT_TRUE(kinked.isCN(1));
     EXPECT_FALSE(kinked.isCN(2));
@@ -540,8 +543,8 @@ TEST(GeometryKinds, aRationalBezierCurveIsPulledTowardsItsHeavierPole)
 
 TEST(GeometryKinds, aBSplineCurveDerivesItsContinuityFromItsMultiplicities)
 {
-    const auto poles = vn::geometry::BSplineCurve<double>::PoleArray{ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0),
-                                                                     Point3d(2.0, 0.0, 0.0), Point3d(3.0, 1.0, 0.0) };
+    const auto poles =
+        vn::geometry::BSplineCurve<double>::PoleArray{ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(2.0, 0.0, 0.0), Point3d(3.0, 1.0, 0.0) };
 
     // Cubic with one span: the only joins are the two clamps, so the curve is CN throughout.
     const BSplineCurved smooth(3, poles, { 0.0, 1.0 }, { 4, 4 });
@@ -551,10 +554,11 @@ TEST(GeometryKinds, aBSplineCurveDerivesItsContinuityFromItsMultiplicities)
 
     // A clamped cubic with an internal knot of multiplicity 2 needs 6 poles (4 + 2 + 4 = poles + degree + 1) and is
     // C1 there.
-    const BSplineCurved kinked(3,
-                               { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(2.0, 0.0, 0.0),
-                                 Point3d(2.0, 2.0, 0.0), Point3d(3.0, 1.0, 0.0), Point3d(3.0, 0.0, 0.0) },
-                               { 0.0, 0.5, 1.0 }, { 4, 2, 4 });
+    const BSplineCurved kinked(
+        3,
+        { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(2.0, 0.0, 0.0), Point3d(2.0, 2.0, 0.0), Point3d(3.0, 1.0, 0.0), Point3d(3.0, 0.0, 0.0) },
+        { 0.0, 0.5, 1.0 },
+        { 4, 2, 4 });
     EXPECT_TRUE(kinked.isValid());
     EXPECT_EQ(kinked.continuity(), vn::geometry::Continuity::C1);
 
@@ -568,25 +572,41 @@ TEST(GeometryKinds, aKnotVectorThatBreaksTheCurveIsNotACurve)
     // An internal multiplicity of `degree + 1` makes the two sides independent: the parameterisation jumps instead of
     // meeting. That is not one curve, so `isValid()` refuses it rather than letting `continuity()` claim `C0`
     // ("the pieces meet at a point") about a curve whose pieces do not meet at all.
-    const BSplineCurved split(2,
-                              { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(2.0, 0.0, 0.0),
-                                Point3d(5.0, 1.0, 0.0), Point3d(6.0, 1.0, 0.0), Point3d(7.0, 1.0, 0.0) },
-                              { 0.0, 0.5, 1.0 }, { 3, 3, 3 });
+    const BSplineCurved split(
+        2,
+        { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(2.0, 0.0, 0.0), Point3d(5.0, 1.0, 0.0), Point3d(6.0, 1.0, 0.0), Point3d(7.0, 1.0, 0.0) },
+        { 0.0, 0.5, 1.0 },
+        { 3, 3, 3 });
     EXPECT_FALSE(split.isValid());
 
     // The same rule holds in each direction of a patch: a break in `u` is not a sheet either.
-    const BSplineSurfaced split_patch({ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(2.0, 0.0, 0.0),
-                                        Point3d(5.0, 1.0, 0.0), Point3d(6.0, 1.0, 0.0), Point3d(7.0, 1.0, 0.0),
-                                        Point3d(0.0, 0.0, 2.0), Point3d(1.0, 0.0, 2.0), Point3d(2.0, 0.0, 2.0),
-                                        Point3d(5.0, 1.0, 2.0), Point3d(6.0, 1.0, 2.0), Point3d(7.0, 1.0, 2.0) },
-                                      6, 2, 2, 1, { 0.0, 0.5, 1.0 }, { 3, 3, 3 }, { 0.0, 1.0 }, { 2, 2 });
+    const BSplineSurfaced split_patch({ Point3d(0.0, 0.0, 0.0),
+                                        Point3d(1.0, 0.0, 0.0),
+                                        Point3d(2.0, 0.0, 0.0),
+                                        Point3d(5.0, 1.0, 0.0),
+                                        Point3d(6.0, 1.0, 0.0),
+                                        Point3d(7.0, 1.0, 0.0),
+                                        Point3d(0.0, 0.0, 2.0),
+                                        Point3d(1.0, 0.0, 2.0),
+                                        Point3d(2.0, 0.0, 2.0),
+                                        Point3d(5.0, 1.0, 2.0),
+                                        Point3d(6.0, 1.0, 2.0),
+                                        Point3d(7.0, 1.0, 2.0) },
+                                      6,
+                                      2,
+                                      2,
+                                      1,
+                                      { 0.0, 0.5, 1.0 },
+                                      { 3, 3, 3 },
+                                      { 0.0, 1.0 },
+                                      { 2, 2 });
     EXPECT_FALSE(split_patch.isValid());
 
     // A multiplicity equal to the degree still joins at a point, so it is a (kinked) curve and answers `C0`.
     const BSplineCurved kinked(2,
-                               { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(2.0, 0.0, 0.0),
-                                 Point3d(5.0, 1.0, 0.0), Point3d(6.0, 1.0, 0.0) },
-                               { 0.0, 0.5, 1.0 }, { 3, 2, 3 });
+                               { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(2.0, 0.0, 0.0), Point3d(5.0, 1.0, 0.0), Point3d(6.0, 1.0, 0.0) },
+                               { 0.0, 0.5, 1.0 },
+                               { 3, 2, 3 });
     EXPECT_TRUE(kinked.isValid());
     EXPECT_EQ(kinked.continuity(), vn::geometry::Continuity::C0);
     EXPECT_TRUE(kinked.isCN(0));
@@ -595,10 +615,7 @@ TEST(GeometryKinds, aKnotVectorThatBreaksTheCurveIsNotACurve)
 
 TEST(GeometryKinds, aBSplineCurveBlendsItsClampedSpan)
 {
-    const BSplineCurved arc(3,
-                            { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 2.0, 0.0), Point3d(2.0, 2.0, 0.0),
-                              Point3d(3.0, 0.0, 0.0) },
-                            { 0.0, 1.0 }, { 4, 4 });
+    const BSplineCurved arc(3, { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 2.0, 0.0), Point3d(2.0, 2.0, 0.0), Point3d(3.0, 0.0, 0.0) }, { 0.0, 1.0 }, { 4, 4 });
 
     EXPECT_TRUE(arc.isValid());
     EXPECT_FALSE(arc.isClosed());
@@ -617,10 +634,7 @@ TEST(GeometryKinds, aBSplineCurveBlendsItsClampedSpan)
     EXPECT_NEAR((arc.evaluate(2.5) - Point3d(3.0, 0.0, 0.0)).length(), 0.0, 1e-12);
 
     // Closure is a geometric fact here: it is the two end points that must meet, not the two end poles.
-    const BSplineCurved loop(3,
-                             { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(1.0, -1.0, 0.0),
-                               Point3d(0.0, 0.0, 0.0) },
-                             { 0.0, 1.0 }, { 4, 4 });
+    const BSplineCurved loop(3, { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(1.0, -1.0, 0.0), Point3d(0.0, 0.0, 0.0) }, { 0.0, 1.0 }, { 4, 4 });
     EXPECT_TRUE(loop.isClosed());
 }
 
@@ -629,7 +643,9 @@ TEST(GeometryKinds, aRationalBSplineCurveTracesAQuarterCircle)
     // The classic exact quarter circle: degree 2, weights 1 / sqrt(2) / 1.
     const BSplineCurved quarter(2,
                                 { Point3d(1.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(0.0, 1.0, 0.0) },
-                                { 0.0, 1.0 }, { 3, 3 }, { 1.0, std::sqrt(0.5), 1.0 });
+                                { 0.0, 1.0 },
+                                { 3, 3 },
+                                { 1.0, std::sqrt(0.5), 1.0 });
 
     EXPECT_TRUE(quarter.isValid());
     EXPECT_TRUE(quarter.isRational());
@@ -641,7 +657,7 @@ TEST(GeometryKinds, aRationalBSplineCurveTracesAQuarterCircle)
 
 TEST(GeometryKinds, anOffsetCurveInheritsTheBasisDomain)
 {
-    const auto basis  = std::make_shared<LineCurved>(Point3d(0.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
+    const auto       basis = std::make_shared<LineCurved>(Point3d(0.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     const OffsetStub offset(basis, 2.0, Vec3d(0.0, 0.0, 1.0));
 
     // The offset is evaluated at the basis' parameter, so its range, closure and period are the basis'.
@@ -672,7 +688,7 @@ TEST(GeometryKinds, anOffsetCurveAtASingularPointStaysOnTheBasis)
 {
     // The basis runs along the reference direction, so there is no perpendicular to offset along: the offset falls
     // back to the basis itself instead of normalising a zero vector.
-    const auto basis = std::make_shared<LineCurved>(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
+    const auto       basis = std::make_shared<LineCurved>(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
     const OffsetStub offset(basis, 2.0, Vec3d(0.0, 0.0, 1.0));
 
     EXPECT_TRUE(offset.isValid());
@@ -724,7 +740,7 @@ TEST(GeometryKinds, aPlacementCompletesAndNormalisesItsFrame)
 
 TEST(GeometryKinds, aCylindricalSurfaceWrapsItsAxis)
 {
-    const CylindricalSurfaced              cylinder(Point3d(1.0, 2.0, 3.0), Vec3d(0.0, 0.0, 1.0), 2.0);
+    const CylindricalSurfaced            cylinder(Point3d(1.0, 2.0, 3.0), Vec3d(0.0, 0.0, 1.0), 2.0);
     const vn::geometry::Surface<double>& as_surface = cylinder;
 
     // u = 0 starts at x_direction = +X; v is the signed height along the axis.
@@ -752,8 +768,8 @@ TEST(GeometryKinds, aCylindricalSurfaceWrapsItsAxis)
 
 TEST(GeometryKinds, aConicalSurfaceWalksItsGeneratrix)
 {
-    const double              semi_angle = vn::math::PI / 4.0;
-    const ConicalSurfaced     cone(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0), 1.0, semi_angle);
+    const double          semi_angle = vn::math::PI / 4.0;
+    const ConicalSurfaced cone(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0), 1.0, semi_angle);
 
     // v is arc length along the generatrix: the radius grows by v * sin(alpha) and the height by v * cos(alpha).
     const double offset = 2.0;
@@ -781,7 +797,7 @@ TEST(GeometryKinds, aConicalSurfaceWalksItsGeneratrix)
 
 TEST(GeometryKinds, aToroidalSurfaceClosesInBothDirections)
 {
-    const ToroidalSurfaced                 torus(Point3d(0.0, 0.0, 1.0), Vec3d(0.0, 0.0, 1.0), 3.0, 1.0);
+    const ToroidalSurfaced               torus(Point3d(0.0, 0.0, 1.0), Vec3d(0.0, 0.0, 1.0), 3.0, 1.0);
     const vn::geometry::Surface<double>& as_surface = torus;
 
     // v = 0 is the outer equator, v = pi / 2 the top of the tube.
@@ -806,7 +822,7 @@ TEST(GeometryKinds, aToroidalSurfaceClosesInBothDirections)
 
 TEST(GeometryKinds, aRectangularTrimmedSurfaceForwardsToItsBasis)
 {
-    const auto basis = std::make_shared<CylindricalSurfaced>(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0), 2.0);
+    const auto                       basis = std::make_shared<CylindricalSurfaced>(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0), 2.0);
     const RectangularTrimmedSurfaced patch(basis, 0.0, vn::math::PI / 2.0, -1.0, 1.0);
 
     EXPECT_TRUE(patch.isValid());
@@ -823,8 +839,7 @@ TEST(GeometryKinds, aRectangularTrimmedSurfaceForwardsToItsBasis)
     EXPECT_NEAR(patch.derivativeU(0.0, 0.0).length(), 2.0, 1e-12);
 
     // Covering the whole basis does keep both answers.
-    const RectangularTrimmedSurfaced full(basis, 0.0, 2.0 * vn::math::PI, -std::numeric_limits<double>::infinity(),
-                                          std::numeric_limits<double>::infinity());
+    const RectangularTrimmedSurfaced full(basis, 0.0, 2.0 * vn::math::PI, -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity());
     EXPECT_TRUE(full.isUClosed());
     EXPECT_TRUE(full.isUPeriodic());
 
@@ -850,9 +865,7 @@ TEST(GeometryKinds, aRectangularTrimmedSurfaceForwardsToItsBasis)
 TEST(GeometryKinds, aBezierPatchBlendsItsNet)
 {
     // Bilinear net, u contiguous: pole(iu, iv) = poles[iu + 2 * iv].
-    const BezierSurfaced patch({ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(0.0, 1.0, 1.0),
-                                 Point3d(1.0, 1.0, 1.0) },
-                               2, 2);
+    const BezierSurfaced patch({ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(0.0, 1.0, 1.0), Point3d(1.0, 1.0, 1.0) }, 2, 2);
 
     EXPECT_TRUE(patch.isValid());
     EXPECT_EQ(patch.degreeU(), 1);
@@ -874,9 +887,7 @@ TEST(GeometryKinds, aBezierPatchBlendsItsNet)
     EXPECT_EQ(patch.continuity(), vn::geometry::Continuity::CN);
 
     // Closure is a data test: matching columns close the patch along u.
-    const BezierSurfaced loop({ Point3d(0.0, 0.0, 0.0), Point3d(0.0, 0.0, 0.0), Point3d(0.0, 1.0, 0.0),
-                                Point3d(0.0, 1.0, 0.0) },
-                              2, 2);
+    const BezierSurfaced loop({ Point3d(0.0, 0.0, 0.0), Point3d(0.0, 0.0, 0.0), Point3d(0.0, 1.0, 0.0), Point3d(0.0, 1.0, 0.0) }, 2, 2);
     EXPECT_TRUE(loop.isUClosed());
 
     // The answers are reachable through the interface, so they are overrides rather than hidden members.
@@ -886,9 +897,10 @@ TEST(GeometryKinds, aBezierPatchBlendsItsNet)
 
 TEST(GeometryKinds, aRationalBezierPatchPullsTowardsItsHeavierCorner)
 {
-    const BezierSurfaced patch({ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(0.0, 1.0, 0.0),
-                                 Point3d(1.0, 1.0, 0.0) },
-                               2, 2, { 1.0, 1.0, 1.0, 3.0 });
+    const BezierSurfaced patch({ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(0.0, 1.0, 0.0), Point3d(1.0, 1.0, 0.0) },
+                               2,
+                               2,
+                               { 1.0, 1.0, 1.0, 3.0 });
 
     EXPECT_TRUE(patch.isRational());
     EXPECT_TRUE(patch.isValid());
@@ -901,9 +913,15 @@ TEST(GeometryKinds, aRationalBezierPatchPullsTowardsItsHeavierCorner)
 TEST(GeometryKinds, aBSplinePatchSumsItsTwoBasisFamilies)
 {
     // Degree 1 in both directions with clamped knots is exactly the bilinear Bezier patch above.
-    const BSplineSurfaced bilinear({ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(0.0, 1.0, 0.0),
-                                     Point3d(1.0, 1.0, 0.0) },
-                                   2, 2, 1, 1, { 0.0, 1.0 }, { 2, 2 }, { 0.0, 1.0 }, { 2, 2 });
+    const BSplineSurfaced bilinear({ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 0.0, 0.0), Point3d(0.0, 1.0, 0.0), Point3d(1.0, 1.0, 0.0) },
+                                   2,
+                                   2,
+                                   1,
+                                   1,
+                                   { 0.0, 1.0 },
+                                   { 2, 2 },
+                                   { 0.0, 1.0 },
+                                   { 2, 2 });
 
     EXPECT_TRUE(bilinear.isValid());
     EXPECT_NEAR((bilinear.evaluate(0.5, 0.5) - Point3d(0.5, 0.5, 0.0)).length(), 0.0, 1e-12);
@@ -912,9 +930,16 @@ TEST(GeometryKinds, aBSplinePatchSumsItsTwoBasisFamilies)
     EXPECT_EQ(bilinear.continuity(), vn::geometry::Continuity::CN);
 
     // Quadratic in u, linear in v: the u tangent at the start is the degree times the first net difference.
-    const BSplineSurfaced apron({ Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(2.0, 0.0, 0.0),
-                                  Point3d(0.0, 0.0, 2.0), Point3d(1.0, 1.0, 2.0), Point3d(2.0, 0.0, 2.0) },
-                                3, 2, 2, 1, { 0.0, 1.0 }, { 3, 3 }, { 0.0, 1.0 }, { 2, 2 });
+    const BSplineSurfaced apron(
+        { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(2.0, 0.0, 0.0), Point3d(0.0, 0.0, 2.0), Point3d(1.0, 1.0, 2.0), Point3d(2.0, 0.0, 2.0) },
+        3,
+        2,
+        2,
+        1,
+        { 0.0, 1.0 },
+        { 3, 3 },
+        { 0.0, 1.0 },
+        { 2, 2 });
 
     EXPECT_TRUE(apron.isValid());
     EXPECT_NEAR((apron.evaluate(0.0, 0.0) - Point3d(0.0, 0.0, 0.0)).length(), 0.0, 1e-12);
@@ -926,18 +951,31 @@ TEST(GeometryKinds, aBSplinePatchSumsItsTwoBasisFamilies)
 
     // An internal multiplicity costs an order of continuity, and the worse direction wins: a quadratic in u with an
     // internal double knot is C0 there, so the 5x2 net (5 + 2 + 1 = 3 + 2 + 3 knots) is the one that fits.
-    const BSplineSurfaced kinked(
-        { Point3d(0.0, 0.0, 0.0), Point3d(1.0, 1.0, 0.0), Point3d(2.0, 0.0, 0.0), Point3d(3.0, 1.0, 0.0),
-          Point3d(4.0, 0.0, 0.0), Point3d(0.0, 0.0, 2.0), Point3d(1.0, 1.0, 2.0), Point3d(2.0, 0.0, 2.0),
-          Point3d(3.0, 1.0, 2.0), Point3d(4.0, 0.0, 2.0) },
-        5, 2, 2, 1, { 0.0, 0.5, 1.0 }, { 3, 2, 3 }, { 0.0, 1.0 }, { 2, 2 });
+    const BSplineSurfaced kinked({ Point3d(0.0, 0.0, 0.0),
+                                   Point3d(1.0, 1.0, 0.0),
+                                   Point3d(2.0, 0.0, 0.0),
+                                   Point3d(3.0, 1.0, 0.0),
+                                   Point3d(4.0, 0.0, 0.0),
+                                   Point3d(0.0, 0.0, 2.0),
+                                   Point3d(1.0, 1.0, 2.0),
+                                   Point3d(2.0, 0.0, 2.0),
+                                   Point3d(3.0, 1.0, 2.0),
+                                   Point3d(4.0, 0.0, 2.0) },
+                                 5,
+                                 2,
+                                 2,
+                                 1,
+                                 { 0.0, 0.5, 1.0 },
+                                 { 3, 2, 3 },
+                                 { 0.0, 1.0 },
+                                 { 2, 2 });
     EXPECT_TRUE(kinked.isValid());
     EXPECT_EQ(kinked.continuity(), vn::geometry::Continuity::C0);
 }
 
 TEST(GeometryKinds, aPlaneAnswersTheSurfaceInterface)
 {
-    const Planed                          plane(Point3d(1.0, 2.0, 3.0), Vec3d(0.0, 0.0, 1.0));
+    const Planed                         plane(Point3d(1.0, 2.0, 3.0), Vec3d(0.0, 0.0, 1.0));
     const vn::geometry::Surface<double>& as_surface = plane;
 
     // The in-plane axes are derived from the normal, so a Z normal keeps the world X and Y axes.
@@ -996,7 +1034,8 @@ void expectCurveInvariants(const vn::geometry::Curve<T>& curve)
     if (curve.isPeriodic()) {
         EXPECT_GT(curve.period(), T(0));
         EXPECT_TRUE(curve.isClosed());
-    } else {
+    }
+    else {
         EXPECT_EQ(curve.period(), T(0));
     }
 
@@ -1038,14 +1077,16 @@ void expectSurfaceInvariants(const vn::geometry::Surface<T>& surface)
     if (surface.isUPeriodic()) {
         EXPECT_GT(surface.uPeriod(), T(0));
         EXPECT_TRUE(surface.isUClosed());
-    } else {
+    }
+    else {
         EXPECT_EQ(surface.uPeriod(), T(0));
     }
 
     if (surface.isVPeriodic()) {
         EXPECT_GT(surface.vPeriod(), T(0));
         EXPECT_TRUE(surface.isVClosed());
-    } else {
+    }
+    else {
         EXPECT_EQ(surface.vPeriod(), T(0));
     }
 
@@ -1056,9 +1097,9 @@ void expectSurfaceInvariants(const vn::geometry::Surface<T>& surface)
         return;
     }
 
-    const T middle_u = first_u + (last_u - first_u) * T(0.3);
-    const T middle_v = first_v + (last_v - first_v) * T(0.3);
-    const auto point = surface.evaluate(middle_u, middle_v);
+    const T    middle_u = first_u + (last_u - first_u) * T(0.3);
+    const T    middle_v = first_v + (last_v - first_v) * T(0.3);
+    const auto point    = surface.evaluate(middle_u, middle_v);
     EXPECT_TRUE(std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z));
     EXPECT_TRUE(std::isfinite(surface.derivativeU(middle_u, middle_v).length()));
     EXPECT_TRUE(std::isfinite(surface.derivativeV(middle_u, middle_v).length()));
@@ -1077,21 +1118,15 @@ void sweepCurves()
     const auto point  = [](double x, double y, double z) { return Point(T(x), T(y), T(z)); };
     const auto vector = [](double x, double y, double z) { return Vector(T(x), T(y), T(z)); };
 
-    const vn::geometry::LineCurve<T> line(point(0.0, 0.0, 0.0), vector(1.0, 1.0, 0.0));
-    const vn::geometry::CircleCurve<T> circle(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(2.0));
-    const vn::geometry::EllipseCurve<T> ellipse(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0),
-                                                vector(1.0, 0.0, 0.0), T(3.0), T(1.0));
-    const vn::geometry::HyperbolaCurve<T> hyperbola(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0),
-                                                    vector(1.0, 0.0, 0.0), T(2.0), T(1.0));
-    const vn::geometry::ParabolaCurve<T> parabola(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0),
-                                                  vector(1.0, 0.0, 0.0), T(1.0));
-    const vn::geometry::BezierCurve<T> bezier({ point(0.0, 0.0, 0.0), point(1.0, 2.0, 0.0), point(2.0, 0.0, 1.0) });
-    const vn::geometry::BSplineCurve<T> spline(2,
-                                              { point(0.0, 0.0, 0.0), point(1.0, 1.0, 0.0), point(2.0, 0.0, 1.0) },
-                                              { T(0.0), T(1.0) }, { 3, 3 });
-    const auto                          basis = std::make_shared<vn::geometry::CircleCurve<T>>(
-      point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(1.0));
-    const vn::geometry::TrimmedCurve<T> trim(basis, T(0.5), T(2.0));
+    const vn::geometry::LineCurve<T>      line(point(0.0, 0.0, 0.0), vector(1.0, 1.0, 0.0));
+    const vn::geometry::CircleCurve<T>    circle(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(2.0));
+    const vn::geometry::EllipseCurve<T>   ellipse(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), vector(1.0, 0.0, 0.0), T(3.0), T(1.0));
+    const vn::geometry::HyperbolaCurve<T> hyperbola(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), vector(1.0, 0.0, 0.0), T(2.0), T(1.0));
+    const vn::geometry::ParabolaCurve<T>  parabola(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), vector(1.0, 0.0, 0.0), T(1.0));
+    const vn::geometry::BezierCurve<T>    bezier({ point(0.0, 0.0, 0.0), point(1.0, 2.0, 0.0), point(2.0, 0.0, 1.0) });
+    const vn::geometry::BSplineCurve<T>   spline(2, { point(0.0, 0.0, 0.0), point(1.0, 1.0, 0.0), point(2.0, 0.0, 1.0) }, { T(0.0), T(1.0) }, { 3, 3 });
+    const auto                            basis = std::make_shared<vn::geometry::CircleCurve<T>>(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(1.0));
+    const vn::geometry::TrimmedCurve<T>   trim(basis, T(0.5), T(2.0));
 
     const Curve* const curves[] = { &line, &circle, &ellipse, &hyperbola, &parabola, &bezier, &spline, &trim };
     for (const Curve* curve : curves) {
@@ -1120,22 +1155,23 @@ void sweepSurfaces()
     const auto point  = [](double x, double y, double z) { return Point(T(x), T(y), T(z)); };
     const auto vector = [](double x, double y, double z) { return Vector(T(x), T(y), T(z)); };
 
-    const vn::geometry::Plane<T>          plane(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0));
-    const vn::geometry::SphericalSurface<T> sphere(point(0.0, 0.0, 0.0), T(2.0));
+    const vn::geometry::Plane<T>              plane(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0));
+    const vn::geometry::SphericalSurface<T>   sphere(point(0.0, 0.0, 0.0), T(2.0));
     const vn::geometry::CylindricalSurface<T> cylinder(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(2.0));
-    const vn::geometry::ConicalSurface<T> cone(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(1.0),
-                                               T(vn::math::PI / 4.0));
-    const vn::geometry::ToroidalSurface<T> torus(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(3.0), T(1.0));
-    const auto basis = std::make_shared<vn::geometry::CylindricalSurface<T>>(point(0.0, 0.0, 0.0),
-                                                                            vector(0.0, 0.0, 1.0), T(2.0));
+    const vn::geometry::ConicalSurface<T>     cone(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(1.0), T(vn::math::PI / 4.0));
+    const vn::geometry::ToroidalSurface<T>    torus(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(3.0), T(1.0));
+    const auto basis = std::make_shared<vn::geometry::CylindricalSurface<T>>(point(0.0, 0.0, 0.0), vector(0.0, 0.0, 1.0), T(2.0));
     const vn::geometry::RectangularTrimmedSurface<T> quarter(basis, T(0.0), T(vn::math::PI / 2.0), T(-1.0), T(1.0));
-    const vn::geometry::BezierSurface<T> patch({ point(0.0, 0.0, 0.0), point(1.0, 0.0, 0.0), point(0.0, 1.0, 1.0),
-                                                point(1.0, 1.0, 1.0) },
-                                              2, 2);
-    const vn::geometry::BSplineSurface<T> spline({ point(0.0, 0.0, 0.0), point(1.0, 0.0, 0.0), point(0.0, 1.0, 1.0),
-                                                  point(1.0, 1.0, 1.0) },
-                                                2, 2, 1, 1, { T(0.0), T(1.0) }, { 2, 2 }, { T(0.0), T(1.0) },
-                                                { 2, 2 });
+    const vn::geometry::BezierSurface<T>             patch({ point(0.0, 0.0, 0.0), point(1.0, 0.0, 0.0), point(0.0, 1.0, 1.0), point(1.0, 1.0, 1.0) }, 2, 2);
+    const vn::geometry::BSplineSurface<T>            spline({ point(0.0, 0.0, 0.0), point(1.0, 0.0, 0.0), point(0.0, 1.0, 1.0), point(1.0, 1.0, 1.0) },
+                                                            2,
+                                                            2,
+                                                            1,
+                                                            1,
+                                                            { T(0.0), T(1.0) },
+                                                            { 2, 2 },
+                                                            { T(0.0), T(1.0) },
+                                                            { 2, 2 });
 
     const Surface* const surfaces[] = { &plane, &sphere, &cylinder, &cone, &torus, &quarter, &patch, &spline };
     for (const Surface* surface : surfaces) {
@@ -1173,13 +1209,10 @@ TEST(GeometryKinds, validityIsAskableThroughTheInterface)
 {
     // The four answers below are the ones that used to need a concrete type, a `dynamic_cast` or a guess: a curve, a
     // surface, a view and a patch, each asked through the interface they are handed over as.
-    const vn::geometry::Curve<double>& degenerate_line
-        = LineCurved(Point3d(1.0, 2.0, 3.0), Vec3d(0.0, 0.0, 0.0));
-    const vn::geometry::Curve<double>& trimmed_without_basis
-        = TrimmedCurved(nullptr, 0.0, 1.0);
-    const vn::geometry::Curve<double>& usable_circle
-        = CircleCurved(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0), 1.0);
-    const vn::geometry::Curve<double>& empty_spline = BSplineCurved();
+    const vn::geometry::Curve<double>& degenerate_line       = LineCurved(Point3d(1.0, 2.0, 3.0), Vec3d(0.0, 0.0, 0.0));
+    const vn::geometry::Curve<double>& trimmed_without_basis = TrimmedCurved(nullptr, 0.0, 1.0);
+    const vn::geometry::Curve<double>& usable_circle         = CircleCurved(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0), 1.0);
+    const vn::geometry::Curve<double>& empty_spline          = BSplineCurved();
 
     EXPECT_FALSE(degenerate_line.isValid());
     EXPECT_FALSE(trimmed_without_basis.isValid());
@@ -1188,8 +1221,8 @@ TEST(GeometryKinds, validityIsAskableThroughTheInterface)
 
     // A plane whose normal has no length has no in-plane axes either: that is a validity answer, not a parameter
     // answer, and it is the one sheet whose answer is derived rather than stored.
-    const vn::geometry::Surface<double>& flat_plane = Planed(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 0.0));
-    const vn::geometry::Surface<double>& usable_plane = Planed(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
+    const vn::geometry::Surface<double>& flat_plane       = Planed(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 0.0));
+    const vn::geometry::Surface<double>& usable_plane     = Planed(Point3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
     const vn::geometry::Surface<double>& collapsed_sphere = SphericalSurfaced(Point3d(0.0, 0.0, 0.0), 0.0);
 
     EXPECT_FALSE(flat_plane.isValid());

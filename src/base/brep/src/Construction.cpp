@@ -17,6 +17,7 @@
 #    include <exception>
 #    include <memory>
 #    include <utility>
+#    include <variant>
 
 #    include <vine/Object.hpp>
 #    include <vine/geometry/Primitive.hpp>
@@ -26,7 +27,8 @@ VN_BREP_NS_BEGIN
 
 #if defined(VN_BREP_HAS_OCCT)
 
-namespace {
+namespace
+{
 
 /// The axis cylinder and cone are built around.
 ///
@@ -37,37 +39,37 @@ gp_Ax2 centeredZAxis(double half_height)
     return gp_Ax2(gp_Pnt(0.0, 0.0, -half_height), gp_Dir(0.0, 0.0, 1.0));
 }
 
-/// Builds a box spanning [-w/2, w/2] x [-h/2, h/2] x [-d/2, d/2], the space Box describes.
-TopoDS_Shape solidOf(const vn::geometry::Box& box)
+/// Builds a box spanning [-hx, hx] x [-hy, hy] x [-hz, hz], the space the analytic box describes.
+TopoDS_Shape solidOf(const vn::geometry::Boxf& box)
 {
-    const auto width  = static_cast<double>(box.width());
-    const auto height = static_cast<double>(box.height());
-    const auto depth  = static_cast<double>(box.depth());
+    const auto half_x = static_cast<double>(box.half_x);
+    const auto half_y = static_cast<double>(box.half_y);
+    const auto half_z = static_cast<double>(box.half_z);
 
-    const gp_Pnt corner(-width / 2.0, -height / 2.0, -depth / 2.0);
-    return BRepPrimAPI_MakeBox(corner, width, height, depth).Shape();
+    const gp_Pnt corner(-half_x, -half_y, -half_z);
+    return BRepPrimAPI_MakeBox(corner, half_x * 2.0, half_y * 2.0, half_z * 2.0).Shape();
 }
 
 /// Builds a sphere of the given radius, already centered on the origin.
-TopoDS_Shape solidOf(const vn::geometry::Sphere& sphere)
+TopoDS_Shape solidOf(const vn::geometry::Spheref& sphere)
 {
-    return BRepPrimAPI_MakeSphere(static_cast<double>(sphere.radius())).Shape();
+    return BRepPrimAPI_MakeSphere(static_cast<double>(sphere.radius)).Shape();
 }
 
-/// Builds a cylinder spanning [-h/2, h/2] on +Z, the space Cylinder describes.
-TopoDS_Shape solidOf(const vn::geometry::Cylinder& cylinder)
+/// Builds a cylinder spanning [-h/2, h/2] on +Z, the space the analytic cylinder describes.
+TopoDS_Shape solidOf(const vn::geometry::Cylinderf& cylinder)
 {
-    const auto radius = static_cast<double>(cylinder.radius());
-    const auto height = static_cast<double>(cylinder.height());
+    const auto radius = static_cast<double>(cylinder.radius);
+    const auto height = static_cast<double>(cylinder.half_height) * 2.0;
 
     return BRepPrimAPI_MakeCylinder(centeredZAxis(height / 2.0), radius, height).Shape();
 }
 
-/// Builds a cone with its base at -h/2 and its apex at +h/2 on +Z, the space Cone describes.
-TopoDS_Shape solidOf(const vn::geometry::Cone& cone)
+/// Builds a cone with its base at -h/2 and its apex at +h/2 on +Z, the space the analytic cone describes.
+TopoDS_Shape solidOf(const vn::geometry::Conef& cone)
 {
-    const auto radius = static_cast<double>(cone.radius());
-    const auto height = static_cast<double>(cone.height());
+    const auto radius = static_cast<double>(cone.base_radius);
+    const auto height = static_cast<double>(cone.half_height) * 2.0;
 
     return BRepPrimAPI_MakeCone(centeredZAxis(height / 2.0), radius, 0.0, height).Shape();
 }
@@ -76,11 +78,11 @@ TopoDS_Shape solidOf(const vn::geometry::Cone& cone)
 ///
 /// The backend has no tri-axial ellipsoid: a unit sphere is scaled onto the three semi-axes, which turns its face into
 /// a B-spline, so the solid matches the ellipsoid only within the transform's tolerance.
-TopoDS_Shape solidOf(const vn::geometry::Ellipsoid& ellipsoid)
+TopoDS_Shape solidOf(const vn::geometry::Ellipsoidf& ellipsoid)
 {
-    const auto radius_x = static_cast<double>(ellipsoid.radiusX());
-    const auto radius_y = static_cast<double>(ellipsoid.radiusY());
-    const auto radius_z = static_cast<double>(ellipsoid.radiusZ());
+    const auto radius_x = static_cast<double>(ellipsoid.radius_x);
+    const auto radius_y = static_cast<double>(ellipsoid.radius_y);
+    const auto radius_z = static_cast<double>(ellipsoid.radius_z);
 
     gp_GTrsf scale;
     scale.SetVectorialPart(gp_Mat(radius_x, 0.0, 0.0, 0.0, radius_y, 0.0, 0.0, 0.0, radius_z));
@@ -91,40 +93,12 @@ TopoDS_Shape solidOf(const vn::geometry::Ellipsoid& ellipsoid)
     return scaled.Shape();
 }
 
-/// Builds the solid the primitive describes, or a null shape when its type is not one the geometry module defines.
+/// Builds the solid the primitive describes.
 TopoDS_Shape buildSolid(const vn::geometry::Primitive& primitive)
 {
-    // The cast is checked as well as the type: a subclass is free to report a ShapeType it does not implement.
-    switch (primitive.shapeType()) {
-    case vn::geometry::ShapeType::Box:
-        if (const auto* box = vn::obj_cast<vn::geometry::Box>(&primitive)) {
-            return solidOf(*box);
-        }
-        break;
-    case vn::geometry::ShapeType::Sphere:
-        if (const auto* sphere = vn::obj_cast<vn::geometry::Sphere>(&primitive)) {
-            return solidOf(*sphere);
-        }
-        break;
-    case vn::geometry::ShapeType::Cylinder:
-        if (const auto* cylinder = vn::obj_cast<vn::geometry::Cylinder>(&primitive)) {
-            return solidOf(*cylinder);
-        }
-        break;
-    case vn::geometry::ShapeType::Cone:
-        if (const auto* cone = vn::obj_cast<vn::geometry::Cone>(&primitive)) {
-            return solidOf(*cone);
-        }
-        break;
-    case vn::geometry::ShapeType::Ellipsoid:
-        if (const auto* ellipsoid = vn::obj_cast<vn::geometry::Ellipsoid>(&primitive)) {
-            return solidOf(*ellipsoid);
-        }
-        break;
-    default: break;
-    }
-
-    return {};
+    // The dispatch is a visit over the closed set of analytic solids: the tag cannot disagree with the dimensions it
+    // describes, and a new kind is a compile error here rather than a silently skipped shape.
+    return std::visit([](const auto& part) { return solidOf(part); }, primitive.shape());
 }
 
 } // namespace

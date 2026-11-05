@@ -31,7 +31,7 @@ B-rep 在仓库里原本只有两半：
 ### 1.3 非目标
 
 - 不做多后端与插件注册：今天只有 OpenCASCADE 一个后端（`G8`）。
-- 不做 `Primitive` → 网格：那是纯数学、零依赖，将来有消费者时归 `geometry`，不归这里。
+- 不做 `Primitive` → 网格：那是纯数学、零依赖，归 `geometry`（已落地，见 `geometry-tessellation.md`），不归这里。
 - 构造只覆盖 `geometry` 定义的五个基本体：不做由网格/线框造实体，也不做布尔与缝合；本期不实现任何 OpenCASCADE 函数体（`../backlog/brep.md`）。
 
 ### 1.4 一句话结论

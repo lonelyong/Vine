@@ -5,6 +5,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <tinyxml2.h>
@@ -125,15 +126,61 @@ void setAttr(tinyxml2::XMLElement* xe, const char* name, const String& value)
     xe->SetAttribute(name, toCStr(value));
 }
 
-template <typename Type, typename Write>
-bool writeShape(const vn::geometry::Shape& shape, Write&& write)
-{
-    if (const auto* value = vn::obj_cast<Type>(&shape)) {
-        write(*value);
-        return true;
+/**
+ * @brief Writes the element a primitive's analytic solid calls for.
+ *
+ * @details
+ * - One overload per kind, dispatched by `std::visit` over the closed set: a new kind fails to compile here instead of
+ *   falling through to a warning. Full extents are written, because that is what the description format states, while
+ *   the analytic solid stores halves.
+ */
+struct PrimitiveWriter {
+    /// The `<geometry>` element the shape's element is appended to.
+    tinyxml2::XMLElement* geometry;
+
+    void operator()(const vn::geometry::Boxf& box) const
+    {
+        auto        element = geometry->GetDocument()->NewElement("box");
+        std::string size    = std::string(detail::floatToStr(box.half_x * 2.0f).as_std_str()) + " " +
+                              std::string(detail::floatToStr(box.half_y * 2.0f).as_std_str()) + " " +
+                              std::string(detail::floatToStr(box.half_z * 2.0f).as_std_str());
+        element->SetAttribute("size", size.c_str());
+        geometry->LinkEndChild(element);
     }
-    return false;
-}
+
+    void operator()(const vn::geometry::Spheref& sphere) const
+    {
+        auto element = geometry->GetDocument()->NewElement("sphere");
+        setAttrFloat(element, "radius", sphere.radius);
+        geometry->LinkEndChild(element);
+    }
+
+    void operator()(const vn::geometry::Cylinderf& cylinder) const
+    {
+        auto element = geometry->GetDocument()->NewElement("cylinder");
+        setAttrFloat(element, "radius", cylinder.radius);
+        setAttrFloat(element, "height", cylinder.half_height * 2.0f);
+        geometry->LinkEndChild(element);
+    }
+
+    void operator()(const vn::geometry::Conef& cone) const
+    {
+        auto element = geometry->GetDocument()->NewElement("cone");
+        setAttrFloat(element, "radius", cone.base_radius);
+        setAttrFloat(element, "height", cone.half_height * 2.0f);
+        geometry->LinkEndChild(element);
+    }
+
+    void operator()(const vn::geometry::Ellipsoidf& ellipsoid) const
+    {
+        auto        element = geometry->GetDocument()->NewElement("ellipsoid");
+        std::string radii   = std::string(detail::floatToStr(ellipsoid.radius_x).as_std_str()) + " " +
+                              std::string(detail::floatToStr(ellipsoid.radius_y).as_std_str()) + " " +
+                              std::string(detail::floatToStr(ellipsoid.radius_z).as_std_str());
+        element->SetAttribute("radii", radii.c_str());
+        geometry->LinkEndChild(element);
+    }
+};
 
 /**
  * @brief Writes a mesh as one geometry file into a VFS.
@@ -276,14 +323,15 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
         if (!(stream >> w >> h >> d)) {
             return {};
         }
-        return vn::make_intrusive<vn::geometry::Box>(static_cast<float>(w * s), static_cast<float>(h * s), static_cast<float>(d * s));
+        return vn::make_intrusive<vn::geometry::Primitive>(
+            vn::geometry::Boxf{ static_cast<float>(w * s) * 0.5f, static_cast<float>(h * s) * 0.5f, static_cast<float>(d * s) * 0.5f });
     }
     if (tag == "sphere") {
         float r = 0.0f;
         if (!getAttrFloat(child, "radius", r)) {
             return {};
         }
-        return vn::make_intrusive<vn::geometry::Sphere>(static_cast<float>(r * s));
+        return vn::make_intrusive<vn::geometry::Primitive>(vn::geometry::Spheref{ static_cast<float>(r * s) });
     }
     if (tag == "cylinder" || tag == "cone") {
         float r = 0.0f, h = 0.0f;
@@ -291,9 +339,9 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
             return {};
         }
         if (tag == "cylinder") {
-            return vn::make_intrusive<vn::geometry::Cylinder>(static_cast<float>(r * s), static_cast<float>(h * s));
+            return vn::make_intrusive<vn::geometry::Primitive>(vn::geometry::Cylinderf{ static_cast<float>(r * s), static_cast<float>(h * s) * 0.5f });
         }
-        return vn::make_intrusive<vn::geometry::Cone>(static_cast<float>(r * s), static_cast<float>(h * s));
+        return vn::make_intrusive<vn::geometry::Primitive>(vn::geometry::Conef{ static_cast<float>(r * s), static_cast<float>(h * s) * 0.5f });
     }
     if (tag == "ellipsoid") {
         const String radii_str = attr(child, "radii");
@@ -301,8 +349,8 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
         if (radii_str.empty() || !detail::strToVec3(radii_str, radii)) {
             return {};
         }
-        return vn::make_intrusive<vn::geometry::Ellipsoid>(
-            static_cast<float>(radii.x * s), static_cast<float>(radii.y * s), static_cast<float>(radii.z * s));
+        return vn::make_intrusive<vn::geometry::Primitive>(
+            vn::geometry::Ellipsoidf{ static_cast<float>(radii.x * s), static_cast<float>(radii.y * s), static_cast<float>(radii.z * s) });
     }
     if (tag == "triangle_mesh" || tag == "indexed_triangle_mesh") {
         if (ctx.vfs == nullptr) {
@@ -326,84 +374,20 @@ vn::intrusive_ptr<vn::geometry::Shape> XmlIOBase::parseGeometry(ParseContext& ct
 void XmlIOBase::exportGeometry(ExportContext& ctx, const vn::geometry::Shape& shape, tinyxml2::XMLElement* xe)
 {
     auto xe_geom = xe->GetDocument()->NewElement("geometry");
+
+    // A primitive is one class holding an analytic solid: the kind belongs to the geometry, so the writer visits it
+    // instead of asking for a tag and casting back to the class that tag was supposed to describe.
+    if (const auto* primitive = vn::obj_cast<vn::geometry::Primitive>(&shape)) {
+        std::visit(PrimitiveWriter{ xe_geom }, primitive->shape());
+        xe->LinkEndChild(xe_geom);
+        return;
+    }
+
     switch (shape.shapeType()) {
-    case vn::geometry::ShapeType::Box:
-    {
-        const bool written = writeShape<vn::geometry::Box>(shape, [&](const auto& box) {
-            auto        xe_box = xe->GetDocument()->NewElement("box");
-            std::string size   = std::string(detail::floatToStr(box.width()).as_std_str()) + " " +
-                               std::string(detail::floatToStr(box.height()).as_std_str()) + " " +
-                               std::string(detail::floatToStr(box.depth()).as_std_str());
-            xe_box->SetAttribute("size", size.c_str());
-            xe_geom->LinkEndChild(xe_box);
-        });
-        if (!written) {
-            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Box, skipped.");
-            return;
-        }
-        break;
-    }
-    case vn::geometry::ShapeType::Cylinder:
-    {
-        const bool written = writeShape<vn::geometry::Cylinder>(shape, [&](const auto& cylinder) {
-            auto xe_cylinder = xe->GetDocument()->NewElement("cylinder");
-            setAttrFloat(xe_cylinder, "radius", cylinder.radius());
-            setAttrFloat(xe_cylinder, "height", cylinder.height());
-            xe_geom->LinkEndChild(xe_cylinder);
-        });
-        if (!written) {
-            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Cylinder, skipped.");
-            return;
-        }
-        break;
-    }
-    case vn::geometry::ShapeType::Cone:
-    {
-        const bool written = writeShape<vn::geometry::Cone>(shape, [&](const auto& cone) {
-            auto xe_cone = xe->GetDocument()->NewElement("cone");
-            setAttrFloat(xe_cone, "radius", cone.radius());
-            setAttrFloat(xe_cone, "height", cone.height());
-            xe_geom->LinkEndChild(xe_cone);
-        });
-        if (!written) {
-            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Cone, skipped.");
-            return;
-        }
-        break;
-    }
-    case vn::geometry::ShapeType::Sphere:
-    {
-        const bool written = writeShape<vn::geometry::Sphere>(shape, [&](const auto& sphere) {
-            auto xe_sphere = xe->GetDocument()->NewElement("sphere");
-            setAttrFloat(xe_sphere, "radius", sphere.radius());
-            xe_geom->LinkEndChild(xe_sphere);
-        });
-        if (!written) {
-            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Sphere, skipped.");
-            return;
-        }
-        break;
-    }
-    case vn::geometry::ShapeType::Ellipsoid:
-    {
-        const bool written = writeShape<vn::geometry::Ellipsoid>(shape, [&](const auto& ellipsoid) {
-            auto        xe_ell = xe->GetDocument()->NewElement("ellipsoid");
-            std::string radii  = std::string(detail::floatToStr(ellipsoid.radiusX()).as_std_str()) + " " +
-                                 std::string(detail::floatToStr(ellipsoid.radiusY()).as_std_str()) + " " +
-                                 std::string(detail::floatToStr(ellipsoid.radiusZ()).as_std_str());
-            xe_ell->SetAttribute("radii", radii.c_str());
-            xe_geom->LinkEndChild(xe_ell);
-        });
-        if (!written) {
-            detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package primitive export requires Ellipsoid, skipped.");
-            return;
-        }
-        break;
-    }
     case vn::geometry::ShapeType::TriangleMesh:
     {
-        const vn::geometry::Mesh* mesh = vn::obj_cast<vn::geometry::Mesh>(&shape);
-        const auto* triangle_mesh = mesh != nullptr ? vn::obj_cast<vn::geometry::TriangleMesh>(mesh) : nullptr;
+        const vn::geometry::Mesh* mesh          = vn::obj_cast<vn::geometry::Mesh>(&shape);
+        const auto*               triangle_mesh = mesh != nullptr ? vn::obj_cast<vn::geometry::TriangleMesh>(mesh) : nullptr;
         if (triangle_mesh == nullptr) {
             detail::appendWarning(ctx.msgs, "XmlIOBase::exportGeometry, package mesh export requires TriangleMesh, skipped.");
             return;

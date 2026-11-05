@@ -27,7 +27,7 @@
 ### 1.3 非目标
 
 - 不做值类型化的参数化几何：`Box` 等是 `Shape`，带身份与 revision；需要"只用尺寸算一算"的调用方应使用 `Aabb` / `Obb` / `Plane` / `SphericalSurface` 这些值类型。
-- 不做参数化几何的射线求交：拾取走网格，B-rep 走 OCCT 的解析构造（`G8`，见 `../backlog/geometry.md` G2）。
+- 不做参数化几何的距离中的**实体间**距离：点到实体的最近点 / 距离与射线求交已由族 `Solid<T>` 解释（`geometry-solid.md`）；两实体之间的距离仍没有消费者（`G8`）。
 - 不让 `geometry` 依赖 OCCT：后端词汇与解析式构造留在 `brep`。
 
 ### 1.4 一句话结论
@@ -61,8 +61,9 @@
 
 ### 2.4 算法不在 `Primitive` 上
 
-- **是什么**：实体只回答 `bounds()`、`isValid()`、`hasVolume(eps)`；求交与距离属于几何值类型（`Aabb::intersectWith(Ray)`）或曲面（`SphericalSurface`）。
-- **为什么**：`G1`、`G8` —— 给 `Primitive` 加虚查询会把算法面挂在建模类型上，每个消费者都得知道该查谁；而今天的查询没有消费者。
+- **是什么**：模型只回答 `bounds()`、`isValid()`、`hasVolume(eps)`，并且它们都**转发**给几何；查询走 `solid()`（族视图）或 `shape()`（variant）；三角化是 `tessellateSolid(shape(), …)`（`geometry-tessellation.md`）。
+- **为什么**：`G13`、`G1`、`G8`、`G12` —— 建模类型的职责是身份 / 名字 / revision，几何类型的职责是公式；几何查询挂在模型上会让同一形状的公式散在多处，也让模型消费者认识算法入口。`G13` 不看有没有新消费者：把已有能力放到它该在的一侧，本身就是一条约束。
+- **边界**：模型侧没有按 `ShapeType` 分派几何的代码；`Solid<T>` 不认识 `Shape` / `Primitive`，两者只在 `Primitive` 一处相接（`geometry-solid.md` 2.1）。
 
 ### 2.5 OCCT 只做 STEP 解析与三角化
 
@@ -77,6 +78,9 @@
 | F2 | 形状契约 | `isValid()` / `hasVolume(eps)` / `bounds()`（canonical 局部空间） | 已落地 |
 | F3 | B-rep 桥 | `brep::makeBrep(Primitive)` 按类型分派，无后端返回空 | 已落地（本机构建含 OCCT 后端） |
 | F4 | 序列化 | `robotics::io` 按 `ShapeType` 读写五种几何元素 | 已落地 |
+| F5 | 三角化 | `tessellateSolid(Solid<float>, quality)`：五个解析体变成闭合、外向、带精确法向的 `TriangleMesh`（见 `geometry-tessellation.md`） | 已落地 |
+| F6 | 模型 → 几何 | `Primitive::solid()`（族视图）/ `shape()`（variant）/ `setSolid()` | 已落地 |
+| F7 | 实体查询 | `Solid<T>::closestPoint()` / `intersectWith(Ray)`：实体语义的最近点 / 距离与射线交点，模型不参与（见 `geometry-solid.md`） | 已落地 |
 
 ### 3.1 F1 建模类型
 
@@ -85,7 +89,7 @@
 
 ### 3.2 F2 形状契约
 
-- **行为**：默认构造给出单位尺寸；`bounds()` 返回局部空间 `Aabbf`；非法尺寸由 `isValid()` 报告而非构造拒绝。
+- **行为**：默认构造给出单位尺寸；`bounds()` 返回局部空间 `Aabbf`（盒由 `Solid<T>` 派生，不在子类里重算，见 `geometry-solid.md` 2.1）；非法尺寸由 `isValid()` 报告而非构造拒绝。
 - **约束**（C2）：`Cone::bounds()` 取底面的外接圆柱盒。
 - **验收**（T2）：`everyPrimitiveFillsItsAnalyticBounds` 用三角化后的包围盒核对五种形状的 canonical 空间。
 
@@ -105,6 +109,9 @@
 | 头文件 | 内容 |
 |---|---|
 | `Primitive.hpp` | `Primitive`（受保护构造，接受 `ShapeType`）与 `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` |
+| `SolidTessellation.hpp` | `TessellationQuality` 与 `tessellateSolid()`（三角化见 `geometry-tessellation.md`） |
+| `Solid.hpp` | `Solid<T>` 接口、五个 kind、`SolidShape<T>` 与 `solidOf()`（见 `geometry-solid.md`） |
+| `Solid.hpp` | `Solid<T>` 与五个 kind、`closestPoint()` / `intersectWith()`（见 `geometry-solid.md`） |
 | `Shape.hpp` | `ShapeType`、`isValid()`、`hasVolume()`、`revision()` |
 
 ## 5. 约束、要求与不变量
@@ -126,7 +133,8 @@
 
 - **D1** 五个尺寸做成无身份值类型 + `Primitive` 用 `std::variant` 持有：`Box` / `Cone` 没有自己的算法，"值"这一侧换不到东西，反而让半径/边长在实体与曲面之间有两个家（`G1`）。见 `../decisions/ADR-2026-11-04-primitive-is-a-shape.md`。
 - **D2** 让 `geometry` 依赖 OCCT 直接构造解析实体：后端词汇进核心模块（`G2`），无后端构建会失去全部契约。
-- **D3** 在 `Primitive` 上开放几何查询（虚 `intersectWith`）：算法面挂在建模类型上，消费者要记住查谁（`G1`、`G8`）。
+- **D3** 在 `Primitive` 上开放几何查询（虚 `intersectWith`）：算法面挂在建模类型上，消费者要记住查谁；几何属于族接口 `Solid<T>` 与它的五个 kind（`G1`、`G8`）。
+- **D4** 以模型为参数写几何自由函数（`f(primitive)` 形态）：每个能力各写一份标签分派，同一形状的公式散在多处；模型只持有一份 `SolidShape` 后，算法在几何一侧只有一套（`G1`、`G12`）。见 `../decisions/ADR-2026-11-05-solid-family-and-variant.md`。
 
 ## 8. 测试与验收
 
@@ -141,10 +149,10 @@
 
 - 五个子类、受保护构造与单头文件组织已落地；`brep` 与 `robotics::io` 按任务书分派。
 - 本机构建含 OCCT 后端（`VN_HAS_OCCT=TRUE`，vcpkg 的 `opencascade`），`test_brep` 可构建并通过，F3 的实体构造分支因此是真跑过的；无后端的构建仍走 `hasBackend()` 为假的路径。
-- 下一步：曲线 / 曲面族已无占位类型，见 `geometry-kinds.md` 2.10 与 `geometry-axis-surfaces.md`；参数化几何的三角化与求交仍是触发条件型待办，见 `../backlog/geometry.md` G1 / G2。
+- 下一步：曲线 / 曲面族已无占位类型，见 `geometry-kinds.md` 2.10 与 `geometry-axis-surfaces.md`；三角化、射线求交与最近点 / 距离已全部落在族 `Solid<T>` 上（`geometry-solid.md`、`geometry-tessellation.md`，F5–F7），本主题没有开放项。
 
 ## 10. 参考
 
-- `geometry-kinds.md`（`Curve` / `Surface` 族与曲面树）、`geometry-primitives.md`（值类型的归属与头文件规则）
+- `geometry-kinds.md`（`Curve` / `Surface` 族与曲面树）、`geometry-primitives.md`（值类型的归属与头文件规则）、`geometry-solid.md`（解析实体的值类型：最近点与射线求交）、`geometry-tessellation.md`（三角化）
 - `graphics-geometry.md`（网格存储与渲染边界）
-- `../decisions/ADR-2026-11-04-primitive-is-a-shape.md`
+- `../decisions/ADR-2026-11-04-primitive-is-a-shape.md`、`../decisions/ADR-2026-11-05-solid-value-type.md`

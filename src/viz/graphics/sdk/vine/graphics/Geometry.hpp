@@ -870,13 +870,16 @@ VN_GRAPHICS_API intrusive_ptr<Buffer<float>> packAttribute(std::span<const vn::m
 VN_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const std::uint32_t> indices);
 
 /**
- * @brief Builds a buffer-only Geometry from a triangle-mesh Shape.
+ * @brief Builds a Geometry from a triangle-mesh shape, or from an analytic primitive.
  *
  * @details
- * - SHARES the shape's positions, normals, texture coordinates AND indices with the geometry - the geometry
- *   reads the mesh's own buffers, so the vertex data exists once in memory. Shapes that are not triangle
- *   meshes (primitives, BRep, ...) are not convertible and yield null. This is the bridge that lets Shape
- *   live purely in the geometry module while Geometry stays vertex-data only.
+ * - A MESH shares its positions, normals, texture coordinates AND indices with the geometry - the geometry
+ *   reads the mesh's own buffers, so the vertex data exists once in memory.
+ * - An analytic primitive (`vn::geometry::Primitive`) owns no vertices, so it is triangulated at this boundary
+ *   (`tessellateSolid`) and the resulting mesh is shared exactly like a mesh shape's would be; the consumer therefore
+ *   keeps the geometry, not the temporary mesh. An unusable primitive yields null.
+ * - Shapes that are neither (BRep, point cloud, ...) are not convertible and yield null. This is the bridge that lets
+ *   Shape live purely in the geometry module while Geometry stays vertex-data only.
  *
  * @note
  * - This is the ONLY Shape -> Geometry conversion: Geometry has no setShape(), because a setter named after
@@ -885,8 +888,8 @@ VN_GRAPHICS_API intrusive_ptr<Buffer<std::uint32_t>> packIndices(std::span<const
  *   per-channel setters (setPositions / setNormals / setTexcoords2 / setTexcoords3) plus setPrimitive for
  *   the draw's topology and index span, which leave custom attribute channels alone.
  *
- * @param shape Mesh shape to convert.
- * @return Filled geometry, or null for unsupported shapes or invalid meshes.
+ * @param shape Shape to convert.
+ * @return Filled geometry, or null for unsupported shapes or invalid input.
  */
 VN_GRAPHICS_API GeometryPtr geometryFromShape(const vn::geometry::Shape& shape);
 

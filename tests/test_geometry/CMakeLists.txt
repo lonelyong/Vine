@@ -1,6 +1,7 @@
 set(TEST_NAME test_geometry)
 set(SRC_FILE_LIST
 	AabbTest.cpp
+	CurveDistanceTest.cpp
 	CurveSurfaceTest.cpp
 	GeometryKindsTest.cpp
 	LinePlaneTest.cpp
@@ -8,6 +9,11 @@ set(SRC_FILE_LIST
 	ObbTest.cpp
 	PointCloudTest.cpp
 	RayTest.cpp
+	SolidDistanceTest.cpp
+	SolidIntersectionTest.cpp
+	SolidTessellationTest.cpp
+	SolidTest.cpp
+	SurfaceQueryTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)

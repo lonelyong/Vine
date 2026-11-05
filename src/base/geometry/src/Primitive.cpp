@@ -1,267 +1,93 @@
 ﻿#include <vine/geometry/Primitive.hpp>
 
+#include <type_traits>
+#include <variant>
+
 VN_GEOMETRY_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Primitive, Shape)
 
-VN_OBJECT_META_IMPL(Box, Primitive)
-
-VN_OBJECT_META_IMPL(Cone, Primitive)
-
-VN_OBJECT_META_IMPL(Cylinder, Primitive)
-
-VN_OBJECT_META_IMPL(Ellipsoid, Primitive)
-
-VN_OBJECT_META_IMPL(Sphere, Primitive)
-
-Primitive::Primitive(ShapeType type)
+namespace
 {
-    shape_type_ = type;
+
+/**
+ * @brief Projects the stored solid's kind onto the `ShapeType` the shape family dispatches on.
+ *
+ * @details
+ * - This is a projection, not a second source of truth: the kind lives in the variant, and the tag is read back from it
+ *   here. The `static_assert` is what makes a new kind fail to compile instead of silently reporting an ellipsoid.
+ *
+ * @param shape The stored solid.
+ * @return The matching `ShapeType`.
+ */
+ShapeType shapeTypeOf(const SolidShapef& shape)
+{
+    return std::visit(
+        [](const auto& kind) {
+            using Kind = std::decay_t<decltype(kind)>;
+            if constexpr (std::is_same_v<Kind, Boxf>) {
+                return ShapeType::Box;
+            }
+            else if constexpr (std::is_same_v<Kind, Spheref>) {
+                return ShapeType::Sphere;
+            }
+            else if constexpr (std::is_same_v<Kind, Cylinderf>) {
+                return ShapeType::Cylinder;
+            }
+            else if constexpr (std::is_same_v<Kind, Conef>) {
+                return ShapeType::Cone;
+            }
+            else {
+                static_assert(std::is_same_v<Kind, Ellipsoidf>, "a new analytic solid needs a ShapeType");
+                return ShapeType::Ellipsoid;
+            }
+        },
+        shape);
 }
 
-Box::Box()
-  : Primitive(ShapeType::Box)
-{}
+} // namespace
 
-Box::Box(float width, float height, float depth)
-  : Primitive(ShapeType::Box)
-  , width_(width)
-  , height_(height)
-  , depth_(depth)
-{}
-
-float Box::width() const noexcept
+Primitive::Primitive()
+  : solid_(Boxf{ 0.5f, 0.5f, 0.5f })
 {
-    return width_;
+    shape_type_ = ShapeType::Box;
 }
 
-void Box::setWidth(float width) noexcept
+Primitive::Primitive(const SolidShapef& solid)
+  : solid_(solid)
 {
-    width_ = width;
+    shape_type_ = shapeTypeOf(solid_);
 }
 
-float Box::height() const noexcept
+const Solidf& Primitive::solid() const noexcept
 {
-    return height_;
+    return solidOf(solid_);
 }
 
-void Box::setHeight(float height) noexcept
+const SolidShapef& Primitive::shape() const noexcept
 {
-    height_ = height;
+    return solid_;
 }
 
-float Box::depth() const noexcept
+void Primitive::setSolid(const SolidShapef& solid) noexcept
 {
-    return depth_;
+    solid_      = solid;
+    shape_type_ = shapeTypeOf(solid_);
 }
 
-void Box::setDepth(float depth) noexcept
+bool Primitive::isValid() const
 {
-    depth_ = depth;
+    return solid().isValid();
 }
 
-bool Box::isValid() const
+bool Primitive::hasVolume(double eps) const
 {
-    return width_ > 0.0f && height_ > 0.0f && depth_ > 0.0f;
+    return solid().hasVolume(static_cast<float>(eps));
 }
 
-bool Box::hasVolume(double eps) const
+Aabbf Primitive::bounds() const noexcept
 {
-    const float tolerance = static_cast<float>(eps);
-    return width_ > tolerance && height_ > tolerance && depth_ > tolerance;
-}
-
-Aabbf Box::bounds() const noexcept
-{
-    const float half_width  = width_ * 0.5f;
-    const float half_height = height_ * 0.5f;
-    const float half_depth  = depth_ * 0.5f;
-    return Aabbf(-half_width, -half_height, -half_depth, half_width, half_height, half_depth);
-}
-
-Sphere::Sphere()
-  : Primitive(ShapeType::Sphere)
-{}
-
-Sphere::Sphere(float radius)
-  : Primitive(ShapeType::Sphere)
-  , radius_(radius)
-{}
-
-float Sphere::radius() const noexcept
-{
-    return radius_;
-}
-
-void Sphere::setRadius(float radius) noexcept
-{
-    radius_ = radius;
-}
-
-bool Sphere::isValid() const
-{
-    return radius_ > 0.0f;
-}
-
-bool Sphere::hasVolume(double eps) const
-{
-    return radius_ > static_cast<float>(eps);
-}
-
-Aabbf Sphere::bounds() const noexcept
-{
-    return Aabbf(-radius_, -radius_, -radius_, radius_, radius_, radius_);
-}
-
-Cylinder::Cylinder()
-  : Primitive(ShapeType::Cylinder)
-{}
-
-Cylinder::Cylinder(float radius, float height)
-  : Primitive(ShapeType::Cylinder)
-  , radius_(radius)
-  , height_(height)
-{}
-
-float Cylinder::radius() const noexcept
-{
-    return radius_;
-}
-
-void Cylinder::setRadius(float radius) noexcept
-{
-    radius_ = radius;
-}
-
-float Cylinder::height() const noexcept
-{
-    return height_;
-}
-
-void Cylinder::setHeight(float height) noexcept
-{
-    height_ = height;
-}
-
-bool Cylinder::isValid() const
-{
-    return radius_ > 0.0f && height_ > 0.0f;
-}
-
-bool Cylinder::hasVolume(double eps) const
-{
-    const float tolerance = static_cast<float>(eps);
-    return radius_ > tolerance && height_ > tolerance;
-}
-
-Aabbf Cylinder::bounds() const noexcept
-{
-    const float half_height = height_ * 0.5f;
-    return Aabbf(-radius_, -radius_, -half_height, radius_, radius_, half_height);
-}
-
-Cone::Cone()
-  : Primitive(ShapeType::Cone)
-{}
-
-Cone::Cone(float radius, float height)
-  : Primitive(ShapeType::Cone)
-  , radius_(radius)
-  , height_(height)
-{}
-
-float Cone::radius() const noexcept
-{
-    return radius_;
-}
-
-void Cone::setRadius(float radius) noexcept
-{
-    radius_ = radius;
-}
-
-float Cone::height() const noexcept
-{
-    return height_;
-}
-
-void Cone::setHeight(float height) noexcept
-{
-    height_ = height;
-}
-
-bool Cone::isValid() const
-{
-    return radius_ > 0.0f && height_ > 0.0f;
-}
-
-bool Cone::hasVolume(double eps) const
-{
-    const float tolerance = static_cast<float>(eps);
-    return radius_ > tolerance && height_ > tolerance;
-}
-
-Aabbf Cone::bounds() const noexcept
-{
-    const float half_height = height_ * 0.5f;
-    return Aabbf(-radius_, -radius_, -half_height, radius_, radius_, half_height);
-}
-
-Ellipsoid::Ellipsoid()
-  : Primitive(ShapeType::Ellipsoid)
-{}
-
-Ellipsoid::Ellipsoid(float radius_x, float radius_y, float radius_z)
-  : Primitive(ShapeType::Ellipsoid)
-  , radius_x_(radius_x)
-  , radius_y_(radius_y)
-  , radius_z_(radius_z)
-{}
-
-float Ellipsoid::radiusX() const noexcept
-{
-    return radius_x_;
-}
-
-void Ellipsoid::setRadiusX(float radius) noexcept
-{
-    radius_x_ = radius;
-}
-
-float Ellipsoid::radiusY() const noexcept
-{
-    return radius_y_;
-}
-
-void Ellipsoid::setRadiusY(float radius) noexcept
-{
-    radius_y_ = radius;
-}
-
-float Ellipsoid::radiusZ() const noexcept
-{
-    return radius_z_;
-}
-
-void Ellipsoid::setRadiusZ(float radius) noexcept
-{
-    radius_z_ = radius;
-}
-
-bool Ellipsoid::isValid() const
-{
-    return radius_x_ > 0.0f && radius_y_ > 0.0f && radius_z_ > 0.0f;
-}
-
-bool Ellipsoid::hasVolume(double eps) const
-{
-    const float tolerance = static_cast<float>(eps);
-    return radius_x_ > tolerance && radius_y_ > tolerance && radius_z_ > tolerance;
-}
-
-Aabbf Ellipsoid::bounds() const noexcept
-{
-    return Aabbf(-radius_x_, -radius_y_, -radius_z_, radius_x_, radius_y_, radius_z_);
+    return solid().bounds();
 }
 
 VN_GEOMETRY_NS_END
