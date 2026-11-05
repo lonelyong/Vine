@@ -247,7 +247,7 @@
 | T3 | 域 / 闭合 / 周期 / 光滑度 | 同文件 `IsUnboundedAndNeverClosed`、`IsClosedPeriodicAndSmooth` |
 | T4 | 退化状态答退化值而非 NaN | `CurveBasicsTest.cpp` 的 `AZeroDirectionIsNotALine`、`ANonPositiveRadiusIsNotACircle`；`EllipseCurveTest.cpp`、`ConicCurvesTest.cpp` 的退化用例 |
 | T5 | 反向映射是 involution、交换域两端，且经 `Curve<T>&` 与 `unique_ptr<const Curve<T>>` 可用 | `CurveBasicsTest.cpp` 的 `ReversesByNegatingItsParameter`、`ReversesByReflectingInsideThePeriod`、`AnswersThroughTheBaseInterface`；`EllipseCurveTest.cpp`、`ArcCurveTest.cpp` 各自的反向与多态用例 |
-| T6 | 契约扫查：域有序、反向 involution、闭合曲线两端同点、周期曲线按 `period()` 重复、非周期曲线 `period() == 0`，六个类型 × float / double | `tests/test_geom2d/CurveContractTest.cpp` 的 `EveryPlanarCurveKeepsItsPromisesInDouble` / `…InFloat` |
+| T6 | 契约扫查：域有序、反向 involution、闭合曲线两端同点、周期曲线按 `period()` 重复、非周期曲线 `period() == 0`，九个类型 × float / double；另有一份导数链检查（每阶导与前一阶导的中心差分一致，含两种有理形式） | `tests/test_geom2d/CurveContractTest.cpp` 的 `EveryPlanarCurveKeepsItsPromisesInDouble` / `…InFloat` / `EveryCurveDifferentiatesConsistently` |
 | T7 | 最近点：直线精确足点、无界曲线必须给窗口、足点落在窗口外落到端点、圆 / 椭圆 / 圆弧的足点、圆心的等距多解、无效曲线、两种精度 | `tests/test_geom2d/CurveProjectionTest.cpp` |
 | T8 | 包围盒：圆的负半径 / 零半径、旋转与 45° 椭圆的支撑函数、圆弧区间内极值、反向区间、盒包含全部采样点、两种精度 | `tests/test_geom2d/BoundsTest.cpp` |
 | T9 | 求交：直线 × 直线、平行线、直线 × 圆（两点且按第一条曲线参数升序）、两圆、圆弧被窗口裁剪、重合弧与重合圆、无界曲线缺窗口、无效曲线、两种精度 | `tests/test_geom2d/CurveIntersectionTest.cpp` |
@@ -259,7 +259,7 @@
 
 ### 9.1 当前状态
 
-十三个头文件（`Curve` / `ConicCurve` / `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `BezierCurve` / `BSplineCurve` / `OffsetCurve` / `CurveProjection` / `CurveCurveIntersection`）+ `test_geom2d`（98 个用例，含九个类型 × float / double 的契约扫查与两个族级算法的双精度对照）；`vn::Geom2D` 是 INTERFACE 目标，不导出任何符号；模块内没有生产代码消费者——今天唯一的使用者是测试。
+十三个头文件（`Curve` / `ConicCurve` / `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `BezierCurve` / `BSplineCurve` / `OffsetCurve` / `CurveProjection` / `CurveCurveIntersection`）+ `test_geom2d`（99 个用例，含九个类型 × float / double 的契约扫查、导数链检查与两个族级算法的双精度对照）；`vn::Geom2D` 是 INTERFACE 目标，不导出任何符号；模块内没有生产代码消费者——今天唯一的使用者是测试。
 
 ### 9.2 已知缺口
 
