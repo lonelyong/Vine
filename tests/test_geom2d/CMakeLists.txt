@@ -5,6 +5,7 @@ set(SRC_FILE_LIST
         ConicCurvesTest.cpp
         CurveBasicsTest.cpp
         CurveContractTest.cpp
+        CurveIntersectionTest.cpp
         CurveProjectionTest.cpp
         EllipseCurveTest.cpp
 )

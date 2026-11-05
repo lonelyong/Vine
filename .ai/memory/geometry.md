@@ -111,3 +111,8 @@
   反向区间与正向同盒（区间方向不改点集）；圆用 `|radius|`。
 - **无效状态必须答有限值**：抛物线焦距为零原先会除零（`u²/(4·0)` → NaN / inf），现在 `pointAt` 答顶点、两条导数答零向量（`hasFocalLength()`）；
   其余退化形态：零半径圆→圆心、零半轴椭圆→线段、零半轴双曲线→过中心的直线、零方向圆锥曲线→center。
+- **平面曲线求交 `intersectCurveWithCurve()`**（`geom2d/CurveCurveIntersection.hpp`）：三值结果 `CurveCurveContact{None, Isolated, Coincident}` + `hits`（点与两边参数，按第一条曲线参数升序），照 3D 的 `CurveSurfaceContact` 形状。
+  算法是对偶的：沿第一条曲线采样，每点用 `closestPointOnCurve()` 取到第二条的垂距。**这个垂距同时给两件事**——连续 ≥3 个样本垂距 ≤ 容差 = 重合段；垂距 ≤ 一步长度 (`step·|C1'|`) = 候选，再用二维 Newton 收敛 `C1(u)=C2(v)`。
+  第一版把“样本垂距 ≤ 容差”当成候选，结果几乎所有交叉都漏了（采样点几乎不会正好落在另一条曲线上）。
+  已知边界：相切默认漏检（雅可比奇异时只有当残差已在容差内才接受）；两交点间距小于三步会被读成重合。
+- **几何模板里的 T 推导**：`intersectCurveWithCurve` 的 T 只出现在默认参数里，`template <FP T, ...>` 推不出来——改成 `template <typename C1, typename C2>` + `detail::CurveScalar<C>`（= `C::value_type`）。
