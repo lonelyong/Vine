@@ -39,6 +39,7 @@ if(MSVC)
 endif()
 
 add_subdirectory(test_math)
+add_subdirectory(test_geom2d)
 add_subdirectory(test_geom3d)
 add_subdirectory(test_core)
 add_subdirectory(test_async)
