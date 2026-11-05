@@ -4,6 +4,7 @@ set(SRC_FILE_LIST
         ConicCurvesTest.cpp
         CurveBasicsTest.cpp
         CurveContractTest.cpp
+        CurveProjectionTest.cpp
         EllipseCurveTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})

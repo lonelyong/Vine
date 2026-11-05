@@ -103,3 +103,6 @@
   `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` 派生自它；**圆不派生**（它的起点由平面定死，存一根永远 (1,0) 的轴是死字段）。
   参数含义各不相同：椭圆是偏心角、双曲线是双曲角（只走 `+x_direction` 一支，另一支是取反方向）、抛物线是垂直轴上的偏移（`P = vertex + u²/(4f)·X + u·Y`）。
   零方向存零向量 ⇒ 点查询答 `center`，`isValid()` 是唯一判据；三条曲线都无界非周期，`reversedParameter` 都是 `-u`。
+- **平面最近点 `closestPointOnCurve()`**（`geom2d/CurveProjection.hpp`）：与 3D 同名函数同一骨架——平方距离驻点 `f(u) = (C(u)-Q)·C'(u)` 求根 + 采样点/window 端点比较；
+  无界曲线（直线/双曲线/抛物线）**必须**给窗口，不给就 `nullopt`。注意两点：等距多解（圆心）报的是“其中一个”，不要断言参数是 0；
+  双曲线对轴上点的最近点通常**不在顶点**（如 (3,0) 到 `x=2cosh, y=sinh` 的最小点在 `5cosh u = 6`，距离 √0.8），写测试先解一遍驻点方程。
