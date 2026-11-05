@@ -1,91 +1,142 @@
 ﻿#include <vine/geometry/Primitive.hpp>
 
-#include <type_traits>
-#include <variant>
-
 VN_GEOMETRY_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Primitive, Shape)
 
-namespace
-{
+VN_OBJECT_META_IMPL(Box, Primitive)
+VN_OBJECT_META_IMPL(Sphere, Primitive)
+VN_OBJECT_META_IMPL(Cylinder, Primitive)
+VN_OBJECT_META_IMPL(Cone, Primitive)
+VN_OBJECT_META_IMPL(Ellipsoid, Primitive)
 
-/**
- * @brief Projects the stored solid's kind onto the `ShapeType` the shape family dispatches on.
- *
- * @details
- * - This is a projection, not a second source of truth: the kind lives in the variant, and the tag is read back from it
- *   here. The `static_assert` is what makes a new kind fail to compile instead of silently reporting an ellipsoid.
- *
- * @param shape The stored solid.
- * @return The matching `ShapeType`.
- */
-ShapeType shapeTypeOf(const SolidShapef& shape)
+Primitive::Primitive(ShapeType type) noexcept
 {
-    return std::visit(
-        [](const auto& kind) {
-            using Kind = std::decay_t<decltype(kind)>;
-            if constexpr (std::is_same_v<Kind, Boxf>) {
-                return ShapeType::Box;
-            }
-            else if constexpr (std::is_same_v<Kind, Spheref>) {
-                return ShapeType::Sphere;
-            }
-            else if constexpr (std::is_same_v<Kind, Cylinderf>) {
-                return ShapeType::Cylinder;
-            }
-            else if constexpr (std::is_same_v<Kind, Conef>) {
-                return ShapeType::Cone;
-            }
-            else {
-                static_assert(std::is_same_v<Kind, Ellipsoidf>, "a new analytic solid needs a ShapeType");
-                return ShapeType::Ellipsoid;
-            }
-        },
-        shape);
+    shape_type_ = type;
 }
 
-} // namespace
+Box::Box()
+  : Primitive(ShapeType::Box)
+{}
 
-Primitive::Primitive()
-  : solid_(Boxf{ 0.5f, 0.5f, 0.5f })
-{
-    shape_type_ = ShapeType::Box;
-}
+Box::Box(float width, float height, float depth)
+  : Primitive(ShapeType::Box)
+  , width_(width)
+  , height_(height)
+  , depth_(depth)
+{}
 
-Primitive::Primitive(const SolidShapef& solid)
-  : solid_(solid)
-{
-    shape_type_ = shapeTypeOf(solid_);
-}
-
-const Solidf& Primitive::solid() const noexcept
-{
-    return solidOf(solid_);
-}
-
-const SolidShapef& Primitive::shape() const noexcept
-{
-    return solid_;
-}
-
-void Primitive::setSolid(const SolidShapef& solid) noexcept
-{
-    solid_      = solid;
-    shape_type_ = shapeTypeOf(solid_);
-}
-
-bool Primitive::isValid() const
+bool Box::isValid() const
 {
     return solid().isValid();
 }
 
-bool Primitive::hasVolume(double eps) const
+bool Box::hasVolume(double eps) const
 {
     return solid().hasVolume(static_cast<float>(eps));
 }
 
-Aabbf Primitive::bounds() const noexcept
+Aabbf Box::bounds() const
+{
+    return solid().bounds();
+}
+
+Sphere::Sphere()
+  : Primitive(ShapeType::Sphere)
+{}
+
+Sphere::Sphere(float radius)
+  : Primitive(ShapeType::Sphere)
+  , radius_(radius)
+{}
+
+bool Sphere::isValid() const
+{
+    return solid().isValid();
+}
+
+bool Sphere::hasVolume(double eps) const
+{
+    return solid().hasVolume(static_cast<float>(eps));
+}
+
+Aabbf Sphere::bounds() const
+{
+    return solid().bounds();
+}
+
+Cylinder::Cylinder()
+  : Primitive(ShapeType::Cylinder)
+{}
+
+Cylinder::Cylinder(float radius, float height)
+  : Primitive(ShapeType::Cylinder)
+  , radius_(radius)
+  , height_(height)
+{}
+
+bool Cylinder::isValid() const
+{
+    return solid().isValid();
+}
+
+bool Cylinder::hasVolume(double eps) const
+{
+    return solid().hasVolume(static_cast<float>(eps));
+}
+
+Aabbf Cylinder::bounds() const
+{
+    return solid().bounds();
+}
+
+Cone::Cone()
+  : Primitive(ShapeType::Cone)
+{}
+
+Cone::Cone(float radius, float height)
+  : Primitive(ShapeType::Cone)
+  , radius_(radius)
+  , height_(height)
+{}
+
+bool Cone::isValid() const
+{
+    return solid().isValid();
+}
+
+bool Cone::hasVolume(double eps) const
+{
+    return solid().hasVolume(static_cast<float>(eps));
+}
+
+Aabbf Cone::bounds() const
+{
+    return solid().bounds();
+}
+
+Ellipsoid::Ellipsoid()
+  : Primitive(ShapeType::Ellipsoid)
+{}
+
+Ellipsoid::Ellipsoid(float radius_x, float radius_y, float radius_z)
+  : Primitive(ShapeType::Ellipsoid)
+  , radius_x_(radius_x)
+  , radius_y_(radius_y)
+  , radius_z_(radius_z)
+{}
+
+bool Ellipsoid::isValid() const
+{
+    return solid().isValid();
+}
+
+bool Ellipsoid::hasVolume(double eps) const
+{
+    return solid().hasVolume(static_cast<float>(eps));
+}
+
+Aabbf Ellipsoid::bounds() const
 {
     return solid().bounds();
 }

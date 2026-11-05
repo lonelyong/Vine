@@ -20,7 +20,7 @@ VN_GEOMETRY_NS_BEGIN
  *
  * @details
  * - This is the *surface*, not the solid: the two nappes, no base and no inside. The closed, placeable version a model
- *   holds is `Cone` (see `Primitive.hpp`).
+ *   holds is `ConeSolid` (see `Primitive.hpp`).
  * - `evaluate(u, v)` uses OCCT's `Geom_ConicalSurface` parameterisation:
  *   `r(v) = reference_radius + v * sin(semi_angle)` and
  *   `P = origin + r(v) * (cos u * X + sin u * Y) + v * cos(semi_angle) * axis`.
@@ -291,7 +291,7 @@ using ConicalSurfaced = ConicalSurface<double>;
  *   normalises the gradient to unit length, and on a point of the cone the two terms cancel exactly.
  * - `axial` is measured from the placement origin along the axis, matching the parameterisation's `v * cos(a)`.
  *
- * @param surface Cone to measure against.
+ * @param surface ConeSolid to measure against.
  * @param point   Point to measure.
  * @return Signed distance to the cone.
  */

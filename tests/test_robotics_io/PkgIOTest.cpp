@@ -187,7 +187,7 @@ TEST(PkgIOTest, DevicePkgPrimitiveRoundTrip)
     auto robot = makeRobot();
     robot->baseLink()->body().visuals().resize(1);
     robot->baseLink()->body().visuals()[0].setShape(
-        vn::intrusive_ptr<vn::geometry::Primitive>(new vn::geometry::Primitive(vn::geometry::Boxf{ 0.125f, 0.25f, 0.375f })));
+        vn::intrusive_ptr<vn::geometry::Primitive>(new vn::geometry::Box(0.25f, 0.5f, 0.75f)));
 
     DeviceIO io;
     io.savePkg(*robot, file);
@@ -196,13 +196,11 @@ TEST(PkgIOTest, DevicePkgPrimitiveRoundTrip)
     ASSERT_NE(loaded, nullptr);
     const auto& visuals = loaded->baseLink()->body().visuals();
     ASSERT_EQ(visuals.size(), 1u);
-    const auto* const primitive = vn::obj_cast<vn::geometry::Primitive>(visuals[0].shape().get());
-    ASSERT_NE(primitive, nullptr);
-    const auto* const box = std::get_if<vn::geometry::Boxf>(&primitive->shape());
+    const auto* const box = vn::obj_cast<vn::geometry::Box>(visuals[0].shape().get());
     ASSERT_NE(box, nullptr);
-    EXPECT_FLOAT_EQ(box->half_x * 2.0f, 0.25f);
-    EXPECT_FLOAT_EQ(box->half_y * 2.0f, 0.5f);
-    EXPECT_FLOAT_EQ(box->half_z * 2.0f, 0.75f);
+    EXPECT_FLOAT_EQ(box->width(), 0.25f);
+    EXPECT_FLOAT_EQ(box->height(), 0.5f);
+    EXPECT_FLOAT_EQ(box->depth(), 0.75f);
 }
 
 TEST(PkgIOTest, DevicePkgWithMeshRoundTrip)

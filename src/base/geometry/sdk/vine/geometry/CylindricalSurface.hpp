@@ -21,7 +21,7 @@ VN_GEOMETRY_NS_BEGIN
  * @details
  * - This is the *surface*, not the solid: it has no caps and no inside, so it exists for the questions a sheet answers
  *   - a trimmed B-rep face, a point projected onto it, a ray that must hit one side. The closed, placeable version a
- *   model holds is `Cylinder` (see `Primitive.hpp`).
+ *   model holds is `CylinderSolid` (see `Primitive.hpp`).
  * - `evaluate(u, v) = origin + radius * (cos u * X + sin u * Y) + v * axis`, the parameterisation OCCT's
  *   `Geom_CylindricalSurface` uses: `u` is the azimuth in `[0, 2 * pi]` measured from `x_direction`, `v` is the signed
  *   distance along the axis in length units.
@@ -274,7 +274,7 @@ using CylindricalSurfaced = CylindricalSurface<double>;
  * - The axial part of `p - origin` is dropped, so only the distance to the axis counts: `|radial| - radius`.
  * - The answer does not depend on the position along the axis, which is what makes the cylinder unbounded.
  *
- * @param surface Cylinder to measure against.
+ * @param surface CylinderSolid to measure against.
  * @param point   Point to measure.
  * @return Signed distance to the cylinder.
  */

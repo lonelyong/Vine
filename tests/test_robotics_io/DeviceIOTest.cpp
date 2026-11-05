@@ -216,11 +216,9 @@ TEST(DeviceIOTest, LoadXmlFromFolder)
     ASSERT_EQ(body.visuals().size(), 1u);
     ASSERT_NE(body.visuals()[0].shape(), nullptr);
     EXPECT_EQ(body.visuals()[0].shape()->shapeType(), vn::geometry::ShapeType::Box);
-    const auto* const primitive = vn::obj_cast<vn::geometry::Primitive>(body.visuals()[0].shape().get());
-    ASSERT_NE(primitive, nullptr);
-    const auto* const box = std::get_if<vn::geometry::Boxf>(&primitive->shape());
+    const auto* const box = vn::obj_cast<vn::geometry::Box>(body.visuals()[0].shape().get());
     ASSERT_NE(box, nullptr);
-    EXPECT_FLOAT_EQ(box->half_x * 2.0f, 0.2f);
+    EXPECT_FLOAT_EQ(box->width(), 0.2f);
     ASSERT_EQ(body.collisions().size(), 1u);
     EXPECT_EQ(body.collisions()[0].shape()->shapeType(), vn::geometry::ShapeType::Sphere);
 }

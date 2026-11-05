@@ -2,7 +2,7 @@
 
 > **状态**：现行
 > **最后核对**：2026-11-05
-> **范围**：`Solid<T>` 族（五个解析体：`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）、它的两个查询（最近点、射线求交）、模型侧的持有方式 `SolidShape<T>` 与族视图 `solidOf()`。
+> **范围**：`Solid<T>` 族（五个解析体：`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid`）、它的两个查询（最近点、射线求交），以及模型侧如何给出这份实体（每个建模子类的 `solid()`、`solidShapeOf()`、`visitPrimitive()`）。
 > 不含三角化（见 `geometry-tessellation.md`），不含实体间运算（布尔、实体间距离，见 `../backlog/geometry.md` G3），不含曲面族查询（见 `geometry-surface-queries.md`）。
 > **权威来源**：`src/base/geometry/sdk/vine/geometry/Solid.hpp`、`Primitive.hpp`；`tests/test_geometry/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`。
 > **待办**：`../backlog/geometry.md`
@@ -19,7 +19,7 @@
 
 - 一个**族**：`const Solid<T>&` 能接受任意一种实体，并对它提问——这是“参数必须是具体类型”的消费者要的东西（一个导出签名、一个后端接口）。
 - 一个**封闭值集**：五个 kind 按值存放，模型一次持有，没有指针、没有堆、没有共享所有权。
-- 模型侧只剩一次转换：`Primitive` 存 `SolidShapef`，`solidOf()` 给出族视图，不按 `shapeType()` 分派几何。
+- 模型侧只剩一次转换：每个建模子类用自己的尺寸构造自己的 kind（`Box::solid()`），`solidShapeOf()` 给出可选值；几何不认识 `ShapeType`。
 - 加一种 kind 时，编译器把“哪些消费者必须处理它”列出来。
 
 ### 1.3 非目标
@@ -27,23 +27,23 @@
 - 不做实体间的布尔与实体间最近距离：结果类型在 `geometry` 里装不下，没有消费者（G3，走 `brep` + OCCT）。
 - 不做有表示的实体：NURBS 体、网格体、布尔结果属于 `BrepShape`，永远不是 `Solid`（`G13`）。
 - 不做 `Solid<T>` 的三角化成员：`TriangleMesh` 是 float，成员化会让 `Solid<double>` 隐式降精度（`geometry-tessellation.md` 2.1）。
-- 不做双精度与单精度之间的隐式转换：要 `double` 的调用方显式构造 `Boxd` / `Sphered` / …（2.6）。
+- 不做双精度与单精度之间的隐式转换：要 `double` 的调用方显式构造 `BoxSolidd` / `SphereSolidd` / …（2.6）。
 
 ### 1.4 一句话结论
 
-**`Solid<T>` 是族接口（五个虚查询），五个 kind 是它的值，模型持有的 `SolidShape<T>` 是这五个值的封闭联合：不认识 kind 的消费者拿 `solid()` 问，必须按 kind 作答的消费者 visit `shape()`。**
+**`Solid<T>` 是族接口（五个虚查询），五个 kind 是它的值；不认识 kind 的消费者问族接口，必须按 kind 作答的消费者用 `solidShapeOf()` 拿到 `SolidShape<T>` 再 visit（或 `visitPrimitive()` 直接拿具体建模类）。**
 
 ## 2. 设计要点
 
 ### 2.1 两个层次，两个问题
 
-- **是什么**：`Solid<T>`（抽象，五个纯虚：`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith`）回答“这个实体怎么样”；`Box<T>` … `Ellipsoid<T>` 是它的值；`SolidShape<T> = std::variant<五个 kind>` 是模型存的那份值。
+- **是什么**：`Solid<T>`（抽象，五个纯虚：`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith`）回答“这个实体怎么样”；`BoxSolid<T>` … `EllipsoidSolid<T>` 是它的值；`SolidShape<T> = std::variant<五个 kind>` 是模型存的那份值。
 - **为什么**：`G13`、`G1` —— 有些参数必须是具体类型，而不是模板：一个导出签名、一个后端接口只能写 `const Solid<float>&`。接口层给出的正是这个类型；variant 层给出的是“按 kind 作答”的穷尽分派。两层各回答一个真问题，不是同一件事做两遍。
-- **边界**：`solidOf(shape)` 是两层之间唯一的转换（`std::visit` 取引用，零成本、无拷贝）；`Primitive::solid()` 是族视图，`Primitive::shape()` 是那份 variant。
+- **边界**：`solidOf(shape)` 是两层之间唯一的转换（`std::visit` 取引用，零成本、无拷贝）；模型的入口是子类的 `solid()`（返回具体 kind 的值）与自由函数 `solidShapeOf()`（可选值，不是实体时为空）。
 
 ### 2.2 封闭集合仍然按值持有
 
-- **是什么**：`SolidShape<T>` 按值持有五个 kind；`Primitive` 把它内联存为成员。
+- **是什么**：`SolidShape<T>` 按值持有五个 kind；模型不再存它：建模子类存自己的尺寸，`solid()` 每次构造一个值。
 - **为什么**：`G10`、`G13` —— 模型对象本来就在堆上（`Shape`），那 24–32 字节躺在一个已经存在的块里，**零额外分配**；换成 `unique_ptr<Solid>` 就是每个连杆一次分配加一次解引用，换成 `shared_ptr` 还违反“模型与几何不共享所有权”。
 - **边界**：`SolidShape<T>` 是 `std::variant`，所以 kind 的集合是封闭的；`BrepShape` 才是“任意实体”的出口。
 
@@ -55,7 +55,7 @@
 
 ### 2.4 canonical 局部空间与半量纲
 
-- **是什么**：盒 / 球 / 椭球居中于原点；圆柱 / 圆锥的轴在 +Z、跨 `[-half_height, +half_height]`，圆锥底面在 `-half_height`。`Box` 存**半**边长，圆柱与圆锥存**半**高。
+- **是什么**：盒 / 球 / 椭球居中于原点；圆柱 / 圆锥的轴在 +Z、跨 `[-half_height, +half_height]`，圆锥底面在 `-half_height`。`BoxSolid` 存**半**边长，圆柱与圆锥存**半**高。
 - **为什么**：`G4`、`G12` —— 该空间的公式一律用半量纲书写（盒是三次 clamp，圆柱是径向 + 轴向 clamp），字段名 `half_x` / `half_height` 自己说明是哪一半；全量纲只出现在模型描述文件那一侧。
 - **边界**：摆放属于持有形状的节点变换，`Solid` 没有坐标系、没有放置、也没有“旋转过的实体”。
 
@@ -67,9 +67,9 @@
 
 ### 2.6 尺寸是 float，更高精度是显式选择
 
-- **是什么**：模型存 `float`；`Boxd` / `Sphered` / … 是 `double` 的 kind，需要它们的调用方自己构造。
+- **是什么**：模型存 `float`；`BoxSolidd` / `SphereSolidd` / … 是 `double` 的 kind，需要它们的调用方自己构造。
 - **为什么**：`G4` —— 描述文件读进来的就是 float，网格也是 float（`TriangleMesh`）；没有“隐式把 float 实体当 double 算”的转换，就不会有“以为拿到了 double 尺寸”的误解。
-- **代价**：跨精度要显式写（构造 `Boxd{...}`）；换精度不是一行 cast，而是一次显式的类型选择。
+- **代价**：跨精度要显式写（构造 `BoxSolidd{...}`）；换精度不是一行 cast，而是一次显式的类型选择。
 
 ## 3. 功能点
 
@@ -77,10 +77,10 @@
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | 族接口与五个 kind | `Solid<T>` 五个纯虚；`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 各持量与公式 | 已落地（T1、T2） |
+| F1 | 族接口与五个 kind | `Solid<T>` 五个纯虚；`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid` 各持量与公式 | 已落地（T1、T2） |
 | F2 | 点到实体的最近点 / 距离 | `closestPoint(query, tolerance)`：实体语义，内部为 0 | 已落地（T3–T6） |
 | F3 | 射线 × 实体 | `intersectWith(ray, eps)`：升序、最多两个、法向朝射线 | 已落地（T4、T7） |
-| F4 | 模型持有与族视图 | `Primitive::shape()` / `solid()`；`solidOf(SolidShape)` 取族引用 | 已落地（T2、T8） |
+| F4 | 模型给出实体 | 每个建模子类的 `solid()`（值）、`solidShapeOf(Primitive)`（可选值）、`visitPrimitive()`；`solidOf(SolidShape)` 取族引用 | 已落地（T2、T8） |
 | F5 | 三角化 | `tessellateSolid(SolidShapef, quality)` | 见 `geometry-tessellation.md` |
 
 ### 3.2 F1 接口与 kind
@@ -105,7 +105,7 @@
 
 ### 3.5 F4 模型持有与族视图
 
-- **行为**：`Primitive` 存 `SolidShapef`；`setSolid()` 是唯一 mutator，并同时重算 `shapeType()`；`solidOf()` 用一个 `std::visit` 把 variant 转成 `const Solidf&`。
+- **行为**：建模子类按当前尺寸构造 `SolidShapef`（`Box::solid()`），`solidShapeOf()` 把任意 `Primitive` 转成 `std::optional<SolidShapef>`，`solidOf()` 用一个 `std::visit` 把 variant 转成 `const Solidf&`。
 - **约束**（C6）：`Solid<T>` 不认识 `Shape` / `Primitive`；模型侧没有按 `ShapeType` 分派几何的代码。
 - **验收**（T2、T8）：`theTwoViewsOfOneSolidAgree`、`theModelHoldsTheGeometryAndDerivesItsTag`。
 
@@ -116,26 +116,26 @@
 | 接口 | 契约 | 备注 |
 |---|---|---|
 | `Solid<T>` | 五个纯虚：`isValid()`、`hasVolume(T)`、`bounds()`、`closestPoint(query, tolerance)`、`intersectWith(ray, eps)` | 完整签名见 `Solid.hpp` |
-| `Box<T>` / `Sphere<T>` / `Cylinder<T>` / `Cone<T>` / `Ellipsoid<T>` | `final` 实现者，持半量纲 | 公开字段 `half_x`、`radius`、`half_height`、`base_radius`、`radius_x/y/z` |
+| `BoxSolid<T>` / `SphereSolid<T>` / `CylinderSolid<T>` / `ConeSolid<T>` / `EllipsoidSolid<T>` | `final` 实现者，持半量纲 | 公开字段 `half_x`、`radius`、`half_height`、`base_radius`、`radius_x/y/z` |
 | `SolidShape<T>` | `std::variant` 五个 kind | 模型存的那份值 |
 | `solidOf(SolidShape<T> const&)` | 取族引用 | 零拷贝；引用跟随 variant 的内容 |
-| `Solidf` / `Solidd`、`Boxf` / `Boxd`、… | 两种精度的别名 | 与 `Aabbf` / `Aabbd` 同一命名法 |
+| `Solidf` / `Solidd`、`BoxSolidf` / `BoxSolidd`、… | 两种精度的别名 | 与 `Aabbf` / `Aabbd` 同一命名法 |
 
 ### 4.2 模型侧
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `Primitive::shape()` | `const SolidShapef&` | 给必须按 kind 作答的消费者 |
-| `Primitive::solid()` | `const Solidf&` | 给只问一个问题的消费者 |
-| `Primitive::setSolid(const SolidShapef&)` | 唯一 mutator，同步 `shapeType()` | 一个 kind 隐式转成 variant |
-| `Primitive::isValid()` / `hasVolume(double)` / `bounds()` | 转发给 `solid()` | 不重算任何公式 |
+| `Box::solid()` … `Ellipsoid::solid()` | 具体 kind 的值 | 子类用自己的尺寸构造 |
+| `solidShapeOf(const Primitive&)` | `std::optional<SolidShapef>` | 不是五个实体之一时为空 |
+| `visitPrimitive(primitive, visitor)` | `bool` | 把具体建模类交给 visitor |
+| `Primitive::isValid()` / `hasVolume(double)` / `bounds()` | 子类转发给 `solid()` | 不重算任何公式 |
 
 ## 5. 约束、要求与不变量
 
 ### 5.1 约束（C#）
 
 - **C1**：所有量纲在 canonical 局部空间；摆放属于节点变换，族没有坐标系。
-- **C2**：`Box` 存半边长，`Cylinder` / `Cone` 存半高。
+- **C2**：`BoxSolid` 存半边长，`CylinderSolid` / `ConeSolid` 存半高。
 - **C3**：不可用的实体（任一半量纲 ≤ 0）答 `std::nullopt` / 空结果，不抛异常、不除零。
 - **C4**：射线结果只含 `t ≥ -eps` 的交点，升序，在 `eps` 内去重。
 - **C5**：法向是外向法向再转向射线（`RayHit` 的规则）；奇异点（圆锥顶点）给零向量。
@@ -178,11 +178,11 @@
 
 - **会怎么错**：以为 `Primitive::solid()` 给的是 `double`。
 - **怎么判**：类型是 `const Solid<float>&`，编译期就能看出来。
-- **怎么防**：2.6；要高精度就显式构造 `Boxd` / `Sphered` / …
+- **怎么防**：2.6；要高精度就显式构造 `BoxSolidd` / `SphereSolidd` / …
 
 ### 6.5 派生类会遮蔽基类的默认参数
 
-- **会怎么错**：只在 `Solid<T>` 上写 `= EPS<T>()`，然后通过 `Boxf` 调用 `closestPoint(query)`，编译报“参数太少”。
+- **会怎么错**：只在 `Solid<T>` 上写 `= EPS<T>()`，然后通过 `BoxSolidf` 调用 `closestPoint(query)`，编译报“参数太少”。
 - **怎么判**：通过具体 kind 调用的地方编译不过，通过 `const Solidf&` 调用的地方正常。
 - **怎么防**：默认值在接口与每个 kind 的声明上各写一次（2.5）；调用点不要自己重复传 `EPS`。
 
@@ -190,7 +190,7 @@
 
 - **D1** `Solid<T>` 直接就是 `std::variant` 的别名（没有接口层）：失去“参数是具体类型”的能力，每个只问一个问题的消费者都得自己 visit（`G7`）。见 `../decisions/ADR-2026-11-05-solid-family-and-variant.md`。
 - **D2** 族接口 + `Primitive` 用指针持有：每次模型构造一次堆分配、每次 `bounds()` 一次解引用，并引入“模型与几何共享所有权”的路径（`G10`、`G13`）。同一 ADR。
-- **D3** 每个形状一个模型子类（`Box(Primitive)` …）：`ShapeType` 与类可能漂移、同一个形状的公式散在多处、模型消费者认识算法入口（`G1`、`G12`）。同一 ADR。
+- **D3** 每个形状一个模型子类（`BoxSolid(Primitive)` …）：`ShapeType` 与类可能漂移、同一个形状的公式散在多处、模型消费者认识算法入口（`G1`、`G12`）。同一 ADR。
 - **D4** 把三角化做成 `Solid<T>` 的成员：`TriangleMesh` 是 float，`Solid<double>::tessellate()` 只能降精度输出（`G4`）。见 `geometry-tessellation.md` D5。
 - **D5** float / double 实体之间隐式转换：会把“尺寸只有 float 分辨率”这件事藏进调用链（`G4`）。见 2.6。
 
@@ -219,11 +219,11 @@
 
 - 实体间运算（布尔、实体间最近距离）没有消费者，见 `../backlog/geometry.md` G3。
 - 新 kind（torus / capsule / 棱柱）：`Solid.hpp` 一处 + 每个 visit 点（编译器会列出来）+ 一个 `ShapeType`；有表示的实体不进这里，走 `BrepShape`。
-- 三角化只有 `SolidShapef` 入口：要画 `Boxd` 的调用方自己构造对应 `Boxf`（`geometry-tessellation.md` 9.2）。
+- 三角化只有 `SolidShapef` 入口：要画 `BoxSolidd` 的调用方自己构造对应 `BoxSolidf`（`geometry-tessellation.md` 9.2）。
 
 ### 9.3 兼容性 / 迁移
 
-- 模型侧：`Primitive` 是唯一类，构造用 `Primitive(Boxf{...})`，读取用 `solid()`（族）或 `shape()`（variant）。
+- 模型侧：`Primitive` 是唯一类，构造用 `Primitive(BoxSolidf{...})`，读取用 `solid()`（族）或 `shape()`（variant）。
 - 以模型为参数的三个算法入口（三角化、射线、距离）已删除；替代分别是 `tessellateSolid(p.shape())` 与 `p.solid().closestPoint(...)` / `p.solid().intersectWith(...)`。
 
 ## 10. 参考

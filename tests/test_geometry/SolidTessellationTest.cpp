@@ -17,12 +17,12 @@
 namespace
 {
 
-using vn::geometry::Boxf;
-using vn::geometry::Conef;
-using vn::geometry::Cylinderf;
-using vn::geometry::Ellipsoidf;
+using vn::geometry::BoxSolidf;
+using vn::geometry::ConeSolidf;
+using vn::geometry::CylinderSolidf;
+using vn::geometry::EllipsoidSolidf;
 using vn::geometry::Primitive;
-using vn::geometry::Spheref;
+using vn::geometry::SphereSolidf;
 using vn::geometry::tessellateSolid;
 using vn::geometry::TessellationQuality;
 using vn::geometry::TriangleMesh;
@@ -82,7 +82,7 @@ void expectOutwardUnitNormals(const TriangleMesh& mesh)
 TEST(SolidTessellation, aBoxBecomesSixClosedQuads)
 {
     // Six faces, four corners each because every face keeps its own normal: 24 vertices, 12 triangles.
-    const auto mesh = tessellateSolid(Boxf{ 1.0f, 2.0f, 3.0f });
+    const auto mesh = tessellateSolid(BoxSolidf{ 1.0f, 2.0f, 3.0f });
 
     ASSERT_TRUE(mesh);
     ASSERT_TRUE(mesh->isValid());
@@ -105,7 +105,7 @@ TEST(SolidTessellation, aBoxBecomesSixClosedQuads)
 TEST(SolidTessellation, aSphereBecomesAClosedBandBetweenItsPoles)
 {
     // around x (along - 1) triangles per band, plus one fan of `around` triangles at each pole.
-    const auto mesh = tessellateSolid(Spheref{ 1.0f }, TessellationQuality{ 8, 4 });
+    const auto mesh = tessellateSolid(SphereSolidf{ 1.0f }, TessellationQuality{ 8, 4 });
 
     ASSERT_TRUE(mesh);
     ASSERT_TRUE(mesh->isValid());
@@ -126,7 +126,7 @@ TEST(SolidTessellation, aCylinderHasASideBandAndTwoCaps)
 {
     // 2 * around side vertices, two cap centres and 2 * around cap rim vertices; the rim is duplicated between the
     // side (radial normal) and the cap (axial normal).
-    const auto mesh = tessellateSolid(Cylinderf{ 1.0f, 1.0f }, TessellationQuality{ 8, 2 });
+    const auto mesh = tessellateSolid(CylinderSolidf{ 1.0f, 1.0f }, TessellationQuality{ 8, 2 });
 
     ASSERT_TRUE(mesh);
     ASSERT_TRUE(mesh->isValid());
@@ -155,7 +155,7 @@ TEST(SolidTessellation, aConeHasASlantedSideAndABase)
 {
     // The side normal is (cos, sin, r / h) before normalisation: with r = 1, h = 2 its axial component is
     // 0.5 / sqrt(1.25) = 1 / sqrt(5).
-    const auto   mesh           = tessellateSolid(Conef{ 1.0f, 1.0f }, TessellationQuality{ 8, 2 });
+    const auto   mesh           = tessellateSolid(ConeSolidf{ 1.0f, 1.0f }, TessellationQuality{ 8, 2 });
     const double expected_axial = 1.0 / std::sqrt(5.0);
 
     ASSERT_TRUE(mesh);
@@ -179,7 +179,7 @@ TEST(SolidTessellation, aConeHasASlantedSideAndABase)
 TEST(SolidTessellation, anEllipsoidUsesItsThreeSemiAxes)
 {
     // Every point satisfies (x / a)^2 + (y / b)^2 + (z / c)^2 = 1, and the normal is parallel to (x / a^2, ...).
-    const auto mesh = tessellateSolid(Ellipsoidf{ 1.0f, 2.0f, 3.0f }, TessellationQuality{ 8, 4 });
+    const auto mesh = tessellateSolid(EllipsoidSolidf{ 1.0f, 2.0f, 3.0f }, TessellationQuality{ 8, 4 });
 
     ASSERT_TRUE(mesh);
     ASSERT_TRUE(mesh->isValid());
@@ -200,7 +200,7 @@ TEST(SolidTessellation, theQualityIsClampedInsteadOfTrusted)
 {
     // around < 3 cannot form a ring and along < 2 leaves no band; both are clamped, so the smallest sphere is an
     // octahedron rather than an empty or degenerate mesh.
-    const auto mesh = tessellateSolid(Spheref{ 1.0f }, TessellationQuality{ 0, 0 });
+    const auto mesh = tessellateSolid(SphereSolidf{ 1.0f }, TessellationQuality{ 0, 0 });
 
     ASSERT_TRUE(mesh);
     ASSERT_TRUE(mesh->isValid());
@@ -210,11 +210,11 @@ TEST(SolidTessellation, theQualityIsClampedInsteadOfTrusted)
 
 TEST(SolidTessellation, anUnusableSolidAnswersNull)
 {
-    const Boxf       degenerate_box{ 1.0f, 0.0f, 1.0f };
-    const Spheref    degenerate_sphere{ 0.0f };
-    const Cylinderf  degenerate_cylinder{ 0.0f, 1.0f };
-    const Conef      degenerate_cone{ 1.0f, 0.0f };
-    const Ellipsoidf degenerate_ellipsoid{ 1.0f, 0.0f, 1.0f };
+    const BoxSolidf       degenerate_box{ 1.0f, 0.0f, 1.0f };
+    const SphereSolidf    degenerate_sphere{ 0.0f };
+    const CylinderSolidf  degenerate_cylinder{ 0.0f, 1.0f };
+    const ConeSolidf      degenerate_cone{ 1.0f, 0.0f };
+    const EllipsoidSolidf degenerate_ellipsoid{ 1.0f, 0.0f, 1.0f };
 
     EXPECT_EQ(tessellateSolid(degenerate_box).get(), nullptr);
     EXPECT_EQ(tessellateSolid(degenerate_sphere).get(), nullptr);
@@ -226,15 +226,19 @@ TEST(SolidTessellation, anUnusableSolidAnswersNull)
 TEST(SolidTessellation, aModelReachesTheMeshThroughItsSolid)
 {
     // The modeling type has no triangulation of its own: it holds the float solid, which is what a mesh is built from.
-    const Primitive box(Boxf{ 1.0f, 2.0f, 3.0f });
+    const vn::geometry::Box box(2.0f, 4.0f, 6.0f);
 
-    const auto mesh = tessellateSolid(box.shape());
+    const auto solid = vn::geometry::solidShapeOf(box);
+    ASSERT_TRUE(solid.has_value());
+    const auto mesh = tessellateSolid(*solid);
     ASSERT_TRUE(mesh);
     EXPECT_EQ(mesh->triangleCount(), 12U);
     EXPECT_NEAR(mesh->aabb().max().y, 2.0f, 1e-6f);
 
     // A degenerate model still hands out its solid; the tessellator is what refuses it.
-    const Primitive collapsed(Cylinderf{ 0.0f, 1.0f });
+    const vn::geometry::Cylinder collapsed(0.0f, 2.0f);
     EXPECT_FALSE(collapsed.isValid());
-    EXPECT_EQ(tessellateSolid(collapsed.shape()).get(), nullptr);
+    const auto collapsed_solid = vn::geometry::solidShapeOf(collapsed);
+    ASSERT_TRUE(collapsed_solid.has_value());
+    EXPECT_EQ(tessellateSolid(*collapsed_solid).get(), nullptr);
 }

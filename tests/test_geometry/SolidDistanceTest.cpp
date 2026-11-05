@@ -11,12 +11,12 @@
 namespace
 {
 
-using vn::geometry::Boxd;
-using vn::geometry::Coned;
-using vn::geometry::Cylinderd;
-using vn::geometry::Ellipsoidd;
+using vn::geometry::BoxSolidd;
+using vn::geometry::ConeSolidd;
+using vn::geometry::CylinderSolidd;
+using vn::geometry::EllipsoidSolidd;
 using vn::geometry::Primitive;
-using vn::geometry::Sphered;
+using vn::geometry::SphereSolidd;
 using vn::math::Point3d;
 using vn::math::Point3f;
 using vn::math::Vec3d;
@@ -34,7 +34,7 @@ void expectInside(const Projection& projection, const Point3d& query)
 template <vn::math::FP T>
 void checkSphereProjectionAtBothPrecisions()
 {
-    const vn::geometry::Sphere<T> sphere{ T(1) };
+    const vn::geometry::SphereSolid<T> sphere{ T(1) };
     const auto                    projection = sphere.closestPoint(vn::math::Point3<T>(T(5), T(0), T(0)));
 
     ASSERT_TRUE(projection.has_value());
@@ -47,7 +47,7 @@ void checkSphereProjectionAtBothPrecisions()
 
 TEST(SolidDistance, aBoxClampsToItsFacesAndCorners)
 {
-    const Boxd box{ 1.0, 1.0, 1.0 };
+    const BoxSolidd box{ 1.0, 1.0, 1.0 };
 
     const auto face = box.closestPoint(Point3d(3.0, 0.0, 0.0));
     ASSERT_TRUE(face.has_value());
@@ -64,7 +64,7 @@ TEST(SolidDistance, aBoxClampsToItsFacesAndCorners)
 
 TEST(SolidDistance, aSphereProjectsAlongItsRadius)
 {
-    const Sphered sphere{ 1.0 };
+    const SphereSolidd sphere{ 1.0 };
 
     const auto outside = sphere.closestPoint(Point3d(5.0, 0.0, 0.0));
     ASSERT_TRUE(outside.has_value());
@@ -78,7 +78,7 @@ TEST(SolidDistance, anEllipsoidProjectsOntoItsSurfaceAlongTheNormal)
 {
     // On the axes the projection is the semi-axis itself; off the axes the nearest point satisfies the Lagrange
     // condition, i.e. the segment to the query is parallel to the surface normal.
-    const Ellipsoidd ellipsoid{ 1.0, 2.0, 3.0 };
+    const EllipsoidSolidd ellipsoid{ 1.0, 2.0, 3.0 };
 
     const auto along_x = ellipsoid.closestPoint(Point3d(5.0, 0.0, 0.0));
     ASSERT_TRUE(along_x.has_value());
@@ -113,7 +113,7 @@ TEST(SolidDistance, anEllipsoidProjectsOntoItsSurfaceAlongTheNormal)
 
 TEST(SolidDistance, aCylinderClampsRadiallyAndAxially)
 {
-    const Cylinderd cylinder{ 1.0, 1.0 };
+    const CylinderSolidd cylinder{ 1.0, 1.0 };
 
     const auto side = cylinder.closestPoint(Point3d(5.0, 0.0, 0.5));
     ASSERT_TRUE(side.has_value());
@@ -135,7 +135,7 @@ TEST(SolidDistance, aCylinderClampsRadiallyAndAxially)
 
 TEST(SolidDistance, aConeChoosesBetweenItsBaseAndItsSide)
 {
-    const Coned cone{ 1.0, 1.0 }; // base radius 1 at z = -1, apex at z = +1
+    const ConeSolidd cone{ 1.0, 1.0 }; // base radius 1 at z = -1, apex at z = +1
 
     // Far from the axis at mid height the base rim is nearest.
     const auto beside = cone.closestPoint(Point3d(5.0, 0.0, 0.0));
@@ -160,8 +160,8 @@ TEST(SolidDistance, aConeChoosesBetweenItsBaseAndItsSide)
 
 TEST(SolidDistance, anUnusableSolidAnswersNothing)
 {
-    const Boxd    degenerate_box{ 1.0, 0.0, 1.0 };
-    const Sphered degenerate_sphere{ 0.0 };
+    const BoxSolidd    degenerate_box{ 1.0, 0.0, 1.0 };
+    const SphereSolidd degenerate_sphere{ 0.0 };
 
     EXPECT_FALSE(degenerate_box.closestPoint(Point3d(1.0, 1.0, 1.0)).has_value());
     EXPECT_FALSE(degenerate_sphere.closestPoint(Point3d(1.0, 1.0, 1.0)).has_value());
@@ -169,8 +169,8 @@ TEST(SolidDistance, anUnusableSolidAnswersNothing)
 
 TEST(SolidDistance, aModelReachesTheSameAnswerThroughItsSolid)
 {
-    // The modeling type has no distance query of its own: it holds the geometry, and the family view answers.
-    const Primitive box(vn::geometry::Boxf{ 1.0f, 1.0f, 1.0f });
+    // The modeling type has no distance query of its own: its analytic solid answers.
+    const vn::geometry::Box box(2.0f, 2.0f, 2.0f);
 
     const auto face = box.solid().closestPoint(Point3f(3.0f, 0.0f, 0.0f));
     ASSERT_TRUE(face.has_value());

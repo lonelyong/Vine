@@ -14,13 +14,13 @@
 namespace
 {
 
-using vn::geometry::Boxd;
-using vn::geometry::Coned;
-using vn::geometry::Cylinderd;
-using vn::geometry::Ellipsoidd;
+using vn::geometry::BoxSolidd;
+using vn::geometry::ConeSolidd;
+using vn::geometry::CylinderSolidd;
+using vn::geometry::EllipsoidSolidd;
 using vn::geometry::Primitive;
 using vn::geometry::Rayd;
-using vn::geometry::Sphered;
+using vn::geometry::SphereSolidd;
 using vn::math::Point3d;
 using vn::math::Vec3d;
 
@@ -37,7 +37,7 @@ void expectNormalsFaceTheRay(const Hits& hits, const Ray& ray)
 template <vn::math::FP T>
 void checkSphereAtBothPrecisions()
 {
-    const vn::geometry::Sphere<T>              sphere{ T(1) };
+    const vn::geometry::SphereSolid<T>              sphere{ T(1) };
     const vn::geometry::Ray<T>                 ray(vn::math::Point3<T>(T(-5), T(0), T(0)), vn::math::Vector3<T>(T(1), T(0), T(0)));
     const std::vector<vn::geometry::RayHit<T>> hits = sphere.intersectWith(ray);
 
@@ -52,7 +52,7 @@ void checkSphereAtBothPrecisions()
 TEST(SolidIntersection, aRayCrossesABoxTwice)
 {
     // A box is a slab: entering at x = -1 and leaving at x = +1; both normals face back towards the ray.
-    const Boxd box{ 1.0, 1.0, 1.0 };
+    const BoxSolidd box{ 1.0, 1.0, 1.0 };
     const Rayd ray(Point3d(-5.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     const auto hits = box.intersectWith(ray);
 
@@ -69,7 +69,7 @@ TEST(SolidIntersection, aRayCrossesABoxTwice)
 TEST(SolidIntersection, aRayFromInsideASolidReportsOnlyTheExit)
 {
     // The entering crossing is behind the origin, so only the boundary ahead of it is a hit.
-    const Boxd box{ 1.0, 1.0, 1.0 };
+    const BoxSolidd box{ 1.0, 1.0, 1.0 };
     const Rayd ray(Point3d(0.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     const auto hits = box.intersectWith(ray);
 
@@ -80,7 +80,7 @@ TEST(SolidIntersection, aRayFromInsideASolidReportsOnlyTheExit)
 
 TEST(SolidIntersection, aRayCrossesASphereTwiceAndMissesItBeside)
 {
-    const Sphered sphere = Sphered{ 1.0 };
+    const SphereSolidd sphere = SphereSolidd{ 1.0 };
     const Rayd    through(Point3d(-5.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     const auto    hits = sphere.intersectWith(through);
     ASSERT_EQ(hits.size(), 2U);
@@ -96,7 +96,7 @@ TEST(SolidIntersection, aTangentialRayTouchesASphereOnce)
 {
     // y = 1 is exactly the radius: the quadratic has a double root at x = 0, and the normal is perpendicular to the
     // ray, so it is neither flipped nor lost.
-    const Sphered sphere = Sphered{ 1.0 };
+    const SphereSolidd sphere = SphereSolidd{ 1.0 };
     const Rayd    tangent(Point3d(-5.0, 1.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     const auto    hits = sphere.intersectWith(tangent);
 
@@ -108,7 +108,7 @@ TEST(SolidIntersection, aTangentialRayTouchesASphereOnce)
 TEST(SolidIntersection, anEllipsoidUsesItsThreeSemiAxes)
 {
     // Along X the crossings are at the X semi-axis, along Y at the Y one: the scaled quadratic does the work.
-    const Ellipsoidd ellipsoid{ 1.0, 2.0, 3.0 };
+    const EllipsoidSolidd ellipsoid{ 1.0, 2.0, 3.0 };
 
     const Rayd along_x(Point3d(-5.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     const auto hits_x = ellipsoid.intersectWith(along_x);
@@ -125,7 +125,7 @@ TEST(SolidIntersection, anEllipsoidUsesItsThreeSemiAxes)
 
 TEST(SolidIntersection, aCylinderIsHitOnItsSideAndOnItsCaps)
 {
-    const Cylinderd cylinder{ 1.0, 1.0 };
+    const CylinderSolidd cylinder{ 1.0, 1.0 };
 
     // Across the axis at mid height: two side crossings at the radius.
     const Rayd across(Point3d(-5.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
@@ -150,7 +150,7 @@ TEST(SolidIntersection, aConeIsHitOnItsSideAndItsBase)
 {
     // At mid height the cone's radius is half the base radius; a horizontal ray therefore meets the side at
     // x = -0.5 and x = +0.5.
-    const Coned cone = Coned{ 1.0, 1.0 };
+    const ConeSolidd cone = ConeSolidd{ 1.0, 1.0 };
     const Rayd  across(Point3d(-5.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     const auto  side = cone.intersectWith(across);
     ASSERT_EQ(side.size(), 2U);
@@ -176,20 +176,20 @@ TEST(SolidIntersection, aConeIsHitOnItsSideAndItsBase)
 
 TEST(SolidIntersection, unusableInputsAnswerNothing)
 {
-    const Sphered sphere = Sphered{ 1.0 };
+    const SphereSolidd sphere = SphereSolidd{ 1.0 };
 
     const Rayd aimless(Point3d(-5.0, 0.0, 0.0), Vec3d(0.0, 0.0, 0.0));
     EXPECT_TRUE(sphere.intersectWith(aimless).empty());
 
-    const Sphered collapsed{ 0.0 };
+    const SphereSolidd collapsed{ 0.0 };
     const Rayd    ray(Point3d(-5.0, 0.0, 0.0), Vec3d(1.0, 0.0, 0.0));
     EXPECT_TRUE(collapsed.intersectWith(ray).empty());
 }
 
 TEST(SolidIntersection, aModelReachesTheSameHitsThroughItsSolid)
 {
-    // The modeling type has no ray query of its own: it holds the geometry, and the family view answers.
-    const Primitive sphere(vn::geometry::Spheref{ 1.0f });
+    // The modeling type has no ray query of its own: its analytic solid answers.
+    const vn::geometry::Sphere sphere(1.0f);
 
     const auto hits = sphere.solid().intersectWith(vn::geometry::Rayf(vn::math::Point3f(-5.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f)));
     ASSERT_EQ(hits.size(), 2U);
@@ -197,7 +197,7 @@ TEST(SolidIntersection, aModelReachesTheSameHitsThroughItsSolid)
     EXPECT_NEAR(hits[1].t, 6.0f, 1e-5f);
 
     // A degenerate model still carries its kind; it is the geometry that refuses the query.
-    const Primitive collapsed(vn::geometry::Cylinderf{ 0.0f, 1.0f });
+    const vn::geometry::Cylinder collapsed(0.0f, 2.0f);
     EXPECT_FALSE(collapsed.isValid());
     const auto refused = collapsed.solid().intersectWith(vn::geometry::Rayf(vn::math::Point3f(-5.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f)));
     EXPECT_TRUE(refused.empty());

@@ -32,7 +32,7 @@
 
 ### 1.4 一句话结论
 
-**参数化几何是建模类型（`Primitive` 的五个子类，同居 `Primitive.hpp`）；几何算法属于值类型与曲面；`geometry` 不碰 OCCT。**
+**参数化几何是建模类型（`Primitive` 的五个子类，同居 `Primitive.hpp`）；基类不持有几何，实体由子类按需构造；几何算法属于值类型与曲面；`geometry` 不碰 OCCT。**
 
 ## 2. 设计要点
 
@@ -44,9 +44,9 @@
 
 ### 2.1 `Primitive` 是抽象基类，五个子类同住一个头
 
-- **是什么**：`class Primitive : public Shape` 只有受保护构造 `Primitive(ShapeType)`；`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 全部定义在 `Primitive.hpp`。
+- **是什么**：`class Primitive : public Shape` 只有受保护构造 `Primitive(ShapeType)` 与一个纯虚 `bounds()`，**不持有任何几何值**；`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 全部定义在 `Primitive.hpp`，各自存尺寸（全量纲）并各自给出 `solid()`。
 - **为什么**：`G5`、`G7` —— 五个子类是同一个基类上的参数记录，分成五个头会让"构造一个盒子"同时绑定 `Shape.hpp`、`Object.hpp`、元类型；同居一个头也让 DLL 的导出规则变隐式：`Primitive.cpp` 已包含该头，五个子类的导出成员随它一起生成，不需要"记得在某个 TU 里 include"。
-- **边界**：`Primitive` 自身不声明任何几何查询（没有 `pointAt`、没有 `intersectWith`）。
+- **边界**：`Primitive` 自身不声明任何几何查询（没有 `pointAt`、没有 `intersectWith`、没有 `solid()`）。"是不是实体"是子类的属性：将来出现轮廓、扫掠面这类图元，直接派生而不用改基类（`SolidTest.cpp` 的 `Profile` 就是这条判据的验收）。
 
 ### 2.2 标签由子类交给基类
 
@@ -61,7 +61,7 @@
 
 ### 2.4 算法不在 `Primitive` 上
 
-- **是什么**：模型只回答 `bounds()`、`isValid()`、`hasVolume(eps)`，并且它们都**转发**给几何；查询走 `solid()`（族视图）或 `shape()`（variant）；三角化是 `tessellateSolid(shape(), …)`（`geometry-tessellation.md`）。
+- **是什么**：模型只回答 `bounds()`、`isValid()`、`hasVolume(eps)`，而且三个都由子类**转发**给一次 `solid()` 构造；需要几何时用两种入口之一：每个子类的 `solid()`（具体 kind 的值）或自由函数 `solidShapeOf(primitive)`（`std::optional<SolidShapef>`，不是实体时为空）。三角化是 `tessellateSolid(solidShapeOf(primitive))`（`geometry-tessellation.md`）。
 - **为什么**：`G13`、`G1`、`G8`、`G12` —— 建模类型的职责是身份 / 名字 / revision，几何类型的职责是公式；几何查询挂在模型上会让同一形状的公式散在多处，也让模型消费者认识算法入口。`G13` 不看有没有新消费者：把已有能力放到它该在的一侧，本身就是一条约束。
 - **边界**：模型侧没有按 `ShapeType` 分派几何的代码；`Solid<T>` 不认识 `Shape` / `Primitive`，两者只在 `Primitive` 一处相接（`geometry-solid.md` 2.1）。
 
@@ -79,7 +79,7 @@
 | F3 | B-rep 桥 | `brep::makeBrep(Primitive)` 按类型分派，无后端返回空 | 已落地（本机构建含 OCCT 后端） |
 | F4 | 序列化 | `robotics::io` 按 `ShapeType` 读写五种几何元素 | 已落地 |
 | F5 | 三角化 | `tessellateSolid(Solid<float>, quality)`：五个解析体变成闭合、外向、带精确法向的 `TriangleMesh`（见 `geometry-tessellation.md`） | 已落地 |
-| F6 | 模型 → 几何 | `Primitive::solid()`（族视图）/ `shape()`（variant）/ `setSolid()` | 已落地 |
+| F6 | 模型 → 几何 | 每个子类 `solid()`（按当前尺寸构造的具体 kind）、`solidShapeOf()`（可选值）、`visitPrimitive()`（交给 closed set 的具体类型） | 已落地 |
 | F7 | 实体查询 | `Solid<T>::closestPoint()` / `intersectWith(Ray)`：实体语义的最近点 / 距离与射线交点，模型不参与（见 `geometry-solid.md`） | 已落地 |
 
 ### 3.1 F1 建模类型
@@ -120,7 +120,8 @@
 - **C2**：所有 `bounds()` 是 canonical 局部空间的盒，世界盒要乘节点变换。
 - **C3**：尺寸非正即非法；非法形状不构造实体，但 `bounds()` 仍是良构的盒。
 - **N1**：`Shape::hasVolume()` 的默认容差是 `double`，子类按 float 尺寸给默认值；显式传 `eps` 时以调用方为准。
-- **N2**：`Box` 等可被子类化，`brep` / `robotics::io` 因此是"先看标签、再校验 cast"。
+- **N2**：五个子类都是 `final`，不再允许"报一个不存在的 `ShapeType`"的派生；`brep` / `robotics::io` 用 `visitPrimitive` 按 closed set 分派，不属于五个的图元返回 `false`。
+- **N3**：子类不存实体、不缓存 `solid()`：每次调用都按当前尺寸构造一个值，所以改完尺寸下一次查询就生效，没有失效点；反过来，调用方不能保存 `solid()` 返回值的引用。
 - **R1**：`isValid()` / `hasVolume()` / `bounds()` 不分配、不抛异常。
 - **R2**：`brep` 可以 include `geometry`，`geometry` 不 include `brep`（`G2`）。
 
@@ -134,7 +135,8 @@
 - **D1** 五个尺寸做成无身份值类型 + `Primitive` 用 `std::variant` 持有：`Box` / `Cone` 没有自己的算法，"值"这一侧换不到东西，反而让半径/边长在实体与曲面之间有两个家（`G1`）。见 `../decisions/ADR-2026-11-04-primitive-is-a-shape.md`。
 - **D2** 让 `geometry` 依赖 OCCT 直接构造解析实体：后端词汇进核心模块（`G2`），无后端构建会失去全部契约。
 - **D3** 在 `Primitive` 上开放几何查询（虚 `intersectWith`）：算法面挂在建模类型上，消费者要记住查谁；几何属于族接口 `Solid<T>` 与它的五个 kind（`G1`、`G8`）。
-- **D4** 以模型为参数写几何自由函数（`f(primitive)` 形态）：每个能力各写一份标签分派，同一形状的公式散在多处；模型只持有一份 `SolidShape` 后，算法在几何一侧只有一套（`G1`、`G12`）。见 `../decisions/ADR-2026-11-05-solid-family-and-variant.md`。
+- **D4** 以模型为参数写几何自由函数（`f(primitive)` 形态）：每个能力各写一份标签分派，同一形状的公式散在多处；几何值由子类的 `solid()` 一次给出后，算法在几何一侧只有一套（`G1`、`G12`）。
+- **D5** 让 `Primitive` 按值持有一个 `SolidShapef`（2026-11-05 的中间形态，已撤回）：基类因此假设"图元必然是实体"，轮廓 / 扫掠面这类图元无处安放（`G1`）。见 `../decisions/ADR-2026-11-05-primitive-is-a-modelling-base.md`。
 
 ## 8. 测试与验收
 
@@ -155,4 +157,4 @@
 
 - `geometry-kinds.md`（`Curve` / `Surface` 族与曲面树）、`geometry-primitives.md`（值类型的归属与头文件规则）、`geometry-solid.md`（解析实体的值类型：最近点与射线求交）、`geometry-tessellation.md`（三角化）
 - `graphics-geometry.md`（网格存储与渲染边界）
-- `../decisions/ADR-2026-11-04-primitive-is-a-shape.md`、`../decisions/ADR-2026-11-05-solid-value-type.md`
+- `../decisions/ADR-2026-11-04-primitive-is-a-shape.md`、`../decisions/ADR-2026-11-05-primitive-is-a-modelling-base.md`

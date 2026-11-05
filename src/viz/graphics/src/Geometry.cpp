@@ -554,7 +554,11 @@ GeometryPtr geometryFromShape(const vn::geometry::Shape& shape)
         return geometryFromShapeMesh(*mesh);
     }
     if (const auto* primitive = obj_cast<vn::geometry::Primitive>(&shape)) {
-        const auto triangles = vn::geometry::tessellateSolid(primitive->shape());
+        const auto solid = vn::geometry::solidShapeOf(*primitive);
+        if (!solid) {
+            return GeometryPtr(); // a primitive that is not one of the five analytic solids draws nothing here
+        }
+        const auto triangles = vn::geometry::tessellateSolid(*solid);
         return triangles ? geometryFromShapeMesh(*triangles) : GeometryPtr();
     }
     return GeometryPtr();

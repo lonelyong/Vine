@@ -252,7 +252,7 @@ void solidAppendBoxHits(std::vector<RayHit<T>>& hits, const Ray<T>& ray, T half_
  *   `Surface<T>`, whose sheets have no inside and no caps (`geometry-solid.md` 2.2).
  * - The interface is the queries, because there is nothing to parameterise: an analytic body has no parameter domain,
  *   so it cannot offer the `evaluate` an interface like `Curve<T>` / `Surface<T>` is built around.
- * - `Box`, `Sphere`, `Cylinder`, `Cone` and `Ellipsoid` are the closed set this repository models. Anything without an
+ * - `BoxSolid`, `SphereSolid`, `CylinderSolid`, `ConeSolid` and `EllipsoidSolid` are the closed set this repository models. Anything without an
  *   analytic formula — a NURBS body, a mesh, a boolean result — is a `BrepShape`, never a `Solid` (`G13`).
  * - The canonical local space is each kind's own: a box, sphere and ellipsoid are centred on the origin, and a cylinder
  *   / cone spans `[-height / 2, +height / 2]` on +Z with the cone's base at the lower end. Placement belongs to the node
@@ -343,7 +343,7 @@ class Solid {
  *   names say which half each one is.
  */
 template <vn::math::FP T>
-class Box final : public Solid<T> {
+class BoxSolid final : public Solid<T> {
   public:
     /// Half extent along X.
     T half_x{ T(0) };
@@ -356,7 +356,7 @@ class Box final : public Solid<T> {
 
   public:
     /// Constructs the degenerate box (all extents 0), which `isValid()` refuses.
-    Box() = default;
+    BoxSolid() = default;
 
     /**
      * @brief Constructs a box from its three half extents.
@@ -365,7 +365,7 @@ class Box final : public Solid<T> {
      * @param hy Half extent along Y.
      * @param hz Half extent along Z.
      */
-    Box(T hx, T hy, T hz)
+    BoxSolid(T hx, T hy, T hz)
       : half_x(hx)
       , half_y(hy)
       , half_z(hz)
@@ -380,23 +380,23 @@ class Box final : public Solid<T> {
 };
 
 /**
- * @brief Sphere centred on the origin.
+ * @brief SphereSolid centred on the origin.
  */
 template <vn::math::FP T>
-class Sphere final : public Solid<T> {
+class SphereSolid final : public Solid<T> {
   public:
     /// Radius.
     T radius{ T(0) };
 
   public:
     /// Constructs the degenerate sphere (radius 0), which `isValid()` refuses.
-    Sphere() = default;
+    SphereSolid() = default;
 
     /**
      * @brief Constructs a sphere of the given radius.
      * @param r Radius.
      */
-    explicit Sphere(T r)
+    explicit SphereSolid(T r)
       : radius(r)
     {}
 
@@ -412,7 +412,7 @@ class Sphere final : public Solid<T> {
  * @brief Right circular cylinder around +Z, spanning `[-half_height, +half_height]`.
  */
 template <vn::math::FP T>
-class Cylinder final : public Solid<T> {
+class CylinderSolid final : public Solid<T> {
   public:
     /// Radius.
     T radius{ T(0) };
@@ -422,7 +422,7 @@ class Cylinder final : public Solid<T> {
 
   public:
     /// Constructs the degenerate cylinder, which `isValid()` refuses.
-    Cylinder() = default;
+    CylinderSolid() = default;
 
     /**
      * @brief Constructs a cylinder from its radius and half height.
@@ -430,7 +430,7 @@ class Cylinder final : public Solid<T> {
      * @param r           Radius.
      * @param hh          Half of the height (the full height is `2 * hh`).
      */
-    Cylinder(T r, T hh)
+    CylinderSolid(T r, T hh)
       : radius(r)
       , half_height(hh)
     {}
@@ -447,7 +447,7 @@ class Cylinder final : public Solid<T> {
  * @brief Right circular cone with its apex at `+half_height` and its base disk at `-half_height`.
  */
 template <vn::math::FP T>
-class Cone final : public Solid<T> {
+class ConeSolid final : public Solid<T> {
   public:
     /// Radius of the base disk.
     T base_radius{ T(0) };
@@ -457,7 +457,7 @@ class Cone final : public Solid<T> {
 
   public:
     /// Constructs the degenerate cone, which `isValid()` refuses.
-    Cone() = default;
+    ConeSolid() = default;
 
     /**
      * @brief Constructs a cone from its base radius and half height.
@@ -465,7 +465,7 @@ class Cone final : public Solid<T> {
      * @param r  Radius of the base disk.
      * @param hh Half of the height (the full height is `2 * hh`).
      */
-    Cone(T r, T hh)
+    ConeSolid(T r, T hh)
       : base_radius(r)
       , half_height(hh)
     {}
@@ -482,7 +482,7 @@ class Cone final : public Solid<T> {
  * @brief Triaxial ellipsoid centred on the origin, axes along X / Y / Z.
  */
 template <vn::math::FP T>
-class Ellipsoid final : public Solid<T> {
+class EllipsoidSolid final : public Solid<T> {
   public:
     /// Semi-axis along X.
     T radius_x{ T(0) };
@@ -495,7 +495,7 @@ class Ellipsoid final : public Solid<T> {
 
   public:
     /// Constructs the degenerate ellipsoid, which `isValid()` refuses.
-    Ellipsoid() = default;
+    EllipsoidSolid() = default;
 
     /**
      * @brief Constructs an ellipsoid from its three semi-axes.
@@ -504,7 +504,7 @@ class Ellipsoid final : public Solid<T> {
      * @param ry Semi-axis along Y.
      * @param rz Semi-axis along Z.
      */
-    Ellipsoid(T rx, T ry, T rz)
+    EllipsoidSolid(T rx, T ry, T rz)
       : radius_x(rx)
       , radius_y(ry)
       , radius_z(rz)
@@ -520,20 +520,20 @@ class Ellipsoid final : public Solid<T> {
 
 /// The closed set of analytic solids, stored by value: what a model holds.
 template <vn::math::FP T>
-using SolidShape = std::variant<Box<T>, Sphere<T>, Cylinder<T>, Cone<T>, Ellipsoid<T>>;
+using SolidShape = std::variant<BoxSolid<T>, SphereSolid<T>, CylinderSolid<T>, ConeSolid<T>, EllipsoidSolid<T>>;
 
 using Solidf      = Solid<float>;
 using Solidd      = Solid<double>;
-using Boxf        = Box<float>;
-using Boxd        = Box<double>;
-using Spheref     = Sphere<float>;
-using Sphered     = Sphere<double>;
-using Cylinderf   = Cylinder<float>;
-using Cylinderd   = Cylinder<double>;
-using Conef       = Cone<float>;
-using Coned       = Cone<double>;
-using Ellipsoidf  = Ellipsoid<float>;
-using Ellipsoidd  = Ellipsoid<double>;
+using BoxSolidf        = BoxSolid<float>;
+using BoxSolidd        = BoxSolid<double>;
+using SphereSolidf     = SphereSolid<float>;
+using SphereSolidd     = SphereSolid<double>;
+using CylinderSolidf   = CylinderSolid<float>;
+using CylinderSolidd   = CylinderSolid<double>;
+using ConeSolidf       = ConeSolid<float>;
+using ConeSolidd       = ConeSolid<double>;
+using EllipsoidSolidf  = EllipsoidSolid<float>;
+using EllipsoidSolidd  = EllipsoidSolid<double>;
 using SolidShapef = SolidShape<float>;
 using SolidShaped = SolidShape<double>;
 
@@ -567,25 +567,25 @@ template <vn::math::FP T>
 }
 
 template <vn::math::FP T>
-bool Box<T>::isValid() const noexcept
+bool BoxSolid<T>::isValid() const noexcept
 {
     return half_x > T(0) && half_y > T(0) && half_z > T(0);
 }
 
 template <vn::math::FP T>
-bool Box<T>::hasVolume(T eps) const noexcept
+bool BoxSolid<T>::hasVolume(T eps) const noexcept
 {
     return half_x * T(2) > eps && half_y * T(2) > eps && half_z * T(2) > eps;
 }
 
 template <vn::math::FP T>
-Aabb<T> Box<T>::bounds() const noexcept
+Aabb<T> BoxSolid<T>::bounds() const noexcept
 {
     return Aabb<T>(vn::math::Point3<T>(-half_x, -half_y, -half_z), vn::math::Point3<T>(half_x, half_y, half_z));
 }
 
 template <vn::math::FP T>
-std::optional<SolidProjection<T>> Box<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
+std::optional<SolidProjection<T>> BoxSolid<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
 {
     (void)tolerance;
     if (!isValid()) {
@@ -597,7 +597,7 @@ std::optional<SolidProjection<T>> Box<T>::closestPoint(const vn::math::Point3<T>
 }
 
 template <vn::math::FP T>
-std::vector<RayHit<T>> Box<T>::intersectWith(const Ray<T>& ray, T eps) const
+std::vector<RayHit<T>> BoxSolid<T>::intersectWith(const Ray<T>& ray, T eps) const
 {
     std::vector<RayHit<T>> hits;
     if (!isValid() || !(ray.direction.length2() > T(0))) {
@@ -610,25 +610,25 @@ std::vector<RayHit<T>> Box<T>::intersectWith(const Ray<T>& ray, T eps) const
 }
 
 template <vn::math::FP T>
-bool Sphere<T>::isValid() const noexcept
+bool SphereSolid<T>::isValid() const noexcept
 {
     return radius > T(0);
 }
 
 template <vn::math::FP T>
-bool Sphere<T>::hasVolume(T eps) const noexcept
+bool SphereSolid<T>::hasVolume(T eps) const noexcept
 {
     return radius > eps;
 }
 
 template <vn::math::FP T>
-Aabb<T> Sphere<T>::bounds() const noexcept
+Aabb<T> SphereSolid<T>::bounds() const noexcept
 {
     return Aabb<T>(vn::math::Point3<T>(-radius, -radius, -radius), vn::math::Point3<T>(radius, radius, radius));
 }
 
 template <vn::math::FP T>
-std::optional<SolidProjection<T>> Sphere<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
+std::optional<SolidProjection<T>> SphereSolid<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
 {
     (void)tolerance;
     if (!isValid()) {
@@ -646,7 +646,7 @@ std::optional<SolidProjection<T>> Sphere<T>::closestPoint(const vn::math::Point3
 }
 
 template <vn::math::FP T>
-std::vector<RayHit<T>> Sphere<T>::intersectWith(const Ray<T>& ray, T eps) const
+std::vector<RayHit<T>> SphereSolid<T>::intersectWith(const Ray<T>& ray, T eps) const
 {
     std::vector<RayHit<T>> hits;
     if (!isValid() || !(ray.direction.length2() > T(0))) {
@@ -673,25 +673,25 @@ std::vector<RayHit<T>> Sphere<T>::intersectWith(const Ray<T>& ray, T eps) const
 }
 
 template <vn::math::FP T>
-bool Cylinder<T>::isValid() const noexcept
+bool CylinderSolid<T>::isValid() const noexcept
 {
     return radius > T(0) && half_height > T(0);
 }
 
 template <vn::math::FP T>
-bool Cylinder<T>::hasVolume(T eps) const noexcept
+bool CylinderSolid<T>::hasVolume(T eps) const noexcept
 {
     return radius > eps && half_height * T(2) > eps;
 }
 
 template <vn::math::FP T>
-Aabb<T> Cylinder<T>::bounds() const noexcept
+Aabb<T> CylinderSolid<T>::bounds() const noexcept
 {
     return Aabb<T>(vn::math::Point3<T>(-radius, -radius, -half_height), vn::math::Point3<T>(radius, radius, half_height));
 }
 
 template <vn::math::FP T>
-std::optional<SolidProjection<T>> Cylinder<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
+std::optional<SolidProjection<T>> CylinderSolid<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
 {
     (void)tolerance;
     if (!isValid()) {
@@ -709,7 +709,7 @@ std::optional<SolidProjection<T>> Cylinder<T>::closestPoint(const vn::math::Poin
 }
 
 template <vn::math::FP T>
-std::vector<RayHit<T>> Cylinder<T>::intersectWith(const Ray<T>& ray, T eps) const
+std::vector<RayHit<T>> CylinderSolid<T>::intersectWith(const Ray<T>& ray, T eps) const
 {
     std::vector<RayHit<T>> hits;
     if (!isValid() || !(ray.direction.length2() > T(0))) {
@@ -746,26 +746,26 @@ std::vector<RayHit<T>> Cylinder<T>::intersectWith(const Ray<T>& ray, T eps) cons
 }
 
 template <vn::math::FP T>
-bool Cone<T>::isValid() const noexcept
+bool ConeSolid<T>::isValid() const noexcept
 {
     return base_radius > T(0) && half_height > T(0);
 }
 
 template <vn::math::FP T>
-bool Cone<T>::hasVolume(T eps) const noexcept
+bool ConeSolid<T>::hasVolume(T eps) const noexcept
 {
     return base_radius > eps && half_height * T(2) > eps;
 }
 
 template <vn::math::FP T>
-Aabb<T> Cone<T>::bounds() const noexcept
+Aabb<T> ConeSolid<T>::bounds() const noexcept
 {
     // The base disk is the widest circle the cone has, so its circumscribing box bounds the whole body.
     return Aabb<T>(vn::math::Point3<T>(-base_radius, -base_radius, -half_height), vn::math::Point3<T>(base_radius, base_radius, half_height));
 }
 
 template <vn::math::FP T>
-std::optional<SolidProjection<T>> Cone<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
+std::optional<SolidProjection<T>> ConeSolid<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
 {
     (void)tolerance;
     if (!isValid()) {
@@ -808,7 +808,7 @@ std::optional<SolidProjection<T>> Cone<T>::closestPoint(const vn::math::Point3<T
 }
 
 template <vn::math::FP T>
-std::vector<RayHit<T>> Cone<T>::intersectWith(const Ray<T>& ray, T eps) const
+std::vector<RayHit<T>> ConeSolid<T>::intersectWith(const Ray<T>& ray, T eps) const
 {
     std::vector<RayHit<T>> hits;
     if (!isValid() || !(ray.direction.length2() > T(0))) {
@@ -847,25 +847,25 @@ std::vector<RayHit<T>> Cone<T>::intersectWith(const Ray<T>& ray, T eps) const
 }
 
 template <vn::math::FP T>
-bool Ellipsoid<T>::isValid() const noexcept
+bool EllipsoidSolid<T>::isValid() const noexcept
 {
     return radius_x > T(0) && radius_y > T(0) && radius_z > T(0);
 }
 
 template <vn::math::FP T>
-bool Ellipsoid<T>::hasVolume(T eps) const noexcept
+bool EllipsoidSolid<T>::hasVolume(T eps) const noexcept
 {
     return radius_x > eps && radius_y > eps && radius_z > eps;
 }
 
 template <vn::math::FP T>
-Aabb<T> Ellipsoid<T>::bounds() const noexcept
+Aabb<T> EllipsoidSolid<T>::bounds() const noexcept
 {
     return Aabb<T>(vn::math::Point3<T>(-radius_x, -radius_y, -radius_z), vn::math::Point3<T>(radius_x, radius_y, radius_z));
 }
 
 template <vn::math::FP T>
-std::optional<SolidProjection<T>> Ellipsoid<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
+std::optional<SolidProjection<T>> EllipsoidSolid<T>::closestPoint(const vn::math::Point3<T>& query, T tolerance) const
 {
     if (!isValid()) {
         return std::nullopt;
@@ -885,7 +885,7 @@ std::optional<SolidProjection<T>> Ellipsoid<T>::closestPoint(const vn::math::Poi
 }
 
 template <vn::math::FP T>
-std::vector<RayHit<T>> Ellipsoid<T>::intersectWith(const Ray<T>& ray, T eps) const
+std::vector<RayHit<T>> EllipsoidSolid<T>::intersectWith(const Ray<T>& ray, T eps) const
 {
     std::vector<RayHit<T>> hits;
     if (!isValid() || !(ray.direction.length2() > T(0))) {

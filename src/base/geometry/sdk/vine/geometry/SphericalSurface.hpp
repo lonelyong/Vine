@@ -20,7 +20,7 @@ VN_GEOMETRY_NS_BEGIN
  * @details
  * - This is the *surface*, not the solid: it has no inside, so it exists for the questions a sheet answers — a
  *   trimmed B-rep face, a ray that must hit one side, a point projected onto the sheet. The closed, placeable
- *   version a model holds is `Sphere` (see `Primitive.hpp`).
+ *   version a model holds is `SphereSolid` (see `Primitive.hpp`).
  * - `pointAt(azimuth, polar)` uses standard spherical coordinates: azimuth around +Z, polar measured **from +Z**, both
  *   in radians. `polar = 0` is the +Z pole, `polar = pi / 2` the equator. As a `Surface<T>` the two parameters are
  *   `u = azimuth` in `[0, 2 * pi]` and `v = polar` in `[0, pi]`.
@@ -288,7 +288,7 @@ using SphericalSurfaced = SphericalSurface<double>;
  * - `|p - centre| - radius`, a true distance: its gradient is the unit radial direction.
  * - A zero radius answers `|p - centre|`, which never changes sign, so a search over it finds no crossing.
  *
- * @param surface Sphere to measure against.
+ * @param surface SphereSolid to measure against.
  * @param point   Point to measure.
  * @return Signed distance to the sphere.
  */

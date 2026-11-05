@@ -1,11 +1,12 @@
 # geometry 要点
 
-- **纯内联的 SDK 类必须由本模块某个 TU include**：`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 的成员全部定义在头文件里，
-  DLL 只有在带 `VN_GEOMETRY_LIB` 的 TU 里看到这个类时才会实例化并导出它们。现在由 `Primitive.cpp` 显式列出这五个头。
-- **参数化几何是建模类型**：`Primitive : Shape` + `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` **全部在 `Primitive.hpp` 一个文件**里
-  （原来五个分开的头已删）。子类把 `ShapeType` 传给受保护构造，不再手写 `shape_type_`。
-  消费点：`obj_cast<vn::geometry::Box>`、`switch (shapeType())`；它们**不提供**几何算法（射线–盒用 `Aabb::intersectWith`，
-  射线–球面属于 `SphericalSurface`）。理由见 `design/geometry-parametric.md`、`decisions/ADR-2026-11-04-primitive-is-a-shape.md`。
+- **纯内联的 SDK 类必须由本模块某个 TU include**：建模子类（`Box` / `Sphere` / …）与几何 kind（`BoxSolid` / `SphereSolid` / …）的成员全部定义在头文件里，
+  DLL 只有在带 `VN_GEOMETRY_LIB` 的 TU 里看到这个类时才会实例化并导出它们。现在由 `Primitive.cpp` include 这个头。
+- **参数化几何是建模类型，基类不持几何**：`Primitive : Shape` 只有受保护构造 `Primitive(ShapeType)` 与纯虚 `bounds()`，**不认识 `Solid`**；
+  `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`（`final`，全部在 `Primitive.hpp`）各存**全量纲**字段，并用 `solid()` 按当前尺寸
+  构造自己的具体 kind（`BoxSolidf` …，返回**值**，不存不缓存）。`isValid()` / `hasVolume()` / `bounds()` 由子类转发给 `solid()`。
+  两个入口：`visitPrimitive(primitive, visitor)`（closed set，不属五个时 `false`）与 `solidShapeOf(primitive)`（`optional<SolidShapef>`）。
+  **没有** `Primitive::shape()` / `setSolid()`；`ShapeType` 仍由子类构造传给基类。理由见 `decisions/ADR-2026-11-05-primitive-is-a-modelling-base.md`。
 - **值类型（`Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` 及全部曲线曲面）上有 `math::FP T`，但类上没有 `VN_GEOMETRY_API`**：
   短查询定义在头文件（内联发生在调用方，**不要**加 `extern template`，会打死拾取循环的实测收益）。
   导出只来自显式实例化，而**每个类型、`float` 与 `double` 两种精度都要实例化**：
@@ -25,7 +26,7 @@
   设计见 `design/geometry-surface-queries.md`，测试在 `tests/test_geometry/SurfaceQueryTest.cpp`。
 - **点到曲线的最近点 / 距离**：`closestPointOnCurve()`（`CurveProjection.hpp`）把平方距离的驻点 `f(u) = (C(u) - P)·C'(u)` 当零点扫，`refineRoot()` 收窄，**窗口端点也是候选**（足点在窗口外时最小值在边界上）。只调 `evaluate` / `derivative`。
   窗口是 `optional<pair>`：有界曲线可省，无界曲线（直线 / 双曲线 / 抛物线）必须给。局部最小与“平坦极小值（f 不变号）”靠 `sample_count`，见 `design/geometry-curve-queries.md`。
-- **解析实体 `Solid<T>` 是族接口，不是 variant**：`Solid.hpp` 里 `Solid<T>` 是抽象基类（`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith` 五个纯虚），五个 kind（`Boxf` / `Spheref` / `Cylinderf` / `Conef` / `Ellipsoidf`，**半**量纲）是 `final` 值；`SolidShape<T> = std::variant<五个 kind>` 是模型存的那份值，`solidOf(shape)` 取族引用（一个 `std::visit`，零拷贝）。`Primitive` 存 `SolidShapef`：`solid()` 给族视图、`shape()` 给 variant、`setSolid()` 是唯一 mutator 并同步 `shapeType()`。**默认容差要同时写在基类与每个 kind 上**（派生声明会遮蔽基类默认参数）。设计见 `design/geometry-solid.md`，测试在 `tests/test_geometry/SolidTest.cpp`。
+- **解析实体 `Solid<T>` 是族接口，不是 variant**：`Solid.hpp` 里 `Solid<T>` 是抽象基类（`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith` 五个纯虚），五个 kind（`BoxSolidf` / `SphereSolidf` / `CylinderSolidf` / `ConeSolidf` / `EllipsoidSolidf`，**半**量纲）是 `final` 值；`SolidShape<T> = std::variant<五个 kind>`，`solidOf(shape)` 取族引用（一个 `std::visit`，零拷贝）。建模子类用 `solid()` 构造这份值，`solidShapeOf(primitive)` 把模型转成它。**默认容差要同时写在基类与每个 kind 上**（派生声明会遮蔽基类默认参数）。设计见 `design/geometry-solid.md`，测试在 `tests/test_geometry/SolidTest.cpp`。
 - **解析实体的三角化**：`tessellateSolid(const Solid<float>&, quality)`（`SolidTessellation.hpp` + `src/SolidTessellation.cpp`）用 `std::visit` 按 kind 解析铺网格，返回 `intrusive_ptr<TriangleMesh>`；三角形数：盒 12，球 / 椭球 `2·around·(along−1)`，圆柱 `4·around`（侧 2·around + 两盖各 around），圆锥 `2·around`（侧扇 + 底盖）。
   **只对 `Solid<float>` 成立**（`TriangleMesh` 是 float），所以它是自由函数而不是 `Solid<T>` 的成员。
   **顶点在法向不连续处复制**（盒棱、柱盖、锥顶按段），所以顶点数不是最小集；闭合性要按**位置**数边，不能按索引。结果只写位置 / 法向 / 索引，不写 UV。
@@ -34,7 +35,7 @@
 - **点到解析实体的最近点 / 距离**：`Solid<T>::closestPoint(query, tolerance)` 是**实体**语义——内部（含边界）返回查询点本身、距离 0；外部返回边界最近点。盒钳制、球径向、椭球 Lagrange 一维二分、圆柱径向×轴向钳制、圆锥「底面盘 vs 母线轮廓」取较近。`tolerance` 只控制椭球求根，内 / 外判定是精确比较。
 - **`Mesh` / `TriangleMesh` / `QuadMesh` / `MixedMesh` 是纯头文件类**（不导出）：成员和 `desc()` 都在头里，消费者各自编译；
   它们的描述符用内联 `VN_OBJECT_META`，靠 `Type::obtain()` 保证全进程只有一个，见 `core.md`。
-- 五个基本体的局部空间：`Box` / `Sphere` / `Ellipsoid` 原点居中；`Cylinder` / `Cone` 沿 Z 跨 `[-h/2, +h/2]`，锥底在 `-h/2`。
+- 五个基本体的局部空间：`BoxSolid` / `SphereSolid` / `EllipsoidSolid` 原点居中；`CylinderSolid` / `ConeSolid` 沿 Z 跨 `[-h/2, +h/2]`，锥底在 `-h/2`。
 - **曲面同理**：`Surface<T>` 是**模板接口**（十三项：`evaluate(u,v)`、`derivativeU/V`、四个参数界、两个方向的闭合/周期、`continuity()`），`ElementarySurface<T>` /
   `BoundedSurface<T>` 只是分类标签（无状态、无虚函数）。`Surface` / `ElementarySurface` / `BoundedSurface` **现在都要带 `<T>`**（旧的非模板写成 `Surface<double>`）。
   `Plane` 不存面内框架（两轴由 `normal` 每次推导，因为它被复制）；`SphericalSurface` 的 `u`（方位角）闭合周期、`v`（极角）不闭合。接口里**没有** `normalAt` / `bounds` / 二阶导数。

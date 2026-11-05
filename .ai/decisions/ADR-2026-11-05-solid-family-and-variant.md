@@ -1,6 +1,6 @@
 # ADR-2026-11-05：解析实体是"族接口 + 封闭值集"，模型按值持有
 
-- 状态：已采纳
+- 状态：已取代（"模型按值持有 `SolidShapef`"的部分由 `ADR-2026-11-05-primitive-is-a-modelling-base.md` 取代；`Solid<T>` 族接口 + 五个 kind 值仍然现行）
 - 日期：2026-11-05
 - 相关：`../design/geometry-solid.md`、`../design/geometry-parametric.md`、`../../src/base/geometry/sdk/vine/geometry/Solid.hpp`、`../../tests/test_geometry/SolidTest.cpp`
 

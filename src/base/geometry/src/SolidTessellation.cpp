@@ -242,27 +242,27 @@ struct TessellateVisitor {
     int          around;
     int          along;
 
-    void operator()(const Boxf& box) const
+    void operator()(const BoxSolidf& box) const
     {
         appendBox(builder, box.half_x, box.half_y, box.half_z);
     }
 
-    void operator()(const Spheref& sphere) const
+    void operator()(const SphereSolidf& sphere) const
     {
         appendEllipsoid(builder, sphere.radius, sphere.radius, sphere.radius, around, along);
     }
 
-    void operator()(const Cylinderf& cylinder) const
+    void operator()(const CylinderSolidf& cylinder) const
     {
         appendCylinder(builder, cylinder.radius, cylinder.half_height, around);
     }
 
-    void operator()(const Conef& cone) const
+    void operator()(const ConeSolidf& cone) const
     {
         appendCone(builder, cone.base_radius, cone.half_height, around);
     }
 
-    void operator()(const Ellipsoidf& ellipsoid) const
+    void operator()(const EllipsoidSolidf& ellipsoid) const
     {
         appendEllipsoid(builder, ellipsoid.radius_x, ellipsoid.radius_y, ellipsoid.radius_z, around, along);
     }

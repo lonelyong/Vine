@@ -12,11 +12,11 @@
 namespace
 {
 
-using vn::geometry::Boxf;
-using vn::geometry::Conef;
-using vn::geometry::Cylinderf;
-using vn::geometry::Ellipsoidf;
-using vn::geometry::Spheref;
+using vn::geometry::BoxSolidf;
+using vn::geometry::ConeSolidf;
+using vn::geometry::CylinderSolidf;
+using vn::geometry::EllipsoidSolidf;
+using vn::geometry::SphereSolidf;
 
 /// How far a tessellated curved face may sit inside the analytic bounds it stands in for.
 constexpr float kBoundsTolerance = 0.03f;
@@ -61,14 +61,14 @@ TEST(Construction, aBuildWithoutABackendProducesNoSolid)
     }
 
     // The module carries the contract without a backend: the capability query says so, and a call produces nothing.
-    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Primitive{}));
+    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Box{}));
 }
 
 TEST(Construction, anInvalidPrimitiveProducesNoSolid)
 {
     // Holds in every build: a dimension of zero or less describes no solid, backend or not.
-    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Primitive(Boxf{ 0.0f, 0.5f, 0.5f })));
-    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Primitive(Spheref{ -1.0f })));
+    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Box(0.0f, 1.0f, 1.0f)));
+    EXPECT_FALSE(vn::brep::makeBrep(vn::geometry::Sphere(-1.0f)));
 }
 
 TEST(Construction, everyPrimitiveFillsItsAnalyticBounds)
@@ -77,11 +77,11 @@ TEST(Construction, everyPrimitiveFillsItsAnalyticBounds)
         GTEST_SKIP() << "the bounds of a built solid are a backend property";
     }
 
-    expectRoundTrip(vn::geometry::Primitive(Boxf{ 1.0f, 2.0f, 3.0f }), vn::geometry::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
-    expectRoundTrip(vn::geometry::Primitive(Spheref{ 2.0f }), vn::geometry::Aabbf(-2.0f, -2.0f, -2.0f, 2.0f, 2.0f, 2.0f));
-    expectRoundTrip(vn::geometry::Primitive(Cylinderf{ 1.0f, 2.0f }), vn::geometry::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
-    expectRoundTrip(vn::geometry::Primitive(Conef{ 1.0f, 2.0f }), vn::geometry::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
-    expectRoundTrip(vn::geometry::Primitive(Ellipsoidf{ 1.0f, 2.0f, 3.0f }), vn::geometry::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
+    expectRoundTrip(vn::geometry::Box(2.0f, 4.0f, 6.0f), vn::geometry::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
+    expectRoundTrip(vn::geometry::Sphere(2.0f), vn::geometry::Aabbf(-2.0f, -2.0f, -2.0f, 2.0f, 2.0f, 2.0f));
+    expectRoundTrip(vn::geometry::Cylinder(1.0f, 4.0f), vn::geometry::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
+    expectRoundTrip(vn::geometry::Cone(1.0f, 4.0f), vn::geometry::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
+    expectRoundTrip(vn::geometry::Ellipsoid(1.0f, 2.0f, 3.0f), vn::geometry::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
 }
 
 TEST(Construction, theSolidCarriesThePrimitiveName)
@@ -90,7 +90,7 @@ TEST(Construction, theSolidCarriesThePrimitiveName)
         GTEST_SKIP() << "there is no solid to name without the backend";
     }
 
-    vn::geometry::Primitive cylinder(Cylinderf{ 1.0f, 1.0f });
+    vn::geometry::Cylinder cylinder(1.0f, 2.0f);
     cylinder.setName(vn::String::fromUtf8("link"));
 
     const auto solid = vn::brep::makeBrep(cylinder);

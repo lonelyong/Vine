@@ -133,9 +133,9 @@ static_assert(!std::is_base_of_v<vn::geometry::Curve<double>, Primitive>);
 /// The analytic solid is a family plus a closed value set: `Solid<T>` is the interface (abstract, no state), the five
 /// kinds are its values, and a model stores the variant of them.
 static_assert(std::is_abstract_v<vn::geometry::Solidf>);
-static_assert(std::is_base_of_v<vn::geometry::Solidf, vn::geometry::Boxf>);
-static_assert(!std::is_abstract_v<vn::geometry::Boxf>);
-static_assert(std::is_same_v<decltype(vn::geometry::Boxf{}.half_x), float>);
+static_assert(std::is_base_of_v<vn::geometry::Solidf, vn::geometry::BoxSolidf>);
+static_assert(!std::is_abstract_v<vn::geometry::BoxSolidf>);
+static_assert(std::is_same_v<decltype(vn::geometry::BoxSolidf{}.half_x), float>);
 static_assert(!std::is_same_v<vn::geometry::SolidShapef, vn::geometry::SolidShaped>);
 
 /// The unbounded spherical sheet is the surface counterpart: it is a surface, not a modeling primitive.
