@@ -35,7 +35,7 @@
 
 - 本次不实现 OCCT 的读写细节，只定"缺后端"的语义与构建开关；不引入第二个 B-rep 后端。
 - 不为 PLY / glTF 写原生的逐记录写出器：assimp 能写的交给 assimp。
-- 不改 `geometry::Mesh` / `geometry::Model` 的数据形状，只改 `BrepShape` 的所有权。
+- 不改 `geom3d::Mesh` / `geom3d::Model` 的数据形状，只改 `BrepShape` 的所有权。
 - 不合并 robotics/io 自己的 STL 源（见 `D5`）。
 
 ### 1.4 一句话结论

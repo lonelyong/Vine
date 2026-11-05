@@ -4,7 +4,7 @@
 
 #include <optional>
 
-#include <vine/geometry/EllipsoidSolid.hpp>
+#include <vine/geom3d/EllipsoidSolid.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Types.hpp>
 
@@ -95,9 +95,9 @@ class VN_MODELS_API Ellipsoid final : public Primitive {
      * @brief Returns the analytic solid this ellipsoid describes.
      * @return The ellipsoid solid with the stored semi-axes.
      */
-    [[nodiscard]] vn::geometry::EllipsoidSolidf solid() const noexcept
+    [[nodiscard]] vn::geom3d::EllipsoidSolidf solid() const noexcept
     {
-        return vn::geometry::EllipsoidSolidf{ radius_x_, radius_y_, radius_z_ };
+        return vn::geom3d::EllipsoidSolidf{ radius_x_, radius_y_, radius_z_ };
     }
 
     /**
@@ -118,7 +118,7 @@ class VN_MODELS_API Ellipsoid final : public Primitive {
      * @brief Returns the axis-aligned bounds of the ellipsoid in its local space.
      * @return The box of the three semi-axes around the origin.
      */
-    [[nodiscard]] vn::geometry::Aabbf bounds() const override;
+    [[nodiscard]] vn::geom3d::Aabbf bounds() const override;
 
   private:
     /// Semi-axis along X; 1 for the unit ellipsoid.

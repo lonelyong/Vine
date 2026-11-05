@@ -54,7 +54,7 @@ target_sources(${TEST_NAME}
 target_link_libraries(${TEST_NAME}
     vn::Appfw
     vn::Progress
-    vn::Geometry
+    vn::Geom3D
     vn::Graphics
     Qt6::Core Qt6::Gui Qt6::Widgets
     # The command cases assert on the LOG LEVEL a status is recorded with (a NotApplicable result

@@ -7,7 +7,7 @@
   DLL 只有在带对应 `_LIB` 宏的 TU 里看到这个类时才会实例化并导出它们。现在每个建模类型都有自己的 `.cpp`（如 `models/src/Box.cpp`）。
 - **建模类型是一个独立模块 `src/base/models`**（`sdk/vine/models/`，namespace `vn::models`，库 `vn::Models`）：`Shape` / `Primitive` / `Model` / `Mesh` 族 /
   `BrepShape` / `PointCloud` / `Material` 族都在这里，单向依赖 `vn::Geometry`；include 写 `<vine/models/Xxx.hpp>`。
-  几何值类型（曲线 / 曲面 / `Solid` / `Aabb` / `Obb` / `Ray`）留在 `src/base/geometry`。
+  几何值类型（曲线 / 曲面 / `Solid` / `Aabb` / `Obb` / `Ray`）留在 `src/base/geom3d`。
 - **参数化几何是建模类型，基类不持几何**：`Primitive : Shape` 只有受保护构造 `Primitive(ShapeType)` 与纯虚 `bounds()`，**不认识 `Solid`**；
   `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`（`final`，各自 `models/Box.hpp` … `models/Ellipsoid.hpp`）各存**全量纲**字段，并用 `solid()` 按当前尺寸
   构造自己的具体 kind（`BoxSolidf` …，返回**值**，不存不缓存）。`isValid()` / `hasVolume()` / `bounds()` 由子类转发给 `solid()`。
@@ -29,14 +29,14 @@
 - **曲线 × 非解析曲面**：`intersectCurveWithSurfaceByProjection()` 与解析入口共用 `detail::scanCurveAgainstSurface`，只把取值换成 `detail::signedDistanceToSurface`（投影距离 + `dS/du × dS/dv` 的符号）。
   **这个带符号距离故意留在 `detail`**：极性属于参数化（球面的叉积朝内，符号与 `signedValue()` 相反），求根只用变号。奇异参数线（球极）返回 NaN = “无信息”。
   扫描收窄根后会再验一次 `|f| ≤ tolerance`，滤掉最近点分支跳变造成的伪变号（`geometry-intersection.md` P8）。
-  设计见 `design/geometry-surface-queries.md`，测试在 `tests/test_geometry/SurfaceQueryTest.cpp`。
+  设计见 `design/geometry-surface-queries.md`，测试在 `tests/test_geom3d/SurfaceQueryTest.cpp`。
 - **点到曲线的最近点 / 距离**：`closestPointOnCurve()`（`CurveProjection.hpp`）把平方距离的驻点 `f(u) = (C(u) - P)·C'(u)` 当零点扫，`refineRoot()` 收窄，**窗口端点也是候选**（足点在窗口外时最小值在边界上）。只调 `evaluate` / `derivative`。
   窗口是 `optional<pair>`：有界曲线可省，无界曲线（直线 / 双曲线 / 抛物线）必须给。局部最小与“平坦极小值（f 不变号）”靠 `sample_count`，见 `design/geometry-curve-queries.md`。
-- **解析实体 `Solid<T>` 是族接口，不是 variant**：`Solid.hpp` 里 `Solid<T>` 是抽象基类（`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith` 五个纯虚），五种实体各一个头文件（`BoxSolid.hpp` … `EllipsoidSolid.hpp`），`SolidShape.hpp` 给 `SolidShape<T> = std::variant<五个 kind>` 与 `solidOf(shape)`（一个 `std::visit`，零拷贝）。建模子类用 `solid()` 构造这份值，`solidShapeOf(primitive)` 把模型转成它。**默认容差要同时写在基类与每个 kind 上**（派生声明会遮蔽基类默认参数）。设计见 `design/geometry-solid.md`，测试在 `tests/test_geometry/SolidTest.cpp`。
+- **解析实体 `Solid<T>` 是族接口，不是 variant**：`Solid.hpp` 里 `Solid<T>` 是抽象基类（`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith` 五个纯虚），五种实体各一个头文件（`BoxSolid.hpp` … `EllipsoidSolid.hpp`），`SolidShape.hpp` 给 `SolidShape<T> = std::variant<五个 kind>` 与 `solidOf(shape)`（一个 `std::visit`，零拷贝）。建模子类用 `solid()` 构造这份值，`solidShapeOf(primitive)` 把模型转成它。**默认容差要同时写在基类与每个 kind 上**（派生声明会遮蔽基类默认参数）。设计见 `design/geometry-solid.md`，测试在 `tests/test_geom3d/SolidTest.cpp`。
 - **解析实体的三角化**：`tessellateSolid(const SolidShapef&, quality)`（`src/base/models/sdk/vine/models/SolidTessellation.hpp` + `src/base/models/src/SolidTessellation.cpp`）用 `std::visit` 按 kind 解析铺网格，返回 `intrusive_ptr<TriangleMesh>`；三角形数：盒 12，球 / 椭球 `2·around·(along−1)`，圆柱 `4·around`（侧 2·around + 两盖各 around），圆锥 `2·around`（侧扇 + 底盖）。
   **只对 `Solid<float>` 成立**（`TriangleMesh` 是 float），所以它是自由函数而不是 `Solid<T>` 的成员。
   **顶点在法向不连续处复制**（盒棱、柱盖、锥顶按段），所以顶点数不是最小集；闭合性要按**位置**数边，不能按索引。结果只写位置 / 法向 / 索引，不写 UV。
-  设计见 `design/geometry-tessellation.md`，测试在 `tests/test_geometry/SolidTessellationTest.cpp`。
+  设计见 `design/geometry-tessellation.md`，测试在 `tests/test_geom3d/SolidTessellationTest.cpp`。
 - **射线 × 解析实体**：`Solid<T>::intersectWith(ray, eps)` 走每个 kind 自己的解析式：盒 slab、球 / 椭球二次、圆柱侧面+两盖、圆锥侧面+底面。结果最多两个（相切一个），只报 `t ≥ -eps`，**内部起点只报离开**；法向按 `RayHit` 转向射线，圆锥顶点命中法向为零。`Solid<T>` 里的 `T` 是计算精度，实体量纲本身是 float。
 - **点到解析实体的最近点 / 距离**：`Solid<T>::closestPoint(query, tolerance)` 是**实体**语义——内部（含边界）返回查询点本身、距离 0；外部返回边界最近点。盒钳制、球径向、椭球 Lagrange 一维二分、圆柱径向×轴向钳制、圆锥「底面盘 vs 母线轮廓」取较近。`tolerance` 只控制椭球求根，内 / 外判定是精确比较。
 - **`Mesh` / `TriangleMesh` / `QuadMesh` / `MixedMesh` 是纯头文件类**（不导出）：成员和 `desc()` 都在头里，消费者各自编译；
@@ -90,4 +90,4 @@
   `CircleCurve::bounds()` 与 `EllipseCurve::bounds()` 用同一支撑函数 `sqrt((a·X_i)² + (b·Y_i)²)`，退化时给线段盒。
   写派生类时注意：**依赖基类的成员一律要限定** —— 基类的 static 函数写 `ConicCurve<T>::inPlaneAxis(...)`，继承的数据成员/函数
   加 `using ConicCurve<T>::center;` 之类的声明，否则 MSVC 报 C3861/C2065。`inPlaneAxis` 现在是 `Frame.hpp` 的自由函数
-  （`vn::geometry::inPlaneAxis`），`ConicCurve` 不再有同名 protected static。
+  （`vn::geom3d::inPlaneAxis`），`ConicCurve` 不再有同名 protected static。

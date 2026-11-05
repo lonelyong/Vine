@@ -1,7 +1,7 @@
 # geometry 待办
 
 > **状态**：开放项
-> **范围**：`src/base/geometry` 参数化几何的后续能力。现行设计见 `../design/geometry-parametric.md`。
+> **范围**：`src/base/geom3d` 参数化几何的后续能力。现行设计见 `../design/geometry-parametric.md`。
 
 | # | 内容 | 触发条件 | 参考 |
 |---|---|---|---|

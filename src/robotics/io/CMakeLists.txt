@@ -20,5 +20,5 @@ vn_add_library(ROBOTICSIO_TARGET_NAME RoboticsIO)
 #     find_package(tinyxml2 CONFIG REQUIRED)
 # endif()
 
-target_link_libraries(${ROBOTICSIO_TARGET_NAME} PUBLIC vn::RoboticsCore vn::Geometry vn::Models vn::IOBase)
+target_link_libraries(${ROBOTICSIO_TARGET_NAME} PUBLIC vn::RoboticsCore vn::Geom3D vn::Models vn::IOBase)
 target_link_libraries(${ROBOTICSIO_TARGET_NAME} PRIVATE tp::tinyxml2)

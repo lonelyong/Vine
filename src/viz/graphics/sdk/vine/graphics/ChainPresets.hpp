@@ -2,7 +2,7 @@
 #include "graphics_global.hpp"
 
 #include <vine/String.hpp>
-#include <vine/geometry/Aabb.hpp>
+#include <vine/geom3d/Aabb.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Point3.hpp>
@@ -79,7 +79,7 @@ class ShaderProgram;
  * @param camera Receives the light camera (also usable as the shadow pass' camera).
  * @return The light camera's projection * view matrix.
  */
-[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d directionalShadowMatrix(const Light& light, const vn::geometry::Aabbd& bounds, Camera& camera);
+[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d directionalShadowMatrix(const Light& light, const vn::geom3d::Aabbd& bounds, Camera& camera);
 
 /** @brief The light camera a SPOT shadow is rendered with.
  *
@@ -97,7 +97,7 @@ class ShaderProgram;
  * @param camera Receives the light camera (also usable as the shadow pass' camera).
  * @return The light camera's projection * view matrix.
  */
-[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d spotShadowMatrix(const Light& light, const vn::geometry::Aabbd& bounds, Camera& camera);
+[[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d spotShadowMatrix(const Light& light, const vn::geom3d::Aabbd& bounds, Camera& camera);
 
 /** @brief Recipe: render content into an off-screen target and composite it back as a picture-in-picture screen pass.
  *

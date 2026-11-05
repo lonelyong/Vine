@@ -2,9 +2,9 @@
 
 > **状态**：现行
 > **最后核对**：2026-11-04
-> **范围**：`src/base/geometry` 中参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）作为**建模类型**的归属与契约，以及 `Primitive` 与几何算法的边界。
+> **范围**：`src/base/geom3d` 中参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）作为**建模类型**的归属与契约，以及 `Primitive` 与几何算法的边界。
 > 不含网格 / B-rep / 点云的存储与 revision（见 `graphics-geometry.md`），不含曲线与曲面族的分类（见 `geometry-kinds.md`，轴对称曲面与样条曲面见 `geometry-axis-surfaces.md`），不含射线–图元契约（见 `geometry-ray.md`）。
-> **权威来源**：`src/base/models/sdk/vine/models/Primitive.hpp`、`src/base/models/sdk/vine/models/PrimitiveDispatch.hpp`、`src/base/models/src/Primitive.cpp`；`tests/test_geometry`、`tests/test_brep`、`tests/test_robotics_io`。
+> **权威来源**：`src/base/models/sdk/vine/models/Primitive.hpp`、`src/base/models/sdk/vine/models/PrimitiveDispatch.hpp`、`src/base/models/src/Primitive.cpp`；`tests/test_geom3d`、`tests/test_brep`、`tests/test_robotics_io`。
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -45,7 +45,7 @@
 ### 2.1 `Primitive` 是抽象基类，每个子类一个头文件
 
 - **是什么**：`class Primitive : public Shape` 只有受保护构造 `Primitive(ShapeType)` 与一个纯虚 `bounds()`，**不持有任何几何值**；`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 各在一个头文件（`models/Box.hpp` … `models/Ellipsoid.hpp`），各自存尺寸（全量纲）并各自给出 `solid()`。
-- **目录边界**：带身份的类型（`Shape` / `Primitive` / `Model` / 网格 / `BrepShape` / `PointCloud` / `Material`）住在 `src/base/models`（`sdk/vine/models/`），几何值类型（曲线、曲面、`Solid`、`Aabb` / `Obb` / `Ray`）住在 `src/base/geometry`。`models` 单向依赖 `geometry`。
+- **目录边界**：带身份的类型（`Shape` / `Primitive` / `Model` / 网格 / `BrepShape` / `PointCloud` / `Material`）住在 `src/base/models`（`sdk/vine/models/`），几何值类型（曲线、曲面、`Solid`、`Aabb` / `Obb` / `Ray`）住在 `src/base/geom3d`。`models` 单向依赖 `geometry`。
 - **为什么**：`G1`、`G12` —— 一个类型一个文件，消费者只 include 它写到的那个形状；`PrimitiveDispatch.hpp` 单独承担 closed set 的两个入口（`visitPrimitive()` / `solidShapeOf()`）。每个子类的 `.cpp` include 自己的头，DLL 导出由该 TU 生成，不再依赖“某个 TU 记得 include 全部类型”。
 - **边界**：`Primitive` 自身不声明任何几何查询（没有 `pointAt`、没有 `intersectWith`、没有 `solid()`）。"是不是实体"是子类的属性：将来出现轮廓、扫掠面这类图元，直接派生而不用改基类（`SolidTest.cpp` 的 `Profile` 就是这条判据的验收）。
 

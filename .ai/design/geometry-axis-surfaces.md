@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-04
 > **范围**：旋转面（圆柱 / 圆锥 / 圆环）的框架与参数化、矩形裁剪曲面，以及双参数样条曲面（贝塞尔 / B 样条）的数据模型与求值。
 > 不含 `Surface<T>` 接口本身（见 `geometry-kinds.md` 2.10），不含族的归属（见同文档 2.3），不含求交 / 距离 / 三角化算法。
-> **权威来源**：`src/base/geometry/sdk/vine/geometry/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`、`RectangularTrimmedSurface.hpp`、`BezierSurface.hpp`、`BSplineSurface.hpp`、`BezierBlend.hpp`、`BSplineBasis.hpp`；`tests/test_geometry/GeometryKindsTest.cpp`
+> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`、`RectangularTrimmedSurface.hpp`、`BezierSurface.hpp`、`BSplineSurface.hpp`、`BezierBlend.hpp`、`BSplineBasis.hpp`；`tests/test_geom3d/GeometryKindsTest.cpp`
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -139,7 +139,7 @@
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 三个旋转面的参数化、导数、域与闭合、退化输入；裁剪的转发与四种无效输入 | `tests/test_geometry/GeometryKindsTest.cpp` 的 `aCylindricalSurfaceWrapsItsAxis`、`aConicalSurfaceWalksItsGeneratrix`、`aToroidalSurfaceClosesInBothDirections`、`aRectangularTrimmedSurfaceForwardsToItsBasis` |
+| T1 | 三个旋转面的参数化、导数、域与闭合、退化输入；裁剪的转发与四种无效输入 | `tests/test_geom3d/GeometryKindsTest.cpp` 的 `aCylindricalSurfaceWrapsItsAxis`、`aConicalSurfaceWalksItsGeneratrix`、`aToroidalSurfaceClosesInBothDirections`、`aRectangularTrimmedSurfaceForwardsToItsBasis` |
 | T2 | 归属与大小 | 同文件顶部 `static_assert`（`sizeof(CylindricalSurfaced)` 等三项、`sizeof(Placement<double>) == 3 * sizeof(Point3d)`、两个样条曲面是 `BoundedSurface` 且非抽象）与 `aPlacementCompletesAndNormalisesItsFrame` |
 | T3 | 样条曲面的求值、有理形式、`continuity()` 与无效网 | `aBezierPatchBlendsItsNet`（双线性网中点为 `(0.5, 0.5, 0.5)`、角点插值、`derivativeU` / `derivativeV`）、`aRationalBezierPatchPullsTowardsItsHeavierCorner`（`2×2` 权重 `{1,1,1,3}` 中点 = `(2/3, 2/3)`）、`aBSplinePatchSumsItsTwoBasisFamilies`（双线性 B 样条等于同网的贝塞尔、二次 `apron` 的 `derivativeU(0,0) = (2,2,0)`、内部重数 2 使 `continuity()` 降为 `C0`） |
 | T4 | 族级曲面契约、裁剪的周期与空基行为 | `everySurfaceKeepsTheInterfacePromises`（八个曲面逐条问域有序、闭合 / 周期与周期值一致、`isCN` 与 `continuity()` 一致、有限矩形内两个一阶导有限）、`aRectangularTrimmedSurfaceForwardsToItsBasis` 内的 `uPeriod()` 与空基断言 |

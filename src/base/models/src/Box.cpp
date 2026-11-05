@@ -25,7 +25,7 @@ bool Box::hasVolume(double eps) const
     return solid().hasVolume(static_cast<float>(eps));
 }
 
-vn::geometry::Aabbf Box::bounds() const
+vn::geom3d::Aabbf Box::bounds() const
 {
     return solid().bounds();
 }

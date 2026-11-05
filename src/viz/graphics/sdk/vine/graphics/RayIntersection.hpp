@@ -5,7 +5,7 @@
 #include <limits>
 #include <vector>
 
-#include <vine/geometry/Ray.hpp>
+#include <vine/geom3d/Ray.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector2.hpp>
@@ -85,7 +85,7 @@ class VN_GRAPHICS_API RayIntersection {
      * @param world    World transform of the geometry (must be invertible to be picked).
      * @return Intersection result; hit=false when there is no intersection.
      */
-    static RayIntersectionResult intersect(const vn::geometry::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world);
+    static RayIntersectionResult intersect(const vn::geom3d::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world);
 
     /** @brief Tests ray intersection with a single geometry for a given mode.
      *
@@ -100,7 +100,7 @@ class VN_GRAPHICS_API RayIntersection {
      * @param mode     Query mode.
      * @return Vector of intersection results (may be empty).
      */
-    static std::vector<RayIntersectionResult> intersect(const vn::geometry::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world, Mode mode);
+    static std::vector<RayIntersectionResult> intersect(const vn::geom3d::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world, Mode mode);
 
     /** @brief Tests ray intersection with all geometries in a scene (closest hit only).
      *
@@ -115,7 +115,7 @@ class VN_GRAPHICS_API RayIntersection {
      * @param layer_mask Layers this query picks (see Node::setLayers).
      * @return Intersection result; hit=false when there is no intersection.
      */
-    static RayIntersectionResult intersectScene(const vn::geometry::Rayd& ray, raw_ptr<Scene> scene, std::uint32_t layer_mask = kAllLayers);
+    static RayIntersectionResult intersectScene(const vn::geom3d::Rayd& ray, raw_ptr<Scene> scene, std::uint32_t layer_mask = kAllLayers);
 
     /** @brief Tests ray intersection with all geometries in a scene, for a given mode.
      *
@@ -133,7 +133,7 @@ class VN_GRAPHICS_API RayIntersection {
      * @return Vector of intersection results (may be empty).
      */
     static std::vector<RayIntersectionResult>
-    intersectSceneAll(const vn::geometry::Rayd& ray, raw_ptr<Scene> scene, Mode mode = Mode::AllHits, std::uint32_t layer_mask = kAllLayers);
+    intersectSceneAll(const vn::geom3d::Rayd& ray, raw_ptr<Scene> scene, Mode mode = Mode::AllHits, std::uint32_t layer_mask = kAllLayers);
 };
 
 VN_GRAPHICS_NS_END

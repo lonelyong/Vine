@@ -39,7 +39,7 @@ gp_Ax2 centeredZAxis(double half_height)
 }
 
 /// Builds a box spanning [-hx, hx] x [-hy, hy] x [-hz, hz], the space the analytic box describes.
-TopoDS_Shape solidOf(const vn::geometry::BoxSolidf& box)
+TopoDS_Shape solidOf(const vn::geom3d::BoxSolidf& box)
 {
     const auto half_x = static_cast<double>(box.half_x);
     const auto half_y = static_cast<double>(box.half_y);
@@ -50,13 +50,13 @@ TopoDS_Shape solidOf(const vn::geometry::BoxSolidf& box)
 }
 
 /// Builds a sphere of the given radius, already centered on the origin.
-TopoDS_Shape solidOf(const vn::geometry::SphereSolidf& sphere)
+TopoDS_Shape solidOf(const vn::geom3d::SphereSolidf& sphere)
 {
     return BRepPrimAPI_MakeSphere(static_cast<double>(sphere.radius)).Shape();
 }
 
 /// Builds a cylinder spanning [-h/2, h/2] on +Z, the space the analytic cylinder describes.
-TopoDS_Shape solidOf(const vn::geometry::CylinderSolidf& cylinder)
+TopoDS_Shape solidOf(const vn::geom3d::CylinderSolidf& cylinder)
 {
     const auto radius = static_cast<double>(cylinder.radius);
     const auto height = static_cast<double>(cylinder.half_height) * 2.0;
@@ -65,7 +65,7 @@ TopoDS_Shape solidOf(const vn::geometry::CylinderSolidf& cylinder)
 }
 
 /// Builds a cone with its base at -h/2 and its apex at +h/2 on +Z, the space the analytic cone describes.
-TopoDS_Shape solidOf(const vn::geometry::ConeSolidf& cone)
+TopoDS_Shape solidOf(const vn::geom3d::ConeSolidf& cone)
 {
     const auto radius = static_cast<double>(cone.base_radius);
     const auto height = static_cast<double>(cone.half_height) * 2.0;
@@ -77,7 +77,7 @@ TopoDS_Shape solidOf(const vn::geometry::ConeSolidf& cone)
 ///
 /// The backend has no tri-axial ellipsoid: a unit sphere is scaled onto the three semi-axes, which turns its face into
 /// a B-spline, so the solid matches the ellipsoid only within the transform's tolerance.
-TopoDS_Shape solidOf(const vn::geometry::EllipsoidSolidf& ellipsoid)
+TopoDS_Shape solidOf(const vn::geom3d::EllipsoidSolidf& ellipsoid)
 {
     const auto radius_x = static_cast<double>(ellipsoid.radius_x);
     const auto radius_y = static_cast<double>(ellipsoid.radius_y);

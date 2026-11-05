@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-05
 > **范围**：把 `Solid<float>`（五个解析体）变成 `TriangleMesh` 的入口、质量参数与结果契约。
 > 不含值类型本身与它的解析查询（见 `geometry-solid.md`）、模型的建模契约（见 `geometry-parametric.md`）、B-rep 的三角化（见 `brep-operations.md`）、网格存储与渲染（见 `graphics-geometry.md`）。
-> **权威来源**：`src/base/models/sdk/vine/models/SolidTessellation.hpp`、`src/base/models/src/SolidTessellation.cpp`；`tests/test_geometry/SolidTessellationTest.cpp`。
+> **权威来源**：`src/base/models/sdk/vine/models/SolidTessellation.hpp`、`src/base/models/src/SolidTessellation.cpp`；`tests/test_geom3d/SolidTessellationTest.cpp`。
 > **待办**：`../backlog/geometry.md` G5
 
 ## 1. 概要设计
@@ -130,7 +130,7 @@
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 盒：六面、canonical 包围盒、法向 | `tests/test_geometry/SolidTessellationTest.cpp` 的 `aBoxBecomesSixClosedQuads` |
+| T1 | 盒：六面、canonical 包围盒、法向 | `tests/test_geom3d/SolidTessellationTest.cpp` 的 `aBoxBecomesSixClosedQuads` |
 | T2 | 球 / 椭球：点集在解析面上、法向 | 同文件 `aSphereBecomesAClosedBandBetweenItsPoles`、`anEllipsoidUsesItsThreeSemiAxes` |
 | T3 | 圆柱：侧带与两盖、法向分类 | 同文件 `aCylinderHasASideBandAndTwoCaps` |
 | T4 | 圆锥：斜法向与底盖 | 同文件 `aConeHasASlantedSideAndABase` |

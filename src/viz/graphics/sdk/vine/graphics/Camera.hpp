@@ -4,7 +4,7 @@
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
-#include <vine/geometry/Ray.hpp>
+#include <vine/geom3d/Ray.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector2.hpp>
@@ -239,7 +239,7 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      *                  (pixel / viewport dimension).
      * @return Ray in world space.
      */
-    vn::geometry::Rayd screenToWorldRay(const Vec2d& screenPos) const;
+    vn::geom3d::Rayd screenToWorldRay(const Vec2d& screenPos) const;
 
   private:
     String         name_;

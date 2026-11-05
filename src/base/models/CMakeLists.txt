@@ -8,4 +8,4 @@
 # Geometry is PUBLIC because the headers speak in Aabb / Solid types.
 vn_add_library(MODELS_TARGET_NAME Models)
 
-target_link_libraries(${MODELS_TARGET_NAME} PUBLIC vn::Geometry)
+target_link_libraries(${MODELS_TARGET_NAME} PUBLIC vn::Geom3D)

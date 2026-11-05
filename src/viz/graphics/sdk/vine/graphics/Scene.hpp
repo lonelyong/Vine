@@ -17,7 +17,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-using vn::geometry::Aabbd;
+using vn::geom3d::Aabbd;
 
 class Camera;
 class LightRig;

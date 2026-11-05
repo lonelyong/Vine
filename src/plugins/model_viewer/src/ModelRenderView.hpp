@@ -358,7 +358,7 @@ inline void ModelRenderView::selectAt(double nx, double ny)
         return;
     }
 
-        const vn::geometry::Rayd                   ray = view_->camera()->screenToWorldRay(vn::math::Vec2d(nx, ny));
+        const vn::geom3d::Rayd                   ray = view_->camera()->screenToWorldRay(vn::math::Vec2d(nx, ny));
     const vn::graphics::RayIntersectionResult hit = vn::graphics::RayIntersection::intersectScene(ray, view_->scene().get());
 
     if (!hit.hit || hit.geometry == nullptr) {

@@ -18,7 +18,7 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/math/Vector4.hpp>
 
-#include <vine/geometry/Aabb.hpp>
+#include <vine/geom3d/Aabb.hpp>
 #include <vine/models/Array.hpp>
 #include <vine/models/Shape.hpp>
 
@@ -53,7 +53,7 @@ class Mesh : public Shape {
     using Vec2   = vn::math::Vec2f;
     using Vec3   = vn::math::Vec3f;
     using Vec4   = vn::math::Vec4f;
-    using Aabb   = vn::geometry::Aabbf;
+    using Aabb   = vn::geom3d::Aabbf;
 
     static constexpr std::uint32_t kVec3Components = 3u;
     static constexpr std::uint32_t kVec2Components = 2u;

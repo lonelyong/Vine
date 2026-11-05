@@ -4,7 +4,7 @@
 
 #include <optional>
 
-#include <vine/geometry/SolidShape.hpp>
+#include <vine/geom3d/SolidShape.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Types.hpp>
 
@@ -70,22 +70,22 @@ bool visitPrimitive(const Primitive& primitive, Visitor&& visitor)
  * @param primitive The primitive to convert.
  * @return The analytic solid, or nothing when the primitive is not one of the five solids.
  */
-[[nodiscard]] inline std::optional<vn::geometry::SolidShapef> solidShapeOf(const Primitive& primitive) noexcept
+[[nodiscard]] inline std::optional<vn::geom3d::SolidShapef> solidShapeOf(const Primitive& primitive) noexcept
 {
     if (const auto* box = vn::obj_cast<Box>(&primitive)) {
-        return vn::geometry::SolidShapef{ box->solid() };
+        return vn::geom3d::SolidShapef{ box->solid() };
     }
     if (const auto* sphere = vn::obj_cast<Sphere>(&primitive)) {
-        return vn::geometry::SolidShapef{ sphere->solid() };
+        return vn::geom3d::SolidShapef{ sphere->solid() };
     }
     if (const auto* cylinder = vn::obj_cast<Cylinder>(&primitive)) {
-        return vn::geometry::SolidShapef{ cylinder->solid() };
+        return vn::geom3d::SolidShapef{ cylinder->solid() };
     }
     if (const auto* cone = vn::obj_cast<Cone>(&primitive)) {
-        return vn::geometry::SolidShapef{ cone->solid() };
+        return vn::geom3d::SolidShapef{ cone->solid() };
     }
     if (const auto* ellipsoid = vn::obj_cast<Ellipsoid>(&primitive)) {
-        return vn::geometry::SolidShapef{ ellipsoid->solid() };
+        return vn::geom3d::SolidShapef{ ellipsoid->solid() };
     }
     return std::nullopt;
 }

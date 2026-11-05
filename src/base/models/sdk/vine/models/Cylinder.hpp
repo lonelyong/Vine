@@ -4,7 +4,7 @@
 
 #include <optional>
 
-#include <vine/geometry/CylinderSolid.hpp>
+#include <vine/geom3d/CylinderSolid.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Types.hpp>
 
@@ -76,9 +76,9 @@ class VN_MODELS_API Cylinder final : public Primitive {
      * @brief Returns the analytic solid this cylinder describes.
      * @return The cylinder solid with the stored radius and half height.
      */
-    [[nodiscard]] vn::geometry::CylinderSolidf solid() const noexcept
+    [[nodiscard]] vn::geom3d::CylinderSolidf solid() const noexcept
     {
-        return vn::geometry::CylinderSolidf{ radius_, height_ * 0.5f };
+        return vn::geom3d::CylinderSolidf{ radius_, height_ * 0.5f };
     }
 
     /**
@@ -99,7 +99,7 @@ class VN_MODELS_API Cylinder final : public Primitive {
      * @brief Returns the axis-aligned bounds of the cylinder in its local space.
      * @return The box of the full diameter around the axis.
      */
-    [[nodiscard]] vn::geometry::Aabbf bounds() const override;
+    [[nodiscard]] vn::geom3d::Aabbf bounds() const override;
 
   private:
     /// Radius; 1 for the unit cylinder.

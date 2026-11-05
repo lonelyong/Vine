@@ -24,7 +24,7 @@ bool Cylinder::hasVolume(double eps) const
     return solid().hasVolume(static_cast<float>(eps));
 }
 
-vn::geometry::Aabbf Cylinder::bounds() const
+vn::geom3d::Aabbf Cylinder::bounds() const
 {
     return solid().bounds();
 }

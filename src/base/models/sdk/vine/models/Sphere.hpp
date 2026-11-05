@@ -4,7 +4,7 @@
 
 #include <optional>
 
-#include <vine/geometry/SphereSolid.hpp>
+#include <vine/geom3d/SphereSolid.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Types.hpp>
 
@@ -57,9 +57,9 @@ class VN_MODELS_API Sphere final : public Primitive {
      * @brief Returns the analytic solid this sphere describes.
      * @return The sphere solid with the stored radius.
      */
-    [[nodiscard]] vn::geometry::SphereSolidf solid() const noexcept
+    [[nodiscard]] vn::geom3d::SphereSolidf solid() const noexcept
     {
-        return vn::geometry::SphereSolidf{ radius_ };
+        return vn::geom3d::SphereSolidf{ radius_ };
     }
 
     /**
@@ -80,7 +80,7 @@ class VN_MODELS_API Sphere final : public Primitive {
      * @brief Returns the axis-aligned bounds of the sphere in its local space.
      * @return The cube of side `2 * radius` around the origin.
      */
-    [[nodiscard]] vn::geometry::Aabbf bounds() const override;
+    [[nodiscard]] vn::geom3d::Aabbf bounds() const override;
 
   private:
     /// Radius; 1 for the unit sphere.

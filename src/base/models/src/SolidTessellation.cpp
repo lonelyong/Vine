@@ -242,27 +242,27 @@ struct TessellateVisitor {
     int          around;
     int          along;
 
-    void operator()(const vn::geometry::BoxSolidf& box) const
+    void operator()(const vn::geom3d::BoxSolidf& box) const
     {
         appendBox(builder, box.half_x, box.half_y, box.half_z);
     }
 
-    void operator()(const vn::geometry::SphereSolidf& sphere) const
+    void operator()(const vn::geom3d::SphereSolidf& sphere) const
     {
         appendEllipsoid(builder, sphere.radius, sphere.radius, sphere.radius, around, along);
     }
 
-    void operator()(const vn::geometry::CylinderSolidf& cylinder) const
+    void operator()(const vn::geom3d::CylinderSolidf& cylinder) const
     {
         appendCylinder(builder, cylinder.radius, cylinder.half_height, around);
     }
 
-    void operator()(const vn::geometry::ConeSolidf& cone) const
+    void operator()(const vn::geom3d::ConeSolidf& cone) const
     {
         appendCone(builder, cone.base_radius, cone.half_height, around);
     }
 
-    void operator()(const vn::geometry::EllipsoidSolidf& ellipsoid) const
+    void operator()(const vn::geom3d::EllipsoidSolidf& ellipsoid) const
     {
         appendEllipsoid(builder, ellipsoid.radius_x, ellipsoid.radius_y, ellipsoid.radius_z, around, along);
     }
@@ -270,7 +270,7 @@ struct TessellateVisitor {
 
 } // namespace
 
-vn::intrusive_ptr<TriangleMesh> tessellateSolid(const vn::geometry::SolidShapef& solid, const TessellationQuality& quality)
+vn::intrusive_ptr<TriangleMesh> tessellateSolid(const vn::geom3d::SolidShapef& solid, const TessellationQuality& quality)
 {
     if (!solidOf(solid).isValid()) {
         return {};

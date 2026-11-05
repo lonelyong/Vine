@@ -4,7 +4,7 @@
 
 #include <optional>
 
-#include <vine/geometry/ConeSolid.hpp>
+#include <vine/geom3d/ConeSolid.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Types.hpp>
 
@@ -76,9 +76,9 @@ class VN_MODELS_API Cone final : public Primitive {
      * @brief Returns the analytic solid this cone describes.
      * @return The cone solid with the stored base radius and half height.
      */
-    [[nodiscard]] vn::geometry::ConeSolidf solid() const noexcept
+    [[nodiscard]] vn::geom3d::ConeSolidf solid() const noexcept
     {
-        return vn::geometry::ConeSolidf{ radius_, height_ * 0.5f };
+        return vn::geom3d::ConeSolidf{ radius_, height_ * 0.5f };
     }
 
     /**
@@ -99,7 +99,7 @@ class VN_MODELS_API Cone final : public Primitive {
      * @brief Returns the axis-aligned bounds of the cone in its local space.
      * @return The box of the base disk around the axis.
      */
-    [[nodiscard]] vn::geometry::Aabbf bounds() const override;
+    [[nodiscard]] vn::geom3d::Aabbf bounds() const override;
 
   private:
     /// Base radius; 1 for the unit cone.

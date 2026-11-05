@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-04
 > **范围**：`geometry` 里“两个对象求交”的**入口约定**（住在谁身上、叫什么、结果长什么样）与现有配对清单。
 > 不含各配对内部的数值算法（在头文件与 `src/`）、不含“算法为什么挂在被交对象上”（`geometry-primitives.md` 2.8、`geometry-ray.md` 2.2）、不含拾取的场景语义（`graphics-scene.md`）。
-> **权威来源**：`Plane.hpp`、`LineCurve.hpp`、`Aabb.hpp`、`Obb.hpp`、`Ray.hpp` 的 `intersectWith` / `intersects` / `intersectTriangle`；`tests/test_geometry/LinePlaneTest.cpp`、`RayTest.cpp`。
+> **权威来源**：`Plane.hpp`、`LineCurve.hpp`、`Aabb.hpp`、`Obb.hpp`、`Ray.hpp` 的 `intersectWith` / `intersects` / `intersectTriangle`；`tests/test_geom3d/LinePlaneTest.cpp`、`RayTest.cpp`。
 > **待办**：`../backlog/geometry.md` G11
 
 ## 1. 概要设计
@@ -187,16 +187,16 @@
 
 | 验收 | 用例 |
 |---|---|
-| T1 直线 × 直线 / 直线 × 平面 | `tests/test_geometry/LinePlaneTest.cpp` 的 `skewLineCurvesReportTheClosestPair`、`parallelAndCollinearFlags`、`lineCrossesThePlaneAtOnePoint`、`parallelLineCurveHasNoIntersection` |
+| T1 直线 × 直线 / 直线 × 平面 | `tests/test_geom3d/LinePlaneTest.cpp` 的 `skewLineCurvesReportTheClosestPair`、`parallelAndCollinearFlags`、`lineCrossesThePlaneAtOnePoint`、`parallelLineCurveHasNoIntersection` |
 | T2 平面 × 平面（含平行、共面） | 同文件 `twoPlanesMeetAlongALineCurve`、`coincidentPlanesReportNoIntersectionLineCurve` |
-| T3 射线 × 平面 / 盒 / 三角形（含起点在内、平行、背面、退化） | `tests/test_geometry/RayTest.cpp` |
-| T4 盒 × 盒（含不相交的间隙盒） | `tests/test_geometry/AabbTest.cpp` 的 `intersectWith` |
-| T5 有向盒 × 有向盒（SAT，含相切与分离） | `tests/test_geometry/ObbTest.cpp` 的 `IntersectsIncludingTouchingAndRejectsSeparatedBoxes` |
-| T6 曲线 × 解析曲面 | `tests/test_geometry/CurveSurfaceTest.cpp` 的 `aLineCrossesAPlaneWhereTheAnalyticAnswerSays`（与解析入口逐点对齐）、`aCircleCrossesAnOffCentreSphereTwice`、`aLineThroughATorusMeetsItFourTimes`（两种精度）、`anUnboundedCurveNeedsAWindow`、`unusableInputsAnswerNothingInsteadOfNaN` |
+| T3 射线 × 平面 / 盒 / 三角形（含起点在内、平行、背面、退化） | `tests/test_geom3d/RayTest.cpp` |
+| T4 盒 × 盒（含不相交的间隙盒） | `tests/test_geom3d/AabbTest.cpp` 的 `intersectWith` |
+| T5 有向盒 × 有向盒（SAT，含相切与分离） | `tests/test_geom3d/ObbTest.cpp` 的 `IntersectsIncludingTouchingAndRejectsSeparatedBoxes` |
+| T6 曲线 × 解析曲面 | `tests/test_geom3d/CurveSurfaceTest.cpp` 的 `aLineCrossesAPlaneWhereTheAnalyticAnswerSays`（与解析入口逐点对齐）、`aCircleCrossesAnOffCentreSphereTwice`、`aLineThroughATorusMeetsItFourTimes`（两种精度）、`anUnboundedCurveNeedsAWindow`、`unusableInputsAnswerNothingInsteadOfNaN` |
 | T7 重合与相切 | 同文件 `aCurveLyingOnTheSurfaceIsCoincidentNotAListOfPoints`、`aTouchWithoutCrossingIsReportedAsNoCrossing`（锁定 P4 的默认行为） |
 | T8 | 求根器本身 | `tests/test_math/RootFindingTest.cpp`（括号、无变号、NaN、斜括号收敛、迭代上限、单精度） |
-| T9 | 射线 × 任意曲面（族级） | `tests/test_geometry/SurfaceQueryTest.cpp` 的 `RaySurface.*`；算法与逐项验收见 `geometry-surface-queries.md` §8 |
-| T10 | 曲线 × 非解析曲面（样条面、裁剪面、曲线在面上、不可用输入、两种精度） | `tests/test_geometry/CurveSurfaceTest.cpp` 的 `CurveSurfaceProjection.*` |
+| T9 | 射线 × 任意曲面（族级） | `tests/test_geom3d/SurfaceQueryTest.cpp` 的 `RaySurface.*`；算法与逐项验收见 `geometry-surface-queries.md` §8 |
+| T10 | 曲线 × 非解析曲面（样条面、裁剪面、曲线在面上、不可用输入、两种精度） | `tests/test_geom3d/CurveSurfaceTest.cpp` 的 `CurveSurfaceProjection.*` |
 ## 9. 状态与演进
 
 - 九个点/盒/射线入口与“曲线 × 解析曲面”的求根入口均已落地；本轮的曲线 × 曲面是把 `../research/geometry-curve-surface-intersection-2026-11-04.md` 并入本文的结果。

@@ -3,7 +3,7 @@
 #include <vine/models/models_global.hpp>
 
 #include <vine/intrusive_ptr.hpp>
-#include <vine/geometry/SolidShape.hpp>
+#include <vine/geom3d/SolidShape.hpp>
 #include <vine/models/TriangleMesh.hpp>
 
 VN_MODELS_NS_BEGIN
@@ -53,13 +53,13 @@ struct TessellationQuality {
  * - The result is a new mesh every call: nothing is cached, and no revision is shared with any modeling shape.
  *
  * @note
- * - The entry takes the stored `vn::geometry::SolidShapef` variant rather than the `vn::geometry::Solid<float>` interface: producing a mesh needs a
+ * - The entry takes the stored `vn::geom3d::SolidShapef` variant rather than the `vn::geom3d::Solid<float>` interface: producing a mesh needs a
  *   different answer per kind, and a `std::visit` over the closed set is exhaustive at compile time, while a virtual
  *   interface would let a new kind fall through silently. A caller that holds a `Primitive` passes `shape()`.
  * - This is the one place an analytic solid becomes drawable: `graphics::geometryFromShape()` takes a mesh, so a caller
  *   hands it the result of this function rather than teaching the renderer a second shape kind (`brep-operations.md`
  *   1.3).
  */
-VN_MODELS_API vn::intrusive_ptr<TriangleMesh> tessellateSolid(const vn::geometry::SolidShapef& solid, const TessellationQuality& quality = {});
+VN_MODELS_API vn::intrusive_ptr<TriangleMesh> tessellateSolid(const vn::geom3d::SolidShapef& solid, const TessellationQuality& quality = {});
 
 VN_MODELS_NS_END

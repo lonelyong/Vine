@@ -75,7 +75,7 @@ FCL 只通过纯虚钩子接入，核心模块不出现 FCL 类型。
 
 ### 3.1.1 F1 碰撞几何
 
-- **行为**：`CollisionGeometry` 持 `intrusive_ptr<const geometry::Shape>`；`buildFromShape` 由后端把形状转成
+- **行为**：`CollisionGeometry` 持 `intrusive_ptr<const models::Shape>`；`buildFromShape` 由后端把形状转成
   FCL 几何，`isValid` 报是否可用。
 - **约束**（C1）：核心模块不出现 FCL 类型；`Shape` 生命周期由调用方保证。
 - **要求**（R1）：几何用 `RefCounted` + `intrusive_ptr`，可多态删除。

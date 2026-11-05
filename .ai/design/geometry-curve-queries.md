@@ -2,9 +2,9 @@
 
 > **状态**：现行
 > **最后核对**：2026-11-04
-> **范围**：`src/base/geometry` 里对**任意** `Curve<T>` 的最近点 / 距离，以及窗口规则与代价。
+> **范围**：`src/base/geom3d` 里对**任意** `Curve<T>` 的最近点 / 距离，以及窗口规则与代价。
 > 不含曲线 × 曲面求交（见 `geometry-intersection.md`）、点到曲面（见 `geometry-surface-queries.md`）、曲线与曲线之间的最近距离、弧长参数化。
-> **权威来源**：`src/base/geometry/sdk/vine/geometry/CurveProjection.hpp`；`tests/test_geometry/CurveDistanceTest.cpp`。
+> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/CurveProjection.hpp`；`tests/test_geom3d/CurveDistanceTest.cpp`。
 > **待办**：`../backlog/geometry.md` G3（只剩实体求交）
 
 ## 1. 概要设计
@@ -107,7 +107,7 @@
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 直线足点与不可用输入 | `tests/test_geometry/CurveDistanceTest.cpp` 的 `aPointProjectsOntoALineCurveAtItsFoot`、`unusableInputsAnswerNothing` |
+| T1 | 直线足点与不可用输入 | `tests/test_geom3d/CurveDistanceTest.cpp` 的 `aPointProjectsOntoALineCurveAtItsFoot`、`unusableInputsAnswerNothing` |
 | T2 | 无界曲线必须给窗口、足点在窗口外落到端点 | 同文件 `anUnboundedCurveNeedsAWindow`、`aFootOutsideTheWindowFallsOnTheNearerEnd` |
 | T3 | 圆与样条的最近点 | 同文件 `aPointProjectsOntoACircle`、`aPointProjectsOntoASplineCurve` |
 | T4 | 等距多解与两种精度 | 同文件 `theCentreOfACircleReportsOneOfItsEquidistantPoints`、`bothPrecisionsFindTheSameFoot` |

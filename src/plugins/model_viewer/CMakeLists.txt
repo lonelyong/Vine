@@ -16,14 +16,14 @@ set_target_properties(${MODEL_VIEWER_TARGET} PROPERTIES
 target_sources(${MODEL_VIEWER_TARGET} PRIVATE res/res.qrc)
 
 # vn::Appfw: the plugin base, the document surface (Document / DocumentManager) and the dock panel API (Control).
-# vn::Geometry: the mesh a model document holds. TriangleMesh is where the two numbers the info panel shows
+# vn::Geom3D: the mesh a model document holds. TriangleMesh is where the two numbers the info panel shows
 #               come from (vertexCount / triangleCount) - not a re-count of something we built ourselves.
 # vn::Graphics: the view IS the renderer (ModelRenderView): its own render control and its own SceneView on it,
 #               and the Geometry/Scene/Material a mesh becomes. Not a second render session - see the class note.
 # vn::MeshIO: MeshLoader, for the opener that reads a mesh file (the "parsed from disk" half of the payload story).
 # vn::Logging: VN_LOGW for the "opener refused" paths.
 # No ImageIO/System here, so the RPATH note in VinePluginHelper.cmake has nothing to catch.
-target_link_libraries(${MODEL_VIEWER_TARGET} PRIVATE vn::Appfw vn::Geometry vn::Models vn::Graphics vn::Logging vn::MeshIO
+target_link_libraries(${MODEL_VIEWER_TARGET} PRIVATE vn::Appfw vn::Geom3D vn::Models vn::Graphics vn::Logging vn::MeshIO
     Qt6::Core Qt6::Gui Qt6::Widgets)
 
 # The plugin's own UI text: res/translations/model_viewer_<locale>.ts, compiled into :/i18n/model_viewer_<locale>.qm.

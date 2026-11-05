@@ -13,4 +13,4 @@ set_target_properties(${TEST_PLUGIN_TARGET} PROPERTIES
     AUTORCC ON
 )
 
-target_link_libraries(${TEST_PLUGIN_TARGET} PRIVATE vn::Appfw vn::Graphics vn::Geometry vn::Progress vn::Logging Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(${TEST_PLUGIN_TARGET} PRIVATE vn::Appfw vn::Graphics vn::Geom3D vn::Progress vn::Logging Qt6::Core Qt6::Gui Qt6::Widgets)

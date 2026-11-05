@@ -5,7 +5,7 @@
 > **范围**：`Curve` / `Surface` 两个求值接口，以及具体值类型的归属与新增类型的最小契约。
 > 参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）**不构成族**：模型侧是一个建模类 `Primitive`，几何侧是族 `Solid<T>` 的五个 kind（见 `geometry-parametric.md`、`geometry-solid.md`）。
 > 不含具体类型的完整契约（见 `geometry-primitives.md`、`geometry-parametric.md`、`geometry-ray.md` 与各自头文件），不含求交与距离算法。
-> **权威来源**：`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Continuity.hpp`、`Surface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp`。
+> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Curve.hpp`、`Continuity.hpp`、`Surface.hpp`；`tests/test_geom3d/GeometryKindsTest.cpp`。
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -215,7 +215,7 @@
 | `Surface.hpp` / `ElementarySurface.hpp` / `BoundedSurface.hpp` | 曲面接口与两个分类标签 |
 | `Frame.hpp` | 共用的“平面内轴”规则（圆锥曲线、平面、旋转面共用） |
 | `Placement.hpp` / `CylindricalSurface.hpp` / `ConicalSurface.hpp` / `ToroidalSurface.hpp` / `RectangularTrimmedSurface.hpp` | 旋转面的坐标系值（`Placement`）与裁剪曲面，见 `geometry-axis-surfaces.md` |
-| `src/base/geometry/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
+| `src/base/geom3d/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
 
 ## 5. 约束、要求与不变量
 
@@ -266,7 +266,7 @@
 
 | 验收 | 用例 |
 |---|---|
-| T1 归属、非归属与零成本 | `tests/test_geometry/GeometryKindsTest.cpp` 顶部 `static_assert` |
+| T1 归属、非归属与零成本 | `tests/test_geom3d/GeometryKindsTest.cpp` 顶部 `static_assert` |
 | T2 曲线参数化与退化输入 | 同文件 `aLineCurveAnswersThePointAtItsParameter`、`aCircleCurveWalksItsOwnPlane`、`aCircleCurveWithoutANormalIsInvalid` |
 | T3 球面参数化与退化输入 | 同文件 `aSphericalSheetPutsPolarZeroAtThePole`、`aCircleCurveWithoutANormalIsInvalid` |
 | T4 曲线接口的参数域与转发 | 同文件 `aCurveAnswersItsDomainAndPeriod`、`aTrimmedCurveForwardsToItsBasis` |
