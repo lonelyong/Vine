@@ -91,3 +91,11 @@
   写派生类时注意：**依赖基类的成员一律要限定** —— 基类的 static 函数写 `ConicCurve<T>::inPlaneAxis(...)`，继承的数据成员/函数
   加 `using ConicCurve<T>::center;` 之类的声明，否则 MSVC 报 C3861/C2065。`inPlaneAxis` 现在是 `Frame.hpp` 的自由函数
   （`vn::geom3d::inPlaneAxis`），`ConicCurve` 不再有同名 protected static。
+- **`geom2d` 是第二份契约，不是 3D 的泛型特化**：`geom2d::Curve<T>` 与 `geom3d::Curve<T>` 同名同义、互不继承
+  （`decisions/ADR-2026-11-05-planar-curve-contract.md`）；今天只有 `LineCurve` / `CircleCurve`，平面圆是 `center` + `radius`、
+  没有 `ConicCurve` 框架。模块 header-only，`vn::Geom2D` 是 **INTERFACE 目标**（没有 `src/`，不导出符号，也就没有实例化表）；
+  名字不带维度标记，精度后缀仍是 `d` / `f`。设计见 `design/geometry-planar.md`。
+- **平面几何（`geom2d`）现有四型**：`LineCurve` / `CircleCurve` / `EllipseCurve` / `ArcCurve`。椭圆自带 `x_direction`（主轴，`yAxis()` 由 +90° 旋转导出），圆没有——圆的起点由平面定死，所以**没有**平面 `ConicCurve` 层。
+  `ArcCurve` 是“圆按值 + 角度区间”：闭合要区间盖满圆的域、周期要至少一个周期，否则 `period() == 0`；裁剪不重参数化，导数就是圆在同一个角度上的速度。
+  **`reversedParameter` 不返回同一个点**：它给的是反向曲线（原曲线关于域中点轴 / 起始轴的镜像）上的同一点，只保证 involution 与两端互换；
+  `evaluate(reversedParameter(u)) != evaluate(u)`（圆是 y 反号、弧是 x↔y 交换）。契约由 `tests/test_geom2d/CurveContractTest.cpp` 的 float / double 扫查盯着。

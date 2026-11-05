@@ -46,14 +46,31 @@ class CircleCurve : public Curve<T> {
 
   public:
     /**
-     * @brief Returns the point at angle @p u.
+     * @brief Returns the point at angle @p angle; the same value as `evaluate()`.
+     *
+     * @details
+     * - It names the parameter's meaning at the call site (an angle, not a distance) and is the concrete type's own
+     *   entry point, as `LineCurve::pointAt()` is for a line.
+     * - It is not `constexpr`: `std::cos` and `std::sin` are not constant expressions in C++20, so unlike the line
+     *   there is no constant-evaluation form of this query.
+     *
+     * @param angle Angle in radians, measured from the positive X axis; values outside `[0, 2*pi]` wrap by periodicity.
+     * @return The point on the circle.
+     */
+    [[nodiscard]] Point pointAt(T angle) const
+    {
+        return center + Vector{ std::cos(angle), std::sin(angle) } * radius;
+    }
+
+    /**
+     * @brief Returns the point at angle @p u; the same value as `pointAt()`.
      *
      * @param u Angle in radians; values outside `[0, 2*pi]` wrap by periodicity.
      * @return The point on the circle.
      */
     [[nodiscard]] Point evaluate(T u) const override
     {
-        return center + Vector{ std::cos(u), std::sin(u) } * radius;
+        return pointAt(u);
     }
 
     /**

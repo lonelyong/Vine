@@ -15,7 +15,7 @@
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
 一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
-## design/ —— 现行设计文档（46）
+## design/ —— 现行设计文档（47）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -50,12 +50,13 @@
 - `appfw-app-info.md` —— 应用身份与应用信息：`AppInfo`/`AppConfig::info`、`Application::appInfo()`、关于面板与对话框。
 - `appfw-translation.md` —— 文案翻译：只翻 appfw 及以上层的界面文案，源语言英文、译文只有中文，Qt 目录随模块走并内嵌（可被文件覆盖），启动时装载、缺译文回退英文。
 
-**base 与其他（20）**
+**base 与其他（21）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
 - `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化与由基本体造实体的契约、失败表示。
 - `geometry-axis-surfaces.md` —— 轴对称解析曲面（圆柱 / 圆锥 / 圆环）的坐标系值 `Placement`、共用的“平面内轴”规则（`Frame.hpp`）、矩形裁剪曲面与样条曲面的现状。
 - `geometry-kinds.md` —— 几何族：`Curve` / `Surface` 都是求值接口（`Curve<T>` 十一项、`Surface<T>` 十四项，含 `isValid()`），曲面多一层 `ElementarySurface` / `BoundedSurface` 分类标签；曲线 / 曲面族已无占位类型。
+- `geometry-planar.md` —— 平面几何：`geom2d::Curve<T>` 是与 3D 契约同义的第二份契约（不是泛型特化、不继承），今天有直线、圆、椭圆与圆弧；平面圆是中心 + 半径、无框架，圆弧是“圆按值 + 角度区间”；模块 header-only / INTERFACE，名字不带维度标记。
 - `geometry-parametric.md` —— 参数化几何是建模类型（`Primitive` 的五个子类同居 `Primitive.hpp`）；canonical 局部空间与 OCCT 的职责收缩。
 - `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`LineCurve`/`Plane` 的归属、命名与契约。
 - `geometry-ray.md` —— 射线与图元相交：`Ray` 归 `geometry`、相交挂在被交对象上、场景走查留 `graphics`。
@@ -72,7 +73,7 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（33）
+## decisions/ —— 决策记录（ADR）（34）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
@@ -85,6 +86,7 @@
 - `ADR-2026-11-04-primitive-is-a-shape.md` —— 参数化几何是建模类型（`Primitive` 子类），算法属于曲面；OCCT 收缩为 STEP 解析与三角化。
 - `ADR-2026-11-05-solid-family-and-variant.md` —— 解析实体是族接口 `Solid<T>` + 封闭值集 `SolidShape`（族本身现行；"模型按值持有"已被下一条取代）。
 - `ADR-2026-11-05-primitive-is-a-modelling-base.md` —— `Primitive` 是建模基类：不持有实体，五个子类各存尺寸并 `solid()` 按需构造；几何 kind 改名 `*Solid`。
+- `ADR-2026-11-05-planar-curve-contract.md` —— 平面曲线是第二份契约（与 3D 同名同义、互不继承），共享词汇留在 `math`；否决泛型 `Curve<PointT>`、继承 3D 契约与嵌入 `z = 0`。
 - `ADR-2026-11-04-curve-third-derivative.md` —— 偏置曲线的二阶导数不实现，也不给 `Curve<T>` 加三阶导数；`OffsetCurve` 保持抽象。
 - `ADR-2026-11-04-axis-surface-frame.md` —— 旋转面的框架放进新的 `AxisSurface` 层，“平面内轴”的规则抽成 `Frame.hpp` 的一份实现；球面不迁移。（已被 `ADR-2026-11-04-surface-placement-value-type.md` 取代）
 - `ADR-2026-11-04-surface-placement-value-type.md` —— 曲面的框架是值类型 `Placement`（原点 + 主方向 + X 方向），不是继承层；“平面内轴”仍只在 `Frame.hpp` 一处。
@@ -120,7 +122,7 @@
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。当前没有在途提案：曲线 × 曲面求交的提案已并入 `design/geometry-intersection.md`（2.7 / F11–F12）并删除。
 
-## backlog/ —— 开放待办（10）
+## backlog/ —— 开放待办（11）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
 
@@ -133,6 +135,7 @@
 - `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
 - `base-crash.md` —— 崩溃报告的开放项（上次崩溃提示、terminate、栈保证、只读目录、Linux、上报触发条件）。
 - `brep.md` —— 运行时 B-rep 运算的开放项（OCCT 后端验证、布尔与缝合）。
+- `geom2d.md` —— 平面几何的开放项（椭圆 / 圆弧 / `ConicCurve` 层、平面查询、`CircleCurve::pointAt`）。
 - `loaders.md` —— loaders 层的开放项（点云 I/O 的归属与入口）。
 
 ## memory/ —— 模块要点（10）
