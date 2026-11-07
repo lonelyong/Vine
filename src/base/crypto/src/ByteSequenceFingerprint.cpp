@@ -12,8 +12,8 @@
 #include <stdexcept>
 #include <vector>
 
-#include <vine/crypto/Hash.hpp>
-#include <vine/crypto/HashCalculator.hpp>
+#include <vine/crypto/Digest.hpp>
+#include <vine/crypto/Hasher.hpp>
 
 VN_CRYPTO_NS_BEGIN
 
@@ -63,15 +63,16 @@ constexpr SamplingConfig chooseSamplingConfig(std::uint64_t data_size) noexcept
 }
 
 /**
- * @brief Writes a SHA-256 digest into the leading bytes of a fingerprint and
+ * @brief Writes a digest into the leading bytes of a fingerprint and
  *        zero-fills the remaining bytes.
  *
- * @param digest The 32-byte digest.
+ * @param digest The digest bytes.
  * @param out The fingerprint array to fill.
  */
-void writeDigestToFingerprint(const std::array<std::uint8_t, 32>& digest, std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& out) noexcept
+void writeDigestToFingerprint(std::span<const std::byte> digest, std::array<std::byte, ByteSequenceFingerprint::kFingerprintSize>& out) noexcept
 {
-    std::memcpy(out.data(), digest.data(), digest.size());
+    out.fill(std::byte{ 0 });
+    std::memcpy(out.data(), digest.data(), std::min<std::size_t>(digest.size(), out.size()));
     std::fill(out.begin() + digest.size(), out.end(), std::byte{ 0 });
 }
 
@@ -148,7 +149,7 @@ void computeSampledFromSpan(std::span<const std::byte> data, std::array<std::byt
         sampled.insert(sampled.end(), data.data() + offset, data.data() + offset + to_read);
     }
 
-    writeDigestToFingerprint(Hash::sha256(sampled.data(), sampled.size()), out);
+    writeDigestToFingerprint(digest(Digest::kSha256, sampled), out);
 }
 
 /**
@@ -194,7 +195,7 @@ void computeSampledFromStream(std::istream& stream, std::uint64_t data_size, std
         }
     }
 
-    writeDigestToFingerprint(Hash::sha256(sampled.data(), sampled.size()), out);
+    writeDigestToFingerprint(digest(Digest::kSha256, sampled), out);
 }
 
 /**
@@ -202,11 +203,11 @@ void computeSampledFromStream(std::istream& stream, std::uint64_t data_size, std
  *
  * @param stream The stream positioned at the start.
  * @param data_size Number of bytes to hash.
- * @return The 32-byte digest.
+ * @return The digest bytes.
  */
-std::array<std::uint8_t, 32> computeSha256FromStream(std::istream& stream, std::uint64_t data_size)
+std::vector<std::byte> computeSha256FromStream(std::istream& stream, std::uint64_t data_size)
 {
-    HashCalculator         calc(HashCalculator::Algorithm::ALG_SHA256);
+    Hasher       calc(Digest::kSha256);
     std::array<char, 4096> buffer{};
     std::uint64_t          remaining = data_size;
 
@@ -217,14 +218,11 @@ std::array<std::uint8_t, 32> computeSha256FromStream(std::istream& stream, std::
         if (n <= 0) {
             break;
         }
-        calc.write(buffer.data(), static_cast<std::size_t>(n));
+        calc.update(buffer.data(), static_cast<std::size_t>(n));
         remaining -= static_cast<std::uint64_t>(n);
     }
 
-    const std::vector<unsigned char> digest = calc.digest();
-    std::array<std::uint8_t, 32>     out{};
-    std::copy_n(digest.begin(), std::min<std::size_t>(digest.size(), out.size()), out.begin());
-    return out;
+    return calc.finish();
 }
 
 /**
@@ -334,7 +332,7 @@ ByteSequenceFingerprint::ByteSequenceFingerprint(std::span<const std::byte> data
     }
 
     if (size_ <= kMediumThreshold) {
-        writeDigestToFingerprint(Hash::sha256(data.data(), size_), fingerprint_);
+        writeDigestToFingerprint(digest(Digest::kSha256, data), fingerprint_);
         mode_ = FingerprintMode::SHA256;
         return;
     }

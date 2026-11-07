@@ -14,13 +14,13 @@
 
 #include <vine/MemoryStream.hpp>
 #include <vine/crypto/ByteSequenceFingerprint.hpp>
-#include <vine/crypto/Hash.hpp>
-#include <vine/crypto/HashCalculator.hpp>
+#include <vine/crypto/Digest.hpp>
+#include <vine/crypto/Hasher.hpp>
 
 using vn::MemoryStream;
 using vn::crypto::ByteSequenceFingerprint;
-using vn::crypto::Hash;
-using vn::crypto::HashCalculator;
+using vn::crypto::Digest;
+using vn::crypto::Hasher;
 
 namespace
 {
@@ -88,71 +88,110 @@ std::string toHex(const std::vector<unsigned char>& data)
     return out;
 }
 
+std::string toHex(std::span<const std::byte> bytes)
+{
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string           out;
+    out.reserve(bytes.size() * 2);
+    for (const std::byte byte : bytes) {
+        const auto value = static_cast<unsigned char>(byte);
+        out.push_back(hex[value >> 4]);
+        out.push_back(hex[value & 0xF]);
+    }
+    return out;
+}
+
+/**
+ * @brief Computes a digest of a text literal, for the published test vectors.
+ *
+ * @param algorithm The digest.
+ * @param text      The ASCII input.
+ * @return The digest bytes.
+ */
+std::vector<std::byte> digestOf(Digest algorithm, std::string_view text)
+{
+    return vn::crypto::digest(algorithm, std::as_bytes(std::span(text.data(), text.size())));
+}
+
+/**
+ * @brief Computes a digest by feeding a MemoryStream, for the stream-path tests.
+ *
+ * @param algorithm The digest.
+ * @param stream    The stream to consume.
+ * @return The digest bytes.
+ */
+std::vector<std::byte> digestOfStream(Digest algorithm, MemoryStream& stream)
+{
+    Hasher hasher(algorithm);
+    hasher << stream;
+    return hasher.finish();
+}
+
 TEST(CryptoTest, Sha256KnownVector)
 {
     // Well-known SHA-256 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha256("abc", 3)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    EXPECT_EQ(toHex(digestOf(Digest::kSha256, "abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
 TEST(CryptoTest, Sha256Empty)
 {
     // SHA-256 of an empty input.
-    EXPECT_EQ(toHex(Hash::sha256("", 0)), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    EXPECT_EQ(toHex(digestOf(Digest::kSha256, "")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 }
 
 TEST(CryptoTest, Md5KnownVector)
 {
     // Well-known MD5 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::md5("abc", 3)), "900150983cd24fb0d6963f7d28e17f72");
+    EXPECT_EQ(toHex(digestOf(Digest::kMd5, "abc")), "900150983cd24fb0d6963f7d28e17f72");
 }
 
 TEST(CryptoTest, Sha1KnownVector)
 {
     // Well-known SHA-1 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha1("abc", 3)), "a9993e364706816aba3e25717850c26c9cd0d89d");
+    EXPECT_EQ(toHex(digestOf(Digest::kSha1, "abc")), "a9993e364706816aba3e25717850c26c9cd0d89d");
 }
 
 TEST(CryptoTest, Sha224KnownVector)
 {
     // Well-known SHA-224 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha224("abc", 3)), "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7");
+    EXPECT_EQ(toHex(digestOf(Digest::kSha224, "abc")), "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7");
 }
 
 TEST(CryptoTest, Sha384KnownVector)
 {
     // Well-known SHA-384 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha384("abc", 3)), "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
+    EXPECT_EQ(toHex(digestOf(Digest::kSha384, "abc")), "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
 }
 
 TEST(CryptoTest, Sha512KnownVector)
 {
     // Well-known SHA-512 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha512("abc", 3)),
+    EXPECT_EQ(toHex(digestOf(Digest::kSha512, "abc")),
               "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
 }
 
 TEST(CryptoTest, Sha3_224KnownVector)
 {
     // Well-known SHA3-224 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha3_224("abc", 3)), "e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf");
+    EXPECT_EQ(toHex(digestOf(Digest::kSha3_224, "abc")), "e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf");
 }
 
 TEST(CryptoTest, Sha3_256KnownVector)
 {
     // Well-known SHA3-256 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha3_256("abc", 3)), "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532");
+    EXPECT_EQ(toHex(digestOf(Digest::kSha3_256, "abc")), "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532");
 }
 
 TEST(CryptoTest, Sha3_384KnownVector)
 {
     // Well-known SHA3-384 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha3_384("abc", 3)), "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25");
+    EXPECT_EQ(toHex(digestOf(Digest::kSha3_384, "abc")), "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25");
 }
 
 TEST(CryptoTest, Sha3_512KnownVector)
 {
     // Well-known SHA3-512 of the ASCII string "abc".
-    EXPECT_EQ(toHex(Hash::sha3_512("abc", 3)),
+    EXPECT_EQ(toHex(digestOf(Digest::kSha3_512, "abc")),
               "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0");
 }
 
@@ -165,13 +204,13 @@ TEST(CryptoTest, MemoryStreamOverloadMatchesByteRange)
     const auto abc = std::as_bytes(std::span<const char>("abc", 3));
 
     MemoryStream md5_stream(abc);
-    EXPECT_EQ(toHex(Hash::md5(md5_stream)), "900150983cd24fb0d6963f7d28e17f72");
+    EXPECT_EQ(toHex(digestOfStream(Digest::kMd5, md5_stream)), "900150983cd24fb0d6963f7d28e17f72");
 
     MemoryStream sha256_stream(abc);
-    EXPECT_EQ(toHex(Hash::sha256(sha256_stream)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    EXPECT_EQ(toHex(digestOfStream(Digest::kSha256, sha256_stream)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 
     MemoryStream sha3_512_stream(abc);
-    EXPECT_EQ(toHex(Hash::sha3_512(sha3_512_stream)),
+    EXPECT_EQ(toHex(digestOfStream(Digest::kSha3_512, sha3_512_stream)),
               "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0");
 }
 
@@ -180,49 +219,49 @@ TEST(CryptoTest, EmptyMemoryStream)
     // An empty (default) stream must be safe to hash.
     MemoryStream stream;
     EXPECT_EQ(stream.size(), 0u);
-    EXPECT_EQ(toHex(Hash::md5(stream)), "d41d8cd98f00b204e9800998ecf8427e");
+    EXPECT_EQ(toHex(digestOfStream(Digest::kMd5, stream)), "d41d8cd98f00b204e9800998ecf8427e");
 }
 
-TEST(CryptoTest, HashCalculatorByEnum)
+TEST(CryptoTest, HasherByEnum)
 {
     // Feed "abc" in two chunks through operator<< and finalize.
-    HashCalculator calc(HashCalculator::Algorithm::ALG_SHA256);
+    Hasher calc(Digest::kSha256);
     calc << u8"ab";
     calc << u8"c";
-    EXPECT_EQ(calc.algorithm(), HashCalculator::Algorithm::ALG_SHA256);
-    EXPECT_EQ(calc.digestSize(), 32u);
-    EXPECT_EQ(toHex(calc.digest()), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    EXPECT_EQ(calc.algorithm(), Digest::kSha256);
+    EXPECT_EQ(calc.size(), 32u);
+    EXPECT_EQ(toHex(calc.finish()), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
-TEST(CryptoTest, HashCalculatorByName)
+TEST(CryptoTest, HasherByName)
 {
     // Names are case-insensitive and accept '-' or '_' separators.
-    HashCalculator calc(u8"SHA3-512");
-    calc.write("abc", 3);
-    EXPECT_EQ(toHex(calc.digest()),
+    Hasher calc(u8"SHA3-512");
+    calc.update("abc", 3);
+    EXPECT_EQ(toHex(calc.finish()),
               "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0");
 }
 
-TEST(CryptoTest, HashCalculatorFromMemoryStream)
+TEST(CryptoTest, HasherFromMemoryStream)
 {
     MemoryStream   stream(std::as_bytes(std::span<const char>("abc", 3)));
-    HashCalculator calc(u8"md5");
+    Hasher calc(u8"md5");
     calc << stream;
-    EXPECT_EQ(toHex(calc.digest()), "900150983cd24fb0d6963f7d28e17f72");
+    EXPECT_EQ(toHex(calc.finish()), "900150983cd24fb0d6963f7d28e17f72");
 }
 
-TEST(CryptoTest, HashCalculatorInvalidName)
+TEST(CryptoTest, HasherInvalidName)
 {
-    EXPECT_THROW(HashCalculator(u8"nope"), std::invalid_argument);
+    EXPECT_THROW(Hasher(u8"nope"), std::invalid_argument);
 }
 
-TEST(CryptoTest, HashCalculatorRepeatedDigest)
+TEST(CryptoTest, HasherRepeatedDigest)
 {
     // digest() is cached; repeated calls return the same bytes.
-    HashCalculator calc(HashCalculator::Algorithm::ALG_SHA1);
+    Hasher calc(Digest::kSha1);
     calc << u8"abc";
-    const auto first  = calc.digest();
-    const auto second = calc.digest();
+    const auto first  = calc.finish();
+    const auto second = calc.finish();
     EXPECT_EQ(first, second);
     EXPECT_EQ(toHex(first), "a9993e364706816aba3e25717850c26c9cd0d89d");
 }

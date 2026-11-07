@@ -12,6 +12,7 @@
 | [`vsg-backend.md`](vsg-backend.md) | 后端运行时：服务/拒绝、每帧调用次数、更新策略、生命周期与所有权、诊断与验证 | 改后端的人 |
 | [`vsg-data-flow.md`](vsg-data-flow.md) | 逐帧数据流与 L0/L1 映射、支持矩阵 | 改后端的人 |
 | [`eigen.md`](eigen.md) | math 模块的 Eigen 使用约定 | 写数学代码的人 |
+| [`crypto.md`](crypto.md) | crypto 模块使用说明：要做什么该用哪个、流式对象契约、密钥与文件格式、线程与所有权、失败长什么样、不要做的事 | 写加解密 / 签名 / 密钥代码的宿主 |
 
 约定：
 
