@@ -2,9 +2,9 @@
 
 > **状态**：现行
 > **最后核对**：2026-11-04
-> **范围**：`src/base/geom3d` 的空间值类型（`Aabb` / `Obb` / `LineCurve` / `Plane`）：归属、命名与契约。
+> **范围**：`src/base/geom/sdk/vine/geom/spatial` 的空间值类型（`Aabb` / `Obb` / `LineCurve` / `Plane`）：归属、命名与契约。
 > 不含 `Shape` / `Mesh` / `Material` / `Model` 的存储与 revision（见 `graphics-geometry.md` §3.5），也不含 2D 区间 `Rect2`（仍在 `math`）。
-> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Aabb.hpp`、`Obb.hpp`、`LineCurve.hpp`、`Plane.hpp`；`tests/test_geom3d`。
+> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Aabb.hpp`、`Obb.hpp`、`LineCurve.hpp`、`Plane.hpp`；`tests/test_geom_spatial`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计
@@ -45,7 +45,7 @@
 
 ### 2.2 一个盒子一个名字
 
-- **是什么**：类型是 `vn::geom3d::Aabb<T>`；别名只有 `Aabbf` / `Aabbd` / `Aabbi`。`Rect3`、`math::Aabb*`、`geometry` 的空转发头全部清退。
+- **是什么**：类型是 `vn::geom::spatial::Aabb<T>`；别名只有 `Aabbf` / `Aabbd` / `Aabbi`。`Rect3`、`math::Aabb*`、`geometry` 的空转发头全部清退。
 - **为什么**：`G1`、`G4`、`G12` —— 名字说明形状；`Aabb` 与 `Obb` 成对，`Rect` 在 3D 里是误名。
 - **边界**：`Mesh::Aabb` 作为 `Mesh` 的类作用域 float 拼写保留（`= Aabbf`），它是别名不是类型，不构成第二个概念。
 - **模板参数有意不受 `vn::math::FP` 约束**：`Aabb<T>` / `Obb<T>` 是**空间值类型**，`Aabbi = Aabb<int32_t>` 是合法的整数索引盒（像素 / 网格索引），所以这里用 `typename T`；几何族（`Curve<T>` / `Surface<T>` 及其成员）则一律约束成浮点，因此 `Plane<T>` 在 2026-11-04 从 `typename T` 改成 `vn::math::FP T`，与族内其余类型一致（`G6`）。两处不一致是刻意的，不是遗漏。
@@ -53,7 +53,7 @@
 
 ### 2.3 解析原语同住一个模块
 
-- **是什么**：`LineCurve`、`Plane`、`Aabb`、`Obb` 都在 `vine/geom3d`；`Plane::intersectWith(Plane, LineCurve&)` 的返回值同模块。
+- **是什么**：`LineCurve`、`Plane`、`Aabb`、`Obb` 都在 `vine/geom/spatial`；`Plane::intersectWith(Plane, LineCurve&)` 的返回值同模块。
 - **为什么**：`G1`、`G6` —— 同一层的形状不跨模块分裂；`LineCurve` 的唯一使用者就是 `Plane`，同批移动不留中间态。
 - **边界**：它们是**值类型**，不进入 `Shape` 层级（2.4）；这不表示 `geometry` 的语义变成“纯数学”，`Shape` / `Mesh` 仍是主内容。射线同样是空间实体：`Ray` 与图元相交已在 `geometry`，契约见 `geometry-ray.md`；参数化几何（`Box` / `Sphere` / …）与模型持有者 `Primitive` 的分工见 `geometry-parametric.md`。
 
@@ -65,9 +65,9 @@
 
 ### 2.5 没有回边
 
-- **是什么**：`math` 的 CMake 依赖仍只有 `vn::Global`；`math` 不 include 任何 `vine/geom3d/*`。
+- **是什么**：`math` 的 CMake 依赖仍只有 `vn::Global`；`math` 不 include 任何 `vine/geom/spatial/*`。
 - **为什么**：`G2` —— 依赖单向，`geometry → math` 不允许反向。
-- **代价**：已有代码里的 `math::Rect3` 必须一次性改到 `geom3d::Aabb`，没有“兼容一个版本”的缓冲（`D2`）。
+- **代价**：已有代码里的 `math::Rect3` 必须一次性改到 `geom::spatial::Aabb`，没有“兼容一个版本”的缓冲（`D2`）。
 
 ### 2.6 `Rect2` 留在 `math`
 
@@ -101,7 +101,7 @@
 | F2 | 有向盒 | `Obb<T>`：center + half-extents + 四元数朝向；`toAabb()` 返回 `Aabb<T>`。 |
 | F3 | 直线 | `LineCurve<T>`：点–方向参数式；`intersectWith` 给最近点对与平行/共线标志；`closestPoint` 投影。 |
 | F4 | 平面 | `Plane<T>`：点 + 法向；与 `LineCurve` 交于一点、与 `Plane` 交于 `LineCurve`。 |
-| F5 | 单一名字 | `Rect3` 与 `math::Aabb*` 不存在；`geom3d::Aabbf/Aabbd/Aabbi` 可用。 |
+| F5 | 单一名字 | `Rect3` 与 `math::Aabb*` 不存在；`geom::spatial::Aabbf/Aabbd/Aabbi` 可用。 |
 | F6 | 2D 不迁 | `math::Rect2` 与 `Rect2i` 保持原位。 |
 | F7 | PCA 拟合 | `Obb::computePca(span)`：协方差特征轴，最大方差方向为局部 X。 |
 | F8 | 固定轴向拟合 | `Obb::computeFixedOrientation(span, x_dir, y_dir)`：调用方给 X/Y，Y 先对 X 正交化。 |
@@ -133,11 +133,11 @@
 
 | 头文件 | 内容 |
 |---|---|
-| `src/base/geom3d/sdk/vine/geom3d/Aabb.hpp` | `Aabb<T>`、`Aabbf` / `Aabbd` / `Aabbi` |
-| `src/base/geom3d/sdk/vine/geom3d/Obb.hpp` | `Obb<T>`、`Obbf` / `Obbd` |
-| `src/base/geom3d/sdk/vine/geom3d/LineCurve.hpp` | `LineCurve<T>`、`LineCurvef` / `LineCurved` |
-| `src/base/geom3d/sdk/vine/geom3d/Plane.hpp` | `Plane<T>`、`Planef` / `Planed` |
-| `src/base/geom3d/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
+| `src/base/geom/sdk/vine/geom/spatial/Aabb.hpp` | `Aabb<T>`、`Aabbf` / `Aabbd` / `Aabbi` |
+| `src/base/geom/sdk/vine/geom/spatial/Obb.hpp` | `Obb<T>`、`Obbf` / `Obbd` |
+| `src/base/geom/sdk/vine/geom/spatial/LineCurve.hpp` | `LineCurve<T>`、`LineCurvef` / `LineCurved` |
+| `src/base/geom/sdk/vine/geom/spatial/Plane.hpp` | `Plane<T>`、`Planef` / `Planed` |
+| `src/base/geom/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
 
 短查询定义在头文件（2.8）；只有长算法留在 `src/` 并保留 `VN_GEOMETRY_API` 显式实例化：`LineCurve::intersectWith(const LineCurve&)`、`Plane::intersectWith(const Plane&, LineCurve&)`、`Obb::computeFixedOrientation` / `computePca`。
 
@@ -166,15 +166,15 @@
 ## 7. 已否决选项
 
 - **D1**：保留 `Rect3` 作为类型名 —— 3D “Rect” 是误名，且与 `Obb` 不成对（`G1`/`G4`）。见 `../decisions/ADR-2026-11-03-geometry-primitives-ownership.md`。
-- **D2**：在 `math/Rect3.hpp` 里留 `using Rect3 = geom3d::Aabb` 兼容别名 —— 会让 `math` 反向依赖 `geometry`（`G2`），一个版本后再删的过渡期不值得一条回边。
+- **D2**：在 `math/Rect3.hpp` 里留 `using Rect3 = geom::spatial::Aabb` 兼容别名 —— 会让 `math` 反向依赖 `geometry`（`G2`），一个版本后再删的过渡期不值得一条回边。
 - **D3**：把 `Rect2` 一起搬进 `geometry` —— 唯一消费者是 GUI 布局矩形，会迫使 `appfw` 的公共头依赖 `geometry`（`G1`/`G5`）。
 
 ## 8. 测试与验收
 
 | # | 判据 | 用例 |
 |---|---|---|
-| T1 | 盒的扩展、相交、`compute`、空哨兵 | `tests/test_geom3d/AabbTest.cpp`（`Aabb.*`） |
-| T2 | 有向盒的规范化、包含、`toAabb` 包围 | `tests/test_geom3d/ObbTest.cpp` |
+| T1 | 盒的扩展、相交、`compute`、空哨兵 | `tests/test_geom_spatial/AabbTest.cpp`（`Aabb.*`） |
+| T2 | 有向盒的规范化、包含、`toAabb` 包围 | `tests/test_geom_spatial/ObbTest.cpp` |
 | T3 | 线–线最近点与平行/共线标志 | `LinePlaneTest.cpp`（`Line.*`） |
 | T4 | 面–线、面–面求交与退化分支 | `LinePlaneTest.cpp`（`Plane.*`） |
 | T5 | 2D 矩形不受影响 | `tests/test_math/Rect2Test.cpp` |
@@ -196,7 +196,7 @@
 
 ## 10. 参考
 
-- 代码：`src/base/geom3d/sdk/vine/geom3d/{Aabb,Obb,Line,Plane}.hpp`、`src/base/geom3d/src/{Aabb,Obb,Line,Plane}.cpp`。
+- 代码：`src/base/geom/sdk/vine/geom/spatial/{Aabb,Obb,Line,Plane}.hpp`、`src/base/geom/src/{Aabb,Obb,Line,Plane}.cpp`。
 - 数学设施：`src/base/math/sdk/vine/math/EigenDecomposition.hpp`（`symmetricEigen`）、`Transform3.hpp`（`toQuaternion`）、`src/base/math/src/Transform3.cpp`。
 - 设计：`graphics-geometry.md`（`Shape` / `Mesh` / revision 的现行设计）、`../decisions/ADR-2026-11-03-geometry-primitives-ownership.md`。
-- 测试：`tests/test_geom3d/AabbTest.cpp`、`ObbTest.cpp`、`ObbFitTest.cpp`、`LinePlaneTest.cpp`；`tests/test_math/Rect2Test.cpp`、`EigenDecompositionTest.cpp`、`Transform3Test.cpp`。
+- 测试：`tests/test_geom_spatial/AabbTest.cpp`、`ObbTest.cpp`、`ObbFitTest.cpp`、`LinePlaneTest.cpp`；`tests/test_math/Rect2Test.cpp`、`EigenDecompositionTest.cpp`、`Transform3Test.cpp`。

@@ -344,7 +344,7 @@ bool OrbitCameraManipulator::pickAt(double screenX, double screenY, Vec3d& outPo
     Vec3d origin;
     Vec3d direction;
     makeScreenRay(screenX, screenY, origin, direction);
-    RayIntersectionResult result = RayIntersection::intersectScene(vn::geom3d::Rayd(vn::math::Point3d(origin.x, origin.y, origin.z), direction), scene_);
+    RayIntersectionResult result = RayIntersection::intersectScene(vn::geom::spatial::Rayd(vn::math::Point3d(origin.x, origin.y, origin.z), direction), scene_);
     if (!result.hit) {
         return false;
     }
@@ -556,7 +556,7 @@ void OrbitCameraManipulator::makeScreenRay(double screenX, double screenY, Vec3d
     }
     const double w   = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
     const double h   = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
-    const vn::geom3d::Rayd ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
+    const vn::geom::spatial::Rayd ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
     origin                       = Vec3d(ray.origin.x, ray.origin.y, ray.origin.z);
     direction                    = ray.direction;
 }

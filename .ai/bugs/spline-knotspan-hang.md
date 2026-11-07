@@ -1,13 +1,13 @@
 # Bug: 节点区间搜索在“最后两跨”上死循环
 
-- **模块**: `src/base/math`（`spline/BSplineBasis.hpp`）
+- **模块**: `src/base/geom`（`geom/detail/BSplineBasis.hpp`，当时在 `src/base/math/spline/`） <!-- drift-ok -->
 - **状态**: 已修复
-- **涉及**: `BSplineBasis.hpp`、`tests/test_math/BSplineBasisTest.cpp`
+- **涉及**: `BSplineBasis.hpp`、`tests/test_geom_spatial/BSplineBasisTest.cpp`（当时在 `tests/test_math/`） <!-- drift-ok -->
 
 ## 现象
 
 对一段两端夹持、只有一个内部节点的 B 样条（度 1，相异节点 `0 / 1 / 2`，重数 `2 / 1 / 2`），在第二个跨里求值
-（例如 `u = 1.5`）会无限循环，进程挂死。写 `geom2d::BSplineCurve` 的测试时第一次暴露。
+（例如 `u = 1.5`）会无限循环，进程挂死。写 `geom::planar::BSplineCurve` 的测试时第一次暴露。
 
 几何侧此前没有暴露这个缺陷：现有的 3D 样条用例要么是单跨（`knots` 只有两个值，搜索提前返回），要么构造后
 `isValid()` 不通过、求值直接返回退化值。也就是说，**带内部节点的样条从未被真正求值过**。
@@ -29,5 +29,5 @@
   修前挂死，修后返回正确的跨号。
 - 同文件的属性测试把邻接逻辑一起钉住：基函数求和为 1 且非负（单位分解）、跨包含参数、解析导数与中心差分一致、
   连续度由内部重数决定。这些用例在修前会因为第一项扫描就挂死。
-- `geom2d::BSplineCurve` 的 11 个用例把同一条路径当作正常行为覆盖（`FollowsItsKnots`、`ContinuityComesFromTheMultiplicities`）。
+- `geom::planar::BSplineCurve` 的 11 个用例把同一条路径当作正常行为覆盖（`FollowsItsKnots`、`ContinuityComesFromTheMultiplicities`）。
 - 全量 ctest 29/29。

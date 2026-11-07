@@ -90,14 +90,14 @@ PRIVATE 是关键：`vn::Brep` 的消费者不会继承 OpenCASCADE（`G10` 关�
 
 ### 2.7 构造是第二件运算，按 `shapeType()` 分派
 
-- **是什么**：`brep::makeBrep(const geom3d::Primitive&) → intrusive_ptr<BrepShape>`；公开入口只有一个，内部按 `shapeType()` 分派到逐类型的构造函数（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）。
+- **是什么**：`brep::makeBrep(const geom::spatial::Primitive&) → intrusive_ptr<BrepShape>`；公开入口只有一个，内部按 `shapeType()` 分派到逐类型的构造函数（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）。
 - **为什么**：`G1`、`G2`、`G6` —— 与 `tessellate()` 同属"对实体做的运算"，同住一个模块、共用一条 PRIVATE 链接、共用一种失败表示；做成 `Primitive` 的虚函数或访问者会把后端词汇与实现拖进 `geometry`（`D5`，与 `D1` 同因）。
 - **边界**：分派是闭集。新增第六个基本体要在这里加一个分支——这是 `G9` 的代价，换来 `geometry` 保持零第三方；分派表只有一处，不会散到每个消费方（`G7`）。
 
 ```mermaid
 flowchart LR
-    P["geom3d::Primitive<br/>Box / Sphere / Cylinder / Cone / Ellipsoid"] -->|"brep::makeBrep()"| B["geom3d::BrepShape"]
-    B -->|"brep::tessellate()"| M["geom3d::TriangleMesh"]
+    P["geom::spatial::Primitive<br/>Box / Sphere / Cylinder / Cone / Ellipsoid"] -->|"brep::makeBrep()"| B["geom::spatial::BrepShape"]
+    B -->|"brep::tessellate()"| M["geom::spatial::TriangleMesh"]
     B -->|"brepio::BrepExporter"| F["STEP / IGES"]
 ```
 
@@ -165,7 +165,7 @@ flowchart LR
 |---|---|---|
 | `src/base/brep/sdk/vine/brep/Backend.hpp` | `hasBackend()`：模块级的构建能力 | 已落地 |
 | `src/base/brep/sdk/vine/brep/Tessellation.hpp` | `TessellationOptions{ deflection, angle, compute_normals }`、`tessellate()` | 已落地 |
-| `src/base/brep/sdk/vine/brep/Construction.hpp` | `makeBrep(const geom3d::Primitive&)` | 已落地 |
+| `src/base/brep/sdk/vine/brep/Construction.hpp` | `makeBrep(const geom::spatial::Primitive&)` | 已落地 |
 
 完整契约在头文件注释里；本文件只记录归属与理由。
 

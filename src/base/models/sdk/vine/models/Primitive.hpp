@@ -2,7 +2,7 @@
 
 #include <vine/models/models_global.hpp>
 
-#include <vine/geom3d/Aabb.hpp>
+#include <vine/geom/spatial/Aabb.hpp>
 
 #include <vine/models/Shape.hpp>
 
@@ -16,7 +16,7 @@ VN_MODELS_NS_BEGIN
  *   to be an analytic solid**, so this base holds no geometry at all: each subclass states its own data and answers
  *   `isValid()`, `hasVolume()` and `bounds()` from it.
  * - `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` are the five subclasses this repository models. They are solids,
- *   so each one also answers `solid()` with its concrete analytic kind (`vn::geom3d::BoxSolidf`, …), which is what the geometry
+ *   so each one also answers `solid()` with its concrete analytic kind (`vn::geom::spatial::BoxSolidf`, …), which is what the geometry
  *   algorithms take. A primitive that is not a solid derives from this base without touching `Solid` at all.
  * - The tag is handed to the base by the subclass constructor, so `shapeType()` cannot name a different kind than the
  *   class that was written.
@@ -49,7 +49,7 @@ class VN_MODELS_API Primitive : public Shape {
      *
      * @return The bounds; multiply by the node transform for a world box.
      */
-    [[nodiscard]] virtual vn::geom3d::Aabbf bounds() const = 0;
+    [[nodiscard]] virtual vn::geom::spatial::Aabbf bounds() const = 0;
 };
 
 VN_MODELS_NS_END

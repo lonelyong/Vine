@@ -28,4 +28,4 @@ vn_use_embedded_shaders(${GRAPHICS_TARGET_NAME} OUTPUT vine/graphics/EmbeddedSha
 #
 # One target because neither half can exist without this module - they are layers of graphics, not a
 # second component - and because a backend then depends on exactly one thing: vn::Graphics.
-target_link_libraries(${GRAPHICS_TARGET_NAME} PUBLIC vn::Core vn::Global vn::Geom3D vn::Models vn::Window vn::Imaging)
+target_link_libraries(${GRAPHICS_TARGET_NAME} PUBLIC vn::Core vn::Global vn::Geom vn::Models vn::Window vn::Imaging)

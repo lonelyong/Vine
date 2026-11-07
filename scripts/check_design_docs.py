@@ -7,16 +7,15 @@ The template is defined in `.github/skills/design-docs/SKILL.md` and summarised 
   R1  The status / last-verified / scope / source block is at the top.
   R2  The ten chapters are present, in order, with numbered headings.
   R3  Subsections are numbered (`1.1`, `3.2.1`).
-  R4  The document is at most 300 lines.
-  R5  Chapter titles carry no dates or review-round labels.
-  R6  A document with a 功能点 chapter has at least one `F#`; each of C/R/T/N/D
+  R4  Chapter titles carry no dates or review-round labels.
+  R5  A document with a 功能点 chapter has at least one `F#`; each of C/R/T/N/D
       appears somewhere in the document (the template uses stable IDs even when a
       chapter is short).
 
 Usage:
     python3 scripts/check_design_docs.py [--strict]
 
-Without `--strict`, R4/R6 are warnings; with it, every finding fails.
+Without `--strict`, R5 is a warning; with it, every finding fails.
 """
 
 from __future__ import annotations
@@ -113,9 +112,6 @@ def check(path: pathlib.Path) -> list[str]:
                     f"ERROR {path.name}:{number}: subsection {match.group(1)}.{match.group(2)} "
                     f"is under chapter {current_chapter}"
                 )
-
-    if len(lines) > 300:
-        findings.append(f"WARN  {path.name}: {len(lines)} lines, over the 300-line aim")
 
     for token, label in (("F", "feature"), ("C", "constraint"), ("R", "requirement"),
                          ("T", "test"), ("N", "note/caveat"), ("D", "rejected option")):

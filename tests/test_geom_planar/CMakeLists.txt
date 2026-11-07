@@ -1,0 +1,22 @@
+set(TEST_NAME test_geom_planar)
+set(SRC_FILE_LIST
+        BSplineCurveTest.cpp
+        BezierCurveTest.cpp
+        BoundsTest.cpp
+        ConicCurvesTest.cpp
+        CurveBasicsTest.cpp
+        CurveContractTest.cpp
+        CurveCurvatureTest.cpp
+        CurveDistanceTest.cpp
+        CurveIntersectionTest.cpp
+        CurveLengthTest.cpp
+        CurveProjectionTest.cpp
+        EllipseCurveTest.cpp
+        ModuleContractTest.cpp
+        OffsetCurveTest.cpp
+        TrimmedCurveTest.cpp
+)
+add_executable(${TEST_NAME} ${SRC_FILE_LIST})
+set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
+target_link_libraries(${TEST_NAME} vn::Geom)
+add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})

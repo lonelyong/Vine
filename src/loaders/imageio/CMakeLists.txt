@@ -1,7 +1,7 @@
 # ImageIO — image container decoding/encoding, backed by vendored stb.
 #
 # Sits in loaders/ next to MeshIO, for the same reason: the DATA type lives in
-# a base module (geom3d::Mesh, imaging::Image) and the third-party codec that
+# a base module (models::Mesh, imaging::Image) and the third-party codec that
 # fills it from a file lives here, linked PRIVATE so this module is the only
 # thing that carries stb.
 vn_add_library(IMAGEIO_TARGET_NAME ImageIO)

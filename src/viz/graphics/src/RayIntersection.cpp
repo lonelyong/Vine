@@ -154,7 +154,7 @@ GeometryMesh meshOfGeometry(const Geometry* geometry, const Primitive* primitive
  * @param visit     Called for every hit (receives it by value, already tagged).
  */
 template <typename Visit>
-void forEachTriangleHit(const Geometry* geometry, const vn::geom3d::Rayd& ray, const Mat4d& world, Visit&& visit)
+void forEachTriangleHit(const Geometry* geometry, const vn::geom::spatial::Rayd& ray, const Mat4d& world, Visit&& visit)
 {
     if (geometry == nullptr) {
         return;
@@ -212,10 +212,10 @@ void forEachTriangleHit(const Geometry* geometry, const vn::geom3d::Rayd& ray, c
 RayIntersectionResult makeTriangleHit(const Vec3d&             a,
                                       const Vec3d&             b,
                                       const Vec3d&             c,
-                                      const vn::geom3d::Rayd& local_ray,
+                                      const vn::geom::spatial::Rayd& local_ray,
                                       double                   t,
                                       std::size_t              triangle_index,
-                                      const vn::geom3d::Rayd& ray,
+                                      const vn::geom::spatial::Rayd& ray,
                                       const Mat4d&             world)
 {
     RayIntersectionResult   r;
@@ -262,7 +262,7 @@ template <typename OnHit>
 bool traverseMesh(const vn::models::Vec3fArray& positions,
                   std::span<const std::uint32_t>  indices,
                   Topology                        topology,
-                  const vn::geom3d::Rayd&       ray,
+                  const vn::geom::spatial::Rayd&       ray,
                   const Mat4d&                    world,
                   OnHit&&                         on_hit)
 {
@@ -271,7 +271,7 @@ bool traverseMesh(const vn::models::Vec3fArray& positions,
     }
     const Aabbd local_bounds = boundsOfPositions(positions);
     if (local_bounds.isValid()) {
-        vn::geom3d::RayHitd world_hit;
+        vn::geom::spatial::RayHitd world_hit;
         if (!transformBounds(local_bounds, world).intersectWith(ray, world_hit)) {
             return false; // the world-space box is the cheap rejection; the mesh itself is tested in local space
         }
@@ -287,7 +287,7 @@ bool traverseMesh(const vn::models::Vec3fArray& positions,
     const Vec3d local_dir    = toWorld(inv, ray.origin.x + ray.direction.x, ray.origin.y + ray.direction.y, ray.origin.z + ray.direction.z) - local_origin;
 
     // geometry's ray keeps its direction unit length, so a hit parameter is a distance in this local space.
-    const vn::geom3d::Rayd local_ray(vn::math::Point3d(local_origin.x, local_origin.y, local_origin.z), local_dir);
+    const vn::geom::spatial::Rayd local_ray(vn::math::Point3d(local_origin.x, local_origin.y, local_origin.z), local_dir);
 
     const std::size_t n      = !indices.empty() ? indices.size() : positions.size();
     bool              any    = false;
@@ -312,8 +312,8 @@ bool traverseMesh(const vn::models::Vec3fArray& positions,
         if (flip) {
             std::swap(b, c); // a strip reverses its winding on every other triangle
         }
-        vn::geom3d::RayHitd local_hit;
-        if (!vn::geom3d::intersectTriangle(local_ray,
+        vn::geom::spatial::RayHitd local_hit;
+        if (!vn::geom::spatial::intersectTriangle(local_ray,
                                              vn::math::Point3d(a.x, a.y, a.z),
                                              vn::math::Point3d(b.x, b.y, b.z),
                                              vn::math::Point3d(c.x, c.y, c.z),
@@ -357,7 +357,7 @@ bool traverseMesh(const vn::models::Vec3fArray& positions,
  * @param layer_mask       Layers this query picks (see Node::setLayers).
  * @param best             Closest intersection found so far (in/out).
  */
-void intersectNode(const vn::geom3d::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, RayIntersectionResult& best)
+void intersectNode(const vn::geom::spatial::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, RayIntersectionResult& best)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
@@ -398,7 +398,7 @@ void intersectNode(const vn::geom3d::Rayd& ray, const Node* node, std::uint32_t 
  * @param layer_mask       Layers this query picks (see Node::setLayers).
  * @param out              Output result list (one entry per geometry that was hit).
  */
-void collectNodeNearest(const vn::geom3d::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
+void collectNodeNearest(const vn::geom::spatial::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
@@ -441,7 +441,7 @@ void collectNodeNearest(const vn::geom3d::Rayd& ray, const Node* node, std::uint
  * @param layer_mask       Layers this query picks (see Node::setLayers).
  * @param out              Output result list (multiple entries per geometry possible).
  */
-void collectNodeHits(const vn::geom3d::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
+void collectNodeHits(const vn::geom::spatial::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
@@ -472,7 +472,7 @@ void collectNodeHits(const vn::geom3d::Rayd& ray, const Node* node, std::uint32_
 
 } // namespace
 
-RayIntersectionResult RayIntersection::intersect(const vn::geom3d::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world)
+RayIntersectionResult RayIntersection::intersect(const vn::geom::spatial::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world)
 {
     RayIntersectionResult result;
     if (geometry == nullptr) {
@@ -489,7 +489,7 @@ RayIntersectionResult RayIntersection::intersect(const vn::geom3d::Rayd& ray, ra
     return result;
 }
 
-std::vector<RayIntersectionResult> RayIntersection::intersect(const vn::geom3d::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world, Mode mode)
+std::vector<RayIntersectionResult> RayIntersection::intersect(const vn::geom::spatial::Rayd& ray, raw_ptr<Geometry> geometry, const Mat4d& world, Mode mode)
 {
     std::vector<RayIntersectionResult> results;
     if (geometry == nullptr) {
@@ -510,7 +510,7 @@ std::vector<RayIntersectionResult> RayIntersection::intersect(const vn::geom3d::
     return results;
 }
 
-RayIntersectionResult RayIntersection::intersectScene(const vn::geom3d::Rayd& ray, raw_ptr<Scene> scene, std::uint32_t layer_mask)
+RayIntersectionResult RayIntersection::intersectScene(const vn::geom::spatial::Rayd& ray, raw_ptr<Scene> scene, std::uint32_t layer_mask)
 {
     RayIntersectionResult best;
     if (scene == nullptr) {
@@ -522,7 +522,7 @@ RayIntersectionResult RayIntersection::intersectScene(const vn::geom3d::Rayd& ra
     return best;
 }
 
-std::vector<RayIntersectionResult> RayIntersection::intersectSceneAll(const vn::geom3d::Rayd& ray, raw_ptr<Scene> scene, Mode mode, std::uint32_t layer_mask)
+std::vector<RayIntersectionResult> RayIntersection::intersectSceneAll(const vn::geom::spatial::Rayd& ray, raw_ptr<Scene> scene, Mode mode, std::uint32_t layer_mask)
 {
     std::vector<RayIntersectionResult> results;
     if (scene == nullptr) {

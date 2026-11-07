@@ -7,7 +7,7 @@
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
-#include <vine/geom3d/Aabb.hpp>
+#include <vine/geom/spatial/Aabb.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/raw_ptr.hpp>
@@ -16,7 +16,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-using vn::geom3d::Aabbd;
+using vn::geom::spatial::Aabbd;
 using vn::math::Mat4d;
 
 class Group;

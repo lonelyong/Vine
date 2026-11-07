@@ -42,7 +42,7 @@
 ## 2. 设计要点
 
 2.1 **一个着色模型**（`G1` `G6`）：metallic-roughness（glTF 2.0 核心词汇：base color / metallic / roughness /
-emissive / occlusion / normal）。Phong 不再是引擎模型；`vn::geom3d::PhongMaterial` 在导入边界按固定表转成
+emissive / occlusion / normal）。Phong 不再是引擎模型；`vn::geom::spatial::PhongMaterial` 在导入边界按固定表转成
 PBR，引擎内部只有一个语义。两条路径、导入器与测试只需对齐一套定义，代价是旧 setter 消失（见 §9.3）。
 
 2.2 **资产与实例是两种类型**（`G1` `G4`）：`Material` 是资产——可共享、可编辑，改动传播给所有未覆盖它的

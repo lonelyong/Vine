@@ -5,7 +5,7 @@
 > **范围**：`Curve` / `Surface` 两个求值接口，以及具体值类型的归属与新增类型的最小契约。
 > 参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）**不构成族**：模型侧是一个建模类 `Primitive`，几何侧是族 `Solid<T>` 的五个 kind（见 `geometry-parametric.md`、`geometry-solid.md`）。
 > 不含具体类型的完整契约（见 `geometry-primitives.md`、`geometry-parametric.md`、`geometry-ray.md` 与各自头文件），不含求交与距离算法。
-> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Curve.hpp`、`Continuity.hpp`、`Surface.hpp`；`tests/test_geom3d/GeometryKindsTest.cpp`。
+> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Curve.hpp`、`Surface.hpp`；`src/base/geom/sdk/vine/geom/Continuity.hpp`；`tests/test_geom_spatial/GeometryKindsTest.cpp`。
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -39,7 +39,7 @@
 - **为什么**：`G4`、`G9` —— “未知类型也能求值并问参数域”只能靠虚函数。两个族问的是同一组事实，只是一个参数还是两个，所以接口也一对一（2.7 与 2.10）。
 - **代价**：实现了接口的类型带 vptr，不再是 trivially copyable，`sizeof` 多一个指针。曲线都是冷类型；`Plane` 在射线求交里被复制，所以它**不**额外存面内框架（2.10）。
 - **`Ray` 不在族里**：它在拾取里逐三角形按值拷贝，加 vptr 会把测到的内联收益退回去（`geometry-ray.md` 2.7）；它只保留 `pointAt`。
-- **`TrimmedCurve<T>`**：持 `std::shared_ptr<const Curve<T>>` 基曲线 + 参数区间，`evaluate` 转发给基曲线；闭合/周期性由基曲线与区间共同决定（跨满全域才算闭合，跨满一个周期才算周期）。
+- **`TrimmedCurve<T>`**：持 `std::shared_ptr<const Curve<T>>` 基曲线 + 参数区间，`evaluate` 转发给基曲线；闭合/周期性由基曲线与区间共同决定（跨满全域**且两端重合**才算闭合，跨满一个周期才算周期）。
 
 ### 2.2 分类标签本身仍是零成本
 
@@ -51,7 +51,7 @@
 
 | 族 | 维度 | 成员 | 参数的含义 |
 |---|---|---|---|
-| `Curve` | 1 | **抽象接口**：`evaluate` / 导数 / 参数域 / 闭合 / 周期 / 光滑度 / 反向映射 / 有效性（2.7）。实现者：`LineCurve`、`CircleCurve`、`EllipseCurve`、`HyperbolaCurve`、`ParabolaCurve`、`TrimmedCurve`、`BezierCurve`、`BSplineCurve`；抽象中间层 `ConicCurve`、`BoundedCurve`；仍不可构造：`OffsetCurve`（点与一阶导数已实现，二阶导数被缺三阶导数阻塞，见 2.8） | `LineCurve` 是 `direction` 的倍数，圆/椭圆是离心角，双曲线是双曲角，抛物线是垂直轴上的偏移，两种样条是各自的节点表示 |
+| `Curve` | 1 | **抽象接口**：`evaluate` / 导数 / 参数域 / 闭合 / 周期 / 光滑度 / 反向映射 / 有效性（2.7）。实现者：`LineCurve`、`CircleCurve`、`EllipseCurve`、`HyperbolaCurve`、`ParabolaCurve`、`TrimmedCurve`、`BezierCurve`、`BSplineCurve`、`OffsetCurve`；抽象中间层 `ConicCurve`、`BoundedCurve` | `LineCurve` 是 `direction` 的倍数，圆/椭圆是离心角，双曲线是双曲角，抛物线是垂直轴上的偏移，两种样条是各自的节点表示 |
 | `Surface` | 2 | **抽象接口**：`evaluate` / 两个一阶导 / 参数域 / 两个方向的闭合与周期 / 光滑度（2.10）。实现者：`Plane`、`SphericalSurface`、`CylindricalSurface`、`ConicalSurface`、`ToroidalSurface`、`RectangularTrimmedSurface` | 球面用方位角与极角，平面用两个面内坐标 |
 | `ElementarySurface` | 2 | `Plane`、`SphericalSurface`、`CylindricalSurface`、`ConicalSurface`、`ToroidalSurface`（全部已实现）；旋转面各持一个 `Placement` 值（见 `geometry-axis-surfaces.md` 2.1） | 无界或半无限的解析支撑面 |
 | `BoundedSurface` | 2 | `RectangularTrimmedSurface`（视图）、`BezierSurface`、`BSplineSurface`（均已实现，见 `geometry-axis-surfaces.md` 2.4 / 2.5） | 参数域有限，总能回答 `bounds()` |
@@ -85,7 +85,7 @@
 
 ### 2.7 曲线接口的核心属性
 
-- **是什么**：`Curve<T>` 的五组属性，全部纯虚——① 求值与导数：`evaluate(u)`、`derivative(u)`、`secondDerivative(u)`；② 参数域与周期：`firstParameter()` / `lastParameter()` / `isClosed()` / `isPeriodic()` / `period()`；③ 光滑度：`continuity()`（及由它导出的非虚 `isCN(n)`）；④ 反向参数映射：`reversedParameter(u)`；⑤ 有效性：`isValid()`（状态能不能求值，与参数无关）。
+- **是什么**：`Curve<T>` 的五组属性，全部纯虚——① 求值与导数：`evaluate(u)`、`derivative(u)`、`secondDerivative(u)`；② 参数域与周期：`firstParameter()` / `lastParameter()` / `isClosed()` / `isPeriodic()` / `period()`；③ 光滑度：`continuity()`（及由它导出的非虚 `isCN(n)`）；④ 反向参数映射：`reversedParameter(u)`；⑤ 有效性：`isValid()`（状态能不能求值，与参数无关）。另有一对**非纯虚能力成员**：`maxDerivativeOrder()`（默认 2）与 `derivativeAt(u, order)`（默认答一、二阶，超出答 `std::nullopt`）。
 - **为什么**：`G4`、`G9` —— 这十一项是“参数化曲线”这个概念的最小完备集：一个点、它的变化率、它在哪里有效、它有多光滑、反着走时参数怎么变、这份状态到底能不能用。切线/法向、离散采样、曲率、B-rep 接缝判定都只依赖这些，不需要知道具体类型。
 - **`derivative` 是速度向量，不是单位切向**：`circle.derivative(u)` 的长度就是半径，要方向就自己归一化。这条写进接口而不是留给约定（`G4`）；`secondDerivative` 同理，只有弧长参数化时它才等于曲率向量。
 - **`continuity()` 用阶梯枚举**：`Continuity` 按光滑度排序，`>=` 即“至少这么光滑”；解析类型（直线、圆、平面）答 `CN`。`Polynomial` / `Rational` 不进去——它们描述表示法（nurbs 形式），不是光滑度。
@@ -97,16 +97,17 @@
   - 弧长 / `length()`：要算法与参数化精度，属算法不属属性。
   - 变换族（OCCT 的 `Transform` / `TransformedParameter`）：坐标系住在 `Shape` 的节点上，曲线不持有放置。
   - `curveType()` 枚举：`dynamic_cast` 与 vtable 已经回答了“我是什么”，再维护一份枚举就是两个家（`G1`）。
-  - `D3` / `DN`：没有消费者；等真需要更高阶导数时再加（`G8`）。
+  - 具体阶数的导数实现：阶数是**算法的参数、类型的能力**，所以接口只回答“能到几阶”（`maxDerivativeOrder()`）与“这一阶是多少”（`derivativeAt()`），三阶导的闭式实现留在能答的类型上；OCCT 的 `DN(order)` + `NotImplemented` 是反例（D10）。见 `../decisions/ADR-2026-11-05-curve-derivative-capability.md`。
 
-### 2.8 样条已可求值，偏置卡在缺少三阶导数
+### 2.8 导数阶梯到三阶：样条与偏置都能答
 
-- **是什么**：`BezierCurve` / `BSplineCurve` 的十个纯虚函数全部落地，两者是**可构造的值类型**；`OffsetCurve` 实现了点与一阶导数，二阶导数仍为纯虚，因此仍不可构造：
-  - `BezierCurve`：一个 de Casteljau 算法用三次——极点、一阶差分、二阶差分，`P' = n * D1(u)`、`P'' = n * (n - 1) * D2(u)`；有理形式在齐次坐标上跑同一套，最后除以权重。
-  - `BSplineCurve`：只需求值参数所在跨的 `degree + 1` 个基函数（Cox–de Boor 与导数递推），对极点加权求和；有理形式用商法则 `P' = (A' - P w') / w`、`P'' = (A'' - 2 P' w' - P * w'') / w`；`isClosed()` 比较两个端点，是几何事实而非数据事实。
-  - `OffsetCurve`：`evaluate` / `derivative` 用 `N = reference_direction x p'` 与 `N' = reference_direction x p''`，叉乘退化时退回基曲线本身（不产生 NaN）。
-- **为什么 `OffsetCurve` 的 `secondDerivative` 是空的**：`P'' = p'' + d * (N / |N|)''` 里含 `p'''`，而 `Curve<T>` 故意只到二阶（2.7、D6）。补三阶导数要让四个圆锥曲线、两种样条、裁剪与直线各自新增一个纯虚实现，只为一条曲线的一种导数付账（`G8`），所以类型保持抽象，成本留到真正需要时。见 `../decisions/ADR-2026-11-04-curve-third-derivative.md`。
-- **为什么现在补样条的数值回答**：数据模型与类型事实在 2.8 之前就已定义（`G1`），缺的只是数值函数；它们是仓库里唯一持有内存的曲线，构造与拷贝语义早已确定，补求值不改变任何契约。
+- **是什么**：`BezierCurve` / `BSplineCurve` / `OffsetCurve` 的十一项纯虚全部落地，三者都是**可构造的值类型**；整个空间曲线族报 `maxDerivativeOrder() == 3`（裁剪视图向基曲线转发），偏置报 2：
+  - `BezierCurve`：一个 de Casteljau 算法连用——极点、一阶差分、二阶差分、三阶差分，`P' = n * D1(u)`、`P'' = n * (n - 1) * D2(u)`、`P''' = n * (n - 1) * (n - 2) * D3(u)`；有理形式在齐次坐标上跑同一套，商法则依次替换 `P'` / `P''` / `P'''`。
+  - `BSplineCurve`：只需求值参数所在跨的 `degree + 1` 个基函数（Cox–de Boor 与导数递推），对极点加权求和，三阶导用同一递推的第三层；有理形式用商法则 `P''' = (A''' - 3 P'' w' - 3 P' w'' - P w''') / w`；`isClosed()` 比较两个端点，是几何事实而非数据事实。
+  - `OffsetCurve`：`evaluate` / `derivative` 用 `N = reference_direction x p'` 与 `N' = reference_direction x p''`；`secondDerivative` 再加一层 `N'' = reference_direction x p'''`，二次链用 `U = N/|N|`、`k = (N·N')/|N|²` 写成 `U'' = N''/R - 2 N' k/R + U (k² - k')`，叉乘退化时退回基曲线本身（不产生 NaN）。
+- **为什么契约仍只有十一项**：三阶导是**能力**而不是义务——具体类型把 `maxDerivativeOrder()` 报为 3 并覆写 `derivativeAt()`，`Curve<T>` 不多一项纯虚，自定义实现只到二阶也不需要写任何东西（2.7、`../decisions/ADR-2026-11-05-curve-derivative-capability.md`）。
+- **偏置为何报 2 而不是 3**：偏置的第 n 阶导需要基曲线的第 n+1 阶，`P''` 用到 `p'''`，`P'''` 就要 `p''''`。所以 `OffsetCurve::maxDerivativeOrder()` 是 `min(2, 基曲线能力 − 1)`：空间具体类型都答 3 时偏置答 2；偏置套偏置时答 1、`derivativeAt(u, 2)` 答空、`isValid()` 为假。这与平面侧同一个规则（`geometry-planar.md` 2.13）。见 `../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`。
+- **为什么补样条的数值回答**：数据模型与类型事实在 2.8 之前就已定义（`G1`），缺的只是数值函数；它们是仓库里唯一持有内存的曲线，构造与拷贝语义早已确定，补求值不改变任何契约。
 - **数据模型的三个取舍（不变）**：
   - 节点存**相异值 + 重数**：重数是调用方唯一会问的东西，存展开向量等于每次查询都重新分组（`G4`）。两端重数 = 度 + 1（夹持），内部重数 ≤ 度——等于度加一时两侧完全独立，参数会跳，那是两段而不是一条曲线（C13、`../decisions/ADR-2026-11-04-bspline-without-knot-breaks.md`）。
   - 权重用**空数组表示多项式**，不用 `is_rational` 布尔：一个标志和数据可以互相矛盾，空数组不会（`G1`）。
@@ -192,7 +193,7 @@
 ### 3.7 F7 样条与偏置
 
 - **行为**：`BezierCurve::degree()` 等于极点数 − 1，求值是一串 de Casteljau 混合；`BSplineCurve::continuity()` 读内部重数，求值只累加参数所在跨的基函数；`OffsetCurve` 的所有参数域答案来自基曲线，位移方向是 `reference_direction x tangent`。
-- **约束**（C7、C10、C11）：`OffsetCurve` 仍不可构造（`is_abstract` 由 `static_assert` 守着）；`BSplineCurve::isValid()` 要求夹持形式（首末重数 = `degree + 1`）、相异节点递增、重数之和 = 极点数 + 度数 + 1；两种样条的 `isValid()` 都要求权重为空或与极点数相等且严格为正；`OffsetCurve` 的基曲线不得为空。
+- **约束**（C7、C10、C11）：`OffsetCurve` 可构造（`static_assert(!std::is_abstract_v<...>)` 守着），但其基曲线必须能答三阶导，否则 `isValid()` 为假；`BSplineCurve::isValid()` 要求夹持形式（首末重数 = `degree + 1`）、相异节点递增、重数之和 = 极点数 + 度数 + 1；两种样条的 `isValid()` 都要求权重为空或与极点数相等且严格为正；`OffsetCurve` 的基曲线不得为空。
 - **验收**（T7）：`aBezierCurveBlendsItsPoles` 验端点、中点、两端导数与常二阶差分；`aRationalBezierCurveIsPulledTowardsItsHeavierPole` 验商法则（`P(u) = 3u / (1 + 2u)` 的取值与两侧导数）；`aBSplineCurveBlendsItsClampedSpan` 验夹持端点、单跨与 Bezier 等价、域外取端点；`aRationalBSplineCurveTracesAQuarterCircle` 验有理基函数（四分之一圆）；`anOffsetCurveInheritsTheBasisDomain` 验域转发与位移几何。
 
 ### 3.8 F8 曲面接口
@@ -211,11 +212,11 @@
 | `LineCurve.hpp` / `CircleCurve.hpp` / `Ray.hpp` / `SphericalSurface.hpp` | 已实现的值类型与 `*f` / `*d` 别名；`Ray` 不在族内（2.1） |
 | `EllipseCurve.hpp` / `HyperbolaCurve.hpp` / `ParabolaCurve.hpp` | 另外三种解析圆锥曲线及 `*f` / `*d` 别名 |
 | `BezierCurve.hpp` / `BSplineCurve.hpp` | 两种可构造的样条值类型：极点 + 权重（+ 度数、节点、重数）与十个曲线属性 |
-| `OffsetCurve.hpp` | 偏置曲线：点与一阶导数已实现，二阶导数仍为纯虚（2.8、D9） |
+| `OffsetCurve.hpp` | 偏置曲线：`shared_ptr` 基曲线 + 距离 + 参考方向；二阶导由基曲线三阶导给出（2.8） |
 | `Surface.hpp` / `ElementarySurface.hpp` / `BoundedSurface.hpp` | 曲面接口与两个分类标签 |
 | `Frame.hpp` | 共用的“平面内轴”规则（圆锥曲线、平面、旋转面共用） |
 | `Placement.hpp` / `CylindricalSurface.hpp` / `ConicalSurface.hpp` / `ToroidalSurface.hpp` / `RectangularTrimmedSurface.hpp` | 旋转面的坐标系值（`Placement`）与裁剪曲面，见 `geometry-axis-surfaces.md` |
-| `src/base/geom3d/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
+| `src/base/geom/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
 
 ## 5. 约束、要求与不变量
 
@@ -235,7 +236,7 @@
 - **N1**：`LineCurve::pointAt(t)` 的 `t` 乘的是 `direction` 的长度，只有单位方向时它才是距离；`Ray` 的方向恒为单位，所以两者同名不同量纲。
 - **N2**：默认构造的准入规则与 2.3 一致：要么默认值是有意义的几何，要么是可被 `isValid()` 认出的空状态；旋转面与平面两者都不是，所以不声明默认构造。`Plane` 是唯一不带 `Surface` 后缀的曲面（平面没有第二个含义，OCCT 同样如此）。
 - **R1**：零分配、不抛异常的范围是 `LineCurve` / 圆锥曲线 / `Aabb` 的 `pointAt` / `bounds` / `derivative`；`BSplineCurve` 的求值也做到零分配（只用局部标量），而 `BezierCurve` 每次求值拷贝一份极点数组的临时缓冲（de Casteljau 需要 `n` 个暂存值，不为此引入可变成员）。
-- **R2**：族分类不新增外部依赖；标签只 include `geom3d_global.hpp`，曲线接口额外只 include `vine/math` 的 `Point3` / `Vector3` 与本目录的 `Continuity.hpp`。
+- **R2**：族分类不新增外部依赖；标签只 include `geom_global.hpp`，曲线接口额外只 include `vine/math` 的 `Point3` / `Vector3` 与本目录的 `Continuity.hpp`。
 
 ## 6. 注意事项与陷阱
 
@@ -260,27 +261,27 @@
 - **D6** `curveType()` 枚举与 `D3` / `DN`：`dynamic_cast` 与 vtable 已能回答“我是什么”，再维护枚举就是两个家；三阶以上导数没有消费者（`G1`、`G8`）。
 - **D7** 曲面继续做空标签：标签答不了“未知曲面也能求值 + 问两个方向的参数域与周期”，而这正是面遍历、采样、求交前置需要的（`G4`、`G9`）。见 `../decisions/ADR-2026-11-04-surface-evaluation-interface.md`。
 - **D8** 曲面接口里放 `normalAt()` / `bounds()` / 二阶导数：前两个是派生值或伪值（无界盒），第三个没有消费者（2.10）。
-- **D9** 给 `Curve<T>` 加 `thirdDerivative()`，好让 `OffsetCurve::secondDerivative()` 落地：只为一条曲线的一种导数，给八种具体曲线各加一个纯虚函数，其余七种今天没有消费者（`G8`）；偏置保持抽象就能如实表达“这一项还没有实现”。见 `../decisions/ADR-2026-11-04-curve-third-derivative.md`。
+- **D9** 给 `Curve<T>` 加一项纯虚 `thirdDerivative()`，好让 `OffsetCurve::secondDerivative()` 落地：只为一条曲线的一种导数，给八种具体曲线各加一个纯虚义务，只到二阶的实现者也被迫付账（`G8`、`G4`）；实际答案是能力协议 + 在能答的类型上多一个非虚成员，契约仍是十一项。见 `../decisions/ADR-2026-11-05-curve-derivative-capability.md`。
+- **D10** 照 OCCT 把任意阶 `DN(order)` 放上接口，未实现就抛 `NotImplemented`：阶数是算法参数而不是类型身份，超出能力应当是**可判的空值**而不是异常或截断（`G4`、`G10`）。能力协议保留“按需询问”，不把异常语义带进几何查询。见 `../decisions/ADR-2026-11-05-curve-derivative-capability.md`。
 
 ## 8. 测试与验收
 
 | 验收 | 用例 |
 |---|---|
-| T1 归属、非归属与零成本 | `tests/test_geom3d/GeometryKindsTest.cpp` 顶部 `static_assert` |
+| T1 归属、非归属与零成本 | `tests/test_geom_spatial/GeometryKindsTest.cpp` 顶部 `static_assert` |
 | T2 曲线参数化与退化输入 | 同文件 `aLineCurveAnswersThePointAtItsParameter`、`aCircleCurveWalksItsOwnPlane`、`aCircleCurveWithoutANormalIsInvalid` |
 | T3 球面参数化与退化输入 | 同文件 `aSphericalSheetPutsPolarZeroAtThePole`、`aCircleCurveWithoutANormalIsInvalid` |
 | T4 曲线接口的参数域与转发 | 同文件 `aCurveAnswersItsDomainAndPeriod`、`aTrimmedCurveForwardsToItsBasis` |
 | T5 曲线核心属性 | 同文件 `aLineCurveHasAConstantVelocity`、`aCircleCurveTurnsTowardsItsCentre`、`aTrimmedCurveMirrorsInsideItsOwnRange` |
 | T6 圆锥曲线族 | 同文件 `anEllipseCurveWalksItsTwoAxes`、`aHyperbolaBranchWalksAwayFromItsCentre`、`aParabolaIsEquidistantFromFocusAndDirectrix` |
-| T7 样条求值与偏置 | 同文件 `aBezierCurveDescribesItself`、`aBezierCurveBlendsItsPoles`、`aRationalBezierCurveIsPulledTowardsItsHeavierPole`、`aBSplineCurveDerivesItsContinuityFromItsMultiplicities`、`aBSplineCurveBlendsItsClampedSpan`、`aRationalBSplineCurveTracesAQuarterCircle`、`anOffsetCurveInheritsTheBasisDomain`、`continuityAnswersTheDerivativeOrderQuestion` |
-| T8 曲面接口 | 同文件 `aPlaneAnswersTheSurfaceInterface`、`aSphericalSheetClosesOnlyAroundItsAxis`；轴对称曲面与矩形裁剪的验收见 `geometry-axis-surfaces.md` T1 |
+| T7 样条求值与偏置 | 同文件 `aBezierCurveDescribesItself`、`aBezierCurveBlendsItsPoles`、`aRationalBezierCurveIsPulledTowardsItsHeavierPole`、`aBSplineCurveDerivesItsContinuityFromItsMultiplicities`、`aBSplineCurveBlendsItsClampedSpan`、`aRationalBSplineCurveTracesAQuarterCircle`、`anOffsetCurveInheritsTheBasisDomain`、`continuityAnswersTheDerivativeOrderQuestion` || T10 | 三阶导数与偏置二阶导 | 同文件 `everySpaceCurveAnswersItsThirdDerivative`（八种类型的三阶导与二阶导中心差分一致，含两种有理形式，并对照圆/椭圆 `-P'`、双曲线 `P'`、直线/抛物线为零）、`theSpaceOffsetAnswersASecondDerivativeExactly`、`anOffsetOfAnOffsetStopsAtTheVelocity` || T8 曲面接口 | 同文件 `aPlaneAnswersTheSurfaceInterface`、`aSphericalSheetClosesOnlyAroundItsAxis`；轴对称曲面与矩形裁剪的验收见 `geometry-axis-surfaces.md` T1 |
 | T9 族级契约扫查 | 同文件 `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` 与它们的 `…InFloat` 版本（**两种精度各跑一遍**：库对 float / double 都显式实例化导出）：对全部实现逐条问：域有序、`isValid()` 为真、闭合 / 周期与周期值一致、`isCN` 与 `continuity()` 一致、`reversedParameter` 自反、有限域内导数有限；裁剪的两条契约另有 `aTrimOfAPeriodicBasisReportsAPeriodOnlyWhenItRepeats`、`aTrimWithoutABasisAnswersInsteadOfDereferencingIt`、`anOffsetCurveWithoutABasisAnswersInsteadOfDereferencingIt`；默认构造的准入规则由顶部 `static_assert` 与 `anEmptyPatchIsRecognisablyEmpty` 盯住，接口上的有效性由 `validityIsAskableThroughTheInterface` 与两行 `static_assert` 盯住 |
 ## 9. 状态与演进
 
 - 两个族、曲面分 `ElementarySurface` / `BoundedSurface`、四种新值类型、归属与大小断言均已落地。
 - 曲线接口的十一项属性已落地（2.7）；`TrimmedCurve` 是组合曲线，`BezierCurve` / `BSplineCurve` 是两种可构造的样条（F7，2.8）。
 - 曲面接口的十四项已落地（F8，2.10），`Plane` 与 `SphericalSurface` 实现；两个分类标签仍无状态、无虚函数，但**曲面现在与曲线一样付 vptr**。
-- 四种圆锥曲线已全部实现（F6）；`BezierCurve` / `BSplineCurve` 的求值与导数已实现（F7，2.8）。`OffsetCurve` 只差 `secondDerivative`，被 `Curve<T>` 缺少三阶导数阻塞（D9，backlog）。
+- 四种圆锥曲线已全部实现（F6）；`BezierCurve` / `BSplineCurve` 的求值与一二三阶导数已实现（F7，2.8）。**空间曲线族到此全部答三阶导**，`OffsetCurve` 用基曲线三阶导答二阶导并成为可构造值类型，阶数规则与平面侧一致（D9、`../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`）。
 - 三个轴对称解析曲面、矩形裁剪曲面与两个样条曲面已实现，见 `geometry-axis-surfaces.md`；曲面族至此没有占位类型。
 - 族级算法已存在两侧：曲面（最近点 / 距离、射线 × 曲面，见 `geometry-surface-queries.md`）与曲线（最近点 / 距离，见 `geometry-curve-queries.md`）；都用自由函数 + `requires std::is_base_of_v<…>` 约束，不给接口加虚函数。已知缺口：实体求交（backlog G3）、曲线 × 曲线的最近距离。
 - 兼容性：曲面接口是从非模板的 `Surface` 标签改为模板接口，是**破坏性变更**（`Surface` / `ElementarySurface` / `BoundedSurface` 现在都要带 `<T>`）；仓库内唯一消费点是 `tests`。
@@ -295,6 +296,7 @@
 - `../decisions/ADR-2026-11-04-geometry-kinds.md`
 - `../decisions/ADR-2026-11-04-curve-evaluation-interface.md`（曲线接口）
 - `../decisions/ADR-2026-11-04-surface-evaluation-interface.md`（曲面接口）
-- `../decisions/ADR-2026-11-04-curve-third-derivative.md`（偏置二阶导数不实现）
+- `../decisions/ADR-2026-11-05-curve-derivative-capability.md`（导数按能力暴露）
+- `../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`（空间三阶导与可构造偏置）
 - `../decisions/ADR-2026-11-04-axis-surface-frame.md`（旋转面框架层与共用的平面内轴规则）
 - OCCT `Geom_Curve.hxx` / `Geom_Surface.hxx` / `Geom_Conic.hxx` / `Geom_BezierCurve.hxx` / `Geom_BSplineCurve.hxx` / `Geom_OffsetCurve.hxx`（接口词汇与数值算法的来源，本地源码在 `E:\opensrc\OCCT\src\ModelingData\TKG3d\Geom`）

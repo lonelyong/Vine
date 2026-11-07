@@ -25,7 +25,7 @@ bool Ellipsoid::hasVolume(double eps) const
     return solid().hasVolume(static_cast<float>(eps));
 }
 
-vn::geom3d::Aabbf Ellipsoid::bounds() const
+vn::geom::spatial::Aabbf Ellipsoid::bounds() const
 {
     return solid().bounds();
 }

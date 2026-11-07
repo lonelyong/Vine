@@ -2,9 +2,9 @@
 
 > **状态**：现行（值类型与四个图元相交已落地；`graphics` 已改用它）
 > **最后核对**：2026-11-04
-> **范围**：`src/base/geom3d` 的射线值类型与射线–AABB / OBB / 平面 / 三角形查询的归属与契约。
+> **范围**：`src/base/geom/sdk/vine/geom/spatial` 的射线值类型与射线–AABB / OBB / 平面 / 三角形查询的归属与契约。
 > 不含场景走查、拾取身份与选择态（见 `graphics-scene.md`），不含射线–网格遍历与加速结构（见 §9.2）。
-> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Ray.hpp`、`RayHit.hpp`、`Aabb.hpp` / `Obb.hpp` / `Plane.hpp` 的 `intersectWith(Ray, RayHit&)`、`tests/test_geom3d`。
+> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Ray.hpp`、`RayHit.hpp`、`Aabb.hpp` / `Obb.hpp` / `Plane.hpp` 的 `intersectWith(Ray, RayHit&)`、`tests/test_geom_spatial`。
 > **待办**：`../backlog/graphics.md`（射线–网格遍历等开放项）
 
 ## 1. 概要设计
@@ -67,7 +67,7 @@
 
 ### 2.5 场景语义留在 `graphics`
 
-- **是什么**：`RayIntersection` 保留 `intersect()` / `intersectScene()` / `intersectSceneAll()` 与 `RayIntersectionResult{ hit, point, normal, distance, geometry, primitiveIndex, instanceIndex }`，内部换成 `geom3d::RayHit<double>` 加自己的身份字段。
+- **是什么**：`RayIntersection` 保留 `intersect()` / `intersectScene()` / `intersectSceneAll()` 与 `RayIntersectionResult{ hit, point, normal, distance, geometry, primitiveIndex, instanceIndex }`，内部换成 `geom::spatial::RayHit<double>` 加自己的身份字段。
 - **为什么**：`G2` —— 节点树、世界矩阵、实例流、可见性是 graphics 的词汇；几何侧一旦认识它们，`brep`/机器人就得反向依赖 `viz`。
 - **边界**：`graphics::Ray` **删除**，不留别名（与 `D2`「不留 `math::Rect3` 兼容别名」同一立场）；调用点一次性改完。
 
@@ -92,7 +92,7 @@
 | F2 | 射线–AABB | slab 法，返回首个正向命中与出射面法线 | 已落地 |
 | F3 | 射线–OBB | 逆变换到局部后复用 AABB，`t` 仍是世界距离 | 已落地 |
 | F4 | 射线–平面 / 三角形 | 平面：`n·d` 平行判定；三角形：Möller–Trumbore，双面 | 已落地 |
-| F5 | graphics 迁移 | `Camera` 返回 `geom3d::Rayd`；`RayIntersection` 只剩场景走查与身份 | 已落地 |
+| F5 | graphics 迁移 | `Camera` 返回 `geom::spatial::Rayd`；`RayIntersection` 只剩场景走查与身份 | 已落地 |
 
 ### 3.1 F1 射线值类型
 
@@ -121,7 +121,7 @@
 
 ### 3.5 F5 graphics 迁移
 
-- **行为**：`graphics::Ray` 删除；`Camera::screenToWorldRay()` 返回 `geom3d::Rayd`；`RayIntersection` 用 `RayHit` 组装原有结果。
+- **行为**：`graphics::Ray` 删除；`Camera::screenToWorldRay()` 返回 `geom::spatial::Rayd`；`RayIntersection` 用 `RayHit` 组装原有结果。
 - **要求**（R4）：`model_viewer`、`OrbitCameraManipulator`、`RayIntersectionTest` 同步改完，仓库内不再出现 `graphics::Ray`。
 - **验收**（T5）：`RayIntersectionTest` 全绿且不依赖 `graphics::Ray`。
 
@@ -172,7 +172,7 @@
 
 | # | 判据 | 用例 |
 |---|---|---|
-| T1 | 归一化、`pointAt`、零方向不产生 NaN、`distanceToPoint` | `tests/test_geom3d/RayTest.cpp` |
+| T1 | 归一化、`pointAt`、零方向不产生 NaN、`distanceToPoint` | `tests/test_geom_spatial/RayTest.cpp` |
 | T2 | 盒：命中、未命中、起点在内、平行、擦边 | `RayTest.cpp` |
 | T3 | OBB：旋转盒与等价 AABB 结果一致 | `RayTest.cpp` |
 | T4 | 平面与三角形：背面、平行、退化、命中点在三角形外 | `RayTest.cpp` |
@@ -182,7 +182,7 @@
 
 ### 9.1 当前状态
 
-已落地：`geom3d::Ray` / `RayHit`、`Aabb` / `Obb` / `Plane` 的射线重载与 `intersectTriangle`；`graphics` 的 `Ray` 已删除，`Camera::screenToWorldRay()` 返回 `geom3d::Rayd`，`RayIntersection` 只剩场景走查、世界→局部与拾取身份。
+已落地：`geom::spatial::Ray` / `RayHit`、`Aabb` / `Obb` / `Plane` 的射线重载与 `intersectTriangle`；`graphics` 的 `Ray` 已删除，`Camera::screenToWorldRay()` 返回 `geom::spatial::Rayd`，`RayIntersection` 只剩场景走查、世界→局部与拾取身份。
 
 ### 9.2 已知缺口
 
@@ -195,7 +195,7 @@
 
 ## 10. 参考
 
-- 代码：`src/base/geom3d/sdk/vine/geom3d/Ray.hpp`、`RayHit.hpp`、`Aabb.hpp`、`Obb.hpp`、`Plane.hpp`；`src/viz/graphics/sdk/vine/graphics/Camera.hpp`、`RayIntersection.hpp`。
+- 代码：`src/base/geom/sdk/vine/geom/spatial/Ray.hpp`、`RayHit.hpp`、`Aabb.hpp`、`Obb.hpp`、`Plane.hpp`；`src/viz/graphics/sdk/vine/graphics/Camera.hpp`、`RayIntersection.hpp`。
 - 设计：`geometry-primitives.md`（空间值类型的边界判据）、`graphics-scene.md`（拾取是机制）、`geometry-intersection.md`（所有配对与结果形态的总表）。
-- 测试：`tests/test_geom3d/RayTest.cpp`、`tests/test_graphics`（相机与拾取）。
+- 测试：`tests/test_geom_spatial/RayTest.cpp`、`tests/test_graphics`（相机与拾取）。
 - 外部资料：Möller–Trumbore 射线–三角形求交；Kay–Kajiya slab 法。

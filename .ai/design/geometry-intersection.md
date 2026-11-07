@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-04
 > **范围**：`geometry` 里“两个对象求交”的**入口约定**（住在谁身上、叫什么、结果长什么样）与现有配对清单。
 > 不含各配对内部的数值算法（在头文件与 `src/`）、不含“算法为什么挂在被交对象上”（`geometry-primitives.md` 2.8、`geometry-ray.md` 2.2）、不含拾取的场景语义（`graphics-scene.md`）。
-> **权威来源**：`Plane.hpp`、`LineCurve.hpp`、`Aabb.hpp`、`Obb.hpp`、`Ray.hpp` 的 `intersectWith` / `intersects` / `intersectTriangle`；`tests/test_geom3d/LinePlaneTest.cpp`、`RayTest.cpp`。
+> **权威来源**：`Plane.hpp`、`LineCurve.hpp`、`Aabb.hpp`、`Obb.hpp`、`Ray.hpp` 的 `intersectWith` / `intersects` / `intersectTriangle`；`tests/test_geom_spatial/LinePlaneTest.cpp`、`RayTest.cpp`。
 > **待办**：`../backlog/geometry.md` G11
 
 ## 1. 概要设计
@@ -75,10 +75,10 @@
 
 ### 2.7 曲线 × 曲面：走隐式求根，不逐对写特例
 
-- **是什么**：任何曲线 × 任何**解析**曲面都由一个模板入口解决：`intersectCurveWithSurface(curve, surface, window, tolerance, interval_count)`。做法是把曲面的**带符号距离**沿曲线采样成 `f(u) = signedValue(surface, curve.evaluate(u))`，在变号的区间上用 `vn::math::refineRoot()` 收窄，零点就是交点。
+- **是什么**：任何曲线 × 任何**解析**曲面都由一个模板入口解决：`intersectCurveWithSurface(curve, surface, window, tolerance, interval_count)`。做法是把曲面的**带符号距离**沿曲线采样成 `f(u) = signedValue(surface, curve.evaluate(u))`，在变号的区间上用 `geom::detail::rootInBracket()` 收窄，零点就是交点。
 - **为什么**：`G9`、`G1` —— 逐对写特例是 8 种曲线 × 5 种曲面的矩阵；而“点是否在面上”已经由各曲面自己的隐式方程回答，求根器只需一个一元的 `f(u)`。新加一种曲线不需要改这里，新加一种曲面只需补一个 `signedValue()`。
 - **代价**：它只对**有隐式方程**的曲面成立（五个解析面都有），样条曲面 / 裁剪面没有——那一半由 `intersectCurveWithSurfaceByProjection()` 用投影补上（2.9）。
-- **求根器为什么在 `math`**：`G2` —— `refineRoot()` 只认识“一元连续函数 + 括号”，是纯数值算法；几何侧只负责取值与组装结果。
+- **求根器为什么在 `geom/detail`**：`G1`、`G5` —— `rootInBracket()` 只认识“一元连续函数 + 括号”，但它今天唯一的消费者是几何，而几何的数值链（求根 → 容差换算 → 积分/反解）住在一起比拆成两层更便宜；`math` 因此只剩数学词汇。代价与反转条件（第二个消费者出现时升独立模块）见 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`。
 - **为什么是安全保护区间的假位法而不是纯 Newton**：Newton 无法判断会落到哪个根、在平处发散；假位法 + 二分回退（估计值落进括号两端 10% 内就二分）保证收敛，同时保留快速的前几步。相切仍然漏检（P4），这一点写在头文件里而不是留给调用方猜。
 
 ### 2.8 精度：同一 `T`，不做混精度
@@ -91,7 +91,7 @@
 - **是什么**：`intersectCurveWithSurfaceByProjection(curve, surface, curve_window, surface_window, tolerance, interval_count)` 与解析入口共用同一个扫描（`detail::scanCurveAgainstSurface`），只把 `f(u)` 换成投影得到的带符号距离（`detail::signedDistanceToSurface`）：大小是最近点距离，符号来自 `dS/du × dS/dv`。
 - **为什么**：`G9`、`G1` —— 样条面与裁剪面没有隐式方程，但**都能求值**；“投影 + 参数化法向”是任何求值曲面都能回答的隐式化。扫描、重合分类、重复去除与参数容差从解析入口提取成一份公用实现，两条路径只在取值上不同。
 - **边界**：符号的**极性属于参数化**（球面的 `u`/`v` 叉积朝内，符号与 `signedValue()` 相反），所以它只以 `detail` 形式存在——求根只关心变号，极性无关；需要具体数字时用具体类型的 `signedValue()`。最近点落在奇异参数线（球极）时没有法向，值为 NaN，扫描把它当成“无信息”。
-- **代价**：每个采样点都是一次完整投影（播种网格 + 牛顿），比 `signedValue()` 贵得多；最近点在两个分支间跳变时会造出一次伪变号，`refineRoot()` 之后还要再验 `|f| ≤ tolerance` 才记录（P8）。
+- **代价**：每个采样点都是一次完整投影（播种网格 + 牛顿），比 `signedValue()` 贵得多；最近点在两个分支间跳变时会造出一次伪变号，`rootInBracket()` 之后还要再验 `|f| ≤ tolerance` 才记录（P8）。
 
 ## 3. 功能点
 
@@ -147,7 +147,7 @@
 | `Ray.hpp` | `intersectTriangle`（自由函数，头文件内联，见 `geometry-primitives.md` 2.8） |
 | `Plane.hpp` / `SphericalSurface.hpp` / `CylindricalSurface.hpp` / `ConicalSurface.hpp` / `ToroidalSurface.hpp` | 各一个 `signedValue(surface, point)` 重载：带符号距离，零点即面 |
 | `CurveSurfaceIntersection.hpp` | `CurveSurfaceContact`、`CurveSurfaceHit<T>`、`CurveSurfaceIntersection<T>` 与两个头文件模板：`intersectCurveWithSurface`（隐式方程）和 `intersectCurveWithSurfaceByProjection`（任何求值曲面） |
-| `math/RootFinding.hpp` | `refineRoot(function, lower, upper, tolerance)`：安全区间的假位法 + 二分回退 |
+| `geom/detail/RootFinding.hpp` | `rootInBracket(function, lower, upper, tolerance)`：括号内的根，安全假位法 + 二分回退；`parameterReaching(value, slope, …)`：单调量达到 target 的那个参数 |
 
 ## 5. 约束、要求与不变量
 
@@ -172,7 +172,7 @@
 - **P5**：采样别名。会怎么错：曲线的振荡比扫描间隔还快，某些交点落在同一个间隔里、符号变化相互抵消，于是漏根。怎么判：把 `interval_count` 加倍后多出交点。怎么防：按曲线的起伏尺度调间隔，不要用默认值处理高度振荡的曲线。
 - **P6**：窗口选错。会怎么错：无界曲线的窗口太小 → 窗外的根不存在于结果里，且表现为“没有交点”。怎么判：把窗口放大一倍后出现新根。怎么防：先用射线/包围盒估一个窗口（3.4 / C5）。
 - **P7**：参数容差在奇异点失效。会怎么错：锥顶、球极附近 `|dP/du| → 0`，`tol / |dP/du|` 爆大或除零，二分“收敛”到错参数。怎么判：迭代数触顶或交点跑偏。怎么防：C8 的回退分支——用采样步长的一个分数作参数容差。
-- **P8**：投影的符号会在最近点分支处跳变。会怎么错：曲线经过裁剪边界背后时，最近点从一条边界跳到另一条，`f` 不连续地变号，`refineRoot()` 收窄到跳变处并报一个并不在面上的交点。怎么判：报出的 `point` 到曲面的距离大于 `tolerance`。怎么防：扫描在收窄后再验一次 `|f| ≤ tolerance` 才记录（已实现），跳变因此被丢掉而不是变成假交点。
+- **P8**：投影的符号会在最近点分支处跳变。会怎么错：曲线经过裁剪边界背后时，最近点从一条边界跳到另一条，`f` 不连续地变号，`rootInBracket()` 收窄到跳变处并报一个并不在面上的交点。怎么判：报出的 `point` 到曲面的距离大于 `tolerance`。怎么防：扫描在收窄后再验一次 `|f| ≤ tolerance` 才记录（已实现），跳变因此被丢掉而不是变成假交点。
 - **P9**：投影的符号在奇异参数线上没有值。会怎么错：曲线正好穿过球面轴线，轴上外侧点的最近点是极点，`dS/du × dS/dv` 为零，值为 NaN；跨过极点的交点因此漏报。怎么判：只有恰好穿过轴线的那条曲线漏，偏离轴线的曲线正常。怎么防：有隐式方程的曲面用解析入口；裁剪 / 样条面穿过奇异参数线时，把窗口收窄到不含奇点的区域再求。
 
 ## 7. 已否决选项
@@ -187,16 +187,16 @@
 
 | 验收 | 用例 |
 |---|---|
-| T1 直线 × 直线 / 直线 × 平面 | `tests/test_geom3d/LinePlaneTest.cpp` 的 `skewLineCurvesReportTheClosestPair`、`parallelAndCollinearFlags`、`lineCrossesThePlaneAtOnePoint`、`parallelLineCurveHasNoIntersection` |
+| T1 直线 × 直线 / 直线 × 平面 | `tests/test_geom_spatial/LinePlaneTest.cpp` 的 `skewLineCurvesReportTheClosestPair`、`parallelAndCollinearFlags`、`lineCrossesThePlaneAtOnePoint`、`parallelLineCurveHasNoIntersection` |
 | T2 平面 × 平面（含平行、共面） | 同文件 `twoPlanesMeetAlongALineCurve`、`coincidentPlanesReportNoIntersectionLineCurve` |
-| T3 射线 × 平面 / 盒 / 三角形（含起点在内、平行、背面、退化） | `tests/test_geom3d/RayTest.cpp` |
-| T4 盒 × 盒（含不相交的间隙盒） | `tests/test_geom3d/AabbTest.cpp` 的 `intersectWith` |
-| T5 有向盒 × 有向盒（SAT，含相切与分离） | `tests/test_geom3d/ObbTest.cpp` 的 `IntersectsIncludingTouchingAndRejectsSeparatedBoxes` |
-| T6 曲线 × 解析曲面 | `tests/test_geom3d/CurveSurfaceTest.cpp` 的 `aLineCrossesAPlaneWhereTheAnalyticAnswerSays`（与解析入口逐点对齐）、`aCircleCrossesAnOffCentreSphereTwice`、`aLineThroughATorusMeetsItFourTimes`（两种精度）、`anUnboundedCurveNeedsAWindow`、`unusableInputsAnswerNothingInsteadOfNaN` |
+| T3 射线 × 平面 / 盒 / 三角形（含起点在内、平行、背面、退化） | `tests/test_geom_spatial/RayTest.cpp` |
+| T4 盒 × 盒（含不相交的间隙盒） | `tests/test_geom_spatial/AabbTest.cpp` 的 `intersectWith` |
+| T5 有向盒 × 有向盒（SAT，含相切与分离） | `tests/test_geom_spatial/ObbTest.cpp` 的 `IntersectsIncludingTouchingAndRejectsSeparatedBoxes` |
+| T6 曲线 × 解析曲面 | `tests/test_geom_spatial/CurveSurfaceTest.cpp` 的 `aLineCrossesAPlaneWhereTheAnalyticAnswerSays`（与解析入口逐点对齐）、`aCircleCrossesAnOffCentreSphereTwice`、`aLineThroughATorusMeetsItFourTimes`（两种精度）、`anUnboundedCurveNeedsAWindow`、`unusableInputsAnswerNothingInsteadOfNaN` |
 | T7 重合与相切 | 同文件 `aCurveLyingOnTheSurfaceIsCoincidentNotAListOfPoints`、`aTouchWithoutCrossingIsReportedAsNoCrossing`（锁定 P4 的默认行为） |
-| T8 | 求根器本身 | `tests/test_math/RootFindingTest.cpp`（括号、无变号、NaN、斜括号收敛、迭代上限、单精度） |
-| T9 | 射线 × 任意曲面（族级） | `tests/test_geom3d/SurfaceQueryTest.cpp` 的 `RaySurface.*`；算法与逐项验收见 `geometry-surface-queries.md` §8 |
-| T10 | 曲线 × 非解析曲面（样条面、裁剪面、曲线在面上、不可用输入、两种精度） | `tests/test_geom3d/CurveSurfaceTest.cpp` 的 `CurveSurfaceProjection.*` |
+| T8 | 求根器本身 | `tests/test_geom_spatial/RootFindingTest.cpp`（括号、无变号、NaN、斜括号收敛、迭代上限、单精度） |
+| T9 | 射线 × 任意曲面（族级） | `tests/test_geom_spatial/SurfaceQueryTest.cpp` 的 `RaySurface.*`；算法与逐项验收见 `geometry-surface-queries.md` §8 |
+| T10 | 曲线 × 非解析曲面（样条面、裁剪面、曲线在面上、不可用输入、两种精度） | `tests/test_geom_spatial/CurveSurfaceTest.cpp` 的 `CurveSurfaceProjection.*` |
 ## 9. 状态与演进
 
 - 九个点/盒/射线入口与“曲线 × 解析曲面”的求根入口均已落地；本轮的曲线 × 曲面是把 `../research/geometry-curve-surface-intersection-2026-11-04.md` 并入本文的结果。

@@ -24,7 +24,7 @@ bool Cone::hasVolume(double eps) const
     return solid().hasVolume(static_cast<float>(eps));
 }
 
-vn::geom3d::Aabbf Cone::bounds() const
+vn::geom::spatial::Aabbf Cone::bounds() const
 {
     return solid().bounds();
 }

@@ -23,7 +23,7 @@ bool Sphere::hasVolume(double eps) const
     return solid().hasVolume(static_cast<float>(eps));
 }
 
-vn::geom3d::Aabbf Sphere::bounds() const
+vn::geom::spatial::Aabbf Sphere::bounds() const
 {
     return solid().bounds();
 }

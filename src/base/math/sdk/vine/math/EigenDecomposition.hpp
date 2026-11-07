@@ -29,6 +29,12 @@ VN_MATH_NS_BEGIN
  * - The sweep budget is fixed; a false return means the off-diagonal entries did not reach the tolerance, and the
  *   returned basis should be treated as approximate.
  *
+ * @note
+ * - It sits in the root namespace rather than in `numeric` because the accuracy target is **not** the caller's: the
+ *   budget is fixed and the relative tolerance is `4 * EPS<T>()`. The split is "who sets the target", not "does it
+ *   iterate" - a process with a caller-supplied `tolerance` / `max_iterations` that may answer `std::nullopt` lives in
+ *   `numeric` (ADR-2026-11-06-shared-numeric-kernels-in-math).
+ *
  * @param m            Symmetric matrix.
  * @param eigenvalues  Ascending spectrum.
  * @param eigenvectors Optional orthonormal eigenvector columns; may be null when only the spectrum is needed.

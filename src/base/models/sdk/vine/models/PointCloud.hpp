@@ -9,7 +9,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Vector3.hpp>
 
-#include <vine/geom3d/Aabb.hpp>
+#include <vine/geom/spatial/Aabb.hpp>
 #include <vine/models/Array.hpp>
 #include <vine/models/Shape.hpp>
 
@@ -45,7 +45,7 @@ class VN_MODELS_API PointCloud : public Shape {
   public:
     using Vec3 = vn::math::Vec3f;
     using Vec4 = vn::math::Vec4f;
-    using Aabb = vn::geom3d::Aabbf;
+    using Aabb = vn::geom::spatial::Aabbf;
 
   public:
     /**

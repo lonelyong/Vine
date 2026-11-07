@@ -230,8 +230,8 @@ python3 scripts/check_public_docs.py
 ```
 
 - `check_ai_docs.py`：`.ai/` 下每份 `.md` 必须在 `.ai/README.md` 被点名；现行段落的引用必须存在。
-- `check_design_docs.py`：每份 design 文档的顶部块、10 章编号、子序号、行数与
-  `F/C/R/T/N/D` ID；`--strict` 把行数/ID 警告也变成失败。
+- `check_design_docs.py`：每份 design 文档的顶部块、10 章编号、子序号与
+  `F/C/R/T/N/D` ID；`--strict` 把 ID 警告也变成失败。
 - `check_doc_symbols.py`：`docs/guides/` 的 living 文档点名的单元必须存在。
 - `check_public_docs.py`：公开面文档义务基线不能变坏。
 - 纯文档改动不跑编译 / 测试；改到源码注释时按仓库规矩决定是否 build。
@@ -239,7 +239,7 @@ python3 scripts/check_public_docs.py
 ## 7. 自查清单
 
 - [ ] 文件名不带日期（design / backlog）。
-- [ ] 一份文件只讲一个主题；≤300 行。
+- [ ] 一份文件只讲一个主题（不设行数上限，但每章只讲本章的事）。
 - [ ] 顶部有状态 / 最后核对 / 范围 / 权威来源 / 待办。
 - [ ] §1–§10 的标题齐全（小文档可合并 1.1–1.3，但不删章节）。
 - [ ] §3 有功能索引表；每个 `F#` 有行为 / 约束 / 要求 / 验收 / 注意，或引用 §5 的共享 C#/R#/N#。

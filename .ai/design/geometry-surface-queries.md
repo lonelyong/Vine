@@ -2,9 +2,9 @@
 
 > **状态**：现行
 > **最后核对**：2026-11-04
-> **范围**：`src/base/geom3d` 里对**任意** `Surface<T>` 的两项算法——点到曲面的最近点 / 距离、射线 × 曲面。
+> **范围**：`src/base/geom/sdk/vine/geom/spatial` 里对**任意** `Surface<T>` 的两项算法——点到曲面的最近点 / 距离、射线 × 曲面。
 > 不含具体类型的解析入口（`Plane::intersectWith(Ray)`、`signedValue()` 等，见 `geometry-ray.md` 与 `geometry-intersection.md`），不含参数化几何（见 `geometry-parametric.md`），不含点到曲线的距离与实体运算（`../backlog/geometry.md` G3）。
-> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/SurfaceParameterWindow.hpp`、`SurfaceProjection.hpp`、`RaySurfaceIntersection.hpp`；`tests/test_geom3d/SurfaceQueryTest.cpp`。
+> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/SurfaceParameterWindow.hpp`、`SurfaceProjection.hpp`、`RaySurfaceIntersection.hpp`；`tests/test_geom_spatial/SurfaceQueryTest.cpp`。
 > **待办**：`../backlog/geometry.md` G3
 
 ## 1. 概要设计
@@ -126,7 +126,7 @@
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 平面投影与窗口规则 | `tests/test_geom3d/SurfaceQueryTest.cpp` 的 `aPointProjectsOntoAPlaneAtItsFoot`、`anUnboundedDirectionNeedsAWindow`、`anInfiniteEndTakesTheSurfacesOwnBound` |
+| T1 | 平面投影与窗口规则 | `tests/test_geom_spatial/SurfaceQueryTest.cpp` 的 `aPointProjectsOntoAPlaneAtItsFoot`、`anUnboundedDirectionNeedsAWindow`、`anInfiniteEndTakesTheSurfacesOwnBound` |
 | T2 | 球面 / 圆柱 / 圆环的最近点 | 同文件 `aPointProjectsOntoASphereAlongItsRadius`、`aPointProjectsOntoACylinderThroughItsAxis`、`theNearestPointOnATorusIsTheBestLocalMinimum` |
 | T3 | 双精度一致 | 同文件 `bothPrecisionsFindTheSameNearestPoint` |
 | T4 | 未使用输入 | 同文件 `anUnboundedDirectionNeedsAWindow` 的反向 / 零宽窗口分支 |

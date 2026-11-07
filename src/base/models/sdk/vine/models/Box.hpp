@@ -4,7 +4,7 @@
 
 #include <optional>
 
-#include <vine/geom3d/BoxSolid.hpp>
+#include <vine/geom/spatial/BoxSolid.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Types.hpp>
 
@@ -102,13 +102,13 @@ class VN_MODELS_API Box final : public Primitive {
      *
      * @details
      * - The solid is a value, not stored state: the extents above are the only copy, and the halves exist for the call
-     *   only. A caller that needs a `vn::geom3d::Solidf&` keeps the returned value alive for that long.
+     *   only. A caller that needs a `vn::geom::spatial::Solidf&` keeps the returned value alive for that long.
      *
      * @return The box solid with half extents.
      */
-    [[nodiscard]] vn::geom3d::BoxSolidf solid() const noexcept
+    [[nodiscard]] vn::geom::spatial::BoxSolidf solid() const noexcept
     {
-        return vn::geom3d::BoxSolidf{ width_ * 0.5f, height_ * 0.5f, depth_ * 0.5f };
+        return vn::geom::spatial::BoxSolidf{ width_ * 0.5f, height_ * 0.5f, depth_ * 0.5f };
     }
 
     /**
@@ -129,7 +129,7 @@ class VN_MODELS_API Box final : public Primitive {
      * @brief Returns the axis-aligned bounds of the box in its local space.
      * @return The box of half extents around the origin.
      */
-    [[nodiscard]] vn::geom3d::Aabbf bounds() const override;
+    [[nodiscard]] vn::geom::spatial::Aabbf bounds() const override;
 
   private:
     /// Extent along X; 1 for the unit box.

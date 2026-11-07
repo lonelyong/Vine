@@ -5,7 +5,7 @@
 
 #include <vine/brep/Construction.hpp>
 #include <vine/brep/Tessellation.hpp>
-#include <vine/geom3d/Aabb.hpp>
+#include <vine/geom/spatial/Aabb.hpp>
 #include <vine/models/Primitive.hpp>
 #include <vine/models/PrimitiveDispatch.hpp>
 #include <vine/models/TriangleMesh.hpp>
@@ -13,11 +13,11 @@
 namespace
 {
 
-using vn::geom3d::BoxSolidf;
-using vn::geom3d::ConeSolidf;
-using vn::geom3d::CylinderSolidf;
-using vn::geom3d::EllipsoidSolidf;
-using vn::geom3d::SphereSolidf;
+using vn::geom::spatial::BoxSolidf;
+using vn::geom::spatial::ConeSolidf;
+using vn::geom::spatial::CylinderSolidf;
+using vn::geom::spatial::EllipsoidSolidf;
+using vn::geom::spatial::SphereSolidf;
 
 /// How far a tessellated curved face may sit inside the analytic bounds it stands in for.
 constexpr float kBoundsTolerance = 0.03f;
@@ -32,7 +32,7 @@ constexpr float kBoundsTolerance = 0.03f;
  * @param primitive The primitive to build.
  * @param expected  The box the primitive describes in its local space.
  */
-void expectRoundTrip(const vn::models::Primitive& primitive, const vn::geom3d::Aabbf& expected)
+void expectRoundTrip(const vn::models::Primitive& primitive, const vn::geom::spatial::Aabbf& expected)
 {
     const auto solid = vn::brep::makeBrep(primitive);
     ASSERT_TRUE(solid);
@@ -43,7 +43,7 @@ void expectRoundTrip(const vn::models::Primitive& primitive, const vn::geom3d::A
     ASSERT_TRUE(mesh);
     ASSERT_GT(mesh->vertexCount(), std::size_t{ 0 });
 
-    const auto bounds = vn::geom3d::Aabbf::compute(mesh->positions());
+    const auto bounds = vn::geom::spatial::Aabbf::compute(mesh->positions());
 
     EXPECT_NEAR(bounds.min().x, expected.min().x, kBoundsTolerance);
     EXPECT_NEAR(bounds.min().y, expected.min().y, kBoundsTolerance);
@@ -78,11 +78,11 @@ TEST(Construction, everyPrimitiveFillsItsAnalyticBounds)
         GTEST_SKIP() << "the bounds of a built solid are a backend property";
     }
 
-    expectRoundTrip(vn::models::Box(2.0f, 4.0f, 6.0f), vn::geom3d::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
-    expectRoundTrip(vn::models::Sphere(2.0f), vn::geom3d::Aabbf(-2.0f, -2.0f, -2.0f, 2.0f, 2.0f, 2.0f));
-    expectRoundTrip(vn::models::Cylinder(1.0f, 4.0f), vn::geom3d::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
-    expectRoundTrip(vn::models::Cone(1.0f, 4.0f), vn::geom3d::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
-    expectRoundTrip(vn::models::Ellipsoid(1.0f, 2.0f, 3.0f), vn::geom3d::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
+    expectRoundTrip(vn::models::Box(2.0f, 4.0f, 6.0f), vn::geom::spatial::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
+    expectRoundTrip(vn::models::Sphere(2.0f), vn::geom::spatial::Aabbf(-2.0f, -2.0f, -2.0f, 2.0f, 2.0f, 2.0f));
+    expectRoundTrip(vn::models::Cylinder(1.0f, 4.0f), vn::geom::spatial::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
+    expectRoundTrip(vn::models::Cone(1.0f, 4.0f), vn::geom::spatial::Aabbf(-1.0f, -1.0f, -2.0f, 1.0f, 1.0f, 2.0f));
+    expectRoundTrip(vn::models::Ellipsoid(1.0f, 2.0f, 3.0f), vn::geom::spatial::Aabbf(-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f));
 }
 
 TEST(Construction, theSolidCarriesThePrimitiveName)

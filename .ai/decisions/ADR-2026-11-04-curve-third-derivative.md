@@ -1,8 +1,8 @@
 # ADR-2026-11-04：偏置曲线的二阶导数不实现，也不给 `Curve<T>` 加三阶导数
 
-> **状态**：已采纳
+> **状态**：已取代（被 `ADR-2026-11-06-space-third-derivative-and-offset.md` 取代：能力协议落地后，空间曲线族答三阶导，`OffsetCurve` 成为可构造的值类型）
 > **日期**：2026-11-04
-> **相关**：`../design/geometry-kinds.md` 2.7 / 2.8 / D9；`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`OffsetCurve.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
+> **相关**：`../design/geometry-kinds.md` 2.7 / 2.8 / D9；`src/base/geom/sdk/vine/geom/spatial/Curve.hpp`、`OffsetCurve.hpp`；`tests/test_geom_spatial/GeometryKindsTest.cpp` <!-- drift-ok -->
 
 ## 背景
 

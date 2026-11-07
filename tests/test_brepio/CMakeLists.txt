@@ -2,7 +2,7 @@ set(TEST_NAME test_brepio)
 file(GLOB SRC_FILE_LIST CONFIGURE_DEPENDS *.cpp)
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
-target_link_libraries(${TEST_NAME} PRIVATE vn::BrepIO vn::Geom3D)
+target_link_libraries(${TEST_NAME} PRIVATE vn::BrepIO vn::Geom)
 
 # The backend is optional: when OCCT is configured the round-trip case builds a real solid, so the test needs the
 # headers and the libraries. The package is looked up here as well because imported targets only exist in the directory

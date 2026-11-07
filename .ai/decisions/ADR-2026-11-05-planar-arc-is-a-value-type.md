@@ -1,6 +1,6 @@
 # ADR-2026-11-05：平面圆弧是值类型，通用裁剪视图不并存
 
-- 状态：已采纳
+- 状态：已取代（被 `ADR-2026-11-05-planar-trimmed-curve.md` 取代：裁剪视图已落地，`ArcCurve` 已删除）
 - 日期：2026-11-05
 - 相关：`../design/geometry-planar.md`、`../design/geometry-kinds.md`
 
@@ -41,10 +41,10 @@
   届时按 B 做：新建 `TrimmedCurve<T>`，删掉 `ArcCurve`，并把 `geometry-planar.md` 的 2.8 改写成
   “裁剪是视图”的版本。
 
-## 证据
+## 证据（历史登记）
 
-- `src/base/geom2d/sdk/vine/geom2d/ArcCurve.hpp`：基圆按值持有，`isClosed` / `isPeriodic` / `period` /
-  `reversedParameter` 四条规则都在类型上。
-- `src/base/geom3d/sdk/vine/geom3d/TrimmedCurve.hpp`：`shared_ptr` 基曲线 + 区间，同一组事实的视图版本。
-- `tests/test_geom2d/ArcCurveTest.cpp`：闭合、半圈、反向、区间外求值、退化基圆共 7 个用例。
+- `src/base/geom/sdk/vine/geom/planar/ArcCurve.hpp`：基圆按值持有，`isClosed` / `isPeriodic` / `period` /
+  `reversedParameter` 四条规则都在类型上（文件已随本 ADR 的取代者删除）。
+- `src/base/geom/sdk/vine/geom/spatial/TrimmedCurve.hpp`：`shared_ptr` 基曲线 + 区间，同一组事实的视图版本。
+- `tests/test_geom_planar/ArcCurveTest.cpp`：闭合、半圈、反向、区间外求值、退化基圆共 7 个用例（已迁移到 `TrimmedCurveTest.cpp`）。
 - `../design/geometry-planar.md` 2.8、D6。

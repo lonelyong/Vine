@@ -40,7 +40,7 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
 * `.ai/` holds AI-visible, repo-versioned knowledge, split by the question it answers:
   * `.ai/design/` — **current, normative** design: what the system IS now. Stable
     `<area>-<topic>.md` names, **no date suffix**, no closed or historical items, one topic
-    per file, aim for ≤300 lines.
+    per file. Length is not capped: a complete, navigable topic beats a short partial one.
   * `.ai/decisions/` — **ADR** (`ADR-YYYY-MM-DD-<slug>.md`): why a decision was made, the
     options rejected and their consequences. Dated, immutable; mark `已取代` and link the
     successor. This is the only history kept in-tree.

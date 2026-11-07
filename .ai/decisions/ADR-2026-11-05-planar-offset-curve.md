@@ -1,13 +1,13 @@
 # ADR-2026-11-05：平面偏置用具体类型的模板，不给 `Curve<T>` 加三阶导数
 
-- 状态：已采纳
+- 状态：已取代（被 `ADR-2026-11-05-planar-offset-holds-handle.md` 取代：能力协议落地后，偏置改为持有基曲线句柄）
 - 日期：2026-11-05
 - 相关：`../design/geometry-planar.md`、`ADR-2026-11-04-curve-third-derivative.md`
 
 ## 背景
 
 偏置曲线 `O = C + d * N` 的二阶导里含基曲线的三阶导：`N` 是单位法向，它的二阶导展开后有 `C'''`。
-空间侧的结论是“不给 `Curve<T>` 加三阶导数”，因此 `geom3d::OffsetCurve` 只实现了点与一阶导、二阶导仍为纯虚，
+空间侧的结论是“不给 `Curve<T>` 加三阶导数”，因此 `geom::spatial::OffsetCurve` 只实现了点与一阶导、二阶导仍为纯虚，
 类型保持不可构造。
 
 平面侧到了决定这一步的时候：要么照抄那个结论（偏置只能到一阶导、或干脆不做），要么换一种写法让偏置完整。
@@ -37,7 +37,7 @@
 ## 后果
 
 - 好的：`OffsetCurve<C>` 三个数值回答都是精确的；按值持有基曲线，没有堆分配；平面契约与 3D 仍逐项同义；
-  `test_geom2d` 可以用“二阶导 vs 一阶导的中心差分”逐点验证它。
+  `test_geom_planar` 可以用“二阶导 vs 一阶导的中心差分”逐点验证它。
 - 坏的 / 代价：偏置的基曲线在编译期确定，`ClosestPoint` 之类的族级算法接受它，但“运行期决定偏移哪条曲线”要调用方自己做分派；
   三阶导在八个类型上各写一遍，新类型不会自动获得它。
 - 触发条件（什么时候重开）：出现需要“对 `Curve<T>&` 做偏置”的消费者（运行期选择的曲线、异构列表里的偏置）。
@@ -45,9 +45,9 @@
 
 ## 证据
 
-- `src/base/geom2d/sdk/vine/geom2d/OffsetCurve.hpp`：模板形态、按值持有、三阶导的使用点。
+- `src/base/geom/sdk/vine/geom/planar/OffsetCurve.hpp`：模板形态、按值持有、三阶导的使用点。
 - 八个类型的 `thirdDerivative()`：`LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` /
   `ArcCurve` / `BezierCurve` / `BSplineCurve`。
-- `tests/test_geom2d/OffsetCurveTest.cpp`：直线平行偏移、逆时针圆向内收缩、椭圆/Bezier 的二阶导与差分一致、
+- `tests/test_geom_planar/OffsetCurveTest.cpp`：直线平行偏移、逆时针圆向内收缩、椭圆/Bezier 的二阶导与差分一致、
   反向基曲线需取反距离、零距离即基曲线、尖点不产生 NaN。
 - 空间侧的既有决定：`ADR-2026-11-04-curve-third-derivative.md`（它管的是 3D，本 ADR 不推翻它）。

@@ -7,7 +7,7 @@
 **索引由机器钉住**（`scripts/check_ai_docs.py`）：`.ai/` 下每一份 `.md` 必须在这里被点名，点到的名字必须存在。
 **写法**：结论在上、历史在下；现行段落提到已不存在的东西时加 `<!-- drift-ok -->`。
 
-**分层**：`design/` 只写**现在是什么**（现行、无日期、≤300 行）；`decisions/` 写**为什么这么定**
+**分层**：`design/` 只写**现在是什么**（现行、无日期）；`decisions/` 写**为什么这么定**
 （ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
 一 bug 一文件。历史归 git，不放进 `design/`。
 
@@ -15,7 +15,7 @@
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
 一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
-## design/ —— 现行设计文档（47）
+## design/ —— 现行设计文档（50）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -50,30 +50,33 @@
 - `appfw-app-info.md` —— 应用身份与应用信息：`AppInfo`/`AppConfig::info`、`Application::appInfo()`、关于面板与对话框。
 - `appfw-translation.md` —— 文案翻译：只翻 appfw 及以上层的界面文案，源语言英文、译文只有中文，Qt 目录随模块走并内嵌（可被文件覆盖），启动时装载、缺译文回退英文。
 
-**base 与其他（21）**
+**base 与其他（24）**
 - `async-design.md` —— `src/base/async` 设计（三条必守规则）。
 - `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
 - `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化与由基本体造实体的契约、失败表示。
+- `crypto.md` —— crypto 模块：只做算法不做策略、一个对象一个方向、增量与一次性同义、后端初始化只有一处（`detail::ensureLibraryInitialized`）；今天的实现（摘要 / HMAC / HKDF / 口令哈希 / AES-GCM·CBC·CTR / RSA / ECC + DER、PEM 与口令保护的 PKCS#8 密钥文件）与缺口（证书解析）。
 - `geometry-axis-surfaces.md` —— 轴对称解析曲面（圆柱 / 圆锥 / 圆环）的坐标系值 `Placement`、共用的“平面内轴”规则（`Frame.hpp`）、矩形裁剪曲面与样条曲面的现状。
 - `geometry-kinds.md` —— 几何族：`Curve` / `Surface` 都是求值接口（`Curve<T>` 十一项、`Surface<T>` 十四项，含 `isValid()`），曲面多一层 `ElementarySurface` / `BoundedSurface` 分类标签；曲线 / 曲面族已无占位类型。
-- `geometry-planar.md` —— 平面几何：`geom2d::Curve<T>` 是与 3D 契约同义的第二份契约（不是泛型特化、不继承），今天有直线、圆、椭圆、双曲线、抛物线、圆弧、Bezier；三条非圆圆锥曲线共享 `ConicCurve`（中心 + 起始轴 + `CN`），圆不进这层；圆弧是“圆按值 + 角度区间”；族级算法有 `closestPointOnCurve()` 与三值结果的 `intersectCurveWithCurve()`，有界类型各有 `bounds()`（`math::Rect2`，椭圆用支撑函数，Bezier 是极点盒）；模块 header-only / INTERFACE，名字不带维度标记。
+- `geometry-planar.md` —— 平面几何：`geom::planar::Curve<T>` 是与 3D 契约同义的第二份契约（不是泛型特化、不继承），今天有直线、圆、椭圆、双曲线、抛物线、圆弧、Bezier、BSpline、偏置；三条非圆圆锥曲线共享 `ConicCurve`（中心 + 起始轴 + `CN`），圆不进这层；圆弧是“圆按值 + 角度区间”；族级算法有最近点、三值求交、两曲线最近距离、弧长与反解、带符号曲率；有界类型各有 `bounds()`（`math::Rect2`，椭圆用支撑函数，样条是极点盒）；模块 header-only 模板、与空间侧同一个库（`vn::Geom`）与同一个 global，名字不带维度标记。
 - `geometry-parametric.md` —— 参数化几何是建模类型（`Primitive` 的五个子类同居 `Primitive.hpp`）；canonical 局部空间与 OCCT 的职责收缩。
 - `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`LineCurve`/`Plane` 的归属、命名与契约。
+- `geometry-module.md` —— 几何模块的形态与命名：一个库 `vn::Geom`、一个 global、四类位置（两棵维度树 / `Continuity` / `geom/detail`）、“什么放哪里”的三步判定、五条隔离门禁（含 `detail` 不得命名维度与 include 域）、命名规则（类型不带维度标记）、以及模块级的已否决项。
 - `geometry-ray.md` —— 射线与图元相交：`Ray` 归 `geometry`、相交挂在被交对象上、场景走查留 `graphics`。
 - `geometry-intersection.md` —— 相交配对与结果形态：动词、结果类型由交集维数决定、`false` 时出参语义、入口配对表与缺口；曲线 × 解析曲面的带符号距离求根（`intersectCurveWithSurface` + `signedValue`）与曲线 × 任意曲面的投影求根（`intersectCurveWithSurfaceByProjection`）。
 - `geometry-surface-queries.md` —— 族级曲面查询：点到曲面的最近点 / 距离（高斯-牛顿）与射线 × 曲面（三元牛顿），参数窗口规则、重合分类与局部解的代价。
-- `geometry-curve-queries.md` —— 点到曲线的最近点 / 距离（平方距离驻点求根）、窗口规则与局部极小值的限制。
+- `geometry-curve-queries.md` —— 曲线的最近点 / 距离（平方距离驻点求根）、两曲线最近距离、弧长与反解、曲率（3D 无符号）、窗口规则与局部极小值的限制。
 - `geometry-solid.md` —— 解析实体的族 `Solid<T>`（五个 kind 是值、`SolidShape` 是 variant）：最近点与射线求交，模型按值持有。
 - `geometry-tessellation.md` —— 解析实体的三角化：`Solid<float>` 到 `TriangleMesh` 的自由函数、质量参数、精确法向与顶点复制、闭合与外向绕序。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
 - `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。
+- `math-base-layer.md` —— `math` 是底座层且只有数学词汇：值类型 / 常量 / 概念 / 3×3 特征分解，18 个头无子目录、无过程；求根、积分、Bernstein 求值与样条表示约定都在 `geom`（两条切分判据 + 代价与反转路径）。
 - `meshio-brepio-design.md` —— meshio / brepio 的公开面（草案：格式枚举、`Result`/`IoError`、无单例）。
 - `robotics-io-design.md` —— Robotics IO（XML、VFS 打包、材质库）。
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（36）
+## decisions/ —— 决策记录（ADR）（59）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
@@ -87,8 +90,27 @@
 - `ADR-2026-11-05-solid-family-and-variant.md` —— 解析实体是族接口 `Solid<T>` + 封闭值集 `SolidShape`（族本身现行；"模型按值持有"已被下一条取代）。
 - `ADR-2026-11-05-primitive-is-a-modelling-base.md` —— `Primitive` 是建模基类：不持有实体，五个子类各存尺寸并 `solid()` 按需构造；几何 kind 改名 `*Solid`。
 - `ADR-2026-11-05-planar-curve-contract.md` —— 平面曲线是第二份契约（与 3D 同名同义、互不继承），共享词汇留在 `math`；否决泛型 `Curve<PointT>`、继承 3D 契约与嵌入 `z = 0`。
-- `ADR-2026-11-05-planar-arc-is-a-value-type.md` —— 平面圆弧是值类型（`ArcCurve` = 圆按值 + 区间），通用 `TrimmedCurve<T>` 不与之并存；需要裁剪非圆基曲线时取代它。
-- `ADR-2026-11-05-planar-offset-curve.md` —— 平面偏置是“具体基曲线类型”的模板 + 具体类型上的非虚三阶导，契约保持十一项；否决给 `Curve<T>` 加第 12 项与差分近似的二阶导。- `ADR-2026-11-04-curve-third-derivative.md` —— 偏置曲线的二阶导数不实现，也不给 `Curve<T>` 加三阶导数；`OffsetCurve` 保持抽象。
+- `ADR-2026-11-05-planar-arc-is-a-value-type.md` —— 平面圆弧是值类型（`ArcCurve` = 圆按值 + 区间），通用 `TrimmedCurve<T>` 不与之并存。（已被 `ADR-2026-11-05-planar-trimmed-curve.md` 取代）
+- `ADR-2026-11-05-planar-trimmed-curve.md` —— 通用裁剪视图 `TrimmedCurve<T>`（`shared_ptr` 基曲线 + 区间）取代 `ArcCurve`；一段圆的紧盒回到 `CircleCurve::bounds(first, last)`。
+- `ADR-2026-11-05-planar-offset-curve.md` —— 平面偏置是“具体基曲线类型”的模板 + 具体类型上的非虚三阶导，契约保持十一项；否决给 `Curve<T>` 加第 12 项与差分近似的二阶导。（已被 `ADR-2026-11-05-planar-offset-holds-handle.md` 取代）
+- `ADR-2026-11-05-planar-offset-holds-handle.md` —— 平面偏置持有 `shared_ptr<const Curve<T>>` 基曲线，阶数 = 基曲线能力 − 1（封顶 2）；基曲线给不出三阶导时 `isValid()` 为假。
+- `ADR-2026-11-05-curve-derivative-capability.md` —— 导数按能力暴露：`Curve<T>` 增加非纯虚 `maxDerivativeOrder()` / `derivativeAt(u, order)`，越界答 `std::nullopt`；否决把某一阶写成纯虚与 OCCT 式任意阶 + 异常。
+- `ADR-2026-11-04-curve-third-derivative.md` —— 偏置曲线的二阶导数不实现，也不给 `Curve<T>` 加三阶导数；`OffsetCurve` 保持抽象。（已被 `ADR-2026-11-06-space-third-derivative-and-offset.md` 取代）
+- `ADR-2026-11-06-space-third-derivative-and-offset.md` —— 空间曲线族新增非虚 `thirdDerivative()` 与能力覆写（报 3），`OffsetCurve` 用基曲线三阶导答二阶导并成为可构造值类型，阶数 = 基曲线能力 − 1。
+- `ADR-2026-11-06-shared-numeric-kernels-in-math.md` —— 与维度无关的数值内核（自适应 Simpson、单调安全 Newton）住进 `math`，2D 与 3D 的弧长 / 反解共用一份实现。
+- `ADR-2026-11-06-math-is-the-base-layer.md` —— `math` 是底座层而非纯数学库：数学词汇进根层、数学过程进 `numeric`、NURBS 表示约定（重数 / 夹持 / 连续度阶梯）进 `spline`；建 `vn::Nurbs` 的触发条件一并写下。
+- `ADR-2026-11-06-merged-geom-module.md` —— `geom/planar` 与 `geom/spatial` 合并为 `src/base/geom` + 单库 `vn::Geom`，两棵 SDK 树共用一个 `geom/geom_global.hpp`；2D/3D 隔离从编译器保证改为 `check_geom_layering.py`。
+- `ADR-2026-11-06-geom-detail-subtree.md` —— 模块内新增 `geom/detail/` 子树，收与维度无关的共享实现（曲线标量、窗口/容差规则、括号收窄、弧长与反解、两曲线细化）；两棵树都可 include 它，它不得 include 任一方；公开名字不动。
+- `ADR-2026-11-06-spline-model-moves-to-geom.md` —— B 样条的节点模型与基函数移入 `geom/detail`、`Continuity` 移入 `geom` 根，判据是“签名里有没有我们自己的数据模型”；`math` 只剩数学词汇与数值过程（取代 `ADR-2026-11-06-math-is-the-base-layer.md` 的表示约定那一半）。
+- `ADR-2026-11-06-math-keeps-only-vocabulary.md` —— 求根、积分与 Bernstein 求值也移入 `geom/detail`，`math` 只剩词汇（取代 `ADR-2026-11-06-shared-numeric-kernels-in-math.md`）；代价（非几何模块要用积分得依赖 `vn::Geom`）与反转路径（第二个消费者出现时升独立模块）写明。
+- `ADR-2026-11-06-geom-tree-layout-and-naming.md` —— 两棵树的目录位置与维度命名维持现状：共享已由 `geom/detail` 与门禁解决，重排只剩名字好看；三个方案（嵌套 `planar`/`spatial`、平铺+`2` 后缀、两棵树都加后缀）及否决理由。
+- `ADR-2026-11-06-geom-contracts-nested-under-module.md` —— 两个契约下沉为 `geom/{planar,spatial}` 目录与 `vn::geom::{planar,spatial}` 子命名空间（取代上一条的“维持兄弟目录”）；重导出归零、目录与命名空间一致；并记录一项预期收益的落空（嵌套不能缩短 `geom::detail::`，因为契约自己有同名 `detail`）。
+- `ADR-2026-11-07-crypto-api-shape.md` —— crypto 的 API 形状：加解密用两个工厂而不是 `mode` 标志、增量 GCM 先缓冲后一次算完（失败会放行未认证数据，代价与退路写明）、后端初始化收在模块内一处。
+- `ADR-2026-11-07-certificates-and-legacy-keys.md` —— 证书只取公钥不做信任判断（名为 F15 的边界，不是缺口）、旧式 `Proc-Type` PEM 只读不写、`WOLFSSL_MD5` 改为显式打开（枚举里有 `kMd5` 就不能靠预设的副作用）。
+- `ADR-2026-11-07-encrypted-private-keys.md` —— 口令保护的私钥用 PKCS#8 + PBES2（AES-256-CBC + PBKDF2），不是自造容器：私钥文件的全部价值是别的工具也能读；否决 `toPrivatePem(password)` 重载（名字要说出格式变化）、把迭代数写死、用 PBES1 写出。
+- `ADR-2026-11-07-digest-vocabulary.md` —— 摘要收敛成一套词汇：`Digest` 枚举 + `digest()` + `DigestCalculator`，删掉 `Hash` / `HashCalculator` / `Hmac::Algorithm` 三套并行面；否决“每种算法一个类”。（命名部分已被下一条取代）
+- `ADR-2026-11-07-incremental-api-shape.md` —— 增量 API 的形态与名字：一次性用自由函数（`digest()` / `hmac()`），增量用东西本身命名（`Hasher` / `Hmac`），方法统一 `update()` / `finish()`；取消自造的 `*Calculator`。
+- `ADR-2026-11-07-aesgcm-streaming.md` —— AES-GCM 改为真流式（去缓冲）：wolfSSL 5.9.4 的 `Init/Update/Final` 入口 + `WARN_UNUSED_RESULT`，代价是“解密输出在 `finish()` 前不可信”这一契约必须显式写明。
 - `ADR-2026-11-04-axis-surface-frame.md` —— 旋转面的框架放进新的 `AxisSurface` 层，“平面内轴”的规则抽成 `Frame.hpp` 的一份实现；球面不迁移。（已被 `ADR-2026-11-04-surface-placement-value-type.md` 取代）
 - `ADR-2026-11-04-surface-placement-value-type.md` —— 曲面的框架是值类型 `Placement`（原点 + 主方向 + X 方向），不是继承层；“平面内轴”仍只在 `Frame.hpp` 一处。
 - `ADR-2026-11-04-isvalid-on-family-interfaces.md` —— `isValid()` 是 `Curve<T>` / `Surface<T>` 的纯虚函数：`const Curve<T>&` 也能问；`Plane` 因此第一次有了零法向判据。
@@ -121,9 +143,9 @@
 
 ## research/ —— 调研与提案（0）
 
-非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。当前没有在途提案：曲线 × 曲面求交的提案已并入 `design/geometry-intersection.md`（2.7 / F11–F12）并删除。
+非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
-## backlog/ —— 开放待办（11）
+## backlog/ —— 开放待办（13）
 
 只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
 
@@ -136,13 +158,16 @@
 - `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
 - `base-crash.md` —— 崩溃报告的开放项（上次崩溃提示、terminate、栈保证、只读目录、Linux、上报触发条件）。
 - `brep.md` —— 运行时 B-rep 运算的开放项（OCCT 后端验证、布尔与缝合）。
-- `geom2d.md` —— 平面几何的开放项（椭圆 / 圆弧 / `ConicCurve` 层、平面查询、`CircleCurve::pointAt`）。
+- `crypto.md` —— crypto 的开放项（错误码分类、Argon2 线程模式、写出方案可配置、第二个 AEAD、泄漏检测）。
+- `geom-planar.md` —— 平面几何的开放项（椭圆 / 圆弧 / `ConicCurve` 层、平面查询、`CircleCurve::pointAt`）。
+- `geometry.md` —— 空间几何的开放项（实体求交、三角面类型、四阶导数与偏置阶数、样条求值的表算法与临时分配、缺的相交配对）。
 - `loaders.md` —— loaders 层的开放项（点云 I/O 的归属与入口）。
 
-## memory/ —— 模块要点（10）
+## memory/ —— 模块要点（11）
 
 - `graphics.md` —— graphics / vsg 现役要点：机制、判据、坑与“当时为什么这么定”。
 - `core.md` —— core 要点：类型描述符只经 `Type::obtain()` 注册、内联与出实参两种声明形式、接口的导出约定。
+- `crypto.md` —— crypto 要点：后端初始化只一处、wolfSSL 的 `Md5`/`Sha256` 宏与 `::Hmac` 同名坑、增量 GCM 缓冲、测试向量与命令。
 - `geometry.md` —— geometry 要点：SDK 类导出约定、五个基本体的局部空间。
 - `appfw.md` —— appfw 横切规则（线程 / 锁内不跑用户代码 / 生命周期）。
 - `async.md` —— `src/base/async` 要点。
@@ -157,7 +182,7 @@
 现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
 
 - `vsg-embedded-init-crash.md`
-- `spline-knotspan-hang.md` —— `math::spline::knotSpan()` 在“最后两跨”括号上不前进，带内部节点的 B 样条求值挂死。
+- `spline-knotspan-hang.md` —— `geom::detail::knotSpan()` 在“最后两跨”括号上不前进，带内部节点的 B 样条求值挂死。
 - `vsg-embedded-blank-render.md`
 - `vsg-resize-distortion.md`
 - `vsg-maximize-black-band.md`

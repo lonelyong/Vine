@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-04
 > **范围**：旋转面（圆柱 / 圆锥 / 圆环）的框架与参数化、矩形裁剪曲面，以及双参数样条曲面（贝塞尔 / B 样条）的数据模型与求值。
 > 不含 `Surface<T>` 接口本身（见 `geometry-kinds.md` 2.10），不含族的归属（见同文档 2.3），不含求交 / 距离 / 三角化算法。
-> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`、`RectangularTrimmedSurface.hpp`、`BezierSurface.hpp`、`BSplineSurface.hpp`；`src/base/math/sdk/vine/math/spline/BezierBlend.hpp`、`BSplineBasis.hpp`；`tests/test_geom3d/GeometryKindsTest.cpp`
+> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`、`RectangularTrimmedSurface.hpp`、`BezierSurface.hpp`、`BSplineSurface.hpp`；`src/base/geom/sdk/vine/geom/detail/BSplineBasis.hpp`、`BezierBlend.hpp`；`tests/test_geom_spatial/GeometryKindsTest.cpp`
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -50,12 +50,12 @@
 
 ### 2.4 裁剪曲面是视图
 
-- `RectangularTrimmedSurface<T>` 持 `std::shared_ptr<const Surface<T>>` 与四个参数界，十三项全部转发；闭合 / 周期由“基曲面在该方向闭合 / 周期”与“矩形覆盖整段 / 至少一个周期”共同决定（`G7`、`G10`）。与 `TrimmedCurve` 完全同构。
+- `RectangularTrimmedSurface<T>` 持 `std::shared_ptr<const Surface<T>>` 与四个参数界，十三项全部转发；闭合 / 周期由“基曲面在该方向闭合 / 周期”与“矩形覆盖整段 / 至少一个周期”共同决定（`G7`、`G10`）。闭合还要求**两端真正落在同一条边界上**：周期基面上是“跨度必须是整数个周期”，矩形覆盖整段但多走半个周期时必须答 false；非周期闭合基面（样条面片）上没有可重复的周期，必须正好用基面自己的两个自然端，外推出去的矩形答 false（与 `TrimmedCurve` 的两端点重合规则同源；两者都要求“覆盖 + 两端落在同一点 / 同一条边界上”）。
 
 ### 2.5 样条曲面复用曲线侧的混合与基函数，不写第二份
 
 - **是什么**：`BezierSurface` / `BSplineSurface` 都是 `BoundedSurface<T>` 的值类型：行优先扁平的极点数组 + `u_pole_count` / `v_pole_count`（索引 `iu + u_pole_count * iv`，`u` 连续）、可选的等长权重数组（空 = 多项式）。求值是两次一维过程的外积：先沿 `u` 把每一行混合成一点，再沿 `v` 混合这些点；有理形式在四维齐次坐标上做同样的双重混合，最后除权重。
-- **共享的两件基础设施**（在 `vn::math::spline`，两个几何模块共用一份）：`BezierBlend.hpp`（de Casteljau 与有限差分，贝塞尔曲线与贝塞尔曲面共用）、`BSplineBasis.hpp`（相异节点 + 重数 → 扁平索引、`knotSpan`、`basisValue`、`isClampedKnotVector`，以及“重数 → `Continuity` 阶梯”的 `knotContinuity`）。曲面侧没有第二份节点扫描、基函数递推或连续性阶梯（`G1`，C3）。
+- **共享的两件基础设施**（都在 `geom::detail`，两个几何模块共用一份）：`BSplineBasis.hpp`（相异节点 + 重数 → 扁平索引、`knotSpan`、`basisValue`、`isClampedKnotVector`，以及“重数 → `Continuity` 阶梯”的 `knotContinuity`）与 `BezierBlend.hpp`（de Casteljau 与有限差分，只吃“一组值 + 一个标量”）。曲面侧没有第二份节点扫描、基函数递推或连续性阶梯（`G1`，C3）。
 - **度数与计数只有一个家**：`BezierSurface` 的度数是计数减一，因此不存；`BSplineSurface` 存两个度数，因为节点向量不蕴含它。
 - **闭合是数据事实**：两个方向首末行 / 列的**齐次**极点逐点相等即闭合。`BSplineSurface` 也用数据判定——夹持形式下 `v = v_min` 的边界曲线就是首行极点的曲线，而夹持基线性无关，所以曲线相等当且仅当极点相等，不必求值比较（`G10`）。
 - **`continuity()`**：贝塞尔恒为 `CN`（段内多项式）；B 样条取两个方向 `C(度 − 最大内部重数)` 的**更差者**，无内部节点的一侧视为 `CN`——这正是把 B 样条曲面做成一个类型的理由（`G1`）。
@@ -89,7 +89,7 @@
 
 ### 3.2 F2 矩形裁剪曲面
 
-- **行为**：四个参数界直接回答；`isUClosed()` / `isVClosed()` 要求基曲面在该方向闭合且矩形覆盖它的整段；`isUPeriodic()` / `isVPeriodic()` 要求矩形至少盖满一个周期。
+- **行为**：四个参数界直接回答；`isUClosed()` / `isVClosed()` 要求基曲面在该方向闭合、矩形覆盖它的整段，且两端落在同一条边界上（周期基面上 = 跨度是整数个周期；非周期基面上 = 正好用它的两个自然端）；`isUPeriodic()` / `isVPeriodic()` 要求矩形至少盖满一个周期。两者是独立事实：跨 1.5 个周期的矩形周期为真、闭合为假。
 - **约束**（C2）：空基曲面与反向矩形都由 `isValid()` 报告；`evaluate()` 在矩形外转发给基曲面，不夹紧。
 - **验收**（T1）：`aRectangularTrimmedSurfaceForwardsToItsBasis`。
 
@@ -113,7 +113,7 @@
 ## 5. 约束、要求与不变量
 
 - **C1**：框架只在 `Placement` 定义一次并在构造时归一化；三个曲面各持一个 `placement` 字段，不得再声明同名的 `origin` / `axis` / `x_direction` 字段，也不得在构造后改写它。
-- **C2**：裁剪曲面的闭合 / 周期是“基曲面 + 矩形”共同的事实，不得只看一边；空基与反向矩形由 `isValid()` 报告。
+- **C2**：裁剪曲面的闭合 / 周期是“基曲面 + 矩形”共同的事实，不得只看一边；闭合还要求“两端落在同一条边界上”，周期基面上即跨度是整数个周期，非周期基面上即正好落在它的两个自然端。空基与反向矩形由 `isValid()` 报告。
 - **C3**：样条曲面的求值必须复用曲线侧的共享实现（`BSplineBasis.hpp` 的节点扫描 / 基函数、`BezierBlend.hpp` 的 de Casteljau 与差分），不得在曲面侧重写。
 - **C4**：控制网是行优先扁平数组，索引 `iu + u_pole_count * iv`；两个计数、网长度与权重长度必须互相一致，由 `isValid()` 检查，不得只靠调用方自觉。
 - **R1**：三个解析曲面的 `evaluate` / `derivativeU` / `derivativeV` / `isValid` 不分配、不抛异常，只有标量运算。
@@ -125,7 +125,7 @@
 ## 6. 注意事项与陷阱
 
 - **P1**：圆柱 / 圆锥的 `v` 与圆环的 `v` 不是同一种量。会怎么错：把 `v` 一律当“高度”，于是把圆锥的 `v` 当轴向长度、圆环的 `v` 当半径。怎么判：`derivativeV().length()` 在圆柱是 1（轴向）、圆锥也是 1（母线弧长）、圆环是小半径。怎么防：按头文件写的量纲传参，不靠字段名猜。
-- **P2**：裁剪曲面的闭合不是基曲面的闭合。会怎么错：基曲面是圆柱就认为裁剪块也闭合，把四分之一柱面当一整圈做接缝判断。怎么判：`isUClosed()` 返回假而基曲面返回真。怎么防：闭合 / 周期只问裁剪本身（C2）。
+- **P2**：裁剪曲面的闭合不是基曲面的闭合，也不是“覆盖整段”。会怎么错：基曲面是圆柱就认为裁剪块也闭合，把四分之一柱面当一整圈做接缝判断；或者矩形覆盖了整段却多走半个周期，就以为两条边界边重合。怎么判：`isUClosed()` 返回假而基曲面返回真，或两条 u 边上的对应点距离不为零。怎么防：闭合 / 周期只问裁剪本身（C2）；不要自己按“基面闭合 + 覆盖整段”推结论。
 - **P3**：行优先的索引方向弄反。会怎么错：把控制网当列优先（`iv + v_pole_count * iu`），得到的是转置的曲面；方阵时外形完全正确、`2×3` 时悄悄换成 `3×2`、单行 / 单列时看不出。怎么判：`poleAt(0, 1)` 是否等于 `poles[u_pole_count]`。怎么防：读网只用 `poleAt(iu, iv)`，自己按下标访问前先看私有 `offset()` 的写法（C4）。
 - **P4**：矩形裁剪的 `uPeriod()` / `vPeriod()` 不是基曲面的周期。会怎么错：基曲面是圆柱就以为裁剪块也是 2π 周期，拿它去归一化参数；四分之一柱面会因此被当成一圈。怎么判：`isUPeriodic()` / `isVPeriodic()` 为假而 `uPeriod()` / `vPeriod()` 为 0（基曲面的对应答案为真 / 2π）。怎么防：周期值只问裁剪自己，要基曲面的数字就直接读 public 的 `basis`（与曲线侧 `TrimmedCurve` 同一规则，`geometry-kinds.md` 2.7 / P8）。
 
@@ -139,10 +139,10 @@
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 三个旋转面的参数化、导数、域与闭合、退化输入；裁剪的转发与四种无效输入 | `tests/test_geom3d/GeometryKindsTest.cpp` 的 `aCylindricalSurfaceWrapsItsAxis`、`aConicalSurfaceWalksItsGeneratrix`、`aToroidalSurfaceClosesInBothDirections`、`aRectangularTrimmedSurfaceForwardsToItsBasis` |
+| T1 | 三个旋转面的参数化、导数、域与闭合、退化输入；裁剪的转发、四种无效输入与整数周期闭合 | `tests/test_geom_spatial/GeometryKindsTest.cpp` 的 `aCylindricalSurfaceWrapsItsAxis`、`aConicalSurfaceWalksItsGeneratrix`、`aToroidalSurfaceClosesInBothDirections`、`aRectangularTrimmedSurfaceForwardsToItsBasis`、`aTrimmedSurfaceClosesOnlyWhenItsEdgesMeet` |
 | T2 | 归属与大小 | 同文件顶部 `static_assert`（`sizeof(CylindricalSurfaced)` 等三项、`sizeof(Placement<double>) == 3 * sizeof(Point3d)`、两个样条曲面是 `BoundedSurface` 且非抽象）与 `aPlacementCompletesAndNormalisesItsFrame` |
 | T3 | 样条曲面的求值、有理形式、`continuity()` 与无效网 | `aBezierPatchBlendsItsNet`（双线性网中点为 `(0.5, 0.5, 0.5)`、角点插值、`derivativeU` / `derivativeV`）、`aRationalBezierPatchPullsTowardsItsHeavierCorner`（`2×2` 权重 `{1,1,1,3}` 中点 = `(2/3, 2/3)`）、`aBSplinePatchSumsItsTwoBasisFamilies`（双线性 B 样条等于同网的贝塞尔、二次 `apron` 的 `derivativeU(0,0) = (2,2,0)`、内部重数 2 使 `continuity()` 降为 `C0`） |
-| T4 | 族级曲面契约、裁剪的周期与空基行为 | `everySurfaceKeepsTheInterfacePromises`（八个曲面逐条问域有序、闭合 / 周期与周期值一致、`isCN` 与 `continuity()` 一致、有限矩形内两个一阶导有限）、`aRectangularTrimmedSurfaceForwardsToItsBasis` 内的 `uPeriod()` 与空基断言 |
+| T4 | 族级曲面契约、裁剪的周期与空基行为 | `everySurfaceKeepsTheInterfacePromises`（八个曲面逐条问域有序、周期与周期值一致且按周期重复、`isCN` 与 `continuity()` 一致、有限矩形内两个一阶导有限）、`aRectangularTrimmedSurfaceForwardsToItsBasis` 内的 `uPeriod()` 与空基断言 |
 
 ## 9. 状态与演进
 

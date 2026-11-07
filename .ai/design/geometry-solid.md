@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-05
 > **范围**：`Solid<T>` 族（五个解析体：`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid`）、它的两个查询（最近点、射线求交），以及模型侧如何给出这份实体（每个建模子类的 `solid()`、`solidShapeOf()`、`visitPrimitive()`）。
 > 不含三角化（见 `geometry-tessellation.md`），不含实体间运算（布尔、实体间距离，见 `../backlog/geometry.md` G3），不含曲面族查询（见 `geometry-surface-queries.md`）。
-> **权威来源**：`src/base/geom3d/sdk/vine/geom3d/Solid.hpp`、`SolidShape.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`；`tests/test_geom3d/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`。
+> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Solid.hpp`、`SolidShape.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`；`tests/test_geom_spatial/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`。
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -145,7 +145,7 @@
 
 - **R1**：`isValid()` / `hasVolume()` / `bounds()` / `closestPoint()` 不分配；`intersectWith()` 只分配结果 `vector`。
 - **R2**：不依赖 OCCT，也不依赖 `brep`（`G2`）。
-- **R3**：header-only 模板；两种精度都在 `test_geom3d` 里被实例化。
+- **R3**：header-only 模板；两种精度都在 `test_geom_spatial` 里被实例化。
 
 ### 5.3 不变量（N#）
 
@@ -207,7 +207,7 @@
 | T7 | 内部起点只报离开、端面命中、去重 | `SolidIntersectionTest.cpp` 的 `aRayFromInsideASolidReportsOnlyTheExit`、`aCylinderIsHitOnItsSideAndOnItsCaps` |
 | T8 | 不可用实体、退化量纲、每 kind 的体积判据 | `SolidTest.cpp` 的 `anUnusableModelStillCarriesItsGeometry`、`aDegenerateKindIsUnusableButStillWellFormed`、`everyKindAnswersItsOwnVolume` |
 
-命令：`cmake --build build --config Debug --target test_geom3d`，再运行 `build/bin/Debug/test_geom3d.exe`。
+命令：`cmake --build build --config Debug --target test_geom_spatial`，再运行 `build/bin/Debug/test_geom_spatial.exe`。
 
 ## 9. 状态与演进
 
@@ -230,9 +230,9 @@
 
 ### 10.1 代码
 
-- `src/base/geom3d/sdk/vine/geom3d/Solid.hpp`、`SolidShape.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`
+- `src/base/geom/sdk/vine/geom/spatial/Solid.hpp`、`SolidShape.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`
 - `src/base/models/sdk/vine/models/Primitive.hpp`、`Box.hpp` … `Ellipsoid.hpp`、`PrimitiveDispatch.hpp`
-- `tests/test_geom3d/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`
+- `tests/test_geom_spatial/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`
 
 ### 10.2 文档与 ADR
 
