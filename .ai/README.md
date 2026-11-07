@@ -15,7 +15,7 @@
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
 一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
-## design/ —— 现行设计文档（50）
+## design/ —— 现行设计文档（51）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -23,7 +23,7 @@
 **graphics / vsg（9）**
 - `graphics-architecture.md` —— 分层、设备/窗口/引擎/链/视图、一帧与调度。
 - `graphics-scene.md` —— 节点、状态、收集、层、视图上下文、拾取。
-- `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒、存储与共享。
+- `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒、存储与共享；网格三角形身份（`triangleCount()` / `triangleCorners()`）与三角形树缓存（F32）。
 - `graphics-rendering.md` —— 目标、MSAA、图源、颜色、着色、阴影。
 - `graphics-content-lifecycle.md` —— 内容释放与缓存策略。
 - `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑索引 / 否决项 / 门禁。
@@ -62,6 +62,7 @@
 - `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`LineCurve`/`Plane` 的归属、命名与契约。
 - `geometry-module.md` —— 几何模块的形态与命名：一个库 `vn::Geom`、一个 global、四类位置（两棵维度树 / `Continuity` / `geom/detail`）、“什么放哪里”的三步判定、五条隔离门禁（含 `detail` 不得命名维度与 include 域）、命名规则（类型不带维度标记）、以及模块级的已否决项。
 - `geometry-ray.md` —— 射线与图元相交：`Ray` 归 `geometry`、相交挂在被交对象上、场景走查留 `graphics`。
+- `geometry-bvh.md` —— 空间包围体层次（BVH）：`Bvh` 是纯结构（包围体、32 字节扁平节点、`parent + 1` 布局、两种零分配遍历、`refit`、`validate`），`BvhBuilder` 是纯构建（两档质量、可注入外来算法），两者之间只有 `detail::BuildJob`；`Obb` 体积经实测否决（叶子表面积约 2 倍、包含性要容差）。
 - `geometry-intersection.md` —— 相交配对与结果形态：动词、结果类型由交集维数决定、`false` 时出参语义、入口配对表与缺口；曲线 × 解析曲面的带符号距离求根（`intersectCurveWithSurface` + `signedValue`）与曲线 × 任意曲面的投影求根（`intersectCurveWithSurfaceByProjection`）。
 - `geometry-surface-queries.md` —— 族级曲面查询：点到曲面的最近点 / 距离（高斯-牛顿）与射线 × 曲面（三元牛顿），参数窗口规则、重合分类与局部解的代价。
 - `geometry-curve-queries.md` —— 曲线的最近点 / 距离（平方距离驻点求根）、两曲线最近距离、弧长与反解、曲率（3D 无符号）、窗口规则与局部极小值的限制。
@@ -76,7 +77,7 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（59）
+## decisions/ —— 决策记录（ADR）（61）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
@@ -108,7 +109,9 @@
 - `ADR-2026-11-07-crypto-api-shape.md` —— crypto 的 API 形状：加解密用两个工厂而不是 `mode` 标志、增量 GCM 先缓冲后一次算完（失败会放行未认证数据，代价与退路写明）、后端初始化收在模块内一处。
 - `ADR-2026-11-07-certificates-and-legacy-keys.md` —— 证书只取公钥不做信任判断（名为 F15 的边界，不是缺口）、旧式 `Proc-Type` PEM 只读不写、`WOLFSSL_MD5` 改为显式打开（枚举里有 `kMd5` 就不能靠预设的副作用）。
 - `ADR-2026-11-07-encrypted-private-keys.md` —— 口令保护的私钥用 PKCS#8 + PBES2（AES-256-CBC + PBKDF2），不是自造容器：私钥文件的全部价值是别的工具也能读；否决 `toPrivatePem(password)` 重载（名字要说出格式变化）、把迭代数写死、用 PBES1 写出。
+- `ADR-2026-11-07-bvh-as-structure-plus-builder.md` —— BVH 拆成结构与构建器（`BuildJob` 是唯一契约），`Obb` 体积经实测否决，取代 `geometry-ray.md` 的 `D5`。
 - `ADR-2026-11-07-digest-vocabulary.md` —— 摘要收敛成一套词汇：`Digest` 枚举 + `digest()` + `DigestCalculator`，删掉 `Hash` / `HashCalculator` / `Hmac::Algorithm` 三套并行面；否决“每种算法一个类”。（命名部分已被下一条取代）
+- `ADR-2026-11-07-mesh-triangle-tree-cache.md` —— 网格自带三角形身份（`triangleCount()` / `triangleCorners()` 上移到 `Mesh`）并把三角形树当缓存（`Bvh<double>`，一三角形一 primitive，id 即序号）。
 - `ADR-2026-11-07-incremental-api-shape.md` —— 增量 API 的形态与名字：一次性用自由函数（`digest()` / `hmac()`），增量用东西本身命名（`Hasher` / `Hmac`），方法统一 `update()` / `finish()`；取消自造的 `*Calculator`。
 - `ADR-2026-11-07-aesgcm-streaming.md` —— AES-GCM 改为真流式（去缓冲）：wolfSSL 5.9.4 的 `Init/Update/Final` 入口 + `WARN_UNUSED_RESULT`，代价是“解密输出在 `finish()` 前不可信”这一契约必须显式写明。
 - `ADR-2026-11-04-axis-surface-frame.md` —— 旋转面的框架放进新的 `AxisSurface` 层，“平面内轴”的规则抽成 `Frame.hpp` 的一份实现；球面不迁移。（已被 `ADR-2026-11-04-surface-placement-value-type.md` 取代）
@@ -141,9 +144,13 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（0）
+## research/ —— 调研与提案（2）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
+
+- `2026-11-07-bvh-persistence-and-picking.md` —— BVH 的持久化提案：存拓扑不存包围盒（`8 B/三角形`，加载时按位置重算，所以陈旧只会变差不会变错）；持久化就是“另一种构建算法”走同一条 `BuildJob`；缓存放网格 bin 旁边的独立 `.vbtp`（不改 `MeshBin` flags，旧读者不受影响）。拾取部分已移入下一份提案。
+- `2026-11-07-geometry-triangle-bvh-unified.md` —— 三角形树的两帧统一：树属于“一条三角形流”，网格帧是整张网格、绘制帧是一个 draw 的切片 + 拓扑；同一个 `Bvh<double>`、同一套构建与查询、同一把流钥匙；几何为自己的每个 draw 按需派生（`prepareBvh` / `bvh` / `dropBvh`，与 `localBounds` 同一缓存模式），网格源几何在 `geometryFromMesh()` 处共享网格那棵；不用 `Role` 枚举（那个概念已经叫 `Topology`）。
+
 
 ## backlog/ —— 开放待办（13）
 

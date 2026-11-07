@@ -1,0 +1,327 @@
+# geometry 包围体层次（BVH）
+
+> **状态**：现行（结构与构建器已落地，`Bvh<T, Aabb<T>>` 两个精度均导出；`Obb` 体积经实测否决，见 `D2` / §9.2）
+> **最后核对**：2026-11-07
+> **范围**：`src/base/geom/sdk/vine/geom/spatial` 的 `Bvh.hpp`、`BvhBuilder.hpp` 与 `spatial/detail/` 下的构建内核；
+> 记录一棵静态包围体层次的归属、结构 / 构建边界、查询契约与失效规则。
+> 不含场景遍历与拾取身份（见 `graphics-scene.md`）、不含射线–图元相交本身（见 `geometry-ray.md`）。
+> **权威来源**：`Bvh.hpp`、`BvhBuilder.hpp`、`detail/VolumeTraits.hpp`、`detail/BvhBuildJob.hpp`、`detail/BvhBuilders.hpp`、
+> `tests/test_geom_spatial/Bvh*Test.cpp`。
+> **待办**：`../backlog/geometry.md`（动态插入删除、并行构建等开放项）
+
+## 1. 概要设计
+
+### 1.1 问题与背景
+
+射线–图元相交已经在 `geometry-ray.md` 落地，但一次查询要对全部图元逐个求交：图元数上千后，每帧的拾取与
+LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结构要能被**任何**“有包围体、能求交”的消费者复用，
+而不是长在渲染侧的场景图里。
+
+要解决的问题不止“写一个 BVH”，而是四条当时没有答案的问题：
+
+- **结构放哪**：`brep`（`base`）与 `graphics`（`viz`）都要用；放进任一侧都是回边（`G2`）。
+- **构建策略怎么加**：中位数切分、SAH、以后可能的上千种启发式；如果写进树里，每加一种就改一次核心类型（`G9`）。
+- **不同体积怎么支持**：`Aabb` 与 `Obb` 的合并、相交、射线测试都不同，但不能因此让树知道具体类型。
+- **buffer 怎么复用**：构建一次要几 MB，重建（模型改动）不能每次都从零分配（`G10`）。
+
+### 1.2 目标
+
+- 一个**结构**：持有图元的包围体、一颗扁平节点树、一次查询遍历；不知道图元是什么、不知道树是怎么建出来的。
+- 一个**构建器**：以可组合的算法把结构建出来，可配置质量与叶子规模，**不碰**查询、不碰失效规则。
+- 体积类型可替换：树只通过 `detail::VolumeTraits<V>` 取得它需要的九个操作。
+- 构建期零临时分配增长：节点数组与图元顺序数组复用容量，重建只写不申请。
+
+### 1.3 非目标
+
+- 不做动态插入 / 删除：树是**静态**的，建成后只允许 `update()` 改包围体 + `refit()` 收拢，或显式重建（`D3`）。
+- 不做场景图遍历、实例化、世界矩阵与拾取身份：那是 `graphics-*` 的事。
+- 不做 GPU 端结构（LBVH、光线包遍历）。
+- 不提供“自动选算法”：质量档位只有两档，额外启发式由调用方经 `buildWith()` 注入（`G8`）。
+
+### 1.4 一句话结论
+
+**`Bvh` 是一棵静态包围体层次：它持有图元的包围体、维护三个不变量、提供重叠与射线两种遍历；
+构建是独立类型 `BvhBuilder`，通过 `detail::BuildJob` 这唯一接口写树；体积类型由 `VolumeTraits` 适配。**
+
+## 2. 设计要点
+
+### 2.1 两个类型，一条单向边
+
+`Bvh<T, Volume>`（`spatial/Bvh.hpp`）是**结构**：图元包围体数组、图元顺序、节点数组、质量统计、查询遍历、`refit`、
+`validate`。它唯一暴露的构建入口是给 `BvhBuilder` 的私有 `friend` 接口。
+
+`BvhBuilder`（`spatial/BvhBuilder.hpp`）是**构建者**：`leafSize` / `maxDepth` / `quality` 三个可链式配置，
+`build(bvh)` 按档位分派，`buildWith(bvh, algorithm)` 接受任意外来算法。
+
+边只有一条：`BvhBuilder.hpp` → `Bvh.hpp`。反向依赖由 `scripts/check_geom_layering.py` 规则 6 拒绝
+（`spatial/Bvh.hpp` 不得 include `spatial/BvhBuilder.hpp`）。理由（`G1`、`G2`、`G12`）：
+
+- 树能回答的问题只有“有哪些图元、它们的盒子在哪、怎么遍历”，这些问题与“谁把它排成这样”无关；
+- 反过来一旦树知道构建器，加一种算法就要改树，且树的两个使用者被迫一起重编；
+- 判据是**可执行的**：删掉 `BvhBuilders.hpp` 与 `BvhBuilder.hpp`，`Bvh.hpp` 单独编译必须仍然通过。
+
+### 2.2 构建算法看到的唯一接口：`BuildJob`
+
+`detail::BuildJob<T, Volume>` 是两个头文件之间的**唯一**契约：
+
+| 成员 | 语义 |
+|---|---|
+| `bounds` | 只读的图元包围体视图 |
+| `order` | 可写的图元顺序（算法只做 `swap` / 分区 / `nth_element`） |
+| `nodes` | 节点数组引用，算法用 `appendNode()` 追加 |
+| `leaf_size` / `max_depth` / `depth` | 本次构建的规模参数 |
+| `rangeBounds` / `writeLeaf` / `appendNode` | 三个原语：算一组的合并包围盒、写叶子、追加内部节点 |
+
+算法只拿到“能读盒子、能重排顺序、能追加节点”这三件事，因此它无法破坏不变量，也无法触碰查询状态。
+`nodes` 是 `std::vector<Node>&` 而不是预分配窗口：叶子数与切分方式相关，预先按 `2·⌈n/leaf⌉+1` 算容量会在
+叶子规模 5、切出 2+3 时越界；容量由 `prepareForBuild()` 清空但保留，追加时自然增长，重建因此不再分配。
+
+### 2.3 `Volume` 契约：traits 适配，不改已有类型
+
+`detail::VolumeTraits<V>` 声明树需要的九个操作：`merged`、`center`、`halfArea`、`overlaps`、`contains`、
+`corners`、`isFinite`、`hitByRay`，外加类型别名 `Scalar` / `VolumeT`。`Aabb<T>` 的适配是精确的：
+`merged` 走 `expandBy`，`overlaps` 六次比较，`hitByRay` 复用 `detail::RaySlab.hpp` 的 `preparedRayBoxInterval`
+（与 `Aabb::rayBoxInterval` 同一份实现，见 `geometry-ray.md`）。
+
+`merged` 允许**保守**（包含两者即可，不必等于并集），但不允许**不包含**：包含性是树正确性的唯一前提，`validate()` 会检查。
+`halfArea` 而不是体积：SAH 按表面积计费，退化成矩形的盒子体积为 0 但表面积有意义。
+
+### 2.4 节点布局与遍历顺序
+
+`detail::BvhNode<T, Volume>` 三个字段、`float` + `Aabb` 下 32 字节：
+
+- `bounds`：该子树（叶子：该组图元）的合并包围体；
+- `offset`：内部节点是**右孩子的下标**，叶子是**图元顺序数组中的起始槽位**；
+- `count`：叶子为该组图元数，内部节点为 0。
+
+**左孩子恒为 `parent + 1`**，右孩子由 `offset` 给出。这条规则让内部节点少存一个下标（省 4 字节/节点），
+代价是遍历时必须写 `nodes_[index + 1]` 而不是 `nodes_[node.offset - 1]`——后者是本轮实现里真实踩到的一次 bug（`P1`）。
+
+### 2.5 三个不变量
+
+- **I1 包含性**：任意节点 `bounds` 包含其子节点的所有角点（叶子：包含组内每个图元包围体的八个角点）。
+- **I2 排列**：`prim_order_` 是 `[0, primCount)` 的一个排列，叶子的槽位区间互不重叠且覆盖全区间。
+- **I3 节点上界**：`nodes_.size() <= 2 · primCount`。
+
+三者由 `validate()` 全量检查（`O(n)`，一次 `std::vector<bool>` 分配，只在测试与断言里调用，不进入查询路径）。
+不变量被破坏时 `validate()` 返回 `false` 而不是抛异常：查询是 `noexcept` 逻辑的一部分，校验是可选的开发期工具。
+
+### 2.6 构建：两级质量
+
+- `BvhBuildQuality::kSah`（默认）：12 桶的 binned SAH。三个轴 × 12 桶双向扫描算代价，取最优划分再 `std::partition`。
+  划分退化（全落一侧或代价非有限）时退回中位数切分，保证**任何输入都能建成**。
+- `BvhBuildQuality::kFast`：沿最长轴按中心中位数切分（`nth_element`）。
+
+两者都由 `detail::buildTopDown<T, Volume, Split>` 这一个递归模板驱动，差别只在“选哪个切分点”，
+递归在 `count <= leaf_size` 或 `depth + 1 >= max_depth` 时写叶子。
+
+递归深度由 `max_depth` 保证（`kBvhMaxDepth = 64`），因此构建不需要显式栈；`83 KB` 级别的递归栈在这个上界下是安全的，
+而 `83 KB` 的显式栈需要堆分配，反而引入 `G10` 的成本。
+
+### 2.7 `refit` 属于结构，质量由调用方裁决
+
+图元移动时 `update(id, bounds)` 只改 `bounds_[id]` 并把树标记为“需要 refit”；`refit()` 一次反向扫描
+（孩子恒在父亲之后，所以一次 `for (index = size; index-- > 0;)` 就是合法后序）重算所有节点盒。
+它不改变拓扑，因此反复 update + refit 会让叶子变松；`qualityReport()` 给出叶子表面积之和与深度，由调用方决定何时重建。
+
+### 2.8 射线查询：一次预处理，最近优先
+
+`forEachRay(ray, visit, max_t)` 先构造 `detail::PreparedRay`（倒数与符号位，节点测试因此没有除法），
+再深度优先、**近孩子先入栈**，并用当前 `limit` 剪掉入口距离已超限的分支。
+
+`visit(id, bounds, max_t&)` 可以写回更小的 `max_t`——这就是最近命中查询的剪枝方式：命中图元后把距离写回，
+后续节点自动被剪掉。回调返回 `false` 立即终止遍历，返回值不参与语义。
+
+### 2.9 查询接口的选择：回调，而不是返回容器
+
+`forEachOverlap` / `forEachRay` 都是回调 + `const` + 调用栈上的 `std::array<PrimId, kMaxDepth + 2>` 栈，
+**零分配**。返回 `std::vector<PrimId>` 会让“最近命中”这种只要一个结果的查询也分配一次数组，
+而“收集全部候选”只是回调十行的事（`G7`：复杂度吸收在遍历里，不推给调用方去管理容器）。
+
+### 2.10 buffer 复用
+
+`prepareForBuild()` 清空节点数组与顺序数组但**保留容量**，`reserve(prim_count)` 供调用方按图元数预留。
+一次构建后的重建（同一规模的模型改动）不产生新的分配；`clear()` 同理会保留容量。
+
+### 2.11 线程与重入
+
+结构不是线程安全的：`add` / `update` / `build` 都写状态。**建成后并发查询是安全的**（查询全部 `const` 且不分配），
+这是刻意的设计点：构建是偶发的、单线程的；查询是频繁的、可以多线程的。
+
+### 2.12 错误契约
+
+- `add()` 在数组已满（`PrimId` 上限）时返回 `kInvalidPrim`，不抛异常；
+- 用空结构查询返回立即返回（`nodes_.empty()` 早退），不崩；
+- 非法参数（`leaf_size == 0`、`max_depth == 0`）由 `prepareForBuild()` 拒绝并返回 `false`，`BvhBuilder::build` 于是什么都不做；
+- 构建不会因为输入退化（全重合、NaN）而崩溃：退化时退回中位数切分，NaN 由 `isFinite` 可观测。
+
+## 3. 功能点
+
+| 编号 | 功能 | 章节 |
+|---|---|---|
+| F1 | 图元登记与批量登记 | 3.1 |
+| F2 | 包围体更新与 `refit` | 3.2 |
+| F3 | 构建（两档质量 + 外来算法） | 3.3 |
+| F4 | 重叠查询 | 3.4 |
+| F5 | 射线查询与最近命中剪枝 | 3.5 |
+| F6 | 不变量校验与质量报告 | 3.6 |
+| F7 | buffer 复用与释放 | 3.7 |
+
+### 3.1 F1 图元登记
+
+- **行为**：`add(bounds)` 追加一个图元，返回 `PrimId`，并把结构标记为未构建；`addRange(count, bounds_of)` 批量追加，
+  一次预留容量。
+- **约束**（C1）：登记不建树；登记后必须 `build` 才能查询（此前查询返回空）。
+- **要求**（R1）：批量登记一次 `reserve`，逐个 `add` 不应被用来循环一万次。
+- **验收**（T1）：`BvhBuildTest` 比对逐个 `add` 与 `addRange` 的 `primCount` 与查询结果一致。
+
+### 3.2 F2 更新与 `refit`
+
+- **行为**：`update(id, bounds)` 改写单个图元的包围体，`refit()` 重建全部节点盒而不动拓扑。
+- **约束**（C5）：`refit` 之后叶子盒是**精确**的合并（没有变形的图元时），内部盒是保守合并。
+- **注意**（N2）：反复 update 后叶子会变松，树质量退化但结果仍然正确。
+- **验收**（T2）：`BvhBuildTest` 平移全部图元后 `refit` + `validate` 通过，查询结果与重建后的树一致。
+
+### 3.3 F3 构建
+
+- **行为**：`BvhBuilder{}.leafSize(8).quality(kFast).build(bvh)`；`buildWith(bvh, algorithm)` 接受满足
+  `BuildAlgorithm` 概念的外来算法（签名为 `algorithm(BuildJob&)`），由调用方自己保证它也维护三个不变量。
+- **约束**（C2）：构建是幂等的：同一输入同一配置产生**相同**的树（`nth_element` 的等价元素顺序不保证，
+  但划分结果保证；测试因此只断言结构与质量，不断言具体下标）。
+- **要求**（R2）：任何配置与任何输入（含全部重合、退化、NaN 盒子）都必须产出一棵 `validate()` 通过的树或干脆不建。
+- **验收**（T3）：`BvhBuildTest` 覆盖 SAH / 中位数两档、叶子规模 1 / 4 / 64、`max_depth` 截断、
+  1000 个随机盒子的 `validate` 与质量对比。
+
+### 3.4 F4 重叠查询
+
+- **行为**：`forEachOverlap(query, visit)` 访问每个**叶子盒与 `query` 相交**的图元。
+- **约束**（C3）：结果是**超集**：叶子盒是保守合并，被访问的图元仍可能在精确测试下不相交（`N1`）。
+- **验收**（T4）：`BvhQueryTest` 用暴力全扫的结果作为**子集**比对（`expectCoversExactAnswer`）。
+
+### 3.5 F5 射线查询
+
+- **行为**：`forEachRay(ray, visit, max_t)` 访问每个叶子盒被射线在 `[0, max_t]` 内进入的图元；
+  `visit` 可写回 `max_t` 收紧，`return false` 立即终止。
+- **约束**（C4）：零方向射线（`direction_length2 <= eps²`）不访问任何图元，也不产生 NaN（沿用 `geometry-ray.md` C3）。
+- **注意**（N3）：近孩子优先只是**访问顺序**，不保证“第一个回调就是最近命中”——图元本身还要按 `t` 比较。
+- **验收**（T5）：`BvhQueryTest` 比对射线查询结果与暴力全扫、`max_t` 剪枝、最近命中只回调一次（写回后剪掉其余）。
+
+### 3.6 F6 校验与质量
+
+- **行为**：`validate()` 全量检查 I1–I3；`qualityReport()` 返回 `{prim_count, leaf_count, leaf_half_area_sum, depth}`。
+- **约束**（C6）：`validate()` 会分配（`std::vector<bool>` 标记已用的顺序槽位），不进查询路径。
+- **验收**（T6）：`BvhBuilderContractTest` 断言构建后 `validate()` 为真，并断言破坏不变量时能被检出（测试内手动破坏一棵树的节点盒）。
+
+### 3.7 F7 buffer 复用
+
+- **行为**：`reserve(prim_count)` 预留图元容量；`prepareForBuild` 清空但保留节点与顺序容量；`clear()` 清空一切但保留容量。
+- **约束**（C7）：重建不产生新分配（容量足够时）。
+- **验收**（T7）：`BvhBuilderContractTest` 记录首次构建后的 `capacity`，重建后断言容量未变。
+
+## 4. 公开接口
+
+| 类型 / 文件 | 内容 |
+|---|---|
+| `spatial/Bvh.hpp` | `Bvh<T, Volume = Aabb>`：`add` / `addRange` / `update` / `reserve` / `clear`、`primCount` / `empty` / `isBuilt`、`forEachOverlap` / `forEachRay`、`refit`、`validate`、`qualityReport`、`primOrder`；`kBvhMaxDepth = 64` |
+| `spatial/BvhBuilder.hpp` | `BvhBuildQuality{kFast, kSah}`；`BvhBuilder`：`leafSize` / `maxDepth` / `quality`、`build(bvh)`、`buildWith(bvh, algorithm)` |
+| `spatial/detail/BvhBuildJob.hpp` | `BvhNode<T, Volume>`、`BuildJob<T, Volume>`——**内部契约**，不属于公开 API |
+| `spatial/detail/BvhBuilders.hpp` | `MedianSplit`、`SahSplit`、`buildTopDown`、`SahBuild`、`MedianBuild`——内部 |
+| `spatial/detail/VolumeTraits.hpp` | `VolumeTraits<V>` 与 `VolumeTraits<Aabb<T>>`——内部 |
+
+完整签名与注释在头文件；本文件只记录归属、边界与理由。
+
+## 5. 约束、要求与不变量
+
+- **C1**：登记不建树；未构建的树查询返回空。
+- **C2**：构建对同一输入与配置产生同构的树；不保证等价元素的相对顺序。
+- **C3**：重叠查询结果是超集；精确判定由调用方对图元自己做。
+- **C4**：零方向射线不产生访问，不产生 NaN。
+- **C5**：`refit` 不改拓扑，只重算盒子；叶子因此可能变松。
+- **C6**：`validate()` 允许分配且只用于开发期；查询路径不分配。
+- **C7**：容量足够时重建不产生新分配。
+- **I1 / I2 / I3**：见 2.5。
+- **R1**：批量登记一次预留；逐条 `add` 只用于少量图元。
+- **R2**：任何输入都必须产出 `validate()` 通过的树，或明确不建，不得崩溃。
+- **R3**：查询 `const` 且无分配，可并发调用；写入接口不可并发。
+- **R4**：`Bvh.hpp` 不依赖 `BvhBuilder.hpp`；`check_geom_layering.py` 规则 6 强制。
+- **N1**：查询回调拿到的盒子是叶子的保守合并盒，不是图元的精确几何。
+
+## 6. 注意事项与陷阱
+
+- **P1**：叶子盒是保守合并，查询结果是**超集**。怎么错：把回调里的命中当成最终答案，选中了其实没相交的图元。
+  怎么判：用暴力全扫做对照，断言“全扫结果 ⊆ BVH 结果”。怎么防：回调里对图元做精确相交。
+- **P2**：左孩子下标是 `parent + 1`，右孩子是 `node.offset`。怎么错：照抄线性 BVH 的 `node.offset - 1` 当左孩子，
+  遍历到自己的父亲或越界。怎么判：小规模手算节点数组下标，或 `validate()` 报 I1 失败。怎么防：只用 `index + 1` 与
+  `node.offset` 两种写法。
+- **P3**：`PrimId` 是 32 位。怎么错：超过 40 亿图元时溢出（实际不可能，但 `add` 会返回 `kInvalidPrim`，调用方要检查）。
+- **P4**：SAH 退化成“全在一侧”时不处理会无限递归。怎么错：栈溢出。怎么判：`SahSplit` 返回 0。怎么防：`buildTopDown`
+  检测到退化划分立即改走中位数切分，中位数切分至少把区间分成两段。
+- **P5**：`leaf_size` 与 `max_depth` 相互作用。怎么错：`max_depth` 太小会让叶子远超 `leaf_size`（树被截断，叶子变成大块）。
+  怎么判：`qualityReport().depth` 与 `leaf_count`。怎么防：`kBvhMaxDepth = 64` 远大于正常树的深度，只在极端输入时才触发。
+- **P6**：`update` 之后不 `refit` 就查询。怎么错：叶子盒还是旧的，漏掉移动后的图元。怎么判：`isBuilt()` 只反映“建过”，
+  不反映“脏”。怎么防：`update` 后必须 `refit()`，或者重建。
+- **P7**：浮点 NaN 盒子。怎么错：`merged` 传播 NaN，整条祖先链失效。怎么判：`VolumeTraits::isFinite`。怎么防：登记前检查，
+  或接受“这棵树的查询会漏掉该图元”。
+
+## 7. 已否决选项
+
+| # | 否决 | 理由 |
+|---|---|---|
+| D1 | 把 BVH 放 `graphics` 或 `brep` | 两侧都要用；放任一侧都是回边（`G2`）。放在 `geometry` 与 `Aabb` / `Ray` 同层（`G1`）。 |
+| D2 | `Obb` 作为第二个 `Volume` 一起交付 | 实测否决：两两合并没有精确解，PCA 拟合十六个角点在细长零件场景下叶子表面积约为 `Aabb` 树的 **2 倍**，且拟合出的盒子容不下刚拟合的角点（差一个舍入步），包含性要加容差。见 `ADR-2026-11-07-bvh-as-structure-plus-builder.md`。 |
+| D3 | 支持动态插入 / 删除 | 消费者（拾取、LiDAR）都是“模型改完重建”，动态平衡树的复杂度没有对应收益（`G8`）。 |
+| D4 | 把构建算法写进 `Bvh`（`build(kSah)` 一个枚举切完） | 加一种算法就改核心类型；外来算法无法注入；树的编译单元被迫带上全部构建内核（`G9`、`G5`）。 |
+| D5 | 构建器继承 `BvhBuilder` 做多态 | 构建是偶发的一次性动作，虚函数与堆分配换来的是“运行时可换算法”这种没人需要的灵活性（`G8`）。 |
+| D6 | `buildWith` 用 `std::function<void(BuildJob&)>` | 每次构建一次类型擦除；模板参数零成本，且构建本来就在头文件里（`G10`）。 |
+| D7 | 预分配 `2·⌈n/leaf⌉+1` 的节点窗口 | 叶子数取决于切分结果（`5` 个图元会切成 `2+3` 两个叶子），这个上界会越界；改由 `appendNode()` 自然增长 + 保留容量。 |
+| D8 | 内部节点存两个子下标 | 多 4 字节/节点；`parent + 1` 规则同样清晰，代价只是一处下标写法（`G10`）。 |
+| D9 | 查询返回 `std::vector<PrimId>` | 最近命中这类单结果查询也要分配；回调 + 可提前终止覆盖全部用法（`G7`）。 |
+| D10 | 构建用显式堆栈 | `max_depth` 已给出递归深度上界，显式栈只是把一个上界换成一次堆分配（`G10`）。 |
+| D11 | 叶子存图元副本 | 图元（网格、三角形）可能很大；树只存包围体与 id，几何留在原处（`G13`）。 |
+| D12 | 把 BVH 放进 `math` | 有拓扑、有构建流程的结构不是数值词汇（`geometry-primitives.md` 2.1、`G1`）。 |
+
+## 8. 测试与验收
+
+| # | 判据 | 用例 |
+|---|---|---|
+| T1 | 逐个 `add` 与 `addRange` 结果一致 | `tests/test_geom_spatial/BvhBuildTest.cpp` |
+| T2 | `update` + `refit` 后 `validate` 通过且查询与重建一致 | `BvhBuildTest.cpp` |
+| T3 | 两档质量 × 三种叶子规模 × 深度截断 × 随机 1000 盒 | `BvhBuildTest.cpp` |
+| T4 | 重叠查询覆盖暴力全扫结果（超集语义） | `BvhQueryTest.cpp` |
+| T5 | 射线查询：命中、未命中、`max_t` 剪枝、最近命中只回调一次 | `BvhQueryTest.cpp` |
+| T6 | 构建后 `validate()` 为真；破坏 I1 能被检出 | `BvhBuilderContractTest.cpp` |
+| T7 | 重建后 `capacity` 不增长 | `BvhBuilderContractTest.cpp` |
+| T8 | 空树查询不崩、未构建的树查询返回空 | `BvhBuilderContractTest.cpp` |
+| T9 | SAH 树的重叠查询节点访问数不高于中位数树（随机场景） | `BvhBuildTest.cpp`（节点访问计数经 `qualityReport` 的叶子表面积间接断言） |
+
+现有 17 个 BVH 用例与 213 个既有 geometry 用例同批运行：`build\bin\Debug\test_geom_spatial.exe`（230 个全绿）。
+
+## 9. 状态与演进
+
+### 9.1 当前状态
+
+已落地：`spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`、`spatial/detail/{RaySlab,VolumeTraits,BvhBuildJob,BvhBuilders}.hpp`；
+`Aabb.hpp` 的 `rayBoxInterval` 改为委托 `preparedRayBoxInterval`（`geometry-ray.md` 2.8 的唯一 slab 实现）；
+`src/base/geom/src/Instantiations.cpp` 导出 `Bvh<float>` / `Bvh<double>`。
+
+### 9.2 已知缺口
+
+- `Obb` 体积（`D2`）：需要一个“保留两个孩子朝向”的合并，而不是每次合并拟合一个新盒子；在此之前不提供。
+- 并行构建、SIMD 遍历、射线包（packet）遍历：没有消费者（`G8`）。
+- 第一个消费者已经落地：`Mesh::buildBvh()` 为每个三角形建一棵树并缓存（`graphics-geometry.md` 2.9 / F32）；
+  `graphics` 的 `RayIntersection` 仍在拾取循环里线性扫三角形，改用它还没做（`../backlog/graphics.md` T24）。
+- 缺少“访问节点数”的直接计数器；目前用 `qualityReport()` 的叶子表面积间接比较质量（T9）。
+
+### 9.3 兼容性与迁移
+
+纯新增，无兼容性影响。`Aabb::rayBoxInterval` 的签名与语义不变，只是实现搬到了 `detail/RaySlab.hpp` 并被
+`Aabb` 与本模块共用。
+
+## 10. 参考
+
+- 代码：`src/base/geom/sdk/vine/geom/spatial/Bvh.hpp`、`BvhBuilder.hpp`、
+  `src/base/geom/sdk/vine/geom/spatial/detail/VolumeTraits.hpp`、`BvhBuildJob.hpp`、`BvhBuilders.hpp`、`RaySlab.hpp`。
+- 相关设计：`geometry-ray.md`（射线与 slab 实现）、`geometry-primitives.md`（值类型归属）。
+- 决策：`../decisions/ADR-2026-11-07-bvh-as-structure-plus-builder.md`。
+- 外部：Wald, *On fast Construction of SAH-based Bounding Volume Hierarchies*（binned SAH）；Aila & Laine,
+  *Understanding the Efficiency of Ray Traversal on GPUs*（`parent + 1` 左孩子布局）。

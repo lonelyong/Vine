@@ -2,6 +2,9 @@ set(TEST_NAME test_geom_spatial)
 set(SRC_FILE_LIST
 	AabbTest.cpp
 	BSplineBasisTest.cpp
+	BvhBuildTest.cpp
+	BvhBuilderContractTest.cpp
+	BvhQueryTest.cpp
 	CurveCurvatureTest.cpp
 	CurveCurveDistanceTest.cpp
 	CurveDistanceTest.cpp
@@ -9,6 +12,7 @@ set(SRC_FILE_LIST
 	CurveSurfaceTest.cpp
 	GeometryKindsTest.cpp
 	LinePlaneTest.cpp
+	MeshBvhTest.cpp
 	ObbFitTest.cpp
 	ObbTest.cpp
 	PointCloudTest.cpp

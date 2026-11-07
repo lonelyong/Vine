@@ -24,6 +24,7 @@
 #include <vine/geom/spatial/BoundedSurface.hpp>
 #include <vine/geom/spatial/BSplineCurve.hpp>
 #include <vine/geom/spatial/BSplineSurface.hpp>
+#include <vine/geom/spatial/Bvh.hpp>
 #include <vine/geom/spatial/CircleCurve.hpp>
 #include <vine/geom/spatial/ConicalSurface.hpp>
 #include <vine/geom/spatial/ConicCurve.hpp>
@@ -52,6 +53,9 @@ template class VN_GEOM_API RayHit<float>;
 template class VN_GEOM_API RayHit<double>;
 template class VN_GEOM_API Placement<float>;
 template class VN_GEOM_API Placement<double>;
+
+template class VN_GEOM_API Bvh<float>;
+template class VN_GEOM_API Bvh<double>;
 
 template class VN_GEOM_API Curve<float>;
 template class VN_GEOM_API Curve<double>;

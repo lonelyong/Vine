@@ -2,6 +2,7 @@
 
 #include <vine/models/models_global.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vine/math/Vector3.hpp>
@@ -36,9 +37,40 @@ class TriangleMesh : public Mesh {
      * @return Triangle count.
      */
     [[nodiscard]]
-    std::size_t triangleCount() const
+    std::size_t triangleCount() const override
     {
         return this->hasIndices() ? this->indices_->size() / 3u : this->vertexCount() / 3u;
+    }
+
+    /**
+     * @brief Returns the three vertex indices of one triangle.
+     *
+     * @param triangle Triangle ordinal, below triangleCount().
+     * @param corners  Receives the three vertex indices; untouched when the call fails.
+     * @return true when the triangle exists and all three indices are in range.
+     */
+    [[nodiscard]]
+    bool triangleCorners(std::size_t triangle, std::array<std::uint32_t, 3>& corners) const override
+    {
+        if (triangle >= triangleCount()) {
+            return false;
+        }
+        const std::size_t first = triangle * 3u;
+        std::uint32_t     a = static_cast<std::uint32_t>(first);
+        std::uint32_t     b = static_cast<std::uint32_t>(first + 1u);
+        std::uint32_t     c = static_cast<std::uint32_t>(first + 2u);
+        if (this->hasIndices()) {
+            const auto indices = this->indices();
+            a = indices[first];
+            b = indices[first + 1u];
+            c = indices[first + 2u];
+        }
+        const std::size_t vertices = this->vertexCount();
+        if (a >= vertices || b >= vertices || c >= vertices) {
+            return false;
+        }
+        corners = { a, b, c };
+        return true;
     }
 
     [[nodiscard]]

@@ -10,7 +10,9 @@ two separate targets did. This gate is that refusal, and it also keeps the share
   3. `geom/detail` may include neither tree;
   4. `geom/detail` may not *name* `Point2` / `Point3` / `Vector2` / `Vector3` - a helper that does is not shared;
   5. a geometry header may only include `vine/geom*`, `vine/math*` or the standard library, and a quoted include must
-     stay in its own directory (R2: the only edges are geometry -> geometry, geometry -> math).
+     stay in its own directory (R2: the only edges are geometry -> geometry, geometry -> math);
+  6. `spatial/Bvh.hpp` may not include `spatial/BvhBuilder.hpp` - the tree holds primitives, not knowledge of how they
+     are built, so the builder depends on the tree and never the reverse (`.ai/design/geometry-bvh.md` 2.2).
 
 Run: python scripts/check_geom_layering.py
 """
@@ -30,6 +32,12 @@ SHARED_TREE = GEOM / "detail"
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*(?P<bracket>[<"])(?P<target>[^>"]+)[>"]')
 ALLOWED_ANGLE_ROOTS = ("vine/geom/", "vine/math/")
 DIMENSION_NAMES = re.compile(r"\b(Point2|Point3|Vector2|Vector3)\b")
+
+# Rule 6: header -> headers it may not include. The tree owns primitives and one build entry point;
+# construction strategies reach it from outside, so no edge may run from the tree back to a strategy.
+FORBIDDEN_EDGES = {
+    "spatial/Bvh.hpp": ("spatial/BvhBuilder.hpp",),
+}
 
 findings: list[str] = []
 checked = 0
@@ -84,6 +92,16 @@ for path in geometry_headers():
                 f"{path.relative_to(ROOT)}:{number}: quoted include leaves its directory: {target} "
                 f"(a same-directory include carries no path)"
             )
+
+    # Rule 6: the structure must not know its construction strategies.
+    edge_key = path.relative_to(GEOM).as_posix()
+    for number, _bracket, target in includes_of(path):
+        for forbidden_header in FORBIDDEN_EDGES.get(edge_key, ()):
+            if target == f"vine/geom/{forbidden_header}":
+                findings.append(
+                    f"{path.relative_to(ROOT)}:{number}: {edge_key} includes {forbidden_header} "
+                    f"(the structure must not depend on its builders)"
+                )
 
     # Rule 4: `detail` stays dimension-free by name, not only by include.
     if tree is None:

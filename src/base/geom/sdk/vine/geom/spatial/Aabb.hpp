@@ -14,6 +14,8 @@
 #include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include <vine/geom/spatial/detail/RaySlab.hpp>
+
 #include "Ray.hpp"
 
 VN_GEOM_SPATIAL_NS_BEGIN
@@ -22,126 +24,43 @@ namespace detail
 {
 
 /**
- * @brief One ray crossing an axis-aligned box, before the normal is turned towards the ray.
- *
- * @tparam T Floating-point scalar type.
- */
-template <vn::math::FP T>
-struct RayBoxInterval {
-    /// Distance to the entry wall; negative when the origin is inside.
-    T enter_t{ T(0) };
-
-    /// Distance to the exit wall; never negative on a successful query.
-    T exit_t{ T(0) };
-
-    /// Axis of the entry wall (0 = X, 1 = Y, 2 = Z).
-    int enter_axis{ -1 };
-
-    /// Axis of the exit wall (0 = X, 1 = Y, 2 = Z).
-    int exit_axis{ -1 };
-
-    /// Outward normal of the entry wall on its own axis.
-    T enter_sign{ T(0) };
-
-    /// Outward normal of the exit wall on its own axis.
-    T exit_sign{ T(0) };
-};
-
-/**
  * @brief The two distances at which a ray crosses an axis-aligned box, and the outward wall of each crossing.
  *
  * @details
- * - This is the only slab implementation in the module: `Aabb::intersectWith()` collapses it to the nearest
- *   crossing, while `BoxSolid` keeps both as its enter / exit crossings (`G5`).
+ * - Prepares the ray and forwards to `preparedRayBoxInterval()`, which is the module's single slab implementation
+ *   (`spatial/detail/RaySlab.hpp`). A caller that tests many boxes with one ray prepares once and calls the other
+ *   overload directly.
  * - `enter_t` may be negative when the origin is inside; `exit_t` is never negative on success.
  * - `enter_sign` / `exit_sign` are the OUTWARD normal components of the two walls on their own axis; `Aabb` turns
  *   the reported normal towards the ray afterwards.
  *
- * @param ray    The ray, whose direction is expected to be unit length.
- * @param xmin   Lower bound along X.
- * @param ymin   Lower bound along Y.
- * @param zmin   Lower bound along Z.
- * @param xmax   Upper bound along X.
- * @param ymax   Upper bound along Y.
- * @param zmax   Upper bound along Z.
- * @param eps    Threshold that makes a ray aimless.
+ * @param ray      The ray, whose direction is expected to be unit length.
+ * @param xmin     Lower bound along X.
+ * @param ymin     Lower bound along Y.
+ * @param zmin     Lower bound along Z.
+ * @param xmax     Upper bound along X.
+ * @param ymax     Upper bound along Y.
+ * @param zmax     Upper bound along Z.
+ * @param eps      Threshold that makes a ray aimless.
  * @param slab_eps Threshold for treating a direction component as parallel to its slab; callers that must keep a tiny
  *                 but real component pass 0.
  * @param interval Receives both crossings on success; untouched otherwise.
  * @return `true` when the box lies in front of the origin or around it.
  */
 template <vn::math::FP T>
-[[nodiscard]] bool rayBoxInterval(const Ray<T>& ray,
-                                  T xmin,
-                                  T ymin,
-                                  T zmin,
-                                  T xmax,
-                                  T ymax,
-                                  T zmax,
-                                  T eps,
-                                  T slab_eps,
+[[nodiscard]] bool rayBoxInterval(const Ray<T>&       ray,
+                                  T                   xmin,
+                                  T                   ymin,
+                                  T                   zmin,
+                                  T                   xmax,
+                                  T                   ymax,
+                                  T                   zmax,
+                                  T                   eps,
+                                  T                   slab_eps,
                                   RayBoxInterval<T>& interval)
 {
-    if (!(ray.direction.length2() > eps * eps)) {
-        return false; // an aimless ray crosses nothing
-    }
-
-    const T origin[3]    = { ray.origin.x, ray.origin.y, ray.origin.z };
-    const T direction[3] = { ray.direction.x, ray.direction.y, ray.direction.z };
-    const T lower[3]     = { xmin, ymin, zmin };
-    const T upper[3]     = { xmax, ymax, zmax };
-
-    T   enter_t    = -std::numeric_limits<T>::infinity();
-    T   exit_t     = std::numeric_limits<T>::infinity();
-    int enter_axis = -1;
-    int exit_axis  = -1;
-    T   enter_sign = T(0);
-    T   exit_sign  = T(0);
-
-    for (int axis = 0; axis < 3; ++axis) {
-        if (!(std::abs(direction[axis]) > slab_eps)) {
-            // Parallel to this pair of faces: inside the slab it never leaves it, outside it never enters.
-            if (origin[axis] < lower[axis] - slab_eps || origin[axis] > upper[axis] + slab_eps) {
-                return false;
-            }
-            continue;
-        }
-
-        T    near_t    = (lower[axis] - origin[axis]) / direction[axis];
-        T    far_t     = (upper[axis] - origin[axis]) / direction[axis];
-        T    near_sign = T(-1); // the min plane faces -axis
-        T    far_sign  = T(1);  // the max plane faces +axis
-        if (near_t > far_t) {
-            std::swap(near_t, far_t);
-            std::swap(near_sign, far_sign);
-        }
-
-        if (near_t > enter_t) {
-            enter_t    = near_t;
-            enter_axis = axis;
-            enter_sign = near_sign;
-        }
-        if (far_t < exit_t) {
-            exit_t    = far_t;
-            exit_axis = axis;
-            exit_sign = far_sign;
-        }
-        if (enter_t > exit_t) {
-            return false;
-        }
-    }
-
-    if (enter_axis < 0 || exit_axis < 0 || exit_t < T(0)) {
-        return false; // no plane was crossed, or the box lies entirely behind the origin
-    }
-
-    interval.enter_t    = enter_t;
-    interval.exit_t     = exit_t;
-    interval.enter_axis = enter_axis;
-    interval.exit_axis  = exit_axis;
-    interval.enter_sign = enter_sign;
-    interval.exit_sign  = exit_sign;
-    return true;
+    return preparedRayBoxInterval(PreparedRay<T>::from(ray), xmin, ymin, zmin, xmax, ymax, zmax, eps, slab_eps,
+                                  interval);
 }
 
 } // namespace detail

@@ -30,7 +30,8 @@
 
 ### 1.3 非目标
 
-- 不做射线–网格遍历与加速结构（BVH / 八叉树）：今天没有性能证据，且它会引入第二种数据组织（`G8`）。
+- 不做射线–网格遍历与加速结构（BVH / 八叉树）：本文件只定义“射线 × 单个图元”的契约；加速结构的归属与契约见
+  `geometry-bvh.md`（`D5` 已由 `ADR-2026-11-07-bvh-as-structure-plus-builder.md` 取代）。
 - 不做场景查询与选中态：拾取是机制、选择是业务（`graphics-scene.md`）。
 - 不给 `SphericalSurface` / 胶囊 / 圆锥面这类**值类型**补射线入口：没有消费者；等出现再按同一约定加。解析实体（`Solid<T>`）的射线求交已经存在，见 `geometry-solid.md`。
 
@@ -165,7 +166,8 @@
 | D2 | 留在 `graphics`，其它层各复制一份 | 一个概念两三个实现，必然漂移（`G1`）；`brep` 依赖 `viz` 是回边（`G2`）。 |
 | D3 | `Ray` 复用 `LineCurve`（加布尔或约定方向长度） | 两种量纲塞进一个类型，`t` 的含义要靠读文档推（`G4`）。 |
 | D4 | 相交写成自由函数 `intersect(ray, target)` 的单一重载集 | 与被交类型分离，`Obb` 复用 `Aabb`、平面特例都要在外部重写；成员形式与既有 `Plane::intersectWith` 一致（`G6`）。 |
-| D5 | 本期就做射线–网格与 BVH | 没有性能证据，加速结构会引入新的数据组织与失效规则（`G8`、`G10`）。 |
+| D5 | 本期就做射线–网格与 BVH（2026-11-04 的判断） | 当时没有性能证据，加速结构会引入新的数据组织与失效规则（`G8`、`G10`）。**已取代**：批量射线消费者出现后已落地，见
+  `ADR-2026-11-07-bvh-as-structure-plus-builder.md` 与 `geometry-bvh.md`。 |
 | D6 | 保留 `graphics::Ray` 兼容别名 | 与 `geometry-primitives.md` D2 同一立场；一个类型两个名字必然漂移（`G4`）。 |
 
 ## 8. 测试与验收
@@ -186,7 +188,8 @@
 
 ### 9.2 已知缺口
 
-- 射线–网格遍历与加速结构（BVH / 八叉树）：等出现“每帧大量射线”的消费者（LiDAR 仿真）再设计（`D5`）。
+- 射线–网格遍历与加速结构（BVH / 八叉树）：**已落地**，归属、结构与构建边界见 `geometry-bvh.md`；
+  射线查询入口是 `Bvh::forEachRay()`，它复用本文件的 `PreparedRay` 与 slab 实现。
 - `tests/test_graphics` 里几个走 `geometryFromShape()` 的用例（`GeometryTest.MeshCounts`、`RayIntersectionTest.HitsTriangle` / `MissesTriangle`、`SceneTest.BoundingBoxAggregates`）在本机上崩溃，且在本轮改动之前就已如此；已记入 `../backlog/graphics.md`。
 
 ### 9.3 兼容性与迁移

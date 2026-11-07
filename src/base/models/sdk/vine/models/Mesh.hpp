@@ -2,9 +2,11 @@
 
 #include <vine/models/models_global.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -19,6 +21,8 @@
 #include <vine/math/Vector4.hpp>
 
 #include <vine/geom/spatial/Aabb.hpp>
+#include <vine/geom/spatial/Bvh.hpp>
+#include <vine/geom/spatial/BvhBuilder.hpp>
 #include <vine/models/Array.hpp>
 #include <vine/models/Shape.hpp>
 
@@ -38,6 +42,11 @@ VN_MODELS_NS_BEGIN
  *   grow one channel and leave the others behind.
  * - Geometry never advances a revision by itself: a holder that changes content reports it once the change is complete
  *   (Shape::bumpRevision() for the shape as a whole, Buffer::setRevision() for bytes it wrote in place).
+ * - The channel handles are `intrusive_ptr<const Buffer<T>>`: a mesh REPLACES a channel, it never writes through one. A
+ *   writer that edits bytes in place owns its own mutable handle and announces with Buffer::setRevision() - which is
+ *   also why the buffers it shares with a geometry can change under that geometry.
+ * - The optional triangle tree is a cache in the same sense as the box: it describes the stored triangles, holds no
+ *   identity, and is dropped by every setter that changes them.
  *
  * @warning
  * - The spans returned by positions(), normals(), texcoords(), colors() and indices() borrow the storage: any setter
@@ -54,6 +63,7 @@ class Mesh : public Shape {
     using Vec3   = vn::math::Vec3f;
     using Vec4   = vn::math::Vec4f;
     using Aabb   = vn::geom::spatial::Aabbf;
+    using Bvh    = vn::geom::spatial::Bvh<double>;
 
     static constexpr std::uint32_t kVec3Components = 3u;
     static constexpr std::uint32_t kVec2Components = 2u;
@@ -196,16 +206,19 @@ class Mesh : public Shape {
      * @note
      * - Switching to indices does not remove the vertices already stored: those the new indices do not name stay in
      *   the position storage and are no longer drawn.
+     * - The corners the indices name are what the triangle tree is built from, so replacing them drops a built tree;
+     *   the cached box is unaffected because no position moved.
      *
      * @param indices Vertex indices in face-corner order.
      */
     void setIndices(UInt32Array indices)
     {
         indices_ = makeBuffer<std::uint32_t>(std::move(indices));
+        bvh_.reset();
     }
 
     /**
-     * @brief Replaces the vertex positions and clears the cached box.
+     * @brief Replaces the vertex positions and clears the cached box and tree.
      *
      * @param positions New positions.
      */
@@ -213,6 +226,7 @@ class Mesh : public Shape {
     {
         positions_ = makeBuffer(packVec3(std::move(positions)));
         aabb_ = Aabb::empty();
+        bvh_.reset();
     }
 
     /**
@@ -257,6 +271,46 @@ class Mesh : public Shape {
     }
 
     /**
+     * @brief Returns how many triangles this mesh's faces make.
+     *
+     * @details
+     * - A triangle is the unit every ray query intersects and every renderer draws, so it is also the identity the
+     *   triangle tree stores: the ordinal counted here is the primitive id a tree query reports.
+     * - Each concrete mesh answers from its own topology - one triangle per face for a triangle mesh, two per face
+     *   split along the first-to-third diagonal for a quad mesh, a fan per face for a mixed mesh - and the rule is the
+     *   same one toTriangleMesh() uses, so a triangle keeps its ordinal across the conversion.
+     * - A base mesh states no faces, so it answers zero.
+     *
+     * @return Triangle count; zero for a mesh that states no face topology.
+     */
+    [[nodiscard]]
+    virtual std::size_t triangleCount() const
+    {
+        return 0u;
+    }
+
+    /**
+     * @brief Returns the three vertex indices of one triangle.
+     *
+     * @details
+     * - The indices address positions(), so a triangle's corners are `positions()[corners[0..2]]`; the tree build and a
+     *   ray test both read a triangle this way, without materialising a triangle array.
+     * - Indexed meshes go through the index buffer, others count vertices directly; either way the ordinal ordering
+     *   matches triangleCount().
+     *
+     * @param triangle Triangle ordinal, below triangleCount().
+     * @param corners  Receives the three vertex indices; untouched when the call fails.
+     * @return true when the triangle exists and its corners are in range.
+     */
+    [[nodiscard]]
+    virtual bool triangleCorners(std::size_t triangle, std::array<std::uint32_t, 3>& corners) const
+    {
+        (void)triangle;
+        (void)corners;
+        return false;
+    }
+
+    /**
      * @brief Returns the cached axis-aligned bounding box.
      *
      * @details
@@ -293,9 +347,143 @@ class Mesh : public Shape {
         return aabb_;
     }
 
+    /**
+     * @brief Returns the cached triangle tree.
+     *
+     * @details
+     * - The cache is UNBUILT until setBvh() or buildBvh() fills it, and an unbuilt tree answers every query with no
+     *   candidate - it never falls back to a linear scan, because a silent full scan hides the missing build. A caller
+     *   that needs hits checks hasBvh() first.
+     * - It is dropped by everything that changes the triangles (setPositions(), setIndices(), and the face-offset setter
+     *   of a mesh that stores one) and by nothing else: normals, texture coordinates and colours do not move a corner.
+     * - The tree is `double` while the positions are `float`: every consumer queries with a `Rayd`, and narrowing that
+     *   ray to float for a box test loses the far-from-origin precision a small leaf box needs. Widening the stored
+     *   floats into the tree's boxes is exact, so the tree states the triangles' bounds without rounding them.
+     *
+     * @return Cached tree; an empty one when nothing was built or stored (see hasBvh()).
+     */
+    [[nodiscard]]
+    const Bvh& bvh() const
+    {
+        static const Bvh kUnbuilt{};
+        return bvh_ != nullptr ? *bvh_ : kUnbuilt;
+    }
+
+    /**
+     * @brief Returns the cached tree as the immutable object it is shared as.
+     *
+     * @details
+     * - A built tree is never modified again: a rebuild publishes a NEW object and leaves the old one to whoever still
+     *   holds it. That is what makes it safe for another frame to hold the same tree - the draw side adopts this handle
+     *   instead of building a second tree over the same triangles.
+     * - Sharing the handle costs one reference count; it does not copy a node.
+     *
+     * @return The tree, or null when nothing was built or stored.
+     */
+    [[nodiscard]]
+    std::shared_ptr<const Bvh> sharedBvh() const
+    {
+        return bvh_;
+    }
+
+    /**
+     * @brief Reports whether the cached tree has been built.
+     *
+     * @return true when bvh() answers queries for the stored triangles.
+     */
+    [[nodiscard]]
+    bool hasBvh() const
+    {
+        return bvh_ != nullptr && bvh_->isBuilt();
+    }
+
+    /**
+     * @brief Stores a triangle tree in the cache.
+     *
+     * @details
+     * - This is how a caller that configures its own builder keeps that choice: build the tree elsewhere and adopt it.
+     *   The caller is responsible for the tree describing the triangles stored here.
+     *
+     * @param bvh Tree to cache; taken by value, moved into the published object.
+     */
+    void setBvh(Bvh bvh)
+    {
+        bvh_ = std::make_shared<const Bvh>(std::move(bvh));
+    }
+
+    /**
+     * @brief Builds the triangle tree from the stored triangles and caches it.
+     *
+     * @details
+     * - One primitive per triangle, in triangle order, so `prim id == triangleCount()`'s ordinal: a hit turns into a
+     *   triangle without a second lookup, and a face is one division away for the fixed-corner meshes.
+     * - All or nothing: an invalid mesh, or a triangle whose corners are out of range, leaves the cache empty and
+     *   reports false rather than caching a tree that describes something else.
+     * - The primitive bound of a triangle is the box of its three corners, widened to double; the builder decides the
+     *   shape of the tree (leaf size, depth limit, quality).
+     * - The tree is built as a local object and published only when it is complete, so a reader never sees a tree that
+     *   is halfway into the arena. A rebuild allocates; it cannot write into a tree someone else is still reading.
+     *
+     * @param builder Builder configuration; the default is the library's own choice.
+     * @return true when the cache holds a built tree afterwards.
+     */
+    [[nodiscard]]
+    bool buildBvh(const vn::geom::spatial::BvhBuilder& builder = {})
+    {
+        bvh_.reset();
+        const std::size_t count = triangleCount();
+        if (count == 0u || !isValid()) {
+            return false;
+        }
+        const auto vertices = positions();
+        auto       tree     = std::make_shared<Bvh>();
+        tree->reserve(count);
+        std::array<std::uint32_t, 3>             corners{};
+        std::array<vn::math::Vector3<double>, 3> points{};
+        for (std::size_t triangle = 0; triangle < count; ++triangle) {
+            if (!triangleCorners(triangle, corners)) {
+                return false;
+            }
+            for (std::size_t corner = 0; corner < 3u; ++corner) {
+                if (corners[corner] >= vertices.size()) {
+                    return false;
+                }
+                const Vec3& position = vertices[corners[corner]];
+                points[corner] = vn::math::Vector3<double>(static_cast<double>(position.x),
+                                                           static_cast<double>(position.y),
+                                                           static_cast<double>(position.z));
+            }
+            tree->add(vn::geom::spatial::Aabbd::compute(points));
+        }
+        builder.build(*tree);
+        if (!tree->isBuilt()) {
+            return false;
+        }
+        bvh_ = std::move(tree);
+        return true;
+    }
+
+    /**
+     * @brief Drops the cached tree.
+     *
+     * @details
+     * - A mesh type that stores its own face topology calls this when that topology changes, the way setIndices() does
+     *   for the corner stream every mesh shares.
+     * - A caller still holding the previous sharedBvh() keeps a valid tree: dropping the cache does not touch the object,
+     *   it stops publishing it.
+     */
+    void clearBvh()
+    {
+        bvh_.reset();
+    }
+
   protected:
     /**
      * @brief Creates a buffer by adopting its vector storage.
+     *
+     * @details
+     * - The handle comes back MUTABLE because this is the call that creates the bytes; the channel member it is stored
+     *   into is const, so publishing it gives up the right to write through it.
      *
      * @param values Values to move into the buffer.
      * @return New buffer owning the values.
@@ -308,11 +496,11 @@ class Mesh : public Shape {
     }
 
   protected:
-    intrusive_ptr<Buffer<float>> positions_; ///< Packed positions; three scalars per vertex.
-    intrusive_ptr<Buffer<float>> normals_; ///< Optional packed normals; three scalars per vertex.
-    intrusive_ptr<Buffer<float>> texcoords_; ///< Optional packed texture coordinates; two scalars per vertex.
-    intrusive_ptr<Buffer<float>> colors_; ///< Optional packed linear RGBA colours; four scalars per vertex.
-    intrusive_ptr<Buffer<std::uint32_t>> indices_; ///< Optional face-corner indices; empty selects sequential vertices.
+    intrusive_ptr<const Buffer<float>> positions_; ///< Packed positions; three scalars per vertex. Replaced, never written through.
+    intrusive_ptr<const Buffer<float>> normals_; ///< Optional packed normals; three scalars per vertex.
+    intrusive_ptr<const Buffer<float>> texcoords_; ///< Optional packed texture coordinates; two scalars per vertex.
+    intrusive_ptr<const Buffer<float>> colors_; ///< Optional packed linear RGBA colours; four scalars per vertex.
+    intrusive_ptr<const Buffer<std::uint32_t>> indices_; ///< Optional face-corner indices; empty selects sequential vertices.
 
   private:
     [[nodiscard]]
@@ -381,6 +569,7 @@ class Mesh : public Shape {
     }
 
     Aabb aabb_{ Aabb::empty() };
+    std::shared_ptr<const Bvh> bvh_{}; ///< Derived cache, published immutable: the triangle tree, null until built or set.
 };
 
 VN_MODELS_NS_END

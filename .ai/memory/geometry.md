@@ -161,3 +161,23 @@
   曲率符号与偏置共用同一个左法向约定。3D 侧同名落地在 `geom/spatial/CurveLength.hpp` 与 `CurveCurvature.hpp`，
   算法与窗口规则相同，但曲率无符号（`curvature()`，3D 没有自然左右）。3D 的两曲线最近距离同样已落地（`geom/spatial/CurveCurveDistance.hpp`，
   结果点是 `Point3`）；backlog G3 现在只剩“实体求交”。投影与两曲线距离的采样 / Gauss-Newton **仍是两份**（胶水比例高，按 ADR 的触发条件再评估）。
+
+- **BVH 是「结构 + 构建器」两个类型**（`spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`）：`Bvh<T, Volume = Aabb>` 只持有图元
+  包围体与扁平节点树，`BvhBuilder` 负责构建，两者之间只有 `detail::BuildJob` 这一个契约。`check_geom_layering.py` 规则 6
+  禁止 `Bvh.hpp` include `BvhBuilder.hpp`——删掉构建器后 `Bvh.hpp` 必须仍能单独编译，这是「职责分离」的可执行判据。
+  内部节点的 `offset` 是**右**孩子下标，左孩子恒为 `parent + 1`（写成 `node.offset - 1` 会遍历到自己或越界）。
+  节点数组由 `appendNode()` 追加增长——不要预分配 `2·⌈n/leaf⌉+1`，叶子数取决于切分结果（5 个图元会切成 2+3）。
+  查询回调拿到的是叶子的**保守合并盒**，结果是超集，精确判定要调用方自己做。`Obb` 体积已实测否决
+  （PCA 拟合角点合并：叶子表面积约为 `Aabb` 树的 2 倍，且角点会落在拟合盒外一个舍入步），别照这个思路重做一遍。
+  设计与理由见 `design/geometry-bvh.md`、`decisions/ADR-2026-11-07-bvh-as-structure-plus-builder.md`。
+
+- **网格自带三角形身份与树**：`Mesh::triangleCount()` / `Mesh::triangleCorners(i, corners[3])` 是虚函数，每个具体网格
+  按自己 `toTriangleMesh()` 的同一规则实现（三角三项一面 / 四边形沿 1→3 对角 / 多边形三角扇），所以三角形序号跨转换
+  稳定——它既是树的 primitive id 也是拾取身份。`Mesh` 缓存 `Bvh<double>`（`buildBvh(builder)` / `bvh()` / `hasBvh()` /
+  `setBvh()` / `clearBvh()` / `sharedBvh()`）：一三角形一 primitive，`setPositions` / `setIndices` /
+  `MixedMesh::setFaceOffsets` 丢树，法线/UV/颜色不丢。树故意用 double：查询射线都是 `Rayd`，窄化成 float 会在远离
+  原点处漏命中。树以 `std::shared_ptr<const Bvh>` 发布且**发布后不可变**（重建换新对象、`clearBvh()` 只停止发布），
+  所以另一帧可以共享同一棵而不复制。未构建的树不回答候选，**不**退化成线性扫描。
+  见 `design/graphics-geometry.md` 2.9 / F32 与 `decisions/ADR-2026-11-07-mesh-triangle-tree-cache.md`。
+
+- **两种智能指针不要混**：`Buffer<T>` 是 `RefCounted` → 用 `intrusive_ptr`（计数在对象里；`Mesh` 的五个通道句柄是 `intrusive_ptr<const Buffer<T>>`，Mesh 只替换通道、从不原地写字节）；`Bvh` 是值类型 → 共享它只能用 `shared_ptr<const Bvh>`（构建时还要能放栈上）。判据：**计数在对象里 → intrusive_ptr；值类型要共享 → shared_ptr**。两者共享契约也不同：一个是“共享可变字节 + `Buffer::setRevision()` 公告”，一个是“发布后不可变”。

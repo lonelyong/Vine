@@ -2,6 +2,7 @@
 
 #include <vine/models/models_global.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -41,6 +42,52 @@ class QuadMesh : public Mesh {
     {
         const std::size_t corner_count = this->hasIndices() ? this->indices().size() : this->vertexCount();
         return corner_count / 4u;
+    }
+
+    /**
+     * @brief Returns how many triangles the quads split into: two per face.
+     *
+     * @return Twice the quad count.
+     */
+    [[nodiscard]]
+    std::size_t triangleCount() const override
+    {
+        return quadCount() * 2u;
+    }
+
+    /**
+     * @brief Returns the three vertex indices of one triangle of the fan.
+     *
+     * @details
+     * - Each quad splits along the diagonal from its first to its third corner, so triangle `2·f` is
+     *   `(c0, c1, c2)` and triangle `2·f + 1` is `(c0, c2, c3)` - the same rule toTriangleMesh() uses, which keeps a
+     *   triangle's ordinal stable across the conversion.
+     *
+     * @param triangle Triangle ordinal, below triangleCount().
+     * @param corners  Receives the three vertex indices; untouched when the call fails.
+     * @return true when the triangle exists and all three indices are in range.
+     */
+    [[nodiscard]]
+    bool triangleCorners(std::size_t triangle, std::array<std::uint32_t, 3>& corners) const override
+    {
+        if (triangle >= triangleCount()) {
+            return false;
+        }
+        const std::size_t first = (triangle / 2u) * 4u;
+        const auto        indices = this->indices();
+        const auto        corner = [&](std::size_t corner_index) {
+            return this->hasIndices() ? indices[corner_index] : static_cast<std::uint32_t>(corner_index);
+        };
+        const std::uint32_t a = corner(first);
+        const std::uint32_t b = corner(first + 1u);
+        const std::uint32_t c = corner(first + 2u);
+        const std::uint32_t d = corner(first + 3u);
+        const std::size_t   vertices = this->vertexCount();
+        if (a >= vertices || b >= vertices || c >= vertices || d >= vertices) {
+            return false;
+        }
+        corners = (triangle % 2u) == 0u ? std::array<std::uint32_t, 3>{ a, b, c } : std::array<std::uint32_t, 3>{ a, c, d };
+        return true;
     }
 
     /**

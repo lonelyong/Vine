@@ -1,6 +1,7 @@
 ﻿#include <vine/graphics/RayIntersection.hpp>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <utility>
 
@@ -11,6 +12,8 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/math/Transform3.hpp>
+
+#include "TriangleStream.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -67,7 +70,7 @@ Aabbd transformBounds(const Aabbd& local, const Mat4d& m)
  * @param positions Position array.
  * @return The bounding box (empty for an empty array).
  */
-Aabbd boundsOfPositions(const vn::models::Vec3fArray& positions)
+Aabbd boundsOfPositions(std::span<const vn::math::Vec3f> positions)
 {
     Aabbd box = Aabbd::empty();
     for (const auto& p : positions) {
@@ -141,6 +144,11 @@ GeometryMesh meshOfGeometry(const Geometry* geometry, const Primitive* primitive
     return mesh;
 }
 
+// Declared before its first use: a template that calls a later template needs the name visible at definition time, and
+// relying on the compiler to find it at instantiation instead is not portable.
+template <typename OnHit>
+bool traverseMesh(const TriangleStream& stream, const vn::geom::spatial::Rayd& ray, const Mat4d& world, OnHit&& on_hit);
+
 /**
  * @brief Walks every TRIANGLE primitive of @p geometry and reports each hit it produces.
  *
@@ -168,13 +176,15 @@ void forEachTriangleHit(const Geometry* geometry, const vn::geom::spatial::Rayd&
         if (!mesh.valid()) {
             continue;
         }
+        // One stream for the whole draw: the linear walk, and later the triangle tree, read the same ordinals from it.
+        const TriangleStream stream{ mesh.positions, mesh.indices, primitive->topology };
         const auto tag = [&](RayIntersectionResult& hit, std::uint32_t instance) {
             hit.primitiveIndex = static_cast<std::uint32_t>(index);
             hit.geometry       = intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry));
             hit.instanceIndex  = instance;
         };
         if (!primitive->hasInstances()) {
-            traverseMesh(mesh.positions, mesh.indices, primitive->topology, ray, world, [&](const RayIntersectionResult& hit) {
+            traverseMesh(stream, ray, world, [&](const RayIntersectionResult& hit) {
                 RayIntersectionResult tagged = hit;
                 tag(tagged, std::numeric_limits<std::uint32_t>::max());
                 visit(tagged);
@@ -187,7 +197,7 @@ void forEachTriangleHit(const Geometry* geometry, const vn::geom::spatial::Rayd&
             if (!matrix.has_value()) {
                 continue; // the buffer shrank under the visible count
             }
-            traverseMesh(mesh.positions, mesh.indices, primitive->topology, ray, world * *matrix, [&](const RayIntersectionResult& hit) {
+            traverseMesh(stream, ray, world * *matrix, [&](const RayIntersectionResult& hit) {
                 RayIntersectionResult tagged = hit;
                 tag(tagged, static_cast<std::uint32_t>(instance));
                 visit(tagged);
@@ -230,7 +240,7 @@ RayIntersectionResult makeTriangleHit(const Vec3d&             a,
 }
 
 /**
- * @brief Walks every triangle of a mesh and calls on_hit for each hit.
+ * @brief Walks every triangle of a draw and calls on_hit for each hit.
  *
  * The geometry is rejected when the ray misses its world-space AABB (cheap
  * slab test). Surviving meshes are tested in LOCAL space: the ray is
@@ -248,28 +258,20 @@ RayIntersectionResult makeTriangleHit(const Vec3d&             a,
  * collapses a dimension has no volume to intersect, so nothing is picked
  * there — the same visible outcome as a hidden node.
  *
- * @param positions  Vertex positions (local space).
- * @param indices    Index array, or null for consecutive vertices.
- * @param topology   How @p indices (or the positions) assemble into triangles. The three triangle topologies differ
- *                   only in which triples they form, and a strip flips its winding every other triangle - which is
- *                   why the reported normal is built from the SAME triple the GPU rasterises.
+ * @param stream     The draw's triangle stream; its ordinal IS the reported triangleIndex, so a tree built over the
+ *                   same stream reports the same number.
  * @param ray        The world-space ray.
  * @param world      World matrix of the geometry.
  * @param on_hit     Invoked for each triangle hit with its hit result.
  * @return true when at least one triangle was hit.
  */
 template <typename OnHit>
-bool traverseMesh(const vn::models::Vec3fArray& positions,
-                  std::span<const std::uint32_t>  indices,
-                  Topology                        topology,
-                  const vn::geom::spatial::Rayd&       ray,
-                  const Mat4d&                    world,
-                  OnHit&&                         on_hit)
+bool traverseMesh(const TriangleStream& stream, const vn::geom::spatial::Rayd& ray, const Mat4d& world, OnHit&& on_hit)
 {
-    if (positions.empty()) {
+    if (stream.positions.empty()) {
         return false;
     }
-    const Aabbd local_bounds = boundsOfPositions(positions);
+    const Aabbd local_bounds = boundsOfPositions(stream.positions);
     if (local_bounds.isValid()) {
         vn::geom::spatial::RayHitd world_hit;
         if (!transformBounds(local_bounds, world).intersectWith(ray, world_hit)) {
@@ -289,61 +291,31 @@ bool traverseMesh(const vn::models::Vec3fArray& positions,
     // geometry's ray keeps its direction unit length, so a hit parameter is a distance in this local space.
     const vn::geom::spatial::Rayd local_ray(vn::math::Point3d(local_origin.x, local_origin.y, local_origin.z), local_dir);
 
-    const std::size_t n      = !indices.empty() ? indices.size() : positions.size();
-    bool              any    = false;
-    const auto        vertex = [&](std::size_t at, Vec3d& out) noexcept {
-        std::size_t index = at;
-        if (!indices.empty()) {
-            index = indices[at];
-            if (index >= positions.size()) {
-                return false;
-            }
-        }
-        out = Vec3d(positions[index].x, positions[index].y, positions[index].z);
-        return true;
-    };
-    const auto tryTriangle = [&](std::size_t a_at, std::size_t b_at, std::size_t c_at, bool flip, std::size_t ordinal) {
-        Vec3d a;
-        Vec3d b;
-        Vec3d c;
-        if (!vertex(a_at, a) || !vertex(b_at, b) || !vertex(c_at, c)) {
-            return;
-        }
-        if (flip) {
-            std::swap(b, c); // a strip reverses its winding on every other triangle
-        }
-        vn::geom::spatial::RayHitd local_hit;
-        if (!vn::geom::spatial::intersectTriangle(local_ray,
-                                             vn::math::Point3d(a.x, a.y, a.z),
-                                             vn::math::Point3d(b.x, b.y, b.z),
-                                             vn::math::Point3d(c.x, c.y, c.z),
-                                             local_hit)) {
-            return;
-        }
-        any = true;
-        on_hit(makeTriangleHit(a, b, c, local_ray, local_hit.t, ordinal, ray, world));
+    const auto vertex = [&](std::uint32_t index) {
+        const auto& p = stream.positions[index];
+        return Vec3d(p.x, p.y, p.z);
     };
 
-    switch (topology) {
-    case Topology::Triangles:
-        for (std::size_t tri = 0; tri + 2 < n; tri += 3) {
-            tryTriangle(tri, tri + 1, tri + 2, false, tri / 3);
+    bool              any   = false;
+    const std::size_t count = stream.triangleCount();
+    for (std::size_t triangle = 0; triangle < count; ++triangle) {
+        std::array<std::uint32_t, 3> corners{};
+        if (!stream.triangleCorners(triangle, corners)) {
+            continue; // a corner that names no stored vertex is not a triangle of this draw
         }
-        break;
-    case Topology::TriangleStrip:
-        for (std::size_t tri = 0; tri + 2 < n; ++tri) {
-            // Triangle i is (i, i+1, i+2), wound the other way on odd i (the rule both APIs state).
-            tryTriangle(tri, tri + 1, tri + 2, (tri % 2U) != 0U, tri);
+        const Vec3d                a = vertex(corners[0]);
+        const Vec3d                b = vertex(corners[1]);
+        const Vec3d                c = vertex(corners[2]);
+        vn::geom::spatial::RayHitd local_hit;
+        if (!vn::geom::spatial::intersectTriangle(local_ray,
+                                                 vn::math::Point3d(a.x, a.y, a.z),
+                                                 vn::math::Point3d(b.x, b.y, b.z),
+                                                 vn::math::Point3d(c.x, c.y, c.z),
+                                                 local_hit)) {
+            continue;
         }
-        break;
-    case Topology::TriangleFan:
-        for (std::size_t tri = 1; tri + 1 < n; ++tri) {
-            tryTriangle(0, tri, tri + 1, false, tri - 1U);
-        }
-        break;
-    case Topology::Points:
-    case Topology::Lines:
-    case Topology::LineStrip: break; // not a surface: nothing to pick
+        any = true;
+        on_hit(makeTriangleHit(a, b, c, local_ray, local_hit.t, triangle, ray, world));
     }
     return any;
 }

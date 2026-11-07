@@ -1324,6 +1324,15 @@ TEST(RayIntersectionTest, AStripAndAFanAreSurfacesToo)
     EXPECT_TRUE(strip_hit.hit) << "两条三角形都应该被走到";
     EXPECT_NEAR(strip_hit.normal.z, 1.0, 1e-6) << "strip 的奇偶翻转必须体现在法线上";
     EXPECT_NEAR(strip_hit.point.z, 0.0, 1e-6);
+    // The ordinal is the DRAW's triangle number, and it is the number a triangle tree stores as its primitive id:
+    // pinning it here is what keeps "which triangle is number 1" in one place.
+    EXPECT_EQ(strip_hit.triangleIndex, 1U) << "the second strip triangle is the one on the x + y > 0 side";
+
+    const RayIntersectionResult strip_first = RayIntersection::intersect(
+        vn::geom::spatial::Rayd(vn::math::Point3d(-0.25, -0.25, 1.0), Vec3d(0.0, 0.0, -1.0)), strip.get(), Mat4d());
+    EXPECT_TRUE(strip_first.hit);
+    EXPECT_EQ(strip_first.triangleIndex, 0U) << "the first strip triangle keeps the authored winding";
+    EXPECT_NEAR(strip_first.normal.z, 1.0, 1e-6);
 
     // A fan: one centre, then the rim in one consistent winding (a fan around a CORNER of a quad would author
     // the second triangle the other way round - the data's winding, which picking reports as it is).

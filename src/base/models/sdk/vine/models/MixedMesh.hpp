@@ -2,6 +2,7 @@
 
 #include <vine/models/models_global.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -60,11 +61,15 @@ class MixedMesh : public Mesh {
     /**
      * @brief Shares a buffer containing the face corner offsets.
      *
+     * @note
+     * - The boundaries are what turn corners into triangles, so replacing them drops a built triangle tree.
+     *
      * @param offsets Buffer containing boundaries from zero to the corner count; null clears the offsets.
      */
     void setFaceOffsets(intrusive_ptr<const Buffer<std::uint32_t>> offsets)
     {
         face_offsets_ = std::move(offsets);
+        this->clearBvh();
     }
 
     /**
@@ -75,6 +80,7 @@ class MixedMesh : public Mesh {
     void setFaceOffsets(UInt32Array offsets)
     {
         face_offsets_ = this->template makeBuffer<std::uint32_t>(std::move(offsets));
+        this->clearBvh();
     }
 
     /**
@@ -97,6 +103,85 @@ class MixedMesh : public Mesh {
     {
         const auto offsets = faceOffsets();
         return offsets.empty() ? 0u : offsets.size() - 1u;
+    }
+
+    /**
+     * @brief Returns how many triangles the fans make: one fewer than the corners, per face.
+     *
+     * @details
+     * - A face with `k` corners splits into `k - 2` triangles, so the total is the corner count minus twice the face
+     *   count. The count is taken from the offsets instead of being stored: a second number that must agree with them
+     *   is a second thing to get wrong.
+     *
+     * @return Triangle count; zero when the offsets do not describe the corner stream.
+     */
+    [[nodiscard]]
+    std::size_t triangleCount() const override
+    {
+        const auto        offsets = faceOffsets();
+        const std::size_t faces   = faceCount();
+        if (faces == 0u) {
+            return 0u;
+        }
+        const std::size_t corners = this->hasIndices() ? this->indices().size() : this->vertexCount();
+        if (offsets.front() != 0u || static_cast<std::size_t>(offsets.back()) != corners || corners < 2u * faces) {
+            return 0u;
+        }
+        return corners - 2u * faces;
+    }
+
+    /**
+     * @brief Returns the three vertex indices of one triangle of the fans.
+     *
+     * @details
+     * - Face `f` contributes triangles `offsets[f] - 2·f` up to `offsets[f + 1] - 2·(f + 1)`; that start index is
+     *   strictly increasing over a valid topology, so the face holding a triangle ordinal is found by binary search and
+     *   no per-triangle table is stored.
+     * - Triangle `t` of face `f` is `(c0, c1+n, c2+n)` with `n = t - start(f)` - the same fan toTriangleMesh() uses,
+     *   which keeps a triangle's ordinal stable across the conversion.
+     *
+     * @param triangle Triangle ordinal, below triangleCount().
+     * @param corners  Receives the three vertex indices; untouched when the call fails.
+     * @return true when the triangle exists and all three indices are in range; false when the offsets do not delimit
+     *         faces of at least three corners.
+     */
+    [[nodiscard]]
+    bool triangleCorners(std::size_t triangle, std::array<std::uint32_t, 3>& corners) const override
+    {
+        const auto        offsets = faceOffsets();
+        const std::size_t faces   = faceCount();
+        if (faces == 0u || triangle >= triangleCount()) {
+            return false;
+        }
+        const auto start_of = [&](std::size_t face) {
+            return static_cast<std::size_t>(offsets[face]) - 2u * face;
+        };
+        std::size_t low  = 0u;
+        std::size_t high = faces - 1u;
+        while (low < high) {
+            const std::size_t middle = (low + high + 1u) / 2u;
+            if (start_of(middle) <= triangle) {
+                low = middle;
+            }
+            else {
+                high = middle - 1u;
+            }
+        }
+        const std::uint32_t begin = offsets[low];
+        const std::uint32_t end   = offsets[low + 1u];
+        const std::size_t   fan   = triangle - start_of(low);
+        if (fan + 3u > static_cast<std::size_t>(end - begin)) {
+            return false;
+        }
+        const std::uint32_t a = cornerIndex(begin);
+        const std::uint32_t b = cornerIndex(static_cast<std::uint32_t>(begin + 1u + fan));
+        const std::uint32_t c = cornerIndex(static_cast<std::uint32_t>(begin + 2u + fan));
+        const std::size_t   vertices = this->vertexCount();
+        if (a >= vertices || b >= vertices || c >= vertices) {
+            return false;
+        }
+        corners = { a, b, c };
+        return true;
     }
 
     /**

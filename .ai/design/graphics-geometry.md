@@ -1,7 +1,7 @@
 # graphics 几何：通道、图元、实例、revision
 
 > **状态**：现行
-> **最后核对**：2026-11-03
+> **最后核对**：2026-11-07
 > **范围**：`Geometry` 通道集、`Primitive` 一次 draw、实例流、revision 与存储共享。
 > **权威来源**：`Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp` / `Mesh.hpp`。
 > **待办**：`../backlog/graphics.md`
@@ -38,10 +38,17 @@
     索引为 `uint32_t`。几何数据都是局部坐标系下的形状描述，float 覆盖全部现有消费者（机器人 IO、渲染、碰撞），
     double 没有下游需求，而模板会把精度选择推给每个调用点。`Shape` 是运行时多态边界，一个 `Mesh` 就是全部网格的基类。
     满足 `G1` / `G4` / `G8`，并以 double 场景下须在调用方自行转换支付 `G10` 成本（今天无此消费者）。
-2.8 **面拓扑由网格类型表达**：`Mesh` 只持有顶点属性与索引存储，不承诺面拓扑；`TriangleMesh` 同时支持有索引与顺序顶点，
-    并独自提供三角形计数。`QuadMesh` 和 `MixedMesh` 直接继承 `Mesh`，渲染与导出在边界处三角化。
-    `MixedMesh` 以 `face_offsets` 描述各面的 corner 范围。满足 `G1` / `G4` / `G6`，并以 Quad/Mixed 转换时生成索引支付
-    `G10` 成本。
+2.8 **面拓扑由网格类型表达，三角形身份只有一处定义**：`Mesh` 只持有顶点属性与索引存储，不承诺面是三角形、四边形还是
+    多边形（那是子类的）；但“这个网格由哪些三角形组成”只由 `Mesh::triangleCount()` / `Mesh::triangleCorners()` 回答，
+    每个具体网格按自己 `toTriangleMesh()` 的同一条规则实现。三角形序号因此能跨转换稳定：它既是树的 primitive id，
+    也是拾取结果的身份。`MixedMesh` 以 `face_offsets` 描述各面的 corner 范围。满足 `G1` / `G4` / `G6`，并以
+    Quad/Mixed 每次查询按规则现算（不建三角形数组）支付 `G10` 成本。
+
+2.9 **三角形树是缓存，不是内容**：`Mesh` 缓存一棵 `Bvh<double>`（`bvh()` / `hasBvh()` / `setBvh()` / `buildBvh()` /
+    `clearBvh()`），与 `aabb_` 同一约定——它描述已存的三角形、不持有身份、被任何改变三角形的 setter 丢掉。
+    树用 `double` 而顶点是 `float`：树不是几何数据，是查询用的导引结构（`G13`），而查询射线在所有消费者里都是
+    `Rayd`；把射线窄化成 float 做盒测试会在远离原点处丢掉小叶子盒所需的精度，反过来把 float 顶点加宽进盒是精确的。
+    满足 `G1` / `G13` / `G4`，并以每个网格多一个空 `Bvh` 的存储支付 `G10` 成本。
 
 ## 3. 功能点
 
@@ -105,10 +112,11 @@
 | F29 | 四边形网格 | `QuadMesh` 按固定对角线显式转换为 `TriangleMesh`。 | 已落地 |
 | F30 | 混合多边形网格 | `MixedMesh` 以 offsets 分面，索引与 offsets 一起整体给出，并通过显式转换生成 `TriangleMesh`。 | 已落地 |
 | F31 | 点云 | `PointCloud`：`setPositions()` 整体替换点集，`normals()` / `colors()` 可选，`computeAabb()` 缓存盒；约束 C8、R7，验收 T10。 | 已落地 |
+| F32 | 三角形树缓存 | `Mesh` 缓存 `Bvh<double>`：`buildBvh()` 每个三角形一个 primitive（id 即三角形序号），`bvh()` 供射线查询；任何改变三角形或面拓扑的 setter 丢树。 | 已落地 |
 
 #### 3.6.1 F28 统一三角网格
 
-- **行为**：带索引时按三项一面；无索引时每三个顺序顶点一面；`triangleCount()` 仅在此类型上定义。
+- **行为**：带索引时按三项一面；无索引时每三个顺序顶点一面；`triangleCount()` / `triangleCorners()` 由 `Mesh` 声明并规定序号（见 2.8），此类型按三项一面实现。
 - **约束**（C5）：索引数量与顶点数量均须组成完整三角形，索引必须落在顶点范围内。
 - **要求**（R4）：机器人 IO 只接受 `TriangleMesh`；基本体也是 float。
 - **验收**（T6）：`MeshShapeTest` 覆盖两种存储形式及完整三角面约束。
@@ -135,6 +143,22 @@
 - 通道持的是 buffer 而不是快照：源 buffer 增长后通道不悬空，长度与地址现取。
 - 段的身份进两层缓存 key：共享绑定缓存 = 缓冲地址 + revision + offset + 长度；派生法线缓存另加索引 first/count。
 - 推导量（零填充 texcoords、白色 opacity 载体、推导法线）仍自己分配真数组；vec4 位置有意不进别名。
+
+#### 3.6.4 F32 三角形树缓存
+
+- **行为**：`buildBvh(builder)` 为每个三角形加一个 primitive，primitive 的盒是三个角点在 `double` 下的包围盒；建成后
+  `bvh().forEachRay(ray, visit)` 给出候选三角形序号，`bvh().forEachOverlap(box, visit)` 给出候选盒相交的三角形。
+  `setBvh()` 接收调用方自己配好构建器建出的树。`hasBvh()` 报告树是否已建。
+  树建成即以共享指针发布（`sharedBvh()`）且此后不再修改：重建**发布新对象**，旧持有者继续读到一棵仍然有效的树，
+  所以另一帧可以零成本共享同一棵（见 §2.9 与 `../research/2026-11-07-geometry-triangle-bvh-unified.md`）。
+- **约束**（C9）：primitive id == `triangleCount()` 的三角形序号；`triangleCount()` / `triangleCorners()` 与
+  `toTriangleMesh()` 同序；非法网格不建树。
+- **要求**（R8）：只有改变三角形或面拓扑的 setter 丢树（`setPositions()` / `setIndices()` /
+  `MixedMesh::setFaceOffsets()`）；法线、贴图坐标与颜色不丢。
+- **验收**（T11）：`tests/test_geom_spatial/MeshBvhTest.cpp` 六项：三角形序号、与转换同序、建树与射线剪枝、
+  失效规则、非法网格不建、接收外来树。
+- **注意**（N15）：候选是超集——叶子盒是三点的包围盒，精确交仍由调用方用 `intersectTriangle()` 做（同 N10
+  的三角扇限制）。
 
 ## 4. 公开接口
 
@@ -177,7 +201,10 @@
 | `Mesh::vertexCount()` / `hasIndices()` | 顶点数与索引状态，不定义面拓扑 |
 | `Mesh::setPositions()` / `setIndices()` / `indices()` | 共用顶点与 corner 索引存储（整体设置） |
 | `Mesh::positions()` / `normals()` / `texcoords()` / `positionsBuffer()` 等 | float 视图与存储句柄；数组别名在 `Array.hpp` |
-| `TriangleMesh::triangleCount()` / `isValid()` | 顺序或索引三角网格及其三角计数 |
+| `Mesh::triangleCount()` / `triangleCorners()` | 三角形身份：个数与三个顶点索引；具体网格各自实现（2.8） |
+| `Mesh::bvh()` / `hasBvh()` / `setBvh()` / `buildBvh()` / `clearBvh()` | 三角形树缓存：建、接收、查、丢（F32） |
+| `Mesh::sharedBvh()` | 把已发布的不可变树交给另一帧共享（不复制） |
+| `TriangleMesh::isValid()` | 顺序或索引三角网格的完整性 |
 | `QuadMesh::quadCount()` / `toTriangleMesh()` | 四边形面与显式三角网格转换 |
 | `MixedMesh::faceOffsets()` / `faceOffsetsBuffer()` / `setFaceOffsets()` / `toTriangleMesh()` | 可共享的多边形边界与显式三角网格转换 |
 | `Model::Entry::mesh` | `Mesh` 句柄；模型导入写入 `TriangleMesh`，绘制前在 `geometryFromShape()` 三角化；同一份网格可被多个节点引用 |
@@ -207,6 +234,7 @@
 | C6 | Quad face corner 数须为 4 的倍数，索引不得越界。 |
 | C7 | Mixed offsets 从 0 开始、单调不减、末项等于 corner 数，且每面至少 3 个 corner。 |
 | C8 | 点云通道布局：位置与法线每点 3 个 float、颜色每点 4 个 float，均存在 `Buffer<float>` 里。 |
+| C9 | 三角形树只描述已存三角形：primitive id == 三角形序号，任何改变三角形或面拓扑的 setter 都丢树；未构建的树不回答候选。 |
 
 ### 5.2 要求（R#）
 
@@ -219,6 +247,7 @@
 | R5 | graphics 与 meshio 消费前验证网格，并复用 `toTriangleMesh()` 转换接口。 |
 | R6 | 模型查看器统计与导出复用显式转换；offsets 不合法时转换不得访问其面数据。 |
 | R7 | 点云的法线/颜色通道只在长度等于 `pointCount()` 时被消费，否则丢弃而不重新索引（与 N11 同一规则）。 |
+| R8 | 需要批量射线时先用 `Mesh::buildBvh()` 建一次树再查，不在拾取循环里线性扫三角形。 |
 
 ### 5.3 不变量（N#）
 
@@ -238,6 +267,8 @@
 | N12 | `Mesh::aabb()` 是缓存：位置变化（`setPositions()`）清空它，未计算前为空盒。 |
 | N13 | geometry 不自行推进任何 revision：`set*` 换的是 buffer 对象（地址变即缓存 key 变），原地写字节的写者用 `Buffer::setRevision()`，形状整体变化由持有者 `Shape::bumpRevision()` 报告；三者不可互替（N2）。 |
 | N14 | `PointCloud::isValid()` 只问“有没有点”，`hasVolume()` 恒为 false；`geometryFromShape()` 还不接点云，不要用没有索引的 `Mesh` 冒充它。 |
+| N15 | `Mesh::bvh()` 是缓存：`setPositions()` / `setIndices()` / `MixedMesh::setFaceOffsets()` 清空它，法线/UV/颜色不清；未构建的树返回空候选，不退化成全扫。 |
+| N16 | 已发布的树不可变：`buildBvh()` 重建时发布新对象，`clearBvh()` 只停止发布、不动已发出的对象，所以持有 `sharedBvh()` 的一方永远读不到半成品。 |
 
 ## 6. 注意事项与陷阱
 
@@ -246,7 +277,17 @@
 - 会怎么错：直接按 offsets 或索引读 faces，非法输入可能访问越界。
 - 怎么判：`isValid()` 为 false，或 offsets 末项与 corner 数不符。
 - 怎么防：转换入口先检查有效性；凹多边形不能假定三角扇保持其形状。
+### 6.2 三角形树
 
+- 会怎么错：拿没建过的树查询，得到“没有命中”，看起来像射线没打中网格。
+  怎么判：`hasBvh()` 为 false。
+  怎么防：查询前建一次，并把 `hasBvh()` 当成前置条件。
+- 会怎么错：树建成后绕过 `setPositions()` 原地改 positions buffer 的字节，树还在描述旧位置。
+  怎么判：命中位置与显示位置错位。
+  怎么防：原地写字节后自己调 `clearBvh()`（与 `Buffer::setRevision()` 同一类手工公告，N13）。
+- 会怎么错：把候选当成最终命中。
+  怎么判：选中了实际上没相交的三角形。
+  怎么防：候选只用于跳过，判定仍用 `intersectTriangle()`（N15）。
 ## 7. 已否决选项
 
 | # | 否决 | 理由 |
@@ -257,6 +298,9 @@
 | D4 | 逐实例材质 / 颜色 / 层 / 排序 / 剔除 | 一条 draw 的实例共享这些；等真实需求再加。 |
 | D5 | GPU indirect / 自动合批 | 没有消费者；实例化只解决“同一几何 N 份”。 |
 | D6 | 把点云做成 `Mesh` 的子类 | `geometryFromShape()` 与导出器会看到一个没有面的网格，名字与行为都对不上（`G1`、`G4`）；点云是独立的 `Shape`（F31）。 |
+| D7 | 只在 `TriangleMesh` 上建树 | `QuadMesh` / `MixedMesh` 是独立的消费者（模型查看器、meshio），只能先 `toTriangleMesh()` 复制一份才能查询（`G1`、`G10`）；三角形身份因此上移到 `Mesh`（2.8）。 |
+| D8 | 树用 `float` 与顶点同精度 | 查询射线在所有消费者里都是 `Rayd`，窄化成 float 做盒测试会在远离原点处丢掉小叶子盒所需的精度而漏命中（`G4`、`G10`）；把 float 顶点加宽进盒是精确的，所以只有树是 double。 |
+| D9 | 每个三角形物化成数值类型再建树 | 建树本来就要扫一遍，物化只会多一份需与网格同步失效的副本；`triangleCorners()` 按规则现算即可（`G10`、`G13`）。 |
 
 ## 8. 测试与验收
 
@@ -272,6 +316,7 @@
 | T8 | Mixed offsets 验证及三角扇输出；`MeshShapeTest.MixedMeshValidatesOffsetsAndConvertsToTriangleMesh`、`MeshShapeTest.MixedMeshWithSeveralFacesConvertsEveryFace`。 |
 | T9 | 盒缓存与 revision 契约；`MeshShapeTest.TheCachedBoxFollowsTheVertices`、`MeshShapeTest.TheRevisionIsReportedByTheHolderNotByASetter`、`PkgIOTest.EditedMeshIsRefusedWhenThePackageIsFinallyWritten`。 |
 | T10 | 点云：空云不可用、三标量打包与 buffer 同一性、通道独立、位置变化清空盒缓存；`PointCloudTest`。 |
+| T11 | 三角形序号与 `toTriangleMesh()` 同序、一三角形一 primitive、射线拾取剪枝、失效规则、非法网格不建、接收外来树；`MeshBvhTest.cpp`（在 `tests/test_geom_spatial`）。 |
 
 ## 9. 状态与演进
 
@@ -289,7 +334,10 @@
 网格与基本体不再提供精度模板，`Meshf` / `Boxd` 这类别名已删除，
 新代码按 §4 的接口写。旧名只在 git 历史里出现。
 
+2026-11-07：`Mesh` 新增两个虚函数的三角形身份（`triangleCount()` / `triangleCorners()`，基类默认 0 / false）与三角形树
+缓存；`TriangleMesh::triangleCount()` 顺带成为其覆写，签名与语义不变（只是原先“仅此类型定义”变成基类声明）。
+
 ## 10. 参考
 
 `Mesh.hpp` · `TriangleMesh.hpp` · `QuadMesh.hpp` · `MixedMesh.hpp` · `PointCloud.hpp` · `MeshShapeTest.cpp` · `PointCloudTest.cpp` ·
-`graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `../backlog/graphics.md`
+`MeshBvhTest.cpp` · `geometry-bvh.md` · `graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `../backlog/graphics.md`

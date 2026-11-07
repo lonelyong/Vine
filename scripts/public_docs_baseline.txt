@@ -253,6 +253,9 @@ src/base/core/sdk/vine/intrusive_ptr.hpp	param|intrusive_ptr::intrusive_ptr/1
 src/base/core/sdk/vine/intrusive_ptr.hpp	param|intrusive_ptr::swap/1
 src/base/core/sdk/vine/intrusive_ptr.hpp	return|intrusive_ptr::bool
 src/base/crash/sdk/vine/crash/CrashHandler.hpp	return|uninstall
+src/base/geom/sdk/vine/geom/spatial/detail/BvhBuilders.hpp	brief|Builder::build
+src/base/geom/sdk/vine/geom/spatial/detail/BvhBuilders.hpp	param|Builder::build/3
+src/base/geom/sdk/vine/geom/spatial/detail/BvhBuilders.hpp	return|Builder::build
 src/base/iobase/sdk/vine/io/Adapters.hpp	brief|IstreamSource::IstreamSource
 src/base/iobase/sdk/vine/io/Adapters.hpp	brief|OstreamSink::OstreamSink
 src/base/iobase/sdk/vine/io/Adapters.hpp	param|IstreamSource::IstreamSource/1
