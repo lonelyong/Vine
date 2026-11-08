@@ -22,7 +22,6 @@
 | T6 | update traversal | 无逐帧节点更新入口（`FrameContext` / `UpdateContext` 没有消费者） | 动画 / 关节回放等需要每帧更新节点状态 | `../design/graphics-scene.md` §2.4 |
 | T7 | 节点灯 / 逐 draw 选灯 | `Light` 在 `Scene` 上且是世界坐标：灯不能跟着子树动，也没有“这几盏灯照这个 draw”（灯块按声明顺序取前 8 盏）。两者是同一个模型的缺口 | 出现挂在会动物体上的灯，或一场景灯数远超槽数且掉落影响画面 | `../design/graphics-scene.md` §2.7、`../design/graphics-shader-params.md`、本文件 S7 |
 | T23 | 点云渲染桥 | `PointCloud` 已在 geometry，但 `geometryFromShape()` 只接网格：点云要变成 `Topology::Points` 的 `Geometry`（位置/法线/颜色三个通道原样共享，点大小由程序写）才会被画出来 | 出现要显示点云文件（PLY 等）或点云节点的消费者 | `../design/graphics-geometry.md` 3.6 F31 |
-| T24 | 拾取用网格三角形树 | `Mesh` 已缓存三角形树（`buildBvh()`，F32），但 `graphics::RayIntersection` 仍在局部空间线性扫三角形；接上后拾取从“三角形数”降到“命中叶子数” | 拾取成为可感知瓶颈（大网格模型里悬停卡顿），或出现每帧多条射线的消费者 | `../design/graphics-geometry.md` §3.6.4、`../design/geometry-bvh.md`、`../research/2026-11-07-geometry-triangle-bvh-unified.md`、`../research/2026-11-07-bvh-persistence-and-picking.md` |
 
 ### 2.2 后端与资源
 

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -37,59 +36,6 @@ inline constexpr std::uint16_t kMeshVersion = 2;
 inline constexpr std::size_t kStlPrefixSize   = 84;
 /// Bytes one binary STL triangle takes: a facet normal, three vertices, and a 16-bit attribute count.
 inline constexpr std::size_t kStlTriangleSize = 50;
-
-/**
- * @brief Writes a 32-bit number in the order binary STL is defined in.
- *
- * @param out Where to write the four bytes.
- * @param value The number; it is byte-swapped on a machine of the other order, since an STL file carries no note of its
- *        own about byte order.
- */
-inline void putU32Le(char* out, std::uint32_t value) noexcept
-{
-    if constexpr (std::endian::native == std::endian::big) {
-        value = (value >> 24) | ((value >> 8) & 0xFF00u) | ((value << 8) & 0xFF0000u) | (value << 24);
-    }
-    std::memcpy(out, &value, sizeof(value));
-}
-
-/**
- * @brief Reads a 32-bit number written in the order binary STL is defined in.
- *
- * @param in The four bytes to read.
- * @return The number.
- */
-[[nodiscard]] inline std::uint32_t getU32Le(const char* in) noexcept
-{
-    std::uint32_t value = 0;
-    std::memcpy(&value, in, sizeof(value));
-    if constexpr (std::endian::native == std::endian::big) {
-        value = (value >> 24) | ((value >> 8) & 0xFF00u) | ((value << 8) & 0xFF0000u) | (value << 24);
-    }
-    return value;
-}
-
-/**
- * @brief Writes a float in the order binary STL is defined in.
- *
- * @param out Where to write the four bytes.
- * @param value The number.
- */
-inline void putFloatLe(char* out, float value) noexcept
-{
-    putU32Le(out, std::bit_cast<std::uint32_t>(value));
-}
-
-/**
- * @brief Reads a float written in the order binary STL is defined in.
- *
- * @param in The four bytes to read.
- * @return The number.
- */
-[[nodiscard]] inline float getFloatLe(const char* in) noexcept
-{
-    return std::bit_cast<float>(getU32Le(in));
-}
 
 /**
  * @brief Works out the normal of three vertices.

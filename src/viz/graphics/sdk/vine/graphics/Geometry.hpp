@@ -6,10 +6,12 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
 #include <vine/Buffer.hpp>
+#include <vine/geom/spatial/Bvh.hpp>
 #include <vine/models/Array.hpp>
 #include <vine/models/Shape.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -290,6 +292,10 @@ class VN_GRAPHICS_API Geometry : public Node {
     VN_OBJECT_META_DECL;
 
   public:
+    /// The tree a draw's cache holds: the SAME `Bvh<double>` a mesh caches (see Mesh::Bvh), so a mesh-source
+    /// geometry can hold the mesh's tree instead of building a second one over the same triangles.
+    using Bvh = vn::geom::spatial::Bvh<double>;
+
     /** @brief Constructs a geometry with no channels and no primitives (it draws nothing until data arrives).
      *
      * @details
@@ -550,6 +556,20 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     [[nodiscard]] std::size_t primitiveCount() const;
 
+    /** @brief Gets how many triangles draw @p draw assembles from its corners.
+     *
+     * @details
+     * - The same number the picker walks and a triangle tree stores as primitive ids: a triangle list makes one per three
+     *   corners (a trailing partial triple is ignored), a strip and a fan make one per corner past the first two, and a
+     *   line or point draw makes none.
+     * - It is a COUNT, not a query: nothing is built, nothing is cached - which is what lets a consumer decide whether a
+     *   draw is worth preparing a tree for (`prepareBvh()`), the threshold being its own policy.
+     *
+     * @param draw Primitive index; 0 is the ordinary single-draw geometry.
+     * @return Triangle count of that draw; 0 for a missing draw, a draw without positions, or a non-triangle topology.
+     */
+    [[nodiscard]] std::size_t triangleCount(std::size_t draw = 0) const;
+
     /** @brief Gets every primitive as a view (the draw order).
      *
      * @return A borrowed view; the primitives live in this geometry.
@@ -756,6 +776,108 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     [[nodiscard]] std::uint64_t localBoundsComputationCount() const noexcept;
 
+    /** @brief Builds (or shares) draw @p draw's triangle tree and reports whether that draw has one.
+     *
+     * @details
+     * - A DRAW is the unit: its index span, topology and the geometry's position channel are one triangle stream, so
+     *   one tree. A geometry of several parts therefore holds one tree per triangle part, not one tree for all of it.
+     * - It is a CACHE, like localBounds(): the tree is derived from data the geometry already holds, is keyed by the
+     *   exact stream it was built from, and is never content of its own. Call it before an interaction starts to pay
+     *   the build cost there (SAH construction is milliseconds on a large mesh) instead of inside the first pick.
+     * - Prepared twice on an unchanged draw, the second call returns true and builds nothing. Two draws over the SAME
+     *   index run share one tree: the second call finds the first draw's key and takes that handle (one reference
+     *   count, no second tree).
+     * - Only a TRIANGLE topology has a tree (see isTriangleTopology): a line, line-strip or point draw returns false
+     *   and holds none, because there is no triangle stream to index. An empty draw returns false too.
+     *
+     * @note A tree that is never prepared costs nothing and changes nothing: picking walks the triangles linearly,
+     *       exactly as it did before trees existed.
+     * @note The build uses the library's default builder and there is no parameter to change it: a draw's tree is a
+     *       cache re-derived from its stream, so there is no long-lived tree whose leaf size a caller would configure
+     *       the way Mesh::buildBvh() lets one. A caller that already has a differently built tree adopts it with
+     *       adoptBvh().
+     *
+     * @param draw Primitive index; 0 is the ordinary single-draw geometry.
+     * @return true when draw @p draw holds a usable tree afterwards.
+     */
+    [[nodiscard]]
+    bool prepareBvh(std::size_t draw = 0);
+
+    /** @brief Gets draw @p draw's tree, or null when it has none for the bytes it draws NOW.
+     *
+     * @details
+     * - The lookup is CONST and never builds: a caller that wants the build to happen calls prepareBvh().
+     * - A cached tree is returned only while its KEY still matches the draw's stream - the positions buffer and its
+     *   revision, the segment, the index buffer and its revision, the slice, the topology and this geometry's revision.
+     *   A geometry whose data moved therefore answers null until prepareBvh() runs again, instead of handing back a
+     *   tree that describes triangles nobody draws any more.
+     * - The pointer is borrowed from this geometry. It stays valid while the geometry publishes it and is safe to read
+     *   concurrently (a built tree is immutable), but it must not outlive a concurrent prepareBvh() on the same draw.
+     * - A null pointer is the whole answer to "may I use a tree": the mesh frame spells the same question as an EMPTY
+     *   tree plus hasBvh() (a mesh has one tree that may be unbuilt; a geometry has one slot per draw that may be
+     *   absent), and Geometry::hasBvh() is the pointer's named form for callers that want the yes/no.
+     *
+     * @param draw Primitive index; 0 is the ordinary single-draw geometry.
+     * @return The tree, or null when none is prepared for the current stream.
+     */
+    [[nodiscard]]
+    const Bvh* bvh(std::size_t draw = 0) const;
+
+    /** @brief Gets whether draw @p draw has a tree for the bytes it draws now.
+     *
+     * @details
+     * - Exactly `bvh(draw) != nullptr`, named the way Mesh::hasBvh() names it: the two frames ask one question, and a
+     *   caller moving between them should not have to switch spelling. Nothing is built here.
+     *
+     * @param draw Primitive index; 0 is the ordinary single-draw geometry.
+     * @return true when the draw holds a tree that still describes its current stream.
+     */
+    [[nodiscard]]
+    bool hasBvh(std::size_t draw = 0) const;
+
+    /** @brief Adopts @p tree as draw @p draw's tree when it describes that draw's stream.
+     *
+     * @details
+     * - The door for a caller that already has a tree over exactly these triangles - the Shape -> Geometry bridge
+     *   hands over the mesh's tree, and a restored model hands over a stored one. It SHARES the object (one reference
+     *   count); it does not copy a node, and it does not take a tree by value the way Mesh::setBvh() stores one.
+     * - The tree is stamped with the draw's CURRENT key, so the ordinary invalidation rule applies unchanged: once the
+     *   draw's stream moves, bvh() stops returning it. Adoption cannot outlive the bytes it describes.
+     * - Only the COUNT is checked (one primitive per triangle, ids in triangle order), not the geometry of every leaf:
+     *   the caller vouches for the triangles, as Mesh::setBvh() does. The count check is what catches a tree built
+     *   over a different stream.
+     *
+     * @param draw Primitive index; 0 is the ordinary single-draw geometry.
+     * @param tree A built tree with one primitive per triangle, in triangle order; null or unbuilt is rejected.
+     * @return true when the tree was adopted; false for a missing primitive, a non-triangle draw, a null/unbuilt tree
+     *         or a tree whose primitive count is not the draw's triangle count.
+     */
+    [[nodiscard]]
+    bool adoptBvh(std::size_t draw, std::shared_ptr<const Bvh> tree);
+
+    /** @brief Drops every prepared tree this geometry holds (the data and the primitives are untouched).
+     *
+     * @note The whole geometry, not one draw: a per-draw release has no consumer, while a geometry is where a caller works
+     *       when it is about to change everything its draws read.
+     * @note The same operation Mesh::clearBvh() is for the mesh frame - dropping the CACHE, not the bytes it was derived
+     *       from - which is why it carries the same name.
+     */
+    void clearBvh();
+
+    /** @brief Gets how many exact triangle tests the ray picker has run against this geometry.
+     *
+     * @details
+     * - The witness of the tree cache: a pick over a prepared draw tests the candidates the tree hands it, a pick
+     *   over an unprepared one tests every triangle. A count that stays as large as the triangle count after
+     *   prepareBvh() means the tree is not being consulted.
+     * - Read-only on purpose. The write side is the picker's (`GeometryPickStats`, a friend defined by RayIntersection):
+     *   a diagnostic moves only by the code whose work it counts, so a caller cannot make the number mean nothing.
+     *
+     * @return Triangle intersection tests performed so far (0 before the first pick).
+     */
+    [[nodiscard]]
+    std::uint64_t triangleTestCount() const noexcept;
+
   public:
     /** @brief The index stream's type: a segment of an index buffer.
      *
@@ -816,11 +938,60 @@ class VN_GRAPHICS_API Geometry : public Node {
         bool          valid = false;               // False until something was computed.
     };
 
+    /**
+     * @brief What one draw's cached triangle tree was built from: the exact bytes and the exact ordinals.
+     *
+     * @details
+     * - The half of LocalBoundsCache's key that bounds a box (the position buffer, its revision, the segment) plus the
+     *   half a box never needed: the index stream (buffer, revision, slice) and the topology, because those decide
+     *   WHICH triangles exist. Plus this geometry's revision for the same reason the box cache keys on it.
+     * - A key that does not match means "no tree", never "an old tree": rebuilding costs one build, answering from a
+     *   tree over other bytes would report hits on triangles that are not drawn.
+     */
+    struct TriangleIndexKey {
+        const void*   positions          = nullptr; // Position buffer the stream reads.
+        std::uint64_t positions_revision = 0;       // That buffer's announced revision at the time.
+        std::size_t   first_vertex       = 0;       // First vertex of the geometry's position segment.
+        std::size_t   vertex_count       = 0;       // Vertices that segment covered (resolved, not "the rest").
+        const void*   indices            = nullptr; // Index buffer, or null for a non-indexed draw.
+        std::uint64_t indices_revision   = 0;       // That buffer's announced revision at the time.
+        std::size_t   first_index        = 0;       // First index the draw reads.
+        std::size_t   index_count        = 0;       // Indices the draw read (resolved).
+        Topology      topology           = Topology::Triangles; // How those corners make triangles.
+        std::uint64_t geometry_revision  = 0;       // This geometry's revision at the time.
+
+        constexpr bool operator==(const TriangleIndexKey&) const noexcept = default;
+    };
+
+    /// One draw's tree cache slot: the tree and the key it was proved to describe. A null tree is an empty slot.
+    struct TriangleTreeSlot {
+        TriangleIndexKey          key{};
+        std::shared_ptr<const Bvh> tree{};
+    };
+
+    /**
+     * @brief Reads the key of draw @p draw's triangle stream.
+     *
+     * @param draw Primitive index.
+     * @return The key, or `std::nullopt` when the draw is not a triangle draw with usable positions.
+     */
+    [[nodiscard]]
+    std::optional<TriangleIndexKey> triangleIndexKey(std::size_t draw) const;
+
+    /// The picker's write half of triangleTestCount() (defined by RayIntersection.cpp): the counter moves only from the
+    /// code that runs the tests, so the public surface is a read-only witness.
+    friend struct GeometryPickStats;
+
     std::map<std::uint32_t, AttributeChannel> attributes_;
     /// The draws this geometry's data is. Each primitive's index span is a SEGMENT of a buffer (see
     /// BufferSlice), so an index arena's slicing rules — an offset past the end clamps, a count of 0 is
     /// "the rest", the length follows the buffer as it grows — are the same rules a vertex channel obeys.
     std::vector<Primitive> primitives_;
+    /// One tree slot per primitive, in the same order (see prepareBvh). Mutable for the same reason as
+    /// local_bounds_: a tree is derived from the streams above and a const lookup may remember it.
+    mutable std::vector<TriangleTreeSlot> triangle_trees_;
+    /// Witness of the tree cache: exact triangle tests the picker has run (see triangleTestCount).
+    mutable std::uint64_t triangle_tests_ = 0;
     /// The leaf's default material/program: a primitive's own value overrides it, and a null default
     /// inherits from the nearest StateNode (see Scene.cpp's fold).
     MaterialBasePtr  material_;

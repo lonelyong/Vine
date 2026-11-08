@@ -309,6 +309,22 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView {
      */
     static void applyDefaultMaterials(vn::graphics::Node& node, const vn::intrusive_ptr<vn::graphics::Material>& shared);
 
+    /**
+     * @brief 给会被拾取的大 draw 备好三角形树（加载时一次，第一次点击不用再付建树的时间）。
+     *
+     * @details
+     * - 树是**几何自己按需派生的缓存**（`graphics-geometry.md` F33）：查看器在这里替它决定“值得建”， 判据是这条
+     *   draw 的三角形数 —— 阈值是查看器的策略，树本身不知道什么叫值得（小 draw 线性扫比建树快）。
+     * - 已经备过的 draw 再调一次不会重建（流的钥匙没变），所以 `buildScene()` 重试是无害的。
+     * - 建不出来（空流、非三角拓扑、坐标非有限）就是没有树：拾取退回线性扫，命中结果不变。
+     *
+     * @param node 子树根（`sceneFromModel` 造出来的那棵）。
+     */
+    static void preparePickTrees(vn::graphics::Node& node);
+
+    /// 达到这个三角形数的 draw 才为拾取建树；更小的线性扫更快（`graphics-geometry.md` 2.9）。
+    static constexpr std::size_t kPickTreeTriangleCount = 512;
+
   private:
     ModelDocument*                 model_   = nullptr;
     vn::appfw::gui::RenderControl* control_ = nullptr;
@@ -336,6 +352,25 @@ inline void ModelRenderView::applyDefaultMaterials(vn::graphics::Node& node, con
         for (const auto& child : group->children()) {
             if (child != nullptr) {
                 applyDefaultMaterials(*child, shared);
+            }
+        }
+    }
+}
+
+inline void ModelRenderView::preparePickTrees(vn::graphics::Node& node)
+{
+    if (auto* geometry = dynamic_cast<vn::graphics::Geometry*>(&node)) {
+        for (std::size_t draw = 0; draw < geometry->primitiveCount(); ++draw) {
+            if (geometry->triangleCount(draw) >= kPickTreeTriangleCount) {
+                (void)geometry->prepareBvh(draw);
+            }
+        }
+        return;
+    }
+    if (auto* group = dynamic_cast<vn::graphics::Group*>(&node)) {
+        for (const auto& child : group->children()) {
+            if (child != nullptr) {
+                preparePickTrees(*child);
             }
         }
     }
@@ -430,6 +465,10 @@ inline void ModelRenderView::buildScene()
     grey->setBaseColor(vn::Colorf(0.72f, 0.74f, 0.78f, 1.0f));
     grey->setRoughness(0.2f);
     applyDefaultMaterials(*converted.root, grey);
+
+    // 拾取用的树在建场景时一次备好，而不是等第一次点击：SAH 建树在大网格上是可感知的一次卡顿，
+    // 而“值不值得”是查看器的策略（见 preparePickTrees）。
+    preparePickTrees(*converted.root);
 
     auto root = converted.root;
 

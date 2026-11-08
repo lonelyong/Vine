@@ -9,6 +9,7 @@
 
 #include <vine/geom/spatial/Aabb.hpp>
 #include <vine/geom/spatial/BvhBuilder.hpp>
+#include <vine/geom/spatial/BvhTopology.hpp>
 
 using vn::geom::spatial::Aabb;
 using vn::geom::spatial::Bvh;
@@ -302,4 +303,78 @@ TEST(BvhBuildTest, InvalidInputIsRejected)
     EXPECT_THROW((void)BvhBuilder{}.leafSize(0), std::invalid_argument);
     EXPECT_THROW((void)BvhBuilder{}.maxDepth(0), std::invalid_argument);
     EXPECT_THROW((void)BvhBuilder{}.maxDepth(vn::geom::spatial::kBvhMaxDepth + 1), std::invalid_argument);
+}
+
+TEST(BvhBuildTest, ARestoredTopologyAnswersTheSameQueries)
+{
+    // The shape is the half a build cannot recompute cheaply, so it is the half worth storing: build once, take
+    // topology(), put it into a fresh tree over the same primitives, and every query must agree.
+    auto reference = makeGridTree(500);
+    BvhBuilder{}.build(reference);
+    ASSERT_TRUE(reference.validate());
+
+    const vn::geom::spatial::BvhTopology shape = reference.topology();
+    ASSERT_FALSE(shape.nodes.empty());
+
+    auto restored = makeGridTree(500);
+    BvhBuilder{}.buildWith(restored, vn::geom::spatial::RestoreTopology{ shape });
+
+    ASSERT_TRUE(restored.isBuilt());
+    EXPECT_TRUE(restored.validate());
+    EXPECT_EQ(restored.topology(), shape) << "the restored shape is the stored one, to the last node";
+
+    // Boxes were recomputed from the primitives on the way in, so the two trees answer identically on every query.
+    const auto boxes = gridBoxes(500);
+    for (int index = 0; index < 500; index += 37) {
+        const Aabb<double> query = boxes[static_cast<std::size_t>(index)];
+        EXPECT_EQ(overlapIds(restored, query), overlapIds(reference, query))
+            << "restored and built trees must report the same candidates for query " << index;
+    }
+
+    // And the restored tree keeps working after a refit: the pass that recomputes boxes is the same one.
+    restored.refit();
+    EXPECT_TRUE(restored.validate());
+    EXPECT_EQ(overlapIds(restored, boxes[3]), overlapIds(reference, boxes[3]));
+}
+
+TEST(BvhBuildTest, ARestoredTopologyThatDoesNotDescribeTheTreeIsRefused)
+{
+    auto reference = makeGridTree(64);
+    BvhBuilder{}.build(reference);
+    const vn::geom::spatial::BvhTopology shape = reference.topology();
+
+    const auto restore_into = [](const vn::geom::spatial::BvhTopology& topology) {
+        auto tree = makeGridTree(64);
+        BvhBuilder{}.buildWith(tree, vn::geom::spatial::RestoreTopology{ topology });
+        return tree;
+    };
+
+    EXPECT_TRUE(restore_into(shape).isBuilt());
+
+    auto wrong_order       = shape;
+    wrong_order.order[1]   = wrong_order.order[0]; // no longer a permutation
+    EXPECT_FALSE(restore_into(wrong_order).isBuilt()) << "an order that repeats an id is refused";
+
+    auto too_short = shape;
+    too_short.order.pop_back();
+    EXPECT_FALSE(restore_into(too_short).isBuilt()) << "the order must cover every primitive";
+
+    auto wrong_height = shape;
+    ++wrong_height.depth;
+    EXPECT_FALSE(restore_into(wrong_height).isBuilt())
+        << "a height that is not the tree's own means the shape is not the one that was written";
+
+    auto broken_nodes = shape;
+    // The root's right child must start after the whole left subtree; pointing it at the left child itself is refused.
+    broken_nodes.nodes.front().offset = 1u;
+    EXPECT_FALSE(restore_into(broken_nodes).isBuilt());
+
+    auto leaf_out_of_range = shape;
+    for (auto& node : leaf_out_of_range.nodes) {
+        if (node.count != 0u) {
+            node.offset = 64u; // one past the last primitive
+            break;
+        }
+    }
+    EXPECT_FALSE(restore_into(leaf_out_of_range).isBuilt());
 }

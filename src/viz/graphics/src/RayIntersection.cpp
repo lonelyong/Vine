@@ -5,7 +5,6 @@
 #include <optional>
 #include <utility>
 
-#include <vine/models/TriangleMesh.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Node.hpp>
@@ -16,6 +15,29 @@
 #include "TriangleStream.hpp"
 
 VN_GRAPHICS_NS_BEGIN
+
+/**
+ * @brief The picker's write half of `Geometry::triangleTestCount()`.
+ *
+ * @details
+ * - A picker that never ran a tree has no way to prove the tree paid off, and a geometry that lets anyone move its
+ *   diagnostic can say anything. So the counter has one reader (public) and one writer (this, reached through
+ *   friendship), and both live where the work happens.
+ * - It is a friend type rather than a public method for the same reason `Mesh::buildBvh()` is not "add a million
+ *   primitives": the number is evidence, not an input.
+ */
+struct GeometryPickStats {
+    /**
+     * @brief Records @p count exact triangle tests against @p geometry.
+     *
+     * @param geometry Geometry the tests were run on.
+     * @param count    Triangle tests just performed.
+     */
+    static void record(const Geometry& geometry, std::uint64_t count) noexcept
+    {
+        geometry.triangle_tests_ += count;
+    }
+};
 
 namespace
 {
@@ -98,56 +120,37 @@ Vec3d toWorld(const Mat4d& m, double x, double y, double z)
 }
 
 /**
- * @brief Owned vertex/index data resolved from a buffer-only Geometry.
+ * @brief Which hits a triangle walk reports, and therefore whether it may prune against the closest hit so far.
  *
- * Positions are materialised from the packed location-0 attribute into a
- * typed array the picker can walk; indices (when present) alias the
- * geometry's index buffer. Lifetime spans the caller's picking call only.
+ * @details
+ * - kNearest is the closest-hit search: a hit that cannot become the nearest one is not worth reporting, so the
+ *   walk may lower its distance limit as it goes - which is what lets a triangle tree skip subtrees.
+ * - kAll is "every triangle hit", the AllHits mode: the SET of hits is the answer, so nothing may be pruned.
+ *   The tree still culls by the ray itself; it just never skips by distance.
  */
-struct GeometryMesh {
-    vn::models::Vec3fArray        positions;
-    std::span<const std::uint32_t> indices;
-
-    /** @brief Returns whether position data is available. */
-    bool valid() const
-    {
-        return !positions.empty();
-    }
+enum class HitPolicy
+{
+    kNearest,
+    kAll,
 };
 
 /**
- * @brief Resolves the vertex/index arrays of a buffer-only Geometry.
- *
- * @param geometry Geometry to read.
- * @return GeometryMesh with no positions for an empty geometry.
+ * @brief What one walk over a draw's triangles found.
  */
-GeometryMesh meshOfGeometry(const Geometry* geometry, const Primitive* primitive)
-{
-    GeometryMesh mesh;
-    if (geometry != nullptr) {
-        if (const auto* position_attr = geometry->buffer(attributeLocation(VertexAttribute::Position));
-            position_attr != nullptr && !position_attr->empty() && position_attr->components >= 3u)
-        {
-            // The declared components are the stride: a vec4 position channel
-            // keeps its xyz and skips w, exactly as the backend uploads it.
-            const std::size_t count = position_attr->vertexCount();
-            mesh.positions.reserve(count);
-            for (std::size_t v = 0; v < count; ++v) {
-                const std::array<float, 3> p = position_attr->xyz(v);
-                mesh.positions.emplace_back(p[0], p[1], p[2]);
-            }
-        }
-        if (primitive != nullptr && primitive->isIndexed()) {
-            mesh.indices = primitive->indices.span();
-        }
-    }
-    return mesh;
-}
+struct MeshWalk {
+    bool        any   = false; ///< At least one triangle was hit.
+    std::size_t tests = 0;     ///< Exact triangle tests run (see Geometry::triangleTestCount).
+};
 
 // Declared before its first use: a template that calls a later template needs the name visible at definition time, and
 // relying on the compiler to find it at instantiation instead is not portable.
 template <typename OnHit>
-bool traverseMesh(const TriangleStream& stream, const vn::geom::spatial::Rayd& ray, const Mat4d& world, OnHit&& on_hit);
+MeshWalk traverseMesh(const TriangleStream&                    stream,
+                      const vn::geom::spatial::Bvh<double>*    tree,
+                      const vn::geom::spatial::Rayd&           ray,
+                      const Mat4d&                             world,
+                      HitPolicy                                policy,
+                      OnHit&&                                  on_hit);
 
 /**
  * @brief Walks every TRIANGLE primitive of @p geometry and reports each hit it produces.
@@ -159,36 +162,40 @@ bool traverseMesh(const TriangleStream& stream, const vn::geom::spatial::Rayd& r
  * @param geometry  Geometry to intersect.
  * @param ray       The ray, in world space.
  * @param world     The geometry's world matrix.
+ * @param policy    Whether only the closest hit matters (permits pruning) or every hit does.
  * @param visit     Called for every hit (receives it by value, already tagged).
  */
 template <typename Visit>
-void forEachTriangleHit(const Geometry* geometry, const vn::geom::spatial::Rayd& ray, const Mat4d& world, Visit&& visit)
+void forEachTriangleHit(const Geometry* geometry, const vn::geom::spatial::Rayd& ray, const Mat4d& world, HitPolicy policy, Visit&& visit)
 {
     if (geometry == nullptr) {
         return;
     }
+    std::size_t tests = 0u;
     for (std::size_t index = 0; index < geometry->primitiveCount(); ++index) {
         const Primitive* primitive = geometry->primitive(index);
         if (primitive == nullptr || !isTriangleTopology(primitive->topology)) {
             continue; // a line or point primitive is not a surface
         }
-        const GeometryMesh mesh = meshOfGeometry(geometry, primitive);
-        if (!mesh.valid()) {
+        // One stream for the whole draw, and the tree prepared over that same stream: the linear walk, the tree's
+        // build and the ordinal a tree query reports all take "which triangle is number t" from here.
+        const DrawTriangleStream view(*geometry, index);
+        if (!view.valid()) {
             continue;
         }
-        // One stream for the whole draw: the linear walk, and later the triangle tree, read the same ordinals from it.
-        const TriangleStream stream{ mesh.positions, mesh.indices, primitive->topology };
+        const TriangleStream&              stream = view.stream();
+        const vn::geom::spatial::Bvh<double>* tree = geometry->bvh(index);
         const auto tag = [&](RayIntersectionResult& hit, std::uint32_t instance) {
             hit.primitiveIndex = static_cast<std::uint32_t>(index);
             hit.geometry       = intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry));
             hit.instanceIndex  = instance;
         };
         if (!primitive->hasInstances()) {
-            traverseMesh(stream, ray, world, [&](const RayIntersectionResult& hit) {
+            tests += traverseMesh(stream, tree, ray, world, policy, [&](const RayIntersectionResult& hit) {
                 RayIntersectionResult tagged = hit;
                 tag(tagged, std::numeric_limits<std::uint32_t>::max());
                 visit(tagged);
-            });
+            }).tests;
             continue;
         }
         const std::size_t visible = primitive->visibleInstanceCount();
@@ -197,13 +204,15 @@ void forEachTriangleHit(const Geometry* geometry, const vn::geom::spatial::Rayd&
             if (!matrix.has_value()) {
                 continue; // the buffer shrank under the visible count
             }
-            traverseMesh(stream, ray, world * *matrix, [&](const RayIntersectionResult& hit) {
+            tests += traverseMesh(stream, tree, ray, world * *matrix, policy, [&](const RayIntersectionResult& hit) {
                 RayIntersectionResult tagged = hit;
                 tag(tagged, static_cast<std::uint32_t>(instance));
                 visit(tagged);
-            });
+            }).tests;
         }
     }
+    // The witness of the tree cache: what this pick cost, so a caller can see whether prepareBvh() paid off.
+    GeometryPickStats::record(*geometry, tests);
 }
 
 /**
@@ -240,14 +249,16 @@ RayIntersectionResult makeTriangleHit(const Vec3d&             a,
 }
 
 /**
- * @brief Walks every triangle of a draw and calls on_hit for each hit.
+ * @brief Walks a draw's triangles and calls on_hit for each hit it reports.
  *
- * The geometry is rejected when the ray misses its world-space AABB (cheap
- * slab test). Surviving meshes are tested in LOCAL space: the ray is
- * transformed once instead of transforming every vertex into world space,
- * which removes a 4x4 multiply per vertex and naturally honours non-uniform
- * scaling. The ray is normalized on the way in - geometry's Ray keeps its direction unit
- * length - so the t it reports can be replayed with pointAt().
+ * Two walks, ONE set of ordinals. Without a tree the geometry is rejected when the ray misses its world-space AABB
+ * (cheap slab test) and then every triangle is tested. With a tree the tree's own boxes do that rejection and the
+ * walk only tests the candidates it hands out - the exact test, the reported ordinal and the hit record are the same
+ * code in both cases, so the two answers can only differ in what they cost.
+ *
+ * Triangles are tested in LOCAL space: the ray is transformed once instead of transforming every vertex into world
+ * space, which removes a 4x4 multiply per vertex and naturally honours non-uniform scaling. The ray is normalized on
+ * the way in - geometry's Ray keeps its direction unit length - so the t it reports can be replayed with pointAt().
  *
  * A SINGULAR world matrix is rejected here, before the local space is built.
  * Matrix4x4::inverted() cannot report failure — it returns the original matrix
@@ -260,22 +271,32 @@ RayIntersectionResult makeTriangleHit(const Vec3d&             a,
  *
  * @param stream     The draw's triangle stream; its ordinal IS the reported triangleIndex, so a tree built over the
  *                   same stream reports the same number.
+ * @param tree       The tree prepared over @p stream, or null to walk every triangle.
  * @param ray        The world-space ray.
  * @param world      World matrix of the geometry.
- * @param on_hit     Invoked for each triangle hit with its hit result.
- * @return true when at least one triangle was hit.
+ * @param policy     Whether only the closest hit matters (then the walk may prune by distance).
+ * @param on_hit     Invoked for each reported triangle hit with its hit result.
+ * @return Whether anything was hit and how many exact triangle tests it took.
  */
 template <typename OnHit>
-bool traverseMesh(const TriangleStream& stream, const vn::geom::spatial::Rayd& ray, const Mat4d& world, OnHit&& on_hit)
+MeshWalk traverseMesh(const TriangleStream&                    stream,
+                      const vn::geom::spatial::Bvh<double>*    tree,
+                      const vn::geom::spatial::Rayd&           ray,
+                      const Mat4d&                             world,
+                      HitPolicy                                policy,
+                      OnHit&&                                  on_hit)
 {
-    if (stream.positions.empty()) {
-        return false;
+    MeshWalk walk;
+    if (stream.positions().empty()) {
+        return walk;
     }
-    const Aabbd local_bounds = boundsOfPositions(stream.positions);
-    if (local_bounds.isValid()) {
-        vn::geom::spatial::RayHitd world_hit;
-        if (!transformBounds(local_bounds, world).intersectWith(ray, world_hit)) {
-            return false; // the world-space box is the cheap rejection; the mesh itself is tested in local space
+    if (tree == nullptr) {
+        const Aabbd local_bounds = boundsOfPositions(stream.positions());
+        if (local_bounds.isValid()) {
+            vn::geom::spatial::RayHitd world_hit;
+            if (!transformBounds(local_bounds, world).intersectWith(ray, world_hit)) {
+                return walk; // the world-space box is the cheap rejection; the mesh itself is tested in local space
+            }
         }
     }
 
@@ -283,7 +304,7 @@ bool traverseMesh(const TriangleStream& stream, const vn::geom::spatial::Rayd& r
     // (see the note above), so the check has to be on THIS copy, not on the caller's matrix.
     Mat4d inv = world;
     if (!inv.invert()) {
-        return false; // singular world transform: no local space to test the ray in
+        return walk; // singular world transform: no local space to test the ray in
     }
     const Vec3d local_origin = toWorld(inv, ray.origin.x, ray.origin.y, ray.origin.z);
     const Vec3d local_dir    = toWorld(inv, ray.origin.x + ray.direction.x, ray.origin.y + ray.direction.y, ray.origin.z + ray.direction.z) - local_origin;
@@ -292,32 +313,60 @@ bool traverseMesh(const TriangleStream& stream, const vn::geom::spatial::Rayd& r
     const vn::geom::spatial::Rayd local_ray(vn::math::Point3d(local_origin.x, local_origin.y, local_origin.z), local_dir);
 
     const auto vertex = [&](std::uint32_t index) {
-        const auto& p = stream.positions[index];
+        const auto& p = stream.positions()[index];
         return Vec3d(p.x, p.y, p.z);
     };
 
-    bool              any   = false;
-    const std::size_t count = stream.triangleCount();
-    for (std::size_t triangle = 0; triangle < count; ++triangle) {
+    // The distance limit a hit must beat to be worth reporting. It stays infinite when every hit matters, which is
+    // what keeps the AllHits answer identical to the linear walk's.
+    double limit = std::numeric_limits<double>::infinity();
+
+    const auto test = [&](std::size_t triangle) {
         std::array<std::uint32_t, 3> corners{};
         if (!stream.triangleCorners(triangle, corners)) {
-            continue; // a corner that names no stored vertex is not a triangle of this draw
+            return; // a corner that names no stored vertex is not a triangle of this draw
         }
         const Vec3d                a = vertex(corners[0]);
         const Vec3d                b = vertex(corners[1]);
         const Vec3d                c = vertex(corners[2]);
         vn::geom::spatial::RayHitd local_hit;
+        ++walk.tests;
         if (!vn::geom::spatial::intersectTriangle(local_ray,
                                                  vn::math::Point3d(a.x, a.y, a.z),
                                                  vn::math::Point3d(b.x, b.y, b.z),
                                                  vn::math::Point3d(c.x, c.y, c.z),
                                                  local_hit)) {
-            continue;
+            return;
         }
-        any = true;
+        if (local_hit.t > limit) {
+            return; // cannot become the closest hit, and only the closest hit matters
+        }
+        if (policy == HitPolicy::kNearest) {
+            limit = local_hit.t;
+        }
+        walk.any = true;
         on_hit(makeTriangleHit(a, b, c, local_ray, local_hit.t, triangle, ray, world));
+    };
+
+    if (tree != nullptr) {
+        tree->forEachRay(local_ray, [&](const vn::geom::spatial::Bvh<double>::PrimId id, const Aabbd&, double& max_t) {
+            // The tree hands over its own working limit, and a closer hit tightens it - which is what prunes the rest
+            // of the tree. A "every hit matters" walk keeps the limit infinite instead.
+            limit = policy == HitPolicy::kNearest ? max_t : std::numeric_limits<double>::infinity();
+            test(static_cast<std::size_t>(id));
+            if (policy == HitPolicy::kNearest) {
+                max_t = limit;
+            }
+            return true;
+        });
+        return walk;
     }
-    return any;
+
+    const std::size_t count = stream.triangleCount();
+    for (std::size_t triangle = 0; triangle < count; ++triangle) {
+        test(triangle);
+    }
+    return walk;
 }
 
 /**
@@ -347,7 +396,7 @@ void intersectNode(const vn::geom::spatial::Rayd& ray, const Node* node, std::ui
         // Leaf geometry: test against its data placed by the ancestor
         // MatrixTransform chain.
         const Mat4d world = node->worldMatrix();
-        forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
+        forEachTriangleHit(geometry, ray, world, HitPolicy::kNearest, [&](RayIntersectionResult hit) {
             if (hit.distance < best.distance) {
                 best = std::move(hit);
             }
@@ -387,7 +436,7 @@ void collectNodeNearest(const vn::geom::spatial::Rayd& ray, const Node* node, st
         }
         const Mat4d           world = node->worldMatrix();
         RayIntersectionResult best;
-        forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
+        forEachTriangleHit(geometry, ray, world, HitPolicy::kNearest, [&](RayIntersectionResult hit) {
             if (hit.distance < best.distance) {
                 best = std::move(hit);
             }
@@ -429,7 +478,7 @@ void collectNodeHits(const vn::geom::spatial::Rayd& ray, const Node* node, std::
             return;
         }
         const Mat4d world = node->worldMatrix();
-        forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
+        forEachTriangleHit(geometry, ray, world, HitPolicy::kAll, [&](RayIntersectionResult hit) {
             RayIntersectionResult copy = std::move(hit);
             out.push_back(std::move(copy));
         });
@@ -450,7 +499,7 @@ RayIntersectionResult RayIntersection::intersect(const vn::geom::spatial::Rayd& 
     if (geometry == nullptr) {
         return result;
     }
-    forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
+    forEachTriangleHit(geometry, ray, world, HitPolicy::kNearest, [&](RayIntersectionResult hit) {
         if (hit.distance < result.distance) {
             result = std::move(hit);
         }
@@ -474,7 +523,7 @@ std::vector<RayIntersectionResult> RayIntersection::intersect(const vn::geom::sp
         }
         return results;
     }
-    forEachTriangleHit(geometry, ray, world, [&](RayIntersectionResult hit) {
+    forEachTriangleHit(geometry, ray, world, HitPolicy::kAll, [&](RayIntersectionResult hit) {
         RayIntersectionResult copy = std::move(hit);
         copy.geometry              = geometry;
         results.push_back(std::move(copy));

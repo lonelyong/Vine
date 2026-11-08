@@ -15,6 +15,7 @@
 #include <vine/math/Vector3.hpp>
 
 #include <vine/geom/spatial/Aabb.hpp>
+#include <vine/geom/spatial/BvhTopology.hpp>
 #include <vine/geom/spatial/Ray.hpp>
 #include <vine/geom/spatial/detail/BvhBuildJob.hpp>
 #include <vine/geom/spatial/detail/VolumeTraits.hpp>
@@ -22,9 +23,6 @@
 VN_GEOM_SPATIAL_NS_BEGIN
 
 class BvhBuilder;
-
-/// Height limit the traversal stacks are sized for; a builder may go shallower, never deeper.
-inline constexpr unsigned kBvhMaxDepth = 64;
 
 /**
  * @brief A bounding-volume hierarchy over caller-owned primitives: geometry, invariants and traversal only.
@@ -317,14 +315,7 @@ class Bvh
         if (nodes_.empty()) {
             return;
         }
-        for (std::size_t index = nodes_.size(); index-- > 0;) {
-            Node& node = nodes_[index];
-            if (node.count != 0) {
-                node.bounds = leafBounds(node.offset, node.count);
-                continue;
-            }
-            node.bounds = detail::VolumeTraits<VolumeT>::merged(nodes_[index + 1].bounds, nodes_[node.offset].bounds);
-        }
+        detail::refitNodes<T, Volume>(nodes_, prim_order_, bounds_);
     }
 
     /**
@@ -385,6 +376,33 @@ class Bvh
      * @return The permutation, or an empty span before the first build.
      */
     [[nodiscard]] std::span<const PrimId> primOrder() const { return prim_order_; }
+
+    /**
+     * @brief Returns the tree's SHAPE as one value: its nodes, its primitive order and its height.
+     *
+     * @details
+     * - This is the half of a tree that a build cannot recompute cheaply, and therefore the half worth storing: with it
+     *   a reader re-derives every box from the primitives (see `RestoreTopology`) instead of re-running a split.
+     * - It is ONE value rather than `primOrder()` plus a node array: the node offsets index into the primitive order and
+     *   the height states the node array's own shape, so the three only mean anything together. Returning them apart is
+     *   how one tree's nodes get paired with another tree's order.
+     * - `primOrder()` stays the QUERY-side view of the same permutation (leaf order is a sensible upload order); this is
+     *   the STORAGE-side view, and it carries the height the query view has no place for.
+     * - The order is the node array's: depth-first, the left child always at `node + 1` (see `BvhNodeTopology`).
+     *
+     * @return The shape; empty (no nodes, no order, height 0) before the first build.
+     */
+    [[nodiscard]] BvhTopology topology() const
+    {
+        BvhTopology out;
+        out.depth = depth_;
+        out.nodes.reserve(nodes_.size());
+        for (const Node& node : nodes_) {
+            out.nodes.push_back(BvhNodeTopology{ node.offset, node.count });
+        }
+        out.order.assign(prim_order_.begin(), prim_order_.end());
+        return out;
+    }
 
     /**
      * @brief Reports the tree's current cost.
@@ -469,22 +487,6 @@ class Bvh
         prim_order_.clear();
         depth_ = 0;
         built_ = false;
-    }
-
-    /**
-     * @brief Returns the volume enclosing a run of the primitive order.
-     *
-     * @param first First index into the order.
-     * @param count Number of primitives; must not be zero.
-     * @return The merged volume.
-     */
-    [[nodiscard]] VolumeT leafBounds(PrimId first, PrimId count) const
-    {
-        VolumeT out = bounds_[prim_order_[first]];
-        for (PrimId index = first + 1; index < first + count; ++index) {
-            out = detail::VolumeTraits<VolumeT>::merged(out, bounds_[prim_order_[index]]);
-        }
-        return out;
     }
 
     /**

@@ -144,13 +144,12 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（2）
+## research/ —— 调研与提案（0）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
-- `2026-11-07-bvh-persistence-and-picking.md` —— BVH 的持久化提案：存拓扑不存包围盒（`8 B/三角形`，加载时按位置重算，所以陈旧只会变差不会变错）；持久化就是“另一种构建算法”走同一条 `BuildJob`；缓存放网格 bin 旁边的独立 `.vbtp`（不改 `MeshBin` flags，旧读者不受影响）。拾取部分已移入下一份提案。
-- `2026-11-07-geometry-triangle-bvh-unified.md` —— 三角形树的两帧统一：树属于“一条三角形流”，网格帧是整张网格、绘制帧是一个 draw 的切片 + 拓扑；同一个 `Bvh<double>`、同一套构建与查询、同一把流钥匙；几何为自己的每个 draw 按需派生（`prepareBvh` / `bvh` / `dropBvh`，与 `localBounds` 同一缓存模式），网格源几何在 `geometryFromMesh()` 处共享网格那棵；不用 `Role` 枚举（那个概念已经叫 `Topology`）。
-
+（无：三角形树的两帧统一与 `.vbtp` 持久化已并入 `design/graphics-geometry.md` 2.10 / F33、
+`design/geometry-bvh.md` 2.13 / F8 与 `design/robotics-io-design.md` F7。）
 
 ## backlog/ —— 开放待办（13）
 

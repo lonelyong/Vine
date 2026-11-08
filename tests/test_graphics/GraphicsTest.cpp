@@ -53,6 +53,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -61,6 +62,7 @@
 #include <set>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 #include "TestGeometryBuilders.hpp"
 
@@ -178,6 +180,57 @@ intrusive_ptr<Geometry> geometryOf(const vn::models::Mesh& mesh)
     auto geom = geometryFromShape(mesh);
     EXPECT_NE(geom.get(), nullptr);
     return geom;
+}
+
+/**
+ * @brief Builds a triangle-list geometry of a @p side x @p side grid of quads in the z = 0 plane.
+ *
+ * The triangles are authored in row order, so a caller can name the ordinal a ray through a known cell must report.
+ * It is hand-authored data (a positions channel plus an index span), not a mesh, which is exactly the drawing-side
+ * stream the triangle-tree cache exists for.
+ *
+ * @param side Cells per axis; the draw holds `side * side * 2` triangles.
+ * @return Geometry reading indexed positions, one triangle draw.
+ */
+intrusive_ptr<Geometry> makeGridGeometry(std::size_t side)
+{
+    const std::size_t  row_length = side + 1u;
+    std::vector<float> positions;
+    positions.reserve(row_length * row_length * 3u);
+    for (std::size_t row = 0; row < row_length; ++row) {
+        for (std::size_t column = 0; column < row_length; ++column) {
+            positions.push_back(static_cast<float>(column));
+            positions.push_back(static_cast<float>(row));
+            positions.push_back(0.0f);
+        }
+    }
+    const auto vertex = [row_length](std::size_t row, std::size_t column) {
+        return static_cast<std::uint32_t>(row * row_length + column);
+    };
+    std::vector<std::uint32_t> indices;
+    indices.reserve(side * side * 6u);
+    for (std::size_t row = 0; row < side; ++row) {
+        for (std::size_t column = 0; column < side; ++column) {
+            const std::uint32_t a = vertex(row, column);
+            const std::uint32_t b = vertex(row, column + 1u);
+            const std::uint32_t c = vertex(row + 1u, column);
+            const std::uint32_t d = vertex(row + 1u, column + 1u);
+            // Counter-clockwise seen from +z, the winding every picking test here relies on.
+            indices.insert(indices.end(), { a, b, d });
+            indices.insert(indices.end(), { a, d, c });
+        }
+    }
+
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::move(positions))));
+    auto arena = intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::move(indices)));
+    geometry->clearPrimitives();
+    Primitive primitive;
+    primitive.topology = Topology::Triangles;
+    primitive.indices  = Primitive::IndexSpan::whole(std::move(arena));
+    geometry->addPrimitive(std::move(primitive));
+    geometry->bumpRevision();
+    return geometry;
 }
 
 /**
@@ -1319,6 +1372,8 @@ TEST(RayIntersectionTest, AStripAndAFanAreSurfacesToo)
 
     // A strip covers the same quad as a list, with four vertices instead of six.
     const auto strip = make_mesh(Topology::TriangleStrip, { -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, -1.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F }, { 0U, 1U, 2U, 3U });
+    // The count a consumer reads for its "is this worth a tree?" decision is the count the walk produces.
+    EXPECT_EQ(strip->triangleCount(0), 2U) << "four strip corners make two triangles";
     const vn::geom::spatial::Rayd  ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
     const RayIntersectionResult strip_hit = RayIntersection::intersect(ray, strip.get(), Mat4d());
     EXPECT_TRUE(strip_hit.hit) << "两条三角形都应该被走到";
@@ -1342,6 +1397,7 @@ TEST(RayIntersectionTest, AStripAndAFanAreSurfacesToo)
     const RayIntersectionResult fan_hit = RayIntersection::intersect(ray, fan.get(), Mat4d());
     EXPECT_TRUE(fan_hit.hit);
     EXPECT_NEAR(fan_hit.normal.z, 1.0, 1e-6);
+    EXPECT_EQ(fan->triangleCount(0), 3U) << "five fan corners make three triangles around the centre";
 
     // A line or point primitive is not a surface, so it is never picked - the same answer as before the strip
     // and fan existed.
@@ -1349,6 +1405,69 @@ TEST(RayIntersectionTest, AStripAndAFanAreSurfacesToo)
     EXPECT_FALSE(isTriangleTopology(Topology::LineStrip));
     EXPECT_FALSE(isTriangleTopology(Topology::Points));
     EXPECT_TRUE(isTriangleTopology(Topology::Triangles));
+}
+
+TEST(RayIntersectionTest, APreparedTreeChangesTheCostAndNotTheAnswer)
+{
+    // A grid large enough that "how many exact triangle tests did this pick run" says something: without a tree the
+    // walk tests every triangle of the draw, with one it tests the candidates the tree hands out.
+    const auto                    grid = makeGridGeometry(12u); // 288 triangles
+    const vn::geom::spatial::Rayd ray(Point3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
+
+    const std::uint64_t         linear_before = grid->triangleTestCount();
+    const RayIntersectionResult linear        = RayIntersection::intersect(ray, grid.get(), Mat4d());
+    const std::uint64_t         linear_tests  = grid->triangleTestCount() - linear_before;
+    ASSERT_TRUE(linear.hit);
+    EXPECT_EQ(linear.triangleIndex, 0u) << "the first authored triangle covers x + y < 1";
+    EXPECT_EQ(linear_tests, 288u) << "without a tree the walk tests every triangle of the draw";
+    EXPECT_EQ(grid->bvh(0), nullptr) << "a geometry builds no tree by itself: the pick falls back to the linear walk";
+
+    ASSERT_TRUE(grid->prepareBvh(0));
+    ASSERT_NE(grid->bvh(0), nullptr);
+
+    const std::uint64_t         tree_before = grid->triangleTestCount();
+    const RayIntersectionResult from_tree   = RayIntersection::intersect(ray, grid.get(), Mat4d());
+    const std::uint64_t         tree_tests  = grid->triangleTestCount() - tree_before;
+
+    // The tree's primitive id IS the draw's triangle ordinal, so the two walks cannot report different triangles.
+    EXPECT_TRUE(from_tree.hit);
+    EXPECT_EQ(from_tree.triangleIndex, linear.triangleIndex);
+    EXPECT_EQ(from_tree.primitiveIndex, linear.primitiveIndex);
+    EXPECT_NEAR(from_tree.distance, linear.distance, 1e-9);
+    EXPECT_NEAR(from_tree.point.x, linear.point.x, 1e-9);
+    EXPECT_NEAR(from_tree.point.y, linear.point.y, 1e-9);
+    EXPECT_NEAR(from_tree.normal.z, linear.normal.z, 1e-9);
+    EXPECT_LT(tree_tests * 8u, linear_tests) << "the tree must cut the number of exact triangle tests";
+}
+
+TEST(RayIntersectionTest, APreparedTreeStillReportsEveryHit)
+{
+    // AllHits is the SET of hits, not the cheapest one: the tree may cull by the ray itself, but it may not prune by
+    // distance the way a closest-hit search does. Two triangles stacked along -Z are pierced by one ray.
+    auto mesh = intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
+    mesh->setPositions({ Vec3f(0.0f, 0.0f, 0.0f), Vec3f(1.0f, 0.0f, 0.0f), Vec3f(0.0f, 1.0f, 0.0f),
+                         Vec3f(0.0f, 0.0f, -2.0f), Vec3f(1.0f, 0.0f, -2.0f), Vec3f(0.0f, 1.0f, -2.0f) });
+    const auto                    geometry = geometryOf(*mesh);
+    const vn::geom::spatial::Rayd ray(Point3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
+
+    const auto linear = RayIntersection::intersect(ray, geometry.get(), Mat4d(), RayIntersection::Mode::AllHits);
+    ASSERT_EQ(linear.size(), 2u) << "one triangle at z = 0, one at z = -2";
+
+    ASSERT_TRUE(geometry->prepareBvh(0));
+    const auto from_tree = RayIntersection::intersect(ray, geometry.get(), Mat4d(), RayIntersection::Mode::AllHits);
+    ASSERT_EQ(from_tree.size(), 2u) << "a tree may not prune an AllHits query";
+
+    std::vector<std::size_t> linear_indices;
+    std::vector<std::size_t> tree_indices;
+    for (const RayIntersectionResult& hit : linear) {
+        linear_indices.push_back(hit.triangleIndex);
+    }
+    for (const RayIntersectionResult& hit : from_tree) {
+        tree_indices.push_back(hit.triangleIndex);
+    }
+    std::sort(linear_indices.begin(), linear_indices.end());
+    std::sort(tree_indices.begin(), tree_indices.end());
+    EXPECT_EQ(tree_indices, linear_indices) << "the same triangles, named by the same ordinals";
 }
 
 TEST(RayIntersectionTest, SceneQuery)
@@ -9013,6 +9132,103 @@ TEST(GeometryTest, ConverterSharesTheMeshIndexStorage)
     mesh->setIndices({ 0u, 2u, 1u, 0u, 1u, 2u });
     EXPECT_NE(geom->primitive(0)->indices.span().data(), mesh->indicesBuffer()->data());
     EXPECT_EQ(geom->primitive(0)->indices.span().size(), 3u) << "the geometry still reads the buffer it was given";
+}
+
+TEST(GeometryTest, AHandBuiltDrawPreparesItsOwnTree)
+{
+    // Hand-authored data (setPositions + an index span, no mesh anywhere) is the same kind of triangle stream as a
+    // mesh's, so it gets the same calls and the same answers: the drawing frame owns the tree of the stream it draws.
+    const auto geometry = makeGridGeometry(2u); // 8 triangles
+    ASSERT_EQ(geometry->primitiveCount(), 1u);
+    EXPECT_EQ(geometry->bvh(0), nullptr) << "a geometry builds no tree by itself";
+
+    ASSERT_TRUE(geometry->prepareBvh(0));
+    const Geometry::Bvh* tree = geometry->bvh(0);
+    ASSERT_NE(tree, nullptr);
+    EXPECT_EQ(tree->primCount(), 8u) << "one primitive per triangle, so a primitive id is the triangle ordinal";
+    EXPECT_TRUE(tree->validate()) << "the tree satisfies its own containment and ordering invariants";
+
+    const std::uint64_t before = geometry->triangleTestCount();
+    const RayIntersectionResult hit =
+        RayIntersection::intersect(vn::geom::spatial::Rayd(Point3d(1.25, 0.1, 1.0), Vec3d(0.0, 0.0, -1.0)), geometry.get(), Mat4d());
+    ASSERT_TRUE(hit.hit);
+    EXPECT_EQ(hit.triangleIndex, 2u) << "cell (1, 0)'s first triangle is ordinal 2 in row order";
+    EXPECT_LT(geometry->triangleTestCount() - before, 8u) << "the pick ran through the tree, not over every triangle";
+
+    ASSERT_TRUE(geometry->prepareBvh(0));
+    EXPECT_EQ(geometry->bvh(0), tree) << "preparing twice on unchanged bytes builds nothing";
+}
+
+TEST(GeometryTest, MovingTheStreamDropsThePreparedTree)
+{
+    auto positions = intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>({ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f }));
+    auto geometry  = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(positions);
+    ASSERT_TRUE(geometry->prepareBvh(0));
+    ASSERT_NE(geometry->bvh(0), nullptr);
+
+    // The same buffer, new bytes, announced the way a writer announces them: the cached tree describes the old
+    // triangles, so the key no longer matches and the draw answers "no tree" instead of a stale one.
+    positions->data()[0] = 5.0f;
+    positions->bumpRevision();
+    EXPECT_EQ(geometry->bvh(0), nullptr) << "钥匙不符 = 没有树，不会给出错答案";
+
+    ASSERT_TRUE(geometry->prepareBvh(0)) << "an announced edit is rebuilt on the next preparation";
+    EXPECT_NE(geometry->bvh(0), nullptr);
+
+    // A line draw never holds a tree at all: it has no triangle stream to index.
+    Primitive lines;
+    lines.topology = Topology::Lines;
+    geometry->addPrimitive(lines);
+    EXPECT_FALSE(geometry->prepareBvh(1));
+    EXPECT_EQ(geometry->bvh(1), nullptr);
+
+    geometry->clearBvh();
+    EXPECT_EQ(geometry->bvh(0), nullptr) << "dropping forgets every prepared tree";
+}
+
+TEST(GeometryTest, TwoDrawsOverOneIndexStreamShareOneTree)
+{
+    // One index run drawn twice (two materials over one surface) is ONE triangle stream: the second draw adopts the
+    // first draw's handle instead of building an identical tree over the same triangles.
+    const auto geometry = makeGridGeometry(2u);
+    geometry->addPrimitive(*geometry->primitive(0));
+
+    ASSERT_TRUE(geometry->prepareBvh(0));
+    const Geometry::Bvh* first = geometry->bvh(0);
+    ASSERT_NE(first, nullptr);
+    ASSERT_TRUE(geometry->prepareBvh(1));
+    EXPECT_EQ(geometry->bvh(1), first) << "the same key is the same stream: one immutable tree, two holders";
+}
+
+TEST(GeometryTest, MeshSourceGeometryAdoptsTheMeshesTree)
+{
+    auto mesh = makeUnitTriangle();
+    ASSERT_TRUE(mesh->buildBvh());
+    const std::shared_ptr<const vn::models::Mesh::Bvh> mesh_tree = mesh->sharedBvh();
+    ASSERT_NE(mesh_tree, nullptr);
+
+    const auto geometry = geometryFromShape(*mesh);
+    ASSERT_NE(geometry.get(), nullptr);
+    EXPECT_EQ(geometry->bvh(0), mesh_tree.get()) << "the draw IS the mesh's stream: the geometry holds that tree";
+    ASSERT_TRUE(geometry->prepareBvh(0));
+    EXPECT_EQ(geometry->bvh(0), mesh_tree.get()) << "preparing adopts the same tree, it does not build a second one";
+}
+
+TEST(GeometryTest, ATriangulatedQuadMeshAdoptsNothing)
+{
+    // A QuadMesh's geometry reads a NEW triangle buffer produced by the converter. The values equal the source's
+    // triangles, but the stream is not the same stream, and a tree keyed by identity must not be borrowed across
+    // that boundary: the geometry prepares its own tree when someone asks for one.
+    auto quad = vn::make_intrusive<vn::models::QuadMesh>();
+    quad->setPositions({ Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(1, 1, 0), Vec3f(0, 1, 0) });
+    ASSERT_TRUE(quad->buildBvh());
+
+    const auto geometry = geometryFromShape(*quad);
+    ASSERT_NE(geometry.get(), nullptr);
+    EXPECT_EQ(geometry->bvh(0), nullptr) << "only geometryFromMesh() adopts; a triangulating converter does not";
+    EXPECT_TRUE(geometry->prepareBvh(0)) << "the new stream gets its own tree on demand";
+    EXPECT_NE(geometry->bvh(0), nullptr);
 }
 
 TEST(GeometryTest, TexcoordChannelUsesTheCanonicalLocation)

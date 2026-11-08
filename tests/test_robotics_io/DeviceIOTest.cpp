@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -101,6 +102,75 @@ void writeBinaryStl(const std::filesystem::path& path,
     }
     const std::uint16_t attribute = 0;
     out.write(reinterpret_cast<const char*>(&attribute), static_cast<std::streamsize>(sizeof(attribute)));
+    ASSERT_TRUE(out.good());
+}
+
+/**
+ * @brief Writes @p count identical triangles as one binary STL file.
+ *
+ * @param path  The file path.
+ * @param count Triangles to write; the prefix states it.
+ */
+void writeStlTriangles(const std::filesystem::path& path, std::uint32_t count)
+{
+    static constexpr char kHeader[] = "binary STL written by the test";
+    std::array<char, 84>  prefix{};
+    std::memcpy(prefix.data(), kHeader, sizeof(kHeader) - 1);
+    std::memcpy(prefix.data() + 80, &count, sizeof(count));
+
+    const std::array<float, 3> normal{ 0.0f, 0.0f, -1.0f };
+    const std::array<float, 3> a{ 0.0f, 0.0f, 0.0f };
+    const std::array<float, 3> b{ 1.0f, 0.0f, 0.0f };
+    const std::array<float, 3> c{ 0.0f, 1.0f, 0.0f };
+
+    std::ofstream out(path, std::ios::binary);
+    out.write(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+    for (std::uint32_t triangle = 0; triangle < count; ++triangle) {
+        for (const auto* const values : { &normal, &a, &b, &c }) {
+            out.write(reinterpret_cast<const char*>(values->data()), static_cast<std::streamsize>(sizeof(float) * 3));
+        }
+        const std::uint16_t attribute = 0;
+        out.write(reinterpret_cast<const char*>(&attribute), static_cast<std::streamsize>(sizeof(attribute)));
+    }
+    ASSERT_TRUE(out.good());
+}
+
+/**
+ * @brief Writes a triangle-tree cache file byte for byte, in the layout the package reader expects.
+ *
+ * @param path           The file path.
+ * @param triangle_count Triangles the tree claims to index.
+ * @param depth          The tree's height.
+ * @param nodes          One `{offset, count}` per node, depth-first.
+ * @param order          The primitive permutation.
+ */
+void writeCacheBytes(const std::filesystem::path&                                         path,
+                     std::uint32_t                                                        triangle_count,
+                     std::uint32_t                                                        depth,
+                     const std::vector<std::pair<std::uint32_t, std::uint32_t>>&          nodes,
+                     const std::vector<std::uint32_t>&                                    order)
+{
+    const auto put = [](std::vector<char>& out, std::uint32_t value) {
+        out.push_back(static_cast<char>(value & 0xFFu));
+        out.push_back(static_cast<char>((value >> 8) & 0xFFu));
+        out.push_back(static_cast<char>((value >> 16) & 0xFFu));
+        out.push_back(static_cast<char>((value >> 24) & 0xFFu));
+    };
+    // magic + version 1 (little-endian) + flags 0 + the four counts.
+    std::vector<char> bytes{ 'V', 'B', 'T', 'P', 1, 0, 0, 0 };
+    put(bytes, triangle_count);
+    put(bytes, static_cast<std::uint32_t>(nodes.size()));
+    put(bytes, depth);
+    put(bytes, 0); // reserved
+    for (const auto& [offset, count] : nodes) {
+        put(bytes, offset);
+        put(bytes, count);
+    }
+    for (const std::uint32_t id : order) {
+        put(bytes, id);
+    }
+    std::ofstream out(path, std::ios::binary);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     ASSERT_TRUE(out.good());
 }
 
@@ -247,6 +317,73 @@ TEST(DeviceIOTest, LoadXmlFromFolderWithMesh)
     // The normal the file states is the one that arrives: an STL normal is not recomputed from the winding.
     ASSERT_EQ(m->normals().size(), 3u);
     EXPECT_FLOAT_EQ(m->normals()[0].z, -1.0f);
+}
+
+TEST(DeviceIOTest, ADamagedTreeCacheIsIgnoredAndAValidOneIsRestored)
+{
+    const TempDir temp;
+    const auto    file = temp.path() / "robot.vdev";
+    writeText(file, kRobotVdevMesh);
+    std::filesystem::create_directories(temp.path() / "geoms");
+    writeStlTriangles(temp.path() / "geoms" / "mesh0.stl", 2u);
+    const auto cache = temp.path() / "geoms" / "mesh0.vbtp";
+
+    // Loads the device and reports whether the mesh came back with a tree; every damaged cache must leave the MESH
+    // loading normally and only lose the tree.
+    const auto mesh_has_tree = [&]() -> std::optional<bool> {
+        DeviceIO io;
+        auto     loaded = io.loadXml(file);
+        EXPECT_NE(loaded, nullptr);
+        if (loaded == nullptr) {
+            return std::nullopt;
+        }
+        auto* const device = dynamic_cast<MotionDevice*>(loaded.get());
+        if (device == nullptr) {
+            return std::nullopt;
+        }
+        const auto* const mesh = dynamic_cast<const vn::models::TriangleMesh*>(device->baseLink()->body().visuals()[0].shape().get());
+        if (mesh == nullptr) {
+            return std::nullopt;
+        }
+        EXPECT_EQ(mesh->triangleCount(), 2u) << "the mesh itself always loads";
+        return mesh->hasBvh();
+    };
+
+    // No cache file: the ordinary case, and the one every package written before this feature is.
+    std::filesystem::remove(cache);
+    EXPECT_FALSE(mesh_has_tree().value_or(true)) << "a missing cache is simply no cache";
+
+    // Fewer bytes than a header.
+    {
+        std::ofstream out(cache, std::ios::binary);
+        out.write("VBT", 3);
+        ASSERT_TRUE(out.good());
+    }
+    EXPECT_FALSE(mesh_has_tree().value_or(true)) << "a truncated cache is ignored";
+
+    // Not this format at all (one magic byte changed).
+    writeCacheBytes(cache, 2u, 0u, { { 0u, 2u } }, { 0u, 1u });
+    {
+        std::fstream stream(cache, std::ios::binary | std::ios::in | std::ios::out);
+        stream.seekp(0);
+        stream.put('X');
+        ASSERT_TRUE(stream.good());
+    }
+    EXPECT_FALSE(mesh_has_tree().value_or(true)) << "a foreign file beside the mesh is ignored";
+
+    // A cache for another mesh: three triangles cannot describe this two-triangle mesh.
+    writeCacheBytes(cache, 3u, 0u, { { 0u, 3u } }, { 0u, 1u, 2u });
+    EXPECT_FALSE(mesh_has_tree().value_or(true)) << "a triangle count that is not this mesh's is refused";
+
+    // An order that repeats an id is not a permutation: the leaves would name the same triangle twice.
+    writeCacheBytes(cache, 2u, 0u, { { 0u, 2u } }, { 0u, 0u });
+    EXPECT_FALSE(mesh_has_tree().value_or(true)) << "an order that is not a permutation is refused";
+
+    // A well-formed cache over THIS mesh: one leaf holding both triangles.
+    writeCacheBytes(cache, 2u, 0u, { { 0u, 2u } }, { 0u, 1u });
+    const auto restored = mesh_has_tree();
+    ASSERT_TRUE(restored.has_value());
+    EXPECT_TRUE(*restored) << "a valid cache is restored with the mesh";
 }
 
 TEST(DeviceIOTest, MaterialLibraryRoundTrip)

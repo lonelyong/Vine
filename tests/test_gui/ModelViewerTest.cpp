@@ -687,6 +687,48 @@ TEST(ModelViewerTest, AFilePayloadReachesTheRenderSceneInTheSourceUnits)
     EXPECT_TRUE(hasVertex(*geometry, 0.0f, 1.0f, 0.0f));
 }
 
+TEST(ModelViewerTest, ALargeMeshGetsItsPickTreePreparedWhenTheSceneIsBuilt)
+{
+    // 拾取用的树是几何自己的缓存（graphics-geometry.md F33）：查看器在建场景时按阈值**一次**备好，第一次点击因此
+    // 不用付一次 SAH 建树；阈值以下的 draw 不建 —— 那是查看器的策略，线性扫比建树快。
+    vn::appfw::DocumentManager           documents;
+    vn::appfw::gui::DocumentViewRegistry views;
+    vn::appfw::gui::MainWindow           window;
+
+    auto* docks = window.dockPanelManager();
+    ASSERT_NE(docks, nullptr);
+    ASSERT_TRUE(registerModelType(documents));
+    ASSERT_TRUE(registerModelOpener(documents));
+    ASSERT_TRUE(views.registerView(kModelType, vn::model_viewer::createRenderView));
+
+    vn::appfw::gui::CentralDocumentHost host(documents, views, *docks);
+
+    // 32 x 32 格 = 2048 个三角形：远高于查看器的 512 阈值。
+    ASSERT_NE(openModel(documents, u8"网格", vn::model_viewer::makeGridMesh(32)), nullptr);
+    auto* view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(view, nullptr);
+    view->activate(); // 场景是懒建的（同文件载荷那条用例）
+    const auto scene = view->renderControl()->view()->scene();
+    ASSERT_NE(scene, nullptr);
+    const auto* large = firstGeometry(*scene->root());
+    ASSERT_NE(large, nullptr);
+    ASSERT_EQ(large->primitiveCount(), 1u);
+    EXPECT_GE(large->triangleCount(0), 512u);
+    EXPECT_NE(large->bvh(0), nullptr) << "大网格在建场景时就备好了拾取树";
+
+    // 一个三角形的小网格：不建树，拾取走线性扫。
+    ASSERT_NE(openModel(documents, u8"单片", makePartMesh(u8"one", 0.0f)), nullptr);
+    auto* small_view = dynamic_cast<vn::model_viewer::ModelRenderView*>(host.currentView());
+    ASSERT_NE(small_view, nullptr);
+    small_view->activate();
+    const auto small_scene = small_view->renderControl()->view()->scene();
+    ASSERT_NE(small_scene, nullptr);
+    const auto* small = firstGeometry(*small_scene->root());
+    ASSERT_NE(small, nullptr);
+    EXPECT_EQ(small->triangleCount(0), 1u);
+    EXPECT_EQ(small->bvh(0), nullptr) << "阈值以下的 draw 不建树：线性扫比建树快";
+}
+
 TEST(ModelViewerTest, AMultiPartModelReachesTheSceneAsPartsAndSelectionPicksOne)
 {
     // 一个模型两个部件：文档的三个数按 entry 汇总、场景里是两个叶子、点击只选中被点中的那一个。

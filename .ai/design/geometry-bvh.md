@@ -1,12 +1,13 @@
 # geometry 包围体层次（BVH）
 
 > **状态**：现行（结构与构建器已落地，`Bvh<T, Aabb<T>>` 两个精度均导出；`Obb` 体积经实测否决，见 `D2` / §9.2）
-> **最后核对**：2026-11-07
-> **范围**：`src/base/geom/sdk/vine/geom/spatial` 的 `Bvh.hpp`、`BvhBuilder.hpp` 与 `spatial/detail/` 下的构建内核；
-> 记录一棵静态包围体层次的归属、结构 / 构建边界、查询契约与失效规则。
+> **最后核对**：2026-11-08
+> **范围**：`src/base/geom/sdk/vine/geom/spatial` 的 `Bvh.hpp`、`BvhBuilder.hpp`、`BvhTopology.hpp`、`TriangleBvh.hpp`
+> 与 `spatial/detail/` 下的构建内核；记录一棵静态包围体层次的归属、结构 / 构建边界、查询契约、失效规则、拓扑存储
+> 与“三角形集 → 树”的编号规则。
 > 不含场景遍历与拾取身份（见 `graphics-scene.md`）、不含射线–图元相交本身（见 `geometry-ray.md`）。
-> **权威来源**：`Bvh.hpp`、`BvhBuilder.hpp`、`detail/VolumeTraits.hpp`、`detail/BvhBuildJob.hpp`、`detail/BvhBuilders.hpp`、
-> `tests/test_geom_spatial/Bvh*Test.cpp`。
+> **权威来源**：`Bvh.hpp`、`BvhBuilder.hpp`、`BvhTopology.hpp`、`TriangleBvh.hpp`、`detail/VolumeTraits.hpp`、
+> `detail/BvhBuildJob.hpp`、`detail/BvhBuilders.hpp`、`tests/test_geom_spatial/Bvh*Test.cpp`、`TriangleBvhTest.cpp`。
 > **待办**：`../backlog/geometry.md`（动态插入删除、并行构建等开放项）
 
 ## 1. 概要设计
@@ -155,6 +156,50 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 - 非法参数（`leaf_size == 0`、`max_depth == 0`）由 `prepareForBuild()` 拒绝并返回 `false`，`BvhBuilder::build` 于是什么都不做；
 - 构建不会因为输入退化（全重合、NaN）而崩溃：退化时退回中位数切分，NaN 由 `isFinite` 可观测。
 
+### 2.13 拓扑可存储、可恢复：盒子不存
+
+树里只有一半是构建不可廉价重算的：**分组与顺序**。每个节点的包围盒是图元位置的函数，所以存储只带一个值
+`BvhTopology{nodes, order, depth}`（每节点一个 `BvhNodeTopology{offset, count}`），恢复时用 `detail::refitNodes()`
+一次反向扫描按当前图元重算全部盒子。这条决定了四件事（`G13`、`G10`、`G1`）：
+
+- 文件里没有浮点，也不存在“文件里的盒与文件里的顶点各自演化”这种只能靠容差掩盖的不一致；
+- 陈旧或来自另一个模型的拓扑只能是**变差的树**，不会是错答案，因此不需要内容指纹；
+- 恢复不是 `Bvh::load()`，而是 `BvhBuilder::buildWith()` 的又一个算法（`RestoreTopology`），
+  与中位数 / SAH 走同一条 `finishBuild` 收尾——树仍然只有一种进入方式；
+- **形状是一个值**：节点的 `offset` 指向 `order`，`depth` 说的是这组节点的实际高度，三者离开彼此就没有意义，
+  所以它们进一个类型而不是三个平行数组（`G1`：一个概念一处定义；`G4`：调用方不可能把甲树的节点配上乙树的顺序）。
+
+`detail::refitNodes()` 因此是“由孩子重算父亲、叶子由图元重算”的唯一实现，`refit()` 与恢复都调它。
+
+### 2.14 三角形树只有一个编号规则：`TriangleSource` + `registerTriangles()`
+
+`Bvh` 不认识三角形：它收的是包围体。于是“一个三角形一棵 primitive、primitive id == 三角形序号”这条规则必须住在
+`Bvh` 之外、`Mesh` 与 `Geometry` 之下的**公共层**，而这条规则需要的输入只有三件事——“有哪些顶点、有多少三角形、
+第 `t` 个三角形的三个角点是谁”。三者拼成一个概念（`G1`）：
+
+- `TriangleSource`（`spatial/TriangleBvh.hpp`）是那个概念的 C++20 `concept`：`positions()`、`triangleCount()`、
+  `triangleCorners()`。它用 Qt 风格取值器书写，和库里其它值类型一样。
+- `registerTriangles(tree, source)` 是**唯一**的编号与盒规则：一三角形一 primitive、顺序即序号、盒子是三角角点的
+  `double` 包围盒（宽化精确，因此叶子在小尺寸远离原点时仍然准）。角点解不出或坐标非有限时返回 `false`——
+  “没有树”是一个返回值，不是从拾取栈里飞出去的异常。调用方仍可以拒绝登记（例如 `isValid()` 不成立的 mesh），
+  但那段循环只有一份。
+- `buildTriangleBvh()` / `restoreTriangleBvh()` 把“先登记、再建树”与“先登记、再装存储的形状”合成一次调用，
+  于是模型帧与绘制帧各写一行，而不是各写一次循环。
+- 两侧各自用 `static_assert(TriangleSource<T>)` 钉住：`Mesh` 与 `TriangleStream` 都必须是三角形源，否则这两个帧
+  的编号可以悄悄分叉（`G6`、`G11`）。
+
+### 2.15 形状的借用形式：`BvhTopologyView`
+
+`BvhTopology` 拥有一组数组，而读一个形状的人（编解码、恢复、写入器）只需要看它。所以形状有两种形态（`G4`）：
+
+- `BvhTopology`：拥有的值，一次解码的结果、一个可以比较的值、`Bvh::topology()` 的返回；
+- `BvhTopologyView`：三个 `std::span` 加一个高度，**显式**借用（“我借用它”是类型而不是注释）；
+  拥有形可直接隐式转换到借用形（更强承诺到更弱承诺，丢掉的只有所有权，同 Qt 的 `QByteArray` → `QByteArrayView`）。
+
+`RestoreTopology` 因此只持有一个 `BvhTopologyView` 成员：它不再需要三条平行跨度，也不再需要用 `@warning` 提醒调用方
+“别把拓扑移走”——参数类型已经说了。`Mesh::restoreBvh()` 与 `.vbtp` 解码之间因此没有一次拷贝：解码填进拥有的值，
+恢复借它的视图。
+
 ## 3. 功能点
 
 | 编号 | 功能 | 章节 |
@@ -166,6 +211,8 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 | F5 | 射线查询与最近命中剪枝 | 3.5 |
 | F6 | 不变量校验与质量报告 | 3.6 |
 | F7 | buffer 复用与释放 | 3.7 |
+| F8 | 拓扑视图与恢复（`BvhTopologyView` / `RestoreTopology`） | 3.8 |
+| F9 | 三角形集 → 三角形树（`TriangleSource`） | 3.9 |
 
 ### 3.1 F1 图元登记
 
@@ -185,7 +232,8 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 ### 3.3 F3 构建
 
 - **行为**：`BvhBuilder{}.leafSize(8).quality(kFast).build(bvh)`；`buildWith(bvh, algorithm)` 接受满足
-  `BuildAlgorithm` 概念的外来算法（签名为 `algorithm(BuildJob&)`），由调用方自己保证它也维护三个不变量。
+  `BvhBuildAlgorithm<T, Volume>` 概念（C++20 `concept`：可调用、以 `BuildJob&` 为参、返回节点数）的外来算法，
+  由调用方自己保证它也维护三个不变量。
 - **约束**（C2）：构建是幂等的：同一输入同一配置产生**相同**的树（`nth_element` 的等价元素顺序不保证，
   但划分结果保证；测试因此只断言结构与质量，不断言具体下标）。
 - **要求**（R2）：任何配置与任何输入（含全部重合、退化、NaN 盒子）都必须产出一棵 `validate()` 通过的树或干脆不建。
@@ -218,12 +266,39 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 - **约束**（C7）：重建不产生新分配（容量足够时）。
 - **验收**（T7）：`BvhBuilderContractTest` 记录首次构建后的 `capacity`，重建后断言容量未变。
 
+### 3.8 F8 拓扑视图与恢复
+
+- **行为**：`Bvh::topology()` 返回整棵树的形状 `BvhTopology{nodes, order, depth}`（节点深度优先，`offset` 的含义见 2.4；
+  `order` 就是 `primOrder()` 的那份排列，`depth` 是树自己的高度，`primitiveCount()` 就是 `order` 的长度）；
+  `BvhTopology::view()` 交出同一形状的借用形式 `BvhTopologyView`（2.15）；`RestoreTopology{shape}` 是一个构建算法，
+  交给 `BvhBuilder::buildWith()` 后按存储的分组重建节点、写入顺序、再用 `detail::refitNodes()` 按当前图元重算盒子。
+- **约束**（C8）：恢复只有一条接受路径，读作一张检查表：图元数与形状都非空 → `order` 与 `job.order` 的长度
+  都等于图元数 → `order` 是图元的一个排列 → 每个节点的 `offset + count` 不越过图元数 → 每个节点都从根可达，
+  且实测高度等于声明的 `depth` → 高度不超过 `max_depth`。任一条不满足返回 0 个节点，树保持未构建。
+- **要求**（R5）：恢复出的树与重建出的树对同一查询逐条相同；`refit()` 与恢复共用同一份反向扫描（C9）。
+- **验收**（T10）：`BvhBuildTest.ARestoredTopologyAnswersTheSameQueries`、
+  `BvhBuildTest.ARestoredTopologyThatDoesNotDescribeTheTreeIsRefused`。
+
+### 3.9 F9 三角形集 → 三角形树
+
+- **行为**：`TriangleSource` 是一个 `concept`（`positions()` + `triangleCount()` + `triangleCorners()`）；
+  `registerTriangles(tree, source)` 按三角形序号登记一个 primitive 一个；`buildTriangleBvh(tree, source, builder)` 与
+  `restoreTriangleBvh(tree, source, shape)` 各自把“登记 + 建树 / 登记 + 恢复”合成一次调用。
+- **约束**（C10）：三角形树的图元编号只有一个定义（`registerTriangles()`）：primitive id == 三角形序号，两侧一致。
+- **约束**（C11）：角点解不出、坐标非有限、树非空、源没有三角形时返回 `false`，**不抛异常**（`Bvh::add()` 的
+  `invalid_argument` 在拾取路径上是不可接受的失败形态）；拒绝时可以已登记了前缀，调用方丢弃那棵树即可。
+- **要求**（R6）：`Mesh` 与绘制帧的 `TriangleStream` 都必须静态满足 `TriangleSource`（两侧各一个 `static_assert`）。
+- **验收**（T11）：`TriangleBvhTest`：primitive id == 序号、一条调用建树、坏角点与非有限坐标被拒、恢复与重建
+  逐条相同、外来形状被拒、非空树不被重编号。
+
 ## 4. 公开接口
 
 | 类型 / 文件 | 内容 |
 |---|---|
-| `spatial/Bvh.hpp` | `Bvh<T, Volume = Aabb>`：`add` / `addRange` / `update` / `reserve` / `clear`、`primCount` / `empty` / `isBuilt`、`forEachOverlap` / `forEachRay`、`refit`、`validate`、`qualityReport`、`primOrder`；`kBvhMaxDepth = 64` |
-| `spatial/BvhBuilder.hpp` | `BvhBuildQuality{kFast, kSah}`；`BvhBuilder`：`leafSize` / `maxDepth` / `quality`、`build(bvh)`、`buildWith(bvh, algorithm)` |
+| `spatial/Bvh.hpp` | `Bvh<T, Volume = Aabb>`：`add` / `addRange` / `update` / `reserve` / `clear`、`primCount` / `empty` / `isBuilt`、`forEachOverlap` / `forEachRay`、`refit`、`validate`、`qualityReport`、`primOrder`、`topology`；`kBvhMaxDepth = 64` |
+| `spatial/BvhTopology.hpp` | `BvhNodeTopology{offset, count}`（一个节点的位置，值类型带 `==`，`static_assert` 平凡可拷贝）；`BvhTopology{nodes, order, depth}`（整棵树的形状，`primitiveCount()` / `view()` / `==`）；`BvhTopologyView{nodes, order, depth}`（同一形状的借用形式，`primitiveCount()` / `empty()`，2.15）；`RestoreTopology{shape}`（构建算法）；`detail::refitNodes`——内部 |
+| `spatial/TriangleBvh.hpp` | `TriangleSource`（三角形源的 `concept`）；`registerTriangles` / `buildTriangleBvh` / `restoreTriangleBvh`（2.14） |
+| `spatial/BvhBuilder.hpp` | `BvhBuildQuality{kFast, kSah}`；`BvhBuildAlgorithm`（构建算法的 `concept`）；`BvhBuilder`：`leafSize` / `maxDepth` / `quality`、`build(bvh)`、`buildWith(bvh, algorithm)` |
 | `spatial/detail/BvhBuildJob.hpp` | `BvhNode<T, Volume>`、`BuildJob<T, Volume>`——**内部契约**，不属于公开 API |
 | `spatial/detail/BvhBuilders.hpp` | `MedianSplit`、`SahSplit`、`buildTopDown`、`SahBuild`、`MedianBuild`——内部 |
 | `spatial/detail/VolumeTraits.hpp` | `VolumeTraits<V>` 与 `VolumeTraits<Aabb<T>>`——内部 |
@@ -239,13 +314,18 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 - **C5**：`refit` 不改拓扑，只重算盒子；叶子因此可能变松。
 - **C6**：`validate()` 允许分配且只用于开发期；查询路径不分配。
 - **C7**：容量足够时重建不产生新分配。
+- **C8**：`RestoreTopology` 只接受自洽的拓扑（见 F8）；不自洽 = 不建树，不是部分恢复。
+- **C9**：`refit()` 与恢复共用 `detail::refitNodes()`——盒子的定义只有一处。
+- **C10**：三角形树的图元编号只有一处定义：`registerTriangles()`（primitive id == 三角形序号），`Mesh` 与 `Geometry` 都走它。
+- **C11**：`registerTriangles()` / `buildTriangleBvh()` / `restoreTriangleBvh()` 不抛异常：不可用的输入是 `false`（可已登记前缀，调用方丢弃那棵树）。
 - **I1 / I2 / I3**：见 2.5。
 - **R1**：批量登记一次预留；逐条 `add` 只用于少量图元。
 - **R2**：任何输入都必须产出 `validate()` 通过的树，或明确不建，不得崩溃。
 - **R3**：查询 `const` 且无分配，可并发调用；写入接口不可并发。
 - **R4**：`Bvh.hpp` 不依赖 `BvhBuilder.hpp`；`check_geom_layering.py` 规则 6 强制。
+- **R5**：恢复出的树与重建出的树对同一查询逐条相同；恢复不引入第二条建树路径（走 `buildWith`）。
+- **R6**：`Mesh` 与 `TriangleStream` 各有一个 `static_assert(TriangleSource<...>)`：两侧的三角形契约不许分叉。
 - **N1**：查询回调拿到的盒子是叶子的保守合并盒，不是图元的精确几何。
-
 ## 6. 注意事项与陷阱
 
 - **P1**：叶子盒是保守合并，查询结果是**超集**。怎么错：把回调里的命中当成最终答案，选中了其实没相交的图元。
@@ -262,6 +342,12 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
   不反映“脏”。怎么防：`update` 后必须 `refit()`，或者重建。
 - **P7**：浮点 NaN 盒子。怎么错：`merged` 传播 NaN，整条祖先链失效。怎么判：`VolumeTraits::isFinite`。怎么防：登记前检查，
   或接受“这棵树的查询会漏掉该图元”。
+- **P8**：把 `BvhNodeTopology::offset` 当成“两个子下标”存或读。怎么错：内部节点的 `offset` 是**右孩子**下标（左孩子恒为
+  `parent + 1`），按线性 BVH 的两下标写文件，恢复后的遍历会跳到父亲的兄弟。怎么判：`validate()` 的包含性检查失败，
+  或恢复直接返回 0（右孩子必须严格在左孩子之后）。怎么防：只以一个字段的语义（2.4）编解码，文件里也只出现这一个口径。
+- **P9**：忘了 `primOrder()`。怎么错：叶子区间指向顺序数组，而顺序数组成了恒等排列——每个叶子的图元集合全错，
+  查询结果**错但看起来正常**。怎么判：`validate()` 的排列检查。怎么防：拓扑、顺序与高度是同一个值（`BvhTopology`），
+  编解码与恢复都只碰这一个值，没有“只带了一半”的调用形态。
 
 ## 7. 已否决选项
 
@@ -279,6 +365,11 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 | D10 | 构建用显式堆栈 | `max_depth` 已给出递归深度上界，显式栈只是把一个上界换成一次堆分配（`G10`）。 |
 | D11 | 叶子存图元副本 | 图元（网格、三角形）可能很大；树只存包围体与 id，几何留在原处（`G13`）。 |
 | D12 | 把 BVH 放进 `math` | 有拓扑、有构建流程的结构不是数值词汇（`geometry-primitives.md` 2.1、`G1`）。 |
+| D13 | 存储/恢复包围盒 | 盒是位置的函数，存了就有“文件里的盒与文件里的顶点各自演化”的不一致（`28 B/三角形`，还要处理字节序与容差）；存拓扑只有约 `8 B/三角形`，恢复时按当前图元重算（2.13，`G10`、`G13`）。 |
+| D14 | 给 `Bvh` 加 `save()` / `load()` | 文件格式归 `robotics/io`（`G2`）；而 `load()` 是绕开 `finishBuild` 的第二条建树路径，能把树写成不自洽状态。恢复就是一个构建算法（`RestoreTopology`）。 |
+| D15 | 给缓存算内容指纹 | 陈旧缓存只会让树变差（2.13），指纹只能提升质量、不能提升正确性，却要在保存与加载各扫一遍全量数据（`G8`）。 |
+| D16 | 一个 `TriangleBvh` 类包住 `Bvh` 与三角形源 | 会挡住已有的共享：`Mesh::sharedBvh()`、`Geometry::adoptBvh()` 与拾取都按 `Bvh<double>` 共享（一个引用计数）。缺的从来不是“又一个树类型”，而是“三角形 → 包围体”的登记规则；规则做成自由函数，树仍是 `Bvh`（`G8`、`G7`）。 |
+| D17 | 把登记规则做成 `BvhBuildAlgorithm`（交给 `buildWith`） | 算法接口面向 `BuildJob` 的内部契约，而登记是“数据第一步”不是“决定形状”；`RestoreTopology` 又要求“图元已登记”这个前提，两者不在同一层，混在一起会让两者互相猜测（`G1`、`G4`）。 |
 
 ## 8. 测试与验收
 
@@ -293,23 +384,28 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 | T7 | 重建后 `capacity` 不增长 | `BvhBuilderContractTest.cpp` |
 | T8 | 空树查询不崩、未构建的树查询返回空 | `BvhBuilderContractTest.cpp` |
 | T9 | SAH 树的重叠查询节点访问数不高于中位数树（随机场景） | `BvhBuildTest.cpp`（节点访问计数经 `qualityReport` 的叶子表面积间接断言） |
+| T10 | 拓扑 → 恢复 → 查询逐条相同；不自洽的拓扑被拒 | `BvhBuildTest.ARestoredTopologyAnswersTheSameQueries`、`ARestoredTopologyThatDoesNotDescribeTheTreeIsRefused` |
+| T11 | primitive id == 三角形序号；一条调用建树；坏角点与 NaN 被拒；恢复与重建同答；外来形状被拒；非空树不被重编号 | `tests/test_geom_spatial/TriangleBvhTest.cpp` |
 
-现有 17 个 BVH 用例与 213 个既有 geometry 用例同批运行：`build\bin\Debug\test_geom_spatial.exe`（230 个全绿）。
+现有 28 个 BVH 用例与既有 geometry 用例同批运行：`build\bin\Debug\test_geom_spatial.exe`（249 个全绿，2026-11-08）。
 
 ## 9. 状态与演进
 
 ### 9.1 当前状态
 
-已落地：`spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`、`spatial/detail/{RaySlab,VolumeTraits,BvhBuildJob,BvhBuilders}.hpp`；
+已落地：`spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`、`spatial/BvhTopology.hpp`、`spatial/TriangleBvh.hpp`、
+`spatial/detail/{RaySlab,VolumeTraits,BvhBuildJob,BvhBuilders}.hpp`；
 `Aabb.hpp` 的 `rayBoxInterval` 改为委托 `preparedRayBoxInterval`（`geometry-ray.md` 2.8 的唯一 slab 实现）；
 `src/base/geom/src/Instantiations.cpp` 导出 `Bvh<float>` / `Bvh<double>`。
+拓扑存储与恢复（F8）已落地；消费它的载入侧见 `robotics-io-design.md`（`.vbtp`）。
 
 ### 9.2 已知缺口
 
 - `Obb` 体积（`D2`）：需要一个“保留两个孩子朝向”的合并，而不是每次合并拟合一个新盒子；在此之前不提供。
 - 并行构建、SIMD 遍历、射线包（packet）遍历：没有消费者（`G8`）。
-- 第一个消费者已经落地：`Mesh::buildBvh()` 为每个三角形建一棵树并缓存（`graphics-geometry.md` 2.9 / F32）；
-  `graphics` 的 `RayIntersection` 仍在拾取循环里线性扫三角形，改用它还没做（`../backlog/graphics.md` T24）。
+- 消费者：`Mesh::buildBvh()` / `Mesh::restoreBvh()`（`graphics-geometry.md` 2.9 / F32）、
+  `Geometry::prepareBvh()`（F33）、`robotics/io` 的 `.vbtp` 缓存；两者都经 `buildTriangleBvh()` /
+  `restoreTriangleBvh()`，因此编号规则只有一份（F9）。
 - 缺少“访问节点数”的直接计数器；目前用 `qualityReport()` 的叶子表面积间接比较质量（T9）。
 
 ### 9.3 兼容性与迁移
@@ -319,7 +415,7 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 
 ## 10. 参考
 
-- 代码：`src/base/geom/sdk/vine/geom/spatial/Bvh.hpp`、`BvhBuilder.hpp`、
+- 代码：`src/base/geom/sdk/vine/geom/spatial/Bvh.hpp`、`BvhBuilder.hpp`、`BvhTopology.hpp`、`TriangleBvh.hpp`、
   `src/base/geom/sdk/vine/geom/spatial/detail/VolumeTraits.hpp`、`BvhBuildJob.hpp`、`BvhBuilders.hpp`、`RaySlab.hpp`。
 - 相关设计：`geometry-ray.md`（射线与 slab 实现）、`geometry-primitives.md`（值类型归属）。
 - 决策：`../decisions/ADR-2026-11-07-bvh-as-structure-plus-builder.md`。

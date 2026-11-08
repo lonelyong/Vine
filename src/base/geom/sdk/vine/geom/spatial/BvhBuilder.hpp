@@ -2,6 +2,8 @@
 
 #include <vine/geom/geom_global.hpp>
 
+#include <concepts>
+#include <cstdint>
 #include <stdexcept>
 
 #include <vine/geom/spatial/Bvh.hpp>
@@ -9,6 +11,26 @@
 #include <vine/geom/spatial/detail/BvhBuilders.hpp>
 
 VN_GEOM_SPATIAL_NS_BEGIN
+
+/**
+ * @brief What `BvhBuilder::buildWith()` accepts: an algorithm that fills one build job and reports its node count.
+ *
+ * @details
+ * - The CONTRACT a build algorithm owes (a permutation of the primitive order, depth-first nodes with the left child at
+ *   `node + 1`, parents enclosing their children, a height within `max_depth`) cannot be checked by the type system, but
+ *   its SHAPE can be: one call, one job, one node count. Stating the shape as a concept turns "this callable takes the
+ *   wrong parameter" into one constraint diagnostic instead of a page of template errors.
+ * - The algorithms in this library (`detail::SahBuild`, `detail::MedianBuild`, `RestoreTopology`) all model it, and so
+ *   does any caller-supplied one - that is the extension point, and this is its signature.
+ *
+ * @tparam Algorithm Callable type; considered as an lvalue, so a `const` call operator is fine.
+ * @tparam T         Floating-point scalar type.
+ * @tparam Volume    Bounding-volume template.
+ */
+template <typename Algorithm, typename T, template <typename> class Volume>
+concept BvhBuildAlgorithm = requires(Algorithm& algorithm, detail::BuildJob<T, Volume>& job) {
+    { algorithm(job) } -> std::convertible_to<std::uint32_t>;
+};
 
 /**
  * @brief Which construction algorithm `BvhBuilder` uses.
@@ -148,11 +170,11 @@ class BvhBuilder
      *
      * @tparam T         Floating-point scalar type.
      * @tparam Volume    Bounding-volume template.
-     * @tparam Algorithm Callable `std::uint32_t(detail::BuildJob<T, Volume>&)`.
+     * @tparam Algorithm Build algorithm; anything modelling `BvhBuildAlgorithm`.
      * @param bvh        The tree to fill.
      * @param algorithm  The construction algorithm.
      */
-    template <typename T, template <typename> class Volume, typename Algorithm>
+    template <typename T, template <typename> class Volume, BvhBuildAlgorithm<T, Volume> Algorithm>
     void buildWith(Bvh<T, Volume>& bvh, Algorithm&& algorithm) const
     {
         if (!bvh.prepareForBuild(leaf_size_, max_depth_)) {

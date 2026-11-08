@@ -17,6 +17,7 @@
 #include <vine/io/Adapters.hpp>
 #include <vine/io/Vfs.hpp>
 
+#include "BvhCache.hpp"
 #include "IoUtils.hpp"
 #include "MeshBin.hpp"
 
@@ -216,6 +217,10 @@ String writeMeshFile(vn::io::Vfs& vfs, std::size_t& geom_seq, const vn::models::
     if (vfs.addFile(detail::vfsPath(path), std::move(source)) != vn::io::IoError::Ok) {
         throw std::runtime_error("XmlIOBase::exportGeometry, failed to write mesh geometry into the package: " + path.as_std_str());
     }
+    // The triangle tree is a CACHE beside the mesh file - separate, optional, and never part of the mesh's own format.
+    // An older reader ignores it and a newer one may find it missing, so writing it changes nothing about the mesh; a
+    // mesh with no prepared tree writes none, and building one for export is the caller's decision.
+    (void)detail::writeBvhCache(vfs, detail::vfsPath(path), mesh);
     return path;
 }
 
@@ -366,7 +371,13 @@ vn::intrusive_ptr<vn::models::Shape> XmlIOBase::parseGeometry(ParseContext& ctx,
         if (geometry_path.empty()) {
             return {}; // a mesh element that names no file has nothing to read
         }
-        return detail::meshFromFile(*ctx.vfs, detail::vfsPath(geometry_path), indexed);
+        auto mesh = detail::meshFromFile(*ctx.vfs, detail::vfsPath(geometry_path), indexed);
+        if (mesh != nullptr) {
+            // The triangle tree, when the same package carries one for this mesh, is restored here: the mesh stays the
+            // source of truth and the tree is an optional acceleration structure beside it.
+            (void)detail::restoreBvhCache(*ctx.vfs, detail::vfsPath(geometry_path), *mesh);
+        }
+        return mesh;
     }
     detail::appendWarning(ctx.msgs, "XmlIOBase::parseGeometry, unsupported geometry tag [%s], skipped.", tag.c_str());
     return {};

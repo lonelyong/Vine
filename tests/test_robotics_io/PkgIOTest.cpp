@@ -12,6 +12,7 @@
 #include <vine/models/Primitive.hpp>
 #include <vine/models/Box.hpp>
 #include <vine/models/TriangleMesh.hpp>
+#include <vine/geom/spatial/BvhTopology.hpp>
 #include <vine/io/ZipArchive.hpp>
 #include <vine/robotics/io/DeviceIO.hpp>
 #include <vine/robotics/io/WorkcellIO.hpp>
@@ -110,6 +111,42 @@ std::unique_ptr<MotionDevice> makeRobotWithMesh()
     base->body().visuals().resize(1);
     base->body().visuals()[0].setShape(mesh);
     return robot;
+}
+
+/**
+ * @brief Builds a @p side x @p side grid mesh: enough triangles that its tree has more than one node.
+ *
+ * @param side Cells per axis; the mesh holds `2 * side * side` triangles.
+ * @return The mesh, positions and indices set.
+ */
+vn::intrusive_ptr<vn::models::TriangleMesh> gridMesh(std::size_t side)
+{
+    const std::size_t          row_length = side + 1u;
+    std::vector<vn::math::Vec3f> positions;
+    positions.reserve(row_length * row_length);
+    for (std::size_t row = 0; row < row_length; ++row) {
+        for (std::size_t column = 0; column < row_length; ++column) {
+            positions.emplace_back(static_cast<float>(column), static_cast<float>(row), 0.0f);
+        }
+    }
+    const auto vertex = [row_length](std::size_t row, std::size_t column) {
+        return static_cast<std::uint32_t>(row * row_length + column);
+    };
+    std::vector<std::uint32_t> indices;
+    indices.reserve(side * side * 6u);
+    for (std::size_t row = 0; row < side; ++row) {
+        for (std::size_t column = 0; column < side; ++column) {
+            const std::uint32_t a = vertex(row, column);
+            const std::uint32_t b = vertex(row, column + 1u);
+            const std::uint32_t c = vertex(row + 1u, column);
+            const std::uint32_t d = vertex(row + 1u, column + 1u);
+            indices.insert(indices.end(), { a, b, d, a, d, c });
+        }
+    }
+    auto mesh = vn::intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
+    mesh->setPositions(std::move(positions));
+    mesh->setIndices(std::move(indices));
+    return mesh;
 }
 
 /**
@@ -224,6 +261,74 @@ TEST(PkgIOTest, DevicePkgWithMeshRoundTrip)
     EXPECT_EQ(m->triangleCount(), 1u);
     EXPECT_FLOAT_EQ(m->positions()[0].x, 0.0f);
     EXPECT_FLOAT_EQ(m->positions()[2].y, 1.0f);
+}
+
+TEST(PkgIOTest, APreparedTriangleTreeTravelsWithThePackage)
+{
+    const TempDir temp;
+    const auto    file = temp.path() / "robot.vdevpkg";
+
+    auto robot = makeRobot();
+    // A grid, so the stored tree really has nodes to restore (a one-triangle mesh is one leaf).
+    auto* const base = robot->baseLink();
+    base->body().visuals().resize(1);
+    base->body().visuals()[0].setShape(gridMesh(6u));
+    auto* const visual_mesh = dynamic_cast<vn::models::TriangleMesh*>(base->body().visuals()[0].shape().get());
+    ASSERT_NE(visual_mesh, nullptr);
+    ASSERT_TRUE(visual_mesh->buildBvh());
+    const vn::geom::spatial::BvhTopology topology = visual_mesh->bvh().topology();
+    ASSERT_GT(topology.nodes.size(), 2u) << "the tree under test must have more than a single leaf";
+
+    DeviceIO io;
+    io.savePkg(*robot, file);
+
+    // The cache sits beside the mesh file inside the package; the mesh file itself is untouched by it.
+    auto opened = vn::io::ZipArchive::open(file, vn::io::ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(opened.ok());
+    EXPECT_TRUE((*opened).exists(std::filesystem::path(u8"geoms/mesh0.vbtp")))
+        << "a prepared tree is written beside the mesh file it describes";
+    EXPECT_TRUE((*opened).exists(std::filesystem::path(u8"geoms/mesh0.stl")))
+        << "the mesh file itself is untouched by the cache";
+
+    auto loaded = io.loadPkg(file);
+    ASSERT_NE(loaded, nullptr);
+    auto* const r = dynamic_cast<MotionDevice*>(loaded.get());
+    ASSERT_NE(r, nullptr);
+    const auto* const restored = dynamic_cast<const vn::models::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+    ASSERT_NE(restored, nullptr);
+    ASSERT_TRUE(restored->hasBvh()) << "the cache beside the mesh file is restored with it";
+    ASSERT_NE(restored->sharedBvh(), nullptr);
+    EXPECT_TRUE(restored->sharedBvh()->validate());
+    EXPECT_EQ(restored->triangleCount(), visual_mesh->triangleCount());
+
+    // Same shape, to the last node: the boxes were recomputed from the positions on the way in, nothing else moved.
+    EXPECT_EQ(restored->sharedBvh()->topology(), topology)
+        << "nodes, order and height are one value: the restored shape equals the stored one";
+}
+
+TEST(PkgIOTest, AMeshWithNoPreparedTreeWritesNoCache)
+{
+    // No buildBvh(): the package carries the mesh and nothing else, and that package loads exactly as before.
+    auto               robot = makeRobotWithMesh();
+    vn::io::ZipArchive package;
+    DeviceIO           io;
+    io.savePkg(*robot, package);
+
+    EXPECT_TRUE(package.exists(std::filesystem::path(u8"geoms/mesh0.stl")));
+    EXPECT_FALSE(package.exists(std::filesystem::path(u8"geoms/mesh0.vbtp")));
+
+    auto zip_bytes = package.toBytes();
+    ASSERT_TRUE(zip_bytes.ok());
+    auto opened = vn::io::ZipArchive::open(zip_bytes.take(), vn::io::ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(opened.ok());
+    auto loaded = io.loadPkg(*opened);
+    ASSERT_NE(loaded, nullptr);
+    auto* const r = dynamic_cast<MotionDevice*>(loaded.get());
+    ASSERT_NE(r, nullptr);
+    const auto* const mesh = dynamic_cast<const vn::models::TriangleMesh*>(r->baseLink()->body().visuals()[0].shape().get());
+    ASSERT_NE(mesh, nullptr);
+    EXPECT_FALSE(mesh->hasBvh()) << "no cache in the package, no tree on the mesh";
+    EXPECT_EQ(mesh->triangleCount(), 1u);
 }
 
 TEST(PkgIOTest, DevicePkgMemoryBytes)

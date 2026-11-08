@@ -23,6 +23,7 @@
 #include <vine/geom/spatial/Aabb.hpp>
 #include <vine/geom/spatial/Bvh.hpp>
 #include <vine/geom/spatial/BvhBuilder.hpp>
+#include <vine/geom/spatial/TriangleBvh.hpp>
 #include <vine/models/Array.hpp>
 #include <vine/models/Shape.hpp>
 
@@ -402,13 +403,22 @@ class Mesh : public Shape {
      *
      * @details
      * - This is how a caller that configures its own builder keeps that choice: build the tree elsewhere and adopt it.
-     *   The caller is responsible for the tree describing the triangles stored here.
+     * - The tree has to be built and to cover THIS mesh's triangles (one primitive per triangle, ids in triangle order),
+     *   which is the same admission rule a draw applies to an adopted tree: a tree over another triangle set would report
+     *   hits on triangles this mesh does not have, so it is refused rather than cached.
      *
-     * @param bvh Tree to cache; taken by value, moved into the published object.
+     * @param tree Tree to cache; taken by value, moved into the published object.
+     * @return true when the cache holds the tree afterwards; false for an unbuilt tree or one that covers another
+     *         triangle count, which leaves the cache as it was.
      */
-    void setBvh(Bvh bvh)
+    [[nodiscard]]
+    bool setBvh(Bvh tree)
     {
-        bvh_ = std::make_shared<const Bvh>(std::move(bvh));
+        if (!tree.isBuilt() || tree.primCount() != triangleCount()) {
+            return false;
+        }
+        bvh_ = std::make_shared<const Bvh>(std::move(tree));
+        return true;
     }
 
     /**
@@ -417,10 +427,11 @@ class Mesh : public Shape {
      * @details
      * - One primitive per triangle, in triangle order, so `prim id == triangleCount()`'s ordinal: a hit turns into a
      *   triangle without a second lookup, and a face is one division away for the fixed-corner meshes.
-     * - All or nothing: an invalid mesh, or a triangle whose corners are out of range, leaves the cache empty and
-     *   reports false rather than caching a tree that describes something else.
-     * - The primitive bound of a triangle is the box of its three corners, widened to double; the builder decides the
-     *   shape of the tree (leaf size, depth limit, quality).
+     * - The registration, the numbering and the box rule are `vn::geom::spatial::buildTriangleBvh()`'s: the same call a
+     *   draw's `Geometry::prepareBvh()` makes over its own stream, so the mesh frame and the draw frame cannot build
+     *   differently numbered trees.
+     * - All or nothing: an invalid mesh, a triangle whose corners are out of range, or a corner that is not finite leaves
+     *   the cache empty and reports false rather than caching a tree that describes something else.
      * - The tree is built as a local object and published only when it is complete, so a reader never sees a tree that
      *   is halfway into the arena. A rebuild allocates; it cannot write into a tree someone else is still reading.
      *
@@ -431,32 +442,43 @@ class Mesh : public Shape {
     bool buildBvh(const vn::geom::spatial::BvhBuilder& builder = {})
     {
         bvh_.reset();
-        const std::size_t count = triangleCount();
-        if (count == 0u || !isValid()) {
+        if (!isValid()) {
+            return false; // a mesh whose channels disagree has no triangles to index
+        }
+        auto tree = std::make_shared<Bvh>();
+        if (!vn::geom::spatial::buildTriangleBvh(*tree, *this, builder)) {
             return false;
         }
-        const auto vertices = positions();
-        auto       tree     = std::make_shared<Bvh>();
-        tree->reserve(count);
-        std::array<std::uint32_t, 3>             corners{};
-        std::array<vn::math::Vector3<double>, 3> points{};
-        for (std::size_t triangle = 0; triangle < count; ++triangle) {
-            if (!triangleCorners(triangle, corners)) {
-                return false;
-            }
-            for (std::size_t corner = 0; corner < 3u; ++corner) {
-                if (corners[corner] >= vertices.size()) {
-                    return false;
-                }
-                const Vec3& position = vertices[corners[corner]];
-                points[corner] = vn::math::Vector3<double>(static_cast<double>(position.x),
-                                                           static_cast<double>(position.y),
-                                                           static_cast<double>(position.z));
-            }
-            tree->add(vn::geom::spatial::Aabbd::compute(points));
+        bvh_ = std::move(tree);
+        return true;
+    }
+
+    /**
+     * @brief Restores the cache from a stored tree shape instead of re-running a split.
+     *
+     * @details
+     * - The SHAPE is the part a build cannot recompute cheaply: which triangles share a leaf and in what order. A stored
+     *   tree therefore comes back in one linear pass - the leaf boxes are recomputed from the CURRENT positions and every
+     *   internal box is merged from its children (see `RestoreTopology`). A stale or foreign-but-well-formed shape can
+     *   only produce a worse tree, never a wrong answer, which is why this needs no content fingerprint.
+     * - It is `vn::geom::spatial::restoreTriangleBvh()` that does the work: the primitives are registered exactly as
+     *   buildBvh() registers them, then the shape is installed and the result validated.
+     * - All or nothing: an invalid mesh, or a shape that does not describe this mesh (a leaf outside the primitive order,
+     *   an order that is not a permutation, an unreachable node, a height that is not the tree's own), leaves the cache
+     *   empty and reports false. A caller treats that as "no cache", not as damage.
+     *
+     * @param shape The stored shape: nodes, primitive order and height, all from one tree (see Bvh::topology()).
+     * @return true when the cache holds a built tree afterwards.
+     */
+    [[nodiscard]]
+    bool restoreBvh(vn::geom::spatial::BvhTopologyView shape)
+    {
+        bvh_.reset();
+        if (!isValid()) {
+            return false; // a mesh whose channels disagree has no triangles to index
         }
-        builder.build(*tree);
-        if (!tree->isBuilt()) {
+        auto tree = std::make_shared<Bvh>();
+        if (!vn::geom::spatial::restoreTriangleBvh(*tree, *this, shape)) {
             return false;
         }
         bvh_ = std::move(tree);
@@ -569,7 +591,11 @@ class Mesh : public Shape {
     }
 
     Aabb aabb_{ Aabb::empty() };
-    std::shared_ptr<const Bvh> bvh_{}; ///< Derived cache, published immutable: the triangle tree, null until built or set.
+    std::shared_ptr<const Bvh> bvh_{}; ///< Derived cache, published immutable: the tree, null until built, set or restored.
 };
+
+static_assert(vn::geom::spatial::TriangleSource<Mesh>,
+              "a mesh owes exactly the three facts a triangle tree is built from (positions, triangle count, corners), so "
+              "the mesh frame and the draw frame build their trees through the same contract");
 
 VN_MODELS_NS_END

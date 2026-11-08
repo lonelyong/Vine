@@ -1,6 +1,8 @@
 ﻿#include <vine/graphics/Geometry.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -8,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include <vine/geom/spatial/BvhBuilder.hpp>
 #include <vine/models/Mesh.hpp>
 #include <vine/models/MixedMesh.hpp>
 #include <vine/models/Primitive.hpp>
@@ -21,6 +24,8 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
+
+#include "TriangleStream.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -73,6 +78,12 @@ GeometryPtr geometryFromMesh(const vn::models::TriangleMesh& mesh)
         primitive.indices = Primitive::IndexSpan::whole(mesh.indicesBuffer());
     }
     geometry->setPrimitive(0U, std::move(primitive));
+    // ADOPTION happens here and only here (2.5): this draw IS the mesh's triangle stream - the same position buffer,
+    // the whole index buffer, triangle list, one primitive per triangle - so the geometry holds the mesh's tree
+    // instead of building a second one over the same triangles. A mesh without a built tree simply adopts nothing.
+    // A triangulated Quad/Mixed mesh adopts nothing either: its stream comes from a NEW buffer, and "the values happen
+    // to be equal" is not the identity this cache keys on.
+    (void)geometry->adoptBvh(0u, mesh.sharedBvh());
     return geometry;
 }
 
@@ -110,6 +121,9 @@ void Geometry::addBuffer(std::uint32_t location, const AttributeChannel& buffer)
     // topology or several parts edits/appends its primitives.
     if (location == attributeLocation(VertexAttribute::Position) && primitives_.empty()) {
         primitives_.emplace_back();
+        // The tree slots follow the primitive list one for one (see prepareBvh): a draw added anywhere is a stream
+        // that may cache a tree.
+        triangle_trees_.emplace_back();
     }
     // The data box may have changed: the cached boxes above this leaf are stale (see
     // Node::invalidateBounds).
@@ -252,6 +266,8 @@ bool samePrimitive(const Primitive& a, const Primitive& b) noexcept
 void Geometry::addPrimitive(Primitive primitive)
 {
     primitives_.push_back(std::move(primitive));
+    // The tree slots follow the primitive list one for one (see prepareBvh).
+    triangle_trees_.emplace_back();
     // A new draw of the same data is a different picture (and possibly a different extent): invalidateBounds()
     // announces the content change as well, so the frame memo cannot answer from the list it built before this call.
     invalidateBounds();
@@ -276,6 +292,7 @@ void Geometry::clearPrimitives()
         return;
     }
     primitives_.clear();
+    triangle_trees_.clear();
     invalidateBounds();
 }
 
@@ -287,6 +304,17 @@ const Primitive* Geometry::primitive(std::size_t index) const
 std::size_t Geometry::primitiveCount() const
 {
     return primitives_.size();
+}
+
+std::size_t Geometry::triangleCount(std::size_t draw) const
+{
+    const Primitive*        primitive = this->primitive(draw);
+    const AttributeChannel* positions = buffer(attributeLocation(VertexAttribute::Position));
+    if (primitive == nullptr || positions == nullptr || positions->values == nullptr || positions->components < 3u) {
+        return 0u;
+    }
+    const std::size_t corners = primitive->isIndexed() ? primitive->indexCount() : positions->vertexCount();
+    return triangleCountOf(corners, primitive->topology);
 }
 
 std::span<const Primitive> Geometry::primitives() const
@@ -517,6 +545,128 @@ Aabbd Geometry::boundingBox() const
 std::uint64_t Geometry::localBoundsComputationCount() const noexcept
 {
     return local_bounds_computations_;
+}
+
+std::optional<Geometry::TriangleIndexKey> Geometry::triangleIndexKey(std::size_t draw) const
+{
+    const Primitive* primitive = this->primitive(draw);
+    if (primitive == nullptr || !isTriangleTopology(primitive->topology)) {
+        return std::nullopt;
+    }
+    const AttributeChannel* positions = buffer(attributeLocation(VertexAttribute::Position));
+    if (positions == nullptr || positions->values == nullptr || positions->components < 3u) {
+        return std::nullopt;
+    }
+    TriangleIndexKey key;
+    key.positions          = positions->values.get();
+    key.positions_revision = positions->values->revision();
+    key.first_vertex       = positions->offset / positions->components;
+    key.vertex_count       = positions->vertexCount();
+    if (primitive->indices.values != nullptr) {
+        key.indices          = primitive->indices.values.get();
+        key.indices_revision = primitive->indices.values->revision();
+        key.first_index      = primitive->indices.begin();
+        key.index_count      = primitive->indices.size();
+    }
+    key.topology          = primitive->topology;
+    key.geometry_revision = revision_;
+    return key;
+}
+
+bool Geometry::prepareBvh(std::size_t draw)
+{
+    const std::optional<TriangleIndexKey> key = triangleIndexKey(draw);
+    if (draw >= triangle_trees_.size() || !key.has_value()) {
+        // Not a stream a tree can index: keep the answer "no tree" and drop anything a previous stream left behind.
+        if (draw < triangle_trees_.size()) {
+            triangle_trees_[draw] = TriangleTreeSlot{};
+        }
+        return false;
+    }
+
+    TriangleTreeSlot& slot = triangle_trees_[draw];
+    if (slot.tree != nullptr && slot.key == *key) {
+        return true; // already the tree of exactly these bytes
+    }
+
+    // The same key is the SAME stream: two draws over one index run share one immutable tree instead of building two
+    // identical ones (C10). One reference count; no node is copied.
+    for (std::size_t other = 0; other < triangle_trees_.size(); ++other) {
+        if (other != draw && triangle_trees_[other].tree != nullptr && triangle_trees_[other].key == *key) {
+            slot.key  = *key;
+            slot.tree = triangle_trees_[other].tree;
+            return true;
+        }
+    }
+
+    DrawTriangleStream    view(*this, draw);
+    const TriangleStream& stream = view.stream();
+    if (!view.valid() || stream.triangleCount() == 0u) {
+        slot = TriangleTreeSlot{};
+        return false;
+    }
+
+    // Built into a local object and published only when complete: a reader never sees a half-built tree, and a
+    // rebuild allocates a new one instead of writing into a tree someone else still holds (C1). The numbering and the
+    // box rule are the geometry side's own (vn::geom::spatial::TriangleSource), so a draw's tree and a mesh's tree name
+    // their triangles the same way and a mesh tree can be adopted below without a second conversion.
+    auto tree = std::make_shared<Bvh>();
+    if (!vn::geom::spatial::buildTriangleBvh(*tree, stream)) {
+        slot = TriangleTreeSlot{};
+        return false; // a corner that names no stored vertex, or a position that is not finite: no tree, not a throw
+    }
+    slot.key  = *key;
+    slot.tree = std::move(tree);
+    return true;
+}
+
+const Geometry::Bvh* Geometry::bvh(std::size_t draw) const
+{
+    if (draw >= triangle_trees_.size() || triangle_trees_[draw].tree == nullptr) {
+        return nullptr;
+    }
+    const std::optional<TriangleIndexKey> key = triangleIndexKey(draw);
+    if (!key.has_value() || !(triangle_trees_[draw].key == *key)) {
+        return nullptr; // the stream moved: the cached tree describes bytes that are no longer drawn (C4)
+    }
+    return triangle_trees_[draw].tree.get();
+}
+
+bool Geometry::hasBvh(std::size_t draw) const
+{
+    return bvh(draw) != nullptr;
+}
+
+bool Geometry::adoptBvh(std::size_t draw, std::shared_ptr<const Bvh> tree)
+{
+    if (tree == nullptr || !tree->isBuilt() || draw >= triangle_trees_.size()) {
+        return false;
+    }
+    const std::optional<TriangleIndexKey> key = triangleIndexKey(draw);
+    if (!key.has_value()) {
+        return false;
+    }
+    // One primitive per triangle, ids in triangle order, is what makes a primitive id equal the triangle ordinal.
+    // The count is the cheap proof that the tree was built over this draw's stream and not another one.
+    DrawTriangleStream view(*this, draw);
+    if (!view.valid() || tree->primCount() != view.stream().triangleCount()) {
+        return false;
+    }
+    triangle_trees_[draw].key  = *key;
+    triangle_trees_[draw].tree = std::move(tree);
+    return true;
+}
+
+void Geometry::clearBvh()
+{
+    for (TriangleTreeSlot& slot : triangle_trees_) {
+        slot = TriangleTreeSlot{};
+    }
+}
+
+std::uint64_t Geometry::triangleTestCount() const noexcept
+{
+    return triangle_tests_;
 }
 
 intrusive_ptr<Buffer<float>> packAttribute(std::span<const vn::math::Vec3f> vertices)

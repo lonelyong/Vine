@@ -49,6 +49,18 @@
     树用 `double` 而顶点是 `float`：树不是几何数据，是查询用的导引结构（`G13`），而查询射线在所有消费者里都是
     `Rayd`；把射线窄化成 float 做盒测试会在远离原点处丢掉小叶子盒所需的精度，反过来把 float 顶点加宽进盒是精确的。
     满足 `G1` / `G13` / `G4`，并以每个网格多一个空 `Bvh` 的存储支付 `G10` 成本。
+    绘制帧是同一条规则的另一份实例：每个 draw 按需派生一棵带钥匙的树（F33），网格源几何在
+    `geometryFromMesh()` 处直接共享网格那棵。
+
+2.10 **一条三角形流，一棵树，两帧**：树的归属单位不是几何也不是网格，而是**一条三角形流**。
+    - 网格帧：一条流是整张网格（序号跨 `toTriangleMesh()` 稳定）；绘制帧：一条流是一个 `Primitive` 的索引段 +
+      几何的位置段 + 拓扑（序号是“这次 draw 的第 n 个三角形”，含 strip / fan）。
+    - 两帧相同的是全部实现（`Bvh<double>`、`BvhBuilder`、`forEachRay` / `forEachOverlap`、钥匙纪律），不同的只有
+      所有者与序号含义——因为它们真的是两条流。
+    - 序号只有一个来源：`graphics` 内部的 `TriangleStream`（`triangleCount()` / `triangleCorners()`），线性扫、建树
+      与精确交都问它，树里的 primitive id 与拾取报出的 `triangleIndex` 因此不可能错位。
+    - 没有树时拾取就是线性扫，所以“有树”是纯增益：结果逐条相同，代价不同。准备时机归消费者（阈值由界面定）。
+    - 满足 `G1`（一个概念一处定义）、`G5`（改动留在自己那一帧）、`G13`（树只描述流，不持有身份）。
 
 ## 3. 功能点
 
@@ -112,7 +124,8 @@
 | F29 | 四边形网格 | `QuadMesh` 按固定对角线显式转换为 `TriangleMesh`。 | 已落地 |
 | F30 | 混合多边形网格 | `MixedMesh` 以 offsets 分面，索引与 offsets 一起整体给出，并通过显式转换生成 `TriangleMesh`。 | 已落地 |
 | F31 | 点云 | `PointCloud`：`setPositions()` 整体替换点集，`normals()` / `colors()` 可选，`computeAabb()` 缓存盒；约束 C8、R7，验收 T10。 | 已落地 |
-| F32 | 三角形树缓存 | `Mesh` 缓存 `Bvh<double>`：`buildBvh()` 每个三角形一个 primitive（id 即三角形序号），`bvh()` 供射线查询；任何改变三角形或面拓扑的 setter 丢树。 | 已落地 |
+| F32 | 三角形树缓存 | `Mesh` 缓存 `Bvh<double>`：`buildBvh()` 每个三角形一个 primitive（id 即三角形序号，规则在 `vn::geom::spatial::buildTriangleBvh()`），`bvh()` 供射线查询；任何改变三角形或面拓扑的 setter 丢树；`setBvh()` 只接收已建且覆盖本网格三角形数的树。 | 已落地 |
+| F33 | 绘制帧的三角形树 | 每个 draw 一棵按需派生、按流钥匙失效的 `Bvh<double>`：`prepareBvh()` 建或共享，`bvh()` 只读查询（`hasBvh()` 是它的布尔形式），`adoptBvh()` 接收已有树，`clearBvh()` 全部丢弃；拾取有树走树、无树退回线性扫描。 | 已落地 |
 
 #### 3.6.1 F28 统一三角网格
 
@@ -148,17 +161,40 @@
 
 - **行为**：`buildBvh(builder)` 为每个三角形加一个 primitive，primitive 的盒是三个角点在 `double` 下的包围盒；建成后
   `bvh().forEachRay(ray, visit)` 给出候选三角形序号，`bvh().forEachOverlap(box, visit)` 给出候选盒相交的三角形。
-  `setBvh()` 接收调用方自己配好构建器建出的树。`hasBvh()` 报告树是否已建。
+  登记与编号不是 `Mesh` 自己写的循环，而是 `vn::geom::spatial::buildTriangleBvh()`（`geometry-bvh.md` 2.14 / F9）：
+  同一份规则也建绘制帧的树。
+  `setBvh()` 接收调用方自己配好构建器建出的树，并校验它已建且覆盖本网格的三角形数（不覆盖则拒绝，与
+  `Geometry::adoptBvh()` 同一条准入规则）。`hasBvh()` 报告树是否已建。
   树建成即以共享指针发布（`sharedBvh()`）且此后不再修改：重建**发布新对象**，旧持有者继续读到一棵仍然有效的树，
-  所以另一帧可以零成本共享同一棵（见 §2.9 与 `../research/2026-11-07-geometry-triangle-bvh-unified.md`）。
+  所以另一帧可以零成本共享同一棵（见 §2.10 与 F33）。
 - **约束**（C9）：primitive id == `triangleCount()` 的三角形序号；`triangleCount()` / `triangleCorners()` 与
   `toTriangleMesh()` 同序；非法网格不建树。
 - **要求**（R8）：只有改变三角形或面拓扑的 setter 丢树（`setPositions()` / `setIndices()` /
   `MixedMesh::setFaceOffsets()`）；法线、贴图坐标与颜色不丢。
-- **验收**（T11）：`tests/test_geom_spatial/MeshBvhTest.cpp` 六项：三角形序号、与转换同序、建树与射线剪枝、
-  失效规则、非法网格不建、接收外来树。
+- **验收**（T11）：`tests/test_geom_spatial/MeshBvhTest.cpp` 七项：三角形序号、与转换同序、建树与射线剪枝、
+  失效规则、非法网格不建、接收外来树、外来/未建的树被 `setBvh()` 拒绝。
 - **注意**（N15）：候选是超集——叶子盒是三点的包围盒，精确交仍由调用方用 `intersectTriangle()` 做（同 N10
   的三角扇限制）。
+
+#### 3.6.5 F33 绘制帧的三角形树
+
+- **行为**：一个 draw 的三角形流（位置段 + 索引切片 + 拓扑）可以按需派生出自己的树：`prepareBvh(draw)` 建树或
+  接住同钥匙的另一棵，`bvh(draw)` 只读地返回当前钥匙下的树（没有就是 `nullptr`，`hasBvh(draw)` 是它的布尔形式），
+  `adoptBvh(draw, tree)` 接收一棵
+  已经建好的树（`geometryFromMesh()` 采纳网格那棵），`clearBvh()` 丢弃全部槽。拾取按 draw 取树：有树时用
+  `forEachRay` 拿候选再精确交，无树时走原来的线性循环——两条路径共用同一个三角形序号实现。
+- **行为**：建树走 `vn::geom::spatial::buildTriangleBvh()`——`TriangleStream` 满足 `TriangleSource`（`TriangleStream.hpp`
+  里有一个 `static_assert` 钉住），所以 draw 的树与网格的树取同一份“primitive id == 三角形序号”规则，
+  网格那棵可以被 draw 直接采纳而不需要任何换算（`geometry-bvh.md` F9）。
+- **约束**（C10）：槽与 `primitives_` 同序同长；钥匙 = 位置 buffer + 其 revision + 段 + 索引 buffer + 其 revision +
+  切片 + 拓扑 + 几何 revision，不符即“没有树”（重建，而不是错答案）。
+- **约束**（C11）：只有三角形拓扑的 draw 能有树；线/点 draw 的 `prepareBvh()` 返回 false 且不占树。
+- **要求**（R9）：同一把钥匙的第二个 draw 共享同一棵不可变树，不重建；采纳只发生在 `geometryFromMesh()`。
+- **验收**（T12）：`GeometryTest.AHandBuiltDrawPreparesItsOwnTree` / `MovingTheStreamDropsThePreparedTree` /
+  `TwoDrawsOverOneIndexStreamShareOneTree` / `MeshSourceGeometryAdoptsTheMeshesTree` /
+  `ATriangulatedQuadMeshAdoptsNothing`，`RayIntersectionTest.APreparedTreeChangesTheCostAndNotTheAnswer` /
+  `APreparedTreeStillReportsEveryHit`。
+- **注意**（N17）：树的有无不改变语义，只改变代价；见证是 `triangleTestCount()`。
 
 ## 4. 公开接口
 
@@ -172,6 +208,8 @@
 | `material()` / `setMaterial()` / `program()` / `setProgram()` | 几何级默认 |
 | `revision()` / `setRevision()` / `bumpRevision()` | 形状公告 |
 | `vertexCount()` / `localBounds()` / `boundingBox()` / `subtreeBounds()` | 数据与盒 |
+| `prepareBvh()` / `bvh()` / `hasBvh()` / `adoptBvh()` / `clearBvh()` / `triangleTestCount()` | 逐 draw 的三角形树缓存与它的只读见证（F33） |
+| `triangleCount(draw)` | 一条 draw 的三角形数；只是数，不建也不缓存，供消费者的阈值策略用 |
 | `setInstanceTransforms()` / `setVisibleInstanceCount()` / `clear*()` | 默认 primitive 0 的实例便捷 |
 | `geometryFromShape()` / `packAttribute()` / `packIndices()` | 桥与打包 |
 
@@ -203,6 +241,7 @@
 | `Mesh::positions()` / `normals()` / `texcoords()` / `positionsBuffer()` 等 | float 视图与存储句柄；数组别名在 `Array.hpp` |
 | `Mesh::triangleCount()` / `triangleCorners()` | 三角形身份：个数与三个顶点索引；具体网格各自实现（2.8） |
 | `Mesh::bvh()` / `hasBvh()` / `setBvh()` / `buildBvh()` / `clearBvh()` | 三角形树缓存：建、接收、查、丢（F32） |
+| `Mesh::restoreBvh()` | 从存下来的形状（`BvhTopology`：节点 + 顺序 + 高度）恢复树，盒子按当前顶点重算；`.vbtp` 缓存走这条路 |
 | `Mesh::sharedBvh()` | 把已发布的不可变树交给另一帧共享（不复制） |
 | `TriangleMesh::isValid()` | 顺序或索引三角网格的完整性 |
 | `QuadMesh::quadCount()` / `toTriangleMesh()` | 四边形面与显式三角网格转换 |
@@ -235,6 +274,7 @@
 | C7 | Mixed offsets 从 0 开始、单调不减、末项等于 corner 数，且每面至少 3 个 corner。 |
 | C8 | 点云通道布局：位置与法线每点 3 个 float、颜色每点 4 个 float，均存在 `Buffer<float>` 里。 |
 | C9 | 三角形树只描述已存三角形：primitive id == 三角形序号，任何改变三角形或面拓扑的 setter 都丢树；未构建的树不回答候选。 |
+| C10 | 绘制帧的树按 draw 缓存且按钥匙失效：位置/索引 buffer、它们的 revision、段、切片、拓扑、几何 revision 任一项不符 = 没有树。 |
 
 ### 5.2 要求（R#）
 
@@ -248,6 +288,7 @@
 | R6 | 模型查看器统计与导出复用显式转换；offsets 不合法时转换不得访问其面数据。 |
 | R7 | 点云的法线/颜色通道只在长度等于 `pointCount()` 时被消费，否则丢弃而不重新索引（与 N11 同一规则）。 |
 | R8 | 需要批量射线时先用 `Mesh::buildBvh()` 建一次树再查，不在拾取循环里线性扫三角形。 |
+| R9 | 绘制帧的树在交互开始前显式 `prepareBvh()`；同一个索引段的多条 draw 共享一棵树；`geometryFromMesh()` 采纳网格的树，三角化出来的 Quad/Mixed 不采纳。第一个消费者是模型查看器：建场景时对 ≥512 三角形的 draw 调一次（阈值是它的策略，`kPickTreeTriangleCount`）。 |
 
 ### 5.3 不变量（N#）
 
@@ -269,6 +310,7 @@
 | N14 | `PointCloud::isValid()` 只问“有没有点”，`hasVolume()` 恒为 false；`geometryFromShape()` 还不接点云，不要用没有索引的 `Mesh` 冒充它。 |
 | N15 | `Mesh::bvh()` 是缓存：`setPositions()` / `setIndices()` / `MixedMesh::setFaceOffsets()` 清空它，法线/UV/颜色不清；未构建的树返回空候选，不退化成全扫。 |
 | N16 | 已发布的树不可变：`buildBvh()` 重建时发布新对象，`clearBvh()` 只停止发布、不动已发出的对象，所以持有 `sharedBvh()` 的一方永远读不到半成品。 |
+| N17 | `Geometry::bvh(draw)` 只回答“钥匙仍然成立”的树；数据动过而没重新 `prepareBvh()` 时返回 `nullptr`（拾取退回线性扫描），不会给旧树。 |
 
 ## 6. 注意事项与陷阱
 
@@ -288,6 +330,12 @@
 - 会怎么错：把候选当成最终命中。
   怎么判：选中了实际上没相交的三角形。
   怎么防：候选只用于跳过，判定仍用 `intersectTriangle()`（N15）。
+- 会怎么错：给 `Mode::AllHits` 的查询也用最近命中剪枝。
+  怎么判：同一个几何建树后 `intersectSceneAll(..., AllHits)` 的结果比不建树时少；最近命中查询却仍然正确。
+  怎么防：剪枝只属于“只要最近”的走法；要全部命中的走法把距离上限保持为无穷（F33）。
+- 会怎么错：几何的流换了（换 buffer、原地改字节并 `setRevision()`、`bumpRevision()`）却没重新 `prepareBvh()`。
+  怎么判：`bvh(draw)` 返回 `nullptr`，`triangleTestCount()` 回到三角形数量级。
+  怎么防：把 `prepareBvh()` 放在数据编辑之后、交互之前；钥匙不符只丢树，不影响答案（C10）。
 ## 7. 已否决选项
 
 | # | 否决 | 理由 |
@@ -301,6 +349,9 @@
 | D7 | 只在 `TriangleMesh` 上建树 | `QuadMesh` / `MixedMesh` 是独立的消费者（模型查看器、meshio），只能先 `toTriangleMesh()` 复制一份才能查询（`G1`、`G10`）；三角形身份因此上移到 `Mesh`（2.8）。 |
 | D8 | 树用 `float` 与顶点同精度 | 查询射线在所有消费者里都是 `Rayd`，窄化成 float 做盒测试会在远离原点处丢掉小叶子盒所需的精度而漏命中（`G4`、`G10`）；把 float 顶点加宽进盒是精确的，所以只有树是 double。 |
 | D9 | 每个三角形物化成数值类型再建树 | 建树本来就要扫一遍，物化只会多一份需与网格同步失效的副本；`triangleCorners()` 按规则现算即可（`G10`、`G13`）。 |
+| D10 | 给 `Geometry` 加 `Role` / `GeometryRole` 枚举声明“这个 draw 是表面” | 那个概念已经叫 `Topology`（`isTriangleTopology()` 是唯一判据，`G1`）；声明与派生的不一致不可观察，而 `prepareBvh()` 的返回值与 `bvh()` 的 `nullptr` 不会说谎（`G11`）；用途还会在运行时变化（选择模式打开后才需要树）。 |
+| D11 | `Geometry` 反向持有 `Shape`，拾取时借网格的树 | 需要四条“编号同构”条件在每次拾取时反复判定，且手搭几何永远没有树；改成几何为自己每条流按需派生（F33）。 |
+| D12 | 把网格的树复制进几何 / 让树可变、几何持有网格的引用 | 同一批三角形两棵同样大的树（`G10`）；可变树会让重建改动另一个持有者正在读的对象。改成共享不可变对象、重建发布新对象（N16）。 |
 
 ## 8. 测试与验收
 
@@ -317,6 +368,7 @@
 | T9 | 盒缓存与 revision 契约；`MeshShapeTest.TheCachedBoxFollowsTheVertices`、`MeshShapeTest.TheRevisionIsReportedByTheHolderNotByASetter`、`PkgIOTest.EditedMeshIsRefusedWhenThePackageIsFinallyWritten`。 |
 | T10 | 点云：空云不可用、三标量打包与 buffer 同一性、通道独立、位置变化清空盒缓存；`PointCloudTest`。 |
 | T11 | 三角形序号与 `toTriangleMesh()` 同序、一三角形一 primitive、射线拾取剪枝、失效规则、非法网格不建、接收外来树；`MeshBvhTest.cpp`（在 `tests/test_geom_spatial`）。 |
+| T12 | 绘制帧的树：手搭几何可建树并用于拾取、有树/无树命中与 `triangleIndex` 相同、三角形测试数下降、同钥匙共享、网格源几何采纳、Quad 三角化不采纳；`tests/test_graphics/GraphicsTest.cpp` 的 `GeometryTest.*Tree*` / `RayIntersectionTest.APreparedTree*`。模型查看器建场景时备好大 draw 的树：`ModelViewerTest.ALargeMeshGetsItsPickTreePreparedWhenTheSceneIsBuilt`。 |
 
 ## 9. 状态与演进
 

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include <vine/geom/spatial/Bvh.hpp>
+#include <vine/geom/spatial/BvhTopology.hpp>
 #include <vine/geom/spatial/Ray.hpp>
 #include <vine/geom/spatial/RayHit.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -278,7 +280,7 @@ TEST(MeshBvhTest, AnAdoptedTreeIsUsedAsIs)
     vn::geom::spatial::BvhBuilder{}.leafSize(1u).build(adopted);
     ASSERT_TRUE(adopted.isBuilt());
 
-    mesh->setBvh(std::move(adopted));
+    EXPECT_TRUE(mesh->setBvh(std::move(adopted)));
     EXPECT_TRUE(mesh->hasBvh()) << "a caller that configures its own builder adopts the result";
 
     const Pick pick = pickClosest(*mesh, vn::geom::spatial::Rayd(Point3d(0.2, 0.2, 4.0),
@@ -288,6 +290,35 @@ TEST(MeshBvhTest, AnAdoptedTreeIsUsedAsIs)
 
     mesh->clearBvh();
     EXPECT_FALSE(mesh->hasBvh()) << "clearing drops the tree";
+}
+
+TEST(MeshBvhTest, AnAdoptedTreeThatCoversAnotherTriangleCountIsRefused)
+{
+    // The mesh frame's half of the admission rule a draw applies in Geometry::adoptBvh(): a tree over another triangle
+    // set would report hits on triangles this mesh does not have, so it is refused rather than cached.
+    auto mesh = gridMesh(4u);
+    ASSERT_GT(mesh->triangleCount(), 1u);
+
+    const auto one_triangle_tree = [] {
+        Mesh::Bvh tree;
+        tree.add(vn::geom::spatial::Aabbd::compute(std::array<vn::math::Vector3<double>, 3>{
+            vn::math::Vector3<double>(0.0, 0.0, 0.0), vn::math::Vector3<double>(1.0, 0.0, 0.0),
+            vn::math::Vector3<double>(0.0, 1.0, 0.0) }));
+        vn::geom::spatial::BvhBuilder{}.leafSize(1u).build(tree);
+        return tree;
+    };
+
+    Mesh::Bvh foreign = one_triangle_tree();
+    ASSERT_TRUE(foreign.isBuilt());
+    EXPECT_FALSE(mesh->setBvh(std::move(foreign)));
+    EXPECT_FALSE(mesh->hasBvh()) << "a refused tree does not enter the cache";
+
+    Mesh::Bvh unbuilt;
+    unbuilt.add(vn::geom::spatial::Aabbd::compute(std::array<vn::math::Vector3<double>, 3>{
+        vn::math::Vector3<double>(0.0, 0.0, 0.0), vn::math::Vector3<double>(1.0, 0.0, 0.0),
+        vn::math::Vector3<double>(0.0, 1.0, 0.0) }));
+    EXPECT_FALSE(mesh->setBvh(std::move(unbuilt))) << "an unbuilt tree answers nothing, so caching it would lie";
+    EXPECT_FALSE(mesh->hasBvh());
 }
 
 TEST(MeshBvhTest, ARebuildPublishesANewObjectAndLeavesTheOldOneAlive)
@@ -309,4 +340,52 @@ TEST(MeshBvhTest, ARebuildPublishesANewObjectAndLeavesTheOldOneAlive)
     EXPECT_FALSE(mesh->hasBvh());
     EXPECT_EQ(mesh->sharedBvh(), nullptr);
     EXPECT_TRUE(first->isBuilt()) << "dropping the cache stops publishing the object; it does not touch it";
+}
+
+TEST(MeshBvhTest, ARestoredTreeAnswersLikeARebuiltOne)
+{
+    // The persistence path: a tree is stored as its shape (nodes, primitive order, height), and the boxes are recomputed
+    // from the current positions. The restored tree must answer every query the rebuilt one answers.
+    auto reference = gridMesh(6u);
+    ASSERT_TRUE(reference->buildBvh());
+    const vn::geom::spatial::BvhTopology shape = reference->bvh().topology();
+    ASSERT_FALSE(shape.nodes.empty());
+
+    auto restored = gridMesh(6u);
+    ASSERT_TRUE(restored->restoreBvh(shape));
+    EXPECT_TRUE(restored->hasBvh());
+    EXPECT_TRUE(restored->bvh().validate());
+    EXPECT_EQ(restored->bvh().primCount(), restored->triangleCount());
+    EXPECT_EQ(restored->bvh().topology(), shape) << "same nodes, same order, same height";
+
+    // Same leaf grouping, same candidates, same closest hit.
+    const vn::geom::spatial::Rayd ray(Point3d(2.25, 3.4, 5.0), vn::math::Vec3d(0.0, 0.0, -1.0));
+    const Pick                    rebuilt   = pickClosest(*reference, ray);
+    const Pick                    from_disk = pickClosest(*restored, ray);
+    EXPECT_EQ(from_disk.triangle, rebuilt.triangle);
+    EXPECT_DOUBLE_EQ(from_disk.distance, rebuilt.distance);
+    EXPECT_EQ(from_disk.visits, rebuilt.visits) << "identical topology, identical traversal";
+}
+
+TEST(MeshBvhTest, ATopologyThatDoesNotDescribeTheMeshIsRefused)
+{
+    auto mesh = gridMesh(4u);
+    ASSERT_TRUE(mesh->buildBvh());
+    const vn::geom::spatial::BvhTopology shape = mesh->bvh().topology();
+
+    // A different triangle count: the order cannot cover this mesh, so the shape describes another one.
+    auto shorter = gridMesh(3u);
+    EXPECT_FALSE(shorter->restoreBvh(shape));
+    EXPECT_FALSE(shorter->hasBvh()) << "a refused restore leaves no tree behind";
+
+    // An order that repeats an id is not a permutation.
+    auto repeated       = shape;
+    repeated.order[1]   = repeated.order[0];
+    auto other          = gridMesh(4u);
+    EXPECT_FALSE(other->restoreBvh(repeated));
+    EXPECT_FALSE(other->hasBvh());
+
+    // An empty mesh has no triangles to number.
+    auto empty = gridMesh(0u);
+    EXPECT_FALSE(empty->restoreBvh(shape));
 }

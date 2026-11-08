@@ -58,6 +58,8 @@
 - 包中包：场景包里的 `.vdevpkg` 条目读出字节，再开成嵌套 `ZipArchive` 解析。
 - mesh 存储：`geoms/*.bin`（positions/normals/indices）+ XML `indexed_triangle_mesh` 引用；
   共享 mesh 只写一次（`mesh_paths` 去重）。
+- 三角形树缓存：与 mesh 文件同名的 `.vbtp`（`geoms/mesh3.vmesh` → `geoms/mesh3.vbtp`），只存拓扑与图元顺序，
+  盒子按当前顶点重算；缺失/陈旧/损坏一律当“没有缓存”，XML 与清单一个字都不提它。
 
 ### 2.4 数据映射
 
@@ -84,6 +86,7 @@
 | F4 | VFS/打包 | `loadPkg/savePkg`，`.vdevpkg`/`.vwspkg`，包中包 | 已落地 |
 | F5 | mesh 存储 | 原生 bin + XML 引用；共享去重 | 已落地 |
 | F6 | BRep/STEP | `<brep>` 预留，本期不实现 | 未做 |
+| F7 | 三角形树缓存 | `.vbtp` 随包读写：导出时有树就写，加载时透明恢复；坏文件当没有 | 已落地 |
 
 ### 3.1.1 F1 设备 XML
 
@@ -135,6 +138,32 @@
 - **验收**（T6）：无（未实现）。
 - **注意**（N6）：BRep 依赖 OCCT，属于后续阶段。
 
+### 3.1.7 F7 三角形树缓存
+
+- **行为**：`writeMeshFile()` 在写 mesh 文件之后，若 `mesh->hasBvh()` 就把 `Bvh::topology()`（一个值：节点 +
+  图元顺序 + 高度）写成同名的 `.vbtp`；`parseGeometry()` 在读出 mesh 后读同名的 `.vbtp` 并调
+  `Mesh::restoreBvh(topology.view())`。
+- **分层**：实现分成两层，只因为它们是两个不同的契约：
+  - `BvhCacheFormat.hpp`：**字节**。头结构、`encodeBvhCache(BvhTopologyView, bytes)`、
+    `decodeBvhCache(bytes, BvhTopology&)`、`bvhCacheByteCount()`。不认识 `Vfs`，也不认识 `Mesh`——它只关于一个
+    形状怎么变成字节。
+  - `BvhCache.hpp`：**策略**。`bvhCachePath()` 命名规则、`writeBvhCache` / `readBvhCache` / `restoreBvhCache`
+    三个 VFS 操作。
+  - 两层之间只传一个值：`vn::geom::spatial::BvhTopology`（拥有）与它的借用形 `BvhTopologyView`（`geometry-bvh.md`
+    2.15），所以编码、解码、恢复之间没有一次额外的数组拷贝。
+- **格式**：24 字节头（魔法 `VBTP`、`u16` 版本、`u16` flags、`u32` 三角形数、`u32` 节点数、`u32` 深度、`u32` 保留）+
+  每节点 `{u32 offset, u32 count}` + 每三角形一个 `u32` 顺序，全部小端。
+- **约束**（C7）：文件的每一项都校验：magic/版本/flags、字节数 = 头 + 节点 + 顺序、三角形数 = 网格的三角形数、
+  节点数 ≤ `2 × 三角形数`、高度 ≤ `kBvhMaxDepth`；`RestoreTopology` 再校排列与叶区间。任一项不符都当“没有缓存”，
+  不报错、不影响网格加载。
+- **要求**（R7）：缓存可随时删除，删除只损失一次建树；不写缓存的包与写缓存的包双向都能读。
+- **验收**（T7）：`PkgIOTest.APreparedTriangleTreeTravelsWithThePackage`、`PkgIOTest.AMeshWithNoPreparedTreeWritesNoCache`、
+  `DeviceIOTest.ADamagedTreeCacheIsIgnoredAndAValidOneIsRestored`。
+- **注意**（N7）：只存拓扑不存盒子（见 `geometry-bvh.md` 2.13）；导出时**不**为了写缓存而建树——那需要改动
+  `const` 的导出路径，目前留给调用方在导出前自己 `buildBvh()`。
+- **注意**（N8）：格式与缓存策略分文件不是为了多一个头文件，而是为了“字节布局”能单独只靠一个 `BvhTopology` 测、
+  也只靠它演进（`G5`：改布局不碰 VFS 与模型层；`G2`：格式不向 `robotics/io` 之外倒依赖）。
+
 ## 4. 公开接口
 
 ### 4.1 `DeviceIO`
@@ -175,6 +204,7 @@
 | C4 | 不落临时目录；包用 zip 惰性读/无源树 saveAs。 |
 | C5 | mesh bin 是原生二进制；计数与 bin 一致。 |
 | C6 | `<brep>` 未实现时明确报不支持。 |
+| C7 | `.vbtp` 的每一项都校验；任何不符都退化为“没有缓存”，不影响网格加载。 |
 
 ### 5.2 要求（R#）
 
@@ -186,6 +216,7 @@
 | R4 | 包中包按扩展名分发；共享 mesh 只写一次。 |
 | R5 | 共享 mesh 去重；设备实例复用不重复写定义。 |
 | R6 | 将来接 BRep 保持 XML 兼容。 |
+| R7 | 树缓存可随时删除；写缓存与不写缓存的包双向可读，网格文件本身不因缓存改变。 |
 
 ### 5.3 不变量（N#）
 
@@ -226,6 +257,8 @@
 | D4 | 落临时目录再打包 | 慢、脏、并发问题；内存/VFS 直接打包。 | — |
 | D5 | 就地材质（`exportMaterial`） | 材质应进命名库，visual 按名引用。 | — |
 | D6 | base64 内嵌 mesh | 包内 bin 更小、可流式、可去重。 | — |
+| D7 | 把三角形树缓存塞进 `MeshBin` 的 flags | 未知 flags 位会被旧读者拒绝整份文件，`byteCount()` 也要跟着变——一个可丢的缓存不该有这种权力；改成网格文件旁的独立 `.vbtp`（F7）。 | — |
+| D8 | 导出时为写缓存而建树 | 导出路径拿的是 `const Shape&`，建树是写操作；默认只写“已经有的树”，需要树的调用方在导出前自己 `buildBvh()`。 | — |
 
 ## 8. 测试与验收
 
@@ -237,6 +270,7 @@
 | T4 | 包/包中包/mesh | `PkgIOTest`（8 例） |
 | T5 | 共享 mesh 去重 | 同上 |
 | T6 | BRep 未实现 | 报不支持 |
+| T7 | 三角形树缓存：带缓存的包往返后网格带树；无树不写缓存；截断/异形/三角形数不符/顺序非排列都被忽略 | `PkgIOTest`、`DeviceIOTest.ADamagedTreeCacheIsIgnoredAndAValidOneIsRestored` |
 
 ## 9. 状态与演进
 

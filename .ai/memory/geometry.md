@@ -171,11 +171,19 @@
   （PCA 拟合角点合并：叶子表面积约为 `Aabb` 树的 2 倍，且角点会落在拟合盒外一个舍入步），别照这个思路重做一遍。
   设计与理由见 `design/geometry-bvh.md`、`decisions/ADR-2026-11-07-bvh-as-structure-plus-builder.md`。
 
+- **三角形树只有一个编号规则**：`spatial/TriangleBvh.hpp` 的 `TriangleSource`（`positions()` + `triangleCount()` +
+  `triangleCorners()`）加 `registerTriangles()` / `buildTriangleBvh()` / `restoreTriangleBvh()`。`Mesh` 与绘制帧的
+  `TriangleStream` 各有一个 `static_assert` 钉住它们满足这个概念——不要在任何一侧再手写一遍“遍历三角形 → 算盒 → add”。
+  规则不抛异常：坏角点或非有限坐标返回 `false`（可以已登记前缀，调用方丢弃那棵树）。
+  形状有两种形态：`BvhTopology`（拥有）与 `BvhTopologyView`（借用，`view()` 或隐式转换），`RestoreTopology` 只持有
+  后者。见 `design/geometry-bvh.md` 2.14 / 2.15 与 F9。
+
 - **网格自带三角形身份与树**：`Mesh::triangleCount()` / `Mesh::triangleCorners(i, corners[3])` 是虚函数，每个具体网格
   按自己 `toTriangleMesh()` 的同一规则实现（三角三项一面 / 四边形沿 1→3 对角 / 多边形三角扇），所以三角形序号跨转换
   稳定——它既是树的 primitive id 也是拾取身份。`Mesh` 缓存 `Bvh<double>`（`buildBvh(builder)` / `bvh()` / `hasBvh()` /
   `setBvh()` / `clearBvh()` / `sharedBvh()`）：一三角形一 primitive，`setPositions` / `setIndices` /
-  `MixedMesh::setFaceOffsets` 丢树，法线/UV/颜色不丢。树故意用 double：查询射线都是 `Rayd`，窄化成 float 会在远离
+  `MixedMesh::setFaceOffsets` 丢树，法线/UV/颜色不丢。`setBvh()` 返回 `bool`：只接已建且 `primCount() == triangleCount()`
+  的树（和 `Geometry::adoptBvh()` 同一条准入规则）。树故意用 double：查询射线都是 `Rayd`，窄化成 float 会在远离
   原点处漏命中。树以 `std::shared_ptr<const Bvh>` 发布且**发布后不可变**（重建换新对象、`clearBvh()` 只停止发布），
   所以另一帧可以共享同一棵而不复制。未构建的树不回答候选，**不**退化成线性扫描。
   见 `design/graphics-geometry.md` 2.9 / F32 与 `decisions/ADR-2026-11-07-mesh-triangle-tree-cache.md`。
