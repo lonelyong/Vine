@@ -146,6 +146,11 @@ void RenderControl::renderFrame()
     dptr()->surface->renderFrame();
 }
 
+void RenderControl::requestFrame()
+{
+    dptr()->surface->requestFrame();
+}
+
 void RenderControl::fitToScreen()
 {
     dptr()->surface->fitToScreen();

@@ -110,6 +110,9 @@
 
 - **行为**：`ViewerOptions` 是构建请求；改一次 = 一次建链。链已经能表达的 `ShadingMode` 只是
   `PassChain::setShadingMode()` 的一次 override；overlay 显隐是 `setGizmoVisible()` / `setStatsVisible()`。
+  换档/开关**只改链上的状态、本身不产生帧**：区是按需出帧的（attach、resize、输入、`requestFrame()`），改状态
+  的一方负责请求一帧 —— 模型的着色命令（`ShadingModeCommand`）改完就 `requestFrame()`（请求，不是同步
+  `renderFrame()`：绘制落在显示同步那一拍，同一拍内合并，未上屏不画）。
 - **约束**（C3）：`PassChain::effectivePath(desc)` 是“请求会建成哪条链”的唯一规则：Deferred 请求带非 Lit 模式时
   建 Forward，但 `desc.path` 保留，切回 Lit 会再建 Deferred。
 - **要求**（R3）：运行期开关零重建；重建必须搬运行期选择（用户隐藏的 overlay 仍隐藏）。

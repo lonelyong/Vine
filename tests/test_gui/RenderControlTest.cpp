@@ -670,6 +670,26 @@ TEST(RenderControlTest, AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScre
     EXPECT_GE(host.stub()->surface_half.presents, 1) << "attach 那一帧就是第一张画面";
 }
 
+// 请求一帧 ≠ 立即出帧：requestFrame() 只把这一帧排进显示同步，调用返回时还没画；同一拍里的多次请求合成一帧。
+// 这是"改完状态不必卡在帧耗时上"的路径（模型的着色命令就是这么用的）。
+TEST(RenderControlTest, ARequestedFrameIsDrawnByTheNextUpdateNotInsideTheCall)
+{
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+
+    // 让布局/attach 剩下的一次性更新落完再取基线：否则它们也会在这段等待里出帧，把"合成一帧"数乱。
+    pumpUntil([] { return false; }, 100);
+    const int before = host.stub()->frames;
+
+    host.control()->requestFrame();
+    host.control()->requestFrame();
+    EXPECT_EQ(host.stub()->frames, before) << "requestFrame() 是请求：帧不该在调用里就画出来";
+
+    ASSERT_TRUE(pumpUntil([&] { return host.stub()->frames > before; }, 3000)) << "事件循环该把这一帧画出来";
+    EXPECT_EQ(host.stub()->frames, before + 1) << "同一拍里的两次请求只画一帧";
+}
+
 // 一帧就是一帧：attach 就在调用它的那一段里出一帧，所以窗口还没 show 时 init() 也让表面就位 —— 判据是
 // “有帧可看”，不是“窗口可见”。
 TEST(RenderControlTest, TheFrameTheAttachRendersPutsTheSurfaceOnScreen)

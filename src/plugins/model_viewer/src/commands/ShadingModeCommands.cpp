@@ -60,6 +60,13 @@ vn::async::Task<vn::appfw::CommandResult> ShadingModeCommand::execute(vn::appfw:
             vn::appfw::translate("model_viewer", "This mode did not take effect: the graphics layer refused the rebuild (see the diagnostics)"));
     }
 
+    // 按需出帧：换档只改链上的状态，不会自己产生一帧 —— 不在这里要一帧，画面要等下一次输入或缩放才变。
+    // 这是**请求**而不是立即画（RenderControl::requestFrame()）：帧由下一次显示同步的那一拍画出，同一拍里的多次
+    // 请求合成一帧，窗口没上屏就不画 —— 命令不必卡在这帧的耗时上。控件文档里的分工也是如此（见
+    // RenderControl::setShadingMode："takes effect on the next frame"）：谁改状态谁要帧。还没 attach 时这一请求
+    // 画不出东西（没有会话），attach 那一帧本来就会画出新档。
+    control->requestFrame();
+
     co_return vn::appfw::CommandResult(vn::appfw::CommandStatus::Success, description());
 }
 

@@ -163,6 +163,10 @@ class VN_APPFW_API RenderControl : public Control {
      * the next frame with no rebuild. When the chain cannot express it, the picture is rebuilt from the current
      * request carrying the requested mode. It is the shortcut to Viewer::setShadingMode.
      *
+     * @note The next frame is the CALLER's: a control renders on demand, so a host that wants the switch on screen
+     *       asks for one with requestFrame() after this call returns true. Before the first attach that request
+     *       draws nothing - the attach's own frame draws the mode.
+     *
      * @param mode The viewing mode to switch to.
      * @return true when the view now shades in @p mode; false when the rebuild failed (the previous pipeline stays
      *         in place). With no chain yet the call builds the chain from its request first, so it is also the way
@@ -225,8 +229,8 @@ class VN_APPFW_API RenderControl : public Control {
     /** @brief Drives frames on a timer instead of on demand.
      *
      * A control (like every appfw surface) renders ON DEMAND: a frame is produced when something changed - an
-     * attach, a resize, an input event, a renderFrame() call. That is what keeps an idle window free, and it is
-     * why the frame-rate readout only moves while the pointer does.
+     * attach, a resize, an input event, a requestFrame() / renderFrame() call. That is what keeps an idle window
+     * free, and it is why the frame-rate readout only moves while the pointer does.
      *
      * Continuous rendering is the other mode, for the hosts that need it: an animation, a simulation, a live
      * camera feed, or simply a frame-rate readout that is worth reading. The control then renders one frame per
@@ -249,8 +253,21 @@ class VN_APPFW_API RenderControl : public Control {
      */
     void setContinuousRendering(bool on, int interval_ms = 16);
 
-    /** @brief Renders one frame through the engine. */
+    /** @brief Renders one frame through the engine, inside this call. */
     void renderFrame();
+
+    /** @brief Requests one frame: it is drawn on the next display-sync update, not inside this call.
+     *
+     * @details
+     * - The coalesced spelling of renderFrame(): requests made before that update arrives produce one frame, and a
+     *   surface that is not on screen draws none until it is (a hidden dock tab costs nothing).
+     * - This is what a caller uses after changing something the picture shows - a shading mode, an overlay, content
+     *   that arrived late: the change is already recorded, and there is nothing to wait for inside the call.
+     *
+     * @note Before the first attach the request draws nothing (there is no session); the attach's own frame is the
+     *       first picture.
+     */
+    void requestFrame();
 
     /** @brief Fits the whole scene into the view (falls back to the home
      * view when the scene is empty) and renders a frame. */

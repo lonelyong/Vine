@@ -138,7 +138,8 @@ attach 不要求表面可见；只有 present 才要求窗口在屏上。平台�
 | `state()` | `Pending` / `Presenting` / `Failed` | 见 F2 |
 | `failureReason()` | 非空 ⟺ `Failed` | attach 成功后清掉 |
 | `engine()` / `view()` / `viewer()` / `surface()` | 借用，控件拥有 | `view()` 在 `release` 后为 null |
-| `renderFrame()` / `fitToScreen()` | 按需出帧 / 对准内容 | attach 前不推 `Presenting` |
+| `renderFrame()` / `fitToScreen()` | 同步出一帧 / 对准内容 | attach 前不推 `Presenting` |
+| `requestFrame()` | 请求一帧：显示同步那一拍画，合并，未上屏不画 | 改完状态后的默认拼法 |
 | `setContinuousRendering(on, interval_ms)` | 连续出帧 | 默认按需 |
 
 ## 5. 约束、要求与不变量

@@ -15,6 +15,7 @@
 
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/ImageRef.hpp>
+#include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/PassChain.hpp>
@@ -194,6 +195,64 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
     // 反过来也判：实体版的轮廓**大部分都有边走过**，否则"边"可能只是几条不相干的线段。
     EXPECT_GT(silhouette, 0U);
     EXPECT_GT(traced * 2U, silhouette) << "实体版轮廓的一半以上必须有边走过";
+}
+
+// 换档之后**每一帧**都得有画面：切换着色模式只改 pass 上的程序覆盖，内容半边按（程序、版本、布局、变体、拓扑）
+// 编译一次。某一次换档如果让这一帧的半边找不到，整条 pass 会被拒绝（连清屏一起丢）——画面停在旧帧上，拖鼠标期间
+// 每一帧都一样，读起来就是"切到这一档什么都没画"。
+TEST(SdkPixelTest, EveryShadingModeKeepsDrawingAfterTheSwitch)
+{
+    VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
+
+    vn::intrusive_ptr<SceneView> view(new SceneView());
+    view->setEngine(fixture.engine.get());
+    view->setScene(fixture.scene);
+    view->resize(SdkPixelFixture::kSide, SdkPixelFixture::kSide, 1.0);
+    // The model viewer's scene has lights and its requested chain carries the frame-rate readout (a CONTENT
+    // pass of its own): both are part of the picture the app draws, so the probe asks for the same chain.
+    fixture.scene->addLighting(vn::graphics::LightRig::studio());
+
+    ChainDesc options;
+    options.path            = ShadingPath::Forward;
+    options.mode            = ShadingMode::Lit;
+    options.camera          = view->camera();
+    options.content         = view->scene();
+    options.fps.enabled     = true;
+    options.fps.pixel_ratio = 1.0;
+    view->setChain(PassChain::build(fixture.engine.get(), options));
+    ASSERT_NE(view->chain(), nullptr);
+
+    RenderPass* const picture = view->chain()->presentingPass();
+    ASSERT_NE(picture, nullptr);
+    picture->setRenderTarget(fixture.target);
+    picture->setClearEnabled(true);
+    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    picture->setShouldClearDepth(true);
+    // 帧率读数那条 pass 在应用里画进同一个窗口：离屏夹具没有默认帧缓冲，所以也指向同一张目标。
+    if (RenderPass* const stats = view->chain()->fpsOverlayPass(); stats != nullptr) {
+        stats->setRenderTarget(fixture.target);
+    }
+    ASSERT_TRUE(view->fitToScreen()) << "默认操纵器按内容把相机摆好";
+
+    // 一帧画面 = 至少有一个像素被内容盖住：拒绝整条 pass 的失败正是"零个像素"，而清屏是黑的。
+    const auto expect_picture = [&fixture](const char* what) {
+        const PixelProbe probe = fixture.read();
+        EXPECT_TRUE(probe.valid()) << what << "：这一帧读不回来";
+        EXPECT_GT(coveredPixels(probe), 0U) << what << "：空画面（整条 pass 被拒绝了）";
+    };
+
+    expect_picture("第一帧（Lit）");
+    for (int round = 0; round < 4; ++round) {
+        for (const ShadingMode mode :
+             { ShadingMode::Flat, ShadingMode::Unlit, ShadingMode::Normals, ShadingMode::Wireframe, ShadingMode::Normals, ShadingMode::Lit })
+        {
+            ASSERT_TRUE(view->chain()->setShadingMode(mode));
+            // 换档那一帧，外加两帧"拖动/重绘"期间的帧：每帧都得有画面。
+            for (int frame = 0; frame < 3; ++frame) {
+                expect_picture(round == 0 && frame == 0 ? "换档后的第一帧" : "后续帧");
+            }
+        }
+    }
 }
 
 // 夹具本身的最小用例：**一个视图都没有**，一个手搭的 pass 把同一批内容画进同一张目标。上一条量的是 SDK 的默认

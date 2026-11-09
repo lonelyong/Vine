@@ -821,6 +821,14 @@ void SurfaceWindow::showContextMenu()
     menu.exec(QCursor::pos());
 }
 
+void SurfaceWindow::requestFrame()
+{
+    // A REQUEST, not a draw: Qt posts QEvent::UpdateRequest and delivers it on the display's own tick, coalescing
+    // every call made before it arrives into one frame - and delivering nothing while the window is not exposed.
+    // The drawing half is in event(), not here: a caller that changed the picture must not be held in the frame.
+    requestUpdate();
+}
+
 void SurfaceWindow::renderFrame()
 {
     // A recreated platform window is the case this is for: follow it now rather than present to a window the
@@ -909,6 +917,11 @@ bool SurfaceWindow::event(QEvent* event)
         }
         break;
     }
+    case QEvent::UpdateRequest:
+        // The frame SurfaceWindow::requestFrame() asked for: drawn here, on the display's tick, so the request
+        // stays coalesced and off the caller's stack (see requestFrame).
+        renderFrame();
+        break;
     default: break;
     }
     return QWindow::event(event);

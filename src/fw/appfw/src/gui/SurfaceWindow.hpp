@@ -124,8 +124,16 @@ class SurfaceWindow : public QWindow {
     /** @brief Renders one frame through the engine (the attach's own frame is the first one).
      *
      * The control shows its render area on the transition this publishes, so the surface ends up on screen once a
-     * frame is in it. */
+     * frame is in it. This is the SYNCHRONOUS spelling: the frame is drawn inside the call. */
     void renderFrame();
+
+    /** @brief Requests one frame: it is drawn on the next display-sync update, not inside this call.
+     *
+     * The request is coalesced by the window system - several calls before that update arrives produce one frame -
+     * and it is not delivered while the window is not exposed (a hidden dock tab draws nothing; the show that
+     * exposes it brings the frame). This is what the control hands to a caller that changed something the picture
+     * shows without having anything to compute. */
+    void requestFrame();
 
     /** @brief Fits the whole scene into the view (home view when the scene is empty) and renders a frame. */
     void fitToScreen();
