@@ -164,6 +164,7 @@ metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不�
   `roughness = sqrt(2 / (shininess + 2))`（Blinn-Phong 到 GGX 的标准映射）、specular 折算进 metallic；
   `PbrMaterial` → 逐字段，不再近似。
 - **规格**：`metallic = clamp(max(specular.rgb) × clamp(specular.a, 0, 1), 0, 1)`——metallic-roughness 没有单独反射率旋钮，强或带色的 specular 正是“金属”含义（最强通道 = 反射峰值，alpha = 强度）；代价见 D7。
+- **注意**（N5）：这条映射假设 Phong 的 specular 是**作者写的**。导入器为“文件没写材质”而虚构的默认材质（assimp 的 `AI_DEFAULT_MATERIAL_NAME`，白色 specular）在加载侧就被当成“没有材质”（`meshio-brepio-design.md` F2），所以不会走到这里；否则白 specular 会折成 metallic 1，而 `builtin_forward.frag` 把环境项乘 `(1 - metallic)`，模型在无环境贴图的场景里只剩高光、看起来是黑的。
 - **约束**（C5）：转换只发生在 `ModelScene.cpp` 一处；引擎侧不出现“源是 Phong”的分支。
 - **验收**（T5）：导入一个 glTF PBR 资产，base/metallic/roughness/emissive 与源文件逐字段一致。
 

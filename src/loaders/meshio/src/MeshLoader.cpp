@@ -471,6 +471,18 @@ class ModelBuilder final : private MeshBuilderBase {
 
 vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
 {
+    // An importer that invents a material for a file that authored none is not describing the file: assimp's STL
+    // loader creates one named AI_DEFAULT_MATERIAL_NAME with a white diffuse AND a white specular. That specular
+    // maps to metallic 1 in the engine's material (graphics-material.md 3.6), i.e. a perfect metal, and a metal's
+    // diffuse lobe is weighted out - so an untextured solid would shade black wherever there is no environment map.
+    // "No material" is a case every consumer already handles (the model viewer's grey fallback included), so the
+    // entry keeps it rather than a material the file never stated.
+    aiString   name;
+    const bool named = source.Get(AI_MATKEY_NAME, name) == AI_SUCCESS && name.length > 0;
+    if (named && std::string_view(name.C_Str(), name.length) == AI_DEFAULT_MATERIAL_NAME) {
+        return {};
+    }
+
     aiColor4D ambient{ 0.0f, 0.0f, 0.0f, 1.0f };
     aiColor4D diffuse{ 1.0f, 1.0f, 1.0f, 1.0f };
     aiColor4D specular{ 0.0f, 0.0f, 0.0f, 1.0f };
@@ -498,8 +510,7 @@ vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
         material = vn::make_intrusive<vn::models::ColorMaterial>(toVnColor(diffuse));
     }
 
-    aiString name;
-    if (source.Get(AI_MATKEY_NAME, name) == AI_SUCCESS && name.length > 0) {
+    if (named) {
         material->setName(String::fromUtf8(std::string_view(name.C_Str(), name.length)));
     }
     return material;

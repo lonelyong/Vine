@@ -58,6 +58,10 @@ loaders/*     ← 用三方库把数据从文件里读出来/写回去
 - 矩阵：assimp 的 `aiMatrix4x4` 与 `vn::math::Matrix4x4` 都是列向量约定、平移在第 4 列，16 个元素直接对应，**不转置**。
 - 材质类型按 assimp 通用键选择：`$mat.metallicFactor|roughnessFactor` → `PbrMaterial`；`$mat.opacity < 1` 也 → Pbr
   （只有它装得下透明度）；`$clr.specular`/`$mat.shininess` → `PhongMaterial`；只有 `$clr.diffuse` → `ColorMaterial`。
+- **导入器自己造的默认材质不算材质**：`AI_DEFAULT_MATERIAL_NAME`（assimp STL 用，白 diffuse + **白 specular**）
+  在 `makeMaterial()` 里答空 —— 否则 specular 会折成 metallic 1，而 `builtin_forward.frag` 用
+  `base * (1 - metallic)` 乘环境项，模型在没有环境贴图的场景里全黑（选中换高亮材质才看得到）。文件真写了
+  `Kd 0 0 0` 的仍然是黑模型，那是作者的意思。
 - robotics/io 有自己的 `StlMeshSource`（不链 assimp，见 `MeshBin.hpp`），与 meshio 的写出刻意重复：合并会让
   robotics 为一份 STL 写出器背上 assimp。
 - iobase 的坑（真缺陷，已修）：libzip 不支持 seek **压缩**条目，且一次被拒的 seek 会毒化 reader —— `zip_file_is_seekable()`

@@ -128,7 +128,9 @@
 ### 3.1.2 F2 `MeshLoader`
 
 - **行为**：`load()` 保留结构（节点树 / 多网格 / 材质），`loadMerged()` 烘平为一个 `IndexedTriangleMesh`；
-  路径与流各一个入口；`clearCache()`。
+  路径与流各一个入口；`clearCache()`。导入器为“文件没写材质”而虚构的默认材质（assimp 的
+  `AI_DEFAULT_MATERIAL_NAME`，举例 STL 会带白色 specular）**不报给调用方**：条目保持“没有材质”，与文件一致
+  （白 specular 一旦折成 metallic 1，模型在没有环境贴图的场景里会全黑，见 `graphics-material.md` 3.6）。
 - **约束/要求/验收**：`C2`、`C3`、`R2`、`R4`、`T3`、`T4`。**注意**：`N2`、`N3`、`N4`、`N6`。
 
 ### 3.1.3 F3 `MeshExporter`

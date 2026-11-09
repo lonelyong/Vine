@@ -374,3 +374,34 @@ TEST(ModelLoadTest, ACreateSourceExportsTheModelWhenPulled)
     ASSERT_EQ(reloaded->meshes().size(), 1u);
     EXPECT_NE(findNode(*reloaded, "shifted"), nullptr);
 }
+
+TEST(ModelLoadTest, AFileThatAuthorsNoMaterialReportsNone)
+{
+    // An STL states geometry and nothing else: no colour, no material. Some importers invent a material anyway
+    // (assimp's STL loader makes one named "DefaultMaterial" with a white diffuse AND a white specular). Reporting
+    // that as the file's material makes an untextured solid shade as a perfect metal - black wherever there is no
+    // environment map, because a metal has no diffuse lobe - and hides the "no material" case every consumer
+    // already handles. The file authored none, so the entry reports none.
+    const TempDir dir;
+    const auto    stl_path = dir.path() / "tetra.stl";
+    writeFile(stl_path,
+              "solid t\n"
+              "facet normal 0 0 1\n"
+              "  outer loop\n"
+              "    vertex 0 0 0\n"
+              "    vertex 1 0 0\n"
+              "    vertex 0 1 0\n"
+              "  endloop\n"
+              "endfacet\n"
+              "endsolid t\n");
+
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
+
+    auto loaded = loader.load(stl_path);
+    ASSERT_TRUE(loaded);
+    const auto model = loaded.take();
+
+    ASSERT_EQ(model->meshes().size(), 1u);
+    EXPECT_EQ(model->meshes()[0].material, nullptr) << "the importer's invented material is not the file's";
+    EXPECT_NE(model->meshes()[0].mesh, nullptr);
+}
