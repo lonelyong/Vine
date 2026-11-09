@@ -51,6 +51,26 @@ enum class ViewDependence
 };
 
 /**
+ * @brief What a node's caches had to recompute since construction (see Node::cacheStats).
+ *
+ * @details
+ * - OBSERVABILITY, NOT STATE: nothing in the engine reads these values and no decision depends on
+ *   them, so a copy answers a question about the node as well as the node itself would.
+ * - One counter per cache: the subtree box (subtreeBounds, keyed by the node's own bounds stamp) and
+ *   the subtree layer union (subtreeLayerUnion, keyed by the process-wide layer epoch).
+ * - A steady walk adds nothing to either - a moving camera included, because a subtree box lives in the
+ *   node's own frame. A count that keeps rising while nothing announced a change means a key is too
+ *   eager, which is the whole reason these exist.
+ * - 32 bits is deliberate: a counter that wraps after four billion rebuilds has already answered the
+ *   question, and keeping it small keeps it out of the node's layout argument.
+ */
+struct NodeCacheStats
+{
+    std::uint32_t bounds_recomputes{ 0 };      ///< How many times the subtree box was rebuilt from the children.
+    std::uint32_t layer_union_recomputes{ 0 }; ///< How many times the subtree layer union was rebuilt.
+};
+
+/**
  * @brief Base class of every scene-graph node.
  *
  * @details
@@ -355,18 +375,6 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     [[nodiscard]] virtual bool subtreeBounds(Aabbd& box) const;
 
-    /** @brief Gets how many times this subtree's box was RECOMPUTED from its children.
-     *
-     * @details
-     * - The witness of the cache above, the way Geometry::localBoundsComputationCount() witnesses its data
-     *   box: a steady scene (a moving camera included - world boxes do not depend on it) recomputes
-     *   nothing after the first collect, and a count that keeps rising while nothing announces a change
-     *   means a stamp is too eager.
-     *
-     * @return Number of recomputes since construction.
-     */
-    [[nodiscard]] std::uint64_t boundsRecomputeCount() const noexcept;
-
     /** @brief Gets the OR of every resolved layer in this subtree, served from the per-node cache.
      *
      * @details
@@ -385,15 +393,20 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     [[nodiscard]] std::uint32_t subtreeLayerUnion(std::uint32_t inherited_layers) const;
 
-    /** @brief Gets how many times this subtree's layer union was RECOMPUTED.
+    /** @brief Gets the two cache-recomputation counters of this node.
      *
      * @details
-     * - The witness of the cache above: a steady walk with the same epoch recomputes nothing. A count that
-     *   keeps rising while no layer/structure edit happened means the cache is being thrown away too eagerly.
+     * - The witnesses of the caches above, the way Geometry::localBoundsComputationCount() witnesses its
+     *   data box: a steady scene recomputes nothing after the first collect, and a count that keeps rising
+     *   while nothing announces a change means a stamp or an epoch is too eager.
+     * - ONE entry rather than one accessor per cache: these are the engine's own observation holes, not
+     *   vocabulary a host draws with, so the public face pays for one name and the next witness becomes a
+     *   field instead of another method.
+     * - Reading them does not disturb any cache: the counters only move when a cache is rebuilt.
      *
-     * @return Number of recomputes since construction.
+     * @return The counters since construction, by value.
      */
-    [[nodiscard]] std::uint64_t subtreeLayerRecomputeCount() const noexcept;
+    [[nodiscard]] NodeCacheStats cacheStats() const noexcept;
 
   private:
     String name_;
@@ -415,17 +428,18 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     // cache is a pure function of the stamps.
     std::uint64_t         bounds_stamp_{ 0 };      // Bumped by invalidateBounds() on this node and every ancestor.
     mutable Aabbd         cached_bounds_;          // Subtree box in this node's frame, valid at cached_stamp_.
-    mutable std::uint64_t cached_stamp_{ 0 };      // bounds_stamp_ when the box was computed.
-    mutable bool          cached_known_{ false };  // False until a recompute succeeded (or after one failed).
-    mutable std::uint64_t bounds_recomputes_{ 0 }; // Recomputation witness (see boundsRecomputeCount).
+    mutable std::uint64_t cached_stamp_{ 0 };     // bounds_stamp_ when the box was computed.
+    mutable bool          cached_known_{ false }; // False until a recompute succeeded (or after one failed).
 
     // The subtree layer union cache (see subtreeLayerUnion). It is a pure function of the layer declarations
     // and the tree shape, not of geometry bytes, so it has its own epoch rather than sharing bounds_stamp_.
     mutable std::uint32_t cached_subtree_layers_{ 0 };   // OR of resolved layers in this subtree.
     mutable std::uint32_t cached_inherited_layers_{ 0 }; // Inherited value the union was computed with.
-    mutable std::uint64_t cached_layer_epoch_{ 0 };      // layerEpoch() when the union was computed.
-    mutable bool          cached_layer_known_{ false };  // False until the first recompute.
-    mutable std::uint64_t layer_union_recomputes_{ 0 };  // Recomputation witness (see subtreeLayerRecomputeCount).
+    mutable std::uint64_t cached_layer_epoch_{ 0 };     // layerEpoch() when the union was computed.
+    mutable bool          cached_layer_known_{ false }; // False until the first recompute.
+
+    // Both caches' recompute counters (see cacheStats): observability only, never read by a walk.
+    mutable NodeCacheStats cache_stats_;
 
     friend class Group;
 };

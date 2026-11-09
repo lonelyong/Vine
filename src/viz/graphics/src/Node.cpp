@@ -48,7 +48,7 @@ bool Node::subtreeBounds(Aabbd& box) const
             box = cached_bounds_;
             return true;
         }
-        ++bounds_recomputes_;
+        ++cache_stats_.bounds_recomputes;
         Aabbd subtree  = Aabbd::empty();
         bool  complete = true;
         for (const auto& child : group->children()) {
@@ -82,11 +82,6 @@ bool Node::subtreeBounds(Aabbd& box) const
     return false;
 }
 
-std::uint64_t Node::boundsRecomputeCount() const noexcept
-{
-    return bounds_recomputes_;
-}
-
 std::uint32_t Node::subtreeLayerUnion(std::uint32_t inherited_layers) const
 {
     const std::uint64_t epoch = detail::layerEpoch();
@@ -94,7 +89,7 @@ std::uint32_t Node::subtreeLayerUnion(std::uint32_t inherited_layers) const
         return cached_subtree_layers_;
     }
 
-    ++layer_union_recomputes_;
+    ++cache_stats_.layer_union_recomputes;
     const std::uint32_t layers       = layers_.value_or(inherited_layers);
     std::uint32_t       union_layers = layers;
     if (const auto* group = obj_cast<Group>(this)) {
@@ -109,9 +104,9 @@ std::uint32_t Node::subtreeLayerUnion(std::uint32_t inherited_layers) const
     return union_layers;
 }
 
-std::uint64_t Node::subtreeLayerRecomputeCount() const noexcept
+NodeCacheStats Node::cacheStats() const noexcept
 {
-    return layer_union_recomputes_;
+    return cache_stats_;
 }
 
 Node::Node() = default;

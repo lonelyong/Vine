@@ -430,13 +430,13 @@ TEST(SceneTest, TheSubtreeLayerUnionPrunesAWholeExcludedSubtree)
     root->addChild(far_group);
 
     ASSERT_TRUE(scene.boundingBox().isValid()) << "the warm-up walk builds the cache";
-    const std::uint64_t group_recomputes = far_group->subtreeLayerRecomputeCount();
+    const std::uint32_t group_recomputes = far_group->cacheStats().layer_union_recomputes;
     ASSERT_GT(group_recomputes, 0U) << "the far group took part in the warm-up walk";
 
     const Aabbd ordinary = scene.boundingBox(kDefaultLayer);
     ASSERT_TRUE(ordinary.isValid());
     EXPECT_NEAR(ordinary.max().x, 1.0, 1e-9) << "only the near triangle is measured";
-    EXPECT_EQ(far_group->subtreeLayerRecomputeCount(), group_recomputes)
+    EXPECT_EQ(far_group->cacheStats().layer_union_recomputes, group_recomputes)
         << "the cached union proved the whole far subtree is out, before visiting its children";
 }
 
@@ -449,30 +449,30 @@ TEST(SceneTest, TheSubtreeLayerCacheInvalidatesOnDeclarationsAndStructure)
     root->addChild(group);
 
     ASSERT_TRUE(scene.boundingBox().isValid());
-    const std::uint64_t warm      = group->subtreeLayerRecomputeCount();
-    const std::uint64_t root_warm = root->subtreeLayerRecomputeCount();
+    const std::uint32_t warm      = group->cacheStats().layer_union_recomputes;
+    const std::uint32_t root_warm = root->cacheStats().layer_union_recomputes;
     ASSERT_GT(warm, 0U);
 
     // A declaration changes not only this node's resolved layer: the child below inherits the new one.
     group->setLayers(1u << 3);
     ASSERT_TRUE(scene.boundingBox(1u << 3).isValid());
-    EXPECT_GT(group->subtreeLayerRecomputeCount(), warm) << "the cached union was rebuilt for the declaration and its inherited descendants";
-    EXPECT_GT(root->subtreeLayerRecomputeCount(), root_warm) << "the ancestor's union also has to see the descendant's new resolved layer";
-    const std::uint64_t rebuilt = group->subtreeLayerRecomputeCount();
+    EXPECT_GT(group->cacheStats().layer_union_recomputes, warm) << "the cached union was rebuilt for the declaration and its inherited descendants";
+    EXPECT_GT(root->cacheStats().layer_union_recomputes, root_warm) << "the ancestor's union also has to see the descendant's new resolved layer";
+    const std::uint32_t rebuilt = group->cacheStats().layer_union_recomputes;
 
     (void)scene.boundingBox(1u << 3);
-    EXPECT_EQ(group->subtreeLayerRecomputeCount(), rebuilt) << "the next walk reuses the rebuilt cache";
+    EXPECT_EQ(group->cacheStats().layer_union_recomputes, rebuilt) << "the next walk reuses the rebuilt cache";
 
     // Clearing the declaration changes the inherited base again.
     group->clearLayers();
     EXPECT_TRUE(scene.boundingBox(kDefaultLayer).isValid());
-    EXPECT_GT(group->subtreeLayerRecomputeCount(), rebuilt) << "clearLayers went back to the inherited layer, so the union is stale";
+    EXPECT_GT(group->cacheStats().layer_union_recomputes, rebuilt) << "clearLayers went back to the inherited layer, so the union is stale";
 
     // A structure change is also a layer change: the new child's inherited layer joins the union.
-    const std::uint64_t cleared = group->subtreeLayerRecomputeCount();
+    const std::uint32_t cleared = group->cacheStats().layer_union_recomputes;
     group->addChild(geometryOf(*makeUnitTriangle()));
     (void)scene.boundingBox(kDefaultLayer);
-    EXPECT_GT(group->subtreeLayerRecomputeCount(), cleared) << "a child added below the declaration can change the union";
+    EXPECT_GT(group->cacheStats().layer_union_recomputes, cleared) << "a child added below the declaration can change the union";
 }
 
 TEST(SceneTest, TheSubtreeLayerCacheIgnoresNonLayerMutations)
@@ -484,13 +484,41 @@ TEST(SceneTest, TheSubtreeLayerCacheIgnoresNonLayerMutations)
     root->addChild(group);
 
     ASSERT_TRUE(scene.boundingBox().isValid());
-    const std::uint64_t warm = group->subtreeLayerRecomputeCount();
+    const std::uint32_t warm = group->cacheStats().layer_union_recomputes;
     ASSERT_GT(warm, 0U);
 
     // Opacity and transforms change the picture, not the resolved layers: the union cache must survive.
     group->setOpacity(0.5F);
     (void)scene.boundingBox();
-    EXPECT_EQ(group->subtreeLayerRecomputeCount(), warm) << "a non-layer edit must not throw the subtree union away";
+    EXPECT_EQ(group->cacheStats().layer_union_recomputes, warm) << "a non-layer edit must not throw the subtree union away";
+}
+
+/**
+ * @brief Node::cacheStats() is a snapshot of two counters: reading it is not a walk, and a held copy does not follow.
+ */
+TEST(SceneTest, TheCacheStatsAreASnapshotAndReadingThemDisturbsNothing)
+{
+    Scene scene;
+    auto  root  = setIdentityRoot(scene);
+    auto  group = intrusive_ptr<Group>(new Group());
+    group->addChild(geometryOf(*makeUnitTriangle()));
+    root->addChild(group);
+
+    ASSERT_TRUE(scene.boundingBox().isValid());
+    const NodeCacheStats snapshot = group->cacheStats();
+    ASSERT_GT(snapshot.layer_union_recomputes, 0u) << "the walk that measured the scene built the union";
+
+    // Asking for the counters is not an operation on the caches.
+    const NodeCacheStats again = group->cacheStats();
+    EXPECT_EQ(again.bounds_recomputes, snapshot.bounds_recomputes);
+    EXPECT_EQ(again.layer_union_recomputes, snapshot.layer_union_recomputes);
+
+    // A copy taken before the rebuild does not follow the rebuild; a fresh read does.
+    group->setLayers(1u << 5);
+    ASSERT_TRUE(scene.boundingBox(1u << 5).isValid());
+    EXPECT_GT(group->cacheStats().layer_union_recomputes, snapshot.layer_union_recomputes)
+        << "the rebuilt union is visible through a fresh read";
+    EXPECT_EQ(snapshot.layer_union_recomputes, again.layer_union_recomputes) << "a copied record is a snapshot";
 }
 
 // ============ RenderCommand collection / culling ============
@@ -9834,10 +9862,10 @@ void pointCameraAtX5(Camera& camera)
     camera.setOrthographic(-2.0, 2.0, -2.0, 2.0, 0.5, 100.0);
 }
 
-/// @brief Sums Node::boundsRecomputeCount() over @p node's subtree (the per-node bounds cache's witness).
-std::uint64_t sumBoundsRecomputes(const Node* node)
+/// @brief Sums Node::cacheStats().bounds_recomputes over @p node's subtree (the per-node bounds cache's witness).
+std::uint32_t sumBoundsRecomputes(const Node* node)
 {
-    std::uint64_t total = node->boundsRecomputeCount();
+    std::uint32_t total = node->cacheStats().bounds_recomputes;
     if (const auto* group = dynamic_cast<const Group*>(node)) {
         for (const auto& child : group->children()) {
             total += sumBoundsRecomputes(child.get());
@@ -9870,7 +9898,7 @@ TEST(SceneTest, CachedSubtreeBoxesSurviveCameraMovesAndFollowAnnouncements)
 {
     // P18 §10.2: each subtree's box in its OWN frame is cached per node, so it survives CAMERA moves -
     // a box in a node's own frame does not depend on the camera - and only an announcement inside the
-    // subtree invalidates it. The witness is Node::boundsRecomputeCount(): a second collect through a
+    // subtree invalidates it. The witness is Node::cacheStats().bounds_recomputes: a second collect through a
     // different camera recomputes nothing, while setMatrix() recomputes exactly the announced spine.
     Scene scene;
     auto  root      = setIdentityRoot(scene);
@@ -13899,8 +13927,8 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes){
     auto commands = (*scene.collectRenderCommands(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].model_matrix.element(0, 3), -2.0, 1e-9);
-    const std::uint64_t left_seeded  = left->boundsRecomputeCount();
-    const std::uint64_t right_seeded = right->boundsRecomputeCount();
+    const std::uint32_t left_seeded  = left->cacheStats().bounds_recomputes;
+    const std::uint32_t right_seeded = right->cacheStats().bounds_recomputes;
 
     // The only thing that changes: which matrix sits above the mover.
     right->addChild(mover);
@@ -13922,8 +13950,8 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes){
     // gains it, and each announcement must reach its own chain (the per-node
     // box cache is served by stamp, so a missed one stays stale for every
     // later walk).
-    EXPECT_GT(left->boundsRecomputeCount(), left_seeded) << "the OLD parent's union is re-derived";
-    EXPECT_GT(right->boundsRecomputeCount(), right_seeded) << "the NEW parent's union is re-derived";
+    EXPECT_GT(left->cacheStats().bounds_recomputes, left_seeded) << "the OLD parent's union is re-derived";
+    EXPECT_GT(right->cacheStats().bounds_recomputes, right_seeded) << "the NEW parent's union is re-derived";
 }
 
 TEST(SceneMutationTest, ReparentingSwapsWhichStateOverridesApply)
@@ -14050,7 +14078,7 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
 
     auto commands = (*scene.collectRenderCommands(&cam));
     ASSERT_EQ(commands.size(), 2u);
-    const std::uint64_t root_seeded = root->boundsRecomputeCount();
+    const std::uint32_t root_seeded = root->cacheStats().bounds_recomputes;
 
     root->removeChild(removed.get());
     EXPECT_EQ(root->children().size(), 1u);
@@ -14068,7 +14096,7 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
 
     // The removal announces on the OLD chain, so the parent's union is
     // re-derived instead of being served stale from the per-node cache.
-    EXPECT_GT(root->boundsRecomputeCount(), root_seeded) << "the removal announces on the old chain";
+    EXPECT_GT(root->cacheStats().bounds_recomputes, root_seeded) << "the removal announces on the old chain";
 
     // Removal is not destruction: the detached subtree can come back.
     root->addChild(removed);

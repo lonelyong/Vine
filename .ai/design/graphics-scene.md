@@ -123,6 +123,8 @@
 | `layers()` / `setLayers()` / `clearLayers()` | L1 内容掩码 |
 | `drawOrder()` / `setDrawOrder()` / `clearDrawOrder()` | pass 内排序 |
 | `parent()` / `worldMatrix()` / `boundingBox()` | 父链查询 |
+| `cacheStats()` | 两个缓存的只读见证（`bounds_recomputes` / `layer_union_recomputes`），按值返回；观测口，不参与任何判定 |
+| `contentEpoch()` | 子树内容公告时钟；`Scene` memo 的失效键，也是宿主自建子树缓存的失效键（契约，不是观测口） |
 | `Group::addChild()` / `removeChild()` / `children()` | 结构 |
 
 ### 4.2 变换与状态
