@@ -66,25 +66,8 @@ enum class ImageLayout : std::uint8_t
 };
 
 /**
- * @brief Identity of an aliased geometry stream: a buffer slice, plus the revision that makes it current.
- *
- * @details
- * - `revision` comes from the UPSTREAM resource (`Geometry::revision()` / a buffer's own revision). The
- *   backend must never invent one by comparing bytes it happens to read: detection would itself become
- *   state, and a key that depends on it stops being an identity.
+ * @brief Identity of a vertex layout: which canonical channels are fed, and at which custom locations.
  */
-struct VN_GRAPHICS_API DataKey {
-    const void*   buffer{ nullptr }; // Buffer the slice lives in.
-    std::uint64_t revision{ 0 };     // Upstream content revision.
-    std::uint32_t components{ 0 };   // Components per vertex (the stride).
-    std::uint32_t offset{ 0 };       // First scalar of the slice.
-    std::uint32_t count{ 0 };        // Scalars in the slice; 0 = to the end of the buffer.
-
-    /** @brief Compares the whole key. */
-    [[nodiscard]] bool operator==(const DataKey& other) const noexcept;
-};
-
-/** @brief Identity of a vertex layout: which canonical channels are fed, and at which custom locations. */
 struct VN_GRAPHICS_API VertexLayoutKey {
     std::uint32_t              canonical_mask{ 0 }; // Bit set of the canonical roles that are fed.
     std::vector<std::uint32_t> custom_locations;    // Custom channel locations, ascending.
@@ -239,8 +222,8 @@ struct VN_GRAPHICS_API PipelineKeyHash {
 
 /** @brief Per-draw state delivered with set commands: changing it must never recompile anything. */
 struct VN_GRAPHICS_API DynamicState {
-    vn::graphics::DepthMode     depth{ vn::graphics::DepthMode::TestAndWrite };  // Depth test/write policy.
-    vn::graphics::CompareOp     compare{ vn::graphics::CompareOp::Less };        // Distance-semantic compare op; the
+    vn::graphics::DepthMode depth{ vn::graphics::DepthMode::TestAndWrite };      // Depth test/write policy.
+    vn::graphics::CompareOp compare{ vn::graphics::CompareOp::Less };            // Distance-semantic compare op; the
                                                                                  // reverse-Z inversion happens at the
                                                                                  // Vulkan boundary.
     vn::graphics::CullMode      cull_mode{ vn::graphics::CullMode::None };       // Face culling.

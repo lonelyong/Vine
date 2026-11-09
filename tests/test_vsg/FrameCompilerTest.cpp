@@ -191,7 +191,6 @@ TEST(FrameCompilerTest, ThePlanHoldsTheInstanceStreamItReads)
     r.addTarget(target.get(), 64, 64, true);
 
     auto instance_storage = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>(32U, 0.0F));
-    instance_storage->bumpRevision();
 
     RenderCommand command;
     command.instance_transforms = vn::BufferSlice<float>::whole(instance_storage);
@@ -260,6 +259,74 @@ TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
     // Nothing produced for the second entry is the ENGINE's business (it resolved it to null), so the backend
     // reports nothing about it: one diagnostic would point the reader at the wrong layer.
     EXPECT_EQ(r.diagnostics.count(DiagnosticCategory::ContentSkipped), 0u);
+}
+
+/*
+ * @brief 第二段映射也钉在一处：记录 → 计划是另一份手写逐字段拷贝，抄漏同样不报错。
+ *
+ * 与收集那段合成一对：任何一段漏掉一个事实，都会在这里以"这个字段没到"的形式说出来。
+ */
+TEST(FrameCompilerTest, EveryFactOfARecordedCommandReachesThePlan)
+{
+    Rig                             r;
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    r.addTarget(target.get(), 64, 64, true);
+
+    const auto geometry = vn::intrusive_ptr<vn::graphics::Geometry>(new vn::graphics::Geometry());
+    geometry->setPositions(
+        vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F })));
+    vn::graphics::Primitive primitive;
+    primitive.topology = vn::graphics::Topology::TriangleStrip;
+    geometry->setPrimitive(0U, primitive);
+    geometry->setRevision(7U);
+
+    const auto material = vn::intrusive_ptr<vn::graphics::Material>(new vn::graphics::Material());
+    const auto program  = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+
+    auto                  instance_storage = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>(32U, 0.0F));
+    const vn::math::Mat4d model            = vn::math::translate(vn::math::Vec3d(1.0, 2.0, 3.0));
+
+    RenderCommand command;
+    command.geometry                 = geometry;
+    command.material                 = material;
+    command.program                  = program;
+    command.model_matrix             = model;
+    command.opacity                  = 0.5F;
+    command.authored_state.cullMode  = vn::graphics::CullMode::Front;
+    command.authored_state.pointSize = 3.0F;
+    command.instance_transforms      = vn::BufferSlice<float>::whole(instance_storage);
+    command.first_instance           = 1U;
+    command.instance_count           = 2U;
+    const std::vector<RenderCommand> commands{ command };
+
+    ASSERT_TRUE(r.recorder.beginFrame(FrameToken{ 1 }));
+    ASSERT_TRUE(r.recorder.beginPass(1));
+    ASSERT_TRUE(r.recorder.setRenderTarget(target.get()));
+    ASSERT_TRUE(r.recorder.render(commands, nullptr));
+    ASSERT_TRUE(r.recorder.endPass());
+    ASSERT_TRUE(r.recorder.endFrame());
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1u);
+    const CompiledCommand& planned = frame.passes[0].draws[0].commands[0];
+
+    EXPECT_EQ(planned.geometry, static_cast<const void*>(geometry.get()));
+    EXPECT_EQ(planned.geometry_revision, 7U) << "the revision the facts row and every stream key are built from";
+    EXPECT_EQ(planned.primitive, 0U);
+    EXPECT_EQ(planned.program.program, static_cast<const void*>(program.get()));
+    EXPECT_EQ(planned.material, static_cast<const void*>(material.get()));
+    EXPECT_TRUE(planned.model.isEqual(model, 1e-12));
+    EXPECT_FLOAT_EQ(planned.opacity, 0.5F);
+    EXPECT_TRUE(planned.transparent) << "carried from the collector's answer, never re-derived here";
+    EXPECT_EQ(planned.instance_buffer.get(), instance_storage.get()) << "the plan holds the stream it reads";
+    EXPECT_EQ(planned.first_instance, 1U);
+    EXPECT_EQ(planned.instance_count, 2U);
+    // The resolved layer: the pass stated nothing, so what the content authored survives.
+    EXPECT_EQ(planned.dynamic.cull_mode, vn::graphics::CullMode::Front);
+    EXPECT_EQ(planned.dynamic.topology, vn::graphics::Topology::TriangleStrip);
+    EXPECT_FLOAT_EQ(planned.point_size, 3.0F) << "the item whose destination is the draw block, not the pipeline";
 }
 
 TEST(FrameCompilerTest, AnImportedTextureInputIsAFirstClassInputWithNoProducerEdge)

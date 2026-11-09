@@ -177,6 +177,11 @@ target_include_directories(${TEST_NAME} PRIVATE
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 
+# 内容层的设备无关半边：这 12 个 TU 不许出现 vsg 类型（见 .ai/design/vsg-backend.md 2.7）。
+# 跟着 ctest 跑，所以"下一次有人把 vsg 类型写进事实表"会在测试里红，而不是在下一次移植时才发现。
+add_test(NAME content_seam
+	COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/scripts/check_vsg_content_seam.cmake)
+
 # 同上：渲染后端插件会建窗口/交换链，ctest 下一律走 offscreen，
 # 避免在 WSLg / 远程桌面里弹窗口被中断后卡死。
 set_tests_properties(${TEST_NAME} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

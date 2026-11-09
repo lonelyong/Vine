@@ -40,6 +40,12 @@
 2.6 **反向 Z + CW 正面**：Vulkan NDC z 就是 depth；世界 CCW 到 framebuffer 是 CW。
 2.7 **证据三重**：验证层 / 计数器 / 像素；三者缺一都不算“通过”。
 2.8 **物理边界**：SDK `graphics/backend/` 不 include vsg；插件 `internal/` 才 include both。
+**插件内部还有一条更窄的缝**：内容记账的半边（`ContentFacts` / `ContentStore` / `ContentHalves` / `ContentSources` /
+`ContentSweep` / `ContentPush`）不许出现 `::vsg::`；设备一律经适配层（`StreamUploads` / `StateCommands` /
+`ContentPipeline` / `ContentDraw`）触达。为什么：插件 23.5k 行里 59% 是内容记账，而这半边实测已经是 0 处 vsg
+引用——它干净，第二个后端才能直接复用；等它被 vsg 类型渗进去就只剩重写。可检查：
+`scripts/check_vsg_content_seam.cmake`，由 CTest 的 `content_seam` 用例执行（不靠记性）。满足 `G2` / `G9`；
+代价是适配层要多包一层纯值（已经是现在的形状）。
 
 ### 2.9 后端架构
 

@@ -415,10 +415,10 @@ TEST(CoreKeysTest, CompatibilityIsPartOfTheKeyWhileLoadOpVariantsAreNot)
 TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
 {
     const auto audit = vn::graphics::backend::keyAuditTable();
-    ASSERT_EQ(audit.size(), 8u);
+    ASSERT_EQ(audit.size(), 7u);
 
     const std::vector<std::string> expected_keys{
-        "DataKey", "VertexLayoutKey", "RenderPassCompatibility", "LoadOpVariantKey", "PipelineKey", "DynamicState", "InstanceSlot", "TargetDesc.shape",
+        "VertexLayoutKey", "RenderPassCompatibility", "LoadOpVariantKey", "PipelineKey", "DynamicState", "InstanceSlot", "TargetDesc.shape",
     };
     for (std::size_t i = 0; i < expected_keys.size(); ++i) {
         EXPECT_EQ(std::string(audit[i].key), expected_keys[i]) << "audit line " << i;

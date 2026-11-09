@@ -476,15 +476,17 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     // Two placements at x = -0.4 and +0.4: the shader applies the matrix itself, so the picture is two
     // triangles drawn by ONE command over ONE instance stream.
     auto instance_storage = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>(32U, 0.0F));
-    for (std::size_t instance = 0; instance < 2U; ++instance) {
-        const std::size_t base               = instance * 16U;
-        instance_storage->data()[base + 0U]  = 1.0F;
-        instance_storage->data()[base + 5U]  = 1.0F;
-        instance_storage->data()[base + 10U] = 1.0F;
-        instance_storage->data()[base + 15U] = 1.0F;
-        instance_storage->data()[base + 12U] = instance == 0U ? -0.4F : 0.4F;
+    {
+        auto edit = instance_storage->edit();
+        for (std::size_t instance = 0; instance < 2U; ++instance) {
+            const std::size_t base = instance * 16U;
+            edit[base + 0U]        = 1.0F;
+            edit[base + 5U]        = 1.0F;
+            edit[base + 10U]       = 1.0F;
+            edit[base + 15U]       = 1.0F;
+            edit[base + 12U]       = instance == 0U ? -0.4F : 0.4F;
+        }
     }
-    instance_storage->bumpRevision();
 
     FrameArena    arena{ 64 * 1024 };
     Diagnostics   diagnostics;

@@ -17,9 +17,9 @@
 #include <gtest/gtest.h>
 
 #include <vine/Buffer.hpp>
-#include <vine/graphics/Geometry.hpp>
-#include <vine/geom/spatial/Ray.hpp>
 #include <vine/geom/spatial/Aabb.hpp>
+#include <vine/geom/spatial/Ray.hpp>
+#include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -107,10 +107,12 @@ TEST(AttributeChannelTest, ASliceMayHaveNoFixedLengthAndNeverRunsPastTheBuffer)
     EXPECT_EQ(from_second.vertexCount(), 3u);
     EXPECT_EQ(from_second.floatCount(), buffer->size() - 9u);
 
-    buffer->push_back(20.0f);
-    buffer->push_back(20.0f);
-    buffer->push_back(0.0f);
-    buffer->setRevision(buffer->revision() + 1u);
+    {
+        auto edit = buffer->edit();
+        edit.push_back(20.0f);
+        edit.push_back(20.0f);
+        edit.push_back(0.0f);
+    }
     EXPECT_EQ(from_second.floatCount(), buffer->size() - 9u) << "no fixed length: it follows the buffer";
 
     // A fixed length truncates; an offset past the end is empty rather than out of range.
@@ -164,7 +166,10 @@ TEST(AttributeChannelTest, TheWholeBufferAndTheSegmentSpellingsAgree)
 
     // The same coverage, on both faces: a buffer that grows is still the whole channel, while the
     // segment keeps the six vertices it stated.
-    arena->append(std::vector<float>{ 9.0f, 9.0f, 9.0f });
+    {
+        auto edit = arena->edit();
+        edit.append(std::vector<float>{ 9.0f, 9.0f, 9.0f });
+    }
     EXPECT_EQ(a->floatCount(), 21u) << "the whole-buffer channel followed the growth";
     EXPECT_EQ(b->floatCount(), 18u) << "the segment stayed the segment";
 
@@ -326,7 +331,10 @@ TEST(GeometryTest, TheIndexStreamsTwoSpellingsShareOneSegment)
 
     // The difference between the two spellings is the same as on the channel side: a whole buffer is
     // "follow it", a segment keeps the count it stated.
-    arena->append(std::vector<std::uint32_t>{ 0u, 1u, 2u });
+    {
+        auto edit = arena->edit();
+        edit.append(std::vector<std::uint32_t>{ 0u, 1u, 2u });
+    }
     EXPECT_EQ(whole.indexCount(), 9u) << "the whole-buffer spelling followed the buffer";
     EXPECT_EQ(segment.indexCount(), 6u) << "the segment stayed the segment";
 

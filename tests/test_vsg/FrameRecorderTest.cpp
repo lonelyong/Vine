@@ -26,25 +26,36 @@
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Light.hpp>
+#include <vine/graphics/Material.hpp>
+#include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
 
+using vn::graphics::CullMode;
 using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::Diagnostics;
+using vn::graphics::Geometry;
 using vn::graphics::Light;
+using vn::graphics::Material;
+using vn::graphics::Primitive;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
+using vn::graphics::Topology;
 using vn::graphics::backend::ClearValues;
+using vn::graphics::backend::CollectedCommand;
 using vn::graphics::backend::CollectedFrame;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameRecorder;
 using vn::graphics::backend::FrameToken;
 using vn::graphics::backend::Observe;
+using vn::math::Mat4d;
+using vn::math::Vec3d;
 
 namespace
 {
@@ -149,6 +160,73 @@ TEST(FrameRecorderTest, TheHostsReusedCommandListIsCopiedAtTheCallNotHeld)
     EXPECT_FLOAT_EQ(description.passes[0].draws[0].commands[0].opacity, 0.25F);
     ASSERT_EQ(description.passes[1].draws.size(), 1u);
     EXPECT_EQ(description.passes[1].draws[0].commands.size(), 2u);
+}
+
+/*
+ * @brief 一段的映射，钉在一处：收集把宿主命令逐字段抄进记录，抄漏一个字段不是编译错误，而是**两个阶段之间
+ * 静静少了一个事实**（实测代价：本轮删掉一个字段要改 5 处，而漏抄一处不会有任何报错）。
+ *
+ * 每个字段各给一个哨兵值，所以副本漏掉哪一个，失败信息就指哪一个。
+ */
+TEST(FrameRecorderTest, EveryFactOfACommandReachesTheRecord)
+{
+    Rig r;
+    r.open();
+
+    const auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(
+        vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F })));
+    Primitive primitive;
+    primitive.topology = Topology::TriangleStrip; // a topology the default is not, so the copy is visible
+    geometry->setPrimitive(0U, primitive);
+    geometry->setRevision(7U);
+
+    const auto material = vn::intrusive_ptr<Material>(new Material());
+    const auto program  = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
+
+    auto        instance_storage = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>(32U, 0.0F));
+    const Mat4d model            = vn::math::translate(Vec3d(1.0, 2.0, 3.0));
+
+    RenderCommand command;
+    command.geometry                 = geometry;
+    command.primitive_index          = 0U;
+    command.material                 = material;
+    command.program                  = program;
+    command.model_matrix             = model;
+    command.opacity                  = 0.5F;
+    command.draw_order               = 3;
+    command.authored_state.cullMode  = CullMode::Front;
+    command.authored_state.pointSize = 3.0F;
+    command.instance_transforms      = vn::BufferSlice<float>::whole(instance_storage);
+    command.first_instance           = 1U;
+    command.instance_count           = 2U;
+
+    EXPECT_TRUE(r.recorder.beginPass(1));
+    EXPECT_TRUE(r.recorder.render(std::span<const RenderCommand>(&command, 1U), nullptr));
+    EXPECT_TRUE(r.recorder.endPass());
+
+    const CollectedFrame& description = r.seal();
+    ASSERT_EQ(description.passes.size(), 1U);
+    ASSERT_EQ(description.passes[0].draws.size(), 1U);
+    ASSERT_EQ(description.passes[0].draws[0].commands.size(), 1U);
+    const CollectedCommand& recorded = description.passes[0].draws[0].commands[0];
+
+    EXPECT_EQ(recorded.geometry, static_cast<const void*>(geometry.get()));
+    EXPECT_EQ(recorded.geometry_revision, 7U) << "the revision the plan keys the facts row on";
+    EXPECT_EQ(recorded.primitive, 0U);
+    EXPECT_EQ(recorded.topology, Topology::TriangleStrip) << "the primitive's assembly travels with the command";
+    EXPECT_EQ(recorded.program.program, static_cast<const void*>(program.get()));
+    EXPECT_EQ(recorded.material, static_cast<const void*>(material.get()));
+    EXPECT_TRUE(recorded.model.isEqual(model, 1e-12)) << "the world matrix";
+    EXPECT_FLOAT_EQ(recorded.opacity, 0.5F);
+    EXPECT_EQ(recorded.transparent, command.isTransparent()) << "the sort answer is carried, not re-derived downstream";
+    ASSERT_TRUE(recorded.authored_state.cullMode.has_value());
+    EXPECT_EQ(*recorded.authored_state.cullMode, CullMode::Front);
+    ASSERT_TRUE(recorded.authored_state.pointSize.has_value());
+    EXPECT_FLOAT_EQ(*recorded.authored_state.pointSize, 3.0F);
+    EXPECT_EQ(recorded.instance_buffer.get(), instance_storage.get()) << "the stream is held, not borrowed";
+    EXPECT_EQ(recorded.first_instance, 1U);
+    EXPECT_EQ(recorded.instance_count, 2U);
 }
 
 TEST(FrameRecorderTest, ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded)

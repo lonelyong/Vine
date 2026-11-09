@@ -75,8 +75,12 @@ TEST(StreamRevisionTest, ABufferAnnouncementRekeysOnlyTheChannelThatReadsIt)
     const StreamKey positions_before = facts.channels[0].streamKey();
     const StreamKey texcoords_before = facts.channels[1].streamKey();
 
-    // The host refills the positions buffer in place and announces it the way Buffer's contract says.
-    two.positions->setRevision(two.positions->revision() + 1U);
+    // The host refills the positions buffer and announces it the way Buffer's contract says: the edit scope IS
+    // the announcement, so there is no second step to forget.
+    {
+        auto edit = two.positions->edit();
+        edit[0]   = 7.0F;
+    }
 
     const StreamKey positions_after = facts.channels[0].streamKey();
     const StreamKey texcoords_after = facts.channels[1].streamKey();
@@ -170,7 +174,10 @@ TEST(StreamRevisionTest, TheBytesComeFromTheBufferAndNotFromTheTable)
     ASSERT_EQ(before.size(), 12U);
 
     // In place, behind the SDK's back - exactly the edit a host makes through a raw pointer.
-    (*two.positions)[0] = 7.0F;
+    {
+        auto edit = two.positions->edit();
+        edit[0]   = 7.0F;
+    }
 
     const std::span<const float> after = facts.channels[0].scalars();
     ASSERT_EQ(after.size(), 12U);

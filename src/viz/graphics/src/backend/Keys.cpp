@@ -4,11 +4,6 @@
 
 VN_GRAPHICSBACKEND_NS_BEGIN
 
-bool DataKey::operator==(const DataKey& other) const noexcept
-{
-    return buffer == other.buffer && revision == other.revision && components == other.components && offset == other.offset && count == other.count;
-}
-
 bool VertexLayoutKey::operator==(const VertexLayoutKey& other) const noexcept
 {
     return canonical_mask == other.canonical_mask && custom_locations == other.custom_locations;
@@ -89,9 +84,8 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
 {
     // The audit, as data. Each line answers "what may enter this key?" - and the answer for anything
     // that can be delivered with a set command, or written into a buffer, is "nothing".
-    static constexpr std::array<KeyAuditEntry, 8> kAudit{
+    static constexpr std::array<KeyAuditEntry, 7> kAudit{
         {
-         { "DataKey", "buffer identity + upstream revision + channel slice (components/offset/count)" },
          { "VertexLayoutKey", "canonical channel mask + custom channel locations" },
          { "RenderPassCompatibility",
             "colour formats + depth format (or none) + the same attachments as the DEVICE spells them + samples "
