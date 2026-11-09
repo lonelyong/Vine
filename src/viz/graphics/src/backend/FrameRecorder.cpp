@@ -409,10 +409,11 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         target.transparent    = source.isTransparent();
         target.authored_state = source.authored_state;
         if (!source.instance_transforms.empty()) {
-            target.instance_buffer   = source.instance_transforms.values.get();
-            target.instance_revision = source.instance_transforms.values->revision();
-            target.first_instance    = source.first_instance;
-            target.instance_count    = source.instance_count;
+            // The record takes a SHARE of the stream rather than a pointer into the host's slice: everything
+            // downstream keys the upload entries by that buffer's address (see CollectedCommand).
+            target.instance_buffer = source.instance_transforms.values;
+            target.first_instance  = source.first_instance;
+            target.instance_count  = source.instance_count;
         }
     }
     return copy;

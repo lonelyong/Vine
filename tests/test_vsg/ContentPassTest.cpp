@@ -549,6 +549,10 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: the half and the stream are both present";
     EXPECT_EQ(draws.draws(), 1U) << "two placements are ONE draw";
     EXPECT_EQ(uploads.uploads(), 3U) << "positions, indices and the whole instance stream";
+    // The stream entry holds the buffer its key names: the key's identity is that buffer's ADDRESS, so the
+    // address must stay reserved until the entry leaves - the plan's share plus the entry's is why the host can
+    // drop its own handle at any time (see .ai/bugs/vsg-content-address-recycled-before-rows.md).
+    EXPECT_GT(instance_storage->useCount(), 1U) << "the instance stream entry took a share of the buffer";
 
     VsgExecutor executor(diagnostics);
     executor.addTarget(target.get(), target.get());

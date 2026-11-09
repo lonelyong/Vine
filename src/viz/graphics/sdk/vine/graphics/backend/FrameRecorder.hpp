@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/DepthRange.hpp>
 #include <vine/graphics/Diagnostics.hpp>
@@ -21,6 +22,7 @@
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/graphics_global.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
 
@@ -127,11 +129,11 @@ struct LightRef {
     vn::math::Vec3d         position{};                               // World-space position (point / spot lights).
     float                   range{ 0.0F };                            // Distance at which the contribution reaches zero
                                                                       // (0 = no cutoff); see Light::setRange.
-    double                  inner_cone_degrees{ 0.0 };                // Spot cone's full-strength angle (degrees).
-    double                  outer_cone_degrees{ 0.0 };                // Spot cone's zero-strength angle (degrees).
-    bool                    cast_shadow{ false };                     // Light::isCastingShadow: the switch that makes it a
+    double inner_cone_degrees{ 0.0 };                                 // Spot cone's full-strength angle (degrees).
+    double outer_cone_degrees{ 0.0 };                                 // Spot cone's zero-strength angle (degrees).
+    bool   cast_shadow{ false };                                      // Light::isCastingShadow: the switch that makes it a
                                                                       // caster.
-    float                   shadow_bias{ 0.0F };                      // ShadowSettings::bias: the map comparison's
+    float shadow_bias{ 0.0F };                                        // ShadowSettings::bias: the map comparison's
                                                                       // depth bias.
 };
 
@@ -172,11 +174,13 @@ struct CollectedCommand {
     /// blend enable must be the same answer the collector sorted by (graphics-material.md 2.7).
     bool                      transparent{ false };
     vn::graphics::RenderState authored_state{}; // What the CONTENT authored, item by item (see the resolution).
-    /// The instance stream, BORROWED for the frame (the primitive's slice holds it): null for a plain draw.
-    const vn::Buffer<float>* instance_buffer{ nullptr };
-    std::uint64_t            instance_revision{ 0 }; // The buffer revision the borrow was made at.
-    std::uint32_t            first_instance{ 0 };    // First instance the draw reads.
-    std::uint32_t            instance_count{ 0 };    // Instances the draw reads (0 = plain).
+    /// The instance stream this draw reads: null for a plain draw. The record HOLDS it rather than borrowing the
+    /// slice's buffer, because the plan it feeds reads those bytes and the upload entries that serve them are
+    /// keyed by this buffer's ADDRESS - a handle here is what keeps the address reserved while anything may still
+    /// answer for it (see .ai/bugs/vsg-content-address-recycled-before-rows.md).
+    vn::intrusive_ptr<const vn::Buffer<float>> instance_buffer{};
+    std::uint32_t                              first_instance{ 0 }; // First instance the draw reads.
+    std::uint32_t                              instance_count{ 0 }; // Instances the draw reads (0 = plain).
 };
 
 /**

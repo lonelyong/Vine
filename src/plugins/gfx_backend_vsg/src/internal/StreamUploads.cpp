@@ -43,10 +43,25 @@ struct StreamUploads::Data {
       : registry(capacity)
     {}
 
-    core::SharedStreams                                                                                registry;
-    std::unordered_map<core::StreamKey, ::vsg::ref_ptr<::vsg::BindVertexBuffers>, core::StreamKeyHash> vertex;
-    std::unordered_map<core::StreamKey, ::vsg::ref_ptr<::vsg::BindIndexBuffer>, core::StreamKeyHash>   index;
-    std::uint64_t                                                                                      refusals{ 0 };
+    /// @brief One cached stream: its bind, and the model buffer its key's ADDRESS names (see the file note).
+    ///
+    /// The owner is not memory policy: it is what keeps the address reserved for exactly as long as the key can
+    /// be looked up, so a new buffer cannot be handed this entry's uploaded bytes.
+    struct VertexEntry {
+        ::vsg::ref_ptr<::vsg::BindVertexBuffers>   bind;
+        vn::intrusive_ptr<const vn::Buffer<float>> owner;
+    };
+
+    /// @brief One cached index stream (see VertexEntry).
+    struct IndexEntry {
+        ::vsg::ref_ptr<::vsg::BindIndexBuffer>             bind;
+        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> owner;
+    };
+
+    core::SharedStreams                                                   registry;
+    std::unordered_map<core::StreamKey, VertexEntry, core::StreamKeyHash> vertex;
+    std::unordered_map<core::StreamKey, IndexEntry, core::StreamKeyHash>  index;
+    std::uint64_t                                                         refusals{ 0 };
     /// The frame the acquires are stamped with, and the window an unnamed entry survives (see beginFrame).
     std::uint64_t frame{ 0 };
     std::uint32_t grace{ 0 };
@@ -90,7 +105,8 @@ std::uint32_t StreamUploads::bindingOfCanonical(std::uint32_t location) noexcept
     }
 }
 
-StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& key, std::span<const float> scalars)
+StreamUploads::VertexResult
+StreamUploads::acquireVertex(const core::StreamKey& key, std::span<const float> scalars, vn::intrusive_ptr<const vn::Buffer<float>> owner)
 {
     // A derived channel is built per geometry, and a custom channel's bind identity is the whole custom
     // layout: sharing either draws every peer with the first drawable's data. Refusing here - loudly, and
@@ -108,7 +124,13 @@ StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& 
     }
     if (decision.action == core::SharedStreams::Action::Alias) {
         const auto found = d->vertex.find(key);
-        return { Action::Aliased, found == d->vertex.end() ? nullptr : found->second };
+        if (found == d->vertex.end()) {
+            return { Action::Aliased, nullptr };
+        }
+        if (found->second.owner == nullptr) {
+            found->second.owner = std::move(owner); // an entry a borrowed caller made: take the reservation now
+        }
+        return { Action::Aliased, found->second.bind };
     }
 
     // The bytes are read HERE and nowhere earlier: a sharing hit returned above without touching them.
@@ -117,11 +139,12 @@ StreamUploads::VertexResult StreamUploads::acquireVertex(const core::StreamKey& 
 
     const auto binding = bindingOfCanonical(key.location);
     auto       bind    = ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
-    d->vertex.insert_or_assign(key, bind);
+    d->vertex.insert_or_assign(key, Data::VertexEntry{ bind, std::move(owner) });
     return { Action::Uploaded, bind };
 }
 
-StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& key, std::span<const std::uint32_t> indices)
+StreamUploads::IndexResult
+StreamUploads::acquireIndex(const core::StreamKey& key, std::span<const std::uint32_t> indices, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> owner)
 {
     if (key.kind != core::StreamKind::Index || key.derived() || indices.empty()) {
         ++d->refusals;
@@ -139,13 +162,19 @@ StreamUploads::IndexResult StreamUploads::acquireIndex(const core::StreamKey& ke
     }
     if (decision.action == core::SharedStreams::Action::Alias) {
         const auto found = d->index.find(normalised);
-        return { Action::Aliased, found == d->index.end() ? nullptr : found->second };
+        if (found == d->index.end()) {
+            return { Action::Aliased, nullptr };
+        }
+        if (found->second.owner == nullptr) {
+            found->second.owner = std::move(owner);
+        }
+        return { Action::Aliased, found->second.bind };
     }
 
     auto array = ::vsg::uintArray::create(indices.size());
     std::copy(indices.begin(), indices.end(), array->begin());
     auto bind = ::vsg::BindIndexBuffer::create(array);
-    d->index.insert_or_assign(normalised, bind);
+    d->index.insert_or_assign(normalised, Data::IndexEntry{ bind, std::move(owner) });
     return { Action::Uploaded, bind };
 }
 

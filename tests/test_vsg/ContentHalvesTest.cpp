@@ -661,3 +661,64 @@ TEST(ContentHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
     EXPECT_EQ(halves.builds(), 1U) << "a refused key is remembered, not retried";
     EXPECT_EQ(halves.refused(), 1U);
 }
+
+// 数据表的身份是**地址**，而行比对象活得久；一次换档恰好造一个新程序、丢一个旧程序，新对象很容易落到刚释放的同一个
+// 地址上，而且内置预设每次创建的 revision 都一样。所以"哪一次描述"必须进半边的键（ProgramFacts::generation），
+// 否则新程序会被喂上上一档编译出来的流水线（画面停在上一档，没有任何拒绝）。
+TEST(ContentHalvesTest, AnotherDescriptionOfOneIdentityIsAnotherHalf)
+{
+    const auto program  = contentProgram();
+    const auto geometry = quad();
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
+    program_facts.generation = 1U; // the description this frame's row is
+
+    Tables tables;
+    tables.programs.push_back(program_facts);
+    GeometryFacts geometry_facts;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
+    tables.geometries.push_back(geometry_facts);
+    MaterialFacts material_facts;
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
+    tables.materials.push_back(material_facts);
+    tables.facts.programs   = tables.programs;
+    tables.facts.geometries = tables.geometries;
+    tables.facts.materials  = tables.materials;
+
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+    };
+    const CompiledPass pass = passWith(draws);
+
+    const auto first = halves.halvesFor(pass, tables.facts, timeline, retirement);
+    ASSERT_EQ(first.size(), 1U);
+    const void* const first_layer = first[0].pipelines;
+    ASSERT_NE(first_layer, nullptr);
+    ASSERT_EQ(halves.builds(), 1U);
+
+    // The SAME address, the SAME revision - but a different description (the object at that address was replaced
+    // and described again). Its text is not the half's text, so the half must not answer for it.
+    tables.programs[0].generation = 2U;
+    const auto second             = halves.halvesFor(pass, tables.facts, timeline, retirement);
+    ASSERT_EQ(second.size(), 1U);
+    EXPECT_NE(second[0].pipelines, first_layer) << "another description is another half";
+    EXPECT_EQ(halves.builds(), 2U);
+    EXPECT_EQ(retirement.pending(), 1U) << "the stale half is parked, not reused";
+
+    // Steady again: the new description's half is served, and nothing is rebuilt.
+    for (int frame = 0; frame < 3; ++frame) {
+        const auto again = halves.halvesFor(pass, tables.facts, timeline, retirement);
+        ASSERT_EQ(again.size(), 1U);
+        EXPECT_EQ(again[0].pipelines, second[0].pipelines);
+    }
+    EXPECT_EQ(halves.builds(), 2U);
+    EXPECT_EQ(retirement.pending(), 1U) << "the stale half was parked once, not once per frame";
+}

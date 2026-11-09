@@ -175,6 +175,9 @@ struct ContentStore::Data {
 
     ContentFacts  facts{};
     std::uint64_t builds{ 0 };
+    /// Raised for every program row appended: what tells two descriptions of one address apart (see
+    /// ProgramFacts::generation - the compiled halves key on it).
+    std::uint64_t descriptions{ 0 };
     std::size_t   retained{ 0 };
     /// Cells a refused park left: no parking window means "keep", never "free early".
     std::vector<std::shared_ptr<void>> kept;
@@ -579,6 +582,7 @@ void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program,
     else {
         live.variants.push_back(variant.bits());
     }
+    fresh.generation = ++d->descriptions; // a new description: a later program row at this address cannot be mistaken for it
     d->program.append(fresh, {});
     ++d->builds;
 }
@@ -589,19 +593,32 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
     std::size_t               released = 0U;
     released_materials.clear();
 
+    // THE SHARE GOES WITH THE PARK, for all three tables. A row is keyed by the object's ADDRESS, so the address
+    // must stay reserved for exactly as long as the row can be read: releasing it here would let the allocator
+    // hand the same address to a later geometry / program / material, and the park that runs afterwards erases
+    // rows BY IDENTITY - including the rows the new object just had described. Measured as the failure this fixes:
+    // a shading switch builds a fresh program at a just-freed address, its rows are erased by the old object's
+    // park at the end of that same frame, `ensureProgram` still believes the program is described, and the pass
+    // then has no compiled content half at all - so the whole pass (clear included) stops being drawn, for good,
+    // until another program object happens to land elsewhere. The parked release owns the object and drops it
+    // with the rows; a park that cannot be taken KEEPS the entry, never frees the address early.
     for (auto it = d->geometries.begin(); it != d->geometries.end();) {
         if (it->second.object != nullptr && it->second.object->useCount() > 1UL) {
             ++it;
             continue;
         }
-        const void* const identity = it->first;
-        const bool        parked   = retirement.retire(timeline, [weak, identity]() {
+        const void* const                               identity = it->first;
+        const vn::intrusive_ptr<vn::graphics::Geometry> held     = it->second.object;
+        const bool                                      parked   = retirement.retire(timeline, [weak, identity, held]() {
+            (void)held; // the address stays reserved until this runs, and dies with the rows it guards
             if (const std::shared_ptr<Data> data = weak.lock()) {
                 data->eraseGeometryOf(identity);
             }
         });
         if (!parked) {
-            ++d->retained;
+            ++d->retained; // no window yet: keep the object, its rows and its address; retry on a later frame
+            ++it;
+            continue;
         }
         it = d->geometries.erase(it);
         ++released;
@@ -612,14 +629,18 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
             ++it;
             continue;
         }
-        const void* const identity = it->first;
-        const bool        parked   = retirement.retire(timeline, [weak, identity]() {
+        const void* const                                    identity = it->first;
+        const vn::intrusive_ptr<vn::graphics::ShaderProgram> held     = it->second.object;
+        const bool                                           parked   = retirement.retire(timeline, [weak, identity, held]() {
+            (void)held;
             if (const std::shared_ptr<Data> data = weak.lock()) {
                 data->eraseProgramOf(identity);
             }
         });
         if (!parked) {
             ++d->retained;
+            ++it;
+            continue;
         }
         it = d->programs.erase(it);
         ++released;
@@ -634,14 +655,18 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
             ++it;
             continue;
         }
-        const void* const identity = it->first;
-        const bool        parked   = retirement.retire(timeline, [weak, identity]() {
+        const void* const                                   identity = it->first;
+        const vn::intrusive_ptr<vn::graphics::MaterialBase> held     = it->second.object;
+        const bool                                          parked   = retirement.retire(timeline, [weak, identity, held]() {
+            (void)held;
             if (const std::shared_ptr<Data> data = weak.lock()) {
                 data->eraseMaterialOf(identity);
             }
         });
         if (!parked) {
             ++d->retained;
+            ++it;
+            continue;
         }
         // The arena slot follows the row: the material is gone, so its storage is nobody's to keep. The
         // identity is a KEY only (the object may already be destroyed - see the declaration).
@@ -667,10 +692,14 @@ bool ContentStore::releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geo
         return true; // one request is enough; a second callback would only repeat the removal
     }
 
-    const std::uint64_t token        = ++live.release_token;
-    live.release_requested           = true;
-    const std::weak_ptr<Data> weak   = d;
-    const bool                parked = retirement.retire(timeline, [weak, geometry, token]() {
+    const std::uint64_t token                              = ++live.release_token;
+    live.release_requested                                 = true;
+    const std::weak_ptr<Data> weak                         = d;
+    // The address is what the rows are keyed by, so it must stay reserved until the park runs (see
+    // releaseAbandoned): the lambda owns the share and drops it together with the rows it erases.
+    const vn::intrusive_ptr<vn::graphics::Geometry> held   = live.object;
+    const bool                                      parked = retirement.retire(timeline, [weak, geometry, token, held]() {
+        (void)held;
         const std::shared_ptr<Data> data = weak.lock();
         if (data == nullptr) {
             return;
@@ -706,10 +735,13 @@ bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram>
         return true;
     }
 
-    const std::uint64_t token        = ++live.release_token;
-    live.release_requested           = true;
-    const std::weak_ptr<Data> weak   = d;
-    const bool                parked = retirement.retire(timeline, [weak, program, token]() {
+    const std::uint64_t token                                   = ++live.release_token;
+    live.release_requested                                      = true;
+    const std::weak_ptr<Data> weak                              = d;
+    // The address must stay reserved until the rows keyed by it are erased (see releaseAbandoned).
+    const vn::intrusive_ptr<vn::graphics::ShaderProgram> held   = live.object;
+    const bool                                           parked = retirement.retire(timeline, [weak, program, token, held]() {
+        (void)held;
         const std::shared_ptr<Data> data = weak.lock();
         if (data == nullptr) {
             return;
@@ -743,10 +775,13 @@ bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase>
         return true;
     }
 
-    const std::uint64_t token        = ++live.release_token;
-    live.release_requested           = true;
-    const std::weak_ptr<Data> weak   = d;
-    const bool                parked = retirement.retire(timeline, [weak, material, token]() {
+    const std::uint64_t token                                  = ++live.release_token;
+    live.release_requested                                     = true;
+    const std::weak_ptr<Data> weak                             = d;
+    // The address must stay reserved until the rows keyed by it are erased (see releaseAbandoned).
+    const vn::intrusive_ptr<vn::graphics::MaterialBase> held   = live.object;
+    const bool                                          parked = retirement.retire(timeline, [weak, material, token, held]() {
+        (void)held;
         const std::shared_ptr<Data> data = weak.lock();
         if (data == nullptr) {
             return;

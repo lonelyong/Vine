@@ -103,6 +103,28 @@ vn::intrusive_ptr<ShaderProgram> screenProgram()
     return program;
 }
 
+/// @brief A content program that says when it dies: what the store's ADDRESS RESERVATION is observed with.
+///
+/// The store keys every facts row by the object's address, so an object whose rows can still be read must not
+/// be destroyed - the allocator would otherwise hand the same address to the next object, whose fresh rows the
+/// old identity's park then erases (see ContentStore::releaseAbandoned).
+class CountedProgram final : public ShaderProgram {
+  public:
+    CountedProgram()
+    {
+        addStage(::stage(ShaderStageType::Vertex, kGatedVertexSource));
+        addStage(::stage(ShaderStageType::Fragment, kGatedFragmentSource));
+    }
+
+    ~CountedProgram() override
+    {
+        ++destructions;
+    }
+
+  public:
+    inline static int destructions = 0;
+};
+
 /// @brief A quad, with the texcoord channel when @p texcoords asks for one.
 vn::intrusive_ptr<Geometry> quad(bool texcoords = false)
 {
@@ -657,6 +679,86 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     EXPECT_EQ(store.geometryEntries(), 0U);
     EXPECT_EQ(store.programEntries(), 1U) << "the program is still held by the host";
+}
+
+// 地址就是行的键：一个对象的行还可能被读到（停靠在排队窗口里的那些），它的地址就不能被释放 —— 否则下一个对象
+// 会拿到同一地址，(a) 新对象会被旧行当成旧对象描述，(b) 旧身份的那次移除会把新对象的行一起擦掉。后者实测过一次
+// "整条 pass 再没有内容半边"（换一次着色模式后画面永远不再更新），所以这条用例把保留本身钉住。
+TEST(ContentStoreTest, AParkedRemovalKeepsTheObjectsAddressReservedUntilItsRowsLeave)
+{
+    ContentStore store;
+    CountedProgram::destructions = 0;
+
+    auto geometry = quad();
+    auto shading  = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    auto program  = vn::intrusive_ptr<ShaderProgram>(new CountedProgram());
+
+    store.track(geometry);
+    store.track(program);
+    store.track(shading);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), shading.get()) }, program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(store.programEntries(), 1U);
+
+    const void* const        address = program.get();
+    std::vector<const void*> released_materials;
+    program.reset();
+    geometry.reset();
+    shading.reset(); // the store's shares are the last ones (the plan copies identities, not handles)
+
+    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 3U) << "the geometry, the program and the material";
+    EXPECT_EQ(CountedProgram::destructions, 0) << "the park owns the object, so the address its rows are keyed by stays reserved";
+
+    // An object allocated NOW cannot take that address: the rows still answer for it.
+    const auto later = vn::intrusive_ptr<ShaderProgram>(new CountedProgram());
+    EXPECT_NE(later.get(), address) << "the reserved address is not handed to a new object while its rows can still be read";
+
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    EXPECT_EQ(store.programEntries(), 0U);
+    EXPECT_EQ(CountedProgram::destructions, 1) << "the park dropped the object together with the rows it guarded";
+}
+
+// 停靠排不上（会话还不知道 in-flight 数）时，行的键同样是地址：条目必须连对象一起留着，下一拍再试。"只计数、
+// 不保留"就是这条用例要抓的形态——那时地址已经被交给分配器，而行还在表里。
+TEST(ContentStoreTest, AReleaseThatCannotBeParkedYetKeepsItsEntryAndIsRetried)
+{
+    ContentStore store;
+    CountedProgram::destructions = 0;
+
+    const auto geometry = quad();
+    const auto shading  = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    auto       program  = vn::intrusive_ptr<ShaderProgram>(new CountedProgram());
+
+    store.track(geometry);
+    store.track(program);
+    store.track(shading);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(0U); // the session has not learned its in-flight count: parking is OFF
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), shading.get()) }, program.get());
+    (void)store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(store.programEntries(), 1U);
+
+    std::vector<const void*> released_materials;
+    program.reset();
+
+    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 0U) << "nothing can be parked, so nothing is let go";
+    EXPECT_EQ(retirement.pending(), 0U);
+    EXPECT_EQ(CountedProgram::destructions, 0) << "the entry keeps the object, so the address its rows are keyed by stays reserved";
+    EXPECT_EQ(store.programEntries(), 1U) << "and the rows stay answerable for the plan that still names them";
+
+    // The session learns how many frames may be in flight: the SAME entry is retried, and parks now.
+    retirement.setSlots(1U);
+    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U) << "the retry is what parks it";
+    EXPECT_EQ(retirement.pending(), 1U);
+    EXPECT_EQ(CountedProgram::destructions, 0) << "parked, not freed";
+
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    EXPECT_EQ(store.programEntries(), 0U);
+    EXPECT_EQ(CountedProgram::destructions, 1) << "the park took the object with the rows";
 }
 
 TEST(ContentStoreTest, AReleaseIsCancelledByTheNextUse)

@@ -10,6 +10,7 @@
 #include <vsg/core/Data.h>
 #include <vsg/core/ref_ptr.h>
 
+#include <vine/Buffer.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
@@ -46,11 +47,18 @@
  *     the index key is normalised here (offset 0, count = the array's element count) and not taken from the
  *     caller's span. The array passed in must alias the whole buffer for that to hold.
  *
- * WHAT DROPPING AN ENTRY DOES NOT DO. An entry holds the bind, and the bind holds the arrays, which alias
- * the model buffers - so an entry leaving the map (the sweep above, or the capacity bound) never frees bytes a
+ * WHAT DROPPING AN ENTRY DOES NOT DO. An entry holds the bind, and the bind holds the arrays the upload was
+ * built from - so an entry leaving the map (the sweep above, or the capacity bound) never frees bytes a
  * frame may still be reading: the frame that bound it holds its own reference to the bind, and what the
  * executor's retirement queue keeps alive is that node (see the design's D4/D7). This store is a LOOKUP, not
  * the owner of last resort, which is why nothing here is parked.
+ *
+ * AN ENTRY ALSO HOLDS ITS MODEL BUFFER. The key names the buffer by ADDRESS, and a buffer nobody holds hands
+ * that address back to the allocator: a new buffer landing there - same kind, same slice, same revision, which
+ * fresh buffers all carry - would then be answered with THIS entry's uploaded bytes, i.e. another geometry's
+ * vertices, silently. (Same family as the program rows' address key, see .ai/bugs/vsgb-content-address-recycled-
+ * before-rows.md.) So an acquire takes the buffer handle and the entry keeps that share until it itself leaves:
+ * the address cannot be recycled while it is cached, which is exactly as long as its key can be looked up.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
@@ -113,18 +121,23 @@ class StreamUploads {
      *
      * @param key     Stream identity; its kind must be Vertex and its location canonical.
      * @param scalars The channel's scalars as they are right now (read on a miss).
+     * @param owner   The buffer the key's address names, held by the entry for as long as it is cached (see
+     *                the file note). Callers that have only a borrowed identity may leave it empty - the entry
+     *                then documents that its address is not reserved.
      * @return The action and the bind (null when the stream may not be shared).
      */
-    [[nodiscard]] VertexResult acquireVertex(const core::StreamKey& key, std::span<const float> scalars);
+    [[nodiscard]] VertexResult acquireVertex(const core::StreamKey& key, std::span<const float> scalars, vn::intrusive_ptr<const vn::Buffer<float>> owner = {});
 
     /** @brief Gets (or builds) the shared bind for an index stream.
      *
      * @param key     Stream identity; its kind must be Index.
      * @param indices The WHOLE index buffer as it is right now (the bind aliases all of it, and the draw
      *                states the span; read on a miss, like acquireVertex's bytes).
+     * @param owner   The buffer the key's address names, held by the entry (see acquireVertex's @p owner).
      * @return The action and the bind (null when the stream may not be shared).
      */
-    [[nodiscard]] IndexResult acquireIndex(const core::StreamKey& key, std::span<const std::uint32_t> indices);
+    [[nodiscard]] IndexResult
+    acquireIndex(const core::StreamKey& key, std::span<const std::uint32_t> indices, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> owner = {});
 
     /** @brief Opens a frame: the stamp every acquire from it carries (see the file note).
      *

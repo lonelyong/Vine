@@ -11,9 +11,12 @@ VN_VSG_NS_BEGIN
 struct ContentHalves::Data {
     /** @brief What a compiled half is: everything the layer depends on (see the file note). */
     struct Key {
-        core::DrawKind         kind{ core::DrawKind::Content };
-        const void*            program{ nullptr };
-        std::uint64_t          revision{ 0 };
+        core::DrawKind kind{ core::DrawKind::Content };
+        const void*    program{ nullptr };
+        std::uint64_t  revision{ 0 };
+        /// Which DESCRIPTION of @ref program this half was compiled from (see ProgramFacts::generation): the
+        /// address alone does not identify the text, because an address is reused once its rows are gone.
+        std::uint64_t          generation{ 0 };
         core::VertexLayoutKey  layout{};
         ProgramVariant         variant{};
         std::uint32_t          color_attachments{ 1 };
@@ -44,8 +47,9 @@ struct ContentHalves::Data {
     [[nodiscard]] Half* find(const Key& key) noexcept
     {
         for (const std::shared_ptr<Half>& half : halves) {
-            if (half->key.kind == key.kind && half->key.program == key.program && half->key.revision == key.revision && half->key.layout == key.layout &&
-                half->key.variant == key.variant && half->key.color_attachments == key.color_attachments && half->key.topology == key.topology)
+            if (half->key.kind == key.kind && half->key.program == key.program && half->key.revision == key.revision &&
+                half->key.generation == key.generation && half->key.layout == key.layout && half->key.variant == key.variant &&
+                half->key.color_attachments == key.color_attachments && half->key.topology == key.topology)
             {
                 return half.get();
             }
@@ -76,7 +80,10 @@ struct ContentHalves::Data {
     /** @brief Whether the tables still answer the key of @p half (see the sweep in halvesFor). */
     [[nodiscard]] bool answerable(const Half& half, const ContentFacts& facts) const noexcept
     {
-        if (!findProgram(facts, core::ProgramRef{ half.key.program, half.key.revision }, half.key.variant, half.key.kind).found()) {
+        const FactResult<ProgramFacts> program = findProgram(facts, core::ProgramRef{ half.key.program, half.key.revision }, half.key.variant, half.key.kind);
+        if (!program.found() || program.entry->generation != half.key.generation) {
+            // Gone at this revision, or replaced by another DESCRIPTION of the same address: this half's text is
+            // no longer what the tables answer (see ProgramFacts::generation).
             return false;
         }
         if (half.key.kind == core::DrawKind::Screen) {
@@ -155,6 +162,7 @@ ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& fac
             key.kind              = core::DrawKind::Screen;
             key.program           = draw.program.program;
             key.revision          = draw.program.revision;
+            key.generation        = program.entry->generation;
             key.color_attachments = pass.color_attachments;
             // A full-screen call's state is the PASS' (its plan field): the topology it draws its generated
             // triangle with travels with it, so a pass drawn as lines gets a line-class pipeline.
@@ -185,6 +193,7 @@ ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& fac
             key.kind              = core::DrawKind::Content;
             key.program           = command.program.program;
             key.revision          = command.program.revision;
+            key.generation        = program.entry->generation;
             key.layout            = geometry.entry->layout;
             key.variant           = variant;
             key.color_attachments = pass.color_attachments;

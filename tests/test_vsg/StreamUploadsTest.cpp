@@ -17,14 +17,17 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <vector>
 
 #include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
 #include <vsg/core/Array.h>
 #include <vsg/core/Data.h>
 
+#include <vine/Buffer.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/backend/Streams.hpp>
+#include <vine/intrusive_ptr.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
 
 using vn::graphics::backend::StreamKey;
@@ -262,4 +265,34 @@ TEST(StreamUploadsTest, ACapacityEvictionDropsTheBindAndTheTwoMapsStayInStep)
     EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "its lookup left the map";
     EXPECT_EQ(store.objects(), 2U) << "the store still holds one bind per entry";
     EXPECT_TRUE(store.agreesWithRegistry());
+}
+
+// 键里的 buffer 是**地址**：一个没人持有的 buffer 会把地址交还给分配器，而新建的 buffer 全是同一个 revision，
+// 于是"同地址 + 同 revision + 同切片"的新 buffer 会被喂上**另一个几何上传过的字节**（画面里是别人的顶点，没有
+// 任何拒绝）。所以条目必须持有它键名所指的那个 buffer —— 地址在键还能被查到之前不能被回收。
+TEST(StreamUploadsTest, AnEntryHoldsTheBufferItsKeyNames)
+{
+    StreamUploads store;
+    store.beginFrame(1U, 1U);
+
+    auto            buffer = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36, 0.0F)));
+    const StreamKey key    = vertexKey(buffer.get(), buffer->revision(), 0, 36);
+
+    const auto acquired = store.acquireVertex(key, buffer->view(), buffer);
+    ASSERT_EQ(acquired.action, StreamUploads::Action::Uploaded);
+    ASSERT_NE(acquired.bind, nullptr);
+
+    auto watcher = buffer; // a handle to observe the counts with
+    buffer.reset();        // the model lets its own reference go
+    EXPECT_EQ(watcher->useCount(), 2U) << "the entry holds the buffer, so its address stays reserved while the key answers";
+
+    // An object allocated NOW cannot take that address (a live object keeps it).
+    const auto later = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36, 0.0F)));
+    EXPECT_NE(later.get(), watcher.get());
+
+    // The sweep lets the entry - and with it the reservation - go.
+    store.beginFrame(4U, 1U);
+    EXPECT_EQ(store.releaseUnseen(), 1U);
+    EXPECT_EQ(store.objects(), 0U) << "the bind went with the entry";
+    EXPECT_EQ(watcher->useCount(), 1U) << "the entry released the buffer it was holding";
 }

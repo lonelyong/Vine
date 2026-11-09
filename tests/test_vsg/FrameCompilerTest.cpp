@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <vector>
 
+#include <vine/Buffer.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/RenderCommand.hpp>
@@ -32,6 +33,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
@@ -43,6 +45,7 @@ using vn::graphics::RenderTarget;
 using vn::graphics::Sampler;
 using vn::graphics::ShaderProgram;
 using vn::graphics::backend::ClearValues;
+using vn::graphics::backend::CompiledCommand;
 using vn::graphics::backend::CompiledDraw;
 using vn::graphics::backend::CompiledFrame;
 using vn::graphics::backend::CompiledInput;
@@ -176,6 +179,46 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     EXPECT_EQ(content.kind, DrawKind::Content);
     ASSERT_EQ(content.commands.size(), 1u) << "the content call of the same pass is unchanged";
     EXPECT_EQ(content.commands[0].dynamic.depth, consumer.state.depth) << "and a content command still takes the pass' depth policy";
+}
+
+// 计划读的字节由计划自己持有：实例流的片段是宿主的（`RenderCommand::instance_transforms` 借用），而上传表按**那个
+// 缓冲区的地址**做键。只借不持的话，宿主在收集之后放掉实例集，地址就可能被同尺寸的新缓冲区拿走，旧条目于是用别人的
+// 变换冒充这一条（见 .ai/bugs/vsg-content-address-recycled-before-rows.md）。
+TEST(FrameCompilerTest, ThePlanHoldsTheInstanceStreamItReads)
+{
+    Rig                             r;
+    vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    r.addTarget(target.get(), 64, 64, true);
+
+    auto instance_storage = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>(32U, 0.0F));
+    instance_storage->bumpRevision();
+
+    RenderCommand command;
+    command.instance_transforms = vn::BufferSlice<float>::whole(instance_storage);
+    command.instance_count      = 2U;
+    const std::vector<RenderCommand> commands{ command };
+
+    ASSERT_TRUE(r.recorder.beginFrame(FrameToken{ 1 }));
+    ASSERT_TRUE(r.recorder.beginPass(1));
+    ASSERT_TRUE(r.recorder.setRenderTarget(target.get()));
+    ASSERT_TRUE(r.recorder.render(commands, nullptr));
+    ASSERT_TRUE(r.recorder.endPass());
+    ASSERT_TRUE(r.recorder.endFrame());
+
+    const CompiledFrame& frame = r.compile();
+    ASSERT_EQ(frame.passes.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draws.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1u);
+    const CompiledCommand& planned = frame.passes[0].draws[0].commands[0];
+    ASSERT_NE(planned.instance_buffer, nullptr) << "the stream is carried as a handle, not as a raw pointer";
+
+    const vn::Buffer<float>* const address  = instance_storage.get();
+    const std::uint64_t            revision = instance_storage->revision();
+    instance_storage.reset(); // the host drops its own handle: what keeps the bytes addressable now is the plan
+
+    EXPECT_EQ(planned.instance_buffer.get(), address) << "the plan names the stream it read";
+    EXPECT_EQ(planned.instance_buffer->revision(), revision) << "and the bytes are still there (nothing dangles)";
+    EXPECT_EQ(planned.instance_count, 2U);
 }
 
 TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)

@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include <vine/Buffer.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/Sampler.hpp>
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
@@ -14,6 +15,7 @@
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>
 #include <vine/graphics/graphics_global.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 /**
  * @brief The frame's COMPILATION stage: what the host asked for becomes an executable plan, and every
@@ -61,7 +63,7 @@ VN_GRAPHICSBACKEND_NS_BEGIN
  *   for a map nobody stated how to read.
  */
 struct ShadowFacts {
-    const void*     light{ nullptr };             // The light this map belongs to (its identity); nullptr = not a
+    const void* light{ nullptr };                 // The light this map belongs to (its identity); nullptr = not a
                                                   // map.
     bool            has_view_projection{ false }; // Whether the producer published how to read the map.
     vn::math::Mat4d view_projection{};            // Light clip <- world, in the producer's clip convention.
@@ -101,11 +103,13 @@ struct CompiledCommand {
     /// weighed by resolveRenderState, so this is the answer, not a claim.
     float        point_size{ 1.0F };
     DynamicState dynamic{}; // The dynamic layer, resolved (see resolveDynamicState).
-    /// The instance stream, BORROWED from the collected frame: null for a plain draw.
-    const vn::Buffer<float>* instance_buffer{ nullptr };
-    std::uint64_t            instance_revision{ 0 }; // The buffer revision the borrow was made at.
-    std::uint32_t            first_instance{ 0 };    // First instance the draw reads.
-    std::uint32_t            instance_count{ 0 };    // Instances the draw reads (0 = plain).
+    /// The instance stream this draw reads, HELD rather than borrowed: the plan reads its bytes (the visible
+    /// range travels in the draw), and `StreamKey` names the buffer by ADDRESS - so this share is what keeps that
+    /// address unique for as long as a stream entry may still be looked up by it. The revision the entry keys on
+    /// is the buffer's own, read live at record time (see StreamKey: one spelling of "which bytes").
+    vn::intrusive_ptr<const vn::Buffer<float>> instance_buffer{};
+    std::uint32_t                              first_instance{ 0 }; // First instance the draw reads.
+    std::uint32_t                              instance_count{ 0 }; // Instances the draw reads (0 = plain).
 };
 
 /** @brief One of a pass' declared inputs, as the plan carries it: what it reads, and what it offers.
@@ -131,9 +135,9 @@ struct CompiledInput {
     std::uint64_t                        texture_revision{ 0 };                         // The texture content revision; 0 for produced inputs.
     std::optional<vn::graphics::Sampler> sampler{};                                     // Imported texture's declared sampler state; absent = the
                                                                                         // backend's input sampler. Always absent for produced inputs.
-    int                                  attachment{ -1 };       // Colour attachment a ProducedImage names; -1 = whole target / imported.
-    bool                                 depth{ false };         // Whether a ProducedImage names the target's depth attachment.
-    std::uint32_t                        color_attachments{ 0 }; // Colour textures it offers (0 = nothing to bind for it).
+    int           attachment{ -1 };       // Colour attachment a ProducedImage names; -1 = whole target / imported.
+    bool          depth{ false };         // Whether a ProducedImage names the target's depth attachment.
+    std::uint32_t color_attachments{ 0 }; // Colour textures it offers (0 = nothing to bind for it).
     /// Whether the input's DEPTH is sampleable and therefore bound too (the engine's contract for a
     /// whole-target input: "every colour attachment of its source, plus its depth while that one is
     /// sampleable"). Resolved from the same facts the target's own depth plan is made of, so "may a
@@ -175,11 +179,11 @@ struct CompiledPass {
     vn::graphics::Viewport        viewport{};          // Whole-target rectangle, for the draw calls that announced none.
     vn::graphics::PassRenderState state{};             // The pass' own state (depth policy + rasterisation override).
     /// The depth band the pass' draws are mapped into ({0, 1} = the whole buffer, see DepthRange).
-    vn::graphics::DepthRange       depth_range{};
-    ClearValues                    clear{};                   // The effective clear policy (announced, or the default).
-    bool                           bootstrap{ false };        // First writer of freshly built attachments: it must clear.
-    bool                           depth_preserved{ false };  // A later pass reads the depth this one writes: never clear it.
-    std::uint32_t                  color_attachments{ 0 };    // Colour attachments of the pass' target (part of a pipeline's
+    vn::graphics::DepthRange depth_range{};
+    ClearValues              clear{};                         // The effective clear policy (announced, or the default).
+    bool                     bootstrap{ false };              // First writer of freshly built attachments: it must clear.
+    bool                     depth_preserved{ false };        // A later pass reads the depth this one writes: never clear it.
+    std::uint32_t            color_attachments{ 0 };          // Colour attachments of the pass' target (part of a pipeline's
                                                               // identity).
     bool                           depth_sampleable{ false }; // The pass' target offers a sampleable depth (part of the identity).
     std::span<const CompiledInput> inputs{};                  // The pass' declared inputs, in declaration order.
@@ -215,15 +219,15 @@ struct CompiledPass {
  *   IS a target with no colour attachments, which is what a depth-only shadow map states).
  */
 struct CompiledShape {
-    std::span<const vn::graphics::RenderTarget::ColorFormat> color_formats{};          // The engine's spelling, one per
-                                                                                       // colour attachment.
-    std::optional<vn::graphics::RenderTarget::DepthFormat>   depth_format{};           // The engine's spelling; absent = no
-                                                                                       // depth attachment.
-    std::span<const std::uint32_t>                           device_color_formats{};   // The device's spelling; empty = never learned.
-    std::uint32_t                                            device_depth_format{ 0 }; // The device's depth format; 0 = no depth, or never
-                                                                                       // learned.
-    std::uint32_t                                            samples{ 1 };             // Sample count.
-    std::uint32_t                                            subpass{ 0 };             // Subpass the pipeline targets.
+    std::span<const vn::graphics::RenderTarget::ColorFormat> color_formats{}; // The engine's spelling, one per
+                                                                              // colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format{};    // The engine's spelling; absent = no
+                                                                              // depth attachment.
+    std::span<const std::uint32_t> device_color_formats{};                    // The device's spelling; empty = never learned.
+    std::uint32_t                  device_depth_format{ 0 };                  // The device's depth format; 0 = no depth, or never
+                                                                              // learned.
+    std::uint32_t samples{ 1 };                                               // Sample count.
+    std::uint32_t subpass{ 0 };                                               // Subpass the pipeline targets.
 };
 
 /** @brief Whether what a plan was told about a target's shape agrees with what the target really has.

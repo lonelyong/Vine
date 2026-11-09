@@ -77,7 +77,7 @@ VN_VSG_NS_BEGIN
  *   streams reading it re-key).
  */
 struct ChannelFacts {
-    core::StreamKey                            key{};  // Kind, location, components, buffer, slice (and the
+    core::StreamKey key{};                             // Kind, location, components, buffer, slice (and the
                                                        // revisions it had when the entry was built).
     vn::intrusive_ptr<const vn::Buffer<float>> values; // The source scalars; read only when uploading.
 
@@ -182,6 +182,16 @@ struct ProgramFacts {
     const void*    program{ nullptr }; // The identity the plan names.
     std::uint64_t  revision{ 0 };      // The revision the plan names.
     ProgramVariant variant{};          // The variant (which of the program's texts) this entry is.
+
+    /// @brief Which DESCRIPTION of this identity this row is (see ContentStore::ensureProgram).
+    ///
+    /// THE IDENTITY IS AN ADDRESS, and an address is reused once its rows are gone: two different programs can be
+    /// described at one address at two different times, at the SAME revision (an engine preset is built from the
+    /// same stage count every time it is created). Address and revision therefore do not identify a program's TEXT,
+    /// and a compiled half keyed on them alone would be served for the other program - the previous mode's
+    /// pipeline, drawn for the mode just asked for. This number does identify the description: it is raised every
+    /// time a row is appended (ContentStore) and it is part of a half's key (ContentHalves).
+    std::uint64_t generation{ 0 };
 
     /// Which of the engine's two drawing CALLS this entry describes. It is part of the entry's key and not a
     /// decoration: ONE program object can be described twice at one revision - as content (both stages, the

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstring>
 #include <span>
+#include <string>
 
 #include <vsg/core/Array.h>
 #include <vsg/state/BufferInfo.h>
@@ -18,6 +19,7 @@
 #include <vsg/state/Sampler.h>
 
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/graphics/ShaderProgram.hpp>
 #include <vine/vsg/internal/ContentPush.hpp>
 #include <vine/vsg/internal/ContentSets.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
@@ -94,6 +96,57 @@ std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
         total += input.depth_sampleable ? 1U : 0U;
     }
     return total;
+}
+
+/**
+ * @brief Says WHY a pass has content drawing calls but no compiled content half.
+ *
+ * WHY IT EXISTS. The pass-level refusal named only the symptom ("no compiled content half was built"), which
+ * sends the reader to the sampled inputs - while a half is missing for one of FOUR different reasons: the
+ * geometry row, the material row, the program entry for the drawable's variant, or a half this backend REFUSED
+ * while building it (its GLSL, or a vertex layout it cannot declare). Each has a different fix, so the pass says
+ * which one it hit. It walks exactly the lookups the producer walked (see api/ContentHalves).
+ *
+ * @param pass  The compiled pass whose content half is missing.
+ * @param facts The tables the halves were produced from (the same ones the producer read).
+ * @return A sentence naming the first content command whose identity could not be answered.
+ */
+std::string describeMissingContentHalf(const core::CompiledPass& pass, const ContentFacts& facts)
+{
+    for (const core::CompiledDraw& draw : pass.draws) {
+        if (draw.kind != core::DrawKind::Content) {
+            continue;
+        }
+        if (draw.commands.empty()) {
+            return "the pass records a content drawing call with no commands";
+        }
+        const core::CompiledCommand&    command  = draw.commands.front();
+        const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry, command.geometry_revision);
+        if (!geometry.found()) {
+            return std::string("the first command's geometry row misses: ") + missText(geometry.miss);
+        }
+        const FactResult<MaterialFacts> material = findMaterial(facts, command.material);
+        if (!material.found()) {
+            return std::string("the first command's material row misses: ") + missText(material.miss);
+        }
+        ProgramVariant variant                 = variantOf(*material.entry, *geometry.entry);
+        variant.instanced                      = command.instance_buffer != nullptr;
+        const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant, core::DrawKind::Content);
+        if (!program.found()) {
+            std::string text = "the first command's program entry misses for variant " + variant.describe() + ": " + missText(program.miss);
+            if (const auto* named = static_cast<const vn::graphics::ShaderProgram*>(command.program.program); named != nullptr) {
+                text += " (program '" + named->name().as_std_str() + "', revision " + std::to_string(command.program.revision) + ")";
+            }
+            return text;
+        }
+        // The identity IS answerable, so the half itself was refused while it was being built - the one reason
+        // the tables cannot explain (see ContentHalves::refused).
+        const auto* named = static_cast<const vn::graphics::ShaderProgram*>(command.program.program);
+        return "the half for the first command's identity was REFUSED while it was built (its GLSL did not compile, or its "
+               "vertex layout is one this backend cannot declare): program '" +
+               (named != nullptr ? named->name().as_std_str() : std::string("<none>")) + "'";
+    }
+    return "the pass has no content drawing call";
 }
 
 /// @brief How many of the announced lights the block is supposed to carry (a DISABLED light is not a drop).
@@ -325,6 +378,11 @@ bool ContentPass::record(const core::CompiledPass&            pass,
     if (has_content) {
         if (content_half == nullptr || content_half->pipelines == nullptr) {
             reportRefused("the pass' sampled inputs", "no compiled content half was built for this pass");
+            // WHY, in the pass' own words: the symptom above is the same for four different misses, and each has
+            // a different fix (see describeMissingContentHalf).
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::ContentSkipped,
+                                vn::String::fromUtf8("why that pass has no content half: " + describeMissingContentHalf(pass, facts)));
             out = group;
             return false;
         }
@@ -1108,8 +1166,9 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
             return false;
         }
         // The key is composed HERE, from the two live announcements (see ChannelFacts::keyFor), and the bytes
-        // are handed over as a view: a stream that is already in the sharing table reads neither.
-        const StreamUploads::VertexResult acquired = scope_.uploads->acquireVertex(channel.streamKey(), channel.scalars());
+        // are handed over as a view: a stream that is already in the sharing table reads neither. The buffer
+        // handle goes WITH the key: the entry reserves the address its key names (see StreamUploads).
+        const StreamUploads::VertexResult acquired = scope_.uploads->acquireVertex(channel.streamKey(), channel.scalars(), channel.values);
         if (acquired.bind == nullptr) {
             reportRefused("the command's geometry", "one of its channels could not be uploaded");
             return false;
@@ -1128,11 +1187,13 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
         key.kind                                   = core::StreamKind::Vertex;
         key.location                               = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
         key.components                             = vn::graphics::kInstanceMatrixComponents;
-        key.buffer                                 = command.instance_buffer;
-        key.revision                               = command.instance_revision;
+        key.buffer                                 = command.instance_buffer.get();
+        key.revision                               = command.instance_buffer->revision();
         key.offset                                 = 0U;
         key.count                                  = 0U;
-        const StreamUploads::VertexResult acquired = scope_.uploads->acquireVertex(key, command.instance_buffer->view());
+        // The handle goes WITH the key: an entry reserves the address it names, and the plan is what holds the
+        // stream until the entry leaves (see StreamUploads).
+        const StreamUploads::VertexResult acquired = scope_.uploads->acquireVertex(key, command.instance_buffer->view(), command.instance_buffer);
         if (acquired.bind == nullptr) {
             reportRefused("the command's instances", "its instance stream could not be uploaded");
             return false;
@@ -1155,7 +1216,9 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // and without one the vertex streams themselves are the geometry (see api/GeometryFacts).
     ::vsg::ref_ptr<::vsg::BindIndexBuffer> index_bind;
     if (primitive.indices.has_value()) {
-        const StreamUploads::IndexResult acquired = scope_.uploads->acquireIndex(primitive.indices->streamKey(), primitive.indices->scalars());
+        // The index buffer's handle travels with its key for the same reason a channel's does (see StreamUploads).
+        const StreamUploads::IndexResult acquired =
+            scope_.uploads->acquireIndex(primitive.indices->streamKey(), primitive.indices->scalars(), primitive.indices->values);
         if (acquired.bind == nullptr) {
             reportRefused("the command's geometry", "its index stream could not be uploaded");
             return false;

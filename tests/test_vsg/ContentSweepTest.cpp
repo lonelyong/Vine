@@ -250,8 +250,12 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
     EXPECT_EQ(outcome.objects, 3U) << "the geometry, the program and the material the host dropped";
     ASSERT_EQ(released_materials.size(), 1U) << "the abandoned material identity is handed back for its slot";
-    EXPECT_EQ(outcome.textures, 1U) << "the texture nothing sampled any more";
-    EXPECT_FALSE(cache->has(texture_address)) << "the image cache has no entry left to look up";
+    // THE MATERIAL OBJECT OUTLIVES THE CALL ON PURPOSE: the park that erases the rows keyed by its ADDRESS owns
+    // it, so a later object cannot take that address while those rows still answer (see
+    // ContentStore::releaseAbandoned). Its texture is therefore still owned here - a MATERIAL owns its maps -
+    // and the image cache drops it on a later sweep, once the park has released the material.
+    EXPECT_EQ(outcome.textures, 0U) << "the material, and with it its texture, is still held until its park runs";
+    EXPECT_TRUE(cache->has(texture_address));
 
     // The ROWS stay answerable until the park comes due: a plan recorded in the frame that is being finished
     // may still name them (see api/ContentSweep), which is why this half parks instead of erasing.
@@ -264,6 +268,12 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     EXPECT_EQ(store.geometryEntries(), 0U);
     EXPECT_EQ(store.programEntries(), 0U);
     EXPECT_EQ(store.materialEntries(), 0U);
+
+    // The park took the material with it: nothing samples the texture any more, so the cache lets it go now.
+    const SweepOutcome after_park = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
+    EXPECT_EQ(after_park.objects, 0U) << "every row already left at the park";
+    EXPECT_EQ(after_park.textures, 1U) << "the texture nothing sampled any more";
+    EXPECT_FALSE(cache->has(texture_address)) << "the image cache has no entry left to look up";
 }
 
 TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)

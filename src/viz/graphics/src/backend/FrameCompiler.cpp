@@ -341,7 +341,6 @@ FrameCompiler::resolveCommands(const CollectedDraw& source, const ProgramRef& de
         out.opacity                                = command.opacity;
         out.transparent                            = command.transparent;
         out.instance_buffer                        = command.instance_buffer;
-        out.instance_revision                      = command.instance_revision;
         out.first_instance                         = command.first_instance;
         out.instance_count                         = command.instance_count;
         // The ONE resolution: what the content authored, weighed against what the pass says
