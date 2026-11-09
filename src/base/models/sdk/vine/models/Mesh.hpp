@@ -64,6 +64,9 @@ class Mesh : public Shape {
     using Vec3   = vn::math::Vec3f;
     using Vec4   = vn::math::Vec4f;
     using Aabb   = vn::geom::spatial::Aabbf;
+    /// The tree keeps `double` bounds while the vertices stay `float`: every consumer queries with a `Rayd`, and
+    /// narrowing that ray to float would drop a small leaf box far from the origin, while widening the stored floats
+    /// into double boxes is exact (see bvh()).
     using Bvh    = vn::geom::spatial::Bvh<double>;
 
     static constexpr std::uint32_t kVec3Components = 3u;
