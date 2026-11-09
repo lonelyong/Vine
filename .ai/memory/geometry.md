@@ -189,4 +189,4 @@
   所以另一帧可以共享同一棵而不复制。未构建的树不回答候选，**不**退化成线性扫描。
   见 `design/graphics-geometry.md` 2.9 / F32 与 `decisions/ADR-2026-11-07-mesh-triangle-tree-cache.md`。
 
-- **两种智能指针不要混**：`Buffer<T>` 是 `RefCounted` → 用 `intrusive_ptr`（计数在对象里；`Mesh` 的五个通道句柄是 `intrusive_ptr<const Buffer<T>>`，Mesh 只替换通道、从不原地写字节）；`Bvh` 是值类型 → 共享它只能用 `shared_ptr<const Bvh>`（构建时还要能放栈上）。判据：**计数在对象里 → intrusive_ptr；值类型要共享 → shared_ptr**。两者共享契约也不同：一个是“共享可变字节 + `Buffer::setRevision()` 公告”，一个是“发布后不可变”。
+- **两种智能指针不要混**：`Buffer<T>` 是 `RefCounted` → 用 `intrusive_ptr`（计数在对象里；`Mesh` 的五个通道句柄是 `intrusive_ptr<const Buffer<T>>`，Mesh 只替换通道、从不原地写字节）；`Bvh` 是值类型 → 共享它只能用 `shared_ptr<const Bvh>`（构建时还要能放栈上）。判据：**计数在对象里 → intrusive_ptr；值类型要共享 → shared_ptr**。两者共享契约也不同：一个是“共享可变字节，写走 `Buffer::edit()` 作用域（结束即公告）”，一个是“发布后不可变”。

@@ -56,9 +56,12 @@ TEST(BufferTest, AdoptsAVectorInsteadOfCopyingIt)
 
 TEST(BufferTest, TheByteViewIsTheTypedElementsThemselves)
 {
-    auto buffer  = intrusive_ptr<Buffer<Vec3>>(new Buffer<Vec3>(2));
-    (*buffer)[0] = Vec3{ 1.0f, 2.0f, 3.0f };
-    (*buffer)[1] = Vec3{ 4.0f, 5.0f, 6.0f };
+    auto buffer = intrusive_ptr<Buffer<Vec3>>(new Buffer<Vec3>(2));
+    {
+        auto edit = buffer->edit();
+        edit[0]   = Vec3{ 1.0f, 2.0f, 3.0f };
+        edit[1]   = Vec3{ 4.0f, 5.0f, 6.0f };
+    }
 
     const auto bytes = buffer->bytes();
 
@@ -76,8 +79,11 @@ TEST(BufferTest, TheByteViewIsTheTypedElementsThemselves)
 
 TEST(BufferTest, IsSharedRatherThanCopied)
 {
-    auto first  = intrusive_ptr<Buffer<int>>(new Buffer<int>(2));
-    (*first)[0] = 7;
+    auto first = intrusive_ptr<Buffer<int>>(new Buffer<int>(2));
+    {
+        auto edit = first->edit();
+        edit[0]   = 7;
+    }
 
     auto second = first;
     EXPECT_EQ(second->useCount(), 2u);
@@ -100,71 +106,81 @@ TEST(BufferTest, AnEmptyBufferHasNoStorage)
 
 TEST(BufferTest, WriteAccessReachesTheElements)
 {
-    // Writing contents is allowed, which is what lets a loader or a mesh builder fill a buffer it just
-    // created.
+    // Writing contents is what lets a loader or a mesh builder fill a buffer it just created - and the scope
+    // is what makes the buffer hear about it, which a raw pointer never could (see the class note).
     auto buffer = intrusive_ptr<Buffer<Vec3>>(new Buffer<Vec3>(1));
-
-    auto values = buffer->view();
-    values[0]   = Vec3{ 9.0f, 8.0f, 7.0f };
+    {
+        auto edit = buffer->edit();
+        auto span = edit.view();
+        span[0]   = Vec3{ 9.0f, 8.0f, 7.0f };
+    }
 
     EXPECT_FLOAT_EQ((*buffer)[0].x, 9.0f);
     EXPECT_FLOAT_EQ(buffer->view()[0].z, 7.0f);
 }
 
-TEST(BufferTest, NoMutationAnnouncesItselfSoTheWriterReportsTheEdit)
+TEST(BufferTest, AnEditAnnouncesItselfExactlyOnce)
 {
-    // A buffer cannot see every write (a pointer, a reference, another thread) and does not know where an edit
-    // ends, so it does not guess: NOTHING here moves the revision, and the writer states the change with
-    // setRevision(). What the test asserts is the absence of a half-truth — "appending announces, writing
-    // through data() silently does not" — because a revision-comparing consumer cannot tell those apart.
+    // The alternative this replaced was "no write announces, the writer says so afterwards": a rule that is
+    // correct only if nobody forgets, and forgetting is invisible. The scope is the missing fact - where the
+    // edit ends - so the announcement is the scope's, and it happens once whatever the edit did.
     auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>());
-    EXPECT_EQ(buffer->revision(), 0u);
+    ASSERT_EQ(buffer->revision(), 0u);
 
-    buffer->push_back(1);
-    EXPECT_EQ(buffer->revision(), 0u) << "an append does not announce itself";
+    {
+        auto edit = buffer->edit();
+        edit.push_back(1);
+        edit.append(std::vector<int>{ 2, 3 });
+        edit.reserve(64);
+        EXPECT_EQ(buffer->revision(), 0u) << "the edit is not announced until it ends";
+        EXPECT_EQ(edit.size(), 3u);
+    }
 
-    buffer->append(std::vector<int>{ 2, 3 });
-    EXPECT_EQ(buffer->revision(), 0u);
+    EXPECT_EQ(buffer->revision(), 1u) << "one edit, one announcement (not one per element, not one per call)";
     EXPECT_EQ(buffer->size(), 3u);
 
-    buffer->clear();
-    EXPECT_EQ(buffer->revision(), 0u) << "neither does emptying it";
+    {
+        auto edit = buffer->edit();
+        edit.clear();
+    }
+    EXPECT_EQ(buffer->revision(), 2u) << "and emptying it is an edit like any other";
     EXPECT_TRUE(buffer->empty());
-
-    // The writer says so, once per edit — and now a cached consumer can tell.
-    buffer->setRevision(buffer->revision() + 1u);
-    EXPECT_EQ(buffer->revision(), 1u);
 }
 
-TEST(BufferTest, ReserveDoesNotCountAsAContentChange)
+#ifndef NDEBUG
+TEST(BufferTest, ASecondWriterCannotOpenWhileOneIsLive)
 {
-    // reserve() may move the storage, but it does not change what a consumer would read — so it must not
-    // make a cache look stale. (Taking a view before it is still wrong; that part is documented, not tracked.)
-    // It is also the one mutation that would have had to stay silent under the old rule, which is part of why
-    // the rule is now uniform.
-    auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>());
-    buffer->push_back(1);
-
-    const std::uint64_t before = buffer->revision();
-    buffer->reserve(64);
-
-    EXPECT_EQ(buffer->revision(), before);
-    EXPECT_EQ((*buffer)[0], 1);
-}
-
-TEST(BufferTest, SetRevisionIsTheOnlyWayTheRevisionMoves)
-{
-    // `data()` and `operator[]` hand out writable references, so a caller can change the contents in ways the
-    // buffer can never notice. That is not a special case any more: it is the same rule as every other write
-    // path, which is what makes "announce it yourself" impossible to read as "unless you used push_back".
+    // Two live writers would each announce the end of "the" edit, and the second one's end would tell a
+    // consumer nothing. It is a call-site bug, so it asserts where it is made.
     auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>(1));
 
-    const std::uint64_t before = buffer->revision();
-    buffer->data()[0]          = 5;
-    EXPECT_EQ(buffer->revision(), before) << "a write through a pointer cannot bump anything by itself";
+    auto outer = buffer->edit();
+    EXPECT_DEATH(
+        {
+            auto inner = buffer->edit();
+            (void)inner;
+        },
+        "one writer at a time");
+    (void)outer;
+}
+#endif
 
-    buffer->setRevision(before + 1);
-    EXPECT_GT(buffer->revision(), before) << "now a cached consumer can tell";
+TEST(BufferTest, SetRevisionStaysForBytesWrittenOutsideTheBuffer)
+{
+    // The escape hatch, not the ordinary path: a file mapped elsewhere, a device write, a producer with its own
+    // version number. It moves the counter like an edit does, so a cached consumer sees "new contents".
+    auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>(1));
+    {
+        auto edit = buffer->edit();
+        edit[0]   = 5;
+    }
+    ASSERT_EQ(buffer->revision(), 1u);
+
+    buffer->setRevision(41u); // a writer that has a revision of its own reports it
+    EXPECT_EQ(buffer->revision(), 41u);
+
+    buffer->bumpRevision(); // the safe step, which cannot lower it
+    EXPECT_EQ(buffer->revision(), 42u);
 
     // The counter says nothing about the data; it only orders changes.
     EXPECT_EQ((*buffer)[0], 5);

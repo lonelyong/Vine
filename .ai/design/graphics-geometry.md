@@ -100,7 +100,7 @@
 | # | 功能 | 说明 |
 |---|---|---|
 | F17 | 几何 revision | `setRevision()` / `bumpRevision()`；只表示形状变化。 |
-| F18 | buffer revision | `Buffer::setRevision()`；字节公告，上传缓存只认它。 |
+| F18 | buffer revision | `Buffer::edit()` 作用域结束即公告（唯一的写入口）；`setRevision()` 只给“对象之外的写”。上传缓存只认 revision。 |
 | F19 | 事实行重建 | 几何 revision 变化 ⇒ 重建 layout / 通道集 / counts。 |
 | F20 | 局部盒缓存 | `localBounds()` + `localBoundsComputationCount()` 见证。 |
 | F21 | 世界盒 | 局部盒乘父链；`subtreeBounds` 在节点自身坐标系。 |
@@ -112,7 +112,7 @@
 | F22 | `core::Buffer<T>` | `RefCounted`，内部组合 `std::vector<T>`；不是 `Object`，没有 vptr。 |
 | F23 | 统一 float | `Mesh` 属性存 `Buffer<float>`，索引为 `Buffer<std::uint32_t>`；没有精度模板，也没有 `Meshf` / `Meshd` 别名。 |
 | F24 | 渲染边界 | `geometryFromShape()` 只把 `TriangleMesh` 交给转换器，属性 buffer 原样共享；`QuadMesh` / `MixedMesh` 在这个边界先转成 `TriangleMesh`，非法网格返回空几何而不抛异常。 |
-| F25 | 手动公告 | 没人自动 bump：写者完成一次编辑后自己推进 `Shape::revision()`；持有 `Buffer` 并原地写的写者用 `Buffer::setRevision()`；draw 布局由 `Geometry::setRevision()` 负责。 |
+| F25 | 手动公告 | `Shape` / `Geometry` 没人自动 bump：写者完成一次编辑后自己推进 `Shape::revision()`；`Buffer` 的写在 `edit()` 作用域里（自动公告一次）；只有对象之外改的字节才用 `Buffer::setRevision()`；draw 布局由 `Geometry::setRevision()` 负责。 |
 | F26 | vsg 别名 | 后端用真 `vsg::vec3Array` 别名持有 Vine buffer 的 `Data`；stride = 数组元素大小，不是 buffer 元素大小。 |
 | F27 | 指针身份判据 | 渲染证据对“拷贝 vs 共享”无感；只有 `dataPointer()` 同一性断言能区分。 |
 

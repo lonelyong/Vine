@@ -535,8 +535,10 @@ TEST(AdaptersTest, BufferSliceSourceRefusesABufferEditedAfterHandover)
 
     ASSERT_EQ(source.read(piece), 4u);
 
-    buffer->operator[](0) = 9.0f;
-    buffer->bumpRevision();
+    {
+        auto edit = buffer->edit();
+        edit[0]   = 9.0f; // an edit the source must notice, or it would hand out bytes it promised
+    }
     EXPECT_EQ(source.read(piece), 0u) << "the content it promised is no longer what it would produce";
     EXPECT_EQ(source.error(), IoError::InvalidData);
 }

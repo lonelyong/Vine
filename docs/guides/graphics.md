@@ -241,8 +241,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   所以一个索引 arena 的所有 geometry 共享一次索引上传。
 - **一份顶点也可以有多条 draw**：顶点通道挂在 `Geometry` 上，一次 draw 挂在 `Primitive` 上，所以"一个对象、
   几段索引"是一条几何体 + 几条图元（见 §3.21），不需要拆成多个几何体。
-- **改这一段要公告**：`buffer->setRevision(buffer->revision() + 1)`（重新填了字节）+ `geometry->setRevision(...)`
-  （渲染侧才知道要重建）。只挪 `offset`（同缓冲换一段）同样要公告。
+- **改这一段要公告**：`auto edit = buffer->edit();` 填字节（**作用域结束即公告**，一次编辑一次公告，无需再手工
+  `setRevision`）+ `geometry->setRevision(...)`（渲染侧才知道要重建）。只挪 `offset`（同缓冲换一段）同样要公告。
 - **边界**：`offset` 越过缓冲末尾、或段长超过剩余长度 ⇒ 访问器一律当**空**处理（不会读越界）。
 
 ## 3. 使用

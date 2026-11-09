@@ -1,6 +1,7 @@
 #pragma once
 #include "core_global.hpp"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -31,16 +32,21 @@ VN_CORE_NS_BEGIN
  * Vine objects and `shared_ptr` for plain data. This is the former: it has identity, is not copyable, and
  * is meant to be shared — exactly the shape `RefCounted` describes.
  *
- * GROWTH IS ANNOUNCED BY THE WRITER, NOT INFERRED HERE. A modelling API appends (a mesh builder adds
- * vertices one at a time), so there is an append API and the length is not fixed. What a consumer must not
- * do is assume the bytes it read are still current: any mutation INVALIDATES byte pointers and views taken
- * before it. But no mutation moves revision() — this object cannot see every write (a non-const `data()`
- * pointer, an element reference, a write from another thread are all invisible to it) and it does not know
- * where an edit begins and ends, so a self-bump could only ever be a half-truth: one write path announces
- * itself, the next one silently does not. The WRITER reports the change with setRevision(), once per edit,
- * and a consumer that cached THE BYTES IT READ FROM THIS BUFFER compares the revision it read against
- * revision() before reusing them — the rule `Texture` and `ShaderProgram` follow for "the same object, new
- * contents".
+ * EVERY WRITE ANNOUNCES ITSELF, AND THERE IS ONE WRITE PATH. Growth is announced by this object, not by the
+ * writer's memory: a modelling API appends (a mesh builder adds vertices one at a time), so there is an
+ * append API and the length is not fixed, and a consumer that cached THE BYTES IT READ FROM THIS BUFFER
+ * compares the revision it read against revision() before reusing them — the rule `Texture` and
+ * `ShaderProgram` follow for "the same object, new contents". That rule is only honest if no mutation can be
+ * silent, and a raw `T*`, an element reference or a span handed out by the buffer itself IS a write this
+ * object cannot see — nor can it tell where such an edit begins and ends. So those are handed out by ONE
+ * scoped writer instead (see edit()): `Edit` owns the write intent, the buffer announces once when it ends,
+ * and no other route to the elements exists. What a consumer must not do is assume the bytes it read are
+ * still current: any mutation INVALIDATES byte pointers and views taken before it, so take a view after the
+ * edit rather than before.
+ *
+ * WHAT STAYS MANUAL. A change made OUTSIDE this object — a file mapped elsewhere, a device write into the
+ * same allocation, a producer that owns its own version number — cannot be seen here at all, so that writer
+ * says so with setRevision(). That is the escape hatch, not the ordinary path.
  *
  * THIS IS THE ANNOUNCEMENT THAT DECIDES RE-UPLOADS. The renderer keys every stream it uploads on
  * (this buffer, this revision, the slice), so moving this number re-sends exactly the streams that read this
@@ -105,41 +111,17 @@ class Buffer : public RefCounted<Buffer<T>> {
     }
 
     /**
-     * @brief Gets writable access to the elements.
-     *
-     * Writing through this pointer CANNOT be seen by the buffer, so a caller that does it must announce the
-     * change with setRevision() — otherwise a consumer that compares revisions keeps reusing what it read.
-     * Every other write path follows the same rule (nothing here moves the revision by itself), which is what
-     * makes the rule absolute instead of "some writes announce themselves".
-     * This is the same reason the write path exists at all: the model side writes vertices in place far more
-     * often than it rebuilds the array.
-     *
-     * @return Pointer to the first element, or null when empty.
-     */
-    [[nodiscard]] T* data() noexcept
-    {
-        return data_.data();
-    }
-
-    /**
      * @brief Gets read-only access to the elements.
+     *
+     * @details
+     * - The WRITE face is @ref Edit (see edit()): a pointer this object handed out cannot be seen when it is
+     *   written through, so no writable pointer exists outside a scope that announces the edit.
      *
      * @return Pointer to the first element, or null when empty.
      */
     [[nodiscard]] const T* data() const noexcept
     {
         return data_.data();
-    }
-
-    /**
-     * @brief Gets one element.
-     *
-     * @param index Element index; must be below `size()`.
-     * @return The element.
-     */
-    [[nodiscard]] T& operator[](size_type index) noexcept
-    {
-        return data_[index];
     }
 
     /**
@@ -154,20 +136,11 @@ class Buffer : public RefCounted<Buffer<T>> {
     }
 
     /**
-     * @brief Gets a typed view of the elements.
+     * @brief Gets a typed READ-ONLY view of the elements.
      *
      * This is the TYPED face of the buffer: the model side keeps `Vec3f`-style access without a cast, and
      * the view is a value (`ptr` + `size`), so it costs nothing and needs no lifetime management of its own.
-     *
-     * @return View over every element.
-     */
-    [[nodiscard]] std::span<T> view() noexcept
-    {
-        return std::span<T>(data_.data(), data_.size());
-    }
-
-    /**
-     * @brief Gets a typed read-only view of the elements.
+     * The writable view lives on @ref Edit (see edit()).
      *
      * @return View over every element.
      */
@@ -195,10 +168,11 @@ class Buffer : public RefCounted<Buffer<T>> {
     /**
      * @brief Gets the content revision.
      *
-     * Moved ONLY by setRevision(), so a consumer that cached the bytes can tell "the same buffer, still the
-     * same contents" from "the same buffer, new contents". A pointer alone cannot: a cache keyed by the
-     * buffer's address would otherwise keep serving the contents it read first. (The counterpart of
-     * `Geometry::revision()`, `Texture::revision()` and `ShaderProgram::revision()`.)
+     * Moved by every mutation this object performs (once per @ref Edit scope, see edit()), so a consumer that
+     * cached the bytes can tell "the same buffer, still the same contents" from "the same buffer, new
+     * contents". A pointer alone cannot: a cache keyed by the buffer's address would otherwise keep serving the
+     * contents it read first. (The counterpart of `Geometry::revision()`, `Texture::revision()` and
+     * `ShaderProgram::revision()`.)
      *
      * @return Monotonic revision counter (starts at 0).
      */
@@ -208,17 +182,163 @@ class Buffer : public RefCounted<Buffer<T>> {
     }
 
     /**
-     * @brief Announces a content change by reporting the revision.
+     * @brief A scoped writer over the elements: the only way to change them.
      *
-     * The ONLY way the revision moves: mutating the elements (push_back / append / clear, or a write through
-     * `data()` / `operator[]` / `view()`) does NOT move it. This object cannot see every write and cannot tell
-     * where an edit begins and ends, so it must not guess — the WRITER knows, and says so once per EDIT rather
-     * than once per element. That is also the granularity a consumer wants: "re-read, I am done".
+     * @details
+     * - WHY A SCOPE AND NOT A POINTER. The buffer cannot see a write made through a raw `T*`, and it cannot tell
+     *   where such an edit begins and ends — so a per-write announcement could only ever be a half-truth (one
+     *   path announces, the next stays silent). Handing the pointer out from a scope that ENDS is what gives the
+     *   buffer the one fact it was missing: the end of the edit.
+     * - ONE ANNOUNCEMENT PER EDIT. The destructor moves revision() once, whatever was done inside the scope —
+     *   which is also the granularity a consumer wants: "re-read, I am done".
+     * - NOT COPYABLE, ONE AT A TIME. Two live writers would each believe they end the edit, so taking a second
+     *   one while the first is alive asserts.
+     * - THE ELEMENTS OUTLIVE NOTHING. A pointer or view taken inside the scope may be invalidated by the next
+     *   mutation (a growth reallocates); take what you need and finish inside the scope.
      *
-     * The usual value is `revision() + 1` — for that case prefer bumpRevision(), which cannot move the
-     * counter backwards by accident. The counter is only ever COMPARED, so nothing breaks if it jumps;
-     * but lowering it is a real hazard: a consumer holding a cached revision could then treat old bytes as
-     * current, or vice versa. Treat it as monotonic unless a caller genuinely needs otherwise.
+     * @warning
+     * - Not thread-safe: another thread writing at the same time is a data race, with or without this scope.
+     */
+    class Edit {
+      public:
+        /**
+         * @brief Opens a write scope over @p buffer; the change is announced when the scope ends.
+         *
+         * @param buffer Buffer to write.
+         */
+        explicit Edit(Buffer& buffer) noexcept
+          : buffer_(buffer)
+        {
+            assert(buffer_.editing_ == 0U && "one writer at a time: a second live Edit would announce the end twice");
+            buffer_.editing_ = 1U;
+        }
+
+        /** @brief Ends the edit and announces it (the one announcement a whole edit costs). */
+        ~Edit() noexcept
+        {
+            buffer_.editing_ = 0U;
+            buffer_.bumpRevision();
+        }
+
+        Edit(const Edit&)            = delete;
+        Edit& operator=(const Edit&) = delete;
+
+      public:
+        /**
+         * @brief Gets writable access to the elements.
+         *
+         * @warning
+         * - The storage may move on the next growth: use it inside the scope, not after it.
+         *
+         * @return Pointer to the first element, or null when empty.
+         */
+        [[nodiscard]] T* data() noexcept
+        {
+            return buffer_.data_.data();
+        }
+
+        /**
+         * @brief Gets a typed writable view of the elements.
+         *
+         * @return View over every element.
+         */
+        [[nodiscard]] std::span<T> view() noexcept
+        {
+            return std::span<T>(buffer_.data_.data(), buffer_.data_.size());
+        }
+
+        /**
+         * @brief Gets one writable element.
+         *
+         * @param index Element index; must be below `size()`.
+         * @return The element.
+         */
+        [[nodiscard]] T& operator[](size_type index) noexcept
+        {
+            return buffer_.data_[index];
+        }
+
+        /**
+         * @brief Gets the element count.
+         *
+         * @return Number of elements.
+         */
+        [[nodiscard]] size_type size() const noexcept
+        {
+            return buffer_.data_.size();
+        }
+
+        /**
+         * @brief Reserves room for @p count elements.
+         *
+         * Does not count as a mutation by itself, but it may move the storage, so pointers and views taken
+         * earlier are invalidated all the same — take a view after the building is done.
+         *
+         * @param count Elements to make room for.
+         */
+        void reserve(size_type count)
+        {
+            buffer_.data_.reserve(count);
+        }
+
+        /**
+         * @brief Appends one element.
+         *
+         * @param value Element to append (copied).
+         */
+        void push_back(const T& value)
+        {
+            buffer_.data_.push_back(value);
+        }
+
+        /**
+         * @brief Appends every element of @p values.
+         *
+         * @param values Elements to append.
+         */
+        void append(std::span<const T> values)
+        {
+            if (values.empty()) {
+                return;
+            }
+
+            buffer_.data_.insert(buffer_.data_.end(), values.begin(), values.end());
+        }
+
+        /** @brief Removes every element. */
+        void clear() noexcept
+        {
+            buffer_.data_.clear();
+        }
+
+      private:
+        Buffer& buffer_;
+    };
+
+    /**
+     * @brief Opens the write scope over the elements: the only way to change them, announcing the edit when it ends.
+     *
+     * @details
+     * - The boundary of an edit is the scope: several writes inside one @ref Edit cost ONE revision move, and a
+     *   write with no scope cannot happen at all.
+     *
+     * @return The writer; the change is announced when it goes out of scope.
+     */
+    [[nodiscard]] Edit edit() noexcept
+    {
+        return Edit(*this);
+    }
+
+    /**
+     * @brief Announces a change made to the bytes OUTSIDE this object by reporting the revision.
+     *
+     * @details
+     * - The escape hatch, not the ordinary path: a file mapped elsewhere, a device write into the same
+     *   allocation, or a producer that already owns a version number. Everything a caller does through @ref Edit
+     *   is announced by that scope, so a call here is only ever about bytes this object did not hand out.
+     * - The usual value is `revision() + 1` — for that case prefer bumpRevision(), which cannot move the counter
+     *   backwards by accident. The counter is only ever COMPARED, so nothing breaks if it jumps; but lowering it
+     *   is a real hazard: a consumer holding a cached revision could then treat old bytes as current.
      *
      * @param revision Revision to report.
      */
@@ -228,73 +348,26 @@ class Buffer : public RefCounted<Buffer<T>> {
     }
 
     /**
-     * @brief Announces a content change by moving the revision one step forward.
+     * @brief Announces a change made outside this object by moving the revision one step forward.
      *
-     * The safe spelling of `setRevision(revision() + 1)`: one call reports an edit, and the counter cannot
-     * be LOWERED by arithmetic (see setRevision, where lowering is the hazard). Use this for the ordinary
-     * "I edited the contents" case; setRevision stays for a writer that has a revision of its own to
-     * report (a model's version, a file's).
+     * @details
+     * - The safe spelling of `setRevision(revision() + 1)`: the counter cannot be LOWERED by arithmetic, so a
+     *   consumer that cached a revision never treats old bytes as current again.
+     *
+     * @note
+     * - Writing through @ref edit() already announces; calling this as well would move the revision twice, which
+     *   costs one redundant re-read and nothing else.
      */
     void bumpRevision() noexcept
     {
         ++revision_;
     }
 
-    /**
-     * @brief Reserves room for @p count elements.
-     *
-     * Does NOT count as a mutation of the contents, but it may move the storage, so views taken earlier are
-     * invalidated all the same — take a view after the building is done.
-     *
-     * @param count Elements to make room for.
-     */
-    void reserve(size_type count)
-    {
-        data_.reserve(count);
-    }
-
-    /**
-     * @brief Appends one element.
-     *
-     * Does not announce the change: report it with setRevision() once the edit is done (see the class
-     * comment). A holder of the storage cannot tell "one more element" from "still the same" by itself.
-     *
-     * @param value Element to append (copied).
-     */
-    void push_back(const T& value)
-    {
-        data_.push_back(value);
-    }
-
-    /**
-     * @brief Appends every element of @p values.
-     *
-     * Does not announce the change (see push_back).
-     *
-     * @param values Elements to append.
-     */
-    void append(std::span<const T> values)
-    {
-        if (values.empty()) {
-            return;
-        }
-
-        data_.insert(data_.end(), values.begin(), values.end());
-    }
-
-    /**
-     * @brief Removes every element.
-     *
-     * Does not announce the change: an emptied buffer is a change a holder has to hear about too.
-     */
-    void clear() noexcept
-    {
-        data_.clear();
-    }
-
   private:
     std::vector<T> data_;
     std::uint64_t  revision_ = 0;
+    /// Whether a writer scope is open (see Edit): one at a time, so the end of an edit is announced once.
+    std::uint32_t editing_   = 0;
 };
 
 /**
