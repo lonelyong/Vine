@@ -105,8 +105,8 @@ struct MedianSplit
         const std::uint32_t mid = count / 2;
         const auto          begin = job.order.begin() + static_cast<std::ptrdiff_t>(first);
         std::nth_element(begin, begin + mid, begin + count, [this, axis](std::uint32_t lhs, std::uint32_t rhs) {
-            return centerCoordinate<T, Volume>(job.bounds[lhs], axis) <
-                   centerCoordinate<T, Volume>(job.bounds[rhs], axis);
+            return centerCoordinate<T, Volume>(job.prim_bounds[lhs], axis) <
+                   centerCoordinate<T, Volume>(job.prim_bounds[rhs], axis);
         });
         return count > 1 ? first + mid : 0;
     }
@@ -147,7 +147,7 @@ struct SahSplit
         T lowest  = std::numeric_limits<T>::max();
         T highest = std::numeric_limits<T>::lowest();
         for (std::uint32_t index = first; index < first + count; ++index) {
-            const T value = centerCoordinate<T, Volume>(job.bounds[job.order[index]], axis);
+            const T value = centerCoordinate<T, Volume>(job.prim_bounds[job.order[index]], axis);
             lowest        = value < lowest ? value : lowest;
             highest       = value > highest ? value : highest;
         }
@@ -163,11 +163,11 @@ struct SahSplit
         (void)costs;
 
         for (std::uint32_t index = first; index < first + count; ++index) {
-            const std::uint32_t id   = job.order[index];
-            const T             value = centerCoordinate<T, Volume>(job.bounds[id], axis);
+            const std::uint32_t id    = job.order[index];
+            const T             value = centerCoordinate<T, Volume>(job.prim_bounds[id], axis);
             const auto          bin   = static_cast<std::uint32_t>((value - lowest) * scale);
             const std::uint32_t slot  = bin < kBins ? bin : kBins - 1;
-            bin_bounds[slot] = bin_used[slot] ? Traits::merged(bin_bounds[slot], job.bounds[id]) : job.bounds[id];
+            bin_bounds[slot] = bin_used[slot] ? Traits::merged(bin_bounds[slot], job.prim_bounds[id]) : job.prim_bounds[id];
             bin_used[slot]   = true;
             ++bin_counts[slot];
         }
@@ -219,7 +219,7 @@ struct SahSplit
         // Partition in place: everything below the chosen plane first.
         const auto begin = job.order.begin() + static_cast<std::ptrdiff_t>(first);
         const auto split = std::partition(begin, begin + count, [this, axis, lowest, scale, best_bin](std::uint32_t id) {
-            const T value = centerCoordinate<T, Volume>(job.bounds[id], axis);
+            const T value = centerCoordinate<T, Volume>(job.prim_bounds[id], axis);
             const auto bin = static_cast<std::uint32_t>((value - lowest) * scale);
             return (bin < kBins ? bin : kBins - 1) < best_bin;
         });
@@ -259,15 +259,15 @@ std::uint32_t buildTopDown(vn::geom::spatial::detail::BuildJob<T, Volume>& job, 
         std::uint32_t build(std::uint32_t first, std::uint32_t count, unsigned depth)
         {
             const auto node = job.appendNode();
-            job.nodes[node].bounds = job.rangeBounds(first, count);
+            job.node_bounds[node] = job.rangeBounds(first, count);
 
             if (count <= job.leaf_size || depth + 1 >= job.max_depth) {
-                job.writeLeaf(node, job.nodes[node].bounds, first, count);
+                job.writeLeaf(node, job.node_bounds[node], first, count);
                 job.depth = depth > job.depth ? depth : job.depth;
                 return node;
             }
 
-            int axis = longestAxis<T, Volume>(job.nodes[node].bounds);
+            int axis = longestAxis<T, Volume>(job.node_bounds[node]);
             auto middle = split(first, count, axis);
 
             if (middle == 0) {
@@ -276,7 +276,7 @@ std::uint32_t buildTopDown(vn::geom::spatial::detail::BuildJob<T, Volume>& job, 
                 middle = median(first, count, axis);
             }
             if (middle == 0) {
-                job.writeLeaf(node, job.nodes[node].bounds, first, count);
+                job.writeLeaf(node, job.node_bounds[node], first, count);
                 job.depth = depth > job.depth ? depth : job.depth;
                 return node;
             }

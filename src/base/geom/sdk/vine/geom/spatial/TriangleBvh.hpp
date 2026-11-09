@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 
 #include <vine/math/Vector3.hpp>
 
@@ -122,7 +123,7 @@ template <TriangleSource Source>
 }
 
 /**
- * @brief Rebuilds @p tree's boxes from @p source's current triangles, in a STORED shape.
+ * @brief Rebuilds @p tree's boxes from @p source's current triangles, in a stored shape it may COPY.
  *
  * @details
  * - The restore path of the triangle-tree contract, in one call: register the triangles exactly as the build does, then
@@ -132,6 +133,8 @@ template <TriangleSource Source>
  *   rather than as damage: the answer for a stale or foreign shape is the triangles, slower, never wrong.
  * - The installed tree is `validate()`d once here, because a shape is data from outside this process: what the build
  *   path guarantees by construction is checked rather than assumed. The check is linear and runs once per restore.
+ * - This is the BORROWING door, for a caller that only has a view. A caller that owns the shape it decoded calls the
+ *   overload below, which adopts the same arrays instead of copying them.
  *
  * @tparam Source Triangle source type; see @ref TriangleSource.
  * @param tree   Receives the primitives and the tree; it must be empty.
@@ -147,6 +150,34 @@ template <TriangleSource Source>
     }
     BvhBuilder{}.buildWith(tree, RestoreTopology{ shape });
     return tree.isBuilt() && tree.validate();
+}
+
+/**
+ * @brief Rebuilds @p tree's boxes from @p source's current triangles, ADOPTING the shape's arrays.
+ *
+ * @details
+ * - The same contract as the view overload - register the triangles, install the grouping, re-derive every box, validate
+ *   once - except that @p shape is moved into the tree instead of copied through a build job. That is the whole reason
+ *   this overload exists: a cache read produces an owned `BvhTopology` and there is no reason to transcribe it.
+ * - The shape is validated by `Bvh::restoreTopology()` through the SAME check the view path uses, so the two doors cannot
+ *   disagree about what describes a tree.
+ *
+ * @tparam Source Triangle source type; see @ref TriangleSource.
+ * @param tree   Receives the primitives and the tree; it must be empty.
+ * @param source The triangles the shape claims to describe.
+ * @param shape  The stored shape, consumed when it is adopted.
+ * @return true when @p tree holds a built tree that describes @p source.
+ */
+template <TriangleSource Source>
+[[nodiscard]] bool restoreTriangleBvh(Bvh<double>& tree, const Source& source, BvhTopology shape)
+{
+    if (!registerTriangles(tree, source)) {
+        return false;
+    }
+    if (!tree.restoreTopology(std::move(shape))) {
+        return false;
+    }
+    return tree.validate();
 }
 
 VN_GEOM_SPATIAL_NS_END

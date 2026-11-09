@@ -2,13 +2,18 @@
 
 #include <vine/geom/geom_global.hpp>
 
+#include <algorithm>
 #include <concepts>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 
 #include <vine/geom/spatial/Bvh.hpp>
+#include <vine/geom/spatial/BvhTopology.hpp>
 #include <vine/geom/spatial/detail/BvhBuildJob.hpp>
 #include <vine/geom/spatial/detail/BvhBuilders.hpp>
+#include <vine/geom/spatial/detail/BvhRefit.hpp>
+#include <vine/geom/spatial/detail/BvhTopologyCheck.hpp>
 
 VN_GEOM_SPATIAL_NS_BEGIN
 
@@ -181,9 +186,10 @@ class BvhBuilder
             return;
         }
 
-        detail::BuildJob<T, Volume> job{ std::span<const typename Bvh<T, Volume>::VolumeT>(bvh.bounds_),
-                                         std::span<typename Bvh<T, Volume>::PrimId>(bvh.prim_order_),
-                                         bvh.nodes_,
+        detail::BuildJob<T, Volume> job{ std::span<const typename Bvh<T, Volume>::VolumeType>(bvh.prim_bounds_),
+                                         std::span<typename Bvh<T, Volume>::PrimId>(bvh.shape_.order),
+                                         bvh.shape_.nodes,
+                                         bvh.node_bounds_,
                                          leaf_size_,
                                          max_depth_ };
 
@@ -195,6 +201,93 @@ class BvhBuilder
     unsigned        leaf_size_{ 4 };
     unsigned        max_depth_{ kBvhMaxDepth };
     BvhBuildQuality quality_{ BvhBuildQuality::kSah };
+};
+
+/**
+ * @brief A construction algorithm that puts a STORED grouping into a tree instead of computing a split.
+ *
+ * @details
+ * - It is a build algorithm like the median and SAH ones - same `BvhBuilder::buildWith()` door, same `finishBuild` tail -
+ *   so "how a tree came to have this shape" stays one concept: every way of building one is content written into a
+ *   `BuildJob`, and none of them can leave the tree in a state the build path would not produce (see
+ *   `.ai/design/geometry-bvh.md` 2.13).
+ * - It copies the primitive order, appends the nodes with their stored `offset`/`count`, and then re-derives every box
+ *   with `detail::refitNodes` - the same pass `refit()` uses. The primitives' volumes must already be registered on the
+ *   tree (one per triangle, in triangle order), which is what `restoreTriangleBvh()` does before calling this.
+ * - The COPYING door. A caller that owns the shape it decoded should prefer `Bvh::restoreTopology()`, which adopts the
+ *   same arrays by moving them and validates them through the same `detail::installableHeight()`.
+ * - Nothing is trusted: a node count outside `[1, 2n]`, a leaf outside the primitive order, an internal node whose right
+ *   child is not strictly after its left one, an order that is not a permutation, an unreachable node or a height that
+ *   is not the tree's own all make the call return 0, which leaves the tree unbuilt. A caller treats that as "no
+ *   cache" rather than as damage.
+ *
+ * @warning
+ * - It BORROWS the shape it is given (a `BvhTopologyView` says so): the arrays have to outlive the `buildWith()` call that
+ *   runs it - a temporary is fine, it lives to the end of the full expression that contains the call. Everything the tree
+ *   keeps is written into the build job, so nothing refers to the shape afterwards.
+ */
+class RestoreTopology
+{
+  public:
+    /**
+     * @brief Prepares a restore of @p shape.
+     *
+     * @param shape The shape to install: nodes, primitive order and height, all from one tree.
+     */
+    explicit RestoreTopology(BvhTopologyView shape)
+      : shape_(shape)
+    {}
+
+    /**
+     * @brief Fills @p job with the stored grouping.
+     *
+     * @details
+     * - Reads as a checklist, and the checklist itself is `detail::installableHeight()` - the one statement of what
+     *   makes a shape describe a tree, shared with the move-in path.
+     *
+     * @tparam T      Floating-point scalar type.
+     * @tparam Volume Bounding-volume template.
+     * @param job     The build job to fill; `order` and `nodes` are written, `depth` and `node_count` are set.
+     * @return The number of node slots used, or 0 when the stored shape does not describe this tree.
+     */
+    template <typename T, template <typename> class Volume>
+    std::uint32_t operator()(detail::BuildJob<T, Volume>& job) const
+    {
+        const auto                    prim_count = static_cast<std::uint32_t>(job.prim_bounds.size());
+        const std::optional<unsigned> height     = detail::installableHeight(shape_, prim_count, job.max_depth);
+        if (!height.has_value()) {
+            return 0;
+        }
+        writeInto(job, *height);
+        return static_cast<std::uint32_t>(shape_.nodes.size());
+    }
+
+  private:
+    /**
+     * @brief Copies the validated shape into @p job and re-derives every box from the primitives.
+     *
+     * @tparam T      Floating-point scalar type.
+     * @tparam Volume Bounding-volume template.
+     * @param job     The build job to fill.
+     * @param height  The tree's height, already verified against the node array and the job's limit.
+     */
+    template <typename T, template <typename> class Volume>
+    void writeInto(detail::BuildJob<T, Volume>& job, unsigned height) const
+    {
+        std::copy(shape_.order.begin(), shape_.order.end(), job.order.begin());
+        job.nodes.clear();
+        job.node_bounds.clear();
+        job.nodes.reserve(shape_.nodes.size());
+        job.node_bounds.reserve(shape_.nodes.size());
+        for (const BvhNodeTopology& node : shape_.nodes) {
+            const auto index  = job.appendNode();
+            job.nodes[index] = node;
+        }
+        detail::refitNodes<T, Volume>(job.nodes, job.node_bounds, job.order, job.prim_bounds);
+        job.depth = height;
+    }
+
+    BvhTopologyView shape_;
 };
 
 VN_GEOM_SPATIAL_NS_END

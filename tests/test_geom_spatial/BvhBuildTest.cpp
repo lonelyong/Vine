@@ -378,3 +378,47 @@ TEST(BvhBuildTest, ARestoredTopologyThatDoesNotDescribeTheTreeIsRefused)
     }
     EXPECT_FALSE(restore_into(leaf_out_of_range).isBuilt());
 }
+
+TEST(BvhBuildTest, AnOwnedTopologyIsAdoptedByTheTreeItself)
+{
+    // The second door to the same result: a caller that OWNS the shape (a decoder, say) hands it over and the tree takes
+    // the arrays. Both doors read the same check, so they refuse the same shapes.
+    auto reference = makeGridTree(256);
+    BvhBuilder{}.build(reference);
+    const vn::geom::spatial::BvhTopology stored = reference.topology();
+
+    auto adopted = makeGridTree(256);
+    EXPECT_TRUE(adopted.restoreTopology(stored));
+    ASSERT_TRUE(adopted.isBuilt());
+    EXPECT_TRUE(adopted.validate());
+    EXPECT_EQ(adopted.topology(), stored) << "the adopted shape is the stored one, to the last node";
+
+    const auto boxes = gridBoxes(256);
+    for (int index = 0; index < 256; index += 29) {
+        const Aabb<double> query = boxes[static_cast<std::size_t>(index)];
+        EXPECT_EQ(overlapIds(adopted, query), overlapIds(reference, query))
+            << "boxes were re-derived from the primitives, so the answers agree for query " << index;
+    }
+
+    auto wrong_order     = stored;
+    wrong_order.order[1] = wrong_order.order[0];
+    auto refused         = makeGridTree(256);
+    EXPECT_FALSE(refused.restoreTopology(wrong_order));
+    EXPECT_FALSE(refused.isBuilt()) << "a refused shape leaves no tree at all";
+}
+
+TEST(BvhBuildTest, ATopologyViewBorrowsTheTreesOwnArrays)
+{
+    // The saving side of the storage story: what is encoded is what the tree already holds. Two views of an unchanged tree
+    // over the same storage cannot differ, which is what "borrowed" means; a copy would answer with two addresses.
+    auto tree = makeGridTree(64);
+    BvhBuilder{}.build(tree);
+
+    const vn::geom::spatial::BvhTopologyView first  = tree.topologyView();
+    const vn::geom::spatial::BvhTopologyView second = tree.topologyView();
+    EXPECT_EQ(first.nodes.data(), second.nodes.data()) << "a view hands out the tree's storage";
+    EXPECT_EQ(first.order.data(), second.order.data());
+    EXPECT_EQ(first.nodes.size(), tree.topology().nodes.size());
+    EXPECT_EQ(first.primitiveCount(), tree.primCount());
+    EXPECT_EQ(first.depth, tree.qualityReport().depth);
+}

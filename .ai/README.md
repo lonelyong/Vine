@@ -77,7 +77,7 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（64）
+## decisions/ —— 决策记录（ADR）（65）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
@@ -85,6 +85,7 @@
 - `ADR-2026-11-09-box-transform-lives-in-geom.md` —— 盒的变换算子回到 `geom`（`Aabb::transformed()`，只接受仿射，非仿射答空盒），删除 `graphics::transformBox()` 与 `RayIntersection.cpp` 的副本；`Obb` 暂不提供（表示装不下一般仿射，零消费者）。
 - `ADR-2026-11-09-solid-tessellation-in-geom.md` —— 三角化回到 `geom`：`tessellateSolid()` 返回精度模板 `Triangulation<T>`（位置 / 法向 / 索引），`meshFromTriangulation()` 在模型侧装配成 `TriangleMesh`；否决返回 `TriangleMesh`（回边）与 `Buffer`（多一次拷贝）。
 - `ADR-2026-11-09-solid-closed-set-without-variant.md` —— 删掉 `SolidShape` 变体与 `solidShapeOf()`：封闭集合由五个 kind + `visitPrimitive()` + 一 kind 一个重载表达；`Solid<T>` 族接口与五个 kind 值不变。
+- `ADR-2026-11-09-bvh-shape-is-the-tree-storage.md` —— BVH 的形状就是它自己的存储（`BvhTopology` 三条数组 + 平行的节点体积），`BvhTopology.hpp` 只留词汇；恢复有视图（`RestoreTopology`）与移动（`Bvh::restoreTopology()`）两个入口、一份检查。否决内部类、AoS 转录与访问器化。
 - `ADR-2026-11-04-curve-evaluation-interface.md` —— 曲线族改为求值接口（`Curve<T>` 虚函数 + `TrimmedCurve`），`Ray` 退出曲线族。
 - `ADR-2026-11-04-surface-family-queries.md` —— 族级曲面查询用自由函数 + 参数窗口 + 牛顿迭代，不扩 `Surface` 接口、不逐类型写特例。
 - `ADR-2026-11-04-surface-evaluation-interface.md` —— 曲面族改为求值接口（`Surface<T>` 十三项虚函数 + 两个分类标签），取代曲线 ADR 的第 6 条。

@@ -489,6 +489,36 @@ class Mesh : public Shape {
     }
 
     /**
+     * @brief Restores the cache from a stored tree shape it MAY CONSUME.
+     *
+     * @details
+     * - The same contract as the view overload, with the shape handed over: a caller that just DECODED one owns it, and
+     *   there is no reason to copy its arrays through a build job. The tree adopts them and re-derives every box from
+     *   the current positions.
+     * - A stale or foreign-but-well-formed shape can only produce a worse tree, never a wrong answer - that is why this
+     *   needs no content fingerprint (see the view overload).
+     * - All or nothing: an invalid mesh, or a shape that does not describe this mesh, leaves the cache empty and reports
+     *   false.
+     *
+     * @param shape The stored shape, nodes, primitive order and height all from one tree; consumed when it is adopted.
+     * @return true when the cache holds a built tree afterwards.
+     */
+    [[nodiscard]]
+    bool restoreBvh(vn::geom::spatial::BvhTopology shape)
+    {
+        bvh_.reset();
+        if (!isValid()) {
+            return false; // a mesh whose channels disagree has no triangles to index
+        }
+        auto tree = std::make_shared<Bvh>();
+        if (!vn::geom::spatial::restoreTriangleBvh(*tree, *this, std::move(shape))) {
+            return false;
+        }
+        bvh_ = std::move(tree);
+        return true;
+    }
+
+    /**
      * @brief Drops the cached tree.
      *
      * @details

@@ -53,13 +53,14 @@ inline bool writeBvhCache(vn::io::Vfs& vfs, const std::filesystem::path& mesh_pa
     if (!mesh.hasBvh()) {
         return false;
     }
-    const vn::geom::spatial::BvhTopology topology = mesh.bvh().topology();
+    // The tree's own arrays, borrowed: saving a cache walks what the tree already holds instead of transcribing it first.
+    const vn::geom::spatial::BvhTopologyView topology = mesh.bvh().topologyView();
     if (topology.primitiveCount() != mesh.triangleCount()) {
         return false; // a tree that does not cover this mesh's triangles is not this mesh's cache
     }
 
     std::vector<unsigned char> bytes;
-    if (!encodeBvhCache(topology.view(), bytes)) {
+    if (!encodeBvhCache(topology, bytes)) {
         return false;
     }
     return vfs.addFile(bvhCachePath(mesh_path), std::span<const unsigned char>(bytes.data(), bytes.size())) == vn::io::IoError::Ok;
@@ -95,8 +96,8 @@ inline bool readBvhCache(vn::io::Vfs& vfs, const std::filesystem::path& cache_pa
  * - Every refusal is the same answer: "no cache". A missing file, a foreign path, a damaged one, or a shape that does
  *   not describe the loaded mesh's triangles all leave the mesh without a tree, which costs a build and nothing else.
  * - This is the whole read side of the persistence contract: the mesh is what the file says it is, and the tree is an
- *   optional acceleration structure beside it. The shape is handed over as a VIEW, so nothing is copied between the
- *   decoded arrays and the tree builder.
+ *   optional acceleration structure beside it. The decoded shape is MOVED into the tree, so nothing is copied between
+ *   the decoder's arrays and the tree's own.
  *
  * @param vfs The tree to read from.
  * @param mesh_path The mesh file that was just loaded.
@@ -109,7 +110,7 @@ inline bool restoreBvhCache(vn::io::Vfs& vfs, const std::filesystem::path& mesh_
     if (!readBvhCache(vfs, bvhCachePath(mesh_path), topology)) {
         return false;
     }
-    return mesh.restoreBvh(topology.view());
+    return mesh.restoreBvh(std::move(topology));
 }
 
 } // namespace detail

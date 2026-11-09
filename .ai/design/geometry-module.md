@@ -43,7 +43,7 @@
 |---|---|---|---|
 | `sdk/vine/geom/` | `vn::geom` | `geom_global.hpp`（宏）、`Continuity.hpp`（光滑度阶梯） | 是 |
 | `sdk/vine/geom/planar/` | `vn::geom::planar` | 平面曲线契约 `Curve<T>`、九个类型、六个族级算法（16 个头） | 是 |
-| `sdk/vine/geom/spatial/` | `vn::geom::spatial` | 曲线、曲面、实体、射线、`Obb` / `Aabb`（49 个头，另有属本契约 `spatial/detail/` 5 个） | 是 |
+| `sdk/vine/geom/spatial/` | `vn::geom::spatial` | 曲线、曲面、实体、射线、`Obb` / `Aabb`（49 个头，另有属本契约 `spatial/detail/` 7 个） | 是 |
 | `sdk/vine/geom/detail/` | `vn::geom::detail` | 与维度无关的共享实现（8 个头） | **不是** |
 
 `geom_global.hpp` 提供 `VN_GEOM_API` 与三个命名空间宏（`VN_GEOM_NS_BEGIN`、`VN_GEOM_PLANAR_NS_BEGIN`、`VN_GEOM_SPATIAL_NS_BEGIN`、`VN_GEOM_DETAIL_NS_BEGIN` 及对应 `_END`）。
@@ -161,7 +161,7 @@
 
 ## 10. 参考
 
-- 代码：`src/base/geom/CMakeLists.txt`、`sdk/vine/geom/geom_global.hpp`、`sdk/vine/geom/Continuity.hpp`、`sdk/vine/geom/detail/`（8 个头）、`sdk/vine/geom/planar/`（16）、`sdk/vine/geom/spatial/`（49，另有 `detail/` 5）。
+- 代码：`src/base/geom/CMakeLists.txt`、`sdk/vine/geom/geom_global.hpp`、`sdk/vine/geom/Continuity.hpp`、`sdk/vine/geom/detail/`（8 个头）、`sdk/vine/geom/planar/`（16）、`sdk/vine/geom/spatial/`（49，另有 `detail/` 7）。
 - 门禁：`scripts/check_geom_layering.py`。
 - 决策：`ADR-2026-11-06-merged-geom-module.md`、`ADR-2026-11-06-geom-detail-subtree.md`、`ADR-2026-11-06-geom-contracts-nested-under-module.md`、`ADR-2026-11-05-planar-curve-contract.md`、`ADR-2026-11-06-spline-model-moves-to-geom.md`、`ADR-2026-11-06-math-keeps-only-vocabulary.md`。
 - 相关设计：`geometry-planar.md`（平面曲线的契约与九个类型）、`geometry-kinds.md`（空间曲线/曲面族）、`geometry-primitives.md`（空间值类型）、`math-base-layer.md`（下层只有词汇）。

@@ -8,6 +8,7 @@
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <vine/math/Point3.hpp>
@@ -18,6 +19,8 @@
 #include <vine/geom/spatial/BvhTopology.hpp>
 #include <vine/geom/spatial/Ray.hpp>
 #include <vine/geom/spatial/detail/BvhBuildJob.hpp>
+#include <vine/geom/spatial/detail/BvhRefit.hpp>
+#include <vine/geom/spatial/detail/BvhTopologyCheck.hpp>
 #include <vine/geom/spatial/detail/VolumeTraits.hpp>
 
 VN_GEOM_SPATIAL_NS_BEGIN
@@ -35,7 +38,10 @@ class BvhBuilder;
  *   vertices, triangles or points stay in the caller's arrays and are never copied here.
  * - **The leaf volumes are conservative, not exact.** A leaf's box encloses its primitives; a query reports candidates,
  *   and the caller still runs its own exact test.
- * - `float` and `Aabb` give a 32-byte node, half a cache line; the tree is one contiguous array walked front to back.
+ * - **The tree keeps the node COMBINATORICS and the node VOLUMES in two parallel arrays** (`shape_.nodes`,
+ *   `node_bounds_`): the combinatorics are `BvhNodeTopology`, which is also what a file holds, so a stored shape is the
+ *   tree's own node array rather than a transcription of it (`topologyView()` is free, and `restoreTopology()` adopts an
+ *   owned shape by moving it). Boxes stay out of the stored half for the reason they are derived from the primitives.
  *
  * @warning
  * - A build is required before queries answer anything: `add()` after a build clears the nodes, so a query on a tree
@@ -51,9 +57,9 @@ class Bvh
 {
   public:
     using Scalar  = T;
-    using VolumeT = Volume<T>;
+    using VolumeType = Volume<T>;
     using PrimId  = std::uint32_t;
-    using Node    = detail::BvhNode<T, Volume>;
+    using Node    = BvhNodeTopology;
 
     /// Hard limit on the tree height; a builder may choose a smaller one but never a larger one.
     static constexpr unsigned kMaxDepth = kBvhMaxDepth;
@@ -90,17 +96,17 @@ class Bvh
      * @throws std::invalid_argument when the volume holds NaN, infinity or an inverted axis.
      * @throws std::length_error   when the id would not fit in `PrimId`.
      */
-    PrimId add(const VolumeT& bounds)
+    PrimId add(const VolumeType& bounds)
     {
-        if (!detail::VolumeTraits<VolumeT>::isFinite(bounds)) {
+        if (!detail::VolumeTraits<VolumeType>::isFinite(bounds)) {
             throw std::invalid_argument("vn::geom::spatial::Bvh: the primitive volume must be finite and not inverted");
         }
-        if (bounds_.size() >= static_cast<std::size_t>(std::numeric_limits<PrimId>::max())) {
+        if (prim_bounds_.size() >= static_cast<std::size_t>(std::numeric_limits<PrimId>::max())) {
             throw std::length_error("vn::geom::spatial::Bvh: more primitives than a PrimId can index");
         }
-        bounds_.push_back(bounds);
+        prim_bounds_.push_back(bounds);
         dropTree();
-        return static_cast<PrimId>(bounds_.size() - 1);
+        return static_cast<PrimId>(prim_bounds_.size() - 1);
     }
 
     /**
@@ -110,7 +116,7 @@ class Bvh
      * - Takes a callable instead of a span so a caller holding vertices and indices does not have to materialise a
      *   temporary array of volumes first; the volumes are computed once and stored.
      *
-     * @tparam BoundsOf Callable `VolumeT(std::size_t)` returning the volume of primitive `index`.
+     * @tparam BoundsOf Callable `VolumeType(std::size_t)` returning the volume of primitive `index`.
      * @param count     Number of primitives.
      * @param bounds_of Computes the volume of one primitive.
      * @throws std::invalid_argument when any volume is not finite, or `bounds_of` throws.
@@ -119,9 +125,9 @@ class Bvh
     template <typename BoundsOf>
     void addRange(std::size_t count, BoundsOf&& bounds_of)
     {
-        bounds_.reserve(bounds_.size() + count);
+        prim_bounds_.reserve(prim_bounds_.size() + count);
         for (std::size_t index = 0; index < count; ++index) {
-            add(static_cast<const VolumeT&>(bounds_of(index)));
+            add(static_cast<const VolumeType&>(bounds_of(index)));
         }
     }
 
@@ -136,15 +142,15 @@ class Bvh
      * @param bounds The new volume; must be finite and not inverted.
      * @throws std::invalid_argument when `id` is out of range or the volume is not usable.
      */
-    void update(PrimId id, const VolumeT& bounds)
+    void update(PrimId id, const VolumeType& bounds)
     {
-        if (id >= bounds_.size()) {
+        if (id >= prim_bounds_.size()) {
             throw std::invalid_argument("vn::geom::spatial::Bvh: update() needs an id returned by add()");
         }
-        if (!detail::VolumeTraits<VolumeT>::isFinite(bounds)) {
+        if (!detail::VolumeTraits<VolumeType>::isFinite(bounds)) {
             throw std::invalid_argument("vn::geom::spatial::Bvh: the primitive volume must be finite and not inverted");
         }
-        bounds_[id] = bounds;
+        prim_bounds_[id] = bounds;
     }
 
     /**
@@ -152,7 +158,7 @@ class Bvh
      *
      * @param prim_count Expected primitive count.
      */
-    void reserve(std::size_t prim_count) { bounds_.reserve(prim_count); }
+    void reserve(std::size_t prim_count) { prim_bounds_.reserve(prim_count); }
 
     /**
      * @brief Forgets every primitive and the tree, keeping the allocated storage.
@@ -163,11 +169,11 @@ class Bvh
      */
     void clear()
     {
-        bounds_.clear();
-        prim_order_.clear();
-        nodes_.clear();
-        depth_ = 0;
-        built_ = false;
+        prim_bounds_.clear();
+        shape_.nodes.clear();
+        shape_.order.clear();
+        shape_.depth = 0;
+        node_bounds_.clear();
     }
 
     /**
@@ -175,21 +181,21 @@ class Bvh
      *
      * @return The primitive count, whether or not a tree has been built.
      */
-    [[nodiscard]] std::size_t primCount() const { return bounds_.size(); }
+    [[nodiscard]] std::size_t primCount() const { return prim_bounds_.size(); }
 
     /**
      * @brief Reports whether no primitive is registered.
      *
      * @return True when the tree holds nothing.
      */
-    [[nodiscard]] bool empty() const { return bounds_.empty(); }
+    [[nodiscard]] bool empty() const { return prim_bounds_.empty(); }
 
     /**
      * @brief Reports whether a build has been performed since the last registration.
      *
      * @return True when the nodes describe the current primitives.
      */
-    [[nodiscard]] bool isBuilt() const { return built_; }
+    [[nodiscard]] bool isBuilt() const { return !shape_.nodes.empty(); }
 
     /**
      * @brief Visits every primitive whose leaf volume overlaps `query`.
@@ -199,14 +205,14 @@ class Bvh
      * - The visit receives the leaf's volume, which is conservative: a primitive reported here may still miss the
      *   query under an exact test.
      *
-     * @tparam Visit Callable `bool(PrimId, const VolumeT&)`, returning false to stop the traversal.
+     * @tparam Visit Callable `bool(PrimId, const VolumeType&)`, returning false to stop the traversal.
      * @param query  Volume to test against.
      * @param visit  Called for each candidate.
      */
     template <typename Visit>
-    void forEachOverlap(const VolumeT& query, Visit&& visit) const
+    void forEachOverlap(const VolumeType& query, Visit&& visit) const
     {
-        if (nodes_.empty()) {
+        if (shape_.nodes.empty()) {
             return;
         }
         std::array<PrimId, kMaxDepth + 2> stack{};
@@ -214,18 +220,18 @@ class Bvh
         stack[top++] = 0;
         while (top > 0) {
             const PrimId index = stack[--top];
-            const Node&  node  = nodes_[index];
-            if (!detail::VolumeTraits<VolumeT>::overlaps(node.bounds, query)) {
+            if (!detail::VolumeTraits<VolumeType>::overlaps(node_bounds_[index], query)) {
                 continue;
             }
+            const Node& node = shape_.nodes[index];
             if (node.count != 0) {
                 if (!visitLeaves(node, visit)) {
                     return;
                 }
                 continue;
             }
-            stack[top++] = node.offset;  // right child
-            stack[top++] = index + 1;    // left child is always the next slot after the parent
+            stack[top++] = node.offset; // right child
+            stack[top++] = index + 1;   // left child is always the next slot after the parent
         }
     }
 
@@ -239,7 +245,7 @@ class Bvh
      * - The visit may lower `max_t` — that is how a closest-hit search prunes: intersect the primitive, and if it is
      *   closer than `max_t`, write the new distance back.
      *
-     * @tparam Visit Callable `bool(PrimId, const VolumeT&, T& max_t)`, returning false to stop the traversal.
+     * @tparam Visit Callable `bool(PrimId, const VolumeType&, T& max_t)`, returning false to stop the traversal.
      * @param ray    The ray; an aimless ray visits nothing.
      * @param visit  Called for each candidate.
      * @param max_t  Initial distance limit; updated by the visit to tighten the search.
@@ -247,10 +253,10 @@ class Bvh
     template <typename Visit>
     void forEachRay(const Ray<T>& ray, Visit&& visit, T max_t = std::numeric_limits<T>::infinity()) const
     {
-        if (nodes_.empty()) {
+        if (shape_.nodes.empty()) {
             return;
         }
-        using Traits = detail::VolumeTraits<VolumeT>;
+        using Traits = detail::VolumeTraits<VolumeType>;
 
         const detail::PreparedRay<T> prepared = detail::PreparedRay<T>::from(ray);
         T                            limit    = max_t;
@@ -260,15 +266,15 @@ class Bvh
         stack[top++] = 0;
         while (top > 0) {
             const PrimId index = stack[--top];
-            const Node&  node  = nodes_[index];
-            T           enter = T(0);
-            if (!Traits::hitByRay(node.bounds, prepared, enter) || enter > limit) {
+            T            enter = T(0);
+            if (!Traits::hitByRay(node_bounds_[index], prepared, enter) || enter > limit) {
                 continue;
             }
+            const Node& node = shape_.nodes[index];
             if (node.count != 0) {
                 for (PrimId slot = node.offset; slot < node.offset + node.count; ++slot) {
-                    const PrimId id = prim_order_[slot];
-                    if (!visit(id, bounds_[id], limit)) {
+                    const PrimId id = shape_.order[slot];
+                    if (!visit(id, prim_bounds_[id], limit)) {
                         return;
                     }
                 }
@@ -276,12 +282,10 @@ class Bvh
             }
 
             // Depth-first but nearest first: test both children, descend into the closer one.
-            const Node& left  = nodes_[index + 1];
-            const Node& right = nodes_[node.offset];
             T           left_enter  = T(0);
             T           right_enter = T(0);
-            const bool  hit_left    = Traits::hitByRay(left.bounds, prepared, left_enter) && left_enter <= limit;
-            const bool  hit_right   = Traits::hitByRay(right.bounds, prepared, right_enter) && right_enter <= limit;
+            const bool  hit_left    = Traits::hitByRay(node_bounds_[index + 1], prepared, left_enter) && left_enter <= limit;
+            const bool  hit_right   = Traits::hitByRay(node_bounds_[node.offset], prepared, right_enter) && right_enter <= limit;
 
             if (hit_left && hit_right) {
                 if (left_enter <= right_enter) {
@@ -312,10 +316,10 @@ class Bvh
      */
     void refit()
     {
-        if (nodes_.empty()) {
+        if (shape_.nodes.empty()) {
             return;
         }
-        detail::refitNodes<T, Volume>(nodes_, prim_order_, bounds_);
+        detail::refitNodes<T, Volume>(shape_.nodes, node_bounds_, shape_.order, prim_bounds_);
     }
 
     /**
@@ -331,39 +335,39 @@ class Bvh
      */
     [[nodiscard]] bool validate() const
     {
-        if (!built_) {
-            return bounds_.empty();
+        if (shape_.nodes.empty()) {
+            return prim_bounds_.empty(); // nothing built is valid only when there is nothing to describe
         }
-        if (nodes_.empty() || prim_order_.size() != bounds_.size()) {
+        if (shape_.order.size() != prim_bounds_.size() || shape_.nodes.size() != node_bounds_.size()) {
             return false;
         }
 
-        std::vector<bool> seen(bounds_.size(), false);
-        for (const PrimId id : prim_order_) {
-            if (id >= bounds_.size() || seen[id]) {
+        std::vector<bool> seen(prim_bounds_.size(), false);
+        for (const PrimId id : shape_.order) {
+            if (id >= prim_bounds_.size() || seen[id]) {
                 return false;
             }
             seen[id] = true;
         }
 
         // Every node must sit inside the array, and every parent must enclose its children.
-        for (std::size_t index = 0; index < nodes_.size(); ++index) {
-            const Node& node = nodes_[index];
+        for (std::size_t index = 0; index < shape_.nodes.size(); ++index) {
+            const Node& node = shape_.nodes[index];
             if (node.count != 0) {
-                if (node.count > bounds_.size() || node.offset > bounds_.size() - node.count) {
+                if (node.count > prim_bounds_.size() || node.offset > prim_bounds_.size() - node.count) {
                     return false;
                 }
                 continue;
             }
-            if (index + 1 >= nodes_.size() || node.offset >= nodes_.size()) {
+            if (index + 1 >= shape_.nodes.size() || node.offset >= shape_.nodes.size()) {
                 return false;
             }
-            if (!encloses(node.bounds, nodes_[index + 1].bounds) || !encloses(node.bounds, nodes_[node.offset].bounds)) {
+            if (!encloses(node_bounds_[index], node_bounds_[index + 1]) || !encloses(node_bounds_[index], node_bounds_[node.offset])) {
                 return false;
             }
         }
 
-        return depth_ <= kMaxDepth && nodes_.size() <= 2 * bounds_.size();
+        return shape_.depth <= kMaxDepth && shape_.nodes.size() <= 2 * prim_bounds_.size();
     }
 
     /**
@@ -375,10 +379,10 @@ class Bvh
      *
      * @return The permutation, or an empty span before the first build.
      */
-    [[nodiscard]] std::span<const PrimId> primOrder() const { return prim_order_; }
+    [[nodiscard]] std::span<const PrimId> primOrder() const { return shape_.order; }
 
     /**
-     * @brief Returns the tree's SHAPE as one value: its nodes, its primitive order and its height.
+     * @brief Returns the tree's SHAPE as one OWNED value: its nodes, its primitive order and its height.
      *
      * @details
      * - This is the half of a tree that a build cannot recompute cheaply, and therefore the half worth storing: with it
@@ -386,22 +390,57 @@ class Bvh
      * - It is ONE value rather than `primOrder()` plus a node array: the node offsets index into the primitive order and
      *   the height states the node array's own shape, so the three only mean anything together. Returning them apart is
      *   how one tree's nodes get paired with another tree's order.
-     * - `primOrder()` stays the QUERY-side view of the same permutation (leaf order is a sensible upload order); this is
-     *   the STORAGE-side view, and it carries the height the query view has no place for.
+     * - The shape IS the tree's own storage, so this call COPIES nothing that `topologyView()` can borrow: reach for this
+     *   one when the value has to outlive the tree or be edited, and for the view when it only has to be read or encoded.
      * - The order is the node array's: depth-first, the left child always at `node + 1` (see `BvhNodeTopology`).
      *
      * @return The shape; empty (no nodes, no order, height 0) before the first build.
      */
-    [[nodiscard]] BvhTopology topology() const
+    [[nodiscard]] BvhTopology topology() const { return shape_; }
+
+    /**
+     * @brief Returns a BORROWED view of the tree's shape, with no copy.
+     *
+     * @details
+     * - The encoding side of the storage story: a writer walks these arrays in place, so saving a tree costs the file
+     *   and nothing else. The view dies with the next build, which is what a borrow states.
+     * - What a stored shape is and what the tree holds are the same three arrays, which is why restoring can adopt them
+     *   instead of transcribing them (see `restoreTopology()`).
+     *
+     * @warning The view borrows this tree: it must not outlive it, nor a call that rebuilds or clears it.
+     *
+     * @return A view over the tree's own arrays; empty before the first build.
+     */
+    [[nodiscard]] BvhTopologyView topologyView() const noexcept
     {
-        BvhTopology out;
-        out.depth = depth_;
-        out.nodes.reserve(nodes_.size());
-        for (const Node& node : nodes_) {
-            out.nodes.push_back(BvhNodeTopology{ node.offset, node.count });
+        return BvhTopologyView{ shape_.nodes, shape_.order, shape_.depth };
+    }
+
+    /**
+     * @brief Installs a stored shape, then re-derives every box from the registered primitives.
+     *
+     * @details
+     * - The move-in half of the storage story: take the shape by value and let the caller `std::move` the one it decoded,
+     *   and the tree adopts its arrays instead of copying node by node. The boxes are then computed by the same pass
+     *   `refit()` uses, so an adopted tree cannot have a different notion of what a box is.
+     * - Nothing is trusted: the shape has to describe THIS tree's primitives (an order that is a permutation, every leaf
+     *   inside it, every internal node pointing forward, the node array one tree, and the stored height that tree's own).
+     *   A shape that fails leaves the tree UNBUILT - a caller treats that as "no cache", not as damage.
+     * - The tree must already hold the primitives the shape was built over; check `primCount()` or register first.
+     *
+     * @param shape The stored shape, nodes, primitive order and height all from one tree; consumed.
+     * @return true when the tree holds a built tree afterwards.
+     */
+    [[nodiscard]] bool restoreTopology(BvhTopology shape)
+    {
+        if (!detail::installableHeight(shape.view(), static_cast<PrimId>(prim_bounds_.size()), kMaxDepth).has_value()) {
+            dropTree();
+            return false;
         }
-        out.order.assign(prim_order_.begin(), prim_order_.end());
-        return out;
+        shape_ = std::move(shape);
+        node_bounds_.assign(shape_.nodes.size(), VolumeType{});
+        detail::refitNodes<T, Volume>(shape_.nodes, node_bounds_, shape_.order, prim_bounds_);
+        return true;
     }
 
     /**
@@ -412,11 +451,10 @@ class Bvh
     [[nodiscard]] Quality qualityReport() const
     {
         Quality quality;
-        quality.depth = depth_;
-        for (const Node& node : nodes_) {
-            if (node.count != 0) {
-                quality.leaf_half_area_sum +=
-                    static_cast<double>(detail::VolumeTraits<VolumeT>::halfArea(node.bounds));
+        quality.depth = shape_.depth;
+        for (std::size_t index = 0; index < shape_.nodes.size(); ++index) {
+            if (shape_.nodes[index].count != 0) {
+                quality.leaf_half_area_sum += static_cast<double>(detail::VolumeTraits<VolumeType>::halfArea(node_bounds_[index]));
                 ++quality.leaf_count;
             }
         }
@@ -444,24 +482,21 @@ class Bvh
         (void)leaf_size;
         (void)max_depth;
 
-        if (bounds_.empty()) {
-            prim_order_.clear();
-            nodes_.clear();
-            depth_ = 0;
-            built_ = false;
+        if (prim_bounds_.empty()) {
+            dropTree();
             return false;
         }
 
-        const auto count = static_cast<PrimId>(bounds_.size());
+        const auto count = static_cast<PrimId>(prim_bounds_.size());
 
-        prim_order_.resize(count);
+        shape_.order.resize(count);
         for (PrimId index = 0; index < count; ++index) {
-            prim_order_[index] = index;
+            shape_.order[index] = index;
         }
         // `clear()` keeps the capacity, so a rebuild allocates nothing once the tree has reached its size once.
-        nodes_.clear();
-        depth_ = 0;
-        built_ = false;
+        shape_.nodes.clear();
+        node_bounds_.clear();
+        shape_.depth = 0;
         return true;
     }
 
@@ -472,8 +507,11 @@ class Bvh
      */
     void finishBuild(const detail::BuildJob<T, Volume>& job)
     {
-        depth_ = job.depth;
-        built_ = job.node_count != 0;
+        shape_.depth = job.depth;
+        if (job.node_count == 0) {
+            // An algorithm that wrote nothing (or gave up) leaves no tree at all: a query must not walk its partial slots.
+            dropTree();
+        }
     }
 
     /**
@@ -481,12 +519,10 @@ class Bvh
      */
     void dropTree()
     {
-        if (!nodes_.empty()) {
-            nodes_.clear();
-        }
-        prim_order_.clear();
-        depth_ = 0;
-        built_ = false;
+        shape_.nodes.clear();
+        shape_.order.clear();
+        shape_.depth = 0;
+        node_bounds_.clear();
     }
 
     /**
@@ -496,10 +532,10 @@ class Bvh
      * @param inner The candidate content.
      * @return True when every corner of `inner` lies inside `outer`.
      */
-    [[nodiscard]] static bool encloses(const VolumeT& outer, const VolumeT& inner)
+    [[nodiscard]] static bool encloses(const VolumeType& outer, const VolumeType& inner)
     {
-        for (const auto& corner : detail::VolumeTraits<VolumeT>::corners(inner)) {
-            if (!detail::VolumeTraits<VolumeT>::contains(outer, corner)) {
+        for (const auto& corner : detail::VolumeTraits<VolumeType>::corners(inner)) {
+            if (!detail::VolumeTraits<VolumeType>::contains(outer, corner)) {
                 return false;
             }
         }
@@ -509,7 +545,7 @@ class Bvh
     /**
      * @brief Runs a visitor over one leaf's primitives.
      *
-     * @tparam Visit Callable `bool(PrimId, const VolumeT&)`.
+     * @tparam Visit Callable `bool(PrimId, const VolumeType&)`.
      * @param node  The leaf.
      * @param visit The visitor.
      * @return False when the visitor asked to stop.
@@ -518,19 +554,17 @@ class Bvh
     bool visitLeaves(const Node& node, Visit& visit) const
     {
         for (PrimId index = node.offset; index < node.offset + node.count; ++index) {
-            const PrimId id = prim_order_[index];
-            if (!visit(id, bounds_[id])) {
+            const PrimId id = shape_.order[index];
+            if (!visit(id, prim_bounds_[id])) {
                 return false;
             }
         }
         return true;
     }
 
-    std::vector<VolumeT> bounds_;
-    std::vector<PrimId>  prim_order_;
-    std::vector<Node>    nodes_;
-    unsigned             depth_{ 0 };
-    bool                 built_{ false };
+    std::vector<VolumeType> prim_bounds_; // One volume per registered primitive, indexed by PrimId.
+    BvhTopology          shape_;       // The combinatorics: node slots, primitive order and height.
+    std::vector<VolumeType> node_bounds_; // One volume per node slot, parallel to shape_.nodes.
 };
 
 VN_GEOM_SPATIAL_NS_END

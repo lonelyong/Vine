@@ -50,7 +50,7 @@ template <vn::math::FP T>
 struct VolumeTraits<Aabb<T>>
 {
     using Scalar  = T;
-    using VolumeT = Aabb<T>;
+    using VolumeType = Aabb<T>;
 
     /**
      * @brief Merges two boxes into the smallest box containing both.
@@ -59,9 +59,9 @@ struct VolumeTraits<Aabb<T>>
      * @param rhs Second box.
      * @return The union; exact and associative for boxes.
      */
-    static VolumeT merged(const VolumeT& lhs, const VolumeT& rhs)
+    static VolumeType merged(const VolumeType& lhs, const VolumeType& rhs)
     {
-        VolumeT out = lhs;
+        VolumeType out = lhs;
         out.expandBy(rhs);
         return out;
     }
@@ -72,7 +72,7 @@ struct VolumeTraits<Aabb<T>>
      * @param box The box.
      * @return Its centre; an inverted box still yields a finite point.
      */
-    static vn::math::Point3<T> center(const VolumeT& box)
+    static vn::math::Point3<T> center(const VolumeType& box)
     {
         return vn::math::Point3<T>((box.xmin + box.xmax) / T(2), (box.ymin + box.ymax) / T(2),
                                    (box.zmin + box.zmax) / T(2));
@@ -84,7 +84,7 @@ struct VolumeTraits<Aabb<T>>
      * @param box The box.
      * @return `dx·dy + dy·dz + dz·dx`; zero for a point or a segment.
      */
-    static T halfArea(const VolumeT& box)
+    static T halfArea(const VolumeType& box)
     {
         const T dx = box.xmax - box.xmin;
         const T dy = box.ymax - box.ymin;
@@ -99,7 +99,7 @@ struct VolumeTraits<Aabb<T>>
      * @param rhs Second box.
      * @return True when they overlap on all three axes.
      */
-    static bool overlaps(const VolumeT& lhs, const VolumeT& rhs)
+    static bool overlaps(const VolumeType& lhs, const VolumeType& rhs)
     {
         return lhs.xmin <= rhs.xmax && rhs.xmin <= lhs.xmax && lhs.ymin <= rhs.ymax && rhs.ymin <= lhs.ymax &&
                lhs.zmin <= rhs.zmax && rhs.zmin <= lhs.zmax;
@@ -112,7 +112,7 @@ struct VolumeTraits<Aabb<T>>
      * @param point The point.
      * @return True when every coordinate is within the box.
      */
-    static bool contains(const VolumeT& box, const vn::math::Point3<T>& point)
+    static bool contains(const VolumeType& box, const vn::math::Point3<T>& point)
     {
         return box.contains(point);
     }
@@ -123,7 +123,7 @@ struct VolumeTraits<Aabb<T>>
      * @param box The box.
      * @return The corners; used to test one box against another.
      */
-    static std::array<vn::math::Point3<T>, 8> corners(const VolumeT& box)
+    static std::array<vn::math::Point3<T>, 8> corners(const VolumeType& box)
     {
         return { vn::math::Point3<T>(box.xmin, box.ymin, box.zmin), vn::math::Point3<T>(box.xmax, box.ymin, box.zmin),
                  vn::math::Point3<T>(box.xmin, box.ymax, box.zmin), vn::math::Point3<T>(box.xmax, box.ymax, box.zmin),
@@ -137,7 +137,7 @@ struct VolumeTraits<Aabb<T>>
      * @param box The box.
      * @return False for NaN, infinite or inverted boxes.
      */
-    static bool isFinite(const VolumeT& box)
+    static bool isFinite(const VolumeType& box)
     {
         return std::isfinite(box.xmin) && std::isfinite(box.ymin) && std::isfinite(box.zmin) &&
                std::isfinite(box.xmax) && std::isfinite(box.ymax) && std::isfinite(box.zmax) && box.xmin <= box.xmax &&
@@ -152,7 +152,7 @@ struct VolumeTraits<Aabb<T>>
      * @param enter Receives the entry distance, clamped at zero when the origin is inside.
      * @return True when the box is in front of the origin or around it.
      */
-    static bool hitByRay(const VolumeT& box, const PreparedRay<T>& ray, T& enter)
+    static bool hitByRay(const VolumeType& box, const PreparedRay<T>& ray, T& enter)
     {
         RayBoxInterval<T> interval;
         if (!preparedRayBoxInterval(ray, box.xmin, box.ymin, box.zmin, box.xmax, box.ymax, box.zmax,

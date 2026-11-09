@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include <vine/geom/spatial/BvhBuilder.hpp>
@@ -160,8 +161,34 @@ TEST(TriangleBvhTest, ARestoredShapeAnswersLikeABuiltOne)
     }
 }
 
-TEST(TriangleBvhTest, AShapeForAnotherTriangleSetIsRefused)
+TEST(TriangleBvhTest, AMovedShapeIsAdoptedInsteadOfCopied)
 {
+    // A cache read hands over a shape it owns. The overload that takes it by value lets the tree adopt those arrays; the
+    // answers have to be the ones a build gives, because the boxes are re-derived either way.
+    const CornerList source = strip(12u);
+
+    vn::geom::spatial::Bvh<double> built;
+    ASSERT_TRUE(vn::geom::spatial::buildTriangleBvh(built, source));
+    vn::geom::spatial::BvhTopology shape           = built.topology();
+    const vn::geom::spatial::BvhTopology expected  = shape;
+
+    vn::geom::spatial::Bvh<double> adopted;
+    ASSERT_TRUE(vn::geom::spatial::restoreTriangleBvh(adopted, source, std::move(shape)));
+    EXPECT_TRUE(adopted.validate());
+    EXPECT_EQ(adopted.topology(), expected) << "adopting a shape keeps nodes, order and height together";
+
+    for (std::size_t quad = 0; quad < 12u; ++quad) {
+        const vn::geom::spatial::Rayd ray(vn::math::Point3d(static_cast<double>(quad) * 2.0 + 1.0, 0.5, 5.0),
+                                          vn::math::Vector3<double>(0.0, 0.0, -1.0));
+        EXPECT_EQ(visitedBy(adopted, ray), visitedBy(built, ray));
+    }
+
+    vn::geom::spatial::Bvh<double> refused;
+    EXPECT_FALSE(vn::geom::spatial::restoreTriangleBvh(refused, strip(2u), expected))
+        << "the same check refuses a shape over another triangle set, whichever door it came through";
+}
+
+TEST(TriangleBvhTest, AShapeForAnotherTriangleSetIsRefused){
     const CornerList twelve = strip(12u);
     const CornerList two    = strip(2u);
 

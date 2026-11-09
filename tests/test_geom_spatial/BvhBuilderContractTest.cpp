@@ -49,8 +49,8 @@ struct BrokenChildBuild
         }
         const auto root = job.appendNode();
         job.appendNode();
-        job.depth           = 1;
-        job.nodes[root].bounds = job.rangeBounds(0, count);
+        job.depth              = 1;
+        job.node_bounds[root]  = job.rangeBounds(0, count);
         job.nodes[root].count  = 0;
         job.nodes[root].offset = 99; // nowhere near a valid slot
         return job.node_count;
