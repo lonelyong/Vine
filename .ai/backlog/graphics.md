@@ -28,6 +28,8 @@
 | # | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|---|
 | T8 | `BlockStorageTest` 偶发 | `TheRegionsAreLaidOutOnceAndDoNotOverlap` 首跑红重跑绿 | 第三次出现 | 本行 |
+| T22 | 内容层提成共享库 | 事实表/半边/键这套记账已与 vsg 无关（`content_seam` 守卫），但仍在插件目录里；提成 SDK 库就能给第二个后端直接复用 | 第二个后端（D3D12/WebGPU/软件）落地，或出现第二个渲染路径 | `../design/vsg-backend.md` 2.8 |
+| T24 | 场景收集的失效粒度 | memo 的失效键是整个场景根的 `contentEpoch`，换了视图就要重走。**第一半已落地**（ADR-2026-11-09-scene-collection-two-halves）：图依赖的一半（世界矩阵 + opacity/layers/drawOrder 折叠）按 `contentEpoch` 烘焙，选取只做层并集剪枝 + 视锥 + 排序；世界盒仍每视图问（盒子的键是流的 revision，`Buffer::edit()` 不惊动图）。**Release 复测**：2000 drawables 移动相机 **1597 µs（0.94 µs/命令）**、200 个 141 µs、稳态帧 0 µs；归因：box 变换 + `BoundsCache` 哈希 = 317 µs（20%），每条命令的构造/解析 ~1.3 ms（71%），排序 7 µs。 | **触发条件未命中**（真实成本 1.6 ms/帧，不是 Debug 的 13.8 ms）：Release 下 1 万 drawables 移动相机 > 4 ms，或 60 fps 预算里收集 > 2 ms，才做\"烘焙世界盒 + 盒 stamp\"或命令构造瘦身（前置：buffer 编辑→场景的公告路径要说清） | `../design/graphics-scene.md`、`Scene.cpp` 的 `detail::SceneBake`、ADR 里的两张测量表 |
 | T9 | V2 | `forget(view)` 依赖 vsg `protected` 池 | 升级 vsg 时与 V1 一起复核 | 本行 |
 | T10 | V3 | 拿不到 `VkPipelineCache`（第三实参写死 `VK_NULL_HANDLE`） | 推上游；影响冷启动 / 换会话 | 本行 |
 | T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在 | 上游支持后合并每 pass 的 begin | 本行 |

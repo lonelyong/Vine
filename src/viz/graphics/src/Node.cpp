@@ -237,4 +237,9 @@ ViewDependence Node::localToWorldForView(const Mat4d& parent_world, const Collec
     return ViewDependence::None;
 }
 
+ViewDependence Node::viewDependence() const noexcept
+{
+    return ViewDependence::None;
+}
+
 VN_GRAPHICS_NS_END

@@ -320,9 +320,18 @@ ViewDependence AutoTransform::localToWorldForView(const Mat4d& parent_world, con
     return auto_scale ? ViewDependence::ViewAndViewport : ViewDependence::View;
 }
 
-double AutoTransform::screenScaleFor(const CollectView& view, const Mat4d& parent_world) const
+ViewDependence AutoTransform::viewDependence() const noexcept
 {
-    // OSG's pixelSize(position, 0.48): 0.48 local units at the node cover N pixels, and the scale that keeps
+    if (auto_scale_to_screen_) {
+        // Conservative: a view without a viewport resolves like None, but a baked pass has no view to ask, so the
+        // declaration covers the widest case the configuration allows.
+        return ViewDependence::ViewAndViewport;
+    }
+    return mode_ != AutoRotateMode::NoRotation ? ViewDependence::View : ViewDependence::None;
+}
+
+double AutoTransform::screenScaleFor(const CollectView& view, const Mat4d& parent_world) const
+{    // OSG's pixelSize(position, 0.48): 0.48 local units at the node cover N pixels, and the scale that keeps
     // that constant is 1/N. The model-view includes the parent, so a parent scale is cancelled by the local
     // scale (a non-uniform parent scale is an approximation; document it).
     if (!view.hasViewport()) {

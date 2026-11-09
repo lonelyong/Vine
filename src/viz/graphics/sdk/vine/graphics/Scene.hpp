@@ -17,6 +17,11 @@
 
 VN_GRAPHICS_NS_BEGIN
 
+namespace detail
+{
+struct SceneBake; // The baked graph half of a collection (see Scene.cpp): an implementation detail, not API.
+}
+
 using vn::geom::spatial::Aabbd;
 
 class Camera;
@@ -281,6 +286,17 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     [[nodiscard]] std::uint64_t contentCollectReuseCount() const noexcept;
 
+    /** @brief Gets how many times the graph was BAKED (see the class note's two halves).
+     *
+     * @details
+     * - A bake is the half of a collection that only depends on the graph: placements, world boxes and folded
+     *   state, in walk order. It is redone when the root subtree announces a change and reused by every view
+     *   meanwhile, so "one bake, N collects" is the steady state of a moving camera over a static scene.
+     *
+     * @return The bake count since construction.
+     */
+    [[nodiscard]] std::uint64_t contentBakeCount() const noexcept;
+
   private:
     /** @brief Whether this scene still has a root that is a ROOT: non-null and without a parent.
      *
@@ -314,6 +330,12 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     // The collected lists of the views in use (one per camera), reused while the graph does not change and dropped
     // when nothing asked for them in the previous frame - so the memo is bounded by the views drawn, not by frames.
     mutable std::unique_ptr<ContentMemo> content_memo_;
+    // The GRAPH half of the same collection, keyed by the same epoch: placements, world boxes and folds, in walk
+    // order. A view reads it instead of recomputing it, which is why a moving camera costs the prune and the sort
+    // rather than a full walk (see detail::SceneBake in Scene.cpp).
+    mutable std::unique_ptr<detail::SceneBake> content_bake_;
+    mutable std::uint64_t                bake_epoch_         = 0;
+    mutable std::uint64_t                content_bake_count_ = 0;
     mutable std::uint64_t                content_collect_count_ = 0;
     mutable std::uint64_t                content_reuse_count_   = 0;
 };

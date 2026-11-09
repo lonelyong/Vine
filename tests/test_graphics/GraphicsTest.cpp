@@ -9,9 +9,7 @@
 #include <vine/Color.hpp>
 #include <vine/Colorf.hpp>
 #include <vine/geom/spatial/Aabb.hpp>
-#include <vine/models/TriangleMesh.hpp>
-#include <vine/models/MixedMesh.hpp>
-#include <vine/models/QuadMesh.hpp>
+#include <vine/geom/spatial/Ray.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/ChainPresets.hpp>
@@ -30,7 +28,6 @@
 #include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/PositionAttitudeTransform.hpp>
 #include <vine/graphics/Primitive.hpp>
-#include <vine/geom/spatial/Ray.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -49,6 +46,9 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 #include <vine/math/Transform3.hpp>
+#include <vine/models/MixedMesh.hpp>
+#include <vine/models/QuadMesh.hpp>
+#include <vine/models/TriangleMesh.hpp>
 #include <vine/window/InputEvent.hpp>
 
 #include <gtest/gtest.h>
@@ -71,10 +71,10 @@ using vn::Color;
 using vn::Colorf;
 using vn::intrusive_ptr;
 using vn::String;
-using vn::imaging::Image;
-using vn::imaging::PixelFormat;
 using vn::geom::spatial::Aabbd;
 using vn::geom::spatial::Aabbf;
+using vn::imaging::Image;
+using vn::imaging::PixelFormat;
 using vn::math::Isometry3d;
 using vn::math::Mat4d;
 using vn::math::Point3d;
@@ -204,9 +204,7 @@ intrusive_ptr<Geometry> makeGridGeometry(std::size_t side)
             positions.push_back(0.0f);
         }
     }
-    const auto vertex = [row_length](std::size_t row, std::size_t column) {
-        return static_cast<std::uint32_t>(row * row_length + column);
-    };
+    const auto                 vertex = [row_length](std::size_t row, std::size_t column) { return static_cast<std::uint32_t>(row * row_length + column); };
     std::vector<std::uint32_t> indices;
     indices.reserve(side * side * 6u);
     for (std::size_t row = 0; row < side; ++row) {
@@ -934,10 +932,10 @@ TEST(CameraTest, ThePickingRayIsBuiltFromTheViewMatrixBasis)
 
     // A screen point off the centre turns towards the VIEW MATRIX's right/up rows: the ray has to be
     // built from the basis the picture uses, which is the only basis the degenerate case leaves intact.
-    const Mat4d view = cam.viewMatrix();
-    const Vec3d right(view.element(0, 0), view.element(0, 1), view.element(0, 2));
-    const Vec3d up(view.element(1, 0), view.element(1, 1), view.element(1, 2));
-    const vn::geom::spatial::Rayd   off_centre = cam.screenToWorldRay(Vec2d(0.9, 0.1));
+    const Mat4d                   view = cam.viewMatrix();
+    const Vec3d                   right(view.element(0, 0), view.element(0, 1), view.element(0, 2));
+    const Vec3d                   up(view.element(1, 0), view.element(1, 1), view.element(1, 2));
+    const vn::geom::spatial::Rayd off_centre = cam.screenToWorldRay(Vec2d(0.9, 0.1));
     EXPECT_TRUE(std::isfinite(off_centre.direction.x));
     EXPECT_TRUE(std::isfinite(off_centre.direction.y));
     EXPECT_TRUE(std::isfinite(off_centre.direction.z));
@@ -1332,8 +1330,8 @@ TEST(RayIntersectionTest, HitsTriangle)
 {
     auto geom = geometryOf(*makeUnitTriangle());
 
-    vn::geom::spatial::Rayd    ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
-    RayIntersectionResult result = RayIntersection::intersect(ray, geom.get(), Mat4d());
+    vn::geom::spatial::Rayd ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    RayIntersectionResult   result = RayIntersection::intersect(ray, geom.get(), Mat4d());
     EXPECT_TRUE(result.hit);
     EXPECT_NEAR(result.distance, 1.0, 1e-6);
     EXPECT_NEAR(result.point.x, 0.25, 1e-6);
@@ -1347,8 +1345,8 @@ TEST(RayIntersectionTest, MissesTriangle)
     auto geom = geometryOf(*makeUnitTriangle());
 
     // vn::geom::spatial::Rayd aimed outside the triangle.
-    vn::geom::spatial::Rayd    ray(vn::math::Point3d(5, 5, 1), Vec3d(0, 0, -1));
-    RayIntersectionResult result = RayIntersection::intersect(ray, geom.get(), Mat4d());
+    vn::geom::spatial::Rayd ray(vn::math::Point3d(5, 5, 1), Vec3d(0, 0, -1));
+    RayIntersectionResult   result = RayIntersection::intersect(ray, geom.get(), Mat4d());
     EXPECT_FALSE(result.hit);
 }
 
@@ -1374,8 +1372,8 @@ TEST(RayIntersectionTest, AStripAndAFanAreSurfacesToo)
     const auto strip = make_mesh(Topology::TriangleStrip, { -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, -1.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F }, { 0U, 1U, 2U, 3U });
     // The count a consumer reads for its "is this worth a tree?" decision is the count the walk produces.
     EXPECT_EQ(strip->triangleCount(0), 2U) << "four strip corners make two triangles";
-    const vn::geom::spatial::Rayd  ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
-    const RayIntersectionResult strip_hit = RayIntersection::intersect(ray, strip.get(), Mat4d());
+    const vn::geom::spatial::Rayd ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
+    const RayIntersectionResult   strip_hit = RayIntersection::intersect(ray, strip.get(), Mat4d());
     EXPECT_TRUE(strip_hit.hit) << "两条三角形都应该被走到";
     EXPECT_NEAR(strip_hit.normal.z, 1.0, 1e-6) << "strip 的奇偶翻转必须体现在法线上";
     EXPECT_NEAR(strip_hit.point.z, 0.0, 1e-6);
@@ -1383,8 +1381,8 @@ TEST(RayIntersectionTest, AStripAndAFanAreSurfacesToo)
     // pinning it here is what keeps "which triangle is number 1" in one place.
     EXPECT_EQ(strip_hit.triangleIndex, 1U) << "the second strip triangle is the one on the x + y > 0 side";
 
-    const RayIntersectionResult strip_first = RayIntersection::intersect(
-        vn::geom::spatial::Rayd(vn::math::Point3d(-0.25, -0.25, 1.0), Vec3d(0.0, 0.0, -1.0)), strip.get(), Mat4d());
+    const RayIntersectionResult strip_first =
+        RayIntersection::intersect(vn::geom::spatial::Rayd(vn::math::Point3d(-0.25, -0.25, 1.0), Vec3d(0.0, 0.0, -1.0)), strip.get(), Mat4d());
     EXPECT_TRUE(strip_first.hit);
     EXPECT_EQ(strip_first.triangleIndex, 0U) << "the first strip triangle keeps the authored winding";
     EXPECT_NEAR(strip_first.normal.z, 1.0, 1e-6);
@@ -1445,8 +1443,12 @@ TEST(RayIntersectionTest, APreparedTreeStillReportsEveryHit)
     // AllHits is the SET of hits, not the cheapest one: the tree may cull by the ray itself, but it may not prune by
     // distance the way a closest-hit search does. Two triangles stacked along -Z are pierced by one ray.
     auto mesh = intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
-    mesh->setPositions({ Vec3f(0.0f, 0.0f, 0.0f), Vec3f(1.0f, 0.0f, 0.0f), Vec3f(0.0f, 1.0f, 0.0f),
-                         Vec3f(0.0f, 0.0f, -2.0f), Vec3f(1.0f, 0.0f, -2.0f), Vec3f(0.0f, 1.0f, -2.0f) });
+    mesh->setPositions({ Vec3f(0.0f, 0.0f, 0.0f),
+                         Vec3f(1.0f, 0.0f, 0.0f),
+                         Vec3f(0.0f, 1.0f, 0.0f),
+                         Vec3f(0.0f, 0.0f, -2.0f),
+                         Vec3f(1.0f, 0.0f, -2.0f),
+                         Vec3f(0.0f, 1.0f, -2.0f) });
     const auto                    geometry = geometryOf(*mesh);
     const vn::geom::spatial::Rayd ray(Point3d(0.25, 0.25, 1.0), Vec3d(0.0, 0.0, -1.0));
 
@@ -1479,8 +1481,8 @@ TEST(RayIntersectionTest, SceneQuery)
     node->addChild(geom);
     scene->setRoot(node);
 
-    vn::geom::spatial::Rayd                   ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
-    RayIntersectionResult result = RayIntersection::intersectScene(ray, scene.get());
+    vn::geom::spatial::Rayd ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    RayIntersectionResult   result = RayIntersection::intersectScene(ray, scene.get());
     EXPECT_TRUE(result.hit);
     EXPECT_EQ(result.geometry.get(), geom.get());
     EXPECT_EQ(result.instanceIndex, std::numeric_limits<std::uint32_t>::max());
@@ -1516,8 +1518,10 @@ TEST(PrimitiveInstancingTest, AnInstancedPrimitiveDrawsEveryPlacement)
     root->addChild(geom);
 
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(2);
-    storage->data()[16 + 12]                 = 2.0f; // the second instance translates by +2 in x (column 3, row 0)
-    storage->bumpRevision();
+    {
+        auto edit     = storage->edit();
+        edit[16 + 12] = 2.0f; // the second instance translates by +2 in x (column 3, row 0)
+    }
     ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
 
     Camera cam;
@@ -1600,8 +1604,10 @@ TEST(PrimitiveInstancingTest, CullingUsesTheInstancesOwnBounds)
     root->addChild(geom);
 
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(1);
-    storage->data()[12]                      = 4000.0f;
-    storage->bumpRevision();
+    {
+        auto edit = storage->edit();
+        edit[12]  = 4000.0f;
+    }
     ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
 
     // The geometry's data box is at the origin; the instance is at x=4000. The geometry's instance-aware
@@ -1655,8 +1661,10 @@ TEST(PrimitiveInstancingTest, ASameSliceAfterABufferEditStillInvalidatesTheDraw)
 
     // Same buffer, same slice, new bytes: the draw really changed, so the announcement must not be
     // swallowed by "the slice pointer looks the same".
-    storage->data()[12] = 4.0f;
-    storage->bumpRevision();
+    {
+        auto edit = storage->edit();
+        edit[12]  = 4.0f;
+    }
     ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
     EXPECT_GT(geom->contentEpoch(), before);
 }
@@ -1669,12 +1677,14 @@ TEST(PrimitiveInstancingTest, PickingReportsThePrimitiveAndTheInstanceThatWasHit
     root->addChild(geom);
 
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(2);
-    storage->data()[16 + 12]                 = 2.0f;
-    storage->bumpRevision();
+    {
+        auto edit     = storage->edit();
+        edit[16 + 12] = 2.0f;
+    }
     ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(storage)));
 
-    const vn::geom::spatial::Rayd                   ray(vn::math::Point3d(2.25, 0.25, 1.0), Vec3d(0, 0, -1));
-    const RayIntersectionResult result = RayIntersection::intersectScene(ray, &scene);
+    const vn::geom::spatial::Rayd ray(vn::math::Point3d(2.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    const RayIntersectionResult   result = RayIntersection::intersectScene(ray, &scene);
     ASSERT_TRUE(result.hit);
     EXPECT_EQ(result.geometry.get(), geom.get());
     EXPECT_EQ(result.primitiveIndex, 0u);
@@ -1696,8 +1706,12 @@ TEST(RayIntersectionTest, AllHitsCollectsEveryTriangleSortedByDepth)
     auto scene = intrusive_ptr<Scene>(new Scene());
     auto node  = intrusive_ptr<Group>(new Group());
     auto mesh  = intrusive_ptr<vn::models::TriangleMesh>(new vn::models::TriangleMesh());
-    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f),
-                         vn::math::Vec3f(0.0f, 0.0f, -2.0f), vn::math::Vec3f(1.0f, 0.0f, -2.0f), vn::math::Vec3f(0.0f, 1.0f, -2.0f) });
+    mesh->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f),
+                         vn::math::Vec3f(1.0f, 0.0f, 0.0f),
+                         vn::math::Vec3f(0.0f, 1.0f, 0.0f),
+                         vn::math::Vec3f(0.0f, 0.0f, -2.0f),
+                         vn::math::Vec3f(1.0f, 0.0f, -2.0f),
+                         vn::math::Vec3f(0.0f, 1.0f, -2.0f) });
     auto geom = geometryOf(*mesh);
     node->addChild(geom);
     scene->setRoot(node);
@@ -3287,7 +3301,7 @@ TEST(MeshTest, ASetterInstallsNewStorageInsteadOfEdittingIt)
     // One edit is one SET. Nothing in the mesh mutates a buffer it already handed out, so a setter needs no
     // announcement: the buffer it installs is a new object, and a cache keyed on (buffer, revision) sees a new key.
     intrusive_ptr<vn::models::TriangleMesh> mesh(new vn::models::TriangleMesh());
-    const auto                                 first_positions = mesh->positionsBuffer();
+    const auto                              first_positions = mesh->positionsBuffer();
     ASSERT_NE(first_positions, nullptr);
     EXPECT_EQ(mesh->indicesBuffer(), nullptr) << "sequential triangles expose no index buffer";
 
@@ -4224,8 +4238,7 @@ TEST(RenderEngineTest, FrameSaysWhetherItRan)
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     engine->setDevice(backend);
-    EXPECT_EQ(engine->frame(), FrameOutcome::NotInitialized)
-        << "a frame through an engine that never attached is a frame nobody drove";
+    EXPECT_EQ(engine->frame(), FrameOutcome::NotInitialized) << "a frame through an engine that never attached is a frame nobody drove";
     EXPECT_EQ(backend->frames_executed, 0);
 
     ASSERT_TRUE(engine->initialize());
@@ -6983,7 +6996,7 @@ TEST(PassChainTest, TheSpotShadowCameraFramesTheConeFromTheLightsPosition)
     // A spot is not a direction: the light camera sits AT the light and its frustum is the cone. The bounds (ten
     // units in front of it) must land inside, and a point well off the cone's axis must land OUTSIDE - the map
     // covers the cone, not the world (outside the cone the light is already at zero strength).
-    auto                          spot = LightPtr(Light::createSpot(vn::math::Vec3d(0.0, 0.0, 10.0), vn::math::Vec3d(0.0, 0.0, -1.0), 10.0, 20.0, 50.0F));
+    auto spot = LightPtr(Light::createSpot(vn::math::Vec3d(0.0, 0.0, 10.0), vn::math::Vec3d(0.0, 0.0, -1.0), 10.0, 20.0, 50.0F));
     const vn::geom::spatial::Aabb<double> bounds(vn::math::Point3<double>(-1.0, -1.0, -1.0), vn::math::Point3<double>(1.0, 1.0, 1.0));
 
     auto                  camera          = intrusive_ptr<Camera>(new Camera());
@@ -8960,7 +8973,7 @@ TEST(GeometryTest, RevisionCanBeReportedByHand)
     // The geometry BORROWS the model's buffers, so a model rebuilt underneath it changes the bytes this
     // geometry reads without calling any setter here. Reporting that is the ONLY way a retained render
     // node can hear about it — and it is a value, not a bump, so it can mirror the model's version.
-    Geometry                 geom;
+    Geometry               geom;
     vn::models::Vec3fArray points = { vn::math::Vec3f(0, 0, 0) };
     geom.setPositions(packAttribute(points));
 
@@ -9148,7 +9161,7 @@ TEST(GeometryTest, AHandBuiltDrawPreparesItsOwnTree)
     EXPECT_EQ(tree->primCount(), 8u) << "one primitive per triangle, so a primitive id is the triangle ordinal";
     EXPECT_TRUE(tree->validate()) << "the tree satisfies its own containment and ordering invariants";
 
-    const std::uint64_t before = geometry->triangleTestCount();
+    const std::uint64_t         before = geometry->triangleTestCount();
     const RayIntersectionResult hit =
         RayIntersection::intersect(vn::geom::spatial::Rayd(Point3d(1.25, 0.1, 1.0), Vec3d(0.0, 0.0, -1.0)), geometry.get(), Mat4d());
     ASSERT_TRUE(hit.hit);
@@ -9169,8 +9182,10 @@ TEST(GeometryTest, MovingTheStreamDropsThePreparedTree)
 
     // The same buffer, new bytes, announced the way a writer announces them: the cached tree describes the old
     // triangles, so the key no longer matches and the draw answers "no tree" instead of a stale one.
-    positions->data()[0] = 5.0f;
-    positions->bumpRevision();
+    {
+        auto edit = positions->edit();
+        edit[0]   = 5.0f;
+    }
     EXPECT_EQ(geometry->bvh(0), nullptr) << "钥匙不符 = 没有树，不会给出错答案";
 
     ASSERT_TRUE(geometry->prepareBvh(0)) << "an announced edit is rebuilt on the next preparation";
@@ -9417,7 +9432,10 @@ TEST(AttributeChannelTest, SharedChannelReadsTheBuffersOwnScalars)
     // The buffer is re-read, not snapshotted, so GROWING it is followed: the new length shows up and the view
     // is re-derived from the handle. A cached pointer + count would be stale here (and could point at freed
     // memory), which is exactly what holding the buffer instead of a snapshot avoids.
-    buffer->append(std::vector<float>{ 7.0f, 8.0f, 9.0f });
+    {
+        auto edit = buffer->edit();
+        edit.append(std::vector<float>{ 7.0f, 8.0f, 9.0f });
+    }
     EXPECT_EQ(channel.floatCount(), 9u);
     EXPECT_EQ(channel.vertexCount(), 3u);
     EXPECT_EQ(channel.scalars().data(), buffer->data());
@@ -9501,8 +9519,8 @@ TEST(RayIntersectionTest, PicksVec4PositionGeometry)
     root->addChild(geom);
     scene->setRoot(root);
 
-    vn::geom::spatial::Rayd                   ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
-    RayIntersectionResult hit = RayIntersection::intersectScene(ray, scene.get());
+    vn::geom::spatial::Rayd ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    RayIntersectionResult   hit = RayIntersection::intersectScene(ray, scene.get());
     EXPECT_TRUE(hit.hit);
     EXPECT_EQ(hit.geometry.get(), geom.get());
     EXPECT_NEAR(hit.distance, 1.0, 1e-6);
@@ -13641,8 +13659,219 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
     }
 }
 
-TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes)
+TEST(SceneTest, ATwoMaskFrameBakesOnceAndCollectsPerView)
 {
+    // WHY THE BAKE IS KEPT even though the Release measurement says the collection costs 1.6 ms per 2000 drawables:
+    // a frame does not collect once, it collects once per (view, mask). A shadow pass drawing casters and a main
+    // pass drawing everything used to be TWO walks of the same unchanged graph; the graph half is now resolved once,
+    // and each pass reads it. This is the steady-state shape of the viewer, and it is the reason the table lives.
+    Scene scene;
+    auto  root = setIdentityRoot(scene);
+
+    auto both = makeTriangleNode(Vec3d(-0.4, 0.0, -5.0), nullptr, u8"both"); // default layer: in every mask below
+    auto caster = makeTriangleNode(Vec3d(0.4, 0.0, -5.0), nullptr, u8"caster");
+    caster->setLayers(1U << 2);
+    root->addChild(both);
+    root->addChild(caster);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    scene.setContentFrame(1);
+
+    const auto bakes_before   = scene.contentBakeCount();
+    const auto collects_before = scene.contentCollectCount();
+
+    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer)->size(), 1U) << "the main pass: the default-layer leaf";
+    EXPECT_EQ(scene.collectRenderCommands(&cam, 1U << 2)->size(), 1U) << "the shadow pass: the caster only";
+    EXPECT_EQ(scene.collectRenderCommands(&cam, kAllLayers)->size(), 2U) << "a pass that draws both";
+
+    EXPECT_EQ(scene.contentBakeCount() - bakes_before, 1U) << "one graph, one bake, however many masks ask";
+    EXPECT_EQ(scene.contentCollectCount() - collects_before, 3U) << "each (view, mask) is still its own collection";
+
+    // And the graph changing is what buys the next bake - the same announcement the memo uses.
+    caster->setOpacity(0.5F);
+    EXPECT_EQ(scene.collectRenderCommands(&cam, kAllLayers)->size(), 2U);
+    EXPECT_EQ(scene.contentBakeCount() - bakes_before, 2U);
+}
+
+// ============ Measurement recipe: where one collection spends its time ============
+TEST(SceneTest, MeasureWhereACollectionSpendsItsTime)
+{
+    // A RECIPE, not a gate. The bake (see Scene.cpp's detail::SceneBake) took the per-view matrix work out of a
+    // collection and bought 19% (Debug, 2000 drawables) - so the remaining cost is somewhere else, and guessing
+    // which part would be the usual mistake. This attributes it BY VARYING THE WORKLOAD, never by putting a
+    // stopwatch in the collector (production pays that on every frame):
+    //
+    //   * same graph, all drawables inside the view vs all of them outside it: the walk is identical, only the
+    //     COMMAND COUNT changes -> the per-command half (construction + sort) falls out as the difference;
+    //   * MEASURED, the culled run is an EARLY-OUT: the root's subtree box is outside the view, so the whole table is
+    //     skipped in one step (8 us for 2001 nodes). It therefore times the prune path, NOT the per-node cost - and
+    //     that is itself the finding: with the bake, a view that sees nothing costs nothing;
+    //   * the primitives the design note names are timed directly at the same counts, so the attribution has a
+    //     cross-check rather than a story.
+    std::printf("\n");
+    constexpr int kRepetitions = 10;
+
+    /// Builds a scene of @p drawables unit triangles that fills the standard camera's view.
+    const auto make_scene = [](std::size_t drawables) {
+        auto scene = intrusive_ptr<Scene>(new Scene());
+        auto root  = setIdentityRoot(*scene);
+        for (std::size_t index = 0; index < drawables; ++index) {
+            const double x = static_cast<double>(index % 50U) * 0.04 - 1.0;
+            const double y = static_cast<double>((index / 50U) % 50U) * 0.04 - 1.0;
+            root->addChild(makeTriangleNode(Vec3d(x, y, -5.0), nullptr));
+        }
+        return scene;
+    };
+
+    /// Microseconds per call over @p kRepetitions, with the camera moved before each one (a memo miss every time).
+    const auto measure_moving = [&](Scene& scene, Camera& camera, bool visible) {
+        const auto begin = std::chrono::steady_clock::now();
+        std::size_t last_size = 0;
+        for (int step = 1; step <= kRepetitions; ++step) {
+            if (visible) {
+                camera.lookAt(Vec3d(0.001 * static_cast<double>(step), 0, 5), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+            }
+            else {
+                // Looking away from the content: the same walk, the same box lookups, ZERO commands.
+                camera.lookAt(Vec3d(0.001 * static_cast<double>(step), 0, 5), Vec3d(0, 0, 50), Vec3d(0, 1, 0));
+            }
+            last_size = scene.collectRenderCommands(&camera)->size();
+        }
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() / kRepetitions;
+        return std::make_pair(us, last_size);
+    };
+
+    for (const std::size_t drawables : { std::size_t{ 200 }, std::size_t{ 2000 } }) {
+        Camera camera;
+        setupLookAtCamera(camera);
+        auto   scene = make_scene(drawables);
+        scene->setContentFrame(1);
+
+        const auto clear_view = measure_moving(*scene, camera, true);
+        EXPECT_EQ(clear_view.second, drawables) << "the workload: every drawable is a command";
+        const auto blank_view = measure_moving(*scene, camera, false);
+        EXPECT_EQ(blank_view.second, 0U) << "the workload: nothing is in view, so nothing is built";
+
+        const long long per_command = static_cast<long long>(clear_view.first) - static_cast<long long>(blank_view.first);
+        std::printf("[measure-collect] drawables=%zu commands=%zu visible=%lld us culled_early_out=%lld us "
+                    "=> per-command half %lld us (%.2f us/command), early-out half %lld us\n",
+                    drawables,
+                    clear_view.second,
+                    static_cast<long long>(clear_view.first),
+                    static_cast<long long>(blank_view.first),
+                    per_command,
+                    drawables != 0 ? static_cast<double>(per_command) / static_cast<double>(drawables) : 0.0,
+                    static_cast<long long>(blank_view.first));
+        std::fflush(stdout);
+    }
+
+    // The primitives, measured at the same counts: this is the cross-check on the split above. A box transform and a
+    // hash-map round trip are what the per-node half is made of; a RenderCommand copy plus a sort is what the
+    // per-command half is made of.
+    for (const std::size_t count : { std::size_t{ 200 }, std::size_t{ 2000 } }) {
+        const Mat4d world = vn::math::translate(Vec3d(0.25, 0.5, -5.0));
+        const Aabbd box   = Aabbd(Point3d(-1.0, -1.0, -1.0), Point3d(1.0, 1.0, 1.0));
+
+        const auto box_begin = std::chrono::steady_clock::now();
+        double     sink      = 0.0;
+        for (int pass = 0; pass < kRepetitions; ++pass) {
+            for (std::size_t index = 0; index < count; ++index) {
+                sink += box.transformed(world).max().x;
+            }
+        }
+        const auto box_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - box_begin).count() / kRepetitions;
+
+        std::unordered_map<const void*, Aabbd> map;
+        map.reserve(count * 2U);
+        const auto map_begin = std::chrono::steady_clock::now();
+        for (int pass = 0; pass < kRepetitions; ++pass) {
+            map.clear();
+            for (std::size_t index = 0; index < count; ++index) {
+                const void* key   = reinterpret_cast<const void*>(index + 1U);
+                const auto  found = map.find(key);
+                if (found == map.end()) {
+                    map.emplace(key, box);
+                }
+            }
+        }
+        const auto map_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - map_begin).count() / kRepetitions;
+
+        std::vector<RenderCommand> commands;
+        commands.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            RenderCommand cmd;
+            cmd.geometry     = geometryOf(*makeUnitTriangle());
+            cmd.model_matrix = world;
+            commands.push_back(std::move(cmd));
+        }
+        const auto copy_begin = std::chrono::steady_clock::now();
+        for (int pass = 0; pass < kRepetitions; ++pass) {
+            std::vector<RenderCommand> into;
+            into.reserve(count);
+            for (const RenderCommand& cmd : commands) {
+                into.push_back(cmd);
+            }
+        }
+        const auto copy_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - copy_begin).count() / kRepetitions;
+
+        std::vector<std::pair<double, RenderCommand*>> keyed;
+        keyed.reserve(count);
+        for (auto& cmd : commands) {
+            keyed.emplace_back(1.0, &cmd);
+        }
+        const auto sort_begin = std::chrono::steady_clock::now();
+        for (int pass = 0; pass < kRepetitions; ++pass) {
+            std::stable_sort(keyed.begin(), keyed.end(), [](const std::pair<double, RenderCommand*>& lhs, const std::pair<double, RenderCommand*>& rhs) {
+                return lhs.first < rhs.first;
+            });
+        }
+        const auto sort_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - sort_begin).count() / kRepetitions;
+
+        // The two halves of the list-building that happen OUTSIDE the collector: the sort key (one Mat4d x Point3d per
+        // command) and the copy out of the pointer-sorted list into the shared vector (a RenderCommand copy each).
+        const Vec3d eye(0.0, 0.0, 5.0);
+        const auto  key_begin = std::chrono::steady_clock::now();
+        double      key_sink  = 0.0;
+        for (int pass = 0; pass < kRepetitions; ++pass) {
+            std::vector<std::pair<double, RenderCommand*>> keys;
+            keys.reserve(count);
+            for (RenderCommand& cmd : commands) {
+                const auto origin = cmd.model_matrix * vn::math::Point3d(0.0, 0.0, 0.0);
+                const auto key    = (origin.asVector() - eye).length2();
+                key_sink += key;
+                keys.emplace_back(key, &cmd);
+            }
+        }
+        const auto key_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - key_begin).count() / kRepetitions;
+
+        const auto ordered_begin = std::chrono::steady_clock::now();
+        for (int pass = 0; pass < kRepetitions; ++pass) {
+            std::vector<RenderCommand> ordered;
+            ordered.reserve(count);
+            for (auto& [distance, cmd] : keyed) {
+                (void)distance;
+                ordered.push_back(std::move(*cmd));
+            }
+        }
+        const auto ordered_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - ordered_begin).count() / kRepetitions;
+
+        std::printf("[measure-primitive] count=%zu box_transform=%lld us hash_roundtrip=%lld us command_copy=%lld us "
+                    "sort=%lld us sort_key=%lld us ordered_copy=%lld us (sink %.1f/%.1f)\n",
+                    count,
+                    static_cast<long long>(box_us),
+                    static_cast<long long>(map_us),
+                    static_cast<long long>(copy_us),
+                    static_cast<long long>(sort_us),
+                    static_cast<long long>(key_us),
+                    static_cast<long long>(ordered_us),
+                    sink,
+                    key_sink);
+        std::fflush(stdout);
+    }
+}
+
+TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes){
     Scene scene;
     auto  root = setIdentityRoot(scene);
 

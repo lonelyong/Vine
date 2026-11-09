@@ -27,7 +27,10 @@ using vn::math::Vec4d;
 
 VN_OBJECT_META_IMPL(Scene, vn::Object);
 
-namespace
+// The collector's internals: the frustum, the per-pass bound cache, the folded inherited state and the baked half of
+// a collection. Named `detail` (not an anonymous namespace) because Scene's header forward-declares the bake type -
+// nothing outside this translation unit names any of them.
+namespace detail
 {
 
 /**
@@ -311,6 +314,67 @@ struct InheritedState {
 };
 
 /**
+ * @brief THE BAKED HALF OF ONE SCENE: every node's view-INDEPENDENT facts, in walk order.
+ *
+ * @details
+ * - WHY IT EXISTS. A collection answers two questions with one walk: "what does this graph contain, placed how"
+ *   (a function of the GRAPH) and "which of it is inside THIS view, in what order" (a function of the CAMERA). The
+ *   memo is keyed by the view, so before this table a camera move threw the graph half away and recomputed every
+ *   world matrix, every world box and every folded state - measured at 13.8 ms per collection for 2000 drawables
+ *   (SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera). The graph half now lives here, keyed by the root
+ *   subtree's content epoch, so a moving camera reads it instead of recomputing it.
+ * - WHY AN ARRAY AND NOT A MAP. `bakeSubtree` and `collectFromBake` are driven by the same order (children in
+ *   order, same pruning of invisible subtrees), so the cursor IS the identity: no node-keyed map, no hashing.
+ *   `end` is what keeps that alignment when a view prunes a subtree - the select step jumps straight past it.
+ * - WHAT IS NOT HERE. Anything a camera decides: the frustum test, the sort key, the final list. And any node whose
+ *   placement may depend on the view (Node::viewDependence) - those subtrees are marked and handed back to the
+ *   original walk per view (`fallbacks`), which is the only path that knows how to resolve them.
+ * - WHY THE WORLD BOX IS NOT HERE EITHER. A geometry's box is a function of its BUFFER's revision, and a writer
+ *   announces that on the buffer (`Buffer::edit()` / `setRevision`) - NOT on the node, so the graph epoch does not
+ *   move. Baking the box would cull with a stale one until some unrelated node change, which is why the select step
+ *   asks BoundsCache for it instead: the transform is cheap, and the LOCAL box is already cached per node by its
+ *   own stream revision (see Geometry::localBounds).
+ * - LIFETIME. It holds SHARES of the content it names (geometry, material, program), exactly like the memo does, so
+ *   a baked entry can never name a freed object; it is dropped when the graph announces a change (the epoch in
+ *   Scene::memo_epoch_) or when the scene invalidates itself (Scene::invalidateContent).
+ * - The three folded fields (`state` / `material` / `program`) are read at a LEAF entry only. Keeping them in the
+ *   same record as the containers costs memory rather than a second array; if a scene with >1e5 nodes ever shows
+ *   up, splitting the leaf payload out is the change to make (see the backlog entry for this table).
+ */
+struct SceneBake {
+    /// One node's resolved facts. `node` is kept because two questions are still per node and cached on it: the
+    /// layer union (`subtreeLayerUnion`) and, for a view-dependent subtree, its per-view placement.
+    struct Entry {
+        const Node*     node{ nullptr };
+        Mat4d           world{};                              // Resolved placement (meaningful when !view_dependent).
+        std::uint32_t   end{ 0 };                             // One past this node's subtree.
+        std::uint32_t   layers{ kDefaultLayer };              // Resolved layers at this node (see InheritedState).
+        std::int32_t    draw_order{ 0 };                      // Folded draw order.
+        float           opacity{ 1.0F };                      // Accumulated opacity INCLUDING this node (unclamped).
+        RenderState     state{};                              // Leaf only: the folded authored state.
+        MaterialBasePtr material{};                           // Leaf only: nearest StateNode material.
+        ShaderProgramPtr program{};                           // Leaf only: nearest StateNode program.
+        GeometryPtr     geometry{};                           // Leaf only: null for a container.
+        std::uint32_t   first_primitive{ 0 };
+        std::uint32_t   primitive_count{ 0 };
+        bool            view_dependent{ false };              // This node or an ancestor resolves its placement per view.
+    };
+
+    /// The context a view-dependent subtree is handed back to the walk with (see collectFromBake). One per run -
+    /// the TOPMOST view-dependent node - so a run is resolved once, by the code that already does it correctly.
+    struct Fallback {
+        std::uint32_t index{ 0 };        // The entry the run starts at.
+        const Node*   node{ nullptr };
+        Mat4d         world{};           // The run's TOP node's own world matrix (the walk's own convention).
+        InheritedState inherited{};
+        float         parent_opacity{ 1.0F };
+    };
+
+    std::vector<Entry>    entries;
+    std::vector<Fallback> fallbacks; // Ascending by `index` (the bake walks in order).
+};
+
+/**
  * @brief Recursively collects render commands from a node subtree.
  *
  * Container nodes (Group and its subclasses) are descended into; a leaf
@@ -467,6 +531,192 @@ void collectNodeCommands(const Node*                 node,
     }
 }
 
+/**
+ * @brief Fills @p bake with one node's subtree, WITHOUT a view: the graph half of a collection.
+ *
+ * @details
+ * - Every fact it records is a function of the graph alone, so the result stays valid until
+ *   `Node::announceContentChange` moves the root's epoch. The frustum test, the layer mask and the sort are
+ *   deliberately absent - they are the view's half (see collectFromBake).
+ * - A node that DECLARES a per-view placement (Node::viewDependence) is not resolved here: the run it starts is
+ *   recorded in `bake.fallbacks`, its subtree box is left EMPTY (so nothing prunes it) and everything below it is
+ *   marked view-dependent, so the select step hands the whole run to the walk that knows how to place it.
+ * - Invisible subtrees produce no entries at all: the walk skipped them before, and an entry that can never be
+ *   drawn is memory nobody reads.
+ *
+ * @param node                Subtree root to bake.
+ * @param world               World matrix of @p node itself (the walk's own convention: the caller has already
+ *                            accumulated it).
+ * @param parent_opacity      Opacity accumulated above @p node.
+ * @param inherited           What @p node inherits from above (see InheritedState).
+ * @param under_view_dependent Whether an ancestor already declared a per-view placement.
+ * @param bake                Receives the entries.
+ * @return One past the last entry this subtree produced.
+ */
+std::uint32_t bakeSubtree(const Node*                 node,
+                          const Mat4d&                world,
+                          float                       parent_opacity,
+                          const InheritedState&       inherited,
+                          bool                        under_view_dependent,
+                          SceneBake&                  bake)
+{
+    if (node == nullptr || !node->isVisible()) {
+        return static_cast<std::uint32_t>(bake.entries.size());
+    }
+    // Reserve this node's slot BEFORE descending: the order is the identity the select step reads by, so a node
+    // must be followed by its own subtree (that is what `end` reports when the descent comes back).
+    const std::uint32_t index = static_cast<std::uint32_t>(bake.entries.size());
+    bake.entries.emplace_back();
+    const ViewDependence declared       = node->viewDependence();
+    const bool           view_dependent = under_view_dependent || declared != ViewDependence::None;
+    const Mat4d          node_world     = world;
+    const std::uint32_t  layers         = node->layers().value_or(inherited.layers);
+    const float          node_opacity   = parent_opacity * node->opacity();
+
+    InheritedState subtree = inherited;
+    subtree.layers         = layers;
+    subtree.draw_order     = node->drawOrder().value_or(inherited.draw_order);
+    if (const auto* state_node = obj_cast<StateNode>(node)) {
+        subtree.state.merge(state_node->renderState());
+        if (raw_ptr<MaterialBase> material = state_node->material()) {
+            subtree.material = material;
+        }
+        if (raw_ptr<ShaderProgram> program = state_node->program()) {
+            subtree.program = program;
+        }
+    }
+
+    if (!under_view_dependent && declared != ViewDependence::None) {
+        // The TOP of a view-dependent run: the select step resolves this whole subtree per view, so the context
+        // the walk needs (not this node's own resolution) is what gets stored.
+        bake.fallbacks.push_back(SceneBake::Fallback{ index, node, world, inherited, parent_opacity });
+    }
+
+    bool           has_geometry = false;
+    std::uint32_t  primitive_count = 0;
+    if (const auto* geometry = obj_cast<Geometry>(node)) {
+        has_geometry    = true;
+        primitive_count = static_cast<std::uint32_t>(geometry->primitiveCount());
+        SceneBake::Entry& entry = bake.entries[index];
+        entry.geometry          = GeometryPtr(const_cast<Geometry*>(geometry));
+        entry.first_primitive   = 0U;
+        entry.primitive_count   = primitive_count;
+        entry.state             = subtree.state;
+        entry.material          = subtree.material != nullptr ? MaterialBasePtr(subtree.material) : MaterialBasePtr();
+        entry.program           = subtree.program != nullptr ? ShaderProgramPtr(subtree.program) : ShaderProgramPtr();
+    }
+    else if (const auto* group = obj_cast<Group>(node)) {
+        for (const auto& child : group->children()) {
+            (void)bakeSubtree(child.get(), node_world * child->localTransformMatrix(), node_opacity, subtree, view_dependent, bake);
+        }
+    }
+
+    // Written AFTER the descent: `bake.entries` may have reallocated, so the slot is addressed by index. The box is
+    // the SUBTREE's (the same call the walk culls with, one pass, cached per node by BoundsCache).
+    SceneBake::Entry& entry = bake.entries[index];
+    entry.node      = node;
+    entry.world     = node_world;
+    entry.layers    = layers;
+    entry.draw_order = static_cast<std::int32_t>(subtree.draw_order);
+    entry.opacity    = node_opacity;
+    entry.view_dependent = view_dependent;
+    entry.end            = static_cast<std::uint32_t>(bake.entries.size());
+    (void)has_geometry; // the leaf payload above is what the select step reads; kept for symmetry with the walk
+    (void)primitive_count;
+    return entry.end;
+}
+
+/**
+ * @brief Collects one view's commands from the baked table: the VIEW half of a collection.
+ *
+ * @details
+ * - The same three decisions the walk made - layer union, frustum, and one command per primitive - taken in the
+ *   same order, reading placements and folds instead of computing them. A pruned subtree is skipped with `end`, so
+ *   the hierarchical pruning the walk had is kept: this is not a linear scan over every instance.
+ * - A view-dependent run is handed back to collectNodeCommands with the context the bake recorded, because that is
+ *   the only code that knows how to place such a node for the camera at hand.
+ *
+ * @param bake        The baked table (see bakeSubtree).
+ * @param frustum     The view's frustum.
+ * @param view        The view being drawn.
+ * @param layer_mask  Layers this picture draws.
+ * @param bounds      Per-pass bound cache (used by the view-dependent runs).
+ * @param viewport_used Receives true when a view-dependent node needs the device-pixel viewport.
+ * @param out         Receives the commands, in walk order.
+ */
+void collectFromBake(const SceneBake&          bake,
+                     const Frustum&            frustum,
+                     const CollectView&        view,
+                     std::uint32_t             layer_mask,
+                     BoundsCache&              bounds,
+                     bool&                     viewport_used,
+                     std::vector<RenderCommand>& out)
+{
+    std::size_t fallback = 0U;
+    for (std::uint32_t index = 0; index < bake.entries.size();) {
+        const SceneBake::Entry& entry = bake.entries[index];
+        if (entry.view_dependent) {
+            // The rare half: one run per top-most view-dependent node, in index order (see bakeSubtree).
+            if (fallback < bake.fallbacks.size() && bake.fallbacks[fallback].index == index) {
+                const SceneBake::Fallback& run = bake.fallbacks[fallback];
+                ++fallback;
+                collectNodeCommands(run.node, run.world, frustum, view, run.parent_opacity, run.inherited, layer_mask, bounds, viewport_used, out);
+            }
+            index = entry.end;
+            continue;
+        }
+        // The layer prune, the same call the walk makes: passing this node's RESOLVED layers in the "inherited"
+        // slot is the same answer (resolution is idempotent - see InheritedState), and it covers a leaf's own
+        // declaration because subtreeLayerUnion() starts from the node itself.
+        if ((entry.node->subtreeLayerUnion(entry.layers) & layer_mask) == 0U) {
+            index = entry.end;
+            continue;
+        }
+        // The box is asked HERE, not baked: a buffer edit changes it without moving the node (see the file note on
+        // SceneBake). BoundsCache makes it one transform per visited node, and the local box is cached per node.
+        if (frustum.isOutside(bounds.worldBound(entry.node, entry.world))) {
+            index = entry.end;
+            continue;
+        }
+        if (entry.geometry != nullptr) {
+            const Geometry* geometry  = entry.geometry.get();
+            const float     effective = std::clamp(entry.opacity, 0.0f, 1.0f);
+            for (std::uint32_t offset = 0; offset < entry.primitive_count; ++offset) {
+                const std::size_t ordinal   = static_cast<std::size_t>(entry.first_primitive) + offset;
+                const Primitive*  primitive = geometry->primitive(ordinal);
+                if (primitive == nullptr) {
+                    continue;
+                }
+                // A visible prefix of zero is not a draw; another primitive of the same data may still be.
+                if (primitive->hasInstances() && primitive->visibleInstanceCount() == 0u) {
+                    continue;
+                }
+                const raw_ptr<MaterialBase> geometry_material = geometry->material();
+                const MaterialBasePtr       material = primitive->material != nullptr
+                                                           ? MaterialBasePtr(primitive->material)
+                                                           : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : entry.material);
+                const raw_ptr<ShaderProgram> geometry_program = geometry->program();
+                const ShaderProgramPtr       program = primitive->program != nullptr
+                                                           ? ShaderProgramPtr(primitive->program)
+                                                           : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program) : entry.program);
+                auto& cmd      = out.emplace_back(entry.geometry, material, entry.world, static_cast<std::uint32_t>(ordinal));
+                cmd.opacity    = effective;
+                cmd.draw_order = entry.draw_order;
+                cmd.authored_state = entry.state;
+                cmd.program        = program;
+                if (primitive->hasInstances()) {
+                    cmd.instance_transforms = primitive->instance_transforms;
+                    cmd.first_instance =
+                        static_cast<std::uint32_t>(std::min<std::size_t>(primitive->firstInstance(), std::numeric_limits<std::uint32_t>::max()));
+                    cmd.instance_count =
+                        static_cast<std::uint32_t>(std::min<std::size_t>(primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
+                }
+            }
+        }
+        ++index;
+    }
+}
+
 } // namespace
 
 /**
@@ -588,7 +838,7 @@ bool Scene::hasRootedRoot() const
 NodePtr Scene::findNode(const String& name) const
 {
     if (root_ != nullptr) {
-        return findNodeRecursive(root_.get(), name);
+        return detail::findNodeRecursive(root_.get(), name);
     }
     return NodePtr();
 }
@@ -653,7 +903,7 @@ Aabbd Scene::boundingBox(std::uint32_t layer_mask) const
     if (!visible_ || !hasRootedRoot()) {
         return Aabbd::empty();
     }
-    return visibleWorldBox(*root_, kDefaultLayer, layer_mask);
+    return detail::visibleWorldBox(*root_, kDefaultLayer, layer_mask);
 }
 
 std::shared_ptr<const std::vector<RenderCommand>>
@@ -661,7 +911,7 @@ Scene::collectRenderCommands(raw_ptr<const Camera> camera, std::uint32_t layer_m
 {
     if (camera == nullptr) {
         // The empty answer, shared rather than built: a caller with no camera asks for nothing.
-        return noCommands();
+        return detail::noCommands();
     }
     const Viewport    draw_viewport = viewport != nullptr ? *viewport : Viewport{};
     const CollectView view{ camera->projectionMatrix(), camera->viewMatrix(), camera->eye(), camera->up(), draw_viewport };
@@ -675,7 +925,7 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     // answer, and the check runs BEFORE the memo lookup on purpose: the memo must not hand back a list built
     // while the node was still this scene's root (see setRoot).
     if (!visible_ || !hasRootedRoot()) {
-        return noCommands();
+        return detail::noCommands();
     }
     // The shape is part of the view: the projection encodes it (the camera states it, see Camera), so the memo
     // below (which matches on the view-projection) cannot answer for one shape with another's walk.
@@ -704,7 +954,7 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
         for (auto& entry : content_memo_->entries) {
             if (entry.revision == content_revision_ && entry.eye == eye && entry.layer_mask == layer_mask &&
                 (!entry.viewport_sensitive || (entry.viewport.width == viewport.width && entry.viewport.height == viewport.height)) &&
-                sameView(entry.view_proj, view_proj))
+                detail::sameView(entry.view_proj, view_proj))
             {
                 entry.last_used_frame = content_frame_;
                 return &entry;
@@ -722,11 +972,22 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     }
     ++content_collect_count_;
 
-    std::vector<RenderCommand> commands;
-    const Frustum              frustum = Frustum::fromViewProjection(view_proj);
-    BoundsCache                bounds;
-    bool                       viewport_used = false;
-    collectNodeCommands(root_.get(), root_->worldMatrix(), frustum, view, opacity_, InheritedState{}, layer_mask, bounds, viewport_used, commands);
+    // THE GRAPH HALF, ONCE PER EPOCH: every node's placement, world box and folded state, in walk order (see
+    // ContentBake). A moved camera then pays the VIEW half only - the layer prune, the frustum test and the sort -
+    // instead of recomputing every matrix and every fold, which is what a collection used to cost per view
+    // (measured: SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera).
+    if (content_bake_ == nullptr || bake_epoch_ != epoch) {
+        content_bake_ = std::make_unique<detail::SceneBake>();
+        (void)detail::bakeSubtree(root_.get(), root_->worldMatrix(), opacity_, detail::InheritedState{}, false, *content_bake_);
+        bake_epoch_ = epoch;
+        ++content_bake_count_;
+    }
+
+    std::vector<RenderCommand>    commands;
+    const detail::Frustum        frustum       = detail::Frustum::fromViewProjection(view_proj);
+    detail::BoundsCache           bounds;
+    bool                          viewport_used = false;
+    detail::collectFromBake(*content_bake_, frustum, view, layer_mask, bounds, viewport_used, commands);
     // Where the sort puts things, in one sentence: the draw order the CONTENT declared is the outer key (see
     // Node::setDrawOrder - higher is drawn later), and inside one order: opaque front-to-back (near first),
     // transparent back-to-front (far first) after the opaque batch. Transparent objects need painter's
@@ -783,8 +1044,7 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     return shared;
 }
 
-void Scene::setContentFrame(std::uint64_t frame)
-{
+void Scene::setContentFrame(std::uint64_t frame){
     if (content_frame_ == frame) {
         return; // idempotent: every pass of a frame may announce the same token
     }
@@ -813,7 +1073,7 @@ void Scene::invalidateContent()
         // announce - so what this reaches is the edit they could not see: data written through a buffer, a
         // custom node's own state. Bumping every stamp makes the next collect recompute every box once (and
         // re-cache), which is what "picked up at once" has to mean for the culling cache too.
-        invalidateBoundsUnder(*root_);
+        detail::invalidateBoundsUnder(*root_);
     }
 }
 
@@ -825,6 +1085,11 @@ std::uint64_t Scene::contentCollectCount() const noexcept
 std::uint64_t Scene::contentCollectReuseCount() const noexcept
 {
     return content_reuse_count_;
+}
+
+std::uint64_t Scene::contentBakeCount() const noexcept
+{
+    return content_bake_count_;
 }
 
 VN_GRAPHICS_NS_END

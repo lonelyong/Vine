@@ -270,6 +270,24 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     virtual ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const;
 
+    /** @brief Gets the WIDEST view dependence this node can have, without being given a view.
+     *
+     * @details
+     * - A DECLARATION, not a discovery. `localToWorldForView` answers for ONE view, so a collector that wants to
+     *   resolve placements WITHOUT a camera (the scene's baked pass, which caches the view-independent half of a
+     *   collection) cannot ask it. This hook is that question, and the two must agree: what a view resolves is
+     *   never STRONGER than what the node declared (a test pins it for the built-in nodes).
+     * - The default answers None. `AutoTransform` answers the widest case its own configuration can produce
+     *   (ViewAndViewport when screen-space scaling is on, View when an auto-rotation mode is set, None otherwise) -
+     *   conservative on purpose: declaring more than a particular view needs costs a per-view resolve, declaring
+     *   less would cache a matrix that belongs to another camera.
+     * - A subclass that overrides `localToWorldForView` to answer something other than None MUST override this too;
+     *   the collector is allowed to trust the declaration.
+     *
+     * @return None for a view-independent placement, otherwise the strongest dependence the node can have.
+     */
+    [[nodiscard]] virtual ViewDependence viewDependence() const noexcept;
+
     /** @brief Announces that this subtree's bound may have changed.
      *
      * @details

@@ -237,6 +237,17 @@ class VN_GRAPHICS_API AutoTransform : public Group {
      */
     ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const override;
 
+    /** @brief Gets the WIDEST view dependence this billboard's configuration can produce (see Node::viewDependence).
+     *
+     * @details
+     * - Declared from the node's own switches, because a baked pass has no camera to discover it with:
+     *   screen-space scaling ⇒ ViewAndViewport (it may or may not use this view's viewport), an auto-rotation mode
+     *   ⇒ View, neither ⇒ None. A particular view may need LESS (auto-scale with no viewport resolves like None),
+     *   never more.
+     *
+     * @return The strongest dependence the configuration allows.
+     */
+    [[nodiscard]] ViewDependence viewDependence() const noexcept override;
     /** @brief Computes a conservative world-space box (the sphere around position covering every orientation).
      *
      * @details
