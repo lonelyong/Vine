@@ -11,11 +11,10 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include <vine/geom/spatial/Aabb.hpp>
+#include <vine/geom/spatial/Ray.hpp>
+#include <vine/geom/spatial/RayHit.hpp>
 #include <vine/geom/spatial/detail/RaySlab.hpp>
-
-#include "Aabb.hpp"
-#include "Ray.hpp"
-#include "RayHit.hpp"
 
 VN_GEOM_SPATIAL_NS_BEGIN
 

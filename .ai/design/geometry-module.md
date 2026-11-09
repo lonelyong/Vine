@@ -42,8 +42,8 @@
 | 目录 | 命名空间 | 内容 | 是不是 API |
 |---|---|---|---|
 | `sdk/vine/geom/` | `vn::geom` | `geom_global.hpp`（宏）、`Continuity.hpp`（光滑度阶梯） | 是 |
-| `sdk/vine/geom/planar/` | `vn::geom::planar` | 平面曲线契约 `Curve<T>`、九个类型、六个族级算法（17 个头） | 是 |
-| `sdk/vine/geom/spatial/` | `vn::geom::spatial` | 曲线、曲面、实体、射线、`Obb` / `Aabb`（47 个头） | 是 |
+| `sdk/vine/geom/planar/` | `vn::geom::planar` | 平面曲线契约 `Curve<T>`、九个类型、六个族级算法（16 个头） | 是 |
+| `sdk/vine/geom/spatial/` | `vn::geom::spatial` | 曲线、曲面、实体、射线、`Obb` / `Aabb`（49 个头，另有属本契约 `spatial/detail/` 5 个） | 是 |
 | `sdk/vine/geom/detail/` | `vn::geom::detail` | 与维度无关的共享实现（8 个头） | **不是** |
 
 `geom_global.hpp` 提供 `VN_GEOM_API` 与三个命名空间宏（`VN_GEOM_NS_BEGIN`、`VN_GEOM_PLANAR_NS_BEGIN`、`VN_GEOM_SPATIAL_NS_BEGIN`、`VN_GEOM_DETAIL_NS_BEGIN` 及对应 `_END`）。
@@ -155,13 +155,13 @@
 
 ## 9. 状态与演进
 
-- **现状**：F1–F5 全部落地；`vn::Geom` 单一目标；`geom/{planar,spatial}` 共 64 个头、`geom/detail` 8 个；五条门禁 0 违规；两套几何测试共 353 例全绿。
+- **现状**：F1–F5 全部落地；`vn::Geom` 单一目标；`geom/{planar,spatial}` 共 65 个头、`geom/detail` 8 个；五条门禁 0 违规；两套几何测试共 353 例全绿。
 - **反转条件**：① 出现**第三棵子树**（多边形、网格几何等）——按 2.3 判定它属于目录、命名空间还是新模块；② 出现非几何的求根/积分/Bernstein 消费者——把内核升成独立模块，几何侧只换 include（见 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`）。
 - **不做**：类型名带维度标记（D4–D5）；除非出现第二条能证明它能消除的税。
 
 ## 10. 参考
 
-- 代码：`src/base/geom/CMakeLists.txt`、`sdk/vine/geom/geom_global.hpp`、`sdk/vine/geom/Continuity.hpp`、`sdk/vine/geom/detail/`（8 个头）、`sdk/vine/geom/planar/`（17）、`sdk/vine/geom/spatial/`（47）。
+- 代码：`src/base/geom/CMakeLists.txt`、`sdk/vine/geom/geom_global.hpp`、`sdk/vine/geom/Continuity.hpp`、`sdk/vine/geom/detail/`（8 个头）、`sdk/vine/geom/planar/`（16）、`sdk/vine/geom/spatial/`（49，另有 `detail/` 5）。
 - 门禁：`scripts/check_geom_layering.py`。
 - 决策：`ADR-2026-11-06-merged-geom-module.md`、`ADR-2026-11-06-geom-detail-subtree.md`、`ADR-2026-11-06-geom-contracts-nested-under-module.md`、`ADR-2026-11-05-planar-curve-contract.md`、`ADR-2026-11-06-spline-model-moves-to-geom.md`、`ADR-2026-11-06-math-keeps-only-vocabulary.md`。
 - 相关设计：`geometry-planar.md`（平面曲线的契约与九个类型）、`geometry-kinds.md`（空间曲线/曲面族）、`geometry-primitives.md`（空间值类型）、`math-base-layer.md`（下层只有词汇）。

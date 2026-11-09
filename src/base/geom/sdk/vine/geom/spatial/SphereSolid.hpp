@@ -14,9 +14,10 @@
 #include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include <vine/geom/spatial/detail/SolidDetail.hpp>
+
 #include "Aabb.hpp"
 #include "Solid.hpp"
-#include "SolidDetail.hpp"
 
 VN_GEOM_SPATIAL_NS_BEGIN
 
