@@ -53,6 +53,10 @@ loaders/*     ← 用三方库把数据从文件里读出来/写回去
 - 失败分类就是那四类：`Unsupported`（表外扩展名 / 无后端 / 非流式目标）、`NotFound`、`IoFailure`、`InvalidData`；
   `Result` 的 `*` / `->` 在失败时是 UB，先判 `ok()`。
 - 两条 assimp 后处理表：`loadMerged()` 带 `aiProcess_PreTransformVertices`，`load()` **绝不能**带（会删节点图）。
+- **不做顶点焊接**：`aiProcess_JoinIdenticalVertices` 不在这两套后处理里，也不提供开关。CAD 导出的零件每个面有
+  自己的顶点（逐面颜色 + 逐面法线），重合的角点永远不相等，焊接根本合并不了 —— 只剩“每角点一条哈希表项”的代价：
+  1.8 GB / 37.7M 三角形的 STL（113M 个角点）开着时 31 GB 被 OOM 杀掉，不做焊接 12.5 GiB / 77 s 读完。代价是三角面片汤
+  保持每三角形 3 个角点，读法不变。法线仍由 `aiProcess_GenNormals` 补齐（见下一条）。
 - 法线：两份列表都带 `aiProcess_GenNormals`，代价是逐面法线导致顶点拆分（`JoinIdenticalVertices` 因此少合并）；
   换来"文件没给法线"时不会交出一份无法线的网格。
 - 矩阵：assimp 的 `aiMatrix4x4` 与 `vn::math::Matrix4x4` 都是列向量约定、平移在第 4 列，16 个元素直接对应，**不转置**。

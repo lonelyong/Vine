@@ -47,14 +47,17 @@ constexpr float kMillimetreThreshold = 10.0f;
 // derive it - assimp's STL loader passes those through, and aiProcess_FindInvalidData (also in these lists, running
 // BEFORE aiProcess_GenNormals) rejects a zero-length normal and drops the whole array. Either way the mesh would arrive
 // without normals, and assimp fills them only for meshes that have none, so a file that does describe normals keeps them.
-// The price is vertex splitting (a per-face normal cannot be shared by the faces around a vertex), which leaves
-// aiProcess_JoinIdenticalVertices - it runs later - less to merge. That is the right trade: the alternative is a document
-// whose mesh carries no normals at all, and STL - the format this repository's file payloads use - is a triangle soup
-// whose facets are meant to be flat anyway.
+// The price is vertex splitting (a per-face normal cannot be shared by the faces around a vertex), and that price is
+// stated rather than optimised away: aiProcess_JoinIdenticalVertices is deliberately NOT in either list, and it is not
+// offered as an option. A CAD export gives every face its own vertices - per-face colours AND per-face normals - so
+// coincident corners never compare equal and the weld cannot merge them; the pass then keeps a hash entry per corner
+// and buys nothing. On a 38-million-triangle part (1.8 GB) that table was ~113 million entries alive at once and got
+// the process killed by the OOM killer, while the document it was optimising fits in a quarter of that. Every consumer
+// reads a per-corner document the same way, so the soup is what this loader reports.
 
 /** @brief Post-processing every load runs, whichever entry it came in through. */
-constexpr unsigned int kLoadFlags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_FindInvalidData | aiProcess_GenNormals |
-                                    aiProcess_ImproveCacheLocality | aiProcess_FixInfacingNormals | aiProcess_PreTransformVertices | aiProcess_OptimizeMeshes;
+constexpr unsigned int kLoadFlags = aiProcess_Triangulate | aiProcess_FindInvalidData | aiProcess_GenNormals | aiProcess_ImproveCacheLocality |
+                                    aiProcess_FixInfacingNormals | aiProcess_PreTransformVertices | aiProcess_OptimizeMeshes;
 
 /**
  * @brief Post-processing the model entry runs.
@@ -63,8 +66,8 @@ constexpr unsigned int kLoadFlags = aiProcess_Triangulate | aiProcess_JoinIdenti
  * the vertices, and aiProcess_OptimizeMeshes would merge meshes and drop nodes - both would throw away the structure
  * this entry exists to keep.
  */
-constexpr unsigned int kModelFlags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_FindInvalidData | aiProcess_GenNormals |
-                                     aiProcess_ImproveCacheLocality | aiProcess_FixInfacingNormals;
+constexpr unsigned int kModelFlags =
+    aiProcess_Triangulate | aiProcess_FindInvalidData | aiProcess_GenNormals | aiProcess_ImproveCacheLocality | aiProcess_FixInfacingNormals;
 
 /** @brief Bytes the stream entry moves per read while it drains a stream. */
 constexpr std::size_t kDrainChunk = 64U * 1024U;

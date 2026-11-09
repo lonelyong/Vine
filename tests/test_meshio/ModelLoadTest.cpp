@@ -405,3 +405,41 @@ TEST(ModelLoadTest, AFileThatAuthorsNoMaterialReportsNone)
     EXPECT_EQ(model->meshes()[0].material, nullptr) << "the importer's invented material is not the file's";
     EXPECT_NE(model->meshes()[0].mesh, nullptr);
 }
+
+TEST(ModelLoadTest, ADuplicateCornerIsKeptBecauseWeldingIsNotOffered)
+{
+    // Two coplanar triangles sharing an edge: a welding pass would report four vertices, this loader reports the six
+    // corners the file states. The pass is not offered because an exported CAD part carries per-face colours AND
+    // per-face normals, so coincident corners never compare equal and the hash table it keeps buys nothing
+    // (meshio-brepio-design.md F2).
+    const TempDir dir;
+    const auto    stl_path = dir.path() / "twice.stl";
+    writeFile(stl_path,
+              "solid t\n"
+              "facet normal 0 0 1\n"
+              "  outer loop\n"
+              "    vertex 0 0 0\n"
+              "    vertex 1 0 0\n"
+              "    vertex 0 1 0\n"
+              "  endloop\n"
+              "endfacet\n"
+              "facet normal 0 0 1\n"
+              "  outer loop\n"
+              "    vertex 1 0 0\n"
+              "    vertex 1 1 0\n"
+              "    vertex 0 1 0\n"
+              "  endloop\n"
+              "endfacet\n"
+              "endsolid t\n");
+
+    MeshLoader loader(MeshLoader::Options{ .scale_mode = MeshLoader::ScaleMode::Disabled });
+
+    auto loaded = loader.load(stl_path);
+    ASSERT_TRUE(loaded);
+    const auto model = loaded.take();
+
+    ASSERT_EQ(model->meshes().size(), 1u);
+    ASSERT_NE(model->meshes()[0].mesh, nullptr);
+    EXPECT_EQ(obj_cast<TriangleMesh>(*model->meshes()[0].mesh).triangleCount(), 2u);
+    EXPECT_EQ(model->meshes()[0].mesh->vertexCount(), 6u) << "the corners the file states, not a welded set";
+}
