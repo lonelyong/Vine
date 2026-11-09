@@ -524,7 +524,7 @@ bool Geometry::subtreeBounds(Aabbd& box) const
         for (std::size_t instance = 0u; instance < visible; ++instance) {
             const std::optional<vn::math::Mat4d> matrix = primitive.instanceMatrix(instance);
             if (matrix.has_value()) {
-                box.expandBy(transformBox(data_box, *matrix));
+                box.expandBy(data_box.transformed(*matrix));
             }
         }
     }
@@ -535,12 +535,12 @@ Aabbd Geometry::boundingBox() const
 {
     // The same LOCAL box a collection walk transforms with the matrix IT accumulated (see Scene.cpp's
     // bounds cache), placed by this leaf's own worldMatrix(): one spelling of "place the box"
-    // (transformBox), so the walk's answer and this one cannot disagree (a test pins it).
+    // (Aabb::transformed), so the walk's answer and this one cannot disagree (a test pins it).
     Aabbd local;
     if (subtreeBounds(local)) {
-        return transformBox(local, worldMatrix());
+        return local.transformed(worldMatrix());
     }
-    return transformBox(localBounds(), worldMatrix());
+    return localBounds().transformed(worldMatrix());
 }
 
 std::uint64_t Geometry::localBoundsComputationCount() const noexcept

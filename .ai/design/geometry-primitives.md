@@ -86,18 +86,25 @@
 
 ### 2.8 值类型的短查询定义在头文件
 
-- **是什么**：`Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` 的短查询与访问器（`contains`、`expandBy`、`intersectWith`、`closestPoint`、`pointAt`、`distanceToPoint`、`corners`、`toAabb`、`intersects`、`intersectTriangle`）定义在 `sdk` 头文件里；只有长算法留在 `src/`，并保留 `template class VN_GEOMETRY_API` 显式实例化。
+- **是什么**：`Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` 的短查询与访问器（`contains`、`expandBy`、`intersectWith`、`transformed`、`closestPoint`、`pointAt`、`distanceToPoint`、`corners`、`toAabb`、`intersects`、`intersectTriangle`）定义在 `sdk` 头文件里；只有长算法留在 `src/`，并保留 `template class VN_GEOMETRY_API` 显式实例化。
 - **布局**：每个类型的类体内只留声明与平凡访问器，定义集中在该类之后、别名之前。一个类型的公开形状因此可以一次读完（`G4`、`G12`）。
 - **为什么**：`G7`、`G10` —— `geometry` 是 DLL，跨模块调用不可能内联；`graphics` 的逐三角形拾取实测命中断 7.09 → 5.99 ns、平行剔除 3.96 → 2.71 ns（独立基准，约 15–30%）。把调用点留在调用方模块里，比让调用方为一次点测试过一道库边界便宜。
 - **边界**：判据是“短且纯算术”——不依赖 `EigenDecomposition.hpp`、OCCT 或匿名命名空间辅助。不是“凡是能内联的都内联”：拟合（`Obb::computePca` / `computeFixedOrientation`）、`LineCurve::intersectWith(LineCurve)`、`Plane::intersectWith(Plane, LineCurve&)` 留在 `src/`，否则公共头要拖进特征分解与 60 行推导注释，成本付给每一个 consumer（`G11`、`G10`）。
 - **代价**：类上没有 `VN_GEOMETRY_API`，导出只来自显式实例化；而**库为每一个几何类型、两种精度都提供显式实例化**：有 `src/` 实现的类型在自己的 `.cpp` 里（`LineCurve` / `Obb` / `Plane`——那些 `.cpp` 是唯一能看见其非内联成员的地方），纯头文件的类型集中在 `src/Instantiations.cpp`（一份可审查的清单，同时是“每个类型都能实例化”的编译期检查）。不写 `extern template`：内联仍然在调用方发生，导出的符号是“不能内联时的兵底”，不是唯一实现。精度与实例化的策略见 `../decisions/ADR-2026-11-04-geometry-precision-and-instantiation.md`。
 - **不做**：不把平行判定的 `eps * length(a) * length(b)` 改成平方比较——实测 2.71 → 2.68 ns 在噪声内（`G8`）；不为“更彻底的 header-only”引入 BVH 或批处理入口，那是 `../backlog/graphics.md` 的射线–网格遍历项，按证据另议。
 
+### 2.9 盒的变换算子跟着盒走
+
+- **是什么**：`Aabb<T>::transformed(const math::Matrix4x4<T>&)` 返回把盒放进另一坐标系之后**包含它**的轴对齐盒（八个角点变换后重拟合）；只对仿射矩阵有定义，空盒或非仿射输入答空盒。`Obb` 暂不提供同名算子。
+- **为什么**：`G1`、`G7`、`G13` —— 这是值类型自己的几何事实，不是渲染词汇。把它留在消费者一侧，就意味着每个消费者（世界盒、子树并集、边界缓存、拾取拒绝盒）各写一遍同样的八角重拟合；那正是搬迁前的样子（见 `../decisions/ADR-2026-11-09-box-transform-lives-in-geom.md`）。
+- **边界**：盒的像一般不再是轴对齐盒，所以这个算子给的是**界**而不是像；需要精确像的调用方要用 `Obb`（今天没有消费者，见 9.2）。`T` 必须是浮点类型：整数盒乘矩阵没有定义好的舍入。
+- **成本**：`Aabb.hpp` 从此 include `math/Transform3.hpp`（矩阵 × 点算子的唯一定义）。`Aabb` 已经 include `Ray.hpp`，所以这层“值类型依赖 math 值类型”的耦合不是新性质。
+
 ## 3. 功能点
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F1 | 轴对齐盒 | `Aabb<T>`：min/max 角点、`empty()` 哨兵、`expandBy` / `intersectWith` / `compute(span)`。 |
+| F1 | 轴对齐盒 | `Aabb<T>`：min/max 角点、`empty()` 哨兵、`expandBy` / `intersectWith` / `compute(span)` / `transformed(affine)`。 |
 | F2 | 有向盒 | `Obb<T>`：center + half-extents + 四元数朝向；`toAabb()` 返回 `Aabb<T>`。 |
 | F3 | 直线 | `LineCurve<T>`：点–方向参数式；`intersectWith` 给最近点对与平行/共线标志；`closestPoint` 投影。 |
 | F4 | 平面 | `Plane<T>`：点 + 法向；与 `LineCurve` 交于一点、与 `Plane` 交于 `LineCurve`。 |
@@ -111,7 +118,7 @@
 - **行为**：默认构造是原点处的零尺寸盒（`isValid()` 为真）；`empty()` 是反向哨兵，只有 `expandBy` 之后才有效。
 - **约束**（C1）：字段只按方向单调变化，`min()/max()` 原样返回存储值；`intersectWith` 的输出始终归一化。
 - **要求**（R1）：`compute()` 接受任意轴序的顶点 span，空输入返回默认零盒。
-- **验收**（T1）：`AabbTest.cpp` 覆盖 expandBy、相交（含不相交的缝隙盒）、`compute`、空哨兵合并。
+- **验收**（T1）：`AabbTest.cpp` 覆盖 expandBy、相交（含不相交的缝隙盒）、`compute`、空哨兵合并，以及 `transformed` 的恒等 / 平移 / 非均匀缩放 / 旋转后重拟合 / 镜像 / 空盒与非仿射输入。
 - **注意**（N1）：`isNeg()` / `isEmpty()` / `isValid()` 是同一判定的三种问法，不要给它们不同的语义。
 
 ### 3.2 F4 平面
@@ -147,6 +154,7 @@
 - **C2**：输出参数由调用方构造，函数不分配、不返回引用。
 - **C3**：这四个类型不参与 `Shape` 的类型判定（`obj_cast` / `ShapeType`）。
 - **C4**：拟合结果永远是包围盒：轴向只影响紧致度，任何输入下 `contains()` 对每个输入点都为真（在容差内）。
+- **C5**：`Aabb::transformed()` 只接受仿射矩阵（`Matrix4x4::isAffine()`）；空盒或非仿射输入答空盒，结果总是归一化（min ≤ max）。
 - **R1**：`Aabb::compute()` 对空 span 返回默认零盒，不抛异常。
 - **R2**：`Plane` 求交在退化输入上返回 `false`，不产生 NaN。
 - **R3**：`math` 不 include `geometry`；`geometry` 可以 include `math`。
@@ -190,7 +198,7 @@
 
 ### 9.2 已知缺口
 
-- `transformBox()` 仍是 `graphics/Node` 的自由函数：类型已经归位，变换算子还在消费者一侧，后续可评估搬入 `geometry`。
+- `Obb` 的变换算子未提供：它存 center + 半长 + 四元数，只对刚体（及均匀缩放）精确——一般仿射的像是平行六面体，这个表示装不下。触发条件：出现需要“精确像”的消费者；届时先定非刚体变换的语义（拒绝 / 重拟合 / 改存储为三根半轴向量）。
 - `LineCurve` / `Plane` 只有基础分支的用例；退化容差、近共线情形未覆盖。
 - 最小体积 OBB 与 `merge` 未提供（2.7）。
 

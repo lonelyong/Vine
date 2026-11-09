@@ -11,6 +11,7 @@
 
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
+#include <vine/math/Transform3.hpp>
 #include <vine/math/Types.hpp>
 #include <vine/math/Vector3.hpp>
 
@@ -383,6 +384,28 @@ class Aabb
     template <math::FP U> requires std::is_same_v<T, U>
     [[nodiscard]] bool intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps = math::EPS<U>()) const;
 
+    /**
+     * @brief Returns the axis-aligned bound of this box after @p affine places it.
+     *
+     * @details
+     * - The result is a BOUND, not the image: a box stops being axis-aligned under a rotation, so the answer is the
+     *   box around the eight transformed corners - the one operation a scene walk needs to place a local box in the
+     *   frame of an accumulated matrix.
+     * - Negative and non-uniform scale are allowed: the corners are expanded into a fresh box, so the result satisfies
+     *   `min <= max` whatever the matrix does to the orientation.
+     * - An empty or inverted box answers an empty box.
+     * - `T` must be a floating-point type; an integer box has no defined rounding under a matrix.
+     *
+     * @warning
+     * - Only an AFFINE transform is defined: a projective matrix maps a box to a hexahedron with no box image. A
+     *   non-affine @p affine answers an empty box rather than a silently wrong one (see `Matrix4x4::isAffine()`).
+     *
+     * @param affine The transform placing the box, in the box's own space.
+     * @return The bound, empty when this box is empty or @p affine is not affine.
+     */
+    [[nodiscard]]
+    Aabb<T> transformed(const math::Matrix4x4<T>& affine) const requires(math::FP<T>);
+
     /* ---- operators ---- */
 
     /**
@@ -523,6 +546,22 @@ bool Aabb<T>::intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps) const
     }
 
     return true;
+}
+
+template <typename T>
+Aabb<T> Aabb<T>::transformed(const math::Matrix4x4<T>& affine) const requires(math::FP<T>)
+{
+    if (!isValid() || !affine.isAffine()) {
+        return Aabb<T>::empty();
+    }
+
+    Aabb<T> result = Aabb<T>::empty();
+    for (int corner = 0; corner < 8; ++corner) {
+        const math::Point3<T> p((corner & 1) ? xmax : xmin, (corner & 2) ? ymax : ymin, (corner & 4) ? zmax : zmin);
+        const math::Point3<T> placed = affine * p;
+        result.expandBy(math::Vector3<T>(placed.x, placed.y, placed.z));
+    }
+    return result;
 }
 
 using Aabbi = Aabb<int32_t>;

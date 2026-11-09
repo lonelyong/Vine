@@ -193,7 +193,7 @@ class BoundsCache {
             // The subtree's box in its own frame, cached per node: a camera move recomputes nothing,
             // and a culled subtree is closed without visiting anything below it. The one edit that can
             // stale it is a change INSIDE the subtree, announced through Node::invalidateBounds().
-            box = transformBox(local, world);
+            box = local.transformed(world);
         }
         else if (const auto* group = obj_cast<Group>(node)) {
             // The subtree could not answer in its own frame (a node below answers only in world space,

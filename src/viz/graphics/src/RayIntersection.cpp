@@ -55,36 +55,8 @@ Vec3d faceNormal(const Vec3d& a, const Vec3d& b, const Vec3d& c)
     return (b - a).cross(c - a).normalized();
 }
 
-// Forward declaration: defined below but used by transformBounds().
+// Forward declaration: defined below but used by makeTriangleHit() and traverseMesh().
 Vec3d toWorld(const Mat4d& m, double x, double y, double z);
-
-/**
- * @brief Transforms a local-space AABB by an affine matrix.
- *
- * The result is the world-space AABB enclosing all eight transformed corners.
- *
- * @param local Box in local space.
- * @param m     World matrix of the geometry.
- * @return World-space AABB (empty when the local box is empty).
- */
-Aabbd transformBounds(const Aabbd& local, const Mat4d& m)
-{
-    Aabbd box = Aabbd::empty();
-    if (!local.isValid()) {
-        return box;
-    }
-    const double x[2] = { local.min().x, local.max().x };
-    const double y[2] = { local.min().y, local.max().y };
-    const double z[2] = { local.min().z, local.max().z };
-    for (int i = 0; i < 2; ++i) {
-        for (int j = 0; j < 2; ++j) {
-            for (int k = 0; k < 2; ++k) {
-                box.expandBy(toWorld(m, x[i], y[j], z[k]));
-            }
-        }
-    }
-    return box;
-}
 
 /**
  * @brief Computes the local AABB enclosing the given positions.
@@ -294,7 +266,7 @@ MeshWalk traverseMesh(const TriangleStream&                    stream,
         const Aabbd local_bounds = boundsOfPositions(stream.positions());
         if (local_bounds.isValid()) {
             vn::geom::spatial::RayHitd world_hit;
-            if (!transformBounds(local_bounds, world).intersectWith(ray, world_hit)) {
+            if (!local_bounds.transformed(world).intersectWith(ray, world_hit)) {
                 return walk; // the world-space box is the cheap rejection; the mesh itself is tested in local space
             }
         }

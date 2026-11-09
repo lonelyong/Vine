@@ -121,3 +121,68 @@ TEST(Aabb, emptySentinelExpand)
     merged.expandBy(Aabbd::empty());
     EXPECT_EQ(merged, box);
 }
+
+TEST(Aabb, transformedPlacesTheBoxWithAnAffineTransform)
+{
+    const Aabbd box(0.0, 0.0, 0.0, 2.0, 3.0, 4.0);
+
+    Mat4d identity;
+    identity.makeIdentity();
+    EXPECT_EQ(box.transformed(identity), box);
+
+    // Translation only: every corner moves by the same offset, so the extents are unchanged.
+    const Aabbd moved = box.transformed(translate(Vec3d(10.0, -2.0, 3.0)));
+    EXPECT_DOUBLE_EQ(moved.min().x, 10.0);
+    EXPECT_DOUBLE_EQ(moved.min().y, -2.0);
+    EXPECT_DOUBLE_EQ(moved.min().z, 3.0);
+    EXPECT_DOUBLE_EQ(moved.max().x, 12.0);
+    EXPECT_DOUBLE_EQ(moved.max().y, 1.0);
+    EXPECT_DOUBLE_EQ(moved.max().z, 7.0);
+
+    // A non-uniform scale stretches each axis independently.
+    const Aabbd stretched = box.transformed(scale(1.0, 2.0, 0.5));
+    EXPECT_DOUBLE_EQ(stretched.max().x, 2.0);
+    EXPECT_DOUBLE_EQ(stretched.max().y, 6.0);
+    EXPECT_DOUBLE_EQ(stretched.max().z, 2.0);
+}
+
+TEST(Aabb, transformedAnswersTheBoundOfARotatedBox)
+{
+    // A quarter turn about Z maps (x, y) to (-y, x): the box's X extent becomes its Y extent, and the answer is the
+    // axis-aligned bound of the turned box, not the turned box itself. The angles are compared with a tolerance
+    // because cos(pi / 2) is a residue, not zero.
+    const Aabbd box(0.0, 0.0, -1.0, 1.0, 2.0, 1.0);
+    const Aabbd turned = box.transformed(rotate(Vec3d(0.0, 0.0, 1.0), PI_TWO / 4.0));
+
+    EXPECT_NEAR(turned.min().x, -2.0, 1e-12);
+    EXPECT_NEAR(turned.min().y, 0.0, 1e-12);
+    EXPECT_NEAR(turned.min().z, -1.0, 1e-12);
+    EXPECT_NEAR(turned.max().x, 0.0, 1e-12);
+    EXPECT_NEAR(turned.max().y, 1.0, 1e-12);
+    EXPECT_NEAR(turned.max().z, 1.0, 1e-12);
+}
+
+TEST(Aabb, transformedKeepsTheResultValidUnderMirroring)
+{
+    // A negative scale swaps which corner is the minimum; expanding into a fresh box keeps min <= max.
+    const Aabbd box(1.0, 2.0, 3.0, 4.0, 5.0, 6.0);
+    const Aabbd mirrored = box.transformed(scale(-1.0, 1.0, 1.0));
+
+    EXPECT_TRUE(mirrored.isValid());
+    EXPECT_DOUBLE_EQ(mirrored.min().x, -4.0);
+    EXPECT_DOUBLE_EQ(mirrored.max().x, -1.0);
+}
+
+TEST(Aabb, transformedOfAnEmptyOrProjectiveInputIsEmpty)
+{
+    Mat4d identity;
+    identity.makeIdentity();
+    EXPECT_TRUE(Aabbd::empty().transformed(identity).isEmpty());
+
+    // A projective matrix maps the box to a hexahedron with no box image; the answer is empty rather than wrong.
+    Mat4d projective;
+    projective.makeIdentity();
+    projective(3, 0) = 1.0;
+    EXPECT_FALSE(projective.isAffine());
+    EXPECT_TRUE(Aabbd(0.0, 0.0, 0.0, 1.0, 1.0, 1.0).transformed(projective).isEmpty());
+}

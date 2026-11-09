@@ -2573,7 +2573,7 @@ TEST(NodeTest, TheLocalBoxPlacedByTheWorldMatrixIsTheWorldBox)
     EXPECT_TRUE(local.isValid()) << "a triangle with positions has a local box";
 
     const Aabbd via_leaf = geom->boundingBox();
-    const Aabbd via_walk = transformBox(geom->localBounds(), geom->worldMatrix());
+    const Aabbd via_walk = geom->localBounds().transformed(geom->worldMatrix());
     EXPECT_TRUE(via_leaf == via_walk) << "the walk's spelling and the leaf's spelling must be one box";
 
     // The local box belongs to the DATA, not to the placement: moving the chain leaves it alone while

@@ -726,7 +726,7 @@ class VN_GRAPHICS_API Geometry : public Node {
      * @details
      * - The bound of the location-0 positions in the leaf's OWN frame: no enclosing transform node
      *   contributes. A collection pass that already accumulates world matrices uses this plus
-     *   transformBox() instead of boundingBox(), which would re-walk the parent chain once per leaf per
+     *   `Aabb::transformed()` instead of boundingBox(), which would re-walk the parent chain once per leaf per
      *   pass - the two spellings are equal by construction and a test pins it.
      *
      * @return Local-space AABB of this geometry's data (empty when no positions are set).
