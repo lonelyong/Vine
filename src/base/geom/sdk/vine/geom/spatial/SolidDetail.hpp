@@ -11,6 +11,8 @@
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include <vine/geom/spatial/detail/RaySlab.hpp>
+
 #include "Aabb.hpp"
 #include "Ray.hpp"
 #include "RayHit.hpp"
@@ -172,7 +174,8 @@ template <vn::math::FP T>
 void solidAppendBoxHits(std::vector<RayHit<T>>& hits, const Ray<T>& ray, T half_x, T half_y, T half_z, T eps)
 {
     detail::RayBoxInterval<T> interval;
-    if (!detail::rayBoxInterval(ray, -half_x, -half_y, -half_z, half_x, half_y, half_z, eps, eps, interval)) {
+    if (!detail::preparedRayBoxInterval(detail::PreparedRay<T>::from(ray), -half_x, -half_y, -half_z, half_x, half_y, half_z, eps, eps,
+                                        interval)) {
         return;
     }
 

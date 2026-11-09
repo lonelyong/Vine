@@ -82,7 +82,7 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 `detail::VolumeTraits<V>` 声明树需要的九个操作：`merged`、`center`、`halfArea`、`overlaps`、`contains`、
 `corners`、`isFinite`、`hitByRay`，外加类型别名 `Scalar` / `VolumeT`。`Aabb<T>` 的适配是精确的：
 `merged` 走 `expandBy`，`overlaps` 六次比较，`hitByRay` 复用 `detail::RaySlab.hpp` 的 `preparedRayBoxInterval`
-（与 `Aabb::rayBoxInterval` 同一份实现，见 `geometry-ray.md`）。
+（盒查询走同一份实现，见 `geometry-ray.md`）。
 
 `merged` 允许**保守**（包含两者即可，不必等于并集），但不允许**不包含**：包含性是树正确性的唯一前提，`validate()` 会检查。
 `halfArea` 而不是体积：SAH 按表面积计费，退化成矩形的盒子体积为 0 但表面积有意义。
@@ -395,7 +395,7 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 
 已落地：`spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`、`spatial/BvhTopology.hpp`、`spatial/TriangleBvh.hpp`、
 `spatial/detail/{RaySlab,VolumeTraits,BvhBuildJob,BvhBuilders}.hpp`；
-`Aabb.hpp` 的 `rayBoxInterval` 改为委托 `preparedRayBoxInterval`（`geometry-ray.md` 2.8 的唯一 slab 实现）；
+`Aabb::intersectWith()` 与盒实体的射线查询直接调用 `preparedRayBoxInterval()`（`geometry-ray.md` 的唯一 slab 实现）；
 `src/base/geom/src/Instantiations.cpp` 导出 `Bvh<float>` / `Bvh<double>`。
 拓扑存储与恢复（F8）已落地；消费它的载入侧见 `robotics-io-design.md`（`.vbtp`）。
 
@@ -410,7 +410,7 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 
 ### 9.3 兼容性与迁移
 
-纯新增，无兼容性影响。`Aabb::rayBoxInterval` 的签名与语义不变，只是实现搬到了 `detail/RaySlab.hpp` 并被
+纯新增，无兼容性影响。`Aabb::intersectWith()` 的签名与语义不变，slab 实现搬到了 `detail/RaySlab.hpp` 并被
 `Aabb` 与本模块共用。
 
 ## 10. 参考

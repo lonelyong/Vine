@@ -109,8 +109,8 @@ struct RayBoxInterval {
  * @brief The two distances at which a prepared ray crosses an axis-aligned box, and the outward wall of each crossing.
  *
  * @details
- * - This is the only slab implementation in the module: `rayBoxInterval()` prepares the ray and calls this, while the
- *   BVH traversal calls it directly with a ray prepared once for the whole query.
+ * - This is the only slab implementation in the module: a box query prepares the ray (`PreparedRay::from(ray)`) and
+ *   calls this, while the BVH traversal prepares once for the whole query.
  * - `enter_t` may be negative when the origin is inside; `exit_t` is never negative on success.
  *
  * @param ray      The prepared ray.

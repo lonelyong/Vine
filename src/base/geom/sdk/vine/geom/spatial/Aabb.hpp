@@ -20,51 +20,6 @@
 
 VN_GEOM_SPATIAL_NS_BEGIN
 
-namespace detail
-{
-
-/**
- * @brief The two distances at which a ray crosses an axis-aligned box, and the outward wall of each crossing.
- *
- * @details
- * - Prepares the ray and forwards to `preparedRayBoxInterval()`, which is the module's single slab implementation
- *   (`spatial/detail/RaySlab.hpp`). A caller that tests many boxes with one ray prepares once and calls the other
- *   overload directly.
- * - `enter_t` may be negative when the origin is inside; `exit_t` is never negative on success.
- * - `enter_sign` / `exit_sign` are the OUTWARD normal components of the two walls on their own axis; `Aabb` turns
- *   the reported normal towards the ray afterwards.
- *
- * @param ray      The ray, whose direction is expected to be unit length.
- * @param xmin     Lower bound along X.
- * @param ymin     Lower bound along Y.
- * @param zmin     Lower bound along Z.
- * @param xmax     Upper bound along X.
- * @param ymax     Upper bound along Y.
- * @param zmax     Upper bound along Z.
- * @param eps      Threshold that makes a ray aimless.
- * @param slab_eps Threshold for treating a direction component as parallel to its slab; callers that must keep a tiny
- *                 but real component pass 0.
- * @param interval Receives both crossings on success; untouched otherwise.
- * @return `true` when the box lies in front of the origin or around it.
- */
-template <vn::math::FP T>
-[[nodiscard]] bool rayBoxInterval(const Ray<T>&       ray,
-                                  T                   xmin,
-                                  T                   ymin,
-                                  T                   zmin,
-                                  T                   xmax,
-                                  T                   ymax,
-                                  T                   zmax,
-                                  T                   eps,
-                                  T                   slab_eps,
-                                  RayBoxInterval<T>& interval)
-{
-    return preparedRayBoxInterval(PreparedRay<T>::from(ray), xmin, ymin, zmin, xmax, ymax, zmax, eps, slab_eps,
-                                  interval);
-}
-
-} // namespace detail
-
 /**
  * @brief Axis-aligned 3D box, defined by its minimum and maximum corners.
  *
@@ -545,7 +500,8 @@ template <math::FP U> requires std::is_same_v<T, U>
 bool Aabb<T>::intersectWith(const Ray<U>& ray, RayHit<U>& hit, U eps) const
 {
     detail::RayBoxInterval<U> interval;
-    if (!detail::rayBoxInterval(ray, xmin, ymin, zmin, xmax, ymax, zmax, eps, U(0), interval)) {
+    if (!detail::preparedRayBoxInterval(detail::PreparedRay<U>::from(ray), xmin, ymin, zmin, xmax, ymax, zmax, eps, U(0),
+                                        interval)) {
         return false;
     }
 

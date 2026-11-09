@@ -52,7 +52,7 @@
 - **是什么**：`Aabb<T>::intersectWith(const Ray<T>&, RayHit<T>&)`、`Obb<T>` 同签名、`Plane<T>` 同签名；三角形因为没有值类型，做成自由函数 `intersectTriangle(ray, a, b, c, hit)`。
 - **为什么**：`G1`、`G6` —— 与 `Plane::intersectWith(LineCurve, Point3&)` 同一形状：被交的东西拥有算法，调用方不必知道 slab 或 Möller–Trumbore。
 - **边界**：`Obb` 的实现把射线逆变换到局部空间再复用 `Aabb`，不写第二套 slab（`G1`、`G10`）。
-- **边界**：`Aabb` / `Obb` 只报**最近命中**（边界语义）；`Solid<T>::intersectWith()` 报穿过实体的全部交点（进入 / 离开，体积语义）。两者共用 `Aabb.hpp` 的 `detail::rayBoxInterval()`，不各写一套 slab。
+- **边界**：`Aabb` / `Obb` 只报**最近命中**（边界语义）；`Solid<T>::intersectWith()` 报穿过实体的全部交点（进入 / 离开，体积语义）。两者共用 `detail/RaySlab.hpp` 的 `preparedRayBoxInterval()`（盒查询先 `PreparedRay::from(ray)` 准备一次），不各写一套 slab。
 
 ### 2.3 结果是 `RayHit`，不是 `optional`
 
