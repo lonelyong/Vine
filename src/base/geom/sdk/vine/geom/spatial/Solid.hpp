@@ -35,10 +35,10 @@ VN_GEOM_SPATIAL_NS_BEGIN
  *   (`std::nullopt` / an empty result) instead of dividing by zero.
  *
  * @note
- * - Holding one of these by value: `SolidShape<T>` is the variant of the five kinds, which is what a model stores
- *   (`Primitive`). A function that only needs to ask a question takes `const Solid<T>&` and calls the virtuals; one
- *   that must build something per kind (a mesh, a B-rep, an element in a description file) visits `SolidShape<T>`
- *   instead, which is exhaustive at compile time.
+ * - A function that only needs to ask a question takes `const Solid<T>&` and calls the virtuals. One that must build
+ *   something per kind (a mesh, a B-rep, an element in a description file) takes the concrete kind - one overload per
+ *   kind, or a visitor handed to `vn::models::visitPrimitive()` - so a new kind is a compile error at that call site
+ *   instead of a silent fall-through.
  *
  * @tparam T Only accepts float and double.
  */

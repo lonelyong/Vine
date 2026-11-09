@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <vine/geom/spatial/BvhBuilder.hpp>
+#include <vine/geom/spatial/SolidTessellation.hpp>
 #include <vine/models/Mesh.hpp>
 #include <vine/models/MixedMesh.hpp>
 #include <vine/models/Primitive.hpp>
@@ -705,12 +706,18 @@ GeometryPtr geometryFromShape(const vn::models::Shape& shape)
         return geometryFromShapeMesh(*mesh);
     }
     if (const auto* primitive = obj_cast<vn::models::Primitive>(&shape)) {
-        const auto solid = vn::models::solidShapeOf(*primitive);
-        if (!solid) {
-            return GeometryPtr(); // a primitive that is not one of the five analytic solids draws nothing here
+        // The five analytic solids are a closed set: a primitive outside it draws nothing here, and the visitor is then
+        // never called. The geometry side decides the triangles and the model side puts them into a mesh, which is what
+        // the shared converter below understands; the arrays are moved, so nothing is copied twice.
+        vn::geom::spatial::Triangulationf triangles;
+        const bool is_solid = vn::models::visitPrimitive(*primitive, [&triangles](const auto& solid_shape) {
+            triangles = vn::geom::spatial::tessellateSolid(solid_shape.solid());
+        });
+        if (!is_solid) {
+            return GeometryPtr();
         }
-        const auto triangles = vn::models::tessellateSolid(*solid);
-        return triangles ? geometryFromShapeMesh(*triangles) : GeometryPtr();
+        const auto mesh = vn::models::meshFromTriangulation(std::move(triangles));
+        return mesh ? geometryFromShapeMesh(*mesh) : GeometryPtr();
     }
     return GeometryPtr();
 }

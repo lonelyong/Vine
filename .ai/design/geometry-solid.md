@@ -1,10 +1,10 @@
 # geometry 解析实体 Solid
 
 > **状态**：现行
-> **最后核对**：2026-11-05
-> **范围**：`Solid<T>` 族（五个解析体：`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid`）、它的两个查询（最近点、射线求交），以及模型侧如何给出这份实体（每个建模子类的 `solid()`、`solidShapeOf()`、`visitPrimitive()`）。
+> **最后核对**：2026-11-09
+> **范围**：`Solid<T>` 族（五个解析体：`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid`）、它的两个查询（最近点、射线求交），以及模型侧如何给出这份实体（每个建模子类的 `solid()`、`visitPrimitive()`）。
 > 不含三角化（见 `geometry-tessellation.md`），不含实体间运算（布尔、实体间距离，见 `../backlog/geometry.md` G3），不含曲面族查询（见 `geometry-surface-queries.md`）。
-> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Solid.hpp`、`SolidShape.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`；`tests/test_geom_spatial/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`。
+> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Solid.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`、`src/base/models/sdk/vine/models/PrimitiveDispatch.hpp`；`tests/test_geom_spatial/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`。
 > **待办**：`../backlog/geometry.md`
 
 ## 1. 概要设计
@@ -18,9 +18,9 @@
 ### 1.2 目标
 
 - 一个**族**：`const Solid<T>&` 能接受任意一种实体，并对它提问——这是“参数必须是具体类型”的消费者要的东西（一个导出签名、一个后端接口）。
-- 一个**封闭值集**：五个 kind 按值存放，模型一次持有，没有指针、没有堆、没有共享所有权。
-- 模型侧只剩一次转换：每个建模子类用自己的尺寸构造自己的 kind（`Box::solid()`），`solidShapeOf()` 给出可选值；几何不认识 `ShapeType`。
-- 加一种 kind 时，编译器把“哪些消费者必须处理它”列出来。
+- 一个**封闭值集**：五个 kind 都是按值的类型，没有指针、没有堆、没有共享所有权；要按 kind 作答的入口一 kind 一个重载。
+- 模型侧只剩一次转换：每个建模子类用自己的尺寸构造自己的 kind（`Box::solid()`），`visitPrimitive()` 把具体子类交给调用方；几何不认识 `ShapeType`。
+- 加一种 kind 时，编译器把“哪些消费者必须处理它”列出来（visitor 里缺分支 / 缺重载）。
 
 ### 1.3 非目标
 
@@ -31,25 +31,25 @@
 
 ### 1.4 一句话结论
 
-**`Solid<T>` 是族接口（五个虚查询），五个 kind 是它的值；不认识 kind 的消费者问族接口，必须按 kind 作答的消费者用 `solidShapeOf()` 拿到 `SolidShape<T>` 再 visit（或 `visitPrimitive()` 直接拿具体建模类）。**
+**`Solid<T>` 是族接口（五个虚查询），五个 kind 是它的值；不认识 kind 的消费者问族接口，必须按 kind 作答的消费者用 `visitPrimitive()` 拿到具体建模类、调对应的几何入口（没有“五个 kind 的 variant”这种类型）。**
 
 ## 2. 设计要点
 
 ### 2.1 两个层次，两个问题
 
-- **是什么**：`Solid<T>`（抽象，五个纯虚：`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith`）回答“这个实体怎么样”；`BoxSolid<T>` … `EllipsoidSolid<T>` 是它的值；`SolidShape<T> = std::variant<五个 kind>` 是模型存的那份值。
-- **为什么**：`G13`、`G1` —— 有些参数必须是具体类型，而不是模板：一个导出签名、一个后端接口只能写 `const Solid<float>&`。接口层给出的正是这个类型；variant 层给出的是“按 kind 作答”的穷尽分派。两层各回答一个真问题，不是同一件事做两遍。
-- **边界**：`solidOf(shape)` 是两层之间唯一的转换（`std::visit` 取引用，零成本、无拷贝）；模型的入口是子类的 `solid()`（返回具体 kind 的值）与自由函数 `solidShapeOf()`（可选值，不是实体时为空）。
+- **是什么**：`Solid<T>`（抽象，五个纯虚：`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith`）回答“这个实体怎么样”；`BoxSolid<T>` … `EllipsoidSolid<T>` 是它的值。
+- **为什么**：`G13`、`G1` —— 有些参数必须是具体类型，而不是模板：一个导出签名、一个后端接口只能写 `const Solid<float>&`。接口层给出的正是这个类型；需要按 kind 作答的消费者拿具体 kind（重载或 `visitPrimitive()`），两层各回答一个真问题。
+- **边界**：模型的入口是子类的 `solid()`（返回具体 kind 的值）与自由函数 `visitPrimitive()`；几何侧不认识 `Primitive`。
 
-### 2.2 封闭集合仍然按值持有
+### 2.2 封闭集合用重载表达，不再有 variant
 
-- **是什么**：`SolidShape<T>` 按值持有五个 kind；模型不再存它：建模子类存自己的尺寸，`solid()` 每次构造一个值。
-- **为什么**：`G10`、`G13` —— 模型对象本来就在堆上（`Shape`），那 24–32 字节躺在一个已经存在的块里，**零额外分配**；换成 `unique_ptr<Solid>` 就是每个连杆一次分配加一次解引用，换成 `shared_ptr` 还违反“模型与几何不共享所有权”。
-- **边界**：`SolidShape<T>` 是 `std::variant`，所以 kind 的集合是封闭的；`BrepShape` 才是“任意实体”的出口。
+- **是什么**：五个 kind 各是一个值类型；需要按 kind 作答的入口（三角化的 `tessellateSolid()`、`brep` 的 `solidOf()`）各写五个重载，调用方用 `visitPrimitive()` 把具体子类交进来。
+- **为什么**：`G8`、`G1` —— variant 今天没有任何存储消费者（模型在 `ADR-2026-11-05-primitive-is-a-modelling-base` 之后只存尺寸）；留一个“五个 kind 的 variant”只会给调用方第二种写法。重载集合与 `visitPrimitive()` 是同一份封闭集合的两个面，新增 kind 时 visitor 里会缺一个重载，编译错误仍然出现。
+- **边界**：任意实体（网格、NURBS、布尔结果）不是这里的一员，出口是 `BrepShape`；`Solid<T>` 不认识 `Shape` / `Primitive`。
 
 ### 2.3 visit 与虚调用各管一段
 
-- **是什么**：三角化、B-rep 桥、描述文件写入者 visit `SolidShape`；`Primitive::isValid()`/`hasVolume()`/`bounds()` 与“只问一个问题”的消费者走虚函数。
+- **是什么**：三角化、B-rep 桥、描述文件写入者按 kind 分派（一 kind 一个重载，或 `visitPrimitive()`）；`Primitive::isValid()`/`hasVolume()`/`bounds()` 与“只问一个问题”的消费者走虚函数。
 - **为什么**：`G9`、`G11` —— 需要“每种 kind 一个答案”的地方（网格、`BRepPrimAPI` 调用、XML 元素）必须穷尽，`std::visit` 漏一个 kind 是编译错误；只需要“一个答案”的地方（包围盒、有效性、射线交点）用接口，调用点不关心 kind。
 - **边界**：`std::visit` 的 visitor 只用一次的地方写 lambda，重复使用的写具名结构（例如三角化的 `TessellateVisitor`）。
 
@@ -80,8 +80,8 @@
 | F1 | 族接口与五个 kind | `Solid<T>` 五个纯虚；`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid` 各持量与公式 | 已落地（T1、T2） |
 | F2 | 点到实体的最近点 / 距离 | `closestPoint(query, tolerance)`：实体语义，内部为 0 | 已落地（T3–T6） |
 | F3 | 射线 × 实体 | `intersectWith(ray, eps)`：升序、最多两个、法向朝射线 | 已落地（T4、T7） |
-| F4 | 模型给出实体 | 每个建模子类的 `solid()`（值）、`solidShapeOf(Primitive)`（可选值）、`visitPrimitive()`；`solidOf(SolidShape)` 取族引用 | 已落地（T2、T8） |
-| F5 | 三角化 | `tessellateSolid(SolidShapef, quality)` | 见 `geometry-tessellation.md` |
+| F4 | 模型给出实体 | 每个建模子类的 `solid()`（值）与 `visitPrimitive()`（交给具体子类） | 已落地（T2、T8） |
+| F5 | 三角化 | `tessellateSolid(具体 kind, quality)` | 见 `geometry-tessellation.md` |
 
 ### 3.2 F1 接口与 kind
 
@@ -103,11 +103,11 @@
 - **注意**（N4）：圆锥顶点命中时法向为零向量。
 - **验收**（T7）：`SolidIntersectionTest.cpp` 的九个用例。
 
-### 3.5 F4 模型持有与族视图
+### 3.5 F4 模型拥有自己的尺寸
 
-- **行为**：建模子类按当前尺寸构造 `SolidShapef`（`Box::solid()`），`solidShapeOf()` 把任意 `Primitive` 转成 `std::optional<SolidShapef>`，`solidOf()` 用一个 `std::visit` 把 variant 转成 `const Solidf&`。
+- **行为**：建模子类按当前尺寸构造具体 kind（`Box::solid()`）；`visitPrimitive()` 把具体子类交给 visitor，几何入口按 kind 重载接收。模型侧不存任何几何值。
 - **约束**（C6）：`Solid<T>` 不认识 `Shape` / `Primitive`；模型侧没有按 `ShapeType` 分派几何的代码。
-- **验收**（T2、T8）：`theTwoViewsOfOneSolidAgree`、`theModelHoldsTheGeometryAndDerivesItsTag`。
+- **验收**（T2、T8）：`visitPrimitiveReachesTheConcreteSubclass`、`thePrimitiveBaseHoldsNoGeometry`。
 
 ## 4. 公开接口
 
@@ -117,8 +117,6 @@
 |---|---|---|
 | `Solid<T>` | 五个纯虚：`isValid()`、`hasVolume(T)`、`bounds()`、`closestPoint(query, tolerance)`、`intersectWith(ray, eps)` | 完整签名见 `Solid.hpp` |
 | `BoxSolid<T>` / `SphereSolid<T>` / `CylinderSolid<T>` / `ConeSolid<T>` / `EllipsoidSolid<T>` | `final` 实现者，持半量纲 | 公开字段 `half_x`、`radius`、`half_height`、`base_radius`、`radius_x/y/z` |
-| `SolidShape<T>` | `std::variant` 五个 kind | 模型存的那份值 |
-| `solidOf(SolidShape<T> const&)` | 取族引用 | 零拷贝；引用跟随 variant 的内容 |
 | `Solidf` / `Solidd`、`BoxSolidf` / `BoxSolidd`、… | 两种精度的别名 | 与 `Aabbf` / `Aabbd` 同一命名法 |
 
 ### 4.2 模型侧
@@ -126,8 +124,7 @@
 | 接口 | 契约 | 备注 |
 |---|---|---|
 | `Box::solid()` … `Ellipsoid::solid()` | 具体 kind 的值 | 子类用自己的尺寸构造 |
-| `solidShapeOf(const Primitive&)` | `std::optional<SolidShapef>` | 不是五个实体之一时为空 |
-| `visitPrimitive(primitive, visitor)` | `bool` | 把具体建模类交给 visitor |
+| `visitPrimitive(primitive, visitor)` | `bool` | 把具体建模类交给 visitor；不是五个之一时 `false` |
 | `Primitive::isValid()` / `hasVolume(double)` / `bounds()` | 子类转发给 `solid()` | 不重算任何公式 |
 
 ## 5. 约束、要求与不变量
@@ -149,10 +146,10 @@
 
 ### 5.3 不变量（N#）
 
-- **N1**：`SolidShape<T>` 恒持有一个 kind；`std::visit` 的分派没有“空”分支。
+- **N1**：没有“空的实体”这种值：`visitPrimitive()` 对五个子类返回 `true`，其它返回 `false`；每个几何入口对不可用实体返回空结果。
 - **N2**：`bounds()` 对退化实体仍返回良构盒（min ≤ max）。
 - **N3**：内部起点时射线最多报一个交点；相切（含双根）报一个。
-- **N4**：`Primitive::shapeType()` 恒等于 `shape()` 里那个 kind 的类型，由 `setSolid()` 一处维护。
+- **N4**：`Primitive::shapeType()` 由子类的构造链给出，与 `visitPrimitive()` 的分派一一对应。
 
 ## 6. 注意事项与陷阱
 
@@ -198,14 +195,14 @@
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 接口抽象、五个 kind 是值、variant 的类型就是那五个 | `SolidTest.cpp` 的 `theFamilyIsAnInterfaceAndTheKindsAreValues` |
-| T2 | 两种视图指向同一个对象；模型持有并派生标签 | 同文件 `theTwoViewsOfOneSolidAgree`、`theModelHoldsTheGeometryAndDerivesItsTag` |
+| T1 | 接口抽象、五个 kind 是值、两种精度的 kind 不互相转换 | `SolidTest.cpp` 的 `theFamilyIsAnInterfaceAndTheKindsAreValues` |
+| T2 | `visitPrimitive()` 交出具体子类；不是五个之一的图元得到 `false` | 同文件 `visitPrimitiveReachesTheConcreteSubclass`、`thePrimitiveBaseHoldsNoGeometry` |
 | T3 | 盒的面 / 角 / 内部 | `SolidDistanceTest.cpp` 的 `aBoxClampsToItsFacesAndCorners` |
 | T4 | 球的内外与两交 / 相切 | `aSphereProjectsAlongItsRadius`、`SolidIntersectionTest.cpp` 的 `aTangentialRayTouchesASphereOnce` |
 | T5 | 椭球三轴 + Lagrange 条件 | `SolidDistanceTest.cpp` 的 `anEllipsoidProjectsOntoItsSurfaceAlongTheNormal` |
 | T6 | 圆柱径向 / 轴向 / 棱，圆锥底面与母线选择 | `aCylinderClampsRadiallyAndAxially`、`aConeChoosesBetweenItsBaseAndItsSide` |
 | T7 | 内部起点只报离开、端面命中、去重 | `SolidIntersectionTest.cpp` 的 `aRayFromInsideASolidReportsOnlyTheExit`、`aCylinderIsHitOnItsSideAndOnItsCaps` |
-| T8 | 不可用实体、退化量纲、每 kind 的体积判据 | `SolidTest.cpp` 的 `anUnusableModelStillCarriesItsGeometry`、`aDegenerateKindIsUnusableButStillWellFormed`、`everyKindAnswersItsOwnVolume` |
+| T8 | 不可用实体、退化量纲、每 kind 的体积判据 | `SolidTest.cpp` 的 `anUnusablePrimitiveStillAnswersItsBounds`、`everySubclassReportsItsOwnTag`、`theDefaultSubclassIsTheUnitShape` |
 
 命令：`cmake --build build --config Debug --target test_geom_spatial`，再运行 `build/bin/Debug/test_geom_spatial.exe`。
 
@@ -213,24 +210,24 @@
 
 ### 9.1 当前状态
 
-- 族接口与五个 kind 已落地；模型持有 `SolidShapef`；三角化是 `tessellateSolid()`（见 `geometry-tessellation.md`）；`brep` 与描述文件写入者都 visit 这份 variant。
+- 族接口与五个 kind 已落地；模型不存几何值（子类只存尺寸，`solid()` 按需构造）；三角化是 geom 的 `tessellateSolid()`，模型侧 `meshFromTriangulation()` 装配成网格（见 `geometry-tessellation.md`）；`brep` 与描述文件写入者都按 kind 分派（`visitPrimitive()` + 重载）。
 
 ### 9.2 已知缺口 / 待办
 
 - 实体间运算（布尔、实体间最近距离）没有消费者，见 `../backlog/geometry.md` G3。
-- 新 kind（torus / capsule / 棱柱）：新增一个 `XxxSolid` 头文件，在 `SolidShape.hpp` 的 variant 里加一项，并逐个处理 `visit` 点（编译器会列出来）+ 一个 `ShapeType`；有表示的实体不进这里，走 `BrepShape`。
-- 三角化只有 `SolidShapef` 入口：要画 `BoxSolidd` 的调用方自己构造对应 `BoxSolidf`（`geometry-tessellation.md` 9.2）。
+- 新 kind（torus / capsule / 棱柱）：新增一个 `XxxSolid` 头文件 + 一个 `ShapeType` + 一个 `visitPrimitive()` 分支，并补齐三角化与 `brep` 的重载；编译器会在 visitor 的实例化与重载解析处报错。有表示的实体不进这里，走 `BrepShape`。
+- 三角化两种精度都有；只有模型网格是 float，`Triangulationd` 装配成网格时要显式转 float（`geometry-tessellation.md` 9.2）。
 
 ### 9.3 兼容性 / 迁移
 
-- 模型侧：`Primitive` 是唯一类，构造用 `Primitive(BoxSolidf{...})`，读取用 `solid()`（族）或 `shape()`（variant）。
-- 以模型为参数的三个算法入口（三角化、射线、距离）已删除；替代分别是 `tessellateSolid(p.shape())` 与 `p.solid().closestPoint(...)` / `p.solid().intersectWith(...)`。
+- 模型侧：`Primitive` 是唯一类，构造用子类（`Box` / `Sphere` / …），读取用 `solid()`（具体 kind 值）或 `visitPrimitive()`（具体子类）。
+- 以模型为参数的三个算法入口（三角化、射线、距离）已删除；替代分别是 `tessellateSolid(visitPrimitive(...))` 与 `p.solid().closestPoint(...)` / `p.solid().intersectWith(...)`。
 
 ## 10. 参考
 
 ### 10.1 代码
 
-- `src/base/geom/sdk/vine/geom/spatial/Solid.hpp`、`SolidShape.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`
+- `src/base/geom/sdk/vine/geom/spatial/Solid.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`
 - `src/base/models/sdk/vine/models/Primitive.hpp`、`Box.hpp` … `Ellipsoid.hpp`、`PrimitiveDispatch.hpp`
 - `tests/test_geom_spatial/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`
 

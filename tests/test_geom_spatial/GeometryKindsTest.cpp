@@ -24,7 +24,7 @@
 #include <vine/geom/spatial/Placement.hpp>
 #include <vine/geom/spatial/Plane.hpp>
 #include <vine/models/Primitive.hpp>
-#include <vine/geom/spatial/SolidShape.hpp>
+#include <vine/geom/spatial/BoxSolid.hpp>
 #include <vine/geom/spatial/Ray.hpp>
 #include <vine/geom/spatial/RectangularTrimmedSurface.hpp>
 #include <vine/geom/spatial/SphericalSurface.hpp>
@@ -132,13 +132,13 @@ static_assert(std::is_base_of_v<vn::models::Shape, Primitive>);
 static_assert(!std::is_base_of_v<vn::geom::spatial::Surface<double>, Primitive>);
 static_assert(!std::is_base_of_v<vn::geom::spatial::Curve<double>, Primitive>);
 
-/// The analytic solid is a family plus a closed value set: `Solid<T>` is the interface (abstract, no state), the five
-/// kinds are its values, and a model stores the variant of them.
+/// The analytic solid is a family plus a closed set of values: `Solid<T>` is the interface (abstract, no state) and the
+/// five kinds are its values.
 static_assert(std::is_abstract_v<vn::geom::spatial::Solidf>);
 static_assert(std::is_base_of_v<vn::geom::spatial::Solidf, vn::geom::spatial::BoxSolidf>);
 static_assert(!std::is_abstract_v<vn::geom::spatial::BoxSolidf>);
 static_assert(std::is_same_v<decltype(vn::geom::spatial::BoxSolidf{}.half_x), float>);
-static_assert(!std::is_same_v<vn::geom::spatial::SolidShapef, vn::geom::spatial::SolidShaped>);
+static_assert(!std::is_same_v<vn::geom::spatial::BoxSolidf, vn::geom::spatial::BoxSolidd>);
 
 /// The unbounded spherical sheet is the surface counterpart: it is a surface, not a modeling primitive.
 static_assert(std::is_base_of_v<vn::geom::spatial::Surface<double>, SphericalSurfaced>);

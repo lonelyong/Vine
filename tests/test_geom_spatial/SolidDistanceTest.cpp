@@ -4,7 +4,11 @@
 
 #include <vine/models/Primitive.hpp>
 #include <vine/models/Box.hpp>
-#include <vine/geom/spatial/SolidShape.hpp>
+#include <vine/geom/spatial/BoxSolid.hpp>
+#include <vine/geom/spatial/ConeSolid.hpp>
+#include <vine/geom/spatial/CylinderSolid.hpp>
+#include <vine/geom/spatial/EllipsoidSolid.hpp>
+#include <vine/geom/spatial/SphereSolid.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>

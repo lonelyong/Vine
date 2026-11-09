@@ -66,8 +66,8 @@
 - `geometry-intersection.md` —— 相交配对与结果形态：动词、结果类型由交集维数决定、`false` 时出参语义、入口配对表与缺口；曲线 × 解析曲面的带符号距离求根（`intersectCurveWithSurface` + `signedValue`）与曲线 × 任意曲面的投影求根（`intersectCurveWithSurfaceByProjection`）。
 - `geometry-surface-queries.md` —— 族级曲面查询：点到曲面的最近点 / 距离（高斯-牛顿）与射线 × 曲面（三元牛顿），参数窗口规则、重合分类与局部解的代价。
 - `geometry-curve-queries.md` —— 曲线的最近点 / 距离（平方距离驻点求根）、两曲线最近距离、弧长与反解、曲率（3D 无符号）、窗口规则与局部极小值的限制。
-- `geometry-solid.md` —— 解析实体的族 `Solid<T>`（五个 kind 是值、`SolidShape` 是 variant）：最近点与射线求交，模型按值持有。
-- `geometry-tessellation.md` —— 解析实体的三角化：`Solid<float>` 到 `TriangleMesh` 的自由函数、质量参数、精确法向与顶点复制、闭合与外向绕序。
+- `geometry-solid.md` —— 解析实体的族 `Solid<T>`（五个 kind 是值）：最近点与射线求交，模型只存尺寸并按需构造实体。
+- `geometry-tessellation.md` —— 解析实体的三角化：五个 kind 到 `Triangulation<T>`（位置 / 法向 / 索引）的自由函数重载、质量参数、精确法向与顶点复制、闭合与外向绕序，以及模型侧的 `meshFromTriangulation()` 装配。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
 - `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
 - `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。
@@ -77,18 +77,20 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（61）
+## decisions/ —— 决策记录（ADR）（63）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-11-09-solid-tessellation-in-geom.md` —— 三角化回到 `geom`：`tessellateSolid()` 返回精度模板 `Triangulation<T>`（位置 / 法向 / 索引），`meshFromTriangulation()` 在模型侧装配成 `TriangleMesh`；否决返回 `TriangleMesh`（回边）与 `Buffer`（多一次拷贝）。
+- `ADR-2026-11-09-solid-closed-set-without-variant.md` —— 删掉 `SolidShape` 变体与 `solidShapeOf()`：封闭集合由五个 kind + `visitPrimitive()` + 一 kind 一个重载表达；`Solid<T>` 族接口与五个 kind 值不变。
 - `ADR-2026-11-04-curve-evaluation-interface.md` —— 曲线族改为求值接口（`Curve<T>` 虚函数 + `TrimmedCurve`），`Ray` 退出曲线族。
 - `ADR-2026-11-04-surface-family-queries.md` —— 族级曲面查询用自由函数 + 参数窗口 + 牛顿迭代，不扩 `Surface` 接口、不逐类型写特例。
 - `ADR-2026-11-04-surface-evaluation-interface.md` —— 曲面族改为求值接口（`Surface<T>` 十三项虚函数 + 两个分类标签），取代曲线 ADR 的第 6 条。
 - `ADR-2026-11-04-geometry-precision-and-instantiation.md` —— 几何类型保留精度模板，`float` / `double` 两种精度都显式实例化并导出。
 - `ADR-2026-11-04-geometry-kinds.md` —— 几何族用空标签分类，不用虚基类。
 - `ADR-2026-11-04-primitive-is-a-shape.md` —— 参数化几何是建模类型（`Primitive` 子类），算法属于曲面；OCCT 收缩为 STEP 解析与三角化。
-- `ADR-2026-11-05-solid-family-and-variant.md` —— 解析实体是族接口 `Solid<T>` + 封闭值集 `SolidShape`（族本身现行；"模型按值持有"已被下一条取代）。
+- `ADR-2026-11-05-solid-family-and-variant.md` —— 解析实体是族接口 `Solid<T>` + 封闭值集 `SolidShape`（族与五个 kind 现行；“模型按值持有”与 `SolidShape` 变体本身已分别被后续 ADR 取代 / 删除）。
 - `ADR-2026-11-05-primitive-is-a-modelling-base.md` —— `Primitive` 是建模基类：不持有实体，五个子类各存尺寸并 `solid()` 按需构造；几何 kind 改名 `*Solid`。
 - `ADR-2026-11-05-planar-curve-contract.md` —— 平面曲线是第二份契约（与 3D 同名同义、互不继承），共享词汇留在 `math`；否决泛型 `Curve<PointT>`、继承 3D 契约与嵌入 `z = 0`。
 - `ADR-2026-11-05-planar-arc-is-a-value-type.md` —— 平面圆弧是值类型（`ArcCurve` = 圆按值 + 区间），通用 `TrimmedCurve<T>` 不与之并存。（已被 `ADR-2026-11-05-planar-trimmed-curve.md` 取代）

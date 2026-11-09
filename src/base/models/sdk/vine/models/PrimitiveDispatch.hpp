@@ -2,9 +2,6 @@
 
 #include <vine/models/models_global.hpp>
 
-#include <optional>
-
-#include <vine/geom/spatial/SolidShape.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Types.hpp>
 
@@ -58,37 +55,5 @@ bool visitPrimitive(const Primitive& primitive, Visitor&& visitor)
         return false;
     }
 }
-
-/**
- * @brief Returns the analytic solid @p primitive describes, for the consumers that take one.
- *
- * @details
- * - This is the one conversion a primitive that is a solid needs; the geometry algorithms take the value and know
- *   nothing about `Shape`. A primitive that is not one of the five answers nothing, which is why the result is optional
- *   rather than an empty solid.
- *
- * @param primitive The primitive to convert.
- * @return The analytic solid, or nothing when the primitive is not one of the five solids.
- */
-[[nodiscard]] inline std::optional<vn::geom::spatial::SolidShapef> solidShapeOf(const Primitive& primitive) noexcept
-{
-    if (const auto* box = vn::obj_cast<Box>(&primitive)) {
-        return vn::geom::spatial::SolidShapef{ box->solid() };
-    }
-    if (const auto* sphere = vn::obj_cast<Sphere>(&primitive)) {
-        return vn::geom::spatial::SolidShapef{ sphere->solid() };
-    }
-    if (const auto* cylinder = vn::obj_cast<Cylinder>(&primitive)) {
-        return vn::geom::spatial::SolidShapef{ cylinder->solid() };
-    }
-    if (const auto* cone = vn::obj_cast<Cone>(&primitive)) {
-        return vn::geom::spatial::SolidShapef{ cone->solid() };
-    }
-    if (const auto* ellipsoid = vn::obj_cast<Ellipsoid>(&primitive)) {
-        return vn::geom::spatial::SolidShapef{ ellipsoid->solid() };
-    }
-    return std::nullopt;
-}
-
 
 VN_MODELS_NS_END

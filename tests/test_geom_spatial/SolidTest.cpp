@@ -1,12 +1,15 @@
 #include <gtest/gtest.h>
 
 #include <type_traits>
-#include <variant>
 
 #include <vine/models/Primitive.hpp>
 #include <vine/models/PrimitiveDispatch.hpp>
+#include <vine/geom/spatial/BoxSolid.hpp>
+#include <vine/geom/spatial/ConeSolid.hpp>
+#include <vine/geom/spatial/CylinderSolid.hpp>
+#include <vine/geom/spatial/EllipsoidSolid.hpp>
 #include <vine/geom/spatial/Ray.hpp>
-#include <vine/geom/spatial/SolidShape.hpp>
+#include <vine/geom/spatial/SphereSolid.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
@@ -22,8 +25,6 @@ using vn::geom::spatial::EllipsoidSolidf;
 using vn::models::ShapeType;
 using vn::geom::spatial::Solidd;
 using vn::geom::spatial::Solidf;
-using vn::geom::spatial::SolidShaped;
-using vn::geom::spatial::SolidShapef;
 using vn::geom::spatial::SphereSolidd;
 using vn::geom::spatial::SphereSolidf;
 
@@ -57,17 +58,17 @@ class Profile final : public vn::models::Primitive {
 TEST(Solid, theFamilyIsAnInterfaceAndTheKindsAreValues)
 {
     // Two levels, two jobs: `Solid<T>` is what a consumer accepts when the kind does not matter, and the five kinds are
-    // the values a model stores. Neither level is a pointer, so nothing allocates.
+    // the values a caller builds. Neither level is a pointer, so nothing allocates.
     static_assert(std::is_abstract_v<Solidf>, "the family interface has no state of its own");
     static_assert(std::is_abstract_v<Solidd>);
     static_assert(std::is_base_of_v<Solidf, BoxSolidf>);
     static_assert(std::is_base_of_v<Solidf, SphereSolidf>);
     static_assert(!std::is_abstract_v<BoxSolidf>, "a kind is a value, not an interface");
-    static_assert(std::is_same_v<SolidShapef, std::variant<BoxSolidf, SphereSolidf, vn::geom::spatial::CylinderSolidf, ConeSolidf, EllipsoidSolidf>>);
 
-    // Each kind keeps its own dimensions; the two precisions are distinct types, so nothing converts behind a caller's back.
+    // Each kind keeps its own dimensions, and the two precisions are distinct types, so nothing converts behind a
+    // caller's back.
     static_assert(std::is_same_v<decltype(BoxSolidf{}.half_x), float>);
-    static_assert(!std::is_same_v<SolidShapef, SolidShaped>);
+    static_assert(!std::is_same_v<BoxSolidf, BoxSolidd>);
 
     const SphereSolidd sphere{ 2.0 };
     EXPECT_TRUE(sphere.isValid());
@@ -88,7 +89,6 @@ TEST(Solid, thePrimitiveBaseHoldsNoGeometry)
     // otherwise.
     Profile profile;
     EXPECT_EQ(profile.shapeType(), ShapeType::Unknown);
-    EXPECT_FALSE(vn::models::solidShapeOf(profile).has_value());
     EXPECT_FALSE(vn::models::visitPrimitive(profile, [](const auto&) {}));
 }
 
@@ -162,17 +162,6 @@ TEST(Solid, anUnusablePrimitiveStillAnswersItsBounds)
     const vn::models::Cylinder degenerate_cylinder(1.0f, 0.0f);
     EXPECT_FALSE(degenerate_cylinder.isValid());
     EXPECT_EQ(degenerate_cylinder.shapeType(), ShapeType::Cylinder);
-}
-
-TEST(Solid, solidShapeOfConvertsOnlyTheFiveSolids)
-{
-    const vn::models::Cone cone(1.0f, 2.0f);
-    const auto               solid = vn::models::solidShapeOf(cone);
-    ASSERT_TRUE(solid.has_value());
-    EXPECT_TRUE(std::holds_alternative<ConeSolidf>(*solid));
-    EXPECT_FLOAT_EQ(std::get<ConeSolidf>(*solid).half_height, 1.0f);
-
-    EXPECT_FALSE(vn::models::solidShapeOf(Profile{}).has_value());
 }
 
 TEST(Solid, visitPrimitiveReachesTheConcreteSubclass)

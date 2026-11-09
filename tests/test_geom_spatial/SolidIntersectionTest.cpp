@@ -7,9 +7,13 @@
 #include <vine/models/Cylinder.hpp>
 #include <vine/models/Sphere.hpp>
 #include <vine/geom/spatial/Aabb.hpp>
+#include <vine/geom/spatial/BoxSolid.hpp>
+#include <vine/geom/spatial/ConeSolid.hpp>
+#include <vine/geom/spatial/CylinderSolid.hpp>
+#include <vine/geom/spatial/EllipsoidSolid.hpp>
 #include <vine/geom/spatial/Ray.hpp>
 #include <vine/geom/spatial/RayHit.hpp>
-#include <vine/geom/spatial/SolidShape.hpp>
+#include <vine/geom/spatial/SphereSolid.hpp>
 #include <vine/math/Math.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Vector3.hpp>
