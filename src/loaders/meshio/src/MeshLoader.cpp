@@ -48,26 +48,40 @@ constexpr float kMillimetreThreshold = 10.0f;
 // BEFORE aiProcess_GenNormals) rejects a zero-length normal and drops the whole array. Either way the mesh would arrive
 // without normals, and assimp fills them only for meshes that have none, so a file that does describe normals keeps them.
 // The price is vertex splitting (a per-face normal cannot be shared by the faces around a vertex), and that price is
-// stated rather than optimised away: aiProcess_JoinIdenticalVertices is deliberately NOT in either list, and it is not
-// offered as an option. A CAD export gives every face its own vertices - per-face colours AND per-face normals - so
-// coincident corners never compare equal and the weld cannot merge them; the pass then keeps a hash entry per corner
-// and buys nothing. On a 38-million-triangle part (1.8 GB) that table was ~113 million entries alive at once and got
-// the process killed by the OOM killer, while the document it was optimising fits in a quarter of that. Every consumer
-// reads a per-corner document the same way, so the soup is what this loader reports.
+// stated rather than optimised away: every pass in these lists either completes a channel the file left out or drops a
+// value that is not geometry, and none of them replaces a value that is present and valid.
+//
+// What the lists deliberately do NOT carry is the rest of the point. Each excluded pass is left commented out at the end
+// of the list it was kept out of, so the omission sits where the list is read and not only in this comment:
+// - aiProcess_JoinIdenticalVertices merges nothing on the kind of file this loader is built for. A CAD export gives
+//   every face its own corners - per-face colours AND per-face normals - so coincident corners never compare equal and
+//   the weld cannot merge them; the pass then keeps a hash entry per corner and buys nothing. On a 38-million-triangle
+//   part (1.8 GB) that table was ~113 million entries alive at once and got the process killed by the OOM killer, while
+//   the document it was optimising fits in a quarter of that. Every consumer reads a per-corner document the same way.
+// - aiProcess_FixInfacingNormals REWRITES normals the file stated, on a guess: it decides a mesh faces inward and flips
+//   its normals. Which way a normal faces is the file's fact to report, not the reader's to infer, so an inverted file
+//   arrives inverted and a consumer that cares detects it, rather than having its data silently reversed.
 
 /** @brief Post-processing every load runs, whichever entry it came in through. */
 constexpr unsigned int kLoadFlags = aiProcess_Triangulate | aiProcess_FindInvalidData | aiProcess_GenNormals | aiProcess_ImproveCacheLocality |
-                                    aiProcess_FixInfacingNormals | aiProcess_PreTransformVertices | aiProcess_OptimizeMeshes;
+                                    aiProcess_PreTransformVertices | aiProcess_OptimizeMeshes
+    // | aiProcess_JoinIdenticalVertices - merges nothing on a per-face export; its table is the OOM (see above)
+    // | aiProcess_FixInfacingNormals    - rewrites authored normals on a guess (see above)
+    ;
 
 /**
  * @brief Post-processing the model entry runs.
  *
  * What is missing is the point: aiProcess_PreTransformVertices would delete the node graph and bake every transform into
  * the vertices, and aiProcess_OptimizeMeshes would merge meshes and drop nodes - both would throw away the structure
- * this entry exists to keep.
+ * this entry exists to keep. The two passes the load list excludes (see above) are excluded here as well, for the same
+ * reasons: a weld cannot merge a per-face export, and a normal's facing is the file's fact.
  */
-constexpr unsigned int kModelFlags =
-    aiProcess_Triangulate | aiProcess_FindInvalidData | aiProcess_GenNormals | aiProcess_ImproveCacheLocality | aiProcess_FixInfacingNormals;
+constexpr unsigned int kModelFlags = aiProcess_Triangulate | aiProcess_FindInvalidData | aiProcess_GenNormals | aiProcess_ImproveCacheLocality
+    // | aiProcess_JoinIdenticalVertices - merges nothing on a per-face export; its table is the OOM (see above)
+    // | aiProcess_FixInfacingNormals    - rewrites authored normals on a guess (see above)
+    ;
+
 
 /** @brief Bytes the stream entry moves per read while it drains a stream. */
 constexpr std::size_t kDrainChunk = 64U * 1024U;
