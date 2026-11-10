@@ -88,7 +88,7 @@
 | F13 | 命令快照 | geometry、primitive、model matrix、opacity、draw_order、state、material、program、instance。 |
 | F14 | memo | 键 = view-projection + eye + layer_mask（必要时 + viewport）；根子树 epoch 失效。 |
 | F15 | 视锥剔除 | 子树盒 `subtreeBounds` 在节点自身坐标系持久缓存；移动相机不重算。 |
-| F16 | 排序 | drawOrder 外键；同 order 内不透明前向、透明后向。 |
+| F16 | 排序 | drawOrder 外键；同 order 内不透明前向、透明后向。分类在收集时求值、顺序冻结在表里（见 §6.3）。 |
 | F17 | 场景盒 | `Scene::boundingBox(mask)` 只算可见且命中层掩码的内容。 |
 
 ### 3.4 层与视图上下文
@@ -208,6 +208,13 @@
 - 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
 - 怎么判：出现“如果 Windows/X11 就……”的分支。
 - 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
+
+### 6.3 透明分类的“顺序”冻结在命令表里
+
+- 会怎么错：`RenderCommand::isTransparent()` 在**收集时**参与排序（F16），而 F14 的 memo 键里没有材质 revision——材质的 setter 只推进 `Material::revision()`，没有通往场景的公告通道（N3 讲的是节点侧）。所以运行时改 `Material::setAlphaMode()`（Opaque ↔ Blend/Mask）后，被 memo 命中的那张命令表**不会重新分批**：这条命令还留在原来的批次与位置，直到下一次图编辑（改位姿、增删节点、`Scene::invalidateContent()`）。
+- 冻结的只有**顺序**。计划里的透明标志是每帧从活材质重新读出来的（`src/viz/graphics/src/backend/FrameRecorder.cpp` 的 `target.transparent = source.isTransparent()`），混合当帧就跟上；着色端的 alpha 模式随材质块 `flags`（位 8-9）在 revision 前进时重新打包。过期的是“它在不透明批还是透明批、排第几”。
+- 怎么判：改 alphaMode 后 `Scene::contentCollectCount()` 不涨（说明走的 memo 命中），而重叠物体的前后遮挡关系仍按旧分类排列——典型表现是“刚变成透明的那个被画在了不透明批的位置”（先画、后被盖），或者半透明物体压在了它后面才该盖住的东西上。
+- 怎么防：运行时切 alphaMode 之后调一次 `Scene::invalidateContent()`；或者把“先画/后画”表达在会公告的入口上（`Node::setOpacity`、`Node::setDrawOrder`、层）。只有一个 drawable 时无影响——没有别的命令可与它排错。
 
 ## 7. 已否决选项
 

@@ -9,6 +9,7 @@
 #include <vsg/state/Buffer.h>
 #include <vsg/vk/Device.h>
 
+#include <vine/graphics/Residency.hpp>
 #include <vine/graphics/backend/FrameRing.hpp>
 #include <vine/graphics/backend/MaterialArena.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
@@ -233,6 +234,19 @@ class BlockStorage {
 
     /** @brief Gets the total bytes written. */
     [[nodiscard]] std::uint64_t bytesWritten() const noexcept;
+
+    /** @brief Gets the material region's residency, as one ledger row.
+     *
+     * @details
+     * - The material arena is the one region whose bytes are PERSISTENT (the view / draw / light / shadow
+     *   regions are this frame's scratch and are not residency), so it is the region a host trims against.
+     * - `live` is the materials holding a slot, `bytes` the region's mapped size, `built` the slots allocated so
+     *   far, `refused` the notes this arena had to turn away. A slot is returned by
+     *   @ref releaseMaterial, which is the only thing that lowers `live`.
+     *
+     * @return The row for `ResidencyKind::MaterialBlocks`.
+     */
+    [[nodiscard]] vn::graphics::ResidencyRow materialResidency() const noexcept;
 
     /** @brief Gets the number of writes refused because the block was larger than its stride. */
     [[nodiscard]] std::uint64_t oversized() const noexcept;

@@ -57,6 +57,19 @@
 满足 `G1` / `G7` / `G10`：一条规则、零等待；同一件事也不再有第二个名字（`RenderDevice` 上不再有“清一次上传”的动词）。
 代价写在 D14：依赖 vsg 的 protected 块状态（派生任务读/清）。
 
+2.9 **“不再被画”有三个不同的开关，后果也不同**：显式 `releaseContent()`（宿主说“我不要驻留了”）、
+   宿主丢掉最后一个引用（对象离树，行与驻留才会被扫尾）、以及**只是这一帧没被画**（隐藏、被视锥裁掉）。
+   前两个由**持有量**决定，第三个什么都不释放，只让这一帧不去“命名”它：
+   - 表行（`ContentStore` 的 geometry / program / material）只看持有量：对象还在（场景图把着），行就留着，
+     所以隐藏/裁剪不会造成建行-丢行的抖动（`ContentStore.cpp` 的 `releaseAbandoned` 以 `useCount() <= 1` 为条件）。
+   - 上传（`StreamUploads`）只看**命名**：条目记录“最后一帧谁叫过我”，超过宽限窗口（`slots + 1` 帧）没人叫就离场
+     （`core/SharedStreams` 的 `releaseUnseen`，`ContentAssembly::beginFrame` 把宽限设为 `retirement.slots() + 1`）。
+     所以隐藏或长时间裁剪的内容**会忘掉自己的上传，回来时重新上传一次**——这是刻意换来的“无读者计数”的代价。
+   - 编译半片 / 描述符集是**会话级**的，不随 pass 走：它们只在“表不再回答这个 program/generation”或
+     “没有任何 geometry 还问这个 layout”时被停靠（`ContentHalves::answerable` / `ContentSets` 的 sweep）。
+   为什么这么分：把“对象没了”和“这一帧没画”合成一个开关，就必然要么为裁剪抖动付重建代价，要么把已离树的
+   驻留永久留（`G1`：两个问题，两个答案）。
+
 ## 3. 功能点
 
 ### 3.1 显式释放
@@ -100,6 +113,17 @@
 | F20 | 每块独立 | `TransferTask` 有 `2 × numBuffers` 个块（early/late × 3），上传按 `frameIndex` 轮转，所以两块都可能压着一个模型（实测 704 MB 车身 → `SharedUsage` 1,228 MB = `2 × 614 MB`）；清也按块清。 |
 | F21 | 可观测 | `VsgBackend::uploadStagingBytes()` / `api::OffscreenSession::stagedBytes()` 报当前占用；稳态恒 0（待释放时才是上传那一刻到下一个帧边界之间）。 |
 | F22 | 由派生任务回答 | “手里有没有块”由会话自己的上传任务回答：它是 `detail::StagingTask`（派生自 `vsg::TransferTask`，能看能清 `staging` / `buffer_data` / `fence`），会话起来时由 `installStagingTask()` 装好。不用设备级上传计数（那是设备的计量，不是被问的会话的）。 |
+
+### 3.5 “不再被画”的六种情形
+
+| # | 情形 | 行（表） | 上传（stream） | 半片 / 描述符集 | 材质槽 | 触发处 |
+|---|---|---|---|---|---|---|
+| F23 | **材质离树** | 宿主丢引用后下个帧边界扫尾（park） | — | 无（set 键不含材质） | 行走了就 `BlockStorage::releaseMaterial` 放槽 | `ContentStore::releaseAbandoned` / `releaseContent` |
+| F24 | **program 离树** | 同上 | — | 半片在 `answerable` 不再成立时 park（它驱动的 vsg 管线随之走；池里的 variant 只按 FIFO 65 淘汰） | — | 同上 |
+| F25 | **pass 脱离** | 后端只有身份：`releasePass` 忘掉 id（永不重发） | — | **不释放**（会话级；随 program/layout 消失才走）；输入集一帧后退回 | — | `RenderEngine::removePass` → `device()->releasePass()` + 拥有目标 `releaseRenderTarget()` |
+| F26 | **geom 离树** | 宿主丢引用后扫尾 | 超过宽限窗口没人命名即离场 | 见 F24（layout 不再被需要时） | — | `releaseAbandoned` + `releaseUnusedStreams` |
+| F27 | **geom 隐藏**（`setVisible(false)`） | **留着**（宿主仍持有） | 同上：超过 `slots + 1` 帧不被命名即离场，恢复可见时重传 | 留着 | — | 只影响收集，不触发释放 |
+| F28 | **geom 被裁剪**（视锥外，逐视图） | 留着 | 同 F27——**逐视图**，所以转个相机就可能丢上传再重传 | 留着 | — | 同上 |
 
 ## 4. 公开接口
 
@@ -186,6 +210,16 @@
   这条线上涨了。
 - 怎么防：只认那块自己的 `fence->status()`（F17），在帧边界扫一遗（F18），并且**不加任何额外条件**（E）。
 
+### 6.4 隐藏 / 裁剪会丢上传，别把它当成泄漏
+
+- 会怎么错：把“这一帧没画”当成“对象没了”，于是要么在离树路径上补一套释放（裁剪抖动 ⇒ 每帧重传），
+  要么反过来以为隐藏的内容还留着上传（回来时多一次传输却查不出谁传的）。
+- 会怎么判：`VsgBackend::releasedStreams()` 在内容还在、只是长期不可见时增长；同一片几何“看不见→又看见”后
+  `StreamUploads::uploads()` 多一次。行数（`ContentStore` 的活对象）**不**变。
+- 怎么防：需要长期保留驻留时，别靠“画一次就保”——那正是 `SharedStreams` 刻意不支持的做法（读者计数实测无法触底，
+  见 `Streams.hpp` 的注释）；真需要就用显式 `releaseContent()` 的反面：让对象继续被绘制，或在宿主侧保留自己的 buffer
+  引用并在恢复时一次性重传。改宽限窗口之前先按 `G10` 量一次（当前值 = `retirement.slots() + 1`）。
+
 ## 7. 已否决选项
 
 | # | 否决 | 理由 |
@@ -219,6 +253,8 @@
 | T6 | `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting`：会话起来就装好了可问的任务（`stagedBytes()` 有值且为 0），出帧不涨 idle，之后仍能提交。 |
 | T7 | `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`：机制层（256 MB 工作集回落 + 后续上传逐字节读回；vsg 自建的任务答不出 → 装过之后报 0 → 再上传后报 ≥ 4096 字节）。 |
 | T8 | `HeadlessBackendTest`：设备双不再有暂存入口（动词已从 SDK 删除，`RenderDevice` 少一个虚函数）。 |
+| T9 | 六种“不再被画”（§2.9 / F23–F28）：`ContentStoreTest.*Release*`（离树与显式释放）、`StreamUploadsTest.*`（宽限窗口：一帧前命名留着、过窗离场）、`VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`（释放后重建）、`VsgBackendTest` 的 pass 身份用例（`releasePass` 只忘 id）。隐藏 / 裁剪的“行不变、上传离场”由 `StreamUploadsTest` 与 `ContentStoreTest` 各钉一半，不合并成一条——那是两件不同的事实。 |
+
 ## 9. 状态与演进
 
 ### 9.1 当前状态

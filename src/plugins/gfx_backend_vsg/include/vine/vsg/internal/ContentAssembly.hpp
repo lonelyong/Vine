@@ -126,6 +126,12 @@ class ContentAssembly {
     /** @brief Gets the stream sharing this session records through (its counters are evidence). */
     [[nodiscard]] StreamUploads& uploads() noexcept;
 
+    /** @brief Gets the stream sharing this session records through, for a read-only report.
+     *
+     * @return The same store; every number a report reads is a const accessor on it.
+     */
+    [[nodiscard]] const StreamUploads& uploads() const noexcept;
+
     /** @brief Drops the shared streams no frame has named for the grace window (the frame's last step).
      *
      * The other half of what api/StreamUploads's note describes: the frame stamps what it binds, and this - run

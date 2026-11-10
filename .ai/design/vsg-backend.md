@@ -149,6 +149,26 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 | `SdkFrameCompiler` | 解析缺省、计划目标/深度、给出执行顺序 |
 | `SdkTargetPlan` / `SdkFrameRing` / `SdkMaterialArena` | 目标计划 / 每帧块 / 持久材质块 |
 
+### 2.10 成本模型：每帧只比较键，不做内容 diff
+
+- 是什么：后端每帧把这一帧画到的对象**触碰**（`track` + `updateMaterial`）一遍，用（身份指针, revision）查表；
+  命中就是几次哈希/二分 + 整数比较，只有**键变了**才付“描述 / 上传 / 编译”的钱。三类状态的划分是
+  `graphics/backend/Keys.hpp` 的 IDENTITY（进管线键）/ DYNAMIC STATE（每 draw 一条 set 命令）/ DATA（写进 buffer +
+  材质引用），带审计表并由测试钉住。
+- 为什么：它让“改一个材质值”“改 cull”“改顶点字节”都不必编译管线，而这三种“把 DATA 漏进 IDENTITY”的错误
+  在本后端历史上各出现过一次（见 `vsg-pitfalls.md`）。正确性也在此：材质编辑没有引擎侧公告，只能靠每帧
+  触碰时的 revision 比较落地。
+- 边界（性能往哪里长）：
+  - **随资源数量**：每 command 的常数项（3 次 `track`、1 次 `updateMaterial`、3 次二分、每通道一次 `StreamKey`
+    哈希、每贴图槽一次 `(Texture*, revision)` 哈希、一次 `VariantPool` 查询），全部 O(1)/O(log n)。
+  - **随资源种类数**：两处**线性扫描**是唯一会变重的簿记 —— half 清扫（`ContentHalves::answerable` 每 pass 对每个
+    half 扫一遍全部 geometry facts）与 `halves` / `sets` 的查找（`ContentHalves::find` / `ContentSets::find`）。
+    几十种组合可忽略，上百种要重新量。
+  - **每 draw 的绝对大头不是簿记，而是 vsg 每帧新建的命令节点**：记录路径基线是 12 次分配/pass、约 33 次分配/
+    一个被录制的三角，而计划半（`FrameRecorder` + `FrameCompiler`）是**零分配**并有门禁。
+  - 真正能到数量级跳跃的只有两件事：**上传**（几何/贴图 revision 抖动，见 F16.2）与**编译**（程序 / 拓扑 / 布局变）。
+  对应 `G10`：成本按层结算，且每一层都有判据；不靠“大概很便宜”。
+
 ## 3. 功能点
 
 ### 3.1 平台与设备
@@ -256,6 +276,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | N1 | 后端不重排 pass、不自建依赖图、不报环。 |
 | N2 | 物理边界：SDK 后端契约不 include vsg。 |
 | N3 | 平台事实（1.4、无 dynamic rendering、reverse-Z）不可协商。 |
+| N4 | 每帧的变化检测只比较（身份, revision）键，**不比较内容字节或值**；材质值、流字节、动态状态永远走 DATA / DYNAMIC 通道。键里出现矩阵、viewport、opacity、材质值、cull、blend 或 extent 就是错的（`Keys.hpp` 的审计表 + 测试）。 |
 
 ## 6. 注意事项与陷阱
 
@@ -289,6 +310,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | T2 | `scripts/vsg_rewrite_gate.sh`：0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。 |
 | T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`。 |
 | T4 | 上传暂存不保留（F16.2）：`UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` —— 帧不 idle；上传后 `uploadStagingBytes()` 归零，**没人调**；同一内容重画零上传；新流再上传、后续帧再归零。`OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` —— 256 MB 上传后工作集至少 +128 MB，随后 4 KB 上传**逐字节**读回一致；同用例还钉住“vsg 自建的任务答不出（`nullopt`）→ 装过之后报 0 → 再上传后报 ≥ 4096 字节”。`OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting` —— 会话起来就装好可问的任务（`stagedBytes()` 有值且为 0），出帧不涨 `deviceWaits`，仍能提交。 |
+| T5 | 编辑成本与稳态（§2.10）：`VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` —— 打印 µs/帧与 `builds` / `uploads` / `created` 增量；断言稳态全 0、材质值 0 上传 0 编译、几何 revision ≥1 上传 0 编译、程序与拓扑变各 1 次编译。配套稳态钉：`ContentStoreTest.ASteadyFrameBuildsNothing`、`CoreMaterialArenaTest.ASteadyFrameWritesNothing`、`ContentHalves` / `ContentSets` 的 sweep 用例。分配上限：`CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（12 次/pass、约 33 次/一个被录制的三角）。这几个配方需要真实窗口，headless 机器上 `GTEST_SKIP`。 |
 
 ## 9. 状态与演进
 

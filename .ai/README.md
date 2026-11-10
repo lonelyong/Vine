@@ -84,6 +84,7 @@
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
 - `ADR-2026-11-10-upload-staging-is-not-retained.md` —— 上传暂存**不保留**：一次上传的 host 可见缓冲是**一个** `vkCmdCopyBuffer` 的源，拷贝的 fence 一完成就清（`detail::StagingTask` 在每个帧边界扫，零等待、零 idle），SDK **没有**对应动词（`RenderDevice::releaseUploadStaging()` 与模型查看器的 `release_render_memory` 一并删除）；否决显式入口 + park/drain、每帧无脑清、换任务释放、以及“还有待拷数据就跳过”的便宜条件（那是会让 sweep 永久冻结的坑）。
+- `ADR-2026-11-10-gpu-residency-pinned-by-content.md` —— GPU 驻留按**内容对象（身份 + revision）**钉住，回收只问“现在谁活着”（事实表枚举 pin 集合），删掉时间窗与容量上限：一套判据替掉现在的五种（流的时间窗、纹理/块的引用计数、半片与描述符集的反事实扫描）；显存不再自动让出是它的明码代价。第一步（`ResidencyLedger` 词汇 + 流/图像/材质块三行接入）已落地。
 - `ADR-2026-11-10-upload-staging-release-is-explicit.md` ——（已取代）上传暂存的回收是**显式入口**，时机归宿主/用户命令。
 - `ADR-2026-11-10-curve-sampling-is-an-object.md` —— 曲线离散化做成对象：基类 + 三个规则子类、setter 配置 + 无参 `compute()`；否决构造即算与“三个自由函数 + 返回值”。
 - `ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md` —— BVH 可封存（`seal()` 放掉构建期的图元盒，只留节点 / 节点盒 / 顺序）、拾取树粗叶 64 且建成即封存、vsg 与索引上传改成别名模型 buffer（14M 三角形的拾取树 1.36 GB → 88 MB，后端再省 1.18 GB）；否决独立封存类型、删 `update`/`refit`、改库的默认叶容量。

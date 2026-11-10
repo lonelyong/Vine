@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "Residency.hpp"
 #include "graphics_global.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -35,6 +36,8 @@ struct VN_GRAPHICS_API FrameCounters {
 struct VN_GRAPHICS_API RetentionStats {
     std::uint64_t released_nodes{ 0 }; // Objects released so far.
     std::uint64_t device_waits{ 0 };   // Counted device idles (destructive paths only).
+    /// What is resident NOW, per kind (see @ref ResidencyLedger); disengaged when the backend keeps no such account.
+    std::optional<ResidencyLedger> residency;
 };
 
 /**

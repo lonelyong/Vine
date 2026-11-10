@@ -329,6 +329,20 @@ BlockStorage::Strides BlockStorage::strides() const noexcept
     return { d->view_ring.stride(), d->draw_ring.stride(), d->light_ring.stride(), d->shadow_ring.stride(), d->arena.blockBytes() };
 }
 
+vn::graphics::ResidencyRow BlockStorage::materialResidency() const noexcept
+{
+    // The arena answers every number itself (see MaterialArena): slots holding a live material, the region's
+    // mapped size, the slots allocated so far, and the notes it had to turn away. `retired` stays absent - a
+    // returned slot is not counted today, and a zero would claim it was.
+    vn::graphics::ResidencyRow row;
+    row.kind    = vn::graphics::ResidencyKind::MaterialBlocks;
+    row.live    = static_cast<std::uint32_t>(d->arena.live());
+    row.bytes   = d->arena.capacityBytes();
+    row.built   = d->arena.allocations();
+    row.refused = d->arena.refusals();
+    return row;
+}
+
 std::span<const std::byte> BlockStorage::bytes() const noexcept
 {
     const std::uint8_t* data = d->mapped != nullptr ? d->mapped->data() : nullptr;

@@ -1166,6 +1166,28 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     report.retention = d->observe.retention();
     report.progress =
         vn::graphics::FrameProgress{ .submitted = timeline.submittedFrame(), .completed = timeline.completedFrame(), .presented = d->presented_watermark };
+
+    // WHAT IS RESIDENT, PER KIND: the accounting half of GPU residency (see ResidencyLedger). The kinds this
+    // device retains are composed HERE, where all three tables are reachable - a table answers only for itself,
+    // and the ledger is the one place a host has to learn. Absent numbers stay absent: the stream store does not
+    // count bytes and the image cache keeps no build history, so those rows say nothing about them instead of
+    // reporting a zero nobody measured.
+    if (d->assembly != nullptr && d->images != nullptr) {
+        vn::graphics::ResidencyLedger ledger;
+        const StreamUploads&         uploads = d->assembly->uploads();
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Streams,
+                                                .live    = static_cast<std::uint32_t>(uploads.live()),
+                                                .built   = uploads.uploads(),
+                                                .retired = uploads.unused() + uploads.evictions(),
+                                                .refused = uploads.refusals() });
+        ledger.note(vn::graphics::ResidencyRow{ .kind  = vn::graphics::ResidencyKind::Images,
+                                                .live  = static_cast<std::uint32_t>(d->images->count()),
+                                                .bytes = d->images->bytes() });
+        if (d->storage != nullptr) {
+            ledger.note(d->storage->materialResidency());
+        }
+        report.retention->residency = std::move(ledger);
+    }
     return report;
 }
 

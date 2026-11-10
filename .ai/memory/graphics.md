@@ -90,6 +90,8 @@
 - 透明度：引擎唯一透明通道是 `Node::opacity`；材质不贡献 alpha；blend 恒开，`enabled` 只选因子。
 - 设备读回像素是 BGR 字节序；单通道断言用 `isRed()` 等，不要读 `pixel[0]`。
 - 改公开签名或改名后必须全量构建；旧插件 `.so` 会 `undefined symbol`。
+- **隐藏 / 被裁剪超过 `slots + 1` 帧 ⇒ 上传被遗忘**：表行留着（对象还在），但 `SharedStreams` 只认“最后一帧谁命名过我”，
+  回来时重传一次。离树（宿主丢引用）才是真释放；见 `.ai/design/graphics-content-lifecycle.md` §2.9 / F23–F28。
 - **非 Debug 配置的两个构建坑（2026-11-10 实测）**：
   - vcpkg 的 glslang 只导出 `DEBUG` / `RELEASE` 两个配置，RelWithDebInfo / MinSizeRel 没有精确匹配，CMake 会回落到**第一个**（DEBUG）
     ⇒ 插件把 `/MDd` 的 glslang 目标链进 `/MD` 的 DLL：`LNK2038`（`_ITERATOR_DEBUG_LEVEL`、`RuntimeLibrary`）+ 未解析的 `__imp__CrtDbgReport`。
@@ -103,3 +105,4 @@
 - `scripts/vsg_rewrite_gate.sh`：suite 两跑 0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。
 - 静态门禁：`check_ai_docs.py`、`check_doc_symbols.py`、`check_include_hygiene.py`、`check_export_annotations.py`、`check_diagnostic_formats.py`、`check_public_docs.py`。
 - `scripts/asan_check.sh` / `VN_ASAN_*`；`skipped == 0` 才算跑过设备电池。
+- 量后端每帧成本：`test_vsg --gtest_filter='*MeasureWhatEachKind*'`（打印 µs/帧 + `builds`/`uploads`/`created`，需真实窗口，headless 会 skip）；成本模型与分配上限见 `.ai/design/vsg-backend.md` §2.10 / N4 / T5。

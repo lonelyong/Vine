@@ -188,6 +188,11 @@ StreamUploads& ContentAssembly::uploads() noexcept
     return d->uploads;
 }
 
+const StreamUploads& ContentAssembly::uploads() const noexcept
+{
+    return d->uploads;
+}
+
 std::uint64_t ContentAssembly::releaseUnusedStreams()
 {
     return d->uploads.releaseUnseen();

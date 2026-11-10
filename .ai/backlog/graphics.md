@@ -10,6 +10,13 @@
 
 材质 PBR 的四步（模型 / 纹理集 / 两条路径的 BRDF / 实例与 alpha 模式）与 F11 的逐材质诊断已全部落地。
 
+- **GPU 驻留的 pin 迁移（ADR 步骤 2–5）**：流 → 纹理 → 材质块 → 半片/描述符集，逐步迁到“pin =（内容身份, revision）”
+  的模型，删掉时间窗与反事实扫描。设计与验收在
+  `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §迁移，每步一个可回退的提交。
+- **`releaseContent` 入口补齐**：`VsgBackend::releaseContent` 用 `obj_cast<const Material>`（具体类），`MaterialInstance`
+  落不到任何分支 ⇒ 返回 false；且 `Buffer` 不在入口里（几何/实例流的驻留键就是 buffer）。改 `MaterialBase` +
+  一条 buffer 分派。
+
 
 ## 2. 触发条件型
 
@@ -36,6 +43,10 @@
 | T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在 | 上游支持后合并每 pass 的 begin | 本行 |
 | T25 | 每帧上传数当观测指标 | `FrameCounters` 只有 passes / draws / invalid_schedules；`StreamUploads::uploads()` 与 `MaterialImages::count()` 的每帧差值能回答“这一帧传了多少”，但今天没有消费者 | HUD / 门禁 / 性能面板要显示“这一帧上传了几个流 / 多少字节” | `../design/graphics-content-lifecycle.md` D10 |
 | T26 | 每帧上传的宿主的暂存重分配 | 现行规则是“fence 一完成就清”，所以每帧都上传的宿主会在每帧重新分配一块最小 16 MB 的暂存。仓库里目前没有这样的宿主（帧内上传都是 revision 变化才发生） | 出现每帧上传的宿主（动态几何 / 流式点云），且分配进入 profile：加回“只清大于 `minimumStagingBufferSize` 的块”这一条判断（一行） | `../design/graphics-content-lifecycle.md` D16、`../decisions/ADR-2026-11-10-upload-staging-is-not-retained.md` |
+| T27 | 驻留的显存交易复评 | pin 模型（ADR-2026-11-10）让驻留 = 活内容所需：离屏但宿主仍持有的内容不再自动让出显存。若某宿主的显存峰值不可接受，需要重新引入一条时间/容量规则（会与“零时间窗”的判据冲突，必须走新 ADR） | 出现“大场景 + 离线模型常驻”进入显存预算的真实宿主 | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §代价 |
+| T28 | 半片 pin 的口径 | 迁移第 5 步打算 pin = program@rev：layout / 变体更替会让半片累积（每个几十 KB 的管线）。若累积不可忽略，加回“该 layout 仍被活几何需要”这一 pin（一份扫描） | 迁移第 5 步落地后，`ContentHalves::halves()` 随交互增长到不可忽略 | 同上 §开放项 1 |
+| T29 | 驻留账的帧级增量 | `RetentionStats::residency`（ADR 第一步）答的是“现在多少”；T25 要的是“这一帧传了多少 / 释放了多少”，即两次报告之差 | 与 T25 同一触发 | `../design/graphics-content-lifecycle.md` §3.3 |
+| T30 | GPU 资源抽象（统一类型 / 多态总表） | 现在统一的是**规则与账**（`ResidencyLedger` + pin），不是类型。基类或多态总表只在第二个后端出现时才值得：届时形状是“SDK 资源描述 + 每后端实现”，不是包 vsg 的基类 | 第二个后端出现（与 T15 同一触发） | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §选项表 |
 
 ### 2.3 平台与验证
 | # | 项 | 内容 | 触发条件 |
