@@ -30,7 +30,7 @@
 - `vsg-pitfalls.md` —— vsg 后端 P1–P82 坑表，按九个风险域分组，每条带症状与判据。
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 - `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
-- `graphics-threading.md` —— 线程模型（**草案**）：内容在 `start()` 移交引擎线程，跨线程只有意图 / 交接 / 快照 / 请求四种动作；表面归应用线程、交换链归引擎线程；并行只做对固定快照的纯计算（收集的 select）。
+- `graphics-threading.md` —— 线程模型（**草案**）：两个世界（内容世界留在 UI 线程、API 不变；渲染世界镜像它，只在引擎线程），三条通道（delta / handoff / snapshot），字节内容靠两个原子 revision 轮询，表面归内容线程、交换链归引擎线程，并行只做镜像上的纯计算。
 
 **appfw（17）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
@@ -84,7 +84,7 @@
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
-- `ADR-2026-11-10-render-thread-owns-content.md` —— 渲染由**引擎线程拥有内容**，应用线程只发意图 / 读快照 / 发请求（内容零锁，`start()` 是所有权移交点）；表面创建留在应用线程，acquire/present/交换链重建归引擎线程；并行只放在对固定快照的纯计算上；否决给内容加锁、应用侧持有内容 + 每帧描述快照、双缓冲世界、每帧起线程、按 pass 并行记录、打开 vsg 的 threading path。
+- `ADR-2026-11-10-render-world-mirrors-content.md` —— 渲染世界**镜像**内容世界：内容留在 UI 线程（编辑 API 不变），镜像（世界矩阵/世界盒/折叠状态/代理）在引擎线程，靠 delta 增量更新（payload 必填 ⇒ 漏发编译不过）、字节靠原子 revision 轮询；表面归内容线程、交换链归引擎线程；否决把内容移交给引擎线程（第一稿）、每帧 extract、双缓冲世界、加锁、每帧起线程、按 pass 并行记录、vsg 的 threading path。
 - `ADR-2026-11-10-upload-staging-is-not-retained.md` —— 上传暂存**不保留**：一次上传的 host 可见缓冲是**一个** `vkCmdCopyBuffer` 的源，拷贝的 fence 一完成就清（`detail::StagingTask` 在每个帧边界扫，零等待、零 idle），SDK **没有**对应动词（`RenderDevice::releaseUploadStaging()` 与模型查看器的 `release_render_memory` 一并删除）；否决显式入口 + park/drain、每帧无脑清、换任务释放、以及“还有待拷数据就跳过”的便宜条件（那是会让 sweep 永久冻结的坑）。
 - `ADR-2026-11-10-gpu-residency-pinned-by-content.md` —— GPU 驻留按**内容对象（身份 + revision）**钉住，回收只问“现在谁活着”（事实表枚举 pin 集合），删掉时间窗与容量上限：一套判据替掉现在的五种（流的时间窗、纹理/块的引用计数、半片与描述符集的反事实扫描）；显存不再自动让出是它的明码代价。第一步（`ResidencyLedger` 词汇 + 流/图像/材质块三行接入）已落地。
 - `ADR-2026-11-10-upload-staging-release-is-explicit.md` ——（已取代）上传暂存的回收是**显式入口**，时机归宿主/用户命令。
