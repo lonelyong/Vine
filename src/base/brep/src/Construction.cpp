@@ -1,6 +1,10 @@
 #include <vine/brep/Construction.hpp>
 
 #if defined(VN_BREP_HAS_OCCT)
+#    include <exception>
+#    include <memory>
+#    include <utility>
+
 #    include <BRepBuilderAPI_GTransform.hxx>
 #    include <BRepPrimAPI_MakeBox.hxx>
 #    include <BRepPrimAPI_MakeCone.hxx>
@@ -14,12 +18,14 @@
 #    include <gp_Mat.hxx>
 #    include <gp_Pnt.hxx>
 
-#    include <exception>
-#    include <memory>
-#    include <utility>
-
 #    include <vine/Object.hpp>
+#    include <vine/geom/spatial/BoxSolid.hpp>
+#    include <vine/geom/spatial/ConeSolid.hpp>
+#    include <vine/geom/spatial/CylinderSolid.hpp>
+#    include <vine/geom/spatial/EllipsoidSolid.hpp>
+#    include <vine/geom/spatial/SphereSolid.hpp>
 #    include <vine/models/Primitive.hpp>
+#    include <vine/models/PrimitiveDispatch.hpp>
 #endif
 
 VN_BREP_NS_BEGIN
