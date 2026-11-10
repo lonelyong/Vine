@@ -9,8 +9,6 @@
  *     refilled buffer is a new one - never a stale copy;
  *   * an edit is answered by a pure decision: nothing, an in-place refresh of named streams, or a rebuild -
  *     and an announcement no stream can account for refuses shared uploads instead of trusting them;
- *   * the same stream offered twice uploads once, and the registry drops an entry when its last reader
- *     leaves without ever owning the bytes;
  *   * a steady frame writes no material bytes, a revision change writes exactly one block, and the
  *     in-flight copies rotate - so a write can never land on a copy an in-flight frame reads;
  *   * the per-frame ring never grows: a frame past its budget is refused and counted, because relocating a
@@ -32,7 +30,6 @@ using vn::graphics::backend::FrameRing;
 using vn::graphics::backend::kAssumedInFlightSlots;
 using vn::graphics::backend::MaterialArena;
 using vn::graphics::backend::perFrameCopies;
-using vn::graphics::backend::SharedStreams;
 using vn::graphics::backend::StreamKey;
 using vn::graphics::backend::StreamKind;
 
@@ -68,9 +65,9 @@ TEST(CoreStreamsTest, StreamIdentityIsTheSliceAndTheRevision)
     const StreamKey filled = vertexKey(0, 3, &buffer_a, 8, 0, 12);  // refilled: the revision moved
     const StreamKey other  = vertexKey(0, 3, &buffer_b, 7, 0, 12);
 
-    // The key IS the identity the alias registry looks up (CoreSharedStreamsTest observes the same rules
-    // through the live registry): the slice and the revision both matter, and a refilled buffer is a
-    // different stream rather than a stale copy of the earlier one.
+    // The key IS the identity the sharing table looks up (StreamUploads observes the same rules through the
+    // live table): the slice and the revision both matter, and a refilled buffer is a different stream
+    // rather than a stale copy of the earlier one.
     EXPECT_TRUE(first == again) << "the same slice at the same revision is one stream";
     EXPECT_FALSE(first == moved) << "two segments of one buffer are two streams";
     EXPECT_FALSE(first == filled) << "a refilled buffer is a new stream, not a stale one";
@@ -79,159 +76,6 @@ TEST(CoreStreamsTest, StreamIdentityIsTheSliceAndTheRevision)
     // A derived channel has no buffer to alias, which is exactly what makes it unshareable.
     EXPECT_TRUE(vertexKey(2, 4, nullptr, 0, 0, 12).derived());
     EXPECT_FALSE(first.derived());
-}
-
-// --- the alias registry --------------------------------------------------------------------------------
-
-TEST(CoreSharedStreamsTest, TheSecondReaderOfOneStreamAliasesTheFirstUpload)
-{
-    SharedStreams   registry;
-    const StreamKey key = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
-
-    const SharedStreams::Decision first  = registry.acquire(key, 1U);
-    const SharedStreams::Decision second = registry.acquire(key, 1U);
-
-    EXPECT_EQ(first.action, SharedStreams::Action::Upload) << "the first reader uploads";
-    EXPECT_EQ(second.action, SharedStreams::Action::Alias) << "the second reads the same upload";
-    EXPECT_EQ(registry.uploads(), 1U);
-    EXPECT_EQ(registry.aliases(), 1U);
-    EXPECT_EQ(registry.live(), 1U);
-}
-
-TEST(CoreSharedStreamsTest, ASliceThatMovedIsAUploadNotAnAlias)
-{
-    SharedStreams   registry;
-    const StreamKey first = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
-    const StreamKey next  = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 12, 12);
-
-    (void)registry.acquire(first, 1U);
-    const SharedStreams::Decision decision = registry.acquire(next, 1U);
-
-    EXPECT_EQ(decision.action, SharedStreams::Action::Upload) << "the next geometry in the same arena reads different bytes";
-    EXPECT_EQ(registry.uploads(), 2U);
-}
-
-TEST(CoreSharedStreamsTest, ARefilledSliceIsANewStreamSoItUploadsAgain)
-{
-    // THE RULE, through the LIVE path: the revision is part of the identity, so a buffer the host refilled
-    // (and announced) can never alias the earlier upload - what is on the device is the old bytes. The
-    // unwired `planGeometry` used to be where this was pinned; it had no production caller and is gone
-    // (design log §11.16cr), so the evidence moved onto the registry the frame path really uses.
-    SharedStreams   registry;
-    const StreamKey before   = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
-    const StreamKey refilled = vertexKey(0, 3, reinterpret_cast<const void*>(1), 6, 0, 12);
-
-    EXPECT_EQ(registry.acquire(before, 1U).action, SharedStreams::Action::Upload);
-    EXPECT_EQ(registry.acquire(before, 2U).action, SharedStreams::Action::Alias) << "the same identity named again is served by the upload it already has";
-    EXPECT_EQ(registry.acquire(refilled, 3U).action, SharedStreams::Action::Upload)
-        << "a refilled buffer is a different stream: it uploads again instead of aliasing";
-    EXPECT_EQ(registry.uploads(), 2U);
-    EXPECT_EQ(registry.aliases(), 1U);
-}
-
-TEST(CoreSharedStreamsTest, AnEntryNoFrameNamesForTheGraceWindowLeavesAndTheNextAcquireUploadsAgain)
-{
-    // THE LIFETIME RULE, and what replaced the reader count (see SharedStreams's note: the count could only
-    // ever go up, so "the last reader let go" was unreachable and `release()` had no caller).
-    SharedStreams   registry;
-    const StreamKey key = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
-    (void)registry.acquire(key, 1U);
-    (void)registry.acquire(key, 1U);
-
-    std::vector<StreamKey> dropped;
-    EXPECT_EQ(registry.releaseUnseen(2U, 3U, dropped), 0U) << "named one frame ago: inside the window";
-    EXPECT_EQ(registry.releaseUnseen(4U, 3U, dropped), 0U) << "named three frames ago: still inside it";
-    EXPECT_EQ(registry.releaseUnseen(5U, 3U, dropped), 1U) << "one frame past the window: it leaves";
-    ASSERT_EQ(dropped.size(), 1U);
-    EXPECT_TRUE(dropped.front() == key) << "the caller is told WHICH key left, so its objects can follow";
-    EXPECT_EQ(registry.unused(), 1U);
-    EXPECT_EQ(registry.live(), 0U);
-    EXPECT_EQ(registry.releaseUnseen(9U, 3U, dropped), 0U) << "and it leaves exactly once";
-
-    const SharedStreams::Decision again = registry.acquire(key, 9U);
-    EXPECT_EQ(again.action, SharedStreams::Action::Upload) << "nothing names those bytes any more, so they have to be uploaded again";
-    EXPECT_EQ(registry.uploads(), 2U);
-    EXPECT_EQ(registry.evictions(), 0U) << "the capacity was never the reason";
-}
-
-TEST(CoreSharedStreamsTest, AStreamAFrameStillNamesIsNeverDropped)
-{
-    // The other half of the rule, and the reason the sweep can run in the same frame that named the entry: an
-    // age of zero is inside every window.
-    SharedStreams          registry;
-    const StreamKey        alive = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
-    const StreamKey        stale = vertexKey(1, 3, reinterpret_cast<const void*>(1), 5, 36, 12);
-    std::vector<StreamKey> dropped;
-
-    for (std::uint64_t frame = 1U; frame <= 8U; ++frame) {
-        if (frame == 1U) {
-            (void)registry.acquire(stale, frame);
-        }
-        (void)registry.acquire(alive, frame);
-        const std::uint64_t released = registry.releaseUnseen(frame, 1U, dropped);
-        // The stale stream was named in frame 1 only: its age is 1 in frame 2 (inside the window) and 2 in
-        // frame 3, so it is frame 3 that lets it go - and the one this frame named is never touched.
-        const std::uint64_t expected = frame == 3U ? 1U : 0U;
-        EXPECT_EQ(released, expected) << "frame " << frame;
-        EXPECT_EQ(registry.live(), frame <= 2U ? 2U : 1U) << "frame " << frame;
-        EXPECT_EQ(registry.acquire(alive, frame).action, SharedStreams::Action::Alias)
-            << "a stream a frame keeps naming stays exactly one entry (frame " << frame << ")";
-    }
-    EXPECT_EQ(registry.unused(), 1U);
-}
-
-TEST(CoreSharedStreamsTest, TheCapacityBoundEvictsTheStalestLookupWithoutReleasingItsBytes)
-{
-    SharedStreams   registry(2);
-    const StreamKey first  = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
-    const StreamKey second = vertexKey(1, 3, reinterpret_cast<const void*>(1), 5, 36, 12);
-    const StreamKey third  = vertexKey(2, 4, reinterpret_cast<const void*>(1), 5, 72, 12);
-
-    (void)registry.acquire(first, 1U);
-    (void)registry.acquire(second, 2U);
-    (void)registry.acquire(third, 3U);
-
-    EXPECT_EQ(registry.evictions(), 1U) << "the bound was reached and one lookup left";
-    EXPECT_EQ(registry.live(), 2U);
-
-    const SharedStreams::Decision again = registry.acquire(first, 4U);
-    EXPECT_EQ(again.action, SharedStreams::Action::Upload) << "the lookup left the map; a reader that already bound the bytes is a different question";
-    EXPECT_EQ(registry.uploads(), 4U);
-}
-
-TEST(CoreSharedStreamsTest, TheBoundTakesTheStalestEntryNotTheOldestInserted)
-{
-    // A scene that ROTATES its content re-names old streams, and there "oldest inserted" and "stalest" are
-    // different rows - which is why the bound follows the stamp the lifetime rule already carries.
-    SharedStreams   registry(2);
-    const StreamKey early_but_renamed = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
-    const StreamKey middle            = vertexKey(1, 3, reinterpret_cast<const void*>(1), 5, 36, 12);
-    const StreamKey newest            = vertexKey(2, 4, reinterpret_cast<const void*>(1), 5, 72, 12);
-
-    (void)registry.acquire(early_but_renamed, 1U);
-    (void)registry.acquire(middle, 2U);
-    (void)registry.acquire(early_but_renamed, 3U); // named again: it is now the freshest of the two
-    const SharedStreams::Decision evicting = registry.acquire(newest, 4U);
-
-    ASSERT_TRUE(evicting.evicted.has_value());
-    EXPECT_TRUE(*evicting.evicted == middle) << "the stalest leaves: the entry inserted first is still the one a frame named last";
-}
-
-TEST(CoreSharedStreamsTest, TheEvictedKeyIsReportedToTheCaller)
-{
-    SharedStreams   registry(2);
-    const StreamKey first  = vertexKey(0, 3, reinterpret_cast<const void*>(1), 5, 0, 12);
-    const StreamKey second = vertexKey(1, 3, reinterpret_cast<const void*>(1), 5, 36, 12);
-    const StreamKey third  = vertexKey(2, 4, reinterpret_cast<const void*>(1), 5, 72, 12);
-
-    EXPECT_FALSE(registry.acquire(first, 1U).evicted.has_value()) << "nothing had to make room yet";
-    EXPECT_FALSE(registry.acquire(second, 2U).evicted.has_value());
-    const SharedStreams::Decision evicting = registry.acquire(third, 3U);
-
-    ASSERT_TRUE(evicting.evicted.has_value()) << "the layer that owns one object per entry has to hear about this: this is the only moment the two"
-                                                 " can be reconciled";
-    EXPECT_TRUE(*evicting.evicted == first) << "the stalest entry is the one that leaves";
-    EXPECT_EQ(evicting.action, SharedStreams::Action::Upload);
 }
 
 // --- the material arena --------------------------------------------------------------------------------

@@ -71,6 +71,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
@@ -103,8 +104,6 @@ using vn::graphics::backend::FrameCompiler;
 using vn::graphics::backend::FrameFacts;
 using vn::graphics::backend::FrameRecorder;
 using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
 using vn::graphics::backend::VariantPool;
@@ -185,8 +184,6 @@ ContentPipeline::Shaders shaders()
 }
 
 int program_identity  = 0;
-int model_vertices    = 0;
-int model_indices     = 0;
 int material_identity = 0;
 
 /// @brief A draw block whose matrix is the identity (the triangle stays where its positions put it).
@@ -276,21 +273,9 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     (*indices)[2]   = 2U;
 
     StreamUploads uploads;
-    StreamKey     vertex_key;
-    vertex_key.kind        = StreamKind::Vertex;
-    vertex_key.location    = 0U;
-    vertex_key.components  = 3U;
-    vertex_key.buffer      = &model_vertices;
-    vertex_key.revision    = 1U;
-    vertex_key.count       = 9U;
-    const auto vertex_bind = uploads.acquireVertex(vertex_key, scalarsOf(positions));
-    StreamKey  index_key;
-    index_key.kind        = StreamKind::Index;
-    index_key.components  = 1U;
-    index_key.buffer      = &model_indices;
-    index_key.revision    = 1U;
-    index_key.count       = 3U;
-    const auto index_bind = uploads.acquireIndex(index_key, indicesOf(indices));
+    const vn::test::UploadedStreams uploaded    = vn::test::uploadTriangle(uploads, scalarsOf(positions), indicesOf(indices));
+    const auto                     vertex_bind = uploaded.vertex;
+    const auto                     index_bind  = uploaded.index;
     ASSERT_NE(vertex_bind.bind, nullptr);
     ASSERT_NE(index_bind.bind, nullptr);
 

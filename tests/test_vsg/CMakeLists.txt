@@ -5,6 +5,7 @@ set(SRC_FILE_LIST
 	BackendCoreTest.cpp
 	BackendEvidenceTest.cpp
 	ContentCoreTest.cpp
+	ResourceTableTest.cpp
 	ClearPlanTest.cpp
 	FrameRecorderTest.cpp
 	FrameCompilerTest.cpp

@@ -1178,7 +1178,7 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
         ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Streams,
                                                 .live    = static_cast<std::uint32_t>(uploads.live()),
                                                 .built   = uploads.uploads(),
-                                                .retired = uploads.unused() + uploads.evictions(),
+                                                .retired = uploads.retired(),
                                                 .refused = uploads.refusals() });
         ledger.note(vn::graphics::ResidencyRow{ .kind  = vn::graphics::ResidencyKind::Images,
                                                 .live  = static_cast<std::uint32_t>(d->images->count()),
@@ -1690,12 +1690,11 @@ void VsgBackend::sweepAbandonedContent()
     // released (the sweep above) or named explicitly, never to make room. So there is no "over the bound" sentence
     // here - the host decides what to release, and count()/bytes() are what it reads to decide.
 
-    // The shared streams nothing names any more go in the same step (see api/StreamUploads): what a frame
-    // binds is stamped with it, and this is the frame's last word on streams. It runs beside the sweep above
-    // because the two answer the same question about different things - "is anything still holding this?" -
-    // and because a stream whose geometry was just released is exactly one of the entries this finds.
+    // The shared streams follow the rows the sweep just parked (see api/StreamUploads): the frame's
+    // beginFrame() retires every entry no live geometry declares any more, and this keeps the counter the
+    // report reads in step with that table.
     if (d->assembly != nullptr) {
-        d->released_streams += d->assembly->releaseUnusedStreams();
+        d->released_streams = static_cast<std::size_t>(d->assembly->uploads().retired());
     }
 }
 

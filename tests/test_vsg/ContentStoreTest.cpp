@@ -19,6 +19,7 @@
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
 #include <vine/vsg/internal/ProgramVariant.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
 
 #include "TestGeometryBuilders.hpp"
 
@@ -46,6 +47,7 @@ using vn::vsg::findProgram;
 using vn::vsg::GeometryFacts;
 using vn::vsg::MaterialFacts;
 using vn::vsg::ProgramVariant;
+using vn::vsg::StreamUploads;
 
 namespace
 {
@@ -940,4 +942,216 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
     // one the engine's generated triangle (see api/ContentSources).
     EXPECT_EQ(content.entry->shaders.vertex, std::string(kGatedVertexSource));
     EXPECT_NE(screen.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos) << "the full-screen entry's vertex stage is the engine's, not the host's";
+}
+
+namespace
+{
+
+/// @brief Binds every stream a facts row declares, the way the recorder does; answers how many were uploads.
+std::uint64_t bindStreams(StreamUploads& uploads, const vn::vsg::GeometryFacts& row)
+{
+    std::uint64_t built = 0U;
+    for (const vn::vsg::ChannelFacts& channel : row.channels) {
+        built += uploads.acquireVertex(channel.streamKey(), channel.scalars(), channel.values).action == StreamUploads::Action::Uploaded ? 1U : 0U;
+    }
+    for (const vn::vsg::PrimitiveFacts& primitive : row.primitives) {
+        if (!primitive.indices.has_value()) {
+            continue;
+        }
+        built += uploads.acquireIndex(primitive.indices->streamKey(), primitive.indices->scalars(), primitive.indices->values).action == StreamUploads::Action::Uploaded ? 1U : 0U;
+    }
+    return built;
+}
+
+} // namespace
+
+TEST(ContentStoreTest, ACulledGeometryKeepsItsUploadsForAHundredFrames)
+{
+    ContentStore store;
+    const auto   geometry = quad();
+    store.track(geometry);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto      drawing = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+    const auto      culled  = contentPlan({});
+
+    StreamUploads       uploads;
+    const ContentFacts& drawn = store.tablesFor(drawing->frame, timeline, retirement);
+    ASSERT_EQ(drawn.geometries.size(), 1U);
+    (void)uploads.beginFrame(drawn, timeline, retirement);
+    ASSERT_EQ(bindStreams(uploads, drawn.geometries.front()), 2U) << "positions + the index arena";
+
+    // CULLING: the plan names nothing, but the geometry is still tracked, so its row - the declaration - stays.
+    for (int frame = 0; frame < 100; ++frame) {
+        const ContentFacts& facts = store.tablesFor(culled->frame, timeline, retirement);
+        ASSERT_EQ(facts.geometries.size(), 1U) << "frame " << frame << ": the tracked geometry's row is still the declaration";
+        (void)uploads.beginFrame(facts, timeline, retirement);
+    }
+
+    EXPECT_EQ(uploads.uploads(), 2U) << "a hundred culled frames uploaded nothing";
+    EXPECT_EQ(uploads.live(), 2U);
+    EXPECT_EQ(uploads.retired(), 0U) << "nothing left: the geometry was only out of view";
+}
+
+TEST(ContentStoreTest, AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped)
+{
+    ContentStore store;
+    auto         geometry = quad();
+    store.track(geometry);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+
+    StreamUploads       uploads;
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(bindStreams(uploads, facts.geometries.front()), 2U);
+    ASSERT_EQ(uploads.live(), 2U);
+
+    // The host lets go of its last reference; the sweep parks the row removal (the replaced-object window).
+    geometry.reset();
+    std::vector<const void*> released_materials;
+    ASSERT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
+
+    // Inside the window the PIN is still there, because the row is parked rather than erased.
+    const ContentFacts& inside = store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(inside.geometries.size(), 1U) << "the row is parked, not erased";
+    (void)uploads.beginFrame(inside, timeline, retirement);
+    EXPECT_EQ(uploads.live(), 2U) << "inside slots + 1 frames the uploads are still declared";
+
+    // One completed frame past the window: the row is gone, so nothing declares the streams any more.
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), retirement.slots()));
+    const ContentFacts& after = store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(after.geometries.size(), 0U);
+    (void)uploads.beginFrame(after, timeline, retirement);
+    EXPECT_EQ(uploads.live(), 0U);
+    EXPECT_EQ(uploads.retired(), 2U);
+}
+
+TEST(ContentStoreTest, AStreamWhoseBufferMovedLeavesWithoutTheGeometryChanging)
+{
+    ContentStore store;
+    auto         positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F }));
+    auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(positions);
+    setPrimitiveIndices(
+        *geometry,
+        0U,
+        vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+    geometry->setRevision(1U);
+    store.track(geometry);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+
+    StreamUploads       uploads;
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(bindStreams(uploads, facts.geometries.front()), 2U);
+    const std::uint64_t builds_before = store.builds();
+
+    // The host refilled the positions buffer and announced it ON THE BUFFER; the geometry did not move.
+    positions->setRevision(positions->revision() + 1U);
+    const ContentFacts& moved = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_EQ(store.builds(), builds_before) << "a buffer announcement does not rebuild the geometry's row";
+    (void)uploads.beginFrame(moved, timeline, retirement);
+
+    EXPECT_EQ(uploads.live(), 1U) << "the positions entry's key moved; the index entry is untouched";
+    EXPECT_EQ(uploads.retired(), 1U) << "the previous revision's upload is not what these bytes are";
+
+    const vn::vsg::ChannelFacts& positions_channel = moved.geometries.front().channels.front();
+    const auto                   again             = uploads.acquireVertex(positions_channel.streamKey(), positions_channel.scalars(), positions_channel.values);
+    EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "the new bytes were never uploaded under this key";
+    EXPECT_EQ(uploads.uploads(), 3U);
+}
+
+TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWindow)
+{
+    ContentStore store;
+    auto         positions = vn::intrusive_ptr<vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -1.0F, -1.0F, 0.0F, 1.0F, -1.0F, 0.0F, 1.0F, 1.0F, 0.0F, -1.0F, 1.0F, 0.0F }));
+    const auto make = [&positions]() {
+        auto geometry = vn::intrusive_ptr<Geometry>(new Geometry());
+        geometry->setPositions(positions);
+        setPrimitiveIndices(
+            *geometry,
+            0U,
+            vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U, 0U, 2U, 3U })));
+        geometry->setRevision(1U);
+        return geometry;
+    };
+    auto left  = make();
+    auto right = make();
+    store.track(left);
+    store.track(right);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto      plan = contentPlan({ command(left.get(), left->revision(), nullptr, nullptr), command(right.get(), right->revision(), nullptr, nullptr) });
+
+    const ContentFacts& both = store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(both.geometries.size(), 2U);
+    const void* buffer = both.geometries.front().channels.front().values.get();
+    ASSERT_NE(buffer, nullptr);
+    EXPECT_TRUE(both.declarations.declaresBuffer(buffer)) << "both rows declare the shared arena";
+    EXPECT_FALSE(both.declarations.declaresBuffer(nullptr));
+
+    // One geometry goes: the OTHER row still declares the buffer, so the index keeps it (the refcount, not a bit).
+    left.reset();
+    std::vector<const void*> released_materials;
+    ASSERT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
+    EXPECT_TRUE(store.tablesFor(plan->frame, timeline, retirement).declarations.declaresBuffer(buffer))
+        << "a shared buffer is declared while ANY row still names it";
+
+    // The last declarer goes too; the parked row keeps the declaration for the window, then it is gone.
+    right.reset();
+    ASSERT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
+    EXPECT_TRUE(store.tablesFor(plan->frame, timeline, retirement).declarations.declaresBuffer(buffer)) << "the row is parked, not erased";
+
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), retirement.slots()));
+    EXPECT_FALSE(store.tablesFor(plan->frame, timeline, retirement).declarations.declaresBuffer(buffer))
+        << "with the last row erased, nothing declares the bytes any more";
+}
+
+TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision)
+{
+    ContentStore store;
+    auto         instances = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(16U, 0.0F)));
+    auto         geometry  = quad();
+    ASSERT_TRUE(geometry->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(instances)));
+    EXPECT_EQ(geometry->revision(), 1U) << "the instance setter does not describe the change; the host reports it";
+    store.track(geometry);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    ASSERT_EQ(facts.geometries.size(), 1U);
+    const vn::vsg::GeometryFacts& row = facts.geometries.front();
+    ASSERT_EQ(row.primitives.size(), 1U);
+    EXPECT_EQ(row.primitives.front().instances.get(), instances.get()) << "the row carries the draw's instance stream";
+    EXPECT_TRUE(facts.declarations.declaresBuffer(instances.get())) << "and the declaration is read from that handle";
+
+    // Swapping the slice WITHOUT reporting a new description: the row is the snapshot the live revision answered
+    // with, so it still describes - and declares - the stream the draw used before (see the pitfall in the design doc).
+    auto replacement = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(16U, 1.0F)));
+    ASSERT_TRUE(geometry->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(replacement)));
+    const ContentFacts& unreported = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_TRUE(unreported.declarations.declaresBuffer(instances.get())) << "the row still describes the stream it was built from";
+    EXPECT_FALSE(unreported.declarations.declaresBuffer(replacement.get())) << "the swapped-in stream is not declared until the description moves";
+
+    // The host reports the new description (the SDK's contract, see Geometry::setInstanceTransforms): the live
+    // revision declares what it draws, and the superseded row keeps declaring the old stream until its park comes due.
+    geometry->bumpRevision();
+    const ContentFacts& reported = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_TRUE(reported.declarations.declaresBuffer(replacement.get())) << "the live revision declares what it draws";
+    EXPECT_TRUE(reported.declarations.declaresBuffer(instances.get())) << "the superseded row is still answerable, so its stream stays declared";
+
+    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), retirement.slots()));
+    const ContentFacts& pruned = store.tablesFor(plan->frame, timeline, retirement);
+    EXPECT_TRUE(pruned.declarations.declaresBuffer(replacement.get()));
+    EXPECT_FALSE(pruned.declarations.declaresBuffer(instances.get())) << "with the old row erased, nothing declares the old stream";
 }

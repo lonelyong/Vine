@@ -1,6 +1,6 @@
 # ADR-2026-11-10：GPU 驻留按内容对象钉住（pin），按"谁活着"回收
 
-- 状态：已采纳（第一步落地，其余按 §迁移 推进）
+- 状态：已采纳（第一、二步落地，其余按 §迁移 推进）
 - 日期：2026-11-10
 - 相关：`../design/graphics-content-lifecycle.md`、`../design/vsg-backend.md` §2.10、`../backlog/graphics.md`
   `src/viz/graphics/src/Scene.cpp`、`src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`、
@@ -84,12 +84,114 @@
 1. **词汇 + 账本**（已落地）：`vn::graphics::ResidencyLedger` / `ResidencyRow` / `ResidencyKind`（`graphics/` 半，
    Vulkan-free），`RetentionStats::residency` 暴露；`gfx_backend_vsg` 把流 / 图像 / 材质块三张表接进去。
    无行为变化。
-2. **流**迁入 pin 模型：`StreamKey` 表泛化到 `backend/ResourceTable<K, V>`，pin = geometry@rev，删窗口。
+2. **流**迁入 pin 模型：`StreamKey` 表泛化到 `backend/ResourceTable<K, V>`，pin = 活几何行声明的
+   （buffer 地址, 该 buffer 此刻的 revision），删窗口。
    验收：裁剪 100 帧零重传；离树后 `slots + 1` 帧内离场。
 3. **纹理**迁入：删 `MaterialImages::releaseAbandoned`，pin = texture@rev。
 4. **材质块**迁入：builder 写 arena、destroyer 放槽；删 `ContentStore` 三个释放循环 → 一个 `retireOwner`。
 5. **半片 + 描述符集**迁入：删 `answerable` 与 `ContentSets::sweep`，pin = program@rev（+ 描述符集另加
    5 个贴图 pin）。删掉的是两份 O(n × m) 扫描。
+
+### 迁移 2 的设计：流 → pin（`backend/ResourceTable<K, V>`）
+
+#### 为什么先有表，而不是就地改 `StreamUploads`
+
+流、纹理、材质块、半片、描述符集要的是**同一条规则**（值按键构建、被活内容钉住、没人钉住就停车），
+差别只在键与值（`G1`、`G6`）。把它写成一张表，`StreamUploads` 就只剩"什么算一条流、一次上传要建哪些对象"；
+后面的四步不再各自重写一遍"表 + 停车 + 代次"，也不会各自长出一套寿命判据（`G5`：变化留在模块里）。
+
+#### 接口（`src/viz/graphics/sdk/vine/graphics/backend/ResourceTable.hpp`，Vulkan-free）
+
+```cpp
+template <class Key, class Value, class Hash = std::hash<Key>>
+class ResourceTable {
+  public:
+    struct Acquired {
+        Value*        value{ nullptr }; // 命中或刚构建的值；留在表里的期间可读（unordered_map 引用稳定）
+        std::uint64_t generation{ 0 };  // 这一个"值"的代次（见下）
+        bool          built{ false };   // true = 本次调用建的值
+    };
+
+    template <class Build>              // Build() -> std::optional<Value>；空 = 拒绝，表不变
+    [[nodiscard]] Acquired acquire(const Key& key, Build&& build);
+
+    template <class Live>               // Live(const Key&) -> bool
+    std::size_t retireUnpinned(Live&& is_live, FrameTimeline&, RetirementQueue&);
+
+    [[nodiscard]] std::size_t   live() const noexcept;
+    [[nodiscard]] std::uint64_t builds() const noexcept;
+    [[nodiscard]] std::size_t   retired() const noexcept;  // 累计离场（本代已停车）
+    [[nodiscard]] std::size_t   retained() const noexcept; // 停不上车而留下的次数
+    void clear();
+};
+```
+
+- **没有容量、没有时间戳、没有 `last_frame`**：寿命唯一地由 `is_live` 决定。`acquire` 命中不碰 builder
+  （稳态一帧零构建）；未命中的 builder 在表外构造，成功才移动进表，拒绝（派生通道、非规范 location 等）
+  不改变表。
+- **`retireUnpinned`**：对每个 `is_live(key) == false` 的条目，把值移进停车 lambda、从表里删掉、`retired++`；
+  `RetirementQueue::retire` 拒绝（还没学到在飞槽数）⇒ **留下**并计 `retained`，下一帧再试。绝不提前删
+  （与 `ContentStore` 的 `retained` 同一条纪律）。
+- **`Value` 必须可拷贝**：停车用的 `ReleaseFn` 是 `std::function`，它要求可调用体可拷贝；`vsg::ref_ptr`
+  与 `intrusive_ptr` 满足这一条，而"值"正是它们的组合。
+
+#### `generation`：同键多代
+
+`generation` 是**一个已构建值**的表内编号（单调、不回收），`acquire` 的调用方和表自己的日志都能拿它认人。
+同一个键可以在旧值**还在停车窗口里**时重新构建：旧代次随它捕获的值停在 `RetirementQueue` 里，新代次从下一个
+编号开始服务查找。所以"同键多代共存"不是表里有两份条目，而是**表里一份 + 队列里 N 份**；编号让任何迟缓的
+记账（测试、日志、下一层可能持有的旧句柄）能认出自己手里的是哪一代，而不会把新值当成旧的——与
+`ProgramFacts::generation` 是同一个想法低一层。
+
+步骤 2 里流的键已含 buffer revision，正常路径不会重建同键；这一条是给步骤 4（材质块按键身份、revision 另计）
+和步骤 5（半片按 program@rev）留的同一个抽屉（`G9`），今天由 `ResourceTableTest` 的计数型 `Value` 钉住。
+
+#### live-pin 的枚举点：内容层发布，条目自答
+
+**先把成本定死**：驻留账每帧只能走 O(#驻留条目)，不能走 O(活内容)。pin 模型让裁剪不释放，于是"被裁剪的
+几何行"会一直留在表里——若每帧去扫这些行，一个什么都没画的帧反而最贵。这正是第一版的缺陷（按代码结构推算，
+10 万几何 × 4 条声明 ≈ 每帧几十万次哈希/解引用，且与画面无关）。所以 v2 把 pin 拆成两半，各用一个 O(1) 事实：
+
+- **地址那一半由内容层发布**：`ContentStore` 的几何表包装（`GeometryTable`）在行 `append` / `eraseIf` /
+  `clear` 的**同一个方法里**维护一个 `地址 → 声明计数` 索引（共享 arena 被多个通道 / 多行声明时按引用计数，
+  最后一个声明走掉地址才离开），`ContentFacts::declarations`（`ContentDeclarations`）只借用它。
+  裁剪不删行 ⇒ 计数不变 ⇒ 一个 `declaresBuffer()` 就答完。
+- **revision 那一半由条目自答**：条目持有它上传时用的 buffer 句柄，`key.revision == owner->revision()`
+  是一次比较。buffer `edit()` 换代不碰任何行，旧条目自己就知道该走。
+- 于是 `StreamUploads::beginFrame(const ContentFacts&, timeline, retirement)` 每帧只遍历自己的两张表；
+  内容变化帧的额外成本是行变更本身（本来就是 O(delta)）加一次索引借用，不是每帧重扫。
+- `PrimitiveFacts::instances` 保留：实例 buffer 是图元声明的字节，索引在行建好时把它计入——所以实例化
+  draw 被裁剪也不会丢实例上传。
+- **owner 必填**：没有句柄的"借用身份"没有任何东西能保留地址（旧实现用快照兜底，等于把一条静默错图留给
+  落在同址的新 buffer）。现在 `acquire*` 直接 `Refused`；生产录制路径本来就总是带句柄，测试夹具改成构造
+  真实 `vn::Buffer`（`tests/test_vsg/TestStreamUploads.hpp`），与生产同形。
+
+#### `StreamUploads` 的 builder / destroyer 形状
+
+- **builder**：`acquireVertex` / `acquireIndex` 的未命中分支原样搬进 `ResourceTable::acquire` 的 builder lambda
+  （零拷贝别名或快照 + 一个 `Bind*Buffers`）；返回值从 "Action + ref_ptr" 变成 "Action + 表给出的 Value*"，
+  `ref_ptr` 由调用方拷一份。条目仍持有 buffer 句柄（地址在键可查期间不被回收，见
+  `graphics-content-lifecycle.md` 2.6）。
+- **destroyer**：没有独立函数。`retireUnpinned` 把整个 `Value`（bind + owner 句柄）移进停车 lambda，
+  停车到期时 lambda 析构 = 释放 bind 与句柄。因此"条目离场"（现在）与"对象销毁"（窗口到期）仍然分开，
+  与 `ContentStore` 的停车同一把尺子。
+- **删除**：`beginFrame(frame, grace)`、`releaseUnseen()`、`evictions()`、`unused()`、容量构造参数；
+  `core::SharedStreams` 整个类（`backend/Streams.hpp` 只留 `StreamKey` / `StreamKeyHash`）。
+  腾出的名字按新口径：
+  - `beginFrame(facts, timeline, retirement)` 返回本帧离场数（读的是 `facts.declarations`）；
+  - `retired()` 取代 `unused() + evictions()` 喂 `ResidencyLedger::Streams.retired`；
+  - `uploads()` / `aliases()` / `refusals()` 不变（`aliases` 由适配层数，因为表只数构建）。
+
+#### 验收怎么落到用例
+
+| 判据 | 用例 |
+|---|---|
+| 裁剪 100 帧 `uploads()` 不涨 | `ContentStoreTest.ACulledGeometryKeepsItsUploadsForAHundredFrames`（同一份事实跑 100 帧，零构建；条目数不变） |
+| 离树后 `slots + 1` 帧内 `live()` 下降 | `ContentStoreTest.AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped`（`releaseAbandoned` 停车 → 行删 → 声明消失 → 条目离场） |
+| 同 buffer 两几何共享一条上传，走掉一个不影响 | `StreamUploadsTest.TwoGeometriesOfOneBufferShareOneUploadUntilBothLeave`（声明计数合并） |
+| revision 前进旧条目离场 | `ContentStoreTest.AStreamWhoseBufferMovedLeavesWithoutTheGeometryChanging` + `StreamUploadsTest.ABufferRevisionThatMovedRetiresTheEntryTheContentStillDeclares`（条目读自己的句柄） |
+| 声明索引随行变更、共享 buffer 的计数、以及停车窗口 | `ContentStoreTest.TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWindow` |
+| 表自己的契约（同位命中 / 拒绝不改表 / 停车 / 保留 / 代次） | `ResourceTableTest`（计数型 `Value`：旧值在停车窗口里仍活着，新值另起一代） |
 
 每步之后跑：`check_ai_docs.py --strict`、`check_design_docs.py`、`check_doc_symbols.py`、
 `check_include_hygiene.py`、`check_export_annotations.py`、`check_public_docs.py`、
@@ -101,7 +203,9 @@
 1. 半片的 pin 是否只看 program@rev（会累积）还是另加"layout 仍被活几何需要"（回到一份扫描）。**倾向后者只
    在实测显示累积不可忽略时才加**。
 2. 是否给 `RefCounted` 加 weak 支持：**不做**。pin 集合由事实表枚举，不需要"对象已死"的通知。
-3. `Buffer` 不在事实表里：流的 pin 用**几何@rev**（几何声明了它的字节），共享 buffer 的自然由多个几何共同钉住。
+3. `Buffer` 仍然不在事实表里，但它不需要“成为身份”：流的 pin 从**几何行的 buffer 句柄**上读
+   （地址 + 此刻的 `revision()`），所以几何声明字节、buffer 宣告换代，两件事各自生效；共享 buffer 的条目
+   自然由多个几何行共同钉住。
 
 ## 后果
 
@@ -109,4 +213,4 @@
 - `G7`：宿主的接口不变（`releaseContent` + 现有报告），复杂度收进后端。
 - `G10`：删掉每 pass 的反事实扫描；代价是显存，写清楚并计量。
 - `G13`：内容类型不新增 GPU 概念；pin 由后端从身份派生。
-- 被取代：`Streams.hpp` 的读者计数论证仍成立（判的是**持有量/身份**，不是"谁读过"），但时间窗部分退役。
+- 被取代：`Streams.hpp` 的读者计数与时间窗都退役（`SharedStreams` 整个类删除）；`StreamKey` 作为身份不变。

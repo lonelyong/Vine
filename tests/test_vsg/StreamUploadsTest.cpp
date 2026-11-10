@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 #include <vsg/commands/BindIndexBuffer.h>
@@ -27,21 +28,25 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
 
+using vn::graphics::backend::FrameTimeline;
+using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::StreamKey;
 using vn::graphics::backend::StreamKind;
+using vn::vsg::ContentDeclarations;
+using vn::vsg::ContentFacts;
 using vn::vsg::StreamUploads;
 
 namespace
 {
 
-int model_buffer_a = 0;
-int model_buffer_b = 0;
-
-/// @brief A canonical vertex stream: positions at their shader location, read from a stand-in model buffer.
+/// @brief A canonical vertex stream: positions at their shader location, read from a model buffer.
 StreamKey vertexKey(const void* buffer, std::uint64_t revision, std::uint64_t offset, std::uint64_t count)
 {
     StreamKey key;
@@ -69,39 +74,46 @@ StreamKey indexKey(const void* buffer, std::uint64_t revision, std::uint64_t fir
     return key;
 }
 
-/// @brief An array that stands in for the model's own bytes (what the caller would bind anyway).
-::vsg::ref_ptr<::vsg::floatArray> floats(std::size_t count)
-{
-    return ::vsg::floatArray::create(count);
-}
+/// @brief What the content store publishes: the buffers its live rows declare (and nothing else).
+///
+/// The store keeps this index beside its rows (see ContentDeclarations), so a test only has to say which
+/// addresses are declared and hand the facts over.
+class Declarations {
+  public:
+    void add(const void* buffer)
+    {
+        ++buffers_[buffer];
+    }
 
-/// @brief An index array that stands in for the model's own indices.
-::vsg::ref_ptr<::vsg::uintArray> indices(std::size_t count)
-{
-    return ::vsg::uintArray::create(count);
-}
+    void remove(const void* buffer)
+    {
+        const auto found = buffers_.find(buffer);
+        if (found != buffers_.end() && --found->second == 0U) {
+            buffers_.erase(found);
+        }
+    }
 
-/// @brief The scalars of @p array, as the upload layer takes them (a view; the bytes are read on a miss).
-inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::floatArray>& array) noexcept
-{
-    return ::vsg::ref_ptr<::vsg::floatArray>(array) == nullptr ? std::span<const float>{} : std::span<const float>(array->data(), array->size());
-}
+    [[nodiscard]] ContentFacts facts() const
+    {
+        ContentFacts out;
+        out.declarations = ContentDeclarations{ &buffers_ };
+        return out;
+    }
 
-/// @brief The indices of @p array, as the upload layer takes them.
-inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>& array) noexcept
-{
-    return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
-}
+  private:
+    std::unordered_map<const void*, std::uint32_t> buffers_;
+};
 
 } // namespace
 
 TEST(StreamUploadsTest, TheSecondDrawableOfOneStreamAliasesTheUpload)
 {
-    StreamUploads   store;
-    const StreamKey key = vertexKey(&model_buffer_a, 1, 0, 36);
+    StreamUploads store;
+    auto          buffer = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
+    const StreamKey key  = vertexKey(buffer.get(), buffer->revision(), 0, 36);
 
-    const auto first  = store.acquireVertex(key, scalarsOf(floats(36)));
-    const auto second = store.acquireVertex(key, scalarsOf(floats(36)));
+    const auto first  = store.acquireVertex(key, buffer->view(), buffer);
+    const auto second = store.acquireVertex(key, buffer->view(), buffer);
 
     EXPECT_EQ(first.action, StreamUploads::Action::Uploaded);
     EXPECT_EQ(second.action, StreamUploads::Action::Aliased) << "the same stream is one bind, and therefore one device buffer and one upload";
@@ -110,19 +122,20 @@ TEST(StreamUploadsTest, TheSecondDrawableOfOneStreamAliasesTheUpload)
     EXPECT_EQ(store.uploads(), 1U);
     EXPECT_EQ(store.aliases(), 1U);
     EXPECT_EQ(store.live(), 1U);
-    EXPECT_EQ(store.objects(), 1U);
-    EXPECT_TRUE(store.agreesWithRegistry());
 }
 
 TEST(StreamUploadsTest, ASliceThatMovedIsANewUpload)
 {
-    StreamUploads   store;
-    const StreamKey first = vertexKey(&model_buffer_a, 1, 0, 12);
-    const StreamKey next  = vertexKey(&model_buffer_a, 1, 12, 12);
+    StreamUploads store;
+    // One arena; two geometries keep different halves of it, as GeometryFacts hands the slices over.
+    auto            arena = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(24U, 0.0F)));
+    const StreamKey first = vertexKey(arena.get(), arena->revision(), 0, 12);
+    const StreamKey next  = vertexKey(arena.get(), arena->revision(), 12, 12);
 
-    const auto a = store.acquireVertex(first, scalarsOf(floats(12)));
-    const auto b = store.acquireVertex(next, scalarsOf(floats(12)));
+    const auto a = store.acquireVertex(first, arena->view().subspan(0U, 12U), arena);
+    const auto b = store.acquireVertex(next, arena->view().subspan(12U, 12U), arena);
 
+    EXPECT_EQ(a.action, StreamUploads::Action::Uploaded);
     EXPECT_EQ(b.action, StreamUploads::Action::Uploaded) << "the next geometry in the arena reads other bytes";
     EXPECT_NE(a.bind, b.bind);
     EXPECT_EQ(store.uploads(), 2U);
@@ -131,74 +144,97 @@ TEST(StreamUploadsTest, ASliceThatMovedIsANewUpload)
 TEST(StreamUploadsTest, ARefilledBufferIsANewUpload)
 {
     StreamUploads store;
-    const auto    first  = store.acquireVertex(vertexKey(&model_buffer_a, 1, 0, 36), scalarsOf(floats(36)));
-    const auto    filled = store.acquireVertex(vertexKey(&model_buffer_a, 2, 0, 36), scalarsOf(floats(36)));
+    auto          buffer = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
+    const auto    first  = store.acquireVertex(vertexKey(buffer.get(), buffer->revision(), 0, 36), buffer->view(), buffer);
+
+    buffer->setRevision(buffer->revision() + 1U);
+    const auto filled = store.acquireVertex(vertexKey(buffer.get(), buffer->revision(), 0, 36), buffer->view(), buffer);
 
     EXPECT_EQ(filled.action, StreamUploads::Action::Uploaded) << "the revision moved: serving the old bind would draw the previous bytes";
     EXPECT_NE(first.bind, filled.bind);
+}
+
+TEST(StreamUploadsTest, AStreamWithoutItsBufferHandleIsRefused)
+{
+    StreamUploads store;
+    auto          buffer = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
+
+    // A borrowed identity has nothing that reserves the address its key names; a snapshot served to whoever lands
+    // there next is exactly the silent-wrong-picture case the entry's hold exists to prevent.
+    const auto refused = store.acquireVertex(vertexKey(buffer.get(), buffer->revision(), 0, 36), buffer->view());
+
+    EXPECT_EQ(refused.action, StreamUploads::Action::Refused);
+    EXPECT_EQ(refused.bind, nullptr);
+    EXPECT_EQ(store.refusals(), 1U);
+    EXPECT_EQ(store.live(), 0U) << "a refusal changes no state: the caller builds its own bind";
 }
 
 TEST(StreamUploadsTest, TheIndexBindAliasesTheWholeBufferSoTwoSpansShareIt)
 {
     StreamUploads store;
     // Two geometries slicing ONE index arena: same buffer, same revision, different spans.
-    const StreamKey first  = indexKey(&model_buffer_b, 4, 0, 36);
-    const StreamKey second = indexKey(&model_buffer_b, 4, 36, 12);
+    auto            arena = vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>(48U, 1U)));
+    const StreamKey first  = indexKey(arena.get(), arena->revision(), 0, 36);
+    const StreamKey second = indexKey(arena.get(), arena->revision(), 36, 12);
 
-    const auto a = store.acquireIndex(first, indicesOf(indices(48)));
-    const auto b = store.acquireIndex(second, indicesOf(indices(48)));
+    const auto a = store.acquireIndex(first, arena->view(), arena);
+    const auto b = store.acquireIndex(second, arena->view(), arena);
 
     EXPECT_EQ(a.action, StreamUploads::Action::Uploaded);
     EXPECT_EQ(b.action, StreamUploads::Action::Aliased) << "the bind covers the whole buffer and the DRAW states the span, so both read one upload";
     EXPECT_EQ(a.bind, b.bind);
     EXPECT_EQ(store.uploads(), 1U);
+    EXPECT_EQ(store.live(), 1U) << "the bind covers the whole buffer, so both spans are ONE entry";
 }
 
-TEST(StreamUploadsTest, TheIndexEntryLeavesUnderTheSameNormalisedKeyTheAcquireUsed)
+TEST(StreamUploadsTest, AnIndexEntryLeavesWhenItsBufferIsNoLongerDeclared)
 {
-    StreamUploads   store;
-    const StreamKey first  = indexKey(&model_buffer_b, 4, 0, 36);
-    const StreamKey second = indexKey(&model_buffer_b, 4, 36, 12);
+    StreamUploads store;
+    auto          arena = vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>(48U, 1U)));
+    const StreamKey key  = indexKey(arena.get(), arena->revision(), 0, 36);
 
-    store.beginFrame(1U, 1U);
-    (void)store.acquireIndex(first, indicesOf(indices(48)));
-    (void)store.acquireIndex(second, indicesOf(indices(48)));
-    EXPECT_EQ(store.live(), 1U) << "the bind covers the whole buffer, so both spans are ONE entry";
+    (void)store.acquireIndex(key, arena->view(), arena);
 
-    // The sweep looks an entry up by the identity the acquire stored, so the DRAW's span (which is not part of
-    // that identity) cannot leave anything behind: the bind goes with the entry, under the whole-buffer key.
-    store.beginFrame(9U, 1U);
-    EXPECT_EQ(store.releaseUnseen(), 1U);
+    // One live row declares the index buffer.
+    Declarations declared;
+    declared.add(arena.get());
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 0U);
+
+    // The row goes (its geometry left the tree): nothing declares the buffer any more.
+    declared.remove(arena.get());
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 1U);
     EXPECT_EQ(store.live(), 0U);
-    EXPECT_EQ(store.objects(), 0U);
-    EXPECT_TRUE(store.agreesWithRegistry());
+    EXPECT_EQ(store.retired(), 1U);
 
-    const auto again = store.acquireIndex(first, indicesOf(indices(48)));
-    EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "nothing holds those bytes any more";
+    const auto again = store.acquireIndex(key, arena->view(), arena);
+    EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "nothing declares those bytes any more";
     EXPECT_EQ(store.uploads(), 2U);
 }
 
 TEST(StreamUploadsTest, ADerivedChannelIsRefusedAndCounted)
 {
     StreamUploads store;
+    auto          buffer  = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
     StreamKey     derived = vertexKey(nullptr, 0, 0, 36); // what the builder makes for a geometry that authors none
 
-    const auto refused = store.acquireVertex(derived, scalarsOf(floats(36)));
+    const auto refused = store.acquireVertex(derived, buffer->view(), buffer);
 
     EXPECT_EQ(refused.action, StreamUploads::Action::Refused);
     EXPECT_EQ(refused.bind, nullptr);
     EXPECT_EQ(store.refusals(), 1U);
     EXPECT_EQ(store.live(), 0U) << "a refusal changes no state: the caller builds its own bind";
-    EXPECT_TRUE(store.agreesWithRegistry());
 }
 
 TEST(StreamUploadsTest, ACustomChannelIsRefusedBecauseItsBindIsTheWholeLayout)
 {
     StreamUploads store;
-    StreamKey     custom = vertexKey(&model_buffer_a, 1, 0, 36);
+    auto          buffer = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
+    StreamKey     custom = vertexKey(buffer.get(), buffer->revision(), 0, 36);
     custom.location      = 5; // a forwarded custom channel (>= 3, never the reserved texcoord slot)
 
-    const auto refused = store.acquireVertex(custom, scalarsOf(floats(36)));
+    const auto refused = store.acquireVertex(custom, buffer->view(), buffer);
 
     EXPECT_EQ(refused.action, StreamUploads::Action::Refused) << "the custom channels share one command whose identity is the whole layout";
     EXPECT_EQ(store.refusals(), 1U);
@@ -216,56 +252,97 @@ TEST(StreamUploadsTest, TheCanonicalBindingMappingIsThisStoreSpelling)
     EXPECT_EQ(StreamUploads::bindingOfCanonical(5U), StreamUploads::kNoBinding) << "a custom channel has none";
 }
 
-TEST(StreamUploadsTest, AStreamNoFrameNamesAnyMoreDropsItsBindAndTheNextAcquireUploadsAgain)
+TEST(StreamUploadsTest, ACulledStreamIsNeverReleasedOrReUploaded)
 {
-    StreamUploads   store;
-    const StreamKey key = vertexKey(&model_buffer_a, 7, 0, 36);
+    StreamUploads store;
+    auto          arena = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
+    const StreamKey key  = vertexKey(arena.get(), arena->revision(), 0, 36);
 
-    // Two frames name it (the second one aliases), and then nothing does.
-    store.beginFrame(1U, 1U);
-    (void)store.acquireVertex(key, scalarsOf(floats(36)));
-    store.beginFrame(2U, 1U);
-    (void)store.acquireVertex(key, scalarsOf(floats(36)));
+    Declarations declared;
+    declared.add(arena.get());
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 0U);
+    (void)store.acquireVertex(key, arena->view(), arena);
     EXPECT_EQ(store.live(), 1U);
 
-    store.beginFrame(3U, 1U);
-    EXPECT_EQ(store.releaseUnseen(), 0U) << "named one frame ago: inside the window";
-    EXPECT_EQ(store.live(), 1U);
+    // CULLING IS NOT LEAVING: the declaration stays for the whole stretch, so nothing leaves and nothing re-uploads.
+    for (int frame = 0; frame < 100; ++frame) {
+        EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 0U) << "frame " << frame;
+    }
+    EXPECT_EQ(store.live(), 1U) << "the content still declares it, however long it is out of view";
+    EXPECT_EQ(store.uploads(), 1U) << "and its upload was never thrown away";
 
-    store.beginFrame(4U, 1U);
-    EXPECT_EQ(store.releaseUnseen(), 1U) << "a frame past the window and no frame has named it";
-    EXPECT_EQ(store.unused(), 1U);
-    EXPECT_EQ(store.live(), 0U);
-    EXPECT_EQ(store.objects(), 0U) << "the bind went with the entry";
+    // LEAVING is the declaration going away: the entry is parked and the lookup stops answering.
+    declared.remove(arena.get());
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 1U);
+    EXPECT_EQ(store.live(), 0U) << "the bind left the table (and is parked, see AnEntryHoldsTheBufferItsKeyNames)";
+    EXPECT_EQ(store.retired(), 1U);
 
-    const auto again = store.acquireVertex(key, scalarsOf(floats(36)));
-    EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "the bytes are uploaded again";
+    const auto again = store.acquireVertex(key, arena->view(), arena);
+    EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "nothing declares those bytes any more";
     EXPECT_EQ(store.uploads(), 2U);
-    EXPECT_TRUE(store.agreesWithRegistry());
 }
 
-TEST(StreamUploadsTest, ACapacityEvictionDropsTheBindAndTheTwoMapsStayInStep)
+TEST(StreamUploadsTest, TwoGeometriesOfOneBufferShareOneUploadUntilBothLeave)
 {
-    StreamUploads   store(2);
-    const StreamKey first  = vertexKey(&model_buffer_a, 1, 0, 12);
-    const StreamKey second = vertexKey(&model_buffer_a, 1, 12, 12);
-    const StreamKey third  = vertexKey(&model_buffer_a, 1, 24, 12);
+    StreamUploads store;
+    auto          arena = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
+    const StreamKey key  = vertexKey(arena.get(), arena->revision(), 0, 36);
 
-    store.beginFrame(1U, 1U);
-    (void)store.acquireVertex(first, scalarsOf(floats(12)));
-    (void)store.acquireVertex(second, scalarsOf(floats(12)));
-    const auto evicting = store.acquireVertex(third, scalarsOf(floats(12)));
+    const auto first  = store.acquireVertex(key, arena->view(), arena);
+    const auto second = store.acquireVertex(key, arena->view(), arena);
+    EXPECT_EQ(first.action, StreamUploads::Action::Uploaded);
+    EXPECT_EQ(second.action, StreamUploads::Action::Aliased);
+    EXPECT_EQ(store.uploads(), 1U) << "one buffer, one upload, however many geometries read it";
 
-    EXPECT_EQ(evicting.action, StreamUploads::Action::Uploaded);
-    EXPECT_EQ(store.evictions(), 1U);
-    EXPECT_EQ(store.live(), 2U);
-    EXPECT_EQ(store.objects(), 2U) << "the evicted entry's bind went with it";
-    EXPECT_TRUE(store.agreesWithRegistry());
+    // Two rows declare the buffer: the declaration index counts them (see GeometryTable).
+    Declarations declared;
+    declared.add(arena.get());
+    declared.add(arena.get());
 
-    const auto again = store.acquireVertex(first, scalarsOf(floats(12)));
-    EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "its lookup left the map";
-    EXPECT_EQ(store.objects(), 2U) << "the store still holds one bind per entry";
-    EXPECT_TRUE(store.agreesWithRegistry());
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 0U);
+
+    // One geometry leaves: the other still declares the bytes, so the shared upload stays.
+    declared.remove(arena.get());
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 0U);
+    EXPECT_EQ(store.live(), 1U) << "a shared upload leaves only when the LAST declarer has";
+
+    // Both gone: the entry goes.
+    declared.remove(arena.get());
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 1U);
+    EXPECT_EQ(store.live(), 0U);
+}
+
+TEST(StreamUploadsTest, ABufferRevisionThatMovedRetiresTheEntryTheContentStillDeclares)
+{
+    StreamUploads store;
+    auto          arena = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
+    const StreamKey before = vertexKey(arena.get(), arena->revision(), 0, 36);
+
+    Declarations declared;
+    declared.add(arena.get());
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    (void)store.acquireVertex(before, arena->view(), arena);
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 0U);
+    EXPECT_EQ(store.live(), 1U);
+
+    // The host refilled the buffer and said so ON THE BUFFER: no row moved, and the entry still knows.
+    arena->setRevision(arena->revision() + 1U);
+    EXPECT_EQ(store.beginFrame(declared.facts(), timeline, retirement), 1U)
+        << "the entry compares its own handle's revision: the old upload is not what these bytes are";
+    EXPECT_EQ(store.live(), 0U);
+
+    const StreamKey after = vertexKey(arena.get(), arena->revision(), 0, 36);
+    const auto      again = store.acquireVertex(after, arena->view(), arena);
+    EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "the new bytes were never uploaded under this key";
+    EXPECT_EQ(store.uploads(), 2U);
 }
 
 // 键里的 buffer 是**地址**：一个没人持有的 buffer 会把地址交还给分配器，而新建的 buffer 全是同一个 revision，
@@ -274,7 +351,6 @@ TEST(StreamUploadsTest, ACapacityEvictionDropsTheBindAndTheTwoMapsStayInStep)
 TEST(StreamUploadsTest, AnEntryHoldsTheBufferItsKeyNames)
 {
     StreamUploads store;
-    store.beginFrame(1U, 1U);
 
     auto            buffer = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36, 0.0F)));
     const StreamKey key    = vertexKey(buffer.get(), buffer->revision(), 0, 36);
@@ -292,12 +368,18 @@ TEST(StreamUploadsTest, AnEntryHoldsTheBufferItsKeyNames)
     const auto later = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36, 0.0F)));
     EXPECT_NE(later.get(), watcher.get());
 
-    // The sweep lets the entry - and with it the reservation - go.
-    store.beginFrame(4U, 1U);
-    EXPECT_EQ(store.releaseUnseen(), 1U);
-    EXPECT_EQ(store.objects(), 0U) << "the bind went with the entry";
-    EXPECT_EQ(watcher->useCount(), 2U) << "the entry released its share; the bind still in hand is what holds the bytes, "
-                                         "which is the file note's \"a dropped entry never frees bytes a frame may still read\"";
+    // A frame that declares nothing parks the entry: the LOOKUP goes now, the objects when the parking window is
+    // past (a submitted frame may still bind them).
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    EXPECT_EQ(store.beginFrame(ContentFacts{}, timeline, retirement), 1U);
+    EXPECT_EQ(store.live(), 0U) << "the bind left the table";
+    EXPECT_EQ(watcher->useCount(), 3U) << "but it is PARKED, not destroyed: the queue holds the bind and its owner";
+
+    timeline.completeUpTo(FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    retirement.advance(timeline);
+    EXPECT_EQ(watcher->useCount(), 2U) << "the park came due; the bind still in hand is what holds the bytes, "
+                                          "which is the file note's \"a dropped entry never frees bytes a frame may still read\"";
 }
 
 TEST(StreamUploadsTest, TheUploadedVertexArrayAliasesTheModelsOwnBytes)

@@ -34,8 +34,12 @@
 2.2 **释放 GPU 驻留，不释放对象**：`releaseContent()` 之后对象仍可用，下一次使用重建驻留。
 2.3 **显式管理**：没有 LRU、没有字节上限、没有压力淘汰；释放由宿主说。
 2.4 **不 idle 设备**：释放走 token + park；只有破坏路径用计数 device idle。
-2.5 **流按 buffer 身份共享**：`StreamKey` = buffer + revision + 段；稳态零重传。条目持有它键名的那个
-    `Buffer`，地址与条目同寿。
+2.5 **流按 buffer 身份共享，寿命按“谁还声明这些字节”**：`StreamKey` = buffer + revision + 段；稳态零重传。
+    条目持有它键名的那个 `Buffer`，地址与条目同寿。驻留寿命**不看时间**，由两个 O(1) 事实决定：
+    内容层发布的声明索引（`ContentFacts::declarations`，由 `ContentStore` 在行变更时同步维护的
+    地址→声明计数）说“还有没有活内容声明这块 buffer”；条目自己的句柄说“revision 是不是它上传时的那个”。
+    没有声明、或 revision 已经走了的条目停车离场（`backend/ResourceTable`）。每帧成本 O(#驻留条目)，
+    不随内容规模走（裁剪不删行，所以扫行会把“什么都没画”的帧变成最贵的帧）。
 2.6 **按地址做键的表，必须把那地址留到键还能被查的最后一次**：事实表（`ContentStore`）、编译半边
     （`ContentHalves`）与上传表（`StreamUploads`）的键都是对象地址，而条目比对象活得久（停靠窗口、`slots + 1` 帧），
     所以**键表持有它键名的对象、读者持有它读的数据**：条目（或它的停靠）拿着对象本身，停靠排不上时**保留条目**、
@@ -57,18 +61,20 @@
 满足 `G1` / `G7` / `G10`：一条规则、零等待；同一件事也不再有第二个名字（`RenderDevice` 上不再有“清一次上传”的动词）。
 代价写在 D14：依赖 vsg 的 protected 块状态（派生任务读/清）。
 
-2.9 **“不再被画”有三个不同的开关，后果也不同**：显式 `releaseContent()`（宿主说“我不要驻留了”）、
+2.9 **“不再被画”的三个开关，后果也不同**：显式 `releaseContent()`（宿主说“我不要驻留了”）、
    宿主丢掉最后一个引用（对象离树，行与驻留才会被扫尾）、以及**只是这一帧没被画**（隐藏、被视锥裁掉）。
-   前两个由**持有量**决定，第三个什么都不释放，只让这一帧不去“命名”它：
+   前两个由**持有量**决定；第三个不改变持有量，所以**什么都不释放**：
    - 表行（`ContentStore` 的 geometry / program / material）只看持有量：对象还在（场景图把着），行就留着，
      所以隐藏/裁剪不会造成建行-丢行的抖动（`ContentStore.cpp` 的 `releaseAbandoned` 以 `useCount() <= 1` 为条件）。
-   - 上传（`StreamUploads`）只看**命名**：条目记录“最后一帧谁叫过我”，超过宽限窗口（`slots + 1` 帧）没人叫就离场
-     （`core/SharedStreams` 的 `releaseUnseen`，`ContentAssembly::beginFrame` 把宽限设为 `retirement.slots() + 1`）。
-     所以隐藏或长时间裁剪的内容**会忘掉自己的上传，回来时重新上传一次**——这是刻意换来的“无读者计数”的代价。
+   - 上传（`StreamUploads`）也只看**持有量**，看的是**声明**：内容层发布的声明索引
+     （`ContentFacts::declarations`）说“还有活行声明这块 buffer 吗”，条目自己的句柄说“revision 还是不是它
+     上传时那个”。隐藏或裁剪不删行 ⇒ 地址仍被声明 ⇒ 上传留着，回来**零重传**；
+     对象离树 ⇒ 行在 `slots + 1` 帧后删掉 ⇒ 声明消失 ⇒ 上传随之离场。buffer 换代（`Buffer::edit()`）
+     也让旧条目自己失去 revision 那一半，不需要几何说话。
    - 编译半片 / 描述符集是**会话级**的，不随 pass 走：它们只在“表不再回答这个 program/generation”或
      “没有任何 geometry 还问这个 layout”时被停靠（`ContentHalves::answerable` / `ContentSets` 的 sweep）。
    为什么这么分：把“对象没了”和“这一帧没画”合成一个开关，就必然要么为裁剪抖动付重建代价，要么把已离树的
-   驻留永久留（`G1`：两个问题，两个答案）。
+   驻留永久留（`G1`：两个问题，两个答案）。流这一步已经从“时间窗猜第三个开关”改成“只问谁还声明”（见 ADR）。
 
 ## 3. 功能点
 
@@ -89,7 +95,7 @@
 | F6 | 纹理缓存 | `MaterialImages` 条目跟宿主持有量走；无 LRU / 上限。 |
 | F7 | 材质 arena | 每槽 `copies` 份（对应在飞帧）；槽满 `Refused`，不淘汰活材质。 |
 | F8 | 按需扩容 | 记录前按 `ContentStore::materialCount()` 换更大 storage；无硬上限。 |
-| F9 | 流共享 | `StreamUploads` 按 `StreamKey` 共享；稳态帧 0 上传。 |
+| F9 | 流共享 | `StreamUploads` 按 `StreamKey` 共享；稳态帧 0 上传；条目由活几何行钉住（`ResourceTable`）。 |
 | F10 | 每帧块 | `BlockStorage` 每帧 ring，slab 数 = 在飞帧 + 1；稳态帧不写。 |
 | F11 | 对齐 | 块偏移必须是设备 `minUniformBufferOffsetAlignment` 的倍数。 |
 | F12 | 预算 | oversized / overflow / material refusal 在消耗预算前拒绝并计数。 |
@@ -98,7 +104,7 @@
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F13 | 计数器 | `writes` / `bytesWritten` / `materialWrites` / `uploads` / `aliases` / `refusals`。 |
+| F13 | 计数器 | `writes` / `bytesWritten` / `materialWrites` / `uploads` / `aliases` / `refusals` / `retired`。 |
 | F14 | 诊断 episode | 被拒绝的块 / 材质各报一次；缓存压力不再发 `ResourcePressure`。 |
 | F15 | 释放后可观测 | 释放 → 下一帧重建；用例断言驻留消失再出现。 |
 
@@ -121,9 +127,9 @@
 | F23 | **材质离树** | 宿主丢引用后下个帧边界扫尾（park） | — | 无（set 键不含材质） | 行走了就 `BlockStorage::releaseMaterial` 放槽 | `ContentStore::releaseAbandoned` / `releaseContent` |
 | F24 | **program 离树** | 同上 | — | 半片在 `answerable` 不再成立时 park（它驱动的 vsg 管线随之走；池里的 variant 只按 FIFO 65 淘汰） | — | 同上 |
 | F25 | **pass 脱离** | 后端只有身份：`releasePass` 忘掉 id（永不重发） | — | **不释放**（会话级；随 program/layout 消失才走）；输入集一帧后退回 | — | `RenderEngine::removePass` → `device()->releasePass()` + 拥有目标 `releaseRenderTarget()` |
-| F26 | **geom 离树** | 宿主丢引用后扫尾 | 超过宽限窗口没人命名即离场 | 见 F24（layout 不再被需要时） | — | `releaseAbandoned` + `releaseUnusedStreams` |
-| F27 | **geom 隐藏**（`setVisible(false)`） | **留着**（宿主仍持有） | 同上：超过 `slots + 1` 帧不被命名即离场，恢复可见时重传 | 留着 | — | 只影响收集，不触发释放 |
-| F28 | **geom 被裁剪**（视锥外，逐视图） | 留着 | 同 F27——**逐视图**，所以转个相机就可能丢上传再重传 | 留着 | — | 同上 |
+| F26 | **geom 离树** | 宿主丢引用后扫尾 | 行被扫尾删掉 ⇒ pin 消失，`slots + 1` 帧内离场 | 见 F24（layout 不再被需要时） | — | `releaseAbandoned` |
+| F27 | **geom 隐藏**（`setVisible(false)`） | **留着**（宿主仍持有） | **留着**：行还在 ⇒ pin 还在；恢复可见零重传 | 留着 | — | 只影响收集，不触发释放 |
+| F28 | **geom 被裁剪**（视锥外，逐视图） | 留着 | 同 F27——裁剪是逐视图的，但它不改变“谁声明了这些字节” | 留着 | — | 同上 |
 
 ## 4. 公开接口
 
@@ -145,7 +151,7 @@
 | `core::MaterialArena::write()` / `capacityNeed()` / `live()` | 材质块 |
 | `BlockStorage::beginFrame()` / `writeView()` / `writeDraw()` / `writeMaterial()` / `releaseMaterial()` | 每帧块 |
 | `BlockStorage::strides()` / `regions()` / `bytes()` | 布局与观测 |
-| `StreamUploads::acquireVertex()` / `acquireIndex()` / `release()` / `agreesWithRegistry()` | 流上传 |
+| `StreamUploads::acquireVertex()` / `acquireIndex()` / `beginFrame()` / `retired()` / `uploads()` | 流上传（条目由 `core::ResourceTable` 持有；寿命读 `ContentFacts::declarations` + 条目自己的 revision） |
 
 ## 5. 约束、要求与不变量
 
@@ -210,15 +216,28 @@
   这条线上涨了。
 - 怎么防：只认那块自己的 `fence->status()`（F17），在帧边界扫一遗（F18），并且**不加任何额外条件**（E）。
 
-### 6.4 隐藏 / 裁剪会丢上传，别把它当成泄漏
+### 6.4 隐藏 / 裁剪**不**丢上传（离树才丢）
 
 - 会怎么错：把“这一帧没画”当成“对象没了”，于是要么在离树路径上补一套释放（裁剪抖动 ⇒ 每帧重传），
-  要么反过来以为隐藏的内容还留着上传（回来时多一次传输却查不出谁传的）。
-- 会怎么判：`VsgBackend::releasedStreams()` 在内容还在、只是长期不可见时增长；同一片几何“看不见→又看见”后
-  `StreamUploads::uploads()` 多一次。行数（`ContentStore` 的活对象）**不**变。
-- 怎么防：需要长期保留驻留时，别靠“画一次就保”——那正是 `SharedStreams` 刻意不支持的做法（读者计数实测无法触底，
-  见 `Streams.hpp` 的注释）；真需要就用显式 `releaseContent()` 的反面：让对象继续被绘制，或在宿主侧保留自己的 buffer
-  引用并在恢复时一次性重传。改宽限窗口之前先按 `G10` 量一次（当前值 = `retirement.slots() + 1`）。
+  要么反过来以为隐藏的内容会忘掉上传，再给它加一条时间窗。
+- 会怎么判：`VsgBackend::releasedStreams()` 只在**行消失之后**增长；同一片几何“看不见→又看见”后
+  `StreamUploads::uploads()` **不变**。行数（`ContentStore` 的活对象）也不变。
+- 怎么防：寿命只问一条——“还有活几何行声明这些字节吗？”（pin = buffer 地址 + 它此刻的 revision，
+  由 `ContentStore::tablesFor` 发布的几何行枚举）。要提前还驻留就用显式 `releaseContent()`，
+  不要再加时间窗 / 容量上限（`G8`：那是替宿主猜）。
+
+### 6.5 换实例流是**描述**变更，几何要自己报 revision
+
+- 会怎么错：宿主给某个 primitive 换了实例切片（`Geometry::setInstanceTransforms`），
+  却没接着报 `Geometry::bumpRevision()`。那个 setter 只推进内容纪元（`Node::invalidateBounds`），
+  **不动** `revision()`；而后端的几何行只在 revision 移动时重建（`ContentStore.cpp` 的
+  `findGeometry(..., geometry->revision())`）。于是计划每帧从 primitive 现读新 buffer、
+  事实行声明的仍是旧 buffer，上传条目**每帧建-退**：画面对，代价静默。
+- 会怎么判：什么都没改、只是每帧重画的稳态里，`StreamUploads::uploads()` 与 `retired()` **同时**按帧上涨，
+  而 `live()` 不涨（这三条一起看才排得掉“真的每帧换内容”）；被替换的那块 buffer 从不出现在声明索引里。
+- 怎么防：换切片属于“这份描述变了”，改完立刻 `bumpRevision()`。隐藏/裁剪**不**触发这条
+  （行还在 ⇒ 声明还在，见 6.4），所以它只在**真的换了 buffer** 时才有后果——
+  “裁剪 100 帧零重传”那条用例钉不住它，钉住它的是 T10（报告前只声明旧流、报告后两代都声明、旧行离场后只剩新流）。
 
 ## 7. 已否决选项
 
@@ -253,7 +272,8 @@
 | T6 | `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting`：会话起来就装好了可问的任务（`stagedBytes()` 有值且为 0），出帧不涨 idle，之后仍能提交。 |
 | T7 | `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`：机制层（256 MB 工作集回落 + 后续上传逐字节读回；vsg 自建的任务答不出 → 装过之后报 0 → 再上传后报 ≥ 4096 字节）。 |
 | T8 | `HeadlessBackendTest`：设备双不再有暂存入口（动词已从 SDK 删除，`RenderDevice` 少一个虚函数）。 |
-| T9 | 六种“不再被画”（§2.9 / F23–F28）：`ContentStoreTest.*Release*`（离树与显式释放）、`StreamUploadsTest.*`（宽限窗口：一帧前命名留着、过窗离场）、`VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`（释放后重建）、`VsgBackendTest` 的 pass 身份用例（`releasePass` 只忘 id）。隐藏 / 裁剪的“行不变、上传离场”由 `StreamUploadsTest` 与 `ContentStoreTest` 各钉一半，不合并成一条——那是两件不同的事实。 |
+| T9 | 六种“不再被画”（§2.9 / F23–F28）：`ContentStoreTest.*Release*`（离树与显式释放）、`ContentStoreTest.ACulledGeometryKeepsItsUploadsForAHundredFrames`（裁剪 100 帧零重传）、`ContentStoreTest.AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped`（离树 `slots + 1` 帧内 `live()` 下降）、`StreamUploadsTest.TwoGeometriesOfOneBufferShareOneUploadUntilBothLeave`（共享 buffer 的 pin 合并）、`VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`（释放后重建）、`VsgBackendTest` 的 pass 身份用例（`releasePass` 只忘 id）。隐藏 / 裁剪的“行不变、上传也留着”由 `StreamUploadsTest` 与 `ContentStoreTest` 各钉一半，不合并成一条——那是两件不同的事实。 |
+| T10 | 实例流也是**声明**（§2.5 / §6.5）：`ContentStoreTest.AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision` —— 行带着 primitive 的实例句柄并据此声明它；换了切片但**没**报新描述时只声明旧流；`bumpRevision()` 后活行声明新流、停车中的旧行仍声明旧流；旧行离场后只剩新流。 |
 
 ## 9. 状态与演进
 

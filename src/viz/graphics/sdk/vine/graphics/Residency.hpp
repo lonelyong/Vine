@@ -82,7 +82,7 @@ struct ResidencyTotals
  *   VOCABULARY a host, a HUD or a gate reads, and it owns no resources, releases nothing and decides nothing.
  *   The policy that says when a residency may be dropped lives in the backend that creates it (see the ADR);
  *   keeping the two apart is what lets a host show "how much is resident" without learning any backend's rules.
- * - WHY IT LIVES OUTSIDE `backend/`. A host that renders through `vine/graphics/*.hpp` must be able to read
+ * - WHY IT LIVES OUTSIDE `backend/`. A host that renders through `vine/graphics/` must be able to read
  *   this answer, and the `backend/` half is only reachable by a backend (`BackendHalfGuard.hpp` makes that a
  *   compile error). Residency is therefore a VALUE in the host half; the tables that feed it stay in the backend.
  * - STEADY STATE IS FREE. A ledger reserves one row per kind when it is built, so `note()` never grows the

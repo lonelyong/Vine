@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
-#include <unordered_map>
 
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/graphics/backend/ResourceTable.hpp>
 #include <vine/vsg/support/VsgSceneRules.hpp>
 
 VN_VSG_NS_BEGIN
@@ -77,10 +77,6 @@ template <typename Element>
 } // namespace
 
 struct StreamUploads::Data {
-    explicit Data(std::size_t capacity)
-      : registry(capacity)
-    {}
-
     /// @brief One cached stream: its bind, and the model buffer its key's ADDRESS names (see the file note).
     ///
     /// The owner is not memory policy: it is what keeps the address reserved for exactly as long as the key can
@@ -96,26 +92,15 @@ struct StreamUploads::Data {
         vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> owner;
     };
 
-    core::SharedStreams                                                   registry;
-    std::unordered_map<core::StreamKey, VertexEntry, core::StreamKeyHash> vertex;
-    std::unordered_map<core::StreamKey, IndexEntry, core::StreamKeyHash>  index;
-    std::uint64_t                                                         refusals{ 0 };
-    /// The frame the acquires are stamped with, and the window an unnamed entry survives (see beginFrame).
-    std::uint64_t frame{ 0 };
-    std::uint32_t grace{ 0 };
-    /// The keys a sweep dropped, so the two maps can follow without allocating per sweep.
-    std::vector<core::StreamKey> dropped;
+    core::ResourceTable<core::StreamKey, VertexEntry, core::StreamKeyHash> vertex;
+    core::ResourceTable<core::StreamKey, IndexEntry, core::StreamKeyHash>  index;
 
-    /** @brief Drops one key's bind from the map that holds it (both are tried: the key is opaque here). */
-    void dropBind(const core::StreamKey& key)
-    {
-        vertex.erase(key);
-        index.erase(key);
-    }
+    std::uint64_t refusals{ 0 };
+    std::uint64_t aliases{ 0 };
 };
 
-StreamUploads::StreamUploads(std::size_t capacity)
-  : d(std::make_unique<Data>(capacity))
+StreamUploads::StreamUploads()
+  : d(std::make_unique<Data>())
 {}
 
 StreamUploads::~StreamUploads() = default;
@@ -148,58 +133,52 @@ StreamUploads::acquireVertex(const core::StreamKey& key, std::span<const float> 
 {
     // A derived channel is built per geometry, and a custom channel's bind identity is the whole custom
     // layout: sharing either draws every peer with the first drawable's data. Refusing here - loudly, and
-    // counted - is what stops the rule from depending on a caller remembering it.
-    if (key.kind != core::StreamKind::Vertex || key.derived() || !vn::graphics::isCanonicalAttributeLocation(key.location) || scalars.empty()) {
+    // counted - is what stops the rule from depending on a caller remembering it. A stream with no buffer
+    // handle is refused for the same reason: nothing would reserve the address its key names (see the file note).
+    if (key.kind != core::StreamKind::Vertex || key.derived() || !vn::graphics::isCanonicalAttributeLocation(key.location) || scalars.empty() ||
+        owner == nullptr || key.buffer != owner.get()) {
         ++d->refusals;
         return {};
     }
 
-    const core::SharedStreams::Decision decision = d->registry.acquire(key, d->frame);
-    if (decision.evicted.has_value()) {
-        // The registry dropped the stalest lookup; the bind goes with it. A reader that already bound it holds
-        // its own reference, so nothing it reads disappears (see the file note).
-        d->dropBind(*decision.evicted);
-    }
-    if (decision.action == core::SharedStreams::Action::Alias) {
-        const auto found = d->vertex.find(key);
-        if (found == d->vertex.end()) {
-            return { Action::Aliased, nullptr };
+    const auto acquired = d->vertex.acquire(key, [&]() -> std::optional<Data::VertexEntry> {
+        // ZERO COPY: what the bind reads IS the model's own bytes. The array is a REAL vsg array over a view of the buffer
+        // (see VsgBufferView, and the note in VsgSceneRules.hpp about why the bound object cannot be the view itself): the
+        // renderer therefore keeps exactly the memory it reads alive, and the vertex data exists in one place instead of in
+        // the model and in the scene graph at once.
+        //
+        // The entry keeps the buffer and the array keeps the view that holds it, so the bytes outlive the model for exactly
+        // as long as something can still draw them - the same rule the file note states for the ADDRESS.
+        const std::optional<std::size_t> offset = sliceOffset(owner, scalars);
+        ::vsg::ref_ptr<::vsg::Data>      array;
+        if (offset.has_value()) {
+            array = detail::aliasArray<::vsg::floatArray, float>(owner, scalars.size(), *offset);
         }
-        if (found->second.owner == nullptr) {
-            found->second.owner = std::move(owner); // an entry a borrowed caller made: take the reservation now
+        else {
+            // A borrowed identity (no buffer handle) or a span of somebody else's memory has nothing to alias.
+            auto snapshot = ::vsg::floatArray::create(static_cast<std::uint32_t>(scalars.size()));
+            std::copy(scalars.begin(), scalars.end(), snapshot->begin());
+            array = snapshot;
         }
-        return { Action::Aliased, found->second.bind };
-    }
 
-    // ZERO COPY: what the bind reads IS the model's own bytes. The array is a REAL vsg array over a view of the buffer
-    // (see VsgBufferView, and the note in VsgSceneRules.hpp about why the bound object cannot be the view itself): the
-    // renderer therefore keeps exactly the memory it reads alive, and the vertex data exists in one place instead of in
-    // the model and in the scene graph at once.
-    //
-    // The entry keeps the buffer and the array keeps the view that holds it, so the bytes outlive the model for exactly
-    // as long as something can still draw them - the same rule the file note states for the ADDRESS.
-    const std::optional<std::size_t> offset = sliceOffset(owner, scalars);
-    ::vsg::ref_ptr<::vsg::Data>      array;
-    if (offset.has_value()) {
-        array = detail::aliasArray<::vsg::floatArray, float>(owner, scalars.size(), *offset);
+        const auto binding = bindingOfCanonical(key.location);
+        auto       bind    = ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
+        return Data::VertexEntry{ bind, std::move(owner) };
+    });
+    if (acquired.value == nullptr) {
+        return {}; // the guards above ARE the rules, so the builder cannot refuse; an empty answer stays honest
     }
-    else {
-        // A borrowed identity (no buffer handle) or a span of somebody else's memory has nothing to alias.
-        auto snapshot = ::vsg::floatArray::create(static_cast<std::uint32_t>(scalars.size()));
-        std::copy(scalars.begin(), scalars.end(), snapshot->begin());
-        array = snapshot;
+    if (acquired.built) {
+        return { Action::Uploaded, acquired.value->bind };
     }
-
-    const auto binding = bindingOfCanonical(key.location);
-    auto       bind    = ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
-    d->vertex.insert_or_assign(key, Data::VertexEntry{ bind, std::move(owner) });
-    return { Action::Uploaded, bind };
+    ++d->aliases;
+    return { Action::Aliased, acquired.value->bind };
 }
 
 StreamUploads::IndexResult
 StreamUploads::acquireIndex(const core::StreamKey& key, std::span<const std::uint32_t> indices, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> owner)
 {
-    if (key.kind != core::StreamKind::Index || key.derived() || indices.empty()) {
+    if (key.kind != core::StreamKind::Index || key.derived() || indices.empty() || owner == nullptr || key.buffer != owner.get()) {
         ++d->refusals;
         return {};
     }
@@ -209,71 +188,60 @@ StreamUploads::acquireIndex(const core::StreamKey& key, std::span<const std::uin
     // entry and shares one index upload (see bindKeyOf).
     const core::StreamKey normalised = bindKeyOf(key);
 
-    const core::SharedStreams::Decision decision = d->registry.acquire(normalised, d->frame);
-    if (decision.evicted.has_value()) {
-        d->dropBind(*decision.evicted);
-    }
-    if (decision.action == core::SharedStreams::Action::Alias) {
-        const auto found = d->index.find(normalised);
-        if (found == d->index.end()) {
-            return { Action::Aliased, nullptr };
+    const auto acquired = d->index.acquire(normalised, [&]() -> std::optional<Data::IndexEntry> {
+        // ZERO COPY, and the WHOLE buffer: the bind aliases all of it and the DRAW states the span (see bindKeyOf), so the
+        // array has to cover the buffer the key names rather than whatever slice this caller happened to pass.
+        const std::optional<std::size_t> offset = sliceOffset(owner, indices);
+        ::vsg::ref_ptr<::vsg::Data>      array;
+        if (offset == std::optional<std::size_t>{ 0u } && indices.size() == owner->size()) {
+            array = detail::aliasArray<::vsg::uintArray, std::uint32_t>(owner, indices.size());
         }
-        if (found->second.owner == nullptr) {
-            found->second.owner = std::move(owner);
+        else {
+            auto snapshot = ::vsg::uintArray::create(static_cast<std::uint32_t>(indices.size()));
+            std::copy(indices.begin(), indices.end(), snapshot->begin());
+            array = snapshot;
         }
-        return { Action::Aliased, found->second.bind };
+        auto bind = ::vsg::BindIndexBuffer::create(array);
+        return Data::IndexEntry{ bind, std::move(owner) };
+    });
+    if (acquired.value == nullptr) {
+        return {};
     }
-
-    // ZERO COPY, and the WHOLE buffer: the bind aliases all of it and the DRAW states the span (see bindKeyOf), so the
-    // array has to cover the buffer the key names rather than whatever slice this caller happened to pass.
-    const std::optional<std::size_t> offset = sliceOffset(owner, indices);
-    ::vsg::ref_ptr<::vsg::Data>      array;
-    if (offset == std::optional<std::size_t>{ 0u } && indices.size() == owner->size()) {
-        array = detail::aliasArray<::vsg::uintArray, std::uint32_t>(owner, indices.size());
+    if (acquired.built) {
+        return { Action::Uploaded, acquired.value->bind };
     }
-    else {
-        auto snapshot = ::vsg::uintArray::create(static_cast<std::uint32_t>(indices.size()));
-        std::copy(indices.begin(), indices.end(), snapshot->begin());
-        array = snapshot;
-    }
-    auto bind = ::vsg::BindIndexBuffer::create(array);
-    d->index.insert_or_assign(normalised, Data::IndexEntry{ bind, std::move(owner) });
-    return { Action::Uploaded, bind };
+    ++d->aliases;
+    return { Action::Aliased, acquired.value->bind };
 }
 
-void StreamUploads::beginFrame(std::uint64_t frame, std::uint32_t grace) noexcept
+std::uint64_t StreamUploads::beginFrame(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
-    d->frame = frame;
-    d->grace = grace;
-}
+    // TWO O(1) FACTS PER ENTRY, in one pass. The ADDRESS is content's answer: some live row still declares it
+    // (`ContentFacts::declarations`, maintained by the content store as its rows move). The REVISION is the
+    // entry's own answer: it holds the buffer it uploaded from, so a buffer edit retires the old upload without
+    // any row changing. Nothing here walks the content tables - see the file note.
+    const auto is_live = [&facts](const core::StreamKey& key, const auto& entry) {
+        return entry.owner != nullptr && facts.declarations.declaresBuffer(key.buffer) && key.revision == entry.owner->revision();
+    };
 
-std::uint64_t StreamUploads::releaseUnseen()
-{
-    const std::uint64_t released = d->registry.releaseUnseen(d->frame, d->grace, d->dropped);
-    for (const core::StreamKey& key : d->dropped) {
-        d->dropBind(key);
-    }
-    return released;
+    std::uint64_t retired = d->vertex.retireUnpinned(is_live, timeline, retirement);
+    retired += d->index.retireUnpinned(is_live, timeline, retirement);
+    return retired;
 }
 
 std::size_t StreamUploads::live() const noexcept
 {
-    return d->registry.live();
-}
-
-std::size_t StreamUploads::objects() const noexcept
-{
-    return d->vertex.size() + d->index.size();
+    return d->vertex.live() + d->index.live();
 }
 
 std::uint64_t StreamUploads::uploads() const noexcept
 {
-    return d->registry.uploads();
+    return d->vertex.builds() + d->index.builds();
 }
 
 std::uint64_t StreamUploads::aliases() const noexcept
 {
-    return d->registry.aliases();
+    return d->aliases;
 }
 
 std::uint64_t StreamUploads::refusals() const noexcept
@@ -281,26 +249,9 @@ std::uint64_t StreamUploads::refusals() const noexcept
     return d->refusals;
 }
 
-std::uint64_t StreamUploads::evictions() const noexcept
+std::uint64_t StreamUploads::retired() const noexcept
 {
-    return d->registry.evictions();
-}
-
-std::uint64_t StreamUploads::unused() const noexcept
-{
-    return d->registry.unused();
-}
-
-bool StreamUploads::agreesWithRegistry() const noexcept
-{
-    return live() == objects();
-}
-
-void StreamUploads::clear()
-{
-    d->vertex.clear();
-    d->index.clear();
-    d->registry.clear();
+    return d->vertex.retired() + d->index.retired();
 }
 
 VN_VSG_NS_END

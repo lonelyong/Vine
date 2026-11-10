@@ -1,6 +1,7 @@
 #include <vine/vsg/internal/ContentStore.hpp>
 
 #include <algorithm>
+#include <unordered_map>
 #include <utility>
 
 #include <vine/vsg/internal/ContentSources.hpp>
@@ -98,19 +99,31 @@ struct ContentStore::Data {
             return replaced;
         }
 
-        /// @brief Erases every row @p drop names, with its storage.
-        template <typename Predicate>
-        void eraseIf(Predicate drop)
+        /// @brief Erases every row @p drop names, running @p before_erase on each one first.
+        ///
+        /// The callback is what lets a wrapper keep a INDEX beside the rows (see GeometryTable): it sees the row
+        /// that is about to disappear, in the same single pass that removes it, so the two cannot drift and the
+        /// order is refreshed once. `eraseIf` is this with nothing to do.
+        template <typename Predicate, typename OnErase>
+        void eraseWhere(Predicate drop, OnErase before_erase)
         {
             for (std::size_t index = 0U; index < rows_.size();) {
                 if (!drop(rows_[index])) {
                     ++index;
                     continue;
                 }
+                before_erase(rows_[index]);
                 rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(index));
                 storage_.erase(storage_.begin() + static_cast<std::ptrdiff_t>(index));
             }
             refresh();
+        }
+
+        /// @brief Erases every row @p drop names, with its storage.
+        template <typename Predicate>
+        void eraseIf(Predicate drop)
+        {
+            eraseWhere(drop, [](const Row&) {});
         }
 
         /// @brief Forgets every row, its storage and the order (the session-teardown path).
@@ -151,6 +164,108 @@ struct ContentStore::Data {
         std::vector<std::uint32_t>            order_;   // A permutation of `rows_`, sorted by the lookup key.
     };
 
+    /// @brief The geometry rows AND the buffers they declare: one object, so a row cannot move without the
+    ///        declaration index following it.
+    ///
+    /// WHY A WRAPPER. A residency table asks "does anything alive still name this buffer?" once per entry, and
+    /// the answer is this index. Letting the rows and the index be two independent things would be the classic
+    /// one-fact-two-places defect: every erase path would have to remember to decrement. Here there are two
+    /// mutation paths (`append`, `eraseIf`) plus `clear`, and each keeps both sides in step in one method.
+    ///
+    /// WHAT THE COUNT IS FOR. One buffer may be declared many times (a channel per attribute, the index stream,
+    /// the instance stream, and several rows sharing one arena), so membership is a REFCOUNT rather than a bit:
+    /// an address leaves the index only when its last declaration goes, which is exactly what lets one shared
+    /// upload outlive the first geometry that used it.
+    class GeometryTable {
+      public:
+        /// @brief Appends one row and its storage, declaring the buffers it names.
+        void append(const GeometryFacts& row, std::unique_ptr<GeometryStorage> cell)
+        {
+            table_.append(row, std::move(cell));
+            declare(row, +1);
+        }
+
+        /// @brief Erases every row @p drop names, withdrawing the buffers those rows declared.
+        template <typename Predicate>
+        void eraseIf(Predicate drop)
+        {
+            table_.eraseWhere(drop, [this](const GeometryFacts& row) { declare(row, -1); });
+        }
+
+        /// @brief Forgets every row and every declaration (the session-teardown path).
+        void clear()
+        {
+            table_.clear();
+            declared_.clear();
+        }
+
+        /** @brief Gets the rows (contiguous: `ContentFacts` hands out spans of them). */
+        [[nodiscard]] std::span<const GeometryFacts> rows() const noexcept
+        {
+            return table_.rows();
+        }
+
+        /** @brief Gets the row order the lookups search (see api/ContentFacts). */
+        [[nodiscard]] std::span<const std::uint32_t> order() const noexcept
+        {
+            return table_.order();
+        }
+
+        /** @brief Gets how many rows the table carries. */
+        [[nodiscard]] std::size_t size() const noexcept
+        {
+            return table_.size();
+        }
+
+        /** @brief Gets the declaration index the facts publish (borrowed for as long as those facts are). */
+        [[nodiscard]] const std::unordered_map<const void*, std::uint32_t>& declaredBuffers() const noexcept
+        {
+            return declared_;
+        }
+
+      private:
+        /// @brief Adds (@p direction +1) or withdraws (-1) every buffer one row names.
+        void declare(const GeometryFacts& row, int direction)
+        {
+            for (const ChannelFacts& channel : row.channels) {
+                declareOne(channel.values.get(), direction);
+            }
+            for (const PrimitiveFacts& primitive : row.primitives) {
+                if (primitive.indices.has_value()) {
+                    declareOne(primitive.indices->values.get(), direction);
+                }
+                declareOne(primitive.instances.get(), direction);
+            }
+        }
+
+        /// @brief Adds or withdraws ONE declaration; the address leaves when its count reaches zero.
+        void declareOne(const void* buffer, int direction)
+        {
+            if (buffer == nullptr) {
+                return;
+            }
+            const auto found = declared_.find(buffer);
+            if (direction > 0) {
+                if (found == declared_.end()) {
+                    declared_.emplace(buffer, 1U);
+                }
+                else {
+                    ++found->second;
+                }
+                return;
+            }
+            if (found == declared_.end()) {
+                return; // cannot happen for a row this table appended; never erase what is not there
+            }
+            if (--found->second == 0U) {
+                declared_.erase(found);
+            }
+        }
+
+        Table<GeometryFacts, GeometryStorage, &orderGeometryRows> table_;
+        std::unordered_map<const void*, std::uint32_t>             declared_;
+    };
+
     // The live set: the objects the host tracked, held so the address key cannot be recycled.
     std::unordered_map<const vn::graphics::Geometry*, LiveGeometry>     geometries;
     std::unordered_map<const vn::graphics::ShaderProgram*, LiveProgram> programs;
@@ -169,7 +284,7 @@ struct ContentStore::Data {
     }
 
     // The tables (see Table: rows, their storage and their row order together).
-    Table<GeometryFacts, GeometryStorage, &orderGeometryRows> geometry;
+    GeometryTable                                            geometry;
     Table<ProgramFacts, NoStorage, &orderProgramRows>         program;
     Table<MaterialFacts, MaterialStorage, &orderMaterialRows> material;
 
@@ -200,6 +315,9 @@ struct ContentStore::Data {
         tables.program_order  = program.order();
         tables.geometry_order = geometry.order();
         tables.material_order = material.order();
+        // The declaration index travels WITH the rows (see ContentDeclarations): a residency table asks it
+        // instead of walking the rows, so its per-frame cost does not follow the size of the content.
+        tables.declarations = ContentDeclarations{ &geometry.declaredBuffers() };
         return tables;
     }
 
@@ -412,6 +530,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     d->facts.program_order  = d->program.order();
     d->facts.geometry_order = d->geometry.order();
     d->facts.material_order = d->material.order();
+    d->facts.declarations   = ContentDeclarations{ &d->geometry.declaredBuffers() };
     return d->facts;
 }
 

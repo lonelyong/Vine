@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 #include <vsg/core/Data.h>
@@ -65,6 +66,52 @@ class Texture;
 }
 
 VN_VSG_NS_BEGIN
+
+/**
+ * @brief What the live content still DECLARES, as an index a residency table can ask in O(1).
+ *
+ * @details
+ * - WHY AN INDEX AND NOT A WALK. A residency table asks one question per entry - "does anything alive still
+ *   name these bytes?" - and the answer is a property of the content rows. Answering it by walking the rows
+ *   would make a frame's residency bookkeeping cost O(live content), which is the wrong side of the pin model:
+ *   culled content KEEPS its rows, so the cost would be paid on frames that draw nothing. The content store
+ *   therefore keeps this index beside the rows (its geometry table updates it as rows move) and publishes it
+ *   here; asking is one hash lookup.
+ * - WHAT IT MEANS, AND WHAT IT DOES NOT. Membership says an address is still declared by some live row, at the
+ *   moment that row was built. It says NOTHING about whether the bytes at that address are still the ones a
+ *   residency entry was built from: `Buffer::edit()` moves the buffer's revision without touching any row. That
+ *   half is answered by the entry itself, which holds the handle it uploaded from and compares its revision
+ *   (see `ResourceTable::retireUnpinned`): declaration membership + own-revision equality - two O(1) facts.
+ * - BORROWED, LIKE THE ROWS. The object points into the store's index and stays valid until the next row
+ *   mutation - the same lifetime the spans beside it have.
+ */
+class ContentDeclarations {
+  public:
+    ContentDeclarations() = default;
+
+    /**
+     * @brief Points at the store's buffer-declaration index.
+     *
+     * @param buffers Address -> how many row declarations still name it (borrowed, never owned).
+     */
+    explicit ContentDeclarations(const std::unordered_map<const void*, std::uint32_t>* buffers) noexcept
+      : buffers_(buffers)
+    {}
+
+    /**
+     * @brief Gets whether a live row still declares @p address.
+     *
+     * @param address Buffer address (the `StreamKey::buffer` spelling); null answers false.
+     * @return true when some live geometry row still names that buffer.
+     */
+    [[nodiscard]] bool declaresBuffer(const void* address) const noexcept
+    {
+        return address != nullptr && buffers_ != nullptr && buffers_->find(address) != buffers_->end();
+    }
+
+  private:
+    const std::unordered_map<const void*, std::uint32_t>* buffers_{ nullptr };
+};
 
 /** @brief One vertex channel of a geometry: what the stream is shared by, and where its bytes live.
  *
@@ -151,6 +198,14 @@ struct PrimitiveFacts {
     std::optional<IndexFacts> indices{};                                     // The index stream when this draw is indexed.
     std::uint32_t             index_count{ 0 };                              // Indices it reads (indexed only).
     std::uint32_t             first_index{ 0 };                              // First index of its span (indexed only).
+
+    /// The instance stream this draw reads (16 scalars per instance, column major), or null for a plain draw.
+    ///
+    /// It is CONTENT, like the index buffer: the buffer is the primitive's own, and only the VISIBLE PREFIX is a
+    /// draw parameter (it travels in the plan). Holding the handle here is what lets a stream's pin and its upload
+    /// key come from the primitive that declares its bytes - so a culled instanced draw keeps its instance upload
+    /// exactly as a culled plain draw keeps its vertex streams.
+    vn::intrusive_ptr<const vn::Buffer<float>> instances{};
 };
 
 /** @brief What a geometry identity answers with: its layout, its vertex channels, and its draws. */
@@ -232,6 +287,11 @@ struct ContentFacts {
     std::span<const ProgramFacts>  programs{};   // Program identities → their GLSL.
     std::span<const GeometryFacts> geometries{}; // Geometry identities → their streams and layout.
     std::span<const MaterialFacts> materials{};  // Material identities → their block bytes.
+
+    /// WHAT THOSE ROWS DECLARE, as an O(1) index (see ContentDeclarations). A residency table asks this per
+    /// entry instead of walking the rows - so a frame's residency bookkeeping costs O(entries), not O(content),
+    /// and a frame that draws nothing (every geometry culled) pays the same as a busy one.
+    ContentDeclarations declarations{};
 
     /// The ROW ORDER of each table, as the lookups search it: a permutation of that table's row indices,
     /// sorted by the identity the lookup names (see @ref orderProgramRows and the file note).

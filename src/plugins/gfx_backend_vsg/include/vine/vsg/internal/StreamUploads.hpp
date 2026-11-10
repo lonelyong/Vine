@@ -11,7 +11,10 @@
 #include <vsg/core/ref_ptr.h>
 
 #include <vine/Buffer.hpp>
+#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/Streams.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/vsg_global.hpp>
 
 /**
@@ -22,18 +25,32 @@
  * upload the same bytes twice; handing both the SAME bind command is what makes the stream exist once on the
  * GPU and be read twice. That is the whole mechanism this store wraps.
  *
- * WHAT IT DELEGATES. Which identity was already offered, and which frame last named it, is
- * `core::SharedStreams` - the decision is bookkeeping, and it is testable without a GPU. This class only
- * owns the objects and keeps its map in step with the registry: a key that leaves the registry (the capacity
- * bound, or a sweep that found nothing naming it any more) drops its bind here too - the readers that already
- * bound it hold their own reference, so nothing they read disappears.
+ * WHAT DECIDES LIFETIME: CONTENT, NOT TIME. An entry lives exactly while some LIVE content declares its bytes.
+ * The declaration is PUBLISHED by the facts the frame was recorded against (`ContentFacts::declarations` - an
+ * index the content store maintains as its geometry rows move), so the question "is this stream still wanted?"
+ * is answered by asking who is alive, not by remembering who named it last. The consequences are the ones the
+ * aliasing rules promise:
  *
- * LIFETIME: A FRAME NAMES IT, OR IT GOES. The frame calls @ref beginFrame once (the driver of the frame's
- * content - see api/ContentAssembly), every acquire stamps the entry, and the frame's last step calls
- * @ref releaseUnseen: what no frame named for the grace window leaves, map entry and bind together. There is
- * deliberately no reader count: a draw acquires its streams once per FRAME, so such a count could only ever
- * go up, and its `release()` had no production caller at all (see core::SharedStreams's note, which is where
- * that spelling is written down as the defect it was).
+ *   * a geometry that is CULLED or hidden keeps its uploads - it is still tracked, so its row (and therefore
+ *     its pin) is still there, and the frame after it comes back re-uploads nothing;
+ *   * a geometry that LEAVES the tree loses them - the content store parks the row's removal for the same
+ *     `slots + 1` window every replaced GPU object gets, and this store's next frame sees the pin gone;
+ *   * a buffer whose bytes were REFILLED (`Buffer::edit()`) retires its previous upload without the geometry
+ *     speaking at all, because the pin carries the buffer's own revision - read live from the row's buffer
+ *     handle at enumeration time, exactly as `streamKey()` reads it.
+ *
+ * The pins are two O(1) facts, not a walk of the content tables. The ADDRESS comes from the content layer: the
+ * facts publish the set of buffers the live rows declare (`ContentDeclarations`, refcounted, so one arena named by
+ * several geometries stays declared until the last of them goes). The REVISION comes from the entry itself: it
+ * holds the buffer it uploaded from, so "are these still that buffer's current bytes?" is one compare against
+ * `owner->revision()` - and a buffer edit retires the old upload without the geometry speaking. Nothing here
+ * walks the content rows, which is what keeps a frame that draws nothing as cheap as a busy one.
+ *
+ * WHAT IS DELETED, AND WHY. The previous spelling remembered "the last frame that named this" and dropped
+ * entries older than a grace window (`slots + 1`), with a capacity bound on top. Both were guesses about
+ * lifetime: culling looked exactly like leaving, so a mesh that merely went out of view re-uploaded when it
+ * came back, and the bound could drop a stream a live geometry still declared. @ref beginFrame now sweeps
+ * against content, and there is no capacity and no clock in this store at all.
  *
  * WHAT MAY BE SHARED (and what is refused instead):
  *
@@ -42,16 +59,20 @@
  *     LAYOUT, and a channel the backend BUILDS carries this drawable's own values (the white opacity carrier
  *     even carries its opacity) - sharing either would draw every peer with the first drawable's data, so
  *     both are refused here and the caller builds a private bind;
+ *   * a channel whose buffer handle the caller does NOT hand over. The entry's key names the buffer by ADDRESS,
+ *     and only the entry's own hold on that address keeps a new buffer from landing on it; a borrowed identity
+ *     has nothing to hold, so its upload would be a snapshot served to whoever lands there next. Refused rather
+ *     than trusted - production always has the handle (see ContentPass);
  *   * the INDEX stream, keyed on the whole buffer it aliases. The DRAW states which span it reads
  *     (first index / count), so two geometries slicing one index arena share one index upload - which is why
  *     the index key is normalised here (offset 0, count = the array's element count) and not taken from the
  *     caller's span. The array passed in must alias the whole buffer for that to hold.
  *
  * WHAT DROPPING AN ENTRY DOES NOT DO. An entry holds the bind, and the bind holds the arrays the upload was
- * built from - so an entry leaving the map (the sweep above, or the capacity bound) never frees bytes a
- * frame may still be reading: the frame that bound it holds its own reference to the bind, and what the
- * executor's retirement queue keeps alive is that node (see the design's D4/D7). This store is a LOOKUP, not
- * the owner of last resort, which is why nothing here is parked.
+ * built from - so an entry leaving the map never frees bytes a frame may still be reading. Departures are
+ * parked through the retirement queue anyway (`ResourceTable::retireUnpinned`), so the bind a submitted frame
+ * named stays alive for exactly the window that frame is in flight; this store is a LOOKUP, not the owner of
+ * last resort.
  *
  * AN ENTRY ALSO HOLDS ITS MODEL BUFFER. The key names the buffer by ADDRESS, and a buffer nobody holds hands
  * that address back to the allocator: a new buffer landing there - same kind, same slice, same revision, which
@@ -64,7 +85,7 @@
  */
 VN_VSG_NS_BEGIN
 
-/** @brief Shared stream uploads, keyed by `core::StreamKey`. */
+/** @brief Shared stream uploads, keyed by `core::StreamKey` and pinned by live geometry (see the file note). */
 class StreamUploads {
   public:
     /** @brief What an acquire did. */
@@ -91,11 +112,7 @@ class StreamUploads {
     static constexpr std::uint32_t kNoBinding = ~std::uint32_t{ 0 };
 
   public:
-    /** @brief Constructs a store with the given capacity.
-     *
-     * @param capacity Maximum shared entries; 0 is clamped to 1 (see `core::SharedStreams`).
-     */
-    explicit StreamUploads(std::size_t capacity = core::SharedStreams::kDefaultCapacity);
+    StreamUploads();
     ~StreamUploads();
 
     StreamUploads(const StreamUploads&)            = delete;
@@ -125,8 +142,8 @@ class StreamUploads {
      * @param key     Stream identity; its kind must be Vertex and its location canonical.
      * @param scalars The channel's scalars as they are right now (read on a miss).
      * @param owner   The buffer the key's address names, held by the entry for as long as it is cached (see
-     *                the file note). Callers that have only a borrowed identity may leave it empty - the entry
-     *                then documents that its address is not reserved.
+     *                the file note). It is REQUIRED: a shareable stream without its handle has nothing that
+     *                reserves the address, and is refused.
      * @return The action and the bind (null when the stream may not be shared).
      */
     [[nodiscard]] VertexResult acquireVertex(const core::StreamKey& key, std::span<const float> scalars, vn::intrusive_ptr<const vn::Buffer<float>> owner = {});
@@ -140,35 +157,34 @@ class StreamUploads {
      * @param key     Stream identity; its kind must be Index.
      * @param indices The WHOLE index buffer as it is right now (the bind aliases all of it, and the draw
      *                states the span; read on a miss, like acquireVertex's bytes).
-     * @param owner   The buffer the key's address names, held by the entry (see acquireVertex's @p owner).
+     * @param owner   The buffer the key's address names, held by the entry (REQUIRED, like acquireVertex's).
      * @return The action and the bind (null when the stream may not be shared).
      */
     [[nodiscard]] IndexResult
     acquireIndex(const core::StreamKey& key, std::span<const std::uint32_t> indices, vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> owner = {});
 
-    /** @brief Opens a frame: the stamp every acquire from it carries (see the file note).
+    /**
+     * @brief Opens a frame: the facts it was recorded against decide which streams stay.
      *
-     * @param frame The frame being recorded (`core::FrameTimeline::submittedFrame`).
-     * @param grace How many frames an entry survives without being named (`slots + 1`: the same window the
-     *              executor parks a replaced GPU object for).
+     * @details
+     * - The declarations are the ones `ContentStore::tablesFor` just published (`ContentFacts::declarations`), so
+     *   "does anything alive still name this buffer?" is one hash lookup per entry - no walk of the rows, no
+     *   second walk of the scene or the plan.
+     * - Every entry whose buffer is no longer declared, or whose bytes are no longer the buffer's current ones
+     *   (`owner->revision()`), is PARKED through @p retirement; one the queue cannot park yet is retained, never
+     *   freed early (see ResourceTable::retireUnpinned).
+     * - Calling it with empty facts means "nothing is declared" and retires every entry.
+     *
+     * @param facts      The frame's facts (its declaration index is what this reads).
+     * @param timeline   The frame clock parks are dated against.
+     * @param retirement Where departed entries are parked.
+     * @return How many entries left (each one's bind holding until the park comes due).
      */
-    void beginFrame(std::uint64_t frame, std::uint32_t grace) noexcept;
-
-    /** @brief Drops the entries no frame has named for the grace window, their binds included.
-     *
-     * The frame's last step for streams (see the file note): it is what lets a stream the host stopped
-     * drawing leave on its own, and it is idempotent - a second call in the same frame releases nothing.
-     *
-     * @return How many entries left (each one's bind went with it).
-     */
-    std::uint64_t releaseUnseen();
+    std::uint64_t beginFrame(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
   public:
-    /** @brief Gets the number of entries the registry holds. */
+    /** @brief Gets the number of entries the store holds. */
     [[nodiscard]] std::size_t live() const noexcept;
-
-    /** @brief Gets the number of binds the store holds. */
-    [[nodiscard]] std::size_t objects() const noexcept;
 
     /** @brief Gets the number of binds built (one upload each). */
     [[nodiscard]] std::uint64_t uploads() const noexcept;
@@ -179,24 +195,8 @@ class StreamUploads {
     /** @brief Gets the number of acquires refused because the stream may not be shared. */
     [[nodiscard]] std::uint64_t refusals() const noexcept;
 
-    /** @brief Gets the number of entries that left because the capacity was reached. */
-    [[nodiscard]] std::uint64_t evictions() const noexcept;
-
-    /** @brief Gets the number of entries that left because no frame had named them any more. */
-    [[nodiscard]] std::uint64_t unused() const noexcept;
-
-    /** @brief Checks the store's own map against the registry that decides for it.
-     *
-     * The two are written at different places - an entry exists because the registry said so, an object
-     * exists because this store built it - so a bug can make one of them drift. Where they describe the same
-     * thing ("one entry, one bind") they are asserted equal instead of believed.
-     *
-     * @return true when the store holds exactly the entries the registry does.
-     */
-    [[nodiscard]] bool agreesWithRegistry() const noexcept;
-
-    /** @brief Drops every entry and bind, keeping the counters (a session was replaced). */
-    void clear();
+    /** @brief Gets the number of entries that left because no live content declared them any more. */
+    [[nodiscard]] std::uint64_t retired() const noexcept;
 
   private:
     struct Data;

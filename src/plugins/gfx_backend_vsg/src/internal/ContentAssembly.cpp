@@ -97,11 +97,12 @@ const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame
     d->timeline   = &timeline;
     d->retirement = &retirement;
     d->storage->beginFrame();
-    // The streams' frame opens with it (see api/StreamUploads): what this frame binds is stamped with it, and
-    // the grace window is the parking window itself - a stream is kept for exactly as long as a recorded frame
-    // that named it may still be in flight.
-    d->uploads.beginFrame(timeline.submittedFrame(), retirement.slots() + 1U);
     d->facts = &d->store->tablesFor(frame, timeline, retirement);
+    // The streams' frame opens ON THE FACTS THAT WALK JUST PUBLISHED (see api/StreamUploads): the published
+    // declaration index says which buffers live content still names, and each entry answers the other half (its
+    // own buffer's revision). Culling keeps a stream (its row still declares the buffer); leaving the tree lets
+    // it go through the same parking window every replaced GPU object gets.
+    (void)d->uploads.beginFrame(*d->facts, timeline, retirement);
 
     // The sampled-input sets the previous frame did not ask for are no longer this session's to keep: the
     // images they name were replaced (a resize builds new ones) or the pass that sampled them is gone. They
@@ -191,11 +192,6 @@ StreamUploads& ContentAssembly::uploads() noexcept
 const StreamUploads& ContentAssembly::uploads() const noexcept
 {
     return d->uploads;
-}
-
-std::uint64_t ContentAssembly::releaseUnusedStreams()
-{
-    return d->uploads.releaseUnseen();
 }
 
 std::uint64_t ContentAssembly::inputSetBuilds() const noexcept

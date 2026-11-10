@@ -1191,8 +1191,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
         key.revision                               = command.instance_buffer->revision();
         key.offset                                 = 0U;
         key.count                                  = 0U;
-        // The handle goes WITH the key: an entry reserves the address it names, and the plan is what holds the
-        // stream until the entry leaves (see StreamUploads).
+        // The handle goes WITH the key: an entry reserves the address it names, and the content store's row
+        // declares it for as long as the primitive names it (see StreamUploads).
         const StreamUploads::VertexResult acquired = scope_.uploads->acquireVertex(key, command.instance_buffer->view(), command.instance_buffer);
         if (acquired.bind == nullptr) {
             reportRefused("the command's instances", "its instance stream could not be uploaded");

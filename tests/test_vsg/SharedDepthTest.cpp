@@ -50,6 +50,7 @@
 #include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "DevicePhases.hpp"
+#include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 inline std::span<const float> scalarsOf(const ::vsg::ref_ptr<::vsg::vec3Array>& array) noexcept
@@ -73,8 +74,6 @@ using vn::graphics::RenderTarget;
 using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
 using vn::graphics::backend::VariantPool;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
@@ -239,8 +238,9 @@ struct Stack {
             return {};
         }
 
-        const auto vertex_bind = uploads->acquireVertex(positionKey(), scalarsOf(trianglePositions()));
-        const auto index_bind  = uploads->acquireIndex(indexKey(), indicesOf(triangleIndices()));
+        const vn::test::UploadedStreams uploaded = vn::test::uploadTriangle(*uploads, scalarsOf(trianglePositions()), indicesOf(triangleIndices()));
+        const auto                     vertex_bind = uploaded.vertex;
+        const auto                     index_bind  = uploaded.index;
         if (vertex_bind.bind == nullptr || index_bind.bind == nullptr) {
             return {};
         }
@@ -262,31 +262,6 @@ struct Stack {
         return recorder->record(*registry, draw);
     }
 
-    static StreamKey positionKey()
-    {
-        static int model_buffer = 0;
-        StreamKey  key;
-        key.kind       = StreamKind::Vertex;
-        key.location   = 0U;
-        key.components = 3U;
-        key.buffer     = &model_buffer;
-        key.revision   = 1U;
-        key.count      = 9U;
-        return key;
-    }
-
-    static StreamKey indexKey()
-    {
-        static int model_indices = 0;
-        StreamKey  key;
-        key.kind       = StreamKind::Index;
-        key.location   = 0U;
-        key.components = 1U;
-        key.buffer     = &model_indices;
-        key.revision   = 1U;
-        key.count      = 3U;
-        return key;
-    }
 };
 
 int Stack::material_identity = 0;

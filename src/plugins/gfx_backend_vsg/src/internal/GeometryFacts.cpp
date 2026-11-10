@@ -176,6 +176,9 @@ FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry,
         else if (out.vertex_count == 0U) {
             return FactMiss::Malformed; // a non-indexed draw with no vertices to assemble
         }
+        // The instance stream is the primitive's own buffer: the visible prefix is a draw parameter, the bytes are
+        // content, so the row keeps the handle (and therefore the address) alive exactly like a channel's.
+        row.instances = primitive->instance_transforms.values;
         primitive_storage.push_back(std::move(row));
     }
     out.primitives    = primitive_storage;

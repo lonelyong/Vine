@@ -2866,11 +2866,12 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
             for (std::size_t index = 0; index + 2 < shifted.size(); index += 3U) {
                 shifted[index] += step;
             }
-            const auto bytes = positions->data();
-            for (std::size_t index = 0; index < shifted.size(); ++index) {
-                bytes[index] = shifted[index];
-            }
-            positions->setRevision(positions->revision() + 1U);
+            {
+                auto bytes = positions->edit();
+                for (std::size_t index = 0; index < shifted.size(); ++index) {
+                    bytes[index] = shifted[index];
+                }
+            } // the edit scope IS the buffer's announcement
             geometry->bumpRevision();
         });
         const EditCostDelta change = editCostDelta(before, after);
@@ -3150,9 +3151,10 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     // frame sends that one stream and NOTHING else - and no row is rebuilt, because the shape did not change.
     {
         const auto [before, after] = run("one channel edited in place", kFramesPerRegime, [&](int frame) {
-            const auto bytes = positions->data();
-            bytes[0]         = 0.01F * static_cast<float>(frame + 1);
-            positions->setRevision(positions->revision() + 1U);
+            {
+                auto bytes = positions->edit();
+                bytes[0]   = 0.01F * static_cast<float>(frame + 1);
+            }
         });
         const EditCostDelta change = editCostDelta(before, after);
         EXPECT_EQ(change.builds, 0) << "bytes are not a shape: nothing to re-describe";
@@ -3165,9 +3167,8 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     {
         const auto [before, after] = run("all channels edited in place", kFramesPerRegime, [&](int frame) {
             const auto touch = [&](const vn::intrusive_ptr<vn::Buffer<float>>& buffer) {
-                const auto bytes = buffer->data();
-                bytes[0]         = 0.01F * static_cast<float>(frame + 1);
-                buffer->setRevision(buffer->revision() + 1U);
+                auto bytes = buffer->edit();
+                bytes[0]   = 0.01F * static_cast<float>(frame + 1);
             };
             touch(positions);
             touch(normals);

@@ -273,13 +273,14 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Gets how many abandoned textures the frame's sweeps have let go (see api/ContentSweep). */
     [[nodiscard]] std::size_t releasedTextures() const noexcept;
 
-    /** @brief Gets how many shared streams the frame's steps have let go because no frame named them any more.
+    /** @brief Gets how many shared streams the frame's steps have let go because no live content declares them.
      *
-     * The observable behind api/StreamUploads's lifetime rule: a geometry the host stops drawing is not
-     * released any differently from one it keeps - what ends is its streams being NAMED, and the window is the
-     * executor's own (`slots + 1`). A host that keeps drawing everything reads zero; one that drops a mesh
-     * reads it move once the window has passed. It is deliberately NOT part of `releasedContentObjects()`:
-     * that one counts objects the host let go of, this one counts uploads no frame asks for any more.
+     * The observable behind api/StreamUploads's lifetime rule: an entry lives while a tracked geometry row names
+     * its buffer. A geometry that is merely culled keeps its uploads (the row is still there); one that leaves the
+     * tree loses them once the content store has parked the row's removal for the executor's own window
+     * (`slots + 1`). A host that keeps drawing everything reads zero; one that drops a mesh reads it move once the
+     * window has passed. It is deliberately NOT part of `releasedContentObjects()`: that one counts objects the
+     * host let go of, this one counts uploads no content declares any more.
      */
     [[nodiscard]] std::size_t releasedStreams() const noexcept;
 

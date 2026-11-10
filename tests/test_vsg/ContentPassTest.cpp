@@ -6198,31 +6198,28 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
         << "the RIGHT drawable samples ITS material's texel (green), got (" << static_cast<int>(right_half.r) << ", " << static_cast<int>(right_half.g) << ", "
         << static_cast<int>(right_half.b) << ") - one colour twice means one set served both drawables";
 
-    // THE STREAM SHARING'S LIFETIME, driven by the frame itself (see api/StreamUploads): the two frames above
-    // bound the geometry's streams, so they are here - and then the frame loop runs on without recording
-    // anything, which names nothing, and the grace window decides when they go. The window is the executor's
-    // own (`slots + 1` = 4 here: the retirement queue above holds 3 slots), so an entry named in frame F
-    // survives frames F..F+4 and leaves in F+5 - which is exactly the arithmetic this pins, because "one frame
-    // early" and "one frame late" are both silent (no picture, no counter moves) without it.
-    const std::size_t streams = assembly.uploads().live();
+    // THE STREAM SHARING'S LIFETIME IS CONTENT'S, NOT A CLOCK'S (see api/StreamUploads): the two frames above
+    // bound the geometry's channels and its index stream, and a stretch of frames that record nothing is
+    // CULLING - the geometry is still tracked, so its rows (the pins) are still there and the uploads stay.
+    const std::size_t   streams         = assembly.uploads().live();
+    const std::uint64_t uploads_before  = assembly.uploads().uploads();
     ASSERT_GT(streams, 0U) << "the two frames bound the geometry's channels and its index stream";
-    EXPECT_EQ(assembly.releaseUnusedStreams(), 0U) << "a frame that just named them releases none of them";
 
-    std::uint64_t released_at_the_end = 0U;
-    for (std::uint64_t step = 0U; step < 5U; ++step) {
+    for (std::uint64_t step = 0U; step < 100U; ++step) {
         const vn::graphics::backend::FrameToken token = timeline.begin();
         timeline.submitted(token);
         (void)assembly.beginFrame(frame, timeline, retirement); // names nothing: no pass is recorded
-        released_at_the_end = assembly.releaseUnusedStreams();
-        if (step < 4U) {
-            EXPECT_EQ(released_at_the_end, 0U) << "inside the window (slots + 1 = 4 frames), nothing leaves";
-        }
     }
-    EXPECT_EQ(released_at_the_end, streams) << "one frame past the window, everything no frame named has left - binds included";
-    EXPECT_EQ(assembly.uploads().live(), 0U);
-    EXPECT_EQ(assembly.uploads().objects(), 0U);
-    EXPECT_EQ(assembly.uploads().unused(), streams);
-    EXPECT_EQ(assembly.uploads().evictions(), 0U) << "the capacity was never the reason";
+    EXPECT_EQ(assembly.uploads().live(), streams) << "a culled geometry keeps its uploads";
+    EXPECT_EQ(assembly.uploads().uploads(), uploads_before) << "and nothing was uploaded again while it was out of view";
+    EXPECT_EQ(assembly.uploads().retired(), 0U) << "nothing left: the content was only out of view";
+
+    // THE OTHER SWITCH IS CONTENT GOING AWAY. The store's teardown drops the rows without parking them (a
+    // session replacement), so the very next frame declares nothing and the table parks what it held.
+    store.clear();
+    (void)assembly.beginFrame(frame, timeline, retirement);
+    EXPECT_EQ(assembly.uploads().live(), 0U) << "nothing declares the streams any more";
+    EXPECT_EQ(assembly.uploads().retired(), streams);
 }
 
 TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)

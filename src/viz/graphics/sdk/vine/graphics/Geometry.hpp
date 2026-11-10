@@ -623,7 +623,12 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   several primitives may point at the same buffer through different slices.
      * - A stream that does not cover whole matrices is rejected and leaves the primitive unchanged; a
      *   null slice clears it. The stream's start is the draw's firstInstance.
-     * - Adding/replacing a stream announces the geometry's content change (bounds and collected commands).
+     * - Adding/replacing a stream announces the geometry's content change (bounds and collected commands),
+     *   but it does NOT move revision(): a different stream is a different DESCRIPTION of that draw.
+     *   Report the new description with setRevision() or bumpRevision() (see revision()).
+     * - The report is what a backend rebuilds its fact row on, and that row is where a stream is DECLARED:
+     *   without it the row keeps naming the stream the draw used before while the command names the new one,
+     *   so the drawn stream is uploaded again on every frame - the picture stays right, only the cost is wrong.
      *
      * @param index      Primitive to edit; must exist.
      * @param transforms Instance matrices, or a null slice to clear.

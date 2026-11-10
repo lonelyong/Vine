@@ -10,8 +10,8 @@
 
 材质 PBR 的四步（模型 / 纹理集 / 两条路径的 BRDF / 实例与 alpha 模式）与 F11 的逐材质诊断已全部落地。
 
-- **GPU 驻留的 pin 迁移（ADR 步骤 2–5）**：流 → 纹理 → 材质块 → 半片/描述符集，逐步迁到“pin =（内容身份, revision）”
-  的模型，删掉时间窗与反事实扫描。设计与验收在
+- **GPU 驻留的 pin 迁移（ADR 步骤 3–5）**：纹理 → 材质块 → 半片/描述符集（**第 2 步“流”已落地**：`backend/ResourceTable` +
+  `StreamUploads` 的 pin = buffer 声明），逐步迁到“pin =（内容身份, revision）”的模型，删掉引用计数与反事实扫描。设计与验收在
   `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §迁移，每步一个可回退的提交。
 - **`releaseContent` 入口补齐**：`VsgBackend::releaseContent` 用 `obj_cast<const Material>`（具体类），`MaterialInstance`
   落不到任何分支 ⇒ 返回 false；且 `Buffer` 不在入口里（几何/实例流的驻留键就是 buffer）。改 `MaterialBase` +

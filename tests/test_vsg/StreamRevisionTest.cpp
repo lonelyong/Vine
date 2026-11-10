@@ -12,14 +12,15 @@
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/FactResult.hpp>
 #include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/vsg/internal/StreamUploads.hpp>
 
 using vn::graphics::Geometry;
-using vn::graphics::backend::SharedStreams;
 using vn::graphics::backend::StreamKey;
 using vn::vsg::buildGeometryFacts;
 using vn::vsg::ChannelFacts;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
+using vn::vsg::StreamUploads;
 
 namespace
 {
@@ -198,21 +199,23 @@ TEST(StreamRevisionTest, TheSharingTableUploadsOnlyTheStreamWhoseAnnouncementMov
     std::vector<vn::vsg::PrimitiveFacts> primitives;
     const GeometryFacts                  facts = two.describe(storage);
 
-    SharedStreams table(8U);
-    const auto    acquire = [&table](const StreamKey& key, std::uint64_t frame) { return table.acquire(key, frame).action; };
+    StreamUploads table;
+    const auto    acquire = [&table](const ChannelFacts& channel) {
+        return table.acquireVertex(channel.streamKey(), channel.scalars(), channel.values).action;
+    };
 
-    EXPECT_EQ(acquire(facts.channels[0].streamKey(), 1U), SharedStreams::Action::Upload);
-    EXPECT_EQ(acquire(facts.channels[1].streamKey(), 1U), SharedStreams::Action::Upload);
+    EXPECT_EQ(acquire(facts.channels[0]), StreamUploads::Action::Uploaded);
+    EXPECT_EQ(acquire(facts.channels[1]), StreamUploads::Action::Uploaded);
     EXPECT_EQ(table.uploads(), 2U);
 
     // The editor touched positions only.
     two.positions->setRevision(two.positions->revision() + 1U);
-    EXPECT_EQ(acquire(facts.channels[0].streamKey(), 2U), SharedStreams::Action::Upload) << "the edited channel is uploaded again";
-    EXPECT_EQ(acquire(facts.channels[1].streamKey(), 2U), SharedStreams::Action::Alias) << "and the untouched one is not";
+    EXPECT_EQ(acquire(facts.channels[0]), StreamUploads::Action::Uploaded) << "the edited channel is uploaded again";
+    EXPECT_EQ(acquire(facts.channels[1]), StreamUploads::Action::Aliased) << "and the untouched one is not";
 
     // A geometry announcement is about shape: it re-uploads nothing, because no buffer spoke.
     two.geometry->bumpRevision();
-    EXPECT_EQ(acquire(facts.channels[0].streamKey(), 3U), SharedStreams::Action::Alias);
-    EXPECT_EQ(acquire(facts.channels[1].streamKey(), 3U), SharedStreams::Action::Alias);
+    EXPECT_EQ(acquire(facts.channels[0]), StreamUploads::Action::Aliased);
+    EXPECT_EQ(acquire(facts.channels[1]), StreamUploads::Action::Aliased);
     EXPECT_EQ(table.uploads(), 3U) << "2 first, 1 after the buffer announcement, none for the geometry's";
 }

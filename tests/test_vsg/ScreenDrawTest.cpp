@@ -59,6 +59,8 @@
 #include <vine/vsg/internal/StreamUploads.hpp>
 #include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
+#include "TestStreamUploads.hpp"
+
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
 ///
 /// The production path hands `StreamUploads` a view of the source buffer; these cases own their arrays and
@@ -85,8 +87,6 @@ using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
 using vn::graphics::backend::VariantPool;
 using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
@@ -283,22 +283,9 @@ class Fixture {
         (*indices)[1]   = 1U;
         (*indices)[2]   = 2U;
 
-        StreamKey vertex_key;
-        vertex_key.kind       = StreamKind::Vertex;
-        vertex_key.location   = 0U;
-        vertex_key.components = 3U;
-        vertex_key.buffer     = &vertex_identity;
-        vertex_key.revision   = 1U;
-        vertex_key.count      = 9U;
-        StreamKey index_key;
-        index_key.kind       = StreamKind::Index;
-        index_key.components = 1U;
-        index_key.buffer     = &index_identity;
-        index_key.revision   = 1U;
-        index_key.count      = 3U;
-
-        const auto vertex_bind = uploads->acquireVertex(vertex_key, scalarsOf(positions));
-        const auto index_bind  = uploads->acquireIndex(index_key, indicesOf(indices));
+        const vn::test::UploadedStreams uploaded    = vn::test::uploadTriangle(*uploads, scalarsOf(positions), indicesOf(indices));
+        const auto                     vertex_bind = uploaded.vertex;
+        const auto                     index_bind  = uploaded.index;
         if (vertex_bind.bind == nullptr || index_bind.bind == nullptr) {
             return false;
         }
@@ -413,14 +400,10 @@ class Fixture {
     std::unique_ptr<StateRegistry>    content_registry;
 
     static int material_identity;
-    static int vertex_identity;
-    static int index_identity;
     static int content_program;
 };
 
 int Fixture::material_identity = 0;
-int Fixture::vertex_identity   = 0;
-int Fixture::index_identity    = 0;
 int Fixture::content_program   = 0;
 
 } // namespace
