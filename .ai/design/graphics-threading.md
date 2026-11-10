@@ -68,6 +68,10 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   输入从"读活节点"换成"应用 delta 后的值"（`G7`：复杂性吸收在引擎侧，不推给宿主）。
 - **边界**：镜像节点持有 `intrusive_ptr<Node>`，**只为让地址活到停靠窗口结束**（ADR-2026-11-09 的规则），
   **不读它的任何字段**；读字段就等于回到共享可变状态。
+- **不进镜像的**：节点名字、行为/脚本、选择态、撤销栈、宿主的文档状态 —— 没有消费者（`G8`）。把这些也搬过来
+  就是"把内容世界整个复制一份"，那是被否决的第一稿。
+- **共用一份算法**：表类型与两趟走法（`bakeSubtree` / `collectFromBake`）是 `src/viz/graphics/src/DrawListBake.hpp`
+  里的**同一份**代码，内容侧与镜像侧只是填表的人不同 —— 否则"等价性"会退化成两套实现互相验证。
 
 ### 2.3 三条跨线程通道
 
@@ -137,6 +141,8 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 | Unreal | 游戏线程（`UWorld`/actor） | 渲染线程的 `FScene` + `FPrimitiveSceneProxy`，变更经 `ENQUEUE_RENDER_COMMAND` 投递 | **本设计的形状**（内容留作者线程，渲染侧持久镜像 + 命令） |
 | Qt Quick | GUI 线程拥有 `QSGNode` | 渲染线程每帧 `sync()` 重建自己那份 | 同为两世界，但每帧同步 ⇒ 每帧 O(n)（本设计用 delta 避开） |
 | Godot | 主线程节点 | `RenderingServer` 经 `CommandQueueMT` + RID（稳定句柄） | 同为命令队列；RID ≈ 本设计的镜像 id |
+| Unity | C# `Transform` 只是句柄，原生 `TransformHierarchy` 权威 | 渲染侧剔除结构按**批**处理变换变更（`TransformChangeDispatch`） | 同为“镜像 + 批量变更”，且验证了按批处理的必要性（§3.1.2） |
+| O3DE | 主线程的组件 | RPI `Scene` + 各 `FeatureProcessor`，由 `TransformService` 的通知嗂养 | 同为事件嗂养的渲染侧世界 |
 | Bevy | 主 world | 每帧 `Extract` 进 render world | 同为两世界，但每帧 extract ⇒ 每帧 O(n) |
 | Filament | 单线程 API + job system 并行剔除 | 同线程 | 对应本设计的"帧内并行"（§2.7） |
 | three.js / bgfx | 单线程 | 同线程 | 基线：本设计的收益从这里来 |
@@ -146,6 +152,9 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 - **在本仓库为什么选持久镜像而不是每帧 extract**：extract/`sync()` 的形状是每帧 O(drawables) 的拷贝，
   而我们的目标恰恰是把**每帧**的成本从 UI 线程拿走；持久镜像只在**编辑**时付 O(变化的部分)，
   静止场景零成本（`G10`）。
+- **批量事务不是我们发明的**：Filament 的 `TransformManager::openLocalTransformTransaction()` /
+  `commitLocalTransformTransaction()` 就是“先攒一堆变换变更、提交时只算一次世界变换”；Godot 是 dirty 列表；
+  Unreal 每次 `UpdatePrimitiveTransform` 只更新受影响图元与其盒。这就是 §3.1.2 / §3.1.4 的批量与脏集合的外部依据。
 - 依据是这些库的公开架构文档与我们自己的测量，不是逐行读它们的源码；落地前不引用它们的内部细节。
 
 ## 3. 功能点
@@ -182,8 +191,13 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 - **行为**：`post(Delta)` 接受值：`attach{parent,child}`、`detach{child}`、`reparent{child,parent,index}`、`setRoot{node}`、
   `placement{node, local_matrix}`、`state{node, visible, opacity, layers, draw_order}`、`description{geometry, ContentDescription}`、
   `camera{CameraValues}`、`surfaceChanged{handle}`、`extentChanged{w,h}`、`visibility{exposed}`、`frame{}`、`terminate{}`。
-- **约束**（C2）：每个 delta 都是可拷贝的值 + 不持有"还会变的内容"（描述用不可变值，句柄用 `intrusive_ptr` 只保命）。
+- **成批**：一次仿真步（机器人 28~70 个关节）不是一个关节一条 delta，而是一条
+  `pose{root, span<placement>}`。批量同时给三件事：一条队列项、一个原子应用点（同帧不可能看到半个 pose）、
+  以及下面那条零分配。
+- **约束**（C2）：每个 delta 都是可拷贝的值 + 不持有“还会变的内容”（描述用不可变值，句柄用 `intrusive_ptr` 只保命）。
 - **要求**（R2）：MPSC、生产者不阻塞、帧首一次 drain 拿完当时全部；合并是允许的（同一节点多条 placement，后者胜）。
+- **要求**（R15）：通道是**定容环**、payload **trivially copyable**、稳态（无 delta / 有 delta 都算）**零堆分配**。
+  机器人场景每帧 28~70 条放置变化，如果一条一次 `new`，稳态零分配的门禁（后端基线 12 alloc/pass）当场就没了。
 - **验收**（T2）：N 线程并发投递 M 条，总数精确、每线程 FIFO。
 - **注意**（N2）：delta 的顺序就是应用的顺序；一个 delta 内的多个字段原子生效。
 
@@ -201,6 +215,8 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 - **行为**：placement 变化 ⇒ 镜像里该节点子树的世界矩阵重算（局部矩阵 × 父世界矩阵），并沿祖先重算世界盒；
   visible/opacity/layers/drawOrder 变化 ⇒ 只重折该节点子树的折叠值（不重算盒）。
 - **约束**（C4）：重算范围 = 变化的子树 + 其祖先，不做整图重算（今天的 `bakeSubtree` 是整图，镜像版要按子树）。
+- **约束**（C15）：**脏集合合并**：drain 完把脏节点收成一个集合，每条受影响子树重算一次，祖先盒每条链只向上合一 次。
+  逐条 delta 直接传播会在机器人（28~70 关节 × 链路深度）上变成数百次重复传播。
 - **要求**（R4）：每帧动画（自转、拖拽 gizmo）就是每帧一条 placement delta；引擎侧**没有** update traversal。
 - **验收**（T4）：拖拽一个节点 100 帧，镜像世界矩阵与内容侧一致（逐元素相等），引擎侧重算量只与被拖子树成正比。
 - **注意**（N4）：dragging 的手感来自"delta 在帧首被应用"，不会被额外推后一帧。
@@ -335,6 +351,8 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 | C11 | 并行度 0/1 与串行逐位相同。 |
 | C12 | `inline` 模式线程断言恒真；镜像侧入口断言引擎线程。 |
 | C13 | 校验和不进 Release 稳态路径。 |
+| C14 | 一次仿真步是一个批量 delta（`pose`），不是一关节一条。 |
+| C15 | 同一帧的多次变更按脏集合合并，每条子树与每条祖先链只重算一次。 |
 
 ### 5.2 要求（R#）
 
@@ -353,6 +371,8 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 | R11 | 小场景不并行。 |
 | R12 | 既有用例与无头路径在 `inline` 下不改一行。 |
 | R13 | 漏调钩子至少被等价性用例抓到。 |
+| R14 | delta 通道定容、payload trivially copyable、稳态零堆分配。 |
+| R15 | 机器人 28~70 关节每帧变化时，引擎侧重算量只与链路成正比，且每帧零分配。 |
 
 ### 5.3 不变量（N#）
 
@@ -437,7 +457,7 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 | T1 | 握手一次；静止 N 帧零 delta、零重算 | `RenderWorldTest.HandshakeCopiesOnceAndThenIdles` |
 | T2 | delta 不丢不重、每线程 FIFO | `DeltaQueueTest.*` |
 | T3 | attach/detach/reparent 后镜像节点集与内容一致、无泄漏 | `RenderWorldTest.StructureFollowsTheGraph` + ASan |
-| T4 | 拖拽 100 帧后世界矩阵逐元素相等；重算量只与子树成正比 | `RenderWorldTest.ATransformEditRecomputesOnlyItsSubtree` |
+| T4 | 拖拽 100 帧后世界矩阵逐元素相等；重算量只与子树成正比 | `RenderWorldTest.ATransformEditRecomputesOnlyItsSubtree`；**机器人场景**：一台 6 轴（7 段）+ 4 台 = 28 关节每帧变，N 帧后镜像 ≡ 内容侧逐位相同、每帧分配数 = 0 |
 | T5 | 换通道/切片/primitive 后代理与从零重建逐字段相同 | `RenderWorldTest.ADescriptionEditRebuildsExactly` |
 | T6 | 相机值两侧一致；无 delta 的帧沿用旧值 | `RenderWorldTest.TheCameraIsOneValue` |
 | T7 | 字节变化只靠 revision 离场/重传 | `StreamUploadsTest.AStreamWhoseBufferMovedLeaves…`（镜像路径） |
@@ -460,11 +480,16 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 - 落地阶段与触发条件见 `../backlog/graphics.md` T31；并行 select 由 T24 单独触发。
 - 多文档 = 多控件 = 多会话（各自的引擎线程与设备），不做"多窗口共享一份内容"的并发编辑。
 - `OwnedFrame` 的真实消费者（远程/录制）仍未出现（T18）。
+- **仿真产出的 pose 要不要绕过场景图**：一种更激进的写法是“pose 是每帧的值，场景图只存拓扑”（仿真侧持关节角数组，
+  产出 pose 值；UI 拾取用同一份值算世界矩阵）。好处是内容侧每帧零图写、零 epoch 抖动；代价是世界矩阵有两处算法（必须同源共享）。
+  **今天不做**：先把镜像与公告钉住；若机器人每帧 28~70 个节点写成为内容侧瓶颈，再拿这条与测量一起重开。
 
 ### 9.3 兼容性 / 迁移
 
-- **P1（无触发条件即可做）**：`inline`/`threaded` 两模式骨架 + delta 队列 + 公告 payload 必填 + 等价性用例。
+- **P1**：`inline`/`threaded` 两模式骨架 + delta 队列 + 公告 payload 必填 + 等价性用例。
   这一步不改任何宿主代码：`inline` 下行为与今天逐位相同，等价性用例先把镜像钉住。
+  **第一步已启动**：bake/select 的表类型与两趟走法已抽到 `src/viz/graphics/src/DrawListBake.hpp`（内部头），
+  内容侧行为不变（`test_graphics` 506/506），这样镜像侧能填同一张表、走同一份算法 —— 否则“等价性”只是两套实现互相验证。
 - **P2**：`threaded` 下的结构/状态/描述/相机 delta 与镜像增量重算。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
