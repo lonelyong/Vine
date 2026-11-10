@@ -15,7 +15,7 @@
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
 一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
-## design/ —— 现行设计文档（51）
+## design/ —— 现行设计文档（52）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
@@ -66,6 +66,7 @@
 - `geometry-intersection.md` —— 相交配对与结果形态：动词、结果类型由交集维数决定、`false` 时出参语义、入口配对表与缺口；曲线 × 解析曲面的带符号距离求根（`intersectCurveWithSurface` + `signedValue`）与曲线 × 任意曲面的投影求根（`intersectCurveWithSurfaceByProjection`）。
 - `geometry-surface-queries.md` —— 族级曲面查询：点到曲面的最近点 / 距离（高斯-牛顿）与射线 × 曲面（三元牛顿），参数窗口规则、重合分类与局部解的代价。
 - `geometry-curve-queries.md` —— 曲线的最近点 / 距离（平方距离驻点求根）、两曲线最近距离、弧长与反解、曲率（3D 无符号）、窗口规则与局部极小值的限制。
+- `geometry-curve-discretization.md` —— 曲线折线化：`CurveSampler<T>` 基类 + 参数等分 / 弧长等距 / 弦高偏离三个子类，`curve(c)` / `range()` / `compute()` 无参 / `polyline()` 的结果式对象壳与结果复位规则，`CurvePolyline<T>{points, parameters}`，2D 与 3D 共用的 `detail` 内核，播种与点数预算，折角不需要间断点表，进度钩子只留位。
 - `geometry-solid.md` —— 解析实体的族 `Solid<T>`（五个 kind 是值）：最近点与射线求交，模型只存尺寸并按需构造实体。
 - `geometry-tessellation.md` —— 解析实体的三角化：五个 kind 到 `Triangulation<T>`（位置 / 法向 / 索引）的自由函数重载、质量参数、精确法向与顶点复制、闭合与外向绕序，以及模型侧的 `meshFromTriangulation()` 装配。
 - `imaging-design.md` —— imaging 模块（CPU 像素数据）。
@@ -77,11 +78,15 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（65）
+## decisions/ —— 决策记录（ADR）（69）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-11-10-curve-sampling-is-an-object.md` —— 曲线离散化做成对象：基类 + 三个规则子类、setter 配置 + 无参 `compute()`；否决构造即算与“三个自由函数 + 返回值”。
+- `ADR-2026-11-09-address-keys-hold-the-object.md` —— 按地址做键的缓存必须持有键名所指的对象：地址在行仍在时被回收，键就指向了新对象。
+- `ADR-2026-11-09-buffer-edit-scope.md` —— `Buffer` 的写入口收成一个作用域（共享可变字节只有一个写入口）。
+- `ADR-2026-11-09-scene-collection-two-halves.md` —— 场景收集拆成「烘焙」与「选取」两半（第一半已落地，第二半待测量）。
 - `ADR-2026-11-09-box-transform-lives-in-geom.md` —— 盒的变换算子回到 `geom`（`Aabb::transformed()`，只接受仿射，非仿射答空盒），删除 `graphics::transformBox()` 与 `RayIntersection.cpp` 的副本；`Obb` 暂不提供（表示装不下一般仿射，零消费者）。
 - `ADR-2026-11-09-solid-tessellation-in-geom.md` —— 三角化回到 `geom`：`tessellateSolid()` 返回精度模板 `Triangulation<T>`（位置 / 法向 / 索引），`meshFromTriangulation()` 在模型侧装配成 `TriangleMesh`；否决返回 `TriangleMesh`（回边）与 `Buffer`（多一次拷贝）。
 - `ADR-2026-11-09-solid-closed-set-without-variant.md` —— 删掉 `SolidShape` 变体与 `solidShapeOf()`：封闭集合由五个 kind + `visitPrimitive()` + 一 kind 一个重载表达；`Solid<T>` 族接口与五个 kind 值不变。
@@ -192,6 +197,7 @@
 现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
 
 - `vsg-embedded-init-crash.md`
+- `vsg-content-address-recycled-before-rows.md`
 - `spline-knotspan-hang.md` —— `geom::detail::knotSpan()` 在“最后两跨”括号上不前进，带内部节点的 B 样条求值挂死。
 - `vsg-embedded-blank-render.md`
 - `vsg-resize-distortion.md`

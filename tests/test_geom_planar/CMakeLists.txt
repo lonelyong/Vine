@@ -11,6 +11,7 @@ set(SRC_FILE_LIST
         CurveIntersectionTest.cpp
         CurveLengthTest.cpp
         CurveProjectionTest.cpp
+        CurveSamplingTest.cpp
         EllipseCurveTest.cpp
         ModuleContractTest.cpp
         OffsetCurveTest.cpp

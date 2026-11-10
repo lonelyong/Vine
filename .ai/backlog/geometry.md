@@ -12,6 +12,9 @@
 | G9 | `BSplineCurve` 求值的 O(p²) 表算法 | 次数 ≥ 8 的样条被放进批量采样循环（现在是无分配的递归基函数，代价随次数增长） | `../design/geometry-kinds.md` 2.8 |
 | G10 | 样条曲面求值的临时分配 | 大批量采样或求值进热路径（现在每次调用按控制点数分配临时数组：`deCasteljau` 按值取数组、`differences` 返回新数组） | `../design/geometry-axis-surfaces.md` 2.5、R2 |
 | G11 | 相交配对表里缺的组合（射线–直线、直线–`Aabb`/`Obb`、平面–`Aabb`/`Obb`、`Obb`–`Aabb`） | 出现需要其中某个组合的消费者（布尔运算、截面裁剪、新拾取图元）；届时按 `../design/geometry-intersection.md` 的 C1–C4 加，不加统一接口 | `../design/geometry-intersection.md` §3.1、D1 / D2 |
+| G12 | 保证最大偏离的曲线离散化（每条弦扫描真实最大距离后再决定细分，OCCT `CPnts_UniformDeflection` 的做法） | 出现要求「真实最大偏离 ≤ 公差」的消费者（显示之外的用途：布尔、公差报告、厚度/间隙检查、CAM）；只要画得好看就用草案里的中点估计版 | `../design/geometry-curve-discretization.md` 2.5、P1、D2 |
+| G13 | 曲线离散化按间断点（`C0` knot）强制分段，折角作为折线顶点保留 | 出现要求「折角必须是一个顶点」而不是「折角被逼近到容差内」的消费者（例如按折线做角点检测、或显示上必须出硬角） | `../design/geometry-curve-discretization.md` 2.6、D3 |
+| G14 | 曲线离散化的进度与取消后端：接 `vn::progress::ProgressIndicator` / `ProgressHost`（现在只有预留位 `progress(callback)`） | 第一次出现「对高次样条或整条线框离散时界面要能报进度 / 能取消」的调用点；届时先试无依赖回调，若直接接 `vn::progress` 则要记账 `geom` 新增的依赖边 | `../design/geometry-curve-discretization.md` 2.12、9.2 |
 ## 判据提醒
 
 - 每一项都只写触发条件：没有消费者的能力不进代码（`G8`）。

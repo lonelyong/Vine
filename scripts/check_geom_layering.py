@@ -12,7 +12,11 @@ two separate targets did. This gate is that refusal, and it also keeps the share
   5. a geometry header may only include `vine/geom*`, `vine/math*` or the standard library, and a quoted include must
      stay in its own directory (R2: the only edges are geometry -> geometry, geometry -> math);
   6. `spatial/Bvh.hpp` may not include `spatial/BvhBuilder.hpp` - the tree holds primitives, not knowledge of how they
-     are built, so the builder depends on the tree and never the reverse (`.ai/design/geometry-bvh.md` 2.2).
+     are built, so the builder depends on the tree and never the reverse (`.ai/design/geometry-bvh.md` 2.2);
+  7. only the geometry module and its own tests may include a `detail` header - `geom/detail`, `planar/detail` and
+     `spatial/detail` are the module's implementation, shipped because a public header needs them, and carrying no
+     stability promise. Another module that includes one has pinned itself to code that may change shape
+     (`.ai/design/geometry-module.md` 2.4).
 
 Run: python scripts/check_geom_layering.py
 """
@@ -38,6 +42,10 @@ DIMENSION_NAMES = re.compile(r"\b(Point2|Point3|Vector2|Vector3)\b")
 FORBIDDEN_EDGES = {
     "spatial/Bvh.hpp": ("spatial/BvhBuilder.hpp",),
 }
+# Rule 7: `detail` is the module's implementation, not vocabulary. Only the geometry module itself and its own tests may
+# include it; a consumer that does has pinned itself to a header with no stability promise.
+DETAIL_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]vine/geom/(?:detail|planar/detail|spatial/detail)/')
+DETAIL_OWNERS = ("src/base/geom/", "tests/test_geom_planar/", "tests/test_geom_spatial/")
 
 findings: list[str] = []
 checked = 0
@@ -111,6 +119,21 @@ for path in geometry_headers():
                 findings.append(
                     f"{path.relative_to(ROOT)}:{number}: geom/detail names {match.group(1)} "
                     f"(a shared helper that names a dimension is not shared any more)"
+                )
+
+# Rule 7: `detail` is the module's implementation, not vocabulary another module builds on.
+for base in ("src", "tests", "tools"):
+    for consumer in sorted((ROOT / base).rglob("*")):
+        if not consumer.is_file() or consumer.suffix not in (".h", ".hh", ".hpp", ".hxx", ".c", ".cc", ".cpp", ".cxx"):
+            continue
+        relative = consumer.relative_to(ROOT).as_posix()
+        if relative.startswith(DETAIL_OWNERS):
+            continue
+        for number, line in enumerate(consumer.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1):
+            if DETAIL_INCLUDE_RE.match(line):
+                findings.append(
+                    f"{relative}:{number}: includes a geom `detail` header "
+                    f"(detail is the module's implementation, not an extension point)"
                 )
 
 for finding in findings:

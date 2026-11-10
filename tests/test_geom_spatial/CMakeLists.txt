@@ -9,6 +9,7 @@ set(SRC_FILE_LIST
 	CurveCurveDistanceTest.cpp
 	CurveDistanceTest.cpp
 	CurveLengthTest.cpp
+	CurveSamplingTest.cpp
 	CurveSurfaceTest.cpp
 	GeometryKindsTest.cpp
 	LinePlaneTest.cpp

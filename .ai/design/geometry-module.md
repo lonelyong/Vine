@@ -1,7 +1,7 @@
 # geometry 模块：一个模块、两个契约、一份共享实现
 
 > **状态**：现行
-> **最后核对**：2026-11-06
+> **最后核对**：2026-11-10
 > **范围**：`src/base/geom` 的物理形态与命名规则——目录与命名空间、`vn::Geom` 目标、`geom/planar` 与 `geom/spatial` 两个契约子树、共享实现子树 `geom/detail`、模块级词汇、隔离门禁、以及"什么放哪里"的判据。不含任何具体曲线/曲面/实体的契约与算法（见 `geometry-planar.md`、`geometry-kinds.md`、`geometry-primitives.md` 等）。
 > **权威来源**：`src/base/geom/CMakeLists.txt`、`src/base/geom/sdk/vine/geom/geom_global.hpp`、`src/base/geom/sdk/vine/geom/Continuity.hpp`、`src/base/geom/sdk/vine/geom/{planar,spatial,detail}/`、`scripts/check_geom_layering.py`、`tests/test_geom_planar/ModuleContractTest.cpp`。
 > **待办**：无
@@ -42,9 +42,9 @@
 | 目录 | 命名空间 | 内容 | 是不是 API |
 |---|---|---|---|
 | `sdk/vine/geom/` | `vn::geom` | `geom_global.hpp`（宏）、`Continuity.hpp`（光滑度阶梯） | 是 |
-| `sdk/vine/geom/planar/` | `vn::geom::planar` | 平面曲线契约 `Curve<T>`、九个类型、六个族级算法（16 个头） | 是 |
-| `sdk/vine/geom/spatial/` | `vn::geom::spatial` | 曲线、曲面、实体、射线、`Obb` / `Aabb`（49 个头，另有属本契约 `spatial/detail/` 7 个） | 是 |
-| `sdk/vine/geom/detail/` | `vn::geom::detail` | 与维度无关的共享实现（8 个头） | **不是** |
+| `sdk/vine/geom/planar/` | `vn::geom::planar` | 平面曲线契约 `Curve<T>`、九个类型、七个族级算法（17 个头） | 是 |
+| `sdk/vine/geom/spatial/` | `vn::geom::spatial` | 曲线、曲面、实体、射线、`Obb` / `Aabb`（50 个头，另有属本契约 `spatial/detail/` 7 个） | 是 |
+| `sdk/vine/geom/detail/` | `vn::geom::detail` | 与维度无关的共享实现（9 个头） | **不是** |
 
 `geom_global.hpp` 提供 `VN_GEOM_API` 与三个命名空间宏（`VN_GEOM_NS_BEGIN`、`VN_GEOM_PLANAR_NS_BEGIN`、`VN_GEOM_SPATIAL_NS_BEGIN`、`VN_GEOM_DETAIL_NS_BEGIN` 及对应 `_END`）。
 
@@ -64,18 +64,20 @@
 ### 2.4 命名规则
 
 - **类型名不带维度标记**：`LineCurve` / `Curve`，不是 `LineCurve2d` / `Curve2`；维度由命名空间承载。精度后缀仍是 `f` / `d`（`LineCurved`、`CircleCurvef`）。
-- **`detail` 不是 API**：不承诺稳定与 ABI；要公开一个共享能力，先在两个契约命名空间各起一个公开入口。`planar::arcLength` / `spatial::arcLength` 就是这样一层薄壳（解析窗口与容差后转发）。
+- **`detail` 不是 API**：不承诺稳定与 ABI；要公开一个共享能力，先在两个契约命名空间各起一个公开入口。`planar::arcLength` / `spatial::arcLength` 就是这样一层薄壳（解析窗口与容差后转发）。这条不再是口头约定：门禁第 7 条只允许本模块与它自己的两个测试目录 include `detail`。
 - **同名的公开入口按契约分属两个命名空间**：`arcLength`、`parameterAtLength`、`closestPointOnCurve`、`curveToCurveDistance` 两个契约各一份（见 P2）。
 
 ### 2.5 依赖方向与门禁
 
 - **方向**：`planar` / `spatial` → `detail` → `math`；两个契约之间没有边。
-- **门禁五条**（`scripts/check_geom_layering.py`，当前 70 个文件 0 处违规）：
+- **门禁七条**（`scripts/check_geom_layering.py`，当前 83 个文件 0 处违规）：
   1. `planar` 不得 include `spatial`；
   2. `spatial` 不得 include `planar`；
   3. `detail` 不得 include 任一个契约；
   4. `detail` 不得**命名** `Point2` / `Point3` / `Vector2` / `Vector3`——按 include 查不住的维度泄漏，按名字查住；
-  5. 几何头的 include 域：带路径的角括号只能是 `vine/geom/` 或 `vine/math/`，引号只能是同目录——即"唯一的边是几何 → 几何、几何 → 数学"。
+  5. 几何头的 include 域：带路径的角括号只能是 `vine/geom/` 或 `vine/math/`，引号只能是同目录——即"唯一的边是几何 → 几何、几何 → 数学"；
+  6. `spatial/Bvh.hpp` 不得 include `spatial/BvhBuilder.hpp`——树持有图元，不知道也不应当知道构建策略；
+  7. 只有 `src/base/geom` 与 `tests/test_geom_planar` / `tests/test_geom_spatial` 可以 include `detail`；其它模块一旦 include 就钉死在无稳定承诺的头上。
 - **为什么用脚本而不是链接**：三个子树上在同一个 target 内，编译器拦不住；两个 target 的老办法会让"一个模块"这个事实消失（`ADR-2026-11-06-merged-geom-module.md`）。
 - **门禁必须能失败**：新增规则后要用一条临时违规头文件反向验证，再删掉它确认回到 0。
 
@@ -84,19 +86,25 @@
 - `math` 只提供数学词汇（值类型、常量、谓词、概念），不认识几何；几何侧的数值链（求根 → 容差换算 → 积分/反解、样条求值与节点模型）全在 `geom/detail`。
 - 代价明确接受：任何非几何模块要用积分或求根，只能依赖 `vn::Geom`、复制一份、或把内核升成独立模块；后者是记账的反转路径（`ADR-2026-11-06-math-keeps-only-vocabulary.md`）。
 
+### 2.7 共享实现为什么住在头里（量过，不再重议）
+
+- **判据**：看**实例化集合的大小**，不看代码长短。集合随调用方类型无限增长（靠 lambda / 容器泛化的 `Quadrature`、`RootFinding`、`CrossingSearch`、`CurvePairSearch`、`BSplineBasis`、`BezierBlend`）⇒ 只能 header；集合有限且已知 ⇒ 可以下沉成 `src/*.cpp` + 显式实例化（`SolidTessellation.cpp` 是 5 个 kind × 2 精度，`Instantiations.cpp` 是值类型）。
+- **量过**：把 `CurveSubdivision.hpp` 的三个内核拆进 `src/CurveSubdivision.cpp`（2 个契约 × 2 精度 × 3 内核 = 12 条导出实例化）之后，包含 `CurveSampling.hpp` 的 TU 编译时间 **2.16 s → 2.16 s**（MSBuild `ClCompile` 单文件强制重编，三次取最小；同目录 `CurveLengthTest.cpp` 作对照为 1.96 s）。本规模下无可测收益，因此保持 header-only，不拆，那次拆分已撤回。<!-- drift-ok -->
+- **边界**：结论不是永久的。重开条件：出现只想要声明的 TU 且编译时间被 `detail` 包成瓶颈，或消费者数量到两位数。届时照 `SolidTessellation.cpp` 的形态拆（声明在头、定义 + 显式实例化在 `.cpp`），不发明第三种写法。
+
 ## 3. 功能点
 
 | 编号 | 功能点 | 内容 | 状态 |
 |---|---|---|---|
 | F1 | 单库布局 | `vn::Geom` 承载两个契约与共享实现，include 路径三段分工 | 已落地 |
 | F2 | 一个 global | `vn::Geom` 的 API 宏、四个命名空间宏（根 + 两个契约 + `detail`） | 已落地 |
-| F3 | 共享实现子树 | 8 个 `geom/detail/*.hpp`，两个契约都可 include | 已落地 |
+| F3 | 共享实现子树 | 9 个 `geom/detail/*.hpp`，两个契约都可 include | 已落地 |
 | F4 | 隔离门禁 | `check_geom_layering.py` 五条规则 | 已落地 |
 | F5 | 命名规则 | 类型不带维度、精度后缀 `f`/`d`、`detail` 非 API | 已落地 |
 
 ### 3.1 F3 共享实现子树（当前清单）
 
-`CurveTraits.hpp`（`CurveScalar` / `CurveWindow` / `resolveTolerance` / `resolveCurveWindow`）、`CrossingSearch.hpp`（`narrowCrossing`）、`CurveMeasure.hpp`（`arcLengthBetween` / `parameterCovering`）、`CurvePairSearch.hpp`（`refineCurvePair`）、`BSplineBasis.hpp`（相异节点 + 重数的节点模型与 Cox–de Boor 基函数）、`BezierBlend.hpp`（de Casteljau 与差商）、`Quadrature.hpp`（自适应 Simpson）、`RootFinding.hpp`（括号内求根、单调量反解）。
+`CurveTraits.hpp`（`CurveScalar` / `CurveWindow` / `resolveTolerance` / `resolveCurveWindow`）、`CrossingSearch.hpp`（`narrowCrossing`）、`CurveMeasure.hpp`（`arcLengthBetween` / `parameterCovering`）、`CurvePairSearch.hpp`（`refineCurvePair`）、`CurveSubdivision.hpp`（`sampleByParameter` / `sampleByLength` / `subdivideByDeflection`，只碰 `C::Point`）、`BSplineBasis.hpp`（相异节点 + 重数的节点模型与 Cox–de Boor 基函数）、`BezierBlend.hpp`（de Casteljau 与差商）、`Quadrature.hpp`（自适应 Simpson）、`RootFinding.hpp`（括号内求根、单调量反解）。
 
 **验收**（T1、T3）：两套几何测试全绿；门禁 0 违规；契约内的引用点无一指向另一个契约。
 
