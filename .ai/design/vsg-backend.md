@@ -186,6 +186,8 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 | # | 功能 | 说明 |
 |---|---|---|
 | F16 | 流共享 | `StreamKey` = buffer + 该 buffer 的 revision + 段；index 归一到整段 buffer。 |
+| F16.1 | 零拷贝上传 | 绑定的数组是**真 vsg 数组 + `VsgBufferView`**（`vsg::floatArray` / `vsg::uintArray` 套在模型 buffer 的视图上），所以模型与场景图读同一份字节；模型先死也没关系，数组持有视图、视图持有 buffer。只给了一个 buffer 句柄或一个别人的 span 时才退回复制。注意映射：顶点通道别名它的**段**（从 `key.offset` 起），索引别名**整个 buffer**（bind 盖全集，跨度由 draw 说）；见 `VsgBufferView.hpp` 与被测量的那条限制：把 `vsg::Data` 子类**直接**绑上去**不会生效**。 |
+| F16.2 | 上传暂存不保留 | vsg 把一次上传的字节先拷进 `TransferBlock::staging`（`HOST_VISIBLE\|HOST_COHERENT`，尺寸=整次上传量，**只增不减**，且不属于任何 pool，`releaseUnusedPools()` 拿不到），传完不还 → 704 MB 车身额外常驻 1,228 MB（正好 `2 × 614 MB`：上传按 `frameIndex` 轮转，两块各涨一次）。实现：`detail::StagingTask`（派生自 `vsg::TransferTask`，会话起来时由 `installStagingTask()` 装好）在每个帧边界（`VsgBackend::executeFrame()` 开头）把**fence 已完成**的块的 `staging` + `buffer_data` 置空 —— 那正是 vsg 自己“不够大就重建”时处理的状态，下一次上传到那个块时重新分配。证据是那块自己的 `fence->status()`（一个 `vkGetFenceStatus`），所以**零等待、零 park、零 `deviceWaitIdle`**；没完成的拷贝留给下一帧。宿主侧没有入口、没有开关、没有环境变量。 |
 | F17 | 自定义属性 | location 3 起，转发 `vn_Attribute{location}`。 |
 | F18 | 块存储 | 一个 mapped buffer：view / draw / material 三区；每帧 ring；稳态零写。 |
 | F19 | 描述符 | 一个 set，3 个 dynamic uniform binding（0 view / 1 draw / 2 material）。 |
@@ -277,6 +279,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | D4 | Wayland | 只按 WSI 契约实现；没有真机验证。 |
 | D5 | 后端自己再排一次 pass | 调度上移引擎；两套排序 = 两套帧词汇。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |
 | D6 | 超过灯块槽数的灯不做 | 灯块 `kMaxLights`（`ShaderAbi.hpp`）个带类型的槽（位置/方向/范围/锥角），超出的按 episode 报掉落；不做逐对象选灯（见 `graphics-shader-params.md`）。 |
+| D7 | 绕开 vsg 自己上传 / 重写 `TransferTask` | 两条都会与 vsg 的传递路径分叉（staging 分配、屏障、信号量、frameIndex 轮转全在那边），而**换任务对象**已经能达到同一效果、且不复制不重写：收益只在“少一次 16 MB 重分配”，代价是一份永远要跟着上游改的拷贝。见 F16.2。 |
 
 ## 8. 测试与验收
 
@@ -285,6 +288,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | T1 | `test_vsg`：设备无关 + 真实设备电池；`skipped == 0` 才算跑过。 |
 | T2 | `scripts/vsg_rewrite_gate.sh`：0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。 |
 | T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`。 |
+| T4 | 上传暂存不保留（F16.2）：`UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` —— 帧不 idle；上传后 `uploadStagingBytes()` 归零，**没人调**；同一内容重画零上传；新流再上传、后续帧再归零。`OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` —— 256 MB 上传后工作集至少 +128 MB，随后 4 KB 上传**逐字节**读回一致；同用例还钉住“vsg 自建的任务答不出（`nullopt`）→ 装过之后报 0 → 再上传后报 ≥ 4096 字节”。`OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting` —— 会话起来就装好可问的任务（`stagedBytes()` 有值且为 0），出帧不涨 `deviceWaits`，仍能提交。 |
 
 ## 9. 状态与演进
 

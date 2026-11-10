@@ -22,6 +22,7 @@
 - 通道 = `BufferSlice<float>` + components。`setPositions` / `setNormals` / `setTexcoords2` / `setTexcoords3` 共享 buffer；arena 用 slice。
 - 实例流：每实例 16 个 float（列主序 mat4）；`visible_instances` 是 draw 参数，不重传；`VN_INSTANCED` 决定 binding 4 与顶点布局。
 - revision：**形状归几何**（`Geometry::setRevision` / `bumpRevision`），**字节归 buffer**（`Buffer::setRevision`）。上传缓存只认 buffer revision；几何 revision 只驱动事实行重建。
+- 拾取树：`Geometry::prepareBvh(draw, builder)` 默认 `pickTreeBuilder()`（`kPickTreeLeafSize = 64`），建出的树**已封存**（`Bvh::seal()`）——一把自叶容量 4 的 14M 三角形树从 1.36 GB 降到 88 MB。封存树的查询回调第二参数是叶盒，拾取本来就不用它。
 - 收集：`Scene::collectRenderCommands` 对每个 primitive 发一条命令，快照 world / state / material / program / instance；按 `drawOrder` 后不透明前向、透明后向排序。
 - 包围盒：`Geometry::localBounds` 缓存键 = positions buffer + 其 revision + 段 + 几何 revision；`subtreeBounds` 在节点自身坐标系；`Scene::boundingBox` 只算可见且命中层掩码的内容。
 - 盒/线/面的类型在 `vn::geometry`：`Aabb<T>`（`Aabbf/Aabbd/Aabbi`）、`Obb<T>`、`Line<T>`、`Plane<T>`；`math` 只有数值与变换，没有 `Rect3`，也没有 `math::Aabb*`。见 `.ai/design/geometry-primitives.md`。
@@ -57,12 +58,44 @@
 - Vulkan NDC z 就是 depth（没有 OpenGL 的 `z*0.5+0.5`）；reverse-Z far = 0.0，清深度不能清 1.0。
 - 动态 `vkCmdSetPrimitiveTopology` 只能在 pipeline 的 topology class 内；`Topology` 进 `PipelineKey`。
 - `POINT_LIST` 要求顶点阶段静态写 `gl_PointSize`；内置程序写 1.0。
+- 顶点/索引上传是**别名，不是复制**：`StreamUploads` 用 `VsgBufferView` + 真 `vsg::floatArray` / `vsg::uintArray` 读模型字节
+  （顶点通道别名它的段、索引别名**整段 buffer**——跨度由 draw 说）。模型先死也没事：数组→视图→buffer 是一条持有链。
+  把 `vsg::Data` 子类**直接**当数组绑上去**不会生效**（验证层干净但画不出），必须先套成真数组。
+  没有 buffer 句柄或 span 不属于该 buffer 时才退回复制（拷贝路径仍要保留，测试就是这么调用的）。
+- vsg 上传后**进程里会多一份与数据同尺寸的 host 显存分配**（14M 三角形的模型：模型 1.16 GB 之外还有 1.23 GB
+  `SharedUsage`，另有同尺寸 `DedicatedUsage`）。**归属已定**：`TransferTask::transferData()` 里
+  `staging = vsg::createBufferAndMemory(device, totalSize, TRANSFER_SRC, EXCLUSIVE, HOST_VISIBLE|HOST_COHERENT)`
+  —— 整份传输一个 host-visible 缓冲，存在 `TransferBlock::staging` 里，`staging->size < totalSize` 时只增不减、
+  传完不还，**不经过** `stagingMemoryBufferPools`，所以 `releaseUnusedPools()` 碰不到它（应用实测数值一字不变）。
+  它随会话（viewport/文档）销毁而释放；vsg 没有任何 getenv/配置能把这条路关掉（源码里只有 FileSystem 读 getenv）。
+  **已解决（F16.2，2026-11-10 改定）**：**暂存不保留**。`detail::StagingTask`（派生自 `vsg::TransferTask`，会话起来时由
+  `installStagingTask()` 装好）在**每个帧边界**（`VsgBackend::executeFrame()` 开头）把 `fence->status() == VK_SUCCESS`
+  的块的 `staging` + `buffer_data` 置空 —— 正是 vsg 自己“不够大就重建”的起点，下一次上传到那块时重新分配。
+  证据是那块自己的 fence，所以**零等待、零 park、零 `deviceWaitIdle`**；没完成的拷贝留给下一帧。
+  **不要加额外条件**：曾经在 sweep 里先问 `to_copy->containsDataToTransfer()`（“还有待拷数据就跳过”），
+  而 vsg 的 `_transferData()` 在 `requiresCopy()` 为假时提前返回、**不清理** `dataMap` → 那个条件可以永久为真，sweep 永久跳过，
+  1.2 GB 又常驻回去（用例抓到的就是这个偶发）。
+  **每块独立**：`TransferTask` 有 `2 × numBuffers` 个块，上传按 `frameIndex` 轮转，所以两块可能各压一个模型
+  （实测 704 MB 车身 → `SharedUsage` 1,228 MB = `2 × 614 MB`）。
+  **可观测**：`VsgBackend::uploadStagingBytes()` / `api::Session::stagedBytes()` / `api::OffscreenSession::stagedBytes()`；
+  稳态恒 0，`RetentionStats::device_waits` 在这条线上永远不涨。
+  **代价**：每帧都上传的宿主会每帧重新分配一块（最小 16 MB）—— 当前仓库无此宿主，触发条件在 backlog。
+  **换任务**（`installStagingTask`）现在只用于“安装可清块的任务”，四个交接仍缺一不可（见 P42.1）。
+  **判读方法**：`Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory` 的实例名是 `pid_<id>_luid_...`
+  （按 `*Vine*` 过滤会得到 0 行）；`DedicatedUsage` = 显存（计入 private、**不计入 ws**）、`SharedUsage` = 系统内存
+  （计入 ws）。要降它只能减少上传字节数（减面 / 换带索引格式）或让暂存被回收。
 - Shader 命名：文件保持 `builtin_*` / `vine_*` 前缀；函数是 `vnXxx`，变量、块实例、stage 输出、采样器一律 `vn_` 前缀。
 - 采样器名**就是** ABI 键（`ContentImages::imageOriginOf` / `MaterialSlotCheck`）：改 shader 里的名字必须同步改表，
   改一边不报错、只把 drawable 的图换成 pass 输入（`vn_shadow_map`、材质五槽、`vn_skyMap`）。
 - 透明度：引擎唯一透明通道是 `Node::opacity`；材质不贡献 alpha；blend 恒开，`enabled` 只选因子。
 - 设备读回像素是 BGR 字节序；单通道断言用 `isRed()` 等，不要读 `pixel[0]`。
 - 改公开签名或改名后必须全量构建；旧插件 `.so` 会 `undefined symbol`。
+- **非 Debug 配置的两个构建坑（2026-11-10 实测）**：
+  - vcpkg 的 glslang 只导出 `DEBUG` / `RELEASE` 两个配置，RelWithDebInfo / MinSizeRel 没有精确匹配，CMake 会回落到**第一个**（DEBUG）
+    ⇒ 插件把 `/MDd` 的 glslang 目标链进 `/MD` 的 DLL：`LNK2038`（`_ITERATOR_DEBUG_LEVEL`、`RuntimeLibrary`）+ 未解析的 `__imp__CrtDbgReport`。
+    `gfx_backend_vsg/CMakeLists.txt` 对 `glslang::glslang` / `::SPIRV` / `::glslang-default-resource-limits` 设了
+    `MAP_IMPORTED_CONFIG_RELWITHDEBINFO|MINSIZEREL = RELEASE`；以后新增只在两个配置出库的 vcpkg 包，消费方要同样映射。
+  - `tests/test_graphics/GraphicsTest.cpp` 约 650 KB，优化配置下段数超 65535（`C1128`）⇒ `tests/CMakeLists.txt` 的 MSVC 选项统一带 `/bigobj`。
 
 ## 6. 证据与门禁
 

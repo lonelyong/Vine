@@ -7,12 +7,14 @@
 #include <vine/vsg/internal/DeviceFeatures.hpp>
 #include <vine/vsg/internal/SessionContent.hpp>
 #include <vine/vsg/internal/SessionDrive.hpp>
+#include <vine/vsg/internal/TransferStaging.hpp>
 #include <vine/vsg/internal/WindowTarget.hpp>
 
 #include <string>
 
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/RenderGraph.h>
+#include <vsg/app/TransferTask.h>
 #include <vsg/app/View.h>
 #include <vsg/app/Viewer.h>
 #include <vsg/app/Window.h>
@@ -220,6 +222,19 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
         auto command_graph = ::vsg::CommandGraph::create(impl->window);
         command_graph->addChild(impl->window_target->graph());
         impl->viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ command_graph });
+
+        // THE TASK THIS SESSION WILL BE ASKED ABOUT, INSTALLED NOW. vsg builds a plain transfer task, whose staging block
+        // it keeps to itself; replacing it here - before any frame, so nothing in flight names the old one and dropping
+        // it costs nothing - gives the session a task that can say what it holds (see detail::StagingTask). Without that
+        // step the first release would have to ASSUME staging (a task vsg built cannot be asked), so a session that
+        // never uploaded anything would answer "given back" once.
+        {
+            const ::vsg::ref_ptr<::vsg::Device> upload_device = impl->window->getOrCreateDevice();
+            ::vsg::ref_ptr<::vsg::TransferTask>              replaced;
+            if (upload_device != nullptr) {
+                (void)detail::installStagingTask(*impl->viewer, *upload_device, replaced);
+            }
+        }
 
         // The device profiler, when the environment asked for one: installed AFTER the record-and-submit
         // task, because the task is what the viewer propagates instrumentation through (the legacy
@@ -584,6 +599,24 @@ core::RetirementQueue& Session::retirement() noexcept
     return impl->shared_retirement != nullptr ? *impl->shared_retirement : impl->retirement;
 }
 
+bool Session::releaseUploadStaging()
+{
+    if (impl == nullptr || impl->viewer == nullptr) {
+        return false;
+    }
+    // ONE MECHANISM, TWO SESSION KINDS: `detail::releaseStaging` frees every block whose copy's fence has signalled, and
+    // the windowless session runs the same body.
+    return detail::releaseStaging(*impl->viewer) > 0;
+}
+
+std::uint64_t Session::stagedBytes() const noexcept
+{
+    if (impl == nullptr || impl->viewer == nullptr) {
+        return 0;
+    }
+    return detail::stagedBytesOf(detail::transferTaskOf(*impl->viewer).get()).value_or(0);
+}
+
 std::uint64_t Session::moves() const noexcept
 {
     return impl->moves;
@@ -748,6 +781,7 @@ bool SessionContentAccess::recompile(api::Session& session)
     if (session.impl == nullptr || session.impl->viewer == nullptr) {
         return false;
     }
+
     // A compile pass over the same graphs: already-compiled objects keep their implementations (a pipeline is
     // only created while its implementation is missing), and the newly attached content gets its own.
     const ::vsg::CompileResult compiled = session.impl->viewer->compile();

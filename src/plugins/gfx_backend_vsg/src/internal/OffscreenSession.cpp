@@ -10,6 +10,8 @@
 
 #include <vine/graphics/backend/SlotProbe.hpp>
 #include <vine/vsg/internal/SessionDrive.hpp>
+#include <vine/vsg/internal/SessionContent.hpp>
+#include <vine/vsg/internal/TransferStaging.hpp>
 
 VN_VSG_NS_BEGIN
 
@@ -97,6 +99,12 @@ bool OffscreenSession::initialize(const OffscreenSessionOptions& options, vn::gr
         // the ONE task whose fences the slot probe reads.
         ::vsg::ref_ptr<::vsg::CommandGraph> graph = ::vsg::CommandGraph::create(impl->device, impl->queue_family);
         impl->viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ graph });
+
+        // THE TASK THIS SESSION WILL BE ASKED ABOUT, INSTALLED NOW: vsg builds a plain transfer task whose staging block it
+        // keeps to itself, and replacing it before any frame (so nothing in flight names the old one) gives the session
+        // a task that can say what it holds (see detail::StagingTask).
+        ::vsg::ref_ptr<::vsg::TransferTask> replaced;
+        (void)detail::installStagingTask(*impl->viewer, *impl->device, replaced);
 
         const auto compiled = impl->viewer->compile();
         if (!compiled) {
@@ -375,6 +383,28 @@ bool OffscreenSession::assignFrameGraphs(const ::vsg::CommandGraphs& graphs)
         return false;
     }
     return true;
+}
+
+bool OffscreenSession::releaseUploadStaging()
+{
+    if (!impl || impl->viewer == nullptr) {
+        return false;
+    }
+    // The SAME body the windowed session runs (see detail::releaseStaging): free every block whose copy's fence has
+    // signalled, and leave the ones that have not for a later frame.
+    return detail::releaseStaging(*impl->viewer) > 0;
+}
+
+std::optional<::VkDeviceSize> OffscreenSession::stagedBytes() const noexcept
+{
+    if (!impl || !impl->ready || impl->viewer == nullptr) {
+        return std::nullopt;
+    }
+    const ::vsg::ref_ptr<::vsg::TransferTask> task = detail::transferTaskOf(*impl->viewer);
+    if (task == nullptr) {
+        return std::nullopt;
+    }
+    return detail::stagedBytesOf(task.get());
 }
 
 } // namespace api

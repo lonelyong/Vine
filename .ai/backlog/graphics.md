@@ -8,7 +8,8 @@
 
 ## 1. 现在可做（无触发条件）
 
-（无：材质 PBR 的四步（模型 / 纹理集 / 两条路径的 BRDF / 实例与 alpha 模式）与 F11 的逐材质诊断已全部落地。）
+材质 PBR 的四步（模型 / 纹理集 / 两条路径的 BRDF / 实例与 alpha 模式）与 F11 的逐材质诊断已全部落地。
+
 
 ## 2. 触发条件型
 
@@ -33,6 +34,8 @@
 | T9 | V2 | `forget(view)` 依赖 vsg `protected` 池 | 升级 vsg 时与 V1 一起复核 | 本行 |
 | T10 | V3 | 拿不到 `VkPipelineCache`（第三实参写死 `VK_NULL_HANDLE`） | 推上游；影响冷启动 / 换会话 | 本行 |
 | T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在 | 上游支持后合并每 pass 的 begin | 本行 |
+| T25 | 每帧上传数当观测指标 | `FrameCounters` 只有 passes / draws / invalid_schedules；`StreamUploads::uploads()` 与 `MaterialImages::count()` 的每帧差值能回答“这一帧传了多少”，但今天没有消费者 | HUD / 门禁 / 性能面板要显示“这一帧上传了几个流 / 多少字节” | `../design/graphics-content-lifecycle.md` D10 |
+| T26 | 每帧上传的宿主的暂存重分配 | 现行规则是“fence 一完成就清”，所以每帧都上传的宿主会在每帧重新分配一块最小 16 MB 的暂存。仓库里目前没有这样的宿主（帧内上传都是 revision 变化才发生） | 出现每帧上传的宿主（动态几何 / 流式点云），且分配进入 profile：加回“只清大于 `minimumStagingBufferSize` 的块”这一条判断（一行） | `../design/graphics-content-lifecycle.md` D16、`../decisions/ADR-2026-11-10-upload-staging-is-not-retained.md` |
 
 ### 2.3 平台与验证
 | # | 项 | 内容 | 触发条件 |

@@ -187,6 +187,8 @@ ABI、流、目标寿命、WSI、证据、引擎侧。时间线归 git。
 | P40 | 索引键归一化为整 buffer | 切片共享同一份上传；别名判据 = 同一个 bind 对象 |
 | P41 | 别名登记不持有字节 | 淘汰 ≠ 释放；寿命靠帧点名，宽限 = slots + 1；容量 512，淘汰最久未点名 |
 | P42 | 用栈对象构造 `intrusive_ptr` 会 invalid free | SDK 对象必须堆上由 `intrusive_ptr` 拥有 |
+| P42.1 | 换 `TransferTask` 少了两个交接就是**静默丢上传** | 新任务必须继承 `transferQueue`（否则 `transferData()` 直接崩），且 `device->transferTask` 必须改指新对象（入队走 device 的观察者、跑任务的是任务表里的那个；不改 = 上传进了没人记录的任务，帧看上去完全正常）。另外：有在飞的拷贝时不能换（`containsDataToTransfer(TRANSFER_ALL)` 为真就拒绝），且只对"一个 viewer 一个 record task"成立（vsg 多任务各有自己的 `TransferTask`，换一个 = 上传分叉）。 |
+| P42.2 | 派生 `vsg::TransferTask` 会读**也写**它的 protected 成员 | 暂存的释放靠 `detail::StagingTask`：读 `_earlyDataToCopy` / `_lateDataToCopy` 里每块的 `staging` / `buffer_data` / `fence`，并**把前两个置空**。置空后正是 vsg 自己“不够大就重建”起点（`!staging` → create + map），所以下一次上传照它的路径重新分配；但两个约束不能省：① 只在 `fence->status() == VK_SUCCESS` 时清（否则销毁了还在读的内存）；② 不要在 sweep 里加“DataToCopy 还有待拷数据就跳过”的条件——那种表可以长期非空而毫无待拷（`_transferData()` 提前返回、不清理），条件一旦成立就永久冻结。上游改名 = 编译错；改语义由 `OffscreenSessionTest` 对字节数的断言兜住。 |
 
 ### 6.6 目标、寿命与设备空闲
 

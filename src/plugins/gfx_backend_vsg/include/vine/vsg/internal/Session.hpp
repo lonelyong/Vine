@@ -166,6 +166,31 @@ class Session {
     /** @brief Gets how many counted device idles this session has taken. */
     [[nodiscard]] std::size_t deviceWaits() const noexcept;
 
+    /** @brief Gives back the upload staging whose copy has finished (see detail::releaseStaging).
+     *
+     * @details
+     * - The windowed session's answer to the question the windowless one answers with `OffscreenSession::releaseUploadStaging()`,
+     *   deliberately the same shape: the backend's frame boundary asks either kind the same way.
+     * - NOTHING IS WAITED FOR. A staging buffer is the source of one `vkCmdCopyBuffer`, so that copy's own fence is the
+     *   proof it may be freed; a copy that has not finished is left for a later frame. No device idle, no park, no
+     *   timeline.
+     * - NOT part of the host-facing surface: it is called from `VsgBackend`'s frame boundary, once per frame.
+     *
+     * @return true when bytes were given back; false when this session holds nothing (the steady state).
+     */
+    [[nodiscard]] bool releaseUploadStaging();
+
+    /** @brief Gets how many bytes of host memory this session's upload task is holding as staging.
+     *
+     * @details
+     * - Host-visible transfer scratch, not device residency: it is what the GPU counters show as `SharedUsage`, and it is
+     *   0 in the steady state (an upload's scratch is freed at the first frame boundary whose copy has finished).
+     * - `std::uint64_t` rather than `VkDeviceSize`: this header carries no graphics types on purpose.
+     *
+     * @return Staged bytes; zero when the session is not up or holds none.
+     */
+    [[nodiscard]] std::uint64_t stagedBytes() const noexcept;
+
     /** @brief Whether this session measures the device (see @ref gpuProfile).
      *
      * The switch is the environment's, read ONCE when the session comes up: `VN_VSG_PROFILE` asks for a

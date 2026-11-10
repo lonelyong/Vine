@@ -796,6 +796,15 @@ void VsgBackend::closeFrameBooks()
 
 void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
 {
+    // WHAT THE LAST FRAME'S UPLOADS NO LONGER NEED, BEFORE THIS ONE RECORDS. A staging buffer is the source of one
+    // vkCmdCopyBuffer; the moment that copy's fence signals, the bytes are dead weight - and vsg keeps them for the life
+    // of the session (measured: 1.2 GB after a 704 MB model, one block per frame slot because uploads rotate through
+    // them). Running the sweep here is the whole trigger: a host asks for nothing, and a copy that has not finished yet is
+    // simply picked up by a later frame.
+    if (d->assembly != nullptr) {
+        (void)releaseFinishedUploadStaging();
+    }
+
     // THE FRAME'S TARGET NAMES ITS WINDOW - AND NAMING NONE IS ITS OWN ANSWER. A device hands out one target per
     // window (see createSurfaceTarget), so a non-null target must be one this device handed out; anything else is
     // wiring it could not have produced, so nothing is recorded and the reason is said once per episode instead of
@@ -1000,6 +1009,39 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
     }
     d->frame = nullptr;
 }
+
+bool VsgBackend::releaseFinishedUploadStaging()
+{
+    // EVERY LIVE SESSION, because the staging belongs to the VIEWER that staged it (one transfer task each). They share
+    // the device, and nothing here touches it: the proof is each block's own fence (see detail::StagingTask).
+    bool released = false;
+    for (const auto& window : d->windows) {
+        if (window == nullptr || window->session == nullptr) {
+            continue;
+        }
+        released = window->session->releaseUploadStaging() || released;
+    }
+    if (d->offscreen != nullptr) {
+        released = d->offscreen->releaseUploadStaging() || released;
+    }
+    return released;
+}
+
+std::size_t VsgBackend::uploadStagingBytes() const noexcept
+{
+    ::VkDeviceSize total = 0;
+    for (const auto& window : d->windows) {
+        if (window == nullptr || window->session == nullptr) {
+            continue;
+        }
+        total += window->session->stagedBytes();
+    }
+    if (d->offscreen != nullptr) {
+        total += d->offscreen->stagedBytes().value_or(0);
+    }
+    return static_cast<std::size_t>(total);
+}
+
 
 void VsgBackend::setWindowHandleAt(std::size_t index, void* native_handle)
 {

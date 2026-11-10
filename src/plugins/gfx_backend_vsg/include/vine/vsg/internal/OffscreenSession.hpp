@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include <vsg/app/CommandGraph.h>
 #include <vsg/core/ref_ptr.h>
@@ -181,6 +182,29 @@ class OffscreenSession {
      *         pass failed (reported).
      */
     bool assignFrameGraphs(const ::vsg::CommandGraphs& graphs);
+
+    /** @brief Gives this session's upload staging back, as much of it as is provably free (see detail::releaseStaging).
+     *
+     * @details
+     * - The windowless twin of `api::Session::releaseUploadStaging`, and the SAME body: one mechanism, so the
+     *   backend can ask either session kind with one call.
+     * - It does not stop the device: a staging buffer is the source of one `vkCmdCopyBuffer`, so that copy's own fence is
+     *   the proof it may go. Nothing is parked and no device idle is taken.
+     *
+     * @return true when bytes were given back; false when this session holds nothing (the steady state).
+     */
+    [[nodiscard]] bool releaseUploadStaging();
+
+    /** @brief Gets how much host staging this session's upload task is holding, or nothing when it cannot be asked.
+     *
+     * @details
+     * - The fact `releaseUploadStaging()` decides on, made observable: a replaced task holds nothing, an uploading one
+     *   holds the block it will reuse. It is not part of the backend's own contract (the backend only needs the yes/no),
+     *   and it exists so the mechanism can be pinned by a test instead of inferred from a working-set measurement.
+     *
+     * @return Staged bytes; `std::nullopt` when the session is not up or its task was not installed by this backend.
+     */
+    [[nodiscard]] std::optional<::VkDeviceSize> stagedBytes() const noexcept;
 
   private:
     /** @brief Folds one frame's slot observation in, and sets the park window up once the count is known. */

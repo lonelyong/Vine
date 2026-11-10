@@ -118,9 +118,9 @@ vn::async::Task<void> ModelViewerPlugin::postLoad(vn::appfw::PluginLoadContext* 
 namespace
 {
 
-/// 登记一条"显示模式"命令：名字被占时不说难听话 —— 插件重载会走到这里第二次，那不是错误。
+/// 登记一条本插件的命令：名字被占时不说难听话 —— 插件重载会走到这里第二次，那不是错误。
 template <typename CommandT>
-void registerShadingCommand(vn::appfw::CommandManager& commands, const char8_t* id)
+void registerModelCommand(vn::appfw::CommandManager& commands, const char8_t* id)
 {
     const vn::String name(id);
     if (!commands.registerCommand<CommandT>(name)) {
@@ -135,11 +135,11 @@ void ModelViewerPlugin::installShadingModeRibbon(vn::appfw::Application& app)
     // 登记命令：一处说得清"这五条属于本插件"（不用 VN_DECLARE_COMMAND 的静态自动登记，见 ShadingModeCommands.hpp
     // 的说明）。
     if (auto* commands = app.commandManager(); commands != nullptr) {
-        registerShadingCommand<SetShadingLitCommand>(*commands, kShadingModeLitCommand);
-        registerShadingCommand<SetShadingFlatCommand>(*commands, kShadingModeFlatCommand);
-        registerShadingCommand<SetShadingUnlitCommand>(*commands, kShadingModeUnlitCommand);
-        registerShadingCommand<SetShadingNormalsCommand>(*commands, kShadingModeNormalsCommand);
-        registerShadingCommand<SetShadingWireframeCommand>(*commands, kShadingModeWireframeCommand);
+        registerModelCommand<SetShadingLitCommand>(*commands, kShadingModeLitCommand);
+        registerModelCommand<SetShadingFlatCommand>(*commands, kShadingModeFlatCommand);
+        registerModelCommand<SetShadingUnlitCommand>(*commands, kShadingModeUnlitCommand);
+        registerModelCommand<SetShadingNormalsCommand>(*commands, kShadingModeNormalsCommand);
+        registerModelCommand<SetShadingWireframeCommand>(*commands, kShadingModeWireframeCommand);
     }
 
     auto* wnd = vn::appfw::gui::MainWindow::current();

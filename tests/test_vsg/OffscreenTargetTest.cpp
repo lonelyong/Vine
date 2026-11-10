@@ -14,13 +14,32 @@
 
 #include <gtest/gtest.h>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
+#endif
+
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 
 #include <vsg/app/CommandGraph.h>
+#include <vsg/app/RecordAndSubmitTask.h>
+#include <vsg/app/TransferTask.h>
 #include <vsg/app/Viewer.h>
+#include <vsg/core/Array.h>
+#include <vsg/state/Buffer.h>
+#include <vsg/state/BufferInfo.h>
 #include <vsg/vk/Device.h>
+#include <vsg/vk/DeviceMemory.h>
 
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -35,6 +54,9 @@
 #include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/OffscreenSession.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/vsg/internal/SessionContent.hpp>
+#include <vine/vsg/internal/SessionDrive.hpp>
+#include <vine/vsg/internal/TransferStaging.hpp>
 
 #include "DevicePhases.hpp"
 
@@ -1299,3 +1321,201 @@ TEST(OffscreenSessionTest, TheDestructiveWaitIsCountedOnce)
     session.waitDeviceIdle();
     EXPECT_EQ(session.deviceWaits(), waits_before + 1U) << "the destructive wait is one counted device idle, not a silent assumption";
 }
+
+TEST(OffscreenSessionTest, AReplacedTransferTaskLeavesTheSessionSubmitting)
+{
+    // Replacing the transfer task is how this backend gets a task whose staging blocks it can free (see
+    // detail::installStagingTask), and it is
+    // the one thing in the session that is replaced rather than moved: the DEVICE's observer and the record task's own
+    // pointer both have to end up on the new object, or the next upload is queued into a task nobody runs - silently,
+    // with a frame that still looks correct. This case proves the session is still a working frame source afterwards,
+    // which is the observable that fails when either handover was missed.
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    Diagnostics                    diagnostics;
+    vn::vsg::api::OffscreenSession session;
+    OffscreenSessionOptions        options;
+    options.device       = created.device;
+    options.queue_family = created.queue_family;
+    ASSERT_TRUE(session.initialize(options, diagnostics));
+
+    // THE TASK THE SESSION INSTALLS IS ONE THIS BACKEND CAN FREE BLOCKS ON (see detail::StagingTask): a task that has
+    // uploaded nothing holds nothing, so the ask answers honestly instead of freeing a block that never existed.
+    const auto staged = session.stagedBytes();
+    ASSERT_TRUE(staged.has_value()) << "the session installs a task that can be asked";
+    EXPECT_EQ(*staged, 0U) << "and a task that has uploaded nothing holds nothing";
+
+    const FrameToken first = session.beginFrame();
+    ASSERT_NE(first.frame, 0U);
+    ASSERT_TRUE(session.commitFrame());
+
+    const std::size_t waits_before = session.deviceWaits();
+    const FrameToken  second       = session.beginFrame();
+    ASSERT_NE(second.frame, 0U) << "the session still mints frames after the task was installed";
+    EXPECT_TRUE(session.commitFrame()) << "and still submits them: the queue and the device's observer were handed over";
+    EXPECT_EQ(session.deviceWaits(), waits_before) << "and the staging sweep the frames run never stops the device";
+
+    session.shutdown();
+    const auto after_shutdown = session.stagedBytes();
+    EXPECT_FALSE(after_shutdown.has_value()) << "a session that is down holds nothing and says so";
+}
+
+#if defined(_WIN32)
+namespace
+{
+
+/// @brief This process's working set, in bytes.
+///
+/// The evidence for the staging question has to be host memory: vsg's staging buffer is HOST_VISIBLE, so it is charged
+/// to this process the moment the upload copies into it, and returning it is visible here and nowhere else (the
+/// destination buffer is DEVICE_LOCAL and does not appear in the working set at all - measured).
+std::size_t workingSetBytes()
+{
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (::GetProcessMemoryInfo(::GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) == 0) {
+        return 0;
+    }
+    return static_cast<std::size_t>(counters.WorkingSetSize);
+}
+
+/// @brief Uploads @p source into a fresh buffer through @p task - the route a static stream takes.
+///
+/// Everything else is the transfer task's own: it stages the bytes in the HOST_VISIBLE buffer it keeps between
+/// uploads (the one this case is about), records the copy and submits it. Nothing here is backend-specific, so the
+/// case measures what vsg does rather than what this repository does on top of it.
+///
+/// @param device       The device the destination buffer lives on.
+/// @param task         The transfer task to queue the copy through.
+/// @param source       The bytes to upload (kept alive by the caller for the length of the copy).
+/// @param memory_flags The destination's memory properties (HOST_VISIBLE when the bytes are read back).
+/// @param destination  Receives the destination buffer, so a caller can read the copy back.
+/// @return the queue submit's result; VK_ERROR_UNKNOWN means the data was never seen as needing a copy.
+VkResult uploadBytes(::vsg::Device&                          device,
+                     ::vsg::TransferTask&                   task,
+                     const ::vsg::ref_ptr<::vsg::ubyteArray>& source,
+                     VkMemoryPropertyFlags                   memory_flags,
+                     ::vsg::ref_ptr<::vsg::Buffer>&           destination)
+{
+    const VkDeviceSize size = static_cast<VkDeviceSize>(source->dataSize());
+    ::vsg::ref_ptr<::vsg::Buffer> buffer = ::vsg::createBufferAndMemory(&device,
+                                                                       size,
+                                                                       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                                       VK_SHARING_MODE_EXCLUSIVE,
+                                                                       memory_flags);
+    if (buffer == nullptr) {
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    destination = buffer;
+
+    ::vsg::ref_ptr<::vsg::BufferInfo> info(new ::vsg::BufferInfo());
+    info->buffer = buffer;
+    info->offset = 0;
+    info->range  = size;
+    info->data   = source;
+
+    task.assign(::vsg::BufferInfoList{ info });
+    if (!task.containsDataToTransfer(::vsg::TransferTask::TRANSFER_ALL)) {
+        return VK_ERROR_UNKNOWN;
+    }
+    return task.transferData(::vsg::TransferTask::TRANSFER_ALL).result;
+}
+
+} // namespace
+
+TEST(OffscreenSessionTest, TheUploadScratchIsGivenBackAndALaterUploadStillLands)
+{
+    // A model uploaded once leaves its whole vertex data resident a SECOND time: vsg stages the upload in a
+    // HOST_VISIBLE buffer of the transfer's own size and keeps it in the TransferBlock it reuses, and no public call
+    // releases or shrinks it. On a 704 MB model that was ~1.2 GB of working set nothing could reach; replacing the
+    // task is the one way to give it back, and this is the case that says so in numbers.
+    const auto created = createDevice();
+    if (!created.ok) {
+        GTEST_SKIP() << "no device satisfies the device-floor requirements";
+    }
+
+    // The viewer shape an off-screen session builds (see OffscreenSession::initialize): ONE windowless record task,
+    // which is also the single transfer task this backend's uploads are queued into.
+    ::vsg::ref_ptr<::vsg::Viewer>       viewer(new vn::vsg::detail::EmbeddedViewer());
+    ::vsg::ref_ptr<::vsg::CommandGraph> graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
+    viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ graph });
+    ASSERT_EQ(viewer->recordAndSubmitTasks.size(), 1U) << "the replacement refuses any other shape";
+    ::vsg::ref_ptr<::vsg::TransferTask>& task = viewer->recordAndSubmitTasks.front()->transferTask;
+    ASSERT_NE(task, nullptr);
+    ASSERT_NE(task->transferQueue, nullptr) << "the viewer gave the task the queue the replacement has to inherit";
+
+    // The upload's source is the caller's own bytes (a stream's owner keeps them), so it is allocated BEFORE the
+    // baseline: what the measurements below may see change is the staging, not the data being uploaded.
+    constexpr std::uint32_t kBytes = 256U * 1024U * 1024U;
+    ::vsg::ref_ptr<::vsg::ubyteArray> source = ::vsg::ubyteArray::create(kBytes, std::uint8_t{ 0 });
+    ASSERT_NE(source, nullptr);
+
+    const std::size_t baseline = workingSetBytes();
+    ASSERT_GT(baseline, 0U) << "the working set has to be readable for any of this to mean anything";
+    ::vsg::ref_ptr<::vsg::Buffer> uploaded_to;
+    ASSERT_EQ(uploadBytes(*created.device, *task, source, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, uploaded_to), VK_SUCCESS)
+        << "the upload itself is real before anything is measured about it";
+    viewer->deviceWaitIdle();
+    const std::size_t uploaded = workingSetBytes();
+    EXPECT_GE(uploaded, baseline + (128U << 20)) << "vsg staged the whole upload in a host-visible buffer (working set " << baseline << " -> " << uploaded << ")";
+
+    // AND WHAT THE TASK CAN SAY ABOUT ITSELF - the fact the release decides on instead of comparing upload counters (see
+    // detail::StagingTask). This viewer was built by vsg, so its task keeps the block to itself: that unreachable answer
+    // is exactly why this backend installs a type of its own, and the swap below is what hands one over.
+    EXPECT_FALSE(vn::vsg::detail::stagedBytesOf(task.get()).has_value())
+        << "a task vsg built cannot be asked what it holds";
+
+    // The task is handed back rather than destroyed by the swap: the caller owns the moment the staged block dies. Here
+    // the copy is already provably done (`deviceWaitIdle()` above), so it goes immediately.
+    ::vsg::ref_ptr<::vsg::TransferTask> previous;
+    ASSERT_TRUE(vn::vsg::detail::installStagingTask(*viewer, *created.device, previous));
+    ASSERT_NE(previous, nullptr) << "the task that staged the upload is handed back, not dropped inside the swap";
+    previous = nullptr;
+    const std::size_t released = workingSetBytes();
+    EXPECT_LE(released + (128U << 20), uploaded) << "replacing the task gives that buffer back (working set " << uploaded << " -> " << released << ")";
+    EXPECT_EQ(created.device->transferTask.get(), task.get()) << "the device's observer follows the replacement";
+    EXPECT_EQ(vn::vsg::detail::stagedBytesOf(task.get()).value_or(1U), 0U) << "and the fresh task holds nothing until it uploads";
+
+    // AND WHAT LANDS AFTER THE REPLACEMENT IS THE BYTES, not just a successful submit: the new task has no staging of
+    // its own, so this upload allocates one and stages through it, and a host-visible destination can be read back -
+    // which is the assertion a lost upload cannot satisfy (its copy is recorded into a task nobody runs, and the
+    // frame still looks correct).
+    ::vsg::ref_ptr<::vsg::ubyteArray> small = ::vsg::ubyteArray::create(4096U, std::uint8_t{ 0 });
+    auto*                             pattern = static_cast<std::uint8_t*>(small->dataPointer());
+    for (std::size_t i = 0; i < small->size(); ++i) {
+        pattern[i] = static_cast<std::uint8_t>((i * 7U) + 1U);
+    }
+    ::vsg::ref_ptr<::vsg::Buffer> landed;
+    ASSERT_EQ(uploadBytes(*created.device,
+                          *task,
+                          small,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                          landed),
+              VK_SUCCESS)
+        << "an upload after the replacement still succeeds";
+    viewer->deviceWaitIdle();
+
+    ::vsg::DeviceMemory* memory = landed->getDeviceMemory(created.device->deviceID);
+    ASSERT_NE(memory, nullptr);
+    void* mapped = nullptr;
+    ASSERT_EQ(memory->map(landed->getMemoryOffset(created.device->deviceID), landed->size, 0, &mapped), VK_SUCCESS);
+    ASSERT_NE(mapped, nullptr);
+    EXPECT_EQ(std::memcmp(mapped, small->dataPointer(), static_cast<std::size_t>(small->dataSize())), 0)
+        << "the copy the NEW task recorded is the copy that ran";
+    memory->unmap();
+
+    // THE INSTALLED TASK ANSWERS WITH REAL BYTES: the block the small upload sized is visible on it, which is what the
+    // release asks before deciding to swap (`staged != 0` -> there is something to give back).
+    const std::optional<::VkDeviceSize> staged_after = vn::vsg::detail::stagedBytesOf(task.get());
+    ASSERT_TRUE(staged_after.has_value()) << "the installed task can be asked";
+    EXPECT_GE(*staged_after, ::VkDeviceSize{ 4096U }) << "and reports the block the upload sized (" << *staged_after << ")";
+
+    // AND THAT BLOCK CAN BE GIVEN BACK WITHOUT STOPPING ANYTHING: the copy's own fence is the proof, so the free is a poll
+    // and nothing else. (The backend runs this at every frame boundary; here it is called directly, which is the same path.)
+    EXPECT_GT(vn::vsg::detail::releaseStaging(*viewer), 0U) << "the staging is freed on the copy's evidence";
+    EXPECT_EQ(vn::vsg::detail::stagedBytesOf(task.get()).value_or(1U), 0U) << "and the task holds nothing afterwards";
+}
+#endif

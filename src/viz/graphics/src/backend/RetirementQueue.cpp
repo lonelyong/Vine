@@ -55,8 +55,7 @@ void RetirementQueue::advance(const FrameTimeline& timeline)
     }
 }
 
-std::uint32_t RetirementQueue::slots() const noexcept
-{
+std::uint32_t RetirementQueue::slots() const noexcept{
     return slots_;
 }
 

@@ -65,6 +65,8 @@ set(SRC_FILE_LIST
 	ShadowPixelTest.cpp
 	# The primitives model end to end: one geometry, three draws, one upload of each shared stream.
 	PrimitiveDrawTest.cpp
+	# When the upload scratch is given back: the frame that uploaded pays for it (see vsg-backend.md F16.2).
+	UploadScratchTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
@@ -127,6 +129,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/DeviceProbe.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/Session.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/OffscreenSession.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/TransferStaging.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/PassRegistry.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/HostTargets.cpp

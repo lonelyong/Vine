@@ -78,12 +78,15 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（69）
+## decisions/ —— 决策记录（ADR）（72）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-11-10-upload-staging-is-not-retained.md` —— 上传暂存**不保留**：一次上传的 host 可见缓冲是**一个** `vkCmdCopyBuffer` 的源，拷贝的 fence 一完成就清（`detail::StagingTask` 在每个帧边界扫，零等待、零 idle），SDK **没有**对应动词（`RenderDevice::releaseUploadStaging()` 与模型查看器的 `release_render_memory` 一并删除）；否决显式入口 + park/drain、每帧无脑清、换任务释放、以及“还有待拷数据就跳过”的便宜条件（那是会让 sweep 永久冻结的坑）。
+- `ADR-2026-11-10-upload-staging-release-is-explicit.md` ——（已取代）上传暂存的回收是**显式入口**，时机归宿主/用户命令。
 - `ADR-2026-11-10-curve-sampling-is-an-object.md` —— 曲线离散化做成对象：基类 + 三个规则子类、setter 配置 + 无参 `compute()`；否决构造即算与“三个自由函数 + 返回值”。
+- `ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md` —— BVH 可封存（`seal()` 放掉构建期的图元盒，只留节点 / 节点盒 / 顺序）、拾取树粗叶 64 且建成即封存、vsg 与索引上传改成别名模型 buffer（14M 三角形的拾取树 1.36 GB → 88 MB，后端再省 1.18 GB）；否决独立封存类型、删 `update`/`refit`、改库的默认叶容量。
 - `ADR-2026-11-09-address-keys-hold-the-object.md` —— 按地址做键的缓存必须持有键名所指的对象：地址在行仍在时被回收，键就指向了新对象。
 - `ADR-2026-11-09-buffer-edit-scope.md` —— `Buffer` 的写入口收成一个作用域（共享可变字节只有一个写入口）。
 - `ADR-2026-11-09-scene-collection-two-halves.md` —— 场景收集拆成「烘焙」与「选取」两半（第一半已落地，第二半待测量）。

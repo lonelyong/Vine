@@ -12,7 +12,6 @@ namespace vsg
 {
 
 class Group;
-class Node;
 
 } // namespace vsg
 

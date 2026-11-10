@@ -283,7 +283,32 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     [[nodiscard]] std::size_t releasedStreams() const noexcept;
 
+    /** @brief Gets how much host memory this device is holding as upload staging, across every live session.
+     *
+     * @details
+     * - The quantity the frame boundary gives back, and the one the host sees as `SharedUsage` in the GPU counters
+     *   (measured: 1.2 GB after loading a 704 MB model, before this backend stopped keeping it). It is 0 in the steady
+     *   state - an upload's scratch is freed at the first frame whose boundary finds its copy done - and rises only while
+     *   a copy is actually in flight.
+     * - Read between frames, like everything else here: it sums each session's own task.
+     *
+     * @return Staged bytes held right now; zero when nothing is staged.
+     */
+    [[nodiscard]] std::size_t uploadStagingBytes() const noexcept;
+
   private:
+    /** @brief Frees every session's upload staging whose copy has finished, and says whether anything went back.
+     *
+     * @details
+     * - WHAT KEEPS UPLOAD MEMORY FROM ACCUMULATING, and the only thing that does: it runs at the top of every frame, so
+     *   a buffer is freed the first frame after the copy that read it signals its fence. A host asks for nothing.
+     * - Call it between frames only - it frees memory a submitted copy may still be reading, under each block's own fence
+     *   and nothing else, so nothing here waits and nothing is parked.
+     *
+     * @return true when at least one session gave bytes back.
+     */
+    bool releaseFinishedUploadStaging();
+
     /** @brief Opens the frame's books: storage, token, acquisition, and the plan's own frame.
      *
      * The first half of what used to be `beginFrame()` (the SDK's frame is one call now - see

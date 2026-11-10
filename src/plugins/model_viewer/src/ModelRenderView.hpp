@@ -30,6 +30,7 @@
 #include <vine/graphics/ModelScene.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
 #include <vine/graphics/RayIntersection.hpp>
+#include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -193,6 +194,8 @@ class ModelRenderView final : public vn::appfw::gui::DocumentView {
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(control_->impl<QWidget>());
     }
+
+    ~ModelRenderView() override = default;
 
   public:
     /**
@@ -504,6 +507,11 @@ inline void ModelRenderView::activate()
         control_->fitToScreen();
         fitted_ = true;
     }
+
+    // 载入完成 = 内容已经画出来了：这一帧真的画（上传就发生在这一帧里），后端在**下一帧的开头**发现那次拷贝的 fence
+    // 已完成就把中转暂存还掉 —— 不需要宿主做任何事（见 `vsg-backend.md` F16.2）。所以不能用 `requestFrame()` 之外
+    // 的猜测：`renderFrame()` 在这一调用内部就把帧画完，返回时正好是帧边界，下一帧来时那块暂存自然回落。
+    control_->renderFrame();
 
     // 发布"当前 3D 视图"：现在由窗口**派生**回答（当前文档视图 → 活动窗格），视图不再往窗口里写任何东西 ——
     // 单槽发布会让两个可见区域互相覆盖（见 ADR-2026-10-24-command-target.md）。
