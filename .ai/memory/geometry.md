@@ -190,3 +190,11 @@
   见 `design/graphics-geometry.md` 2.9 / F32 与 `decisions/ADR-2026-11-07-mesh-triangle-tree-cache.md`。
 
 - **两种智能指针不要混**：`Buffer<T>` 是 `RefCounted` → 用 `intrusive_ptr`（计数在对象里；`Mesh` 的五个通道句柄是 `intrusive_ptr<const Buffer<T>>`，Mesh 只替换通道、从不原地写字节）；`Bvh` 是值类型 → 共享它只能用 `shared_ptr<const Bvh>`（构建时还要能放栈上）。判据：**计数在对象里 → intrusive_ptr；值类型要共享 → shared_ptr**。两者共享契约也不同：一个是“共享可变字节，写走 `Buffer::edit()` 作用域（结束即公告）”，一个是“发布后不可变”。
+
+- **树建成后可以封存**：`Bvh::seal()` 释放逐图元盒（`Aabb<double>` 是 **48 B/图元**），只留 `shape_` + `node_bounds_`；
+  `isSealed()` 由“建成了且图元盒为空”推出，没有标志位。封存后 `add`/`addRange`/`update`/`refit`/`reserve`/
+  `restoreTopology`/构建抛 `logic_error`，`primCount()` 从 `shape_.order.size()` 回答，查询回调的第二参数变成**叶盒**。
+  叶粒度（`BvhBuilder::leafSize`）只改**节点数**，与图元盒无关——要降内存必须两者一起做。
+  `update`/`refit` 今天**无生产调用方**（只有测试）：刚体变换不碰树（树在局部空间，钥匙里没有世界矩阵），
+  顶点变化走丢树重建。见 `design/geometry-bvh.md` 2.16 / F10 / P10 与
+  `decisions/ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md`。

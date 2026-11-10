@@ -12,6 +12,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/geom/spatial/Bvh.hpp>
+#include <vine/geom/spatial/BvhBuilder.hpp>
 #include <vine/models/Array.hpp>
 #include <vine/models/Shape.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -28,6 +29,35 @@ using MaterialPtr = intrusive_ptr<Material>;
 
 class ShaderProgram;
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
+
+/**
+ * @brief Primitives per leaf the engine builds its own pick trees with.
+ *
+ * @details
+ * - A tree stores a box per NODE, not per primitive, so the leaf size is what decides which of the two dominates: a
+ *   leaf of four pays roughly half a node per triangle, a leaf of sixty-four pays about a thirty-second. What the
+ *   coarse leaf costs is exact triangle tests on a pick - a ray crosses a handful of leaves, and one test is tens of
+ *   nanoseconds - which is why 64 is the engine's choice rather than the geometry library's own default.
+ * - It is a POLICY of this layer, not of `vn::geom::spatial`: a small mesh wants the library's fine default, and a
+ *   caller that wants another shape passes its own `BvhBuilder` to `Geometry::prepareBvh()`.
+ */
+inline constexpr unsigned kPickTreeLeafSize = 64u;
+
+/**
+ * @brief The builder `Geometry::prepareBvh()` uses when the caller names none.
+ *
+ * @details
+ * - One spelling of "the tree this engine builds for picking", so the leaf size above is stated once and a test can
+ *   ask for the same shape without repeating the number.
+ *
+ * @return A builder configured with @ref kPickTreeLeafSize.
+ */
+[[nodiscard]] inline vn::geom::spatial::BvhBuilder pickTreeBuilder()
+{
+    vn::geom::spatial::BvhBuilder builder;
+    builder.leafSize(kPickTreeLeafSize);
+    return builder;
+}
 
 /**
  * @brief A per-vertex channel bound to a shader attribute location.
@@ -792,16 +822,20 @@ class VN_GRAPHICS_API Geometry : public Node {
      *
      * @note A tree that is never prepared costs nothing and changes nothing: picking walks the triangles linearly,
      *       exactly as it did before trees existed.
-     * @note The build uses the library's default builder and there is no parameter to change it: a draw's tree is a
-     *       cache re-derived from its stream, so there is no long-lived tree whose leaf size a caller would configure
-     *       the way Mesh::buildBvh() lets one. A caller that already has a differently built tree adopts it with
-     *       adoptBvh().
+     * @note The tree this builds is SEALED (`Bvh::seal()`): it is a cache of the draw's bytes, and a draw whose bytes
+     *       change gets a new tree rather than an updated one - so the per-primitive volumes the build needed are
+     *       dropped instead of staying resident. That is what makes a coarse leaf pay twice: fewer nodes AND no box per
+     *       triangle.
+     * @note @p builder applies when a tree is BUILT. A draw that already holds one for exactly its bytes answers true
+     *       without rebuilding, so the granularity of an existing tree is the one it was built with.
      *
-     * @param draw Primitive index; 0 is the ordinary single-draw geometry.
+     * @param draw    Primitive index; 0 is the ordinary single-draw geometry.
+     * @param builder Build parameters; the default is @ref pickTreeBuilder() (a coarse leaf, see @ref
+     *                kPickTreeLeafSize).
      * @return true when draw @p draw holds a usable tree afterwards.
      */
     [[nodiscard]]
-    bool prepareBvh(std::size_t draw = 0);
+    bool prepareBvh(std::size_t draw = 0, const vn::geom::spatial::BvhBuilder& builder = pickTreeBuilder());
 
     /** @brief Gets draw @p draw's tree, or null when it has none for the bytes it draws NOW.
      *

@@ -1,8 +1,12 @@
 #include <vine/vsg/internal/StreamUploads.hpp>
 
+#include <algorithm>
+#include <cstdint>
+#include <optional>
 #include <unordered_map>
 
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/vsg/support/VsgSceneRules.hpp>
 
 VN_VSG_NS_BEGIN
 
@@ -34,6 +38,40 @@ core::StreamKey bindKeyOf(const core::StreamKey& key) noexcept
     whole.offset          = 0U;
     whole.count           = 0U;
     return whole;
+}
+
+/**
+ * @brief The offset of @p slice inside @p buffer, or nothing when the slice is not a range of that buffer.
+ *
+ * @details
+ * - The offset is what lets an uploaded array read the model's own bytes: `vsg::Array` aliases storage from a byte
+ *   offset, so a channel that is a SEGMENT of one arena binds exactly that segment, with no copy (`GeometryFacts`
+ *   states the same thing from the other side: "a sliced channel keeps its own scalars").
+ * - The guard is not decoration: the acquire entry takes a span, and a caller whose span is its own scratch memory has
+ *   nothing to alias - it gets a snapshot instead of an array over unrelated bytes.
+ *
+ * @tparam Element Scalar element type of both the buffer and the slice.
+ * @param buffer Buffer @p slice is expected to be a range of.
+ * @param slice  Scalars to locate.
+ * @return The first element's index inside @p buffer, or `std::nullopt` when @p slice is not a range of it.
+ */
+template <typename Element>
+[[nodiscard]] std::optional<std::size_t> sliceOffset(const vn::intrusive_ptr<const vn::Buffer<Element>>& buffer, std::span<const Element> slice) noexcept
+{
+    if (buffer == nullptr || slice.empty()) {
+        return std::nullopt;
+    }
+    const auto base  = reinterpret_cast<std::uintptr_t>(buffer->data());
+    const auto first = reinterpret_cast<std::uintptr_t>(slice.data());
+    const auto bytes = buffer->size() * sizeof(Element);
+    if (first < base || first - base > bytes || (first - base) % sizeof(Element) != 0u) {
+        return std::nullopt;
+    }
+    const std::size_t offset = (first - base) / sizeof(Element);
+    if (offset + slice.size() > buffer->size()) {
+        return std::nullopt;
+    }
+    return offset;
 }
 
 } // namespace
@@ -133,9 +171,24 @@ StreamUploads::acquireVertex(const core::StreamKey& key, std::span<const float> 
         return { Action::Aliased, found->second.bind };
     }
 
-    // The bytes are read HERE and nowhere earlier: a sharing hit returned above without touching them.
-    auto array = ::vsg::floatArray::create(scalars.size());
-    std::copy(scalars.begin(), scalars.end(), array->begin());
+    // ZERO COPY: what the bind reads IS the model's own bytes. The array is a REAL vsg array over a view of the buffer
+    // (see VsgBufferView, and the note in VsgSceneRules.hpp about why the bound object cannot be the view itself): the
+    // renderer therefore keeps exactly the memory it reads alive, and the vertex data exists in one place instead of in
+    // the model and in the scene graph at once.
+    //
+    // The entry keeps the buffer and the array keeps the view that holds it, so the bytes outlive the model for exactly
+    // as long as something can still draw them - the same rule the file note states for the ADDRESS.
+    const std::optional<std::size_t> offset = sliceOffset(owner, scalars);
+    ::vsg::ref_ptr<::vsg::Data>      array;
+    if (offset.has_value()) {
+        array = detail::aliasArray<::vsg::floatArray, float>(owner, scalars.size(), *offset);
+    }
+    else {
+        // A borrowed identity (no buffer handle) or a span of somebody else's memory has nothing to alias.
+        auto snapshot = ::vsg::floatArray::create(static_cast<std::uint32_t>(scalars.size()));
+        std::copy(scalars.begin(), scalars.end(), snapshot->begin());
+        array = snapshot;
+    }
 
     const auto binding = bindingOfCanonical(key.location);
     auto       bind    = ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
@@ -171,8 +224,18 @@ StreamUploads::acquireIndex(const core::StreamKey& key, std::span<const std::uin
         return { Action::Aliased, found->second.bind };
     }
 
-    auto array = ::vsg::uintArray::create(indices.size());
-    std::copy(indices.begin(), indices.end(), array->begin());
+    // ZERO COPY, and the WHOLE buffer: the bind aliases all of it and the DRAW states the span (see bindKeyOf), so the
+    // array has to cover the buffer the key names rather than whatever slice this caller happened to pass.
+    const std::optional<std::size_t> offset = sliceOffset(owner, indices);
+    ::vsg::ref_ptr<::vsg::Data>      array;
+    if (offset == std::optional<std::size_t>{ 0u } && indices.size() == owner->size()) {
+        array = detail::aliasArray<::vsg::uintArray, std::uint32_t>(owner, indices.size());
+    }
+    else {
+        auto snapshot = ::vsg::uintArray::create(static_cast<std::uint32_t>(indices.size()));
+        std::copy(indices.begin(), indices.end(), snapshot->begin());
+        array = snapshot;
+    }
     auto bind = ::vsg::BindIndexBuffer::create(array);
     d->index.insert_or_assign(normalised, Data::IndexEntry{ bind, std::move(owner) });
     return { Action::Uploaded, bind };

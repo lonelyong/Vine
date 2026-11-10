@@ -15,6 +15,7 @@
 | G12 | 保证最大偏离的曲线离散化（每条弦扫描真实最大距离后再决定细分，OCCT `CPnts_UniformDeflection` 的做法） | 出现要求「真实最大偏离 ≤ 公差」的消费者（显示之外的用途：布尔、公差报告、厚度/间隙检查、CAM）；只要画得好看就用草案里的中点估计版 | `../design/geometry-curve-discretization.md` 2.5、P1、D2 |
 | G13 | 曲线离散化按间断点（`C0` knot）强制分段，折角作为折线顶点保留 | 出现要求「折角必须是一个顶点」而不是「折角被逼近到容差内」的消费者（例如按折线做角点检测、或显示上必须出硬角） | `../design/geometry-curve-discretization.md` 2.6、D3 |
 | G14 | 曲线离散化的进度与取消后端：接 `vn::progress::ProgressIndicator` / `ProgressHost`（现在只有预留位 `progress(callback)`） | 第一次出现「对高次样条或整条线框离散时界面要能报进度 / 能取消」的调用点；届时先试无依赖回调，若直接接 `vn::progress` 则要记账 `geom` 新增的依赖边 | `../design/geometry-curve-discretization.md` 2.12、9.2 |
+| G15 | 盒的存储标量降为 `float`（`Aabb<float>` 存储、`double` 计算）：盒值本来就是 float 坐标的 `min`/`max`，无损；封存后节点盒是剩余的最大一项 | 大模型的拾取/查询树内存再次成为问题时（封存已落地，见 `ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md`）；要先在 `Bvh` 上写出“存储标量 ≠ 计算标量”的表述 | `../design/geometry-bvh.md` 2.16、9.2 |
 ## 判据提醒
 
 - 每一项都只写触发条件：没有消费者的能力不进代码（`G8`）。

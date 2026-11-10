@@ -118,6 +118,9 @@ class StreamUploads {
      * @details
      * - The BYTES are handed over as a view and are only read when the stream must actually be uploaded: a
      *   sharing hit touches neither the buffer nor its memory, so a steady frame pays nothing for them.
+     * - The array the bind reads ALIASES @p owner's memory (see `VsgBufferView`): the renderer keeps the model's own
+     *   bytes instead of a second copy of every channel, and the entry's hold on @p owner is what keeps them alive. A
+     *   caller that passes no owner (a borrowed identity) has nothing to alias and gets a snapshot instead.
      *
      * @param key     Stream identity; its kind must be Vertex and its location canonical.
      * @param scalars The channel's scalars as they are right now (read on a miss).
@@ -129,6 +132,10 @@ class StreamUploads {
     [[nodiscard]] VertexResult acquireVertex(const core::StreamKey& key, std::span<const float> scalars, vn::intrusive_ptr<const vn::Buffer<float>> owner = {});
 
     /** @brief Gets (or builds) the shared bind for an index stream.
+     *
+     * @details
+     * - The bind covers the WHOLE buffer (the draw states the span), so the array aliases @p owner from offset 0 and
+     *   the whole length - a span that is not that whole buffer cannot be aliased and is snapshotted instead.
      *
      * @param key     Stream identity; its kind must be Index.
      * @param indices The WHOLE index buffer as it is right now (the bind aliases all of it, and the draw

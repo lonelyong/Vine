@@ -40,6 +40,30 @@ if(VN_USE_FETCHCONTENT)
         unset(glslang_DIR CACHE)   # Drop the stale shim from a previous configure.
     endif()
     find_package(glslang CONFIG QUIET)
+    if(glslang_FOUND)
+        # An installed glslang (vcpkg x64-windows, or a hand-built install) exports only
+        # DEBUG and RELEASE configurations. A RelWithDebInfo / MinSizeRel build has no
+        # exact match, so CMake falls back to the first declared configuration - DEBUG -
+        # and the plugin then links /MDd glslang objects into an /MD DLL: LNK2038
+        # (_ITERATOR_DEBUG_LEVEL, RuntimeLibrary) and an unresolved __imp__CrtDbgReport.
+        # Both intermediate configurations use the release runtime, so map them onto
+        # RELEASE, which is the glslang build matching every Vine target there.
+        foreach(_vn_glslang_config RelWithDebInfo MinSizeRel)
+            string(TOUPPER "${_vn_glslang_config}" _vn_glslang_config_upper)
+            foreach(_vn_glslang_target
+                    glslang::glslang
+                    glslang::SPIRV
+                    glslang::glslang-default-resource-limits)
+                if(TARGET ${_vn_glslang_target})
+                    get_target_property(_vn_glslang_imported ${_vn_glslang_target} IMPORTED)
+                    if(_vn_glslang_imported)
+                        set_property(TARGET ${_vn_glslang_target}
+                                     PROPERTY MAP_IMPORTED_CONFIG_${_vn_glslang_config_upper} RELEASE)
+                    endif()
+                endif()
+            endforeach()
+        endforeach()
+    endif()
     if(NOT glslang_FOUND)
         FetchContent_Declare(glslang
             GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git

@@ -125,7 +125,7 @@
 | F30 | 混合多边形网格 | `MixedMesh` 以 offsets 分面，索引与 offsets 一起整体给出，并通过显式转换生成 `TriangleMesh`。 | 已落地 |
 | F31 | 点云 | `PointCloud`：`setPositions()` 整体替换点集，`normals()` / `colors()` 可选，`computeAabb()` 缓存盒；约束 C8、R7，验收 T10。 | 已落地 |
 | F32 | 三角形树缓存 | `Mesh` 缓存 `Bvh<double>`：`buildBvh()` 每个三角形一个 primitive（id 即三角形序号，规则在 `vn::geom::spatial::buildTriangleBvh()`），`bvh()` 供射线查询；任何改变三角形或面拓扑的 setter 丢树；`setBvh()` 只接收已建且覆盖本网格三角形数的树。 | 已落地 |
-| F33 | 绘制帧的三角形树 | 每个 draw 一棵按需派生、按流钥匙失效的 `Bvh<double>`：`prepareBvh()` 建或共享，`bvh()` 只读查询（`hasBvh()` 是它的布尔形式），`adoptBvh()` 接收已有树，`clearBvh()` 全部丢弃；拾取有树走树、无树退回线性扫描。 | 已落地 |
+| F33 | 绘制帧的三角形树 | 每个 draw 一棵按需派生、按流钥匙失效的 `Bvh<double>`：`prepareBvh()` 建或共享（建出的树已封存，叶容量默认 64），`bvh()` 只读查询（`hasBvh()` 是它的布尔形式），`adoptBvh()` 接收已有树，`clearBvh()` 全部丢弃；拾取有树走树、无树退回线性扫描。 | 已落地 |
 
 #### 3.6.1 F28 统一三角网格
 
@@ -189,12 +189,19 @@
 - **约束**（C10）：槽与 `primitives_` 同序同长；钥匙 = 位置 buffer + 其 revision + 段 + 索引 buffer + 其 revision +
   切片 + 拓扑 + 几何 revision，不符即“没有树”（重建，而不是错答案）。
 - **约束**（C11）：只有三角形拓扑的 draw 能有树；线/点 draw 的 `prepareBvh()` 返回 false 且不占树。
+- **约束**（C12）：引擎建的树是**封存**的（`Bvh::seal()`）且默认叶容量为 `kPickTreeLeafSize = 64`：前者因为是
+  缓存（换钥匙就是新树，永不可能被 `update`/`refit`），后者因为一棵树按**节点**存盒——叶容量 4 时每三角形摊
+  半个节点，64 时摊三十二分之一，而代价只是一次点击多测几十个三角形。调用方可传自己的 `BvhBuilder` 改粒度
+  （`prepareBvh(draw, builder)`），封存则不是可选项。
 - **要求**（R9）：同一把钥匙的第二个 draw 共享同一棵不可变树，不重建；采纳只发生在 `geometryFromMesh()`。
 - **验收**（T12）：`GeometryTest.AHandBuiltDrawPreparesItsOwnTree` / `MovingTheStreamDropsThePreparedTree` /
   `TwoDrawsOverOneIndexStreamShareOneTree` / `MeshSourceGeometryAdoptsTheMeshesTree` /
-  `ATriangulatedQuadMeshAdoptsNothing`，`RayIntersectionTest.APreparedTreeChangesTheCostAndNotTheAnswer` /
+  `ATriangulatedQuadMeshAdoptsNothing` / `ThePreparedTreeIsSealedAndKeepsTheEnginesCoarseLeaf` /
+  `TheCallerChoosesTheLeafSizeOfItsPickTree`，`RayIntersectionTest.APreparedTreeChangesTheCostAndNotTheAnswer` /
   `APreparedTreeStillReportsEveryHit`。
 - **注意**（N17）：树的有无不改变语义，只改变代价；见证是 `triangleTestCount()`。
+- **注意**（N18）：封存后的回调第二个参数是**叶盒**而不是图元盒（`geometry-bvh.md` `R7`）。拾取忽略该参数，所以不受影响；
+  新写一个靠它拿“这个三角形在哪”的消费者要么自己做图元盒，要么不封存。
 
 ## 4. 公开接口
 
@@ -208,7 +215,7 @@
 | `material()` / `setMaterial()` / `program()` / `setProgram()` | 几何级默认 |
 | `revision()` / `setRevision()` / `bumpRevision()` | 形状公告 |
 | `vertexCount()` / `localBounds()` / `boundingBox()` / `subtreeBounds()` | 数据与盒 |
-| `prepareBvh()` / `bvh()` / `hasBvh()` / `adoptBvh()` / `clearBvh()` / `triangleTestCount()` | 逐 draw 的三角形树缓存与它的只读见证（F33） |
+| `prepareBvh()` / `bvh()` / `hasBvh()` / `adoptBvh()` / `clearBvh()` / `triangleTestCount()` | 逐 draw 的三角形树缓存与它的只读见证（F33）；`prepareBvh(draw, builder)` 的 builder 是粒度选择，默认 `pickTreeBuilder()`（`kPickTreeLeafSize = 64`），建出的树总是已封存 |
 | `triangleCount(draw)` | 一条 draw 的三角形数；只是数，不建也不缓存，供消费者的阈值策略用 |
 | `setInstanceTransforms()` / `setVisibleInstanceCount()` / `clear*()` | 默认 primitive 0 的实例便捷 |
 | `geometryFromShape()` / `packAttribute()` / `packIndices()` | 桥与打包 |

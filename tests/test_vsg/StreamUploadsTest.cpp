@@ -23,6 +23,7 @@
 #include <vsg/commands/BindVertexBuffers.h>
 #include <vsg/core/Array.h>
 #include <vsg/core/Data.h>
+#include <vsg/state/BufferInfo.h>
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
@@ -284,7 +285,8 @@ TEST(StreamUploadsTest, AnEntryHoldsTheBufferItsKeyNames)
 
     auto watcher = buffer; // a handle to observe the counts with
     buffer.reset();        // the model lets its own reference go
-    EXPECT_EQ(watcher->useCount(), 2U) << "the entry holds the buffer, so its address stays reserved while the key answers";
+    EXPECT_EQ(watcher->useCount(), 3U) << "the entry holds the buffer, AND the array the bind reads aliases it through a "
+                                          "view - which is exactly what \"no copy\" means";
 
     // An object allocated NOW cannot take that address (a live object keeps it).
     const auto later = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36, 0.0F)));
@@ -294,5 +296,42 @@ TEST(StreamUploadsTest, AnEntryHoldsTheBufferItsKeyNames)
     store.beginFrame(4U, 1U);
     EXPECT_EQ(store.releaseUnseen(), 1U);
     EXPECT_EQ(store.objects(), 0U) << "the bind went with the entry";
-    EXPECT_EQ(watcher->useCount(), 1U) << "the entry released the buffer it was holding";
+    EXPECT_EQ(watcher->useCount(), 2U) << "the entry released its share; the bind still in hand is what holds the bytes, "
+                                         "which is the file note's \"a dropped entry never frees bytes a frame may still read\"";
+}
+
+TEST(StreamUploadsTest, TheUploadedVertexArrayAliasesTheModelsOwnBytes)
+{
+    StreamUploads store;
+    // One arena of 24 floats; the channel keeps the SECOND half of it, as GeometryFacts hands a sliced channel over.
+    auto arena = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(24U, 1.5F)));
+
+    const auto acquired = store.acquireVertex(vertexKey(arena.get(), arena->revision(), 12, 12), arena->view().subspan(12U, 12U), arena);
+    ASSERT_EQ(acquired.action, StreamUploads::Action::Uploaded);
+    ASSERT_NE(acquired.bind, nullptr);
+    ASSERT_EQ(acquired.bind->arrays.size(), 1U);
+
+    const ::vsg::ref_ptr<::vsg::Data> array = acquired.bind->arrays.front()->data;
+    ASSERT_NE(array, nullptr);
+    EXPECT_EQ(array->dataPointer(), static_cast<const void*>(arena->data() + 12U))
+        << "the array reads the model's own bytes at the channel's offset: a snapshot would live at another address";
+    EXPECT_EQ(array->valueCount(), 12U) << "the channel is the slice, not the whole arena";
+    EXPECT_EQ(array->properties.stride, sizeof(float)) << "one scalar per element, exactly as a copied floatArray states";
+}
+
+TEST(StreamUploadsTest, TheUploadedIndexArrayAliasesTheWholeModelBuffer)
+{
+    StreamUploads store;
+    auto          arena = vn::intrusive_ptr<vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>(48U, 7U)));
+
+    const auto acquired = store.acquireIndex(indexKey(arena.get(), arena->revision(), 36, 12), arena->view(), arena);
+    ASSERT_EQ(acquired.action, StreamUploads::Action::Uploaded);
+    ASSERT_NE(acquired.bind, nullptr);
+    ASSERT_NE(acquired.bind->indices, nullptr);
+
+    const ::vsg::ref_ptr<::vsg::Data> array = acquired.bind->indices->data;
+    ASSERT_NE(array, nullptr);
+    EXPECT_EQ(array->dataPointer(), static_cast<const void*>(arena->data()))
+        << "the bind covers the whole buffer and the DRAW states the span, so the array starts where the buffer does";
+    EXPECT_EQ(array->valueCount(), 48U) << "a span inside the arena may not shrink what the bind aliases";
 }

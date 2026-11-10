@@ -574,7 +574,7 @@ std::optional<Geometry::TriangleIndexKey> Geometry::triangleIndexKey(std::size_t
     return key;
 }
 
-bool Geometry::prepareBvh(std::size_t draw)
+bool Geometry::prepareBvh(std::size_t draw, const vn::geom::spatial::BvhBuilder& builder)
 {
     const std::optional<TriangleIndexKey> key = triangleIndexKey(draw);
     if (draw >= triangle_trees_.size() || !key.has_value()) {
@@ -612,10 +612,15 @@ bool Geometry::prepareBvh(std::size_t draw)
     // box rule are the geometry side's own (vn::geom::spatial::TriangleSource), so a draw's tree and a mesh's tree name
     // their triangles the same way and a mesh tree can be adopted below without a second conversion.
     auto tree = std::make_shared<Bvh>();
-    if (!vn::geom::spatial::buildTriangleBvh(*tree, stream)) {
+    if (!vn::geom::spatial::buildTriangleBvh(*tree, stream, builder)) {
         slot = TriangleTreeSlot{};
         return false; // a corner that names no stored vertex, or a position that is not finite: no tree, not a throw
     }
+    // SEALED, because this tree is a CACHE of the draw's bytes and nothing can ever update it: its key is the stream
+    // itself, so a stream that changes is answered with a NEW tree (see the branch above) rather than a refit. The
+    // per-primitive volumes the build needed are therefore scratch, and dropping them is what keeps a 14-million-triangle
+    // draw's tree from paying 48 bytes per triangle on top of its boxes.
+    tree->seal();
     slot.key  = *key;
     slot.tree = std::move(tree);
     return true;

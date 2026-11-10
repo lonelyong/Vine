@@ -148,6 +148,8 @@ class BvhBuilder
      * @tparam T      Floating-point scalar type.
      * @tparam Volume Bounding-volume template.
      * @param bvh     The tree to fill; its registered primitives are what gets partitioned.
+     * @throws std::logic_error when @p bvh is sealed: a build partitions the per-primitive volumes it no longer holds
+     *                          (see `Bvh::seal()`).
      */
     template <typename T, template <typename> class Volume>
     void build(Bvh<T, Volume>& bvh) const
@@ -178,6 +180,7 @@ class BvhBuilder
      * @tparam Algorithm Build algorithm; anything modelling `BvhBuildAlgorithm`.
      * @param bvh        The tree to fill.
      * @param algorithm  The construction algorithm.
+     * @throws std::logic_error when @p bvh is sealed (see `Bvh::seal()`).
      */
     template <typename T, template <typename> class Volume, BvhBuildAlgorithm<T, Volume> Algorithm>
     void buildWith(Bvh<T, Volume>& bvh, Algorithm&& algorithm) const

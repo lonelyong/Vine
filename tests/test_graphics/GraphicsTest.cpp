@@ -1448,7 +1448,10 @@ TEST(RayIntersectionTest, APreparedTreeChangesTheCostAndNotTheAnswer)
     EXPECT_EQ(linear_tests, 288u) << "without a tree the walk tests every triangle of the draw";
     EXPECT_EQ(grid->bvh(0), nullptr) << "a geometry builds no tree by itself: the pick falls back to the linear walk";
 
-    ASSERT_TRUE(grid->prepareBvh(0));
+    // A leaf of four: this case is about the MECHANISM (a tree cuts the exact tests), and the engine's own default
+    // leaf is deliberately coarse (64 primitives - see kPickTreeLeafSize), which on 288 triangles would put every
+    // triangle the ray can reach in one or two leaves and hide the cut it is supposed to show.
+    ASSERT_TRUE(grid->prepareBvh(0, vn::geom::spatial::BvhBuilder{}.leafSize(4u)));
     ASSERT_NE(grid->bvh(0), nullptr);
 
     const std::uint64_t         tree_before = grid->triangleTestCount();
@@ -9183,7 +9186,9 @@ TEST(GeometryTest, AHandBuiltDrawPreparesItsOwnTree)
     ASSERT_EQ(geometry->primitiveCount(), 1u);
     EXPECT_EQ(geometry->bvh(0), nullptr) << "a geometry builds no tree by itself";
 
-    ASSERT_TRUE(geometry->prepareBvh(0));
+    // A leaf of two: this case is about PRUNING, and a tree that held all eight triangles in one leaf could not prune
+    // anything (the engine's own default leaf is coarse - see ThePreparedTreeIsSealedAndKeepsTheEnginesCoarseLeaf).
+    ASSERT_TRUE(geometry->prepareBvh(0, vn::geom::spatial::BvhBuilder{}.leafSize(2u)));
     const Geometry::Bvh* tree = geometry->bvh(0);
     ASSERT_NE(tree, nullptr);
     EXPECT_EQ(tree->primCount(), 8u) << "one primitive per triangle, so a primitive id is the triangle ordinal";
@@ -9256,6 +9261,34 @@ TEST(GeometryTest, MeshSourceGeometryAdoptsTheMeshesTree)
     EXPECT_EQ(geometry->bvh(0), mesh_tree.get()) << "the draw IS the mesh's stream: the geometry holds that tree";
     ASSERT_TRUE(geometry->prepareBvh(0));
     EXPECT_EQ(geometry->bvh(0), mesh_tree.get()) << "preparing adopts the same tree, it does not build a second one";
+}
+
+TEST(GeometryTest, ThePreparedTreeIsSealedAndKeepsTheEnginesCoarseLeaf)
+{
+    // Two facts a big model pays for, pinned on eight triangles: the tree holds no per-primitive volume (it is a
+    // cache of the draw's bytes and is never updated), and the engine's default leaf is coarse enough that eight
+    // primitives stay in ONE node instead of being split four ways.
+    const auto geometry = makeGridGeometry(2u);
+    ASSERT_TRUE(geometry->prepareBvh(0));
+
+    const Geometry::Bvh* tree = geometry->bvh(0);
+    ASSERT_NE(tree, nullptr);
+    EXPECT_TRUE(tree->isSealed()) << "a draw's tree is published read-only, so the build's volumes are scratch";
+    EXPECT_EQ(tree->primCount(), 8u) << "sealing drops the volumes, never the primitive count";
+    EXPECT_TRUE(tree->validate()) << "a sealed tree still satisfies every invariant a mutable one does";
+    EXPECT_EQ(tree->qualityReport().leaf_count, 1u)
+        << "kPickTreeLeafSize (64) is what makes a tree over N triangles cost N/64 nodes rather than N/4";
+}
+
+TEST(GeometryTest, TheCallerChoosesTheLeafSizeOfItsPickTree)
+{
+    const auto geometry = makeGridGeometry(2u);
+    ASSERT_TRUE(geometry->prepareBvh(0, vn::geom::spatial::BvhBuilder{}.leafSize(2u)));
+
+    const Geometry::Bvh* tree = geometry->bvh(0);
+    ASSERT_NE(tree, nullptr);
+    EXPECT_GT(tree->qualityReport().leaf_count, 1u) << "a finer leaf splits the same eight triangles";
+    EXPECT_TRUE(tree->isSealed()) << "the granularity is the caller's; the read-only shape of the result is not";
 }
 
 TEST(GeometryTest, ATriangulatedQuadMeshAdoptsNothing)

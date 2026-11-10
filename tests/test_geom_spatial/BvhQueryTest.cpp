@@ -217,3 +217,105 @@ TEST(BvhQueryTest, VisitCanStopTheTraversalEarly)
                         });
     EXPECT_EQ(calls, 3) << "the visitor's false must end the walk, not be ignored";
 }
+
+TEST(BvhQueryTest, ASealedTreeReportsTheSamePrimitivesItDidBefore)
+{
+    auto [tree, boxes] = buildRandomTree();
+    ASSERT_TRUE(tree.validate());
+    const std::size_t   prim_count = tree.primCount();
+    const std::size_t   leaf_count = tree.qualityReport().leaf_count;
+    const Aabb<double>  query(-10.0, -10.0, -10.0, 10.0, 10.0, 10.0);
+
+    const auto before = collectIds([&](std::vector<std::uint32_t>& ids) {
+        tree.forEachOverlap(query, [&](std::uint32_t id, const Aabb<double>&) {
+            ids.push_back(id);
+            return true;
+        });
+    });
+    ASSERT_FALSE(before.empty()) << "the query has to report something for this to compare anything";
+
+    tree.seal();
+
+    ASSERT_TRUE(tree.isSealed());
+    EXPECT_EQ(tree.primCount(), prim_count) << "the primitive order keeps the count the volumes stated";
+    EXPECT_TRUE(tree.isBuilt());
+    EXPECT_TRUE(tree.validate()) << "validate() checks the tree's own combinatorics, which sealing does not touch";
+    EXPECT_EQ(tree.qualityReport().leaf_count, leaf_count) << "the leaves and their boxes are the RESULT, not scratch";
+
+    const auto after = collectIds([&](std::vector<std::uint32_t>& ids) {
+        tree.forEachOverlap(query, [&](std::uint32_t id, const Aabb<double>& box) {
+            // What replaces the per-primitive box is the leaf's: a SUPERSET of it, which is why the ids cannot change.
+            EXPECT_LE(box.xmin, boxes[id].xmin);
+            EXPECT_LE(box.ymin, boxes[id].ymin);
+            EXPECT_LE(box.zmin, boxes[id].zmin);
+            EXPECT_GE(box.xmax, boxes[id].xmax);
+            EXPECT_GE(box.ymax, boxes[id].ymax);
+            EXPECT_GE(box.zmax, boxes[id].zmax);
+            ids.push_back(id);
+            return true;
+        });
+    });
+    EXPECT_EQ(after, before);
+}
+
+TEST(BvhQueryTest, ASealedTreeStillAnswersRayQueriesWithTheSamePrimitives)
+{
+    auto [tree, boxes] = buildRandomTree();
+    ASSERT_TRUE(tree.validate());
+
+    const Ray<double> ray(vn::math::Point3<double>(-120.0, -40.0, -30.0), vn::math::Vector3<double>(1.0, 0.3, -0.2));
+    const auto        walk = [&](const Bvh<double>& source) {
+        return collectIds([&](std::vector<std::uint32_t>& ids) {
+            source.forEachRay(ray, [&](std::uint32_t id, const Aabb<double>&, double&) {
+                ids.push_back(id);
+                return true;
+            });
+        });
+    };
+
+    const auto before = walk(tree);
+    tree.seal();
+    EXPECT_EQ(walk(tree), before) << "the ray walk culls with leaf boxes, so dropping the primitive ones changes no id";
+}
+
+TEST(BvhQueryTest, ASealedTreeRefusesEveryOperationThatNeedsTheVolumes)
+{
+    auto [tree, boxes] = buildRandomTree();
+    tree.seal();
+    ASSERT_TRUE(tree.isSealed());
+
+    const Aabb<double> box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+    EXPECT_THROW((void)tree.add(box), std::logic_error);
+    EXPECT_THROW(tree.addRange(1u, [&](std::size_t) { return box; }), std::logic_error);
+    EXPECT_THROW(tree.update(0u, box), std::logic_error);
+    EXPECT_THROW(tree.refit(), std::logic_error);
+    EXPECT_THROW(tree.reserve(16u), std::logic_error);
+    EXPECT_THROW((void)tree.restoreTopology(tree.topology()), std::logic_error);
+    EXPECT_THROW(BvhBuilder{}.build(tree), std::logic_error)
+        << "a build partitions the per-primitive volumes a sealed tree no longer holds, so it cannot silently no-op";
+}
+
+TEST(BvhQueryTest, ClearingASealedTreeMakesItMutableAgain)
+{
+    auto [tree, boxes] = buildRandomTree();
+    tree.seal();
+    ASSERT_TRUE(tree.isSealed());
+
+    tree.clear();
+    EXPECT_FALSE(tree.isSealed()) << "the sealing went with the tree it described";
+    EXPECT_EQ(tree.primCount(), 0u);
+    EXPECT_NO_THROW((void)tree.add(Aabb<double>(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)));
+}
+
+TEST(BvhQueryTest, SealingATreeThatWasNeverBuiltKeepsItsPrimitivesMutable)
+{
+    Bvh<double> tree;
+    (void)tree.add(Aabb<double>(0.0, 0.0, 0.0, 1.0, 1.0, 1.0));
+
+    tree.seal();
+
+    EXPECT_FALSE(tree.isSealed()) << "there is no result to keep, so nothing is dropped";
+    EXPECT_EQ(tree.primCount(), 1u);
+    EXPECT_NO_THROW(BvhBuilder{}.build(tree));
+    EXPECT_TRUE(tree.isBuilt());
+}

@@ -8,6 +8,7 @@
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -42,11 +43,19 @@ class BvhBuilder;
  *   `node_bounds_`): the combinatorics are `BvhNodeTopology`, which is also what a file holds, so a stored shape is the
  *   tree's own node array rather than a transcription of it (`topologyView()` is free, and `restoreTopology()` adopts an
  *   owned shape by moving it). Boxes stay out of the stored half for the reason they are derived from the primitives.
+ * - **A tree has two states, and the difference is what it holds for its primitives**: a MUTABLE tree keeps one volume
+ *   per primitive (which is what `update()` and `refit()` work from), a SEALED tree (see `seal()`) keeps the build's
+ *   RESULT - the nodes, their boxes and the primitive order - and drops those volumes. Sealing is the answer to "who
+ *   pays 48 B per primitive" (`Aabb<double>`): a tree that is built to be queried, not updated, stops paying it.
  *
  * @warning
  * - A build is required before queries answer anything: `add()` after a build clears the nodes, so a query on a tree
  *   that has pending additions visits nothing rather than answering from a stale tree.
  * - `update()` changes a primitive's volume; the tree is only valid again after `refit()`, which keeps the topology.
+ * - A SEALED tree is read-only: `add()`, `addRange()`, `update()`, `refit()`, `reserve()` and `restoreTopology()` throw
+ *   `std::logic_error`, because the volumes they need are gone. Its query visitors receive the leaf's box instead of a
+ *   primitive's own (a superset, which is the conservative answer the tree already promises); `topology()`,
+ *   `primOrder()`, `validate()` and `qualityReport()` keep answering.
  * - Queries are `const` and safe to run concurrently. Everything else needs exclusive access to the object.
  *
  * @tparam T      Floating-point scalar type.
@@ -95,9 +104,11 @@ class Bvh
      * @return The primitive id to use with `update()` and query visitors.
      * @throws std::invalid_argument when the volume holds NaN, infinity or an inverted axis.
      * @throws std::length_error   when the id would not fit in `PrimId`.
+     * @throws std::logic_error    when the tree is sealed (see `seal()`).
      */
     PrimId add(const VolumeType& bounds)
     {
+        rejectWhenSealed("add()");
         if (!detail::VolumeTraits<VolumeType>::isFinite(bounds)) {
             throw std::invalid_argument("vn::geom::spatial::Bvh: the primitive volume must be finite and not inverted");
         }
@@ -121,10 +132,12 @@ class Bvh
      * @param bounds_of Computes the volume of one primitive.
      * @throws std::invalid_argument when any volume is not finite, or `bounds_of` throws.
      * @throws std::length_error   when the ids would not fit in `PrimId`.
+     * @throws std::logic_error    when the tree is sealed (see `seal()`).
      */
     template <typename BoundsOf>
     void addRange(std::size_t count, BoundsOf&& bounds_of)
     {
+        rejectWhenSealed("addRange()");
         prim_bounds_.reserve(prim_bounds_.size() + count);
         for (std::size_t index = 0; index < count; ++index) {
             add(static_cast<const VolumeType&>(bounds_of(index)));
@@ -141,9 +154,11 @@ class Bvh
      * @param id     Primitive id returned by `add()`.
      * @param bounds The new volume; must be finite and not inverted.
      * @throws std::invalid_argument when `id` is out of range or the volume is not usable.
+     * @throws std::logic_error    when the tree is sealed (see `seal()`).
      */
     void update(PrimId id, const VolumeType& bounds)
     {
+        rejectWhenSealed("update()");
         if (id >= prim_bounds_.size()) {
             throw std::invalid_argument("vn::geom::spatial::Bvh: update() needs an id returned by add()");
         }
@@ -157,8 +172,13 @@ class Bvh
      * @brief Reserves storage for `prim_count` primitives, so later registrations do not allocate.
      *
      * @param prim_count Expected primitive count.
+     * @throws std::logic_error when the tree is sealed (see `seal()`).
      */
-    void reserve(std::size_t prim_count) { prim_bounds_.reserve(prim_count); }
+    void reserve(std::size_t prim_count)
+    {
+        rejectWhenSealed("reserve()");
+        prim_bounds_.reserve(prim_count);
+    }
 
     /**
      * @brief Forgets every primitive and the tree, keeping the allocated storage.
@@ -166,6 +186,7 @@ class Bvh
      * @details
      * - The next registration starts numbering at zero again; the capacity of all three arrays is kept, which is what
      *   makes a rebuild cycle allocation-free.
+     * - This is also how a SEALED tree becomes mutable again: the sealing goes away with the tree it described.
      */
     void clear()
     {
@@ -179,16 +200,20 @@ class Bvh
     /**
      * @brief Returns how many primitives are registered.
      *
+     * @details
+     * - A sealed tree answers from its primitive ORDER: that array is the same length as the volumes it dropped, so the
+     *   count survives the sealing (`Mesh::setBvh()` and `Geometry::adoptBvh()` check it against the triangle count).
+     *
      * @return The primitive count, whether or not a tree has been built.
      */
-    [[nodiscard]] std::size_t primCount() const { return prim_bounds_.size(); }
+    [[nodiscard]] std::size_t primCount() const noexcept { return prim_bounds_.empty() ? shape_.order.size() : prim_bounds_.size(); }
 
     /**
      * @brief Reports whether no primitive is registered.
      *
      * @return True when the tree holds nothing.
      */
-    [[nodiscard]] bool empty() const { return prim_bounds_.empty(); }
+    [[nodiscard]] bool empty() const noexcept { return primCount() == 0u; }
 
     /**
      * @brief Reports whether a build has been performed since the last registration.
@@ -198,12 +223,53 @@ class Bvh
     [[nodiscard]] bool isBuilt() const { return !shape_.nodes.empty(); }
 
     /**
+     * @brief Reports whether the tree is SEALED: built, and no longer holding a volume per primitive.
+     *
+     * @details
+     * - Sealed means "this tree answers queries and nothing else": `seal()` dropped the per-primitive volumes the build
+     *   needed, so the object's residency is the RESULT (nodes, their boxes, the primitive order) and no longer grows
+     *   with the primitive count twice.
+     * - The state is decided by what is held, not by a flag: a built tree whose volume array is gone IS sealed, and an
+     *   empty or not-yet-built tree is not (it still holds, or may still take, its primitives).
+     *
+     * @return True when the tree is built and has no per-primitive volumes left.
+     */
+    [[nodiscard]] bool isSealed() const { return prim_bounds_.empty() && !shape_.order.empty(); }
+
+    /**
+     * @brief Drops the per-primitive volumes, keeping the built tree: the tree becomes read-only, and smaller.
+     *
+     * @details
+     * - The volumes are BUILD SCRATCH for a tree that will never be updated: the queries walk `node_bounds_`, and the
+     *   only things that read `prim_bounds_` afterwards are the mutations (`update` / `refit` / `restoreTopology`) and
+     *   the visitors' second argument. For `Aabb<double>` this releases 48 bytes per primitive - the dominant term on a
+     *   triangle soup, where the primitive count is the triangle count.
+     * - The memory is RELEASED, not just emptied: the caller seals precisely to stop paying for it.
+     * - A visitor asking for volumes gets the leaf's box afterwards. That box CONTAINS each of its primitives, so every
+     *   answer stays a superset of the exact one (the same conservative promise a leaf box already makes) - what a
+     *   caller loses is the per-primitive rejection, not the correctness of the primitives reported.
+     *
+     * @note A tree that is not built has nothing to keep, so sealing it does nothing: the primitives stay mutable, which
+     *       is the state a caller that registered but has not built is in.
+     * @note Sealing is idempotent.
+     * @warning After this call the tree cannot be updated, refit or restored into (see the class warning): a caller that
+     *          may still change its primitives must not seal.
+     */
+    void seal()
+    {
+        if (shape_.nodes.empty()) {
+            return; // nothing built: there is no result to keep, and the primitives have to stay mutable
+        }
+        std::vector<VolumeType>().swap(prim_bounds_); // release the capacity too: emptying it would keep the bytes
+    }
+
+    /**
      * @brief Visits every primitive whose leaf volume overlaps `query`.
      *
      * @details
      * - Allocation-free and `const`: the traversal stack lives on the call's own stack.
-     * - The visit receives the leaf's volume, which is conservative: a primitive reported here may still miss the
-     *   query under an exact test.
+     * - The visit receives the primitive's own volume; a SEALED tree answers its leaf's volume instead, which CONTAINS
+     *   it (see `seal()`). Either way the primitive reported here may still miss `query` under an exact test.
      *
      * @tparam Visit Callable `bool(PrimId, const VolumeType&)`, returning false to stop the traversal.
      * @param query  Volume to test against.
@@ -225,7 +291,7 @@ class Bvh
             }
             const Node& node = shape_.nodes[index];
             if (node.count != 0) {
-                if (!visitLeaves(node, visit)) {
+                if (!visitLeaves(node, node_bounds_[index], visit)) {
                     return;
                 }
                 continue;
@@ -272,9 +338,11 @@ class Bvh
             }
             const Node& node = shape_.nodes[index];
             if (node.count != 0) {
+                // A sealed tree has no per-primitive volumes: the leaf's box is what the visitor is handed, and it
+                // contains every primitive of that leaf (see seal()).
                 for (PrimId slot = node.offset; slot < node.offset + node.count; ++slot) {
                     const PrimId id = shape_.order[slot];
-                    if (!visit(id, prim_bounds_[id], limit)) {
+                    if (!visit(id, prim_bounds_.empty() ? node_bounds_[index] : prim_bounds_[id], limit)) {
                         return;
                     }
                 }
@@ -313,12 +381,16 @@ class Bvh
      * - One reverse pass over the flat array: children always sit after their parent, so the sweep is a valid post-order.
      * - Allocation-free and O(n). It does not improve the shape of the tree; if repeated updates have loosened the
      *   leaves, `qualityReport()` tells the caller it is time to build again.
+     * - A SEALED tree has nothing to refit from and answers `std::logic_error` (see `seal()`).
+     *
+     * @throws std::logic_error when the tree is sealed.
      */
     void refit()
     {
         if (shape_.nodes.empty()) {
             return;
         }
+        rejectWhenSealed("refit()");
         detail::refitNodes<T, Volume>(shape_.nodes, node_bounds_, shape_.order, prim_bounds_);
     }
 
@@ -330,21 +402,24 @@ class Bvh
      *   every parent encloses both children, and the height stays within the limit.
      * - Worth calling after a custom build algorithm. The built-in ones are covered by tests; a third-party algorithm
      *   has only this function standing between it and a query that silently misses.
+     * - What it checks is the tree's own combinatorics; the per-primitive volumes are only COUNTED, never inspected, so
+     *   a sealed tree validates exactly like a mutable one.
      *
      * @return True when the tree satisfies every invariant.
      */
     [[nodiscard]] bool validate() const
     {
+        const std::size_t count = primCount();
         if (shape_.nodes.empty()) {
-            return prim_bounds_.empty(); // nothing built is valid only when there is nothing to describe
+            return count == 0u; // nothing built is valid only when there is nothing to describe
         }
-        if (shape_.order.size() != prim_bounds_.size() || shape_.nodes.size() != node_bounds_.size()) {
+        if (shape_.order.size() != count || shape_.nodes.size() != node_bounds_.size()) {
             return false;
         }
 
-        std::vector<bool> seen(prim_bounds_.size(), false);
+        std::vector<bool> seen(count, false);
         for (const PrimId id : shape_.order) {
-            if (id >= prim_bounds_.size() || seen[id]) {
+            if (id >= count || seen[id]) {
                 return false;
             }
             seen[id] = true;
@@ -354,7 +429,7 @@ class Bvh
         for (std::size_t index = 0; index < shape_.nodes.size(); ++index) {
             const Node& node = shape_.nodes[index];
             if (node.count != 0) {
-                if (node.count > prim_bounds_.size() || node.offset > prim_bounds_.size() - node.count) {
+                if (node.count > count || node.offset > count - node.count) {
                     return false;
                 }
                 continue;
@@ -367,7 +442,7 @@ class Bvh
             }
         }
 
-        return shape_.depth <= kMaxDepth && shape_.nodes.size() <= 2 * prim_bounds_.size();
+        return shape_.depth <= kMaxDepth && shape_.nodes.size() <= 2 * count;
     }
 
     /**
@@ -430,9 +505,11 @@ class Bvh
      *
      * @param shape The stored shape, nodes, primitive order and height all from one tree; consumed.
      * @return true when the tree holds a built tree afterwards.
+     * @throws std::logic_error when the tree is sealed: there are no volumes to re-derive the boxes from.
      */
     [[nodiscard]] bool restoreTopology(BvhTopology shape)
     {
+        rejectWhenSealed("restoreTopology()");
         if (!detail::installableHeight(shape.view(), static_cast<PrimId>(prim_bounds_.size()), kMaxDepth).has_value()) {
             dropTree();
             return false;
@@ -476,12 +553,14 @@ class Bvh
      * @param leaf_size Maximum primitives per leaf; kept for the record of what the build was asked for.
      * @param max_depth Height limit the builder must respect.
      * @return False when there is nothing to build.
+     * @throws std::logic_error when the tree is sealed: a build partitions the per-primitive volumes it no longer holds.
      */
     bool prepareForBuild(unsigned leaf_size, unsigned max_depth)
     {
         (void)leaf_size;
         (void)max_depth;
 
+        rejectWhenSealed("build");
         if (prim_bounds_.empty()) {
             dropTree();
             return false;
@@ -545,21 +624,46 @@ class Bvh
     /**
      * @brief Runs a visitor over one leaf's primitives.
      *
+     * @details
+     * - The visitor's volume is the primitive's own on a mutable tree, and @p leaf_bounds on a sealed one - the leaf's
+     *   box contains every primitive it holds, so the answer stays a superset either way (see `seal()`).
+     *
      * @tparam Visit Callable `bool(PrimId, const VolumeType&)`.
-     * @param node  The leaf.
-     * @param visit The visitor.
+     * @param node        The leaf.
+     * @param leaf_bounds The leaf's volume, handed out when the per-primitive volumes are gone.
+     * @param visit       The visitor.
      * @return False when the visitor asked to stop.
      */
     template <typename Visit>
-    bool visitLeaves(const Node& node, Visit& visit) const
+    bool visitLeaves(const Node& node, const VolumeType& leaf_bounds, Visit& visit) const
     {
+        const bool sealed = prim_bounds_.empty();
         for (PrimId index = node.offset; index < node.offset + node.count; ++index) {
             const PrimId id = shape_.order[index];
-            if (!visit(id, prim_bounds_[id])) {
+            if (!visit(id, sealed ? leaf_bounds : prim_bounds_[id])) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * @brief Refuses an operation that would need the per-primitive volumes a sealed tree dropped.
+     *
+     * @details
+     * - A sealed tree is a RESULT, and every operation refused here rewrites the data it was computed from. Saying so
+     *   loudly is the difference between "this tree answers queries" and a silent no-op that leaves a caller believing
+     *   its update landed (see `seal()`).
+     *
+     * @param what The operation, as the message names it.
+     * @throws std::logic_error when the tree is sealed.
+     */
+    void rejectWhenSealed(const char* what) const
+    {
+        if (isSealed()) {
+            throw std::logic_error(std::string("vn::geom::spatial::Bvh: ") + what +
+                                   " needs the per-primitive volumes a sealed tree dropped (see seal())");
+        }
     }
 
     std::vector<VolumeType> prim_bounds_; // One volume per registered primitive, indexed by PrimId.

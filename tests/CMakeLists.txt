@@ -34,8 +34,11 @@ link_libraries(gtest gtest_main)
 
 # MSVC options for the project's own test targets. Placed after the gtest
 # FetchContent so the fetched gtest does not inherit them (see vn_add_library).
+# /bigobj is required because an optimized build emits far more sections per
+# object than a debug one: tests/test_graphics/GraphicsTest.cpp is a ~650 KB
+# translation unit and fails RelWithDebInfo/MinSizeRel with C1128 otherwise.
 if(MSVC)
-    add_compile_options(/utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus)
+    add_compile_options(/utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus /bigobj)
 endif()
 
 add_subdirectory(test_math)
