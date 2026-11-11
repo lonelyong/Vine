@@ -1,7 +1,8 @@
 # graphics 的线程模型
 
-> **状态**：草案（未落地；契约先定，实现按 `../backlog/graphics.md` T31 的触发条件推进）
-> **最后核对**：2026-11-10
+> **状态**：草案（未落地；契约先定，实现按 `../backlog/graphics.md` T31 的触发条件推进；P1 的四步与 P2 的
+> "事实行从描述建"已完成）
+> **最后核对**：2026-11-11
 > **范围**：graphics 模块与宿主之间"哪一段工作在哪个线程"的完整契约 —— 内容世界与渲染世界各归谁、
 > 场景图/节点状态/相机怎么更新到渲染侧、表面与交换链归谁、并行计算放在哪、关闭怎么收。
 > **不含** appfw 的通用异步（`appfw-startup-phases.md`、`async-design.md`）与 Vulkan 同步细节（`vsg-backend.md`）。
@@ -230,8 +231,9 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 ### 3.1.5 F5 几何描述更新
 
 - **行为**：通道集合/切片、primitive（索引与实例切片）、material/program 句柄变化 ⇒ 内容侧构造一个不可变
-  `ContentDescription`（值）随 delta 送出；镜像据此重建几何代理，旧代理停靠后释放。
-- **约束**（C5）：`ContentDescription` 只在**形状编辑**时构造，代价 O(#通道 + #primitive)，与帧无关。
+  `GeometryDescription`（值，`Geometry::description()` 按 revision 缓存）随命令送出；镜像/后端据此建几何代理，
+  旧代理停靠后释放。
+- **约束**（C5）：`GeometryDescription` 只在**形状编辑**时构造，代价 O(#通道 + #primitive)，与帧无关。
 - **要求**（R5）：`setMaterial()`/`setProgram()` 这类"只换句柄"的编辑也走同一条 delta（值小）。
 - **验收**（T5）：换通道/换切片/换 primitive 后，渲染侧事实行与从零重建的行逐字段相同。
 - **注意**（N5）：描述与字节是两件事 —— 换 buffer 是描述变化（delta），改 buffer 里的字节是 revision 变化（轮询，F7）。
@@ -316,6 +318,8 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 |---|---|---|
 | `announcePlacement(...)` / `announceDescription(...)` | 公告的唯一入口，payload 必填 | 取代 `invalidateBounds()`/`announceContentChange()` 的无参形态 |
 | `Buffer::revision()` / `Geometry::revision()` | 原子、单调、只被比较 | 唯一允许的跨侧读 |
+| `Geometry::description()` | 形状的不可变值（通道切片 + 逐 primitive），按 `revision()` 缓存 | 渲染侧唯一描述来源；缓存写，内容线程 |
+| `RenderCommand::row` / `description` | 身份（`RowId`）+ 形状值；后端只从它建事实行 | 手建命令可只给 `geometry`，录制侧按名转换 |
 | `Scene::collectRenderCommands(view)` | 仍是内容侧的纯查询（宿主/工具/等价性用例用） | 与镜像的产出必须逐位相同 |
 | `Scene::boundingBox()` | 内容侧查询 | `fitToScreen` 用它，不往返引擎 |
 
@@ -348,7 +352,7 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 | C2 | delta 是值 + 保命句柄，不携带"还会变的内容"。 |
 | C3 | 镜像保地址、不读字段；子树摘除必须停靠。 |
 | C4 | 重算范围 = 变化子树 + 祖先。 |
-| C5 | `ContentDescription` 只在形状编辑时构造。 |
+| C5 | `GeometryDescription` 只在形状编辑时构造。 |
 | C6 | 相机值只算一次，两侧用同一份。 |
 | C7 | 字节变化不产生 delta。 |
 | C8 | 一帧一次 drain。 |
@@ -442,6 +446,16 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 - **怎么判**：门禁数字抖动/负数。
 - **怎么防**：并行段不进窗口或按线程分桶。
 
+### 6.9 描述是快照：改形状必须 bump revision，并在下一帧重新交出
+
+- **会怎么错**：宿主 `setPrimitive` / `addBuffer` / 换切片之后不 `bumpRevision()`，或者**建好命令之后**再改形状 ——
+  `Geometry::description()` 是按 revision 缓存的值，命令拿到的是旧快照，后端照旧快照建行：topology 停在旧值
+  （点云画成三角形）、索引/切片停在旧 buffer。程序不崩，只是画错。
+- **怎么判**：现象是“改了没生效”，而 `Geometry::revision()` 没动；`ContentPassTest` 与 `PrimitiveDrawTest` 的
+  拓扑用例就是这个形状（改 topology ⇒ bump ⇒ 重新给命令/`track`）。
+- **怎么防**：形状编辑 = 改 + `bumpRevision()`（§3.1.5 F5）；命令与计划是值，编辑后由下一帧重新收集，
+  `ContentStore::track` 再交一次（后端每帧对每个命令做一次，稳态零成本）。
+
 ## 7. 已否决选项
 
 | # | 选项 | 理由 | ADR |
@@ -474,6 +488,7 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 | T12 | `inline` 与 `threaded` 行为一致 | 同一子集两模式各跑一次 |
 | T13 | 删掉一处公告，等价性用例失败 | 变异验证（手工 + 记录在案） |
 | T14 | 无数据竞争 | 新增 `-fsanitize=thread` 构建树跑 `test_vsg` 与 `test_appfw` |
+| T15 | 事实行从描述建；身份 = 内容地址、revision = 描述的 revision | `GeometryFactsTest.*`、`FrameRecorderTest.EveryFactOfACommandReachesTheRecord`、`ContentStoreTest.*` |
 
 ## 9. 状态与演进
 
@@ -512,11 +527,14 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   “镜像与内容侧共用同一个折叠”带来的等价性盲区（变异验证：去掉 `* row.local` 后该断言立刻红）。
   **第四步已完成**：渲染世界改为**只吃值** —— `buildRows()` 是内容侧的入口（唯一读图的地方），`RenderWorld::adopt(SceneBake)`
   拿走结果，编辑用 `place(RowId, …)`，签名里不再出现内容类型；`bakeSubtree` 退到实现文件内部。
-- **P2（下一步）**：让**后端的事实行也从行取**。形状：`RenderCommand` 带 `RowId` 与一份不可变的几何描述
-  （通道切片 + 逐 primitive 事实，即行里已有的 own 叶子事实），`ContentStore::track` / `GeometryFacts` 从描述建行、
-  不再 `obj_cast<const Geometry>` 读活内容。验收：中间路径里 grep 不到 `geometry->`（逐视图 run 除外），
-  且 `ContentStoreTest` / `ContentPassTest` 改为喂描述而不是建场景节点。那一步做完，“引擎线程”才真的立得起来。
-- **P2**：`threaded` 下的结构/状态/描述/相机 delta 与镜像增量重算。
+- **P2（第一步已完成）**：**后端的事实行也从描述建**。`Geometry::description()` 给出一个不可变形状
+  （通道位置/切片/stride + 逐 primitive：topology、索引段、实例流），`RenderCommand` 带 `row`（身份）与
+  `description`（值），`ContentStore::track(identity, description)` / `buildGeometryFacts(description)` 只读值——
+  后端里已无 `obj_cast<const Geometry>`，也无任何 `geometry->`。身份仍是内容地址（ADR-2026-11-09），所以
+  计划/查找语义与之前一致；`ContentStore` 同时持有该对象的一份 share，**只为把地址钉住**（否则回收地址会让
+  新几何读到旧行 —— 用例 `PrimitiveDrawTest` 抓到的就是这个）。验收：`GeometryFactsTest` / `ContentStoreTest` /
+  `ContentHalvesTest` / `ContentPassTest` 全部改为喂描述；`test_vsg` 全绿。
+- **P2（下一步）**：`threaded` 下的结构/状态/描述/相机 delta 与镜像增量重算。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：

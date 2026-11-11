@@ -71,6 +71,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestGeometryFacts.hpp"
 #include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).

@@ -62,6 +62,7 @@
 #include <vine/vsg/support/VsgDynamicState.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestGeometryFacts.hpp"
 
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;

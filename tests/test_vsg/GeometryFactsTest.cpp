@@ -32,6 +32,7 @@
 #include <vine/vsg/internal/GeometryFacts.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestGeometryFacts.hpp"
 
 using vn::graphics::Geometry;
 using vn::graphics::backend::StreamKind;
@@ -72,6 +73,8 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     std::vector<vn::vsg::PrimitiveFacts> primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, primitives), FactMiss::None);
 
+    // The identity a plan names is the geometry's ADDRESS (what a command carries); the shape it describes is the
+    // immutable value. The store overwrites this with the identity it keys by, and a hand-built table states it here.
     EXPECT_EQ(facts.geometry, &geometry);
     EXPECT_EQ(facts.revision, 4U);
 

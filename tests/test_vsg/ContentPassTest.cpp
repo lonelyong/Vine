@@ -69,6 +69,7 @@
 #include <vine/vsg/support/VsgDynamicState.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestGeometryFacts.hpp"
 
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
@@ -6577,16 +6578,20 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     clear.color_value[2] = kClear[2];
     clear.color_value[3] = 1.0F;
 
-    RenderCommand command;
-    command.geometry = geometry;
-    command.material = material;
-    command.program  = program;
-    // The point cloud IS a points draw: the primitive states it (see Primitive.hpp) - a StateNode cannot.
+    // The point cloud IS a points draw: the primitive states it (see Primitive.hpp) - a StateNode cannot. It is stated
+    // BEFORE the command is built, because a command carries the geometry's SHAPE as a value (see
+    // RenderCommand::description): an edit after that is a new description, not a mutation the recorder would see.
     if (geometry != nullptr && geometry->primitive(0) != nullptr) {
         vn::graphics::Primitive points = *geometry->primitive(0);
         points.topology                = vn::graphics::Topology::Points;
         geometry->setPrimitive(0U, std::move(points));
+        geometry->bumpRevision();
+        store.track(geometry); // the frame hands the new shape over (a description is a value, never a live read)
     }
+    RenderCommand command;
+    command.geometry = geometry;
+    command.material = material;
+    command.program  = program;
     const std::vector<RenderCommand> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });

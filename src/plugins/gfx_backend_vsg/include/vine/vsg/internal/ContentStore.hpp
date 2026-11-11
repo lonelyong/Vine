@@ -47,11 +47,13 @@
  * identity alone (a plan cannot name a material revision - see findMaterial): the table has to answer "the
  * material now", so an edit REPLACES the entry in place and only the replaced value is parked.
  *
- * WHY AN ENTRY OWNS ITS OBJECT. The store is keyed by the object's ADDRESS and cannot observe its
- * destruction, so an entry that merely referenced it could outlive it - and a new object allocated at the
- * recycled address would be served the dead one's facts (wrong picture, silently). The store therefore holds
- * an owning reference per tracked object, exactly like api/MaterialImages does for its textures, and
- * @ref releaseAbandoned drops what nobody else holds.
+ * WHY AN ENTRY OWNS ITS SHAPE. The store is keyed by the IDENTITY a plan names and cannot observe the content's
+ * destruction, so an entry that merely referenced the description it answers with could outlive it - and a later
+ * geometry allocated at the recycled address would be served the dead one's facts (wrong picture, silently). The store
+ * therefore holds an owning reference to the shape per tracked identity, exactly like api/MaterialImages does for its
+ * textures, and @ref releaseAbandoned drops what nobody else holds. A geometry's own cache holds its current
+ * description (see Geometry::description), so "nobody else holds it" means the geometry is gone or the revision moved
+ * - the two cases whose rows are dead.
  *
  * WHAT IT REFUSES TO DO. It reports nothing: an object it cannot describe (a geometry without positions, a
  * program that is not one content pipeline) simply gets no entry, and the recorder - which owns the
@@ -69,10 +71,32 @@ class ContentStore {
     ContentStore();
 
     /**
-     * @brief Takes (a share of) ownership of @p geometry and answers for it from now on.
+     * @brief Answers for the SHAPE @p description at @p identity from now on.
      *
-     * Tracking the same object again is not an error: the entry it already has is kept and the new share is
-     * released with it. The object must stay tracked for as long as any frame may name it.
+     * WHY BOTH. The identity is the address the content side names (a node's, which a command carries and a lookup
+     * matches); the description is the immutable value the shape was read into (see `Geometry::description`), so the
+     * tables are built from values and never read content. A frame hands both, once per geometry it commands
+     * (`RenderCommand::row` and `RenderCommand::description`).
+     *
+     * A NEW DESCRIPTION AT A KNOWN IDENTITY IS AN EDIT: the value replaces the old one, and the rows the tables answer
+     * for the old revision stay answerable until the frames that may still record them are past - they leave at the
+     * park `ensureGeometry` takes when it notices the move. Tracking the same pair again is not an error.
+     *
+     * @warning
+     * - This overload does NOT hold the identity's address alive: it can only name the shape. The caller that drained
+     *   the value keeps that address reserved (the row table does it for a mirrored node, see ADR-2026-11-09); a
+     *   caller that also holds the object uses the overload below.
+     *
+     * @param identity    Address the plan names; null is ignored.
+     * @param description Shape to describe; null is ignored (a frame that names no shape is reported as a miss).
+     */
+    void track(const void* identity, const vn::graphics::GeometryDescriptionPtr& description);
+
+    /**
+     * @brief Describes @p geometry and tracks that pair (the content-side convenience).
+     *
+     * A caller that still holds the authored object - a tool, a test, an inline host - names it and this converts it
+     * once (`Geometry::description()` is cached per revision).
      *
      * @param geometry Geometry the host draws with; null is ignored.
      */
@@ -169,23 +193,31 @@ class ContentStore {
     std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement, std::vector<const void*>& released_materials);
 
     /**
-     * @brief Marks a geometry the host still owns as releasable and parks the removal of its rows.
+     * @brief Marks the identity @p identity as done with and parks the removal of its rows.
      *
      * @details
      * - The live entry stays until the parked callback runs; that is what makes the release CANCELABLE:
-     *   track() / ensureGeometry() clear the request and bump the token, so a later use keeps the object
-     *   resident and an old callback becomes a no-op. A direct erase here would let a reused object have its
-     *   newly built rows removed by the previous release's callback.
-     * - The rows leave when the in-flight window is past (see the retirement queue); the object and its
-     *   revision are untouched.
+     *   track() / ensureGeometry() clear the request and bump the token, so a later use keeps the identity
+     *   resident and an old callback becomes a no-op.
+     * - The rows leave when the in-flight window is past (see the retirement queue); the shape is untouched.
      * - When parking is unavailable the request is rolled back and false is returned: memory may be kept,
      *   never freed while a recorded frame can still name it.
+     *
+     * @param identity   Identity to release; null is refused.
+     * @param timeline   Frame clock the park is dated against.
+     * @param retirement Where the removal is parked.
+     * @return true when the request was accepted (or the identity was not resident); false when it could not be
+     *         parked safely.
+     */
+    bool releaseGeometry(const void* identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+
+    /**
+     * @brief Releases the identity @p geometry names (the content-side convenience).
      *
      * @param geometry   Geometry to release; null is refused.
      * @param timeline   Frame clock the park is dated against.
      * @param retirement Where the removal is parked.
-     * @return true when the request was accepted (or the object was not resident); false when it could not be
-     *         parked safely.
+     * @return true when the request was accepted (or nothing was resident); false when it could not be parked safely.
      */
     bool releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
@@ -254,8 +286,8 @@ class ContentStore {
     ContentStore& operator=(const ContentStore&) = delete;
 
   private:
-    /** @brief Ensures the tables answer for one named geometry (see tablesFor). */
-    void ensureGeometry(const vn::graphics::Geometry* geometry, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    /** @brief Ensures the tables answer for one named identity's current shape (see tablesFor). */
+    void ensureGeometry(const void* identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named material (see tablesFor). */
     void ensureMaterial(const vn::graphics::MaterialBase* material, core::FrameTimeline& timeline, core::RetirementQueue& retirement);

@@ -87,6 +87,9 @@ struct Row {
     ShaderProgramPtr             own_program{};
     ViewDependence               dependence{ ViewDependence::None };
     GeometryPtr                  geometry{};           ///< The command's payload (a share, never dereferenced here).
+    /// The same geometry's shape as an immutable value (see Geometry::description): what a command hands a backend, so
+    /// describing streams never reads the live object. Shared by every draw of this row and stable per revision.
+    GeometryDescriptionPtr       description{};
     std::vector<DrawFacts>       draws{};
 
     /// A row whose own box cannot be answered in its own frame (a custom leaf): its world box is a seed the producer

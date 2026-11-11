@@ -384,6 +384,7 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
 
     const std::uint64_t rows_before = static_cast<std::uint64_t>(second.geometries.size());
     const_cast<vn::graphics::Geometry*>(geometry.get())->setRevision(2U);
+    store.track(geometry); // the frame hands over the NEW shape (a description is a value; an edit is a new one)
     ASSERT_TRUE(store.tablesFor(plan->frame, timeline, retirement).geometries.size() > rows_before)
         << "the new revision JOINS the table the old one is still answerable in";
     EXPECT_TRUE(covers(store.tablesFor(plan->frame, timeline, retirement)));
@@ -414,6 +415,7 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
 
     // The host edits the data and announces it (the SDK's contract): the plan still names the old revision.
     geometry->bumpRevision();
+    store.track(geometry); // the next frame hands the NEW shape over (see ContentStore::track)
     const std::uint64_t new_revision = geometry->revision();
     EXPECT_NE(new_revision, old_revision);
 
@@ -1146,6 +1148,7 @@ TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRev
     // The host reports the new description (the SDK's contract, see Geometry::setInstanceTransforms): the live
     // revision declares what it draws, and the superseded row keeps declaring the old stream until its park comes due.
     geometry->bumpRevision();
+    store.track(geometry); // the frame hands the new shape over
     const ContentFacts& reported = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_TRUE(reported.declarations.declaresBuffer(replacement.get())) << "the live revision declares what it draws";
     EXPECT_TRUE(reported.declarations.declaresBuffer(instances.get())) << "the superseded row is still answerable, so its stream stays declared";

@@ -23,6 +23,7 @@
 #include <vine/vsg/internal/ProgramVariant.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestGeometryFacts.hpp"
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;

@@ -274,7 +274,8 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
             }
         }
         if (const auto* geometry = obj_cast<Geometry>(&node)) {
-            row.geometry = GeometryPtr(const_cast<Geometry*>(geometry));
+            row.geometry    = GeometryPtr(const_cast<Geometry*>(geometry));
+            row.description = geometry->description();
             const raw_ptr<MaterialBase>  geometry_material = geometry->material();
             const raw_ptr<ShaderProgram> geometry_program  = geometry->program();
             const std::size_t            primitive_count   = geometry->primitiveCount();
@@ -451,6 +452,7 @@ void selectFromBake(const SceneBake&            bake,
                 const MaterialBasePtr material = draw.material != nullptr ? draw.material : row.material;
                 const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.program;
                 auto&                  cmd     = out.emplace_back(row.geometry, material, row.world, draw.primitive_index);
+                cmd.description                = row.description;
                 cmd.opacity                    = effective;
                 cmd.draw_order                 = row.draw_order;
                 cmd.authored_state             = row.state;

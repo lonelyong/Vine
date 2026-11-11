@@ -63,6 +63,7 @@
 #include <vine/vsg/internal/VsgExecutor.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestGeometryFacts.hpp"
 
 using vn::graphics::Camera;
 using vn::graphics::Diagnostics;

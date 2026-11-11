@@ -312,6 +312,7 @@ TEST(FrameCompilerTest, EveryFactOfARecordedCommandReachesThePlan)
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1u);
     const CompiledCommand& planned = frame.passes[0].draws[0].commands[0];
 
+    // A plan carries the content identity and the revision of the shape it describes (see RenderCommand::row).
     EXPECT_EQ(planned.geometry, static_cast<const void*>(geometry.get()));
     EXPECT_EQ(planned.geometry_revision, 7U) << "the revision the facts row and every stream key are built from";
     EXPECT_EQ(planned.primitive, 0U);

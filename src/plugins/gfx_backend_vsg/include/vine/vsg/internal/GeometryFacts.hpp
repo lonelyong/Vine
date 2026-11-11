@@ -7,9 +7,13 @@
 #include <vine/vsg/vsg_global.hpp>
 
 /**
- * @brief Building one geometry's entry in the content tables, from the SDK object the host authored.
+ * @brief Building one geometry's entry in the content tables, from the description the content side handed over.
  *
- * WHAT IT WALKS, AND IN WHICH ORDER. The geometry holds an open list of vertex channels keyed by shader
+ * WHAT IT READS. A `GeometryDescription` (see Geometry::description): the immutable shape of one geometry revision,
+ * which is what a frame carries across. Nothing here reads the authored `Geometry`, so the tables can be built on a
+ * side that owns no content at all (see `.ai/design/graphics-threading.md`).
+ *
+ * WHAT IT WALKS, AND IN WHICH ORDER. The description holds an open list of vertex channels keyed by shader
  * location (0 = positions, 1 = normals, 2 = colours, 8 = the reserved texcoord slot, anything else a custom
  * channel). The table's entries are built in a FIXED order - the canonical channels first, in their ABI order,
  * then the custom ones ascending - because the entry's order IS the vertex-binding order: the pipeline's
@@ -43,19 +47,19 @@
  */
 VN_VSG_NS_BEGIN
 
-/** @brief Builds the geometry table entry for @p geometry.
+/** @brief Builds the geometry table entry for @p description.
  *
- * @param geometry SDK geometry to describe (borrowed; the entry points at its buffers).
- * @param out      Receives the entry (its spans point into @p storage).
- * @param storage  Caller-owned channel storage the entry borrows; cleared first, and must outlive the entry.
+ * @param description Geometry shape to describe (borrowed; the entry points at its buffers).
+ * @param out         Receives the entry (its spans point into @p storage).
+ * @param storage     Caller-owned channel storage the entry borrows; cleared first, and must outlive the entry.
  * @param primitive_storage Caller-owned primitive storage, same rule: @ref GeometryFacts::primitives points
- *                 into it, one row per draw in the geometry's order.
+ *                    into it, one row per draw in the description's order.
  * @return None when the entry was built; Unknown when there is nothing to describe; Malformed when the
  *         geometry cannot be drawn as authored (see the file note).
  */
-[[nodiscard]] FactMiss buildGeometryFacts(const vn::graphics::Geometry& geometry,
-                                          GeometryFacts&                out,
-                                          std::vector<ChannelFacts>&    storage,
-                                          std::vector<PrimitiveFacts>&  primitive_storage);
+[[nodiscard]] FactMiss buildGeometryFacts(const vn::graphics::GeometryDescription& description,
+                                          GeometryFacts&                           out,
+                                          std::vector<ChannelFacts>&               storage,
+                                          std::vector<PrimitiveFacts>&             primitive_storage);
 
 VN_VSG_NS_END

@@ -34,6 +34,27 @@ using vn::math::Vec3d;
 
 VN_OBJECT_META_IMPL(Geometry, Node);
 
+GeometryDescription::GeometryDescription(std::uint64_t revision, std::vector<GeometryChannel> channels, std::vector<Primitive> primitives)
+  : revision_(revision)
+  , channels_(std::move(channels))
+  , primitives_(std::move(primitives))
+{}
+
+std::uint64_t GeometryDescription::revision() const noexcept
+{
+    return revision_;
+}
+
+std::span<const GeometryChannel> GeometryDescription::channels() const noexcept
+{
+    return channels_;
+}
+
+std::span<const Primitive> GeometryDescription::primitives() const noexcept
+{
+    return primitives_;
+}
+
 Geometry::Geometry() = default;
 
 Geometry::~Geometry() = default;
@@ -415,6 +436,23 @@ void Geometry::setProgram(intrusive_ptr<ShaderProgram> program)
 std::uint64_t Geometry::revision() const
 {
     return revision_;
+}
+
+GeometryDescriptionPtr Geometry::description() const
+{
+    // The cache key IS the revision: the shape setters deliberately do not move it (a host reports where its edit
+    // ended), so a description built here stays the current one for as long as the host says so - which is what lets
+    // a backend key its rows by this object and rebuild nothing on a steady frame.
+    if (description_ != nullptr && description_->revision() == revision_) {
+        return description_;
+    }
+    std::vector<GeometryChannel> channels;
+    channels.reserve(attributes_.size());
+    for (const auto& [location, channel] : attributes_) {
+        channels.push_back(GeometryChannel{ location, channel });
+    }
+    description_ = GeometryDescriptionPtr(new GeometryDescription(revision_, std::move(channels), primitives_));
+    return description_;
 }
 
 void Geometry::setRevision(std::uint64_t revision) noexcept

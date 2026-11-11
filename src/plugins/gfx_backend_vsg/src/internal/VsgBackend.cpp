@@ -1401,11 +1401,18 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
         reportUnserved(kUnservedDraw);
         return;
     }
-    // What the commands name becomes the store's live content: the objects are borrowed for the frame, and
-    // the tables must answer for them when the plan (which copies their identities) is recorded - including
-    // after the host has dropped its own handle (the store owns a share, see its note).
+    // What the commands name becomes the store's live content: the IDENTITY and the DESCRIPTION are the values a frame
+    // carries (`RenderCommand::row` / `description`), and the tables must answer for them when the plan is recorded -
+    // including after the host has dropped its own handle (the store owns a share, see its note). A command that still
+    // carries its geometry pins the identity's address through it; a command built from a row names the two separately
+    // and the row's owner is what keeps that address alive (ADR-2026-11-09).
     for (const vn::graphics::RenderCommand& command : commands) {
-        d->store->track(command.geometry);
+        if (command.geometry != nullptr) {
+            d->store->track(command.geometry);
+        }
+        else {
+            d->store->track(command.row, command.geometryDescription());
+        }
         d->store->track(command.material);
         d->store->track(command.program);
         // THE MATERIAL IS TOUCHED HERE, because this is the only place a live edit can be noticed: the engine
@@ -1477,6 +1484,8 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
     // narrower base (see graphics-content-lifecycle.md). The order is exact: no two of these types
     // are related, and a Texture2D / CubeMap answers through Texture::desc().
     if (const auto* geometry = vn::obj_cast<const vn::graphics::Geometry>(content)) {
+        // The store releases the shape the frames described for it (see its own overload): releasing the geometry
+        // releases the description's rows, and a shape nobody described has none.
         return d->store->releaseGeometry(geometry, d->clock.timeline(), d->retirement);
     }
     if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content)) {

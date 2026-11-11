@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <vine/Buffer.hpp>
+#include <vine/RefCounted.hpp>
 #include <vine/geom/spatial/Bvh.hpp>
 #include <vine/geom/spatial/BvhBuilder.hpp>
 #include <vine/models/Array.hpp>
@@ -303,6 +304,62 @@ struct VN_GRAPHICS_API AttributeChannel {
         return { reinterpret_cast<const vn::math::Vec3f*>(data.data()), data.size() / kVec3Scalars };
     }
 };
+
+/**
+ * @brief One of a geometry's channels, with the shader attribute location it binds to.
+ *
+ * @details
+ * - `AttributeChannel` describes the segment and its stride; the location is what makes it a DECLARATION rather than
+ *   data (see ShaderAbi for the canonical ones). Kept apart so one description can carry the pairs in binding order.
+ */
+struct VN_GRAPHICS_API GeometryChannel {
+    /// Shader attribute location this channel feeds.
+    std::uint32_t location{ 0 };
+    /// The segment (buffer, offset, count) and its components per vertex.
+    AttributeChannel channel{};
+};
+
+/**
+ * @brief ONE geometry's shape as an immutable VALUE: the channels it feeds, the draws it makes, and the revision.
+ *
+ * @details
+ * - WHY IT EXISTS. The backend's fact tables are built from a geometry's SHAPE, and reading that shape off the live
+ *   object ties the reader to the content's thread (see `.ai/design/graphics-threading.md`). This is what crosses
+ *   instead: a snapshot shared by every draw and every pass of it, immutable once built, so a side that owns no
+ *   geometry can describe its streams without touching content.
+ * - WHAT IT IS NOT. Not the bytes. A channel holds its buffer HANDLE and its slice, so a byte write is announced on
+ *   the buffer's own revision and needs no new description - the same division `Geometry::revision()` states.
+ * - ONE PER REVISION. `Geometry::description()` returns the cached instance for the geometry's current revision, so
+ *   frames with no shape edit share one object and the backend's rows stay put; a new revision is a new value.
+ * - NOT thread-safe to mutate, and it never is: every field is set by the constructor and read-only afterwards.
+ */
+class VN_GRAPHICS_API GeometryDescription final : public RefCounted<GeometryDescription> {
+  public:
+    /**
+     * @brief Constructs a description.
+     *
+     * @param revision   The geometry's revision the shape was read at.
+     * @param channels   The channels, in the order they were read (the fact builder orders them for binding).
+     * @param primitives The draws, in the geometry's own order.
+     */
+    GeometryDescription(std::uint64_t revision, std::vector<GeometryChannel> channels, std::vector<Primitive> primitives);
+
+    /** @brief Gets the geometry revision this shape was read at. */
+    [[nodiscard]] std::uint64_t revision() const noexcept;
+
+    /** @brief Gets the channels, one per declared attribute location. */
+    [[nodiscard]] std::span<const GeometryChannel> channels() const noexcept;
+
+    /** @brief Gets the draws, in the geometry's own order. */
+    [[nodiscard]] std::span<const Primitive> primitives() const noexcept;
+
+  private:
+    std::uint64_t               revision_;
+    std::vector<GeometryChannel> channels_;
+    std::vector<Primitive>       primitives_;
+};
+
+using GeometryDescriptionPtr = intrusive_ptr<const GeometryDescription>;
 
 /**
  * @brief Leaf scene-graph node holding vertex data to render.
@@ -714,6 +771,26 @@ class VN_GRAPHICS_API Geometry : public Node {
      */
     std::uint64_t revision() const;
 
+    /**
+     * @brief Gets this geometry's shape as an immutable value, cached per revision.
+     *
+     * @details
+     * - The ONE conversion from the authored object to what a render side describes streams from: channels (location,
+     *   buffer, slice, stride) and primitives (topology, index span, instance stream, shading). Everything it holds is
+     *   a HANDLE or a value, so the two sides share no mutable state.
+     * - Cached and keyed by revision(): two calls in the same revision return the same object, which is what lets a
+     *   backend key its rows by the description and rebuild nothing on a steady frame. A shape edit that moved
+     *   revision() produces a new description (a new identity) on the next call.
+     * - It does NOT move revision() and does not announce anything: it is a read.
+     *
+     * @warning
+     * - Cache write: call it from the thread that owns this geometry, like every other accessor. A render side takes
+     *   the value it was handed instead of calling this (see `.ai/design/graphics-threading.md`).
+     *
+     * @return The description for the current revision (never null).
+     */
+    [[nodiscard]] GeometryDescriptionPtr description() const;
+
     /** @brief Announces a change to this geometry's SHAPE by reporting the revision.
      *
      * @details
@@ -1042,6 +1119,9 @@ class VN_GRAPHICS_API Geometry : public Node {
     // reading is not a data race between engine threads.
     mutable LocalBoundsCache local_bounds_;
     mutable std::uint64_t    local_bounds_computations_ = 0;
+    /// The shape as a shared immutable value, rebuilt only when revision_ moves (see description()). Mutable for the
+    /// same reason as local_bounds_: reading a derived value while keeping it is not a write to the geometry.
+    mutable GeometryDescriptionPtr description_;
 };
 
 using GeometryPtr = intrusive_ptr<Geometry>;

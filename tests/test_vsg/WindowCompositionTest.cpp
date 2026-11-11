@@ -89,6 +89,7 @@
 #include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestGeometryFacts.hpp"
 
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;

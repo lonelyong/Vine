@@ -14,6 +14,8 @@
 #include <vine/vsg/internal/GeometryFacts.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
 
+#include "TestGeometryFacts.hpp"
+
 using vn::graphics::Geometry;
 using vn::graphics::backend::StreamKey;
 using vn::vsg::buildGeometryFacts;

@@ -386,14 +386,22 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         const vn::graphics::RenderCommand& source = commands[i];
         CollectedCommand&                  target = copy[i];
 
-        target.geometry          = source.geometry.get();
-        target.geometry_revision = source.geometry != nullptr ? source.geometry->revision() : 0;
+        // The SHAPE travels as a value and the IDENTITY as its own address (see RenderCommand::row): a draw-list
+        // command carries both, and a hand-built one is converted here by the content-side caller that built it - this
+        // step runs before the plan crosses to whatever records it, exactly like the collection it follows.
+        const vn::graphics::GeometryDescriptionPtr description = source.geometryDescription();
+        target.geometry          = source.row != nullptr ? source.row : static_cast<const void*>(source.geometry.get());
+        target.geometry_revision = description != nullptr ? description->revision() : 0;
         target.primitive         = source.primitive_index;
         // The primitive's topology travels with the command: it is the data's word (the pass may still override
-        // it - see resolveRenderState), and a command whose primitive the geometry no longer holds keeps the
-        // documented default, which draws nothing because the facts cannot answer for it.
-        if (const vn::graphics::Primitive* primitive = source.primitive()) {
-            target.topology = primitive->topology;
+        // it - see resolveRenderState), and it is read from the DESCRIPTION, so recording never asks the live
+        // geometry anything. A command with no description (or an index past its primitives) keeps the documented
+        // default, and the backend reports the miss instead of drawing a guess.
+        if (description != nullptr) {
+            const std::span<const vn::graphics::Primitive> primitives = description->primitives();
+            if (source.primitive_index < primitives.size()) {
+                target.topology = primitives[source.primitive_index].topology;
+            }
         }
         // The pass' override wins over the command's own program (see render()): the identity the plan keys its
         // pipeline variants by is therefore the EFFECTIVE one, and nothing downstream needs to know about overrides.

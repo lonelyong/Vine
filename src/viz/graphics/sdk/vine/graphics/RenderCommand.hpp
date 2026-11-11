@@ -28,6 +28,32 @@ struct VN_GRAPHICS_API RenderCommand {
     /** Leaf geometry to render. */
     GeometryPtr geometry;
 
+    /** The identity this command mirrors (`RowId`): the address the draw list's row carries.
+     *
+     * @details
+     * - WHAT IT IS FOR. A render world builds commands from ROWS, and a row may mirror a value producer that has no
+     *   `Geometry` object at all - so the identity a backend keys its facts by must travel on its own, not be inferred
+     *   from @ref geometry. It is the same address the content side names (a node's), which is what makes a lookup
+     *   answer for the right thing (ADR-2026-11-09: caches are keyed by address).
+     * - A hand-built command leaves it null; a recorder then uses @ref geometry's address, which is the identity such a
+     *   caller means (see `.ai/design/graphics-threading.md`).
+     */
+    const void* row{ nullptr };
+
+    /** The geometry's shape as an immutable value: what a backend describes streams from (see Geometry::description).
+     *
+     * @details
+     * - THE VALUE THE FRAME CROSSES WITH. A recorder hands this to the backend, which builds its fact rows from it
+     *   (`buildGeometryFacts`) instead of reading the live `Geometry` - so recording needs no access to content, and a
+     *   render side on another thread shares no mutable state with the editor (see
+     *   `.ai/design/graphics-threading.md`).
+     * - It is the SAME object for every draw and every frame of one geometry revision (`Geometry::description()` is
+     *   cached by revision), which is what lets the backend keep one row per geometry instead of rebuilding per frame.
+     * - `geometry` above stays the content-side identity (naming, pick results, keeping the object alive); null only for
+     *   a command a host built without one, which a backend then reports as a miss rather than reading live content.
+     */
+    GeometryDescriptionPtr description;
+
     /** Which of the geometry's primitives this command draws (its index, see Geometry::primitive). */
     std::uint32_t primitive_index{ 0 };
 
@@ -143,6 +169,26 @@ struct VN_GRAPHICS_API RenderCommand {
     {
         return geometry != nullptr ? geometry->primitive(primitive_index) : nullptr;
     }
+
+    /**
+     * @brief Gets the immutable shape this command draws, converting a hand-built command's geometry if needed.
+     *
+     * @details
+     * - NAMED CONVERSION, not a second source of truth: a command a DRAW LIST produced carries @ref description
+     *   (that is the value the frame crosses with); a command a content-side caller built from a live geometry - a
+     *   host driving one pass, a tool, a test - may state only @ref geometry, and this is where that becomes a value.
+     *   The conversion is `Geometry::description()`, cached per revision, so it costs an integer compare after the
+     *   first call.
+     * - The one place allowed to make this read on the recording side is the step that runs on the content's own
+     *   thread (see `.ai/design/graphics-threading.md`, which names this and the per-view run as the only two).
+     *
+     * @warning
+     * - A recording path on another thread must NOT call this: what crosses a thread boundary is the value the
+     *   command already carries, never a read of the object it came from.
+     *
+     * @return The description, or null for a command that names no geometry at all.
+     */
+    [[nodiscard]] GeometryDescriptionPtr geometryDescription() const;
 };
 
 VN_GRAPHICS_NS_END
