@@ -159,7 +159,7 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（5 文件 / 1 组提案）
+## research/ —— 调研与提案（6 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
@@ -171,6 +171,9 @@
   publish / fold / select / sort / record / reclaim / plan-diff 算法、线程与内存模型、诊断、后端契约。
 - `graphics-2026-11-11-next-benefits.md` —— 同上的**收益与代价**：按维度量化收益与测量方式、`P1–P7`、
   三批迁移与每批的判死条件、反方论点回应。
+- `graphics-2026-11-11-next-hot-paths.md` —— 同上的**性能/动画/后期/扩展**：实测成本模型与 60 fps 预算、
+  select/fold/sort/record 的手段、值的热路径三条规则、动画走"帧内 pose"（不经发布）、后期＝计划即依赖图、
+  受控逃逸口、工程效率、`N11–N18`，以及"先给 `Measure*` 加阈值"的优先级。
 - `graphics-2026-11-11-next-api.md` —— 同上的**现有 API 集审计**：`P1–P24`（一概念两表示、声明里的回调、
   目标四种说法、顺序四套、49 个公开方法、七个别名…）、`M1–M10` 缺失能力、逐方法去向、命名对照、A–E 分批。
 
