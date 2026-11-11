@@ -101,7 +101,10 @@ attach 不要求表面可见；只有 present 才要求窗口在屏上。平台�
 
 - **行为**：`Pending`（没有可用表面或还没渲过）/ `Presenting`（帧在表面里）/ `Failed`（后端起不来）。
   容器在 `state_changed` 报到 `Presenting` 之前一直隐藏。
-- **约束**（C2）：没有会话就没有帧；`failureReason()` 非空 ⟺ `Failed`。
+  **`Presenting` 说的是"帧真的进了表面"**：inline 下排帧即答完，所以提交那一刻成立；线程化时第一次会
+  `waitForFrame()` 等这张首帧（区域能不能露出来靠它），之后每一拍只看上一帧的 `presentRecord()`，不再等。
+  反过来，一张 `Lost` 的帧把状态打回 `Pending`，再走一次 attach（见 §2.4）。
+- **约束**（C2）：没有会话就没有帧；`failureReason()` 非空 ⟺ `Failed`；`Presenting` 只在有 `Presented` 的答案之后。
 - **要求**（R2）：`Presenting` 之前露出的是主窗背景，不是洞；`renderFrame()` / `fitToScreen()` 在 attach 前不得推状态。
 - **验收**（T2）：`TheFrameTheAttachRendersPutsTheSurfaceOnScreen`、
   `AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen`。

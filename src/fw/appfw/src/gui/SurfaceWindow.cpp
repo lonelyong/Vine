@@ -235,6 +235,9 @@ struct SurfaceWindow::Impl {
     /// The last frame whose picture outcome this control has looked at (see RenderControl's frame drive): a lost
     /// picture is acted on once, at the head of the next frame, and re-reading the same answer must not re-attach.
     std::uint64_t seen_present_frame = 0;
+    /// Set when a frame's picture did not reach the surface: the NEXT tick re-attaches (see renderFrame), rather than
+    /// re-attaching from inside the frame drive (a surface that stays broken must not recurse).
+    bool needs_reattach = false;
     bool has_session          = false;
     /// true while the last attach attempt reported success (implies has_session).
     bool backend_live         = false;
@@ -860,23 +863,55 @@ void SurfaceWindow::renderFrame()
         return;
     }
     // A PICTURE THAT DID NOT REACH THE SURFACE IS THE HOST'S TO ACT ON (see PresentOutcome). The window can be
-    // destroyed under a frame (a reparent, a platform recreation, a display going away), and the backend answers
-    // Lost for it: presenting into that surface again would spam the driver, and the fix is the attach path - a
-    // fresh target, a rebuilt swapchain. With a frame thread the answer arrives one frame late, so it is read here,
-    // at the head of the next frame, instead of waiting for the one just submitted.
-    const vn::graphics::RenderEngine::PresentRecord seen = d->engine->presentRecord();
-    if (seen.frame != d->seen_present_frame && seen.outcome == vn::graphics::PresentOutcome::Lost) {
-        d->seen_present_frame = seen.frame;
-        setState(SurfaceState::Pending);
-        init(); // the same attach every other surface loss goes through (a recreated handle, a refused window)
+    // destroyed under a frame (a reparent, a platform recreation, a display going away), and the backend answers Lost
+    // for it: presenting into that surface again would spam the driver, and the fix is the ATTACH path - a fresh
+    // target, a rebuilt swapchain. It is acted on once per answer, at the head of the next frame, and the attach runs
+    // on the tick after that (a flag, not a direct call: a surface that stays broken must not recurse this method).
+    if (d->needs_reattach) {
+        d->needs_reattach = false;
+        init();
         return;
     }
-    d->seen_present_frame = seen.frame;
+    (void)reattachAfterLostPicture();
+    if (d->needs_reattach) {
+        return; // the picture was lost: this tick is the attach's, not another frame's
+    }
 
     d->engine->frame();
-    // A frame is in the surface: this is the transition the control shows its render area on. A backend that could
-    // not present reports it on the diagnostics channel, which is why this says "submitted", not "confirmed".
-    setState(SurfaceState::Presenting);
+    if (d->state != SurfaceState::Presenting) {
+        // THE FIRST PICTURE OF A SESSION is what lets the control SHOW the area, so this one is waited for: it is the
+        // attach's own frame (that is where a session's first picture comes from), and a host that shows an area
+        // before it has a picture in it would leave the hole `hasPresented()` says it never leaves. Inline the wait is
+        // the frame itself; with a frame thread it is the one moment a host pays to know.
+        (void)d->engine->waitForFrame();
+        (void)reattachAfterLostPicture();
+        if (d->needs_reattach) {
+            return; // the picture was lost again: the next tick re-attaches
+        }
+        if (d->engine->presentRecord().outcome == vn::graphics::PresentOutcome::Presented) {
+            setState(SurfaceState::Presenting);
+        }
+        return;
+    }
+    // STEADY STATE: a submitted frame is enough to keep the area on screen, and the NEXT tick's head is where a lost
+    // picture is noticed (with a frame thread the answer to this frame arrives while the next one is built).
+}
+
+bool SurfaceWindow::reattachAfterLostPicture()
+{
+    const vn::graphics::RenderEngine::PresentRecord seen = d->engine->presentRecord();
+    if (seen.frame == d->seen_present_frame) {
+        return false; // this answer was already looked at
+    }
+    d->seen_present_frame = seen.frame;
+    if (seen.outcome != vn::graphics::PresentOutcome::Lost) {
+        return false;
+    }
+    // The surface could not take a picture: back to Pending (the area is not showing a picture any more) and let the
+    // attach rebuild the target and the swapchain.
+    d->needs_reattach = true;
+    setState(SurfaceState::Pending);
+    return true;
 }
 
 void SurfaceWindow::setState(SurfaceState next)
