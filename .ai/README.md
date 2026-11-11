@@ -159,12 +159,18 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（1）
+## research/ —— 调研与提案（4 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
-- `graphics-2026-11-11-next.md` —— graphics 整体骨架的重设计提案与论证（快照 + 句柄 + 声明式计划、
-  `I1–I7` 不变量、判死条件 `K1–K6`、三步验证）。对应 backlog `T32`；采纳则改写 `design/`，否决则留 ADR。
+- `graphics-2026-11-11-next.md` —— graphics 整体骨架的重设计：**总纲**（问题来源、骨架摘要、`I1–I7`、
+  判死条件 `K1–K6`、验证计划、否决项、`G1–G13` 对照）。对应 backlog `T32`；采纳则改写 `design/`，否决则留 ADR。
+- `graphics-2026-11-11-next-requirements.md` —— 同上的**目标与需求**：`O1–O7` / `R1–R30` / `N1–N10` /
+  `C1–C12` / `T1–T16`，并给出现状 `C1–C20` 的去向。
+- `graphics-2026-11-11-next-design.md` —— 同上的**初步设计**：分层、类型草案、hot/cold 分块布局、
+  publish / fold / select / sort / record / reclaim / plan-diff 算法、线程与内存模型、诊断、后端契约。
+- `graphics-2026-11-11-next-benefits.md` —— 同上的**收益与代价**：按维度量化收益与测量方式、`P1–P7`、
+  三批迁移与每批的判死条件、反方论点回应。
 
 （此前的三角形树两帧统一与 `.vbtp` 持久化已并入 `design/graphics-geometry.md` 2.10 / F33、
 `design/geometry-bvh.md` 2.13 / F8 与 `design/robotics-io-design.md` F7。）
