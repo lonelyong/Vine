@@ -41,6 +41,7 @@
 - 通道 = `BufferSlice<float>` + components。`setPositions` / `setNormals` / `setTexcoords2` / `setTexcoords3` 共享 buffer；arena 用 slice。
 - 实例流：每实例 16 个 float（列主序 mat4）；`visible_instances` 是 draw 参数，不重传；`VN_INSTANCED` 决定 binding 4 与顶点布局。
 - revision：**形状归几何**（`Geometry::setRevision` / `bumpRevision`），**字节归 buffer**（`Buffer::setRevision`）。上传缓存只认 buffer revision；几何 revision 只驱动事实行重建。
+- 身份：`vn::graphics::Handle`（gen24/domain8/index32）+ `ContentRef{id, revision}`，公开头是 `sdk/vine/graphics/ContentId.hpp`。`Node::id()` / `MaterialBase::id()` 在构造时分配、析构时释放；`Row::identity`、`RenderWorld::RowId`、delta、`RenderCommand::node`、`CompiledCommand::geometry`、`GeometryFacts::geometry`、材质表都按它键。**表按 `(id, revision)` 建行**，旧 revision 的行在停靠窗口内继续作答。地址不再是身份（`ADR-2026-11-11-content-identity-is-a-handle`）；`Buffer`/流上传/编译半边仍是地址 + `ADR-2026-11-09` 的“持有即身份”。
 - 拾取树：`Geometry::prepareBvh(draw, builder)` 默认 `pickTreeBuilder()`（`kPickTreeLeafSize = 64`），建出的树**已封存**（`Bvh::seal()`）——一把自叶容量 4 的 14M 三角形树从 1.36 GB 降到 88 MB。封存树的查询回调第二参数是叶盒，拾取本来就不用它。
 - 收集：`Scene::collectRenderCommands` 对每个 primitive 发一条命令，快照 world / state / material / program / instance；按 `drawOrder` 后不透明前向、透明后向排序。
 - 包围盒：`Geometry::localBounds` 缓存键 = positions buffer + 其 revision + 段 + 几何 revision；`subtreeBounds` 在节点自身坐标系；`Scene::boundingBox` 只算可见且命中层掩码的内容。
