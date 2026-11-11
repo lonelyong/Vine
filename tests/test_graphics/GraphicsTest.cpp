@@ -9833,11 +9833,10 @@ class CountingGroup : public Group {
 
 TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
 {
-    // The pass culls with each node's world bound. Asking a container for its
-    // bound re-walks its whole subtree (Group::boundingBox unions the
-    // children), so doing that per visited node made collection quadratic in
-    // the node count. The pass must therefore ask every leaf once — no matter
-    // how deep it sits — and never ask a container.
+    // The collection culls with each node's world bound. Asking a container for its bound re-walks its whole subtree
+    // (Group::boundingBox unions the children), so doing that per visited node made collection quadratic in the node
+    // count. The table answers for every row it holds, so a leaf whose bound only the NODE can answer (a Geometry
+    // subclass, see Node::subtreeBounds) is asked once per BUILD - never per pass, and never for a container.
     Scene                          scene;
     auto                           root = setIdentityRoot(scene);
     auto                           deep = root;
@@ -9867,20 +9866,21 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
     setupLookAtCamera(cam);
     const auto commands = (*scene.collectRenderCommands(&cam));
     ASSERT_EQ(commands.size(), 1u);
-    EXPECT_EQ(leaf->bound_calls, 1);
+    EXPECT_EQ(leaf->bound_calls, 1) << "the build reads it once";
     EXPECT_EQ(counted_container->bound_calls, 0);
 
-    // A second pass asks again (the cache lives for one collection only, so a
-    // moved node is never culled with a stale bound).
+    // A second collection of the same content asks NOTHING: the rows answer for the boxes, so a pass costs no node
+    // call at all - and a camera move (a different view over the same rows) is the same story.
     EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
-    EXPECT_EQ(leaf->bound_calls, 2);
+    EXPECT_EQ(leaf->bound_calls, 1) << "a pass asks no node for a bound";
     EXPECT_EQ(counted_container->bound_calls, 0);
 
-    // Culled leaves are still bounded exactly once (the bound is what decides).
+    // Culled leaves are still bounded once per build (the bound is what decides), and an announcement is what makes
+    // the next build re-read it.
     leaf->setName(u8"culled");
     first_transform->setMatrix(vn::math::translate(Vec3d(4000.0, 0.0, 0.0)));
     EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
-    EXPECT_EQ(leaf->bound_calls, 3);
+    EXPECT_EQ(leaf->bound_calls, 2) << "the announced spine made a new build";
 }
 
 namespace

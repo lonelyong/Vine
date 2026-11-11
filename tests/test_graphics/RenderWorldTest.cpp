@@ -148,6 +148,19 @@ TEST(RenderWorldTest, APlacementEditReplacesThatSubtreeAndNothingElse)
     std::vector<RenderCommand> mirrored;
     world.collect(view, vn::graphics::kAllLayers, mirrored);
     expectSameDrawList(mirrored, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+
+    // The equivalence above compares two users of one fold, so it cannot see a fold that is wrong for BOTH. The
+    // absolute placement can: the link hangs from the arm, which hangs from an identity root, so its draw matrix
+    // must translate by the two offsets - the applied one and the authored one.
+    const RenderCommand* link_draw = nullptr;
+    for (const RenderCommand& command : mirrored) {
+        if (command.geometry.get() == assembly.link_geometry.get()) {
+            link_draw = &command;
+        }
+    }
+    ASSERT_NE(link_draw, nullptr) << "the link's draw is in the list";
+    EXPECT_NEAR(link_draw->model_matrix.element(0, 3), 0.05 + 0.1, 1e-12) << "the arm the test moved, and the link's own offset";
+    EXPECT_NEAR(link_draw->model_matrix.element(1, 3), 0.25, 1e-12) << "the arm the test moved";
 }
 
 TEST(RenderWorldTest, TheMirrorMovesOnlyWhenItIsTold)

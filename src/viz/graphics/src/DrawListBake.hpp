@@ -2,8 +2,7 @@
 
 #include <array>
 #include <cstdint>
-#include <unordered_map>
-#include <utility>
+#include <optional>
 #include <vector>
 
 #include <vine/graphics/CollectView.hpp>
@@ -32,28 +31,135 @@ namespace detail
 {
 
 /**
- * @brief The bake and the select of ONE collection, shared by every producer of a draw list.
+ * @brief ONE DRAW a leaf row names, resolved: what the select needs to emit a command, and none of the arithmetic.
  *
  * @details
- * - WHY IT IS A HEADER. `Scene` builds the table by walking the live graph; the render world builds the same table
- *   from values it was told (see `.ai/design/graphics-threading.md`). Both must run the SAME fold rules, so the
- *   table type and the two passes live in one place instead of two implementations that would drift.
- * - WHO FILLS IT. `bakeSubtree` (a graph walk) here, and any producer that can answer for one node's own facts;
- *   `collectFromBake` is the only reader, and it is the whole VIEW half of a collection.
- * - WHAT IT DOES NOT OWN: the memo, the frames, the scene. Those belong to whoever is asking.
+ * - A row with N primitives carries N of these; a container carries none. Resolving them on the PRODUCING side is
+ *   what lets the select run without asking a geometry anything: the fold that used to happen per primitive, per
+ *   pass, now happens once per description.
+ * - `drawn` is false for a primitive whose visible instance prefix is zero: not a draw this frame, but the row keeps
+ *   it (an edit may make it one again without changing the description).
  */
+struct DrawFacts {
+    std::uint32_t      primitive_index{ 0 };                 ///< Which primitive of the geometry this draw is.
+    MaterialBasePtr    material{};                           ///< Resolved: primitive, else geometry, else inherited.
+    ShaderProgramPtr   program{};                            ///< Resolved the same way.
+    BufferSlice<float> instance_transforms{};                ///< Null for a non-instanced draw.
+    std::uint32_t      first_instance{ 0 };
+    std::uint32_t      instance_count{ 0 };                  ///< 0 for a plain draw (see RenderCommand).
+    bool               drawn{ true };
+};
+
+/**
+ * @brief ONE ROW of a draw list: a node's OWN facts and the values the fold resolved from them.
+ *
+ * @details
+ * - OWN facts are what the node itself says: its local placement, visibility, opacity, its own layer / draw-order
+ *   declaration, its own state, material and program, and its primitives. They are the fold's INPUT, which is what
+ *   lets a producer that was handed VALUES (the render world) re-run the fold without a node.
+ * - RESOLVED facts are what a select reads: the accumulated placement and folds, the subtree's layer union and world
+ *   box, and the end of the subtree in walk order. Nothing there needs the node again.
+ * - `node` is kept for exactly two named reasons: a per-view run is resolved by the walk that knows how to place it
+ *   (see `SceneBake::Fallback`), and this table keeps the content it names alive (see ADR-2026-11-09). Neither is a
+ *   read of the node's mutable state during a select.
+ * - `identity` is the address the table keys by - the same address `node` carries, kept separately so a producer
+ *   that has no node at all (the render world) can still name what it mirrors.
+ */
+struct Row {
+    /// The address this row mirrors (the content object; see ADR-2026-11-09).
+    const void* identity{ nullptr };
+
+    // ---- structure: walk order, so a row is followed by its own subtree
+    const Node*   node{ nullptr };              ///< Kept for a per-view run and to hold the content alive.
+    std::uint32_t parent{ 0xFFFFFFFFU };        ///< 0-based row index; the table's first row has none.
+    std::uint32_t end{ 0 };                     ///< One past this row's subtree.
+    std::uint32_t child_count{ 0 };
+
+    // ---- OWN facts (the fold's input)
+    Mat4d                        local{};        ///< Placement in the parent's frame.
+    bool                         own_visible{ true };
+    float                        own_opacity{ 1.0F };
+    std::optional<std::uint32_t> own_layers{};
+    std::optional<int>           own_draw_order{};
+    bool                         owns_state{ false };  ///< A StateNode's contribution below is meaningful.
+    RenderState                  own_state{};
+    MaterialBasePtr              own_material{};
+    ShaderProgramPtr             own_program{};
+    ViewDependence               dependence{ ViewDependence::None };
+    GeometryPtr                  geometry{};           ///< The command's payload (a share, never dereferenced here).
+    std::vector<DrawFacts>       draws{};
+
+    /// A row whose own box cannot be answered in its own frame (a custom leaf): its world box is a seed the producer
+    /// resolved, and a placement edit cannot re-place it (the render world refuses such a row).
+    bool  box_from_node{ false };
+    Aabbd seed_world_box{};
+    std::uint64_t box_revision{ 0 };             ///< The geometry revision the own box was read at.
+
+    // ---- RESOLVED facts (the fold's output; what a select reads)
+    Mat4d            world{};
+    std::uint32_t    layers{ kDefaultLayer };
+    std::int32_t     draw_order{ 0 };
+    float            opacity{ 1.0F };
+    RenderState      state{};
+    MaterialBasePtr  material{};
+    ShaderProgramPtr program{};
+    Aabbd            local_box{};                ///< This subtree's box in this row's own frame.
+    Aabbd            world_box{};                ///< ... placed by `world` (what the frustum test reads).
+    std::uint32_t    layers_union{ 0U };         ///< OR of the resolved layers of this subtree.
+    bool             view_dependent{ false };    ///< This row or an ancestor resolves its placement per view.
+};
+
+/**
+ * @brief THE DRAW LIST'S ROWS: every node's facts in walk order, shared by every producer of a draw list.
+ *
+ * @details
+ * - WHY IT IS SHARED. `Scene` builds the rows by walking the live graph; the render world builds them from values it
+ *   was told (see `.ai/design/graphics-threading.md`). Both must run the SAME fold, so the row type, the build and
+ *   the passes over it live in one place (`DrawListBake.cpp`) instead of in two implementations that would drift.
+ * - WHY AN ARRAY AND NOT A MAP. The build and the select are driven by the same order (children in order, invisible
+ *   subtrees pruned), so the cursor IS the identity: no node-keyed map, no hashing. `end` keeps that alignment when
+ *   a view prunes a subtree - the select jumps straight past it.
+ * - WHAT IS NOT HERE. Anything a camera decides: the frustum test, the sort key, the final list.
+ * - LIFETIME. A row holds SHARES of the content it names (geometry, material, program), so a row can never name a
+ *   freed object. The table is dropped when the graph announces a change (the epoch) or the scene invalidates.
+ */
+struct SceneBake {
+    /// The row index meaning "this row has no parent" (the table's first row).
+    inline static constexpr std::uint32_t kNoParent = 0xFFFFFFFFU;
+
+    /// What the fold inherits ABOVE the table's first row (the scene's own opacity, and no placement).
+    struct Seed {
+        float parent_opacity{ 1.0F };
+    };
+
+    /// The context a per-view run is handed back to the walk with (see selectFromBake): one per run, the TOPMOST
+    /// such node, so a run is resolved once - by the code that already knows how to place it.
+    struct Fallback {
+        std::uint32_t    index{ 0 };
+        const Node*      node{ nullptr };
+        Mat4d            world{};              ///< The run's TOP node's own accumulated placement (the walk's convention).
+        float            parent_opacity{ 1.0F }; ///< Opacity accumulated ABOVE the run.
+        std::uint32_t    layers{ kDefaultLayer }; ///< Layers the run inherits from above.
+        std::int32_t     draw_order{ 0 };
+        RenderState      state{};
+        MaterialBasePtr  material{};
+        ShaderProgramPtr program{};
+    };
+
+    std::vector<Row>      rows;
+    std::vector<Fallback> fallbacks; // ascending by `index` (the build walks in order)
+    Seed                  seed{};
+};
 
 /**
  * @brief View frustum defined by six planes, used for culling.
  *
- * Planes are stored in the order: left, right, bottom, top, near, far.
- * Each plane is a 4-vector (a, b, c, d) satisfying
- * a*x + b*y + c*z + d = 0 in world space.
+ * Planes are stored in the order: left, right, bottom, top, near, far. Each plane is a 4-vector (a, b, c, d)
+ * satisfying a*x + b*y + c*z + d = 0 in world space.
  */
 class Frustum {
   public:
     /** @brief Extracts the frustum from a combined view-projection matrix.
-     *
      * @param vp Combined projection * view matrix.
      * @return Frustum with normalized plane equations.
      */
@@ -84,11 +190,7 @@ class Frustum {
         return f;
     }
 
-    /** @brief Tests whether a box lies fully outside the frustum.
-     *
-     * Uses the p-vertex test: the box is outside when its corner most in the
-     * direction of a plane normal is still behind that plane.
-     *
+    /** @brief Tests whether a box lies fully outside the frustum (the p-vertex test).
      * @param box World-space axis-aligned bounding box.
      * @return true when the box is fully outside the frustum.
      */
@@ -109,184 +211,69 @@ class Frustum {
 };
 
 /**
- * @brief Per-traversal cache of the world-space bounds of the visited nodes.
- *
- * Group::boundingBox() unions its children's boxes, and Geometry::boundingBox()
- * places the data box in world space. Asking every visited node for its bound
- * therefore re-walks the whole subtree below every container — quadratic in the
- * node count for deep / broad assemblies — while the culling decision only
- * needs each node's box once. This map makes one collection pass visit every
- * subtree exactly once.
- *
- * THE SECOND LAYER IS PER NODE AND OUTLIVES THE PASS (see Node::subtreeBounds):
- * a subtree's box in its OWN frame is cached on the node and survives camera
- * moves, so a pass costs one transform per visited node and a culled subtree is
- * closed without descending — invalidated only by announcements
- * (Node::invalidateBounds). This map still earns its keep for the nodes that
- * cannot answer that way (a custom leaf makes its ancestors compute from
- * scratch) and as the per-pass dedup the tree always relied on.
- *
- * The traversal is a tree (Group::addChild re-parents a node, so a node has one
- * parent), which is what makes a node-keyed cache valid: within one pass a node
- * has exactly one world matrix.
- */
-class BoundsCache {
-  public:
-    /** @brief Returns the world-space bound of @p node (computed once). */
-    const Aabbd& worldBound(const Node* node, const Mat4d& world)
-    {
-        const auto cached = bounds_.find(node);
-        if (cached != bounds_.end()) {
-            return cached->second;
-        }
-        Aabbd box   = Aabbd::empty();
-        Aabbd local = Aabbd::empty();
-        if (node->subtreeBounds(local)) {
-            // The subtree's box in its own frame, cached per node: a camera move recomputes nothing,
-            // and a culled subtree is closed without visiting anything below it. The one edit that can
-            // stale it is a change INSIDE the subtree, announced through Node::invalidateBounds().
-            box = local.transformed(world);
-        }
-        else if (const auto* group = obj_cast<Group>(node)) {
-            // The subtree could not answer in its own frame (a node below answers only in world space,
-            // e.g. a custom leaf): compute from scratch, exactly as collection always did. Children
-            // that CAN answer still use their caches through this same entry point — including the
-            // exact Geometry fast path (its local data box placed by the accumulated matrix; a Geometry
-            // SUBCLASS keeps answering through its own boundingBox(), see Node::subtreeBounds).
-            for (const auto& child : group->children()) {
-                box.expandBy(worldBound(child.get(), world * child->localTransformMatrix()));
-            }
-        }
-        else {
-            // A leaf that is not the engine's own (or is a subclass of one) answers for itself.
-            box = node->boundingBox();
-        }
-        return bounds_.emplace(node, box).first->second;
-    }
-
-  private:
-    std::unordered_map<const Node*, Aabbd> bounds_;
-};
-
-/**
- * @brief The state a node INHERITS from the nodes above it.
- *
- * The fold is computed once on the way DOWN the traversal, which is where the ancestors already are. The
- * three lookups a leaf needs (the folded render state, the nearest ancestor material, the nearest ancestor
- * program) each used to walk back up to the root — per geometry, per pass, per frame — and one of them
- * (collectRenderState) allocated a vector of the whole ancestor chain to do it. Descending, a StateNode
- * merges its own state into what it inherited and replaces the material / program it carries, which is
- * exactly what the three up-walking helpers compute: the deepest StateNode wins for the single-valued
- * items, and the folded state merges root-to-leaf.
- *
- * The layers a subtree belongs to fold the same way and for the same reason: the nearest declaration wins,
- * and what arrives here is already RESOLVED (kDefaultLayer when nobody declared any), because the mask test
- * needs one answer per node, not a chain to walk.
- *
- * @note The up-walking helpers stay in StateNode.hpp/.cpp — they are the SDK's public spelling of the same
- *       rule, used by hosts — and this is their top-down form. A test pins that the two agree on a nested
- *       tree, because two implementations of one rule are a drift waiting to happen. Layers deliberately
- *       have only this form (see Node::layers): the answer is needed by the walk, and no host asks a node
- *       "which layer are you in" - that question belongs to the pass doing the drawing.
- */
-struct InheritedState {
-    RenderState            state;                      // Fold of every StateNode above this node (deeper overrides).
-    raw_ptr<MaterialBase>  material;                   // Nearest StateNode material above this node, or null.
-    raw_ptr<ShaderProgram> program;                    // Nearest StateNode program above this node, or null.
-    std::uint32_t          layers     = kDefaultLayer; // Nearest layer declaration above, resolved (see Node::setLayers).
-    int                    draw_order = 0;             // Nearest draw-order declaration above (see Node::setDrawOrder).
-};
-
-/**
- * @brief THE BAKED HALF OF ONE SCENE: every node's view-INDEPENDENT facts, in walk order.
+ * @brief Fills @p bake with one node's subtree: every node's OWN facts and the structure, in walk order.
  *
  * @details
- * - WHY IT EXISTS. A collection answers two questions with one walk: "what does this graph contain, placed how"
- *   (a function of the GRAPH) and "which of it is inside THIS view, in what order" (a function of the CAMERA). The
- *   memo is keyed by the view, so before this table a camera move threw the graph half away and recomputed every
- *   world matrix, every world box and every folded state - measured at 13.8 ms per collection for 2000 drawables
- *   (SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera). The graph half now lives here, keyed by the root
- *   subtree's content epoch, so a moving camera reads it instead of recomputing it.
- * - WHY AN ARRAY AND NOT A MAP. `bakeSubtree` and `collectFromBake` are driven by the same order (children in
- *   order, same pruning of invisible subtrees), so the cursor IS the identity: no node-keyed map, no hashing.
- *   `end` is what keeps that alignment when a view prunes a subtree - the select step jumps straight past it.
- * - WHAT IS NOT HERE. Anything a camera decides: the frustum test, the sort key, the final list. And any node whose
- *   placement may depend on the view (Node::viewDependence) - those subtrees are marked and handed back to the
- *   original walk per view (`fallbacks`), which is the only path that knows how to resolve them.
- * - WHY THE WORLD BOX IS NOT HERE EITHER. A geometry's box is a function of its BUFFER's revision, and a writer
- *   announces that on the buffer (`Buffer::edit()` / `setRevision`) - NOT on the node, so the graph epoch does not
- *   move. Baking the box would cull with a stale one until some unrelated node change, which is why the select step
- *   asks BoundsCache for it instead: the transform is cheap, and the LOCAL box is already cached per node by its
- *   own stream revision (see Geometry::localBounds).
- * - LIFETIME. It holds SHARES of the content it names (geometry, material, program), exactly like the memo does, so
- *   a baked entry can never name a freed object; it is dropped when the graph announces a change (the epoch in
- *   Scene::memo_epoch_) or when the scene invalidates itself (Scene::invalidateContent).
- * - The three folded fields (`state` / `material` / `program`) are read at a LEAF entry only. Keeping them in the
- *   same record as the containers costs memory rather than a second array; if a scene with >1e5 nodes ever shows
- *   up, splitting the leaf payload out is the change to make (see the backlog entry for this table).
+ * - It is the ONLY code that reads a graph for a draw list, and it runs on the thread that owns that graph. It
+ *   resolves nothing: `resolveSubtree` folds what it wrote (one fold, used by the build and by every edit).
+ * - Invisible subtrees produce no rows at all: the walk skipped them before, and a row that can never be drawn is
+ *   memory nobody reads.
+ * - A node that DECLARES a per-view placement (Node::viewDependence) starts a run recorded in `bake.fallbacks`; the
+ *   select hands that run back to the walk that knows how to place it for the camera at hand.
+ *
+ * @param node   Subtree root to build.
+ * @param bake   Receives the rows.
+ * @param parent Row index of @p node's parent (the table's first row has none).
+ * @return One past the last row this subtree produced.
  */
-struct SceneBake {
-    /// The row index meaning "this row has no parent" (the table's first row).
-    inline static constexpr std::uint32_t kNoParent = 0xFFFFFFFFU;
-
-    /// One node's resolved facts. `node` is kept because two questions are still per node and cached on it: the
-    /// layer union (`subtreeLayerUnion`) and, for a view-dependent subtree, its per-view placement.
-    struct Entry {
-        const Node*     node{ nullptr };
-        Mat4d           local{};                              // This node's OWN placement (its parent's frame).
-        std::uint32_t   parent{ kNoParent };                  // The row this node hangs from (0-based; kNoParent = the root).
-        Mat4d           world{};                              // Resolved placement (meaningful when !view_dependent).
-        std::uint32_t   end{ 0 };                             // One past this node's subtree.
-        std::uint32_t   layers{ kDefaultLayer };              // Resolved layers at this node (see InheritedState).
-        std::int32_t    draw_order{ 0 };                      // Folded draw order.
-        float           opacity{ 1.0F };                      // Accumulated opacity INCLUDING this node (unclamped).
-        RenderState     state{};                              // Leaf only: the folded authored state.
-        MaterialBasePtr material{};                           // Leaf only: nearest StateNode material.
-        ShaderProgramPtr program{};                           // Leaf only: nearest StateNode program.
-        GeometryPtr     geometry{};                           // Leaf only: null for a container.
-        std::uint32_t   first_primitive{ 0 };
-        std::uint32_t   primitive_count{ 0 };
-        bool            view_dependent{ false };              // This node or an ancestor resolves its placement per view.
-    };
-
-    /// The context a view-dependent subtree is handed back to the walk with (see collectFromBake). One per run -
-    /// the TOPMOST view-dependent node - so a run is resolved once, by the code that already does it correctly.
-    struct Fallback {
-        std::uint32_t index{ 0 };        // The entry the run starts at.
-        const Node*   node{ nullptr };
-        Mat4d         world{};           // The run's TOP node's own world matrix (the walk's own convention).
-        InheritedState inherited{};
-        float         parent_opacity{ 1.0F };
-    };
-
-    std::vector<Entry>    entries;
-    std::vector<Fallback> fallbacks; // Ascending by `index` (the bake walks in order).
-};
-
-std::uint32_t bakeSubtree(const Node*           node,
-                          const Mat4d&          world,
-                          float                 parent_opacity,
-                          const InheritedState& inherited,
-                          bool                  under_view_dependent,
-                          SceneBake&            bake,
-                          std::uint32_t         parent = SceneBake::kNoParent);
+std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t parent = SceneBake::kNoParent);
 
 /**
- * @brief Re-resolves ONE row's subtree after that row's own placement changed: the one fold a producer runs on an edit.
+ * @brief Re-resolves ONE row's subtree: the one fold, run by the build once and by a producer on every edit.
  *
  * @details
- * - It walks the subtree of @p index (a row of @p bake) and re-multiplies world matrices top-down; nothing above the
- *   row is touched, which is what makes a joint edit cost the joint's subtree instead of the whole graph.
- * - A view-dependent row (or one below it) is skipped: its placement is resolved per view by the walk that knows how
- *   to place it (see collectFromBake's fallbacks), so a row cannot answer for it.
- * - Folded values are NOT recomputed: this is the placement-only fold. A change to visibility, opacity, layers, draw
- *   order or state re-derives its subtree from its own facts instead (a different fold, deliberately not mixed in).
+ * - Top-down it recomputes the accumulated placement and the folded values from the own facts; bottom-up it
+ *   recomputes each row's local and world boxes and its subtree layer union. Only the subtree of @p index is
+ *   touched, which is what makes a joint edit cost the joint's subtree instead of the whole graph.
+ * - A row that resolves its placement per view, or whose box could only be answered by the node, is skipped: the
+ *   fold cannot answer for it from values (the build kept the node's answer instead).
  *
- * @param bake   The table containing @p index.
- * @param index  The row whose own placement changed.
- * @return How many rows were re-placed (the row itself included; 0 for a view-dependent row).
+ * @param bake  The table containing @p index.
+ * @param index The row to fold (with its subtree).
+ * @return How many rows were re-resolved (0 when the row cannot be folded from values).
  */
-std::uint32_t refoldSubtree(SceneBake& bake, std::uint32_t index);
+std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index);
+
+/**
+ * @brief Re-reads the own boxes of the rows whose geometry revision moved, and folds the ancestors' boxes.
+ *
+ * @details
+ * - Byte content does not travel as a delta (see the design): a writer announces it on the buffer, so a box has to be
+ *   re-read when that revision moves. This is the ONE step that still needs the content's thread, and it is a poll
+ *   over the rows a collection is about to use - never a read inside the select.
+ * - Only boxes are recomputed (plus the placement transform), so a streaming buffer costs its chain, not the graph.
+ *
+ * @param bake The table to refresh.
+ * @return How many rows had their own box re-read.
+ */
+std::uint32_t refreshBoxes(SceneBake& bake);
+
+/**
+ * @brief Collects one view's commands from the rows: the VIEW half of a collection, and it reads rows only.
+ *
+ * @param bake          The table (see bakeSubtree).
+ * @param frustum       The view's frustum.
+ * @param view          The view being drawn.
+ * @param layer_mask    Layers this picture draws.
+ * @param viewport_used Receives true when a per-view row needs the device-pixel viewport.
+ * @param out           Receives the commands, in walk order.
+ */
+void selectFromBake(const SceneBake&            bake,
+                    const Frustum&              frustum,
+                    const CollectView&          view,
+                    std::uint32_t               layer_mask,
+                    bool&                       viewport_used,
+                    std::vector<RenderCommand>& out);
 
 /**
  * @brief Reorders @p commands into the draw order a frame draws them in, in place.
@@ -294,21 +281,12 @@ std::uint32_t refoldSubtree(SceneBake& bake, std::uint32_t index);
  * @details
  * - The order is the CONTENT's declared draw order (see Node::setDrawOrder), then opaque before transparent, then
  *   front-to-back for opaque and back-to-front for transparent. Ties keep the collection order.
- * - It exists as its own step because BOTH producers of a draw list need it and neither may own a copy: the scene's
- *   collection and the render world's (see `.ai/design/graphics-threading.md`).
+ * - It exists as its own step because BOTH producers of a draw list need it and neither may own a copy.
  *
  * @param commands Commands to reorder (replaced by their sorted order).
  * @param eye      World-space eye point the distances are measured from.
  */
 void sortCollected(std::vector<RenderCommand>& commands, const Vec3d& eye);
-
-void collectFromBake(const SceneBake&            bake,
-                     const Frustum&              frustum,
-                     const CollectView&          view,
-                     std::uint32_t               layer_mask,
-                     BoundsCache&                bounds,
-                     bool&                       viewport_used,
-                     std::vector<RenderCommand>& out);
 
 } // namespace detail
 

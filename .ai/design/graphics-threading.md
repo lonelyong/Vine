@@ -70,8 +70,14 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   **不读它的任何字段**；读字段就等于回到共享可变状态。
 - **不进镜像的**：节点名字、行为/脚本、选择态、撤销栈、宿主的文档状态 —— 没有消费者（`G8`）。把这些也搬过来
   就是"把内容世界整个复制一份"，那是被否决的第一稿。
-- **共用一份算法**：表类型与两趟走法（`bakeSubtree` / `collectFromBake`）是 `src/viz/graphics/src/DrawListBake.hpp`
-  里的**同一份**代码，内容侧与镜像侧只是填表的人不同 —— 否则"等价性"会退化成两套实现互相验证。
+- **一行 = own + resolved**：own 是节点自己说的（局部矩阵、可见性、透明度、自己的层/顺序声明、自己的状态/材质/程序、
+  逐 primitive 的 `DrawFacts`）；resolved 是折出来的（世界矩阵、折叠值、子树层并集、世界盒、`end`）。镜像的编辑只改 own，
+  再跑**同一次**折 —— 这也是“镜像能自己前进”的全部机制。
+- **共用一份算法**：行类型与三趟走法（`bakeSubtree` 建 own / `resolveSubtree` 折 / `selectFromBake` 选 / `sortCollected` 排）
+  是 `src/viz/graphics/src/DrawListBake.{hpp,cpp}` 里的**同一份**代码，内容侧与镜像侧只是填 own 的人不同 ——
+  否则“等价性”会退化成两套实现互相验证。
+- **唯一还需要内容线程的一步**：`refreshBoxes`。“写 buffer”不会发 delta，盒子的新鲜度靠问 geometry 自己的（按通道 revision
+  与切片键控的）`localBounds()`；这一问是写缓存的，所以它留在拥有内容的那侧，与选取分开。
 
 ### 2.3 三条跨线程通道
 
@@ -478,8 +484,11 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 ### 9.2 已知缺口 / 待办
 
 - 落地阶段与触发条件见 `../backlog/graphics.md` T31；并行 select 由 T24 单独触发。
-- **镜像目前仍从节点缓存取两样东西**：世界盒（`BoundsCache`，键是 buffer revision）与子树层并集（`Node::subtreeLayerUnion`，
-  键是 layer epoch）。两者都按“公告”失效，所以它们的行化就是 P2 要做的事（也是镜像能真正跑在引擎线程上的前提）。
+- **镜像目前仍从节点缓存取两样东西**：逐视图放置的整棵 run（`AutoTransform`：只有知道相机的那趟走法能放它），
+  与“只能在世界空间答题”的 `Geometry` 子类叶子的盒（构建时取一次，作为 seed，该行因此不可被 placement 复拓）。
+  两者都是**具名例外**，不是隐藏的读；把它们变成值（逐视图放置作为一个函数值 / 子类叶子给局部盒）是后续一步。
+- **身份仍是 `const Node&`**：`RenderWorld::place()` 的入参还是内容类型。真正的镜像侧应该用自己的行句柄；这一步留到
+  “内容世界不再被渲染侧的世界引用”时一起改（与后端事实行同一批）。
 - 多文档 = 多控件 = 多会话（各自的引擎线程与设备），不做"多窗口共享一份内容"的并发编辑。
 - `OwnedFrame` 的真实消费者（远程/录制）仍未出现（T18）。
 - **仿真产出的 pose 要不要绕过场景图**：一种更激进的写法是“pose 是每帧的值，场景图只存拓扑”（仿真侧持关节角数组，
@@ -493,9 +502,13 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   **第一步已启动**：bake/select 的表类型与两趟走法已抽到 `src/viz/graphics/src/DrawListBake.hpp`（内部头），
   内容侧行为不变（`test_graphics` 506/506），这样镜像侧能填同一张表、走同一份算法 —— 否则“等价性”只是两套实现互相验证。
   **第二步已启动**：`detail::RenderWorld`（`src/viz/graphics/src/RenderWorld.{hpp,cpp}`）= 表 + 行索引 +
-  `place()`（只有 placement 这一种 delta）+ `collect()`（复用 `collectFromBake` / `sortCollected`），
+  `place()`（只有 placement 这一种 delta）+ `collect()`（复用 `selectFromBake` / `sortCollected`），
   等价性用例 `RenderWorldTest` 四条：镜像的采集与内容侧逐命令相同、placement 只重算受影响子树（计数器）、
-  不告诉就不动、答不了就拒（未知节点/逐视图放置）。
+  不告诉就不动、答不了就拒（未知节点/逐视图放置/盒只能问节点）。
+  **第三步已完成**：行拆成 own/resolved，叶子图元在构建时解析成 `DrawFacts`（材质/程序/实例切片），
+  逐 primitive 的读从选取里消失；层并集与盒都是行上的值；`selectFromBake` 只读行（唯一例外是逐视图 run，
+  它被显式交给知道相机的那趟走法）。新用例钉住了“一次 pass 不问任何节点要盒”，并用**绝对位移**补上了
+  “镜像与内容侧共用同一个折叠”带来的等价性盲区（变异验证：去掉 `* row.local` 后该断言立刻红）。
 - **P2**：`threaded` 下的结构/状态/描述/相机 delta 与镜像增量重算。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
