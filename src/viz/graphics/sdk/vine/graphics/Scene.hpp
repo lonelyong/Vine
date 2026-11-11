@@ -22,6 +22,7 @@ namespace detail
 {
 struct SceneBake;  // The baked graph half of a collection (see Scene.cpp): an implementation detail, not API.
 class SceneRows;   // The one door onto those rows, for the engine side's mirror (see src/SceneRows.hpp).
+class DrawListMemo; // The per-view collected lists, shared by a Scene and a mirror (see src/DrawListMemo.hpp).
 }
 
 using vn::geom::spatial::Aabbd;
@@ -332,8 +333,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     NodePtr               root_;
     std::vector<LightPtr> lights_;
 
-    /** @brief Collected-command memo (defined in the .cpp: it holds commands). */
-    struct ContentMemo;
+    /** @brief Collected-command memo: SHARED with the mirror (see src/DrawListMemo.hpp). */
 
     // Bumped by every scene-level content change, so a memo built before the
     // change is not reused (see invalidateContent).
@@ -347,7 +347,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     mutable std::uint64_t memo_epoch_ = 0;
     // The collected lists of the views in use (one per camera), reused while the graph does not change and dropped
     // when nothing asked for them in the previous frame - so the memo is bounded by the views drawn, not by frames.
-    mutable std::unique_ptr<ContentMemo> content_memo_;
+    mutable std::unique_ptr<detail::DrawListMemo> content_memo_;
     // The GRAPH half of the same collection, keyed by the same epoch: placements, world boxes and folds, in walk
     // order. A view reads it instead of recomputing it, which is why a moving camera costs the prune and the sort
     // rather than a full walk (see detail::SceneBake in Scene.cpp).

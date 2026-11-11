@@ -1,6 +1,7 @@
 ﻿#include <vine/graphics/Scene.hpp>
 
 #include "DrawListBake.hpp"
+#include "DrawListMemo.hpp"
 #include "LayerEpoch.hpp"
 
 #include <algorithm>
@@ -45,29 +46,6 @@ std::shared_ptr<const std::vector<RenderCommand>> noCommands()
     return kNoCommands;
 }
 
-/**
- * @brief Returns whether two projection*view matrices are identical.
- *
- * Matrix4x4 has no operator==, and the memo only needs "the same view": exact
- * element equality is the right test because the memo caches a pure function of
- * the view, so a camera that happens to produce the same matrices must reuse
- * the entry (its result is identical by construction).
- *
- * @param lhs First matrix to compare.
- * @param rhs Second matrix to compare.
- * @return true when every element matches.
- */
-bool sameView(const Mat4d& lhs, const Mat4d& rhs)
-{
-    for (int row = 0; row < 4; ++row) {
-        for (int col = 0; col < 4; ++col) {
-            if (lhs(row, col) != rhs(row, col)) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
 
 
 /**
@@ -167,51 +145,6 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
 } // namespace
 
 
-
-/**
- * @brief One frame's collected command lists, keyed by the camera's view.
- *
- * Scoped to a content frame (Scene::setContentFrame): the entries are dropped
- * at the next frame boundary, so the memo cannot grow with time and cannot
- * serve content from an earlier frame.
- *
- * The key is the camera's VIEW (its projection*view product and eye point), not
- * its address: the collected list is a pure function of that view, so two
- * cameras with the same view share the entry by construction, a camera edited
- * between two passes misses (and gets a fresh walk), and — unlike a pointer key
- * — nothing is assumed about the camera's lifetime. Cameras are borrowed as
- * raw pointers by design (a stack camera is legal, see RenderPass::setCamera),
- * so an owning key would be wrong, and a bare address key could not notice a
- * camera being edited in place.
- */
-struct Scene::ContentMemo {
-    /// One view's collected list.
-    struct Entry {
-        Mat4d view_proj;
-        Vec3d eye;
-        // The device-pixel rectangle is part of the KEY: the same camera drawn into two PiP rectangles
-        // produces different screen-space scales for view-dependent nodes (AutoTransform).
-        Viewport      viewport;
-        std::uint64_t revision   = 0;
-        // The mask is part of the KEY, not only a parameter: two passes may draw the same view through the
-        // same camera and still want DIFFERENT lists (a shadow pass drawing only casters, a main pass drawing
-        // everything), so serving one's list for the other's mask would swap a few objects in and out of the
-        // picture - correct-looking and wrong.
-        std::uint32_t layer_mask = kAllLayers;
-        // True when the list was built by a node that also depends on the device-pixel viewport
-        // (AutoTransform screen-space scaling). A list without such a node is shared across rectangles.
-        bool viewport_sensitive  = false;
-        // SHARED and immutable once built (see collectRenderCommands): the passes of a frame hand the same list
-        // around, and it is reused across frames for as long as the graph does not change.
-        std::shared_ptr<const std::vector<RenderCommand>> commands;
-        // The content frame that asked for this list last (see setContentFrame): an entry nothing asked for in the
-        // previous frame is dropped, which is what keeps the memo bounded to the views actually drawn.
-        std::uint64_t last_used_frame = 0;
-    };
-
-    /// Lists collected for the views in use (one per distinct view), reused while the graph does not change.
-    std::vector<Entry> entries;
-};
 
 Scene::Scene() = default;
 
@@ -387,37 +320,36 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     // deliberate: editing another scene's tree leaves this root's epoch alone, so its lists survive. Before the
     // memo existed an entry lived for one frame only and a static scene paid a full walk per frame (measured:
     // SceneTest.MeasureWhatOneCollectionCosts*).
+    // THE MEMO OUTLIVES ONE FRAME. A collected list is a pure function of the graph and the view, so it is reused for as
+    // long as NOTHING changed - which the graph announces through the content epoch of THIS SCENE'S ROOT SUBTREE (every
+    // mutator bumps itself and every ancestor, see Node::announceContentChange). The scope is deliberate: editing
+    // another scene's tree leaves this root's epoch alone, so its lists survive. Before the memo existed an entry lived
+    // for one frame only and a static scene paid a full walk per frame (measured: SceneTest.MeasureWhatOneCollectionCosts*).
+    // The memo itself is SHARED WITH THE MIRROR (see DrawListMemo): "which list may this view reuse" is one rule, and
+    // the two answers to a view must not implement it twice.
     const std::uint64_t epoch = root_->contentEpoch();
     if (content_memo_ != nullptr && epoch != memo_epoch_) {
-        // Something in THIS scene's graph changed since the last look: every view's list may be stale, and
-        // re-deriving each one is the walk a miss does anyway.
-        content_memo_->entries.clear();
+        // Something in THIS scene's graph changed since the last look: every view's list may be stale, and re-deriving
+        // each one is the walk a miss does anyway.
+        content_memo_->clear();
     }
-    // Recorded even when the memo was just cleared (or does not exist yet): the next call has to compare against
-    // THIS look, or it would invalidate a memo it built itself.
-    memo_epoch_           = epoch;
-    const auto memo_entry = [this, &view_proj, &eye, &viewport, layer_mask]() -> ContentMemo::Entry* {
-        if (content_frame_ == 0 || content_memo_ == nullptr) {
-            return nullptr; // nothing is memoised until a frame is open (a caller that drives it keeps walking)
+    // Recorded even when the memo was just cleared (or does not exist yet): the next call has to compare against THIS
+    // look, or it would invalidate a memo it built itself.
+    memo_epoch_ = epoch;
+    const bool memoising = content_frame_ != 0; // nothing is memoised until a frame is open (a caller drives it)
+    if (memoising && content_memo_ == nullptr) {
+        content_memo_ = std::make_unique<detail::DrawListMemo>();
+    }
+    if (memoising) {
+        if (detail::DrawListMemo::Entry* hit = content_memo_->find(view_proj, eye, viewport, layer_mask, content_revision_)) {
+            ++content_reuse_count_;
+            hit->last_used_frame = content_frame_;
+            // The SHARED list itself, not a copy of it: the list is immutable once built (what a pass may change is its
+            // own view of it, see RenderPass::execute), so handing out one more reference costs a refcount instead of
+            // one copy of every command -- the per-pass copy this replaced was N intrusive_ptr increments plus an
+            // N x sizeof(RenderCommand) memcpy, on every pass of every frame.
+            return hit->commands;
         }
-        for (auto& entry : content_memo_->entries) {
-            if (entry.revision == content_revision_ && entry.eye == eye && entry.layer_mask == layer_mask &&
-                (!entry.viewport_sensitive || (entry.viewport.width == viewport.width && entry.viewport.height == viewport.height)) &&
-                detail::sameView(entry.view_proj, view_proj))
-            {
-                entry.last_used_frame = content_frame_;
-                return &entry;
-            }
-        }
-        return nullptr;
-    };
-    if (const ContentMemo::Entry* hit = memo_entry()) {
-        ++content_reuse_count_;
-        // The SHARED list itself, not a copy of it: the list is immutable once built (what a pass may
-        // change is its own view of it, see RenderPass::execute), so handing out one more reference costs
-        // a refcount instead of one copy of every command -- the per-pass copy this replaced was N
-        // intrusive_ptr increments plus an N x sizeof(RenderCommand) memcpy, on every pass of every frame.
-        return hit->commands;
     }
     ++content_collect_count_;
 
@@ -432,17 +364,14 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     detail::sortCollected(commands, eye);
     // Into the shared list by MOVE: the walk's result is the only copy that ever exists.
     auto shared = std::make_shared<const std::vector<RenderCommand>>(std::move(commands));
-    if (content_frame_ != 0) {
-        if (content_memo_ == nullptr) {
-            content_memo_ = std::make_unique<ContentMemo>();
-        }
-        if (ContentMemo::Entry* entry = memo_entry()) {
+    if (memoising) {
+        if (detail::DrawListMemo::Entry* entry = content_memo_->find(view_proj, eye, viewport, layer_mask, content_revision_)) {
             entry->commands           = shared; // the same view asked again after a change
             entry->viewport_sensitive = viewport_used;
+            entry->last_used_frame    = content_frame_;
         }
         else {
-            content_memo_->entries.push_back(
-                ContentMemo::Entry{ view_proj, eye, viewport, content_revision_, layer_mask, viewport_used, shared, content_frame_ });
+            (void)content_memo_->store(view_proj, eye, viewport, layer_mask, viewport_used, content_revision_, shared, content_frame_);
         }
     }
     return shared;
@@ -484,7 +413,8 @@ const detail::SceneBake& Scene::ensureRows() const
     return *content_bake_;
 }
 
-void Scene::setContentFrame(std::uint64_t frame){
+void Scene::setContentFrame(std::uint64_t frame)
+{
     if (content_frame_ == frame) {
         return; // idempotent: every pass of a frame may announce the same token
     }
@@ -493,12 +423,9 @@ void Scene::setContentFrame(std::uint64_t frame){
     if (content_memo_ == nullptr) {
         return;
     }
-    // ONE FRAME OF GRACE, then the entry goes: a list is kept while some view keeps asking for it, so a view that
-    // stops being drawn (a closed pane, a camera that went away) releases its storage instead of owning it forever.
-    // This is what replaced "clear everything at every frame boundary" (see the memo note in collectRenderCommands).
-    auto& entries = content_memo_->entries;
-    entries.erase(std::remove_if(entries.begin(), entries.end(), [previous](const ContentMemo::Entry& entry) { return entry.last_used_frame < previous; }),
-                  entries.end());
+    // ONE FRAME OF GRACE, then the entry goes (see DrawListMemo::beginFrame): this is what replaced "clear everything at
+    // every frame boundary" - a list is kept while some view keeps asking for it.
+    content_memo_->beginFrame(previous);
 }
 
 void Scene::invalidateContent()
