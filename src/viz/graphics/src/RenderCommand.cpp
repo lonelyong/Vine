@@ -18,6 +18,18 @@ RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const
     // value the content side handed over, not a live read on whichever thread records the frame.
 }
 
+MaterialDescriptionPtr RenderCommand::materialDescription() const
+{
+    if (material_description != nullptr) {
+        return material_description;
+    }
+    // A HAND-BUILT COMMAND: the same door `geometryDescription` opens, for the
+    // same reason - the object's own cache answers, once per revision, and the
+    // object is the host's to keep still while a frame records. A command built
+    // from a scene row never gets here: the row's value was published.
+    return material != nullptr ? material->description() : MaterialDescriptionPtr{};
+}
+
 GeometryDescriptionPtr RenderCommand::geometryDescription() const
 {
     if (description != nullptr) {

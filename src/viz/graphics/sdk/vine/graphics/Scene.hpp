@@ -390,8 +390,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     /** @brief Collected-command memo: SHARED with the mirror (see src/DrawListMemo.hpp). */
 
     // Bumped by every scene-level content change, so a memo built before the
-    // change is not reused (see invalidateContent).
-    std::uint64_t content_revision_   = 1;
+    // change is not reused (see invalidateContent) - and by a material whose
+    // values moved (see detail::refreshMaterials, which runs during a
+    // collection because a material edit announces nothing on the graph).
+    mutable std::uint64_t content_revision_ = 1;
     // Token of the content frame currently open, 0 = none (no memoising).
     std::uint64_t content_frame_      = 0;
     // THIS SCENE'S ROOT SUBTREE content epoch when the memo was last validated: a different value means something in
@@ -417,9 +419,14 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     // batch the published pair stays where it was, so a frame that lands mid-batch publishes nothing; the next
     // collection after the outermost endEdit() catches it up in one step - which is also the only moment the whole
     // batch is read.
+    // How many times a MATERIAL value moved under the rows (see detail::refreshMaterials): a material is edited
+    // through a live object, so no node mutator announces it and `bake_epoch_` cannot see it - while the values a
+    // command carries do change (RenderCommand::material_description).
+    mutable std::uint64_t                 material_generation_ = 0;
     int                                   edit_depth_      = 0;
-    mutable std::uint64_t                 published_epoch_ = 0;
-    mutable std::uint64_t                 published_boxes_ = 0;
+    mutable std::uint64_t                 published_epoch_     = 0;
+    mutable std::uint64_t                 published_boxes_     = 0;
+    mutable std::uint64_t                 published_materials_ = 0;
 };
 
 using ScenePtr = intrusive_ptr<Scene>;

@@ -375,10 +375,10 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
     EXPECT_TRUE(covers(first));
 
     // A material EDIT replaces a row in place, and a geometry revision bump APPENDS one and parks the old one.
-    store.updateMaterial(material.get());
+    store.track(material.get(), material->description());
     auto* mutable_material = const_cast<vn::graphics::Material*>(material.get());
     mutable_material->setBaseColor(vn::Colorf(0.9F, 0.1F, 0.1F, 1.0F));
-    store.updateMaterial(material.get());
+    store.track(material.get(), material->description());
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_TRUE(covers(second)) << "a replaced row keeps its place in the order";
 
@@ -458,11 +458,11 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
 
     // The host edits the material. The material moves its own revision (Material::revision - every shading value
     // goes through a setter, which compares first), and the facade touches every material a frame commands because
-    // the engine never announces an edit; this is that touch.
+    // the frame publishes the values its row carried; this is that publish.
     const std::uint64_t before = material->revision();
     material->setBaseColor(vn::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
     EXPECT_EQ(material->revision(), before + 1U);
-    store.updateMaterial(material.get());
+    store.track(material.get(), material->description());
 
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_EQ(store.materialEntries(), 1U) << "a material is answered by identity alone: the row is replaced";
@@ -475,7 +475,7 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
 
     // An edit for a material nobody tracked is answered with nothing at all (it cannot be drawn either).
     const auto untracked = ::material(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
-    store.updateMaterial(untracked.get());
+    store.track(untracked.get(), untracked->description());
     EXPECT_EQ(store.materialEntries(), 1U);
 }
 
@@ -504,7 +504,7 @@ TEST(ContentStoreTest, AWrongMaterialSlotIsReportedOncePerEpisode)
 
     // An edit is a new episode: a host that fixed one map and broke another hears about the second.
     material->setBaseColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
-    store.updateMaterial(material.get());
+    store.track(material.get(), material->description());
     EXPECT_TRUE(store.claimSlotReport(material.get(), 2U)) << "the material changed: the episode restarted";
     EXPECT_FALSE(store.claimSlotReport(material.get(), 2U));
 
@@ -532,14 +532,14 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement);
 
-    // A TOUCH IS ONE NUMBER (see ContentStore::updateMaterial): the facade touches every material a frame commands,
-    // because the engine never announces an edit - so a touch that finds the revision it already accounted for must
-    // build nothing and park nothing, or every frame would rebuild every material row. Re-applying the values the
-    // material already holds is the other half of the same guarantee: it does not move the revision either.
+    // A PUBLISHED VALUE IS ONE NUMBER: every frame hands the store the value its row carried, so a
+    // value whose revision is the one the row was built at must build nothing and park nothing, or every
+    // frame would rebuild every material row. Re-applying the values the material already holds is the
+    // other half of the same guarantee: it does not move the revision either.
     const std::uint64_t builds_before = store.builds();
     for (int frame = 0; frame < 5; ++frame) {
         material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F)); // same value: not an edit
-        store.updateMaterial(material.get());
+        store.track(material.get(), material->description());
         (void)store.tablesFor(plan->frame, timeline, retirement);
     }
     const ContentFacts& again = store.tablesFor(plan->frame, timeline, retirement);
@@ -551,7 +551,7 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     // The same touch AFTER an edit moves the revision, and the next walk replaces the row (the SDK's own
     // contract, now reached through the touch rather than through a separate announcement).
     material->setBaseColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
-    store.updateMaterial(material.get());
+    store.track(material.get(), material->description());
     const ContentFacts& edited = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_EQ(store.builds(), builds_before + 1U) << "the edit replaced the row";
     EXPECT_FLOAT_EQ(blockOf(*findMaterial(edited, material.get()).entry).base_color[0], 0.5F);

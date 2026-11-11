@@ -571,6 +571,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | C16 | 一帧的两个半段各归一条线程：内容半段（钩子 / publish / describe）在内容线程，引擎半段（drain / bind / expand / execute / present）在引擎线程；帧值两份轮换，每侧一帧在飞。 |
 | C17 | 表面事件只在帧首应用一次；交换链只在引擎线程重建；UI 侧不写任何引擎侧状态。 |
 | C18 | 批内版本不推进：`Scene::beginEdit()` 之后、最外层 `endEdit()` 之前，镜像比较的版本停在原处 —— 落进批次中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布（一条 `RowsReplaced`）落地。 |
+| C19 | 材质以**值**过帧：命令携带 `MaterialDescriptionPtr`（`revision` + 解析后的 `MaterialParameters`），引擎侧只读值，不读 `Material::resolved()`。值的取点在内容侧（`SceneRows::publish` 与 `detail::refreshMaterials`），批内不取 —— 所以材质编辑和节点/几何编辑走同一条批次规则（C18）。 |
 
 ### 5.2 要求（R#）
 
@@ -923,6 +924,19 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   镜像仍是旧图、`publishCount` 只 +1、嵌套批次只在最外层释放、批次之后恢复"一改一发"）、
   `RenderEngineTest.AFrameLandedInsideAnEditBatchDrawsTheStateTheBatchStartedFrom`（帧在批次中间两次都画旧状态，
   `endEdit` 之后那一帧到齐）。
+- **材质成为值（C19，2026-11-11）**：最后一个"以活对象过帧"的内容事实收口。`MaterialDescription`（值，
+  `MaterialBase::description()` 按 revision 缓存，`cachedDescription()` 不会在读者线程上构造）、
+  `RenderCommand::material_description` + `materialDescription()`（与 `geometryDescription()` 同一形态：行来的
+  命令带发布值，手搓命令退回对象自己的缓存）、行/绘制事实携带它，`ContentStore::ensureMaterial` 从值描述行，
+  每帧的活体 touch（`updateMaterial`，读 `revision()`）**删掉**。材质被 `setXxx` 改动时图上一声不响，所以
+  取值点有两处：`SceneRows::publish`（发布边界）与 `detail::refreshMaterials`（采集前，内容线程，O(行)指针比较；
+  版本动了才清 memo 并抬 `Version::materials`），批内两处都不取（`edit_depth_ == 0` 才取）。验收：
+  `ContentMirrorTest.AMaterialEditInsideABatchLandsWithTheBatchAndKeepsTheOldValuesUntilThen`（批中帧仍是旧值、
+  批末一次落地、批外下次采集即生效）、`SdkPixelTest.TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends`（像素级：
+  改材质 → 下一帧画面变）、`VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`
+  （稳帧零重建）。
+  **边界（有意不处理）**：宿主直接写材质 buffer / 直接改内存（不经 `setXxx`）不在保证内 —— 那类改动没有值可取，
+  和"直接写顶点 buffer 要自己 `invalidateContent`"是同一条规矩。
 - **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`

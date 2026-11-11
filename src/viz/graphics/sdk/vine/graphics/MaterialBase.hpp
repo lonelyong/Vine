@@ -99,6 +99,45 @@ struct VN_GRAPHICS_API MaterialParameters {
 };
 
 /**
+ * @brief A material's values AT ONE REVISION, as an immutable value.
+ *
+ * @details
+ * - THE SAME SHAPE AS `GeometryDescription`, for the same reason: what a frame draws must not be read from a live object
+ *   on the frame's own thread. A command carries this value, and the backend describes its tables from it - so a material
+ *   edit is a NEW VALUE that reaches the render side the way every other content fact does: at a publication boundary
+ *   (one frame, or one edit batch - see `Scene::beginEdit`), never by a live re-read in the middle of one.
+ * - ONE PER REVISION: `MaterialBase::description()` returns the cached instance for the material's current revision, so a
+ *   frame with no material edit shares one object and the backend's rows stay put.
+ * - NOT thread-safe to mutate, and it never is: every field is set by the constructor and read-only afterwards.
+ *
+ * @note
+ * - `values` is the RESOLVED set (an instance answers with its parent's values overlaid), so an asset and an instance
+ *   describe themselves the same way and nothing downstream can tell them apart.
+ */
+class VN_GRAPHICS_API MaterialDescription final : public RefCounted<MaterialDescription> {
+  public:
+    /**
+     * @brief Constructs a description.
+     *
+     * @param revision The material revision these values were read at.
+     * @param values   The resolved values.
+     */
+    MaterialDescription(std::uint64_t revision, MaterialParameters values);
+
+    /** @brief Gets the revision these values were read at (see MaterialBase::revision). */
+    [[nodiscard]] std::uint64_t revision() const noexcept;
+
+    /** @brief Gets the resolved values. */
+    [[nodiscard]] const MaterialParameters& values() const noexcept;
+
+  private:
+    std::uint64_t      revision_;
+    MaterialParameters values_;
+};
+
+using MaterialDescriptionPtr = intrusive_ptr<const MaterialDescription>;
+
+/**
  * @brief One item of `MaterialParameters`, as a bit an instance can override.
  *
  * @details
@@ -204,6 +243,34 @@ class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBa
     [[nodiscard]] virtual std::uint64_t revision() const noexcept = 0;
 
     /**
+     * @brief Gets these values as an immutable value, building it when the revision moved.
+     *
+     * @details
+     * - THE CONVERSION, the same shape as `Geometry::description`: call it where the values may still be read - the
+     *   publish that copies a scene's rows, a row fact built for a delta. It caches, so the second call in a revision is
+     *   an integer compare.
+     * - What the RENDER side reads is the value that was handed to it (`RenderCommand::materialDescription`), never this
+     *   call: a material edit must reach a frame at a publication boundary, not in the middle of one (design
+     *   graphics-threading.md C18).
+     *
+     * @return The cached description for the current revision.
+     */
+    [[nodiscard]] MaterialDescriptionPtr description() const;
+
+    /**
+     * @brief Gets the cached description WITHOUT building one - null when the revision moved since it was built.
+     *
+     * @details
+     * - What a frame-side reader uses: it answers "the values this material was published with" without ever writing the
+     *   cache from a thread that does not own the content. A null answer means the material moved on since it was
+     *   published, and the picture keeps the values it was given (one publication of lag - the rule every other content
+     *   fact follows).
+     *
+     * @return The value built for the current revision, or null.
+     */
+    [[nodiscard]] MaterialDescriptionPtr cachedDescription() const noexcept;
+
+    /**
      * @brief Gets the resolved alpha mode, which is what the transparency sort asks for.
      *
      * @details
@@ -285,6 +352,11 @@ class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBa
 
   private:
     String name_;
+
+    /// The one value per revision (see description()); written on the content side only.
+    mutable MaterialDescriptionPtr description_;
+    mutable std::uint64_t          described_revision_{ 0 };
+    mutable bool                   described_{ false };
 };
 
 using MaterialBasePtr = intrusive_ptr<MaterialBase>;

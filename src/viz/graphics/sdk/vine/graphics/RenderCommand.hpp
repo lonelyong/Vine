@@ -60,6 +60,22 @@ struct VN_GRAPHICS_API RenderCommand {
     /** Material to use (an asset, or an instance over one - see MaterialBase). */
     MaterialBasePtr material;
 
+    /**
+     * @brief The material's values at the revision this frame crosses with, or null when nobody published them.
+     *
+     * @details
+     * - THE MATERIAL'S HALF OF `description` ABOVE, and the same rule: what a frame draws is a value read where the
+     *   content lives, not a live object read on the thread that records the frame. A command built from a scene row
+     *   carries the values that row was published with, so a material edited mid-frame keeps the values the frame
+     *   started with, and a material edited inside an edit batch lands with the whole batch (see `Scene::beginEdit` and
+     *   `.ai/design/graphics-threading.md` C18).
+     * - Null means the host built this command by hand and never published the material; a backend then falls back to
+     *   reading the object, and the host owns the rule that the object is not edited while a frame records (the same
+     *   door every other hand-built command uses).
+     * - `material` above stays the identity (naming, keeping the object alive).
+     */
+    MaterialDescriptionPtr material_description;
+
     /** Effective shader program (leaf/StateNode resolution), null = default.
      *
      * @note A backend that supports user programs compiles/uses this instead of the built-in program; backends
@@ -189,6 +205,19 @@ struct VN_GRAPHICS_API RenderCommand {
      * @return The description, or null for a command that names no geometry at all.
      */
     [[nodiscard]] GeometryDescriptionPtr geometryDescription() const;
+
+    /**
+     * @brief Gets the material's values as a value: the published one, or (for a hand-built command) the material's
+     *        cached one.
+     *
+     * @details
+     * - What a recorder hands the backend, so describing material rows never reads the live object.
+     * - It never BUILDS a value (see `MaterialBase::cachedDescription`): a material whose revision moved since it was
+     *   published answers the values it was published with, which is the one-publication lag every content fact has.
+     *
+     * @return The published values; null when none were ever published for this material.
+     */
+    [[nodiscard]] MaterialDescriptionPtr materialDescription() const;
 };
 
 VN_GRAPHICS_NS_END

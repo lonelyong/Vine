@@ -36,14 +36,15 @@ struct ContentStore::Data {
 
     struct LiveMaterial {
         vn::intrusive_ptr<vn::graphics::MaterialBase> object{};
-        std::uint64_t                                 revision{ 0 }; // Edit counter; only updateMaterial() moves it.
+        /// The VALUES this entry answers for: what a frame published (see the file note on geometry's `shape`), or
+        /// null for a material nobody published - a hand-built command, answered from the object's own cache.
+        vn::graphics::MaterialDescriptionPtr values{};
         /// Which of its texture slots have already been reported in THIS episode (a bit per slot, see
         /// claimSlotReport). A new description - i.e. the material's values changed - re-arms it, because a
         /// host that fixes a map and breaks another one has a new thing to say.
         std::uint32_t slots_reported{ 0 };
-        std::uint64_t seen_revision{ 0 }; // The material's own revision last accounted for.
         bool          described{ false };
-        std::uint64_t described_revision{ 0 };
+        std::uint64_t described_revision{ 0 }; // The `values` revision the row was built at.
         std::uint64_t release_token{ 0 };
         bool          release_requested{ false };
     };
@@ -460,37 +461,31 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& ma
     }
 }
 
-void ContentStore::updateMaterial(vn::raw_ptr<vn::graphics::MaterialBase> material)
+void ContentStore::track(const vn::graphics::MaterialBase* identity, const vn::graphics::MaterialDescriptionPtr& values)
 {
-    if (material == nullptr) {
+    if (identity == nullptr || values == nullptr) {
         return;
     }
-    const auto entry = d->materials.find(material);
+    const auto entry = d->materials.find(identity);
     if (entry == d->materials.end()) {
-        return; // untracked: nothing draws with it, so nothing can be asked about it
-    }
-    Data::markUsed(entry->second); // touched by a frame: a pending release is cancelled
-
-    // THE TOUCH IS ONE NUMBER (see the header note): a material moves its own revision when one of its shading
-    // values changes (Material::revision - every such change goes through a setter, and a setter that finds the
-    // value it already holds moves nothing), so this asks "did it move since the last time?" instead of reading
-    // the values back and comparing them. A steady frame therefore does one integer compare per commanded
-    // material and allocates nothing, and an edit lands on the very next frame that draws with the material.
-    Data::LiveMaterial& live = entry->second;
-    const std::uint64_t seen = material->revision();
-    if (!live.described) {
-        // Nothing is described yet: the first description (taken when a frame records) reads the values as they
-        // are and records the revision it read (see ensureMaterial), so there is nothing to supersede.
+        // Untracked: nothing draws with it, so nothing can be asked about it.
+        // Unlike a geometry value (which a mirrored row may name alone), a
+        // material always arrives with the share that tracked it - so an entry
+        // is not created here.
         return;
     }
-    if (live.seen_revision == seen) {
-        return; // touched and unchanged: nothing to build, nothing to park, nothing allocated
+    Data::LiveMaterial& live = entry->second;
+    Data::markUsed(live); // tracked by a frame: a pending release is cancelled
+    // A NEW VALUE STARTS A NEW EPISODE for the slot reports: the values changed, so what is wrong with them may
+    // have too (see claimSlotReport) - and the report is asked BEFORE the next frame describes the value, which is
+    // why it is re-armed here and not in ensureMaterial.
+    if (live.described && live.described_revision != values->revision()) {
+        live.slots_reported = 0U;
     }
-    live.seen_revision = seen;
-    ++live.revision;
-    // A NEW DESCRIPTION IS A NEW EPISODE for the slot reports too: the values changed, so what is wrong with
-    // them may have too (see claimSlotReport).
-    live.slots_reported = 0U;
+    // A NEW VALUE AT THE SAME IDENTITY. Replacing it is enough: `ensureMaterial` compares the value's revision with the
+    // one its row was built at, parks what it replaces and builds the rest, so a steady frame compares an integer and a
+    // material edit is one new value at the next publish (see the class note).
+    live.values = values;
 }
 
 bool ContentStore::claimSlotReport(const void* identity, std::size_t slot) noexcept
@@ -631,21 +626,26 @@ void ContentStore::ensureMaterial(const vn::graphics::MaterialBase* material, co
 
     Data::LiveMaterial& live = entry->second;
     Data::markUsed(live); // ensured by a frame: a pending release is cancelled
-    if (live.described && live.described_revision == live.revision) {
-        return;
+
+    // THE VALUES A ROW IS BUILT FROM: the ones the frame published. A material no frame published (a command a host
+    // built by hand) is answered from the object's own cache - the same door every hand-built command uses, and the
+    // reason that command is the host's to keep still.
+    vn::graphics::MaterialDescriptionPtr values = live.values;
+    if (values == nullptr && material != nullptr) {
+        values = material->description();
+    }
+    const std::uint64_t revision = values != nullptr ? values->revision() : 0;
+    if (live.described && live.described_revision == revision) {
+        return; // the steady frame: nothing to build, nothing to park
     }
 
     auto           storage = std::make_unique<Data::MaterialStorage>();
     MaterialFacts  fresh;
-    const FactMiss miss     = buildMaterialFacts(material, live.revision, fresh, storage->block);
+    const FactMiss miss     = buildMaterialFacts(material, values, revision, fresh, storage->block);
     live.described          = true;
-    live.described_revision = live.revision;
+    live.described_revision = revision;
     // A fresh description starts a fresh episode for the material's slot reports (see claimSlotReport).
     live.slots_reported     = 0U;
-    // The row about to be written carries the values the material has RIGHT NOW, so that is the revision this entry
-    // has accounted for: the next touch of an unedited material is then a no-op instead of a second description of
-    // the same values.
-    live.seen_revision      = material != nullptr ? material->revision() : 0;
     if (miss != FactMiss::None) {
         return;
     }

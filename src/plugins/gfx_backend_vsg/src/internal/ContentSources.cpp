@@ -211,13 +211,21 @@ namespace
 
 } // namespace
 
-FactMiss buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uint64_t revision, MaterialFacts& out, std::vector<std::byte>& storage)
+FactMiss buildMaterialFacts(const vn::graphics::MaterialBase*                   material,
+                            const vn::graphics::MaterialDescriptionPtr& values,
+                            std::uint64_t                                revision,
+                            MaterialFacts&                               out,
+                            std::vector<std::byte>&                      storage)
 {
+
     // The block's MEMBERS are the payload, and `{}` is aggregate initialisation: it initialises the members
     // from their defaults (the ABI states the default material's values) and leaves the struct's tail padding
     // alone. What decides whether a material changed is the number it reports (MaterialBase::revision), never a
     // byte comparison of these bytes (which would report "changed" for a material that did not).
-    const vn::graphics::VineMaterialBlock block = material != nullptr ? blockOfMaterial(material->resolved()) : vn::graphics::VineMaterialBlock{};
+    // The VALUES are the caller's argument (see ContentStore::ensureMaterial): a description built from the value a
+    // frame published, never a read of the live material on the thread that records the frame.
+    const vn::graphics::VineMaterialBlock block =
+        values != nullptr ? blockOfMaterial(values->values()) : vn::graphics::VineMaterialBlock{};
 
     storage.assign(sizeof(block), std::byte{ 0 });
     std::memcpy(storage.data(), &block, sizeof(block));
@@ -230,11 +238,11 @@ FactMiss buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uin
     // slot is what decides whether the drawable takes the `VN_TEXTURED` variant of its program
     // (api/ProgramVariant). A slot's map and its sampler come from the same side of the resolution (instance
     // or asset), because a slot is ONE item there.
-    if (material != nullptr) {
-        const vn::graphics::MaterialParameters& values = material->resolved();
+    if (values != nullptr) {
+        const vn::graphics::MaterialParameters& parameters = values->values();
         for (std::uint32_t index = 0U; index < vn::graphics::kTextureSlotCount; ++index) {
-            out.slots[index].texture = values.textures[index].texture.get();
-            out.slots[index].sampler = values.textures[index].sampler;
+            out.slots[index].texture = parameters.textures[index].texture.get();
+            out.slots[index].sampler = parameters.textures[index].sampler;
         }
     }
     return FactMiss::None;

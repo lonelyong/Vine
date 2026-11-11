@@ -118,21 +118,22 @@ class ContentStore {
     void track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& material);
 
     /**
-     * @brief Touches @p material: refreshes its entry when the material reports that it changed.
+     * @brief Answers for @p identity 's VALUES from now on - the material's half of the geometry overload above.
      *
-     * WHY A TOUCH AT ALL. The SDK carries no material-edit CHANNEL (no manager is handed to a backend, and
-     * `RenderBackend` has no such entry point), so the only place an edit can be noticed is where the material is
-     * announced - every material a frame commands. WHICH IS WHY THE MATERIAL COUNTS ITS OWN EDITS:
-     * `Material::revision()` moves itself whenever a shading value changes (each setter compares first, so
-     * re-applying equality is not a change), and this call is one integer compare against the number it last
-     * accounted for. Nothing is read back, nothing is built, and a steady frame allocates nothing.
+     * @details
+     * - THE VALUE, NOT THE OBJECT: a row is built from what the frame published (`RenderCommand::materialDescription`),
+     *   so describing a material never reads the live material on the thread that records the frame. A material edit
+     *   is a new value at the next publish, which is what makes an edit inside an edit batch land with the batch
+     *   (design graphics-threading.md C18).
+     * - The rows the tables answer for the old value stay answerable until the frames that may still record them are
+     *   past, which `ensureMaterial` arranges when it notices the revision move (see `LiveMaterial::values`).
+     * - A host that built its command by hand and never published a value is answered from the object's own cache
+     *   (`MaterialBase::description`), the same door such a command uses everywhere else.
      *
-     * An edit for a material the host never tracked is ignored: nothing draws with it, so nothing can be asked about
-     * it.
-     *
-     * @param material Material to touch; null is ignored (the default entry describes itself).
+     * @param identity Address the plan names; null is ignored.
+     * @param values   The material's values; null is ignored (the object's own value answers instead).
      */
-    void updateMaterial(vn::raw_ptr<vn::graphics::MaterialBase> material);
+    void track(const vn::graphics::MaterialBase* identity, const vn::graphics::MaterialDescriptionPtr& values);
 
     /**
      * @brief Claims the right to report one of @p identity 's texture slots, once per episode.

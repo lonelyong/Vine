@@ -4,6 +4,45 @@ VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(Material, MaterialBase);
 
+MaterialDescription::MaterialDescription(std::uint64_t revision, MaterialParameters values)
+    : revision_(revision)
+    , values_(std::move(values))
+{
+}
+
+std::uint64_t MaterialDescription::revision() const noexcept
+{
+    return revision_;
+}
+
+const MaterialParameters& MaterialDescription::values() const noexcept
+{
+    return values_;
+}
+
+MaterialDescriptionPtr MaterialBase::description() const
+{
+    const std::uint64_t revision = this->revision();
+    if (described_ && described_revision_ == revision && description_ != nullptr) {
+        return description_;
+    }
+    // The revision IS the value's identity (see revision()): a description is
+    // built once per revision and then shared, so a steady frame compares an
+    // integer and a backend row keyed on the value stays put.
+    description_        = intrusive_ptr<const MaterialDescription>(new MaterialDescription(revision, resolved()));
+    described_revision_ = revision;
+    described_          = true;
+    return description_;
+}
+
+MaterialDescriptionPtr MaterialBase::cachedDescription() const noexcept
+{
+    if (!described_ || described_revision_ != revision()) {
+        return nullptr;
+    }
+    return description_;
+}
+
 Material::Material() = default;
 
 void Material::setBaseColor(const Colorf& color)

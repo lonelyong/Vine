@@ -318,7 +318,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts, screen_facts };
     const GeometryFacts geometries[] = { geometry_facts };

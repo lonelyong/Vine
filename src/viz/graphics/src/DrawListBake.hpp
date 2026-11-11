@@ -43,6 +43,9 @@ namespace detail
 struct DrawFacts {
     std::uint32_t      primitive_index{ 0 };                 ///< Which primitive of the geometry this draw is.
     MaterialBasePtr    material{};                           ///< Resolved: primitive, else geometry, else inherited.
+    /// The same material's values as a value (see MaterialBase::description), taken where the facts were built: what a
+    /// command hands a backend, so recording never reads the live material.
+    MaterialDescriptionPtr material_description{};
     ShaderProgramPtr   program{};                            ///< Resolved the same way.
     BufferSlice<float> instance_transforms{};                ///< Null for a non-instanced draw.
     std::uint32_t      first_instance{ 0 };
@@ -83,6 +86,9 @@ struct Row {
     bool                         owns_state{ false };  ///< A StateNode's contribution below is meaningful.
     RenderState                  own_state{};
     MaterialBasePtr              own_material{};
+    /// The own material's values, taken with it (content side): the fold copies pointers, so nothing downstream has to
+    /// ask the material for its values on a thread that does not own it.
+    MaterialDescriptionPtr       own_material_description{};
     ShaderProgramPtr             own_program{};
     /// The leaf's own bound as the NODE states it, in WORLD space, for the leaves that cannot state one in their own
     /// frame (a Geometry subclass may place itself in ways only it knows - see Node::subtreeBounds).
@@ -114,6 +120,9 @@ struct Row {
     float            opacity{ 1.0F };
     RenderState      state{};
     MaterialBasePtr  material{};
+    /// The resolved material's values (see `material`): from the row that owned the material, by pointer copy - a
+    /// material EDIT is a new value at the next publish, never a live re-read in the middle of a frame.
+    MaterialDescriptionPtr material_description{};
     ShaderProgramPtr program{};
     /// This subtree's box in this row's OWN frame (the frame `local` consumes): a leaf's own bounds, or the union of
     /// its children's boxes placed by their `local`. For a per-view row it does NOT cover the orientations the
@@ -310,6 +319,26 @@ void refoldChain(SceneBake& bake, std::uint32_t index);
  * @return How many rows' own box actually changed (0 when nothing moved, in which case nothing was folded).
  */
 std::uint32_t refreshBoxes(SceneBake& bake);
+
+/**
+ * @brief Re-takes every row's material values, and answers how many rows actually moved.
+ *
+ * @details
+ * - THE ONE CONTENT FACT THE GRAPH EPOCH CANNOT SEE. A geometry's shape, a node's placement and a program all change
+ *   through a mutator that announces itself (`Node::announceContentChange`), which is what the epoch counts. A material
+ *   is edited through a LIVE OBJECT (`Material::setXxx`, or nothing at all when a host writes its block) - no node is
+ *   touched, so no epoch moves, and a list memoised on that epoch would keep drawing the old values forever.
+ * - SO THIS IS THE PUBLISH BOUNDARY FOR MATERIALS, the material's half of `refreshBoxes`: the content side (the only
+ *   thread that may read a material) walks its own rows, takes `MaterialBase::description()` - a pointer compare in a
+ *   steady frame, one new value when a setter moved the revision - and reports what moved. The caller turns a non-zero
+ *   answer into a version bump, and every consumer keyed on that version (the list memo, a mirror) then re-derives.
+ * - A MIRROR has no live objects (see the class note), so it does not refresh: its rows carry the values they were
+ *   published with, which is exactly the one-publication lag every content fact has.
+ *
+ * @param bake The table to refresh; its rows are edited in place.
+ * @return How many rows' values changed (0 when nothing moved).
+ */
+std::uint32_t refreshMaterials(SceneBake& bake);
 
 /**
  * @brief Collects one view's commands from the rows: the VIEW half of a collection, and it reads rows only.

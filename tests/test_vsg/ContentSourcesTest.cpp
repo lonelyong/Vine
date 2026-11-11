@@ -201,7 +201,7 @@ TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
 
     MaterialFacts          facts;
     std::vector<std::byte> storage;
-    ASSERT_EQ(buildMaterialFacts(&material, 9U, facts, storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(&material, material.description(), 9U, facts, storage), FactMiss::None);
 
     EXPECT_EQ(facts.material, &material);
     EXPECT_EQ(facts.revision, 9U);
@@ -234,7 +234,7 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
 {
     MaterialFacts          facts;
     std::vector<std::byte> storage;
-    ASSERT_EQ(buildMaterialFacts(nullptr, 0U, facts, storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(nullptr, nullptr, 0U, facts, storage), FactMiss::None);
 
     // The entry's identity is null, which is what content without a material looks up - and the bytes are the
     // ABI's own defaults (the existing implementation hands the same block to a drawable that names none).
@@ -257,7 +257,7 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     // Building the same entry twice gives the same MEMBERS (the table's identity for it is the pair below).
     std::vector<std::byte> again_storage;
     MaterialFacts          again;
-    ASSERT_EQ(buildMaterialFacts(nullptr, 0U, again, again_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(nullptr, nullptr, 0U, again, again_storage), FactMiss::None);
     vn::graphics::VineMaterialBlock again_block{};
     std::memcpy(&again_block, again.block.data(), sizeof(again_block));
     EXPECT_TRUE(again_block == block);

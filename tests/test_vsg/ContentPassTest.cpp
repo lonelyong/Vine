@@ -273,7 +273,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -454,7 +454,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -669,7 +669,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]{ green_facts, blue_facts, other_facts };
     const GeometryFacts geometries[]{ left_facts, right_facts, unserved_facts };
@@ -903,7 +903,7 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { left_facts, right_facts };
@@ -1127,7 +1127,7 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     material->setBaseColor(vn::Colorf(0.75F, 0.25F, 0.5F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -1298,7 +1298,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -1536,7 +1536,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     material->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -1786,7 +1786,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     material->setTexture(vn::graphics::TextureSlot::BaseColor, cube);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -2014,7 +2014,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     material->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -2332,8 +2332,8 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     MaterialFacts          plain_material_facts;
     std::vector<std::byte> textured_material_storage;
     std::vector<std::byte> plain_material_storage;
-    ASSERT_EQ(buildMaterialFacts(textured_material.get(), 1U, textured_material_facts, textured_material_storage), FactMiss::None);
-    ASSERT_EQ(buildMaterialFacts(plain_material.get(), 1U, plain_material_facts, plain_material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(textured_material.get(), textured_material->description(), 1U, textured_material_facts, textured_material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(plain_material.get(), plain_material->description(), 1U, plain_material_facts, plain_material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]{ plain_facts, textured_facts };
     const GeometryFacts geometries[]{ geometry_facts };
@@ -2608,7 +2608,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     material->setBaseColor(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -2808,7 +2808,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     ASSERT_EQ(material->texture(vn::graphics::TextureSlot::BaseColor), nullptr) << "the material this case shades has no map (that is the point)";
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };
@@ -3048,7 +3048,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     material->setBaseColor(vn::Colorf(1.0F, 0.5F, 0.5F, 1.0F));
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]{ shadow_facts, unshadowed_facts };
     const GeometryFacts geometries[]{ geometry_facts };
@@ -3528,7 +3528,7 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]{ writer_facts, shadowed_facts, unshadowed_facts };
     const GeometryFacts geometries[]{ geometry_facts };
@@ -3913,7 +3913,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]{ writer_facts, lighting_facts };
     const GeometryFacts geometries[]{ geometry_facts };
@@ -4180,8 +4180,8 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     MaterialFacts          quarter_facts;
     std::vector<std::byte> black_storage;
     std::vector<std::byte> quarter_storage;
-    ASSERT_EQ(buildMaterialFacts(black_material.get(), 1U, black_facts, black_storage), FactMiss::None);
-    ASSERT_EQ(buildMaterialFacts(quarter_material.get(), 1U, quarter_facts, quarter_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(black_material.get(), black_material->description(), 1U, black_facts, black_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(quarter_material.get(), quarter_material->description(), 1U, quarter_facts, quarter_storage), FactMiss::None);
 
     const ProgramFacts  programs[]{ forward_facts, gbuffer_facts, lighting_facts };
     const GeometryFacts geometries[]{ geometry_facts };
@@ -4462,7 +4462,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
     const vn::intrusive_ptr<ShaderProgram> absent_program(new ShaderProgram());
     addStages(*absent_program);
     // ... and one program the tables DO answer for, so the pass has a compiled half to draw with: without
@@ -4637,7 +4637,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]{ ramp_facts };
     const GeometryFacts geometries[]{ geometry_facts };
@@ -4795,7 +4795,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
@@ -5056,7 +5056,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
     std::vector<std::byte>            material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]{ writer_facts, lighting_facts };
     const GeometryFacts geometries[]{ geometry_facts };

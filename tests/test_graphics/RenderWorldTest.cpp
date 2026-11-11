@@ -536,6 +536,64 @@ TEST(ContentMirrorTest, AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictur
     EXPECT_EQ(mirror.publishCount(), publishes_before + 3U);
 }
 
+TEST(ContentMirrorTest, AMaterialEditInsideABatchLandsWithTheBatchAndKeepsTheOldValuesUntilThen)
+{
+    // A MATERIAL IS CONTENT LIKE ANY OTHER (graphics-threading.md C18): it is edited through a live object, so nothing on
+    // the graph announces it - the values a frame draws are the ones the row carries, which are published. That makes
+    // the batch rule reach the material too: half a material edit must not be drawn any more than half a pose.
+    auto root = intrusive_ptr<Group>(new Group());
+    auto arm  = intrusive_ptr<vn::graphics::StateNode>(new vn::graphics::StateNode());
+    arm->addChild(triangle());
+    root->addChild(arm);
+
+    intrusive_ptr<vn::graphics::Material> material(new vn::graphics::Material());
+    material->setBaseColor(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    arm->setMaterial(vn::graphics::MaterialBasePtr(material.get()));
+    ASSERT_NE(dynamic_cast<vn::graphics::StateNode*>(arm.get()), nullptr);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror     mirror{ scene };
+    const CollectView view = clipBoxView();
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    const auto red = [](const std::vector<RenderCommand>& commands) {
+        const vn::graphics::MaterialDescriptionPtr values = commands.empty() ? vn::graphics::MaterialDescriptionPtr{} : commands.front().materialDescription();
+        return values != nullptr ? values->values().base_color.r : -1.0F;
+    };
+    const auto reference = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    ASSERT_NE(reference, nullptr);
+    ASSERT_EQ(reference->size(), 1U);
+    ASSERT_DOUBLE_EQ(red(*reference), 1.0F) << "the published values are the ones the material holds";
+
+    scene.beginEdit();
+    material->setBaseColor(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F));
+    EXPECT_FALSE(mirror.publish(scene)) << "mid-batch there is nothing to publish";
+    const auto midway = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    ASSERT_NE(midway, nullptr);
+    ASSERT_EQ(midway->size(), 1U);
+    EXPECT_DOUBLE_EQ(red(*midway), 1.0F) << "and the mid-batch frame keeps the values the batch started from";
+    scene.endEdit();
+
+    ASSERT_TRUE(mirror.publish(scene)) << "the batch's end publishes the new values";
+    EXPECT_EQ(mirror.drain(), 1U);
+    const auto edited = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    ASSERT_NE(edited, nullptr);
+    ASSERT_EQ(edited->size(), 1U);
+    EXPECT_DOUBLE_EQ(red(*edited), 0.0F) << "the whole edit lands at once";
+
+    // OUTSIDE A BATCH an edit lands on the very next collection, which is what a host that just calls a setter expects.
+    material->setBaseColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+    const auto again = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    ASSERT_NE(again, nullptr);
+    ASSERT_EQ(again->size(), 1U);
+    EXPECT_DOUBLE_EQ(red(*again), 0.0F);
+}
+
 TEST(ContentMirrorTest, ARefusedPublishIsRetriedInsteadOfBeingLost)
 {
     // The channel is bounded, so a publish can be refused. Because the version is only recorded on SUCCESS, the next

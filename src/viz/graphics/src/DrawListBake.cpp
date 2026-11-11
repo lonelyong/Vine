@@ -21,6 +21,7 @@ struct Inherited {
     std::int32_t     draw_order{ 0 };
     RenderState      state{};
     MaterialBasePtr  material{};
+    MaterialDescriptionPtr material_description{};
     ShaderProgramPtr program{};
     bool             view_dependent{ false };
 };
@@ -94,7 +95,8 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
     if (row.owns_state) {
         inherited.state.merge(row.own_state);
         if (row.own_material != nullptr) {
-            inherited.material = row.own_material;
+            inherited.material             = row.own_material;
+            inherited.material_description = row.own_material_description;
         }
         if (row.own_program != nullptr) {
             inherited.program = row.own_program;
@@ -108,7 +110,8 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
     row.draw_order         = inherited.draw_order;
     if (!row.draws.empty()) {
         row.state    = inherited.state;
-        row.material = inherited.material;
+        row.material             = inherited.material;
+        row.material_description = inherited.material_description;
         row.program  = inherited.program;
     }
 
@@ -222,6 +225,11 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
             row.own_state  = state_node->renderState();
             if (raw_ptr<MaterialBase> material = state_node->material()) {
                 row.own_material = material;
+                // The values are taken WITH the identity, here, on the content
+                // side: the fold below only copies the value pointer, which is
+                // what lets a mirror - threaded or not - resolve a material
+                // without ever reading the live object.
+                row.own_material_description = material->description();
             }
             if (raw_ptr<ShaderProgram> program = state_node->program()) {
                 row.own_program = program;
@@ -244,6 +252,8 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
                 draw.material        = primitive->material != nullptr
                                            ? MaterialBasePtr(primitive->material)
                                            : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : MaterialBasePtr());
+                draw.material_description =
+                    draw.material != nullptr ? draw.material->description() : MaterialDescriptionPtr();
                 draw.program         = primitive->program != nullptr
                                            ? ShaderProgramPtr(primitive->program)
                                            : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program) : ShaderProgramPtr());
@@ -329,6 +339,7 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index)
         parent.draw_order = above.draw_order;
         parent.state     = above.state;
         parent.material  = above.material;
+        parent.material_description = above.material_description;
         parent.program   = above.program;
         parent.view_dependent = above.view_dependent;
     }
@@ -388,6 +399,42 @@ std::uint32_t refreshBoxes(SceneBake& bake)
         foldRow(bake, row);
     }
     return refreshed;
+}
+
+std::uint32_t refreshMaterials(SceneBake& bake)
+{
+    std::uint32_t moved = 0U;
+    for (Row& row : bake.rows) {
+        bool row_moved = false;
+        if (row.material != nullptr) {
+            const MaterialDescriptionPtr values = row.material->description();
+            if (values != row.material_description) {
+                row.material_description = values;
+                row_moved                = true;
+            }
+        }
+        if (row.own_material != nullptr) {
+            const MaterialDescriptionPtr values = row.own_material->description();
+            if (values != row.own_material_description) {
+                row.own_material_description = values;
+                row_moved                    = true;
+            }
+        }
+        for (DrawFacts& draw : row.draws) {
+            if (draw.material == nullptr) {
+                continue;
+            }
+            const MaterialDescriptionPtr values = draw.material->description();
+            if (values != draw.material_description) {
+                draw.material_description = values;
+                row_moved                 = true;
+            }
+        }
+        if (row_moved) {
+            ++moved;
+        }
+    }
+    return moved;
 }
 
 void selectFromBake(const SceneBake&            bake,
@@ -454,10 +501,13 @@ void selectFromBake(const SceneBake&            bake,
                     continue;
                 }
                 const MaterialBasePtr material = draw.material != nullptr ? draw.material : row.material;
+                const MaterialDescriptionPtr material_description =
+                    draw.material_description != nullptr ? draw.material_description : row.material_description;
                 const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.program;
                 auto&                  cmd     = out.emplace_back(row.geometry, material, world, draw.primitive_index);
                 cmd.row                        = row.identity;
                 cmd.description                = row.description;
+                cmd.material_description       = material_description;
                 cmd.opacity                    = effective;
                 cmd.draw_order                 = row.draw_order;
                 cmd.authored_state             = row.state;

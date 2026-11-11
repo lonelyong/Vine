@@ -121,6 +121,14 @@
     `MAP_IMPORTED_CONFIG_RELWITHDEBINFO|MINSIZEREL = RELEASE`；以后新增只在两个配置出库的 vcpkg 包，消费方要同样映射。
   - `tests/test_graphics/GraphicsTest.cpp` 约 650 KB，优化配置下段数超 65535（`C1128`）⇒ `tests/CMakeLists.txt` 的 MSVC 选项统一带 `/bigobj`。
 
+- **材质改动的三条落地点（2026-11-11 实测，别再踩）**：材质是"以值过帧"的最后一个内容事实（C19）。改
+  `Material::setXxx` 之后值要落地，靠的是**两处取值点**：`SceneRows::publish`（发布边界，镜像/引擎侧看到的
+  版本）和 `Scene::collectRenderCommands` 开头的 `detail::refreshMaterials`（版本动了才清 memo、抬
+  `Version::materials`）。**只改一处就有画面滞后**：只改 publish ⇒ 直连/镜像采集命中旧 memo；只改 collect ⇒
+  镜像永不重发布。批内（`edit_depth_ != 0`）两处都不取，这才是 C18 对材质生效的方式。
+  另：`RenderCommand::materialDescription()` 对手搓命令退回 `material->description()`（与
+  `geometryDescription()` 同一形态），所以手搓命令仍"下一帧生效"，但那条路是宿主的（别在录制中改它）。
+
 ## 6. 证据与门禁
 
 - `test_graphics`（模型无关）、`test_vsg`（后端，含真实设备用例）、`test_gui`、`test_core`。

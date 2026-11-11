@@ -1423,13 +1423,12 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
             d->store->track(command.row, command.geometryDescription());
         }
         d->store->track(command.material);
+        // The material's VALUES travel the same way the geometry's do: a command built from a row carries the values
+        // that row was published with, so the material table is described from a value and never from the live
+        // object - which is what lets the content side edit a material while another thread records (design
+        // graphics-threading.md C18).
+        d->store->track(command.material.get(), command.materialDescription());
         d->store->track(command.program);
-        // THE MATERIAL IS TOUCHED HERE, because this is the only place a live edit can be noticed: the engine
-        // never announces one (the SDK's RenderBackend has no such entry point - see ContentStore::updateMaterial),
-        // and the implementation this backend replaces refreshed each commanded material every frame for the
-        // same reason. The touch compares and only a difference rebuilds the row, so a steady frame pays a
-        // comparison and nothing else.
-        d->store->updateMaterial(command.material.get());
     }
     // The picture's shape is the CAMERA's (see Camera), and the recorder reads it from the same camera when it
     // builds the view block - one number, read by culling and projection alike, so they cannot drift.

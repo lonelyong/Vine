@@ -443,7 +443,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };

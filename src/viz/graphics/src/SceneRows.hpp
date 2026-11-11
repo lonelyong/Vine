@@ -33,6 +33,9 @@ class SceneRows {
     struct Version {
         std::uint64_t epoch{ 0 }; ///< The root subtree's content epoch the rows were built at (node edits).
         std::uint64_t boxes{ 0 }; ///< How many times a re-read box actually moved (byte edits).
+        /// How many times a MATERIAL value moved under these rows (see detail::refreshMaterials): a material edit is
+        /// announced by no node, so it needs its own number - and it is what makes a mid-batch edit invisible here.
+        std::uint64_t materials{ 0 };
 
         /** @brief Returns whether two versions describe the same rows. */
         [[nodiscard]] bool operator==(const Version& other) const noexcept = default;

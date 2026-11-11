@@ -92,19 +92,25 @@ VN_VSG_NS_BEGIN
  */
 [[nodiscard]] FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out);
 
-/** @brief Builds the material table entry for @p material, or for the DEFAULT material when it is null.
+/** @brief Builds the material table entry for @p material from the VALUES @p values, or for the DEFAULT material.
  *
  * @details
- * - It takes a MaterialBase, so an asset and an instance over one are both describable: the block is packed from
- *   `resolved()`, which is exactly the set of values the two kinds agree on (graphics-material.md 2.2).
+ * - It packs the block from the value, so an asset and an instance over one are both describable (the value is the
+ *   resolved set - graphics-material.md 2.2) and, more importantly, describing a row never reads the live material:
+ *   what the frame published is what the row says (see `RenderCommand::materialDescription`).
  *
- * @param material SDK material (or instance) to describe, or nullptr for the engine's default material.
- * @param revision Revision the caller tracks this material's edits at.
+ * @param material SDK material (or instance) to describe; its address is the row's identity. Null only when @p values
+ *                 is null too, which is the engine's default material.
+ * @param values   The values to pack, or null for the default material.
+ * @param revision The value's revision, recorded in the row.
  * @param out      Receives the entry (its block span points into @p storage).
  * @param storage  Caller-owned storage the entry borrows; resized to the block's size and must outlive it.
  * @return None always: an absent material is a describable thing (see the file note), not a miss.
  */
-[[nodiscard]] FactMiss
-buildMaterialFacts(const vn::graphics::MaterialBase* material, std::uint64_t revision, MaterialFacts& out, std::vector<std::byte>& storage);
+[[nodiscard]] FactMiss buildMaterialFacts(const vn::graphics::MaterialBase*           material,
+                                          const vn::graphics::MaterialDescriptionPtr& values,
+                                          std::uint64_t                                revision,
+                                          MaterialFacts&                               out,
+                                          std::vector<std::byte>&                      storage);
 
 VN_VSG_NS_END
