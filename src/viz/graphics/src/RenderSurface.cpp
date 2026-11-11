@@ -232,11 +232,10 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
     if (const raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
         engine->announceAreaSize(this, width, height);
     }
-    // And the WINDOW's own half of it goes to the target, which is the object that owns the swapchain (see
-    // PresentTarget::resize): the surface is what owns its size, and the target is what follows it.
-    if (target_ != nullptr) {
-        target_->resize(width, height);
-    }
+    // The WINDOW's own half of it is NOT told here: that is the swapchain, the one place a frame waits on the device,
+    // and it belongs to the frame (`RenderEngine` hands the recorded size to the target at the frame's head - see
+    // design 2.12). Telling it from this call would be the UI thread writing engine-side state, one call away from
+    // being the wrong thread, and it would resize a surface whose next frame is already laid out on the new number.
     // Handed to the view that presents this surface, and only to it: a pass a host declared has no view to feed,
     // and it states its own rectangle in device pixels. The view RE-DERIVES its geometry from the numbers recorded
     // here (it reads them - see SceneView::surfaceWidth), so there is one size and no copy to keep in step.

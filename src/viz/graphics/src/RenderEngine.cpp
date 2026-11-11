@@ -200,12 +200,9 @@ bool RenderEngine::initialize()
         SurfaceTargetResult why = SurfaceTargetResult::Ok;
         own_target_             = device_->createSurfaceTarget(nullptr, &why);
     }
-    // A size announced before initialization (a host sizes its widget before it has a device)
-    // never reached the target: it is handed over now, so what hangs off the size is laid out at it
-    // instead of the device's default.
-    if (surface_width_ > 0 && surface_height_ > 0 && area_ != nullptr && area_->hasTarget()) {
-        area_->target()->resize(surface_width_, surface_height_);
-    }
+    // A size announced before initialization (a host sizes its widget before it has a device) is NOT replayed here:
+    // the first frame hands it to the target at its head (see frame), the same path every later size takes - one
+    // place that resizes a swapchain instead of two, and nothing to keep in step when the target object changes.
     // NO PRE-FRAME WARM-UP. It used to execute every enabled, non-clearing pass once before the first frame, so
     // a backend could see its whole pass set before presenting - which mattered when a frame arrived as a
     // sequence of calls and content was built lazily inside a drawing call. A frame now arrives as ONE value
@@ -227,6 +224,10 @@ void RenderEngine::shutdown()
     }
     own_target_  = nullptr;
     initialized_ = false;
+    // The target this engine was resizing is gone (the area let go of it, or the device will): a re-initialized engine
+    // asks its device for a new one, whose size is the device's own until the next frame hands it the announced one.
+    applied_width_  = 0;
+    applied_height_ = 0;
 }
 
 raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
@@ -312,6 +313,19 @@ FrameOutcome RenderEngine::frame()
     // for itself, and a device that presents nothing leaves the frame with no target at all - a first-class state
     // (an offline bake, a display-less device), not an error.
     PresentTarget* const present_to = (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
+
+    // THE WINDOW HALF OF THE SIZE FOLLOWS THE FRAME (design 2.12). An announcement is recorded where it happens
+    // (RenderSurface::resize -> announceAreaSize), so the passes above were laid out on a number the frame already
+    // knew; the SWAPCHAIN is told here, at the frame's head, once per changed size - it is the one place a frame waits
+    // on the device, and a host resizing twice between two frames costs one resize instead of two. Doing it from the
+    // announcement instead would be the host's thread writing engine-side state, and it would resize a surface whose
+    // next frame is already laid out on the new number (one shape, two halves, no window for them to disagree in).
+    if (present_to != nullptr && surface_width_ > 0 && surface_height_ > 0
+        && (surface_width_ != applied_width_ || surface_height_ != applied_height_)) {
+        present_to->resize(surface_width_, surface_height_);
+        applied_width_  = surface_width_;
+        applied_height_ = surface_height_;
+    }
 
     // The WHOLE FRAME happens inside this ONE call (see RenderFrameExecutor::executeFrame): the device acquires the
     // presentable image, the record submits, and the frame's tail presents it through the target it names. The engine

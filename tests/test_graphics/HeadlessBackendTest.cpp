@@ -524,13 +524,18 @@ TEST(HeadlessBackendTest, ATargetTheHostMadeReachesTheFrameUnreported)
     EXPECT_EQ(backend->target_creations, creations_before_attach) << "the area held a target: the device was not asked for a second one";
     EXPECT_EQ(backend->adopted_handle, handle) << "the window was a creation input, not a later announcement";
     EXPECT_EQ(target->nativeHandle(), handle);
-    EXPECT_EQ(backend->last_width, 640);
-    EXPECT_EQ(backend->last_height, 480) << "the size announced before initialize reaches the target that can take it";
+    // NOT YET: the swapchain follows the FRAME (design 2.12). An announcement is a number the area records; the frame
+    // it is laid out on is what hands it to the target, at that frame's head.
+    EXPECT_EQ(backend->resize_calls, 0) << "no frame has run: the window half is still the device's own size";
     EXPECT_EQ(engine->diagnosticCount(), 0u);
     EXPECT_TRUE(engine->capabilities().presentation) << "this device CAN present: the value says so";
 
     engine->frame();
+    EXPECT_EQ(backend->resize_calls, 1) << "the first frame hands over the size it was laid out on";
+    EXPECT_EQ(backend->last_width, 640);
+    EXPECT_EQ(backend->last_height, 480);
     engine->frame();
+    EXPECT_EQ(backend->resize_calls, 1) << "and a frame whose size did not change costs no device wait";
     EXPECT_EQ(backend->frames, 2);
     EXPECT_EQ(backend->presents, 2) << "one present per frame, through the area's target";
     ASSERT_EQ(backend->present_targets.size(), 2u);
@@ -557,6 +562,7 @@ TEST(HeadlessBackendTest, AStoppedEngineUnbindsTheAreasTargetFirst)
     ASSERT_TRUE(area->hasTarget()) << "the engine asked its device for the area's window target";
 
     area->resize(320, 240);
+    engine->frame(); // the frame is what hands the size to the window half (design 2.12)
     const int resize_calls_before = backend->resize_calls;
     ASSERT_EQ(resize_calls_before, 1) << "the area feeds the target while it is bound";
 
@@ -564,6 +570,7 @@ TEST(HeadlessBackendTest, AStoppedEngineUnbindsTheAreasTargetFirst)
 
     EXPECT_FALSE(area->hasTarget()) << "the area does not name an object the device may destroy";
     area->resize(640, 480);
+    engine->frame(); // ... and with no target there is nobody to hand it to
     EXPECT_EQ(backend->resize_calls, resize_calls_before) << "and a later resize does not reach the target";
     EXPECT_EQ(engine->surfaceWidth(), 640) << "the frame size is still the area's to announce: the device was never this engine's to take down";
 
@@ -707,6 +714,8 @@ TEST(HeadlessBackendTest, TheDeviceIsAskedForItsOwnTargetOnlyWhenTheAreaHoldsNon
     ASSERT_TRUE(engine->initialize());
     EXPECT_EQ(backend->target_creations, 1) << "the area held a target: the device was not asked for another";
     EXPECT_EQ(backend->nativeHandle(), static_cast<void*>(&second)) << "the attach hands over what the TARGET says now, never a copy of the engine's";
+    // Whatever target the frame ends up naming gets the size the frame was laid out on, at its head (design 2.12).
+    engine->frame();
     EXPECT_EQ(backend->last_width, 800);
     EXPECT_EQ(backend->last_height, 600);
 }

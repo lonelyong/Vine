@@ -149,8 +149,9 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *   window knows it - see SurfaceWindow), the view reads it back (SceneView::resize) rather than holding a
      *   second copy, and a view presented LATER is sized at once from what is remembered.
      * - The same ONE announcement serves the frame: the engine records it in the frame context every pass lays
-     *   itself out on, and the window half (the swapchain, what hangs off the extent) is the TARGET's own call,
-     *   made here - the engine owns no size of its own, the area owns the target (see PresentTarget::resize).
+     *   itself out on, and the WINDOW half (the swapchain, what hangs off the extent) is the frame's own call -
+     *   the engine hands this number to the target at the frame's head, once, and only when it changed (see
+     *   PresentTarget::resize). Nothing here waits on the device: a host may announce a size while a frame runs.
      * - A pass a host declared itself is not fed: it has no view, and such a pass states its own rectangle in
      *   device pixels (see RenderPass::setViewport).
      *

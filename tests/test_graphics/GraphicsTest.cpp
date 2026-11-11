@@ -12735,16 +12735,30 @@ TEST(RenderEngineTest, TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend)
     EXPECT_EQ(engine->surfaceWidth(), 800);
     EXPECT_EQ(engine->surfaceHeight(), 600);
 
+    // The size is recorded by the area and READ by the frame's layout; the WINDOW half is the frame's own call, made
+    // at its head (design 2.12) - so initialize() itself hands nothing over and no frame has run yet.
     ASSERT_TRUE(engine->initialize());
+    EXPECT_EQ(backend->surface_half.resize_calls, 0);
+
+    engine->frame();
     EXPECT_EQ(backend->surface_half.resize_calls, 1);
     EXPECT_EQ(backend->surface_half.last_surface_width, 800);
     EXPECT_EQ(backend->surface_half.last_surface_height, 600);
 
-    // A later resize is forwarded directly (one call per announcement, not two).
+    // A LATER announcement reaches the target at the NEXT frame, and two of them between two frames cost one resize:
+    // the number that travels is the one the frame is laid out on, not a queue of every size a host ever reported.
     area->resize(1024, 768);
+    EXPECT_EQ(backend->surface_half.resize_calls, 1) << "a host may resize while a frame runs: nothing waits on the device";
+    EXPECT_EQ(engine->surfaceWidth(), 1024) << "the layout the next frame reads is already the new number";
+    area->resize(1280, 720);
+    engine->frame();
+    EXPECT_EQ(backend->surface_half.resize_calls, 2) << "one resize for the frame, carrying the size it was built on";
+    EXPECT_EQ(backend->surface_half.last_surface_width, 1280);
+    EXPECT_EQ(backend->surface_half.last_surface_height, 720);
+
+    // And a frame that does not change the size pays nothing: the window half is a device wait, not a per-frame tax.
+    engine->frame();
     EXPECT_EQ(backend->surface_half.resize_calls, 2);
-    EXPECT_EQ(backend->surface_half.last_surface_width, 1024);
-    EXPECT_EQ(backend->surface_half.last_surface_height, 768);
 }
 
 /**

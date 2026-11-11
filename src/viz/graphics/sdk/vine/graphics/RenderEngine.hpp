@@ -1000,6 +1000,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // recorded even before a device exists, because the passes and their targets are built from it.
     int surface_width_                 = 0;
     int surface_height_                = 0;
+    // What the frame's target was LAST told (see RenderEngine::frame's head): the swapchain follows the frame, so a
+    // frame only pays for a resize when the number it was laid out on differs from the one the target already has.
+    // Reset by shutdown(), because the target a re-initialized engine asks for is a new object with the device's own
+    // default size.
+    int applied_width_                 = 0;
+    int applied_height_                = 0;
     // Monotonic content-frame token, announced to every rendered scene each
     // frame (Scene::setContentFrame): the passes of one frame that draw the same
     // scene through the same camera then share one tree walk instead of walking

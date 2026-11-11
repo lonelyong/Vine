@@ -302,8 +302,11 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 - **完成通知是报告，不是回调**（`C10` / `G10`）：present 的结局（上屏 / 丢弃 / 重建后上屏 + 原因）写进那一帧的
   `FramePlan`（帧号、结局、`record_micros`、`RetirementQueue::deviceWaits`），一把锁下发布。引擎线程**从不**回调 UI、
   也从不回头读 UI。要"等第 N 帧上屏"就 `waitForFrame(N)`，要统计就读最近一份报告。
-- **重建只在帧边界**：extent 变了的那一帧**丢弃且不计错**（R9），下一帧按新 extent 构建 —— 内容侧立刻就知道新尺寸
-  （`resize()` 已记录），所以"布局用旧尺寸、交换链用新尺寸"这种错配没有窗口期。
+- **尺寸随帧走，交换链在帧首跟随**（已落地）：`RenderSurface::resize` 只做两件事 —— 记录这个面积自己的尺寸（布局在
+  内容半段读它）、把几何交给 presenting view —— 而**不碰** target；`frame()` 在装配完之后、执行之前，把"这一帧的尺寸"
+  交给 target，且**只在数字变了时**（`applied_width_`/`applied_height_`）。于是：宿主在一次帧中间 resize 也不等设备，
+  两帧之间的多次 resize 只付一次交换链重建，一帧绝不会拿着与自己被布局的尺寸不同的表面。
+  **因此"extent 变了的帧丢弃"这条不用了**：布局与交换链读的是同一个数（R9 只剩"设备拒绝时跳过这一帧而不计错"）。
 - **关闭**（F10）：`stop()` 投"不要再要帧" → 引擎半段跑完手上这一帧（或丢弃）→ 在引擎线程释放 present target、
   会话、设备 → join（有界，超时报错）。析构顺序沿用 N11（线程先于设备与表结束）。UI 此时可以自由销毁自己的窗口，
   因为引擎侧已经没有回头的边。
@@ -443,9 +446,10 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 - **行为**：UI 投 `SurfaceEvent{ bound(handle, display) | extent(w, h) | visible(bool) }`（值）；引擎半段在**帧首**
   应用一次并重建交换链；present 的结局写进该帧的 `FramePlan`；要"这一帧真的上屏了"的调用方 `waitForFrame(id)`。
 - **约束**（C9 / C17）：present 与交换链重建只在引擎线程；UI 不持有交换链句柄，也不写引擎侧任何状态。
-- **要求**（R9 / R16）：重建期间的帧丢弃且不计错；重建后第一帧恢复；`deviceWaits` 与丢弃原因可见；
-  UI 调用不因 present 而阻塞。
-- **验收**（T9）：连续 resize / 重建窗口后画面正确、无崩溃、UI 无阻塞；丢弃计数 > 0 而不报错；重建后一帧即恢复。
+- **要求**（R9 / R16）：重建只在帧首、只随尺寸变化；设备拒绝时跳过这一帧而不计错；`deviceWaits` 与跳过原因可见；
+  UI 调用不因 present 或交换链重建而阻塞。
+- **验收**（T9）：连续 resize / 重建窗口后画面正确、无崩溃、UI 无阻塞；同一尺寸的相邻两帧只付一次重建（用例
+  `RenderEngineTest.TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend`）。
 - **注意**（N10）：Wayland"未映射拿不到 extent"的回退仍在 UI 侧决定（`appfw-render-surface.md` F5）；另有 N15（晚一帧）。
 
 ### 3.1.10 F10 关闭与拆解
@@ -558,7 +562,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | R6 | `fitToScreen` 留在内容侧。 |
 | R7 | 流式写法不新增机制（双 buffer 轮换 或 `edit()`+revision）。 |
 | R8 | UI 调用不阻塞等帧。 |
-| R9 | 重建期间丢帧不计错。 |
+| R9 | 交换链重建只在帧首、只随尺寸变化；设备拒绝时跳过那一帧而不计错。 |
 | R10 | `stop()` 后引擎侧无泄漏。 |
 | R11 | 小场景不并行。 |
 | R12 | 既有用例与无头路径在 `inline` 下不改一行。 |
@@ -822,7 +826,13 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   （同一相机两 pass = 2 次采集 + 1 次复用；静止帧 0 次采集；一次编辑各视图重采一次）、
   `OneCameraCullsWithItsOwnShapeInEveryRectangle`、`SceneViewTest.SetSceneReachesDefaultWindowPassAndSceneAwareManipulator`
   （换 scene 后由引擎的镜像采一次，两个内容自己的采集计数都是 0 —— 这一条同时钉住"帧不再问内容"）。
-- **P3 契约已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
+- **P3 第一步已落（尺寸随帧走，2026-11-11）**：`RenderSurface::resize` 不再写 target（它只记录尺寸 + 交给 presenting
+  view），`RenderEngine::frame()` 在帧首按"数字变了"把布局尺寸交给 target，`initialize()` 的一次性重放随之删除 ——
+  交换链的重建从此只有一条路径、一个写者（设计 §2.12）。验收：
+  `RenderEngineTest.TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend`（未跑帧不重建、第一帧重建一次、
+  同尺寸的下一帧零次、两帧之间两次 resize 只付一次）、`HeadlessBackendTest.ATargetTheHostMadeReachesTheFrameUnreported`、
+  `AStoppedEngineUnbindsTheAreasTargetFirst`、`TheDeviceIsAskedForItsOwnTargetOnlyWhenTheAreaHoldsNone`。
+- **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`
   的写者（今天在 UI 线程直接写引擎侧对象）。顺带把 §5.3 里被引用却一直没定义的 N7–N14 补齐。
