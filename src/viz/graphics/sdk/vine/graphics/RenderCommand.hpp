@@ -5,6 +5,7 @@
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "ContentId.hpp"
 #include "Geometry.hpp"
 #include "Material.hpp"
 #include "RenderState.hpp"
@@ -28,17 +29,19 @@ struct VN_GRAPHICS_API RenderCommand {
     /** Leaf geometry to render. */
     GeometryPtr geometry;
 
-    /** The identity this command mirrors (`RowId`): the address the draw list's row carries.
+    /** The node identity this command mirrors (see Node::id): what a backend keys its facts by.
      *
      * @details
-     * - WHAT IT IS FOR. A render world builds commands from ROWS, and a row may mirror a value producer that has no
-     *   `Geometry` object at all - so the identity a backend keys its facts by must travel on its own, not be inferred
-     *   from @ref geometry. It is the same address the content side names (a node's), which is what makes a lookup
-     *   answer for the right thing (ADR-2026-11-09: caches are keyed by address).
-     * - A hand-built command leaves it null; a recorder then uses @ref geometry's address, which is the identity such a
-     *   caller means (see `.ai/design/graphics-threading.md`).
+     * - WHAT IT IS FOR. A render world builds commands from ROWS, and a row may mirror a node that has no `Geometry`
+     *   object at all - so the identity a backend keys its facts by must travel on its own, not be inferred from
+     *   @ref geometry.
+     * - IT IS A HANDLE, NOT AN ADDRESS. A collected list outlives the node it was built from by design (a frame in
+     *   flight records it), and an address would be reused by whatever object is built next - a lookup would then
+     *   silently answer somebody else's facts. A handle answers "gone" instead (see ContentId.hpp).
+     * - A hand-built command leaves it null; a recorder then falls back to the geometry's own identity, which is the
+     *   thing such a caller means (see `.ai/design/graphics-threading.md`).
      */
-    const void* row{ nullptr };
+    NodeId node{};
 
     /** The geometry's shape as an immutable value: what a backend describes streams from (see Geometry::description).
      *

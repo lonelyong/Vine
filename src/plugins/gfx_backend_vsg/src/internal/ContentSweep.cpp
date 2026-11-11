@@ -6,7 +6,7 @@ SweepOutcome releaseAbandonedContent(ContentStore&             store,
                                      MaterialImages&           images,
                                      core::FrameTimeline&      timeline,
                                      core::RetirementQueue&    retirement,
-                                     std::vector<const void*>& released_materials)
+                                     std::vector<vn::graphics::MaterialId>& released_materials)
 {
     SweepOutcome outcome;
 

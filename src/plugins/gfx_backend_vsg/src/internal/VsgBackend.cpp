@@ -433,7 +433,7 @@ struct VsgBackend::Data {
     std::size_t released_textures{ 0 };
     std::size_t released_streams{ 0 };
     /// Reused by the sweep: the abandoned material identities whose arena slots the storage returns.
-    std::vector<const void*>                abandoned_materials;
+    std::vector<vn::graphics::MaterialId> abandoned_materials;
     std::vector<core::TargetFacts>          facts;         // This frame's target table (borrowed rows).
     std::vector<const vn::graphics::Light*> light_scratch; // Reused by announceLights (no per-call allocation).
     std::vector<InputImages>                input_scratch; // Reused per content pass (see recordContent).
@@ -1411,17 +1411,13 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
         return;
     }
     // What the commands name becomes the store's live content: the IDENTITY and the DESCRIPTION are the values a frame
-    // carries (`RenderCommand::row` / `description`), and the tables must answer for them when the plan is recorded -
-    // including after the host has dropped its own handle (the store owns a share, see its note). A command that still
-    // carries its geometry pins the identity's address through it; a command built from a row names the two separately
-    // and the row's owner is what keeps that address alive (ADR-2026-11-09).
+    // carries (`RenderCommand::node` / `description`), and the tables must answer for them when the plan is recorded -
+    // including after the host has dropped its own handle (the store owns a share, see its note). A command built by
+    // hand carries no node and is named by the geometry's own id, which is the identity such a caller means.
     for (const vn::graphics::RenderCommand& command : commands) {
-        if (command.geometry != nullptr) {
-            d->store->track(command.geometry);
-        }
-        else {
-            d->store->track(command.row, command.geometryDescription());
-        }
+        const vn::graphics::NodeId identity =
+            !command.node.isNull() ? command.node : (command.geometry != nullptr ? command.geometry->id() : vn::graphics::NodeId{});
+        d->store->track(identity, command.geometryDescription());
         d->store->track(command.material);
         // The material's VALUES travel the same way the geometry's do: a command built from a row carries the values
         // that row was published with, so the material table is described from a value and never from the live
@@ -1503,7 +1499,7 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
         const bool released = d->store->releaseMaterial(material, d->clock.timeline(), d->retirement);
         if (released && d->storage != nullptr) {
             // The row's slot goes with it: a released material must not keep memory the host asked to free.
-            (void)d->storage->releaseMaterial(material);
+            (void)d->storage->releaseMaterial(material->id());
         }
         return released;
     }
@@ -1698,7 +1694,7 @@ void VsgBackend::sweepAbandonedContent()
     // THE MATERIAL SLOT FOLLOWS THE ROW: a material nobody holds any more cannot be drawn again, so the arena's
     // slot is nobody's to keep (releaseMaterial is a key lookup, never a dereference - the object may be gone).
     if (d->storage != nullptr) {
-        for (const void* material : d->abandoned_materials) {
+        for (const vn::graphics::MaterialId material : d->abandoned_materials) {
             (void)d->storage->releaseMaterial(material);
         }
     }

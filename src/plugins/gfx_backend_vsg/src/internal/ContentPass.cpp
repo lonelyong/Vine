@@ -1145,7 +1145,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     vn::graphics::VineDrawBlock draw_block;
     packDrawBlock(command, draw_block);
     const BlockStorage::Block         block          = scope_.storage->writeDraw(bytesOf(draw_block));
-    const BlockStorage::MaterialWrite material_write = scope_.storage->writeMaterial(material.entry->material, material.entry->revision, material.entry->block);
+    const BlockStorage::MaterialWrite material_write =
+        scope_.storage->writeMaterial(material.entry->material.as<vn::graphics::MaterialTag>(), material.entry->material.revision, material.entry->block);
     if (!block.valid) {
         reportRefused("the command's draw block", "the frame's block budget is full");
         return false;
@@ -1424,7 +1425,7 @@ void ContentPass::reportMaterialSlots(const MaterialFacts& material)
         // frame, so its own state would repeat the sentence 60 times a second. Without a store (a hand-built
         // scope) there is no memory to claim against and the scope's lifetime is the episode - which is what a
         // unit test wants.
-        if (scope_.store != nullptr && !scope_.store->claimSlotReport(material.material, slot)) {
+        if (scope_.store != nullptr && !scope_.store->claimSlotReport(material.material.as<vn::graphics::MaterialTag>(), slot)) {
             continue;
         }
         const char* const name = materialSlotName(slot);

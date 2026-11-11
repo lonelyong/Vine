@@ -27,9 +27,9 @@ namespace detail
  * - WHO BUILDS THE ROWS. The content's thread does, with `buildRows` (the only code that reads a graph), or any
  *   producer that can fill own facts from a description. That single conversion is the handshake; after it this side
  *   needs no content object at all, apart from the identity it was told to key by.
- * - IDENTITY. A row is addressed by `RowId`, the opaque address it mirrors (ADR-2026-11-09 keys caches by address and
- *   keeps the object alive). A `const Node*` converts to it implicitly, so a content-side caller writes
- *   `world.place(&node, matrix)` without this header naming a content type in any signature.
+ * - IDENTITY. A row is addressed by `RowId` - the node id it mirrors (see Node::id), not the object's address: a row
+ *   can outlive the node it was built from, and a handle the table still names answers "gone" instead of resolving
+ *   to whatever object was built at the same address later.
  * - WHAT IT IS NOT. Not a scene, not a document and not a second graph: no parent walks, no names, no selection, no
  *   behaviours. It answers one question, with the passes the content side uses too, so the two cannot drift.
  * - WHAT STILL NEEDS THE CONTENT'S THREAD. Two steps, both named: the handshake (`buildRows`), and the box refresh a
@@ -41,8 +41,8 @@ namespace detail
  */
 class RenderWorld {
   public:
-    /// The identity a row mirrors: opaque on this side, and the same address the content object has.
-    using RowId = const void*;
+    /// The identity a row mirrors: the node's handle, never an address (see ContentId.hpp).
+    using RowId = NodeId;
 
   public:
     /** @brief Takes ownership of @p rows (the handshake; the values came from the content's thread). */

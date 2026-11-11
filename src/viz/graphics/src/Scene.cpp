@@ -396,6 +396,8 @@ const detail::SceneBake& Scene::ensureRows() const
         }
         content_bake_->rows.clear();
         content_bake_->nodes.clear();
+        content_bake_->node_epochs.clear();
+        content_bake_->snapshot_cache.reset();
         return *content_bake_;
     }
 
@@ -404,10 +406,110 @@ const detail::SceneBake& Scene::ensureRows() const
     // recomputing every matrix and every fold, which is what a collection used to cost per view
     // (measured: SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera). It is a named step because a collection
     // is not the only reader of the rows any more: the engine side's mirror is published from them (see SceneRows).
-    const std::uint64_t epoch = root_->contentEpoch();
+    const std::uint64_t epoch               = root_->contentEpoch();
+    bool                refreshed_in_place = false;
     if (content_bake_ == nullptr || bake_epoch_ != epoch) {
-        content_bake_ = std::make_unique<detail::SceneBake>();
-        detail::buildRows(*root_, *content_bake_, opacity_);
+        // THE INCREMENTAL PATH. A node edit bumps its own epoch and every ancestor's, so the rows whose epochs moved
+        // are the edited rows plus their ancestors. When the structure did not change and every edited row's own
+        // facts are still "hot" (placement / opacity / layers / order / view placement), re-read those rows and
+        // re-fold only their topmost subtrees. Anything else - a child insert / remove, a state or geometry change,
+        // a material whose values moved - falls back to the full build; the fast path must never guess.
+        if (content_bake_ != nullptr && !content_bake_->rows.empty() &&
+            content_bake_->rows[0].identity == root_->id() &&
+            content_bake_->nodes.size() == content_bake_->rows.size() &&
+            content_bake_->node_epochs.size() == content_bake_->rows.size()) {
+            std::vector<std::uint32_t> changed;
+            bool                       structure_ok = true;
+            for (std::uint32_t index = 0; index < content_bake_->rows.size(); ++index) {
+                const detail::Row& row  = content_bake_->rows[index];
+                const Node*        node = content_bake_->nodes[index];
+                if (node == nullptr || node->id() != row.identity || !node->isVisible()) {
+                    structure_ok = false;
+                    break;
+                }
+                const Node* expected_parent =
+                    row.parent == detail::SceneBake::kNoParent ? nullptr : content_bake_->nodes[row.parent];
+                if (node->parent() != expected_parent) {
+                    structure_ok = false;
+                    break;
+                }
+                if (row.child_count != 0U) {
+                    const auto* group = obj_cast<Group>(node);
+                    if (group == nullptr || group->children().size() != row.child_count) {
+                        structure_ok = false;
+                        break;
+                    }
+                    // The row table's walk order IS the child order: checking the identities here catches a reorder or
+                    // a same-count child swap, which no child count can see (and which the hot path must not accept).
+                    std::uint32_t cursor = index + 1U;
+                    for (const auto& child : group->children()) {
+                        if (!child->isVisible()) {
+                            continue; // an invisible child states no row (see bakeSubtree)
+                        }
+                        if (cursor >= row.end || content_bake_->nodes[cursor] != child.get()) {
+                            structure_ok = false;
+                            break;
+                        }
+                        cursor = content_bake_->rows[cursor].end;
+                    }
+                    if (!structure_ok || cursor != row.end) {
+                        structure_ok = false;
+                        break;
+                    }
+                }
+                if (node->contentEpoch() != content_bake_->node_epochs[index]) {
+                    changed.push_back(index);
+                }
+            }
+
+            if (structure_ok && !changed.empty()) {
+                std::vector<std::uint32_t> hot;
+                bool                       compatible = true;
+                for (const std::uint32_t index : changed) {
+                    const detail::RowRefresh answer =
+                        detail::refreshRowFacts(*content_bake_->nodes[index], *content_bake_, index);
+                    if (answer == detail::RowRefresh::Incompatible) {
+                        compatible = false;
+                        break;
+                    }
+                    if (answer == detail::RowRefresh::HotChange) {
+                        hot.push_back(index);
+                    }
+                }
+                if (compatible && !hot.empty()) {
+                    for (const std::uint32_t index : hot) {
+                        bool has_hot_ancestor = false;
+                        for (std::uint32_t above = content_bake_->rows[index].parent;
+                             above != detail::SceneBake::kNoParent;
+                             above = content_bake_->rows[above].parent) {
+                            if (std::find(hot.begin(), hot.end(), above) != hot.end()) {
+                                has_hot_ancestor = true;
+                                break;
+                            }
+                        }
+                        if (!has_hot_ancestor) {
+                            (void)detail::resolveSubtree(*content_bake_, index);
+                        }
+                    }
+                    for (const std::uint32_t index : changed) {
+                        content_bake_->node_epochs[index] = content_bake_->nodes[index]->contentEpoch();
+                    }
+                    refreshed_in_place = true;
+                }
+            }
+        }
+
+        if (!refreshed_in_place) {
+            std::shared_ptr<const detail::SceneSnapshot> previous_snapshot =
+                content_bake_ != nullptr ? std::move(content_bake_->snapshot_cache) : nullptr;
+            content_bake_                 = std::make_unique<detail::SceneBake>();
+            content_bake_->snapshot_cache = std::move(previous_snapshot);
+            detail::buildRows(*root_, *content_bake_, opacity_);
+            content_bake_->node_epochs.resize(content_bake_->rows.size());
+            for (std::size_t index = 0; index < content_bake_->rows.size(); ++index) {
+                content_bake_->node_epochs[index] = content_bake_->nodes[index]->contentEpoch();
+            }
+        }
         bake_epoch_ = epoch;
         ++content_bake_count_;
     }

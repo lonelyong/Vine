@@ -39,7 +39,7 @@ std::uint64_t MaterialArena::offsetOf(std::uint32_t slot, std::uint32_t copy) co
     return (static_cast<std::uint64_t>(slot) * copies + copy) * layout_.block_bytes;
 }
 
-MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t revision)
+MaterialArena::Write MaterialArena::note(vn::graphics::MaterialId material, std::uint64_t revision)
 {
     const std::uint32_t copy = currentCopy();
 
@@ -92,7 +92,7 @@ MaterialArena::Write MaterialArena::note(const void* material, std::uint64_t rev
     return { WriteKind::Allocated, slot, copy, layout_.block_bytes };
 }
 
-bool MaterialArena::release(const void* material) noexcept
+bool MaterialArena::release(vn::graphics::MaterialId material) noexcept
 {
     const auto found = entries_.find(material);
     if (found == entries_.end()) {

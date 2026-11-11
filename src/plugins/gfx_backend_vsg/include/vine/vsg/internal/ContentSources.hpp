@@ -99,17 +99,14 @@ VN_VSG_NS_BEGIN
  *   resolved set - graphics-material.md 2.2) and, more importantly, describing a row never reads the live material:
  *   what the frame published is what the row says (see `RenderCommand::materialDescription`).
  *
- * @param material SDK material (or instance) to describe; its address is the row's identity. Null only when @p values
- *                 is null too, which is the engine's default material.
+ * @param material The identity AND revision the row answers for; a null id is the engine's default material.
  * @param values   The values to pack, or null for the default material.
- * @param revision The value's revision, recorded in the row.
  * @param out      Receives the entry (its block span points into @p storage).
  * @param storage  Caller-owned storage the entry borrows; resized to the block's size and must outlive it.
  * @return None always: an absent material is a describable thing (see the file note), not a miss.
  */
-[[nodiscard]] FactMiss buildMaterialFacts(const vn::graphics::MaterialBase*           material,
+[[nodiscard]] FactMiss buildMaterialFacts(vn::graphics::ContentRef                        material,
                                           const vn::graphics::MaterialDescriptionPtr& values,
-                                          std::uint64_t                                revision,
                                           MaterialFacts&                               out,
                                           std::vector<std::byte>&                      storage);
 

@@ -50,6 +50,7 @@
 #include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "DevicePhases.hpp"
+#include "TestMaterialFacts.hpp"
 #include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
@@ -233,7 +234,7 @@ struct Stack {
         storage->beginFrame();
         const auto view     = storage->writeView(viewBlock());
         const auto block    = storage->writeDraw(drawBlock(z, translate_x, green, red));
-        const auto material = storage->writeMaterial(&material_identity, 1U, materialBlock());
+        const auto material = storage->writeMaterial(vn::test::materialId(1), 1U, materialBlock());
         if (!view.valid || !block.valid) {
             return {};
         }

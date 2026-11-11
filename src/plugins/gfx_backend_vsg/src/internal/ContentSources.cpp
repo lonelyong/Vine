@@ -211,9 +211,8 @@ namespace
 
 } // namespace
 
-FactMiss buildMaterialFacts(const vn::graphics::MaterialBase*                   material,
+FactMiss buildMaterialFacts(vn::graphics::ContentRef                        material,
                             const vn::graphics::MaterialDescriptionPtr& values,
-                            std::uint64_t                                revision,
                             MaterialFacts&                               out,
                             std::vector<std::byte>&                      storage)
 {
@@ -231,8 +230,7 @@ FactMiss buildMaterialFacts(const vn::graphics::MaterialBase*                   
     std::memcpy(storage.data(), &block, sizeof(block));
 
     out          = MaterialFacts{};
-    out.material = material; // null for the default material: an identity that content without one matches
-    out.revision = revision;
+    out.material = material; // a null id for the default material: an identity that content without one matches
     out.block    = storage;
     // AFTER the entry is reset: the texture SET is a fact of the material like the block is, and any present
     // slot is what decides whether the drawable takes the `VN_TEXTURED` variant of its program

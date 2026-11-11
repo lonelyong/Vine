@@ -58,12 +58,6 @@ struct ContentStore::Data {
         std::vector<std::byte> block; // What the row's `MaterialFacts::block` points at.
     };
 
-    /// A replaced material's value and its storage, kept together for the parking window (see the file note).
-    struct RetiredMaterial {
-        MaterialFacts                    facts{};
-        std::unique_ptr<MaterialStorage> storage{};
-    };
-
     /// A program row's per-row storage: none. The type is here because the three tables move their rows the
     /// same way, and an EMPTY slot (a null pointer) costs nothing to carry beside the other two.
     struct NoStorage {};
@@ -90,19 +84,6 @@ struct ContentStore::Data {
             rows_.push_back(row);
             storage_.push_back(std::move(cell));
             refresh();
-        }
-
-        /// @brief Replaces one row and its storage, giving the replaced storage back to the caller.
-        ///
-        /// The storage comes back because a row's spans point INTO it: the material table parks the value it
-        /// replaced, and that parked row has to keep pointing at the bytes it described (see the file note).
-        [[nodiscard]] std::unique_ptr<Storage> replace(std::size_t index, const Row& row, std::unique_ptr<Storage> cell)
-        {
-            std::unique_ptr<Storage> replaced = std::move(storage_[index]);
-            rows_[index]                      = row;
-            storage_[index]                   = std::move(cell);
-            refresh();
-            return replaced;
         }
 
         /// @brief Erases every row @p drop names, running @p before_erase on each one first.
@@ -275,9 +256,9 @@ struct ContentStore::Data {
     // The live set: the identities the host tracked, each holding the SHAPE it answers with. The description is held
     // so the value a row was built from cannot die under the table, and the identity is the address the content side
     // names (a node's), so an edit re-uses the entry instead of creating a second one.
-    std::unordered_map<const void*, LiveGeometry>                       geometries;
+    std::unordered_map<vn::graphics::NodeId, LiveGeometry>              geometries;
     std::unordered_map<const vn::graphics::ShaderProgram*, LiveProgram> programs;
-    std::unordered_map<const vn::graphics::MaterialBase*, LiveMaterial> materials;
+    std::unordered_map<vn::graphics::MaterialId, LiveMaterial>          materials;
 
     /** @brief Cancels a pending release because the object is being used again.
      *
@@ -302,8 +283,6 @@ struct ContentStore::Data {
     /// ProgramFacts::generation - the compiled halves key on it).
     std::uint64_t descriptions{ 0 };
     std::size_t   retained{ 0 };
-    /// Cells a refused park left: no parking window means "keep", never "free early".
-    std::vector<std::shared_ptr<void>> kept;
 
     /**
      * @brief Gets the tables as the lookups see them: the rows, and the row order each is searched by.
@@ -330,13 +309,13 @@ struct ContentStore::Data {
     }
 
     /** @brief Removes the geometry rows of one identity at one revision (a superseded shape). */
-    void eraseGeometryRows(const void* identity, std::uint64_t revision) noexcept
+    void eraseGeometryRows(vn::graphics::NodeId identity, std::uint64_t revision) noexcept
     {
         geometry.eraseIf([identity, revision](const GeometryFacts& row) { return row.geometry == identity && row.revision == revision; });
     }
 
     /** @brief Removes every geometry row of one identity (an abandoned object's rows). */
-    void eraseGeometryOf(const void* identity) noexcept
+    void eraseGeometryOf(vn::graphics::NodeId identity) noexcept
     {
         geometry.eraseIf([identity](const GeometryFacts& row) { return row.geometry == identity; });
     }
@@ -353,10 +332,18 @@ struct ContentStore::Data {
         program.eraseIf([identity](const ProgramFacts& row) { return row.program == identity; });
     }
 
-    /** @brief Removes every material row of one identity (an abandoned object's rows). */
-    void eraseMaterialOf(const void* identity) noexcept
+    /** @brief Removes the material rows of one identity at one revision (a superseded value). */
+    void eraseMaterialRows(vn::graphics::MaterialId identity, std::uint64_t revision) noexcept
     {
-        material.eraseIf([identity](const MaterialFacts& row) { return row.material == identity; });
+        material.eraseIf([identity, revision](const MaterialFacts& row) {
+            return row.material.as<vn::graphics::MaterialTag>() == identity && row.material.revision == revision;
+        });
+    }
+
+    /** @brief Removes every material row of one identity (an abandoned object's rows). */
+    void eraseMaterialOf(vn::graphics::MaterialId identity) noexcept
+    {
+        material.eraseIf([identity](const MaterialFacts& row) { return row.material.as<vn::graphics::MaterialTag>() == identity; });
     }
 
     /** @brief Gets the row that answers for a geometry right now (the one built at its live revision).
@@ -377,9 +364,9 @@ struct ContentStore::Data {
      * EXISTS holds a share (LiveGeometry::object), and that share is the license to touch the shape; a
      * row-less address answers nullptr without being read.
      */
-    [[nodiscard]] const GeometryFacts* liveGeometry(const void* identity) const noexcept
+    [[nodiscard]] const GeometryFacts* liveGeometry(vn::graphics::NodeId identity) const noexcept
     {
-        if (identity == nullptr) {
+        if (identity.isNull()) {
             return nullptr;
         }
         const auto entry = geometries.find(identity);
@@ -389,10 +376,14 @@ struct ContentStore::Data {
         return findGeometry(view(), identity, entry->second.shape->revision()).entry;
     }
 
-    /** @brief Gets the row that answers for a material right now (identity is the whole key). */
-    [[nodiscard]] const MaterialFacts* liveMaterial(const void* identity) const noexcept
+    /** @brief Gets the row that answers for a material right now (the one built at its live revision). */
+    [[nodiscard]] const MaterialFacts* liveMaterial(vn::graphics::MaterialId identity) const noexcept
     {
-        return findMaterial(view(), identity).entry;
+        const auto entry = materials.find(identity);
+        if (entry == materials.end() || !entry->second.described) {
+            return nullptr;
+        }
+        return findMaterial(view(), vn::graphics::ContentRef{ identity.handle(), entry->second.described_revision }).entry;
     }
 };
 
@@ -402,9 +393,9 @@ ContentStore::ContentStore()
 
 ContentStore::~ContentStore() = default;
 
-void ContentStore::track(const void* identity, const vn::graphics::GeometryDescriptionPtr& description)
+void ContentStore::track(vn::graphics::NodeId identity, const vn::graphics::GeometryDescriptionPtr& description)
 {
-    if (identity == nullptr || description == nullptr) {
+    if (identity.isNull() || description == nullptr) {
         return;
     }
     const auto [entry, inserted] = d->geometries.try_emplace(identity);
@@ -425,7 +416,7 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Geometry>& geomet
     // ONE CALL, TWO FACTS: the object reserves the address the rows are keyed by (see LiveGeometry::object), and its
     // current shape is what a row is built from. This is the content side's door; a frame with no object names the two
     // separately (see the overload above).
-    const auto [entry, inserted] = d->geometries.try_emplace(geometry.get());
+    const auto [entry, inserted] = d->geometries.try_emplace(geometry->id());
     (void)inserted;
     Data::LiveGeometry& live = entry->second;
     Data::markUsed(live);
@@ -452,7 +443,7 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& ma
     if (material == nullptr) {
         return;
     }
-    const auto [entry, inserted] = d->materials.try_emplace(material.get());
+    const auto [entry, inserted] = d->materials.try_emplace(material->id());
     if (inserted) {
         entry->second.object = material;
     }
@@ -466,7 +457,7 @@ void ContentStore::track(const vn::graphics::MaterialBase* identity, const vn::g
     if (identity == nullptr || values == nullptr) {
         return;
     }
-    const auto entry = d->materials.find(identity);
+    const auto entry = d->materials.find(identity->id());
     if (entry == d->materials.end()) {
         // Untracked: nothing draws with it, so nothing can be asked about it.
         // Unlike a geometry value (which a mirrored row may name alone), a
@@ -488,9 +479,9 @@ void ContentStore::track(const vn::graphics::MaterialBase* identity, const vn::g
     live.values = values;
 }
 
-bool ContentStore::claimSlotReport(const void* identity, std::size_t slot) noexcept
+bool ContentStore::claimSlotReport(vn::graphics::MaterialId identity, std::size_t slot) noexcept
 {
-    const auto entry = d->materials.find(static_cast<const vn::graphics::MaterialBase*>(identity));
+    const auto entry = d->materials.find(identity);
     if (entry == d->materials.end() || slot >= vn::graphics::kTextureSlotCount) {
         // Nothing to remember against (an untracked material, or no slot): say "report it", because a caller
         // that says nothing at all would hide a real problem; the recorder's own per-pass state is what keeps
@@ -517,11 +508,11 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
             }
 
             for (const core::CompiledCommand& command : draw.commands) {
-                const void* identity = command.geometry;
-                const auto* material = static_cast<const vn::graphics::MaterialBase*>(command.material);
+                const vn::graphics::NodeId identity = command.geometry;
+                const vn::graphics::MaterialId material = command.material.as<vn::graphics::MaterialTag>();
 
                 ensureGeometry(identity, timeline, retirement);
-                ensureMaterial(material, timeline, retirement);
+                ensureMaterial(command.material, timeline, retirement);
 
                 const auto* program = static_cast<const vn::graphics::ShaderProgram*>(command.program.program);
                 if (program == nullptr) {
@@ -557,9 +548,9 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     return d->facts;
 }
 
-void ContentStore::ensureGeometry(const void* identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+void ContentStore::ensureGeometry(vn::graphics::NodeId identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
-    if (identity == nullptr) {
+    if (identity.isNull()) {
         return;
     }
     const auto entry = d->geometries.find(identity);
@@ -612,16 +603,17 @@ void ContentStore::ensureGeometry(const void* identity, core::FrameTimeline& tim
     ++d->builds;
 }
 
-void ContentStore::ensureMaterial(const vn::graphics::MaterialBase* material, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+void ContentStore::ensureMaterial(vn::graphics::ContentRef material, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
-    auto entry = d->materials.find(material);
+    const vn::graphics::MaterialId identity = material.as<vn::graphics::MaterialTag>();
+    auto                          entry    = d->materials.find(identity);
     if (entry == d->materials.end()) {
-        if (material != nullptr) {
+        if (!identity.isNull()) {
             return; // untracked (see ensureGeometry)
         }
         // The default material is an entry like any other (see api/ContentSources) and needs no tracking:
         // content without a material can be described at any time.
-        entry = d->materials.try_emplace(nullptr).first;
+        entry = d->materials.try_emplace(vn::graphics::MaterialId{}).first;
     }
 
     Data::LiveMaterial& live = entry->second;
@@ -631,51 +623,42 @@ void ContentStore::ensureMaterial(const vn::graphics::MaterialBase* material, co
     // built by hand) is answered from the object's own cache - the same door every hand-built command uses, and the
     // reason that command is the host's to keep still.
     vn::graphics::MaterialDescriptionPtr values = live.values;
-    if (values == nullptr && material != nullptr) {
-        values = material->description();
+    if (values == nullptr && live.object != nullptr) {
+        values = live.object->description();
     }
     const std::uint64_t revision = values != nullptr ? values->revision() : 0;
     if (live.described && live.described_revision == revision) {
         return; // the steady frame: nothing to build, nothing to park
     }
 
-    auto           storage = std::make_unique<Data::MaterialStorage>();
-    MaterialFacts  fresh;
-    const FactMiss miss     = buildMaterialFacts(material, values, revision, fresh, storage->block);
+    if (live.described) {
+        // The value moved: the rows the table answers for the old revision stay answerable until the frames that may
+        // still record them are past (the same rule the geometry table follows), and then leave.
+        const std::uint64_t       retired = live.described_revision;
+        const std::weak_ptr<Data> weak    = d;
+        const bool                parked  = retirement.retire(timeline, [weak, identity, retired]() {
+            if (const std::shared_ptr<Data> data = weak.lock()) {
+                data->eraseMaterialRows(identity, retired);
+            }
+        });
+        if (!parked) {
+            ++d->retained; // no window: the rows are kept, which costs memory and never correctness
+        }
+    }
+
+    auto          storage = std::make_unique<Data::MaterialStorage>();
+    MaterialFacts fresh;
+    const FactMiss miss = buildMaterialFacts(vn::graphics::ContentRef{ identity.handle(), revision }, values, fresh, storage->block);
     live.described          = true;
     live.described_revision = revision;
     // A fresh description starts a fresh episode for the material's slot reports (see claimSlotReport).
-    live.slots_reported     = 0U;
+    live.slots_reported = 0U;
     if (miss != FactMiss::None) {
         return;
     }
 
-    // The material's lookup is by identity alone, so the table has to answer "the material now": the row is
-    // REPLACED, and only the value it had is parked (see the file note). WHICH row is the same question the
-    // recording asks, so it is asked the same way - through the lookup that owns the rule.
-    const MaterialFacts* const live_row = d->liveMaterial(material);
-    if (live_row == nullptr) {
-        d->material.append(fresh, std::move(storage));
-        ++d->builds;
-        return;
-    }
-    const std::size_t row = static_cast<std::size_t>(live_row - d->material.rows().data());
-
-    // The value being replaced goes on living in the parked cell: the row's block span points into the
-    // storage, so the storage travels WITH the value rather than being overwritten where it lies.
-    const std::shared_ptr<Data::RetiredMaterial> cell = std::make_shared<Data::RetiredMaterial>();
-    cell->facts                                       = *live_row;
-    cell->storage                                     = d->material.replace(row, fresh, std::move(storage));
+    d->material.append(fresh, std::move(storage));
     ++d->builds;
-
-    const bool parked = retirement.retire(timeline, [cell]() { (void)cell; });
-    if (!parked) {
-        // The value stays reachable for the session: `kept` owns it, so a recorded frame that still points
-        // at the old block bytes never dangles.
-        const std::shared_ptr<void> held = cell;
-        d->kept.push_back(held);
-        ++d->retained;
-    }
 }
 
 void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program,
@@ -740,7 +723,7 @@ void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program,
     ++d->builds;
 }
 
-std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement, std::vector<const void*>& released_materials)
+std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement, std::vector<vn::graphics::MaterialId>& released_materials)
 {
     const std::weak_ptr<Data> weak     = d;
     std::size_t               released = 0U;
@@ -764,10 +747,10 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
             ++it;
             continue;
         }
-        const void* const                          identity    = it->first;
-        const vn::graphics::GeometryDescriptionPtr held        = it->second.shape;
-        const vn::intrusive_ptr<vn::graphics::Geometry> object_held = it->second.object;
-        const bool                                 parked      = retirement.retire(timeline, [weak, identity, held, object_held]() {
+        const vn::graphics::NodeId                       identity    = it->first;
+        const vn::graphics::GeometryDescriptionPtr       held        = it->second.shape;
+        const vn::intrusive_ptr<vn::graphics::Geometry>  object_held = it->second.object;
+        const bool                                       parked      = retirement.retire(timeline, [weak, identity, held, object_held]() {
             (void)held;        // the address stays reserved until this runs, and dies with the rows it guards
             (void)object_held; // and so does the object that names it
             if (const std::shared_ptr<Data> data = weak.lock()) {
@@ -775,7 +758,7 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
             }
         });
         if (!parked) {
-            ++d->retained; // no window yet: keep the description, its rows and its address; retry on a later frame
+            ++d->retained; // no window yet: keep the description and its rows; retry on a later frame
             ++it;
             continue;
         }
@@ -806,7 +789,7 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
     }
 
     for (auto it = d->materials.begin(); it != d->materials.end();) {
-        if (it->first == nullptr) {
+        if (it->first.isNull()) {
             ++it; // the default material is not an object anyone can abandon
             continue;
         }
@@ -814,7 +797,7 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
             ++it;
             continue;
         }
-        const void* const                                   identity = it->first;
+        const vn::graphics::MaterialId                      identity = it->first;
         const vn::intrusive_ptr<vn::graphics::MaterialBase> held     = it->second.object;
         const bool                                          parked   = retirement.retire(timeline, [weak, identity, held]() {
             (void)held;
@@ -837,9 +820,9 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
     return released;
 }
 
-bool ContentStore::releaseGeometry(const void* identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+bool ContentStore::releaseGeometry(vn::graphics::NodeId identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
-    if (identity == nullptr) {
+    if (identity.isNull()) {
         return false;
     }
     const auto entry = d->geometries.find(identity);
@@ -854,13 +837,13 @@ bool ContentStore::releaseGeometry(const void* identity, core::FrameTimeline& ti
     const std::uint64_t                        token  = ++live.release_token;
     live.release_requested                             = true;
     const std::weak_ptr<Data>                  weak   = d;
-    // The address is what the rows are keyed by, so it must stay reserved until the park runs (see
+    // The id is what the rows are keyed by, so it must stay reserved until the park runs (see
     // releaseAbandoned): the lambda owns the shape and drops it together with the rows it erases.
     const vn::graphics::GeometryDescriptionPtr held   = live.shape;
     const vn::intrusive_ptr<vn::graphics::Geometry> object_held = live.object;
     const bool                                 parked = retirement.retire(timeline, [weak, identity, token, held, object_held]() {
         (void)held;
-        (void)object_held; // the address stays reserved until this runs, and dies with the rows it guards
+        (void)object_held; // both shares live until this runs, and die with the rows they guard
         const std::shared_ptr<Data> data = weak.lock();
         if (data == nullptr) {
             return;
@@ -884,7 +867,10 @@ bool ContentStore::releaseGeometry(const void* identity, core::FrameTimeline& ti
 
 bool ContentStore::releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
-    return releaseGeometry(static_cast<const void*>(geometry), timeline, retirement);
+    if (geometry == nullptr) {
+        return false;
+    }
+    return releaseGeometry(geometry->id(), timeline, retirement);
 }
 
 bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
@@ -932,7 +918,8 @@ bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase>
     if (material == nullptr) {
         return false;
     }
-    const auto entry = d->materials.find(material);
+    const vn::graphics::MaterialId identity = material->id();
+    const auto                     entry    = d->materials.find(identity);
     if (entry == d->materials.end()) {
         return true;
     }
@@ -944,20 +931,20 @@ bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase>
     const std::uint64_t token                                  = ++live.release_token;
     live.release_requested                                     = true;
     const std::weak_ptr<Data> weak                             = d;
-    // The address must stay reserved until the rows keyed by it are erased (see releaseAbandoned).
+    // The id must stay reserved until the rows keyed by it are erased (see releaseAbandoned).
     const vn::intrusive_ptr<vn::graphics::MaterialBase> held   = live.object;
-    const bool                                          parked = retirement.retire(timeline, [weak, material, token, held]() {
+    const bool                                          parked = retirement.retire(timeline, [weak, identity, token, held]() {
         (void)held;
         const std::shared_ptr<Data> data = weak.lock();
         if (data == nullptr) {
             return;
         }
-        const auto found = data->materials.find(material);
+        const auto found = data->materials.find(identity);
         if (found == data->materials.end() || !found->second.release_requested || found->second.release_token != token) {
             return;
         }
         data->materials.erase(found);
-        data->eraseMaterialOf(material);
+        data->eraseMaterialOf(identity);
     });
     if (!parked) {
         live.release_requested = false;
@@ -977,7 +964,6 @@ void ContentStore::clear()
     d->material.clear();
     d->facts    = ContentFacts{};
     d->retained = 0U;
-    d->kept.clear();
 }
 
 std::size_t ContentStore::geometryEntries() const noexcept
@@ -1000,7 +986,7 @@ std::size_t ContentStore::materialCount() const noexcept
     // The default material (a null identity) is not an object the host holds: it is the fill-in for a command
     // that names none, and it does not get an arena slot of its own until it is noted like any other.
     const std::size_t all = d->materials.size();
-    return (all != 0U && d->materials.find(nullptr) != d->materials.end()) ? all - 1U : all;
+    return (all != 0U && d->materials.find(vn::graphics::MaterialId{}) != d->materials.end()) ? all - 1U : all;
 }
 
 std::uint64_t ContentStore::builds() const noexcept

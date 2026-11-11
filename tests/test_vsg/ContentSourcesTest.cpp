@@ -201,10 +201,11 @@ TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
 
     MaterialFacts          facts;
     std::vector<std::byte> storage;
-    ASSERT_EQ(buildMaterialFacts(&material, material.description(), 9U, facts, storage), FactMiss::None);
+    const vn::graphics::ContentRef identity{ material.id().handle(), 9U };
+    ASSERT_EQ(buildMaterialFacts(identity, material.description(), facts, storage), FactMiss::None);
 
-    EXPECT_EQ(facts.material, &material);
-    EXPECT_EQ(facts.revision, 9U);
+    EXPECT_EQ(facts.material, identity);
+    EXPECT_EQ(facts.material.revision, 9U);
     EXPECT_EQ(facts.block.size(), sizeof(vn::graphics::VineMaterialBlock));
 
     vn::graphics::VineMaterialBlock block;
@@ -234,11 +235,11 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
 {
     MaterialFacts          facts;
     std::vector<std::byte> storage;
-    ASSERT_EQ(buildMaterialFacts(nullptr, nullptr, 0U, facts, storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(vn::graphics::ContentRef{}, nullptr, facts, storage), FactMiss::None);
 
     // The entry's identity is null, which is what content without a material looks up - and the bytes are the
     // ABI's own defaults (the existing implementation hands the same block to a drawable that names none).
-    EXPECT_EQ(facts.material, nullptr);
+    EXPECT_TRUE(facts.material.isNull());
     EXPECT_EQ(facts.block.size(), sizeof(vn::graphics::VineMaterialBlock));
 
     vn::graphics::VineMaterialBlock block{};
@@ -257,7 +258,7 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     // Building the same entry twice gives the same MEMBERS (the table's identity for it is the pair below).
     std::vector<std::byte> again_storage;
     MaterialFacts          again;
-    ASSERT_EQ(buildMaterialFacts(nullptr, nullptr, 0U, again, again_storage), FactMiss::None);
+    ASSERT_EQ(buildMaterialFacts(vn::graphics::ContentRef{}, nullptr, again, again_storage), FactMiss::None);
     vn::graphics::VineMaterialBlock again_block{};
     std::memcpy(&again_block, again.block.data(), sizeof(again_block));
     EXPECT_TRUE(again_block == block);
@@ -266,14 +267,14 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     const MaterialFacts entries[] = { facts };
     ContentFacts        table;
     table.materials  = entries;
-    const auto found = findMaterial(table, nullptr);
+    const auto found = findMaterial(table, vn::graphics::ContentRef{});
     ASSERT_TRUE(found.found());
-    EXPECT_EQ(found.entry->material, nullptr);
+    EXPECT_TRUE(found.entry->material.isNull());
 
     // ...and a table that does not says Unknown, leaving the decision where it belongs.
-    MaterialFacts       without_default{ &facts, 0U, storage };
+    MaterialFacts       without_default{ vn::graphics::ContentRef{ vn::graphics::Handle::make(9U, 1U, 0U), 0U }, storage };
     const MaterialFacts other[] = { without_default };
     ContentFacts        table_without;
     table_without.materials = other;
-    EXPECT_EQ(findMaterial(table_without, nullptr).miss, FactMiss::Unknown);
+    EXPECT_EQ(findMaterial(table_without, vn::graphics::ContentRef{}).miss, FactMiss::Unknown);
 }

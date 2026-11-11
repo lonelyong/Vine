@@ -24,6 +24,7 @@
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
+#include "TestMaterialFacts.hpp"
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -42,6 +43,7 @@ using vn::graphics::backend::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::vsg::buildGeometryFacts;
 using vn::vsg::buildMaterialFacts;
+using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
 using vn::vsg::buildProgramFacts;
 using vn::vsg::ChannelFacts;
 using vn::vsg::ContentFacts;
@@ -162,7 +164,7 @@ CompiledPass passWith(std::span<const CompiledDraw> draws, std::uint32_t color_a
 }
 
 /// @brief A content command over @p geometry, @p program and @p material.
-CompiledCommand commandOf(const void* geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, const void* material)
+CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
 {
     CompiledCommand out;
     out.geometry          = geometry;
@@ -170,6 +172,26 @@ CompiledCommand commandOf(const void* geometry, std::uint64_t geometry_revision,
     out.program           = ProgramRef{ program, program_revision };
     out.material          = material;
     return out;
+}
+
+/** @brief The same command named by the OBJECT a test holds: a plan carries a handle, so the object converts to its id. */
+CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
+{
+    return commandOf(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, program_revision, material);
+}
+
+/** @brief The same command naming a material by the OBJECT a test holds: the plan carries the id and the revision. */
+CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
+{
+    const vn::graphics::ContentRef ref =
+        material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};
+    return commandOf(geometry, geometry_revision, program, program_revision, ref);
+}
+
+/** @brief Both identities named by the OBJECTS a case holds - the shape most cases write. */
+CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
+{
+    return commandOf(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, program_revision, material);
 }
 
 } // namespace
@@ -384,6 +406,11 @@ TEST(ContentHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
 
     const auto entries = halves.halvesFor(pass, tables.facts, timeline, retirement);
     EXPECT_EQ(halves.refused(), 0U) << "both layers compile";
+    // The rows are keyed by the revision of the VALUE they describe, and the plan names that same revision: the two
+    // halves can only disagree about a material if those two numbers drift apart (see ContentFacts::MaterialFacts).
+    EXPECT_EQ(findMaterial(tables.facts, textured_material_facts.material).miss, FactMiss::None) << "the textured row answers";
+    EXPECT_EQ(findMaterial(tables.facts, plain_material_facts.material).miss, FactMiss::None) << "the plain row answers";
+    EXPECT_EQ(textured_material_facts.material, (vn::graphics::ContentRef{ textured->id().handle(), textured->revision() })) << "the row is keyed by the value's revision";
     ASSERT_EQ(entries.size(), 2U) << "one program, two texts: the pass is served two halves";
     EXPECT_EQ(entries[0].variant, textured_variant);
     EXPECT_EQ(entries[1].variant, ProgramVariant{});

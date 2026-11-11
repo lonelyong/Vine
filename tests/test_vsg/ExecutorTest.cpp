@@ -55,6 +55,7 @@
 #include <vine/vsg/support/VsgDynamicState.hpp>
 
 #include "DevicePhases.hpp"
+#include "TestMaterialFacts.hpp"
 #include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
@@ -230,7 +231,7 @@ struct Fixture {
         storage->beginFrame();
         const auto view     = storage->writeView(bytesOf(288U));
         const auto block    = storage->writeDraw(bytesOf(80U));
-        const auto material = storage->writeMaterial(&material_identity, 1U, bytesOf(64U));
+        const auto material = storage->writeMaterial(vn::test::materialId(1), 1U, bytesOf(64U));
         if (!view.valid || !block.valid) {
             return {};
         }

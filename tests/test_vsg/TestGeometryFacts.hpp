@@ -27,9 +27,9 @@ inline vn::vsg::FactMiss buildGeometryFacts(const vn::graphics::Geometry&       
                                             std::vector<vn::vsg::PrimitiveFacts>& primitives)
 {
     const vn::vsg::FactMiss miss = vn::vsg::buildGeometryFacts(*geometry.description(), out, channels, primitives);
-    // The identity these tests will name from their commands: the geometry's ADDRESS, which is what a hand-built
-    // `RenderCommand` / `CompiledCommand` carries (a draw list's row identity is the same address). The backend's
-    // builder states the description's address, which is the only identity it can know on its own.
-    out.geometry = &geometry;
+    // The identity these tests will name from their commands: the geometry's own id, which is what a hand-built
+    // `RenderCommand` / `CompiledCommand` carries (a draw list's row identity is the same node id). The backend's
+    // builder stamps no identity at all, because a description knows its revision, not who published it.
+    out.geometry = geometry.id();
     return miss;
 }

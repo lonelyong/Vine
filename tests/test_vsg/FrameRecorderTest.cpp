@@ -212,13 +212,14 @@ TEST(FrameRecorderTest, EveryFactOfACommandReachesTheRecord)
     const CollectedCommand& recorded = description.passes[0].draws[0].commands[0];
 
     // The plan names the content identity the command carried, and the revision of the SHAPE it describes (the value
-    // rides beside the identity: see RenderCommand::row / description).
-    EXPECT_EQ(recorded.geometry, static_cast<const void*>(geometry.get()));
+    // rides beside the identity: see RenderCommand::node / description).
+    EXPECT_EQ(recorded.geometry, geometry->id());
     EXPECT_EQ(recorded.geometry_revision, 7U) << "the revision the plan keys the facts row on";
     EXPECT_EQ(recorded.primitive, 0U);
     EXPECT_EQ(recorded.topology, Topology::TriangleStrip) << "the primitive's assembly travels with the command";
     EXPECT_EQ(recorded.program.program, static_cast<const void*>(program.get()));
-    EXPECT_EQ(recorded.material, static_cast<const void*>(material.get()));
+    EXPECT_EQ(recorded.material.as<vn::graphics::MaterialTag>(), material->id()) << "the plan names the material's id";
+    EXPECT_EQ(recorded.material.revision, material->revision()) << "and the revision of the values it was published with";
     EXPECT_TRUE(recorded.model.isEqual(model, 1e-12)) << "the world matrix";
     EXPECT_FLOAT_EQ(recorded.opacity, 0.5F);
     EXPECT_EQ(recorded.transparent, command.isTransparent()) << "the sort answer is carried, not re-derived downstream";

@@ -38,6 +38,18 @@ using vn::vsg::ProgramVariant;
 namespace
 {
 
+/// @brief A node id a test can name without building an object (the identity is the whole key).
+vn::graphics::NodeId nodeId(std::uint32_t index)
+{
+    return vn::graphics::NodeId(vn::graphics::Handle::make(index, 1U, 0U));
+}
+
+/// @brief A material reference a test can name without building an object.
+vn::graphics::ContentRef materialRef(std::uint32_t index, std::uint64_t revision)
+{
+    return vn::graphics::ContentRef{ vn::graphics::Handle::make(index, 1U, 0U), revision };
+}
+
 /// @brief One vertex channel with no bytes (the lookup never reads them).
 ChannelFacts channel(std::uint32_t location)
 {
@@ -66,7 +78,7 @@ struct GeometryHolder {
     std::vector<vn::vsg::PrimitiveFacts> primitive_rows; // What `facts.primitives` points at.
     GeometryFacts                        facts;
 
-    GeometryHolder(const void* identity, std::uint64_t revision, std::uint32_t canonical_mask, std::size_t channel_count, std::uint32_t custom_locations = 0U)
+    GeometryHolder(vn::graphics::NodeId identity, std::uint64_t revision, std::uint32_t canonical_mask, std::size_t channel_count, std::uint32_t custom_locations = 0U)
       : channels(channel_count, channel(0U))
     {
         facts.geometry              = identity;
@@ -88,11 +100,10 @@ struct MaterialHolder {
     std::vector<std::byte> block;
     MaterialFacts          facts;
 
-    MaterialHolder(const void* identity, std::uint64_t revision, std::size_t bytes)
+    MaterialHolder(vn::graphics::ContentRef identity, std::size_t bytes)
       : block(bytes, std::byte{ 0 })
     {
         facts.material = identity;
-        facts.revision = revision;
         facts.block    = block;
     }
 };
@@ -143,49 +154,49 @@ TEST(ContentFactsTest, AProgramIsFoundByItsIdentityAndRevisionAndNothingElse)
 
 TEST(ContentFactsTest, AGeometryIsFoundByItsIdentityAndRevision)
 {
-    static int identity  = 0;
-    int        unrelated = 0;
+    const auto identity  = nodeId(1U);
+    const auto unrelated = nodeId(2U);
 
-    GeometryHolder holder(&identity, 3U, /*canonical_mask*/ 0x3U, /*channels*/ 2U);
+    GeometryHolder holder(identity, 3U, /*canonical_mask*/ 0x3U, /*channels*/ 2U);
     Tables         tables;
     tables.geometries.push_back(holder.facts);
 
     const ContentFacts facts = tables.view();
-    const auto         found = findGeometry(facts, &identity, 3U);
+    const auto         found = findGeometry(facts, identity, 3U);
     ASSERT_TRUE(found.found());
     ASSERT_EQ(found.entry->primitives.size(), 1U);
     EXPECT_EQ(found.entry->primitives[0].index_count, 3U);
     EXPECT_EQ(found.entry->channels.size(), 2U);
     EXPECT_EQ(found.miss, FactMiss::None);
 
-    EXPECT_EQ(findGeometry(facts, &identity, 2U).miss, FactMiss::Revision);
-    EXPECT_EQ(findGeometry(facts, &unrelated, 3U).miss, FactMiss::Unknown);
-    EXPECT_EQ(findGeometry(facts, nullptr, 3U).miss, FactMiss::Unknown);
+    EXPECT_EQ(findGeometry(facts, identity, 2U).miss, FactMiss::Revision);
+    EXPECT_EQ(findGeometry(facts, unrelated, 3U).miss, FactMiss::Unknown);
+    EXPECT_EQ(findGeometry(facts, vn::graphics::NodeId{}, 3U).miss, FactMiss::Unknown);
 }
 
 TEST(ContentFactsTest, AGeometryWhoseChannelsDoNotMatchItsLayoutCannotBeDrawn)
 {
     // The layout declares two canonical channels but only one stream answers for them: a pipeline built from
     // that layout would declare an attribute nothing feeds.
-    const GeometryHolder one_short(nullptr, 1U, /*canonical_mask*/ 0x3U, /*channels*/ 1U);
+    const GeometryHolder one_short(nodeId(1U), 1U, /*canonical_mask*/ 0x3U, /*channels*/ 1U);
     EXPECT_FALSE(channelsMatchLayout(one_short.facts));
 
     // The other direction: a stream nothing declares is data nothing consumes.
-    const GeometryHolder extra(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 2U);
+    const GeometryHolder extra(nodeId(1U), 1U, /*canonical_mask*/ 0x1U, /*channels*/ 2U);
     EXPECT_FALSE(channelsMatchLayout(extra.facts));
 
     // Custom locations count as declarations: position + one custom channel is a complete pair.
-    const GeometryHolder custom(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 2U, /*custom*/ 1U);
+    const GeometryHolder custom(nodeId(1U), 1U, /*canonical_mask*/ 0x1U, /*channels*/ 2U, /*custom*/ 1U);
     EXPECT_TRUE(channelsMatchLayout(custom.facts));
 
     // A geometry whose "indices" are a vertex stream is not drawable this way: the mode is the stream's KIND,
     // so a stream that is not an index stream states nothing about how the draw is assembled.
-    GeometryHolder not_indexed(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 1U);
+    GeometryHolder not_indexed(nodeId(1U), 1U, /*canonical_mask*/ 0x1U, /*channels*/ 1U);
     not_indexed.primitive_rows[0].indices->key.kind = StreamKind::Vertex;
     EXPECT_FALSE(channelsMatchLayout(not_indexed.facts));
 
     // ...while a geometry that names NO index stream is the unindexed mode and is drawable from its vertices.
-    GeometryHolder unindexed(nullptr, 1U, /*canonical_mask*/ 0x1U, /*channels*/ 1U);
+    GeometryHolder unindexed(nodeId(1U), 1U, /*canonical_mask*/ 0x1U, /*channels*/ 1U);
     unindexed.facts.primitives = {};
     EXPECT_FALSE(channelsMatchLayout(unindexed.facts)) << "no index stream and no vertex count: nothing to draw";
     // A geometry whose primitives are all non-indexed IS drawable from its vertices.
@@ -195,34 +206,34 @@ TEST(ContentFactsTest, AGeometryWhoseChannelsDoNotMatchItsLayoutCannotBeDrawn)
     EXPECT_TRUE(channelsMatchLayout(unindexed.facts));
 
     // ...and a short geometry is reported as Malformed rather than "found but useless".
-    static int     identity = 0;
-    GeometryHolder broken(&identity, 1U, /*canonical_mask*/ 0x3U, /*channels*/ 1U);
+    const auto      identity = nodeId(1U);
+    GeometryHolder broken(identity, 1U, /*canonical_mask*/ 0x3U, /*channels*/ 1U);
     Tables         tables;
     tables.geometries.push_back(broken.facts);
     const ContentFacts facts = tables.view();
-    EXPECT_EQ(findGeometry(facts, &identity, 1U).miss, FactMiss::Malformed);
+    EXPECT_EQ(findGeometry(facts, identity, 1U).miss, FactMiss::Malformed);
 }
 
 TEST(ContentFactsTest, AMaterialWhoseBlockIsNotTheAbisSizeCannotBeDrawn)
 {
-    static int identity = 0;
+    const auto identity = materialRef(1U, 1U);
 
-    const MaterialHolder right(&identity, 1U, sizeof(vn::graphics::VineMaterialBlock));
+    const MaterialHolder right(identity, sizeof(vn::graphics::VineMaterialBlock));
     EXPECT_TRUE(blockFitsAbi(right.facts));
 
-    const MaterialHolder short_block(&identity, 1U, sizeof(vn::graphics::VineMaterialBlock) - 1U);
+    const MaterialHolder short_block(identity, sizeof(vn::graphics::VineMaterialBlock) - 1U);
     EXPECT_FALSE(blockFitsAbi(short_block.facts));
 
     Tables tables;
     tables.materials.push_back(short_block.facts);
     const ContentFacts facts = tables.view();
-    EXPECT_EQ(findMaterial(facts, &identity).miss, FactMiss::Malformed);
+    EXPECT_EQ(findMaterial(facts, identity).miss, FactMiss::Malformed);
 
-    // The IDENTITY is the whole key for a material, unlike the other two tables: the plan cannot name a
-    // material revision (the SDK type has no revision accessor), so the table's entry IS the current account of
-    // its bytes - a "different revision" cannot be asked for and therefore cannot be missed.
-    EXPECT_TRUE(findMaterial(facts, &identity).miss == FactMiss::Malformed);
-    EXPECT_EQ(findMaterial(facts, nullptr).miss, FactMiss::Unknown);
+    // The REVISION IS PART OF THE KEY, exactly like the geometry table: a plan that names revision R must be served
+    // R's bytes, so another revision is a miss (the frame in flight kept what it started with).
+    EXPECT_TRUE(findMaterial(facts, identity).miss == FactMiss::Malformed);
+    EXPECT_EQ(findMaterial(facts, materialRef(1U, 0U)).miss, FactMiss::Unknown);
+    EXPECT_EQ(findMaterial(facts, vn::graphics::ContentRef{}).miss, FactMiss::Unknown);
 }
 
 TEST(ContentFactsTest, AnEmptyTableAnswersUnknownRatherThanGuessing)
@@ -231,6 +242,6 @@ TEST(ContentFactsTest, AnEmptyTableAnswersUnknownRatherThanGuessing)
 
     int identity = 0;
     EXPECT_EQ(findProgram(empty, ProgramRef{ &identity, 0U }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
-    EXPECT_EQ(findGeometry(empty, &identity, 0U).miss, FactMiss::Unknown);
-    EXPECT_EQ(findMaterial(empty, &identity).miss, FactMiss::Unknown);
+    EXPECT_EQ(findGeometry(empty, nodeId(1U), 0U).miss, FactMiss::Unknown);
+    EXPECT_EQ(findMaterial(empty, materialRef(1U, 0U)).miss, FactMiss::Unknown);
 }

@@ -286,7 +286,7 @@ BlockStorage::Block BlockStorage::writeShadows(std::span<const std::byte> block)
     return { true, offset };
 }
 
-BlockStorage::MaterialWrite BlockStorage::writeMaterial(const void* material, std::uint64_t revision, std::span<const std::byte> block)
+BlockStorage::MaterialWrite BlockStorage::writeMaterial(vn::graphics::MaterialId material, std::uint64_t revision, std::span<const std::byte> block)
 {
     // Same rule as the rings: an oversized block is refused BEFORE the arena records the revision, or the
     // material would be marked as written and its real bytes never reach the buffer.
@@ -460,7 +460,7 @@ std::uint64_t BlockStorage::materialRefusals() const noexcept
     return d->arena.refusals();
 }
 
-bool BlockStorage::releaseMaterial(const void* material) noexcept
+bool BlockStorage::releaseMaterial(vn::graphics::MaterialId material) noexcept
 {
     return d->arena.release(material);
 }

@@ -13,6 +13,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "CollectView.hpp"
+#include "ContentId.hpp"
 #include "ViewPlacement.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -84,11 +85,23 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     VN_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs a node: visible, fully opaque, unattached. */
+    /** @brief Constructs a node: visible, fully opaque, unattached, with an identity of its own. */
     Node();
     ~Node();
 
   public:
+    /** @brief Gets this node's identity.
+     *
+     * @details
+     * - ALLOCATED AT CONSTRUCTION, released with the node, so the handle answers "gone" after the object dies. That
+     *   is what lets a mirror or a backend plane that outlived the content tell "this row's content is gone" from
+     *   "this address belongs to somebody else now" - an address is reused, a handle is not.
+     * - THE NAME IS NOT THE IDENTITY (see name()): two nodes may share a name, and a rename keeps the identity.
+     *
+     * @return The node id; never null for a constructed node.
+     */
+    [[nodiscard]] NodeId id() const noexcept;
+
     /** @brief Gets the node name.
      *
      * @return The name (empty when never set - names exist for lookup and debugging, not for identity).
@@ -370,6 +383,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
     [[nodiscard]] NodeCacheStats cacheStats() const noexcept;
 
   private:
+    NodeId id_;
     String name_;
     bool   visible_ = true;
     /// This node's own layer declaration, or nullopt when it says nothing and inherits (see setLayers).

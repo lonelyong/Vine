@@ -1,8 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <cstdio>
 #include <memory>
 #include <utility>
 #include <vector>
+
+#if defined(__linux__)
+#include <malloc.h>
+#endif
 
 #include <vine/Buffer.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -22,6 +28,8 @@
 
 #include "ContentMirror.hpp"
 #include "RenderWorld.hpp"
+#include "SceneRows.hpp"
+#include "SceneSnapshot.hpp"
 
 using vn::graphics::CollectView;
 using vn::graphics::Geometry;
@@ -158,6 +166,193 @@ Assembly makeAssembly()
 }
 
 } // namespace
+
+TEST(SnapshotTest, ThePureSelectMatchesTheScene)
+{
+    // THE BOUNDARY STEP 2 IS ABOUT. A snapshot is a value: selecting from it never asks the Scene, a Node or a
+    // material for anything. For the same view it must answer exactly what the content-side collector answers,
+    // command for command - that is the equivalence the migration rides on.
+    const Assembly assembly = makeAssembly();
+    Scene          scene;
+    scene.setRoot(assembly.root);
+
+    const CollectView view     = clipBoxView();
+    const auto        snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
+    ASSERT_NE(snapshot, nullptr);
+
+    std::vector<RenderCommand> selected;
+    bool                       viewport_used = false;
+    vn::graphics::detail::selectSnapshot(*snapshot, view, vn::graphics::kAllLayers, selected, viewport_used);
+    expectSameDrawList(selected, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+}
+
+TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
+{
+    // AUDIT A1 / K7. A material is edited through a live object, so nothing on the graph announces it. A snapshot
+    // copied before the edit must keep the immutable MaterialDescription value it was published with; a snapshot
+    // taken after the edit must carry the new revision. Without this, an in-flight frame would silently read the
+    // new values and R9/I1 would be false.
+    auto root = intrusive_ptr<Group>(new Group());
+    auto leaf = triangle();
+
+    auto material = vn::graphics::MaterialPtr(new vn::graphics::Material());
+    material->setMetallic(0.0F);
+    leaf->setMaterial(material);
+    root->addChild(leaf);
+
+    Scene scene;
+    scene.setRoot(root);
+    const CollectView view = clipBoxView();
+
+    const auto old_snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
+    std::vector<RenderCommand> old_commands;
+    bool                       viewport_used = false;
+    vn::graphics::detail::selectSnapshot(*old_snapshot, view, vn::graphics::kAllLayers, old_commands, viewport_used);
+    ASSERT_EQ(old_commands.size(), 1U);
+    const auto old_values = old_commands.front().material_description;
+    ASSERT_NE(old_values, nullptr);
+    EXPECT_FLOAT_EQ(old_values->values().metallic, 0.0F);
+
+    material->setMetallic(0.75F);
+    const auto fresh_snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
+    std::vector<RenderCommand> fresh_commands;
+    vn::graphics::detail::selectSnapshot(*fresh_snapshot, view, vn::graphics::kAllLayers, fresh_commands, viewport_used);
+    ASSERT_EQ(fresh_commands.size(), 1U);
+    const auto fresh_values = fresh_commands.front().material_description;
+    ASSERT_NE(fresh_values, nullptr);
+    EXPECT_NE(fresh_values.get(), old_values.get()) << "a new material revision is a new immutable value";
+    EXPECT_FLOAT_EQ(fresh_values->values().metallic, 0.75F);
+
+    // The old snapshot is still the old picture after the edit.
+    std::vector<RenderCommand> old_again;
+    vn::graphics::detail::selectSnapshot(*old_snapshot, view, vn::graphics::kAllLayers, old_again, viewport_used);
+    ASSERT_EQ(old_again.size(), 1U);
+    EXPECT_EQ(old_again.front().material_description.get(), old_values.get());
+    EXPECT_FLOAT_EQ(old_again.front().material_description->values().metallic, 0.0F);
+}
+
+TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
+{
+    // K1 / K3 FOR THE BRIDGE. `SceneRows::snapshot` still copies today's whole `SceneBake` and `ensureRows` still
+    // rebuilds the whole row table when the graph epoch moves; this test exposes both halves separately. If the
+    // total is far above K1's 500 us, the next step is the chunked hot/cold table - not a smaller copy.
+    auto root = intrusive_ptr<Group>(new Group());
+    for (std::size_t index = 0; index < 2000U; ++index) {
+        root->addChild(triangle());
+    }
+    Scene scene;
+    scene.setRoot(root);
+
+    const CollectView view = clipBoxView();
+    std::vector<RenderCommand> selected;
+    bool                       viewport_used = false;
+    const auto                 warm_snapshot = vn::graphics::detail::SceneRows::snapshot(scene); // warm the bake
+
+    constexpr int kRepetitions = 10;
+    long long     publish_us   = 0;
+    long long     select_us    = 0;
+    vn::graphics::detail::SceneSnapshotPtr latest_snapshot;
+    for (int step = 0; step < kRepetitions; ++step) {
+        root->children().front()->setOpacity(0.5F + 0.001F * static_cast<float>(step));
+
+        const auto before_publish = std::chrono::steady_clock::now();
+        const auto snapshot       = vn::graphics::detail::SceneRows::snapshot(scene);
+        const auto after_publish  = std::chrono::steady_clock::now();
+        latest_snapshot           = snapshot;
+
+        vn::graphics::detail::selectSnapshot(*snapshot, view, vn::graphics::kAllLayers, selected, viewport_used);
+        const auto after_select = std::chrono::steady_clock::now();
+
+        publish_us += std::chrono::duration_cast<std::chrono::microseconds>(after_publish - before_publish).count();
+        select_us += std::chrono::duration_cast<std::chrono::microseconds>(after_select - after_publish).count();
+    }
+
+    std::size_t shared_chunks = 0;
+    for (std::size_t index = 0; index < warm_snapshot->chunks.size() && index < latest_snapshot->chunks.size(); ++index) {
+        if (warm_snapshot->chunks[index] == latest_snapshot->chunks[index]) {
+            ++shared_chunks;
+        }
+    }
+
+    const long long publish_avg = publish_us / kRepetitions;
+    const long long select_avg  = select_us / kRepetitions;
+    std::printf("[measure] snapshot rows=%zu publish=%lld us select=%lld us shared=%zu/%zu\n",
+                selected.size(),
+                publish_avg,
+                select_avg,
+                shared_chunks,
+                warm_snapshot->chunks.size());
+    std::fflush(stdout);
+    EXPECT_EQ(selected.size(), 2000U);
+#if defined(NDEBUG) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+    EXPECT_LE(publish_avg, 250) << "N2: one edit at 2000 rows must publish within 250 us in an optimized build";
+#endif
+}
+
+TEST(SnapshotTest, AnEditedTransformRepublishesAndMatchesTheScene)
+{
+    // The incremental row refresh must handle the common container edit (a placement change) without falling back
+    // to the whole-table build, and the resulting snapshot must still answer the same list as the Scene.
+    const Assembly assembly = makeAssembly();
+    Scene          scene;
+    scene.setRoot(assembly.root);
+
+    const CollectView view   = clipBoxView();
+    const auto        before = vn::graphics::detail::SceneRows::snapshot(scene);
+
+    assembly.arm->setMatrix(vn::math::translate(0.25, 0.1, 0.0));
+    const auto after = vn::graphics::detail::SceneRows::snapshot(scene);
+    ASSERT_NE(after, nullptr);
+    EXPECT_NE(before.get(), after.get()) << "an edit is a new publication";
+
+    std::vector<RenderCommand> selected;
+    bool                       viewport_used = false;
+    vn::graphics::detail::selectSnapshot(*after, view, vn::graphics::kAllLayers, selected, viewport_used);
+    expectSameDrawList(selected, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+}
+
+TEST(SnapshotTest, MeasureWhatASnapshotKeepsResident)
+{
+    // K2: the snapshot must not cost more than 3x the row table it copies (N3's target is 2x). The measured delta
+    // covers the chunk vectors and the DrawFacts allocations; the row-table estimate uses the same capacities, so the
+    // ratio is the comparison the audit asks for rather than a machine-specific absolute byte count.
+#if defined(__GLIBC__)
+    auto root = intrusive_ptr<Group>(new Group());
+    for (std::size_t index = 0; index < 2000U; ++index) {
+        root->addChild(triangle());
+    }
+    Scene scene;
+    scene.setRoot(root);
+
+    const CollectView view = clipBoxView();
+    (void)scene.collectRenderCommands(view, vn::graphics::kAllLayers); // build the rows (the baseline)
+
+    const std::size_t before = mallinfo2().uordblks;
+    const auto        snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
+    const std::size_t after = mallinfo2().uordblks;
+
+    std::size_t row_bytes = 0U;
+    for (const auto& chunk : snapshot->chunks) {
+        row_bytes += chunk->capacity() * sizeof(vn::graphics::detail::Row);
+        for (const auto& row : *chunk) {
+            row_bytes += row.draws.capacity() * sizeof(vn::graphics::detail::DrawFacts);
+        }
+    }
+
+    const std::size_t snapshot_bytes = after >= before ? after - before : 0U;
+    const double      ratio          = row_bytes == 0U ? 0.0 : static_cast<double>(snapshot_bytes) / static_cast<double>(row_bytes);
+    std::printf("[measure] snapshot resident rows=%zu row_bytes=%zu snapshot_bytes=%zu ratio=%.2f\n",
+                snapshot->row_count,
+                row_bytes,
+                snapshot_bytes,
+                ratio);
+    std::fflush(stdout);
+    EXPECT_LT(ratio, 3.0) << "K2: the snapshot must stay below 3x the row table";
+    EXPECT_LE(ratio, 2.0) << "N3: target is at most 2x the row table";
+#else
+    GTEST_SKIP() << "K2 needs mallinfo2 (glibc)";
+#endif
+}
 
 TEST(ContentMirrorTest, TheMirrorCollectsWhatItsSceneCollectsAndOnlyPublishesOnAChange)
 {
@@ -638,7 +833,7 @@ TEST(DrawListBakeTest, ARefreshFoldsOnlyWhatChanged)
     SceneBake bake;
     buildRows(*root, bake);
 
-    const auto row_of = [&bake](const void* identity) -> const Row* {
+    const auto row_of = [&bake](vn::graphics::NodeId identity) -> const Row* {
         for (const Row& row : bake.rows) {
             if (row.identity == identity) {
                 return &row;
@@ -650,7 +845,7 @@ TEST(DrawListBakeTest, ARefreshFoldsOnlyWhatChanged)
     // Nothing announced since the build: a collection over unchanged boxes re-derives nothing at all.
     EXPECT_EQ(refreshBoxes(bake), 0U) << "an unchanged table folds nothing";
 
-    const Row* other_row = row_of(other.get());
+    const Row* other_row = row_of(other->id());
     ASSERT_NE(other_row, nullptr);
     const Aabbd other_box = other_row->world_box;
 
@@ -658,13 +853,13 @@ TEST(DrawListBakeTest, ARefreshFoldsOnlyWhatChanged)
     leaf->half_extent = 0.9;
     EXPECT_EQ(refreshBoxes(bake), 1U) << "one leaf moved, so one box was re-read";
 
-    const Row* leaf_row = row_of(leaf.get());
+    const Row* leaf_row = row_of(leaf->id());
     ASSERT_NE(leaf_row, nullptr);
     EXPECT_NEAR(leaf_row->world_box.max().x, 0.9, 1e-12) << "the world-space answer the leaf gave, and nothing else";
-    const Row* left_row = row_of(left.get());
+    const Row* left_row = row_of(left->id());
     ASSERT_NE(left_row, nullptr);
     EXPECT_NEAR(left_row->world_box.max().x, 0.9, 1e-12) << "the chain above the changed leaf followed it";
-    EXPECT_TRUE(row_of(other.get())->world_box == other_box) << "the other branch was not re-derived";
+    EXPECT_TRUE(row_of(other->id())->world_box == other_box) << "the other branch was not re-derived";
 
     // ...and it settles: a second look at the same table finds nothing to do.
     EXPECT_EQ(refreshBoxes(bake), 0U) << "and the next look folds nothing";
@@ -730,7 +925,7 @@ TEST(RenderWorldTest, APlacementEditReplacesThatSubtreeAndNothingElse)
     // The host's own edit, and the value it hands over: the mirror never reads the node.
     const Mat4d moved = vn::math::translate(0.05, 0.25, 0.0);
     assembly.arm->setMatrix(moved);
-    ASSERT_TRUE(world.place(assembly.arm.get(), moved));
+    ASSERT_TRUE(world.place(assembly.arm->id(), moved));
     EXPECT_EQ(world.rowsRecomputed() - before, 3U) << "the arm, its link and the link's leaf - not the whole assembly";
 
     std::vector<RenderCommand> mirrored;
@@ -782,7 +977,7 @@ TEST(RenderWorldTest, AMovedSubtreeIsCulledByItsAncestorsNewBox)
     // The host moves the leaf's chain into view and tells the mirror about the transform it moved.
     const Mat4d inside = Mat4d{};
     arm->setMatrix(inside);
-    ASSERT_TRUE(world.place(arm.get(), inside));
+    ASSERT_TRUE(world.place(arm->id(), inside));
 
     std::vector<RenderCommand> after;
     world.collect(view, vn::graphics::kAllLayers, after);
@@ -791,7 +986,7 @@ TEST(RenderWorldTest, AMovedSubtreeIsCulledByItsAncestorsNewBox)
 
     // ...and moving it back out must prune it again, through every box above it.
     arm->setMatrix(away);
-    ASSERT_TRUE(world.place(arm.get(), away));
+    ASSERT_TRUE(world.place(arm->id(), away));
     std::vector<RenderCommand> returned;
     world.collect(view, vn::graphics::kAllLayers, returned);
     expectSameDrawList(returned, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
@@ -864,7 +1059,7 @@ TEST(RenderWorldTest, APerViewRowDrawsTheSameInAMirrorThatOwnsNoNode)
     // A billboard MOVES as a value too, and the value is the placement itself: a delta that carried only the local
     // matrix would leave the mirror drawing the old orientation.
     billboard->setPosition(vn::math::Point3d(-0.3, 0.2, 0.0));
-    ASSERT_TRUE(world.place(billboard.get(), billboard->matrix(), billboard->viewPlacement()));
+    ASSERT_TRUE(world.place(billboard->id(), billboard->matrix(), billboard->viewPlacement()));
     std::vector<RenderCommand> after;
     world.collect(view, vn::graphics::kAllLayers, after);
     expectSameDrawList(after, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
@@ -883,7 +1078,7 @@ TEST(RenderWorldTest, AnEditItCannotAnswerForIsRefused)
     // A node this world was not built from: it has no row, so there is nothing to re-place.
     const auto        stranger = placed(1.0, 0.0, 0.0);
     const Mat4d       moved    = vn::math::translate(1.0, 0.0, 0.0);
-    EXPECT_FALSE(world.place(stranger.get(), moved));
+    EXPECT_FALSE(world.place(stranger->id(), moved));
     EXPECT_EQ(world.refusals(), 1U);
 
     // Building from another graph starts a new world: the old rows (and their shares) are gone.
@@ -891,5 +1086,5 @@ TEST(RenderWorldTest, AnEditItCannotAnswerForIsRefused)
     buildRows(*stranger, other);
     world.adopt(std::move(other));
     EXPECT_EQ(world.rowCount(), 1U);
-    EXPECT_TRUE(world.place(stranger.get(), moved));
+    EXPECT_TRUE(world.place(stranger->id(), moved));
 }

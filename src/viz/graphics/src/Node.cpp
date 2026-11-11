@@ -109,9 +109,21 @@ NodeCacheStats Node::cacheStats() const noexcept
     return cache_stats_;
 }
 
-Node::Node() = default;
+Node::Node()
+  : id_(ContentRegistry::instance().allocate<NodeTag>())
+{}
 
-Node::~Node() = default;
+Node::~Node()
+{
+    // The id leaves with the object: a row, a mirror or a backend table that still names it afterwards reads
+    // "gone" instead of resolving to whatever the slot holds next (see ContentId.hpp).
+    ContentRegistry::instance().release(id_.handle());
+}
+
+NodeId Node::id() const noexcept
+{
+    return id_;
+}
 
 String Node::name() const
 {

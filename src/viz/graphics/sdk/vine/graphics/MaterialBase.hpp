@@ -11,6 +11,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "ContentId.hpp"
 #include "Sampler.hpp"
 #include "Texture.hpp"
 
@@ -205,6 +206,22 @@ class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBa
     VN_OBJECT_META_DECL;
 
   public:
+    /** @brief Constructs a material: unnamed, opaque, with an identity of its own. */
+    MaterialBase();
+    ~MaterialBase();
+
+  public:
+    /** @brief Gets this material's identity.
+     *
+     * @details
+     * - ALLOCATED AT CONSTRUCTION, released with the object, so a table that outlived the material reads "gone"
+     *   instead of resolving to whatever is built at the same address next (see ContentId.hpp).
+     * - THE NAME IS NOT THE IDENTITY (see name()): two materials may share a name, and a rename keeps the identity.
+     *
+     * @return The material id; never null for a constructed material.
+     */
+    [[nodiscard]] MaterialId id() const noexcept;
+
     /**
      * @brief Gets the name this material (or instance) was given.
      *
@@ -351,7 +368,8 @@ class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBa
     [[nodiscard]] bool hasTexture(TextureSlot slot) const noexcept;
 
   private:
-    String name_;
+    MaterialId id_;
+    String     name_;
 
     /// The one value per revision (see description()); written on the content side only.
     mutable MaterialDescriptionPtr description_;

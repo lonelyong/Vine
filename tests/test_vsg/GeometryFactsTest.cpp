@@ -73,9 +73,9 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     std::vector<vn::vsg::PrimitiveFacts> primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, primitives), FactMiss::None);
 
-    // The identity a plan names is the geometry's ADDRESS (what a command carries); the shape it describes is the
-    // immutable value. The store overwrites this with the identity it keys by, and a hand-built table states it here.
-    EXPECT_EQ(facts.geometry, &geometry);
+    // The identity is the geometry's own id: the raw builder stamps none (a description knows its revision, not who
+    // published it), and the test helper - like the store - states it once, here.
+    EXPECT_EQ(facts.geometry, geometry.id());
     EXPECT_EQ(facts.revision, 4U);
 
     // Position and normal, in ABI order: the layout's mask is the same fact the pipeline key reads.

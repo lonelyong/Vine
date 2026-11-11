@@ -54,7 +54,8 @@ FactMiss buildGeometryFacts(const vn::graphics::GeometryDescription& description
     storage.clear();
     primitive_storage.clear();
     out          = GeometryFacts{};
-    out.geometry = &description;
+    // The identity is the ROW's (the draw-list node id), which the table stamps when it appends: a description knows
+    // its revision, not who published it.
     out.revision = description.revision();
 
     const std::span<const vn::graphics::Primitive>       primitives = description.primitives();

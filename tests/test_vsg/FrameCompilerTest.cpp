@@ -312,12 +312,13 @@ TEST(FrameCompilerTest, EveryFactOfARecordedCommandReachesThePlan)
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1u);
     const CompiledCommand& planned = frame.passes[0].draws[0].commands[0];
 
-    // A plan carries the content identity and the revision of the shape it describes (see RenderCommand::row).
-    EXPECT_EQ(planned.geometry, static_cast<const void*>(geometry.get()));
+    // A plan carries the content identity and the revision of the shape it describes (see RenderCommand::node).
+    EXPECT_EQ(planned.geometry, geometry->id());
     EXPECT_EQ(planned.geometry_revision, 7U) << "the revision the facts row and every stream key are built from";
     EXPECT_EQ(planned.primitive, 0U);
     EXPECT_EQ(planned.program.program, static_cast<const void*>(program.get()));
-    EXPECT_EQ(planned.material, static_cast<const void*>(material.get()));
+    EXPECT_EQ(planned.material.as<vn::graphics::MaterialTag>(), material->id());
+    EXPECT_EQ(planned.material.revision, material->revision());
     EXPECT_TRUE(planned.model.isEqual(model, 1e-12));
     EXPECT_FLOAT_EQ(planned.opacity, 0.5F);
     EXPECT_TRUE(planned.transparent) << "carried from the collector's answer, never re-derived here";

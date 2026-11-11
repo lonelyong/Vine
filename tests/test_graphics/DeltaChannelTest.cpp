@@ -26,7 +26,7 @@ namespace
 {
 
 /// @brief A placement delta about @p identity, translated by @p x on X (so a test can tell two apart).
-Delta placementAbout(const void* identity, double x)
+Delta placementAbout(vn::graphics::NodeId identity, double x)
 {
     Delta delta;
     delta.kind     = DeltaKind::Placement;
@@ -43,22 +43,22 @@ TEST(DeltaChannelTest, ABatchArrivesInPostOrderAndOnlyOnce)
     // finds nothing. Without that, two deltas about one row could apply in either order and a frame could see half a
     // change.
     DeltaChannel channel;
-    const int    a = 1;
-    const int    b = 2;
-    const int    c = 3;
+    const auto   a = vn::graphics::NodeId(vn::graphics::Handle::make(1U, 1U, 0U));
+    const auto   b = vn::graphics::NodeId(vn::graphics::Handle::make(2U, 1U, 0U));
+    const auto   c = vn::graphics::NodeId(vn::graphics::Handle::make(3U, 1U, 0U));
 
-    EXPECT_TRUE(channel.post(placementAbout(&a, 1.0)));
-    EXPECT_TRUE(channel.post(placementAbout(&b, 2.0)));
-    EXPECT_TRUE(channel.post(placementAbout(&c, 3.0)));
+    EXPECT_TRUE(channel.post(placementAbout(a, 1.0)));
+    EXPECT_TRUE(channel.post(placementAbout(b, 2.0)));
+    EXPECT_TRUE(channel.post(placementAbout(c, 3.0)));
     EXPECT_EQ(channel.posted(), 3U);
     EXPECT_EQ(channel.pending(), 3U);
 
     std::vector<OwnedDelta> batch;
     channel.drain(batch);
     ASSERT_EQ(batch.size(), 3U);
-    EXPECT_EQ(batch[0].delta.identity, &a);
-    EXPECT_EQ(batch[1].delta.identity, &b);
-    EXPECT_EQ(batch[2].delta.identity, &c);
+    EXPECT_EQ(batch[0].delta.identity, a);
+    EXPECT_EQ(batch[1].delta.identity, b);
+    EXPECT_EQ(batch[2].delta.identity, c);
     EXPECT_NEAR(batch[2].delta.matrix.element(0, 3), 3.0, 1e-12);
     EXPECT_EQ(channel.pending(), 0U);
 
@@ -90,7 +90,7 @@ TEST(DeltaChannelTest, ATableTravelsWithTheDeltaThatCarriesIt)
     EXPECT_EQ(batch[0].delta.kind, DeltaKind::RowsReplaced);
     ASSERT_TRUE(batch[0].rows != nullptr);
     EXPECT_EQ(batch[0].rows->rows.size(), row_count);
-    EXPECT_EQ(batch[0].rows->rows.front().identity, root.get()) << "the table the content's thread built";
+    EXPECT_EQ(batch[0].rows->rows.front().identity, root->id()) << "the table the content's thread built";
     EXPECT_EQ(batch[0].rows.use_count(), 2) << "the channel handed the share over, it did not copy the table";
 }
 
@@ -112,7 +112,8 @@ TEST(DeltaChannelTest, PostsFromSeveralThreadsAllArriveOnceAndInEachThreadsOrder
     for (int producer = 0; producer < kProducers; ++producer) {
         threads.emplace_back([&channel, producer]() {
             // The identity encodes the producer, the matrix the step, so the drain can check both.
-            const void* identity = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(producer + 1));
+            const vn::graphics::NodeId identity =
+                vn::graphics::NodeId(vn::graphics::Handle::make(static_cast<std::uint32_t>(producer + 1), 1U, 0U));
             for (int step = 1; step <= kPerProducer; ++step) {
                 Delta delta;
                 delta.kind     = DeltaKind::Placement;
@@ -135,7 +136,7 @@ TEST(DeltaChannelTest, PostsFromSeveralThreadsAllArriveOnceAndInEachThreadsOrder
     std::vector<double> last(kProducers, 0.0);
     std::vector<int>    seen(kProducers, 0);
     for (const OwnedDelta& owned : batch) {
-        const auto producer = static_cast<std::size_t>(reinterpret_cast<std::uintptr_t>(owned.delta.identity)) - 1U;
+        const auto producer = static_cast<std::size_t>(owned.delta.identity.handle().index()) - 1U;
         ASSERT_LT(producer, static_cast<std::size_t>(kProducers));
         const double step = owned.delta.matrix.element(0, 3);
         EXPECT_GT(step, last[producer]) << "producer " << producer << " arrived out of order";
@@ -156,10 +157,10 @@ TEST(DeltaChannelTest, AFullChannelRefusesAndCountsInsteadOfDroppingQuietly)
     DeltaChannel channel{ 2 };
     EXPECT_EQ(channel.capacity(), 2U);
 
-    const int a = 1;
-    EXPECT_TRUE(channel.post(placementAbout(&a, 1.0)));
-    EXPECT_TRUE(channel.post(placementAbout(&a, 2.0)));
-    EXPECT_FALSE(channel.post(placementAbout(&a, 3.0))) << "the third does not fit";
+    const auto a = vn::graphics::NodeId(vn::graphics::Handle::make(1U, 1U, 0U));
+    EXPECT_TRUE(channel.post(placementAbout(a, 1.0)));
+    EXPECT_TRUE(channel.post(placementAbout(a, 2.0)));
+    EXPECT_FALSE(channel.post(placementAbout(a, 3.0))) << "the third does not fit";
     EXPECT_EQ(channel.refused(), 1U);
     EXPECT_EQ(channel.posted(), 2U);
     EXPECT_EQ(channel.pending(), 2U);
@@ -170,7 +171,7 @@ TEST(DeltaChannelTest, AFullChannelRefusesAndCountsInsteadOfDroppingQuietly)
     EXPECT_NEAR(batch.back().delta.matrix.element(0, 3), 2.0, 1e-12) << "the refused delta was not queued";
 
     // ...and the channel is usable again once the batch is gone.
-    EXPECT_TRUE(channel.post(placementAbout(&a, 4.0)));
+    EXPECT_TRUE(channel.post(placementAbout(a, 4.0)));
     channel.drain(batch);
     ASSERT_EQ(batch.size(), 1U);
     EXPECT_NEAR(batch.front().delta.matrix.element(0, 3), 4.0, 1e-12);
@@ -183,10 +184,10 @@ TEST(DeltaChannelTest, DrainingRecyclesTheBufferItIsGiven)
     DeltaChannel channel;
     std::vector<OwnedDelta> batch;
 
-    const int a = 1;
+    const auto a = vn::graphics::NodeId(vn::graphics::Handle::make(1U, 1U, 0U));
     for (int frame = 0; frame < 4; ++frame) {
         for (int index = 0; index < 8; ++index) {
-            ASSERT_TRUE(channel.post(placementAbout(&a, static_cast<double>(index))));
+            ASSERT_TRUE(channel.post(placementAbout(a, static_cast<double>(index))));
         }
         channel.drain(batch);
         ASSERT_EQ(batch.size(), 8U);

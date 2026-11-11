@@ -189,7 +189,7 @@ class BlockStorage {
      * @return What happened and where the block is; the offset is valid for every answer except Refused
      *         (`valid == false`), where the caller skips the draw and growth is requested (see MaterialWrite).
      */
-    [[nodiscard]] MaterialWrite writeMaterial(const void* material, std::uint64_t revision, std::span<const std::byte> block);
+    [[nodiscard]] MaterialWrite writeMaterial(vn::graphics::MaterialId material, std::uint64_t revision, std::span<const std::byte> block);
 
     /** @brief Returns a material's slot to the arena (the application is done with it).
      *
@@ -199,7 +199,7 @@ class BlockStorage {
      * @param material Material identity; a material with no slot answers false.
      * @return true when a slot was returned.
      */
-    bool releaseMaterial(const void* material) noexcept;
+    bool releaseMaterial(vn::graphics::MaterialId material) noexcept;
 
   public:
     /** @brief Gets the regions the buffer is divided into. */

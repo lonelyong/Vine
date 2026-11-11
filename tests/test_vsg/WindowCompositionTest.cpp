@@ -90,6 +90,7 @@
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
+#include "TestMaterialFacts.hpp"
 
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
@@ -115,6 +116,7 @@ using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::buildGeometryFacts;
 using vn::vsg::buildMaterialFacts;
+using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
 using vn::vsg::buildProgramFacts;
 using vn::vsg::buildScreenProgramFacts;
 using vn::vsg::buildViewBlock;

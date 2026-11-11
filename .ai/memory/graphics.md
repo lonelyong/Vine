@@ -156,3 +156,84 @@
 - 新门禁：`scripts/check_api_style.py`（四条规则，今天 0 新增 / 4 基线）。
 - 本 session 唯一的**生产代码**改动：`af2de738` 把 `sessionChangeAllowed` 收回 private（原为我误放 public）。
 - 下次的第一条命令：`-hot-paths` §8 第 1 步 —— 把 `Measure*` 用例从打印改成阈值断言（不改架构、让性能回归可见）。
+
+## 2026-11-11 —— graphics-next 第二轮审计（新增 `graphics-2026-11-11-next-audit.md`；动作顺序被改写）
+
+- 新增 `.ai/research/graphics-2026-11-11-next-audit.md`：`X1–X10` 跨文档矛盾、`A1–A13` 设计缺口、
+  `R31–R39` / `T17–T31` / `K7–K11` 补充。**提案仍是“未采纳”；现行设计不变。**
+- 最关键的 A1：新设计的 `DrawItem` 只带 `id`，丢了 revision；内容一改，在飞旧帧会按 id 查到新值，
+  直接违反 `R9`/`I1`。今天的 `RenderCommand` 反而带 `GeometryDescriptionPtr`/`MaterialDescriptionPtr`
+  （`ContentStore` 也为旧 revision 保留行到帧走完）。修法：`ContentRef{id,rev}` 或冷块存值指针；
+  引擎表按 `(id, generation, revision)`。**先修这条再谈快照原型。**
+- 其余必须先修的：A2 拾取身份是 `InstanceId` + `FrameResult` 缺 View/pose；A3 共享原型要“一个写者域 +
+  发布时比对原型 revision”；A4 `Instance` 要持有原型存活；A5 原型实例化“10 次矩阵乘”不成立（5000×10 是 5 万次，
+  内存按实例倍增）；A6 `DrawItem ≤64 B` 按字段已超且 `sort_key` 少 32 位；A7 发布元数据整体拷贝不是 O(变更)；
+  A8 `chain[0]` 块剔除不成立且 `local_box_union` 字段不存在。
+- 证据口径：2519 = 提案基线（8 个文件 .hpp+.cpp，仅 cpp 1212；当前原型新增 select/facts 后 2702，K5 仍用 2519 分母）；ContentStore 1016 行、寿命 token 75（六 token）/100（含 parked）；
+  RenderEngine 1309 行；test_graphics 548（提案时；当前 559）/ test_vsg 537 / ctest 30 套；2000 drawable 重测约 2074–2128 µs（200 为 204 µs）；
+  “47 处 include”当前只有 23 个文件，“126 个 bool”按 scope 是 110/152——数字要带命令，否则会漂。
+- 动作顺序（取代上面“下次第一条命令”）：① 修 X/A1–A4 文档 + 补 K7–K11；② `-hot-paths` §8 第 1 步（Measure 阈值）
+  + 证据脚本；③ `detail::` 快照 + 纯 select（**不带原型实例化**，内容引用带 revision）；④ 寿命/注册表；⑤ 计划值 +
+  `prepare` + 单 Session 多 Surface；⑥ 原型实例化单独实验（先定 A5 的共享 local rows + per-instance transform）。
+- 结论一句话：跨层不可变值必须落到引用上——**只带 id 的引用不是不可变值**，只是把版本问题推到引擎表里。
+
+### 落地（同一 session，2026-11-11）
+
+- **步骤 0 已完成**：六份提案里的 `X1–X10` / `A1–A13` 已按 audit 修订——`ContentRef{id,rev}`、
+  `DrawItem` 24 B + 64 位 `sort_key`、`world_bound` 块剔除、`PoseEntry` 子树传播、`FrameQuery`/`PickResult`、
+  `prepare`、单 Session 多 Surface、`Result<void>` 特化、`C2b` 写者域、`R31–R39`/`T17–T31`/`K7–K11`。
+  提案仍是“未采纳”；`.ai/design` 未动。
+- **步骤 1 已完成**：`SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera` 现在有阈值
+  `drawables*3+1000` µs（sanitizer 只打印）；实测 200→204 µs / 2000→2128 µs，均通过。新增
+  `scripts/measure_graphics_claims.py`：桥 2519（提案时；当前 2700）、ContentStore 1016/75/100、
+  RenderEngine 1309/50 public/22 include、SDK 75/99、bool 110/152、tests 548/537/30（提案时；当前 559/537/30）。
+- 下次从步骤 2 开始：`detail::Snapshot` + 纯 `select`，**内容引用带 revision、暂不做原型实例化**；
+  先跑 `K1–K3` + `K7`。不要跳过 `ContentRef`——那是本轮审计的核心修正。
+
+### 步骤 2：chunked snapshot + 增量发布（2026-11-11，Debug 结果）
+
+- `SceneSnapshot` 现在是 32 行 chunk 的不可变快照：`makeSceneSnapshot` 复用上一版未变 chunk；
+  `SceneRows::snapshot` 的缓存挂在内部 `SceneBake` 上（整表重建时把上一版缓存搬过去），`Scene` 的公开布局不变。
+- `Scene::ensureRows` 增加增量路径：按每行 `Node::contentEpoch` 找编辑行；结构/可见性/父子顺序
+  全检；只允许 local / opacity / layers / draw order / view placement 这些热字段原地刷新，
+  其余（state / geometry / material / primitive / box）回退整表 `buildRows`。
+- `SnapshotTest` 五条通过：纯 select 等价、旧 revision、transform 增量、2000 行计时、常驻内存；`test_graphics` 559 条通过（另加 `ContentRegistryTest` / `ResidencyTableTest` 6 条）。
+- **2000 行改 1 行**：Debug publish ≈ 2.2 ms / select ≈ 1.3 ms；**RelWithDebInfo publish ≈ 154–203 µs /
+  select ≈ 293–307 µs**，K1（≤500 µs）与 K3（≤×1.2）都通过；shared 62/63 chunks。
+- **K2/N3 通过**：`MeasureWhatASnapshotKeepsResident` 测得 snapshot 常驻约 **1.03× 行表**（K2 ≤3×，N3 ≤2×）。
+- **N2 已调整为 ≤250 µs**（2026-11-11）：50 µs 需要内容侧 dirty notification，与“Node 无 Scene 反向指针”
+  冲突；203 µs 在 250 µs 内，RelWithDebInfo 的计时测试已加 N2 断言。下一步进步骤 3
+  （`ContentRegistry` + `ContentRef{id,rev}` 的引擎表）。不要拿 Debug 的 2.2 ms 当最终数字。
+
+### 步骤 3a（身份/驻留原型；2026-11-11）
+
+- 新增内部 `ContentRegistry.{hpp,cpp}`：`Handle`（gen24|domain8|index32）、typed `Id<Tag>`、
+  `allocate<Tag>()`、generation/domain 校验、24 位回绕退休槽；`ContentRef{id,rev}`；
+  `ResidencyTable`（`last_epoch < oldest_live` 的 collectable/reclaim，revision 是 key 的一部分）。
+- 新增 `ContentRegistryTest` / `ResidencyTableTest` 6 条（stale handle、跨 domain、重复 release、
+  collectable 可枚举、revision 键、touch 延长寿命）；`test_graphics` 559 条通过。
+- **3b 已按设计拍板走 B（公开身份 = `Handle`），第一段落地**（2026-11-11）：新增公开
+  `sdk/vine/graphics/ContentId.hpp`（`Handle`/`Id<Tag>`/`ContentRef`/`ContentRegistry::instance()` + `std::hash`），
+  `Node` 持 `NodeId`（ctor 分配 / dtor 释放，`Node::id()`）。行身份全面改 `NodeId`：`Row::identity`、
+  `RenderWorld::RowId`、`Delta`、镜像 delta、`SceneSnapshot::identities`；公开 `RenderCommand::row`
+  （`const void*`）→ `RenderCommand::node`（`NodeId`），`Collected/CompiledCommand`、`GeometryFacts`、
+  `ContentStore` 几何表随之按 `NodeId` 键。手写命令无 node 时用 `geometry->id()`。
+  证据：`test_graphics` 559 / `test_vsg` 537 / ctest 30/30。改动后**清旧对象再编**（`Node`/`RenderCommand` 布局变）。
+  仍未做：①`Geometry`/`MaterialBase`/`ShaderProgram` 自己的 id，让 `ContentRef` 成为唯一键（几何表现在是
+  `(NodeId, rev)`、材质表仍按地址单键 = A1 在后端的残余）；②计划行合并成 `ContentRef geometry`；
+  ③`markUsed`/parking/`kept` 换 `ResidencyTable` epoch 回收。三步之间不要半迁移 `ContentStore`。
+
+### 步骤 4（材质身份；2026-11-11）
+
+- `MaterialBase::id()`（ctor 分配 / dtor 释放）。`MaterialFacts::material` 改成 `ContentRef`（revision 进键，
+  独立 `revision` 字段删掉）；`CompiledCommand`/`CollectedCommand::material` 也是 `ContentRef`。
+- `ContentStore::ensureMaterial` 现在**每 revision 追加一行**、旧行停靠后删（不再就地替换 + `RetiredMaterial`/`kept`）；
+  `materialEntries()` 是“每 revision 一行”。`MaterialArena`/`BlockStorage`/`ContentSweep`/`released_materials` 按 `MaterialId`。
+- `FrameRecorder::snapshotCommands` 的材质 revision 规则：已发布的值取值 revision，否则取对象当前 revision ——
+  必须与 `ensureMaterial` 取值规则一致，否则手写命令与表永远错过（实测踩过）。
+- **`ContentRef::revision` 是 `std::uint64_t`**（原设计稿写 uint32）：SDK 每个 `revision()` 都是 64 位。
+- 测试 helper：`tests/test_vsg/TestMaterialFacts.hpp`（`materialId()`/`materialRef()`/对象→`ContentRef`）。
+- 下一步：`ShaderProgram::id()` + `ProgramRef` → `ContentRef`（程序表也按 `(id,rev,variant,kind)`）；
+  计划行 `geometry`+`geometry_revision` 合并为 `ContentRef geometry`；然后 epoch 回收。
+- 这一步只改了内部 `SceneBake` / `SceneSnapshot` / `Scene::ensureRows` / `DrawListBake`；公开 API 未变。
+  `Scene` 的缓存/epochs 全放在内部 `SceneBake`，避免改公开类布局（曾因临时加字段导致 test_vsg ABI 崩溃，已改回）。

@@ -68,7 +68,7 @@ static_assert(std::is_trivially_copyable_v<StateValues>, "a state delta carries 
  */
 struct Delta {
     DeltaKind     kind{ DeltaKind::Placement };
-    const void*   identity{ nullptr }; ///< The content object it is about: opaque here, and never dereferenced.
+    NodeId        identity{};          ///< The node it is about (see Node::id): a handle, never a dereferenced pointer.
     Mat4d         matrix{};            ///< Placement: the row's own local matrix.
     StateValues   state{};             ///< State: the row's own numeric values.
     std::uint32_t child_index{ 0 };    ///< Attached: where among the parent's children the block goes (0 = first).

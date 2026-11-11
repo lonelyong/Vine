@@ -386,11 +386,11 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         const vn::graphics::RenderCommand& source = commands[i];
         CollectedCommand&                  target = copy[i];
 
-        // The SHAPE travels as a value and the IDENTITY as its own address (see RenderCommand::row): a draw-list
-        // command carries both, and a hand-built one is converted here by the content-side caller that built it - this
-        // step runs before the plan crosses to whatever records it, exactly like the collection it follows.
+        // The SHAPE travels as a value and the IDENTITY as a handle (see RenderCommand::node): a draw-list command
+        // carries both, and a hand-built one is converted here by the content-side caller that built it - this step
+        // runs before the plan crosses to whatever records it, exactly like the collection it follows.
         const vn::graphics::GeometryDescriptionPtr description = source.geometryDescription();
-        target.geometry          = source.row != nullptr ? source.row : static_cast<const void*>(source.geometry.get());
+        target.geometry          = !source.node.isNull() ? source.node : (source.geometry != nullptr ? source.geometry->id() : vn::graphics::NodeId{});
         target.geometry_revision = description != nullptr ? description->revision() : 0;
         target.primitive         = source.primitive_index;
         // The primitive's topology travels with the command: it is the data's word (the pass may still override
@@ -406,9 +406,22 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         // The pass' override wins over the command's own program (see render()): the identity the plan keys its
         // pipeline variants by is therefore the EFFECTIVE one, and nothing downstream needs to know about overrides.
         target.program        = programRef(program_override != nullptr ? program_override : source.program.get());
-        target.material       = source.material.get();
-        target.model          = source.model_matrix;
-        target.opacity        = source.opacity;
+        // THE MATERIAL'S VALUES CROSS, NOT THE OBJECT (see RenderCommand::materialDescription): the identity is the
+        // material's own id and the revision is the one the values are at, so a frame in flight is served the bytes it
+        // started with rather than whatever the material says by the time the plan is recorded.
+        //
+        // A command a host built by hand published no value, and the store will describe it from the object's own
+        // current values (see ContentStore::ensureMaterial) - so the ref names that revision, and the plan and the table
+        // agree instead of missing each other forever.
+        const vn::graphics::MaterialDescriptionPtr material_values = source.materialDescription();
+        std::uint64_t                              material_revision = material_values != nullptr ? material_values->revision() : 0;
+        if (material_values == nullptr && source.material != nullptr) {
+            material_revision = source.material->revision();
+        }
+        target.material = vn::graphics::ContentRef{ source.material != nullptr ? source.material->id().handle() : vn::graphics::Handle{},
+                                                    material_revision };
+        target.model   = source.model_matrix;
+        target.opacity = source.opacity;
         // The transparency decision is made ONCE, here, from the command's own rule (`isTransparent`: the
         // material's resolved alpha mode and the drawable's opacity). The plan carries the answer because
         // compilation has only the identity, and the blend enable has to agree with the order the collector

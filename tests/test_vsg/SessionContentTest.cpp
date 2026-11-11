@@ -72,6 +72,7 @@
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
+#include "TestMaterialFacts.hpp"
 #include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
@@ -287,7 +288,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     storage->beginFrame();
     const auto view     = storage->writeView(std::vector<std::byte>(288U, std::byte{ 0 }));
     const auto block    = storage->writeDraw(drawBlock());
-    const auto material = storage->writeMaterial(&material_identity, 1U, std::vector<std::byte>(64U, std::byte{ 0 }));
+    const auto material = storage->writeMaterial(vn::test::materialId(1), 1U, std::vector<std::byte>(64U, std::byte{ 0 }));
     ASSERT_TRUE(view.valid);
     ASSERT_TRUE(block.valid);
 
@@ -443,7 +444,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
-    ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
+    ASSERT_EQ(vn::test::buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     const ProgramFacts  programs[]   = { program_facts };
     const GeometryFacts geometries[] = { geometry_facts };

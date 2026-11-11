@@ -12,6 +12,7 @@ set(SRC_FILE_LIST
 	ModelSceneTest.cpp
 	MeshShapeTest.cpp
 	ResidencyTest.cpp
+	ContentRegistryTest.cpp
 	RenderWorldTest.cpp
 	DeltaChannelTest.cpp
 	FrameWorkerTest.cpp

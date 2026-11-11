@@ -73,24 +73,23 @@ class ContentStore {
     /**
      * @brief Answers for the SHAPE @p description at @p identity from now on.
      *
-     * WHY BOTH. The identity is the address the content side names (a node's, which a command carries and a lookup
-     * matches); the description is the immutable value the shape was read into (see `Geometry::description`), so the
-     * tables are built from values and never read content. A frame hands both, once per geometry it commands
-     * (`RenderCommand::row` and `RenderCommand::description`).
+     * WHY BOTH. The identity is the draw-list row's node handle (see `RenderCommand::node`), which a plan names and a
+     * lookup matches; the description is the immutable value the shape was read into (see `Geometry::description`), so
+     * the tables are built from values and never read content. A frame hands both, once per geometry it commands
+     * (`RenderCommand::node` and `RenderCommand::description`).
      *
      * A NEW DESCRIPTION AT A KNOWN IDENTITY IS AN EDIT: the value replaces the old one, and the rows the tables answer
      * for the old revision stay answerable until the frames that may still record them are past - they leave at the
      * park `ensureGeometry` takes when it notices the move. Tracking the same pair again is not an error.
      *
      * @warning
-     * - This overload does NOT hold the identity's address alive: it can only name the shape. The caller that drained
-     *   the value keeps that address reserved (the row table does it for a mirrored node, see ADR-2026-11-09); a
-     *   caller that also holds the object uses the overload below.
+     * - This overload does NOT hold the identity's object alive: it can only name the shape. The caller that drained
+     *   the value keeps that object reserved; a caller that also holds the object uses the overload below.
      *
-     * @param identity    Address the plan names; null is ignored.
+     * @param identity    Node id the plan names; a null id is ignored.
      * @param description Shape to describe; null is ignored (a frame that names no shape is reported as a miss).
      */
-    void track(const void* identity, const vn::graphics::GeometryDescriptionPtr& description);
+    void track(vn::graphics::NodeId identity, const vn::graphics::GeometryDescriptionPtr& description);
 
     /**
      * @brief Describes @p geometry and tracks that pair (the content-side convenience).
@@ -153,7 +152,7 @@ class ContentStore {
      * @return true when this episode has not reported that slot yet (an untracked material always answers
      *         true: there is no record to remember it in).
      */
-    [[nodiscard]] bool claimSlotReport(const void* identity, std::size_t slot) noexcept;
+    [[nodiscard]] bool claimSlotReport(vn::graphics::MaterialId identity, std::size_t slot) noexcept;
 
     /**
      * @brief Ensures the tables answer for everything @p frame names, and returns them.
@@ -191,7 +190,7 @@ class ContentStore {
      *                           key, never dereferenced, so it may already name freed memory.
      * @return Number of abandoned objects released.
      */
-    std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement, std::vector<const void*>& released_materials);
+    std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement, std::vector<vn::graphics::MaterialId>& released_materials);
 
     /**
      * @brief Marks the identity @p identity as done with and parks the removal of its rows.
@@ -204,13 +203,13 @@ class ContentStore {
      * - When parking is unavailable the request is rolled back and false is returned: memory may be kept,
      *   never freed while a recorded frame can still name it.
      *
-     * @param identity   Identity to release; null is refused.
+     * @param identity   Identity to release; a null id is refused.
      * @param timeline   Frame clock the park is dated against.
      * @param retirement Where the removal is parked.
      * @return true when the request was accepted (or the identity was not resident); false when it could not be
      *         parked safely.
      */
-    bool releaseGeometry(const void* identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    bool releaseGeometry(vn::graphics::NodeId identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /**
      * @brief Releases the identity @p geometry names (the content-side convenience).
@@ -288,10 +287,10 @@ class ContentStore {
 
   private:
     /** @brief Ensures the tables answer for one named identity's current shape (see tablesFor). */
-    void ensureGeometry(const void* identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    void ensureGeometry(vn::graphics::NodeId identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named material (see tablesFor). */
-    void ensureMaterial(const vn::graphics::MaterialBase* material, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    void ensureMaterial(vn::graphics::ContentRef material, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Ensures the tables answer for one named program IN ONE GEOMETRY-FREE KIND (see tablesFor). */
     void ensureProgram(const vn::graphics::ShaderProgram* program,

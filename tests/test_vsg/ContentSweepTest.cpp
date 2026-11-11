@@ -136,7 +136,7 @@ struct Plan {
 };
 
 /// @brief A plan with one pass and one content draw naming @p geometry, @p program and @p material.
-std::unique_ptr<Plan> contentPlan(const void* geometry, std::uint64_t geometry_revision, const void* program, const void* material)
+std::unique_ptr<Plan> contentPlan(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, vn::graphics::ContentRef material)
 {
     auto plan = std::make_unique<Plan>();
 
@@ -161,6 +161,20 @@ std::unique_ptr<Plan> contentPlan(const void* geometry, std::uint64_t geometry_r
     return plan;
 }
 
+/** @brief The same plan named by the OBJECT a test holds: a plan carries a handle, so the object converts to its id. */
+std::unique_ptr<Plan> contentPlan(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, vn::graphics::ContentRef material)
+{
+    return contentPlan(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, material);
+}
+
+/** @brief The same plan naming a material by the OBJECT a test holds: the plan carries the id and revision, not the object. */
+std::unique_ptr<Plan> contentPlan(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, const vn::graphics::MaterialBase* material)
+{
+    const vn::graphics::ContentRef material_ref =
+        material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};
+    return contentPlan(geometry, geometry_revision, program, material_ref);
+}
+
 /// @brief Drives the timeline past @p frame and runs the queue's releases (the frame's last step).
 void releaseUpTo(FrameTimeline& timeline, RetirementQueue& retirement, std::uint64_t frame)
 {
@@ -176,7 +190,7 @@ TEST(ContentSweepTest, NothingIsLetGoWhileTheHostStillHoldsEverything)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
-    std::vector<const void*>              released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
     ASSERT_NE(cache, nullptr);
 
     const auto geometry = quad();
@@ -216,7 +230,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
-    std::vector<const void*>              released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
     ASSERT_NE(cache, nullptr);
 
     auto geometry = quad();
@@ -237,7 +251,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     ASSERT_EQ(cache->count(), 1U);
 
     // The identities the rows are keyed by: what a later lookup would use.
-    const void* const   geometry_address  = geometry.get();
+    const auto          geometry_address  = geometry->id();
     const std::uint64_t geometry_revision = geometry->revision();
 
     // The host lets go of the whole drawable - the texture goes with the material that held it.
@@ -282,7 +296,7 @@ TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
-    std::vector<const void*>              released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
     ASSERT_NE(cache, nullptr);
 
     auto geometry = quad();
@@ -314,7 +328,7 @@ TEST(ContentSweepTest, TheDefaultMaterialIsNeverAbandoned)
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     FrameTimeline                         timeline;
     RetirementQueue                       retirement(1U);
-    std::vector<const void*>              released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
     ASSERT_NE(cache, nullptr);
 
     auto geometry = quad();

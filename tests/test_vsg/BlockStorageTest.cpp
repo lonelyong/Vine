@@ -45,6 +45,12 @@ using vn::vsg::BlockStorage;
 namespace
 {
 
+/// @brief A material identity a case can name without building an object: the storage keys by id, never by address.
+vn::graphics::MaterialId materialId(int index)
+{
+    return vn::graphics::MaterialId(vn::graphics::Handle::make(static_cast<std::uint32_t>(index + 1), 1U, 0U));
+}
+
 /// @brief A window (and with it a device) the test owns, plus a storage built on that device.
 class Fixture {
   public:
@@ -169,12 +175,12 @@ TEST(BlockStorageTest, EveryBlockIsReadBackFromInsideItsOwnRegion)
     const std::vector<std::byte> view              = blockOf(288, 0x11);
     const std::vector<std::byte> draw              = blockOf(80, 0x22);
     const std::vector<std::byte> material          = blockOf(64, 0x33);
-    const int                    material_identity = 0;
+    const auto                   material_identity = materialId(0);
 
     fixture.storage->beginFrame();
     const auto view_result     = fixture.storage->writeView(view);
     const auto draw_result     = fixture.storage->writeDraw(draw);
-    const auto material_result = fixture.storage->writeMaterial(&material_identity, 1, material);
+    const auto material_result = fixture.storage->writeMaterial(material_identity, 1, material);
 
     ASSERT_TRUE(view_result.valid);
     ASSERT_TRUE(draw_result.valid);
@@ -415,21 +421,21 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
     Fixture fixture;
     ASSERT_TRUE(fixture.build({}));
 
-    const int                    material = 0;
+    const auto                   material = materialId(0);
     const std::vector<std::byte> first    = blockOf(64, 0xA1);
     const std::vector<std::byte> second   = blockOf(64, 0xB2);
     const std::vector<std::byte> third    = blockOf(64, 0xC3);
     const std::vector<std::byte> fourth   = blockOf(64, 0xD4);
 
     fixture.storage->beginFrame();
-    const auto allocated = fixture.storage->writeMaterial(&material, 1, first);
+    const auto allocated = fixture.storage->writeMaterial(material, 1, first);
     ASSERT_EQ(allocated.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(allocated.bytes, first.size());
     EXPECT_EQ(readBack(*fixture.storage, allocated.offset, first.size()), first);
 
     // The steady frame: the same revision, so the bytes the GPU reads are already right.
     fixture.storage->beginFrame();
-    const auto steady = fixture.storage->writeMaterial(&material, 1, second);
+    const auto steady = fixture.storage->writeMaterial(material, 1, second);
     EXPECT_EQ(steady.kind, vn::graphics::backend::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(steady.bytes, 0U);
     EXPECT_EQ(steady.offset, allocated.offset) << "a hit still names the block: a draw binds THAT offset (offset 0 is another region's data)";
@@ -437,13 +443,13 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
 
     // An edit: exactly one block, wherever this frame's copy lives.
     fixture.storage->beginFrame();
-    const auto rewritten = fixture.storage->writeMaterial(&material, 2, third);
+    const auto rewritten = fixture.storage->writeMaterial(material, 2, third);
     ASSERT_EQ(rewritten.kind, vn::graphics::backend::MaterialArena::WriteKind::Rewritten);
     EXPECT_EQ(rewritten.bytes, third.size());
     EXPECT_EQ(readBack(*fixture.storage, rewritten.offset, third.size()), third);
 
     // A second edit in the SAME frame: the GPU can only ever see one of the two versions, so one write.
-    const auto deduped = fixture.storage->writeMaterial(&material, 3, fourth);
+    const auto deduped = fixture.storage->writeMaterial(material, 3, fourth);
     EXPECT_EQ(deduped.kind, vn::graphics::backend::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(deduped.bytes, 0U);
     EXPECT_EQ(deduped.offset, rewritten.offset) << "the frame's copy is where both answers point";
@@ -462,7 +468,7 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
     layout.materials.copies = perFrameCopies(3U); // three frames in flight: four copies (see the arena's note)
     ASSERT_TRUE(fixture.build(layout));
 
-    const int material = 0;
+    const auto material = materialId(0);
 
     // Four consecutive edits: each frame writes its own copy, because the frames before it may still be in
     // flight - the OLDEST of them included, which is what the extra copy is for (see core::perFrameCopies).
@@ -470,7 +476,7 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
     for (std::uint8_t revision = 1; revision <= 4; ++revision) {
         fixture.storage->beginFrame();
         const std::vector<std::byte> block  = blockOf(64, revision);
-        const auto                   result = fixture.storage->writeMaterial(&material, revision, block);
+        const auto                   result = fixture.storage->writeMaterial(material, revision, block);
         ASSERT_EQ(result.kind,
                   revision == 1 ? vn::graphics::backend::MaterialArena::WriteKind::Allocated : vn::graphics::backend::MaterialArena::WriteKind::Rewritten);
         EXPECT_EQ(readBack(*fixture.storage, result.offset, block.size()), block);
@@ -492,13 +498,13 @@ TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
     layout.materials.capacity = 2U;
     ASSERT_TRUE(fixture.build(layout));
 
-    const int a = 0, b = 1, c = 2;
+    const auto a = materialId(0), b = materialId(1), c = materialId(2);
     fixture.storage->beginFrame();
-    EXPECT_TRUE(fixture.storage->writeMaterial(&a, 1, blockOf(64, 0x10)).valid);
-    EXPECT_TRUE(fixture.storage->writeMaterial(&b, 1, blockOf(64, 0x20)).valid);
+    EXPECT_TRUE(fixture.storage->writeMaterial(a, 1, blockOf(64, 0x10)).valid);
+    EXPECT_TRUE(fixture.storage->writeMaterial(b, 1, blockOf(64, 0x20)).valid);
 
     // No eviction: the third material is refused, and the request is "one capacity that serves this frame".
-    const auto refused = fixture.storage->writeMaterial(&c, 1, blockOf(64, 0x30));
+    const auto refused = fixture.storage->writeMaterial(c, 1, blockOf(64, 0x30));
     EXPECT_EQ(refused.kind, vn::graphics::backend::MaterialArena::WriteKind::Refused);
     EXPECT_FALSE(refused.valid) << "a refused write has no offset a draw may bind";
     EXPECT_EQ(fixture.storage->materialRefusals(), 1U);
@@ -506,8 +512,8 @@ TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
     EXPECT_EQ(fixture.storage->growthNeeded().materials, 3U) << "live (2) + the one refused";
 
     // The release path is what makes room - no capacity to run out of.
-    EXPECT_TRUE(fixture.storage->releaseMaterial(&a));
-    const auto fitted = fixture.storage->writeMaterial(&c, 1, blockOf(64, 0x30));
+    EXPECT_TRUE(fixture.storage->releaseMaterial(a));
+    const auto fitted = fixture.storage->writeMaterial(c, 1, blockOf(64, 0x30));
     EXPECT_TRUE(fitted.valid);
     EXPECT_EQ(fitted.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(fixture.storage->materialRefusals(), 1U) << "a release is not a refusal";

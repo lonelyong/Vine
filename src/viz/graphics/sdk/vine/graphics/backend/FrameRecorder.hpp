@@ -149,8 +149,8 @@ using CameraSnapshot = vn::graphics::CameraSnapshot;
 
 /** @brief One instance of one command, as the frame remembers it (the SDK's RenderCommand, copied). */
 struct CollectedCommand {
-    const void*   geometry{ nullptr };    // Leaf geometry identity.
-    std::uint64_t geometry_revision{ 0 }; // `Geometry::revision()` at collection time.
+    vn::graphics::NodeId geometry{};      // The node identity the plan names for this draw's facts.
+    std::uint64_t        geometry_revision{ 0 }; // `Geometry::revision()` at collection time.
     /// Which of the geometry's primitives this command draws (see Geometry::primitive). It is the draw's
     /// identity inside the geometry: two commands of one geometry differ here, and the frame's facts answer
     /// per (geometry, primitive).
@@ -160,7 +160,7 @@ struct CollectedCommand {
     /// is why it travels with the command instead of with `authored_state`.
     vn::graphics::Topology topology{ vn::graphics::Topology::Triangles };
     ProgramRef             program{};           // The command's own program; null = the frame's default.
-    const void*            material{ nullptr }; // Material identity, or nullptr.
+    vn::graphics::ContentRef material{};        // The material identity AND revision, or a null id for none.
     vn::math::Mat4d        model{};             // World-space model matrix.
     float                  opacity{ 1.0F };     // Effective opacity (the drawable's half of the alpha rule).
     /// Whether this command belongs in the transparent queue, from `RenderCommand::isTransparent` (the

@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <limits>
 
-#include <vine/SmallVector.hpp>
-
 VN_GRAPHICS_NS_BEGIN
 
 namespace detail
@@ -197,6 +195,86 @@ void foldUp(SceneBake& bake, std::uint32_t index)
     foldRow(bake, index);
 }
 
+/// @brief Fills one row's OWN facts from @p node, leaving its resolved fields and structure untouched.
+///
+/// @details
+/// - `bakeSubtree` uses it for a fresh row; the incremental edit path uses it to refresh a row in place.
+/// - The resolved fields (`world`, `parent_world`, `opacity`, `layers`, `world_box`, `layers_union`, …) are the
+///   fold's output and are recomputed by `resolveSubtree`; this function clears only the fields it owns.
+void fillOwnFacts(const Node& node, Row& row)
+{
+    row.identity       = node.id();
+    row.local          = node.localTransformMatrix();
+    row.own_opacity    = node.opacity();
+    row.own_layers     = node.layers();
+    row.own_draw_order = node.drawOrder();
+    row.placement      = node.viewPlacement();
+
+    row.owns_state = false;
+    row.own_state  = RenderState{};
+    row.own_material.reset();
+    row.own_material_description.reset();
+    row.own_program.reset();
+    row.geometry.reset();
+    row.description.reset();
+    row.draws.clear();
+    row.world_box_answer.reset();
+    row.unbounded = false;
+
+    if (const auto* state_node = obj_cast<StateNode>(&node)) {
+        row.owns_state = true;
+        row.own_state  = state_node->renderState();
+        if (raw_ptr<MaterialBase> material = state_node->material()) {
+            row.own_material = material;
+            // The values are taken WITH the identity, here, on the content side: the fold below only copies the value
+            // pointer, which is what lets a mirror - threaded or not - resolve a material without reading the live
+            // object.
+            row.own_material_description = material->description();
+        }
+        if (raw_ptr<ShaderProgram> program = state_node->program()) {
+            row.own_program = program;
+        }
+    }
+    if (const auto* geometry = obj_cast<Geometry>(&node)) {
+        row.geometry    = GeometryPtr(const_cast<Geometry*>(geometry));
+        row.description = geometry->description();
+        const raw_ptr<MaterialBase>  geometry_material = geometry->material();
+        const raw_ptr<ShaderProgram> geometry_program  = geometry->program();
+        const std::size_t            primitive_count   = geometry->primitiveCount();
+        row.draws.reserve(primitive_count);
+        for (std::size_t ordinal = 0; ordinal < primitive_count; ++ordinal) {
+            const Primitive* primitive = geometry->primitive(ordinal);
+            if (primitive == nullptr) {
+                continue;
+            }
+            DrawFacts draw;
+            draw.primitive_index = static_cast<std::uint32_t>(ordinal);
+            draw.material        = primitive->material != nullptr
+                                       ? MaterialBasePtr(primitive->material)
+                                       : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : MaterialBasePtr());
+            draw.material_description =
+                draw.material != nullptr ? draw.material->description() : MaterialDescriptionPtr();
+            draw.program         = primitive->program != nullptr
+                                       ? ShaderProgramPtr(primitive->program)
+                                       : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program) : ShaderProgramPtr());
+            draw.drawn = !(primitive->hasInstances() && primitive->visibleInstanceCount() == 0u);
+            if (primitive->hasInstances()) {
+                draw.instance_transforms = primitive->instance_transforms;
+                draw.first_instance =
+                    static_cast<std::uint32_t>(std::min<std::size_t>(primitive->firstInstance(), std::numeric_limits<std::uint32_t>::max()));
+                draw.instance_count =
+                    static_cast<std::uint32_t>(std::min<std::size_t>(primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
+            }
+            row.draws.push_back(std::move(draw));
+        }
+        (void)recordLeafBox(row, readLeafBox(node));
+    }
+    else if (obj_cast<Group>(&node) == nullptr) {
+        // A leaf the engine does not own: the same rule (see readLeafBox).
+        (void)recordLeafBox(row, readLeafBox(node));
+    }
+}
+
 std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t parent = SceneBake::kNoParent)
 {
     if (!node.isVisible()) {
@@ -208,71 +286,9 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
     bake.nodes.push_back(&node);
 
     {
-        Row& row           = bake.rows[index];
-        row.identity       = &node;
-        row.parent         = parent;
-        row.local          = node.localTransformMatrix();
-        row.own_opacity    = node.opacity();
-        // An invisible node never gets here (see bakeSubtree's first line): in this model visibility is STRUCTURE, so a
-        // hidden subtree has no rows and showing it is an attach.
-        row.own_layers     = node.layers();
-        row.own_draw_order = node.drawOrder();
-        // The per-view half of the placement, IF the node has one: a value the select resolves from the view it
-        // draws (see ViewPlacement). Taking it here is what keeps the select free of node reads.
-        row.placement = node.viewPlacement();
-        if (const auto* state_node = obj_cast<StateNode>(&node)) {
-            row.owns_state = true;
-            row.own_state  = state_node->renderState();
-            if (raw_ptr<MaterialBase> material = state_node->material()) {
-                row.own_material = material;
-                // The values are taken WITH the identity, here, on the content
-                // side: the fold below only copies the value pointer, which is
-                // what lets a mirror - threaded or not - resolve a material
-                // without ever reading the live object.
-                row.own_material_description = material->description();
-            }
-            if (raw_ptr<ShaderProgram> program = state_node->program()) {
-                row.own_program = program;
-            }
-        }
-        if (const auto* geometry = obj_cast<Geometry>(&node)) {
-            row.geometry    = GeometryPtr(const_cast<Geometry*>(geometry));
-            row.description = geometry->description();
-            const raw_ptr<MaterialBase>  geometry_material = geometry->material();
-            const raw_ptr<ShaderProgram> geometry_program  = geometry->program();
-            const std::size_t            primitive_count   = geometry->primitiveCount();
-            row.draws.reserve(primitive_count);
-            for (std::size_t ordinal = 0; ordinal < primitive_count; ++ordinal) {
-                const Primitive* primitive = geometry->primitive(ordinal);
-                if (primitive == nullptr) {
-                    continue;
-                }
-                DrawFacts draw;
-                draw.primitive_index = static_cast<std::uint32_t>(ordinal);
-                draw.material        = primitive->material != nullptr
-                                           ? MaterialBasePtr(primitive->material)
-                                           : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : MaterialBasePtr());
-                draw.material_description =
-                    draw.material != nullptr ? draw.material->description() : MaterialDescriptionPtr();
-                draw.program         = primitive->program != nullptr
-                                           ? ShaderProgramPtr(primitive->program)
-                                           : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program) : ShaderProgramPtr());
-                draw.drawn = !(primitive->hasInstances() && primitive->visibleInstanceCount() == 0u);
-                if (primitive->hasInstances()) {
-                    draw.instance_transforms = primitive->instance_transforms;
-                    draw.first_instance =
-                        static_cast<std::uint32_t>(std::min<std::size_t>(primitive->firstInstance(), std::numeric_limits<std::uint32_t>::max()));
-                    draw.instance_count =
-                        static_cast<std::uint32_t>(std::min<std::size_t>(primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
-                }
-                row.draws.push_back(std::move(draw));
-            }
-            (void)recordLeafBox(row, readLeafBox(node));
-        }
-        else if (obj_cast<Group>(&node) == nullptr) {
-            // A leaf the engine does not own: the same rule (see readLeafBox).
-            (void)recordLeafBox(row, readLeafBox(node));
-        }
+        Row& row    = bake.rows[index];
+        row.parent  = parent;
+        fillOwnFacts(node, row);
     }
 
     std::uint32_t children = 0U;
@@ -290,6 +306,71 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
 }
 
 } // namespace
+
+RowRefresh refreshRowFacts(const Node& node, SceneBake& bake, std::uint32_t index)
+{
+    if (index >= bake.rows.size() || bake.nodes.size() != bake.rows.size() || bake.nodes[index] != &node) {
+        return RowRefresh::Incompatible;
+    }
+
+    const Row before = bake.rows[index];
+    Row&      row    = bake.rows[index];
+    fillOwnFacts(node, row);
+
+    const auto same_matrix = [](const Mat4d& lhs, const Mat4d& rhs) {
+        for (int row_index = 0; row_index < 4; ++row_index) {
+            for (int column = 0; column < 4; ++column) {
+                if (lhs.element(row_index, column) != rhs.element(row_index, column)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    const auto same_draw = [](const DrawFacts& lhs, const DrawFacts& rhs) {
+        return lhs.primitive_index == rhs.primitive_index && lhs.material.get() == rhs.material.get() &&
+               lhs.material_description.get() == rhs.material_description.get() &&
+               lhs.program.get() == rhs.program.get() &&
+               lhs.instance_transforms.values.get() == rhs.instance_transforms.values.get() &&
+               lhs.instance_transforms.first == rhs.instance_transforms.first &&
+               lhs.instance_transforms.count == rhs.instance_transforms.count &&
+               lhs.first_instance == rhs.first_instance && lhs.instance_count == rhs.instance_count &&
+               lhs.drawn == rhs.drawn;
+    };
+    const auto same_draws = [&same_draw](const std::vector<DrawFacts>& lhs, const std::vector<DrawFacts>& rhs) {
+        if (lhs.size() != rhs.size()) {
+            return false;
+        }
+        for (std::size_t draw_index = 0; draw_index < lhs.size(); ++draw_index) {
+            if (!same_draw(lhs[draw_index], rhs[draw_index])) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto same_optional_box = [](const std::optional<Aabbd>& lhs, const std::optional<Aabbd>& rhs) {
+        if (lhs.has_value() != rhs.has_value()) {
+            return false;
+        }
+        return !lhs.has_value() || *lhs == *rhs;
+    };
+
+    const bool non_hot = before.owns_state != row.owns_state || !(before.own_state == row.own_state) ||
+                         before.own_material.get() != row.own_material.get() ||
+                         before.own_material_description.get() != row.own_material_description.get() ||
+                         before.own_program.get() != row.own_program.get() || before.geometry.get() != row.geometry.get() ||
+                         before.description.get() != row.description.get() || !same_draws(before.draws, row.draws) ||
+                         !same_optional_box(before.world_box_answer, row.world_box_answer) ||
+                         !(before.local_box == row.local_box) || before.unbounded != row.unbounded;
+    if (non_hot) {
+        return RowRefresh::Incompatible;
+    }
+
+    const bool hot = !same_matrix(before.local, row.local) || before.own_opacity != row.own_opacity ||
+                     before.own_layers != row.own_layers || before.own_draw_order != row.own_draw_order ||
+                     before.placement.get() != row.placement.get();
+    return hot ? RowRefresh::HotChange : RowRefresh::NoChange;
+}
 
 void buildOwnFacts(const Node& root, SceneBake& bake)
 {
@@ -444,81 +525,13 @@ void selectFromBake(const SceneBake&            bake,
                     bool&                       viewport_used,
                     std::vector<RenderCommand>& out)
 {
-    // The rows are in walk order, so the rows currently being resolved form the ancestor chain, deepest last. A row
-    // whose placement was resolved for THIS view hands its world down; every other row is already placed by the fold.
-    struct OpenRow {
-        std::uint32_t end{ 0 };          ///< One past the row's subtree: it stops being an ancestor there.
-        bool          resolved{ false }; ///< Its world was resolved from the view (children must compose with it).
-        Mat4d         world{};           ///< The world the row resolved to.
-    };
-    // A TREE'S DEPTH, not a scene's size: the chain of rows currently being resolved. The inline capacity covers an
-    // ordinary assembly, and the vector in the repo only grows past it for a pathological hierarchy - which is why this
-    // is a SmallVector and not a std::vector: a collection happens per view per frame, and it must not allocate.
-    vn::SmallVector<OpenRow, 32U> open;
-
-    for (std::uint32_t index = 0; index < bake.rows.size();) {
-        while (!open.empty() && open.back().end <= index) {
-            open.pop_back();
-        }
-        const Row&  row             = bake.rows[index];
-        const bool  parent_resolved = !open.empty() && open.back().resolved;
-        const bool  in_run          = row.view_dependent || parent_resolved;
-        const Mat4d parent_world    = parent_resolved ? open.back().world : row.parent_world;
-
-        Mat4d world    = row.world;
-        bool  resolved = false;
-        if (row.placement != nullptr) {
-            const ViewDependence dependence = localToWorldForView(*row.placement, parent_world, view, world);
-            if (dependence == ViewDependence::ViewAndViewport) {
-                viewport_used = true;
-            }
-            if (dependence == ViewDependence::None) {
-                world = parent_world * row.local; // this view keeps the node's own placement
-            }
-            resolved = true;
-        }
-        else if (in_run) {
-            world    = parent_world * row.local; // an ancestor was re-placed, so this row's folded world is stale
-            resolved = true;
-        }
-
-        if ((row.layers_union & layer_mask) == 0U) {
-            index = row.end;
-            continue;
-        }
-        // A row with no view-independent bound must not be culled: no box can promise it is out of the frustum.
-        if (!row.unbounded && frustum.isOutside(resolved ? row.local_box.transformed(world) : row.world_box)) {
-            index = row.end;
-            continue;
-        }
-        if (resolved) {
-            open.push_back(OpenRow{ row.end, true, world });
-        }
-        if (!row.draws.empty()) {
-            const float effective = std::clamp(row.opacity, 0.0f, 1.0f);
-            for (const DrawFacts& draw : row.draws) {
-                if (!draw.drawn) {
-                    continue;
-                }
-                const MaterialBasePtr material = draw.material != nullptr ? draw.material : row.material;
-                const MaterialDescriptionPtr material_description =
-                    draw.material_description != nullptr ? draw.material_description : row.material_description;
-                const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.program;
-                auto&                  cmd     = out.emplace_back(row.geometry, material, world, draw.primitive_index);
-                cmd.row                        = row.identity;
-                cmd.description                = row.description;
-                cmd.material_description       = material_description;
-                cmd.opacity                    = effective;
-                cmd.draw_order                 = row.draw_order;
-                cmd.authored_state             = row.state;
-                cmd.program                    = program;
-                cmd.instance_transforms        = draw.instance_transforms;
-                cmd.first_instance             = draw.first_instance;
-                cmd.instance_count             = draw.instance_count;
-            }
-        }
-        ++index;
-    }
+    selectRows(static_cast<std::uint32_t>(bake.rows.size()),
+               [&bake](std::uint32_t index) -> const Row& { return bake.rows[index]; },
+               frustum,
+               view,
+               layer_mask,
+               viewport_used,
+               out);
 }
 
 void sortCollected(std::vector<RenderCommand>& commands, const Vec3d& eye)

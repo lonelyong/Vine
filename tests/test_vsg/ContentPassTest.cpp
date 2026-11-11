@@ -70,6 +70,7 @@
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
+#include "TestMaterialFacts.hpp"
 
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
@@ -99,6 +100,7 @@ using vn::vsg::BlockDescriptors;
 using vn::vsg::BlockStorage;
 using vn::vsg::buildGeometryFacts;
 using vn::vsg::buildMaterialFacts;
+using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
 using vn::vsg::buildProgramFacts;
 using vn::vsg::ChannelFacts;
 using vn::vsg::ContentAssembly;
@@ -6658,7 +6660,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     // or "build that program". Without this check the points draw would go through the triangle-baked
     // pipeline - exactly the shape the previous implementation shipped, where only the API's own
     // same-topology-class rule stood between the picture and undefined behaviour.
-    const vn::vsg::FactResult<GeometryFacts> live_geometry = vn::vsg::findGeometry(assembly.facts(), geometry.get(), geometry->revision());
+    const vn::vsg::FactResult<GeometryFacts> live_geometry = vn::vsg::findGeometry(assembly.facts(), geometry->id(), geometry->revision());
     ASSERT_TRUE(live_geometry.found());
     ASSERT_EQ(assembly.facts().programs.size(), 1U) << "one program was compiled for this frame";
     const ProgramFacts& live_program = assembly.facts().programs.front();

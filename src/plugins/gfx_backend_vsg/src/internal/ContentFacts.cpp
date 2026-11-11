@@ -47,6 +47,18 @@ enum class KeyFields : std::uint8_t
     return std::strong_ordering::equal;
 }
 
+/// @brief Compares two content handles by their bits: the same total order a pointer identity has, without an address.
+[[nodiscard]] std::strong_ordering compareIdentity(vn::graphics::NodeId left, vn::graphics::NodeId right) noexcept
+{
+    return left.handle().bits() <=> right.handle().bits();
+}
+
+/// @brief The same comparison for a material id.
+[[nodiscard]] std::strong_ordering compareIdentity(vn::graphics::MaterialId left, vn::graphics::MaterialId right) noexcept
+{
+    return left.handle().bits() <=> right.handle().bits();
+}
+
 /// @brief The key @ref findProgram searches by: the identity, the revision and the drawing CALL.
 struct ProgramKey {
     const void*    identity{ nullptr };
@@ -74,8 +86,8 @@ struct ProgramKey {
 
 /// @brief The key @ref findGeometry searches by: the identity and the revision.
 struct GeometryKey {
-    const void*   identity{ nullptr };
-    std::uint64_t revision{ 0 };
+    vn::graphics::NodeId identity{};
+    std::uint64_t        revision{ 0 };
 };
 
 /// @brief Orders one geometry row against one geometry key, over the first @p fields of the key.
@@ -90,15 +102,23 @@ struct GeometryKey {
     return row.revision <=> key.revision;
 }
 
-/// @brief The key @ref findMaterial searches by: the identity (the whole key - see that lookup).
+/// @brief The key @ref findMaterial searches by: the identity AND the revision (see MaterialFacts::material).
 struct MaterialKey {
-    const void* identity{ nullptr };
+    vn::graphics::ContentRef material{};
 };
 
-/// @brief Orders one material row against one material key (the identity is the whole key).
-[[nodiscard]] std::strong_ordering compareMaterial(const MaterialFacts& row, const MaterialKey& key, KeyFields) noexcept
+/// @brief Orders one material row against one material key over the first @p fields of the key.
+[[nodiscard]] std::strong_ordering compareMaterial(const MaterialFacts& row, const MaterialKey& key, KeyFields fields) noexcept
 {
-    return compareIdentity(row.material, key.identity);
+    if (const std::strong_ordering identity =
+            compareIdentity(row.material.as<vn::graphics::MaterialTag>(), key.material.as<vn::graphics::MaterialTag>());
+        identity != std::strong_ordering::equal) {
+        return identity;
+    }
+    if (fields == KeyFields::Identity) {
+        return std::strong_ordering::equal;
+    }
+    return row.material.revision <=> key.material.revision;
 }
 
 /// @brief Gets the half-open range of @p order whose rows match @p key over @p fields, by bisection.
@@ -186,7 +206,7 @@ void orderMaterialRows(std::span<const MaterialFacts> rows, std::vector<std::uin
     std::stable_sort(order.begin(), order.end(), [rows](std::uint32_t left, std::uint32_t right) {
         const MaterialFacts& row = rows[right];
         const MaterialKey    key{ row.material };
-        return compareMaterial(rows[left], key, KeyFields::Identity) < 0;
+        return compareMaterial(rows[left], key, KeyFields::Revision) < 0;
     });
 }
 
@@ -280,9 +300,9 @@ FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::Prog
     return { nullptr, identity_known ? FactMiss::Revision : FactMiss::Unknown };
 }
 
-FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, const void* geometry, std::uint64_t revision) noexcept
+FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::NodeId geometry, std::uint64_t revision) noexcept
 {
-    if (geometry == nullptr) {
+    if (geometry.isNull()) {
         return { nullptr, FactMiss::Unknown };
     }
 
@@ -321,17 +341,18 @@ FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, const void* ge
     return { nullptr, identity_known ? FactMiss::Revision : FactMiss::Unknown };
 }
 
-FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, const void* material) noexcept
+FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, vn::graphics::ContentRef material) noexcept
 {
     // A null identity is NOT special-cased: the engine's material is optional, and the default material is an
     // entry like any other (see api/ContentSources.hpp). A table that carries one answers for content without
     // a material; a table that does not says Unknown, and the content layer decides what that means.
     //
-    // An INDEXED table answers with the FIRST row of the identity's run, which is the row the scan returns:
-    // the order is a stable sort, so the run is in table order (see orderMaterialRows).
+    // THE REVISION IS PART OF THE KEY (see MaterialFacts::material): the run of one (id, revision) is the whole answer,
+    // and its FIRST row is the one a scan would have decided with - the order is a stable sort, so the run is in table
+    // order (see orderMaterialRows).
     if (searchable(facts.materials.size(), facts.material_order)) {
         const MaterialKey key{ material };
-        const auto        searched = runOf(facts.materials, facts.material_order, key, KeyFields::Identity, compareMaterial);
+        const auto        searched = runOf(facts.materials, facts.material_order, key, KeyFields::Revision, compareMaterial);
         if (!holdsRows(searched)) {
             return { nullptr, FactMiss::Unknown };
         }
@@ -342,6 +363,8 @@ FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, const void* ma
         return { &row, FactMiss::None };
     }
 
+    // The whole scan has to run: a table may hold a replaced revision while the frames that named it are past, and only
+    // the pair the caller names may answer.
     for (const MaterialFacts& entry : facts.materials) {
         if (entry.material != material) {
             continue;

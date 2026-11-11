@@ -52,6 +52,19 @@ using vn::vsg::StreamUploads;
 namespace
 {
 
+/// @brief The material lookup a case writes: the plan names (id, revision), so a case holding the object asks with its pair.
+///
+/// A NAMED CONVERSION, and the same one production makes: `FrameRecorder` builds the reference from the object's id and
+/// the revision of the values it published. Overloading the free function keeps the cases reading like the lookup they
+/// mean without giving the table a second identity.
+vn::vsg::FactResult<vn::vsg::MaterialFacts> findMaterial(const ContentFacts& facts, const vn::graphics::MaterialBase* material)
+{
+    if (material == nullptr) {
+        return vn::vsg::findMaterial(facts, vn::graphics::ContentRef{});
+    }
+    return vn::vsg::findMaterial(facts, vn::graphics::ContentRef{ material->id().handle(), material->revision() });
+}
+
 /// @brief A stage of @p type, with the given source (the ASCII form the SDK stores as UTF-8).
 ShaderStage stage(ShaderStageType type, const char* source)
 {
@@ -176,7 +189,7 @@ struct Plan {
 };
 
 /// @brief A content command naming @p geometry (at @p geometry_revision), @p program and @p material.
-CompiledCommand command(const void* geometry, std::uint64_t geometry_revision, const void* program, const void* material)
+CompiledCommand command(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, vn::graphics::ContentRef material)
 {
     CompiledCommand out;
     out.geometry          = geometry;
@@ -184,6 +197,20 @@ CompiledCommand command(const void* geometry, std::uint64_t geometry_revision, c
     out.program           = ProgramRef{ program, 0U };
     out.material          = material;
     return out;
+}
+
+/** @brief The same command naming a material by the OBJECT a case holds: the plan carries the id and the revision. */
+CompiledCommand command(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, const vn::graphics::MaterialBase* material)
+{
+    const vn::graphics::ContentRef ref =
+        material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};
+    return command(geometry, geometry_revision, program, ref);
+}
+
+/** @brief The same command named by the OBJECT a case holds: a plan carries a handle, so the object converts to its id. */
+CompiledCommand command(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, const vn::graphics::MaterialBase* material)
+{
+    return command(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, material);
 }
 
 /// @brief A plan with one pass and one content draw over @p commands.
@@ -257,7 +284,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     EXPECT_EQ(store.materialEntries(), 1U);
     EXPECT_EQ(store.builds(), 3U);
 
-    EXPECT_TRUE(findGeometry(facts, named.get(), named->revision()).found());
+    EXPECT_TRUE(findGeometry(facts, named->id(), named->revision()).found());
     EXPECT_TRUE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).found());
     EXPECT_TRUE(findMaterial(facts, material.get()).found());
 
@@ -268,7 +295,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     EXPECT_EQ(store.programEntries(), 1U);
     EXPECT_EQ(store.materialEntries(), 2U) << "the default material joins the table the first time content without one is named";
     EXPECT_EQ(store.builds(), 5U) << "the other geometry and the default material, and nothing else (the program is already answered)";
-    EXPECT_TRUE(findMaterial(second, nullptr).found());
+    EXPECT_TRUE(findMaterial(second, vn::graphics::ContentRef{}).found());
 }
 
 TEST(ContentStoreTest, ASteadyFrameBuildsNothing)
@@ -324,7 +351,7 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
 
     // And the order is the one the lookups search, so the recording's own three questions answer through it.
     const auto found_program  = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content);
-    const auto found_geometry = findGeometry(facts, geometry.get(), geometry->revision());
+    const auto found_geometry = findGeometry(facts, geometry->id(), geometry->revision());
     const auto found_material = findMaterial(facts, material.get());
     EXPECT_TRUE(found_program.entry != nullptr);
     EXPECT_TRUE(found_geometry.entry != nullptr);
@@ -410,7 +437,7 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
 
     const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
-    ASSERT_TRUE(findGeometry(first, geometry.get(), geometry->revision()).found());
+    ASSERT_TRUE(findGeometry(first, geometry->id(), geometry->revision()).found());
     const std::uint64_t old_revision = geometry->revision();
 
     // The host edits the data and announces it (the SDK's contract): the plan still names the old revision.
@@ -421,23 +448,23 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
 
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
     EXPECT_EQ(store.geometryEntries(), 2U) << "the new revision JOINS the table, it does not replace it";
-    EXPECT_TRUE(findGeometry(second, geometry.get(), new_revision).found()) << "the live revision answers";
-    EXPECT_TRUE(findGeometry(second, geometry.get(), old_revision).found()) << "and so does the revision a recorded frame may still name";
+    EXPECT_TRUE(findGeometry(second, geometry->id(), new_revision).found()) << "the live revision answers";
+    EXPECT_TRUE(findGeometry(second, geometry->id(), old_revision).found()) << "and so does the revision a recorded frame may still name";
     EXPECT_EQ(retirement.pending(), 1U) << "the supersession was parked";
 
     // Not yet due: the park's window is the slots that could still record the old revision.
     releaseUpTo(timeline, retirement, 1U);
     EXPECT_EQ(retirement.pending(), 1U) << "released a frame early";
-    EXPECT_TRUE(findGeometry(second, geometry.get(), old_revision).found());
+    EXPECT_TRUE(findGeometry(second, geometry->id(), old_revision).found());
 
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     EXPECT_EQ(retirement.pending(), 0U);
     EXPECT_EQ(store.geometryEntries(), 1U) << "the superseded revision left the table";
-    EXPECT_EQ(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry.get(), old_revision).miss, FactMiss::Revision)
+    EXPECT_EQ(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry->id(), old_revision).miss, FactMiss::Revision)
         << "a plan naming it now misses with Revision (the identity is known, that revision is not)";
 }
 
-TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
+TEST(ContentStoreTest, AMaterialEditJoinsTheTableAndTheOldRevisionLeavesAtThePark)
 {
     ContentStore store;
     const auto   geometry = quad();
@@ -455,6 +482,8 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     const ContentFacts& first       = store.tablesFor(plan->frame, timeline, retirement);
     const auto          first_block = blockOf(*findMaterial(first, material.get()).entry);
     EXPECT_FLOAT_EQ(first_block.base_color[0], 0.25F);
+    const std::uint64_t old_revision = material->revision();
+    const vn::graphics::ContentRef old_ref{ material->id().handle(), old_revision };
 
     // The host edits the material. The material moves its own revision (Material::revision - every shading value
     // goes through a setter, which compares first), and the facade touches every material a frame commands because
@@ -463,15 +492,26 @@ TEST(ContentStoreTest, AMaterialEditReplacesItsEntryAndParksTheValue)
     material->setBaseColor(vn::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
     EXPECT_EQ(material->revision(), before + 1U);
     store.track(material.get(), material->description());
+    const std::uint64_t new_revision = material->revision();
+    ASSERT_NE(new_revision, old_revision);
 
+    // A frame compiled BEFORE the edit still names the old revision, and the table has to keep answering it - the
+    // same rule the geometry table follows (see the case above), and the one A1 was about.
     const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
-    EXPECT_EQ(store.materialEntries(), 1U) << "a material is answered by identity alone: the row is replaced";
+    EXPECT_EQ(store.materialEntries(), 2U) << "the new revision JOINS the table, it does not replace the old one";
+    EXPECT_TRUE(findMaterial(second, old_ref).found()) << "the revision a recorded frame may still name keeps answering";
     const auto second_block = blockOf(*findMaterial(second, material.get()).entry);
-    EXPECT_FLOAT_EQ(second_block.base_color[0], 0.75F) << "the table answers what the material is NOW";
-    EXPECT_EQ(retirement.pending(), 1U) << "the replaced value was parked";
+    EXPECT_FLOAT_EQ(second_block.base_color[0], 0.75F) << "and the new one answers what the material is NOW";
+    EXPECT_EQ(retirement.pending(), 1U) << "the supersession was parked";
+
+    // Not yet due: the park's window is the slots that could still record the old revision.
+    releaseUpTo(timeline, retirement, 1U);
+    EXPECT_EQ(retirement.pending(), 1U) << "released a frame early";
+    EXPECT_TRUE(findMaterial(second, old_ref).found());
 
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     EXPECT_EQ(retirement.pending(), 0U);
+    EXPECT_EQ(store.materialEntries(), 1U) << "the superseded revision left the table";
 
     // An edit for a material nobody tracked is answered with nothing at all (it cannot be drawn either).
     const auto untracked = ::material(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
@@ -498,21 +538,21 @@ TEST(ContentStoreTest, AWrongMaterialSlotIsReportedOncePerEpisode)
     const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     (void)store.tablesFor(plan->frame, timeline, retirement); // the first description opens the episode
 
-    EXPECT_TRUE(store.claimSlotReport(material.get(), 2U)) << "the first frame says it";
-    EXPECT_FALSE(store.claimSlotReport(material.get(), 2U)) << "the second does not";
-    EXPECT_TRUE(store.claimSlotReport(material.get(), 3U)) << "another slot is its own report";
+    EXPECT_TRUE(store.claimSlotReport(material->id(), 2U)) << "the first frame says it";
+    EXPECT_FALSE(store.claimSlotReport(material->id(), 2U)) << "the second does not";
+    EXPECT_TRUE(store.claimSlotReport(material->id(), 3U)) << "another slot is its own report";
 
     // An edit is a new episode: a host that fixed one map and broke another hears about the second.
     material->setBaseColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
     store.track(material.get(), material->description());
-    EXPECT_TRUE(store.claimSlotReport(material.get(), 2U)) << "the material changed: the episode restarted";
-    EXPECT_FALSE(store.claimSlotReport(material.get(), 2U));
+    EXPECT_TRUE(store.claimSlotReport(material->id(), 2U)) << "the material changed: the episode restarted";
+    EXPECT_FALSE(store.claimSlotReport(material->id(), 2U));
 
     // An untracked material has no record to remember it in: the answer is "report it" rather than silence - the
     // recorder's own per-pass state is what keeps that from repeating every frame.
     const auto untracked = ::material(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
-    EXPECT_TRUE(store.claimSlotReport(untracked.get(), 2U));
-    EXPECT_TRUE(store.claimSlotReport(untracked.get(), 2U)) << "and it stays that way: there is nothing to record";
+    EXPECT_TRUE(store.claimSlotReport(untracked->id(), 2U));
+    EXPECT_TRUE(store.claimSlotReport(untracked->id(), 2U)) << "and it stays that way: there is nothing to record";
 }
 
 TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
@@ -642,7 +682,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     EXPECT_EQ(store.programEntries(), 0U);
     EXPECT_EQ(store.materialEntries(), 0U);
     EXPECT_EQ(store.builds(), 0U);
-    EXPECT_EQ(findGeometry(facts, geometry.get(), geometry->revision()).miss, FactMiss::Unknown);
+    EXPECT_EQ(findGeometry(facts, geometry->id(), geometry->revision()).miss, FactMiss::Unknown);
     EXPECT_EQ(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(facts, material.get()).miss, FactMiss::Unknown);
 }
@@ -664,7 +704,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     ASSERT_EQ(store.geometryEntries(), 1U);
     ASSERT_EQ(store.programEntries(), 1U);
 
-    std::vector<const void*> released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
 
     // The host still holds both, so neither is abandoned.
     EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 0U);
@@ -672,7 +712,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     EXPECT_TRUE(released_materials.empty());
 
     // The host lets the geometry go: the store's share is the last one.
-    const void* const   identity = geometry.get();
+    const auto          identity = geometry->id();
     const std::uint64_t revision = geometry->revision();
     geometry.reset();
     EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
@@ -708,7 +748,7 @@ TEST(ContentStoreTest, AParkedRemovalKeepsTheObjectsAddressReservedUntilItsRowsL
     ASSERT_EQ(store.programEntries(), 1U);
 
     const void* const        address = program.get();
-    std::vector<const void*> released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
     program.reset();
     geometry.reset();
     shading.reset(); // the store's shares are the last ones (the plan copies identities, not handles)
@@ -746,7 +786,7 @@ TEST(ContentStoreTest, AReleaseThatCannotBeParkedYetKeepsItsEntryAndIsRetried)
     (void)store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_EQ(store.programEntries(), 1U);
 
-    std::vector<const void*> released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
     program.reset();
 
     EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 0U) << "nothing can be parked, so nothing is let go";
@@ -788,7 +828,7 @@ TEST(ContentStoreTest, AReleaseIsCancelledByTheNextUse)
     store.track(geometry);
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     EXPECT_EQ(store.geometryEntries(), 1U);
-    EXPECT_TRUE(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry.get(), geometry->revision()).found());
+    EXPECT_TRUE(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometry->id(), geometry->revision()).found());
 }
 
 TEST(ContentStoreTest, AReleaseWithoutReuseDropsTheRowsAtThePark)
@@ -874,11 +914,11 @@ TEST(ContentStoreTest, AReleaseThenAnEditKeepsTheNewRevisionAfterThePark)
     store.track(geometry);
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
     ASSERT_NE(new_revision, old_revision);
-    EXPECT_TRUE(findGeometry(facts, geometry.get(), new_revision).found());
+    EXPECT_TRUE(findGeometry(facts, geometry->id(), new_revision).found());
 
     releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
     const ContentFacts& after = store.tablesFor(plan->frame, timeline, retirement);
-    EXPECT_TRUE(findGeometry(after, geometry.get(), new_revision).found()) << "the cancelled release must not erase the revision the host is using now";
+    EXPECT_TRUE(findGeometry(after, geometry->id(), new_revision).found()) << "the cancelled release must not erase the revision the host is using now";
     EXPECT_EQ(store.geometryEntries(), 1U);
 }
 
@@ -1013,7 +1053,7 @@ TEST(ContentStoreTest, AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDrop
 
     // The host lets go of its last reference; the sweep parks the row removal (the replaced-object window).
     geometry.reset();
-    std::vector<const void*> released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
     ASSERT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
 
     // Inside the window the PIN is still there, because the row is parked rather than erased.
@@ -1102,7 +1142,7 @@ TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWi
 
     // One geometry goes: the OTHER row still declares the buffer, so the index keeps it (the refcount, not a bit).
     left.reset();
-    std::vector<const void*> released_materials;
+    std::vector<vn::graphics::MaterialId> released_materials;
     ASSERT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
     EXPECT_TRUE(store.tablesFor(plan->frame, timeline, retirement).declarations.declaresBuffer(buffer))
         << "a shared buffer is declared while ANY row still names it";

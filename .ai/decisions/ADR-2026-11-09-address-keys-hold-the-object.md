@@ -1,6 +1,8 @@
 # ADR-2026-11-09：按地址做键的缓存，必须持有它键名所指的对象
 
-- 状态：已采纳
+- 状态：已部分取代（被 `ADR-2026-11-11-content-identity-is-a-handle.md` 取代“身份”那一半：内容的键改为
+  `Handle`/`ContentRef`。本篇的“持有即身份，键要能查多久就持有多久”规则，对**尚未迁移到句柄的表**
+  —— 流上传、编译半边、管线变体 —— 仍然有效）
 - 日期：2026-11-09
 - 相关：`../design/graphics-content-lifecycle.md`（2.5 / 2.6）、`../bugs/vsg-content-address-recycled-before-rows.md`、
   backlog `graphics.md` T19（本条决定落地时已关闭，条目已删除，证据留在下面）

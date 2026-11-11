@@ -16,6 +16,8 @@ void RenderWorld::adopt(SceneBake rows)
     // announce themselves), and this side must not name a node - so it is dropped here, once, where the handshake
     // happens (see SceneBake::nodes).
     bake_.nodes.clear();
+    bake_.node_epochs.clear();
+    bake_.snapshot_cache.reset();
     rebuildIndex();
     ++revision_; // a whole new table: every collected list is stale
 }
@@ -178,7 +180,7 @@ void RenderWorld::rebuildIndex()
     index_.reserve(bake_.rows.size());
     for (std::uint32_t row = 0U; row < bake_.rows.size(); ++row) {
         const RowId identity = bake_.rows[row].identity;
-        if (identity != nullptr) {
+        if (!identity.isNull()) {
             index_.emplace(identity, row);
         }
     }

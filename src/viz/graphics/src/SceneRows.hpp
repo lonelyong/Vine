@@ -5,6 +5,7 @@
 #include <vine/graphics/Scene.hpp>
 
 #include "DrawListBake.hpp"
+#include "SceneSnapshot.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -62,6 +63,21 @@ class SceneRows {
      * @param out   Receives the rows (replacing its contents).
      */
     static void publish(const Scene& scene, SceneBake& out);
+
+    /**
+     * @brief Copies the scene's rows into an immutable snapshot at their current version.
+     *
+     * @details
+     * - This is the bridge between today's mutable `SceneBake` and the chunked snapshot: the copy drops the node
+     *   record and re-takes the material values exactly like `publish`, so the result can be selected without
+     *   touching the live graph.
+     * - The returned value is immutable; editing the scene afterwards does not change what an older snapshot
+     *   selects (the material / geometry values carried in its rows keep their revision).
+     *
+     * @param scene The scene whose rows are published.
+     * @return The immutable snapshot; never null.
+     */
+    [[nodiscard]] static SceneSnapshotPtr snapshot(const Scene& scene);
 };
 
 } // namespace detail

@@ -52,7 +52,7 @@ bool ContentMirror::setDescription(const Node& node)
     }
     Delta delta;
     delta.kind     = DeltaKind::Description;
-    delta.identity = &node;
+    delta.identity = node.id();
     return channel_.post(delta, std::move(block));
 }
 
@@ -60,7 +60,7 @@ bool ContentMirror::setState(const Node& node)
 {
     Delta delta;
     delta.kind             = DeltaKind::State;
-    delta.identity         = &node;
+    delta.identity         = node.id();
     delta.state.opacity    = node.opacity();
     delta.state.layers     = node.layers();
     delta.state.draw_order = node.drawOrder();
@@ -76,7 +76,7 @@ bool ContentMirror::attach(const Node& parent, const Node& subtree, std::uint32_
     }
     Delta delta;
     delta.kind        = DeltaKind::Attached;
-    delta.identity    = &parent;
+    delta.identity    = parent.id();
     delta.child_index = child_index;
     return channel_.post(delta, std::move(block));
 }
@@ -85,7 +85,7 @@ bool ContentMirror::detach(const Node& subtree)
 {
     Delta delta;
     delta.kind     = DeltaKind::Detached;
-    delta.identity = &subtree;
+    delta.identity = subtree.id();
     return channel_.post(delta);
 }
 

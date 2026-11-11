@@ -1,9 +1,13 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
+
+#include <vine/SmallVector.hpp>
 
 #include <vine/graphics/CollectView.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -29,6 +33,8 @@ using vn::math::Vec4d;
 
 namespace detail
 {
+
+struct SceneSnapshot; // The immutable chunked publication (see SceneSnapshot.hpp).
 
 /**
  * @brief ONE DRAW a leaf row names, resolved: what the select needs to emit a command, and none of the arithmetic.
@@ -66,12 +72,13 @@ struct DrawFacts {
  *   from the view by the select, which reads its placement value (see ViewPlacement).
  * - `geometry` is the content object a content-side producer HAD (a share); a mirror built from values carries none,
  *   and nothing in the fold or the select reads it (see `.ai/design/graphics-threading.md`).
- * - `identity` is the address the table keys by, kept separately so a producer that has no object at all (the render
+ * - `identity` is the node id the table keys by, kept separately so a producer that has no object at all (the render
  *   world) can still name what it mirrors.
  */
 struct Row {
-    /// The address this row mirrors (the content object; see ADR-2026-11-09).
-    const void* identity{ nullptr };
+    /// The node this row mirrors (see Node::id): a handle, so a row can outlive the object and still be told apart
+    /// from a later node built at the same address.
+    NodeId identity{};
 
     // ---- structure: walk order, so a row is followed by its own subtree
     std::uint32_t parent{ 0xFFFFFFFFU };        ///< 0-based row index; the table's first row has none.
@@ -173,6 +180,11 @@ struct SceneBake {
     std::vector<Row>        rows;
     std::vector<const Node*> nodes; // One per row, content-side box refresh only (dropped by a mirror).
     Seed                    seed{};
+    // The incremental path's bookkeeping: the node epoch each row was built at, and the last immutable publication
+    // (kept here so Scene's public layout does not grow for an internal optimisation). A full rebuild carries the
+    // previous publication forward so the new snapshot can still share its unchanged chunks.
+    std::vector<std::uint64_t>            node_epochs;
+    std::shared_ptr<const SceneSnapshot> snapshot_cache;
 };
 
 /**
@@ -339,6 +351,125 @@ std::uint32_t refreshBoxes(SceneBake& bake);
  * @return How many rows' values changed (0 when nothing moved).
  */
 std::uint32_t refreshMaterials(SceneBake& bake);
+
+/** @brief What re-reading one row's own facts found. */
+enum class RowRefresh
+{
+    NoChange,    ///< The node's own facts are the same (an ancestor's epoch moved, nothing below did).
+    HotChange,   ///< Only local placement / opacity / layers / draw order / view placement moved.
+    Incompatible ///< A field outside the hot set moved; the caller must rebuild the table.
+};
+
+/**
+ * @brief Re-reads one row's own facts from @p node, for the incremental edit path.
+ *
+ * @details
+ * - It never touches `parent` / `end` / `child_count`: structure changes are the caller's signal to rebuild.
+ * - @p index must name @p node in @p bake; a mismatch answers Incompatible rather than refreshing the wrong row.
+ * - The caller resolves the subtree when the answer is HotChange; this function only fills the row's own facts.
+ *
+ * @param node  The node the row was built from.
+ * @param bake  The table to refresh.
+ * @param index The row to refresh.
+ * @return What changed (see RowRefresh).
+ */
+RowRefresh refreshRowFacts(const Node& node, SceneBake& bake, std::uint32_t index);
+
+/**
+ * @brief Collects one view's commands from a row range, through an accessor.
+ *
+ * @details
+ * - The algorithm reads rows only; the accessor is what lets it run over a flat `SceneBake` and over the chunked
+ *   `SceneSnapshot` without materialising either into the other's layout.
+ * - `row_at(index)` must answer the row at @p index and must be stable for the duration of the call.
+ *
+ * @tparam RowAt Callable `const Row&(std::uint32_t)`.
+ */
+template <class RowAt>
+void selectRows(std::uint32_t               row_count,
+                RowAt                       row_at,
+                const Frustum&              frustum,
+                const CollectView&          view,
+                std::uint32_t               layer_mask,
+                bool&                       viewport_used,
+                std::vector<RenderCommand>& out)
+{
+    // The rows are in walk order, so the rows currently being resolved form the ancestor chain, deepest last. A row
+    // whose placement was resolved for THIS view hands its world down; every other row is already placed by the fold.
+    struct OpenRow {
+        std::uint32_t end{ 0 };          ///< One past the row's subtree: it stops being an ancestor there.
+        bool          resolved{ false }; ///< Its world was resolved from the view (children must compose with it).
+        Mat4d         world{};           ///< The world the row resolved to.
+    };
+    // A TREE'S DEPTH, not a scene's size: the chain of rows currently being resolved. The inline capacity covers an
+    // ordinary assembly, and the vector in the repo only grows past it for a pathological hierarchy - which is why this
+    // is a SmallVector and not a std::vector: a collection happens per view per frame, and it must not allocate.
+    vn::SmallVector<OpenRow, 32U> open;
+
+    for (std::uint32_t index = 0; index < row_count;) {
+        while (!open.empty() && open.back().end <= index) {
+            open.pop_back();
+        }
+        const Row&  row             = row_at(index);
+        const bool  parent_resolved = !open.empty() && open.back().resolved;
+        const bool  in_run          = row.view_dependent || parent_resolved;
+        const Mat4d parent_world    = parent_resolved ? open.back().world : row.parent_world;
+
+        Mat4d world    = row.world;
+        bool  resolved = false;
+        if (row.placement != nullptr) {
+            const ViewDependence dependence = localToWorldForView(*row.placement, parent_world, view, world);
+            if (dependence == ViewDependence::ViewAndViewport) {
+                viewport_used = true;
+            }
+            if (dependence == ViewDependence::None) {
+                world = parent_world * row.local; // this view keeps the node's own placement
+            }
+            resolved = true;
+        }
+        else if (in_run) {
+            world    = parent_world * row.local; // an ancestor was re-placed, so this row's folded world is stale
+            resolved = true;
+        }
+
+        if ((row.layers_union & layer_mask) == 0U) {
+            index = row.end;
+            continue;
+        }
+        // A row with no view-independent bound must not be culled: no box can promise it is out of the frustum.
+        if (!row.unbounded && frustum.isOutside(resolved ? row.local_box.transformed(world) : row.world_box)) {
+            index = row.end;
+            continue;
+        }
+        if (resolved) {
+            open.push_back(OpenRow{ row.end, true, world });
+        }
+        if (!row.draws.empty()) {
+            const float effective = std::clamp(row.opacity, 0.0f, 1.0f);
+            for (const DrawFacts& draw : row.draws) {
+                if (!draw.drawn) {
+                    continue;
+                }
+                const MaterialBasePtr material = draw.material != nullptr ? draw.material : row.material;
+                const MaterialDescriptionPtr material_description =
+                    draw.material_description != nullptr ? draw.material_description : row.material_description;
+                const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.program;
+                auto&                  cmd     = out.emplace_back(row.geometry, material, world, draw.primitive_index);
+                cmd.node                       = row.identity;
+                cmd.description                = row.description;
+                cmd.material_description       = material_description;
+                cmd.opacity                    = effective;
+                cmd.draw_order                 = row.draw_order;
+                cmd.authored_state             = row.state;
+                cmd.program                    = program;
+                cmd.instance_transforms        = draw.instance_transforms;
+                cmd.first_instance             = draw.first_instance;
+                cmd.instance_count             = draw.instance_count;
+            }
+        }
+        ++index;
+    }
+}
 
 /**
  * @brief Collects one view's commands from the rows: the VIEW half of a collection, and it reads rows only.

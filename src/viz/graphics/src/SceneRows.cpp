@@ -17,12 +17,36 @@ SceneRows::Version SceneRows::version(const Scene& scene)
     return Version{ scene.published_epoch_, scene.published_boxes_, scene.published_materials_ };
 }
 
+SceneSnapshotPtr SceneRows::snapshot(const Scene& scene)
+{
+    const Version version_now = version(scene); // this is the call that brings the rows up to date
+    SceneBake* rows = scene.content_bake_.get();
+    if (rows == nullptr) {
+        return makeSceneSnapshot(SceneBake{}, version_now.epoch, version_now.boxes, version_now.materials, nullptr);
+    }
+    const SceneSnapshotPtr& cached = rows->snapshot_cache;
+    if (cached != nullptr && cached->epoch == version_now.epoch && cached->boxes == version_now.boxes &&
+        cached->materials == version_now.materials) {
+        return cached; // nothing moved: the previous publication is still the answer
+    }
+
+    SceneSnapshotPtr snapshot = makeSceneSnapshot(*rows,
+                                                  version_now.epoch,
+                                                  version_now.boxes,
+                                                  version_now.materials,
+                                                  cached);
+    rows->snapshot_cache      = snapshot;
+    return snapshot;
+}
+
 void SceneRows::publish(const Scene& scene, SceneBake& out)
 {
     const SceneBake& rows = scene.ensureRows();
     out.rows              = rows.rows; // a copy: the engine side owns its table and edits it (adopt/place)
     out.seed              = rows.seed;
-    out.nodes.clear(); // the node record stays on the content's thread (see the declaration)
+    out.nodes.clear();    // the node record stays on the content's thread (see the declaration)
+    out.node_epochs.clear();
+    out.snapshot_cache.reset();
 
     // THE MATERIAL VALUES ARE RE-TAKEN HERE, and this is the boundary that makes them safe to read: a material is
     // edited through a live object (`Material::setXxx`), so no row edit announces it - the publish is where the

@@ -80,13 +80,19 @@ TEST(CoreStreamsTest, StreamIdentityIsTheSliceAndTheRevision)
 
 // --- the material arena --------------------------------------------------------------------------------
 
+/// @brief A material identity a case can name without building an object: the arena keys by id, never by address.
+vn::graphics::MaterialId materialId(int index)
+{
+    return vn::graphics::MaterialId(vn::graphics::Handle::make(static_cast<std::uint32_t>(index + 1), 1U, 0U));
+}
+
 TEST(CoreMaterialArenaTest, TheFirstNoteAllocatesAndWritesOneBlock)
 {
     MaterialArena arena({});
     arena.beginFrame();
 
-    const int                  material = 0;
-    const MaterialArena::Write write    = arena.note(&material, 1);
+    const auto                 material = materialId(0);
+    const MaterialArena::Write write    = arena.note(material, 1);
 
     EXPECT_EQ(write.kind, MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(write.bytes, 64U) << "one VineMaterialBlock";
@@ -104,13 +110,13 @@ TEST(CoreMaterialArenaTest, TheFirstNoteAllocatesAndWritesOneBlock)
 TEST(CoreMaterialArenaTest, ASteadyFrameWritesNothing)
 {
     MaterialArena arena({});
-    const int     material = 0;
+    const auto    material = materialId(0);
     arena.beginFrame();
-    (void)arena.note(&material, 7);
+    (void)arena.note(material, 7);
 
     for (int frame = 0; frame < 10; ++frame) {
         arena.beginFrame();
-        const MaterialArena::Write write = arena.note(&material, 7);
+        const MaterialArena::Write write = arena.note(material, 7);
         EXPECT_EQ(write.kind, MaterialArena::WriteKind::Unchanged);
         EXPECT_EQ(write.bytes, 0U);
     }
@@ -123,14 +129,14 @@ TEST(CoreMaterialArenaTest, ASteadyFrameWritesNothing)
 TEST(CoreMaterialArenaTest, ARevisionChangeWritesExactlyOncePerFrame)
 {
     MaterialArena arena({});
-    const int     material = 0;
+    const auto    material = materialId(0);
     arena.beginFrame();
-    (void)arena.note(&material, 1);
+    (void)arena.note(material, 1);
 
     arena.beginFrame();
-    const MaterialArena::Write first  = arena.note(&material, 2);
-    const MaterialArena::Write second = arena.note(&material, 3);
-    const MaterialArena::Write third  = arena.note(&material, 3);
+    const MaterialArena::Write first  = arena.note(material, 2);
+    const MaterialArena::Write second = arena.note(material, 3);
+    const MaterialArena::Write third  = arena.note(material, 3);
 
     EXPECT_EQ(first.kind, MaterialArena::WriteKind::Rewritten) << "the revision moved";
     EXPECT_EQ(first.bytes, 64U);
@@ -143,7 +149,7 @@ TEST(CoreMaterialArenaTest, ARevisionChangeWritesExactlyOncePerFrame)
 TEST(CoreMaterialArenaTest, TheCopyRotationSpansTheInFlightFrames)
 {
     MaterialArena arena({});
-    const int     material = 0;
+    const auto    material = materialId(0);
 
     // ONE MORE frame than the arena owns copies: a copy is only free once the frame that read it is proved
     // finished, and the framework proves that when the slot is recycled - after this frame's write. So the
@@ -152,7 +158,7 @@ TEST(CoreMaterialArenaTest, TheCopyRotationSpansTheInFlightFrames)
     for (std::uint64_t frame = 0; frame <= arena.copies(); ++frame) {
         arena.beginFrame();
         EXPECT_EQ(arena.frame(), frame);
-        const MaterialArena::Write write = arena.note(&material, frame + 1);
+        const MaterialArena::Write write = arena.note(material, frame + 1);
         ASSERT_EQ(write.kind, frame == 0 ? MaterialArena::WriteKind::Allocated : MaterialArena::WriteKind::Rewritten);
         copies.push_back(write.copy);
     }
@@ -170,24 +176,24 @@ TEST(CoreMaterialArenaTest, AMaterialThatDoesNotFitIsRefusedNotEvicted)
 {
     MaterialArena arena({ 64U, 3U, 2U });
     arena.beginFrame();
-    const int first  = 0;
-    const int second = 1;
-    const int third  = 2;
+    const auto first  = materialId(0);
+    const auto second = materialId(1);
+    const auto third  = materialId(2);
 
-    const MaterialArena::Write first_write = arena.note(&first, 1);
-    (void)arena.note(&second, 1);
-    const MaterialArena::Write refused = arena.note(&third, 1);
+    const MaterialArena::Write first_write = arena.note(first, 1);
+    (void)arena.note(second, 1);
+    const MaterialArena::Write refused = arena.note(third, 1);
 
     // NO EVICTION: the material that does not fit is refused, and the two live ones keep their slots.
     EXPECT_EQ(refused.kind, MaterialArena::WriteKind::Refused);
     EXPECT_EQ(arena.refusals(), 1U);
     EXPECT_EQ(arena.live(), 2U);
     EXPECT_EQ(arena.capacityNeed(), 3U) << "one capacity would have served this frame";
-    EXPECT_EQ(arena.note(&first, 1).kind, MaterialArena::WriteKind::Unchanged) << "the existing material still hits: nothing was reused under it";
+    EXPECT_EQ(arena.note(first, 1).kind, MaterialArena::WriteKind::Unchanged) << "the existing material still hits: nothing was reused under it";
 
     // A release is what makes room - the host's decision, not the arena's.
-    EXPECT_TRUE(arena.release(&first));
-    const MaterialArena::Write fitted = arena.note(&third, 1);
+    EXPECT_TRUE(arena.release(first));
+    const MaterialArena::Write fitted = arena.note(third, 1);
     EXPECT_EQ(fitted.kind, MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(fitted.slot, first_write.slot) << "the released slot is the one reused";
     EXPECT_EQ(arena.refusals(), 1U) << "a release is not a refusal";
@@ -197,17 +203,17 @@ TEST(CoreMaterialArenaTest, TheCapacityNeedCountsDistinctRefusedMaterialsPerFram
 {
     MaterialArena arena({ 64U, 3U, 1U });
     arena.beginFrame();
-    const int held    = 0;
-    const int refused = 1;
+    const auto held    = materialId(0);
+    const auto refused = materialId(1);
 
-    (void)arena.note(&held, 1);
-    (void)arena.note(&refused, 1);
-    (void)arena.note(&refused, 1); // the same material twice in one frame is one slot short, not two
+    (void)arena.note(held, 1);
+    (void)arena.note(refused, 1);
+    (void)arena.note(refused, 1); // the same material twice in one frame is one slot short, not two
     EXPECT_EQ(arena.refusals(), 2U) << "both notes were answered Refused";
     EXPECT_EQ(arena.capacityNeed(), 2U) << "live (1) + distinct refused (1)";
 
     arena.beginFrame();
-    (void)arena.note(&refused, 1);
+    (void)arena.note(refused, 1);
     EXPECT_EQ(arena.capacityNeed(), 2U) << "the need is the frame's own";
 }
 
@@ -215,15 +221,15 @@ TEST(CoreMaterialArenaTest, AReleasedSlotIsReusedByTheNextMaterial)
 {
     MaterialArena arena({ 64U, 3U, 2U });
     arena.beginFrame();
-    const int first  = 0;
-    const int second = 1;
-    const int third  = 2;
+    const auto first  = materialId(0);
+    const auto second = materialId(1);
+    const auto third  = materialId(2);
 
-    const MaterialArena::Write allocated = arena.note(&first, 1);
-    (void)arena.note(&second, 1);
-    EXPECT_TRUE(arena.release(&first));
+    const MaterialArena::Write allocated = arena.note(first, 1);
+    (void)arena.note(second, 1);
+    EXPECT_TRUE(arena.release(first));
 
-    const MaterialArena::Write reused = arena.note(&third, 1);
+    const MaterialArena::Write reused = arena.note(third, 1);
     EXPECT_EQ(reused.kind, MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(reused.slot, allocated.slot) << "the freed slot is what the next material takes";
     EXPECT_EQ(arena.live(), 2U);

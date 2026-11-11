@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include <vine/graphics/ContentId.hpp>
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
 #include <vine/graphics/graphics_global.hpp>
@@ -104,14 +105,14 @@ class VN_GRAPHICS_API MaterialArena {
      * @param revision Upstream revision of the material's bytes; the arena never invents one.
      * @return What happened, and where the block lives (see @ref offsetOf).
      */
-    [[nodiscard]] Write note(const void* material, std::uint64_t revision);
+    [[nodiscard]] Write note(vn::graphics::MaterialId material, std::uint64_t revision);
 
     /** @brief Drops a material's slot, when the application itself is done with it.
      *
      * @param material Material identity.
      * @return true when the arena had a slot for it.
      */
-    bool release(const void* material) noexcept;
+    bool release(vn::graphics::MaterialId material) noexcept;
 
     /** @brief Gets the byte offset of one block, which is also the dynamic offset a descriptor binds with.
      *
@@ -170,11 +171,11 @@ class VN_GRAPHICS_API MaterialArena {
 
   private:
     struct Entry {
-        const void*   material{ nullptr };   // The identity this slot belongs to.
-        std::uint64_t revision{ 0 };         // Revision whose bytes the slot holds.
-        std::uint32_t slot{ 0 };             // Slot index.
-        std::uint64_t last_write_frame{ 0 }; // Frame of the last write (the per-frame dedupe).
-        std::uint32_t last_copy{ 0 };        // Copy the last write went to.
+        vn::graphics::MaterialId material{};         // The identity this slot belongs to.
+        std::uint64_t            revision{ 0 };      // Revision whose bytes the slot holds.
+        std::uint32_t            slot{ 0 };          // Slot index.
+        std::uint64_t            last_write_frame{ 0 }; // Frame of the last write (the per-frame dedupe).
+        std::uint32_t            last_copy{ 0 };     // Copy the last write went to.
     };
 
     /** @brief Gets the copy the current frame writes to. */
@@ -187,13 +188,13 @@ class VN_GRAPHICS_API MaterialArena {
     std::uint32_t              next_slot_{ 0 };
     std::vector<std::uint32_t> free_slots_;
 
-    std::unordered_map<const void*, Entry> entries_; // Material -> its slot (no order: nothing is evicted).
+    std::unordered_map<vn::graphics::MaterialId, Entry> entries_; // Material -> its slot (no order: nothing is evicted).
 
     std::uint64_t                   writes_{ 0 };
     std::uint64_t                   allocations_{ 0 };
     std::uint64_t                   hits_{ 0 };
     std::uint64_t                   refusals_{ 0 };
-    std::unordered_set<const void*> refused_this_frame_; // Distinct materials refused this frame.
+    std::unordered_set<vn::graphics::MaterialId> refused_this_frame_; // Distinct materials refused this frame.
     std::uint64_t                   bytes_written_{ 0 };
 };
 

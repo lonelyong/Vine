@@ -85,14 +85,14 @@ struct FrameFacts {
 
 /** @brief One instance of one command, resolved: identity, plus the state to deliver with it. */
 struct CompiledCommand {
-    const void*   geometry{ nullptr };    // Leaf geometry identity.
-    std::uint64_t geometry_revision{ 0 }; // `Geometry::revision()` at collection time.
+    vn::graphics::NodeId geometry{};      // The node identity the plan names for this draw's facts.
+    std::uint64_t        geometry_revision{ 0 }; // `Geometry::revision()` at collection time.
     /// Which of the geometry's primitives this command draws. The plan names ONE DRAW, so the pair
     /// (geometry, primitive) is this command's data identity - the backend's facts answer index spans and
     /// uploads per primitive, and nothing downstream has to walk a primitive list to find it.
     std::uint32_t   primitive{ 0 };
     ProgramRef      program{};           // The command's own program, or the frame's default (resolved).
-    const void*     material{ nullptr }; // Material identity, or nullptr.
+    vn::graphics::ContentRef material{}; // The material identity AND revision, or a null id for none.
     vn::math::Mat4d model{};             // World-space model matrix.
     float           opacity{ 1.0F };     // Effective opacity (the drawable's half of the alpha rule).
     /// Whether this drawable blends, carried from the collected command (see CollectedCommand::transparent):

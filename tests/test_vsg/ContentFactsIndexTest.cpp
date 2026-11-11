@@ -51,9 +51,17 @@ constexpr std::uint32_t kCanonicalPositions = 0x1U; // The one channel a synthet
 
 /// @brief The identities the tables are built from: a few objects, so one identity owns SEVERAL rows.
 struct Identities {
-    int geometries[3]{};
+    vn::graphics::NodeId geometries[3]{
+        vn::graphics::NodeId(vn::graphics::Handle::make(1U, 1U, 0U)),
+        vn::graphics::NodeId(vn::graphics::Handle::make(2U, 1U, 0U)),
+        vn::graphics::NodeId(vn::graphics::Handle::make(3U, 1U, 0U))
+    };
     int programs[3]{};
-    int materials[3]{};
+    vn::graphics::MaterialId materials[3]{
+        vn::graphics::MaterialId(vn::graphics::Handle::make(11U, 1U, 0U)),
+        vn::graphics::MaterialId(vn::graphics::Handle::make(12U, 1U, 0U)),
+        vn::graphics::MaterialId(vn::graphics::Handle::make(13U, 1U, 0U))
+    };
 };
 
 /// @brief The rows, and the storage their spans point at (the tables borrow, so the test must own it).
@@ -67,7 +75,7 @@ struct Rows {
 
     /// @brief Adds one geometry row: @p channel_count streams of @p mask's shape (the malformed row is one
     ///        whose count does not match what its layout declares).
-    void addGeometry(const void* identity, std::uint64_t revision, std::uint32_t mask, std::size_t channel_count, bool indexed)
+    void addGeometry(vn::graphics::NodeId identity, std::uint64_t revision, std::uint32_t mask, std::size_t channel_count, bool indexed)
     {
         channels.emplace_back(channel_count);
         for (std::size_t index = 0U; index < channel_count; ++index) {
@@ -111,12 +119,11 @@ struct Rows {
     }
 
     /// @brief Adds one material row whose block is @p bytes long (the ABI's size is what makes it well-formed).
-    void addMaterial(const void* identity, std::uint64_t revision, std::size_t bytes)
+    void addMaterial(vn::graphics::MaterialId identity, std::uint64_t revision, std::size_t bytes)
     {
         blocks.emplace_back(bytes, std::byte{ 0 });
         MaterialFacts row;
-        row.material = identity;
-        row.revision = revision;
+        row.material = vn::graphics::ContentRef{ identity.handle(), revision };
         row.block    = blocks.back();
         materials.push_back(row);
     }
@@ -151,12 +158,12 @@ void buildRows(const Identities& ids, Rows& out)
     // and in both orders, because "the first matching row decides" is a rule the scan has and the run must
     // keep: the pair (malformed, good) answers Malformed, the pair (good, malformed) answers the good row.
     for (int index = 0; index < 3; ++index) {
-        out.addGeometry(&ids.geometries[index], 1U, kCanonicalPositions, 1U, /*indexed*/ true);
-        out.addGeometry(&ids.geometries[index], 2U, kCanonicalPositions, 1U, /*indexed*/ true);
+        out.addGeometry(ids.geometries[index], 1U, kCanonicalPositions, 1U, /*indexed*/ true);
+        out.addGeometry(ids.geometries[index], 2U, kCanonicalPositions, 1U, /*indexed*/ true);
     }
-    out.addGeometry(&ids.geometries[0], 2U, kCanonicalPositions, 0U, /*indexed*/ true);  // malformed, first
-    out.addGeometry(&ids.geometries[1], 2U, kCanonicalPositions, 0U, /*indexed*/ true);  // malformed, second
-    out.addGeometry(&ids.geometries[2], 3U, kCanonicalPositions, 1U, /*indexed*/ false); // a third revision
+    out.addGeometry(ids.geometries[0], 2U, kCanonicalPositions, 0U, /*indexed*/ true);  // malformed, first
+    out.addGeometry(ids.geometries[1], 2U, kCanonicalPositions, 0U, /*indexed*/ true);  // malformed, second
+    out.addGeometry(ids.geometries[2], 3U, kCanonicalPositions, 1U, /*indexed*/ false); // a third revision
 
     // PROGRAMS: every identity at two revisions, in BOTH kinds, in three variants - so the run of one
     // (identity, revision, kind) is several rows long and only the variant tells them apart. Identity 0 also
@@ -177,11 +184,11 @@ void buildRows(const Identities& ids, Rows& out)
 
     // MATERIALS: the default (null) entry, the three identities, a REPLACED pair for one identity (two rows,
     // one identity: the first is the answer - see findMaterial) and a malformed block for another.
-    out.addMaterial(nullptr, 0U, sizeof(vn::graphics::VineMaterialBlock));
-    out.addMaterial(&ids.materials[0], 1U, sizeof(vn::graphics::VineMaterialBlock));
-    out.addMaterial(&ids.materials[1], 1U, sizeof(vn::graphics::VineMaterialBlock));
-    out.addMaterial(&ids.materials[1], 2U, sizeof(vn::graphics::VineMaterialBlock));
-    out.addMaterial(&ids.materials[2], 1U, 8U); // not the ABI's size: Malformed
+    out.addMaterial(vn::graphics::MaterialId{}, 0U, sizeof(vn::graphics::VineMaterialBlock));
+    out.addMaterial(ids.materials[0], 1U, sizeof(vn::graphics::VineMaterialBlock));
+    out.addMaterial(ids.materials[1], 1U, sizeof(vn::graphics::VineMaterialBlock));
+    out.addMaterial(ids.materials[1], 2U, sizeof(vn::graphics::VineMaterialBlock));
+    out.addMaterial(ids.materials[2], 1U, 8U); // not the ABI's size: Malformed
 }
 
 /// @brief Gets a row's index in its own table, or -1 when the lookup found nothing.
@@ -215,8 +222,8 @@ TEST(ContentFactsIndexTest, AnIndexedTableAnswersExactlyWhatAScanWould)
 
     for (int index = 0; index < 3; ++index) {
         for (const std::uint64_t revision : revisions) {
-            const auto scanned  = findGeometry(scan, &ids.geometries[index], revision);
-            const auto searched = findGeometry(indexed, &ids.geometries[index], revision);
+            const auto scanned  = findGeometry(scan, ids.geometries[index], revision);
+            const auto searched = findGeometry(indexed, ids.geometries[index], revision);
             EXPECT_EQ(static_cast<int>(searched.miss), static_cast<int>(scanned.miss));
             EXPECT_EQ(rowIndex(scan.geometries, scanned.entry), rowIndex(indexed.geometries, searched.entry))
                 << "geometry identity " << index << " revision " << revision;
@@ -233,16 +240,17 @@ TEST(ContentFactsIndexTest, AnIndexedTableAnswersExactlyWhatAScanWould)
             }
         }
 
-        const auto scanned_material  = findMaterial(scan, &ids.materials[index]);
-        const auto searched_material = findMaterial(indexed, &ids.materials[index]);
+        const auto                         material_ref      = vn::graphics::ContentRef{ ids.materials[index].handle(), 1U };
+        const auto                         scanned_material  = findMaterial(scan, material_ref);
+        const auto                         searched_material = findMaterial(indexed, material_ref);
         EXPECT_EQ(static_cast<int>(searched_material.miss), static_cast<int>(scanned_material.miss));
         EXPECT_EQ(rowIndex(scan.materials, scanned_material.entry), rowIndex(indexed.materials, searched_material.entry)) << "material identity " << index;
     }
 
     // The null material identity, and an identity the tables never heard of: the two answers that are not
     // "a row" have to agree as well (the default entry is a row like any other).
-    const auto scanned_default  = findMaterial(scan, nullptr);
-    const auto searched_default = findMaterial(indexed, nullptr);
+    const auto scanned_default  = findMaterial(scan, vn::graphics::ContentRef{});
+    const auto searched_default = findMaterial(indexed, vn::graphics::ContentRef{});
     EXPECT_EQ(static_cast<int>(searched_default.miss), static_cast<int>(scanned_default.miss));
     EXPECT_EQ(rowIndex(scan.materials, scanned_default.entry), rowIndex(indexed.materials, searched_default.entry));
 
@@ -295,16 +303,18 @@ TEST(ContentFactsIndexTest, TheOrderIsAPermutationOfTheRowsAndItsRunsAreContiguo
         }
         return static_cast<int>(left.kind) < static_cast<int>(right.kind);
     };
-    const auto geometry_before = [&before](const GeometryFacts& left, const GeometryFacts& right) {
-        if (before(left.geometry, right.geometry)) {
-            return true;
-        }
-        if (before(right.geometry, left.geometry)) {
-            return false;
+    const auto geometry_before = [](const GeometryFacts& left, const GeometryFacts& right) {
+        if (left.geometry.handle().bits() != right.geometry.handle().bits()) {
+            return left.geometry.handle().bits() < right.geometry.handle().bits();
         }
         return left.revision < right.revision;
     };
-    const auto material_before = [&before](const MaterialFacts& left, const MaterialFacts& right) { return before(left.material, right.material); };
+    const auto material_before = [](const MaterialFacts& left, const MaterialFacts& right) {
+        if (left.material.id.bits() != right.material.id.bits()) {
+            return left.material.id.bits() < right.material.id.bits();
+        }
+        return left.material.revision < right.material.revision;
+    };
     const auto ascending       = [](std::span<const std::uint32_t> order, auto&& rows_of, auto&& row_before) {
         for (std::size_t position = 1U; position < order.size(); ++position) {
             if (row_before(rows_of[order[position]], rows_of[order[position - 1U]])) {

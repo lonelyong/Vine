@@ -210,7 +210,7 @@ struct PrimitiveFacts {
 
 /** @brief What a geometry identity answers with: its layout, its vertex channels, and its draws. */
 struct GeometryFacts {
-    const void*                   geometry{ nullptr }; // The identity the plan names.
+    vn::graphics::NodeId          geometry{};          // The node identity the plan names.
     std::uint64_t                 revision{ 0 };       // The revision the plan names.
     core::VertexLayoutKey         layout{};            // Which channels this geometry feeds (the pipeline key's half).
     std::span<const ChannelFacts> channels{};          // One per fed channel, in binding order.
@@ -270,9 +270,13 @@ struct MaterialSlotFacts {
 
 /** @brief What a material identity answers with: the block bytes the shading reads, and its texture set. */
 struct MaterialFacts {
-    const void*                material{ nullptr }; // The identity (nullptr = the default material).
-    std::uint64_t              revision{ 0 };       // The revision its owner tracks its bytes at.
-    std::span<const std::byte> block{};             // The block; its size must be the ABI's.
+    /// The identity AND the revision the plan names (a null id = the default material).
+    ///
+    /// THE REVISION IS PART OF THE KEY, the same rule the geometry table follows: a frame in flight that named revision
+    /// 3 must be served revision 3's bytes after the material moved to 4, so a table keyed by the identity alone would
+    /// answer the new values to the old frame.
+    vn::graphics::ContentRef   material{};
+    std::span<const std::byte> block{}; // The block; its size must be the ABI's.
 
     /// The five texture slots, in `TextureSlot` order. A null map means the slot is absent - which is what the
     /// block's flag bits say as well (this list is what the CONTENT layer resolves images from, the flags are
@@ -400,7 +404,7 @@ findProgram(const ContentFacts& facts, const core::ProgramRef& program, const Pr
  * @param revision Geometry revision the plan was collected at.
  * @return The entry, or the reason there is none (Malformed when its channels do not match its layout).
  */
-[[nodiscard]] FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, const void* geometry, std::uint64_t revision) noexcept;
+[[nodiscard]] FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::NodeId geometry, std::uint64_t revision) noexcept;
 
 /** @brief Finds the material a compiled command names.
  *
@@ -417,6 +421,6 @@ findProgram(const ContentFacts& facts, const core::ProgramRef& program, const Pr
  * @param material Material identity (from the plan), or nullptr for "no material".
  * @return The entry, or the reason there is none (Malformed when its block size is not the ABI's).
  */
-[[nodiscard]] FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, const void* material) noexcept;
+[[nodiscard]] FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, vn::graphics::ContentRef material) noexcept;
 
 VN_VSG_NS_END

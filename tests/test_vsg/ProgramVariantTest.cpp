@@ -60,7 +60,7 @@ ChannelFacts channelAt(std::uint32_t location, std::uint32_t components, const v
 GeometryFacts geometryWith(std::vector<ChannelFacts>& storage)
 {
     GeometryFacts facts;
-    facts.geometry = reinterpret_cast<const void*>(0x21U);
+    facts.geometry = vn::graphics::NodeId(vn::graphics::Handle::make(0x21U, 1U, 0U));
     facts.revision = 1U;
     facts.channels = std::span<const ChannelFacts>(storage);
     return facts;
