@@ -326,6 +326,14 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
 
     d->created_at = std::chrono::steady_clock::now();
     d->engine     = vn::intrusive_ptr<vn::graphics::RenderEngine>(new vn::graphics::RenderEngine());
+    // THE HOST RUNS THE ENGINE HALF ON ITS OWN THREAD, and this is the default from here on: a GUI thread that pays
+    // the O(drawables) expansion and the device wait per frame is a GUI thread that stutters, which is the whole
+    // reason the two halves exist (design graphics-threading.md 2.12). The price is stated where it is paid - the
+    // picture follows the content by one frame (N15) - and everything this window does around a frame already
+    // respects it: an attach waits for the frame in flight, the first picture of a session is waited for so the area
+    // is only shown with a picture in it, and `Presenting` is published on an ANSWERED frame, not a submitted one.
+    // A host that wants the whole frame on its own thread says so: control->setFrameThreading(Inline).
+    d->engine->setFrameThreading(vn::graphics::FrameThreading::EngineThread);
     // The engine is a pure scheduler (no passes, camera-agnostic); the view owns the camera, the content scene
     // and the orbit manipulator, and the pipeline it has adopted owns the passes that present them.
     d->view       = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());

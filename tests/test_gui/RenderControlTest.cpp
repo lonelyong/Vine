@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -74,9 +75,12 @@ class StubBackend : public vn::graphics::RenderBackend {
       public:
         /// What this surface answers (a case that wants a lost picture makes it answer Lost).
         vn::graphics::PresentOutcome outcome{ vn::graphics::PresentOutcome::Presented };
-        int   handle_calls{ 0 };
-        int   resize_calls{ 0 };
-        int   presents{ 0 };
+        /// ATOMIC, because these are written where the engine half runs - on the control's frame thread by default -
+        /// and read here, on the test's thread. A plain int would be a data race the moment the host is threaded,
+        /// which is exactly the arrangement these cases exercise.
+        std::atomic<int> handle_calls{ 0 };
+        std::atomic<int> resize_calls{ 0 };
+        std::atomic<int> presents{ 0 };
         void* last_handle{ nullptr };
         int   width{ 0 };
         int   height{ 0 };
@@ -105,7 +109,10 @@ class StubBackend : public vn::graphics::RenderBackend {
                                               vn::graphics::PresentTarget*               present_to = nullptr) override
     {
         ++frames;
-        present_targets.push_back(present_to);
+        {
+            const std::lock_guard<std::mutex> lock(witness_mutex);
+            present_targets.push_back(present_to);
+        }
         for (const vn::graphics::FrameDescription::Pass& entry : frame.passes) {
             draws += entry.draw.has_value() ? entry.draw->draws.size() : 0u;
         }
@@ -160,10 +167,31 @@ class StubBackend : public vn::graphics::RenderBackend {
     /// How many frames the control's views ran, how many drawing calls they carried, and what each frame named as
     /// the surface it resolves to: the stub's own reading of the value the engine handed over (see
     /// RenderFrameExecutor::executeFrame).
-    int                                       frames{ 0 };
-    std::size_t                               draws{ 0 };
-    std::vector<vn::graphics::PresentTarget*> present_targets;
+    ///
+    /// ATOMIC / LOCKED, because the host runs the engine half on its own thread by default: a case that reads these
+    /// is reading what another thread wrote, so it reads them under `witness_mutex` (see `witnesses()`) after the
+    /// frame it asked for has been answered (`HostedControl::settle`).
+    std::atomic<int>                                                    frames{ 0 };
+    std::atomic<std::size_t>                                            draws{ 0 };
+    mutable std::mutex                                                  witness_mutex;
+    std::vector<vn::graphics::PresentTarget*>                           present_targets;
 };
+
+/// Waits until the control's engine has answered the frame it was last asked for.
+///
+/// The host runs the engine half on its own thread by default, so everything a backend stub records about a frame
+/// (how many frames ran, what they drew, which target they presented through) is written THERE. A case that reads
+/// those witnesses says so here first - it is the one explicit wait of the engine (RenderEngine::waitForFrame), and it
+/// is a no-op inline.
+/// @param control The control whose frame to wait for.
+/// @return true when the frame was answered.
+bool settle(RenderControl* control)
+{
+    if (control == nullptr || control->engine() == nullptr) {
+        return false;
+    }
+    return control->engine()->waitForFrame();
+}
 
 /// Pumps the event loop until 'done' holds or 'timeout_ms' elapses.
 /// @param done Predicate to wait for.
@@ -538,22 +566,22 @@ TEST(RenderControlTest, ContinuousRenderingDrivesFramesWithoutInput)
     ASSERT_TRUE(pumpUntil([&] { return host.control()->width() > 0; }, 3000));
 
     // 先安静一会儿：按需模式下没有输入就没有帧（这条本身也是"按需"的判据）。
-    const int idle_before = host.stub()->surface_half.presents;
+    const int idle_before = host.stub()->surface_half.presents.load();
     pumpUntil([] { return false; }, 150);
-    EXPECT_EQ(host.stub()->surface_half.presents, idle_before) << "按需模式：没人输入就不出帧";
+    EXPECT_EQ(host.stub()->surface_half.presents.load(), idle_before) << "按需模式：没人输入就不出帧";
 
     host.control()->setContinuousRendering(true, 10);
-    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents >= idle_before + 3; }, 3000)) << "连续渲染开着时应当自己出帧（不需要任何输入）";
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents.load() >= idle_before + 3; }, 3000)) << "连续渲染开着时应当自己出帧（不需要任何输入）";
 
     // 关掉：帧数必须停住。给足两倍以上的滴答周期，避免把"刚好在跑的那一帧"当成还在继续。
     host.control()->setContinuousRendering(false);
-    const int stopped_at = host.stub()->surface_half.presents;
+    const int stopped_at = host.stub()->surface_half.presents.load();
     pumpUntil([] { return false; }, 120);
-    EXPECT_EQ(host.stub()->surface_half.presents, stopped_at) << "关掉之后不该再出帧";
+    EXPECT_EQ(host.stub()->surface_half.presents.load(), stopped_at) << "关掉之后不该再出帧";
 
     // 可以再开一次（幂等：重复调用不叠计时器、换周期按新的跑）。
     host.control()->setContinuousRendering(true, 5);
-    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents >= stopped_at + 2; }, 3000));
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents.load() >= stopped_at + 2; }, 3000));
     host.control()->setContinuousRendering(false);
 }
 
@@ -567,12 +595,12 @@ TEST(RenderControlTest, ALostPictureIsRepairedByReannouncingTheSize)
     host.show();
     ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
 
-    const int resizes_before  = host.stub()->surface_half.resize_calls;
-    const int presents_before = host.stub()->surface_half.presents;
+    const int resizes_before  = host.stub()->surface_half.resize_calls.load();
+    const int presents_before = host.stub()->surface_half.presents.load();
 
     host.stub()->surface_half.outcome = vn::graphics::PresentOutcome::Lost;
     host.control()->setContinuousRendering(true, 5);
-    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.resize_calls > resizes_before; }, 3000))
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.resize_calls.load() > resizes_before; }, 3000))
         << "a lost picture makes the next frame re-announce the extent - that is the repair";
     // THE AREA IS NOT TAKEN DOWN: its last picture is still what is on screen, and hiding it would stop the frames that
     // repair the surface (a hidden window asks for none). So the state stays Presenting and the drive keeps running.
@@ -581,7 +609,7 @@ TEST(RenderControlTest, ALostPictureIsRepairedByReannouncingTheSize)
 
     // The rebuilt swapchain takes the next picture, and frames keep reaching it - no attach, no state dance.
     host.stub()->surface_half.outcome = vn::graphics::PresentOutcome::Presented;
-    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents > presents_before + 2; }, 3000))
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents.load() > presents_before + 2; }, 3000))
         << "the surface is presenting again on its own";
     EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
     host.control()->setContinuousRendering(false);
@@ -698,7 +726,7 @@ TEST(RenderControlTest, AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScre
     // 同一句在 attach 之后就真的出帧了：区别只在会话在不在。
     ASSERT_TRUE(pumpUntil([&] { return host.control()->init(); }, 3000));
     EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
-    EXPECT_GE(host.stub()->surface_half.presents, 1) << "attach 那一帧就是第一张画面";
+    EXPECT_GE(host.stub()->surface_half.presents.load(), 1) << "attach 那一帧就是第一张画面";
 }
 
 // 请求一帧 ≠ 立即出帧：requestFrame() 只把这一帧排进显示同步，调用返回时还没画；同一拍里的多次请求合成一帧。
@@ -773,7 +801,7 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
 
     void* first_handle = host.stub()->surface_half.last_handle;
     ASSERT_NE(first_handle, nullptr);
-    const int handle_calls_before = host.stub()->surface_half.handle_calls;
+    const int handle_calls_before = host.stub()->surface_half.handle_calls.load();
 
     std::vector<RenderControl::SurfaceState> seen;
     auto subscription = host.control()->state_changed.connect([&seen](RenderControl::SurfaceState state) { seen.push_back(state); });
@@ -787,7 +815,7 @@ TEST(RenderControlTest, FollowsARecreatedSurfaceWithoutTheHost)
     ASSERT_TRUE(
         pumpUntil([&] { return host.stub()->surface_half.last_handle != first_handle && host.control()->state() == RenderControl::SurfaceState::Presenting; },
                   3000));
-    EXPECT_GT(host.stub()->surface_half.handle_calls, handle_calls_before);
+    EXPECT_GT(host.stub()->surface_half.handle_calls.load(), handle_calls_before);
     EXPECT_TRUE(surface->isVisible()); // 新窗口里重新落一帧之后才再上屏
 
     // 重建期间状态回到 Pending（窗口没了就不该声称"在出画面"），然后落一帧重新上屏。
@@ -964,14 +992,15 @@ TEST(RenderControlTest, TheControlAsksItsDeviceForTheTargetOfTheWindowItGot)
     ASSERT_NE(surface->target(), nullptr) << "区持有设备为这个窗口造的那把目标";
     EXPECT_EQ(surface->target(), &host.stub()->surface_half);
     EXPECT_EQ(host.stub()->target_calls, 1) << "只问一次：控件所在的这个窗口";
-    EXPECT_EQ(host.stub()->surface_half.handle_calls, 1) << "窗口句柄是造目标时的输入";
+    EXPECT_EQ(host.stub()->surface_half.handle_calls.load(), 1) << "窗口句柄是造目标时的输入";
     EXPECT_NE(surface->target()->nativeHandle(), nullptr) << "设备拿到的就是宿主这个窗口";
 
     // 一帧解析到的是**区**那把目标：引擎交给执行器的 present_to 就是它，帧尾的 present 也走它。
     control->renderFrame();
+    ASSERT_TRUE(settle(control)) << "the frame the control asked for is answered before its witnesses are read";
     ASSERT_FALSE(host.stub()->present_targets.empty());
     EXPECT_EQ(host.stub()->present_targets.back(), surface->target());
-    EXPECT_GE(host.stub()->surface_half.presents, 1);
+    EXPECT_GE(host.stub()->surface_half.presents.load(), 1);
 }
 
 // 造不出目标就是挂不上：设备"不呈现"的答案（SurfaceTargetResult::NoPresentation）变成控件的失败理由，
@@ -985,7 +1014,7 @@ TEST(RenderControlTest, ADeviceThatPresentsNothingFailsTheAttachWithItsReason)
     ASSERT_TRUE(pumpUntil([&] { return control->state() == RenderControl::SurfaceState::Failed; }, 3000));
     EXPECT_EQ(host.stub()->target_calls, 1) << "控件向设备要过目标：它问的就是这个窗口";
     EXPECT_EQ(host.stub()->initialize_calls, 0) << "没有窗口就没有会话：设备不白起一次";
-    EXPECT_EQ(host.stub()->surface_half.presents, 0);
+    EXPECT_EQ(host.stub()->surface_half.presents.load(), 0);
     EXPECT_NE(control->failureReason().as_std_str().find("presents nothing"), std::string::npos) << "宿主读到的理由说了为什么（无呈现能力）";
 }
 

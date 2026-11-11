@@ -673,6 +673,17 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 - **怎么防**：宿主只见值（`SurfaceEvent`），交换链重建只在帧首、只在引擎线程（C17，§2.12）；`resize()` 只记录
   "下一帧布局用多大"，UI 侧一次也不写引擎侧状态。
 
+### 6.11 `*collectRenderCommands(...)` 直接放进 range-for
+
+- **会怎么错**：`for (const RenderCommand& c : *source.collectRenderCommands(view, mask))` 看起来没问题，实际拿到的是
+  一个临时 `shared_ptr` 所指 vector 的引用 —— range-for 的初始化把 `*f()` 绑给 `__range`，而**临时 `shared_ptr` 在
+  那条初始化语句结束时就销毁了**（只有"绑定到引用上的临时对象"才延长寿命）。于是循环体读的是已经释放的列表：程序多半
+  还能跑，输出偶尔是垃圾。
+- **怎么判**：TSan 报 `heap-use-after-free`（`vector::begin()` 读已释放内存），ASan 跑同样的用例也会红；不进 sanitizer
+  就只在"列表刚被回收"的时机崩。
+- **怎么防**：先把返回值**具名持有**，再遍历：`const auto list = ...; for (const auto& c : *list)`。这是调用侧的规矩，
+  不是 API 的缺陷：列表的寿命由它的 `shared_ptr` 决定，而 range-for 不会替你持有它。
+
 ## 7. 已否决选项
 
 | # | 选项 | 理由 | ADR |
@@ -713,6 +724,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | T16 | 一帧的构建只花 O(passes)：UI 线程不 expand、不等 present（P3） | 计数断言（帧内 expand 次数 = passes 的展开需求，不含采集）+ `callgrind_diff.py` |
 | T17 | 表面事件只在帧首生效：resize 之后的下一帧用新尺寸，期间那一帧被丢弃且不计错 | 新增用例：连续两帧改 extent，断言第一帧丢弃原因可见、第二帧尺寸正确、`deviceWaits` 增长 |
 | T18 | `waitForFrame(n)` 只等第 n 帧；不调用它时 `frame()` 不依赖引擎线程进度 | 用例：投 100 帧后立刻返回（时间上界），逐帧 `waitForFrame` 单调完成 |
+| T19 | 引擎线程与两条通道无数据竞争；整包无 use-after-free | `scripts/tsan_check.sh`（`-fsanitize=thread` 树 + `test_graphics` 全跑；**0 条警告**才算过） |
 
 ## 9. 状态与演进
 
@@ -871,6 +883,17 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   `renderFrame()` 在下一帧帧首处置 `Lost`（回 `Pending` + 重新 attach），`RenderControl::setFrameThreading()` 让宿主
   选择引擎线程（默认 Inline）。验收：`RenderEngineTest.TheFramesPictureOutcomeIsAFactOfTheFrame` 三条（Presented /
   目标答 Lost / 无 target 答 Skipped），`test_vsg` 537/537，`ctest` 30/30。
+- **T14 / T19 已落地（TSan 门禁，2026-11-11）**：`scripts/tsan_check.sh` 建 `build-tsan`（`-fsanitize=thread`）、
+  编 `test_graphics`、全跑并以"**0 条 TSan 警告**"为判据（测试全绿但有一条警告仍算失败）。首跑 14 条警告，三类：
+  ① `RenderEngine::removePass` 在擦掉槽位（可能是该 pass 的最后一个引用）之后还解引用它 —— **引擎真 bug**，已修
+  （调用期间持有 `intrusive_ptr`，与 `clearPasses` 同一条规矩）；② 一条用例读了它刚释放的相机；③ 两处把
+  `*collectRenderCommands(...)` 直接放进 range-for（临时 `shared_ptr` 在循环开始前就销毁，见 §6.11）。
+  修完再跑：**540/540 通过、0 条警告**。这也回答了"线程化到底有没有竞争"：没有 —— 首轮 14 条里**没有一条是 data race**，
+  全是寿命问题。
+- **宿主默认走引擎线程（2026-11-11）**：`SurfaceWindow` 建好引擎就把 `setFrameThreading(EngineThread)` 打开 —— GUI 线程
+  不再付 expand 与 present 的等待，代价是画面比内容晚一帧（N15）。窗口自己绕着一帧做的事已经按这个前提写好：attach
+  先 `waitForFrame`、会话首帧等一次再报 `Presenting`、丢图不藏区域；`RenderControl::setFrameThreading(Inline)` 是回退口。
+  验收：`RenderControlTest` 25/25（含连续渲染与丢图修复两条时序用例，重复跑稳定）。
 - **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`

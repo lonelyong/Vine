@@ -590,7 +590,12 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, 
 
 void RenderEngine::removePass(raw_ptr<RenderPass> pass)
 {
-    const auto old_size                   = slots_.size();
+    // THE INVOCATION MAY BE THE PASS' LAST REFERENCE (its slot is one, and a host that just added a pass and forgot
+    // its handle has nothing else), so hold it for the length of this call: the erase below can drop the last count,
+    // and everything after it reads the pass - the same rule clearPasses states for the same reason (measured: a
+    // heap-use-after-free of the pass' render target, found by the thread sanitizer because it checks liveness too).
+    const intrusive_ptr<RenderPass> keep_alive{ pass };
+    const auto                      old_size = slots_.size();
     // The order the pass ran at is not kept anywhere: the slot list IS the answer (see passOrder), and a pass
     // that is gone has none.
     raw_ptr<RenderTarget> transient_owned = nullptr;

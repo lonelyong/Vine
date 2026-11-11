@@ -7453,8 +7453,11 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
 
     const RenderPass*   pass_raw    = nullptr;
     const RenderTarget* target_raw  = nullptr;
-    const Camera*       camera_raw  = nullptr;
     const Texture*      texture_raw = nullptr;
+    /// The camera's view as a VALUE, taken while the camera is alive: this case is about the owned frame keeping what
+    /// its producers released, so the comparison below must not read the camera it just let go of (the thread
+    /// sanitizer reports that as a use-after-free).
+    Mat4d camera_view{};
 
     {
         auto pass = intrusive_ptr<RenderPass>(new RenderPass());
@@ -7470,8 +7473,8 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
 
         pass_raw    = pass.get();
         target_raw  = target.get();
-        camera_raw  = camera.get();
         texture_raw = texture.get();
+        camera_view = camera->viewMatrix();
 
         OwnedPass owned_pass;
         owned_pass.pass  = pass;
@@ -7504,7 +7507,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
     EXPECT_EQ(description.target, target_raw);
     ASSERT_TRUE(description.clear.has_value());
     ASSERT_EQ(description.draws.size(), 1U);
-    EXPECT_TRUE(description.draws[0].camera.view.isEqual(camera_raw->viewMatrix(), 1e-12)) << "the camera the pass held, as a value";
+    EXPECT_TRUE(description.draws[0].camera.view.isEqual(camera_view, 1e-12)) << "the camera the pass held, as a value";
     ASSERT_NE(description.draws[0].commands, nullptr) << "the command collection is held, not borrowed";
     EXPECT_EQ(description.draws[0].commands->size(), 1U);
 

@@ -340,7 +340,11 @@ TEST(ContentMirrorTest, AStateEditRefoldsItsSubtreeAndNothingIsRepublished)
     for (const std::uint32_t mask : masks) {
         expectSameDrawList(*mirror.source().collectRenderCommands(view, mask), scene.collectRenderCommands(view, mask));
     }
-    for (const RenderCommand& command : *mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers)) {
+    // THE LIST IS HELD BY NAME: `*collect(...)` inside a range-for would be a reference to a vector whose shared_ptr
+    // dies at the end of the range initialisation (only a temporary BOUND to the reference is extended), which the
+    // thread sanitizer reports as a use-after-free.
+    const auto after_opacity = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    for (const RenderCommand& command : *after_opacity) {
         EXPECT_FLOAT_EQ(command.opacity, 0.25F) << "the arm's opacity reached every draw under it";
     }
 
@@ -361,7 +365,8 @@ TEST(ContentMirrorTest, AStateEditRefoldsItsSubtreeAndNothingIsRepublished)
     EXPECT_EQ(mirror.drain(), 1U);
     expectSameDrawList(*mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers),
                        scene.collectRenderCommands(view, vn::graphics::kAllLayers));
-    for (const RenderCommand& command : *mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers)) {
+    const auto after_order = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    for (const RenderCommand& command : *after_order) {
         EXPECT_EQ(command.draw_order, 7);
     }
 
