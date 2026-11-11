@@ -16,6 +16,22 @@ namespace detail
 {
 
 /**
+ * @brief WHAT a frame's engine half does with the content a draw names: keep it, or answer with its mirror.
+ *
+ * @details
+ * - The two modes are one predicate, and it follows from WHERE the work runs: on the content's own thread the frame
+ *   may keep asking the content directly (bind is pointless and costs nothing), off that thread it must ask the mirror,
+ *   or the expansion reads content the engine side does not own.
+ * - Naming it after the FRAME (not after the thread) keeps the worker honest: it never inspects a thread, it applies
+ *   the mode it was handed (see FrameRunner, which is what owns the thread and therefore chooses).
+ */
+enum class FrameMode : std::uint8_t
+{
+    Inline,   ///< The content's thread runs the frame: the draw keeps the content it names (today's path).
+    Threaded, ///< Another thread runs it: every draw is re-pointed at its content's mirror (see the design's bindContent).
+};
+
+/**
  * @brief THE ENGINE SIDE OF ONE FRAME: drain what the contents published, bind the frame to their mirrors, expand it.
  *
  * @details
@@ -61,12 +77,37 @@ class FrameWorker {
     bool publish(const Scene& scene);
 
     /**
-     * @brief Runs the engine half of @p frame: drain, bind, expand.
+     * @brief Applies what every mirror's content published (the frame's FIRST step).
+     *
+     * @details
+     * - It is separate from the expansion because a caller that measures its passes one by one still has to drain
+     *   exactly ONCE per frame: a drain per pass would apply nothing the second time but would walk every mirror again,
+     *   and - worse - would suggest that a pass can see values another pass did not.
+     *
+     * @return How many deltas were applied.
+     */
+    std::size_t drain();
+
+    /**
+     * @brief Binds (see @p mode) and expands the draws of ONE pass.
+     *
+     * @param pass The pass' drawing calls, expanded in place.
+     * @param mode What this run may assume about the content (see FrameMode).
+     */
+    void runPass(PassDraw& pass, FrameMode mode);
+
+    /**
+     * @brief Runs the engine half of @p frame: drain, then every pass.
+     *
+     * @details
+     * - The whole-frame form of @ref drain + @ref runPass, and the form a runner hands to another thread: whoever runs
+     *   the frame does all of it, in the order the frame requires.
      *
      * @param frame The frame value to expand in place.
+     * @param mode  What the run may assume about the content (see FrameMode).
      * @return How many deltas the mirror drains applied.
      */
-    std::size_t run(FrameDescription& frame);
+    std::size_t run(FrameDescription& frame, FrameMode mode = FrameMode::Threaded);
 
   public:
     /** @brief Gets how many contents this worker mirrors. */

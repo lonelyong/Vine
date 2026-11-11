@@ -30,6 +30,7 @@ using vn::graphics::PassDraw;
 using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
 using vn::graphics::detail::expandFrame;
+using vn::graphics::detail::FrameMode;
 using vn::graphics::detail::FrameWorker;
 using vn::intrusive_ptr;
 using vn::math::Vec3d;
@@ -113,7 +114,7 @@ TEST(FrameWorkerTest, AWorkerExpandsTheSameFrameTheSceneWould)
     FrameWorker worker;
     EXPECT_TRUE(worker.publish(scene)) << "the first publish is the handshake";
     FrameDescription from_mirror = onePassFrame(scene);
-    EXPECT_EQ(worker.run(from_mirror), 1U) << "the handshake's delta is what the drain applied";
+    EXPECT_EQ(worker.run(from_mirror, FrameMode::Threaded), 1U) << "the handshake's delta is what the drain applied";
 
     const std::vector<RenderCommand>& expected = commandsOf(from_content);
     const std::vector<RenderCommand>& actual   = commandsOf(from_mirror);
@@ -145,15 +146,73 @@ TEST(FrameWorkerTest, ARunOnTheSameFrameTwiceBindsOnceAndExpandsOnce)
     FrameWorker worker;
     ASSERT_TRUE(worker.publish(scene));
     FrameDescription frame = onePassFrame(scene);
-    EXPECT_EQ(worker.run(frame), 1U);
+    EXPECT_EQ(worker.run(frame, FrameMode::Threaded), 1U);
     EXPECT_EQ(worker.unbound(), 0U);
 
     const std::vector<RenderCommand>* first = &commandsOf(frame);
     EXPECT_EQ(first->size(), 1U);
 
-    EXPECT_EQ(worker.run(frame), 0U) << "nothing new was published";
+    EXPECT_EQ(worker.run(frame, FrameMode::Threaded), 0U) << "nothing new was published";
     EXPECT_EQ(worker.unbound(), 0U) << "the mirror the frame now names is this worker's own";
     EXPECT_EQ(commandsOf(frame).size(), 1U);
+}
+
+TEST(FrameWorkerTest, PerPassAndWholeFrameFormsGiveTheSamePicture)
+{
+    // The engine measures its passes one by one, so the worker exposes the frame's steps as two primitives: ONE drain
+    // per frame, then a bind+expand per pass. The whole-frame form is their composition and must not be a second
+    // behaviour - a caller choosing one or the other is choosing WHO measures, not WHAT is drawn.
+    auto root = intrusive_ptr<Group>(new Group());
+    root->addChild(triangleAt(0.0));
+
+    Scene scene;
+    scene.setRoot(root);
+
+    FrameWorker worker;
+    ASSERT_TRUE(worker.publish(scene));
+
+    // Per pass: the drain once, then the pass (twice, as a two-pass frame would ask it) - the second pass must get the
+    // same list as the first, from the same rows, without applying anything again.
+    FrameDescription piecewise = onePassFrame(scene);
+    PassDraw&       pass       = *piecewise.passes.front().draw;
+    EXPECT_EQ(worker.drain(), 1U);
+    worker.runPass(pass, FrameMode::Threaded);
+    ASSERT_EQ(pass.draws.size(), 1U);
+    const std::size_t first_pass_commands = commandsOf(piecewise).size();
+    EXPECT_EQ(first_pass_commands, 1U);
+    pass.draws.front().commands.reset(); // a second pass describes itself from scratch
+    pass.draws.front().content = &scene;
+    worker.runPass(pass, FrameMode::Threaded);
+    EXPECT_EQ(worker.drain(), 0U) << "a pass does not apply the channel: that is the frame's first step";
+    EXPECT_EQ(commandsOf(piecewise).size(), first_pass_commands);
+
+    // The whole-frame form, on a frame of its own.
+    FrameDescription whole = onePassFrame(scene);
+    EXPECT_EQ(worker.run(whole, FrameMode::Threaded), 0U) << "the handshake was applied above";
+    ASSERT_EQ(commandsOf(whole).size(), first_pass_commands);
+    for (std::size_t index = 0; index < first_pass_commands; ++index) {
+        EXPECT_EQ(commandsOf(whole)[index].geometry.get(), commandsOf(piecewise)[index].geometry.get());
+    }
+}
+
+TEST(FrameWorkerTest, TheInlineModeBindsNothingBecauseItIsTheContentsOwnThread)
+{
+    // THE MODE IS ONE PREDICATE. In the inline mode the caller IS the content's thread, so the draw keeps the content it
+    // names: re-pointing it would spend a mirror's copy to reproduce the answer the content gives for free. That also
+    // makes `unbound()` a meaningful number instead of "every draw of an inline frame".
+    auto root = intrusive_ptr<Group>(new Group());
+    root->addChild(triangleAt(0.0));
+
+    Scene scene;
+    scene.setRoot(root);
+
+    FrameWorker worker;
+    ASSERT_TRUE(worker.publish(scene)) << "the mirror exists, even though the inline mode will not use it";
+    FrameDescription frame = onePassFrame(scene);
+    EXPECT_EQ(worker.run(frame, FrameMode::Inline), 1U) << "the drain still runs: it is not a mirror-only step";
+    EXPECT_EQ(worker.unbound(), 0U) << "an inline run binds nothing, so nothing is unbound";
+    EXPECT_EQ(frame.passes.front().draw->draws.front().content, &scene) << "the draw still names the content";
+    EXPECT_EQ(commandsOf(frame).size(), 1U) << "and it expanded all the same";
 }
 
 TEST(FrameWorkerTest, ADrawWhoseContentWasNeverPublishedIsCountedNotSilentlyMirrored)
@@ -169,7 +228,7 @@ TEST(FrameWorkerTest, ADrawWhoseContentWasNeverPublishedIsCountedNotSilentlyMirr
 
     FrameWorker worker;
     FrameDescription frame = onePassFrame(scene);
-    EXPECT_EQ(worker.run(frame), 0U) << "no mirror, so no delta was drained";
+    EXPECT_EQ(worker.run(frame, FrameMode::Threaded), 0U) << "no mirror, so no delta was drained";
     EXPECT_EQ(worker.unbound(), 1U) << "the draw named a content this worker does not mirror";
     EXPECT_EQ(commandsOf(frame).size(), 1U) << "it is still expanded, from the content itself";
     EXPECT_EQ(worker.mirrorCount(), 0U);

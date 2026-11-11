@@ -238,6 +238,12 @@ flowchart LR
 - **`bindContent` 是一条明写的规则，不是隐含约定**（`G4`）：`DrawDescription::content` 说的是"这段内容"，
   它只在内容线程有效；引擎侧展开前必须把它换成镜像，否则就是跨线程读内容。P1 用一张
   `const DrawListSource* → DrawListSource*` 的映射，inline 模式下是恒等。
+- **模式是一个谓词，不是两套实现**：`FrameMode::Inline`（调用线程 = 内容线程 ⇒ draw 保留它命名的内容，不需要 bind）与
+  `Threaded`（另一条线程 ⇒ 每个 draw 改指该内容的镜像）。这条判定恰好等价于"跑在哪"，所以 worker 从不检查线程身份，
+  只执行交给它的模式；`unbound()` 因此只在 threaded 下有意义（inline 下它恒为 0，而不是每帧满屏假警报）。
+- **worker 的两个原语 = 引擎需要的粒度**：`drain()` 一帧一次（一次采集里的每个 pass 看到同一批值），`runPass()` 一个 pass
+  一次（bind + expand）；`run(frame)` 是二者的组合，也就是交给另一条线程的那种"整帧"形式。引擎按 pass 计时，所以它用前
+  两个；线程只跑整帧，所以 runner 用后一个 —— 选哪个是"谁在计时"，不是"画什么"。
 - **`FrameRunner` 是唯一持线程的东西**：它把 worker 的 `run` 放到调用线程（inline）或自己的引擎线程（threaded），
   并用"一个请求 + 一个完成"的握手把帧值交出去、等这一帧跑完再交回 —— 所以**调用者在两种模式下看到同一个答案**，也不会有
   两帧同时碰一个帧值。空闲时引擎线程阻塞在条件变量上（`2.8`：等待而不是轮询）；从引擎线程自己请求一帧、或在 `stop()`
@@ -666,8 +672,14 @@ flowchart LR
   空闲时阻塞在条件变量上；`stop()` 幂等，停后即成 inline runner；从引擎线程自己请求就地跑（避免等自己）。
   验收：`FrameRunnerTest` 三条 —— 两种模式与"内容自己展开"三者逐命令同图、64 帧过线程每帧等价（`applied()` 证明只应用了
   握手那一条 delta）、`stop()` 之后仍能跑帧且不等待。
-- **P1 下一步**：把它接进 `RenderEngine`（可选模式 + `publish(每帧一次，版本比较)` + 把 expand 从 `buildFrameValue` 移出去），
-  前提是 P3 的设备/表面所有权契约 —— 见 §2.11 最后一条；在那之前宿主代码与默认行为都不动。
+- **P1 第五步已落（半）**：`FrameMode` 移到 `FrameWorker` 旁边并成为它执行的**一条谓词**；worker 拆出 `drain()` 与
+  `runPass()` 两个原语（引擎按 pass 计时需要它们，一帧只 drain 一次是它们的契约），`run(frame)` 是二者的组合。
+  验收：`FrameWorkerTest.TheInlineModeBindsNothingBecauseItIsTheContentsOwnThread`（inline 不改写 draw、`unbound()` 恒 0）
+  与 `FrameWorkerTest.PerPassAndWholeFrameFormsGiveTheSamePicture`（两个原语与整帧形式同图，且 pass 不 drain 通道）。
+- **P1 下一步（接入引擎）**：`RenderEngine` 持有 `FrameWorker`，`buildFrameValue` 里把 `expandPass(*entry.draw)` 换成
+  `worker.runPass(*entry.draw, mode)`、在帧首调一次 `worker.drain()`（每 pass 的 `record_micros` 仍覆盖它自己的 expand，
+  所以那个数字的意思不变），threaded 模式下再加每帧一次 `worker.publish(每个 pass 的 scene)`。真正切到 `Threaded` 仍要等
+  P3：`executeFrame`（取图/记录/提交/呈现）读设备与表面，只搬 expand 是半个线程。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：

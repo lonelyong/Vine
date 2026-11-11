@@ -15,13 +15,6 @@ VN_GRAPHICS_NS_BEGIN
 namespace detail
 {
 
-/// @brief WHERE a frame's engine half runs.
-enum class FrameMode : std::uint8_t
-{
-    Inline,   ///< On the calling thread: no thread, no waiting ("the engine thread" IS the caller).
-    Threaded, ///< On an engine thread of its own, with the caller waiting for that one frame to finish.
-};
-
 /**
  * @brief Runs a `FrameWorker`'s frames in one of the two modes, with the same semantics.
  *
@@ -50,7 +43,7 @@ class FrameRunner {
      * @brief Runs @p worker's frames in @p mode.
      *
      * @param worker The worker whose frames this runner drives; it must outlive the runner.
-     * @param mode   Where the work runs (see FrameMode).
+     * @param mode   Where the work runs, and therefore what it may assume about the content (see FrameMode).
      */
     explicit FrameRunner(FrameWorker& worker, FrameMode mode = FrameMode::Threaded);
 
@@ -84,7 +77,11 @@ class FrameRunner {
     void stop();
 
   public:
-    /** @brief Gets the mode this runner was built with (it does not change: a mode is a lifetime decision). */
+    /** @brief Gets the mode this runner was built with (it does not change: a mode is a lifetime decision).
+     *
+     * @return The mode. A runner with no live thread (before start, after `stop`) reports the mode it was built with,
+     *         because the mode is what the frame MEANS, not which thread happens to be alive.
+     */
     [[nodiscard]] FrameMode mode() const noexcept;
 
     /** @brief Gets how many frames the engine side has run (the threaded mode's witness). */

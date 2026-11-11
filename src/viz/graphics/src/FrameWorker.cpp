@@ -25,24 +25,25 @@ bool FrameWorker::publish(const Scene& scene)
     return mirror->publish(scene);
 }
 
-std::size_t FrameWorker::run(FrameDescription& frame)
+std::size_t FrameWorker::drain()
 {
-    // 1. DRAIN: every mirror applies what its content published, in post order, before anything reads the rows.
+    // Every mirror applies what its content published, in post order, before anything reads the rows.
     std::size_t drained = 0U;
     for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
         drained += mirror->drain();
     }
     applied_ += drained;
+    return drained;
+}
 
-    // 2. BIND: a draw that names a CONTENT is re-pointed at that content's mirror, so the expansion below stops asking
-    //    the content (which is the whole point of the mirror, and the only thing that makes the expand safe to run on
-    //    another thread). A source this worker does not mirror is left alone and counted: correct on the calling
-    //    thread, a cross-thread read anywhere else - which is exactly what the count is for.
-    for (FrameDescription::Pass& pass : frame.passes) {
-        if (!pass.draw.has_value()) {
-            continue;
-        }
-        for (DrawDescription& draw : pass.draw->draws) {
+void FrameWorker::runPass(PassDraw& pass, FrameMode mode)
+{
+    if (mode == FrameMode::Threaded) {
+        // BIND: a draw that names a CONTENT is re-pointed at that content's mirror, so the expansion below stops
+        // asking the content - which is what makes the expand safe off the content's thread. A source this worker does
+        // not mirror is left alone and counted: correct on the calling thread, a cross-thread read anywhere else,
+        // which is exactly what the count is for.
+        for (DrawDescription& draw : pass.draws) {
             if (draw.content == nullptr) {
                 continue;
             }
@@ -54,9 +55,19 @@ std::size_t FrameWorker::run(FrameDescription& frame)
             draw.content = &mirror->source();
         }
     }
+    // The INLINE mode binds nothing: the caller IS the content's thread, so asking the content is exactly right, and
+    // re-pointing the draw would spend a mirror's copy to reproduce the answer the content gives for free.
+    expandPass(pass);
+}
 
-    // 3. EXPAND: the frame's one O(drawables) step, against the mirrors the bind just selected.
-    expandFrame(frame);
+std::size_t FrameWorker::run(FrameDescription& frame, FrameMode mode)
+{
+    const std::size_t drained = drain();
+    for (FrameDescription::Pass& entry : frame.passes) {
+        if (entry.draw.has_value()) {
+            runPass(*entry.draw, mode);
+        }
+    }
     return drained;
 }
 
