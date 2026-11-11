@@ -421,24 +421,12 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     }
     ++content_collect_count_;
 
-    // THE GRAPH HALF, ONCE PER EPOCH: every node's own facts, then the one fold over them (see DrawListBake.hpp).
-    // A moved camera then pays the VIEW half only - the layer prune, the frustum test and the sort - instead of
-    // recomputing every matrix and every fold, which is what a collection used to cost per view
-    // (measured: SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera).
-    if (content_bake_ == nullptr || bake_epoch_ != epoch) {
-        content_bake_ = std::make_unique<detail::SceneBake>();
-        detail::buildRows(*root_, *content_bake_, opacity_);
-        bake_epoch_ = epoch;
-        ++content_bake_count_;
-    }
-    // Byte content announces itself on the buffer, not on the graph, so the boxes that depend on it are re-read
-    // here - the ONE step of a collection that still needs this thread (see refreshBoxes).
-    (void)detail::refreshBoxes(*content_bake_);
+    const detail::SceneBake& rows = ensureRows();
 
     std::vector<RenderCommand> commands;
     const detail::Frustum      frustum       = detail::Frustum::fromViewProjection(view_proj);
     bool                       viewport_used = false;
-    detail::selectFromBake(*content_bake_, frustum, view, layer_mask, viewport_used, commands);
+    detail::selectFromBake(rows, frustum, view, layer_mask, viewport_used, commands);
     // The view's half ends in one order, and the order is the same rule for every producer of a draw list (the
     // render world sorts its own collection with this very function - see DrawListBake.hpp).
     detail::sortCollected(commands, eye);
@@ -458,6 +446,30 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
         }
     }
     return shared;
+}
+
+const detail::SceneBake& Scene::ensureRows() const
+{
+    // THE GRAPH HALF, ONCE PER EPOCH: every node's own facts, then the one fold over them (see DrawListBake.hpp).
+    // A moved camera then pays the VIEW half only - the layer prune, the frustum test and the sort - instead of
+    // recomputing every matrix and every fold, which is what a collection used to cost per view
+    // (measured: SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera). It is a named step because a collection
+    // is not the only reader of the rows any more: the engine side's mirror is published from them (see SceneRows).
+    const std::uint64_t epoch = root_->contentEpoch();
+    if (content_bake_ == nullptr || bake_epoch_ != epoch) {
+        content_bake_ = std::make_unique<detail::SceneBake>();
+        detail::buildRows(*root_, *content_bake_, opacity_);
+        bake_epoch_ = epoch;
+        ++content_bake_count_;
+    }
+    // Byte content announces itself on the buffer, not on the graph, so the boxes that depend on it are re-read
+    // here - the ONE step of a collection that still needs this thread (see refreshBoxes). A box that moved is a
+    // change the EPOCH cannot see, so it moves the rows' version too: a reader that mirrors these rows compares
+    // that version, and would otherwise keep a stale box forever (see SceneRows::version).
+    if (detail::refreshBoxes(*content_bake_) > 0U) {
+        ++box_generation_;
+    }
+    return *content_bake_;
 }
 
 void Scene::setContentFrame(std::uint64_t frame){

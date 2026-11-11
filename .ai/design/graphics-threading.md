@@ -191,8 +191,10 @@ P1 要落的是"两模式 + 镜像 + 通道 + 等价性"，所以先把**骨架*
 
 | 单元 | 位置 | 只回答 | 不知道 |
 |---|---|---|---|
+| `detail::SceneRows` | `src/viz/graphics/src/SceneRows.{hpp,cpp}` | "这张表的版本是什么、值拷一份" | 谁在镜像它、帧、线程 |
 | `detail::DeltaChannel` | `src/viz/graphics/src/DeltaChannel.{hpp,cpp}` | "内容线程说了什么，按什么顺序" | delta 的含义、有没有线程、谁在等 |
 | `detail::RenderWorld` | `src/viz/graphics/src/RenderWorld.{hpp,cpp}` | "这些值现在是什么" | 内容图、节点、帧 |
+| `detail::ContentMirror` | `src/viz/graphics/src/ContentMirror.{hpp,cpp}` | "一段内容的镜像，靠值保持同步" | 帧、绑定、记录 |
 | `detail::FrameWorker`（P1 下一步） | `src/viz/graphics/src/FrameWorker.{hpp,cpp}` | "一帧从头到尾做完了" | 内容世界的任何指针 |
 
 ```mermaid
@@ -219,6 +221,14 @@ flowchart LR
   重发一张表（§9.2 的"可恢复"性质）。
 - **`RenderWorld` 已经是那块镜像**：`adopt` 收一张表、`place` 收一处放置，都不持节点（第五步的成果）。它不知道
   帧，所以 inline 与 threaded 共用它，测试也共用它。
+- **`SceneRows` 是那张表唯一的门**：`Scene` 的行是 `detail::SceneBake`（公开 SDK 不能命名实现类型），而镜像必须
+  从**同一份**行出发（`G1`：一张表、一份算法、两个所有者）。友元访问器是最窄的说法：公开接口不长，耦合就是模块内的
+  一个内部类。它只在**内容线程**上调，返回 `Version{epoch, boxes}` —— `epoch` 回答"节点改了没有"，`boxes` 回答
+  "有没有哪次刷新真的挪动了盒"；只比 `epoch` 的镜像会永久留着一个陈旧的盒（§2.4 的字节编辑不动 epoch）。
+- **`ContentMirror` 是"一段内容的镜像"这个单元**：`RenderWorld` + `RenderWorldSource` + 自己的 `DeltaChannel`。
+  `publish` 在内容线程（比版本 → 变了就发一条带表的 `RowsReplaced`），`drain` 在引擎线程（按序应用），两者只在通道里
+  相遇、不在成员里相遇。**P1 的发布是粗粒度的**：一次 O(行) 的拷贝，发生在版本变的时候而不是每帧；更细的 delta 一类
+  一类替换它，每类自带 applier。
 - **`FrameWorker` 是"帧"唯一的归属**：它按顺序做四件事 —— drain（帧首一次）、apply（`adopt`/`place`）、
   `bindContent`（把请求里的**内容源**换成该内容的**镜像**，见下）、`expandFrame` —— 然后交给执行器。两模式的差别
   只有一条：**这四件事跑在哪个线程**。inline 就是调用线程（没有线程、没有等待，通道仍用同一个，只是同帧即排空）。
@@ -569,9 +579,11 @@ flowchart LR
 ### 9.2 已知缺口 / 待办
 
 - 落地阶段与触发条件见 `../backlog/graphics.md` T31；并行 select 由 T24 单独触发。
-- **镜像没有“盒 delta”**：写 buffer 不发 delta，内容侧靠 `refreshBoxes`（问叶子自己的、按 revision 键控的 `localBounds()`，
-  只折真正变了的行与它上面的链）保鲜；镜像没有节点，它的盒停在握手给的值上。今天不痛（握手随结构/放置变），
-  要动时新增一条盒 delta，而不是让镜像读节点。
+- **镜像的盒更新是粗粒度的**：写 buffer 不发 delta，内容侧靠 `refreshBoxes`（问叶子自己的、按 revision 键控的
+  `localBounds()`，只折真正变了的行与它上面的链）保鲜；镜像没有节点，所以它得到的是"版本变了 ⇒ 重发整张表"
+  （`SceneRows::Version` 的 `boxes` 一半，见 `ContentMirrorTest.ABoxThatMovedUnderAByteEditIsPublished...`）。
+  正确但不是最省：一条流式 buffer 会付一次 O(行) 的拷贝。要省时加一条 `Box` delta（一条 applier 就够），
+  而不是让镜像读节点。
 - **身份**：`RenderWorld` 用自己的不透明句柄（`RowId = const void*`，即被镜像对象的地址，见 ADR-2026-11-09）；
   `const Node*` 隐式转成它，所以内容侧写 `world.place(&node, m, placement)`，而渲染世界的**签名里没有任何内容类型**。
   行表不再持有 `node`（`SceneBake::nodes` 只是内容侧的盒刷新记录，`adopt` 时丢掉）。
@@ -629,6 +641,11 @@ flowchart LR
   （`RowsReplaced` → `RenderWorld::adopt`、`Placement` → `RenderWorld::place`、`Terminate`），更细的 kind 随其 applier
   一起来（`G8`）。验收：`DeltaChannelTest`（顺序/只送一次、表随 delta 同行且不复制、4 线程 × 500 条精确计数与每生产者 FIFO、
   满载拒收可见、复用缓冲区）。
+- **P1 第二步已落**：`detail::SceneRows` + `detail::ContentMirror`（§2.11）。`Scene` 的行这一步有了名字（`ensureRows`），
+  一个 `box_generation_` 让它把"盒挪了"也算进版本；`ContentMirror` 是"一段内容的镜像"这个单元：`publish`（内容线程，
+  比版本，变了才发一条带表的 `RowsReplaced`）、`drain`（引擎线程，按序应用）、`source()`（帧绑定后要问的那张脸）。
+  拒收不丢版本，所以下一次调用自动重试。验收：`ContentMirrorTest` 三条 —— 逐命令等价 + "稳态不发布"、字节编辑挪动盒
+  也发布（epoch 未动，先证前提再证结果）、被拒后重试仍等价。
 - **P1 下一步**：`detail::FrameWorker`（drain → apply → `bindContent` → `expandFrame` → 交执行器），先只做 inline 形态
   并把"经镜像展开"与"经 `Scene` 展开"逐命令等价钉住；线程、`start()/stop()`、空闲等待在它之后，`RenderEngine` 的默认
   模式不变（宿主代码不动）。

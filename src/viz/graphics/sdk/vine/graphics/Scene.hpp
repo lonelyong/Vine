@@ -20,7 +20,8 @@ VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
-struct SceneBake; // The baked graph half of a collection (see Scene.cpp): an implementation detail, not API.
+struct SceneBake;  // The baked graph half of a collection (see Scene.cpp): an implementation detail, not API.
+class SceneRows;   // The one door onto those rows, for the engine side's mirror (see src/SceneRows.hpp).
 }
 
 using vn::geom::spatial::Aabbd;
@@ -309,6 +310,22 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      */
     [[nodiscard]] bool hasRootedRoot() const;
 
+    /** @brief Builds (once per epoch) and box-refreshes the rows a collection reads, and returns them.
+     *
+     * @details
+     * - A named step because the rows have TWO readers now: a collection (which then runs the view half) and the
+     *   engine side's mirror, which is published from them (see detail::SceneRows).
+     * - It is the one place of the collection that needs this thread: building reads the graph, and the box refresh
+     *   reads each leaf's own data box (a cache keyed by the buffers' revisions).
+     *
+     * @return The rows, valid until the graph changes.
+     */
+    [[nodiscard]] const detail::SceneBake& ensureRows() const;
+
+  private:
+    friend class detail::SceneRows; // the engine side's publish: version + a copy of the rows (see SceneRows.hpp)
+
+  private:
     String                name_;
     bool                  visible_ = true;
     float                 opacity_ = 1.0f;
@@ -339,6 +356,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     mutable std::uint64_t                content_bake_count_ = 0;
     mutable std::uint64_t                content_collect_count_ = 0;
     mutable std::uint64_t                content_reuse_count_   = 0;
+    // How many times a re-read box actually moved (see ensureRows): a byte edit announces itself on a buffer, not on
+    // the graph, so it does not move `bake_epoch_` - and a reader that mirrors these rows needs a version that does.
+    mutable std::uint64_t                box_generation_ = 0;
 };
 
 using ScenePtr = intrusive_ptr<Scene>;

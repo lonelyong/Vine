@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include <vine/Buffer.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Point3.hpp>
 #include <vine/math/Transform3.hpp>
@@ -18,6 +19,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/Scene.hpp>
 
+#include "ContentMirror.hpp"
 #include "RenderWorld.hpp"
 
 using vn::graphics::CollectView;
@@ -28,6 +30,7 @@ using vn::graphics::MatrixTransform;
 using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
 using vn::graphics::detail::buildRows;
+using vn::graphics::detail::ContentMirror;
 using vn::graphics::detail::refreshBoxes;
 using vn::graphics::detail::Row;
 using vn::graphics::Aabbd;
@@ -153,6 +156,110 @@ Assembly makeAssembly()
 }
 
 } // namespace
+
+TEST(ContentMirrorTest, TheMirrorCollectsWhatItsSceneCollectsAndOnlyPublishesOnAChange)
+{
+    // THE ENGINE SIDE'S COPY OF A CONTENT. Publishing is a VERSION comparison first, so a steady frame costs nothing;
+    // when the content moved, the table travels as one value on the channel and the engine side adopts it. The two
+    // sides then answer the same view with the same list - which is what lets a frame name either one.
+    const Assembly assembly = makeAssembly();
+    Scene          scene;
+    scene.setRoot(assembly.root);
+
+    ContentMirror mirror{ scene };
+    const CollectView view = clipBoxView();
+
+    EXPECT_TRUE(mirror.publish(scene)) << "the first publish is the handshake";
+    EXPECT_EQ(mirror.drain(), 1U);
+    expectSameDrawList(*mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers),
+                       scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+
+    // Nothing moved: the mirror already holds this answer, so a frame asks it for nothing at all.
+    EXPECT_FALSE(mirror.publish(scene)) << "a steady frame publishes nothing";
+    EXPECT_EQ(mirror.drain(), 0U);
+    EXPECT_EQ(mirror.publishCount(), 1U);
+
+    // A node edit moves the epoch, so the next publish carries the new table.
+    assembly.arm->setMatrix(vn::math::translate(0.05, 0.25, 0.0));
+    EXPECT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+    expectSameDrawList(*mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers),
+                       scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    EXPECT_EQ(mirror.publishCount(), 2U);
+}
+
+TEST(ContentMirrorTest, ABoxThatMovedUnderAByteEditIsPublishedEvenThoughTheEpochDidNotMove)
+{
+    // THE CASE 2.4 IS ABOUT. A writer edits a channel's bytes (Buffer::edit) - no node is touched, so the graph's epoch
+    // does not move - and the leaf's data box moves with them. A mirror that compared only the epoch would keep a
+    // stale box forever and then cull content that IS in view (or draw content that is not); the rows' version
+    // carries a box generation for exactly this.
+    auto root      = intrusive_ptr<Group>(new Group());
+    auto leaf      = GeometryPtr(new vn::graphics::Geometry());
+    auto positions = intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(9U));
+    {
+        auto        edit       = positions->edit();
+        const float unit[9]    = { 0.0F, 0.0F, 0.0F, 0.5F, 0.0F, 0.0F, 0.0F, 0.5F, 0.0F };
+        for (std::size_t index = 0; index < 9U; ++index) {
+            edit[index] = unit[index];
+        }
+    }
+    leaf->setPositions(positions, 0U, 3U);
+    root->addChild(leaf);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror     mirror{ scene };
+    const CollectView view = clipBoxView();
+
+    ASSERT_EQ(scene.collectRenderCommands(view, vn::graphics::kAllLayers)->size(), 1U) << "the triangle starts in view";
+    EXPECT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+    expectSameDrawList(*mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers),
+                       scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+
+    // The bytes move the triangle far outside the clip box: an edit no node announces.
+    const std::uint64_t epoch_before = root->contentEpoch();
+    {
+        auto edit = positions->edit();
+        for (std::size_t vertex = 0; vertex < 3U; ++vertex) {
+            edit[vertex * 3U] += 4.0F;
+        }
+    }
+    EXPECT_EQ(root->contentEpoch(), epoch_before) << "a byte edit is not a graph announcement";
+
+    EXPECT_TRUE(mirror.publish(scene)) << "the box that moved is a change the mirror has to hear about";
+    EXPECT_EQ(mirror.drain(), 1U);
+    EXPECT_TRUE(scene.collectRenderCommands(view, vn::graphics::kAllLayers)->empty());
+    EXPECT_TRUE(mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers)->empty())
+        << "the mirror culled it with the box the edit moved, not the one the build read";
+}
+
+TEST(ContentMirrorTest, ARefusedPublishIsRetriedInsteadOfBeingLost)
+{
+    // The channel is bounded, so a publish can be refused. Because the version is only recorded on SUCCESS, the next
+    // call re-posts the same table: a refusal costs a frame, never a wrong picture.
+    const Assembly assembly = makeAssembly();
+    Scene          scene;
+    scene.setRoot(assembly.root);
+
+    ContentMirror mirror{ scene, 1 };
+    EXPECT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    assembly.arm->setMatrix(vn::math::translate(0.1, 0.0, 0.0));
+    EXPECT_TRUE(mirror.publish(scene)); // fills the channel
+    assembly.link->setMatrix(vn::math::translate(0.0, 0.3, 0.0));
+    EXPECT_FALSE(mirror.publish(scene)) << "the channel is full: refused, and the version is not recorded";
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    EXPECT_TRUE(mirror.publish(scene)) << "the retry carries the version the refusal left behind";
+    EXPECT_EQ(mirror.drain(), 1U);
+    const CollectView view = clipBoxView();
+    expectSameDrawList(*mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers),
+                       scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+}
 
 TEST(DrawListBakeTest, ARefreshFoldsOnlyWhatChanged)
 {
