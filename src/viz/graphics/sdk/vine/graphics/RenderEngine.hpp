@@ -286,21 +286,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void reportEngineProblem(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message);
 
-    /** @brief Answers whether a session-shape change may be applied now, reporting ONE diagnostic per episode when not.
-     *
-     * @details
-     * - THE ONE PLACE THE RULE IS SPELLED OUT (design graphics-threading.md 2.12). A session's shape - its passes, its
-     *   resources, the backend's retained state - is what the engine thread walks while it records a frame, so a change
-     *   that lands during one is refused instead of applied to a list something is already reading. The alternative
-     *   (a lock around every read of the slot list) would put the engine thread behind the host's edits for no gain:
-     *   adding a pass mid-frame is a host bug, not a use case.
-     * - ONE REPORT PER EPISODE: a host that forgot to wait hears about it the first time, and the episode re-arms as
-     *   soon as a change is accepted - so a second, separate mistake still speaks.
-     *
-     * @param verb Name of the refused call, for the sentence.
-     * @return true when the caller may proceed.
-     */
-    [[nodiscard]] bool sessionChangeAllowed(const char* verb);
 
     /** @brief Attaches this engine to the device it borrows: ready to drive frames.
      *
@@ -1268,6 +1253,20 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /// The episode of the "a session's shape cannot change during a frame" report (see sessionChangeAllowed).
     ReportOnce session_change_episode_;
+
+    /// @brief Answers whether a session-shape change may be applied now, reporting ONE diagnostic per episode when not.
+    ///
+    /// @details
+    /// - THE ONE PLACE THE RULE IS SPELLED OUT (design graphics-threading.md 2.12, C20): the pass slots, the resources
+    ///   table and the backend's retained state are what the engine thread walks while it records, so a change that
+    ///   lands during a frame is REFUSED rather than applied to a list something is already reading.
+    /// - Private on purpose: it is the engine's own guard, not a question a host asks.
+    /// - ONE REPORT PER EPISODE: a host that forgot to wait hears it the first time; an accepted change re-arms it, so a
+    ///   second, separate mistake still speaks.
+    ///
+    /// @param verb Name of the refused call, for the sentence.
+    /// @return true when the caller may proceed.
+    [[nodiscard]] bool sessionChangeAllowed(const char* verb);
     /// A frame whose engine half finished on the frame thread and whose per-pass cost still has to reach the plan: the
     /// next frame() publishes it, once it has waited for that half. Null when there is nothing to publish (the inline
     /// path publishes immediately - it IS the content half's thread).
