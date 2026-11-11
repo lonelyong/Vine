@@ -12,14 +12,16 @@
 
 | 文件 | 内容 |
 |---|---|
-| `graphics-2026-11-11-next.md`（本文） | 总纲：问题来源、结论、骨架摘要、判死条件 `K1–K6`、验证计划、否决项 `D1–D8`、与 `G1–G13` 对照 |
+| `graphics-2026-11-11-next.md`（本文） | 总纲：问题来源、结论、骨架摘要、判死条件 `K1–K11`、验证计划、否决项 `D1–D9`、与 `G1–G13` 对照 |
 | `graphics-2026-11-11-next-requirements.md` | **要什么**：目标 `O1–O7`、功能要求 `R1–R30`、非功能要求 `N1–N10`、硬约束 `C1–C12`、验收 `T1–T16` |
 | `graphics-2026-11-11-next-design.md` | **怎么做**：分层、概念表、类型草案、hot/cold 数据布局、publish/fold/select/sort/record/reclaim/plan-diff 算法、线程与内存模型、诊断、后端契约、关闭相位、未决问题 |
-| `graphics-2026-11-11-next-benefits.md` | **值不值**：按维度的量化收益与测量方式、代价 `P1–P7`、三批迁移与每批判死、反方论点的详细回应 |
+| `graphics-2026-11-11-next-benefits.md` | **值不值**：按维度的量化收益与测量方式、代价 `P1–P7`、五步迁移与每步判死、反方论点的详细回应 |
 | `graphics-2026-11-11-next-api.md` | **现有 API 集的问题**：`P1–P32` 概念/形状/层次/风格问题（每条带证据与 `G#`）、`M1–M10` 缺失能力、`RenderEngine` 49 个公开方法的去向、命名对照、A–E 分批、风格门禁 `scripts/check_api_style.py` |
 | `graphics-2026-11-11-next-hot-paths.md` | **性能、动画、后期与扩展**：实测成本模型与 60 fps 预算、select/fold/sort/record 的手段与门禁、值的热路径三条规则、动画＝帧内 `PoseSet`（不经发布）、后期＝计划即依赖图、受控逃逸口、工程效率、`N11–N18` |
+| `graphics-2026-11-11-next-audit.md` | **第二轮审计**：证据口径复核（§2）、跨文档矛盾 `X1–X10`（§3）、设计缺口 `A1–A13`（§4）、补充要求 `R31–R39` / 判死条件 `K7–K11`（§5–§6）、成本再评估与修订后的推进顺序（§7–§8） |
 
-读法：先本文 §1–§2 拿骨架，再按需要跳 `-requirements`（要什么）、`-design`（怎么做）、`-benefits`（值不值）。
+读法：先本文 §1–§2 拿骨架，再按需要跳 `-requirements`（要什么）、`-design`（怎么做）、`-benefits`（值不值）；
+**动手前先读 `graphics-2026-11-11-next-audit.md` 的 A1–A4**——其中 A1（内容引用必须带 revision）是“在飞帧不变”能否成立的前提。
 
 ---
 
@@ -35,7 +37,7 @@
 | 量 | 今天 |
 |---|---|
 | 两世界之间的桥（`ContentMirror` / `DeltaChannel` / `DrawListMemo` / `FrameWorker` / `FrameRunner` / `SceneRows` / `EngineFrame` / `DrawListBake`） | **2519 行** |
-| 引擎侧寿命机器（`markUsed` / `release_token` / `release_requested` / `retired` / `kept` / `retirement`） | `ContentStore.cpp`（1016 行）里 **72 处** |
+| 引擎侧寿命机器（`markUsed` / `release_token` / `release_requested` / `retired` / `kept` / `retirement`） | `ContentStore.cpp`（1016 行）里 **约 72–75 处**（口径见 audit §2） |
 | 线程设计的约束表 | **C1–C20（20 条）** |
 | TSan 首次运行（2026-11-11） | **14 条警告、0 条数据竞争、4 个 UAF** —— 全在寿命层 |
 | 材质这个"活对象过帧"的最后残留 | 本次刚修完（C19）；需要**两处**取值点才不漏帧（`publish` + `refreshMaterials`） |
@@ -56,7 +58,9 @@
 - 不改**作者层 API 的形态**（`Node` setter、`Scene` 装配、材质/几何的值对象大体照旧）。
 - 不做内容侧多线程写（一个 Scene 一个写者，见 `I3`）。
 - 不做 GPU-driven / bindless / 本层 render graph（同步是后端的，`G2`）。
-- 不改后端实现（只改它与本层的**接口形状**）。
+- 不改后端的**录制/同步实现**；但后端表的内容键（`(id, revision)`）、接口形状与驻留键允许改（审计 A1/X6）。
+- **作者层保留现有糖类**（`Node` / `Group` / `StateNode` / `MatrixTransform` / `ScreenPass` / `Camera` 的公开形态）；
+  变的是快照里的表示（四类事实 + 值），不是“作者必须改写代码”（审计 X5）。
 
 ### 1.4 一句话结论
 
@@ -128,7 +132,7 @@ flowchart TB
 | **I1** | 跨层的一切都是不可变值；可变对象只活在 ① 层 | 活对象过帧（材质那一类） |
 | **I2** | 每个句柄带 generation；陈旧句柄答"已消失"，永不悬垂 | UAF / 地址复用 |
 | **I3** | 一个 Scene 同时只有一个写者；发布是一次指针交换 | 批中泄漏、并发写 |
-| **I4** | GPU 资源存活 ⟺ 有活 Snapshot 引用它的句柄 | 驻留猜、parking、`kept` 兜底 |
+| **I4** | GPU 资源存活 ⟺ 被 Session 已接受或在飞的 Snapshot 引用它的 `(id, revision)`；宿主自持快照不钉住资源 | 驻留猜、parking、`kept` 兜底；审计 A9 |
 | **I5** | 派生是纯的：`(Snapshot, View, caps)` 相同 ⇒ DrawList 逐项相同 | "为什么这两帧不同"、跨后端不一致 |
 | **I6** | 只有一条引擎线程碰设备；并行只发生在 ③ 层 | 设备层竞争 |
 | **I7** | 看起来像屏幕的查询（拾取、锚点、fit）吃 `FrameResult` 里的 View 值 | 瞄准错（N17 那一类） |
@@ -144,7 +148,8 @@ flowchart TB
 
 折叠规则一条：**子 = 父 + 自己**（放置相乘、状态按文档化规则合并、层取并、顺序可覆盖）。
 折叠是**值运算** ⇒ 线程安全、可单测、可 fuzz；`StateNode` / `MatrixTransform` / `ScreenPass`
-不再是"种类"，而是同一概念的不同取值；隐藏是结构（不在树里），不是标志位。
+不再在**快照**里是"种类"，而是同一概念的不同取值（作者层糖类保留，审计 X5）；
+隐藏是**快照表示**（不产生行），作者层的 `Node::setVisible` 保留，由发布把它编译成结构（审计 X7）。
 
 ### 2.6 身份：注册表、四种 id
 
@@ -177,7 +182,9 @@ flowchart TB
 | 改某处放置 | 只改那个 `Instance` |
 
 折叠：`rows(instance) = Placement(实例链) ∘ PrototypeLocalRows(原型, revision)`。
-**原型内部折叠算一次，放置 N 次** —— 5000 节点的机械臂插 10 次，只付 10 次矩阵乘 + 行拼接。
+**原型内部折叠算一次**；v1 物化时，放置成本是 **N × 原型行数** 次矩阵乘 —— 5000 行插 10 次是 **5 万次**，
+不是 10 次（审计 A5）。共享 local rows + per-instance 根变换（B 方案）可把静态实例压到 O(rows + N)，
+但要等到 `T23` 测量后再选（`Q8`）。
 原型层是 DAG，`flatten` 之后是**行树** ⇒ 折叠/select/排序/拾取一行都不用改。
 约束：原型包含**必须无环**（插入时检测）；**行预算可观测**（实例数 × 原型行数，超阈值报 episode）。
 
@@ -188,17 +195,19 @@ flowchart TB
 
 | 决定 | 为什么 | 替掉什么 |
 |---|---|---|
-| 引擎表按**句柄 index** 索引（+ generation 校验） | 数组、无哈希、无寿命协商 | 身份地址 + `markUsed` |
-| 引擎表**只存共享资源**，从不存每实例状态 | 表大小 = 原型数，不是实例数；插 10 次不复制资源 | 每命令活体 touch |
-| **驻留由快照引用决定**（`I4`） | 精确规则，不看时间窗 | `retirement` + `parked` + `kept` |
+| 引擎表按**句柄 index** 索引（+ generation + **revision** 校验） | 数组、无哈希、无寿命协商；旧帧能读到旧版 | 身份地址 + `markUsed` |
+| 引擎表**只存共享资源**，从不存每实例状态 | 表大小 = 原型数 × 版本数，不是实例数；插 10 次不复制资源 | 每命令活体 touch |
+| **驻留由会话已知的快照引用决定**（`I4`） | 精确规则，不看时间窗；宿主自持快照不钉住 | `retirement` + `parked` + `kept` |
 | 管线缓存键是**值**（program@rev, layout@rev, state, formats, samples） | 可复现、可跨 pass 共享、可单测 | 指针 + variant bits |
 | **预热是一等 API**（`plan(snapshot) → 需要什么`） | 编译卡顿可预算；加载期可全预编译 | 录制时才发现编译 |
 | **每帧 arena**（三缓冲） | 分配上限从"规则"变"常数" | per-frame `vector`/`shared_ptr` |
-| 发布按 **id→revision 表**比对 | O(引用值数)，与行数无关 | `refreshMaterials` 扫行 |
+| 发布按 **id→revision 表**比对；冷块存 `ContentRef{id,rev}` | O(引用值数)，与行数无关；旧 Snapshot 永远读旧 revision | `refreshMaterials` 扫行；只带 id 的引用（审计 A1） |
 
 ### 2.9 计划是声明
 
-`Pass = (View, TargetId, 状态覆盖, order)`；`TargetId` 的临时目标由计划声明生命周期。
+`Pass = (name, View, Target, 状态覆盖, order, inputs)`；`Target` 是 `Surface{SurfaceId} | Transient{name,shape} | External{name}`，
+临时目标由计划声明生命周期；`inputs` 用稳定名字，`PassId` 只在 Session 内部（审计 X1）。
+一个设备 = 一个 Session = 多条 Surface（审计 X4）。
 宿主发布"我要的帧图"，Session 在帧边界**按名字差分对齐**。于是：
 
 - `addPass` / `removePass` / `clearPasses` / `releasePass` 不存在的 ⇒ "帧在飞时改会话形状"**不可表达**
@@ -207,9 +216,9 @@ flowchart TB
 
 ### 2.10 派生是纯函数
 
-`select(snapshot, view) → DrawList`、`record(drawList, resident) → FrameValue`。
-⇒ 多视图并行、分块录制后确定性合并、可 dump、可 replay、可跨后端比对。
-排序键是一个**值**：`(draw_order, layer, opaque/transparent, depth-quantized, stable-id)` 全序且文档化。
+`select(snapshot, view) → DrawList` 是纯函数；`record` 发生在后端 `execute` 内部（审计 A13）。
+⇒ 多视图并行、可 dump、可 replay、可跨后端比对；后端若并行 record，合并结果的确定性由后端自己证明。
+排序键是一个 **64 位值**：`(draw_order, layer, opaque/transparent, depth-quantized)` 全序且文档化（审计 A6）。
 
 ---
 
@@ -224,7 +233,7 @@ flowchart TB
 | `Camera`（活对象）+ 每帧使用 | **Camera 值 + View 值** | 相机是内容，用哪台是视图 |
 | `RenderEngine` / `RenderDevice` / `RenderSurface` | **Session + SurfaceId** | 设备唯一，驱动按表面 |
 | `FrameDescription` / `EngineFrame` / `PresentOutcome` | **FrameValue + FrameResult** | 模式枚举收成 `PipelineDepth` + `Execution` |
-| `RowId = const void*` + `markUsed` + parking | **`{index, domain, generation}`** | 寿命从猜变算 |
+| `RowId = const void*` + `markUsed` + parking | **`{index, domain, generation}` + `revision`** | 寿命从猜变算；旧帧读旧值 |
 
 ---
 
@@ -236,16 +245,16 @@ flowchart TB
 |---|---|---|
 | A1 | 活对象跨线程读是真 bug 源，不是理论风险 | 本次会话修掉的材质正是最后一处：`ensureMaterial` 在录制线程读 `resolved()`，`revision_` 是普通整数。改成值之后删掉每帧 touch，TSan 548/548 零警告 |
 | A2 | 版本/镜像/memo 的组合复杂度是**结构**造成的 | 桥 2519 行里约 60% 在答"这份副本什么时候过期"；两次改错（镜像在帧内出生没有帧令牌、`refreshMaterials` 只改 publish 会滞后）都在这一层 |
-| A3 | 寿命靠时间窗必然长出兜底分支 | `ContentStore.cpp` 72 处寿命机器；`parked ? : kept` 兜底；TSan 首轮 14 条警告 **全部**是寿命问题、**0 条**数据竞争 |
+| A3 | 寿命靠时间窗必然长出兜底分支 | `ContentStore.cpp` 约 72–75 处寿命机器；`parked ? : kept` 兜底；TSan 首轮 14 条警告 **全部**是寿命问题、**0 条**数据竞争 |
 | A4 | 顺序/形状靠约定会反复犯错 | `FrameMode`/`RunnerMode`/`FrameThreading` 三者关系靠文档；`addPass` 家族靠 C20 运行时拒绝；pick 用活相机（N17）需要一条专门规则 |
-| A5 | 纯函数带来可测性红利（**待测**） | 今天 select 与"当前内容"耦合，`test_graphics` 548 条里大量在测"内容变了之后状态对不对"，而不是"给定输入输出是否相同" |
+| A5 | 纯函数带来可测性红利（**部分已测**） | 提案时 `test_graphics` 548 条；新增 `SnapshotTest` 5 条 + `ContentRegistryTest`/`ResidencyTableTest` 6 条后 559 条 |
 
 ### 4.2 量化对比（今天 vs 骨架目标）
 
 | 量 | 今天 | 骨架目标 | 判据 |
 |---|---|---|---|
-| 桥接 + 版本逻辑 | 2519 行 | ≤ 600（快照构造 + 结构共享 + 派生） | 代码量 |
-| 引擎寿命机器 | 72 处 | ≤ 20 | 代码量 + TSan |
+| 桥接 + 版本逻辑 | 2519 行（.hpp + .cpp；仅 cpp 1212） | ≤ 600（同口径；快照构造 + 结构共享 + 派生） | 代码量 |
+| 引擎寿命机器 | 约 72–75 处 | ≤ 20 | 代码量 + TSan |
 | 约束 | C1–C20 | **I1–I7（7 条）** | 文档 |
 | 会话形状入口 | 4 个 + 1 条运行时拒绝 | 0（计划是值） | API |
 | 陈旧身份 | 悬垂/误命中 | 答 gone | 类型 |
@@ -266,7 +275,7 @@ flowchart TB
 
 | 反方 | 回应 |
 |---|---|
-| "今天约束多，但每条都被测试钉住；换骨架等于丢经验" | `I1–I7` 是那些约束的**收敛形式**（值过帧、单写者、帧边界、瞄准），不是推翻。迁移分三步，每步都保留等价性用例 |
+| "今天约束多，但每条都被测试钉住；换骨架等于丢经验" | `I1–I7` 是那些约束的**收敛形式**（值过帧、单写者、帧边界、瞄准），不是推翻。迁移按 audit §8 的五步，每步都保留等价性用例 |
 | "C++ 里结构共享容易写错" | 先用 `shared_ptr<const 块>` + 分块起步，不追求极致；先原型测量（§5），数字不好就在那一步停 |
 | "指针身份省了一个注册表" | 注册表只是内容侧的账本，且解决了一整类 UAF；域对象由宿主创建，默认域只是便利 |
 | "重写期间维护双份" | 原型只活在 `detail::` 与一个内部开关里，**公开 API 不动**；不发布就不算双份 |
@@ -281,38 +290,54 @@ flowchart TB
 | K1 | 2000 行场景改 1 行，`publish` > 500 µs（即 CoW 退化成整表） | `SceneTest.Measure*` 扩展 |
 | K2 | 快照常驻内存 > 3× 行表字节数 | `alloc_trace.c` / RSS |
 | K3 | 相机移动的 collect 成本 > 今天 2160 µs（2000 drawable）的 1.2 倍 | 现有 `MeasureWhatOneCollectionCosts*` |
-| K4 | 等价性无法保持：`test_vsg` 537 条里有 > 5% 需要改测试才通过 | 直接数 |
-| K5 | 代码量不降反升（桥 + 寿命层 > 今天的 100%） | `wc -l` |
+| K4 | 等价性无法保持：`test_vsg` 537 条里有 > 5% 的**语义断言**需要改才通过（纯改名不计） | 直接数 |
+| K5 | 代码量不降反升（桥 + 寿命层 > 今天的 100%；与 2519 同口径） | `wc -l` |
 | K6 | TSan 出现任何**新的**数据竞争报告 | `scripts/tsan_check.sh` |
+| K7 | 在飞帧的旧内容被新发布改变（材质/几何/程序任一） | `T17` 逐项 diff；任何差异 = 失败 |
+| K8 | 两个 Scene 共享原型时出现数据竞争，或跨线程用例无法被拒绝 | `T21` + TSan |
+| K9 | pose 后的拾取/剔除与画面不一致 | `T19` / `T27` / `T28` |
+| K10 | 多表面必须靠两个 Session / 两条引擎线程才能成立 | `T29`；否则 `I6` 或 `R27` 必须改 |
+| K11 | 5000 原型、1 次编辑的 publish 超过预算（元数据整体拷贝暴露） | `N19` ≤ 50 µs 或字节上限 |
 
 阈值是**提案的一部分**：先写下来，测量时不许下调（`G8`：不要让结论倒推指标）。
 
 ---
 
-## 5. 验证计划（三步，每步可独立判死）
+## 5. 验证计划（前置两步 + 原三步 + 实例化实验，每步可独立判死）
 
-### 5.1 第一步：Snapshot + 结构共享 + 纯 select（不变公开 API）
+> **顺序以 `graphics-2026-11-11-next-audit.md` §8 为准**：前置 0（文档修正）与 1（`Measure*` 阈值 + 证据脚本）
+> 已完成；下面的 5.1 / 5.2 / 5.3 对应五步里的第 2 / 3 / 4 步；第 5 步（原型实例化）单独做，不混进快照原型。
 
-- 在 `detail::` 内新增 `Snapshot`（分块 CoW 行 + `id→revision` 表），并让 select 变成
+### 5.1 第一步：Snapshot + 结构共享 + 纯 select（不变公开 API；不带原型实例化）
+
+- 在 `detail::` 内新增 `Snapshot`（分块 CoW 行 + `id→revision` 表 + **带 revision 的内容引用**），并让 select 变成
   `select(const Snapshot&, const View&) → DrawList` 的纯函数版本；
-- 用例：同一个场景，旧路径与新路径的 DrawList **逐项相等**（`expectSameDrawList` 已有）；
-- 指标：K1 / K2 / K3；命令：扩展 `SceneTest.MeasureWhatOneCollectionCosts*` 打印 publish/collect 分离数字。
+- **暂不做**原型实例化 / 原型 DAG：先用今天的图语义验证快照、结构共享与纯 select（审计 A5 把实例化列为独立实验）；
+- 用例：同一个场景，旧路径与新路径的 DrawList **逐项相等**（`expectSameDrawList` 已有）；旧帧读旧 revision（`T17`）；
+- 指标：K1 / K2 / K3 / K7；命令：扩展 `SceneTest.MeasureWhatOneCollectionCosts*` 打印 publish/collect 分离数字。
 - 产出：一个数字对照表。**数字不好，到此为止。**
 
 ### 5.2 第二步：句柄化 + `I4` 回收
 
 - `ContentRegistry`（槽分配器 + generation）与 `{index, domain, generation}`；
+- **内容引用带 revision**：冷块 / `DrawItem` 用 `ContentRef{id,rev}` 或不可变值指针；引擎表按 `(id,rev)` 驻留；
 - 引擎表改数组索引；删除 `markUsed` / `parked` / `kept` 路径；
-- 用例：一个**陈旧句柄必须答 gone**；驻留 = 活快照引用集（可枚举断言）；
-- 指标：寿命机器处数、TSan（K6）。
+- 用例：一个**陈旧句柄必须答 gone**；旧帧读旧 revision（`T17`）；驻留 = 会话已知快照引用集（可枚举断言）；
+- 指标：寿命机器处数、TSan（K6/K8）。
 
-### 5.3 第三步：计划声明式
+### 5.3 第三步：计划声明式 + 预热 + 多表面
 
 - `Pass`/`Target` 变成值 + 帧边界差分；
-- 用例：`addPass` 时代的所有场景等价（含多视图、离屏链、HUD）；
-- 指标：会话形状入口数 → 0；`PassProtocolViolation` 中"帧在飞时改形状"的那条消失。
+- `prepare(snapshot, plan)` 预热入口；一个设备一个 Session 多个 Surface；
+- 用例：`addPass` 时代的所有场景等价（含多视图、离屏链、HUD）；多表面 `T29`；
+- 指标：会话形状入口数 → 0；`PassProtocolViolation` 中"帧在飞时改形状"的那条消失；预热后 `builds` 增量 0。
 
-### 5.4 每步收尾（沿用仓库节奏）
+### 5.4 第四步（单独实验）：原型实例化
+
+- 先做 A（物化）保证正确性；`T23` 测 5000×10 的发布/select/内存，`K11` 判死；
+- 数字不好就停在"原型 DAG 共享"，不把实例化塞进快照主路径。
+
+### 5.5 每步收尾（沿用仓库节奏）
 
 全量构建 → `test_graphics` / `test_vsg` / `ctest` → `scripts/tsan_check.sh`（0 警告）→ 八个文档门禁 → 提交。
 
@@ -330,6 +355,7 @@ flowchart TB
 | D6 | 默认 bindless / GPU-driven | 没有第二个后端、没有实测瓶颈（`G8`） |
 | D7 | 本层做自动 barrier 的 render graph | 同步归后端（`G2`） |
 | D8 | 保留 `addPass` 家族 + 运行时拒绝 | 计划是值之后，误用不可表达；拒绝路径本身是复杂度 |
+| D9 | 内容引用只带 `id`、不带 revision | 旧帧会按 id 解析到新值，直接破坏 `R9`/`I1`（审计 A1） |
 
 ---
 
@@ -346,7 +372,7 @@ flowchart TB
 | `G7` 隐藏复杂性 | 复杂度被吸收进快照与句柄，而不是推给宿主（对比：4 个 add/remove + 一条拒绝） |
 | `G8` 避免过度设计 | 原型折叠缓存、并行、bindless 都**留到测量之后**；判死条件先写 |
 | `G9` 易于扩展 | 扩展点都是"加一个值"（§2.5 四类事实、§2.9 计划） |
-| `G10` 真实成本 | K1–K6 把成本写成阈值；arena/释放规则给出常数上限 |
+| `G10` 真实成本 | K1–K11 把成本写成阈值；arena/释放规则给出常数上限 |
 | `G11` 可维护可调试 | 纯函数 + 可 dump + replay + 逐项相等 |
 | `G12` 意图在代码中 | 不可表达的误用（会话形状、陈旧句柄、活相机查询） |
 | `G13` 建模归建模 | 作者的 `Node`/`Camera` 只带身份与状态；几何/算法留在值侧 |

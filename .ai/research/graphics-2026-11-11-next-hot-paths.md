@@ -25,7 +25,7 @@
 
 | 段 | 目标（2000 drawable） | 今天 | 依据 |
 |---|---|---|---|
-| 发布（内容改动） | ≤ 50 µs（改 1 行） | 整表或逐条 | `N2` |
+| 发布（内容改动） | ≤ 250 µs（改 1 行；原 50 µs 已按 prototype 203 µs 调整） | 整表或逐条 | `N2` |
 | fold（若每帧） | ≤ 300 µs | 缓存，不付 | 见 §2.2 |
 | select + sort（每视图） | ≤ 1.5 ms | **2160 µs** | `N1` 要求 ≤ ×1.2；并行后目标 800 µs |
 | record（构建命令） | ≤ 1 ms | 未单独计量 | 需新增计量点 |
@@ -44,8 +44,8 @@ push_back"。三处可削：
 
 | 手段 | 预期 | 判据 |
 |---|---|---|
-| **块级早期剔除**（`chain[0]` 变换块包围盒，整块跳过） | 视野外内容多时 2–10× | 新用例：2000 行其中 90% 在视外 |
-| **DrawItem 定长 ≤ 64 B**、写进 arena（无 `vector` 增长、无 `shared_ptr`） | 分配 0，缓存友好 | `N6` + `sizeof(DrawItem)` 静态断言 |
+| **块级早期剔除**（用 hot 块的 `world_bound`，整块跳过；不用 `chain[0]`） | 视野外内容多时 2–10× | 新用例：2000 行其中 90% 在视外；`T24` |
+| **DrawItem 定长 24 B**、写进 arena（无 `vector` 增长、无 `shared_ptr`） | 分配 0，缓存友好 | `N6` + `sizeof(DrawItem)` 静态断言 |
 | **分块并行**（每块一个任务，输出到各自的 arena 段，按块序合并） | 2–4×（核数上限） | 串并行逐项相等（`R20`）+ 计时 |
 
 **今天做不到并行**的根本原因不是没线程，而是 select 与"当前内容"耦合（要 `ensureRows`、要 memo、
@@ -67,15 +67,18 @@ push_back"。三处可削：
 2000 项 × `log2(2000) ≈ 11` ≈ 22k 次比较；用 96 位打包键（`order|layer|transparent|depth`）可降到
 20–50 µs。两段排序（不透明按键、透明按键+深度倒序），不依赖 `std::sort` 的稳定性（今天的隐含依赖）。
 
-### 2.4 record / execute：分别计量
+### 2.4 record / execute：分别计量（record 是后端内部阶段）
 
 今天 `record` 与后端 `execute` 混在一起（`buildFrameValue` + `executeFrame`），只有一个总耗时。
-新设计必须在 `FrameReport` 里**分开**：`fold_micros / select_micros / record_micros / execute_micros /
-upload_bytes / builds`。没有分开的数字，就无法判断优化对了没有。
+新设计在 `FrameResult` 里**分开**：`select_micros / record_micros / execute_micros / upload_bytes / builds`。
+没有分开的数字，就无法判断优化对了没有。
+
+**但 record 不是核心的纯函数**：`Backend` 只有 `execute`，录制发生在它内部，vsg 的录制要碰设备状态。
+核心只要求后端**报告** `record_micros`；后端可以自己并行，但不把“纯 CommandList”写成跨后端契约（审计 A13）。
 
 ### 2.5 值的三条热路径规则（这是最容易踩的一处）
 
-1. **每帧被复制的东西必须是 POD**：`DrawItem` ≤ 64 B、无 `intrusive_ptr` 成员、无 `std::function`。
+1. **每帧被复制的东西必须是 POD**：`DrawItem` 24 B、无 `intrusive_ptr` 成员、无 `std::function`。
    （反例：今天的 `RenderCommand` 有 5 个 `intrusive_ptr`，每命令 5 次原子增减；2000 条 =
    1 万次原子操作/帧。）
 2. **共享的大值用 `shared_ptr` 共享，不进帧**：`GeometryDescription`、`MaterialDescription` 只在
@@ -109,8 +112,12 @@ upload_bytes / builds`。没有分开的数字，就无法判断优化对了没�
 | 拾取 | 用快照 | 用 `FrameResult` 里那一帧的 pose（`I7`） |
 
 ```cpp
-struct PoseSet {                                  // 纯值、POD
-    std::span<const PoseEntry> entries;            // {InstanceId first, uint32 count, const Mat4d* matrices}
+struct PoseEntry {                                // 纯值：一个实例的局部放置覆盖
+    InstanceId instance{};
+    Mat4d      local{};
+};
+struct PoseSet {                                  // FrameRequest 用的非拥有视图
+    std::span<const PoseEntry> entries;            // 存储必须活到 present 返回
 };
 struct FrameRequest {
     SnapshotPtr content{};
@@ -119,8 +126,12 @@ struct FrameRequest {
 };
 ```
 
-派生时：`world(row) = chain × pose(row, if posed) × local(row)`。快照不动 ⇒ **发布成本 0**，
-动画成本 = 每被 pose 覆盖的行一次矩阵乘（2000 行估 ≤ 150 µs，可并行）。
+派生时：**`PoseEntry` 覆盖该实例的 local，并重算它的整个子树**：
+`world(row) = parent_world × pose(祖先链上的覆盖) × local(row)`。
+不是“每行一次乘法、只改那一行”：父关节 pose 必须带动子节点（审计 A10）。
+快照不动 ⇒ **发布成本 0**，动画成本 = 被 pose 子树覆盖的行数（2000 行估 ≤ 150 µs，可并行）。
+pose 校验：实例存在、矩阵有限、无重复；违规 → `kPoseInvalid` + 跳过该条。
+pose 后的剔除/拾取用重算的 world / `world_bound`，不能用快照里过期的 box。
 
 ### 3.3 为什么这是"设计"而不是"优化"
 
@@ -154,13 +165,17 @@ struct FrameRequest {
 struct Pass {
     String              name{};       // 差分键
     View                view{};       // 含投影种类（Perspective | Ortho | Screen）
-    Target              target{};     // Window | Transient{name,shape} | External{Handle}
-    std::vector<PassId> reads{};      // 前向引用 = 计划错误（编译期校验）
+    Target              target{};     // Surface{SurfaceId} | Transient{name,shape} | External{name}
+    std::vector<String> reads{};      // 稳定名字；PassId 只在 Session 内部
     ClearPolicy         clear{};
     DrawState           state{};
     std::int32_t        order{ 0 };
 };
 ```
+
+`reads` 用名字而不是 `PassId`：宿主在 `submit` 前拿不到会话内部 id（审计 X1）。
+Session 在接入计划时校验：重复名字、未知输入、DAG 环（不只是“前向引用”）、超 `kMaxPasses`，
+每条违规一条稳定 `DiagnosticCode`。
 
 | 由计划推导的东西 | 规则 |
 |---|---|
@@ -194,27 +209,17 @@ struct Pass {
 | 新 pass（阴影/HUD/后期） | 一个**计划取值** | 0 代码（宿主声明） | 见 §4 |
 | 新查询（框选、吸附） | 一个**纯函数** | 1 函数 | 吃快照 + 视图 |
 | 新后端 | 实现 `Backend` | 1 模块 | ①②③ 层不动 |
-| **任意自定义 draw**（逃逸口） | `CustomPass`（见 §5.1） | 1 模块 | **明确不受"值"安全网保护** |
+| **任意自定义 draw**（逃逸口） | **本版不做**（`G8`：没有消费者） | 0 | 将来是后端的一个可选能力，不是核心 `Pass` 的函数指针 |
 
-### 5.1 受控逃逸口：`CustomPass`
+### 5.1 受控逃逸口：先不做
 
-如果宿主真需要"我自己记一条命令"（第三方渲染、调试绘制、嵌入式 viewport 渲染）：
+如果宿主真需要“我自己记一条命令”（第三方渲染、调试绘制、嵌入式 viewport 渲染），那将是**后端**的一个可选
+能力：只在引擎线程调用、只能读 `FrameValue` 的值、不参与排序/透明/裁剪、不在 dump/replay 保证内，
+并且必须由后端提供 `CommandBuffer` 类型。
 
-```cpp
-class CustomPass : public Backend {                  // 或 Backend 的一个可选能力
-    // 只在引擎线程调用；只能读 FrameValue 的值；不得触碰内容对象
-    virtual void record(const FrameValue& frame, CommandBuffer& out) = 0;
-};
-```
-
-**边界必须写明**（否则等于没有骨架）：
-- 只允许读 `FrameValue`（值）—— 不能读 `Scene` / `Material`（否则竞争回来）；
-- 只在引擎线程调用；
-- 它产生的命令**不参与**排序/透明/裁剪（自己负责）；
-- 不在"确定性、dump、replay"的保证内。
-
-`G8` 的说法：这个逃逸口**今天没有消费者**（`app_shell` / robotics / test 都不需要），所以**先不做**，
-但**留出接口位置**（`Pass` 里不出现任何函数指针即可，将来是额外的一个 pass 种类/能力）。
+`G8` 的结论：这个逃逸口**今天没有消费者**（`app_shell` / robotics / test 都不需要），所以**本版不做**，
+也不给出 `CustomPass : public Backend` 这种类别错误的接口（审计 X8 / A12）。
+`Pass` 里不出现任何函数指针，就是为将来留下的唯一位置。
 
 ---
 
@@ -222,7 +227,7 @@ class CustomPass : public Backend {                  // 或 Backend 的一个可
 
 | 项 | 今天 | 目标 | 手段 |
 |---|---|---|---|
-| 改一个 SDK 头的重编译 | 几乎全库（`RenderEngine.hpp` 被 47 处 include） | 只重编依赖它的 TU | 值类型各放一个**独立小头**（`View`、`Pass`、`Frame` 各一个），会话头只持指针 |
+| 改一个 SDK 头的重编译 | 几乎全库（`RenderEngine.hpp` 当前被 22 个文件 include；此前的 47 未能复现，见 `scripts/measure_graphics_claims.py`） | 只重编依赖它的 TU | 值类型各放一个**独立小头**（`View`、`Pass`、`Frame` 各一个），会话头只持指针 |
 | 新增一个 pass 类型的编译影响 | 触到 `PassRegistry` / `RenderPass` / 引擎编译 | 0（宿主声明） | 计划是值 |
 | `test_graphics` 单次运行 | 0.25 s ✓ | 保持 | 纯函数化后更快 |
 | `test_vsg` 单次运行 | 12.5 s | 保持 | |
@@ -239,10 +244,11 @@ class CustomPass : public Backend {                  // 或 Backend 的一个可
 | N12 | pose 不改变快照 | `snapshot_epoch` 不变 | 用例断言 |
 | N13 | 后期 5 遍 @1080p 的 record 成本 | ≤ 100 µs | `MeasureWhatAPostChainCosts` |
 | N14 | transient 稳态零重建 | `builds` 增量 0 | 连续 10 帧（含 resize 后） |
-| N15 | `DrawItem` 大小 | ≤ 64 B（静态断言） | 编译期 |
+| N15 | `DrawItem` 大小 | **24 B**（`row` + 两个实例计数 + `flags` + 64 位 `sort_key`） | `static_assert`；按 v1 字段 |
 | N16 | 每命令的原子操作 | 0（无 `intrusive_ptr` 拷贝） | 计时 + 代码审查 |
-| N17 | 块的早期剔除有效 | 视外 90% 时 select ≤ 400 µs | 新用例 |
+| N17 | 块的早期剔除有效 | 视外 90% 时 select ≤ 400 µs | 新用例；用 `world_bound`，不用 `chain[0]` |
 | N18 | 扩展一次只改一处 | 新节点行为 ≤ 3 文件 | 参照实现（一个放置值） |
+| N19 | publish 元数据不整体拷贝 | 5000 原型、1 次编辑 ≤ 50 µs（或字节上限） | 新用例 `MeasureWhatOneEditCostsToPublish`；`K11` |
 
 **建议的门禁**（与现有八个脚本并列）：`Measure*` 用例改成**阈值断言**而不是打印 ——
 今天它们是"打印给人看"，于是回归无声。做法：把基线数字写成 `kBudgetMicros` 常量，超了就让用例失败。
@@ -253,9 +259,10 @@ class CustomPass : public Backend {                  // 或 Backend 的一个可
 
 | 顺位 | 事 | 为什么先做 |
 |---|---|---|
-| 1 | **`Measure*` 用例加阈值** | 没有这个，后面所有优化都不可证；成本半天 |
-| 2 | `FrameReport` 分四段计量（fold/select/record/execute） | 优化方向由数字决定 |
-| 3 | DrawItem ≤ 64 B + arena（去 `intrusive_ptr` 拷贝） | 一项改动同时改善 select/record/分配 |
+| 0 | **修 `-audit` 的 X1–X10 / A1–A4 文档缺口** | 引用不带 revision 时，后面的测量会测到一个错模型（A1）；这一步不改代码 |
+| 1 | **`Measure*` 用例加阈值 + `scripts/measure_graphics_claims.py`** | 没有这个，后面所有优化都不可证；成本半天 |
+| 2 | `FrameResult` 分四段计量（select/record/execute/upload） | 优化方向由数字决定；record 是后端内部阶段 |
+| 3 | DrawItem 24 B + arena（去 `intrusive_ptr` 拷贝） | 一项改动同时改善 select/record/分配 |
 | 4 | 块级早期剔除 | 大场景收益最大、风险最小 |
 | 5 | pose 路径（动画） | 消掉 T6，且让"每帧更新"不再经过发布 |
 | 6 | 计划即依赖图（后期） | 已有形状，收益是稳态零重建 |

@@ -113,7 +113,7 @@ pass 的 content 既写在声明里（`PassDesc::content`），又能经 `bindPa
 | 结果 | `frame`(outcome) / `presentRecord` / `presentedCamera` / `capabilities` / `frameReport` | 5 |
 
 **更好**：会话 7 个方法（`open/submit/present/wait/report/capabilities/close`）；
-所有观测收成一个 `FrameReport` 值；内部缝全部私有化（今天 `reportEngineProblem` 是 public，
+所有观测收成一个 `FrameResult` 值；内部缝全部私有化（今天 `reportEngineProblem` 是 public，
 注释说"因为引擎自己的 builder 也用它" —— 那是内部调用，不是公开理由）。**成本**：大（宿主全改，见 §9）。
 
 ### P11 观测散成 9 个函数，而不是一个值（`G11`）
@@ -121,7 +121,7 @@ pass 的 content 既写在声明里（`PassDesc::content`），又能经 `bindPa
 `builds`、`draws`、`passes`、`record_micros`、`execute_micros`、`presented_view`、`diagnosticCount` 分居
 8 个 accessor，没有一个可以整体 dump / 整体断言 / 跨帧保存。
 
-**更好**：`FrameReport` 值（`graphics-2026-11-11-next-design.md` §3.7），一帧一个，可存可 diff。**成本**：小。
+**更好**：`FrameResult` 值（`graphics-2026-11-11-next-design.md` §3.7），一帧一个，可存可 diff。**成本**：小。
 
 ### P12 七个名字指"画东西的那个东西"（`G1` / `G6`）
 
@@ -217,7 +217,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 ### P23 缺少"声明之后能问回来"的东西（`G11`）
 
 今天能读"计划长什么样"（`framePlan` dump）、"上一帧画了什么"（`frameDescription`），但没有一个**稳定的观测值**：
-`FrameReport` 应包含 `passes/draws/builds/resident/snapshot_epoch/presented_view/耗时`，并且可序列化。
+`FrameResult` 应包含 `passes/draws/builds/resident/snapshot_epoch/presented_view/耗时`，并且可序列化。
 
 **更好**：见 P11。**成本**：小。
 
@@ -259,7 +259,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 **更好**：**一个后缀**——创建参数一律 `XxxConfig`；能力一律 `Capabilities`；跨层的值**不带后缀**（`Pass`、
 `View`、`Frame`、`FramePlan`）；"某一时刻的值"用 `XxxSnapshot`。**成本**：小（纯改名）。
 
-### P26 126 个公开方法返回 `bool`（`G4`）
+### P26 大量公开方法返回 `bool`（`G4`）
 
 `bool` 现在同时承担三件事：**成功/失败**、**有/无**、**找到/没找到**。读调用点时无法区分
 `if (!engine.initialize())` 与 `if (!scene.hasRootedRoot())` 属于哪一种。
@@ -268,7 +268,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 
 ### P27 错误表达有三套（`G6`）
 
-1. `bool`（126 处）；
+1. `bool`（110 处顶层 SDK / 152 处含 `backend/`；口径见 audit §2）；
 2. **出参枚举**：`createSurfaceTarget(handle, SurfaceTargetResult* why)`、`readColorBuffer(..., ReadbackResult* why)`
    （`RenderDevice.hpp:228 / :333 / :361`）；
 3. **诊断文本**：`DiagnosticCategory` + message，**没有稳定 code**（于是测试只能匹配文字）。
@@ -353,7 +353,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 | # | 缺什么 | 今天的替代 | 判据 |
 |---|---|---|---|
 | M1 | 能力**协商**（必选/可选 + 拒绝原因 code） | `capabilities()` 只答"有什么"，不答"我不满足你是否还能跑" | `G4` |
-| M2 | 管线**预热查询**（给定快照答需要什么） | 首帧现场编译，卡顿不可预算 | `G10` |
+| M2 | 管线**预热查询**（`prepare(snapshot, plan) → Requirements`；给定快照答需要什么） | 首帧现场编译，卡顿不可预算 | `G10` |
 | M3 | 异步编译的显式语义（未就绪 ⇒ 跳过 + episode） | 首次出现的卡帧 | `G11` |
 | M4 | 帧**节流策略**（深度 / 延迟 / vsync） | 硬编码深度 1 | `G10` |
 | M5 | 计划**回读**（我提交的计划下一帧会是什么样） | 只有 `framePlan` dump 文本 | `G11` |
@@ -361,7 +361,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 | M7 | 查询吃视图值（pick / box / fit 统一签名） | 各自一套，且部分吃活相机 | `G12` |
 | M8 | 内容**句柄化**（陈旧使用可判定） | `const void*` + 兜底 | `G10` |
 | M9 | 单位与颜色空间在类型里 | 注释约定 | `G10` |
-| M10 | 视图的**多表面**（一设备多窗口） | 一引擎一表面，第二表面被拒 | `G5` |
+| M10 | 视图的**多表面**（一设备多窗口） | 一引擎一表面，第二表面被拒；目标应是“一设备 = 一个 Session + 多 Surface”，不是两个 Session 共享设备 | `G5` |
 
 ---
 
@@ -372,28 +372,30 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 | `device@184` / `setDevice@200` / `initialize@304` | **合并** → `Session::open` | 创建一次把不变量建好 |
 | `shutdown@316` | 保留 → `close()` | 幂等相位 |
 | `frame@336` | 保留 → `present(request)` | 返回 `FrameResult` |
+| （新增） | `prepare(snapshot, plan) → Requirements` | R23 预热；`M2` 的入口，不能只写在 hot-paths |
 | `waitForFrame@375/382` | 合并 → `wait(frame_id)` | 一个重载（无参 = 最后一帧） |
 | `addPass@587/605/624` / `removePass@640` / `clearPasses@664` / `passCount@670` / `passOrder@474` | **删除** | 计划是值（`submit`） |
 | `bindPassContent@683` / `contentOf@690` | **删除** | 内容只属于声明（P9） |
-| `framePlan@492` / `frameDescription@512` | **合并** → `FrameReport` / dump | 观测是值 |
-| `presentRecord@403` / `presentedCamera@419` | **合并** → `FrameReport.presented_view` | 一个值 |
+| `framePlan@492` / `frameDescription@512` | **合并** → `FrameResult` / dump | 观测是值 |
+| `presentRecord@403` / `presentedCamera@419` | **合并** → `FrameResult.query.view` | 一个值 |
 | `frameNumber@360` | **并入** `FrameResult.frame_id` | |
-| `surfaceWidth@430` / `surfaceHeight@436` | **并入** `FrameReport.target` | |
-| `contentCollectCount@237` / `contentCollectReuseCount@244` | **并入** `FrameReport` | 且新设计里 memo 概念消失 |
-| `diagnosticCount@256/263` / `diagnosticsClean@273` | **并入** `FrameReport.diagnostics` + `Session::diagnostics()` | 保留一个计数口 |
+| `surfaceWidth@430` / `surfaceHeight@436` | **并入** `FrameResult.query.target` | |
+| `contentCollectCount@237` / `contentCollectReuseCount@244` | **并入** `FrameResult` | 且新设计里 memo 概念消失 |
+| `diagnosticCount@256/263` / `diagnosticsClean@273` | **并入** `FrameResult.diagnostics` + `Session::diagnostics()` | 保留一个计数口 |
 | `diagnostics@177` / `setDiagnosticSink@214` / `diagnosticSink@220` | 保留（收成一个 `setSink`） | 单路由不变 |
 | `reportEngineProblem@287` | **私有化** | 见 P22 |
 | `capabilities@448` | 保留 | + 必选/可选（M1） |
-| `frameReport@459` | 保留并扩展 | 它的雏形就是 `FrameReport` |
+| `frameReport@459` | 保留并扩展 | 它的雏形就是 `FrameResult`；会话累计报告与每帧结果分开命名 |
 | `transientTargetCount@523` / `transientTarget@540` | **删除** | 目标按名字取值视图（P3） |
 | `setDefaultContentProgram@557` / `defaultContentProgram@563` | **移入计划/视图** | 见 P8 |
 | `releaseContent@656` | 改成 `forget(ContentId)` | 见 P24 |
 | `publish@708` / `resolve@719` / `unpublish@725` | **内部化** | 输出协议的实现细节 |
-| `createSurface@743` | **并入** `Session` + `Surface` 值 | 见 M10 |
+| `createSurface@743` | **并入** `Session` + `Surface` 值 | 一个设备一个 Session 多条 Surface（M10） |
 | `setFrameThreading@349` / `frameThreading@352` | **合并** → `SessionConfig.execution` | 一个轴 |
-| `lease@144` / `passes@157` / `outputs@167` | 保留但收进 `FrameReport` | 读的入口少而稳 |
+| `lease@144` / `passes@157` / `outputs@167` | 保留但收进 `FrameResult` | 读的入口少而稳 |
 
-**净结果**：49 → **7**（`open` / `submit` / `present` / `wait` / `report` / `capabilities` / `close`）+ 诊断 sink。
+**净结果**：49 → **8**（`open` / `submit` / `prepare` / `present` / `wait` / `report` / `capabilities` / `close`）+ 诊断 sink。
+`prepare` 是 R23/M2 的预热入口；没有它，“预热是一等 API”就只写在 hot-paths 里。
 
 ---
 
@@ -438,7 +440,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 | **A. 删死物** | 删 `PassDesc::tag`、`before_draw`、`ShaderStageType::Compute`；`TransientShape` 改 `optional`；`reportEngineProblem` 私有化 | 无 | 小 | **最高**（几小时，纯减法） |
 | **B. 改名** | §8 的映射，`using` 别名 + `[[deprecated]]` 过渡 | 无 | 小 | 高（阅读成本立刻下降） |
 | **C. 值化 pass** | `Pass`/`FramePlan` 进 SDK；`RenderPass` 退为构建器；`ScreenPass` 删除 | 中 | 中 | 高（P1/P3/P4/P5 一起消） |
-| **D. 收口 session** | 49 → 7；观测收成 `FrameReport`；删 `publish/resolve/unpublish/transientTarget*` | 中 | 大 | 高 |
+| **D. 收口 session** | 49 → 8（含 `prepare`）；观测收成 `FrameResult`；删 `publish/resolve/unpublish/transientTarget*` | 中 | 大 | 高 |
 | **E. 缺失能力** | `M1–M10`，各自独立、有消费者才做 | 增 | 小 | 中（每条独立评估） |
 
 **顺序理由**：A 与 B 是"零语义、低风险、立刻见效"；C 是概念收益最大的一批；D 破坏面最大，放在 C 之后

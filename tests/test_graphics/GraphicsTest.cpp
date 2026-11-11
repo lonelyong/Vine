@@ -14260,17 +14260,21 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
 
 TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
 {
-    // A RECIPE, not a gate: it answers the question the B4 row in the backend's design log
-    // (.ai/design/vsg-backend.md §11.16bw) could not - "the demo's collection is a memo hit or ~42
-    // commands, so the cost is unmeasurable there". Nothing here asserts a machine-dependent number; the
-    // figures below are printed so they can be recorded in the design log, and the asserted facts are the
-    // machine-independent ones: a MOVED camera collects again, a STILL one reuses the shared list, and the
-    // command list is the same size either way.
+    // A GATE with a generous ceiling, not a benchmark: it answers the question the B4 row in the backend's
+    // design log (.ai/design/vsg-backend.md §11.16bw) could not - "the demo's collection is a memo hit or ~42
+    // commands, so the cost is unmeasurable there". The printed figures are the record; the assertion is a
+    // ceiling that only a structural regression (losing the memo/bake, an O(n^2) walk) can cross. The budget
+    // is per drawable so it scales with the case instead of encoding one machine's absolute time:
+    //   budget_us = drawables * 3 + 1000
+    // Today's Debug build measures ~0.2 ms @200 and ~2.1 ms @2000, so the ceiling is ~3-4x the baseline.
+    // Sanitizer builds are much slower, so they print without the timing assertion.
     //
     // Run it where the numbers matter (Release builds the walk inlined):
     //   ./build-release/bin/test_graphics --gtest_filter='*MeasureWhatOneCollectionCosts*'
     std::printf("\n"); // keep the measurements on their own lines
     for (const std::size_t drawables : { std::size_t{ 200 }, std::size_t{ 2000 } }) {
+        const long long budget_us = static_cast<long long>(drawables) * 3 + 1000;
+
         Scene                scene;
         intrusive_ptr<Group> root = setIdentityRoot(scene);
         // A grid of unit triangles five units in front of the camera: all inside the frustum, at DIFFERENT
@@ -14354,15 +14358,22 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
         EXPECT_EQ(scene.contentCollectCount(), per_frame_collects + 1U);
         (void)moved;
 
-        std::printf("[measure] drawables=%zu commands=%zu moving=%lld us still=%lld us per_frame=%lld us (%d of "
-                    "each)\n",
+        std::printf("[measure] drawables=%zu commands=%zu moving=%lld us still=%lld us per_frame=%lld us "
+                    "budget=%lld us (%d of each)\n",
                     drawables,
                     commands,
                     static_cast<long long>(moving_us),
                     static_cast<long long>(still_us),
                     static_cast<long long>(frame_us),
+                    budget_us,
                     kRepetitions);
         std::fflush(stdout);
+
+#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+        EXPECT_LE(static_cast<long long>(moving_us), budget_us)
+            << "a moved camera's collection crossed the structural ceiling; see .ai/research/"
+               "graphics-2026-11-11-next-hot-paths.md §8";
+#endif
     }
 }
 

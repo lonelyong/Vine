@@ -79,11 +79,12 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（73）
+## decisions/ —— 决策记录（ADR）（74）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-11-11-content-identity-is-a-handle.md` —— 内容身份是**句柄**（`Handle` gen24/domain8/index32 + `ContentRef{id,revision}`），不是地址：公开 `ContentId.hpp`、`Node::id()`、行身份/镜像键/`RenderCommand::node`/计划行/后端几何表全部改为 `NodeId`；分三段落地（公开身份 → `ContentRef` 唯一键 → epoch 回收）；部分取代 `ADR-2026-11-09-address-keys-hold-the-object`。
 - `ADR-2026-11-10-render-world-mirrors-content.md` —— 渲染世界**镜像**内容世界：内容留在 UI 线程（编辑 API 不变），镜像（世界矩阵/世界盒/折叠状态/代理）在引擎线程，靠 delta 增量更新（payload 必填 ⇒ 漏发编译不过）、字节靠原子 revision 轮询；表面归内容线程、交换链归引擎线程；否决把内容移交给引擎线程（第一稿）、每帧 extract、双缓冲世界、加锁、每帧起线程、按 pass 并行记录、vsg 的 threading path。
 - `ADR-2026-11-10-upload-staging-is-not-retained.md` —— 上传暂存**不保留**：一次上传的 host 可见缓冲是**一个** `vkCmdCopyBuffer` 的源，拷贝的 fence 一完成就清（`detail::StagingTask` 在每个帧边界扫，零等待、零 idle），SDK **没有**对应动词（`RenderDevice::releaseUploadStaging()` 与模型查看器的 `release_render_memory` 一并删除）；否决显式入口 + park/drain、每帧无脑清、换任务释放、以及“还有待拷数据就跳过”的便宜条件（那是会让 sweep 永久冻结的坑）。
 - `ADR-2026-11-10-gpu-residency-pinned-by-content.md` —— GPU 驻留按**内容对象（身份 + revision）**钉住，回收只问“现在谁活着”（事实表枚举 pin 集合），删掉时间窗与容量上限：一套判据替掉现在的五种（流的时间窗、纹理/块的引用计数、半片与描述符集的反事实扫描）；显存不再自动让出是它的明码代价。第一步（`ResidencyLedger` 词汇 + 流/图像/材质块三行接入）已落地。
@@ -159,7 +160,7 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（6 文件 / 1 组提案）
+## research/ —— 调研与提案（7 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
@@ -174,8 +175,10 @@
 - `graphics-2026-11-11-next-hot-paths.md` —— 同上的**性能/动画/后期/扩展**：实测成本模型与 60 fps 预算、
   select/fold/sort/record 的手段、值的热路径三条规则、动画走"帧内 pose"（不经发布）、后期＝计划即依赖图、
   受控逃逸口、工程效率、`N11–N18`，以及"先给 `Measure*` 加阈值"的优先级。
-- `graphics-2026-11-11-next-api.md` —— 同上的**现有 API 集审计**：`P1–P24`（一概念两表示、声明里的回调、
+- `graphics-2026-11-11-next-api.md` —— 同上的**现有 API 集审计**：`P1–P32`（一概念两表示、声明里的回调、
   目标四种说法、顺序四套、49 个公开方法、七个别名…）、`M1–M10` 缺失能力、逐方法去向、命名对照、A–E 分批。
+- `graphics-2026-11-11-next-audit.md` —— 同上的**第二轮审计**：证据口径复核、跨文档矛盾 `X1–X10`、
+  设计缺口 `A1–A13`、补充要求 `R31–R39` 与判死条件 `K7–K11`、成本再评估与修订后的推进顺序。
 
 （此前的三角形树两帧统一与 `.vbtp` 持久化已并入 `design/graphics-geometry.md` 2.10 / F33、
 `design/geometry-bvh.md` 2.13 / F8 与 `design/robotics-io-design.md` F7。）
