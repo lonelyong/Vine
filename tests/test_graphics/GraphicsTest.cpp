@@ -11282,6 +11282,75 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
  * is pinned here: the value is rebuilt from scratch every frame (the engine's own value is per frame), so "the
  * compile describes after the hook" is the only thing keeping a readout from being a frame behind.
  */
+/**
+ * @brief A frame answers ONE state: what a hook wrote is visible to every pass of that frame, not only the later ones.
+ *
+ * @details
+ * - The expansion happens after EVERY pass has been described (see RenderEngine::expandFrameValue), and a mirrored
+ *   frame drains once per frame - so a frame's draws all read one mirror state (design N16). That is the rule the
+ *   direct and the mirrored mode share now: a `before_draw` hook that writes content is a statement about the frame it
+ *   ran in, not about the passes that happen to be described after it.
+ * - Pinned because the two orders produce the same wire (both draw a triangle), one of them at a position the frame
+ *   never agreed on: a mirrored pass that reads a movE made by a LATER pass' hook is what "one state" buys, and a
+ *   regression to per-pass expansion shows up here as the first pass drawing the triangle where it used to be.
+ */
+TEST(RenderEngineTest, AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    auto node  = makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"mover");
+    root->addChild(node);
+
+    // TWO VIEWS, so the two passes cannot share one collected list: a shared list would hide the question.
+    auto camera_a = intrusive_ptr<Camera>(new Camera());
+    camera_a->lookAt(Vec3d(0, 0, 9), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    camera_a->setPerspective(60.0, 0.1, 1000.0);
+    auto camera_b = intrusive_ptr<Camera>(new Camera());
+    camera_b->lookAt(Vec3d(4, 0, 9), Vec3d(4, 0, 0), Vec3d(0, 1, 0));
+    camera_b->setPerspective(60.0, 0.1, 1000.0);
+
+    PassDesc first;
+    first.name    = u8"first";
+    first.camera  = camera_a;
+    first.content = scene;
+    ASSERT_NE(engine->addPass(first), nullptr);
+
+    bool moved = false;
+    PassDesc second;
+    second.name    = u8"second";
+    second.camera  = camera_b;
+    second.content = scene;
+    second.before_draw = [&] {
+        if (!moved) {
+            moved = true;
+            // The SECOND pass' hook writes content the FIRST pass has already been described against.
+            node->setMatrix(vn::math::translate(Vec3d(1.5, 0, -3)));
+        }
+    };
+    ASSERT_NE(engine->addPass(second), nullptr);
+
+    engine->frame();
+
+    const FrameDescription& frame = engine->frameDescription();
+    ASSERT_EQ(frame.passes.size(), 2u);
+    ASSERT_TRUE(frame.passes[0].draw.has_value());
+    ASSERT_TRUE(frame.passes[1].draw.has_value());
+    ASSERT_EQ(frame.passes[0].draw->draws.size(), 1u);
+    ASSERT_EQ(frame.passes[1].draw->draws.size(), 1u);
+    ASSERT_EQ(frame.passes[0].draw->draws[0].commands->size(), 1u);
+    ASSERT_EQ(frame.passes[1].draw->draws[0].commands->size(), 1u);
+
+    const Point3d from_first = (*frame.passes[0].draw->draws[0].commands)[0].model_matrix * Point3d(0, 0, 0);
+    const Point3d from_second = (*frame.passes[1].draw->draws[0].commands)[0].model_matrix * Point3d(0, 0, 0);
+    EXPECT_NEAR(from_first.x, 1.5, 1e-9) << "the first pass answered after the whole frame was described";
+    EXPECT_NEAR(from_second.x, 1.5, 1e-9);
+}
+
 TEST(RenderEngineTest, TheFramesValueIsBuiltAfterThePerFrameHooks)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());

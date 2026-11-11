@@ -258,6 +258,9 @@ void RenderEngine::buildFrameValue()
     // The entries are REUSED rather than rebuilt (see below): a steady frame hands over the same pass list with the
     // same input lists, so it must not free and re-allocate them 60 times a second.
     std::size_t used           = 0;
+    // Which entries the expansion has to answer, in run order (the passes whose description issued something).
+    // Reused like the entries themselves: a steady frame does not allocate.
+    frame_engine_order_.clear();
     // A window pass has no target to read a device-pixel size from. The engine states the surface size (converted
     // with the surface's pixel ratio) on every pass; RenderPass::describe prefers a sub-viewport or the target's
     // own size, so off-screen passes are unaffected.
@@ -284,17 +287,17 @@ void RenderEngine::buildFrameValue()
         if (index < slots_.size() && slots_[index].pass != nullptr && slots_[index].pass->declaration().before_draw) {
             slots_[index].pass->declaration().before_draw();
         }
-        // THE ENGINE HALF'S FIRST TWO STEPS, for THIS pass. A `before_draw` hook WRITES content (an overlay that
-        // follows the camera, a gizmo), so what it wrote has to be published BEFORE the pass is expanded - and it is
-        // per pass, not once per frame, because that is exactly what the direct path does today: each pass collects at
-        // its own moment and sees what the hooks before it said (see the design's note on snapshot semantics, which is
-        // the threaded mode's, not this one's). With nothing changed, both calls answer immediately.
+        // WHAT THIS PASS WROTE GOES TO THE MIRROR BEFORE THE FRAME IS ANSWERED. The hook WRITES content (an overlay
+        // that follows the camera, a gizmo), so that write has to be published - and it is published per pass, in run
+        // order, because that is the order the hooks ran in. The EXPANSION below is a separate step (see
+        // expandFrameValue) and runs after every pass has been described, which is what makes a frame answer ONE
+        // mirror state (design N16): a hook's write is visible to all of that frame's passes, which is the same rule
+        // the direct and the mirrored mode now state. With nothing changed, both calls answer immediately.
         if (frame_mode_ == detail::FrameMode::Mirrored) {
             if (raw_ptr<Scene> scene = pass->content()) {
                 (void)worker_->publish(*scene);
             }
         }
-        (void)worker_->drain();
         // The declared inputs were resolved by the compile (see compileFrame's rows), and the pass is told them
         // here: they are what a ScreenPass' effect reads, and they are part of what the pass describes.
         pass->resolveInputTextures(row.inputs);
@@ -318,12 +321,11 @@ void RenderEngine::buildFrameValue()
             entry.draw.reset();
         }
         else {
-            // THE FRAME'S ONE O(DRAWABLES) STEP, and it is a function of the value described above: the pass stated a
-            // view and whose content answers it, and this asks that source for the list (see FrameWorker). It is
-            // inside this pass' measured interval, so record_micros keeps meaning "describe + collect" - and in the
-            // mirrored mode it covers the mirror's answer, which is the same picture by construction (the equivalence
-            // tests are the judge, and every frame in this build now goes through it).
-            worker_->runPass(*entry.draw, frame_mode_);
+            // THE ANSWER IS NOT TAKEN HERE. The pass stated a view and whose content answers it (and the content's
+            // write is already in the mirror); asking that source for the list is the ENGINE half's step, which runs
+            // over the whole described frame (see expandFrameValue) - that is the seam a thread crosses, and it is
+            // why it is a function of its own rather than a line in this loop.
+            frame_engine_order_.push_back(index);
         }
         if (index < slots_.size()) {
             slots_[index].record_micros =
@@ -335,6 +337,31 @@ void RenderEngine::buildFrameValue()
     if (frame_value_.passes.size() > used) {
         frame_value_.passes.resize(used);
     }
+}
+
+void RenderEngine::expandFrameValue()
+{
+    // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one drain per pass, in run
+    // order (see design 2.12 - the two halves are the seam a thread crosses, so they are two functions and not one
+    // loop). Nothing in this function reads content: `runPass` re-points each draw at its content's mirror and
+    // `expandPass` asks that mirror, which is exactly what makes it safe to run away from the content's thread.
+    //
+    // record_micros keeps meaning "describe + collect": the content half measured its part per pass, and the
+    // expansion adds its own here - one clock read per pass, not per draw.
+    std::size_t entry = 0;
+    for (const std::uint32_t index : frame_engine_order_) {
+        FrameDescription::Pass& described = frame_value_.passes[entry++];
+        const auto              started   = std::chrono::steady_clock::now();
+        (void)worker_->drain();
+        if (described.draw.has_value()) {
+            worker_->runPass(*described.draw, frame_mode_);
+        }
+        if (index < slots_.size()) {
+            slots_[index].record_micros +=
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
+        }
+    }
+    frame_engine_order_.clear();
 }
 
 void RenderEngine::collectPictureShapeMismatches()

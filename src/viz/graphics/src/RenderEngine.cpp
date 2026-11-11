@@ -314,6 +314,10 @@ FrameOutcome RenderEngine::frame()
     // (an offline bake, a display-less device), not an error.
     PresentTarget* const present_to = (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
 
+    // THE FRAME'S ENGINE HALF, IN ORDER: the extent the frame was laid out on goes to the window half, then the
+    // described draws are answered, then the whole frame is executed (acquire, record, submit, present). The first
+    // two are what a thread would carry; the last one is the device's own call.
+    //
     // THE WINDOW HALF OF THE SIZE FOLLOWS THE FRAME (design 2.12). An announcement is recorded where it happens
     // (RenderSurface::resize -> announceAreaSize), so the passes above were laid out on a number the frame already
     // knew; the SWAPCHAIN is told here, at the frame's head, once per changed size - it is the one place a frame waits
@@ -326,6 +330,8 @@ FrameOutcome RenderEngine::frame()
         applied_width_  = surface_width_;
         applied_height_ = surface_height_;
     }
+
+    expandFrameValue();
 
     // The WHOLE FRAME happens inside this ONE call (see RenderFrameExecutor::executeFrame): the device acquires the
     // presentable image, the record submits, and the frame's tail presents it through the target it names. The engine

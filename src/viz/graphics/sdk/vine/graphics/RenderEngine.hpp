@@ -825,6 +825,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void buildFrameValue();
 
+    /** @brief Answers the frame's draws: one drain per pass, then one expansion per described draw.
+     *
+     * @details
+     * - The ENGINE HALF of a frame (design 2.12): every draw `buildFrameValue` described is asked of its source here,
+     *   after every pass has been described - so one frame answers ONE mirror state (N16), and nothing in this
+     *   function reads content (`runPass` re-points a draw at its content's mirror first, see FrameWorker).
+     * - It is a function of its own because it is the seam a thread crosses: it runs where the device runs, and it
+     *   touches the mirrors, while the half above runs where the content is.
+     */
+    void expandFrameValue();
+
     /** @brief Reports the problems the compile found, once per episode, then remembers them.
      *
      * @details
@@ -1012,6 +1023,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // it once per pass. 0 = no frame announced yet, which is also what a caller
     // that never renders sees (no memoising at all).
     std::uint64_t content_frame_       = 0;
+    // The passes whose description issued something, in run order: what expandFrameValue has to answer. Reused like
+    // the frame value's entries (a steady frame allocates nothing).
+    std::vector<std::uint32_t> frame_engine_order_;
     bool          initialized_         = false;
     // The one area this engine drives (see createSurface): OWNED, because a 1:1 relation needs one of its two ends
     // to own it. It is the only place the engine reads a target from - the engine owns no window and no handle (see

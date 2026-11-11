@@ -832,6 +832,12 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   `RenderEngineTest.TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend`（未跑帧不重建、第一帧重建一次、
   同尺寸的下一帧零次、两帧之间两次 resize 只付一次）、`HeadlessBackendTest.ATargetTheHostMadeReachesTheFrameUnreported`、
   `AStoppedEngineUnbindsTheAreasTargetFirst`、`TheDeviceIsAskedForItsOwnTargetOnlyWhenTheAreaHoldsNone`。
+- **P3 第二步已落（两个半段分开，2026-11-11）**：`buildFrameValue` 只做内容半段（钩子、解析输入、描述），
+  `expandFrameValue` 只做引擎半段（每 pass 一次 drain + 一次 expand），`frame()` 依次做"尺寸 → 展开 → 执行/呈现"。
+  这不改画面，但把"线程要跨的那条缝"变成一个函数边界，并让 `Direct` 与 `Mirrored` 对 N16 给出同一个答案
+  （钩子写的内容对该帧所有 pass 可见）。验收：`RenderEngineTest.AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote`
+  （第二个 pass 的钩子移动节点，第一个 pass 也画在新位置 —— 改回"每 pass 就地展开"立刻红）；
+  `record_micros` 仍是"describe + collect"（两半各测一段、相加）。
 - **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`
