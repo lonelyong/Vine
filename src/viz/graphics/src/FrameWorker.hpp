@@ -82,6 +82,13 @@ class FrameWorker {
     bool publish(const Scene& scene);
 
     /**
+     * @brief Opens @p frame on every mirror: the token their memos are keyed by (the frame's FIRST step).
+     *
+     * @param frame The frame about to ask for views (0 means none is open: nothing is memoised).
+     */
+    void beginFrame(std::uint64_t frame);
+
+    /**
      * @brief Applies what every mirror's content published (the frame's FIRST step).
      *
      * @details
@@ -124,12 +131,19 @@ class FrameWorker {
     /** @brief Gets how many draws named a source this worker does not mirror (see the class note). */
     [[nodiscard]] std::uint64_t unbound() const noexcept;
 
+    /** @brief Gets how many lists the mirrors' sources answered from their memos (the per-view reuse witness). */
+    [[nodiscard]] std::uint64_t memoHits() const noexcept;
+
+    /** @brief Gets how many lists the mirrors' sources collected (the per-view walk witness). */
+    [[nodiscard]] std::uint64_t memoStores() const noexcept;
+
   private:
     /// @brief Finds the mirror a draw names, whether it names the content or the mirror itself.
     [[nodiscard]] ContentMirror* mirrorOf(const vn::graphics::DrawListSource& source) noexcept;
 
   private:
     std::vector<std::unique_ptr<ContentMirror>> mirrors_;
+    std::uint64_t                               frame_{ 0 };
     std::uint64_t                               applied_{ 0 };
     std::uint64_t                               unbound_{ 0 };
 };

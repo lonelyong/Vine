@@ -5593,7 +5593,7 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
 
     auto replacement = intrusive_ptr<Scene>(new Scene());
     replacement->setRoot(intrusive_ptr<Group>(new Group()));
-    const auto original_walks = original->contentCollectCount();
+    const auto original_walks = engine->contentCollectCount();
 
     view->setScene(replacement);
     EXPECT_EQ(view->scene().get(), replacement.get());
@@ -5603,8 +5603,9 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     // (its bound content) and no longer the scene it replaced.
     ASSERT_TRUE(engine->initialize());
     engine->frame();
-    EXPECT_EQ(replacement->contentCollectCount(), 1u);
-    EXPECT_EQ(original->contentCollectCount(), original_walks);
+    EXPECT_EQ(engine->contentCollectCount() - original_walks, 1u) << "the replacement scene's view was walked once";
+    EXPECT_EQ(replacement->contentCollectCount(), 0u) << "the content's own collect is not called by a frame any more";
+    EXPECT_EQ(original->contentCollectCount(), 0u);
 }
 
 TEST(RenderEngineTest, DefaultContentProgramForwardedToBackend)
@@ -11192,27 +11193,29 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
     engine->addPass(pass_c, scene, 2);
 
     // Deltas: the pre-frame warm-up also executes passes and collects.
-    const auto walks_before  = scene->contentCollectCount();
-    const auto reuses_before = scene->contentCollectReuseCount();
+    // The ENGINE is the one that collects now (its frames are answered by the content's mirror), so the memo's
+    // witnesses are read from it - the same numbers, from the side that does the work.
+    const auto walks_before  = engine->contentCollectCount();
+    const auto reuses_before = engine->contentCollectReuseCount();
 
     // Each pass is described ONCE per frame: the compile describes it into the frame's value and the run announces
     // that value (see RenderEngine::buildFrameValue) - so the reuses are exactly the passes that shared the walk
     // this frame: pass_b's.
     engine->frame();
-    EXPECT_EQ(scene->contentCollectCount() - walks_before, 2u);       // one per view
-    EXPECT_EQ(scene->contentCollectReuseCount() - reuses_before, 1u); // pass_b reused pass_a's
+    EXPECT_EQ(engine->contentCollectCount() - walks_before, 2u);       // one per view
+    EXPECT_EQ(engine->contentCollectReuseCount() - reuses_before, 1u); // pass_b reused pass_a's
 
     // THE NEXT FRAME REUSES, because nothing in the graph changed: the memo outlives one frame and every view's
     // list is dropped only when the graph announces a change (Node::announceContentChange).
     engine->frame();
-    EXPECT_EQ(scene->contentCollectCount() - walks_before, 2u) << "a still frame costs no walk";
-    EXPECT_EQ(scene->contentCollectReuseCount() - reuses_before, 4u) << "every pass answered from the memo";
+    EXPECT_EQ(engine->contentCollectCount() - walks_before, 2u) << "a still frame costs no walk";
+    EXPECT_EQ(engine->contentCollectReuseCount() - reuses_before, 4u) << "every pass answered from the memo";
 
     // An EDIT is what buys the walk: one node setter, one announcement, one fresh list per view.
     root->addChild(makeTriangleNode(Vec3d(0.5, 0, -2), nullptr, u8"added"));
     engine->frame();
-    EXPECT_EQ(scene->contentCollectCount() - walks_before, 4u) << "an edited frame collects again";
-    EXPECT_EQ(scene->contentCollectReuseCount() - reuses_before, 5u)
+    EXPECT_EQ(engine->contentCollectCount() - walks_before, 4u) << "an edited frame collects again";
+    EXPECT_EQ(engine->contentCollectReuseCount() - reuses_before, 5u)
         << "an edit drops every entry, so only the pass sharing a view with a walk in the same frame reuses one";
 }
 
@@ -11242,8 +11245,8 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
     engine->addPass(wide, scene, 0);
     engine->addPass(square, scene, 1);
 
-    const auto        walks_before  = scene->contentCollectCount();
-    const auto        reuses_before = scene->contentCollectReuseCount();
+    const auto        walks_before  = engine->contentCollectCount();
+    const auto        reuses_before = engine->contentCollectReuseCount();
     const std::size_t calls_before  = backend->render_command_counts.size();
     engine->frame();
 
@@ -11252,21 +11255,21 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
     ASSERT_EQ(backend->render_command_counts.size() - calls_before, 2u) << "one drawing call per pass";
     EXPECT_EQ(backend->render_command_counts[calls_before], 0u) << "the wide rectangle does not hand the camera a wider shape";
     EXPECT_EQ(backend->render_command_counts[calls_before + 1], 0u);
-    EXPECT_EQ(scene->contentCollectCount() - walks_before, 1u) << "one walk for the frame: one camera, one shape, however many rectangles it fills";
+    EXPECT_EQ(engine->contentCollectCount() - walks_before, 1u) << "one walk for the frame: one camera, one shape, however many rectangles it fills";
     // One describe per pass per frame (the frame runs from the value the compile built): the second pass is served
     // by the memo, and nothing describes anything twice.
-    EXPECT_EQ(scene->contentCollectReuseCount() - reuses_before, 1u);
+    EXPECT_EQ(engine->contentCollectReuseCount() - reuses_before, 1u);
 
     // Giving the camera a wider shape gives BOTH rectangles the wider view - and the new shape its own walk.
     camera->setAspect(8.0 / 3.0);
-    const std::size_t walks_before_wide = scene->contentCollectCount();
+    const std::size_t walks_before_wide = engine->contentCollectCount();
     engine->frame();
 
     ASSERT_EQ(backend->render_command_counts.size() - calls_before, 4u);
     EXPECT_EQ(backend->render_command_counts[calls_before + 2], 1u) << "the wide shape holds the off-centre object";
     EXPECT_EQ(backend->render_command_counts[calls_before + 3], 1u)
         << "and so does the square rectangle the camera was given it for - the picture is stretched, not re-culled";
-    EXPECT_EQ(scene->contentCollectCount() - walks_before_wide, 1u) << "one walk per SHAPE the camera has been given";
+    EXPECT_EQ(engine->contentCollectCount() - walks_before_wide, 1u) << "one walk per SHAPE the camera has been given";
 }
 
 /**

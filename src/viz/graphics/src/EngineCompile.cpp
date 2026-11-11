@@ -248,7 +248,10 @@ void RenderEngine::scheduleRows()
 }
 
 void RenderEngine::buildFrameValue()
-{ // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
+{
+    // A FRAME IS OPEN: the token every per-view memo is keyed by (a list outlives one frame, but nothing is memoised
+    // outside one - see DrawListMemo). Opened here because this is where the frame's passes start asking for views.
+    worker_->beginFrame(content_frame_); // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
     // issue" is a fact of the frame (its scope opens and closes, and a backend keys per-pass retained state by
     // it), which is not the same fact as "this pass did not run" - a disabled pass has no entry at all.
     //

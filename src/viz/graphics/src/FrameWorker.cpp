@@ -21,8 +21,20 @@ bool FrameWorker::publish(const Scene& scene)
         mirrors_.reserve(4U);
         mirrors_.push_back(std::make_unique<ContentMirror>(scene));
         mirror = mirrors_.back().get();
+        // A mirror born IN a frame joins that frame: the token was opened before it existed, so without this its first
+        // frame would collect once per pass - the one frame where a new content costs the most. Opening the token here
+        // is idempotent with the next beginFrame and never rewinds the memo (see DrawListMemo::beginFrame).
+        mirror->beginFrame(frame_);
     }
     return mirror->publish(scene);
+}
+
+void FrameWorker::beginFrame(std::uint64_t frame)
+{
+    frame_ = frame;
+    for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
+        mirror->beginFrame(frame);
+    }
 }
 
 std::size_t FrameWorker::drain()
@@ -84,6 +96,24 @@ std::uint64_t FrameWorker::applied() const noexcept
 std::uint64_t FrameWorker::unbound() const noexcept
 {
     return unbound_;
+}
+
+std::uint64_t FrameWorker::memoHits() const noexcept
+{
+    std::uint64_t hits = 0U;
+    for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
+        hits += mirror->memoHits();
+    }
+    return hits;
+}
+
+std::uint64_t FrameWorker::memoStores() const noexcept
+{
+    std::uint64_t stores = 0U;
+    for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
+        stores += mirror->memoStores();
+    }
+    return stores;
 }
 
 ContentMirror* FrameWorker::mirrorOf(const vn::graphics::DrawListSource& source) noexcept

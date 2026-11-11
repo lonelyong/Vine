@@ -35,12 +35,10 @@ RenderEngine::RenderEngine()
   : resources_(std::make_unique<detail::FrameResources>())
   , scheduler_(std::make_unique<detail::FrameScheduler>())
   , worker_(std::make_unique<detail::FrameWorker>())
-  // DIRECT UNTIL THE MIRROR HAS THE COLLECTED-LIST MEMO. Flipping this to Mirrored is one word, and it was tried: the
-  // frames expand correctly from the mirror (every engine test that checks a picture still passes), but the mirror
-  // answers every pass with a FRESH list where Scene answers a second pass from its per-view memo - so a G-buffer +
-  // lighting frame would cull and select twice. The memo is the gate, not the wiring (see the design's 2.11 and the
-  // backlog's T31).
-  , frame_mode_(detail::FrameMode::Direct)
+  // THE MIRROR IS THE SOURCE (see the design's 2.11): every scene pass is published, then expanded from that content's
+  // mirror, so a frame's draws name nothing the content owns - which is what P3 will move to another thread. The
+  // per-view memo it needs (one camera drawn by two passes collects once) is the shared DrawListMemo.
+  , frame_mode_(detail::FrameMode::Mirrored)
 {
     // The ONE default in the shading path, and it is a named program: content with no program of its
     // own is shaded with the engine's forward program until the host says otherwise. (Null would mean
@@ -320,6 +318,16 @@ FrameOutcome RenderEngine::frame()
     // does not present afterwards - presenting twice would be presenting somebody else's frame (or nothing at all).
     device_->executor().executeFrame(frame_value_, present_to);
     return FrameOutcome::Ran;
+}
+
+std::uint64_t RenderEngine::contentCollectCount() const noexcept
+{
+    return worker_ != nullptr ? worker_->memoStores() : 0U;
+}
+
+std::uint64_t RenderEngine::contentCollectReuseCount() const noexcept
+{
+    return worker_ != nullptr ? worker_->memoHits() : 0U;
 }
 
 int RenderEngine::surfaceWidth() const noexcept

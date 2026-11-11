@@ -9,6 +9,7 @@
 
 #include "DeltaChannel.hpp"
 #include "DrawListBake.hpp"
+#include "DrawListMemo.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -136,12 +137,23 @@ class RenderWorld {
      */
     bool detach(RowId identity);
 
-    /** @brief Collects one view's commands, in draw order - the same list the content's collection produces. */
-    void collect(const CollectView& view, std::uint32_t layer_mask, std::vector<RenderCommand>& out) const;
+    /**
+     * @brief Collects one view's commands, in draw order - the same list the content's collection produces.
+     *
+     * @param view       The view to collect for.
+     * @param layer_mask Layers this picture draws.
+     * @param out        Receives the commands, in draw order.
+     * @return true when a per-view row needed the DEVICE-PIXEL viewport (the memo's key half: such a list is only
+     *         reusable for the same rectangle).
+     */
+    bool collect(const CollectView& view, std::uint32_t layer_mask, std::vector<RenderCommand>& out) const;
 
   public:
     /** @brief Gets how many rows the world carries. */
     [[nodiscard]] std::size_t rowCount() const noexcept;
+
+    /** @brief Gets the version of the rows: moves on every edit, and is what a collected list is keyed by. */
+    [[nodiscard]] std::uint64_t revision() const noexcept;
 
     /** @brief Gets how many rows the edits so far have re-resolved (the witness for "only the subtree"). */
     [[nodiscard]] std::uint64_t rowsRecomputed() const noexcept;
@@ -156,6 +168,7 @@ class RenderWorld {
   private:
     SceneBake                             bake_;
     std::unordered_map<RowId, std::uint32_t> index_;
+    std::uint64_t                         revision_{ 0 }; ///< Bumped by every edit (see revision()).
     std::uint64_t                         rows_recomputed_{ 0 };
     std::uint64_t                         refusals_{ 0 };
 };
@@ -180,6 +193,19 @@ class RenderWorldSource final : public vn::graphics::DrawListSource {
      */
     explicit RenderWorldSource(RenderWorld& world) noexcept;
 
+    /**
+     * @brief Drops the lists nothing asked for in the previous frame (see DrawListMemo::beginFrame).
+     *
+     * @param frame The frame about to be asked; must be called where frames run.
+     */
+    void beginFrame(std::uint64_t frame);
+
+    /** @brief Gets how many lists this source has handed out of its memo (the per-view reuse witness). */
+    [[nodiscard]] std::uint64_t memoHits() const noexcept;
+
+    /** @brief Gets how many lists this source has collected (the per-view walk witness). */
+    [[nodiscard]] std::uint64_t memoStores() const noexcept;
+
     /** @brief Collects what @p view draws from the mirror (see DrawListSource).
      *
      * @param view       The view to collect for.
@@ -191,6 +217,10 @@ class RenderWorldSource final : public vn::graphics::DrawListSource {
 
   private:
     RenderWorld* const world_;
+    // THE SAME MEMO THE CONTENT HAS (see DrawListMemo): a list is a pure function of (rows, view, mask), and a camera
+    // drawn by two passes must be culled and selected once - which the mirror could not do before this existed.
+    mutable DrawListMemo memo_;
+    std::uint64_t        frame_{ 0 }; ///< The frame currently asking (0: no frame open, nothing is memoised).
 };
 
 } // namespace detail

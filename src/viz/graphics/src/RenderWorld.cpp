@@ -17,6 +17,7 @@ void RenderWorld::adopt(SceneBake rows)
     // happens (see SceneBake::nodes).
     bake_.nodes.clear();
     rebuildIndex();
+    ++revision_; // a whole new table: every collected list is stale
 }
 
 void RenderWorld::clear()
@@ -45,6 +46,7 @@ bool RenderWorld::place(RowId identity, const Mat4d& local, ViewPlacementPtr pla
     row.local     = local;
     row.placement = std::move(placement);
     rows_recomputed_ += resolveSubtree(bake_, found->second);
+    ++revision_;
     return true;
 }
 
@@ -60,6 +62,7 @@ bool RenderWorld::setState(RowId identity, const StateValues& values)
     row.own_layers     = values.layers;
     row.own_draw_order = values.draw_order;
     rows_recomputed_ += resolveSubtree(bake_, found->second);
+    ++revision_;
     return true;
 }
 
@@ -79,6 +82,7 @@ bool RenderWorld::setDescription(RowId identity, const SceneBake& block)
     row.end                          = structure.end;
     row.child_count                  = structure.child_count;
     rows_recomputed_ += resolveSubtree(bake_, row_index);
+    ++revision_;
     return true;
 }
 
@@ -132,6 +136,7 @@ bool RenderWorld::attach(RowId parent_identity, std::uint32_t child_index, Scene
 
     rebuildIndex();
     rows_recomputed_ += resolveSubtree(bake_, at);
+    ++revision_;
     return true;
 }
 
@@ -163,6 +168,7 @@ bool RenderWorld::detach(RowId identity)
     rebuildIndex();
     // Only BOXES moved above it (a union lost a child), so the ancestors are re-derived and nothing is re-folded.
     refoldChain(bake_, parent);
+    ++revision_;
     return true;
 }
 
@@ -178,12 +184,18 @@ void RenderWorld::rebuildIndex()
     }
 }
 
-void RenderWorld::collect(const CollectView& view, std::uint32_t layer_mask, std::vector<RenderCommand>& out) const
+bool RenderWorld::collect(const CollectView& view, std::uint32_t layer_mask, std::vector<RenderCommand>& out) const
 {
     const Frustum frustum       = Frustum::fromViewProjection(view.viewProjection());
     bool          viewport_used = false;
     selectFromBake(bake_, frustum, view, layer_mask, viewport_used, out);
     sortCollected(out, view.eye);
+    return viewport_used;
+}
+
+std::uint64_t RenderWorld::revision() const noexcept
+{
+    return revision_;
 }
 
 std::size_t RenderWorld::rowCount() const noexcept
@@ -205,14 +217,43 @@ RenderWorldSource::RenderWorldSource(RenderWorld& world) noexcept
   : world_(&world)
 {}
 
+void RenderWorldSource::beginFrame(std::uint64_t frame)
+{
+    memo_.beginFrame(frame_); // one frame of grace: what the PREVIOUS frame asked for is evicted
+    frame_ = frame;
+}
+
+std::uint64_t RenderWorldSource::memoHits() const noexcept
+{
+    return memo_.hits();
+}
+
+std::uint64_t RenderWorldSource::memoStores() const noexcept
+{
+    return memo_.stores();
+}
+
 std::shared_ptr<const std::vector<RenderCommand>> RenderWorldSource::collectRenderCommands(const vn::graphics::CollectView& view,
                                                                                           std::uint32_t                    layer_mask) const
 {
-    // The frame asks the same question of either side (see DrawListSource), and the answer is shared because every
-    // pass of this frame that draws the view names this one list. Built once per ask, like a Scene's cold path.
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
-    world_->collect(view, layer_mask, *commands);
-    return commands;
+    // THE SAME ANSWER AS A SCENE'S, including its memo (see DrawListMemo): a camera drawn by two passes is culled and
+    // selected ONCE, and a still frame reuses the list - which is what makes a mirrored frame cost what a direct one
+    // does. The rows' revision is the key's state half. Nothing is memoised until a frame is open (frame_ == 0), the
+    // same rule the content follows: a caller that drives a collection itself keeps getting the walk it asked for.
+    const std::uint64_t revision = world_->revision();
+    if (frame_ != 0U) {
+        if (DrawListMemo::Entry* hit = memo_.find(view.viewProjection(), view.eye, view.viewport, layer_mask, revision)) {
+            hit->last_used_frame = frame_;
+            return hit->commands;
+        }
+    }
+    auto       commands      = std::make_shared<std::vector<RenderCommand>>();
+    const bool viewport_used = world_->collect(view, layer_mask, *commands);
+    auto       shared        = std::shared_ptr<const std::vector<RenderCommand>>(std::move(commands));
+    if (frame_ != 0U) {
+        (void)memo_.store(view.viewProjection(), view.eye, view.viewport, layer_mask, viewport_used, revision, shared, frame_);
+    }
+    return shared;
 }
 
 } // namespace detail

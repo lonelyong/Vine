@@ -246,21 +246,30 @@ flowchart LR
   两个；线程只跑整帧，所以 runner 用后一个 —— 选哪个是"谁在计时"，不是"画什么"。
 - **引擎接入（C1）**：`RenderEngine` 现在持有 `detail::FrameWorker`，一帧的装配走**同一个入口**——每 pass 在
   `before_draw` 钩子之后 `publish`（钩子会写内容，所以发布必须在它之后、且**按 pass**：直连路径今天就是"每个 pass
-  在自己那一刻采集，看得见它之前的钩子"），然后 `drain`，再 `runPass`。`frame_mode_` 一词切换 `Direct`/`Mirrored`。
-- **为什么默认还是 `Direct`**：把默认改成 `Mirrored` **试过**——所有"画面"用例都通过（镜像与内容逐命令相同），
-  但**镜像没有"每个视图的采集备忘录"**：`Scene` 会让同一个视图的第二个 pass 复用上一份列表，镜像每次问都重新采集。
-  G-buffer + lighting 这种"一相机两 pass"会因此**剔两遍、选两遍**。所以**备忘录是翻这个开关的前提**，不是接线
-  （`Scene::ContentMemo` 应抽成两侧共用的 `detail::DrawListMemo`；镜像的 revision = 应用过 delta 的次数，frame 令牌
-  随帧走）。
+  在自己那一刻采集，看得见它之前的钩子"），然后 `drain`，再 `runPass`。`frame_mode_` 的默认值现在是 `Mirrored`：
+  **一帧的 draw 由镜像回答**，`Direct` 仍是同一个入口上的另一条取值（内容自己回答），两条的差别只有"问谁"。
+- **每视图的备忘录是两侧共用的一件东西**（`detail::DrawListMemo`）：键是（视图投影、眼点、视口、层掩码），状态一半
+  是**表 revision**（镜像 = 应用过 delta 的次数，内容 = 行版本），令牌一半是**帧号**。`Scene` 与
+  `RenderWorldSource` 各持一个实例，同一份规则：`beginFrame` 只淘汰上一帧没碰过的键（一帧宽限），帧令牌 0 表示
+  "没有帧在开，别记"（自己驱动采集的调用者永远拿到它问的那一次走）。这条共用是**翻默认值的前提**：没有它，
+  "一相机两 pass"（G-buffer + lighting）会对同一个视图**剔两遍、选两遍**。
+- **中途诞生的镜像属于当帧**：令牌在 `beginFrame` 打开，而一个内容的第一帧里镜像还不存在，所以
+  `FrameWorker::publish` 建好镜像后立刻用**当帧令牌**打开它——否则每个新内容的第一帧恰好是最贵的那一帧
+  （每个 pass 各走一遍）。这个 bug 只在"默认切到镜像"后才看得见：画面完全正确，只有引擎侧的采集计数不动。
+- **采集计数的归属跟着走**：一帧由镜像回答，所以"这个视图采了几次、复用了几次"这个见证要问**引擎**
+  （`RenderEngine::contentCollectCount/ReuseCount`，即它的 worker 各镜像之和），而不是问内容 —— 问 `Scene` 在镜像
+  模式下恒为 0，那是正确的 0，不是失败。
 - **`FrameRunner` 是唯一持线程的东西**：它把 worker 的 `run` 放到调用线程（inline）或自己的引擎线程（threaded），
   并用"一个请求 + 一个完成"的握手把帧值交出去、等这一帧跑完再交回 —— 所以**调用者在两种模式下看到同一个答案**，也不会有
   两帧同时碰一个帧值。空闲时引擎线程阻塞在条件变量上（`2.8`：等待而不是轮询）；从引擎线程自己请求一帧、或在 `stop()`
   之后再请求，都**就地跑**（等待自己会死锁；停下来的 runner 就是一个 inline runner）。
 - **通道不含等待**：唤醒、帧号、完成通知都在 runner（`2.8` 的空闲等待）。这条边界让 P1 的 inline 模式**完全不需要
   线程原语**，也让 threaded 模式的多帧在飞（后续）不改通道的契约。
-- **为什么不急着接进 `RenderEngine::frame()`**：一帧的后半段是 `executeFrame`（取图、记录、提交、呈现），它读设备与表面。
+- **为什么还没把整帧搬到引擎线程**：一帧的后半段是 `executeFrame`（取图、记录、提交、呈现），它读设备与表面。
   把这些留在调用线程、只把 expand 搬到线程，是**半个线程**——比不搬更差（多一次握手，没有任何并发收益）；把它也搬过去，
-  就要先有 P3 的设备/表面所有权契约。所以 P1 的骨架先证明"同一条路径在两种线程下给出同一张图"，接入等 P3。
+  就要先有 P3 的设备/表面所有权契约。所以今天引擎**接的是同一条路径**（`publish → drain → runPass`），只是
+  由 `frame()` 的调用线程就地派发（`RunnerMode::Inline`）：一帧的 draw 已经由镜像回答，而"回答在哪条线程上发生"
+  仍是 `FrameRunner` 的一个取值，等 P3 才拨到 `Threaded`。
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -616,7 +625,8 @@ flowchart LR
 
 ### 9.1 当前状态
 
-草案。只定契约，未改代码。今天的行为由 `inline` 模式描述。
+P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`RenderEngine` 的帧**默认由镜像回答**（`Mirrored`），
+派发仍是就地（`RunnerMode::Inline`）。下一步是 P3（设备/表面所有权 + 整帧搬到引擎线程）。
 
 ### 9.2 已知缺口 / 待办
 
@@ -722,15 +732,21 @@ flowchart LR
   验收：`ContentMirrorTest.APayloadEditIsOneRowAndEqualsARebuild`（换材质后与从零重建逐命令相同、命令里是新的那个句柄、
   行数不变、`publishCount` 不变）与 `ADescriptionDeltaRefusesWhatIsNotOneRow`。
 - **P1 第五步已完成（引擎接入）**：`RenderEngine` 持有 `FrameWorker`，`buildFrameValue` 的每 pass 变成
-  `before_draw → publish(该 pass 的 scene，仅 Mirrored) → drain → runPass(*entry.draw, frame_mode_)`，默认 `Direct`
-  （行为与之前逐位相同，`record_micros` 含义不变），`frame_mode_` 一词即可切到镜像。
-  **切不动的唯一原因是镜像缺"每视图采集备忘录"**（见 §2.11 最后两条）：试过 `Mirrored`，画面用例全绿，只有依赖
-  `Scene::contentCollectCount/ReuseCount` 的 3 条用例红——它们量的正是镜像没有的那件东西。
-- **P2 收尾（下一步，先于 P3）**：把 `Scene::ContentMemo` 抽成 `detail::DrawListMemo`，`Scene` 与 `ContentMirror` 共用
-  （镜像的 revision = 应用过 delta 的次数，frame 令牌随帧传入），然后把 `frame_mode_` 切到 `Mirrored` 并让那 3 条
-  用例改量镜像的命中数。这一步之后 P3 才是"把同一段搬到另一条线程"。
-- **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
-- **P4**：并行 select（可与 P2/P3 解耦）。
+  `before_draw → publish(该 pass 的 scene，仅 Mirrored) → drain → runPass(*entry.draw, frame_mode_)`。
+- **T31a 已完成：默认值已切到 `Mirrored`**（§2.11）。三步：
+  ① `Scene::ContentMemo` 抽成 `detail::DrawListMemo`（`src/viz/graphics/src/DrawListMemo.{hpp,cpp}`），两侧共用同一份
+  查找/淘汰/计数规则；② `RenderWorld` 有了 `revision()`（`adopt/place/setState/setDescription/attach/detach` 各 bump 一次）
+  和 `collect()` 的"用到视口没有"返回，`RenderWorldSource` 用它们把采集记忆化（`beginFrame` 打开令牌，帧令牌 0 不记）；
+  ③ 引擎在 `buildFrameValue` 开头 `worker_->beginFrame(content_frame_)`，`frame_mode_` 默认 `Mirrored`。
+  **顺带修掉一个只在翻转后才可见的 bug**：中途诞生的镜像没有当帧令牌，于是每个新内容的第一帧每个 pass 各走一遍
+  （画面全对，只有采集计数不动）。验收：`RenderEngineTest.PassesSharingSceneAndCameraCollectOncePerCameraPerFrame`
+  （同一相机两 pass = 2 次采集 + 1 次复用；静止帧 0 次采集；一次编辑各视图重采一次）、
+  `OneCameraCullsWithItsOwnShapeInEveryRectangle`、`SceneViewTest.SetSceneReachesDefaultWindowPassAndSceneAwareManipulator`
+  （换 scene 后由引擎的镜像采一次，两个内容自己的采集计数都是 0 —— 这一条同时钉住"帧不再问内容"）。
+- **P3（下一步）**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
+  同时要定下"钩子在交出帧之前还是之后跑"的语义：今天的 per-pass 发布让直连/就地模式是"每个 pass 看见它之前的钩子"，
+  而一条交出去线程的帧是**一张快照**；两种都自洽，P3 必须明写取哪一个。
+- **P4**：并行 select（可与 P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：
   本文是那个设计。落地后线程契约由本文与 ADR 接管，该文继续管 attach 的时机/次序/可见性。
 

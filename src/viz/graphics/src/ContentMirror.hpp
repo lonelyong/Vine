@@ -129,6 +129,13 @@ class ContentMirror {
     bool detach(const Node& subtree);
 
     /**
+     * @brief Opens @p frame on this mirror's source: the frame token that lets a list outlive one frame (engine thread).
+     *
+     * @param frame The frame about to ask for views; 0 means none is open (nothing is memoised).
+     */
+    void beginFrame(std::uint64_t frame);
+
+    /**
      * @brief Applies everything published since the last drain, in post order (engine thread).
      *
      * @return How many deltas were applied.
@@ -141,6 +148,12 @@ class ContentMirror {
 
     /** @brief Gets how many publishes the mirror accepted. */
     [[nodiscard]] std::uint64_t publishCount() const noexcept;
+
+    /** @brief Gets how many lists the source has answered from its memo (the per-view reuse witness). */
+    [[nodiscard]] std::uint64_t memoHits() const noexcept;
+
+    /** @brief Gets how many lists the source has collected (the per-view walk witness). */
+    [[nodiscard]] std::uint64_t memoStores() const noexcept;
 
   private:
     const vn::graphics::DrawListSource* content_;

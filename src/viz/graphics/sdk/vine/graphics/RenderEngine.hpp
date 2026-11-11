@@ -194,6 +194,27 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         return diagnostics_.sink();
     }
 
+    /**
+     * @brief Gets how many command lists this engine's frames have COLLECTED (one per distinct view).
+     *
+     * @details
+     * - The witness of the per-view memo on the engine's side: a frame whose passes share a camera collects once for it
+     *   and answers the rest from the memo (see contentCollectReuseCount). Before the mirror carried the same memo this
+     *   number would grow per pass, which is what "one camera, two passes" must not cost.
+     * - It counts what the SOURCE answered - the content's mirror, since a frame's draws are answered from it - so the
+     *   number means the same thing whether the frame runs here or (later) on an engine thread.
+     *
+     * @return Total number of lists collected since construction.
+     */
+    [[nodiscard]] std::uint64_t contentCollectCount() const noexcept;
+
+    /**
+     * @brief Gets how many collected lists this engine's frames answered from the per-view memo.
+     *
+     * @return Total number of reuses since construction.
+     */
+    [[nodiscard]] std::uint64_t contentCollectReuseCount() const noexcept;
+
     /** @brief Gets how many diagnostics were reported through this engine's route.
      *
      * @details

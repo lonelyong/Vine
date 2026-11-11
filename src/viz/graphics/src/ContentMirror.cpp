@@ -89,6 +89,11 @@ bool ContentMirror::detach(const Node& subtree)
     return channel_.post(delta);
 }
 
+void ContentMirror::beginFrame(std::uint64_t frame)
+{
+    source_.beginFrame(frame);
+}
+
 std::size_t ContentMirror::drain()
 {
     channel_.drain(batch_);
@@ -129,6 +134,16 @@ std::size_t ContentMirror::drain()
 const RenderWorld& ContentMirror::world() const noexcept
 {
     return world_;
+}
+
+std::uint64_t ContentMirror::memoHits() const noexcept
+{
+    return source_.memoHits();
+}
+
+std::uint64_t ContentMirror::memoStores() const noexcept
+{
+    return source_.memoStores();
 }
 
 std::uint64_t ContentMirror::publishCount() const noexcept
