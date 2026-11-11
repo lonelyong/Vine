@@ -2,6 +2,7 @@
 #include "graphics_global.hpp"
 
 #include <vine/math/Matrix4x4.hpp>
+#include <vine/math/Vector2.hpp>
 #include <vine/math/Vector3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
@@ -43,6 +44,30 @@ struct VN_GRAPHICS_API CameraSnapshot {
      * @return The snapshot, with @ref present set.
      */
     [[nodiscard]] static CameraSnapshot of(const Camera& camera);
+
+    /**
+     * @brief Answers the world-space ray THIS PICTURE sees through a point of itself.
+     *
+     * @details
+     * - The value's own question, and the one a pointer needs: "what is under this pixel of the picture I am looking
+     *   at". It is asked of the SNAPSHOT rather than of the live camera because those are different pictures when a
+     *   frame is answered somewhere else: the camera may have moved since, and a pick that used the new pose would miss
+     *   what the user pointed at (design graphics-threading.md N17 - the one place where "the camera is ahead of the
+     *   picture" is a semantic error, not a lag).
+     * - Both ends of the pixel are unprojected through this snapshot's own matrices, so it answers the same way for a
+     *   perspective and an orthographic camera and for an off-centre window: the projection carries which clip depth is
+     *   NEAR (this tree renders Reverse-Z), and the ray is read as the segment between the two, oriented away from the
+     *   eye. A perspective's ray starts AT the eye; an orthographic one has no eye on it, so it starts where the pixel
+     *   crosses the near plane.
+     *
+     * @param screen01  The point in NORMALISED picture coordinates - 0..1 across it, x right and y DOWN, which is the
+     *                  convention a window pointer arrives in (not OpenGL's y-up clip space).
+     * @param origin    Receives the ray's origin in world space.
+     * @param direction Receives the ray's direction in world space, normalised.
+     * @return false when this snapshot holds no camera (see @ref present), or when its projection collapses the
+     *         picture to a point (a degenerate shape: there is no ray to give).
+     */
+    [[nodiscard]] bool screenRay(const vn::math::Vec2d& screen01, Vec3d& origin, Vec3d& direction) const;
 };
 
 VN_GRAPHICS_NS_END

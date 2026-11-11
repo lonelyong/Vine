@@ -192,4 +192,63 @@ CameraSnapshot CameraSnapshot::of(const Camera& camera)
     return snapshot;
 }
 
+bool CameraSnapshot::screenRay(const vn::math::Vec2d& screen01, Vec3d& origin, Vec3d& direction) const
+{
+    if (!present) {
+        return false;
+    }
+    // NDC first: a window pointer is x-right / y-DOWN over the picture, clip space is y-UP.
+    const double ndc_x = (2.0 * screen01.x) - 1.0;
+    const double ndc_y = 1.0 - (2.0 * screen01.y);
+
+    // BOTH ENDS OF THE PIXEL, unprojected through this snapshot's own matrices. Which clip depth is NEAR is the
+    // projection's business (this tree renders Reverse-Z: the near plane is clip 1), so nothing here assumes it - the
+    // two world points say which is which by their distance to the eye.
+    const Mat4d inverse = (projection * view).inverted();
+    const auto  worldAt = [&inverse](double x, double y, double clip_z) {
+        const double point[4]{ x, y, clip_z, 1.0 };
+        double       mapped[4]{ 0.0, 0.0, 0.0, 0.0 };
+        for (int row = 0; row < 4; ++row) {
+            for (int index = 0; index < 4; ++index) {
+                mapped[row] += inverse.element(row, index) * point[index];
+            }
+        }
+        const double w = mapped[3] != 0.0 ? mapped[3] : 1.0;
+        return Vec3d(mapped[0] / w, mapped[1] / w, mapped[2] / w);
+    };
+
+    const Vec3d end_a = worldAt(ndc_x, ndc_y, 1.0);
+    const Vec3d end_b = worldAt(ndc_x, ndc_y, 0.0);
+    const auto  offset = [](const Vec3d& from, const Vec3d& to) { return Vec3d(to.x - from.x, to.y - from.y, to.z - from.z); };
+    const auto  squared_length = [](const Vec3d& v) { return (v.x * v.x) + (v.y * v.y) + (v.z * v.z); };
+    const auto  dot = [](const Vec3d& lhs, const Vec3d& rhs) { return (lhs.x * rhs.x) + (lhs.y * rhs.y) + (lhs.z * rhs.z); };
+
+    const Vec3d to_a = offset(eye, end_a);
+    const Vec3d to_b = offset(eye, end_b);
+    const bool  a_is_nearer = squared_length(to_a) <= squared_length(to_b);
+    const Vec3d near_point = a_is_nearer ? end_a : end_b;
+    const Vec3d far_point  = a_is_nearer ? end_b : end_a;
+
+    const Vec3d  along          = offset(near_point, far_point);
+    const double squared_length_of_segment = squared_length(along);
+    if (squared_length_of_segment < 1e-24) {
+        return false; // the projection collapsed the picture to a point: there is no ray to give
+    }
+    const double length = std::sqrt(squared_length_of_segment);
+    const Vec3d  unit(along.x / length, along.y / length, along.z / length);
+
+    // PERSPECTIVE OR ORTHOGRAPHIC, answered by geometry rather than by a flag: a perspective's ray passes through the
+    // eye (so it starts there), an orthographic one does not (so it starts where the pixel crosses the near plane).
+    const Vec3d  to_near       = offset(eye, near_point);
+    const double along_to_near = dot(to_near, unit);
+    const Vec3d  perpendicular =
+        Vec3d(to_near.x - (unit.x * along_to_near), to_near.y - (unit.y * along_to_near), to_near.z - (unit.z * along_to_near));
+    const double scale        = std::max(1.0, std::sqrt(squared_length(to_near)));
+    const bool   eye_on_the_ray = squared_length(perpendicular) <= (1e-18 * scale * scale);
+
+    origin    = eye_on_the_ray ? eye : near_point;
+    direction = unit;
+    return true;
+}
+
 VN_GRAPHICS_NS_END

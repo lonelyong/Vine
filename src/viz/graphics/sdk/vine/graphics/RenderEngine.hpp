@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <vector>
@@ -17,6 +18,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "CameraSnapshot.hpp"
 #include "Capabilities.hpp"
 #include "Diagnostics.hpp"
 #include "DiagnosticsRoute.hpp"
@@ -398,6 +400,22 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /** @brief Gets what became of the last answered frame's picture (see PresentRecord). */
     [[nodiscard]] PresentRecord presentRecord() const noexcept;
+
+    /** @brief Gets the camera the last ANSWERED frame's picture was taken with, when something presents this area.
+     *
+     * @details
+     * - The value a pointer query should aim with (design graphics-threading.md N17): the camera moves on the content's
+     *   side and takes effect at once, while the picture on screen is the frame answered last - one frame behind when
+     *   the engine half runs elsewhere. Aiming with the LIVE camera asks about a pose nobody has seen yet, which shows
+     *   up as a pivot or a selection that is off by exactly that frame's camera delta.
+     * - It is the presenting pass' camera, taken when the frame was BUILT (the same conversion the frame's draws carry),
+     *   and published when the frame is answered - beside presentRecord(), and read from any thread.
+     * - Absent when nothing presents this engine's area (an offline bake, a device that presents nothing): a query then
+     *   keeps using the live camera, which is the right answer when there is no picture to disagree with.
+     *
+     * @return The snapshot, or nullopt (see above).
+     */
+    [[nodiscard]] std::optional<CameraSnapshot> presentedCamera() const;
 
     /** @brief Gets the width the frame is laid out on, as the host announced it (see RenderSurface::resize).
      *
@@ -1224,6 +1242,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// The last answered frame's id and picture outcome, packed into one word (`frame << 8 | outcome`) so a host can
     /// read both from any thread without a lock and without the two halves of the answer tearing apart.
     std::atomic<std::uint64_t> present_record_{ 0 };
+    /// The camera of the last answered frame (see presentedCamera), and the lock that makes it readable from the
+    /// content's thread while the engine thread answers the next frame. A snapshot is a handful of matrices, so the
+    /// lock is held for a copy in both directions and nothing else.
+    mutable std::mutex          presented_camera_mutex_;
+    std::optional<CameraSnapshot> presented_camera_;
     // THE ENGINE HALF OF A FRAME, in this engine (see detail::FrameWorker): the one place a pass' expansion is asked
     // for, so the DEFAULT path and the mirrored one are the same code - and the mode below is what P3 flips when the
     // frame moves to an engine thread.

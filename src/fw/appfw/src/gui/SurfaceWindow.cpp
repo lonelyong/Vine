@@ -901,6 +901,12 @@ void SurfaceWindow::observePresentRecord()
         return;
     }
     d->seen_present_frame = seen.frame;
+    // THE PICTURE THE USER CAN SEE is now this frame, so the view's pointer queries aim with THAT camera instead of the
+    // live one (design N17): at low frame rate a press would otherwise resolve a pivot or a selection against a pose
+    // that has not been shown yet. Empty (nothing presents the area) clears it, and a query falls back to the camera.
+    if (vn::raw_ptr<vn::graphics::SceneView> presented = d->surface->presentedView(); presented != nullptr) {
+        presented->setPresentedCamera(d->engine->presentedCamera().value_or(vn::graphics::CameraSnapshot{}));
+    }
     if (seen.outcome != vn::graphics::PresentOutcome::Lost) {
         return;
     }

@@ -551,11 +551,21 @@ void OrbitCameraManipulator::makeScreenRay(double screenX, double screenY, Vec3d
     Camera* cam = camera_;
     origin      = cam != nullptr ? cam->eye() : Vec3d();
     direction   = Vec3d(0.0, 0.0, -1.0);
+    if (cam == nullptr && !presented_camera_.has_value()) {
+        return;
+    }
+    const double w = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
+    const double h = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
+    // THE PICTURE THE USER IS AIMING AT, when the host says it is not the live camera (design N17): the camera may have
+    // moved since the frame that is on screen was answered, and a pick that used the new pose would resolve a pivot or
+    // a selection off by exactly that much. With nothing set (inline mode, a still picture) this is the live camera, as
+    // it has always been.
+    if (presented_camera_.has_value() && presented_camera_->screenRay(Vec2d(screenX / w, screenY / h), origin, direction)) {
+        return;
+    }
     if (cam == nullptr) {
         return;
     }
-    const double w   = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
-    const double h   = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
     const vn::geom::spatial::Rayd ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
     origin                       = Vec3d(ray.origin.x, ray.origin.y, ray.origin.z);
     direction                    = ray.direction;

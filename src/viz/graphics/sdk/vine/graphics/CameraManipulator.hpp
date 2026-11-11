@@ -1,12 +1,16 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
+#include <optional>
+
 #include <vine/RefCounted.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/window/InputEvent.hpp>
 #include <vine/window/KeyCode.hpp>
 #include <vine/window/MouseButton.hpp>
+
+#include "CameraSnapshot.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -129,6 +133,32 @@ class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
      */
     virtual void onResize(const vn::window::ResizeEvent& event) = 0;
 
+  public:
+    /** @brief Sets the camera the PICTURE the user is looking at was taken with, if that is not the live one.
+     *
+     * @details
+     * - WHY THIS EXISTS (design graphics-threading.md N17): the camera moves on the frame's CONTENT side and takes
+     *   effect immediately, while the picture on screen is the frame that was answered last - one frame behind when the
+     *   engine half runs elsewhere. A query that turns a pointer into a world point must use the picture the user is
+     *   aiming at, or it answers about a pose nobody has seen yet: at low frame rate a press resolves a pivot (or a
+     *   selection ray) off by exactly that frame's camera delta.
+     * - WHO SETS IT: the host, from the frame's own value - `RenderEngine::presentedCamera()` is the snapshot of the
+     *   last ANSWERED frame (see RenderEngine::presentRecord). A host that never sets one keeps today's behaviour:
+     *   queries use the live camera, which is right whenever the picture and the camera are the same moment (inline
+     *   mode, or a still picture).
+     * - It is a VALUE (see CameraSnapshot), so a stale picture can never make a derived manipulator read a camera that
+     *   moved in between.
+     *
+     * @param picture The camera snapshot of the frame the user can see (its `present` flag decides whether it is used).
+     */
+    void setPresentedCamera(const CameraSnapshot& picture);
+
+    /** @brief Forgets the presented camera: queries answer with the live one again (the default). */
+    void clearPresentedCamera();
+
+    /** @brief Gets the camera snapshot queries should aim with, or nullopt when the live camera is the right answer. */
+    [[nodiscard]] const std::optional<CameraSnapshot>& presentedCamera() const;
+
   protected:
     /** @brief Constructs a manipulator bound to a camera.
      *
@@ -140,6 +170,8 @@ class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
 
     raw_ptr<Camera> camera_ = nullptr;
     Mode            mode_   = Mode::Orbit;
+    /// The picture the user sees, when it is not the live camera (see setPresentedCamera).
+    std::optional<CameraSnapshot> presented_camera_;
 };
 
 VN_GRAPHICS_NS_END

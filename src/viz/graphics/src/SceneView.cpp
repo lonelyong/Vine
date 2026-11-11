@@ -208,6 +208,7 @@ raw_ptr<CameraManipulator> SceneView::manipulator()
         // scene; created lazily so it snapshots its home from the camera's
         // final placement (after the application has framed the view).
         manipulator_ = intrusive_ptr<CameraManipulator>(new OrbitCameraManipulator(camera_.get(), scene_.get()));
+        applyPresentedCamera();
     }
     // One place keeps the router pointed at the manipulator that is really here, including the lazy default -
     // otherwise the first event would find a router that never heard of it.
@@ -218,7 +219,33 @@ raw_ptr<CameraManipulator> SceneView::manipulator()
 void SceneView::setManipulator(intrusive_ptr<CameraManipulator> manipulator)
 {
     manipulator_ = std::move(manipulator);
+    applyPresentedCamera();
     input_router_.setManipulator(manipulator_.get());
+}
+
+void SceneView::setPresentedCamera(const CameraSnapshot& picture)
+{
+    presented_camera_ = picture;
+    applyPresentedCamera();
+}
+
+const CameraSnapshot& SceneView::presentedCamera() const noexcept
+{
+    return presented_camera_;
+}
+
+void SceneView::applyPresentedCamera()
+{
+    // NOTHING IS CREATED HERE: a view whose manipulator is the lazy default gets the picture when that default is
+    // created (see manipulator()), and a host that never touches the manipulator pays nothing.
+    if (manipulator_ == nullptr) {
+        return;
+    }
+    if (presented_camera_.present) {
+        manipulator_->setPresentedCamera(presented_camera_);
+        return;
+    }
+    manipulator_->clearPresentedCamera();
 }
 
 bool SceneView::fitToScreen()

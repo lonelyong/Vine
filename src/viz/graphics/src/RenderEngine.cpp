@@ -350,6 +350,12 @@ bool RenderEngine::waitForFrame(std::chrono::milliseconds timeout)
     return waitForFrame(frame_number_, timeout);
 }
 
+std::optional<CameraSnapshot> RenderEngine::presentedCamera() const
+{
+    const std::lock_guard<std::mutex> lock(presented_camera_mutex_);
+    return presented_camera_;
+}
+
 RenderEngine::PresentRecord RenderEngine::presentRecord() const noexcept
 {
     const std::uint64_t packed = present_record_.load(std::memory_order_acquire);
@@ -372,6 +378,17 @@ void RenderEngine::buildContentHalf(detail::EngineFrame& frame)
     frame.height        = surface_height_;
     frame.target        = (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
     frame.content_frame = content_frame_;
+    // THE CAMERA THE USER WILL BE LOOKING AT, taken now as the same value `describe` puts in the frame's draws: the pass
+    // that presents this engine's area is the picture, so its camera is the one a pointer query must aim with once this
+    // frame is answered (design N17). Nothing presents the area (an offline bake, a device with no window) => empty,
+    // and a query keeps aiming with the live camera.
+    frame.presented_camera = CameraSnapshot{};
+    if (area_ != nullptr) {
+        if (raw_ptr<RenderPass> presenting = area_->presentingPass();
+            presenting != nullptr && presenting->camera() != nullptr) {
+            frame.presented_camera = CameraSnapshot::of(*presenting->camera());
+        }
+    }
 
     // Announce the content frame BEFORE the passes run: every scene this frame
     // renders may then memoise the command list it collects (see
@@ -475,6 +492,13 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
     // The picture's fate and the frame's id travel as ONE word: a host reading presentRecord() while the next frame is
     // being answered must never see this frame's outcome beside that frame's id.
     present_record_.store((frame.number << 8U) | static_cast<std::uint64_t>(frame.outcome), std::memory_order_release);
+    // The picture's camera travels with the answer for the same reason its outcome does: a query must aim with the frame
+    // the user can see (design N17), and it is a value, so the copy under a lock is all the sharing there is.
+    {
+        const std::lock_guard<std::mutex> lock(presented_camera_mutex_);
+        presented_camera_ = frame.presented_camera.present ? std::optional<CameraSnapshot>(frame.presented_camera)
+                                                           : std::nullopt;
+    }
     frame_completed_.store(frame.number, std::memory_order_release);
 }
 

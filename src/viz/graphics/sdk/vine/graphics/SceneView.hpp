@@ -10,6 +10,7 @@
 #include <vine/raw_ptr.hpp>
 #include <vine/window/window_global.hpp>
 
+#include "CameraSnapshot.hpp"
 #include "InputRouter.hpp"
 #include "LayoutParticipant.hpp"
 #include "PassChain.hpp"
@@ -111,6 +112,23 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      * @param manipulator Manipulator bound to this view's camera; the view keeps a reference.
      */
     void setManipulator(intrusive_ptr<CameraManipulator> manipulator);
+
+    /** @brief Tells this view which picture the user is LOOKING AT, so pointer queries aim with that camera.
+     *
+     * @details
+     * - The view is where input becomes a question about content, and the camera may have moved since the frame on
+     *   screen was answered (design graphics-threading.md N17). The host feeds the frame's own value here
+     *   (`RenderEngine::presentedCamera()`), and it reaches the manipulator this view drives - including one set
+     *   later, and including the lazy default.
+     * - An empty snapshot (`present == false`) means "no picture": the manipulator goes back to the live camera, which
+     *   is right for a still picture, for inline mode, and for a view nothing presents.
+     *
+     * @param picture The camera snapshot of the answered frame the user can see, or an empty one to clear it.
+     */
+    void setPresentedCamera(const CameraSnapshot& picture);
+
+    /** @brief Gets the picture this view's pointer queries aim with (empty when they use the live camera). */
+    [[nodiscard]] const CameraSnapshot& presentedCamera() const noexcept;
 
     /** @brief Fits the content scene into the view.
      *
@@ -350,6 +368,12 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // there too (see LayoutParticipant).
     LayoutParticipant layout_;
 
+    /// Pushes `presented_camera_` into the manipulator this view drives, if it has one (never creates one).
+    void applyPresentedCamera();
+
+    /// The camera of the last answered frame the user can see (see setPresentedCamera): what pointer queries aim with
+    /// when it is not the live camera. Empty when it is.
+    CameraSnapshot presented_camera_{};
     // Window input routed to the manipulator (see InputRouter). Kept fed with manipulator_ wherever that changes.
     InputRouter input_router_;
 

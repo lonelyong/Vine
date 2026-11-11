@@ -304,9 +304,10 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
     **操作立刻生效**、不会"拖不动"，也不会越拖越远（延迟恒定一帧，因为每侧一帧在飞）；
   - 画面显示的是**上一帧取下的相机快照**。60 fps 下 16 ms 感觉不到；10 fps 下是 100 ms，观感就是"拖一步跳一格"
     ——低帧率本来就如此，多出来的只是这一帧；
-  - **内容查询用的是当前相机，而用户看的是上一帧的画面**：`onMousePress` 的 `resolveAnchor` 会按"还没显示出来"
-    的那一帧相机去算枢轴/射线。低帧率 + 快速拖拽时，按下得到的点偏出一个帧位移（表现为枢轴略偏，因为按下不动相机）。
-    这是本设计里**唯一**"相机领先画面"会造成语义错误的地方，见 §9.2 的"最后呈现的相机"（T31b）；
+  - **内容查询必须按"用户看到的那一帧"的相机算**（已落地，N17）：`onMousePress` 的 `resolveAnchor` / 选择射线原先用
+    当前相机 —— 那会按"还没显示出来"的位姿回答，低帧率下枢轴/选择偏出一个帧位移。现在引擎把**被答完那一帧的相机快照**
+    作为值发布（`presentedCamera()`，与 `presentRecord()` 同处），宿主经 `SceneView::setPresentedCamera` 交给
+    manipulator；`OrbitCameraManipulator::makeScreenRay` 优先用它，没有就退回当前相机（静止画面、inline、无人呈现）；
   - **UI 只是"不再付展开与 present"，不是"不再被渲染节流"**：每次请求帧会等**上一帧的引擎半段**（含 acquire/
     present），所以帧率低时 UI 的绘制节拍被拉着走；输入事件仍在两次请求之间正常落地（R8 的准确读法）。
 - **"等到这一帧"是显式动作**（`G4`）：`FrameRunner::run` 今天"交出去并等它跑完"，那语义保留成
@@ -611,7 +612,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | N14 | 等价性是本设计的总闸：镜像错了画面就错，而它不崩、不报错。 |
 | N15 | 线程化之后画面比内容晚一帧（引擎半段跑的是上一帧）；`waitForFrame` 是唯一"等到那一帧"的手段。 |
 | N16 | 一帧之内镜像只有一个状态：钩子写的内容对该帧所有 pass 可见（一帧一次 drain 的直接后果，见 §2.12）。 |
-| N17 | 相机在内容侧、事件即刻生效；画面是上一帧的相机快照。所以**内容查询（拾取、锚点）默认用当前相机**，与用户看到的那一帧差一帧——低帧率快节奏操作时可感知，已知缺口见 §9.2（T31b）。 |
+| N17 | 相机在内容侧、事件即刻生效，画面是上一帧的相机快照。所以**把指针变成世界点的查询（拾取、锚点）用"用户看到的那一帧"的相机**：`RenderEngine::presentedCamera()` 发布它，经 `SceneView::setPresentedCamera` 到达 manipulator；没有发布值时退回当前相机（静止画面 / inline）。 |
 
 ## 6. 注意事项与陷阱
 
@@ -905,10 +906,13 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   不再付 expand 与 present 的等待，代价是画面比内容晚一帧（N15）。窗口自己绕着一帧做的事已经按这个前提写好：attach
   先 `waitForFrame`、会话首帧等一次再报 `Presenting`、丢图不藏区域；`RenderControl::setFrameThreading(Inline)` 是回退口。
   验收：`RenderControlTest` 25/25（含连续渲染与丢图修复两条时序用例，重复跑稳定）。
-- **"最后呈现的相机"（T31b，未落地）**：`resolveAnchor` / 选择射线用的是**当前**相机与几何，而用户对着上一帧的画面
-  瞄（N17）。修法是内容侧记住"最后被答完那一帧的相机快照"（值已经在 `CameraSnapshot` 里，与 `presentRecord()` 同一处
-  发布），查询改用它 —— 拾取因此永远"所见即所得"，相机操作本身不受影响。**今天不做**：需要一个真实宿主抱怨低帧率下
-  选择偏移（或一次对不上的拾取实测），而不是为假想需求先加一条值。
+- **"最后呈现的相机"已落地（原 T31b）**：`CameraSnapshot::screenRay`（一个像素 → 世界射线，透视与正交、离屏窗口同一套
+  算法：两端反投影，谁离眼近谁是原点）、`RenderEngine::presentedCamera()`（答完即发布，锁下拷贝）、
+  `SceneView::setPresentedCamera` → `CameraManipulator::setPresentedCamera`、`makeScreenRay` 改用它。验收：
+  `CameraSnapshotTest.TheSnapshotsRayIsTheCamerasOwnRay`（与 `Camera::screenToWorldRay` 同方向；正交比"同一条线"）、
+  `CameraSnapshotTest.APointerQueryAimsWithThePictureNotTheLiveCamera`（相机移开后按下，锚点落在用户那张画面的射线上；
+  换一张画面给另一个答案）、`RenderEngineTest.TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith`（帧被答完才发布，
+  相机移动后跟下一帧）。
 - **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`

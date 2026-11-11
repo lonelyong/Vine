@@ -18,8 +18,10 @@
   present）在引擎线程；两块帧值轮换、帧号随帧走（`detail::EngineFrame`）。**宿主默认线程化**
   （`SurfaceWindow` 开局就 `setFrameThreading(EngineThread)`），`RenderControl::setFrameThreading(Inline)` 是回退口。
 - 线程化后的可感知代价（别当 bug 报）：画面比内容**晚一帧**（N15）；`frame()` 每次最多等**一个引擎半段**（含
-  acquire/present），所以 UI 被渲染节拍节流——"不阻塞"指的是不付展开与整帧，不是不被节流；**拾取/锚点用当前相机，
-  而用户看的是上一帧**（N17，缺口 T31b）。
+  acquire/present），所以 UI 被渲染节拍节流——"不阻塞"指的是不付展开与整帧，不是不被节流。
+- **指针查询按"用户看到的那一帧"算**（N17）：`RenderEngine::presentedCamera()` 发布被答完那一帧的相机快照，
+  `SceneView::setPresentedCamera` 交给 manipulator，`OrbitCameraManipulator::makeScreenRay` 优先用它；没有发布值就退回
+  当前相机（静止画面 / inline）。一个像素 → 世界射线是 `CameraSnapshot::screenRay`（两端反投影，透视正交同一套）。
 - 呈现结局是值：`PresentOutcome{Presented, Skipped, Lost}` + `RenderEngine::presentRecord()`（帧号+结局，一个原子字）。
   `Lost` 由**引擎**修（忘掉已告知的尺寸 → 下一帧重报 → 后端重建交换链），宿主只记一条日志、不拆会话、不藏区域
   （藏区域会停掉修复帧）。设备动词（`createSurfaceTarget` / `setWindowHandle` / `initialize`）是**帧间**操作。

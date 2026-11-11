@@ -4,6 +4,7 @@
 
 #include <vine/raw_ptr.hpp>
 
+#include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 
 VN_GRAPHICS_NS_BEGIN
@@ -57,6 +58,10 @@ struct EngineFrame {
     /// What the expansion cost per entry of @ref engine_order, in microseconds: the engine half's share of a pass'
     /// `record_micros` (the content half measured its own share while it described). Same length as engine_order.
     std::vector<std::uint64_t> engine_micros;
+    /// The camera THIS frame's picture was taken with (the presenting pass' camera, as a value), or an empty snapshot
+    /// when nothing presents this engine's area. It is what a pointer query should aim with once the frame is answered
+    /// (design N17): `RenderEngine::presentedCamera` hands it to the host.
+    CameraSnapshot presented_camera{};
     /// What became of this frame's PICTURE (see PresentOutcome): written by the engine half when the frame is answered,
     /// and what `RenderEngine::presentRecord` hands a host - #Lost is the one answer a host must act on (re-attach).
     PresentOutcome outcome = PresentOutcome::Skipped;

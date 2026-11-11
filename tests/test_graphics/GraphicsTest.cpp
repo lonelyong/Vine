@@ -11223,6 +11223,165 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
         << "an edit drops every entry, so only the pass sharing a view with a walk in the same frame reuses one";
 }
 
+TEST(RenderEngineTest, TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith)
+{
+    // THE ENGINE HANDS OUT THE PICTURE'S CAMERA (design N17): the pass that presents the area is the picture, so its
+    // camera - taken when the frame was built - is what a pointer query must aim with once that frame is answered.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+
+    auto surface = engine->createSurface();
+    auto view    = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    // A view's picture is a CHAIN (a view with none presents nowhere), so this asks for the default one before the area
+    // can declare it - the same path a host takes in its first attach. The chain's passes draw THIS view's camera.
+    ASSERT_NE(buildFor(*view, engine.get()), nullptr);
+    ASSERT_TRUE(surface->present(*view));
+    const Camera& picture_camera = *view->camera();
+
+    EXPECT_FALSE(engine->presentedCamera().has_value()) << "no frame has been answered yet";
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    const auto answered = engine->presentedCamera();
+    ASSERT_TRUE(answered.has_value()) << "something presents this area, so the frame has a picture";
+    EXPECT_NEAR(answered->eye.x, picture_camera.eye().x, 1e-9);
+    EXPECT_NEAR(answered->eye.y, picture_camera.eye().y, 1e-9);
+    EXPECT_NEAR(answered->eye.z, picture_camera.eye().z, 1e-9);
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
+            EXPECT_DOUBLE_EQ(answered->projection.element(row, column),
+                             picture_camera.projectionMatrix().element(row, column));
+        }
+    }
+
+    // A camera that moved between frames is the NEXT frame's picture, not this one's: the value follows the answer.
+    view->camera()->lookAt(Vec3d(9, 9, 9), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    const auto moved = engine->presentedCamera();
+    ASSERT_TRUE(moved.has_value());
+    EXPECT_NEAR(moved->eye.x, 9.0, 1e-6);
+}
+
+TEST(CameraSnapshotTest, TheSnapshotsRayIsTheCamerasOwnRay)
+{
+    // THE VALUE ANSWERS THE PICTURE'S OWN QUESTION (design N17): which world ray does this picture see through this
+    // point. It must agree with the camera it came from - otherwise a query that aims with the answered frame would
+    // disagree with the picture that frame has on screen.
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera); // eye (0,0,5), fov 60, shape 1
+
+    const CameraSnapshot picture = CameraSnapshot::of(*camera);
+    ASSERT_TRUE(picture.present);
+    for (const Vec2d screen01 : { Vec2d(0.5, 0.5), Vec2d(0.25, 0.75), Vec2d(0.9, 0.1) }) {
+        Vec3d origin;
+        Vec3d direction;
+        ASSERT_TRUE(picture.screenRay(screen01, origin, direction)) << "a picture holds a camera, so it answers";
+        const auto own = camera->screenToWorldRay(screen01);
+        EXPECT_NEAR(direction.x, own.direction.x, 1e-9);
+        EXPECT_NEAR(direction.y, own.direction.y, 1e-9);
+        EXPECT_NEAR(direction.z, own.direction.z, 1e-9);
+        // A perspective's ray starts AT the eye: the near plane is where the picture is sampled, not where it begins.
+        EXPECT_NEAR(origin.x, own.origin.x, 1e-9);
+        EXPECT_NEAR(origin.y, own.origin.y, 1e-9);
+        EXPECT_NEAR(origin.z, own.origin.z, 1e-9);
+    }
+
+    // ORTHOGRAPHIC: the ray's DIRECTION is the view's, and its origin travels across the window - so what must match
+    // is the LINE (the camera's own origin lies on it), which is what a query cares about.
+    camera->setOrthographic(-4.0, 4.0, -3.0, 3.0, 0.1, 100.0);
+    const CameraSnapshot ortho = CameraSnapshot::of(*camera);
+    for (const Vec2d screen01 : { Vec2d(0.5, 0.5), Vec2d(0.2, 0.8) }) {
+        Vec3d origin;
+        Vec3d direction;
+        ASSERT_TRUE(ortho.screenRay(screen01, origin, direction));
+        const auto own = camera->screenToWorldRay(screen01);
+        EXPECT_NEAR(direction.x, own.direction.x, 1e-9);
+        EXPECT_NEAR(direction.y, own.direction.y, 1e-9);
+        EXPECT_NEAR(direction.z, own.direction.z, 1e-9);
+        const Vec3d  to_own(own.origin.x - origin.x, own.origin.y - origin.y, own.origin.z - origin.z);
+        const Vec3d  cross = to_own.cross(Vec3d(own.direction.x, own.direction.y, own.direction.z));
+        // Same LINE, not the same starting point: an orthographic camera's `eye` is where its window is centred, not
+        // where the picture begins, so both points are on the ray and only the direction has to agree.
+        EXPECT_NEAR(cross.length(), 0.0, 1e-6) << "the camera's origin is on the snapshot's line";
+    }
+
+    // An empty snapshot answers nothing, which is how a query knows to keep the live camera.
+    Vec3d origin;
+    Vec3d direction;
+    EXPECT_FALSE(CameraSnapshot{}.screenRay(Vec2d(0.5, 0.5), origin, direction));
+}
+
+TEST(CameraSnapshotTest, APointerQueryAimsWithThePictureNotTheLiveCamera)
+{
+    // THE ONE PLACE THE ONE-FRAME LEAD IS A SEMANTIC ERROR (design N17): the camera moved on, the picture on screen has
+    // not. A press must resolve against the pose the user is aiming at.
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    // The unit triangle spans +x/+y from its node's origin, so an offset of -0.1 puts the picture's CENTRE ray
+    // through its interior (a vertex is not a hit worth pinning a rule on).
+    root->addChild(makeTriangleNode(Vec3d(-0.1, -0.1, -5), nullptr, u8"centre"));
+    // A SECOND piece, far off that ray: it exists so the scene's bounding-box centre (the answer a MISS falls back to)
+    // is NOT the point the picture's centre ray hits - which is what lets the two halves of this case differ.
+    root->addChild(makeTriangleNode(Vec3d(3.0, 3.0, -5), nullptr, u8"corner"));
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    camera->setPerspective(60.0, 0.1, 1000.0);
+    camera->setAspect(1.0);
+    camera->lookAt(Vec3d(0, 0, 5), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    const CameraSnapshot picture = CameraSnapshot::of(*camera); // the frame the user can see
+
+    auto manipulator = intrusive_ptr<OrbitCameraManipulator>(new OrbitCameraManipulator(camera.get(), scene.get()));
+    manipulator->onResize(vn::window::ResizeEvent{ /*width*/ 800, /*height*/ 800 });
+
+    // The user keeps dragging: the LIVE camera now looks from somewhere else entirely, while the picture is still the
+    // one above. (In the threaded engine that is one frame; here it is made large enough to be unmistakable.)
+    camera->lookAt(Vec3d(0, 200, 0.001), Vec3d(0, 0, 0), Vec3d(0, 0, -1));
+
+    // WHAT THE PICTURE SEES THROUGH ITS CENTRE: the triangle, from the pose above.
+    Vec3d picture_origin;
+    Vec3d picture_direction;
+    ASSERT_TRUE(picture.screenRay(Vec2d(0.5, 0.5), picture_origin, picture_direction));
+
+    manipulator->setPresentedCamera(picture);
+    ASSERT_TRUE(manipulator->setCenterFromScreen(400, 400)) << "the centre of that picture hits the triangle";
+    const Vec3d anchored = camera->target();
+    const Vec3d to_anchor(anchored.x - picture_origin.x, anchored.y - picture_origin.y, anchored.z - picture_origin.z);
+    EXPECT_NEAR(to_anchor.cross(picture_direction).length(), 0.0, 1e-6)
+        << "the anchor is ON the ray the user's picture sees through that pixel";
+    EXPECT_NEAR(anchored.x, 0.0, 1e-6);
+    EXPECT_NEAR(anchored.z, -5.0, 1e-6);
+
+    // A DIFFERENT PICTURE GIVES A DIFFERENT ANSWER, on that picture's own ray: the query follows the frame the user is
+    // looking at, which is the whole rule - not a fixed correction towards anything.
+    auto elsewhere = intrusive_ptr<Camera>(new Camera());
+    elsewhere->setPerspective(60.0, 0.1, 1000.0);
+    elsewhere->setAspect(1.0);
+    // A picture aimed at the OTHER piece (what the user sees after panning, say): its centre pixel lands on that piece,
+    // so a press answering with it is both ON this picture's ray and far from the first answer.
+    elsewhere->lookAt(Vec3d(0.0, 0.0, 5.0), Vec3d(3.25, 3.25, -5.0), Vec3d(0.0, 1.0, 0.0));
+    const CameraSnapshot side = CameraSnapshot::of(*elsewhere);
+    Vec3d                  side_origin;
+    Vec3d                  side_direction;
+    ASSERT_TRUE(side.screenRay(Vec2d(0.5, 0.5), side_origin, side_direction));
+
+    manipulator->setPresentedCamera(side);
+    (void)manipulator->setCenterFromScreen(400, 400);
+    const Vec3d from_side = camera->target();
+    const Vec3d to_side(from_side.x - side_origin.x, from_side.y - side_origin.y, from_side.z - side_origin.z);
+    EXPECT_NEAR(to_side.cross(side_direction).length(), 0.0, 1e-6)
+        << "the anchor is on the ray THIS picture sees through that pixel";
+    EXPECT_GT((from_side - anchored).length(), 0.5)
+        << "and a different picture is a different answer - the query follows what the user sees, not a correction";
+
+    // Clearing it is the documented way back to the live camera (the default every other case in this suite uses).
+    manipulator->clearPresentedCamera();
+    EXPECT_FALSE(manipulator->presentedCamera().has_value());
+}
+
 TEST(RenderEngineTest, TheFramesPictureOutcomeIsAFactOfTheFrame)
 {
     // WHAT BECAME OF THE PICTURE is a value about ONE frame (see PresentOutcome): a host acts on Lost (it re-attaches)
