@@ -117,7 +117,11 @@ bool RenderWorld::attach(RowId parent_identity, std::uint32_t child_index, Scene
             if (existing.parent != SceneBake::kNoParent && existing.parent >= at) {
                 existing.parent += count;
             }
-            if (existing.end >= at) {
+            // STRICTLY greater: the sibling whose subtree ENDS at the insertion point does not contain the block, so
+            // its `end` must stay where it is. A `>=` there makes that sibling claim the block - and pruning the
+            // sibling then skips content that is still in view (found by review, pinned by
+            // ContentMirrorTest.AnAttachDoesNotInheritThePrecedingSiblingsSubtree).
+            if (existing.end > at) {
                 existing.end += count;
             }
         }

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <limits>
 
+#include <vine/SmallVector.hpp>
+
 VN_GRAPHICS_NS_BEGIN
 
 namespace detail
@@ -402,7 +404,10 @@ void selectFromBake(const SceneBake&            bake,
         bool          resolved{ false }; ///< Its world was resolved from the view (children must compose with it).
         Mat4d         world{};           ///< The world the row resolved to.
     };
-    std::vector<OpenRow> open;
+    // A TREE'S DEPTH, not a scene's size: the chain of rows currently being resolved. The inline capacity covers an
+    // ordinary assembly, and the vector in the repo only grows past it for a pathological hierarchy - which is why this
+    // is a SmallVector and not a std::vector: a collection happens per view per frame, and it must not allocate.
+    vn::SmallVector<OpenRow, 32U> open;
 
     for (std::uint32_t index = 0; index < bake.rows.size();) {
         while (!open.empty() && open.back().end <= index) {

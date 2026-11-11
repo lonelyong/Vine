@@ -52,8 +52,11 @@ enum class FrameMode : std::uint8_t
  *   (`unbound()`) instead of being quietly expanded from the content - which is correct on the calling thread and a
  *   cross-thread read anywhere else, so the count is how a host finds out it forgot to publish.
  *
- * @warning One thread at a time. `publish` runs on the content's thread, `run` on the engine's, and they meet only in
- * the mirrors' channels.
+ * @warning `publish` MUST NOT RUN WHILE A FRAME IS RUNNING. The value channel is safe from both sides, but the LIST of
+ * mirrors is not: `publish` may create one while `run` walks it. Today that is guaranteed by construction - the runner
+ * hands a frame over and waits for it, so the content's thread is inside `run` while the engine's works - and a mode
+ * that overlaps frames has to move mirror creation into the handshake (or publish through the channel) BEFORE it may
+ * overlap them. Stating the invariant rather than relying on it silently is the point.
  */
 class FrameWorker {
   public:

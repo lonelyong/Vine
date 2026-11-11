@@ -21,11 +21,16 @@ FrameRunner::~FrameRunner()
 
 std::size_t FrameRunner::run(FrameDescription& frame)
 {
-    // Inline: the caller IS the engine thread. A stopped runner is one too - it must run the frame rather than wait
-    // for a thread that is gone. And a request from the engine thread itself would wait on itself, so that case runs
-    // where it stands as well (see the class note).
-    if (mode_ == FrameMode::Inline || !thread_.joinable() || std::this_thread::get_id() == thread_.get_id()) {
-        return worker_.run(frame);
+    if (mode_ == FrameMode::Inline || !thread_.joinable()) {
+        // Inline - and a stopped runner IS one: the caller is the content's thread, so the frame runs here and nothing
+        // needs binding (passing this runner's mode would re-point every draw at a mirror to reproduce an answer the
+        // content gives for free, and would count every draw as unbound).
+        return worker_.run(frame, FrameMode::Inline);
+    }
+    if (std::this_thread::get_id() == thread_.get_id()) {
+        // Asked FROM the engine thread: waiting on itself would deadlock, so the frame runs where it stands - and the
+        // content is on another thread, so this is still the threaded mode the runner was built with.
+        return worker_.run(frame, mode_);
     }
 
     std::unique_lock<std::mutex> lock(mutex_);

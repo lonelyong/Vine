@@ -426,6 +426,47 @@ TEST(ContentMirrorTest, ADescriptionDeltaRefusesWhatIsNotOneRow)
     EXPECT_EQ(mirror.world().rowCount(), 3U);
 }
 
+TEST(ContentMirrorTest, AnAttachDoesNotInheritThePrecedingSiblingsSubtree)
+{
+    // A row's `end` is "one past MY subtree", and the attach has to keep that true for the sibling it inserts AFTER:
+    // that sibling's subtree ends exactly at the insertion point, so its `end` must NOT grow by the block's size. If it
+    // does, the sibling claims the new block - and pruning the sibling (a layer mask, a cull) then skips the block,
+    // which is content that is still in view.
+    auto root  = intrusive_ptr<Group>(new Group());
+    auto slot  = intrusive_ptr<Group>(new Group());
+    auto first = placed(-0.5, 0.0, 0.0);
+    const GeometryPtr first_face = triangle();
+    first->addChild(first_face);
+    slot->addChild(first);
+    root->addChild(slot);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror     mirror{ scene };
+    const CollectView view = clipBoxView();
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    auto added = placed(0.0, 0.0, 0.0);
+    const GeometryPtr added_face = triangle();
+    added->addChild(added_face);
+    slot->addChild(added);
+    ASSERT_TRUE(mirror.attach(*slot, *added, 1U)) << "after the sibling it already had";
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    // The sibling leaves the picture's layer; the block hangs beside it and must stay.
+    first->setLayers(1U << 5);
+    ASSERT_TRUE(mirror.setState(*first));
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    const auto expected = scene.collectRenderCommands(view, vn::graphics::kDefaultLayer);
+    const auto actual   = mirror.source().collectRenderCommands(view, vn::graphics::kDefaultLayer);
+    expectSameDrawList(*actual, expected);
+    ASSERT_EQ(actual->size(), 1U);
+    EXPECT_EQ((*actual)[0].geometry.get(), added_face.get()) << "the block the attach placed is still drawn";
+}
+
 TEST(ContentMirrorTest, ARefusedPublishIsRetriedInsteadOfBeingLost)
 {
     // The channel is bounded, so a publish can be refused. Because the version is only recorded on SUCCESS, the next

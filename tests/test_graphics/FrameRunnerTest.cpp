@@ -187,6 +187,9 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
     FrameDescription frame = onePassFrame(scene);
     EXPECT_EQ(runner.run(frame), 1U) << "the frame still runs: on the calling thread";
     EXPECT_EQ(commandsOf(frame).size(), 2U);
+    EXPECT_EQ(worker.unbound(), 0U) << "a stopped runner runs INLINE: the caller is the content's thread, so the draw "
+                                      "keeps its content instead of being re-pointed at a mirror";
+    EXPECT_EQ(frame.passes.front().draw->draws.front().content, &scene);
     EXPECT_EQ(runner.frames(), 0U) << "no engine thread ran it";
     EXPECT_EQ(runner.mode(), FrameMode::Threaded) << "the mode is a lifetime decision, not a live state";
 }
