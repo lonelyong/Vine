@@ -286,6 +286,22 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void reportEngineProblem(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message);
 
+    /** @brief Answers whether a session-shape change may be applied now, reporting ONE diagnostic per episode when not.
+     *
+     * @details
+     * - THE ONE PLACE THE RULE IS SPELLED OUT (design graphics-threading.md 2.12). A session's shape - its passes, its
+     *   resources, the backend's retained state - is what the engine thread walks while it records a frame, so a change
+     *   that lands during one is refused instead of applied to a list something is already reading. The alternative
+     *   (a lock around every read of the slot list) would put the engine thread behind the host's edits for no gain:
+     *   adding a pass mid-frame is a host bug, not a use case.
+     * - ONE REPORT PER EPISODE: a host that forgot to wait hears about it the first time, and the episode re-arms as
+     *   soon as a change is accepted - so a second, separate mistake still speaks.
+     *
+     * @param verb Name of the refused call, for the sentence.
+     * @return true when the caller may proceed.
+     */
+    [[nodiscard]] bool sessionChangeAllowed(const char* verb);
+
     /** @brief Attaches this engine to the device it borrows: ready to drive frames.
      *
      * @details
@@ -575,9 +591,13 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   so they stay separate content (the order only decides their stacking). Give distinct orders (and a
      *   sub-viewport / clear policy) when they must layer.
      *
+     * @warning
+     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is REFUSED (null,
+     *   plus one `PassProtocolViolation` diagnostic per episode) - see `waitForFrame`.
+     *
      * @param pass  Pass to add (the engine keeps a reference).
      * @param order Execution order (ascending; any integer allowed).
-     * @return The pass the engine registered, or null when it was already registered.
+     * @return The pass the engine registered, or null when it was already registered OR the call was refused.
      */
     intrusive_ptr<RenderPass> addPass(intrusive_ptr<RenderPass> pass, int order);
 
@@ -625,6 +645,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   per-pass GPU state (RenderDevice::releasePass, keyed by the pass itself) and any off-screen render
      *   target the pass owns (RenderDevice::releaseRenderTarget).
      *
+     * @warning
+     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is REFUSED (one
+     *   `PassProtocolViolation` diagnostic per episode) - the slot list is what the engine thread walks (see
+     *   `waitForFrame`).
+     *
      * @param pass Pass to remove (by pointer).
      */
     void removePass(raw_ptr<RenderPass> pass);
@@ -645,7 +670,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     bool releaseContent(raw_ptr<const Object> content);
 
-    /** @brief Removes all registered passes (each one as removePass: resources released). */
+    /** @brief Removes all registered passes (each one as removePass: resources released).
+     *
+     * @warning
+     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: refused, with the same once-per-episode diagnostic as removePass,
+     *   while a frame is being recorded.
+     */
     void clearPasses();
 
     /** @brief Gets the number of registered scene passes.
@@ -1235,6 +1265,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// Where the engine half runs (see setFrameThreading); null means inline - the thread object exists only when a
     /// host asked for one, so an engine that never does allocates nothing and starts no thread.
     std::unique_ptr<detail::FrameRunner> runner_;
+
+    /// The episode of the "a session's shape cannot change during a frame" report (see sessionChangeAllowed).
+    ReportOnce session_change_episode_;
     /// A frame whose engine half finished on the frame thread and whose per-pass cost still has to reach the plan: the
     /// next frame() publishes it, once it has waited for that half. Null when there is nothing to publish (the inline
     /// path publishes immediately - it IS the content half's thread).

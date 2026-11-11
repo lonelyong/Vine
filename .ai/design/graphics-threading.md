@@ -571,6 +571,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | C16 | 一帧的两个半段各归一条线程：内容半段（钩子 / publish / describe）在内容线程，引擎半段（drain / bind / expand / execute / present）在引擎线程；帧值两份轮换，每侧一帧在飞。 |
 | C17 | 表面事件只在帧首应用一次；交换链只在引擎线程重建；UI 侧不写任何引擎侧状态。 |
 | C18 | 批内版本不推进：`Scene::beginEdit()` 之后、最外层 `endEdit()` 之前，镜像比较的版本停在原处 —— 落进批次中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布（一条 `RowsReplaced`）落地。 |
+| C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `addPass` / `removePass` / `clearPasses` 一律拒绝（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`；被接受的一次改动会重置 episode。 |
 | C19 | 材质以**值**过帧：命令携带 `MaterialDescriptionPtr`（`revision` + 解析后的 `MaterialParameters`），引擎侧只读值，不读 `Material::resolved()`。值的取点在内容侧（`SceneRows::publish` 与 `detail::refreshMaterials`），批内不取 —— 所以材质编辑和节点/几何编辑走同一条批次规则（C18）。 |
 
 ### 5.2 要求（R#）
@@ -937,6 +938,12 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   （稳帧零重建）。
   **边界（有意不处理）**：宿主直接写材质 buffer / 直接改内存（不经 `setXxx`）不在保证内 —— 那类改动没有值可取，
   和"直接写顶点 buffer 要自己 `invalidateContent`"是同一条规矩。
+- **会话形状只在帧间改（C20，2026-11-11）**：`addPass` / `removePass` / `clearPasses` 在引擎线程录制中时**拒绝**
+  （返回 null / 什么都不做），并借 `Diagnostics::reportOnce` 按 episode 只报一条 `PassProtocolViolation`；
+  帧不在飞时的一次成功改动会 `rearm()`，所以第二次独立的误用还会说话。理由不是"加锁更安全"，而是：给每次读取
+  槽表都上锁会让引擎线程排在宿主的编辑后面，而"帧里加 pass"是宿主 bug，不是用例。验收：
+  `RenderEngineTest.ASessionsShapeIsEditedBetweenFramesNotDuringOne`（一个卡在 `executeFrame` 里的
+  后端把"帧在飞"变成确定事实：两次调用一次报告、会话形状不变、帧答完后同一调用成立且不再报告）。
 - **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`

@@ -11557,6 +11557,91 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
     EXPECT_EQ(backend->frames_executed, 11) << "every frame reached the device exactly once, whichever thread drove it";
 }
 
+/// @brief A backend that stops INSIDE a frame until the test lets it go.
+///
+/// @details
+/// - The only way to make "a frame is being recorded" a deterministic fact: every question about what may happen while
+///   the engine thread is busy needs a frame that cannot finish on its own.
+class GatedBackend : public MockBackend {
+  public:
+    PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+    {
+        {
+            std::unique_lock<std::mutex> lock(gate);
+            entered = true;
+            changed.notify_all();
+            changed.wait(lock, [this] { return released; });
+        }
+        return MockBackend::executeFrame(frame, present_to);
+    }
+
+    void waitEntered()
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        changed.wait(lock, [this] { return entered; });
+    }
+
+    void release()
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        released = true;
+        changed.notify_all();
+    }
+
+  private:
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    entered{ false };
+    bool                    released{ false };
+};
+
+TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
+{
+    // A SESSION'S SHAPE BELONGS TO NO FRAME (design 2.12): the pass list, the resources table and the backend's retained
+    // state are what the engine thread walks while it records, so a change that lands during a frame is refused - once
+    // per episode, with a diagnostic that names the call - instead of editing a list something is already reading.
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(camera);
+    ASSERT_NE(engine->addPass(pass, scene, 0), nullptr);
+    const std::size_t passes_before = engine->passCount();
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    ASSERT_EQ(engine->frame(), FrameOutcome::Submitted);
+    backend->waitEntered(); // the engine thread is now INSIDE the frame
+
+    const std::size_t diagnostics_before = engine->diagnosticCount();
+    auto              extra              = intrusive_ptr<RenderPass>(new RenderPass());
+    extra->setCamera(camera);
+    EXPECT_EQ(engine->addPass(extra, 1), nullptr) << "refused while a frame is being recorded";
+    engine->clearPasses();
+    EXPECT_EQ(engine->passCount(), passes_before) << "and the session keeps the shape the frame is drawing";
+    EXPECT_EQ(engine->diagnosticCount(), diagnostics_before + 1U)
+        << "one report for the episode, not one per call: the host hears it once";
+
+    EXPECT_EQ(engine->addPass(extra, 1), nullptr) << "still refused";
+    EXPECT_EQ(engine->diagnosticCount(), diagnostics_before + 1U) << "and still one report";
+
+    backend->release();
+    EXPECT_TRUE(engine->waitForFrame());
+    ASSERT_NE(engine->addPass(extra, 1), nullptr) << "between frames the same call is nothing special";
+    EXPECT_EQ(engine->passCount(), passes_before + 1U);
+    EXPECT_EQ(engine->diagnosticCount(), diagnostics_before + 1U) << "an accepted change says nothing at all";
+
+    engine->setFrameThreading(FrameThreading::Inline);
+    engine->removePass(extra.get());
+    engine->shutdown();
+}
+
 TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
 {
     // ONE camera, TWO rectangles: the same eye, the same fov - and, because a camera holds the shape of its

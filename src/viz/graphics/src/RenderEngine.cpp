@@ -585,6 +585,25 @@ const FrameDescription& RenderEngine::frameDescription() const noexcept
     return frame_->description;
 }
 
+bool RenderEngine::sessionChangeAllowed(const char* verb)
+{
+    if (runner_ == nullptr || !runner_->busy()) {
+        // Nothing is recording: the change is applied and the episode re-arms,
+        // so a later, separate mistake still speaks once.
+        session_change_episode_.rearm();
+        return true;
+    }
+    if (session_change_episode_.shouldReport()) {
+        reportEngineProblem(DiagnosticSeverity::Warning,
+                            DiagnosticCategory::PassProtocolViolation,
+                            String(u8"a session's passes cannot change while a frame is being recorded: ") +
+                                String::fromUtf8(verb) +
+                                String(u8" was refused (wait for the frame with RenderEngine::waitForFrame, or change "
+                                        "passes between frames)"));
+    }
+    return false;
+}
+
 intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, int order)
 {
     return addPass(std::move(pass), nullptr, order);
@@ -592,6 +611,9 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, 
 
 intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order)
 {
+    if (!sessionChangeAllowed("addPass")) {
+        return nullptr;
+    }
     Slot slot;
     slot.pass  = std::move(pass);
     slot.order = order;
@@ -614,6 +636,9 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, 
 
 void RenderEngine::removePass(raw_ptr<RenderPass> pass)
 {
+    if (!sessionChangeAllowed("removePass")) {
+        return;
+    }
     // THE INVOCATION MAY BE THE PASS' LAST REFERENCE (its slot is one, and a host that just added a pass and forgot
     // its handle has nothing else), so hold it for the length of this call: the erase below can drop the last count,
     // and everything after it reads the pass - the same rule clearPasses states for the same reason (measured: a
@@ -653,6 +678,9 @@ bool RenderEngine::releaseContent(raw_ptr<const Object> content)
 
 void RenderEngine::clearPasses()
 {
+    if (!sessionChangeAllowed("clearPasses")) {
+        return;
+    }
     // Keep the passes alive while their retained backend state is released: a pass may be owned only by its
     // slot, so dropping the slots first and then dereferencing a raw pointer would be a use-after-free.
     std::vector<intrusive_ptr<RenderPass>> removed;
