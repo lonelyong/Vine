@@ -939,7 +939,9 @@ P1/P2/P3 都已落地：镜像、三条通道、每视图备忘录、帧的两�
   `ContentMirrorTest.AMaterialEditInsideABatchLandsWithTheBatchAndKeepsTheOldValuesUntilThen`（批中帧仍是旧值、
   批末一次落地、批外下次采集即生效）、`SdkPixelTest.TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends`（像素级：
   改材质 → 下一帧画面变）、`VsgBackendTest.AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNothing`
-  （稳帧零重建）。
+  （稳帧零重建）、`RenderEngineTest.AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadRecords`
+  （内容线程在引擎线程**录制中**改材质：在飞的帧仍是它发布时的值，下一帧是新值，编辑不丢；`tsan_check.sh` 盯的
+  正是这条跨界）。
   **边界（有意不处理）**：宿主直接写材质 buffer / 直接改内存（不经 `setXxx`）不在保证内 —— 那类改动没有值可取，
   和"直接写顶点 buffer 要自己 `invalidateContent`"是同一条规矩。
 - **会话形状只在帧间改（C20，2026-11-11）**：`addPass` / `removePass` / `clearPasses` 在引擎线程录制中时**拒绝**

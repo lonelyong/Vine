@@ -11564,10 +11564,26 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
 ///   the engine thread is busy needs a frame that cannot finish on its own.
 class GatedBackend : public MockBackend {
   public:
+    /// @brief Arms the gate: from now on a frame stops inside executeFrame until release().
+    ///
+    /// @details
+    /// - ARMED EXPLICITLY, because a frame is not always somebody else's: an inline frame IS the caller's own call, so a
+    ///   gate that is always on would block the very thread that would release it.
+    void arm()
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        armed    = true;
+        released = false;
+        entered  = false;
+    }
+
     PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
     {
         {
             std::unique_lock<std::mutex> lock(gate);
+            if (!armed) {
+                return MockBackend::executeFrame(frame, present_to);
+            }
             entered = true;
             changed.notify_all();
             changed.wait(lock, [this] { return released; });
@@ -11591,6 +11607,7 @@ class GatedBackend : public MockBackend {
   private:
     std::mutex              gate;
     std::condition_variable changed;
+    bool                    armed{ false };
     bool                    entered{ false };
     bool                    released{ false };
 };
@@ -11616,6 +11633,7 @@ TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
     const std::size_t passes_before = engine->passCount();
 
     engine->setFrameThreading(FrameThreading::EngineThread);
+    backend->arm();
     ASSERT_EQ(engine->frame(), FrameOutcome::Submitted);
     backend->waitEntered(); // the engine thread is now INSIDE the frame
 
@@ -11639,6 +11657,63 @@ TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
 
     engine->setFrameThreading(FrameThreading::Inline);
     engine->removePass(extra.get());
+    engine->shutdown();
+}
+
+TEST(RenderEngineTest, AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadRecords)
+{
+    // THE VALUE PATH UNDER REAL CONCURRENCY (design C19): the content side moves a material's values while the engine
+    // thread is INSIDE a frame. Two facts have to hold at once - the frame in flight draws the values it was published
+    // with (a mid-frame edit must not be half-drawn), and the next frame draws the new ones (an edit is never lost).
+    // Both are read on the caller's thread AFTER the frame is answered, so the assertions share nothing with the engine
+    // thread; what an edit crossing a recording thread would actually break is what scripts/tsan_check.sh watches.
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto material = intrusive_ptr<Material>(new Material());
+    material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -3.0), material, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(camera);
+    ASSERT_NE(engine->addPass(pass, scene, 0), nullptr);
+
+    // The values the last answered frame drew, read through the command (which is what a backend reads).
+    const auto red_of = [&engine]() -> float {
+        const auto& commands = engine->frameDescription().passes.at(0).draw->draws.at(0).commands;
+        if (commands == nullptr || commands->empty()) {
+            return -1.0F;
+        }
+        const auto values = commands->front().materialDescription();
+        return values != nullptr ? values->values().base_color.r : -1.0F;
+    };
+
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->waitForFrame());
+    ASSERT_FLOAT_EQ(red_of(), 1.0F) << "the frame draws the values the material holds";
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    backend->arm();
+    ASSERT_EQ(engine->frame(), FrameOutcome::Submitted);
+    backend->waitEntered(); // the engine thread is now recording a frame
+
+    material->setBaseColor(Colorf(0.0F, 1.0F, 0.0F, 1.0F)); // edited on the content thread, mid-frame
+
+    backend->release();
+    ASSERT_TRUE(engine->waitForFrame());
+    EXPECT_FLOAT_EQ(red_of(), 1.0F) << "the frame that was in flight keeps the values it was published with";
+
+    ASSERT_EQ(engine->frame(), FrameOutcome::Submitted);
+    ASSERT_TRUE(engine->waitForFrame());
+    EXPECT_FLOAT_EQ(red_of(), 0.0F) << "and the next frame draws the edit: nothing is lost across the thread";
+
+    engine->setFrameThreading(FrameThreading::Inline);
     engine->shutdown();
 }
 
