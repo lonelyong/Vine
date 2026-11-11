@@ -63,6 +63,25 @@ bool RenderWorld::setState(RowId identity, const StateValues& values)
     return true;
 }
 
+bool RenderWorld::setDescription(RowId identity, const SceneBake& block)
+{
+    const auto found = index_.find(identity);
+    if (found == index_.end() || block.rows.size() != 1U) {
+        ++refusals_;
+        return false;
+    }
+    const std::uint32_t row_index    = found->second;
+    const Row           structure    = bake_.rows[row_index]; // identity / parent / end / child count are the table's
+    bake_.rows[row_index]            = block.rows.front();
+    Row& row                         = bake_.rows[row_index];
+    row.identity                     = structure.identity;
+    row.parent                       = structure.parent;
+    row.end                          = structure.end;
+    row.child_count                  = structure.child_count;
+    rows_recomputed_ += resolveSubtree(bake_, row_index);
+    return true;
+}
+
 bool RenderWorld::attach(RowId parent_identity, std::uint32_t child_index, SceneBake block)
 {
     const auto found = index_.find(parent_identity);

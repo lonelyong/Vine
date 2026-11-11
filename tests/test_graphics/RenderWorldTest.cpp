@@ -15,6 +15,7 @@
 #include <vine/graphics/CollectView.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
+#include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/Scene.hpp>
@@ -94,6 +95,7 @@ void expectSameDrawList(const std::vector<RenderCommand>& actual, const std::sha
         EXPECT_EQ(lhs.geometry.get(), rhs.geometry.get()) << "command " << index << ": different geometry";
         EXPECT_EQ(lhs.primitive_index, rhs.primitive_index) << "command " << index << ": different primitive";
         EXPECT_EQ(lhs.program.get(), rhs.program.get()) << "command " << index << ": different program";
+        EXPECT_EQ(lhs.material.get(), rhs.material.get()) << "command " << index << ": different material";
         EXPECT_FLOAT_EQ(lhs.opacity, rhs.opacity) << "command " << index << ": different opacity";
         EXPECT_EQ(lhs.draw_order, rhs.draw_order) << "command " << index << ": different draw order";
         for (int row = 0; row < 4; ++row) {
@@ -366,6 +368,62 @@ TEST(ContentMirrorTest, AStateEditRefoldsItsSubtreeAndNothingIsRepublished)
     // A state edit is a DELTA, not a reason to republish: the mirror was told, and it never copied the table again.
     // (`publish` would still answer true here - the content's own rows moved by the same edit - which is why a producer
     // that announces finely must not also publish every frame: deciding what to announce is the producer's job.)
+}
+
+TEST(ContentMirrorTest, APayloadEditIsOneRowAndEqualsARebuild)
+{
+    // THE FACT WITH A HANDLE IN IT (design F5/R5). A geometry's shape or handles change: the content's thread re-reads
+    // the row's payload ONCE (the description is an immutable value per revision) and the engine side replaces that row
+    // - not the table. Structure is kept: the row's identity, parent and subtree bounds come from the live table.
+    auto root = intrusive_ptr<Group>(new Group());
+    auto leaf = triangle();
+    root->addChild(leaf);
+
+    vn::graphics::MaterialPtr first(new vn::graphics::Material());
+    vn::graphics::MaterialPtr second(new vn::graphics::Material());
+    leaf->setMaterial(first);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror     mirror{ scene };
+    const CollectView view = clipBoxView();
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+    const std::uint64_t publishes = mirror.publishCount();
+
+    // The leaf's material is swapped: a payload edit, announced as one row.
+    leaf->setMaterial(second);
+    ASSERT_TRUE(mirror.setDescription(*leaf));
+    EXPECT_EQ(mirror.drain(), 1U);
+    expectSameDrawList(*mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers),
+                       scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    const auto mirrored = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    ASSERT_EQ(mirrored->size(), 1U);
+    EXPECT_EQ((*mirrored)[0].material.get(), second.get()) << "the handle the content now states, not the one it had";
+    EXPECT_EQ(mirror.publishCount(), publishes) << "one row's payload is a delta, not a reason to republish the table";
+    EXPECT_EQ(mirror.world().rowCount(), 2U) << "root and the leaf: nothing was spliced";
+}
+
+TEST(ContentMirrorTest, ADescriptionDeltaRefusesWhatIsNotOneRow)
+{
+    // A row's payload is ONE row. A subtree (a container, or a leaf that just became invisible) is a structure change:
+    // saying so is better than silently replacing a row with a block that means something else.
+    auto root   = intrusive_ptr<Group>(new Group());
+    auto branch = placed(0.1, 0.0, 0.0);
+    branch->addChild(triangle());
+    root->addChild(branch);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror mirror{ scene };
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    EXPECT_FALSE(mirror.setDescription(*branch)) << "a container is not one row";
+    EXPECT_EQ(mirror.drain(), 0U) << "nothing was posted";
+    EXPECT_EQ(mirror.world().rowCount(), 3U);
 }
 
 TEST(ContentMirrorTest, ARefusedPublishIsRetriedInsteadOfBeingLost)

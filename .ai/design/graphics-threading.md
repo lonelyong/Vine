@@ -263,7 +263,7 @@ flowchart LR
 | F2 | delta 协议 | 值 + 必填 payload；帧首一次 drain；同帧按序 | **P1 第一步已落**（`DeltaChannel`，三种 kind） |
 | F3 | 场景图结构更新 | attach / detach / 重父化 / 换根；离树在停靠窗口后释放 | **attach / detach 已落**（`RenderWorld::attach/detach` + `Attached`/`Detached` delta）；重父化 = detach + attach、换根用整体重发 |
 | F4 | 节点状态更新 | placement（局部变换）/ opacity / layers / drawOrder；子树增量重折。（visible 属结构：隐藏的子树没有行，见 F3） | **placement + state 已落** |
-| F5 | 几何描述更新 | 通道集合与切片、primitive（索引/实例）、material/program 句柄@revision | 草案 |
+| F5 | 几何描述更新 | 通道集合与切片、primitive（索引/实例）、material/program 句柄@revision | **已落（一行 = 一次 payload 重读）** |
 | F6 | 相机更新 | 相机在内容侧；变化发一个相机 delta；`fitToScreen` 留在内容侧 | 草案 |
 | F7 | 字节内容与流式 | `Buffer::edit()` 之后只靠原子 revision 轮询；不产生 delta | 草案 |
 | F8 | 每帧 | 镜像上剔除 → 建计划 → 记录 → 提交 → 呈现 → 推进时间线 → 发布快照 | 草案 |
@@ -706,6 +706,13 @@ flowchart LR
 - **P2 第二步已落（state delta）**：`StateValues` + `DeltaKind::State` → `RenderWorld::setState`（`resolveSubtree` 重折该子树、
   祖先盒一并重算），内容侧 `ContentMirror::setState(node)`。带句柄的 material/program 留在描述 delta（R5），visibility 留在结构
   （隐藏的子树没有行）。顺带删掉 `Row::own_visible`（无人读）。验收：`ContentMirrorTest.AStateEditRefoldsItsSubtreeAndNothingIsRepublishe`。
+- **P2 第三步已落（description delta）**：`DeltaKind::Description` 带一个**一行块**（`buildOwnFacts` 对一个叶子），
+  applier `RenderWorld::setDescription` **保留结构**（identity / parent / end / child_count 来自活行）、换上块里的 own 事实，
+  再 `resolveSubtree`。这就是设计 R5 说的"只换句柄的编辑也走同一条描述 delta"：几何的材质/程序/形状/primitive 各自成为一行的一次 payload 重读，
+  而不是整表重发。**只对叶子成立**：一个容器（或刚变成可见/不可见的叶子）的子树形状变了，那是 attach/detach；`setDescription` 对非一行块**拒收并计数**。
+  StateNode 的 material/program 仍走整体重发（它由整棵子树继承，不是一行的 payload —— 要细粒度就得带句柄再折整棵子树，单独一步再说）。
+  验收：`ContentMirrorTest.APayloadEditIsOneRowAndEqualsARebuild`（换材质后与从零重建逐命令相同、命令里是新的那个句柄、
+  行数不变、`publishCount` 不变）与 `ADescriptionDeltaRefusesWhatIsNotOneRow`。
 - **P1 下一步（接入引擎）**：`RenderEngine` 持有 `FrameWorker`，`buildFrameValue` 里把 `expandPass(*entry.draw)` 换成
   `worker.runPass(*entry.draw, mode)`、在帧首调一次 `worker.drain()`（每 pass 的 `record_micros` 仍覆盖它自己的 expand，
   所以那个数字的意思不变），threaded 模式下再加每帧一次 `worker.publish(每个 pass 的 scene)`。真正切到 `Threaded` 仍要等

@@ -43,6 +43,19 @@ bool ContentMirror::publish(const Scene& scene)
     return true;
 }
 
+bool ContentMirror::setDescription(const Node& node)
+{
+    auto block = std::make_shared<SceneBake>();
+    buildOwnFacts(node, *block);
+    if (block->rows.size() != 1U) {
+        return false; // not a leaf (or invisible): a payload delta describes ONE row, structure is attach/detach
+    }
+    Delta delta;
+    delta.kind     = DeltaKind::Description;
+    delta.identity = &node;
+    return channel_.post(delta, std::move(block));
+}
+
 bool ContentMirror::setState(const Node& node)
 {
     Delta delta;
@@ -93,6 +106,11 @@ std::size_t ContentMirror::drain()
                 break;
             case DeltaKind::Detached:
                 (void)world_.detach(owned.delta.identity);
+                break;
+            case DeltaKind::Description:
+                if (owned.rows != nullptr) {
+                    (void)world_.setDescription(owned.delta.identity, *owned.rows);
+                }
                 break;
             case DeltaKind::State:
                 (void)world_.setState(owned.delta.identity, owned.delta.state);

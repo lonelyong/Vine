@@ -35,6 +35,7 @@ enum class DeltaKind : std::uint8_t
     Detached,     ///< A subtree is gone from the table: `identity` is the detached subtree's ROOT.
     Placement,    ///< One row's own placement; carries its local matrix.
     State,        ///< One row's own numeric values (opacity / layers / draw order); see StateValues.
+    Description,  ///< One row's PAYLOAD (geometry description, draw facts, its handles); carries a one-row block.
     Terminate,    ///< The engine side should stop: the last delta this channel ever carries.
 };
 

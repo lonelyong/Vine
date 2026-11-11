@@ -76,6 +76,20 @@ class ContentMirror {
     bool publish(const Scene& scene);
 
     /**
+     * @brief Announces @p node's PAYLOAD: a re-read of its geometry description, draw facts and handles (content thread).
+     *
+     * @details
+     * - The one fact with a handle in it (design F5/R5): a shape edit (`Geometry::setRevision`), a primitive or instance
+     *   change, a material/program swap on a geometry or on a StateNode. The content's thread re-reads it ONCE (the
+     *   description is an immutable value per revision) and the engine side replaces that row and re-folds.
+     * - @p node must be a LEAF: a row whose subtree gains or loses rows is a structure change (attach / detach).
+     *
+     * @param node The leaf whose payload changed.
+     * @return true when the announcement was posted.
+     */
+    bool setDescription(const Node& node);
+
+    /**
      * @brief Announces @p node's own numeric values (content thread).
      *
      * @details

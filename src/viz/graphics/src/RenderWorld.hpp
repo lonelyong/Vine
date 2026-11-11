@@ -85,6 +85,23 @@ class RenderWorld {
     bool setState(RowId identity, const StateValues& values);
 
     /**
+     * @brief Replaces one row's OWN facts with the block's single row: its payload and whatever a re-read states.
+     *
+     * @details
+     * - This is how a DESCRIPTION travels (design F5/R5): a geometry whose shape, primitives or handles changed, and a
+     *   StateNode whose material or program was swapped - one fact with a handle in it, re-read once by the content's
+     *   thread and applied here as values.
+     * - STRUCTURE IS KEPT: identity, parent, subtree end and child count come from the live row; everything else is
+     *   taken from @p block and then re-folded (the resolved values are the fold's). A change that alters the SHAPE of
+     *   the subtree (a node becoming invisible, gaining or losing children) is not this - that is attach/detach.
+     *
+     * @param identity The row the block describes.
+     * @param block    A block of exactly one row (see buildOwnFacts on a leaf).
+     * @return false when the identity is unknown or the block is not one row; the refusal is counted.
+     */
+    bool setDescription(RowId identity, const SceneBake& block);
+
+    /**
      * @brief Connects a subtree: @p block's rows (its OWN facts, see buildOwnFacts) become the @p child_index'th child
      *        of @p parent_identity.
      *
