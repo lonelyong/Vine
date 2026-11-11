@@ -226,10 +226,15 @@ struct InheritedState {
  *   up, splitting the leaf payload out is the change to make (see the backlog entry for this table).
  */
 struct SceneBake {
+    /// The row index meaning "this row has no parent" (the table's first row).
+    inline static constexpr std::uint32_t kNoParent = 0xFFFFFFFFU;
+
     /// One node's resolved facts. `node` is kept because two questions are still per node and cached on it: the
     /// layer union (`subtreeLayerUnion`) and, for a view-dependent subtree, its per-view placement.
     struct Entry {
         const Node*     node{ nullptr };
+        Mat4d           local{};                              // This node's OWN placement (its parent's frame).
+        std::uint32_t   parent{ kNoParent };                  // The row this node hangs from (0-based; kNoParent = the root).
         Mat4d           world{};                              // Resolved placement (meaningful when !view_dependent).
         std::uint32_t   end{ 0 };                             // One past this node's subtree.
         std::uint32_t   layers{ kDefaultLayer };              // Resolved layers at this node (see InheritedState).
@@ -263,7 +268,39 @@ std::uint32_t bakeSubtree(const Node*           node,
                           float                 parent_opacity,
                           const InheritedState& inherited,
                           bool                  under_view_dependent,
-                          SceneBake&            bake);
+                          SceneBake&            bake,
+                          std::uint32_t         parent = SceneBake::kNoParent);
+
+/**
+ * @brief Re-resolves ONE row's subtree after that row's own placement changed: the one fold a producer runs on an edit.
+ *
+ * @details
+ * - It walks the subtree of @p index (a row of @p bake) and re-multiplies world matrices top-down; nothing above the
+ *   row is touched, which is what makes a joint edit cost the joint's subtree instead of the whole graph.
+ * - A view-dependent row (or one below it) is skipped: its placement is resolved per view by the walk that knows how
+ *   to place it (see collectFromBake's fallbacks), so a row cannot answer for it.
+ * - Folded values are NOT recomputed: this is the placement-only fold. A change to visibility, opacity, layers, draw
+ *   order or state re-derives its subtree from its own facts instead (a different fold, deliberately not mixed in).
+ *
+ * @param bake   The table containing @p index.
+ * @param index  The row whose own placement changed.
+ * @return How many rows were re-placed (the row itself included; 0 for a view-dependent row).
+ */
+std::uint32_t refoldSubtree(SceneBake& bake, std::uint32_t index);
+
+/**
+ * @brief Reorders @p commands into the draw order a frame draws them in, in place.
+ *
+ * @details
+ * - The order is the CONTENT's declared draw order (see Node::setDrawOrder), then opaque before transparent, then
+ *   front-to-back for opaque and back-to-front for transparent. Ties keep the collection order.
+ * - It exists as its own step because BOTH producers of a draw list need it and neither may own a copy: the scene's
+ *   collection and the render world's (see `.ai/design/graphics-threading.md`).
+ *
+ * @param commands Commands to reorder (replaced by their sorted order).
+ * @param eye      World-space eye point the distances are measured from.
+ */
+void sortCollected(std::vector<RenderCommand>& commands, const Vec3d& eye);
 
 void collectFromBake(const SceneBake&            bake,
                      const Frustum&              frustum,

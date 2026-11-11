@@ -478,6 +478,8 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 ### 9.2 已知缺口 / 待办
 
 - 落地阶段与触发条件见 `../backlog/graphics.md` T31；并行 select 由 T24 单独触发。
+- **镜像目前仍从节点缓存取两样东西**：世界盒（`BoundsCache`，键是 buffer revision）与子树层并集（`Node::subtreeLayerUnion`，
+  键是 layer epoch）。两者都按“公告”失效，所以它们的行化就是 P2 要做的事（也是镜像能真正跑在引擎线程上的前提）。
 - 多文档 = 多控件 = 多会话（各自的引擎线程与设备），不做"多窗口共享一份内容"的并发编辑。
 - `OwnedFrame` 的真实消费者（远程/录制）仍未出现（T18）。
 - **仿真产出的 pose 要不要绕过场景图**：一种更激进的写法是“pose 是每帧的值，场景图只存拓扑”（仿真侧持关节角数组，
@@ -490,6 +492,10 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   这一步不改任何宿主代码：`inline` 下行为与今天逐位相同，等价性用例先把镜像钉住。
   **第一步已启动**：bake/select 的表类型与两趟走法已抽到 `src/viz/graphics/src/DrawListBake.hpp`（内部头），
   内容侧行为不变（`test_graphics` 506/506），这样镜像侧能填同一张表、走同一份算法 —— 否则“等价性”只是两套实现互相验证。
+  **第二步已启动**：`detail::RenderWorld`（`src/viz/graphics/src/RenderWorld.{hpp,cpp}`）= 表 + 行索引 +
+  `place()`（只有 placement 这一种 delta）+ `collect()`（复用 `collectFromBake` / `sortCollected`），
+  等价性用例 `RenderWorldTest` 四条：镜像的采集与内容侧逐命令相同、placement 只重算受影响子树（计数器）、
+  不告诉就不动、答不了就拒（未知节点/逐视图放置）。
 - **P2**：`threaded` 下的结构/状态/描述/相机 delta 与镜像增量重算。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。

@@ -348,7 +348,8 @@ std::uint32_t bakeSubtree(const Node*                 node,
                           float                       parent_opacity,
                           const InheritedState&       inherited,
                           bool                        under_view_dependent,
-                          SceneBake&                  bake)
+                          SceneBake&                  bake,
+                          std::uint32_t               parent)
 {
     if (node == nullptr || !node->isVisible()) {
         return static_cast<std::uint32_t>(bake.entries.size());
@@ -397,7 +398,7 @@ std::uint32_t bakeSubtree(const Node*                 node,
     }
     else if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
-            (void)bakeSubtree(child.get(), node_world * child->localTransformMatrix(), node_opacity, subtree, view_dependent, bake);
+            (void)bakeSubtree(child.get(), node_world * child->localTransformMatrix(), node_opacity, subtree, view_dependent, bake, index);
         }
     }
 
@@ -405,6 +406,8 @@ std::uint32_t bakeSubtree(const Node*                 node,
     // the SUBTREE's (the same call the walk culls with, one pass, cached per node by BoundsCache).
     SceneBake::Entry& entry = bake.entries[index];
     entry.node      = node;
+    entry.local     = node->localTransformMatrix();
+    entry.parent    = parent;
     entry.world     = node_world;
     entry.layers    = layers;
     entry.draw_order = static_cast<std::int32_t>(subtree.draw_order);
@@ -508,6 +511,72 @@ void collectFromBake(const SceneBake&          bake,
 }
 
 } // namespace
+
+namespace detail
+{
+
+std::uint32_t refoldSubtree(SceneBake& bake, std::uint32_t index)
+{
+    if (index >= bake.entries.size()) {
+        return 0U;
+    }
+    const SceneBake::Entry& root = bake.entries[index];
+    if (root.view_dependent) {
+        return 0U; // per-view placement: only the walk that knows the camera can answer for it
+    }
+    // A table's first row is placed by whoever built it (the scene hands the root's world in), so it keeps its
+    // world; every row below it is its parent's world times its own local placement.
+    const bool table_root = root.parent == SceneBake::kNoParent;
+
+    std::uint32_t recomputed = 0U;
+    std::uint32_t cursor     = index;
+    while (cursor < root.end) {
+        SceneBake::Entry& row = bake.entries[cursor];
+        if (cursor != index || !table_root) {
+            row.world = bake.entries[row.parent].world * row.local;
+        }
+        ++recomputed;
+        if (row.view_dependent) {
+            cursor = row.end; // its whole run is resolved per view; nothing below depends on this row's world
+            continue;
+        }
+        ++cursor;
+    }
+    return recomputed;
+}
+
+void sortCollected(std::vector<RenderCommand>& commands, const Vec3d& eye)
+{
+    std::vector<std::pair<double, RenderCommand*>> keyed;
+    keyed.reserve(commands.size());
+    for (RenderCommand& cmd : commands) {
+        const auto origin = cmd.model_matrix * vn::math::Point3d(0.0, 0.0, 0.0);
+        keyed.emplace_back((origin.asVector() - eye).length2(), &cmd);
+    }
+    std::stable_sort(keyed.begin(), keyed.end(), [](const std::pair<double, RenderCommand*>& lhs, const std::pair<double, RenderCommand*>& rhs) {
+        // The draw order DECLARED on the content is the outer key (see Node::setDrawOrder): a
+        // higher order is drawn later, which is how content that must land on top of the rest
+        // - an outline, a decal, a highlight - is expressed without its own pass. Equal orders
+        // fall through to the ordering the collection has always produced, so the default
+        // (everybody at 0) is bit for bit the picture it was.
+        if (lhs.second->draw_order != rhs.second->draw_order) {
+            return lhs.second->draw_order < rhs.second->draw_order;
+        }
+        if (lhs.second->isTransparent() != rhs.second->isTransparent()) {
+            return !lhs.second->isTransparent();
+        }
+        return lhs.second->isTransparent() ? lhs.first > rhs.first : lhs.first < rhs.first;
+    });
+    std::vector<RenderCommand> ordered;
+    ordered.reserve(keyed.size());
+    for (auto& [distance, cmd] : keyed) {
+        (void)distance;
+        ordered.push_back(std::move(*cmd));
+    }
+    commands = std::move(ordered);
+}
+
+} // namespace detail
 
 /**
  * @brief One frame's collected command lists, keyed by the camera's view.
@@ -778,46 +847,11 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     detail::BoundsCache           bounds;
     bool                          viewport_used = false;
     detail::collectFromBake(*content_bake_, frustum, view, layer_mask, bounds, viewport_used, commands);
-    // Where the sort puts things, in one sentence: the draw order the CONTENT declared is the outer key (see
-    // Node::setDrawOrder - higher is drawn later), and inside one order: opaque front-to-back (near first),
-    // transparent back-to-front (far first) after the opaque batch. Transparent objects need painter's
-    // order for correct alpha blending.
-    //
-    // The sort key is computed once per command instead of inside the
-    // comparator: a comparator runs O(n log n) times, and the original form
-    // therefore re-did two matrix-vector products per comparison. Squared
-    // distance orders identically to distance (sqrt is monotonic on [0, inf))
-    // and skips the roots. Sorting pointers keeps std::stable_sort's stable
-    // semantics over the collection order, so ties still favour the earlier
-    // command.
-    std::vector<std::pair<double, RenderCommand*>> keyed;
-    keyed.reserve(commands.size());
-    for (RenderCommand& cmd : commands) {
-        const auto origin = cmd.model_matrix * vn::math::Point3d(0.0, 0.0, 0.0);
-        keyed.emplace_back((origin.asVector() - eye).length2(), &cmd);
-    }
-    std::stable_sort(keyed.begin(), keyed.end(), [](const std::pair<double, RenderCommand*>& lhs, const std::pair<double, RenderCommand*>& rhs) {
-        // The draw order DECLARED on the content is the outer key (see Node::setDrawOrder): a
-        // higher order is drawn later, which is how content that must land on top of the rest
-        // - an outline, a decal, a highlight - is expressed without its own pass. Equal orders
-        // fall through to the ordering the collection has always produced, so the default
-        // (everybody at 0) is bit for bit the picture it was.
-        if (lhs.second->draw_order != rhs.second->draw_order) {
-            return lhs.second->draw_order < rhs.second->draw_order;
-        }
-        if (lhs.second->isTransparent() != rhs.second->isTransparent()) {
-            return !lhs.second->isTransparent();
-        }
-        return lhs.second->isTransparent() ? lhs.first > rhs.first : lhs.first < rhs.first;
-    });
-    std::vector<RenderCommand> ordered;
-    ordered.reserve(keyed.size());
-    for (auto& [distance, cmd] : keyed) {
-        (void)distance;
-        ordered.push_back(std::move(*cmd));
-    }
+    // The view's half ends in one order, and the order is the same rule for every producer of a draw list (the
+    // render world sorts its own collection with this very function - see DrawListBake.hpp).
+    detail::sortCollected(commands, eye);
     // Into the shared list by MOVE: the walk's result is the only copy that ever exists.
-    auto shared = std::make_shared<const std::vector<RenderCommand>>(std::move(ordered));
+    auto shared = std::make_shared<const std::vector<RenderCommand>>(std::move(commands));
     if (content_frame_ != 0) {
         if (content_memo_ == nullptr) {
             content_memo_ = std::make_unique<ContentMemo>();
