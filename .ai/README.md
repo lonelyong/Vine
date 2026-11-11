@@ -159,11 +159,14 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（0）
+## research/ —— 调研与提案（1）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
-（无：三角形树的两帧统一与 `.vbtp` 持久化已并入 `design/graphics-geometry.md` 2.10 / F33、
+- `graphics-2026-11-11-next.md` —— graphics 整体骨架的重设计提案与论证（快照 + 句柄 + 声明式计划、
+  `I1–I7` 不变量、判死条件 `K1–K6`、三步验证）。对应 backlog `T32`；采纳则改写 `design/`，否决则留 ADR。
+
+（此前的三角形树两帧统一与 `.vbtp` 持久化已并入 `design/graphics-geometry.md` 2.10 / F33、
 `design/geometry-bvh.md` 2.13 / F8 与 `design/robotics-io-design.md` F7。）
 
 ## backlog/ —— 开放待办（13）

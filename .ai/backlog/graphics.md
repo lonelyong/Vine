@@ -27,6 +27,7 @@
 | T1 | LOD / 空间划分 | 无 LOD 节点、无八叉树 / 可见性集合 | 大场景“每帧收集本身成为瓶颈” | `../design/graphics-scene.md` §2.3 |
 | T2 | 选择态 | 选中集 / 描边 / 框选 / 多选不在框架 | 多处调用点各自重写同一套选择与高亮 | `../design/graphics-scene.md` §2.5 |
 | T4 | L2b 分层目标 | 数组层 + 一次写多层；L2a 已裁决不做 | VR / 单 pass 多视图真正落地，或实测 N-pass 开销成为瓶颈 | `../design/graphics-rendering.md` §2.1 |
+| T32 | graphics-next 骨架（快照 + 句柄 + 声明式计划） | 整体重设计的提案与论证在 `../research/graphics-2026-11-11-next.md`：跨层只有不可变值、发布=指针交换、身份={index,domain,generation}、驻留按快照引用回收、计划是声明。先做 §5.1 的 `detail::` 原型（不动公开 API），用 `SceneTest.MeasureWhatOneCollectionCosts*` 对照 | 该文件 §4.5 的任一条判死条件被**反向**触发，即：实测显示今天的桥接成本已成为真实瓶颈（2000 drawable 相机移动 collect 进入 16 ms 预算，或发布/ha 寿命层再出现 UAF） | `../research/graphics-2026-11-11-next.md` §4.5 / §5 |
 | T6 | update traversal | 无逐帧节点更新入口（`FrameContext` / `UpdateContext` 没有消费者） | 动画 / 关节回放等需要每帧更新节点状态 | `../design/graphics-scene.md` §2.4 |
 | T7 | 节点灯 / 逐 draw 选灯 | `Light` 在 `Scene` 上且是世界坐标：灯不能跟着子树动，也没有“这几盏灯照这个 draw”（灯块按声明顺序取前 8 盏）。两者是同一个模型的缺口 | 出现挂在会动物体上的灯，或一场景灯数远超槽数且掉落影响画面 | `../design/graphics-scene.md` §2.7、`../design/graphics-shader-params.md`、本文件 S7 |
 | T23 | 点云渲染桥 | `PointCloud` 已在 geometry，但 `geometryFromShape()` 只接网格：点云要变成 `Topology::Points` 的 `Geometry`（位置/法线/颜色三个通道原样共享，点大小由程序写）才会被画出来 | 出现要显示点云文件（PLY 等）或点云节点的消费者 | `../design/graphics-geometry.md` 3.6 F31 |
