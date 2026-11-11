@@ -196,6 +196,7 @@ P1 要落的是"两模式 + 镜像 + 通道 + 等价性"，所以先把**骨架*
 | `detail::RenderWorld` | `src/viz/graphics/src/RenderWorld.{hpp,cpp}` | "这些值现在是什么" | 内容图、节点、帧 |
 | `detail::ContentMirror` | `src/viz/graphics/src/ContentMirror.{hpp,cpp}` | "一段内容的镜像，靠值保持同步" | 帧、绑定、记录 |
 | `detail::FrameWorker` | `src/viz/graphics/src/FrameWorker.{hpp,cpp}` | "一帧的头三步按序做完了" | 内容世界的任何指针、哪个线程 |
+| `detail::FrameRunner` | `src/viz/graphics/src/FrameRunner.{hpp,cpp}` | "这段跑在哪个线程、什么时候跑完" | 帧里有什么、设备、表面 |
 
 ```mermaid
 flowchart LR
@@ -237,8 +238,15 @@ flowchart LR
 - **`bindContent` 是一条明写的规则，不是隐含约定**（`G4`）：`DrawDescription::content` 说的是"这段内容"，
   它只在内容线程有效；引擎侧展开前必须把它换成镜像，否则就是跨线程读内容。P1 用一张
   `const DrawListSource* → DrawListSource*` 的映射，inline 模式下是恒等。
-- **通道不含等待**：唤醒、帧号、完成通知都在 worker（`2.8` 的空闲等待）。这条边界让 P1 的 inline 模式**完全不需要
+- **`FrameRunner` 是唯一持线程的东西**：它把 worker 的 `run` 放到调用线程（inline）或自己的引擎线程（threaded），
+  并用"一个请求 + 一个完成"的握手把帧值交出去、等这一帧跑完再交回 —— 所以**调用者在两种模式下看到同一个答案**，也不会有
+  两帧同时碰一个帧值。空闲时引擎线程阻塞在条件变量上（`2.8`：等待而不是轮询）；从引擎线程自己请求一帧、或在 `stop()`
+  之后再请求，都**就地跑**（等待自己会死锁；停下来的 runner 就是一个 inline runner）。
+- **通道不含等待**：唤醒、帧号、完成通知都在 runner（`2.8` 的空闲等待）。这条边界让 P1 的 inline 模式**完全不需要
   线程原语**，也让 threaded 模式的多帧在飞（后续）不改通道的契约。
+- **为什么不急着接进 `RenderEngine::frame()`**：一帧的后半段是 `executeFrame`（取图、记录、提交、呈现），它读设备与表面。
+  把这些留在调用线程、只把 expand 搬到线程，是**半个线程**——比不搬更差（多一次握手，没有任何并发收益）；把它也搬过去，
+  就要先有 P3 的设备/表面所有权契约。所以 P1 的骨架先证明"同一条路径在两种线程下给出同一张图"，接入等 P3。
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -653,8 +661,13 @@ flowchart LR
   （inline 正确，换线程就是跨线程读 —— 计数是让宿主发现自己漏发的方式），已被 bind 过的帧再跑一次不会误判、不会重收集。
   验收：`FrameWorkerTest` 三条 —— 经 worker 的帧与经 `Scene` 的帧逐命令相同（含模型矩阵逐元素）、同一帧跑两次、未发布的
   内容被计数而不是静默镜像。
-- **P1 下一步**：线程与 `start()/stop()`（`2.8` 的空闲等待、完成通知、`RenderEngine` 的可选模式），然后才是把它接进
-  `RenderEngine::frame()`；接入之前宿主代码不动，默认仍是 inline（直接用 `Scene` 当源）。
+- **P1 第四步已落**：`detail::FrameRunner`（`src/viz/graphics/src/FrameRunner.{hpp,cpp}`）—— `FrameMode::Inline` /
+  `Threaded` 两种模式跑**同一条** `FrameWorker::run`；threaded 用"一个请求 + 一个完成"握手，**一帧在飞、严格交替**，
+  空闲时阻塞在条件变量上；`stop()` 幂等，停后即成 inline runner；从引擎线程自己请求就地跑（避免等自己）。
+  验收：`FrameRunnerTest` 三条 —— 两种模式与"内容自己展开"三者逐命令同图、64 帧过线程每帧等价（`applied()` 证明只应用了
+  握手那一条 delta）、`stop()` 之后仍能跑帧且不等待。
+- **P1 下一步**：把它接进 `RenderEngine`（可选模式 + `publish(每帧一次，版本比较)` + 把 expand 从 `buildFrameValue` 移出去），
+  前提是 P3 的设备/表面所有权契约 —— 见 §2.11 最后一条；在那之前宿主代码与默认行为都不动。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：
