@@ -1,20 +1,21 @@
 #include "RenderWorld.hpp"
 
+#include <utility>
+
 VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
 
-void RenderWorld::buildFrom(const Node& root, float opacity)
+void RenderWorld::adopt(SceneBake rows)
 {
     clear();
-    bake_.seed.parent_opacity = opacity;
-    (void)bakeSubtree(root, bake_);
-    (void)resolveSubtree(bake_, 0U);
+    bake_ = std::move(rows);
     index_.reserve(bake_.rows.size());
     for (std::uint32_t index = 0; index < bake_.rows.size(); ++index) {
-        if (const Node* node = bake_.rows[index].node) {
-            index_.emplace(node, index);
+        const RowId identity = bake_.rows[index].identity;
+        if (identity != nullptr) {
+            index_.emplace(identity, index);
         }
     }
 }
@@ -23,17 +24,23 @@ void RenderWorld::clear()
 {
     bake_.rows.clear();
     bake_.fallbacks.clear();
+    bake_.seed = SceneBake::Seed{};
     index_.clear();
     rows_recomputed_ = 0;
     refusals_        = 0;
 }
 
-bool RenderWorld::place(const Node& node, const Mat4d& local)
+bool RenderWorld::contains(RowId identity) const noexcept
 {
-    const auto found = index_.find(&node);
+    return index_.find(identity) != index_.end();
+}
+
+bool RenderWorld::place(RowId identity, const Mat4d& local)
+{
+    const auto found = index_.find(identity);
     if (found == index_.end()) {
         ++refusals_;
-        return false; // not in this world: it was built from another graph, or the node is not visible
+        return false; // not in this world: adopted from another graph, or the row is not visible
     }
     Row& row = bake_.rows[found->second];
     if (row.dependence != ViewDependence::None) {
@@ -51,10 +58,15 @@ bool RenderWorld::place(const Node& node, const Mat4d& local)
 
 void RenderWorld::collect(const CollectView& view, std::uint32_t layer_mask, std::vector<RenderCommand>& out) const
 {
-    const Frustum frustum = Frustum::fromViewProjection(view.viewProjection());
+    const Frustum frustum       = Frustum::fromViewProjection(view.viewProjection());
     bool          viewport_used = false;
     selectFromBake(bake_, frustum, view, layer_mask, viewport_used, out);
     sortCollected(out, view.eye);
+}
+
+std::uint32_t RenderWorld::refreshBoxes()
+{
+    return detail::refreshBoxes(bake_);
 }
 
 std::size_t RenderWorld::rowCount() const noexcept
@@ -70,11 +82,6 @@ std::uint64_t RenderWorld::rowsRecomputed() const noexcept
 std::uint64_t RenderWorld::refusals() const noexcept
 {
     return refusals_;
-}
-
-std::uint32_t RenderWorld::refreshBoxes()
-{
-    return detail::refreshBoxes(bake_);
 }
 
 } // namespace detail

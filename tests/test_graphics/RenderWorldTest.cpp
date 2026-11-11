@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <vine/intrusive_ptr.hpp>
@@ -24,7 +25,9 @@ using vn::graphics::Group;
 using vn::graphics::MatrixTransform;
 using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
+using vn::graphics::detail::buildRows;
 using vn::graphics::detail::RenderWorld;
+using vn::graphics::detail::SceneBake;
 using vn::intrusive_ptr;
 using vn::math::Mat4d;
 using vn::math::Vec3d;
@@ -115,8 +118,10 @@ TEST(RenderWorldTest, TheMirrorCollectsWhatTheContentCollects)
     Scene          scene;
     scene.setRoot(assembly.root);
 
+    SceneBake  rows;
+    buildRows(*assembly.root, rows);
     RenderWorld world;
-    world.buildFrom(*assembly.root);
+    world.adopt(std::move(rows));
     EXPECT_EQ(world.rowCount(), 5U) << "the root, the arm, the link and the two leaves";
 
     const CollectView view = clipBoxView();
@@ -133,8 +138,10 @@ TEST(RenderWorldTest, APlacementEditReplacesThatSubtreeAndNothingElse)
     Scene    scene;
     scene.setRoot(assembly.root);
 
+    SceneBake  rows;
+    buildRows(*assembly.root, rows);
     RenderWorld world;
-    world.buildFrom(*assembly.root);
+    world.adopt(std::move(rows));
 
     const CollectView view = clipBoxView();
     const std::uint64_t before = world.rowsRecomputed();
@@ -142,7 +149,7 @@ TEST(RenderWorldTest, APlacementEditReplacesThatSubtreeAndNothingElse)
     // The host's own edit, and the value it hands over: the mirror never reads the node.
     const Mat4d moved = vn::math::translate(0.05, 0.25, 0.0);
     assembly.arm->setMatrix(moved);
-    ASSERT_TRUE(world.place(*assembly.arm, moved));
+    ASSERT_TRUE(world.place(assembly.arm.get(), moved));
     EXPECT_EQ(world.rowsRecomputed() - before, 3U) << "the arm, its link and the link's leaf - not the whole assembly";
 
     std::vector<RenderCommand> mirrored;
@@ -169,8 +176,10 @@ TEST(RenderWorldTest, TheMirrorMovesOnlyWhenItIsTold)
     Scene    scene;
     scene.setRoot(assembly.root);
 
+    SceneBake  rows;
+    buildRows(*assembly.root, rows);
     RenderWorld world;
-    world.buildFrom(*assembly.root);
+    world.adopt(std::move(rows));
 
     const CollectView view = clipBoxView();
     std::vector<RenderCommand> before_mirror;
@@ -196,17 +205,21 @@ TEST(RenderWorldTest, TheMirrorMovesOnlyWhenItIsTold)
 TEST(RenderWorldTest, AnEditItCannotAnswerForIsRefused)
 {
     Assembly assembly = makeAssembly();
+    SceneBake  rows;
+    buildRows(*assembly.root, rows);
     RenderWorld world;
-    world.buildFrom(*assembly.root);
+    world.adopt(std::move(rows));
 
     // A node this world was not built from: it has no row, so there is nothing to re-place.
     const auto        stranger = placed(1.0, 0.0, 0.0);
     const Mat4d       moved    = vn::math::translate(1.0, 0.0, 0.0);
-    EXPECT_FALSE(world.place(*stranger, moved));
+    EXPECT_FALSE(world.place(stranger.get(), moved));
     EXPECT_EQ(world.refusals(), 1U);
 
     // Building from another graph starts a new world: the old rows (and their shares) are gone.
-    world.buildFrom(*stranger);
+    SceneBake other;
+    buildRows(*stranger, other);
+    world.adopt(std::move(other));
     EXPECT_EQ(world.rowCount(), 1U);
-    EXPECT_TRUE(world.place(*stranger, moved));
+    EXPECT_TRUE(world.place(stranger.get(), moved));
 }

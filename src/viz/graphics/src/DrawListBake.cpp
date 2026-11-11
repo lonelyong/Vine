@@ -243,9 +243,7 @@ void foldUp(SceneBake& bake, std::uint32_t index)
     row.layers_union = union_of_layers;
 }
 
-} // namespace
-
-std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t parent)
+std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t parent = SceneBake::kNoParent)
 {
     if (!node.isVisible()) {
         return static_cast<std::uint32_t>(bake.rows.size());
@@ -341,6 +339,17 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
     row.end         = static_cast<std::uint32_t>(bake.rows.size());
     row.child_count = children;
     return row.end;
+}
+
+} // namespace
+
+void buildRows(const Node& root, SceneBake& bake, float opacity)
+{
+    bake.rows.clear();
+    bake.fallbacks.clear();
+    bake.seed.parent_opacity = opacity;
+    (void)bakeSubtree(root, bake);
+    (void)resolveSubtree(bake, 0U);
 }
 
 std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index)

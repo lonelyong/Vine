@@ -427,9 +427,7 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     // (measured: SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera).
     if (content_bake_ == nullptr || bake_epoch_ != epoch) {
         content_bake_ = std::make_unique<detail::SceneBake>();
-        content_bake_->seed.parent_opacity = opacity_;
-        (void)detail::bakeSubtree(*root_, *content_bake_);
-        (void)detail::resolveSubtree(*content_bake_, 0U);
+        detail::buildRows(*root_, *content_bake_, opacity_);
         bake_epoch_ = epoch;
         ++content_bake_count_;
     }

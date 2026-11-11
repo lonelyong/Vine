@@ -211,22 +211,21 @@ class Frustum {
 };
 
 /**
- * @brief Fills @p bake with one node's subtree: every node's OWN facts and the structure, in walk order.
+ * @brief Builds a draw list's rows from a graph: every node's OWN facts, then one fold over them.
  *
  * @details
- * - It is the ONLY code that reads a graph for a draw list, and it runs on the thread that owns that graph. It
- *   resolves nothing: `resolveSubtree` folds what it wrote (one fold, used by the build and by every edit).
+ * - It is the ONLY code that reads a graph for a draw list, and it runs on the thread that owns that graph. What it
+ *   writes is values; a side that owns no graph takes them as they are (see RenderWorld::adopt).
  * - Invisible subtrees produce no rows at all: the walk skipped them before, and a row that can never be drawn is
  *   memory nobody reads.
  * - A node that DECLARES a per-view placement (Node::viewDependence) starts a run recorded in `bake.fallbacks`; the
  *   select hands that run back to the walk that knows how to place it for the camera at hand.
  *
- * @param node   Subtree root to build.
- * @param bake   Receives the rows.
- * @param parent Row index of @p node's parent (the table's first row has none).
- * @return One past the last row this subtree produced.
+ * @param root    Subtree root to build.
+ * @param bake    Receives the rows (its previous contents are dropped).
+ * @param opacity Opacity accumulated above @p root (the scene's own).
  */
-std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t parent = SceneBake::kNoParent);
+void buildRows(const Node& root, SceneBake& bake, float opacity = 1.0F);
 
 /**
  * @brief Re-resolves ONE row's subtree: the one fold, run by the build once and by a producer on every edit.
