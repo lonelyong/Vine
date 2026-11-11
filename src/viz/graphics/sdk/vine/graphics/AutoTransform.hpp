@@ -217,37 +217,22 @@ class VN_GRAPHICS_API AutoTransform : public Group {
      */
     Mat4d matrix() const;
 
-    /** @brief Computes this billboard's world matrix for the view being drawn.
+    /** @brief Gets this billboard's per-view placement as a value (see Node::viewPlacement).
      *
      * @details
-     * - NoRotation without auto-scale is view-independent (the walk uses the plain local matrix). A
-     *   view-dependent mode fills @p world with
-     *   `T(world_position) * R(auto) * R(rotation) * S(scale) * T(-pivot)`.
-     * - The world position is `parent_world * position`; the automatic rotation is computed in the node's
-     *   local frame from the model-view, so a parent rotation is cancelled by it and a parent scale is
-     *   inherited (see the class note).
-     * - With autoScaleToScreen() the scale is uniform and derived from the viewport; otherwise the authored
-     *   scale() is used. An invalid viewport keeps the authored scale.
+     * - NoRotation without auto-scale answers null: the walk uses the plain local matrix. Otherwise the value carries
+     *   the mode, the authored placement and the scale limits, and resolves
+     *   `T(world_position) * R(auto) * R(rotation) * S(scale) * T(-pivot)` from a view alone
+     *   (see ViewPlacement::localMatrix).
+     * - The automatic rotation is computed in the node's local frame from the model-view, so a parent rotation is
+     *   cancelled by it and a parent scale is inherited (see the class note).
+     * - With autoScaleToScreen() the scale is uniform and derived from the viewport; otherwise the authored scale()
+     *   is used. A view without a viewport keeps the authored scale.
      *
-     * @param parent_world World matrix of this node's parent.
-     * @param view         The view being drawn: projection / view / eye / up and the device-pixel viewport.
-     * @param world        Receives the world matrix when the return value is not None.
-     * @return None when neither automatic mode nor screen-space scaling is on; View for an auto-rotating
-     *         billboard without a viewport; ViewAndViewport when screen-space scaling uses the viewport.
+     * @return The placement value, or null when neither automatic mode nor screen-space scaling is on.
      */
-    ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const override;
+    [[nodiscard]] ViewPlacementPtr viewPlacement() const override;
 
-    /** @brief Gets the WIDEST view dependence this billboard's configuration can produce (see Node::viewDependence).
-     *
-     * @details
-     * - Declared from the node's own switches, because a baked pass has no camera to discover it with:
-     *   screen-space scaling ⇒ ViewAndViewport (it may or may not use this view's viewport), an auto-rotation mode
-     *   ⇒ View, neither ⇒ None. A particular view may need LESS (auto-scale with no viewport resolves like None),
-     *   never more.
-     *
-     * @return The strongest dependence the configuration allows.
-     */
-    [[nodiscard]] ViewDependence viewDependence() const noexcept override;
     /** @brief Computes a conservative world-space box (the sphere around position covering every orientation).
      *
      * @details
@@ -263,8 +248,7 @@ class VN_GRAPHICS_API AutoTransform : public Group {
     Mat4d localTransformMatrix() const override;
 
   private:
-    void   recompose();
-    double screenScaleFor(const CollectView& view, const Mat4d& parent_world) const;
+    void recompose();
 
     Point3d        position_{};
     Quatd          rotation_{};

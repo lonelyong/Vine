@@ -224,17 +224,9 @@ Mat4d Node::localTransformMatrix() const
     return Mat4d();
 }
 
-ViewDependence Node::localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const
+ViewPlacementPtr Node::viewPlacement() const
 {
-    (void)parent_world;
-    (void)view;
-    (void)world;
-    return ViewDependence::None;
-}
-
-ViewDependence Node::viewDependence() const noexcept
-{
-    return ViewDependence::None;
+    return {}; // placed by localTransformMatrix(): the common case (see the declaration)
 }
 
 VN_GRAPHICS_NS_END

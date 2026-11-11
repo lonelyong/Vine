@@ -12,6 +12,10 @@ void RenderWorld::adopt(SceneBake rows)
 {
     clear();
     bake_ = std::move(rows);
+    // A mirror holds VALUES. The node record is the content's own bookkeeping (it is what refreshes a box when bytes
+    // announce themselves), and this side must not name a node - so it is dropped here, once, where the handshake
+    // happens (see SceneBake::nodes).
+    bake_.nodes.clear();
     index_.reserve(bake_.rows.size());
     for (std::uint32_t index = 0; index < bake_.rows.size(); ++index) {
         const RowId identity = bake_.rows[index].identity;
@@ -24,7 +28,7 @@ void RenderWorld::adopt(SceneBake rows)
 void RenderWorld::clear()
 {
     bake_.rows.clear();
-    bake_.fallbacks.clear();
+    bake_.nodes.clear();
     bake_.seed = SceneBake::Seed{};
     index_.clear();
     rows_recomputed_ = 0;
@@ -36,23 +40,16 @@ bool RenderWorld::contains(RowId identity) const noexcept
     return index_.find(identity) != index_.end();
 }
 
-bool RenderWorld::place(RowId identity, const Mat4d& local)
+bool RenderWorld::place(RowId identity, const Mat4d& local, ViewPlacementPtr placement)
 {
     const auto found = index_.find(identity);
     if (found == index_.end()) {
         ++refusals_;
         return false; // not in this world: adopted from another graph, or the row is not visible
     }
-    Row& row = bake_.rows[found->second];
-    if (row.dependence != ViewDependence::None) {
-        ++refusals_;
-        return false; // its placement is a function of the view: only the walk that knows the camera may answer
-    }
-    if (row.box_from_node) {
-        ++refusals_;
-        return false; // its box could only be read from a node, so this world cannot re-place it from values
-    }
-    row.local = local;
+    Row& row      = bake_.rows[found->second];
+    row.local     = local;
+    row.placement = std::move(placement);
     rows_recomputed_ += resolveSubtree(bake_, found->second);
     return true;
 }
@@ -63,11 +60,6 @@ void RenderWorld::collect(const CollectView& view, std::uint32_t layer_mask, std
     bool          viewport_used = false;
     selectFromBake(bake_, frustum, view, layer_mask, viewport_used, out);
     sortCollected(out, view.eye);
-}
-
-std::uint32_t RenderWorld::refreshBoxes()
-{
-    return detail::refreshBoxes(bake_);
 }
 
 std::size_t RenderWorld::rowCount() const noexcept

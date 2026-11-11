@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <limits>
-#include <unordered_map>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -24,125 +23,35 @@ struct Inherited {
     bool             view_dependent{ false };
 };
 
-/// @brief Per-run cache of the world-space bounds the graph walk culls with (per-view runs only).
-class BoundsCache {
-  public:
-    const Aabbd& worldBound(const Node* node, const Mat4d& world)
-    {
-        const auto cached = bounds_.find(node);
-        if (cached != bounds_.end()) {
-            return cached->second;
-        }
-        Aabbd box   = Aabbd::empty();
-        Aabbd local = Aabbd::empty();
-        if (node->subtreeBounds(local)) {
-            box = local.transformed(world);
-        }
-        else if (const auto* group = obj_cast<Group>(node)) {
-            for (const auto& child : group->children()) {
-                box.expandBy(worldBound(child.get(), world * child->localTransformMatrix()));
-            }
-        }
-        else {
-            box = node->boundingBox();
-        }
-        return bounds_.emplace(node, box).first->second;
-    }
-
-  private:
-    std::unordered_map<const Node*, Aabbd> bounds_;
-};
-
-/// @brief Collects one subtree's commands by WALKING it: the per-view half of a run (see SceneBake::Fallback).
+/// @brief Records a LEAF's own bound on its row: in the leaf's own frame when it can state one.
 ///
-/// The only reason this still exists is a node whose placement is a function of the view (Node::viewDependence): the
-/// rows cannot place it, so the run it starts is handed back to the walk that can. Everything else in a select reads
-/// rows only.
-void collectNodeCommands(const Node*                 node,
-                         const Mat4d&                world,
-                         const Frustum&              frustum,
-                         const CollectView&          view,
-                         float                       opacity,
-                         const Inherited&            inherited,
-                         std::uint32_t               layer_mask,
-                         BoundsCache&                bounds,
-                         bool&                       viewport_used,
-                         std::vector<RenderCommand>& out)
+/// @details
+/// - The engine's leaf answers in its own frame (`Geometry::subtreeBounds`), and so does any node that can; that box is
+///   what every ancestor is folded from, and it survives a placement edit untouched.
+/// - A leaf the engine cannot see inside (a Geometry subclass that places itself in ways only it knows) answers in
+///   WORLD space only. Its answer is kept as a value (`Row::world_box_answer`) and the fold converts it with the row's
+///   own placement, so the cull above it keeps working instead of silently under-measuring the subtree.
+/// - A leaf that cannot state a bound at all marks its subtree UNCULLABLE rather than contributing an empty box, which
+///   would quietly drop everything above it.
+///
+/// @param node The leaf to read.
+/// @param row  Its row (own facts are written; the resolved boxes are the fold's).
+void recordLeafBox(const Node& node, Row& row)
 {
-    if (node == nullptr || !node->isVisible()) {
+    // Idempotent: the whole leaf-box state is recomputed from the node, so a leaf that answers again after a while
+    // gets its cull back (the refresh runs this on every collection a content-side table is used for).
+    row.world_box_answer.reset();
+    Aabbd local = Aabbd::empty();
+    if (node.subtreeBounds(local)) {
+        row.local_box = local;
+        row.unbounded = false;
         return;
     }
-    if ((node->subtreeLayerUnion(inherited.layers) & layer_mask) == 0) {
-        return;
-    }
-    Mat4d                node_world = world;
-    Mat4d                view_world;
-    const ViewDependence dependence = node->localToWorldForView(world, view, view_world);
-    if (dependence != ViewDependence::None) {
-        node_world = view_world;
-    }
-    if (dependence == ViewDependence::ViewAndViewport) {
-        viewport_used = true;
-    }
-    const std::uint32_t layers = node->layers().value_or(inherited.layers);
-    if (frustum.isOutside(bounds.worldBound(node, node_world))) {
-        return;
-    }
-    const float node_opacity = opacity * node->opacity();
-
-    Inherited subtree = inherited;
-    subtree.layers     = layers;
-    subtree.draw_order = node->drawOrder().value_or(inherited.draw_order);
-    if (const auto* state_node = obj_cast<StateNode>(node)) {
-        subtree.state.merge(state_node->renderState());
-        if (raw_ptr<MaterialBase> material = state_node->material()) {
-            subtree.material = material;
-        }
-        if (raw_ptr<ShaderProgram> program = state_node->program()) {
-            subtree.program = program;
-        }
-    }
-
-    if (const auto* geometry = obj_cast<Geometry>(node)) {
-        if ((layers & layer_mask) == 0) {
-            return;
-        }
-        const float effective = std::clamp(node_opacity, 0.0f, 1.0f);
-        for (std::size_t index = 0; index < geometry->primitiveCount(); ++index) {
-            const Primitive* primitive = geometry->primitive(index);
-            if (primitive == nullptr) {
-                continue;
-            }
-            if (primitive->hasInstances() && primitive->visibleInstanceCount() == 0u) {
-                continue;
-            }
-            const raw_ptr<MaterialBase> geometry_material = geometry->material();
-            const MaterialBasePtr       material = primitive->material != nullptr
-                                                       ? MaterialBasePtr(primitive->material)
-                                                       : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : subtree.material);
-            const raw_ptr<ShaderProgram> geometry_program = geometry->program();
-            const ShaderProgramPtr       program = primitive->program != nullptr
-                                                       ? ShaderProgramPtr(primitive->program)
-                                                       : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program) : subtree.program);
-            auto& cmd          = out.emplace_back(intrusive_ptr<Geometry>(const_cast<Geometry*>(geometry)), material, node_world, static_cast<std::uint32_t>(index));
-            cmd.opacity        = effective;
-            cmd.draw_order     = subtree.draw_order;
-            cmd.authored_state = subtree.state;
-            cmd.program        = program;
-            if (primitive->hasInstances()) {
-                cmd.instance_transforms = primitive->instance_transforms;
-                cmd.first_instance =
-                    static_cast<std::uint32_t>(std::min<std::size_t>(primitive->firstInstance(), std::numeric_limits<std::uint32_t>::max()));
-                cmd.instance_count =
-                    static_cast<std::uint32_t>(std::min<std::size_t>(primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
-            }
-        }
-        return;
-    }
-    if (const auto* group = obj_cast<Group>(node)) {
-        for (const auto& child : group->children()) {
-            collectNodeCommands(child.get(), node_world * child->localTransformMatrix(), frustum, view, node_opacity, subtree, layer_mask, bounds, viewport_used, out);
-        }
+    const Aabbd world = node.boundingBox();
+    row.local_box     = Aabbd::empty();
+    row.unbounded     = !world.isValid();
+    if (world.isValid()) {
+        row.world_box_answer = world;
     }
 }
 
@@ -151,8 +60,7 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
 {
     Row& row = bake.rows[index];
 
-    const bool starts_run = !parent.view_dependent && row.dependence != ViewDependence::None;
-    row.view_dependent    = parent.view_dependent || row.dependence != ViewDependence::None;
+    row.view_dependent = parent.view_dependent || row.placement != nullptr;
 
     Inherited inherited = parent;
     inherited.world          = parent.world * row.local;
@@ -171,6 +79,7 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
     }
 
     row.world              = inherited.world;
+    row.parent_world       = parent.world;
     row.opacity            = inherited.opacity;
     row.layers             = inherited.layers;
     row.draw_order         = inherited.draw_order;
@@ -178,12 +87,6 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
         row.state    = inherited.state;
         row.material = inherited.material;
         row.program  = inherited.program;
-    }
-
-    if (starts_run) {
-        // The select hands this whole subtree back to the graph walk, so what it needs is the context ABOVE the run
-        // and the run's own accumulated placement (the walk's convention, see collectNodeCommands).
-        bake.fallbacks.push_back(SceneBake::Fallback{ index, row.node, inherited.world, parent.opacity, parent.layers, parent.draw_order, parent.state, parent.material, parent.program });
     }
 
     for (std::uint32_t cursor = index + 1; cursor < row.end;) {
@@ -204,42 +107,51 @@ void foldUp(SceneBake& bake, std::uint32_t index)
     }
 
     Row& row = bake.rows[index];
-    if (row.box_from_node) {
-        row.world_box = row.seed_world_box;
-    }
-    else {
-        // The own-frame box comes from the producer that knows it: a graph producer asks the node's cached subtree
-        // box (a box in a node's own frame does not depend on the camera, so a camera move recomputes nothing and
-        // only an announcement inside the subtree invalidates it); a value producer already carries it. The fold
-        // unions the children only when there is no node to ask.
-        Aabbd local  = Aabbd::empty();
-        bool  answered = row.node != nullptr && row.node->subtreeBounds(local);
-        if (!answered && row.geometry != nullptr) {
-            local    = row.geometry->localBounds();
-            answered = true;
+    // The own-frame box is a VALUE: a leaf carries its own (read at build time, or re-read by refreshBoxes when the
+    // bytes under it announce), a container is the union of its children. A per-view child answers the union through
+    // its placement instead of through `local`, because the orientation it may choose is not the axis-aligned one
+    // its own box was measured in (see ViewPlacement::conservativeParentBox).
+    Aabbd local = row.child_count == 0 ? row.local_box : Aabbd::empty();
+    if (row.world_box_answer.has_value()) {
+        // A leaf that could only answer in world space: undo this row's own placement so the row holds the same kind
+        // of box every other row does. The AABB of the transformed corners is a SUPERSET for a rotated placement,
+        // which errs on the side of drawing.
+        local = Aabbd::empty();
+        Mat4d inverse = row.world;
+        if (inverse.invert()) {
+            local = row.world_box_answer->transformed(inverse);
         }
-        if (!answered) {
-            for (std::uint32_t cursor = index + 1; cursor < end;) {
-                const std::uint32_t child_end = bake.rows[cursor].end;
-                if (bake.rows[cursor].local_box.isValid()) {
-                    local.expandBy(bake.rows[cursor].local_box.transformed(bake.rows[cursor].local));
-                }
-                cursor = child_end;
-            }
+        else {
+            row.unbounded = true; // a degenerate placement cannot be undone, so no box can be trusted
         }
-        row.local_box = local;
-        row.world_box = local.transformed(row.world);
     }
-    if (row.geometry != nullptr) {
-        row.box_revision = row.geometry->revision();
+    for (std::uint32_t cursor = index + 1; cursor < end;) {
+        const std::uint32_t child_end = bake.rows[cursor].end;
+        const Row&          child     = bake.rows[cursor];
+        const Aabbd         placed    = child.placement != nullptr ? child.placement->conservativeParentBox(child.local_box)
+                                                                  : child.local_box.transformed(child.local);
+        if (placed.isValid()) {
+            local.expandBy(placed);
+        }
+        cursor = child_end;
     }
+    row.local_box = local;
+    // The world box covers EVERY view, so a cull above this row never depends on the camera: a per-view row folds
+    // the parent-frame bound through the parent's placement; an ordinary row folds its own box through its own.
+    row.world_box = row.placement != nullptr ? row.placement->conservativeParentBox(local).transformed(row.parent_world)
+                                             : local.transformed(row.world);
 
+    // A subtree whose bound cannot be stated without a view must not be culled anywhere on the way down: the flag
+    // climbs with the boxes it invalidates.
+    bool          unbounded       = (row.placement != nullptr && !row.placement->isBounded()) || row.unbounded;
     std::uint32_t union_of_layers = row.layers;
     for (std::uint32_t cursor = index + 1; cursor < end;) {
         const std::uint32_t child_end = bake.rows[cursor].end;
         union_of_layers |= bake.rows[cursor].layers_union;
+        unbounded |= bake.rows[cursor].unbounded;
         cursor = child_end;
     }
+    row.unbounded    = unbounded;
     row.layers_union = union_of_layers;
 }
 
@@ -251,18 +163,20 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
 
     const std::uint32_t index = static_cast<std::uint32_t>(bake.rows.size());
     bake.rows.emplace_back();
+    bake.nodes.push_back(&node);
 
     {
         Row& row           = bake.rows[index];
         row.identity       = &node;
-        row.node           = &node;
         row.parent         = parent;
         row.local          = node.localTransformMatrix();
         row.own_visible    = node.isVisible();
         row.own_opacity    = node.opacity();
         row.own_layers     = node.layers();
         row.own_draw_order = node.drawOrder();
-        row.dependence     = node.viewDependence();
+        // The per-view half of the placement, IF the node has one: a value the select resolves from the view it
+        // draws (see ViewPlacement). Taking it here is what keeps the select free of node reads.
+        row.placement = node.viewPlacement();
         if (const auto* state_node = obj_cast<StateNode>(&node)) {
             row.owns_state = true;
             row.own_state  = state_node->renderState();
@@ -303,30 +217,13 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
                 }
                 row.draws.push_back(std::move(draw));
             }
-            // Its own-frame box: the engine's own leaf answers it (and caches it per data revision); a SUBCLASS may
-            // place itself differently and answers only in world space (Node::subtreeBounds says so), in which case
-            // the producer records the node's answer as a seed and the row is not re-placeable from values.
-            Aabbd local = Aabbd::empty();
-            if (!node.subtreeBounds(local)) {
-                row.box_from_node  = true;
-                row.seed_world_box = node.boundingBox();
-            }
-            else {
-                row.local_box = local;
-            }
+            recordLeafBox(node, row);
         }
         else if (obj_cast<Group>(&node) == nullptr) {
-            // A leaf the engine does not own: it may answer only in world space, so the value is a SEED and the fold
-            // cannot re-place it (see Row::box_from_node).
-            Aabbd local = Aabbd::empty();
-            if (!node.subtreeBounds(local)) {
-                row.box_from_node   = true;
-                row.seed_world_box  = node.boundingBox();
-            }
-            else {
-                row.local_box = local;
-            }
-        }    }
+            // A leaf the engine does not own: the same rule (see recordLeafBox).
+            recordLeafBox(node, row);
+        }
+    }
 
     std::uint32_t children = 0U;
     if (const auto* group = obj_cast<Group>(&node)) {
@@ -347,7 +244,7 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
 void buildRows(const Node& root, SceneBake& bake, float opacity)
 {
     bake.rows.clear();
-    bake.fallbacks.clear();
+    bake.nodes.clear();
     bake.seed.parent_opacity = opacity;
     (void)bakeSubtree(root, bake);
     (void)resolveSubtree(bake, 0U);
@@ -358,17 +255,8 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index)
     if (index >= bake.rows.size()) {
         return 0U;
     }
-    if (bake.rows[index].dependence != ViewDependence::None || bake.rows[index].box_from_node) {
-        return 0U; // the fold cannot answer for a per-view placement, and cannot re-read a node's own box
-    }
-    // The fallback list is rebuilt for the folded subtree only: those before it are untouched, those inside it are
-    // stale now. A run that starts inside the subtree is re-registered by the fold.
     const std::uint32_t first_row = index;
     const std::uint32_t last_row  = bake.rows[index].end;
-    auto                erased   = std::remove_if(bake.fallbacks.begin(), bake.fallbacks.end(), [first_row, last_row](const SceneBake::Fallback& run) {
-        return run.index >= first_row && run.index < last_row;
-    });
-    bake.fallbacks.erase(erased, bake.fallbacks.end());
 
     Inherited parent;
     if (bake.rows[index].parent == SceneBake::kNoParent) {
@@ -388,10 +276,6 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index)
     foldDown(bake, index, parent);
     foldUp(bake, index);
 
-    // The fallbacks stay sorted by row index, which is what the select walks them by.
-    std::sort(bake.fallbacks.begin(), bake.fallbacks.end(), [](const SceneBake::Fallback& lhs, const SceneBake::Fallback& rhs) {
-        return lhs.index < rhs.index;
-    });
     return last_row - first_row;
 }
 
@@ -401,15 +285,21 @@ std::uint32_t refreshBoxes(SceneBake& bake)
         return 0U;
     }
     // The boxes are the one part of the rows that a BYTE edit can stale without a delta, and the freshness key is the
-    // geometry's own (its channels' revisions and their slices - see Geometry::localBounds). Asking the same fold
-    // again is what re-reads it: every geometry box is a cache hit unless something it reads announced.
-    foldUp(bake, 0U);
+    // geometry's own (its channels' revisions and their slices - see Geometry::localBounds). Asking a LEAF for its
+    // own box is a cache hit unless something it reads announced; a container needs no ask at all (its box is the
+    // union its children already answered), and a MIRROR has no nodes and therefore refreshes nothing (its boxes are
+    // the handshake's until a box delta exists - see the declaration).
     std::uint32_t refreshed = 0U;
-    for (const Row& row : bake.rows) {
-        if (row.geometry != nullptr) {
-            ++refreshed;
+    const std::size_t count = std::min(bake.rows.size(), bake.nodes.size());
+    for (std::size_t index = 0; index < count; ++index) {
+        const Node* node = bake.nodes[index];
+        if (node == nullptr || bake.rows[index].child_count != 0) {
+            continue;
         }
+        recordLeafBox(*node, bake.rows[index]);
+        ++refreshed;
     }
+    foldUp(bake, 0U);
     return refreshed;
 }
 
@@ -420,28 +310,52 @@ void selectFromBake(const SceneBake&            bake,
                     bool&                       viewport_used,
                     std::vector<RenderCommand>& out)
 {
-    std::size_t fallback = 0U;
+    // The rows are in walk order, so the rows currently being resolved form the ancestor chain, deepest last. A row
+    // whose placement was resolved for THIS view hands its world down; every other row is already placed by the fold.
+    struct OpenRow {
+        std::uint32_t end{ 0 };          ///< One past the row's subtree: it stops being an ancestor there.
+        bool          resolved{ false }; ///< Its world was resolved from the view (children must compose with it).
+        Mat4d         world{};           ///< The world the row resolved to.
+    };
+    std::vector<OpenRow> open;
+
     for (std::uint32_t index = 0; index < bake.rows.size();) {
-        const Row& row = bake.rows[index];
-        if (row.view_dependent) {
-            // The rare half: one run per top-most per-view node, in row order (see bakeSubtree / foldDown).
-            if (fallback < bake.fallbacks.size() && bake.fallbacks[fallback].index == index) {
-                const SceneBake::Fallback& run = bake.fallbacks[fallback];
-                ++fallback;
-                BoundsCache     bounds;
-                const Inherited inherited{ {}, run.parent_opacity, run.layers, run.draw_order, run.state, run.material, run.program, false };
-                collectNodeCommands(run.node, run.world, frustum, view, run.parent_opacity, inherited, layer_mask, bounds, viewport_used, out);
-            }
-            index = row.end;
-            continue;
+        while (!open.empty() && open.back().end <= index) {
+            open.pop_back();
         }
+        const Row&  row             = bake.rows[index];
+        const bool  parent_resolved = !open.empty() && open.back().resolved;
+        const bool  in_run          = row.view_dependent || parent_resolved;
+        const Mat4d parent_world    = parent_resolved ? open.back().world : row.parent_world;
+
+        Mat4d world    = row.world;
+        bool  resolved = false;
+        if (row.placement != nullptr) {
+            const ViewDependence dependence = localToWorldForView(*row.placement, parent_world, view, world);
+            if (dependence == ViewDependence::ViewAndViewport) {
+                viewport_used = true;
+            }
+            if (dependence == ViewDependence::None) {
+                world = parent_world * row.local; // this view keeps the node's own placement
+            }
+            resolved = true;
+        }
+        else if (in_run) {
+            world    = parent_world * row.local; // an ancestor was re-placed, so this row's folded world is stale
+            resolved = true;
+        }
+
         if ((row.layers_union & layer_mask) == 0U) {
             index = row.end;
             continue;
         }
-        if (frustum.isOutside(row.world_box)) {
+        // A row with no view-independent bound must not be culled: no box can promise it is out of the frustum.
+        if (!row.unbounded && frustum.isOutside(resolved ? row.local_box.transformed(world) : row.world_box)) {
             index = row.end;
             continue;
+        }
+        if (resolved) {
+            open.push_back(OpenRow{ row.end, true, world });
         }
         if (!row.draws.empty()) {
             const float effective = std::clamp(row.opacity, 0.0f, 1.0f);
@@ -451,7 +365,8 @@ void selectFromBake(const SceneBake&            bake,
                 }
                 const MaterialBasePtr material = draw.material != nullptr ? draw.material : row.material;
                 const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.program;
-                auto&                  cmd     = out.emplace_back(row.geometry, material, row.world, draw.primitive_index);
+                auto&                  cmd     = out.emplace_back(row.geometry, material, world, draw.primitive_index);
+                cmd.row                        = row.identity;
                 cmd.description                = row.description;
                 cmd.opacity                    = effective;
                 cmd.draw_order                 = row.draw_order;

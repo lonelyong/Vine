@@ -550,6 +550,28 @@ CollectView viewOf(const Camera& camera, const Viewport& viewport = Viewport{})
     return CollectView{ camera.projectionMatrix(), camera.viewMatrix(), camera.eye(), camera.up(), viewport };
 }
 
+/**
+ * @brief Resolves @p node's per-view placement for @p view, the way a bake and a select do it.
+ *
+ * @details
+ * - Taking the value and resolving it is what every producer of a draw list does (see Node::viewPlacement /
+ *   ViewPlacement): nothing here reads the node twice.
+ *
+ * @param node         The node whose placement is resolved.
+ * @param parent_world The placement the node inherits.
+ * @param view         The view being drawn.
+ * @param world        Receives the node's world matrix when the answer is not None.
+ * @return None when the node's placement is view-independent for this view.
+ */
+ViewDependence resolveView(const Node& node, const Mat4d& parent_world, const CollectView& view, Mat4d& world)
+{
+    const auto placement = node.viewPlacement();
+    if (placement == nullptr) {
+        return ViewDependence::None;
+    }
+    return vn::graphics::localToWorldForView(*placement, parent_world, view, world);
+}
+
 TEST(SceneTest, CollectCommandsSortsOpaqueFrontToBack)
 {
     Scene scene;
@@ -2768,7 +2790,7 @@ TEST(AutoTransformTest, NoRotationIsThePlainPlacement)
     Camera cam;
     setupLookAtCamera(cam);
     Mat4d world;
-    EXPECT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::None) << "NoRotation must leave the view-independent path alone";
+    EXPECT_EQ(billboard.viewPlacement(), nullptr) << "NoRotation must leave the view-independent path alone";
 }
 
 TEST(AutoTransformTest, RotateToScreenCancelsTheCameraRotation)
@@ -2784,7 +2806,7 @@ TEST(AutoTransformTest, RotateToScreenCancelsTheCameraRotation)
     cam.setAspect(1.0);
 
     Mat4d world;
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::View);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), viewOf(cam), world), ViewDependence::View);
 
     const auto normal = world * Point3d(0, 0, 1) - world * Point3d(0, 0, 0);
     EXPECT_NEAR(normal.x, 1.0, 1e-9);
@@ -2793,7 +2815,7 @@ TEST(AutoTransformTest, RotateToScreenCancelsTheCameraRotation)
 
     // Rotation applied after the automatic orientation spins the billboard in its own plane.
     billboard.setRotation(Quatd(vn::math::PI_HALF, Vec3d(0, 0, 1)));
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::View);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), viewOf(cam), world), ViewDependence::View);
     const auto spun = world * Point3d(1, 0, 0) - world * Point3d(0, 0, 0);
     EXPECT_NEAR(spun.x, 0.0, 1e-9);
     EXPECT_NEAR(spun.y, 1.0, 1e-9);
@@ -2809,7 +2831,7 @@ TEST(AutoTransformTest, RotateToCameraPointsLocalZAtTheEye)
     Camera cam;
     setupLookAtCamera(cam);
     Mat4d world;
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::View);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), viewOf(cam), world), ViewDependence::View);
 
     const auto normal   = world * Point3d(0, 0, 1) - world * Point3d(0, 0, 0);
     const auto expected = (cam.eye() - Vec3d(1, 0, 0)).normalized();
@@ -2831,7 +2853,7 @@ TEST(AutoTransformTest, ParentTranslationAndRotationReachTheBillboard)
     Camera cam;
     setupLookAtCamera(cam);
     Mat4d world;
-    ASSERT_EQ(billboard->localToWorldForView(parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
+    ASSERT_EQ(resolveView(*billboard, parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
 
     const auto origin = world * Point3d(0, 0, 0);
     EXPECT_NEAR(origin.x, 10.0, 1e-9) << "the parent translation places the billboard";
@@ -2851,7 +2873,7 @@ TEST(AutoTransformTest, RotateToCameraUnderARotatedParentFacesTheEye)
     Camera cam;
     setupLookAtCamera(cam);
     Mat4d world;
-    ASSERT_EQ(billboard->localToWorldForView(parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
+    ASSERT_EQ(resolveView(*billboard, parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
 
     const auto origin = world * Point3d(0, 0, 0);
     const auto normal = world * Point3d(0, 0, 1) - origin;
@@ -2874,7 +2896,7 @@ TEST(AutoTransformTest, RotateToAxisKeepsTheAxisFixedAndTurnsToTheEye)
     cam.setAspect(1.0);
 
     Mat4d world;
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), viewOf(cam), world), ViewDependence::View);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), viewOf(cam), world), ViewDependence::View);
 
     const auto origin = world * Point3d(0, 0, 0);
     const auto axis   = world * Point3d(0, 0, 1) - origin;
@@ -2899,7 +2921,7 @@ TEST(AutoTransformTest, RotateToAxisUnderARotatedParentKeepsItsWorldAxis)
     Camera cam;
     setupLookAtCamera(cam);
     Mat4d world;
-    ASSERT_EQ(billboard->localToWorldForView(parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
+    ASSERT_EQ(resolveView(*billboard, parent->worldMatrix(), viewOf(cam), world), ViewDependence::View);
 
     const auto origin = world * Point3d(0, 0, 0);
     const auto axis   = world * Point3d(0, 0, 1) - origin;
@@ -2924,12 +2946,12 @@ TEST(AutoTransformTest, AutoScaleCancelsAUniformParentScale)
     const CollectView view = viewOf(cam, Viewport{ 0, 0, 800, 600 });
 
     Mat4d plain_world;
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), view, plain_world), ViewDependence::ViewAndViewport);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), view, plain_world), ViewDependence::ViewAndViewport);
 
     auto parent = intrusive_ptr<MatrixTransform>(new MatrixTransform());
     parent->setMatrix(vn::math::scale(Vec3d(2, 2, 2)));
     Mat4d scaled_world;
-    ASSERT_EQ(billboard.localToWorldForView(parent->worldMatrix(), view, scaled_world), ViewDependence::ViewAndViewport);
+    ASSERT_EQ(resolveView(billboard, parent->worldMatrix(), view, scaled_world), ViewDependence::ViewAndViewport);
 
     const auto height = [](const Mat4d& world) { return (world * Point3d(0, 1, 0) - world * Point3d(0, 0, 0)).length(); };
     EXPECT_NEAR(height(scaled_world), height(plain_world), 1e-9) << "the local scale is reduced by the same factor the parent adds";
@@ -2985,8 +3007,8 @@ TEST(AutoTransformTest, AutoScaleKeepsAConstantPixelSize)
 
     Mat4d near_world;
     Mat4d far_world;
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), near_view, near_world), ViewDependence::ViewAndViewport);
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), far_view, far_world), ViewDependence::ViewAndViewport);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), near_view, near_world), ViewDependence::ViewAndViewport);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), far_view, far_world), ViewDependence::ViewAndViewport);
 
     const auto screen_height = [](const CollectView& view, const Mat4d& world) {
         const Mat4d   view_projection = view.viewProjection();
@@ -3013,7 +3035,7 @@ TEST(AutoTransformTest, AutoScaleClampsToTheConfiguredRange)
     setupLookAtCamera(cam);
     const CollectView view = viewOf(cam, Viewport{ 0, 0, 800, 600 });
     Mat4d             world;
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), view, world), ViewDependence::ViewAndViewport);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), view, world), ViewDependence::ViewAndViewport);
 
     const auto height = (world * Point3d(0, 1, 0) - world * Point3d(0, 0, 0)).length();
     EXPECT_NEAR(height, 0.5, 1e-9);
@@ -3031,7 +3053,7 @@ TEST(AutoTransformTest, AutoScaleWithoutAViewportKeepsTheAuthoredScale)
     const CollectView view = viewOf(cam); // no viewport
 
     Mat4d world;
-    ASSERT_EQ(billboard.localToWorldForView(Mat4d(), view, world), ViewDependence::View);
+    ASSERT_EQ(resolveView(billboard, Mat4d(), view, world), ViewDependence::View);
     const auto height = (world * Point3d(0, 1, 0) - world * Point3d(0, 0, 0)).length();
     EXPECT_NEAR(height, 3.0, 1e-9) << "the authored Y scale is the fallback";
 }
@@ -9837,12 +9859,12 @@ class CountingGroup : public Group {
 
 } // namespace
 
-TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
+TEST(SceneTest, CollectCommandsAsksEachLeafForItsOwnBoxOnly)
 {
-    // The collection culls with each node's world bound. Asking a container for its bound re-walks its whole subtree
-    // (Group::boundingBox unions the children), so doing that per visited node made collection quadratic in the node
-    // count. The table answers for every row it holds, so a leaf whose bound only the NODE can answer (a Geometry
-    // subclass, see Node::subtreeBounds) is asked once per BUILD - never per pass, and never for a container.
+    // The cull reads a row's box, and a row's box is a VALUE (see DrawListBake). A build therefore asks each LEAF for
+    // its box in the leaf's OWN frame, and never asks a container: a container's bound re-walks its whole subtree, and
+    // doing that per visited node is what made collection quadratic in the node count. Everything a later pass
+    // re-reads through the refresh is a revision-keyed cache hit.
     Scene                          scene;
     auto                           root = setIdentityRoot(scene);
     auto                           deep = root;
@@ -9862,31 +9884,62 @@ TEST(SceneTest, CollectCommandsAsksEachLeafBoundOnce)
             deep = counted_container;
         }
     }
-    auto leaf = intrusive_ptr<CountingGeometry>(new CountingGeometry());
-    // CountingGeometry is a Geometry subclass, so fill it through the
-    // per-channel setter (the Shape converter always returns a plain Geometry).
-    leaf->setPositions(packAttribute(makeUnitTriangle()->positions()));
+    const auto leaf = geometryOf(*makeUnitTriangle());
     deep->addChild(leaf);
 
     Camera cam;
     setupLookAtCamera(cam);
     const auto commands = (*scene.collectRenderCommands(&cam));
     ASSERT_EQ(commands.size(), 1u);
-    EXPECT_EQ(leaf->bound_calls, 1) << "the build reads it once";
-    EXPECT_EQ(counted_container->bound_calls, 0);
+    EXPECT_EQ(counted_container->bound_calls, 0) << "a container is never asked for a bound";
+    EXPECT_EQ(leaf->localBoundsComputationCount(), 1u) << "the build scans the leaf's data box once";
 
-    // A second collection of the same content asks NOTHING: the rows answer for the boxes, so a pass costs no node
-    // call at all - and a camera move (a different view over the same rows) is the same story.
+    // A second collection of the same content asks NOTHING expensive: the rows answer for the boxes, and the one
+    // refresh a pass runs is a cache hit per leaf - a camera move (a different view over the same rows) is the same.
     EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
-    EXPECT_EQ(leaf->bound_calls, 1) << "a pass asks no node for a bound";
+    EXPECT_EQ(leaf->localBoundsComputationCount(), 1u) << "a pass re-reads the box, the revision-keyed cache answers";
     EXPECT_EQ(counted_container->bound_calls, 0);
 
-    // Culled leaves are still bounded once per build (the bound is what decides), and an announcement is what makes
-    // the next build re-read it.
+    // A placement edit RE-PLACES the rows and measures nothing: the cull still drops the subtree once it is out of
+    // view, and the leaf's own box is still the one the build read.
+    first_transform->setMatrix(vn::math::translate(Vec3d(4000.0, 0.0, 0.0)));
+    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
+    EXPECT_EQ(leaf->localBoundsComputationCount(), 1u) << "a moved subtree is re-placed, not re-measured";
+}
+
+TEST(SceneTest, ALeafThatOnlyAnswersInWorldSpaceStillCulls)
+{
+    // A Geometry subclass may place itself in ways the engine cannot see inside, so it answers its bound in WORLD
+    // space only (Node::subtreeBounds). That answer travels as a VALUE on the row and the fold converts it with the
+    // row's own placement, so the cull above it still works - and the select still reads no node (see DrawListBake).
+    Scene                          scene;
+    auto                           root = setIdentityRoot(scene);
+    auto                           deep = root;
+    intrusive_ptr<MatrixTransform> first_transform;
+    for (int level = 0; level < 4; ++level) {
+        auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+        transform->setMatrix(vn::math::translate(Vec3d(0.0, 0.0, -0.1)));
+        deep->addChild(transform);
+        deep = transform;
+        if (level == 0) {
+            first_transform = transform;
+        }
+    }
+    auto leaf = intrusive_ptr<CountingGeometry>(new CountingGeometry());
+    // CountingGeometry is a Geometry subclass, so fill it through the per-channel setter (the Shape converter always
+    // returns a plain Geometry).
+    leaf->setPositions(packAttribute(makeUnitTriangle()->positions()));
+    deep->addChild(leaf);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    ASSERT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    EXPECT_GE(leaf->bound_calls, 1) << "the leaf that can only answer in world space is asked for that answer";
+
+    // Culling still works from the value, and an announcement is what makes the next build re-read the answer.
     leaf->setName(u8"culled");
     first_transform->setMatrix(vn::math::translate(Vec3d(4000.0, 0.0, 0.0)));
     EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
-    EXPECT_EQ(leaf->bound_calls, 2) << "the announced spine made a new build";
 }
 
 namespace
@@ -9933,17 +9986,17 @@ class ShiftedGroup : public Group {
 
 } // namespace
 
-TEST(SceneTest, CachedSubtreeBoxesSurviveCameraMovesAndFollowAnnouncements)
+TEST(SceneTest, TheRowsSurviveCameraMovesAndFollowAnnouncements)
 {
-    // P18 §10.2: each subtree's box in its OWN frame is cached per node, so it survives CAMERA moves -
-    // a box in a node's own frame does not depend on the camera - and only an announcement inside the
-    // subtree invalidates it. The witness is Node::cacheStats().bounds_recomputes: a second collect through a
-    // different camera recomputes nothing, while setMatrix() recomputes exactly the announced spine.
+    // A box in a node's own frame does not depend on the camera, so a CAMERA move must rebuild no rows and re-scan no
+    // data box - that is what the row table buys (see DrawListBake): a moved camera pays the view half only. An
+    // announcement inside the graph is what makes the next collection build the rows again.
     Scene scene;
     auto  root      = setIdentityRoot(scene);
     auto  container = intrusive_ptr<Group>(new Group());
     auto  transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
-    transform->addChild(geometryOf(*makeUnitTriangle()));
+    const auto leaf = geometryOf(*makeUnitTriangle());
+    transform->addChild(leaf);
     container->addChild(transform);
     root->addChild(container);
 
@@ -9955,17 +10008,20 @@ TEST(SceneTest, CachedSubtreeBoxesSurviveCameraMovesAndFollowAnnouncements)
 
     scene.setContentFrame(1);
     ASSERT_EQ(scene.collectRenderCommands(&first)->size(), 1u);
-    const std::uint64_t first_total = sumBoundsRecomputes(root.get());
-    EXPECT_GT(first_total, 0u) << "the first collect computes the unions";
+    const std::uint64_t first_bakes = scene.contentBakeCount();
+    const std::uint64_t first_scans = leaf->localBoundsComputationCount();
+    EXPECT_GT(first_bakes, 0u) << "the first collect builds the rows";
 
     scene.setContentFrame(2);
     EXPECT_EQ(scene.collectRenderCommands(&second)->size(), 1u) << "the triangle is still in view";
-    EXPECT_EQ(sumBoundsRecomputes(root.get()), first_total) << "a camera move must not recompute a single cached box";
+    EXPECT_EQ(scene.contentBakeCount(), first_bakes) << "a camera move must not rebuild the rows";
+    EXPECT_EQ(leaf->localBoundsComputationCount(), first_scans) << "nor re-scan a data box";
 
     transform->setMatrix(vn::math::translate(Vec3d(0.0, 0.4, 0.0)));
     scene.setContentFrame(3);
     (void)(*scene.collectRenderCommands(&first));
-    EXPECT_GT(sumBoundsRecomputes(root.get()), first_total) << "the announced spine recomputes";
+    EXPECT_GT(scene.contentBakeCount(), first_bakes) << "the announcement is what rebuilds the rows";
+    EXPECT_EQ(leaf->localBoundsComputationCount(), first_scans) << "and the leaf's own box is still a cache hit";
 }
 
 TEST(SceneTest, ASubtreeMovedIntoViewIsNotHiddenByAStaleBox)
@@ -13955,9 +14011,8 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes){
     Camera cam;
     setupLookAtCamera(cam);
 
-    // The world-space box is the end result; the cache witness is the
-    // recompute counter read below (the collection walk is what consumes the
-    // per-node cached boxes).
+    // The world-space box is the end result; the rebuild counter read below is the witness that the collection
+    // noticed the change at all.
     const Aabbd before = scene.boundingBox();
     ASSERT_TRUE(before.isValid());
     EXPECT_NEAR(before.min().x, -2.0, 1e-9);
@@ -13966,8 +14021,7 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes){
     auto commands = (*scene.collectRenderCommands(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].model_matrix.element(0, 3), -2.0, 1e-9);
-    const std::uint32_t left_seeded  = left->cacheStats().bounds_recomputes;
-    const std::uint32_t right_seeded = right->cacheStats().bounds_recomputes;
+    const std::uint64_t bakes_before = scene.contentBakeCount();
 
     // The only thing that changes: which matrix sits above the mover.
     right->addChild(mover);
@@ -13985,12 +14039,9 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes){
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].model_matrix.element(0, 3), 2.0, 1e-9);
 
-    // Both unions are re-derived: the old parent loses a child, the new one
-    // gains it, and each announcement must reach its own chain (the per-node
-    // box cache is served by stamp, so a missed one stays stale for every
-    // later walk).
-    EXPECT_GT(left->cacheStats().bounds_recomputes, left_seeded) << "the OLD parent's union is re-derived";
-    EXPECT_GT(right->cacheStats().bounds_recomputes, right_seeded) << "the NEW parent's union is re-derived";
+    // The rows are REBUILT: a reparent announces on both chains, so the fold runs again instead of the table being
+    // served stale (see Scene::collectRenderCommands - the epoch is what decides).
+    EXPECT_GT(scene.contentBakeCount(), bakes_before) << "the reparent announces on both chains";
 }
 
 TEST(SceneMutationTest, ReparentingSwapsWhichStateOverridesApply)
@@ -14109,15 +14160,15 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
     Camera cam;
     setupLookAtCamera(cam);
 
-    // The world-space box after the removal is the end result; the cache
-    // witness is the recompute counter read below.
+    // The world-space box after the removal is the end result; the rebuild counter read below is the witness that
+    // the collection noticed the change.
     const Aabbd before = scene.boundingBox();
     ASSERT_TRUE(before.isValid());
     EXPECT_NEAR(before.min().x, -2.0, 1e-9);
 
     auto commands = (*scene.collectRenderCommands(&cam));
     ASSERT_EQ(commands.size(), 2u);
-    const std::uint32_t root_seeded = root->cacheStats().bounds_recomputes;
+    const std::uint64_t bakes_before = scene.contentBakeCount();
 
     root->removeChild(removed.get());
     EXPECT_EQ(root->children().size(), 1u);
@@ -14133,9 +14184,8 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry.get(), keeper_geom);
 
-    // The removal announces on the OLD chain, so the parent's union is
-    // re-derived instead of being served stale from the per-node cache.
-    EXPECT_GT(root->cacheStats().bounds_recomputes, root_seeded) << "the removal announces on the old chain";
+    // The removal announces on the OLD chain, so the rows are rebuilt instead of the table being served stale.
+    EXPECT_GT(scene.contentBakeCount(), bakes_before) << "the removal announces on the old chain";
 
     // Removal is not destruction: the detached subtree can come back.
     root->addChild(removed);

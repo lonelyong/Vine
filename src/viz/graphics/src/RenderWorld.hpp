@@ -30,9 +30,10 @@ namespace detail
  *   `world.place(&node, matrix)` without this header naming a content type in any signature.
  * - WHAT IT IS NOT. Not a scene, not a document and not a second graph: no parent walks, no names, no selection, no
  *   behaviours. It answers one question, with the passes the content side uses too, so the two cannot drift.
- * - WHAT STILL NEEDS THE CONTENT'S THREAD. Two steps, both named: the handshake (`buildRows`), and `refreshBoxes` - a
- *   byte write moves the box a row culls with and announces itself on the buffer, so re-reading it asks a geometry's
- *   own revision-keyed cache (a cache write). A world adopted from a description never runs the second.
+ * - WHAT STILL NEEDS THE CONTENT'S THREAD. Two steps, both named: the handshake (`buildRows`), and the box refresh a
+ *   byte write causes - a write moves the box a row culls with, and re-reading it asks a geometry's own
+ *   revision-keyed cache. `Scene` runs the second; a world adopted from values holds no node to re-read, which is why
+ *   `adopt` drops that record (see `SceneBake::nodes`).
  *
  * @note Not thread-safe: one thread owns an instance, like every other backend-side unit.
  */
@@ -52,20 +53,23 @@ class RenderWorld {
     [[nodiscard]] bool contains(RowId identity) const noexcept;
 
     /**
-     * @brief Applies one placement edit: the identity's own local matrix, with its subtree re-placed.
+     * @brief Applies one placement edit: the identity's placement as the content's thread now states it.
      *
-     * @param identity A row this world mirrors.
-     * @param local    That row's own local matrix.
-     * @return false when the identity is unknown, resolves its placement per view, or carries a box only its node
-     *         could answer (see Row::box_from_node); the refusal is counted.
+     * @details
+     * - Both halves travel, because they are what a row is placed by: the view-independent local matrix, and the
+     *   per-view placement value (null when the node's placement is that local matrix alone). Passing the new value
+     *   is what lets a billboard move - its own numbers are IN the value, so a delta that leaves it out would leave
+     *   the mirror drawing the old orientation.
+     *
+     * @param identity  A row this world mirrors.
+     * @param local     That row's own local matrix.
+     * @param placement That row's per-view placement, or null when it has none.
+     * @return false when the identity is unknown (a row this world did not adopt); the refusal is counted.
      */
-    bool place(RowId identity, const Mat4d& local);
+    bool place(RowId identity, const Mat4d& local, ViewPlacementPtr placement = {});
 
     /** @brief Collects one view's commands, in draw order - the same list the content's collection produces. */
     void collect(const CollectView& view, std::uint32_t layer_mask, std::vector<RenderCommand>& out) const;
-
-    /** @brief Re-reads the own boxes whose data revision moved (a content-thread step; see refreshBoxes). */
-    std::uint32_t refreshBoxes();
 
   public:
     /** @brief Gets how many rows the world carries. */

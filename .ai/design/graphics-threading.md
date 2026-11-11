@@ -67,24 +67,29 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   这正是 `detail::SceneBake` + `GeometryFacts` 今天算的两样东西，**内容源与算法都不变，只是搬到引擎侧**。
 - **为什么**：不新增概念（`G1`），代价最小 —— 今天的 bake 已经按 `contentEpoch` 缓存、按子树重算；镜像只是把它的
   输入从"读活节点"换成"应用 delta 后的值"（`G7`：复杂性吸收在引擎侧，不推给宿主）。
-- **边界**：镜像节点持有 `intrusive_ptr<Node>`，**只为让地址活到停靠窗口结束**（ADR-2026-11-09 的规则），
-  **不读它的任何字段**；读字段就等于回到共享可变状态。
+- **边界**：镜像**不持有节点**（`RenderWorld::adopt` 直接把构建时记下的 `SceneBake::nodes` 丢掉）；内容侧的 `ContentStore`
+  持有对象 share 只是为把地址钉住（ADR-2026-11-09 的规则），**不读它的任何字段**；读字段就等于回到共享可变状态。
 - **不进镜像的**：节点名字、行为/脚本、选择态、撤销栈、宿主的文档状态 —— 没有消费者（`G8`）。把这些也搬过来
   就是"把内容世界整个复制一份"，那是被否决的第一稿。
 - **一行 = own + resolved**：own 是节点自己说的（局部矩阵、可见性、透明度、自己的层/顺序声明、自己的状态/材质/程序、
-  逐 primitive 的 `DrawFacts`）；resolved 是折出来的（世界矩阵、折叠值、子树层并集、世界盒、`end`）。镜像的编辑只改 own，
-  再跑**同一次**折 —— 这也是“镜像能自己前进”的全部机制。
+  逐 primitive 的 `DrawFacts`，以及**逐视图放置这个值**）；resolved 是折出来的（世界矩阵、父世界矩阵、折叠值、子树层并集、
+  世界盒、`unbounded`、`end`）。镜像的编辑只改 own，再跑**同一次**折 —— 这也是“镜像能自己前进”的全部机制。
+- **逐视图放置是函数值**：`ViewPlacement`（`AutoTransform` 是它的唯一实现）= 一个只含数字的不可变对象，
+  三个答案 `declaredDependence()` / `dependence(view)` / `localMatrix(parent_world, view)`，外加一个**与视图无关的保守盒**
+  `conservativeParentBox(own_box)`（旋转因此被"绕枢轴的正方体"覆盖）与 `isBounded()`（屏幕缩放在没有上限时不存在与视图无关的尺寸，
+  该子树的 `unbounded` 沿祖先上爬，谁都不许按盒剔它）。选取拿到的就是**视图值**，所以镜像不需要节点也不需要相机对象。
 - **共用一份算法**：行类型与三趟走法（`bakeSubtree` 建 own / `resolveSubtree` 折 / `selectFromBake` 选 / `sortCollected` 排）
   是 `src/viz/graphics/src/DrawListBake.{hpp,cpp}` 里的**同一份**代码，内容侧与镜像侧只是填 own 的人不同 ——
   否则“等价性”会退化成两套实现互相验证。
-- **唯一还需要内容线程的一步**：`refreshBoxes`。“写 buffer”不会发 delta，盒子的新鲜度靠问 geometry 自己的（按通道 revision
-  与切片键控的）`localBounds()`；这一问是写缓存的，所以它留在拥有内容的那侧，与选取分开。
+- **唯一还需要内容线程的一步**：`refreshBoxes`（只对叶子，容器不问）。“写 buffer”不会发 delta，盒子的新鲜度靠问 geometry
+  自己的（按通道 revision 与切片键控的）`localBounds()`；这一问是写缓存的，所以它留在拥有内容的那侧，与选取分开。
+  镜像没有节点，因此这一步它**不做**：镜像的盒停在握手给的值上，直到有了"盒 delta"（§9.2 的已知缺口）。
 
 ### 2.3 三条跨线程通道
 
 | 通道 | 方向 | 装载什么 | 顺序 / 失效 | 违反的形态 |
 |---|---|---|---|---|
-| **delta**（变更公告） | 内容 → 引擎 | **值**：结构变化（attach/detach/换根）、节点 placement/state、几何描述、相机、表面事件、帧请求 | 队列 FIFO；引擎在**帧首一次 drain**，同帧内按序应用 | 漏发（编译期拦，§2.5）、改了不公告 |
+| **delta**（变更公告） | 内容 → 引擎 | **值**：结构变化（attach/detach/换根）、节点 placement（局部矩阵 **+ `ViewPlacement` 值**）/state、几何描述、相机、表面事件、帧请求 | 队列 FIFO；引擎在**帧首一次 drain**，同帧内按序应用 | 漏发（编译期拦，§2.5）、改了不公告 |
 | **handoff**（交接） | worker → 任何一侧 | **所有权**：新构造好的 `Buffer`/`Geometry`/纹理，或整帧（`OwnedFrame`） | 交接后发送方不再触碰；必须过带边界的队列 | 用 `intrusive_ptr` 直接跨界（无 happens-before，`RefCounted.hpp:62-83`） |
 | **snapshot**（快照） | 引擎 → 内容/UI | 已发布**不可变值**：`FrameCounters`/`RetentionStats`/`FramePlan`（已有）、镜像校验和、帧号 | 读到的一定是完整的某一版，带帧号 | 把"上一帧的答案"当"现在" |
 
@@ -223,7 +228,8 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 
 - **行为**：`attach` 把一个子树接入镜像（子树描述随 delta 一起给，或由内容侧先建好再 handoff）；`detach` 让镜像
   摘掉子树并把节点**停靠**（`RetirementQueue`，`slots + 1` 帧）后才释放；`reparent` = detach + attach（世界矩阵重算）。
-- **约束**（C3）：镜像持有 `intrusive_ptr<Node>` 只为保地址（ADR-2026-11-09）；子树摘除必须停靠，因为已录制的帧可能还命名它。
+- **约束**（C3）：镜像**不持有节点**，只持有按地址键的行与内容 share（ADR-2026-11-09 的地址规则在内容侧生效）；
+  子树摘除必须停靠，因为已录制的帧可能还命名它。
 - **要求**（R3）：`detach` 之后 N 帧内引擎侧该子树的驻留按现行 pin 规则离场（不新增释放路径）。
 - **验收**（T3）：attach/detach/reparent 循环若干次后，镜像节点数与内容侧一致，无泄漏（ASan）。
 - **注意**（N3）：重父化会重算整棵子树的**世界矩阵**（局部不变），与内容侧 `invalidateBounds` 的传播方向一致。
@@ -232,6 +238,8 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 
 - **行为**：placement 变化 ⇒ 镜像里该节点子树的世界矩阵重算（局部矩阵 × 父世界矩阵），并沿祖先重算世界盒；
   visible/opacity/layers/drawOrder 变化 ⇒ 只重折该节点子树的折叠值（不重算盒）。
+- **placement 的两半一起走**：`place(RowId, local, ViewPlacementPtr)`。逐视图放置的节点（`AutoTransform`）把自己的数字
+  放在那个值里，只发局部矩阵会让镜像停在旧朝向 —— 所以两者是同一条 delta 的两个字段，不是两条。
 - **约束**（C4）：重算范围 = 变化的子树 + 其祖先，不做整图重算（今天的 `bakeSubtree` 是整图，镜像版要按子树）。
 - **约束**（C15）：**脏集合合并**：drain 完把脏节点收成一个集合，每条受影响子树重算一次，祖先盒每条链只向上合一 次。
   逐条 delta 直接传播会在机器人（28~70 关节 × 链路深度）上变成数百次重复传播。
@@ -514,12 +522,11 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 ### 9.2 已知缺口 / 待办
 
 - 落地阶段与触发条件见 `../backlog/graphics.md` T31；并行 select 由 T24 单独触发。
-- **镜像目前仍从节点缓存取两样东西**：逐视图放置的整棵 run（`AutoTransform`：只有知道相机的那趟走法能放它），
-  与“只能在世界空间答题”的 `Geometry` 子类叶子的盒（构建时取一次，作为 seed，该行因此不可被 placement 复拓）。
-  两者都是**具名例外**，不是隐藏的读；把它们变成值（逐视图放置作为一个函数值 / 子类叶子给局部盒）是后续一步。
+- **镜像没有“盒 delta”**：写 buffer 不发 delta，内容侧靠 `refreshBoxes`（问叶子自己的、按 revision 键控的 `localBounds()`）
+  保鲜；镜像没有节点，它的盒停在握手给的值上。今天不痛（握手随结构/放置变），要动时新增一条盒 delta，而不是让镜像读节点。
 - **身份**：`RenderWorld` 用自己的不透明句柄（`RowId = const void*`，即被镜像对象的地址，见 ADR-2026-11-09）；
-  `const Node*` 隐式转成它，所以内容侧写 `world.place(&node, m)`，而渲染世界的**签名里没有任何内容类型**。
-  行表本身仍持有 `node`（逐视图 run + 保命），那是行的事，不是接口的事。
+  `const Node*` 隐式转成它，所以内容侧写 `world.place(&node, m, placement)`，而渲染世界的**签名里没有任何内容类型**。
+  行表不再持有 `node`（`SceneBake::nodes` 只是内容侧的盒刷新记录，`adopt` 时丢掉）。
 - 多文档 = 多控件 = 多会话（各自的引擎线程与设备），不做"多窗口共享一份内容"的并发编辑。
 - `OwnedFrame` 的真实消费者（远程/录制）仍未出现（T18）。
 - **仿真产出的 pose 要不要绕过场景图**：一种更激进的写法是“pose 是每帧的值，场景图只存拓扑”（仿真侧持关节角数组，
@@ -542,6 +549,14 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   “镜像与内容侧共用同一个折叠”带来的等价性盲区（变异验证：去掉 `* row.local` 后该断言立刻红）。
   **第四步已完成**：渲染世界改为**只吃值** —— `buildRows()` 是内容侧的入口（唯一读图的地方），`RenderWorld::adopt(SceneBake)`
   拿走结果，编辑用 `place(RowId, …)`，签名里不再出现内容类型；`bakeSubtree` 退到实现文件内部。
+  **第五步已完成**：行上最后两处“仍要问节点”的地方变成值 —— 逐视图放置抽成 `ViewPlacement` 函数值
+  （`Node::viewPlacement()` 是唯一钩子；`localToWorldForView(placement, …)` 是唯一的解析规则，选取与用例共用），
+  折叠也**只吃值**（容器由子行并出盒，逐视图子行用 `conservativeParentBox` 并，世界盒由 `parent_world` 折出；
+  “只能在世界空间答题”的子类叶子把答案当值放在行上、由折换算回自己的帧）。于是 `selectFromBake` 完全读值：
+  一个 run 栈按视图解析、按 `[row, row.end)` 跳过被剔的子树。用例：
+  `RenderWorldTest.APerViewRowDrawsTheSameInAMirrorThatOwnsNoNode`（没有节点的镜像画出同一个广告牌，并证明那条规则真在动）、
+  `SceneTest.CollectCommandsAsksEachLeafForItsOwnBoxOnly` / `SceneTest.ALeafThatOnlyAnswersInWorldSpaceStillCulls` /
+  `SceneTest.TheRowsSurviveCameraMovesAndFollowAnnouncements`。
 - **P2（第一步已完成）**：**后端的事实行也从描述建**。`Geometry::description()` 给出一个不可变形状
   （通道位置/切片/stride + 逐 primitive：topology、索引段、实例流），`RenderCommand` 带 `row`（身份）与
   `description`（值），`ContentStore::track(identity, description)` / `buildGeometryFacts(description)` 只读值——
@@ -556,7 +571,7 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   验收：`test_graphics` 的 `PassDrawTest` / `RenderEngineTest` / `OwnedFrameTest` 改为先展开再比较，
   `RenderWorldTest.TheMirrorIsADrawListSourceAndAnswersAFramesViewTheSameWay` 钉住两种来源逐命令相同。
 - **下一步**：把 `expandFrame` 搬进 `RenderWorker`（引擎线程）并让 `inline` 模式也经 `RenderWorldSource` ——
-  后者要先把逐视图放置（AutoTransform）与“只能问节点”的盒变成值（§9.2 的已知缺口）。
+  它的前提（逐视图放置与盒都是值）在第五步里已经满足，剩下的就是线程与 delta 接线。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：

@@ -122,6 +122,204 @@ Mat4d cameraRotation(const Point3d& world_position, const Vec3d& eye, const Vec3
     return rotationFromBasis(x, y, z);
 }
 
+/**
+ * @brief OSG's pixel size for one local unit, as a SCALE (the reciprocal), clamped by the node's limits.
+ *
+ * @details
+ * - One function, used by the placement value only: the node no longer resolves a view itself (see
+ *   AutoTransform::viewPlacement), so the math lives next to the value that carries it.
+ *
+ * @param position      The billboard's position in its own frame.
+ * @param authored      The authored scale (the answer when no viewport is stated).
+ * @param minimum_scale Lower clamp.
+ * @param maximum_scale Upper clamp.
+ * @param view          The view being drawn.
+ * @param parent_world  The placement the node inherits (part of the model-view).
+ * @return The uniform scale to draw with.
+ */
+double screenScaleFor(const Point3d& position,
+                      const Vec3d&   authored,
+                      double         minimum_scale,
+                      double         maximum_scale,
+                      const CollectView& view,
+                      const Mat4d&   parent_world)
+{
+    // OSG's pixelSize(position, 0.48): 0.48 local units at the node cover N pixels, and the scale that keeps
+    // that constant is 1/N. The model-view includes the parent, so a parent scale is cancelled by the local
+    // scale (a non-uniform parent scale is an approximation; document it).
+    if (!view.hasViewport()) {
+        return authored.x;
+    }
+    // Project one local unit along X and Y at the node's position. The model-view includes the parent, so a
+    // parent scale/rotation (and a perspective depth) is part of the measured pixel size. This is the same
+    // quantity OSG's computePixelSizeVector measures, without assuming the parent is rigid.
+    const Mat4d   view_projection = view.projection * (view.view * parent_world);
+    const Point3d origin          = view_projection * position;
+    const Point3d x_axis          = view_projection * Point3d(position.x + 1.0, position.y, position.z);
+    const Point3d y_axis          = view_projection * Point3d(position.x, position.y + 1.0, position.z);
+
+    const double half_width   = static_cast<double>(view.viewport.width) * 0.5;
+    const double half_height  = static_cast<double>(view.viewport.height) * 0.5;
+    const auto   pixel_length = [&](const Point3d& point) {
+        const double dx = (point.x - origin.x) * half_width;
+        const double dy = (point.y - origin.y) * half_height;
+        return std::sqrt(dx * dx + dy * dy);
+    };
+    // Use the tighter axis so a non-square viewport keeps the whole billboard inside the picture.
+    const double pixels_per_local = std::min(pixel_length(x_axis), pixel_length(y_axis));
+    const double pixel_size       = kAutoScaleReferenceRadius * pixels_per_local;
+    if (!(pixel_size > 0.0) || !std::isfinite(pixel_size)) {
+        return authored.x;
+    }
+    const double scale = 1.0 / pixel_size;
+    if (!std::isfinite(scale)) {
+        return authored.x;
+    }
+    return std::clamp(scale, minimum_scale, maximum_scale);
+}
+
+/**
+ * @brief An AutoTransform's per-view placement as a value: the switches and numbers, and the math they imply.
+ *
+ * @details
+ * - The node builds one per build (see AutoTransform::viewPlacement) and a draw-list row carries it, so the select
+ *   resolves a billboard from the view exactly like any other row - no node, no camera object.
+ * - The three answers are the node's old three hooks, unchanged in meaning: the declared (widest) dependence, the
+ *   per-view dependence together with the local matrix, and a box that covers every orientation.
+ */
+class AutoTransformPlacement final : public ViewPlacement {
+  public:
+    AutoTransformPlacement(AutoTransform::AutoRotateMode mode,
+                           bool                           auto_scale,
+                           Point3d                        position,
+                           Quatd                          rotation,
+                           Vec3d                          scale,
+                           Point3d                        pivot,
+                           Vec3d                          axis,
+                           Vec3d                          normal,
+                           double                         minimum_scale,
+                           double                         maximum_scale)
+      : mode_(mode)
+      , auto_scale_(auto_scale)
+      , position_(position)
+      , rotation_(rotation)
+      , scale_(scale)
+      , pivot_(pivot)
+      , axis_(axis)
+      , normal_(normal)
+      , minimum_scale_(minimum_scale)
+      , maximum_scale_(maximum_scale)
+    {}
+
+    [[nodiscard]] ViewDependence declaredDependence() const noexcept override
+    {
+        if (auto_scale_) {
+            // Conservative: a view without a viewport resolves like None, but a bake has no view to ask.
+            return ViewDependence::ViewAndViewport;
+        }
+        return mode_ != AutoTransform::AutoRotateMode::NoRotation ? ViewDependence::View : ViewDependence::None;
+    }
+
+    [[nodiscard]] ViewDependence dependence(const CollectView& view) const noexcept override
+    {
+        const bool auto_rotate = mode_ != AutoTransform::AutoRotateMode::NoRotation;
+        const bool auto_scale  = auto_scale_ && view.hasViewport();
+        if (!auto_rotate && !auto_scale) {
+            return ViewDependence::None;
+        }
+        return auto_scale ? ViewDependence::ViewAndViewport : ViewDependence::View;
+    }
+
+    [[nodiscard]] Mat4d localMatrix(const Mat4d& parent_world, const CollectView& view) const override
+    {
+        // The automatic rotation is computed in THIS node's frame, exactly as OSG does: the model-view includes
+        // the parent transform, so a parent rotation is cancelled by the local rotation and a parent scale is
+        // inherited. RotateToCamera needs the eye/up expressed in the same local frame.
+        Mat4d auto_rotation;
+        if (mode_ != AutoTransform::AutoRotateMode::NoRotation) {
+            if (mode_ == AutoTransform::AutoRotateMode::RotateToScreen) {
+                auto_rotation = screenRotation(view.view * parent_world);
+            }
+            else {
+                Mat4d         parent_inverse = parent_world;
+                const bool    inverted       = parent_inverse.invert();
+                const Point3d local_point    = inverted ? parent_inverse * Point3d(view.eye.x, view.eye.y, view.eye.z) : Point3d(view.eye.x, view.eye.y, view.eye.z);
+                const Vec3d   local_eye(local_point.x, local_point.y, local_point.z);
+                if (mode_ == AutoTransform::AutoRotateMode::RotateToCamera) {
+                    const Vec3d local_up = inverted ? parent_inverse * view.up : view.up;
+                    auto_rotation        = cameraRotation(position_, local_eye, local_up);
+                }
+                else {
+                    auto_rotation = axisRotation(local_eye, position_, axis_, normal_);
+                }
+            }
+        }
+
+        Vec3d draw_scale = scale_;
+        if (auto_scale_ && view.hasViewport()) {
+            const double scale = screenScaleFor(position_, scale_, minimum_scale_, maximum_scale_, view, parent_world);
+            draw_scale         = Vec3d(scale, scale, scale);
+        }
+
+        // The local matrix is the ordinary T * R * S * T(-pivot); the walk multiplies the parent on the left,
+        // so parent translation, rotation and scale all reach the billboard (OSG semantics).
+        return vn::math::translate(Vec3d(position_.x, position_.y, position_.z)) * auto_rotation * vn::math::rotate(rotation_) *
+               vn::math::scale(draw_scale) * vn::math::translate(Vec3d(-pivot_.x, -pivot_.y, -pivot_.z));
+    }
+
+    [[nodiscard]] Aabbd conservativeParentBox(const Aabbd& own_box) const override
+    {
+        if (!own_box.isValid()) {
+            return own_box;
+        }
+        // The automatic rotation turns about `position_`, so a cube around it covers every orientation. `position_`
+        // and the authored placement are stated in the PARENT frame (they are what `matrix_` composes), which is the
+        // frame this answer has to be in. The scale that may be applied is the authored one, or the finite maximum
+        // when screen scaling is on (a view can make the node bigger than either, which is what isBounded() reports).
+        Vec3d bound_scale = scale_;
+        if (auto_scale_ && maximum_scale_ < std::numeric_limits<double>::max()) {
+            bound_scale = Vec3d(maximum_scale_, maximum_scale_, maximum_scale_);
+        }
+        const Aabbd placed = own_box.transformed(vn::math::translate(Vec3d(position_.x, position_.y, position_.z)) * vn::math::rotate(rotation_) *
+                                                 vn::math::scale(bound_scale) * vn::math::translate(Vec3d(-pivot_.x, -pivot_.y, -pivot_.z)));
+        const auto  mn     = placed.min();
+        const auto  mx     = placed.max();
+        double      radius = 0.0;
+        const double xs[2] = { mn.x, mx.x };
+        const double ys[2] = { mn.y, mx.y };
+        const double zs[2] = { mn.z, mx.z };
+        for (const double x : xs) {
+            for (const double y : ys) {
+                for (const double z : zs) {
+                    radius = std::max(radius, (Vec3d(x - position_.x, y - position_.y, z - position_.z)).length());
+                }
+            }
+        }
+        Aabbd box = Aabbd::empty();
+        box.expandBy(Point3d(position_.x - radius, position_.y - radius, position_.z - radius));
+        box.expandBy(Point3d(position_.x + radius, position_.y + radius, position_.z + radius));
+        return box;
+    }
+
+    [[nodiscard]] bool isBounded() const noexcept override
+    {
+        // Screen scaling has no view-independent size when no finite maximum was stated (see maximumScale).
+        return !auto_scale_ || maximum_scale_ < std::numeric_limits<double>::max();
+    }
+
+  private:
+    AutoTransform::AutoRotateMode mode_{ AutoTransform::AutoRotateMode::NoRotation };
+    bool                          auto_scale_{ false };
+    Point3d                       position_{};
+    Quatd                         rotation_{};
+    Vec3d                         scale_{ 1.0, 1.0, 1.0 };
+    Point3d                       pivot_{};
+    Vec3d                         axis_{ 0.0, 0.0, 1.0 };
+    Vec3d                         normal_{ 0.0, -1.0, 0.0 };
+    double                        minimum_scale_{ 0.0 };
+    double                        maximum_scale_{ std::numeric_limits<double>::max() };
+};
+
 } // namespace
 
 VN_OBJECT_META_IMPL(AutoTransform, Group);
@@ -275,94 +473,22 @@ Mat4d AutoTransform::localTransformMatrix() const
     return matrix_;
 }
 
-ViewDependence AutoTransform::localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const
+ViewPlacementPtr AutoTransform::viewPlacement() const
 {
-    const bool auto_rotate = mode_ != AutoRotateMode::NoRotation;
-    const bool auto_scale  = auto_scale_to_screen_ && view.hasViewport();
-    if (!auto_rotate && !auto_scale) {
-        return ViewDependence::None;
+    if (mode_ == AutoRotateMode::NoRotation && !auto_scale_to_screen_) {
+        return {}; // the view-independent placement: localTransformMatrix() answers for every camera
     }
-
-    // The automatic rotation is computed in THIS node's frame, exactly as OSG does: the model-view includes
-    // the parent transform, so a parent rotation is cancelled by the local rotation and a parent scale is
-    // inherited. RotateToCamera needs the eye/up expressed in the same local frame.
-    Mat4d auto_rotation;
-    if (auto_rotate) {
-        if (mode_ == AutoRotateMode::RotateToScreen) {
-            auto_rotation = screenRotation(view.view * parent_world);
-        }
-        else {
-            Mat4d         parent_inverse = parent_world;
-            const bool    inverted       = parent_inverse.invert();
-            const Point3d local_point = inverted ? parent_inverse * Point3d(view.eye.x, view.eye.y, view.eye.z) : Point3d(view.eye.x, view.eye.y, view.eye.z);
-            const Vec3d   local_eye(local_point.x, local_point.y, local_point.z);
-            if (mode_ == AutoRotateMode::RotateToCamera) {
-                const Vec3d local_up = inverted ? parent_inverse * view.up : view.up;
-                auto_rotation        = cameraRotation(position_, local_eye, local_up);
-            }
-            else {
-                auto_rotation = axisRotation(local_eye, position_, axis_, normal_);
-            }
-        }
-    }
-
-    Vec3d draw_scale = scale_;
-    if (auto_scale) {
-        const double scale = screenScaleFor(view, parent_world);
-        draw_scale         = Vec3d(scale, scale, scale);
-    }
-
-    // The local matrix is the ordinary T * R * S * T(-pivot); the walk multiplies the parent on the left,
-    // so parent translation, rotation and scale all reach the billboard (OSG semantics).
-    const Mat4d local = vn::math::translate(Vec3d(position_.x, position_.y, position_.z)) * auto_rotation * vn::math::rotate(rotation_) *
-                        vn::math::scale(draw_scale) * vn::math::translate(Vec3d(-pivot_.x, -pivot_.y, -pivot_.z));
-    world             = parent_world * local;
-    return auto_scale ? ViewDependence::ViewAndViewport : ViewDependence::View;
-}
-
-ViewDependence AutoTransform::viewDependence() const noexcept
-{
-    if (auto_scale_to_screen_) {
-        // Conservative: a view without a viewport resolves like None, but a baked pass has no view to ask, so the
-        // declaration covers the widest case the configuration allows.
-        return ViewDependence::ViewAndViewport;
-    }
-    return mode_ != AutoRotateMode::NoRotation ? ViewDependence::View : ViewDependence::None;
-}
-
-double AutoTransform::screenScaleFor(const CollectView& view, const Mat4d& parent_world) const
-{    // OSG's pixelSize(position, 0.48): 0.48 local units at the node cover N pixels, and the scale that keeps
-    // that constant is 1/N. The model-view includes the parent, so a parent scale is cancelled by the local
-    // scale (a non-uniform parent scale is an approximation; document it).
-    if (!view.hasViewport()) {
-        return scale_.x;
-    }
-    // Project one local unit along X and Y at the node's position. The model-view includes the parent, so a
-    // parent scale/rotation (and a perspective depth) is part of the measured pixel size. This is the same
-    // quantity OSG's computePixelSizeVector measures, without assuming the parent is rigid.
-    const Mat4d   view_projection = view.projection * (view.view * parent_world);
-    const Point3d origin          = view_projection * position_;
-    const Point3d x_axis          = view_projection * Point3d(position_.x + 1.0, position_.y, position_.z);
-    const Point3d y_axis          = view_projection * Point3d(position_.x, position_.y + 1.0, position_.z);
-
-    const double half_width   = static_cast<double>(view.viewport.width) * 0.5;
-    const double half_height  = static_cast<double>(view.viewport.height) * 0.5;
-    const auto   pixel_length = [&](const Point3d& point) {
-        const double dx = (point.x - origin.x) * half_width;
-        const double dy = (point.y - origin.y) * half_height;
-        return std::sqrt(dx * dx + dy * dy);
-    };
-    // Use the tighter axis so a non-square viewport keeps the whole billboard inside the picture.
-    const double pixels_per_local = std::min(pixel_length(x_axis), pixel_length(y_axis));
-    const double pixel_size       = kAutoScaleReferenceRadius * pixels_per_local;
-    if (!(pixel_size > 0.0) || !std::isfinite(pixel_size)) {
-        return scale_.x;
-    }
-    const double scale = 1.0 / pixel_size;
-    if (!std::isfinite(scale)) {
-        return scale_.x;
-    }
-    return std::clamp(scale, minimum_scale_, maximum_scale_);
+    // A snapshot of this node's switches and numbers: the value carries no node, so a row can resolve it without one.
+    return ViewPlacementPtr(new AutoTransformPlacement(mode_,
+                                                       auto_scale_to_screen_,
+                                                       position_,
+                                                       rotation_,
+                                                       scale_,
+                                                       pivot_,
+                                                       axis_,
+                                                       normal_,
+                                                       minimum_scale_,
+                                                       maximum_scale_));
 }
 
 Aabbd AutoTransform::boundingBox() const

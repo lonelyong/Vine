@@ -55,22 +55,22 @@ struct DrawFacts {
  *
  * @details
  * - OWN facts are what the node itself says: its local placement, visibility, opacity, its own layer / draw-order
- *   declaration, its own state, material and program, and its primitives. They are the fold's INPUT, which is what
- *   lets a producer that was handed VALUES (the render world) re-run the fold without a node.
+ *   declaration, its own state, material and program, its primitives - and, when its placement depends on the camera,
+ *   a ViewPlacement VALUE. They are the fold's INPUT, which is what lets a producer that was handed VALUES (the
+ *   render world) re-run the fold without a node.
  * - RESOLVED facts are what a select reads: the accumulated placement and folds, the subtree's layer union and world
- *   box, and the end of the subtree in walk order. Nothing there needs the node again.
- * - `node` is kept for exactly two named reasons: a per-view run is resolved by the walk that knows how to place it
- *   (see `SceneBake::Fallback`), and this table keeps the content it names alive (see ADR-2026-11-09). Neither is a
- *   read of the node's mutable state during a select.
- * - `identity` is the address the table keys by - the same address `node` carries, kept separately so a producer
- *   that has no node at all (the render world) can still name what it mirrors.
+ *   box, and the end of the subtree in walk order. Nothing there needs the node again - a per-view row is resolved
+ *   from the view by the select, which reads its placement value (see ViewPlacement).
+ * - `geometry` is the content object a content-side producer HAD (a share); a mirror built from values carries none,
+ *   and nothing in the fold or the select reads it (see `.ai/design/graphics-threading.md`).
+ * - `identity` is the address the table keys by, kept separately so a producer that has no object at all (the render
+ *   world) can still name what it mirrors.
  */
 struct Row {
     /// The address this row mirrors (the content object; see ADR-2026-11-09).
     const void* identity{ nullptr };
 
     // ---- structure: walk order, so a row is followed by its own subtree
-    const Node*   node{ nullptr };              ///< Kept for a per-view run and to hold the content alive.
     std::uint32_t parent{ 0xFFFFFFFFU };        ///< 0-based row index; the table's first row has none.
     std::uint32_t end{ 0 };                     ///< One past this row's subtree.
     std::uint32_t child_count{ 0 };
@@ -85,31 +85,54 @@ struct Row {
     RenderState                  own_state{};
     MaterialBasePtr              own_material{};
     ShaderProgramPtr             own_program{};
-    ViewDependence               dependence{ ViewDependence::None };
+    /// The leaf's own bound as the NODE states it, in WORLD space, for the leaves that cannot state one in their own
+    /// frame (a Geometry subclass may place itself in ways only it knows - see Node::subtreeBounds).
+    ///
+    /// The fold turns that answer into `local_box` with the row's own placement, so every box downstream lives in one
+    /// frame and the cull above the row still works. `refreshBoxes` re-reads it, which is why such a row is a
+    /// content-side one: a mirror keeps the value it was told (see SceneBake::nodes).
+    std::optional<Aabbd>         world_box_answer{};
+    /// The per-view half of this row's placement, or null when the row is placed by `local` alone.
+    ///
+    /// A VALUE (see ViewPlacement): the select resolves it from the view it is drawing, which is what lets a mirror - or
+    /// any side that owns no node - draw a billboard without handing its subtree back to the graph walk.
+    ViewPlacementPtr             placement{};
     GeometryPtr                  geometry{};           ///< The command's payload (a share, never dereferenced here).
     /// The same geometry's shape as an immutable value (see Geometry::description): what a command hands a backend, so
     /// describing streams never reads the live object. Shared by every draw of this row and stable per revision.
     GeometryDescriptionPtr       description{};
     std::vector<DrawFacts>       draws{};
 
-    /// A row whose own box cannot be answered in its own frame (a custom leaf): its world box is a seed the producer
-    /// resolved, and a placement edit cannot re-place it (the render world refuses such a row).
-    bool  box_from_node{ false };
-    Aabbd seed_world_box{};
-    std::uint64_t box_revision{ 0 };             ///< The geometry revision the own box was read at.
-
     // ---- RESOLVED facts (the fold's output; what a select reads)
-    Mat4d            world{};
+    Mat4d            world{};                    ///< Placed by this row's own `local`, from the fold (no camera read).
+    /// The placement accumulated ABOVE this row.
+    ///
+    /// A per-view placement produces the row's WHOLE local matrix (it replaces `local`), so it has to be composed
+    /// with what the parent already resolved - not with `world`, which already contains this row's own `local`.
+    Mat4d            parent_world{};
     std::uint32_t    layers{ kDefaultLayer };
     std::int32_t     draw_order{ 0 };
     float            opacity{ 1.0F };
     RenderState      state{};
     MaterialBasePtr  material{};
     ShaderProgramPtr program{};
-    Aabbd            local_box{};                ///< This subtree's box in this row's own frame.
-    Aabbd            world_box{};                ///< ... placed by `world` (what the frustum test reads).
+    /// This subtree's box in this row's OWN frame (the frame `local` consumes): a leaf's own bounds, or the union of
+    /// its children's boxes placed by their `local`. For a per-view row it does NOT cover the orientations the
+    /// placement may choose - that bound is in the PARENT frame, see world_box.
+    Aabbd            local_box{};
+    /// This subtree's box in world space, CONSERVATIVE for every view: what the frustum test reads.
+    ///
+    /// A per-view row folds `placement->conservativeParentBox(local_box)` through `parent_world`, so the box covers
+    /// every orientation the placement can take - the cull above it therefore does not depend on the camera.
+    Aabbd            world_box{};
+    /// This row or an ancestor resolves its placement per view: the select re-places the subtree from the view instead
+    /// of reading `world`.
+    bool             view_dependent{ false };
     std::uint32_t    layers_union{ 0U };         ///< OR of the resolved layers of this subtree.
-    bool             view_dependent{ false };    ///< This row or an ancestor resolves its placement per view.
+    /// The subtree has NO view-independent bound, so a caller must not cull it (nor any ancestor, whose box was built
+    /// from this one). Two causes: a per-view placement that can grow without a finite limit (screen scaling with no
+    /// finite maximum), and a leaf that states no box at all.
+    bool             unbounded{ false };
 };
 
 /**
@@ -125,6 +148,10 @@ struct Row {
  * - WHAT IS NOT HERE. Anything a camera decides: the frustum test, the sort key, the final list.
  * - LIFETIME. A row holds SHARES of the content it names (geometry, material, program), so a row can never name a
  *   freed object. The table is dropped when the graph announces a change (the epoch) or the scene invalidates.
+ * - WHAT IS CONTENT-SIDE ONLY. `nodes` is the build's record of which node each row came from, used by
+ *   `refreshBoxes` (a byte edit announces itself on a buffer, so the box that depends on those bytes has to be
+ *   re-read). It is NOT part of the draw list: a mirror adopts the rows and drops it (`RenderWorld::adopt`), which
+ *   is why nothing in the fold or the select reads a node.
  */
 struct SceneBake {
     /// The row index meaning "this row has no parent" (the table's first row).
@@ -135,23 +162,9 @@ struct SceneBake {
         float parent_opacity{ 1.0F };
     };
 
-    /// The context a per-view run is handed back to the walk with (see selectFromBake): one per run, the TOPMOST
-    /// such node, so a run is resolved once - by the code that already knows how to place it.
-    struct Fallback {
-        std::uint32_t    index{ 0 };
-        const Node*      node{ nullptr };
-        Mat4d            world{};              ///< The run's TOP node's own accumulated placement (the walk's convention).
-        float            parent_opacity{ 1.0F }; ///< Opacity accumulated ABOVE the run.
-        std::uint32_t    layers{ kDefaultLayer }; ///< Layers the run inherits from above.
-        std::int32_t     draw_order{ 0 };
-        RenderState      state{};
-        MaterialBasePtr  material{};
-        ShaderProgramPtr program{};
-    };
-
-    std::vector<Row>      rows;
-    std::vector<Fallback> fallbacks; // ascending by `index` (the build walks in order)
-    Seed                  seed{};
+    std::vector<Row>        rows;
+    std::vector<const Node*> nodes; // One per row, content-side box refresh only (dropped by a mirror).
+    Seed                    seed{};
 };
 
 /**
@@ -221,8 +234,9 @@ class Frustum {
  *   writes is values; a side that owns no graph takes them as they are (see RenderWorld::adopt).
  * - Invisible subtrees produce no rows at all: the walk skipped them before, and a row that can never be drawn is
  *   memory nobody reads.
- * - A node that DECLARES a per-view placement (Node::viewDependence) starts a run recorded in `bake.fallbacks`; the
- *   select hands that run back to the walk that knows how to place it for the camera at hand.
+ * - A node that DECLARES a per-view placement answers `viewPlacement()`; the value goes on the row, and the select
+ *   resolves it from the view it is drawing (see ViewPlacement). No run is handed back to a graph walk, so a mirror
+ *   (which owns no node) draws a billboard exactly like content does.
  *
  * @param root    Subtree root to build.
  * @param bake    Receives the rows (its previous contents are dropped).
@@ -237,8 +251,8 @@ void buildRows(const Node& root, SceneBake& bake, float opacity = 1.0F);
  * - Top-down it recomputes the accumulated placement and the folded values from the own facts; bottom-up it
  *   recomputes each row's local and world boxes and its subtree layer union. Only the subtree of @p index is
  *   touched, which is what makes a joint edit cost the joint's subtree instead of the whole graph.
- * - A row that resolves its placement per view, or whose box could only be answered by the node, is skipped: the
- *   fold cannot answer for it from values (the build kept the node's answer instead).
+ * - The boxes are values (`Row::local_box` for a leaf, the children's union for a container), so a fold never asks a
+ *   node: a mirror re-folds exactly what content does.
  *
  * @param bake  The table containing @p index.
  * @param index The row to fold (with its subtree).
@@ -252,8 +266,10 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index);
  * @details
  * - Byte content does not travel as a delta (see the design): a writer announces it on the buffer, so a box has to be
  *   re-read when that revision moves. This is the ONE step that still needs the content's thread, and it is a poll
- *   over the rows a collection is about to use - never a read inside the select.
+ *   over the nodes the build recorded (`SceneBake::nodes`) - never a read inside the select.
  * - Only boxes are recomputed (plus the placement transform), so a streaming buffer costs its chain, not the graph.
+ * - A MIRROR has no nodes (see RenderWorld::adopt), so it does not refresh: its boxes are the handshake's until a box
+ *   delta exists (a known gap, not a silent read of content).
  *
  * @param bake The table to refresh.
  * @return How many rows had their own box re-read.

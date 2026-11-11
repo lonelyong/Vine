@@ -9,6 +9,7 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/models/TriangleMesh.hpp>
 
+#include <vine/graphics/AutoTransform.hpp>
 #include <vine/graphics/CollectView.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
@@ -45,6 +46,16 @@ CollectView clipBoxView()
 {
     CollectView view;
     view.eye = Vec3d(0.0, 0.0, 10.0);
+    return view;
+}
+
+/// @brief A view whose world-to-view rotation is NOT the identity, so a billboard's auto rotation is visible.
+CollectView tiltedView()
+{
+    CollectView view;
+    view.view       = vn::math::rotate(Vec3d(0.0, 1.0, 0.0), 0.6); // world -> view
+    view.eye        = Vec3d(3.0, 2.0, 10.0);
+    view.projection = Mat4d{}; // clip box [-1, 1]^3
     return view;
 }
 
@@ -224,6 +235,48 @@ TEST(RenderWorldTest, TheMirrorMovesOnlyWhenItIsTold)
             }
         }
     }
+}
+
+TEST(RenderWorldTest, APerViewRowDrawsTheSameInAMirrorThatOwnsNoNode)
+{
+    // A billboard's placement is a function of the CAMERA, and a mirror owns no node to ask. The row carries that
+    // placement as a value (ViewPlacement), so both sides resolve it from the view they are handed - which is the case
+    // the rows could not express before: the run used to be handed back to the graph walk.
+    auto root = intrusive_ptr<Group>(new Group());
+    auto billboard = intrusive_ptr<vn::graphics::AutoTransform>(new vn::graphics::AutoTransform());
+    billboard->setPosition(vn::math::Point3d(0.2, 0.1, 0.0));
+    billboard->setAutoRotateMode(vn::graphics::AutoTransform::AutoRotateMode::RotateToScreen);
+    const GeometryPtr face = triangle();
+    billboard->addChild(face);
+    root->addChild(billboard);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    SceneBake  rows;
+    buildRows(*root, rows);
+    RenderWorld world;
+    world.adopt(std::move(rows));
+
+    const CollectView         view = tiltedView();
+    std::vector<RenderCommand> mirrored;
+    world.collect(view, vn::graphics::kAllLayers, mirrored);
+    ASSERT_EQ(mirrored.size(), 1u);
+    expectSameDrawList(mirrored, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+
+    // The equivalence compares two users of one rule, so it cannot see a rule that does nothing for both. The draw
+    // matrix is NOT the authored placement: the auto rotation cancels the view's own turn.
+    EXPECT_GT(std::abs(mirrored.front().model_matrix.element(0, 2)), 0.1) << "the billboard turned, it is not the identity";
+
+    // A billboard MOVES as a value too, and the value is the placement itself: a delta that carried only the local
+    // matrix would leave the mirror drawing the old orientation.
+    billboard->setPosition(vn::math::Point3d(-0.3, 0.2, 0.0));
+    ASSERT_TRUE(world.place(billboard.get(), billboard->matrix(), billboard->viewPlacement()));
+    std::vector<RenderCommand> after;
+    world.collect(view, vn::graphics::kAllLayers, after);
+    expectSameDrawList(after, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    ASSERT_EQ(after.size(), 1u);
+    EXPECT_NEAR(after.front().model_matrix.element(0, 3), -0.3, 1e-12) << "the value the mirror was told, not the node's";
 }
 
 TEST(RenderWorldTest, AnEditItCannotAnswerForIsRefused)

@@ -115,7 +115,7 @@ void invalidateBoundsUnder(Node& node)
  * @brief Unions the world-space boxes of a subtree's VISIBLE content the @p layer_mask selects.
  *
  * The scene's box answers for what it would DRAW (see Scene::boundingBox), so an invisible node prunes
- * its whole subtree - the same rule the collection walk (collectNodeCommands below) and the ray walks
+ * its whole subtree - the same rule the draw list's build (bakeSubtree in DrawListBake) and the ray walks
  * (RayIntersection) apply. The layers fold down (nearest declaration wins) and the mask is tested where
  * a box is contributed (the drawn node), like the collection: a container stands for structure and is
  * never pruned by the mask. Every other node answers through its own boundingBox(), which stays the

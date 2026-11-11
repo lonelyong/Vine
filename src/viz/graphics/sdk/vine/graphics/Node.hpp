@@ -13,6 +13,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "CollectView.hpp"
+#include "ViewPlacement.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -32,23 +33,6 @@ inline constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
 /// "undeclared = every layer" every non-caster would have to be declared before it could be excluded. Here,
 /// declaring the few items that ARE in a named layer is enough.
 inline constexpr std::uint32_t kDefaultLayer = 1u << 0;
-
-/**
- * @brief What a node's per-view placement depends on (see Node::localToWorldForView).
- *
- * @details
- * - None: the node is placed by localTransformMatrix() alone (the common case).
- * - View: projection / view / eye / up matter, but the device-pixel viewport does not (a billboard that only
- *   rotates). A collected list can be shared by two passes that look the same but fill different rectangles.
- * - ViewAndViewport: the viewport matters too (screen-space scaling), so the collected-list memo must key on
- *   the device-pixel rectangle as well.
- */
-enum class ViewDependence
-{
-    None,            // View-independent placement.
-    View,            // Depends on the camera, but not on the device-pixel viewport.
-    ViewAndViewport, // Depends on the camera and on the device-pixel viewport.
-};
 
 /**
  * @brief What a node's caches had to recompute since construction (see Node::cacheStats).
@@ -250,8 +234,8 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *   (identity for every other node); for a transform node it includes its own. For a leaf Geometry it
      *   places the local vertex data in world space.
      * - This is the VIEW-INDEPENDENT placement: a view-dependent node (AutoTransform with auto-rotation or
-     *   screen-space scaling) is reported with the placement it has with no camera, while command collection
-     *   asks localToWorldForView() for the matrix of the view being drawn.
+     *   screen-space scaling) is reported with the placement it has with no camera, while a collector resolves the
+     *   value the node answers through viewPlacement() (see ViewPlacement.hpp).
      * - This walks the ancestor chain: a traversal should accumulate top-down with localTransformMatrix()
      *   (one product per node) instead of calling this once per node (one product per ancestor).
      *
@@ -269,44 +253,21 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      */
     virtual Mat4d localTransformMatrix() const;
 
-    /** @brief Computes this node's local-to-world matrix for one VIEW, when its placement depends on the camera.
+    /** @brief Gets this node's PER-VIEW placement as a value, or null when its placement is view-independent.
      *
      * @details
-     * - The collection walk offers this hook before it descends. The default answers false, so the walk uses
-     *   `parent_world * localTransformMatrix()` - the view-independent placement every other node has.
-     * - A view-dependent node (AutoTransform's auto-rotation or screen-space scaling) fills @p world and
-     *   returns a non-None dependence. The walk then uses that matrix for the node's own culling box and for
-     *   its children. The collected-list memo is
-     *   already keyed by the view, so "one list per camera" remains the existing contract.
-     * - It is NOT used by Node::worldMatrix(), Scene::boundingBox() or picking: those have no camera and keep
-     *   asking the view-independent placement (a view-dependent node makes its own boundingBox()
-     *   conservative).
+     * - THE EXTENSION POINT for a node whose placement is a function of the camera (a billboard). Everything needed
+     *   to resolve it is in the returned value (see ViewPlacement), so a collector that owns no node - the render
+     *   world's rows, or a side that takes a draw list across a thread - resolves it from the view alone.
+     * - The default answers null: the node is placed by localTransformMatrix(). `AutoTransform` answers a value whose
+     *   declaredDependence() is View or ViewAndViewport depending on its configuration.
+     * - Taken when the CALLER asks (a bake takes it once per build), so a node whose parameters changed returns a
+     *   fresh value; the returned object itself never changes. Resolving it for a view is `localToWorldForView`
+     *   (see ViewPlacement.hpp), which reads nothing but the value.
      *
-     * @param parent_world World matrix of this node's parent (already accumulated).
-     * @param view         The view being drawn: projection / view / eye / up and the device-pixel viewport.
-     * @param world        Receives the node's world matrix when the return value is not None.
-     * @return None when the placement is view-independent; View when @p world was filled and the viewport does
-     *         not matter; ViewAndViewport when @p world was filled and the viewport is one of its inputs.
+     * @return The placement value, or null for a view-independent placement.
      */
-    virtual ViewDependence localToWorldForView(const Mat4d& parent_world, const CollectView& view, Mat4d& world) const;
-
-    /** @brief Gets the WIDEST view dependence this node can have, without being given a view.
-     *
-     * @details
-     * - A DECLARATION, not a discovery. `localToWorldForView` answers for ONE view, so a collector that wants to
-     *   resolve placements WITHOUT a camera (the scene's baked pass, which caches the view-independent half of a
-     *   collection) cannot ask it. This hook is that question, and the two must agree: what a view resolves is
-     *   never STRONGER than what the node declared (a test pins it for the built-in nodes).
-     * - The default answers None. `AutoTransform` answers the widest case its own configuration can produce
-     *   (ViewAndViewport when screen-space scaling is on, View when an auto-rotation mode is set, None otherwise) -
-     *   conservative on purpose: declaring more than a particular view needs costs a per-view resolve, declaring
-     *   less would cache a matrix that belongs to another camera.
-     * - A subclass that overrides `localToWorldForView` to answer something other than None MUST override this too;
-     *   the collector is allowed to trust the declaration.
-     *
-     * @return None for a view-independent placement, otherwise the strongest dependence the node can have.
-     */
-    [[nodiscard]] virtual ViewDependence viewDependence() const noexcept;
+    [[nodiscard]] virtual ViewPlacementPtr viewPlacement() const;
 
     /** @brief Announces that this subtree's bound may have changed.
      *
