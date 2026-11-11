@@ -138,3 +138,21 @@
   4 条既有发现登记在脚本的 `BASELINE` 里，修完即删）。
 - `scripts/asan_check.sh` / `VN_ASAN_*`；`skipped == 0` 才算跑过设备电池。
 - 量后端每帧成本：`test_vsg --gtest_filter='*MeasureWhatEachKind*'`（打印 µs/帧 + `builds`/`uploads`/`created`，需真实窗口，headless 会 skip）；成本模型与分配上限见 `.ai/design/vsg-backend.md` §2.10 / N4 / T5。
+
+## 2026-11-11 —— graphics-next 提案组（未采纳；下次从这里继续）
+
+- 六份文档，入口 `.ai/research/graphics-2026-11-11-next.md`（总纲），展开：`-requirements`（`R1–R30`、
+  `N1–N18`、`C1–C12`、`T1–T16`）、`-design`（类型草案 + hot/cold 分块 + 七个算法 + 7 条 open question）、
+  `-benefits`（收益/代价 `P1–P7`/三批迁移）、`-api`（`P1–P32` + `M1–M10` + 风格三档 + 49 方法去向）、
+  `-hot-paths`（性能预算、动画 pose、后期依赖图、扩展、`N11–N18`）。对应 backlog `T32`；**现行设计不变**。
+- 讨论中定下、且值得下次直接沿用的三条判断：
+  1. **三档风格**：跨线程/进计划/被比较 ⇒ 值（无 setter，`withXxx`）；有身份/单线程/增量编辑 ⇒ 对象（Qt 访问器）；
+     只在创建时存在 ⇒ 构建器（`build()` 产出值）。`RenderPass` / `PassChain` / `ShaderProgram` / `RenderControl`
+     今天**越档**（分别是值语义、构建器、值、适配器）。
+  2. **动画不走发布**：`Instance::setMatrix` 是编辑（hot 块 CoW + 发布）；每帧动画走帧内 `PoseSet`
+     （快照不动、每行一次矩阵乘）。这样"半个配置上屏"在动画路径上不会出现，也顺带消掉 backlog `T6`。
+  3. **hot/cold 分块**是"折叠留在快照"与"发布 O(变更)"能同时成立的前提：动画只复制 hot 块（~10 KB/块），
+     cold 块（身份/状态/引用）共享零拷贝。
+- 新门禁：`scripts/check_api_style.py`（四条规则，今天 0 新增 / 4 基线）。
+- 本 session 唯一的**生产代码**改动：`af2de738` 把 `sessionChangeAllowed` 收回 private（原为我误放 public）。
+- 下次的第一条命令：`-hot-paths` §8 第 1 步 —— 把 `Measure*` 用例从打印改成阈值断言（不改架构、让性能回归可见）。
