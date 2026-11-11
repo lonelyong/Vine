@@ -159,7 +159,7 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（4 文件 / 1 组提案）
+## research/ —— 调研与提案（5 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
@@ -171,6 +171,8 @@
   publish / fold / select / sort / record / reclaim / plan-diff 算法、线程与内存模型、诊断、后端契约。
 - `graphics-2026-11-11-next-benefits.md` —— 同上的**收益与代价**：按维度量化收益与测量方式、`P1–P7`、
   三批迁移与每批的判死条件、反方论点回应。
+- `graphics-2026-11-11-next-api.md` —— 同上的**现有 API 集审计**：`P1–P24`（一概念两表示、声明里的回调、
+  目标四种说法、顺序四套、49 个公开方法、七个别名…）、`M1–M10` 缺失能力、逐方法去向、命名对照、A–E 分批。
 
 （此前的三角形树两帧统一与 `.vbtp` 持久化已并入 `design/graphics-geometry.md` 2.10 / F33、
 `design/geometry-bvh.md` 2.13 / F8 与 `design/robotics-io-design.md` F7。）

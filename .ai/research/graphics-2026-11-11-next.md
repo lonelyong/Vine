@@ -16,6 +16,7 @@
 | `graphics-2026-11-11-next-requirements.md` | **要什么**：目标 `O1–O7`、功能要求 `R1–R30`、非功能要求 `N1–N10`、硬约束 `C1–C12`、验收 `T1–T16` |
 | `graphics-2026-11-11-next-design.md` | **怎么做**：分层、概念表、类型草案、hot/cold 数据布局、publish/fold/select/sort/record/reclaim/plan-diff 算法、线程与内存模型、诊断、后端契约、关闭相位、未决问题 |
 | `graphics-2026-11-11-next-benefits.md` | **值不值**：按维度的量化收益与测量方式、代价 `P1–P7`、三批迁移与每批判死、反方论点的详细回应 |
+| `graphics-2026-11-11-next-api.md` | **现有 API 集的问题**：`P1–P24` 概念/形状/层次问题（每条带证据与 `G#`）、`M1–M10` 缺失能力、`RenderEngine` 49 个公开方法的去向、命名对照、A–E 分批 |
 
 读法：先本文 §1–§2 拿骨架，再按需要跳 `-requirements`（要什么）、`-design`（怎么做）、`-benefits`（值不值）。
 
