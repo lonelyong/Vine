@@ -38,7 +38,7 @@ std::size_t FrameWorker::drain()
 
 void FrameWorker::runPass(PassDraw& pass, FrameMode mode)
 {
-    if (mode == FrameMode::Threaded) {
+    if (mode == FrameMode::Mirrored) {
         // BIND: a draw that names a CONTENT is re-pointed at that content's mirror, so the expansion below stops
         // asking the content - which is what makes the expand safe off the content's thread. A source this worker does
         // not mirror is left alone and counted: correct on the calling thread, a cross-thread read anywhere else,

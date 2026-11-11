@@ -16,19 +16,21 @@ namespace detail
 {
 
 /**
- * @brief WHAT a frame's engine half does with the content a draw names: keep it, or answer with its mirror.
+ * @brief WHAT a frame's engine half asks for a draw: the CONTENT it names, or that content's MIRROR.
  *
  * @details
- * - The two modes are one predicate, and it follows from WHERE the work runs: on the content's own thread the frame
- *   may keep asking the content directly (bind is pointless and costs nothing), off that thread it must ask the mirror,
- *   or the expansion reads content the engine side does not own.
- * - Naming it after the FRAME (not after the thread) keeps the worker honest: it never inspects a thread, it applies
- *   the mode it was handed (see FrameRunner, which is what owns the thread and therefore chooses).
+ * - This is a statement about the SOURCE, not about the thread - and the two are independent: a mirror-backed frame may
+ *   run on the content's own thread (an engine that publishes and then expands in place), and only the reverse is
+ *   illegal - `Direct` reads content, so it may ONLY run where that content lives.
+ * - `Mirrored` is what makes a frame portable across threads at all: every draw is re-pointed at the mirror that was
+ *   published for it, and after that the frame names nothing the content owns.
+ * - Naming it after the SOURCE keeps the worker honest (it never inspects a thread) and the owner honest (the engine
+ *   decides how its frames are answered; the runner decides where they run).
  */
 enum class FrameMode : std::uint8_t
 {
-    Inline,   ///< The content's thread runs the frame: the draw keeps the content it names (today's path).
-    Threaded, ///< Another thread runs it: every draw is re-pointed at its content's mirror (see the design's bindContent).
+    Direct,  ///< Ask the content a draw names. Legal only on the content's thread (the inline path, and the fallback).
+    Mirrored, ///< Ask that content's mirror (see the design's bindContent). Legal anywhere it was published from.
 };
 
 /**
@@ -95,9 +97,9 @@ class FrameWorker {
      * @brief Binds (see @p mode) and expands the draws of ONE pass.
      *
      * @param pass The pass' drawing calls, expanded in place.
-     * @param mode What this run may assume about the content (see FrameMode).
+     * @param mode What a draw may ask (see FrameMode).
      */
-    void runPass(PassDraw& pass, FrameMode mode);
+    void runPass(PassDraw& pass, FrameMode mode = FrameMode::Mirrored);
 
     /**
      * @brief Runs the engine half of @p frame: drain, then every pass.
@@ -110,7 +112,7 @@ class FrameWorker {
      * @param mode  What the run may assume about the content (see FrameMode).
      * @return How many deltas the mirror drains applied.
      */
-    std::size_t run(FrameDescription& frame, FrameMode mode = FrameMode::Threaded);
+    std::size_t run(FrameDescription& frame, FrameMode mode = FrameMode::Mirrored);
 
   public:
     /** @brief Gets how many contents this worker mirrors. */

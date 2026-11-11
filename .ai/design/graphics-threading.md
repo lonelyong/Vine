@@ -244,6 +244,14 @@ flowchart LR
 - **worker 的两个原语 = 引擎需要的粒度**：`drain()` 一帧一次（一次采集里的每个 pass 看到同一批值），`runPass()` 一个 pass
   一次（bind + expand）；`run(frame)` 是二者的组合，也就是交给另一条线程的那种"整帧"形式。引擎按 pass 计时，所以它用前
   两个；线程只跑整帧，所以 runner 用后一个 —— 选哪个是"谁在计时"，不是"画什么"。
+- **引擎接入（C1）**：`RenderEngine` 现在持有 `detail::FrameWorker`，一帧的装配走**同一个入口**——每 pass 在
+  `before_draw` 钩子之后 `publish`（钩子会写内容，所以发布必须在它之后、且**按 pass**：直连路径今天就是"每个 pass
+  在自己那一刻采集，看得见它之前的钩子"），然后 `drain`，再 `runPass`。`frame_mode_` 一词切换 `Direct`/`Mirrored`。
+- **为什么默认还是 `Direct`**：把默认改成 `Mirrored` **试过**——所有"画面"用例都通过（镜像与内容逐命令相同），
+  但**镜像没有"每个视图的采集备忘录"**：`Scene` 会让同一个视图的第二个 pass 复用上一份列表，镜像每次问都重新采集。
+  G-buffer + lighting 这种"一相机两 pass"会因此**剔两遍、选两遍**。所以**备忘录是翻这个开关的前提**，不是接线
+  （`Scene::ContentMemo` 应抽成两侧共用的 `detail::DrawListMemo`；镜像的 revision = 应用过 delta 的次数，frame 令牌
+  随帧走）。
 - **`FrameRunner` 是唯一持线程的东西**：它把 worker 的 `run` 放到调用线程（inline）或自己的引擎线程（threaded），
   并用"一个请求 + 一个完成"的握手把帧值交出去、等这一帧跑完再交回 —— 所以**调用者在两种模式下看到同一个答案**，也不会有
   两帧同时碰一个帧值。空闲时引擎线程阻塞在条件变量上（`2.8`：等待而不是轮询）；从引擎线程自己请求一帧、或在 `stop()`
@@ -713,10 +721,14 @@ flowchart LR
   StateNode 的 material/program 仍走整体重发（它由整棵子树继承，不是一行的 payload —— 要细粒度就得带句柄再折整棵子树，单独一步再说）。
   验收：`ContentMirrorTest.APayloadEditIsOneRowAndEqualsARebuild`（换材质后与从零重建逐命令相同、命令里是新的那个句柄、
   行数不变、`publishCount` 不变）与 `ADescriptionDeltaRefusesWhatIsNotOneRow`。
-- **P1 下一步（接入引擎）**：`RenderEngine` 持有 `FrameWorker`，`buildFrameValue` 里把 `expandPass(*entry.draw)` 换成
-  `worker.runPass(*entry.draw, mode)`、在帧首调一次 `worker.drain()`（每 pass 的 `record_micros` 仍覆盖它自己的 expand，
-  所以那个数字的意思不变），threaded 模式下再加每帧一次 `worker.publish(每个 pass 的 scene)`。真正切到 `Threaded` 仍要等
-  P3：`executeFrame`（取图/记录/提交/呈现）读设备与表面，只搬 expand 是半个线程。
+- **P1 第五步已完成（引擎接入）**：`RenderEngine` 持有 `FrameWorker`，`buildFrameValue` 的每 pass 变成
+  `before_draw → publish(该 pass 的 scene，仅 Mirrored) → drain → runPass(*entry.draw, frame_mode_)`，默认 `Direct`
+  （行为与之前逐位相同，`record_micros` 含义不变），`frame_mode_` 一词即可切到镜像。
+  **切不动的唯一原因是镜像缺"每视图采集备忘录"**（见 §2.11 最后两条）：试过 `Mirrored`，画面用例全绿，只有依赖
+  `Scene::contentCollectCount/ReuseCount` 的 3 条用例红——它们量的正是镜像没有的那件东西。
+- **P2 收尾（下一步，先于 P3）**：把 `Scene::ContentMemo` 抽成 `detail::DrawListMemo`，`Scene` 与 `ContentMirror` 共用
+  （镜像的 revision = 应用过 delta 的次数，frame 令牌随帧传入），然后把 `frame_mode_` 切到 `Mirrored` 并让那 3 条
+  用例改量镜像的命中数。这一步之后 P3 才是"把同一段搬到另一条线程"。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：

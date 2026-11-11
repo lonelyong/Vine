@@ -15,6 +15,13 @@ VN_GRAPHICS_NS_BEGIN
 namespace detail
 {
 
+/** @brief WHERE a frame's engine half runs (the source question is FrameMode's, see FrameWorker). */
+enum class RunnerMode : std::uint8_t
+{
+    Inline,   ///< On the calling thread: no thread, no waiting ("the engine thread" IS the caller).
+    Threaded, ///< On an engine thread of its own, with the caller waiting for that one frame to finish.
+};
+
 /**
  * @brief Runs a `FrameWorker`'s frames in one of the two modes, with the same semantics.
  *
@@ -43,9 +50,9 @@ class FrameRunner {
      * @brief Runs @p worker's frames in @p mode.
      *
      * @param worker The worker whose frames this runner drives; it must outlive the runner.
-     * @param mode   Where the work runs, and therefore what it may assume about the content (see FrameMode).
+     * @param mode   Where the work runs (see RunnerMode).
      */
-    explicit FrameRunner(FrameWorker& worker, FrameMode mode = FrameMode::Threaded);
+    explicit FrameRunner(FrameWorker& worker, RunnerMode mode = RunnerMode::Threaded);
 
     /** @brief Stops the engine thread (if any) and joins it. */
     ~FrameRunner();
@@ -63,9 +70,11 @@ class FrameRunner {
      *   statement already sees the frame's command lists.
      *
      * @param frame The frame value to expand in place; it must stay alive until this returns.
+     * @param mode  What a draw may ask this frame (see FrameMode). It travels WITH the frame because it is the
+     *              engine's decision about the frame, not the runner's about the thread.
      * @return How many deltas the frame's drains applied (see FrameWorker::run).
      */
-    std::size_t run(FrameDescription& frame);
+    std::size_t run(FrameDescription& frame, FrameMode mode = FrameMode::Mirrored);
 
     /**
      * @brief Stops the engine thread and joins it.
@@ -77,12 +86,12 @@ class FrameRunner {
     void stop();
 
   public:
-    /** @brief Gets the mode this runner was built with (it does not change: a mode is a lifetime decision).
+    /** @brief Gets where this runner was built to run frames (it does not change: a mode is a lifetime decision).
      *
      * @return The mode. A runner with no live thread (before start, after `stop`) reports the mode it was built with,
      *         because the mode is what the frame MEANS, not which thread happens to be alive.
      */
-    [[nodiscard]] FrameMode mode() const noexcept;
+    [[nodiscard]] RunnerMode mode() const noexcept;
 
     /** @brief Gets how many frames the engine side has run (the threaded mode's witness). */
     [[nodiscard]] std::uint64_t frames() const;
@@ -93,12 +102,13 @@ class FrameRunner {
 
   private:
     FrameWorker&            worker_;
-    FrameMode               mode_;
+    RunnerMode              mode_;
     std::thread             thread_;
     mutable std::mutex      mutex_;
     std::condition_variable wake_; ///< Engine thread: a request arrived, or the runner is stopping.
     std::condition_variable done_; ///< Caller: the frame it handed over is finished.
     FrameDescription*       request_{ nullptr };
+    FrameMode               request_mode_{ FrameMode::Mirrored }; ///< What the frame in flight may ask.
     std::size_t             result_{ 0 };
     bool                    finished_{ false };
     bool                    stopping_{ false };

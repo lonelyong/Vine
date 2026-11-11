@@ -5,11 +5,11 @@ VN_GRAPHICS_NS_BEGIN
 namespace detail
 {
 
-FrameRunner::FrameRunner(FrameWorker& worker, FrameMode mode)
+FrameRunner::FrameRunner(FrameWorker& worker, RunnerMode mode)
   : worker_(worker)
   , mode_(mode)
 {
-    if (mode_ == FrameMode::Threaded) {
+    if (mode_ == RunnerMode::Threaded) {
         thread_ = std::thread([this]() { loop(); });
     }
 }
@@ -19,22 +19,21 @@ FrameRunner::~FrameRunner()
     stop();
 }
 
-std::size_t FrameRunner::run(FrameDescription& frame)
+std::size_t FrameRunner::run(FrameDescription& frame, FrameMode mode)
 {
-    if (mode_ == FrameMode::Inline || !thread_.joinable()) {
-        // Inline - and a stopped runner IS one: the caller is the content's thread, so the frame runs here and nothing
-        // needs binding (passing this runner's mode would re-point every draw at a mirror to reproduce an answer the
-        // content gives for free, and would count every draw as unbound).
-        return worker_.run(frame, FrameMode::Inline);
+    if (mode_ == RunnerMode::Inline || !thread_.joinable()) {
+        // Inline - and a stopped runner IS one: the frame runs here, exactly as the caller asked it to be answered
+        // (a stopped runner is not a reason to change WHAT a frame asks; it is only a different thread).
+        return worker_.run(frame, mode);
     }
     if (std::this_thread::get_id() == thread_.get_id()) {
-        // Asked FROM the engine thread: waiting on itself would deadlock, so the frame runs where it stands - and the
-        // content is on another thread, so this is still the threaded mode the runner was built with.
-        return worker_.run(frame, mode_);
+        // Asked FROM the engine thread: waiting on itself would deadlock, so the frame runs where it stands.
+        return worker_.run(frame, mode);
     }
 
     std::unique_lock<std::mutex> lock(mutex_);
     request_  = &frame;
+    request_mode_ = mode;
     finished_ = false;
     wake_.notify_one();
     done_.wait(lock, [this]() { return finished_; });
@@ -56,7 +55,7 @@ void FrameRunner::stop()
     thread_.join();
 }
 
-FrameMode FrameRunner::mode() const noexcept
+RunnerMode FrameRunner::mode() const noexcept
 {
     return mode_;
 }
@@ -77,8 +76,9 @@ void FrameRunner::loop()
         }
         // The work runs OUTSIDE the lock: the caller only needs to know when it is done, not to watch it happen.
         FrameDescription* frame = request_;
+        const FrameMode   mode  = request_mode_;
         lock.unlock();
-        const std::size_t applied = worker_.run(*frame);
+        const std::size_t applied = worker_.run(*frame, mode);
         lock.lock();
         ++frames_;
         result_   = applied;

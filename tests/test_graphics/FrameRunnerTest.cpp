@@ -31,6 +31,7 @@ using vn::graphics::Scene;
 using vn::graphics::detail::expandFrame;
 using vn::graphics::detail::FrameMode;
 using vn::graphics::detail::FrameRunner;
+using vn::graphics::detail::RunnerMode;
 using vn::graphics::detail::FrameWorker;
 using vn::intrusive_ptr;
 using vn::math::Vec3d;
@@ -126,16 +127,16 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
 
     FrameWorker inline_worker;
     ASSERT_TRUE(inline_worker.publish(scene));
-    FrameRunner inline_runner{ inline_worker, FrameMode::Inline };
+    FrameRunner inline_runner{ inline_worker, RunnerMode::Inline };
     FrameDescription from_inline = onePassFrame(scene);
-    EXPECT_EQ(inline_runner.run(from_inline), 1U) << "the handshake's delta is applied by the drain";
+    EXPECT_EQ(inline_runner.run(from_inline, FrameMode::Mirrored), 1U) << "the handshake's delta is applied by the drain";
     EXPECT_EQ(inline_runner.frames(), 0U) << "an inline runner has no engine thread to count";
 
     FrameWorker threaded_worker;
     ASSERT_TRUE(threaded_worker.publish(scene));
-    FrameRunner threaded_runner{ threaded_worker, FrameMode::Threaded };
+    FrameRunner threaded_runner{ threaded_worker, RunnerMode::Threaded };
     FrameDescription from_thread = onePassFrame(scene);
-    EXPECT_EQ(threaded_runner.run(from_thread), 1U);
+    EXPECT_EQ(threaded_runner.run(from_thread, FrameMode::Mirrored), 1U);
     EXPECT_EQ(threaded_runner.frames(), 1U) << "the engine thread ran that frame";
 
     ASSERT_EQ(commandsOf(from_content).size(), 2U);
@@ -153,12 +154,12 @@ TEST(FrameRunnerTest, ManyFramesThroughTheEngineThreadStayEquivalent)
 
     FrameWorker worker;
     ASSERT_TRUE(worker.publish(scene));
-    FrameRunner runner{ worker, FrameMode::Threaded };
+    FrameRunner runner{ worker, RunnerMode::Threaded };
 
     constexpr int kFrames = 64;
     for (int frame_index = 0; frame_index < kFrames; ++frame_index) {
         FrameDescription frame = onePassFrame(scene);
-        const std::size_t applied = runner.run(frame);
+        const std::size_t applied = runner.run(frame, FrameMode::Mirrored);
         EXPECT_EQ(applied, frame_index == 0 ? 1U : 0U) << "only the handshake had something to apply";
         ASSERT_EQ(commandsOf(frame).size(), 2U) << "frame " << frame_index;
         FrameDescription reference = onePassFrame(scene);
@@ -179,17 +180,19 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
 
     FrameWorker worker;
     ASSERT_TRUE(worker.publish(scene));
-    FrameRunner runner{ worker, FrameMode::Threaded };
+    FrameRunner runner{ worker, RunnerMode::Threaded };
     runner.stop();
     runner.stop(); // idempotent
     EXPECT_EQ(runner.frames(), 0U);
 
     FrameDescription frame = onePassFrame(scene);
-    EXPECT_EQ(runner.run(frame), 1U) << "the frame still runs: on the calling thread";
+    // Asked DIRECT: this test is about the thread, so it keeps the source question out of it - a stopped runner must
+    // run the frame, not reinterpret how it should be answered.
+    EXPECT_EQ(runner.run(frame, FrameMode::Direct), 1U) << "the frame still runs: on the calling thread";
     EXPECT_EQ(commandsOf(frame).size(), 2U);
     EXPECT_EQ(worker.unbound(), 0U) << "a stopped runner runs INLINE: the caller is the content's thread, so the draw "
                                       "keeps its content instead of being re-pointed at a mirror";
     EXPECT_EQ(frame.passes.front().draw->draws.front().content, &scene);
     EXPECT_EQ(runner.frames(), 0U) << "no engine thread ran it";
-    EXPECT_EQ(runner.mode(), FrameMode::Threaded) << "the mode is a lifetime decision, not a live state";
+    EXPECT_EQ(runner.mode(), RunnerMode::Threaded) << "the mode is a lifetime decision, not a live state";
 }

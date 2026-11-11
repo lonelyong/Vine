@@ -14,6 +14,7 @@
 
 #include "FrameResources.hpp"
 #include "FrameScheduler.hpp"
+#include "FrameWorker.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -33,6 +34,13 @@ VN_OBJECT_META_IMPL(RenderEngine, vn::Object);
 RenderEngine::RenderEngine()
   : resources_(std::make_unique<detail::FrameResources>())
   , scheduler_(std::make_unique<detail::FrameScheduler>())
+  , worker_(std::make_unique<detail::FrameWorker>())
+  // DIRECT UNTIL THE MIRROR HAS THE COLLECTED-LIST MEMO. Flipping this to Mirrored is one word, and it was tried: the
+  // frames expand correctly from the mirror (every engine test that checks a picture still passes), but the mirror
+  // answers every pass with a FRESH list where Scene answers a second pass from its per-view memo - so a G-buffer +
+  // lighting frame would cull and select twice. The memo is the gate, not the wiring (see the design's 2.11 and the
+  // backlog's T31).
+  , frame_mode_(detail::FrameMode::Direct)
 {
     // The ONE default in the shading path, and it is a named program: content with no program of its
     // own is shaded with the engine's forward program until the host says otherwise. (Null would mean

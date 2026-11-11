@@ -34,6 +34,8 @@ namespace detail
 
 class FrameResources;
 class FrameScheduler;
+class FrameWorker;   // The engine half of a frame: drain, bind, expand (see src/FrameWorker.hpp).
+enum class FrameMode : std::uint8_t; // What a frame's draws may ask: content (Direct) or its mirror (Mirrored).
 
 } // namespace detail
 
@@ -1026,6 +1028,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// This frame as a value, rebuilt by every compile (see buildFrameValue). Reused, so a steady frame keeps its
     /// storage: the rows of the previous frame are dropped, not their capacity.
     FrameDescription frame_value_;
+    // THE ENGINE HALF OF A FRAME, in this engine (see detail::FrameWorker): the one place a pass' expansion is asked
+    // for, so the DEFAULT path and the mirrored one are the same code - and the mode below is what P3 flips when the
+    // frame moves to an engine thread.
+    std::unique_ptr<detail::FrameWorker> worker_;
+    detail::FrameMode                    frame_mode_;
     /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
     std::vector<PlanProblem> plan_problems_;
     std::vector<PlanProblem> previous_problems_;

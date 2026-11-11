@@ -16,6 +16,7 @@
 #include <vine/graphics/Viewport.hpp>
 
 #include "FrameExpand.hpp"
+#include "FrameWorker.hpp"
 #include "FrameResources.hpp"
 #include "FrameScheduler.hpp"
 
@@ -280,6 +281,17 @@ void RenderEngine::buildFrameValue()
         if (index < slots_.size() && slots_[index].pass != nullptr && slots_[index].pass->declaration().before_draw) {
             slots_[index].pass->declaration().before_draw();
         }
+        // THE ENGINE HALF'S FIRST TWO STEPS, for THIS pass. A `before_draw` hook WRITES content (an overlay that
+        // follows the camera, a gizmo), so what it wrote has to be published BEFORE the pass is expanded - and it is
+        // per pass, not once per frame, because that is exactly what the direct path does today: each pass collects at
+        // its own moment and sees what the hooks before it said (see the design's note on snapshot semantics, which is
+        // the threaded mode's, not this one's). With nothing changed, both calls answer immediately.
+        if (frame_mode_ == detail::FrameMode::Mirrored) {
+            if (raw_ptr<Scene> scene = pass->content()) {
+                (void)worker_->publish(*scene);
+            }
+        }
+        (void)worker_->drain();
         // The declared inputs were resolved by the compile (see compileFrame's rows), and the pass is told them
         // here: they are what a ScreenPass' effect reads, and they are part of what the pass describes.
         pass->resolveInputTextures(row.inputs);
@@ -304,9 +316,11 @@ void RenderEngine::buildFrameValue()
         }
         else {
             // THE FRAME'S ONE O(DRAWABLES) STEP, and it is a function of the value described above: the pass stated a
-            // view and whose content answers it, and this asks that content for the list (see FrameExpand). It is
-            // inside this pass' measured interval, so record_micros keeps meaning "describe + collect".
-            detail::expandPass(*entry.draw);
+            // view and whose content answers it, and this asks that source for the list (see FrameWorker). It is
+            // inside this pass' measured interval, so record_micros keeps meaning "describe + collect" - and in the
+            // mirrored mode it covers the mirror's answer, which is the same picture by construction (the equivalence
+            // tests are the judge, and every frame in this build now goes through it).
+            worker_->runPass(*entry.draw, frame_mode_);
         }
         if (index < slots_.size()) {
             slots_[index].record_micros =

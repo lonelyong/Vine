@@ -450,6 +450,18 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
 
 const detail::SceneBake& Scene::ensureRows() const
 {
+    // A scene with no rooted root DRAWS NOTHING (see collectRenderCommands), so its rows are empty - and that is a
+    // state, not an error: a mirror of such a scene publishes an empty table and the frame stays correct. This is the
+    // total contract of this function; a caller (the mirror's publish) has no business repeating the guard.
+    if (!hasRootedRoot()) {
+        if (content_bake_ == nullptr) {
+            content_bake_ = std::make_unique<detail::SceneBake>();
+        }
+        content_bake_->rows.clear();
+        content_bake_->nodes.clear();
+        return *content_bake_;
+    }
+
     // THE GRAPH HALF, ONCE PER EPOCH: every node's own facts, then the one fold over them (see DrawListBake.hpp).
     // A moved camera then pays the VIEW half only - the layer prune, the frustum test and the sort - instead of
     // recomputing every matrix and every fold, which is what a collection used to cost per view
