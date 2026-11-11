@@ -43,6 +43,17 @@ bool ContentMirror::publish(const Scene& scene)
     return true;
 }
 
+bool ContentMirror::setState(const Node& node)
+{
+    Delta delta;
+    delta.kind             = DeltaKind::State;
+    delta.identity         = &node;
+    delta.state.opacity    = node.opacity();
+    delta.state.layers     = node.layers();
+    delta.state.draw_order = node.drawOrder();
+    return channel_.post(delta);
+}
+
 bool ContentMirror::attach(const Node& parent, const Node& subtree, std::uint32_t child_index)
 {
     auto block = std::make_shared<SceneBake>();
@@ -82,6 +93,9 @@ std::size_t ContentMirror::drain()
                 break;
             case DeltaKind::Detached:
                 (void)world_.detach(owned.delta.identity);
+                break;
+            case DeltaKind::State:
+                (void)world_.setState(owned.delta.identity, owned.delta.state);
                 break;
             case DeltaKind::Placement:
                 (void)world_.place(owned.delta.identity, owned.delta.matrix);

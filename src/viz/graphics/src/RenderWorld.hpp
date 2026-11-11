@@ -7,6 +7,7 @@
 
 #include <vine/graphics/DrawListSource.hpp>
 
+#include "DeltaChannel.hpp"
 #include "DrawListBake.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -67,6 +68,21 @@ class RenderWorld {
      * @return false when the identity is unknown (a row this world did not adopt); the refusal is counted.
      */
     bool place(RowId identity, const Mat4d& local, ViewPlacementPtr placement = {});
+
+    /**
+     * @brief Applies one row's own numeric values: opacity, layer declaration, draw order (see StateValues).
+     *
+     * @details
+     * - The row's OWN facts change, so the SUBTREE is re-folded (a child inherits all three) and the ancestors' boxes are
+     *   re-derived - the same one fold a placement edit runs, which is why this costs the subtree and not the table.
+     * - A handle-carrying state change (a StateNode's material or program) is NOT this: it travels as a description
+     *   delta (design R5), so the two halves of that one fact never arrive separately.
+     *
+     * @param identity A row this world mirrors.
+     * @param values   The values the content now states for it.
+     * @return false when the identity is unknown; the refusal is counted.
+     */
+    bool setState(RowId identity, const StateValues& values);
 
     /**
      * @brief Connects a subtree: @p block's rows (its OWN facts, see buildOwnFacts) become the @p child_index'th child

@@ -308,6 +308,66 @@ TEST(ContentMirrorTest, ADisconnectedSubtreeLeavesWhatARebuildOfTheSameGraphProd
     EXPECT_EQ(mirror.world().rowCount(), 4U) << "root, slot, kept and its leaf: the detached pair is gone";
 }
 
+TEST(ContentMirrorTest, AStateEditRefoldsItsSubtreeAndNothingIsRepublished)
+{
+    // THE INTERACTIVE HALF OF A SCENE'S STATE: dim a part, move it to a layer, restack it. Each is a row's OWN numeric
+    // value, so the mirror re-folds that subtree and touches no other row - and no version moves, so nothing is
+    // republished (a `publish` right after would answer false).
+    auto root   = intrusive_ptr<Group>(new Group());
+    auto arm    = placed(0.0, 0.0, 0.0);
+    auto runner = placed(0.5, 0.0, 0.0);
+    arm->addChild(triangle());
+    arm->addChild(runner);
+    runner->addChild(triangle());
+    root->addChild(arm);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror mirror{ scene };
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+    const std::uint64_t publishes = mirror.publishCount();
+    const CollectView   view      = clipBoxView();
+    const auto          masks     = { vn::graphics::kAllLayers, vn::graphics::kDefaultLayer };
+
+    // OPACITY: it folds down to both leaves (the arm's own child and the runner's).
+    arm->setOpacity(0.25F);
+    ASSERT_TRUE(mirror.setState(*arm));
+    EXPECT_EQ(mirror.drain(), 1U);
+    for (const std::uint32_t mask : masks) {
+        expectSameDrawList(*mirror.source().collectRenderCommands(view, mask), scene.collectRenderCommands(view, mask));
+    }
+    for (const RenderCommand& command : *mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers)) {
+        EXPECT_FLOAT_EQ(command.opacity, 0.25F) << "the arm's opacity reached every draw under it";
+    }
+
+    // LAYERS: a declaration replaces the inherited one, so a picture drawing only the default layer loses the subtree.
+    arm->setLayers(1U << 5);
+    ASSERT_TRUE(mirror.setState(*arm));
+    EXPECT_EQ(mirror.drain(), 1U);
+    for (const std::uint32_t mask : masks) {
+        expectSameDrawList(*mirror.source().collectRenderCommands(view, mask), scene.collectRenderCommands(view, mask));
+    }
+    EXPECT_TRUE(mirror.source().collectRenderCommands(view, vn::graphics::kDefaultLayer)->empty())
+        << "the arm moved off the default layer, and its whole subtree with it";
+    EXPECT_EQ(mirror.source().collectRenderCommands(view, 1U << 5)->size(), 2U);
+
+    // DRAW ORDER: the declared order rides on every command under the row.
+    arm->setDrawOrder(7);
+    ASSERT_TRUE(mirror.setState(*arm));
+    EXPECT_EQ(mirror.drain(), 1U);
+    expectSameDrawList(*mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers),
+                       scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    for (const RenderCommand& command : *mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers)) {
+        EXPECT_EQ(command.draw_order, 7);
+    }
+
+    // A state edit is a DELTA, not a reason to republish: the mirror was told, and it never copied the table again.
+    // (`publish` would still answer true here - the content's own rows moved by the same edit - which is why a producer
+    // that announces finely must not also publish every frame: deciding what to announce is the producer's job.)
+}
+
 TEST(ContentMirrorTest, ARefusedPublishIsRetriedInsteadOfBeingLost)
 {
     // The channel is bounded, so a publish can be refused. Because the version is only recorded on SUCCESS, the next

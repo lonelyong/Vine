@@ -34,8 +34,28 @@ enum class DeltaKind : std::uint8_t
     Attached,     ///< A subtree now hangs under a row: `identity` is the PARENT, the block rides along (child_index).
     Detached,     ///< A subtree is gone from the table: `identity` is the detached subtree's ROOT.
     Placement,    ///< One row's own placement; carries its local matrix.
+    State,        ///< One row's own numeric values (opacity / layers / draw order); see StateValues.
     Terminate,    ///< The engine side should stop: the last delta this channel ever carries.
 };
+
+/**
+ * @brief One row's own NUMERIC values: what a node declares about itself, without a handle in it.
+ *
+ * @details
+ * - WHY ONLY NUMBERS. A StateNode contributes state + material + program together, and two of those are handles: a
+ *   handle-carrying edit belongs to the description delta (design R5 / F5), so that one fact is never split across two
+ *   deltas. What is left is exactly the numeric half - and the half an editor changes interactively (dimming a part,
+ *   moving it to another layer, restacking it).
+ * - VISIBILITY IS NOT HERE: in this model a hidden subtree has no rows at all (the build skips it), so showing and
+ *   hiding is a STRUCTURE change (attach / detach), not a value one.
+ */
+struct StateValues {
+    float                        opacity{ 1.0F }; ///< The row's own opacity (its subtree multiplies it).
+    std::optional<std::uint32_t> layers{};        ///< The row's own layer declaration, or nothing (inherit).
+    std::optional<std::int32_t>  draw_order{};    ///< The row's own draw order, or nothing (inherit).
+};
+
+static_assert(std::is_trivially_copyable_v<StateValues>, "a state delta carries no share either: it must cross as bytes");
 
 /**
  * @brief ONE delta's own value: fixed size, trivially copyable, no share.
@@ -49,6 +69,7 @@ struct Delta {
     DeltaKind     kind{ DeltaKind::Placement };
     const void*   identity{ nullptr }; ///< The content object it is about: opaque here, and never dereferenced.
     Mat4d         matrix{};            ///< Placement: the row's own local matrix.
+    StateValues   state{};             ///< State: the row's own numeric values.
     std::uint32_t child_index{ 0 };    ///< Attached: where among the parent's children the block goes (0 = first).
 };
 

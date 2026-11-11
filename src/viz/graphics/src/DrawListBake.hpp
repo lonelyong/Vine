@@ -77,7 +77,6 @@ struct Row {
 
     // ---- OWN facts (the fold's input)
     Mat4d                        local{};        ///< Placement in the parent's frame.
-    bool                         own_visible{ true };
     float                        own_opacity{ 1.0F };
     std::optional<std::uint32_t> own_layers{};
     std::optional<int>           own_draw_order{};

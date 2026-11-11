@@ -59,15 +59,35 @@ class ContentMirror {
      * @brief Publishes @p scene's rows to this mirror, if they moved since the last publish.
      *
      * @details
-     * - Content thread. It compares the rows' version first, so a steady frame publishes nothing at all; a change
+     * - Content thread. It compares the rows' version first, so an unchanged scene publishes nothing at all; a change
      *   posts ONE `RowsReplaced` delta carrying a copy of the table.
      * - A refused post (the channel is full) leaves the version unpublished, so the next call retries it - the same
      *   "a refusal is recoverable" property the channel is built on.
+     * - IT IS THE HANDSHAKE AND THE COARSE FALLBACK, not a per-frame call. The version it compares moves on ANY node
+     *   edit, including the ones `setState`/`attach`/`detach` already announced finely - so the version cannot tell
+     *   "already told" from "not told yet", and a producer that announces edits finely must not also publish every
+     *   frame (it would repeat what the deltas said). Deciding WHAT to announce is the producer's job (`2.5`); this
+     *   call is for the cases it cannot express: the first handshake, an edit no fine delta covers yet (a material or
+     *   program swap), and the recovery after a refusal.
      *
      * @param scene The scene this mirror is the mirror of.
      * @return true when a publish was posted (false when nothing moved or the channel was full).
      */
     bool publish(const Scene& scene);
+
+    /**
+     * @brief Announces @p node's own numeric values (content thread).
+     *
+     * @details
+     * - The interactive half of a scene's state: dim a part, isolate a layer, restack a node. The row's subtree is
+     *   re-folded on the engine side; nothing is re-read from the graph there.
+     * - It carries NO handle, so a StateNode's material/program change is not this call: that one fact travels as a
+     *   description delta (design R5), and until it exists it goes through `publish`.
+     *
+     * @param node The node whose values the content now states.
+     * @return true when the announcement was posted.
+     */
+    bool setState(const Node& node);
 
     /**
      * @brief Announces that @p subtree now hangs under @p parent at @p child_index (content thread).

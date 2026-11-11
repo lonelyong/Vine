@@ -262,7 +262,7 @@ flowchart LR
 | F1 | 两个世界与启动握手 | 内容世界由宿主建好 → 引擎侧建一次**全图镜像** → 之后只有增量 | 草案 |
 | F2 | delta 协议 | 值 + 必填 payload；帧首一次 drain；同帧按序 | **P1 第一步已落**（`DeltaChannel`，三种 kind） |
 | F3 | 场景图结构更新 | attach / detach / 重父化 / 换根；离树在停靠窗口后释放 | **attach / detach 已落**（`RenderWorld::attach/detach` + `Attached`/`Detached` delta）；重父化 = detach + attach、换根用整体重发 |
-| F4 | 节点状态更新 | placement（局部变换）/ visible / opacity / layers / drawOrder；子树世界矩阵增量重算 | 草案 |
+| F4 | 节点状态更新 | placement（局部变换）/ opacity / layers / drawOrder；子树增量重折。（visible 属结构：隐藏的子树没有行，见 F3） | **placement + state 已落** |
 | F5 | 几何描述更新 | 通道集合与切片、primitive（索引/实例）、material/program 句柄@revision | 草案 |
 | F6 | 相机更新 | 相机在内容侧；变化发一个相机 delta；`fitToScreen` 留在内容侧 | 草案 |
 | F7 | 字节内容与流式 | `Buffer::edit()` 之后只靠原子 revision 轮询；不产生 delta | 草案 |
@@ -322,6 +322,15 @@ flowchart LR
   visible/opacity/layers/drawOrder 变化 ⇒ 只重折该节点子树的折叠值（不重算盒）。
 - **placement 的两半一起走**：`place(RowId, local, ViewPlacementPtr)`。逐视图放置的节点（`AutoTransform`）把自己的数字
   放在那个值里，只发局部矩阵会让镜像停在旧朝向 —— 所以两者是同一条 delta 的两个字段，不是两条。
+- **state 只装数字**：`StateValues` = 自身的 opacity / layers / draw_order（`DeltaKind::State` → `RenderWorld::setState`），
+  镜像按 `resolveSubtree` 重折**该子树**并把祖先盒一并重算。带句柄的那一半（`StateNode` 的 material / program）**不在这里**：
+  它属于描述 delta（R5），否则同一个事实会被拆成两条、还可能只到一半。
+- **visible 不是 state**：隐藏的子树在 `bakeSubtree` 里就不建行，所以"显示/隐藏"是一次**结构**变化（detach / attach），
+  不是一次值变化。`Row::own_visible` 因此没有任何读者，已删掉（`G8`）。
+- **`publish` 是握手与粗粒度兜底，不是每帧调用**：它比较的行版本被**任何**节点编辑推动（包括已经用细粒度 delta 公告过的），
+  所以版本分不清"已告诉过"与"还没告诉"——决定发什么是**生产者**的事（`2.5`）；用细粒度 delta 的生产者不得同时每帧 publish。
+  验收：`ContentMirrorTest.AStateEditRefoldsItsSubtreeAndNothingIsRepublishe` —— opacity 折到整棵子树、layers 让带掩码的
+  采集整棵消失、draw_order 落到每条命令，三者都与从零重建逐命令相同，且 `publishCount` 不变。
 - **约束**（C4）：重算范围 = 变化的子树 + 其祖先，不做整图重算（今天的 `bakeSubtree` 是整图，镜像版要按子树）。
 - **约束**（C15）：**脏集合合并**：drain 完把脏节点收成一个集合，每条受影响子树重算一次，祖先盒每条链只向上合一 次。
   逐条 delta 直接传播会在机器人（28~70 关节 × 链路深度）上变成数百次重复传播。
@@ -694,6 +703,9 @@ flowchart LR
   **不设停靠窗口**：一条命令命名的是它画的东西（几何 share、矩阵、状态），不是一行；退役对象的驻留窗口仍是后端自己的
   `RetirementQueue` 规则。根不能 detach（换根走整体重发）。验收：`ContentMirrorTest` 两条 —— 接上一棵子树后，镜像的
   命令序列与行数**等于**对同一张图从零重建的结果（顺序也一致），摘掉一棵子树同理。
+- **P2 第二步已落（state delta）**：`StateValues` + `DeltaKind::State` → `RenderWorld::setState`（`resolveSubtree` 重折该子树、
+  祖先盒一并重算），内容侧 `ContentMirror::setState(node)`。带句柄的 material/program 留在描述 delta（R5），visibility 留在结构
+  （隐藏的子树没有行）。顺带删掉 `Row::own_visible`（无人读）。验收：`ContentMirrorTest.AStateEditRefoldsItsSubtreeAndNothingIsRepublishe`。
 - **P1 下一步（接入引擎）**：`RenderEngine` 持有 `FrameWorker`，`buildFrameValue` 里把 `expandPass(*entry.draw)` 换成
   `worker.runPass(*entry.draw, mode)`、在帧首调一次 `worker.drain()`（每 pass 的 `record_micros` 仍覆盖它自己的 expand，
   所以那个数字的意思不变），threaded 模式下再加每帧一次 `worker.publish(每个 pass 的 scene)`。真正切到 `Threaded` 仍要等

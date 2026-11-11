@@ -48,6 +48,21 @@ bool RenderWorld::place(RowId identity, const Mat4d& local, ViewPlacementPtr pla
     return true;
 }
 
+bool RenderWorld::setState(RowId identity, const StateValues& values)
+{
+    const auto found = index_.find(identity);
+    if (found == index_.end()) {
+        ++refusals_;
+        return false;
+    }
+    Row& row           = bake_.rows[found->second];
+    row.own_opacity    = values.opacity;
+    row.own_layers     = values.layers;
+    row.own_draw_order = values.draw_order;
+    rows_recomputed_ += resolveSubtree(bake_, found->second);
+    return true;
+}
+
 bool RenderWorld::attach(RowId parent_identity, std::uint32_t child_index, SceneBake block)
 {
     const auto found = index_.find(parent_identity);

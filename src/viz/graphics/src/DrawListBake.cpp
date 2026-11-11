@@ -207,8 +207,9 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
         row.identity       = &node;
         row.parent         = parent;
         row.local          = node.localTransformMatrix();
-        row.own_visible    = node.isVisible();
         row.own_opacity    = node.opacity();
+        // An invisible node never gets here (see bakeSubtree's first line): in this model visibility is STRUCTURE, so a
+        // hidden subtree has no rows and showing it is an attach.
         row.own_layers     = node.layers();
         row.own_draw_order = node.drawOrder();
         // The per-view half of the placement, IF the node has one: a value the select resolves from the view it
