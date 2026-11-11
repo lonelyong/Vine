@@ -47,7 +47,6 @@
 | T28 | 半片 pin 的口径 | 迁移第 5 步打算 pin = program@rev：layout / 变体更替会让半片累积（每个几十 KB 的管线）。若累积不可忽略，加回“该 layout 仍被活几何需要”这一 pin（一份扫描） | 迁移第 5 步落地后，`ContentHalves::halves()` 随交互增长到不可忽略 | 同上 §开放项 1 |
 | T29 | 驻留账的帧级增量 | `RetentionStats::residency`（ADR 第一步）答的是“现在多少”；T25 要的是“这一帧传了多少 / 释放了多少”，即两次报告之差 | 与 T25 同一触发 | `../design/graphics-content-lifecycle.md` §3.3 |
 | T30 | GPU 资源抽象（统一类型 / 多态总表） | 现在统一的是**规则与账**（`ResidencyLedger` + pin），不是类型。基类或多态总表只在第二个后端出现时才值得：届时形状是“SDK 资源描述 + 每后端实现”，不是包 vsg 的基类 | 第二个后端出现（与 T15 同一触发） | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §选项表 |
-| T31 | 渲染线程（引擎线程）落地 | 契约已定（`../design/graphics-threading.md` + ADR-2026-11-10-render-world-mirrors-content）：**两个世界** —— 内容（含场景图、节点、相机）留在 UI 线程、编辑 API 不变；渲染侧是它的镜像（世界矩阵/世界盒/代理），靠 delta 增量更新（payload 必填）、字节靠原子 revision 轮询。阶段：P1 两模式骨架 + 镜像 + delta 队列 + 等价性用例（不改任何宿主代码）→ P2 结构/状态/描述/相机 delta 与镜像增量重算 → P3 表面事件与交换链协议 | 有可复现的“渲染占应用线程”证据：交互期间 UI 事件延迟 > 16 ms，或 resize / 拖拽中主窗卡顿的录制 | `../design/graphics-threading.md` §9.3 |
 
 ### 2.3 平台与验证
 | # | 项 | 内容 | 触发条件 |
