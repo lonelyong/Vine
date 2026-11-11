@@ -278,6 +278,25 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
 
 } // namespace
 
+void buildOwnFacts(const Node& root, SceneBake& bake)
+{
+    bake.rows.clear();
+    bake.nodes.clear();
+    bake.seed = SceneBake::Seed{};
+    (void)bakeSubtree(root, bake);
+}
+
+void refoldChain(SceneBake& bake, std::uint32_t index)
+{
+    if (index >= bake.rows.size()) {
+        return;
+    }
+    foldRow(bake, index);
+    for (std::uint32_t above = bake.rows[index].parent; above != SceneBake::kNoParent; above = bake.rows[above].parent) {
+        foldRow(bake, above);
+    }
+}
+
 void buildRows(const Node& root, SceneBake& bake, float opacity)
 {
     bake.rows.clear();
@@ -315,7 +334,8 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index)
     // THE CHAIN ABOVE. A box is a union, so the row just re-folded is part of every ancestor's box: leaving them
     // alone keeps a box that says the subtree is still where it was, and a cull then prunes content that moved INTO
     // view - the object silently disappears (a subset of the rows is stale, which no assertion in the edit path can
-    // see). Each ancestor needs its OWN row recomputed and nothing more: its children are already folded.
+    // see). Each ancestor needs its OWN row recomputed and nothing more: its children are already folded (see
+    // refoldChain, which is the same rule for a change that moves no values).
     for (std::uint32_t above = bake.rows[index].parent; above != SceneBake::kNoParent; above = bake.rows[above].parent) {
         foldRow(bake, above);
     }

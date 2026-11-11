@@ -21,9 +21,10 @@ namespace detail
  * - WHAT IT IS. A `RenderWorld` (the rows) plus the face a frame asks for a view (`RenderWorldSource`), plus the
  *   channel the content's thread publishes through. It is the unit a worker owns per content, and it is the whole of
  *   "the render world" for one scene: no node, no graph, no camera object.
- * - THE TWO SIDES, ONE OBJECT. `publish` runs on the CONTENT's thread (it reads the scene's rows, `SceneRows`), and
- *   `drain` runs on the ENGINE's. They meet in the channel, never in a member: the content side writes the version it
- *   published and the channel, the engine side writes the world. Nothing is shared mutable between them.
+ * - THE TWO SIDES, ONE OBJECT. `publish`/`attach`/`detach` run on the CONTENT's thread (they read the graph - the
+ *   scene's rows, a subtree's own facts - and post values), and `drain`/`source` run on the ENGINE's (they read no
+ *   content at all). The two sides meet in the channel, never in a member: the content side owns the version it
+ *   published and the channel, the engine side owns the world. Nothing is shared mutable between them.
  * - WHY THE PUBLISH IS COARSE IN P1. A node edit moves the scene's epoch and a byte edit moves a box (see
  *   `SceneRows::Version`), and both are answered by publishing the whole table. That is one O(rows) copy per change
  *   instead of per frame, and it is exactly the handshake the design calls for; the finer deltas (structure, state,
@@ -67,6 +68,31 @@ class ContentMirror {
      * @return true when a publish was posted (false when nothing moved or the channel was full).
      */
     bool publish(const Scene& scene);
+
+    /**
+     * @brief Announces that @p subtree now hangs under @p parent at @p child_index (content thread).
+     *
+     * @details
+     * - Only the subtree's OWN facts travel (see buildOwnFacts): the engine side splices them into its table and folds
+     *   them there, against the parent it already has. That is what keeps a structure change O(subtree) instead of a
+     *   republish of the whole table.
+     * - The subtree's root must be attached in the graph already (the caller is describing what it just did): a
+     *   detached node's `localTransformMatrix()` is still its own, so the block is the same either way.
+     *
+     * @param parent      The row the subtree hangs under (its graph node).
+     * @param subtree     Root of the subtree being connected.
+     * @param child_index Where among the parent's children it goes (0 = first).
+     * @return true when the announcement was posted.
+     */
+    bool attach(const Node& parent, const Node& subtree, std::uint32_t child_index);
+
+    /**
+     * @brief Announces that @p subtree's rows are gone (content thread).
+     *
+     * @param subtree Root of the subtree that was disconnected.
+     * @return true when the announcement was posted.
+     */
+    bool detach(const Node& subtree);
 
     /**
      * @brief Applies everything published since the last drain, in post order (engine thread).

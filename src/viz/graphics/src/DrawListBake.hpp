@@ -245,6 +245,23 @@ class Frustum {
 void buildRows(const Node& root, SceneBake& bake, float opacity = 1.0F);
 
 /**
+ * @brief Builds a subtree's OWN facts and nothing else: the block a structure change carries.
+ *
+ * @details
+ * - It is the first half of `buildRows` (the walk), without the fold: the rows come out with `parent` / `end` relative
+ *   to a table of their own, and every resolved value untouched. Whoever SPLICES them into a live table folds them
+ *   there, where the real parent's placement is known (see RenderWorld::attach).
+ * - Splitting it here rather than in the mirror is what keeps "how a subtree's own facts are read" in one place: the
+ *   graph is only ever read by this file.
+ * - Invisible subtrees still produce no rows (see buildRows): "connect a hidden subtree" is a no-op, and the caller
+ *   that shows it later announces it as a new attach.
+ *
+ * @param root Root of the subtree to read.
+ * @param bake Receives the rows (its previous contents are dropped); `nodes` is filled for a content-side caller.
+ */
+void buildOwnFacts(const Node& root, SceneBake& bake);
+
+/**
  * @brief Re-resolves ONE row's subtree: the one fold, run by the build once and by a producer on every edit.
  *
  * @details
@@ -262,6 +279,19 @@ void buildRows(const Node& root, SceneBake& bake, float opacity = 1.0F);
  * @return How many rows were re-resolved (0 when the row cannot be folded from values).
  */
 std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index);
+
+/**
+ * @brief Recomputes one row's box and every ancestor's, from children that are already folded.
+ *
+ * @details
+ * - The BOX halves of the fold only: no own fact and no resolved value changes, which is exactly the case a detached
+ *   subtree leaves behind (the parent's union lost a child, everything else is as it was).
+ * - Deepest first: each row is re-derived after the children it reads.
+ *
+ * @param bake  The table.
+ * @param index The row whose own box moved last (the parent of what was removed), or the row that was inserted.
+ */
+void refoldChain(SceneBake& bake, std::uint32_t index);
 
 /**
  * @brief Re-reads the own boxes of the rows whose geometry revision moved, and folds the ancestors' boxes.

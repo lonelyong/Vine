@@ -261,7 +261,7 @@ flowchart LR
 |---|---|---|---|
 | F1 | 两个世界与启动握手 | 内容世界由宿主建好 → 引擎侧建一次**全图镜像** → 之后只有增量 | 草案 |
 | F2 | delta 协议 | 值 + 必填 payload；帧首一次 drain；同帧按序 | **P1 第一步已落**（`DeltaChannel`，三种 kind） |
-| F3 | 场景图结构更新 | attach / detach / 重父化 / 换根；离树在停靠窗口后释放 | 草案 |
+| F3 | 场景图结构更新 | attach / detach / 重父化 / 换根；离树在停靠窗口后释放 | **attach / detach 已落**（`RenderWorld::attach/detach` + `Attached`/`Detached` delta）；重父化 = detach + attach、换根用整体重发 |
 | F4 | 节点状态更新 | placement（局部变换）/ visible / opacity / layers / drawOrder；子树世界矩阵增量重算 | 草案 |
 | F5 | 几何描述更新 | 通道集合与切片、primitive（索引/实例）、material/program 句柄@revision | 草案 |
 | F6 | 相机更新 | 相机在内容侧；变化发一个相机 delta；`fitToScreen` 留在内容侧 | 草案 |
@@ -676,6 +676,15 @@ flowchart LR
   `runPass()` 两个原语（引擎按 pass 计时需要它们，一帧只 drain 一次是它们的契约），`run(frame)` 是二者的组合。
   验收：`FrameWorkerTest.TheInlineModeBindsNothingBecauseItIsTheContentsOwnThread`（inline 不改写 draw、`unbound()` 恒 0）
   与 `FrameWorkerTest.PerPassAndWholeFrameFormsGiveTheSamePicture`（两个原语与整帧形式同图，且 pass 不 drain 通道）。
+- **P2 第一步已落（结构 delta）**：`detail::buildOwnFacts`（只建 own 事实、不折，`buildRows` 的前半段）与
+  `detail::refoldChain`（只重算盒的那半截折）让"结构变化"能作为值走通道；`DeltaKind::Attached`（`identity` = **父**，
+  `child_index` + 块随行）与 `Detached`（`identity` = 被摘子树的根）由其 applier `RenderWorld::attach/detach` 接手。
+  **attach 是"拼接 + 重编号"**：块插进去后，插入点之后的索引、以及每一个"子树包含插入点"的行的 `end` 都加块大小 ——
+  这是 O(行) 的索引修正，一次结构变化付一次，换来的是 select 保持纯索引算术（`end` 跳跃）。块在拼接处才折（那里才知道
+  父的放置），随后按 `resolveSubtree` 把祖先盒一并重算；**detach 只动盒**（并集少了一个孩子），所以用 `refoldChain`。
+  **不设停靠窗口**：一条命令命名的是它画的东西（几何 share、矩阵、状态），不是一行；退役对象的驻留窗口仍是后端自己的
+  `RetirementQueue` 规则。根不能 detach（换根走整体重发）。验收：`ContentMirrorTest` 两条 —— 接上一棵子树后，镜像的
+  命令序列与行数**等于**对同一张图从零重建的结果（顺序也一致），摘掉一棵子树同理。
 - **P1 下一步（接入引擎）**：`RenderEngine` 持有 `FrameWorker`，`buildFrameValue` 里把 `expandPass(*entry.draw)` 换成
   `worker.runPass(*entry.draw, mode)`、在帧首调一次 `worker.drain()`（每 pass 的 `record_micros` 仍覆盖它自己的 expand，
   所以那个数字的意思不变），threaded 模式下再加每帧一次 `worker.publish(每个 pass 的 scene)`。真正切到 `Threaded` 仍要等

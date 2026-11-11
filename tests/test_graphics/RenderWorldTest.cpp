@@ -236,6 +236,78 @@ TEST(ContentMirrorTest, ABoxThatMovedUnderAByteEditIsPublishedEvenThoughTheEpoch
         << "the mirror culled it with the box the edit moved, not the one the build read";
 }
 
+TEST(ContentMirrorTest, AConnectedSubtreeIsWhatARebuildOfTheSameGraphProduces)
+{
+    // STRUCTURE AS A DELTA. A subtree that hangs somewhere new must produce the table (and therefore the picture) a
+    // rebuild of the edited graph would - that is the oracle the whole mirror rests on, and it is what makes a
+    // splice-with-renumbering trustworthy. The two blocks sit at the SAME place so the draw order is the walk order,
+    // which is what makes the second attach visible as an ORDER and not just a count.
+    auto root = intrusive_ptr<Group>(new Group());
+    auto slot = intrusive_ptr<Group>(new Group());
+    const GeometryPtr first_face  = triangle();
+    const GeometryPtr second_face = triangle();
+    slot->addChild(first_face);
+    root->addChild(slot);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror     mirror{ scene };
+    const CollectView view = clipBoxView();
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    // The content connects a subtree and says so: only its own facts travel, the engine side folds them under the
+    // parent it already has.
+    auto added = placed(0.0, 0.0, 0.0);
+    added->addChild(second_face);
+    slot->addChild(added);
+    ASSERT_TRUE(mirror.attach(*slot, *added, 1U)) << "index 1: past the leaf the slot already had";
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    const auto expected = scene.collectRenderCommands(view, vn::graphics::kAllLayers);
+    const auto actual   = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    expectSameDrawList(*actual, expected);
+    ASSERT_EQ(actual->size(), 2U);
+    EXPECT_EQ((*actual)[0].geometry.get(), first_face.get()) << "the order the attach stated, not just the count";
+    EXPECT_EQ((*actual)[1].geometry.get(), second_face.get());
+    EXPECT_EQ(mirror.world().rowCount(), 5U) << "root, slot, the leaf it had, and the block's two rows";
+}
+
+TEST(ContentMirrorTest, ADisconnectedSubtreeLeavesWhatARebuildOfTheSameGraphProduces)
+{
+    // The other half: rows leave the table, and only the ancestors' BOXES have to be re-derived (nothing below them
+    // changed, and nothing of the subtree is recomputed - it is gone).
+    auto root = intrusive_ptr<Group>(new Group());
+    auto slot = intrusive_ptr<Group>(new Group());
+    auto kept = placed(0.4, 0.0, 0.0);
+    auto gone = placed(-0.4, 0.0, 0.0);
+    const GeometryPtr kept_face = triangle();
+    const GeometryPtr gone_face = triangle();
+    kept->addChild(kept_face);
+    gone->addChild(gone_face);
+    slot->addChild(kept);
+    slot->addChild(gone);
+    root->addChild(slot);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror     mirror{ scene };
+    const CollectView view = clipBoxView();
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+    ASSERT_EQ(mirror.world().rowCount(), 6U) << "root, slot, kept and its leaf, gone and its leaf";
+
+    slot->removeChild(gone.get());
+    ASSERT_TRUE(mirror.detach(*gone));
+    EXPECT_EQ(mirror.drain(), 1U);
+
+    expectSameDrawList(*mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers),
+                       scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    EXPECT_EQ(mirror.world().rowCount(), 4U) << "root, slot, kept and its leaf: the detached pair is gone";
+}
+
 TEST(ContentMirrorTest, ARefusedPublishIsRetriedInsteadOfBeingLost)
 {
     // The channel is bounded, so a publish can be refused. Because the version is only recorded on SUCCESS, the next

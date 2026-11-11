@@ -31,6 +31,8 @@ namespace detail
 enum class DeltaKind : std::uint8_t
 {
     RowsReplaced, ///< The content's rows as of this moment; carries the table (see OwnedDelta::rows).
+    Attached,     ///< A subtree now hangs under a row: `identity` is the PARENT, the block rides along (child_index).
+    Detached,     ///< A subtree is gone from the table: `identity` is the detached subtree's ROOT.
     Placement,    ///< One row's own placement; carries its local matrix.
     Terminate,    ///< The engine side should stop: the last delta this channel ever carries.
 };
@@ -44,9 +46,10 @@ enum class DeltaKind : std::uint8_t
  *   @ref OwnedDelta, which is the same value plus the share it carries.
  */
 struct Delta {
-    DeltaKind   kind{ DeltaKind::Placement };
-    const void* identity{ nullptr }; ///< The content object it is about: opaque here, and never dereferenced.
-    Mat4d       matrix{};            ///< Placement: the row's own local matrix.
+    DeltaKind     kind{ DeltaKind::Placement };
+    const void*   identity{ nullptr }; ///< The content object it is about: opaque here, and never dereferenced.
+    Mat4d         matrix{};            ///< Placement: the row's own local matrix.
+    std::uint32_t child_index{ 0 };    ///< Attached: where among the parent's children the block goes (0 = first).
 };
 
 static_assert(std::is_trivially_copyable_v<Delta>, "a delta is a value: it has to cross a thread as bytes");
@@ -63,7 +66,9 @@ static_assert(std::is_trivially_copyable_v<Delta>, "a delta is a value: it has t
  */
 struct OwnedDelta {
     Delta                            delta{};
-    std::shared_ptr<const SceneBake> rows{}; ///< Set by a `RowsReplaced` delta; empty otherwise.
+    /// The table a `RowsReplaced` delta carries, or the BLOCK an `Attached` one does: built on the content's thread
+    /// and read-only on the engine's. Empty for the kinds that own nothing.
+    std::shared_ptr<const SceneBake> rows{};
 };
 
 /**

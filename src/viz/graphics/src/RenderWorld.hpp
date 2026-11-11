@@ -68,6 +68,41 @@ class RenderWorld {
      */
     bool place(RowId identity, const Mat4d& local, ViewPlacementPtr placement = {});
 
+    /**
+     * @brief Connects a subtree: @p block's rows (its OWN facts, see buildOwnFacts) become the @p child_index'th child
+     *        of @p parent_identity.
+     *
+     * @details
+     * - The rows are SPLICED into the table's walk order, so every range a select jumps by (`Row::end`) still means
+     *   what it meant: the rows after the insertion point move, and every row whose subtree contains it grows by the
+     *   block's size. That costs the table O(rows) index fixups - once per structure change, which is the price of the
+     *   select being pure index arithmetic (see DrawListBake's note on why the table is an array).
+     * - The block arrives UNFOLDED because only the table knows the parent's placement; the fold runs here, against
+     *   the real parent, and then re-derives the ancestors' boxes (see resolveSubtree).
+     * - A block with no rows (an invisible subtree, see buildOwnFacts) changes nothing and is not a refusal.
+     *
+     * @param parent_identity The row the subtree hangs under.
+     * @param child_index     Where among that row's children it goes (0 = first, past the end = last).
+     * @param block           The block to splice; its identity keys are what the table will answer by.
+     * @return false when the parent is not in this world; the refusal is counted.
+     */
+    bool attach(RowId parent_identity, std::uint32_t child_index, SceneBake block);
+
+    /**
+     * @brief Disconnects the subtree rooted at @p identity: its rows leave the table.
+     *
+     * @details
+     * - Nothing is parked: a collected command names what it draws (a geometry share, a matrix, a state), not a row, and
+     *   the residency window for a retired object is the backend's own rule (RetirementQueue) - unchanged here.
+     * - Only boxes change above it, so the ancestors are re-derived with the box-only fold (see refoldChain): the
+     *   subtree's own values are gone, not recomputed.
+     * - The ROOT cannot be detached (it has no parent row to fix up): replacing a whole table is `adopt`'s job.
+     *
+     * @param identity The subtree's root.
+     * @return false when the identity is unknown, or is this world's root; the refusal is counted.
+     */
+    bool detach(RowId identity);
+
     /** @brief Collects one view's commands, in draw order - the same list the content's collection produces. */
     void collect(const CollectView& view, std::uint32_t layer_mask, std::vector<RenderCommand>& out) const;
 
@@ -80,6 +115,10 @@ class RenderWorld {
 
     /** @brief Gets how many edits were refused. */
     [[nodiscard]] std::uint64_t refusals() const noexcept;
+
+  private:
+    /// @brief Rebuilds the identity → row index after the table's indices moved.
+    void rebuildIndex();
 
   private:
     SceneBake                             bake_;

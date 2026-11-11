@@ -43,6 +43,28 @@ bool ContentMirror::publish(const Scene& scene)
     return true;
 }
 
+bool ContentMirror::attach(const Node& parent, const Node& subtree, std::uint32_t child_index)
+{
+    auto block = std::make_shared<SceneBake>();
+    buildOwnFacts(subtree, *block);
+    if (block->rows.empty()) {
+        return false; // an invisible subtree states no rows: "connect a hidden subtree" changes nothing
+    }
+    Delta delta;
+    delta.kind        = DeltaKind::Attached;
+    delta.identity    = &parent;
+    delta.child_index = child_index;
+    return channel_.post(delta, std::move(block));
+}
+
+bool ContentMirror::detach(const Node& subtree)
+{
+    Delta delta;
+    delta.kind     = DeltaKind::Detached;
+    delta.identity = &subtree;
+    return channel_.post(delta);
+}
+
 std::size_t ContentMirror::drain()
 {
     channel_.drain(batch_);
@@ -52,6 +74,14 @@ std::size_t ContentMirror::drain()
                 if (owned.rows != nullptr) {
                     world_.adopt(*owned.rows); // the world copies what it will edit; the share is released after
                 }
+                break;
+            case DeltaKind::Attached:
+                if (owned.rows != nullptr) {
+                    (void)world_.attach(owned.delta.identity, owned.delta.child_index, *owned.rows);
+                }
+                break;
+            case DeltaKind::Detached:
+                (void)world_.detach(owned.delta.identity);
                 break;
             case DeltaKind::Placement:
                 (void)world_.place(owned.delta.identity, owned.delta.matrix);
