@@ -270,6 +270,51 @@ flowchart LR
   就要先有 P3 的设备/表面所有权契约。所以今天引擎**接的是同一条路径**（`publish → drain → runPass`），只是
   由 `frame()` 的调用线程就地派发（`RunnerMode::Inline`）：一帧的 draw 已经由镜像回答，而"回答在哪条线程上发生"
   仍是 `FrameRunner` 的一个取值，等 P3 才拨到 `Threaded`。
+
+### 2.12 P3 契约：设备与表面归引擎侧，一帧的两个半段各归一条线程（`G2` / `G4` / `G10`）
+
+P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了，但一帧仍然是**一个函数、一条线程**：
+`frame()` 从钩子到 present 全在调用线程上。P3 定的是这条缝 —— **内容半段留在内容线程，引擎半段搬到引擎线程**，
+两条线程一前一后地跑**不同的帧**。
+
+- **所有权表**（`G1`：一样东西一个定义、一个写者）
+
+| 东西 | 持有者 | 唯一写者 | 跨边界的形态 |
+|---|---|---|---|
+| 原生窗口句柄 / display | UI（Qt） | UI | 事件值（见下） |
+| `RenderSurface`（面积） | 引擎（`createSurface` 给的 share） | 引擎线程 | — |
+| `WindowPresentTarget` + 交换链 | 引擎（设备造，`createSurfaceTarget`） | 引擎线程 | — |
+| `RenderDevice` / 会话 / 帧值 / 退休队列 | 引擎 | 引擎线程 | — |
+| 帧的**内容半段**：帧号、`compileFrame`、`before_draw` 钩子、`publish`、`describe` | 内容线程 | 内容线程 | 帧值交出去 |
+| 帧的**引擎半段**：表面事件、`drain`、bind、`runPass`(expand)、`executeFrame`、present | 引擎线程 | 引擎线程 | — |
+
+- **表面事件是值，不是函数调用**（`G4`）：今天 `RenderSurface::resize` 一次改三处 —— 引擎记下的布局尺寸、
+  target 的交换链尺寸、presenting view 的几何 —— 也就是"一个 UI 事件同步改引擎侧状态"。线程化之后那正是
+  UI 线程写引擎侧对象（N1 的近亲），而交换链重建本来就必须在拥有设备的线程上。于是 UI 侧只留两半：
+  `resize()` 记下宽度供**下一帧构建时**读（布局是内容半段的事），并投一条
+  `SurfaceEvent{ bound(handle, display) | extent(w, h) | visible(bool) }`；引擎半段**帧首应用一次**
+  （与 C8 同一条规则：一帧一次），在那里重建交换链、重派生 presenting view 的几何。
+- **一帧两个半段，每侧一帧在飞**：内容线程构建帧 N+1 时，引擎线程正在跑帧 N，**所以画面比内容晚一帧**（N15）。
+  这是 P3 唯一付的语义代价，换来的是 UI 侧调用只花 O(passes)：不 expand（O(drawables)）、不 present
+  （可能等垂直同步）。帧值因此要两份轮换（今天只有一份 `frame_value_`），帧号随握手一起走。
+- **"等到这一帧"是显式动作**（`G4`）：`FrameRunner::run` 今天"交出去并等它跑完"，那语义保留成
+  `waitForFrame(frame_id)` —— 截图、resize 稳定后、退出、测量用；默认路径 `frame()` 只保证"构建完成并交出去了"。
+- **完成通知是报告，不是回调**（`C10` / `G10`）：present 的结局（上屏 / 丢弃 / 重建后上屏 + 原因）写进那一帧的
+  `FramePlan`（帧号、结局、`record_micros`、`RetirementQueue::deviceWaits`），一把锁下发布。引擎线程**从不**回调 UI、
+  也从不回头读 UI。要"等第 N 帧上屏"就 `waitForFrame(N)`，要统计就读最近一份报告。
+- **重建只在帧边界**：extent 变了的那一帧**丢弃且不计错**（R9），下一帧按新 extent 构建 —— 内容侧立刻就知道新尺寸
+  （`resize()` 已记录），所以"布局用旧尺寸、交换链用新尺寸"这种错配没有窗口期。
+- **关闭**（F10）：`stop()` 投"不要再要帧" → 引擎半段跑完手上这一帧（或丢弃）→ 在引擎线程释放 present target、
+  会话、设备 → join（有界，超时报错）。析构顺序沿用 N11（线程先于设备与表结束）。UI 此时可以自由销毁自己的窗口，
+  因为引擎侧已经没有回头的边。
+- **一帧只有一个镜像状态，这是决定不是副作用**：钩子在内容半段跑、`publish` 按 pass 发，但引擎半段**一帧一次 drain**
+  （C8）⇒ 该帧所有 pass 都对着同一份镜像展开。也就是说**一个钩子写的内容对该帧所有 pass 可见**，而不是"只对排在它
+  后面的 pass 可见"（`Direct` 今天正是后者）。取前者：一帧是一张一致的图（`G3`），帧内一致与将来的帧内并行都要求它；
+  若某个 pass 必须看不见某段内容，那是**声明**问题（给它自己的场景），不是调度问题（N16）。
+- **否决**：D10（只搬 expand、`executeFrame` 留 UI —— 半个线程）、D11（构建完就地跑完 —— 那就是 inline）、
+  D12（流水线深度 > 1）、D13（UI 线程回调 `onPresented`）。理由见 §7。
+- **验收**：T9 / T10 见 §3.1.9、§3.1.10，另加"两模式同图"（§8）。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -395,16 +440,18 @@ flowchart LR
 
 ### 3.1.9 F9 表面事件与交换链
 
-- **行为**：UI 发 `surfaceChanged`/`extentChanged`/`visibility`；引擎在帧首应用，必要时重建交换链；present 结果以
-  完成通知（`{frame_id}`）回到 UI；需要"这一帧真的上屏了"的调用方等这个通知（不阻塞帧）。
-- **约束**（C9）：present 只在引擎线程；UI 不持有交换链句柄。
-- **要求**（R9）：重建期间的帧丢弃且不计错；重建后第一帧恢复；`device_waits` 可见。
-- **验收**（T9）：连续 resize / 重建窗口后画面正确、无崩溃、UI 无阻塞。
-- **注意**（N10）：Wayland"未映射拿不到 extent"的回退仍在 UI 侧决定（`appfw-render-surface.md` F5）。
+- **行为**：UI 投 `SurfaceEvent{ bound(handle, display) | extent(w, h) | visible(bool) }`（值）；引擎半段在**帧首**
+  应用一次并重建交换链；present 的结局写进该帧的 `FramePlan`；要"这一帧真的上屏了"的调用方 `waitForFrame(id)`。
+- **约束**（C9 / C17）：present 与交换链重建只在引擎线程；UI 不持有交换链句柄，也不写引擎侧任何状态。
+- **要求**（R9 / R16）：重建期间的帧丢弃且不计错；重建后第一帧恢复；`deviceWaits` 与丢弃原因可见；
+  UI 调用不因 present 而阻塞。
+- **验收**（T9）：连续 resize / 重建窗口后画面正确、无崩溃、UI 无阻塞；丢弃计数 > 0 而不报错；重建后一帧即恢复。
+- **注意**（N10）：Wayland"未映射拿不到 extent"的回退仍在 UI 侧决定（`appfw-render-surface.md` F5）；另有 N15（晚一帧）。
 
 ### 3.1.10 F10 关闭与拆解
 
-- **行为**：`stop()`：投 `terminate` → 引擎自停帧 → detach 全图（停靠条目释放）→ 释放设备/会话/表 → 线程退出 → join（有界，超时报错）。
+- **行为**：`stop()`：投"不要再要帧" → 引擎半段跑完手上这一帧（或丢弃）→ detach 全图（停靠条目释放）→
+  在**引擎线程**释放 present target / 会话 / 设备 → 线程退出 → join（有界，超时报错）。
 - **约束**（C10）：引擎线程**不得**同步等 UI 线程（否则与"UI 不得等 worker"互相等死）。
 - **要求**（R10）：`stop()` 之后引擎侧分配的一切已释放（ASan 判据）；pending delta 丢弃且可观测。
 - **验收**（T10）：`stop()` 无泄漏；重复 `start()`/`stop()` 稳定。
@@ -461,8 +508,10 @@ flowchart LR
 | `RenderWorker::start(mode)` | `inline` / `threaded`；握手点 | 之后镜像只靠 delta 前进 |
 | `post(Delta)` | 任意线程、不阻塞、帧首一次 drain | 值 + 保命句柄 |
 | `handoff(Owned…)` | 所有权转移，过带边界队列 | 新内容/整帧 |
-| `snapshot()` | 已发布不可变值 + 帧号 | 统计/计划/校验和 |
-| `onPresented(fn)` | 完成通知 | 截图/离线拼法 |
+| `submitFrame(frame)` | 把构建好的帧值交给引擎半段，**不等待**（P3） | 每侧一帧在飞 |
+| `waitForFrame(id)` | 等到第 `id` 帧的引擎半段结束（含 present），有界超时 | 截图/测量/退出 |
+| `postSurface(SurfaceEvent)` | 表面事件，只在帧首应用 | UI 只发值（C17） |
+| `framePlan()` | 最近一份已发布报告：帧号 + 结局 + 各 pass `record_micros` | 统计/校验和 |
 | `stop()` | 有界 join，超时报错 | 引擎自拆 |
 
 ### 4.3 不变的部分
@@ -494,6 +543,8 @@ flowchart LR
 | C13 | 校验和不进 Release 稳态路径。 |
 | C14 | 一次仿真步是一个批量 delta（`pose`），不是一关节一条。 |
 | C15 | 同一帧的多次变更按脏集合合并，每条子树与每条祖先链只重算一次。 |
+| C16 | 一帧的两个半段各归一条线程：内容半段（钩子 / publish / describe）在内容线程，引擎半段（drain / bind / expand / execute / present）在引擎线程；帧值两份轮换，每侧一帧在飞。 |
+| C17 | 表面事件只在帧首应用一次；交换链只在引擎线程重建；UI 侧不写任何引擎侧状态。 |
 
 ### 5.2 要求（R#）
 
@@ -514,6 +565,7 @@ flowchart LR
 | R13 | 漏调钩子至少被等价性用例抓到。 |
 | R14 | delta 通道定容、payload trivially copyable、稳态零堆分配。 |
 | R15 | 机器人 28~70 关节每帧变化时，引擎侧重算量只与链路成正比，且每帧零分配。 |
+| R16 | 线程化之后 `frame()` 只花 O(passes)（构建 + 交出）加一次握手；expand 与 present 不在调用者的关键路径上，等待必须显式（`waitForFrame`）。 |
 
 ### 5.3 不变量（N#）
 
@@ -525,6 +577,16 @@ flowchart LR
 | N4 | 一次 `present` 对应一次 `acquire`，两者同线程。 |
 | N5 | 镜像产出与内容侧 `collectRenderCommands` 对同一视图逐位相同。 |
 | N6 | 设备与镜像的重建/销毁只在引擎线程。 |
+| N7 | 原子 revision 只回答"字节换了"，不回答"在哪读"：流式写法仍是双 buffer 轮换或 `edit()` + revision。 |
+| N8 | `record_micros` 是"这一帧各 pass 花了多少"的观测点，线程化之后归属引擎线程。 |
+| N9 | 交换链重建会 wait device，次数进 `RetirementQueue::deviceWaits`；UI 永不阻塞在交换链上。 |
+| N10 | Wayland"未映射拿不到 extent"的回退仍在 UI 侧决定（`appfw-render-surface.md` F5）。 |
+| N11 | 析构顺序：引擎线程必须在设备与表之前结束。 |
+| N12 | 并行段不进 `AllocationGate` 的统计窗口。 |
+| N13 | 模式（`inline` / `threaded`）是启动参数；两条路径共用同一份帧循环与镜像。 |
+| N14 | 等价性是本设计的总闸：镜像错了画面就错，而它不崩、不报错。 |
+| N15 | 线程化之后画面比内容晚一帧（引擎半段跑的是上一帧）；`waitForFrame` 是唯一"等到那一帧"的手段。 |
+| N16 | 一帧之内镜像只有一个状态：钩子写的内容对该帧所有 pass 可见（一帧一次 drain 的直接后果，见 §2.12）。 |
 
 ## 6. 注意事项与陷阱
 
@@ -587,6 +649,16 @@ flowchart LR
 - **怎么防**：形状编辑 = 改 + `bumpRevision()`（§3.1.5 F5）；命令与计划是值，编辑后由下一帧重新收集，
   `ContentStore::track` 再交一次（后端每帧对每个命令做一次，稳态零成本）。
 
+### 6.10 表面事件被当成函数调用
+
+- **会怎么错**：宿主（或我们自己的控件）在线程化之后仍旧直接调 `RenderSurface::resize` / `bindTarget` 并期待
+  "下一帧就对了" —— 那把 UI 线程的手伸进了引擎侧对象（交换链、presenting view 的几何），在 Debug 下表现为偶发
+  的尺寸错配（布局是新尺寸、交换链是旧尺寸），在 Release 下表现为花屏或崩溃。
+- **怎么判**：`N1` 的近亲违反 —— 拿线程 id 断言或 TSan 抓"引擎侧对象被内容线程写"；症状是 resize 之后偶尔一帧
+  比例不对，且只在窗口被拖拽时出现。
+- **怎么防**：宿主只见值（`SurfaceEvent`），交换链重建只在帧首、只在引擎线程（C17，§2.12）；`resize()` 只记录
+  "下一帧布局用多大"，UI 侧一次也不写引擎侧状态。
+
 ## 7. 已否决选项
 
 | # | 选项 | 理由 | ADR |
@@ -600,6 +672,10 @@ flowchart LR
 | D7 | 打开 vsg 的 `Viewer::setupThreading()` | 它并行的是 vsg 的记录任务，而每个任务仍读我们按 pass 交错写的表 —— 不解决分区。 | 同上 |
 | D8 | 把整帧序列化成描述再交给后端 | 序列化 O(content)；`FrameDescription` 已是借用快照，多一层没有消费者（`G8`）。 | 同上 |
 | D9 | 相机/包围盒/拾取的"请求-应答"通道 | 复核后删掉：这三样在内容侧都能自答（`boundingBox`、BVH、相机对象本身），没有消费者（`G8`）。 | 同上 |
+| D10 | 只把 expand 搬到引擎线程、`executeFrame` 留在调用线程 | 半个线程：多一次握手、零并发收益，且 UI 仍然等 present。 | 同上 |
+| D11 | 构建完就在同一线程跑完，UI 只等构建 | 那就是 inline 模式（`frame()` 今天的形状）：没有并发收益，present 的等待仍在 UI 上。 | 同上 |
+| D12 | 流水线深度 > 1（多帧在飞） | 改的是"这一帧跑完了"的返回契约与报告语义，而 present 本身就是帧尾同步点；每侧一帧在飞已能把 UI 与设备等待切开。深度留到有真实消费者（远程/录制、离线拼法）再开（`G8`）。 | 同上 |
+| D13 | UI 线程回调 `onPresented(fn)` | 需要拥有 UI 事件循环的投递能力，本仓库没有；"报告 + 显式 `waitForFrame`"达到同一目的，不多一条我们管不了的边（`G8`）。 | 同上 |
 
 ## 8. 测试与验收
 
@@ -620,6 +696,9 @@ flowchart LR
 | T13 | 删掉一处公告，等价性用例失败 | 变异验证（手工 + 记录在案） |
 | T14 | 无数据竞争 | 新增 `-fsanitize=thread` 构建树跑 `test_vsg` 与 `test_appfw` |
 | T15 | 事实行从描述建；身份 = 内容地址、revision = 描述的 revision | `GeometryFactsTest.*`、`FrameRecorderTest.EveryFactOfACommandReachesTheRecord`、`ContentStoreTest.*` |
+| T16 | 一帧的构建只花 O(passes)：UI 线程不 expand、不等 present（P3） | 计数断言（帧内 expand 次数 = passes 的展开需求，不含采集）+ `callgrind_diff.py` |
+| T17 | 表面事件只在帧首生效：resize 之后的下一帧用新尺寸，期间那一帧被丢弃且不计错 | 新增用例：连续两帧改 extent，断言第一帧丢弃原因可见、第二帧尺寸正确、`deviceWaits` 增长 |
+| T18 | `waitForFrame(n)` 只等第 n 帧；不调用它时 `frame()` 不依赖引擎线程进度 | 用例：投 100 帧后立刻返回（时间上界），逐帧 `waitForFrame` 单调完成 |
 
 ## 9. 状态与演进
 
@@ -743,7 +822,10 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   （同一相机两 pass = 2 次采集 + 1 次复用；静止帧 0 次采集；一次编辑各视图重采一次）、
   `OneCameraCullsWithItsOwnShapeInEveryRectangle`、`SceneViewTest.SetSceneReachesDefaultWindowPassAndSceneAwareManipulator`
   （换 scene 后由引擎的镜像采一次，两个内容自己的采集计数都是 0 —— 这一条同时钉住"帧不再问内容"）。
-- **P3（下一步）**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
+- **P3 契约已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
+  `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
+  `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`
+  的写者（今天在 UI 线程直接写引擎侧对象）。顺带把 §5.3 里被引用却一直没定义的 N7–N14 补齐。
   同时要定下"钩子在交出帧之前还是之后跑"的语义：今天的 per-pass 发布让直连/就地模式是"每个 pass 看见它之前的钩子"，
   而一条交出去线程的帧是**一张快照**；两种都自洽，P3 必须明写取哪一个。
 - **P4**：并行 select（可与 P3 解耦）。
