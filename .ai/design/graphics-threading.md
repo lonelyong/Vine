@@ -299,13 +299,22 @@ flowchart LR
 
 ### 3.1.3 F3 场景图结构更新
 
-- **行为**：`attach` 把一个子树接入镜像（子树描述随 delta 一起给，或由内容侧先建好再 handoff）；`detach` 让镜像
-  摘掉子树并把节点**停靠**（`RetirementQueue`，`slots + 1` 帧）后才释放；`reparent` = detach + attach（世界矩阵重算）。
-- **约束**（C3）：镜像**不持有节点**，只持有按地址键的行与内容 share（ADR-2026-11-09 的地址规则在内容侧生效）；
-  子树摘除必须停靠，因为已录制的帧可能还命名它。
-- **要求**（R3）：`detach` 之后 N 帧内引擎侧该子树的驻留按现行 pin 规则离场（不新增释放路径）。
-- **验收**（T3）：attach/detach/reparent 循环若干次后，镜像节点数与内容侧一致，无泄漏（ASan）。
-- **注意**（N3）：重父化会重算整棵子树的**世界矩阵**（局部不变），与内容侧 `invalidateBounds` 的传播方向一致。
+- **行为**：`Attached` 把一个子树接入镜像 —— 走的**只有那棵子树的 own 事实**（`buildOwnFacts`，在内容线程建好），
+  镜像在自己的表里**拼接 + 重编号**，然后在拼接处折它（那里才知道父的放置）；`Detached` 按 `identity` 摘掉一整段行区间，
+  **只重算祖先的盒**（并集少了一个孩子）。`reparent` = 同一批里的 detach + attach。
+- **时序（拖拽 ≠ 换父）**：拖拽期间**层级不动**，每帧变的只有 placement（F4）；**释放**才是一次结构变化，摘与挂在
+  **同一批** delta 里完成。因此"子树暂时不在"这个中间态**不可被观察**（一批在 expand 之前全部应用，中间没有读者），
+  这也是**不为换父单独造一种 delta 的理由**（`G8`）。
+- **谁做放置补偿**：换父会换掉继承的父矩阵，但视觉上不该跳，所以**内容侧**在挂接前算
+  `new_local = inverse(new_parent.world) * old_world`；镜像不做这个补偿，它只搬行、重折子树、重算两条链的盒。
+- **约束**（C3）：镜像**不持有节点**，只持有按地址键的行与内容 share（ADR-2026-11-09 的地址规则在内容侧生效）。
+- **要求**（R3）：摘掉的子树**不在镜像里停靠** —— 一条命令命名的是它画的东西（几何 share、矩阵、状态），不是一行，
+  所以行可以立刻消失；退役对象能不能被后端立刻释放，是后端自己的 pin/`RetirementQueue` 规则，这里**不新增释放路径**。
+- **验收**（T3）：接上/摘掉一棵子树之后，镜像的**命令序列与行数等于对同一张图从零重建的结果**（顺序也一致）——
+  `ContentMirrorTest.AConnectedSubtreeIsWhatARebuildOfTheSameGraphProduces` / `ADisconnectedSubtreeLeavesWhatARebuild...`。
+- **注意**（N3）：换父会重算整棵子树**继承来的值**（world / opacity / layers / state / material / program），不只是矩阵；
+  代价是两次重编号（旧位置一次、新位置一次），低频动作可以接受。若将来出现"拖拽期间就要换父且不能看到消失"的跨帧需求，
+  或重编号成为 profile 热点，再考虑单独的 `Reparented`。
 
 ### 3.1.4 F4 节点状态更新
 
@@ -446,7 +455,7 @@ flowchart LR
 |---|---|
 | C1 | 握手之后内容侧不再整图给渲染侧看；镜像只靠 delta 前进。 |
 | C2 | delta 是值 + 保命句柄，不携带"还会变的内容"。 |
-| C3 | 镜像保地址、不读字段；子树摘除必须停靠。 |
+| C3 | 镜像保地址、不读字段；行可以随摘随丢（命令命名它画的东西，不命名行）。 |
 | C4 | 重算范围 = 变化子树 + 祖先。 |
 | C5 | `GeometryDescription` 只在形状编辑时构造。 |
 | C6 | 相机值只算一次，两侧用同一份。 |
@@ -466,7 +475,7 @@ flowchart LR
 |---|---|
 | R1 | 握手一次 O(n)，不随帧重复。 |
 | R2 | delta 队列 MPSC、生产者不阻塞、drain 拿完当时全部。 |
-| R3 | `detach` 后按现行 pin 规则离场，不新增释放路径。 |
+| R3 | 摘掉的子树不在镜像里停靠；驻留离场仍按后端现行 pin 规则，不新增释放路径。 |
 | R4 | 每帧动画 = 每帧一条 placement delta，引擎侧无 update traversal。 |
 | R5 | 只换句柄的编辑也走同一条描述 delta。 |
 | R6 | `fitToScreen` 留在内容侧。 |
@@ -486,7 +495,7 @@ flowchart LR
 |---|---|
 | N1 | 内容世界只被内容线程写；渲染世界只被引擎线程写。 |
 | N2 | 渲染世界不读内容对象的字段（两个原子 revision 除外）。 |
-| N3 | 镜像的节点集与内容侧一致（除停靠窗口内的已摘除子树）。 |
+| N3 | 镜像的节点集与内容侧一致；换父重算的是整棵子树继承来的值，不只是矩阵。 |
 | N4 | 一次 `present` 对应一次 `acquire`，两者同线程。 |
 | N5 | 镜像产出与内容侧 `collectRenderCommands` 对同一视图逐位相同。 |
 | N6 | 设备与镜像的重建/销毁只在引擎线程。 |
@@ -570,12 +579,12 @@ flowchart LR
 
 | # | 判据 | 用例 / 命令 |
 | --- | --- | --- |
-| T1 | 握手一次；静止 N 帧零 delta、零重算 | `RenderWorldTest.HandshakeCopiesOnceAndThenIdles` |
-| T2 | delta 不丢不重、每线程 FIFO | `DeltaQueueTest.*` |
-| T3 | attach/detach/reparent 后镜像节点集与内容一致、无泄漏 | `RenderWorldTest.StructureFollowsTheGraph` + ASan |
-| T4 | 拖拽 100 帧后世界矩阵逐元素相等；重算量只与子树成正比 | `RenderWorldTest.ATransformEditRecomputesOnlyItsSubtree`；**机器人场景**：一台 6 轴（7 段）+ 4 台 = 28 关节每帧变，N 帧后镜像 ≡ 内容侧逐位相同、每帧分配数 = 0 |
-| T5 | 换通道/切片/primitive 后代理与从零重建逐字段相同 | `RenderWorldTest.ADescriptionEditRebuildsExactly` |
-| T6 | 相机值两侧一致；无 delta 的帧沿用旧值 | `RenderWorldTest.TheCameraIsOneValue` |
+| T1 | 握手一次；静止帧零 delta、零重算 | `ContentMirrorTest.TheMirrorCollectsWhatItsSceneCollectsAndOnlyPublishesOnAChange`（"稳态不发布"） |
+| T2 | delta 不丢不重、每线程 FIFO、满载拒收可见 | `DeltaChannelTest.PostsFromSeveralThreadsAllArriveOnceAndInEachThreadsOrder` / `AFullChannelRefusesAndCountsInsteadOfDroppingQuietly` |
+| T3 | attach/detach 后镜像的行与命令序列等于从零重建（顺序亦然） | `ContentMirrorTest.AConnectedSubtreeIsWhatARebuildOfTheSameGraphProduces` / `ADisconnectedSubtreeLeavesWhatARebuildOfTheSameGraphProduces` |
+| T4 | 放置编辑后世界矩阵逐元素相等；重算量只与子树成正比 | `RenderWorldTest.APlacementEditReplacesThatSubtreeAndNothingElse`（重算计数）+ `AMovedSubtreeIsCulledByItsAncestorsNewBox`；**机器人场景（待落）**：一台 6 轴（7 段）+ 4 台 = 28 关节每帧变，N 帧后镜像 ≡ 内容侧逐位相同、每帧分配数 = 0 |
+| T5 | 换通道/切片/primitive 后代理与从零重建逐字段相同（待落：今天的描述变化走整体重发） | — |
+| T6 | 相机值两侧一致；无 delta 的帧沿用旧值（待落：相机今天随帧值走，没有 delta） | — |
 | T7 | 字节变化只靠 revision 离场/重传 | `StreamUploadsTest.AStreamWhoseBufferMovedLeaves…`（镜像路径） |
 | T8 | 帧在引擎线程；静止场景 UI 线程零成本 | 线程 id 断言 + `scripts/callgrind_diff.py` |
 | T9 | 连续 resize / 重建窗口后画面正确、UI 无阻塞 | `RenderControlTest` 系列 + 新增协议用例 |
