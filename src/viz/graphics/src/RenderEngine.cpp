@@ -449,6 +449,17 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
     // does not present afterwards - presenting twice would be presenting somebody else's frame (or nothing at all).
     frame.outcome = device_->executor().executeFrame(frame.description, frame.target);
 
+    // A LOST PICTURE IS THE SURFACE ASKING TO BE REBUILT, and the size is how that request is made: a swapchain is
+    // rebuilt by re-announcing the extent it hangs off (PresentTarget::resize -> the session follows the surface and
+    // builds a new one, counted as a device wait). So the engine FORGETS what it told the target, and the next frame
+    // hands it the same numbers again - one repair, on the side that owns the swapchain's size. If that repair does
+    // not take (the window itself is gone), the next frame answers Lost again, and the HOST's move is the attach
+    // (a new handle, a new target) - never both at once, and never a repair loop inside the frame.
+    if (frame.outcome == PresentOutcome::Lost) {
+        applied_width_  = 0;
+        applied_height_ = 0;
+    }
+
     // The frame is answered: what a host's waitForFrame is actually waiting for (see design 2.12 - the completion is a
     // fact of the frame, not a callback into anybody's thread).
     //   The per-pass cost still has to reach the plan a host reads, and the PLAN belongs to the content half (it is

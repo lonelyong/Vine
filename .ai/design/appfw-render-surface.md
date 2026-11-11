@@ -72,10 +72,13 @@
 
 attach 不要求表面可见；只有 present 才要求窗口在屏上。平台不同意时 attach 失败，控件回退到“先显示表面再 attach”。
 
-**帧中丢面（`Lost`）走同一条 attach**：`renderFrame()` 在排帧前读 `engine->presentRecord()`，若它说的是
-`PresentOutcome::Lost`，就把状态打回 `Pending` 并重新 `init()`，这一拍不排帧 —— 一张没到表面的图不是"再画一次"
-能解决的，它要的是新的 target 与重建的交换链。线程化时这个答案晚一帧到，所以它读的是"上一条被答完的帧"，不是
-刚交出去的那一帧。
+**帧中丢面（`Lost`）不拆会话，也不藏区域**：一张没到表面的图是"这块表面请求重建"，不是"会话要换"。修的一侧是
+引擎 —— 它忘掉已告知的尺寸，下一帧重报同一个尺寸，后端据此重建交换链（计一次 device wait）；宿主这一侧只做两件事：
+把答案记一次并说一句（`presentRecord()` 的帧号保证一条答案只处置一次），以及在**句柄真的变了/为空**时走 attach（
+`renderFrame()` 头部本来就这么做）。
+不去改 `state()` 是刻意的：`Presenting` 说的是"表面里有帧"，而**最后那张图仍在屏幕上**；把它藏起来还会连带停掉
+修它的那些帧（隐藏的窗口不请求帧），把一个可恢复的交换链变成死的。线程化时答案晚一帧到，所以它读的是"上一条
+被答完的帧"。
 
 ## 3. 功能点
 
@@ -103,7 +106,7 @@ attach 不要求表面可见；只有 present 才要求窗口在屏上。平台�
   容器在 `state_changed` 报到 `Presenting` 之前一直隐藏。
   **`Presenting` 说的是"帧真的进了表面"**：inline 下排帧即答完，所以提交那一刻成立；线程化时第一次会
   `waitForFrame()` 等这张首帧（区域能不能露出来靠它），之后每一拍只看上一帧的 `presentRecord()`，不再等。
-  反过来，一张 `Lost` 的帧把状态打回 `Pending`，再走一次 attach（见 §2.4）。
+  一张 `Lost` 的帧**不改状态**（见 §2.4）：修它的是引擎重报尺寸，藏区域反而会停掉修复。
 - **约束**（C2）：没有会话就没有帧；`failureReason()` 非空 ⟺ `Failed`；`Presenting` 只在有 `Presented` 的答案之后。
 - **要求**（R2）：`Presenting` 之前露出的是主窗背景，不是洞；`renderFrame()` / `fitToScreen()` 在 attach 前不得推状态。
 - **验收**（T2）：`TheFrameTheAttachRendersPutsTheSurfaceOnScreen`、

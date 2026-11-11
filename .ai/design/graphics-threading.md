@@ -448,8 +448,9 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 
 - **行为**：尺寸是**帧自己的值**（帧首交给 target，只在变化时）；**设备动词（`createSurfaceTarget` /
   `setWindowHandle` / `device->initialize`）是帧间操作**，宿主先 `waitForFrame()`；每帧的呈现结局是
-  `PresentOutcome{Presented, Skipped, Lost}` 的值（`RenderEngine::presentRecord()`），`Lost` 由宿主在下一帧
-  帧首处置（回到 `Pending` 并重新 attach）。
+  `PresentOutcome{Presented, Skipped, Lost}` 的值（`RenderEngine::presentRecord()`）；`Lost` 由**引擎**修 ——
+  忘掉已告知的尺寸，下一帧重报，目标据此重建交换链（计一次 device wait）；**宿主**只在句柄真的变了/为空时重 attach，
+  且**不**因为一张丢掉的图去改变区域状态（隐藏会让修复帧停掉）。
 - **约束**（C9 / C17）：present 与交换链重建只在引擎线程；UI 不持有交换链句柄，也不写引擎侧任何状态。
 - **要求**（R9 / R16）：重建只在帧首、只随尺寸变化；设备拒绝时跳过这一帧而不计错；`deviceWaits` 与跳过原因可见；
   UI 调用不因 present 或交换链重建而阻塞。

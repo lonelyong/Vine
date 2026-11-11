@@ -68,10 +68,12 @@ class StubBackend : public vn::graphics::RenderBackend {
         vn::graphics::PresentOutcome present() override
         {
             ++presents;
-            return vn::graphics::PresentOutcome::Presented;
+            return outcome;
         }
 
       public:
+        /// What this surface answers (a case that wants a lost picture makes it answer Lost).
+        vn::graphics::PresentOutcome outcome{ vn::graphics::PresentOutcome::Presented };
         int   handle_calls{ 0 };
         int   resize_calls{ 0 };
         int   presents{ 0 };
@@ -556,6 +558,35 @@ TEST(RenderControlTest, ContinuousRenderingDrivesFramesWithoutInput)
 }
 
 // initAsync() 不挂起 —— 它返回时 attach 已经结束，宿主的内容装配天然排在它之后，不需要任何等待。
+TEST(RenderControlTest, ALostPictureIsRepairedByReannouncingTheSize)
+{
+    // A SURFACE THAT CANNOT TAKE A PICTURE is not a reason to re-attach: the size is what a swapchain is rebuilt from,
+    // so the ENGINE forgets the extent it announced and the next frame hands the target the same numbers again (design
+    // graphics-threading.md F9). The control's half is to stop claiming a picture is in the surface.
+    HostedControl host;
+    host.show();
+    ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
+
+    const int resizes_before  = host.stub()->surface_half.resize_calls;
+    const int presents_before = host.stub()->surface_half.presents;
+
+    host.stub()->surface_half.outcome = vn::graphics::PresentOutcome::Lost;
+    host.control()->setContinuousRendering(true, 5);
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.resize_calls > resizes_before; }, 3000))
+        << "a lost picture makes the next frame re-announce the extent - that is the repair";
+    // THE AREA IS NOT TAKEN DOWN: its last picture is still what is on screen, and hiding it would stop the frames that
+    // repair the surface (a hidden window asks for none). So the state stays Presenting and the drive keeps running.
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting)
+        << "a lost picture is not a reason to hide an area that is showing the last one";
+
+    // The rebuilt swapchain takes the next picture, and frames keep reaching it - no attach, no state dance.
+    host.stub()->surface_half.outcome = vn::graphics::PresentOutcome::Presented;
+    EXPECT_TRUE(pumpUntil([&] { return host.stub()->surface_half.presents > presents_before + 2; }, 3000))
+        << "the surface is presenting again on its own";
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Presenting);
+    host.control()->setContinuousRendering(false);
+}
+
 TEST(RenderControlTest, InitAsyncCompletesWithoutSuspending)
 {
     HostedControl host;

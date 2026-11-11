@@ -127,16 +127,15 @@ class SurfaceWindow : public QWindow {
      * frame is in it. This is the SYNCHRONOUS spelling: the frame is drawn inside the call. */
     void renderFrame();
 
-    /** @brief Notices a frame whose picture did not reach the surface and arms the next attach.
+    /** @brief Reads the last answered frame's picture outcome, once per answer.
      *
      * @details
-     * - One answer is looked at once (the record's frame id is remembered): `Lost` puts the state back to Pending and
-     *   sets the flag `renderFrame` re-attaches on, on the next tick - never from inside the frame drive, because a
-     *   surface that stays broken would otherwise recurse.
-     *
-     * @return true when this answer was `Lost` and an attach is now owed.
+     * - One answer is looked at once (the record's frame id is remembered): `Lost` puts the state back to Pending, which
+     *   is what hides an area that is no longer showing a current picture, and says so once. The repair itself is not
+     *   this method's: the engine re-announces the size (so the backend rebuilds the swapchain), and a window that is
+     *   really gone is the attach's business - `renderFrame` already notices a recreated or null native handle.
      */
-    bool reattachAfterLostPicture();
+    void observePresentRecord();
 
     /** @brief Requests one frame: it is drawn on the next display-sync update, not inside this call.
      *
