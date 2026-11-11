@@ -13,24 +13,32 @@ FrameWorker::~FrameWorker() = default;
 
 bool FrameWorker::publish(const Scene& scene)
 {
-    ContentMirror* mirror = mirrorOf(scene);
-    if (mirror == nullptr) {
-        // The handshake: one mirror per content, created the first time the content is published. The vector is
-        // reserved for the small number of contents a frame draws (a main scene, a HUD, an overlay) so a steady frame
-        // never reallocates it.
-        mirrors_.reserve(4U);
-        mirrors_.push_back(std::make_unique<ContentMirror>(scene));
-        mirror = mirrors_.back().get();
-        // A mirror born IN a frame joins that frame: the token was opened before it existed, so without this its first
-        // frame would collect once per pass - the one frame where a new content costs the most. Opening the token here
-        // is idempotent with the next beginFrame and never rewinds the memo (see DrawListMemo::beginFrame).
-        mirror->beginFrame(frame_);
+    ContentMirror* mirror = nullptr;
+    {
+        // The list is looked up and grown under its lock, and the lock is RELEASED before anything is published: what
+        // the two halves share is the list, not the mirror, and a content's publish is O(rows).
+        const std::lock_guard<std::mutex> lock(mirrors_mutex_);
+        mirror = mirrorOfLocked(scene);
+        if (mirror == nullptr) {
+            // The handshake: one mirror per content, created the first time the content is published. The vector is
+            // reserved for the small number of contents a frame draws (a main scene, a HUD, an overlay) so a steady
+            // frame never reallocates it.
+            mirrors_.reserve(4U);
+            mirrors_.push_back(std::make_unique<ContentMirror>(scene));
+            mirror = mirrors_.back().get();
+            // A mirror born IN a frame joins that frame: the token was opened before it existed, so without this its
+            // first frame would collect once per pass - the one frame where a new content costs the most. Opening the
+            // token here is idempotent with the next beginFrame and never rewinds the memo (see
+            // DrawListMemo::beginFrame).
+            mirror->beginFrame(frame_);
+        }
     }
     return mirror->publish(scene);
 }
 
 void FrameWorker::beginFrame(std::uint64_t frame)
 {
+    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
     frame_ = frame;
     for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
         mirror->beginFrame(frame);
@@ -39,8 +47,11 @@ void FrameWorker::beginFrame(std::uint64_t frame)
 
 std::size_t FrameWorker::drain()
 {
-    // Every mirror applies what its content published, in post order, before anything reads the rows.
-    std::size_t drained = 0U;
+    // Every mirror applies what its content published, in post order, before anything reads the rows. The lock covers
+    // the WALK: a content published for the first time while this frame is answered grows the list, and `drain` itself
+    // is the mirror's own business (its channel is the only thing the two halves share).
+    std::lock_guard<std::mutex> lock(mirrors_mutex_);
+    std::size_t                 drained = 0U;
     for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
         drained += mirror->drain();
     }
@@ -85,6 +96,7 @@ std::size_t FrameWorker::run(FrameDescription& frame, FrameMode mode)
 
 std::size_t FrameWorker::mirrorCount() const noexcept
 {
+    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
     return mirrors_.size();
 }
 
@@ -100,6 +112,7 @@ std::uint64_t FrameWorker::unbound() const noexcept
 
 std::uint64_t FrameWorker::memoHits() const noexcept
 {
+    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
     std::uint64_t hits = 0U;
     for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
         hits += mirror->memoHits();
@@ -109,6 +122,7 @@ std::uint64_t FrameWorker::memoHits() const noexcept
 
 std::uint64_t FrameWorker::memoStores() const noexcept
 {
+    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
     std::uint64_t stores = 0U;
     for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
         stores += mirror->memoStores();
@@ -117,6 +131,12 @@ std::uint64_t FrameWorker::memoStores() const noexcept
 }
 
 ContentMirror* FrameWorker::mirrorOf(const vn::graphics::DrawListSource& source) noexcept
+{
+    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
+    return mirrorOfLocked(source);
+}
+
+ContentMirror* FrameWorker::mirrorOfLocked(const vn::graphics::DrawListSource& source) noexcept
 {
     for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
         // Either spelling means "this content": the CONTENT itself (a frame described on the content's thread) or the

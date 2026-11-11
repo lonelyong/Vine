@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <set>
 #include <vector>
@@ -944,7 +943,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void expandFrameValue(detail::EngineFrame& frame);
 
-    /** @brief Adds the engine half's per-pass cost to the plan a host reads (under `report_mutex_`).
+    /** @brief Adds the engine half's per-pass cost to the plan a host reads.
+     *
+     * @details
+     * - Called only when the content half is NOT running (inline: right after the engine half; threaded: at the start
+     *   of the next frame, after the runner went idle), because the plan's tables belong to the content half.
      *
      * @param frame The frame whose engine half just finished.
      */
@@ -1193,9 +1196,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// Where the engine half runs (see setFrameThreading); null means inline - the thread object exists only when a
     /// host asked for one, so an engine that never does allocates nothing and starts no thread.
     std::unique_ptr<detail::FrameRunner> runner_;
-    /// Guards the per-pass `record_micros` the engine half writes: the plan a host reads is the content half's, but
-    /// that one number is the other half's to publish (design 2.12 - the two halves share no mutable state otherwise).
-    mutable std::mutex report_mutex_;
+    /// A frame whose engine half finished on the frame thread and whose per-pass cost still has to reach the plan: the
+    /// next frame() publishes it, once it has waited for that half. Null when there is nothing to publish (the inline
+    /// path publishes immediately - it IS the content half's thread).
+    std::atomic<detail::EngineFrame*> pending_micros_{ nullptr };
     // THE ENGINE HALF OF A FRAME, in this engine (see detail::FrameWorker): the one place a pass' expansion is asked
     // for, so the DEFAULT path and the mirrored one are the same code - and the mode below is what P3 flips when the
     // frame moves to an engine thread.

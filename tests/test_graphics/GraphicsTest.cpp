@@ -11273,11 +11273,25 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
         << "a number this engine never built is not 'answered later'";
     EXPECT_FALSE(engine->waitForFrame(0)) << "no frame was ever built under that id";
 
+    // MANY FRAMES, WITH CONTENT CHANGING UNDER THEM: this is the arrangement the whole design exists for - the content
+    // half publishes a frame's writes while the engine half is still answering the one before it. Nothing here may
+    // crash, and every frame must still reach the device exactly once.
+    int added = 0;
+    for (int step = 0; step < 8; ++step) {
+        root->addChild(makeTriangleNode(Vec3d(0.5, 0.0, -3.0 - 0.1 * step), nullptr, u8"step"));
+        ++added;
+        EXPECT_EQ(engine->frame(), FrameOutcome::Submitted);
+        EXPECT_TRUE(engine->waitForFrame()) << "frame " << engine->frameNumber();
+        const auto& commands = engine->frameDescription().passes.at(0).draw->draws.at(0).commands;
+        ASSERT_NE(commands, nullptr);
+        EXPECT_EQ(commands->size(), static_cast<std::size_t>(1 + added)) << "step " << step;
+    }
+
     // Back to inline: the next frame is answered before frame() returns, and the thread is joined.
     engine->setFrameThreading(FrameThreading::Inline);
     EXPECT_EQ(engine->frame(), FrameOutcome::Ran);
     EXPECT_TRUE(engine->waitForFrame());
-    EXPECT_EQ(backend->frames_executed, 3) << "every frame reached the device exactly once, whichever thread drove it";
+    EXPECT_EQ(backend->frames_executed, 11) << "every frame reached the device exactly once, whichever thread drove it";
 }
 
 TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)

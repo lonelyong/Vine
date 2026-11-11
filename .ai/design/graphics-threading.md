@@ -848,8 +848,15 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   **不共享任何可变状态**（引擎半段的 `record_micros` 经 `report_mutex_` 发布，`framePlan()` 在同锁下读）；
   `shutdown()` 先 `waitIdle + stop` 再解绑 target（F10 / N11）。默认仍是 Inline，539 条用例里只有新增的一条走线程。
   验收：`RenderEngineTest.AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLanded`（`Ran` → `Submitted`、
-  线程画的与 inline 逐元素同图、`waitForFrame` 正/负两向、切回 Inline 后仍是 `Ran`、每帧只到一次设备）；
+  线程画的与 inline 逐元素同图、`waitForFrame` 正/负两向、切回 Inline 后仍是 `Ran`、每帧只到一次设备，
+  另有 8 帧连续加内容的抖动段：内容半段发布时引擎半段正在答上一帧），`--gtest_repeat=60` 稳定；
   `FrameRunnerTest` 三条改为 job 形式（两模式同图、64 帧、`stop()` 后仍就地跑）。
+- **P3 第三步的并发收尾（2026-11-11）**：两条真正被两侧共用的状态各自有了规矩 ——
+  ① `FrameWorker` 的镜像**列表**（内容半段首次发布时 `push_back`，引擎半段同时在自己 `drain/beginFrame/bind` 里遍历）
+  由 `mirrors_mutex_` 保护，且只包住查找/插入与遍历，不包住 publish/drain/expand；
+  ② 引擎半段的 `record_micros` 不再直接写 `slots_`（那张表属于内容半段，`addPass` 在两帧之间就能改它）：
+  inline 就地发布，线程化则记在 `pending_micros_`、由下一帧在 `waitIdle()` 之后发布。两条都不是"加把锁了事"，
+  而是把"谁在什么时候可以写"写清楚（`G1`/`G10`）。
 - **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`

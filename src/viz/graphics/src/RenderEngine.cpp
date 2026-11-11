@@ -277,6 +277,11 @@ FrameOutcome RenderEngine::frame()
     // is for the frame BEFORE the one it is about to build, which is normally already done (design 2.12, D12).
     if (runner_ != nullptr) {
         runner_->waitIdle();
+        // The frame that just finished reported its per-pass cost on its own value; the plan is the content half's, so it
+        // is written here - the one moment nobody else is in it.
+        if (detail::EngineFrame* const finished = pending_micros_.exchange(nullptr, std::memory_order_acquire)) {
+            publishEngineMicros(*finished);
+        }
     }
 
     // The content half fills one slot; the other is what the frame thread holds (inline, it is only the spare).
@@ -437,15 +442,23 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
 
     // The frame is answered: what a host's waitForFrame is actually waiting for (see design 2.12 - the completion is a
     // fact of the frame, not a callback into anybody's thread).
-    publishEngineMicros(frame);
+    //   The per-pass cost still has to reach the plan a host reads, and the PLAN belongs to the content half (it is
+    // written by addPass, removePass and the compile). Inline that is this thread, so it is published right here;
+    // with a frame thread it is published by the next frame(), which by then has waited for this half - so the engine
+    // half never touches the engine's own tables (design 2.12: the halves share no mutable state).
+    if (runner_ == nullptr) {
+        publishEngineMicros(frame);
+    }
+    else {
+        pending_micros_.store(&frame, std::memory_order_release);
+    }
     frame_completed_.store(frame.number, std::memory_order_release);
 }
 
 void RenderEngine::publishEngineMicros(const detail::EngineFrame& frame)
 {
-    // The plan is the CONTENT half's value (a host reads it whenever it likes, from its own thread); this one number is
-    // the engine half's to add. `record_micros` keeps meaning "describe + collect": each half measured its own share.
-    std::lock_guard<std::mutex> lock(report_mutex_);
+    // `record_micros` keeps meaning "describe + collect": each half measured its own share, and this adds the engine
+    // half's. Called only when the content half is not looking (see the two call sites), so it takes no lock.
     for (std::size_t index = 0; index < frame.engine_order.size() && index < frame.engine_micros.size(); ++index) {
         const std::uint32_t slot = frame.engine_order[index];
         if (slot < slots_.size()) {
@@ -488,9 +501,6 @@ FramePlan RenderEngine::framePlan() const
 {
     FramePlan plan;
     plan.passes.reserve(slots_.size());
-    // The one number in the plan the ENGINE half writes (see publishEngineMicros): a host reads the plan from its own
-    // thread whenever it likes, so that field is read under the same lock the other half adds it under.
-    std::lock_guard<std::mutex> micros_lock(report_mutex_);
     for (const Slot& slot : slots_) {
         const RenderPass* const pass = slot.pass.get();
         if (pass == nullptr) {

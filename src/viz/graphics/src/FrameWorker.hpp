@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include <vine/graphics/FrameDescription.hpp>
@@ -141,8 +142,16 @@ class FrameWorker {
     /// @brief Finds the mirror a draw names, whether it names the content or the mirror itself.
     [[nodiscard]] ContentMirror* mirrorOf(const vn::graphics::DrawListSource& source) noexcept;
 
+    /// @brief The lookup itself, for callers that already hold `mirrors_mutex_`.
+    [[nodiscard]] ContentMirror* mirrorOfLocked(const vn::graphics::DrawListSource& source) noexcept;
+
   private:
     std::vector<std::unique_ptr<ContentMirror>> mirrors_;
+    /// Guards the mirrors' LIST (not their contents): the content half creates one the first time a content is
+    /// published, and the engine half walks the same list while it drains, opens a frame and binds - two threads, one
+    /// vector, and a `push_back` that can reallocate it. Held only for a lookup or an insert, never across a
+    /// publish/drain/expand.
+    mutable std::mutex mirrors_mutex_;
     std::uint64_t                               frame_{ 0 };
     std::uint64_t                               applied_{ 0 };
     std::uint64_t                               unbound_{ 0 };
