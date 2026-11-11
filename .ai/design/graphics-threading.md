@@ -183,6 +183,50 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   所以 `Scene`（内容侧）与 `RenderWorldSource`（镜像）可互换，等价性用例 `RenderWorldTest` 钉住。
 - **代价**：`DrawDescription` 同时可以“带视图”或“带列表”，这是一个**两段式值**的不变量（展开前/后），
   写在类型注释里；由展开函数唯一填写，宿主手建时直接带列表。
+
+### 2.11 P1 骨架：三样东西，各自一个所有者（`G1` / `G2` / `G5`）
+
+P1 要落的是"两模式 + 镜像 + 通道 + 等价性"，所以先把**骨架**定成一个可以逐块替换的结构，而不是先接线再整理。
+三样东西，每样只回答一个问题：
+
+| 单元 | 位置 | 只回答 | 不知道 |
+|---|---|---|---|
+| `detail::DeltaChannel` | `src/viz/graphics/src/DeltaChannel.{hpp,cpp}` | "内容线程说了什么，按什么顺序" | delta 的含义、有没有线程、谁在等 |
+| `detail::RenderWorld` | `src/viz/graphics/src/RenderWorld.{hpp,cpp}` | "这些值现在是什么" | 内容图、节点、帧 |
+| `detail::FrameWorker`（P1 下一步） | `src/viz/graphics/src/FrameWorker.{hpp,cpp}` | "一帧从头到尾做完了" | 内容世界的任何指针 |
+
+```mermaid
+flowchart LR
+  subgraph content["内容线程（UI）"]
+    N["Node 变更 / bake<br/>（唯一读图的地方）"]
+    R["frame(): hooks → describe<br/>→ publish 表"]
+    N -- "值 + 承载内容的 share" --> CH["DeltaChannel<br/>定容 · 按序 · 一帧一次 drain"]
+    R -- "publishRows" --> CH
+  end
+  subgraph engine["引擎线程"]
+    W["FrameWorker<br/>drain → apply → bindContent → expandFrame"]
+    M["RenderWorld（镜像）"]
+    X["executor.executeFrame"]
+    W --> M
+    W --> X
+  end
+  CH -- "drain（帧首一次）" --> W
+```
+
+- **`DeltaChannel` 只搬不解释**：`Delta` 是固定大小、trivially copyable 的值（`static_assert`），承载内容的
+  share 与它同行（`OwnedDelta::rows`），所以"表换了"永远不会与表本身分开到达。定容、满了**拒收并计数**，
+  绝不静默丢弃 —— 而丢一条也不失真，因为最粗的一条 `RowsReplaced` 是其它所有 delta 的超集：生产者看到拒收就
+  重发一张表（§9.2 的"可恢复"性质）。
+- **`RenderWorld` 已经是那块镜像**：`adopt` 收一张表、`place` 收一处放置，都不持节点（第五步的成果）。它不知道
+  帧，所以 inline 与 threaded 共用它，测试也共用它。
+- **`FrameWorker` 是"帧"唯一的归属**：它按顺序做四件事 —— drain（帧首一次）、apply（`adopt`/`place`）、
+  `bindContent`（把请求里的**内容源**换成该内容的**镜像**，见下）、`expandFrame` —— 然后交给执行器。两模式的差别
+  只有一条：**这四件事跑在哪个线程**。inline 就是调用线程（没有线程、没有等待，通道仍用同一个，只是同帧即排空）。
+- **`bindContent` 是一条明写的规则，不是隐含约定**（`G4`）：`DrawDescription::content` 说的是"这段内容"，
+  它只在内容线程有效；引擎侧展开前必须把它换成镜像，否则就是跨线程读内容。P1 用一张
+  `const DrawListSource* → DrawListSource*` 的映射，inline 模式下是恒等。
+- **通道不含等待**：唤醒、帧号、完成通知都在 worker（`2.8` 的空闲等待）。这条边界让 P1 的 inline 模式**完全不需要
+  线程原语**，也让 threaded 模式的多帧在飞（后续）不改通道的契约。
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -190,7 +234,7 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
 | F1 | 两个世界与启动握手 | 内容世界由宿主建好 → 引擎侧建一次**全图镜像** → 之后只有增量 | 草案 |
-| F2 | delta 协议 | 值 + 必填 payload；帧首一次 drain；同帧按序 | 草案 |
+| F2 | delta 协议 | 值 + 必填 payload；帧首一次 drain；同帧按序 | **P1 第一步已落**（`DeltaChannel`，三种 kind） |
 | F3 | 场景图结构更新 | attach / detach / 重父化 / 换根；离树在停靠窗口后释放 | 草案 |
 | F4 | 节点状态更新 | placement（局部变换）/ visible / opacity / layers / drawOrder；子树世界矩阵增量重算 | 草案 |
 | F5 | 几何描述更新 | 通道集合与切片、primitive（索引/实例）、material/program 句柄@revision | 草案 |
@@ -579,8 +623,15 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   `FrameRecorder` 只收相机**值**（内容侧便利重载仍可给 `Camera*`，即时转换）；`OwnedFrame` 的 draw 也存值。
   验收：`test_graphics` 的 `PassDrawTest` / `RenderEngineTest` / `OwnedFrameTest` 改为先展开再比较，
   `RenderWorldTest.TheMirrorIsADrawListSourceAndAnswersAFramesViewTheSameWay` 钉住两种来源逐命令相同。
-- **下一步**：把 `expandFrame` 搬进 `RenderWorker`（引擎线程）并让 `inline` 模式也经 `RenderWorldSource` ——
-  它的前提（逐视图放置与盒都是值）在第五步里已经满足，剩下的就是线程与 delta 接线。
+- **T31 / P1 已开始（骨架优先）**：先定骨架再接线（§2.11）。**通道已落**：`detail::DeltaChannel`
+  （`src/viz/graphics/src/DeltaChannel.{hpp,cpp}`）—— 定容、按序、帧首一次 drain、满载拒收并计数、drain 复用缓冲区
+  （稳态零分配），`Delta` 有 `static_assert(trivially_copyable)`；今天三种 kind 且**每种都有 applier**
+  （`RowsReplaced` → `RenderWorld::adopt`、`Placement` → `RenderWorld::place`、`Terminate`），更细的 kind 随其 applier
+  一起来（`G8`）。验收：`DeltaChannelTest`（顺序/只送一次、表随 delta 同行且不复制、4 线程 × 500 条精确计数与每生产者 FIFO、
+  满载拒收可见、复用缓冲区）。
+- **P1 下一步**：`detail::FrameWorker`（drain → apply → `bindContent` → `expandFrame` → 交执行器），先只做 inline 形态
+  并把"经镜像展开"与"经 `Scene` 展开"逐命令等价钉住；线程、`start()/stop()`、空闲等待在它之后，`RenderEngine` 的默认
+  模式不变（宿主代码不动）。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：
