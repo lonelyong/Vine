@@ -195,7 +195,7 @@ P1 要落的是"两模式 + 镜像 + 通道 + 等价性"，所以先把**骨架*
 | `detail::DeltaChannel` | `src/viz/graphics/src/DeltaChannel.{hpp,cpp}` | "内容线程说了什么，按什么顺序" | delta 的含义、有没有线程、谁在等 |
 | `detail::RenderWorld` | `src/viz/graphics/src/RenderWorld.{hpp,cpp}` | "这些值现在是什么" | 内容图、节点、帧 |
 | `detail::ContentMirror` | `src/viz/graphics/src/ContentMirror.{hpp,cpp}` | "一段内容的镜像，靠值保持同步" | 帧、绑定、记录 |
-| `detail::FrameWorker`（P1 下一步） | `src/viz/graphics/src/FrameWorker.{hpp,cpp}` | "一帧从头到尾做完了" | 内容世界的任何指针 |
+| `detail::FrameWorker` | `src/viz/graphics/src/FrameWorker.{hpp,cpp}` | "一帧的头三步按序做完了" | 内容世界的任何指针、哪个线程 |
 
 ```mermaid
 flowchart LR
@@ -229,9 +229,11 @@ flowchart LR
   `publish` 在内容线程（比版本 → 变了就发一条带表的 `RowsReplaced`），`drain` 在引擎线程（按序应用），两者只在通道里
   相遇、不在成员里相遇。**P1 的发布是粗粒度的**：一次 O(行) 的拷贝，发生在版本变的时候而不是每帧；更细的 delta 一类
   一类替换它，每类自带 applier。
-- **`FrameWorker` 是"帧"唯一的归属**：它按顺序做四件事 —— drain（帧首一次）、apply（`adopt`/`place`）、
-  `bindContent`（把请求里的**内容源**换成该内容的**镜像**，见下）、`expandFrame` —— 然后交给执行器。两模式的差别
-  只有一条：**这四件事跑在哪个线程**。inline 就是调用线程（没有线程、没有等待，通道仍用同一个，只是同帧即排空）。
+- **`FrameWorker` 是"帧"唯一的归属**：`run()` 一个函数里按序做三件事 —— **drain**（每个镜像按 post 序应用，
+  也就是 apply）、**bind**（把请求里的**内容源**换成该内容的**镜像**，见下）、**expand**（`expandFrame`）。两模式的
+  差别只有一条：**这段跑在哪个线程**；它自己不持线程、不等待、不检查线程身份，所以 inline 就是调用线程（没有线程、
+  没有等待，通道同帧即排空）。顺序写在一处，因为两个错序都是静默的：先展开后 drain 会画上一帧，先展开后 bind 会从
+  错的线程问内容。交执行器（`executeFrame`）留给拥有它的引擎 —— 一个长出了"帧"的镜像就是第二个引擎。
 - **`bindContent` 是一条明写的规则，不是隐含约定**（`G4`）：`DrawDescription::content` 说的是"这段内容"，
   它只在内容线程有效；引擎侧展开前必须把它换成镜像，否则就是跨线程读内容。P1 用一张
   `const DrawListSource* → DrawListSource*` 的映射，inline 模式下是恒等。
@@ -646,9 +648,13 @@ flowchart LR
   比版本，变了才发一条带表的 `RowsReplaced`）、`drain`（引擎线程，按序应用）、`source()`（帧绑定后要问的那张脸）。
   拒收不丢版本，所以下一次调用自动重试。验收：`ContentMirrorTest` 三条 —— 逐命令等价 + "稳态不发布"、字节编辑挪动盒
   也发布（epoch 未动，先证前提再证结果）、被拒后重试仍等价。
-- **P1 下一步**：`detail::FrameWorker`（drain → apply → `bindContent` → `expandFrame` → 交执行器），先只做 inline 形态
-  并把"经镜像展开"与"经 `Scene` 展开"逐命令等价钉住；线程、`start()/stop()`、空闲等待在它之后，`RenderEngine` 的默认
-  模式不变（宿主代码不动）。
+- **P1 第三步已落**：`detail::FrameWorker`（`src/viz/graphics/src/FrameWorker.{hpp,cpp}`）—— `publish`（内容线程，
+  首次即建镜像）+ `run`（drain → bind → expand，一个函数里的固定顺序，不持线程、不等待）。未镜像的源**照原样展开并计数**
+  （inline 正确，换线程就是跨线程读 —— 计数是让宿主发现自己漏发的方式），已被 bind 过的帧再跑一次不会误判、不会重收集。
+  验收：`FrameWorkerTest` 三条 —— 经 worker 的帧与经 `Scene` 的帧逐命令相同（含模型矩阵逐元素）、同一帧跑两次、未发布的
+  内容被计数而不是静默镜像。
+- **P1 下一步**：线程与 `start()/stop()`（`2.8` 的空闲等待、完成通知、`RenderEngine` 的可选模式），然后才是把它接进
+  `RenderEngine::frame()`；接入之前宿主代码不动，默认仍是 inline（直接用 `Scene` 当源）。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：

@@ -14,6 +14,7 @@ set(SRC_FILE_LIST
 	ResidencyTest.cpp
 	RenderWorldTest.cpp
 	DeltaChannelTest.cpp
+	FrameWorkerTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
