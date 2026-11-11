@@ -133,6 +133,8 @@
 
 - `test_graphics`（模型无关）、`test_vsg`（后端，含真实设备用例）、`test_gui`、`test_core`。
 - `scripts/vsg_rewrite_gate.sh`：suite 两跑 0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。
-- 静态门禁：`check_ai_docs.py`、`check_doc_symbols.py`、`check_include_hygiene.py`、`check_export_annotations.py`、`check_diagnostic_formats.py`、`check_public_docs.py`。
+- 静态门禁：`check_ai_docs.py`、`check_doc_symbols.py`、`check_include_hygiene.py`、`check_export_annotations.py`、`check_diagnostic_formats.py`、`check_public_docs.py`、
+  `check_api_style.py`（API 风格：值里不许有 setter/回调、禁 `getXxx` 访问器、`bool`+出参不并存、`XxxBuilder` 必须有 `build()`；
+  4 条既有发现登记在脚本的 `BASELINE` 里，修完即删）。
 - `scripts/asan_check.sh` / `VN_ASAN_*`；`skipped == 0` 才算跑过设备电池。
 - 量后端每帧成本：`test_vsg --gtest_filter='*MeasureWhatEachKind*'`（打印 µs/帧 + `builds`/`uploads`/`created`，需真实窗口，headless 会 skip）；成本模型与分配上限见 `.ai/design/vsg-backend.md` §2.10 / N4 / T5。

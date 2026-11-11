@@ -249,13 +249,23 @@ struct FrameResult {
     double         execute_micros{ 0.0 };
 };
 
+/// C++20 没有 std::expected：一个极小的 Result，只有"值"或"一个问题"两态。
+template <class T> class Result {
+  public:
+    static Result ok(T value);
+    static Result fail(Diagnostic problem);
+    explicit operator bool() const;          // true = 成功
+    [[nodiscard]] T&                value();       // 前置：成功
+    [[nodiscard]] const Diagnostic& problem() const; // 前置：失败
+};
+
 class Backend {                      // 后端 = 纯执行器
   public:
     virtual ~Backend() = default;
-    virtual bool create(const SessionConfig& config, String& why) = 0;   // 协商
-    virtual void alignPlan(const FramePlan& plan) = 0;                    // 帧边界差分
-    virtual FrameResult execute(const FrameValue& frame, FrameArena& arena) = 0;
-    virtual void release() = 0;
+    virtual Result<void> create(const SessionConfig& config) = 0;         // 协商（失败带 code）
+    virtual void         alignPlan(const FramePlan& plan) = 0;            // 帧边界差分
+    virtual FrameResult  execute(const FrameValue& frame, FrameArena& arena) = 0;
+    virtual void         release() = 0;
 };
 ```
 

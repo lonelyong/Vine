@@ -6,7 +6,7 @@
 > `graphics-2026-11-11-next-requirements.md`（要什么）、`graphics-2026-11-11-next-design.md`（怎么做）并列。
 > **范围**：**审现有 API 集** —— 概念、命名、API 形状、抽象层次、所有权与错误处理、缺失的能力。
 > 每条给：现象 → 证据 → 判据（`G#`）→ 更好的做法 → 迁移成本。
-> **出口**：采纳 → 按 §9 分批改；否决单条 → 在对应 ADR 记理由。本文件在采纳后删除。
+> **出口**：采纳 → 按 §10 分批改；否决单条 → 在对应 ADR 记理由。本文件在采纳后删除。
 
 ---
 
@@ -174,8 +174,8 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 `setDevice()` → `initialize()` → `addPass()` → `frame()`，顺序错了只会得到后面的 `false` 或空帧。
 没有工厂、没有"已初始化"的类型状态。
 
-**更好**：`Session::open(config, sink, &why)` 一次把不变量建立起来，失败**只有一种**表达（返回空 + why +
-诊断 code）。**成本**：中。
+**更好**：`Session::open(config, sink)` 一次把不变量建立起来，失败**只有一种**表达（见 P27 的 `Result`）。
+**成本**：中。
 
 ---
 
@@ -231,7 +231,124 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 
 ---
 
-## 5. 缺失的能力（`M#`）
+## 5. API 风格：三档与一条线
+
+### 5.0 三种风格，各有各的岗位
+
+| 档 | 形态 | 谁用 | 今天的例子 |
+|---|---|---|---|
+| **值（描述形）** | 聚合初始化 + `withXxx()` 返回新值；**没有 setter** | 跨线程、进计划、被比较、被序列化 | `CameraSnapshot`、`MaterialParameters`、`RenderState`、`Viewport` |
+| **对象（get/set 形）** | Qt 风格访问器；有身份；单线程增量编辑 | 作者层（场景图、材质、相机、几何） | `Scene`、`Node`、`Geometry`、`Material`、`Camera` |
+| **构建器** | `build()` 产出一个**值**，自身不进入运行期 | 参数多、有默认值、一次成型 | `RenderPass`（本该如此）、`PassChain`（本该如此）、`Program` 的编译前阶段 |
+
+**判据不是审美，是物理事实**：
+
+> **会跨线程 / 会进计划 / 会被比较 → 值。**
+> **有身份 / 单线程 / 增量编辑 → 对象。**
+> **只在创建时存在 → 构建器。**
+
+这也是为什么"全值"与"全 setter"都不可行：全值 ⇒ 每次编辑拷整棵树（`G10`）；
+全 setter ⇒ 跨层只能靠锁 + 镜像 + 版本（今天 2519 行的由来）。
+
+### P25 描述类型的后缀有 6 种（`G6`）
+
+实测 9 个类型、6 种后缀：`PassDesc` / `DeviceDesc` / `ChainDesc`（Desc）；`ViewerOptions` /
+`AxisGizmoOptions` / `FpsOverlayOptions`（Options）；`ShadowSettings`（Settings）；`SplashConfig`（Config）；
+`RenderBackendInfo`（Info）；`MaterialParameters`（Params）。
+
+**更好**：**一个后缀**——创建参数一律 `XxxConfig`；能力一律 `Capabilities`；跨层的值**不带后缀**（`Pass`、
+`View`、`Frame`、`FramePlan`）；"某一时刻的值"用 `XxxSnapshot`。**成本**：小（纯改名）。
+
+### P26 126 个公开方法返回 `bool`（`G4`）
+
+`bool` 现在同时承担三件事：**成功/失败**、**有/无**、**找到/没找到**。读调用点时无法区分
+`if (!engine.initialize())` 与 `if (!scene.hasRootedRoot())` 属于哪一种。
+
+**更好**：谓词叫 `isXxx()` / `hasXxx()` 且只表达真假；会失败的操作返回 `Result`（P27）。**成本**：中。
+
+### P27 错误表达有三套（`G6`）
+
+1. `bool`（126 处）；
+2. **出参枚举**：`createSurfaceTarget(handle, SurfaceTargetResult* why)`、`readColorBuffer(..., ReadbackResult* why)`
+   （`RenderDevice.hpp:228 / :333 / :361`）；
+3. **诊断文本**：`DiagnosticCategory` + message，**没有稳定 code**（于是测试只能匹配文字）。
+
+**更好**：一套 —— `Result<T>`（值，或 `DiagnosticCode` + 结构化 detail），诊断仍走单一路由 + episode。
+`SurfaceTargetResult` / `ReadbackResult` 这类枚举改成 `DiagnosticCode` 的取值。**成本**：中（调用点要改）。
+
+### P28 回调散在 8 个 SDK 头（`G4`）
+
+`PassDesc::before_draw`（**值里**）、`PassChain::OverlayLayout`（`std::function<void(RenderPass&, int, int, double)>`）、
+`SceneView::addSurfaceLayout`（2 个重载）、`LayoutParticipant`、`RenderDiagnostic`（sink，**合法**），加上两个 appfw UI 头。
+
+**规则**：**值里零回调**；回调只允许出现在**对象**（事件处理器）与**会话配置**（`DiagnosticSink`）上，
+并且必须在注释里写明**在哪个线程被调用**。**成本**：小（值里的两处删掉即可）。
+
+### P29 `OverlayLayout` 把可变 pass 交给回调（`G1` / `G7`）
+
+`std::function<void(RenderPass& pass, …)>` —— 回调里改一个正在成型的可变 pass。这是"pass 值化"的**最大障碍**：
+值不能逃逸可变引用，而这个回调的存在使得"pass 在创建后仍会被改"合法化。
+
+**更好**：回调只接收**值**并返回新值（`Pass(Pass)`），或者改成"布局产出 `View` 值"。**成本**：中（HUD / overlay 用例要改）。
+
+### P30 访问器与命令共用 `get` 前缀（`G4`）
+
+`VisualUserIO::getStringAsync / getIntAsync / getDoubleAsync / getPoint3dAsync / getFileAsync / getFilesAsync`
+（8 处）—— 它们不是属性访问器，是**命令**（"向用户要一个值"）。仓库规则禁 `getXxx` 访问器是对的，
+但一刀切会误伤命令。
+
+**更好**：规则按"访问器 vs 命令"分：访问器用 Qt 风格（`name()`）；命令用动词（`askStringAsync`）。
+**成本**：小。
+
+### P31 值可以有成员函数，但不能有 setter（`G4`）
+
+`CameraSnapshot::screenRay()` 是纯函数成员 ✓。判据：一旦出现 `set*` 或非 const 成员，它就不是值了，
+必须换档（变成对象或构建器）。
+
+### P32 预设 = 返回值的自由函数（已有的好模式，应写成规则）
+
+`unlitForwardProgram()`、`ChainPresets` 一族都是"直接返回值"的预设，没有"配置对象 + apply"。
+**规则**：预设一律是返回值的自由函数；不要为预设造 enum + switch（`G8`）。
+
+### 5.1 今天的东西该归哪一档（含放错的）
+
+| 类型 | 应在 | 今天实际 | 处理 |
+|---|---|---|---|
+| `Scene` / `Node` / `Geometry` / `Material` / `Camera` | 对象 | 对象 ✓ | 保留 |
+| `MaterialParameters` / `RenderState` / `Viewport` / `CameraSnapshot` | 值 | 值 ✓ | 保留（后缀统一） |
+| `Pass`（`PassDesc`） | 值 | 值但**带回调 + 四种目标说法** | 删回调，目标合一 |
+| `RenderPass` | **构建器** | 可变对象（25 setter） | 退为 `PassBuilder`（`build() → Pass`） |
+| `PassChain` | **构建器** | 活到运行期、自己 add/remove | 收成 `FramePlanBuilder`（`build() → FramePlan`） |
+| `Program`（`ShaderProgram`） | **值** | 可变对象 + revision | 值 + `ProgramBuilder` |
+| `RenderControl` | **适配器**（只吸收） | 转发 18 个方法 | 收成 `Viewer`（4 个方法） |
+| `RenderEngine` | 对象（会话） | 对象但 49 个公开方法 | 收口到 7 |
+| `Diagnostics` | 对象 ✓ | 对象 ✓ | 加 `DiagnosticCode` |
+
+### 5.2 门禁（已落地：`scripts/check_api_style.py`）
+
+四条纯文本规则，扫 `src/viz/graphics/sdk/vine/graphics/*.hpp`（75 个头）：
+
+**今天的基线：0 条新增、4 条已登记的既有发现**（每条都对应本文件的一个 `P#` 与一个批次，
+修完就删掉它那一行）：
+
+| 文件:行 | 符号 | 规则 | 归属 |
+|---|---|---|---|
+| `PassDesc.hpp:89` | `std::function` | A（值里不许有回调） | P2 / 批 A |
+| `PassChain.hpp:27` | `ChainBuilder`（前向声明） | D（构建器必须有 `build()`） | P1 / 批 C |
+| `RenderDevice.hpp:333` | `ReadbackResult` | C（bool + 出参） | P27 |
+| `RenderDevice.hpp:361` | `ReadbackResult` | C | P27 |
+
+四条规则本身是：
+
+1. 名字以 `Desc|Options|Settings|Info|Config|Params` 结尾的类型：**不得**有 `set*` 方法、**不得**有
+   `std::function` 成员（值的定义）。
+2. `sdk/` 下 `get[A-Z]\w*` 零容忍，白名单逐个改名（P30）。
+3. `bool` 返回 + `XxxResult*` 出参同时出现：零容忍（P27）。
+4. `XxxBuilder` 必须有 `build()`，且 `build()` 返回值（不返回引用）。
+
+
+
+## 6. 缺失的能力（`M#`）
 
 | # | 缺什么 | 今天的替代 | 判据 |
 |---|---|---|---|
@@ -248,7 +365,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 
 ---
 
-## 6. `RenderEngine` 49 个公开方法的去向
+## 7. `RenderEngine` 49 个公开方法的去向
 
 | 方法（行号） | 去向 | 说明 |
 |---|---|---|
@@ -280,7 +397,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 
 ---
 
-## 7. 其它类的逐项
+## 8. 其它类的逐项
 
 | 类 | 问题 | 更好的做法 |
 |---|---|---|
@@ -296,7 +413,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 
 ---
 
-## 8. 命名对照
+## 9. 命名对照
 
 | 今天 | 新 | 理由 |
 |---|---|---|
@@ -314,7 +431,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 
 ---
 
-## 9. 分批（每批可独立评审）
+## 10. 分批（每批可独立评审）
 
 | 批 | 内容 | 语义变化 | 破坏面 | ROI |
 |---|---|---|---|---|
@@ -329,7 +446,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 
 ---
 
-## 10. 明确不做
+## 11. 明确不做
 
 | 不做 | 理由 |
 |---|---|
@@ -341,7 +458,7 @@ getter 的 `@return` 里点明"借"），并把命令改成持有时明确标出
 
 ---
 
-## 11. 一句话
+## 12. 一句话
 
 **今天这套 API 的问题不是"缺功能"，而是同一个概念被说了两遍（pass 两种表示、目标四种说法、顺序四套、
 观测九个函数、引擎七个名字），以及把内部缝和开关放进了公开面。**
