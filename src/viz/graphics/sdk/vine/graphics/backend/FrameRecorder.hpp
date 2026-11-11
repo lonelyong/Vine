@@ -7,6 +7,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/DepthRange.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/ImageSource.hpp>
@@ -137,21 +138,14 @@ struct LightRef {
                                                                       // depth bias.
 };
 
-/** @brief A camera as the frame remembers it: its matrices and eye, not the borrowed pointer.
+/** @brief The camera value a frame carries (see `CameraSnapshot`): one definition, in the SDK root.
  *
  * @details
- * - The view block and the CPU-side light transform both need the camera's numbers, and both are
- *   written after the call returns; the engine owns the camera and may retarget or destroy it in
- *   between.
+ * - It used to be declared here, because the recorder was the first thing that needed it. It is a FRAME value now:
+ *   a pass takes it when it describes itself (see DrawDescription::camera), the recorder copies it, and nothing
+ *   reads a `Camera` object while recording - so the type belongs one layer up, next to the camera it snapshots.
  */
-struct CameraSnapshot {
-    bool            present{ false }; // Whether a camera was announced at all.
-    vn::math::Mat4d view{};           // World -> view matrix.
-    vn::math::Mat4d projection{};     // Clip-space projection (see Camera).
-    vn::math::Vec3d eye{};            // Eye position, for the CPU light transform.
-    vn::math::Vec3d target{};         // Look-at target, for the CPU light transform.
-    vn::math::Vec3d up{};             // Up vector, for the CPU light transform.
-};
+using CameraSnapshot = vn::graphics::CameraSnapshot;
 
 /** @brief One instance of one command, as the frame remembers it (the SDK's RenderCommand, copied). */
 struct CollectedCommand {
@@ -376,22 +370,52 @@ class VN_GRAPHICS_API FrameRecorder {
      *   list per frame per overriding pass.
      *
      * @param commands         Commands to draw, copied into the arena before this call returns.
-     * @param camera           Camera for view/projection, snapshotted.
+     * @param camera           The view the call is projected with (the frame's value, see CameraSnapshot).
      * @param program_override Program every command is drawn with, or null to use each command's own.
      * @return true when the call was collected; false when it was refused (no scope, or a released target).
      */
     bool render(std::span<const vn::graphics::RenderCommand> commands,
-                const vn::graphics::Camera*                  camera,
+                const vn::graphics::CameraSnapshot&          camera,
                 const vn::graphics::ShaderProgram*           program_override = nullptr);
+
+    /** @brief The same, for a caller that still holds the authored camera (the content-side convenience).
+     *
+     * @details
+     * - It converts ONCE (`CameraSnapshot::of`) and delegates, so a host or a test that names the object says so in
+     *   one word - while the frame path itself carries the value (see DrawDescription::camera). Null means "no view".
+     *
+     * @param commands         Commands to draw, copied into the arena before this call returns.
+     * @param camera           The camera to snapshot, or null for a call with no view.
+     * @param program_override Program every command is drawn with, or null to use each command's own.
+     * @return true when the call was collected; false when it was refused (no scope, or a released target).
+     */
+    bool render(std::span<const vn::graphics::RenderCommand> commands,
+                const vn::graphics::Camera*                   camera,
+                const vn::graphics::ShaderProgram*            program_override = nullptr)
+    {
+        return render(commands, camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{}, program_override);
+    }
 
     /** @brief Collects a full-screen program drawing call (the screen kind of a frame's draw).
      *
      * @param source  Target whose colour attachments are sampled.
      * @param program Fragment program to draw with.
-     * @param camera  Camera whose lights are forwarded.
+     * @param camera  The view the call is projected with (the frame's value).
      * @return true when the call was collected; false when it was refused.
      */
-    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::Camera* camera);
+    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera);
+
+    /** @brief The same, for a caller that still holds the authored camera (the content-side convenience).
+     *
+     * @param source  Target whose colour attachments are sampled.
+     * @param program Fragment program to draw with.
+     * @param camera  The camera to snapshot, or null for a call with no view.
+     * @return true when the call was collected; false when it was refused.
+     */
+    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::Camera* camera)
+    {
+        return drawScreenProgram(source, program, camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{});
+    }
 
     /** @brief Selects the program content without one of its own is drawn with.
      *
@@ -435,9 +459,6 @@ class VN_GRAPHICS_API FrameRecorder {
      */
     [[nodiscard]] std::span<const CollectedCommand> snapshotCommands(std::span<const vn::graphics::RenderCommand> commands,
                                                                      const vn::graphics::ShaderProgram*           program_override);
-
-    /** @brief Snapshots a borrowed camera, projected for a picture of the scope's announced shape. */
-    [[nodiscard]] CameraSnapshot snapshotCamera(const vn::graphics::Camera* camera) const;
 
 
   private:

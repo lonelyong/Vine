@@ -5,11 +5,14 @@
 
 #include <vine/Color.hpp>
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+
+#include "FrameExpand.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -208,7 +211,13 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     }
     DrawDescription draw;
     draw.kind         = DrawDescription::Kind::Scene;
-    draw.camera       = desc_.camera.get();
+    // THE VIEW, AS A VALUE (see CameraSnapshot). Taking it here is what lets the frame's expansion collect on
+    // another thread, and what keeps this frame's culling and shading on one camera state.
+    draw.camera       = CameraSnapshot::of(*desc_.camera);
+    // WHO ANSWERS THE VIEW. The pass names the content it renders; the collection happens in the frame's expansion
+    // step (see detail::expandPass), so describing a pass costs nothing per drawable.
+    draw.content      = scene;
+    draw.layer_mask   = desc_.layer_mask;
     // The viewport this pass lands in, in DEVICE pixels. A sub-viewport wins; otherwise an explicit target's
     // size; otherwise the surface size the engine/chain stated for a window pass. Collection needs it for
     // view-dependent features (AutoTransform screen-space scaling), not for the backend's own viewport.
@@ -221,11 +230,7 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
             viewport = draw_size_;
         }
     }
-    const Viewport* stated_viewport                                  = viewport.isValid() ? &viewport : nullptr;
-    // The shared list, not a copy of it: every pass of a frame draws the same commands, and a per-pass copy would cost
-    // an intrusive_ptr increment per command plus a command-sized memcpy per pass per frame. What a pass may change is
-    // its own VIEW of the list, so the copy happens below - and only for a pass that actually rewrites something.
-    const std::shared_ptr<const std::vector<RenderCommand>> commands = scene->collectRenderCommands(desc_.camera.get(), desc_.layer_mask, stated_viewport);
+    draw.collect_viewport = viewport;
     // The pass lights whatever content scene it renders: forward the scene's lights so the backend can match this
     // pass's view lighting. Announced even when there are none: "there are no lights" restores a backend's default.
     std::vector<raw_ptr<const Light>> light_ptrs;
@@ -233,16 +238,10 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     for (const auto& light : scene->lights()) {
         light_ptrs.push_back(light.get());
     }
-    draw.lights   = std::move(light_ptrs);
-    // A program override is the one pass-level override that still rewrites commands: replacing the program is not
-    // "another state item" but "draw this content with another program", and the rewrite is what keeps a backend's
-    // per-command pipeline key valid. The rasterisation override is NOT rewritten: it travels with the pass' state
-    // (stateOverrides()) and is resolved per command, in one place (resolveRenderState).
-    // The command list is handed over AS IT WAS COLLECTED - shared, immutable, no copy. A program override is a PASS
-    // fact, not a per-command rewrite (see PassDraw::program_override): the backend resolves it per command exactly
-    // like the pass' state (PassDraw::state). Rewriting the commands here cost a whole extra list per frame per
-    // overriding pass, which is why the rasterisation override gave up that shape first (M1).
-    draw.commands = commands;
+    draw.lights = std::move(light_ptrs);
+    // The command list is NOT collected here: `draw.commands` stays null and the frame's expansion asks
+    // `draw.content` for it (see FrameExpand). A program override is a PASS fact, not a per-command rewrite
+    // (see PassDraw::program_override): the backend resolves it per command exactly like the pass' state.
     out.draws.push_back(std::move(draw));
     return true;
 }
@@ -252,14 +251,15 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend, r
     if (backend == nullptr) {
         return;
     }
-    // Describe, then hand the device's frame half the frame that says so - there is no interleaving and no second
-    // wire: what this pass issues is a value, and a pass a host drives itself is a frame with one pass in it (see
-    // singlePassFrame), which is the same shape the engine builds for a whole frame. The target is what its default
-    // framebuffer row resolves to, and the EXECUTOR presents through it at the frame's tail.
+    // Describe, EXPAND (the one step that reads drawables), then hand the device's frame half the frame that says so -
+    // there is no interleaving and no second wire: what this pass issues is a value, and a pass a host drives itself is
+    // a frame with one pass in it (see singlePassFrame), which is the same shape the engine builds for a whole frame.
+    // The target is what its default framebuffer row resolves to, and the EXECUTOR presents through it at the tail.
     PassDraw description;
     if (!describe(scene, description)) {
         return;
     }
+    detail::expandPass(description);
     backend->executor().executeFrame(singlePassFrame(this, /*order*/ 0, /*inputs*/ {}, std::move(description)), present_to);
 }
 

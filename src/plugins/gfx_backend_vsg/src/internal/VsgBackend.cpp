@@ -884,7 +884,7 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::g
                 if (draw.lights.has_value()) {
                     announceLights(*draw.lights);
                 }
-                if (draw.camera == nullptr) {
+                if (!draw.camera.present) {
                     continue; // a drawing call with no view is no call at all (see DrawDescription)
                 }
                 if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
@@ -1389,8 +1389,8 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
 }
 
 void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
-                                    const vn::graphics::Camera*                     camera,
-                                    const vn::graphics::ShaderProgram*              program_override)
+                                    const vn::graphics::CameraSnapshot&            camera,
+                                    const vn::graphics::ShaderProgram*             program_override)
 {
     if (!d->recorder.inFrame()) {
         return; // nothing is collected outside a frame
@@ -1436,7 +1436,7 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
 
 void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                    source,
                                    vn::raw_ptr<const vn::graphics::ShaderProgram> program,
-                                   vn::raw_ptr<const vn::graphics::Camera>        camera)
+                                   const vn::graphics::CameraSnapshot&            camera)
 {
     if (!d->recorder.inFrame()) {
         return; // nothing is collected outside a frame

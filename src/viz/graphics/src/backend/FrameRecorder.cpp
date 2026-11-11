@@ -250,7 +250,7 @@ bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights
 }
 
 bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
-                           const vn::graphics::Camera*                  camera,
+                           const vn::graphics::CameraSnapshot&          camera,
                            const vn::graphics::ShaderProgram*           program_override)
 {
     if (!pass_open_ || scope_target_released_) {
@@ -268,7 +268,7 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
     if (!commands.empty()) {
         CollectedDraw draw;
         draw.kind         = DrawKind::Content;
-        draw.camera       = snapshotCamera(camera);
+        draw.camera       = camera;
         draw.has_viewport = pending_has_viewport_;
         draw.viewport     = pending_viewport_;
         draw.lights       = pending_lights_;
@@ -286,7 +286,7 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
     return true;
 }
 
-bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::Camera* camera)
+bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera)
 {
     if (!pass_open_ || scope_target_released_) {
         return false; // no scope to draw in, or its target is gone: nothing is redirected
@@ -296,7 +296,7 @@ bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::Sh
     draw.kind         = DrawKind::Screen;
     draw.source       = source;
     draw.program      = programRef(program);
-    draw.camera       = snapshotCamera(camera);
+    draw.camera       = camera;
     draw.has_viewport = pending_has_viewport_;
     draw.viewport     = pending_viewport_;
     draw.lights       = pending_lights_;
@@ -425,23 +425,6 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         }
     }
     return copy;
-}
-
-CameraSnapshot FrameRecorder::snapshotCamera(const vn::graphics::Camera* camera) const
-{
-    CameraSnapshot snapshot;
-    if (camera == nullptr) {
-        return snapshot; // present stays false: "the call named no camera" is a fact, not a default
-    }
-    snapshot.present    = true;
-    snapshot.view       = camera->viewMatrix();
-    // The CAMERA's own shape is what the projection is built with (see Camera): the engine culls with the same
-    // number, so the frustum culled against and the projection rendered with cannot drift.
-    snapshot.projection = camera->projectionMatrix();
-    snapshot.eye        = camera->eye();
-    snapshot.target     = camera->target();
-    snapshot.up         = camera->up();
-    return snapshot;
 }
 
 VN_GRAPHICSBACKEND_NS_END

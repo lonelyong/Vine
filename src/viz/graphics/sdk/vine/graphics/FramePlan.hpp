@@ -80,8 +80,9 @@ struct VN_GRAPHICS_API PassPlan {
     /// cost, and the useful answer to "which pass should I look at" is what the pass cost the last time it ran.
     /// Zero before this pass has ever run, and for a pass that did not run last frame (a disabled one).
     /// WHAT THAT COST IS: the frame is compiled before it runs (see RenderEngine::buildFrameValue), so a pass'
-    /// share of a frame is its hook, its inputs and its own description - collecting and culling its content -
-    /// and not the wire announcements that follow (those are the backend's, see FrameCounters).
+    /// share of a frame is its hook, its inputs, its own description AND the expansion that collects the view it
+    /// stated (see DrawListSource) - and not the wire announcements that follow (those are the backend's, see
+    /// FrameCounters).
     std::uint64_t record_micros = 0;
 };
 

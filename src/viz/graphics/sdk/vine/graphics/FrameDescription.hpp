@@ -10,8 +10,10 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "CameraSnapshot.hpp"
 #include "DepthRange.hpp"
 #include "ImageSource.hpp"
+#include "Node.hpp"
 #include "RenderCommand.hpp"
 #include "StateResolution.hpp"
 #include "Viewport.hpp"
@@ -19,6 +21,7 @@
 VN_GRAPHICS_NS_BEGIN
 
 class Camera;
+class DrawListSource;
 class Light;
 class RenderBackend;
 class RenderPass;
@@ -70,12 +73,20 @@ struct ClearPolicy {
 };
 
 /**
- * @brief ONE DRAWING CALL of a pass: what it draws, through what, and with what announced for it.
+ * @brief ONE DRAWING CALL of a pass: the VIEW it draws, whose content answers it, and what a backend records.
  *
  * @details
- * - The value a pass produces instead of CALLING the backend (see PassDraw). Everything here is either
- *   a borrowed pointer (valid for the call) or a handle kept alive by this value, so a description is only
- *   ever read while its producer is alive.
+ * - The value a pass produces instead of CALLING the backend (see PassDraw): the pass states a view, and the frame's
+ *   EXPANSION (see `expandFrame`) turns that view into the command list a backend records. Splitting the two is what
+ *   makes a frame a REQUEST first and an answer second - the collection is O(drawables) and the request is
+ *   O(passes), so the step that costs has a name, a value boundary and a thread of its own (see
+ *   `.ai/design/graphics-threading.md`).
+ * - Everything in a REQUEST is a value or an identity: the camera is a snapshot (see CameraSnapshot), the view is a
+ *   rectangle plus a layer mask, and `content` is the thing to ask (see DrawListSource). Nothing in it is a live
+ *   scene read, which is what lets the request be built on one thread and answered on another.
+ * - A description a HOST builds by hand may carry @ref commands directly (the backend's own tests and an owned
+ *   frame do): the expansion leaves such a draw alone, so "a list I already have" and "a view to collect" are two
+ *   spellings of the same fact, and the second one is free.
  *
  * @note
  * - Why the ORDER is not here: the old wire made the backend infer meaning from call order (state setters as
@@ -93,15 +104,33 @@ struct VN_GRAPHICS_API DrawDescription {
     };
 
     /// Which of the two calls this describes.
-    Kind kind                    = Kind::Scene;
-    /// The view this draw is projected and lit with; null means the pass issues NO draw at all (there is no view
-    /// to build), which is what a pass with no camera or no program says by leaving it null.
-    raw_ptr<const Camera> camera = nullptr;
+    Kind kind = Kind::Scene;
+    /// The view this draw is projected and lit with, as a VALUE taken when the pass described itself.
+    ///
+    /// `present == false` means the pass issues NO draw at all (there is no view to build), which is what a pass with
+    /// no camera or no program says by leaving it default. Taken once here, so one frame's culling, projection and
+    /// shading cannot see a camera that moved in between.
+    CameraSnapshot camera{};
+    /// Scene kind: WHOSE commands this draw issues (see DrawListSource).
+    ///
+    /// The frame's expansion asks it for the list behind @ref camera / @ref collect_viewport / @ref layer_mask, so a
+    /// host that hands a view does not also have to collect. Null (or a description that already carries
+    /// @ref commands) means nothing is collected.
+    raw_ptr<const DrawListSource> content = nullptr;
+    /// Scene kind: the device-pixel rectangle the collection needs, or an invalid one when the caller cannot state it.
+    ///
+    /// A view-dependent node (AutoTransform) uses it for screen-space scaling and keeps its authored values when it
+    /// is absent. It is NOT the backend's viewport - that is @ref PassDraw::viewport, a different question asked a
+    /// stage later.
+    Viewport collect_viewport{};
+    /// Scene kind: layers this picture draws (see Node::setLayers). Part of the view: two passes drawing the same
+    /// camera with different masks do NOT draw the same list.
+    std::uint32_t layer_mask = kAllLayers;
     /// Scene kind: the commands this draw issues, collected for THIS frame's picture shape.
     ///
-    /// Shared rather than copied: every pass of a frame usually draws the same command list, and the collection
-    /// is memoised per content frame (see Scene::collectRenderCommands), so one description per pass holds
-    /// a handle to the same list. Owned by this value, because nothing else promises to outlive the frame.
+    /// FILLED BY THE EXPANSION from @ref content (or carried by a hand-built description). Shared rather than copied:
+    /// every pass of a frame usually draws the same command list, and the collection is memoised per view (see
+    /// DrawListSource), so one description per pass holds a handle to the same list.
     std::shared_ptr<const std::vector<RenderCommand>> commands;
     /// Screen kind: the target whose colour attachments the full-screen program samples.
     raw_ptr<RenderTarget> source = nullptr;

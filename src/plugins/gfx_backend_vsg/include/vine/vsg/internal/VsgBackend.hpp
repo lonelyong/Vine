@@ -389,13 +389,13 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Collects one content drawing call, and tracks the objects it names (see the file note).
      *
      * @param commands         The pass' collected commands (shared and immutable - never rewritten here).
-     * @param camera           The camera the draw is projected with.
+     * @param camera           The view the draw is projected with (the frame's value, not the authored object).
      * @param program_override The pass' program override, applied to every command when the draw is recorded
      *                         (see PassDraw::program_override), or null for each command's own program.
      */
     void collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
-                            const vn::graphics::Camera*                     camera,
-                            const vn::graphics::ShaderProgram*              program_override);
+                            const vn::graphics::CameraSnapshot&            camera,
+                            const vn::graphics::ShaderProgram*             program_override);
 
     /** @brief Creates the slot of window @p index when it does not exist yet (indices are dense and never reused).
      *
@@ -425,7 +425,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs. */
     void collectScreenDraw(vn::graphics::RenderTarget*                    source,
                            vn::raw_ptr<const vn::graphics::ShaderProgram> program,
-                           vn::raw_ptr<const vn::graphics::Camera>        camera);
+                           const vn::graphics::CameraSnapshot&            camera);
 
     /** @brief Holds the host's target and builds what its description can make (the half setRenderTarget shares).
      *

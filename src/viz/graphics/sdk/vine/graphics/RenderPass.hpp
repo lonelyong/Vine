@@ -836,8 +836,9 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * @details
      * - THE EXTENSION POINT: what a pass does is data, and a subclass that draws something else fills in a different
      *   description (ScreenPass draws a full-screen program instead of collected geometry).
-     * - ONE CALL, because nothing here needs a backend: the picture's shape is the camera's and the commands are
-     *   collected with it, so a whole frame's worth of descriptions can be assembled before anything runs.
+     * - ONE CALL, because nothing here needs a backend: the picture's shape is the camera's, and the VIEW it states
+     *   is collected by the frame's expansion step (see DrawListSource / `expandPass`), so a whole frame's worth of
+     *   requests can be assembled before anything runs.
      * - A pass that issues NOTHING this frame answers false (a scene pass with no scene, a screen pass with no
      *   resolved source): nothing is announced at all, which keeps "this pass is not running" distinguishable from
      *   "this pass has no picture" (an empty PassDraw::draws).

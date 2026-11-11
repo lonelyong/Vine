@@ -163,7 +163,18 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   `commitLocalTransformTransaction()` 就是“先攒一堆变换变更、提交时只算一次世界变换”；Godot 是 dirty 列表；
   Unreal 每次 `UpdatePrimitiveTransform` 只更新受影响图元与其盒。这就是 §3.1.2 / §3.1.4 的批量与脏集合的外部依据。
 - 依据是这些库的公开架构文档与我们自己的测量，不是逐行读它们的源码；落地前不引用它们的内部细节。
+### 2.10 帧先是“请求”，展开是一步（`G3` / `G7` / `G10`）
 
+- **是什么**：`DrawDescription` 不再由 pass 自己收集命令，而是陈述**视图**：`camera`（`CameraSnapshot` 值）、
+  `collect_viewport`（设备像素矩形）、`layer_mask`、`content`（`DrawListSource`，谁回答这个视图）。
+  帧的**展开**（`detail::expandPass` / `expandFrame`）把它变成命令列表；一个已带 `commands` 的手建描述展开时跳过。
+- **为什么**：原来 O(drawables) 的收集发生在 pass 的 `describe()` 里，而 `describe()` 又在 UI 线程的帧循环里 ——
+  “把一帧交给引擎线程”就没有可搬的边界（要搬只能搬整段 `describe`，连读活场景一起搬）。拆开后是两个具名步骤：
+  **O(passes) 的请求**与 **O(drawables) 的展开**，中间的输入全是值（相机四数、矩形、掩码、身份）。
+- **边界**：`record_micros` 仍是“describe + expand”一个区间（观测数字不变）；展开只问 `DrawListSource`，
+  所以 `Scene`（内容侧）与 `RenderWorldSource`（镜像）可互换，等价性用例 `RenderWorldTest` 钉住。
+- **代价**：`DrawDescription` 同时可以“带视图”或“带列表”，这是一个**两段式值**的不变量（展开前/后），
+  写在类型注释里；由展开函数唯一填写，宿主手建时直接带列表。
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -258,8 +269,9 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 
 ### 3.1.8 F8 每帧
 
-- **行为**：drain delta → 应用 → 镜像剔除（每 pass 一个视图）→ 建 `FramePlan` → 记录 → 提交 → 呈现 →
-  推进 `FrameTimeline`/`RetirementQueue` → 发布快照（`FrameCounters`/`RetentionStats`/`FramePlan`/帧号）。
+- **行为**：编译出帧请求（pass 的视图、目标、状态 —— O(passes)）→ **展开**（`DrawListSource` 回答每个视图，
+  O(drawables)）→ 执行（上传、记录、提交、呈现）→ 推进 `FrameTimeline`/`RetirementQueue` → 发布快照
+  （`FrameCounters`/`RetentionStats`/`FramePlan`/帧号）。
 - **约束**（C8）：一帧一次 drain；一帧之内不再看队列。
 - **要求**（R8）：UI 调用任何入口都不阻塞等待帧结束。
 - **验收**（T8）：帧在引擎线程完成（线程 id 断言）；静止场景 CPU ≈ 0。
@@ -320,6 +332,9 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 | `Buffer::revision()` / `Geometry::revision()` | 原子、单调、只被比较 | 唯一允许的跨侧读 |
 | `Geometry::description()` | 形状的不可变值（通道切片 + 逐 primitive），按 `revision()` 缓存 | 渲染侧唯一描述来源；缓存写，内容线程 |
 | `RenderCommand::row` / `description` | 身份（`RowId`）+ 形状值；后端只从它建事实行 | 手建命令可只给 `geometry`，录制侧按名转换 |
+| `CameraSnapshot::of(camera)` | 一帧的视图作为值（projection/view/eye/target/up） | 唯一转换；`DrawDescription::camera` 与 `OwnedDraw::camera` 都是它 |
+| `DrawListSource::collectRenderCommands(view, mask)` | 帧问内容的唯一问题 | `Scene` 与 `RenderWorldSource` 两种实现，等价性用例钉住 |
+| `detail::expandPass` / `expandFrame` | 把视图变成命令（帧的唯一 O(drawables) 步骤） | 已带 `commands` 的描述跳过；线程模式在这里搬 |
 | `Scene::collectRenderCommands(view)` | 仍是内容侧的纯查询（宿主/工具/等价性用例用） | 与镜像的产出必须逐位相同 |
 | `Scene::boundingBox()` | 内容侧查询 | `fitToScreen` 用它，不往返引擎 |
 
@@ -534,7 +549,14 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   计划/查找语义与之前一致；`ContentStore` 同时持有该对象的一份 share，**只为把地址钉住**（否则回收地址会让
   新几何读到旧行 —— 用例 `PrimitiveDrawTest` 抓到的就是这个）。验收：`GeometryFactsTest` / `ContentStoreTest` /
   `ContentHalvesTest` / `ContentPassTest` 全部改为喂描述；`test_vsg` 全绿。
-- **P2（下一步）**：`threaded` 下的结构/状态/描述/相机 delta 与镜像增量重算。
+- **S3 第一步已完成（2026-11-11）**：帧先是**请求**，展开是**一步**。`DrawDescription` 带视图值
+  （`CameraSnapshot` + `collect_viewport` + `layer_mask` + `content`），`RenderPass::describe` / `ScreenPass::describe`
+  不再收集；`detail::expandPass` 是唯一的 O(drawables) 步骤（`Scene` 与 `RenderWorldSource` 是同一问题的两个答案）；
+  `FrameRecorder` 只收相机**值**（内容侧便利重载仍可给 `Camera*`，即时转换）；`OwnedFrame` 的 draw 也存值。
+  验收：`test_graphics` 的 `PassDrawTest` / `RenderEngineTest` / `OwnedFrameTest` 改为先展开再比较，
+  `RenderWorldTest.TheMirrorIsADrawListSourceAndAnswersAFramesViewTheSameWay` 钉住两种来源逐命令相同。
+- **下一步**：把 `expandFrame` 搬进 `RenderWorker`（引擎线程）并让 `inline` 模式也经 `RenderWorldSource` ——
+  后者要先把逐视图放置（AutoTransform）与“只能问节点”的盒变成值（§9.2 的已知缺口）。
 - **P3**：表面事件与交换链协议，以及 `RenderControl` 的 `state()` 在异步下的重新表述。
 - **P4**：并行 select（可与 P2/P3 解耦）。
 - 与 `appfw-render-surface.md` §9.2（"会话 init 仍在应用线程；搬到池上需要重新设计……暂不做"）的关系：

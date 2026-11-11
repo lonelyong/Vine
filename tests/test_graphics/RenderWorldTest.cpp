@@ -27,6 +27,7 @@ using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
 using vn::graphics::detail::buildRows;
 using vn::graphics::detail::RenderWorld;
+using vn::graphics::detail::RenderWorldSource;
 using vn::graphics::detail::SceneBake;
 using vn::intrusive_ptr;
 using vn::math::Mat4d;
@@ -113,8 +114,7 @@ Assembly makeAssembly()
 } // namespace
 
 TEST(RenderWorldTest, TheMirrorCollectsWhatTheContentCollects)
-{
-    const Assembly assembly = makeAssembly();
+{    const Assembly assembly = makeAssembly();
     Scene          scene;
     scene.setRoot(assembly.root);
 
@@ -130,6 +130,30 @@ TEST(RenderWorldTest, TheMirrorCollectsWhatTheContentCollects)
 
     expectSameDrawList(mirrored, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
     EXPECT_EQ(mirrored.size(), 2U) << "two leaves, two draws";
+}
+
+TEST(RenderWorldTest, TheMirrorIsADrawListSourceAndAnswersAFramesViewTheSameWay)
+{
+    const Assembly assembly = makeAssembly();
+    Scene          scene;
+    scene.setRoot(assembly.root);
+
+    SceneBake  rows;
+    buildRows(*assembly.root, rows);
+    RenderWorld world;
+    world.adopt(std::move(rows));
+
+    // THE FRAME'S OWN QUESTION, asked of both sides. This is the seam a frame expands through
+    // (DrawDescription::content): the request names a view and who answers it, so "the two worlds agree" is not two
+    // collectors compared - it is the answer a frame would get either way.
+    vn::graphics::DrawListSource&            content = scene;
+    RenderWorldSource                        mirror{ world };
+    const CollectView                        view        = clipBoxView();
+    const std::shared_ptr<const std::vector<RenderCommand>> from_content = content.collectRenderCommands(view, vn::graphics::kAllLayers);
+    const std::shared_ptr<const std::vector<RenderCommand>> from_mirror  = mirror.collectRenderCommands(view, vn::graphics::kAllLayers);
+
+    expectSameDrawList(*from_mirror, from_content);
+    EXPECT_EQ(from_mirror->size(), 2U) << "two leaves, two draws, through either source";
 }
 
 TEST(RenderWorldTest, APlacementEditReplacesThatSubtreeAndNothingElse)

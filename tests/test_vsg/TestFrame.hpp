@@ -144,8 +144,9 @@ class TestFrame {
     TestFrame& content(const std::vector<vn::graphics::RenderCommand>& commands, const vn::graphics::Camera* camera)
     {
         vn::graphics::DrawDescription draw;
-        draw.kind     = vn::graphics::DrawDescription::Kind::Scene;
-        draw.camera   = camera;
+        draw.kind = vn::graphics::DrawDescription::Kind::Scene;
+        // A frame carries the VIEW as a value (see DrawDescription::camera); a test that still holds the object names it.
+        draw.camera   = camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{};
         draw.commands = std::make_shared<const std::vector<vn::graphics::RenderCommand>>(commands);
         description().draws.push_back(std::move(draw));
         return *this;
@@ -162,7 +163,7 @@ class TestFrame {
     {
         vn::graphics::DrawDescription draw;
         draw.kind    = vn::graphics::DrawDescription::Kind::Screen;
-        draw.camera  = camera;
+        draw.camera  = camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{};
         draw.source  = source;
         draw.program = std::move(program);
         description().draws.push_back(std::move(draw));

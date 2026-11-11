@@ -1,5 +1,7 @@
 ﻿#include <vine/graphics/Camera.hpp>
 
+#include <vine/graphics/CameraSnapshot.hpp>
+
 #include <vine/math/Transform3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
@@ -172,6 +174,22 @@ vn::geom::spatial::Rayd Camera::screenToWorldRay(const Vec2d& screenPos) const
     const double y        = ndc_y * tan_half;
     const Vec3d  dir      = (forward + right * x + up * y).normalized();
     return vn::geom::spatial::Rayd(vn::math::Point3d(eye_.x, eye_.y, eye_.z), dir);
+}
+
+CameraSnapshot CameraSnapshot::of(const Camera& camera)
+{
+    // The ONE conversion from an authored camera to the value a frame carries: the same four numbers the view block,
+    // the culling and the picking ray read, taken together so one frame cannot see a camera that moved in between.
+    CameraSnapshot snapshot;
+    snapshot.present    = true;
+    snapshot.view       = camera.viewMatrix();
+    // The CAMERA's own shape is what the projection is built with (see Camera): the engine culls with the same
+    // number, so the frustum culled against and the projection rendered with cannot drift.
+    snapshot.projection = camera.projectionMatrix();
+    snapshot.eye        = camera.eye();
+    snapshot.target     = camera.target();
+    snapshot.up         = camera.up();
+    return snapshot;
 }
 
 VN_GRAPHICS_NS_END

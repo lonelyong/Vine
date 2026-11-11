@@ -64,6 +64,7 @@
 #include <thread>
 #include <vector>
 
+#include "FrameExpand.hpp"
 #include "TestGeometryBuilders.hpp"
 
 using namespace vn::graphics;
@@ -3508,9 +3509,10 @@ class MockBackend : public RenderBackend {
     /// Policy of the last clear the frame stated, so a test can assert WHAT the pass asked for.
     ClearPolicy   last_clear_policy{};
     int           viewport_sets = 0;
-    const Camera* last_camera   = nullptr;
+    /// The view the last content draw was projected with (the frame's VALUE: a frame no longer names a Camera).
+    CameraSnapshot last_camera{};
     /// Camera of every content draw the frame carried, in run order (a pass' own camera, not just the last one).
-    std::vector<const Camera*> render_cameras;
+    std::vector<CameraSnapshot> render_cameras;
     /// How many commands every content draw carried, in run order (next to render_cameras): after a frame
     /// that ran several passes this says which pass drew what.
     std::vector<std::size_t> render_command_counts;
@@ -3571,7 +3573,7 @@ class MockBackend : public RenderBackend {
     int                                                   program_draws       = 0;
     RenderTarget*                                         last_program_source = nullptr;
     const ShaderProgram*                                  last_program        = nullptr;
-    const Camera*                                         last_program_camera = nullptr;
+    CameraSnapshot                                        last_program_camera{};
     /// What this double reports for RenderDevice::capabilities: off-screen targets TRUE by default, because
     /// the double honours every target it is handed (a pass test is not asking about target support).
     /// A test that wants the other answer flips this and the engine reports the pipeline it cannot serve.
@@ -3661,7 +3663,7 @@ class MockBackend : public RenderBackend {
                 last_light_count = draw.lights->size();
                 last_light       = draw.lights->empty() ? nullptr : (*draw.lights).front();
             }
-            if (draw.camera == nullptr) {
+            if (!draw.camera.present) {
                 continue; // a drawing call with no view is no call at all
             }
             if (draw.kind == DrawDescription::Kind::Screen) {
@@ -3680,7 +3682,7 @@ class MockBackend : public RenderBackend {
     ///
     /// The pass' program override is applied here, exactly as a real backend applies it (see PassDraw::program_override
     /// and FrameRecorder::render): the commands handed over are the shared list the engine collected, never a rewrite.
-    void consumeCommands(const std::vector<RenderCommand>& commands, const Camera* camera, const ShaderProgram* program_override)
+    void consumeCommands(const std::vector<RenderCommand>& commands, const CameraSnapshot& camera, const ShaderProgram* program_override)
     {
         ++render_calls;
         last_camera = camera;
@@ -5645,9 +5647,9 @@ TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)
     engine->frame();
     // pre + main + post = three render calls per frame.
     EXPECT_EQ(backend->render_calls - before, 3);
-    // The last rendered pass is the highest-order (post) pass.
-    ASSERT_NE(backend->last_camera, nullptr);
-    EXPECT_EQ(backend->last_camera->name(), u8"postfx");
+    // The last rendered pass is the highest-order (post) pass: its own VIEW, which is what a frame carries now.
+    EXPECT_TRUE(backend->last_camera.present);
+    EXPECT_TRUE(backend->last_camera.view.isEqual(post->camera()->viewMatrix(), 1e-12)) << "the postfx pass' own camera";
 
     engine->removePass(post.get());
     EXPECT_EQ(engine->passCount(), 2u);
@@ -5938,6 +5940,9 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     // 值：同一件事描述成 PassDraw。
     vn::graphics::PassDraw described;
     ASSERT_TRUE(pass->describe(scene.get(), described));
+    // The pass STATES a view; the frame's expansion is the step that collects it (see FrameExpand), and this test
+    // compares the value with what the live pass announced - so it takes that step too.
+    vn::graphics::detail::expandPass(described);
 
     // —— pass 自己的四项事实 ——
     ASSERT_FALSE(backend->target_history.empty());
@@ -5960,7 +5965,7 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     const vn::graphics::DrawDescription& draw = described.draws.front();
     EXPECT_EQ(draw.kind, vn::graphics::DrawDescription::Kind::Scene);
     ASSERT_FALSE(backend->render_cameras.empty());
-    EXPECT_EQ(draw.camera, backend->render_cameras.back());
+    EXPECT_TRUE(draw.camera.view.isEqual(backend->render_cameras.back().view, 1e-12)) << "the view the frame carried";
     ASSERT_NE(draw.commands, nullptr);
     EXPECT_FALSE(draw.commands->empty()) << "三角形必须在里面，否则这条只验证了空集合相等";
     EXPECT_EQ(draw.commands->size(), backend->render_command_counts.back());
@@ -6002,20 +6007,21 @@ TEST(PassDrawTest, WhatAScreenPassDescribesIsWhatItAnnounces)
 
     vn::graphics::PassDraw described;
     ASSERT_TRUE(pass->describe(nullptr, described)) << "有场景不是它的门禁：解析出源才是";
+    vn::graphics::detail::expandPass(described);
 
     ASSERT_EQ(described.draws.size(), 1u);
     const vn::graphics::DrawDescription& draw = described.draws.front();
     EXPECT_EQ(draw.kind, vn::graphics::DrawDescription::Kind::Screen);
     EXPECT_EQ(draw.source, source.get());
     EXPECT_EQ(draw.program.get(), program.get());
-    EXPECT_EQ(draw.camera, cam.get());
+    EXPECT_TRUE(draw.camera.view.isEqual(cam->viewMatrix(), 1e-12)) << "the pass' own view, as a value";
     EXPECT_FALSE(draw.lights.has_value()) << "没有场景 ⇒ 不公告灯（\"没有场景\"不是关于光照的陈述）";
     EXPECT_EQ(backend->light_sets, 0);
     // 线上走的真的是全屏程序那条路，参数就是描述里那几个
     EXPECT_EQ(backend->program_draws, 1);
     EXPECT_EQ(backend->last_program_source, draw.source);
     EXPECT_EQ(backend->last_program, draw.program.get());
-    EXPECT_EQ(backend->last_program_camera, draw.camera);
+    EXPECT_TRUE(backend->last_program_camera.view.isEqual(draw.camera.view, 1e-12)) << "the same view the description stated";
     EXPECT_EQ(backend->render_calls, 0) << "全屏档走 drawScreenProgram()，不走 render()";
     // 清屏在构造里就关了：描述里没有 clear，线上也没收到 setClearPolicy（0 值不是"清了黑色"）
     EXPECT_FALSE(described.clear.has_value());
@@ -6201,7 +6207,7 @@ TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
     EXPECT_EQ(backend->program_draws, before + 1);
     EXPECT_EQ(backend->last_program_source, rt.get());
     EXPECT_EQ(backend->last_program, program.get());
-    EXPECT_EQ(backend->last_program_camera, cam.get());
+    EXPECT_TRUE(backend->last_program_camera.view.isEqual(cam->viewMatrix(), 1e-12));
 }
 
 // ============ Light ============
@@ -6288,7 +6294,7 @@ class DescribeOnlyPass : public RenderPass {
         fillPassFacts(out);
         DrawDescription draw;
         draw.kind   = DrawDescription::Kind::Scene;
-        draw.camera = camera();
+        draw.camera = CameraSnapshot::of(*camera());
         out.draws.push_back(std::move(draw));
         (void)scene; // the pass is content-agnostic: its picture is the camera's
         return true;
@@ -6788,10 +6794,10 @@ TEST(PassChainTest, ARequestedShadowIsBuiltOnTheDeferredPath)
 
     // ...and the pass drew the content through an orthographic camera that is not the view camera.
     ASSERT_FALSE(backend->render_cameras.empty());
-    const Camera* shadow_camera = backend->render_cameras.front();
-    ASSERT_NE(shadow_camera, nullptr);
-    EXPECT_NE(shadow_camera, cam.get()) << "the shadow pass looks along the light, not through the view";
-    EXPECT_EQ(shadow_camera->projectionType(), Camera::ProjectionType::Orthographic);
+    const CameraSnapshot shadow_camera = backend->render_cameras.front();
+    ASSERT_TRUE(shadow_camera.present);
+    EXPECT_FALSE(shadow_camera.view.isEqual(cam->viewMatrix(), 1e-12)) << "the shadow pass looks along the light, not through the view";
+    EXPECT_FALSE(shadow_camera.projection.isEqual(cam->projectionMatrix(), 1e-12)) << "and projects the light's own, orthographic frame";
 
     // The map reached the lighting: a declared input nothing produced is reported by the engine.
     EXPECT_EQ(engine->diagnosticCount(), problems_before);
@@ -6855,9 +6861,9 @@ TEST(PassChainTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
         }
     }
     ASSERT_FALSE(backend->render_cameras.empty());
-    ASSERT_NE(backend->render_cameras.front(), nullptr);
-    EXPECT_NE(backend->render_cameras.front(), cam.get());
-    EXPECT_EQ(backend->render_cameras.front()->projectionType(), Camera::ProjectionType::Orthographic);
+    ASSERT_TRUE(backend->render_cameras.front().present);
+    EXPECT_FALSE(backend->render_cameras.front().view.isEqual(cam->viewMatrix(), 1e-12)) << "the light's view, not the picture's";
+    EXPECT_FALSE(backend->render_cameras.front().projection.isEqual(cam->projectionMatrix(), 1e-12)) << "and its orthographic frame";
 
     // The hand-off: the content pass no longer declares an input nothing produced. Without that
     // declaration the engine reports it here, which is exactly the failure this test is about.
@@ -6912,9 +6918,9 @@ TEST(PassChainTest, ASpotCasterIsBuiltAsOnePerspectiveShadowMap)
     }
 
     ASSERT_FALSE(backend->render_cameras.empty());
-    ASSERT_NE(backend->render_cameras.front(), nullptr);
-    EXPECT_NE(backend->render_cameras.front(), cam.get()) << "the shadow pass looks along the spot, not through the view";
-    EXPECT_EQ(backend->render_cameras.front()->projectionType(), Camera::ProjectionType::Perspective)
+    ASSERT_TRUE(backend->render_cameras.front().present);
+    EXPECT_FALSE(backend->render_cameras.front().view.isEqual(cam->viewMatrix(), 1e-12)) << "the shadow pass looks along the spot, not through the view";
+    EXPECT_FALSE(backend->render_cameras.front().projection.isEqual(cam->projectionMatrix(), 1e-12))
         << "the spot's map is drawn through its cone, not an orthographic box";
     EXPECT_EQ(engine->diagnosticCount(), problems_before) << "one caster, one pass: nothing requested is left unbuilt";
 }
@@ -7452,7 +7458,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
         description.target = target;
         description.clear  = ClearPolicy{ Color(0, 0, 0, 255).toLinear(), true };
         OwnedDraw draw;
-        draw.camera   = camera;
+        draw.camera   = CameraSnapshot::of(*camera);
         draw.commands = commands;
         description.draws.push_back(std::move(draw));
 
@@ -7474,7 +7480,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
     EXPECT_EQ(description.target, target_raw);
     ASSERT_TRUE(description.clear.has_value());
     ASSERT_EQ(description.draws.size(), 1U);
-    EXPECT_EQ(description.draws[0].camera, camera_raw);
+    EXPECT_TRUE(description.draws[0].camera.view.isEqual(camera_raw->viewMatrix(), 1e-12)) << "the camera the pass held, as a value";
     ASSERT_NE(description.draws[0].commands, nullptr) << "the command collection is held, not borrowed";
     EXPECT_EQ(description.draws[0].commands->size(), 1U);
 
@@ -11345,7 +11351,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     EXPECT_EQ(scene_pass.viewport->width, 160);
     ASSERT_EQ(scene_pass.draws.size(), 1u);
     ASSERT_EQ(backend->render_cameras.size(), 1u);
-    EXPECT_EQ(scene_pass.draws[0].camera, backend->render_cameras[0]);
+    EXPECT_TRUE(scene_pass.draws[0].camera.view.isEqual(backend->render_cameras[0].view, 1e-12));
     EXPECT_EQ(scene_pass.draws[0].commands->size(), backend->render_command_counts[0]);
     // 覆盖是 PASS 的事实（见 PassDraw::program_override）：命令表是共享的、原样的，画的时候由后端逐命令解析。
     EXPECT_EQ(scene_pass.program_override.get(), override_program.get()) << "the pass states the override once, and the backend draws its commands with it";
@@ -11431,7 +11437,7 @@ TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndDescribesEachPassOnce)
     ASSERT_EQ(backend->pass_entries.size(), 2u) << "one entry per frame";
     EXPECT_EQ(backend->render_calls, 2);
     ASSERT_EQ(backend->render_cameras.size(), 2u);
-    EXPECT_EQ(backend->render_cameras[1], camera.get());
+    EXPECT_TRUE(backend->render_cameras[1].view.isEqual(camera->viewMatrix(), 1e-12));
     EXPECT_EQ(backend->render_command_counts[1], 1u);
 }
 
@@ -11905,7 +11911,7 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
     engine->frame();
     EXPECT_EQ(backend->program_draws, 1u) << "the declared screen pass drew through its program";
     EXPECT_EQ(backend->last_program_source, source.get()) << "with the target the compile resolved for it";
-    EXPECT_EQ(backend->last_program_camera, camera.get());
+    EXPECT_TRUE(backend->last_program_camera.view.isEqual(camera->viewMatrix(), 1e-12));
 
     const FramePlan plan = engine->framePlan();
     ASSERT_EQ(plan.passes.size(), 2u);

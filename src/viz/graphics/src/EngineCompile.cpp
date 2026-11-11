@@ -15,6 +15,7 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Viewport.hpp>
 
+#include "FrameExpand.hpp"
 #include "FrameResources.hpp"
 #include "FrameScheduler.hpp"
 
@@ -268,10 +269,10 @@ void RenderEngine::buildFrameValue()
             continue; // the scheduler never puts a pass that does not run into the order
         }
         // THIS IS WHAT A PASS COSTS THE FRAME. Under a value-driven frame the work is here: the hook runs, the
-        // inputs are told, the pass describes itself (collecting and culling its content) - and the run then only
-        // announces what came out. The number is what the plan reports per pass (see
-        // FramePlan::PassPlan::record_micros), which is the host-visible half of a frame; the GPU half is the
-        // backend's (see RenderEngine::frameReport). One clock read per pass, not per draw.
+        // inputs are told, the pass states its VIEW, and the frame's expansion collects it (see FrameExpand) - one
+        // measured interval, so the number keeps meaning what it always meant. The number is what the plan reports
+        // per pass (see FramePlan::PassPlan::record_micros), which is the host-visible half of a frame; the GPU half
+        // is the backend's (see RenderEngine::frameReport). One clock read per pass, not per draw.
         const auto pass_started = std::chrono::steady_clock::now();
         // Content that updates itself per frame (an FPS readout, a mirrored gizmo) does it through the hook its
         // declaration carried, and it is what the pass is ABOUT TO describe: it writes content, so it happens
@@ -300,6 +301,12 @@ void RenderEngine::buildFrameValue()
             // "This pass issued nothing" must not leave the previous frame's picture behind: the draw goes away and
             // the entry keeps the fact that the pass ran (see the note at the top).
             entry.draw.reset();
+        }
+        else {
+            // THE FRAME'S ONE O(DRAWABLES) STEP, and it is a function of the value described above: the pass stated a
+            // view and whose content answers it, and this asks that content for the list (see FrameExpand). It is
+            // inside this pass' measured interval, so record_micros keeps meaning "describe + collect".
+            detail::expandPass(*entry.draw);
         }
         if (index < slots_.size()) {
             slots_[index].record_micros =

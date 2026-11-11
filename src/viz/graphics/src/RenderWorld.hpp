@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include <vine/graphics/DrawListSource.hpp>
+
 #include "DrawListBake.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -80,6 +82,39 @@ class RenderWorld {
     std::unordered_map<RowId, std::uint32_t> index_;
     std::uint64_t                         rows_recomputed_{ 0 };
     std::uint64_t                         refusals_{ 0 };
+};
+
+/**
+ * @brief The RENDER WORLD as the thing a frame asks for a view's commands (see `vn::graphics::DrawListSource`).
+ *
+ * @details
+ * - WHY IT EXISTS. A frame states a VIEW and names who answers it (see `DrawDescription::content`); a `Scene` and a
+ *   mirror must both be able to be that answer, or the threaded mode would need a second frame path. This is the
+ *   mirror's face on that interface, and it is how the equivalence test proves the two sides produce one picture.
+ * - IT OWNS NOTHING. The world belongs to whoever drains the deltas into it (the engine or its worker); this adapter
+ *   only borrows it for the duration of a collection.
+ *
+ * @warning The world is single-threaded (see RenderWorld): the source answers on the thread that owns it.
+ */
+class RenderWorldSource final : public vn::graphics::DrawListSource {
+  public:
+    /** @brief Presents @p world as a draw list source.
+     *
+     * @param world The mirror to borrow; it must outlive this adapter.
+     */
+    explicit RenderWorldSource(RenderWorld& world) noexcept;
+
+    /** @brief Collects what @p view draws from the mirror (see DrawListSource).
+     *
+     * @param view       The view to collect for.
+     * @param layer_mask Layers this picture draws.
+     * @return The commands, in draw order, shared the way every source shares one collection.
+     */
+    [[nodiscard]] std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const vn::graphics::CollectView& view,
+                                                                                         std::uint32_t                    layer_mask) const override;
+
+  private:
+    RenderWorld* const world_;
 };
 
 } // namespace detail

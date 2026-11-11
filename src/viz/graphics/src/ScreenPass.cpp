@@ -1,5 +1,6 @@
 #include <vine/graphics/ScreenPass.hpp>
 
+#include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -65,7 +66,7 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     }
     DrawDescription draw;
     draw.kind    = DrawDescription::Kind::Screen;
-    draw.camera  = camera();
+    draw.camera  = CameraSnapshot::of(*camera());
     draw.source  = source_;
     draw.program = desc_.program;
     // Forward the content scene's lights so the backend can push them to the

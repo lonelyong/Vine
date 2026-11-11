@@ -12,6 +12,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "CollectView.hpp"
+#include "DrawListSource.hpp"
 #include "Light.hpp"
 #include "Node.hpp"
 
@@ -39,7 +40,7 @@ struct RenderCommand;
  *   that is still attached elsewhere, and a root attached elsewhere afterwards takes the scene out of the
  *   picture (see setRoot).
  */
-class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
+class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public DrawListSource {
     VN_OBJECT_META_DECL;
     VN_DISABLE_COPY_MOVE(Scene);
 
@@ -241,7 +242,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * @param layer_mask Layers this picture draws (see Node::setLayers).
      * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const CollectView& view, std::uint32_t layer_mask = kAllLayers) const;
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const CollectView& view, std::uint32_t layer_mask = kAllLayers) const override;
 
     /** @brief Opens the content frame the collected-command memo belongs to (and ages what nothing asked for).
      *

@@ -1,5 +1,6 @@
 #include "RenderWorld.hpp"
 
+#include <memory>
 #include <utility>
 
 VN_GRAPHICS_NS_BEGIN
@@ -82,6 +83,20 @@ std::uint64_t RenderWorld::rowsRecomputed() const noexcept
 std::uint64_t RenderWorld::refusals() const noexcept
 {
     return refusals_;
+}
+
+RenderWorldSource::RenderWorldSource(RenderWorld& world) noexcept
+  : world_(&world)
+{}
+
+std::shared_ptr<const std::vector<RenderCommand>> RenderWorldSource::collectRenderCommands(const vn::graphics::CollectView& view,
+                                                                                          std::uint32_t                    layer_mask) const
+{
+    // The frame asks the same question of either side (see DrawListSource), and the answer is shared because every
+    // pass of this frame that draws the view names this one list. Built once per ask, like a Scene's cold path.
+    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    world_->collect(view, layer_mask, *commands);
+    return commands;
 }
 
 } // namespace detail
