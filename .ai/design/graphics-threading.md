@@ -84,6 +84,9 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 - **唯一还需要内容线程的一步**：`refreshBoxes`（只对叶子，容器不问）。“写 buffer”不会发 delta，盒子的新鲜度靠问 geometry
   自己的（按通道 revision 与切片键控的）`localBounds()`；这一问是写缓存的，所以它留在拥有内容的那侧，与选取分开。
   镜像没有节点，因此这一步它**不做**：镜像的盒停在握手给的值上，直到有了"盒 delta"（§9.2 的已知缺口）。
+- **局部更新只碰它改过的行**（§3.1.4 的 C4/C15 在内容侧已经成立）：盒是并集，所以一次编辑要把**改动的子树**整片重折，
+  再把**它上面那条链**逐行重折（每行只用已折好的子行，不再走子行以下的树）。刷新则先比对叶子这次说的和行里存的：
+  没变就**一次折都不跑**，变了才折那一片加那条链，多条链去重后按行号降序折（前序里子行永远在后，所以降序即先子后父）。
 
 ### 2.3 三条跨线程通道
 
@@ -522,8 +525,9 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
 ### 9.2 已知缺口 / 待办
 
 - 落地阶段与触发条件见 `../backlog/graphics.md` T31；并行 select 由 T24 单独触发。
-- **镜像没有“盒 delta”**：写 buffer 不发 delta，内容侧靠 `refreshBoxes`（问叶子自己的、按 revision 键控的 `localBounds()`）
-  保鲜；镜像没有节点，它的盒停在握手给的值上。今天不痛（握手随结构/放置变），要动时新增一条盒 delta，而不是让镜像读节点。
+- **镜像没有“盒 delta”**：写 buffer 不发 delta，内容侧靠 `refreshBoxes`（问叶子自己的、按 revision 键控的 `localBounds()`，
+  只折真正变了的行与它上面的链）保鲜；镜像没有节点，它的盒停在握手给的值上。今天不痛（握手随结构/放置变），
+  要动时新增一条盒 delta，而不是让镜像读节点。
 - **身份**：`RenderWorld` 用自己的不透明句柄（`RowId = const void*`，即被镜像对象的地址，见 ADR-2026-11-09）；
   `const Node*` 隐式转成它，所以内容侧写 `world.place(&node, m, placement)`，而渲染世界的**签名里没有任何内容类型**。
   行表不再持有 `node`（`SceneBake::nodes` 只是内容侧的盒刷新记录，`adopt` 时丢掉）。
@@ -557,6 +561,11 @@ appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
   `RenderWorldTest.APerViewRowDrawsTheSameInAMirrorThatOwnsNoNode`（没有节点的镜像画出同一个广告牌，并证明那条规则真在动）、
   `SceneTest.CollectCommandsAsksEachLeafForItsOwnBoxOnly` / `SceneTest.ALeafThatOnlyAnswersInWorldSpaceStillCulls` /
   `SceneTest.TheRowsSurviveCameraMovesAndFollowAnnouncements`。
+  **第五步的后续修正**：盒是并集，所以一次编辑必须把改动行**上面那条链**也重折 —— 否则祖先停在旧盒上，把移进视野的内容剔掉，
+  物体静默消失（`RenderWorldTest.AMovedSubtreeIsCulledByItsAncestorsNewBox` 先红后绿）。同时把刷新改成“先比对、变了才折”，
+  `SceneTest` 实测移动相机 2000 drawables：7628 → 2061 µs（10 次采集，Debug）；用例
+  `DrawListBakeTest.ARefreshFoldsOnlyWhatChanged` 钉住“没变就一次折都不跑”，`detail::refreshBoxes` 的返回值也改成
+  “真正变了的行数”。
 - **P2（第一步已完成）**：**后端的事实行也从描述建**。`Geometry::description()` 给出一个不可变形状
   （通道位置/切片/stride + 逐 primitive：topology、索引段、实例流），`RenderCommand` 带 `row`（身份）与
   `description`（值），`ContentStore::track(identity, description)` / `buildGeometryFacts(description)` 只读值——

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <vine/intrusive_ptr.hpp>
+#include <vine/math/Point3.hpp>
 #include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/models/TriangleMesh.hpp>
@@ -27,6 +28,9 @@ using vn::graphics::MatrixTransform;
 using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
 using vn::graphics::detail::buildRows;
+using vn::graphics::detail::refreshBoxes;
+using vn::graphics::detail::Row;
+using vn::graphics::Aabbd;
 using vn::graphics::detail::RenderWorld;
 using vn::graphics::detail::RenderWorldSource;
 using vn::graphics::detail::SceneBake;
@@ -98,6 +102,32 @@ void expectSameDrawList(const std::vector<RenderCommand>& actual, const std::sha
     }
 }
 
+/**
+ * @brief A leaf the engine cannot see inside: it states its bound in WORLD space only, at a size the test sets.
+ *
+ * @details
+ * - A Geometry subclass answers `subtreeBounds` with false (see Node::subtreeBounds), so its row can only be built
+ *   from the world-space answer `boundingBox()` gives. Driving that answer is how a test moves a box without touching
+ *   a single vertex.
+ */
+class WorldAnswerLeaf : public Geometry {
+  public:
+    double half_extent{ 0.5 };
+
+    /**
+     * @brief Answers the world-space box the test set (this leaf states nothing in its own frame).
+     *
+     * @return The cube around the origin with the current half extent.
+     */
+    Aabbd boundingBox() const override
+    {
+        Aabbd box = Aabbd::empty();
+        box.expandBy(vn::math::Point3d(-half_extent, -half_extent, -half_extent));
+        box.expandBy(vn::math::Point3d(half_extent, half_extent, half_extent));
+        return box;
+    }
+};
+
 /// @brief A root with one two-deep chain and a second leaf beside it: a small articulated assembly.
 struct Assembly {
     intrusive_ptr<Group>           root;
@@ -123,6 +153,57 @@ Assembly makeAssembly()
 }
 
 } // namespace
+
+TEST(DrawListBakeTest, ARefreshFoldsOnlyWhatChanged)
+{
+    // A box climbs, but only when it MOVED: a collection over unchanged boxes folds nothing, and one changed leaf
+    // costs its own answer plus the chain above it. That is the content side of the same rule the mirror follows on
+    // an edit (see RenderWorldTest.AMovedSubtreeIsCulledByItsAncestorsNewBox), and it is what keeps a streaming
+    // buffer's per-frame cost at its chain instead of the table.
+    auto root  = intrusive_ptr<Group>(new Group());
+    auto left  = placed(-0.6, 0.0, 0.0);
+    auto right = placed(0.6, 0.0, 0.0);
+    auto leaf  = intrusive_ptr<WorldAnswerLeaf>(new WorldAnswerLeaf());
+    const GeometryPtr other = triangle(); // the engine's own leaf: answers in its own frame
+    left->addChild(leaf);
+    right->addChild(other);
+    root->addChild(left);
+    root->addChild(right);
+
+    SceneBake bake;
+    buildRows(*root, bake);
+
+    const auto row_of = [&bake](const void* identity) -> const Row* {
+        for (const Row& row : bake.rows) {
+            if (row.identity == identity) {
+                return &row;
+            }
+        }
+        return nullptr;
+    };
+
+    // Nothing announced since the build: a collection over unchanged boxes re-derives nothing at all.
+    EXPECT_EQ(refreshBoxes(bake), 0U) << "an unchanged table folds nothing";
+
+    const Row* other_row = row_of(other.get());
+    ASSERT_NE(other_row, nullptr);
+    const Aabbd other_box = other_row->world_box;
+
+    // The leaf's bound moves. Only its row and the rows above it are re-derived, and the other branch is untouched.
+    leaf->half_extent = 0.9;
+    EXPECT_EQ(refreshBoxes(bake), 1U) << "one leaf moved, so one box was re-read";
+
+    const Row* leaf_row = row_of(leaf.get());
+    ASSERT_NE(leaf_row, nullptr);
+    EXPECT_NEAR(leaf_row->world_box.max().x, 0.9, 1e-12) << "the world-space answer the leaf gave, and nothing else";
+    const Row* left_row = row_of(left.get());
+    ASSERT_NE(left_row, nullptr);
+    EXPECT_NEAR(left_row->world_box.max().x, 0.9, 1e-12) << "the chain above the changed leaf followed it";
+    EXPECT_TRUE(row_of(other.get())->world_box == other_box) << "the other branch was not re-derived";
+
+    // ...and it settles: a second look at the same table finds nothing to do.
+    EXPECT_EQ(refreshBoxes(bake), 0U) << "and the next look folds nothing";
+}
 
 TEST(RenderWorldTest, TheMirrorCollectsWhatTheContentCollects)
 {    const Assembly assembly = makeAssembly();
@@ -203,6 +284,53 @@ TEST(RenderWorldTest, APlacementEditReplacesThatSubtreeAndNothingElse)
     ASSERT_NE(link_draw, nullptr) << "the link's draw is in the list";
     EXPECT_NEAR(link_draw->model_matrix.element(0, 3), 0.05 + 0.1, 1e-12) << "the arm the test moved, and the link's own offset";
     EXPECT_NEAR(link_draw->model_matrix.element(1, 3), 0.25, 1e-12) << "the arm the test moved";
+}
+
+TEST(RenderWorldTest, AMovedSubtreeIsCulledByItsAncestorsNewBox)
+{
+    // A box is a UNION up the chain, so re-placing a row changes every ancestor's box too. If the fold stops at the
+    // edited row, the ancestors keep the box they had before the move: a subtree that moved INTO view is then pruned
+    // by a box that still says it is somewhere else, and the object silently disappears - the same failure a missed
+    // announcement causes, one level up.
+    auto root      = intrusive_ptr<Group>(new Group());
+    auto container = intrusive_ptr<Group>(new Group());
+    const Mat4d away = vn::math::translate(4.0, 0.0, 0.0); // far outside the clip box [-1, 1]^3
+    auto arm       = placed(away.element(0, 3), away.element(1, 3), away.element(2, 3));
+    const GeometryPtr face = triangle();
+    arm->addChild(face);
+    container->addChild(arm);
+    root->addChild(container);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    SceneBake  rows;
+    buildRows(*root, rows);
+    RenderWorld world;
+    world.adopt(std::move(rows));
+
+    const CollectView view = clipBoxView();
+    std::vector<RenderCommand> mirrored;
+    world.collect(view, vn::graphics::kAllLayers, mirrored);
+    ASSERT_TRUE(mirrored.empty()) << "it starts out of view";
+
+    // The host moves the leaf's chain into view and tells the mirror about the transform it moved.
+    const Mat4d inside = Mat4d{};
+    arm->setMatrix(inside);
+    ASSERT_TRUE(world.place(arm.get(), inside));
+
+    std::vector<RenderCommand> after;
+    world.collect(view, vn::graphics::kAllLayers, after);
+    expectSameDrawList(after, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    EXPECT_EQ(after.size(), 1U) << "a row moved into view must not be pruned by its ancestors' stale boxes";
+
+    // ...and moving it back out must prune it again, through every box above it.
+    arm->setMatrix(away);
+    ASSERT_TRUE(world.place(arm.get(), away));
+    std::vector<RenderCommand> returned;
+    world.collect(view, vn::graphics::kAllLayers, returned);
+    expectSameDrawList(returned, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    EXPECT_TRUE(returned.empty());
 }
 
 TEST(RenderWorldTest, TheMirrorMovesOnlyWhenItIsTold)

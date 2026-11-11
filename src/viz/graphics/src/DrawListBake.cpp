@@ -23,36 +23,57 @@ struct Inherited {
     bool             view_dependent{ false };
 };
 
-/// @brief Records a LEAF's own bound on its row: in the leaf's own frame when it can state one.
+/// @brief ONE leaf's own bound as the node states it, and the frame it stated it in.
 ///
 /// @details
 /// - The engine's leaf answers in its own frame (`Geometry::subtreeBounds`), and so does any node that can; that box is
 ///   what every ancestor is folded from, and it survives a placement edit untouched.
 /// - A leaf the engine cannot see inside (a Geometry subclass that places itself in ways only it knows) answers in
-///   WORLD space only. Its answer is kept as a value (`Row::world_box_answer`) and the fold converts it with the row's
-///   own placement, so the cull above it keeps working instead of silently under-measuring the subtree.
-/// - A leaf that cannot state a bound at all marks its subtree UNCULLABLE rather than contributing an empty box, which
-///   would quietly drop everything above it.
+///   WORLD space only. That answer is kept as a value and the FOLD converts it (see foldRow) - it cannot be converted
+///   here, because the row's own placement is what the fold computes.
+/// - A leaf that cannot state a bound at all is UNCULLABLE rather than contributing an empty box, which would quietly
+///   drop everything above it.
+struct LeafBox {
+    Aabbd                local{ Aabbd::empty() }; ///< In the leaf's own frame; empty when the answer was `world`.
+    std::optional<Aabbd> world{};                 ///< The node's answer in world space, when it stated one there.
+    bool                 unbounded{ false };      ///< No box can be trusted for this leaf.
+};
+
+/// @brief Reads @p node's own bound.
 ///
 /// @param node The leaf to read.
-/// @param row  Its row (own facts are written; the resolved boxes are the fold's).
-void recordLeafBox(const Node& node, Row& row)
+/// @return The box and the frame it was stated in (see LeafBox).
+LeafBox readLeafBox(const Node& node)
 {
-    // Idempotent: the whole leaf-box state is recomputed from the node, so a leaf that answers again after a while
-    // gets its cull back (the refresh runs this on every collection a content-side table is used for).
-    row.world_box_answer.reset();
     Aabbd local = Aabbd::empty();
     if (node.subtreeBounds(local)) {
-        row.local_box = local;
-        row.unbounded = false;
-        return;
+        return LeafBox{ local, std::nullopt, false }; // the engine's own leaf: already in its own frame
     }
     const Aabbd world = node.boundingBox();
-    row.local_box     = Aabbd::empty();
-    row.unbounded     = !world.isValid();
-    if (world.isValid()) {
-        row.world_box_answer = world;
+    if (!world.isValid()) {
+        return LeafBox{ Aabbd::empty(), std::nullopt, true }; // nothing to cull by
     }
+    return LeafBox{ Aabbd::empty(), world, false };
+}
+
+/// @brief Writes @p box into @p row and says whether that changed anything the fold depends on.
+///
+/// @param row The leaf's row.
+/// @param box The bound read from the node.
+/// @return true when the row's own box or its cullability moved, so the rows above it have to be folded again.
+bool recordLeafBox(Row& row, const LeafBox& box)
+{
+    // Compared against what the NODE said: its own-frame box, or - for a leaf that can only answer in world space -
+    // that world answer (the row's own-frame box is then the FOLD's derivation of it, not a statement).
+    const bool from_world = box.world.has_value();
+    const bool changed    = (from_world ? row.world_box_answer != box.world : row.local_box != box.local) || row.unbounded != box.unbounded;
+    if (!changed) {
+        return false; // nothing moved: write nothing, so the derived box the fold produced stays exactly as it was
+    }
+    row.world_box_answer = box.world;
+    row.local_box        = from_world ? Aabbd::empty() : box.local; // from_world: the fold derives it from `world`
+    row.unbounded        = box.unbounded;
+    return true;
 }
 
 /// @brief Replays the fold for one row given what it inherits, and recurses into its children.
@@ -96,17 +117,20 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
     }
 }
 
-/// @brief Recomputes one subtree's boxes and layer unions bottom-up.
-void foldUp(SceneBake& bake, std::uint32_t index)
+/// @brief Recomputes ONE row's boxes and union from its children's rows, which must already be folded.
+///
+/// @details
+/// - A box climbs: a row's own box is its leaf answer or the union of its children's, so the fold is bottom-up and
+///   stops nowhere in particular. Keeping the one-row step separate is what lets an edit re-derive the EDITED subtree
+///   in full and then walk the ancestors, each with this step alone (see resolveSubtree) - instead of re-walking the
+///   ancestors' whole subtrees, which is what a per-frame edit would pay on a robot leg.
+///
+/// @param bake  The table containing @p index.
+/// @param index The row to re-derive (its children are read, never written).
+void foldRow(SceneBake& bake, std::uint32_t index)
 {
     const std::uint32_t end = bake.rows[index].end;
-    for (std::uint32_t cursor = index + 1; cursor < end;) {
-        const std::uint32_t child_end = bake.rows[cursor].end;
-        foldUp(bake, cursor);
-        cursor = child_end;
-    }
-
-    Row& row = bake.rows[index];
+    Row&                row = bake.rows[index];
     // The own-frame box is a VALUE: a leaf carries its own (read at build time, or re-read by refreshBoxes when the
     // bytes under it announce), a container is the union of its children. A per-view child answers the union through
     // its placement instead of through `local`, because the orientation it may choose is not the axis-aligned one
@@ -115,8 +139,9 @@ void foldUp(SceneBake& bake, std::uint32_t index)
     if (row.world_box_answer.has_value()) {
         // A leaf that could only answer in world space: undo this row's own placement so the row holds the same kind
         // of box every other row does. The AABB of the transformed corners is a SUPERSET for a rotated placement,
-        // which errs on the side of drawing.
-        local = Aabbd::empty();
+        // which errs on the side of drawing. This is the only place the conversion can happen - it needs `world`,
+        // which is the fold's own answer.
+        local         = Aabbd::empty();
         Mat4d inverse = row.world;
         if (inverse.invert()) {
             local = row.world_box_answer->transformed(inverse);
@@ -153,6 +178,18 @@ void foldUp(SceneBake& bake, std::uint32_t index)
     }
     row.unbounded    = unbounded;
     row.layers_union = union_of_layers;
+}
+
+/// @brief Recomputes one subtree's boxes and layer unions bottom-up.
+void foldUp(SceneBake& bake, std::uint32_t index)
+{
+    const std::uint32_t end = bake.rows[index].end;
+    for (std::uint32_t cursor = index + 1; cursor < end;) {
+        const std::uint32_t child_end = bake.rows[cursor].end;
+        foldUp(bake, cursor);
+        cursor = child_end;
+    }
+    foldRow(bake, index);
 }
 
 std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t parent = SceneBake::kNoParent)
@@ -217,11 +254,11 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
                 }
                 row.draws.push_back(std::move(draw));
             }
-            recordLeafBox(node, row);
+            (void)recordLeafBox(row, readLeafBox(node));
         }
         else if (obj_cast<Group>(&node) == nullptr) {
-            // A leaf the engine does not own: the same rule (see recordLeafBox).
-            recordLeafBox(node, row);
+            // A leaf the engine does not own: the same rule (see readLeafBox).
+            (void)recordLeafBox(row, readLeafBox(node));
         }
     }
 
@@ -275,6 +312,13 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index)
     }
     foldDown(bake, index, parent);
     foldUp(bake, index);
+    // THE CHAIN ABOVE. A box is a union, so the row just re-folded is part of every ancestor's box: leaving them
+    // alone keeps a box that says the subtree is still where it was, and a cull then prunes content that moved INTO
+    // view - the object silently disappears (a subset of the rows is stale, which no assertion in the edit path can
+    // see). Each ancestor needs its OWN row recomputed and nothing more: its children are already folded.
+    for (std::uint32_t above = bake.rows[index].parent; above != SceneBake::kNoParent; above = bake.rows[above].parent) {
+        foldRow(bake, above);
+    }
 
     return last_row - first_row;
 }
@@ -289,17 +333,37 @@ std::uint32_t refreshBoxes(SceneBake& bake)
     // own box is a cache hit unless something it reads announced; a container needs no ask at all (its box is the
     // union its children already answered), and a MIRROR has no nodes and therefore refreshes nothing (its boxes are
     // the handshake's until a box delta exists - see the declaration).
-    std::uint32_t refreshed = 0U;
-    const std::size_t count = std::min(bake.rows.size(), bake.nodes.size());
+    std::vector<std::uint32_t> changed;
+    const std::size_t          count = std::min(bake.rows.size(), bake.nodes.size());
     for (std::size_t index = 0; index < count; ++index) {
         const Node* node = bake.nodes[index];
         if (node == nullptr || bake.rows[index].child_count != 0) {
             continue;
         }
-        recordLeafBox(*node, bake.rows[index]);
-        ++refreshed;
+        if (recordLeafBox(bake.rows[index], readLeafBox(*node))) {
+            changed.push_back(static_cast<std::uint32_t>(index));
+        }
     }
-    foldUp(bake, 0U);
+    if (changed.empty()) {
+        return 0U; // NOTHING moved: a collection over unchanged boxes folds nothing at all
+    }
+    const std::uint32_t refreshed = static_cast<std::uint32_t>(changed.size());
+    // A changed box belongs to every box above it, so those rows have to be re-derived - one row each, from children
+    // that are already folded. The chains of several changed leaves overlap; the dedupe is what keeps a streaming
+    // buffer's cost at its own chain instead of the whole table.
+    const std::size_t leaves = changed.size();
+    for (std::size_t position = 0; position < leaves; ++position) {
+        for (std::uint32_t above = bake.rows[changed[position]].parent; above != SceneBake::kNoParent; above = bake.rows[above].parent) {
+            changed.push_back(above);
+        }
+    }
+    // Deepest first: in walk order a child always sits after its parent, so folding in DESCENDING row index means
+    // every row is folded after the children it reads.
+    std::sort(changed.begin(), changed.end(), [](std::uint32_t lhs, std::uint32_t rhs) { return lhs > rhs; });
+    changed.erase(std::unique(changed.begin(), changed.end()), changed.end());
+    for (const std::uint32_t row : changed) {
+        foldRow(bake, row);
+    }
     return refreshed;
 }
 

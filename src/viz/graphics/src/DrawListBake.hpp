@@ -89,8 +89,8 @@ struct Row {
     /// frame (a Geometry subclass may place itself in ways only it knows - see Node::subtreeBounds).
     ///
     /// The fold turns that answer into `local_box` with the row's own placement, so every box downstream lives in one
-    /// frame and the cull above the row still works. `refreshBoxes` re-reads it, which is why such a row is a
-    /// content-side one: a mirror keeps the value it was told (see SceneBake::nodes).
+    /// frame and the cull above the row still works. `refreshBoxes` re-reads it and compares, which is why such a row
+    /// is a content-side one: a mirror keeps the value it was told (see SceneBake::nodes).
     std::optional<Aabbd>         world_box_answer{};
     /// The per-view half of this row's placement, or null when the row is placed by `local` alone.
     ///
@@ -251,6 +251,9 @@ void buildRows(const Node& root, SceneBake& bake, float opacity = 1.0F);
  * - Top-down it recomputes the accumulated placement and the folded values from the own facts; bottom-up it
  *   recomputes each row's local and world boxes and its subtree layer union. Only the subtree of @p index is
  *   touched, which is what makes a joint edit cost the joint's subtree instead of the whole graph.
+ * - THE CHAIN ABOVE is re-derived too, one row each: a box is a UNION, so the row just re-folded is part of every
+ *   ancestor's box. Skipping that leaves a box that still says the subtree is where it was, and a cull then prunes
+ *   content that moved INTO view - the object silently disappears.
  * - The boxes are values (`Row::local_box` for a leaf, the children's union for a container), so a fold never asks a
  *   node: a mirror re-folds exactly what content does.
  *
@@ -267,12 +270,15 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index);
  * - Byte content does not travel as a delta (see the design): a writer announces it on the buffer, so a box has to be
  *   re-read when that revision moves. This is the ONE step that still needs the content's thread, and it is a poll
  *   over the nodes the build recorded (`SceneBake::nodes`) - never a read inside the select.
- * - Only boxes are recomputed (plus the placement transform), so a streaming buffer costs its chain, not the graph.
+ * - Only boxes are recomputed (plus the placement transform), and only for the leaves whose answer MOVED: the
+ *   refresh compares what each leaf states with what the row holds, so a streaming buffer costs its own chain, and a
+ *   collection over unchanged boxes folds nothing at all. The chains of several changed leaves are deduped and folded
+ *   deepest-first, because in walk order a child always sits after its parent.
  * - A MIRROR has no nodes (see RenderWorld::adopt), so it does not refresh: its boxes are the handshake's until a box
  *   delta exists (a known gap, not a silent read of content).
  *
  * @param bake The table to refresh.
- * @return How many rows had their own box re-read.
+ * @return How many rows' own box actually changed (0 when nothing moved, in which case nothing was folded).
  */
 std::uint32_t refreshBoxes(SceneBake& bake);
 
