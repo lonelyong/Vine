@@ -65,9 +65,10 @@ class StubBackend : public vn::graphics::RenderBackend {
             ++resize_calls;
         }
 
-        void present() override
+        vn::graphics::PresentOutcome present() override
         {
             ++presents;
+            return vn::graphics::PresentOutcome::Presented;
         }
 
       public:
@@ -98,7 +99,8 @@ class StubBackend : public vn::graphics::RenderBackend {
         return up;
     }
 
-    void executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to = nullptr) override
+    vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame,
+                                              vn::graphics::PresentTarget*               present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
@@ -107,9 +109,7 @@ class StubBackend : public vn::graphics::RenderBackend {
         }
         // The frame's tail is the executor's (see RenderFrameExecutor::executeFrame): this stub presents through the
         // target the frame named, exactly as the real device does.
-        if (present_to != nullptr) {
-            present_to->present();
-        }
+        return present_to != nullptr ? present_to->present() : vn::graphics::PresentOutcome::Skipped;
     }
 
     void setRenderTarget(vn::graphics::RenderTarget*) override

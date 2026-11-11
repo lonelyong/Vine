@@ -378,6 +378,27 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     bool waitForFrame(std::chrono::milliseconds timeout = std::chrono::milliseconds(5000));
 
+    /** @brief What became of the picture of the last frame this engine ANSWERED (see PresentOutcome).
+     *
+     * @details
+     * - ONE VALUE, TWO FACTS: which frame (its id, so a host can tell whether the frame it is waiting for has been
+     *   answered yet) and what became of its picture. It is written by whichever half answers frames - the caller's
+     *   inline, the engine thread otherwise - and may be read from any thread at any time.
+     * - #PresentOutcome::Lost is the one answer a host must ACT on: the surface was there and the picture did not reach
+     *   it (the window was destroyed under a frame, the swapchain could not serve it), so the move is to re-attach -
+     *   which must happen BETWEEN frames (the device verbs are the host's, and they need it quiet).
+     * - The frame's id never goes backwards and never skips: `frame` is the id of the frame that produced this answer.
+     *
+     * @return The last answered frame's id and picture outcome; frame 0 means no frame has been answered yet.
+     */
+    struct PresentRecord {
+        std::uint64_t frame{ 0 };                                  ///< The frame this answer belongs to (0: none yet).
+        PresentOutcome outcome{ PresentOutcome::Skipped };          ///< What became of its picture.
+    };
+
+    /** @brief Gets what became of the last answered frame's picture (see PresentRecord). */
+    [[nodiscard]] PresentRecord presentRecord() const noexcept;
+
     /** @brief Gets the width the frame is laid out on, as the host announced it (see RenderSurface::resize).
      *
      * @details
@@ -1200,6 +1221,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// next frame() publishes it, once it has waited for that half. Null when there is nothing to publish (the inline
     /// path publishes immediately - it IS the content half's thread).
     std::atomic<detail::EngineFrame*> pending_micros_{ nullptr };
+    /// The last answered frame's id and picture outcome, packed into one word (`frame << 8 | outcome`) so a host can
+    /// read both from any thread without a lock and without the two halves of the answer tearing apart.
+    std::atomic<std::uint64_t> present_record_{ 0 };
     // THE ENGINE HALF OF A FRAME, in this engine (see detail::FrameWorker): the one place a pass' expansion is asked
     // for, so the DEFAULT path and the mirrored one are the same code - and the mode below is what P3 flips when the
     // frame moves to an engine thread.

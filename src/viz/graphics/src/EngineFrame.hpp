@@ -57,6 +57,9 @@ struct EngineFrame {
     /// What the expansion cost per entry of @ref engine_order, in microseconds: the engine half's share of a pass'
     /// `record_micros` (the content half measured its own share while it described). Same length as engine_order.
     std::vector<std::uint64_t> engine_micros;
+    /// What became of this frame's PICTURE (see PresentOutcome): written by the engine half when the frame is answered,
+    /// and what `RenderEngine::presentRecord` hands a host - #Lost is the one answer a host must act on (re-attach).
+    PresentOutcome outcome = PresentOutcome::Skipped;
 };
 
 } // namespace detail

@@ -232,6 +232,9 @@ struct SurfaceWindow::Impl {
     std::unique_ptr<Viewer> viewer;
     /// true once a device and its pipelines were built on the surface's window: what makes a new handle a
     /// re-announce rather than a first attach, and what keeps the surface following a recreated window.
+    /// The last frame whose picture outcome this control has looked at (see RenderControl's frame drive): a lost
+    /// picture is acted on once, at the head of the next frame, and re-reading the same answer must not re-attach.
+    std::uint64_t seen_present_frame = 0;
     bool has_session          = false;
     /// true while the last attach attempt reported success (implies has_session).
     bool backend_live         = false;
@@ -708,6 +711,13 @@ bool SurfaceWindow::init()
     // recreated window re-enters here, and re-arming would recreate it forever). See recreateSurface().
     armRecreateHatch();
 
+    // THE DEVICE AND THE SURFACE BELONG TO THE ENGINE'S SIDE OF THE SEAM (design graphics-threading.md 2.12): a
+    // frame's engine half records into the swapchain that hangs off these objects, and moving or replacing them
+    // while it does is undefined behaviour, not a wrong picture. So an attach WAITS for the frame in flight first -
+    // the one explicit wait of the engine (waitForFrame), and it is normally already done. Inline (the default) it
+    // is a no-op, because a frame and its attach are the same thread.
+    (void)d->engine->waitForFrame();
+
     void* const handle = nativeHandle();
     if (handle == nullptr || width() <= 0 || height() <= 0) {
         // Defer: attaching to a dead or empty handle is worse than waiting. The surface events that follow bring
@@ -849,6 +859,20 @@ void SurfaceWindow::renderFrame()
         // renders before attaching gets its frames from the attach. Same rule as setContinuousRendering()'s.
         return;
     }
+    // A PICTURE THAT DID NOT REACH THE SURFACE IS THE HOST'S TO ACT ON (see PresentOutcome). The window can be
+    // destroyed under a frame (a reparent, a platform recreation, a display going away), and the backend answers
+    // Lost for it: presenting into that surface again would spam the driver, and the fix is the attach path - a
+    // fresh target, a rebuilt swapchain. With a frame thread the answer arrives one frame late, so it is read here,
+    // at the head of the next frame, instead of waiting for the one just submitted.
+    const vn::graphics::RenderEngine::PresentRecord seen = d->engine->presentRecord();
+    if (seen.frame != d->seen_present_frame && seen.outcome == vn::graphics::PresentOutcome::Lost) {
+        d->seen_present_frame = seen.frame;
+        setState(SurfaceState::Pending);
+        init(); // the same attach every other surface loss goes through (a recreated handle, a refused window)
+        return;
+    }
+    d->seen_present_frame = seen.frame;
+
     d->engine->frame();
     // A frame is in the surface: this is the transition the control shows its render area on. A backend that could
     // not present reports it on the diagnostics channel, which is why this says "submitted", not "confirmed".

@@ -4,6 +4,30 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
+ * @brief What became of a frame's picture (see PresentTarget::present).
+ *
+ * @details
+ * - THE THREE ANSWERS ARE DIFFERENT FACTS, not degrees of failure:
+ *   - #Presented: the platform accepted it - the frame reached a window (or, for a presenter that is not a window, the
+ *     place it sends to). It does NOT mean "on the glass" (that needs a present-timing extension this tree does not
+ *     require), only that the presentation path took it.
+ *   - #Skipped: there was nothing to present into - a device that presents nothing, an engine with no area, a frame a
+ *     host named no target for. A first-class state (an offline bake, a display-less run), not an error.
+ *   - #Lost: there WAS a surface, and the picture did not reach it - the submission or the present was refused, the
+ *     surface is gone (the window was destroyed under it), or the swapchain could no longer serve it. The picture is
+ *     lost, the frame is over, and the host's move is to re-attach (see `.ai/design/graphics-threading.md` F9).
+ * - Why a VALUE and not a diagnostic: a lost frame is the one thing a host must ACT on (re-attach) while frames keep
+ *   running, so it travels with the frame it belongs to (RenderEngine::presentRecord) instead of becoming a message a
+ *   reader has to correlate with a frame number.
+ */
+enum class PresentOutcome : std::uint8_t
+{
+    Presented, // The platform accepted the frame's picture.
+    Skipped,   // There was nothing to present into (no target, or a device that presents nothing).
+    Lost,      // There was a surface and the picture did not reach it (refused, gone, or out of date).
+};
+
+/**
  * @brief A target a frame is PRESENTED through: the one contract every presenter implements.
  *
  * @details
@@ -49,14 +73,16 @@ class VN_GRAPHICS_API PresentTarget {
     /** @brief Finishes the frame the executor last ran: it becomes real work, and its image is presented.
      *
      * @details
-     * - The frame's own body - acquiring the next presentable image, collecting, compiling - happens inside
-     *   RenderFrameExecutor::executeFrame; this is the half that records what was collected into the frame's graph,
-     *   submits it, and hands the acquired image back to the display.
-     * - It is the ONE call that presents, it is called once per frame the executor ran, and the EXECUTOR makes that
-     *   call at the frame's tail (RenderFrameExecutor::executeFrame). A host that drove the frame does not call it:
-     *   a second present would find no frame of its own to hand back.
+     * - The ONE call that presents, made once per frame the executor ran (RenderFrameExecutor::executeFrame) at the
+     *   frame's tail. A host that drove the frame does not call it: a second present would find no frame of its own to
+     *   hand back.
+     * - What it answers is @ref PresentOutcome: whether the picture reached this target, there was nothing to present
+     *   into, or the surface could not take it. A presenter that cannot tell the last two apart answers #Lost, because
+     *   "the picture did not arrive" is the fact a host must act on.
+     *
+     * @return What became of the frame's picture.
      */
-    virtual void present() = 0;
+    virtual PresentOutcome present() = 0;
 };
 
 VN_GRAPHICS_NS_END

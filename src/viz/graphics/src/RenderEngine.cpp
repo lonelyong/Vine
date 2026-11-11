@@ -350,6 +350,15 @@ bool RenderEngine::waitForFrame(std::chrono::milliseconds timeout)
     return waitForFrame(frame_number_, timeout);
 }
 
+RenderEngine::PresentRecord RenderEngine::presentRecord() const noexcept
+{
+    const std::uint64_t packed = present_record_.load(std::memory_order_acquire);
+    PresentRecord       record;
+    record.frame   = packed >> 8U;
+    record.outcome = static_cast<PresentOutcome>(packed & 0xFFU);
+    return record;
+}
+
 void RenderEngine::buildContentHalf(detail::EngineFrame& frame)
 {
     // Everything below describes into THIS slot: `frame_` is the compile's way to reach it (see buildFrameValue), and
@@ -438,7 +447,7 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
     // The WHOLE FRAME happens inside this ONE call (see RenderFrameExecutor::executeFrame): the device acquires the
     // presentable image, the record submits, and the frame's tail presents it through the target it names. The engine
     // does not present afterwards - presenting twice would be presenting somebody else's frame (or nothing at all).
-    device_->executor().executeFrame(frame.description, frame.target);
+    frame.outcome = device_->executor().executeFrame(frame.description, frame.target);
 
     // The frame is answered: what a host's waitForFrame is actually waiting for (see design 2.12 - the completion is a
     // fact of the frame, not a callback into anybody's thread).
@@ -452,6 +461,9 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
     else {
         pending_micros_.store(&frame, std::memory_order_release);
     }
+    // The picture's fate and the frame's id travel as ONE word: a host reading presentRecord() while the next frame is
+    // being answered must never see this frame's outcome beside that frame's id.
+    present_record_.store((frame.number << 8U) | static_cast<std::uint64_t>(frame.outcome), std::memory_order_release);
     frame_completed_.store(frame.number, std::memory_order_release);
 }
 

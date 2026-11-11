@@ -59,13 +59,11 @@ class HeadlessBackend : public RenderBackend {
         return RenderDevice::createSurfaceTarget(native_handle, why);
     }
 
-    void executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+    PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
     {
         ++frames;
         last = &frame;
-        if (present_to != nullptr) {
-            present_to->present();
-        }
+        return present_to != nullptr ? present_to->present() : PresentOutcome::Skipped;
     }
 
     void setRenderTarget(RenderTarget*) override

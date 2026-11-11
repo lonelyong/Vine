@@ -120,13 +120,14 @@ class DirectDriveBackend : public vn::vsg::VsgBackend {
     /// able to name it).
     void executeFrame(const vn::graphics::FrameDescription& frame)
     {
-        vn::vsg::VsgBackend::executeFrame(frame, heldTarget());
+        (void)vn::vsg::VsgBackend::executeFrame(frame, heldTarget());
     }
 
     /// The two-argument form, unchanged: a case that names a target explicitly (a foreign one, a bare presenter).
-    void executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to) override
+    vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame,
+                                              vn::graphics::PresentTarget*               present_to) override
     {
-        vn::vsg::VsgBackend::executeFrame(frame, present_to);
+        return vn::vsg::VsgBackend::executeFrame(frame, present_to);
     }
 
     [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> target() const
@@ -4649,9 +4650,10 @@ TEST(VsgBackendTest, AFrameThatNamesATargetTheDeviceDidNotHandOutIsRefusedOnce)
         void resize(int, int) override
         {}
 
-        void present() override
+        vn::graphics::PresentOutcome present() override
         {
             ++presents;
+            return vn::graphics::PresentOutcome::Presented;
         }
 
         int presents = 0;

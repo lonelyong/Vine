@@ -64,10 +64,18 @@
 2. **补默认后端**：`useDefaultBackend()` 只在引擎没有后端时取注册表第一个；晚注册的后端仍会被下一次 attach 捡起。
 3. **没有后端** ⇒ `failAttach("no render backend is registered")`，状态 `Failed`。
 4. **句柄空 / 尺寸退化** ⇒ 记一行日志、保持 `Pending`，等 show/resize/下一次 `activate()`；控件不排定时器。
-5. **attach**：`setWindowHandle` → 设备/会话/管线 `initialize()` → `resize(w,h)` + 把尺寸交给表面
-   → `renderFrame()`（这一帧付掉 pass 图 / program slot / 编译，状态进 `Presenting`）。
+5. **先等帧**：`engine->waitForFrame()` —— 下面那几个动词改的是**引擎线程正在记录的会话**（target、交换链、
+   设备），所以 attach 必须发生在帧与帧之间（`.ai/design/graphics-threading.md` §2.12）。inline 模式下这是
+   no-op；线程化时它等的通常是自己上一帧，代价是一次"已经做完"的检查。
+6. **attach**：`setWindowHandle` / `createSurfaceTarget` → 设备/会话/管线 `initialize()` → `resize(w,h)` + 把尺寸
+   交给表面 → `renderFrame()`（这一帧付掉 pass 图 / program slot / 编译，状态进 `Presenting`）。
 
 attach 不要求表面可见；只有 present 才要求窗口在屏上。平台不同意时 attach 失败，控件回退到“先显示表面再 attach”。
+
+**帧中丢面（`Lost`）走同一条 attach**：`renderFrame()` 在排帧前读 `engine->presentRecord()`，若它说的是
+`PresentOutcome::Lost`，就把状态打回 `Pending` 并重新 `init()`，这一拍不排帧 —— 一张没到表面的图不是"再画一次"
+能解决的，它要的是新的 target 与重建的交换链。线程化时这个答案晚一帧到，所以它读的是"上一条被答完的帧"，不是
+刚交出去的那一帧。
 
 ## 3. 功能点
 

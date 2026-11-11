@@ -84,8 +84,12 @@ class VN_GRAPHICS_API RenderFrameExecutor {
      *                   submitted by the time this call returns (an off-screen frame, see the class contract). A
      *                   device with a surface of its own does not take that surface by default - a caller that wants
      *                   to draw into it names the target the device handed out (RenderDevice::createSurfaceTarget).
+     * @return What became of the frame's PICTURE (see PresentOutcome): #Presented when the target took it, #Skipped
+     *         when the frame named no target (or the device presents nothing) - which is the off-screen form, not a
+     *         failure - and #Lost when a surface was named and the picture did not reach it. A host acts on #Lost (it
+     *         re-attaches); a caller that does not look at it is saying the frame's picture is not its business.
      */
-    virtual void executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) = 0;
+    virtual PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) = 0;
 
     /** @brief Gets this executor's own report about its frames (see FrameReport).
      *

@@ -3470,12 +3470,15 @@ class MockBackend : public RenderBackend {
             last_surface_height = height;
         }
 
-        void present() override
+        PresentOutcome present() override
         {
             ++present_calls;
+            return present_outcome;
         }
 
       public:
+        /// What this target answers (a case that wants a lost frame makes it answer Lost).
+        PresentOutcome     present_outcome      = PresentOutcome::Presented;
         int                present_calls       = 0;
         int                resize_calls        = 0;
         int                last_surface_width  = 0;
@@ -3636,7 +3639,7 @@ class MockBackend : public RenderBackend {
     /// clear / state it stated, and each of its draws with the lights that belong to it). Every witness below is
     /// filled from HERE, which is what makes the other cases' assertions ("the backend was handed this clear",
     /// "this camera drew") read as "the engine's frame value said so".
-    void executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+    PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
     {
         ++frames_executed;
         present_targets.push_back(present_to);
@@ -3657,9 +3660,7 @@ class MockBackend : public RenderBackend {
         }
         // THE FRAME'S TAIL is this executor's (see RenderFrameExecutor::executeFrame): it presents through the target
         // the frame named, so a case's `present_calls` witness stays exactly one per frame the engine ran.
-        if (present_to != nullptr) {
-            present_to->present();
-        }
+        return present_to != nullptr ? present_to->present() : PresentOutcome::Skipped;
     }
 
   private:
@@ -11217,6 +11218,52 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
     EXPECT_EQ(engine->contentCollectCount() - walks_before, 4u) << "an edited frame collects again";
     EXPECT_EQ(engine->contentCollectReuseCount() - reuses_before, 5u)
         << "an edit drops every entry, so only the pass sharing a view with a walk in the same frame reuses one";
+}
+
+TEST(RenderEngineTest, TheFramesPictureOutcomeIsAFactOfTheFrame)
+{
+    // WHAT BECAME OF THE PICTURE is a value about ONE frame (see PresentOutcome): a host acts on Lost (it re-attaches)
+    // and must not read a device-wide counter to work out whether the frame it asked for reached the window. Skipped
+    // is not a failure: it is a frame that named no target at all (a device that presents nothing, an offline bake).
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(camera);
+    engine->addPass(pass, scene, 0);
+
+    EXPECT_EQ(engine->presentRecord().frame, 0U) << "no frame has been answered yet";
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_EQ(engine->presentRecord().frame, engine->frameNumber()) << "the answer belongs to the frame that produced it";
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Presented);
+
+    // The surface could not take the next frame (the window went away under it): the frame is over and the picture is
+    // lost - which is the one outcome a host has to act on.
+    backend->surface_half.present_outcome = PresentOutcome::Lost;
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Lost);
+    EXPECT_EQ(engine->presentRecord().frame, engine->frameNumber());
+
+    // And a frame that named NO target presents nowhere by design: Skipped, not Lost.
+    backend->surface_half.present_outcome = PresentOutcome::Presented;
+    MockBackend* const windowless        = new MockBackend();
+    windowless->has_surface              = false;
+    auto               offline_engine    = intrusive_ptr<RenderEngine>(new RenderEngine());
+    offline_engine->setDevice(intrusive_ptr<MockBackend>(windowless));
+    ASSERT_TRUE(offline_engine->initialize());
+    auto offline_pass = intrusive_ptr<RenderPass>(new RenderPass());
+    offline_pass->setCamera(camera);
+    offline_engine->addPass(offline_pass, scene, 0);
+    ASSERT_EQ(offline_engine->frame(), FrameOutcome::Ran);
+    EXPECT_EQ(offline_engine->presentRecord().outcome, PresentOutcome::Skipped)
+        << "a device that presents nothing is a first-class state, not a lost frame";
 }
 
 TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLanded)

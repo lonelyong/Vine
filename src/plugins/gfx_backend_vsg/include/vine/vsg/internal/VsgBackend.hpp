@@ -164,7 +164,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      *
      * @param index Window index (see createSurfaceTarget); an out-of-range one does nothing.
      */
-    void presentWindow(std::size_t index);
+    vn::graphics::PresentOutcome presentWindow(std::size_t index);
 
     /** @brief Announces window @p index's surface size: what a target object calls (see PresentTarget::resize).
      *
@@ -200,7 +200,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * @param frame      The frame to run, in run order.
      * @param present_to Target the frame's default framebuffer resolves to, or nullptr to present nowhere.
      */
-    virtual void executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to = nullptr) override;
+    virtual vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame,
+                                                      vn::graphics::PresentTarget*  present_to = nullptr) override;
 
     /** @brief Answers what this backend can do: off-screen targets, and presentation unless created to present nothing.
      *
@@ -348,7 +349,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * @param offscreen The off-screen session that owns the frame, or null when the frame belongs to a window
      *                  (exactly one of the two is non-null).
      */
-    void commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen);
+    vn::graphics::PresentOutcome commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen);
 
     /** @brief Opens a pass' scope under the pass' own number (see api/PassRegistry). */
     void openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass);

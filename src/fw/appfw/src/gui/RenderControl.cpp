@@ -95,6 +95,21 @@ vn::graphics::RenderEngine* RenderControl::engine() const
     return dptr()->surface->engine();
 }
 
+void RenderControl::setFrameThreading(vn::graphics::FrameThreading mode)
+{
+    // The engine owns the decision (and the thread); this is the control's spelling of it, so a host that owns a
+    // control does not have to reach for engine()->... to ask for the one thing that changes how frames are driven.
+    if (vn::graphics::RenderEngine* const engine = this->engine(); engine != nullptr) {
+        engine->setFrameThreading(mode);
+    }
+}
+
+vn::graphics::FrameThreading RenderControl::frameThreading() const
+{
+    const vn::graphics::RenderEngine* const engine = this->engine();
+    return engine != nullptr ? engine->frameThreading() : vn::graphics::FrameThreading::Inline;
+}
+
 vn::graphics::SceneView* RenderControl::view() const
 {
     return dptr()->surface->view();

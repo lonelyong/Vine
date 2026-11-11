@@ -335,9 +335,9 @@ class WindowFacade : public vn::graphics::WindowPresentTarget {
         device_->resizeWindow(index_, width, height);
     }
 
-    void present() override
+    vn::graphics::PresentOutcome present() override
     {
-        device_->presentWindow(index_);
+        return device_->presentWindow(index_);
     }
 
   private:
@@ -794,7 +794,8 @@ void VsgBackend::closeFrameBooks()
     d->frame = &d->compiler.compile(d->recorder.description(), core::FrameFacts{ d->facts });
 }
 
-void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
+vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
+                                                       vn::graphics::PresentTarget*               present_to)
 {
     // WHAT THE LAST FRAME'S UPLOADS NO LONGER NEED, BEFORE THIS ONE RECORDS. A staging buffer is the source of one
     // vkCmdCopyBuffer; the moment that copy's fence signals, the bytes are dead weight - and vsg keeps them for the life
@@ -827,7 +828,7 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::g
                                                       "nothing was recorded (a device serves the windows it created, "
                                                       "see createSurfaceTarget)"));
             }
-            return;
+            return vn::graphics::PresentOutcome::Lost; // a surface was named and nothing could reach it
         }
     }
 
@@ -836,7 +837,9 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::g
         offscreen = ensureOffscreenSession();
         if (offscreen == nullptr) {
             reportUnserved(kUnservedNoSession);
-            return; // nothing runs: the device the frame would be submitted on is not up
+            // Nothing runs: the device the frame would be submitted on is not up, and nothing was going to be
+            // presented either way.
+            return vn::graphics::PresentOutcome::Skipped;
         }
         // NO WINDOW IN THE FRAME, SO NONE IN THE EXECUTOR: a pass that names no target has nowhere to draw, and
         // the plan it is compiled against says so (see closeFrameBooks).
@@ -850,7 +853,9 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::g
         api::Session& session = sessionAt(index);
         if (!session.initialized()) {
             reportUnserved(kUnservedNoSession);
-            return; // nothing runs and nothing presents: the session that would record it is not up
+            // Nothing runs and nothing presents: the session that would record it is not up, so the picture did not
+            // reach the surface the frame named.
+            return vn::graphics::PresentOutcome::Lost;
         }
         d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
     }
@@ -906,29 +911,38 @@ void VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::g
     // the one making the call - and in this backend that call is what commits the frame and shows it. WITHOUT a
     // window there is nothing to present, so the off-screen session commits it inline.
     if (offscreen != nullptr) {
-        commitFrameThrough(nullptr, offscreen);
-        return;
+        return commitFrameThrough(nullptr, offscreen);
     }
-    present_to->present();
+    return present_to != nullptr ? present_to->present() : vn::graphics::PresentOutcome::Skipped;
 }
 
-void VsgBackend::presentWindow(std::size_t index)
+vn::graphics::PresentOutcome VsgBackend::presentWindow(std::size_t index)
 {
     if (index >= d->windows.size()) {
-        return;
+        return vn::graphics::PresentOutcome::Skipped;
     }
     api::Session& session = sessionAt(index);
     if (d->frame == nullptr || !session.initialized()) {
-        return; // no frame is open (executeFrame closed none, and says why), or the session is down
+        // No frame is open (executeFrame closed none, and says why), or the session is down: there is a surface and
+        // nothing to hand it, which is a loss rather than "present nothing" - the host re-attaches on it.
+        return vn::graphics::PresentOutcome::Lost;
     }
-    commitFrameThrough(&session, nullptr);
+    return commitFrameThrough(&session, nullptr);
 }
 
-void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen)
+vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen)
 {
     if (d->frame == nullptr || (window == nullptr && offscreen == nullptr)) {
-        return;
+        return vn::graphics::PresentOutcome::Skipped;
     }
+    // A WINDOW PRESENTS, AN OFF-SCREEN SESSION DOES NOT: both commit, and the answer says which happened, so the
+    // executor can report "the picture reached a window" apart from "it went nowhere by design".
+    const auto settled = [window](bool committed) {
+        if (!committed) {
+            return vn::graphics::PresentOutcome::Lost;
+        }
+        return window != nullptr ? vn::graphics::PresentOutcome::Presented : vn::graphics::PresentOutcome::Skipped;
+    };
 
     // The frame's own clock and park queue: the window's, or the off-screen session's - both are the DEVICE's when
     // the backend gave them one (see core::DeviceClock).
@@ -951,20 +965,17 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
         // The sweep runs on this path too: a frame that draws nothing is still a frame in which the host may have
         // dropped something, and the sweep's place is the frame's - not "the frames that drew".
         sweepAbandonedContent();
-        if (window != nullptr) {
-            (void)d->executor.commit(*d->frame, *window);
-        }
-        else {
-            (void)d->executor.commit(*d->frame, *offscreen);
-        }
+        const bool committed = window != nullptr ? d->executor.commit(*d->frame, *window)
+                                                 : d->executor.commit(*d->frame, *offscreen);
         d->frame = nullptr;
-        return;
+        return settled(committed);
     }
 
     const ::vsg::ref_ptr<::vsg::CommandGraph> graph = window != nullptr ? detail::SessionContentAccess::makeFrameGraph(*window) : offscreen->makeFrameGraph();
     if (graph == nullptr) {
+        // The frame's graph could not be built, so none of its picture was ever going to reach the surface.
         d->frame = nullptr;
-        return;
+        return vn::graphics::PresentOutcome::Lost;
     }
 
     // The frame drive's own order, once (see VsgExecutor): what the plan answered for its targets becomes real, the
@@ -999,15 +1010,13 @@ void VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession*
     sweepAbandonedContent();
     const bool assigned = window != nullptr ? detail::SessionContentAccess::assignFrameGraphs(*window, ::vsg::CommandGraphs{ graph })
                                             : offscreen->assignFrameGraphs(::vsg::CommandGraphs{ graph });
+    bool committed = false;
     if (assigned) {
-        if (window != nullptr) {
-            (void)d->executor.commit(*d->frame, *window); // it reports its own failure and marks what it wrote
-        }
-        else {
-            (void)d->executor.commit(*d->frame, *offscreen);
-        }
+        // The executor reports its own failure and marks what it wrote; the answer is whether the picture got out.
+        committed = window != nullptr ? d->executor.commit(*d->frame, *window) : d->executor.commit(*d->frame, *offscreen);
     }
     d->frame = nullptr;
+    return settled(committed);
 }
 
 bool VsgBackend::releaseFinishedUploadStaging()

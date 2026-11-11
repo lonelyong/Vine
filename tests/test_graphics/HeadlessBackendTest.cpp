@@ -66,7 +66,7 @@ class HeadlessBackend : public RenderBackend {
         return RenderDevice::createSurfaceTarget(native_handle, why);
     }
 
-    void executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+    PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
@@ -79,9 +79,7 @@ class HeadlessBackend : public RenderBackend {
         }
         // The frame's tail, exactly as the contract states it (RenderFrameExecutor::executeFrame): the executor
         // presents through the target the frame named, and a frame that named none presents nowhere.
-        if (present_to != nullptr) {
-            present_to->present();
-        }
+        return present_to != nullptr ? present_to->present() : PresentOutcome::Skipped;
     }
 
     void setRenderTarget(RenderTarget*) override
@@ -171,14 +169,12 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget {
         return this;
     }
 
-    void executeFrame(const FrameDescription&, PresentTarget* present_to = nullptr) override
+    PresentOutcome executeFrame(const FrameDescription&, PresentTarget* present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
         // The frame's tail: the executor presents through the target the frame named (see RenderFrameExecutor).
-        if (present_to != nullptr) {
-            present_to->present();
-        }
+        return present_to != nullptr ? present_to->present() : PresentOutcome::Skipped;
     }
 
     void setRenderTarget(RenderTarget*) override
@@ -207,9 +203,10 @@ class WindowedBackend : public RenderBackend, public WindowPresentTarget {
         last_height = height;
     }
 
-    void present() override
+    PresentOutcome present() override
     {
         ++presents;
+        return PresentOutcome::Presented;
     }
 
     int                         frames           = 0;
@@ -260,9 +257,10 @@ class FleetBackend : public RenderBackend {
             height_ = height;
         }
 
-        void present() override
+        PresentOutcome present() override
         {
             ++presents;
+            return PresentOutcome::Presented;
         }
 
         int presents = 0;
@@ -305,14 +303,12 @@ class FleetBackend : public RenderBackend {
         return targets.back().get();
     }
 
-    void executeFrame(const FrameDescription&, PresentTarget* present_to = nullptr) override
+    PresentOutcome executeFrame(const FrameDescription&, PresentTarget* present_to = nullptr) override
     {
         ++frames;
         present_targets.push_back(present_to);
         // One frame, one present - through THAT frame's target (see RenderFrameExecutor::executeFrame).
-        if (present_to != nullptr) {
-            present_to->present();
-        }
+        return present_to != nullptr ? present_to->present() : PresentOutcome::Skipped;
     }
 
     void setRenderTarget(RenderTarget*) override
@@ -400,9 +396,10 @@ TEST(HeadlessBackendTest, APresenterThatIsNotAWindowIsNamedByTheFrameItsHostDriv
             ++resizes;
         }
 
-        void present() override
+        PresentOutcome present() override
         {
             ++presents;
+            return PresentOutcome::Presented;
         }
 
         int resizes  = 0;

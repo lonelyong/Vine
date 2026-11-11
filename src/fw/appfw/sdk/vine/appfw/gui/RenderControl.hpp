@@ -8,6 +8,8 @@
 
 #include <vine/async/Task.hpp>
 
+#include <vine/graphics/RenderEngine.hpp>
+
 #include "Control.hpp"
 #include "ViewerOptions.hpp"
 
@@ -103,6 +105,26 @@ class VN_APPFW_API RenderControl : public Control {
      * @return The engine, or nullptr when creation failed.
      */
     vn::graphics::RenderEngine* engine() const;
+
+    /** @brief Chooses where the engine half of each frame runs (see vn::graphics::FrameThreading).
+     *
+     * @details
+     * - Inline (the default) keeps the whole frame on the GUI thread, which is what every existing host does and what
+     *   needs no thread at all. EngineThread moves the expansion and the execute/present call to a thread this
+     *   control's engine owns, so a frame's O(drawables) work and the device wait stop costing GUI-thread time - and
+     *   the picture follows the content one frame later (a frame is submitted, not answered, when frame() returns).
+     * - THIS CONTROL'S OWN PATHS ALREADY HONOUR EITHER MODE: an attach waits for the frame in flight before it
+     *   touches the device or the surface (the device's verbs need it quiet), and a picture the window refused is
+     *   acted on at the head of the next frame (the surface goes back to Pending and re-attaches).
+     * - A lifetime decision, made once: switching starts or joins the engine's thread, so call it between frames (an
+     *   event handler is fine; a `before_draw` hook is not).
+     *
+     * @param mode Where to run the engine half of each frame.
+     */
+    void setFrameThreading(vn::graphics::FrameThreading mode);
+
+    /** @brief Gets where the engine half of each frame runs (inline until setFrameThreading says otherwise). */
+    [[nodiscard]] vn::graphics::FrameThreading frameThreading() const;
 
     /** @brief Gets the interactive primary view created by this control.
      *
