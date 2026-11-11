@@ -12,7 +12,9 @@ SceneRows::Version SceneRows::version(const Scene& scene)
     // Ensuring the rows is what makes the answer CURRENT: the build is keyed by the epoch, and the refresh is what
     // notices a box that moved under it.
     (void)scene.ensureRows();
-    return Version{ scene.bake_epoch_, scene.box_generation_ };
+    // THE PUBLISHED pair, not the scene's own: inside an edit batch these stay where they were, so a frame that lands
+    // mid-batch publishes nothing (see Scene::beginEdit / ensureRows).
+    return Version{ scene.published_epoch_, scene.published_boxes_ };
 }
 
 void SceneRows::publish(const Scene& scene, SceneBake& out)

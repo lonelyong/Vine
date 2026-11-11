@@ -11223,6 +11223,60 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
         << "an edit drops every entry, so only the pass sharing a view with a walk in the same frame reuses one";
 }
 
+TEST(RenderEngineTest, AFrameLandedInsideAnEditBatchDrawsTheStateTheBatchStartedFrom)
+{
+    // THE ROBOT CASE (design C18): a configuration is seventy poses, and a frame that drew half of them would be a WRONG
+    // picture. So the batch brackets the frames: every frame asked for inside it draws what the batch started from, and
+    // the whole thing lands in the frame after it - as one publication, because the version a mirror compares is held
+    // still until then.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    auto joint = makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"joint");
+    root->addChild(joint);
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(camera);
+    engine->addPass(pass, scene, 0);
+
+    const auto joint_x = [&engine]() {
+        // Held BY NAME: `*collect(...)` inside a range-for would be a reference into a list whose shared_ptr is already
+        // gone (design 6.11), and the picture is read here on every frame.
+        const auto& draws = engine->frameDescription().passes.at(0).draw;
+        if (!draws.has_value() || draws->draws.empty() || draws->draws[0].commands == nullptr) {
+            return -1000.0;
+        }
+        const std::shared_ptr<const std::vector<RenderCommand>> list = draws->draws[0].commands;
+        return list->empty() ? -1000.0 : (*list)[0].model_matrix.element(0, 3);
+    };
+
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_NEAR(joint_x(), 0.0, 1e-9);
+
+    scene->beginEdit();
+    joint->setMatrix(vn::math::translate(0.4, 0.0, -3.0)); // half a configuration
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_NEAR(joint_x(), 0.0, 1e-9) << "a frame inside the batch draws the state the batch started from";
+
+    joint->setMatrix(vn::math::translate(0.8, 0.0, -3.0)); // the other half
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_NEAR(joint_x(), 0.0, 1e-9) << "still: nothing of the batch has been published";
+
+    scene->endEdit();
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_NEAR(joint_x(), 0.8, 1e-9) << "the whole batch lands in ONE frame";
+
+    // AND EVERYTHING IS ORDINARY AGAIN: one edit, one frame, visible at once.
+    joint->setMatrix(vn::math::translate(0.2, 0.0, -3.0));
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_NEAR(joint_x(), 0.2, 1e-9);
+}
+
 TEST(RenderEngineTest, TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith)
 {
     // THE ENGINE HANDS OUT THE PICTURE'S CAMERA (design N17): the pass that presents the area is the picture, so its

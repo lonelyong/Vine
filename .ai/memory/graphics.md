@@ -19,6 +19,9 @@
   （`SurfaceWindow` 开局就 `setFrameThreading(EngineThread)`），`RenderControl::setFrameThreading(Inline)` 是回退口。
 - 线程化后的可感知代价（别当 bug 报）：画面比内容**晚一帧**（N15）；`frame()` 每次最多等**一个引擎半段**（含
   acquire/present），所以 UI 被渲染节拍节流——"不阻塞"指的是不付展开与整帧，不是不被节流。
+- **编辑批次**：`Scene::beginEdit()` / `endEdit()`（或 `Scene::Edit` 作用域）把镜像比较的版本按住 —— 批内帧不发布、
+  画批次开始时的状态，整批在之后那一帧一次落地（C18/R17，机器人关节状态的硬要求）。查询（拾取、`boundingBox`、
+  直接采集）在批内仍看当前内容；`version()` 返回的是 `published_epoch_/published_boxes_`，不是 `bake_epoch_`。
 - **指针查询按"用户看到的那一帧"算**（N17）：`RenderEngine::presentedCamera()` 发布被答完那一帧的相机快照，
   `SceneView::setPresentedCamera` 交给 manipulator，`OrbitCameraManipulator::makeScreenRay` 优先用它；没有发布值就退回
   当前相机（静止画面 / inline）。一个像素 → 世界射线是 `CameraSnapshot::screenRay`（两端反投影，透视正交同一套）。

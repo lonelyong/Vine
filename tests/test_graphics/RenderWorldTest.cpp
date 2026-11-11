@@ -472,6 +472,70 @@ TEST(ContentMirrorTest, AnAttachDoesNotInheritThePrecedingSiblingsSubtree)
     EXPECT_EQ((*actual)[0].geometry.get(), added_face.get()) << "the block the attach placed is still drawn";
 }
 
+TEST(ContentMirrorTest, AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds)
+{
+    // WORK THAT IS ONLY MEANINGFUL AS A WHOLE: a robot's joint state, a rig's pose. A frame that lands in the middle of
+    // it must draw the state the batch STARTED from - half a configuration is a wrong picture, not an unfinished one
+    // (design C18). The mechanism is one version, held still: inside a batch a publish says "nothing changed", and the
+    // outermost endEdit() lets the whole batch land as ONE publication.
+    auto root = intrusive_ptr<Group>(new Group());
+    auto arm  = placed(0.0, 0.0, 0.0);
+    arm->addChild(triangle());
+    root->addChild(arm);
+
+    Scene scene;
+    scene.setRoot(root);
+
+    ContentMirror     mirror{ scene };
+    const CollectView view = clipBoxView();
+    ASSERT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.drain(), 1U);
+    const std::uint64_t publishes_before = mirror.publishCount();
+
+    const auto reference = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    ASSERT_NE(reference, nullptr);
+    ASSERT_EQ(reference->size(), 1U);
+    const double started_at = (*reference)[0].model_matrix.element(0, 3);
+
+    scene.beginEdit();
+    arm->setMatrix(vn::math::translate(0.25, 0.0, 0.0)); // half of the configuration
+    EXPECT_FALSE(mirror.publish(scene)) << "mid-batch there is nothing to publish: the version is held";
+    const auto midway = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    ASSERT_NE(midway, nullptr);
+    ASSERT_EQ(midway->size(), 1U);
+    EXPECT_DOUBLE_EQ((*midway)[0].model_matrix.element(0, 3), started_at)
+        << "and the mirror still draws the state the batch started from";
+
+    arm->setMatrix(vn::math::translate(0.5, 0.0, 0.0)); // the other half
+    EXPECT_FALSE(mirror.publish(scene));
+
+    scene.endEdit();
+    ASSERT_TRUE(mirror.publish(scene)) << "the whole batch is one change";
+    EXPECT_EQ(mirror.publishCount(), publishes_before + 1U) << "one publication, not one per edit";
+    EXPECT_EQ(mirror.drain(), 1U);
+    const auto whole = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
+    ASSERT_NE(whole, nullptr);
+    ASSERT_EQ(whole->size(), 1U);
+    EXPECT_DOUBLE_EQ((*whole)[0].model_matrix.element(0, 3), 0.5) << "and it is the batch's END state";
+    expectSameDrawList(*whole, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+
+    // NESTED BATCHES: only the outermost release publishes, so a helper that opens its own composes with its caller.
+    scene.beginEdit();
+    {
+        Scene::Edit inner(scene);
+        arm->setMatrix(vn::math::translate(0.6, 0.0, 0.0));
+    }
+    EXPECT_FALSE(mirror.publish(scene)) << "the caller's batch is still open";
+    scene.endEdit();
+    EXPECT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.publishCount(), publishes_before + 2U);
+
+    // AND AFTER A BATCH EVERYTHING IS ORDINARY AGAIN: one edit, one publication.
+    arm->setMatrix(vn::math::translate(0.7, 0.0, 0.0));
+    EXPECT_TRUE(mirror.publish(scene));
+    EXPECT_EQ(mirror.publishCount(), publishes_before + 3U);
+}
+
 TEST(ContentMirrorTest, ARefusedPublishIsRetriedInsteadOfBeingLost)
 {
     // The channel is bounded, so a publish can be refused. Because the version is only recorded on SUCCESS, the next

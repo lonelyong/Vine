@@ -410,7 +410,31 @@ const detail::SceneBake& Scene::ensureRows() const
     if (detail::refreshBoxes(*content_bake_) > 0U) {
         ++box_generation_;
     }
+    // WHAT A MIRROR IS TOLD. The two numbers above are this scene's own (a query wants them current); the pair below is
+    // the version a mirror compares, and it only advances OUTSIDE an edit batch (see beginEdit): a frame that lands in
+    // the middle of one publishes nothing, so the mirror keeps drawing the state the batch started from, and the whole
+    // batch becomes ONE publication in the frame after the outermost endEdit.
+    if (edit_depth_ == 0) {
+        published_epoch_ = bake_epoch_;
+        published_boxes_ = box_generation_;
+    }
     return *content_bake_;
+}
+
+void Scene::beginEdit()
+{
+    // A COUNTER, not a flag: a helper that opens its own batch must compose with the caller's (see the declaration).
+    ++edit_depth_;
+}
+
+void Scene::endEdit()
+{
+    if (edit_depth_ > 0) {
+        --edit_depth_;
+    }
+    // The version is NOT forced up here: nothing has been collected yet, so `bake_epoch_` may be behind the graph. The
+    // next collection catches the pair up (see ensureRows) - and that collection is the one a frame's publication
+    // reads, which is exactly where the whole batch has to be visible.
 }
 
 void Scene::setContentFrame(std::uint64_t frame)

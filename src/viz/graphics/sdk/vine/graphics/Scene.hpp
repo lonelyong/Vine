@@ -277,6 +277,60 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      */
     void invalidateContent();
 
+    /** @brief Opens an EDIT BATCH: every edit until endEdit() is published to the mirror as one change.
+     *
+     * @details
+     * - WHAT A BATCH IS FOR: work that is only meaningful as a whole. A robot's joint state is the case it exists for -
+     *   seventy poses that describe one configuration - and a frame that rendered half of them would be a WRONG picture,
+     *   not an unfinished one. Inside a batch the scene's rows keep being as current as any query needs them to be, but
+     *   the version a MIRROR compares stays where it was: a frame that lands in the middle publishes nothing and draws
+     *   the state the batch started from, and the whole batch lands in the frame that follows endEdit() as ONE
+     *   publication (one `RowsReplaced`, not one per edit).
+     * - NESTED BATCHES COUNT: only the outermost endEdit() releases the version, so a helper that opens its own batch
+     *   composes with the caller's.
+     * - IT COVERS EXACTLY WHAT THE RENDER SIDE SEES. Queries stay live - collecting, picking, `boundingBox()`,
+     *   `fitToScreen()` answer about the content as it is now, batch or not - and the scene's own memo keeps working.
+     *   What is held back is the version the mirror's copy is keyed by.
+     * - Nothing here is a transaction: a batch cannot fail and it does not roll back. It bounds WHAT A FRAME CAN SEE,
+     *   which is the guarantee a picture needs.
+     *
+     * @warning One thread: the scene is the content thread's (see `.ai/design/graphics-threading.md`), and a batch is
+     *          a bracket in that thread's own program order - end it before the frame that must show the batch.
+     *
+     * @note Pair it with endEdit(). `Scene::Edit` is the scoped spelling, when an early return is possible.
+     */
+    void beginEdit();
+
+    /** @brief Closes an edit batch (see beginEdit()); the outermost one lets the next frame publish the whole thing. */
+    void endEdit();
+
+    /** @brief A scoped edit batch: `{ Scene::Edit batch(scene); ... }` */
+    class Edit
+    {
+      public:
+        /** @brief Opens the batch on @p scene.
+         *
+         * @param scene The scene to bracket (borrowed: it must outlive this guard).
+         */
+        explicit Edit(Scene& scene)
+          : scene_(scene)
+        {
+            scene_.beginEdit();
+        }
+
+        /** @brief Closes it, however the scope was left. */
+        ~Edit()
+        {
+            scene_.endEdit();
+        }
+
+        Edit(const Edit&)            = delete;
+        Edit& operator=(const Edit&) = delete;
+
+      private:
+        Scene& scene_;
+    };
+
     /** @brief Gets how many times the tree was walked to collect commands.
      *
      * @return The walk count since construction.
@@ -359,6 +413,13 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     // How many times a re-read box actually moved (see ensureRows): a byte edit announces itself on a buffer, not on
     // the graph, so it does not move `bake_epoch_` - and a reader that mirrors these rows needs a version that does.
     mutable std::uint64_t                box_generation_ = 0;
+    // HOW DEEP THE EDIT BATCH IS (see beginEdit), and the version a MIRROR compares (`SceneRows::version`). Inside a
+    // batch the published pair stays where it was, so a frame that lands mid-batch publishes nothing; the next
+    // collection after the outermost endEdit() catches it up in one step - which is also the only moment the whole
+    // batch is read.
+    int                                   edit_depth_      = 0;
+    mutable std::uint64_t                 published_epoch_ = 0;
+    mutable std::uint64_t                 published_boxes_ = 0;
 };
 
 using ScenePtr = intrusive_ptr<Scene>;

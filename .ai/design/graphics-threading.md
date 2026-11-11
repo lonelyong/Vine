@@ -570,6 +570,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | C15 | 同一帧的多次变更按脏集合合并，每条子树与每条祖先链只重算一次。 |
 | C16 | 一帧的两个半段各归一条线程：内容半段（钩子 / publish / describe）在内容线程，引擎半段（drain / bind / expand / execute / present）在引擎线程；帧值两份轮换，每侧一帧在飞。 |
 | C17 | 表面事件只在帧首应用一次；交换链只在引擎线程重建；UI 侧不写任何引擎侧状态。 |
+| C18 | 批内版本不推进：`Scene::beginEdit()` 之后、最外层 `endEdit()` 之前，镜像比较的版本停在原处 —— 落进批次中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布（一条 `RowsReplaced`）落地。 |
 
 ### 5.2 要求（R#）
 
@@ -591,6 +592,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | R14 | delta 通道定容、payload trivially copyable、稳态零堆分配。 |
 | R15 | 机器人 28~70 关节每帧变化时，引擎侧重算量只与链路成正比，且每帧零分配。 |
 | R16 | 线程化之后 `frame()` 只花 O(passes)（构建 + 交出）加一次握手；expand 与 present 不在调用者的关键路径上，等待必须显式（`waitForFrame`）。 |
+| R17 | 一次仿真步 / 一次装配 = **一个批次 = 一次发布**（机器人 28~70 关节、姿态），不是一关节一条 delta，也不是一关节一次整表。 |
 
 ### 5.3 不变量（N#）
 
@@ -913,6 +915,14 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   `CameraSnapshotTest.APointerQueryAimsWithThePictureNotTheLiveCamera`（相机移开后按下，锚点落在用户那张画面的射线上；
   换一张画面给另一个答案）、`RenderEngineTest.TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith`（帧被答完才发布，
   相机移动后跟下一帧）。
+- **编辑批次（C18 / R17，2026-11-11）**：`Scene::beginEdit()` / `endEdit()`（+ `Scene::Edit` 作用域）把"一个版本"
+  按住 —— 批内行表照常对查询最新（拾取、`boundingBox`、直接采集都看当前内容），但**镜像比较的版本**停在原处。
+  于是落进批次中间的帧什么都不发布、画批次开始时的状态；整批在最外层 `endEdit()` 之后那一帧一次落地。
+  这是机器人关节状态的硬要求（半个配置不是"未完成"，是错的），也顺带把 N 次整表发布压成 1 次。验收：
+  `ContentMirrorTest.AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds`（批中 publish 返回 false、
+  镜像仍是旧图、`publishCount` 只 +1、嵌套批次只在最外层释放、批次之后恢复"一改一发"）、
+  `RenderEngineTest.AFrameLandedInsideAnEditBatchDrawsTheStateTheBatchStartedFrom`（帧在批次中间两次都画旧状态，
+  `endEdit` 之后那一帧到齐）。
 - **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`
