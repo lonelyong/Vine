@@ -294,9 +294,11 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
   `resize()` 记下宽度供**下一帧构建时**读（布局是内容半段的事），并投一条
   `SurfaceEvent{ bound(handle, display) | extent(w, h) | visible(bool) }`；引擎半段**帧首应用一次**
   （与 C8 同一条规则：一帧一次），在那里重建交换链、重派生 presenting view 的几何。
-- **一帧两个半段，每侧一帧在飞**：内容线程构建帧 N+1 时，引擎线程正在跑帧 N，**所以画面比内容晚一帧**（N15）。
-  这是 P3 唯一付的语义代价，换来的是 UI 侧调用只花 O(passes)：不 expand（O(drawables)）、不 present
-  （可能等垂直同步）。帧值因此要两份轮换（今天只有一份 `frame_value_`），帧号随握手一起走。
+- **一帧两个半段，每侧一帧在飞**（已落地）：内容线程构建帧 N+1 时，引擎线程正在跑帧 N，**所以画面比内容晚一帧**
+  （N15）。这是 P3 唯一付的语义代价，换来的是 UI 侧调用只花 O(passes)：不 expand（O(drawables)）、不 present
+  （可能等垂直同步）。帧值因此有两份轮换（`frame_slots_`），帧号随帧走（`detail::EngineFrame::number`），
+  `frame()` 在构建前**只等上一帧的引擎半段**（`waitIdle`，通常已完成），并把 `frame_completed_` 作为
+  `waitForFrame` 的答案。
 - **"等到这一帧"是显式动作**（`G4`）：`FrameRunner::run` 今天"交出去并等它跑完"，那语义保留成
   `waitForFrame(frame_id)` —— 截图、resize 稳定后、退出、测量用；默认路径 `frame()` 只保证"构建完成并交出去了"。
 - **完成通知是报告，不是回调**（`C10` / `G10`）：present 的结局（上屏 / 丢弃 / 重建后上屏 + 原因）写进那一帧的
@@ -512,9 +514,10 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | `RenderWorker::start(mode)` | `inline` / `threaded`；握手点 | 之后镜像只靠 delta 前进 |
 | `post(Delta)` | 任意线程、不阻塞、帧首一次 drain | 值 + 保命句柄 |
 | `handoff(Owned…)` | 所有权转移，过带边界队列 | 新内容/整帧 |
-| `submitFrame(frame)` | 把构建好的帧值交给引擎半段，**不等待**（P3） | 每侧一帧在飞 |
-| `waitForFrame(id)` | 等到第 `id` 帧的引擎半段结束（含 present），有界超时 | 截图/测量/退出 |
-| `postSurface(SurfaceEvent)` | 表面事件，只在帧首应用 | UI 只发值（C17） |
+| `setFrameThreading(Inline/EngineThread)` | 引擎半段跑在哪；`frame()` 于是返回 `Ran` 或 `Submitted` | 默认 Inline（已落地） |
+| `waitForFrame(id[, timeout])` | 等到第 `id` 帧的引擎半段结束（含 present），可带超时 | 截图/测量/退出（已落地） |
+| `frameNumber()` | 最后构建的那一帧的 id | 与 `waitForFrame` 配对 |
+| `postSurface(SurfaceEvent)` | 表面事件，只在帧首应用 | UI 只发值（C17，未落地） |
 | `framePlan()` | 最近一份已发布报告：帧号 + 结局 + 各 pass `record_micros` | 统计/校验和 |
 | `stop()` | 有界 join，超时报错 | 引擎自拆 |
 
@@ -561,7 +564,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | R5 | 只换句柄的编辑也走同一条描述 delta。 |
 | R6 | `fitToScreen` 留在内容侧。 |
 | R7 | 流式写法不新增机制（双 buffer 轮换 或 `edit()`+revision）。 |
-| R8 | UI 调用不阻塞等帧。 |
+| R8 | UI 调用不阻塞等 present；唯一会等的是"上一帧的引擎半段"（每侧一帧在飞，通常已完成），需要"这一帧上屏了"必须显式 `waitForFrame`。 |
 | R9 | 交换链重建只在帧首、只随尺寸变化；设备拒绝时跳过那一帧而不计错。 |
 | R10 | `stop()` 后引擎侧无泄漏。 |
 | R11 | 小场景不并行。 |
@@ -838,6 +841,15 @@ P1/P2 已落地到代码：镜像、三条通道、每视图备忘录都在，`R
   （钩子写的内容对该帧所有 pass 可见）。验收：`RenderEngineTest.AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote`
   （第二个 pass 的钩子移动节点，第一个 pass 也画在新位置 —— 改回"每 pass 就地展开"立刻红）；
   `record_micros` 仍是"describe + collect"（两半各测一段、相加）。
+- **P3 第三步已落（引擎线程，2026-11-11）**：`FrameOutcome::Submitted` + `FrameThreading` +
+  `setFrameThreading` / `frameThreading` / `frameNumber` / `waitForFrame`；`detail::FrameRunner` 变成"只搬线程与握手"
+  （`submit` / `wait` / `waitIdle` / `run` / `stop`，一帧在飞），引擎持有它、`frame()` 把**引擎半段**作为 job 交过去；
+  两块帧值轮换（`frame_slots_`），`detail::EngineFrame` 带 `number` / `engine_order` / `engine_micros`，两个半段因此
+  **不共享任何可变状态**（引擎半段的 `record_micros` 经 `report_mutex_` 发布，`framePlan()` 在同锁下读）；
+  `shutdown()` 先 `waitIdle + stop` 再解绑 target（F10 / N11）。默认仍是 Inline，539 条用例里只有新增的一条走线程。
+  验收：`RenderEngineTest.AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLanded`（`Ran` → `Submitted`、
+  线程画的与 inline 逐元素同图、`waitForFrame` 正/负两向、切回 Inline 后仍是 `Ran`、每帧只到一次设备）；
+  `FrameRunnerTest` 三条改为 job 形式（两模式同图、64 帧、`stop()` 后仍就地跑）。
 - **P3 契约的其余部分已定，未落地（§2.12）**：设备与交换链归引擎侧、表面事件走值、一帧两个半段各归一条线程、每侧一帧在飞、
   `waitForFrame` 是唯一的显式等待、完成通知是报告不是回调；并定下"一帧只有一个镜像状态"（N16）。落地要改的是
   `RenderEngine::frame()` 的返回契约（今天同步到 present）、帧值的双缓冲、以及 `RenderSurface::resize/bindTarget`

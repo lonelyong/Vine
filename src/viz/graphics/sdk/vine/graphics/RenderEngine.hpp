@@ -1,9 +1,13 @@
 #pragma once
 #include "graphics_global.hpp"
 
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <vector>
@@ -35,6 +39,8 @@ namespace detail
 class FrameResources;
 class FrameScheduler;
 class FrameWorker;   // The engine half of a frame: drain, bind, expand (see src/FrameWorker.hpp).
+struct EngineFrame;  // One frame as it travels between the two halves (see src/EngineFrame.hpp).
+class FrameRunner;   // The thread a frame's engine half runs on (see src/FrameRunner.hpp).
 enum class FrameMode : std::uint8_t; // What a frame's draws may ask: content (Direct) or its mirror (Mirrored).
 
 } // namespace detail
@@ -51,19 +57,40 @@ class PresentTarget;
  * @brief What one RenderEngine::frame() call did.
  *
  * @details
- * - Ran: the frame was compiled and handed to the device (a frame with no passes still ran).
+ * - Ran: the frame was compiled AND answered (executed, presented) before the call returned, because this engine has no
+ *   frame thread (see setFrameThreading - the default).
+ * - Submitted: the frame was compiled and handed to the engine thread; waitForFrame says when it was answered. The
+ *   picture is then one frame behind the content, which is the price of the caller not waiting for the device (design
+ *   2.12, N15).
  * - NotInitialized: initialize() has not succeeded - never called, refused, or shutdown() ran since.
  * - NoDevice: setDevice() was never called, so there is nothing to hand a frame to.
  *
  * @note
- * - This answers "did the frame run", not "did it draw anything": a ran frame that issued no draw is a
+ * - This answers "what happened to the frame", not "did it draw anything": a frame that ran and issued no draw is a
  *   different fact, and RenderEngine::frameReport() is where its counters are.
  */
 enum class FrameOutcome : std::uint8_t
 {
-    Ran,            // The frame was compiled and handed to the device.
+    Ran,            // Compiled and answered before the call returned (no frame thread).
+    Submitted,      // Compiled and handed to the frame thread; see waitForFrame.
     NotInitialized, // The engine is not attached to a device it can drive.
     NoDevice,       // No backend is set.
+};
+
+/**
+ * @brief Where the engine half of a frame runs (see frame(); the content half always runs on the caller's thread).
+ *
+ * @details
+ * - Inline (the default): both halves run inside frame(), on the calling thread - the behaviour every existing host and
+ *   test has, and the one that needs no thread at all.
+ * - EngineThread: frame() builds the content half here and hands the engine half (the expansion, the execute/present
+ *   call) to a thread this engine owns. frame() then returns Submitted, the picture follows one frame later, and
+ *   waitForFrame(n) is how a host asks "is frame n on screen yet" (screenshot, benchmark, shutdown).
+ */
+enum class FrameThreading : std::uint8_t
+{
+    Inline,      // Both halves on the calling thread; frame() returns Ran.
+    EngineThread // The engine half on this engine's own thread; frame() returns Submitted.
 };
 
 /**
@@ -300,9 +327,57 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   animates measures its own time (a pass' `before_draw` hook, an overlay's own wall clock), which is what the
      *   one `dt` a host had to hand over used to be - a number nothing in the frame read.
      *
-     * @return Whether the frame ran; NotInitialized / NoDevice say nothing was compiled or handed over.
+     * @return Whether the frame ran (see FrameOutcome): `Ran` when this engine has no frame thread and the frame was
+     *         answered before returning, `Submitted` when it was handed to one, NotInitialized / NoDevice when nothing
+     *         was compiled or handed over.
      */
     FrameOutcome frame();
+
+    /** @brief Chooses where the engine half of each frame runs (see FrameThreading).
+     *
+     * @details
+     * - A LIFETIME DECISION, made once: switching to EngineThread starts this engine's frame thread, switching back to
+     *   Inline stops and joins it. Both wait for a frame in flight first, so a host may switch between frames (not
+     *   from inside a `before_draw` hook).
+     * - The thread is told nothing about the content: `frame()` still builds the content half on the caller's thread,
+     *   and only the mirrors, the surface's window half and the device are touched on the other side.
+     *
+     * @param mode Where to run the engine half.
+     */
+    void setFrameThreading(FrameThreading mode);
+
+    /** @brief Gets where the engine half of a frame runs (Inline until setFrameThreading says otherwise). */
+    [[nodiscard]] FrameThreading frameThreading() const noexcept;
+
+    /** @brief Gets the id of the last frame this engine built (0 before the first one).
+     *
+     * @details
+     * - The number a host hands to waitForFrame: it is the same number the frame carried, so "wait for the frame I just
+     *   asked for" is `waitForFrame(frameNumber())`.
+     */
+    [[nodiscard]] std::uint64_t frameNumber() const noexcept;
+
+    /** @brief Waits until frame @p number has been answered (executed and presented, or refused by the device).
+     *
+     * @details
+     * - The ONE explicit wait of this class (design 2.12): `frame()` never waits for the device, so a host that needs
+     *   "this frame is on screen" - a screenshot, a benchmark, a resize settled, shutdown - says so here.
+     * - Inline it is a no-op that answers true for every frame already built, because those were answered inside
+     *   `frame()`.
+     * - It does not start a frame, and it does not spin: it waits on the frame thread's own completion signal.
+     *
+     * @param number  The frame id to wait for (see frameNumber).
+     * @param timeout How long to wait.
+     * @return true when that frame has been answered, false on timeout (or when it was never built).
+     */
+    bool waitForFrame(std::uint64_t number, std::chrono::milliseconds timeout = std::chrono::milliseconds(5000));
+
+    /** @brief Waits until the last frame this engine built has been answered (see waitForFrame).
+     *
+     * @param timeout How long to wait.
+     * @return true when it has been answered, false on timeout.
+     */
+    bool waitForFrame(std::chrono::milliseconds timeout = std::chrono::milliseconds(5000));
 
     /** @brief Gets the width the frame is laid out on, as the host announced it (see RenderSurface::resize).
      *
@@ -388,6 +463,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - The value is a BORROWED snapshot (see FrameDescription): it is valid until the next compile, and
      *   its order IS the execution order - a backend keeps it, and a cyclic component is already removed and
      *   reported before the value is published.
+     *
+     * @warning With a frame thread (setFrameThreading) the value's command lists are filled by the ENGINE half, so
+     *          reading them before `waitForFrame` is reading while another thread writes: wait for the frame first.
+     *          Without one (the default) it is complete as soon as frame() returns.
      *
      * @return The value, valid until the next compile and borrowed throughout; empty before the first frame.
      */
@@ -825,16 +904,51 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void buildFrameValue();
 
+    /** @brief Runs the frame's CONTENT half: the token, the compile, its reports, and the described passes.
+     *
+     * @details
+     * - Everything here reads or writes CONTENT (hooks, `Scene` rows, `Scene::setContentFrame`) and the declarations,
+     *   and nothing here touches the device or a mirror's state - which is what lets the other half run elsewhere.
+     * - It ends with the frame being a complete value (see `detail::EngineFrame`): a target, a size and a list of
+     *   described passes.
+     */
+    void buildContentHalf();
+
+    /** @brief Builds ONE frame's content half into @p frame (also the slot `frame_` names while it runs). */
+    void buildContentHalf(detail::EngineFrame& frame);
+
+    /** @brief Runs the frame's ENGINE half: the window half of the size, the expansion of every draw, execute/present.
+     *
+     * @details
+     * - The seam `buildContentHalf` hands over (see `.ai/design/graphics-threading.md` 2.12): it touches the mirrors,
+     *   the target and the device - never the content - so it is what runs on the engine thread.
+     * - It takes the frame EXPLICITLY instead of reading `frame_`: by the time it runs, the content half may already
+     *   be filling the other slot.
+     * - The size it hands the window half is the one the frame was LAID OUT on, not the surface's current size: an
+     *   announcement that arrived while the frame was being built belongs to the next frame.
+     *
+     * @param frame The frame value to answer (borrowed; it outlives the call because it is one of this engine's slots).
+     */
+    void runEngineHalf(detail::EngineFrame& frame);
+
     /** @brief Answers the frame's draws: one drain per pass, then one expansion per described draw.
      *
      * @details
      * - The ENGINE HALF of a frame (design 2.12): every draw `buildFrameValue` described is asked of its source here,
      *   after every pass has been described - so one frame answers ONE mirror state (N16), and nothing in this
      *   function reads content (`runPass` re-points a draw at its content's mirror first, see FrameWorker).
-     * - It is a function of its own because it is the seam a thread crosses: it runs where the device runs, and it
-     *   touches the mirrors, while the half above runs where the content is.
+     * - What it costs per pass lands in @p frame (its own `engine_micros`), never in the plan: the plan belongs to the
+     *   content half, and the numbers are published into it by `publishEngineMicros`.
+     *
+     * @param frame The frame whose draws to answer.
      */
-    void expandFrameValue();
+    void expandFrameValue(detail::EngineFrame& frame);
+
+    /** @brief Adds the engine half's per-pass cost to the plan a host reads (under `report_mutex_`).
+     *
+     * @param frame The frame whose engine half just finished.
+     */
+    void publishEngineMicros(const detail::EngineFrame& frame);
 
     /** @brief Reports the problems the compile found, once per episode, then remembers them.
      *
@@ -1023,9 +1137,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // it once per pass. 0 = no frame announced yet, which is also what a caller
     // that never renders sees (no memoising at all).
     std::uint64_t content_frame_       = 0;
-    // The passes whose description issued something, in run order: what expandFrameValue has to answer. Reused like
-    // the frame value's entries (a steady frame allocates nothing).
-    std::vector<std::uint32_t> frame_engine_order_;
     bool          initialized_         = false;
     // The one area this engine drives (see createSurface): OWNED, because a 1:1 relation needs one of its two ends
     // to own it. It is the only place the engine reads a target from - the engine owns no window and no handle (see
@@ -1066,9 +1177,25 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     std::vector<int> frame_order_keys_;
     /// The scheduler's working memory (see FrameScheduler): one per engine, reused every frame.
     std::unique_ptr<detail::FrameScheduler> scheduler_;
-    /// This frame as a value, rebuilt by every compile (see buildFrameValue). Reused, so a steady frame keeps its
-    /// storage: the rows of the previous frame are dropped, not their capacity.
-    FrameDescription frame_value_;
+    /// THIS frame, as one value: what the passes described plus the facts the engine half needs (the size it was laid
+    /// out on, the target it resolves to, the mirror token). Rebuilt by every compile, reused across frames so a
+    /// steady frame keeps its storage - and, being one object, it is what the frame thread is handed.
+    detail::EngineFrame* frame_ = nullptr;
+    /// The frame values, TWO of them: with a frame thread, the half that runs elsewhere holds one while the content
+    /// half fills the other. Both live as long as the engine, because each keeps the storage of its pass entries.
+    std::array<std::unique_ptr<detail::EngineFrame>, 2> frame_slots_;
+    /// Which slot frame_ names while a frame is being built (alternates every frame).
+    std::size_t frame_slot_            = 0;
+    /// How many frames this engine has built (monotonic; 0 before the first one). What waitForFrame names.
+    std::uint64_t frame_number_        = 0;
+    /// The id of the last frame whose engine half finished (0 before the first one). Read by waitForFrame.
+    std::atomic<std::uint64_t> frame_completed_{ 0 };
+    /// Where the engine half runs (see setFrameThreading); null means inline - the thread object exists only when a
+    /// host asked for one, so an engine that never does allocates nothing and starts no thread.
+    std::unique_ptr<detail::FrameRunner> runner_;
+    /// Guards the per-pass `record_micros` the engine half writes: the plan a host reads is the content half's, but
+    /// that one number is the other half's to publish (design 2.12 - the two halves share no mutable state otherwise).
+    mutable std::mutex report_mutex_;
     // THE ENGINE HALF OF A FRAME, in this engine (see detail::FrameWorker): the one place a pass' expansion is asked
     // for, so the DEFAULT path and the mirrored one are the same code - and the mode below is what P3 flips when the
     // frame moves to an engine thread.

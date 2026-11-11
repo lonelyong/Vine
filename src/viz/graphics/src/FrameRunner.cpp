@@ -5,9 +5,8 @@ VN_GRAPHICS_NS_BEGIN
 namespace detail
 {
 
-FrameRunner::FrameRunner(FrameWorker& worker, RunnerMode mode)
-  : worker_(worker)
-  , mode_(mode)
+FrameRunner::FrameRunner(RunnerMode mode)
+  : mode_(mode)
 {
     if (mode_ == RunnerMode::Threaded) {
         thread_ = std::thread([this]() { loop(); });
@@ -19,27 +18,54 @@ FrameRunner::~FrameRunner()
     stop();
 }
 
-std::size_t FrameRunner::run(FrameDescription& frame, FrameMode mode)
+void FrameRunner::runHere(const Job& job)
 {
-    if (mode_ == RunnerMode::Inline || !thread_.joinable()) {
-        // Inline - and a stopped runner IS one: the frame runs here, exactly as the caller asked it to be answered
-        // (a stopped runner is not a reason to change WHAT a frame asks; it is only a different thread).
-        return worker_.run(frame, mode);
-    }
-    if (std::this_thread::get_id() == thread_.get_id()) {
-        // Asked FROM the engine thread: waiting on itself would deadlock, so the frame runs where it stands.
-        return worker_.run(frame, mode);
-    }
+    job();
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++frames_;
+}
 
+void FrameRunner::submit(Job job)
+{
+    if (mode_ == RunnerMode::Inline || !thread_.joinable() || std::this_thread::get_id() == thread_.get_id()) {
+        // Inline - and a stopped runner IS one, and a job asked for FROM the engine thread runs where it stands (waiting
+        // on itself would deadlock). None of these is a reason to change WHAT the job does; only where it runs.
+        runHere(job);
+        return;
+    }
     std::unique_lock<std::mutex> lock(mutex_);
-    request_  = &frame;
-    request_mode_ = mode;
-    finished_ = false;
+    // ONE IN FLIGHT: the previous job is finished before this one is handed over, so a caller cannot queue frames the
+    // engine side never asked for and no two of them ever touch the mirrors at once.
+    done_.wait(lock, [this]() { return !has_request_; });
+    request_     = std::move(job);
+    has_request_ = true;
     wake_.notify_one();
-    done_.wait(lock, [this]() { return finished_; });
-    finished_ = false;
-    const std::size_t applied = result_;
-    return applied;
+}
+
+bool FrameRunner::wait(std::chrono::milliseconds timeout)
+{
+    if (!thread_.joinable()) {
+        return true; // an inline (or stopped) runner has nothing that could still be running
+    }
+    std::unique_lock<std::mutex> lock(mutex_);
+    return done_.wait_for(lock, timeout, [this]() { return !has_request_; });
+}
+
+void FrameRunner::waitIdle()
+{
+    if (!thread_.joinable()) {
+        return; // an inline (or stopped) runner has nothing in flight, ever
+    }
+    std::unique_lock<std::mutex> lock(mutex_);
+    done_.wait(lock, [this]() { return !has_request_; });
+}
+
+void FrameRunner::run(Job job)
+{
+    submit(std::move(job));
+    if (mode_ == RunnerMode::Threaded && thread_.joinable() && std::this_thread::get_id() != thread_.get_id()) {
+        (void)wait();
+    }
 }
 
 void FrameRunner::stop()
@@ -66,25 +92,29 @@ std::uint64_t FrameRunner::frames() const
     return frames_;
 }
 
+bool FrameRunner::busy() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return has_request_;
+}
+
 void FrameRunner::loop()
 {
     std::unique_lock<std::mutex> lock(mutex_);
     while (true) {
-        wake_.wait(lock, [this]() { return request_ != nullptr || stopping_; });
-        if (request_ == nullptr) {
+        wake_.wait(lock, [this]() { return has_request_ || stopping_; });
+        if (!has_request_) {
             return; // stopping, and nothing was in flight
         }
         // The work runs OUTSIDE the lock: the caller only needs to know when it is done, not to watch it happen.
-        FrameDescription* frame = request_;
-        const FrameMode   mode  = request_mode_;
+        Job job = std::move(request_);
+        request_ = Job();
         lock.unlock();
-        const std::size_t applied = worker_.run(*frame, mode);
+        job();
         lock.lock();
         ++frames_;
-        result_   = applied;
-        request_  = nullptr;
-        finished_ = true;
-        done_.notify_one();
+        has_request_ = false;
+        done_.notify_all();
     }
 }
 

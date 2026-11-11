@@ -15,6 +15,7 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Viewport.hpp>
 
+#include "EngineFrame.hpp"
 #include "FrameExpand.hpp"
 #include "FrameWorker.hpp"
 #include "FrameResources.hpp"
@@ -249,24 +250,23 @@ void RenderEngine::scheduleRows()
 
 void RenderEngine::buildFrameValue()
 {
-    // A FRAME IS OPEN: the token every per-view memo is keyed by (a list outlives one frame, but nothing is memoised
-    // outside one - see DrawListMemo). Opened here because this is where the frame's passes start asking for views.
-    worker_->beginFrame(content_frame_); // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
+    // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
     // issue" is a fact of the frame (its scope opens and closes, and a backend keys per-pass retained state by
     // it), which is not the same fact as "this pass did not run" - a disabled pass has no entry at all.
     //
     // The entries are REUSED rather than rebuilt (see below): a steady frame hands over the same pass list with the
     // same input lists, so it must not free and re-allocate them 60 times a second.
     std::size_t used           = 0;
-    // Which entries the expansion has to answer, in run order (the passes whose description issued something).
-    // Reused like the entries themselves: a steady frame does not allocate.
-    frame_engine_order_.clear();
+    // Which entries the expansion has to answer, in run order (the passes whose description issued something). It
+    // lives on the FRAME, so the two halves share no mutable state: this half fills it, the engine half walks it.
+    frame_->engine_order.clear();
+    frame_->engine_micros.clear();
     // A window pass has no target to read a device-pixel size from. The engine states the surface size (converted
     // with the surface's pixel ratio) on every pass; RenderPass::describe prefers a sub-viewport or the target's
     // own size, so off-screen passes are unaffected.
     const double pixel_ratio   = area_ != nullptr ? area_->pixelRatio() : 1.0;
-    const int    device_width  = static_cast<int>(std::lround(static_cast<double>(surface_width_) * pixel_ratio));
-    const int    device_height = static_cast<int>(std::lround(static_cast<double>(surface_height_) * pixel_ratio));
+    const int    device_width  = static_cast<int>(std::lround(static_cast<double>(frame_->width) * pixel_ratio));
+    const int    device_height = static_cast<int>(std::lround(static_cast<double>(frame_->height) * pixel_ratio));
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
     // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
     for (const std::uint32_t index : frame_order_) {
@@ -304,10 +304,10 @@ void RenderEngine::buildFrameValue()
 
         // Reuse the entry this index had last frame: the input list keeps its capacity (assign, not a fresh copy) and
         // an already-described pass keeps its description's draw list, which fillPassFacts clears but does not free.
-        if (used == frame_value_.passes.size()) {
-            frame_value_.passes.emplace_back();
+        if (used == frame_->description.passes.size()) {
+            frame_->description.passes.emplace_back();
         }
-        FrameDescription::Pass& entry = frame_value_.passes[used++];
+        FrameDescription::Pass& entry = frame_->description.passes[used++];
         entry.pass                    = pass;
         entry.order                   = row.order;
         entry.inputs.assign(row.inputs.begin(), row.inputs.end());
@@ -325,7 +325,7 @@ void RenderEngine::buildFrameValue()
             // write is already in the mirror); asking that source for the list is the ENGINE half's step, which runs
             // over the whole described frame (see expandFrameValue) - that is the seam a thread crosses, and it is
             // why it is a function of its own rather than a line in this loop.
-            frame_engine_order_.push_back(index);
+            frame_->engine_order.push_back(index);
         }
         if (index < slots_.size()) {
             slots_[index].record_micros =
@@ -334,13 +334,19 @@ void RenderEngine::buildFrameValue()
     }
     // A frame with fewer running passes than the last one drops the surplus entries (the only frame that frees
     // anything here, and it is a frame whose shape changed).
-    if (frame_value_.passes.size() > used) {
-        frame_value_.passes.resize(used);
+    if (frame_->description.passes.size() > used) {
+        frame_->description.passes.resize(used);
     }
 }
 
-void RenderEngine::expandFrameValue()
+void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
 {
+    // A FRAME IS OPEN: the token every per-view memo is keyed by (a list outlives one frame, but nothing is memoised
+    // outside one - see DrawListMemo). Opened HERE and not where the frame was built, because it writes the mirrors'
+    // memos - the very state this half reads - and because the token travels on the frame (see detail::EngineFrame):
+    // a frame answered late opens its OWN number, never the one the content has moved on to.
+    worker_->beginFrame(frame.content_frame);
+
     // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one drain per pass, in run
     // order (see design 2.12 - the two halves are the seam a thread crosses, so they are two functions and not one
     // loop). Nothing in this function reads content: `runPass` re-points each draw at its content's mirror and
@@ -349,19 +355,17 @@ void RenderEngine::expandFrameValue()
     // record_micros keeps meaning "describe + collect": the content half measured its part per pass, and the
     // expansion adds its own here - one clock read per pass, not per draw.
     std::size_t entry = 0;
-    for (const std::uint32_t index : frame_engine_order_) {
-        FrameDescription::Pass& described = frame_value_.passes[entry++];
+    frame.engine_micros.clear();
+    for (const std::uint32_t index : frame.engine_order) {
+        FrameDescription::Pass& described = frame.description.passes[entry++];
         const auto              started   = std::chrono::steady_clock::now();
         (void)worker_->drain();
         if (described.draw.has_value()) {
             worker_->runPass(*described.draw, frame_mode_);
         }
-        if (index < slots_.size()) {
-            slots_[index].record_micros +=
-                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
-        }
+        frame.engine_micros.push_back(
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count()));
     }
-    frame_engine_order_.clear();
 }
 
 void RenderEngine::collectPictureShapeMismatches()
@@ -394,8 +398,8 @@ void RenderEngine::collectPictureShapeMismatches()
         // The rectangle: the pass' viewport when it named one, else the whole thing it draws into. A window pass
         // (no render target) draws into the surface this frame presents, which is what its rectangle is sized
         // from; a surface nobody has sized yet describes no picture, so there is nothing to check.
-        int width  = surface_width_;
-        int height = surface_height_;
+        int width  = frame_->width;
+        int height = frame_->height;
         if (raw_ptr<const RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
             width  = drawn_into->width();
             height = drawn_into->height();
@@ -453,8 +457,8 @@ void RenderEngine::resolveTransientTarget(Slot& slot)
     // normally the size of the picture that consumes it). A surface nobody has sized yet is not a reason to
     // build nothing: a 1x1 target keeps the pass' shape defined until the host reports a size.
     const TransientShape& shape  = slot.pass->declaration().writes_shape;
-    int                   width  = shape.width > 0 ? shape.width : surface_width_;
-    int                   height = shape.height > 0 ? shape.height : surface_height_;
+    int                   width  = shape.width > 0 ? shape.width : frame_->width;
+    int                   height = shape.height > 0 ? shape.height : frame_->height;
     if (width <= 0 || height <= 0) {
         width  = 1;
         height = 1;

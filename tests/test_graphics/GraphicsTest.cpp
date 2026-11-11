@@ -11219,6 +11219,67 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
         << "an edit drops every entry, so only the pass sharing a view with a walk in the same frame reuses one";
 }
 
+TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLanded)
+{
+    // THE ENGINE THREAD IS A PLACE, NOT A DIFFERENT PICTURE (design 2.12). frame() builds the content half and hands
+    // the engine half over, so it RETURNS BEFORE the frame is on screen - the outcome says so (Submitted), the picture
+    // follows one frame later, and waitForFrame is the one explicit "is it there yet".
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(camera);
+    engine->addPass(pass, scene, 0);
+
+    // The reference: the inline path, which is what every other case in this file measures.
+    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    const std::uint64_t inline_frame = engine->frameNumber();
+    ASSERT_EQ(inline_frame, 1U) << "a frame's id is its place in this engine's sequence";
+    EXPECT_TRUE(engine->waitForFrame(inline_frame)) << "inline, every built frame is already answered";
+    const auto& inline_commands = engine->frameDescription().passes.at(0).draw->draws.at(0).commands;
+    ASSERT_NE(inline_commands, nullptr);
+    ASSERT_EQ(inline_commands->size(), 1U);
+
+    // Now the same frame with a thread behind it.
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    EXPECT_EQ(engine->frameThreading(), FrameThreading::EngineThread);
+    EXPECT_EQ(engine->frame(), FrameOutcome::Submitted) << "the caller does not wait for the device";
+    const std::uint64_t threaded_frame = engine->frameNumber();
+    ASSERT_EQ(threaded_frame, 2U);
+    EXPECT_TRUE(engine->waitForFrame(threaded_frame)) << "waitForFrame is how a host asks for it";
+    EXPECT_TRUE(engine->waitForFrame()) << "the same wait without a number: the last frame built";
+
+    // THE SAME PICTURE, one thread away: the very same geometry at the very same world position.
+    const auto& threaded_commands = engine->frameDescription().passes.at(0).draw->draws.at(0).commands;
+    ASSERT_NE(threaded_commands, nullptr);
+    ASSERT_EQ(threaded_commands->size(), 1U);
+    EXPECT_EQ(threaded_commands->at(0).geometry.get(), inline_commands->at(0).geometry.get());
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
+            EXPECT_DOUBLE_EQ(threaded_commands->at(0).model_matrix(row, column),
+                             inline_commands->at(0).model_matrix(row, column));
+        }
+    }
+
+    // A frame that cannot be on screen yet says so instead of blocking for its timeout's worth of frames.
+    EXPECT_FALSE(engine->waitForFrame(threaded_frame + 100, std::chrono::milliseconds(1)))
+        << "a number this engine never built is not 'answered later'";
+    EXPECT_FALSE(engine->waitForFrame(0)) << "no frame was ever built under that id";
+
+    // Back to inline: the next frame is answered before frame() returns, and the thread is joined.
+    engine->setFrameThreading(FrameThreading::Inline);
+    EXPECT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_TRUE(engine->waitForFrame());
+    EXPECT_EQ(backend->frames_executed, 3) << "every frame reached the device exactly once, whichever thread drove it";
+}
+
 TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
 {
     // ONE camera, TWO rectangles: the same eye, the same fov - and, because a camera holds the shape of its

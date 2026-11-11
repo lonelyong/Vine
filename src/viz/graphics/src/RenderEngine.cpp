@@ -12,7 +12,9 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 
+#include "EngineFrame.hpp"
 #include "FrameResources.hpp"
+#include "FrameRunner.hpp"
 #include "FrameScheduler.hpp"
 #include "FrameWorker.hpp"
 
@@ -34,6 +36,7 @@ VN_OBJECT_META_IMPL(RenderEngine, vn::Object);
 RenderEngine::RenderEngine()
   : resources_(std::make_unique<detail::FrameResources>())
   , scheduler_(std::make_unique<detail::FrameScheduler>())
+  , frame_slots_{ std::make_unique<detail::EngineFrame>(), std::make_unique<detail::EngineFrame>() }
   , worker_(std::make_unique<detail::FrameWorker>())
   // THE MIRROR IS THE SOURCE (see the design's 2.11): every scene pass is published, then expanded from that content's
   // mirror, so a frame's draws name nothing the content owns - which is what P3 will move to another thread. The
@@ -219,6 +222,15 @@ void RenderEngine::shutdown()
     // driving it. What is this engine's own is the area's binding - and it goes FIRST, because the target is one of
     // the device's objects (see RenderDevice::createSurfaceTarget): nothing is left naming something the device's
     // creator may destroy.
+    //
+    // NOTHING IS ANSWERED AFTER THIS POINT, so the frame thread goes FIRST: a frame in flight is finished (the thread is
+    // joined, never detached) and the runner is destroyed - a frame still executing while this call hands the device
+    // back would touch objects its creator may already own (design F10 / N11).
+    if (runner_ != nullptr) {
+        runner_->waitIdle();
+        runner_->stop();
+        runner_.reset();
+    }
     if (area_ != nullptr) {
         area_->bindTarget(nullptr);
     }
@@ -246,6 +258,10 @@ raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
 
 FrameOutcome RenderEngine::frame()
 {
+    // A FRAME IS TWO HALVES (design 2.12): one built where the content is, one answered where the device is. Without a
+    // frame thread they run one after the other, here; with one, this call builds and hands over, and the picture
+    // follows one frame later.
+
     // The two reasons a frame cannot be driven are different answers, and both used to look like a frame that ran
     // and drew nothing: no device to hand anything to, or a device the engine is not attached to. The caller gets
     // the reason as a value (see FrameOutcome); "ran but issued no draw" stays a FrameReport fact.
@@ -256,6 +272,93 @@ FrameOutcome RenderEngine::frame()
         return FrameOutcome::NotInitialized;
     }
 
+    // ONE FRAME IN FLIGHT: with a frame thread, the previous frame's engine half is finished before this frame touches
+    // the mirrors or a slot. That is the whole pipeline (1 + 1), and it is why a caller never queues frames: the wait
+    // is for the frame BEFORE the one it is about to build, which is normally already done (design 2.12, D12).
+    if (runner_ != nullptr) {
+        runner_->waitIdle();
+    }
+
+    // The content half fills one slot; the other is what the frame thread holds (inline, it is only the spare).
+    detail::EngineFrame& next = *frame_slots_[frame_slot_];
+    frame_slot_               = (frame_slot_ + 1) % frame_slots_.size();
+    next.number               = ++frame_number_;
+    buildContentHalf(next);
+
+    if (runner_ == nullptr) {
+        runEngineHalf(next);
+        return FrameOutcome::Ran;
+    }
+    detail::EngineFrame* const submitted = &next;
+    runner_->submit([this, submitted]() { runEngineHalf(*submitted); });
+    return FrameOutcome::Submitted;
+}
+
+void RenderEngine::setFrameThreading(FrameThreading mode)
+{
+    const bool wanted = mode == FrameThreading::EngineThread;
+    if (wanted == (runner_ != nullptr)) {
+        return; // already there
+    }
+    if (wanted) {
+        // The thread exists only when a host asked for one: an engine that never does allocates nothing and starts
+        // nothing, and the inline path stays literally the same code.
+        runner_ = std::make_unique<detail::FrameRunner>(detail::RunnerMode::Threaded);
+        return;
+    }
+    // Back to inline: a frame in flight is finished first (the thread is joined, not detached), so nothing is being
+    // answered while the host goes on to describe frames here.
+    runner_->waitIdle();
+    runner_->stop();
+    runner_.reset();
+}
+
+FrameThreading RenderEngine::frameThreading() const noexcept
+{
+    return runner_ != nullptr ? FrameThreading::EngineThread : FrameThreading::Inline;
+}
+
+std::uint64_t RenderEngine::frameNumber() const noexcept
+{
+    return frame_number_;
+}
+
+bool RenderEngine::waitForFrame(std::uint64_t number, std::chrono::milliseconds timeout)
+{
+    if (number == 0U) {
+        return false; // no frame was ever built, so nothing can be "on screen"
+    }
+    if (frame_completed_.load(std::memory_order_acquire) >= number) {
+        return true;
+    }
+    if (runner_ == nullptr) {
+        // Inline: every frame this engine built was answered before frame() returned, so a number this engine does not
+        // know is simply not built yet.
+        return frame_completed_.load(std::memory_order_acquire) >= number;
+    }
+    (void)runner_->wait(timeout);
+    return frame_completed_.load(std::memory_order_acquire) >= number;
+}
+
+bool RenderEngine::waitForFrame(std::chrono::milliseconds timeout)
+{
+    return waitForFrame(frame_number_, timeout);
+}
+
+void RenderEngine::buildContentHalf(detail::EngineFrame& frame)
+{
+    // Everything below describes into THIS slot: `frame_` is the compile's way to reach it (see buildFrameValue), and
+    // it is reset by the next frame - which is why the engine half takes its frame as an argument instead.
+    frame_ = &frame;
+
+    // THE FRAME'S SIZE AND TARGET ARE TAKEN ONCE, when the frame starts: the passes below lay themselves out on these
+    // numbers, and the engine half applies THAT size to THAT target - so an announcement arriving while the frame is
+    // being answered belongs to the next frame instead of tearing this one in half (design 2.12).
+    frame.width         = surface_width_;
+    frame.height        = surface_height_;
+    frame.target        = (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
+    frame.content_frame = content_frame_;
+
     // Announce the content frame BEFORE the passes run: every scene this frame
     // renders may then memoise the command list it collects (see
     // Scene::setContentFrame), so the multi-pass pipelines that draw one scene
@@ -263,6 +366,7 @@ FrameOutcome RenderEngine::frame()
     // walk the tree once instead of once per pass. The token is idempotent, so
     // a scene shared by several slots is announced any number of times.
     ++content_frame_;
+    frame.content_frame = content_frame_;
     for (const auto& slot : slots_) {
         if (slot.pass == nullptr) {
             continue;
@@ -303,41 +407,51 @@ FrameOutcome RenderEngine::frame()
         unsupported_target_reported_.rearm();
     }
 
-    // THE FRAME, HANDED OVER AS ONE VALUE. What runs is what the compile produced (see buildFrameValue): one entry
-    // per enabled pass, in run order, with everything that pass is and everything it issues. A disabled pass has no
-    // entry (and its row keeps saying it cost nothing - see FramePlan::PassPlan::record_micros, written by the
-    // compile); a pass whose entry carries no description issues nothing at all.
-    //
-    // THE FRAME NAMES THE SURFACE IT RESOLVES TO. The area's target is what the frame's "default framebuffer" row
-    // draws into (see RenderFrameExecutor::executeFrame); an engine with no area names the target its device made
-    // for itself, and a device that presents nothing leaves the frame with no target at all - a first-class state
-    // (an offline bake, a display-less device), not an error.
-    PresentTarget* const present_to = (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
+    // The half ends with a COMPLETE VALUE: the compile above ends by assembling what every pass described (see
+    // buildFrameValue, called from compileFrame), and the size and target were taken when the frame started. What
+    // runs from here on is runEngineHalf - the half that touches the mirrors and the device.
+}
 
+void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
+{
     // THE FRAME'S ENGINE HALF, IN ORDER: the extent the frame was laid out on goes to the window half, then the
-    // described draws are answered, then the whole frame is executed (acquire, record, submit, present). The first
-    // two are what a thread would carry; the last one is the device's own call.
+    // described draws are answered, then the whole frame is executed (acquire, record, submit, present).
     //
-    // THE WINDOW HALF OF THE SIZE FOLLOWS THE FRAME (design 2.12). An announcement is recorded where it happens
-    // (RenderSurface::resize -> announceAreaSize), so the passes above were laid out on a number the frame already
-    // knew; the SWAPCHAIN is told here, at the frame's head, once per changed size - it is the one place a frame waits
-    // on the device, and a host resizing twice between two frames costs one resize instead of two. Doing it from the
-    // announcement instead would be the host's thread writing engine-side state, and it would resize a surface whose
-    // next frame is already laid out on the new number (one shape, two halves, no window for them to disagree in).
-    if (present_to != nullptr && surface_width_ > 0 && surface_height_ > 0
-        && (surface_width_ != applied_width_ || surface_height_ != applied_height_)) {
-        present_to->resize(surface_width_, surface_height_);
-        applied_width_  = surface_width_;
-        applied_height_ = surface_height_;
+    // THE WINDOW HALF OF THE SIZE FOLLOWS THE FRAME (design 2.12). The size is the FRAME's (taken when it started, see
+    // buildContentHalf), so a host resizing while this frame is answered costs the NEXT frame its resize and leaves
+    // this one whole. The swapchain is told here, at the frame's head, once per changed size - it is the one place a
+    // frame waits on the device, and a host resizing twice between two frames costs one resize instead of two.
+    if (frame.target != nullptr && frame.width > 0 && frame.height > 0
+        && (frame.width != applied_width_ || frame.height != applied_height_)) {
+        frame.target->resize(frame.width, frame.height);
+        applied_width_  = frame.width;
+        applied_height_ = frame.height;
     }
 
-    expandFrameValue();
+    expandFrameValue(frame);
 
     // The WHOLE FRAME happens inside this ONE call (see RenderFrameExecutor::executeFrame): the device acquires the
     // presentable image, the record submits, and the frame's tail presents it through the target it names. The engine
     // does not present afterwards - presenting twice would be presenting somebody else's frame (or nothing at all).
-    device_->executor().executeFrame(frame_value_, present_to);
-    return FrameOutcome::Ran;
+    device_->executor().executeFrame(frame.description, frame.target);
+
+    // The frame is answered: what a host's waitForFrame is actually waiting for (see design 2.12 - the completion is a
+    // fact of the frame, not a callback into anybody's thread).
+    publishEngineMicros(frame);
+    frame_completed_.store(frame.number, std::memory_order_release);
+}
+
+void RenderEngine::publishEngineMicros(const detail::EngineFrame& frame)
+{
+    // The plan is the CONTENT half's value (a host reads it whenever it likes, from its own thread); this one number is
+    // the engine half's to add. `record_micros` keeps meaning "describe + collect": each half measured its own share.
+    std::lock_guard<std::mutex> lock(report_mutex_);
+    for (std::size_t index = 0; index < frame.engine_order.size() && index < frame.engine_micros.size(); ++index) {
+        const std::uint32_t slot = frame.engine_order[index];
+        if (slot < slots_.size()) {
+            slots_[slot].record_micros += frame.engine_micros[index];
+        }
+    }
 }
 
 std::uint64_t RenderEngine::contentCollectCount() const noexcept
@@ -374,6 +488,9 @@ FramePlan RenderEngine::framePlan() const
 {
     FramePlan plan;
     plan.passes.reserve(slots_.size());
+    // The one number in the plan the ENGINE half writes (see publishEngineMicros): a host reads the plan from its own
+    // thread whenever it likes, so that field is read under the same lock the other half adds it under.
+    std::lock_guard<std::mutex> micros_lock(report_mutex_);
     for (const Slot& slot : slots_) {
         const RenderPass* const pass = slot.pass.get();
         if (pass == nullptr) {
@@ -408,7 +525,7 @@ const FrameDescription& RenderEngine::frameDescription() const noexcept
 {
     // What the last compile produced. Before the first frame it is empty: nothing has been decided yet, and an
     // invented value would be a second answer to "what does this frame do".
-    return frame_value_;
+    return frame_->description;
 }
 
 intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, int order)
