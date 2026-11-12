@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
@@ -168,40 +169,40 @@ class ResourceTable {
     }
 
     /**
-     * @brief Visits every resident key and value, in an unspecified order.
+     * @brief Visits every resident VALUE, in an unspecified order.
      *
      * @details
      * - THE READ DOOR, for a caller whose whole table needs work rather than one lookup: repointing every cached
-     *   value at a replacement parent (see `ContentSets::repoint`) or adding up a report. It is not a lookup and
-     *   does not touch generations.
-     * - The key is const: a value's identity is what the table was ordered by, and a visitor that changed it
-     *   would corrupt the map. The value is mutable here for the repoint case only.
+     *   value at a replacement parent (see `ContentSets::repoint`) or adding up a report.
+     * - VALUES ONLY. The key is what the table was ordered by, so a door that handed it out would be a door a caller
+     *   could use to change an entry's identity mid-walk - the one edit a map cannot survive. A caller that needs the
+     *   identity of what it is looking at is doing a lookup, which this table already answers.
      *
      * @warning
      * - THE VISITOR MUST NOT ACQUIRE, RETIRE OR CLEAR on this table: each would move `entries_` while it is being
-     *   walked, invalidating the iterator. Changes to a value's own body are fine; changes to its identity are not.
+     *   walked, invalidating the iterator. Changes to a value's own body are fine.
      *
-     * @tparam Visit Callable `void(const Key&, Value&)` (or `const Value&` for the const overload).
+     * @tparam Visit Callable `void(Value&)` (or `void(const Value&)` for the const overload).
      * @param visit What to do with each resident value.
      */
     template <class Visit>
-    void forEach(Visit&& visit)
+    void visitValues(Visit&& visit)
     {
-        for (auto& [key, entry] : entries_) {
-            visit(key, entry.value);
+        for (auto& item : entries_) {
+            visit(item.second.value);
         }
     }
 
-    /** @brief Visits every resident key and value through a const table (see the mutable overload).
+    /** @brief Visits every resident value through a const table (see the mutable overload).
      *
-     * @tparam Visit Callable `void(const Key&, const Value&)`.
+     * @tparam Visit Callable `void(const Value&)`.
      * @param visit What to do with each resident value.
      */
     template <class Visit>
-    void forEach(Visit&& visit) const
+    void visitValues(Visit&& visit) const
     {
-        for (const auto& [key, entry] : entries_) {
-            visit(key, entry.value);
+        for (const auto& item : entries_) {
+            visit(item.second.value);
         }
     }
 
@@ -243,5 +244,38 @@ class ResourceTable {
     std::size_t                          retired_{ 0 };
     std::size_t                          retained_{ 0 };
 };
+
+/**
+ * @brief Forgets the keys a builder REFUSED whose pins are gone: the half of a residency rule that has no value.
+ *
+ * @details
+ * - A REFUSED BUILD IS NOT A RESIDENT VALUE. Nothing was built (no half, no descriptor set), so there is nothing to
+ *   park and nothing for @ref ResourceTable to hold - a producer remembers the key only so it does not retry a build
+ *   that would fail the same way. That memory is the exact mirror of the table's own entries, which is why it leaves
+ *   by the exact mirror of the table's rule: once the same pin predicate says the key is no longer wanted.
+ * - WHY IT IS HERE AND NOT IN EACH PRODUCER. Two producers (api/ContentHalves, api/ContentSets) keep such a set, and
+ *   "walk it with the pin predicate" written twice is how one of them ends up forgetting a revision the other keeps.
+ *
+ * @tparam Key  The key type the producer builds by.
+ * @tparam Hash The set's hasher (the same one the table uses, so "the same key" means the same thing in both).
+ * @tparam Live Callable `bool(const Key&)` - true when the key is still wanted.
+ * @param keys    The refused keys to sweep (entries are removed from it).
+ * @param is_live Whether a key is still pinned by live content.
+ * @return How many keys were forgotten.
+ */
+template <class Key, class Hash, class Live>
+std::size_t forgetUnpinned(std::unordered_set<Key, Hash>& keys, Live&& is_live)
+{
+    std::size_t forgotten = 0U;
+    for (auto it = keys.begin(); it != keys.end();) {
+        if (is_live(*it)) {
+            ++it;
+            continue;
+        }
+        it = keys.erase(it);
+        ++forgotten;
+    }
+    return forgotten;
+}
 
 VN_GRAPHICSBACKEND_NS_END

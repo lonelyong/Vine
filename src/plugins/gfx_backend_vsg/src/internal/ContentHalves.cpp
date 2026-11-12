@@ -211,17 +211,9 @@ void ContentHalves::sweep(const ContentFacts& facts, core::FrameTimeline& timeli
     };
     (void)d->halves.retireUnpinned([&pinned](const Data::Key& key, const std::shared_ptr<Data::Half>&) { return pinned(key); }, timeline, retirement);
 
-    // A refused build has no GPU object to park: its key is simply forgotten once its pins are gone (the same
-    // program revision and layout the resident halves are held by), which is the ONE rule above asked of the keys
-    // that never became a resident value.
-    for (auto it = d->refused_keys.begin(); it != d->refused_keys.end();) {
-        if (pinned(*it)) {
-            ++it;
-        }
-        else {
-            it = d->refused_keys.erase(it);
-        }
-    }
+    // A refused build has no GPU object to park: they are the SAME rule above asked of the keys that never became a
+    // resident value (see core::forgetUnpinned - one implementation for both producers).
+    (void)core::forgetUnpinned(d->refused_keys, pinned);
 }
 
 std::size_t ContentHalves::halves() const noexcept

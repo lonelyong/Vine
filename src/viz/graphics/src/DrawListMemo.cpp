@@ -86,12 +86,14 @@ std::size_t DrawListMemo::size() const noexcept
 
 std::uint64_t DrawListMemo::hits() const noexcept
 {
-    return hits_;
+    // Relaxed: the counter is evidence a host reads through RenderEngine::contentCollectCount, which may be called
+    // from the content's thread while the engine half answers (see the class note). It orders nothing.
+    return hits_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t DrawListMemo::stores() const noexcept
 {
-    return stores_;
+    return stores_.load(std::memory_order_relaxed);
 }
 
 } // namespace detail

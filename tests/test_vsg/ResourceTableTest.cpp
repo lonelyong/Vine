@@ -18,12 +18,14 @@
 
 #include <cstdint>
 #include <optional>
+#include <unordered_set>
 #include <utility>
 
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/ResourceTable.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 
+using vn::graphics::backend::forgetUnpinned;
 using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::ResourceTable;
 using vn::graphics::backend::RetirementQueue;
@@ -176,19 +178,32 @@ TEST(ResourceTableTest, TheVisitSeesEveryResidentValueAndCanChangeItsBody)
 
     int seen = 0;
     int sum  = 0;
-    table.forEach([&](const int& key, Counted& value) {
+    table.visitValues([&](Counted& value) {
         ++seen;
-        value.id += key; // changing the BODY is what a repoint does; the key is the table's
+        value.id += 10; // changing the BODY is what a repoint does; an entry's identity is the table's
         sum += value.id;
     });
 
     EXPECT_EQ(seen, 2) << "one visit per resident value";
-    EXPECT_EQ(sum, 2 + 4) << "the visitor saw the values the table held, and its change stuck";
+    EXPECT_EQ(sum, 11 + 12) << "the visitor saw the values the table held, and its change stuck";
 
     const ResourceTable<int, Counted>& const_table = table;
     int                               const_sum   = 0;
-    const_table.forEach([&](const int&, const Counted& value) { const_sum += value.id; });
+    const_table.visitValues([&](const Counted& value) { const_sum += value.id; });
     EXPECT_EQ(const_sum, sum) << "the const door sees the same values";
+}
+
+TEST(ResourceTableTest, ARefusedKeyIsForgottenByTheSamePinRuleAsAResidentValue)
+{
+    // The refused half of a residency rule (see forgetUnpinned): a remembered key has nothing built behind it, so it
+    // leaves by the mirror of the table's rule - and the producers that keep such a set share this one implementation.
+    std::unordered_set<int> refused{ 1, 2, 3 };
+    EXPECT_EQ(forgetUnpinned(refused, [](int key) { return key < 3; }), 1U) << "only the key whose pin is gone leaves";
+    EXPECT_EQ(refused.count(3), 0U);
+    EXPECT_EQ(refused.size(), 2U);
+
+    EXPECT_EQ(forgetUnpinned(refused, [](int) { return true; }), 0U) << "everything still pinned forgets nothing";
+    EXPECT_EQ(refused.size(), 2U);
 }
 
 TEST(ResourceTableTest, ClearDropsWithoutParkingBecauseNothingIsInFlight)

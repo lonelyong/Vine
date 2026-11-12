@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -33,11 +34,17 @@ namespace detail
  *   one. A list without such a node is shared across rectangles (see `viewport_sensitive`).
  * - IT IS BOUNDED BY THE VIEWS DRAWN, NOT BY FRAMES: an entry nothing asked for in the previous frame is dropped by
  *   `beginFrame`, so a closed pane or a camera that went away releases its storage instead of owning it forever.
- * - THE `revision` IS THE CALLER'S. It says which state the list was built from (a scene's content revision, a mirror's
- *   applied-delta count); a different revision is a miss. That is the one thing the two callers do not share, and
+ * - THE `revision` IS THE CALLER'S. It says which state the list was built from (a scene's content revision, a
+ *   publication's id); a different revision is a miss. That is the one thing the callers do not share, and
  *   passing it in keeps the memo from knowing where rows come from.
+ * - THE COUNTERS ARE THE ONE PART ANOTHER THREAD MAY READ. The memo itself is one owner, one thread (the one that
+ *   answers its views), but `hits()` / `stores()` are what `RenderEngine::contentCollectCount()` publishes to a host -
+ *   and with the engine half on its own thread that read happens from the content's thread. They are therefore
+ *   relaxed atomics: the numbers are evidence, not synchronisation, and a read that lands a few increments late is
+ *   the same answer it always was. Every other member stays unsynchronised on purpose (G10: the memo is on the
+ *   per-view hot path and has exactly one writer).
  *
- * @note Not thread-safe: one owner, one thread (the one that answers its views).
+ * @note Not thread-safe, except for the two counters (see above).
  */
 class DrawListMemo {
   public:
@@ -117,9 +124,9 @@ class DrawListMemo {
     [[nodiscard]] std::uint64_t stores() const noexcept;
 
   private:
-    std::vector<Entry> entries_;
-    std::uint64_t      hits_{ 0 };
-    std::uint64_t      stores_{ 0 };
+    std::vector<Entry>           entries_;
+    std::atomic<std::uint64_t>   hits_{ 0 };   // Read from another thread: see the class note.
+    std::atomic<std::uint64_t>   stores_{ 0 }; // Read from another thread: see the class note.
 };
 
 } // namespace detail

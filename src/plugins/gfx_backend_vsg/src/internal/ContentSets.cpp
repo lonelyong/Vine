@@ -276,7 +276,7 @@ std::size_t ContentSets::repoint(const BlockStorage& storage, core::FrameTimelin
 {
     d->storage            = &storage;
     std::size_t repointed = 0;
-    d->sets.forEach([&](const Data::Key&, std::shared_ptr<Data::Set>& set) {
+    d->sets.visitValues([&](std::shared_ptr<Data::Set>& set) {
         const ::vsg::ref_ptr<::vsg::DescriptorSet> previous = set->descriptors->set();
         if (!set->descriptors->repoint(storage)) {
             return;
@@ -400,17 +400,9 @@ void ContentSets::sweep(const ContentFacts& facts, core::FrameTimeline& timeline
     };
     (void)d->sets.retireUnpinned([&pinned](const Data::Key& key, const std::shared_ptr<Data::Set>&) { return pinned(key); }, timeline, retirement);
 
-    // A refused build has no descriptor set to park: its key is simply forgotten once its pins are gone (the same
-    // program revision and maps the resident sets are held by) - the ONE rule above asked of the keys that never
-    // became a resident value.
-    for (auto it = d->refused_keys.begin(); it != d->refused_keys.end();) {
-        if (pinned(*it)) {
-            ++it;
-        }
-        else {
-            it = d->refused_keys.erase(it);
-        }
-    }
+    // A refused build has no descriptor set to park: they are the SAME rule above asked of the keys that never became
+    // a resident value (see core::forgetUnpinned - one implementation for both producers).
+    (void)core::forgetUnpinned(d->refused_keys, pinned);
 }
 
 std::size_t ContentSets::sets() const noexcept
