@@ -32,7 +32,7 @@ struct VN_GRAPHICS_API RenderCommand {
     /** The node identity this command mirrors (see Node::id): what a backend keys its facts by.
      *
      * @details
-     * - WHAT IT IS FOR. A render world builds commands from ROWS, and a row may mirror a node that has no `Geometry`
+     * - WHAT IT IS FOR. A published row may name a node that has no `Geometry`
      *   object at all - so the identity a backend keys its facts by must travel on its own, not be inferred from
      *   @ref geometry.
      * - IT IS A HANDLE, NOT AN ADDRESS. A collected list outlives the node it was built from by design (a frame in

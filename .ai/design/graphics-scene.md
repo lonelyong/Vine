@@ -1,7 +1,8 @@
 # graphics 场景图：节点、状态、收集、层、拾取
 
-> **状态**：现行（镜像 / delta / memo 的迁移目标形状见 `graphics-frame-pipeline.md`（草案）§9.3 第 5 步）
-> **最后核对**：2026-11-02
+> **状态**：现行（收集与快照的关系见 `graphics-threading.md` §2.2；镜像 / delta / memo 一代已于 2026-11-12
+> 删除，本文件里涉及它们的措辞待下一次重写时对齐）
+> **最后核对**：2026-11-12
 > **范围**：严格树、状态折叠、收集 memo、层与拾取。
 > **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
 > `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`。

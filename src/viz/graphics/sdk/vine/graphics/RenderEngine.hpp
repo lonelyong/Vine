@@ -230,10 +230,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @details
      * - The witness of the per-view memo on the engine's side: a frame whose passes share a camera collects once for it
-     *   and answers the rest from the memo (see contentCollectReuseCount). Before the mirror carried the same memo this
-     *   number would grow per pass, which is what "one camera, two passes" must not cost.
-     * - It counts what the SOURCE answered - the content's mirror, since a frame's draws are answered from it - so the
-     *   number means the same thing whether the frame runs here or (later) on an engine thread.
+     *   and answers the rest from the memo (see contentCollectReuseCount), which is what "one camera, two passes" must
+     *   cost.
+     * - It counts what the SOURCE answered - the content's published snapshot, since a frame's draws are answered from
+     *   it - so the number means the same thing wherever the frame runs.
      *
      * @return Total number of lists collected since construction.
      */
@@ -404,7 +404,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   Inline stops and joins it. Both wait for a frame in flight first, so a host may switch between frames (not
      *   from inside a `before_draw` hook).
      * - The thread is told nothing about the content: `frame()` still builds the content half on the caller's thread,
-     *   and only the mirrors, the surface's window half and the device are touched on the other side.
+     *   and only the publications, the surface's window half and the device are touched on the other side.
      *
      * @param mode Where to run the engine half.
      */
@@ -1089,7 +1089,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @details
      * - Everything here reads or writes CONTENT (hooks, `Scene` rows, `Scene::setContentFrame`) and the declarations,
-     *   and nothing here touches the device or a mirror's state - which is what lets the other half run elsewhere.
+     *   and nothing here touches the device or a publication's state - which is what lets the other half run elsewhere.
      * - It ends with the frame being a complete value (see `detail::EngineFrame`): a target, a size and a list of
      *   described passes.
      */
@@ -1101,7 +1101,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Runs the frame's ENGINE half: the window half of the size, the expansion of every draw, execute/present.
      *
      * @details
-     * - The seam `buildContentHalf` hands over (see `.ai/design/graphics-threading.md` 2.12): it touches the mirrors,
+     * - The seam `buildContentHalf` hands over (see `.ai/design/graphics-threading.md` 2.12): it touches the publications,
      *   the target and the device - never the content - so it is what runs on the engine thread.
      * - It takes the frame EXPLICITLY instead of reading `frame_`: by the time it runs, the content half may already
      *   be filling the other slot.
@@ -1116,8 +1116,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @details
      * - The ENGINE HALF of a frame (design 2.12): every draw `buildFrameValue` described is asked of its source here,
-     *   after every pass has been described - so one frame answers ONE mirror state (N16), and nothing in this
-     *   function reads content (`runPass` re-points a draw at its content's mirror first, see FrameWorker).
+     *   after every pass has been described - so one frame answers ONE publication (N16), and nothing in this
+     *   function reads content (`runPass` re-points a draw at its content's publication first, see FrameWorker).
      * - What it costs per pass lands in @p frame (its own `engine_micros`), never in the plan: the plan belongs to the
      *   content half, and the numbers are published into it by `publishEngineMicros`.
      *
@@ -1389,7 +1389,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// The scheduler's working memory (see FrameScheduler): one per engine, reused every frame.
     std::unique_ptr<detail::FrameScheduler> scheduler_;
     /// THIS frame, as one value: what the passes described plus the facts the engine half needs (the size it was laid
-    /// out on, the target it resolves to, the mirror token). Rebuilt by every compile, reused across frames so a
+    /// out on, the target it resolves to, the frame token). Rebuilt by every compile, reused across frames so a
     /// steady frame keeps its storage - and, being one object, it is what the frame thread is handed.
     detail::EngineFrame* frame_ = nullptr;
     /// The frame values, TWO of them: with a frame thread, the half that runs elsewhere holds one while the content

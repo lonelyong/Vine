@@ -31,7 +31,9 @@
 - `vsg-pitfalls.md` —— vsg 后端 P1–P82 坑表，按九个风险域分组，每条带症状与判据。
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 - `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
-- `graphics-threading.md` —— 线程模型（**草案**）：两个世界（内容世界留在 UI 线程、API 不变；渲染世界镜像它，只在引擎线程），三条通道（delta / handoff / snapshot），字节内容靠两个原子 revision 轮询，表面归内容线程、交换链归引擎线程，并行只做镜像上的纯计算。
+- `graphics-threading.md` —— 线程模型（**现行**）：内容侧 `publish()` 出一份不可变快照，引擎半段只读它；
+  两条线程各有一个写者，跨边界的载荷只有「发布的值」与「完成报告」，字节内容靠两个原子 revision 轮询；
+  表面归内容线程、交换链归引擎线程，并行只在派生层的纯值上。
 
 **appfw（17）**
 - `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。

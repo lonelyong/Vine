@@ -248,14 +248,14 @@
 
 ### 3.9 F9 `publish` 返回结果
 
-- **行为**：一次发布回答四种状态之一（`Posted` / `Unchanged` / `InsideBatch` / `Refused`）与“镜像现在持有的
-  那一版”；`InsideBatch` 是批内显式“未发布”，`Refused` 是“通道满、下次重试”。外层 `endEdit` 之后的那一帧
-  才发布整批，`publishCount` 只 +1。
+- **行为**：一次发布回答三种状态之一（`Posted` / `Unchanged` / `InsideBatch`），并带着"这次调用之后作为答案的
+  那一份"（`ScenePublishResult::snapshot`）；`InsideBatch` 是批内显式"未发布"，答案仍是批开始时的那份。
+  外层 `endEdit` 之后的那一帧才发布整批，`publishCount` 只 +1。没有 `Refused`：发布无处可拒——它不排队。
 - **约束**（`C2`）：一个 Scene 同时只有一个写者。
-- **要求**（`R11` / `R39`）：`publishCount` 只 +1；没有 null，也没有一个 `bool` 同时表示“没变”“批内”“通道满”。
-- **验收**（`T3` / `T31`）：`FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`、
-  `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture`。
-- **注意**（`P9`）：批不是事务——它只界定“一帧能看见什么”。公开 `Scene::publish()` 随快照（5b-2a，已落地）出现：
+- **要求**（`R11` / `R39`）：`publishCount` 只 +1；没有 null，也没有一个 `bool` 同时表示"没变"和"批内"。
+- **验收**（`T3` / `T31`）：`FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`（三态 + 句柄的
+  revision 走向）、`SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture`。
+- **注意**（`P9`）：批不是事务——它只界定"一帧能看见什么"。公开 `Scene::publish()` 随快照（5b-2a，已落地）出现：
   在那之前，公开面没有一个能承载“上一份快照”的类型，先公开它只会多一个没人能用的版本号。
 
 ### 3.10 F10 原型与实例
@@ -576,11 +576,12 @@
   `RenderWorldSource` / `PublishOutcome` 与 23 条 LEGACY 用例**；`test_graphics` 554 / `test_vsg` 542。
 - **未做**：F8、F10、F11 与 F12 的 `query` 半边。F7 的两半都已落地：3a 的答案（`drawNeeds` 是唯一的键构造者）
   与 3b 的预建（`RenderEngine::prepare()` → `prepareFrame(value)`；预热后录制的帧 `builds` 增量 0，见 `T33`）。
-  F9 的内部半边（四态发布答案）已落地；它的公开
-  `Scene::publish()` 已在 5b-2a 公开；“帧内隐式发布消失”留给 5b-2c（那时 `EngineCompile` 不再自动调用
-  `worker_->publish`）。
-- **迁移期的事实**：`graphics-threading.md` 的 `C1–C20` 与 `graphics-scene.md` 的镜像/delta/memo 描述
-  仍是**现在**的形状；本文件是**目标**。两者冲突时以状态字段为准，接管顺序见 §9.3。
+  F9 的三态公开答案（`Posted` / `Unchanged` / `InsideBatch`）与它携带的快照句柄已落地（5b-2a + 2026-11-12 的
+  `SceneSnapshotRef`）；宿主可以用 `RenderEngine::bindSnapshot()` 自己接管发布（§2.13 of
+  `graphics-threading.md`），未绑定的场景仍由帧首隐式发布 —— 这句"隐式发布消失"留给 5b-2c。
+- **迁移期的事实**：`graphics-threading.md` 已于 2026-11-12 重写为**当前**契约（发布取代镜像/delta，
+  `C1–C15` / `N1–N14` 作为历史编号退役不复用）；`graphics-scene.md` 的收集描述仍带镜像时代的措辞，等它
+  下一次重写时对齐。本文件是**目标**，两者冲突时以状态字段为准，接管顺序见 §9.3。
 
 ### 9.2 已知缺口
 

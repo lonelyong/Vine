@@ -126,6 +126,18 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - `RenderEngine` —— 帧泵 + 账本：`initialize()` / `shutdown()`、`setDevice()`、`addPass(pass, content, order)` / `removePass()`、
   `frame()`（返回 `FrameOutcome`：Ran / NotInitialized / NoDevice）、`createSurface()`（尺寸走 `RenderSurface::resize()`）、
   `publish/resolve`（命名输出）、`framePlan()` / `frameDescription()` / `frameReport()` / `diagnostics()` / `releaseContent()`。
+  - **发布与绑定**：`Scene::publish()` 回答 `Posted` / `Unchanged` / `InsideBatch`，并把**这一份**快照
+    （`SceneSnapshotRef`，可用 `valid()` / `revision()` 查）交回来；`bindSnapshot(scene, ref)` 说“这个引擎画这一份”。
+    绑定之后引擎**不再**为该场景隐式发布，所以画面就是你指定的那一份。不调用两者也照样有画面 —— 帧首会替
+    未绑定的场景发布，这是迁移期的便利。
+  - **会话形状是值**：`applyPlan(plan)` 按名字差分（新增 / 同名原地更新 / 消失的删除，一次调用完成，整份接受或整份拒绝），
+    `plan()` 把它读回成同一个类型，`Plan::describe()` 打出人能读的表。`addPass` / `removePass` 仍可用（迁移期），
+    但不要和计划混用在同一个引擎上：计划没命名的 pass 会被移除。
+  - **预热**：`prepare()` 不提交任何帧，只把下一帧要编译 / 上传的身份建好，返回 `PrepareReport`（这次调用建了什么）；
+    预热过的帧再录制时 `builds` / `uploads` 增量为 0。
+  - **线程与帧的回读**：`setFrameThreading(Inline | EngineThread)`（生命周期决定，不是每帧开关）、
+    `waitForFrame(n)`（唯一显式等待，“这一帧上屏了”）、`presentRecord()` / `presentedCamera()`
+    （上一帧的呈现结局与那一帧的相机快照 —— 拾取用它，不要用活相机）。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。
   - **扩展点只有一个：`describe(scene, out)`**（另加声明侧的 `before_draw` 钩子）。这一条 pass 要"发什么"

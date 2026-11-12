@@ -323,7 +323,7 @@ void RenderEngine::buildFrameValue()
         }
         else {
             // THE ANSWER IS NOT TAKEN HERE. The pass stated a view and whose content answers it (and the content's
-            // write is already in the mirror); asking that source for the list is the ENGINE half's step, which runs
+            // write is already published); asking that source for the list is the ENGINE half's step, which runs
             // over the whole described frame (see expandFrameValue) - that is the seam a thread crosses, and it is
             // why it is a function of its own rather than a line in this loop.
             frame_->engine_order.push_back(index);
@@ -343,15 +343,15 @@ void RenderEngine::buildFrameValue()
 void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
 {
     // A FRAME IS OPEN: the token every per-view memo is keyed by (a list outlives one frame, but nothing is memoised
-    // outside one - see DrawListMemo). Opened HERE and not where the frame was built, because it writes the mirrors'
+    // outside one - see DrawListMemo). Opened HERE and not where the frame was built, because it writes the publications'
     // memos - the very state this half reads - and because the token travels on the frame (see detail::EngineFrame):
     // a frame answered late opens its OWN number, never the one the content has moved on to.
     worker_->beginFrame(frame.content_frame);
 
     // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one bind+expand per pass, in
     // run order (see design 2.12 - the two halves are the seam a thread crosses, so they are two functions and not one
-    // loop). Nothing in this function reads content: `runPass` re-points each draw at its content's mirror and
-    // `expandPass` asks that mirror, which is exactly what makes it safe to run away from the content's thread.
+    // loop). Nothing in this function reads content: `runPass` re-points each draw at its content's publication and
+    // `expandPass` asks that publication, which is exactly what makes it safe to run away from the content's thread.
     //
     // record_micros keeps meaning "describe + collect": the content half measured its part per pass, and the
     // expansion adds its own here - one clock read per pass, not per draw.

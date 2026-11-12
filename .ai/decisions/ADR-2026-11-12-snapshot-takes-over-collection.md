@@ -53,6 +53,10 @@
 2. **谁 publish**（`G2`）：5a / 5b-1 仍由 `EngineCompile` 在帧内隐式发布；5b-2a 公开
    `Scene::publish()` 返回三态结果；5b-2b 让 `EngineCompile` 不再自动调用 `worker_->publish`，帧内隐式发布
    消失。公开面只在 5b-2a 变。
+   > **勘误（2026-11-12，落地核对）**：5b-2b **没有**删掉帧内隐式发布 —— 它删的是镜像 / delta / `RenderWorld`。
+   > 隐式发布仍在（`EngineCompile` 每 pass 调 `FrameWorker::publish`），但已可被宿主用
+   > `RenderEngine::bindSnapshot()` 接管；删除它是 5b-2c 的事（同样待删的还有 `addPass` 家族）。
+   > 另：5b-2a 的公开答案现在携带 `SceneSnapshotRef`（2026-11-12），见 `graphics-threading.md` §2.13。
 3. **`DrawListSource` 的去向**（`G5`）：保留这个**一个问题**的接口；`SnapshotSource` 在 5b-1 就是生产实现，
    5b-2 删掉 `ContentMirror` / `RenderWorldSource` 后它仍是同一个接口。`FrameDescription::content` /
    `expandPass` 的契约不变，等价性测试仍能问两个实现。不把它改成公开的新名词（`G8`：今天的消费者就是

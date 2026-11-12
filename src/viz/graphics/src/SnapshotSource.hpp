@@ -22,10 +22,10 @@ namespace detail
  * @details
  * - WHAT IT IS. The snapshot half of the one question every draw source answers: "what would this view draw".
  *   It reads only the snapshot value, so it answers on the engine thread while the content keeps editing.
- * - WHY IT EXISTS NOW. 5a runs it beside the mirror as a SHADOW: both answer the same view and the frame compares
- *   their lists. 5b makes it the only source and deletes the mirror (see
- *   `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`).
- * - THE MEMO IS THE SAME ONE THE SCENE AND THE MIRROR USE. A list is a pure function of (snapshot, view, mask);
+ * - WHERE THE VALUE COMES FROM. `Scene::publish()` builds the value and `FrameWorker::publish` / `bindSnapshot`
+ *   hand it over; the source never asks the content for anything. That is what makes a frame's draws portable across
+ *   threads: after the bind, they name nothing the content owns (`.ai/design/graphics-threading.md` §2.2).
+ * - THE MEMO IS THE SAME ONE THE SCENE USES. A list is a pure function of (snapshot, view, mask);
  *   two passes that draw the same view must select once. The snapshot's `revision` is the memo's state key.
  * - THREADS. `setSnapshot` runs on the content thread (inside `FrameWorker::publish`); `collectRenderCommands` and
  *   `beginFrame` run on the engine thread. Only the shared pointer is shared, under one mutex; the snapshot is

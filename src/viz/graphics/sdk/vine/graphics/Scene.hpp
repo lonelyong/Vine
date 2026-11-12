@@ -352,7 +352,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      */
     void invalidateContent();
 
-    /** @brief Opens an EDIT BATCH: every edit until endEdit() is published to the mirror as one change.
+    /** @brief Opens an EDIT BATCH: every edit until endEdit() lands as ONE publication.
      *
      * @details
      * - WHAT A BATCH IS FOR: work that is only meaningful as a whole. A robot's joint state is the case it exists for -
@@ -365,7 +365,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      *   composes with the caller's.
      * - IT COVERS EXACTLY WHAT THE RENDER SIDE SEES. Queries stay live - collecting, picking, `boundingBox()`,
      *   `fitToScreen()` answer about the content as it is now, batch or not - and the scene's own memo keeps working.
-     *   What is held back is the version the mirror's copy is keyed by.
+     *   What is held back is the publication itself: the answer stays the one the batch started from.
      * - Nothing here is a transaction: a batch cannot fail and it does not roll back. It bounds WHAT A FRAME CAN SEE,
      *   which is the guarantee a picture needs.
      *
@@ -444,7 +444,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      *
      * @details
      * - A named step because the rows have TWO readers now: a collection (which then runs the view half) and the
-     *   engine side's mirror, which is published from them (see detail::SceneRows).
+     *   engine side's publication, built from them (see detail::SceneRows).
      * - It is the one place of the collection that needs this thread: building reads the graph, and the box refresh
      *   reads each leaf's own data box (a cache keyed by the buffers' revisions).
      *
@@ -462,7 +462,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     NodePtr               root_;
     std::vector<LightPtr> lights_;
 
-    /** @brief Collected-command memo: SHARED with the mirror (see src/DrawListMemo.hpp). */
+    /** @brief Collected-command memo, one list per view (see src/DrawListMemo.hpp). */
 
     // Bumped by every scene-level content change, so a memo built before the
     // change is not reused (see invalidateContent) - and by a material whose
@@ -488,7 +488,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     mutable std::uint64_t                content_collect_count_ = 0;
     mutable std::uint64_t                content_reuse_count_   = 0;
     // How many times a re-read box actually moved (see ensureRows): a byte edit announces itself on a buffer, not on
-    // the graph, so it does not move `bake_epoch_` - and a reader that mirrors these rows needs a version that does.
+    // the graph, so it does not move `bake_epoch_` - and a reader that published these rows needs a version that does.
     mutable std::uint64_t                box_generation_ = 0;
     // HOW DEEP THE EDIT BATCH IS (see beginEdit), and the version a publication compares (`Scene::publish`). Inside a
     // batch the published pair stays where it was, so a frame that lands mid-batch publishes nothing; the next
