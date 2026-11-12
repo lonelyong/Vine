@@ -77,31 +77,36 @@ VN_VSG_NS_BEGIN
  *   name these bytes?" - and the answer is a property of the content rows. Answering it by walking the rows
  *   would make a frame's residency bookkeeping cost O(live content), which is the wrong side of the pin model:
  *   culled content KEEPS its rows, so the cost would be paid on frames that draw nothing. The content store
- *   therefore keeps this index beside the rows (its geometry table updates it as rows move) and publishes it
+ *   therefore keeps these indexes beside the rows (each table maintains its own as rows move) and publishes them
  *   here; asking is one hash lookup.
+ * - TWO KINDS, ONE QUESTION. A geometry row declares the BUFFERS its streams read; a material row declares the
+ *   TEXTURES its slots sample. Both are addresses, and both are asked the same way by the residency tables that
+ *   key on them (api/StreamUploads, api/MaterialImages) - so one type answers both instead of two lookalikes.
  * - WHAT IT MEANS, AND WHAT IT DOES NOT. Membership says an address is still declared by some live row, at the
  *   moment that row was built. It says NOTHING about whether the bytes at that address are still the ones a
- *   residency entry was built from: `Buffer::edit()` moves the buffer's revision without touching any row. That
- *   half is answered by the entry itself, which holds the handle it uploaded from and compares its revision
- *   (see `ResourceTable::retireUnpinned`): declaration membership + own-revision equality - two O(1) facts.
- * - BORROWED, LIKE THE ROWS. The object points into the store's index and stays valid until the next row
+ *   residency entry was built from: `Buffer::edit()` / a texture refill move the object's revision without
+ *   touching any row. That half is answered by the entry itself, which holds the handle it uploaded from and
+ *   compares its revision (see `ResourceTable::retireUnpinned`): declaration membership + own-revision equality
+ *   - two O(1) facts.
+ * - BORROWED, LIKE THE ROWS. The object points into the store's indexes and stays valid until the next row
  *   mutation - the same lifetime the spans beside it have.
  */
 class ContentDeclarations {
   public:
-    ContentDeclarations() = default;
-
     /**
-     * @brief Points at the store's buffer-declaration index.
+     * @brief Points at the store's declaration indexes.
      *
-     * @param buffers Address -> how many row declarations still name it (borrowed, never owned).
+     * @param buffers  Address -> how many live geometry rows still name it (borrowed, never owned).
+     * @param textures Address -> how many live material rows still sample it (borrowed, never owned).
      */
-    explicit ContentDeclarations(const std::unordered_map<const void*, std::uint32_t>* buffers) noexcept
+    explicit ContentDeclarations(const std::unordered_map<const void*, std::uint32_t>* buffers  = nullptr,
+                                 const std::unordered_map<const void*, std::uint32_t>* textures = nullptr) noexcept
       : buffers_(buffers)
+      , textures_(textures)
     {}
 
     /**
-     * @brief Gets whether a live row still declares @p address.
+     * @brief Gets whether a live geometry row still declares @p address.
      *
      * @param address Buffer address (the `StreamKey::buffer` spelling); null answers false.
      * @return true when some live geometry row still names that buffer.
@@ -111,8 +116,20 @@ class ContentDeclarations {
         return address != nullptr && buffers_ != nullptr && buffers_->find(address) != buffers_->end();
     }
 
+    /**
+     * @brief Gets whether a live material row still samples the texture at @p address.
+     *
+     * @param address Texture address (the image cache's key); null answers false.
+     * @return true when some live material row still names that texture.
+     */
+    [[nodiscard]] bool declaresTexture(const void* address) const noexcept
+    {
+        return address != nullptr && textures_ != nullptr && textures_->find(address) != textures_->end();
+    }
+
   private:
     const std::unordered_map<const void*, std::uint32_t>* buffers_{ nullptr };
+    const std::unordered_map<const void*, std::uint32_t>* textures_{ nullptr };
 };
 
 /** @brief One vertex channel of a geometry: what the stream is shared by, and where its bytes live.
@@ -126,7 +143,7 @@ class ContentDeclarations {
  *   streams reading it re-key).
  */
 struct ChannelFacts {
-    core::StreamKey key{};                             // Kind, location, components, buffer, slice (and the
+    core::StreamKey                            key{};  // Kind, location, components, buffer, slice (and the
                                                        // revisions it had when the entry was built).
     vn::intrusive_ptr<const vn::Buffer<float>> values; // The source scalars; read only when uploading.
 
@@ -222,8 +239,8 @@ struct GeometryFacts {
     /// not a separate geometry handle: a geometry IS a node (see ADR-2026-11-11-content-identity-is-a-handle),
     /// so `ref.as<NodeTag>()` is the typed view and no `GeometryId` allocator exists.
     vn::graphics::ContentRef      geometry{};
-    core::VertexLayoutKey         layout{};            // Which channels this geometry feeds (the pipeline key's half).
-    std::span<const ChannelFacts> channels{};          // One per fed channel, in binding order.
+    core::VertexLayoutKey         layout{};   // Which channels this geometry feeds (the pipeline key's half).
+    std::span<const ChannelFacts> channels{}; // One per fed channel, in binding order.
 
     /// The draws, in the geometry's own order: `CompiledCommand::primitive` indexes this row. Empty is a
     /// fact ("this geometry draws nothing"), never a default - a geometry with data always has one.

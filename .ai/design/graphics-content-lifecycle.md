@@ -74,6 +74,9 @@
      上传时那个”。隐藏或裁剪不删行 ⇒ 地址仍被声明 ⇒ 上传留着，回来**零重传**；
      对象离树 ⇒ 行过了 epoch 窗口删掉 ⇒ 声明消失 ⇒ 上传随之离场。buffer 换代（`Buffer::edit()`）
      也让旧条目自己失去 revision 那一半，不需要几何说话。
+   - 纹理（`MaterialImages`）走**同一条规则**：声明是材质行的 slot（`declaresTexture`）或该帧某个 pass 的导入
+     输入（`ImageInput`，没有事实行也照样算），另一半是条目自己的 `Texture::revision()`；离场不 park（描述符集
+     自己持有 view / sampler），所以它在 `ContentAssembly::beginFrame` 里和流一起问。
    - 编译半片 / 描述符集是**会话级**的，不随 pass 走：它们只在“表不再回答这个 program（id + revision）”或
      “没有任何 geometry 还问这个 layout”时被停靠（`ContentHalves::answerable` / `ContentSets` 的 sweep）。
    为什么这么分：把“对象没了”和“这一帧没画”合成一个开关，就必然要么为裁剪抖动付重建代价，要么把已离树的
@@ -97,13 +100,13 @@
 | F2 | 释放标记 | 释放只是标记；行按 epoch 回收（2.10）。下次使用（`track` / `ensure*`）清掉标记，所以不误删。 |
 | F3 | 纹理立即删 | 纹理 cache 立即删条目；行按 epoch 回收，arena 槽跟最后一行走。 |
 | F4 | 重建 | 下一次使用重建驻留；不是泄漏。 |
-| F5 | 弃用扫尾 | 宿主丢掉引用后由 `ContentSweep` 标记，行与条目按 epoch 回收。 |
+| F5 | 弃用扫尾 | 宿主丢掉引用后由 `ContentStore::releaseAbandoned` 标记（帧内一次，录完内容、提交之前），行与条目按 epoch 回收；上传与纹理由帧自己的声明扫描离场。 |
 
 ### 3.2 缓存
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F6 | 纹理缓存 | `MaterialImages` 条目跟宿主持有量走；无 LRU / 上限。 |
+| F6 | 纹理缓存 | `MaterialImages` 条目由**活内容**钉住：材质行的 slot 声明（`ContentDeclarations::declaresTexture`）+ 该帧各 pass 导入的贴图，另加条目自己的 `revision()`；无 LRU / 上限。 |
 | F7 | 材质 arena | 每槽 `copies` 份（对应在飞帧）；槽满 `Refused`，不淘汰活材质。 |
 | F8 | 按需扩容 | 记录前按 `ContentStore::materialCount()` 换更大 storage；无硬上限。 |
 | F9 | 流共享 | `StreamUploads` 按 `StreamKey` 共享；稳态帧 0 上传；条目由活几何行钉住（`ResourceTable`）。 |
@@ -142,6 +145,9 @@
 | F27 | **geom 隐藏**（`setVisible(false)`） | **留着**（宿主仍持有） | **留着**：行还在 ⇒ pin 还在；恢复可见零重传 | 留着 | — | 只影响收集，不触发释放 |
 | F28 | **geom 被裁剪**（视锥外，逐视图） | 留着 | 同 F27——裁剪是逐视图的，但它不改变“谁声明了这些字节” | 留着 | — | 同上 |
 
+纹理（`MaterialImages`）在“上传”那一列：它的 pin 同样是声明（材质行的 slot）+ 该帧导入的贴图 + 条目自己的
+revision，所以隐藏 / 裁剪的材质不丢贴图，材质行过了 epoch 窗口才让贴图离场（F26 的机制，另一张表）。
+
 ## 4. 公开接口
 
 ### 4.1 释放
@@ -158,7 +164,7 @@
 
 | 接口 | 作用 |
 |---|---|
-| `MaterialImages::acquire()` / `releaseTexture()` / `releaseContent()` / `releaseAbandoned()` / `bytes()` | 纹理 cache |
+| `MaterialImages::acquire()` / `releaseTexture()` / `beginFrame()` / `released()` / `bytes()` | 纹理 cache（寿命读 `ContentDeclarations::declaresTexture` + 该帧导入的贴图 + 条目自己的 revision） |
 | `core::MaterialArena::write()` / `capacityNeed()` / `live()` | 材质块 |
 | `BlockStorage::beginFrame()` / `writeView()` / `writeDraw()` / `writeMaterial()` / `releaseMaterial()` | 每帧块 |
 | `BlockStorage::strides()` / `regions()` / `bytes()` | 布局与观测 |

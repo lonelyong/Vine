@@ -42,7 +42,7 @@ struct ContentStore::Data {
         /// The shape the rows are built from. Immutable, so a new revision is a NEW value here (never an in-place edit).
         vn::graphics::GeometryDescriptionPtr shape{};
         /// Whether a build was attempted at @ref described_revision. A shape that FAILED is not retried until it moves.
-        bool          described{ false };
+        bool described{ false };
         /// Whether that attempt produced a row. Cleared when the row ages out, so the identity is rebuilt when a plan
         /// names it again instead of looking up a row that is gone.
         bool          built{ false };
@@ -104,10 +104,7 @@ struct ContentStore::Data {
     ///
     /// The order is refreshed on EVERY mutation (a content change, not a frame) and never per lookup: a frame
     /// that changes nothing touches none of this (see tablesFor).
-    template <typename Row,
-              typename Storage,
-              void (*MakeOrder)(std::span<const Row>, std::vector<std::uint32_t>&),
-              std::uint64_t (*KeyOf)(const Row&)>
+    template <typename Row, typename Storage, void (*MakeOrder)(std::span<const Row>, std::vector<std::uint32_t>&), std::uint64_t (*KeyOf)(const Row&)>
     class Table {
       public:
         /// @brief Appends one row and its storage, stamped with @p epoch (the frame whose plan names it).
@@ -240,11 +237,58 @@ struct ContentStore::Data {
             MakeOrder(rows_, order_);
         }
 
-        std::vector<Row>                      rows_;
-        std::vector<std::unique_ptr<Storage>> storage_;   // One per row, in row order.
-        std::vector<std::uint64_t>            epochs_;    // One per row: the last frame whose plan named it.
-        std::vector<std::uint32_t>            order_;     // A permutation of `rows_`, sorted by the lookup key.
+        std::vector<Row>                                 rows_;
+        std::vector<std::unique_ptr<Storage>>            storage_; // One per row, in row order.
+        std::vector<std::uint64_t>                       epochs_;  // One per row: the last frame whose plan named it.
+        std::vector<std::uint32_t>                       order_;   // A permutation of `rows_`, sorted by the lookup key.
         std::unordered_map<std::uint64_t, std::uint32_t> rows_of_; // Rows per identity (see rowsOf).
+    };
+
+    /// @brief Address -> how many live rows name it: the index ContentFacts publishes (see ContentDeclarations).
+    ///
+    /// WHY ONE TYPE FOR BOTH KINDS. A geometry row names the buffers its streams read and a material row names the
+    /// textures its slots sample; both are an address, both are asked as membership, and both are refcounted (one
+    /// arena is named by several rows). Two lookalike maps is how the two would come to disagree about what "named"
+    /// means - so the rule (add one on append, remove one on erase, leave at zero) is written once.
+    class Declarations {
+      public:
+        /// @brief Adds one declaration of @p address (null is not a declaration).
+        void add(const void* address)
+        {
+            if (address != nullptr) {
+                ++counts_[address];
+            }
+        }
+
+        /// @brief Withdraws one declaration of @p address; the address leaves when its count reaches zero.
+        void remove(const void* address) noexcept
+        {
+            if (address == nullptr) {
+                return;
+            }
+            const auto found = counts_.find(address);
+            if (found == counts_.end()) {
+                return; // cannot happen for a row this index saw; never erase what is not there
+            }
+            if (--found->second == 0U) {
+                counts_.erase(found);
+            }
+        }
+
+        /// @brief Forgets every declaration (the session-teardown path).
+        void clear() noexcept
+        {
+            counts_.clear();
+        }
+
+        /// @brief Gets the index a `ContentDeclarations` borrows.
+        [[nodiscard]] const std::unordered_map<const void*, std::uint32_t>& counts() const noexcept
+        {
+            return counts_;
+        }
+
+      private:
+        std::unordered_map<const void*, std::uint32_t> counts_;
     };
 
     /// @brief The geometry rows AND the buffers they declare: one object, so a row cannot move without the
@@ -286,13 +330,10 @@ struct ContentStore::Data {
         template <typename Keep, typename OnErase>
         std::size_t reclaimBefore(std::uint64_t oldest_live, Keep keep, OnErase after_declare)
         {
-            return table_.reclaimBefore(
-                oldest_live,
-                keep,
-                [this, &after_declare](const GeometryFacts& row) {
-                    declare(row, -1);
-                    after_declare(row);
-                });
+            return table_.reclaimBefore(oldest_live, keep, [this, &after_declare](const GeometryFacts& row) {
+                declare(row, -1);
+                after_declare(row);
+            });
         }
 
         /// @brief Forgets every row and every declaration (the session-teardown path).
@@ -329,7 +370,7 @@ struct ContentStore::Data {
         /** @brief Gets the declaration index the facts publish (borrowed for as long as those facts are). */
         [[nodiscard]] const std::unordered_map<const void*, std::uint32_t>& declaredBuffers() const noexcept
         {
-            return declared_;
+            return declared_.counts();
         }
 
       private:
@@ -347,40 +388,115 @@ struct ContentStore::Data {
             }
         }
 
-        /// @brief Adds or withdraws ONE declaration; the address leaves when its count reaches zero.
+        /// @brief Adds or withdraws ONE declaration.
         void declareOne(const void* buffer, int direction)
         {
-            if (buffer == nullptr) {
-                return;
-            }
-            const auto found = declared_.find(buffer);
             if (direction > 0) {
-                if (found == declared_.end()) {
-                    declared_.emplace(buffer, 1U);
-                }
-                else {
-                    ++found->second;
-                }
-                return;
+                declared_.add(buffer);
             }
-            if (found == declared_.end()) {
-                return; // cannot happen for a row this table appended; never erase what is not there
-            }
-            if (--found->second == 0U) {
-                declared_.erase(found);
+            else {
+                declared_.remove(buffer);
             }
         }
 
         Table<GeometryFacts, GeometryStorage, &orderGeometryRows, &geometryRowKey> table_;
-        std::unordered_map<const void*, std::uint32_t>             declared_;
+        Declarations                                                               declared_;
+    };
+
+    /// @brief The material rows AND the textures they sample: GeometryTable's rule for the other kind.
+    ///
+    /// WHY THE TEXTURES NEED ONE. The image cache's residency key is the texture's ADDRESS plus its revision (see
+    /// api/MaterialImages), so "is this upload still wanted?" is asked once per cached image and must not cost a
+    /// walk over the material rows - a scene with culled draws keeps its rows, so the walk would be paid on frames
+    /// that draw nothing. A slot's map is declared for exactly as long as the row that names it answers, which is
+    /// the same lifetime the row's bytes have; a material edit replaces the row and the declaration with it.
+    class MaterialTable {
+      public:
+        /// @brief Appends one row and its storage, declaring the textures it samples and stamping it with @p epoch.
+        void append(const MaterialFacts& row, std::unique_ptr<MaterialStorage> cell, std::uint64_t epoch)
+        {
+            table_.append(row, std::move(cell), epoch);
+            declare(row, +1);
+        }
+
+        /// @brief Stamps @p row with @p epoch (the frame whose plan just named it).
+        void stamp(const MaterialFacts* row, std::uint64_t epoch) noexcept
+        {
+            table_.stamp(row, epoch);
+        }
+
+        /// @brief Erases every row no plan named since @p oldest_live that @p keep does not protect, withdrawing its
+        ///        declarations.
+        template <typename Keep, typename OnErase>
+        std::size_t reclaimBefore(std::uint64_t oldest_live, Keep keep, OnErase after_declare)
+        {
+            return table_.reclaimBefore(oldest_live, keep, [this, &after_declare](const MaterialFacts& row) {
+                declare(row, -1);
+                after_declare(row);
+            });
+        }
+
+        /// @brief Forgets every row and every declaration (the session-teardown path).
+        void clear()
+        {
+            table_.clear();
+            declared_.clear();
+        }
+
+        /** @brief Gets the rows (contiguous: `ContentFacts` hands out spans of them). */
+        [[nodiscard]] std::span<const MaterialFacts> rows() const noexcept
+        {
+            return table_.rows();
+        }
+
+        /** @brief Gets the row order the lookups search (see api/ContentFacts). */
+        [[nodiscard]] std::span<const std::uint32_t> order() const noexcept
+        {
+            return table_.order();
+        }
+
+        /** @brief Gets how many rows the table carries. */
+        [[nodiscard]] std::size_t size() const noexcept
+        {
+            return table_.size();
+        }
+
+        /** @brief Gets how many rows one identity still has (see Table::rowsOf). */
+        [[nodiscard]] std::size_t rowsOf(std::uint64_t key) const noexcept
+        {
+            return table_.rowsOf(key);
+        }
+
+        /** @brief Gets the texture index the facts publish (borrowed for as long as those facts are). */
+        [[nodiscard]] const std::unordered_map<const void*, std::uint32_t>& declaredTextures() const noexcept
+        {
+            return declared_.counts();
+        }
+
+      private:
+        /// @brief Adds (@p direction +1) or withdraws (-1) every texture one row's slots name.
+        void declare(const MaterialFacts& row, int direction)
+        {
+            for (const MaterialSlotFacts& slot : row.slots) {
+                if (direction > 0) {
+                    declared_.add(slot.texture);
+                }
+                else {
+                    declared_.remove(slot.texture);
+                }
+            }
+        }
+
+        Table<MaterialFacts, MaterialStorage, &orderMaterialRows, &materialRowKey> table_;
+        Declarations                                                               declared_;
     };
 
     // The live set: the identities the host tracked, each holding the SHAPE it answers with. The description is held
     // so a row built from it stays readable (a material row borrows its maps, so the entry is what owns them), and the
     // identity is the node handle the content side names, so an edit re-uses the entry instead of creating a second one.
-    std::unordered_map<vn::graphics::NodeId, LiveGeometry>              geometries;
-    std::unordered_map<vn::graphics::ProgramId, LiveProgram>            programs;
-    std::unordered_map<vn::graphics::MaterialId, LiveMaterial>          materials;
+    std::unordered_map<vn::graphics::NodeId, LiveGeometry>     geometries;
+    std::unordered_map<vn::graphics::ProgramId, LiveProgram>   programs;
+    std::unordered_map<vn::graphics::MaterialId, LiveMaterial> materials;
 
     /// Material identities whose entry is gone and whose arena slot is nobody's to keep any more (see dropReleased):
     /// the sweep hands them to the block storage.
@@ -392,9 +508,9 @@ struct ContentStore::Data {
     std::vector<ProgramNameFacts> program_names;
 
     // The tables (see Table: rows, their storage, their order and their epoch together).
-    GeometryTable                                                                geometry;
-    Table<ProgramFacts, NoStorage, &orderProgramRows, &programRowKey>            program;
-    Table<MaterialFacts, MaterialStorage, &orderMaterialRows, &materialRowKey>   material;
+    GeometryTable                                                     geometry;
+    Table<ProgramFacts, NoStorage, &orderProgramRows, &programRowKey> program;
+    MaterialTable                                                     material;
 
     ContentFacts  facts{};
     std::uint64_t builds{ 0 };
@@ -418,9 +534,9 @@ struct ContentStore::Data {
         tables.program_order  = program.order();
         tables.geometry_order = geometry.order();
         tables.material_order = material.order();
-        // The declaration index travels WITH the rows (see ContentDeclarations): a residency table asks it
+        // The declaration indexes travel WITH the rows (see ContentDeclarations): a residency table asks them
         // instead of walking the rows, so its per-frame cost does not follow the size of the content.
-        tables.declarations = ContentDeclarations{ &geometry.declaredBuffers() };
+        tables.declarations   = ContentDeclarations{ &geometry.declaredBuffers(), &material.declaredTextures() };
         return tables;
     }
 
@@ -595,11 +711,11 @@ void ContentStore::track(vn::graphics::NodeId identity, const vn::graphics::Geom
     const auto [entry, inserted] = d->geometries.try_emplace(identity);
     (void)inserted;
     Data::LiveGeometry& live = entry->second;
-    live.released             = false; // still in use: a release the host asked for is called off
+    live.released            = false; // still in use: a release the host asked for is called off
     // A NEW SHAPE AT THE SAME IDENTITY. The rows the tables answer for the old revision stay answerable until no
     // live plan has named them for a window (see tablesFor's reclamation pass), so nothing is dropped here - the value
     // is replaced and the revision compare does the rest.
-    live.shape = description;
+    live.shape               = description;
 }
 
 void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Geometry>& geometry)
@@ -613,9 +729,9 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Geometry>& geomet
     const auto [entry, inserted] = d->geometries.try_emplace(geometry->id());
     (void)inserted;
     Data::LiveGeometry& live = entry->second;
-    live.released             = false; // still in use: a release the host asked for is called off
-    live.object               = geometry;
-    live.shape                = geometry->description();
+    live.released            = false; // still in use: a release the host asked for is called off
+    live.object              = geometry;
+    live.shape               = geometry->description();
 }
 
 void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& program)
@@ -660,7 +776,7 @@ void ContentStore::track(const vn::graphics::MaterialBase* identity, const vn::g
         return;
     }
     Data::LiveMaterial& live = entry->second;
-    live.released             = false; // still in use: a release the host asked for is called off
+    live.released            = false; // still in use: a release the host asked for is called off
     // A NEW VALUE STARTS A NEW EPISODE for the slot reports: the values changed, so what is wrong with them may
     // have too (see claimSlotReport) - and the report is asked BEFORE the next frame describes the value, which is
     // why it is re-armed here and not in ensureMaterial.
@@ -735,9 +851,9 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
         }
     }
 
-    d->facts.programs   = d->program.rows();
-    d->facts.geometries = d->geometry.rows();
-    d->facts.materials  = d->material.rows();
+    d->facts.programs      = d->program.rows();
+    d->facts.geometries    = d->geometry.rows();
+    d->facts.materials     = d->material.rows();
     d->facts.program_names = d->program_names;
 
     // The tables are published WITH THEIR ROW ORDER, which is what turns the recording's lookups into
@@ -746,7 +862,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     d->facts.program_order  = d->program.order();
     d->facts.geometry_order = d->geometry.order();
     d->facts.material_order = d->material.order();
-    d->facts.declarations   = ContentDeclarations{ &d->geometry.declaredBuffers() };
+    d->facts.declarations   = ContentDeclarations{ &d->geometry.declaredBuffers(), &d->material.declaredTextures() };
     return d->facts;
 }
 
@@ -764,7 +880,7 @@ void ContentStore::ensureGeometry(vn::graphics::NodeId identity, std::uint64_t e
     }
 
     Data::LiveGeometry& live = entry->second;
-    live.released             = false; // named by a frame: a release the host asked for is called off
+    live.released            = false; // named by a frame: a release the host asked for is called off
     if (live.shape == nullptr) {
         return;
     }
@@ -786,8 +902,8 @@ void ContentStore::ensureGeometry(vn::graphics::NodeId identity, std::uint64_t e
         live.built = false; // the row aged out under us; the description is built again below
     }
 
-    auto          storage = std::make_unique<Data::GeometryStorage>();
-    GeometryFacts fresh;
+    auto           storage = std::make_unique<Data::GeometryStorage>();
+    GeometryFacts  fresh;
     const FactMiss miss = buildGeometryFacts(*live.shape, fresh, storage->channels, storage->primitives);
     if (miss != FactMiss::None) {
         // The ATTEMPT, not the success: a shape that failed is not retried until the revision moves.
@@ -805,7 +921,7 @@ void ContentStore::ensureGeometry(vn::graphics::NodeId identity, std::uint64_t e
 void ContentStore::ensureMaterial(vn::graphics::ContentRef material, std::uint64_t epoch)
 {
     const vn::graphics::MaterialId identity = material.as<vn::graphics::MaterialTag>();
-    auto                          entry    = d->materials.find(identity);
+    auto                           entry    = d->materials.find(identity);
     if (entry == d->materials.end()) {
         if (!identity.isNull()) {
             return; // untracked (see ensureGeometry)
@@ -816,7 +932,7 @@ void ContentStore::ensureMaterial(vn::graphics::ContentRef material, std::uint64
     }
 
     Data::LiveMaterial& live = entry->second;
-    live.released             = false; // named by a frame: a release the host asked for is called off
+    live.released            = false; // named by a frame: a release the host asked for is called off
 
     // THE VALUES A ROW IS BUILT FROM: the ones the frame published. A material no frame published (a command a host
     // built by hand) is answered from the object's own cache - the same door every hand-built command uses, and the
@@ -844,8 +960,8 @@ void ContentStore::ensureMaterial(vn::graphics::ContentRef material, std::uint64
         live.built = false;
     }
 
-    auto          storage = std::make_unique<Data::MaterialStorage>();
-    MaterialFacts fresh;
+    auto           storage = std::make_unique<Data::MaterialStorage>();
+    MaterialFacts  fresh;
     const FactMiss miss = buildMaterialFacts(ref, values, fresh, storage->block);
     if (miss != FactMiss::None) {
         return; // the ATTEMPT, not the success (see ensureGeometry)
@@ -866,8 +982,8 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
         return; // untracked (see ensureGeometry)
     }
 
-    Data::LiveProgram& live = entry->second;
-    live.released             = false; // named by a frame: a release the host asked for is called off
+    Data::LiveProgram& live                     = entry->second;
+    live.released                               = false; // named by a frame: a release the host asked for is called off
     // THE TRACKED OBJECT IS WHAT THE ROW IS DESCRIBED FROM: the plan names the identity, and the values are the
     // object's current ones - a build never resurrects a revision (see the class note), so the plan's revision
     // is deliberately not used here.
@@ -886,8 +1002,7 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
     }
 
     const auto built = [&live, &variant, screen]() {
-        return screen ? live.screen_built
-                      : std::find(live.variants.begin(), live.variants.end(), variant.bits()) != live.variants.end();
+        return screen ? live.screen_built : std::find(live.variants.begin(), live.variants.end(), variant.bits()) != live.variants.end();
     };
     if (built()) {
         const FactResult<ProgramFacts> row =

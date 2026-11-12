@@ -17,13 +17,11 @@ set(_guarded
     src/plugins/gfx_backend_vsg/include/vine/vsg/internal/ContentPush.hpp
     src/plugins/gfx_backend_vsg/include/vine/vsg/internal/ContentSources.hpp
     src/plugins/gfx_backend_vsg/include/vine/vsg/internal/ContentStore.hpp
-    src/plugins/gfx_backend_vsg/include/vine/vsg/internal/ContentSweep.hpp
     src/plugins/gfx_backend_vsg/src/internal/ContentFacts.cpp
     src/plugins/gfx_backend_vsg/src/internal/ContentHalves.cpp
     src/plugins/gfx_backend_vsg/src/internal/ContentPush.cpp
     src/plugins/gfx_backend_vsg/src/internal/ContentSources.cpp
-    src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp
-    src/plugins/gfx_backend_vsg/src/internal/ContentSweep.cpp)
+    src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp)
 
 set(_checked 0)
 foreach(_file IN LISTS _guarded)

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 #include <vsg/core/ref_ptr.h>
 
@@ -22,6 +23,7 @@ class Texture;
 }
 
 VN_VSG_NS_BEGIN
+class ContentDeclarations; // What the live content declares (see ContentFacts.hpp).
 
 /**
  * @brief The images one engine texture is SAMPLED through: the GPU side of a mat
@@ -45,15 +47,11 @@ anism the backend has always
  note below) rather than
  * patched in place.
  *
- * WHY THE ENTRY OWNS ITS KEY. The cache is keyed by the texture's ADDRESS and ca
-nnot observe its
- * destruction, so an entry that merely referenced it could outlive it - and a ne
-w texture allocated at the
- * recycled address would then be served the dead texture's image (wrong pixels,
-silently). Each entry holds
- * an owning reference, and @ref releaseAbandoned drops the entries whose only re
-maining owner is the cache
- * itself.
+ * WHY THE ENTRY OWNS ITS KEY. The cache is keyed by the texture's ADDRESS and cannot observe its
+ * destruction, so an entry that merely referenced it could outlive it - and a new texture allocated at the
+ * recycled address would then be served the dead texture's image (wrong pixels, silently). Each entry holds
+ * an owning reference, and @ref beginFrame drops the entries no live content declares any more: the handle the
+ * entry holds is what keeps its address unique for exactly as long as its key can be looked up.
  *
  * WHY THE REVISION IS PART OF THE KEY. `Texture::revision()` is bumped by every fill of a face, and a
  * texture that is re-filled keeps its address: without the revision the entry would keep serving the image
@@ -87,17 +85,18 @@ backend.
  */
 class MaterialImages {
   public:
-    /** @brief Why there is NO entry bound: the host owns the memory policy.
+    /** @brief When an entry lives and when it goes (the pin model; see @ref beginFrame).
      *
-     * WHAT LIVES HERE. An entry lives exactly as long as the host holds its texture: the cache never drops
-     * a texture it can still be asked to sample, because "which live content deserves GPU memory" is the
-     * host's decision rather than this cache's. That matters because a bound made the cache rebuild and
-     * re-upload a whole working set every time it was sampled again - a cost the picture never shows, and one
-     * the cache could only trade against another arbitrary number.
+     * WHAT LIVES HERE. An entry lives exactly as long as some LIVE CONTENT still names its texture: a material
+     * row's slot (the tables a recording reads) or a pass' imported input (the frame's own declaration). Culled
+     * content keeps its rows, so a map that is merely out of view keeps its upload and comes back to zero
+     * re-uploads - the same rule the shared streams follow, because a residency lifetime should not depend on
+     * which kind of GPU object it is.
      *
-     * WHAT SHRINKS IT. releaseAbandoned() drops the entries whose texture the host let go (nobody can ask for
-     * them again), and releaseTexture() drops one the host names explicitly. Those are the only two answers to
-     * "should this leave?", and neither is a capacity rule.
+     * WHAT SHRINKS IT. beginFrame() drops the entries no live content declares any more (the row that named the
+     * texture left), and releaseTexture() drops one the host names explicitly. Those are the only two answers to
+     * "should this leave?", and neither is a capacity rule: there is no LRU, no byte bound and no pressure
+     * eviction anywhere in this cache.
      *
      * WHAT THE HOST CAN READ. count() and bytes() describe the residency so a host that wants to spend less
      * memory can decide what to release; the cache itself does not warn or evict on their values.
@@ -184,16 +183,30 @@ luded). */
     [[nodiscard]] bool has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept;
 
     /**
-     * @brief Releases the images of every texture the app has dropped.
+     * @brief Opens a frame: every entry no live content still names, or whose texture moved, leaves.
      *
-     * An entry is abandoned when the cache is the only owner left: nothing can
-look it up again, so its
-     * image and view are released now rather than pinned until the session ends
-.
+     * @details
+     * - THE TWO HALVES OF A PIN, exactly as the shared streams ask them: the DECLARATION says whether anything
+     *   alive still names this texture (`ContentDeclarations::declaresTexture` - the material rows' slots), and
+     *   the entry says whether the bytes are still the ones it built from (`owner->revision()`). A texture
+     *   refilled without being re-acquired loses its entry here instead of lingering with the old pixels.
+     * - THE FRAME'S OWN IMPORTS ARE CONTENT TOO: a pass may declare a texture as an input (`ImageInput`), and
+     *   that declaration names the texture without any table row, so the caller hands those addresses over.
+     *   Without them every imported map would be re-uploaded every frame - the picture would stay right and the
+     *   cost would be invisible in it.
+     * - NOTHING IS PARKED. Unlike a stream (whose bind a recorded command buffer may still name), an entry here
+     *   owns only a lookup share: a descriptor set that already samples the image holds its own reference to the
+     *   view and the sampler, so erasing the entry cannot pull anything out from under a submitted frame.
+     * - O(#entries), never O(content): the answer is one hash lookup per resident image.
      *
-     * @return Number of released entries.
+     * @param declarations What the content rows declare (the store's published index).
+     * @param imported     Textures the frame's passes import (borrowed addresses, may contain duplicates).
+     * @return How many entries left.
      */
-    std::size_t releaseAbandoned();
+    std::size_t beginFrame(const ContentDeclarations& declarations, std::span<const vn::graphics::Texture*> imported);
+
+    /** @brief Gets how many entries left so far (the sweep's departures; explicit releases are not counted here). */
+    [[nodiscard]] std::size_t released() const noexcept;
 
     /**
      * @brief Releases the cached image of one texture the host still owns.

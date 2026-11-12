@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -28,6 +29,7 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
+#include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/MaterialImages.hpp>
 
 using vn::graphics::CubeMap;
@@ -36,6 +38,7 @@ using vn::graphics::Texture;
 using vn::graphics::Texture2D;
 using vn::imaging::Image;
 using vn::imaging::PixelFormat;
+using vn::vsg::ContentDeclarations;
 using vn::vsg::MaterialImages;
 using vn::vsg::SamplerImage;
 using vn::vsg::detail::TextureReject;
@@ -260,26 +263,86 @@ TEST(MaterialImagesTest, ADeclaredAnisotropyIsClampedToTheDeviceLimit)
     EXPECT_FLOAT_EQ(flat.sampler->maxAnisotropy, 1.0F);
 }
 
-TEST(MaterialImagesTest, AnEntryKeepsItsTextureAliveUntilItIsAbandoned)
+/**
+ * @brief A declared texture keeps its upload however long the frames run; the row leaving is what ends it.
+ *
+ * WHY THE DECLARATION AND NOT THE HOST'S HANDLE. The residency rule is content's (see the class note): a texture a
+ * live material row samples is wanted every frame, and a texture nobody names is an entry nothing can ask for. The
+ * two facts a frame asks are the ones the shared streams ask - declaration membership and the entry's own revision -
+ * so this case drives the frame sweep with a hand-built index.
+ */
+TEST(MaterialImagesTest, AnEntryLivesWhileContentDeclaresItAndLeavesWhenItDoesNot)
 {
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    auto          texture = readyTexture(); // the app's own reference, dropped below
+    const auto    texture = readyTexture();
     TextureReject reason  = TextureReject::Ok;
     const auto    images  = cache->acquire(texture.get(), reason);
     ASSERT_NE(images.view, nullptr);
     ASSERT_EQ(cache->count(), 1U);
+    ASSERT_GT(cache->bytes(), 0U);
 
-    // While the app holds the texture the entry is a retained share of a live object.
-    EXPECT_EQ(cache->releaseAbandoned(), 0U);
-    EXPECT_TRUE(cache->has(texture.get()));
+    std::unordered_map<const void*, std::uint32_t> textures{
+        { texture.get(), 1U }
+    };
+    const ContentDeclarations declared{ nullptr, &textures };
+    for (int frame = 0; frame < 100; ++frame) {
+        EXPECT_EQ(cache->beginFrame(declared, {}), 0U) << "a declared texture keeps its upload";
+    }
+    EXPECT_EQ(cache->count(), 1U);
+    EXPECT_EQ(cache->released(), 0U);
 
-    const Texture* address = texture.get();
-    texture.reset(); // the cache is the only owner left
+    // The last row that named it left: the entry goes at the next frame boundary (nothing is parked here).
+    textures.clear();
+    EXPECT_EQ(cache->beginFrame(declared, {}), 1U);
+    EXPECT_EQ(cache->count(), 0U);
+    EXPECT_EQ(cache->bytes(), 0U) << "the residency follows the entry";
+    EXPECT_EQ(cache->released(), 1U);
+}
 
-    EXPECT_EQ(cache->releaseAbandoned(), 1U) << "nothing can look the entry up again";
-    EXPECT_FALSE(cache->has(address));
+/** @brief An imported pass input pins its texture with no material row at all. */
+TEST(MaterialImagesTest, AnImportedInputKeepsItsEntryWithoutAnyRow)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+
+    const auto    texture = readyTexture();
+    TextureReject reason  = TextureReject::Ok;
+    ASSERT_NE(cache->acquire(texture.get(), reason).view, nullptr);
+
+    // A span is a view over the call's own storage: the vector must be writable to hand one over.
+    std::vector<const Texture*> imported{ texture.get() };
+    const ContentDeclarations   none; // no material row names it
+    for (int frame = 0; frame < 3; ++frame) {
+        EXPECT_EQ(cache->beginFrame(none, imported), 0U) << "a pass that imports it names it every frame";
+    }
+    EXPECT_EQ(cache->count(), 1U);
+
+    // A frame that imports nothing leaves it with no pin at all: the entry goes.
+    EXPECT_EQ(cache->beginFrame(none, {}), 1U);
+    EXPECT_EQ(cache->count(), 0U);
+}
+
+/** @brief A refill the frame never re-acquired is not kept around with the old pixels. */
+TEST(MaterialImagesTest, ARevisionThatMovedRetiresTheEntryContentStillDeclares)
+{
+    const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
+    ASSERT_NE(cache, nullptr);
+
+    const auto    texture = readyTexture();
+    TextureReject reason  = TextureReject::Ok;
+    ASSERT_NE(cache->acquire(texture.get(), reason).view, nullptr);
+
+    std::unordered_map<const void*, std::uint32_t> textures{
+        { texture.get(), 1U }
+    };
+    const ContentDeclarations declared{ nullptr, &textures };
+    ASSERT_EQ(cache->beginFrame(declared, {}), 0U);
+
+    // The host refills the texture: its revision moves, the declaration does not.
+    texture->setImage(vn::intrusive_ptr<const Image>(new Image(4, 4, PixelFormat::Rgba8Unorm)));
+    EXPECT_EQ(cache->beginFrame(declared, {}), 1U) << "the entry's bytes are not the texture's any more";
     EXPECT_EQ(cache->count(), 0U);
 }
 
@@ -387,7 +450,8 @@ TEST(MaterialImagesTest, ClearDropsEveryEntryAndTheFallbacks)
  * @brief A live texture keeps its images however many there are: the cache has no capacity to run out of.
  *
  * The old contract was a 256-entry bound that rebuilt the whole working set every time it was sampled again.
- * The rule now is the host's: hold the texture and it stays resident; drop it and releaseAbandoned lets it go.
+ * The rule now follows the content: while a material row (or a pass' import) still names the texture it stays
+ * resident, and the row leaving is what lets it go (see beginFrame).
  */
 TEST(MaterialImagesTest, EveryLiveTextureKeepsItsImages)
 {
@@ -417,26 +481,29 @@ TEST(MaterialImagesTest, EveryLiveTextureKeepsItsImages)
     EXPECT_NE(again.view, nullptr);
 }
 
-TEST(MaterialImagesTest, DroppingTheTextureIsWhatRemovesItsImages)
+TEST(MaterialImagesTest, DroppingTheDeclarationIsWhatRemovesItsImages)
 {
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
     ASSERT_NE(cache, nullptr);
 
-    auto          texture = readyTexture();
+    const auto    texture = readyTexture();
     TextureReject reason  = TextureReject::Ok;
     ASSERT_NE(cache->acquire(texture.get(), reason).view, nullptr);
     ASSERT_EQ(cache->count(), 1U);
     const std::uint64_t bytes_before = cache->bytes();
     ASSERT_GT(bytes_before, 0U);
 
-    // The host still holds it, so the sweep has nothing to do.
-    EXPECT_EQ(cache->releaseAbandoned(), 0U);
+    std::unordered_map<const void*, std::uint32_t> textures{
+        { texture.get(), 1U }
+    };
+    const ContentDeclarations declared{ nullptr, &textures };
+
+    // The content still names it, so the sweep has nothing to do and the residency does not move.
+    EXPECT_EQ(cache->beginFrame(declared, {}), 0U);
     EXPECT_EQ(cache->bytes(), bytes_before) << "a sweep that releases nothing changes nothing";
 
-    const Texture* address = texture.get();
-    texture.reset();
-    EXPECT_EQ(cache->releaseAbandoned(), 1U) << "nobody can ask for it again";
-    EXPECT_FALSE(cache->has(address));
+    textures.clear();
+    EXPECT_EQ(cache->beginFrame(declared, {}), 1U) << "nothing names it any more";
     EXPECT_EQ(cache->count(), 0U);
     EXPECT_EQ(cache->bytes(), 0U) << "the residency follows the entry";
 }

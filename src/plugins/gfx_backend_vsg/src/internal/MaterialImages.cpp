@@ -17,6 +17,7 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
+#include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/WhiteImage.hpp>
 
 VN_VSG_NS_BEGIN
@@ -404,7 +405,9 @@ struct MaterialImages::Data {
     /// the same fields share one VkSampler and a texture is never re-uploaded for a sampling change.
     std::vector<SamplerEntry> samplers;
     /// The staged bytes of every live entry (what bytes() answers; kept in step with insertions and erasures).
-    std::uint64_t               bytes_total{ 0 };
+    std::uint64_t bytes_total{ 0 };
+    /// Entries the frame sweep has let go so far (what released() answers; explicit releases are not counted here).
+    std::size_t                 released{ 0 };
     std::shared_ptr<WhiteImage> white;
     SamplerImage                white_cube;
     // What the device offers (see setMaxAnisotropy); 1 is the safe answer for a cache that was never told.
@@ -567,23 +570,38 @@ bool MaterialImages::has(vn::raw_ptr<const vn::graphics::Texture> texture) const
     return d->cache.find(texture) != d->cache.end();
 }
 
-std::size_t MaterialImages::releaseAbandoned()
+std::size_t MaterialImages::beginFrame(const ContentDeclarations& declarations, std::span<const vn::graphics::Texture*> imported)
 {
-    // This cache is the only retained holder of a texture in this path, so its own entries ARE the
-    // retained shares: an entry whose texture has no owner left but the entry itself is one nothing can
-    // look up again. (The L2 counts shares across its caches because several of them retain the same
-    // object; a second retainer of textures here would bring that count with it.)
-    std::size_t released = 0;
+    // TWO O(1) FACTS PER ENTRY, the same pair the shared streams are asked for: the DECLARATION says whether live
+    // content still names this texture (the material rows' slots, and the frame's imported inputs, which name a
+    // texture without any row), and the entry says whether its bytes are still the ones it built from. Nothing
+    // here walks the rows, and nothing is parked: what an entry owns is a lookup share, and a descriptor set that
+    // already samples the image holds its own reference (see the header).
+    const auto declared = [&declarations, &imported](const void* address) {
+        if (declarations.declaresTexture(address)) {
+            return true;
+        }
+        return std::find(imported.begin(), imported.end(), address) != imported.end();
+    };
+
+    std::size_t dropped = 0;
     for (auto it = d->cache.begin(); it != d->cache.end();) {
-        if (it->second.owner == nullptr || it->second.owner->useCount() <= 1UL) {
-            d->bytes_total -= it->second.bytes;
-            it = d->cache.erase(it);
-            ++released;
+        const bool current = it->second.owner != nullptr && it->second.revision == it->second.owner->revision();
+        if (current && declared(it->first)) {
+            ++it;
             continue;
         }
-        ++it;
+        d->bytes_total -= it->second.bytes;
+        it = d->cache.erase(it);
+        ++dropped;
     }
-    return released;
+    d->released += dropped;
+    return dropped;
+}
+
+std::size_t MaterialImages::released() const noexcept
+{
+    return d->released;
 }
 
 bool MaterialImages::releaseTexture(vn::raw_ptr<const vn::graphics::Texture> texture)

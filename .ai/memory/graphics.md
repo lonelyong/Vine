@@ -316,3 +316,26 @@
 - 语义：只放这一条流的 GPU 副本，geometry 的行与表不动；下一帧画到它重传。想放一个 geometry 的全部流 → 放 geometry。
 - 证据：`VsgBackendTest.ReleasingAStreamBufferDropsTheUploadButNotTheGeometry`（`uploads().live()` 2 → 1 →
   2、`geometryEntries()` 保持 1、`uploads()` 回涨）；`test_vsg` 539 全绿，`test_graphics` / 各项门禁 0。
+
+## 2026-11-12 —— ADR-2026-11-10 步骤 3：纹理迁入 pin 模型
+
+- **声明索引有两个了**：`ContentDeclarations` 同时借 buffers / textures 两张表（`declaresBuffer` /
+  `declaresTexture`）；`ContentStore` 里两者共用同一个 `Declarations` 类（地址 → 引用计数，append 加、erase 减、
+  归零删），`GeometryTable` 与新的 `MaterialTable` 各持一个。材质行在 append / reclaim 时声明 / 撤回
+  `slots[].texture`。
+- **`MaterialImages::beginFrame(declarations, imported)`**：声明 = 材质行 slot **或该帧 pass 的导入输入**
+  （`CompiledPass::inputs` 里 `ImportedTexture` 的地址；`ContentAssembly::beginFrame` 收集到一个复用 vector），
+  另一半是条目自己的 `owner->revision()`。**不 park**：条目只持有查找份额，描述符集自己持有 view / sampler。
+  `releaseAbandoned()` 删除，新增累计计数 `released()`；`VsgBackend::releasedTextures()` 读它。
+- **`ContentSweep.{hpp,cpp}` 与 `ContentSweepTest.cpp` 删除**：只剩 store 一半的包装，名字与行为不符。 <!-- drift-ok -->
+  `VsgBackend::sweepAbandonedContent()` 直接调 `store->releaseAbandoned(...)`，文档搬进那里的注释；
+  默认材质的断言搬成 `ContentStoreTest.TheDefaultMaterialIsNeverAbandoned`。
+- **陷阱（真实缺陷，用例发现）**：`passes` 为空的帧走 `commitFrameThrough` 的早退分支，原来不跑
+  `recordContent` ⇒ 图像扫描不跑 ⇒ “宿主不再画任何东西”时贴图永不释放。早退分支现在也调
+  `assembly->beginFrame(...)`。
+- **陷阱**：`std::span<const Texture*>` 不能从 `const std::vector<const Texture*>` 构造（libstdc++ 的 range
+  约束），局部 vector 必须可写。
+- **语义变化（ADR 的代价，T27）**：贴图只由活内容钉住——宿主手里但没有材质/导入引用的贴图会在下一帧离场。
+  `VsgBackendTest.AWorkingSetLargerThanTheOldTextureBoundStaysResident` 的前提正是旧的持有量规则，删除；
+  “无容量上限”由 `MaterialImagesTest.EveryLiveTextureKeepsItsImages`（300 条、不跑帧）继续钉住。
+- 变异验证：把 `declared` 改成恒真 ⇒ 3 个新用例全红。`test_vsg` / 全 ctest 30/30，门禁 0。

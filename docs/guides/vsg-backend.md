@@ -63,6 +63,11 @@
 `StreamUploads::uploads()`（同名流走 `aliases()`）、`VariantPool::created()`、`Session::deviceWaits()`（帧路径）、
 `RetentionQueue` 的驻留增长、`AllocationGate`（**连续两帧**零分配才算数）。读数见 §6。
 
+**驻留寿命由“谁声明这些字节”决定**，不由宿主持有量决定：几何行声明 stream 的 buffer，材质行的 slot 与各 pass 的
+导入输入声明贴图，另一半是对象自己的 `revision()`。所以裁剪 / 隐藏不丢上传（行还在，回来零重传），对象离树后行
+过一个 `slots + 1` 的窗口，声明消失，副本随之离场（`StreamUploads::retired()` / `MaterialImages::released()`
+是这条路的口径）。显式 `releaseContent`（对象，或一条流读的 `buffer`）立刻放，对象本身不受影响。
+
 ## 4. 更新策略
 
 * **材质**：SDK 没有"材质改了"的公告，所以每帧逐命令 **compare-and-write**（64B；相同就不写、不重建行）。

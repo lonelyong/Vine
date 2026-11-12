@@ -126,8 +126,7 @@ class DirectDriveBackend : public vn::vsg::VsgBackend {
     }
 
     /// The two-argument form, unchanged: a case that names a target explicitly (a foreign one, a bare presenter).
-    vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame,
-                                              vn::graphics::PresentTarget*               present_to) override
+    vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to) override
     {
         return vn::vsg::VsgBackend::executeFrame(frame, present_to);
     }
@@ -1093,7 +1092,13 @@ TEST(VsgBackendTest, ReleasingAMaterialInstanceDropsItsResidency)
     const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive_content = [&] {
-        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).content(commands, camera.get()).value());
+        backend->executeFrame(TestFrame()
+                                  .pass(pass.get())
+                                  .target(target.get())
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(commands, camera.get())
+                                  .value());
     };
     const auto drive_empty = [&] {
         backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).value());
@@ -1152,7 +1157,13 @@ TEST(VsgBackendTest, ReleasingAStreamBufferDropsTheUploadButNotTheGeometry)
     const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&] {
-        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).content(triangle.commands, camera.get()).value());
+        backend->executeFrame(TestFrame()
+                                  .pass(pass.get())
+                                  .target(target.get())
+                                  .clear(clear)
+                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .content(triangle.commands, camera.get())
+                                  .value());
     };
 
     // Warm the session up so its in-flight count is learned and the release can be parked.
@@ -3699,10 +3710,10 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
 
 TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
 {
-    // A6'S SEMANTICS, PINNED WITHOUT A COUNTER. The cache has NO capacity: an entry lives as long as the host
-    // holds its texture, so a working set larger than the old 256-entry bound is served every pass (0 misses),
-    // and dropping the host's references is what lets the sweep release it. A pass over 200 textures is the
-    // control: it missed once and then nothing, exactly like before.
+    // A6'S SEMANTICS, PINNED WITHOUT A COUNTER. The cache has NO capacity: a working set larger than the old
+    // 256-entry bound is served every pass (0 misses). No frame is driven here, so no sweep runs either - which is
+    // the point of keeping this case at the cache's own level: what a frame DECIDES is the pin, and that is pinned
+    // by the cache's cases (MaterialImagesTest) and by the imported/textured passes below.
     //
     // Nothing is drawn: this is the cache's contract, not a frame's. The numbers are printed; the assertions
     // are the misses counted through has().
@@ -3826,67 +3837,6 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());
-}
-
-/**
- * @brief A live working set larger than the old bound is resident, and the sweep says nothing.
- *
- * There is no capacity any more (see MaterialImages): 300 live textures all keep their entries, so no
- * `ResourcePressure` sentence is written and a frame that samples them again rebuilds nothing. Dropping the
- * host's references is what the sweep answers - releasing, not evicting.
- *
- * Nothing here draws: an EMPTY frame is still a frame and runs the frame's tail (the sweep is the frame's,
- * not "the frames that drew").
- */
-TEST(VsgBackendTest, AWorkingSetLargerThanTheOldTextureBoundStaysResident)
-{
-    if (!deviceCaseAvailable()) {
-        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
-    }
-    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
-    ASSERT_TRUE(backend->initialize());
-
-    vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
-    ASSERT_NE(images, nullptr);
-    const auto        reported = [&backend]() { return backend->diagnosticCount(vn::graphics::DiagnosticCategory::ResourcePressure); };
-    const std::size_t before   = reported();
-
-    const auto sample = [&images](const vn::intrusive_ptr<vn::graphics::Texture2D>& texture, unsigned shade) {
-        const vn::intrusive_ptr<vn::imaging::Image> image(new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
-        const std::span<std::byte>                  pixels = image->mipData(0);
-        std::fill(pixels.begin(), pixels.end(), static_cast<std::byte>(shade & 0xFFU));
-        texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
-
-        vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
-        (void)images->acquire(texture.get(), reason);
-        ASSERT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete 2D texture must upload";
-    };
-
-    constexpr std::size_t                                   kTextures = 300U;
-    std::vector<vn::intrusive_ptr<vn::graphics::Texture2D>> textures;
-    textures.reserve(kTextures);
-    for (std::size_t index = 0; index < kTextures; ++index) {
-        textures.push_back(vn::intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm)));
-        sample(textures.back(), static_cast<unsigned>(index));
-    }
-    EXPECT_EQ(images->count(), kTextures) << "every live texture is resident past the old bound";
-    EXPECT_GT(images->bytes(), 0U);
-    EXPECT_TRUE(images->has(textures.front().get())) << "the first was not evicted to make room";
-
-    // The frame's tail runs the sweep, and with no capacity there is nothing to report.
-    backend->executeFrame(vn::graphics::FrameDescription{});
-    EXPECT_EQ(reported(), before) << "using memory is not a pressure episode any more";
-    backend->executeFrame(vn::graphics::FrameDescription{});
-    EXPECT_EQ(images->count(), kTextures);
-
-    // Letting go of the textures is what the sweep answers: released, not evicted.
-    textures.clear();
-    backend->executeFrame(vn::graphics::FrameDescription{});
-    EXPECT_EQ(images->count(), 0U);
-    EXPECT_EQ(images->bytes(), 0U);
-    EXPECT_EQ(reported(), before) << "releasing is not a capacity episode either";
-
-    backend->shutdown();
 }
 
 TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)

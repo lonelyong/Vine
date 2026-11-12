@@ -27,7 +27,6 @@
 #include <vine/vsg/internal/BlockStorage.hpp>
 #include <vine/vsg/internal/ContentAssembly.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
-#include <vine/vsg/internal/ContentSweep.hpp>
 #include <vine/vsg/internal/Device.hpp>
 #include <vine/vsg/internal/HostReadback.hpp>
 #include <vine/vsg/internal/HostTargets.hpp>
@@ -428,12 +427,12 @@ struct VsgBackend::Data {
     std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};      // The unresolved-target episodes.
     vn::graphics::ReportOnce                                   occupied_report{};       // The "a window already served was asked again" episode.
     vn::graphics::ReportOnce                                   foreign_target_report{}; // The "a frame named someone else's target" episode.
-    /// What the frame's sweeps have let go (see api/ContentSweep); zero while the host holds everything.
+    /// What the frame's steps have let go; zero while the host holds everything.
     std::size_t released_objects{ 0 };
     std::size_t released_textures{ 0 };
     std::size_t released_streams{ 0 };
     /// Reused by the sweep: the abandoned material identities whose arena slots the storage returns.
-    std::vector<vn::graphics::MaterialId> abandoned_materials;
+    std::vector<vn::graphics::MaterialId>   abandoned_materials;
     std::vector<core::TargetFacts>          facts;         // This frame's target table (borrowed rows).
     std::vector<const vn::graphics::Light*> light_scratch; // Reused by announceLights (no per-call allocation).
     std::vector<InputImages>                input_scratch; // Reused per content pass (see recordContent).
@@ -794,8 +793,7 @@ void VsgBackend::closeFrameBooks()
     d->frame = &d->compiler.compile(d->recorder.description(), core::FrameFacts{ d->facts });
 }
 
-vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame,
-                                                       vn::graphics::PresentTarget*               present_to)
+vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
 {
     // WHAT THE LAST FRAME'S UPLOADS NO LONGER NEED, BEFORE THIS ONE RECORDS. A staging buffer is the source of one
     // vkCmdCopyBuffer; the moment that copy's fence signals, the bytes are dead weight - and vsg keeps them for the life
@@ -963,11 +961,15 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
         // because nothing was acquired and nothing will be presented.
         //
         // The sweep runs on this path too: a frame that draws nothing is still a frame in which the host may have
-        // dropped something, and the sweep's place is the frame's - not "the frames that drew".
+        // dropped something, and the sweep's place is the frame's - not "the frames that drew". The content side is
+        // opened first for the same reason: the table walk is what PUBLISHES the declaration indexes the residency
+        // sweeps ask (see ContentAssembly::beginFrame), so a host that stops drawing must still lose its uploads.
+        if (d->assembly != nullptr) {
+            (void)d->assembly->beginFrame(*d->frame, timeline, retirement);
+        }
         sweepAbandonedContent();
-        const bool committed = window != nullptr ? d->executor.commit(*d->frame, *window)
-                                                 : d->executor.commit(*d->frame, *offscreen);
-        d->frame = nullptr;
+        const bool committed = window != nullptr ? d->executor.commit(*d->frame, *window) : d->executor.commit(*d->frame, *offscreen);
+        d->frame             = nullptr;
         return settled(committed);
     }
 
@@ -1006,11 +1008,11 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
     (void)d->executor.record(*d->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
     // what advances the retirement queue - so this is the last moment a park can be dated against this frame
-    // (see api/ContentSweep, and the ordering rule core::RetirementQueue states).
+    // (see the frame drive's ordering note, and the ordering rule core::RetirementQueue states).
     sweepAbandonedContent();
-    const bool assigned = window != nullptr ? detail::SessionContentAccess::assignFrameGraphs(*window, ::vsg::CommandGraphs{ graph })
-                                            : offscreen->assignFrameGraphs(::vsg::CommandGraphs{ graph });
-    bool committed = false;
+    const bool assigned  = window != nullptr ? detail::SessionContentAccess::assignFrameGraphs(*window, ::vsg::CommandGraphs{ graph })
+                                             : offscreen->assignFrameGraphs(::vsg::CommandGraphs{ graph });
+    bool       committed = false;
     if (assigned) {
         // The executor reports its own failure and marks what it wrote; the answer is whether the picture got out.
         committed = window != nullptr ? d->executor.commit(*d->frame, *window) : d->executor.commit(*d->frame, *offscreen);
@@ -1050,7 +1052,6 @@ std::size_t VsgBackend::uploadStagingBytes() const noexcept
     }
     return static_cast<std::size_t>(total);
 }
-
 
 void VsgBackend::setWindowHandleAt(std::size_t index, void* native_handle)
 {
@@ -1183,7 +1184,7 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     // reporting a zero nobody measured.
     if (d->assembly != nullptr && d->images != nullptr) {
         vn::graphics::ResidencyLedger ledger;
-        const StreamUploads&         uploads = d->assembly->uploads();
+        const StreamUploads&          uploads = d->assembly->uploads();
         ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Streams,
                                                 .live    = static_cast<std::uint32_t>(uploads.live()),
                                                 .built   = uploads.uploads(),
@@ -1398,8 +1399,8 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
 }
 
 void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
-                                    const vn::graphics::CameraSnapshot&            camera,
-                                    const vn::graphics::ShaderProgram*             program_override)
+                                    const vn::graphics::CameraSnapshot&             camera,
+                                    const vn::graphics::ShaderProgram*              program_override)
 {
     if (!d->recorder.inFrame()) {
         return; // nothing is collected outside a frame
@@ -1712,9 +1713,12 @@ void VsgBackend::sweepAbandonedContent()
         // No content world on this session (see initialize): there is nothing retained to let go of either.
         return;
     }
-    const SweepOutcome outcome = releaseAbandonedContent(*d->store, *d->images, d->abandoned_materials);
-    d->released_objects += outcome.objects;
-    d->released_textures += outcome.textures;
+    // WHAT THIS DRIVES IS THE STORE'S HALF, AND THAT IS WHY IT IS HERE. The streams and the images ask their own
+    // residency question inside ContentAssembly::beginFrame, because the answer is a property of THAT frame's tables
+    // (the declaration indexes the store publishes). The store's own entries are the opposite kind of step: they must
+    // not be marked before the frame's content has been recorded, and they must not be dropped after the commit has
+    // advanced the retirement queue - so they get one call between the two (see the frame drive).
+    d->released_objects += d->store->releaseAbandoned(d->abandoned_materials);
 
     // THE MATERIAL SLOT FOLLOWS THE ROW: a material nobody holds any more cannot be drawn again, so the arena's
     // slot is nobody's to keep (releaseMaterial is a key lookup, never a dereference - the object may be gone).
@@ -1734,6 +1738,7 @@ void VsgBackend::sweepAbandonedContent()
     if (d->assembly != nullptr) {
         d->released_streams = static_cast<std::size_t>(d->assembly->uploads().retired());
     }
+    d->released_textures = d->images->released();
 }
 
 void VsgBackend::growMaterialArenaIfNeeded()

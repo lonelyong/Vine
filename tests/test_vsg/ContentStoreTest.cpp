@@ -209,7 +209,8 @@ CompiledCommand command(vn::graphics::ContentRef geometry, const ShaderProgram* 
 
 /** @brief The same command named by the OBJECT a case holds: a plan carries the geometry's id and the revision its
  *         shape is at (a `Geometry` inherits its id from `Node`), so the two halves make one ref here. */
-CompiledCommand command(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, const vn::graphics::MaterialBase* material)
+CompiledCommand
+command(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, const vn::graphics::MaterialBase* material)
 {
     const vn::graphics::NodeId identity = geometry != nullptr ? geometry->id() : vn::graphics::NodeId{};
     return command(vn::graphics::contentRefOf(identity, geometry_revision), program, material);
@@ -281,7 +282,7 @@ class Frames {
     [[nodiscard]] const ContentFacts& record(ContentStore& store, const CompiledFrame& frame)
     {
         const vn::graphics::backend::FrameToken token = timeline_.begin();
-        const ContentFacts&                  facts   = store.tablesFor(frame, timeline_);
+        const ContentFacts&                     facts = store.tablesFor(frame, timeline_);
         timeline_.submitted(token);
         settle();
         return facts;
@@ -371,8 +372,7 @@ TEST(ContentStoreTest, ASteadyFrameBuildsNothing)
     const std::uint64_t built = store.builds();
 
     for (int frame = 0; frame < 3; ++frame) {
-        ASSERT_TRUE(store.tablesFor(plan->frame, timeline).programs.data() == facts.programs.data())
-            << "the tables are the same storage each frame";
+        ASSERT_TRUE(store.tablesFor(plan->frame, timeline).programs.data() == facts.programs.data()) << "the tables are the same storage each frame";
         EXPECT_EQ(store.builds(), built) << "a steady frame builds nothing";
     }
     EXPECT_EQ(store.geometryEntries(), 1U) << "nothing was superseded, so no row was added";
@@ -464,8 +464,7 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
     const std::uint64_t rows_before = static_cast<std::uint64_t>(second.geometries.size());
     const_cast<vn::graphics::Geometry*>(geometry.get())->setRevision(2U);
     store.track(geometry); // the frame hands over the NEW shape (a description is a value; an edit is a new one)
-    ASSERT_TRUE(frames.record(store, plan->frame).geometries.size() > rows_before)
-        << "the new revision JOINS the table the old one is still answerable in";
+    ASSERT_TRUE(frames.record(store, plan->frame).geometries.size() > rows_before) << "the new revision JOINS the table the old one is still answerable in";
     EXPECT_TRUE(covers(frames.record(store, plan->frame)));
 
     // The frames settle: the superseded revision's row leaves once no plan may name it, and the order has to
@@ -500,8 +499,7 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesOnceNoP
     const ContentFacts& second = frames.record(store, plan->frame);
     EXPECT_EQ(store.geometryEntries(), 2U) << "the new revision JOINS the table, it does not replace it";
     EXPECT_TRUE(findGeometry(second, geometryRef(geometry->id(), new_revision)).found()) << "the live revision answers";
-    EXPECT_TRUE(findGeometry(second, geometryRef(geometry->id(), old_revision)).found())
-        << "and so does the revision a recorded frame may still name";
+    EXPECT_TRUE(findGeometry(second, geometryRef(geometry->id(), old_revision)).found()) << "and so does the revision a recorded frame may still name";
 
     // The window: the row leaves once the frame that could replay its plan has been recycled (the epoch rule).
     const ContentFacts& after = frames.record(store, plan->frame);
@@ -527,7 +525,7 @@ TEST(ContentStoreTest, AMaterialEditJoinsTheTableAndTheOldRevisionLeavesOnceNoPl
     const ContentFacts& first       = frames.record(store, plan->frame);
     const auto          first_block = blockOf(*findMaterial(first, material.get()).entry);
     EXPECT_FLOAT_EQ(first_block.base_color[0], 0.25F);
-    const std::uint64_t old_revision = material->revision();
+    const std::uint64_t            old_revision = material->revision();
     const vn::graphics::ContentRef old_ref{ material->id().handle(), old_revision };
 
     // The host edits the material. The material moves its own revision (Material::revision - every shading value
@@ -574,7 +572,7 @@ TEST(ContentStoreTest, AWrongMaterialSlotIsReportedOncePerEpisode)
     store.track(material);
 
     FrameTimeline timeline;
-    const auto   plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
+    const auto    plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     (void)store.tablesFor(plan->frame, timeline); // the first description opens the episode
 
     EXPECT_TRUE(store.claimSlotReport(material->id(), 2U)) << "the first frame says it";
@@ -751,7 +749,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveOnceNoPla
     store.track(geometry);
     store.track(program);
 
-    Frames frames;
+    Frames     frames;
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.geometryEntries(), 1U);
@@ -779,6 +777,30 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveOnceNoPla
     EXPECT_EQ(store.programEntries(), 1U) << "the program is still held by the host";
 }
 
+// 默认材质不是任何宿主句柄能放弃的对象：它没有 arena 槽，也不该出现在 released_materials 里。
+TEST(ContentStoreTest, TheDefaultMaterialIsNeverAbandoned)
+{
+    ContentStore store;
+    auto         geometry = quad();
+    auto         program  = contentProgram();
+    store.track(geometry);
+    store.track(program);
+
+    Frames     frames;
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
+    (void)frames.record(store, plan->frame);
+    ASSERT_EQ(store.materialEntries(), 1U) << "the default material answers for content that names none";
+
+    // The store's shares have to be the last ones for "abandoned" to mean anything (see releaseAbandoned).
+    geometry.reset();
+    program.reset();
+
+    std::vector<vn::graphics::MaterialId> released_materials;
+    EXPECT_EQ(store.releaseAbandoned(released_materials), 2U) << "the geometry and the program, never the default material";
+    EXPECT_TRUE(released_materials.empty()) << "the default material has no arena slot to hand back";
+    EXPECT_EQ(store.materialEntries(), 1U) << "the default entry stays: it is not an object anyone holds";
+}
+
 // 行的寿命与对象的寿命不是一回事：行还可能在飞帧里被读出（材质行借用了材质的贴图），所以条目要等到最后一行离开才
 // 丢下自己的对象份额。这条用例把“对象不早于行死”钉住。
 TEST(ContentStoreTest, AnAbandonedEntryKeepsItsObjectUntilItsRowsLeave)
@@ -794,7 +816,7 @@ TEST(ContentStoreTest, AnAbandonedEntryKeepsItsObjectUntilItsRowsLeave)
     store.track(program);
     store.track(shading);
 
-    Frames frames;
+    Frames     frames;
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), shading.get()) }, program.get());
     (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.programEntries(), 1U);
@@ -826,7 +848,7 @@ TEST(ContentStoreTest, AReleaseIsCancelledByTheNextUse)
     store.track(program);
     store.track(material);
 
-    Frames frames;
+    Frames     frames;
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.geometryEntries(), 1U);
@@ -848,7 +870,7 @@ TEST(ContentStoreTest, AReleaseWithoutReuseDropsTheRowsOnceNoPlanNamesThem)
     store.track(geometry);
     store.track(program);
 
-    Frames frames;
+    Frames     frames;
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.geometryEntries(), 1U);
@@ -881,7 +903,7 @@ TEST(ContentStoreTest, AReleaseWithoutCompletionEvidenceKeepsTheRows)
     const auto   geometry = quad();
     store.track(geometry);
 
-    Frames frames(0U); // the session has not learned its in-flight count: completion is never proven
+    Frames     frames(0U); // the session has not learned its in-flight count: completion is never proven
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
     (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.geometryEntries(), 1U);
@@ -906,7 +928,7 @@ TEST(ContentStoreTest, AReleaseThenAnEditKeepsTheNewRevision)
     store.track(geometry);
     store.track(program);
 
-    Frames frames;
+    Frames     frames;
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
     (void)frames.record(store, plan->frame);
     const std::uint64_t old_revision = geometry->revision();
@@ -935,7 +957,7 @@ TEST(ContentStoreTest, AReleaseOfAProgramOrMaterialDropsItsRows)
     store.track(program);
     store.track(material);
 
-    Frames frames;
+    Frames     frames;
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.programEntries(), 1U);
@@ -1002,7 +1024,10 @@ std::uint64_t bindStreams(StreamUploads& uploads, const vn::vsg::GeometryFacts& 
         if (!primitive.indices.has_value()) {
             continue;
         }
-        built += uploads.acquireIndex(primitive.indices->streamKey(), primitive.indices->scalars(), primitive.indices->values).action == StreamUploads::Action::Uploaded ? 1U : 0U;
+        built += uploads.acquireIndex(primitive.indices->streamKey(), primitive.indices->scalars(), primitive.indices->values).action ==
+                         StreamUploads::Action::Uploaded
+                     ? 1U
+                     : 0U;
     }
     return built;
 }
@@ -1015,7 +1040,7 @@ TEST(ContentStoreTest, ACulledGeometryKeepsItsUploadsForAHundredFrames)
     const auto   geometry = quad();
     store.track(geometry);
 
-    Frames frames;
+    Frames          frames;
     RetirementQueue retirement(1U); // the uploads' parks are still the queue's
     const auto      drawing = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
     const auto      culled  = contentPlan({});
@@ -1045,7 +1070,7 @@ TEST(ContentStoreTest, AStreamLeavesOnceItsGeometryIsDropped)
     auto         geometry = quad();
     store.track(geometry);
 
-    Frames frames;
+    Frames          frames;
     RetirementQueue retirement(1U); // the uploads leave through the queue's window
     const auto      plan  = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
     const auto      empty = contentPlan({});
@@ -1110,7 +1135,7 @@ TEST(ContentStoreTest, AStreamWhoseBufferMovedLeavesWithoutTheGeometryChanging)
     EXPECT_EQ(uploads.retired(), 1U) << "the previous revision's upload is not what these bytes are";
 
     const vn::vsg::ChannelFacts& positions_channel = moved.geometries.front().channels.front();
-    const auto                   again             = uploads.acquireVertex(positions_channel.streamKey(), positions_channel.scalars(), positions_channel.values);
+    const auto                   again = uploads.acquireVertex(positions_channel.streamKey(), positions_channel.scalars(), positions_channel.values);
     EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "the new bytes were never uploaded under this key";
     EXPECT_EQ(uploads.uploads(), 3U);
 }
@@ -1135,7 +1160,7 @@ TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWi
     store.track(left);
     store.track(right);
 
-    Frames frames;
+    Frames     frames;
     const auto plan  = contentPlan({ command(left.get(), left->revision(), nullptr, nullptr), command(right.get(), right->revision(), nullptr, nullptr) });
     const auto empty = contentPlan({});
 
@@ -1152,14 +1177,12 @@ TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWi
     ASSERT_EQ(store.releaseAbandoned(released_materials), 1U);
     EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer))
         << "the dropped row is inside its window, and the other row names the buffer anyway";
-    EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer))
-        << "the row that is still the live answer keeps the bytes declared";
+    EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer)) << "the row that is still the live answer keeps the bytes declared";
 
     // The last declarer goes too: the next frame boundary erases its row, and nothing declares the bytes.
     right.reset();
     ASSERT_EQ(store.releaseAbandoned(released_materials), 1U);
-    EXPECT_FALSE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer))
-        << "with the last row erased, nothing declares the bytes any more";
+    EXPECT_FALSE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer)) << "with the last row erased, nothing declares the bytes any more";
 }
 
 TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision)
@@ -1171,7 +1194,7 @@ TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRev
     EXPECT_EQ(geometry->revision(), 1U) << "the instance setter does not describe the change; the host reports it";
     store.track(geometry);
 
-    Frames frames;
+    Frames     frames;
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
 
     const ContentFacts& facts = frames.record(store, plan->frame);

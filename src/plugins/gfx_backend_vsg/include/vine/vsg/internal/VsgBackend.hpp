@@ -60,13 +60,11 @@
  *     host's sink and its single `diagnosticCount()` see the session's own reports without this layer
  *     re-reporting anything;
  *   * THE SWEEP - a frame's content is retained for as long as the host holds it, and what the host has let go
- *     is let go ONCE PER FRAME, in the one call that owns the order (api/ContentSweep: after the frame's
- *     content has been recorded; the store MARKS what the host let go, and its rows leave by epoch at the next
- *     frame boundary - no park of its own). Before that unit existed both halves
- *     existed and were called by nothing, so a dropped geometry kept its tables, its halves and its pipelines
- *     alive until the session ended; `releasedContentObjects()` / `releasedTextures()` / `releasedStreams()`
- *     are the counters that
- *     keep the sweep visible from outside.
+ *     is let go ONCE PER FRAME: the streams and the textures ask their residency question from the frame's own
+ *     tables (inside api/ContentAssembly::beginFrame), and the store MARKS what the host let go after the frame's
+ *     content has been recorded and before the commit advances the queue - its rows then leave by epoch at the
+ *     next frame boundary, with no park of its own. `releasedContentObjects()` / `releasedTextures()` /
+ *     `releasedStreams()` are the counters that keep the sweep visible from outside.
  *
  * WHAT IS REPORTED AS NOT SERVED YET: two calls that have nowhere to go - a frame asked for with no session,
  * and a draw before the content world is up. Each says so once per episode (vn::graphics::ReportOnce); a facade that
@@ -201,8 +199,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * @param frame      The frame to run, in run order.
      * @param present_to Target the frame's default framebuffer resolves to, or nullptr to present nowhere.
      */
-    virtual vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame,
-                                                      vn::graphics::PresentTarget*  present_to = nullptr) override;
+    virtual vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to = nullptr) override;
 
     /** @brief Answers what this backend can do: off-screen targets, and presentation unless created to present nothing.
      *
@@ -285,7 +282,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Gets how many times this backend has waited the device idle. */
     [[nodiscard]] std::size_t deviceWaits() const noexcept;
 
-    /** @brief Gets how many abandoned content objects the frame's sweeps have let go (see api/ContentSweep).
+    /** @brief Gets how many abandoned content objects the frame's sweep has let go (see ContentStore::releaseAbandoned).
      *
      * ONE PER OBJECT whose last holder was the content store - a geometry, a program or a material the host
      * dropped. The counter is how "the sweep runs, and it only ever lets go of what nobody holds" stays
@@ -294,7 +291,11 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     [[nodiscard]] std::size_t releasedContentObjects() const noexcept;
 
-    /** @brief Gets how many abandoned textures the frame's sweeps have let go (see api/ContentSweep). */
+    /** @brief Gets how many texture uploads left because no live content declares them (see MaterialImages::released).
+     *
+     * The observable behind the image cache's pin rule: an entry lives while a material row names its texture or a
+     * pass imports it, so a culled map keeps its upload and a dropped one leaves once its row is gone.
+     */
     [[nodiscard]] std::size_t releasedTextures() const noexcept;
 
     /** @brief Gets how many shared streams the frame's steps have let go because no live content declares them.
@@ -418,8 +419,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      *                         (see PassDraw::program_override), or null for each command's own program.
      */
     void collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
-                            const vn::graphics::CameraSnapshot&            camera,
-                            const vn::graphics::ShaderProgram*             program_override);
+                            const vn::graphics::CameraSnapshot&             camera,
+                            const vn::graphics::ShaderProgram*              program_override);
 
     /** @brief Creates the slot of window @p index when it does not exist yet (indices are dense and never reused).
      *
@@ -447,9 +448,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     [[nodiscard]] api::OffscreenSession* ensureOffscreenSession();
 
     /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs. */
-    void collectScreenDraw(vn::graphics::RenderTarget*                    source,
-                           vn::raw_ptr<const vn::graphics::ShaderProgram> program,
-                           const vn::graphics::CameraSnapshot&            camera);
+    void
+    collectScreenDraw(vn::graphics::RenderTarget* source, vn::raw_ptr<const vn::graphics::ShaderProgram> program, const vn::graphics::CameraSnapshot& camera);
 
     /** @brief Holds the host's target and builds what its description can make (the half setRenderTarget shares).
      *
@@ -510,7 +510,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Reports one unserved entry point, once per episode (see the file note). */
     void reportUnserved(std::size_t slot) noexcept;
 
-    /** @brief Runs this frame's sweep: what the host let go is let go (see api/ContentSweep).
+    /** @brief Runs this frame's sweep: what the host let go is let go (see the class note and the frame drive).
      *
      * Called once per frame, after the frame's content has been recorded and before the session commits it -
      * the commit advances the retirement queue, and a park made after that advance would be released a frame

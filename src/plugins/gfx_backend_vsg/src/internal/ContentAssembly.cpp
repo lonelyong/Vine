@@ -28,6 +28,8 @@ struct ContentAssembly::Data {
     const ContentFacts*    facts{ nullptr };
     core::FrameTimeline*   timeline{ nullptr };
     core::RetirementQueue* retirement{ nullptr };
+    /// Reused per frame: the textures the passes import (the content that names a texture without a row).
+    std::vector<const vn::graphics::Texture*> imported_textures;
 
     /// Episode state of the light-drop sentence, PER PASS: the sentence is about a pass ("the lights the
     /// host announced do not fit the block"), and the frame path builds a scope per pass per frame - so
@@ -103,6 +105,19 @@ const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame
     // own buffer's revision). Culling keeps a stream (its row still declares the buffer); leaving the tree lets
     // it go through the same parking window every replaced GPU object gets.
     (void)d->uploads.beginFrame(*d->facts, timeline, retirement);
+
+    // The textures' frame opens on the SAME facts plus the frame's own imports (see api/MaterialImages): a material
+    // row declares the maps its slots sample, and a pass' imported input declares a texture with no row at all - so a
+    // map that is only ever imported would otherwise leave the cache between two frames that both sample it.
+    d->imported_textures.clear();
+    for (const core::CompiledPass& pass : frame.passes) {
+        for (const core::CompiledInput& input : pass.inputs) {
+            if (input.kind == vn::graphics::ImageSource::Kind::ImportedTexture && input.texture != nullptr) {
+                d->imported_textures.push_back(static_cast<const vn::graphics::Texture*>(input.texture));
+            }
+        }
+    }
+    (void)d->images->beginFrame(d->facts->declarations, d->imported_textures);
 
     // The sampled-input sets the previous frame did not ask for are no longer this session's to keep: the
     // images they name were replaced (a resize builds new ones) or the pass that sampled them is gone. They

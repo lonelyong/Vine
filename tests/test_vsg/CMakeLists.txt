@@ -32,7 +32,6 @@ set(SRC_FILE_LIST
 	MaterialImagesTest.cpp
 	ProgramVariantTest.cpp
 	ContentStoreTest.cpp
-	ContentSweepTest.cpp
 	ExecutorSubmissionTest.cpp
 	ContentHalvesTest.cpp
 	ContentDrawTest.cpp
@@ -161,7 +160,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/MaterialImages.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ProgramVariant.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentSweep.cpp
+
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentSets.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentAssembly.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentHalves.cpp
