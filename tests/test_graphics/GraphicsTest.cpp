@@ -5046,6 +5046,9 @@ TEST(SceneViewViewportTest, ThePassLevelPolygonModeOverridesTheContentAndCanBeCl
     RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
 
+    // THE HOST PUBLISHES WHAT THE VIEW OWNS (SceneView::publishContent) before each frame it asks for.
+    view->publishContent();
+
     // No override: the content's own Line reaches the backend (and the default is exactly that).
     engine->frame();
     ASSERT_EQ(backend->last_polygon_modes.size(), 1u);
@@ -5092,6 +5095,9 @@ TEST(SceneViewViewportTest, ThePassLevelPointSizeOverridesTheContentAndNeverReac
     RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
 
+    // THE HOST PUBLISHES WHAT THE VIEW OWNS (SceneView::publishContent) before each frame it asks for.
+    view->publishContent();
+
     // The content's own size reaches the backend, and the default is one pixel.
     engine->frame();
     ASSERT_EQ(backend->last_point_sizes.size(), 1u);
@@ -5136,6 +5142,8 @@ TEST(SceneViewViewportTest, ThePassLevelLineWidthOverridesTheContentAndCanBeClea
     RenderPass* const window = pipeline->presentingPass();
     ASSERT_NE(window, nullptr);
 
+    // THE HOST PUBLISHES WHAT THE VIEW OWNS (SceneView::publishContent) before each frame it asks for.
+    view->publishContent();
     engine->frame();
     ASSERT_EQ(backend->last_line_widths.size(), 1u);
     EXPECT_FLOAT_EQ(backend->last_line_widths[0], 2.0F);
@@ -5172,6 +5180,7 @@ TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
+    (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
 
     EXPECT_EQ(backend->pass_state.depth, DepthMode::TestOnly);
@@ -5604,6 +5613,7 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     // One frame: the chain's window pass must now walk the REPLACEMENT scene
     // (its bound content) and no longer the scene it replaced.
     ASSERT_TRUE(engine->initialize());
+    (void)replacement->publish(); // the host's verb (see Scene::publish)
     engine->frame();
     EXPECT_EQ(engine->contentCollectCount() - original_walks, 1u) << "the replacement scene's view was walked once";
     EXPECT_EQ(replacement->contentCollectCount(), 0u) << "the content's own collect is not called by a frame any more";
@@ -5667,6 +5677,9 @@ TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)
     engine->addPass(pre, content, -5); // shadow-map style pass before the window pass.
     engine->addPass(post, content, 5); // post-processing pass after the window pass.
     EXPECT_EQ(engine->passCount(), 3u);
+
+    // THE HOST PUBLISHES (see Scene::publish): a frame draws the publication that stood when it was built.
+    (void)content->publish();
 
     const int before = backend->render_calls;
     engine->frame();
@@ -5969,8 +5982,8 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     // it (see FrameExpand), and this test compares the value with what the live pass announced - so it takes both
     // steps too.
     vn::graphics::detail::PublicationStore publications;
-    (void)publications.publish(*scene);
-    vn::graphics::detail::bindSceneDraws(described, publications.sourceOf(*scene));
+    (void)scene->publish();
+    vn::graphics::detail::bindSceneDraws(described, publications.sourceFor(*scene, publications.publicationFor(*scene)));
     vn::graphics::detail::expandPass(described);
 
     // —— pass 自己的四项事实 ——
@@ -6455,6 +6468,9 @@ TEST(RenderEngineTest, ShadowPassIsJustARegisteredScenePass)
 
     EXPECT_EQ(engine->passCount(), 2u);
 
+    // THE HOST PUBLISHES (see Scene::publish): both passes draw the same picture.
+    (void)content->publish();
+
     const int renders_before = backend->render_calls;
     engine->frame();
     // Depth-only shadow pass + window pass.
@@ -6800,6 +6816,7 @@ TEST(PassChainTest, ARequestedShadowIsBuiltOnTheDeferredPath)
     backend->target_history.clear();
     backend->render_cameras.clear();
     const std::size_t problems_before = engine->diagnosticCount();
+    (void)content->publish(); // the host's verb (see Scene::publish)
     engine->frame();
 
     ASSERT_GE(backend->target_history.size(), 2u);
@@ -6867,6 +6884,7 @@ TEST(PassChainTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
     backend->target_history.clear();
     backend->render_cameras.clear();
     const std::size_t problems_before = engine->diagnosticCount();
+    (void)content->publish(); // the host's verb (see Scene::publish)
     engine->frame();
 
     // The frame OPENS with the shadow: it must be recorded before the pass that samples it.
@@ -6927,6 +6945,7 @@ TEST(PassChainTest, ASpotCasterIsBuiltAsOnePerspectiveShadowMap)
     backend->target_history.clear();
     backend->render_cameras.clear();
     const std::size_t problems_before = engine->diagnosticCount();
+    (void)content->publish(); // the host's verb (see Scene::publish)
     engine->frame();
 
     ASSERT_GE(backend->target_history.size(), 2u);
@@ -7931,6 +7950,8 @@ TEST(HudPassTest, EngineDrawsPassesInOrderAndSkipsDisabled)
     engine->addPass(hidden, scene, 7);
 
     const int before = backend->render_calls;
+    (void)win_content->publish(); // both scenes this frame draws are published by their owner (see Scene::publish)
+    (void)scene->publish();
     engine->frame();
     // Window pass + the two enabled HUD passes (the disabled one is skipped).
     EXPECT_EQ(backend->render_calls - before, 3);
@@ -10962,6 +10983,7 @@ TEST(ContentLayersTest, APassThatSelectsNoLayerDrawsNothingAndSaysSoOnce)
 
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 0u) << "nothing ran yet";
 
+    (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u);
     ASSERT_FALSE(backend->render_command_counts.empty());
@@ -11200,6 +11222,7 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
     engine->addPass(pass_a, scene, 0);
     engine->addPass(pass_b, scene, 1);
     engine->addPass(pass_c, scene, 2);
+    (void)scene->publish(); // the host's verb (see Scene::publish)
 
     // Deltas: the pre-frame warm-up also executes passes and collects.
     // The ENGINE is the one that collects now (its frames are answered by the content's mirror), so the memo's
@@ -11222,6 +11245,7 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
 
     // An EDIT is what buys the walk: one node setter, one announcement, one fresh list per view.
     root->addChild(makeTriangleNode(Vec3d(0.5, 0, -2), nullptr, u8"added"));
+    (void)scene->publish(); // an edit is what the next frame draws, because the host published it
     engine->frame();
     EXPECT_EQ(engine->contentCollectCount() - walks_before, 4u) << "an edited frame collects again";
     EXPECT_EQ(engine->contentCollectReuseCount() - reuses_before, 5u)
@@ -11260,24 +11284,31 @@ TEST(RenderEngineTest, AFrameLandedInsideAnEditBatchDrawsTheStateTheBatchStarted
         return list->empty() ? -1000.0 : (*list)[0].model_matrix.element(0, 3);
     };
 
+    // THE HOST PUBLISHES BEFORE EACH FRAME (see Scene::publish), exactly as SceneView::publishContent does; inside the
+    // batch the answer is `InsideBatch` and the picture the batch started from stays the one a frame takes.
+    ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);
     ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
     EXPECT_NEAR(joint_x(), 0.0, 1e-9);
 
     scene->beginEdit();
     joint->setMatrix(vn::math::translate(0.4, 0.0, -3.0)); // half a configuration
+    EXPECT_EQ(scene->publish().status, ScenePublishStatus::InsideBatch);
     ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
     EXPECT_NEAR(joint_x(), 0.0, 1e-9) << "a frame inside the batch draws the state the batch started from";
 
     joint->setMatrix(vn::math::translate(0.8, 0.0, -3.0)); // the other half
+    EXPECT_EQ(scene->publish().status, ScenePublishStatus::InsideBatch);
     ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
     EXPECT_NEAR(joint_x(), 0.0, 1e-9) << "still: nothing of the batch has been published";
 
     scene->endEdit();
+    ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);
     ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
     EXPECT_NEAR(joint_x(), 0.8, 1e-9) << "the whole batch lands in ONE frame";
 
-    // AND EVERYTHING IS ORDINARY AGAIN: one edit, one frame, visible at once.
+    // AND EVERYTHING IS ORDINARY AGAIN: one edit, one publish, one frame, visible at once.
     joint->setMatrix(vn::math::translate(0.2, 0.0, -3.0));
+    (void)scene->publish();
     ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
     EXPECT_NEAR(joint_x(), 0.2, 1e-9);
 }
@@ -11505,6 +11536,7 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
     engine->addPass(pass, scene, 0);
+    (void)scene->publish(); // the host's verb (see Scene::publish)
 
     // The reference: the inline path, which is what every other case in this file measures.
     ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
@@ -11548,6 +11580,7 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
     for (int step = 0; step < 8; ++step) {
         root->addChild(makeTriangleNode(Vec3d(0.5, 0.0, -3.0 - 0.1 * step), nullptr, u8"step"));
         ++added;
+        (void)scene->publish(); // the content half publishes while the engine half answers the previous frame
         EXPECT_EQ(engine->frame(), FrameOutcome::Submitted);
         EXPECT_TRUE(engine->waitForFrame()) << "frame " << engine->frameNumber();
         const auto& commands = engine->frameDescription().passes.at(0).draw->draws.at(0).commands;
@@ -11688,6 +11721,7 @@ TEST(RenderEngineTest, AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadR
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
     ASSERT_NE(engine->addPass(pass, scene, 0), nullptr);
+    (void)scene->publish(); // the host's verb (see Scene::publish)
 
     // The values the last answered frame drew, read through the command (which is what a backend reads).
     const auto red_of = [&engine]() -> float {
@@ -11709,6 +11743,8 @@ TEST(RenderEngineTest, AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadR
     backend->waitEntered(); // the engine thread is now recording a frame
 
     material->setBaseColor(Colorf(0.0F, 1.0F, 0.0F, 1.0F)); // edited on the content thread, mid-frame
+    (void)scene->publish();                                  // and published there: the frame in flight already
+                                                             // took its picture, the next one takes this value
 
     backend->release();
     ASSERT_TRUE(engine->waitForFrame());
@@ -11747,6 +11783,7 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
     square->setViewport(0, 0, 600, 600); // shape 1.0
     engine->addPass(wide, scene, 0);
     engine->addPass(square, scene, 1);
+    (void)scene->publish(); // the host's verb (see Scene::publish)
 
     const auto        walks_before  = engine->contentCollectCount();
     const auto        reuses_before = engine->contentCollectReuseCount();
@@ -11831,8 +11868,11 @@ TEST(RenderEngineTest, AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote)
     second.before_draw = [&] {
         if (!moved) {
             moved = true;
-            // The SECOND pass' hook writes content the FIRST pass has already been described against.
+            // The SECOND pass' hook writes content the FIRST pass has already been described against - and PUBLISHES it
+            // (a hook that writes content posts it: the frame takes the scene's latest publication, see
+            // Scene::publish), which is what makes the write this frame's state rather than the next one's.
             node->setMatrix(vn::math::translate(Vec3d(1.5, 0, -3)));
+            (void)scene->publish();
         }
     };
     ASSERT_NE(engine->addPass(second), nullptr);
@@ -11880,9 +11920,10 @@ TEST(RenderEngineTest, TheFramesValueIsBuiltAfterThePerFrameHooks)
         ++hook_runs;
         if (!content_replaced) {
             // Once, the way an overlay rewrites what it shows: the frame's value has to describe the version the
-            // hook left behind.
+            // hook left behind, so the hook PUBLISHES it (see Scene::publish - a hook that writes content posts it).
             content_replaced = true;
             root->addChild(makeTriangleNode(Vec3d(0, 0, -6), nullptr, u8"readout"));
+            (void)scene->publish();
         }
     };
     ASSERT_NE(engine->addPass(desc), nullptr);
@@ -11960,6 +12001,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     engine->addPass(third, scene, 2);
     engine->addPass(fourth, nullptr, 3);
     engine->addPass(fifth, scene, 4);
+    (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
 
     const FrameDescription& value = engine->frameDescription();
@@ -12059,6 +12101,7 @@ TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndDescribesEachPassOnce)
 
     const int describes_before = pass->describes;
 
+    (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
     engine->frame();
 
@@ -12101,6 +12144,7 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
     auto area = engine->createSurface();
     area->resize(800, 600); // the window pass' rectangle: shape 4:3
 
+    (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
@@ -12167,6 +12211,7 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAScreenPassIsNotMeasured)
     auto area = engine->createSurface();
     area->resize(800, 600); // the SURFACE is 4:3, the pass draws into a square
 
+    (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
     EXPECT_EQ(received.size(), 0u) << "the camera is shaped for the box it draws into, not for the surface";
 

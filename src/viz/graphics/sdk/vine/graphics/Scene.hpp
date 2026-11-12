@@ -327,6 +327,20 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     ScenePublishResult publish();
 
+    /**
+     * @brief Gets the publication this scene last posted (see publish()): the picture a frame draws by default.
+     *
+     * @details
+     * - THE VALUE A FRAME TAKES, NOT A LIVE HANDLE: a frame built after this call draws exactly this publication, and a
+     *   later publish never changes what a frame already built draws - which is why publishing needs no ordering rule
+     *   and no bind (`RenderEngine::bindSnapshot` is the explicit override for a host that wants another picture).
+     * - It is the same handle `publish()` answers with: empty before the first `Posted`, and inside an edit batch it is
+     *   the publication the batch started from.
+     *
+     * @return The published publication, or an empty handle when nothing was posted yet.
+     */
+    [[nodiscard]] SceneSnapshotRef publishedSnapshot() const;
+
     /** @brief Opens the content frame the collected-command memo belongs to (and ages what nothing asked for).
      *
      * @details

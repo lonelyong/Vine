@@ -286,10 +286,12 @@
 
 > 目标是目标签名；每一条以落地后的头文件为准。迁移期按 `C11` 只增不改。
 >
-> **迁移 API 状态（`W2`，2026-11-13）**：`applyPlan` / `plan` / `bindSnapshot` / `prepare` 在 `src/` 里没有宿主
-> 调用点（只有引擎内部的转发与自测），它们是**迁移入口，尚未成为宿主契约**；5b-2c 前不再新增公共入口。生产路径
-> 仍是 `addPass` 家族 + 帧首隐式发布。`FramePlan` 的改名（→ `FrameTable`）与 `SessionBusy` 的去留（随 `W7` 移出
-> `PlanProblemCode`）都在 5b-2c 窗口内一次改完（见 `graphics-architecture.md` §2.10）。
+> **迁移 API 状态（`W2`，2026-11-13；W9b 后更新）**：`applyPlan` / `plan` / `prepare` 在 `src/` 里没有宿主
+> 调用点（只有引擎内部的转发与自测），它们是**迁移入口，尚未成为宿主契约**；5b-2c 前不再新增公共入口。
+> `bindSnapshot` 自 W9b 起只是**覆盖**（帧默认取 `Scene::publishedSnapshot()`），生产路径是
+> `SceneView::publishContent` + `addPass` 家族（后者随 W9d 收口）。`FramePlan` 的改名（→ `FrameTable`）与
+> `SessionBusy` 的去留（随 `W7` 移出 `PlanProblemCode`）都在 5b-2c 窗口内一次改完
+> （见 `graphics-architecture.md` §2.10）。
 
 ### 4.1 内容侧
 
@@ -590,8 +592,8 @@
 - **未做**：F8、F10、F11 与 F12 的 `query` 半边。F7 的两半都已落地：3a 的答案（`drawNeeds` 是唯一的键构造者）
   与 3b 的预建（`RenderEngine::prepare()` → `prepareFrame(value)`；预热后录制的帧 `builds` 增量 0，见 `T33`）。
   F9 的三态公开答案（`Posted` / `Unchanged` / `InsideBatch`）与它携带的快照句柄已落地（5b-2a + 2026-11-12 的
-  `SceneSnapshotRef`）；宿主可以用 `RenderEngine::bindSnapshot()` 自己接管发布（§2.13 of
-  `graphics-threading.md`），未绑定的场景仍由帧首隐式发布 —— 这句"隐式发布消失"留给 5b-2c。
+  `SceneSnapshotRef`）。**帧内隐式发布已删除（W9b，2026-11-13）**：发布是内容写者的动词，帧在 build 时取
+  `Scene::publishedSnapshot()`；`bindSnapshot` 只剩覆盖一个含义（§2.13 of `graphics-threading.md`）。
 - **迁移期的事实**：`graphics-threading.md` 已于 2026-11-12 重写为**当前**契约（发布取代镜像/delta，
   `C1–C15` / `N1–N14` 作为历史编号退役不复用）；`graphics-scene.md` 的收集描述仍带镜像时代的措辞，等它
   下一次重写时对齐。本文件是**目标**，两者冲突时以状态字段为准，接管顺序见 §9.3。
@@ -632,7 +634,13 @@
 **W9a（W6b）已落地 2026-11-13**：`Scene` 不再实现 `DrawListSource`，`RenderPass::describe` 不再把活 `Scene`
 写进帧值，绑定移到内容半段（`detail::bindSceneDraws`），`FrameExpander` 随之删除（它只有 bind 一个职责）。
 帧值跨线程时只装发布源；未发布的场景什么也不画（`FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing`）。
-剩余：W9b（隐式发布）、W9c（活指针门）、W9d（`addPass` 家族）、W9e（W7 结果形状）。
+
+**W9b（隐式发布）已落地 2026-11-13**：`RenderEngine` 不再发布任何场景。`Scene::publishedSnapshot()` 是帧默认取的
+那一份；`PublicationStore` 按 `(content, revision)` 一个源，所以在飞帧不会被新发布扰动；`bindSnapshot` 降为覆盖。
+宿主侧：`SceneView::publishContent()`（视图 + 链拥有的场景）、`PassChain::publishContent()`，`SurfaceWindow::renderFrame`
+每帧调用前者；overlay 的 `before_draw` 钩子在 `update()` 里自行发布。没发布的场景不画并报一次 `ContentSkipped`。
+`PublicationStore::publish` / `hasExplicitSnapshot` 删除。
+剩余：W9c（活指针门）、W9d（`addPass` 家族）、W9e（W7 结果形状）。
 
 ## 10. 参考
 

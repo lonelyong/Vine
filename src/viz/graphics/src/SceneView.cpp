@@ -162,6 +162,18 @@ void SceneView::applySurfaceGeometry()
     });
 }
 
+void SceneView::publishContent()
+{
+    // THE VIEW'S OWN CONTENT FIRST, then what its chain contributes: after this call the next frame built by the engine
+    // draws exactly these publications (see Scene::publish / detail::PublicationStore).
+    if (scene_ != nullptr) {
+        (void)scene_->publish();
+    }
+    if (pipeline_ != nullptr) {
+        pipeline_->publishContent();
+    }
+}
+
 raw_ptr<Camera> SceneView::camera() const
 {
     return camera_.get();

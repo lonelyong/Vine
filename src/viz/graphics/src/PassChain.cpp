@@ -252,6 +252,21 @@ intrusive_ptr<RenderPass> PassChain::addPass(const PassDesc& desc, const String&
     return registry_.addOwnedBy(desc, this, role);
 }
 
+void PassChain::setTransparentContent(intrusive_ptr<Scene> scene)
+{
+    transparent_content_ = std::move(scene);
+}
+
+void PassChain::publishContent()
+{
+    // ONE OWNER PER SCENE: this chain owns the transparent scene it draws (see ChainDesc::transparent), so publishing it
+    // is this call's job - the host publishes the content it owns (SceneView::publishContent), and a frame only draws
+    // what was published.
+    if (transparent_content_ != nullptr) {
+        (void)transparent_content_->publish();
+    }
+}
+
 void PassChain::setWindowPass(intrusive_ptr<RenderPass> pass)
 {
     window_pass_ = std::move(pass);

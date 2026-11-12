@@ -95,6 +95,12 @@ GeometryPtr triangleAt(double x)
     return vn::graphics::geometryFromShape(*mesh);
 }
 
+/// @brief The source a frame built NOW binds its scene draws to (what RenderEngine::buildFrameValue does).
+SnapshotSource* frameSourceFor(PublicationStore& store, Scene& scene)
+{
+    return store.sourceFor(scene, store.publicationFor(scene));
+}
+
 /// @brief Collects the commands of the frame's one draw.
 const std::vector<RenderCommand>& commandsOf(const FrameDescription& frame)
 {
@@ -128,8 +134,8 @@ TEST(FrameExpandTest, AFrameExpandsTheSamePictureTheSceneWould)
 
     // The engine side's answer: publish the content, bind the draw to its publication, then expand.
     PublicationStore store;
-    EXPECT_TRUE(store.publish(scene)) << "the first publish is the handshake";
-    FrameDescription from_snapshot = onePassFrame(store.sourceOf(scene));
+    EXPECT_TRUE(scene.publish()) << "the host's verb: the scene posts the picture a frame takes";
+    FrameDescription from_snapshot = onePassFrame(frameSourceFor(store, scene));
     expandFrame(from_snapshot);
 
     const std::vector<RenderCommand>& expected = *from_content;
@@ -163,8 +169,8 @@ TEST(FrameExpandTest, ABoundPublicationIsThePictureTheFrameDraws)
     const ScenePublishResult first = scene.publish();
     ASSERT_TRUE(first.posted());
     store.bindSnapshot(scene, first.snapshot);
-    SnapshotSource* const source = store.sourceOf(scene);
-    ASSERT_NE(source, nullptr) << "binding a snapshot attaches the source the frame binds its draws to";
+    SnapshotSource* const source = frameSourceFor(store, scene);
+    ASSERT_NE(source, nullptr) << "the bound publication is the source the frame binds its draws to";
 
     FrameDescription frame = onePassFrame(source);
     expandFrame(frame);
@@ -176,11 +182,9 @@ TEST(FrameExpandTest, ABoundPublicationIsThePictureTheFrameDraws)
     expandFrame(stale);
     EXPECT_EQ(commandsOf(stale).size(), 1U) << "the content moved, but the engine was not handed a new publication";
 
-    // THE FRAME'S OWN PUBLICATION DOES NOT OVERRIDE THE BINDING. A bound scene is the host's picture; the implicit
-    // publication that runs once per frame must leave it alone, or a host's bind would be undone silently every frame.
-    const ScenePublishResult implicit_answer = store.publish(scene);
-    EXPECT_EQ(implicit_answer.status, ScenePublishStatus::Unchanged) << "a bound scene is not published by the frame";
-    EXPECT_EQ(implicit_answer.snapshot.revision(), first.snapshot.revision()) << "and the answer is still the bound picture";
+    // THE FRAME'S OWN PUBLICATION DOES NOT OVERRIDE THE BINDING. A bound scene is the host's picture: a frame built
+    // after the scene published something else still takes the bound value, or the bind would be undone silently.
+    EXPECT_EQ(store.publicationFor(scene).revision(), first.snapshot.revision()) << "the frame still takes the bound picture";
     FrameDescription unbound_by_frame = onePassFrame(source);
     expandFrame(unbound_by_frame);
     EXPECT_EQ(commandsOf(unbound_by_frame).size(), 1U) << "the frame did not take the scene's new state";
@@ -190,13 +194,13 @@ TEST(FrameExpandTest, ABoundPublicationIsThePictureTheFrameDraws)
     ASSERT_TRUE(second.posted());
     ASSERT_NE(second.snapshot.revision(), first.snapshot.revision());
     store.bindSnapshot(scene, second.snapshot);
-    FrameDescription fresh = onePassFrame(source);
+    FrameDescription fresh = onePassFrame(frameSourceFor(store, scene));
     expandFrame(fresh);
     EXPECT_EQ(commandsOf(fresh).size(), 2U) << "the frame draws the publication it was last bound to";
 
     // An empty handle clears the binding: the same answer as a scene whose content draws nothing.
     store.bindSnapshot(scene, SceneSnapshotRef{});
-    FrameDescription cleared = onePassFrame(source);
+    FrameDescription cleared = onePassFrame(frameSourceFor(store, scene));
     expandFrame(cleared);
     EXPECT_TRUE(commandsOf(cleared).empty()) << "an empty publication draws nothing, and says so by drawing nothing";
 }
@@ -212,8 +216,8 @@ TEST(FrameExpandTest, ASecondExpansionKeepsTheListTheDrawAlreadyCarries)
     scene.setRoot(root);
 
     PublicationStore store;
-    ASSERT_TRUE(store.publish(scene));
-    FrameDescription frame = onePassFrame(store.sourceOf(scene));
+    ASSERT_TRUE(scene.publish());
+    FrameDescription frame = onePassFrame(frameSourceFor(store, scene));
     expandFrame(frame);
     const std::vector<RenderCommand>* const first = &commandsOf(frame);
     EXPECT_EQ(first->size(), 1U);
@@ -234,8 +238,8 @@ TEST(FrameExpandTest, PerPassAndWholeFrameFormsGiveTheSamePicture)
     scene.setRoot(root);
 
     PublicationStore store;
-    ASSERT_TRUE(store.publish(scene));
-    SnapshotSource* const source = store.sourceOf(scene);
+    ASSERT_TRUE(scene.publish());
+    SnapshotSource* const source = frameSourceFor(store, scene);
     ASSERT_NE(source, nullptr);
 
     // Per pass: the pass twice, as a two-pass frame would ask it - the second pass must get the same list as the
@@ -272,12 +276,11 @@ TEST(FrameExpandTest, BindSceneDrawsBindsOnlyWhatNothingBoundYet)
     scene.setRoot(root);
 
     PublicationStore store;
-    ASSERT_TRUE(store.publish(scene));
-    SnapshotSource* const source = store.sourceOf(scene);
+    ASSERT_TRUE(scene.publish());
+    SnapshotSource* const source = frameSourceFor(store, scene);
 
     PublicationStore other_store;
-    ASSERT_NE(other_store.publish(scene).status, ScenePublishStatus::InsideBatch);
-    SnapshotSource* const other_source = other_store.sourceOf(scene);
+    SnapshotSource* const other_source = frameSourceFor(other_store, scene);
     ASSERT_NE(source, other_source) << "two stores publish the same content as two pictures";
 
     PassDraw pass;

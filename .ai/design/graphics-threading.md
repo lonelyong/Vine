@@ -75,9 +75,10 @@
 - **行里装的是什么值**：每条命令携带 `geometry_ref` / `material_ref`（身份 + 版本）与三份不可变描述
   （`GeometryDescription` / `MaterialDescription` / `ShaderProgramDescription`）；pass 描述自己时另快照
   `LightValue` 数组与程序 override 的文本。这就是 §2.14 的载荷，记录侧只读它。
-- **一次发布是谁的动词**：`publish()` 是内容侧的动词（内容线程，唯一写者）；`bindSnapshot()` 说"这个引擎画
-  这一份"（宿主在帧与帧之间调用，或引擎的隐式发布代劳 —— 见 §2.13）。两个动词都落在 `detail::PublicationStore`
-  上，引擎半段只读这张表（见 §2.15）。两者合起来才是完整的交接。
+- **一次发布是谁的动词**：`publish()` 是内容侧的动词（内容线程，唯一写者），也是**唯一必须的动词**：帧在 build
+  时取场景当时的那一份（`Scene::publishedSnapshot`），宿主发布完就可以画。`bindSnapshot()` 只做**覆盖**
+  （"这个引擎画这一份"），用于两个引擎画不同份；两者都落在 `detail::PublicationStore` 上，引擎半段的唯一调用是
+  `beginFrame`（打开 memo 令牌，见 §2.15）。
 
 ### 2.3 两条通道：发布的快照 与 完成报告
 
@@ -210,14 +211,18 @@
   D10（流水线深度 > 1）、D11（UI 线程回调 `onPresented`）。理由见 §7。
 - **验收**：T9 / T10 见 §3.1.3、§3.1.4，另加"两种运行位置同图"（T12）。
 
-### 2.13 发布可以由宿主接管
+### 2.13 发布是内容写者的动词，绑定是覆盖
 
-- **是什么**：宿主可以 `Scene::publish()` 自己发、再把值交给 `RenderEngine::bindSnapshot(scene, ref)`；
-  一旦绑定，这个引擎**不再**隐式发布该场景（否则宿主指定的那份会在下一个帧首被覆盖，绑定就成了空操作）。
-  没绑定过的场景由引擎在帧首隐式发布（迁移期的便利，5b-2c 删除）。
-- **为什么**：发布是内容侧的动词、绑定是引擎侧的动词（`G2`）；把两个动词分开，宿主才能说"这一帧画的是我刚刚发的
-  那一份"，而不是"跑的时候恰好是什么"（`G4`）。
-- **边界**：一个引擎对一份场景只保留一个绑定；绑定是**每个引擎**的，所以两个引擎可以各画各的一份（编辑器 + 离屏烘焙）。
+- **是什么**：写内容的一方（宿主、`SceneView::publishContent`、`before_draw` 钩子）调用 `Scene::publish()`；
+  帧在 build 时取 `Scene::publishedSnapshot()`（绑定过则取绑定值）。`RenderEngine::bindSnapshot(scene, ref)` 是
+  **覆盖**：宿主想画更旧或另一份时用它，一直有效到下一次绑定（空句柄 = 画空）。
+- **为什么**：发布是内容侧的动词、绑定是引擎侧的动词（`G2`）；把"帧画哪一份"做成帧开始那一刻取的值，宿主才能说
+  "这一帧画的是我刚发布的那份"，而不是"跑的时候恰好是什么"（`G4`）——而这个保证来自值（`PublicationStore` 按
+  `(content, revision)` 一个源），不来自"先等待再发布"的隐含约定。
+- **边界**：一个引擎对一份场景只保留一个覆盖；覆盖是**每个引擎**的，所以两个引擎可以各画各的一份（编辑器 + 离屏烘焙）。
+  没有覆盖时两个引擎画同一份最新发布。
+- **没发布的场景**：帧不替它发布、也不读它的活内容：draw 拿不到源、什么也不画，并报一次
+  `ContentSkipped`（"pass 'x' draws a scene that was never published"）。
 
 ### 2.14 跨侧载荷是值：三份 description + `LightValue` + `ContentRef`
 
@@ -237,10 +242,13 @@
 
 ### 2.15 发布与展开是两个半边，帧值只装发布（`G2` / `G12`）
 
-- **是什么**：`detail::PublicationStore` 持有"每个内容一份 `SnapshotSource`"的表与那把锁，动词都是内容侧的
-  `publish` / `bindSnapshot` / `hasExplicitSnapshot` / `sourceOf`（外加表级 `beginFrame`，引擎半段唯一的一次调用）。
+- **是什么**：`detail::PublicationStore` 持有"每个 `(content, publication)` 一份 `SnapshotSource`"的表与那把锁，
+  动词都是内容侧的 `bindSnapshot` / `publicationFor` / `sourceFor`（外加表级 `beginFrame`，引擎半段唯一的一次调用）。
   帧的绑定与展开在 `detail::FrameExpand` 里：`bindSceneDraws` 把每个 scene draw 指向它的发布源，`expandFrame`
   只读值、按视图收集。
+- **为什么一个发布一个源**：源是一份不可变值的 `DrawListSource` 面。新发布拿新源，所以已经 build 的帧继续画它
+  取到的那一份，发布落在帧中间也改不了它的画面；没变的发布复用同一个源，静态场景的 per-view memo 照常存活。
+  一个源只被一两个帧命名，`beginFrame` 把没人再画的那些丢掉（在飞帧只有一个 ⇒ 每内容至多两份）。
 - **为什么**：`FrameWorker` 的拆分走了两步。第一步（W3）把发布（内容侧）与 bind + expand（引擎侧）分成
   `PublicationStore` / `FrameExpander`，去掉了"内容半段必须知道引擎半段对象"的回边。第二步（W9a）去掉了 bind
   本身——它存在只因为 `RenderPass::describe` 把活 `Scene` 写进了帧值。现在 describe 只写 VIEW，
@@ -278,7 +286,7 @@
 
 ### 3.1.1 F1 / F2 / F3 / F4 / F5：发布就是内容侧的"更新协议"
 
-- **行为**：宿主改内容（结构、放置、状态、几何、材质），然后 `publish()`（或让引擎在帧首隐式发布）。一次发布把
+- **行为**：宿主改内容（结构、放置、状态、几何、材质），然后 `publish()`。一次发布把
   新结构、新折叠值、新素材值与灯集一起变成一份新快照；未变的块与新值共享，未变的行不复制。
 - **约束**（C18 / C19）：批内不发布；材质以**值**过帧。
 - **要求**（R9 / R13 / R17）：一次交换、在飞帧逐项不变、批 = 一次发布。
@@ -291,9 +299,10 @@
 
 ### 3.1.2 F8 每帧
 
-- **行为**：内容半段（`RenderEngine::buildContentHalf`）按 run order 跑每个声明的 `before_draw`、发布该 pass 的内容、
-  把 pass 描述成 `FrameDescription` 并把每个 scene draw 绑定到它的发布；引擎半段（`runEngineHalf`）展开命令、交给
-  executor 执行并呈现。
+- **行为**：宿主先 `publish()`（`SceneView::publishContent` 把视图与链拥有的场景都发一遍）；内容半段
+  （`RenderEngine::buildContentHalf`）按 run order 跑每个声明的 `before_draw`（钩子写的内容由钩子自己发布），
+  把 pass 描述成 `FrameDescription` 并把每个 scene draw 绑定到帧开始那一刻的发布；引擎半段（`runEngineHalf`）
+  展开命令、交给 executor 执行并呈现。
 - **约束**（C16）：两个半段各归一条线程；一条引擎线程碰设备。
 - **要求**（R16）：`frame()` 在内容线程只花 O(passes) 加一次握手；等待必须显式。
 - **验收**（T12 / T16）：`FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`（64 帧逐项相同）、
@@ -346,7 +355,9 @@
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `RenderEngine::bindSnapshot(scene, ref)` | 说"这个引擎从这一份开始画"；**接管**该场景的发布（不再隐式发布） | 新（2026-11-12）；**迁移 API，尚未成为宿主契约**（`W2`） |
+| `Scene::publishedSnapshot()` | 场景最近一次发布的句柄：帧 build 时默认取它 | 新（W9b，2026-11-13） |
+| `RenderEngine::bindSnapshot(scene, ref)` | **覆盖**：这个引擎改画 `ref` 这一份（直到下一次绑定） | 新（2026-11-12）；W9b 起只是覆盖，不是必须步骤 |
+| `SceneView::publishContent()` / `PassChain::publishContent()` | 宿主每帧一次的发布（视图 + 链拥有的场景） | 新（W9b） |
 | `RenderEngine::frame() → FrameOutcome` | 构建 + 交出（`Submitted`）或就地跑完（`Ran`） | 已存在 |
 | `RenderEngine::setFrameThreading(FrameThreading)` | `Inline`（默认）/ `EngineThread`；生命周期决定 | 已存在 |
 | `RenderEngine::waitForFrame(n, timeout)` | 唯一显式等待 | 已存在 |
@@ -490,8 +501,8 @@
 - **已落地**：两个世界与发布（F1–F7、F12）、帧的两个半段与引擎线程（`setFrameThreading` / `waitForFrame` /
   `presentRecord` / `presentedCamera`）、表面与交换链归属（F9）、关闭相位（F10）、宿主接管发布（§2.13）。
 - **未做**：F11（派生层并行）—— 它是纯函数的自然延伸，没有消费者之前不建（`G8`）。
-- **迁移期的形状**：引擎在帧首为**未绑定**的场景隐式发布（§2.13）；5b-2c 删 `addPass` 家族时一并删除，
-  那时"发布"只有一个动词、一个调用者（`graphics-frame-pipeline.md` §9.3）。
+- **帧内隐式发布已删除（W9b，2026-11-13）**：发布是内容写者的动词，帧在 build 时取场景当时的那一份；
+  没发布的场景不画并报一次 `ContentSkipped`（§2.13）。`bindSnapshot` 只剩"覆盖"一个含义。
 
 ### 9.2 已知缺口
 

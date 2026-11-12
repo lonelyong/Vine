@@ -875,6 +875,14 @@ void SurfaceWindow::renderFrame()
     //     re-attaches, and a null handle is not a frame at all.
     observePresentRecord();
 
+    // THE HOST'S PUBLICATION, ONCE PER FRAME AND BEFORE THE FRAME IS BUILT: the view folds the content it owns into
+    // immutable publications, and the frame that follows draws exactly those values (see SceneView::publishContent).
+    // No wait and no bind is needed - a frame takes the publication that stood when it was BUILT, so one landing while
+    // an earlier frame is being answered cannot change that frame's picture.
+    if (vn::graphics::SceneView* const primary = view(); primary != nullptr) {
+        primary->publishContent();
+    }
+
     d->engine->frame();
     if (d->state != SurfaceState::Presenting) {
         // THE FIRST PICTURE OF A SESSION is what lets the control SHOW the area, so this one is waited for: it is the

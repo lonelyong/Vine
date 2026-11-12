@@ -450,6 +450,7 @@ TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
     fixture.engine->addPass(pass, scene, 0);
 
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe first = fixture.read();
     ASSERT_TRUE(first.valid());
     const auto& centre_before = first.pixel(SdkPixelFixture::kSide / 2, SdkPixelFixture::kSide / 2);
@@ -458,6 +459,7 @@ TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
 
     // 一句声明把它翻过来：红的那张画在最后。
     red->setDrawOrder(1);
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe second = fixture.read();
     ASSERT_TRUE(second.valid());
     const auto& centre_after = second.pixel(SdkPixelFixture::kSide / 2, SdkPixelFixture::kSide / 2);
@@ -493,7 +495,13 @@ TEST(SdkPixelTest, TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends)
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
     fixture.engine->addPass(pass, scene, 0);
 
-    const auto centre = [&]() { return fixture.read().pixel(SdkPixelFixture::kSide / 2, SdkPixelFixture::kSide / 2); };
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
+    const auto centre = [&]() {
+        // The test's own content, published before the frame that draws it (see Scene::publish): the material's mode and
+        // alpha change between reads, and each change is a new picture.
+        (void)scene->publish();
+        return fixture.read().pixel(SdkPixelFixture::kSide / 2, SdkPixelFixture::kSide / 2);
+    };
 
     // ① Mask + alpha 0.25：低于 cutoff，几何不写任何像素。
     const Rgba8 cut = centre();

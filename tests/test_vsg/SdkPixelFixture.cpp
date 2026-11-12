@@ -179,6 +179,11 @@ bool SdkPixelFixture::up()
 
 vn::graphics::backend::PixelProbe SdkPixelFixture::read()
 {
+    // THE HOST'S PUBLICATION (see Scene::publish): the fixture owns the content every case draws, so it posts the
+    // picture before driving the frame - the same verb SceneView::publishContent performs for a view's own scenes.
+    if (scene != nullptr) {
+        (void)scene->publish();
+    }
     engine->frame();
 
     std::vector<std::uint8_t>    pixels;

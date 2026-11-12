@@ -598,3 +598,19 @@
   `if` 作用域里就是 use-after-free（本地已踩，`RenderPassTest.Execute*` 段错误）。
 - 测试：`FrameExpanderTest` → `FrameExpandTest`（6 例；文件与 suite 都改名），`FrameRunnerTest` / `ValueChannelTest`
   改成传发布源，`PassDrawTest` 补走绑定。`test_graphics` 558 / `test_vsg` 546 全绿。
+
+## 2026-11-13 —— W9b：帧不再发布，发布是内容写者的动词
+
+- **删掉的**：`RenderEngine::buildFrameValue` 的"每帧每场景一次隐式发布"；`PublicationStore::publish` /
+  `hasExplicitSnapshot`。`bindSnapshot` 从"接管"降为**覆盖**（默认取场景自己的最新发布）。
+- **新增**：`Scene::publishedSnapshot()`（帧 build 时取的那一份）；`PublicationStore` 按 `(content, revision)`
+  一个 `SnapshotSource`，`beginFrame` 丢掉没人再画的源（在飞帧只有一个 ⇒ 每内容至多两份）；`SceneView::publishContent()`
+  / `PassChain::publishContent()`（链拥有的 transparent 场景）；`AxisGizmo::update` / `FpsOverlay::update` 在钩子里
+  自行发布（钩子写内容就必须发布，否则这一帧看不到）。
+- **宿主**：`SurfaceWindow::renderFrame` 每帧先 `view()->publishContent()` 再 `engine->frame()`。没等、没 bind——
+  在飞帧钉住的是 build 时取到的值。
+- **失败形状**：没发布的场景 ⇒ draw 不命名源 ⇒ 什么也不画 + 一次 `ContentSkipped`（"pass 'x' draws a scene that was
+  never published"），不再悄悄读活树。
+- **测试**：`PublicationStoreTest` 重写为四例（三态 / 一发布一源 / 源被丢 / 绑定覆盖）；`test_graphics` 561 /
+  `test_vsg` 546 全绿。引擎/像素用例改成"宿主动词"：`scene->publish()` 或 `view->publishContent()`，钩子用例在钩子里
+  发布。

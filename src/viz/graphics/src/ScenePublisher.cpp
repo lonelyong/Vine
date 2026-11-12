@@ -126,8 +126,7 @@ ScenePublisher::collectRenderCommands(const vn::graphics::CollectView& view, std
 }
 
 vn::graphics::ScenePublishResult ScenePublisher::publish()
-{
-    // A BATCH HOLDS THE PUBLICATION BACK (see Scene::beginEdit): the previous snapshot stays the answer, so a frame that
+{    // A BATCH HOLDS THE PUBLICATION BACK (see Scene::beginEdit): the previous snapshot stays the answer, so a frame that
     // lands mid-batch draws the state the batch started from - and the answer says which picture that is.
     if (edit_depth_ > 0) {
         return vn::graphics::ScenePublishResult{ vn::graphics::ScenePublishStatus::InsideBatch, published_snapshot_ };
@@ -142,6 +141,11 @@ vn::graphics::ScenePublishResult ScenePublisher::publish()
         return vn::graphics::ScenePublishResult{ vn::graphics::ScenePublishStatus::Posted, published_snapshot_ };
     }
     return vn::graphics::ScenePublishResult{ vn::graphics::ScenePublishStatus::Unchanged, published_snapshot_ };
+}
+
+const vn::graphics::SceneSnapshotRef& ScenePublisher::publishedSnapshot() const noexcept
+{
+    return published_snapshot_;
 }
 
 void ScenePublisher::beginEdit()

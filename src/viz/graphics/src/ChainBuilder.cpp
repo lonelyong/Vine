@@ -317,6 +317,9 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
         transparent_desc.clear_enabled = false;
         transparent_desc.depth_mode    = DepthMode::TestOnly;
         pipeline.addPass(transparent_desc);
+        // The chain owns the extra scene from here on (see PassChain::publishContent): the content the HOST owns is
+        // the host's to publish, and this one has no other owner.
+        pipeline.setTransparentContent(transparent_);
     }
     pipeline.setWindowPass(pass);
     return true;
@@ -490,6 +493,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // report is exactly about two passes both claiming to be the source of one image.
     transparent_desc.output_target = composite;
     pipeline.addPass(transparent_desc);
+    pipeline.setTransparentContent(transparent_); // see PassChain::publishContent
 
     // Present the baked composite to the window (order 2). Carrying the view
     // camera with a null render target is what makes it a window pass; a host

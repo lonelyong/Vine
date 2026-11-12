@@ -281,6 +281,11 @@ ScenePublishResult Scene::publish()
     return publisher_->publish();
 }
 
+SceneSnapshotRef Scene::publishedSnapshot() const
+{
+    return publisher_->publishedSnapshot();
+}
+
 void Scene::beginEdit()
 {
     publisher_->beginEdit();

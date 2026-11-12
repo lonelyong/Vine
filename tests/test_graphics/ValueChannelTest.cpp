@@ -75,7 +75,7 @@ FrameDescription describedFrame(RenderPass& pass, const intrusive_ptr<Scene>& sc
 {
     PassDraw description;
     EXPECT_TRUE(pass.describe(scene.get(), description));
-    bindSceneDraws(description, store.sourceOf(*scene));
+    bindSceneDraws(description, store.sourceFor(*scene, store.publicationFor(*scene)));
 
     FrameDescription frame;
     frame.passes.emplace_back();
@@ -140,7 +140,7 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
 
     // FRAME N: published and described on the content side, exactly as a frame's content half does it.
     PublicationStore store;
-    ASSERT_EQ(store.publish(*scene).status, ScenePublishStatus::Posted);
+    ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);
     FrameDescription frame = describedFrame(pass, scene, store);
 
     const std::uint64_t program_revision_v1  = program->revision();
@@ -199,7 +199,7 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     EXPECT_NE(material->revision(), material_revision_v1);
 
     // FRAME N+1: publish, describe, run - all after the edits.
-    ASSERT_EQ(store.publish(*scene).status, ScenePublishStatus::Posted);
+    ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);
     FrameDescription next = describedFrame(pass, scene, store);
     expandFrame(next);
 

@@ -94,6 +94,17 @@ class ScenePublisher final
     void endEdit();
 
     /**
+     * @brief Gets the publication `publish()` last answered `Posted` with (empty before the first one).
+     *
+     * @details
+     * - THE PICTURE A FRAME DRAWS BY DEFAULT: a frame built after this call takes this value, which is what makes
+     *   "the frame draws what was published" a property of the values rather than of an ordering rule.
+     *
+     * @return The published handle; empty when nothing was posted yet.
+     */
+    [[nodiscard]] const vn::graphics::SceneSnapshotRef& publishedSnapshot() const noexcept;
+
+    /**
      * @brief Opens @p frame on the memo (see Scene::setContentFrame).
      *
      * @param frame Opaque frame token; the same token means the same frame.

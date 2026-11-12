@@ -273,10 +273,11 @@ void RenderEngine::buildFrameValue()
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
     // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
     //
-    // THE HOOKS RUN FIRST, ALL OF THEM (see the publication step below): a hook WRITES content, and this frame's one
-    // publication has to carry every hook's write - including a later pass' write, which a publication taken inside
-    // the pass loop would have skipped for every pass described before it. Their cost is the pass' share of the
-    // content half; the description below adds its own.
+    // THE HOOKS RUN FIRST, ALL OF THEM: a hook WRITES content, and a hook that owns what it writes PUBLISHES it there
+    // (see AxisGizmo / FpsOverlay: update, then publish). Running every hook before any description is what makes that
+    // work - a hook of a later pass would otherwise publish after an earlier pass had already taken its publication,
+    // and the frame would draw two different moments. Their cost is the pass' share of the content half; the
+    // description below adds its own.
     for (const std::uint32_t index : frame_order_) {
         const PlanRow&    row  = plan_rows_[index];
         RenderPass* const pass = row.pass;
@@ -296,14 +297,9 @@ void RenderEngine::buildFrameValue()
         }
     }
 
-    // THEN ONE PUBLICATION PER SCENE, taken in run order of the passes that name it, and only then the descriptions.
-    // Publishing between the two loops is what makes it ONE publication per frame and scene: a scene drawn by N
-    // passes used to be published N times (the later N-1 answered `Unchanged`, still a lock and an epoch comparison
-    // each), and a publication taken before every hook ran would leave a later hook's write out of the frame
-    // entirely. This is the migration's IMPLICIT publication; it goes away in 5b-2c, when a host publishes through
-    // `Scene::publish()` and hands the value over with `RenderEngine::bindSnapshot`. With nothing changed, the call
-    // answers immediately.
-    published_scenes_.clear();
+    // THEN THE DESCRIPTIONS, each bound to the publication that stands NOW. Nothing here publishes: publishing is the
+    // content writer's verb (`Scene::publish`), and the frame takes the value it finds - so a host controls the picture
+    // by publishing, and a publication that lands after this frame was built cannot change what it draws.
     for (const std::uint32_t index : frame_order_) {
         PlanRow&          row  = plan_rows_[index];
         RenderPass* const pass = row.pass;
@@ -317,11 +313,6 @@ void RenderEngine::buildFrameValue()
         // host-visible half of a frame; the GPU half is the backend's (see RenderEngine::frameReport). One clock read
         // per pass, not per draw.
         const auto pass_started = std::chrono::steady_clock::now();
-        if (raw_ptr<Scene> scene = pass->content();
-            scene != nullptr && std::find(published_scenes_.begin(), published_scenes_.end(), scene) == published_scenes_.end()) {
-            published_scenes_.push_back(scene);
-            (void)publications_->publish(*scene);
-        }
         // The declared inputs were resolved by the compile (see compileFrame's rows), and the pass is told them
         // here: they are what a ScreenPass' effect reads, and they are part of what the pass describes.
         pass->resolveInputTextures(row.inputs);
@@ -349,7 +340,18 @@ void RenderEngine::buildFrameValue()
             // already published (see the publication step above), and this is where the frame value stops naming the
             // content and starts naming its rows (see detail::bindSceneDraws). A pass with no content binds nothing -
             // its draws are already what it described.
-            detail::bindSceneDraws(*entry.draw, row.content != nullptr ? publications_->sourceOf(*row.content) : nullptr);
+            if (row.content != nullptr) {
+                const SceneSnapshotRef publication = publications_->publicationFor(*row.content);
+                detail::SnapshotSource* const source = publications_->sourceFor(*row.content, publication);
+                detail::bindSceneDraws(*entry.draw, source);
+                if (source == nullptr) {
+                    // "You drew a scene that never published": reported once per episode, and the pass draws nothing -
+                    // the honest answer, instead of quietly reading the live tree.
+                    noteProblem(String(u8"pass '") + reportedPassName(pass)
+                                + String(u8"' draws a scene that was never published: publish it (Scene::publish), or bind a"
+                                         u8" publication before the frame (RenderEngine::bindSnapshot)"));
+                }
+            }
             // THE ANSWER IS NOT TAKEN HERE. The pass stated a view and whose content answers it (and the content's
             // write is already published); asking that source for the list is the ENGINE half's step, which runs
             // over the whole described frame (see expandFrameValue) - that is the seam a thread crosses, and it is

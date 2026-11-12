@@ -256,6 +256,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
     fixture.engine->addPass(pass, scene, 0);
 
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe picture = fixture.read();
     ASSERT_TRUE(picture.valid()) << "画出来的这一帧必须读得回来";
     ASSERT_EQ(picture.width(), SdkPixelFixture::kSide);
@@ -294,6 +295,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
 
     // 第二帧什么都不改：九次取流全部命中，一个字节都不该重传（首帧的九次里有三次是上传，
     // 所以两帧的 aliases 之差正好是九）。
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe again = fixture.read();
     ASSERT_TRUE(again.valid()) << "第二帧也必须读得回来";
     const std::uint64_t aliases_after_second = assembly->uploads().aliases();
@@ -351,12 +353,14 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
     fixture.engine->addPass(pass, scene, 0);
 
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe one = fixture.read();
     ASSERT_TRUE(one.valid()) << "画出来的这一帧必须读得回来";
     const PartPixels single_pixel = countParts(one);
 
     // The content authored the size: the same command, the same pipeline, a different draw-block value.
     state->setPointSize(9.0F);
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe nine = fixture.read();
     ASSERT_TRUE(nine.valid());
     const PartPixels nine_pixels = countParts(nine);
@@ -415,7 +419,9 @@ TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
         pass->setDepthMode(DepthMode::Disabled);
         pass->setProgramOverride(vn::graphics::unlitForwardProgram());
         fixture.engine->addPass(pass, scene, 0);
+        (void)scene->publish(); // the scene this pass draws, published by its owner (see Scene::publish)
 
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
         const PixelProbe picture = fixture.read();
         fixture.engine->removePass(pass.get());
         EXPECT_TRUE(picture.valid()) << "画出来的这一帧必须读得回来";
@@ -470,11 +476,13 @@ TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
     fixture.engine->addPass(pass, scene, 0);
 
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe thin = fixture.read();
     ASSERT_TRUE(thin.valid()) << "画出来的这一帧必须读得回来";
     const PartPixels one_pixel = countParts(thin);
 
     state->setLineWidth(4.0F);
+    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe wide = fixture.read();
     ASSERT_TRUE(wide.valid());
     const PartPixels four_pixels = countParts(wide);

@@ -94,6 +94,21 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void setScene(intrusive_ptr<Scene> scene);
 
+    /**
+     * @brief Publishes the content this view draws: its scene, and the extra scene its chain owns.
+     *
+     * @details
+     * - THE HOST'S PER-FRAME VERB (see Scene::publish): publishing is the content writer's act, and a frame draws the
+     *   publication that stood when it was built - so a host that publishes before driving a frame always draws its
+     *   own content, and an edit landing while a frame is answered never changes that frame's picture.
+     * - It is cheap when nothing moved (`Unchanged`) and posts nothing inside an edit batch, so calling it every frame
+     *   is the ordinary shape. A host that owns OTHER scenes (a custom chain's content, an overlay of its own)
+     *   publishes those itself: this call covers exactly what the view owns.
+     * - A host that anchors frames otherwise - `SurfaceWindow::renderFrame` - already does this once per frame; call
+     *   it yourself only when you drive the engine from your own loop.
+     */
+    void publishContent();
+
   public:
     // ---- Navigation ----
 

@@ -133,8 +133,8 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
     // A JOB IS ONE FRAME'S ENGINE HALF (see RenderEngine::runEngineHalf): the expansion of a value that already names
     // the publications it draws, which is what a caller without a device has to hand over.
     PublicationStore inline_store;
-    ASSERT_NE(inline_store.publish(scene).status, ScenePublishStatus::InsideBatch);
-    SnapshotSource* const inline_source = inline_store.sourceOf(scene);
+    ASSERT_TRUE(scene.publish());
+    SnapshotSource* const inline_source = inline_store.sourceFor(scene, inline_store.publicationFor(scene));
     ASSERT_NE(inline_source, nullptr);
     FrameRunner     inline_runner{ RunnerMode::Inline };
     FrameDescription from_inline = onePassFrame(*inline_source);
@@ -142,8 +142,7 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
     EXPECT_EQ(inline_runner.frames(), 1U) << "jobs are counted where they run: inline, that is the caller's thread";
 
     PublicationStore threaded_store;
-    ASSERT_NE(threaded_store.publish(scene).status, ScenePublishStatus::InsideBatch);
-    SnapshotSource* const threaded_source = threaded_store.sourceOf(scene);
+    SnapshotSource* const threaded_source = threaded_store.sourceFor(scene, threaded_store.publicationFor(scene));
     ASSERT_NE(threaded_source, nullptr);
     FrameRunner     threaded_runner{ RunnerMode::Threaded };
     FrameDescription from_thread = onePassFrame(*threaded_source);
@@ -164,8 +163,8 @@ TEST(FrameRunnerTest, ManyFramesThroughTheEngineThreadStayEquivalent)
     scene.setRoot(root);
 
     PublicationStore store;
-    ASSERT_TRUE(store.publish(scene));
-    SnapshotSource* const source = store.sourceOf(scene);
+    ASSERT_TRUE(scene.publish());
+    SnapshotSource* const source = store.sourceFor(scene, store.publicationFor(scene));
     ASSERT_NE(source, nullptr);
     FrameRunner runner{ RunnerMode::Threaded };
 
@@ -193,8 +192,8 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
     scene.setRoot(root);
 
     PublicationStore store;
-    ASSERT_TRUE(store.publish(scene));
-    SnapshotSource* const source = store.sourceOf(scene);
+    ASSERT_TRUE(scene.publish());
+    SnapshotSource* const source = store.sourceFor(scene, store.publicationFor(scene));
     ASSERT_NE(source, nullptr);
     FrameRunner runner{ RunnerMode::Threaded };
     runner.stop();

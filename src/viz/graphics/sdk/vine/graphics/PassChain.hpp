@@ -311,6 +311,18 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      */
     [[nodiscard]] bool isValid() const noexcept;
 
+    /**
+     * @brief Publishes the extra content this chain draws (see ChainDesc::transparent), if any.
+     *
+     * @details
+     * - THE CHAIN OWNS THIS SCENE, so it is the chain that publishes it: the content the HOST owns is the host's to
+     *   publish (see SceneView::publishContent), and a frame only ever draws what was published (a frame never
+     *   publishes - see Scene::publish).
+     * - Cheap when nothing moved (`Unchanged`) and inside an edit batch it posts nothing, so a host may call it every
+     *   frame before driving one.
+     */
+    void publishContent();
+
     /** @brief Gets whether any pass of this chain draws @p scene.
      *
      * @details
@@ -559,6 +571,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      */
     intrusive_ptr<RenderPass> addPass(const PassDesc& desc, const String& role = String());
 
+
     /** @brief Sets the window-presenting pass. */
     void setWindowPass(intrusive_ptr<RenderPass> pass);
 
@@ -574,6 +587,9 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
         raw_ptr<Object> content{ nullptr };
         OverlayLayout   layout;
     };
+
+    /** @brief Sets the extra scene this chain draws (see ChainDesc::transparent); the builder's call. */
+    void setTransparentContent(intrusive_ptr<Scene> scene);
 
     /** @brief Role the axis-gizmo HUD pass is registered under. */
     inline static constexpr const char8_t kGizmoRole[] = u8"gizmo";
@@ -594,6 +610,8 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     intrusive_ptr<RenderPass>   window_pass_;
     intrusive_ptr<RenderTarget> offscreen_target_;
     intrusive_ptr<RenderTarget> composite_target_;
+    /// The extra scene this chain draws (see ChainDesc::transparent), or null: owned here so it is published here.
+    intrusive_ptr<Scene> transparent_content_;
     // The overlays, as VALUES (see addOverlay): a role (which is also the name the pass is registered under), the
     // content object and its layout. No field per overlay and no pass handle here - the pass lives in the group and is
     // found by role, and the content stays alive with whoever registered it.

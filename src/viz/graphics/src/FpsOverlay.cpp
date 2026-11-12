@@ -229,6 +229,9 @@ void FpsOverlay::setAreaOrigin(int x, int y)
 
 void FpsOverlay::update()
 {
+    // The readout's edits land as ONE publication at the end of this hook: the frame takes the scene's latest
+    // publication (see detail::PublicationStore), so a hook that wrote content has to post it (see AxisGizmo::update).
+
     // Measure the actual render-loop frame rate from the wall clock between
     // calls and (throttled) refresh the readout before it is drawn.
     const auto now = std::chrono::steady_clock::now();
@@ -237,6 +240,9 @@ void FpsOverlay::update()
         updateReadout(dt);
     }
     last_tick_ = now;
+    if (content_ != nullptr) {
+        (void)content_->publish();
+    }
 }
 
 void FpsOverlay::updateReadout(double dt)

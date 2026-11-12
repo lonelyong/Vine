@@ -193,6 +193,12 @@ void AxisGizmo::setAreaOrigin(int x, int y)
 void AxisGizmo::update()
 {
     applyMirror();
+    // WHAT THIS HOOK WROTE IS WHAT THE FRAME DRAWS: a frame takes the scene's latest publication (see
+    // detail::PublicationStore), so an update that moved content posts one - a hook that edited content and stayed
+    // silent would leave the frame drawing the previous picture.
+    if (content_ != nullptr) {
+        (void)content_->publish();
+    }
 }
 
 void AxisGizmo::applyMirror()

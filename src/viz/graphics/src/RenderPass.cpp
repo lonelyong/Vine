@@ -277,10 +277,14 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend, r
     // A PASS DRIVEN BY ITS OWNER DRAWS A PUBLICATION TOO (see Scene: a frame never reads the live tree). Publishing
     // here is the same call a host makes before handing a snapshot to an engine, so a pass commanded mid-batch draws
     // the picture the batch started from - exactly what a frame would.
+    // A PASS DRIVEN BY ITS OWNER PUBLISHES TOO: the picture it is about to hand the backend is the one this call just
+    // posted (see Scene::publish), bound by the same step a frame's content half performs - inside an edit batch it is
+    // the batch's starting picture, so a pass driven mid-batch draws what a frame would. The store lives until the
+    // expansion below has collected, because the draw names a source the store owns.
     detail::PublicationStore publications;
     if (scene != nullptr) {
-        (void)publications.publish(*scene);
-        detail::bindSceneDraws(description, publications.sourceOf(*scene));
+        const ScenePublishResult published = scene->publish();
+        detail::bindSceneDraws(description, publications.sourceFor(*scene, published.snapshot));
     }
     detail::expandPass(description);
     backend->executor().executeFrame(singlePassFrame(this, /*order*/ 0, /*inputs*/ {}, std::move(description)), present_to);

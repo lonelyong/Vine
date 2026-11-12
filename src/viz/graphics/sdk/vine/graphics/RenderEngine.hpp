@@ -329,20 +329,15 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   view and an offscreen bake can be one publication apart without either telling the other what to draw.
      * - An EMPTY handle clears the binding: every view then answers an empty list, which is the same answer as a
      *   scene whose content draws nothing.
-     * - IT TAKES PUBLICATION OVER FOR THIS SCENE. A scene this engine was bound for is no longer published implicitly at
-     *   frame start - otherwise the picture the host named would be replaced by whatever the content said when the frame
-     *   ran, and the call would have no effect. A scene never bound keeps the migration's convenience (one implicit
-     *   publication per frame, which 5b-2c deletes), so a host that does not care keeps working.
-     *
-     * @warning
-     * - Between frames: the engine half of a frame looks this content's source up while it expands, and the binding is
-     *   the answer it finds. Binding while a frame is being answered is a race the engine does not police.
-     * - The takeover is per engine and one-way for the scene's lifetime in this engine: publishing through the frame is
-     *   the implicit path, and there is nothing to switch back to.
+     * - IT IS AN OVERRIDE, NOT A REQUIRED STEP: a frame takes the scene's latest publication by default
+     *   (`Scene::publishedSnapshot`), so a host that publishes and stops there always draws its own content. Bind when
+     *   you want an OLDER or a DIFFERENT picture - an offscreen bake drawing the state an editor has moved past, two
+     *   engines drawing one scene one publication apart.
+     * - A BIND SURVIVES later publications: every frame built until the next bind draws the publishing value you named.
      *
      * @note
-     * - MIGRATION ENTRY: this repository has no host consumer of it yet, so its shape is not a host contract until
-     *   the 5b-2c window closes (backlog W9 / W2).
+     * - A frame pins the publication it took when it was BUILT, so a bind (or a publish) landing while a frame is being
+     *   answered never changes that frame's picture (see detail::PublicationStore).
      *
      * @param scene    The scene whose publication is being handed over.
      * @param snapshot The publication to draw (see ScenePublishResult::snapshot), or an empty handle to draw nothing.
@@ -1417,9 +1412,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     std::vector<PlanRow> plan_rows_;
     /// The execution order of plan_rows_ (indices), decided by scheduleRows(); also what buildFrameValue walks.
     std::vector<std::uint32_t> frame_order_;
-    /// The scenes THIS frame has already published (see buildFrameValue): one publication per scene per frame, reused
-    /// so a steady frame allocates nothing here.
-    std::vector<raw_ptr<Scene>> published_scenes_;
     /// The announced sort key of each plan row, rebuilt by scheduleRows() (the scheduler reads a contiguous span).
     std::vector<int> frame_order_keys_;
     /// The scheduler's working memory (see FrameScheduler): one per engine, reused every frame.
