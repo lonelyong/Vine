@@ -36,6 +36,7 @@
 #include <vine/intrusive_ptr.hpp>
 
 #include "TestProgramFacts.hpp"
+#include "LightValues.hpp"
 
 using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
@@ -1063,7 +1064,7 @@ TEST(FrameCompilerTest, TheFrameCarriesWhatTheRecorderSnapshottedWithoutReworkin
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
-    r.recorder.setLights(lights);
+    r.recorder.setLights(lightValues(lights));
     r.recorder.setPassInputs(std::span<const RenderTarget* const>{});
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();

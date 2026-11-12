@@ -614,3 +614,14 @@
 - **测试**：`PublicationStoreTest` 重写为四例（三态 / 一发布一源 / 源被丢 / 绑定覆盖）；`test_graphics` 561 /
   `test_vsg` 546 全绿。引擎/像素用例改成"宿主动词"：`scene->publish()` 或 `view->publishContent()`，钩子用例在钩子里
   发布。
+
+## 2026-11-13 —— W9c：灯的活指针通道删除
+
+- `DrawDescription::lights`（`raw_ptr<const Light>` 数组）与 `FrameRecorder::setLights(std::span<const Light* const>)`
+  / `snapshotLights(Light*...)` 删除；`light_values` 是唯一通道，`Light::value()` 只在内容侧调用。
+- 顺带删了 `FrameRecorder::render(..., const ShaderProgram*)` 这个读活程序的旧重载（只剩描述的版本）。
+- 测试：`MockBackend` 改读 `light_values`（`last_light` 变成 `std::optional<LightValue>`），`OwnedFrame` 复制
+  `light_values`；LightBlock/ShadowBlock/ContentPass 的测试用新的 `tests/test_vsg/LightValues.hpp` 在调用点转换。
+  `test_graphics` 561 / `test_vsg` 546 全绿。
+- `RenderCommand::geometry/material/program` 保留：只做身份与寿命（流绑定、驻留、`releaseContent` 的“还有谁持有”），
+  记录侧不再从它们读 revision / 透明 / 灯值；删它们需要内容注册通道（T30/T22 触发）。

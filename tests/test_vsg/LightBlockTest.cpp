@@ -66,6 +66,7 @@
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
 #include "TestProgramFacts.hpp"
+#include "LightValues.hpp"
 
 using vn::graphics::Camera;
 using vn::graphics::Diagnostics;
@@ -591,13 +592,13 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     recorder.beginPass(1U);
     recorder.setRenderTarget(handle.get());
     recorder.setClearPolicy(clear);
-    recorder.setLights(std::span<const Light* const>(towards_lights, 2U));
+    recorder.setLights(lightValues(std::span<const Light* const>(towards_lights, 2U)));
     recorder.render(std::span<const RenderCommand>(&commands[0], 1U), &camera);
-    recorder.setLights(std::span<const Light* const>(away_lights, 2U));
+    recorder.setLights(lightValues(std::span<const Light* const>(away_lights, 2U)));
     recorder.render(std::span<const RenderCommand>(&commands[1], 1U), &camera);
-    recorder.setLights(std::span<const Light* const>(disabled_ambient_lights, 1U));
+    recorder.setLights(lightValues(std::span<const Light* const>(disabled_ambient_lights, 1U)));
     recorder.render(std::span<const RenderCommand>(&commands[2], 1U), &camera);
-    recorder.setLights(std::span<const Light* const>(disabled_sun_lights, 1U));
+    recorder.setLights(lightValues(std::span<const Light* const>(disabled_sun_lights, 1U)));
     recorder.render(std::span<const RenderCommand>(&commands[3], 1U), &camera);
     recorder.endPass();
     recorder.endFrame();
@@ -814,13 +815,13 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     recorder.setRenderTarget(handle.get());
     const std::uint32_t band_width = kSize / 3U; // 21 / 21 / 22: the last band takes the remainder
     recorder.setViewport(0, 0, static_cast<int>(band_width), static_cast<int>(kSize));
-    recorder.setLights(std::span<const Light* const>(band0_lights, 2U));
+    recorder.setLights(lightValues(std::span<const Light* const>(band0_lights, 2U)));
     recorder.drawScreenProgram(handle.get(), program.get(), &camera);
     recorder.setViewport(static_cast<int>(band_width), 0, static_cast<int>(band_width), static_cast<int>(kSize));
-    recorder.setLights(std::span<const Light* const>(band1_lights, 2U));
+    recorder.setLights(lightValues(std::span<const Light* const>(band1_lights, 2U)));
     recorder.drawScreenProgram(handle.get(), program.get(), &camera);
     recorder.setViewport(static_cast<int>(band_width * 2U), 0, static_cast<int>(kSize - band_width * 2U), static_cast<int>(kSize));
-    recorder.setLights(std::span<const Light* const>{}); // the backend default: the fill
+    recorder.setLights(lightValues(std::span<const Light* const>{})); // the backend default: the fill
     recorder.drawScreenProgram(handle.get(), program.get(), &camera);
     recorder.endPass();
     recorder.endFrame();

@@ -236,8 +236,11 @@
 - **为什么**（`G1` / `G4` / `G10`）：**唯一一类真实 UB** 是 UI 改灯/材质/程序与引擎线程读同一非原子字段（R3-1）。
   值通道让“帧 N 画它描述时的那份值”成为值语义，而不是约定；每条命令少 3 次 `intrusive_ptr` 原子增减。
   “把 revision 改 atomic”只修一个字段、不修灯与程序文本，**已否决**（`D12`）。
-- **边界**：活指针字段（`RenderCommand::geometry/material/program`、`PassDraw::program_override`、
-  `DrawDescription::lights`）**保留到 5b-2c**（`C11`：公开 API 只增不改）；记录侧与事实表只读值，活指针只做身份与寿命。
+- **边界**：灯的活指针通道已删（W9c，2026-11-13）：`DrawDescription::lights` 与 `FrameRecorder` 的对象形
+  `setLights` 都没有了，`light_values` 是唯一通道。仍保留的活指针是 `RenderCommand::geometry/material/program`
+  与 `PassDraw::program_override`：它们做**身份与寿命**（流绑定要对象、驻留账要份额、`releaseContent` 要问"还有谁
+  持有"），记录侧从它们身上只读**不变量**（id）——revision / isTransparent / 灯的数值全部来自值。删它们需要一条
+  内容注册通道（T30/T22 的触发），今天没有消费者（`G8`）。
   程序/材质的值是通过 `detail::refreshValues` 在发布边界重取的（它们不经节点 mutator，epoch 看不见）。
 
 ### 2.15 发布与展开是两个半边，帧值只装发布（`G2` / `G12`）

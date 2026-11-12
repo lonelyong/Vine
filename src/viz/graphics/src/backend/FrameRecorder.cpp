@@ -247,26 +247,6 @@ bool FrameRecorder::setLights(std::span<const vn::graphics::LightValue> lights)
     return true;
 }
 
-bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights)
-{
-    if (!pass_open_ || scope_target_released_) {
-        return false; // no scope to fill, or the scope's target is gone (see the file note)
-    }
-    snapshotLights(lights);
-    return true;
-}
-
-bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
-                           const vn::graphics::CameraSnapshot&          camera,
-                           const vn::graphics::ShaderProgram*           program_override)
-{
-    // THE LEGACY DOOR (C11: additive until 5b-2c): convert once, where the object may still be read, and take the
-    // value path below. A command a scene row produced never needs this - it carries its program text already.
-    const vn::graphics::ShaderProgramDescriptionPtr text =
-        program_override != nullptr ? program_override->description() : vn::graphics::ShaderProgramDescriptionPtr{};
-    return render(commands, camera, text.get());
-}
-
 bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
                            const vn::graphics::CameraSnapshot&           camera,
                            const vn::graphics::ShaderProgramDescription* program_override)
@@ -392,19 +372,6 @@ void FrameRecorder::snapshotLights(std::span<const vn::graphics::LightValue> lig
     pending_lights_ = copy;
 }
 
-void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> lights)
-{
-    // THE LEGACY DOOR (C11: additive until 5b-2c): the conversion is `Light::value()`, one named call per light, made
-    // by the caller that may still read the object.
-    const std::span<LightRef> copy = arena_.makeArray<LightRef>(lights.size());
-    for (std::size_t i = 0; i < lights.size(); ++i) {
-        if (lights[i] != nullptr) {
-            copy[i] = lights[i]->value();
-        }
-    }
-    pending_lights_ = copy;
-}
-
 std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<const vn::graphics::RenderCommand> commands,
                                                                   const vn::graphics::ShaderProgramDescription* program_override)
 {
@@ -425,6 +392,8 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
             target.geometry = source.geometry_ref;
         }
         else {
+            // A hand-built command: the node it names is its identity, else the geometry's own id - an IDENTITY read
+            // (immutable after construction), never a value: the revision comes from the description above.
             const vn::graphics::NodeId identity =
                 !source.node.isNull() ? source.node : (source.geometry != nullptr ? source.geometry->id() : vn::graphics::NodeId{});
             target.geometry = vn::graphics::contentRefOf(identity, description != nullptr ? description->revision() : 0);
@@ -455,11 +424,12 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         // agree instead of missing each other forever.
         const vn::graphics::MaterialDescriptionPtr material_values = source.materialDescription();
         if (!source.material_ref.isNull()) {
-            // The pair the collector took (material identity + the values' revision).
+            // The pair the command carries (material identity + the values' revision): taken where it was built.
             target.material = source.material_ref;
         }
         else if (material_values != nullptr) {
-            // The identity is the object's own (immutable after construction); the revision is the value's.
+            // A hand-built command: the material's id is an IDENTITY (immutable after construction); the revision is the
+            // VALUE's, so no revision is ever read from the object here.
             target.material = vn::graphics::ContentRef{ source.material != nullptr ? source.material->id().handle() : vn::graphics::Handle{},
                                                        material_values->revision() };
         }

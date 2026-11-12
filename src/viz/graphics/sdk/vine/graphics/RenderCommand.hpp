@@ -223,57 +223,42 @@ struct VN_GRAPHICS_API RenderCommand {
         return geometry != nullptr ? geometry->primitive(primitive_index) : nullptr;
     }
 
-    /**
-     * @brief Gets the immutable shape this command draws, converting a hand-built command's geometry if needed.
+    /** @brief Gets the immutable shape this command draws: `description`, or a hand-built command's cached conversion.
      *
      * @details
-     * - NAMED CONVERSION, not a second source of truth: a command a DRAW LIST produced carries @ref description
-     *   (that is the value the frame crosses with); a command a content-side caller built from a live geometry - a
-     *   host driving one pass, a tool, a test - may state only @ref geometry, and this is where that becomes a value.
-     *   The conversion is `Geometry::description()`, cached per revision, so it costs an integer compare after the
-     *   first call.
-     * - The one place allowed to make this read on the recording side is the step that runs on the content's own
-     *   thread (see `.ai/design/graphics-threading.md`, which names this and the per-view run as the only two).
-     *
-     * @warning
-     * - A recording path on another thread must NOT call this: what crosses a thread boundary is the value the
-     *   command already carries, never a read of the object it came from.
+     * - A draw list puts the row's published VALUE in @ref description, which is what the recording side reads.
+     * - A command a content-side caller built (a host driving one pass, a tool, a test) may state only @ref geometry;
+     *   that conversion is `Geometry::description()`, cached per revision, and belongs to the thread that built the
+     *   command - see `.ai/design/graphics-threading.md`, which names it as the only read the value path allows.
      *
      * @return The description, or null for a command that names no geometry at all.
      */
     [[nodiscard]] GeometryDescriptionPtr geometryDescription() const;
 
     /**
-     * @brief Gets the material's values as a value: the published one, or (for a hand-built command) the material's
-     *        cached one.
+     * @brief Gets the material's values: the published ones, or a hand-built command's cached conversion.
      *
      * @details
-     * - What a recorder hands the backend, so describing material rows never reads the live object.
-     * - It never BUILDS a value (see `MaterialBase::cachedDescription`): a material whose revision moved since it was
-     *   published answers the values it was published with, which is the one-publication lag every content fact has.
+     * - A command a scene row produced carries the values that row was published with, so a material edited while a
+     *   frame records cannot change what that frame draws.
+     * - A hand-built command states only @ref material; the conversion is the same content-side door as
+     *   `geometryDescription`.
      *
-     * @return The published values; null when none were ever published for this material.
+     * @return The values; null when the command names no material.
      */
     [[nodiscard]] MaterialDescriptionPtr materialDescription() const;
 
     /**
-     * @brief Gets the program's text as a value: the published one, or (for a hand-built command) the program's
-     *        cached one.
+     * @brief Gets the program's text: the published one, or a hand-built command's cached conversion.
      *
      * @details
-     * - What a recorder hands the program table, so describing a program never reads the live object on the thread
-     *   that records the frame.
-     * - Same door as `geometryDescription()`: a command a scene row produced already carries @ref program_description,
-     *   so this costs a pointer check; a hand-built command states only @ref program and the conversion
-     *   (`ShaderProgram::description`) happens on the content side.
+     * - A command a scene row produced carries @ref program_description already; a hand-built command states only
+     *   @ref program and the conversion (`ShaderProgram::description`) happens where the command was built.
      *
-     * @warning
-     * - A recording path on another thread must NOT rely on the fallback: what crosses a thread boundary is the value
-     *   the command already carries.
-     *
-     * @return The program text; null when the command names no program (the frame's default answers).
+     * @return The text; null when the command names no program (the frame's default answers).
      */
     [[nodiscard]] ShaderProgramDescriptionPtr programDescription() const;
+
 };
 
 VN_GRAPHICS_NS_END

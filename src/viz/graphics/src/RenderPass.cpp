@@ -236,17 +236,9 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         }
     }
     draw.collect_viewport = viewport;
-    // The pass lights whatever content scene it renders: forward the scene's lights so the backend can match this
-    // pass's view lighting. Announced even when there are none: "there are no lights" restores a backend's default.
-    std::vector<raw_ptr<const Light>> light_ptrs;
-    light_ptrs.reserve(scene->lights().size());
-    for (const auto& light : scene->lights()) {
-        light_ptrs.push_back(light.get());
-    }
-    draw.lights = std::move(light_ptrs);
-    // THE SAME LIGHTS AS VALUES (see LightValue): what the recorder reads, so editing a light while this frame records
-    // cannot change what it lights. A null entry keeps its slot as the default disabled light, exactly like the
-    // pointer spelling does (see FrameRecorder::snapshotLights).
+    // The pass lights whatever content scene it renders: forward the scene's lights AS VALUES (see LightValue), so
+    // editing a light while this frame records cannot change what it lights. Announced even when there are none:
+    // "there are no lights" restores a backend's default. A null entry keeps its slot as the default disabled light.
     std::vector<LightValue> light_values;
     light_values.reserve(scene->lights().size());
     for (const auto& light : scene->lights()) {

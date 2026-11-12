@@ -200,7 +200,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *
      * @details
      * - The scene keeps a reference. Passes rendering this scene light their content with the scene's
-     *   lights (a drawing call announces them: DrawDescription::lights).
+     *   lights (a drawing call announces them as values: DrawDescription::light_values).
      *
      * @param light Light to add.
      */

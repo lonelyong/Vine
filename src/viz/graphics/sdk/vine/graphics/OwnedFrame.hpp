@@ -46,8 +46,8 @@ struct OwnedDraw {
     intrusive_ptr<RenderTarget> source;
     /// Screen kind: the fragment program to draw the source through (held).
     intrusive_ptr<const ShaderProgram> program;
-    /// The lights this draw announces, or nullopt for NONE (see DrawDescription::lights).
-    std::optional<std::vector<intrusive_ptr<const Light>>> lights;
+    /// The lights this draw announces, as values, or nullopt for NONE (see DrawDescription::light_values).
+    std::optional<std::vector<LightValue>> light_values;
 };
 
 /**
@@ -104,7 +104,8 @@ struct OwnedPass {
  *   per frame - and wrong for the three cases where a frame must outlive its producers: offline rendering, remote
  *   rendering (a worker thread or another process), and frame recording/replay. This is those cases' value.
  * - WHAT IT OWNS: the passes, their targets, the cameras and programs their draws name, the command collections (whose
- *   commands own their geometry and materials), the lights, and the input declarations. Nothing in it points at
+ *   commands own their geometry and materials), the announced light values, and the input declarations. Nothing in it
+ *   points at
  *   something it does not keep alive.
  * - HOW IT IS CONSUMED: @ref borrowed() hands the backend-facing value over. The result is valid exactly as long as
  *   the owned frame is alive, which is the caller's to guarantee - and it is the SAME shape the engine compiles, so a
@@ -186,14 +187,7 @@ class OwnedFrame {
             borrowed_draw.commands = draw.commands;
             borrowed_draw.source   = draw.source.get();
             borrowed_draw.program  = draw.program;
-            if (draw.lights.has_value()) {
-                std::vector<raw_ptr<const Light>> lights;
-                lights.reserve(draw.lights->size());
-                for (const intrusive_ptr<const Light>& light : *draw.lights) {
-                    lights.push_back(light.get());
-                }
-                borrowed_draw.lights = std::move(lights);
-            }
+            borrowed_draw.light_values = draw.light_values;
             out.draws.push_back(std::move(borrowed_draw));
         }
         return out;

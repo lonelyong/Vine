@@ -77,12 +77,8 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     // A pass with no scene announces NONE rather than an empty list: a screen pass is content-agnostic, and
     // "there is no scene" is not a statement about the lighting.
     if (scene != nullptr) {
-        std::vector<raw_ptr<const Light>> light_ptrs;
-        light_ptrs.reserve(scene->lights().size());
-        for (const auto& light : scene->lights()) {
-            light_ptrs.push_back(light.get());
-        }
-        draw.lights = std::move(light_ptrs);
+        // AS VALUES (see LightValue): the numbers the recorder reads, so a light edited while the frame records cannot
+        // change what it lights. A null entry keeps its slot as the default disabled light.
         std::vector<LightValue> light_values;
         light_values.reserve(scene->lights().size());
         for (const auto& light : scene->lights()) {

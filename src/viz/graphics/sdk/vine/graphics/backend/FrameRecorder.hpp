@@ -107,8 +107,8 @@ struct InputRef {
  *   second light struct to keep in step, and recording never touches a `Light` object.
  * - `identity` is the light's address, used only to match `RenderTarget::shadowOf` against the announced lights; it is
  *   never dereferenced after the call that announced it.
- * - The old pointer-shaped `setLights` overload stays for hand-built calls (C11: additive until 5b-2c); it converts
- *   through `Light::value()` on the content side.
+ * - There is ONE spelling: a caller that holds `Light` objects converts them where it holds them (`Light::value()`,
+ *   the named conversion), so recording never touches a `Light`.
  */
 using LightRef = vn::graphics::LightValue;
 
@@ -342,47 +342,19 @@ class VN_GRAPHICS_API FrameRecorder {
      * @details
      * - THE ENTRY THE FRAME PATH USES: a pass snapshots its scene's lights with `Light::value()` when it describes
      *   itself, and this copies the values - so recording never reads a `Light` on the thread that records.
-     * - Engaged-but-empty is a real announcement ("there are none"), exactly like the pointer spelling.
+     * - Engaged-but-empty is a real announcement ("there are none"); announcing nothing is the other state.
      *
      * @param lights The light values, or empty for the backend default.
      * @return true when it was recorded; false when it was dropped.
      */
     bool setLights(std::span<const vn::graphics::LightValue> lights);
 
-    /** @brief Announces the lights for the NEXT drawing call of this scope (the object spelling).
-     *
-     * @note The legacy door for a hand-built call (C11: additive until 5b-2c); it converts through
-     *       `Light::value()` and therefore reads the light on the caller's thread.
-     *
-     * @param lights Lights of the content scene, or empty for the backend default.
-     * @return true when it was recorded; false when it was dropped.
-     */
-    bool setLights(std::span<const vn::graphics::Light* const> lights);
-
     /** @brief Collects a content drawing call (the SDK's render()).
      *
      * @details
-     * - THE PASS' PROGRAM OVERRIDE IS RESOLVED HERE, once per command, the way the pass' state is (see
-     *   `resolveRenderState`): the SDK hands over the shared command list it collected plus the override, and a backend
-     *   that draws content applies the two together. Rewriting the commands on the SDK side instead cost a whole extra
-     *   list per frame per overriding pass.
-     *
-     * @param commands         Commands to draw, copied into the arena before this call returns.
-     * @param camera           The view the call is projected with (the frame's value, see CameraSnapshot).
-     * @param program_override Program every command is drawn with, or null to use each command's own.
-     * @return true when the call was collected; false when it was refused (no scope, or a released target).
-     */
-    bool render(std::span<const vn::graphics::RenderCommand> commands,
-                const vn::graphics::CameraSnapshot&          camera,
-                const vn::graphics::ShaderProgram*           program_override = nullptr);
-
-    /** @brief The value spelling of the call above: @p program_override is the pass override's TEXT.
-     *
-     * @details
-     * - What the frame path calls: `PassDraw::program_override_description` was taken when the pass described
-     *   itself, so an override edited while the frame is in flight keeps the text the frame recorded.
-     * - The object spelling stays for hand-built calls (C11: additive until 5b-2c); a literal `nullptr` as the third
-     *   argument is ambiguous between the two, so callers state the parameter's type (or pass neither).
+     * - What the frame path calls: the commands are VALUES (see RenderCommand), and
+     *   `PassDraw::program_override_description` was taken when the pass described itself - so an override edited
+     *   while the frame is in flight keeps the text the frame recorded.
      *
      * @param commands         Commands to draw, copied into the arena before this call returns.
      * @param camera           The view the call is projected with.
@@ -405,8 +377,8 @@ class VN_GRAPHICS_API FrameRecorder {
      * @return true when the call was collected; false when it was refused (no scope, or a released target).
      */
     bool render(std::span<const vn::graphics::RenderCommand> commands,
-                const vn::graphics::Camera*                   camera,
-                const vn::graphics::ShaderProgram*            program_override = nullptr)
+                const vn::graphics::Camera*                        camera,
+                const vn::graphics::ShaderProgramDescription*      program_override = nullptr)
     {
         return render(commands, camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{}, program_override);
     }
@@ -481,9 +453,6 @@ class VN_GRAPHICS_API FrameRecorder {
   private:
     /** @brief Copies @p lights into the arena and makes them the pending announcement. */
     void snapshotLights(std::span<const vn::graphics::LightValue> lights);
-
-    /** @brief The object spelling: converts through `Light::value()` and delegates. */
-    void snapshotLights(std::span<const vn::graphics::Light* const> lights);
 
     /** @brief Copies @p commands into the arena as collected commands, with the pass' program override applied.
      *

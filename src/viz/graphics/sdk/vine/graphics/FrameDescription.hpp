@@ -142,17 +142,13 @@ struct VN_GRAPHICS_API DrawDescription {
     /// The recorder reads THIS, not the object: the same rule every other cross-thread value follows. A hand-built
     /// description that names only the object falls back to its cached conversion (the content-side door).
     ShaderProgramDescriptionPtr program_description;
-    /// The lights this draw announces, or nullopt to announce NONE.
+    /// The lights this draw announces, as VALUES taken when the pass described itself (see LightValue).
     ///
-    /// Engaged-but-empty is a real state (a scene with no lights: the announcement happens and says so, which is
-    /// what restores a backend's default light), which is why this is an optional and not a vector: "announce
-    /// nothing" and "announce that there are none" are different statements.
-    std::optional<std::vector<raw_ptr<const Light>>> lights;
-    /// The same lights as VALUES, taken when the pass described itself (see LightValue).
-    ///
-    /// THE CHANNEL THE RECORDER READS. `lights` above stays for the calls that still name objects (a host driving
-    /// content, the legacy record door); both spellings are filled together and say the same thing until the object
-    /// half retires (5b-2c). Engaged-but-empty means "none", exactly like @ref lights.
+    /// THE ONE CHANNEL: a frame carries numbers, never `Light` objects, so a light edited on the content thread
+    /// cannot change what a frame that is already described draws. Engaged-but-empty is a real state (a scene with no
+    /// lights: the announcement happens and says so, which is what restores a backend's default light), which is why
+    /// this is an optional and not a vector: "announce nothing" and "announce that there are none" are different
+    /// statements.
     std::optional<std::vector<LightValue>> light_values;
 };
 

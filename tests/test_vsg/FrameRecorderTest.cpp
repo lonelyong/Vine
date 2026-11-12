@@ -36,6 +36,7 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 
 #include "TestProgramFacts.hpp"
+#include "LightValues.hpp"
 
 using vn::graphics::CullMode;
 using vn::graphics::DepthMode;
@@ -250,7 +251,8 @@ TEST(FrameRecorderTest, ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded)
     const auto list_before = commands[0].program; // 借用同一个 identity，事后核对没有被改写
 
     EXPECT_TRUE(r.recorder.beginPass(1));
-    EXPECT_TRUE(r.recorder.render(commands, nullptr, override_program.get()));
+    const vn::graphics::ShaderProgramDescriptionPtr override_text = override_program->description();
+    EXPECT_TRUE(r.recorder.render(commands, nullptr, override_text.get()));
     EXPECT_TRUE(r.recorder.endPass());
 
     const CollectedFrame& description = r.seal();
@@ -271,7 +273,7 @@ TEST(FrameRecorderTest, TheAnnouncedLightsAreCopiedNumbersNotBorrowedPointers)
     const std::vector<RenderCommand> commands = oneCommand();
 
     EXPECT_TRUE(r.recorder.beginPass(1));
-    EXPECT_TRUE(r.recorder.setLights(lights));
+    EXPECT_TRUE(r.recorder.setLights(lightValues(lights)));
     EXPECT_TRUE(r.recorder.render(commands, nullptr));
     EXPECT_TRUE(r.recorder.endPass());
 
@@ -302,12 +304,12 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     EXPECT_TRUE(r.recorder.beginPass(1));
     {
         EXPECT_TRUE(r.recorder.setViewport(1, 2, 3, 4));
-        EXPECT_TRUE(r.recorder.setLights(lights));
+        EXPECT_TRUE(r.recorder.setLights(lightValues(lights)));
         EXPECT_TRUE(r.recorder.render(commands, nullptr)); // consumes both announcements
     }
     EXPECT_TRUE(r.recorder.render(commands, nullptr)); // nothing announced: the whole target, default lights
     {
-        EXPECT_TRUE(r.recorder.setLights(lights));
+        EXPECT_TRUE(r.recorder.setLights(lightValues(lights)));
         EXPECT_TRUE(r.recorder.render(commands, nullptr)); // announced again
     }
     EXPECT_TRUE(r.recorder.endPass());
@@ -399,7 +401,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
     EXPECT_TRUE(r.recorder.setClearPolicy(clear));
     {
         EXPECT_TRUE(r.recorder.setViewport(1, 2, 3, 4));
-        EXPECT_TRUE(r.recorder.setLights(lights));
+        EXPECT_TRUE(r.recorder.setLights(lightValues(lights)));
         EXPECT_TRUE(r.recorder.render(std::span<const RenderCommand>{}, nullptr)); // nothing to draw
     }
     EXPECT_TRUE(r.recorder.render(commands, nullptr)); // nothing announced: the whole target, default lights
@@ -506,7 +508,7 @@ TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeTakeNoEffect)
     EXPECT_FALSE(r.recorder.setClearPolicy(ClearValues{}));
     EXPECT_FALSE(r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthMode::Disabled }));
     EXPECT_FALSE(r.recorder.setPassInputs(std::span<const RenderTarget* const>{}));
-    EXPECT_FALSE(r.recorder.setLights(std::span<const Light* const>{}));
+    EXPECT_FALSE(r.recorder.setLights(lightValues(std::span<const Light* const>{})));
 
     EXPECT_TRUE(r.diagnostics.clean());
 

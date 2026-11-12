@@ -640,7 +640,11 @@
 宿主侧：`SceneView::publishContent()`（视图 + 链拥有的场景）、`PassChain::publishContent()`，`SurfaceWindow::renderFrame`
 每帧调用前者；overlay 的 `before_draw` 钩子在 `update()` 里自行发布。没发布的场景不画并报一次 `ContentSkipped`。
 `PublicationStore::publish` / `hasExplicitSnapshot` 删除。
-剩余：W9c（活指针门）、W9d（`addPass` 家族）、W9e（W7 结果形状）。
+**W9c（活指针门）已落地 2026-11-13**：灯的活指针通道删除——`DrawDescription::lights` 与 `FrameRecorder` 的对象形
+`setLights` 一并消失，`light_values` 是唯一通道（`MockBackend` / `OwnedFrame` / 像素测试都改读值）。`RenderCommand`
+的 `geometry/material/program` 活指针**保留**：它们只做身份（id）与寿命（流绑定、驻留账、`releaseContent`），记录侧
+读到的 revision / 透明判定 / 灯数值全部来自值；删除它们需要一条内容注册通道，触发条件见 T30/T22（`G8`）。
+剩余：W9d（`addPass` 家族）、W9e（W7 结果形状）。
 
 ## 10. 参考
 

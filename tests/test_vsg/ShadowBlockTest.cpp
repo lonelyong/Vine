@@ -60,6 +60,7 @@
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
 #include "TestProgramFacts.hpp"
+#include "LightValues.hpp"
 
 using vn::graphics::Camera;
 using vn::graphics::Diagnostics;
@@ -696,7 +697,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U); // the engine's shadow pass: the map, and nothing else
     recorder.setRenderTarget(map_handle.get());
-    recorder.setLights(std::span<const Light* const>(band0_lights, 2U));
+    recorder.setLights(lightValues(std::span<const Light* const>(band0_lights, 2U)));
     recorder.render(std::span<const RenderCommand>(&producer_command, 1U), &camera);
     recorder.endPass();
     recorder.beginPass(2U); // the receiver: four calls, four light lists
@@ -709,17 +710,17 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     recorder.setClearPolicy(clear);
     const RenderTarget* map_inputs[]{ map_handle.get() };
     recorder.setPassInputs(std::span<const RenderTarget* const>(map_inputs, 1U));
-    recorder.setLights(std::span<const Light* const>(band0_lights, 2U));
+    recorder.setLights(lightValues(std::span<const Light* const>(band0_lights, 2U)));
     recorder.render(std::span<const RenderCommand>(&commands[0], 1U), &camera);
     // The runtime switch, flipped on the SAME light between two calls of one frame: the map's owner has to stop
     // shading the moment it stops casting (a snapshot taken once per call is what makes that observable).
     sun_a->setCastShadow(false);
-    recorder.setLights(std::span<const Light* const>(band1_lights, 2U));
+    recorder.setLights(lightValues(std::span<const Light* const>(band1_lights, 2U)));
     recorder.render(std::span<const RenderCommand>(&commands[1], 1U), &camera);
     sun_a->setCastShadow(true);
-    recorder.setLights(std::span<const Light* const>(band2_lights, 3U));
+    recorder.setLights(lightValues(std::span<const Light* const>(band2_lights, 3U)));
     recorder.render(std::span<const RenderCommand>(&commands[2], 1U), &camera);
-    recorder.setLights(std::span<const Light* const>(band3_refs));
+    recorder.setLights(lightValues(std::span<const Light* const>(band3_refs)));
     recorder.render(std::span<const RenderCommand>(&commands[3], 1U), &camera);
     recorder.endPass();
     recorder.endFrame();

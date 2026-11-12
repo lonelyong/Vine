@@ -73,6 +73,7 @@
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
+#include "LightValues.hpp"
 
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
@@ -3633,28 +3634,28 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     recorder.setRenderTarget(lit_handle.get());
     recorder.setClearPolicy(shade_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_and_lit_map_inputs, 2U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(shading_lights, 2U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 2U)));
     recorder.drawScreenProgram(gbuffer_handle.get(), shadowed_program.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(5U);
     recorder.setRenderTarget(shadowed_handle.get());
     recorder.setClearPolicy(shade_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_and_shadowed_map_inputs, 2U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(shading_lights, 2U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 2U)));
     recorder.drawScreenProgram(gbuffer_handle.get(), shadowed_program.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(6U);
     recorder.setRenderTarget(flat_handle.get());
     recorder.setClearPolicy(shade_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_input, 1U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(shading_lights, 2U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 2U)));
     recorder.drawScreenProgram(gbuffer_handle.get(), unshadowed_program.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(7U);
     recorder.setRenderTarget(plain_handle.get());
     recorder.setClearPolicy(shade_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_and_lit_map_inputs, 2U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(shading_lights, 2U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 2U)));
     recorder.drawScreenProgram(gbuffer_handle.get(), unshadowed_program.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
@@ -3989,7 +3990,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     recorder.setRenderTarget(lit_handle.get());
     recorder.setClearPolicy(lit_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_input, 1U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(shading_lights, 1U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 1U)));
     recorder.drawScreenProgram(gbuffer_handle.get(), lighting_program.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
@@ -4271,13 +4272,13 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     recorder.beginPass(1U);
     recorder.setRenderTarget(forward_black_handle.get());
     recorder.setClearPolicy(black_clear);
-    recorder.setLights(std::span<const vn::graphics::Light* const>(lights, 1U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(lights, 1U)));
     recorder.render(std::vector<RenderCommand>{ black_command }, camera.get());
     recorder.endPass();
     recorder.beginPass(2U);
     recorder.setRenderTarget(forward_quarter_handle.get());
     recorder.setClearPolicy(black_clear);
-    recorder.setLights(std::span<const vn::graphics::Light* const>(lights, 1U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(lights, 1U)));
     recorder.render(std::vector<RenderCommand>{ quarter_command }, camera.get());
     recorder.endPass();
     recorder.beginPass(3U);
@@ -4289,7 +4290,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     recorder.setRenderTarget(deferred_handle.get());
     recorder.setClearPolicy(black_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_input, 1U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(lights, 1U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(lights, 1U)));
     recorder.drawScreenProgram(gbuffer_handle.get(), lighting_program.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
@@ -4885,7 +4886,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
         if (empty_rectangle) {
             recorder.setViewport(0, 0, 0, 0); // a host that has not laid its render area out yet
         }
-        recorder.setLights(std::span<const vn::graphics::Light* const>(too_many_lights ? many_refs : few_refs));
+        recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(too_many_lights ? many_refs : few_refs)));
         recorder.render(commands, camera.get());
         recorder.endPass();
         recorder.endFrame();
@@ -5135,7 +5136,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     recorder.setRenderTarget(dim_eight_bit_handle.get());
     recorder.setClearPolicy(clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(input_eight_bit, 1U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(dim_lights, 1U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(dim_lights, 1U)));
     recorder.drawScreenProgram(eight_bit_handle.get(), lighting.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(3U);
@@ -5147,7 +5148,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     recorder.setRenderTarget(dim_half_float_handle.get());
     recorder.setClearPolicy(clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(input_half_float, 1U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(dim_lights, 1U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(dim_lights, 1U)));
     recorder.drawScreenProgram(half_float_handle.get(), lighting.get(), camera.get());
     recorder.endPass();
     // The BRIGHT regime: the same two chains with a light four times stronger.
@@ -5155,14 +5156,14 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     recorder.setRenderTarget(bright_eight_bit_handle.get());
     recorder.setClearPolicy(clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(input_eight_bit, 1U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(bright_lights, 1U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(bright_lights, 1U)));
     recorder.drawScreenProgram(eight_bit_handle.get(), lighting.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(6U);
     recorder.setRenderTarget(bright_half_float_handle.get());
     recorder.setClearPolicy(clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(input_half_float, 1U));
-    recorder.setLights(std::span<const vn::graphics::Light* const>(bright_lights, 1U));
+    recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(bright_lights, 1U)));
     recorder.drawScreenProgram(half_float_handle.get(), lighting.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
