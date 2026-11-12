@@ -208,7 +208,7 @@ TEST(ContentSweepTest, NothingIsLetGoWhileTheHostStillHoldsEverything)
     store.track(shading);
 
     const auto plan = contentPlan(geometry.get(), geometry->revision(), program.get(), shading.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    (void)store.tablesFor(plan->frame, timeline);
     ASSERT_EQ(store.geometryEntries(), 1U);
     ASSERT_EQ(store.programEntries(), 1U);
     ASSERT_EQ(store.materialEntries(), 1U);
@@ -218,18 +218,17 @@ TEST(ContentSweepTest, NothingIsLetGoWhileTheHostStillHoldsEverything)
     ASSERT_EQ(cache->count(), 1U);
     ASSERT_EQ(reason, TextureReject::Ok);
 
-    // The host holds every one of them: the sweep has nothing to do, and nothing to park.
-    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
+    // The host holds every one of them: the sweep has nothing to do.
+    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, released_materials);
     EXPECT_EQ(outcome.objects, 0U) << "a geometry, a program and a material the host still holds";
     EXPECT_EQ(outcome.textures, 0U) << "a texture the host still holds (through its material)";
     EXPECT_EQ(store.geometryEntries(), 1U);
     EXPECT_EQ(store.programEntries(), 1U);
     EXPECT_EQ(store.materialEntries(), 1U);
     EXPECT_EQ(cache->count(), 1U);
-    EXPECT_EQ(retirement.pending(), 0U) << "nothing was abandoned, so nothing was parked";
 }
 
-TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAtThePark)
+TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveOnceNoPlanNamesThem)
 {
     ContentStore                          store;
     const std::shared_ptr<MaterialImages> cache = MaterialImages::create();
@@ -248,7 +247,7 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     store.track(shading);
 
     const auto          plan  = contentPlan(geometry.get(), geometry->revision(), program.get(), shading.get());
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
     TextureReject reason = TextureReject::Ok;
@@ -266,34 +265,35 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     program.reset();
     texture.reset();
 
-    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
+    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, released_materials);
     EXPECT_EQ(outcome.objects, 3U) << "the geometry, the program and the material the host dropped";
-    ASSERT_EQ(released_materials.size(), 1U) << "the abandoned material identity is handed back for its slot";
-    // THE MATERIAL OBJECT OUTLIVES THE CALL ON PURPOSE: the park that erases the rows keyed by its ADDRESS owns
-    // it, so a later object cannot take that address while those rows still answer (see
-    // ContentStore::releaseAbandoned). Its texture is therefore still owned here - a MATERIAL owns its maps -
-    // and the image cache drops it on a later sweep, once the park has released the material.
-    EXPECT_EQ(outcome.textures, 0U) << "the material, and with it its texture, is still held until its park runs";
+    EXPECT_TRUE(released_materials.empty()) << "the material's arena slot follows its ROW: the row still answers";
+    // THE MATERIAL OBJECT OUTLIVES THE CALL ON PURPOSE: the material row borrows its maps, so the entry keeps the
+    // object until that row is gone (see ContentStore::releaseAbandoned). Its texture is therefore still owned
+    // here - a MATERIAL owns its maps - and the image cache drops it on a later sweep.
+    EXPECT_EQ(outcome.textures, 0U) << "the material, and with it its texture, is still held until its row leaves";
     EXPECT_TRUE(cache->has(texture_address));
 
-    // The ROWS stay answerable until the park comes due: a plan recorded in the frame that is being finished
-    // may still name them (see api/ContentSweep), which is why this half parks instead of erasing.
-    EXPECT_GE(retirement.pending(), 1U);
+    // The ROWS stay answerable until the frames that could still name them are past: a plan recorded in the frame
+    // that is being finished may still read them (see api/ContentSweep).
     EXPECT_TRUE(findGeometry(facts, vn::graphics::contentRefOf(geometry_address, geometry_revision)).found())
-        << "the row of the dropped geometry still answers while its park is open";
+        << "the row of the dropped geometry still answers inside its window";
     EXPECT_EQ(store.geometryEntries(), 1U);
 
-    // And once the slots that could still name them are past, they leave.
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    // And once the frame that could still name them has been recycled, they leave.
+    releaseUpTo(timeline, retirement, 1U);
+    const CompiledFrame empty;
+    (void)store.tablesFor(empty, timeline);
     EXPECT_EQ(store.geometryEntries(), 0U);
     EXPECT_EQ(store.programEntries(), 0U);
     EXPECT_EQ(store.materialEntries(), 0U);
 
-    // The park took the material with it: nothing samples the texture any more, so the cache lets it go now.
-    const SweepOutcome after_park = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
-    EXPECT_EQ(after_park.objects, 0U) << "every row already left at the park";
-    EXPECT_EQ(after_park.textures, 1U) << "the texture nothing sampled any more";
+    // The row took the material with it: nothing samples the texture any more, so the cache lets it go now.
+    const SweepOutcome after_rows = releaseAbandonedContent(store, *cache, released_materials);
+    EXPECT_EQ(after_rows.objects, 0U) << "every row already left with its frame";
+    EXPECT_EQ(after_rows.textures, 1U) << "the texture nothing sampled any more";
     EXPECT_FALSE(cache->has(texture_address)) << "the image cache has no entry left to look up";
+    EXPECT_EQ(released_materials.size(), 1U) << "and the material's arena slot is handed back now";
 }
 
 TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)
@@ -312,18 +312,18 @@ TEST(ContentSweepTest, AnObjectIsLetGoOnceAndASecondSweepCountsNothing)
     store.track(program);
 
     const auto plan = contentPlan(geometry.get(), geometry->revision(), program.get(), nullptr);
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    (void)store.tablesFor(plan->frame, timeline);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
     geometry.reset();
     program.reset();
 
-    const SweepOutcome first = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
+    const SweepOutcome first = releaseAbandonedContent(store, *cache, released_materials);
     EXPECT_EQ(first.objects, 2U);
 
     // The live set no longer holds them, so the second sweep has nothing to forget: a sweep that counted the
     // same object every frame would make "nothing is retained" unobservable.
-    const SweepOutcome second = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
+    const SweepOutcome second = releaseAbandonedContent(store, *cache, released_materials);
     EXPECT_EQ(second.objects, 0U);
     EXPECT_EQ(second.textures, 0U);
 }
@@ -346,13 +346,13 @@ TEST(ContentSweepTest, TheDefaultMaterialIsNeverAbandoned)
     // Content with no material of its own: the plan names nullptr, and the store answers with its own
     // default entry, which no host handle can abandon (see ContentStore::releaseAbandoned).
     const auto plan = contentPlan(geometry.get(), geometry->revision(), program.get(), nullptr);
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    (void)store.tablesFor(plan->frame, timeline);
     ASSERT_EQ(store.materialEntries(), 1U);
 
     geometry.reset();
     program.reset();
 
-    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, timeline, retirement, released_materials);
+    const SweepOutcome outcome = releaseAbandonedContent(store, *cache, released_materials);
     EXPECT_EQ(outcome.objects, 2U) << "the geometry and the program, never the default material";
     EXPECT_TRUE(released_materials.empty()) << "the default material is not handed back: it has no slot";
     EXPECT_EQ(store.materialEntries(), 1U) << "the default entry stays: it is not an object anyone holds";

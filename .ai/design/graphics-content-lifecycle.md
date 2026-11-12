@@ -33,7 +33,7 @@
     编译变体是后端驻留。
 2.2 **释放 GPU 驻留，不释放对象**：`releaseContent()` 之后对象仍可用，下一次使用重建驻留。
 2.3 **显式管理**：没有 LRU、没有字节上限、没有压力淘汰；释放由宿主说。
-2.4 **不 idle 设备**：释放走 token + park；只有破坏路径用计数 device idle。
+2.4 **不 idle 设备**：释放是宿主的一句话（标记），行的回收按 epoch（2.10）；只有破坏路径用计数 device idle。
 2.5 **流按 buffer 身份共享，寿命按“谁还声明这些字节”**：`StreamKey` = buffer + revision + 段；稳态零重传。
     条目持有它键名的那个 `Buffer`，地址与条目同寿。驻留寿命**不看时间**，由两个 O(1) 事实决定：
     内容层发布的声明索引（`ContentFacts::declarations`，由 `ContentStore` 在行变更时同步维护的
@@ -54,8 +54,7 @@
 
 2.8 **一次上传的中转暂存，寿命是“一次上传”，不是驻留**：`releaseContent()` 回答的是“宿主还想不想为这个对象保留一份 GPU 副本”，
 而一次上传用来中转的 host 暂存（vsg 是 `TransferTask` 的 `staging`：整次上传一个 `HOST_VISIBLE` 缓冲，只增不减）在拷贝落地后
-**没有第二个读者**——它既不是宿主对象的驻留，也不是可复用的缓存，只是没还给系统的临时内存。
-为什么：先把它归类，才谈得上谁决定“何时还”。它不能进 `releaseContent` 的口径（那会替宿主决定驻留），
+**没有第二个读者**——它既不是宿主对象的驻留，也不是可复用的缓存，只是没还给系统的临时内存。为什么：先把它归类，才谈得上谁决定“何时还”。它不能进 `releaseContent` 的口径（那会替宿主决定驻留），
 也不该变成容量上限/预算（`G8`：没有消费者）。
 边界：**这块暂存不保留**。它是**一个** `vkCmdCopyBuffer` 的源，没有第二个读者；拷贝的 fence 一完成它就是死重。
 所以“何时还”不是一道需要谁决定的题：证据（那块的 fence）到了就还，触发点是**帧边界**，宿主不参与、也不需要知道（F16–F21）。
@@ -70,12 +69,20 @@
    - 上传（`StreamUploads`）也只看**持有量**，看的是**声明**：内容层发布的声明索引
      （`ContentFacts::declarations`）说“还有活行声明这块 buffer 吗”，条目自己的句柄说“revision 还是不是它
      上传时那个”。隐藏或裁剪不删行 ⇒ 地址仍被声明 ⇒ 上传留着，回来**零重传**；
-     对象离树 ⇒ 行在 `slots + 1` 帧后删掉 ⇒ 声明消失 ⇒ 上传随之离场。buffer 换代（`Buffer::edit()`）
+     对象离树 ⇒ 行过了 epoch 窗口删掉 ⇒ 声明消失 ⇒ 上传随之离场。buffer 换代（`Buffer::edit()`）
      也让旧条目自己失去 revision 那一半，不需要几何说话。
    - 编译半片 / 描述符集是**会话级**的，不随 pass 走：它们只在“表不再回答这个 program（id + revision）”或
      “没有任何 geometry 还问这个 layout”时被停靠（`ContentHalves::answerable` / `ContentSets` 的 sweep）。
    为什么这么分：把“对象没了”和“这一帧没画”合成一个开关，就必然要么为裁剪抖动付重建代价，要么把已离树的
    驻留永久留（`G1`：两个问题，两个答案）。流这一步已经从“时间窗猜第三个开关”改成“只问谁还声明”（见 ADR）。
+
+2.10 **内容行的寿命是算出来的，不是停靠的**：每条几何 / 程序 / 材质行记它最后一次被计划命中的帧
+    （epoch），帧边界回收满足两条的行：`last_epoch < completedFrame() + 1`，且**不再是条目当前答案**。
+    两个后果：
+    - 被取代的 revision（条目已给出新行）与已释放条目（宿主说了 release，或没人再持有）的行，过了窗口就离开；
+    - **被裁剪 / 隐藏的内容不会丢行**：它仍是条目的当前答案，所以也仍是上传声明的来源（F27 / F28）。
+    条目本身在“宿主不要了”与“没有行还答得出”同时成立时离开；材质 arena 槽跟最后一行走。
+    `markUsed` / 释放 token / park / `kept` 都不再存在（`ResidencyTable` 的规则落到行上，见 ADR-2026-11-11 第 3 段）。
 
 ## 3. 功能点
 
@@ -84,10 +91,10 @@
 | # | 功能 | 说明 |
 |---|---|---|
 | F1 | `releaseContent(Object)` | 释放 Geometry / Material / ShaderProgram / Texture 的 GPU 驻留。 |
-| F2 | release token | 释放后、回收前宿主再次使用 ⇒ 取消释放，不误删新驻留。 |
-| F3 | 纹理立即删 | 纹理 cache 立即删条目；行 / 编译产物 park。 |
+| F2 | 释放标记 | 释放只是标记；行按 epoch 回收（2.10）。下次使用（`track` / `ensure*`）清掉标记，所以不误删。 |
+| F3 | 纹理立即删 | 纹理 cache 立即删条目；行按 epoch 回收，arena 槽跟最后一行走。 |
 | F4 | 重建 | 下一次使用重建驻留；不是泄漏。 |
-| F5 | 弃用扫尾 | 宿主丢掉引用后由 `ContentSweep` 回收。 |
+| F5 | 弃用扫尾 | 宿主丢掉引用后由 `ContentSweep` 标记，行与条目按 epoch 回收。 |
 
 ### 3.2 缓存
 
@@ -125,10 +132,10 @@
 
 | # | 情形 | 行（表） | 上传（stream） | 半片 / 描述符集 | 材质槽 | 触发处 |
 |---|---|---|---|---|---|---|
-| F23 | **材质离树** | 宿主丢引用后下个帧边界扫尾（park） | — | 无（set 键不含材质） | 行走了就 `BlockStorage::releaseMaterial` 放槽 | `ContentStore::releaseAbandoned` / `releaseContent` |
+| F23 | **材质离树** | 宿主丢引用后下个帧边界标记；行过了 epoch 窗口才走 | — | 无（set 键不含材质） | 行走了就 `BlockStorage::releaseMaterial` 放槽 | `ContentStore::releaseAbandoned` / `releaseContent` |
 | F24 | **program 离树** | 同上 | — | 半片在 `answerable` 不再成立时 park（它驱动的 vsg 管线随之走；池里的 variant 只按 FIFO 65 淘汰） | — | 同上 |
 | F25 | **pass 脱离** | 后端只有身份：`releasePass` 忘掉 id（永不重发） | — | **不释放**（会话级；随 program/layout 消失才走）；输入集一帧后退回 | — | `RenderEngine::removePass` → `device()->releasePass()` + 拥有目标 `releaseRenderTarget()` |
-| F26 | **geom 离树** | 宿主丢引用后扫尾 | 行被扫尾删掉 ⇒ pin 消失，`slots + 1` 帧内离场 | 见 F24（layout 不再被需要时） | — | `releaseAbandoned` |
+| F26 | **geom 离树** | 宿主丢引用后扫尾标记；行过了 epoch 窗口 ⇒ pin 消失，上传按自己的窗口离场 | — | 见 F24（layout 不再被需要时） | `releaseAbandoned` |
 | F27 | **geom 隐藏**（`setVisible(false)`） | **留着**（宿主仍持有） | **留着**：行还在 ⇒ pin 还在；恢复可见零重传 | 留着 | — | 只影响收集，不触发释放 |
 | F28 | **geom 被裁剪**（视锥外，逐视图） | 留着 | 同 F27——裁剪是逐视图的，但它不改变“谁声明了这些字节” | 留着 | — | 同上 |
 
@@ -170,7 +177,7 @@
 | # | 要求 |
 |---|---|
 | R1 | `releaseContent()` 释放 GPU 驻留；不替宿主决定寿命。 |
-| R2 | 不 idle 设备；释放走 token + park。暂存回收更轻：fence 证据（F17），零等待、零 idle、不进退役队列。 |
+| R2 | 不 idle 设备；释放只是标记，行的回收按 epoch（2.10）。暂存回收更轻：fence 证据（F17），零等待、零 idle、不进退役队列。 |
 | R3 | 不引入全局预算/trim/收缩。 |
 | R4 | 暂存回收不需要宿主参与：它不是一条策略，而是“用完就放”（F18）。宿主侧不再有调用点，也没有开关。 |
 
@@ -246,7 +253,7 @@
 |---|---|---|
 | D1 | LRU / 容量上限 / 压力淘汰 | 300 张同序循环下 LRU 与 FIFO 一样差；上限是替宿主做决定。详见 [ADR](../decisions/ADR-2026-10-22-cache-unbounded-explicit-release.md)。 |
 | D2 | 材质 FIFO 淘汰 | 淘汰活材质会画错；拒绝只兜底。 |
-| D3 | 释放时 idle 设备 | 破坏路径才需要；释放走 token + park。 |
+| D3 | 释放时 idle 设备 | 破坏路径才需要；释放只是标记，行的回收按 epoch。 |
 | D4 | 全局预算 / trim / 收缩 | 没有消费者；宿主显式管理。 |
 | D5 | 旧帧读回接缝 | F−N 是观测缺口，不是生产竞态；不做。 |
 | D6 | 把回收做成显式入口（宿主或用户命令调） | 最常见的宿主（载入完不动）不会调；park 到期又要 `2 × slots + 1` 帧，于是要再补一条“再问一次 = 一次计数 idle”。详见 [ADR](../decisions/ADR-2026-11-10-upload-staging-is-not-retained.md)。 |

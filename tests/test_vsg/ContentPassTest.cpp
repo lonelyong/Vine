@@ -5452,7 +5452,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
 
     vn::graphics::backend::FrameTimeline   timeline;
     vn::graphics::backend::RetirementQueue retirement(3U);
-    const ContentFacts&                    facts = store.tablesFor(frame, timeline, retirement);
+    const ContentFacts&                    facts = store.tablesFor(frame, timeline);
     ASSERT_EQ(store.programEntries(), 2U) << "one program, two texts: the store built both variants";
     ASSERT_EQ(store.builds(), 5U) << "the geometry, the two materials and the two variants";
 
@@ -5678,7 +5678,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
 
     vn::graphics::backend::FrameTimeline   timeline;
     vn::graphics::backend::RetirementQueue retirement(3U);
-    const ContentFacts&                    facts = store.tablesFor(frame, timeline, retirement);
+    const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
     ContentHalves halves(pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
@@ -5905,7 +5905,7 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
 
     vn::graphics::backend::FrameTimeline   timeline;
     vn::graphics::backend::RetirementQueue retirement(3U);
-    const ContentFacts&                    facts = store.tablesFor(frame, timeline, retirement);
+    const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
     ContentHalves halves(pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));

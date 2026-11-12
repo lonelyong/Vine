@@ -2,17 +2,15 @@
 
 VN_VSG_NS_BEGIN
 
-SweepOutcome releaseAbandonedContent(ContentStore&             store,
-                                     MaterialImages&           images,
-                                     core::FrameTimeline&      timeline,
-                                     core::RetirementQueue&    retirement,
+SweepOutcome releaseAbandonedContent(ContentStore&                          store,
+                                     MaterialImages&                        images,
                                      std::vector<vn::graphics::MaterialId>& released_materials)
 {
     SweepOutcome outcome;
 
-    // The store first, and it parks: the rows it drops are the ones a plan recorded in the frame that is
-    // still being finished may name, and the caller advances the queue after this call (see the file note).
-    outcome.objects  = store.releaseAbandoned(timeline, retirement, released_materials);
+    // The store first: it marks what the host let go and drops the entries whose rows are already gone. Nothing is
+    // parked here - the rows leave by epoch at the frame boundary (see api/ContentStore).
+    outcome.objects  = store.releaseAbandoned(released_materials);
     // The images need no window: what this drops is the cache's own share of objects the sampler (and any
     // retained descriptor set that names them) holds for as long as it is recorded (see the file note).
     outcome.textures = images.releaseAbandoned();

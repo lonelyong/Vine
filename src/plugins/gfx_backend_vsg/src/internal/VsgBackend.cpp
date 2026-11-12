@@ -1490,18 +1490,15 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
     if (const auto* geometry = vn::obj_cast<const vn::graphics::Geometry>(content)) {
         // The store releases the shape the frames described for it (see its own overload): releasing the geometry
         // releases the description's rows, and a shape nobody described has none.
-        return d->store->releaseGeometry(geometry, d->clock.timeline(), d->retirement);
+        return d->store->releaseGeometry(geometry);
     }
     if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content)) {
-        return d->store->releaseProgram(program, d->clock.timeline(), d->retirement);
+        return d->store->releaseProgram(program);
     }
     if (const auto* material = vn::obj_cast<const vn::graphics::Material>(content)) {
-        const bool released = d->store->releaseMaterial(material, d->clock.timeline(), d->retirement);
-        if (released && d->storage != nullptr) {
-            // The row's slot goes with it: a released material must not keep memory the host asked to free.
-            (void)d->storage->releaseMaterial(material->id());
-        }
-        return released;
+        // The ARENA SLOT is NOT freed here: a recorded plan may still read the row's block, so the slot leaves with
+        // the row - the next sweep returns the id once no row names it (see ContentStore::releaseMaterial).
+        return d->store->releaseMaterial(material);
     }
     if (const auto* texture = vn::obj_cast<const vn::graphics::Texture>(content)) {
         return d->images->releaseTexture(texture);
@@ -1687,7 +1684,7 @@ void VsgBackend::sweepAbandonedContent()
         // No content world on this session (see initialize): there is nothing retained to let go of either.
         return;
     }
-    const SweepOutcome outcome = releaseAbandonedContent(*d->store, *d->images, d->clock.timeline(), d->retirement, d->abandoned_materials);
+    const SweepOutcome outcome = releaseAbandonedContent(*d->store, *d->images, d->abandoned_materials);
     d->released_objects += outcome.objects;
     d->released_textures += outcome.textures;
 

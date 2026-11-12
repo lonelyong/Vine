@@ -266,6 +266,54 @@ void releaseUpTo(FrameTimeline& timeline, RetirementQueue& retirement, std::uint
     retirement.advance(timeline);
 }
 
+/// @brief Records plans in frames and lets the recycled slots prove completion (see ContentStore::tablesFor).
+///
+/// The store ages rows by FRAME, so a lifetime case has to drive frames: a row last named in frame N is safe to
+/// reclaim once frame N's command buffer cannot replay its plan (`completedFrame() >= N`). @p slots is how far
+/// completion lags submission, as the session learns it.
+class Frames {
+  public:
+    explicit Frames(std::uint32_t slots = 1U)
+      : slots_(slots)
+    {}
+
+    /// @brief Records @p frame in one new frame of its own.
+    [[nodiscard]] const ContentFacts& record(ContentStore& store, const CompiledFrame& frame)
+    {
+        const vn::graphics::backend::FrameToken token = timeline_.begin();
+        const ContentFacts&                  facts   = store.tablesFor(frame, timeline_);
+        timeline_.submitted(token);
+        settle();
+        return facts;
+    }
+
+    /// @brief Records @p frame in @p count consecutive new frames.
+    [[nodiscard]] const ContentFacts& record(ContentStore& store, const CompiledFrame& frame, int count)
+    {
+        for (int index = 1; index < count; ++index) {
+            (void)record(store, frame);
+        }
+        return record(store, frame);
+    }
+
+    /// @brief Advances the completion watermark as far as the learned slot count proves (the session's own rule).
+    void settle()
+    {
+        if (slots_ != 0U && timeline_.submittedFrame() > slots_) {
+            timeline_.completeUpTo(timeline_.submittedFrame() - slots_);
+        }
+    }
+
+    [[nodiscard]] FrameTimeline& timeline() noexcept
+    {
+        return timeline_;
+    }
+
+  private:
+    std::uint32_t slots_{ 1 };
+    FrameTimeline timeline_{};
+};
+
 } // namespace
 
 TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
@@ -281,11 +329,10 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    FrameTimeline timeline;
 
     const auto          plan  = contentPlan({ command(named.get(), named->revision(), program.get(), material.get()) }, program.get());
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
 
     EXPECT_EQ(store.geometryEntries(), 1U) << "the geometry no plan names is not built";
     EXPECT_EQ(store.programEntries(), 1U);
@@ -298,7 +345,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
 
     // A second frame naming the other three builds the other three, and nothing else.
     const auto          other_plan = contentPlan({ command(unnamed.get(), unnamed->revision(), program.get(), nullptr) }, program.get());
-    const ContentFacts& second     = store.tablesFor(other_plan->frame, timeline, retirement);
+    const ContentFacts& second     = store.tablesFor(other_plan->frame, timeline);
     EXPECT_EQ(store.geometryEntries(), 2U);
     EXPECT_EQ(store.programEntries(), 1U);
     EXPECT_EQ(store.materialEntries(), 2U) << "the default material joins the table the first time content without one is named";
@@ -317,19 +364,18 @@ TEST(ContentStoreTest, ASteadyFrameBuildsNothing)
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    FrameTimeline timeline;
 
     const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
     const std::uint64_t built = store.builds();
 
     for (int frame = 0; frame < 3; ++frame) {
-        ASSERT_TRUE(store.tablesFor(plan->frame, timeline, retirement).programs.data() == facts.programs.data())
+        ASSERT_TRUE(store.tablesFor(plan->frame, timeline).programs.data() == facts.programs.data())
             << "the tables are the same storage each frame";
         EXPECT_EQ(store.builds(), built) << "a steady frame builds nothing";
     }
-    EXPECT_EQ(retirement.pending(), 0U) << "nothing was superseded, so nothing was parked";
+    EXPECT_EQ(store.geometryEntries(), 1U) << "nothing was superseded, so no row was added";
 }
 
 TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
@@ -346,11 +392,10 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    FrameTimeline timeline;
 
     const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
 
     EXPECT_EQ(facts.program_order.size(), facts.programs.size());
     EXPECT_EQ(facts.geometry_order.size(), facts.geometries.size());
@@ -383,8 +428,7 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    Frames frames;
 
     const auto plan   = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
     const auto covers = [](const ContentFacts& facts) {
@@ -405,33 +449,33 @@ TEST(ContentStoreTest, TheRowOrderCoversEveryRowAfterAppendsAndErasures)
                is_permutation(facts.material_order, facts.materials.size());
     };
 
-    const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& first = frames.record(store, plan->frame);
     EXPECT_EQ(first.geometry_order.size(), first.geometries.size()) << "one row was appended: the order covers it";
     EXPECT_TRUE(covers(first));
 
-    // A material EDIT replaces a row in place, and a geometry revision bump APPENDS one and parks the old one.
+    // A material EDIT appends a row for its new revision, and a geometry revision bump APPENDS one too.
     store.track(material.get(), material->description());
     auto* mutable_material = const_cast<vn::graphics::Material*>(material.get());
     mutable_material->setBaseColor(vn::Colorf(0.9F, 0.1F, 0.1F, 1.0F));
     store.track(material.get(), material->description());
-    const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
-    EXPECT_TRUE(covers(second)) << "a replaced row keeps its place in the order";
+    const ContentFacts& second = frames.record(store, plan->frame);
+    EXPECT_TRUE(covers(second)) << "an appended row joins the order";
 
     const std::uint64_t rows_before = static_cast<std::uint64_t>(second.geometries.size());
     const_cast<vn::graphics::Geometry*>(geometry.get())->setRevision(2U);
     store.track(geometry); // the frame hands over the NEW shape (a description is a value; an edit is a new one)
-    ASSERT_TRUE(store.tablesFor(plan->frame, timeline, retirement).geometries.size() > rows_before)
+    ASSERT_TRUE(frames.record(store, plan->frame).geometries.size() > rows_before)
         << "the new revision JOINS the table the old one is still answerable in";
-    EXPECT_TRUE(covers(store.tablesFor(plan->frame, timeline, retirement)));
+    EXPECT_TRUE(covers(frames.record(store, plan->frame)));
 
-    // The parks come due: the superseded revision's rows leave, and the order has to shrink with them.
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
-    const ContentFacts& pruned = store.tablesFor(plan->frame, timeline, retirement);
-    EXPECT_EQ(pruned.geometries.size(), rows_before) << "the superseded revision's row has left";
+    // The frames settle: the superseded revision's row leaves once no plan may name it, and the order has to
+    // shrink with it.
+    const ContentFacts& pruned = frames.record(store, plan->frame);
+    EXPECT_EQ(store.geometryEntries(), rows_before) << "the superseded revision's row has left";
     EXPECT_TRUE(covers(pruned)) << "an ERASURE has to leave the order covering exactly what is left";
 }
 
-TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPark)
+TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesOnceNoPlanNamesIt)
 {
     ContentStore store;
     const auto   geometry = quad();
@@ -440,11 +484,10 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
     store.track(geometry);
     store.track(program);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    Frames frames;
 
     const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
-    const ContentFacts& first = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& first = frames.record(store, plan->frame);
     ASSERT_TRUE(findGeometry(first, geometryRef(geometry->id(), geometry->revision())).found());
     const std::uint64_t old_revision = geometry->revision();
 
@@ -454,26 +497,20 @@ TEST(ContentStoreTest, ARevisionBumpJoinsTheTablesAndTheOldRevisionLeavesAtItsPa
     const std::uint64_t new_revision = geometry->revision();
     EXPECT_NE(new_revision, old_revision);
 
-    const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& second = frames.record(store, plan->frame);
     EXPECT_EQ(store.geometryEntries(), 2U) << "the new revision JOINS the table, it does not replace it";
     EXPECT_TRUE(findGeometry(second, geometryRef(geometry->id(), new_revision)).found()) << "the live revision answers";
     EXPECT_TRUE(findGeometry(second, geometryRef(geometry->id(), old_revision)).found())
         << "and so does the revision a recorded frame may still name";
-    EXPECT_EQ(retirement.pending(), 1U) << "the supersession was parked";
 
-    // Not yet due: the park's window is the slots that could still record the old revision.
-    releaseUpTo(timeline, retirement, 1U);
-    EXPECT_EQ(retirement.pending(), 1U) << "released a frame early";
-    EXPECT_TRUE(findGeometry(second, geometryRef(geometry->id(), old_revision)).found());
-
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
-    EXPECT_EQ(retirement.pending(), 0U);
+    // The window: the row leaves once the frame that could replay its plan has been recycled (the epoch rule).
+    const ContentFacts& after = frames.record(store, plan->frame);
     EXPECT_EQ(store.geometryEntries(), 1U) << "the superseded revision left the table";
-    EXPECT_EQ(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometryRef(geometry->id(), old_revision)).miss, FactMiss::Revision)
+    EXPECT_EQ(findGeometry(after, geometryRef(geometry->id(), old_revision)).miss, FactMiss::Revision)
         << "a plan naming it now misses with Revision (the identity is known, that revision is not)";
 }
 
-TEST(ContentStoreTest, AMaterialEditJoinsTheTableAndTheOldRevisionLeavesAtThePark)
+TEST(ContentStoreTest, AMaterialEditJoinsTheTableAndTheOldRevisionLeavesOnceNoPlanNamesIt)
 {
     ContentStore store;
     const auto   geometry = quad();
@@ -484,11 +521,10 @@ TEST(ContentStoreTest, AMaterialEditJoinsTheTableAndTheOldRevisionLeavesAtThePar
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    Frames frames;
 
     const auto          plan        = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
-    const ContentFacts& first       = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& first       = frames.record(store, plan->frame);
     const auto          first_block = blockOf(*findMaterial(first, material.get()).entry);
     EXPECT_FLOAT_EQ(first_block.base_color[0], 0.25F);
     const std::uint64_t old_revision = material->revision();
@@ -506,21 +542,16 @@ TEST(ContentStoreTest, AMaterialEditJoinsTheTableAndTheOldRevisionLeavesAtThePar
 
     // A frame compiled BEFORE the edit still names the old revision, and the table has to keep answering it - the
     // same rule the geometry table follows (see the case above), and the one A1 was about.
-    const ContentFacts& second = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& second = frames.record(store, plan->frame);
     EXPECT_EQ(store.materialEntries(), 2U) << "the new revision JOINS the table, it does not replace the old one";
     EXPECT_TRUE(findMaterial(second, old_ref).found()) << "the revision a recorded frame may still name keeps answering";
     const auto second_block = blockOf(*findMaterial(second, material.get()).entry);
     EXPECT_FLOAT_EQ(second_block.base_color[0], 0.75F) << "and the new one answers what the material is NOW";
-    EXPECT_EQ(retirement.pending(), 1U) << "the supersession was parked";
 
-    // Not yet due: the park's window is the slots that could still record the old revision.
-    releaseUpTo(timeline, retirement, 1U);
-    EXPECT_EQ(retirement.pending(), 1U) << "released a frame early";
-    EXPECT_TRUE(findMaterial(second, old_ref).found());
-
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
-    EXPECT_EQ(retirement.pending(), 0U);
+    // The window: the old row leaves once the frame that could replay its plan has been recycled.
+    const ContentFacts& after = frames.record(store, plan->frame);
     EXPECT_EQ(store.materialEntries(), 1U) << "the superseded revision left the table";
+    EXPECT_EQ(findMaterial(after, old_ref).miss, FactMiss::Unknown) << "and the plan that named it is answered with a miss";
 
     // An edit for a material nobody tracked is answered with nothing at all (it cannot be drawn either).
     const auto untracked = ::material(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
@@ -542,10 +573,9 @@ TEST(ContentStoreTest, AWrongMaterialSlotIsReportedOncePerEpisode)
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement); // the first description opens the episode
+    FrameTimeline timeline;
+    const auto   plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
+    (void)store.tablesFor(plan->frame, timeline); // the first description opens the episode
 
     EXPECT_TRUE(store.claimSlotReport(material->id(), 2U)) << "the first frame says it";
     EXPECT_FALSE(store.claimSlotReport(material->id(), 2U)) << "the second does not";
@@ -575,36 +605,34 @@ TEST(ContentStoreTest, ATouchWithNoEditChangesNothing)
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    FrameTimeline timeline;
 
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    (void)store.tablesFor(plan->frame, timeline);
 
     // A PUBLISHED VALUE IS ONE NUMBER: every frame hands the store the value its row carried, so a
-    // value whose revision is the one the row was built at must build nothing and park nothing, or every
+    // value whose revision is the one the row was built at must build nothing and append nothing, or every
     // frame would rebuild every material row. Re-applying the values the material already holds is the
     // other half of the same guarantee: it does not move the revision either.
     const std::uint64_t builds_before = store.builds();
     for (int frame = 0; frame < 5; ++frame) {
         material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F)); // same value: not an edit
         store.track(material.get(), material->description());
-        (void)store.tablesFor(plan->frame, timeline, retirement);
+        (void)store.tablesFor(plan->frame, timeline);
     }
-    const ContentFacts& again = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& again = store.tablesFor(plan->frame, timeline);
     EXPECT_EQ(store.builds(), builds_before) << "the touch found nothing changed";
-    EXPECT_EQ(retirement.pending(), 0U) << "and nothing was parked";
-    EXPECT_EQ(store.materialEntries(), 1U);
+    EXPECT_EQ(store.materialEntries(), 1U) << "and no row was added";
     EXPECT_FLOAT_EQ(blockOf(*findMaterial(again, material.get()).entry).base_color[0], 0.25F);
 
-    // The same touch AFTER an edit moves the revision, and the next walk replaces the row (the SDK's own
+    // The same touch AFTER an edit moves the revision, and the next walk appends the new row (the SDK's own
     // contract, now reached through the touch rather than through a separate announcement).
     material->setBaseColor(vn::Colorf(0.5F, 0.5F, 0.5F, 1.0F));
     store.track(material.get(), material->description());
-    const ContentFacts& edited = store.tablesFor(plan->frame, timeline, retirement);
-    EXPECT_EQ(store.builds(), builds_before + 1U) << "the edit replaced the row";
+    const ContentFacts& edited = store.tablesFor(plan->frame, timeline);
+    EXPECT_EQ(store.builds(), builds_before + 1U) << "the edit appended the new row";
     EXPECT_FLOAT_EQ(blockOf(*findMaterial(edited, material.get()).entry).base_color[0], 0.5F);
-    EXPECT_EQ(retirement.pending(), 1U) << "and the value it had was parked";
+    EXPECT_EQ(store.materialEntries(), 2U) << "and the value it had stays answerable for the frames that named it";
 }
 
 TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
@@ -621,13 +649,12 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     store.track(textured);
     store.track(plain);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    FrameTimeline timeline;
 
     const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), textured.get()),
                                               command(geometry.get(), geometry->revision(), program.get(), plain.get()) },
                                             program.get());
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
 
     ASSERT_EQ(store.programEntries(), 2U) << "one program, two texts: two entries";
 
@@ -653,11 +680,10 @@ TEST(ContentStoreTest, AScreenProgramGetsTheEnginesOwnVertexStage)
     const auto   program = screenProgram();
     store.track(program);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    FrameTimeline timeline;
 
     const auto          plan  = screenPlan(program.get());
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
 
     ASSERT_EQ(store.programEntries(), 1U);
     // Asked for as the call it was described FOR: this program's entry answers the full-screen ABI (see
@@ -681,11 +707,10 @@ TEST(ContentStoreTest, AProgramThatCannotBeDescribedStillHasItsName)
     program->addStage(fragment);
     store.track(program);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    FrameTimeline timeline;
 
     const auto          plan  = screenPlan(program.get());
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
 
     // No row: a program that is not one content pipeline is refused, and the recorder reports the miss...
     EXPECT_FALSE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Screen).found());
@@ -703,11 +728,10 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     const auto program  = contentProgram();
     const auto material = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    FrameTimeline timeline;
 
     const auto          plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
 
     EXPECT_EQ(store.geometryEntries(), 0U);
     EXPECT_EQ(store.programEntries(), 0U);
@@ -718,7 +742,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     EXPECT_EQ(findMaterial(facts, material.get()).miss, FactMiss::Unknown);
 }
 
-TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark)
+TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveOnceNoPlanNamesThem)
 {
     ContentStore store;
     auto         geometry = quad();
@@ -727,39 +751,37 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveAtThePark
     store.track(geometry);
     store.track(program);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-
+    Frames frames;
     const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.geometryEntries(), 1U);
     ASSERT_EQ(store.programEntries(), 1U);
 
     std::vector<vn::graphics::MaterialId> released_materials;
 
     // The host still holds both, so neither is abandoned.
-    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 0U);
+    EXPECT_EQ(store.releaseAbandoned(released_materials), 0U);
     EXPECT_EQ(store.geometryEntries(), 1U);
     EXPECT_TRUE(released_materials.empty());
 
-    // The host lets the geometry go: the store's share is the last one.
-    const auto          identity = geometry->id();
-    const std::uint64_t revision = geometry->revision();
+    // The host lets the geometry go: the store's share is the last one. The ENTRY stays while its row may still be
+    // named - the row is what a recorded plan reads, and the entry is what owns the shape it borrows from.
     geometry.reset();
-    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
-    EXPECT_EQ(retirement.pending(), 1U) << "the abandoned rows are parked, not dropped: a recorded frame may still name them";
-    EXPECT_TRUE(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometryRef(identity, revision)).found())
-        << "the rows still answer while the parking window is open";
+    EXPECT_EQ(store.releaseAbandoned(released_materials), 1U);
+    EXPECT_EQ(store.geometryEntries(), 1U) << "the entry stays while a recorded plan may still name its row";
 
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    // Frames that draw nothing age the row, and the entry leaves once completion proves no plan can name it.
+    const auto empty = contentPlan({});
+    (void)frames.record(store, empty->frame);
+    EXPECT_EQ(store.geometryEntries(), 1U) << "one more frame is still inside the window";
+    (void)frames.record(store, empty->frame);
     EXPECT_EQ(store.geometryEntries(), 0U);
     EXPECT_EQ(store.programEntries(), 1U) << "the program is still held by the host";
 }
 
-// 地址就是行的键：一个对象的行还可能被读到（停靠在排队窗口里的那些），它的地址就不能被释放 —— 否则下一个对象
-// 会拿到同一地址，(a) 新对象会被旧行当成旧对象描述，(b) 旧身份的那次移除会把新对象的行一起擦掉。后者实测过一次
-// "整条 pass 再没有内容半边"（换一次着色模式后画面永远不再更新），所以这条用例把保留本身钉住。
-TEST(ContentStoreTest, AParkedRemovalKeepsTheObjectsAddressReservedUntilItsRowsLeave)
+// 行的寿命与对象的寿命不是一回事：行还可能在飞帧里被读出（材质行借用了材质的贴图），所以条目要等到最后一行离开才
+// 丢下自己的对象份额。这条用例把“对象不早于行死”钉住。
+TEST(ContentStoreTest, AnAbandonedEntryKeepsItsObjectUntilItsRowsLeave)
 {
     ContentStore store;
     CountedProgram::destructions = 0;
@@ -772,68 +794,26 @@ TEST(ContentStoreTest, AParkedRemovalKeepsTheObjectsAddressReservedUntilItsRowsL
     store.track(program);
     store.track(shading);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), shading.get()) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    Frames frames;
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), shading.get()) }, program.get());
+    (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.programEntries(), 1U);
 
-    const void* const        address = program.get();
     std::vector<vn::graphics::MaterialId> released_materials;
     program.reset();
     geometry.reset();
     shading.reset(); // the store's shares are the last ones (the plan copies identities, not handles)
 
-    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 3U) << "the geometry, the program and the material";
-    EXPECT_EQ(CountedProgram::destructions, 0) << "the park owns the object, so the address its rows are keyed by stays reserved";
+    EXPECT_EQ(store.releaseAbandoned(released_materials), 3U) << "the geometry, the program and the material";
+    EXPECT_EQ(CountedProgram::destructions, 0) << "the entry still owns the object its rows answer from";
 
-    // An object allocated NOW cannot take that address: the rows still answer for it.
-    const auto later = vn::intrusive_ptr<ShaderProgram>(new CountedProgram());
-    EXPECT_NE(later.get(), address) << "the reserved address is not handed to a new object while its rows can still be read";
-
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    // The rows age out with the frames that could still name them, and the object goes with the last entry.
+    const auto empty = contentPlan({});
+    (void)frames.record(store, empty->frame);
+    EXPECT_EQ(store.programEntries(), 1U);
+    (void)frames.record(store, empty->frame);
     EXPECT_EQ(store.programEntries(), 0U);
-    EXPECT_EQ(CountedProgram::destructions, 1) << "the park dropped the object together with the rows it guarded";
-}
-
-// 停靠排不上（会话还不知道 in-flight 数）时，行的键同样是地址：条目必须连对象一起留着，下一拍再试。"只计数、
-// 不保留"就是这条用例要抓的形态——那时地址已经被交给分配器，而行还在表里。
-TEST(ContentStoreTest, AReleaseThatCannotBeParkedYetKeepsItsEntryAndIsRetried)
-{
-    ContentStore store;
-    CountedProgram::destructions = 0;
-
-    const auto geometry = quad();
-    const auto shading  = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
-    auto       program  = vn::intrusive_ptr<ShaderProgram>(new CountedProgram());
-
-    store.track(geometry);
-    store.track(program);
-    store.track(shading);
-
-    FrameTimeline   timeline;
-    RetirementQueue retirement(0U); // the session has not learned its in-flight count: parking is OFF
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), shading.get()) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
-    ASSERT_EQ(store.programEntries(), 1U);
-
-    std::vector<vn::graphics::MaterialId> released_materials;
-    program.reset();
-
-    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 0U) << "nothing can be parked, so nothing is let go";
-    EXPECT_EQ(retirement.pending(), 0U);
-    EXPECT_EQ(CountedProgram::destructions, 0) << "the entry keeps the object, so the address its rows are keyed by stays reserved";
-    EXPECT_EQ(store.programEntries(), 1U) << "and the rows stay answerable for the plan that still names them";
-
-    // The session learns how many frames may be in flight: the SAME entry is retried, and parks now.
-    retirement.setSlots(1U);
-    EXPECT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U) << "the retry is what parks it";
-    EXPECT_EQ(retirement.pending(), 1U);
-    EXPECT_EQ(CountedProgram::destructions, 0) << "parked, not freed";
-
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
-    EXPECT_EQ(store.programEntries(), 0U);
-    EXPECT_EQ(CountedProgram::destructions, 1) << "the park took the object with the rows";
+    EXPECT_EQ(CountedProgram::destructions, 1) << "the entry dropped the object together with its rows";
 }
 
 TEST(ContentStoreTest, AReleaseIsCancelledByTheNextUse)
@@ -846,23 +826,21 @@ TEST(ContentStoreTest, AReleaseIsCancelledByTheNextUse)
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    Frames frames;
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
+    (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
-    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
-    EXPECT_EQ(retirement.pending(), 1U) << "the release waits for the in-flight window";
+    ASSERT_TRUE(store.releaseGeometry(geometry.get()));
 
-    // The next frame uses it again: the pending callback must become a no-op, not erase the object's rows.
+    // The next frame uses it again: naming the identity clears the release, so its rows live on.
     store.track(geometry);
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    const ContentFacts& again = frames.record(store, plan->frame, 3);
     EXPECT_EQ(store.geometryEntries(), 1U);
-    EXPECT_TRUE(findGeometry(store.tablesFor(plan->frame, timeline, retirement), geometryRef(geometry->id(), geometry->revision())).found());
+    EXPECT_TRUE(findGeometry(again, geometryRef(geometry->id(), geometry->revision())).found());
 }
 
-TEST(ContentStoreTest, AReleaseWithoutReuseDropsTheRowsAtThePark)
+TEST(ContentStoreTest, AReleaseWithoutReuseDropsTheRowsOnceNoPlanNamesThem)
 {
     ContentStore store;
     const auto   geometry = quad();
@@ -870,60 +848,57 @@ TEST(ContentStoreTest, AReleaseWithoutReuseDropsTheRowsAtThePark)
     store.track(geometry);
     store.track(program);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    Frames frames;
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
+    (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
-    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
-    EXPECT_EQ(retirement.pending(), 1U);
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    ASSERT_TRUE(store.releaseGeometry(geometry.get()));
+    const auto empty = contentPlan({});
+    (void)frames.record(store, empty->frame, 3);
     EXPECT_EQ(store.geometryEntries(), 0U);
-    EXPECT_EQ(retirement.released(), 1U);
 
     // The object was not destroyed: it is untracked, so the next frame that names it can hand it over again.
     const std::uint64_t builds = store.builds();
     store.track(geometry);
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    (void)frames.record(store, plan->frame);
     EXPECT_EQ(store.builds(), builds + 1U);
 }
 
-TEST(ContentStoreTest, ASecondReleaseDoesNotParkASecondCallback)
+TEST(ContentStoreTest, AReleaseIsIdempotent)
 {
     ContentStore store;
     const auto   geometry = quad();
     store.track(geometry);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
-    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
-    EXPECT_EQ(retirement.pending(), 1U) << "one request is enough";
+    EXPECT_TRUE(store.releaseGeometry(geometry.get()));
+    EXPECT_TRUE(store.releaseGeometry(geometry.get())) << "one request is enough, and the second is not an error";
 }
 
-TEST(ContentStoreTest, AReleaseWithoutAParkingWindowChangesNothing)
+TEST(ContentStoreTest, AReleaseWithoutCompletionEvidenceKeepsTheRows)
 {
     ContentStore store;
     const auto   geometry = quad();
     store.track(geometry);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(0U); // the session has not learned its in-flight count
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    Frames frames(0U); // the session has not learned its in-flight count: completion is never proven
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+    (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.geometryEntries(), 1U);
 
-    EXPECT_FALSE(store.releaseGeometry(geometry.get(), timeline, retirement)) << "a release that cannot be parked must be refused, not guessed";
-    EXPECT_EQ(retirement.pending(), 0U);
-    EXPECT_EQ(store.geometryEntries(), 1U);
+    EXPECT_TRUE(store.releaseGeometry(geometry.get())) << "the release itself is the host's word";
 
-    // It is still a live object: the next walk must not find a half-released entry.
-    (void)store.tablesFor(plan->frame, timeline, retirement);
-    EXPECT_EQ(store.geometryEntries(), 1U);
+    const auto empty = contentPlan({});
+    (void)frames.record(store, empty->frame, 3);
+    EXPECT_EQ(store.geometryEntries(), 1U) << "no completion evidence: the row is kept (memory, never correctness)";
+
+    // Proof arrives (the slot that could name it was recycled): the next frame boundary reclaims it.
+    frames.timeline().completeUpTo(1U);
+    (void)frames.record(store, empty->frame);
+    EXPECT_EQ(store.geometryEntries(), 0U);
 }
 
-TEST(ContentStoreTest, AReleaseThenAnEditKeepsTheNewRevisionAfterThePark)
+TEST(ContentStoreTest, AReleaseThenAnEditKeepsTheNewRevision)
 {
     ContentStore store;
     const auto   geometry = quad();
@@ -931,25 +906,21 @@ TEST(ContentStoreTest, AReleaseThenAnEditKeepsTheNewRevisionAfterThePark)
     store.track(geometry);
     store.track(program);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    Frames frames;
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
+    (void)frames.record(store, plan->frame);
     const std::uint64_t old_revision = geometry->revision();
 
-    ASSERT_TRUE(store.releaseGeometry(geometry.get(), timeline, retirement));
+    ASSERT_TRUE(store.releaseGeometry(geometry.get()));
 
-    // The object is edited and used again before the release callback runs: the new revision must survive.
+    // The object is edited and used again before its rows leave: the new revision must survive.
     const_cast<vn::graphics::Geometry*>(geometry.get())->bumpRevision();
     const std::uint64_t new_revision = geometry->revision();
     store.track(geometry);
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    (void)frames.record(store, plan->frame);
+    const ContentFacts& facts = frames.record(store, plan->frame, 2);
     ASSERT_NE(new_revision, old_revision);
-    EXPECT_TRUE(findGeometry(facts, geometryRef(geometry->id(), new_revision)).found());
-
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
-    const ContentFacts& after = store.tablesFor(plan->frame, timeline, retirement);
-    EXPECT_TRUE(findGeometry(after, geometryRef(geometry->id(), new_revision)).found())
+    EXPECT_TRUE(findGeometry(facts, geometryRef(geometry->id(), new_revision)).found())
         << "the cancelled release must not erase the revision the host is using now";
     EXPECT_EQ(store.geometryEntries(), 1U);
 }
@@ -964,18 +935,17 @@ TEST(ContentStoreTest, AReleaseOfAProgramOrMaterialDropsItsRows)
     store.track(program);
     store.track(material);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
-    (void)store.tablesFor(plan->frame, timeline, retirement);
+    Frames frames;
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), material.get()) }, program.get());
+    (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.programEntries(), 1U);
     ASSERT_EQ(store.materialEntries(), 1U);
 
-    ASSERT_TRUE(store.releaseProgram(program.get(), timeline, retirement));
-    ASSERT_TRUE(store.releaseMaterial(material.get(), timeline, retirement));
-    EXPECT_EQ(retirement.pending(), 2U);
+    ASSERT_TRUE(store.releaseProgram(program.get()));
+    ASSERT_TRUE(store.releaseMaterial(material.get()));
 
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), 1U));
+    const auto empty = contentPlan({});
+    (void)frames.record(store, empty->frame, 3);
     EXPECT_EQ(store.programEntries(), 0U);
     EXPECT_EQ(store.materialEntries(), 0U);
     EXPECT_EQ(store.geometryEntries(), 1U) << "the untouched geometry stays";
@@ -995,14 +965,14 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
 
     // One frame shades CONTENT with it...
     const auto content_plan = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), nullptr) }, program.get());
-    (void)store.tablesFor(content_plan->frame, timeline, retirement);
+    (void)store.tablesFor(content_plan->frame, timeline);
     ASSERT_EQ(store.programEntries(), 1U);
 
     // ... and a later frame draws the SAME program as a full-screen call. The two are different ABIs, so the
     // table has to answer with two entries - and a lookup that did not name the kind would hand whichever row
     // came first to a caller expecting the other, which is a wrong picture with no refusal anywhere.
     const auto          screen_plan = screenPlan(program.get());
-    const ContentFacts& facts       = store.tablesFor(screen_plan->frame, timeline, retirement);
+    const ContentFacts& facts       = store.tablesFor(screen_plan->frame, timeline);
 
     ASSERT_EQ(store.programEntries(), 2U) << "one text, two entries: the two calls are different ABIs";
     const auto content = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content);
@@ -1045,22 +1015,23 @@ TEST(ContentStoreTest, ACulledGeometryKeepsItsUploadsForAHundredFrames)
     const auto   geometry = quad();
     store.track(geometry);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    Frames frames;
+    RetirementQueue retirement(1U); // the uploads' parks are still the queue's
     const auto      drawing = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
     const auto      culled  = contentPlan({});
 
     StreamUploads       uploads;
-    const ContentFacts& drawn = store.tablesFor(drawing->frame, timeline, retirement);
+    const ContentFacts& drawn = frames.record(store, drawing->frame);
     ASSERT_EQ(drawn.geometries.size(), 1U);
-    (void)uploads.beginFrame(drawn, timeline, retirement);
+    (void)uploads.beginFrame(drawn, frames.timeline(), retirement);
     ASSERT_EQ(bindStreams(uploads, drawn.geometries.front()), 2U) << "positions + the index arena";
 
-    // CULLING: the plan names nothing, but the geometry is still tracked, so its row - the declaration - stays.
+    // CULLING: the plan names nothing, but the geometry is still the content the host holds - its row is the LIVE
+    // answer of a live entry, so it stays (and so do the uploads it declares) however many frames go by.
     for (int frame = 0; frame < 100; ++frame) {
-        const ContentFacts& facts = store.tablesFor(culled->frame, timeline, retirement);
+        const ContentFacts& facts = frames.record(store, culled->frame);
         ASSERT_EQ(facts.geometries.size(), 1U) << "frame " << frame << ": the tracked geometry's row is still the declaration";
-        (void)uploads.beginFrame(facts, timeline, retirement);
+        (void)uploads.beginFrame(facts, frames.timeline(), retirement);
     }
 
     EXPECT_EQ(uploads.uploads(), 2U) << "a hundred culled frames uploaded nothing";
@@ -1068,37 +1039,40 @@ TEST(ContentStoreTest, ACulledGeometryKeepsItsUploadsForAHundredFrames)
     EXPECT_EQ(uploads.retired(), 0U) << "nothing left: the geometry was only out of view";
 }
 
-TEST(ContentStoreTest, AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped)
+TEST(ContentStoreTest, AStreamLeavesOnceItsGeometryIsDropped)
 {
     ContentStore store;
     auto         geometry = quad();
     store.track(geometry);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+    Frames frames;
+    RetirementQueue retirement(1U); // the uploads leave through the queue's window
+    const auto      plan  = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+    const auto      empty = contentPlan({});
 
     StreamUploads       uploads;
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = frames.record(store, plan->frame);
     ASSERT_EQ(bindStreams(uploads, facts.geometries.front()), 2U);
     ASSERT_EQ(uploads.live(), 2U);
 
-    // The host lets go of its last reference; the sweep parks the row removal (the replaced-object window).
+    // The host lets go of its last reference; the sweep marks the entry, and the row lives until no plan may name it.
     geometry.reset();
     std::vector<vn::graphics::MaterialId> released_materials;
-    ASSERT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
+    ASSERT_EQ(store.releaseAbandoned(released_materials), 1U);
 
-    // Inside the window the PIN is still there, because the row is parked rather than erased.
-    const ContentFacts& inside = store.tablesFor(plan->frame, timeline, retirement);
-    ASSERT_EQ(inside.geometries.size(), 1U) << "the row is parked, not erased";
-    (void)uploads.beginFrame(inside, timeline, retirement);
-    EXPECT_EQ(uploads.live(), 2U) << "inside slots + 1 frames the uploads are still declared";
+    // Still inside the window: the row (and therefore the PIN) is there.
+    const ContentFacts& inside = frames.record(store, empty->frame);
+    ASSERT_EQ(inside.geometries.size(), 1U) << "the row is still inside its window";
+    (void)uploads.beginFrame(inside, frames.timeline(), retirement);
+    EXPECT_EQ(uploads.live(), 2U) << "inside the window the uploads are still declared";
 
-    // One completed frame past the window: the row is gone, so nothing declares the streams any more.
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), retirement.slots()));
-    const ContentFacts& after = store.tablesFor(plan->frame, timeline, retirement);
+    // The window is past: the row is gone, so nothing declares the streams any more - and they leave through their
+    // own park (the queue's window for a GPU object).
+    (void)frames.record(store, empty->frame);
+    releaseUpTo(frames.timeline(), retirement, FrameTimeline::retirePoint(frames.timeline().submittedFrame(), retirement.slots()));
+    const ContentFacts& after = frames.record(store, empty->frame);
     ASSERT_EQ(after.geometries.size(), 0U);
-    (void)uploads.beginFrame(after, timeline, retirement);
+    (void)uploads.beginFrame(after, frames.timeline(), retirement);
     EXPECT_EQ(uploads.live(), 0U);
     EXPECT_EQ(uploads.retired(), 2U);
 }
@@ -1118,17 +1092,17 @@ TEST(ContentStoreTest, AStreamWhoseBufferMovedLeavesWithoutTheGeometryChanging)
     store.track(geometry);
 
     FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
+    RetirementQueue retirement(1U); // the uploads' parks
     const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
 
     StreamUploads       uploads;
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
     ASSERT_EQ(bindStreams(uploads, facts.geometries.front()), 2U);
     const std::uint64_t builds_before = store.builds();
 
     // The host refilled the positions buffer and announced it ON THE BUFFER; the geometry did not move.
     positions->setRevision(positions->revision() + 1U);
-    const ContentFacts& moved = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& moved = store.tablesFor(plan->frame, timeline);
     EXPECT_EQ(store.builds(), builds_before) << "a buffer announcement does not rebuild the geometry's row";
     (void)uploads.beginFrame(moved, timeline, retirement);
 
@@ -1161,11 +1135,11 @@ TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWi
     store.track(left);
     store.track(right);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(left.get(), left->revision(), nullptr, nullptr), command(right.get(), right->revision(), nullptr, nullptr) });
+    Frames frames;
+    const auto plan  = contentPlan({ command(left.get(), left->revision(), nullptr, nullptr), command(right.get(), right->revision(), nullptr, nullptr) });
+    const auto empty = contentPlan({});
 
-    const ContentFacts& both = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& both = frames.record(store, plan->frame);
     ASSERT_EQ(both.geometries.size(), 2U);
     const void* buffer = both.geometries.front().channels.front().values.get();
     ASSERT_NE(buffer, nullptr);
@@ -1175,17 +1149,16 @@ TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWi
     // One geometry goes: the OTHER row still declares the buffer, so the index keeps it (the refcount, not a bit).
     left.reset();
     std::vector<vn::graphics::MaterialId> released_materials;
-    ASSERT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
-    EXPECT_TRUE(store.tablesFor(plan->frame, timeline, retirement).declarations.declaresBuffer(buffer))
-        << "a shared buffer is declared while ANY row still names it";
+    ASSERT_EQ(store.releaseAbandoned(released_materials), 1U);
+    EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer))
+        << "the dropped row is inside its window, and the other row names the buffer anyway";
+    EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer))
+        << "the row that is still the live answer keeps the bytes declared";
 
-    // The last declarer goes too; the parked row keeps the declaration for the window, then it is gone.
+    // The last declarer goes too: the next frame boundary erases its row, and nothing declares the bytes.
     right.reset();
-    ASSERT_EQ(store.releaseAbandoned(timeline, retirement, released_materials), 1U);
-    EXPECT_TRUE(store.tablesFor(plan->frame, timeline, retirement).declarations.declaresBuffer(buffer)) << "the row is parked, not erased";
-
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), retirement.slots()));
-    EXPECT_FALSE(store.tablesFor(plan->frame, timeline, retirement).declarations.declaresBuffer(buffer))
+    ASSERT_EQ(store.releaseAbandoned(released_materials), 1U);
+    EXPECT_FALSE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer))
         << "with the last row erased, nothing declares the bytes any more";
 }
 
@@ -1198,11 +1171,10 @@ TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRev
     EXPECT_EQ(geometry->revision(), 1U) << "the instance setter does not describe the change; the host reports it";
     store.track(geometry);
 
-    FrameTimeline   timeline;
-    RetirementQueue retirement(1U);
-    const auto      plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
+    Frames frames;
+    const auto plan = contentPlan({ command(geometry.get(), geometry->revision(), nullptr, nullptr) });
 
-    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& facts = frames.record(store, plan->frame);
     ASSERT_EQ(facts.geometries.size(), 1U);
     const vn::vsg::GeometryFacts& row = facts.geometries.front();
     ASSERT_EQ(row.primitives.size(), 1U);
@@ -1213,7 +1185,7 @@ TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRev
     // with, so it still describes - and declares - the stream the draw used before (see the pitfall in the design doc).
     auto replacement = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(16U, 1.0F)));
     ASSERT_TRUE(geometry->setInstanceTransforms(0U, vn::BufferSlice<float>::whole(replacement)));
-    const ContentFacts& unreported = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& unreported = frames.record(store, plan->frame);
     EXPECT_TRUE(unreported.declarations.declaresBuffer(instances.get())) << "the row still describes the stream it was built from";
     EXPECT_FALSE(unreported.declarations.declaresBuffer(replacement.get())) << "the swapped-in stream is not declared until the description moves";
 
@@ -1221,12 +1193,12 @@ TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRev
     // revision declares what it draws, and the superseded row keeps declaring the old stream until its park comes due.
     geometry->bumpRevision();
     store.track(geometry); // the frame hands the new shape over
-    const ContentFacts& reported = store.tablesFor(plan->frame, timeline, retirement);
+    const ContentFacts& reported = frames.record(store, plan->frame);
     EXPECT_TRUE(reported.declarations.declaresBuffer(replacement.get())) << "the live revision declares what it draws";
     EXPECT_TRUE(reported.declarations.declaresBuffer(instances.get())) << "the superseded row is still answerable, so its stream stays declared";
 
-    releaseUpTo(timeline, retirement, FrameTimeline::retirePoint(timeline.submittedFrame(), retirement.slots()));
-    const ContentFacts& pruned = store.tablesFor(plan->frame, timeline, retirement);
+    (void)frames.record(store, plan->frame); // the superseded row's window
+    const ContentFacts& pruned = frames.record(store, plan->frame);
     EXPECT_TRUE(pruned.declarations.declaresBuffer(replacement.get()));
     EXPECT_FALSE(pruned.declarations.declaresBuffer(instances.get())) << "with the old row erased, nothing declares the old stream";
 }

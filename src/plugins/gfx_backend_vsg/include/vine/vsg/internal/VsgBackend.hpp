@@ -61,7 +61,8 @@
  *     re-reporting anything;
  *   * THE SWEEP - a frame's content is retained for as long as the host holds it, and what the host has let go
  *     is let go ONCE PER FRAME, in the one call that owns the order (api/ContentSweep: after the frame's
- *     content has been recorded, before the frame's parks are advanced). Before that unit existed both halves
+ *     content has been recorded; the store MARKS what the host let go, and its rows leave by epoch at the next
+ *     frame boundary - no park of its own). Before that unit existed both halves
  *     existed and were called by nothing, so a dropped geometry kept its tables, its halves and its pipelines
  *     alive until the session ended; `releasedContentObjects()` / `releasedTextures()` / `releasedStreams()`
  *     are the counters that

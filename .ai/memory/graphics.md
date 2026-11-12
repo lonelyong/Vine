@@ -275,4 +275,27 @@
 - 测试 helper（`TestGeometryFacts.hpp`、`ContentStoreTest` / `ContentSweepTest` / `ContentHalvesTest` 的手搓
   计划）保留“对象 + revision”入口，但内部只造一个 ref —— 计划行的 API 只有一个 ref。
 - 验证：`test_graphics` / `test_vsg` / ctest 30/30 全绿。
-- 下一步：`ResidencyTable` 的 epoch 回收替换 `ContentStore` 的 `markUsed`/parking/`kept`。
+- 下一步（已落地，见下节）：`ResidencyTable` 的 epoch 回收替换 `ContentStore` 的 `markUsed`/parking/`kept`。
+
+### 行寿命改为 epoch 回收（2026-11-12 已落地）
+
+- `ContentStore` 的 `markUsed` / `release_token` / `release_requested` / `retained` / park 全部删除。每条
+  几何 / 程序 / 材质行带 `last_epoch`（最后一次被计划命中的帧，`tablesFor` 逐条 stamp）；
+  `Data::reclaim()` 在每帧 `tablesFor` 开头跑一次：`last_epoch < completedFrame() + 1` **且不再是条目的
+  当前答案**（`isCurrent`）的行离开。`RetirementQueue` 仍然只给 GPU 对象用（上传、半片、描述符集）。
+- **“当前答案”那一半不能省**：裁剪 / 隐藏的内容本帧不被计划命中，但它仍是活条目的当前答案，所以行（和它
+  声明的上传）留着；否则 `ACulledGeometryKeepsItsUploadsForAHundredFrames` 与 design F27/F28 都会破。
+  已释放条目与 superseded revision 不再是当前答案，按 epoch 走（无时间窗）。
+- 条目（`Live*`）多活一步：`released` 标记（`release*` / `releaseAbandoned`）+ 无行 ⇒ `dropReleased()`
+  丢条目；“没有行”由表的 per-identity 行计数回答（`Table::rowsOf`）。材质 arena 槽在条目丢时进
+  `material_slots_pending`，由下一次 `releaseAbandoned` 交给 `BlockStorage::releaseMaterial`（比旧 park 晚一帧）。
+- `Table<Row, Storage, MakeOrder, KeyOf>`：`append(row, storage, epoch)` / `stamp(row, epoch)` /
+  `reclaimBefore(oldest_live, keep, onErase)` / `rowsOf(key)`；`epochs_` 与 `rows_`/`storage_` 同步移动。
+- API：`tablesFor(frame, timeline)`、`releaseGeometry/Program/Material` 不再收 timeline/retirement，
+  `releaseAbandoned(released_materials)`，`releaseAbandonedContent(store, images, released_materials)`；
+  `ContentStore::retained()` 删除。
+- 测试：`Frames` helper（`ContentStoreTest`）驱动 begin/submit/`completeUpTo(frame - slots)`；旧 park 用例改名
+  为 “...OnceNoPlanNamesThem”，`AReleaseThatCannotBeParked...` 删除，新增
+  `AReleaseWithoutCompletionEvidenceKeepsTheRows` 与 `AnAbandonedEntryKeepsItsObjectUntilItsRowsLeave`。
+- 证据：`measure_graphics_claims.py` 的寿命 token 75 → **1**；`test_vsg` 537 / `test_graphics` 559 / ctest 30/30。
+- 陷阱：`tablesFor` 返回 store 的 `d->facts` 引用，多次 record 会改写它；断言要在每次 record 后立刻读。

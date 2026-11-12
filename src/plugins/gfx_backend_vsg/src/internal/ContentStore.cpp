@@ -10,18 +10,46 @@
 
 VN_VSG_NS_BEGIN
 
+namespace
+{
+
+/// @brief The identity a geometry row is counted under: an entry asks "how many rows still name me?".
+[[nodiscard]] std::uint64_t geometryRowKey(const GeometryFacts& row) noexcept
+{
+    return row.geometry.id.bits();
+}
+
+/// @brief The identity a program row is counted under (see geometryRowKey).
+[[nodiscard]] std::uint64_t programRowKey(const ProgramFacts& row) noexcept
+{
+    return row.program.id.bits();
+}
+
+/// @brief The identity a material row is counted under (see geometryRowKey).
+[[nodiscard]] std::uint64_t materialRowKey(const MaterialFacts& row) noexcept
+{
+    return row.material.id.bits();
+}
+
+} // namespace
+
 struct ContentStore::Data {
     struct LiveGeometry {
-        /// The object the identity names, kept ONLY to reserve its address (ADR-2026-11-09): the rows answer by
-        /// address, so an allocator handing that address to a later geometry would serve the dead one's facts. Null
-        /// when the identity came from a value producer, whose owner is the one that keeps it alive.
+        /// The object the identity names, held so a row that borrows from it stays readable AND so "nobody else holds
+        /// it" (@ref releaseAbandoned) can be asked at all. Null when the identity came from a value producer, whose
+        /// owner is the one that keeps it alive.
         vn::intrusive_ptr<vn::graphics::Geometry> object{};
         /// The shape the rows are built from. Immutable, so a new revision is a NEW value here (never an in-place edit).
         vn::graphics::GeometryDescriptionPtr shape{};
-        bool                                 described{ false };
-        std::uint64_t                        described_revision{ 0 };   // The revision a row was (attempted to be) built at.
-        std::uint64_t                        release_token{ 0 };         // Bumped by release and by reuse.
-        bool                                 release_requested{ false }; // A release wait is parked.
+        /// Whether a build was attempted at @ref described_revision. A shape that FAILED is not retried until it moves.
+        bool          described{ false };
+        /// Whether that attempt produced a row. Cleared when the row ages out, so the identity is rebuilt when a plan
+        /// names it again instead of looking up a row that is gone.
+        bool          built{ false };
+        std::uint64_t described_revision{ 0 }; // The revision a row was (attempted to be) built at.
+        /// The host is done with this identity (@ref releaseGeometry). track() / ensureGeometry() clear it again, and
+        /// the entry itself leaves once no row names it (see the file note).
+        bool released{ false };
     };
 
     struct LiveProgram {
@@ -30,8 +58,7 @@ struct ContentStore::Data {
         std::uint64_t                                  described_revision{ 0 };
         std::vector<std::uint32_t>                     variants;              // Variants built at that revision (their bits()).
         bool                                           screen_built{ false }; // The full-screen entry, at that revision.
-        std::uint64_t                                  release_token{ 0 };
-        bool                                           release_requested{ false };
+        bool                                           released{ false };
     };
 
     struct LiveMaterial {
@@ -44,9 +71,10 @@ struct ContentStore::Data {
         /// host that fixes a map and breaks another one has a new thing to say.
         std::uint32_t slots_reported{ 0 };
         bool          described{ false };
+        /// Whether that attempt produced a row (see LiveGeometry::built).
+        bool          built{ false };
         std::uint64_t described_revision{ 0 }; // The `values` revision the row was built at.
-        std::uint64_t release_token{ 0 };
-        bool          release_requested{ false };
+        bool          released{ false };
     };
 
     struct GeometryStorage {
@@ -62,28 +90,42 @@ struct ContentStore::Data {
     /// same way, and an EMPTY slot (a null pointer) costs nothing to carry beside the other two.
     struct NoStorage {};
 
-    /// One table: its rows, the per-row storage their spans point at, and the ROW ORDER its lookups search.
+    /// One table: its rows, the per-row storage their spans point at, the row order its lookups search, and the
+    /// EPOCH each row was last named by.
     ///
-    /// WHY THE THREE ARE ONE TYPE. The rows must be contiguous (`ContentFacts` hands out spans of them), every
-    /// row's spans point into that row's OWN storage, and the order must stay a permutation of the rows sorted
-    /// by the lookup's key - so a row appearing or leaving moves all three. Before the order existed, the rows
-    /// and their storage were two vectors kept in step BY HAND at five erasure sites; a slip there is a row
-    /// whose spans point at its neighbour's bytes, i.e. a wrong picture with no refusal anywhere, and the order
-    /// would have added a third vector to the same discipline. Here the only mutators are the four operations
-    /// below, and each of them refreshes the order, so "the order is a permutation of the rows" is true by
+    /// WHY THEY ARE ONE TYPE. The rows must be contiguous (`ContentFacts` hands out spans of them), every
+    /// row's spans point into that row's OWN storage, the order must stay a permutation of the rows sorted
+    /// by the lookup's key, and a row's age must move with it - so a row appearing or leaving moves all four.
+    /// Before the order existed, the rows and their storage were two vectors kept in step BY HAND at five
+    /// erasure sites; a slip there is a row whose spans point at its neighbour's bytes, i.e. a wrong picture
+    /// with no refusal anywhere. Here the only mutators are the operations below, and each of them moves all
+    /// four in one place, so "the order is a permutation" and "the stamp belongs to its row" are true by
     /// construction rather than by remembering to set a flag.
     ///
     /// The order is refreshed on EVERY mutation (a content change, not a frame) and never per lookup: a frame
     /// that changes nothing touches none of this (see tablesFor).
-    template <typename Row, typename Storage, void (*MakeOrder)(std::span<const Row>, std::vector<std::uint32_t>&)>
+    template <typename Row,
+              typename Storage,
+              void (*MakeOrder)(std::span<const Row>, std::vector<std::uint32_t>&),
+              std::uint64_t (*KeyOf)(const Row&)>
     class Table {
       public:
-        /// @brief Appends one row and its storage. A null storage is allowed and keeps its empty slot.
-        void append(const Row& row, std::unique_ptr<Storage> cell)
+        /// @brief Appends one row and its storage, stamped with @p epoch (the frame whose plan names it).
+        void append(const Row& row, std::unique_ptr<Storage> cell, std::uint64_t epoch)
         {
             rows_.push_back(row);
             storage_.push_back(std::move(cell));
+            epochs_.push_back(epoch);
+            ++rows_of_[KeyOf(row)];
             refresh();
+        }
+
+        /// @brief Stamps @p row (a row of THIS table) with @p epoch: the frame whose plan just named it.
+        void stamp(const Row* row, std::uint64_t epoch) noexcept
+        {
+            if (row != nullptr) {
+                epochs_[static_cast<std::size_t>(row - rows_.data())] = epoch;
+            }
         }
 
         /// @brief Erases every row @p drop names, running @p before_erase on each one first.
@@ -100,8 +142,7 @@ struct ContentStore::Data {
                     continue;
                 }
                 before_erase(rows_[index]);
-                rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(index));
-                storage_.erase(storage_.begin() + static_cast<std::ptrdiff_t>(index));
+                eraseAt(index);
             }
             refresh();
         }
@@ -113,11 +154,36 @@ struct ContentStore::Data {
             eraseWhere(drop, [](const Row&) {});
         }
 
-        /// @brief Forgets every row, its storage and the order (the session-teardown path).
+        /// @brief Erases every row no plan named since @p oldest_live that @p keep does not protect.
+        ///
+        /// THE RECLAMATION PASS (see the file note): `last_epoch < oldest_live` is the age rule, and @p keep is the
+        /// other half - a row that is still its entry's LIVE answer stays however long ago a plan last named it (a
+        /// culled drawable keeps its facts, and its uploads, for as long as the content exists). There is no
+        /// per-entry park and no release token: the row's age and its entry are the whole lifetime.
+        template <typename Keep, typename OnErase>
+        std::size_t reclaimBefore(std::uint64_t oldest_live, Keep keep, OnErase before_erase)
+        {
+            std::size_t removed = 0U;
+            for (std::size_t index = 0U; index < rows_.size();) {
+                if (epochs_[index] >= oldest_live || keep(rows_[index])) {
+                    ++index;
+                    continue;
+                }
+                before_erase(rows_[index]);
+                eraseAt(index);
+                ++removed;
+            }
+            refresh();
+            return removed;
+        }
+
+        /// @brief Forgets every row, its storage, its stamp and the order (the session-teardown path).
         void clear()
         {
             rows_.clear();
             storage_.clear();
+            epochs_.clear();
+            rows_of_.clear();
             order_.clear();
         }
 
@@ -139,7 +205,35 @@ struct ContentStore::Data {
             return rows_.size();
         }
 
+        /** @brief Gets how many rows one identity (a ref's id bits) still has - the entry-drop condition. */
+        [[nodiscard]] std::size_t rowsOf(std::uint64_t key) const noexcept
+        {
+            const auto found = rows_of_.find(key);
+            return found != rows_of_.end() ? static_cast<std::size_t>(found->second) : 0U;
+        }
+
       private:
+        /// @brief Erases row @p index with its storage and stamp (the one place the four vectors move).
+        void eraseAt(std::size_t index)
+        {
+            withdraw(KeyOf(rows_[index]));
+            rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(index));
+            storage_.erase(storage_.begin() + static_cast<std::ptrdiff_t>(index));
+            epochs_.erase(epochs_.begin() + static_cast<std::ptrdiff_t>(index));
+        }
+
+        /// @brief Takes one row off @p key 's count; the entry leaves when its last row does.
+        void withdraw(std::uint64_t key) noexcept
+        {
+            const auto found = rows_of_.find(key);
+            if (found == rows_of_.end()) {
+                return; // cannot happen for a row this table appended; never erase what is not there
+            }
+            if (--found->second == 0U) {
+                rows_of_.erase(found);
+            }
+        }
+
         /// @brief Rebuilds the order from the rows (the only thing that ever writes it).
         void refresh()
         {
@@ -147,8 +241,10 @@ struct ContentStore::Data {
         }
 
         std::vector<Row>                      rows_;
-        std::vector<std::unique_ptr<Storage>> storage_; // One per row, in row order.
-        std::vector<std::uint32_t>            order_;   // A permutation of `rows_`, sorted by the lookup key.
+        std::vector<std::unique_ptr<Storage>> storage_;   // One per row, in row order.
+        std::vector<std::uint64_t>            epochs_;    // One per row: the last frame whose plan named it.
+        std::vector<std::uint32_t>            order_;     // A permutation of `rows_`, sorted by the lookup key.
+        std::unordered_map<std::uint64_t, std::uint32_t> rows_of_; // Rows per identity (see rowsOf).
     };
 
     /// @brief The geometry rows AND the buffers they declare: one object, so a row cannot move without the
@@ -165,11 +261,17 @@ struct ContentStore::Data {
     /// upload outlive the first geometry that used it.
     class GeometryTable {
       public:
-        /// @brief Appends one row and its storage, declaring the buffers it names.
-        void append(const GeometryFacts& row, std::unique_ptr<GeometryStorage> cell)
+        /// @brief Appends one row and its storage, declaring the buffers it names and stamping it with @p epoch.
+        void append(const GeometryFacts& row, std::unique_ptr<GeometryStorage> cell, std::uint64_t epoch)
         {
-            table_.append(row, std::move(cell));
+            table_.append(row, std::move(cell), epoch);
             declare(row, +1);
+        }
+
+        /// @brief Stamps @p row with @p epoch (the frame whose plan just named it).
+        void stamp(const GeometryFacts* row, std::uint64_t epoch) noexcept
+        {
+            table_.stamp(row, epoch);
         }
 
         /// @brief Erases every row @p drop names, withdrawing the buffers those rows declared.
@@ -177,6 +279,20 @@ struct ContentStore::Data {
         void eraseIf(Predicate drop)
         {
             table_.eraseWhere(drop, [this](const GeometryFacts& row) { declare(row, -1); });
+        }
+
+        /// @brief Erases every row no plan named since @p oldest_live that @p keep does not protect, withdrawing its
+        ///        declarations.
+        template <typename Keep, typename OnErase>
+        std::size_t reclaimBefore(std::uint64_t oldest_live, Keep keep, OnErase after_declare)
+        {
+            return table_.reclaimBefore(
+                oldest_live,
+                keep,
+                [this, &after_declare](const GeometryFacts& row) {
+                    declare(row, -1);
+                    after_declare(row);
+                });
         }
 
         /// @brief Forgets every row and every declaration (the session-teardown path).
@@ -202,6 +318,12 @@ struct ContentStore::Data {
         [[nodiscard]] std::size_t size() const noexcept
         {
             return table_.size();
+        }
+
+        /** @brief Gets how many rows one identity still has (see Table::rowsOf). */
+        [[nodiscard]] std::size_t rowsOf(std::uint64_t key) const noexcept
+        {
+            return table_.rowsOf(key);
         }
 
         /** @brief Gets the declaration index the facts publish (borrowed for as long as those facts are). */
@@ -249,42 +371,33 @@ struct ContentStore::Data {
             }
         }
 
-        Table<GeometryFacts, GeometryStorage, &orderGeometryRows> table_;
+        Table<GeometryFacts, GeometryStorage, &orderGeometryRows, &geometryRowKey> table_;
         std::unordered_map<const void*, std::uint32_t>             declared_;
     };
 
     // The live set: the identities the host tracked, each holding the SHAPE it answers with. The description is held
-    // so the value a row was built from cannot die under the table, and the identity is the address the content side
-    // names (a node's), so an edit re-uses the entry instead of creating a second one.
+    // so a row built from it stays readable (a material row borrows its maps, so the entry is what owns them), and the
+    // identity is the node handle the content side names, so an edit re-uses the entry instead of creating a second one.
     std::unordered_map<vn::graphics::NodeId, LiveGeometry>              geometries;
     std::unordered_map<vn::graphics::ProgramId, LiveProgram>            programs;
     std::unordered_map<vn::graphics::MaterialId, LiveMaterial>          materials;
+
+    /// Material identities whose entry is gone and whose arena slot is nobody's to keep any more (see dropReleased):
+    /// the sweep hands them to the block storage.
+    std::vector<vn::graphics::MaterialId> material_slots_pending;
 
     /// Program identity -> the name its description saw (see ProgramNameFacts): the tables answer it separately
     /// from `program` because a program whose text cannot be described still has a name, and that is exactly the
     /// case whose sentence needs one. One entry per identity: a name does not move with the revision.
     std::vector<ProgramNameFacts> program_names;
 
-    /** @brief Cancels a pending release because the object is being used again.
-     *
-     * The token moves even when no release was requested, so a callback from a previous release can never
-     * match after the object has been tracked again (see releaseGeometry).
-     */
-    template <typename Live>
-    static void markUsed(Live& live) noexcept
-    {
-        live.release_requested = false;
-        ++live.release_token;
-    }
-
-    // The tables (see Table: rows, their storage and their row order together).
-    GeometryTable                                            geometry;
-    Table<ProgramFacts, NoStorage, &orderProgramRows>         program;
-    Table<MaterialFacts, MaterialStorage, &orderMaterialRows> material;
+    // The tables (see Table: rows, their storage, their order and their epoch together).
+    GeometryTable                                                                geometry;
+    Table<ProgramFacts, NoStorage, &orderProgramRows, &programRowKey>            program;
+    Table<MaterialFacts, MaterialStorage, &orderMaterialRows, &materialRowKey>   material;
 
     ContentFacts  facts{};
     std::uint64_t builds{ 0 };
-    std::size_t   retained{ 0 };
 
     /**
      * @brief Gets the tables as the lookups see them: the rows, and the row order each is searched by.
@@ -311,35 +424,6 @@ struct ContentStore::Data {
         return tables;
     }
 
-    /** @brief Removes the geometry rows of one identity at one revision (a superseded shape). */
-    void eraseGeometryRows(vn::graphics::ContentRef geometry_ref) noexcept
-    {
-        geometry.eraseIf([geometry_ref](const GeometryFacts& row) { return row.geometry == geometry_ref; });
-    }
-
-    /** @brief Removes every geometry row of one identity (an abandoned object's rows). */
-    void eraseGeometryOf(vn::graphics::NodeId identity) noexcept
-    {
-        geometry.eraseIf([identity](const GeometryFacts& row) { return row.geometry.as<vn::graphics::NodeTag>() == identity; });
-    }
-
-    /** @brief Removes the program rows of one identity at one revision (a parked supersession). */
-    void eraseProgramRows(vn::graphics::ProgramId identity, std::uint64_t revision) noexcept
-    {
-        program.eraseIf([identity, revision](const ProgramFacts& row) {
-            return row.program.as<vn::graphics::ProgramTag>() == identity && row.program.revision == revision;
-        });
-    }
-
-    /** @brief Removes every program row of one identity (an abandoned object's rows, and its name). */
-    void eraseProgramOf(vn::graphics::ProgramId identity) noexcept
-    {
-        program.eraseIf(
-            [identity](const ProgramFacts& row) { return row.program.as<vn::graphics::ProgramTag>() == identity; });
-        std::erase_if(program_names,
-                      [identity](const ProgramNameFacts& name) { return name.program == identity; });
-    }
-
     /** @brief Records the name a description saw (see ProgramNameFacts): one entry per identity, updated in place. */
     void recordProgramName(vn::graphics::ProgramId identity, const vn::String& name)
     {
@@ -352,37 +436,127 @@ struct ContentStore::Data {
         program_names.push_back(ProgramNameFacts{ identity, name.as_std_str() });
     }
 
-    /** @brief Removes the material rows of one identity at one revision (a superseded value). */
-    void eraseMaterialRows(vn::graphics::MaterialId identity, std::uint64_t revision) noexcept
+    /** @brief The row-reclamation pass: every row that is no longer its entry's live answer and old enough leaves. */
+    void reclaim(std::uint64_t oldest_live)
     {
-        material.eraseIf([identity, revision](const MaterialFacts& row) {
-            return row.material.as<vn::graphics::MaterialTag>() == identity && row.material.revision == revision;
-        });
+        geometry.reclaimBefore(
+            oldest_live,
+            [this](const GeometryFacts& row) { return isCurrent(row); },
+            [this](const GeometryFacts& row) { noteGeometryRowGone(row); });
+        program.reclaimBefore(
+            oldest_live,
+            [this](const ProgramFacts& row) { return isCurrent(row); },
+            [this](const ProgramFacts& row) { noteProgramRowGone(row); });
+        material.reclaimBefore(
+            oldest_live,
+            [this](const MaterialFacts& row) { return isCurrent(row); },
+            [this](const MaterialFacts& row) { noteMaterialRowGone(row); });
+        dropReleased();
     }
 
-    /** @brief Removes every material row of one identity (an abandoned object's rows). */
-    void eraseMaterialOf(vn::graphics::MaterialId identity) noexcept
+    /// @brief Says whether @p row is its entry's LIVE answer (and therefore outlives the epoch window; see reclaim).
+    [[nodiscard]] bool isCurrent(const GeometryFacts& row) const noexcept
     {
-        material.eraseIf([identity](const MaterialFacts& row) { return row.material.as<vn::graphics::MaterialTag>() == identity; });
+        const auto entry = geometries.find(row.geometry.as<vn::graphics::NodeTag>());
+        return entry != geometries.end() && !entry->second.released && entry->second.described_revision == row.geometry.revision;
     }
 
-    /** @brief Gets the row that answers for a geometry right now (the one built at its live revision).
-     *
-     * It asks through the SAME lookup the recording asks with (`findGeometry`), so what this walk believes and
-     * what the recording will find cannot drift apart - and the question is a bisection of the row order
-     * rather than a walk of the table (the walk asks it once per command, see api/ContentFacts).
-     */
+    /// @brief Says whether @p row is its program's live answer (any variant/kind of the live revision counts).
+    [[nodiscard]] bool isCurrent(const ProgramFacts& row) const noexcept
+    {
+        const auto entry = programs.find(row.program.as<vn::graphics::ProgramTag>());
+        return entry != programs.end() && !entry->second.released && entry->second.described_revision == row.program.revision;
+    }
+
+    /// @brief Says whether @p row is its material's live answer.
+    [[nodiscard]] bool isCurrent(const MaterialFacts& row) const noexcept
+    {
+        const auto entry = materials.find(row.material.as<vn::graphics::MaterialTag>());
+        return entry != materials.end() && !entry->second.released && entry->second.described_revision == row.material.revision;
+    }
+
+    /** @brief Forgets the revision a reclaimed geometry row was built at, so the identity is rebuilt when named again. */
+    void noteGeometryRowGone(const GeometryFacts& row) noexcept
+    {
+        const auto entry = geometries.find(row.geometry.as<vn::graphics::NodeTag>());
+        if (entry == geometries.end() || entry->second.described_revision != row.geometry.revision) {
+            return;
+        }
+        entry->second.described = false;
+        entry->second.built     = false;
+    }
+
+    /** @brief Forgets the variant (or the screen entry) a reclaimed program row was built as. */
+    void noteProgramRowGone(const ProgramFacts& row) noexcept
+    {
+        const auto entry = programs.find(row.program.as<vn::graphics::ProgramTag>());
+        if (entry == programs.end() || entry->second.described_revision != row.program.revision) {
+            return;
+        }
+        if (row.kind == core::DrawKind::Screen) {
+            entry->second.screen_built = false;
+        }
+        else {
+            std::erase(entry->second.variants, row.variant.bits());
+        }
+        if (!entry->second.screen_built && entry->second.variants.empty()) {
+            entry->second.described = false; // nothing of that revision is left: a later ensure describes it again
+        }
+    }
+
+    /** @brief Forgets the revision a reclaimed material row was built at (see noteGeometryRowGone). */
+    void noteMaterialRowGone(const MaterialFacts& row) noexcept
+    {
+        const auto entry = materials.find(row.material.as<vn::graphics::MaterialTag>());
+        if (entry == materials.end() || entry->second.described_revision != row.material.revision) {
+            return;
+        }
+        entry->second.described = false;
+        entry->second.built     = false;
+    }
+
+    /** @brief Drops the entries the host is done with whose rows are all gone (the epoch rule's other half). */
+    void dropReleased()
+    {
+        for (auto it = geometries.begin(); it != geometries.end();) {
+            if (it->second.released && geometry.rowsOf(it->first.handle().bits()) == 0U) {
+                it = geometries.erase(it);
+            }
+            else {
+                ++it;
+            }
+        }
+        for (auto it = programs.begin(); it != programs.end();) {
+            if (it->second.released && program.rowsOf(it->first.handle().bits()) == 0U) {
+                const vn::graphics::ProgramId identity = it->first;
+                std::erase_if(program_names, [identity](const ProgramNameFacts& name) { return name.program == identity; });
+                it = programs.erase(it);
+            }
+            else {
+                ++it;
+            }
+        }
+        for (auto it = materials.begin(); it != materials.end();) {
+            if (it->second.released && material.rowsOf(it->first.handle().bits()) == 0U) {
+                // The ARENA SLOT follows the row: the block a recorded plan still reads is the row's, so the id leaves
+                // for the block storage only once that row is gone (see releaseMaterial).
+                material_slots_pending.push_back(it->first);
+                it = materials.erase(it);
+            }
+            else {
+                ++it;
+            }
+        }
+    }
+
     /** @brief Gets the row that answers for a TRACKED geometry right now (the one built at its live revision).
      *
      * It asks through the SAME lookup the recording asks with (`findGeometry`), so what this walk believes and
      * what the recording will find cannot drift apart - and the question is a bisection of the row order
      * rather than a walk of the table (the walk asks it once per command, see api/ContentFacts).
      *
-     * The membership check comes FIRST, and it is load-bearing: the revision has to be read from the shape the entry
-     * holds, and a plan may name one the host has already let go of - a parked row still answers for it (see
-     * releaseAbandoned), but the address itself may be freed memory, so it must not be read. A row that
-     * EXISTS holds a share (LiveGeometry::object), and that share is the license to touch the shape; a
-     * row-less address answers nullptr without being read.
+     * `built` is the membership test: an entry whose row aged out (or whose description was refused) has no row to
+     * answer with, and asking the table would walk it for an answer this walk already knows.
      */
     [[nodiscard]] const GeometryFacts* liveGeometry(vn::graphics::NodeId identity) const noexcept
     {
@@ -390,17 +564,17 @@ struct ContentStore::Data {
             return nullptr;
         }
         const auto entry = geometries.find(identity);
-        if (entry == geometries.end() || entry->second.shape == nullptr) {
+        if (entry == geometries.end() || !entry->second.built) {
             return nullptr;
         }
-        return findGeometry(view(), vn::graphics::contentRefOf(identity, entry->second.shape->revision())).entry;
+        return findGeometry(view(), vn::graphics::contentRefOf(identity, entry->second.described_revision)).entry;
     }
 
     /** @brief Gets the row that answers for a material right now (the one built at its live revision). */
     [[nodiscard]] const MaterialFacts* liveMaterial(vn::graphics::MaterialId identity) const noexcept
     {
         const auto entry = materials.find(identity);
-        if (entry == materials.end() || !entry->second.described) {
+        if (entry == materials.end() || !entry->second.built) {
             return nullptr;
         }
         return findMaterial(view(), vn::graphics::ContentRef{ identity.handle(), entry->second.described_revision }).entry;
@@ -408,7 +582,7 @@ struct ContentStore::Data {
 };
 
 ContentStore::ContentStore()
-  : d(std::make_shared<Data>())
+  : d(std::make_unique<Data>())
 {}
 
 ContentStore::~ContentStore() = default;
@@ -421,10 +595,10 @@ void ContentStore::track(vn::graphics::NodeId identity, const vn::graphics::Geom
     const auto [entry, inserted] = d->geometries.try_emplace(identity);
     (void)inserted;
     Data::LiveGeometry& live = entry->second;
-    Data::markUsed(live); // tracked by a frame: a pending release is cancelled
-    // A NEW SHAPE AT THE SAME IDENTITY. The rows the tables answer for the old revision stay answerable until the
-    // frames that may still record them are past (see ensureGeometry, which parks them when it notices the move), so
-    // nothing is dropped here - the value is replaced and the revision compare does the rest.
+    live.released             = false; // still in use: a release the host asked for is called off
+    // A NEW SHAPE AT THE SAME IDENTITY. The rows the tables answer for the old revision stay answerable until no
+    // live plan has named them for a window (see tablesFor's reclamation pass), so nothing is dropped here - the value
+    // is replaced and the revision compare does the rest.
     live.shape = description;
 }
 
@@ -433,15 +607,15 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::Geometry>& geomet
     if (geometry == nullptr) {
         return;
     }
-    // ONE CALL, TWO FACTS: the object reserves the address the rows are keyed by (see LiveGeometry::object), and its
-    // current shape is what a row is built from. This is the content side's door; a frame with no object names the two
-    // separately (see the overload above).
+    // ONE CALL, TWO FACTS: the object is what a row borrows its buffers from (and what "nobody else holds it" asks
+    // about), and its current shape is what a row is built from. This is the content side's door; a frame with no
+    // object names the two separately (see the overload above).
     const auto [entry, inserted] = d->geometries.try_emplace(geometry->id());
     (void)inserted;
     Data::LiveGeometry& live = entry->second;
-    Data::markUsed(live);
-    live.object = geometry;
-    live.shape  = geometry->description();
+    live.released             = false; // still in use: a release the host asked for is called off
+    live.object               = geometry;
+    live.shape                = geometry->description();
 }
 
 void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& program)
@@ -454,7 +628,7 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& p
         entry->second.object = program;
     }
     else {
-        Data::markUsed(entry->second);
+        entry->second.released = false; // still in use: a release the host asked for is called off
     }
 }
 
@@ -468,7 +642,7 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& ma
         entry->second.object = material;
     }
     else {
-        Data::markUsed(entry->second);
+        entry->second.released = false; // still in use: a release the host asked for is called off
     }
 }
 
@@ -486,7 +660,7 @@ void ContentStore::track(const vn::graphics::MaterialBase* identity, const vn::g
         return;
     }
     Data::LiveMaterial& live = entry->second;
-    Data::markUsed(live); // tracked by a frame: a pending release is cancelled
+    live.released             = false; // still in use: a release the host asked for is called off
     // A NEW VALUE STARTS A NEW EPISODE for the slot reports: the values changed, so what is wrong with them may
     // have too (see claimSlotReport) - and the report is asked BEFORE the next frame describes the value, which is
     // why it is re-armed here and not in ensureMaterial.
@@ -494,8 +668,8 @@ void ContentStore::track(const vn::graphics::MaterialBase* identity, const vn::g
         live.slots_reported = 0U;
     }
     // A NEW VALUE AT THE SAME IDENTITY. Replacing it is enough: `ensureMaterial` compares the value's revision with the
-    // one its row was built at, parks what it replaces and builds the rest, so a steady frame compares an integer and a
-    // material edit is one new value at the next publish (see the class note).
+    // one its row was built at and builds what the tables do not answer yet, so a steady frame compares an integer and
+    // a material edit is one new value at the next publish (see the class note).
     live.values = values;
 }
 
@@ -516,14 +690,22 @@ bool ContentStore::claimSlotReport(vn::graphics::MaterialId identity, std::size_
     return true;
 }
 
-const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, const core::FrameTimeline& timeline)
 {
+    // THE FRAME'S EPOCH, and the window's other end. A row named by this frame's plan is stamped with the frame the
+    // plan is being recorded in; a row no plan has named since `completedFrame()` leaves now - the frame whose
+    // command buffer could still replay that plan has been recycled (see FrameTimeline). No time window is guessed:
+    // before the session has learned its slot count nothing completes, so nothing is reclaimed either.
+    const std::uint64_t epoch       = timeline.hasOpenFrame() ? timeline.current().frame : timeline.submittedFrame() + 1U;
+    const std::uint64_t oldest_live = timeline.completedFrame() + 1U;
+    d->reclaim(oldest_live);
+
     for (const core::CompiledPass& pass : frame.passes) {
         for (const core::CompiledDraw& draw : pass.draws) {
             if (draw.kind == core::DrawKind::Screen) {
                 // The full-screen ABI is the engine's and carries no variant: a screen program is one text
                 // (see api/ContentSources).
-                ensureProgram(draw.program.as<vn::graphics::ProgramTag>(), ProgramVariant{}, true, timeline, retirement);
+                ensureProgram(draw.program.as<vn::graphics::ProgramTag>(), ProgramVariant{}, true, epoch);
                 continue;
             }
 
@@ -531,8 +713,8 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
                 const vn::graphics::NodeId     identity = command.geometry.as<vn::graphics::NodeTag>();
                 const vn::graphics::MaterialId material = command.material.as<vn::graphics::MaterialTag>();
 
-                ensureGeometry(identity, timeline, retirement);
-                ensureMaterial(command.material, timeline, retirement);
+                ensureGeometry(identity, epoch);
+                ensureMaterial(command.material, epoch);
 
                 if (command.program.isNull()) {
                     continue;
@@ -548,7 +730,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
                 }
                 ProgramVariant variant = variantOf(*live_material, *live_geometry);
                 variant.instanced      = command.instance_buffer != nullptr;
-                ensureProgram(command.program.as<vn::graphics::ProgramTag>(), variant, false, timeline, retirement);
+                ensureProgram(command.program.as<vn::graphics::ProgramTag>(), variant, false, epoch);
             }
         }
     }
@@ -568,7 +750,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     return d->facts;
 }
 
-void ContentStore::ensureGeometry(vn::graphics::NodeId identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+void ContentStore::ensureGeometry(vn::graphics::NodeId identity, std::uint64_t epoch)
 {
     if (identity.isNull()) {
         return;
@@ -582,48 +764,45 @@ void ContentStore::ensureGeometry(vn::graphics::NodeId identity, core::FrameTime
     }
 
     Data::LiveGeometry& live = entry->second;
-    Data::markUsed(live); // ensured by a frame: a pending release is cancelled
+    live.released             = false; // named by a frame: a release the host asked for is called off
     if (live.shape == nullptr) {
         return;
     }
-    const std::uint64_t revision = live.shape->revision();
-    if (live.described && live.described_revision == revision) {
-        return; // the steady frame: nothing to build, nothing to park
+    const std::uint64_t            revision = live.shape->revision();
+    const vn::graphics::ContentRef ref      = vn::graphics::contentRefOf(identity, revision);
+    if (!(live.described && live.described_revision == revision)) {
+        // A NEW REVISION IS A NEW ATTEMPT: what the next frames ask for is decided by its outcome, and the old
+        // revision's row stays answerable until no live plan names it (tablesFor's reclamation pass).
+        live.described          = true;
+        live.described_revision = revision;
+        live.built              = false;
     }
-
-    if (live.described) {
-        // The shape moved: what the table answers for the old revision stays answerable until the frames that may
-        // still record it are past (see the file note), and then leaves.
-        const vn::graphics::ContentRef retired_ref = vn::graphics::contentRefOf(identity, live.described_revision);
-        const std::weak_ptr<Data>       weak        = d;
-        const bool                      parked      = retirement.retire(timeline, [weak, retired_ref]() {
-            if (const std::shared_ptr<Data> data = weak.lock()) {
-                data->eraseGeometryRows(retired_ref);
-            }
-        });
-        if (!parked) {
-            ++d->retained; // no window: the rows are kept, which costs memory and never correctness
+    if (live.built) {
+        const FactResult<GeometryFacts> row = findGeometry(d->view(), ref);
+        if (row.found()) {
+            d->geometry.stamp(row.entry, epoch);
+            return; // the steady frame: one bisection, no build
         }
+        live.built = false; // the row aged out under us; the description is built again below
     }
 
     auto          storage = std::make_unique<Data::GeometryStorage>();
     GeometryFacts fresh;
     const FactMiss miss = buildGeometryFacts(*live.shape, fresh, storage->channels, storage->primitives);
-    live.described          = true;
-    // The ATTEMPT, not the success: a shape that failed is not retried until the revision moves.
-    live.described_revision = revision;
     if (miss != FactMiss::None) {
+        // The ATTEMPT, not the success: a shape that failed is not retried until the revision moves.
         return;
     }
 
     // The row is keyed by the REF the plan names, not by the description it was built from: the description is a
     // value, the ref (identity + revision) is what a command - and therefore a lookup - carries.
-    fresh.geometry = vn::graphics::contentRefOf(identity, revision);
-    d->geometry.append(fresh, std::move(storage));
+    fresh.geometry = ref;
+    d->geometry.append(fresh, std::move(storage), epoch);
+    live.built = true;
     ++d->builds;
 }
 
-void ContentStore::ensureMaterial(vn::graphics::ContentRef material, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+void ContentStore::ensureMaterial(vn::graphics::ContentRef material, std::uint64_t epoch)
 {
     const vn::graphics::MaterialId identity = material.as<vn::graphics::MaterialTag>();
     auto                          entry    = d->materials.find(identity);
@@ -637,7 +816,7 @@ void ContentStore::ensureMaterial(vn::graphics::ContentRef material, core::Frame
     }
 
     Data::LiveMaterial& live = entry->second;
-    Data::markUsed(live); // ensured by a frame: a pending release is cancelled
+    live.released             = false; // named by a frame: a release the host asked for is called off
 
     // THE VALUES A ROW IS BUILT FROM: the ones the frame published. A material no frame published (a command a host
     // built by hand) is answered from the object's own cache - the same door every hand-built command uses, and the
@@ -646,46 +825,38 @@ void ContentStore::ensureMaterial(vn::graphics::ContentRef material, core::Frame
     if (values == nullptr && live.object != nullptr) {
         values = live.object->description();
     }
-    const std::uint64_t revision = values != nullptr ? values->revision() : 0;
-    if (live.described && live.described_revision == revision) {
-        return; // the steady frame: nothing to build, nothing to park
+    const std::uint64_t            revision = values != nullptr ? values->revision() : 0;
+    const vn::graphics::ContentRef ref{ identity.handle(), revision };
+    if (!(live.described && live.described_revision == revision)) {
+        // A NEW VALUE IS A NEW ATTEMPT (see ensureGeometry), and it starts a fresh episode for the slot reports
+        // (see claimSlotReport).
+        live.described          = true;
+        live.described_revision = revision;
+        live.built              = false;
+        live.slots_reported     = 0U;
     }
-
-    if (live.described) {
-        // The value moved: the rows the table answers for the old revision stay answerable until the frames that may
-        // still record them are past (the same rule the geometry table follows), and then leave.
-        const std::uint64_t       retired = live.described_revision;
-        const std::weak_ptr<Data> weak    = d;
-        const bool                parked  = retirement.retire(timeline, [weak, identity, retired]() {
-            if (const std::shared_ptr<Data> data = weak.lock()) {
-                data->eraseMaterialRows(identity, retired);
-            }
-        });
-        if (!parked) {
-            ++d->retained; // no window: the rows are kept, which costs memory and never correctness
+    if (live.built) {
+        const FactResult<MaterialFacts> row = findMaterial(d->view(), ref);
+        if (row.found()) {
+            d->material.stamp(row.entry, epoch);
+            return; // the steady frame: one bisection, no build
         }
+        live.built = false;
     }
 
     auto          storage = std::make_unique<Data::MaterialStorage>();
     MaterialFacts fresh;
-    const FactMiss miss = buildMaterialFacts(vn::graphics::ContentRef{ identity.handle(), revision }, values, fresh, storage->block);
-    live.described          = true;
-    live.described_revision = revision;
-    // A fresh description starts a fresh episode for the material's slot reports (see claimSlotReport).
-    live.slots_reported = 0U;
+    const FactMiss miss = buildMaterialFacts(ref, values, fresh, storage->block);
     if (miss != FactMiss::None) {
-        return;
+        return; // the ATTEMPT, not the success (see ensureGeometry)
     }
 
-    d->material.append(fresh, std::move(storage));
+    d->material.append(fresh, std::move(storage), epoch);
+    live.built = true;
     ++d->builds;
 }
 
-void ContentStore::ensureProgram(vn::graphics::ProgramId program,
-                                 const ProgramVariant&  variant,
-                                 bool                   screen,
-                                 core::FrameTimeline&   timeline,
-                                 core::RetirementQueue& retirement)
+void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramVariant& variant, bool screen, std::uint64_t epoch)
 {
     if (program.isNull()) {
         return;
@@ -696,41 +867,42 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program,
     }
 
     Data::LiveProgram& live = entry->second;
-    Data::markUsed(live); // ensured by a frame: a pending release is cancelled
+    live.released             = false; // named by a frame: a release the host asked for is called off
     // THE TRACKED OBJECT IS WHAT THE ROW IS DESCRIBED FROM: the plan names the identity, and the values are the
     // object's current ones - a build never resurrects a revision (see the class note), so the plan's revision
     // is deliberately not used here.
     const vn::graphics::ShaderProgram& source   = *live.object;
     const std::uint64_t                revision = source.revision();
-    if (live.described && live.described_revision == revision) {
-        const bool built = screen ? live.screen_built : std::find(live.variants.begin(), live.variants.end(), variant.bits()) != live.variants.end();
-        if (built) {
-            return; // this text of this revision is already in the tables
-        }
-    }
-    else {
-        if (live.described) {
-            const vn::graphics::ProgramId identity = program;
-            const std::uint64_t           retired  = live.described_revision;
-            const std::weak_ptr<Data>     weak     = d;
-            const bool                    parked   = retirement.retire(timeline, [weak, identity, retired]() {
-                if (const std::shared_ptr<Data> data = weak.lock()) {
-                    data->eraseProgramRows(identity, retired);
-                }
-            });
-            if (!parked) {
-                ++d->retained;
-            }
-        }
+    const vn::graphics::ContentRef     ref{ program.handle(), revision };
+    if (!(live.described && live.described_revision == revision)) {
+        // Another revision is another set of texts: none of the old answers is this one's (its rows age out by epoch).
         live.described          = true;
         live.described_revision = revision;
-        // Another revision is another set of texts: none of the old answers is this one's. (The rows stay in
-        // the tables until their park comes due.)
         live.variants.clear();
         live.screen_built = false;
         // The NAME travels with the description, not with the row: a program whose text is refused still has a
         // name, and the sentence that says so has no row to read it from (see ProgramNameFacts).
         d->recordProgramName(program, source.name());
+    }
+
+    const auto built = [&live, &variant, screen]() {
+        return screen ? live.screen_built
+                      : std::find(live.variants.begin(), live.variants.end(), variant.bits()) != live.variants.end();
+    };
+    if (built()) {
+        const FactResult<ProgramFacts> row =
+            findProgram(d->view(), ref, screen ? ProgramVariant{} : variant, screen ? core::DrawKind::Screen : core::DrawKind::Content);
+        if (row.found()) {
+            d->program.stamp(row.entry, epoch);
+            return; // this text of this revision is already in the tables
+        }
+        // The row aged out under us: forget the bit and build it again (see ensureGeometry).
+        if (screen) {
+            live.screen_built = false;
+        }
+        else {
+            std::erase(live.variants, variant.bits());
+        }
     }
 
     ProgramFacts   fresh;
@@ -745,104 +917,63 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program,
     else {
         live.variants.push_back(variant.bits());
     }
-    d->program.append(fresh, {});
+    d->program.append(fresh, {}, epoch);
     ++d->builds;
 }
 
-std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement, std::vector<vn::graphics::MaterialId>& released_materials)
+std::size_t ContentStore::releaseAbandoned(std::vector<vn::graphics::MaterialId>& released_materials)
 {
-    const std::weak_ptr<Data> weak     = d;
-    std::size_t               released = 0U;
     released_materials.clear();
+    std::size_t released = 0U;
 
-    // THE ENTRY AND ITS ROWS LEAVE TOGETHER, THROUGH THE PARK, for all three tables. Everything here is keyed by
-    // content IDENTITY (a handle, see ContentId.hpp), so an erased entry can never be confused with a later
-    // object - what the park buys is the frame in flight: for one retirement window the rows still answer for the
-    // identity a recorded plan named. A park that cannot be taken KEEPS the entry (memory, never correctness) and
-    // is retried on a later frame.
-    for (auto it = d->geometries.begin(); it != d->geometries.end();) {
+    // AN ABANDONED ENTRY IS ONLY MARKED HERE. Its rows may still answer for a recorded plan, and the entry is what
+    // keeps a material's maps (and a geometry's shape) alive for them - so the entry leaves in dropReleased() once its
+    // last row does, and its arena slot with it.
+    for (auto& [identity, live] : d->geometries) {
+        if (live.released) {
+            continue; // already the host's word
+        }
         // WHAT "NOBODY ELSE HOLDS IT" MEANS: the object (when the identity named one) is the content's; a shape with no
-        // object came from a value producer, whose owner is the one that keeps it alive. Either way, a share besides the
-        // store's own means the thing is still in use.
-        const unsigned long held_outside = it->second.object != nullptr ? it->second.object->useCount() : (it->second.shape != nullptr ? it->second.shape->useCount() : 0UL);
+        // object came from a value producer, whose owner is the one that keeps it alive. Either way, a share besides
+        // the store's own means the thing is still in use.
+        const unsigned long held_outside = live.object != nullptr ? live.object->useCount() : (live.shape != nullptr ? live.shape->useCount() : 0UL);
         if (held_outside > 1UL) {
-            ++it;
             continue;
         }
-        const vn::graphics::NodeId                       identity    = it->first;
-        const vn::graphics::GeometryDescriptionPtr       held        = it->second.shape;
-        const vn::intrusive_ptr<vn::graphics::Geometry>  object_held = it->second.object;
-        const bool                                       parked      = retirement.retire(timeline, [weak, identity, held, object_held]() {
-            (void)held;        // the shape's share lives until this runs, and dies with the rows it guards
-            (void)object_held; // and so does the object that names it
-            if (const std::shared_ptr<Data> data = weak.lock()) {
-                data->eraseGeometryOf(identity);
-            }
-        });
-        if (!parked) {
-            ++d->retained; // no window yet: keep the description and its rows; retry on a later frame
-            ++it;
-            continue;
-        }
-        it = d->geometries.erase(it);
+        live.released = true;
         ++released;
     }
 
-    for (auto it = d->programs.begin(); it != d->programs.end();) {
-        if (it->second.object != nullptr && it->second.object->useCount() > 1UL) {
-            ++it;
+    for (auto& [identity, live] : d->programs) {
+        (void)identity;
+        if (live.released || (live.object != nullptr && live.object->useCount() > 1UL)) {
             continue;
         }
-        const vn::graphics::ProgramId                        identity = it->first;
-        const vn::intrusive_ptr<vn::graphics::ShaderProgram> held     = it->second.object;
-        const bool                                           parked   = retirement.retire(timeline, [weak, identity, held]() {
-            (void)held;
-            if (const std::shared_ptr<Data> data = weak.lock()) {
-                data->eraseProgramOf(identity);
-            }
-        });
-        if (!parked) {
-            ++d->retained;
-            ++it;
-            continue;
-        }
-        it = d->programs.erase(it);
+        live.released = true;
         ++released;
     }
 
-    for (auto it = d->materials.begin(); it != d->materials.end();) {
-        if (it->first.isNull()) {
-            ++it; // the default material is not an object anyone can abandon
+    for (auto& [identity, live] : d->materials) {
+        if (identity.isNull() || live.released) {
+            continue; // the default material is not an object anyone can abandon
+        }
+        if (live.object != nullptr && live.object->useCount() > 1UL) {
             continue;
         }
-        if (it->second.object != nullptr && it->second.object->useCount() > 1UL) {
-            ++it;
-            continue;
-        }
-        const vn::graphics::MaterialId                      identity = it->first;
-        const vn::intrusive_ptr<vn::graphics::MaterialBase> held     = it->second.object;
-        const bool                                          parked   = retirement.retire(timeline, [weak, identity, held]() {
-            (void)held;
-            if (const std::shared_ptr<Data> data = weak.lock()) {
-                data->eraseMaterialOf(identity);
-            }
-        });
-        if (!parked) {
-            ++d->retained;
-            ++it;
-            continue;
-        }
-        // The arena slot follows the row: the material is gone, so its storage is nobody's to keep. The
-        // identity is a KEY only (the object may already be destroyed - see the declaration).
-        released_materials.push_back(identity);
-        it = d->materials.erase(it);
+        live.released = true;
         ++released;
     }
 
+    d->dropReleased();
+
+    // THE ARENA SLOTS come out here: an id whose entry (and therefore every row) is gone is nobody's to keep. The
+    // identity is a KEY only (the object may already be destroyed - see the declaration).
+    released_materials.swap(d->material_slots_pending);
+    d->material_slots_pending.clear();
     return released;
 }
 
-bool ContentStore::releaseGeometry(vn::graphics::NodeId identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+bool ContentStore::releaseGeometry(vn::graphics::NodeId identity)
 {
     if (identity.isNull()) {
         return false;
@@ -851,128 +982,41 @@ bool ContentStore::releaseGeometry(vn::graphics::NodeId identity, core::FrameTim
     if (entry == d->geometries.end()) {
         return true; // not resident: the release is already true of this identity
     }
-    Data::LiveGeometry& live = entry->second;
-    if (live.release_requested) {
-        return true; // one request is enough; a second callback would only repeat the removal
-    }
-
-    const std::uint64_t                        token  = ++live.release_token;
-    live.release_requested                             = true;
-    const std::weak_ptr<Data>                  weak   = d;
-    // The id is what the rows are keyed by, so it must stay reserved until the park runs (see
-    // releaseAbandoned): the lambda owns the shape and drops it together with the rows it erases.
-    const vn::graphics::GeometryDescriptionPtr held   = live.shape;
-    const vn::intrusive_ptr<vn::graphics::Geometry> object_held = live.object;
-    const bool                                 parked = retirement.retire(timeline, [weak, identity, token, held, object_held]() {
-        (void)held;
-        (void)object_held; // both shares live until this runs, and die with the rows they guard
-        const std::shared_ptr<Data> data = weak.lock();
-        if (data == nullptr) {
-            return;
-        }
-        const auto found = data->geometries.find(identity);
-        if (found == data->geometries.end() || !found->second.release_requested || found->second.release_token != token) {
-            return; // the identity was used again: this release was cancelled
-        }
-        data->geometries.erase(found);
-        data->eraseGeometryOf(identity);
-    });
-    if (!parked) {
-        // No in-flight window: keep everything, so the description's rows cannot vanish while a recorded frame
-        // still names them. The token moves so a stale callback (there is none) could never match.
-        live.release_requested = false;
-        ++live.release_token;
-        return false;
-    }
+    entry->second.released = true;
+    d->dropReleased(); // an identity whose rows are already gone leaves now; otherwise at the next frame boundary
     return true;
 }
 
-bool ContentStore::releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+bool ContentStore::releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry)
 {
     if (geometry == nullptr) {
         return false;
     }
-    return releaseGeometry(geometry->id(), timeline, retirement);
+    return releaseGeometry(geometry->id());
 }
 
-bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program)
 {
     if (program == nullptr) {
         return false;
     }
-    const vn::graphics::ProgramId identity = program->id();
-    const auto                    entry    = d->programs.find(identity);
-    if (entry == d->programs.end()) {
-        return true;
-    }
-    Data::LiveProgram& live = entry->second;
-    if (live.release_requested) {
-        return true;
-    }
-
-    const std::uint64_t token                                   = ++live.release_token;
-    live.release_requested                                      = true;
-    const std::weak_ptr<Data> weak                              = d;
-    // The entry must stay until the park runs (see releaseAbandoned).
-    const vn::intrusive_ptr<vn::graphics::ShaderProgram> held   = live.object;
-    const bool                                           parked = retirement.retire(timeline, [weak, identity, token, held]() {
-        (void)held;
-        const std::shared_ptr<Data> data = weak.lock();
-        if (data == nullptr) {
-            return;
-        }
-        const auto found = data->programs.find(identity);
-        if (found == data->programs.end() || !found->second.release_requested || found->second.release_token != token) {
-            return;
-        }
-        data->programs.erase(found);
-        data->eraseProgramOf(identity);
-    });
-    if (!parked) {
-        live.release_requested = false;
-        ++live.release_token;
-        return false;
+    const auto entry = d->programs.find(program->id());
+    if (entry != d->programs.end()) {
+        entry->second.released = true;
+        d->dropReleased();
     }
     return true;
 }
 
-bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material)
 {
     if (material == nullptr) {
         return false;
     }
-    const vn::graphics::MaterialId identity = material->id();
-    const auto                     entry    = d->materials.find(identity);
-    if (entry == d->materials.end()) {
-        return true;
-    }
-    Data::LiveMaterial& live = entry->second;
-    if (live.release_requested) {
-        return true;
-    }
-
-    const std::uint64_t token                                  = ++live.release_token;
-    live.release_requested                                     = true;
-    const std::weak_ptr<Data> weak                             = d;
-    // The id must stay reserved until the rows keyed by it are erased (see releaseAbandoned).
-    const vn::intrusive_ptr<vn::graphics::MaterialBase> held   = live.object;
-    const bool                                          parked = retirement.retire(timeline, [weak, identity, token, held]() {
-        (void)held;
-        const std::shared_ptr<Data> data = weak.lock();
-        if (data == nullptr) {
-            return;
-        }
-        const auto found = data->materials.find(identity);
-        if (found == data->materials.end() || !found->second.release_requested || found->second.release_token != token) {
-            return;
-        }
-        data->materials.erase(found);
-        data->eraseMaterialOf(identity);
-    });
-    if (!parked) {
-        live.release_requested = false;
-        ++live.release_token;
-        return false;
+    const auto entry = d->materials.find(material->id());
+    if (entry != d->materials.end()) {
+        entry->second.released = true;
+        d->dropReleased();
     }
     return true;
 }
@@ -982,12 +1026,12 @@ void ContentStore::clear()
     d->geometries.clear();
     d->programs.clear();
     d->materials.clear();
+    d->material_slots_pending.clear();
     d->program_names.clear();
     d->geometry.clear();
     d->program.clear();
     d->material.clear();
-    d->facts    = ContentFacts{};
-    d->retained = 0U;
+    d->facts = ContentFacts{};
 }
 
 std::size_t ContentStore::geometryEntries() const noexcept
@@ -1016,11 +1060,6 @@ std::size_t ContentStore::materialCount() const noexcept
 std::uint64_t ContentStore::builds() const noexcept
 {
     return d->builds;
-}
-
-std::size_t ContentStore::retained() const noexcept
-{
-    return d->retained;
 }
 
 VN_VSG_NS_END

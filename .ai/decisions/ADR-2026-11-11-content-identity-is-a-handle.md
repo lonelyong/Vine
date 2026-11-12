@@ -46,8 +46,12 @@
    `ProgramFacts::generation` 随之删除；几何行的 `geometry` + `geometry_revision` 合并当时仍在待办。
    > 追记（2026-11-12）：几何合并已完成——`CollectedCommand` / `CompiledCommand` / `GeometryFacts` 的
    > `geometry`+`geometry_revision` 是一个 `ContentRef`，`findGeometry` 按它查；本段余下的只有第 3 步。
-3. **寿命交给 epoch**（未做）：`ContentStore` 的 `markUsed` / parking / `kept` 换成 `ResidencyTable`
-   （`last_epoch < oldest_live` 即可回收，无时间窗、无 kept 回退）。
+3. **寿命交给 epoch**（已完成，2026-11-12）：`ContentStore` 的 `markUsed` / parking / `kept` 换成按行的 epoch
+   （`last_epoch < completedFrame() + 1` 且不再是条目当前答案）。落地时定下两条：
+   - "当前答案"那一半是必须的 —— 否则被裁剪 / 隐藏的内容会因为没被本帧计划命中而丢行，与
+     `graphics-content-lifecycle.md` 的 F27/F28（裁剪不丢上传）直接冲突；
+   - 条目比行多活一步（材质行借用材质的贴图），所以"宿主不要了"与"没有行还答得出"同时成立才丢条目，
+     材质 arena 槽跟最后一行走。
 
 **不做 A**：设计已把身份定为句柄，A 会让设计文档与代码长期不一致，且重放/转储仍要另造键。
 **不做 C**：地址→句柄的映射表正是 `G7` 说的“把复杂性往下推一层”，并留下两层身份。

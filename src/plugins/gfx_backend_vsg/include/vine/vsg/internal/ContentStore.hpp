@@ -39,19 +39,23 @@
  * lookup MISSES - which is the designed answer (see api/ContentFacts: "a miss is a report, not a fallback"),
  * not something a store could paper over: the bytes it would have to describe are gone.
  *
- * WHY A SUPERSEDED ENTRY STAYS. The plan that named revision 3 may still be RECORDED after the object has
- * moved to 4 (the frame drive re-records), so a replaced revision must keep answering until the slots that
- * could still name it are past - the same window the executor gives a replaced GPU object, through the same
- * `core::RetirementQueue`. The entry is therefore not replaced but JOINED: the tables carry both revisions,
- * and the old one leaves when its park comes due. The one exception is the MATERIAL, whose lookup is by
- * identity alone (a plan cannot name a material revision - see findMaterial): the table has to answer "the
- * material now", so an edit REPLACES the entry in place and only the replaced value is parked.
+ * WHY A SUPERSEDED ROW STAYS, AND HOW LONG. The plan that named revision 3 may still be RECORDED after the
+ * object has moved to 4 (the frame drive re-records), so a replaced revision must keep answering for the
+ * frames that still name it. So every row carries the EPOCH of the last plan that named it (the frame number),
+ * and leaves when no live plan can name it any more - `last_epoch < oldest_live`, where `oldest_live` is the
+ * first frame whose completion is not yet proven (`FrameTimeline::completedFrame() + 1`). The ONE row that
+ * outlives that window is its entry's live answer: a drawable culled for a hundred frames is still the
+ * content the host holds, so its facts (and the uploads they declare) stay. There is no per-entry park and no
+ * release token: the row's age and its entry are the whole lifetime, and one pass at the frame boundary
+ * reclaims what both agree is done (`ResidencyTable`'s rule, applied to rows).
  *
- * WHY AN ENTRY OWNS ITS CONTENT. The tables are keyed by the identity a plan names (a handle, see ContentId.hpp),
- * and a row is built from the OBJECT the host tracks - so the store holds an owning reference per tracked identity,
- * exactly like api/MaterialImages does for its textures. What that buys is the row's own home: `ensureProgram` reads
- * the object to describe its next revision, and @ref releaseAbandoned drops what nobody else holds, so "nobody else
- * holds it" means the object is gone - the case whose rows are dead. A geometry's own cache holds its current
+ * WHY AN ENTRY OWNS ITS CONTENT, AND FOR HOW LONG. The tables are keyed by the identity a plan names (a handle,
+ * see ContentId.hpp), and a row is built from the OBJECT the host tracks - so the store holds an owning
+ * reference per tracked identity, exactly like api/MaterialImages does for its textures. The entry must outlive
+ * its rows: a material row borrows its maps from the material (`MaterialSlotFacts::texture`), so the share is
+ * what keeps a row a plan may still name readable. The entry is therefore dropped when BOTH hold: the host is
+ * done with it (@ref releaseGeometry / releaseProgram / releaseMaterial, or nobody else holds the object - see
+ * @ref releaseAbandoned) AND no row of that identity is left. A geometry's own cache holds its current
  * description (see Geometry::description) for the same reason.
  *
  * WHAT IT REFUSES TO DO. It reports nothing: an object it cannot describe (a geometry without positions, a
@@ -78,8 +82,8 @@ class ContentStore {
      * (`RenderCommand::node` and `RenderCommand::description`).
      *
      * A NEW DESCRIPTION AT A KNOWN IDENTITY IS AN EDIT: the value replaces the old one, and the rows the tables answer
-     * for the old revision stay answerable until the frames that may still record them are past - they leave at the
-     * park `ensureGeometry` takes when it notices the move. Tracking the same pair again is not an error.
+     * for the old revision stay answerable until no live plan has named them for a window (see the file note).
+     * Tracking the same pair again is not an error.
      *
      * @warning
      * - This overload does NOT hold the identity's object alive: it can only name the shape. The caller that drained
@@ -123,8 +127,8 @@ class ContentStore {
      *   so describing a material never reads the live material on the thread that records the frame. A material edit
      *   is a new value at the next publish, which is what makes an edit inside an edit batch land with the batch
      *   (design graphics-threading.md C18).
-     * - The rows the tables answer for the old value stay answerable until the frames that may still record them are
-     *   past, which `ensureMaterial` arranges when it notices the revision move (see `LiveMaterial::values`).
+     * - The rows the tables answer for the old value stay answerable until no live plan has named them for a window
+     *   (see `LiveMaterial::values` and the file note).
      * - A host that built its command by hand and never published a value is answered from the object's own cache
      *   (`MaterialBase::description`), the same door such a command uses everywhere else.
      *
@@ -165,88 +169,76 @@ class ContentStore {
      * it is shaded with, the geometry it draws), so the program entry the recorder asks for is the one its
      * own text declares - `abi` and all.
      *
-     * REPLACED REVISIONS AND REPLACED MATERIALS ARE PARKED through @p retirement, dated against @p timeline
-     * (the caller's clock, like every other park in this backend), and released when the window is past.
+     * REPLACED ROWS AGE OUT, AND SO DO THE ENTRIES THE HOST HAS LET GO. Every row this walk names is stamped with
+     * @p timeline's frame; the walk first reclaims every row no live plan named for a window (`last_epoch <
+     * completedFrame() + 1`) and then drops the entries whose host is done and whose rows are all gone.
      *
-     * @param frame      The compiled plan whose identities are ensured.
-     * @param timeline   The frame clock parks are dated against.
-     * @param retirement Where replaced entries are parked.
+     * @param frame    The compiled plan whose identities are ensured.
+     * @param timeline The frame clock the row epochs and the reclamation watermark come from.
      * @return The tables, valid until the next call - they borrow this store's own storage.
      */
-    [[nodiscard]] const ContentFacts& tablesFor(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    [[nodiscard]] const ContentFacts& tablesFor(const core::CompiledFrame& frame, const core::FrameTimeline& timeline);
 
     /**
-     * @brief Drops the tracked objects nobody else holds any more, and parks their entries' removal.
+     * @brief Drops the tracked objects nobody else holds any more.
      *
      * An object is abandoned when the store's share is the last one: nothing can draw with it again, so its
-     * rows have no future lookups to answer - but they are parked rather than dropped, because a plan that
-     * already named the object may still be recorded.
+     * entry has no future to describe. The entry is marked released here and DROPPED when its rows are gone -
+     * a plan already recorded may still name them (see the file note).
      *
-     * @param timeline           The frame clock parks are dated against.
-     * @param retirement         Where the abandoned entries' removals are parked.
-     * @param released_materials Receives the identities of abandoned MATERIALS (cleared first): the block
-     *                           storage returns their arena slots. A raw pointer is only used as the arena's
-     *                           key, never dereferenced, so it may already name freed memory.
+     * @param released_materials Receives the identities of abandoned MATERIALS whose arena slots are free at
+     *                           the next sweep (cleared first): the block storage returns those slots. A raw
+     *                           pointer is only used as the arena's key, never dereferenced, so it may already
+     *                           name freed memory.
      * @return Number of abandoned objects released.
      */
-    std::size_t releaseAbandoned(core::FrameTimeline& timeline, core::RetirementQueue& retirement, std::vector<vn::graphics::MaterialId>& released_materials);
+    std::size_t releaseAbandoned(std::vector<vn::graphics::MaterialId>& released_materials);
 
     /**
-     * @brief Marks the identity @p identity as done with and parks the removal of its rows.
+     * @brief Tells the store the host is done with @p identity, and drops its entry once its rows are gone.
      *
      * @details
-     * - The live entry stays until the parked callback runs; that is what makes the release CANCELABLE:
-     *   track() / ensureGeometry() clear the request and bump the token, so a later use keeps the identity
-     *   resident and an old callback becomes a no-op.
-     * - The rows leave when the in-flight window is past (see the retirement queue); the shape is untouched.
-     * - When parking is unavailable the request is rolled back and false is returned: memory may be kept,
-     *   never freed while a recorded frame can still name it.
+     * - The release is a FLAG, not a parked callback: the entry stops describing (a later track() / ensureGeometry()
+     *   that names it again clears the flag), and it leaves at the next frame boundary whose rows are all gone -
+     *   the rows themselves age out by epoch (see the file note).
+     * - A null identity is refused, and an identity that was never tracked is already released (true).
+     * - Releasing a live identity twice is a no-op.
      *
-     * @param identity   Identity to release; a null id is refused.
-     * @param timeline   Frame clock the park is dated against.
-     * @param retirement Where the removal is parked.
-     * @return true when the request was accepted (or the identity was not resident); false when it could not be
-     *         parked safely.
+     * @param identity Identity to release; a null id is refused.
+     * @return true when the identity is not (or no longer) resident.
      */
-    bool releaseGeometry(vn::graphics::NodeId identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    bool releaseGeometry(vn::graphics::NodeId identity);
 
     /**
      * @brief Releases the identity @p geometry names (the content-side convenience).
      *
-     * @param geometry   Geometry to release; null is refused.
-     * @param timeline   Frame clock the park is dated against.
-     * @param retirement Where the removal is parked.
-     * @return true when the request was accepted (or nothing was resident); false when it could not be parked safely.
+     * @param geometry Geometry to release; null is refused.
+     * @return true when the identity is not (or no longer) resident; false for a null geometry.
      */
-    bool releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    bool releaseGeometry(vn::raw_ptr<const vn::graphics::Geometry> geometry);
 
-    /** @brief Marks a program the host still owns as releasable and parks the removal of its rows.
+    /** @brief Tells the store the host is done with @p program, and drops its entry once its rows are gone.
      *
      * @details
-     * - Same token and parking semantics as releaseGeometry(): a later track() / ensureProgram() cancels
-     *   the request, and a failed park leaves the store unchanged.
+     * - Same released-flag rule as releaseGeometry(): a later track() / ensureProgram() clears it, and the entry
+     *   leaves when no row names it any more.
      *
-     * @param program    Program to release; null is refused.
-     * @param timeline   Frame clock the park is dated against.
-     * @param retirement Where the removal is parked.
-     * @return true when the request was accepted (or the object was not resident); false when it could not be
-     *         parked safely.
+     * @param program Program to release; null is refused.
+     * @return true when the program is not (or no longer) resident; false for a null program.
      */
-    bool releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    bool releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram> program);
 
-    /** @brief Marks a material the host still owns as releasable and parks the removal of its row.
+    /** @brief Tells the store the host is done with @p material, and drops its entry once its rows are gone.
      *
      * @details
-     * - Same token and parking semantics as releaseGeometry(): a later track() / updateMaterial() /
-     *   ensureMaterial() cancels the request, and a failed park leaves the store unchanged.
+     * - Same released-flag rule as releaseGeometry(). The material's ARENA SLOT is not freed here: the row's block
+     *   may still be read by a recorded plan, so the slot leaves through @ref releaseAbandoned's output once the row
+     *   is gone (the sweep frees it then).
      *
-     * @param material   Material to release; null is refused.
-     * @param timeline   Frame clock the park is dated against.
-     * @param retirement Where the removal is parked.
-     * @return true when the request was accepted (or the object was not resident); false when it could not be
-     *         parked safely.
+     * @param material Material to release; null is refused.
+     * @return true when the material is not (or no longer) resident; false for a null material.
      */
-    bool releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    bool releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material);
 
     /** @brief Forgets every tracked object and every entry. The session-teardown path: nothing is parked. */
     void clear();
@@ -270,26 +262,17 @@ class ContentStore {
     /** @brief Gets how many entries were built in total: a steady frame raises this by nothing. */
     [[nodiscard]] std::uint64_t builds() const noexcept;
 
-    /**
-     * @brief Gets how many supersessions could not be parked and were retained instead.
-     *
-     * A store that is never told how many frames may be in flight cannot park, and the honest answer to "we
-     * do not know" is to keep the entry (it costs memory, never correctness) rather than to free it while a
-     * recorded frame may still name it. The count says how many supersessions took that path.
-     */
-    [[nodiscard]] std::size_t retained() const noexcept;
-
     ~ContentStore();
 
     ContentStore(const ContentStore&)            = delete;
     ContentStore& operator=(const ContentStore&) = delete;
 
   private:
-    /** @brief Ensures the tables answer for one named identity's current shape (see tablesFor). */
-    void ensureGeometry(vn::graphics::NodeId identity, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    /** @brief Ensures the tables answer for one named identity's current shape, stamped with @p epoch. */
+    void ensureGeometry(vn::graphics::NodeId identity, std::uint64_t epoch);
 
-    /** @brief Ensures the tables answer for one named material (see tablesFor). */
-    void ensureMaterial(vn::graphics::ContentRef material, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+    /** @brief Ensures the tables answer for one named material, stamped with @p epoch. */
+    void ensureMaterial(vn::graphics::ContentRef material, std::uint64_t epoch);
 
     /** @brief Ensures the tables answer for one named program IN ONE GEOMETRY-FREE KIND (see tablesFor).
      *
@@ -298,16 +281,10 @@ class ContentStore {
      * that named a superseded revision looks up a row that is gone - which is the designed miss, not something
      * the store may paper over (see the class note).
      */
-    void ensureProgram(vn::graphics::ProgramId    program,
-                       const ProgramVariant&      variant,
-                       bool                       screen,
-                       core::FrameTimeline&       timeline,
-                       core::RetirementQueue&     retirement);
+    void ensureProgram(vn::graphics::ProgramId program, const ProgramVariant& variant, bool screen, std::uint64_t epoch);
 
     struct Data;
-    // A shared Data rather than a unique one: a parked removal holds a WEAK reference to it, so a store
-    // that dies before its parks come due releases nothing and dangles nowhere.
-    std::shared_ptr<Data> d;
+    std::unique_ptr<Data> d;
 };
 
 VN_VSG_NS_END

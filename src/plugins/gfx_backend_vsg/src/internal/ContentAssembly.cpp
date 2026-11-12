@@ -97,7 +97,7 @@ const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame
     d->timeline   = &timeline;
     d->retirement = &retirement;
     d->storage->beginFrame();
-    d->facts = &d->store->tablesFor(frame, timeline, retirement);
+    d->facts = &d->store->tablesFor(frame, timeline);
     // The streams' frame opens ON THE FACTS THAT WALK JUST PUBLISHED (see api/StreamUploads): the published
     // declaration index says which buffers live content still names, and each entry answers the other half (its
     // own buffer's revision). Culling keeps a stream (its row still declares the buffer); leaving the tree lets
