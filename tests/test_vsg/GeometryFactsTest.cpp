@@ -73,10 +73,10 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     std::vector<vn::vsg::PrimitiveFacts> primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, primitives), FactMiss::None);
 
-    // The identity is the geometry's own id: the raw builder stamps none (a description knows its revision, not who
-    // published it), and the test helper - like the store - states it once, here.
-    EXPECT_EQ(facts.geometry, geometry.id());
-    EXPECT_EQ(facts.revision, 4U);
+    // The ref is the geometry's own id at its revision: the raw builder stamps only the revision (a description
+    // knows its revision, not who published it), and the test helper - like the store - states the whole ref here.
+    EXPECT_EQ(facts.geometry.as<vn::graphics::NodeTag>(), geometry.id());
+    EXPECT_EQ(facts.geometry.revision, 4U);
 
     // Position and normal, in ABI order: the layout's mask is the same fact the pipeline key reads.
     EXPECT_EQ(facts.layout.canonical_mask, 0x3U);

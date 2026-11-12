@@ -70,22 +70,23 @@ struct ProgramKey {
     return row.kind <=> key.kind;
 }
 
-/// @brief The key @ref findGeometry searches by: the identity and the revision.
+/// @brief The key @ref findGeometry searches by: the identity AND the revision (see GeometryFacts::geometry).
 struct GeometryKey {
-    vn::graphics::NodeId identity{};
-    std::uint64_t        revision{ 0 };
+    vn::graphics::ContentRef geometry{};
 };
 
 /// @brief Orders one geometry row against one geometry key, over the first @p fields of the key.
 [[nodiscard]] std::strong_ordering compareGeometry(const GeometryFacts& row, const GeometryKey& key, KeyFields fields) noexcept
 {
-    if (const std::strong_ordering identity = compareIdentity(row.geometry, key.identity); identity != std::strong_ordering::equal) {
+    if (const std::strong_ordering identity =
+            compareIdentity(row.geometry.as<vn::graphics::NodeTag>(), key.geometry.as<vn::graphics::NodeTag>());
+        identity != std::strong_ordering::equal) {
         return identity;
     }
     if (fields == KeyFields::Identity) {
         return std::strong_ordering::equal;
     }
-    return row.revision <=> key.revision;
+    return row.geometry.revision <=> key.geometry.revision;
 }
 
 /// @brief The key @ref findMaterial searches by: the identity AND the revision (see MaterialFacts::material).
@@ -178,7 +179,7 @@ void orderGeometryRows(std::span<const GeometryFacts> rows, std::vector<std::uin
     }
     std::stable_sort(order.begin(), order.end(), [rows](std::uint32_t left, std::uint32_t right) {
         const GeometryFacts& row = rows[right];
-        const GeometryKey    key{ row.geometry, row.revision };
+        const GeometryKey    key{ row.geometry };
         return compareGeometry(rows[left], key, KeyFields::Revision) < 0;
     });
 }
@@ -296,7 +297,7 @@ std::string_view programName(const ContentFacts& facts, vn::graphics::ProgramId 
     return {};
 }
 
-FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::NodeId geometry, std::uint64_t revision) noexcept
+FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::ContentRef geometry) noexcept
 {
     if (geometry.isNull()) {
         return { nullptr, FactMiss::Unknown };
@@ -305,7 +306,7 @@ FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::
     // An INDEXED table: the run of (identity, revision) is the whole answer, and its FIRST row is the one a
     // scan would have decided with - the malformed check is about the row that answers, not about the table.
     if (searchable(facts.geometries.size(), facts.geometry_order)) {
-        const GeometryKey key{ geometry, revision };
+        const GeometryKey key{ geometry };
         const auto        searched = runOf(facts.geometries, facts.geometry_order, key, KeyFields::Revision, compareGeometry);
         if (holdsRows(searched)) {
             const GeometryFacts& row = facts.geometries[facts.geometry_order[searched.first]];
@@ -322,11 +323,11 @@ FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::
     // still in flight (see api/ContentStore), so the first entry of that identity is not the answer.
     bool identity_known = false;
     for (const GeometryFacts& entry : facts.geometries) {
-        if (entry.geometry != geometry) {
+        if (entry.geometry.id != geometry.id) {
             continue;
         }
         identity_known = true;
-        if (entry.revision != revision) {
+        if (entry.geometry.revision != geometry.revision) {
             continue;
         }
         if (!channelsMatchLayout(entry)) {

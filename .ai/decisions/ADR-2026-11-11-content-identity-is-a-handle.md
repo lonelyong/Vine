@@ -43,7 +43,9 @@
 2. **`ContentRef` 成为唯一键**（材质与程序已完成，几何合并未做）：`MaterialBase` 已持自己的 typed id，材质表已由
    地址单键改为 `(MaterialId, revision)`（消掉 `A1` 残余）；`ShaderProgram` 也已持 `ProgramId`，计划与记录里的
    `program` 是 `ContentRef`（`ProgramRef` 类型删除），程序表按 `(ProgramId, revision, variant, kind)` 建行、
-   `ProgramFacts::generation` 随之删除；几何行的 `geometry` + `geometry_revision` 合并仍在待办。
+   `ProgramFacts::generation` 随之删除；几何行的 `geometry` + `geometry_revision` 合并当时仍在待办。
+   > 追记（2026-11-12）：几何合并已完成——`CollectedCommand` / `CompiledCommand` / `GeometryFacts` 的
+   > `geometry`+`geometry_revision` 是一个 `ContentRef`，`findGeometry` 按它查；本段余下的只有第 3 步。
 3. **寿命交给 epoch**（未做）：`ContentStore` 的 `markUsed` / parking / `kept` 换成 `ResidencyTable`
    （`last_epoch < oldest_live` 即可回收，无时间窗、无 kept 回退）。
 

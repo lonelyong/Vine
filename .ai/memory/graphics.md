@@ -256,18 +256,23 @@
   `ResidencyTable` epoch 回收。`ProgramFacts::generation` 删除后，`ADR-2026-11-09` 的“持有即身份”只剩上传表
   （`Buffer`）一条。
 
-### 下一步的接缝（几何行合并为 `ContentRef`）
+### 几何行合并为 `ContentRef`（2026-11-12 已落地）
 
-- 计划行：`CollectedCommand` / `CompiledCommand` 的 `geometry`（`NodeId`）+ `geometry_revision` → 一个
-  `vn::graphics::ContentRef geometry`。产生点只有一个（`FrameRecorder::snapshotCommands`，revision 取
-  `description->revision()`），`FrameCompiler::resolveCommands` 只复制。
-- 事实与表：`GeometryFacts` 的 `geometry` + `revision` 合并；`GeometryKey` / `compareGeometry` /
-  `orderGeometryRows`、`findGeometry(facts, ContentRef)`；`ContentStore` 的 live 表、`eraseGeometryRows` 与
-  `TrackedGeometry` 从 `(NodeId, revision)` 改成一个 ref。`ensureGeometry` 仍从 `live.shape->revision()` 建行
+- 计划行：`CollectedCommand` / `CompiledCommand` 的 `geometry`（`NodeId`）+ `geometry_revision` 合成一个
+  `vn::graphics::ContentRef geometry`。产生点仍只有 `FrameRecorder::snapshotCommands`（identity 取
+  `RenderCommand::node`，无 node 时退回 `geometry->id()`；revision 取 `description->revision()`），
+  `FrameCompiler::resolveCommands` 只复制。
+- 事实与表：`GeometryFacts` 的 `geometry` + `revision` 合并成同一个 ref；`GeometryKey` / `compareGeometry` /
+  `orderGeometryRows` 与 `findGeometry(facts, ContentRef)` 按一个键；`ContentStore` 的 `eraseGeometryRows`、
+  `liveGeometry`、`ensureGeometry` 与几何表都按一个 ref。`ensureGeometry` 仍从 `live.shape->revision()` 建行
   （计划里的 revision 不参与建行，规则与程序/材质相同）。
-- **类型坑**：几何的身份就是 `Geometry` 继承自 `Node` 的 `NodeId`（`Geometry::id()` = `Node::id()`），
+- **类型**：几何的身份就是 `Geometry` 继承自 `Node` 的 `NodeId`（`Geometry::id()` = `Node::id()`），
   `ContentRef::revision` 才是几何 revision。**不要为此造 `GeometryId`**（`ContentId.hpp` 有这个 tag，但今天
   没有分配者）；要 typed 视图用 `ref.as<vn::graphics::NodeTag>()`。
-- 消费点：`ContentHalves::halvesFor`、`ContentPass`（两处 `findGeometry`）、`ContentSets::ensure`。
-  `ContentHalves::Key` 与 `ContentSets::Key` 里没有几何身份（只有 layout / set / source），它们的键不用改。
-- 不要顺手改 `RenderWorld` / `SceneSnapshot` / `Scene` 的行身份：它们已经是 `NodeId` 键，这次只动“计划行”。
+- 消费点只改了参数：`ContentHalves::halvesFor`、`ContentPass`（两处 `findGeometry`）、`ContentSets::setsFor`。
+  `ContentHalves::Key` / `ContentSets::Key` 里没有几何身份（只有 layout / set / source），键没动；
+  `RenderWorld` / `SceneSnapshot` / `Scene` 的行身份也没动（它们本来就是 `NodeId` 键）。
+- 测试 helper（`TestGeometryFacts.hpp`、`ContentStoreTest` / `ContentSweepTest` / `ContentHalvesTest` 的手搓
+  计划）保留“对象 + revision”入口，但内部只造一个 ref —— 计划行的 API 只有一个 ref。
+- 验证：`test_graphics` / `test_vsg` / ctest 30/30 全绿。
+- 下一步：`ResidencyTable` 的 epoch 回收替换 `ContentStore` 的 `markUsed`/parking/`kept`。

@@ -91,8 +91,7 @@ struct Rows {
             channel.key.revision   = 1U;
         }
         GeometryFacts row;
-        row.geometry              = identity;
-        row.revision              = revision;
+        row.geometry              = vn::graphics::contentRefOf(identity, revision);
         row.layout.canonical_mask = mask;
         row.channels              = channels.back();
         // ONE PRIMITIVE ROW PER GEOMETRY ROW (the plan names a draw by its primitive index): indexed ones
@@ -226,8 +225,9 @@ TEST(ContentFactsIndexTest, AnIndexedTableAnswersExactlyWhatAScanWould)
 
     for (int index = 0; index < 3; ++index) {
         for (const std::uint64_t revision : revisions) {
-            const auto scanned  = findGeometry(scan, ids.geometries[index], revision);
-            const auto searched = findGeometry(indexed, ids.geometries[index], revision);
+            const vn::graphics::ContentRef geometry_key = vn::graphics::contentRefOf(ids.geometries[index], revision);
+            const auto                    scanned      = findGeometry(scan, geometry_key);
+            const auto                    searched     = findGeometry(indexed, geometry_key);
             EXPECT_EQ(static_cast<int>(searched.miss), static_cast<int>(scanned.miss));
             EXPECT_EQ(rowIndex(scan.geometries, scanned.entry), rowIndex(indexed.geometries, searched.entry))
                 << "geometry identity " << index << " revision " << revision;
@@ -305,10 +305,10 @@ TEST(ContentFactsIndexTest, TheOrderIsAPermutationOfTheRowsAndItsRunsAreContiguo
         return static_cast<int>(left.kind) < static_cast<int>(right.kind);
     };
     const auto geometry_before = [](const GeometryFacts& left, const GeometryFacts& right) {
-        if (left.geometry.handle().bits() != right.geometry.handle().bits()) {
-            return left.geometry.handle().bits() < right.geometry.handle().bits();
+        if (left.geometry.id.bits() != right.geometry.id.bits()) {
+            return left.geometry.id.bits() < right.geometry.id.bits();
         }
-        return left.revision < right.revision;
+        return left.geometry.revision < right.geometry.revision;
     };
     const auto material_before = [](const MaterialFacts& left, const MaterialFacts& right) {
         if (left.material.id.bits() != right.material.id.bits()) {

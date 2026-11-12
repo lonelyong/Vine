@@ -293,7 +293,7 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
             continue; // a full-screen call's set is the pass' own (declaredSets is empty for that ABI)
         }
         for (const core::CompiledCommand& command : draw.commands) {
-            const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry, command.geometry_revision);
+            const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry);
             if (!geometry.found()) {
                 continue;
             }

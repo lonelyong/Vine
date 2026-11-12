@@ -135,8 +135,9 @@ struct Plan {
     CompiledFrame                frame{};
 };
 
-/// @brief A plan with one pass and one content draw naming @p geometry, @p program and @p material.
-std::unique_ptr<Plan> contentPlan(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const ShaderProgram* program, vn::graphics::ContentRef material)
+/// @brief A plan with one pass and one content draw naming @p geometry (id and revision, as one plan row keys
+///        them), @p program and @p material.
+std::unique_ptr<Plan> contentPlan(vn::graphics::ContentRef geometry, const ShaderProgram* program, vn::graphics::ContentRef material)
 {
     auto plan = std::make_unique<Plan>();
 
@@ -144,10 +145,9 @@ std::unique_ptr<Plan> contentPlan(vn::graphics::NodeId geometry, std::uint64_t g
         program != nullptr ? vn::test::programRef(*program) : vn::graphics::ContentRef{};
 
     CompiledCommand command;
-    command.geometry          = geometry;
-    command.geometry_revision = geometry_revision;
-    command.program           = program_ref;
-    command.material          = material;
+    command.geometry = geometry;
+    command.program  = program_ref;
+    command.material = material;
     plan->commands.push_back(command);
 
     CompiledDraw draw;
@@ -164,10 +164,12 @@ std::unique_ptr<Plan> contentPlan(vn::graphics::NodeId geometry, std::uint64_t g
     return plan;
 }
 
-/** @brief The same plan named by the OBJECT a test holds: a plan carries a handle, so the object converts to its id. */
+/** @brief The same plan named by the OBJECT a test holds: a plan carries the geometry's id and the revision its
+ *         shape is at (a `Geometry` inherits its id from `Node`), so the two halves make one ref here. */
 std::unique_ptr<Plan> contentPlan(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, vn::graphics::ContentRef material)
 {
-    return contentPlan(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, material);
+    const vn::graphics::NodeId identity = geometry != nullptr ? geometry->id() : vn::graphics::NodeId{};
+    return contentPlan(vn::graphics::contentRefOf(identity, geometry_revision), program, material);
 }
 
 /** @brief The same plan naming a material by the OBJECT a test holds: the plan carries the id and revision, not the object. */
@@ -277,7 +279,8 @@ TEST(ContentSweepTest, EverythingTheHostDroppedIsLetGoInOneCallAndItsRowsLeaveAt
     // The ROWS stay answerable until the park comes due: a plan recorded in the frame that is being finished
     // may still name them (see api/ContentSweep), which is why this half parks instead of erasing.
     EXPECT_GE(retirement.pending(), 1U);
-    EXPECT_TRUE(findGeometry(facts, geometry_address, geometry_revision).found()) << "the row of the dropped geometry still answers while its park is open";
+    EXPECT_TRUE(findGeometry(facts, vn::graphics::contentRefOf(geometry_address, geometry_revision)).found())
+        << "the row of the dropped geometry still answers while its park is open";
     EXPECT_EQ(store.geometryEntries(), 1U);
 
     // And once the slots that could still name them are past, they leave.

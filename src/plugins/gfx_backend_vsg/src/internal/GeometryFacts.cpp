@@ -53,10 +53,10 @@ FactMiss buildGeometryFacts(const vn::graphics::GeometryDescription& description
 {
     storage.clear();
     primitive_storage.clear();
-    out          = GeometryFacts{};
+    out = GeometryFacts{};
     // The identity is the ROW's (the draw-list node id), which the table stamps when it appends: a description knows
-    // its revision, not who published it.
-    out.revision = description.revision();
+    // its revision, not who published it - so only the revision half of the merged ref is filled here.
+    out.geometry.revision = description.revision();
 
     const std::span<const vn::graphics::Primitive>       primitives = description.primitives();
     const std::span<const vn::graphics::GeometryChannel> channels   = description.channels();

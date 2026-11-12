@@ -387,10 +387,14 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         // The SHAPE travels as a value and the IDENTITY as a handle (see RenderCommand::node): a draw-list command
         // carries both, and a hand-built one is converted here by the content-side caller that built it - this step
         // runs before the plan crosses to whatever records it, exactly like the collection it follows.
+        //
+        // THE IDENTITY AND THE REVISION ARE ONE REF (see CollectedCommand::geometry): the revision is read from the
+        // DESCRIPTION, so a frame in flight is served the shape it recorded even after the geometry moved on.
         const vn::graphics::GeometryDescriptionPtr description = source.geometryDescription();
-        target.geometry          = !source.node.isNull() ? source.node : (source.geometry != nullptr ? source.geometry->id() : vn::graphics::NodeId{});
-        target.geometry_revision = description != nullptr ? description->revision() : 0;
-        target.primitive         = source.primitive_index;
+        const vn::graphics::NodeId                 identity =
+            !source.node.isNull() ? source.node : (source.geometry != nullptr ? source.geometry->id() : vn::graphics::NodeId{});
+        target.geometry  = vn::graphics::contentRefOf(identity, description != nullptr ? description->revision() : 0);
+        target.primitive = source.primitive_index;
         // The primitive's topology travels with the command: it is the data's word (the pass may still override
         // it - see resolveRenderState), and it is read from the DESCRIPTION, so recording never asks the live
         // geometry anything. A command with no description (or an index past its primitives) keeps the documented

@@ -232,7 +232,7 @@
 - 会怎么错：宿主给某个 primitive 换了实例切片（`Geometry::setInstanceTransforms`），
   却没接着报 `Geometry::bumpRevision()`。那个 setter 只推进内容纪元（`Node::invalidateBounds`），
   **不动** `revision()`；而后端的几何行只在 revision 移动时重建（`ContentStore.cpp` 的
-  `findGeometry(..., geometry->revision())`）。于是计划每帧从 primitive 现读新 buffer、
+  `findGeometry(..., contentRefOf(identity, live.shape->revision()))`）。于是计划每帧从 primitive 现读新 buffer、
   事实行声明的仍是旧 buffer，上传条目**每帧建-退**：画面对，代价静默。
 - 会怎么判：什么都没改、只是每帧重画的稳态里，`StreamUploads::uploads()` 与 `retired()` **同时**按帧上涨，
   而 `live()` 不涨（这三条一起看才排得掉“真的每帧换内容”）；被替换的那块 buffer 从不出现在声明索引里。

@@ -312,15 +312,15 @@ struct ContentStore::Data {
     }
 
     /** @brief Removes the geometry rows of one identity at one revision (a superseded shape). */
-    void eraseGeometryRows(vn::graphics::NodeId identity, std::uint64_t revision) noexcept
+    void eraseGeometryRows(vn::graphics::ContentRef geometry_ref) noexcept
     {
-        geometry.eraseIf([identity, revision](const GeometryFacts& row) { return row.geometry == identity && row.revision == revision; });
+        geometry.eraseIf([geometry_ref](const GeometryFacts& row) { return row.geometry == geometry_ref; });
     }
 
     /** @brief Removes every geometry row of one identity (an abandoned object's rows). */
     void eraseGeometryOf(vn::graphics::NodeId identity) noexcept
     {
-        geometry.eraseIf([identity](const GeometryFacts& row) { return row.geometry == identity; });
+        geometry.eraseIf([identity](const GeometryFacts& row) { return row.geometry.as<vn::graphics::NodeTag>() == identity; });
     }
 
     /** @brief Removes the program rows of one identity at one revision (a parked supersession). */
@@ -393,7 +393,7 @@ struct ContentStore::Data {
         if (entry == geometries.end() || entry->second.shape == nullptr) {
             return nullptr;
         }
-        return findGeometry(view(), identity, entry->second.shape->revision()).entry;
+        return findGeometry(view(), vn::graphics::contentRefOf(identity, entry->second.shape->revision())).entry;
     }
 
     /** @brief Gets the row that answers for a material right now (the one built at its live revision). */
@@ -528,7 +528,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
             }
 
             for (const core::CompiledCommand& command : draw.commands) {
-                const vn::graphics::NodeId identity = command.geometry;
+                const vn::graphics::NodeId     identity = command.geometry.as<vn::graphics::NodeTag>();
                 const vn::graphics::MaterialId material = command.material.as<vn::graphics::MaterialTag>();
 
                 ensureGeometry(identity, timeline, retirement);
@@ -594,11 +594,11 @@ void ContentStore::ensureGeometry(vn::graphics::NodeId identity, core::FrameTime
     if (live.described) {
         // The shape moved: what the table answers for the old revision stays answerable until the frames that may
         // still record it are past (see the file note), and then leaves.
-        const std::uint64_t       retired = live.described_revision;
-        const std::weak_ptr<Data> weak    = d;
-        const bool                parked  = retirement.retire(timeline, [weak, identity, retired]() {
+        const vn::graphics::ContentRef retired_ref = vn::graphics::contentRefOf(identity, live.described_revision);
+        const std::weak_ptr<Data>       weak        = d;
+        const bool                      parked      = retirement.retire(timeline, [weak, retired_ref]() {
             if (const std::shared_ptr<Data> data = weak.lock()) {
-                data->eraseGeometryRows(identity, retired);
+                data->eraseGeometryRows(retired_ref);
             }
         });
         if (!parked) {
@@ -616,9 +616,9 @@ void ContentStore::ensureGeometry(vn::graphics::NodeId identity, core::FrameTime
         return;
     }
 
-    // The row is keyed by the IDENTITY the plan names, not by the description it was built from: the description is a
-    // value, the identity is what a command (and therefore a lookup) carries.
-    fresh.geometry = identity;
+    // The row is keyed by the REF the plan names, not by the description it was built from: the description is a
+    // value, the ref (identity + revision) is what a command - and therefore a lookup - carries.
+    fresh.geometry = vn::graphics::contentRefOf(identity, revision);
     d->geometry.append(fresh, std::move(storage));
     ++d->builds;
 }

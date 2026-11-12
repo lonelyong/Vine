@@ -212,8 +212,16 @@ struct PrimitiveFacts {
 
 /** @brief What a geometry identity answers with: its layout, its vertex channels, and its draws. */
 struct GeometryFacts {
-    vn::graphics::NodeId          geometry{};          // The node identity the plan names.
-    std::uint64_t                 revision{ 0 };       // The revision the plan names.
+    /// The identity AND the revision the plan names (see `ContentId.hpp`).
+    ///
+    /// THE REVISION IS PART OF THE KEY, the same rule the program and material tables follow: a frame in flight
+    /// that named revision 3 must be served revision 3's streams after the geometry moved to 4, so a table keyed
+    /// by the identity alone would answer the new shape to the old frame.
+    ///
+    /// THE IDENTITY IS THE GEOMETRY'S OWN NODE ID (`Geometry::id()`, inherited from `Node`), not an address and
+    /// not a separate geometry handle: a geometry IS a node (see ADR-2026-11-11-content-identity-is-a-handle),
+    /// so `ref.as<NodeTag>()` is the typed view and no `GeometryId` allocator exists.
+    vn::graphics::ContentRef      geometry{};
     core::VertexLayoutKey         layout{};            // Which channels this geometry feeds (the pipeline key's half).
     std::span<const ChannelFacts> channels{};          // One per fed channel, in binding order.
 
@@ -354,8 +362,8 @@ void orderProgramRows(std::span<const ProgramFacts> rows, std::vector<std::uint3
 
 /** @brief Replaces @p order with the row order @ref findGeometry searches the geometry table by.
  *
- * The order is (identity, revision): rows that share both are contiguous and in table order, so the geometry
- * the scan would have answered with is the first row of that run.
+ * The order is the ref's (identity, revision) pair: rows that share both are contiguous and in table order, so
+ * the geometry the scan would have answered with is the first row of that run.
  *
  * @param rows  The table's rows.
  * @param order Receives the order; its previous contents are replaced and its capacity is kept.
@@ -436,15 +444,17 @@ findProgram(const ContentFacts& facts, const vn::graphics::ContentRef& program, 
 
 /** @brief Finds the geometry a compiled command names.
  *
+ * THE REFERENCE IS THE WHOLE KEY (see GeometryFacts::geometry): the plan carries the identity and the revision it
+ * was collected at, so a frame in flight is answered with the shape it recorded.
+ *
  * A TABLE MAY CARRY SUPERSEDED REVISIONS (see findProgram): the scan looks for the revision asked for
  * instead of stopping at the first entry of that identity.
  *
  * @param facts    The tables.
- * @param geometry Geometry identity (from the plan).
- * @param revision Geometry revision the plan was collected at.
+ * @param geometry Geometry identity and revision (from the plan).
  * @return The entry, or the reason there is none (Malformed when its channels do not match its layout).
  */
-[[nodiscard]] FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::NodeId geometry, std::uint64_t revision) noexcept;
+[[nodiscard]] FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::ContentRef geometry) noexcept;
 
 /** @brief Finds the material a compiled command names.
  *

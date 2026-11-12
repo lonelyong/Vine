@@ -334,7 +334,6 @@ FrameCompiler::resolveCommands(const CollectedDraw& source, const vn::graphics::
         CompiledCommand&        out     = commands[index];
 
         out.geometry                               = command.geometry;
-        out.geometry_revision                      = command.geometry_revision;
         out.primitive                              = command.primitive;
         out.material                               = command.material;
         out.model                                  = command.model;

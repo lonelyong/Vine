@@ -213,10 +213,10 @@ TEST(FrameRecorderTest, EveryFactOfACommandReachesTheRecord)
     ASSERT_EQ(description.passes[0].draws[0].commands.size(), 1U);
     const CollectedCommand& recorded = description.passes[0].draws[0].commands[0];
 
-    // The plan names the content identity the command carried, and the revision of the SHAPE it describes (the value
-    // rides beside the identity: see RenderCommand::node / description).
-    EXPECT_EQ(recorded.geometry, geometry->id());
-    EXPECT_EQ(recorded.geometry_revision, 7U) << "the revision the plan keys the facts row on";
+    // The plan names the content identity the command carried AND the revision of the SHAPE it describes, as one ref
+    // (see RenderCommand::node / description and CollectedCommand::geometry).
+    EXPECT_EQ(recorded.geometry, vn::graphics::contentRefOf(geometry->id(), 7U))
+        << "the identity and the revision the plan keys the facts row on";
     EXPECT_EQ(recorded.primitive, 0U);
     EXPECT_EQ(recorded.topology, Topology::TriangleStrip) << "the primitive's assembly travels with the command";
     EXPECT_EQ(recorded.program, vn::test::programRef(*program));

@@ -167,7 +167,7 @@ ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& fac
         for (const core::CompiledCommand& command : draw.commands) {
             // The same lookups the recorder makes (see api/ContentPass::recordCommand), so the halves
             // produced here are exactly the tuples it will ask for.
-            const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry, command.geometry_revision);
+            const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry);
             if (!geometry.found()) {
                 continue;
             }

@@ -85,8 +85,9 @@ struct FrameFacts {
 
 /** @brief One instance of one command, resolved: identity, plus the state to deliver with it. */
 struct CompiledCommand {
-    vn::graphics::NodeId geometry{};      // The node identity the plan names for this draw's facts.
-    std::uint64_t        geometry_revision{ 0 }; // `Geometry::revision()` at collection time.
+    /// The geometry identity AND revision the plan names for this draw's facts (copied from the collected
+    /// command; see CollectedCommand::geometry).
+    vn::graphics::ContentRef geometry{};
     /// Which of the geometry's primitives this command draws. The plan names ONE DRAW, so the pair
     /// (geometry, primitive) is this command's data identity - the backend's facts answer index spans and
     /// uploads per primitive, and nothing downstream has to walk a primitive list to find it.

@@ -163,35 +163,37 @@ CompiledPass passWith(std::span<const CompiledDraw> draws, std::uint32_t color_a
     return pass;
 }
 
-/// @brief A content command over @p geometry, @p program and @p material.
-CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
+/// @brief A content command over @p geometry (id and revision, as one plan row keys them), @p program and @p material.
+CompiledCommand commandOf(vn::graphics::ContentRef geometry, const ShaderProgram* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
 {
     CompiledCommand out;
-    out.geometry          = geometry;
-    out.geometry_revision = geometry_revision;
-    out.program           = program != nullptr ? vn::graphics::contentRefOf(program->id(), program_revision) : vn::graphics::ContentRef{};
-    out.material          = material;
+    out.geometry = geometry;
+    out.program  = program != nullptr ? vn::graphics::contentRefOf(program->id(), program_revision) : vn::graphics::ContentRef{};
+    out.material = material;
     return out;
 }
 
-/** @brief The same command named by the OBJECT a test holds: a plan carries a handle, so the object converts to its id. */
-CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
-{
-    return commandOf(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, program_revision, material);
-}
-
 /** @brief The same command naming a material by the OBJECT a test holds: the plan carries the id and the revision. */
-CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
+CompiledCommand commandOf(vn::graphics::ContentRef geometry, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
 {
     const vn::graphics::ContentRef ref =
         material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};
-    return commandOf(geometry, geometry_revision, program, program_revision, ref);
+    return commandOf(geometry, program, program_revision, ref);
+}
+
+/** @brief The same command named by the OBJECT a test holds: a plan carries the geometry's id and the revision its
+ *         shape is at (a `Geometry` inherits its id from `Node`), so the two halves make one ref here. */
+CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
+{
+    const vn::graphics::NodeId identity = geometry != nullptr ? geometry->id() : vn::graphics::NodeId{};
+    return commandOf(vn::graphics::contentRefOf(identity, geometry_revision), program, program_revision, material);
 }
 
 /** @brief Both identities named by the OBJECTS a case holds - the shape most cases write. */
 CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
 {
-    return commandOf(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, program_revision, material);
+    const vn::graphics::NodeId identity = geometry != nullptr ? geometry->id() : vn::graphics::NodeId{};
+    return commandOf(vn::graphics::contentRefOf(identity, geometry_revision), program, program_revision, material);
 }
 
 } // namespace

@@ -735,7 +735,7 @@ P1/P2 把"问谁"（镜像）和"在哪条线程跑"（`FrameRunner`）分开了
 | T12 | `inline` 与 `threaded` 行为一致 | 同一子集两模式各跑一次 |
 | T13 | 删掉一处公告，等价性用例失败 | 变异验证（手工 + 记录在案） |
 | T14 | 无数据竞争 | 新增 `-fsanitize=thread` 构建树跑 `test_vsg` 与 `test_appfw` |
-| T15 | 事实行从描述建；身份 = 内容地址、revision = 描述的 revision | `GeometryFactsTest.*`、`FrameRecorderTest.EveryFactOfACommandReachesTheRecord`、`ContentStoreTest.*` |
+| T15 | 事实行从描述建；几何行键 = `(NodeId, revision)`（计划带同一个 `ContentRef`）、revision = 描述的 revision | `GeometryFactsTest.*`、`FrameRecorderTest.EveryFactOfACommandReachesTheRecord`、`ContentStoreTest.*` |
 | T16 | 一帧的构建只花 O(passes)：UI 线程不 expand、不等 present（P3） | 计数断言（帧内 expand 次数 = passes 的展开需求，不含采集）+ `callgrind_diff.py` |
 | T17 | 表面事件只在帧首生效：resize 之后的下一帧用新尺寸，期间那一帧被丢弃且不计错 | 新增用例：连续两帧改 extent，断言第一帧丢弃原因可见、第二帧尺寸正确、`deviceWaits` 增长 |
 | T18 | `waitForFrame(n)` 只等第 n 帧；不调用它时 `frame()` 不依赖引擎线程进度 | 用例：投 100 帧后立刻返回（时间上界），逐帧 `waitForFrame` 单调完成 |

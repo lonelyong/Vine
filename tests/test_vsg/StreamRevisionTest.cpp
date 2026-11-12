@@ -119,7 +119,7 @@ TEST(StreamRevisionTest, AGeometryAnnouncementDoesNotRekeyTheStreams)
     std::vector<ChannelFacts>            again;
     std::vector<vn::vsg::PrimitiveFacts> again_primitives;
     const GeometryFacts                  rebuilt = two.describe(again);
-    EXPECT_NE(rebuilt.revision, facts.revision) << "the geometry announced, so its description is a new one";
+    EXPECT_NE(rebuilt.geometry.revision, facts.geometry.revision) << "the geometry announced, so its description is a new one";
 }
 
 /*

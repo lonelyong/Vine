@@ -143,8 +143,13 @@ using CameraSnapshot = vn::graphics::CameraSnapshot;
 
 /** @brief One instance of one command, as the frame remembers it (the SDK's RenderCommand, copied). */
 struct CollectedCommand {
-    vn::graphics::NodeId geometry{};      // The node identity the plan names for this draw's facts.
-    std::uint64_t        geometry_revision{ 0 }; // `Geometry::revision()` at collection time.
+    /// The geometry identity AND revision the plan names for this draw's facts (see `ContentId.hpp`).
+    ///
+    /// THE IDENTITY IS THE DRAW LIST'S NODE (`RenderCommand::node`), which a `Geometry` inherits as its own id, and
+    /// the revision is `Geometry::revision()` at collection time. Both travel together because a frame in flight
+    /// must be answered with the row the content published for it, not with whatever the geometry says by the time
+    /// the plan is recorded - the same rule `program` and `material` follow.
+    vn::graphics::ContentRef geometry{};
     /// Which of the geometry's primitives this command draws (see Geometry::primitive). It is the draw's
     /// identity inside the geometry: two commands of one geometry differ here, and the frame's facts answer
     /// per (geometry, primitive).

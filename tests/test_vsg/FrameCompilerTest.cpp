@@ -314,9 +314,10 @@ TEST(FrameCompilerTest, EveryFactOfARecordedCommandReachesThePlan)
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1u);
     const CompiledCommand& planned = frame.passes[0].draws[0].commands[0];
 
-    // A plan carries the content identity and the revision of the shape it describes (see RenderCommand::node).
-    EXPECT_EQ(planned.geometry, geometry->id());
-    EXPECT_EQ(planned.geometry_revision, 7U) << "the revision the facts row and every stream key are built from";
+    // A plan carries the content identity and the revision of the shape it describes, as one ref (see
+    // RenderCommand::node and CompiledCommand::geometry).
+    EXPECT_EQ(planned.geometry, vn::graphics::contentRefOf(geometry->id(), 7U))
+        << "the identity and the revision the facts row and every stream key are built from";
     EXPECT_EQ(planned.primitive, 0U);
     EXPECT_EQ(planned.program, vn::test::programRef(*program));
     EXPECT_EQ(planned.material.as<vn::graphics::MaterialTag>(), material->id());

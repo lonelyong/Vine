@@ -51,6 +51,12 @@ vn::graphics::ContentRef materialRef(std::uint32_t index, std::uint64_t revision
     return vn::graphics::ContentRef{ vn::graphics::Handle::make(index, 1U, 0U), revision };
 }
 
+/// @brief The geometry reference a plan names: the identity and the revision, as one key.
+vn::graphics::ContentRef geometryRef(vn::graphics::NodeId identity, std::uint64_t revision)
+{
+    return vn::graphics::contentRefOf(identity, revision);
+}
+
 /// @brief One vertex channel with no bytes (the lookup never reads them).
 ChannelFacts channel(std::uint32_t location)
 {
@@ -82,8 +88,7 @@ struct GeometryHolder {
     GeometryHolder(vn::graphics::NodeId identity, std::uint64_t revision, std::uint32_t canonical_mask, std::size_t channel_count, std::uint32_t custom_locations = 0U)
       : channels(channel_count, channel(0U))
     {
-        facts.geometry              = identity;
-        facts.revision              = revision;
+        facts.geometry              = geometryRef(identity, revision);
         facts.layout.canonical_mask = canonical_mask;
         facts.channels              = channels;
         primitive_rows.emplace_back();
@@ -159,16 +164,16 @@ TEST(ContentFactsTest, AGeometryIsFoundByItsIdentityAndRevision)
     tables.geometries.push_back(holder.facts);
 
     const ContentFacts facts = tables.view();
-    const auto         found = findGeometry(facts, identity, 3U);
+    const auto         found = findGeometry(facts, geometryRef(identity, 3U));
     ASSERT_TRUE(found.found());
     ASSERT_EQ(found.entry->primitives.size(), 1U);
     EXPECT_EQ(found.entry->primitives[0].index_count, 3U);
     EXPECT_EQ(found.entry->channels.size(), 2U);
     EXPECT_EQ(found.miss, FactMiss::None);
 
-    EXPECT_EQ(findGeometry(facts, identity, 2U).miss, FactMiss::Revision);
-    EXPECT_EQ(findGeometry(facts, unrelated, 3U).miss, FactMiss::Unknown);
-    EXPECT_EQ(findGeometry(facts, vn::graphics::NodeId{}, 3U).miss, FactMiss::Unknown);
+    EXPECT_EQ(findGeometry(facts, geometryRef(identity, 2U)).miss, FactMiss::Revision);
+    EXPECT_EQ(findGeometry(facts, geometryRef(unrelated, 3U)).miss, FactMiss::Unknown);
+    EXPECT_EQ(findGeometry(facts, geometryRef(vn::graphics::NodeId{}, 3U)).miss, FactMiss::Unknown);
 }
 
 TEST(ContentFactsTest, AGeometryWhoseChannelsDoNotMatchItsLayoutCannotBeDrawn)
@@ -208,7 +213,7 @@ TEST(ContentFactsTest, AGeometryWhoseChannelsDoNotMatchItsLayoutCannotBeDrawn)
     Tables         tables;
     tables.geometries.push_back(broken.facts);
     const ContentFacts facts = tables.view();
-    EXPECT_EQ(findGeometry(facts, identity, 1U).miss, FactMiss::Malformed);
+    EXPECT_EQ(findGeometry(facts, geometryRef(identity, 1U)).miss, FactMiss::Malformed);
 }
 
 TEST(ContentFactsTest, AMaterialWhoseBlockIsNotTheAbisSizeCannotBeDrawn)
@@ -238,6 +243,6 @@ TEST(ContentFactsTest, AnEmptyTableAnswersUnknownRatherThanGuessing)
     const ContentFacts empty{};
 
     EXPECT_EQ(findProgram(empty, vn::test::programRef(1, 0U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
-    EXPECT_EQ(findGeometry(empty, nodeId(1U), 0U).miss, FactMiss::Unknown);
+    EXPECT_EQ(findGeometry(empty, geometryRef(nodeId(1U), 0U)).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(empty, materialRef(1U, 0U)).miss, FactMiss::Unknown);
 }

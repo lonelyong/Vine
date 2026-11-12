@@ -121,7 +121,7 @@ std::string describeMissingContentHalf(const core::CompiledPass& pass, const Con
             return "the pass records a content drawing call with no commands";
         }
         const core::CompiledCommand&    command  = draw.commands.front();
-        const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry, command.geometry_revision);
+        const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry);
         if (!geometry.found()) {
             return std::string("the first command's geometry row misses: ") + missText(geometry.miss);
         }
@@ -1003,7 +1003,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
                                 std::uint32_t                                   sampled_depth_count,
                                 ::vsg::Group&                                   into)
 {
-    const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry, command.geometry_revision);
+    const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry);
     if (!geometry.found()) {
         reportRefused("the command's geometry", geometry.miss);
         return false;
