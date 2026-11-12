@@ -536,7 +536,7 @@ const detail::SceneBake& Scene::ensureRows() const
     // Byte content announces itself on the buffer, not on the graph, so the boxes that depend on it are re-read
     // here - the ONE step of a collection that still needs this thread (see refreshBoxes). A box that moved is a
     // change the EPOCH cannot see, so it moves the rows' version too: a reader that mirrors these rows compares
-    // that version, and would otherwise keep a stale box forever (see SceneRows::version).
+    // that version, and would otherwise keep a stale box forever (see Scene::publish).
     if (detail::refreshBoxes(*content_bake_) > 0U) {
         ++box_generation_;
     }

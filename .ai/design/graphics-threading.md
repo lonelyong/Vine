@@ -1,9 +1,10 @@
 # graphics 的线程模型
 
-> **状态**：已落地（P1/P2/P3 全部在代码里，宿主默认走引擎线程；§9.2 只剩真实缺口，不是计划）。
+> **状态**：现行（线程契约）；**镜像/delta 的具体实现已删除**（graphics-next 5b-2b，2026-11-12）：生产源是
+> `SnapshotSource`，本文件里 `ContentMirror` / `DeltaChannel` / `RenderWorld` 的段落是迁移期历史。
 > **下一版的目标形状见 `graphics-frame-pipeline.md`（草案）**：它的 `I1–I7` 会取代本文件的 `C8` / `C12` /
 > `C16` / `C18` / `C20`（迁移第 5 步收口时删旧形状）。
-> **最后核对**：2026-11-11
+> **最后核对**：2026-11-12
 > **范围**：graphics 模块与宿主之间"哪一段工作在哪个线程"的完整契约 —— 内容世界与渲染世界各归谁、
 > 场景图/节点状态/相机怎么更新到渲染侧、表面与交换链归谁、并行计算放在哪、关闭怎么收。
 > **不含** appfw 的通用异步（`appfw-startup-phases.md`、`async-design.md`）与 Vulkan 同步细节（`vsg-backend.md`）。

@@ -27,7 +27,7 @@ namespace detail
  *   `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`).
  * - THE MEMO IS THE SAME ONE THE SCENE AND THE MIRROR USE. A list is a pure function of (snapshot, view, mask);
  *   two passes that draw the same view must select once. The snapshot's `revision` is the memo's state key.
- * - THREADS. `setSnapshot` runs on the content thread (inside `ContentMirror::publish`); `collectRenderCommands` and
+ * - THREADS. `setSnapshot` runs on the content thread (inside `FrameWorker::publish`); `collectRenderCommands` and
  *   `beginFrame` run on the engine thread. Only the shared pointer is shared, under one mutex; the snapshot is
  *   immutable and the memo is engine-thread-only.
  */

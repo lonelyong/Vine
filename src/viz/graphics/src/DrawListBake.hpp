@@ -165,8 +165,8 @@ struct Row {
  *   freed object. The table is dropped when the graph announces a change (the epoch) or the scene invalidates.
  * - WHAT IS CONTENT-SIDE ONLY. `nodes` is the build's record of which node each row came from, used by
  *   `refreshBoxes` (a byte edit announces itself on a buffer, so the box that depends on those bytes has to be
- *   re-read). It is NOT part of the draw list: a mirror adopts the rows and drops it (`RenderWorld::adopt`), which
- *   is why nothing in the fold or the select reads a node.
+ *   re-read). It is NOT part of the draw list: a published snapshot drops it, which is why nothing in the fold or
+ *   the select reads a node.
  */
 struct SceneBake {
     /// The row index meaning "this row has no parent" (the table's first row).
@@ -251,7 +251,7 @@ class Frustum {
  *
  * @details
  * - It is the ONLY code that reads a graph for a draw list, and it runs on the thread that owns that graph. What it
- *   writes is values; a side that owns no graph takes them as they are (see RenderWorld::adopt).
+ *   writes is values; a side that owns no graph takes them as they are (see makeSceneSnapshot).
  * - Invisible subtrees produce no rows at all: the walk skipped them before, and a row that can never be drawn is
  *   memory nobody reads.
  * - A node that DECLARES a per-view placement answers `viewPlacement()`; the value goes on the row, and the select
@@ -270,7 +270,7 @@ void buildRows(const Node& root, SceneBake& bake, float opacity = 1.0F);
  * @details
  * - It is the first half of `buildRows` (the walk), without the fold: the rows come out with `parent` / `end` relative
  *   to a table of their own, and every resolved value untouched. Whoever SPLICES them into a live table folds them
- *   there, where the real parent's placement is known (see RenderWorld::attach).
+ *   there, where the real parent's placement is known.
  * - Splitting it here rather than in the mirror is what keeps "how a subtree's own facts are read" in one place: the
  *   graph is only ever read by this file.
  * - Invisible subtrees still produce no rows (see buildRows): "connect a hidden subtree" is a no-op, and the caller
@@ -324,7 +324,7 @@ void refoldChain(SceneBake& bake, std::uint32_t index);
  *   refresh compares what each leaf states with what the row holds, so a streaming buffer costs its own chain, and a
  *   collection over unchanged boxes folds nothing at all. The chains of several changed leaves are deduped and folded
  *   deepest-first, because in walk order a child always sits after its parent.
- * - A MIRROR has no nodes (see RenderWorld::adopt), so it does not refresh: its boxes are the handshake's until a box
+ * - A SNAPSHOT has no nodes, so it does not refresh: its boxes are the publication's until a box
  *   delta exists (a known gap, not a silent read of content).
  *
  * @param bake The table to refresh.

@@ -1,9 +1,9 @@
 # ADR-2026-11-12：快照接管生产收集拆成 5a 影子切换、5b-1 切换真相与 5b-2 删除
 
-- 状态：已采纳（迁移形状；5a 影子接缝、5b-1 生产切换与 5b-2a 公开入口已落地 2026-11-12，5b-2b 未落地）
+- 状态：已采纳（迁移形状；5a、5b-1、5b-2a 与 5b-2b 已落地 2026-11-12，5b-2c 的 pass 声明收口未落地）
 - 日期：2026-11-12
 - 相关：`../design/graphics-frame-pipeline.md` §9.3；`../research/graphics-2026-11-12-instances.md`；
-  `tests/test_graphics/RenderWorldTest.cpp`（镜像 / delta / 烘焙的现役用例）
+  `tests/test_graphics/RenderWorldTest.cpp`（快照 / 烘焙的现役用例）
 
 ## 背景
 
@@ -38,11 +38,12 @@
 - **5b-2a = 公开入口 + 源归位（2026-11-12 已落地）**：公开 `Scene::publish()`（三态
   `Posted`/`Unchanged`/`InsideBatch`）；`FrameWorker` 直接持有 `SnapshotSource`，不再经过 `ContentMirror`。
   本步不删 LEGACY 文件/用例，它们仍在树内但已不在生产路径。
-- **5b-2b = 删除旧路径**：删 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `RenderWorldSource` /
-  `PublishOutcome` / `SceneRows::version/publish/editing`（约 2000 行，含 LEGACY 用例）+ `addPass` 家族 +
-  `PassRegistry` 的运行时拒绝。`DrawListMemo` 保留为 `SnapshotSource` 的纯 per-view 缓存；
-  `Scene::refreshBoxes` / `refreshMaterials` 保留（快照的输入）。`K4` 的分母在 5b-2b 开始时重取；
-  `K5` 前后 `wc -l` 对比；`K7` 必须在新路径上绿。只有 5b-2a 稳定后进 5b-2b。
+- **5b-2b = 删除旧路径（2026-11-12 已落地）**：删 `ContentMirror` / `DeltaChannel` / `RenderWorld` /
+  `RenderWorldSource` / `PublishOutcome` / `SceneRows::version/publish/editing`（含 23 条 LEGACY 用例）。
+  `DrawListMemo` 保留为 `SnapshotSource` 的纯 per-view 缓存；`Scene::refreshBoxes` / `refreshMaterials`
+  保留（快照的输入）。
+- **5b-2c = 收口 pass 声明**：删 `addPass` / `removePass` / `clearPasses` 与 `PassRegistry` 的运行时拒绝，
+  计划是唯一的形状。`K4` 的分母在 5b-2c 开始时重取；`K5` 前后 `wc -l` 对比；`T7` / `T30` 保持绿。
 
 ## 决定补充：A5 必须回答的四件事
 
@@ -56,8 +57,9 @@
    5b-2 删掉 `ContentMirror` / `RenderWorldSource` 后它仍是同一个接口。`FrameDescription::content` /
    `expandPass` 的契约不变，等价性测试仍能问两个实现。不把它改成公开的新名词（`G8`：今天的消费者就是
    `expandPass`）。
-4. **删除面与基线**（`K5`）：`wc -l` 记下 `ContentMirror` / `DeltaChannel` / `RenderWorld` 的现数
-   （与 2519 同口径：`.hpp` + `.cpp`），5b-2b 前后各一次；5a / 5b-1 / 5b-2a 只增不删，`K5` 只在 5b-2b 判。
+4. **删除面与基线**（`K5`）：`ContentMirror` / `DeltaChannel` / `RenderWorld` 的 5b-2b 删除已完成；
+   `K5` 的最终 `wc -l` 与 2519 同口径（`.hpp` + `.cpp`），在 5b-2c 收口时一起记录。5a / 5b-1 / 5b-2a
+   只增不删，`K5` 只在最终收口时判。
 
 ## 后果
 
@@ -75,16 +77,17 @@
 - **5a + 5b-1（2026-11-12）**：`SnapshotSource`（快照 → `DrawListSource`，按 `SceneSnapshot::revision` 记忆化）、
   `DrawListDiff`（字段级比较）、`ContentMirror::snapshotSource()` / `legacySource()` /
   `FrameWorker::setLegacyShadow()`。5b-1 的生产绑定是 `snapshotSource()`；LEGACY 影子默认关闭。
-  `T34`：`SnapshotShadowTest.TheSnapshotSourceMatchesTheMirrorAcrossSixHundredFrames`（600 帧，transform / opacity /
-  material / placement 编辑）+ `FrameWorkerTest.TheSnapshotShadowComparesEverySceneDrawAndFindsNoDifference`；
-  `SnapshotShadowTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith` 补齐 `T17` 的 snapshot 侧（材质 / 几何 /
-  程序三种 revision）；`SnapshotShadowTest.ADifferentSnapshotIsReportedAsADifference` 证明比较不是恒真。
+  `T34`：`SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity /
+  material / placement 编辑）+ `FrameWorkerTest.AWorkerExpandsTheSameFrameTheSceneWould`；
+  `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith` 补齐 `T17` 的 snapshot 侧（材质 / 几何 /
+  程序三种 revision）；`SnapshotSourceTest.ADifferentSnapshotIsReportedAsADifference` 证明比较不是恒真。
   `test_graphics` 577 / `test_vsg` 542 / `ctest` 30/30 / TSan 0 警告。
 - **5b-2a（2026-11-12）**：公开 `Scene::publish()` 三态；`FrameWorker` 直接持有 `SnapshotSource`，
-  `T31` 由 `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch` 钉住；`test_graphics` 577 /
-  `test_vsg` 542 / `ctest` 30/30 / TSan 0。
-- 5b-1 后分母：`test_graphics` 577 + `test_vsg` 542 = 1119；5b-2b 开始时重取。
-- 绑定删除面的用例初判 17 条（`ContentMirrorTest` 11 + `DeltaChannelTest` 5 + `DrawListBakeTest` 1），
-  占 1.5%；即使把 `FrameWorkerTest` 的 4 条发布路径用例算上也只有 1.9%，5% 线不会成为 5b-2 的约束。
+  `T31` 由 `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch` 钉住。
+- **5b-2b（2026-11-12）**：删除 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `RenderWorldSource` /
+  `PublishOutcome` 与 23 条 LEGACY 用例；`test_graphics` 554 / `test_vsg` 542 / `ctest` 30/30 / TSan 0。
+- 5b-2c 后分母：`test_graphics` 554 + `test_vsg` 542 = 1096；开始时重取。
+- 绑定删除面的用例初判 17 条；5b-2b 实际删除了 23 条 LEGACY 用例（`ContentMirrorTest` 11 + `RenderWorldTest` 7 +
+  `DeltaChannelTest` 5）。它们只钉旧机制，没有需要改断言的语义存续，符合 `K4` 的计数口径。
 - 相关判据：`T17` / `K1` / `K2` / `K3` / `K7` / `N5`；`K5` 的 2519 行基线见
   `../research/graphics-2026-11-11-next-audit.md` §2。

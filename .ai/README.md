@@ -26,7 +26,7 @@
 - `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒、存储与共享；网格三角形身份（`triangleCount()` / `triangleCorners()`）与三角形树缓存（F32）。
 - `graphics-rendering.md` —— 目标、MSAA、图源、颜色、着色、阴影。
 - `graphics-content-lifecycle.md` —— 内容释放与缓存策略。
-- `graphics-frame-pipeline.md` —— 帧管线（**草案**）：graphics-next 采纳后的目标形状 —— 内容 → 快照 → 派生 → 执行 四层单向、8 个名词 / 3 个动词、`C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` / `P1–P11` / `D1–D11` / `T1–T34`，逐功能标落地状态，迁移表（步 5 拆成 5a / 5b-1 / 5b-2a / 5b-2b）在 §9.3。
+- `graphics-frame-pipeline.md` —— 帧管线（**草案**）：graphics-next 采纳后的目标形状 —— 内容 → 快照 → 派生 → 执行 四层单向、8 个名词 / 3 个动词、`C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` / `P1–P11` / `D1–D11` / `T1–T34`，逐功能标落地状态，迁移表（步 5 拆成 5a / 5b-1 / 5b-2a / 5b-2b / 5b-2c）在 §9.3。
 - `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑索引 / 否决项 / 门禁。
 - `vsg-pitfalls.md` —— vsg 后端 P1–P82 坑表，按九个风险域分组，每条带症状与判据。
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
@@ -86,7 +86,7 @@
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
 - `ADR-2026-11-12-adopt-graphics-next.md` —— **采纳 graphics-next 作为下一版帧管线设计**（四层单向：内容 → 快照 → 派生 → 执行）；目标形状的规范文档是 `design/graphics-frame-pipeline.md`（草案），`K1–K11` 从“否决提案”改成“每一步的验收阈值与回退条件”，backlog 的 `T32` 从触发条件型移出；否决保持现状、只留已落地的身份/寿命层、以及大爆炸重写。
-- `ADR-2026-11-12-snapshot-takes-over-collection.md` —— **快照接管生产收集拆成 5a 影子 / 5b-1 翻源 / 5b-2a 公开入口 / 5b-2b 删除**：5a 只跑新旧两路并逐项 diff、旧路径仍是渲染真相；5b-1 把 Published 模式绑到 `SnapshotSource`，旧路径降为可选 LEGACY 影子；5b-2a 公开 `Scene::publish()` 三态并让 `FrameWorker` 直接持有 `SnapshotSource`；5b-2b 才删 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome`（约 2000 行）与 `addPass` 家族；否决一步完成、拆三步、保留 mirror 与 debug-only 双跑。
+- `ADR-2026-11-12-snapshot-takes-over-collection.md` —— **快照接管生产收集拆成 5a 影子 / 5b-1 翻源 / 5b-2a 公开入口 / 5b-2b 删除 / 5b-2c pass 收口**：5a 只跑新旧两路并逐项 diff、旧路径仍是渲染真相；5b-1 把 Published 模式绑到 `SnapshotSource`；5b-2a 公开 `Scene::publish()` 三态并让 `FrameWorker` 直接持有 `SnapshotSource`；5b-2b 删 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome` 与 23 条 LEGACY 用例；5b-2c 才删 `addPass` 家族与运行时拒绝；否决一步完成、拆三步、保留 mirror 与 debug-only 双跑。
 - `ADR-2026-11-11-content-identity-is-a-handle.md` —— 内容身份是**句柄**（`Handle` gen24/domain8/index32 + `ContentRef{id,revision}`），不是地址：公开 `ContentId.hpp`、`Node::id()`、行身份/镜像键/`RenderCommand::node`/计划行/后端几何表全部改为 `NodeId`；分三段落地（公开身份 → `ContentRef` 唯一键 → epoch 回收）；部分取代 `ADR-2026-11-09-address-keys-hold-the-object`。
 - `ADR-2026-11-10-render-world-mirrors-content.md` —— 渲染世界**镜像**内容世界：内容留在 UI 线程（编辑 API 不变），镜像（世界矩阵/世界盒/折叠状态/代理）在引擎线程，靠 delta 增量更新（payload 必填 ⇒ 漏发编译不过）、字节靠原子 revision 轮询；表面归内容线程、交换链归引擎线程；否决把内容移交给引擎线程（第一稿）、每帧 extract、双缓冲世界、加锁、每帧起线程、按 pass 并行记录、vsg 的 threading path。
 - `ADR-2026-11-10-upload-staging-is-not-retained.md` —— 上传暂存**不保留**：一次上传的 host 可见缓冲是**一个** `vkCmdCopyBuffer` 的源，拷贝的 fence 一完成就清（`detail::StagingTask` 在每个帧边界扫，零等待、零 idle），SDK **没有**对应动词（`RenderDevice::releaseUploadStaging()` 与模型查看器的 `release_render_memory` 一并删除）；否决显式入口 + park/drain、每帧无脑清、换任务释放、以及“还有待拷数据就跳过”的便宜条件（那是会让 sweep 永久冻结的坑）。

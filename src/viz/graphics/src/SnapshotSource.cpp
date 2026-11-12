@@ -24,7 +24,7 @@ SceneSnapshotPtr SnapshotSource::snapshot() const
 
 void SnapshotSource::beginFrame(std::uint64_t frame)
 {
-    // ONE FRAME OF GRACE, exactly like RenderWorldSource and Scene: evict what the PREVIOUS frame asked for, then
+    // ONE FRAME OF GRACE, exactly like Scene's own memo: evict what the PREVIOUS frame asked for, then
     // move to the new token. Evicting with the NEW frame would drop every list that was used last frame.
     memo_.beginFrame(frame_);
     frame_ = frame;

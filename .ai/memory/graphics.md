@@ -391,7 +391,7 @@
 
 - **为什么**：`ContentMirror::publish` / `FrameWorker::publish` 返回 `bool`，而同一个 `false` 表示三件不同的事
   ——“没变”“批内被冻住”“通道满、下次重试”。调用方无法据此决定重试还是报告，`T31` 的“批内显式未发布”也无处表达。
-- **新值**：`src/viz/graphics/src/PublishOutcome.hpp` —— `PublishStatus{Posted, Unchanged, InsideBatch, Refused}`
+- **新值**：`src/viz/graphics/src/PublishOutcome.hpp`（5b-2b 已删）<!-- drift-ok --> —— `PublishStatus{Posted, Unchanged, InsideBatch, Refused}`
   + `PublishOutcome{status, held}`（`held` = 调用之后镜像持有的那一版，首次发布前为空）+ `explicit operator bool`
   （保留旧的“是否发布了”读法，所以既有 `EXPECT_TRUE(publish(...))` 一处未改）+ `posted()`。
 - **怎么分辨批内**：`SceneRows::editing(scene)`（friend，读 `edit_depth_ > 0`）。**先问它**再比版本：批内版本是被
@@ -479,4 +479,18 @@
 - **坑**：第二个 `FrameWorker` 对同一 scene 调 `publish` 得到 `Unchanged`（不是 `Posted`），旧测试的
   `ASSERT_TRUE(publish(...))` 要改成接受 `Posted|Unchanged`。
 - **测试**：`FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`；`test_graphics` 577 / `test_vsg` 542 /
-  ctest 30/30 / TSan 0。5b-2b（删 legacy 文件/用例 + `addPass` 家族）未做。
+  ctest 30/30 / TSan 0。
+
+## 2026-11-12 —— graphics-next 5b-2b：删除旧镜像 / delta / 版本
+
+- **删除**：`ContentMirror` / `DeltaChannel` / `RenderWorld` / `RenderWorldSource` / `PublishOutcome` 全部删；
+  `SceneRows` 只剩 `snapshot`（`version` / `editing` / `publish` 一并删）。`DrawListMemo` 保留为 `SnapshotSource`
+  的纯 per-view 缓存；`Scene::refreshBoxes/refreshMaterials` 保留（快照输入）。
+- **测试**：`ContentMirrorTest` 11 + `RenderWorldTest` 7 + `DeltaChannelTest` 5 = 23 条 LEGACY 用例删除；
+  `RenderWorldTest.cpp` 只留 `SnapshotTest` 与 `DrawListBakeTest`；`SnapshotShadowTest.cpp` 改成
+  `SnapshotSourceTest`（发布源 vs Scene 直接收集，600 帧 + 批内 + T17 + 空快照变异）。
+- **计数**：`test_graphics` 554 / `test_vsg` 542 / ctest 30/30 / TSan 0。5b-2c（`addPass` 家族 /
+  `PassRegistry` 运行时拒绝）未做。
+- **坑**：`RenderEngine` 的 contentCollectCount/ReuseCount 读 `FrameWorker::memoStores/Hits`；删掉 LEGACY 后
+  只剩 `SnapshotSource` 的 memo，`PassesSharingSceneAndCameraCollectOnce...` 仍应绿（`beginFrame` 的上一帧
+  grace 是前提）。

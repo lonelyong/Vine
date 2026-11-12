@@ -16,14 +16,15 @@
   `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §迁移，每步一个可回退的提交。
 - **graphics-next 的接管（已采纳：`../decisions/ADR-2026-11-12-adopt-graphics-next.md`）**：目标形状、
   `C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` 与迁移表在 `../design/graphics-frame-pipeline.md`。
-  未做的是 §9.3 的步 4、5b-2b、6（多表面 → 删除旧路径 → 原型/实例），以及 F11/F12 的全序键与 `query`。
-  5a、5b-1 与 5b-2a 已落地 2026-11-12：Published 模式绑定 `SnapshotSource`，公开 `Scene::publish()` 三态，
-  `FrameWorker` 直接持有 `SnapshotSource`；LEGACY 文件仍在树内但已不在生产路径，待 5b-2b 删除。
-  5a/5b-1/5b-2a/5b-2b 的拆分理由见 `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`；
+  未做的是 §9.3 的步 4、5b-2c、6（多表面 → pass 声明收口 → 原型/实例），以及 F11/F12 的全序键与 `query`。
+  5a、5b-1、5b-2a 与 5b-2b 已落地 2026-11-12：Published 模式绑定 `SnapshotSource`，公开 `Scene::publish()` 三态，
+  `FrameWorker` 直接持有 `SnapshotSource`，旧 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome`
+  与 23 条 LEGACY 用例已删除。
+  5a/5b-1/5b-2a/5b-2b/5b-2c 的拆分理由见 `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`；
   A6 的测量口径见 `../research/graphics-2026-11-12-instances.md`。每步一个可回退提交；
   某步击穿它自己的 `K#` ⇒ 回退该步并把结论写回 ADR，**不重开“是否采纳”**。
-  5b-2b 的删除不在“现在可做”里：触发条件是 5b-2a 稳定一轮、mirror/delta 再出一类 in-flight/版本缺陷、第二后端要
-  复用内容层，或收集进入性能预算；A6 的触发条件是出现“一处原型多处放置”的真实宿主。未命中就只写设计（`G8`）。
+  5b-2c 的 pass 声明收口不在“现在可做”里：触发条件是 5b-2b 稳定一轮、第二后端要复用内容层，或 host
+  需要计划之外的第二套 pass 形状；A6 的触发条件是出现“一处原型多处放置”的真实宿主。未命中就只写设计（`G8`）。
 
 
 ## 2. 触发条件型

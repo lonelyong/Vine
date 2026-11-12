@@ -482,7 +482,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     // How many times a re-read box actually moved (see ensureRows): a byte edit announces itself on a buffer, not on
     // the graph, so it does not move `bake_epoch_` - and a reader that mirrors these rows needs a version that does.
     mutable std::uint64_t                box_generation_ = 0;
-    // HOW DEEP THE EDIT BATCH IS (see beginEdit), and the version a MIRROR compares (`SceneRows::version`). Inside a
+    // HOW DEEP THE EDIT BATCH IS (see beginEdit), and the version a publication compares (`Scene::publish`). Inside a
     // batch the published pair stays where it was, so a frame that lands mid-batch publishes nothing; the next
     // collection after the outermost endEdit() catches it up in one step - which is also the only moment the whole
     // batch is read.
